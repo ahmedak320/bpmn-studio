@@ -2,10 +2,10 @@ appId: ae.orbitpm.processstudio
 productName: OrbitPM Process Studio
 copyright: Copyright © 2026 ahmedak320
 
-# NOTE: resources/icon.png is a placeholder brand-color square generated in
-# wave A1 so the build config is self-consistent. Replace with a real
-# multi-resolution app icon (icon.ico for win, plus icon.png source) before
-# a real release build.
+# resources/icon.svg is the source of truth (deep-blue rounded square, white
+# circle -> rounded-rect -> diamond BPMN motif). resources/icon.ico (16-256
+# multi-size) and resources/icon.png (512) are generated from it — see
+# scratchpad report C3.md for the generator script if it needs regenerating.
 
 directories:
   output: dist
@@ -19,6 +19,7 @@ asarUnpack:
   - resources/**
 
 win:
+  icon: resources/icon.ico
   target:
     - target: nsis
       arch:
@@ -28,7 +29,7 @@ win:
     - ext: bpmn
       name: BPMN Diagram
       description: BPMN 2.0 Process Diagram
-      icon: resources/icon.png
+      icon: resources/icon.ico
       role: Editor
 
 nsis:
@@ -37,6 +38,8 @@ nsis:
   allowElevation: false
   runAfterFinish: true
   artifactName: ${productName}-Setup-${version}.${ext}
+  installerIcon: resources/icon.ico
+  uninstallerIcon: resources/icon.ico
 
 publish:
   provider: github

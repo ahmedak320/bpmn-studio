@@ -1,0 +1,35 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
+  <!-- OrbitPM Process Studio app icon: deep-blue rounded-square background
+       with a white geometric BPMN motif — start event (circle), task
+       (rounded rect), and gateway (diamond) chained by connecting lines —
+       reading as a tiny process diagram at any size down to 16px. -->
+  <defs>
+    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#234b73"/>
+      <stop offset="100%" stop-color="#152a40"/>
+    </linearGradient>
+  </defs>
+
+  <rect x="0" y="0" width="1024" height="1024" rx="224" fill="url(#bg)"/>
+
+  <g fill="none" stroke="#ffffff" stroke-width="30" stroke-linecap="round" stroke-linejoin="round">
+    <!-- connecting flow lines (drawn first, under the shapes) -->
+    <line x1="336" y1="512" x2="410" y2="512"/>
+    <line x1="654" y1="512" x2="726" y2="512"/>
+
+    <!-- start event: thin circle -->
+    <circle cx="256" cy="512" r="80" stroke-width="22"/>
+
+    <!-- task: rounded rectangle -->
+    <rect x="410" y="410" width="244" height="204" rx="32"/>
+
+    <!-- gateway: diamond -->
+    <polygon points="830,392 942,512 830,632 718,512"/>
+  </g>
+
+  <!-- arrowheads on the connecting flows -->
+  <g fill="#ffffff">
+    <polygon points="410,512 378,496 378,528"/>
+    <polygon points="726,512 694,496 694,528"/>
+  </g>
+</svg>
