@@ -1,0 +1,165 @@
+/*
+ * Dark-mode-tolerant styling for the BPMN editor tab.
+ *
+ * No hardcoded white/black: everything routes through CSS custom
+ * properties with light defaults, flipped by prefers-color-scheme. If a
+ * later wave introduces an app-wide theme system that sets these same
+ * variable names higher up the tree, those values win automatically.
+ */
+
+.orbitpm-editor {
+  --orbitpm-editor-bg: #f7f7f8;
+  --orbitpm-editor-canvas-bg: #ffffff;
+  --orbitpm-editor-fg: #1a1a1e;
+  --orbitpm-editor-muted-fg: #6b6b74;
+  --orbitpm-editor-border: #d8d8de;
+  --orbitpm-editor-accent: #2b6ef2;
+  --orbitpm-editor-accent-fg: #ffffff;
+  --orbitpm-editor-danger: #c4322f;
+  --orbitpm-editor-danger-bg: #fdeceb;
+  --orbitpm-editor-panel-bg: #ffffff;
+
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  color: var(--orbitpm-editor-fg);
+  background: var(--orbitpm-editor-bg);
+}
+
+@media (prefers-color-scheme: dark) {
+  .orbitpm-editor {
+    --orbitpm-editor-bg: #1e1f22;
+    --orbitpm-editor-canvas-bg: #26272b;
+    --orbitpm-editor-fg: #e8e8ea;
+    --orbitpm-editor-muted-fg: #a2a2ab;
+    --orbitpm-editor-border: #3a3b40;
+    --orbitpm-editor-accent: #5b9dff;
+    --orbitpm-editor-accent-fg: #0f1115;
+    --orbitpm-editor-danger: #ff8a80;
+    --orbitpm-editor-danger-bg: #3a2323;
+    --orbitpm-editor-panel-bg: #2a2b2f;
+  }
+}
+
+/* Explicit overrides win regardless of OS preference (app-level theme toggle). */
+:root[data-theme='dark'] .orbitpm-editor {
+  --orbitpm-editor-bg: #1e1f22;
+  --orbitpm-editor-canvas-bg: #26272b;
+  --orbitpm-editor-fg: #e8e8ea;
+  --orbitpm-editor-muted-fg: #a2a2ab;
+  --orbitpm-editor-border: #3a3b40;
+  --orbitpm-editor-accent: #5b9dff;
+  --orbitpm-editor-accent-fg: #0f1115;
+  --orbitpm-editor-danger: #ff8a80;
+  --orbitpm-editor-danger-bg: #3a2323;
+  --orbitpm-editor-panel-bg: #2a2b2f;
+}
+
+:root[data-theme='light'] .orbitpm-editor {
+  --orbitpm-editor-bg: #f7f7f8;
+  --orbitpm-editor-canvas-bg: #ffffff;
+  --orbitpm-editor-fg: #1a1a1e;
+  --orbitpm-editor-muted-fg: #6b6b74;
+  --orbitpm-editor-border: #d8d8de;
+  --orbitpm-editor-accent: #2b6ef2;
+  --orbitpm-editor-accent-fg: #ffffff;
+  --orbitpm-editor-danger: #c4322f;
+  --orbitpm-editor-danger-bg: #fdeceb;
+  --orbitpm-editor-panel-bg: #ffffff;
+}
+
+.orbitpm-editor__toolbar {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.4rem 0.6rem;
+  border-bottom: 1px solid var(--orbitpm-editor-border);
+  background: var(--orbitpm-editor-bg);
+  flex: 0 0 auto;
+}
+
+.orbitpm-editor__button {
+  font: inherit;
+  font-size: 0.85rem;
+  padding: 0.35rem 0.7rem;
+  border-radius: 4px;
+  border: 1px solid var(--orbitpm-editor-border);
+  background: var(--orbitpm-editor-panel-bg);
+  color: var(--orbitpm-editor-fg);
+  cursor: pointer;
+}
+
+.orbitpm-editor__button:hover:not(:disabled) {
+  border-color: var(--orbitpm-editor-accent);
+}
+
+.orbitpm-editor__button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.orbitpm-editor__button--primary {
+  background: var(--orbitpm-editor-accent);
+  border-color: var(--orbitpm-editor-accent);
+  color: var(--orbitpm-editor-accent-fg);
+}
+
+.orbitpm-editor__dirty-flag {
+  margin-left: auto;
+  font-size: 0.8rem;
+  color: var(--orbitpm-editor-muted-fg);
+}
+
+.orbitpm-editor__dirty-flag--dirty {
+  color: var(--orbitpm-editor-accent);
+  font-weight: 600;
+}
+
+.orbitpm-editor__error {
+  padding: 0.4rem 0.6rem;
+  font-size: 0.8rem;
+  color: var(--orbitpm-editor-danger);
+  background: var(--orbitpm-editor-danger-bg);
+  border-bottom: 1px solid var(--orbitpm-editor-border);
+  flex: 0 0 auto;
+}
+
+.orbitpm-editor__body {
+  position: relative;
+  display: flex;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.orbitpm-editor__canvas {
+  flex: 1 1 auto;
+  min-width: 0;
+  background: var(--orbitpm-editor-canvas-bg);
+}
+
+/* bpmn-js draws its own SVG background rect; keep the host element itself
+   themed so no hardcoded white shows through the gaps. */
+.orbitpm-editor__canvas .djs-container {
+  background-color: var(--orbitpm-editor-canvas-bg);
+}
+
+.orbitpm-editor__properties {
+  flex: 0 0 300px;
+  min-width: 240px;
+  max-width: 420px;
+  overflow: auto;
+  border-left: 1px solid var(--orbitpm-editor-border);
+  background: var(--orbitpm-editor-panel-bg);
+  color: var(--orbitpm-editor-fg);
+}
+
+/* @bpmn-io/properties-panel ships its own light-theme inline styling via
+   its stylesheet; re-point its CSS variables at ours so it isn't a stark
+   white box in dark mode. */
+.orbitpm-editor__properties {
+  --color-white: var(--orbitpm-editor-panel-bg);
+  --color-grey-225-10-15: var(--orbitpm-editor-fg);
+  --color-grey-225-10-35: var(--orbitpm-editor-muted-fg);
+}
