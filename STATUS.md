@@ -350,3 +350,52 @@ explicitly tracked as deferred maintenance (Electron major upgrade).
 - Ahmed's laptop: SmartScreen bypass worked ("Run anyway") but corporate application control then blocked execution ("Windows cannot access the specified device, path, or file" + "blocked by your company, request support" dialog) — AppLocker/WDAC or enterprise SmartScreen. Risk #1 materialized in its strong form.
 - Claude Desktop precedent reinterpreted: per-user installs are fine, but the policy gates on PUBLISHER SIGNATURE/reputation — unsigned exes are blocked regardless.
 - Viable legitimate routes: (1) IT approval request (block dialog offers it); (2) Azure Trusted Signing (~$10/mo) so builds carry a stable publisher identity — also makes IT approval durable across auto-updates (publisher rule, not per-hash); (3) browser-delivered fallbacks (single-file editor / future web version) which app-control does not gate. NO policy-evasion workarounds will be attempted.
+
+## 2026-07-22 — Wave G2 lane L1: portable-exe experiment
+
+- **Framing**: this is a *test of whether packaging form matters* to the
+  Wave G corporate-app-control block, run openly on the same laptop — not
+  a workaround. Expected result going in: an unsigned portable exe should
+  hit the same publisher-reputation gate as the unsigned NSIS installer.
+  Either outcome (blocked identically, or something more specific like
+  "runs but flags differently") is useful data for deciding between IT
+  approval, Azure Trusted Signing, or the browser-delivered fallback (L2,
+  this wave).
+- Added `.github/workflows/portable-experiment.yml` — `workflow_dispatch`
+  only (never runs on tag pushes), `windows-latest`, `permissions:
+  contents: write`. Deliberately does **not** touch the committed
+  `electron-builder.yml` or `package.json`: it generates a throwaway
+  `electron-builder.portable.yml` at runtime (same appId/icon/files, `win
+  .target` swapped to `portable`, nsis block dropped) and builds against
+  that, so the real NSIS release pipeline config stays byte-for-byte
+  untouched. Uploads the resulting exe as a workflow artifact
+  (`--publish never`, no release side-effect from the build step itself).
+- CI run `29941270325` on `main` (commit `630d268`) went green on the
+  first attempt (`build-portable` job, ~2m49s) — no retry needed.
+- Downloaded the artifact (`gh run download`) and verified statically:
+  `file` → `PE32 executable (GUI) ... Nullsoft Installer self-extracting
+  archive`; `7z l` → NSIS-3 Unicode, single `$PLUGINSDIR/app-64.7z`
+  payload (electron-builder's portable target is still NSIS-based — a
+  self-extracting single exe, not a true zero-extraction PE, but there is
+  no separate install step: it unpacks to a temp dir and runs); `strings`
+  on the embedded manifest confirms `requestedExecutionLevel
+  level="asInvoker" uiAccess="false"` — same no-admin posture as the
+  regular installer.
+- Renamed to `OrbitPM-Process-Studio-Portable-0.1.2.exe` and attached to
+  the **existing** `v0.1.2` release via `gh release upload` (no retag, no
+  change to the other three assets — `latest.yml` and the NSIS
+  Setup.exe/.blockmap pair are untouched, confirmed via `gh release
+  view`).
+- **Download URL for the laptop test**:
+  https://github.com/ahmedak320/bpmn-studio/releases/download/v0.1.2/OrbitPM-Process-Studio-Portable-0.1.2.exe
+- **Instructions for Ahmed** (test openly — if the same "blocked by your
+  company, request support" dialog appears, that confirms the block is
+  publisher-based, not installer-form-based, and IT approval / Azure
+  Trusted Signing remain the real paths forward):
+  1. Download `OrbitPM-Process-Studio-Portable-0.1.2.exe` from the link
+     above (it will land in `Downloads`, same as the Setup.exe before it).
+  2. Run it directly from `Downloads` — no install step, it launches (or
+     attempts to launch) the app directly.
+  3. Note the *exact* error text if blocked (screenshot or copy-paste is
+     ideal) — same corporate app-control dialog as before, a different
+     message, or a silent failure are all distinct, useful signals.
