@@ -185,3 +185,37 @@ https://github.com/ahmedak320/bpmn-studio/releases/download/v0.0.1-alpha.2/Orbit
 polish (updater/menu/file-association/dark-mode/icon) are all wired end
 to end in a single assembled app. Remaining gaps are listed in this
 lane's report for Wave D.**
+
+## Wave D — lane D2 (docs + v0.1.0 pre-release)
+
+Running in parallel with D1 (playwright-electron e2e suite, `tests/e2e`),
+which owns its own file tree and isn't touched by this entry.
+
+- **README.md**: full user-first rewrite — what the app is, install
+  (download `Setup.exe` from Releases, SmartScreen "More info → Run
+  anyway", per-user/no-admin install), first run (workspace-root picker,
+  OneDrive folder recommended), using it (folder tree, drawing basics,
+  save/export, call-activity linking + drill-down + the unresolved-links
+  footer badge), AI setup (Settings gear → per-provider field table for
+  all 7 providers incl. Moonshot/Kimi and GLM's OpenAI-compatible base
+  URL + model fields and Azure's 4-field deployment-driven config, keys
+  stored via `safeStorage`/DPAPI and never leaving the workspace),
+  offline/online feature matrix, "files are standard BPMN 2.0" portability
+  note, troubleshooting table (SmartScreen, corporate proxy — system
+  proxy is used automatically, OneDrive lock hiccups, `ai.log` location,
+  where keys/settings live), dev section (npm ci/dev/build/test, smoke
+  test, e2e pointer, release process with the version==tag rule spelled
+  out explicitly).
+- **package.json**: bumped `version` from `0.0.1-alpha.2` to `0.1.0`
+  (direct edit — no dependency changes, so the `.npm-lock` install
+  protocol doesn't apply here).
+- **Release v0.1.0**: tagged and pushed after `typecheck`/`build`/`test`
+  gates passed locally; CI (`.github/workflows/build.yml`, unchanged —
+  still green from A2/C4) built on `windows-latest` and published the
+  GitHub Release. See this lane's report (`D2.md`) for the exact CI run
+  URL, asset list, and static installer checks performed on the
+  downloaded `.exe`.
+
+**Wave D (D2 scope) status: README complete, v0.1.0 tagged/released.
+Findings/URLs in the D2 lane report; D1's e2e results are tracked
+separately in that lane's own report.**
