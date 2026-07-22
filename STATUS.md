@@ -612,3 +612,141 @@ and gate-verified before the next started; this entry summarizes all three.
   2 493 719 bytes) — this refresh carries all three W2 lanes (A+B+C), per
   W2B's note deferring the release-asset re-upload to this final wave
   integration point.
+
+## Wave FX (post-review fixes)
+
+Two independent reviews of `c5de138..94e046b` (Claude live-review + Codex
+GPT-5.6-Sol code-review) found issues; three lanes (FX1, FX2, FX3) fixed and
+shipped them. Commits: `32f7c84` (FX1), `d49635d` (FX2), `ae33e7d` (FX3).
+
+- **Claude-review fixes (2)**:
+  1. **CSP/OpenRouter** — `lite/index.html`'s `connect-src` now whitelists
+     exactly `'self' https://api.anthropic.com
+     https://generativelanguage.googleapis.com https://openrouter.ai` (was
+     broader/inconsistent with the shipped provider set). The Custom
+     OpenAI-compatible endpoint is a closed allowlist by nature (arbitrary
+     origin), so it was made **desktop-app only**: marked
+     `providersLite.desktopOnly`, Test-connection disabled in Settings,
+     Generate disabled in the AI panel, copy updated (en+ar). New e2e
+     (`lite-providers.spec.ts`) asserts the **BUILT dist** CSP whitelists
+     exactly those 3 origins.
+  2. **e2e headless config** — `playwright.lite.config.ts` shipped with
+     `headless: false`, requiring a live `DISPLAY`; in a sandbox/CI with no
+     display Playwright blocks waiting for a browser window that never
+     appears — the root cause of a prior ~4h hang. bpmn-js renders fully in
+     headless chromium (real Canvas/SVG, no GPU dependency), so headed mode
+     bought no coverage. Switched to `headless: true` with `actionTimeout`/
+     `navigationTimeout`/`globalTimeout` backstops; dropped the now-unneeded
+     `DISPLAY=:0` from README and the opt-in live-CORS spec's run
+     instructions.
+
+- **Codex fixes (10 by id, + minors)**:
+  - **C1** (critical) — workspace-switch cross-write: `activateWorkspace`
+    bumps a workspace generation + resets ALL state (tree/tabs/contents/
+    dirty/modelers/history/dialogs) before the new scan; every `Tab` carries
+    `gen`; saves refuse to write through a stale generation. Unsaved-switch
+    dialog (Save all / Discard / Cancel) added.
+  - **C2** (critical) — binary-safe folder copy: `copyTree`/`relocate` now
+    copy raw bytes (`arrayBuffer`/`writeBytesAt`), never `file.text()`, so
+    non-`.bpmn` files (PDFs, images, spreadsheets) survive move/rename
+    intact. Toast reports file + non-BPMN counts.
+  - **M3** (major) — collision atomicity: `createBpmnFileUnique` re-probes
+    existence at write time and all create/import/AI-place writes serialize
+    through a mutex; the slug is recomputed inside the lock.
+  - **M4** (major) — PDF memory: Gemini gate lowered 40→32 MiB, single
+    base64 encode (no re-encode downstream), soft warning above 15 MiB
+    (en+ar).
+  - **M5** (major) — OpenRouter PDF engine: stopped forcing
+    `pdf.engine:'native'` (broken for the default text-input model
+    `z-ai/glm-5.2`); now sends `plugins:[{id:'file-parser'}]` so the
+    provider falls back per model. PDF UI notes "engine managed by
+    provider".
+  - **M6** (major) — Arabic process-id collisions: `deriveProcessId` derives
+    from the (Arabic-preserving) file base name; non-Latin names hash to a
+    unique `Process_<8-char FNV-1a>` id instead of all collapsing to
+    `Process_process`; filename dedup transfers to id uniqueness.
+  - **M7** (major) — external-change staleness: manual **Refresh** button in
+    the tree header + debounced (2s) auto-refresh on window focus /
+    visibilitychange.
+  - **M8** (major) — out-of-order refreshes: `refreshWorkspace` claims a
+    token from a refresh guard and commits only if it's the latest token
+    for the still-active handle, so a slower earlier scan can no longer
+    clobber a later one.
+  - **M9** (major) — transport vs. model-output errors: new `TransportError`
+    (401/403/429/CORS/network/timeout) is thrown by the browser AI client
+    and rethrown immediately by the repair loop — no retry, no re-upload of
+    the PDF attachment, on a permanent failure.
+  - **M10** (major) — missing timeouts: `fetchWithTimeout` (AbortController)
+    on every fetch — 180s for generation, 15s for test-connection — timeout
+    surfaces as a typed `TransportError` with i18n copy (en+ar).
+  - **Minors fixed**: search over-emitting unrelated processes from
+    multi-process files (now matches on the process's own name/id/content
+    only); Arabic-sweep gaps — provider descriptions, test-connection
+    verdicts, and error classifications now render via i18n keys instead of
+    hardcoded English; rename accepting names that drop `.bpmn` or embed a
+    path separator (now auto-appends `.bpmn`, rejects `/`/`\`); unhandled
+    promise rejections on drag/picker/fallback-open import (now caught,
+    surfaced as a toast); the CORS discriminator marking every rejected
+    fetch as "CORS-blocked" regardless of cause (now reports "Blocked or
+    unreachable (CORS, offline, or DNS)" — resolved HTTP responses were
+    already classified correctly).
+  - **Deferred (residual, flagged not silently dropped)**: *whole-workspace
+    traversal performance* — every mutation still re-traverses and re-reads
+    the entire workspace tree (`refreshWorkspace` scans + reads all `.bpmn`
+    files fully into memory), and the search 2 MiB guard only skips
+    building `contentText` after the full XML is already loaded. Not a
+    correctness bug at the workspace sizes this tool targets (a handful to
+    low hundreds of processes); flagged as a scaling concern for very large
+    workspaces (thousands of files) — no lane in this wave addressed it.
+
+- **Policy decision**: the Custom OpenAI-compatible provider (arbitrary
+  base URL) is **desktop-app only**. The web/Pages build's CSP is a closed
+  allowlist (`self` + the 3 browser-callable providers) by design for
+  zero-network-at-load + no attacker-controlled origin in a page anyone can
+  load; the desktop Electron app has no such CSP constraint and keeps full
+  Custom-endpoint support.
+
+- **Gates (this wave, all green)**: lite `tsc` clean · lite `vitest`
+  **191/191** · lite e2e **HEADLESS** (built dist over `file://`, no
+  `DISPLAY` needed) **17 passed / 3 self-skipped** (live-CORS opt-in), run
+  **twice**, ~11–14s each (was an unbounded hang under `headless:false` with
+  no display) · lite `vite build`: **one file**, `dist/index.html`
+  **2 508 529 bytes / 2.39 MB** (< 4 MB) · parent `typecheck` clean ·
+  parent `vitest` **203/203** · parent `electron-vite build` ok.
+
+- **Built dist verified**: single file (`find dist -type f` → 1) · CSP
+  `connect-src` = exactly `'self' https://api.anthropic.com
+  https://generativelanguage.googleapis.com https://openrouter.ai` · size
+  2 508 529 bytes (2.39 MB, well under the 4 MB budget) · zero-network-at-load
+  spec (`lite-smoke.spec.ts`) green in both headless runs.
+
+- **Shipped**: pushed to `main` (`ae33e7d`) → Pages run `29959364765`
+  **success**; live <https://ahmedak320.github.io/bpmn-studio/> is
+  **byte-identical** to the local build (`sha256
+  d23e8578ab31c8ebf67a08ccc0842baf4f5da0e1e64571f7ed29baec6c7b3c9b`,
+  content-length 2 508 529 matches). Release asset
+  `OrbitPM-Process-Studio-Lite.html` on **v0.1.2** re-uploaded (`--clobber`,
+  2 508 529 bytes, sha256-verified against the local build by re-downloading
+  it) — supersedes the prior 2 493 719-byte asset with all of FX1+FX2's
+  fixes.
+
+- **Live spot-checks**: this sandbox has no working browser-automation
+  extension (`claude-in-chrome` reports "extension not connected" — a
+  sandbox limitation, not a product issue), so the OpenRouter Test-connection
+  click could not be driven end-to-end from here. Verified the documented
+  fallback instead: (a) the **live** page's CSP whitelists `openrouter.ai`
+  (confirmed above, byte-identical to local); (b) `curl
+  https://openrouter.ai/api/v1/models` → **200** from this sandbox (egress to
+  OpenRouter is NOT blocked here, better than expected); (c) `curl
+  https://api.anthropic.com/v1/models` → **401** and `curl
+  https://generativelanguage.googleapis.com/v1beta/models` → **403**, i.e.
+  both reachable (server responded; only auth is missing) — consistent with
+  Anthropic/Gemini Test-connection reporting reachable. Arabic toggle sanity
+  was verified against this exact artifact by the headless e2e suite
+  (`lite-i18n-rtl.spec.ts`, both runs green): language toggle sets
+  `<html dir="rtl">`, translates chrome strings, and the bpmn-js canvas
+  island stays `dir="ltr"`. **What the user should click to get final
+  browser-side proof of OpenRouter**: open
+  <https://ahmedak320.github.io/bpmn-studio/> → Settings → Test connection
+  next to OpenRouter — expect "reachable" (a 4xx/CORS-open response), not
+  "blocked".
