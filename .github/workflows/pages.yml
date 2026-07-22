@@ -1,0 +1,78 @@
+name: Deploy Lite to GitHub Pages
+
+# Builds the zero-install single-file web editor (lite/) and publishes it to
+# GitHub Pages. The Pages block is app-control's answer to the blocked NSIS
+# installer: a web page is not gated by AppLocker/WDAC.
+#
+# The build imports the desktop app's pure generation pipeline + browser-safe
+# React helpers straight from ../src (see lite/vite.config.ts). The parent
+# app's node_modules is NOT installed here — lite's own deps + Vite `dedupe`
+# make those cross-tree imports resolve to lite/node_modules, so `npm ci` in
+# lite/ is all that's needed.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'lite/**'
+      - '.github/workflows/pages.yml'
+  workflow_dispatch: {}
+
+# Allow the deploy job to mint a Pages deployment via OIDC.
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# One in-flight Pages deployment at a time; don't cancel a running publish.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: lite/package-lock.json
+
+      - name: Install lite dependencies
+        working-directory: lite
+        run: npm ci
+
+      - name: Build single-file editor
+        working-directory: lite
+        run: npm run build
+
+      - name: Verify single-file artifact
+        working-directory: lite
+        run: |
+          test -f dist/index.html
+          # Fail if the build somehow emitted extra assets (must be one file).
+          count=$(find dist -type f | wc -l)
+          echo "dist file count: $count"
+          test "$count" -eq 1
+          echo "index.html size: $(du -h dist/index.html | cut -f1)"
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: lite/dist
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4

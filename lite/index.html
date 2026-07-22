@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <!--
+      Self-containment guard. Everything the page needs is inlined at build
+      time, so the only things this policy permits over the network are the
+      user's own AI calls to the two CORS-capable providers. `data:`/`blob:`
+      cover the inlined fonts, icons and the PNG-export canvas.
+    -->
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self' https://api.anthropic.com https://generativelanguage.googleapis.com;"
+    />
+    <!-- Empty data: icon prevents the browser from fetching /favicon.ico on
+         load (which would be an external request); main.tsx swaps in the real
+         OrbitPM icon (reused from resources/icon.svg) as a data: URI. -->
+    <link id="favicon" rel="icon" href="data:," />
+    <title>OrbitPM Process Studio Lite</title>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

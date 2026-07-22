@@ -32,6 +32,73 @@ the right.)*
 4. The app checks GitHub Releases for updates in the background and can
    update itself in place (still no admin needed).
 
+> **Can't install? Corporate application control blocking the `.exe`?** Some
+> managed laptops block *any* unsigned executable (AppLocker/WDAC), even a
+> per-user one, after SmartScreen. If that's you, use **Lite** below — it runs
+> in your browser, with nothing to install and nothing for app-control to
+> block.
+
+## Lite — the zero-install browser version
+
+**OrbitPM Process Studio Lite** is the same editor as a single web page: draw
+BPMN 2.0 diagrams, organize them in real folders on your computer, link
+processes with call activities (with drill-down), export SVG/PNG, and generate
+diagrams from a description with AI. It reuses the desktop app's exact
+generation pipeline — there is **nothing to install**, so corporate application
+control (which gates executables, not web pages) doesn't block it.
+
+**Two ways to get it:**
+
+1. **Open the hosted page:** <https://ahmedak320.github.io/bpmn-studio/> — just
+   open it in Microsoft Edge or Google Chrome.
+2. **Download the single file:** grab `OrbitPM-Process-Studio-Lite.html` from
+   the [latest release's Assets](https://github.com/ahmedak320/bpmn-studio/releases/latest)
+   and double-click it (it opens in your browser). It's one self-contained
+   `.html` file — no other files, no internet needed except for AI. You can
+   keep it in your OneDrive and open it anywhere.
+
+**How to use it:**
+
+- Click **Open a folder…** and pick a folder on your computer (a OneDrive
+  folder is ideal). The browser asks permission the first time and remembers
+  the folder for next time (you re-grant access with one click on later
+  visits). Your `.bpmn` files are read and written **in place**, exactly like
+  the desktop app — Lite is not a sandbox or a copy.
+- Right-click the tree for **New process / New folder / Rename / Delete**.
+  Double-click a `.bpmn` to open it; **Ctrl+S** saves back to disk.
+- Reduced mode: if your browser blocks folder access (older browsers, or a
+  policy that disables the File System Access API), Lite falls back to opening
+  a **single `.bpmn` file** and **saving via download**. A banner explains
+  when you're in this mode. Edge and Chrome support the full folder experience;
+  Firefox/Safari get the single-file fallback.
+
+**What works offline:** everything except AI generation — drawing, folders,
+opening/saving files, call-activity linking and drill-down, and SVG/PNG export
+all work with no internet. Only **Generate with AI** needs to be online.
+
+**AI in Lite — provider support (browser CORS limitation):**
+
+A web page can only call AI providers that allow cross-origin (CORS) browser
+requests. Two of the desktop app's seven providers do; the rest must be used
+from the desktop app (or a future hosted backend).
+
+| Provider | Works in Lite? | Notes |
+|---|---|---|
+| **Anthropic (Claude)** | ✅ Yes | Uses the `anthropic-dangerous-direct-browser-access` header. |
+| **Google Gemini** | ✅ Yes | The Generative Language API allows browser access. |
+| OpenAI | ❌ No | No browser CORS — use the desktop app. |
+| Moonshot (Kimi) | ❌ No | No browser CORS — use the desktop app. |
+| DeepSeek | ❌ No | No browser CORS — use the desktop app. |
+| Azure OpenAI | ❌ No | No browser CORS — use the desktop app. |
+| GLM (Zhipu) | ❌ No | No browser CORS — use the desktop app. |
+
+> ⚠️ **API-key storage warning.** A browser page has no OS-encrypted vault, so
+> in Lite your Anthropic/Gemini API key is stored **unencrypted in this
+> browser profile** (`localStorage`). Anyone with access to this computer
+> profile can read it. Only enter a key on a machine you trust, and use
+> **Settings → Clear stored key** when you're done on a shared computer. (The
+> desktop app, by contrast, encrypts keys with the OS keychain/DPAPI.)
+
 ## First run
 
 On first launch you'll be asked to choose a **processes folder** — this is
@@ -190,6 +257,31 @@ Runs the app headless; prints `SMOKE_OK` and exits 0 if startup succeeds.
 Playwright-electron tests live in `tests/e2e` (see `package.json` for the
 script that runs them).
 
+### Lite (the browser version)
+
+The zero-install web editor is a standalone Vite + React project in `lite/`
+with its **own** `package.json`, dependencies, and tests. It reuses the
+desktop app's pure code by importing straight from `../src` (the `@app/*`
+alias in `lite/vite.config.ts` + `lite/tsconfig.json`) and builds one
+self-contained `dist/index.html` via `vite-plugin-singlefile`.
+
+```bash
+cd lite
+npm ci
+npm run dev          # vite dev server
+npm run typecheck    # tsc over lite + the reused ../src files
+npm test             # vitest — FS-adapter glue (mocked File System Access handles)
+npm run build        # -> lite/dist/index.html (one inlined file, ~2.8 MB)
+
+# E2E smoke (headed chromium; run from the desktop/ repo root where Playwright
+# and the chromium browser are installed):
+cd .. && DISPLAY=:0 npx playwright test -c lite/tests/e2e/playwright.lite.config.ts
+```
+
+It's deployed to GitHub Pages by `.github/workflows/pages.yml` on any push to
+`main` that touches `lite/**`. The desktop app's own `npm ci/build/test`
+gates are unaffected — `lite/**` is excluded from the root `vitest.config.ts`.
+
 ### Release process
 
 Windows installers are built on GitHub Actions (`windows-latest`) by
@@ -248,3 +340,7 @@ This directory (`desktop/`) is its own git repository, nested inside the
 pushed independently to a public GitHub repo (`ahmedak320/bpmn-studio`) so
 the private server monorepo stays separate. See `plan.md` for the full
 build plan and `STATUS.md` for the wave-by-wave build ledger.
+
+`lite/` is the standalone browser-editor subproject (see the **Lite** section
+above and **Development → Lite**); it reuses `src/gen/**`, `src/shared/**`,
+and browser-safe renderer helpers from this same tree.

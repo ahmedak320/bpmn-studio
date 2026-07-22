@@ -399,3 +399,95 @@ explicitly tracked as deferred maintenance (Electron major upgrade).
   3. Note the *exact* error text if blocked (screenshot or copy-paste is
      ideal) — same corporate app-control dialog as before, a different
      message, or a silent failure are all distinct, useful signals.
+
+## 2026-07-22 — Wave G2 lane L2: OrbitPM Process Studio Lite (zero-install web editor)
+
+- **What it is**: a standalone Vite + React + TS subproject in `lite/` whose
+  build emits ONE self-contained `dist/index.html` (via
+  `vite-plugin-singlefile`; JS, CSS, and the bpmn.io icon fonts all inlined as
+  `data:` — zero external requests at load, only the user's own AI calls go
+  out). App-control gates executables, not web pages, so this sidesteps the
+  Wave G block entirely.
+- **Reuse (not reinvented)**: imports the desktop app's pure code straight from
+  `../src` via the `@app/*` Vite alias + tsconfig paths — `src/gen/**` (the
+  whole IR→validate→transform→xml→layout→generateFromDescription pipeline,
+  incl. `bpmn-auto-layout`), `src/shared/{processIndex,slug}.ts`, and the
+  browser-safe renderer helpers `editor/{dirty,callActivity,exportImage,
+  newDiagram}`, `editor/EditorTab.css`, `links/{LinkPicker,modelerOps}`, and
+  `common/{PromptProvider,TextInputModal}`. Only two React shells that touch
+  bpmn-js — `EditorTab` and `SelectionLinkButton` — are *ported* into
+  `lite/src` (they still reuse all the pure helpers + CSS above); porting was
+  required because (a) bpmn-js's nested `bpmn-moddle@10` named export only
+  resolves when the import originates from `lite/src`, and (b) both desktop
+  files carry latent type annotations (a canvas cast, an incompatible
+  interface-`extends`) that a real `tsc` surfaces — see the deviations note.
+- **New (lite-only)**: `fs/fsAccess.ts` — the File System Access API adapter
+  (recursive `.bpmn` tree, read/write via handles, create/rename/delete,
+  slug dedup) written pure so it's unit-testable with mock handles;
+  `fs/idb.ts` (persist the directory handle) + `fs/workspaceHandle.ts`
+  (pick / remember / re-request permission, with the single-file fallback when
+  `showDirectoryPicker` is unavailable); `ai/browserAi.ts` (browser-direct
+  `generateObject` through the SAME `generateFromDescription`, Anthropic via
+  the `anthropic-dangerous-direct-browser-access` header + Gemini);
+  `ai/keys.ts` (localStorage keys with the unencrypted-storage warning); and
+  the 3-zone `App.tsx` (folder tree · tabbed bpmn-js editor + props panel +
+  minimap · collapsible AI panel), settings dialog, and picker/tree/AI
+  components.
+- **Graceful degradation**: full folder mode on Edge/Chrome; automatic
+  single-file open + download-on-save fallback (with an explanatory banner) on
+  browsers without the File System Access API.
+- **AI CORS reality**: only Anthropic + Gemini are reachable from a browser;
+  the panel + README state plainly that OpenAI/Kimi/DeepSeek/Azure/GLM need the
+  desktop app (or a future web backend).
+- **Verification (all green, live this lane)**:
+  - `lite` unit tests: **18/18** (`vitest` — the FS-adapter glue with mocked
+    handles: tree build, read/write round-trip, create/rename/delete, dedup,
+    flatten-for-index).
+  - `lite` typecheck: `tsc --noEmit` **clean** (over lite + every reused
+    `../src` file it pulls in).
+  - `lite` build: one `dist/index.html`, **2.81 MB** (fonts inlined; within the
+    2–5 MB target); verified `dist/` contains exactly one file and no
+    non-`data:` `url()`/`<script src>`/`<link href>`.
+  - **E2E** (`playwright` chromium, **headed** `DISPLAY=:0`, loads the BUILT
+    file over `file://`): **2/2** — page renders, forced single-file fallback →
+    New blank diagram → bpmn-js canvas shows shapes (start-event circle) →
+    Export SVG yields real SVG content; **request interception asserts ZERO
+    network/sub-resource requests at load** (proves self-containment); second
+    spec asserts the browser-only provider note. FS-picker flows can't be
+    automated (native dialog) — covered the fallback path per the plan.
+  - **CI-build simulation**: rebuilt in an isolated tree with **no parent
+    `node_modules`** (only `lite/ npm ci`) → **byte-identical** artifact,
+    proving the Pages workflow resolves the `../src` reuse to `lite/node_modules`
+    via Vite `dedupe`.
+  - **Parent gates unaffected**: `npm run typecheck` clean, `npm run build`
+    clean, `npm test` **200/200** (back to baseline after excluding `lite/**`
+    from the root `vitest.config.ts`).
+- **Delivery**:
+  - `.github/workflows/pages.yml` (new) — on push to `main` touching `lite/**`,
+    `npm ci && npm run build` in `lite/`, then `upload-pages-artifact` +
+    `deploy-pages` (`permissions: pages: write, id-token: write`).
+  - GitHub Pages enabled via `gh api` (`build_type=workflow`).
+  - **Live page**: <https://ahmedak320.github.io/bpmn-studio/>
+  - **Release asset**: `OrbitPM-Process-Studio-Lite.html` attached to the
+    existing `v0.1.2` release (renamed copy of `dist/index.html`; the other
+    v0.1.2 assets — NSIS Setup.exe/.blockmap, latest.yml, and L1's Portable
+    exe — untouched).
+  - README **Lite** section (what it is, the two ways to get it, offline
+    matrix, the AI provider-support table, the localStorage key warning) +
+    a Development → Lite subsection.
+- **Deviation (flagged)**: touched one shared file outside this lane's stated
+  ownership — added `'lite/**'` to the root `vitest.config.ts` `exclude` (one
+  line). Without it the desktop `npm test` gate collects lite's vitest + throws
+  on lite's Playwright spec. This is the minimal change that keeps the parent
+  gate green (a wave rule), and is disjoint from L1's files. Did NOT edit the
+  reused desktop renderer files (ported the two problematic shells into
+  `lite/` instead) to keep all other changes inside `lite/**`.
+- **Instructions for Ahmed (laptop)**: open
+  <https://ahmedak320.github.io/bpmn-studio/> in **Edge** → click **Open a
+  folder…** → pick a OneDrive folder → draw / organize / link; **Ctrl+S**
+  saves in place. AI: **Settings → paste an Anthropic or Gemini key** (note the
+  unencrypted-storage warning), then **Generate**. Offline-only machine or a
+  browser that blocks folders → it drops to single-file open + download-on-save
+  automatically. Alternatively download `OrbitPM-Process-Studio-Lite.html` from
+  the v0.1.2 release and double-click it — same app, one file, keep it in
+  OneDrive.

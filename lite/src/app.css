@@ -1,0 +1,88 @@
+/* Global shell styling for OrbitPM Process Studio Lite. Theme-aware via
+   prefers-color-scheme; the editor component brings its own themed variables. */
+
+:root {
+  --orbitpm-bg: #ffffff;
+  --orbitpm-fg: #1a1a1e;
+  --orbitpm-muted: #6b6b74;
+  --orbitpm-border: rgba(127, 127, 127, 0.25);
+  --orbitpm-accent: #2563eb;
+  --orbitpm-panel-bg: #ffffff;
+  --orbitpm-hover: rgba(127, 127, 127, 0.12);
+  color-scheme: light dark;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --orbitpm-bg: #1a1b1e;
+    --orbitpm-fg: #e8e8ea;
+    --orbitpm-muted: #a2a2ab;
+    --orbitpm-border: rgba(160, 160, 170, 0.22);
+    --orbitpm-accent: #5b9dff;
+    --orbitpm-panel-bg: #232428;
+    --orbitpm-hover: rgba(160, 160, 170, 0.14);
+  }
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  font-family:
+    system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif;
+  color: var(--orbitpm-fg);
+  background: var(--orbitpm-bg);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+button {
+  font: inherit;
+  color: inherit;
+}
+
+@keyframes orbitpm-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.orbitpm-lite-banner {
+  padding: 0.5rem 0.8rem;
+  font-size: 12.5px;
+  background: rgba(234, 179, 8, 0.16);
+  border-bottom: 1px solid rgba(234, 179, 8, 0.4);
+  color: var(--orbitpm-fg);
+}
+
+.orbitpm-lite-chrome-btn {
+  padding: 0.3rem 0.6rem;
+  border-radius: 6px;
+  border: 1px solid rgba(127, 127, 127, 0.35);
+  background: transparent;
+  font-size: 12px;
+  cursor: pointer;
+}
+.orbitpm-lite-chrome-btn:hover {
+  border-color: var(--orbitpm-accent);
+}
+
+.orbitpm-lite-primary {
+  padding: 0.55rem 0.9rem;
+  border-radius: 8px;
+  border: 1px solid var(--orbitpm-accent);
+  background: var(--orbitpm-accent);
+  color: #fff;
+  font-size: 14px;
+  cursor: pointer;
+}
+.orbitpm-lite-primary:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
