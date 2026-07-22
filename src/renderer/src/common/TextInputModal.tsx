@@ -39,6 +39,12 @@ export function TextInputModal({
   onCancel
 }: TextInputModalProps): JSX.Element | null {
   const inputRef = useRef<HTMLInputElement>(null)
+  // Keep the latest cancel handler in a ref so the window-level Escape listener
+  // below can stay subscribed for the modal's whole open lifetime without
+  // re-subscribing on every keystroke, and never calls a stale closure (the
+  // handler identity changes every render because the value is controlled).
+  const onCancelRef = useRef(onCancel)
+  onCancelRef.current = onCancel
 
   useEffect(() => {
     if (!open) return
@@ -51,6 +57,25 @@ export function TextInputModal({
       }
     })
     return () => cancelAnimationFrame(id)
+  }, [open])
+
+  // Escape must close the modal no matter where focus is. Focus is moved into
+  // the input asynchronously (the rAF above); until it lands, focus is still on
+  // whatever opened the modal — OUTSIDE this dialog — so an Escape handled only
+  // by the dialog's own onKeyDown is missed while the page is under load. A
+  // window-level capture listener (matching the app's other modals) is immune
+  // to that race and owns Escape for as long as the modal is open.
+  useEffect(() => {
+    if (!open) return
+    const onKeyDown = (e: KeyboardEvent): void => {
+      if (e.key === 'Escape') {
+        e.preventDefault()
+        e.stopPropagation()
+        onCancelRef.current()
+      }
+    }
+    window.addEventListener('keydown', onKeyDown, true)
+    return () => window.removeEventListener('keydown', onKeyDown, true)
   }, [open])
 
   if (!open) return null
@@ -74,12 +99,12 @@ export function TextInputModal({
         aria-modal="true"
         aria-label={title}
         onKeyDown={(e) => {
+          // Enter confirms while focus is inside the dialog. Escape is handled
+          // by the window-level capture listener above so it fires even before
+          // focus has moved into the input (see that effect for the rationale).
           if (e.key === 'Enter') {
             e.preventDefault()
             submit()
-          } else if (e.key === 'Escape') {
-            e.preventDefault()
-            onCancel()
           }
         }}
       >
