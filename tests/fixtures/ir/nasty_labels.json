@@ -1,0 +1,22 @@
+{
+  "process": [
+    { "type": "startEvent", "id": "start", "label": "Begin \"now\"" },
+    { "type": "task", "id": "t1", "label": "A & B < C > D \"quoted\" café ☕ naïve — 日本語" },
+    {
+      "type": "exclusiveGateway",
+      "id": "gw",
+      "label": "x < 5 & y > 3?",
+      "has_join": true,
+      "branches": [
+        {
+          "condition": "yes & <ok> \"go\"",
+          "path": [
+            { "type": "task", "id": "t2", "label": "Do <stuff> & \"things\"" }
+          ]
+        },
+        { "condition": "no → skip", "path": [] }
+      ]
+    },
+    { "type": "endEvent", "id": "end", "label": "Fin — ✓" }
+  ]
+}

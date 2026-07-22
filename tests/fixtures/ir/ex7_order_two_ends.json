@@ -1,0 +1,27 @@
+{
+  "process": [
+    { "type": "startEvent", "id": "start", "label": "Order submitted" },
+    { "type": "task", "id": "task1", "label": "Process order" },
+    {
+      "type": "exclusiveGateway",
+      "id": "gateway1",
+      "label": "Order valid?",
+      "has_join": false,
+      "branches": [
+        {
+          "condition": "Yes",
+          "path": [
+            { "type": "task", "id": "task2", "label": "Fulfill order" },
+            { "type": "endEvent", "id": "end1", "label": "Order delivered" }
+          ]
+        },
+        {
+          "condition": "No",
+          "path": [
+            { "type": "endEvent", "id": "end2", "label": "Order rejected" }
+          ]
+        }
+      ]
+    }
+  ]
+}

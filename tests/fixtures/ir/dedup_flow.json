@@ -1,0 +1,23 @@
+{
+  "process": [
+    { "type": "startEvent", "id": "start" },
+    {
+      "type": "exclusiveGateway",
+      "id": "gw",
+      "label": "Route",
+      "has_join": false,
+      "branches": [
+        {
+          "condition": "Main path",
+          "path": [
+            { "type": "task", "id": "work", "label": "Do work" },
+            { "type": "endEvent", "id": "done" }
+          ]
+        },
+        { "condition": "Cancelled by user", "path": [] },
+        { "condition": "Rejected by system", "path": [] }
+      ]
+    },
+    { "type": "endEvent", "id": "end" }
+  ]
+}

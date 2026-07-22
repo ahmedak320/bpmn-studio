@@ -1,0 +1,46 @@
+{
+  "process": [
+    { "type": "startEvent", "id": "start" },
+    {
+      "type": "exclusiveGateway",
+      "id": "gateway1",
+      "label": "Main Decision",
+      "has_join": false,
+      "branches": [
+        {
+          "condition": "Option A",
+          "path": [
+            { "type": "task", "id": "taskA", "label": "Perform Task A" },
+            {
+              "type": "exclusiveGateway",
+              "id": "gateway2",
+              "label": "Nested Decision",
+              "has_join": false,
+              "branches": [
+                {
+                  "condition": "Sub-option 1",
+                  "path": [
+                    { "type": "task", "id": "taskA1", "label": "Perform Task A1" }
+                  ]
+                },
+                {
+                  "condition": "Sub-option 2",
+                  "path": [
+                    { "type": "task", "id": "taskA2", "label": "Perform Task A2" }
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "condition": "Option B",
+          "path": [
+            { "type": "task", "id": "taskB", "label": "Perform Task B" }
+          ]
+        }
+      ]
+    },
+    { "type": "endEvent", "id": "end" }
+  ]
+}

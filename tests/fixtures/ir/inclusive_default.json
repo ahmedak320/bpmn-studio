@@ -1,0 +1,28 @@
+{
+  "process": [
+    { "type": "startEvent", "id": "start" },
+    { "type": "userTask", "id": "order", "label": "Take order" },
+    {
+      "type": "inclusiveGateway",
+      "id": "ig",
+      "label": "Which courses to prepare?",
+      "has_join": true,
+      "branches": [
+        {
+          "condition": "Order includes pasta",
+          "path": [ { "type": "task", "id": "pasta", "label": "Prepare pasta" } ]
+        },
+        {
+          "condition": "Order includes salad",
+          "path": [ { "type": "task", "id": "salad", "label": "Prepare salad" } ]
+        },
+        {
+          "path": [ { "type": "task", "id": "water", "label": "Serve water" } ],
+          "is_default": true
+        }
+      ]
+    },
+    { "type": "serviceTask", "id": "serve", "label": "Serve meal" },
+    { "type": "endEvent", "id": "end" }
+  ]
+}

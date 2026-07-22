@@ -1,0 +1,20 @@
+{
+  "process": [
+    { "type": "startEvent", "id": "start" },
+    {
+      "type": "parallelGateway",
+      "id": "parallel1",
+      "branches": [
+        [
+          { "type": "serviceTask", "id": "task1", "label": "Send mail to supplier" },
+          { "type": "task", "id": "task2", "label": "Prepare the documents" }
+        ],
+        [
+          { "type": "task", "id": "task3", "label": "Search for the goods" },
+          { "type": "task", "id": "task4", "label": "Pick up the goods" }
+        ]
+      ]
+    },
+    { "type": "endEvent", "id": "end1" }
+  ]
+}

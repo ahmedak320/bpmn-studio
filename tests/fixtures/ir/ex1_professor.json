@@ -1,0 +1,23 @@
+{
+  "process": [
+    { "type": "startEvent", "id": "start" },
+    { "type": "userTask", "id": "task1", "label": "Send email to professor" },
+    { "type": "task", "id": "task2", "label": "Receive the email" },
+    {
+      "type": "exclusiveGateway",
+      "id": "exclusive1",
+      "label": "Professor agrees?",
+      "has_join": true,
+      "branches": [
+        {
+          "condition": "If the professor agrees",
+          "path": [
+            { "type": "task", "id": "task3", "label": "Reply to the student" }
+          ]
+        },
+        { "condition": "If the professor does not agree", "path": [] }
+      ]
+    },
+    { "type": "endEvent", "id": "end1" }
+  ]
+}

@@ -1,0 +1,29 @@
+{
+  "process": [
+    { "type": "startEvent", "id": "start" },
+    { "type": "userTask", "id": "apply", "label": "Submit application" },
+    { "type": "serviceTask", "id": "review", "label": "Review application" },
+    {
+      "type": "exclusiveGateway",
+      "id": "decide",
+      "label": "Approved?",
+      "has_join": false,
+      "branches": [
+        {
+          "condition": "Approved",
+          "path": [
+            { "type": "task", "id": "grant", "label": "Grant access" },
+            { "type": "endEvent", "id": "done" }
+          ]
+        },
+        {
+          "condition": "Needs changes",
+          "path": [
+            { "type": "userTask", "id": "revise", "label": "Revise application" }
+          ],
+          "next": "review"
+        }
+      ]
+    }
+  ]
+}

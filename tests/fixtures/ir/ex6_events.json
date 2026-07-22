@@ -1,0 +1,10 @@
+{
+  "process": [
+    { "type": "startEvent", "id": "start", "label": "Start at midnight", "eventDefinition": "timerEventDefinition" },
+    { "type": "task", "id": "task1", "label": "Process pending orders" },
+    { "type": "intermediateCatchEvent", "id": "timer1", "label": "Wait 5 minutes", "eventDefinition": "timerEventDefinition" },
+    { "type": "intermediateThrowEvent", "id": "message1", "label": "Send completion notification", "eventDefinition": "messageEventDefinition" },
+    { "type": "intermediateCatchEvent", "id": "message2", "label": "Wait for confirmation", "eventDefinition": "messageEventDefinition" },
+    { "type": "endEvent", "id": "end" }
+  ]
+}

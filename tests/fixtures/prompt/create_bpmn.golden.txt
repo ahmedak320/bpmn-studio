@@ -1,0 +1,523 @@
+The BPMN JSON representation uses a sequence of elements to describe the process. Each element is executed in order based on its position in the "process" array unless gateways (exclusive or parallel) specify branching paths.
+
+# Representation of various BPMN elements
+
+## Tasks
+
+Specify the task type in the 'type' field. The following task types are supported: "task", "userTask", "serviceTask", "sendTask", "receiveTask", "businessRuleTask", "manualTask", "scriptTask".
+Always try to specify the most specific task type:
+- Use 'userTask' for human interaction tasks (reviewing, deciding, entering data)
+- Use 'serviceTask' for automated system actions (calculations, database operations, API calls)
+- Use 'sendTask' for automated sending operations (emails, notifications, messages)
+- Use 'receiveTask' for automated receiving operations (waiting for messages, webhooks)
+- Use 'businessRuleTask' for decision engine or rule evaluation tasks
+- Use 'manualTask' for manual work performed without system support (physical activities, paper forms)
+- Use 'scriptTask' for script or code execution tasks
+- Use 'task' only if the action cannot be clearly classified as any of the above
+Each task must be atomic - representing a single unit of work. Break down complex activities into multiple separate tasks.
+Labels must be clear and concise (ideally 2-4 words).
+
+```json
+{
+    "type": String = "task" | "userTask" | "serviceTask" | "sendTask" | "receiveTask" | "businessRuleTask" | "manualTask" | "scriptTask"
+    "id": String,
+    "label": String, // short task description
+}
+```
+
+## Events
+
+Specify the event type in the 'type' field. The following event types are supported: "startEvent", "endEvent", "intermediateThrowEvent", "intermediateCatchEvent".
+
+Events can optionally have an event definition that specifies what triggers or is triggered by the event:
+- Use 'timerEventDefinition' for time-based events (schedules, delays, timeouts)
+- Use 'messageEventDefinition' for message-based events (sending or receiving messages)
+- Omit 'eventDefinition' for generic/none events
+
+Event types:
+- 'startEvent' - starts the process (can have timerEventDefinition or messageEventDefinition)
+- 'endEvent' - ends the process (can have messageEventDefinition)
+- 'intermediateThrowEvent' - throws/triggers an event during the process (typically with messageEventDefinition)
+- 'intermediateCatchEvent' - waits for an event during the process (can have timerEventDefinition or messageEventDefinition)
+
+```json
+{
+    "type": String = "startEvent" | "endEvent" | "intermediateThrowEvent" | "intermediateCatchEvent",
+    "id": String,
+    "label": String, // OPTIONAL: short event description
+    "eventDefinition": String = "timerEventDefinition" | "messageEventDefinition", // OPTIONAL: event trigger type
+}
+```
+
+## Gateways
+
+Gateways determine process flow based on conditions or parallel tasks.
+
+### Exclusive gateway
+
+Each branch must include a condition and an array of elements that are executed if the condition is met.
+If a branch has an empty "path", it leads to the first element after the exclusive gateway.
+If the branch does not lead to the next element in the process (for example, it goes back to a previous element), specify the next element id.
+If the branch leads to the next element in the process, do not specify the next element id.
+If the process needs to end under a specific condition, you must explicitly include an end event in that branch's "path". If no end event is provided, the process will automatically continue to the next task in the sequence.
+If the process description does not explicitly mention the 'else' branch or specify the outcome for an unmet condition, assume it leads to an end event.
+
+
+```json
+{
+    "type": String = "exclusiveGateway",
+    "id": String,
+    "label": String, // label for the gateway (e.g. "Professor agrees?")
+    "has_join": Boolean, // whether the gateway contains a join element that merges the branches
+    "branches": [
+        {
+            "condition": String, // condition for the branch
+            "path": [], // array of elements that are executed if the condition is met (can be empty)
+            "next": String, // OPTIONAL: ID of the next element if not following default sequence. Omit or set to null if following default sequence.
+        },
+        {
+            "condition": String,
+            "path": [],
+            "next": String, // OPTIONAL: as above
+        },
+        // ... more branches
+    ],
+}
+```
+
+### Inclusive gateway
+
+An inclusive gateway (OR-gateway) allows multiple branches to be taken simultaneously based on their conditions. Unlike exclusive gateways where only one path is taken, inclusive gateways evaluate all conditions and take ALL branches where the condition is fulfilled.
+
+Use inclusive gateways when:
+- Multiple parallel activities may be needed based on different conditions (e.g., prepare pasta AND salad AND steak based on order)
+- The number of parallel paths is determined by data/variables rather than being fixed
+- You need "one or more" behavior rather than "exactly one" (exclusive) or "all" (parallel)
+
+Each branch must include an array of elements. All branches with fulfilled conditions will be executed in parallel.
+Non-default branches MUST have a condition. Default branches should NOT have a condition.
+Optionally, one branch can be marked as the default (is_default: true). This branch is taken only when NO other conditions are met.
+
+```json
+{
+    "type": String = "inclusiveGateway",
+    "id": String,
+    "label": String, // label for the gateway (e.g. "Which courses to prepare?")
+    "has_join": Boolean, // whether the gateway contains a join element that merges the branches
+    "branches": [
+        {
+            "condition": String, // REQUIRED for non-default branches (e.g. "Order includes pasta")
+            "path": [], // array of elements that are executed if the condition is met
+            "next": String, // OPTIONAL: ID of the next element if not following default sequence
+            "is_default": Boolean, // OPTIONAL: marks this as the default branch (default: false)
+        },
+        {
+            // Default branch example - NO condition field
+            "path": [], // array of elements executed when no other conditions are met
+            "next": String, // OPTIONAL: as above
+            "is_default": true, // This marks it as the default branch
+        },
+        // ... more branches
+    ],
+}
+```
+
+### Parallel gateway
+
+Specify "branches" as an array of arrays, where each sub-array lists elements executed in parallel.
+A converging element is automatically generated to synchronize parallel branches. Therefore, there's no need to explicitly specify it.
+
+```json
+{
+    "type": String = "parallelGateway",
+    "id": String,
+    "branches": [
+        [], // array of elements that are executed in parallel with the next array
+        [], // array of elements that are executed in parallel with the previous array
+        // ... more arrays
+    ],
+}
+```
+# Process examples
+
+The order of execution in the BPMN process is determined by the sequence of elements in the top-level "process" array. Elements are executed in the order they appear in this array, from first to last.
+
+Textual description:
+"The student sends an email to the professor. The professor receives the email. If the professor agrees with the proposal, he replies to the student."
+
+```json
+{
+    "process": [
+        {
+            "type": "startEvent",
+            "id": "start",
+        },
+        {
+            "type": "userTask",
+            "id": "task1",
+            "label": "Send email to professor",
+        },
+        {
+            "type": "task",
+            "id": "task2",
+            "label": "Receive the email",
+        },
+        {
+            "type": "exclusiveGateway",
+            "id": "exclusive1",
+            "label": "Professor agrees?",
+            "has_join": true,
+            "branches": [
+                {
+                    "condition": "If the professor agrees",
+                    "path": [
+                        {
+                            "type": "task",
+                            "id": "task3",
+                            "label": "Reply to the student",
+                        }
+                    ]
+                },
+                {
+                    "condition": "If the professor does not agree",
+                    "path": []
+                }
+            ]
+        },
+        {
+            "type": "endEvent",
+            "id": "end1",
+        }
+    ]
+}
+```
+
+---
+
+Textual description:
+"The manager sends the mail to the supplier and prepares the documents. At the same time, the customer searches for the goods and picks up the goods."
+
+```json
+{
+    "process": [
+        {
+            "type": "startEvent",
+            "id": "start",
+        },
+        {
+            "type": "parallelGateway",
+            "id": "parallel1",
+            "branches": [
+                [
+                    {
+                        "type": "serviceTask",
+                        "id": "task1",
+                        "label": "Send mail to supplier",
+                    },
+                    {
+                        "type": "task",
+                        "id": "task2",
+                        "label": "Prepare the documents",
+                    }
+                ],
+                [
+                    {
+                        "type": "task",
+                        "id": "task3",
+                        "label": "Search for the goods",
+                    },
+                    {
+                        "type": "task",
+                        "id": "task4",
+                        "label": "Pick up the goods",
+                    }
+                ]
+            ]
+        },
+        {
+            "type": "endEvent",
+            "id": "end1",
+        }
+    ]
+}
+```
+
+---
+
+Textual description: "Someone starts a process by entering an exam room. After that, they take the test. Once the exam is finished, their score is checked. If they scored more than 50%, their grade is recorded and the process ends. But if they fail, they have to go back to the beginning and take the exam again."
+
+```json
+{
+    "process": [
+      {
+        "type": "startEvent",
+        "id": "start"
+      },
+      {
+        "type": "task",
+        "id": "task1",
+        "label": "Enter exam room"
+      },
+      {
+        "type": "task",
+        "id": "task2",
+        "label": "Take test"
+      },
+      {
+        "type": "exclusiveGateway",
+        "id": "eg",
+        "label": "Score more than 50%?",
+        "has_join": false,
+        "branches": [
+          {
+            "condition": "Yes",
+            "path": [
+              {
+                "type": "task",
+                "id": "task3",
+                "label": "Enter grade"
+              },
+              {
+                "type": "endEvent",
+                "id": "end1"
+              }
+            ]
+          },
+          {
+            "condition": "No",
+            "path": [],
+            "next": "task1"
+          }
+        ]
+      }
+    ]
+}
+```
+
+---
+
+Textual description: "The process starts with a decision. If Option A is selected, Task A is performed. If Option B is selected, Task B is performed. Task A is followed by another decision. If Sub-option 1 is selected, Task A1 is performed. If Sub-option 2 is selected, Task A2 is performed."
+
+
+```json
+{
+  "process": [
+    {
+      "type": "startEvent",
+      "id": "start",
+    },
+    {
+      "type": "exclusiveGateway",
+      "id": "gateway1",
+      "label": "Main Decision",
+      "has_join": false,
+      "branches": [
+        {
+          "condition": "Option A",
+          "path": [
+            {
+              "type": "task",
+              "id": "taskA",
+              "label": "Perform Task A",
+            },
+            {
+              "type": "exclusiveGateway",
+              "id": "gateway2",
+              "label": "Nested Decision",
+              "has_join": false,
+              "branches": [
+                {
+                  "condition": "Sub-option 1",
+                  "path": [
+                    {
+                      "type": "task",
+                      "id": "taskA1",
+                      "label": "Perform Task A1",
+                    }
+                  ],
+                },
+                {
+                  "condition": "Sub-option 2",
+                  "path": [
+                    {
+                      "type": "task",
+                      "id": "taskA2",
+                      "label": "Perform Task A2",
+                    }
+                  ],
+                }
+              ]
+            }
+          ],
+        },
+        {
+          "condition": "Option B",
+          "path": [
+            {
+              "type": "task",
+              "id": "taskB",
+              "label": "Perform Task B",
+            }
+          ],
+        }
+      ]
+    },
+    {
+      "type": "endEvent",
+      "id": "end",
+    }
+  ]
+}
+```
+
+---
+
+Textual description: "A customer fills out an order form manually. The system sends a confirmation email and then waits to receive payment confirmation. A script validates the payment data, and business rules determine if the customer is eligible for a discount."
+
+```json
+{
+  "process": [
+    {
+      "type": "startEvent",
+      "id": "start",
+    },
+    {
+      "type": "manualTask",
+      "id": "task1",
+      "label": "Fill out order form"
+    },
+    {
+      "type": "sendTask",
+      "id": "task2",
+      "label": "Send confirmation email"
+    },
+    {
+      "type": "receiveTask",
+      "id": "task3",
+      "label": "Receive payment confirmation"
+    },
+    {
+      "type": "scriptTask",
+      "id": "task4",
+      "label": "Validate payment data"
+    },
+    {
+      "type": "businessRuleTask",
+      "id": "task5",
+      "label": "Determine discount eligibility"
+    },
+    {
+      "type": "endEvent",
+      "id": "end",
+    }
+  ]
+}
+```
+
+---
+
+Textual description: "A batch process starts at midnight using a timer. The system processes pending orders and waits for 5 minutes. Then it sends a completion notification and waits to receive a confirmation message before ending."
+
+```json
+{
+  "process": [
+    {
+      "type": "startEvent",
+      "id": "start",
+      "label": "Start at midnight",
+      "eventDefinition": "timerEventDefinition"
+    },
+    {
+      "type": "task",
+      "id": "task1",
+      "label": "Process pending orders"
+    },
+    {
+      "type": "intermediateCatchEvent",
+      "id": "timer1",
+      "label": "Wait 5 minutes",
+      "eventDefinition": "timerEventDefinition"
+    },
+    {
+      "type": "intermediateThrowEvent",
+      "id": "message1",
+      "label": "Send completion notification",
+      "eventDefinition": "messageEventDefinition"
+    },
+    {
+      "type": "intermediateCatchEvent",
+      "id": "message2",
+      "label": "Wait for confirmation",
+      "eventDefinition": "messageEventDefinition"
+    },
+    {
+      "type": "endEvent",
+      "id": "end",
+    }
+  ]
+}
+```
+
+---
+
+Textual description: "An order process starts when a customer submits an order. The order is then processed by the system. If the order is valid, it is fulfilled and the process ends with a successful delivery. If the order is invalid, the process ends with order rejection."
+
+```json
+{
+  "process": [
+    {
+      "type": "startEvent",
+      "id": "start",
+      "label": "Order submitted"
+    },
+    {
+      "type": "task",
+      "id": "task1",
+      "label": "Process order"
+    },
+    {
+      "type": "exclusiveGateway",
+      "id": "gateway1",
+      "label": "Order valid?",
+      "has_join": false,
+      "branches": [
+        {
+          "condition": "Yes",
+          "path": [
+            {
+              "type": "task",
+              "id": "task2",
+              "label": "Fulfill order"
+            },
+            {
+              "type": "endEvent",
+              "id": "end1",
+              "label": "Order delivered"
+            }
+          ]
+        },
+        {
+          "condition": "No",
+          "path": [
+            {
+              "type": "endEvent",
+              "id": "end2",
+              "label": "Order rejected"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
+```
+---
+
+The following is the message history between the user and an AI assistant.
+
+Message history:
+```
+User: A customer submits an order & the system processes it.
+```
+
+Create a BPMN representation of the process described in the messages.

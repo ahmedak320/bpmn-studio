@@ -1,0 +1,11 @@
+{
+  "process": [
+    { "type": "startEvent", "id": "start" },
+    { "type": "manualTask", "id": "task1", "label": "Fill out order form" },
+    { "type": "sendTask", "id": "task2", "label": "Send confirmation email" },
+    { "type": "receiveTask", "id": "task3", "label": "Receive payment confirmation" },
+    { "type": "scriptTask", "id": "task4", "label": "Validate payment data" },
+    { "type": "businessRuleTask", "id": "task5", "label": "Determine discount eligibility" },
+    { "type": "endEvent", "id": "end" }
+  ]
+}

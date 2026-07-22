@@ -1,0 +1,23 @@
+{
+  "process": [
+    { "type": "startEvent", "id": "start" },
+    { "type": "task", "id": "task1", "label": "Enter exam room" },
+    { "type": "task", "id": "task2", "label": "Take test" },
+    {
+      "type": "exclusiveGateway",
+      "id": "eg",
+      "label": "Score more than 50%?",
+      "has_join": false,
+      "branches": [
+        {
+          "condition": "Yes",
+          "path": [
+            { "type": "task", "id": "task3", "label": "Enter grade" },
+            { "type": "endEvent", "id": "end1" }
+          ]
+        },
+        { "condition": "No", "path": [], "next": "task1" }
+      ]
+    }
+  ]
+}
