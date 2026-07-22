@@ -218,13 +218,18 @@ export interface RelocateResult {
 }
 
 /** Recursively copy a directory subtree from `fromRel` to a fresh `toRel`,
- *  copying every file's raw BYTES (binary-safe). Returns the file counts. */
-async function copyTree(
+ *  copying every file's raw BYTES (binary-safe). Returns the file counts.
+ *  Exported for retry-safety testing (Codex NEW-minor). */
+export async function copyTree(
   root: FileSystemDirectoryHandle,
   fromRel: string,
   toRel: string
 ): Promise<{ files: number; nonBpmn: number }> {
   const src = await resolveDir(root, fromRel)
+  // Retry-safety: a prior FAILED attempt may have left a partial/stale `toRel`.
+  // Start from a clean destination so the copy is deterministic — the result is
+  // EXACTLY the source subtree, never source ∪ leftovers (Codex NEW-minor).
+  await removeIfExists(root, toRel, 'directory')
   await resolveDir(root, toRel, { create: true })
   let files = 0
   let nonBpmn = 0
@@ -244,6 +249,105 @@ async function copyTree(
   return { files, nonBpmn }
 }
 
+/** Delete an entry if present; a missing entry is a silent no-op. Used to make
+ *  the copy paths retry-safe (clean a partial/stale destination or a leftover
+ *  temp from an interrupted prior attempt). */
+async function removeIfExists(
+  root: FileSystemDirectoryHandle,
+  relPath: string,
+  type: 'file' | 'directory'
+): Promise<void> {
+  try {
+    await deleteAt(root, relPath, type)
+  } catch {
+    /* already absent — fine */
+  }
+}
+
+/** Distinctive temp suffix for the safe two-step self-rename (long + unlikely to
+ *  collide with a real workspace name). */
+const SELF_RENAME_TMP = '.__orbitpm_rename_tmp__'
+
+/**
+ * True when `destRel` resolves to the SAME underlying entry as `fromRel` — the
+ * case-only rename on a CASE-INSENSITIVE filesystem (macOS/Windows), where
+ * `Order.bpmn` and `order.bpmn` are one file. Detected by a case-insensitive
+ * name match in the SAME parent, then confirmed (where the platform exposes it)
+ * via `isSameEntry` handle identity. A cross-parent move is never the same
+ * entry; on a genuinely case-SENSITIVE fs the dest name does not resolve, so
+ * this returns false and the normal copy+delete path runs (Codex NEW-CRITICAL-1).
+ */
+async function isSameEntryTarget(
+  root: FileSystemDirectoryHandle,
+  fromRel: string,
+  destRel: string,
+  type: 'file' | 'directory'
+): Promise<boolean> {
+  if (dirOf(fromRel) !== dirOf(destRel)) return false
+  const fromName = baseOf(fromRel)
+  const destName = baseOf(destRel)
+  // Byte-identical names are the caller's no-op (handled above); only a case-only
+  // difference is interesting here.
+  if (fromName === destName) return false
+  if (fromName.toLowerCase() !== destName.toLowerCase()) return false
+  let parent: FileSystemDirectoryHandle
+  try {
+    parent = await resolveDir(root, dirOf(fromRel))
+  } catch {
+    return false
+  }
+  try {
+    const from =
+      type === 'file'
+        ? await parent.getFileHandle(fromName)
+        : await parent.getDirectoryHandle(fromName)
+    const dest =
+      type === 'file'
+        ? await parent.getFileHandle(destName)
+        : await parent.getDirectoryHandle(destName)
+    const a = from as unknown as { isSameEntry?: (o: unknown) => Promise<boolean> }
+    if (typeof a.isSameEntry === 'function') return a.isSameEntry(dest)
+    // No isSameEntry on this platform: a case-insensitive name match in the same
+    // parent is our best (and safe) signal — treat as the same entry.
+    return true
+  } catch {
+    // The dest name did not resolve ⇒ a distinct, not-yet-existing entry
+    // (case-sensitive fs) ⇒ NOT the same target.
+    return false
+  }
+}
+
+/**
+ * Safe two-step self-rename via a temp name, used when source and destination
+ * are the SAME entry on a case-insensitive fs. A plain copy-then-delete would
+ * DELETE the file it just wrote (source and dest are one inode), so we stage
+ * through a distinct temp name: copy → delete source → copy temp → delete temp.
+ * Covers both files and folders.
+ */
+async function safeSelfRename(
+  root: FileSystemDirectoryHandle,
+  fromRel: string,
+  destRel: string,
+  type: 'file' | 'directory'
+): Promise<RelocateResult> {
+  const parentRel = dirOf(fromRel)
+  const tmpRel = joinRel(parentRel, `${baseOf(fromRel)}${SELF_RENAME_TMP}`)
+  // Clean any leftover temp from a prior interrupted attempt (retry-safety).
+  await removeIfExists(root, tmpRel, type)
+  if (type === 'file') {
+    await copyFileBytes(root, fromRel, tmpRel)
+    await deleteAt(root, fromRel, 'file')
+    await copyFileBytes(root, tmpRel, destRel)
+    await deleteAt(root, tmpRel, 'file')
+    return { destRel, files: 1, nonBpmn: BPMN_RE.test(baseOf(destRel)) ? 0 : 1 }
+  }
+  const counts = await copyTree(root, fromRel, tmpRel)
+  await deleteAt(root, fromRel, 'directory')
+  await copyTree(root, tmpRel, destRel)
+  await deleteAt(root, tmpRel, 'directory')
+  return { destRel, ...counts }
+}
+
 /**
  * Relocate a file or folder from `fromRel` to `destRel` (a full relPath,
  * possibly in a different parent). The File System Access API has no native
@@ -260,6 +364,13 @@ async function relocate(
   type: 'file' | 'directory'
 ): Promise<RelocateResult> {
   if (destRel === fromRel) return { destRel: fromRel, files: 0, nonBpmn: 0 }
+
+  // Case-only rename / same underlying entry on a case-insensitive filesystem:
+  // route through a temp-name two-step so the copy-then-delete never deletes the
+  // just-written file (Codex NEW-CRITICAL-1).
+  if (await isSameEntryTarget(root, fromRel, destRel, type)) {
+    return safeSelfRename(root, fromRel, destRel, type)
+  }
 
   const destParentRel = dirOf(destRel)
   const destName = baseOf(destRel)
@@ -462,6 +573,56 @@ export interface FileMeta {
   lastModified: number
   /** byte size of the file (falls back to the content length if unavailable). */
   size: number
+}
+
+/** One coherent workspace snapshot: the folder tree and the flat `.bpmn`
+ *  file-meta list, both derived from the SAME traversal. */
+export interface WorkspaceSnapshot {
+  tree: LiteTreeNode
+  files: FileMeta[]
+}
+
+/**
+ * ONE filesystem traversal that yields BOTH the folder tree and the flat
+ * `.bpmn` file-meta list, so the tree and everything derived from the file list
+ * (process index, catalog, search, unresolved links) are always coherent — they
+ * can never disagree because a single walk observed one directory state, rather
+ * than two independent walks racing an external write (Codex NEW-minor:
+ * single-refresh coherence).
+ */
+export async function snapshotWorkspace(
+  root: FileSystemDirectoryHandle,
+  rootName: string
+): Promise<WorkspaceSnapshot> {
+  const files: FileMeta[] = []
+  async function walk(
+    dir: FileSystemDirectoryHandle,
+    relPath: string,
+    name: string
+  ): Promise<LiteTreeNode> {
+    const children: LiteTreeNode[] = []
+    for await (const [childName, handle] of dir.entries()) {
+      const childRel = joinRel(relPath, childName)
+      if (handle.kind === 'directory') {
+        children.push(await walk(handle as FileSystemDirectoryHandle, childRel, childName))
+      } else if (BPMN_RE.test(childName)) {
+        // Read the file ONCE and populate BOTH outputs from that single read, so
+        // the tree node and the file-meta entry can never disagree.
+        const file = await (handle as FileSystemFileHandle).getFile()
+        const xml = await file.text()
+        files.push({
+          relPath: childRel,
+          xml,
+          lastModified: typeof file.lastModified === 'number' ? file.lastModified : 0,
+          size: typeof file.size === 'number' ? file.size : xml.length
+        })
+        children.push({ name: childName, relPath: childRel, type: 'file' })
+      }
+    }
+    return { name, relPath, type: 'directory', children: sortNodes(children) }
+  }
+  const tree = await walk(root, '', rootName)
+  return { tree, files }
 }
 
 /**

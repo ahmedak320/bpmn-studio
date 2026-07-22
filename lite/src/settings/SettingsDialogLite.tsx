@@ -118,7 +118,7 @@ export function SettingsDialogLite({
         ...r,
         [providerId]: {
           reachable: false,
-          corsBlocked: true,
+          blockedOrUnreachable: true,
           code: 'blocked',
           message: err instanceof Error ? err.message : String(err)
         }
@@ -265,7 +265,7 @@ export function SettingsDialogLite({
 
                 {result && (
                   <div role="status" style={verdictStyle(result)}>
-                    {result.corsBlocked ? '⛔ ' : result.reachable ? '✅ ' : 'ℹ️ '}
+                    {result.blockedOrUnreachable ? '⛔ ' : result.reachable ? '✅ ' : 'ℹ️ '}
                     {verdictMessage(result)}
                   </div>
                 )}
@@ -326,7 +326,7 @@ function verdictMessage(r: TestConnectionResult): string {
 }
 
 function verdictStyle(r: TestConnectionResult): CSSProperties {
-  const tone = r.corsBlocked
+  const tone = r.blockedOrUnreachable
     ? { bg: 'rgba(239,68,68,0.12)', border: 'rgba(239,68,68,0.4)' }
     : r.reachable
       ? { bg: 'rgba(34,197,94,0.12)', border: 'rgba(34,197,94,0.4)' }

@@ -97,6 +97,9 @@ export const en = {
   'confirm.deleteFolder.typeNameLabel': 'Type the folder name "{name}" to confirm deletion',
   'alert.permissionNotGranted.open': 'Permission to read/write the folder was not granted.',
   'alert.permissionNotGranted.reconnect': 'Permission was not granted. Try opening the folder again.',
+  'alert.picker.security': 'The browser blocked folder access for security reasons. Try a folder inside your user profile (e.g. Documents), or use the desktop app.',
+  'alert.picker.notAllowed': 'The browser did not allow folder access. Check this site’s file-system permission in your browser settings, or use the desktop app.',
+  'alert.picker.unknown': 'Could not open the folder. Please try again, or use the desktop app.',
 
   // --- WorkspacePickerLite ---
   'picker.title': 'OrbitPM Process Studio Lite',
@@ -355,6 +358,7 @@ export const en = {
   'alert.import.failed': 'Import failed: {error}',
   'alert.open.failed': 'Could not open the file: {error}',
   'alert.staleWrite': 'This diagram belongs to a folder that is no longer open — its save was skipped.',
+  'alert.staleGeneration': 'The workspace folder changed while generating — the diagram was not saved. Open it again and re-generate.',
   'alert.saveAll.failed': 'Could not save all changes: {error}. Keeping the current folder open.',
   'confirm.switch.title': 'Unsaved changes',
   'confirm.switch.body':
@@ -391,6 +395,8 @@ export const en = {
   // Generation timeout + PDF notes.
   'ai.error.timeout': 'The request took too long and timed out. Try again, or use a smaller input.',
   'ai.pdf.engineNote': 'PDF parsing engine is managed by the provider.',
+  'ai.pdf.memoryNote':
+    'PDFs are capped at 20 MB. Sending base64-encodes the file (~+33%) and copies it into the JSON request, so a large PDF briefly uses several times its size in memory — split scanned or very large documents.',
   'ai.pdf.sizeGate.softWarn':
     'This PDF is {size} — large files may be slow or brush provider limits. Split it if generation fails.'
 } as const
@@ -491,6 +497,9 @@ export const ar: Record<keyof typeof en, string> = {
   'confirm.deleteFolder.typeNameLabel': 'اكتب اسم المجلد "{name}" لتأكيد الحذف',
   'alert.permissionNotGranted.open': 'لم يتم منح إذن القراءة/الكتابة للمجلد.',
   'alert.permissionNotGranted.reconnect': 'لم يُمنح الإذن. حاول فتح المجلد مرة أخرى.',
+  'alert.picker.security': 'منع المتصفح الوصول إلى المجلد لأسباب أمنية. جرّب مجلدًا داخل ملف تعريف المستخدم (مثل Documents)، أو استخدم تطبيق سطح المكتب.',
+  'alert.picker.notAllowed': 'لم يسمح المتصفح بالوصول إلى المجلد. تحقّق من إذن الوصول إلى نظام الملفات لهذا الموقع في إعدادات المتصفح، أو استخدم تطبيق سطح المكتب.',
+  'alert.picker.unknown': 'تعذّر فتح المجلد. حاول مرة أخرى، أو استخدم تطبيق سطح المكتب.',
 
   // --- WorkspacePickerLite ---
   'picker.title': 'OrbitPM Process Studio Lite',
@@ -749,6 +758,7 @@ export const ar: Record<keyof typeof en, string> = {
   'alert.import.failed': 'فشل الاستيراد: {error}',
   'alert.open.failed': 'تعذّر فتح الملف: {error}',
   'alert.staleWrite': 'ينتمي هذا المخطط إلى مجلد لم يعد مفتوحًا — تم تخطّي حفظه.',
+  'alert.staleGeneration': 'تغيّر مجلد مساحة العمل أثناء التوليد — لم يُحفظ المخطط. افتح المجلد من جديد ثم أعد التوليد.',
   'alert.saveAll.failed': 'تعذّر حفظ جميع التغييرات: {error}. سيبقى المجلد الحالي مفتوحًا.',
   'confirm.switch.title': 'تغييرات غير محفوظة',
   'confirm.switch.body': 'لديك تغييرات غير محفوظة في {count} مخطط مفتوح. هل تريد حفظها قبل تبديل المجلد؟',
@@ -780,6 +790,8 @@ export const ar: Record<keyof typeof en, string> = {
   'settings.verdict.timeout': 'انتهت مهلة الاتصال. تحقق من شبكتك وحاول مرة أخرى.',
   'ai.error.timeout': 'استغرق الطلب وقتًا طويلًا وانتهت مهلته. حاول مرة أخرى، أو استخدم مدخلًا أصغر.',
   'ai.pdf.engineNote': 'محرّك تحليل PDF يديره المزوّد.',
+  'ai.pdf.memoryNote':
+    'الحد الأقصى لحجم PDF هو 20 ميغابايت. يقوم الإرسال بترميز الملف بنظام base64 (‏+33% تقريبًا) ونسخه داخل طلب JSON، لذا يستهلك الملف الكبير مؤقتًا عدة أضعاف حجمه في الذاكرة — قسّم المستندات الممسوحة ضوئيًا أو الكبيرة جدًا.',
   'ai.pdf.sizeGate.softWarn':
     'حجم هذا الملف {size} — قد تكون الملفات الكبيرة بطيئة أو تقترب من حدود المزوّد. قسّمه إذا فشل التوليد.'
 }

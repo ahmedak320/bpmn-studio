@@ -144,15 +144,56 @@ describe('searchWorkspace per-process attribution (multi-process file)', () => {
     expect(groups[0].hits[0].processId).toBe('Process_beta')
   })
 
-  it('a file-level content match applies to every process in the file', () => {
-    // "request" is an element label (file-level content, not a process name/id),
-    // so both processes in the file are legitimately in scope and attributed to
-    // content — distinct from the per-process name/id bug fixed above.
+  it('attributes a content hit to ONLY the process whose elements contain it (ORIG-11)', () => {
+    // "Review request" is a task label INSIDE process alpha only. Searching
+    // "request" must therefore match alpha alone — NOT drag in its sibling beta
+    // (the pre-fix behavior emitted BOTH because content was file-level).
     const groups = searchWorkspace(index, 'request')
-    expect(countHits(groups)).toBe(2)
-    expect(groups[0].hits.every((h) => h.matchedOn === 'content')).toBe(true)
-    // Both ids share the "process_" prefix → both emit, attributed to id.
+    expect(countHits(groups)).toBe(1)
+    expect(groups[0].hits[0].processId).toBe('Process_alpha')
+    expect(groups[0].hits[0].matchedOn).toBe('content')
+    // A shared id prefix still legitimately matches both (id field, not content).
     expect(countHits(searchWorkspace(index, 'process_'))).toBe(2)
+  })
+
+  it('the sibling process is not emitted for a content term unique to the other', () => {
+    // "welcome" is only in process beta's element ("Send welcome").
+    const groups = searchWorkspace(index, 'welcome')
+    expect(countHits(groups)).toBe(1)
+    expect(groups[0].hits[0].processId).toBe('Process_beta')
+    expect(groups[0].hits[0].matchedOn).toBe('content')
+  })
+})
+
+// A file whose searchable text lives OUTSIDE any <process> (a collaboration /
+// participant label) — that text can't be attributed to a specific process, so
+// a hit must be labeled file-level ("matched in file"), never falsely pinned to
+// a process (Codex ORIG-11).
+const COLLAB_XML = `<bpmn:definitions xmlns:bpmn="x">
+  <bpmn:collaboration id="C1">
+    <bpmn:participant id="pt1" name="External Vendor" processRef="Process_a" />
+  </bpmn:collaboration>
+  <bpmn:process id="Process_a" name="Alpha"><bpmn:task id="t1" name="do a" /></bpmn:process>
+  <bpmn:process id="Process_b" name="Beta"><bpmn:task id="t2" name="do b" /></bpmn:process>
+</bpmn:definitions>`
+
+describe('searchWorkspace file-level content attribution (ORIG-11)', () => {
+  const index = buildSearchIndex([{ relPath: 'Ops/collab.bpmn', xml: COLLAB_XML }])
+
+  it('a match in text OUTSIDE any process is labeled file-level, not attributed to a process', () => {
+    const groups = searchWorkspace(index, 'vendor')
+    expect(countHits(groups)).toBe(1)
+    const hit = groups[0].hits[0]
+    // Not attributed to process a or b — it is a file-level match.
+    expect(hit.processId).toBeUndefined()
+    expect(hit.matchedOn).toBe('file')
+  })
+
+  it('a match inside a specific process still attributes to that process only', () => {
+    const groups = searchWorkspace(index, 'do a')
+    expect(countHits(groups)).toBe(1)
+    expect(groups[0].hits[0].processId).toBe('Process_a')
+    expect(groups[0].hits[0].matchedOn).toBe('content')
   })
 })
 

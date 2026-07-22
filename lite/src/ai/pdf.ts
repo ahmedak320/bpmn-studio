@@ -20,17 +20,18 @@ export interface PdfAttachment {
   sizeBytes: number
 }
 
-// Client-side size gates. Both Anthropic and Gemini limits apply to the WHOLE
-// request payload; base64 inflates bytes ~33%, so we gate on the RAW file size
-// conservatively below the encoded ceiling. (Anthropic 32 MB request ⇒ ~23 MB
-// raw; Gemini's inline-PDF path capped at 32 MiB here — an aligned safety margin
-// against tab memory pressure, since the base64 + data-URL + serialized-body
-// copies stack up; OpenRouter unpublished ⇒ same gate as Anthropic since it
-// forwards downstream.)
+// Client-side size gates. The provider limits apply to the WHOLE request
+// payload, and encoding STACKS several copies of the file in tab memory: base64
+// inflates the bytes ~33%, then that string is embedded in a data-URL / JSON
+// part and the whole body is serialized — so a raw N-byte PDF transiently costs
+// several×N. We therefore gate the RAW file size well below the encoded ceiling.
+// Gemini's inline-PDF path is capped at 20 MiB here (lowered from 32 MiB —
+// Codex ORIG-4) to align all three browser providers on one conservative,
+// memory-safe cap; OpenRouter forwards downstream so it shares Anthropic's gate.
 export const PDF_SIZE_LIMITS: Record<LiteProviderId, number> = {
   anthropic: 20 * 1024 * 1024,
   openrouter: 20 * 1024 * 1024,
-  gemini: 32 * 1024 * 1024,
+  gemini: 20 * 1024 * 1024,
   // Custom endpoints have no verified PDF path — see providersLite.supportsPdf.
   custom: 0
 }
@@ -66,10 +67,9 @@ export function checkPdfSize(providerId: LiteProviderId, sizeBytes: number): Pdf
     }
   }
   if (sizeBytes > limit) {
-    const alt =
-      providerId === 'gemini'
-        ? t('ai.pdf.sizeGate.alt.splitOnly')
-        : t('ai.pdf.sizeGate.alt.tryGeminiOrSplit')
+    // All browser providers now share the 20 MiB cap, so the only useful advice
+    // is to split the document (no "try Gemini — larger limit" anymore).
+    const alt = t('ai.pdf.sizeGate.alt.splitOnly')
     return {
       ok: false,
       message: t('ai.pdf.sizeGate.overLimit', { size: mb(sizeBytes), limit: mb(limit), alt })

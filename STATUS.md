@@ -791,3 +791,137 @@ shipped them. Commits: `32f7c84` (FX1), `d49635d` (FX2), `ae33e7d` (FX3).
   went **2 508 529 → 2 508 727** bytes. Release asset
   `OrbitPM-Process-Studio-Lite.html` on **v0.1.2** re-uploaded (`--clobber`,
   now 2 508 727 bytes).
+
+## 2026-07-23 — Lite: remediation round — close Codex re-review findings (FX4)
+
+A Codex GPT-5.6-Sol re-review of the FX1+FX2 wave found 9 findings still
+partially open plus 2 regressions the prior wave introduced. This lane closed
+all 13, **test-first** (test written and shown FAILING on pre-fix code, then
+fixed, then shown passing). Lite unit suite **191 → 230** (28 files; +39 new
+tests across 8 new files). Full per-item ledger:
+
+- **[NEW-C1] Case-only rename/move deleted files on case-insensitive FS.**
+  Root cause: `relocate()` compared `destRel !== fromRel` case-sensitively, so
+  `Order.bpmn → order.bpmn` on macOS/Windows (one inode) ran copy-then-delete
+  and the delete removed the file it had just written. Fix (`fsAccess.ts`):
+  `isSameEntryTarget()` detects a same-parent case-only name match, confirmed via
+  `isSameEntry` handle identity where available; when same-entry, `safeSelfRename()`
+  stages through a temp name (`copy → delete source → copy temp → delete temp`),
+  covering files AND folders. Test evidence: `fsCaseInsensitive.test.ts` with a
+  new case-insensitive mock (`newRootCI`) — 3 case-only tests FAIL on pre-fix
+  (`NotFound`, data lost) → 5/5 PASS after.
+
+- **[NEW-C2] `saveAllDirty` silently discarded fallback tabs.** Root cause:
+  `saveAllDirty` skipped tabs with `relPath === null` while `guardWorkspaceSwitch`
+  counted them — "Save all & switch" dropped their unsaved work. Fix: pure
+  `partitionDirtyTabs()` (`workspace/dirtySave.ts`) splits dirty tabs into
+  `writable` (to disk) vs `downloadable` (fallback → download-on-save);
+  `saveAllDirty` now downloads fallback tabs. Test: `dirtySave.test.ts` — buggy
+  drop version FAILS 3/4 (downloadable empty) → 4/4 PASS after routing fallbacks
+  to `downloadable`.
+
+- **[ORIG-1] Cross-workspace holes.** (a) Async file read in `openDirectoryFile`
+  could commit stale content after a mid-read folder switch. (b) AI placement
+  could write into the switched-in workspace after a mid-generation switch. Fix:
+  new pure `commitIfCurrent()` (`workspaceSession.ts`) commits a producer's
+  result only if the generation is unchanged; `openDirectoryFile` reads through
+  the live handle mirror under it; `placeGenerated` threads the
+  generation-at-start (new `getWorkspaceGen` prop on `AiPanelLite` → `onPlaceGenerated`)
+  and refuses at write time both before AND inside the op-mutex (new i18n
+  `alert.staleGeneration`). Test: `workspaceSession.test.ts` — mid-read and
+  mid-generation scenarios FAIL on absent guard (no export) → 10/10 PASS.
+
+- **[ORIG-6] Arabic id collisions.** (a) Mixed names ("طلب A" / "موافقة A")
+  stripped to the same short residue `_a` → both `Process__A`. Fix
+  (`deriveProcessId`): hash the name when the ASCII residue is < 3 letters (was:
+  only when zero Latin). (b) Both production call sites now pass the
+  `dedupeProcessId` predicate against the live `processIndex` so any collision
+  (incl. hash) is suffixed. Test: `arabicIdCollision.test.ts` — mixed-name
+  distinctness + forced-hash-collision dedupe FAIL on pre-fix (`Process__A` ==
+  `Process__A`) → 7/7 PASS; existing 25 `newProcessDoc` tests unchanged.
+
+- **[ORIG-10] Timeout now covers the response BODY.** Root cause:
+  `fetchWithTimeout` cleared the timer once headers arrived, so a stalled
+  `res.json()`/`res.text()` could hang generation forever. Fix: it now takes a
+  `consume(res)` callback and keeps the AbortController armed through body
+  consumption; only our abort becomes `timeout`, HTTP/empty/JSON errors keep
+  their own type (401→auth, 500→ProviderHttpError, empty→plain retriable).
+  Test: `timeout.test.ts` — stalled-body mock stays `pending` (hangs) on pre-fix
+  → resolves to `timeout` after; error-typing regression guards included. 4/4 PASS.
+
+- **[ORIG-3-partial] Rename/move routed through the op-mutex.** `handleRename`
+  and `performMove` now run inside `opMutexRef.runExclusive`, serialized with
+  create/import/AI-place; `relocate` re-probes the destination inside that
+  critical section immediately before writing. **Residual limitation documented**
+  in code + here: the File System Access API has no atomic create/rename, so an
+  EXTERNAL writer can still land a name between our probe and write — unfixable
+  without native atomicity (see deferred "true FS-API atomic create"). Test:
+  `opSerialization.test.ts` — proves shared-mutex create→rename never interleaves
+  (and that bypassing it DOES interleave). 3/3 PASS.
+
+- **[NEW-minor] `copyTree` retry-ability.** A folder copy that failed partway
+  left a partial/stale destination; a retry would be `source ∪ leftovers`. Fix:
+  `copyTree` cleans the destination first (deterministic overwrite). Test:
+  `fsRetry.test.ts` — a stale `ghost.bpmn` survives on pre-fix → removed after. 2/2.
+
+- **[NEW-minor] Single-refresh coherence.** `refreshWorkspace` did two
+  independent walks (`buildTree` + `scanWorkspaceFiles`) that could disagree if
+  the folder changed between them. Fix: one `snapshotWorkspace()` traversal
+  yields both the tree and file-metas from a single listing under the same
+  refresh token. Test: `fsSnapshot.test.ts` with a root that mutates between
+  enumerations — naive two-walk version FAILS (tree lacks `late.bpmn`, scan has
+  it) → single-traversal PASSES; a companion test documents the old incoherence.
+  3/3.
+
+- **[ORIG-11] Search honesty (per-process content attribution).** Root cause:
+  content was file-level, so a term inside process A's elements emitted process B
+  too. Fix (`searchIndex.ts`): `splitProcessContent()` splits diagram text by
+  `<process>` element ranges; each process matches only its OWN content; text
+  outside any process is labeled file-level ("matched in file", no `processId`).
+  Test: `searchIndex.test.ts` — "request" (in A only) now emits A alone, and an
+  out-of-process "vendor" hit is file-level; 4 pre-fix over-broad assertions FAIL
+  → 19/19 PASS (updated the test that pinned the old 2-hit semantics).
+
+- **[ORIG-12] Raw-English picker error passthroughs.** The two untemplated
+  `setPickError(errMsg(err))` sites (open-folder, reconnect) surfaced raw browser
+  exception text. Fix: pure `classifyPickerError()` (`workspaceHandle.ts`) →
+  stable code → i18n key (`alert.picker.security/notAllowed/unknown`, en+ar MSA;
+  `aborted` = no error). Audit found exactly these two untemplated sites; all
+  other error surfaces already route through i18n templates. Test:
+  `pickerError.test.ts` FAILS on missing export → 4/4 PASS.
+
+- **[ORIG-14] `corsBlocked` → `blockedOrUnreachable`.** A fetch reject is CORS OR
+  offline OR DNS; the old flag overclaimed "CORS". Renamed on `TestConnectionResult`
+  and every construction/consumer (`browserAi.ts`, `SettingsDialogLite.tsx`), and
+  the regression test that pinned the old semantics updated
+  (`testConnection.test.ts`, message + field). 7/7 PASS.
+
+- **[NEW-minor] CSP hardening.** Added `object-src 'none'; base-uri 'self';
+  form-action 'self'` to `lite/index.html` (connect-src left EXACTLY as-is).
+  Built-CSP e2e assertion added (`lite-providers.spec.ts`). Verified in the built
+  `dist/index.html`: connect-src unchanged, three hardening directives present.
+
+- **[ORIG-4] Gemini PDF cap lowered to 20 MiB.** All three browser providers now
+  share the 20 MiB cap (was Gemini 32 MiB); the >15 MiB soft warning stays; the
+  over-limit advice is now "split the file" (no misleading "try Gemini"); and a
+  new PDF UI hint (`ai.pdf.memoryNote`, en+ar) documents the base64 (~+33%) +
+  JSON-copy in-memory multiplier. Test: `pdf.test.ts` — old 32-MiB assertions
+  FAIL → 12/12 PASS.
+
+- **DEFERRED (documented, not fixed):** ORIG-16 whole-workspace scaling (re-reads
+  every `.bpmn` on each refresh — acceptable for the target small/medium
+  workspaces); true FS-API atomic create/rename (no browser primitive exists —
+  the op-mutex + re-probe is the best available in-app mitigation).
+
+- **Gates (all green, run twice for e2e):** Lite `tsc` clean; Lite `vitest`
+  **230/230** (28 files); Lite e2e headless **18 passed / 3 skipped** (live-CORS,
+  key-gated) on BOTH runs incl. the new CSP-hardening assertion. Parent `tsc`
+  clean; parent `vitest` **203/203** (25 files); parent `electron-vite build` OK.
+  Built `dist/index.html`: single file, **2 514 266 bytes**, sha256
+  `231dbbe13074fd535cf5218215f67c4c92c8ef75e814fc6a340a660e9cb695a7`.
+
+- **Ship:** one commit `lite: remediation round — close Codex re-review findings
+  (FX4)`; all changed paths under `lite/**`, so the push AUTO-triggers the Pages
+  workflow (no `workflow_dispatch` needed). Live content-length re-verified
+  against the local build and the **v0.1.2** `OrbitPM-Process-Studio-Lite.html`
+  release asset re-clobbered post-deploy (see task report for the exact bytes).

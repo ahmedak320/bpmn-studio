@@ -39,7 +39,15 @@ export function hash8(input: string): string {
  */
 export function deriveProcessId(baseName: string): string {
   const safe = baseName.replace(/-/g, '_').replace(/[^A-Za-z0-9_]/g, '')
-  if (!/[A-Za-z]/.test(safe) && /[^\x00-\x7F]/.test(baseName)) {
+  // A non-Latin name (Arabic, CJK…) whose ASCII residue is empty OR too short to
+  // be meaningful (<3 letters) would otherwise collapse DIFFERENT names onto one
+  // shared id — every pure-Arabic name to `Process_process`, and mixed names
+  // like "طلب A" / "موافقة A" both to `Process__A` — silently cross-wiring their
+  // call links. Hash the original name instead so each gets a distinct, stable,
+  // valid NCName (Codex ORIG-6a). A 3+ letter residue is considered meaningful
+  // and kept, so a Latin-with-accents name stays link-compatible.
+  const asciiLetters = safe.replace(/[^A-Za-z]/g, '')
+  if (asciiLetters.length < 3 && /[^\x00-\x7F]/.test(baseName)) {
     const seed = baseName.trim()
     if (seed) return `Process_${hash8(seed)}`
   }

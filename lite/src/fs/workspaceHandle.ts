@@ -12,6 +12,25 @@ export function directoryPickerSupported(): boolean {
   return typeof window !== 'undefined' && typeof window.showDirectoryPicker === 'function'
 }
 
+/** Stable classification of a folder-picker / reconnect failure, so the UI can
+ *  render an i18n (RTL-safe) message instead of the raw, locale-dependent
+ *  browser exception text (Codex ORIG-12). */
+export type PickerErrorCode = 'aborted' | 'security' | 'not-allowed' | 'unknown'
+
+export function classifyPickerError(err: unknown): PickerErrorCode {
+  const name = err instanceof Error ? err.name : (err as { name?: string })?.name
+  switch (name) {
+    case 'AbortError':
+      return 'aborted'
+    case 'SecurityError':
+      return 'security'
+    case 'NotAllowedError':
+      return 'not-allowed'
+    default:
+      return 'unknown'
+  }
+}
+
 /** Prompt the user to pick a workspace folder (read+write), or null if they
  * cancel. Throws only on genuine errors (not on cancellation). */
 export async function pickWorkspace(): Promise<FileSystemDirectoryHandle | null> {

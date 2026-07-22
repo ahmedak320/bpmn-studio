@@ -1,5 +1,9 @@
 import { describe, it, expect } from 'vitest'
-import { canCommitToWorkspace, createRefreshGuard } from '../workspace/workspaceSession'
+import {
+  canCommitToWorkspace,
+  createRefreshGuard,
+  commitIfCurrent
+} from '../workspace/workspaceSession'
 
 describe('canCommitToWorkspace (CRITICAL-1 tab-write guard)', () => {
   it('allows a write while the tab still belongs to the live generation', () => {
@@ -60,5 +64,55 @@ describe('createRefreshGuard (MAJOR-8 stale/out-of-order scan guard)', () => {
     guard.begin()
     const t2 = guard.begin()
     expect(guard.latest()).toBe(t2)
+  })
+})
+
+describe('commitIfCurrent (ORIG-1: async read / AI-placement cross-workspace guard)', () => {
+  it('commits when the workspace generation is unchanged across the async op', async () => {
+    let gen = 1
+    let committed: string | null = null
+    const outcome = await commitIfCurrent(
+      () => gen,
+      async () => 'xml',
+      (v) => {
+        committed = v
+      }
+    )
+    expect(outcome).toBe('committed')
+    expect(committed).toBe('xml')
+  })
+
+  it('DISCARDS a file read whose workspace was switched OUT mid-read', async () => {
+    let gen = 1
+    let committed: string | null = null
+    const outcome = await commitIfCurrent(
+      () => gen,
+      async () => {
+        gen = 2 // the user switched folders while the read was in flight
+        return 'stale-xml-from-old-folder'
+      },
+      (v) => {
+        committed = v
+      }
+    )
+    expect(outcome).toBe('discarded')
+    // The stale content is NEVER committed into the new workspace.
+    expect(committed).toBeNull()
+  })
+
+  it('DISCARDS an AI placement whose workspace was switched mid-generation', async () => {
+    let gen = 5
+    const writes: string[] = []
+    const outcome = await commitIfCurrent(
+      () => gen,
+      async () => {
+        gen = 6 // folder switched during the (slow) generation
+        return 'freshly-generated-xml'
+      },
+      (v) => writes.push(v)
+    )
+    expect(outcome).toBe('discarded')
+    // Nothing is written into the switched-in workspace.
+    expect(writes).toEqual([])
   })
 })

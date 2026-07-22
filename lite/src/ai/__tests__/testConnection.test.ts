@@ -25,20 +25,21 @@ describe('CORS-vs-auth discriminator', () => {
     mockFetch(() => new Response('unauthorized', { status: 401 }))
     const r = await testConnection(cfg({ providerId: 'anthropic', apiKey: '' }))
     expect(r.reachable).toBe(true)
-    expect(r.corsBlocked).toBe(false)
+    expect(r.blockedOrUnreachable).toBe(false)
     expect(r.status).toBe(401)
     expect(r.message).toMatch(/reachable/i)
     expect(r.message).toMatch(/rejected the key|key/i)
   })
 
-  it('a thrown TypeError (Failed to fetch) ⇒ CORS BLOCKED verdict', async () => {
+  it('a thrown TypeError (Failed to fetch) ⇒ BLOCKED-OR-UNREACHABLE verdict', async () => {
     mockFetch(() => {
       throw new TypeError('Failed to fetch')
     })
     const r = await testConnection(cfg({ providerId: 'gemini' }))
     expect(r.reachable).toBe(false)
-    expect(r.corsBlocked).toBe(true)
-    expect(r.message).toMatch(/cors-blocked|could not read/i)
+    // Renamed from corsBlocked: a fetch reject is CORS OR offline OR DNS (ORIG-14).
+    expect(r.blockedOrUnreachable).toBe(true)
+    expect(r.message).toMatch(/blocked or unreachable|could not read/i)
   })
 
   it('a 200 ⇒ reachable + "key works"', async () => {
@@ -53,7 +54,7 @@ describe('CORS-vs-auth discriminator', () => {
     mockFetch(() => new Response('bad', { status: 400 }))
     const r = await testConnection(cfg({ providerId: 'gemini' }))
     expect(r.reachable).toBe(true)
-    expect(r.corsBlocked).toBe(false)
+    expect(r.blockedOrUnreachable).toBe(false)
     expect(r.message).toMatch(/reachable/i)
   })
 
@@ -82,7 +83,7 @@ describe('CORS-vs-auth discriminator', () => {
     mockFetch(() => new Response('', { status: 200 }))
     const r = await testConnection(cfg({ providerId: 'custom', baseURL: '' }))
     expect(r.reachable).toBe(false)
-    expect(r.corsBlocked).toBe(false)
+    expect(r.blockedOrUnreachable).toBe(false)
     expect(r.message).toMatch(/base url/i)
     expect(fetchMock()).not.toHaveBeenCalled()
   })

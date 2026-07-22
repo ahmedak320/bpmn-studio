@@ -8,23 +8,32 @@ describe('checkPdfSize', () => {
     }
   })
 
-  it('rejects an over-limit PDF with a provider-aware message', () => {
+  it('rejects an over-limit PDF with a split-the-file message (ORIG-4)', () => {
     const r = checkPdfSize('anthropic', PDF_SIZE_LIMITS.anthropic + 1)
     expect(r.ok).toBe(false)
     expect(r.message).toMatch(/over the/i)
-    expect(r.message).toMatch(/Gemini/i) // suggests the larger-limit provider
+    // All providers now share the 20 MiB cap, so the advice is to split — no
+    // longer "try Gemini (larger limit)".
+    expect(r.message).toMatch(/split/i)
   })
 
-  it('accepts a 30MB PDF on Gemini but rejects it on Anthropic', () => {
+  it('rejects a 30MB PDF on EVERY provider now that all caps are 20 MiB (ORIG-4)', () => {
     const thirtyMb = 30 * 1024 * 1024
-    expect(checkPdfSize('gemini', thirtyMb).ok).toBe(true)
+    expect(checkPdfSize('gemini', thirtyMb).ok).toBe(false)
     expect(checkPdfSize('anthropic', thirtyMb).ok).toBe(false)
+    expect(checkPdfSize('openrouter', thirtyMb).ok).toBe(false)
   })
 
-  it('caps Gemini at 32 MiB (aligned safety margin)', () => {
-    expect(PDF_SIZE_LIMITS.gemini).toBe(32 * 1024 * 1024)
-    expect(checkPdfSize('gemini', 32 * 1024 * 1024).ok).toBe(true)
-    expect(checkPdfSize('gemini', 32 * 1024 * 1024 + 1).ok).toBe(false)
+  it('caps Gemini at 20 MiB (lowered; base64/JSON memory multiplier) (ORIG-4)', () => {
+    expect(PDF_SIZE_LIMITS.gemini).toBe(20 * 1024 * 1024)
+    expect(checkPdfSize('gemini', 20 * 1024 * 1024).ok).toBe(true)
+    expect(checkPdfSize('gemini', 20 * 1024 * 1024 + 1).ok).toBe(false)
+  })
+
+  it('all three PDF-capable providers share the same 20 MiB cap', () => {
+    expect(PDF_SIZE_LIMITS.anthropic).toBe(20 * 1024 * 1024)
+    expect(PDF_SIZE_LIMITS.openrouter).toBe(20 * 1024 * 1024)
+    expect(PDF_SIZE_LIMITS.gemini).toBe(20 * 1024 * 1024)
   })
 
   it('disables PDF for the custom endpoint', () => {

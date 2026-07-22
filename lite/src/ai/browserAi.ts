@@ -95,29 +95,45 @@ function toTransportError(error: unknown): TransportError {
 }
 
 /**
- * `fetch` with an AbortSignal timeout. On timeout it rejects with a
- * TransportError(code:'timeout'); other rejections (CORS/offline/DNS) become
- * TransportError(code:'network'). The timer is always cleared, so no stray timer
- * lingers after the request settles (keeps unit tests handle-clean).
+ * `fetch` with an AbortSignal timeout that COVERS THE BODY. The caller supplies
+ * a `consume(res)` that reads the response (status + body); the timer stays armed
+ * through it, so a server that sends headers then STALLS THE BODY still aborts
+ * (Codex ORIG-10 — the old version cleared the timer once headers arrived, so a
+ * hung `res.json()`/`res.text()` could block generation forever). On our timeout
+ * it rejects with TransportError(code:'timeout'); a fetch-level rejection
+ * (CORS/offline/DNS) becomes TransportError(code:'network'); errors thrown by
+ * `consume` (HTTP status, empty body, JSON parse) keep their own type so the
+ * repair loop's retry classification is unchanged. The timer is always cleared.
  */
-async function fetchWithTimeout(
+async function fetchWithTimeout<T>(
   url: string,
   init: RequestInit,
-  timeoutMs: number
-): Promise<Response> {
+  timeoutMs: number,
+  consume: (res: Response) => Promise<T>
+): Promise<T> {
   const ctrl = new AbortController()
   let timedOut = false
   const timer = setTimeout(() => {
     timedOut = true
     ctrl.abort()
   }, timeoutMs)
+  const timeoutError = (): TransportError =>
+    new TransportError('timeout', `Request timed out after ${Math.round(timeoutMs / 1000)}s`)
+  let res: Response
   try {
-    return await fetch(url, { ...init, signal: ctrl.signal })
+    res = await fetch(url, { ...init, signal: ctrl.signal })
   } catch (error) {
-    if (timedOut) {
-      throw new TransportError('timeout', `Request timed out after ${Math.round(timeoutMs / 1000)}s`)
-    }
+    clearTimeout(timer)
+    if (timedOut) throw timeoutError()
     throw toTransportError(error)
+  }
+  try {
+    // Body read runs under the SAME deadline — the timer is cleared only AFTER
+    // the body is fully consumed.
+    return await consume(res)
+  } catch (error) {
+    if (timedOut) throw timeoutError()
+    throw error
   } finally {
     clearTimeout(timer)
   }
@@ -374,27 +390,29 @@ export function makeBrowserCallLLM(
   const attachment = extra?.attachment
   return async (messages: LlmMessage[], { maxTokens }: { maxTokens: number }) => {
     const req = buildRequest(cfg, messages, { maxTokens, jsonMode: true, attachment })
-    // fetchWithTimeout throws a TransportError on network/CORS/timeout, which the
-    // repair loop will NOT retry.
-    const res = await fetchWithTimeout(
+    // fetchWithTimeout throws a TransportError on network/CORS/timeout (which the
+    // repair loop will NOT retry); the timeout now covers the body read too.
+    return fetchWithTimeout(
       req.url,
       { method: 'POST', headers: req.headers, body: JSON.stringify(req.body) },
-      GENERATION_TIMEOUT_MS
+      GENERATION_TIMEOUT_MS,
+      async (res) => {
+        if (!res.ok) {
+          const errText = await res.text().catch(() => '')
+          const message = `${cfg.providerId} ${res.status}: ${truncate(errText)}`
+          // 401/403/429 are permanent for this call — mark them transport so the
+          // repair loop surfaces them once instead of re-sending (re-uploading the
+          // PDF) three times. Other statuses stay ProviderHttpError, still retriable.
+          if (res.status === 401 || res.status === 403) throw new TransportError('auth', message, res.status)
+          if (res.status === 429) throw new TransportError('rate', message, res.status)
+          throw new ProviderHttpError(res.status, message)
+        }
+        const data: unknown = await res.json()
+        const text = extractText(cfg.providerId, data)
+        if (!text.trim()) throw new Error(`${cfg.providerId}: empty response from the model`)
+        return text
+      }
     )
-    if (!res.ok) {
-      const errText = await res.text().catch(() => '')
-      const message = `${cfg.providerId} ${res.status}: ${truncate(errText)}`
-      // 401/403/429 are permanent for this call — mark them transport so the
-      // repair loop surfaces them once instead of re-sending (re-uploading the
-      // PDF) three times. Other statuses stay ProviderHttpError, still retriable.
-      if (res.status === 401 || res.status === 403) throw new TransportError('auth', message, res.status)
-      if (res.status === 429) throw new TransportError('rate', message, res.status)
-      throw new ProviderHttpError(res.status, message)
-    }
-    const data: unknown = await res.json()
-    const text = extractText(cfg.providerId, data)
-    if (!text.trim()) throw new Error(`${cfg.providerId}: empty response from the model`)
-    return text
   }
 }
 
@@ -462,8 +480,11 @@ export type TestVerdictCode =
 export interface TestConnectionResult {
   /** True when the browser could read ANY HTTP response (⇒ CORS is open). */
   reachable: boolean
-  /** True when fetch() threw a CORS/network reject (NOT a timeout). */
-  corsBlocked: boolean
+  /** True when fetch() threw a reject the browser could not read past (NOT a
+   *  timeout). Renamed from `corsBlocked` because such a reject is equally a
+   *  CORS block, an offline state, a DNS/TLS failure or an unreachable host — the
+   *  flag no longer overclaims "CORS" (Codex ORIG-14). */
+  blockedOrUnreachable: boolean
   status?: number
   /** Machine-readable verdict for i18n rendering. */
   code: TestVerdictCode
@@ -478,7 +499,7 @@ function fallbackProbeModel(providerId: LiteProviderId): string {
 }
 
 function interpretProbe(status: number): TestConnectionResult {
-  const base = { reachable: true, corsBlocked: false, status }
+  const base = { reachable: true, blockedOrUnreachable: false, status }
   if (status >= 200 && status < 300) {
     return {
       ...base,
@@ -513,7 +534,7 @@ function interpretProbe(status: number): TestConnectionResult {
  */
 export async function testConnection(cfg: ProviderConfig): Promise<TestConnectionResult> {
   if (cfg.providerId === 'custom' && !(cfg.baseURL && cfg.baseURL.trim())) {
-    return { reachable: false, corsBlocked: false, code: 'need-base-url', message: 'Enter a base URL first.' }
+    return { reachable: false, blockedOrUnreachable: false, code: 'need-base-url', message: 'Enter a base URL first.' }
   }
   const probeCfg: ProviderConfig = {
     ...cfg,
@@ -524,32 +545,35 @@ export async function testConnection(cfg: ProviderConfig): Promise<TestConnectio
     maxTokens: 1,
     jsonMode: false
   })
-  let res: Response
+  let status: number
   try {
-    res = await fetchWithTimeout(
+    // The probe only needs the status (CORS-open ⇔ any readable response); it
+    // deliberately does not read the body.
+    status = await fetchWithTimeout(
       req.url,
       { method: 'POST', headers: req.headers, body: JSON.stringify(req.body) },
-      TEST_CONNECTION_TIMEOUT_MS
+      TEST_CONNECTION_TIMEOUT_MS,
+      async (res) => res.status
     )
   } catch (error) {
     if (error instanceof TransportError && error.code === 'timeout') {
       return {
         reachable: false,
-        corsBlocked: false,
+        blockedOrUnreachable: false,
         code: 'timeout',
         message: 'The connection timed out. Check your network and try again.'
       }
     }
     return {
       reachable: false,
-      corsBlocked: true,
+      blockedOrUnreachable: true,
       code: 'blocked',
       message:
         'Blocked or unreachable (CORS, offline, or DNS) — the browser could not read any response. ' +
         'Try OpenRouter, Anthropic, or Gemini, or use the desktop app.'
     }
   }
-  return interpretProbe(res.status)
+  return interpretProbe(status)
 }
 
 // --- compact error classifier (browser cases) ------------------------------

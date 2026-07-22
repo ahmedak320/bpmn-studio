@@ -21,8 +21,7 @@ import {
   deriveFileBaseName
 } from './editor/newProcessDoc'
 import {
-  buildTree,
-  scanWorkspaceFiles,
+  snapshotWorkspace,
   readFileAt,
   writeFileAt,
   createFolderAt,
@@ -46,7 +45,9 @@ import {
   rememberWorkspace,
   loadRememberedWorkspace,
   forgetWorkspace,
-  ensurePermission
+  ensurePermission,
+  classifyPickerError,
+  type PickerErrorCode
 } from './fs/workspaceHandle'
 import { WorkspacePickerLite } from './workspace/WorkspacePickerLite'
 import { FolderTreeLite } from './workspace/FolderTreeLite'
@@ -76,7 +77,8 @@ import { Toaster, type ToastMsg, type ToastTone } from './workspace/Toaster'
 import { ConfirmDialog } from './workspace/ConfirmDialog'
 import { UnsavedSwitchDialog } from './workspace/UnsavedSwitchDialog'
 import { createMutex } from './workspace/mutex'
-import { createRefreshGuard, canCommitToWorkspace } from './workspace/workspaceSession'
+import { partitionDirtyTabs } from './workspace/dirtySave'
+import { createRefreshGuard, canCommitToWorkspace, commitIfCurrent } from './workspace/workspaceSession'
 import { MoveDialog } from './workspace/MoveDialog'
 import { PrintButton } from './workspace/PrintButton'
 import { PrintView, type PrintJob } from './workspace/PrintView'
@@ -111,6 +113,20 @@ function baseName(relPath: string): string {
 
 function errMsg(err: unknown): string {
   return err instanceof Error ? err.message : String(err)
+}
+
+/** Map a classified picker/reconnect failure to its i18n key (ORIG-12) — raw
+ *  browser exception text is never shown to the user. `aborted` (the user
+ *  dismissed the dialog) is handled by the caller as a no-op. */
+function pickerErrorKey(code: PickerErrorCode): 'alert.picker.security' | 'alert.picker.notAllowed' | 'alert.picker.unknown' {
+  switch (code) {
+    case 'security':
+      return 'alert.picker.security'
+    case 'not-allowed':
+      return 'alert.picker.notAllowed'
+    default:
+      return 'alert.picker.unknown'
+  }
 }
 
 function collectFolders(node: LiteTreeNode | null): FolderOptionLite[] {
@@ -207,10 +223,9 @@ function App(): JSX.Element {
     // Each scan claims a token; a slower earlier scan (or one begun before a
     // folder switch) is discarded rather than overwriting a newer/other one.
     const token = refreshGuardRef.current.begin()
-    const [nextTree, scanned] = await Promise.all([
-      buildTree(handle, handle.name),
-      scanWorkspaceFiles(handle)
-    ])
+    // ONE traversal yields both the tree and the file-meta list, so the tree and
+    // the indexes derived from `files` are always coherent (Codex NEW-minor).
+    const { tree: nextTree, files: scanned } = await snapshotWorkspace(handle, handle.name)
     if (!refreshGuardRef.current.shouldCommit(token, handle, rootHandleRef.current)) return
     setTree(nextTree)
     setFiles(scanned)
@@ -329,14 +344,26 @@ function App(): JSX.Element {
   // Save every dirty directory-mode tab through the CURRENT root handle (called
   // before a folder switch, while the old handle is still active).
   const saveAllDirty = useCallback(async () => {
-    for (const tab of tabs) {
-      if (!dirtyByKey[tab.key] || !tab.relPath || !rootHandle) continue
-      const modeler = modelersByKey[tab.key] as
+    // Partition so NO dirty tab is silently dropped: directory tabs write to disk;
+    // fallback/virtual tabs (relPath === null) take the download-on-save path so
+    // their unsaved work survives the switch instead of being discarded (NEW-C2).
+    const { writable, downloadable } = partitionDirtyTabs(tabs, (tab) => Boolean(dirtyByKey[tab.key]))
+    const readXml = async (key: string): Promise<string | undefined> => {
+      const modeler = modelersByKey[key] as
         | { saveXML?: (o: { format: boolean }) => Promise<{ xml?: string }> }
         | undefined
-      if (!modeler?.saveXML) continue
+      if (!modeler?.saveXML) return undefined
       const { xml } = await modeler.saveXML({ format: true })
+      return xml
+    }
+    for (const tab of writable) {
+      if (!tab.relPath || !rootHandle) continue
+      const xml = await readXml(tab.key)
       if (xml) await writeFileAt(rootHandle, tab.relPath, xml)
+    }
+    for (const tab of downloadable) {
+      const xml = await readXml(tab.key)
+      if (xml) downloadBpmn(tab.title.endsWith('.bpmn') ? tab.title : `${tab.title}.bpmn`, xml)
     }
   }, [tabs, dirtyByKey, modelersByKey, rootHandle])
 
@@ -384,7 +411,8 @@ function App(): JSX.Element {
       if (!proceed) return
       await activateWorkspace(handle)
     } catch (err) {
-      setPickError(errMsg(err))
+      const code = classifyPickerError(err)
+      if (code !== 'aborted') setPickError(t(pickerErrorKey(code)))
     } finally {
       setPickBusy(false)
     }
@@ -406,7 +434,8 @@ function App(): JSX.Element {
       }
       await activateWorkspace(handle)
     } catch (err) {
-      setPickError(errMsg(err))
+      const code = classifyPickerError(err)
+      if (code !== 'aborted') setPickError(t(pickerErrorKey(code)))
     } finally {
       setPickBusy(false)
     }
@@ -439,16 +468,30 @@ function App(): JSX.Element {
       )
       setActiveKey(key)
       if (contents[key] !== undefined) return
-      if (!rootHandle) return
-      try {
-        const xml = await readFileAt(rootHandle, relPath)
-        setContents((prev) => ({ ...prev, [key]: xml }))
-      } catch (err) {
-        setContents((prev) => ({ ...prev, [key]: '' }))
-        pushToast(t('alert.openFileFailed', { relPath, error: errMsg(err) }), 'error')
+      // Read through the LIVE handle mirror and guard the commit against a
+      // mid-read folder switch: neither the loaded content nor its error toast is
+      // committed if the workspace changed while the read was in flight, so a
+      // stale read from the previous folder can never land in the new one (ORIG-1a).
+      const handle = rootHandleRef.current
+      if (!handle) return
+      let failed: unknown = null
+      const outcome = await commitIfCurrent(
+        () => workspaceGenRef.current,
+        async () => {
+          try {
+            return await readFileAt(handle, relPath)
+          } catch (err) {
+            failed = err
+            return ''
+          }
+        },
+        (xml) => setContents((prev) => ({ ...prev, [key]: xml }))
+      )
+      if (outcome === 'committed' && failed) {
+        pushToast(t('alert.openFileFailed', { relPath, error: errMsg(failed) }), 'error')
       }
     },
-    [contents, rootHandle, pushToast]
+    [contents, pushToast]
   )
 
   const openVirtualTab = useCallback((title: string, xml: string) => {
@@ -622,7 +665,10 @@ function App(): JSX.Element {
         const relPath = await opMutexRef.current.runExclusive(async () => {
           const taken = await bpmnSlugsIn(rootHandle, folderRel)
           const slug = dedupeSlug(deriveFileBaseName(name), (c) => taken.has(c.toLowerCase()))
-          const doc = buildNewProcessDoc(name, slug)
+          // Also de-dup the derived <process id> against the LIVE process index
+          // so ANY id collision (incl. a hash clash for two Arabic names) is
+          // suffixed rather than silently cross-wiring their call links (ORIG-6b).
+          const doc = buildNewProcessDoc(name, slug, (candidate) => processIndex.has(candidate))
           return createBpmnFileUnique(rootHandle, folderRel, doc.fileBaseName, doc.xml)
         })
         await refreshWorkspace(rootHandle)
@@ -631,7 +677,7 @@ function App(): JSX.Element {
         pushToast(t('alert.createProcessFailed', { error: errMsg(err) }), 'error')
       }
     },
-    [rootHandle, promptText, refreshWorkspace, openDirectoryFile, pushToast]
+    [rootHandle, promptText, refreshWorkspace, openDirectoryFile, pushToast, processIndex]
   )
 
   const handleNewProcessFallback = useCallback(async () => {
@@ -643,11 +689,14 @@ function App(): JSX.Element {
       hint: t('dialog.newProcess.hint.fallback')
     })
     if (!name) return
-    const doc = buildNewProcessDoc(name)
+    // Dedup the derived id against the (in-memory) index too, for parity with the
+    // directory path (ORIG-6b); in fallback mode the index is empty, so this is a
+    // no-op but keeps the two creation paths from drifting.
+    const doc = buildNewProcessDoc(name, undefined, (candidate) => processIndex.has(candidate))
     setMode('fallback')
     setPhase('ready')
     openVirtualTab(`${doc.fileBaseName}.bpmn`, doc.xml)
-  }, [promptText, openVirtualTab])
+  }, [promptText, openVirtualTab, processIndex])
 
   const handleNewProcessClick = useCallback(() => {
     if (mode === 'directory' && rootHandle) void handleNewProcess('')
@@ -694,7 +743,17 @@ function App(): JSX.Element {
       const finalName = node.type === 'file' ? ensureBpmnExtension(raw) : raw
       if (finalName === node.name) return
       try {
-        const res = await renameAt(rootHandle, node.relPath, finalName, node.type)
+        // Serialize through the SAME op-mutex as create/import/AI-place so a
+        // rename can't interleave its clobber-probe→write with an in-flight
+        // in-app create racing for the same name (Codex ORIG-3). `relocate`
+        // re-probes the destination immediately before writing, inside this
+        // critical section. RESIDUAL LIMITATION: the File System Access API has
+        // no atomic create/rename, so an EXTERNAL writer (another app/tab) can
+        // still land the same name between our probe and write — unavoidable
+        // without native atomicity; documented in STATUS (ORIG-16/atomic-create).
+        const res = await opMutexRef.current.runExclusive(() =>
+          renameAt(rootHandle, node.relPath, finalName, node.type)
+        )
         closeTabsUnder(node.relPath)
         await refreshWorkspace(rootHandle)
         if (res.nonBpmn > 0) {
@@ -749,7 +808,13 @@ function App(): JSX.Element {
     async (node: LiteTreeNode, toFolderRel: string) => {
       if (!rootHandle) return
       try {
-        const res = await moveAt(rootHandle, node.relPath, toFolderRel, node.type)
+        // Same op-mutex as create/import/AI-place/rename — a move re-probes the
+        // destination inside the critical section immediately before writing
+        // (Codex ORIG-3). Residual EXTERNAL-writer TOCTOU is unavoidable without
+        // FS-API atomic create/rename (documented in STATUS).
+        const res = await opMutexRef.current.runExclusive(() =>
+          moveAt(rootHandle, node.relPath, toFolderRel, node.type)
+        )
         closeTabsUnder(node.relPath)
         await refreshWorkspace(rootHandle)
         const dest = toFolderRel || rootName
@@ -906,22 +971,42 @@ function App(): JSX.Element {
   // --- AI placement -------------------------------------------------------
 
   const placeGenerated = useCallback(
-    async (xml: string, opts: { name: string; targetFolder: string }) => {
+    async (xml: string, opts: { name: string; targetFolder: string; gen?: number }) => {
       const slug = deriveFileBaseName(opts.name || 'process')
-      if (mode === 'directory' && rootHandle) {
-        const relPath = await opMutexRef.current.runExclusive(async () => {
-          const taken = await bpmnSlugsIn(rootHandle, opts.targetFolder)
+      // Validate the workspace generation captured when generation STARTED against
+      // the live one, both before enqueuing AND at write time inside the mutex: a
+      // folder switch during the (slow) generation must not land the diagram in
+      // the switched-in workspace's folder (Codex ORIG-1b). Read the LIVE handle.
+      const handle = rootHandleRef.current
+      const stale = (): boolean =>
+        opts.gen !== undefined && !canCommitToWorkspace(opts.gen, workspaceGenRef.current)
+      if (mode === 'directory' && handle) {
+        if (stale()) {
+          pushToast(t('alert.staleGeneration'), 'error')
+          return null
+        }
+        const result = await opMutexRef.current.runExclusive(async () => {
+          // Re-check at write time — a switch could have landed while queued.
+          if (stale()) return { stale: true as const }
+          const taken = await bpmnSlugsIn(handle, opts.targetFolder)
           const finalSlug = dedupeSlug(slug, (c) => taken.has(c.toLowerCase()))
-          return createBpmnFileUnique(rootHandle, opts.targetFolder, finalSlug, xml)
+          return {
+            stale: false as const,
+            relPath: await createBpmnFileUnique(handle, opts.targetFolder, finalSlug, xml)
+          }
         })
-        await refreshWorkspace(rootHandle)
-        void openDirectoryFile(relPath)
-        return { label: relPath }
+        if (result.stale) {
+          pushToast(t('alert.staleGeneration'), 'error')
+          return null
+        }
+        await refreshWorkspace(handle)
+        void openDirectoryFile(result.relPath)
+        return { label: result.relPath }
       }
       openVirtualTab(`${slug}.bpmn`, xml)
       return null
     },
-    [mode, rootHandle, refreshWorkspace, openDirectoryFile, openVirtualTab]
+    [mode, refreshWorkspace, openDirectoryFile, openVirtualTab, pushToast]
   )
 
   // --- navigation (back / forward / Alt+Arrows) ---------------------------
@@ -1578,6 +1663,7 @@ function App(): JSX.Element {
         <AiPanelLite
           folders={folders}
           onPlaceGenerated={placeGenerated}
+          getWorkspaceGen={() => workspaceGenRef.current}
           onOpenSettings={() => setSettingsOpen(true)}
           collapsed={aiCollapsed}
           onToggle={() => setAiCollapsed((c) => !c)}

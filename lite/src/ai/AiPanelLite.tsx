@@ -26,11 +26,15 @@ export interface AiPanelLiteProps {
   /** Target-folder options (directory mode). Empty in fallback mode. */
   folders: FolderOptionLite[]
   /** Place a freshly-generated diagram. Returns the opened path label, or null
-   * if it was opened in-memory (fallback mode). */
+   * if it was opened in-memory (fallback mode). `gen` carries the workspace
+   * generation captured when generation STARTED, so App can refuse a placement
+   * whose folder was switched out mid-generation (Codex ORIG-1b). */
   onPlaceGenerated: (
     xml: string,
-    opts: { name: string; targetFolder: string }
+    opts: { name: string; targetFolder: string; gen?: number }
   ) => Promise<{ label: string } | null>
+  /** Read the live workspace generation (captured at generation start). */
+  getWorkspaceGen?: () => number
   onOpenSettings: () => void
   collapsed: boolean
   onToggle: () => void
@@ -64,6 +68,7 @@ function errorMessageForCode(c: ClassifiedError): string {
 export function AiPanelLite({
   folders,
   onPlaceGenerated,
+  getWorkspaceGen,
   onOpenSettings,
   collapsed,
   onToggle,
@@ -163,6 +168,9 @@ export function AiPanelLite({
     setError(null)
     setOffline(false)
     setResultLabel(null)
+    // Capture the workspace generation at generation START so App can refuse the
+    // placement if the user switches folders during the (slow) generation (ORIG-1b).
+    const genAtStart = getWorkspaceGen?.()
     try {
       const apiKey = getKey(providerId)
       if (!apiKey) throw new Error(t('ai.error.noApiKey'))
@@ -193,7 +201,7 @@ export function AiPanelLite({
       } else {
         xml = await generateDiagramXml({ ...common, description: description.trim() })
       }
-      const placed = await onPlaceGenerated(xml, { name: name.trim(), targetFolder })
+      const placed = await onPlaceGenerated(xml, { name: name.trim(), targetFolder, gen: genAtStart })
       setResultLabel(placed ? placed.label : t('ai.openedInMemory'))
     } catch (err) {
       const classified = classifyBrowserError(err)
@@ -213,7 +221,8 @@ export function AiPanelLite({
     description,
     name,
     targetFolder,
-    onPlaceGenerated
+    onPlaceGenerated,
+    getWorkspaceGen
   ])
 
   if (collapsed) {
@@ -377,6 +386,7 @@ export function AiPanelLite({
               </div>
             )}
             <div style={{ fontSize: 11, color: 'var(--orbitpm-muted)' }}>{t('ai.pdf.engineNote')}</div>
+            <div style={{ fontSize: 11, color: 'var(--orbitpm-muted)' }}>{t('ai.pdf.memoryNote')}</div>
             <label style={labelStyle}>
               <span style={labelText}>
                 {t('ai.pdfHint.label')} <span style={{ opacity: 0.7 }}>{t('ai.pdfHint.optional')}</span>

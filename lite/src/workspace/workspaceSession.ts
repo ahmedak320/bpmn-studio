@@ -28,6 +28,25 @@ export function canCommitToWorkspace(tabGeneration: number, activeGeneration: nu
   return tabGeneration === activeGeneration
 }
 
+/**
+ * Run an async `producer`, then `commit` its result ONLY if the workspace
+ * generation is unchanged from when the producer started. Models the guard that
+ * async file reads (`openDirectoryFile`) and AI placement use so a folder switch
+ * mid-flight can never commit stale content into — or write a generated diagram
+ * into — the WRONG workspace (Codex ORIG-1). Returns whether it committed.
+ */
+export async function commitIfCurrent<T>(
+  getGeneration: () => number,
+  producer: () => Promise<T>,
+  commit: (value: T) => void
+): Promise<'committed' | 'discarded'> {
+  const startGen = getGeneration()
+  const value = await producer()
+  if (getGeneration() !== startGen) return 'discarded'
+  commit(value)
+  return 'committed'
+}
+
 export interface RefreshGuard {
   /** Claim a fresh token for a scan about to start; also becomes the "latest". */
   begin(): number

@@ -34,8 +34,51 @@ export interface SearchDoc {
   namesText: string
   /** Lowercased process ids, joined with spaces. */
   idsText: string
-  /** Lowercased full diagram text (element names + documentation). */
+  /** Lowercased full diagram text (element names + documentation) — the whole
+   *  file, used only for the cheap early-skip check. */
   contentText: string
+  /** Lowercased diagram text scoped to EACH process, keyed by process id, so a
+   *  content match attributes to the RIGHT process only (Codex ORIG-11). */
+  perProcessContent: Record<string, string>
+  /** Lowercased diagram text that lives OUTSIDE any `<process>` (collaboration /
+   *  participant labels) — not attributable to a process, surfaced file-level. */
+  fileLevelContent: string
+}
+
+/**
+ * Split a file's searchable diagram text into per-process segments (keyed by
+ * process id) plus the leftover text that lives OUTSIDE any `<process>` block.
+ * This is what lets a content match attribute to the specific process whose
+ * elements contain it, instead of every process in a multi-process file
+ * (Codex ORIG-11). `ownNames` are excluded (they belong to the per-process
+ * `name` field, not free content).
+ */
+export function splitProcessContent(
+  xml: string,
+  ownNames: Set<string>
+): { perProcess: Record<string, string>; fileLevel: string } {
+  const toText = (segment: string): string =>
+    extractDiagramText(segment)
+      .filter((txt) => !ownNames.has(txt.toLowerCase()))
+      .join(' • ')
+      .toLowerCase()
+  const perProcess: Record<string, string> = {}
+  // Backreference \1 matches the same (namespace-prefixed) tag name on close.
+  const blockRe = /<((?:[a-zA-Z_][\w.-]*:)?process)\b([^>]*?)>([\s\S]*?)<\/\1\s*>/g
+  let m: RegExpExecArray | null
+  while ((m = blockRe.exec(xml)) !== null) {
+    const attrs = m[2] ?? ''
+    const inner = m[3] ?? ''
+    const idMatch = /\bid\s*=\s*(?:"([^"]*)"|'([^']*)')/.exec(attrs)
+    const id = idMatch ? (idMatch[1] ?? idMatch[2] ?? '') : ''
+    if (id) perProcess[id] = toText(inner)
+  }
+  // Everything with the process blocks stripped out ⇒ the file-level text.
+  const outOfProcess = xml.replace(
+    /<((?:[a-zA-Z_][\w.-]*:)?process)\b[^>]*?>[\s\S]*?<\/\1\s*>/g,
+    ' '
+  )
+  return { perProcess, fileLevel: toText(outOfProcess) }
 }
 
 function decodeXmlEntities(value: string): string {
@@ -95,13 +138,17 @@ export function buildSearchDoc(
   // file-level content match emit EVERY process in the file for a query that
   // only hit one process's name (Codex MINOR: over-broad search emission).
   const ownNames = new Set(processes.map((p) => (p.name ?? '').toLowerCase()).filter(Boolean))
-  const contentText =
-    size <= maxContentBytes
-      ? extractDiagramText(file.xml)
-          .filter((txt) => !ownNames.has(txt.toLowerCase()))
-          .join(' • ')
-          .toLowerCase()
-      : ''
+  const withinCap = size <= maxContentBytes
+  const contentText = withinCap
+    ? extractDiagramText(file.xml)
+        .filter((txt) => !ownNames.has(txt.toLowerCase()))
+        .join(' • ')
+        .toLowerCase()
+    : ''
+  // Per-process + out-of-process split for honest content attribution (ORIG-11).
+  const { perProcess, fileLevel } = withinCap
+    ? splitProcessContent(file.xml, ownNames)
+    : { perProcess: {}, fileLevel: '' }
   return {
     relPath: file.relPath,
     fileName,
@@ -115,7 +162,9 @@ export function buildSearchDoc(
       .map((p) => p.id)
       .join(' ')
       .toLowerCase(),
-    contentText
+    contentText,
+    perProcessContent: perProcess,
+    fileLevelContent: fileLevel
   }
 }
 
@@ -181,11 +230,12 @@ export function searchWorkspace(index: SearchDoc[], query: string): SearchGroup[
 
     // File-level fields (shared by every process in the file).
     const fileMatched = everyTermIn(fileText, terms)
-    const contentMatched = everyTermIn(doc.contentText, terms)
     const hits = byFolder.get(doc.folder) ?? []
 
     if (doc.processes.length === 0) {
-      // No process to attribute to — keep it only on a genuine file-level match.
+      // No process to attribute to — keep it only on a genuine file-level match
+      // (file name, or any diagram text in the file).
+      const contentMatched = everyTermIn(doc.contentText, terms)
       if (fileMatched || contentMatched) {
         hits.push({
           relPath: doc.relPath,
@@ -195,16 +245,17 @@ export function searchWorkspace(index: SearchDoc[], query: string): SearchGroup[
         })
       }
     } else {
+      let anyEmitted = false
       for (const proc of doc.processes) {
-        // A process is emitted only when its OWN name/id holds every term, or a
-        // file-level field does. Priority name > file > id > content drives the
-        // "why" label. A process none of whose fields match is skipped, so an
-        // unrelated sibling process is no longer dragged into the results.
+        // A process is emitted only when its OWN name/id/CONTENT holds every
+        // term, or the shared file name does. Content is now scoped to THIS
+        // process's elements, so a match inside a sibling no longer drags this
+        // one in (Codex ORIG-11). Priority name > file > id > content.
         let matchedOn: MatchField | null = null
         if (everyTermIn((proc.name ?? '').toLowerCase(), terms)) matchedOn = 'name'
         else if (fileMatched) matchedOn = 'file'
         else if (everyTermIn(proc.id.toLowerCase(), terms)) matchedOn = 'id'
-        else if (contentMatched) matchedOn = 'content'
+        else if (everyTermIn(doc.perProcessContent[proc.id] ?? '', terms)) matchedOn = 'content'
         if (!matchedOn) continue
         hits.push({
           relPath: doc.relPath,
@@ -213,6 +264,18 @@ export function searchWorkspace(index: SearchDoc[], query: string): SearchGroup[
           processId: proc.id,
           processName: proc.name,
           matchedOn
+        })
+        anyEmitted = true
+      }
+      // Text OUTSIDE any process (collaboration / participant labels) matched but
+      // no specific process did — surface ONE honest file-level hit ("matched in
+      // file"), never falsely attributed to a process.
+      if (!anyEmitted && everyTermIn(doc.fileLevelContent, terms)) {
+        hits.push({
+          relPath: doc.relPath,
+          fileName: doc.fileName,
+          folder: doc.folder,
+          matchedOn: 'file'
         })
       }
     }

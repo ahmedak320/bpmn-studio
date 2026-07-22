@@ -33,6 +33,18 @@ test('BUILT dist CSP whitelists exactly the three browser-callable providers (in
   expect(connectSrc).not.toMatch(/\*|http:|ws:|wss:/)
 })
 
+test('BUILT dist CSP carries the hardening directives (object-src/base-uri/form-action)', () => {
+  const csp = readFileSync(DIST, 'utf8')
+    .replace(/<!--[\s\S]*?-->/g, '')
+    .match(/Content-Security-Policy"\s+content="([^"]+)"/)
+  expect(csp, 'built HTML must carry a CSP meta').not.toBeNull()
+  const policy = (csp as RegExpMatchArray)[1]
+  // Codex NEW-minor CSP hardening — added beyond default-src.
+  expect(policy).toContain("object-src 'none'")
+  expect(policy).toContain("base-uri 'self'")
+  expect(policy).toContain("form-action 'self'")
+})
+
 function recordOffendingRequests(page: import('@playwright/test').Page): string[] {
   const offending: string[] = []
   page.on('request', (req) => {
