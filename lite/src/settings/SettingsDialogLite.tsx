@@ -31,6 +31,19 @@ export function SettingsDialogLite({
     }
   }, [open])
 
+  // Escape closes the dialog (consistent with the app's other modals).
+  useEffect(() => {
+    if (!open) return
+    const onKeyDown = (event: KeyboardEvent): void => {
+      if (event.key === 'Escape') {
+        event.preventDefault()
+        onClose()
+      }
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [open, onClose])
+
   if (!open) return null
 
   const save = (): void => {

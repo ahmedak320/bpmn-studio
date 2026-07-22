@@ -204,6 +204,21 @@ export async function bpmnSlugsIn(
   return taken
 }
 
+/**
+ * Count the `.bpmn` files anywhere in a built tree. Zero means the workspace
+ * has no processes yet — the signal the UI uses to show the "No processes yet"
+ * empty-state card (with its create-your-first-process button) instead of a
+ * blank tree, which was the original dead-end: an opened-but-empty folder
+ * rendered nothing and offered no obvious way to start.
+ */
+export function countBpmnFiles(node: LiteTreeNode | null): number {
+  if (!node) return 0
+  if (node.type === 'file') return 1
+  let total = 0
+  for (const child of node.children ?? []) total += countBpmnFiles(child)
+  return total
+}
+
 function sortNodes(nodes: LiteTreeNode[]): LiteTreeNode[] {
   // Folders first, then files; each alphabetical, case-insensitive.
   return nodes.sort((a, b) => {

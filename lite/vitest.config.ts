@@ -5,6 +5,11 @@ import { defineConfig } from 'vitest/config'
 // File System Access handles). Runs from within lite/ via `npm test` here;
 // the PARENT app's vitest run excludes lite/** so the two suites stay separate.
 export default defineConfig({
+  // Use the automatic JSX runtime (react/jsx-runtime) so presentational
+  // components can be rendered to a string with react-dom/server in a plain
+  // node environment — no React import, no jsdom — matching tsconfig's
+  // "jsx": "react-jsx".
+  esbuild: { jsx: 'automatic' },
   resolve: {
     alias: {
       '@app': resolve(__dirname, '../src')
@@ -12,6 +17,6 @@ export default defineConfig({
   },
   test: {
     environment: 'node',
-    include: ['src/**/*.test.ts']
+    include: ['src/**/*.test.ts', 'src/**/*.test.tsx']
   }
 })

@@ -15,6 +15,11 @@ import {
 import { slugify, dedupeSlug } from '@app/shared/slug'
 // --- lite-local ---
 import {
+  buildNewProcessDoc,
+  buildMissingProcessDoc,
+  humanizeProcessId
+} from './editor/newProcessDoc'
+import {
   buildTree,
   listBpmnFiles,
   readFileAt,
@@ -24,6 +29,7 @@ import {
   deleteAt,
   renameAt,
   bpmnSlugsIn,
+  countBpmnFiles,
   type LiteTreeNode
 } from './fs/fsAccess'
 import {
@@ -36,6 +42,7 @@ import {
 } from './fs/workspaceHandle'
 import { WorkspacePickerLite } from './workspace/WorkspacePickerLite'
 import { FolderTreeLite } from './workspace/FolderTreeLite'
+import { EmptyWorkspaceCard } from './workspace/EmptyWorkspaceCard'
 import { AiPanelLite, type FolderOptionLite } from './ai/AiPanelLite'
 import { SettingsDialogLite } from './settings/SettingsDialogLite'
 import { ICON_DATA_URI } from './branding/icon'
@@ -312,6 +319,39 @@ function App(): JSX.Element {
     [rootHandle, refreshWorkspace]
   )
 
+  // Create a process on demand to satisfy a dangling calledElement: the new
+  // file's <process id> is fixed to `calledElementId` verbatim, so the link
+  // resolves immediately; the user only picks the display name / file name.
+  const handleCreateMissingProcess = useCallback(
+    async (calledElementId: string) => {
+      if (!(mode === 'directory' && rootHandle)) {
+        window.alert(
+          `Process "${calledElementId}" doesn't exist yet. Open a folder to create and link processes.`
+        )
+        return
+      }
+      const name = await promptText({
+        title: 'Create linked process',
+        label: 'Process name',
+        initialValue: humanizeProcessId(calledElementId),
+        okLabel: 'Create & open',
+        hint: `Creates a new .bpmn whose process id is "${calledElementId}", so this call activity resolves.`
+      })
+      if (!name) return
+      const taken = await bpmnSlugsIn(rootHandle, '')
+      const slug = dedupeSlug(slugify(name || calledElementId), (c) => taken.has(c.toLowerCase()))
+      const doc = buildMissingProcessDoc(calledElementId, name, slug)
+      try {
+        const relPath = await createBpmnFileAt(rootHandle, '', doc.fileBaseName, doc.xml)
+        await refreshWorkspace(rootHandle)
+        void openDirectoryFile(relPath)
+      } catch (err) {
+        window.alert(`Could not create process: ${err instanceof Error ? err.message : String(err)}`)
+      }
+    },
+    [mode, rootHandle, promptText, refreshWorkspace, openDirectoryFile]
+  )
+
   const handleOpenCalledProcess = useCallback(
     (processId: string) => {
       const entry = processIndex.get(processId)
@@ -319,11 +359,17 @@ function App(): JSX.Element {
         void openDirectoryFile(entry.relPath)
         return
       }
-      window.alert(
-        `No process with id "${processId}" in this workspace — create it or link a different process.`
-      )
+      // Unresolved link: offer to create the missing process now instead of a
+      // dead-end alert (directory mode only — fallback can't create files).
+      if (mode === 'directory' && rootHandle) {
+        void handleCreateMissingProcess(processId)
+      } else {
+        window.alert(
+          `No process with id "${processId}" in this workspace — link a different process or open a folder to create it.`
+        )
+      }
     },
-    [processIndex, openDirectoryFile]
+    [processIndex, openDirectoryFile, mode, rootHandle, handleCreateMissingProcess]
   )
 
   // --- tree CRUD ----------------------------------------------------------
@@ -336,13 +382,16 @@ function App(): JSX.Element {
         label: 'Process name',
         initialValue: 'New Process',
         okLabel: 'Create',
-        hint: 'A .bpmn file will be created with a start event.'
+        hint: 'A .bpmn file with a start event is created; other processes can link to it.'
       })
       if (!name) return
       const taken = await bpmnSlugsIn(rootHandle, folderRel)
       const slug = dedupeSlug(slugify(name), (c) => taken.has(c.toLowerCase()))
+      // The process id derives from the (de-duplicated) slug, so the new file is
+      // a stable, linkable call-activity target; the name attribute is verbatim.
+      const doc = buildNewProcessDoc(name, slug)
       try {
-        const relPath = await createBpmnFileAt(rootHandle, folderRel, slug, createNewDiagramXml())
+        const relPath = await createBpmnFileAt(rootHandle, folderRel, doc.fileBaseName, doc.xml)
         await refreshWorkspace(rootHandle)
         void openDirectoryFile(relPath)
       } catch (err) {
@@ -351,6 +400,30 @@ function App(): JSX.Element {
     },
     [rootHandle, promptText, refreshWorkspace, openDirectoryFile]
   )
+
+  // Fallback (no folder open): same name → slug → stable-id flow, but the tab is
+  // virtual and Save downloads the .bpmn instead of writing it back in place.
+  const handleNewProcessFallback = useCallback(async () => {
+    const name = await promptText({
+      title: 'New Process',
+      label: 'Process name',
+      initialValue: 'New Process',
+      okLabel: 'Create',
+      hint: 'No folder is open, so Save will download the .bpmn file.'
+    })
+    if (!name) return
+    const doc = buildNewProcessDoc(name)
+    setMode('fallback')
+    setPhase('ready')
+    openVirtualTab(`${doc.fileBaseName}.bpmn`, doc.xml)
+  }, [promptText, openVirtualTab])
+
+  // Header "＋ New process" — the always-visible entry point that works in both
+  // modes (fixes the empty-folder dead end where nothing offered a way to start).
+  const handleNewProcessClick = useCallback(() => {
+    if (mode === 'directory' && rootHandle) void handleNewProcess('')
+    else void handleNewProcessFallback()
+  }, [mode, rootHandle, handleNewProcess, handleNewProcessFallback])
 
   const handleNewFolder = useCallback(
     async (folderRel: string) => {
@@ -459,12 +532,25 @@ function App(): JSX.Element {
   const activeTab = tabs.find((t) => t.key === activeKey) ?? null
   const activeModeler = (activeKey ? modelersByKey[activeKey] : null) as SelectionLinkModeler | null
 
-  const unresolvedCount = useMemo(() => {
-    if (!activeKey) return 0
+  const unresolvedLinks = useMemo(() => {
+    if (!activeKey) return []
     const content = contents[activeKey]
-    if (!content) return 0
-    return listUnresolvedCalledElements(content, processIndex).length
+    if (!content) return []
+    return listUnresolvedCalledElements(content, processIndex)
   }, [activeKey, contents, processIndex])
+  const unresolvedCount = unresolvedLinks.length
+
+  // Expose the active tab's live bpmn-js modeler as a documented automation
+  // surface (used by the e2e suite to drive programmatic modeling, and handy
+  // for power-user scripting in the console). Purely a reference hand-off — it
+  // adds no network or storage behavior, keeping the page self-contained.
+  useEffect(() => {
+    const w = window as unknown as { __ORBITPM_LITE__?: Record<string, unknown> }
+    w.__ORBITPM_LITE__ = {
+      ...(w.__ORBITPM_LITE__ ?? {}),
+      modeler: activeKey ? (modelersByKey[activeKey] ?? null) : null
+    }
+  }, [activeKey, modelersByKey])
 
   // --- render -------------------------------------------------------------
 
@@ -495,6 +581,7 @@ function App(): JSX.Element {
           onOpenDifferent={handleOpenDifferent}
           onOpenFile={openFileFromDisk}
           onNewDiagram={startBlankDiagram}
+          onNewProcess={() => void handleNewProcessFallback()}
         />
         <SettingsDialogLite
           open={settingsOpen}
@@ -526,21 +613,50 @@ function App(): JSX.Element {
           <strong style={{ fontSize: 13 }}>OrbitPM Process Studio Lite</strong>
         </span>
         <div style={{ display: 'flex', gap: 8 }}>
+          <button
+            className="orbitpm-lite-chrome-btn"
+            onClick={handleNewProcessClick}
+            title="Create a new BPMN process"
+            style={{
+              background: 'var(--orbitpm-accent)',
+              color: '#fff',
+              borderColor: 'var(--orbitpm-accent)',
+              fontWeight: 600
+            }}
+          >
+            ＋ New process
+          </button>
           {mode === 'directory' ? (
-            <button className="orbitpm-lite-chrome-btn" onClick={() => void handleOpenDifferent()}>
+            <button
+              className="orbitpm-lite-chrome-btn"
+              onClick={() => void handleOpenDifferent()}
+              title="Open a different workspace folder"
+            >
               Change folder…
             </button>
           ) : (
-            <button className="orbitpm-lite-chrome-btn" onClick={openFileFromDisk}>
+            <button
+              className="orbitpm-lite-chrome-btn"
+              onClick={openFileFromDisk}
+              title="Open an existing .bpmn file from disk"
+            >
               Open .bpmn…
             </button>
           )}
           {aiCollapsed && (
-            <button className="orbitpm-lite-chrome-btn" onClick={() => setAiCollapsed(false)}>
+            <button
+              className="orbitpm-lite-chrome-btn"
+              onClick={() => setAiCollapsed(false)}
+              title="Show the AI generation panel"
+            >
               ✨ AI
             </button>
           )}
-          <button className="orbitpm-lite-chrome-btn" onClick={() => setSettingsOpen(true)}>
+          <button
+            className="orbitpm-lite-chrome-btn"
+            onClick={() => setSettingsOpen(true)}
+            title="Settings — manage AI provider keys"
+          >
             ⚙ Settings
           </button>
         </div>
@@ -555,15 +671,53 @@ function App(): JSX.Element {
           }}
         >
           {mode === 'directory' ? (
-            <FolderTreeLite
-              root={tree}
-              activePath={activeTab?.relPath ?? null}
-              onOpenFile={(rel) => void openDirectoryFile(rel)}
-              onNewProcess={(f) => void handleNewProcess(f)}
-              onNewFolder={(f) => void handleNewFolder(f)}
-              onRename={(n) => void handleRename(n)}
-              onDelete={(n) => void handleDelete(n)}
-            />
+            <div>
+              {/* Always-present create bar — the primary, unmissable way to start
+                  a process in a folder (the empty-folder dead end is fixed here,
+                  in the header button, and in the empty-state card below). */}
+              <div
+                style={{
+                  display: 'flex',
+                  gap: 6,
+                  padding: '0 0.6rem 0.5rem',
+                  marginBottom: 6,
+                  borderBottom: '1px solid var(--orbitpm-border)'
+                }}
+              >
+                <button
+                  className="orbitpm-lite-chrome-btn"
+                  style={{ flex: 1 }}
+                  onClick={() => void handleNewProcess('')}
+                  title="Create a new process at the workspace root"
+                >
+                  ＋ New process
+                </button>
+                <button
+                  className="orbitpm-lite-chrome-btn"
+                  onClick={() => void handleNewFolder('')}
+                  title="Create a new folder at the workspace root"
+                  aria-label="New folder"
+                >
+                  📁＋
+                </button>
+              </div>
+              {countBpmnFiles(tree) === 0 ? (
+                <EmptyWorkspaceCard
+                  folderName={rootName}
+                  onCreateFirst={() => void handleNewProcess('')}
+                />
+              ) : (
+                <FolderTreeLite
+                  root={tree}
+                  activePath={activeTab?.relPath ?? null}
+                  onOpenFile={(rel) => void openDirectoryFile(rel)}
+                  onNewProcess={(f) => void handleNewProcess(f)}
+                  onNewFolder={(f) => void handleNewFolder(f)}
+                  onRename={(n) => void handleRename(n)}
+                  onDelete={(n) => void handleDelete(n)}
+                />
+              )}
+            </div>
           ) : (
             <div style={{ padding: '0.6rem 0.8rem', fontSize: 12.5, color: 'var(--orbitpm-muted)' }}>
               <p style={{ marginTop: 0 }}>
@@ -571,8 +725,24 @@ function App(): JSX.Element {
               </p>
               <button
                 className="orbitpm-lite-chrome-btn"
+                style={{
+                  width: '100%',
+                  marginBottom: 6,
+                  background: 'var(--orbitpm-accent)',
+                  color: '#fff',
+                  borderColor: 'var(--orbitpm-accent)',
+                  fontWeight: 600
+                }}
+                onClick={() => void handleNewProcessFallback()}
+                title="Create a new named process (Save downloads the file)"
+              >
+                ＋ New process
+              </button>
+              <button
+                className="orbitpm-lite-chrome-btn"
                 style={{ width: '100%', marginBottom: 6 }}
                 onClick={openFileFromDisk}
+                title="Open an existing .bpmn file from disk"
               >
                 Open a .bpmn file…
               </button>
@@ -580,6 +750,7 @@ function App(): JSX.Element {
                 className="orbitpm-lite-chrome-btn"
                 style={{ width: '100%' }}
                 onClick={startBlankDiagram}
+                title="Start an unnamed blank diagram"
               >
                 New blank diagram
               </button>
@@ -637,10 +808,19 @@ function App(): JSX.Element {
 
           <div style={{ position: 'relative', flex: 1, minHeight: 0 }}>
             {tabs.length === 0 && (
-              <div style={{ padding: '1.5rem', opacity: 0.5 }}>
-                {mode === 'directory'
-                  ? 'Select a .bpmn file from the tree to open it, right-click a folder to create one, or generate one with AI.'
-                  : 'Open a .bpmn file or start a new blank diagram.'}
+              <div style={{ padding: '1.5rem', opacity: 0.6, lineHeight: 1.6 }}>
+                {mode === 'directory' ? (
+                  <>
+                    Select a <code>.bpmn</code> file from the tree to open it, or press{' '}
+                    <strong>＋ New process</strong> (top-right or in the sidebar) to start one. You
+                    can also generate a draft with AI.
+                  </>
+                ) : (
+                  <>
+                    Press <strong>＋ New process</strong> to start drawing, or open an existing{' '}
+                    <code>.bpmn</code> file.
+                  </>
+                )}
               </div>
             )}
             {tabs.map((tab) => {
@@ -711,18 +891,30 @@ function App(): JSX.Element {
         <span style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
           {mode === 'directory' ? `📁 ${rootName}` : 'Single-file mode (saving downloads)'}
           {unresolvedCount > 0 && (
-            <span
-              title="Call activities linked to a process id not found in this workspace"
+            <button
+              type="button"
+              onClick={() => {
+                const first = unresolvedLinks[0]
+                if (first) handleOpenCalledProcess(first.calledElement)
+              }}
+              title={
+                mode === 'directory'
+                  ? `Click to create the missing linked process "${unresolvedLinks[0]?.calledElement ?? ''}"`
+                  : 'Call activities linked to a process id not found in this workspace'
+              }
               style={{
                 padding: '0.1rem 0.5rem',
                 borderRadius: 999,
+                border: 'none',
                 background: 'rgba(217,119,6,0.18)',
                 color: '#d97706',
-                fontWeight: 600
+                fontWeight: 600,
+                cursor: mode === 'directory' ? 'pointer' : 'default',
+                font: 'inherit'
               }}
             >
               {unresolvedCount} unresolved link{unresolvedCount === 1 ? '' : 's'}
-            </span>
+            </button>
           )}
         </span>
         <span>Zero-install · runs in your browser</span>

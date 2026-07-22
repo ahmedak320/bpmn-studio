@@ -17,6 +17,8 @@ export interface WorkspacePickerLiteProps {
   onOpenFile?: () => void
   /** Start a brand-new empty diagram without any folder (fallback mode). */
   onNewDiagram?: () => void
+  /** Start the named New-process flow (prompts for a name) — fallback mode. */
+  onNewProcess?: () => void
 }
 
 /**
@@ -35,7 +37,8 @@ export function WorkspacePickerLite({
   onOpenFolder,
   onOpenDifferent,
   onOpenFile,
-  onNewDiagram
+  onNewDiagram,
+  onNewProcess
 }: WorkspacePickerLiteProps): JSX.Element {
   return (
     <div
@@ -96,7 +99,10 @@ export function WorkspacePickerLite({
             desktop app.
           </div>
           <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', justifyContent: 'center' }}>
-            <button className="orbitpm-lite-primary" onClick={onOpenFile}>
+            <button className="orbitpm-lite-primary" onClick={onNewProcess}>
+              ＋ New process
+            </button>
+            <button className="orbitpm-lite-chrome-btn" onClick={onOpenFile}>
               Open a .bpmn file…
             </button>
             <button className="orbitpm-lite-chrome-btn" onClick={onNewDiagram}>

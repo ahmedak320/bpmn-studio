@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import type { ProcessEntry, ProcessIndex } from '../../../shared/processIndex'
 
 export interface LinkPickerProps {
@@ -39,6 +39,20 @@ export function LinkPicker({
     const all = Array.from(index.values()).sort((a, b) => a.processId.localeCompare(b.processId))
     return all.filter((entry) => matches(entry, query))
   }, [index, query])
+
+  // Escape closes the picker (matches the app's other modals). Bound to the
+  // window so it fires regardless of which element inside the dialog has focus.
+  useEffect(() => {
+    if (!open) return
+    const onKeyDown = (event: KeyboardEvent): void => {
+      if (event.key === 'Escape') {
+        event.preventDefault()
+        onClose()
+      }
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [open, onClose])
 
   if (!open) return null
 

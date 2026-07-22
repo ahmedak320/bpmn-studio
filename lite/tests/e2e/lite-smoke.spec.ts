@@ -16,10 +16,10 @@ test.beforeAll(() => {
   )
 })
 
-test('loads self-contained, renders bpmn-js, and exports SVG (fallback mode)', async ({ page }) => {
-  // 1) Record every request. The ONLY load-time request allowed is the main
-  //    document itself; anything else (http/https, or an extra file:// asset)
-  //    would mean the page is not self-contained.
+/** Attach a request recorder that flags any load/runtime request that is not
+ *  the document navigation itself or an inlined data:/blob: URI. Returns the
+ *  live array of offending requests. */
+function recordOffendingRequests(page: import('@playwright/test').Page): string[] {
   const offending: string[] = []
   page.on('request', (req) => {
     const url = req.url()
@@ -27,21 +27,33 @@ test('loads self-contained, renders bpmn-js, and exports SVG (fallback mode)', a
     if (url.startsWith('data:') || url.startsWith('blob:')) return // inlined, not network
     offending.push(`${req.method()} ${url}`)
   })
+  return offending
+}
 
-  // Force the single-file fallback path (the File System Access folder picker
-  // opens a native dialog that can't be automated). Removing showDirectoryPicker
-  // makes directoryPickerSupported() false → the app offers "New blank diagram".
+/** Force the single-file fallback path (the File System Access folder picker
+ *  opens a native dialog that can't be automated). Removing showDirectoryPicker
+ *  makes directoryPickerSupported() false. */
+async function forceFallbackMode(page: import('@playwright/test').Page): Promise<void> {
   await page.addInitScript(() => {
     // @ts-expect-error deleting an optional global for the test
     delete window.showDirectoryPicker
     // @ts-expect-error deleting an optional global for the test
     delete window.showOpenFilePicker
   })
+}
+
+test('loads self-contained, renders bpmn-js, and exports SVG (fallback mode)', async ({ page }) => {
+  // 1) Record every request. The ONLY load-time request allowed is the main
+  //    document itself; anything else would mean the page is not self-contained.
+  const offending = recordOffendingRequests(page)
+  await forceFallbackMode(page)
 
   await page.goto(FILE_URL, { waitUntil: 'load' })
 
-  // 2) Page renders.
+  // 2) Page renders, with the always-present New-process affordance + the quick
+  //    "New blank diagram" path.
   await expect(page.getByRole('heading', { name: 'OrbitPM Process Studio Lite' })).toBeVisible()
+  await expect(page.getByRole('button', { name: /New process/i }).first()).toBeVisible()
   await expect(page.getByRole('button', { name: /New blank diagram/i })).toBeVisible()
 
   // 3) Zero network/sub-resource requests during load — proves self-containment.
@@ -73,6 +85,116 @@ test('loads self-contained, renders bpmn-js, and exports SVG (fallback mode)', a
 
   // 6) Still no stray network requests after interacting.
   expect(offending, `unexpected requests after interaction: ${offending.join(', ')}`).toEqual([])
+})
+
+test('New process flow (fallback): modal → full palette → add a task → undo → export', async ({
+  page
+}) => {
+  const offending = recordOffendingRequests(page)
+  await forceFallbackMode(page)
+  await page.goto(FILE_URL, { waitUntil: 'load' })
+
+  // (a) The New-process button is visible with no file open; clicking it opens
+  //     the name modal.
+  await page.getByRole('button', { name: /New process/i }).first().click()
+  const dialog = page.getByRole('dialog', { name: /New Process/i })
+  await expect(dialog).toBeVisible()
+
+  // Focus management: the input is autofocused + selected, so typing replaces
+  // the suggested name.
+  const input = dialog.getByRole('textbox')
+  await expect(input).toBeFocused()
+  await input.fill('Invoice Approval')
+  await dialog.getByRole('button', { name: 'Create', exact: true }).click()
+
+  // (b) The canvas renders with the start event.
+  const svg = page.locator('.djs-container svg').first()
+  await expect(svg).toBeVisible({ timeout: 20_000 })
+  expect(await page.locator('.djs-container svg circle').count()).toBeGreaterThan(0)
+
+  // The brand-new-diagram hint overlay is shown.
+  await expect(page.getByText('Start drawing')).toBeVisible()
+
+  // (c) Full default palette is present (FIX 2 completeness): events, task,
+  //     gateway, sub-process, pool (participant) and data object.
+  const palette = page.locator('.djs-palette')
+  for (const action of [
+    'create.start-event',
+    'create.end-event',
+    'create.intermediate-event',
+    'create.task',
+    'create.exclusive-gateway',
+    'create.subprocess-expanded',
+    'create.participant-expanded',
+    'create.data-object',
+    'create.data-store'
+  ]) {
+    await expect(palette.locator(`[data-action="${action}"]`)).toBeVisible()
+  }
+
+  // (d) Programmatic modeling via the exposed automation hook, with UI-visible
+  //     effects. Count diagram elements before/after so we don't depend on ids.
+  await page.waitForFunction(() => {
+    const w = window as unknown as { __ORBITPM_LITE__?: { modeler?: unknown } }
+    return !!w.__ORBITPM_LITE__?.modeler
+  })
+  const before = await page.locator('.djs-element').count()
+
+  await page.evaluate(() => {
+    const w = window as unknown as {
+      __ORBITPM_LITE__: { modeler: { get(name: string): unknown } }
+    }
+    const m = w.__ORBITPM_LITE__.modeler
+    const modeling = m.get('modeling') as {
+      createShape(shape: unknown, pos: { x: number; y: number }, parent: unknown): unknown
+    }
+    const elementFactory = m.get('elementFactory') as {
+      createShape(attrs: { type: string }): unknown
+    }
+    const canvas = m.get('canvas') as { getRootElement(): unknown }
+    const task = elementFactory.createShape({ type: 'bpmn:Task' })
+    modeling.createShape(task, { x: 420, y: 220 }, canvas.getRootElement())
+  })
+
+  // UI reflects the change: an extra element, the dirty flag, and the hint gone.
+  await expect(page.locator('.djs-element')).toHaveCount(before + 1)
+  await expect(page.getByText('Unsaved changes')).toBeVisible()
+  await expect(page.getByText('Start drawing')).toHaveCount(0)
+
+  // (e) Keyboard shortcuts work (auto-bound to the focusable canvas SVG in
+  //     bpmn-js 18): focus the canvas and Ctrl+Z undoes the task.
+  await svg.focus()
+  await page.keyboard.press('Control+z')
+  await expect(page.locator('.djs-element')).toHaveCount(before)
+  await expect(page.getByText('Saved')).toBeVisible()
+  // Dismissed hint must NOT reappear now that the diagram is "clean" again.
+  await expect(page.getByText('Start drawing')).toHaveCount(0)
+
+  // (f) Export SVG downloads real content.
+  const [download] = await Promise.all([
+    page.waitForEvent('download'),
+    page.getByRole('button', { name: 'Export SVG' }).click()
+  ])
+  const stream = await download.createReadStream()
+  const chunks: Buffer[] = []
+  for await (const chunk of stream) chunks.push(chunk as Buffer)
+  const out = Buffer.concat(chunks).toString('utf8')
+  expect(out).toContain('<svg')
+  expect(out.length).toBeGreaterThan(500)
+
+  // (g) Everything above ran with zero stray network requests.
+  expect(offending, `unexpected requests: ${offending.join(', ')}`).toEqual([])
+})
+
+test('Escape closes the New-process modal', async ({ page }) => {
+  await forceFallbackMode(page)
+  await page.goto(FILE_URL, { waitUntil: 'load' })
+
+  await page.getByRole('button', { name: /New process/i }).first().click()
+  const dialog = page.getByRole('dialog', { name: /New Process/i })
+  await expect(dialog).toBeVisible()
+  await page.keyboard.press('Escape')
+  await expect(dialog).toHaveCount(0)
 })
 
 test('AI panel documents the browser-only provider limitation', async ({ page }) => {

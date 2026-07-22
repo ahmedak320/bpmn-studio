@@ -9,6 +9,7 @@ import {
   deleteAt,
   renameAt,
   bpmnSlugsIn,
+  countBpmnFiles,
   resolveDir,
   segments,
   joinRel,
@@ -272,6 +273,36 @@ describe('buildTree', () => {
     const sub = findChild(tree, 'Sub')
     expect(sub?.children?.map((c) => c.relPath)).toEqual(['Sub/child.bpmn'])
     expect(findChild(tree, 'ignore.txt')).toBeUndefined()
+  })
+})
+
+describe('countBpmnFiles (drives the empty-state card)', () => {
+  it('returns 0 for a freshly-opened empty folder', async () => {
+    const root = newRoot('Empty')
+    const tree = await buildTree(root, 'Empty')
+    expect(countBpmnFiles(tree)).toBe(0)
+  })
+
+  it('returns 0 when the folder only has non-.bpmn files and empty subfolders', async () => {
+    const root = newRoot()
+    await writeFileAt(root, 'readme.txt', 'x')
+    await createFolderAt(root, '', 'drafts')
+    const tree = await buildTree(root, 'ws')
+    expect(countBpmnFiles(tree)).toBe(0)
+  })
+
+  it('counts every .bpmn file across nested folders', async () => {
+    const root = newRoot()
+    await writeFileAt(root, 'a.bpmn', 'x')
+    await writeFileAt(root, 'sub/b.bpmn', 'x')
+    await writeFileAt(root, 'sub/deep/c.bpmn', 'x')
+    await writeFileAt(root, 'sub/note.md', 'x')
+    const tree = await buildTree(root, 'ws')
+    expect(countBpmnFiles(tree)).toBe(3)
+  })
+
+  it('handles a null tree (workspace not built yet)', () => {
+    expect(countBpmnFiles(null)).toBe(0)
   })
 })
 

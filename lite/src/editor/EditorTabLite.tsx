@@ -67,8 +67,21 @@ interface CommandStackLike {
 }
 
 interface CanvasApiLike {
+  /** No-arg reads the current zoom level; a number sets it; 'fit-viewport' fits. */
+  zoom(): number
   zoom(mode: 'fit-viewport'): void
+  zoom(level: number): void
   viewbox(): { width: number; height: number }
+}
+
+interface ElementLike {
+  type?: string
+  labelTarget?: unknown
+  waypoints?: unknown
+}
+
+interface ElementRegistryLike {
+  getAll(): ElementLike[]
 }
 
 interface EventBusLike {
@@ -83,8 +96,22 @@ interface BpmnModelerLike {
   get(name: 'commandStack'): CommandStackLike
   get(name: 'canvas'): CanvasApiLike
   get(name: 'eventBus'): EventBusLike
+  get(name: 'elementRegistry'): ElementRegistryLike
   destroy(): void
   attachTo(container: HTMLElement): void
+}
+
+/** How many BPMN flow-node shapes (excluding the root process/collaboration,
+ *  labels and connections) a diagram contains — 0/1 marks a brand-new diagram,
+ *  which is when the "drag from the palette" hint overlay is worth showing. */
+function countFlowNodeShapes(registry: ElementRegistryLike): number {
+  return registry.getAll().filter((el) => {
+    const t = el.type
+    if (typeof t !== 'string' || !t.startsWith('bpmn:')) return false
+    if (t === 'bpmn:Process' || t === 'bpmn:Collaboration') return false
+    // Labels carry a labelTarget; connections carry waypoints — neither counts.
+    return el.labelTarget == null && el.waypoints == null
+  }).length
 }
 
 function getStackIndex(modeler: BpmnModelerLike): number {
@@ -119,6 +146,12 @@ export function EditorTab(props: EditorTabProps): JSX.Element {
   const [dirty, setDirty] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
+  // True right after importing a brand-new (empty / start-event-only) diagram —
+  // drives the "drag from the palette" hint overlay. `hintDismissed` latches on
+  // the first edit so the hint never comes back (e.g. it must NOT reappear after
+  // a Save clears the dirty flag over a now-populated diagram).
+  const [isNewDiagram, setIsNewDiagram] = useState(false)
+  const [hintDismissed, setHintDismissed] = useState(false)
 
   const applyDirtyState = useCallback(
     (next: DirtyState) => {
@@ -133,6 +166,20 @@ export function EditorTab(props: EditorTabProps): JSX.Element {
   useEffect(() => {
     if (!canvasContainerRef.current || !propertiesContainerRef.current) return
 
+    // bpmn-js Modeler already ships the full editing stack: the complete palette
+    // (all events/tasks/gateways/sub-process/call-activity/data objects/pool),
+    // context pad, direct label editing (dblclick), copy/paste, snapping +
+    // alignment, ctrl+scroll zoom (ZoomScrollModule) and — since diagram-js 15
+    // (bpmn-js 18) — keyboard shortcuts (undo/redo/copy/paste/delete/select-all)
+    // that AUTO-BIND to the focusable canvas SVG (tabindex=0). The old
+    // `keyboard: { bindTo: document }` option is UNSUPPORTED now (it logs an
+    // error) and, with multiple tabs each holding a live modeler, would let
+    // background diagrams react to a Delete meant for the active one — so it is
+    // deliberately NOT set; the per-canvas auto-binding is both working and
+    // correctly scoped. `additionalModules` only adds what Modeler lacks:
+    // properties panel, searchable create/append (the core module only — the
+    // element-templates variant needs an `elementTemplates` service we do not
+    // configure) and the minimap.
     const modeler = new BpmnModeler({
       container: canvasContainerRef.current,
       propertiesPanel: {
@@ -195,6 +242,10 @@ export function EditorTab(props: EditorTabProps): JSX.Element {
         }
         applyDirtyState(createDirtyState(getStackIndex(modeler)))
         modeler.get('canvas').zoom('fit-viewport')
+        // Show the palette hint only for a freshly-created, near-empty diagram
+        // (nothing but a start event), never when opening a real process file.
+        setIsNewDiagram(countFlowNodeShapes(modeler.get('elementRegistry')) <= 1)
+        setHintDismissed(false)
       })
       .catch((err: unknown) => {
         if (cancelled) return
@@ -236,6 +287,11 @@ export function EditorTab(props: EditorTabProps): JSX.Element {
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
   }, [handleSave])
+
+  // Latch the hint dismissed on the first edit; never bring it back.
+  useEffect(() => {
+    if (dirty) setHintDismissed(true)
+  }, [dirty])
 
   const baseName = exportFileBaseName?.trim() || 'diagram'
 
@@ -284,6 +340,14 @@ export function EditorTab(props: EditorTabProps): JSX.Element {
     modelerRef.current?.get('canvas').zoom('fit-viewport')
   }, [])
 
+  const zoomByFactor = useCallback((factor: number) => {
+    const canvas = modelerRef.current?.get('canvas')
+    if (!canvas) return
+    const current = canvas.zoom()
+    const next = Math.max(0.2, Math.min(4, current * factor))
+    canvas.zoom(next)
+  }, [])
+
   useEffect(() => {
     onCommandsReady?.({
       save: () => void handleSave(),
@@ -305,13 +369,46 @@ export function EditorTab(props: EditorTabProps): JSX.Element {
         >
           {saving ? 'Saving…' : 'Save'}
         </button>
-        <button type="button" className="orbitpm-editor__button" onClick={() => void handleExportSvg()}>
+        <button
+          type="button"
+          className="orbitpm-editor__button"
+          onClick={() => void handleExportSvg()}
+          title="Download the diagram as an SVG vector image"
+        >
           Export SVG
         </button>
-        <button type="button" className="orbitpm-editor__button" onClick={() => void handleExportPng()}>
+        <button
+          type="button"
+          className="orbitpm-editor__button"
+          onClick={() => void handleExportPng()}
+          title="Download the diagram as a PNG image"
+        >
           Export PNG
         </button>
-        <button type="button" className="orbitpm-editor__button" onClick={handleZoomFit}>
+        <button
+          type="button"
+          className="orbitpm-editor__button"
+          onClick={() => zoomByFactor(1 / 1.15)}
+          title="Zoom out"
+          aria-label="Zoom out"
+        >
+          −
+        </button>
+        <button
+          type="button"
+          className="orbitpm-editor__button"
+          onClick={() => zoomByFactor(1.15)}
+          title="Zoom in"
+          aria-label="Zoom in"
+        >
+          ＋
+        </button>
+        <button
+          type="button"
+          className="orbitpm-editor__button"
+          onClick={handleZoomFit}
+          title="Zoom to fit the whole diagram (or Ctrl + mouse-wheel to zoom)"
+        >
           Zoom Fit
         </button>
         <span
@@ -320,14 +417,56 @@ export function EditorTab(props: EditorTabProps): JSX.Element {
               ? 'orbitpm-editor__dirty-flag orbitpm-editor__dirty-flag--dirty'
               : 'orbitpm-editor__dirty-flag'
           }
+          title={dirty ? 'This diagram has changes you have not saved yet' : 'All changes saved'}
         >
-          {dirty ? 'Unsaved changes' : 'Saved'}
+          {dirty ? '● Unsaved changes' : 'Saved'}
         </span>
         {toolbarExtra}
       </div>
       {error ? <div className="orbitpm-editor__error">{error}</div> : null}
       <div className="orbitpm-editor__body">
-        <div ref={canvasContainerRef} className="orbitpm-editor__canvas" />
+        <div style={{ position: 'relative', flex: '1 1 auto', minWidth: 0, display: 'flex' }}>
+          <div ref={canvasContainerRef} className="orbitpm-editor__canvas" />
+          {isNewDiagram && !hintDismissed && (
+            <div
+              // Non-interactive so the palette, canvas and context pad underneath
+              // stay fully usable; it vanishes on the first edit (dirty === true).
+              style={{
+                position: 'absolute',
+                inset: 0,
+                pointerEvents: 'none',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                padding: '1rem'
+              }}
+            >
+              <div
+                style={{
+                  maxWidth: 340,
+                  textAlign: 'center',
+                  padding: '0.9rem 1.1rem',
+                  borderRadius: 10,
+                  background: 'var(--orbitpm-editor-panel-bg)',
+                  border: '1px dashed var(--orbitpm-editor-border)',
+                  color: 'var(--orbitpm-editor-muted-fg)',
+                  boxShadow: '0 4px 18px rgba(0,0,0,0.12)',
+                  fontSize: 13,
+                  lineHeight: 1.5
+                }}
+              >
+                <div style={{ fontSize: 22, marginBottom: 4 }} aria-hidden>
+                  🎨
+                </div>
+                <strong style={{ color: 'var(--orbitpm-editor-fg)' }}>Start drawing</strong>
+                <div style={{ marginTop: 4 }}>
+                  Drag a shape from the palette on the left (or click one) to add it. Double-click
+                  any element to rename it.
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
         <div ref={propertiesContainerRef} className="orbitpm-editor__properties" />
       </div>
     </div>
