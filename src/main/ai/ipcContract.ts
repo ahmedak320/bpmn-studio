@@ -72,6 +72,14 @@ export interface SecretsStatusView {
   providers: { id: ProviderId; configured: boolean }[]
 }
 
+/** Shape of one field's entry in `secrets:getKeys`'s result (mirrors
+ * main/secrets.ts KeyFieldStatus). NEVER carries the decrypted value — only
+ * whether it's set and a last-4-chars hint for the Settings UI. */
+export interface KeyFieldStatusView {
+  configured: boolean
+  last4?: string
+}
+
 /** Progress event pushed on `ai:progress` during a generation. */
 export interface AiProgress {
   stage: 'contacting-model' | 'laying-out' | 'writing-file'

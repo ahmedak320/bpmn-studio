@@ -21,14 +21,29 @@ const NS_BPMNDI = 'http://www.omg.org/spec/BPMN/20100524/DI'
 const NS_DC = 'http://www.omg.org/spec/DD/20100524/DC'
 const NS_DI = 'http://www.omg.org/spec/DD/20100524/DI'
 
+// XML 1.0 only permits #x9 | #xA | #xD | [#x20-#xD7FF] | ... — strip any
+// other C0 control character (\x00-\x08, \x0B, \x0C, \x0E-\x1F) so a
+// model-produced label with a stray control char degrades gracefully
+// (dropped char) instead of producing invalid XML that bpmn-auto-layout /
+// importXML would reject outright. \t \n \r are explicitly kept (and are
+// separately entity-escaped in escapeAttr below).
+const XML_ILLEGAL_CONTROL_CHARS = /[\x00-\x08\x0b\x0c\x0e-\x1f]/g
+
+function stripIllegalXmlChars(text: string): string {
+  return text.replace(XML_ILLEGAL_CONTROL_CHARS, '')
+}
+
 /** Escape element text exactly like ElementTree `_escape_cdata`. */
 function escapeText(text: string): string {
-  return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+  return stripIllegalXmlChars(text)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
 }
 
 /** Escape an attribute value exactly like ElementTree `_escape_attrib`. */
 function escapeAttr(text: string): string {
-  return text
+  return stripIllegalXmlChars(text)
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;')

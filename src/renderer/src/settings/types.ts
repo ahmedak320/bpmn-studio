@@ -19,11 +19,20 @@ export type TestConnectionResult =
   | { ok: true; message: string }
   | { ok: false; message: string }
 
+/** Per-field status for one provider's credential form — NEVER the decrypted
+ * value itself (the app's invariant is that keys never enter the renderer).
+ * `last4` powers a "Configured (****abcd)" placeholder hint. */
+export interface KeyFieldStatus {
+  configured: boolean
+  last4?: string
+}
+
 export interface SettingsHandlers {
   /** Fetch current vault status (encryption availability + per-provider configured flag). */
   onGetStatus: () => Promise<SettingsStatus>
-  /** Fetch current (decrypted) field values for one provider, to prefill the form. */
-  onGetKeys: (providerId: ProviderId) => Promise<Record<string, string>>
+  /** Fetch per-field configured/last4 status for one provider (write-only
+   * fields — the form never receives a decryptable value back). */
+  onGetKeys: (providerId: ProviderId) => Promise<Record<string, KeyFieldStatus>>
   /** Persist one or more fields for a provider. */
   onSetKey: (providerId: ProviderId, fields: Record<string, string>) => Promise<void>
   /** Clear all stored fields for a provider. */

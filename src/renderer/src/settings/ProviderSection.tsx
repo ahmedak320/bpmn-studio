@@ -1,15 +1,16 @@
 import { useEffect, useState } from 'react'
 import type { ProviderSpec } from '../../../shared/providers'
-import type { SettingsHandlers, TestConnectionResult } from './types'
+import type { KeyFieldStatus, SettingsHandlers, TestConnectionResult } from './types'
 
 interface ProviderSectionProps extends SettingsHandlers {
   spec: ProviderSpec
   configured: boolean
 }
 
-/** One provider's card in the Settings modal: key/config fields (masked for
- * secrets), model picker (or free-text for Azure/GLM), save/clear, and an
- * optional "Test connection" slot whose handler lands in wave C1. */
+/** One provider's card in the Settings modal: write-only key/config fields
+ * (masked for secrets, never prefilled with the stored value — only a
+ * "Configured (****abcd)" placeholder hint), model picker (or free-text for
+ * Azure/GLM), save/clear, and an optional "Test connection" slot. */
 export function ProviderSection({
   spec,
   configured,
@@ -18,9 +19,11 @@ export function ProviderSection({
   onDeleteKey,
   onTestConnection
 }: ProviderSectionProps): JSX.Element {
+  // What the user has typed THIS session — never prefilled from the vault.
   const [fields, setFields] = useState<Record<string, string>>({})
+  // Per-field configured/last4 status, fetched from the vault (no values).
+  const [keyStatus, setKeyStatus] = useState<Record<string, KeyFieldStatus>>({})
   const [modelId, setModelId] = useState<string>(spec.models[0]?.id ?? '')
-  const [revealed, setRevealed] = useState<Record<string, boolean>>({})
   const [status, setStatus] = useState<'idle' | 'saving' | 'saved' | 'error' | 'testing'>('idle')
   const [testResult, setTestResult] = useState<TestConnectionResult | null>(null)
   const [loaded, setLoaded] = useState(false)
@@ -29,11 +32,7 @@ export function ProviderSection({
     let cancelled = false
     onGetKeys(spec.id).then((existing) => {
       if (cancelled) return
-      const withDefaults: Record<string, string> = {}
-      for (const f of spec.keyFields) {
-        withDefaults[f.name] = existing[f.name] ?? f.defaultValue ?? ''
-      }
-      setFields(withDefaults)
+      setKeyStatus(existing)
       setLoaded(true)
     })
     return () => {
@@ -50,7 +49,17 @@ export function ProviderSection({
   async function handleSave(): Promise<void> {
     setStatus('saving')
     try {
-      await onSetKey(spec.id, fields)
+      // Only send fields the user actually typed into this session — a
+      // blank input must never overwrite an already-configured value.
+      const toSend: Record<string, string> = {}
+      for (const f of spec.keyFields) {
+        const value = fields[f.name]
+        if (value) toSend[f.name] = value
+      }
+      await onSetKey(spec.id, toSend)
+      const refreshed = await onGetKeys(spec.id)
+      setKeyStatus(refreshed)
+      setFields({})
       setStatus('saved')
     } catch {
       setStatus('error')
@@ -61,9 +70,8 @@ export function ProviderSection({
     setStatus('saving')
     try {
       await onDeleteKey(spec.id)
-      const cleared: Record<string, string> = {}
-      for (const f of spec.keyFields) cleared[f.name] = f.defaultValue ?? ''
-      setFields(cleared)
+      setFields({})
+      setKeyStatus({})
       setTestResult(null)
       setStatus('saved')
     } catch {
@@ -98,31 +106,26 @@ export function ProviderSection({
       <p className="settings-provider__desc">{spec.description}</p>
 
       <div className="settings-provider__fields">
-        {spec.keyFields.map((field) => (
-          <label key={field.name} className="settings-field">
-            <span>{field.label}</span>
-            <div className="settings-field__input-row">
-              <input
-                type={field.kind === 'secret' && !revealed[field.name] ? 'password' : 'text'}
-                value={fields[field.name] ?? ''}
-                placeholder={field.placeholder}
-                autoComplete="off"
-                onChange={(e) => updateField(field.name, e.target.value)}
-              />
-              {field.kind === 'secret' && (
-                <button
-                  type="button"
-                  className="settings-field__reveal"
-                  onClick={() =>
-                    setRevealed((prev) => ({ ...prev, [field.name]: !prev[field.name] }))
-                  }
-                >
-                  {revealed[field.name] ? 'Hide' : 'Show'}
-                </button>
-              )}
-            </div>
-          </label>
-        ))}
+        {spec.keyFields.map((field) => {
+          const stored = keyStatus[field.name]
+          const placeholder = stored?.configured
+            ? `Configured (****${stored.last4 ?? ''})`
+            : field.placeholder
+          return (
+            <label key={field.name} className="settings-field">
+              <span>{field.label}</span>
+              <div className="settings-field__input-row">
+                <input
+                  type={field.kind === 'secret' ? 'password' : 'text'}
+                  value={fields[field.name] ?? ''}
+                  placeholder={placeholder}
+                  autoComplete="off"
+                  onChange={(e) => updateField(field.name, e.target.value)}
+                />
+              </div>
+            </label>
+          )
+        })}
 
         {spec.models.length > 0 && (
           <label className="settings-field">

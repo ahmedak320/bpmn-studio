@@ -59,8 +59,28 @@ function createWindow(): void {
   })
 
   mainWindow.webContents.setWindowOpenHandler((details) => {
-    shell.openExternal(details.url)
+    // Only ever hand http(s) URLs to the OS default browser; deny (and never
+    // shell-open) anything else (file:, javascript:, custom schemes, ...).
+    if (details.url.startsWith('http://') || details.url.startsWith('https://')) {
+      shell.openExternal(details.url)
+    }
     return { action: 'deny' }
+  })
+
+  // Block top-level navigation away from the app's own loaded page (dev
+  // server URL or the packaged renderer/index.html) — defense in depth so a
+  // navigated-away page could never inherit the preload's window.orbitpm API.
+  const isOwnOrigin = (url: string): boolean => {
+    if (process.env.ELECTRON_RENDERER_URL && url.startsWith(process.env.ELECTRON_RENDERER_URL)) {
+      return true
+    }
+    return url.startsWith('file://')
+  }
+  mainWindow.webContents.on('will-navigate', (event, url) => {
+    if (!isOwnOrigin(url)) event.preventDefault()
+  })
+  mainWindow.webContents.on('will-redirect', (event, url) => {
+    if (!isOwnOrigin(url)) event.preventDefault()
   })
 
   // --- IPC registrations -----------------------------------------------

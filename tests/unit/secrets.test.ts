@@ -36,11 +36,19 @@ describe('secrets vault', () => {
     await rm(userDataDir, { recursive: true, force: true })
   })
 
-  it('round-trips a key through set/get when encryption is available', async () => {
+  it('getKeys never returns the decrypted value — only configured + last4', async () => {
     const secrets = await import('../../src/main/secrets')
     await secrets.setKey('openai', { apiKey: 'sk-test-123' })
     const keys = await secrets.getKeys('openai')
-    expect(keys.apiKey).toBe('sk-test-123')
+    expect(keys.apiKey).toEqual({ configured: true, last4: '-123' })
+    expect(JSON.stringify(keys)).not.toContain('sk-test-123')
+  })
+
+  it('round-trips the actual value through getAllKeys (main-process-only, not IPC-exposed)', async () => {
+    const secrets = await import('../../src/main/secrets')
+    await secrets.setKey('openai', { apiKey: 'sk-test-123' })
+    const all = await secrets.getAllKeys()
+    expect(all.openai?.apiKey).toBe('sk-test-123')
   })
 
   it('reports configured=true only once required fields are set', async () => {
@@ -72,6 +80,8 @@ describe('secrets vault', () => {
     await secrets.deleteKey('anthropic')
     const keys = await secrets.getKeys('anthropic')
     expect(keys.apiKey).toBeUndefined()
+    const all = await secrets.getAllKeys()
+    expect(all.anthropic?.apiKey).toBeUndefined()
     const status = await secrets.getStatus()
     expect(status.providers.find((p) => p.id === 'anthropic')?.configured).toBe(false)
   })
@@ -85,7 +95,7 @@ describe('secrets vault', () => {
     expect(status.encryptionAvailable).toBe(false)
 
     const keys = await secrets.getKeys('deepseek')
-    expect(keys.apiKey).toBe('ds-plain')
+    expect(keys.apiKey).toEqual({ configured: true, last4: 'lain' })
 
     const raw = await (await import('node:fs/promises')).readFile(
       join(userDataDir, 'secrets.json'),
@@ -93,6 +103,14 @@ describe('secrets vault', () => {
     )
     expect(raw).toContain('ds-plain')
     expect(raw).not.toContain('ENC:')
+  })
+
+  it('writes the vault file with mode 0o600', async () => {
+    const secrets = await import('../../src/main/secrets')
+    await secrets.setKey('openai', { apiKey: 'sk-test-123' })
+    const { stat } = await import('node:fs/promises')
+    const st = await stat(join(userDataDir, 'secrets.json'))
+    expect(st.mode & 0o777).toBe(0o600)
   })
 
   it('getAllKeys returns decrypted fields for every stored provider', async () => {

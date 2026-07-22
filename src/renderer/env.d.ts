@@ -71,9 +71,16 @@ interface AiProgressIpc {
   detail?: string
 }
 
+/** Per-field status returned by settings.getKeys — NEVER the decrypted value
+ * itself, only whether it's set and a last-4-chars hint for the UI. */
+interface KeyFieldStatusIpc {
+  configured: boolean
+  last4?: string
+}
+
 interface SettingsApi {
   getStatus: () => Promise<SecretsStatusView>
-  getKeys: (providerId: string) => Promise<Record<string, string>>
+  getKeys: (providerId: string) => Promise<Record<string, KeyFieldStatusIpc>>
   setKey: (providerId: string, fields: Record<string, string>) => Promise<void>
   deleteKey: (providerId: string) => Promise<void>
 }

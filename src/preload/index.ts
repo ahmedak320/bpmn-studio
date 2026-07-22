@@ -12,6 +12,7 @@ import {
   type AvailableProviderInfo,
   type GenerateRequest,
   type GenerateResult,
+  type KeyFieldStatusView,
   type SecretsStatusView,
   type TestConnectionResult
 } from '../main/ai/ipcContract'
@@ -62,7 +63,7 @@ const workspace = {
 // Settings modal's `SettingsHandlers` from these.
 const settings = {
   getStatus: (): Promise<SecretsStatusView> => ipcRenderer.invoke(SECRETS_CHANNELS.getStatus),
-  getKeys: (providerId: ProviderId): Promise<Record<string, string>> =>
+  getKeys: (providerId: ProviderId): Promise<Record<string, KeyFieldStatusView>> =>
     ipcRenderer.invoke(SECRETS_CHANNELS.getKeys, providerId),
   setKey: (providerId: ProviderId, fields: Record<string, string>): Promise<void> =>
     ipcRenderer.invoke(SECRETS_CHANNELS.setKey, providerId, fields),

@@ -53,12 +53,14 @@ async function readStore(): Promise<SecretsFile> {
   }
 }
 
-/** Atomic write (temp + rename) so a crash mid-write can't corrupt the vault. */
+/** Atomic write (temp + rename) so a crash mid-write can't corrupt the vault.
+ * Written with mode 0o600 (owner read/write only) — belt-and-suspenders on
+ * top of OS ACLs, in particular for the plaintext-fallback path. */
 async function writeStore(store: SecretsFile): Promise<void> {
   const target = secretsPath()
   await mkdir(dirname(target), { recursive: true })
   const tmp = `${target}.${process.pid}.tmp`
-  await writeFile(tmp, JSON.stringify(store, null, 2), 'utf8')
+  await writeFile(tmp, JSON.stringify(store, null, 2), { encoding: 'utf8', mode: 0o600 })
   await rename(tmp, target)
 }
 
@@ -113,13 +115,28 @@ export async function getStatus(): Promise<SecretsStatus> {
   return { encryptionAvailable: store.encryptionAvailable, providers }
 }
 
-/** Decrypted field values for one provider (empty object if none stored). */
-export async function getKeys(providerId: ProviderId): Promise<Record<string, string>> {
+/** Per-field status for one provider — NEVER the decrypted value itself.
+ * Renderer-facing (secrets:getKeys IPC): the app's stated invariant is that
+ * keys never enter the renderer, so the Settings UI can only learn whether a
+ * field is set and, for a UX hint, its last 4 characters. */
+export interface KeyFieldStatus {
+  configured: boolean
+  /** Last 4 characters of the stored value, for a "Configured (****abcd)" hint. */
+  last4?: string
+}
+
+/** Per-field configured/last4 status for one provider (empty object if none
+ * stored). Decrypts internally only to compute `last4` — the plaintext value
+ * itself is never returned. */
+export async function getKeys(providerId: ProviderId): Promise<Record<string, KeyFieldStatus>> {
   const store = await readStore()
   const fields = store.providers[providerId] ?? {}
-  const out: Record<string, string> = {}
+  const out: Record<string, KeyFieldStatus> = {}
   for (const [name, value] of Object.entries(fields)) {
-    out[name] = decryptField(value, store.encryptionAvailable)
+    const decrypted = decryptField(value, store.encryptionAvailable)
+    out[name] = decrypted
+      ? { configured: true, last4: decrypted.slice(-4) }
+      : { configured: false }
   }
   return out
 }
