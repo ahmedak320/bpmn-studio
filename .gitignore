@@ -9,3 +9,8 @@ npm-debug.log*
 # electron-builder / electron-vite artifacts
 release/
 build/
+
+# playwright-electron e2e artifacts (screenshots/traces on failure) + caches
+tests/e2e/artifacts/
+test-results/
+playwright-report/

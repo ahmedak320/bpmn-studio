@@ -11,6 +11,15 @@ import { THEME_CHANNELS } from './themeContract'
 const isSmokeTest = process.argv.includes('--smoke-test')
 const __dirname = fileURLToPath(new URL('.', import.meta.url))
 
+// E2E test hook (gated, no production effect): let the Playwright suite redirect
+// Electron's userData directory to a per-run temp dir so each test is isolated
+// (its own workspace-settings.json, secrets vault, logs). Must run before the
+// single-instance lock (whose lock file lives in userData) and before ready.
+// When ORBITPM_USERDATA is unset, this is a no-op and behavior is unchanged.
+if (process.env.ORBITPM_USERDATA) {
+  app.setPath('userData', process.env.ORBITPM_USERDATA)
+}
+
 // Single-instance lock: focus the existing window on relaunch (e.g. via .bpmn
 // file-association double-click) instead of spawning a second app instance.
 const gotLock = app.requestSingleInstanceLock()
@@ -27,7 +36,10 @@ function createWindow(): void {
     show: false,
     autoHideMenuBar: true,
     webPreferences: {
-      preload: join(__dirname, '../preload/index.mjs'),
+      // CommonJS preload (index.cjs) — required because the renderer is
+      // sandboxed; a sandboxed renderer cannot load an ESM preload. The
+      // electron.vite.config.ts preload build emits `.cjs` to match.
+      preload: join(__dirname, '../preload/index.cjs'),
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: true

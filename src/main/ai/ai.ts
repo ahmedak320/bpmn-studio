@@ -26,6 +26,10 @@ import { writeFileText, createFolder } from '../workspace/fsOps'
 import { resolveWithinRoot } from '../workspace/pathGuard'
 import { SettingsStore } from '../workspace/settingsStore'
 import { bridgeCallLLM, classifyError } from './adapter'
+// E2E-only fake-LLM hook (see fakeLlm.ts). All three helpers are inert unless
+// ORBITPM_E2E_FAKE_LLM is set; they let the Playwright suite exercise the AI
+// path with no network/keys. Nothing else in this file's real behavior changes.
+import { isFakeLlmEnabled, makeFakeCallLLM, fakeAvailableProviders } from './fakeLlm'
 import {
   AI_CHANNELS,
   PROVIDER_CHANNELS,
@@ -130,7 +134,11 @@ async function handleGenerate(
 
   try {
     sendProgress(win, { stage: 'contacting-model' })
-    const call = bridgeCallLLM(makeCallLLM(req.providerId, req.modelId), onResult)
+    // E2E fake-LLM hook: when enabled, bypass the real provider and return a
+    // deterministic fixture IR chosen by a [fixture:NAME] marker in `description`.
+    const call = isFakeLlmEnabled()
+      ? makeFakeCallLLM(description)
+      : bridgeCallLLM(makeCallLLM(req.providerId, req.modelId), onResult)
     const { layoutedXml } = await generateFromDescription(call, description)
 
     sendProgress(win, { stage: 'writing-file' })
@@ -194,8 +202,11 @@ export function registerAiIpc(mainWindow: BrowserWindow): void {
     secrets.deleteKey(providerId)
   )
 
-  // Provider registry (B4).
-  ipcMain.handle(PROVIDER_CHANNELS.available, () => availableProviders())
+  // Provider registry (B4). E2E fake-LLM hook: report a single fake-configured
+  // provider so the AI panel enables without any real keys (gated on the env var).
+  ipcMain.handle(PROVIDER_CHANNELS.available, () =>
+    isFakeLlmEnabled() ? fakeAvailableProviders() : availableProviders()
+  )
 
   // AI (this lane).
   ipcMain.handle(AI_CHANNELS.generate, (_e: IpcMainInvokeEvent, req: GenerateRequest) =>

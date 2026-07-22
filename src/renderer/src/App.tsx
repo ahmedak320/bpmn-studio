@@ -46,7 +46,9 @@ function App(): JSX.Element {
   // Cross-process linking: workspace-wide processId -> file index, and the
   // live bpmn-js modeler of whichever tab is active (for the call-activity
   // link button + the unresolved-link status-bar badge).
-  const { index: processIndex } = useProcessIndex(window.orbitpm?.workspace ?? null)
+  const { index: processIndex, refresh: refreshProcessIndex } = useProcessIndex(
+    window.orbitpm?.workspace ?? null
+  )
   // Every mounted tab reports its live modeler instance here (keyed by
   // relPath) as it's created/destroyed; `activeModeler` below just looks up
   // whichever entry belongs to the currently-active tab. State (not a ref)
@@ -91,11 +93,18 @@ function App(): JSX.Element {
   useEffect(() => {
     if (!root) return
     refreshTree()
+    // The process index (link picker / drill-down / unresolved badge) builds on
+    // mount inside useProcessIndex, but that effect runs before the workspace
+    // root is resolved, and the fs watcher uses `ignoreInitial` so no
+    // tree-changed event fires for pre-existing files. Without this the index
+    // would stay empty until the first on-disk change. Rebuild it now that the
+    // root is known.
+    refreshProcessIndex()
     const unsubscribe = window.orbitpm.workspace.onTreeChanged(() => {
       refreshTree()
     })
     return unsubscribe
-  }, [root, refreshTree])
+  }, [root, refreshTree, refreshProcessIndex])
 
   // Mark a tab as mounted once it first becomes active, so switching away and
   // back preserves the live bpmn-js modeler (and its undo history) instead of

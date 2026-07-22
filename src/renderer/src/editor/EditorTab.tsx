@@ -4,10 +4,12 @@ import {
   BpmnPropertiesPanelModule,
   BpmnPropertiesProviderModule
 } from 'bpmn-js-properties-panel'
-import {
-  CreateAppendAnythingModule,
-  CreateAppendElementTemplatesModule
-} from 'bpmn-js-create-append-anything'
+// NOTE: only the core CreateAppendAnythingModule is used. The package's
+// CreateAppendElementTemplatesModule requires an `elementTemplates` service
+// (from bpmn-js-element-templates), which this app does not configure —
+// including it makes bpmn-js throw `No provider for "elementTemplates"!` on
+// every modeler mount, crashing the editor. This app has no element templates.
+import { CreateAppendAnythingModule } from 'bpmn-js-create-append-anything'
 // eslint-disable-next-line import/no-named-as-default -- diagram-js-minimap's default export is the module descriptor
 import minimapModule from 'diagram-js-minimap'
 
@@ -143,7 +145,6 @@ export function EditorTab(props: EditorTabProps): JSX.Element {
         BpmnPropertiesPanelModule,
         BpmnPropertiesProviderModule,
         CreateAppendAnythingModule,
-        CreateAppendElementTemplatesModule,
         minimapModule
       ]
     }) as unknown as BpmnModelerLike
