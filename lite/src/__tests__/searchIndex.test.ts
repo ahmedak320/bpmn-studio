@@ -109,6 +109,53 @@ describe('searchWorkspace', () => {
   })
 })
 
+// One file, TWO processes — the case the emission bug inflated: a query hitting
+// only ONE process's name/id used to emit BOTH (Codex MINOR).
+const MULTI_XML = `<bpmn:definitions xmlns:bpmn="x">
+  <bpmn:process id="Process_alpha" name="Alpha Approval">
+    <bpmn:task id="t1" name="Review request" />
+  </bpmn:process>
+  <bpmn:process id="Process_beta" name="Beta Onboarding">
+    <bpmn:task id="t2" name="Send welcome" />
+  </bpmn:process>
+</bpmn:definitions>`
+
+describe('searchWorkspace per-process attribution (multi-process file)', () => {
+  const index = buildSearchIndex([{ relPath: 'Ops/combo.bpmn', xml: MULTI_XML }])
+
+  it('emits ONLY the process whose own name matched (not its sibling)', () => {
+    const groups = searchWorkspace(index, 'alpha')
+    expect(countHits(groups)).toBe(1)
+    const hit = groups[0].hits[0]
+    expect(hit.processId).toBe('Process_alpha')
+    expect(hit.matchedOn).toBe('name')
+  })
+
+  it('emits ONLY the process whose own id matched', () => {
+    const groups = searchWorkspace(index, 'process_beta')
+    expect(countHits(groups)).toBe(1)
+    expect(groups[0].hits[0].processId).toBe('Process_beta')
+    expect(groups[0].hits[0].matchedOn).toBe('id')
+  })
+
+  it('a name term unique to one process never drags in the other', () => {
+    const groups = searchWorkspace(index, 'onboarding')
+    expect(countHits(groups)).toBe(1)
+    expect(groups[0].hits[0].processId).toBe('Process_beta')
+  })
+
+  it('a file-level content match applies to every process in the file', () => {
+    // "request" is an element label (file-level content, not a process name/id),
+    // so both processes in the file are legitimately in scope and attributed to
+    // content — distinct from the per-process name/id bug fixed above.
+    const groups = searchWorkspace(index, 'request')
+    expect(countHits(groups)).toBe(2)
+    expect(groups[0].hits.every((h) => h.matchedOn === 'content')).toBe(true)
+    // Both ids share the "process_" prefix → both emit, attributed to id.
+    expect(countHits(searchWorkspace(index, 'process_'))).toBe(2)
+  })
+})
+
 describe('queryTerms', () => {
   it('lowercases and splits on whitespace, dropping empties', () => {
     expect(queryTerms('  Order   Stock ')).toEqual(['order', 'stock'])

@@ -26,13 +26,15 @@ import {
   readFileAt,
   writeFileAt,
   createFolderAt,
-  createBpmnFileAt,
+  createBpmnFileUnique,
   deleteAt,
   renameAt,
   moveAt,
   countDirEntries,
   bpmnSlugsIn,
   countBpmnFiles,
+  hasPathSeparator,
+  ensureBpmnExtension,
   dirOf,
   joinRel,
   type LiteTreeNode,
@@ -72,6 +74,9 @@ import {
 import { folderCrumbs } from './workspace/breadcrumb'
 import { Toaster, type ToastMsg, type ToastTone } from './workspace/Toaster'
 import { ConfirmDialog } from './workspace/ConfirmDialog'
+import { UnsavedSwitchDialog } from './workspace/UnsavedSwitchDialog'
+import { createMutex } from './workspace/mutex'
+import { createRefreshGuard, canCommitToWorkspace } from './workspace/workspaceSession'
 import { MoveDialog } from './workspace/MoveDialog'
 import { PrintButton } from './workspace/PrintButton'
 import { PrintView, type PrintJob } from './workspace/PrintView'
@@ -88,6 +93,10 @@ interface Tab {
   title: string
   /** workspace-relative path in directory mode; null for a virtual/fallback tab. */
   relPath: string | null
+  /** Workspace generation this tab was opened under. A save is refused unless it
+   *  still matches the live generation, so a tab from a previous folder can
+   *  never write through the new root handle after a switch (Codex CRITICAL-1). */
+  gen: number
 }
 
 interface DeleteState {
@@ -153,6 +162,14 @@ function App(): JSX.Element {
   const commandsRef = useRef<Record<string, EditorTabCommands | null>>({})
   const virtualCounter = useRef(0)
 
+  // Data-safety plumbing (Codex C1 / M3 / M8).
+  const workspaceGenRef = useRef(0) // bumped on every folder switch (tab-write guard)
+  const rootHandleRef = useRef<FileSystemDirectoryHandle | null>(null) // sync mirror for async guards
+  const refreshGuardRef = useRef(createRefreshGuard()) // discards stale/out-of-order scans
+  const opMutexRef = useRef(createMutex()) // serializes create / import / AI-place writes
+  const [switchGuard, setSwitchGuard] = useState<{ count: number } | null>(null)
+  const switchResolveRef = useRef<((choice: 'save' | 'discard' | 'cancel') => void) | null>(null)
+
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [aiCollapsed, setAiCollapsed] = useState(false)
   const [keysVersion, setKeysVersion] = useState(0)
@@ -187,16 +204,42 @@ function App(): JSX.Element {
   // --- workspace lifecycle -------------------------------------------------
 
   const refreshWorkspace = useCallback(async (handle: FileSystemDirectoryHandle) => {
+    // Each scan claims a token; a slower earlier scan (or one begun before a
+    // folder switch) is discarded rather than overwriting a newer/other one.
+    const token = refreshGuardRef.current.begin()
     const [nextTree, scanned] = await Promise.all([
       buildTree(handle, handle.name),
       scanWorkspaceFiles(handle)
     ])
+    if (!refreshGuardRef.current.shouldCommit(token, handle, rootHandleRef.current)) return
     setTree(nextTree)
     setFiles(scanned)
   }, [])
 
   const activateWorkspace = useCallback(
     async (handle: FileSystemDirectoryHandle) => {
+      // New session: bump the generation (invalidates every stale tab's save)
+      // and update the sync handle mirror BEFORE any async scan can commit.
+      workspaceGenRef.current += 1
+      rootHandleRef.current = handle
+      // Full reset BEFORE the new scan so no tab / tree / index / dirty flag /
+      // modeler from the previous folder survives the switch (Codex CRITICAL-1).
+      setTree(null)
+      setFiles([])
+      setTabs([])
+      setActiveKey(null)
+      setContents({})
+      setDirtyByKey({})
+      setModelersByKey({})
+      setMounted(new Set())
+      commandsRef.current = {}
+      setSearch('')
+      setSearchOpen(false)
+      setCatalogOpen(false)
+      setMoveTarget(null)
+      setDeleteTarget(null)
+      setUnresolvedOpen(false)
+      setHistory(emptyHistory())
       setRootHandle(handle)
       setRootName(handle.name)
       setMode('directory')
@@ -251,6 +294,80 @@ function App(): JSX.Element {
     }
   }, [support, activateWorkspace])
 
+  // Manual "Refresh" (tree header): re-scan the folder for changes made outside
+  // the app. The refresh guard makes concurrent/stale scans safe (Codex M7/M8).
+  const handleManualRefresh = useCallback(async () => {
+    const h = rootHandleRef.current
+    if (!h) return
+    await refreshWorkspace(h)
+    pushToast(t('toast.refreshed'), 'info')
+  }, [refreshWorkspace, pushToast])
+
+  // Auto-refresh on window focus / tab visibility, debounced 2s, so external
+  // filesystem changes (files added/edited/deleted outside the app) don't leave
+  // the tree, search, catalog and links stale indefinitely (Codex MAJOR-7-lite).
+  useEffect(() => {
+    if (mode !== 'directory') return
+    let timer: ReturnType<typeof setTimeout> | undefined
+    const schedule = (): void => {
+      if (typeof document !== 'undefined' && document.visibilityState === 'hidden') return
+      if (timer) clearTimeout(timer)
+      timer = setTimeout(() => {
+        const h = rootHandleRef.current
+        if (h) void refreshWorkspace(h)
+      }, 2000)
+    }
+    window.addEventListener('focus', schedule)
+    document.addEventListener('visibilitychange', schedule)
+    return () => {
+      if (timer) clearTimeout(timer)
+      window.removeEventListener('focus', schedule)
+      document.removeEventListener('visibilitychange', schedule)
+    }
+  }, [mode, refreshWorkspace])
+
+  // Save every dirty directory-mode tab through the CURRENT root handle (called
+  // before a folder switch, while the old handle is still active).
+  const saveAllDirty = useCallback(async () => {
+    for (const tab of tabs) {
+      if (!dirtyByKey[tab.key] || !tab.relPath || !rootHandle) continue
+      const modeler = modelersByKey[tab.key] as
+        | { saveXML?: (o: { format: boolean }) => Promise<{ xml?: string }> }
+        | undefined
+      if (!modeler?.saveXML) continue
+      const { xml } = await modeler.saveXML({ format: true })
+      if (xml) await writeFileAt(rootHandle, tab.relPath, xml)
+    }
+  }, [tabs, dirtyByKey, modelersByKey, rootHandle])
+
+  const resolveSwitch = useCallback((choice: 'save' | 'discard' | 'cancel') => {
+    setSwitchGuard(null)
+    const r = switchResolveRef.current
+    switchResolveRef.current = null
+    r?.(choice)
+  }, [])
+
+  // Gate a folder switch on unsaved work. Returns true to proceed, false to
+  // abort (keep the current folder). Prompts ONCE for all dirty tabs.
+  const guardWorkspaceSwitch = useCallback(async (): Promise<boolean> => {
+    const dirtyCount = tabs.filter((tb) => dirtyByKey[tb.key]).length
+    if (dirtyCount === 0) return true
+    const choice = await new Promise<'save' | 'discard' | 'cancel'>((resolve) => {
+      switchResolveRef.current = resolve
+      setSwitchGuard({ count: dirtyCount })
+    })
+    if (choice === 'cancel') return false
+    if (choice === 'save') {
+      try {
+        await saveAllDirty()
+      } catch (err) {
+        pushToast(t('alert.saveAll.failed', { error: errMsg(err) }), 'error')
+        return false
+      }
+    }
+    return true
+  }, [tabs, dirtyByKey, saveAllDirty, pushToast])
+
   const handleOpenFolder = useCallback(async () => {
     setPickBusy(true)
     setPickError(null)
@@ -262,13 +379,16 @@ function App(): JSX.Element {
         setPickError(t('alert.permissionNotGranted.open'))
         return
       }
+      // Prompt for unsaved work BEFORE we reset state onto the new folder.
+      const proceed = await guardWorkspaceSwitch()
+      if (!proceed) return
       await activateWorkspace(handle)
     } catch (err) {
       setPickError(errMsg(err))
     } finally {
       setPickBusy(false)
     }
-  }, [activateWorkspace])
+  }, [activateWorkspace, guardWorkspaceSwitch])
 
   const handleReconnect = useCallback(async () => {
     const handle = rememberedRef.current
@@ -312,7 +432,11 @@ function App(): JSX.Element {
     async (relPath: string) => {
       const key = relPath
       setCatalogOpen(false)
-      setTabs((prev) => (prev.some((t) => t.key === key) ? prev : [...prev, { key, title: baseName(relPath), relPath }]))
+      setTabs((prev) =>
+        prev.some((t) => t.key === key)
+          ? prev
+          : [...prev, { key, title: baseName(relPath), relPath, gen: workspaceGenRef.current }]
+      )
       setActiveKey(key)
       if (contents[key] !== undefined) return
       if (!rootHandle) return
@@ -330,7 +454,7 @@ function App(): JSX.Element {
   const openVirtualTab = useCallback((title: string, xml: string) => {
     const key = `virtual:${++virtualCounter.current}`
     setCatalogOpen(false)
-    setTabs((prev) => [...prev, { key, title, relPath: null }])
+    setTabs((prev) => [...prev, { key, title, relPath: null, gen: workspaceGenRef.current }])
     setContents((prev) => ({ ...prev, [key]: xml }))
     setActiveKey(key)
   }, [])
@@ -381,13 +505,19 @@ function App(): JSX.Element {
   const handleRequestSave = useCallback(
     async (tab: Tab, xml: string) => {
       if (tab.relPath && rootHandle) {
+        // Refuse a write from a tab whose workspace was switched out from under
+        // it — otherwise it would land its relative path in the WRONG folder.
+        if (!canCommitToWorkspace(tab.gen, workspaceGenRef.current)) {
+          pushToast(t('alert.staleWrite'), 'error')
+          return
+        }
         await writeFileAt(rootHandle, tab.relPath, xml)
         await refreshWorkspace(rootHandle)
       } else {
         downloadBpmn(tab.title.endsWith('.bpmn') ? tab.title : `${tab.title}.bpmn`, xml)
       }
     },
-    [rootHandle, refreshWorkspace]
+    [rootHandle, refreshWorkspace, pushToast]
   )
 
   // --- derived data (single source: `files`) ------------------------------
@@ -441,11 +571,15 @@ function App(): JSX.Element {
         hint: t('dialog.createMissingProcess.hint', { calledElementId })
       })
       if (!name) return
-      const taken = await bpmnSlugsIn(rootHandle, '')
-      const slug = dedupeSlug(deriveFileBaseName(name || calledElementId), (c) => taken.has(c.toLowerCase()))
-      const doc = buildMissingProcessDoc(calledElementId, name, slug)
       try {
-        const relPath = await createBpmnFileAt(rootHandle, '', doc.fileBaseName, doc.xml)
+        const relPath = await opMutexRef.current.runExclusive(async () => {
+          const taken = await bpmnSlugsIn(rootHandle, '')
+          const slug = dedupeSlug(deriveFileBaseName(name || calledElementId), (c) =>
+            taken.has(c.toLowerCase())
+          )
+          const doc = buildMissingProcessDoc(calledElementId, name, slug)
+          return createBpmnFileUnique(rootHandle, '', doc.fileBaseName, doc.xml)
+        })
         await refreshWorkspace(rootHandle)
         void openDirectoryFile(relPath)
       } catch (err) {
@@ -484,11 +618,13 @@ function App(): JSX.Element {
         hint: t('dialog.newProcess.hint.directory')
       })
       if (!name) return
-      const taken = await bpmnSlugsIn(rootHandle, folderRel)
-      const slug = dedupeSlug(deriveFileBaseName(name), (c) => taken.has(c.toLowerCase()))
-      const doc = buildNewProcessDoc(name, slug)
       try {
-        const relPath = await createBpmnFileAt(rootHandle, folderRel, doc.fileBaseName, doc.xml)
+        const relPath = await opMutexRef.current.runExclusive(async () => {
+          const taken = await bpmnSlugsIn(rootHandle, folderRel)
+          const slug = dedupeSlug(deriveFileBaseName(name), (c) => taken.has(c.toLowerCase()))
+          const doc = buildNewProcessDoc(name, slug)
+          return createBpmnFileUnique(rootHandle, folderRel, doc.fileBaseName, doc.xml)
+        })
         await refreshWorkspace(rootHandle)
         void openDirectoryFile(relPath)
       } catch (err) {
@@ -548,10 +684,31 @@ function App(): JSX.Element {
         okLabel: t('dialog.rename.okLabel')
       })
       if (!name || name === node.name) return
+      const raw = name.trim()
+      if (hasPathSeparator(raw)) {
+        pushToast(t('alert.rename.invalidChars'), 'error')
+        return
+      }
+      // Preserve the .bpmn extension for files (auto-append if the user dropped
+      // it) so the renamed process never disappears from the .bpmn-only tree.
+      const finalName = node.type === 'file' ? ensureBpmnExtension(raw) : raw
+      if (finalName === node.name) return
       try {
-        await renameAt(rootHandle, node.relPath, name.trim(), node.type)
+        const res = await renameAt(rootHandle, node.relPath, finalName, node.type)
         closeTabsUnder(node.relPath)
         await refreshWorkspace(rootHandle)
+        if (res.nonBpmn > 0) {
+          pushToast(
+            t('toast.renamed.withCount', {
+              name: finalName,
+              count: res.files,
+              nonBpmn: res.nonBpmn
+            }),
+            'success'
+          )
+        } else {
+          pushToast(t('toast.renamed', { name: finalName }), 'success')
+        }
       } catch (err) {
         pushToast(t('alert.renameFailed', { error: errMsg(err) }), 'error')
       }
@@ -592,10 +749,23 @@ function App(): JSX.Element {
     async (node: LiteTreeNode, toFolderRel: string) => {
       if (!rootHandle) return
       try {
-        await moveAt(rootHandle, node.relPath, toFolderRel, node.type)
+        const res = await moveAt(rootHandle, node.relPath, toFolderRel, node.type)
         closeTabsUnder(node.relPath)
         await refreshWorkspace(rootHandle)
-        pushToast(t('toast.moved', { name: node.name, dest: toFolderRel || rootName }), 'success')
+        const dest = toFolderRel || rootName
+        if (res.nonBpmn > 0) {
+          pushToast(
+            t('toast.moved.withCount', {
+              name: node.name,
+              dest,
+              count: res.files,
+              nonBpmn: res.nonBpmn
+            }),
+            'success'
+          )
+        } else {
+          pushToast(t('toast.moved', { name: node.name, dest }), 'success')
+        }
       } catch (err) {
         pushToast(t('alert.moveFailed', { error: errMsg(err) }), 'error')
       }
@@ -629,13 +799,18 @@ function App(): JSX.Element {
         const sub = dirOf(entry.relPath)
         const targetFolder = sub ? joinRel(baseFolderRel, sub) : baseFolderRel
         const base = deriveFileBaseName(entry.name.replace(/\.bpmn$/i, ''))
-        const taken = await bpmnSlugsIn(rootHandle, targetFolder)
-        const slug = dedupeSlug(base, (c) => taken.has(c.toLowerCase()))
-        if (slug !== base) renamed += 1
         try {
           const xml = await entry.getText()
-          await createBpmnFileAt(rootHandle, targetFolder, slug, xml)
+          // Serialize the slug pick + write so two concurrent imports (or an
+          // import racing an AI-place) can't both grab the same free slug.
+          const relPath = await opMutexRef.current.runExclusive(async () => {
+            const taken = await bpmnSlugsIn(rootHandle, targetFolder)
+            const guess = dedupeSlug(base, (c) => taken.has(c.toLowerCase()))
+            return createBpmnFileUnique(rootHandle, targetFolder, guess, xml)
+          })
           created += 1
+          const finalBase = baseName(relPath).replace(/\.bpmn$/i, '')
+          if (finalBase.toLowerCase() !== base.toLowerCase()) renamed += 1
         } catch {
           /* skip an unreadable entry, keep importing the rest */
         }
@@ -654,11 +829,15 @@ function App(): JSX.Element {
   const handleImportDrop = useCallback(
     (dt: DataTransfer, toFolderRel: string) => {
       void (async () => {
-        const entries = await collectDroppedBpmn(dt)
-        await importEntries(entries, toFolderRel)
+        try {
+          const entries = await collectDroppedBpmn(dt)
+          await importEntries(entries, toFolderRel)
+        } catch (err) {
+          pushToast(t('alert.import.failed', { error: errMsg(err) }), 'error')
+        }
       })()
     },
-    [importEntries]
+    [importEntries, pushToast]
   )
 
   const onImportInputChange = useCallback(
@@ -666,12 +845,16 @@ function App(): JSX.Element {
       const list = e.target.files
       e.target.value = ''
       if (!list || list.length === 0) return
-      const entries: DroppedBpmn[] = Array.from(list)
-        .filter((f) => /\.bpmn$/i.test(f.name))
-        .map((f) => ({ relPath: f.name, name: f.name, getText: () => f.text() }))
-      await importEntries(entries, '')
+      try {
+        const entries: DroppedBpmn[] = Array.from(list)
+          .filter((f) => /\.bpmn$/i.test(f.name))
+          .map((f) => ({ relPath: f.name, name: f.name, getText: () => f.text() }))
+        await importEntries(entries, '')
+      } catch (err) {
+        pushToast(t('alert.import.failed', { error: errMsg(err) }), 'error')
+      }
     },
-    [importEntries]
+    [importEntries, pushToast]
   )
 
   // Container-level drop: importing onto non-tree areas lands at the root.
@@ -702,12 +885,16 @@ function App(): JSX.Element {
       const file = e.target.files?.[0]
       e.target.value = ''
       if (!file) return
-      const xml = await file.text()
-      setMode('fallback')
-      setPhase('ready')
-      openVirtualTab(file.name, xml)
+      try {
+        const xml = await file.text()
+        setMode('fallback')
+        setPhase('ready')
+        openVirtualTab(file.name, xml)
+      } catch (err) {
+        pushToast(t('alert.open.failed', { error: errMsg(err) }), 'error')
+      }
     },
-    [openVirtualTab]
+    [openVirtualTab, pushToast]
   )
 
   const startBlankDiagram = useCallback(() => {
@@ -722,9 +909,11 @@ function App(): JSX.Element {
     async (xml: string, opts: { name: string; targetFolder: string }) => {
       const slug = deriveFileBaseName(opts.name || 'process')
       if (mode === 'directory' && rootHandle) {
-        const taken = await bpmnSlugsIn(rootHandle, opts.targetFolder)
-        const finalSlug = dedupeSlug(slug, (c) => taken.has(c.toLowerCase()))
-        const relPath = await createBpmnFileAt(rootHandle, opts.targetFolder, finalSlug, xml)
+        const relPath = await opMutexRef.current.runExclusive(async () => {
+          const taken = await bpmnSlugsIn(rootHandle, opts.targetFolder)
+          const finalSlug = dedupeSlug(slug, (c) => taken.has(c.toLowerCase()))
+          return createBpmnFileUnique(rootHandle, opts.targetFolder, finalSlug, xml)
+        })
         await refreshWorkspace(rootHandle)
         void openDirectoryFile(relPath)
         return { label: relPath }
@@ -1153,6 +1342,14 @@ function App(): JSX.Element {
                 >
                   ⤓ {t('app.import')}
                 </button>
+                <button
+                  className="orbitpm-lite-chrome-btn"
+                  onClick={() => void handleManualRefresh()}
+                  title={t('tree.refresh.title')}
+                  aria-label={t('tree.refresh.aria')}
+                >
+                  {t('tree.refresh')}
+                </button>
               </div>
               {countBpmnFiles(tree) === 0 ? (
                 <EmptyWorkspaceCard
@@ -1480,6 +1677,15 @@ function App(): JSX.Element {
             }
           }}
           onClose={() => setUnresolvedOpen(false)}
+        />
+      )}
+
+      {switchGuard && (
+        <UnsavedSwitchDialog
+          count={switchGuard.count}
+          onSaveAll={() => resolveSwitch('save')}
+          onDiscard={() => resolveSwitch('discard')}
+          onCancel={() => resolveSwitch('cancel')}
         />
       )}
 

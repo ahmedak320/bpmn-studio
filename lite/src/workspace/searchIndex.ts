@@ -90,8 +90,18 @@ export function buildSearchDoc(
   const entries = parseProcessesFromXml(file.xml, file.relPath)
   const processes: IndexedProcess[] = entries.map((e) => ({ id: e.processId, name: e.processName }))
   const size = typeof file.size === 'number' ? file.size : file.xml.length
+  // Exclude the processes' OWN display names from the file-level content text —
+  // those belong to the per-process `name` field. Leaving them in would let a
+  // file-level content match emit EVERY process in the file for a query that
+  // only hit one process's name (Codex MINOR: over-broad search emission).
+  const ownNames = new Set(processes.map((p) => (p.name ?? '').toLowerCase()).filter(Boolean))
   const contentText =
-    size <= maxContentBytes ? extractDiagramText(file.xml).join(' • ').toLowerCase() : ''
+    size <= maxContentBytes
+      ? extractDiagramText(file.xml)
+          .filter((txt) => !ownNames.has(txt.toLowerCase()))
+          .join(' • ')
+          .toLowerCase()
+      : ''
   return {
     relPath: file.relPath,
     fileName,
@@ -148,17 +158,6 @@ function everyTermIn(haystack: string, terms: string[]): boolean {
   return terms.every((t) => haystack.includes(t))
 }
 
-/** The strongest field (name > file > id > content) that contains ALL terms;
- *  null when no single field holds them all (a cross-field match). */
-function strongestField(doc: SearchDoc, terms: string[]): MatchField | null {
-  const fileText = doc.fileName.toLowerCase()
-  if (everyTermIn(doc.namesText, terms)) return 'name'
-  if (everyTermIn(fileText, terms)) return 'file'
-  if (everyTermIn(doc.idsText, terms)) return 'id'
-  if (everyTermIn(doc.contentText, terms)) return 'content'
-  return null
-}
-
 /**
  * Run an instant search over a prebuilt index. A file matches when every query
  * term appears somewhere across its four fields (AND semantics, so
@@ -174,28 +173,39 @@ export function searchWorkspace(index: SearchDoc[], query: string): SearchGroup[
 
   const byFolder = new Map<string, SearchHit[]>()
   for (const doc of index) {
-    const combined = `${doc.fileName.toLowerCase()} ${doc.namesText} ${doc.idsText} ${doc.contentText}`
+    const fileText = doc.fileName.toLowerCase()
+    // Cheap early skip: if no field anywhere in the file holds every term, no
+    // process in it can match either.
+    const combined = `${fileText} ${doc.namesText} ${doc.idsText} ${doc.contentText}`
     if (!everyTermIn(combined, terms)) continue
 
-    // Prefer the field that alone contains the full query; fall back to the
-    // per-process field so a name-only or id-only match still labels sensibly.
-    const fileField = strongestField(doc, terms)
+    // File-level fields (shared by every process in the file).
+    const fileMatched = everyTermIn(fileText, terms)
+    const contentMatched = everyTermIn(doc.contentText, terms)
     const hits = byFolder.get(doc.folder) ?? []
+
     if (doc.processes.length === 0) {
-      hits.push({
-        relPath: doc.relPath,
-        fileName: doc.fileName,
-        folder: doc.folder,
-        matchedOn: fileField ?? 'content'
-      })
+      // No process to attribute to — keep it only on a genuine file-level match.
+      if (fileMatched || contentMatched) {
+        hits.push({
+          relPath: doc.relPath,
+          fileName: doc.fileName,
+          folder: doc.folder,
+          matchedOn: fileMatched ? 'file' : 'content'
+        })
+      }
     } else {
       for (const proc of doc.processes) {
-        let matchedOn: MatchField = fileField ?? 'content'
-        if (!fileField) {
-          const nm = (proc.name ?? '').toLowerCase()
-          if (nm && everyTermIn(nm, terms)) matchedOn = 'name'
-          else if (everyTermIn(proc.id.toLowerCase(), terms)) matchedOn = 'id'
-        }
+        // A process is emitted only when its OWN name/id holds every term, or a
+        // file-level field does. Priority name > file > id > content drives the
+        // "why" label. A process none of whose fields match is skipped, so an
+        // unrelated sibling process is no longer dragged into the results.
+        let matchedOn: MatchField | null = null
+        if (everyTermIn((proc.name ?? '').toLowerCase(), terms)) matchedOn = 'name'
+        else if (fileMatched) matchedOn = 'file'
+        else if (everyTermIn(proc.id.toLowerCase(), terms)) matchedOn = 'id'
+        else if (contentMatched) matchedOn = 'content'
+        if (!matchedOn) continue
         hits.push({
           relPath: doc.relPath,
           fileName: doc.fileName,
@@ -206,7 +216,7 @@ export function searchWorkspace(index: SearchDoc[], query: string): SearchGroup[
         })
       }
     }
-    byFolder.set(doc.folder, hits)
+    if (hits.length > 0) byFolder.set(doc.folder, hits)
   }
 
   return [...byFolder.entries()]

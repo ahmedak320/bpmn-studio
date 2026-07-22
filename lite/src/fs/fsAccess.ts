@@ -75,6 +75,16 @@ export async function readFileAt(root: FileSystemDirectoryHandle, relPath: strin
   return file.text()
 }
 
+/** Read a file's raw BYTES by relPath (binary-safe companion to readFileAt). */
+export async function readBytesAt(
+  root: FileSystemDirectoryHandle,
+  relPath: string
+): Promise<ArrayBuffer> {
+  const handle = await resolveFile(root, relPath)
+  const file = await handle.getFile()
+  return file.arrayBuffer()
+}
+
 /** Write text to a file by relPath, creating it (and any parent dirs) if needed. */
 export async function writeFileAt(
   root: FileSystemDirectoryHandle,
@@ -88,6 +98,39 @@ export async function writeFileAt(
   } finally {
     await writable.close()
   }
+}
+
+/** Write raw BYTES to a file by relPath (binary-safe), creating parents. */
+export async function writeBytesAt(
+  root: FileSystemDirectoryHandle,
+  relPath: string,
+  data: ArrayBuffer
+): Promise<void> {
+  const handle = await resolveFile(root, relPath, { create: true })
+  const writable = await handle.createWritable()
+  try {
+    await writable.write(data)
+  } finally {
+    await writable.close()
+  }
+}
+
+/**
+ * Binary-safe single-file copy: reads the source's raw bytes via
+ * `arrayBuffer()` and writes them verbatim. Never decodes through
+ * `file.text()` — that round-trip silently corrupts NON-text files (PDF, PNG,
+ * xlsx…), which is exactly what a folder move/rename used to do before it then
+ * deleted the originals (Codex CRITICAL-2).
+ */
+async function copyFileBytes(
+  root: FileSystemDirectoryHandle,
+  fromRel: string,
+  toRel: string
+): Promise<void> {
+  const src = await resolveFile(root, fromRel)
+  const file = await src.getFile()
+  const bytes = await file.arrayBuffer()
+  await writeBytesAt(root, toRel, bytes)
 }
 
 /** Create a folder under `parentRelPath`; returns the new folder's relPath. */
@@ -116,6 +159,44 @@ export async function createBpmnFileAt(
   return relPath
 }
 
+/** Does a file named exactly `name` exist directly in `dir`? Uses a
+ *  `getFileHandle(create:false)` probe — the at-write-time existence check. */
+async function fileExistsIn(dir: FileSystemDirectoryHandle, name: string): Promise<boolean> {
+  try {
+    await dir.getFileHandle(name, { create: false })
+    return true
+  } catch {
+    return false
+  }
+}
+
+/**
+ * Create `<slug>.bpmn` under `parentRelPath`, RE-CHECKING existence at write
+ * time and re-suffixing (`slug-2`, `slug-3`, …) if the name is already taken —
+ * so a file that appeared since the caller precomputed its slug (an external
+ * create, or a concurrent in-app op racing for the same slug) is never silently
+ * overwritten (Codex MAJOR-3). Callers serialize through the app-level mutex so
+ * the probe→write window of two in-app ops cannot interleave. Returns the new
+ * file's relPath.
+ */
+export async function createBpmnFileUnique(
+  root: FileSystemDirectoryHandle,
+  parentRelPath: string,
+  baseSlug: string,
+  xml: string
+): Promise<string> {
+  const dir = await resolveDir(root, parentRelPath, { create: true })
+  let slug = baseSlug || 'process'
+  let n = 1
+  while (await fileExistsIn(dir, `${slug}.bpmn`)) {
+    n += 1
+    slug = `${baseSlug || 'process'}-${n}`
+  }
+  const relPath = joinRel(parentRelPath, `${slug}.bpmn`)
+  await writeFileAt(root, relPath, xml)
+  return relPath
+}
+
 /** Delete a file or folder (folders removed recursively). */
 export async function deleteAt(
   root: FileSystemDirectoryHandle,
@@ -126,24 +207,41 @@ export async function deleteAt(
   await parent.removeEntry(baseOf(relPath), { recursive: type === 'directory' })
 }
 
-/** Recursively copy a directory subtree from `fromRel` to a fresh `toRel`. */
+/** How many files a move/rename carried, split so the toast can surface the
+ *  non-BPMN ones that would otherwise be relocated invisibly. */
+export interface RelocateResult {
+  destRel: string
+  /** Total files copied (0 for a no-op). */
+  files: number
+  /** Of `files`, how many were NOT `.bpmn` (PDFs, images, spreadsheets…). */
+  nonBpmn: number
+}
+
+/** Recursively copy a directory subtree from `fromRel` to a fresh `toRel`,
+ *  copying every file's raw BYTES (binary-safe). Returns the file counts. */
 async function copyTree(
   root: FileSystemDirectoryHandle,
   fromRel: string,
   toRel: string
-): Promise<void> {
+): Promise<{ files: number; nonBpmn: number }> {
   const src = await resolveDir(root, fromRel)
   await resolveDir(root, toRel, { create: true })
+  let files = 0
+  let nonBpmn = 0
   for await (const [name, handle] of src.entries()) {
     const childFrom = joinRel(fromRel, name)
     const childTo = joinRel(toRel, name)
     if (handle.kind === 'directory') {
-      await copyTree(root, childFrom, childTo)
+      const sub = await copyTree(root, childFrom, childTo)
+      files += sub.files
+      nonBpmn += sub.nonBpmn
     } else {
-      const file = await (handle as FileSystemFileHandle).getFile()
-      await writeFileAt(root, childTo, await file.text())
+      await copyFileBytes(root, childFrom, childTo)
+      files += 1
+      if (!BPMN_RE.test(name)) nonBpmn += 1
     }
   }
+  return { files, nonBpmn }
 }
 
 /**
@@ -160,8 +258,8 @@ async function relocate(
   fromRel: string,
   destRel: string,
   type: 'file' | 'directory'
-): Promise<string> {
-  if (destRel === fromRel) return fromRel
+): Promise<RelocateResult> {
+  if (destRel === fromRel) return { destRel: fromRel, files: 0, nonBpmn: 0 }
 
   const destParentRel = dirOf(destRel)
   const destName = baseOf(destRel)
@@ -174,27 +272,46 @@ async function relocate(
   }
 
   if (type === 'file') {
-    const content = await readFileAt(root, fromRel)
-    await writeFileAt(root, destRel, content)
+    // Binary-safe: copy raw bytes, never text() (a moved non-.bpmn attachment
+    // must round-trip intact before its original is deleted).
+    await copyFileBytes(root, fromRel, destRel)
     await deleteAt(root, fromRel, 'file')
-  } else {
-    await copyTree(root, fromRel, destRel)
-    await deleteAt(root, fromRel, 'directory')
+    return { destRel, files: 1, nonBpmn: BPMN_RE.test(destName) ? 0 : 1 }
   }
-  return destRel
+  const counts = await copyTree(root, fromRel, destRel)
+  await deleteAt(root, fromRel, 'directory')
+  return { destRel, ...counts }
+}
+
+/** True when `name` embeds a path separator — illegal for a single rename
+ *  segment (a `/` or `\` would silently turn a rename into a move + mkdir). */
+export function hasPathSeparator(name: string): boolean {
+  return /[/\\]/.test(name)
+}
+
+/** Keep a file's `.bpmn` extension, auto-appending it when the user stripped
+ *  it — otherwise the renamed process vanishes from the `.bpmn`-only tree. */
+export function ensureBpmnExtension(name: string): string {
+  return BPMN_RE.test(name) ? name : `${name}.bpmn`
 }
 
 /**
- * Rename a file or folder within its own parent directory. Returns the new
- * relPath. Throws if the target name already exists in the parent.
+ * Rename a file or folder within its own parent directory. Returns the move
+ * result (new relPath + file counts). Rejects names containing a path
+ * separator, and preserves the `.bpmn` extension for files. Throws if the
+ * target name already exists in the parent.
  */
 export async function renameAt(
   root: FileSystemDirectoryHandle,
   relPath: string,
   newName: string,
   type: 'file' | 'directory'
-): Promise<string> {
-  return relocate(root, relPath, joinRel(dirOf(relPath), newName), type)
+): Promise<RelocateResult> {
+  const trimmed = newName.trim()
+  if (!trimmed) throw new Error('A name cannot be empty.')
+  if (hasPathSeparator(trimmed)) throw new Error('A name cannot contain "/" or "\\".')
+  const finalName = type === 'file' ? ensureBpmnExtension(trimmed) : trimmed
+  return relocate(root, relPath, joinRel(dirOf(relPath), finalName), type)
 }
 
 /**
@@ -209,10 +326,10 @@ export async function moveAt(
   fromRel: string,
   toParentRelPath: string,
   type: 'file' | 'directory'
-): Promise<string> {
+): Promise<RelocateResult> {
   const name = baseOf(fromRel)
   const destRel = joinRel(toParentRelPath, name)
-  if (destRel === fromRel) return fromRel // already lives directly in that folder
+  if (destRel === fromRel) return { destRel: fromRel, files: 0, nonBpmn: 0 } // already there
   if (
     type === 'directory' &&
     (toParentRelPath === fromRel || toParentRelPath.startsWith(fromRel + '/'))

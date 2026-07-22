@@ -4,37 +4,69 @@
 // which scanWorkspaceFiles (catalog / search metadata) reads. NOT a *.test file
 // so vitest doesn't collect it.
 
+type WriteChunk = string | ArrayBuffer | ArrayBufferView
+
+function toBytes(data: WriteChunk): Uint8Array {
+  if (typeof data === 'string') return new TextEncoder().encode(data)
+  if (data instanceof Uint8Array) return data
+  if (ArrayBuffer.isView(data)) return new Uint8Array(data.buffer, data.byteOffset, data.byteLength)
+  return new Uint8Array(data)
+}
+
 export class MockFileHandle {
   kind = 'file' as const
+  name: string
+  /** Canonical byte store so binary content round-trips intact. */
+  bytes: Uint8Array
   lastModified: number
-  constructor(
-    public name: string,
-    public content = '',
-    lastModified?: number
-  ) {
+  constructor(name: string, content: string | Uint8Array = '', lastModified?: number) {
+    this.name = name
+    this.bytes = typeof content === 'string' ? new TextEncoder().encode(content) : content
     this.lastModified = lastModified ?? Date.now()
   }
-  get size(): number {
-    return this.content.length
+  /** Back-compat text view of the byte store (older tests read `.content`). */
+  get content(): string {
+    return new TextDecoder().decode(this.bytes)
   }
-  async getFile(): Promise<{ text: () => Promise<string>; lastModified: number; size: number }> {
+  get size(): number {
+    return this.bytes.length
+  }
+  async getFile(): Promise<{
+    text: () => Promise<string>
+    arrayBuffer: () => Promise<ArrayBuffer>
+    lastModified: number
+    size: number
+  }> {
+    const bytes = this.bytes
     return {
-      text: async () => this.content,
+      text: async () => new TextDecoder().decode(bytes),
+      arrayBuffer: async () =>
+        bytes.buffer.slice(
+          bytes.byteOffset,
+          bytes.byteOffset + bytes.byteLength
+        ) as ArrayBuffer,
       lastModified: this.lastModified,
-      size: this.content.length
+      size: bytes.length
     }
   }
   async createWritable(): Promise<{
-    write: (d: string) => Promise<void>
+    write: (d: WriteChunk) => Promise<void>
     close: () => Promise<void>
   }> {
-    let buf = ''
+    const chunks: Uint8Array[] = []
     return {
-      write: async (data: string) => {
-        buf += data
+      write: async (data: WriteChunk) => {
+        chunks.push(toBytes(data))
       },
       close: async () => {
-        this.content = buf
+        const total = chunks.reduce((n, c) => n + c.length, 0)
+        const merged = new Uint8Array(total)
+        let off = 0
+        for (const c of chunks) {
+          merged.set(c, off)
+          off += c.length
+        }
+        this.bytes = merged
         this.lastModified = Date.now()
       }
     }

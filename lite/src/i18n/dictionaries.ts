@@ -207,7 +207,7 @@ export const en = {
   'ai.generateFromPdf': 'Generate from PDF',
   'ai.addOneInSettings.period': '.',
   'ai.customNotReady': 'Set the base URL and model for the Custom endpoint in Settings.',
-  'ai.note.updated': '{anthropic}, {gemini}, and {openrouter} can be called directly from a web page. Reach GLM, Kimi, and DeepSeek through OpenRouter. The direct vendor APIs for {desktopOnlyProviders} don’t allow browser (CORS) access — use OpenRouter, a Custom endpoint, or the desktop app for those.',
+  'ai.note.updated': '{anthropic}, {gemini}, and {openrouter} can be called directly from a web page. Reach GLM, Kimi, and DeepSeek through OpenRouter. The direct vendor APIs for {desktopOnlyProviders} don’t allow browser (CORS) access — reach those models through OpenRouter here, or use the desktop app. The Custom OpenAI-compatible endpoint works in the desktop app only.',
   'ai.error.chooseNoPdf': 'Choose a PDF file first.',
   'ai.pdf.sizeGate.customUnavailable': 'PDF input is not available for the Custom endpoint. Use OpenRouter, Anthropic, or Gemini for PDFs.',
   'ai.pdf.sizeGate.overLimit': 'PDF is {size} — over the {limit} limit for this provider. Please {alt}.',
@@ -341,7 +341,58 @@ export const en = {
   'toast.import.openFolderFirst': 'Open a folder first to import files into your workspace.',
   'toast.import.noBpmnFound': 'No .bpmn files found in what you dropped.',
   'toast.print.loading': 'The diagram is still loading — try Print again in a moment.',
-  'toast.print.failed': 'Print failed: {error}'
+  'toast.print.failed': 'Print failed: {error}',
+
+  // --- FX1: workspace & data-safety fixes (KEEP BOTH sides on rebase conflict) ---
+  'tree.refresh': '↻',
+  'tree.refresh.title': 'Rescan this folder for changes made outside the app',
+  'tree.refresh.aria': 'Refresh workspace',
+  'toast.refreshed': 'Workspace refreshed.',
+  'toast.moved.withCount': 'Moved "{name}" to {dest} — {count} files (incl. {nonBpmn} non-BPMN).',
+  'toast.renamed': 'Renamed to "{name}".',
+  'toast.renamed.withCount': 'Renamed "{name}" — {count} files (incl. {nonBpmn} non-BPMN).',
+  'alert.rename.invalidChars': 'A name cannot contain "/" or "\\".',
+  'alert.import.failed': 'Import failed: {error}',
+  'alert.open.failed': 'Could not open the file: {error}',
+  'alert.staleWrite': 'This diagram belongs to a folder that is no longer open — its save was skipped.',
+  'alert.saveAll.failed': 'Could not save all changes: {error}. Keeping the current folder open.',
+  'confirm.switch.title': 'Unsaved changes',
+  'confirm.switch.body':
+    'You have unsaved changes in {count} open diagram(s). Save them before switching folders?',
+  'confirm.switch.saveAll': 'Save all & switch',
+  'confirm.switch.discard': 'Discard & switch',
+  'confirm.switch.cancel': 'Cancel',
+
+  // --- FX2 lane: AI/provider/CSP/naming/i18n fixes (F1 + Codex M4/5/6/9/10) ---
+  // Provider blurbs — rendered via i18n (RTL-safe) instead of English literals.
+  'ai.provider.openrouter.desc':
+    'One key, many models (GLM-5.2, Kimi K3, DeepSeek V4, Claude, Gemini). Browser-callable; PDF supported.',
+  'ai.provider.anthropic.desc':
+    'Claude models, called browser-direct with your key. Native PDF understanding.',
+  'ai.provider.gemini.desc': 'Gemini via raw generateContent. Native PDF understanding.',
+  'ai.provider.custom.desc':
+    'Point at any OpenAI-compatible endpoint (base URL + key + model). Runs in the desktop app only.',
+  // Desktop-only: the Custom endpoint can't be reached under the browser CSP.
+  'settings.desktopOnly.badge': 'Desktop app only',
+  'settings.desktopOnly.hint':
+    'The browser’s security policy only allows OpenRouter, Anthropic, and Gemini. Use OpenRouter to reach other vendors here, or the desktop app.',
+  'ai.custom.desktopOnly':
+    'The Custom endpoint runs in the desktop app only — the browser blocks calls to arbitrary endpoints. Use OpenRouter to reach other vendors here.',
+  // Test-connection verdicts (localized; {status} is the HTTP code).
+  'settings.verdict.needBaseUrl': 'Enter a base URL first.',
+  'settings.verdict.reachableOk': 'Reachable — request accepted (HTTP {status}). Your key works.',
+  'settings.verdict.reachableAuth':
+    'Reachable (CORS OK) — the provider rejected the key (HTTP {status}). Expected for a keyless test; enter a valid key to use it.',
+  'settings.verdict.reachableOther':
+    'Reachable (CORS OK) — HTTP {status}. The endpoint is callable from the browser.',
+  'settings.verdict.blocked':
+    'Blocked or unreachable (CORS, offline, or DNS) — the browser could not read any response. Try OpenRouter, Anthropic, or Gemini, or the desktop app.',
+  'settings.verdict.timeout': 'The connection timed out. Check your network and try again.',
+  // Generation timeout + PDF notes.
+  'ai.error.timeout': 'The request took too long and timed out. Try again, or use a smaller input.',
+  'ai.pdf.engineNote': 'PDF parsing engine is managed by the provider.',
+  'ai.pdf.sizeGate.softWarn':
+    'This PDF is {size} — large files may be slow or brush provider limits. Split it if generation fails.'
 } as const
 
 export const ar: Record<keyof typeof en, string> = {
@@ -550,7 +601,7 @@ export const ar: Record<keyof typeof en, string> = {
   'ai.generateFromPdf': 'التوليد من PDF',
   'ai.addOneInSettings.period': '.',
   'ai.customNotReady': 'عيّن الرابط الأساسي والنموذج للنقطة المخصصة في الإعدادات.',
-  'ai.note.updated': 'يمكن استدعاء {anthropic} و{gemini} و{openrouter} مباشرة من صفحة ويب. يمكن الوصول إلى GLM وKimi وDeepSeek عبر OpenRouter. لا تسمح واجهات المزوّدين المباشرة لـ {desktopOnlyProviders} بالوصول من المتصفح (CORS) — استخدم OpenRouter، أو نقطة نهاية مخصصة، أو تطبيق سطح المكتب لتلك.',
+  'ai.note.updated': 'يمكن استدعاء {anthropic} و{gemini} و{openrouter} مباشرة من صفحة ويب. يمكن الوصول إلى GLM وKimi وDeepSeek عبر OpenRouter. لا تسمح واجهات المزوّدين المباشرة لـ {desktopOnlyProviders} بالوصول من المتصفح (CORS) — يمكن الوصول إلى تلك النماذج عبر OpenRouter هنا، أو استخدم تطبيق سطح المكتب. أما النقطة المخصصة المتوافقة مع OpenAI فتعمل في تطبيق سطح المكتب فقط.',
   'ai.error.chooseNoPdf': 'اختر ملف PDF أولًا.',
   'ai.pdf.sizeGate.customUnavailable': 'إدخال PDF غير متاح للنقطة المخصصة. استخدم OpenRouter أو Anthropic أو Gemini لملفات PDF.',
   'ai.pdf.sizeGate.overLimit': 'حجم PDF هو {size} — يتجاوز الحد {limit} لهذا المزوّد. الرجاء {alt}.',
@@ -684,5 +735,51 @@ export const ar: Record<keyof typeof en, string> = {
   'toast.import.openFolderFirst': 'افتح مجلدًا أولًا لاستيراد الملفات إلى مساحة عملك.',
   'toast.import.noBpmnFound': 'لم يتم العثور على ملفات .bpmn فيما تم إفلاته.',
   'toast.print.loading': 'المخطط لا يزال قيد التحميل — حاول الطباعة مرة أخرى بعد لحظة.',
-  'toast.print.failed': 'فشلت الطباعة: {error}'
+  'toast.print.failed': 'فشلت الطباعة: {error}',
+
+  // --- FX1: workspace & data-safety fixes (KEEP BOTH sides on rebase conflict) ---
+  'tree.refresh': '↻',
+  'tree.refresh.title': 'إعادة فحص هذا المجلد بحثًا عن تغييرات تمت خارج التطبيق',
+  'tree.refresh.aria': 'تحديث مساحة العمل',
+  'toast.refreshed': 'تم تحديث مساحة العمل.',
+  'toast.moved.withCount': 'تم نقل "{name}" إلى {dest} — {count} ملفات (منها {nonBpmn} غير BPMN).',
+  'toast.renamed': 'تمت إعادة التسمية إلى "{name}".',
+  'toast.renamed.withCount': 'تمت إعادة تسمية "{name}" — {count} ملفات (منها {nonBpmn} غير BPMN).',
+  'alert.rename.invalidChars': 'لا يمكن أن يحتوي الاسم على "/" أو "\\".',
+  'alert.import.failed': 'فشل الاستيراد: {error}',
+  'alert.open.failed': 'تعذّر فتح الملف: {error}',
+  'alert.staleWrite': 'ينتمي هذا المخطط إلى مجلد لم يعد مفتوحًا — تم تخطّي حفظه.',
+  'alert.saveAll.failed': 'تعذّر حفظ جميع التغييرات: {error}. سيبقى المجلد الحالي مفتوحًا.',
+  'confirm.switch.title': 'تغييرات غير محفوظة',
+  'confirm.switch.body': 'لديك تغييرات غير محفوظة في {count} مخطط مفتوح. هل تريد حفظها قبل تبديل المجلد؟',
+  'confirm.switch.saveAll': 'حفظ الكل والتبديل',
+  'confirm.switch.discard': 'تجاهل والتبديل',
+  'confirm.switch.cancel': 'إلغاء',
+
+  // --- FX2 lane: AI/provider/CSP/naming/i18n fixes (F1 + Codex M4/5/6/9/10) ---
+  'ai.provider.openrouter.desc':
+    'مفتاح واحد، نماذج متعددة (GLM-5.2 وKimi K3 وDeepSeek V4 وClaude وGemini). قابل للاستدعاء من المتصفح؛ يدعم PDF.',
+  'ai.provider.anthropic.desc':
+    'نماذج Claude، تُستدعى مباشرة من المتصفح بمفتاحك. فهم أصلي لملفات PDF.',
+  'ai.provider.gemini.desc': 'Gemini عبر generateContent المباشر. فهم أصلي لملفات PDF.',
+  'ai.provider.custom.desc':
+    'وجّهه إلى أي نقطة نهاية متوافقة مع OpenAI (الرابط الأساسي + المفتاح + النموذج). يعمل في تطبيق سطح المكتب فقط.',
+  'settings.desktopOnly.badge': 'متاح في تطبيق سطح المكتب فقط',
+  'settings.desktopOnly.hint':
+    'تسمح سياسة أمان المتصفح باستدعاء OpenRouter وAnthropic وGemini فقط. استخدم OpenRouter للوصول إلى المزوّدين الآخرين هنا، أو استخدم تطبيق سطح المكتب.',
+  'ai.custom.desktopOnly':
+    'تعمل النقطة المخصصة في تطبيق سطح المكتب فقط — يمنع المتصفح الاتصال بنقاط النهاية العشوائية. استخدم OpenRouter للوصول إلى المزوّدين الآخرين هنا.',
+  'settings.verdict.needBaseUrl': 'أدخل الرابط الأساسي أولًا.',
+  'settings.verdict.reachableOk': 'يمكن الوصول — تم قبول الطلب (HTTP {status}). مفتاحك يعمل.',
+  'settings.verdict.reachableAuth':
+    'يمكن الوصول (CORS يعمل) — رفض المزوّد المفتاح (HTTP {status}). متوقّع لاختبار بدون مفتاح؛ أدخل مفتاحًا صالحًا لاستخدامه.',
+  'settings.verdict.reachableOther':
+    'يمكن الوصول (CORS يعمل) — HTTP {status}. النقطة قابلة للاستدعاء من المتصفح.',
+  'settings.verdict.blocked':
+    'محجوب أو غير قابل للوصول (CORS أو عدم اتصال أو DNS) — تعذّر على المتصفح قراءة أي استجابة. جرّب OpenRouter أو Anthropic أو Gemini، أو استخدم تطبيق سطح المكتب.',
+  'settings.verdict.timeout': 'انتهت مهلة الاتصال. تحقق من شبكتك وحاول مرة أخرى.',
+  'ai.error.timeout': 'استغرق الطلب وقتًا طويلًا وانتهت مهلته. حاول مرة أخرى، أو استخدم مدخلًا أصغر.',
+  'ai.pdf.engineNote': 'محرّك تحليل PDF يديره المزوّد.',
+  'ai.pdf.sizeGate.softWarn':
+    'حجم هذا الملف {size} — قد تكون الملفات الكبيرة بطيئة أو تقترب من حدود المزوّد. قسّمه إذا فشل التوليد.'
 }

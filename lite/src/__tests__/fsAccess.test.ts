@@ -23,23 +23,58 @@ import {
 // adapter: directory/file handles with getFileHandle/getDirectoryHandle/
 // removeEntry/entries and a getFile/createWritable round-trip.
 
+type WriteChunk = string | ArrayBuffer | ArrayBufferView
+function toBytes(data: WriteChunk): Uint8Array {
+  if (typeof data === 'string') return new TextEncoder().encode(data)
+  if (data instanceof Uint8Array) return data
+  if (ArrayBuffer.isView(data)) return new Uint8Array(data.buffer, data.byteOffset, data.byteLength)
+  return new Uint8Array(data)
+}
+
 class MockFileHandle {
   kind = 'file' as const
+  bytes: Uint8Array
   constructor(
     public name: string,
-    public content = ''
-  ) {}
-  async getFile(): Promise<{ text: () => Promise<string> }> {
-    return { text: async () => this.content }
+    content = ''
+  ) {
+    this.bytes = new TextEncoder().encode(content)
   }
-  async createWritable(): Promise<{ write: (d: string) => Promise<void>; close: () => Promise<void> }> {
-    let buf = ''
+  get content(): string {
+    return new TextDecoder().decode(this.bytes)
+  }
+  async getFile(): Promise<{
+    text: () => Promise<string>
+    arrayBuffer: () => Promise<ArrayBuffer>
+  }> {
+    const bytes = this.bytes
     return {
-      write: async (data: string) => {
-        buf += data
+      text: async () => new TextDecoder().decode(bytes),
+      arrayBuffer: async () =>
+        bytes.buffer.slice(
+          bytes.byteOffset,
+          bytes.byteOffset + bytes.byteLength
+        ) as ArrayBuffer
+    }
+  }
+  async createWritable(): Promise<{
+    write: (d: WriteChunk) => Promise<void>
+    close: () => Promise<void>
+  }> {
+    const chunks: Uint8Array[] = []
+    return {
+      write: async (data: WriteChunk) => {
+        chunks.push(toBytes(data))
       },
       close: async () => {
-        this.content = buf
+        const total = chunks.reduce((n, c) => n + c.length, 0)
+        const merged = new Uint8Array(total)
+        let off = 0
+        for (const c of chunks) {
+          merged.set(c, off)
+          off += c.length
+        }
+        this.bytes = merged
       }
     }
   }
@@ -225,7 +260,7 @@ describe('renameAt', () => {
     const root = newRoot()
     await writeFileAt(root, 'sub/old.bpmn', 'CONTENT')
     const newRel = await renameAt(root, 'sub/old.bpmn', 'new.bpmn', 'file')
-    expect(newRel).toBe('sub/new.bpmn')
+    expect(newRel.destRel).toBe('sub/new.bpmn')
     expect(await readFileAt(root, 'sub/new.bpmn')).toBe('CONTENT')
     await expect(readFileAt(root, 'sub/old.bpmn')).rejects.toBeTruthy()
   })
@@ -235,7 +270,7 @@ describe('renameAt', () => {
     await writeFileAt(root, 'Old/a.bpmn', 'A')
     await writeFileAt(root, 'Old/deep/b.bpmn', 'B')
     const newRel = await renameAt(root, 'Old', 'New', 'directory')
-    expect(newRel).toBe('New')
+    expect(newRel.destRel).toBe('New')
     expect(await readFileAt(root, 'New/a.bpmn')).toBe('A')
     expect(await readFileAt(root, 'New/deep/b.bpmn')).toBe('B')
     await expect(resolveDir(root, 'Old')).rejects.toBeTruthy()
