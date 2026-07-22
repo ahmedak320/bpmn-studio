@@ -47,6 +47,27 @@ function errMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error)
 }
 
+/**
+ * True for a provider/TRANSPORT-layer failure (auth 401/403, rate-limit 429,
+ * CORS/network reject, or a timeout) as opposed to malformed model OUTPUT. The
+ * repair loop must NOT retry these: re-sending the request (which, for the PDF
+ * path, re-uploads the whole base64 document on every attempt) cannot fix a
+ * permanent 401/403/429 or a dead connection, so a transport failure should
+ * surface ONCE instead of triggering three identical large requests.
+ *
+ * Detection is duck-typed on a `transport === true` marker so this module stays
+ * provider-agnostic (the browser adapter's `TransportError` sets it; a desktop
+ * provider can opt in the same way). Anything without the marker is treated as
+ * before — a candidate for the conversational repair loop.
+ */
+export function isTransportError(error: unknown): boolean {
+  return (
+    typeof error === 'object' &&
+    error !== null &&
+    (error as { transport?: unknown }).transport === true
+  )
+}
+
 function extractProcess(parsed: unknown): Record<string, unknown>[] {
   if (Array.isArray(parsed)) {
     return parsed as Record<string, unknown>[]
@@ -94,6 +115,10 @@ export async function generateFromDescription(
     try {
       raw = await callLLM(messages, { maxTokens: 3000 })
     } catch (e) {
+      // A transport/auth/rate-limit/timeout failure is permanent for this call:
+      // surface it immediately rather than burning retries (and, for PDFs,
+      // re-uploading the document) on something a retry can never fix.
+      if (isTransportError(e)) throw e
       lastError = e
       messages.push({ role: 'user', content: `Error: ${errMessage(e)}. Try again.` })
       continue

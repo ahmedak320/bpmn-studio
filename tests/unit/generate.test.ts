@@ -5,7 +5,12 @@
  * loop wording/behaviour, retry exhaustion, and that layout runs end-to-end.
  */
 import { describe, it, expect } from 'vitest'
-import { generateFromDescription, type CallLLM, type LlmMessage } from '../../src/gen/generate'
+import {
+  generateFromDescription,
+  isTransportError,
+  type CallLLM,
+  type LlmMessage
+} from '../../src/gen/generate'
 
 const VALID_IR = {
   process: [
@@ -103,6 +108,44 @@ describe('generateFromDescription', () => {
       generateFromDescription(callLLM, 'x', undefined, { maxRetries: 2 })
     ).rejects.toThrow('Max number of retries reached')
     expect(calls.length).toBe(2)
+  })
+
+  it('does NOT retry a transport error — surfaces it once (no re-upload of PDFs)', async () => {
+    // A transport-marked failure (auth/rate/CORS/network/timeout) must break the
+    // loop immediately instead of being fed back through the repair path.
+    const transportErr = Object.assign(new Error('anthropic 401: invalid key'), {
+      transport: true as const
+    })
+    let calls = 0
+    const callLLM: CallLLM = async () => {
+      calls += 1
+      throw transportErr
+    }
+    await expect(generateFromDescription(callLLM, 'do a thing')).rejects.toBe(transportErr)
+    // Exactly one attempt — no "Try again" retries, no re-send.
+    expect(calls).toBe(1)
+  })
+
+  it('still retries a NON-transport (model-output) error up to maxRetries', async () => {
+    // A plain error with no transport marker is a candidate for repair and is
+    // retried the full three times (regression guard for the additive change).
+    let calls = 0
+    const callLLM: CallLLM = async () => {
+      calls += 1
+      throw new Error('transient hiccup')
+    }
+    await expect(generateFromDescription(callLLM, 'do a thing')).rejects.toThrow(
+      'Max number of retries reached'
+    )
+    expect(calls).toBe(3)
+  })
+
+  it('isTransportError only trips on the duck-typed transport marker', () => {
+    expect(isTransportError(Object.assign(new Error('x'), { transport: true }))).toBe(true)
+    expect(isTransportError(new Error('plain'))).toBe(false)
+    expect(isTransportError({ transport: false })).toBe(false)
+    expect(isTransportError(null)).toBe(false)
+    expect(isTransportError('nope')).toBe(false)
   })
 
   it('uses an explicit history when provided', async () => {

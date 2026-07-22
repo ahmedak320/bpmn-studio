@@ -16,6 +16,23 @@ test.beforeAll(() => {
   )
 })
 
+test('BUILT dist CSP whitelists exactly the three browser-callable providers (incl. OpenRouter)', () => {
+  // Strip HTML comments first — the CSP rationale comment also mentions
+  // "connect-src", and we want the real directive, not the prose.
+  const html = readFileSync(DIST, 'utf8').replace(/<!--[\s\S]*?-->/g, '')
+  const m = html.match(/connect-src ([^;]+)/)
+  expect(m, 'built HTML must carry a connect-src directive').not.toBeNull()
+  const connectSrc = (m as RegExpMatchArray)[1]
+  // OpenRouter (the flagship provider) MUST be reachable — its absence is the F1 bug.
+  expect(connectSrc).toContain('https://openrouter.ai')
+  // The other two browser-callable providers + self stay.
+  expect(connectSrc).toContain("'self'")
+  expect(connectSrc).toContain('https://api.anthropic.com')
+  expect(connectSrc).toContain('https://generativelanguage.googleapis.com')
+  // Nothing broader: no wildcard / http: / ws: egress.
+  expect(connectSrc).not.toMatch(/\*|http:|ws:|wss:/)
+})
+
 function recordOffendingRequests(page: import('@playwright/test').Page): string[] {
   const offending: string[] = []
   page.on('request', (req) => {

@@ -9,15 +9,57 @@ import { slugify, FALLBACK_SLUG } from '@app/shared/slug'
 import { createNamedDiagramXml } from '@app/renderer/src/editor/newDiagram'
 
 /**
- * Derive a stable, BPMN-legal `<process id>` from a file slug. Mirrors the
- * desktop app's convention (`Process_<slug-with-underscores>`) so a file
- * created in Lite and one created in the desktop app for the same name are
- * link-compatible. Dashes become underscores and any stray non-id character is
- * dropped, guaranteeing a valid XML NCName that never starts with a digit.
+ * FNV-1a (32-bit) over UTF-16 code units → 8 lowercase hex chars. Deterministic
+ * and dependency-free, so it produces the SAME id in the browser and in
+ * node/vitest. Used to disambiguate non-Latin names whose ASCII slug degenerates
+ * to nothing (see `deriveProcessId`).
  */
-export function deriveProcessId(slug: string): string {
-  const safe = slug.replace(/-/g, '_').replace(/[^A-Za-z0-9_]/g, '')
+export function hash8(input: string): string {
+  let h = 0x811c9dc5
+  for (let i = 0; i < input.length; i++) {
+    h ^= input.charCodeAt(i)
+    h = Math.imul(h, 0x01000193)
+  }
+  return (h >>> 0).toString(16).padStart(8, '0')
+}
+
+/**
+ * Derive a stable, BPMN-legal `<process id>` from a file base name. Mirrors the
+ * desktop app's convention (`Process_<slug-with-underscores>`) so a file created
+ * in Lite and one created in the desktop app for the same Latin name are
+ * link-compatible: dashes become underscores and any stray non-id character is
+ * dropped, guaranteeing a valid XML NCName that never starts with a digit.
+ *
+ * A name written in a NON-Latin script (Arabic, CJK, …) strips to nothing here,
+ * so instead of every such name collapsing to the single shared `Process_process`
+ * (which silently cross-wired call links — two different Arabic names resolved to
+ * the same file), we fall back to `Process_<8-char hash of the original name>`.
+ * Two different non-Latin names therefore get two different, stable ids. Latin
+ * (and empty / ASCII-punctuation) inputs are byte-identical to before.
+ */
+export function deriveProcessId(baseName: string): string {
+  const safe = baseName.replace(/-/g, '_').replace(/[^A-Za-z0-9_]/g, '')
+  if (!/[A-Za-z]/.test(safe) && /[^\x00-\x7F]/.test(baseName)) {
+    const seed = baseName.trim()
+    if (seed) return `Process_${hash8(seed)}`
+  }
   return `Process_${safe || 'process'}`
+}
+
+/**
+ * Make a derived process id unique against the CURRENT index by suffixing
+ * `_2`, `_3`, … when a collision is reported. Callers that have the workspace's
+ * process-id set pass an `isTaken` predicate; without one, filename-level dedup
+ * (which flows through `deriveProcessId` via the deduplicated file base name)
+ * already keeps ids distinct in practice, and true 32-bit hash collisions are
+ * astronomically unlikely.
+ */
+export function dedupeProcessId(baseId: string, isTaken: (candidate: string) => boolean): string {
+  if (!isTaken(baseId)) return baseId
+  for (let n = 2; ; n++) {
+    const candidate = `${baseId}_${n}`
+    if (!isTaken(candidate)) return candidate
+  }
 }
 
 /**
@@ -75,15 +117,27 @@ export interface NewProcessDoc {
 
 /**
  * Build the document for a brand-new process from a user-entered display name.
- * The slug (and therefore the file name) and process id both derive from the
- * name, so the created file is an immediately-linkable, stably-named target.
- * `slugOverride` lets a caller substitute a de-duplicated slug (so a second
- * "Order" in a folder becomes `order-2.bpmn` / `Process_order_2`).
+ * The file name and process id both derive from the name, so the created file is
+ * an immediately-linkable, stably-named target. `slugOverride` lets a caller
+ * substitute a de-duplicated slug (so a second "Order" in a folder becomes
+ * `order-2.bpmn` / `Process_order_2`).
+ *
+ * The process id derives from the FILE BASE NAME (which preserves Arabic / other
+ * scripts), not from the ASCII `slugify()` output — otherwise every non-Latin
+ * name slugifies to the `process` fallback and `deriveProcessId` can no longer
+ * tell them apart. Because the caller passes an already-deduplicated
+ * `slugOverride`, the id inherits that uniqueness (a second "طلب" → file base
+ * `طلب-2` → a distinct hashed id). An optional `isProcessIdTaken` predicate adds
+ * belt-and-suspenders suffixing against the live index for the rare hash clash.
  */
-export function buildNewProcessDoc(name: string, slugOverride?: string): NewProcessDoc {
-  const slug = slugOverride ?? slugify(name)
-  const processId = deriveProcessId(slug)
+export function buildNewProcessDoc(
+  name: string,
+  slugOverride?: string,
+  isProcessIdTaken?: (candidate: string) => boolean
+): NewProcessDoc {
   const fileBaseName = slugOverride ?? deriveFileBaseName(name)
+  const baseId = deriveProcessId(fileBaseName)
+  const processId = isProcessIdTaken ? dedupeProcessId(baseId, isProcessIdTaken) : baseId
   return {
     fileBaseName,
     processId,

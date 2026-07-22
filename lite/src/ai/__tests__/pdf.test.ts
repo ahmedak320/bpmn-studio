@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { checkPdfSize, buildPdfInstruction, PDF_SIZE_LIMITS } from '../pdf'
+import { checkPdfSize, buildPdfInstruction, PDF_SIZE_LIMITS, PDF_SOFT_WARN_BYTES } from '../pdf'
 
 describe('checkPdfSize', () => {
   it('accepts a small PDF for every PDF-capable provider', () => {
@@ -21,10 +21,36 @@ describe('checkPdfSize', () => {
     expect(checkPdfSize('anthropic', thirtyMb).ok).toBe(false)
   })
 
+  it('caps Gemini at 32 MiB (aligned safety margin)', () => {
+    expect(PDF_SIZE_LIMITS.gemini).toBe(32 * 1024 * 1024)
+    expect(checkPdfSize('gemini', 32 * 1024 * 1024).ok).toBe(true)
+    expect(checkPdfSize('gemini', 32 * 1024 * 1024 + 1).ok).toBe(false)
+  })
+
   it('disables PDF for the custom endpoint', () => {
     const r = checkPdfSize('custom', 1024)
     expect(r.ok).toBe(false)
     expect(r.message).toMatch(/not available for the Custom endpoint/i)
+  })
+})
+
+describe('checkPdfSize soft warning (large-but-allowed files)', () => {
+  it('adds no warning for a small file within the limit', () => {
+    const r = checkPdfSize('gemini', 1 * 1024 * 1024)
+    expect(r.ok).toBe(true)
+    expect(r.warning).toBeUndefined()
+  })
+
+  it('warns (but still accepts) a file above the 15 MiB soft threshold', () => {
+    expect(PDF_SOFT_WARN_BYTES).toBe(15 * 1024 * 1024)
+    const r = checkPdfSize('gemini', 20 * 1024 * 1024)
+    expect(r.ok).toBe(true)
+    expect(r.warning).toBeTruthy()
+    expect(r.warning).toMatch(/20\.0 MB/)
+  })
+
+  it('does not warn exactly at the soft threshold', () => {
+    expect(checkPdfSize('gemini', PDF_SOFT_WARN_BYTES).warning).toBeUndefined()
   })
 })
 

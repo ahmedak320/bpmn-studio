@@ -59,6 +59,70 @@ export class ProviderHttpError extends Error {
   }
 }
 
+export type TransportCode = 'auth' | 'rate' | 'network' | 'timeout'
+
+/**
+ * A provider/TRANSPORT-layer failure — auth (401/403), rate-limit (429), a
+ * CORS/network reject, or a timeout — as opposed to malformed model OUTPUT. It
+ * carries the duck-typed `transport === true` marker that `src/gen/generate.ts`
+ * reads via {@link isTransportError} to STOP the conversational repair loop:
+ * retrying a permanent 401/429 (or, for PDFs, re-uploading the whole document)
+ * can never help, so the failure surfaces once instead of three times.
+ */
+export class TransportError extends Error {
+  readonly transport = true as const
+  code: TransportCode
+  status?: number
+  constructor(code: TransportCode, message: string, status?: number) {
+    super(message)
+    this.name = 'TransportError'
+    this.code = code
+    this.status = status
+  }
+}
+
+// Every outbound fetch gets a timeout so a connection that never completes can't
+// leave generation/testing busy forever (Codex M10). Generation is allowed to be
+// slow (large PDFs, big diagrams); the connectivity probe must feel snappy.
+export const GENERATION_TIMEOUT_MS = 180_000
+export const TEST_CONNECTION_TIMEOUT_MS = 15_000
+
+/** Map a raw fetch rejection to a TransportError (already-typed ones pass through). */
+function toTransportError(error: unknown): TransportError {
+  if (error instanceof TransportError) return error
+  const msg = error instanceof Error ? error.message : String(error)
+  return new TransportError('network', msg)
+}
+
+/**
+ * `fetch` with an AbortSignal timeout. On timeout it rejects with a
+ * TransportError(code:'timeout'); other rejections (CORS/offline/DNS) become
+ * TransportError(code:'network'). The timer is always cleared, so no stray timer
+ * lingers after the request settles (keeps unit tests handle-clean).
+ */
+async function fetchWithTimeout(
+  url: string,
+  init: RequestInit,
+  timeoutMs: number
+): Promise<Response> {
+  const ctrl = new AbortController()
+  let timedOut = false
+  const timer = setTimeout(() => {
+    timedOut = true
+    ctrl.abort()
+  }, timeoutMs)
+  try {
+    return await fetch(url, { ...init, signal: ctrl.signal })
+  } catch (error) {
+    if (timedOut) {
+      throw new TransportError('timeout', `Request timed out after ${Math.round(timeoutMs / 1000)}s`)
+    }
+    throw toTransportError(error)
+  } finally {
+    clearTimeout(timer)
+  }
+}
+
 function truncate(s: string, n = 300): string {
   const line = s.replace(/\s+/g, ' ').trim()
   return line.length > n ? `${line.slice(0, n - 1)}…` : line
@@ -210,9 +274,12 @@ export function buildOpenRouterRequest(
   }
   if (opts.jsonMode) body.response_format = { type: 'json_object' }
   if (opts.attachment) {
-    // Parse PDFs server-side for models without native document support; native
-    // pass-through for those that have it (Claude/Gemini via OpenRouter).
-    body.plugins = [{ id: 'file-parser', pdf: { engine: 'native' } }]
+    // Attach the file-parser plugin but DO NOT pin `pdf.engine`. Forcing
+    // 'native' only works for models with native file input; the default model
+    // (z-ai/glm-5.2) is text-input-only, so pinning 'native' broke its PDF path.
+    // Omitting the engine lets OpenRouter pick per model capability — native
+    // pass-through for Claude/Gemini, its OCR/text fallback for the rest.
+    body.plugins = [{ id: 'file-parser' }]
   }
   const headers: Record<string, string> = {
     authorization: `Bearer ${cfg.apiKey}`,
@@ -307,14 +374,22 @@ export function makeBrowserCallLLM(
   const attachment = extra?.attachment
   return async (messages: LlmMessage[], { maxTokens }: { maxTokens: number }) => {
     const req = buildRequest(cfg, messages, { maxTokens, jsonMode: true, attachment })
-    const res = await fetch(req.url, {
-      method: 'POST',
-      headers: req.headers,
-      body: JSON.stringify(req.body)
-    })
+    // fetchWithTimeout throws a TransportError on network/CORS/timeout, which the
+    // repair loop will NOT retry.
+    const res = await fetchWithTimeout(
+      req.url,
+      { method: 'POST', headers: req.headers, body: JSON.stringify(req.body) },
+      GENERATION_TIMEOUT_MS
+    )
     if (!res.ok) {
       const errText = await res.text().catch(() => '')
-      throw new ProviderHttpError(res.status, `${cfg.providerId} ${res.status}: ${truncate(errText)}`)
+      const message = `${cfg.providerId} ${res.status}: ${truncate(errText)}`
+      // 401/403/429 are permanent for this call — mark them transport so the
+      // repair loop surfaces them once instead of re-sending (re-uploading the
+      // PDF) three times. Other statuses stay ProviderHttpError, still retriable.
+      if (res.status === 401 || res.status === 403) throw new TransportError('auth', message, res.status)
+      if (res.status === 429) throw new TransportError('rate', message, res.status)
+      throw new ProviderHttpError(res.status, message)
     }
     const data: unknown = await res.json()
     const text = extractText(cfg.providerId, data)
@@ -370,12 +445,29 @@ export async function generateDiagramXmlFromPdf(args: GeneratePdfArgs): Promise<
 
 const DUMMY_PROBE_KEY = 'orbitpm-cors-probe-key'
 
+/**
+ * Stable verdict code so the UI can render the message from the i18n dictionary
+ * (RTL-safe) instead of the English `message` below (which is kept for tests and
+ * as a fallback). `reachable-other` covers 400/404/429/5xx — all "the browser
+ * COULD read a response, so CORS is open" — with the status interpolated.
+ */
+export type TestVerdictCode =
+  | 'need-base-url'
+  | 'reachable-ok'
+  | 'reachable-auth'
+  | 'reachable-other'
+  | 'blocked'
+  | 'timeout'
+
 export interface TestConnectionResult {
   /** True when the browser could read ANY HTTP response (⇒ CORS is open). */
   reachable: boolean
-  /** True when fetch() threw (CORS preflight failed / host unreachable). */
+  /** True when fetch() threw a CORS/network reject (NOT a timeout). */
   corsBlocked: boolean
   status?: number
+  /** Machine-readable verdict for i18n rendering. */
+  code: TestVerdictCode
+  /** English fallback / test-facing message. */
   message: string
 }
 
@@ -388,34 +480,22 @@ function fallbackProbeModel(providerId: LiteProviderId): string {
 function interpretProbe(status: number): TestConnectionResult {
   const base = { reachable: true, corsBlocked: false, status }
   if (status >= 200 && status < 300) {
-    return { ...base, message: `Reachable — request accepted (HTTP ${status}). Your key works.` }
+    return {
+      ...base,
+      code: 'reachable-ok',
+      message: `Reachable — request accepted (HTTP ${status}). Your key works.`
+    }
   }
   if (status === 401 || status === 403) {
     return {
       ...base,
+      code: 'reachable-auth',
       message: `Reachable (CORS OK) — the provider rejected the key (HTTP ${status}). Expected for a keyless test; enter a valid key to use it.`
-    }
-  }
-  if (status === 400) {
-    return {
-      ...base,
-      message: 'Reachable (CORS OK) — provider returned 400. The endpoint is callable from the browser.'
-    }
-  }
-  if (status === 404) {
-    return {
-      ...base,
-      message: 'Reachable (CORS OK) — 404 (check the model id). The endpoint is callable from the browser.'
-    }
-  }
-  if (status === 429) {
-    return {
-      ...base,
-      message: 'Reachable (CORS OK) — rate-limited (HTTP 429). The endpoint is callable from the browser.'
     }
   }
   return {
     ...base,
+    code: 'reachable-other',
     message: `Reachable (CORS OK) — HTTP ${status}. The endpoint is callable from the browser.`
   }
 }
@@ -424,14 +504,16 @@ function interpretProbe(status: number): TestConnectionResult {
  * Probe a provider from the browser to tell CORS from auth truthfully:
  *  - fetch() RESOLVES with any status (even 401/400) ⇒ the browser could read a
  *    response ⇒ **CORS is OPEN** (report "reachable — key invalid" for a 401).
- *  - fetch() REJECTS (TypeError "Failed to fetch") ⇒ the browser could not read
- *    a response ⇒ **CORS BLOCKED** (or the host is unreachable).
+ *  - fetch() REJECTS ⇒ the browser could not read a response. We do NOT claim
+ *    that is definitely CORS: a rejection is equally a DNS failure, offline
+ *    state, TLS error, or an unreachable host, so the verdict says "blocked or
+ *    unreachable (CORS, offline, or DNS)". A timeout is reported distinctly.
  * Uses a dummy key when none is stored, so connectivity can be verified without
  * a key (this is also the e2e's key-free way to prove the providers are live).
  */
 export async function testConnection(cfg: ProviderConfig): Promise<TestConnectionResult> {
   if (cfg.providerId === 'custom' && !(cfg.baseURL && cfg.baseURL.trim())) {
-    return { reachable: false, corsBlocked: false, message: 'Enter a base URL first.' }
+    return { reachable: false, corsBlocked: false, code: 'need-base-url', message: 'Enter a base URL first.' }
   }
   const probeCfg: ProviderConfig = {
     ...cfg,
@@ -444,18 +526,27 @@ export async function testConnection(cfg: ProviderConfig): Promise<TestConnectio
   })
   let res: Response
   try {
-    res = await fetch(req.url, {
-      method: 'POST',
-      headers: req.headers,
-      body: JSON.stringify(req.body)
-    })
-  } catch {
+    res = await fetchWithTimeout(
+      req.url,
+      { method: 'POST', headers: req.headers, body: JSON.stringify(req.body) },
+      TEST_CONNECTION_TIMEOUT_MS
+    )
+  } catch (error) {
+    if (error instanceof TransportError && error.code === 'timeout') {
+      return {
+        reachable: false,
+        corsBlocked: false,
+        code: 'timeout',
+        message: 'The connection timed out. Check your network and try again.'
+      }
+    }
     return {
       reachable: false,
       corsBlocked: true,
+      code: 'blocked',
       message:
-        'CORS-blocked or unreachable — the browser could not read any response. ' +
-        'This endpoint likely cannot be called directly from a web page (use the desktop app or a proxy).'
+        'Blocked or unreachable (CORS, offline, or DNS) — the browser could not read any response. ' +
+        'Try OpenRouter, Anthropic, or Gemini, or use the desktop app.'
     }
   }
   return interpretProbe(res.status)
@@ -463,7 +554,13 @@ export async function testConnection(cfg: ProviderConfig): Promise<TestConnectio
 
 // --- compact error classifier (browser cases) ------------------------------
 
+/** Machine-readable error class so the UI can render an i18n (RTL-safe) message. */
+export type ErrorCode = 'auth' | 'rate' | 'cors' | 'network' | 'timeout' | 'unknown'
+
 export interface ClassifiedError {
+  /** Stable code for i18n rendering (`unknown` ⇒ show the raw `message`). */
+  code: ErrorCode
+  /** English fallback message (used verbatim only for `unknown`). */
   message: string
   offline: boolean
 }
@@ -487,6 +584,7 @@ function haystack(error: unknown): string {
   return parts.join(' ').toLowerCase()
 }
 
+const TIMEOUT_RE = /\btimeout\b|timed out|timeouterror|aborterror|operation was aborted|signal timed out/
 const NETWORK_RE =
   /failed to fetch|networkerror|load failed|fetch failed|err_network|network|typeerror: failed/
 const CORS_RE = /cors|cross-origin|access-control|blocked by/
@@ -494,23 +592,55 @@ const AUTH_RE = /\b401\b|\b403\b|unauthorized|forbidden|invalid api key|invalid_
 const RATE_RE = /\b429\b|rate limit|rate_limit|too many requests|quota|overloaded/
 
 export function classifyBrowserError(error: unknown): ClassifiedError {
+  // A typed TransportError already carries its class — trust it directly so we
+  // never mis-read a 'network' code as CORS (or vice-versa).
+  if (error instanceof TransportError) {
+    if (error.code === 'timeout') {
+      return { code: 'timeout', offline: false, message: 'The request timed out. Try again.' }
+    }
+    if (error.code === 'auth') {
+      return {
+        code: 'auth',
+        offline: false,
+        message: 'The provider rejected the request (authentication). Check your API key in Settings.'
+      }
+    }
+    if (error.code === 'rate') {
+      return {
+        code: 'rate',
+        offline: false,
+        message: 'The provider is rate-limiting or overloaded right now. Wait a moment and try again.'
+      }
+    }
+    return {
+      code: 'network',
+      offline: true,
+      message: 'Could not reach the AI provider. Check your internet connection, then try again.'
+    }
+  }
   const hay = haystack(error)
-  // Auth/rate first: a ProviderHttpError(401) whose body text may also mention
+  if (TIMEOUT_RE.test(hay)) {
+    return { code: 'timeout', offline: false, message: 'The request timed out. Try again.' }
+  }
+  // Auth/rate next: a ProviderHttpError(401) whose body text may also mention
   // "network"-ish words should still classify as auth, not offline.
   if (AUTH_RE.test(hay) && !CORS_RE.test(hay)) {
     return {
+      code: 'auth',
       offline: false,
       message: 'The provider rejected the request (authentication). Check your API key in Settings.'
     }
   }
   if (RATE_RE.test(hay)) {
     return {
+      code: 'rate',
       offline: false,
       message: 'The provider is rate-limiting or overloaded right now. Wait a moment and try again.'
     }
   }
   if (CORS_RE.test(hay)) {
     return {
+      code: 'cors',
       offline: false,
       message:
         'The provider blocked the browser request (CORS). Use OpenRouter, Anthropic, or Gemini — ' +
@@ -519,11 +649,16 @@ export function classifyBrowserError(error: unknown): ClassifiedError {
   }
   if (NETWORK_RE.test(hay)) {
     return {
+      code: 'network',
       offline: true,
       message: 'Could not reach the AI provider. Check your internet connection, then try again.'
     }
   }
   const raw = error instanceof Error ? error.message : String(error)
   const firstLine = raw.split('\n')[0].trim()
-  return { offline: false, message: firstLine.length > 200 ? `${firstLine.slice(0, 197)}…` : firstLine }
+  return {
+    code: 'unknown',
+    offline: false,
+    message: firstLine.length > 200 ? `${firstLine.slice(0, 197)}…` : firstLine
+  }
 }

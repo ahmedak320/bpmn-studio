@@ -9,7 +9,8 @@ import {
 import {
   generateDiagramXml,
   generateDiagramXmlFromPdf,
-  classifyBrowserError
+  classifyBrowserError,
+  type ClassifiedError
 } from './browserAi'
 import { getKey, hasKey, getCustomConfig, customConfigReady } from './keys'
 import { checkPdfSize, fileToBase64 } from './pdf'
@@ -40,6 +41,25 @@ export interface AiPanelLiteProps {
 }
 
 type GenMode = 'description' | 'pdf'
+
+/** Localized message for a classified generation error (RTL-safe); the raw
+ * English message is used only for the `unknown` bucket. */
+function errorMessageForCode(c: ClassifiedError): string {
+  switch (c.code) {
+    case 'auth':
+      return t('ai.error.auth')
+    case 'rate':
+      return t('ai.error.rateLimit')
+    case 'cors':
+      return t('ai.error.cors')
+    case 'network':
+      return t('ai.error.network')
+    case 'timeout':
+      return t('ai.error.timeout')
+    default:
+      return c.message
+  }
+}
 
 export function AiPanelLite({
   folders,
@@ -115,6 +135,9 @@ export function AiPanelLite({
 
   const keyPresent = hasKey(providerId)
   const isCustom = providerId === 'custom'
+  // Providers not on the page's CSP connect-src allowlist (the Custom endpoint)
+  // cannot be reached from the browser — generation is desktop-app only.
+  const desktopOnly = Boolean(providerSpec.desktopOnly)
   const customReady = isCustom ? customConfigReady(customCfg) : true
   const effectiveModel = isCustom ? customCfg.model : modelId.trim()
 
@@ -128,6 +151,7 @@ export function AiPanelLite({
   const canGenerate =
     !busy &&
     online &&
+    !desktopOnly &&
     keyPresent &&
     customReady &&
     Boolean(effectiveModel) &&
@@ -173,7 +197,7 @@ export function AiPanelLite({
       setResultLabel(placed ? placed.label : t('ai.openedInMemory'))
     } catch (err) {
       const classified = classifyBrowserError(err)
-      setError(classified.message)
+      setError(errorMessageForCode(classified))
       setOffline(classified.offline || (typeof navigator !== 'undefined' && !navigator.onLine))
     } finally {
       setBusy(false)
@@ -277,16 +301,8 @@ export function AiPanelLite({
         {/* Model selector: free-text (with suggestions) for OpenRouter/Gemini,
             a fixed dropdown for Anthropic, and a Settings-driven note for Custom. */}
         {isCustom ? (
-          <div style={{ fontSize: 12, color: 'var(--orbitpm-muted)' }}>
-            {t('ai.custom.configuredNote', { settingsLink: '' }).split('{settingsLink}')[0]}
-            <button type="button" onClick={onOpenSettings} style={linkBtn}>
-              {t('ai.custom.settingsLink')}
-            </button>
-            {customCfg.model ? (
-              t('ai.custom.modelLabel', { model: customCfg.model })
-            ) : (
-              t('ai.custom.setBaseUrlFirst')
-            )}
+          <div style={infoBox} role="note">
+            🖥️ <strong>{t('settings.desktopOnly.badge')}</strong> — {t('ai.custom.desktopOnly')}
           </div>
         ) : providerSpec.allowCustomModel ? (
           <label style={labelStyle}>
@@ -355,6 +371,12 @@ export function AiPanelLite({
                 {!sizeGate.ok && sizeGate.message ? ` — ${sizeGate.message}` : ''}
               </div>
             )}
+            {pdfFile && sizeGate.ok && sizeGate.warning && (
+              <div role="status" style={warnBox}>
+                {sizeGate.warning}
+              </div>
+            )}
+            <div style={{ fontSize: 11, color: 'var(--orbitpm-muted)' }}>{t('ai.pdf.engineNote')}</div>
             <label style={labelStyle}>
               <span style={labelText}>
                 {t('ai.pdfHint.label')} <span style={{ opacity: 0.7 }}>{t('ai.pdfHint.optional')}</span>
@@ -420,19 +442,13 @@ export function AiPanelLite({
           {busy ? t('ai.generating') : genMode === 'pdf' ? t('ai.generateFromPdf') : t('ai.generate')}
         </button>
 
-        {!keyPresent && (
+        {!desktopOnly && !keyPresent && (
           <div style={{ fontSize: 12, color: 'var(--orbitpm-muted)' }}>
             {t('ai.noKeyForProvider', { providerLabel: providerSpec.label })}{' '}
             <button type="button" onClick={onOpenSettings} style={linkBtn}>
               {t('ai.addOneInSettings')}
             </button>
             {t('ai.addOneInSettings.period')}
-          </div>
-        )}
-
-        {isCustom && !customReady && (
-          <div style={{ fontSize: 12, color: 'var(--orbitpm-muted)' }}>
-            {t('ai.customNotReady')}
           </div>
         )}
 

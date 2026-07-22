@@ -152,7 +152,9 @@ describe('OpenRouter payload', () => {
       type: 'file',
       file: { filename: 'spec.pdf', file_data: 'data:application/pdf;base64,QkFTRTY0UERG' }
     })
-    expect(req.body.plugins).toEqual([{ id: 'file-parser', pdf: { engine: 'native' } }])
+    // The engine is intentionally NOT pinned — OpenRouter falls back per model
+    // (native for models with file input, OCR/text otherwise). See M5.
+    expect(req.body.plugins).toEqual([{ id: 'file-parser' }])
   })
 })
 

@@ -23,19 +23,28 @@ export interface PdfAttachment {
 // Client-side size gates. Both Anthropic and Gemini limits apply to the WHOLE
 // request payload; base64 inflates bytes ~33%, so we gate on the RAW file size
 // conservatively below the encoded ceiling. (Anthropic 32 MB request ⇒ ~23 MB
-// raw; Gemini 50 MB inline PDF cap; OpenRouter unpublished ⇒ same gate as
-// Anthropic since it forwards downstream.)
+// raw; Gemini's inline-PDF path capped at 32 MiB here — an aligned safety margin
+// against tab memory pressure, since the base64 + data-URL + serialized-body
+// copies stack up; OpenRouter unpublished ⇒ same gate as Anthropic since it
+// forwards downstream.)
 export const PDF_SIZE_LIMITS: Record<LiteProviderId, number> = {
   anthropic: 20 * 1024 * 1024,
   openrouter: 20 * 1024 * 1024,
-  gemini: 40 * 1024 * 1024,
+  gemini: 32 * 1024 * 1024,
   // Custom endpoints have no verified PDF path — see providersLite.supportsPdf.
   custom: 0
 }
 
+// Above this RAW size a PDF is still accepted, but a soft heads-up is shown:
+// base64 encoding inflates it ~33% and it may be slow or brush provider limits.
+export const PDF_SOFT_WARN_BYTES = 15 * 1024 * 1024
+
 export interface PdfSizeCheck {
   ok: boolean
+  /** Set only when `ok` is false — a hard, provider-aware rejection reason. */
   message?: string
+  /** Set when `ok` is true but the file is large enough to warrant a heads-up. */
+  warning?: string
 }
 
 function mb(bytes: number): string {
@@ -44,8 +53,9 @@ function mb(bytes: number): string {
 
 /**
  * Gate a selected PDF's raw size against the chosen provider's limit. Returns
- * `{ ok: true }` when acceptable, else `{ ok:false, message }` with a friendly,
- * provider-aware explanation (which other provider to try).
+ * `{ ok: true }` when acceptable (optionally with a soft `warning` for large but
+ * allowed files), else `{ ok:false, message }` with a friendly, provider-aware
+ * explanation (which other provider to try).
  */
 export function checkPdfSize(providerId: LiteProviderId, sizeBytes: number): PdfSizeCheck {
   const limit = PDF_SIZE_LIMITS[providerId]
@@ -65,13 +75,19 @@ export function checkPdfSize(providerId: LiteProviderId, sizeBytes: number): Pdf
       message: t('ai.pdf.sizeGate.overLimit', { size: mb(sizeBytes), limit: mb(limit), alt })
     }
   }
+  if (sizeBytes > PDF_SOFT_WARN_BYTES) {
+    return { ok: true, warning: t('ai.pdf.sizeGate.softWarn', { size: mb(sizeBytes) }) }
+  }
   return { ok: true }
 }
 
 /**
- * Read a File into a base64 string (no data: prefix) via FileReader. Browser-
- * only; kept thin so the payload builders (which take the base64 string) stay
- * pure and unit-testable in node.
+ * Read a File into a base64 string (no data: prefix) via FileReader — encoded
+ * exactly ONCE here. The single returned string is what every provider builder
+ * reuses verbatim (`attachment.base64`); none of them re-encode or re-slice it,
+ * so a large PDF is held as base64 once rather than in several stacked copies
+ * (Codex M4). Browser-only; kept thin so the payload builders (which take the
+ * base64 string) stay pure and unit-testable in node.
  */
 export function fileToBase64(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -83,7 +99,9 @@ export function fileToBase64(file: File): Promise<string> {
         reject(new Error('Unexpected FileReader result'))
         return
       }
-      // result is `data:application/pdf;base64,XXXX` — strip the prefix.
+      // result is `data:application/pdf;base64,XXXX` — return the payload after
+      // the first comma (single slice; the data-URL string is released as soon
+      // as this resolves).
       const comma = result.indexOf(',')
       resolve(comma >= 0 ? result.slice(comma + 1) : result)
     }

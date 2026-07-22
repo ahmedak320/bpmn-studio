@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import {
   deriveProcessId,
+  dedupeProcessId,
   humanizeProcessId,
   buildNewProcessDoc,
   buildMissingProcessDoc,
@@ -83,9 +84,33 @@ describe('deriveProcessId', () => {
     expect(deriveProcessId('order')).toBe('Process_order')
     expect(deriveProcessId('order-2')).toBe('Process_order_2')
   })
-  it('falls back to a valid id for an empty/garbage slug', () => {
+  it('falls back to a valid id for an empty/ASCII-punctuation slug (no script to hash)', () => {
     expect(deriveProcessId('')).toBe('Process_process')
     expect(deriveProcessId('***')).toBe('Process_process')
+  })
+  it('hashes a non-Latin (Arabic) base name into a stable, valid NCName instead of Process_process', () => {
+    const a = deriveProcessId('طلب')
+    const b = deriveProcessId('موافقة')
+    // Both are valid ids of the shape Process_<8 hex chars>…
+    expect(a).toMatch(/^Process_[0-9a-f]{8}$/)
+    expect(b).toMatch(/^Process_[0-9a-f]{8}$/)
+    // …deterministic (same input ⇒ same id)…
+    expect(deriveProcessId('طلب')).toBe(a)
+    // …and — the whole point — DIFFERENT non-Latin names get DIFFERENT ids
+    // (the old behaviour collapsed both to Process_process).
+    expect(a).not.toBe(b)
+    expect(a).not.toBe('Process_process')
+  })
+  it('gives a distinct id to a de-duplicated non-Latin base name', () => {
+    expect(deriveProcessId('طلب-العميل')).not.toBe(deriveProcessId('طلب-العميل-2'))
+  })
+})
+
+describe('dedupeProcessId', () => {
+  it('returns the id unchanged when free, else suffixes _2, _3, …', () => {
+    expect(dedupeProcessId('Process_x', () => false)).toBe('Process_x')
+    const taken = new Set(['Process_x', 'Process_x_2'])
+    expect(dedupeProcessId('Process_x', (c) => taken.has(c))).toBe('Process_x_3')
   })
 })
 
@@ -160,30 +185,34 @@ describe('deriveFileBaseName (Arabic / non-Latin name handling)', () => {
 })
 
 describe('buildNewProcessDoc with an Arabic display name', () => {
-  it('keeps the Arabic name as-is, derives an Arabic file name, but falls back the <process id> to a stable ASCII form', () => {
+  it('keeps the Arabic name as-is, derives an Arabic file name, and a stable HASHED <process id> (not Process_process)', () => {
     const doc = buildNewProcessDoc('طلب العميل')
     expect(doc.name).toBe('طلب العميل')
     expect(doc.fileBaseName).toBe('طلب-العميل')
-    // deriveProcessId() strips every non [A-Za-z0-9_] character; an
-    // all-Arabic slug reduces to nothing, so it falls back to "process" —
-    // still a valid, stable BPMN NCName, just not derived from the Arabic text.
-    expect(doc.processId).toBe('Process_process')
-    expect(doc.xml).toContain('id="Process_process"')
+    // The id is a deterministic hash of the (Arabic) file base name — a valid
+    // NCName — rather than the shared "Process_process" fallback that used to
+    // cross-wire every Arabic process's call links.
+    expect(doc.processId).toMatch(/^Process_[0-9a-f]{8}$/)
+    expect(doc.processId).not.toBe('Process_process')
+    expect(doc.xml).toContain(`id="${doc.processId}"`)
     expect(doc.xml).toContain('name="طلب العميل"')
   })
 
-  it('a de-duplicated Arabic slug override still keeps the Arabic file name and yields a distinct, stable id', () => {
+  it('two DIFFERENT Arabic names get two DIFFERENT ids (the M6 fix)', () => {
+    const a = buildNewProcessDoc('طلب')
+    const b = buildNewProcessDoc('موافقة')
+    expect(a.processId).not.toBe(b.processId)
+  })
+
+  it('a de-duplicated Arabic slug override keeps the Arabic file name and yields a distinct, stable id', () => {
     // Mirrors how App.tsx dedupes: dedupeSlug(deriveFileBaseName(name), isTaken)
-    // yields "طلب-العميل-2" on a second Arabic process with the same name.
+    // yields "طلب-العميل-2" on a second Arabic process with the same name — and
+    // because the id derives from that de-duplicated base name, the two ids differ.
+    const first = buildNewProcessDoc('طلب العميل')
     const doc = buildNewProcessDoc('طلب العميل', 'طلب-العميل-2')
     expect(doc.fileBaseName).toBe('طلب-العميل-2')
-    // deriveProcessId() strips the Arabic characters but keeps the ASCII
-    // dashes-turned-underscores around them, so the trailing "-2" counter
-    // survives as a distinct (if not cosmetically clean) id — still a valid
-    // XML NCName, and critically still DIFFERENT from the first process's
-    // "Process_process", so the two files never collide on id.
-    expect(doc.processId).toBe('Process___2')
-    expect(doc.processId).not.toBe('Process_process')
+    expect(doc.processId).toMatch(/^Process_[0-9a-f]{8}$/)
+    expect(doc.processId).not.toBe(first.processId)
   })
 })
 
@@ -199,10 +228,33 @@ describe('Arabic file names through fsAccess (mock handles)', () => {
     const files = await listBpmnFiles(root)
     expect(files.map((f) => f.relPath)).toEqual(['طلب-العميل.bpmn'])
 
+    // The hashed id round-trips through the shared process index and points back
+    // at the Arabic file (the id is no longer the shared Process_process).
     const index = buildProcessIndex(files)
-    expect(index.has('Process_process')).toBe(true)
-    expect(index.get('Process_process')?.relPath).toBe('طلب-العميل.bpmn')
-    expect(index.get('Process_process')?.processName).toBe('طلب العميل')
+    expect(index.has(doc.processId)).toBe(true)
+    expect(index.get(doc.processId)?.relPath).toBe('طلب-العميل.bpmn')
+    expect(index.get(doc.processId)?.processName).toBe('طلب العميل')
+  })
+
+  it('two Arabic processes + a call link between them resolve to the RIGHT files', async () => {
+    const root = newRoot()
+    // "طلب" (request) contains a call activity to "موافقة" (approval).
+    const approval = buildNewProcessDoc('موافقة')
+    await createBpmnFileAt(root, '', approval.fileBaseName, approval.xml)
+    const requestXml = `<?xml version="1.0"?>
+<bpmn2:definitions xmlns:bpmn2="http://www.omg.org/spec/BPMN/20100524/MODEL">
+  <bpmn2:process id="${deriveProcessId('طلب')}" name="طلب">
+    <bpmn2:callActivity id="Call_1" calledElement="${approval.processId}" />
+  </bpmn2:process>
+</bpmn2:definitions>`
+    await createBpmnFileAt(root, '', deriveFileBaseName('طلب'), requestXml)
+
+    const index = buildProcessIndex(await listBpmnFiles(root))
+    // The two Arabic processes have distinct ids and each maps to its own file…
+    expect(approval.processId).not.toBe(deriveProcessId('طلب'))
+    expect(index.get(approval.processId)?.relPath).toBe('موافقة.bpmn')
+    // …so the call link is fully resolved (no dangling calledElement).
+    expect(listUnresolvedCalledElements(requestXml, index)).toEqual([])
   })
 
   it('nests an Arabic-named process inside an Arabic-named folder', async () => {

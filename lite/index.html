@@ -6,12 +6,16 @@
     <!--
       Self-containment guard. Everything the page needs is inlined at build
       time, so the only things this policy permits over the network are the
-      user's own AI calls to the two CORS-capable providers. `data:`/`blob:`
-      cover the inlined fonts, icons and the PNG-export canvas.
+      user's own AI calls to the three CORS-capable providers (OpenRouter,
+      Anthropic, Gemini). `data:`/`blob:` cover the inlined fonts, icons and the
+      PNG-export canvas. connect-src is a CLOSED allowlist on purpose: a
+      user-supplied Custom OpenAI-compatible endpoint is NOT listed here, so it
+      cannot be reached from the browser — the Custom provider is therefore
+      surfaced as "desktop app only" in Settings/AI (see providersLite.ts).
     -->
     <meta
       http-equiv="Content-Security-Policy"
-      content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self' https://api.anthropic.com https://generativelanguage.googleapis.com;"
+      content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self' https://api.anthropic.com https://generativelanguage.googleapis.com https://openrouter.ai;"
     />
     <!-- Empty data: icon prevents the browser from fetching /favicon.ico on
          load (which would be an external request); main.tsx swaps in the real

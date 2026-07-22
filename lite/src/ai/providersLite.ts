@@ -39,10 +39,17 @@ export interface LiteProviderSpec {
   supportsPdf: boolean
   /** True when the user must configure a base URL (Custom OpenAI-compatible). */
   needsEndpointConfig: boolean
+  /**
+   * True when this provider CANNOT be reached from the browser under the page's
+   * strict CSP connect-src allowlist (only self + OpenRouter/Anthropic/Gemini
+   * are whitelisted). The Custom OpenAI-compatible endpoint points at an
+   * arbitrary user host that is not — and cannot be — on that allowlist, so it
+   * is surfaced as "desktop app only": its Test/Generate actions are disabled in
+   * Lite. See index.html's CSP and the note copy in the dictionaries.
+   */
+  desktopOnly?: boolean
   /** Where to get an API key (link shown in Settings). */
   keysUrl: string
-  /** One-line description shown under the provider name in Settings. */
-  description: string
 }
 
 // OpenRouter curated slugs — LIVE-VERIFIED against GET
@@ -69,9 +76,7 @@ export const LITE_PROVIDERS: LiteProviderSpec[] = [
     allowCustomModel: true,
     supportsPdf: true,
     needsEndpointConfig: false,
-    keysUrl: 'https://openrouter.ai/keys',
-    description:
-      'One key, many models (GLM-5.2, Kimi K3, DeepSeek V4, Claude, Gemini). CORS-friendly; PDF supported.'
+    keysUrl: 'https://openrouter.ai/keys'
   },
   {
     id: 'anthropic',
@@ -80,8 +85,7 @@ export const LITE_PROVIDERS: LiteProviderSpec[] = [
     allowCustomModel: false,
     supportsPdf: true,
     needsEndpointConfig: false,
-    keysUrl: 'https://console.anthropic.com/settings/keys',
-    description: 'Claude models, called browser-direct with your key. Native PDF understanding.'
+    keysUrl: 'https://console.anthropic.com/settings/keys'
   },
   {
     id: 'gemini',
@@ -91,8 +95,7 @@ export const LITE_PROVIDERS: LiteProviderSpec[] = [
     allowCustomModel: true,
     supportsPdf: true,
     needsEndpointConfig: false,
-    keysUrl: 'https://aistudio.google.com/apikey',
-    description: 'Gemini via raw generateContent. Native PDF understanding.'
+    keysUrl: 'https://aistudio.google.com/apikey'
   },
   {
     id: 'custom',
@@ -103,9 +106,10 @@ export const LITE_PROVIDERS: LiteProviderSpec[] = [
     // providers with a verified document path.
     supportsPdf: false,
     needsEndpointConfig: true,
-    keysUrl: '',
-    description:
-      'Point at any OpenAI-compatible endpoint (base URL + key + model). For self-hosted proxies or CORS-enabled vendors.'
+    // An arbitrary user host is not on the page's CSP connect-src allowlist, so
+    // it cannot be reached from the browser: desktop app only.
+    desktopOnly: true,
+    keysUrl: ''
   }
 ]
 

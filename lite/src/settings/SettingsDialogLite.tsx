@@ -112,11 +112,14 @@ export function SettingsDialogLite({
       const result = await testConnection(cfg)
       setResults((r) => ({ ...r, [providerId]: result }))
     } catch (err) {
+      // testConnection resolves for every real outcome; this only trips on an
+      // unexpected throw. Surface it as a blocked verdict with the raw message.
       setResults((r) => ({
         ...r,
         [providerId]: {
           reachable: false,
-          corsBlocked: false,
+          corsBlocked: true,
+          code: 'blocked',
           message: err instanceof Error ? err.message : String(err)
         }
       }))
@@ -172,7 +175,15 @@ export function SettingsDialogLite({
                     </a>
                   )}
                 </div>
-                <div style={{ fontSize: 11.5, color: 'var(--orbitpm-muted)' }}>{p.description}</div>
+                <div style={{ fontSize: 11.5, color: 'var(--orbitpm-muted)' }}>
+                  {providerDescription(p.id)}
+                </div>
+
+                {p.desktopOnly && (
+                  <div style={desktopOnlyNote} role="note">
+                    🖥️ <strong>{t('settings.desktopOnly.badge')}</strong> — {t('settings.desktopOnly.hint')}
+                  </div>
+                )}
 
                 {p.needsEndpointConfig && (
                   <>
@@ -226,7 +237,8 @@ export function SettingsDialogLite({
                   <button
                     type="button"
                     onClick={() => void runTest(p.id)}
-                    disabled={testing[p.id]}
+                    disabled={testing[p.id] || Boolean(p.desktopOnly)}
+                    title={p.desktopOnly ? t('settings.desktopOnly.badge') : undefined}
                     style={ghostBtn}
                   >
                     {testing[p.id] ? t('settings.testConnection.testing') : t('settings.testConnection')}
@@ -254,7 +266,7 @@ export function SettingsDialogLite({
                 {result && (
                   <div role="status" style={verdictStyle(result)}>
                     {result.corsBlocked ? '⛔ ' : result.reachable ? '✅ ' : 'ℹ️ '}
-                    {result.message}
+                    {verdictMessage(result)}
                   </div>
                 )}
               </section>
@@ -275,6 +287,42 @@ export function SettingsDialogLite({
       </div>
     </div>
   )
+}
+
+/** Localized one-line provider blurb (kept out of providersLite so it's RTL-safe). */
+function providerDescription(id: LiteProviderId): string {
+  switch (id) {
+    case 'openrouter':
+      return t('ai.provider.openrouter.desc')
+    case 'anthropic':
+      return t('ai.provider.anthropic.desc')
+    case 'gemini':
+      return t('ai.provider.gemini.desc')
+    case 'custom':
+      return t('ai.provider.custom.desc')
+  }
+}
+
+/** Render a test-connection verdict from its code (localized) — falls back to the
+ * English `message` for any future/unknown code. */
+function verdictMessage(r: TestConnectionResult): string {
+  const status = r.status ?? ''
+  switch (r.code) {
+    case 'need-base-url':
+      return t('settings.verdict.needBaseUrl')
+    case 'reachable-ok':
+      return t('settings.verdict.reachableOk', { status })
+    case 'reachable-auth':
+      return t('settings.verdict.reachableAuth', { status })
+    case 'reachable-other':
+      return t('settings.verdict.reachableOther', { status })
+    case 'blocked':
+      return t('settings.verdict.blocked')
+    case 'timeout':
+      return t('settings.verdict.timeout')
+    default:
+      return r.message
+  }
 }
 
 function verdictStyle(r: TestConnectionResult): CSSProperties {
@@ -338,6 +386,14 @@ const warning: CSSProperties = {
   borderRadius: 8,
   background: 'rgba(234,179,8,0.15)',
   border: '1px solid rgba(234,179,8,0.4)'
+}
+const desktopOnlyNote: CSSProperties = {
+  fontSize: 11.5,
+  lineHeight: 1.5,
+  padding: '0.45rem 0.55rem',
+  borderRadius: 6,
+  background: 'rgba(59,130,246,0.1)',
+  border: '1px solid rgba(59,130,246,0.35)'
 }
 const input: CSSProperties = {
   padding: '0.45rem 0.55rem',
