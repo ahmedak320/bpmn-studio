@@ -1,0 +1,60 @@
+/* Print / Save-as-PDF stylesheet for a single diagram. The dedicated print
+   view (.orbitpm-print-root) is display:none on screen and only rendered while
+   a print is in progress; the aggressive "hide everything else" rules are
+   scoped to body.orbitpm-printing so a plain browser Ctrl+P (no active job)
+   still prints the app normally instead of a blank page. Edge's built-in
+   "Save as PDF" then turns the print into a PDF — no PDF library needed. */
+
+.orbitpm-print-root {
+  display: none;
+}
+
+.orbitpm-print-header {
+  margin-bottom: 10mm;
+  border-bottom: 1px solid #999;
+  padding-bottom: 4mm;
+}
+.orbitpm-print-title {
+  font-size: 20pt;
+  font-weight: 700;
+  margin: 0 0 2mm;
+  color: #111;
+}
+.orbitpm-print-folder {
+  font-size: 11pt;
+  color: #555;
+  margin: 0;
+}
+.orbitpm-print-svg svg {
+  max-width: 100%;
+  height: auto;
+}
+
+@media print {
+  @page {
+    size: landscape;
+    margin: 12mm;
+  }
+
+  body.orbitpm-printing * {
+    visibility: hidden !important;
+  }
+  body.orbitpm-printing .orbitpm-print-root,
+  body.orbitpm-printing .orbitpm-print-root * {
+    visibility: visible !important;
+  }
+  body.orbitpm-printing .orbitpm-print-root {
+    display: block !important;
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 100%;
+    background: #fff;
+    color: #111;
+  }
+  body.orbitpm-printing .orbitpm-print-svg svg {
+    width: 100% !important;
+    height: auto !important;
+    max-width: 100% !important;
+  }
+}

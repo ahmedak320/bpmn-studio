@@ -86,3 +86,14 @@ button {
   opacity: 0.5;
   cursor: default;
 }
+
+/* Tree row hover actions: hidden until the row (or one of its buttons) is
+   hovered/focused, so the tree stays clean but rename/move/delete/new are one
+   hover away in addition to the right-click menu. */
+.orbitpm-tree-actions {
+  visibility: hidden;
+}
+.orbitpm-tree-row:hover .orbitpm-tree-actions,
+.orbitpm-tree-actions:focus-within {
+  visibility: visible;
+}

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import type { LiteTreeNode } from '../fs/fsAccess'
+import { INTERNAL_DND_MIME, isInternalDrag } from './importDrop'
 
 export interface FolderTreeLiteProps {
   root: LiteTreeNode | null
@@ -10,6 +11,12 @@ export interface FolderTreeLiteProps {
   onNewFolder: (folderRelPath: string) => void
   onRename: (node: LiteTreeNode) => void
   onDelete: (node: LiteTreeNode) => void
+  /** Open the "Move to…" dialog for a node (drag-and-drop fallback). */
+  onMove: (node: LiteTreeNode) => void
+  /** A node was drag-dropped onto a folder within the tree. */
+  onMoveDrop: (fromRel: string, fromType: 'file' | 'directory', toFolderRel: string) => void
+  /** Files/folders were dragged in from OUTSIDE the browser (Explorer import). */
+  onImportDrop?: (dataTransfer: DataTransfer, toFolderRel: string) => void
 }
 
 interface MenuState {
@@ -29,11 +36,36 @@ function parentOf(relPath: string): string {
   return idx === -1 ? '' : relPath.slice(0, idx)
 }
 
+/** The folder a drop onto this node targets: the folder itself, or a file's
+ *  containing folder. */
+function dropFolderOf(node: LiteTreeNode): string {
+  return node.type === 'directory' ? node.relPath : parentOf(node.relPath)
+}
+
+interface RowActions {
+  activePath: string | null
+  expanded: Set<string>
+  dropTargetRel: string | null
+  onToggle: (relPath: string) => void
+  onOpenFile: (relPath: string) => void
+  onContextMenu: (event: React.MouseEvent, node: LiteTreeNode) => void
+  onRename: (node: LiteTreeNode) => void
+  onDelete: (node: LiteTreeNode) => void
+  onMove: (node: LiteTreeNode) => void
+  onNewProcess: (folderRel: string) => void
+  onDragStartNode: (event: React.DragEvent, node: LiteTreeNode) => void
+  onDragOverFolder: (event: React.DragEvent, folderRel: string) => void
+  onDragLeaveFolder: (event: React.DragEvent, folderRel: string) => void
+  onDropFolder: (event: React.DragEvent, folderRel: string) => void
+}
+
 /**
- * Folder tree over a File-System-Access-backed workspace. Ported from the
- * desktop renderer's FolderTree (same visuals + context-menu behavior) but
- * driven by LiteTreeNode and callbacks instead of the Electron workspace IPC —
- * App wires the actual create/rename/delete to the fsAccess adapter.
+ * Folder tree over a File-System-Access-backed workspace. Adds three ways to
+ * manage files/folders: hover action icons, a right-click context menu (both
+ * offering rename / move / delete / new), and drag-and-drop move within the
+ * tree. It is also the primary drop zone for importing `.bpmn` files dragged in
+ * from Explorer (routed to the folder they land on). App wires each callback to
+ * the fsAccess adapter.
  */
 export function FolderTreeLite({
   root,
@@ -42,10 +74,14 @@ export function FolderTreeLite({
   onNewProcess,
   onNewFolder,
   onRename,
-  onDelete
+  onDelete,
+  onMove,
+  onMoveDrop,
+  onImportDrop
 }: FolderTreeLiteProps): JSX.Element {
   const [expanded, setExpanded] = useState<Set<string>>(() => new Set(['']))
   const [menu, setMenu] = useState<MenuState | null>(null)
+  const [dropTargetRel, setDropTargetRel] = useState<string | null>(null)
 
   const toggle = useCallback((relPath: string) => {
     setExpanded((prev) => {
@@ -62,40 +98,131 @@ export function FolderTreeLite({
     setMenu({ x: event.clientX, y: event.clientY, node })
   }, [])
 
+  // --- drag and drop ------------------------------------------------------
+
+  const onDragStartNode = useCallback((event: React.DragEvent, node: LiteTreeNode) => {
+    if (node.relPath === '') return
+    event.dataTransfer.setData(
+      INTERNAL_DND_MIME,
+      JSON.stringify({ relPath: node.relPath, type: node.type })
+    )
+    event.dataTransfer.setData('text/plain', node.name)
+    event.dataTransfer.effectAllowed = 'move'
+  }, [])
+
+  const onDragOverFolder = useCallback((event: React.DragEvent, folderRel: string) => {
+    // Accept both internal moves and external imports so a drop can fire.
+    event.preventDefault()
+    event.dataTransfer.dropEffect = isInternalDrag(event.dataTransfer) ? 'move' : 'copy'
+    setDropTargetRel(folderRel)
+  }, [])
+
+  const onDragLeaveFolder = useCallback((_event: React.DragEvent, folderRel: string) => {
+    setDropTargetRel((cur) => (cur === folderRel ? null : cur))
+  }, [])
+
+  const onDropFolder = useCallback(
+    (event: React.DragEvent, folderRel: string) => {
+      event.preventDefault()
+      event.stopPropagation()
+      setDropTargetRel(null)
+      const dt = event.dataTransfer
+      if (isInternalDrag(dt)) {
+        try {
+          const raw = dt.getData(INTERNAL_DND_MIME)
+          if (!raw) return
+          const parsed = JSON.parse(raw) as { relPath: string; type: 'file' | 'directory' }
+          onMoveDrop(parsed.relPath, parsed.type, folderRel)
+        } catch {
+          /* malformed payload — ignore */
+        }
+      } else {
+        onImportDrop?.(dt, folderRel)
+      }
+    },
+    [onMoveDrop, onImportDrop]
+  )
+
+  const actions: RowActions = useMemo(
+    () => ({
+      activePath: activePath ?? null,
+      expanded,
+      dropTargetRel,
+      onToggle: toggle,
+      onOpenFile,
+      onContextMenu: openMenu,
+      onRename,
+      onDelete,
+      onMove,
+      onNewProcess,
+      onDragStartNode,
+      onDragOverFolder,
+      onDragLeaveFolder,
+      onDropFolder
+    }),
+    [
+      activePath,
+      expanded,
+      dropTargetRel,
+      toggle,
+      onOpenFile,
+      openMenu,
+      onRename,
+      onDelete,
+      onMove,
+      onNewProcess,
+      onDragStartNode,
+      onDragOverFolder,
+      onDragLeaveFolder,
+      onDropFolder
+    ]
+  )
+
   const buildMenuItems = useCallback(
     (node: LiteTreeNode): MenuItem[] => {
-      const folderRel = node.type === 'directory' ? node.relPath : parentOf(node.relPath)
+      const folderRel = dropFolderOf(node)
       const items: MenuItem[] = [
         { label: 'New process', onClick: () => onNewProcess(folderRel) },
         { label: 'New folder', onClick: () => onNewFolder(folderRel) }
       ]
       if (node.relPath !== '') {
         items.push({ label: 'Rename', onClick: () => onRename(node) })
+        items.push({ label: 'Move to…', onClick: () => onMove(node) })
         items.push({ label: 'Delete', onClick: () => onDelete(node), danger: true })
       }
       return items
     },
-    [onNewProcess, onNewFolder, onRename, onDelete]
+    [onNewProcess, onNewFolder, onRename, onMove, onDelete]
   )
 
   const rows = useMemo(() => {
     if (!root) return null
-    return (
-      <TreeLevel
-        node={root}
-        depth={0}
-        expanded={expanded}
-        activePath={activePath ?? null}
-        onToggle={toggle}
-        onOpenFile={onOpenFile}
-        onContextMenu={openMenu}
-      />
-    )
-  }, [root, expanded, activePath, toggle, onOpenFile, openMenu])
+    return <TreeLevel node={root} depth={0} actions={actions} />
+  }, [root, actions])
+
+  const rootIsDropTarget = dropTargetRel === ''
 
   return (
-    <div style={{ userSelect: 'none' }} onContextMenu={(e) => root && openMenu(e, root)}>
-      {rows}
+    <div
+      style={{ userSelect: 'none' }}
+      onContextMenu={(e) => root && openMenu(e, root)}
+      // The empty tree area is a drop zone for the workspace root (import here,
+      // or move a node up to the root). Folder rows stopPropagation so a drop
+      // onto a specific folder targets that folder instead.
+      onDragOver={(e) => onDragOverFolder(e, '')}
+      onDragLeave={(e) => onDragLeaveFolder(e, '')}
+      onDrop={(e) => onDropFolder(e, '')}
+    >
+      <div
+        style={{
+          outline: rootIsDropTarget ? '2px dashed var(--orbitpm-accent)' : 'none',
+          outlineOffset: -2,
+          borderRadius: 6,
+          minHeight: 40
+        }}
+      >
+        {rows}
+      </div>
       {menu && (
         <ContextMenu
           x={menu.x}
@@ -111,35 +238,31 @@ export function FolderTreeLite({
 interface TreeLevelProps {
   node: LiteTreeNode
   depth: number
-  expanded: Set<string>
-  activePath: string | null
-  onToggle: (relPath: string) => void
-  onOpenFile: (relPath: string) => void
-  onContextMenu: (event: React.MouseEvent, node: LiteTreeNode) => void
+  actions: RowActions
 }
 
-function TreeLevel({
-  node,
-  depth,
-  expanded,
-  activePath,
-  onToggle,
-  onOpenFile,
-  onContextMenu
-}: TreeLevelProps): JSX.Element {
+function TreeLevel({ node, depth, actions }: TreeLevelProps): JSX.Element {
   const isRoot = depth === 0
-  const isOpen = isRoot || expanded.has(node.relPath)
-  const isActive = node.type === 'file' && node.relPath === activePath
+  const isOpen = isRoot || actions.expanded.has(node.relPath)
+  const isActive = node.type === 'file' && node.relPath === actions.activePath
+  const folderRel = dropFolderOf(node)
+  const isDropTarget = !isRoot && actions.dropTargetRel === folderRel && node.type === 'directory'
 
   return (
     <div>
       {!isRoot && (
         <div
+          className="orbitpm-tree-row"
+          draggable
+          onDragStart={(e) => actions.onDragStartNode(e, node)}
+          onDragOver={(e) => actions.onDragOverFolder(e, folderRel)}
+          onDragLeave={(e) => actions.onDragLeaveFolder(e, folderRel)}
+          onDrop={(e) => actions.onDropFolder(e, folderRel)}
           onClick={() => {
-            if (node.type === 'directory') onToggle(node.relPath)
-            else onOpenFile(node.relPath)
+            if (node.type === 'directory') actions.onToggle(node.relPath)
+            else actions.onOpenFile(node.relPath)
           }}
-          onContextMenu={(e) => onContextMenu(e, node)}
+          onContextMenu={(e) => actions.onContextMenu(e, node)}
           style={{
             display: 'flex',
             alignItems: 'center',
@@ -150,38 +273,103 @@ function TreeLevel({
             fontSize: 13,
             borderRadius: 4,
             whiteSpace: 'nowrap',
-            background: isActive ? 'var(--orbitpm-hover)' : 'transparent'
+            background: isDropTarget
+              ? 'var(--orbitpm-hover)'
+              : isActive
+                ? 'var(--orbitpm-hover)'
+                : 'transparent',
+            outline: isDropTarget ? '2px dashed var(--orbitpm-accent)' : 'none',
+            outlineOffset: -2
           }}
           onMouseEnter={(e) => (e.currentTarget.style.background = 'var(--orbitpm-hover)')}
           onMouseLeave={(e) =>
-            (e.currentTarget.style.background = isActive ? 'var(--orbitpm-hover)' : 'transparent')
+            (e.currentTarget.style.background =
+              isDropTarget || isActive ? 'var(--orbitpm-hover)' : 'transparent')
           }
           title={node.relPath}
         >
-          <span style={{ opacity: 0.6, width: 12, display: 'inline-block' }}>
+          <span style={{ opacity: 0.6, width: 12, display: 'inline-block', flex: '0 0 auto' }}>
             {node.type === 'directory' ? (isOpen ? '▾' : '▸') : ''}
           </span>
-          <span>{node.type === 'directory' ? '📁' : '📄'}</span>
-          <span>{node.name}</span>
+          <span style={{ flex: '0 0 auto' }}>{node.type === 'directory' ? '📁' : '📄'}</span>
+          <span style={{ flex: '1 1 auto', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+            {node.name}
+          </span>
+          {/* Hover action icons (revealed via CSS on row hover). */}
+          <span className="orbitpm-tree-actions" style={{ display: 'flex', gap: 2, flex: '0 0 auto' }}>
+            {node.type === 'directory' && (
+              <ActionIcon
+                label={`New process in ${node.name}`}
+                glyph="＋"
+                onClick={() => actions.onNewProcess(node.relPath)}
+              />
+            )}
+            <ActionIcon
+              label={`Rename ${node.name}`}
+              glyph="✎"
+              onClick={() => actions.onRename(node)}
+            />
+            <ActionIcon
+              label={`Move ${node.name}`}
+              glyph="⤴"
+              onClick={() => actions.onMove(node)}
+            />
+            <ActionIcon
+              label={`Delete ${node.name}`}
+              glyph="🗑"
+              danger
+              onClick={() => actions.onDelete(node)}
+            />
+          </span>
         </div>
       )}
       {node.type === 'directory' && isOpen && node.children && (
         <div>
           {node.children.map((child) => (
-            <TreeLevel
-              key={child.relPath}
-              node={child}
-              depth={depth + 1}
-              expanded={expanded}
-              activePath={activePath}
-              onToggle={onToggle}
-              onOpenFile={onOpenFile}
-              onContextMenu={onContextMenu}
-            />
+            <TreeLevel key={child.relPath} node={child} depth={depth + 1} actions={actions} />
           ))}
         </div>
       )}
     </div>
+  )
+}
+
+function ActionIcon({
+  label,
+  glyph,
+  onClick,
+  danger
+}: {
+  label: string
+  glyph: string
+  onClick: () => void
+  danger?: boolean
+}): JSX.Element {
+  return (
+    <button
+      type="button"
+      aria-label={label}
+      title={label}
+      onClick={(e) => {
+        e.stopPropagation()
+        onClick()
+      }}
+      style={{
+        border: 'none',
+        background: 'transparent',
+        cursor: 'pointer',
+        fontSize: 12,
+        lineHeight: 1,
+        padding: '2px 3px',
+        borderRadius: 4,
+        color: danger ? '#d0473f' : 'inherit',
+        opacity: 0.75
+      }}
+      onMouseEnter={(e) => (e.currentTarget.style.opacity = '1')}
+      onMouseLeave={(e) => (e.currentTarget.style.opacity = '0.75')}
+    >
+      {glyph}
+    </button>
   )
 }
 

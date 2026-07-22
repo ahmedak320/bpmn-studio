@@ -147,9 +147,45 @@ async function copyTree(
 }
 
 /**
- * Rename a file or folder within its own parent directory. The File System
- * Access API has no native move/rename, so this is implemented as copy + delete
- * (a file copies its bytes; a folder is copied recursively). Returns the new
+ * Relocate a file or folder from `fromRel` to `destRel` (a full relPath,
+ * possibly in a different parent). The File System Access API has no native
+ * move/rename, so this is copy + delete (a file copies its bytes; a folder is
+ * copied recursively). Returns `destRel`. Throws if an entry with the target
+ * name already exists in the destination parent. Shared by both {@link renameAt}
+ * (same parent, new name) and {@link moveAt} (new parent, same name) so the two
+ * can never drift.
+ */
+async function relocate(
+  root: FileSystemDirectoryHandle,
+  fromRel: string,
+  destRel: string,
+  type: 'file' | 'directory'
+): Promise<string> {
+  if (destRel === fromRel) return fromRel
+
+  const destParentRel = dirOf(destRel)
+  const destName = baseOf(destRel)
+  // create:true so a move can target a folder created earlier in the same op;
+  // for a rename the parent already exists, so this is a no-op there.
+  const parent = await resolveDir(root, destParentRel, { create: true })
+  // Refuse to clobber an existing entry with the same name.
+  for await (const [name] of parent.entries()) {
+    if (name === destName) throw new Error(`"${destName}" already exists here.`)
+  }
+
+  if (type === 'file') {
+    const content = await readFileAt(root, fromRel)
+    await writeFileAt(root, destRel, content)
+    await deleteAt(root, fromRel, 'file')
+  } else {
+    await copyTree(root, fromRel, destRel)
+    await deleteAt(root, fromRel, 'directory')
+  }
+  return destRel
+}
+
+/**
+ * Rename a file or folder within its own parent directory. Returns the new
  * relPath. Throws if the target name already exists in the parent.
  */
 export async function renameAt(
@@ -158,30 +194,51 @@ export async function renameAt(
   newName: string,
   type: 'file' | 'directory'
 ): Promise<string> {
-  const parentRel = dirOf(relPath)
-  const newRel = joinRel(parentRel, newName)
-  if (newRel === relPath) return relPath
+  return relocate(root, relPath, joinRel(dirOf(relPath), newName), type)
+}
 
-  const parent = await resolveDir(root, parentRel)
-  // Refuse to clobber an existing entry with the same name.
-  let clash = false
-  for await (const [name] of parent.entries()) {
-    if (name === newName) {
-      clash = true
-      break
-    }
+/**
+ * Move a file or folder INTO a different parent folder, keeping its own name.
+ * `toParentRelPath === ''` moves it to the workspace root. Returns the moved
+ * entry's new relPath. Guards against moving a folder into itself or one of its
+ * own descendants (which would recurse forever) and against clobbering an
+ * existing entry of the same name in the destination.
+ */
+export async function moveAt(
+  root: FileSystemDirectoryHandle,
+  fromRel: string,
+  toParentRelPath: string,
+  type: 'file' | 'directory'
+): Promise<string> {
+  const name = baseOf(fromRel)
+  const destRel = joinRel(toParentRelPath, name)
+  if (destRel === fromRel) return fromRel // already lives directly in that folder
+  if (
+    type === 'directory' &&
+    (toParentRelPath === fromRel || toParentRelPath.startsWith(fromRel + '/'))
+  ) {
+    throw new Error('Cannot move a folder into itself or one of its subfolders.')
   }
-  if (clash) throw new Error(`"${newName}" already exists here.`)
+  return relocate(root, fromRel, destRel, type)
+}
 
-  if (type === 'file') {
-    const content = await readFileAt(root, relPath)
-    await writeFileAt(root, newRel, content)
-    await deleteAt(root, relPath, 'file')
-  } else {
-    await copyTree(root, relPath, newRel)
-    await deleteAt(root, relPath, 'directory')
+/** Count the direct entries (files + subfolders, any type) inside a folder.
+ *  Used to decide whether a folder delete needs the type-the-name confirm:
+ *  an empty folder deletes with a plain confirm; a non-empty one is a heavier
+ *  action worth guarding. Returns 0 for a missing folder. */
+export async function countDirEntries(
+  root: FileSystemDirectoryHandle,
+  relDir: string
+): Promise<number> {
+  let dir: FileSystemDirectoryHandle
+  try {
+    dir = await resolveDir(root, relDir)
+  } catch {
+    return 0
   }
-  return newRel
+  let n = 0
+  for await (const _entry of dir.entries()) n += 1
+  return n
 }
 
 /** Does a bare slug (no extension) already exist as `<slug>.bpmn` in a folder? */
@@ -272,6 +329,49 @@ export async function listBpmnFiles(
       } else if (BPMN_RE.test(childName)) {
         const file = await (handle as FileSystemFileHandle).getFile()
         out.push({ relPath: childRel, xml: await file.text() })
+      }
+    }
+  }
+  await walk(root, '')
+  return out
+}
+
+/** One scanned `.bpmn` file: its content plus the filesystem metadata the
+ *  catalog (last-modified column) and the search-content guard (≤2MB) need. */
+export interface FileMeta {
+  relPath: string
+  xml: string
+  /** epoch ms of the file's last modification (0 if the platform omits it). */
+  lastModified: number
+  /** byte size of the file (falls back to the content length if unavailable). */
+  size: number
+}
+
+/**
+ * Like {@link listBpmnFiles} but also captures each file's `lastModified` and
+ * `size`. This is the SINGLE disk read that refreshes the whole workspace: the
+ * process index, the catalog, the search index and the unresolved-links list
+ * are all derived from its result in memory, so a tree change re-reads every
+ * `.bpmn` exactly once (mirroring the desktop app's on-refresh scan).
+ */
+export async function scanWorkspaceFiles(
+  root: FileSystemDirectoryHandle
+): Promise<FileMeta[]> {
+  const out: FileMeta[] = []
+  async function walk(dir: FileSystemDirectoryHandle, relPath: string): Promise<void> {
+    for await (const [childName, handle] of dir.entries()) {
+      const childRel = joinRel(relPath, childName)
+      if (handle.kind === 'directory') {
+        await walk(handle as FileSystemDirectoryHandle, childRel)
+      } else if (BPMN_RE.test(childName)) {
+        const file = await (handle as FileSystemFileHandle).getFile()
+        const xml = await file.text()
+        out.push({
+          relPath: childRel,
+          xml,
+          lastModified: typeof file.lastModified === 'number' ? file.lastModified : 0,
+          size: typeof file.size === 'number' ? file.size : xml.length
+        })
       }
     }
   }
