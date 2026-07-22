@@ -2,6 +2,11 @@ import { app, BrowserWindow, shell } from 'electron'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { registerWorkspaceIpc } from './workspace'
+import { registerAiIpc } from './ai/ai'
+// TODO(C4): C3 provides `registerUpdaterIpc`/menu wiring + a `.bpmn`
+// file-association open-path handler as patch snippets — add its import here
+// and its register fn to REGISTRATIONS below (and forward opened file paths to
+// the renderer via a new channel) when stitching C3's report.
 
 const isSmokeTest = process.argv.includes('--smoke-test')
 const __dirname = fileURLToPath(new URL('.', import.meta.url))
@@ -52,7 +57,11 @@ function createWindow(): void {
   // features (ai.ts, updater.ts, ...) — keep each registration in its own
   // module (electron imports injectable/mockable) rather than inlining
   // ipcMain.handle calls in this file.
-  const REGISTRATIONS: Array<(win: BrowserWindow) => void> = [registerWorkspaceIpc]
+  const REGISTRATIONS: Array<(win: BrowserWindow) => void> = [
+    registerWorkspaceIpc,
+    registerAiIpc
+    // TODO(C4): append C3's updater/menu registration here.
+  ]
   for (const register of REGISTRATIONS) {
     register(mainWindow)
   }

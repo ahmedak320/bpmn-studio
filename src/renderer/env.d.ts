@@ -31,6 +31,63 @@ interface WorkspaceApi {
   onTreeChanged: (callback: () => void) => () => void
 }
 
+// --- AI / settings / providers surface (added by C1) ------------------------
+// Provider ids are typed as plain `string` here (this is an ambient,
+// import-free .d.ts); the strongly-typed ProviderId union lives in
+// src/shared/providers.ts and is used by renderer code that imports it.
+
+interface SecretsStatusView {
+  encryptionAvailable: boolean
+  providers: { id: string; configured: boolean }[]
+}
+
+interface AvailableProviderInfo {
+  id: string
+  configured: boolean
+}
+
+interface GenerateRequestIpc {
+  description: string
+  providerId: string
+  modelId: string
+  targetFolder: string
+  name: string
+}
+
+interface GenerateResultIpc {
+  ok: boolean
+  relPath?: string
+  error?: string
+  usedFallback?: boolean
+  offline?: boolean
+}
+
+type TestConnectionResultIpc =
+  | { ok: true; message: string }
+  | { ok: false; message: string }
+
+interface AiProgressIpc {
+  stage: 'contacting-model' | 'laying-out' | 'writing-file'
+  detail?: string
+}
+
+interface SettingsApi {
+  getStatus: () => Promise<SecretsStatusView>
+  getKeys: (providerId: string) => Promise<Record<string, string>>
+  setKey: (providerId: string, fields: Record<string, string>) => Promise<void>
+  deleteKey: (providerId: string) => Promise<void>
+}
+
+interface AiApi {
+  generate: (request: GenerateRequestIpc) => Promise<GenerateResultIpc>
+  testConnection: (providerId: string, modelId: string) => Promise<TestConnectionResultIpc>
+  onProgress: (callback: (progress: AiProgressIpc) => void) => () => void
+}
+
+interface ProvidersApi {
+  available: () => Promise<AvailableProviderInfo[]>
+}
+
 interface Window {
   orbitpm: {
     versions: {
@@ -39,5 +96,9 @@ interface Window {
       electron: string
     }
     workspace: WorkspaceApi
+    settings: SettingsApi
+    ai: AiApi
+    providers: ProvidersApi
+    // TODO(C4): add `updater: UpdaterApi` here when stitching C3's preload snippet.
   }
 }

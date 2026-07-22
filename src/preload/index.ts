@@ -4,6 +4,18 @@ import {
   type TreeNode,
   type WorkspaceApiResult
 } from '../main/workspace/ipcContract'
+import {
+  AI_CHANNELS,
+  PROVIDER_CHANNELS,
+  SECRETS_CHANNELS,
+  type AiProgress,
+  type AvailableProviderInfo,
+  type GenerateRequest,
+  type GenerateResult,
+  type SecretsStatusView,
+  type TestConnectionResult
+} from '../main/ai/ipcContract'
+import type { ProviderId } from '../shared/providers'
 
 // Typed surface exposed to the renderer. Grows in later waves (AI generate
 // IPC, secrets, updater) — each lane should add its own namespace object to
@@ -43,13 +55,48 @@ const workspace = {
   }
 }
 
+// B4 secrets vault surface (see report B4.md). The renderer builds its
+// Settings modal's `SettingsHandlers` from these.
+const settings = {
+  getStatus: (): Promise<SecretsStatusView> => ipcRenderer.invoke(SECRETS_CHANNELS.getStatus),
+  getKeys: (providerId: ProviderId): Promise<Record<string, string>> =>
+    ipcRenderer.invoke(SECRETS_CHANNELS.getKeys, providerId),
+  setKey: (providerId: ProviderId, fields: Record<string, string>): Promise<void> =>
+    ipcRenderer.invoke(SECRETS_CHANNELS.setKey, providerId, fields),
+  deleteKey: (providerId: ProviderId): Promise<void> =>
+    ipcRenderer.invoke(SECRETS_CHANNELS.deleteKey, providerId)
+}
+
+// AI generation surface (C1). testConnection doubles as the Settings modal's
+// onTestConnection handler.
+const ai = {
+  generate: (request: GenerateRequest): Promise<GenerateResult> =>
+    ipcRenderer.invoke(AI_CHANNELS.generate, request),
+  testConnection: (providerId: ProviderId, modelId: string): Promise<TestConnectionResult> =>
+    ipcRenderer.invoke(AI_CHANNELS.testConnection, providerId, modelId),
+  /** Subscribe to generation progress pushes; returns an unsubscribe fn. */
+  onProgress: (callback: (progress: AiProgress) => void): (() => void) => {
+    const listener = (_e: unknown, progress: AiProgress): void => callback(progress)
+    ipcRenderer.on(AI_CHANNELS.progress, listener)
+    return () => ipcRenderer.removeListener(AI_CHANNELS.progress, listener)
+  }
+}
+
+const providers = {
+  available: (): Promise<AvailableProviderInfo[]> =>
+    ipcRenderer.invoke(PROVIDER_CHANNELS.available)
+}
+
 const api = {
   versions: {
     node: process.versions.node,
     chrome: process.versions.chrome,
     electron: process.versions.electron
   },
-  workspace
+  workspace,
+  settings,
+  ai,
+  providers
 }
 
 export type OrbitPmApi = typeof api

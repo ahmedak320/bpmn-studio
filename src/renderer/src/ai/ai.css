@@ -1,0 +1,5 @@
+@keyframes orbitpm-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
