@@ -1,0 +1,97 @@
+name: Portable EXE experiment (manual)
+
+# EXPERIMENT, not a new distribution channel. Wave G found the unsigned
+# NSIS installer blocked on the target laptop by corporate application
+# control (AppLocker/WDAC-style "blocked by your company, request
+# support" dialog), *after* SmartScreen was bypassed. This workflow tests
+# whether the packaging FORM (installer vs. portable single-file exe)
+# matters to that block, or whether — as expected — app control gates on
+# publisher signature/reputation and blocks an unsigned portable exe
+# identically. Either result is useful data; this is not a policy
+# workaround.
+#
+# Manual dispatch only — does not run on tags/pushes, does not touch the
+# main NSIS release pipeline (electron-builder.yml and package.json are
+# untouched by this workflow; a temporary merged config is generated at
+# runtime instead of editing the committed electron-builder.yml).
+
+on:
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+jobs:
+  build-portable:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build (electron-vite)
+        run: npm run build
+
+      - name: Generate temporary portable-target config
+        shell: bash
+        run: |
+          # Generated at runtime only — electron-builder.yml itself is never
+          # modified or committed. Same appId/icon/files as the real config,
+          # win.target swapped to 'portable' and the nsis block dropped.
+          cat > electron-builder.portable.yml <<'EOF'
+          # Auto-generated at CI runtime by portable-experiment.yml.
+          # NOT committed as electron-builder.yml's replacement — this file
+          # only exists inside the workflow run's checkout.
+          appId: ae.orbitpm.processstudio
+          productName: OrbitPM Process Studio
+          copyright: Copyright © 2026 ahmedak320
+
+          directories:
+            output: dist
+            buildResources: resources
+
+          files:
+            - out/**/*
+            - package.json
+
+          asarUnpack:
+            - resources/**
+
+          win:
+            icon: resources/icon.ico
+            target:
+              - target: portable
+                arch:
+                  - x64
+            artifactName: ${productName}-Portable-${version}.${ext}
+
+          portable:
+            artifactName: ${productName}-Portable-${version}.${ext}
+          EOF
+
+      - name: Package portable exe (electron-builder, no publish)
+        run: npx electron-builder --win --publish never --config electron-builder.portable.yml
+
+      - name: Locate artifact
+        id: artifact
+        shell: bash
+        run: |
+          f=$(ls dist/*.exe | head -n1)
+          echo "path=$f" >> "$GITHUB_OUTPUT"
+          echo "name=$(basename "$f")" >> "$GITHUB_OUTPUT"
+
+      - name: Upload workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: portable-exe
+          path: ${{ steps.artifact.outputs.path }}
+          retention-days: 30
