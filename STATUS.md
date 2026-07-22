@@ -342,3 +342,6 @@ should actually be handed to the end user for install.
 window.prompt fix, F2 CSP/secrets/nav/XML hardening, F3 docs/licensing) or
 explicitly tracked as deferred maintenance (Electron major upgrade).
 `v0.1.2` is the first non-prerelease, end-user-installable release.**
+
+## 2026-07-22 — Cross-check: desktop pipeline → SpiffArena import ✅
+- Desktop gen pipeline (validate→transform→xml→layout, no LLM, nested-exclusive fixture) produced a 5.6KB BPMN+DI file; imported into the running SpiffArena via the bridge → model created, byte-identical on disk, git-committed, and **accepted by SpiffArena's own BPMN parser** (`bpmn_process_ids: ['Process_1']`). Zero incompatibilities. Test model deleted; fixture restored. Closes the interop DoD item — remaining boxes are all wave-G laptop items (install, live keys, auto-update proof).
