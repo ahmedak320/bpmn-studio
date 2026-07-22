@@ -1,7 +1,18 @@
-import { useEffect, useState } from 'react'
-import { LITE_PROVIDERS } from '../ai/providersLite'
-import { getKey, setKey, clearKey, keyLast4, KEY_STORAGE_WARNING } from '../ai/keys'
-import type { LiteProviderId } from '../ai/browserAi'
+import { useEffect, useState, type CSSProperties } from 'react'
+import { LITE_PROVIDERS, type LiteProviderId } from '../ai/providersLite'
+import {
+  getKey,
+  setKey,
+  clearKey,
+  keyLast4,
+  KEY_STORAGE_WARNING,
+  getCustomConfig,
+  setCustomConfig,
+  parseHeaderLines,
+  headerLinesToText,
+  type CustomEndpointConfig
+} from '../ai/keys'
+import { testConnection, type ProviderConfig, type TestConnectionResult } from '../ai/browserAi'
 
 export interface SettingsDialogLiteProps {
   open: boolean
@@ -11,10 +22,14 @@ export interface SettingsDialogLiteProps {
 }
 
 /**
- * Minimal API-key manager for the two browser-capable providers. Fields are
- * write-only: an already-stored key shows a "Configured (••••1234)" placeholder
- * and is only overwritten when you type a new value + Save; Clear removes it.
- * Keys go to localStorage — the warning banner makes that explicit.
+ * Per-provider API-key manager for the four browser-callable providers.
+ * Key fields are write-only: an already-stored key shows a "Configured
+ * (••••1234)" placeholder and is only overwritten when you type a new value +
+ * Save; Clear removes it. The Custom endpoint additionally captures a base URL /
+ * model / extra headers. Every provider has a "Test connection" button that
+ * truthfully distinguishes a CORS block from an auth failure (see
+ * browserAi.testConnection). Everything lives in localStorage — the warning
+ * banner makes that explicit.
  */
 export function SettingsDialogLite({
   open,
@@ -22,12 +37,20 @@ export function SettingsDialogLite({
   onKeysChanged
 }: SettingsDialogLiteProps): JSX.Element | null {
   const [drafts, setDrafts] = useState<Record<string, string>>({})
+  const [custom, setCustom] = useState<CustomEndpointConfig>(() => getCustomConfig())
+  const [headerText, setHeaderText] = useState('')
   const [saved, setSaved] = useState<string | null>(null)
+  const [testing, setTesting] = useState<Record<string, boolean>>({})
+  const [results, setResults] = useState<Record<string, TestConnectionResult>>({})
 
   useEffect(() => {
     if (open) {
       setDrafts({})
       setSaved(null)
+      setResults({})
+      const cfg = getCustomConfig()
+      setCustom(cfg)
+      setHeaderText(headerLinesToText(cfg.extraHeaders))
     }
   }, [open])
 
@@ -46,16 +69,58 @@ export function SettingsDialogLite({
 
   if (!open) return null
 
+  const persistCustom = (next: CustomEndpointConfig): void => {
+    setCustom(next)
+    setCustomConfig(next)
+  }
+
   const save = (): void => {
     for (const p of LITE_PROVIDERS) {
       const draft = drafts[p.id]
-      if (draft !== undefined && draft.trim().length > 0) {
-        setKey(p.id, draft)
-      }
+      if (draft !== undefined && draft.trim().length > 0) setKey(p.id, draft)
     }
+    // Persist the custom endpoint (base URL / model / headers) too.
+    setCustomConfig({ ...custom, extraHeaders: parseHeaderLines(headerText) })
     setDrafts({})
     setSaved('Saved.')
     onKeysChanged()
+  }
+
+  const runTest = async (providerId: LiteProviderId): Promise<void> => {
+    setTesting((t) => ({ ...t, [providerId]: true }))
+    setResults((r) => {
+      const next = { ...r }
+      delete next[providerId]
+      return next
+    })
+    // Prefer a freshly-typed draft key so users can test before saving; fall
+    // back to the stored key; the probe itself uses a dummy when both are empty.
+    const draftKey = drafts[providerId]
+    const apiKey = draftKey && draftKey.trim() ? draftKey.trim() : getKey(providerId)
+    const cfg: ProviderConfig = {
+      providerId,
+      model: providerId === 'custom' ? custom.model : '',
+      apiKey,
+      baseURL: providerId === 'custom' ? custom.baseURL : undefined,
+      extraHeaders: providerId === 'custom' ? parseHeaderLines(headerText) : undefined,
+      referer: typeof location !== 'undefined' ? location.origin : undefined,
+      title: 'OrbitPM Process Studio Lite'
+    }
+    try {
+      const result = await testConnection(cfg)
+      setResults((r) => ({ ...r, [providerId]: result }))
+    } catch (err) {
+      setResults((r) => ({
+        ...r,
+        [providerId]: {
+          reachable: false,
+          corsBlocked: false,
+          message: err instanceof Error ? err.message : String(err)
+        }
+      }))
+    } finally {
+      setTesting((t) => ({ ...t, [providerId]: false }))
+    }
   }
 
   return (
@@ -70,13 +135,13 @@ export function SettingsDialogLite({
     >
       <div style={panel}>
         <header style={header}>
-          <strong>Settings — AI keys</strong>
+          <strong>Settings — AI providers</strong>
           <button type="button" onClick={onClose} aria-label="Close" style={closeBtn}>
             ×
           </button>
         </header>
 
-        <div style={{ padding: '0.9rem 1rem', display: 'flex', flexDirection: 'column', gap: 16 }}>
+        <div style={{ padding: '0.9rem 1rem', display: 'flex', flexDirection: 'column', gap: 18 }}>
           <div style={warning} role="note">
             ⚠️ {KEY_STORAGE_WARNING}
           </div>
@@ -85,46 +150,110 @@ export function SettingsDialogLite({
             const configured = getKey(p.id).length > 0
             const last4 = keyLast4(p.id)
             const value = drafts[p.id] ?? ''
+            const result = results[p.id]
             return (
-              <div key={p.id} style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+              <section
+                key={p.id}
+                aria-label={p.label}
+                style={{ display: 'flex', flexDirection: 'column', gap: 6 }}
+              >
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
                   <span style={{ fontWeight: 600, fontSize: 14 }}>{p.label}</span>
-                  <a
-                    href={p.keysUrl}
-                    target="_blank"
-                    rel="noreferrer noopener"
-                    style={{ fontSize: 12, color: 'var(--orbitpm-accent)' }}
-                  >
-                    Get a key ↗
-                  </a>
+                  {p.keysUrl && (
+                    <a
+                      href={p.keysUrl}
+                      target="_blank"
+                      rel="noreferrer noopener"
+                      style={{ fontSize: 12, color: 'var(--orbitpm-accent)' }}
+                    >
+                      Get a key ↗
+                    </a>
+                  )}
                 </div>
+                <div style={{ fontSize: 11.5, color: 'var(--orbitpm-muted)' }}>{p.description}</div>
+
+                {p.needsEndpointConfig && (
+                  <>
+                    <input
+                      type="text"
+                      autoComplete="off"
+                      aria-label="Base URL"
+                      value={custom.baseURL}
+                      placeholder="Base URL, e.g. https://api.example.com/v1"
+                      onChange={(e) => persistCustom({ ...custom, baseURL: e.target.value })}
+                      style={input}
+                    />
+                    <input
+                      type="text"
+                      autoComplete="off"
+                      aria-label="Model id"
+                      value={custom.model}
+                      placeholder="Model id, e.g. llama-3.3-70b"
+                      onChange={(e) => persistCustom({ ...custom, model: e.target.value })}
+                      style={input}
+                    />
+                  </>
+                )}
+
                 <input
                   type="password"
                   autoComplete="off"
+                  aria-label={`${p.label} API key`}
                   value={value}
-                  placeholder={configured ? `Configured (••••${last4}) — type to replace` : 'Paste API key'}
+                  placeholder={
+                    configured ? `Configured (••••${last4}) — type to replace` : 'Paste API key'
+                  }
                   onChange={(e) => setDrafts((d) => ({ ...d, [p.id]: e.target.value }))}
                   style={input}
                 />
-                {configured && (
+
+                {p.needsEndpointConfig && (
+                  <textarea
+                    aria-label="Extra headers"
+                    value={headerText}
+                    placeholder={'Extra headers (optional), one per line:\nX-My-Header: value'}
+                    onChange={(e) => setHeaderText(e.target.value)}
+                    rows={2}
+                    style={{ ...input, resize: 'vertical', fontFamily: 'monospace', fontSize: 12 }}
+                  />
+                )}
+
+                <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
                   <button
                     type="button"
-                    onClick={() => {
-                      clearKey(p.id as LiteProviderId)
-                      setDrafts((d) => {
-                        const next = { ...d }
-                        delete next[p.id]
-                        return next
-                      })
-                      setSaved('Key cleared.')
-                      onKeysChanged()
-                    }}
-                    style={{ ...ghostBtn, alignSelf: 'flex-start' }}
+                    onClick={() => void runTest(p.id)}
+                    disabled={testing[p.id]}
+                    style={ghostBtn}
                   >
-                    Clear stored key
+                    {testing[p.id] ? 'Testing…' : 'Test connection'}
                   </button>
+                  {configured && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        clearKey(p.id)
+                        setDrafts((d) => {
+                          const next = { ...d }
+                          delete next[p.id]
+                          return next
+                        })
+                        setSaved('Key cleared.')
+                        onKeysChanged()
+                      }}
+                      style={ghostBtn}
+                    >
+                      Clear stored key
+                    </button>
+                  )}
+                </div>
+
+                {result && (
+                  <div role="status" style={verdictStyle(result)}>
+                    {result.corsBlocked ? '⛔ ' : result.reachable ? '✅ ' : 'ℹ️ '}
+                    {result.message}
+                  </div>
                 )}
-              </div>
+              </section>
             )
           })}
         </div>
@@ -136,7 +265,7 @@ export function SettingsDialogLite({
             Close
           </button>
           <button type="button" onClick={save} className="orbitpm-lite-primary" style={{ fontSize: 13 }}>
-            Save keys
+            Save
           </button>
         </footer>
       </div>
@@ -144,7 +273,23 @@ export function SettingsDialogLite({
   )
 }
 
-const overlay: React.CSSProperties = {
+function verdictStyle(r: TestConnectionResult): CSSProperties {
+  const tone = r.corsBlocked
+    ? { bg: 'rgba(239,68,68,0.12)', border: 'rgba(239,68,68,0.4)' }
+    : r.reachable
+      ? { bg: 'rgba(34,197,94,0.12)', border: 'rgba(34,197,94,0.4)' }
+      : { bg: 'rgba(234,179,8,0.12)', border: 'rgba(234,179,8,0.4)' }
+  return {
+    fontSize: 12,
+    lineHeight: 1.45,
+    padding: '0.45rem 0.55rem',
+    borderRadius: 6,
+    background: tone.bg,
+    border: `1px solid ${tone.border}`
+  }
+}
+
+const overlay: CSSProperties = {
   position: 'fixed',
   inset: 0,
   background: 'rgba(0,0,0,0.4)',
@@ -153,30 +298,36 @@ const overlay: React.CSSProperties = {
   justifyContent: 'center',
   zIndex: 1500
 }
-const panel: React.CSSProperties = {
-  width: 480,
+const panel: CSSProperties = {
+  width: 520,
   maxWidth: '92vw',
-  maxHeight: '86vh',
+  maxHeight: '88vh',
   overflow: 'auto',
   background: 'var(--orbitpm-panel-bg)',
   borderRadius: 10,
   boxShadow: '0 10px 40px rgba(0,0,0,0.35)'
 }
-const header: React.CSSProperties = {
+const header: CSSProperties = {
   display: 'flex',
   justifyContent: 'space-between',
   alignItems: 'center',
   padding: '0.75rem 1rem',
-  borderBottom: '1px solid var(--orbitpm-border)'
+  borderBottom: '1px solid var(--orbitpm-border)',
+  position: 'sticky',
+  top: 0,
+  background: 'var(--orbitpm-panel-bg)'
 }
-const footer: React.CSSProperties = {
+const footer: CSSProperties = {
   display: 'flex',
   gap: 8,
   alignItems: 'center',
   padding: '0.7rem 1rem',
-  borderTop: '1px solid var(--orbitpm-border)'
+  borderTop: '1px solid var(--orbitpm-border)',
+  position: 'sticky',
+  bottom: 0,
+  background: 'var(--orbitpm-panel-bg)'
 }
-const warning: React.CSSProperties = {
+const warning: CSSProperties = {
   fontSize: 12,
   lineHeight: 1.5,
   padding: '0.6rem 0.7rem',
@@ -184,7 +335,7 @@ const warning: React.CSSProperties = {
   background: 'rgba(234,179,8,0.15)',
   border: '1px solid rgba(234,179,8,0.4)'
 }
-const input: React.CSSProperties = {
+const input: CSSProperties = {
   padding: '0.45rem 0.55rem',
   borderRadius: 6,
   border: '1px solid rgba(127,127,127,0.4)',
@@ -193,20 +344,21 @@ const input: React.CSSProperties = {
   font: 'inherit',
   fontSize: 13
 }
-const closeBtn: React.CSSProperties = {
+const closeBtn: CSSProperties = {
   border: 'none',
   background: 'transparent',
   fontSize: 20,
   cursor: 'pointer',
   lineHeight: 1
 }
-const ghostBtn: React.CSSProperties = {
+const ghostBtn: CSSProperties = {
   padding: '0.4rem 0.7rem',
   borderRadius: 6,
   border: '1px solid rgba(127,127,127,0.35)',
   background: 'transparent',
   fontSize: 13,
-  cursor: 'pointer'
+  cursor: 'pointer',
+  color: 'inherit'
 }
 
 export default SettingsDialogLite

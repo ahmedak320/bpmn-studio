@@ -205,8 +205,10 @@ test('AI panel documents the browser-only provider limitation', async ({ page })
   await page.goto(FILE_URL, { waitUntil: 'load' })
   await page.getByRole('button', { name: /New blank diagram/i }).click()
 
-  // The AI panel (right zone) names the two browser-capable providers and the
-  // desktop-only ones.
-  await expect(page.getByText(/Only\s+Anthropic\s+and\s+Gemini/i)).toBeVisible()
+  // The AI panel (right zone) names the browser-capable providers (now
+  // Anthropic, Gemini AND OpenRouter) and the desktop-only ones. The exhaustive
+  // copy check lives in lite-providers.spec.ts; here we just assert the note is
+  // present and still warns about the CORS-gated providers.
+  await expect(page.getByText(/can be called directly from a web page/i)).toBeVisible()
   await expect(page.getByText(/don.?t allow browser \(CORS\) access/i)).toBeVisible()
 })
