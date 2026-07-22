@@ -15,7 +15,7 @@ import type { AddressInfo } from 'node:net'
 // provider is REACHABLE (i.e. CORS is open — a keyless probe expectedly gets a
 // 401/400 the browser CAN read), NOT "CORS-blocked".
 //
-// Run: DISPLAY=:0 LITE_LIVE_CORS=1 npx playwright test \
+// Run: LITE_LIVE_CORS=1 npx playwright test \
 //        -c lite/tests/e2e/playwright.lite.config.ts lite-live-cors
 
 const LIVE = process.env.LITE_LIVE_CORS === '1'

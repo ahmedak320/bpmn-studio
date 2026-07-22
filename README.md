@@ -273,9 +273,9 @@ npm run typecheck    # tsc over lite + the reused ../src files
 npm test             # vitest — FS-adapter glue (mocked File System Access handles)
 npm run build        # -> lite/dist/index.html (one inlined file, ~2.8 MB)
 
-# E2E smoke (headed chromium; run from the desktop/ repo root where Playwright
+# E2E smoke (headless chromium; run from the desktop/ repo root where Playwright
 # and the chromium browser are installed):
-cd .. && DISPLAY=:0 npx playwright test -c lite/tests/e2e/playwright.lite.config.ts
+cd .. && npx playwright test -c lite/tests/e2e/playwright.lite.config.ts
 ```
 
 It's deployed to GitHub Pages by `.github/workflows/pages.yml` on any push to
