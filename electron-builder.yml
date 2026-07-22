@@ -1,0 +1,49 @@
+appId: ae.orbitpm.processstudio
+productName: OrbitPM Process Studio
+copyright: Copyright © 2026 ahmedak320
+
+# NOTE: resources/icon.png is a placeholder brand-color square generated in
+# wave A1 so the build config is self-consistent. Replace with a real
+# multi-resolution app icon (icon.ico for win, plus icon.png source) before
+# a real release build.
+
+directories:
+  output: dist
+  buildResources: resources
+
+files:
+  - out/**/*
+  - package.json
+
+asarUnpack:
+  - resources/**
+
+win:
+  target:
+    - target: nsis
+      arch:
+        - x64
+  artifactName: ${productName}-Setup-${version}.${ext}
+  fileAssociations:
+    - ext: bpmn
+      name: BPMN Diagram
+      description: BPMN 2.0 Process Diagram
+      icon: resources/icon.png
+      role: Editor
+
+nsis:
+  oneClick: true
+  perMachine: false
+  allowElevation: false
+  runAfterFinish: true
+  artifactName: ${productName}-Setup-${version}.${ext}
+
+publish:
+  provider: github
+  owner: ahmedak320
+  repo: bpmn-studio
+
+# NOTE: unsigned build — do NOT set verifyUpdateCodeSignature or a
+# publisherName override; electron-updater's GitHub provider works fine
+# unsigned for per-user (HKCU) NSIS installs. Revisit Azure Trusted Signing
+# only if the laptop SmartScreen experiment (wave A2/G) blocks the install.

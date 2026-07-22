@@ -1,0 +1,47 @@
+name: Build Windows installer
+
+# Canonical build = GitHub Actions windows-latest (per plan §2c): public repo,
+# free minutes, no wine, signing-ready later.
+#
+# Local fallback (if CI/repo auth is ever unavailable — plan risk #8):
+#   docker run --rm -ti \
+#     --env-file <(env | grep -iE 'GH_TOKEN|ELECTRON|NPM') \
+#     -v ${PWD}:/project \
+#     -v ~/.cache/electron:/root/.cache/electron \
+#     -v ~/.cache/electron-builder:/root/.cache/electron-builder \
+#     electronuserland/builder:wine \
+#     /bin/bash -c "npm ci && npm run build && npx electron-builder --win --publish always"
+#   (Wine-hosted Windows build; run from the desktop/ repo root with GH_TOKEN
+#   exported. This repo IS desktop/ — a standalone nested git repo, see
+#   ../.gitignore in the parent bpmn_tool checkout.)
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch: {}
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build (electron-vite)
+        run: npm run build
+
+      - name: Package + publish (electron-builder)
+        run: npx electron-builder --win --publish always
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
