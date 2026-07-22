@@ -219,3 +219,51 @@ which owns its own file tree and isn't touched by this entry.
 **Wave D (D2 scope) status: README complete, v0.1.0 tagged/released.
 Findings/URLs in the D2 lane report; D1's e2e results are tracked
 separately in that lane's own report.**
+
+## Wave R — lane R1 (release repair: v0.1.0 → v0.1.1)
+
+`v0.1.0` (=`0db4ff2`) was built and released **before**
+`169d6b1` ("e2e: playwright-electron suite with fake-LLM hook") landed
+on `main`. That commit — besides adding the playwright-electron e2e
+suite — contains three ship-blocking app fixes that were only
+discovered by actually running the built app:
+
+1. **Preload must be CommonJS** (`out/preload/index.cjs`). The
+   released `v0.1.0` build's preload was `.mjs`, which fails to load
+   under `sandbox:true`, leaving `window.orbitpm` `undefined` and the
+   app hanging forever on "Loading workspace…". **v0.1.0 was DOA** —
+   nobody could get past the loading screen.
+2. `EditorTab` was missing `CreateAppendElementTemplatesModule`,
+   which crashed on every diagram open.
+3. A process-index root race in `App.tsx`.
+
+Because `v0.1.0` cannot be used at all, it was pulled rather than
+patched forward:
+
+- `git push` — landed `169d6b1` on `origin/main` (was local-only,
+  1 commit ahead).
+- `gh release delete v0.1.0 --yes` — removed the GitHub Release (and
+  its assets) so nobody downloads the broken installer.
+- `git push --delete origin v0.1.0` + `git tag -d v0.1.0` — removed
+  the tag locally and on `origin`.
+- Bumped `package.json` version `0.1.0` → `0.1.1` (no dependency
+  changes; `.npm-lock` protocol used per convention anyway).
+- Quick gates re-run against the fixed commit before tagging:
+  `npm run typecheck` (clean), `npm run build` (confirms
+  `out/preload/index.cjs` — CommonJS, the fix — is what's emitted),
+  `npm test` — **196/196 passed**.
+- Committed `release: v0.1.1 (supersedes v0.1.0 — includes
+  e2e-discovered runtime fixes)`, pushed `main`, tagged `v0.1.1`,
+  pushed the tag. CI (`.github/workflows/build.yml`) builds on
+  `windows-latest` and publishes the GitHub Release automatically off
+  the tag push.
+- See this lane's report (`R1.md`) for the CI run URL, the
+  `gh release view` asset/flag confirmation (Setup exe, `latest.yml`,
+  blockmap), the static NSIS/`asInvoker` checks on the downloaded
+  installer, and the `latest.yml` version confirmation.
+
+**`v0.1.1` is an INTERNAL release only** — it supersedes the DOA
+`v0.1.0` and unblocks e2e/CI, but a further planned `v0.1.2` (after
+the `window.prompt`-in-Electron CRUD-flow issue flagged by the e2e
+lane as UNCONFIRMED-in-real-Electron is investigated/fixed) is what
+should actually be handed to the end user for install.
