@@ -1,6 +1,7 @@
 import { app, BrowserWindow, shell } from 'electron'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { registerWorkspaceIpc } from './workspace'
 
 const isSmokeTest = process.argv.includes('--smoke-test')
 const __dirname = fileURLToPath(new URL('.', import.meta.url))
@@ -44,6 +45,18 @@ function createWindow(): void {
     shell.openExternal(details.url)
     return { action: 'deny' }
   })
+
+  // --- IPC registrations -----------------------------------------------
+  // Each lane owning an IPC surface registers its channels here. Add new
+  // `register*Ipc(mainWindow)` calls to this list as later waves add
+  // features (ai.ts, updater.ts, ...) — keep each registration in its own
+  // module (electron imports injectable/mockable) rather than inlining
+  // ipcMain.handle calls in this file.
+  const REGISTRATIONS: Array<(win: BrowserWindow) => void> = [registerWorkspaceIpc]
+  for (const register of REGISTRATIONS) {
+    register(mainWindow)
+  }
+  // -----------------------------------------------------------------------
 
   if (process.env.ELECTRON_RENDERER_URL) {
     mainWindow.loadURL(process.env.ELECTRON_RENDERER_URL)
