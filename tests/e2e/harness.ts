@@ -7,9 +7,11 @@
 //   - launches the built app (out/main/index.js) with --no-sandbox and the
 //     ORBITPM_USERDATA / ORBITPM_E2E_FIXTURES_DIR / ORBITPM_E2E_FAKE_LLM env
 //     hooks (all gated in the main process; no production effect),
-//   - neutralizes the browser dialog primitives (window.prompt is unsupported
-//     in Electron; window.confirm/alert would block the renderer) so flows are
-//     deterministic while the user-visible actions themselves stay real,
+//   - stubs only the BLOCKING native dialogs (window.confirm/alert would hang
+//     the headless renderer) so flows are deterministic while the clicks/menus
+//     that trigger them stay real. window.prompt is deliberately left un-stubbed
+//     — Electron does not support it and the app now uses an in-app modal (see
+//     submitPrompt), so any regression back to window.prompt is caught, not masked,
 //   - on teardown closes the app, removes the temp dirs, and on failure writes
 //     a screenshot + trace into tests/e2e/artifacts.
 
@@ -97,14 +99,14 @@ export const test = base.extend<Fixtures>({
       const window = await app.firstWindow()
       await window.waitForLoadState('domcontentloaded')
 
-      // Neutralize native/unsupported browser dialogs. Only the dialog
-      // primitives are stubbed — the clicks/menus that trigger them stay real.
+      // Stub only the BLOCKING native dialogs so headless flows don't hang.
+      // window.prompt is intentionally NOT stubbed: Electron does not support
+      // it, and the app now uses the in-app TextInputModal (driven via
+      // submitPrompt). Leaving prompt real means a regression back to
+      // window.prompt is caught, not masked.
       await window.evaluate(() => {
-        const w = window as unknown as { __E2E_PROMPT__: string }
-        w.__E2E_PROMPT__ = ''
         window.confirm = () => true
         window.alert = () => undefined
-        window.prompt = () => w.__E2E_PROMPT__
       })
 
       const launched: Launched = { app, window, userDataDir, workspaceDir }
@@ -134,11 +136,18 @@ export const test = base.extend<Fixtures>({
 
 export { expect }
 
-/** Set the value the stubbed window.prompt will return for the next action. */
-export function setPromptValue(window: Page, value: string): Promise<void> {
-  return window.evaluate((v) => {
-    ;(window as unknown as { __E2E_PROMPT__: string }).__E2E_PROMPT__ = v
-  }, value)
+/**
+ * Drive the in-app TextInputModal (the replacement for the unsupported
+ * window.prompt) that new-process / new-folder / rename flows open: wait for
+ * it, fill its input, confirm, and wait for it to close. Call this AFTER the
+ * action that opens the modal (right-click → menu item, or File > New Process).
+ */
+export async function submitPrompt(window: Page, value: string): Promise<void> {
+  const input = window.locator('.text-input-modal__input')
+  await expect(input).toBeVisible()
+  await input.fill(value)
+  await window.locator('.text-input-modal__ok').click()
+  await expect(input).toHaveCount(0)
 }
 
 /** Force the AI panel's connectivity state to online (fake path needs no net). */

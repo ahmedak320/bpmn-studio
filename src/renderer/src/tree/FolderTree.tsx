@@ -1,5 +1,7 @@
 import { useCallback, useMemo, useState } from 'react'
 import ContextMenu, { type ContextMenuItem } from './ContextMenu'
+import { usePromptText } from '../common'
+import { promptNewProcess } from './newProcess'
 
 export interface FolderTreeProps {
   root: TreeNode | null
@@ -13,20 +15,11 @@ interface MenuState {
   node: TreeNode
 }
 
-function slugify(name: string): string {
-  return (
-    name
-      .trim()
-      .toLowerCase()
-      .replace(/[^a-z0-9]+/g, '-')
-      .replace(/^-+|-+$/g, '') || 'process'
-  )
-}
-
 /** Folder tree: folders sorted first, .bpmn files only, expand/collapse,
  * context menu (new process / new folder / rename / delete), double-click
  * a file to open it. */
 function FolderTree({ root, onOpenFile, onRefresh }: FolderTreeProps): JSX.Element {
+  const promptText = usePromptText()
   const [expanded, setExpanded] = useState<Set<string>>(() => new Set(['']))
   const [menu, setMenu] = useState<MenuState | null>(null)
 
@@ -41,25 +34,22 @@ function FolderTree({ root, onOpenFile, onRefresh }: FolderTreeProps): JSX.Eleme
 
   const handleNewProcess = useCallback(
     async (folder: TreeNode) => {
-      const name = window.prompt('New process name:', 'Untitled Process')
-      if (!name) return
-      const slug = slugify(name)
-      const relPath = folder.relPath ? `${folder.relPath}/${slug}.bpmn` : `${slug}.bpmn`
-      const processId = `Process_${slug.replace(/-/g, '_')}`
-      const result = await window.orbitpm.workspace.createBpmnFile(relPath, processId, name)
-      if (!result.ok) {
-        window.alert(`Could not create process: ${result.error}`)
-        return
-      }
+      const relPath = await promptNewProcess(folder.relPath, promptText)
+      if (!relPath) return
       onRefresh()
       onOpenFile(relPath)
     },
-    [onOpenFile, onRefresh]
+    [onOpenFile, onRefresh, promptText]
   )
 
   const handleNewFolder = useCallback(
     async (folder: TreeNode) => {
-      const name = window.prompt('New folder name:', 'New Folder')
+      const name = await promptText({
+        title: 'New Folder',
+        label: 'Folder name',
+        initialValue: 'New Folder',
+        okLabel: 'Create'
+      })
       if (!name) return
       const relPath = folder.relPath ? `${folder.relPath}/${name}` : name
       const result = await window.orbitpm.workspace.createFolder(relPath)
@@ -69,13 +59,18 @@ function FolderTree({ root, onOpenFile, onRefresh }: FolderTreeProps): JSX.Eleme
       }
       onRefresh()
     },
-    [onRefresh]
+    [onRefresh, promptText]
   )
 
   const handleRename = useCallback(
     async (node: TreeNode) => {
       const currentName = node.name
-      const name = window.prompt('Rename to:', currentName)
+      const name = await promptText({
+        title: 'Rename',
+        label: 'New name',
+        initialValue: currentName,
+        okLabel: 'Rename'
+      })
       if (!name || name === currentName) return
       const result = await window.orbitpm.workspace.rename(node.relPath, name)
       if (!result.ok) {
@@ -84,7 +79,7 @@ function FolderTree({ root, onOpenFile, onRefresh }: FolderTreeProps): JSX.Eleme
       }
       onRefresh()
     },
-    [onRefresh]
+    [onRefresh, promptText]
   )
 
   const handleDelete = useCallback(

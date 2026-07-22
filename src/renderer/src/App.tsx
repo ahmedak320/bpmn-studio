@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
-import { FolderTree, WorkspacePicker } from './tree'
+import { FolderTree, WorkspacePicker, promptNewProcess } from './tree'
 import { EditorTab, type EditorTabCommands } from './editor'
 import { AiPanel, collectFolders } from './ai'
 import { SettingsModal, type SettingsHandlers, type SettingsStatus } from './settings'
+import { PromptProvider, usePromptText } from './common'
 import {
   useProcessIndex,
   SelectionLinkButton,
@@ -19,6 +20,7 @@ function baseName(relPath: string): string {
 }
 
 function App(): JSX.Element {
+  const promptText = usePromptText()
   const [root, setRoot] = useState<string | null>(null)
   const [rootLoading, setRootLoading] = useState(true)
   const [chooseError, setChooseError] = useState<string | null>(null)
@@ -224,7 +226,18 @@ function App(): JSX.Element {
     const api = window.orbitpm
     if (!api?.menu) return
     const unsubscribers = [
-      api.menu.onAction(api.menu.channels.newProcess, () => setAiCollapsed(false)),
+      // File > New Process runs the SAME flow as the tree's "New process"
+      // context-menu item (prompt for a name -> create the .bpmn -> open it),
+      // targeting the workspace root. Opening the AI panel is left to the
+      // AI-specific entries (the header "✨ AI" button).
+      api.menu.onAction(api.menu.channels.newProcess, () => {
+        void (async () => {
+          const relPath = await promptNewProcess('', promptText)
+          if (!relPath) return
+          await refreshTree()
+          void handleOpenFile(relPath)
+        })()
+      }),
       api.menu.onAction(api.menu.channels.openWorkspaceFolder, () => void handleChooseRoot()),
       api.menu.onAction(api.menu.channels.save, () => {
         if (activeFile) commandsByPathRef.current[activeFile]?.save()
@@ -237,7 +250,7 @@ function App(): JSX.Element {
       })
     ]
     return () => unsubscribers.forEach((unsub) => unsub())
-  }, [handleChooseRoot, activeFile])
+  }, [handleChooseRoot, activeFile, promptText, refreshTree, handleOpenFile])
 
   const settingsHandlers: SettingsHandlers = useMemo(
     () => ({
@@ -486,4 +499,14 @@ const chromeButton: CSSProperties = {
   cursor: 'pointer'
 }
 
-export default App
+/** App wrapped in the prompt provider so `usePromptText()` (tree CRUD + the
+ * File > New Process menu handler) has its in-app modal available. */
+function AppWithProviders(): JSX.Element {
+  return (
+    <PromptProvider>
+      <App />
+    </PromptProvider>
+  )
+}
+
+export default AppWithProviders

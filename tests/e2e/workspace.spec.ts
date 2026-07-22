@@ -1,6 +1,6 @@
 import { existsSync } from 'node:fs'
 import { join } from 'node:path'
-import { test, expect, setPromptValue } from './harness'
+import { test, expect, submitPrompt } from './harness'
 import { linearDiagram } from './diagrams'
 
 // Pre-seeded root with a fixture tree (sales/ + hr/ folders, sample .bpmn
@@ -27,10 +27,10 @@ test('renders the seeded tree and creates a process via the context menu', async
   await expect(window.getByText('order.bpmn', { exact: true })).toBeVisible()
 
   // New process via the custom ContextMenu: right-click the folder row, click
-  // the "New process" item; the (stubbed) prompt supplies the name.
-  await setPromptValue(window, 'Quarterly Review')
+  // the "New process" item, then fill the in-app TextInputModal with the name.
   await window.getByText('sales', { exact: true }).click({ button: 'right' })
   await window.getByRole('button', { name: 'New process' }).click()
+  await submitPrompt(window, 'Quarterly Review')
 
   // The file is written to disk under the right folder with the expected slug…
   const created = join(workspaceDir, 'sales', 'quarterly-review.bpmn')
