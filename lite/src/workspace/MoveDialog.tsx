@@ -1,6 +1,8 @@
 import { useMemo, useState } from 'react'
 import { Modal } from './Modal'
 import type { LiteTreeNode } from '../fs/fsAccess'
+import { t } from '../i18n'
+import { useLang } from '../i18n/useLang'
 
 export interface MoveFolderOption {
   relPath: string
@@ -28,6 +30,7 @@ function parentOf(relPath: string): string {
  * (which would recurse). Confirm calls back with the chosen destination folder.
  */
 export function MoveDialog({ node, folders, onMove, onCancel }: MoveDialogProps): JSX.Element {
+  useLang()
   const currentParent = parentOf(node.relPath)
   const options = useMemo(() => {
     return folders.filter((f) => {
@@ -45,7 +48,7 @@ export function MoveDialog({ node, folders, onMove, onCancel }: MoveDialogProps)
   const footer = (
     <>
       <button type="button" className="orbitpm-lite-chrome-btn" onClick={onCancel}>
-        Cancel
+        {t('dialog.moveTo.cancel')}
       </button>
       <button
         type="button"
@@ -61,21 +64,21 @@ export function MoveDialog({ node, folders, onMove, onCancel }: MoveDialogProps)
           cursor: options.length === 0 ? 'not-allowed' : 'pointer'
         }}
       >
-        Move here
+        {t('dialog.moveTo.okLabel')}
       </button>
     </>
   )
 
   return (
-    <Modal title={`Move "${node.name}"`} onClose={onCancel} maxWidth={420} footer={footer}>
+    <Modal title={t('dialog.moveTo.title', { name: node.name })} onClose={onCancel} maxWidth={420} footer={footer}>
       {options.length === 0 ? (
         <p style={{ margin: 0, fontSize: 13, color: 'var(--orbitpm-muted)' }}>
-          There is no other folder to move this into. Create a folder first.
+          {t('dialog.moveTo.noFolders')}
         </p>
       ) : (
         <label style={{ display: 'block', fontSize: 13 }}>
           <span style={{ display: 'block', marginBottom: 6, color: 'var(--orbitpm-muted)' }}>
-            Destination folder
+            {t('dialog.moveTo.destination')}
           </span>
           <select
             value={dest}

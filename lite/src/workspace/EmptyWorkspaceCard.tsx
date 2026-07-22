@@ -1,3 +1,6 @@
+import { t } from '../i18n'
+import { useLang } from '../i18n/useLang'
+
 export interface EmptyWorkspaceCardProps {
   /** Name of the opened workspace folder (shown in the folder hint line). */
   folderName?: string
@@ -17,6 +20,7 @@ export function EmptyWorkspaceCard({
   folderName,
   onCreateFirst
 }: EmptyWorkspaceCardProps): JSX.Element {
+  useLang()
   return (
     <div
       style={{
@@ -35,19 +39,19 @@ export function EmptyWorkspaceCard({
       <div style={{ fontSize: 30, lineHeight: 1 }} aria-hidden>
         🗂️
       </div>
-      <strong style={{ fontSize: 14 }}>No processes yet</strong>
+      <strong style={{ fontSize: 14 }}>{t('emptyWorkspace.heading')}</strong>
       <button
         type="button"
         className="orbitpm-lite-primary"
         style={{ width: '100%' }}
         onClick={onCreateFirst}
       >
-        ＋ Create your first process
+        {t('emptyWorkspace.createFirst')}
       </button>
       <p style={{ margin: 0, fontSize: 12, color: 'var(--orbitpm-muted)', lineHeight: 1.45 }}>
-        Each process is one <code>.bpmn</code> file saved in{' '}
-        <strong>{folderName ? folderName : 'this folder'}</strong>. Make folders to group related
-        processes; right-click the tree for more.
+        {t('emptyWorkspace.explain', {
+          folderName: folderName ? folderName : t('emptyWorkspace.explain.fallbackFolderName')
+        })}
       </p>
     </div>
   )

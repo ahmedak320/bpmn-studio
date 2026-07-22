@@ -13,6 +13,8 @@ import {
 } from './browserAi'
 import { getKey, hasKey, getCustomConfig, customConfigReady } from './keys'
 import { checkPdfSize, fileToBase64 } from './pdf'
+import { t } from '../i18n'
+import { useLang } from '../i18n/useLang'
 
 export interface FolderOptionLite {
   relPath: string
@@ -48,6 +50,7 @@ export function AiPanelLite({
   keysVersion,
   mode
 }: AiPanelLiteProps): JSX.Element {
+  useLang()
   const [providerId, setProviderId] = useState<LiteProviderId>('openrouter')
   const [modelId, setModelId] = useState<string>(() => defaultLiteModelId('openrouter'))
   const [genMode, setGenMode] = useState<GenMode>('description')
@@ -138,7 +141,7 @@ export function AiPanelLite({
     setResultLabel(null)
     try {
       const apiKey = getKey(providerId)
-      if (!apiKey) throw new Error('No API key for this provider. Add one in Settings.')
+      if (!apiKey) throw new Error(t('ai.error.noApiKey'))
       const common = {
         providerId,
         modelId: effectiveModel,
@@ -148,7 +151,7 @@ export function AiPanelLite({
       }
       let xml: string
       if (genMode === 'pdf') {
-        if (!pdfFile) throw new Error('Choose a PDF file first.')
+        if (!pdfFile) throw new Error(t('ai.error.chooseNoPdf'))
         const gate = checkPdfSize(providerId, pdfFile.size)
         if (!gate.ok) throw new Error(gate.message)
         const base64 = await fileToBase64(pdfFile)
@@ -167,7 +170,7 @@ export function AiPanelLite({
         xml = await generateDiagramXml({ ...common, description: description.trim() })
       }
       const placed = await onPlaceGenerated(xml, { name: name.trim(), targetFolder })
-      setResultLabel(placed ? placed.label : 'Opened in a new tab (use Save to download).')
+      setResultLabel(placed ? placed.label : t('ai.openedInMemory'))
     } catch (err) {
       const classified = classifyBrowserError(err)
       setError(classified.message)
@@ -192,8 +195,8 @@ export function AiPanelLite({
   if (collapsed) {
     return (
       <div style={collapsedWrap}>
-        <button type="button" onClick={onToggle} title="Show AI panel" style={collapsedBtn}>
-          ✨ Generate with AI
+        <button type="button" onClick={onToggle} title={t('app.showAi.title')} style={collapsedBtn}>
+          {t('ai.collapsedButton')}
         </button>
       </div>
     )
@@ -204,8 +207,8 @@ export function AiPanelLite({
   return (
     <div style={wrap}>
       <header style={panelHeader}>
-        <strong style={{ fontSize: 14 }}>✨ Generate with AI</strong>
-        <button type="button" onClick={onToggle} title="Hide AI panel" style={hideBtn}>
+        <strong style={{ fontSize: 14 }}>{t('ai.header')}</strong>
+        <button type="button" onClick={onToggle} title={t('ai.hide.title')} style={hideBtn}>
           ⟩
         </button>
       </header>
@@ -213,23 +216,22 @@ export function AiPanelLite({
       <div style={{ padding: '0.8rem', display: 'flex', flexDirection: 'column', gap: 12 }}>
         {!online && (
           <div role="status" style={warnBox}>
-            You appear to be offline. AI generation needs an internet connection; drawing and
-            organizing diagrams still works.
+            {t('ai.offlineWarning')}
           </div>
         )}
 
         {noKeysAtAll && (
           <div style={infoBox}>
-            No API keys yet. Pick a provider below and{' '}
+            {t('ai.noKeysAtAll.note').split('{link}')[0]}
             <button type="button" onClick={onOpenSettings} style={linkBtn}>
-              add a key in Settings
-            </button>{' '}
-            to generate — you can also test provider connectivity there without a key.
+              {t('ai.noKeysAtAll.link')}
+            </button>
+            {t('ai.noKeysAtAll.note').split('{link}')[1]}
           </div>
         )}
 
         {/* Generation mode: description vs PDF */}
-        <div role="tablist" aria-label="Generation source" style={segmentWrap}>
+        <div role="tablist" aria-label={t('ai.tablist.aria')} style={segmentWrap}>
           <button
             type="button"
             role="tab"
@@ -237,7 +239,7 @@ export function AiPanelLite({
             onClick={() => setGenMode('description')}
             style={segmentBtn(genMode === 'description')}
           >
-            From description
+            {t('ai.tab.description')}
           </button>
           <button
             type="button"
@@ -247,17 +249,17 @@ export function AiPanelLite({
             disabled={!providerSpec.supportsPdf}
             title={
               providerSpec.supportsPdf
-                ? 'Generate from a PDF document'
-                : 'PDF is not available for this provider'
+                ? t('ai.tab.pdf.title.supported')
+                : t('ai.tab.pdf.title.unsupported')
             }
             style={segmentBtn(genMode === 'pdf')}
           >
-            From PDF
+            {t('ai.tab.pdf')}
           </button>
         </div>
 
         <label style={labelStyle}>
-          <span style={labelText}>Provider</span>
+          <span style={labelText}>{t('ai.provider.label')}</span>
           <select
             value={providerId}
             onChange={(e) => setProviderId(e.target.value as LiteProviderId)}
@@ -276,28 +278,25 @@ export function AiPanelLite({
             a fixed dropdown for Anthropic, and a Settings-driven note for Custom. */}
         {isCustom ? (
           <div style={{ fontSize: 12, color: 'var(--orbitpm-muted)' }}>
-            Model &amp; endpoint are configured in{' '}
+            {t('ai.custom.configuredNote', { settingsLink: '' }).split('{settingsLink}')[0]}
             <button type="button" onClick={onOpenSettings} style={linkBtn}>
-              Settings
+              {t('ai.custom.settingsLink')}
             </button>
             {customCfg.model ? (
-              <>
-                {' '}
-                (model: <code>{customCfg.model}</code>).
-              </>
+              t('ai.custom.modelLabel', { model: customCfg.model })
             ) : (
-              ' — set a base URL and model there first.'
+              t('ai.custom.setBaseUrlFirst')
             )}
           </div>
         ) : providerSpec.allowCustomModel ? (
           <label style={labelStyle}>
-            <span style={labelText}>Model</span>
+            <span style={labelText}>{t('ai.model.label')}</span>
             <input
               type="text"
               list={`models-${providerId}`}
               value={modelId}
               onChange={(e) => setModelId(e.target.value)}
-              placeholder="Model id"
+              placeholder={t('ai.model.label')}
               style={inputStyle}
             />
             <datalist id={`models-${providerId}`}>
@@ -310,7 +309,7 @@ export function AiPanelLite({
           </label>
         ) : (
           <label style={labelStyle}>
-            <span style={labelText}>Model</span>
+            <span style={labelText}>{t('ai.model.label')}</span>
             <select value={modelId} onChange={(e) => setModelId(e.target.value)} style={inputStyle}>
               {providerSpec.models.map((m) => (
                 <option key={m.id} value={m.id}>
@@ -323,11 +322,11 @@ export function AiPanelLite({
 
         {genMode === 'description' ? (
           <label style={labelStyle}>
-            <span style={labelText}>Description</span>
+            <span style={labelText}>{t('ai.description.label')}</span>
             <textarea
               value={description}
               onChange={(e) => setDescription(e.target.value)}
-              placeholder="Describe the process in plain language, e.g. “A customer submits an order; if it's valid it's fulfilled, otherwise it's rejected.”"
+              placeholder={t('ai.description.placeholder')}
               rows={6}
               dir="auto"
               style={{ ...inputStyle, resize: 'vertical', minHeight: 96 }}
@@ -336,7 +335,7 @@ export function AiPanelLite({
         ) : (
           <>
             <label style={labelStyle}>
-              <span style={labelText}>PDF document</span>
+              <span style={labelText}>{t('ai.pdfDocument.label')}</span>
               <input
                 ref={pdfInputRef}
                 type="file"
@@ -358,12 +357,12 @@ export function AiPanelLite({
             )}
             <label style={labelStyle}>
               <span style={labelText}>
-                Which process? <span style={{ opacity: 0.7 }}>(optional)</span>
+                {t('ai.pdfHint.label')} <span style={{ opacity: 0.7 }}>{t('ai.pdfHint.optional')}</span>
               </span>
               <textarea
                 value={hint}
                 onChange={(e) => setHint(e.target.value)}
-                placeholder="Which process from this document? / ما هي العملية المطلوبة من هذا المستند؟"
+                placeholder={t('ai.pdfHint.placeholder')}
                 rows={2}
                 dir="auto"
                 style={{ ...inputStyle, resize: 'vertical' }}
@@ -374,7 +373,7 @@ export function AiPanelLite({
 
         {mode === 'directory' && folders.length > 0 && (
           <label style={labelStyle}>
-            <span style={labelText}>Target folder</span>
+            <span style={labelText}>{t('ai.targetFolder.label')}</span>
             <select
               value={targetFolder}
               onChange={(e) => setTargetFolder(e.target.value)}
@@ -390,12 +389,12 @@ export function AiPanelLite({
         )}
 
         <label style={labelStyle}>
-          <span style={labelText}>Name</span>
+          <span style={labelText}>{t('ai.name.label')}</span>
           <input
             type="text"
             value={name}
             onChange={(e) => setName(e.target.value)}
-            placeholder="Order process (optional)"
+            placeholder={t('ai.name.placeholder')}
             dir="auto"
             style={inputStyle}
           />
@@ -418,22 +417,22 @@ export function AiPanelLite({
           }}
         >
           {busy && <Spinner />}
-          {busy ? 'Generating…' : genMode === 'pdf' ? 'Generate from PDF' : 'Generate'}
+          {busy ? t('ai.generating') : genMode === 'pdf' ? t('ai.generateFromPdf') : t('ai.generate')}
         </button>
 
         {!keyPresent && (
           <div style={{ fontSize: 12, color: 'var(--orbitpm-muted)' }}>
-            No key stored for {providerSpec.label}.{' '}
+            {t('ai.noKeyForProvider', { providerLabel: providerSpec.label })}{' '}
             <button type="button" onClick={onOpenSettings} style={linkBtn}>
-              Add one in Settings
+              {t('ai.addOneInSettings')}
             </button>
-            .
+            {t('ai.addOneInSettings.period')}
           </div>
         )}
 
         {isCustom && !customReady && (
           <div style={{ fontSize: 12, color: 'var(--orbitpm-muted)' }}>
-            Set the base URL and model for the Custom endpoint in Settings.
+            {t('ai.customNotReady')}
           </div>
         )}
 
@@ -442,7 +441,7 @@ export function AiPanelLite({
             <span>{error}</span>
             {offline && (
               <span style={{ opacity: 0.85 }}>
-                Tip: this looks like a connectivity issue. Check your network.
+                {t('ai.errorTip.offline')}
               </span>
             )}
           </div>
@@ -450,15 +449,17 @@ export function AiPanelLite({
 
         {resultLabel && (
           <div role="status" style={okBox}>
-            Created: {resultLabel}
+            {t('ai.created', { resultLabel })}
           </div>
         )}
 
         <div style={noteBox}>
-          <strong>Anthropic</strong>, <strong>Gemini</strong>, and <strong>OpenRouter</strong> can be
-          called directly from a web page. Reach GLM, Kimi, and DeepSeek through OpenRouter. The
-          direct vendor APIs for {DESKTOP_ONLY_PROVIDERS.join(', ')} don&apos;t allow browser (CORS)
-          access — use OpenRouter, a Custom endpoint, or the desktop app for those.
+          {t('ai.note.updated', {
+            anthropic: 'Anthropic',
+            gemini: 'Gemini',
+            openrouter: 'OpenRouter',
+            desktopOnlyProviders: DESKTOP_ONLY_PROVIDERS.join(', ')
+          })}
         </div>
       </div>
     </div>
@@ -483,7 +484,7 @@ function Spinner(): JSX.Element {
 }
 
 const wrap: CSSProperties = {
-  borderLeft: '1px solid var(--orbitpm-border)',
+  borderInlineStart: '1px solid var(--orbitpm-border)',
   width: 320,
   display: 'flex',
   flexDirection: 'column',
@@ -491,7 +492,7 @@ const wrap: CSSProperties = {
   overflowY: 'auto'
 }
 const collapsedWrap: CSSProperties = {
-  borderLeft: '1px solid var(--orbitpm-border)',
+  borderInlineStart: '1px solid var(--orbitpm-border)',
   display: 'flex',
   alignItems: 'flex-start',
   justifyContent: 'center',

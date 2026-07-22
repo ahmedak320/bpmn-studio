@@ -1,5 +1,7 @@
 import type { CatalogRow, CatalogSortKey, SortDir } from './catalog'
 import { rowLabel } from './catalog'
+import { t, tPlural } from '../i18n'
+import { useLang } from '../i18n/useLang'
 
 export interface CatalogViewProps {
   /** Rows already filtered (by the search query) and sorted by App. */
@@ -52,6 +54,7 @@ export function CatalogView({
   onNewProcess,
   onOpenUnresolved
 }: CatalogViewProps): JSX.Element {
+  useLang()
   const arrow = (key: CatalogSortKey): string =>
     sortKey === key ? (sortDir === 'asc' ? ' ▲' : ' ▼') : ''
   const unresolvedTotal = rows.reduce((s, r) => s + (r.unresolvedCount > 0 ? 1 : 0), 0)
@@ -76,7 +79,7 @@ export function CatalogView({
           marginBottom: 4
         }}
       >
-        <h2 style={{ margin: 0, fontSize: 18 }}>Process catalog</h2>
+        <h2 style={{ margin: 0, fontSize: 18 }}>{t('catalog.title')}</h2>
         <button
           type="button"
           className="orbitpm-lite-chrome-btn"
@@ -88,14 +91,14 @@ export function CatalogView({
             fontWeight: 600
           }}
         >
-          ＋ New process
+          {t('app.newProcess')}
         </button>
       </div>
       <p style={{ margin: '0 0 12px', fontSize: 12.5, color: 'var(--orbitpm-muted)' }}>
-        Every process in <strong>{rootName}</strong>.{' '}
+        {t('catalog.everyProcessIn', { rootName })}{' '}
         {query.trim()
-          ? `Showing ${rows.length} of ${totalCount} matching “${query.trim()}”.`
-          : `${totalCount} process${totalCount === 1 ? '' : 'es'}.`}
+          ? t('catalog.showingMatching', { shown: rows.length, total: totalCount, query: query.trim() })
+          : tPlural('catalog.process', totalCount, { total: totalCount })}
         {unresolvedTotal > 0 && (
           <>
             {' '}
@@ -113,7 +116,7 @@ export function CatalogView({
                 textDecoration: 'underline'
               }}
             >
-              {unresolvedTotal} with unresolved links
+              {t('catalog.withUnresolvedLinks', { count: unresolvedTotal })}
             </button>
           </>
         )}
@@ -132,10 +135,12 @@ export function CatalogView({
           }}
         >
           {query.trim() ? (
-            <>No processes match “{query.trim()}”.</>
+            t('catalog.noMatch', { query: query.trim() })
           ) : (
             <>
-              No processes yet. Click <strong>＋ New process</strong> to create the first one.
+              {t('catalog.emptyBody').split('{newProcess}')[0]}
+              <strong>{t('app.newProcess')}</strong>
+              {t('catalog.emptyBody').split('{newProcess}')[1]}
             </>
           )}
         </div>
@@ -157,17 +162,17 @@ export function CatalogView({
               color: 'var(--orbitpm-muted)'
             }}
           >
-            <HeaderButton label={`Process${arrow('name')}`} onClick={() => onSort('name')} />
-            <HeaderButton label={`Folder${arrow('folder')}`} onClick={() => onSort('folder')} />
-            <HeaderButton label={`Modified${arrow('modified')}`} onClick={() => onSort('modified')} />
-            <span>Links</span>
+            <HeaderButton label={`${t('catalog.column.name')}${arrow('name')}`} onClick={() => onSort('name')} />
+            <HeaderButton label={`${t('catalog.column.folder')}${arrow('folder')}`} onClick={() => onSort('folder')} />
+            <HeaderButton label={`${t('catalog.column.modified')}${arrow('modified')}`} onClick={() => onSort('modified')} />
+            <span>{t('catalog.column.links')}</span>
           </div>
           {rows.map((row, i) => (
             <div
               key={`${row.relPath}::${row.processId ?? i}`}
               role="button"
               tabIndex={0}
-              aria-label={`Open ${rowLabel(row)}`}
+              aria-label={t('catalog.openRow.aria', { name: rowLabel(row) })}
               onClick={() => onOpen(row.relPath, row.processId)}
               onKeyDown={(e) => {
                 if (e.key === 'Enter' || e.key === ' ') {
@@ -228,9 +233,7 @@ export function CatalogView({
               <span>
                 {row.unresolvedCount > 0 ? (
                   <span
-                    title={`${row.unresolvedCount} unresolved call-activity link${
-                      row.unresolvedCount === 1 ? '' : 's'
-                    }`}
+                    title={tPlural('catalog.unresolvedTooltip', row.unresolvedCount)}
                     style={{
                       padding: '0.05rem 0.4rem',
                       borderRadius: 999,
@@ -243,7 +246,7 @@ export function CatalogView({
                     ⚠ {row.unresolvedCount}
                   </span>
                 ) : (
-                  <span style={{ color: 'var(--orbitpm-muted)', fontSize: 12 }}>ok</span>
+                  <span style={{ color: 'var(--orbitpm-muted)', fontSize: 12 }}>{t('catalog.ok')}</span>
                 )}
               </span>
             </div>
@@ -267,7 +270,7 @@ function HeaderButton({ label, onClick }: { label: string; onClick: () => void }
         textTransform: 'inherit',
         letterSpacing: 'inherit',
         cursor: 'pointer',
-        textAlign: 'left',
+        textAlign: 'start',
         padding: 0
       }}
     >

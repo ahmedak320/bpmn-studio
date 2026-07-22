@@ -38,6 +38,15 @@ body {
   background: var(--orbitpm-bg);
 }
 
+/* Arabic UI: Segoe UI/Tahoma carry the long-standing well-shaped Arabic
+   metrics on Windows; system-ui/-apple-system/Roboto already cover Arabic on
+   macOS/ChromeOS/Linux, so this is additive polish, not a correctness fix
+   (see the i18n prep §3.6). */
+:root[dir='rtl'] body {
+  font-family:
+    'Segoe UI', Tahoma, Geneva, Arial, system-ui, -apple-system, Roboto, sans-serif;
+}
+
 * {
   box-sizing: border-box;
 }

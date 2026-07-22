@@ -31,7 +31,7 @@ export function Toaster({
       aria-live="polite"
       style={{
         position: 'fixed',
-        right: 16,
+        insetInlineEnd: 16,
         bottom: 16,
         zIndex: 4000,
         display: 'flex',

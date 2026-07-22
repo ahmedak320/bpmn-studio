@@ -3,7 +3,8 @@ import {
   deriveProcessId,
   humanizeProcessId,
   buildNewProcessDoc,
-  buildMissingProcessDoc
+  buildMissingProcessDoc,
+  deriveFileBaseName
 } from '../editor/newProcessDoc'
 import {
   buildProcessIndex,
@@ -134,6 +135,94 @@ describe('buildNewProcessDoc (New process flow — used by BOTH modes)', () => {
     const index = buildProcessIndex(await listBpmnFiles(root))
     expect(index.has('Process_customer_onboarding')).toBe(true)
     expect(index.get('Process_customer_onboarding')?.relPath).toBe('customer-onboarding.bpmn')
+  })
+})
+
+describe('deriveFileBaseName (Arabic / non-Latin name handling)', () => {
+  it('defers to the existing ASCII slug behavior for a Latin name (byte-identical, no regression)', () => {
+    expect(deriveFileBaseName('Order Refund')).toBe('order-refund')
+    expect(deriveFileBaseName('  Customer Onboarding  ')).toBe('customer-onboarding')
+  })
+
+  it('preserves an Arabic name verbatim in the file base name (dashed for spaces)', () => {
+    expect(deriveFileBaseName('طلب العميل')).toBe('طلب-العميل')
+    expect(deriveFileBaseName('استقبال الموظف الجديد')).toBe('استقبال-الموظف-الجديد')
+  })
+
+  it('strips Windows-illegal characters from an Arabic name but keeps the script', () => {
+    expect(deriveFileBaseName('طلب<>: "شراء"')).toBe('طلب-شراء')
+  })
+
+  it('falls back to the generic slug when an Arabic (or any) name is empty/whitespace', () => {
+    expect(deriveFileBaseName('   ')).toBe('process')
+    expect(deriveFileBaseName('')).toBe('process')
+  })
+})
+
+describe('buildNewProcessDoc with an Arabic display name', () => {
+  it('keeps the Arabic name as-is, derives an Arabic file name, but falls back the <process id> to a stable ASCII form', () => {
+    const doc = buildNewProcessDoc('طلب العميل')
+    expect(doc.name).toBe('طلب العميل')
+    expect(doc.fileBaseName).toBe('طلب-العميل')
+    // deriveProcessId() strips every non [A-Za-z0-9_] character; an
+    // all-Arabic slug reduces to nothing, so it falls back to "process" —
+    // still a valid, stable BPMN NCName, just not derived from the Arabic text.
+    expect(doc.processId).toBe('Process_process')
+    expect(doc.xml).toContain('id="Process_process"')
+    expect(doc.xml).toContain('name="طلب العميل"')
+  })
+
+  it('a de-duplicated Arabic slug override still keeps the Arabic file name and yields a distinct, stable id', () => {
+    // Mirrors how App.tsx dedupes: dedupeSlug(deriveFileBaseName(name), isTaken)
+    // yields "طلب-العميل-2" on a second Arabic process with the same name.
+    const doc = buildNewProcessDoc('طلب العميل', 'طلب-العميل-2')
+    expect(doc.fileBaseName).toBe('طلب-العميل-2')
+    // deriveProcessId() strips the Arabic characters but keeps the ASCII
+    // dashes-turned-underscores around them, so the trailing "-2" counter
+    // survives as a distinct (if not cosmetically clean) id — still a valid
+    // XML NCName, and critically still DIFFERENT from the first process's
+    // "Process_process", so the two files never collide on id.
+    expect(doc.processId).toBe('Process___2')
+    expect(doc.processId).not.toBe('Process_process')
+  })
+})
+
+describe('Arabic file names through fsAccess (mock handles)', () => {
+  it('creates, lists and re-reads a .bpmn file whose name is Arabic', async () => {
+    const root = newRoot()
+    const doc = buildNewProcessDoc('طلب العميل')
+    const rel = await createBpmnFileAt(root, '', doc.fileBaseName, doc.xml)
+    expect(rel).toBe('طلب-العميل.bpmn')
+
+    // The mock directory handle's entriesMap key IS the Arabic file name —
+    // proves the FS-adapter layer never transliterates or drops the script.
+    const files = await listBpmnFiles(root)
+    expect(files.map((f) => f.relPath)).toEqual(['طلب-العميل.bpmn'])
+
+    const index = buildProcessIndex(files)
+    expect(index.has('Process_process')).toBe(true)
+    expect(index.get('Process_process')?.relPath).toBe('طلب-العميل.bpmn')
+    expect(index.get('Process_process')?.processName).toBe('طلب العميل')
+  })
+
+  it('nests an Arabic-named process inside an Arabic-named folder', async () => {
+    const root = newRoot()
+    const doc = buildNewProcessDoc('استقبال الموظف')
+    const rel = await createBpmnFileAt(root, 'الموارد-البشرية', doc.fileBaseName, doc.xml)
+    expect(rel).toBe('الموارد-البشرية/استقبال-الموظف.bpmn')
+    const files = await listBpmnFiles(root)
+    expect(files.map((f) => f.relPath)).toEqual(['الموارد-البشرية/استقبال-الموظف.bpmn'])
+  })
+})
+
+describe('buildMissingProcessDoc with an Arabic display name', () => {
+  it('keeps the Arabic display name + file name, while the id stays fixed to the (ASCII) calledElement', () => {
+    const doc = buildMissingProcessDoc('Process_billing', 'الفوترة')
+    expect(doc.name).toBe('الفوترة')
+    expect(doc.fileBaseName).toBe('الفوترة')
+    expect(doc.processId).toBe('Process_billing')
+    expect(doc.xml).toContain('name="الفوترة"')
+    expect(doc.xml).toContain('id="Process_billing"')
   })
 })
 

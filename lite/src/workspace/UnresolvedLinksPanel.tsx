@@ -1,5 +1,7 @@
 import { Modal } from './Modal'
 import type { WorkspaceUnresolvedLink } from './unresolved'
+import { t } from '../i18n'
+import { useLang } from '../i18n/useLang'
 
 export interface UnresolvedLinksPanelProps {
   links: WorkspaceUnresolvedLink[]
@@ -26,30 +28,28 @@ export function UnresolvedLinksPanel({
   onOpenSource,
   onClose
 }: UnresolvedLinksPanelProps): JSX.Element {
+  useLang()
   return (
     <Modal
-      title={`Unresolved links (${links.length})`}
+      title={t('unresolved.title.count', { count: links.length })}
       onClose={onClose}
       maxWidth={620}
-      ariaLabel="Unresolved links"
+      ariaLabel={t('unresolved.title')}
       footer={
         <button type="button" className="orbitpm-lite-chrome-btn" onClick={onClose}>
-          Close
+          {t('unresolved.close')}
         </button>
       }
     >
       {links.length === 0 ? (
         <p style={{ margin: 0, fontSize: 13, color: 'var(--orbitpm-muted)' }}>
-          No unresolved links — every call activity points at a process that exists in this
-          workspace.
+          {t('unresolved.empty.full')}
         </p>
       ) : (
         <>
           <p style={{ margin: '0 0 12px', fontSize: 12.5, color: 'var(--orbitpm-muted)' }}>
-            Each row is a call activity whose target process isn&apos;t in this workspace.{' '}
-            {canCreate
-              ? 'Create the missing process (its id is fixed so the link resolves), or open the source to fix it.'
-              : 'Open a folder to create the missing processes; here you can jump to each source.'}
+            {t('unresolved.intro')}
+            {canCreate ? t('unresolved.intro.canCreate') : t('unresolved.intro.cannotCreate')}
           </p>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
             {links.map((link, i) => (
@@ -85,18 +85,18 @@ export function UnresolvedLinksPanel({
                       type="button"
                       className="orbitpm-lite-chrome-btn"
                       onClick={() => onCreate(link.calledElement)}
-                      title={`Create a process with id "${link.calledElement}"`}
+                      title={t('unresolved.createNow.title', { calledElement: link.calledElement })}
                     >
-                      Create now
+                      {t('unresolved.createNow')}
                     </button>
                   )}
                   <button
                     type="button"
                     className="orbitpm-lite-chrome-btn"
                     onClick={() => onOpenSource(link.sourceRelPath)}
-                    title="Open the file that contains this call activity"
+                    title={t('unresolved.openSource.title')}
                   >
-                    Open source
+                    {t('unresolved.openSource')}
                   </button>
                 </div>
               </div>

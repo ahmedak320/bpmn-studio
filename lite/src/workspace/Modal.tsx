@@ -1,4 +1,6 @@
 import { useEffect, type ReactNode } from 'react'
+import { t } from '../i18n'
+import { useLang } from '../i18n/useLang'
 
 export interface ModalProps {
   title: string
@@ -24,6 +26,7 @@ export function Modal({
   maxWidth = 460,
   ariaLabel
 }: ModalProps): JSX.Element {
+  useLang()
   useEffect(() => {
     const onKey = (e: KeyboardEvent): void => {
       if (e.key === 'Escape') {
@@ -82,8 +85,8 @@ export function Modal({
           <button
             type="button"
             onClick={onClose}
-            aria-label="Close"
-            title="Close"
+            aria-label={t('modal.close.aria')}
+            title={t('modal.close.aria')}
             style={{
               border: 'none',
               background: 'transparent',

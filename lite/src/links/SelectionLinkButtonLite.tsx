@@ -17,6 +17,8 @@ import {
   type ModelingLike,
   type ElementRegistryLike
 } from '@app/renderer/src/links/modelerOps'
+import { t } from '../i18n'
+import { useLang } from '../i18n/useLang'
 
 interface SelectedElementLike extends CallActivityLikeElement {
   id?: string
@@ -54,6 +56,7 @@ export function SelectionLinkButton({
   modeler,
   index
 }: SelectionLinkButtonProps): JSX.Element | null {
+  useLang()
   const [selected, setSelected] = useState<SelectedElementLike | null>(null)
   const [pickerOpen, setPickerOpen] = useState(false)
 
@@ -92,11 +95,11 @@ export function SelectionLinkButton({
         onClick={() => setPickerOpen(true)}
         title={
           inspection.calledElementId
-            ? `Linked to ${inspection.calledElementId}`
-            : 'Link this call activity to a process'
+            ? t('link.button.title.linked', { calledElementId: inspection.calledElementId })
+            : t('link.button.title.unlinked')
         }
       >
-        {inspection.calledElementId ? 'Change process link…' : 'Link to process…'}
+        {inspection.calledElementId ? t('link.changeProcess') : t('link.linkToProcess')}
       </button>
       <LinkPicker
         open={pickerOpen}

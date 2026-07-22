@@ -1,3 +1,6 @@
+import { t } from '../i18n'
+import { useLang } from '../i18n/useLang'
+
 /** Toolbar button that prints / saves-as-PDF the active diagram. Injected into
  *  the editor toolbar (via EditorTab's `toolbarExtra`) so it sits beside the
  *  SVG/PNG export buttons and matches their styling. App owns the actual
@@ -9,15 +12,16 @@ export function PrintButton({
   onPrint: () => void
   disabled?: boolean
 }): JSX.Element {
+  useLang()
   return (
     <button
       type="button"
       className="orbitpm-editor__button"
       onClick={onPrint}
       disabled={disabled}
-      title="Print or Save as PDF — opens the print dialog with a full-page, landscape view of this diagram"
+      title={t('editor.print.title')}
     >
-      Print / PDF
+      {t('editor.print')}
     </button>
   )
 }

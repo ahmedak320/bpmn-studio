@@ -130,7 +130,7 @@ export function LinkPicker({
                     onClick={() => onPick(entry.processId)}
                     style={{
                       width: '100%',
-                      textAlign: 'left',
+                      textAlign: 'start',
                       padding: '0.5rem',
                       borderRadius: 6,
                       border: 'none',

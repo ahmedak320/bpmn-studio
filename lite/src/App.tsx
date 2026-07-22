@@ -12,12 +12,13 @@ import {
   listUnresolvedCalledElements,
   type ProcessIndex
 } from '@app/shared/processIndex'
-import { slugify, dedupeSlug } from '@app/shared/slug'
+import { dedupeSlug } from '@app/shared/slug'
 // --- lite-local ---
 import {
   buildNewProcessDoc,
   buildMissingProcessDoc,
-  humanizeProcessId
+  humanizeProcessId,
+  deriveFileBaseName
 } from './editor/newProcessDoc'
 import {
   buildTree,
@@ -75,6 +76,8 @@ import { MoveDialog } from './workspace/MoveDialog'
 import { PrintButton } from './workspace/PrintButton'
 import { PrintView, type PrintJob } from './workspace/PrintView'
 import { collectDroppedBpmn, isInternalDrag, type DroppedBpmn } from './workspace/importDrop'
+import { t, tPlural } from './i18n'
+import { useLang, setLang } from './i18n/useLang'
 import './print.css'
 
 type Phase = 'loading' | 'need-open' | 'need-reconnect' | 'ready'
@@ -108,7 +111,7 @@ function collectFolders(node: LiteTreeNode | null): FolderOptionLite[] {
     if (n.type !== 'directory') return
     out.push({
       relPath: n.relPath,
-      label: n.relPath === '' ? '/ (workspace root)' : `${' '.repeat(depth * 2)}${n.name}`
+      label: n.relPath === '' ? t('ai.folderOption.root') : `${' '.repeat(depth * 2)}${n.name}`
     })
     for (const child of n.children ?? []) walk(child, depth + 1)
   }
@@ -126,6 +129,7 @@ interface ModelerWithSvg {
 
 function App(): JSX.Element {
   const promptText = usePromptText()
+  const lang = useLang()
   const support = useMemo(() => directoryPickerSupported(), [])
 
   const [phase, setPhase] = useState<Phase>('loading')
@@ -255,7 +259,7 @@ function App(): JSX.Element {
       if (!handle) return
       const state = await ensurePermission(handle, true)
       if (state !== 'granted') {
-        setPickError('Permission to read/write the folder was not granted.')
+        setPickError(t('alert.permissionNotGranted.open'))
         return
       }
       await activateWorkspace(handle)
@@ -277,7 +281,7 @@ function App(): JSX.Element {
     try {
       const state = await ensurePermission(handle, true)
       if (state !== 'granted') {
-        setPickError('Permission was not granted. Try opening the folder again.')
+        setPickError(t('alert.permissionNotGranted.reconnect'))
         return
       }
       await activateWorkspace(handle)
@@ -317,7 +321,7 @@ function App(): JSX.Element {
         setContents((prev) => ({ ...prev, [key]: xml }))
       } catch (err) {
         setContents((prev) => ({ ...prev, [key]: '' }))
-        pushToast(`Could not open ${relPath}: ${errMsg(err)}`, 'error')
+        pushToast(t('alert.openFileFailed', { relPath, error: errMsg(err) }), 'error')
       }
     },
     [contents, rootHandle, pushToast]
@@ -340,8 +344,8 @@ function App(): JSX.Element {
   const closeTab = useCallback(
     (key: string) => {
       if (dirtyByKey[key]) {
-        const tab = tabs.find((t) => t.key === key)
-        const confirmed = window.confirm(`Discard unsaved changes to ${tab?.title ?? 'this file'}?`)
+        const tab = tabs.find((tb) => tb.key === key)
+        const confirmed = window.confirm(t('confirm.discardUnsaved', { title: tab?.title ?? 'this file' }))
         if (!confirmed) return
       }
       setActiveKey((prev) => {
@@ -397,7 +401,7 @@ function App(): JSX.Element {
     [catalogRows, search, xmlByPath, catSort, catDir]
   )
   const searchGroups = useMemo(() => searchWorkspace(searchIndex, search), [searchIndex, search])
-  const folders = useMemo(() => collectFolders(tree), [tree])
+  const folders = useMemo(() => collectFolders(tree), [tree, lang])
   const filePaths = useMemo(() => new Set(files.map((f) => f.relPath)), [files])
 
   const activeTab = tabs.find((t) => t.key === activeKey) ?? null
@@ -426,29 +430,26 @@ function App(): JSX.Element {
   const handleCreateMissingProcess = useCallback(
     async (calledElementId: string) => {
       if (!(mode === 'directory' && rootHandle)) {
-        pushToast(
-          `Process “${calledElementId}” doesn't exist yet. Open a folder to create and link processes.`,
-          'info'
-        )
+        pushToast(t('alert.createMissingProcessNoFolder', { calledElementId }), 'info')
         return
       }
       const name = await promptText({
-        title: 'Create linked process',
-        label: 'Process name',
+        title: t('dialog.createMissingProcess.title'),
+        label: t('dialog.createMissingProcess.label'),
         initialValue: humanizeProcessId(calledElementId),
-        okLabel: 'Create & open',
-        hint: `Creates a new .bpmn whose process id is "${calledElementId}", so this call activity resolves.`
+        okLabel: t('dialog.createMissingProcess.okLabel'),
+        hint: t('dialog.createMissingProcess.hint', { calledElementId })
       })
       if (!name) return
       const taken = await bpmnSlugsIn(rootHandle, '')
-      const slug = dedupeSlug(slugify(name || calledElementId), (c) => taken.has(c.toLowerCase()))
+      const slug = dedupeSlug(deriveFileBaseName(name || calledElementId), (c) => taken.has(c.toLowerCase()))
       const doc = buildMissingProcessDoc(calledElementId, name, slug)
       try {
         const relPath = await createBpmnFileAt(rootHandle, '', doc.fileBaseName, doc.xml)
         await refreshWorkspace(rootHandle)
         void openDirectoryFile(relPath)
       } catch (err) {
-        pushToast(`Could not create process: ${errMsg(err)}`, 'error')
+        pushToast(t('alert.createProcessFailed', { error: errMsg(err) }), 'error')
       }
     },
     [mode, rootHandle, promptText, refreshWorkspace, openDirectoryFile, pushToast]
@@ -464,10 +465,7 @@ function App(): JSX.Element {
       if (mode === 'directory' && rootHandle) {
         void handleCreateMissingProcess(processId)
       } else {
-        pushToast(
-          `No process with id “${processId}” in this workspace — link a different process or open a folder to create it.`,
-          'info'
-        )
+        pushToast(t('alert.noProcessWithId', { processId }), 'info')
       }
     },
     [processIndex, openDirectoryFile, mode, rootHandle, handleCreateMissingProcess, pushToast]
@@ -479,22 +477,22 @@ function App(): JSX.Element {
     async (folderRel: string) => {
       if (!rootHandle) return
       const name = await promptText({
-        title: 'New Process',
-        label: 'Process name',
-        initialValue: 'New Process',
-        okLabel: 'Create',
-        hint: 'A .bpmn file with a start event is created; other processes can link to it.'
+        title: t('dialog.newProcess.title'),
+        label: t('dialog.newProcess.label'),
+        initialValue: t('dialog.newProcess.initialValue'),
+        okLabel: t('dialog.newProcess.okLabel'),
+        hint: t('dialog.newProcess.hint.directory')
       })
       if (!name) return
       const taken = await bpmnSlugsIn(rootHandle, folderRel)
-      const slug = dedupeSlug(slugify(name), (c) => taken.has(c.toLowerCase()))
+      const slug = dedupeSlug(deriveFileBaseName(name), (c) => taken.has(c.toLowerCase()))
       const doc = buildNewProcessDoc(name, slug)
       try {
         const relPath = await createBpmnFileAt(rootHandle, folderRel, doc.fileBaseName, doc.xml)
         await refreshWorkspace(rootHandle)
         void openDirectoryFile(relPath)
       } catch (err) {
-        pushToast(`Could not create process: ${errMsg(err)}`, 'error')
+        pushToast(t('alert.createProcessFailed', { error: errMsg(err) }), 'error')
       }
     },
     [rootHandle, promptText, refreshWorkspace, openDirectoryFile, pushToast]
@@ -502,11 +500,11 @@ function App(): JSX.Element {
 
   const handleNewProcessFallback = useCallback(async () => {
     const name = await promptText({
-      title: 'New Process',
-      label: 'Process name',
-      initialValue: 'New Process',
-      okLabel: 'Create',
-      hint: 'No folder is open, so Save will download the .bpmn file.'
+      title: t('dialog.newProcess.title'),
+      label: t('dialog.newProcess.label'),
+      initialValue: t('dialog.newProcess.initialValue'),
+      okLabel: t('dialog.newProcess.okLabel'),
+      hint: t('dialog.newProcess.hint.fallback')
     })
     if (!name) return
     const doc = buildNewProcessDoc(name)
@@ -524,17 +522,17 @@ function App(): JSX.Element {
     async (folderRel: string) => {
       if (!rootHandle) return
       const name = await promptText({
-        title: 'New Folder',
-        label: 'Folder name',
-        initialValue: 'New Folder',
-        okLabel: 'Create'
+        title: t('dialog.newFolder.title'),
+        label: t('dialog.newFolder.label'),
+        initialValue: t('dialog.newFolder.initialValue'),
+        okLabel: t('dialog.newFolder.okLabel')
       })
       if (!name) return
       try {
         await createFolderAt(rootHandle, folderRel, name.trim())
         await refreshWorkspace(rootHandle)
       } catch (err) {
-        pushToast(`Could not create folder: ${errMsg(err)}`, 'error')
+        pushToast(t('alert.createFolderFailed', { error: errMsg(err) }), 'error')
       }
     },
     [rootHandle, promptText, refreshWorkspace, pushToast]
@@ -544,10 +542,10 @@ function App(): JSX.Element {
     async (node: LiteTreeNode) => {
       if (!rootHandle) return
       const name = await promptText({
-        title: 'Rename',
-        label: 'New name',
+        title: t('dialog.rename.title'),
+        label: t('dialog.rename.label'),
         initialValue: node.name,
-        okLabel: 'Rename'
+        okLabel: t('dialog.rename.okLabel')
       })
       if (!name || name === node.name) return
       try {
@@ -555,7 +553,7 @@ function App(): JSX.Element {
         closeTabsUnder(node.relPath)
         await refreshWorkspace(rootHandle)
       } catch (err) {
-        pushToast(`Could not rename: ${errMsg(err)}`, 'error')
+        pushToast(t('alert.renameFailed', { error: errMsg(err) }), 'error')
       }
     },
     [rootHandle, promptText, refreshWorkspace, closeTabsUnder, pushToast]
@@ -583,9 +581,9 @@ function App(): JSX.Element {
       await deleteAt(rootHandle, target.node.relPath, target.node.type)
       closeTabsUnder(target.node.relPath)
       await refreshWorkspace(rootHandle)
-      pushToast(`Deleted “${target.node.name}”.`, 'success')
+      pushToast(t('toast.deleted', { name: target.node.name }), 'success')
     } catch (err) {
-      pushToast(`Could not delete: ${errMsg(err)}`, 'error')
+      pushToast(t('alert.deleteFailed', { error: errMsg(err) }), 'error')
     }
   }, [deleteTarget, rootHandle, refreshWorkspace, closeTabsUnder, pushToast])
 
@@ -597,9 +595,9 @@ function App(): JSX.Element {
         await moveAt(rootHandle, node.relPath, toFolderRel, node.type)
         closeTabsUnder(node.relPath)
         await refreshWorkspace(rootHandle)
-        pushToast(`Moved “${node.name}” to ${toFolderRel || rootName}.`, 'success')
+        pushToast(t('toast.moved', { name: node.name, dest: toFolderRel || rootName }), 'success')
       } catch (err) {
-        pushToast(`Could not move: ${errMsg(err)}`, 'error')
+        pushToast(t('alert.moveFailed', { error: errMsg(err) }), 'error')
       }
     },
     [rootHandle, refreshWorkspace, closeTabsUnder, pushToast, rootName]
@@ -618,11 +616,11 @@ function App(): JSX.Element {
   const importEntries = useCallback(
     async (entries: DroppedBpmn[], baseFolderRel: string) => {
       if (!(mode === 'directory' && rootHandle)) {
-        pushToast('Open a folder first to import files into your workspace.', 'info')
+        pushToast(t('toast.import.openFolderFirst'), 'info')
         return
       }
       if (entries.length === 0) {
-        pushToast('No .bpmn files found in what you dropped.', 'info')
+        pushToast(t('toast.import.noBpmnFound'), 'info')
         return
       }
       let created = 0
@@ -630,7 +628,7 @@ function App(): JSX.Element {
       for (const entry of entries) {
         const sub = dirOf(entry.relPath)
         const targetFolder = sub ? joinRel(baseFolderRel, sub) : baseFolderRel
-        const base = slugify(entry.name.replace(/\.bpmn$/i, ''))
+        const base = deriveFileBaseName(entry.name.replace(/\.bpmn$/i, ''))
         const taken = await bpmnSlugsIn(rootHandle, targetFolder)
         const slug = dedupeSlug(base, (c) => taken.has(c.toLowerCase()))
         if (slug !== base) renamed += 1
@@ -644,8 +642,8 @@ function App(): JSX.Element {
       }
       await refreshWorkspace(rootHandle)
       pushToast(
-        `Imported ${created} file${created === 1 ? '' : 's'}` +
-          (renamed > 0 ? ` (${renamed} renamed to avoid a name clash)` : '') +
+        t('toast.imported.count', { count: created, plural: created === 1 ? '' : 's' }) +
+          (renamed > 0 ? t('toast.imported.renamed', { renamed }) : '') +
           '.',
         'success'
       )
@@ -722,7 +720,7 @@ function App(): JSX.Element {
 
   const placeGenerated = useCallback(
     async (xml: string, opts: { name: string; targetFolder: string }) => {
-      const slug = slugify(opts.name || 'process')
+      const slug = deriveFileBaseName(opts.name || 'process')
       if (mode === 'directory' && rootHandle) {
         const taken = await bpmnSlugsIn(rootHandle, opts.targetFolder)
         const finalSlug = dedupeSlug(slug, (c) => taken.has(c.toLowerCase()))
@@ -812,17 +810,17 @@ function App(): JSX.Element {
     async (tab: Tab) => {
       const modeler = modelersByKey[tab.key] as ModelerWithSvg | undefined
       if (!modeler?.saveSVG) {
-        pushToast('The diagram is still loading — try Print again in a moment.', 'info')
+        pushToast(t('toast.print.loading'), 'info')
         return
       }
       try {
         const { svg } = await modeler.saveSVG()
         const folderLabel = tab.relPath
-          ? dirOf(tab.relPath) || rootName || 'Workspace'
+          ? dirOf(tab.relPath) || rootName || t('breadcrumb.root')
           : 'Single-file'
         setPrintJob({ svg, title: tab.title.replace(/\.bpmn$/i, ''), folder: folderLabel })
       } catch (err) {
-        pushToast(`Print failed: ${errMsg(err)}`, 'error')
+        pushToast(t('toast.print.failed', { error: errMsg(err) }), 'error')
       }
     },
     [modelersByKey, rootName, pushToast]
@@ -929,7 +927,7 @@ function App(): JSX.Element {
   )
 
   if (phase === 'loading') {
-    return <div style={{ padding: '2rem' }}>Loading…</div>
+    return <div style={{ padding: '2rem' }}>{t('app.loading')}</div>
   }
 
   if (phase === 'need-open' || phase === 'need-reconnect') {
@@ -960,7 +958,7 @@ function App(): JSX.Element {
   }
 
   const showCatalog = mode === 'directory' && (tabs.length === 0 || catalogOpen)
-  const crumbs = activeTab && activeTab.relPath ? folderCrumbs(activeTab.relPath, rootName || 'Workspace') : null
+  const crumbs = activeTab && activeTab.relPath ? folderCrumbs(activeTab.relPath, rootName || t('breadcrumb.root')) : null
 
   return (
     <div style={{ display: 'grid', gridTemplateRows: 'auto 1fr auto', height: '100vh' }}>
@@ -978,34 +976,34 @@ function App(): JSX.Element {
       >
         <span style={{ display: 'flex', alignItems: 'center', gap: 8, flex: '0 0 auto' }}>
           <img src={ICON_DATA_URI} width={20} height={20} alt="" style={{ borderRadius: 5 }} />
-          <strong style={{ fontSize: 13 }}>OrbitPM Process Studio Lite</strong>
-          <span style={{ display: 'inline-flex', gap: 2, marginLeft: 6 }}>
+          <strong style={{ fontSize: 13 }}>{t('app.title')}</strong>
+          <span style={{ display: 'inline-flex', gap: 2, marginInlineStart: 6 }}>
             <button
               className="orbitpm-lite-chrome-btn"
               onClick={handleBack}
               disabled={!backEnabled}
-              aria-label="Back"
-              title="Back (Alt+Left)"
+              aria-label={t('nav.back')}
+              title={t('nav.back.title')}
               style={{ opacity: backEnabled ? 1 : 0.4, padding: '0.2rem 0.45rem' }}
             >
-              ◀
+              {lang === 'ar' ? '▶' : '◀'}
             </button>
             <button
               className="orbitpm-lite-chrome-btn"
               onClick={handleForward}
               disabled={!forwardEnabled}
-              aria-label="Forward"
-              title="Forward (Alt+Right)"
+              aria-label={t('nav.forward')}
+              title={t('nav.forward.title')}
               style={{ opacity: forwardEnabled ? 1 : 0.4, padding: '0.2rem 0.45rem' }}
             >
-              ▶
+              {lang === 'ar' ? '◀' : '▶'}
             </button>
             {mode === 'directory' && (
               <button
                 className="orbitpm-lite-chrome-btn"
                 onClick={() => setCatalogOpen(true)}
-                aria-label="Home — process catalog"
-                title="Home — browse all processes"
+                aria-label={t('app.home')}
+                title={t('app.home.title')}
                 style={{ padding: '0.2rem 0.45rem' }}
               >
                 🏠
@@ -1019,8 +1017,8 @@ function App(): JSX.Element {
             <input
               type="search"
               value={search}
-              placeholder="Search processes, files, ids, diagram text…"
-              aria-label="Search the workspace"
+              placeholder={t('tree.search.placeholder')}
+              aria-label={t('tree.search.aria')}
               onChange={(e) => {
                 setSearch(e.target.value)
                 setSearchOpen(true)
@@ -1042,7 +1040,7 @@ function App(): JSX.Element {
               <SearchResults
                 groups={searchGroups}
                 query={search}
-                rootName={rootName || 'Workspace'}
+                rootName={rootName || t('breadcrumb.root')}
                 onOpen={(rel) => openSearchHit(rel)}
                 onClose={() => setSearchOpen(false)}
               />
@@ -1050,11 +1048,11 @@ function App(): JSX.Element {
           </div>
         )}
 
-        <div style={{ display: 'flex', gap: 8, flex: '0 0 auto' }}>
+        <div style={{ display: 'flex', gap: 8, flex: '0 0 auto', alignItems: 'center' }}>
           <button
             className="orbitpm-lite-chrome-btn"
             onClick={handleNewProcessClick}
-            title="Create a new BPMN process"
+            title={t('app.newProcess.title')}
             style={{
               background: 'var(--orbitpm-accent)',
               color: '#fff',
@@ -1062,40 +1060,47 @@ function App(): JSX.Element {
               fontWeight: 600
             }}
           >
-            ＋ New process
+            {t('app.newProcess')}
           </button>
           {mode === 'directory' ? (
             <button
               className="orbitpm-lite-chrome-btn"
               onClick={() => void handleOpenDifferent()}
-              title="Open a different workspace folder"
+              title={t('app.changeFolder.title')}
             >
-              Change folder…
+              {t('app.changeFolder')}
             </button>
           ) : (
             <button
               className="orbitpm-lite-chrome-btn"
               onClick={openFileFromDisk}
-              title="Open an existing .bpmn file from disk"
+              title={t('app.openBpmn.title')}
             >
-              Open .bpmn…
+              {t('app.openBpmn')}
             </button>
           )}
           {aiCollapsed && (
             <button
               className="orbitpm-lite-chrome-btn"
               onClick={() => setAiCollapsed(false)}
-              title="Show the AI generation panel"
+              title={t('app.showAi.title')}
             >
-              ✨ AI
+              {t('app.showAi')}
             </button>
           )}
           <button
             className="orbitpm-lite-chrome-btn"
             onClick={() => setSettingsOpen(true)}
-            title="Settings — manage AI provider keys"
+            title={t('app.settings.title')}
           >
-            ⚙ Settings
+            {t('app.settings')}
+          </button>
+          <button
+            className="orbitpm-lite-chrome-btn"
+            onClick={() => setLang(lang === 'en' ? 'ar' : 'en')}
+            title={t('app.lang.toggle.title')}
+          >
+            {lang === 'en' ? t('app.lang.ar') : t('app.lang.en')}
           </button>
         </div>
       </header>
@@ -1107,7 +1112,7 @@ function App(): JSX.Element {
       >
         <aside
           style={{
-            borderRight: '1px solid var(--orbitpm-border)',
+            borderInlineEnd: '1px solid var(--orbitpm-border)',
             overflowY: 'auto',
             padding: '0.5rem 0'
           }}
@@ -1128,25 +1133,25 @@ function App(): JSX.Element {
                   className="orbitpm-lite-chrome-btn"
                   style={{ flex: '1 1 auto' }}
                   onClick={() => void handleNewProcess('')}
-                  title="Create a new process at the workspace root"
+                  title={t('tree.newProcess.title')}
                 >
-                  ＋ New process
+                  {t('tree.newProcess')}
                 </button>
                 <button
                   className="orbitpm-lite-chrome-btn"
                   onClick={() => void handleNewFolder('')}
-                  title="Create a new folder at the workspace root"
-                  aria-label="New folder"
+                  title={t('tree.newFolder.title')}
+                  aria-label={t('tree.newFolder.aria')}
                 >
                   📁＋
                 </button>
                 <button
                   className="orbitpm-lite-chrome-btn"
                   onClick={() => importInputRef.current?.click()}
-                  title="Import .bpmn files into the workspace (or drag them from Explorer onto the tree)"
-                  aria-label="Import .bpmn files"
+                  title={t('app.import.title')}
+                  aria-label={t('app.import')}
                 >
-                  ⤓ Import
+                  ⤓ {t('app.import')}
                 </button>
               </div>
               {countBpmnFiles(tree) === 0 ? (
@@ -1171,9 +1176,7 @@ function App(): JSX.Element {
             </div>
           ) : (
             <div style={{ padding: '0.6rem 0.8rem', fontSize: 12.5, color: 'var(--orbitpm-muted)' }}>
-              <p style={{ marginTop: 0 }}>
-                Single-file mode — no folder is open. Saving downloads the <code>.bpmn</code> file.
-              </p>
+              <p style={{ marginTop: 0 }}>{t('fallback.singleFileNote')}</p>
               <button
                 className="orbitpm-lite-chrome-btn"
                 style={{
@@ -1185,25 +1188,25 @@ function App(): JSX.Element {
                   fontWeight: 600
                 }}
                 onClick={() => void handleNewProcessFallback()}
-                title="Create a new named process (Save downloads the file)"
+                title={t('fallback.newProcess.title')}
               >
-                ＋ New process
+                {t('fallback.newProcess')}
               </button>
               <button
                 className="orbitpm-lite-chrome-btn"
                 style={{ width: '100%', marginBottom: 6 }}
                 onClick={openFileFromDisk}
-                title="Open an existing .bpmn file from disk"
+                title={t('fallback.openBpmnFile.title')}
               >
-                Open a .bpmn file…
+                {t('fallback.openBpmnFile')}
               </button>
               <button
                 className="orbitpm-lite-chrome-btn"
                 style={{ width: '100%' }}
                 onClick={startBlankDiagram}
-                title="Start an unnamed blank diagram"
+                title={t('fallback.newBlank.title')}
               >
-                New blank diagram
+                {t('fallback.newBlank')}
               </button>
             </div>
           )}
@@ -1251,7 +1254,7 @@ function App(): JSX.Element {
                       e.stopPropagation()
                       closeTab(tab.key)
                     }}
-                    title="Close"
+                    title={t('tab.closeTitle')}
                     style={{ opacity: 0.5 }}
                   >
                     ×
@@ -1263,7 +1266,7 @@ function App(): JSX.Element {
 
           {crumbs && !showCatalog && (
             <nav
-              aria-label="Breadcrumb"
+              aria-label={t('breadcrumb.aria')}
               style={{
                 flex: '0 0 auto',
                 display: 'flex',
@@ -1284,7 +1287,7 @@ function App(): JSX.Element {
                     <button
                       type="button"
                       onClick={() => setCatalogOpen(true)}
-                      title="Browse all processes"
+                      title={t('app.home.title')}
                       style={{
                         border: 'none',
                         background: 'transparent',
@@ -1309,8 +1312,7 @@ function App(): JSX.Element {
           <div style={{ position: 'relative', flex: 1, minHeight: 0 }}>
             {tabs.length === 0 && mode === 'fallback' && (
               <div style={{ padding: '1.5rem', opacity: 0.6, lineHeight: 1.6 }}>
-                Press <strong>＋ New process</strong> to start drawing, or open an existing{' '}
-                <code>.bpmn</code> file.
+                {t('emptyTab.fallback')}
               </div>
             )}
             {tabs.map((tab) => {
@@ -1329,7 +1331,7 @@ function App(): JSX.Element {
                   }}
                 >
                   {content === undefined ? (
-                    <div style={{ padding: '1.5rem', opacity: 0.6 }}>Loading diagram…</div>
+                    <div style={{ padding: '1.5rem', opacity: 0.6 }}>{t('editor.loadingDiagram')}</div>
                   ) : (
                     <EditorTab
                       xml={content}
@@ -1368,7 +1370,7 @@ function App(): JSX.Element {
                 onOpen={(rel) => void openDirectoryFile(rel)}
                 query={search}
                 totalCount={catalogRows.length}
-                rootName={rootName || 'Workspace'}
+                rootName={rootName || t('breadcrumb.root')}
                 onNewProcess={() => void handleNewProcess('')}
                 onOpenUnresolved={() => setUnresolvedOpen(true)}
               />
@@ -1399,15 +1401,15 @@ function App(): JSX.Element {
         }}
       >
         <span style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-          {mode === 'directory' ? `📁 ${rootName}` : 'Single-file mode (saving downloads)'}
+          {mode === 'directory' ? t('footer.folderPrefix', { folderName: rootName }) : t('footer.singleFileMode')}
           {search.trim() && mode === 'directory' && (
-            <span>· {countHits(searchGroups)} search match{countHits(searchGroups) === 1 ? '' : 'es'}</span>
+            <span>· {tPlural('search.matches', countHits(searchGroups))}</span>
           )}
           {unresolvedCount > 0 && (
             <button
               type="button"
               onClick={() => setUnresolvedOpen(true)}
-              title="Show every unresolved call-activity link in the workspace"
+              title={t('unresolved.badge.title')}
               style={{
                 padding: '0.1rem 0.5rem',
                 borderRadius: 999,
@@ -1419,11 +1421,11 @@ function App(): JSX.Element {
                 font: 'inherit'
               }}
             >
-              {unresolvedCount} unresolved link{unresolvedCount === 1 ? '' : 's'}
+              {tPlural('footer.unresolvedLinks', unresolvedCount)}
             </button>
           )}
         </span>
-        <span>Zero-install · runs in your browser</span>
+        <span>{t('footer.tagline')}</span>
       </footer>
 
       {moveTarget && (
@@ -1441,20 +1443,21 @@ function App(): JSX.Element {
 
       {deleteTarget && (
         <ConfirmDialog
-          title={deleteTarget.node.type === 'directory' ? 'Delete folder' : 'Delete file'}
+          title={
+            deleteTarget.node.type === 'directory'
+              ? t('confirmDialog.deleteFolder.title')
+              : t('confirmDialog.deleteFile.title')
+          }
           danger
-          confirmLabel="Delete"
+          confirmLabel={t('confirmDialog.confirm')}
           requireTyped={deleteTarget.requireTyped}
           message={
             deleteTarget.requireTyped ? (
               <>
-                <strong>{deleteTarget.node.name}</strong> is not empty. Deleting it removes the
-                folder and everything inside it. This cannot be undone.
+                <strong>{deleteTarget.node.name}</strong> {t('confirm.deleteFolder.notEmptyBody')}
               </>
             ) : (
-              <>
-                Delete <strong>{deleteTarget.node.name}</strong>? This cannot be undone.
-              </>
+              t('confirm.deleteNode', { name: deleteTarget.node.name })
             )
           }
           onConfirm={() => void performDelete()}

@@ -1,5 +1,7 @@
 import type { SearchGroup, MatchField } from './searchIndex'
 import { countHits } from './searchIndex'
+import { t, tPlural } from '../i18n'
+import { useLang } from '../i18n/useLang'
 
 export interface SearchResultsProps {
   groups: SearchGroup[]
@@ -9,11 +11,11 @@ export interface SearchResultsProps {
   onClose: () => void
 }
 
-const FIELD_LABEL: Record<MatchField, string> = {
-  name: 'name',
-  file: 'file',
-  id: 'id',
-  content: 'in diagram'
+const FIELD_KEY: Record<MatchField, string> = {
+  name: 'search.field.name',
+  file: 'search.field.file',
+  id: 'search.field.id',
+  content: 'search.field.content'
 }
 
 /**
@@ -29,11 +31,12 @@ export function SearchResults({
   onOpen,
   onClose
 }: SearchResultsProps): JSX.Element {
+  useLang()
   const total = countHits(groups)
   return (
     <div
       role="listbox"
-      aria-label="Search results"
+      aria-label={t('search.results.title')}
       style={{
         position: 'absolute',
         top: 'calc(100% + 4px)',
@@ -58,13 +61,11 @@ export function SearchResults({
           justifyContent: 'space-between'
         }}
       >
-        <span>
-          {total} result{total === 1 ? '' : 's'} for “{query.trim()}”
-        </span>
+        <span>{tPlural('search.resultCount', total, { query: query.trim() })}</span>
         <button
           type="button"
           onClick={onClose}
-          aria-label="Close search results"
+          aria-label={t('search.close.aria')}
           style={{ border: 'none', background: 'transparent', color: 'inherit', cursor: 'pointer' }}
         >
           ×
@@ -73,7 +74,7 @@ export function SearchResults({
 
       {total === 0 ? (
         <div style={{ padding: '0.9rem 0.7rem', fontSize: 13, color: 'var(--orbitpm-muted)' }}>
-          No processes, files, ids or diagram text match.
+          {t('search.noResults.full')}
         </div>
       ) : (
         groups.map((group) => (
@@ -109,7 +110,7 @@ export function SearchResults({
                   color: 'inherit',
                   font: 'inherit',
                   fontSize: 13,
-                  textAlign: 'left',
+                  textAlign: 'start',
                   cursor: 'pointer'
                 }}
                 onMouseEnter={(e) => (e.currentTarget.style.background = 'var(--orbitpm-hover)')}
@@ -149,7 +150,7 @@ export function SearchResults({
                     padding: '0.05rem 0.4rem'
                   }}
                 >
-                  {FIELD_LABEL[hit.matchedOn]}
+                  {t(FIELD_KEY[hit.matchedOn] as Parameters<typeof t>[0])}
                 </span>
               </button>
             ))}

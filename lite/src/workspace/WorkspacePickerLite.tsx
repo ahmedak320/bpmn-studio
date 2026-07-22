@@ -1,4 +1,6 @@
 import { ICON_DATA_URI } from '../branding/icon'
+import { t } from '../i18n'
+import { useLang, setLang } from '../i18n/useLang'
 
 export type PickerMode = 'open' | 'reconnect' | 'fallback'
 
@@ -40,9 +42,11 @@ export function WorkspacePickerLite({
   onNewDiagram,
   onNewProcess
 }: WorkspacePickerLiteProps): JSX.Element {
+  const lang = useLang()
   return (
     <div
       style={{
+        position: 'relative',
         height: '100vh',
         display: 'flex',
         flexDirection: 'column',
@@ -53,24 +57,30 @@ export function WorkspacePickerLite({
         textAlign: 'center'
       }}
     >
+      <button
+        type="button"
+        className="orbitpm-lite-chrome-btn"
+        onClick={() => setLang(lang === 'en' ? 'ar' : 'en')}
+        title={t('app.lang.toggle.title')}
+        style={{ position: 'absolute', insetBlockStart: 16, insetInlineEnd: 16 }}
+      >
+        {lang === 'en' ? t('app.lang.ar') : t('app.lang.en')}
+      </button>
       <img src={ICON_DATA_URI} width={72} height={72} alt="OrbitPM" style={{ borderRadius: 16 }} />
       <div>
-        <h1 style={{ fontSize: 22, margin: '0 0 4px' }}>OrbitPM Process Studio Lite</h1>
+        <h1 style={{ fontSize: 22, margin: '0 0 4px' }}>{t('picker.title')}</h1>
         <p style={{ margin: 0, color: 'var(--orbitpm-muted)', fontSize: 14, maxWidth: 440 }}>
-          Draw BPMN 2.0 diagrams, organize them in folders, link processes, and generate from a
-          description with AI — all in your browser, nothing to install.
+          {t('picker.subtitle')}
         </p>
       </div>
 
       {mode === 'open' && (
         <>
           <button className="orbitpm-lite-primary" onClick={onOpenFolder} disabled={busy}>
-            {busy ? 'Opening…' : 'Open a folder…'}
+            {busy ? t('picker.open.button.busy') : t('picker.open.button')}
           </button>
           <p style={{ margin: 0, fontSize: 12.5, color: 'var(--orbitpm-muted)', maxWidth: 440 }}>
-            Choose a folder on your computer (e.g. a OneDrive folder) to hold your{' '}
-            <code>.bpmn</code> files. The browser asks permission the first time and remembers the
-            folder for next time.
+            {t('picker.open.hint')}
           </p>
         </>
       )}
@@ -78,13 +88,17 @@ export function WorkspacePickerLite({
       {mode === 'reconnect' && (
         <>
           <button className="orbitpm-lite-primary" onClick={onOpenFolder} disabled={busy}>
-            {busy ? 'Reconnecting…' : `Reconnect to "${rememberedName ?? 'your folder'}"`}
+            {busy
+              ? t('picker.reconnect.button.busy')
+              : t('picker.reconnect.button', {
+                  rememberedName: rememberedName ?? t('picker.reconnect.button.fallbackName')
+                })}
           </button>
           <button className="orbitpm-lite-chrome-btn" onClick={onOpenDifferent} disabled={busy}>
-            Open a different folder…
+            {t('picker.reconnect.openDifferent')}
           </button>
           <p style={{ margin: 0, fontSize: 12.5, color: 'var(--orbitpm-muted)', maxWidth: 440 }}>
-            Your browser needs you to re-grant read/write access to this folder for this session.
+            {t('picker.reconnect.hint')}
           </p>
         </>
       )}
@@ -92,21 +106,17 @@ export function WorkspacePickerLite({
       {mode === 'fallback' && (
         <>
           <div className="orbitpm-lite-banner" style={{ borderRadius: 8, maxWidth: 480 }}>
-            This browser doesn&apos;t allow opening a folder (the File System Access API is
-            unavailable or disabled by policy). You can still open a single <code>.bpmn</code> file
-            or start a new diagram — saving will download the file instead of writing it back in
-            place. For the full folder experience, use Microsoft Edge or Google Chrome, or the
-            desktop app.
+            {t('picker.fallback.banner')}
           </div>
           <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', justifyContent: 'center' }}>
             <button className="orbitpm-lite-primary" onClick={onNewProcess}>
-              ＋ New process
+              {t('picker.fallback.newProcess')}
             </button>
             <button className="orbitpm-lite-chrome-btn" onClick={onOpenFile}>
-              Open a .bpmn file…
+              {t('picker.fallback.openFile')}
             </button>
             <button className="orbitpm-lite-chrome-btn" onClick={onNewDiagram}>
-              New blank diagram
+              {t('picker.fallback.newDiagram')}
             </button>
           </div>
         </>

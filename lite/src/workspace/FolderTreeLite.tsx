@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import type { LiteTreeNode } from '../fs/fsAccess'
 import { INTERNAL_DND_MIME, isInternalDrag } from './importDrop'
+import { t } from '../i18n'
+import { useLang } from '../i18n/useLang'
 
 export interface FolderTreeLiteProps {
   root: LiteTreeNode | null
@@ -79,6 +81,7 @@ export function FolderTreeLite({
   onMoveDrop,
   onImportDrop
 }: FolderTreeLiteProps): JSX.Element {
+  useLang()
   const [expanded, setExpanded] = useState<Set<string>>(() => new Set(['']))
   const [menu, setMenu] = useState<MenuState | null>(null)
   const [dropTargetRel, setDropTargetRel] = useState<string | null>(null)
@@ -182,13 +185,13 @@ export function FolderTreeLite({
     (node: LiteTreeNode): MenuItem[] => {
       const folderRel = dropFolderOf(node)
       const items: MenuItem[] = [
-        { label: 'New process', onClick: () => onNewProcess(folderRel) },
-        { label: 'New folder', onClick: () => onNewFolder(folderRel) }
+        { label: t('contextMenu.newProcess'), onClick: () => onNewProcess(folderRel) },
+        { label: t('contextMenu.newFolder'), onClick: () => onNewFolder(folderRel) }
       ]
       if (node.relPath !== '') {
-        items.push({ label: 'Rename', onClick: () => onRename(node) })
-        items.push({ label: 'Move to…', onClick: () => onMove(node) })
-        items.push({ label: 'Delete', onClick: () => onDelete(node), danger: true })
+        items.push({ label: t('contextMenu.rename'), onClick: () => onRename(node) })
+        items.push({ label: t('contextMenu.moveTo'), onClick: () => onMove(node) })
+        items.push({ label: t('contextMenu.delete'), onClick: () => onDelete(node), danger: true })
       }
       return items
     },
@@ -268,7 +271,7 @@ function TreeLevel({ node, depth, actions }: TreeLevelProps): JSX.Element {
             alignItems: 'center',
             gap: 6,
             padding: '3px 6px',
-            paddingLeft: 8 + depth * 14,
+            paddingInlineStart: 8 + depth * 14,
             cursor: 'pointer',
             fontSize: 13,
             borderRadius: 4,
@@ -299,23 +302,23 @@ function TreeLevel({ node, depth, actions }: TreeLevelProps): JSX.Element {
           <span className="orbitpm-tree-actions" style={{ display: 'flex', gap: 2, flex: '0 0 auto' }}>
             {node.type === 'directory' && (
               <ActionIcon
-                label={`New process in ${node.name}`}
+                label={t('treeAction.newProcessIn', { name: node.name })}
                 glyph="＋"
                 onClick={() => actions.onNewProcess(node.relPath)}
               />
             )}
             <ActionIcon
-              label={`Rename ${node.name}`}
+              label={t('treeAction.rename', { name: node.name })}
               glyph="✎"
               onClick={() => actions.onRename(node)}
             />
             <ActionIcon
-              label={`Move ${node.name}`}
+              label={t('treeAction.move', { name: node.name })}
               glyph="⤴"
               onClick={() => actions.onMove(node)}
             />
             <ActionIcon
-              label={`Delete ${node.name}`}
+              label={t('treeAction.delete', { name: node.name })}
               glyph="🗑"
               danger
               onClick={() => actions.onDelete(node)}
@@ -425,7 +428,7 @@ function ContextMenu({
           style={{
             display: 'block',
             width: '100%',
-            textAlign: 'left',
+            textAlign: 'start',
             padding: '6px 10px',
             border: 'none',
             background: 'transparent',

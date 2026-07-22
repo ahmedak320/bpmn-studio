@@ -6,6 +6,7 @@
 // with vision, which also makes scanned / Arabic / RTL / flowchart PDFs work.
 
 import type { LiteProviderId } from './providersLite'
+import { t } from '../i18n'
 
 /** A PDF selected by the user, encoded for a provider request. */
 export interface PdfAttachment {
@@ -51,15 +52,17 @@ export function checkPdfSize(providerId: LiteProviderId, sizeBytes: number): Pdf
   if (limit <= 0) {
     return {
       ok: false,
-      message:
-        'PDF input is not available for the Custom endpoint. Use OpenRouter, Anthropic, or Gemini for PDFs.'
+      message: t('ai.pdf.sizeGate.customUnavailable')
     }
   }
   if (sizeBytes > limit) {
-    const alt = providerId === 'gemini' ? 'split the file' : 'try Gemini (larger limit) or split the file'
+    const alt =
+      providerId === 'gemini'
+        ? t('ai.pdf.sizeGate.alt.splitOnly')
+        : t('ai.pdf.sizeGate.alt.tryGeminiOrSplit')
     return {
       ok: false,
-      message: `PDF is ${mb(sizeBytes)} — over the ${mb(limit)} limit for this provider. Please ${alt}.`
+      message: t('ai.pdf.sizeGate.overLimit', { size: mb(sizeBytes), limit: mb(limit), alt })
     }
   }
   return { ok: true }

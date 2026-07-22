@@ -5,7 +5,6 @@ import {
   setKey,
   clearKey,
   keyLast4,
-  KEY_STORAGE_WARNING,
   getCustomConfig,
   setCustomConfig,
   parseHeaderLines,
@@ -13,6 +12,8 @@ import {
   type CustomEndpointConfig
 } from '../ai/keys'
 import { testConnection, type ProviderConfig, type TestConnectionResult } from '../ai/browserAi'
+import { t } from '../i18n'
+import { useLang } from '../i18n/useLang'
 
 export interface SettingsDialogLiteProps {
   open: boolean
@@ -36,6 +37,7 @@ export function SettingsDialogLite({
   onClose,
   onKeysChanged
 }: SettingsDialogLiteProps): JSX.Element | null {
+  useLang()
   const [drafts, setDrafts] = useState<Record<string, string>>({})
   const [custom, setCustom] = useState<CustomEndpointConfig>(() => getCustomConfig())
   const [headerText, setHeaderText] = useState('')
@@ -82,7 +84,7 @@ export function SettingsDialogLite({
     // Persist the custom endpoint (base URL / model / headers) too.
     setCustomConfig({ ...custom, extraHeaders: parseHeaderLines(headerText) })
     setDrafts({})
-    setSaved('Saved.')
+    setSaved(t('settings.saved'))
     onKeysChanged()
   }
 
@@ -104,7 +106,7 @@ export function SettingsDialogLite({
       baseURL: providerId === 'custom' ? custom.baseURL : undefined,
       extraHeaders: providerId === 'custom' ? parseHeaderLines(headerText) : undefined,
       referer: typeof location !== 'undefined' ? location.origin : undefined,
-      title: 'OrbitPM Process Studio Lite'
+      title: t('app.title')
     }
     try {
       const result = await testConnection(cfg)
@@ -127,7 +129,7 @@ export function SettingsDialogLite({
     <div
       role="dialog"
       aria-modal="true"
-      aria-label="Settings"
+      aria-label={t('settings.title')}
       style={overlay}
       onMouseDown={(e) => {
         if (e.target === e.currentTarget) onClose()
@@ -135,15 +137,15 @@ export function SettingsDialogLite({
     >
       <div style={panel}>
         <header style={header}>
-          <strong>Settings — AI providers</strong>
-          <button type="button" onClick={onClose} aria-label="Close" style={closeBtn}>
+          <strong>{t('settings.title.providers')}</strong>
+          <button type="button" onClick={onClose} aria-label={t('settings.close.aria')} style={closeBtn}>
             ×
           </button>
         </header>
 
         <div style={{ padding: '0.9rem 1rem', display: 'flex', flexDirection: 'column', gap: 18 }}>
           <div style={warning} role="note">
-            ⚠️ {KEY_STORAGE_WARNING}
+            ⚠️ {t('settings.keyStorageWarning')}
           </div>
 
           {LITE_PROVIDERS.map((p) => {
@@ -166,7 +168,7 @@ export function SettingsDialogLite({
                       rel="noreferrer noopener"
                       style={{ fontSize: 12, color: 'var(--orbitpm-accent)' }}
                     >
-                      Get a key ↗
+                      {t('settings.getKey')}
                     </a>
                   )}
                 </div>
@@ -177,18 +179,18 @@ export function SettingsDialogLite({
                     <input
                       type="text"
                       autoComplete="off"
-                      aria-label="Base URL"
+                      aria-label={t('settings.baseUrl.aria')}
                       value={custom.baseURL}
-                      placeholder="Base URL, e.g. https://api.example.com/v1"
+                      placeholder={t('settings.baseUrl.placeholder')}
                       onChange={(e) => persistCustom({ ...custom, baseURL: e.target.value })}
                       style={input}
                     />
                     <input
                       type="text"
                       autoComplete="off"
-                      aria-label="Model id"
+                      aria-label={t('settings.modelId.aria')}
                       value={custom.model}
-                      placeholder="Model id, e.g. llama-3.3-70b"
+                      placeholder={t('settings.modelId.placeholder')}
                       onChange={(e) => persistCustom({ ...custom, model: e.target.value })}
                       style={input}
                     />
@@ -198,10 +200,12 @@ export function SettingsDialogLite({
                 <input
                   type="password"
                   autoComplete="off"
-                  aria-label={`${p.label} API key`}
+                  aria-label={t('settings.apiKey.aria', { label: p.label })}
                   value={value}
                   placeholder={
-                    configured ? `Configured (••••${last4}) — type to replace` : 'Paste API key'
+                    configured
+                      ? t('settings.keyPlaceholder.configured', { last4 })
+                      : t('settings.keyPlaceholder.empty')
                   }
                   onChange={(e) => setDrafts((d) => ({ ...d, [p.id]: e.target.value }))}
                   style={input}
@@ -209,9 +213,9 @@ export function SettingsDialogLite({
 
                 {p.needsEndpointConfig && (
                   <textarea
-                    aria-label="Extra headers"
+                    aria-label={t('settings.extraHeaders.aria')}
                     value={headerText}
-                    placeholder={'Extra headers (optional), one per line:\nX-My-Header: value'}
+                    placeholder={t('settings.extraHeaders.placeholder')}
                     onChange={(e) => setHeaderText(e.target.value)}
                     rows={2}
                     style={{ ...input, resize: 'vertical', fontFamily: 'monospace', fontSize: 12 }}
@@ -225,7 +229,7 @@ export function SettingsDialogLite({
                     disabled={testing[p.id]}
                     style={ghostBtn}
                   >
-                    {testing[p.id] ? 'Testing…' : 'Test connection'}
+                    {testing[p.id] ? t('settings.testConnection.testing') : t('settings.testConnection')}
                   </button>
                   {configured && (
                     <button
@@ -237,12 +241,12 @@ export function SettingsDialogLite({
                           delete next[p.id]
                           return next
                         })
-                        setSaved('Key cleared.')
+                        setSaved(t('settings.keyCleared'))
                         onKeysChanged()
                       }}
                       style={ghostBtn}
                     >
-                      Clear stored key
+                      {t('settings.clearKey')}
                     </button>
                   )}
                 </div>
@@ -262,10 +266,10 @@ export function SettingsDialogLite({
           {saved && <span style={{ fontSize: 12, color: 'var(--orbitpm-muted)' }}>{saved}</span>}
           <span style={{ flex: 1 }} />
           <button type="button" onClick={onClose} style={ghostBtn}>
-            Close
+            {t('settings.close')}
           </button>
           <button type="button" onClick={save} className="orbitpm-lite-primary" style={{ fontSize: 13 }}>
-            Save
+            {t('settings.saveKeys')}
           </button>
         </footer>
       </div>

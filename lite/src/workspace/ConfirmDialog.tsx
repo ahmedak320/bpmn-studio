@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { Modal } from './Modal'
+import { t } from '../i18n'
+import { useLang } from '../i18n/useLang'
 
 export interface ConfirmDialogProps {
   title: string
@@ -22,13 +24,16 @@ export interface ConfirmDialogProps {
 export function ConfirmDialog({
   title,
   message,
-  confirmLabel = 'Confirm',
-  cancelLabel = 'Cancel',
+  confirmLabel,
+  cancelLabel,
   danger = false,
   requireTyped,
   onConfirm,
   onCancel
 }: ConfirmDialogProps): JSX.Element {
+  useLang()
+  const resolvedConfirmLabel = confirmLabel ?? t('confirmDialog.confirm.default')
+  const resolvedCancelLabel = cancelLabel ?? t('confirmDialog.cancel')
   const [typed, setTyped] = useState('')
   const inputRef = useRef<HTMLInputElement | null>(null)
   const canConfirm = requireTyped === undefined || typed === requireTyped
@@ -52,7 +57,7 @@ export function ConfirmDialog({
         cursor: canConfirm ? 'pointer' : 'not-allowed'
       }}
     >
-      {confirmLabel}
+      {resolvedConfirmLabel}
     </button>
   )
 
@@ -64,7 +69,7 @@ export function ConfirmDialog({
       footer={
         <>
           <button type="button" className="orbitpm-lite-chrome-btn" onClick={onCancel}>
-            {cancelLabel}
+            {resolvedCancelLabel}
           </button>
           {confirmBtn}
         </>
@@ -74,7 +79,9 @@ export function ConfirmDialog({
       {requireTyped !== undefined && (
         <label style={{ display: 'block', marginTop: 12, fontSize: 13 }}>
           <span style={{ display: 'block', marginBottom: 4, color: 'var(--orbitpm-muted)' }}>
-            Type <strong>{requireTyped}</strong> to confirm:
+            {t('confirmDialog.typeToConfirm').split('{name}')[0]}
+            <strong>{requireTyped}</strong>
+            {t('confirmDialog.typeToConfirm').split('{name}')[1]}
           </span>
           <input
             ref={inputRef}

@@ -5,7 +5,7 @@
 // directory-mode (real file) and fallback-mode (in-memory/download) paths, so
 // the two can never drift.
 
-import { slugify } from '@app/shared/slug'
+import { slugify, FALLBACK_SLUG } from '@app/shared/slug'
 import { createNamedDiagramXml } from '@app/renderer/src/editor/newDiagram'
 
 /**
@@ -25,6 +25,34 @@ export function deriveProcessId(slug: string): string {
  * name field when creating a process to satisfy an unresolved `calledElement`
  * (e.g. `Process_customer_onboarding` -> "Customer Onboarding").
  */
+/**
+ * Derive a file base name that PRESERVES non-Latin scripts (Arabic, etc.)
+ * instead of stripping them the way `slugify()` does — `slugify()` is kept
+ * strictly ASCII (Windows-legal dashed-lowercase) because it also feeds
+ * `deriveProcessId()`, whose output must be a valid XML NCName. The file name
+ * has no such constraint: modern filesystems and the File System Access API
+ * both support Unicode names, so an Arabic process name should produce an
+ * Arabic `.bpmn` file name, while its `<process id>` still falls back to a
+ * stable ASCII form (`Process_process`, deduplicated `Process_process_2`, …)
+ * via `slugify()`/`deriveProcessId()` in the callers below.
+ *
+ * For an ASCII-only input this defers entirely to `slugify()` so existing
+ * (English) file names are byte-identical to before this function existed.
+ */
+export function deriveFileBaseName(name: string): string {
+  const trimmed = name.trim()
+  if (!trimmed) return FALLBACK_SLUG
+  const hasNonAscii = /[^\x00-\x7F]/.test(trimmed)
+  if (!hasNonAscii) return slugify(trimmed)
+  // Strip characters illegal in a Windows file name and control characters,
+  // collapse whitespace to a single dash, trim stray dashes.
+  const safe = trimmed
+    .replace(/[<>:"/\\|?*\x00-\x1F]/g, '')
+    .replace(/\s+/g, '-')
+    .replace(/^-+|-+$/g, '')
+  return safe || FALLBACK_SLUG
+}
+
 export function humanizeProcessId(id: string): string {
   const words = id
     .replace(/^Process[_-]?/i, '')
@@ -55,8 +83,9 @@ export interface NewProcessDoc {
 export function buildNewProcessDoc(name: string, slugOverride?: string): NewProcessDoc {
   const slug = slugOverride ?? slugify(name)
   const processId = deriveProcessId(slug)
+  const fileBaseName = slugOverride ?? deriveFileBaseName(name)
   return {
-    fileBaseName: slug,
+    fileBaseName,
     processId,
     name,
     xml: createNamedDiagramXml({ processId, name })
@@ -76,9 +105,9 @@ export function buildMissingProcessDoc(
   slugOverride?: string
 ): NewProcessDoc {
   const displayName = (name && name.trim()) || humanizeProcessId(calledElementId)
-  const slug = slugOverride ?? slugify(displayName || calledElementId)
+  const fileBaseName = slugOverride ?? deriveFileBaseName(displayName || calledElementId)
   return {
-    fileBaseName: slug,
+    fileBaseName,
     processId: calledElementId,
     name: displayName,
     xml: createNamedDiagramXml({ processId: calledElementId, name: displayName })

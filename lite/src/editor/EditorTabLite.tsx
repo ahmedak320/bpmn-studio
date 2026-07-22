@@ -44,6 +44,8 @@ import {
   triggerDownload,
   type CanvasLike
 } from '@app/renderer/src/editor/exportImage'
+import { t } from '../i18n'
+import { useLang } from '../i18n/useLang'
 
 export interface EditorTabProps {
   xml: string
@@ -133,6 +135,7 @@ export function EditorTab(props: EditorTabProps): JSX.Element {
     toolbarExtra,
     onCommandsReady
   } = props
+  useLang()
   const onModelerReadyRef = useRef(onModelerReady)
   onModelerReadyRef.current = onModelerReady
 
@@ -249,7 +252,7 @@ export function EditorTab(props: EditorTabProps): JSX.Element {
       })
       .catch((err: unknown) => {
         if (cancelled) return
-        setError(`Failed to load diagram: ${errorMessage(err)}`)
+        setError(t('editor.error.loadFailed', { error: errorMessage(err) }))
       })
 
     return () => {
@@ -271,7 +274,7 @@ export function EditorTab(props: EditorTabProps): JSX.Element {
       await onRequestSave(savedXml)
       applyDirtyState(withSaved(dirtyStateRef.current))
     } catch (err) {
-      setError(`Save failed: ${errorMessage(err)}`)
+      setError(t('editor.error.saveFailed', { error: errorMessage(err) }))
     } finally {
       setSaving(false)
     }
@@ -302,7 +305,7 @@ export function EditorTab(props: EditorTabProps): JSX.Element {
       const { svg } = await modeler.saveSVG()
       triggerDownload(`${baseName}.svg`, svgToDataUrl(svg))
     } catch (err) {
-      setError(`SVG export failed: ${errorMessage(err)}`)
+      setError(t('editor.error.exportSvgFailed', { error: errorMessage(err) }))
     }
   }, [baseName])
 
@@ -332,7 +335,7 @@ export function EditorTab(props: EditorTabProps): JSX.Element {
       })
       triggerDownload(`${baseName}.png`, dataUrl)
     } catch (err) {
-      setError(`PNG export failed: ${errorMessage(err)}`)
+      setError(t('editor.error.exportPngFailed', { error: errorMessage(err) }))
     }
   }, [baseName])
 
@@ -358,39 +361,44 @@ export function EditorTab(props: EditorTabProps): JSX.Element {
   }, [onCommandsReady, handleSave, handleExportSvg, handleExportPng])
 
   return (
-    <div className="orbitpm-editor">
+    // Forced LTR: bpmn-js's canvas/palette/context-pad/minimap all assume a
+    // hardcoded LTR coordinate system with no RTL mode of their own (see the
+    // i18n prep §3.4). The toolbar text itself is still translated; only the
+    // physical layout of this work-surface island stays LTR regardless of the
+    // app's active language.
+    <div className="orbitpm-editor" dir="ltr">
       <div className="orbitpm-editor__toolbar">
         <button
           type="button"
           className="orbitpm-editor__button orbitpm-editor__button--primary"
           onClick={() => void handleSave()}
           disabled={saving}
-          title="Save (Ctrl+S)"
+          title={t('editor.save.title')}
         >
-          {saving ? 'Saving…' : 'Save'}
+          {saving ? t('editor.save.saving') : t('editor.save')}
         </button>
         <button
           type="button"
           className="orbitpm-editor__button"
           onClick={() => void handleExportSvg()}
-          title="Download the diagram as an SVG vector image"
+          title={t('editor.exportSvg.title')}
         >
-          Export SVG
+          {t('editor.exportSvg')}
         </button>
         <button
           type="button"
           className="orbitpm-editor__button"
           onClick={() => void handleExportPng()}
-          title="Download the diagram as a PNG image"
+          title={t('editor.exportPng.title')}
         >
-          Export PNG
+          {t('editor.exportPng')}
         </button>
         <button
           type="button"
           className="orbitpm-editor__button"
           onClick={() => zoomByFactor(1 / 1.15)}
-          title="Zoom out"
-          aria-label="Zoom out"
+          title={t('editor.zoomOut.title')}
+          aria-label={t('editor.zoomOut.title')}
         >
           −
         </button>
@@ -398,8 +406,8 @@ export function EditorTab(props: EditorTabProps): JSX.Element {
           type="button"
           className="orbitpm-editor__button"
           onClick={() => zoomByFactor(1.15)}
-          title="Zoom in"
-          aria-label="Zoom in"
+          title={t('editor.zoomIn.title')}
+          aria-label={t('editor.zoomIn.title')}
         >
           ＋
         </button>
@@ -407,9 +415,9 @@ export function EditorTab(props: EditorTabProps): JSX.Element {
           type="button"
           className="orbitpm-editor__button"
           onClick={handleZoomFit}
-          title="Zoom to fit the whole diagram (or Ctrl + mouse-wheel to zoom)"
+          title={t('editor.zoomFit.title')}
         >
-          Zoom Fit
+          {t('editor.zoomFit')}
         </button>
         <span
           className={
@@ -417,9 +425,9 @@ export function EditorTab(props: EditorTabProps): JSX.Element {
               ? 'orbitpm-editor__dirty-flag orbitpm-editor__dirty-flag--dirty'
               : 'orbitpm-editor__dirty-flag'
           }
-          title={dirty ? 'This diagram has changes you have not saved yet' : 'All changes saved'}
+          title={dirty ? t('editor.dirtyFlag.dirty.title') : t('editor.dirtyFlag.saved.title')}
         >
-          {dirty ? '● Unsaved changes' : 'Saved'}
+          {dirty ? t('editor.dirtyFlag.dirty') : t('editor.dirtyFlag.saved')}
         </span>
         {toolbarExtra}
       </div>
@@ -458,11 +466,8 @@ export function EditorTab(props: EditorTabProps): JSX.Element {
                 <div style={{ fontSize: 22, marginBottom: 4 }} aria-hidden>
                   🎨
                 </div>
-                <strong style={{ color: 'var(--orbitpm-editor-fg)' }}>Start drawing</strong>
-                <div style={{ marginTop: 4 }}>
-                  Drag a shape from the palette on the left (or click one) to add it. Double-click
-                  any element to rename it.
-                </div>
+                <strong style={{ color: 'var(--orbitpm-editor-fg)' }}>{t('editor.hint.startDrawing')}</strong>
+                <div style={{ marginTop: 4 }}>{t('editor.hint.startDrawing.body')}</div>
               </div>
             </div>
           )}
