@@ -52,8 +52,10 @@ You can change the workspace root later from the **File** menu.
 The left sidebar is a live folder tree rooted at your workspace. Create
 folders to group related processes (by department, by project, however
 makes sense to you) and `.bpmn` files inside them. Right-click for
-create/rename/delete/move. Changes made outside the app (e.g. someone syncs
-a file via OneDrive) show up automatically.
+create/rename/delete/move — new-folder, new-process, and rename open a
+small in-app dialog to type the name (not a browser-style prompt). Changes
+made outside the app (e.g. someone syncs a file via OneDrive) show up
+automatically.
 
 ### Drawing basics
 
@@ -109,11 +111,16 @@ internet connection and an API key for at least one provider. Open
 | **Azure OpenAI** | API key, Resource endpoint, Deployment name, API version | Four fields because Azure OpenAI is deployment-driven, not model-driven: **Resource endpoint** is your `https://<resource>.openai.azure.com` URL, **Deployment name** is the deployment you created in Azure (not a model name), **API version** defaults to `2024-10-21` but is editable if your resource needs a different one. |
 
 Every card has **Save**, **Clear**, and **Test connection** (does a live
-reachability/auth check with the model you've selected). Keys never leave
-the main process — they're stored locally, encrypted with Windows DPAPI via
-Electron's `safeStorage` (tied to your Windows user account), and only used
-from the app's background process to call the provider's API. They are
-never sent anywhere except the provider you configured.
+reachability/auth check with the model you've selected). Key fields are
+**write-only**: they start empty, and once a key is stored the field shows
+a placeholder like `Configured (****ab12)` instead of the real value — the
+app never reads a stored key back out to display it. Type a new value and
+Save to overwrite it; leave the field blank and Save leaves the stored key
+untouched. Keys never leave the main process — they're stored locally,
+encrypted with Windows DPAPI via Electron's `safeStorage` (tied to your
+Windows user account), and only used from the app's background process to
+call the provider's API. They are never sent anywhere except the provider
+you configured.
 
 To generate a diagram, open the AI panel (right side), write a description
 of the process, pick a provider/model and target folder, and generate. The
@@ -155,7 +162,7 @@ proprietary extensions. That means:
 | SmartScreen blocks the installer | Expected for an unsigned app — click **More info → Run anyway**. See [Install](#install). |
 | Corporate proxy / firewall blocks AI calls | The app uses the system proxy automatically, so most corporate proxies work transparently. If a specific provider is still unreachable, it's likely that provider's domain is blocked outbound by your network policy — try **Test connection** in Settings for a clear error, and try a different provider (Azure OpenAI is often already allow-listed in enterprise networks). |
 | File seems "stuck" / won't save right after a OneDrive sync | OneDrive can briefly lock a file while syncing. Wait a few seconds and Save again — saves are atomic (write-then-rename) and retried, so this is normally a transient hiccup, not data loss. |
-| AI generation fails or times out | Open `<install-folder-data>\logs\ai.log` (the app's userData `logs` folder — Settings → each provider's "Test connection" will also surface the immediate error) for the full error detail behind the friendly message shown in the panel. |
+| AI generation fails or times out | Open `%APPDATA%\OrbitPM Process Studio\logs\ai.log` (Settings → each provider's "Test connection" will also surface the immediate error) for the full error detail behind the friendly message shown in the panel. |
 | Where are my settings/keys stored? | In your Windows user profile's app-data folder for this app (`%APPDATA%\OrbitPM Process Studio\`), never in the workspace folder you chose — so they don't get swept into OneDrive/git along with your diagrams. |
 
 ## Development
@@ -216,6 +223,23 @@ Installer is per-user (NSIS `oneClick` + `perMachine: false`), no admin
 required, with `.bpmn` file association and auto-update via
 `electron-updater` against public GitHub Releases (unsigned — this is
 intentional, see `electron-builder.yml`'s notes).
+
+## Acknowledgements
+
+This app is built on open-source tooling, most notably:
+
+- [bpmn-js](https://bpmn.io/toolkit/bpmn-js/) and the rest of the
+  [bpmn.io](https://bpmn.io) toolkit — the BPMN 2.0 diagram editor at the
+  core of this app, used under the bpmn.io license. The "Powered by
+  bpmn.io" link shown in the bottom-right corner of the diagram editor is
+  part of that license and is not removed or obscured.
+- [Electron](https://www.electronjs.org/) — the desktop app shell.
+- [Vercel AI SDK](https://sdk.vercel.ai/) — the multi-provider AI
+  integration used for diagram generation.
+- [bpmn-auto-layout](https://github.com/bpmn-io/bpmn-auto-layout) — automatic
+  diagram layout for AI-generated processes.
+
+See [LICENSE](LICENSE) for this project's own license.
 
 ## Repo layout
 

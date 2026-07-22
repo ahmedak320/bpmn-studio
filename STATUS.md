@@ -267,3 +267,78 @@ patched forward:
 the `window.prompt`-in-Electron CRUD-flow issue flagged by the e2e
 lane as UNCONFIRMED-in-real-Electron is investigated/fixed) is what
 should actually be handed to the end user for install.
+
+## Wave F — lanes F1/F2 (confirmed-findings fixes) + F3 (docs/licensing + v0.1.2 release)
+
+- **F1** (`b3920a6`, E1-1/E2-1): replaced `window.prompt` (unimplemented in
+  Electron's `BrowserWindow`, silently returns `null`) with a real in-app
+  modal (`src/renderer/src/common/{TextInputModal,PromptProvider}.tsx`,
+  `usePromptText`). New Process / New Folder / Rename in the folder tree —
+  and File → New Process, which previously just opened the AI panel — now
+  actually work in the packaged app. e2e's `window.prompt` stub removed and
+  replaced with a real modal-driving flow; added a regression spec
+  (`tests/e2e/prompt-modal.spec.ts`) that fails on any resurfaced
+  `prompt() is not supported` page error.
+- **F2** (`bf97c17`, E1-2/3/5/6/7): CSP `font-src 'self' data:` (bpmn-js's
+  icon font was silently blocked, breaking palette/context-pad/
+  properties-panel icons); `secrets.getKeys` now returns only
+  `{configured, last4}` — provider key fields are write-only in Settings
+  (empty by default, `Configured (****last4)` placeholder when a key is
+  stored, blank-and-save never clobbers an existing key, "Show" reveal
+  control removed); `setWindowOpenHandler`/`will-navigate`/`will-redirect`
+  hardened to deny all non-http(s) external navigation and block
+  in-app navigation away from the app's own origin; secrets vault file
+  written with mode `0o600`; XML emitter strips XML-1.0-illegal control
+  characters before escaping (regression test added). Gate at landing:
+  typecheck/build clean, `npm test` 200/200 (was 196 — added
+  xml-control-chars + vault-mode tests), `npm run test:e2e` 7/7.
+- **F3 (this entry) — docs/licensing + the v0.1.2 release**:
+  - **E2-2** (README `ai.log` path): corrected the invented
+    `<install-folder-data>\logs\ai.log` token to the real
+    `%APPDATA%\OrbitPM Process Studio\logs\ai.log`. Also updated the
+    AI-setup section to describe F2's write-only key fields
+    (`Configured (****last4)` placeholder, no reveal control) and the
+    "Folders = organization" section to mention F1's in-app rename/create
+    dialogs (replacing the old browser-`prompt()` framing that was never
+    accurate for the packaged app).
+  - **E2-3** (licensing): added a top-level `LICENSE` (MIT, copyright
+    "2026 Ahmed Alkatheeri") and a `"license": "MIT"` field in
+    `package.json`. **MIT was chosen as a reasonable default for a public
+    repo** — permissive, standard, and trivial for Ahmed to swap for a
+    different license later (single file + one `package.json` field, no
+    code depends on it). Added a README **Acknowledgements** section
+    crediting bpmn.io/bpmn-js (used under the bpmn.io license; the
+    "Powered by bpmn.io" watermark is retained, unmodified, per E2's
+    licensing review), Electron, the Vercel AI SDK, and
+    `bpmn-auto-layout`.
+  - **E2-4** (plan.md DoD): ticked `plan.md` §6 boxes 1–3 (Vitest goldens,
+    Playwright-electron suite, CI-produces-installer) with one-line
+    evidence pointers into this ledger and the live test run this lane
+    performed. Boxes 4 (Ahmed's laptop, wave G) and 5's "project memory
+    updated" tail are left unticked — legitimately still pending a human
+    gate this lane can't perform.
+  - **Full gate re-run at HEAD before release** (this lane, live):
+    `npm run typecheck` clean; `npm run build` clean; `npm test` →
+    **25 files / 200 tests, all green**; `npm run test:e2e`
+    (`DISPLAY=:0`) → **8/8 passed** (workspace, editor, ai-generate,
+    linking ×2 specs, prompt-modal, settings, boot-and-first-run).
+  - **Tracked maintenance item (not fixed this wave)**: Electron is
+    pinned at `^33.3.1` (installed `33.4.11`); `npm outdated` shows
+    latest is `43.2.0` — ten majors behind. Left as-is deliberately (a
+    major Electron bump is a real compatibility/regression risk, out of
+    scope for a docs/licensing/release lane); flagging here as a
+    tracked-not-forgotten maintenance item for a future wave.
+  - **Release v0.1.2**: bumped `package.json` version `0.1.1` → `0.1.2`
+    (no dependency changes). This is the first release intended for
+    actual end-user install — tagged, pushed, built by CI on
+    `windows-latest`, and published **not as a prerelease** (unlike
+    `v0.0.1-alpha.2` and `v0.1.1`, which stay marked prerelease) so
+    electron-updater's GitHub-provider auto-update treats it as the
+    current stable release. See this lane's report (`F3.md`) for the CI
+    run URL, asset list, static NSIS/`asInvoker` checks, and
+    `latest.yml` version confirmation.
+
+**Wave F status: all E1/E2 findings routed to this wave are resolved (F1
+window.prompt fix, F2 CSP/secrets/nav/XML hardening, F3 docs/licensing) or
+explicitly tracked as deferred maintenance (Electron major upgrade).
+`v0.1.2` is the first non-prerelease, end-user-installable release.**

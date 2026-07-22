@@ -106,9 +106,9 @@ Same rules as the server build: **every task by delegated agents** — `sonnet-m
 
 ## 6. Verification / Definition of Done
 
-- [ ] Vitest goldens: TS pipeline output equivalent to vendored Python transformer on all 7 example IRs (+ new cases: loop-back `next`, dedup-fix, nasty labels); validate.ts rejects each documented invalid case.
-- [ ] Playwright-electron suite green on Linux: workspace CRUD, draw/save/reopen, fake-provider AI generate → rendered tab, call-activity drill-down.
-- [ ] CI produces `OrbitPM-Process-Studio-Setup-x.y.z.exe` + `latest.yml` on windows-latest; installer static checks show per-user (no admin manifest, no perMachine).
+- [x] Vitest goldens: TS pipeline output equivalent to vendored Python transformer on all 7 example IRs (+ new cases: loop-back `next`, dedup-fix, nasty labels); validate.ts rejects each documented invalid case. — Evidence: `tests/unit/golden.test.ts` (10 tests) + full `npm test` = 200/200 passing at v0.1.2 (Wave F3 verification).
+- [x] Playwright-electron suite green on Linux: workspace CRUD, draw/save/reopen, fake-provider AI generate → rendered tab, call-activity drill-down. — Evidence: `tests/e2e/{workspace,editor,ai-generate,linking,boot-and-first-run,settings,prompt-modal}.spec.ts`, 8/8 passing (`npm run test:e2e`, DISPLAY=:0, Wave F3 verification).
+- [x] CI produces `OrbitPM-Process-Studio-Setup-x.y.z.exe` + `latest.yml` on windows-latest; installer static checks show per-user (no admin manifest, no perMachine). — Evidence: `.github/workflows/build.yml` runs on `windows-latest`; releases v0.0.1-alpha.2, v0.1.1, v0.1.2 all produced the exe/`.blockmap`/`latest.yml` triple with `asInvoker` manifest (see STATUS.md Waves A2/R/F3).
 - [ ] **Ahmed's laptop (wave G)**: installs without admin prompt; runs; full offline flow works; live AI generation succeeds with GLM 5.2, Kimi K3, DeepSeek, and Azure OpenAI keys entered in Settings; a generated file imports cleanly into SpiffArena on this desktop (cross-check); auto-update v0.1.0→v0.1.1 works in-app.
 - [ ] E-wave reviews done; confirmed findings fixed; README complete; desktop/STATUS.md ledger current; project memory updated.
 
