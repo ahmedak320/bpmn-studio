@@ -88,6 +88,32 @@ interface ProvidersApi {
   available: () => Promise<AvailableProviderInfo[]>
 }
 
+// --- file-association / theme / menu surface (added by C3, wired by C4) ---
+
+interface OpenFilePayloadIpc {
+  relPath: string
+}
+
+interface OpenFileApi {
+  onOpenFile: (callback: (payload: OpenFilePayloadIpc) => void) => () => void
+}
+
+interface ThemeApi {
+  get: () => Promise<{ ok: boolean; data?: boolean; error?: string }>
+  onChange: (callback: (isDark: boolean) => void) => () => void
+}
+
+interface MenuApi {
+  channels: {
+    newProcess: string
+    openWorkspaceFolder: string
+    save: string
+    exportSvg: string
+    exportPng: string
+  }
+  onAction: (channel: string, callback: () => void) => () => void
+}
+
 interface Window {
   orbitpm: {
     versions: {
@@ -99,6 +125,8 @@ interface Window {
     settings: SettingsApi
     ai: AiApi
     providers: ProvidersApi
-    // TODO(C4): add `updater: UpdaterApi` here when stitching C3's preload snippet.
+    openFile: OpenFileApi
+    theme: ThemeApi
+    menu: MenuApi
   }
 }

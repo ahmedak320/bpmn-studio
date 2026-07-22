@@ -31,6 +31,29 @@ export interface EditorTabProps {
   onOpenCalledProcess?: (processId: string) => void
   /** Base filename (no extension) used for SVG/PNG export downloads. */
   exportFileBaseName?: string
+  /** Fired once the bpmn-js modeler instance exists (mount) and again with
+   *  null on unmount. Lets a parent toolbar (e.g. SelectionLinkButton) read
+   *  live selection/modeling state without EditorTab needing to know about
+   *  it. Untyped (`unknown`) here deliberately — callers narrow to their
+   *  own structural interface (see links/SelectionLinkButton.tsx). */
+  onModelerReady?: (modeler: unknown | null) => void
+  /** Extra controls rendered at the end of the toolbar (e.g. the
+   *  call-activity link button) — kept as an opaque ReactNode so EditorTab
+   *  itself never needs to know what's mounted there. */
+  toolbarExtra?: import('react').ReactNode
+  /** Fired (with the current imperative command set) whenever this tab's
+   *  save/export handlers are (re)created, and with null on unmount. Lets a
+   *  parent (App's native-menu command bus) trigger this tab's Save/Export
+   *  without EditorTab needing to know about menus at all — every mounted
+   *  tab reports its own commands; the parent picks whichever belongs to
+   *  the currently-active tab. */
+  onCommandsReady?: (commands: EditorTabCommands | null) => void
+}
+
+export interface EditorTabCommands {
+  save: () => void
+  exportSvg: () => void
+  exportPng: () => void
 }
 
 // A minimal structural view of what we read off the live bpmn-js instance.
@@ -72,7 +95,18 @@ function errorMessage(err: unknown): string {
 }
 
 export function EditorTab(props: EditorTabProps): JSX.Element {
-  const { xml, onDirtyChange, onRequestSave, onOpenCalledProcess, exportFileBaseName } = props
+  const {
+    xml,
+    onDirtyChange,
+    onRequestSave,
+    onOpenCalledProcess,
+    exportFileBaseName,
+    onModelerReady,
+    toolbarExtra,
+    onCommandsReady
+  } = props
+  const onModelerReadyRef = useRef(onModelerReady)
+  onModelerReadyRef.current = onModelerReady
 
   const canvasContainerRef = useRef<HTMLDivElement | null>(null)
   const propertiesContainerRef = useRef<HTMLDivElement | null>(null)
@@ -115,6 +149,7 @@ export function EditorTab(props: EditorTabProps): JSX.Element {
     }) as unknown as BpmnModelerLike
 
     modelerRef.current = modeler
+    onModelerReadyRef.current?.(modeler)
 
     const handleCommandStackChanged = (): void => {
       applyDirtyState(withCommandStackChanged(dirtyStateRef.current, getStackIndex(modeler)))
@@ -140,6 +175,7 @@ export function EditorTab(props: EditorTabProps): JSX.Element {
       eventBus.off('element.dblclick', handleDblClick)
       modeler.destroy()
       modelerRef.current = null
+      onModelerReadyRef.current?.(null)
     }
     // Only re-run if the container nodes themselves are replaced; `xml`
     // changes are handled by the import effect below, not a full remount.
@@ -255,6 +291,17 @@ export function EditorTab(props: EditorTabProps): JSX.Element {
     modelerRef.current?.get('canvas').zoom('fit-viewport')
   }, [])
 
+  // Report this tab's imperative commands (for the native-menu command bus)
+  // whenever the underlying handlers change identity, and clear on unmount.
+  useEffect(() => {
+    onCommandsReady?.({
+      save: () => void handleSave(),
+      exportSvg: () => void handleExportSvg(),
+      exportPng: () => void handleExportPng()
+    })
+    return () => onCommandsReady?.(null)
+  }, [onCommandsReady, handleSave, handleExportSvg, handleExportPng])
+
   return (
     <div className="orbitpm-editor">
       <div className="orbitpm-editor__toolbar">
@@ -293,6 +340,7 @@ export function EditorTab(props: EditorTabProps): JSX.Element {
         >
           {dirty ? 'Unsaved changes' : 'Saved'}
         </span>
+        {toolbarExtra}
       </div>
       {error ? <div className="orbitpm-editor__error">{error}</div> : null}
       <div className="orbitpm-editor__body">

@@ -1,12 +1,12 @@
-import { app, BrowserWindow, shell } from 'electron'
+import { app, BrowserWindow, Menu, ipcMain, nativeTheme, shell } from 'electron'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { registerWorkspaceIpc } from './workspace'
 import { registerAiIpc } from './ai/ai'
-// TODO(C4): C3 provides `registerUpdaterIpc`/menu wiring + a `.bpmn`
-// file-association open-path handler as patch snippets — add its import here
-// and its register fn to REGISTRATIONS below (and forward opened file paths to
-// the renderer via a new channel) when stitching C3's report.
+import { buildMenu } from './menu'
+import { initAutoUpdater } from './updater'
+import { findAndHandleOpenFileArgs } from './openFile'
+import { THEME_CHANNELS } from './themeContract'
 
 const isSmokeTest = process.argv.includes('--smoke-test')
 const __dirname = fileURLToPath(new URL('.', import.meta.url))
@@ -59,8 +59,13 @@ function createWindow(): void {
   // ipcMain.handle calls in this file.
   const REGISTRATIONS: Array<(win: BrowserWindow) => void> = [
     registerWorkspaceIpc,
-    registerAiIpc
-    // TODO(C4): append C3's updater/menu registration here.
+    registerAiIpc,
+    () => {
+      ipcMain.handle(THEME_CHANNELS.get, () => ({
+        ok: true,
+        data: nativeTheme.shouldUseDarkColors
+      }))
+    }
   ]
   for (const register of REGISTRATIONS) {
     register(mainWindow)
@@ -72,17 +77,33 @@ function createWindow(): void {
   } else {
     mainWindow.loadFile(join(__dirname, '../renderer/index.html'))
   }
+
+  // Windows file-association / first-launch open path: only fires once for
+  // the initial page load. Subsequent double-click opens while the app is
+  // already running are handled via 'second-instance' below.
+  mainWindow.webContents.once('did-finish-load', () => {
+    findAndHandleOpenFileArgs(process.argv, () => mainWindow)
+  })
 }
 
-app.on('second-instance', () => {
+// nativeTheme is a singleton; forward OS theme changes to the renderer
+// regardless of which window is current.
+nativeTheme.on('updated', () => {
+  mainWindow?.webContents.send(THEME_CHANNELS.changed, nativeTheme.shouldUseDarkColors)
+})
+
+app.on('second-instance', (_event, argv) => {
   if (mainWindow) {
     if (mainWindow.isMinimized()) mainWindow.restore()
     mainWindow.focus()
+    findAndHandleOpenFileArgs(argv, () => mainWindow)
   }
 })
 
 app.whenReady().then(() => {
   createWindow()
+  initAutoUpdater()
+  Menu.setApplicationMenu(buildMenu(() => mainWindow))
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow()

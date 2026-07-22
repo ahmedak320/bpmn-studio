@@ -16,6 +16,9 @@ import {
   type TestConnectionResult
 } from '../main/ai/ipcContract'
 import type { ProviderId } from '../shared/providers'
+import { OPEN_FILE_CHANNELS, type OpenFilePayload } from '../main/openFileContract'
+import { THEME_CHANNELS } from '../main/themeContract'
+import { MENU_CHANNELS } from '../main/menuContract'
 
 // Typed surface exposed to the renderer. Grows in later waves (AI generate
 // IPC, secrets, updater) — each lane should add its own namespace object to
@@ -87,6 +90,38 @@ const providers = {
     ipcRenderer.invoke(PROVIDER_CHANNELS.available)
 }
 
+// C3: .bpmn file-association open-path surface (double-click / second
+// instance / import-from-outside-workspace) — main pushes, renderer opens a tab.
+const openFile = {
+  onOpenFile: (callback: (payload: OpenFilePayload) => void): (() => void) => {
+    const listener = (_event: unknown, payload: OpenFilePayload): void => callback(payload)
+    ipcRenderer.on(OPEN_FILE_CHANNELS.openFile, listener)
+    return () => ipcRenderer.removeListener(OPEN_FILE_CHANNELS.openFile, listener)
+  }
+}
+
+// C3: nativeTheme (dark/light) forwarding.
+const theme = {
+  get: (): Promise<{ ok: boolean; data?: boolean; error?: string }> =>
+    ipcRenderer.invoke(THEME_CHANNELS.get),
+  onChange: (callback: (isDark: boolean) => void): (() => void) => {
+    const listener = (_event: unknown, isDark: boolean): void => callback(isDark)
+    ipcRenderer.on(THEME_CHANNELS.changed, listener)
+    return () => ipcRenderer.removeListener(THEME_CHANNELS.changed, listener)
+  }
+}
+
+// C3: native application-menu action round-trips (File/View/Help items that
+// need renderer state, e.g. Save/Export/New Process).
+const menu = {
+  channels: MENU_CHANNELS,
+  onAction: (channel: string, callback: () => void): (() => void) => {
+    const listener = (): void => callback()
+    ipcRenderer.on(channel, listener)
+    return () => ipcRenderer.removeListener(channel, listener)
+  }
+}
+
 const api = {
   versions: {
     node: process.versions.node,
@@ -96,7 +131,10 @@ const api = {
   workspace,
   settings,
   ai,
-  providers
+  providers,
+  openFile,
+  theme,
+  menu
 }
 
 export type OrbitPmApi = typeof api

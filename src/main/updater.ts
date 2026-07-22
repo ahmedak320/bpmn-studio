@@ -16,7 +16,43 @@
 //    before downloadUpdate()/quitAndInstall().
 
 import { app, dialog, type BrowserWindow } from 'electron'
-import { autoUpdater, type UpdateInfo } from 'electron-updater'
+// electron-updater ships as CommonJS; a plain named import compiles fine
+// under TypeScript's esModuleInterop but fails at runtime in the built ESM
+// main bundle ("Named export 'autoUpdater' not found") because
+// electron-vite externalizes node_modules for the main process rather than
+// bundling/interop-wrapping them, and Node's cjs-module-lexer doesn't
+// statically detect this package's named export. A default import doesn't
+// work either: `tests/unit/menu.test.ts` mocks this module with
+// `vi.mock('electron-updater', () => ({ autoUpdater: {...} }))` (a plain
+// named export, no `default` key), so a strict default import breaks the
+// test even though it fixes the real build. Resolve both shapes via a
+// namespace import: real Node ESM/CJS interop always exposes the full CJS
+// `module.exports` as `.default` (so `.default.autoUpdater` works there),
+// while Vitest's mock factory return value has no `.default` and exposes
+// `.autoUpdater` directly.
+import * as electronUpdaterModule from 'electron-updater'
+import type { UpdateInfo } from 'electron-updater'
+
+interface AutoUpdaterLike {
+  once: (event: string, listener: (...args: unknown[]) => void) => void
+  on: (event: string, listener: (...args: unknown[]) => void) => void
+  checkForUpdates: () => Promise<unknown>
+  checkForUpdatesAndNotify: () => Promise<unknown>
+  downloadUpdate: () => Promise<unknown>
+  quitAndInstall: () => void
+  autoInstallOnAppQuit: boolean
+}
+
+const electronUpdaterExports = electronUpdaterModule as unknown as {
+  autoUpdater?: AutoUpdaterLike
+  default?: { autoUpdater?: AutoUpdaterLike }
+}
+const autoUpdater =
+  electronUpdaterExports.autoUpdater ?? electronUpdaterExports.default?.autoUpdater
+
+if (!autoUpdater) {
+  throw new Error('electron-updater: could not resolve autoUpdater export (unexpected module shape)')
+}
 
 let backgroundWired = false
 

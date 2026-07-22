@@ -1,5 +1,5 @@
 export { EditorTab, default } from './EditorTab'
-export type { EditorTabProps } from './EditorTab'
+export type { EditorTabProps, EditorTabCommands } from './EditorTab'
 
 export { createNewDiagramXml, NEW_DIAGRAM_XML } from './newDiagram'
 

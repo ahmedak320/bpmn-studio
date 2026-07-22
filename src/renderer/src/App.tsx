@@ -1,8 +1,14 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
 import { FolderTree, WorkspacePicker } from './tree'
-import { EditorTab } from './editor'
+import { EditorTab, type EditorTabCommands } from './editor'
 import { AiPanel, collectFolders } from './ai'
 import { SettingsModal, type SettingsHandlers, type SettingsStatus } from './settings'
+import {
+  useProcessIndex,
+  SelectionLinkButton,
+  listUnresolvedCalledElements,
+  type SelectionLinkModeler
+} from './links'
 
 interface OpenFile {
   relPath: string
@@ -36,6 +42,24 @@ function App(): JSX.Element {
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [aiCollapsed, setAiCollapsed] = useState(false)
   const [providersRefreshToken, setProvidersRefreshToken] = useState(0)
+
+  // Cross-process linking: workspace-wide processId -> file index, and the
+  // live bpmn-js modeler of whichever tab is active (for the call-activity
+  // link button + the unresolved-link status-bar badge).
+  const { index: processIndex } = useProcessIndex(window.orbitpm?.workspace ?? null)
+  // Every mounted tab reports its live modeler instance here (keyed by
+  // relPath) as it's created/destroyed; `activeModeler` below just looks up
+  // whichever entry belongs to the currently-active tab. State (not a ref)
+  // because SelectionLinkButton needs to re-render when it changes.
+  const [modelersByPath, setModelersByPath] = useState<Record<string, unknown>>({})
+  const activeModeler = (activeFile ? modelersByPath[activeFile] : null) as
+    | SelectionLinkModeler
+    | null
+  // Native-menu command bus: every mounted tab reports its own imperative
+  // save/export commands here (keyed by relPath); Save/Export menu items
+  // just look up whichever entry belongs to the currently-active tab. A
+  // ref (not state) since it never needs to trigger a re-render itself.
+  const commandsByPathRef = useRef<Record<string, EditorTabCommands | null>>({})
 
   const refreshTree = useCallback(async () => {
     const result = await window.orbitpm.workspace.listTree()
@@ -132,6 +156,8 @@ function App(): JSX.Element {
       setFileContents(drop)
       setFileErrors(drop)
       setDirtyByPath(drop)
+      setModelersByPath(drop)
+      delete commandsByPathRef.current[relPath]
       setMounted((prev) => {
         if (!prev.has(relPath)) return prev
         const next = new Set(prev)
@@ -155,20 +181,54 @@ function App(): JSX.Element {
     if (!res.ok) throw new Error(res.error ?? 'Could not write file.')
   }, [])
 
-  // TODO(C4 + C2): resolve a call-activity's calledElement (processId) to a
-  // workspace file via the process index (src/shared/processIndex.ts +
-  // src/renderer/src/links/useProcessIndex) and call handleOpenFile(relPath).
-  // C2 owns the resolver; this is the wiring slot. Until stitched, drill-down
-  // is a no-op beyond a console hint.
-  const handleOpenCalledProcess = useCallback((processId: string) => {
-    // eslint-disable-next-line no-console
-    console.info('[orbitpm] call-activity drill-down requested for process id:', processId)
-  }, [])
+  // Call-activity drill-down: resolve the double-clicked calledElement
+  // (processId) to a workspace file via the process index and open it as a
+  // tab. Unresolved (no such process indexed) -> explanatory alert; no
+  // toast infra exists yet (see C2 report).
+  const handleOpenCalledProcess = useCallback(
+    (processId: string) => {
+      const entry = processIndex.get(processId)
+      if (entry) {
+        handleOpenFile(entry.relPath)
+        return
+      }
+      window.alert(
+        `No process with id "${processId}" in this workspace — create it or link a different process.`
+      )
+    },
+    [processIndex, handleOpenFile]
+  )
 
-  // TODO(C4 + C3): subscribe here to a main->renderer "open this .bpmn path"
-  // event (Windows file-association / single-instance second-instance args)
-  // exposed via a new preload namespace, and call handleOpenFile(relPath).
-  // C3 provides the main-side sender + preload snippet as a patch.
+  // Windows file-association / single-instance open-path: main pushes the
+  // relPath once it has classified & (if needed) imported the file.
+  useEffect(() => {
+    const api = window.orbitpm
+    if (!api?.openFile) return
+    return api.openFile.onOpenFile(({ relPath }) => {
+      void handleOpenFile(relPath)
+    })
+  }, [handleOpenFile])
+
+  // Native application-menu round-trips (File menu items that need renderer
+  // state). "Open Workspace Folder…" reuses the same picker as first-run.
+  useEffect(() => {
+    const api = window.orbitpm
+    if (!api?.menu) return
+    const unsubscribers = [
+      api.menu.onAction(api.menu.channels.newProcess, () => setAiCollapsed(false)),
+      api.menu.onAction(api.menu.channels.openWorkspaceFolder, () => void handleChooseRoot()),
+      api.menu.onAction(api.menu.channels.save, () => {
+        if (activeFile) commandsByPathRef.current[activeFile]?.save()
+      }),
+      api.menu.onAction(api.menu.channels.exportSvg, () => {
+        if (activeFile) commandsByPathRef.current[activeFile]?.exportSvg()
+      }),
+      api.menu.onAction(api.menu.channels.exportPng, () => {
+        if (activeFile) commandsByPathRef.current[activeFile]?.exportPng()
+      })
+    ]
+    return () => unsubscribers.forEach((unsub) => unsub())
+  }, [handleChooseRoot, activeFile])
 
   const settingsHandlers: SettingsHandlers = useMemo(
     () => ({
@@ -183,6 +243,16 @@ function App(): JSX.Element {
   )
 
   const folders = useMemo(() => collectFolders(tree), [tree])
+
+  // Unresolved call-activity links in the currently active tab's in-memory
+  // content (cheap single regex pass; re-checked whenever the active file,
+  // its loaded content, or the process index changes).
+  const unresolvedCount = useMemo(() => {
+    if (!activeFile) return 0
+    const content = fileContents[activeFile]
+    if (!content) return 0
+    return listUnresolvedCalledElements(content, processIndex).length
+  }, [activeFile, fileContents, processIndex])
 
   const closeSettings = useCallback(() => {
     setSettingsOpen(false)
@@ -331,6 +401,17 @@ function App(): JSX.Element {
                       onRequestSave={(xml) => handleRequestSave(file.relPath, xml)}
                       onOpenCalledProcess={handleOpenCalledProcess}
                       exportFileBaseName={baseName(file.relPath).replace(/\.bpmn$/i, '')}
+                      onCommandsReady={(commands) => {
+                        commandsByPathRef.current[file.relPath] = commands
+                      }}
+                      onModelerReady={(modeler) => {
+                        setModelersByPath((prev) => ({ ...prev, [file.relPath]: modeler }))
+                      }}
+                      toolbarExtra={
+                        isActive ? (
+                          <SelectionLinkButton modeler={activeModeler} index={processIndex} />
+                        ) : null
+                      }
                     />
                   )}
                 </div>
@@ -360,7 +441,23 @@ function App(): JSX.Element {
           justifyContent: 'space-between'
         }}
       >
-        <span title={root}>{root}</span>
+        <span title={root} style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+          {root}
+          {unresolvedCount > 0 && (
+            <span
+              title="Call activities linked to a process id not found in this workspace"
+              style={{
+                padding: '0.1rem 0.5rem',
+                borderRadius: 999,
+                background: 'rgba(217,119,6,0.18)',
+                color: '#d97706',
+                fontWeight: 600
+              }}
+            >
+              {unresolvedCount} unresolved link{unresolvedCount === 1 ? '' : 's'}
+            </span>
+          )}
+        </span>
         <span>{versions}</span>
       </footer>
 

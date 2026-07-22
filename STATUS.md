@@ -69,3 +69,119 @@ awaiting laptop install experiment.**
 
 Download URL for the laptop test:
 https://github.com/ahmedak320/bpmn-studio/releases/download/v0.0.1-alpha.2/OrbitPM-Process-Studio-Setup-0.0.1-alpha.2.exe
+
+## Wave B (parallel lanes B1–B4)
+
+- **B1 Workspace** (`37dacb5`): root picker (first-run + Settings),
+  path-guarded fs IPC (`src/main/workspace`, `WORKSPACE_CHANNELS`:
+  getRoot/chooseRoot/listTree/readFile/writeFile/createFolder/
+  createBpmnFile/rename/move/delete + `treeChanged` push), atomic
+  writes (temp+rename), chokidar-driven tree refresh, `FolderTree` +
+  `WorkspacePicker` renderer components. Established the
+  no-Electron-import `ipcContract.ts` pattern later lanes reused
+  (workspace/openFile/menu/theme/ai contracts).
+- **B2 Editor** (`af14980`): `EditorTab` — bpmn-js Modeler + properties
+  panel + create-append-anything + minimap, Ctrl+S save, dirty-state
+  tracking (`editor/dirty.ts`), SVG/PNG export, call-activity
+  double-click hook (`onOpenCalledProcess`), `NEW_DIAGRAM_XML` factory.
+- **B3 Pipeline port** (`f84aedc`): `src/gen` — IR Zod schema, validator,
+  transformer (+ documented dedup-flow fix), semantic BPMN XML emitter,
+  `bpmn-auto-layout@0.4.0` wrapper, prompts, `generateFromDescription`
+  with conversational repair loop. Golden-tested against the vendored
+  Python transformer's output on all 7 example IRs.
+- **B4 Providers + settings** (`9b5573c`): 7-provider catalog
+  (`src/main/providers.ts`, `makeCallLLM`), `safeStorage`-backed secrets
+  vault (`src/main/secrets.ts`), pure `SettingsModal` UI (delivered
+  unwired this wave — wired in Wave C by C1).
+- Gate: `npm run typecheck` / `npm run build` / `npm test` green after
+  each lane; combined Wave B test count carried into Wave C's baseline.
+
+## Wave C (parallel lanes C1–C3) + C4 integration stitch
+
+- **C1 AI integration** (`d87df64`): `ai:generate`/`ai:testConnection`
+  IPC (`src/main/ai/{ai.ts,adapter.ts,ipcContract.ts}`), a B4→B3
+  `CallLLM` adapter (`bridgeCallLLM`), Windows-safe slugify
+  (`src/shared/slug.ts`), the `AiPanel` renderer UI, and the first real
+  `App.tsx` assembly (tabs, save/dirty/confirm-close, AiPanel +
+  SettingsModal mounted). Left explicit `TODO(C4)` slots in
+  `index.ts`/`preload/index.ts`/`App.tsx`/`env.d.ts` for C2's and C3's
+  work, since those two lanes were barred from touching the files C1
+  owned this wave.
+- **C2 Cross-process linking** (`34fe961`): `src/shared/processIndex.ts`
+  (regex-based processId→file index, namespace-prefix agnostic,
+  `listUnresolvedCalledElements`), `src/renderer/src/links/**`
+  (`useProcessIndex`, `LinkPicker`, `SelectionLinkButton`,
+  `setCalledElement` modeling op). Delivered as a standalone,
+  fully-tested module tree plus exact integration snippets in its report
+  (C2.md) — not wired into `App.tsx`/`EditorTab.tsx` by C2 itself, per
+  this wave's file-ownership rules.
+- **C3 Windows polish** (`1883a2d`): `src/main/updater.ts`
+  (electron-updater GitHub-provider wiring, background + interactive
+  check flows, never sets `verifyUpdateCodeSignature`/`publisherName`),
+  `src/main/menu.ts` (File/View/Help native menu), `src/main/openFile.ts`
+  (`.bpmn` file-association open-path resolution: inside/outside/no-root
+  classification + import-copy flow), `src/main/themeContract.ts` +
+  `src/renderer/src/theme.ts` (`nativeTheme` dark-mode wiring), real app
+  icon (`resources/icon.{svg,png,ico}`) wired into
+  `electron-builder.yml`. Also delivered as a standalone module tree +
+  exact `index.ts`/`preload.ts` snippets, not wired in by C3 itself.
+- **C4 integration stitch (this entry)**: applied C2's and C3's
+  documented patch snippets into the three C4-owned files
+  (`src/main/index.ts`, `src/preload/index.ts`,
+  `src/renderer/src/App.tsx`) plus a toolbar-stitch patch to
+  `src/renderer/src/editor/EditorTab.tsx`:
+  - `index.ts`: wired `THEME_CHANNELS.get` IPC, `initAutoUpdater()`,
+    `Menu.setApplicationMenu(buildMenu(...))`, first-launch
+    `did-finish-load` open-path handling, and `second-instance` argv
+    forwarding for `.bpmn` double-click opens.
+  - `preload/index.ts`: added the `openFile`/`theme`/`menu` namespaces
+    alongside the existing `workspace`/`settings`/`ai`/`providers` ones;
+    `src/renderer/env.d.ts` extended to match.
+  - `App.tsx`: wired `useProcessIndex` + a real call-activity
+    drill-down handler (resolves `calledElement` → file via the process
+    index, `window.alert` fallback for unresolved links — no toast
+    infra exists yet, matches C2's documented placeholder copy),
+    subscribed to `openFile.onOpenFile` (file-association opens) and
+    `menu.onAction` (File-menu Save/Export/New Process/Open Workspace
+    Folder), and added an unresolved-call-activity-links badge to the
+    status bar (footer), computed against the active tab's loaded XML.
+  - `EditorTab.tsx` (toolbar-stitch only): added `onModelerReady` (so a
+    parent can read the live modeler for `SelectionLinkButton`),
+    `onCommandsReady` (a small typed command bus — each mounted tab
+    reports `{save, exportSvg, exportPng}`; `App.tsx` looks up whichever
+    entry belongs to the active tab for the native File-menu's
+    Save/Export items instead of a broadcast event), and `toolbarExtra`
+    (an opaque `ReactNode` slot at the end of the toolbar, used to mount
+    `SelectionLinkButton` only for the active tab).
+  - **Bug found + fixed during smoke testing** (not present in any lane's
+    report): `src/main/updater.ts`'s `import { autoUpdater } from
+    'electron-updater'` type-checked and unit-tested fine but crashed the
+    *built* app at runtime — `SyntaxError: Named export 'autoUpdater' not
+    found` (electron-vite externalizes `node_modules` for the main
+    process; Node's `cjs-module-lexer` doesn't statically detect this
+    package's named export). A plain default-import fix would have broken
+    `tests/unit/menu.test.ts`'s existing `vi.mock('electron-updater', ...)`
+    (which returns a named `autoUpdater` export with no `default`). Fixed
+    with a namespace import + dual-shape resolver
+    (`electronUpdaterExports.autoUpdater ??
+    electronUpdaterExports.default?.autoUpdater`) that satisfies both the
+    real Node ESM/CJS interop shape and the test mock shape.
+- Gates (final, on the fully-stitched tree): `npm run typecheck` clean,
+  `npm run build` clean (main 78.9 kB / preload 4.86 kB / renderer
+  3.18 MB — bpmn-js + AI SDK providers are the bulk), `npm test` → **24
+  test files / 196 tests, all green**. `--smoke-test` run
+  (`DISPLAY=:0 npx electron ./out/main/index.js --smoke-test
+  --no-sandbox`) prints `SMOKE_OK` and exits 0. A 15s untouched
+  interactive launch (`--no-sandbox`, no `--smoke-test`) produced zero
+  stdout/stderr output — no runtime errors during startup. No screenshot
+  tool was available in this environment (`scrot`/`import`/`spectacle`/
+  `gnome-screenshot` all absent) — skipped per instructions rather than
+  installing one unprompted.
+- Committed: `stitch: wire linking, polish, theme; full app assembly`.
+  Pushed `main` to `origin` (this lane's responsibility per the wave
+  plan — no earlier Wave B/C lane pushed).
+
+**Wave C complete: AI generation, cross-process linking, and Windows
+polish (updater/menu/file-association/dark-mode/icon) are all wired end
+to end in a single assembled app. Remaining gaps are listed in this
+lane's report for Wave D.**
