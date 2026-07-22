@@ -750,3 +750,44 @@ shipped them. Commits: `32f7c84` (FX1), `d49635d` (FX2), `ae33e7d` (FX3).
   <https://ahmedak320.github.io/bpmn-studio/> → Settings → Test connection
   next to OpenRouter — expect "reachable" (a 4xx/CORS-open response), not
   "blocked".
+
+## 2026-07-23 — Lite: robust Escape handling for modals (intermittent close flake fixed)
+
+- **The flake**: headless e2e `lite-smoke.spec.ts:189` "Escape closes the
+  New-process modal" failed intermittently (independently reproduced 1-of-2
+  full runs): the modal opened, Escape was pressed, and the dialog never
+  closed (locator count stayed 1 through the full 5 s / 14-retry window — the
+  handler simply didn't fire that run, not a frame race).
+- **Root cause**: the shared `TextInputModal` (src/renderer/src/common/,
+  which Lite imports via `@app/renderer/src/common` for every `promptText`
+  flow) handled Escape only through a React `onKeyDown` bound to the dialog
+  `<div>`, which fires **only when focus is inside that div**. Focus is moved
+  into the input asynchronously in a `requestAnimationFrame` on open; until
+  that rAF lands, focus is still on the button that opened the modal —
+  **outside** the dialog — so an Escape dispatched in that pre-focus window
+  is delivered to the button and never reaches the dialog handler. The e2e
+  test presses Escape immediately after the dialog becomes visible, without
+  waiting for focus, so it hits this window under load. Proven deterministically
+  with a scratch repro that stole focus back to the trigger button before
+  Escape: **5/5 FAIL** on the pre-fix build, **5/5 PASS** after (repro removed,
+  not committed — minimal diff).
+- **Fix** (`TextInputModal.tsx`, +28/−3): added a window-level **capture**
+  keydown listener active exactly while the modal is open (removed on close),
+  which closes the modal on Escape regardless of where focus is — the same
+  focus-independent pattern the app's other modals already use (workspace
+  `Modal.tsx`, `SettingsDialogLite`). Latest-cancel-handler ref keeps the
+  listener subscribed for the whole open lifetime without re-binding per
+  keystroke. Enter-to-confirm, autofocus/select, and overlay/Cancel dismissal
+  are unchanged; the dialog `onKeyDown` now owns Enter only. Lite's sibling
+  modals were audited and already robust, so no other changes were needed.
+- **Proof**: `-g "Escape closes" --repeat-each 15` → **15/15 green** (was
+  flaky). Full Lite e2e suite **twice** headless → 17 passed / 3 skipped
+  (live-CORS) each run. Lite `tsc` clean; Lite vitest **191/191** (20 files).
+  Parent gates unchanged: `tsc` clean, vitest **203/203** (25 files),
+  `electron-vite build` OK.
+- **Ship**: commit `926ce7c` pushed to `main`. Pages workflow dispatched
+  (the fix lives in `src/`, outside the workflow's `lite/**` path filter, so
+  it doesn't auto-trigger) and watched to green; **live** page content-length
+  went **2 508 529 → 2 508 727** bytes. Release asset
+  `OrbitPM-Process-Studio-Lite.html` on **v0.1.2** re-uploaded (`--clobber`,
+  now 2 508 727 bytes).
