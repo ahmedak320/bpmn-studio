@@ -345,3 +345,8 @@ explicitly tracked as deferred maintenance (Electron major upgrade).
 
 ## 2026-07-22 — Cross-check: desktop pipeline → SpiffArena import ✅
 - Desktop gen pipeline (validate→transform→xml→layout, no LLM, nested-exclusive fixture) produced a 5.6KB BPMN+DI file; imported into the running SpiffArena via the bridge → model created, byte-identical on disk, git-committed, and **accepted by SpiffArena's own BPMN parser** (`bpmn_process_ids: ['Process_1']`). Zero incompatibilities. Test model deleted; fixture restored. Closes the interop DoD item — remaining boxes are all wave-G laptop items (install, live keys, auto-update proof).
+
+## 2026-07-22 — Wave G gate result: UNSIGNED INSTALLER BLOCKED on target laptop ❌
+- Ahmed's laptop: SmartScreen bypass worked ("Run anyway") but corporate application control then blocked execution ("Windows cannot access the specified device, path, or file" + "blocked by your company, request support" dialog) — AppLocker/WDAC or enterprise SmartScreen. Risk #1 materialized in its strong form.
+- Claude Desktop precedent reinterpreted: per-user installs are fine, but the policy gates on PUBLISHER SIGNATURE/reputation — unsigned exes are blocked regardless.
+- Viable legitimate routes: (1) IT approval request (block dialog offers it); (2) Azure Trusted Signing (~$10/mo) so builds carry a stable publisher identity — also makes IT approval durable across auto-updates (publisher rule, not per-hash); (3) browser-delivered fallbacks (single-file editor / future web version) which app-control does not gate. NO policy-evasion workarounds will be attempted.
