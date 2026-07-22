@@ -491,3 +491,8 @@ explicitly tracked as deferred maintenance (Electron major upgrade).
   automatically. Alternatively download `OrbitPM-Process-Studio-Lite.html` from
   the v0.1.2 release and double-click it — same app, one file, keep it in
   OneDrive.
+
+## 2026-07-22 — Azure Trusted Signing: NO-GO for UAE (verified, $0 spent)
+- Microsoft's Artifact Signing (ex-Trusted Signing) Public Trust identity validation is limited to orgs in USA/Canada/EU/UK and individuals in USA/Canada (FAQ dated 2026-05/06); individual onboarding paused; "no ETA" for other countries. UAE ineligible on both paths → agent halted at the go/no-go gate, created nothing.
+- Fallbacks on the table: (A) SSL.com OV + eSigner cloud (~$20/mo, turnkey headless CI signing via official GH Action + electron-builder custom sign hook — note: repo has electron-builder 25.1.8; native azureSignOptions would have needed v26, moot now); (B) Certum Open Source cert (~$58, qualifies — public MIT repo — but SimplySign signing is GUI/manual, weak CI fit); (C) Azure **Private Trust** IS UAE-eligible but only works if the target org's IT deploys the private root (WDAC) — an IT-cooperation path; (D) IT-first: ask what they'd allowlist before buying.
+- Awaiting Ahmed's decision. Lite editor (no executable) live meanwhile at https://ahmedak320.github.io/bpmn-studio/
