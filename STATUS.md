@@ -510,3 +510,105 @@ explicitly tracked as deferred maintenance (Electron major upgrade).
 - **Shared (@app) edits, justified & additive**: `createNamedDiagramXml` added to `renderer/editor/newDiagram.ts`; Escape handling added to `renderer/links/LinkPicker.tsx`. Parent `typecheck`/`test`/`build` stayed green.
 - **Gates**: lite `tsc` 0 · lite vitest **35** (added newProcessDoc both-mode + dangling-link resolution, countBpmnFiles empty-tree, EmptyWorkspaceCard render) · lite e2e **4** (new-process modal → full-palette check → programmatic task → Ctrl+Z undo → export, all zero-network; Escape-closes-modal) run **twice** green · desktop typecheck 0 / test 200 / build ok.
 - **Shipped**: single file rebuilt (self-contained, **2.75 MB / gzip ~777 KB**, 1 file). Pushed to main → Pages run `29946714370` green; live <https://ahmedak320.github.io/bpmn-studio/> serves the new build (content-length 2 815 168, markers "Create your first process"/"Start drawing" present). Release asset `OrbitPM-Process-Studio-Lite.html` on **v0.1.2** re-uploaded (`--clobber`, 2 815 168 bytes).
+
+## 2026-07-22/23 — Wave 2: provider expansion + company-doc completeness + Arabic i18n/RTL (W2A+W2B+W2C)
+
+Three lanes landed in sequence on top of LF1, each rebased onto the previous
+and gate-verified before the next started; this entry summarizes all three.
+
+- **W2A — provider expansion + PDF-to-BPMN** (commit `79ce43c`): added
+  **OpenRouter** (one BYOK key reaching GLM-5.2/Kimi K3/DeepSeek V4/Claude/
+  Gemini via `provider/model` slugs, live-verified against
+  `GET /api/v1/models`) and a **Custom OpenAI-compatible endpoint** (base URL +
+  model + extra headers) to the four browser-callable Lite providers; a
+  Settings **"Test connection"** probe per provider that truthfully
+  distinguishes a CORS block from an auth failure; and **PDF-to-BPMN**
+  generation (native PDF understanding via each provider's own document/
+  inlineData/file part — no bundled `pdfjs-dist` — with client-side size
+  gates per provider and an optional "which process?" hint field, EN/AR
+  placeholder).
+- **W2B — company-documentation completeness** (commit `a1fcb5b`, rebased onto
+  W2A): file **rename/delete/move** (context menu, hover icons, drag-and-drop,
+  a "Move to…" dialog, non-empty-folder delete requires typing the name);
+  workspace-wide **search** (name/file/id/diagram-text, ≤2 MB content cap,
+  grouped by folder); drag-in **import** of `.bpmn` files/folders from
+  Explorer with collision auto-suffix; a **catalog/home view** (sortable,
+  search-aware, click-to-open); **Back/Forward** navigation (Alt+Left/Right)
+  + a folder **breadcrumb**; a workspace-wide **unresolved-links panel**
+  (Create now / Open source per row); and a dedicated **Print/PDF** view
+  (`window.print()`, landscape, full-page SVG — no PDF library).
+- **W2C — Arabic i18n + RTL sweep** (this lane, commit `94e046b`, rebased onto
+  W2B): a from-scratch `lite/src/i18n/` module (`t()`/`tPlural()` lookup +
+  localStorage-persisted language state + a `useSyncExternalStore` React hook,
+  ~35 lines of logic) with complete EN/AR dictionaries (280+ keys) covering
+  every string introduced across all three lanes — app chrome, every dialog,
+  the empty-state card, the folder-tree context menu, Settings (incl. W2A's
+  provider-expansion + test-connection UI), the AI panel (incl. W2A's PDF
+  flow), the editor toolbar, the link picker, and W2B's catalog/search/
+  unresolved-links/print/toast/confirm/move UI. A header **language toggle**
+  (EN ⇄ العربية, also on the landing/picker screen since the header doesn't
+  exist there) persists the choice and flips `<html dir/lang>` immediately (no
+  flash-of-wrong-direction). **RTL**: physical CSS properties converted to
+  logical ones (`borderInlineEnd/Start`, `paddingInlineStart`,
+  `insetInlineEnd`, `textAlign:'start'`) so the 3-pane layout (tree · editor ·
+  AI panel) mirrors correctly under Arabic via CSS Grid's own RTL-aware track
+  placement — the bpmn-js canvas + toolbar + properties panel are deliberately
+  pinned `dir="ltr"` as one "work-surface island" (`.orbitpm-editor`) since
+  bpmn-js/its palette/context-pad/minimap have no RTL mode of their own and
+  hardcode LTR-assuming absolute positioning; toolbar button *labels* inside
+  that island are still translated. **Arabic content correctness**: added
+  `deriveFileBaseName()` to `newProcessDoc.ts` so a non-Latin process name
+  keeps its script verbatim in the `.bpmn` file name (only Windows-illegal
+  characters stripped) while `deriveProcessId()` still falls back to a stable
+  ASCII `<process id>` (`Process_process`, deduplicated `_2`/`_3`/…) for the
+  calledElement-linkable id — wired through every App.tsx creation path (new
+  process, missing-link process, Explorer import, AI placement) so Arabic
+  names work end-to-end in both directory and fallback modes.
+- **Deviation (flagged)**: touched the shared `src/renderer/src/links/
+  LinkPicker.tsx` (desktop + Lite both consume it) for a one-line
+  `textAlign: 'left'` → `'start'` logical-property fix only — no string
+  translation there (importing Lite's i18n module into a file the Electron
+  desktop app also bundles would be wrong; the LinkPicker modal's own text
+  stays English in Lite too, a residual gap, not a functional regression).
+- **Known residual i18n gaps (honest, not silently dropped)**: bpmn-js's own
+  palette/context-pad tooltips and the `@bpmn-io/properties-panel` field
+  labels are English-only (third-party libraries, their own `translate`
+  service override is out of scope this wave); a handful of deep AI-provider
+  diagnostic strings (Settings "Test connection" verdict messages,
+  `browserAi.ts`'s `classifyBrowserError` network/HTTP-status internals) stay
+  English — the main generation-flow errors (`ai.error.*`) and the PDF
+  size-gate messages ARE translated; the AI panel's provider **names/
+  descriptions** (OpenRouter, Anthropic, model labels) stay English per the
+  same "proper/product names aren't transliterated" convention as OrbitPM/
+  BPMN; the vertical-tab `collapsedBtn`'s `rotate(180deg)` in `AiPanelLite.tsx`
+  is not RTL-flipped (prep flagged this as needing a manual visual QA call
+  this lane can't make from code alone).
+- **Tests**: unit — a dictionary-completeness test (`i18n.test.ts`, walks
+  every `.ts`/`.tsx` under `lite/src`, extracts every `t()`/`tPlural()` call
+  site via regex, asserts full coverage in both `en` and `ar` plus
+  placeholder-token parity — **12 tests**) + Arabic slug/id/file-name behavior
+  (`deriveFileBaseName`, `buildNewProcessDoc`/`buildMissingProcessDoc` with
+  Arabic names, and end-to-end `fsAccess` mock-handle tests proving an Arabic
+  `.bpmn` file name round-trips through create/list/read — **9 new tests** in
+  `newProcessDoc.test.ts`); e2e — 3 new specs: language toggle sets
+  `dir=rtl`/`lang=ar` and persists to localStorage then back to `ltr`/`en`;
+  create a process with an Arabic name in fallback mode, set an Arabic label
+  on the canvas via the `__ORBITPM_LITE__` automation hook, assert the
+  rendered SVG `<tspan>` and the exported SVG file both contain the Arabic
+  text; assert `.orbitpm-editor` stays `dir="ltr"` while the app root is
+  `dir="rtl"`.
+- **Gates**: lite `tsc --noEmit` clean · lite `vitest` **155/155** (134
+  existing + 21 new: 12 i18n-dictionary + 9 Arabic newProcessDoc/fsAccess) ·
+  lite e2e (BUILT file over `file://`, `DISPLAY=:0`) **16/16** (13 existing +
+  3 new i18n/RTL specs; 3 live-CORS specs self-skip without
+  `LITE_LIVE_CORS=1`) run **twice** green · lite build: one `dist/index.html`,
+  **2.49 MB / gzip 695 KB** (< 4 MB) · parent gates untouched: `typecheck`
+  clean, `vitest` **200/200**, `electron-vite build` ok.
+- **Shipped**: pushed to `main` (`94e046b`) → Pages run `29953398147` green;
+  live <https://ahmedak320.github.io/bpmn-studio/> serves the new build
+  (content-length 2 493 719, matching `dist/index.html` byte-for-byte;
+  markers `app.lang.toggle` / `عملية جديدة` present). Release asset
+  `OrbitPM-Process-Studio-Lite.html` on **v0.1.2** re-uploaded (`--clobber`,
+  2 493 719 bytes) — this refresh carries all three W2 lanes (A+B+C), per
+  W2B's note deferring the release-asset re-upload to this final wave
+  integration point.
