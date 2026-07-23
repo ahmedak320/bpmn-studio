@@ -1,4 +1,12 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ChangeEvent,
+  type CSSProperties
+} from 'react'
 import {
   LITE_PROVIDERS,
   DESKTOP_ONLY_PROVIDERS,
@@ -8,7 +16,7 @@ import {
 } from './providersLite'
 import {
   generateDiagramXml,
-  generateDiagramXmlFromPdf,
+  generateDiagramXmlFromDocument,
   classifyBrowserError,
   type ClassifiedError,
   type GenerateOutput,
@@ -26,7 +34,15 @@ import {
 import { partitionLinks, applyLinkDecisions } from './linkReview'
 import { LinkVerifyDialog } from './LinkVerifyDialog'
 import { CreditsLine } from './CreditsLine'
-import { checkPdfSize, fileToBase64 } from './pdf'
+import {
+  ACCEPTED_IMAGE_TYPES,
+  checkAttachmentSize,
+  fileToBase64,
+  imageMediaTypeFromName,
+  type AttachmentKind,
+  type AttachmentSizeCheck
+} from './pdf'
+import { extractDocxText } from './docx'
 import { t } from '../i18n'
 import { useLang } from '../i18n/useLang'
 
@@ -70,6 +86,52 @@ export interface AiPanelLiteProps {
 
 type GenMode = 'description' | 'pdf'
 
+/** The document tab's selection: a PDF or an image of a process drawing. */
+interface DocSelection {
+  file: File
+  kind: AttachmentKind
+  /** Normalized mime (File.type, or extension-derived when the OS gave none). */
+  mediaType: string
+}
+
+/** The description tab's optional "Description document" attachment. */
+interface DescAttach {
+  file: File
+  /** .docx text is extracted client-side; a .pdf rides natively to the provider. */
+  kind: 'docx' | 'pdf'
+  /** Extracted .docx text (null while unread / when extraction failed). */
+  text: string | null
+  /** Localized success line ("… characters of text extracted"). */
+  note: string | null
+  /** Localized inline problem (read failure / empty docx). */
+  error: string | null
+}
+
+// What the two file inputs accept. The description input takes documents that
+// CONTAIN the description (Word/PDF); the document tab takes what the providers
+// can look at natively (PDF + the verified image mimes).
+const DESC_DOC_ACCEPT =
+  '.docx,application/vnd.openxmlformats-officedocument.wordprocessingml.document,.pdf,application/pdf'
+const DOC_TAB_ACCEPT = 'application/pdf,.pdf,image/png,image/jpeg,image/webp,image/gif'
+
+/**
+ * Classify a document-tab selection as PDF or image and pin down its mime.
+ * Extension fallbacks cover File objects whose `type` is empty (some OS/browser
+ * combos). Returns null for anything the tab doesn't support.
+ */
+function detectDocMeta(file: File): { kind: AttachmentKind; mediaType: string } | null {
+  const lower = file.name.toLowerCase()
+  if (file.type === 'application/pdf' || lower.endsWith('.pdf')) {
+    return { kind: 'pdf', mediaType: 'application/pdf' }
+  }
+  if (ACCEPTED_IMAGE_TYPES.includes(file.type)) {
+    return { kind: 'image', mediaType: file.type }
+  }
+  const byName = imageMediaTypeFromName(file.name)
+  if (byName) return { kind: 'image', mediaType: byName }
+  return null
+}
+
 /** Localized message for a classified generation error (RTL-safe); the raw
  * English message is used only for the `unknown` bucket. */
 function errorMessageForCode(c: ClassifiedError): string {
@@ -108,7 +170,12 @@ export function AiPanelLite({
   const [modelId, setModelId] = useState<string>(() => defaultLiteModelId('openrouter'))
   const [genMode, setGenMode] = useState<GenMode>('description')
   const [description, setDescription] = useState('')
-  const [pdfFile, setPdfFile] = useState<File | null>(null)
+  // "From PDF / image" tab selection (PDF document or process-drawing image).
+  const [doc, setDoc] = useState<DocSelection | null>(null)
+  // Inline error when a picked file is neither a PDF nor an accepted image.
+  const [docTypeError, setDocTypeError] = useState<string | null>(null)
+  // Description tab's optional attached document (Word/PDF).
+  const [descAttach, setDescAttach] = useState<DescAttach | null>(null)
   const [hint, setHint] = useState('')
   const [name, setName] = useState('')
   const [targetFolder, setTargetFolder] = useState('')
@@ -138,7 +205,8 @@ export function AiPanelLite({
   const [online, setOnline] = useState<boolean>(() =>
     typeof navigator === 'undefined' ? true : navigator.onLine
   )
-  const pdfInputRef = useRef<HTMLInputElement | null>(null)
+  const docInputRef = useRef<HTMLInputElement | null>(null)
+  const descInputRef = useRef<HTMLInputElement | null>(null)
 
   // Re-read key + custom-endpoint availability whenever Settings closes.
   const configuredIds = useMemo(
@@ -175,7 +243,8 @@ export function AiPanelLite({
     setModelId(defaultLiteModelId(providerId))
   }, [providerId])
 
-  // Custom endpoint has no verified PDF path — snap back to description mode.
+  // Custom endpoint has no verified attachment path (PDF or image) — snap back
+  // to description mode.
   useEffect(() => {
     if (!providerSpec.supportsPdf && genMode === 'pdf') setGenMode('description')
   }, [providerSpec.supportsPdf, genMode])
@@ -193,13 +262,34 @@ export function AiPanelLite({
   const customReady = isCustom ? customConfigReady(customCfg) : true
   const effectiveModel = isCustom ? customCfg.model : modelId.trim()
 
-  // Size gate for the currently-selected PDF (recomputed on file/provider change).
-  const sizeGate = useMemo(
-    () => (pdfFile ? checkPdfSize(providerId, pdfFile.size) : { ok: true }),
-    [pdfFile, providerId]
+  // Size gate for the document tab's selection (recomputed on file/provider
+  // change) — kind-aware: PDF behavior identical to before, image caps apply
+  // per provider.
+  const sizeGate = useMemo<AttachmentSizeCheck>(
+    () => (doc ? checkAttachmentSize(providerId, doc.kind, doc.file.size) : { ok: true }),
+    [doc, providerId]
   )
+  // An image needs a provider with a verified image path (all but custom).
+  const docImageUnsupported = doc?.kind === 'image' && !providerSpec.supportsImages
 
-  const hasInput = genMode === 'description' ? Boolean(description.trim()) : Boolean(pdfFile)
+  // Description-tab PDF attachment gates — same size gate as the document tab
+  // (spec'd identical), plus the provider-supports-PDF check.
+  const descPdfGate = useMemo<AttachmentSizeCheck>(
+    () =>
+      descAttach?.kind === 'pdf'
+        ? checkAttachmentSize(providerId, 'pdf', descAttach.file.size)
+        : { ok: true },
+    [descAttach, providerId]
+  )
+  const descPdfUnsupported = descAttach?.kind === 'pdf' && !providerSpec.supportsPdf
+
+  // The effective description-tab input: typed text, extracted .docx text, or a
+  // natively-attached PDF — any one of them suffices (but not none).
+  const descDocText = descAttach?.kind === 'docx' && descAttach.text ? descAttach.text : null
+  const hasInput =
+    genMode === 'description'
+      ? Boolean(description.trim()) || Boolean(descDocText) || descAttach?.kind === 'pdf'
+      : Boolean(doc)
   const canGenerate =
     !busy &&
     online &&
@@ -208,7 +298,9 @@ export function AiPanelLite({
     customReady &&
     Boolean(effectiveModel) &&
     hasInput &&
-    (genMode === 'description' || sizeGate.ok)
+    (genMode === 'description'
+      ? !descPdfUnsupported && descPdfGate.ok
+      : sizeGate.ok && !docImageUnsupported)
 
   // OpenRouter balance lookup — only when the current provider is OpenRouter and
   // a key is stored (keyless renders show nothing and issue no request). Fetches
@@ -242,6 +334,82 @@ export function AiPanelLite({
     // and whenever the stored keys change.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [providerId, keysVersion])
+
+  // Document-tab file pick: classify as PDF vs image; anything else is rejected
+  // inline (and the input cleared so re-picking the same file re-fires change).
+  const handleDocChange = useCallback((e: ChangeEvent<HTMLInputElement>) => {
+    const f = e.target.files?.[0] ?? null
+    setError(null)
+    setResultLabel(null)
+    setDocTypeError(null)
+    if (!f) {
+      setDoc(null)
+      return
+    }
+    const meta = detectDocMeta(f)
+    if (!meta) {
+      setDoc(null)
+      setDocTypeError(t('ai.image.unsupportedType'))
+      if (docInputRef.current) docInputRef.current.value = ''
+      return
+    }
+    setDoc({ file: f, kind: meta.kind, mediaType: meta.mediaType })
+  }, [])
+
+  // Description-document pick. A .pdf is kept as a file (sent natively at
+  // generate time); everything else is treated as a .docx and its text is
+  // extracted RIGHT NOW — so corrupt/empty files surface immediately with a
+  // per-file message instead of failing later inside generation.
+  const handleDescFile = useCallback(async (file: File | null): Promise<void> => {
+    setError(null)
+    setResultLabel(null)
+    if (!file) {
+      setDescAttach(null)
+      return
+    }
+    const lower = file.name.toLowerCase()
+    if (file.type === 'application/pdf' || lower.endsWith('.pdf')) {
+      setDescAttach({ file, kind: 'pdf', text: null, note: null, error: null })
+      return
+    }
+    try {
+      const bytes = new Uint8Array(await file.arrayBuffer())
+      const text = extractDocxText(bytes)
+      if (!text.trim()) {
+        setDescAttach({
+          file,
+          kind: 'docx',
+          text: null,
+          note: null,
+          error: t('ai.attach.docxEmpty', { name: file.name })
+        })
+        return
+      }
+      setDescAttach({
+        file,
+        kind: 'docx',
+        text,
+        note: t('ai.attach.extracted', { name: file.name, chars: text.length }),
+        error: null
+      })
+    } catch (err) {
+      // DocxParseError for non-docx bytes, or a reader failure — either way the
+      // message rides into the localized readFailed line.
+      const msg = err instanceof Error ? err.message : String(err)
+      setDescAttach({
+        file,
+        kind: 'docx',
+        text: null,
+        note: null,
+        error: t('ai.attach.readFailed', { name: file.name, error: msg })
+      })
+    }
+  }, [])
+
+  const removeDescAttach = useCallback(() => {
+    setDescAttach(null)
+    if (descInputRef.current) descInputRef.current.value = ''
+  }, [])
 
   // Shared placement + reporting for both the immediate path and the post-verify
   // path. `survived` is the set of links whose calledElement was kept, used to
@@ -289,23 +457,56 @@ export function AiPanelLite({
       }
       let res: GenerateOutput
       if (genMode === 'pdf') {
-        if (!pdfFile) throw new Error(t('ai.error.chooseNoPdf'))
-        const gate = checkPdfSize(providerId, pdfFile.size)
+        // Document tab: PDF or image, sent natively with the hint.
+        if (!doc) throw new Error(t('ai.error.chooseNoPdf'))
+        const gate = checkAttachmentSize(providerId, doc.kind, doc.file.size)
         if (!gate.ok) throw new Error(gate.message)
-        const base64 = await fileToBase64(pdfFile)
-        res = await generateDiagramXmlFromPdf({
+        if (doc.kind === 'image' && !providerSpec.supportsImages) {
+          throw new Error(t('ai.attach.unsupportedProvider'))
+        }
+        const base64 = await fileToBase64(doc.file)
+        res = await generateDiagramXmlFromDocument({
           ...common,
           description: '',
           attachment: {
+            kind: doc.kind,
             base64,
-            mediaType: 'application/pdf',
-            fileName: pdfFile.name,
-            sizeBytes: pdfFile.size
+            mediaType: doc.mediaType,
+            fileName: doc.file.name,
+            sizeBytes: doc.file.size
           },
           hint
         })
+      } else if (descAttach?.kind === 'pdf') {
+        // Description tab with a PDF attached: the PDF goes natively through the
+        // existing attachment mechanism; the TYPED DESCRIPTION acts as the hint
+        // (the pdf instruction frames it as "which/what process to model").
+        if (!providerSpec.supportsPdf) throw new Error(t('ai.attach.unsupportedProvider'))
+        const gate = checkAttachmentSize(providerId, 'pdf', descAttach.file.size)
+        if (!gate.ok) throw new Error(gate.message)
+        const base64 = await fileToBase64(descAttach.file)
+        res = await generateDiagramXmlFromDocument({
+          ...common,
+          description: '',
+          attachment: {
+            kind: 'pdf',
+            base64,
+            mediaType: 'application/pdf',
+            fileName: descAttach.file.name,
+            sizeBytes: descAttach.file.size
+          },
+          hint: description.trim()
+        })
       } else {
-        res = await generateDiagramXml({ ...common, description: description.trim() })
+        // Plain text path — with an attached .docx, its extracted text rides
+        // along under a named separator (either part may be empty, not both;
+        // canGenerate enforces that).
+        const typed = description.trim()
+        let effective = typed
+        if (descAttach && descAttach.kind === 'docx' && descAttach.text) {
+          effective = `${typed}\n\n--- Attached document: ${descAttach.file.name} ---\n${descAttach.text}`
+        }
+        res = await generateDiagramXml({ ...common, description: effective })
       }
       // The generation call recorded usage and (for OpenRouter) spent credits —
       // refresh both balance lines.
@@ -329,11 +530,13 @@ export function AiPanelLite({
     }
   }, [
     providerId,
+    providerSpec,
     effectiveModel,
     isCustom,
     customCfg,
     genMode,
-    pdfFile,
+    doc,
+    descAttach,
     hint,
     description,
     processCatalog,
@@ -439,7 +642,7 @@ export function AiPanelLite({
           </div>
         )}
 
-        {/* Generation mode: description vs PDF */}
+        {/* Generation mode: description vs PDF/image document */}
         <div role="tablist" aria-label={t('ai.tablist.aria')} style={segmentWrap}>
           <button
             type="button"
@@ -526,43 +729,110 @@ export function AiPanelLite({
         )}
 
         {genMode === 'description' ? (
-          <label style={labelStyle}>
-            <span style={labelText}>{t('ai.description.label')}</span>
-            <textarea
-              value={description}
-              onChange={(e) => setDescription(e.target.value)}
-              placeholder={t('ai.description.placeholder')}
-              rows={6}
-              dir="auto"
-              style={{ ...inputStyle, resize: 'vertical', minHeight: 96 }}
-            />
-          </label>
+          <>
+            <label style={labelStyle}>
+              <span style={labelText}>{t('ai.description.label')}</span>
+              <textarea
+                value={description}
+                onChange={(e) => setDescription(e.target.value)}
+                placeholder={t('ai.description.placeholder')}
+                rows={6}
+                dir="auto"
+                style={{ ...inputStyle, resize: 'vertical', minHeight: 96 }}
+              />
+            </label>
+
+            {/* Optional "Description document" (.docx text is extracted here in
+                the browser; a .pdf goes natively to the provider at generate
+                time with the typed text as the hint). */}
+            <label style={labelStyle}>
+              <span style={labelText}>
+                {t('ai.attach.label')}{' '}
+                <span style={{ opacity: 0.7 }}>{t('ai.pdfHint.optional')}</span>
+              </span>
+              <input
+                ref={descInputRef}
+                type="file"
+                accept={DESC_DOC_ACCEPT}
+                onChange={(e) => void handleDescFile(e.target.files?.[0] ?? null)}
+                style={{ fontSize: 12.5 }}
+              />
+            </label>
+            <div style={{ fontSize: 11, color: 'var(--orbitpm-muted)' }}>{t('ai.attach.hint')}</div>
+            {descAttach && (
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12 }}>
+                <span style={{ color: 'var(--orbitpm-muted)', overflowWrap: 'anywhere' }}>
+                  {descAttach.file.name} · {(descAttach.file.size / (1024 * 1024)).toFixed(1)} MB
+                </span>
+                <button
+                  type="button"
+                  onClick={removeDescAttach}
+                  title={t('ai.attach.remove')}
+                  style={removeBtn}
+                >
+                  {t('ai.attach.remove')}
+                </button>
+              </div>
+            )}
+            {descAttach?.note && (
+              <div role="status" style={{ fontSize: 12, color: 'var(--orbitpm-muted)' }}>
+                {descAttach.note}
+              </div>
+            )}
+            {descAttach?.error && (
+              <div role="alert" style={{ fontSize: 12, color: '#dc2626' }}>
+                {descAttach.error}
+              </div>
+            )}
+            {/* PDF-specific gates: provider must support native PDF, and the
+                size gate is identical to the document tab's. */}
+            {descPdfUnsupported && (
+              <div role="alert" style={{ fontSize: 12, color: '#dc2626' }}>
+                {t('ai.attach.unsupportedProvider')}
+              </div>
+            )}
+            {descAttach?.kind === 'pdf' && !descPdfUnsupported && !descPdfGate.ok && (
+              <div role="alert" style={{ fontSize: 12, color: '#dc2626' }}>
+                {descPdfGate.message}
+              </div>
+            )}
+            {descAttach?.kind === 'pdf' && !descPdfUnsupported && descPdfGate.ok && descPdfGate.warning && (
+              <div role="status" style={warnBox}>
+                {descPdfGate.warning}
+              </div>
+            )}
+          </>
         ) : (
           <>
             <label style={labelStyle}>
               <span style={labelText}>{t('ai.pdfDocument.label')}</span>
               <input
-                ref={pdfInputRef}
+                ref={docInputRef}
                 type="file"
-                accept="application/pdf,.pdf"
-                onChange={(e) => {
-                  const f = e.target.files?.[0] ?? null
-                  setPdfFile(f)
-                  setError(null)
-                  setResultLabel(null)
-                }}
+                accept={DOC_TAB_ACCEPT}
+                onChange={handleDocChange}
                 style={{ fontSize: 12.5 }}
               />
             </label>
-            {pdfFile && (
+            {docTypeError && (
+              <div role="alert" style={{ fontSize: 12, color: '#dc2626' }}>
+                {docTypeError}
+              </div>
+            )}
+            {doc && (
               <div style={{ fontSize: 12, color: sizeGate.ok ? 'var(--orbitpm-muted)' : '#dc2626' }}>
-                {pdfFile.name} · {(pdfFile.size / (1024 * 1024)).toFixed(1)} MB
+                {doc.file.name} · {(doc.file.size / (1024 * 1024)).toFixed(1)} MB
                 {!sizeGate.ok && sizeGate.message ? ` — ${sizeGate.message}` : ''}
               </div>
             )}
-            {pdfFile && sizeGate.ok && sizeGate.warning && (
+            {doc && sizeGate.ok && sizeGate.warning && (
               <div role="status" style={warnBox}>
                 {sizeGate.warning}
+              </div>
+            )}
+            {docImageUnsupported && (
+              <div role="alert" style={{ fontSize: 12, color: '#dc2626' }}>
+                {t('ai.attach.unsupportedProvider')}
               </div>
             )}
             <div style={{ fontSize: 11, color: 'var(--orbitpm-muted)' }}>{t('ai.pdf.engineNote')}</div>
@@ -825,6 +1095,16 @@ const linkBtn: CSSProperties = {
   cursor: 'pointer',
   font: 'inherit',
   padding: 0
+}
+const removeBtn: CSSProperties = {
+  border: '1px solid rgba(127,127,127,0.35)',
+  background: 'transparent',
+  color: 'inherit',
+  borderRadius: 6,
+  padding: '0.15rem 0.5rem',
+  fontSize: 11.5,
+  cursor: 'pointer',
+  flexShrink: 0
 }
 const warnBox: CSSProperties = {
   fontSize: 12,

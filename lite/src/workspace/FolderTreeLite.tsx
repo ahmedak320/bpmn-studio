@@ -8,6 +8,10 @@ export interface FolderTreeLiteProps {
   root: LiteTreeNode | null
   activePath?: string | null
   onOpenFile: (relPath: string) => void
+  /** Double-click on a file row: open it AND take the full window (App
+   *  collapses the sidebar). Single click stays a plain open via onOpenFile so
+   *  browsing the tree never steals the explorer (see App's `collapse` opt). */
+  onOpenFileFocus?: (relPath: string) => void
   /** folderRelPath is '' for the workspace root. */
   onNewProcess: (folderRelPath: string) => void
   onNewFolder: (folderRelPath: string) => void
@@ -50,6 +54,7 @@ interface RowActions {
   dropTargetRel: string | null
   onToggle: (relPath: string) => void
   onOpenFile: (relPath: string) => void
+  onOpenFileFocus?: (relPath: string) => void
   onContextMenu: (event: React.MouseEvent, node: LiteTreeNode) => void
   onRename: (node: LiteTreeNode) => void
   onDelete: (node: LiteTreeNode) => void
@@ -73,6 +78,7 @@ export function FolderTreeLite({
   root,
   activePath,
   onOpenFile,
+  onOpenFileFocus,
   onNewProcess,
   onNewFolder,
   onRename,
@@ -153,6 +159,7 @@ export function FolderTreeLite({
       dropTargetRel,
       onToggle: toggle,
       onOpenFile,
+      onOpenFileFocus,
       onContextMenu: openMenu,
       onRename,
       onDelete,
@@ -169,6 +176,7 @@ export function FolderTreeLite({
       dropTargetRel,
       toggle,
       onOpenFile,
+      onOpenFileFocus,
       openMenu,
       onRename,
       onDelete,
@@ -264,6 +272,13 @@ function TreeLevel({ node, depth, actions }: TreeLevelProps): JSX.Element {
           onClick={() => {
             if (node.type === 'directory') actions.onToggle(node.relPath)
             else actions.onOpenFile(node.relPath)
+          }}
+          onDoubleClick={() => {
+            // Files only: the pair of clicks above already opened the tab, so
+            // this just re-activates it with the sidebar-collapsing variant.
+            // Folders keep their click-toggle (a double click nets out to the
+            // original expanded state, matching the pre-existing behavior).
+            if (node.type === 'file') actions.onOpenFileFocus?.(node.relPath)
           }}
           onContextMenu={(e) => actions.onContextMenu(e, node)}
           style={{

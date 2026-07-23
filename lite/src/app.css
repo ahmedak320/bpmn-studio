@@ -126,3 +126,43 @@ button {
 .orbitpm-tree-actions:focus-within {
   visibility: visible;
 }
+
+/* Bottom grip bar on the bpmn-js draw palette. paletteDrag.ts appends this as
+   the LAST child of .djs-palette (a sibling after .djs-palette-entries), full
+   palette width, so it reads as an edge of the palette rather than a floating
+   control. Grabbing it drags the whole palette; double-click resets to the
+   stylesheet default position (diagram-js.css's left:20px/top:20px). Uses
+   only the existing --orbitpm-* variables, which are already redefined for
+   dark mode above, so this needs no separate dark-mode block. */
+.orbitpm-palette-grip {
+  width: 100%;
+  height: 14px;
+  margin-top: 2px;
+  border-top: 1px solid var(--orbitpm-border);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: grab;
+  color: var(--orbitpm-muted);
+  user-select: none;
+  /* Pointer events drive the whole drag; keep touchscreens from starting
+     their own scroll/pan gesture on the grip instead. */
+  touch-action: none;
+}
+
+.orbitpm-palette-grip::before {
+  content: '⠿';
+  font-size: 12px;
+  line-height: 1;
+}
+
+.orbitpm-palette-grip:hover {
+  background: var(--orbitpm-hover);
+  color: var(--orbitpm-accent);
+}
+
+.orbitpm-palette-grip.orbitpm-palette-grip--dragging {
+  cursor: grabbing;
+  background: var(--orbitpm-hover);
+  color: var(--orbitpm-accent);
+}

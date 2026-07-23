@@ -8,8 +8,9 @@
 // needs (and none that break it — notably Gemini's raw path avoids the
 // Api-Revision header that the @google/genai SDK adds), (b) truthfully
 // distinguish a CORS block from an auth failure in the Test-connection probe,
-// and (c) attach provider-native PDF document parts. See providersLite.ts for
-// which providers are reachable from a web page and why.
+// and (c) attach provider-native PDF document parts and IMAGE parts (photos /
+// screenshots of process drawings). See providersLite.ts for which providers
+// are reachable from a web page and why.
 //
 // The payload builders + response extractors are exported as pure functions and
 // unit-tested (payloadBuilders.test.ts) — no network, no SDK.
@@ -21,7 +22,7 @@ import {
   type LlmMessage
 } from '@app/gen'
 import { defaultLiteModelId, type LiteProviderId } from './providersLite'
-import { buildPdfInstruction, type PdfAttachment } from './pdf'
+import { buildImageInstruction, buildPdfInstruction, type GenAttachment } from './pdf'
 import { extractUsage, recordUsage } from './credits'
 
 export type { LiteProviderId } from './providersLite'
@@ -95,8 +96,8 @@ export interface BuildOpts {
   maxTokens: number
   /** Ask the provider for JSON output where it supports a mode flag. */
   jsonMode: boolean
-  /** Optional PDF attached to the first user turn (provider-native part). */
-  attachment?: PdfAttachment
+  /** Optional PDF/image attached to the first user turn (provider-native part). */
+  attachment?: GenAttachment
 }
 
 /** Error carrying the HTTP status so the classifier can read it. */
@@ -208,27 +209,41 @@ interface OpenAiFilePart {
   type: 'file'
   file: { filename: string; file_data: string }
 }
+interface OpenAiImagePart {
+  type: 'image_url'
+  image_url: { url: string }
+}
 interface OpenAiMessage {
   role: string
-  content: string | Array<OpenAiTextPart | OpenAiFilePart>
+  content: string | Array<OpenAiTextPart | OpenAiFilePart | OpenAiImagePart>
 }
 
-function toOpenAiMessages(messages: LlmMessage[], attachment?: PdfAttachment): OpenAiMessage[] {
+function toOpenAiMessages(messages: LlmMessage[], attachment?: GenAttachment): OpenAiMessage[] {
   const attachAt = attachment ? firstUserIndex(messages) : -1
   return messages.map((m, i): OpenAiMessage => {
     if (i === attachAt && attachment) {
+      // Text part FIRST, then the attachment part — OpenRouter's documented
+      // recommendation for image inputs ("send the text prompt first, then the
+      // images") and the existing behavior for PDF file parts. Images ride as
+      // an `image_url` part with a base64 data-URL (verified 2026-07-23,
+      // openrouter.ai/docs/guides/overview/multimodal/image-understanding);
+      // PDFs keep the `file` part consumed by the file-parser plugin.
+      const part: OpenAiFilePart | OpenAiImagePart =
+        attachment.kind === 'image'
+          ? {
+              type: 'image_url',
+              image_url: { url: `data:${attachment.mediaType};base64,${attachment.base64}` }
+            }
+          : {
+              type: 'file',
+              file: {
+                filename: attachment.fileName,
+                file_data: `data:${attachment.mediaType};base64,${attachment.base64}`
+              }
+            }
       return {
         role: 'user',
-        content: [
-          { type: 'text', text: m.content },
-          {
-            type: 'file',
-            file: {
-              filename: attachment.fileName,
-              file_data: `data:${attachment.mediaType};base64,${attachment.base64}`
-            }
-          }
-        ]
+        content: [{ type: 'text', text: m.content }, part]
       }
     }
     return { role: m.role, content: m.content }
@@ -253,9 +268,13 @@ export function buildAnthropicRequest(
     const role: 'user' | 'assistant' = m.role === 'assistant' ? 'assistant' : 'user'
     const parts: unknown[] = []
     if (i === attachAt && opts.attachment) {
-      // Document block goes BEFORE the text (Anthropic's documented ordering).
+      // Attachment block goes BEFORE the text — Anthropic's documented ordering
+      // for documents AND images ("Claude works best when images come before
+      // text"; verified 2026-07-23, platform.claude.com/docs/en/build-with-claude/
+      // vision). A PDF is a `document` block, an image an `image` block; both
+      // use the same base64 source shape.
       parts.push({
-        type: 'document',
+        type: opts.attachment.kind === 'image' ? 'image' : 'document',
         source: {
           type: 'base64',
           media_type: opts.attachment.mediaType,
@@ -302,6 +321,9 @@ export function buildGeminiRequest(
     const role: 'user' | 'model' = m.role === 'assistant' ? 'model' : 'user'
     const parts: unknown[] = [{ text: m.content }]
     if (i === attachAt && opts.attachment) {
+      // One `inlineData` part carries EITHER mime — application/pdf or an
+      // image/* type — with the same {mimeType, data} shape (verified
+      // 2026-07-23, ai.google.dev/gemini-api/docs/image-understanding).
       parts.push({
         inlineData: { mimeType: opts.attachment.mediaType, data: opts.attachment.base64 }
       })
@@ -339,9 +361,11 @@ export function buildOpenRouterRequest(
     max_tokens: opts.maxTokens
   }
   if (opts.jsonMode) body.response_format = { type: 'json_object' }
-  if (opts.attachment) {
-    // Attach the file-parser plugin but DO NOT pin `pdf.engine`. Forcing
-    // 'native' only works for models with native file input; the default model
+  if (opts.attachment?.kind === 'pdf') {
+    // Attach the file-parser plugin — for PDF `file` parts ONLY. Images are
+    // native to chat/completions (no plugin; verified 2026-07-23, OpenRouter
+    // image-understanding docs). And DO NOT pin `pdf.engine`: forcing 'native'
+    // only works for models with native file input; the default model
     // (z-ai/glm-5.2) is text-input-only, so pinning 'native' broke its PDF path.
     // Omitting the engine lets OpenRouter pick per model capability — native
     // pass-through for Claude/Gemini, its OCR/text fallback for the rest.
@@ -364,7 +388,7 @@ export function buildCustomRequest(
   const base = (cfg.baseURL ?? '').replace(/\/+$/, '')
   const body: Record<string, unknown> = {
     model: cfg.model,
-    // No PDF part for custom endpoints (no verified document contract).
+    // No PDF/image part for custom endpoints (no verified attachment contract).
     messages: toOpenAiMessages(messages, undefined),
     max_tokens: opts.maxTokens
   }
@@ -430,12 +454,12 @@ export function extractText(providerId: LiteProviderId, data: unknown): string {
 /**
  * A pipeline-shaped CallLLM bound to one provider/model/key: builds the
  * provider request (JSON mode on), POSTs it, and returns the model's raw text
- * for the pipeline to loose-parse + validate + repair. An optional PDF is
- * attached to the first user turn as a provider-native document part.
+ * for the pipeline to loose-parse + validate + repair. An optional PDF/image is
+ * attached to the first user turn as a provider-native part.
  */
 export function makeBrowserCallLLM(
   cfg: ProviderConfig,
-  extra?: { attachment?: PdfAttachment }
+  extra?: { attachment?: GenAttachment }
 ): CallLLM {
   const attachment = extra?.attachment
   return async (messages: LlmMessage[], { maxTokens }: { maxTokens: number }) => {
@@ -515,20 +539,37 @@ export async function generateDiagramXml(args: GenerateArgs): Promise<GenerateOu
   return { xml: result.layoutedXml, links: collectProposedLinks(result.ir) }
 }
 
-export interface GeneratePdfArgs extends GenerateArgs {
-  attachment: PdfAttachment
+export interface GenerateDocumentArgs extends GenerateArgs {
+  attachment: GenAttachment
   hint: string
 }
 
-/** Generate a laid-out BPMN 2.0 XML (+ proposed links) from a PDF (+ optional Arabic hint). */
-export async function generateDiagramXmlFromPdf(args: GeneratePdfArgs): Promise<GenerateOutput> {
-  const instruction = buildPdfInstruction(args.hint)
+/** Back-compat alias — the pre-image name for {@link GenerateDocumentArgs}. */
+export type GeneratePdfArgs = GenerateDocumentArgs
+
+/**
+ * Generate a laid-out BPMN 2.0 XML (+ proposed links) from an attached document
+ * — a PDF or an image of a process drawing — plus an optional (Arabic-safe)
+ * hint. The attachment's `kind` picks the instruction: buildPdfInstruction for
+ * documents, buildImageInstruction for drawings; the bytes ride along as a
+ * provider-native part either way.
+ */
+export async function generateDiagramXmlFromDocument(
+  args: GenerateDocumentArgs
+): Promise<GenerateOutput> {
+  const instruction =
+    args.attachment.kind === 'image'
+      ? buildImageInstruction(args.hint)
+      : buildPdfInstruction(args.hint)
   const call = makeBrowserCallLLM(toConfig(args), { attachment: args.attachment })
   const result = await generateFromDescription(call, instruction, undefined, {
     processCatalog: args.processCatalog
   })
   return { xml: result.layoutedXml, links: collectProposedLinks(result.ir) }
 }
+
+/** Back-compat alias — the pre-image name for {@link generateDiagramXmlFromDocument}. */
+export const generateDiagramXmlFromPdf = generateDiagramXmlFromDocument
 
 // --- Test connection: CORS-vs-auth discriminator ---------------------------
 

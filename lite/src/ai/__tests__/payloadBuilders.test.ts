@@ -8,16 +8,25 @@ import {
   extractText,
   type ProviderConfig
 } from '../browserAi'
-import type { PdfAttachment } from '../pdf'
+import type { GenAttachment } from '../pdf'
 import type { LlmMessage } from '@app/gen'
 
 const TEXT_MSGS: LlmMessage[] = [{ role: 'user', content: 'Model an order process.' }]
 
-const PDF: PdfAttachment = {
+const PDF: GenAttachment = {
+  kind: 'pdf',
   base64: 'QkFTRTY0UERG', // "BASE64PDF"
   mediaType: 'application/pdf',
   fileName: 'spec.pdf',
   sizeBytes: 1234
+}
+
+const IMG: GenAttachment = {
+  kind: 'image',
+  base64: 'SU1BR0VEQVRB', // "IMAGEDATA"
+  mediaType: 'image/png',
+  fileName: 'flow.png',
+  sizeBytes: 2048
 }
 
 const cfg = (over: Partial<ProviderConfig>): ProviderConfig => ({
@@ -60,6 +69,26 @@ describe('Anthropic payload', () => {
       source: { type: 'base64', media_type: 'application/pdf', data: 'QkFTRTY0UERG' }
     })
     expect(content[1]).toEqual({ type: 'text', text: 'Model an order process.' })
+  })
+
+  it("prepends a base64 IMAGE block BEFORE the text for kind 'image' (documented ordering)", () => {
+    // Verified 2026-07-23 (platform.claude.com/docs/en/build-with-claude/vision):
+    // image content block = { type: 'image', source: { type: 'base64',
+    // media_type, data } }, and "Claude works best when images come before text".
+    const req = buildAnthropicRequest(cfg({ providerId: 'anthropic' }), TEXT_MSGS, {
+      maxTokens: 3000,
+      jsonMode: true,
+      attachment: IMG
+    })
+    const content = (req.body.messages as Array<{ content: Array<Record<string, unknown>> }>)[0]
+      .content
+    expect(content).toEqual([
+      {
+        type: 'image',
+        source: { type: 'base64', media_type: 'image/png', data: 'SU1BR0VEQVRB' }
+      },
+      { type: 'text', text: 'Model an order process.' }
+    ])
   })
 
   it('hoists a system message to the top-level system field', () => {
@@ -120,6 +149,23 @@ describe('Gemini payload', () => {
       inlineData: { mimeType: 'application/pdf', data: 'QkFTRTY0UERG' }
     })
   })
+
+  it("keeps the SAME inlineData part shape for kind 'image' (image mime)", () => {
+    // Verified 2026-07-23 (ai.google.dev/gemini-api/docs/image-understanding):
+    // inline images use the identical { inlineData: { mimeType, data } } part —
+    // only the mime differs from the PDF case.
+    const req = buildGeminiRequest(cfg({ providerId: 'gemini', model: 'g' }), TEXT_MSGS, {
+      maxTokens: 10,
+      jsonMode: true,
+      attachment: IMG
+    })
+    const contents = req.body.contents as Array<{ role: string; parts: unknown[] }>
+    expect(contents).toHaveLength(1)
+    expect(contents[0].parts).toEqual([
+      { text: 'Model an order process.' },
+      { inlineData: { mimeType: 'image/png', data: 'SU1BR0VEQVRB' } }
+    ])
+  })
 })
 
 describe('OpenRouter payload', () => {
@@ -156,6 +202,28 @@ describe('OpenRouter payload', () => {
     // (native for models with file input, OCR/text otherwise). See M5.
     expect(req.body.plugins).toEqual([{ id: 'file-parser' }])
   })
+
+  it('attaches an image_url data-URL part for images — text first, and NO file-parser plugin', () => {
+    // Verified 2026-07-23 (openrouter.ai/docs/guides/overview/multimodal/
+    // image-understanding): images are { type: 'image_url', image_url: { url:
+    // 'data:<mime>;base64,…' } }, natively supported (no plugin), with the text
+    // prompt recommended first.
+    const req = buildOpenRouterRequest(cfg({ providerId: 'openrouter', model: 'x' }), TEXT_MSGS, {
+      maxTokens: 3000,
+      jsonMode: true,
+      attachment: IMG
+    })
+    const message = (req.body.messages as Array<{ role: string; content: unknown }>)[0]
+    expect(message).toEqual({
+      role: 'user',
+      content: [
+        { type: 'text', text: 'Model an order process.' },
+        { type: 'image_url', image_url: { url: 'data:image/png;base64,SU1BR0VEQVRB' } }
+      ]
+    })
+    // The file-parser plugin is a PDF affordance ONLY.
+    expect(req.body.plugins).toBeUndefined()
+  })
 })
 
 describe('Custom OpenAI-compatible payload', () => {
@@ -186,6 +254,18 @@ describe('Custom OpenAI-compatible payload', () => {
     expect((req.body.messages as Array<{ content: unknown }>)[0].content).toBe(
       'Model an order process.'
     )
+  })
+
+  it('never adds an image part either (attachments are dropped entirely)', () => {
+    const req = buildCustomRequest(
+      cfg({ providerId: 'custom', model: 'm', baseURL: 'https://x' }),
+      TEXT_MSGS,
+      { maxTokens: 3000, jsonMode: true, attachment: IMG }
+    )
+    expect((req.body.messages as Array<{ content: unknown }>)[0].content).toBe(
+      'Model an order process.'
+    )
+    expect(req.body.plugins).toBeUndefined()
   })
 })
 

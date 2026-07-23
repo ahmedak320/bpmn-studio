@@ -83,7 +83,14 @@ import { createRefreshGuard, canCommitToWorkspace, commitIfCurrent } from './wor
 import { MoveDialog } from './workspace/MoveDialog'
 import { PrintButton } from './workspace/PrintButton'
 import { PrintView, type PrintJob } from './workspace/PrintView'
-import { collectDroppedBpmn, isInternalDrag, isApcName, type DroppedBpmn } from './workspace/importDrop'
+import {
+  collectDroppedBpmn,
+  isInternalDrag,
+  isApcName,
+  isXmlName,
+  looksLikeBpmnXml,
+  type DroppedBpmn
+} from './workspace/importDrop'
 import {
   getProcessOrgProps,
   setProcessOrgProps,
@@ -266,10 +273,11 @@ function App(): JSX.Element {
   // from that modeler's current selection at render time (stepDetailsCtx).
   const [stepDetails, setStepDetails] = useState<{ tabKey: string } | null>(null)
   // Left sidebar (file explorer on top, AI generator on the bottom). Open by
-  // default; auto-collapses whenever a file opens so the canvas takes the full
-  // window, and the rail restores it. Deliberately NOT persisted — its state
-  // follows the open/close flow, and a manual rail click wins until the next
-  // open event.
+  // default; auto-collapses when a file opens so the canvas takes the full
+  // window — EXCEPT for a single tree-row click, which keeps the explorer
+  // visible (double-click collapses; see openDirectoryFile's `collapse` opt).
+  // The rail restores it. Deliberately NOT persisted — its state follows the
+  // open/close flow, and a manual rail click wins until the next open event.
   const [sidebarOpen, setSidebarOpen] = useState(true)
   // The AI generator sub-section within the sidebar. Persisted separately so a
   // user who prefers the explorer-only sidebar keeps it collapsed across loads.
@@ -577,11 +585,15 @@ function App(): JSX.Element {
   }, [activeKey, markMounted])
 
   const openDirectoryFile = useCallback(
-    async (relPath: string) => {
+    async (relPath: string, opts?: { collapse?: boolean }) => {
       const key = relPath
-      // Opening a file hands the canvas the full window; the rail restores the
-      // sidebar. A manual rail click after this wins until the next open event.
-      setSidebarOpen(false)
+      // Opening a file normally hands the canvas the full window; the rail
+      // restores the sidebar. A SINGLE click on a tree row opts out
+      // (collapse: false) so browsing the explorer keeps it open — only a
+      // double-click (and every non-tree open path: catalog, search, drill-down,
+      // AI placement) takes the full window. A manual rail click after this wins
+      // until the next collapsing open event.
+      if (opts?.collapse !== false) setSidebarOpen(false)
       setCatalogOpen(false)
       setTabs((prev) =>
         prev.some((t) => t.key === key)
@@ -1054,11 +1066,20 @@ function App(): JSX.Element {
       for (const entry of entries) {
         const sub = dirOf(entry.relPath)
         const targetFolder = sub ? joinRel(baseFolderRel, sub) : baseFolderRel
-        // Both .bpmn and (experimental) .apc land as a <base>.bpmn file.
-        const base = deriveFileBaseName(entry.name.replace(/\.(bpmn|apc)$/i, ''))
+        // .bpmn, plain .xml (sniffed below) and (experimental) .apc all land as
+        // a <base>.bpmn file.
+        const base = deriveFileBaseName(entry.name.replace(/\.(bpmn|apc|xml)$/i, ''))
         const apc = isApcName(entry.name)
         try {
           let xml = await entry.getText()
+          // A `.xml` file is only importable when its CONTENT is a BPMN 2.0
+          // document (many tools export BPMN with a .xml extension). Anything
+          // else — build files, configs, arbitrary XML — is skipped with a
+          // per-file toast instead of landing a broken .bpmn in the workspace.
+          if (isXmlName(entry.name) && !looksLikeBpmnXml(xml)) {
+            pushToast(t('import.notBpmnXml', { name: entry.name }), 'error')
+            continue
+          }
           if (apc) {
             // Experimental ARIS AML → BPMN conversion; a failure skips this one
             // file (with a toast) but never aborts the rest of the import.
@@ -1111,12 +1132,16 @@ function App(): JSX.Element {
 
   const onImportInputChange = useCallback(
     async (e: React.ChangeEvent<HTMLInputElement>) => {
-      const list = e.target.files
+      // `e.target.files` is a LIVE FileList in Chrome: resetting `value` below
+      // empties it IN PLACE, so it must be copied into a real array FIRST.
+      // (Capturing the list and clearing before the copy made this handler a
+      // silent no-op — the "Import does nothing" bug.)
+      const files = Array.from(e.target.files ?? [])
       e.target.value = ''
-      if (!list || list.length === 0) return
+      if (files.length === 0) return
       try {
-        const entries: DroppedBpmn[] = Array.from(list)
-          .filter((f) => /\.(bpmn|apc)$/i.test(f.name))
+        const entries: DroppedBpmn[] = files
+          .filter((f) => /\.(bpmn|apc|xml)$/i.test(f.name))
           .map((f) => ({ relPath: f.name, name: f.name, getText: () => f.text() }))
         await importEntries(entries, '')
       } catch (err) {
@@ -1681,7 +1706,7 @@ function App(): JSX.Element {
     <input
       ref={importInputRef}
       type="file"
-      accept=".bpmn,.apc,application/xml,text/xml"
+      accept=".bpmn,.apc,.xml,application/xml,text/xml"
       multiple
       style={{ display: 'none' }}
       onChange={(e) => void onImportInputChange(e)}
@@ -1957,7 +1982,12 @@ function App(): JSX.Element {
                 <FolderTreeLite
                   root={tree}
                   activePath={activeTab?.relPath ?? null}
-                  onOpenFile={(rel) => void openDirectoryFile(rel)}
+                  // Single click: open but keep the explorer visible. Double
+                  // click: open AND collapse the sidebar so the canvas takes the
+                  // full window (the first click of the pair already opened the
+                  // tab, so this handler only needs to re-activate + collapse).
+                  onOpenFile={(rel) => void openDirectoryFile(rel, { collapse: false })}
+                  onOpenFileFocus={(rel) => void openDirectoryFile(rel)}
                   onNewProcess={(f) => void handleNewProcess(f)}
                   onNewFolder={(f) => void handleNewFolder(f)}
                   onRename={(n) => void handleRename(n)}

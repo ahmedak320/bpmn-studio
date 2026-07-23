@@ -4,20 +4,24 @@
 // process, where CORS never applies), Lite calls providers DIRECTLY from the
 // web page. Only providers that send permissive CORS headers can be reached
 // this way. Per the verified provider matrix (scratchpad/prep/provider-matrix.md,
-// re-verified 2026-07-22):
+// re-verified 2026-07-22; image-input shapes re-verified 2026-07-23):
 //
 //   - OpenRouter  — CORS-open by design (BYOK browser apps are its use case).
 //                   One key reaches GLM-5.2, Kimi K3, DeepSeek V4, Claude and
 //                   Gemini (via `provider/model` slugs). PDF via the
-//                   `file-parser` plugin. THE flagship Lite provider.
+//                   `file-parser` plugin; images native via `image_url` parts
+//                   (vision-capable models). THE flagship Lite provider.
 //   - Anthropic   — CORS-open via the `anthropic-dangerous-direct-browser-access`
-//                   header. Native PDF (`document` content block).
+//                   header. Native PDF (`document` content block) and images
+//                   (`image` content block).
 //   - Gemini      — CORS-workable via RAW fetch to `generateContent` (do NOT use
 //                   the @google/genai SDK — its Api-Revision header breaks the
-//                   CORS preflight). Native PDF (`inlineData` part).
+//                   CORS preflight). Native PDF AND images (same `inlineData`
+//                   part, different mime).
 //   - Custom      — user-supplied OpenAI-compatible endpoint (baseURL/key/model/
 //                   extraHeaders): the escape hatch for self-hosted proxies and
-//                   any other CORS-enabled OpenAI-shaped API.
+//                   any other CORS-enabled OpenAI-shaped API. No attachments
+//                   (neither PDF nor image — no verified contract).
 //
 // Direct-vendor APIs for OpenAI / Azure / GLM / Kimi / DeepSeek are NOT
 // browser-callable (no CORS, and several vendors' ToS forbid client-side keys)
@@ -37,6 +41,11 @@ export interface LiteProviderSpec {
   allowCustomModel: boolean
   /** Whether this provider accepts a PDF document directly from the browser. */
   supportsPdf: boolean
+  /** Whether this provider accepts an IMAGE of a process drawing directly from
+   * the browser (photo/screenshot of a flowchart or whiteboard). Same trio as
+   * PDF: OpenRouter/Anthropic/Gemini have a verified image part; Custom has
+   * none. Used by AiPanelLite to gate the image path per provider. */
+  supportsImages: boolean
   /** True when the user must configure a base URL (Custom OpenAI-compatible). */
   needsEndpointConfig: boolean
   /**
@@ -75,6 +84,9 @@ export const LITE_PROVIDERS: LiteProviderSpec[] = [
     models: OPENROUTER_MODELS,
     allowCustomModel: true,
     supportsPdf: true,
+    // `image_url` parts are native to chat/completions for vision models —
+    // no plugin needed (unlike PDFs).
+    supportsImages: true,
     needsEndpointConfig: false,
     keysUrl: 'https://openrouter.ai/keys'
   },
@@ -84,6 +96,8 @@ export const LITE_PROVIDERS: LiteProviderSpec[] = [
     models: PROVIDERS.anthropic.models,
     allowCustomModel: false,
     supportsPdf: true,
+    // Native `image` content block (base64 source, image before text).
+    supportsImages: true,
     needsEndpointConfig: false,
     keysUrl: 'https://console.anthropic.com/settings/keys'
   },
@@ -94,6 +108,8 @@ export const LITE_PROVIDERS: LiteProviderSpec[] = [
     // Gemini model ids drift often — let users override with a free-text id.
     allowCustomModel: true,
     supportsPdf: true,
+    // Same `inlineData` part as PDFs, with an image mime.
+    supportsImages: true,
     needsEndpointConfig: false,
     keysUrl: 'https://aistudio.google.com/apikey'
   },
@@ -102,9 +118,10 @@ export const LITE_PROVIDERS: LiteProviderSpec[] = [
     label: 'Custom OpenAI-compatible',
     models: [],
     allowCustomModel: true,
-    // A user endpoint MAY support PDF, but we can't assume it — keep PDF to the
-    // providers with a verified document path.
+    // A user endpoint MAY support attachments, but we can't assume it — keep
+    // PDF and image input to the providers with a verified native path.
     supportsPdf: false,
+    supportsImages: false,
     needsEndpointConfig: true,
     // An arbitrary user host is not on the page's CSP connect-src allowlist, so
     // it cannot be reached from the browser: desktop app only.

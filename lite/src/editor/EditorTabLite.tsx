@@ -46,6 +46,8 @@ import {
 } from '@app/renderer/src/editor/exportImage'
 import { orbitpmModdleDescriptor } from '../org/orbitpmModdle'
 import { OrgRenderModule } from '../org/orgRenderer'
+import { installDragWatchdog } from './dragWatchdog'
+import { installPaletteDrag } from './paletteDrag'
 import { t } from '../i18n'
 import { useLang } from '../i18n/useLang'
 
@@ -248,7 +250,21 @@ export function EditorTab(props: EditorTabProps): JSX.Element {
     eventBus.on('commandStack.changed', 1000, handleCommandStackChanged)
     eventBus.on('element.dblclick', 1500, handleDblClick)
 
+    // diagram-js's MoveCanvas (and the minimap) end a canvas pan only when a
+    // mouseup reaches `document`; a release swallowed by the OS/devtools/an
+    // iframe leaves the pan glued to the cursor. The watchdog detects the lost
+    // release (buttons === 0 on the next move, or focus loss) and dispatches a
+    // synthetic mouseup so the libraries run their own normal end handlers.
+    const uninstallDragWatchdog = installDragWatchdog(canvasContainerRef.current)
+
+    // Movable tool palette: a grip bar appended at the palette's bottom lets the
+    // user drag it anywhere in the canvas (double-click resets; position
+    // persists). The installer waits for bpmn-js to create `.djs-palette`.
+    const uninstallPaletteDrag = installPaletteDrag(canvasContainerRef.current)
+
     return () => {
+      uninstallPaletteDrag()
+      uninstallDragWatchdog()
       eventBus.off('commandStack.changed', handleCommandStackChanged)
       eventBus.off('element.dblclick', handleDblClick)
       modeler.destroy()
