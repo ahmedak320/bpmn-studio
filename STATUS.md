@@ -925,3 +925,89 @@ tests across 8 new files). Full per-item ledger:
   workflow (no `workflow_dispatch` needed). Live content-length re-verified
   against the local build and the **v0.1.2** `OrbitPM-Process-Studio-Lite.html`
   release asset re-clobbered post-deploy (see task report for the exact bytes).
+
+## 2026-07-23 — Lite: sidebar, banded print, AI linking + credits, DMT org pack, assistant, library (Phases A+B)
+
+Two-phase feature wave. **Phase A** (`4c0c4b3`) landed eight disjoint modules
+in parallel, each with its own file tree and standalone unit tests; **Phase
+B** (`8993a76`) then integrated all eight into the live app across five
+sequential lanes, each rebased onto the previous and gate-verified before the
+next started.
+
+- **Phase A — 8 parallel module lanes**:
+  1. `src/gen`: `callActivity` IR type + `calledElement` emission + an
+     optional workspace-catalog prompt section (byte-golden safe — a
+     `catalog-prompt.test.ts` assertion pins "no catalog ⇒ byte-identical to
+     the golden render").
+  2. `lite/src/ai/credits.ts`: OpenRouter `/api/v1/credits` balance fetch +
+     a local per-provider usage ledger.
+  3. `lite/src/owner`: workspace-wide owners index (regex-scanned
+     `orbitpm:owner*` attributes across all files), searchable
+     `OwnerPicker`, CSV export.
+  4. `lite/src/links`: morph-any-linkable-activity-to-CallActivity + link,
+     `calledElement` strip, 🔗 badge overlay installer.
+  5. `lite/src/print`: pure A4-landscape band-wrap engine (`computeBandPlan`)
+     + `svgSlice`, plus the banded `PrintView`.
+  6. `lite/src/org`: `orbitpm` moddle extension (`extends: ['bpmn:BaseElement']`,
+     so every flow node/process/start-event gains the attributes), DMT
+     palette/renderer, the org-styling settings flag.
+  7. `lite/src/assist`: process digests, retrieval/ranking, local
+     deterministic next-step answerer.
+  8. `lite/src/library`: fflate-based zip export/import with safe-path
+     validation.
+  - Gate: lite vitest 396 (new baseline), desktop tests/unit 169 — both green.
+- **Phase B — 5 sequential integration lanes**:
+  - **B1** wired the single collapsible left sidebar (tree + embedded AI
+    generator) into `App.tsx`, the 16px rail toggle, auto-collapse-on-open,
+    and the properties-panel **Panel** toolbar button; repaired existing e2e
+    specs and added a new rail smoke test.
+  - **B2** wired print to the band engine (A4 landscape, wide diagrams wrap
+    into stacked bands), swapped `document.title` to the process name so the
+    browser's Save-as-PDF dialog defaults to it, and added the owner line to
+    the print header.
+  - **B3** wired usage capture into every provider call, the
+    OpenRouter-balance/session-usage `CreditsLine` into the AI panel +
+    Settings, the workspace catalog into generation, the
+    confident/unsure/unmatched proposed-link partition + `LinkVerifyDialog`,
+    the link-any-task morph button, and the 🔗 badge installer per modeler.
+  - **B4** registered the `orbitpm` moddle extension + DMT renderer in the
+    editor, wired the unified `StepDetailsDialog` (owner/RACI, note, channel,
+    CC, trigger), the owners CSV export, and the Settings org-styling toggle
+    with a live re-render.
+  - **B5** wired the process-assistant chat drawer (LLM answer with a local
+    deterministic fallback), whole-library zip export/import, and
+    experimental ARIS `.apc` conversion on import.
+- **Bug found + fixed during B5** (production-only — not caught by Phase A's
+  own gate): `lite/src/library/zipImport.ts`'s control-character regex was
+  written with **literal raw control bytes** in the source. That survived
+  Node/Vitest fine (git even stored the file as *binary* in the Phase A diff,
+  `Bin 0 -> 2629 bytes`), but broke once Vite's production bundler processed
+  it — `"Range out of order in character class"` — which would have taken
+  down the whole built app the moment B5 wired the module into `App.tsx`, not
+  just library import. Fixed by rewriting the same character class with
+  `\x` escape sequences (`/[\x00-\x1f\x7f]/`, with a comment recording why the
+  raw-byte form is unsafe once bundled) before it ever reached `main`.
+- **Gates (final, whole tree)**: `npm run typecheck` clean; **lite vitest
+  436/436**; **desktop tests/unit 169/169**; **playwright 23 passed / 3
+  skipped** (the three `lite-live-cors.spec.ts` probes self-skip without
+  `LITE_LIVE_CORS=1` set); single-file build **2,663 kB** (one
+  `lite/dist/index.html`, no secondary assets).
+- **Remaining open items** (flagged, not addressed this wave):
+  - **Live LLM link-generation is untested without a real API key** — the
+    confident/unsure/unmatched partition and `LinkVerifyDialog` flow are
+    unit- and e2e-tested against mocked/local responses only; no lane in this
+    sandbox held a live Anthropic/Gemini/OpenRouter key to exercise a real
+    model's confidence output end-to-end.
+  - **The `.apc` (ARIS) converter is awaiting a real ARIS sample** —
+    `apcImport.ts` is tested only against a hand-written, synthetic AML
+    fixture (`apcImport.test.ts`); it has never parsed an actual ARIS export,
+    so its best-effort AML handling is unverified against real-world file
+    quirks.
+  - **DMT org-styling on a collaboration/multi-participant diagram is
+    verified only for single-process diagrams** — `orgModel.ts`'s
+    `getProcessElement` has a documented fallback that follows a
+    `bpmn:Collaboration`'s first participant (unit-tested in isolation,
+    `orgModel.test.ts`), but neither `lite-org.spec.ts` nor any other e2e
+    spec exercises the Details dialog/DMT renderer against a real
+    multi-pool collaboration diagram — only single-process fixtures are
+    covered end to end.

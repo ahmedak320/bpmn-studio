@@ -15,6 +15,9 @@ on:
     branches: [main]
     paths:
       - 'lite/**'
+      - 'src/gen/**'
+      - 'src/shared/**'
+      - 'src/renderer/src/**'
       - '.github/workflows/pages.yml'
   workflow_dispatch: {}
 

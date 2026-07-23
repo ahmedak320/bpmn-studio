@@ -71,6 +71,45 @@ control (which gates executables, not web pages) doesn't block it.
   a **single `.bpmn` file** and **saving via download**. A banner explains
   when you're in this mode. Edge and Chrome support the full folder experience;
   Firefox/Safari get the single-file fallback.
+- The left side is one collapsible **sidebar**: a file tree on top, a
+  collapsible **AI generator** section at the bottom. A slim rail (**⟨ / ⟩**)
+  toggles it, and it auto-collapses the moment you open a `.bpmn` so the
+  canvas gets the full window — click the rail to bring the sidebar back.
+- The editor toolbar's **Panel** button shows/hides the bpmn-js properties
+  panel, independently of the sidebar.
+- **Link to process…** now works on any task, not only call activities: pick
+  a target process and Lite morphs the task into a Call Activity for you
+  (name and position preserved). Linked steps show a small 🔗 badge, and
+  double-click still drills into the linked process.
+- **Details…** in the toolbar opens one dialog for a step's — or the whole
+  process's — **owner** (Individual / Department / Division, plus an RACI
+  role: R/A/C/I). Owners render as beige boxes next to their step, on the
+  canvas and in print/export; a searchable picker suggests names already used
+  elsewhere in your workspace. **Export owners (CSV)** downloads the full
+  responsible-party list.
+- The same dialog also carries the **DMT org pack**: yellow sticky-note
+  annotations, a channel tag (DMT HUB / Email / Data), a start-event trigger
+  (Email / DMT Hub / Manual / Schedule / Other — DMT Hub triggers require a
+  hub service name), and pink "CC: `<recipient>`" steps. All of it is plain
+  `orbitpm:*` XML attributes, so files stay standard, valid BPMN 2.0 and still
+  open cleanly in other tools. Turn the live colour-coding off from
+  **Settings → DMT colour coding & step details** (on by default).
+- **Print / PDF** (toolbar) is still A4 landscape, but a wide diagram now
+  wraps into stacked bands — read top-to-bottom, with ⮕/⮡ continuation
+  arrows — so steps print larger. The suggested PDF file name is the process
+  name, and the header shows the process owner when one is set.
+- The floating 💬 button opens the **process assistant**: ask it things like
+  "what happens after X" and it answers from every documented process in your
+  workspace, citing the source process with an Open button. It uses your
+  configured AI provider when a key is set, and otherwise falls back to a
+  deterministic local answer (matched step + next steps + responsible party)
+  — so it still works offline.
+- **Export library** (toolbar) downloads your whole workspace as one `.zip`
+  (folders preserved, plus a `process-owners.csv`); **Import library**
+  restores one safely, validating paths and auto-suffixing any name
+  collisions. Experimental: `.apc` (ARIS) files are also accepted on import
+  and converted best-effort to BPMN — treat the result as a rough draft to
+  clean up, not a finished diagram.
 
 **What works offline:** everything except AI generation — drawing, folders,
 opening/saving files, call-activity linking and drill-down, and SVG/PNG export
@@ -79,25 +118,43 @@ all work with no internet. Only **Generate with AI** needs to be online.
 **AI in Lite — provider support (browser CORS limitation):**
 
 A web page can only call AI providers that allow cross-origin (CORS) browser
-requests. Two of the desktop app's seven providers do; the rest must be used
-from the desktop app (or a future hosted backend).
+requests. Three built-in options do — **OpenRouter** (one key that reaches
+GLM, Kimi, DeepSeek, Claude and Gemini models, and the recommended choice in
+Lite), **Anthropic**, and **Google Gemini**. The remaining direct-vendor APIs
+must be used from the desktop app (or reached through OpenRouter).
 
 | Provider | Works in Lite? | Notes |
 |---|---|---|
+| **OpenRouter** | ✅ Yes | Recommended. One key, many models (GLM, Kimi, DeepSeek, Claude, Gemini). Shows your real remaining credits. |
 | **Anthropic (Claude)** | ✅ Yes | Uses the `anthropic-dangerous-direct-browser-access` header. |
 | **Google Gemini** | ✅ Yes | The Generative Language API allows browser access. |
-| OpenAI | ❌ No | No browser CORS — use the desktop app. |
-| Moonshot (Kimi) | ❌ No | No browser CORS — use the desktop app. |
-| DeepSeek | ❌ No | No browser CORS — use the desktop app. |
+| OpenAI (direct) | ❌ No | No browser CORS — use the desktop app or OpenRouter. |
+| Moonshot (Kimi) (direct) | ❌ No | No browser CORS — use the desktop app or OpenRouter. |
+| DeepSeek (direct) | ❌ No | No browser CORS — use the desktop app or OpenRouter. |
 | Azure OpenAI | ❌ No | No browser CORS — use the desktop app. |
-| GLM (Zhipu) | ❌ No | No browser CORS — use the desktop app. |
+| GLM (Zhipu) (direct) | ❌ No | No browser CORS — use the desktop app or OpenRouter. |
 
 > ⚠️ **API-key storage warning.** A browser page has no OS-encrypted vault, so
-> in Lite your Anthropic/Gemini API key is stored **unencrypted in this
-> browser profile** (`localStorage`). Anyone with access to this computer
+> in Lite your API key (OpenRouter, Anthropic, or Gemini) is stored
+> **unencrypted in this browser profile** (`localStorage`). Anyone with access to this computer
 > profile can read it. Only enter a key on a machine you trust, and use
 > **Settings → Clear stored key** when you're done on a shared computer. (The
 > desktop app, by contrast, encrypts keys with the OS keychain/DPAPI.)
+
+AI-generated diagrams also see your workspace's existing processes: the
+model can propose call activities that link to them, each tagged with a
+confidence level. Confident, valid links are applied automatically (and
+listed in the generation's success message); anything uncertain, or pointing
+at a process Lite doesn't recognize, is held back for a quick per-link
+confirm dialog before the diagram is placed.
+
+**Credits and usage.**
+OpenRouter has a real account-balance API, so the AI panel and Settings show
+your actual remaining credits, with a refresh button. Anthropic and Gemini
+don't expose any balance API to third-party apps, so for those two Lite
+instead tracks token usage for the current browser session locally — a
+count plus a rough cost estimate, with a reset button. Treat that number as
+an estimate, never an authoritative balance.
 
 ## First run
 
