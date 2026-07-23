@@ -1,6 +1,6 @@
 {
   "name": "orbitpm-process-studio",
-  "version": "0.1.2",
+  "version": "0.2.0",
   "description": "OrbitPM Process Studio — draw, organize, and link BPMN 2.0 diagrams; generate diagrams from text with AI when online.",
   "main": "./out/main/index.js",
   "author": "ahmedak320",
