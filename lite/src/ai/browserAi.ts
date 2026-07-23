@@ -14,11 +14,61 @@
 // The payload builders + response extractors are exported as pure functions and
 // unit-tested (payloadBuilders.test.ts) — no network, no SDK.
 
-import { generateFromDescription, type CallLLM, type LlmMessage } from '@app/gen'
+import {
+  generateFromDescription,
+  type BpmnElement,
+  type CallLLM,
+  type LlmMessage
+} from '@app/gen'
 import { defaultLiteModelId, type LiteProviderId } from './providersLite'
 import { buildPdfInstruction, type PdfAttachment } from './pdf'
+import { extractUsage, recordUsage } from './credits'
 
 export type { LiteProviderId } from './providersLite'
+
+/**
+ * One AI-proposed process link, collected from the generated IR: the id of the
+ * element that carries the `calledElement` in the emitted XML, its display
+ * label, the referenced BPMN process id, and the model's self-reported match
+ * confidence. `confidence` defaults to "low" when the model omitted it.
+ */
+export interface ProposedLink {
+  elementId: string
+  label: string
+  calledProcess: string
+  confidence: 'high' | 'low'
+}
+
+/**
+ * Walk the generated IR and collect every callActivity that carries a non-empty
+ * `calledProcess`. Recurses through exclusive/inclusive gateway branch `.path`
+ * arrays and parallel gateway branch arrays so a link nested inside any gateway
+ * is still surfaced. Pure + exported for unit testing.
+ */
+export function collectProposedLinks(ir: BpmnElement[]): ProposedLink[] {
+  const out: ProposedLink[] = []
+  const walk = (elements: BpmnElement[]): void => {
+    for (const el of elements) {
+      if (el.type === 'callActivity') {
+        const called = el.calledProcess
+        if (typeof called === 'string' && called.trim() !== '') {
+          out.push({
+            elementId: el.id,
+            label: el.label,
+            calledProcess: called,
+            confidence: el.confidence ?? 'low'
+          })
+        }
+      } else if (el.type === 'exclusiveGateway' || el.type === 'inclusiveGateway') {
+        for (const branch of el.branches) walk(branch.path ?? [])
+      } else if (el.type === 'parallelGateway') {
+        for (const branch of el.branches) walk(branch ?? [])
+      }
+    }
+  }
+  walk(ir)
+  return out
+}
 
 // --- config + request shapes ----------------------------------------------
 
@@ -408,6 +458,15 @@ export function makeBrowserCallLLM(
           throw new ProviderHttpError(res.status, message)
         }
         const data: unknown = await res.json()
+        // Best-effort usage accounting — accumulate the reported token counts for
+        // the local usage/cost ledger. It must NEVER throw/reject the generation
+        // call, so it is fully guarded even though extract/record are defensive.
+        try {
+          const usage = extractUsage(cfg.providerId, data)
+          if (usage) recordUsage(cfg.providerId, { ...usage, modelId: cfg.model })
+        } catch {
+          /* usage accounting is best-effort only */
+        }
         const text = extractText(cfg.providerId, data)
         if (!text.trim()) throw new Error(`${cfg.providerId}: empty response from the model`)
         return text
@@ -425,6 +484,14 @@ export interface GenerateArgs {
   apiKey: string
   baseURL?: string
   extraHeaders?: Record<string, string>
+  /** Workspace processes offered to the model for callActivity linking. */
+  processCatalog?: Array<{ id: string; name: string }>
+}
+
+/** A generation result: the laid-out XML plus the links the model proposed. */
+export interface GenerateOutput {
+  xml: string
+  links: ProposedLink[]
 }
 
 function toConfig(args: GenerateArgs): ProviderConfig {
@@ -439,11 +506,13 @@ function toConfig(args: GenerateArgs): ProviderConfig {
   }
 }
 
-/** Generate a laid-out BPMN 2.0 XML string from a text description. */
-export async function generateDiagramXml(args: GenerateArgs): Promise<string> {
+/** Generate a laid-out BPMN 2.0 XML string (+ proposed links) from a text description. */
+export async function generateDiagramXml(args: GenerateArgs): Promise<GenerateOutput> {
   const call = makeBrowserCallLLM(toConfig(args))
-  const { layoutedXml } = await generateFromDescription(call, args.description)
-  return layoutedXml
+  const result = await generateFromDescription(call, args.description, undefined, {
+    processCatalog: args.processCatalog
+  })
+  return { xml: result.layoutedXml, links: collectProposedLinks(result.ir) }
 }
 
 export interface GeneratePdfArgs extends GenerateArgs {
@@ -451,12 +520,14 @@ export interface GeneratePdfArgs extends GenerateArgs {
   hint: string
 }
 
-/** Generate a laid-out BPMN 2.0 XML from a PDF (+ optional Arabic-safe hint). */
-export async function generateDiagramXmlFromPdf(args: GeneratePdfArgs): Promise<string> {
+/** Generate a laid-out BPMN 2.0 XML (+ proposed links) from a PDF (+ optional Arabic hint). */
+export async function generateDiagramXmlFromPdf(args: GeneratePdfArgs): Promise<GenerateOutput> {
   const instruction = buildPdfInstruction(args.hint)
   const call = makeBrowserCallLLM(toConfig(args), { attachment: args.attachment })
-  const { layoutedXml } = await generateFromDescription(call, instruction)
-  return layoutedXml
+  const result = await generateFromDescription(call, instruction, undefined, {
+    processCatalog: args.processCatalog
+  })
+  return { xml: result.layoutedXml, links: collectProposedLinks(result.ir) }
 }
 
 // --- Test connection: CORS-vs-auth discriminator ---------------------------

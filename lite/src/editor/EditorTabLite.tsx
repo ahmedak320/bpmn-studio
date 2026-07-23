@@ -44,6 +44,8 @@ import {
   triggerDownload,
   type CanvasLike
 } from '@app/renderer/src/editor/exportImage'
+import { orbitpmModdleDescriptor } from '../org/orbitpmModdle'
+import { OrgRenderModule } from '../org/orgRenderer'
 import { t } from '../i18n'
 import { useLang } from '../i18n/useLang'
 
@@ -155,6 +157,28 @@ export function EditorTab(props: EditorTabProps): JSX.Element {
   // a Save clears the dirty flag over a now-populated diagram).
   const [isNewDiagram, setIsNewDiagram] = useState(false)
   const [hintDismissed, setHintDismissed] = useState(false)
+  // Properties-panel visibility (persisted; default shown). The bpmn-js panel
+  // container MUST stay mounted — bpmn-js owns that DOM — so we hide it with CSS
+  // rather than unmounting it.
+  const [propsOpen, setPropsOpen] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem('orbitpm.lite.propsPanelOpen') !== '0'
+    } catch {
+      return true
+    }
+  })
+
+  const togglePropsPanel = useCallback(() => {
+    setPropsOpen((prev) => {
+      const next = !prev
+      try {
+        localStorage.setItem('orbitpm.lite.propsPanelOpen', next ? '1' : '0')
+      } catch {
+        /* storage may be unavailable; the toggle still works for this session */
+      }
+      return next
+    })
+  }, [])
 
   const applyDirtyState = useCallback(
     (next: DirtyState) => {
@@ -188,11 +212,17 @@ export function EditorTab(props: EditorTabProps): JSX.Element {
       propertiesPanel: {
         parent: propertiesContainerRef.current
       },
+      // The `orbitpm:*` org-pack attributes are registered as a real moddle
+      // extension so modeling.updateProperties writes them as round-trippable
+      // XML; OrgRenderModule (priority 1500) paints the DMT decorations over the
+      // stock renderer and reads the live styling flag on every draw.
+      moddleExtensions: { orbitpm: orbitpmModdleDescriptor },
       additionalModules: [
         BpmnPropertiesPanelModule,
         BpmnPropertiesProviderModule,
         CreateAppendAnythingModule,
-        minimapModule
+        minimapModule,
+        OrgRenderModule
       ]
     }) as unknown as BpmnModelerLike
 
@@ -419,6 +449,15 @@ export function EditorTab(props: EditorTabProps): JSX.Element {
         >
           {t('editor.zoomFit')}
         </button>
+        <button
+          type="button"
+          className="orbitpm-editor__button"
+          onClick={togglePropsPanel}
+          aria-pressed={propsOpen}
+          title={t('editor.propsToggle.title')}
+        >
+          {t('editor.propsToggle')}
+        </button>
         <span
           className={
             dirty
@@ -472,7 +511,11 @@ export function EditorTab(props: EditorTabProps): JSX.Element {
             </div>
           )}
         </div>
-        <div ref={propertiesContainerRef} className="orbitpm-editor__properties" />
+        <div
+          ref={propertiesContainerRef}
+          className="orbitpm-editor__properties"
+          style={{ display: propsOpen ? undefined : 'none' }}
+        />
       </div>
     </div>
   )

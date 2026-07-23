@@ -82,6 +82,26 @@ button {
   border-color: var(--orbitpm-accent);
 }
 
+/* Full-height rail that collapses/expands the left sidebar. borderInlineEnd is
+   logical so the divider stays on the sidebar side in both LTR and RTL. */
+.orbitpm-lite-rail {
+  inline-size: 16px;
+  flex: 0 0 auto;
+  border: none;
+  border-inline-end: 1px solid var(--orbitpm-border);
+  background: transparent;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  color: var(--orbitpm-muted);
+  font-size: 12px;
+}
+.orbitpm-lite-rail:hover {
+  background: var(--orbitpm-hover);
+}
+
 .orbitpm-lite-primary {
   padding: 0.55rem 0.9rem;
   border-radius: 8px;

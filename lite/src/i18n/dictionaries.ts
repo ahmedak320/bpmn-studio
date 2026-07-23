@@ -23,6 +23,11 @@ export const en = {
   'app.lang.en': 'EN',
   'app.lang.ar': 'العربية',
 
+  // --- Sidebar rail toggle ---
+  'sidebar.toggle.aria': 'Toggle side panel',
+  'sidebar.hide.title': 'Hide the side panel',
+  'sidebar.show.title': 'Show the side panel',
+
   // --- Sidebar: directory mode ---
   'tree.newProcess': '＋ New process',
   'tree.newProcess.title': 'Create a new process at the workspace root',
@@ -229,6 +234,8 @@ export const en = {
   'editor.zoomIn.title': 'Zoom in',
   'editor.zoomFit': 'Zoom Fit',
   'editor.zoomFit.title': 'Zoom to fit the whole diagram (or Ctrl + mouse-wheel to zoom)',
+  'editor.propsToggle': 'Panel',
+  'editor.propsToggle.title': 'Show/hide the properties panel',
   'editor.dirtyFlag.dirty': '● Unsaved changes',
   'editor.dirtyFlag.dirty.title': 'This diagram has changes you have not saved yet',
   'editor.dirtyFlag.saved': 'Saved',
@@ -247,6 +254,30 @@ export const en = {
   'link.linkToProcess': 'Link to process…',
   'link.button.title.linked': 'Linked to {calledElementId}',
   'link.button.title.unlinked': 'Link this call activity to a process',
+
+  // --- AI link verification (LinkVerifyDialog) ---
+  'ai.linkVerify.title': 'Review process links',
+  'ai.linkVerify.intro':
+    'The AI suggested links to existing processes. Confirm the uncertain ones below; unchecked links stay unlinked.',
+  'ai.linkVerify.uncertain': '(uncertain)',
+  'ai.linkVerify.noMatch': '(no matching process — stays unlinked)',
+  'ai.linkVerify.confirm': 'Confirm links',
+  'ai.linkVerify.cancel': 'Cancel',
+  'ai.linked.summary': 'Linked {count}: {list}',
+
+  // --- AI credits / usage (CreditsLine) ---
+  'ai.credits.remaining': 'Credits remaining: ${amount}',
+  'ai.credits.refresh': 'Refresh credit balance',
+  'ai.credits.loading': 'Checking credit balance…',
+  'ai.credits.error.auth': 'Balance check failed — invalid key.',
+  'ai.credits.error.network': 'Balance check failed — network error.',
+  'ai.credits.error.timeout': 'Balance check timed out.',
+  'ai.credits.error.unexpected': 'Balance check failed.',
+  'ai.usage.session': 'This session: {requests} requests · {tokens} tokens · {cost}',
+  'ai.usage.costNa': 'cost n/a',
+  'ai.usage.reset': 'Reset',
+  'settings.credits.noBalanceApi':
+    'This provider does not expose a balance API — showing locally tracked usage instead.',
   'linkPicker.title': 'Link to process…',
   'linkPicker.close.aria': 'Close',
   'linkPicker.searchPlaceholder': 'Search by id, name, or path…',
@@ -334,6 +365,11 @@ export const en = {
   // --- Print ---
   'print.button': 'Print / PDF',
   'print.title.prefix': 'Process: ',
+  'print.ownerLine': 'Process owner: {name} ({type})',
+  // Owner types — canonical keys reused by every owner-facing surface.
+  'owner.type.individual': 'Individual',
+  'owner.type.department': 'Department',
+  'owner.type.division': 'Division',
 
   // --- Toasts ---
   'toast.dismiss.aria': 'Dismiss',
@@ -398,7 +434,112 @@ export const en = {
   'ai.pdf.memoryNote':
     'PDFs are capped at 20 MB. Sending base64-encodes the file (~+33%) and copies it into the JSON request, so a large PDF briefly uses several times its size in memory — split scanned or very large documents.',
   'ai.pdf.sizeGate.softWarn':
-    'This PDF is {size} — large files may be slow or brush provider limits. Split it if generation fails.'
+    'This PDF is {size} — large files may be slow or brush provider limits. Split it if generation fails.',
+
+  // --- Org pack: step-details dialog + owner picker + styling (B4) ---
+  'editor.stepDetails': 'Details…',
+  'editor.stepDetails.title': 'Edit owner, note, channel and trigger details',
+  'org.dialog.title.element': 'Step details',
+  'org.dialog.title.process': 'Process details',
+  'org.apply': 'Apply',
+  'org.cancel': 'Cancel',
+  'org.applied': 'Details applied.',
+  'org.applyFailed': 'Could not apply the details: {error}',
+  'org.export.owners': 'Export owners (CSV)',
+
+  'org.section.owner': 'Owner',
+  'org.section.note': 'Note',
+  'org.section.channel': 'Channel',
+  'org.section.cc': 'Carbon copy (CC)',
+  'org.section.trigger': 'Trigger',
+
+  'org.ownerRole.label': 'RACI role',
+  'org.ownerRole.R': 'Responsible',
+  'org.ownerRole.A': 'Accountable',
+  'org.ownerRole.C': 'Consulted',
+  'org.ownerRole.I': 'Informed',
+
+  'org.channel.none': 'None',
+  'org.channel.dmthub': 'DMT Hub',
+  'org.channel.email': 'Email',
+  'org.channel.data': 'Data',
+  'org.channel.detail.label': 'Channel detail',
+  'org.channel.detail.placeholder': 'e.g. recipient, queue or reference',
+  'org.channel.dmthub.placeholder': 'DMT Hub service name',
+
+  'org.cc.label': 'Copy another owner on this step',
+  'org.cc.to.label': 'CC recipient',
+  'org.cc.to.placeholder': 'Name or role to copy',
+
+  'org.trigger.label': 'Trigger',
+  'org.trigger.none': 'None',
+  'org.trigger.email': 'Email',
+  'org.trigger.dmthub': 'DMT Hub',
+  'org.trigger.manual': 'Manual',
+  'org.trigger.schedule': 'Schedule',
+  'org.trigger.other': 'Other',
+  'org.trigger.service.label': 'DMT Hub service',
+  'org.trigger.service.placeholder': 'Hub service that fires this start event',
+  'org.trigger.detail.label': 'Trigger detail',
+  'org.trigger.detail.placeholder': 'e.g. schedule, sender or reference',
+  'org.trigger.serviceRequired': 'A DMT Hub service name is required.',
+
+  'org.note.label': 'Note',
+  'org.note.placeholder': 'Add a note shown beside this step…',
+
+  // Owner-picker labels (reuse owner.type.individual/department/division above).
+  'owner.name.label': 'Owner',
+  'owner.name.placeholder': 'Owner name…',
+  'owner.type.label': 'Type',
+  'owner.type.none': '—',
+  'owner.suggestions.aria': 'Owner suggestions',
+
+  // --- Settings: diagram styling (B4) ---
+  'settings.diagram.title': 'Diagram',
+  'settings.orgStyling.label': 'DMT colour coding & step details',
+  'settings.orgStyling.desc':
+    'Show owner chips, RACI roles, channel and trigger tags, and note styling on the canvas and in exports.',
+
+  // --- Process assistant (chat drawer, B5) ---
+  'assist.open': 'Ask the process assistant',
+  'assist.title': 'Process assistant',
+  'assist.close': 'Close assistant',
+  'assist.placeholder': 'Ask what happens next, or who owns a step…',
+  'assist.send': 'Send',
+  'assist.thinking': 'Thinking…',
+  'assist.empty':
+    'Ask about your documented processes — what happens after a step, who is responsible, or which process to follow.',
+  'assist.sources': 'Based on',
+  'assist.poweredBy': 'AI answers via {provider}',
+  'assist.localMode': 'Direct answers from your process files',
+  'assist.fellBack':
+    'The AI provider could not be reached, so here is a direct answer from your process files:',
+  'assist.local.next': 'In “{process}”, after “{step}” the next step is:',
+  'assist.local.complete': 'In “{process}”, “{step}” is the final step — the process is complete.',
+  'assist.local.candidates': 'That could refer to a few processes — which did you mean?',
+  'assist.local.none': 'I could not find that in your documented processes.',
+
+  // --- Whole-library export / import (.zip, B5) ---
+  'library.export': 'Export library',
+  'library.export.title': 'Download the whole workspace as a .zip library',
+  'library.import': 'Import library',
+  'library.import.title': 'Import a .zip process library',
+  'library.import.confirmTitle': 'Import process library',
+  'library.import.summary': 'Import {count} process file(s) from this library into your workspace?',
+  'library.import.skippedNote': '{skipped} entr(ies) in the archive will be skipped:',
+  'library.import.confirm': 'Import',
+  'library.exported': 'Exported {count} process file(s) as a .zip library.',
+  'library.import.empty': 'No process files were found in this library.',
+  'library.skip.not-bpmn': 'not a .bpmn file',
+  'library.skip.unsafe-path': 'unsafe path',
+  'library.skip.too-large': 'file too large',
+  'library.skip.decode-failed': 'could not decode',
+
+  // --- ARIS (.apc) experimental import (B5) ---
+  'apc.converted': 'Imported “{name}” from ARIS — experimental conversion, please review it.',
+  'apc.failed': 'Could not convert an ARIS (.apc) file: {reason}',
+  'apc.reason.notAml': 'it is not a recognized ARIS AML export',
+  'apc.reason.noObjects': 'no process objects were found'
 } as const
 
 export const ar: Record<keyof typeof en, string> = {
@@ -422,6 +563,11 @@ export const ar: Record<keyof typeof en, string> = {
   'app.lang.toggle.title': 'Switch language / تبديل اللغة',
   'app.lang.en': 'EN',
   'app.lang.ar': 'العربية',
+
+  // --- Sidebar rail toggle ---
+  'sidebar.toggle.aria': 'إظهار/إخفاء اللوحة الجانبية',
+  'sidebar.hide.title': 'إخفاء اللوحة الجانبية',
+  'sidebar.show.title': 'إظهار اللوحة الجانبية',
 
   // --- Sidebar: directory mode ---
   'tree.newProcess': '＋ عملية جديدة',
@@ -629,6 +775,8 @@ export const ar: Record<keyof typeof en, string> = {
   'editor.zoomIn.title': 'تكبير',
   'editor.zoomFit': 'ملاءمة التكبير',
   'editor.zoomFit.title': 'ملاءمة عرض المخطط بالكامل (أو Ctrl + عجلة الفأرة للتكبير)',
+  'editor.propsToggle': 'اللوحة',
+  'editor.propsToggle.title': 'إظهار/إخفاء لوحة الخصائص',
   'editor.dirtyFlag.dirty': '● تغييرات غير محفوظة',
   'editor.dirtyFlag.dirty.title': 'يحتوي هذا المخطط على تغييرات لم تُحفظ بعد',
   'editor.dirtyFlag.saved': 'تم الحفظ',
@@ -647,6 +795,30 @@ export const ar: Record<keyof typeof en, string> = {
   'link.linkToProcess': 'ربط بعملية…',
   'link.button.title.linked': 'مرتبط بـ {calledElementId}',
   'link.button.title.unlinked': 'اربط نشاط الاستدعاء هذا بعملية',
+
+  // --- AI link verification (LinkVerifyDialog) ---
+  'ai.linkVerify.title': 'مراجعة روابط العمليات',
+  'ai.linkVerify.intro':
+    'اقترح الذكاء الاصطناعي روابط لعمليات موجودة. أكّد الروابط غير المؤكدة أدناه؛ تبقى الروابط غير المحددة بدون ربط.',
+  'ai.linkVerify.uncertain': '(غير مؤكد)',
+  'ai.linkVerify.noMatch': '(لا توجد عملية مطابقة — تبقى بدون ربط)',
+  'ai.linkVerify.confirm': 'تأكيد الروابط',
+  'ai.linkVerify.cancel': 'إلغاء',
+  'ai.linked.summary': 'تم الربط ({count}): {list}',
+
+  // --- AI credits / usage (CreditsLine) ---
+  'ai.credits.remaining': 'الرصيد المتبقي: ${amount}',
+  'ai.credits.refresh': 'تحديث رصيد الاعتمادات',
+  'ai.credits.loading': 'جارٍ التحقق من الرصيد…',
+  'ai.credits.error.auth': 'فشل التحقق من الرصيد — مفتاح غير صالح.',
+  'ai.credits.error.network': 'فشل التحقق من الرصيد — خطأ في الشبكة.',
+  'ai.credits.error.timeout': 'انتهت مهلة التحقق من الرصيد.',
+  'ai.credits.error.unexpected': 'فشل التحقق من الرصيد.',
+  'ai.usage.session': 'هذه الجلسة: {requests} طلبات · {tokens} رمز · {cost}',
+  'ai.usage.costNa': 'التكلفة غير متاحة',
+  'ai.usage.reset': 'إعادة تعيين',
+  'settings.credits.noBalanceApi':
+    'لا يوفر هذا المزوّد واجهة لعرض الرصيد — يتم عرض الاستخدام المتتبَّع محليًا بدلًا من ذلك.',
   'linkPicker.title': 'ربط بعملية…',
   'linkPicker.close.aria': 'إغلاق',
   'linkPicker.searchPlaceholder': 'ابحث بالمعرّف أو الاسم أو المسار…',
@@ -734,6 +906,11 @@ export const ar: Record<keyof typeof en, string> = {
   // --- Print ---
   'print.button': 'طباعة / PDF',
   'print.title.prefix': 'العملية: ',
+  'print.ownerLine': 'مالك العملية: {name} ({type})',
+  // Owner types — canonical keys reused by every owner-facing surface.
+  'owner.type.individual': 'فرد',
+  'owner.type.department': 'إدارة',
+  'owner.type.division': 'قطاع',
 
   // --- Toasts ---
   'toast.dismiss.aria': 'إغلاق',
@@ -793,5 +970,110 @@ export const ar: Record<keyof typeof en, string> = {
   'ai.pdf.memoryNote':
     'الحد الأقصى لحجم PDF هو 20 ميغابايت. يقوم الإرسال بترميز الملف بنظام base64 (‏+33% تقريبًا) ونسخه داخل طلب JSON، لذا يستهلك الملف الكبير مؤقتًا عدة أضعاف حجمه في الذاكرة — قسّم المستندات الممسوحة ضوئيًا أو الكبيرة جدًا.',
   'ai.pdf.sizeGate.softWarn':
-    'حجم هذا الملف {size} — قد تكون الملفات الكبيرة بطيئة أو تقترب من حدود المزوّد. قسّمه إذا فشل التوليد.'
+    'حجم هذا الملف {size} — قد تكون الملفات الكبيرة بطيئة أو تقترب من حدود المزوّد. قسّمه إذا فشل التوليد.',
+
+  // --- حزمة التنظيم: نافذة تفاصيل الخطوة + مُنتقي المالك + التنسيق (B4) ---
+  'editor.stepDetails': 'تفاصيل…',
+  'editor.stepDetails.title': 'تحرير المالك والملاحظة وتفاصيل القناة والمُشغِّل',
+  'org.dialog.title.element': 'تفاصيل الخطوة',
+  'org.dialog.title.process': 'تفاصيل العملية',
+  'org.apply': 'تطبيق',
+  'org.cancel': 'إلغاء',
+  'org.applied': 'تم تطبيق التفاصيل.',
+  'org.applyFailed': 'تعذّر تطبيق التفاصيل: {error}',
+  'org.export.owners': 'تصدير المالكين (CSV)',
+
+  'org.section.owner': 'المالك',
+  'org.section.note': 'ملاحظة',
+  'org.section.channel': 'القناة',
+  'org.section.cc': 'نسخة كربونية (CC)',
+  'org.section.trigger': 'المُشغِّل',
+
+  'org.ownerRole.label': 'دور RACI',
+  'org.ownerRole.R': 'مسؤول التنفيذ',
+  'org.ownerRole.A': 'المُساءَل',
+  'org.ownerRole.C': 'مُستشار',
+  'org.ownerRole.I': 'مُطّلِع',
+
+  'org.channel.none': 'بلا',
+  'org.channel.dmthub': 'منصة DMT',
+  'org.channel.email': 'بريد إلكتروني',
+  'org.channel.data': 'بيانات',
+  'org.channel.detail.label': 'تفاصيل القناة',
+  'org.channel.detail.placeholder': 'مثال: المستلِم أو قائمة الانتظار أو مرجع',
+  'org.channel.dmthub.placeholder': 'اسم خدمة منصة DMT',
+
+  'org.cc.label': 'نسخ مالك آخر في هذه الخطوة',
+  'org.cc.to.label': 'مستلِم النسخة',
+  'org.cc.to.placeholder': 'الاسم أو الدور المراد نسخه',
+
+  'org.trigger.label': 'المُشغِّل',
+  'org.trigger.none': 'بلا',
+  'org.trigger.email': 'بريد إلكتروني',
+  'org.trigger.dmthub': 'منصة DMT',
+  'org.trigger.manual': 'يدوي',
+  'org.trigger.schedule': 'مُجدوَل',
+  'org.trigger.other': 'أخرى',
+  'org.trigger.service.label': 'خدمة منصة DMT',
+  'org.trigger.service.placeholder': 'خدمة المنصة التي تُطلق حدث البداية',
+  'org.trigger.detail.label': 'تفاصيل المُشغِّل',
+  'org.trigger.detail.placeholder': 'مثال: الجدول أو المُرسِل أو مرجع',
+  'org.trigger.serviceRequired': 'اسم خدمة منصة DMT مطلوب.',
+
+  'org.note.label': 'ملاحظة',
+  'org.note.placeholder': 'أضف ملاحظة تظهر بجوار هذه الخطوة…',
+
+  // ملصقات مُنتقي المالك (يُعاد استخدام owner.type.individual/department/division أعلاه).
+  'owner.name.label': 'المالك',
+  'owner.name.placeholder': 'اسم المالك…',
+  'owner.type.label': 'النوع',
+  'owner.type.none': '—',
+  'owner.suggestions.aria': 'اقتراحات المالكين',
+
+  // --- الإعدادات: تنسيق المخطط (B4) ---
+  'settings.diagram.title': 'المخطط',
+  'settings.orgStyling.label': 'ترميز ألوان DMT وتفاصيل الخطوات',
+  'settings.orgStyling.desc':
+    'إظهار شارات المالك وأدوار RACI وعلامات القناة والمُشغِّل وتنسيق الملاحظات على اللوحة وفي التصدير.',
+
+  // --- مساعد العمليات (لوحة الدردشة، B5) ---
+  'assist.open': 'اسأل مساعد العمليات',
+  'assist.title': 'مساعد العمليات',
+  'assist.close': 'إغلاق المساعد',
+  'assist.placeholder': 'اسأل عمّا يحدث بعد خطوة، أو مَن المسؤول عنها…',
+  'assist.send': 'إرسال',
+  'assist.thinking': 'جارٍ التفكير…',
+  'assist.empty':
+    'اسأل عن عملياتك الموثّقة — ماذا يحدث بعد خطوة معيّنة، ومَن المسؤول عنها، وأي عملية تتبع.',
+  'assist.sources': 'استنادًا إلى',
+  'assist.poweredBy': 'إجابات الذكاء الاصطناعي عبر {provider}',
+  'assist.localMode': 'إجابات مباشرة من ملفات عملياتك',
+  'assist.fellBack':
+    'تعذّر الوصول إلى مزوّد الذكاء الاصطناعي، وإليك إجابة مباشرة من ملفات عملياتك:',
+  'assist.local.next': 'في «{process}»، بعد «{step}» تكون الخطوة التالية:',
+  'assist.local.complete': 'في «{process}»، «{step}» هي الخطوة الأخيرة — اكتملت العملية.',
+  'assist.local.candidates': 'قد يشير هذا إلى عدة عمليات — أيها تقصد؟',
+  'assist.local.none': 'لم أتمكّن من العثور على ذلك في عملياتك الموثّقة.',
+
+  // --- تصدير/استيراد المكتبة كاملةً (‎.zip‎، B5) ---
+  'library.export': 'تصدير المكتبة',
+  'library.export.title': 'تنزيل مساحة العمل بأكملها كمكتبة ‎.zip‎',
+  'library.import': 'استيراد مكتبة',
+  'library.import.title': 'استيراد مكتبة عمليات ‎.zip‎',
+  'library.import.confirmTitle': 'استيراد مكتبة العمليات',
+  'library.import.summary': 'استيراد {count} ملف عملية من هذه المكتبة إلى مساحة عملك؟',
+  'library.import.skippedNote': 'سيتم تخطّي {skipped} عنصرًا في الأرشيف:',
+  'library.import.confirm': 'استيراد',
+  'library.exported': 'تم تصدير {count} ملف عملية كمكتبة ‎.zip‎.',
+  'library.import.empty': 'لم يتم العثور على أي ملفات عمليات في هذه المكتبة.',
+  'library.skip.not-bpmn': 'ليس ملف ‎.bpmn‎',
+  'library.skip.unsafe-path': 'مسار غير آمن',
+  'library.skip.too-large': 'الملف كبير جدًا',
+  'library.skip.decode-failed': 'تعذّر فك الترميز',
+
+  // --- استيراد ARIS التجريبي (‎.apc‎، B5) ---
+  'apc.converted': 'تم استيراد «{name}» من ARIS — تحويل تجريبي، يُرجى مراجعته.',
+  'apc.failed': 'تعذّر تحويل ملف ARIS ‎(.apc)‎: {reason}',
+  'apc.reason.notAml': 'ليس تصدير AML من ARIS معروفًا',
+  'apc.reason.noObjects': 'لم يتم العثور على أي كائنات عمليات'
 }

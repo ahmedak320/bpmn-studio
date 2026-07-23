@@ -17,6 +17,12 @@ import {
   type ModelingLike,
   type ElementRegistryLike
 } from '@app/renderer/src/links/modelerOps'
+import {
+  isLinkableActivity,
+  ensureCallActivityAndLink,
+  type BpmnReplaceLike,
+  type ElementRegistryForLinkingLike
+} from '../links/linkOps'
 import { t } from '../i18n'
 import { useLang } from '../i18n/useLang'
 
@@ -24,8 +30,13 @@ interface SelectedElementLike extends CallActivityLikeElement {
   id?: string
 }
 
+// bpmn-js's selection service exposes both `get()` (read the current selection,
+// used by this button) and `select()` (re-select the morphed element, used by
+// ensureCallActivityAndLink). Declaring both keeps this modeler assignable to
+// linkOps' LinkMorphModeler for the morph-and-link path.
 interface SelectionLike {
   get(): SelectedElementLike[]
+  select(element: unknown): void
 }
 
 interface EventBusLike {
@@ -34,12 +45,16 @@ interface EventBusLike {
 }
 
 // All `get` overloads declared together (not via `extends`) so this stays a
-// single, self-consistent structural type.
+// single, self-consistent structural type. `bpmnReplace` + the intersected
+// elementRegistry type make it a superset of linkOps' LinkMorphModeler, so it
+// can drive both the existing setCalledElement path and the task→CallActivity
+// morph.
 export interface SelectionLinkModeler {
   get(name: 'modeling'): ModelingLike
-  get(name: 'elementRegistry'): ElementRegistryLike
+  get(name: 'elementRegistry'): ElementRegistryForLinkingLike & ElementRegistryLike
   get(name: 'eventBus'): EventBusLike
   get(name: 'selection'): SelectionLike
+  get(name: 'bpmnReplace'): BpmnReplaceLike
 }
 
 export interface SelectionLinkButtonProps {
@@ -83,7 +98,10 @@ export function SelectionLinkButton({
   }, [modeler])
 
   const inspection = inspectCallActivityElement(selected)
-  if (!modeler || !selected?.id || !inspection.isCallActivity) return null
+  // Shown for ANY linkable activity now — not only existing call activities. A
+  // plain task is morphed into a bpmn:CallActivity on pick (ensureCallActivity-
+  // AndLink); a real call activity keeps the direct setCalledElement path.
+  if (!modeler || !selected?.id || !isLinkableActivity(selected)) return null
 
   const elementId = selected.id
 
@@ -106,7 +124,13 @@ export function SelectionLinkButton({
         index={index}
         currentProcessId={inspection.calledElementId}
         onPick={(processId: string) => {
-          setCalledElement(modeler, elementId, processId)
+          if (inspection.isCallActivity) {
+            setCalledElement(modeler, elementId, processId)
+          } else {
+            // Morph the task into a CallActivity and link it in one undoable step;
+            // the morphed element IS a CallActivity, so dblclick drill-down works.
+            ensureCallActivityAndLink(modeler, elementId, processId)
+          }
           setPickerOpen(false)
         }}
         onClose={() => setPickerOpen(false)}

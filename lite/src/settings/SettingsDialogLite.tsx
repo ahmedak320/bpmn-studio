@@ -1,4 +1,4 @@
-import { useEffect, useState, type CSSProperties } from 'react'
+import { useCallback, useEffect, useState, type CSSProperties } from 'react'
 import { LITE_PROVIDERS, type LiteProviderId } from '../ai/providersLite'
 import {
   getKey,
@@ -12,6 +12,16 @@ import {
   type CustomEndpointConfig
 } from '../ai/keys'
 import { testConnection, type ProviderConfig, type TestConnectionResult } from '../ai/browserAi'
+import {
+  fetchOpenRouterCredits,
+  getUsage,
+  resetUsage,
+  CreditsError,
+  type CreditsErrorKind,
+  type OpenRouterCredits
+} from '../ai/credits'
+import { CreditsLine } from '../ai/CreditsLine'
+import { isOrgStylingOn, setOrgStyling } from '../org/orgSettings'
 import { t } from '../i18n'
 import { useLang } from '../i18n/useLang'
 
@@ -20,6 +30,9 @@ export interface SettingsDialogLiteProps {
   onClose: () => void
   /** Called after keys change so the AI panel can re-evaluate availability. */
   onKeysChanged: () => void
+  /** Called after the DMT org-styling flag is toggled so every open modeler can
+   *  be re-rendered against the new value (App loops refreshOrgStyling). */
+  onOrgStylingChanged?: () => void
 }
 
 /**
@@ -35,26 +48,59 @@ export interface SettingsDialogLiteProps {
 export function SettingsDialogLite({
   open,
   onClose,
-  onKeysChanged
+  onKeysChanged,
+  onOrgStylingChanged
 }: SettingsDialogLiteProps): JSX.Element | null {
   useLang()
+  const [orgStyling, setOrgStylingState] = useState<boolean>(() => isOrgStylingOn())
   const [drafts, setDrafts] = useState<Record<string, string>>({})
   const [custom, setCustom] = useState<CustomEndpointConfig>(() => getCustomConfig())
   const [headerText, setHeaderText] = useState('')
   const [saved, setSaved] = useState<string | null>(null)
   const [testing, setTesting] = useState<Record<string, boolean>>({})
   const [results, setResults] = useState<Record<string, TestConnectionResult>>({})
+  // OpenRouter balance display state (Anthropic/Gemini have no balance API — they
+  // show the local usage ledger instead, re-read via a bump on reset).
+  const [credits, setCredits] = useState<OpenRouterCredits | null>(null)
+  const [creditsLoading, setCreditsLoading] = useState(false)
+  const [creditsError, setCreditsError] = useState<CreditsErrorKind | null>(null)
+  const [, bumpUsage] = useState(0)
+
+  const refreshCredits = useCallback(async () => {
+    const key = getKey('openrouter')
+    if (!key) {
+      setCredits(null)
+      setCreditsError(null)
+      setCreditsLoading(false)
+      return
+    }
+    setCreditsLoading(true)
+    setCreditsError(null)
+    try {
+      const c = await fetchOpenRouterCredits(key)
+      setCredits(c)
+    } catch (err) {
+      setCreditsError(err instanceof CreditsError ? err.kind : 'unexpected')
+      setCredits(null)
+    } finally {
+      setCreditsLoading(false)
+    }
+  }, [])
 
   useEffect(() => {
     if (open) {
       setDrafts({})
       setSaved(null)
       setResults({})
+      setOrgStylingState(isOrgStylingOn())
       const cfg = getCustomConfig()
       setCustom(cfg)
       setHeaderText(headerLinesToText(cfg.extraHeaders))
+      // Only fetches when an OpenRouter key is already stored — a keyless open
+      // (e.g. the e2e) issues no network request.
+      void refreshCredits()
     }
-  }, [open])
+  }, [open, refreshCredits])
 
   // Escape closes the dialog (consistent with the app's other modals).
   useEffect(() => {
@@ -147,6 +193,30 @@ export function SettingsDialogLite({
         </header>
 
         <div style={{ padding: '0.9rem 1rem', display: 'flex', flexDirection: 'column', gap: 18 }}>
+          <section aria-label={t('settings.diagram.title')} style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+            <span style={{ fontWeight: 600, fontSize: 14 }}>{t('settings.diagram.title')}</span>
+            <label style={{ display: 'flex', gap: 10, alignItems: 'flex-start', cursor: 'pointer' }}>
+              <input
+                type="checkbox"
+                aria-label={t('settings.orgStyling.label')}
+                checked={orgStyling}
+                onChange={(e) => {
+                  const next = e.target.checked
+                  setOrgStyling(next)
+                  setOrgStylingState(next)
+                  onOrgStylingChanged?.()
+                }}
+                style={{ marginTop: 3 }}
+              />
+              <span style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+                <span style={{ fontWeight: 600, fontSize: 13 }}>{t('settings.orgStyling.label')}</span>
+                <span style={{ fontSize: 11.5, color: 'var(--orbitpm-muted)' }}>
+                  {t('settings.orgStyling.desc')}
+                </span>
+              </span>
+            </label>
+          </section>
+
           <div style={warning} role="note">
             ⚠️ {t('settings.keyStorageWarning')}
           </div>
@@ -263,6 +333,24 @@ export function SettingsDialogLite({
                   )}
                 </div>
 
+                {configured && p.id === 'openrouter' && (
+                  <CreditsLine
+                    state={
+                      creditsLoading
+                        ? { kind: 'loading' }
+                        : creditsError
+                          ? { kind: 'error', errorKind: creditsError }
+                          : credits
+                            ? { kind: 'credits', remaining: credits.remaining }
+                            : { kind: 'loading' }
+                    }
+                    onRefresh={() => void refreshCredits()}
+                  />
+                )}
+                {configured && (p.id === 'anthropic' || p.id === 'gemini') && (
+                  <UsageLine providerId={p.id} onReset={() => bumpUsage((v) => v + 1)} />
+                )}
+
                 {result && (
                   <div role="status" style={verdictStyle(result)}>
                     {result.blockedOrUnreachable ? '⛔ ' : result.reachable ? '✅ ' : 'ℹ️ '}
@@ -286,6 +374,35 @@ export function SettingsDialogLite({
         </footer>
       </div>
     </div>
+  )
+}
+
+/** Local usage-ledger line for a provider with no balance API (Anthropic/Gemini):
+ *  the session totals + a reset link + the "no balance API" note. getUsage is
+ *  re-read on every render; the parent's onReset bump forces that re-render. */
+function UsageLine({
+  providerId,
+  onReset
+}: {
+  providerId: LiteProviderId
+  onReset: () => void
+}): JSX.Element {
+  const usage = getUsage(providerId)
+  return (
+    <CreditsLine
+      state={{
+        kind: 'usage',
+        requests: usage?.requests ?? 0,
+        inputTokens: usage?.inputTokens ?? 0,
+        outputTokens: usage?.outputTokens ?? 0,
+        estCostUsd: usage?.estCostUsd ?? null
+      }}
+      onReset={() => {
+        resetUsage(providerId)
+        onReset()
+      }}
+      note
+    />
   )
 }
 

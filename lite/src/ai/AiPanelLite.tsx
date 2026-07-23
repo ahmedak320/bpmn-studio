@@ -10,9 +10,22 @@ import {
   generateDiagramXml,
   generateDiagramXmlFromPdf,
   classifyBrowserError,
-  type ClassifiedError
+  type ClassifiedError,
+  type GenerateOutput,
+  type ProposedLink
 } from './browserAi'
 import { getKey, hasKey, getCustomConfig, customConfigReady } from './keys'
+import {
+  fetchOpenRouterCredits,
+  getUsage,
+  resetUsage,
+  CreditsError,
+  type CreditsErrorKind,
+  type OpenRouterCredits
+} from './credits'
+import { partitionLinks, applyLinkDecisions } from './linkReview'
+import { LinkVerifyDialog } from './LinkVerifyDialog'
+import { CreditsLine } from './CreditsLine'
 import { checkPdfSize, fileToBase64 } from './pdf'
 import { t } from '../i18n'
 import { useLang } from '../i18n/useLang'
@@ -42,6 +55,17 @@ export interface AiPanelLiteProps {
   keysVersion: number
   /** Directory mode shows the target-folder picker; fallback hides it. */
   mode: 'directory' | 'fallback'
+  /** Workspace processes offered to the model for callActivity linking. */
+  processCatalog: Array<{ id: string; name: string }>
+  /** True when a BPMN process id exists in the current workspace. */
+  isKnownProcess: (id: string) => boolean
+  /** Resolve a BPMN process id to its display name (falls back to the id). */
+  resolveProcessName: (id: string) => string
+  /** Rendered inside the left sidebar's AI section: the outer fixed-width/border
+   *  chrome, the internal header row and the collapsed strip are all dropped —
+   *  only the form body is returned, full-width. `collapsed` is ignored here
+   *  because the enclosing sidebar section owns the expand/collapse toggle. */
+  embedded?: boolean
 }
 
 type GenMode = 'description' | 'pdf'
@@ -73,7 +97,11 @@ export function AiPanelLite({
   collapsed,
   onToggle,
   keysVersion,
-  mode
+  mode,
+  processCatalog,
+  isKnownProcess,
+  resolveProcessName,
+  embedded = false
 }: AiPanelLiteProps): JSX.Element {
   useLang()
   const [providerId, setProviderId] = useState<LiteProviderId>('openrouter')
@@ -88,6 +116,25 @@ export function AiPanelLite({
   const [error, setError] = useState<string | null>(null)
   const [offline, setOffline] = useState(false)
   const [resultLabel, setResultLabel] = useState<string | null>(null)
+  // Summary of the links that survived placement ("label → process, …"); shown in
+  // the success box alongside the created-file label when any link was kept.
+  const [linkedSummary, setLinkedSummary] = useState<string | null>(null)
+  // A generation awaiting user verification of its uncertain links. Held until
+  // the LinkVerifyDialog resolves; placement happens on confirm/cancel.
+  const [pending, setPending] = useState<{
+    xml: string
+    confident: ProposedLink[]
+    unsure: ProposedLink[]
+    unmatched: ProposedLink[]
+    gen?: number
+  } | null>(null)
+  // OpenRouter balance + local usage-ledger display state.
+  const [credits, setCredits] = useState<OpenRouterCredits | null>(null)
+  const [creditsLoading, setCreditsLoading] = useState(false)
+  const [creditsError, setCreditsError] = useState<CreditsErrorKind | null>(null)
+  // Bumped after a generation / a usage reset so the (localStorage-backed) usage
+  // line re-reads. Only the setter is needed — the re-render re-runs getUsage.
+  const [, bumpUsage] = useState(0)
   const [online, setOnline] = useState<boolean>(() =>
     typeof navigator === 'undefined' ? true : navigator.onLine
   )
@@ -163,11 +210,69 @@ export function AiPanelLite({
     hasInput &&
     (genMode === 'description' || sizeGate.ok)
 
+  // OpenRouter balance lookup — only when the current provider is OpenRouter and
+  // a key is stored (keyless renders show nothing and issue no request). Fetches
+  // on mount, on keysVersion change, on switching to OpenRouter, and after each
+  // generation (see below). Errors surface as a stable CreditsErrorKind.
+  const refreshCredits = useCallback(async () => {
+    if (providerId !== 'openrouter') return
+    const key = getKey('openrouter')
+    if (!key) {
+      setCredits(null)
+      setCreditsError(null)
+      setCreditsLoading(false)
+      return
+    }
+    setCreditsLoading(true)
+    setCreditsError(null)
+    try {
+      const c = await fetchOpenRouterCredits(key)
+      setCredits(c)
+    } catch (err) {
+      setCreditsError(err instanceof CreditsError ? err.kind : 'unexpected')
+      setCredits(null)
+    } finally {
+      setCreditsLoading(false)
+    }
+  }, [providerId])
+
+  useEffect(() => {
+    void refreshCredits()
+    // Re-run on provider switch (refreshCredits identity depends on providerId)
+    // and whenever the stored keys change.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [providerId, keysVersion])
+
+  // Shared placement + reporting for both the immediate path and the post-verify
+  // path. `survived` is the set of links whose calledElement was kept, used to
+  // build the linked-summary line. onPlaceGenerated may throw (a write failure),
+  // so classify here too.
+  const placeAndReport = useCallback(
+    async (finalXml: string, survived: ProposedLink[], gen: number | undefined): Promise<void> => {
+      try {
+        const placed = await onPlaceGenerated(finalXml, { name: name.trim(), targetFolder, gen })
+        setResultLabel(placed ? placed.label : t('ai.openedInMemory'))
+        if (survived.length > 0) {
+          const list = survived
+            .map((l) => `${l.label} → ${resolveProcessName(l.calledProcess)}`)
+            .join(', ')
+          setLinkedSummary(t('ai.linked.summary', { count: survived.length, list }))
+        }
+      } catch (err) {
+        const classified = classifyBrowserError(err)
+        setError(errorMessageForCode(classified))
+        setOffline(classified.offline || (typeof navigator !== 'undefined' && !navigator.onLine))
+      }
+    },
+    [name, targetFolder, onPlaceGenerated, resolveProcessName]
+  )
+
   const handleGenerate = useCallback(async () => {
     setBusy(true)
     setError(null)
     setOffline(false)
     setResultLabel(null)
+    setLinkedSummary(null)
     // Capture the workspace generation at generation START so App can refuse the
     // placement if the user switches folders during the (slow) generation (ORIG-1b).
     const genAtStart = getWorkspaceGen?.()
@@ -179,15 +284,16 @@ export function AiPanelLite({
         modelId: effectiveModel,
         apiKey,
         baseURL: isCustom ? customCfg.baseURL : undefined,
-        extraHeaders: isCustom ? customCfg.extraHeaders : undefined
+        extraHeaders: isCustom ? customCfg.extraHeaders : undefined,
+        processCatalog
       }
-      let xml: string
+      let res: GenerateOutput
       if (genMode === 'pdf') {
         if (!pdfFile) throw new Error(t('ai.error.chooseNoPdf'))
         const gate = checkPdfSize(providerId, pdfFile.size)
         if (!gate.ok) throw new Error(gate.message)
         const base64 = await fileToBase64(pdfFile)
-        xml = await generateDiagramXmlFromPdf({
+        res = await generateDiagramXmlFromPdf({
           ...common,
           description: '',
           attachment: {
@@ -199,10 +305,21 @@ export function AiPanelLite({
           hint
         })
       } else {
-        xml = await generateDiagramXml({ ...common, description: description.trim() })
+        res = await generateDiagramXml({ ...common, description: description.trim() })
       }
-      const placed = await onPlaceGenerated(xml, { name: name.trim(), targetFolder, gen: genAtStart })
-      setResultLabel(placed ? placed.label : t('ai.openedInMemory'))
+      // The generation call recorded usage and (for OpenRouter) spent credits —
+      // refresh both balance lines.
+      bumpUsage((v) => v + 1)
+      void refreshCredits()
+      const { confident, unsure, unmatched } = partitionLinks(res.links, isKnownProcess)
+      if (unsure.length + unmatched.length === 0) {
+        // Nothing to vet — place with the XML unchanged; confident links stay.
+        await placeAndReport(res.xml, confident, genAtStart)
+      } else {
+        // Hand the uncertain/unmatched links to the verification dialog; the
+        // placement waits for the user's decision.
+        setPending({ xml: res.xml, confident, unsure, unmatched, gen: genAtStart })
+      }
     } catch (err) {
       const classified = classifyBrowserError(err)
       setError(errorMessageForCode(classified))
@@ -219,34 +336,93 @@ export function AiPanelLite({
     pdfFile,
     hint,
     description,
-    name,
-    targetFolder,
-    onPlaceGenerated,
+    processCatalog,
+    isKnownProcess,
+    placeAndReport,
+    refreshCredits,
     getWorkspaceGen
   ])
 
-  if (collapsed) {
-    return (
-      <div style={collapsedWrap}>
-        <button type="button" onClick={onToggle} title={t('app.showAi.title')} style={collapsedBtn}>
-          {t('ai.collapsedButton')}
-        </button>
-      </div>
-    )
-  }
+  // Verify-dialog confirm: keep confident links + the user-accepted unsure ones,
+  // strip everything else (unaccepted unsure + all unmatched).
+  const handleVerifyConfirm = useCallback(
+    async (accepted: Set<string>): Promise<void> => {
+      const p = pending
+      if (!p) return
+      setPending(null)
+      setBusy(true)
+      try {
+        const keepIds = new Set<string>([...accepted, ...p.confident.map((l) => l.elementId)])
+        const finalXml = applyLinkDecisions(p.xml, [...p.unsure, ...p.unmatched], keepIds)
+        const survived = [...p.confident, ...p.unsure.filter((l) => accepted.has(l.elementId))]
+        await placeAndReport(finalXml, survived, p.gen)
+      } finally {
+        setBusy(false)
+      }
+    },
+    [pending, placeAndReport]
+  )
+
+  // Verify-dialog cancel: keep only the confident links (dismiss all uncertain).
+  const handleVerifyCancel = useCallback(async (): Promise<void> => {
+    const p = pending
+    if (!p) return
+    setPending(null)
+    setBusy(true)
+    try {
+      const keepIds = new Set<string>(p.confident.map((l) => l.elementId))
+      const finalXml = applyLinkDecisions(p.xml, [...p.unsure, ...p.unmatched], keepIds)
+      await placeAndReport(finalXml, p.confident, p.gen)
+    } finally {
+      setBusy(false)
+    }
+  }, [pending, placeAndReport])
 
   const noKeysAtAll = configuredIds.length === 0
 
-  return (
-    <div style={wrap}>
-      <header style={panelHeader}>
-        <strong style={{ fontSize: 14 }}>{t('ai.header')}</strong>
-        <button type="button" onClick={onToggle} title={t('ai.hide.title')} style={hideBtn}>
-          ⟩
-        </button>
-      </header>
+  // Local usage ledger for the balance line (Anthropic/Gemini). Re-read every
+  // render; bumpUsage() forces the re-render after a generation or a reset.
+  const sessionUsage =
+    keyPresent && (providerId === 'anthropic' || providerId === 'gemini')
+      ? getUsage(providerId)
+      : null
 
-      <div style={{ padding: '0.8rem', display: 'flex', flexDirection: 'column', gap: 12 }}>
+  // The balance/usage status line shown directly under the provider selector.
+  const balanceLine =
+    !desktopOnly && keyPresent && providerId === 'openrouter' ? (
+      <CreditsLine
+        state={
+          creditsLoading
+            ? { kind: 'loading' }
+            : creditsError
+              ? { kind: 'error', errorKind: creditsError }
+              : credits
+                ? { kind: 'credits', remaining: credits.remaining }
+                : { kind: 'loading' }
+        }
+        onRefresh={() => void refreshCredits()}
+      />
+    ) : keyPresent && (providerId === 'anthropic' || providerId === 'gemini') ? (
+      <CreditsLine
+        state={{
+          kind: 'usage',
+          requests: sessionUsage?.requests ?? 0,
+          inputTokens: sessionUsage?.inputTokens ?? 0,
+          outputTokens: sessionUsage?.outputTokens ?? 0,
+          estCostUsd: sessionUsage?.estCostUsd ?? null
+        }}
+        onReset={() => {
+          resetUsage(providerId)
+          bumpUsage((v) => v + 1)
+        }}
+      />
+    ) : null
+
+  // The generation form itself — shared verbatim between the embedded (left
+  // sidebar) render and the legacy (right-column) render; only the surrounding
+  // chrome differs, so the whole body lives in one place.
+  const body = (
+    <div style={{ padding: '0.8rem', display: 'flex', flexDirection: 'column', gap: 12 }}>
         {!online && (
           <div role="status" style={warnBox}>
             {t('ai.offlineWarning')}
@@ -306,6 +482,10 @@ export function AiPanelLite({
             ))}
           </select>
         </label>
+
+        {/* Provider balance: OpenRouter remaining credits, or the local session
+            usage ledger for Anthropic/Gemini (no balance API). */}
+        {balanceLine}
 
         {/* Model selector: free-text (with suggestions) for OpenRouter/Gemini,
             a fixed dropdown for Anthropic, and a Settings-driven note for Custom. */}
@@ -475,7 +655,8 @@ export function AiPanelLite({
 
         {resultLabel && (
           <div role="status" style={okBox}>
-            {t('ai.created', { resultLabel })}
+            <span>{t('ai.created', { resultLabel })}</span>
+            {linkedSummary && <span style={{ opacity: 0.85 }}>{linkedSummary}</span>}
           </div>
         )}
 
@@ -488,6 +669,53 @@ export function AiPanelLite({
           })}
         </div>
       </div>
+  )
+
+  // The verification modal renders above whichever chrome variant is active, so
+  // it is emitted alongside every return.
+  const verifyDialog = pending ? (
+    <LinkVerifyDialog
+      unsure={pending.unsure}
+      unmatched={pending.unmatched}
+      resolveProcessName={resolveProcessName}
+      onConfirm={(accepted) => void handleVerifyConfirm(accepted)}
+      onCancel={() => void handleVerifyCancel()}
+    />
+  ) : null
+
+  // Embedded: the enclosing sidebar section owns the header + expand/collapse
+  // toggle, so drop the fixed-width/bordered wrap, the internal header row and
+  // the collapsed strip; return only the full-width form body.
+  if (embedded) {
+    return (
+      <div style={{ width: '100%' }}>
+        {body}
+        {verifyDialog}
+      </div>
+    )
+  }
+
+  if (collapsed) {
+    return (
+      <div style={collapsedWrap}>
+        <button type="button" onClick={onToggle} title={t('app.showAi.title')} style={collapsedBtn}>
+          {t('ai.collapsedButton')}
+        </button>
+        {verifyDialog}
+      </div>
+    )
+  }
+
+  return (
+    <div style={wrap}>
+      <header style={panelHeader}>
+        <strong style={{ fontSize: 14 }}>{t('ai.header')}</strong>
+        <button type="button" onClick={onToggle} title={t('ai.hide.title')} style={hideBtn}>
+          ⟩
+        </button>
+      </header>
+      {body}
+      {verifyDialog}
     </div>
   )
 }
@@ -629,7 +857,10 @@ const okBox: CSSProperties = {
   borderRadius: 6,
   background: 'rgba(34,197,94,0.12)',
   border: '1px solid rgba(34,197,94,0.4)',
-  wordBreak: 'break-all'
+  wordBreak: 'break-word',
+  display: 'flex',
+  flexDirection: 'column',
+  gap: 4
 }
 const noteBox: CSSProperties = {
   fontSize: 11.5,

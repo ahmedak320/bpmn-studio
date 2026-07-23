@@ -53,6 +53,7 @@ import { WorkspacePickerLite } from './workspace/WorkspacePickerLite'
 import { FolderTreeLite } from './workspace/FolderTreeLite'
 import { EmptyWorkspaceCard } from './workspace/EmptyWorkspaceCard'
 import { AiPanelLite, type FolderOptionLite } from './ai/AiPanelLite'
+import { installLinkBadges, type LinkBadgeModeler } from './links/linkBadges'
 import { SettingsDialogLite } from './settings/SettingsDialogLite'
 import { ICON_DATA_URI } from './branding/icon'
 // --- W2B: file mgmt / search / catalog / navigation / print ---
@@ -82,8 +83,29 @@ import { createRefreshGuard, canCommitToWorkspace, commitIfCurrent } from './wor
 import { MoveDialog } from './workspace/MoveDialog'
 import { PrintButton } from './workspace/PrintButton'
 import { PrintView, type PrintJob } from './workspace/PrintView'
-import { collectDroppedBpmn, isInternalDrag, type DroppedBpmn } from './workspace/importDrop'
-import { t, tPlural } from './i18n'
+import { collectDroppedBpmn, isInternalDrag, isApcName, type DroppedBpmn } from './workspace/importDrop'
+import {
+  getProcessOrgProps,
+  setProcessOrgProps,
+  getProcessDocumentation,
+  setProcessDocumentation,
+  getOrgProps,
+  setOrgProps,
+  getLinkedNote,
+  setStepNote,
+  type OrgModeler,
+  type OrgElementLike
+} from './org/orgModel'
+import { refreshOrgStyling } from './org/orgSettings'
+import { StepDetailsDialog, type StepDetailsValues } from './org/StepDetailsDialog'
+import { collectOwners } from './owner/ownersIndex'
+import { ownersToCsv } from './owner/ownerCsv'
+import { AssistantDrawer } from './assist/AssistantDrawer'
+import { buildAllDigests, type ProcessDigest } from './assist/digest'
+import { buildLibraryZip, zipFileName } from './library/zipExport'
+import { readLibraryZip, type LibraryImportResult } from './library/zipImport'
+import { convertApcToBpmn } from './library/apcImport'
+import { t, tPlural, type Key } from './i18n'
 import { useLang, setLang } from './i18n/useLang'
 import './print.css'
 
@@ -113,6 +135,13 @@ function baseName(relPath: string): string {
 
 function errMsg(err: unknown): string {
   return err instanceof Error ? err.message : String(err)
+}
+
+/** Map a convertApcToBpmn error code to friendly, localized reason text. */
+function apcReason(code: string): string {
+  if (code === 'not-aml') return t('apc.reason.notAml')
+  if (code === 'no-objects') return t('apc.reason.noObjects')
+  return code
 }
 
 /** Map a classified picker/reconnect failure to its i18n key (ORIG-12) — raw
@@ -148,8 +177,49 @@ function downloadBpmn(fileName: string, xml: string): void {
   triggerDownload(fileName, `data:application/xml;charset=utf-8,${encodeURIComponent(xml)}`)
 }
 
+/** A single selectable flow node (not a label, connection, or the process/
+ *  collaboration root) — the Step-details button uses this to decide between
+ *  element mode (exactly one flow node selected) and process mode. */
+function isFlowNodeElement(el: OrgElementLike | undefined | null): el is OrgElementLike {
+  if (!el) return false
+  const type = el.type
+  if (typeof type !== 'string' || !type.startsWith('bpmn:')) return false
+  if (el.waypoints != null || el.labelTarget != null) return false
+  return type !== 'bpmn:Process' && type !== 'bpmn:Collaboration'
+}
+
+/** The modeler surface the Step-details dialog needs: the org read/write helpers
+ *  (OrgModeler) plus the selection service. */
+type StepDetailsModeler = OrgModeler & {
+  get(service: 'selection'): { get(): OrgElementLike[] }
+}
+
+/** A flow-node / gateway / event shape as reported by the elementRegistry. */
+interface PrintShapeElement {
+  type?: string
+  x: number
+  y: number
+  width: number
+  height: number
+  waypoints?: unknown
+  labelTarget?: unknown
+}
+
+/** Minimal shape of the canvas root's business object we read for the header. */
+interface PrintRootBusinessObject {
+  $type?: string
+  name?: string
+  participants?: Array<{ processRef?: { name?: string } | undefined } | undefined>
+}
+
+// Structural (never the concrete bpmn-js class) so it stays a local port like the
+// other lite modeler shells: saveSVG for the diagram, plus the two services the
+// print header needs — the element registry (band-cut rects) and the canvas
+// (process display name).
 interface ModelerWithSvg {
   saveSVG?: () => Promise<{ svg: string }>
+  get(service: 'elementRegistry'): { getAll(): PrintShapeElement[] }
+  get(service: 'canvas'): { getRootElement(): { businessObject?: PrintRootBusinessObject } | undefined }
 }
 
 function App(): JSX.Element {
@@ -176,6 +246,10 @@ function App(): JSX.Element {
   const [mounted, setMounted] = useState<Set<string>>(() => new Set())
   const [modelersByKey, setModelersByKey] = useState<Record<string, unknown>>({})
   const commandsRef = useRef<Record<string, EditorTabCommands | null>>({})
+  // Per-tab uninstall handles for the "linked" call-activity badge overlays,
+  // installed when a tab's modeler is ready and torn down when it is replaced
+  // (onModelerReady(null)) or the tab closes.
+  const badgeUninstallersRef = useRef<Record<string, () => void>>({})
   const virtualCounter = useRef(0)
 
   // Data-safety plumbing (Codex C1 / M3 / M8).
@@ -187,8 +261,38 @@ function App(): JSX.Element {
   const switchResolveRef = useRef<((choice: 'save' | 'discard' | 'cancel') => void) | null>(null)
 
   const [settingsOpen, setSettingsOpen] = useState(false)
-  const [aiCollapsed, setAiCollapsed] = useState(false)
+  // The Step-details dialog targets one tab's modeler; the mode (element vs
+  // process), the initial values and the target element are all derived LIVE
+  // from that modeler's current selection at render time (stepDetailsCtx).
+  const [stepDetails, setStepDetails] = useState<{ tabKey: string } | null>(null)
+  // Left sidebar (file explorer on top, AI generator on the bottom). Open by
+  // default; auto-collapses whenever a file opens so the canvas takes the full
+  // window, and the rail restores it. Deliberately NOT persisted — its state
+  // follows the open/close flow, and a manual rail click wins until the next
+  // open event.
+  const [sidebarOpen, setSidebarOpen] = useState(true)
+  // The AI generator sub-section within the sidebar. Persisted separately so a
+  // user who prefers the explorer-only sidebar keeps it collapsed across loads.
+  const [aiSectionCollapsed, setAiSectionCollapsed] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem('orbitpm.lite.sidebarAiCollapsed') === '1'
+    } catch {
+      return false
+    }
+  })
   const [keysVersion, setKeysVersion] = useState(0)
+
+  const toggleAiSection = useCallback(() => {
+    setAiSectionCollapsed((prev) => {
+      const next = !prev
+      try {
+        localStorage.setItem('orbitpm.lite.sidebarAiCollapsed', next ? '1' : '0')
+      } catch {
+        /* storage may be unavailable; the toggle still works for this session */
+      }
+      return next
+    })
+  }, [])
 
   // W2B feature state
   const [search, setSearch] = useState('')
@@ -208,6 +312,18 @@ function App(): JSX.Element {
 
   const fileInputRef = useRef<HTMLInputElement | null>(null)
   const importInputRef = useRef<HTMLInputElement | null>(null)
+  const libraryInputRef = useRef<HTMLInputElement | null>(null)
+
+  // Process assistant (B5) + whole-library import confirmation.
+  const [assistOpen, setAssistOpen] = useState(false)
+  const [libraryImport, setLibraryImport] = useState<LibraryImportResult | null>(null)
+  // Memoize the (async) per-workspace digests: rebuilt only when the files
+  // identity handed to the assistant changes (see `assistFiles` below), so a
+  // repeated question over an unchanged workspace reuses the same parse.
+  const digestsCacheRef = useRef<{
+    files: Array<{ relPath: string; xml: string }>
+    promise: Promise<ProcessDigest[]>
+  } | null>(null)
 
   const pushToast = useCallback((text: string, tone: ToastTone = 'info') => {
     const id = ++toastIdRef.current
@@ -255,6 +371,9 @@ function App(): JSX.Element {
       setDeleteTarget(null)
       setUnresolvedOpen(false)
       setHistory(emptyHistory())
+      // A freshly-activated workspace has zero tabs (the catalog is showing), so
+      // reveal the sidebar — the auto-collapse fires again the moment a file opens.
+      setSidebarOpen(true)
       setRootHandle(handle)
       setRootName(handle.name)
       setMode('directory')
@@ -460,6 +579,9 @@ function App(): JSX.Element {
   const openDirectoryFile = useCallback(
     async (relPath: string) => {
       const key = relPath
+      // Opening a file hands the canvas the full window; the rail restores the
+      // sidebar. A manual rail click after this wins until the next open event.
+      setSidebarOpen(false)
       setCatalogOpen(false)
       setTabs((prev) =>
         prev.some((t) => t.key === key)
@@ -496,6 +618,8 @@ function App(): JSX.Element {
 
   const openVirtualTab = useCallback((title: string, xml: string) => {
     const key = `virtual:${++virtualCounter.current}`
+    // Same as openDirectoryFile: an opening tab collapses the sidebar to the rail.
+    setSidebarOpen(false)
     setCatalogOpen(false)
     setTabs((prev) => [...prev, { key, title, relPath: null, gen: workspaceGenRef.current }])
     setContents((prev) => ({ ...prev, [key]: xml }))
@@ -515,6 +639,9 @@ function App(): JSX.Element {
         const confirmed = window.confirm(t('confirm.discardUnsaved', { title: tab?.title ?? 'this file' }))
         if (!confirmed) return
       }
+      // Closing the last tab returns to an empty canvas (or the catalog) — bring
+      // the sidebar back so the explorer / AI generator are reachable again.
+      if (tabs.filter((t) => t.key !== key).length === 0) setSidebarOpen(true)
       setActiveKey((prev) => {
         if (prev !== key) return prev
         const remaining = tabs.filter((t) => t.key !== key)
@@ -566,6 +693,25 @@ function App(): JSX.Element {
   // --- derived data (single source: `files`) ------------------------------
 
   const processIndex: ProcessIndex = useMemo(() => buildProcessIndex(files), [files])
+  // Offered to the AI panel so the model can propose callActivity links to the
+  // workspace's existing processes; the two resolvers back the link-verification
+  // dialog and the linked-summary line.
+  const processCatalog = useMemo(
+    () =>
+      Array.from(processIndex.entries()).map(([id, e]) => ({
+        id,
+        name: e.processName || e.relPath
+      })),
+    [processIndex]
+  )
+  const isKnownProcess = useCallback((id: string) => processIndex.has(id), [processIndex])
+  const resolveProcessName = useCallback(
+    (id: string) => {
+      const e = processIndex.get(id)
+      return e ? e.processName || e.relPath : id
+    },
+    [processIndex]
+  )
   const searchIndex = useMemo(() => buildSearchIndex(files), [files])
   const xmlByPath = useMemo(() => new Map(files.map((f) => [f.relPath, f.xml])), [files])
   const catalogRows = useMemo(() => buildCatalog(files, processIndex), [files, processIndex])
@@ -576,6 +722,51 @@ function App(): JSX.Element {
   const searchGroups = useMemo(() => searchWorkspace(searchIndex, search), [searchIndex, search])
   const folders = useMemo(() => collectFolders(tree), [tree, lang])
   const filePaths = useMemo(() => new Set(files.map((f) => f.relPath)), [files])
+  // Owner suggestions for the Step-details picker + the "Export owners (CSV)"
+  // action — aggregated across every .bpmn in the workspace (empty in fallback).
+  const ownersEntries = useMemo(
+    () => collectOwners(files.map((f) => ({ relPath: f.relPath, xml: f.xml }))),
+    [files]
+  )
+
+  // The whole-workspace file list the assistant reasons over in DIRECTORY mode
+  // (kept in sync with disk via `files`). Its stable reference keys the digest
+  // memo so repeated questions over an unchanged workspace reuse one parse.
+  const assistFiles = useMemo<Array<{ relPath: string; xml: string }>>(
+    () => files.map((f) => ({ relPath: f.relPath, xml: f.xml })),
+    [files]
+  )
+
+  const getDigests = useCallback(async (): Promise<ProcessDigest[]> => {
+    if (mode === 'directory') {
+      const cached = digestsCacheRef.current
+      if (cached && cached.files === assistFiles) return cached.promise
+      const promise = buildAllDigests(assistFiles)
+      digestsCacheRef.current = { files: assistFiles, promise }
+      return promise
+    }
+    // Fallback mode has no folder to scan: read the LIVE modeler XML for each
+    // open tab so the assistant sees what is on the canvas NOW (the initial
+    // `contents` XML predates any in-canvas edits), falling back to `contents`
+    // when a tab's modeler isn't ready yet.
+    const collected: Array<{ relPath: string; xml: string }> = []
+    for (const tb of tabs) {
+      const modeler = modelersByKey[tb.key] as
+        | { saveXML?: (o: { format: boolean }) => Promise<{ xml?: string }> }
+        | undefined
+      let xml = contents[tb.key]
+      if (modeler?.saveXML) {
+        try {
+          const r = await modeler.saveXML({ format: true })
+          if (r.xml) xml = r.xml
+        } catch {
+          /* fall back to the initial contents for this tab */
+        }
+      }
+      if (xml) collected.push({ relPath: tb.title, xml })
+    }
+    return buildAllDigests(collected)
+  }, [mode, assistFiles, tabs, modelersByKey, contents])
 
   const activeTab = tabs.find((t) => t.key === activeKey) ?? null
   const activeModeler = (activeKey ? modelersByKey[activeKey] : null) as SelectionLinkModeler | null
@@ -863,9 +1054,21 @@ function App(): JSX.Element {
       for (const entry of entries) {
         const sub = dirOf(entry.relPath)
         const targetFolder = sub ? joinRel(baseFolderRel, sub) : baseFolderRel
-        const base = deriveFileBaseName(entry.name.replace(/\.bpmn$/i, ''))
+        // Both .bpmn and (experimental) .apc land as a <base>.bpmn file.
+        const base = deriveFileBaseName(entry.name.replace(/\.(bpmn|apc)$/i, ''))
+        const apc = isApcName(entry.name)
         try {
-          const xml = await entry.getText()
+          let xml = await entry.getText()
+          if (apc) {
+            // Experimental ARIS AML → BPMN conversion; a failure skips this one
+            // file (with a toast) but never aborts the rest of the import.
+            const conv = await convertApcToBpmn(xml)
+            if ('error' in conv) {
+              pushToast(t('apc.failed', { reason: apcReason(conv.error) }), 'error')
+              continue
+            }
+            xml = conv.xml
+          }
           // Serialize the slug pick + write so two concurrent imports (or an
           // import racing an AI-place) can't both grab the same free slug.
           const relPath = await opMutexRef.current.runExclusive(async () => {
@@ -874,6 +1077,7 @@ function App(): JSX.Element {
             return createBpmnFileUnique(rootHandle, targetFolder, guess, xml)
           })
           created += 1
+          if (apc) pushToast(t('apc.converted', { name: baseName(relPath) }), 'success')
           const finalBase = baseName(relPath).replace(/\.bpmn$/i, '')
           if (finalBase.toLowerCase() !== base.toLowerCase()) renamed += 1
         } catch {
@@ -912,7 +1116,7 @@ function App(): JSX.Element {
       if (!list || list.length === 0) return
       try {
         const entries: DroppedBpmn[] = Array.from(list)
-          .filter((f) => /\.bpmn$/i.test(f.name))
+          .filter((f) => /\.(bpmn|apc)$/i.test(f.name))
           .map((f) => ({ relPath: f.name, name: f.name, getText: () => f.text() }))
         await importEntries(entries, '')
       } catch (err) {
@@ -1092,7 +1296,47 @@ function App(): JSX.Element {
         const folderLabel = tab.relPath
           ? dirOf(tab.relPath) || rootName || t('breadcrumb.root')
           : 'Single-file'
-        setPrintJob({ svg, title: tab.title.replace(/\.bpmn$/i, ''), folder: folderLabel })
+        // Band-cut rects: flow-node/gateway/event shapes only — exclude edges
+        // (waypoints), external labels (labelTarget), the Process/Collaboration
+        // roots and anything without real coordinates (see print/printLayout).
+        const shapes = modeler
+          .get('elementRegistry')
+          .getAll()
+          .filter(
+            (el) =>
+              !el.waypoints &&
+              !el.labelTarget &&
+              el.type?.startsWith('bpmn:') &&
+              el.type !== 'bpmn:Process' &&
+              el.type !== 'bpmn:Collaboration' &&
+              Number.isFinite(el.x)
+          )
+          .map((el) => ({ x: el.x, y: el.y, width: el.width, height: el.height }))
+        // Process display name for the header: a plain process root uses its own
+        // name; a collaboration uses its first participant's referenced process.
+        const rootBo = modeler.get('canvas').getRootElement()?.businessObject
+        let processName: string | undefined
+        if (rootBo?.$type === 'bpmn:Process') {
+          processName = rootBo.name || undefined
+        } else if (rootBo) {
+          processName = rootBo.participants?.[0]?.processRef?.name || undefined
+        }
+        // Owner line from the process-level org props (orbitpm:owner/ownerType).
+        const org = getProcessOrgProps(modeler as unknown as OrgModeler)
+        const ownerLine = org.owner
+          ? t('print.ownerLine', {
+              name: org.owner,
+              type: t(`owner.type.${org.ownerType || 'individual'}` as Key)
+            })
+          : undefined
+        setPrintJob({
+          svg,
+          title: tab.title.replace(/\.bpmn$/i, ''),
+          folder: folderLabel,
+          processName,
+          ownerLine,
+          shapes
+        })
       } catch (err) {
         pushToast(t('toast.print.failed', { error: errMsg(err) }), 'error')
       }
@@ -1106,6 +1350,14 @@ function App(): JSX.Element {
       return
     }
     document.body.classList.add('orbitpm-printing')
+    // Swap the document title so the browser's "Save as PDF" defaults the
+    // filename to the process name; restored idempotently on afterprint AND on
+    // effect cleanup (whichever runs first) so the tab title never sticks.
+    const prevTitle = document.title
+    document.title = printJob.processName || printJob.title
+    const restoreTitle = (): void => {
+      document.title = prevTitle
+    }
     const raf = requestAnimationFrame(() => {
       try {
         window.print()
@@ -1113,11 +1365,15 @@ function App(): JSX.Element {
         /* headless / blocked print — the print view is still in the DOM */
       }
     })
-    const after = (): void => setPrintJob(null)
+    const after = (): void => {
+      restoreTitle()
+      setPrintJob(null)
+    }
     window.addEventListener('afterprint', after)
     return () => {
       cancelAnimationFrame(raf)
       window.removeEventListener('afterprint', after)
+      restoreTitle()
     }
   }, [printJob])
 
@@ -1168,6 +1424,238 @@ function App(): JSX.Element {
     })
   }, [])
 
+  // --- step details (org pack) --------------------------------------------
+
+  // Derive the dialog's mode + initial values LIVE from the target tab's modeler
+  // selection. Exactly one selected flow node → element mode (its org props +
+  // linked note + type); anything else → process mode (process org props +
+  // documentation + the first start event's trigger). Recomputed only when the
+  // target or the modeler map changes; the modal overlay blocks canvas clicks so
+  // the selection can't drift while it is open.
+  const stepDetailsCtx = useMemo(() => {
+    if (!stepDetails) return null
+    const raw = modelersByKey[stepDetails.tabKey]
+    if (!raw) return null
+    const modeler = raw as StepDetailsModeler
+    let selection: OrgElementLike[] = []
+    try {
+      selection = modeler.get('selection').get()
+    } catch {
+      selection = []
+    }
+    const single = selection.length === 1 ? selection[0] : undefined
+    if (isFlowNodeElement(single)) {
+      const org = getOrgProps(single)
+      const note = getLinkedNote(modeler, single)?.text ?? ''
+      const initial: StepDetailsValues = {
+        owner: org.owner ?? '',
+        ownerType: org.ownerType ?? '',
+        ownerRole: org.ownerRole ?? '',
+        note,
+        channel: org.channel ?? '',
+        channelDetail: org.channelDetail ?? '',
+        cc: org.kind === 'cc',
+        ccTo: org.ccTo ?? '',
+        trigger: org.trigger ?? '',
+        triggerService: org.triggerService ?? '',
+        triggerDetail: org.triggerDetail ?? ''
+      }
+      return { mode: 'element' as const, elementType: single.type, initial, element: single, modeler }
+    }
+    const proc = getProcessOrgProps(modeler)
+    const startEvent = modeler
+      .get('elementRegistry')
+      .getAll()
+      .find((el) => el.type === 'bpmn:StartEvent')
+    const startProps = startEvent ? getOrgProps(startEvent) : {}
+    const initial: StepDetailsValues = {
+      owner: proc.owner ?? '',
+      ownerType: proc.ownerType ?? '',
+      ownerRole: proc.ownerRole ?? '',
+      note: getProcessDocumentation(modeler),
+      channel: '',
+      channelDetail: '',
+      cc: false,
+      ccTo: '',
+      trigger: startProps.trigger ?? '',
+      triggerService: startProps.triggerService ?? '',
+      triggerDetail: startProps.triggerDetail ?? ''
+    }
+    return { mode: 'process' as const, elementType: undefined, initial, element: undefined, modeler }
+  }, [stepDetails, modelersByKey])
+
+  const applyStepDetails = useCallback(
+    (v: StepDetailsValues) => {
+      const ctx = stepDetailsCtx
+      if (!ctx) {
+        setStepDetails(null)
+        return
+      }
+      const { modeler } = ctx
+      try {
+        if (ctx.mode === 'element' && ctx.element) {
+          // setOrgProps has REPLACE semantics — read the current bag, layer the
+          // edited fields on top, and map the CC checkbox onto the `kind` attr.
+          const current = getOrgProps(ctx.element)
+          setOrgProps(modeler, ctx.element, {
+            ...current,
+            owner: v.owner,
+            ownerType: v.ownerType,
+            ownerRole: v.ownerRole,
+            channel: v.channel,
+            channelDetail: v.channelDetail,
+            ccTo: v.ccTo,
+            kind: v.cc ? 'cc' : undefined,
+            trigger: v.trigger,
+            triggerService: v.triggerService,
+            triggerDetail: v.triggerDetail
+          })
+          // The linked TextAnnotation is only touched when the note text changed
+          // (setStepNote creates / updates / deletes it as needed).
+          if (v.note !== ctx.initial.note) setStepNote(modeler, ctx.element, v.note)
+        } else {
+          const current = getProcessOrgProps(modeler)
+          setProcessOrgProps(modeler, {
+            ...current,
+            owner: v.owner,
+            ownerType: v.ownerType,
+            ownerRole: v.ownerRole
+          })
+          setProcessDocumentation(modeler, v.note)
+          // Process-mode trigger fields land on the FIRST start event, preserving
+          // its other org props.
+          const startEvent = modeler
+            .get('elementRegistry')
+            .getAll()
+            .find((el) => el.type === 'bpmn:StartEvent')
+          if (startEvent) {
+            const cur = getOrgProps(startEvent)
+            setOrgProps(modeler, startEvent, {
+              ...cur,
+              trigger: v.trigger,
+              triggerService: v.triggerService,
+              triggerDetail: v.triggerDetail
+            })
+          }
+        }
+        pushToast(t('org.applied'), 'success')
+      } catch (err) {
+        pushToast(t('org.applyFailed', { error: errMsg(err) }), 'error')
+      }
+      setStepDetails(null)
+    },
+    [stepDetailsCtx, pushToast]
+  )
+
+  const exportOwners = useCallback(() => {
+    const csv = ownersToCsv(ownersEntries)
+    triggerDownload('process-owners.csv', 'data:text/csv;charset=utf-8,' + encodeURIComponent(csv))
+  }, [ownersEntries])
+
+  // --- whole-library export / import (.zip, B5) ---------------------------
+
+  const exportLibrary = useCallback(() => {
+    try {
+      const csv = ownersToCsv(ownersEntries)
+      const data = buildLibraryZip(
+        files.map((f) => ({ relPath: f.relPath, xml: f.xml })),
+        [{ relPath: 'process-owners.csv', content: csv }]
+      )
+      const url = URL.createObjectURL(new Blob([data as BlobPart], { type: 'application/zip' }))
+      triggerDownload(zipFileName(rootName), url)
+      // Revoke once the click-initiated download has grabbed the blob.
+      setTimeout(() => URL.revokeObjectURL(url), 10_000)
+      pushToast(t('library.exported', { count: files.length }), 'success')
+    } catch (err) {
+      pushToast(t('alert.import.failed', { error: errMsg(err) }), 'error')
+    }
+  }, [files, ownersEntries, rootName, pushToast])
+
+  const onLibraryInputChange = useCallback(
+    async (e: React.ChangeEvent<HTMLInputElement>) => {
+      const file = e.target.files?.[0]
+      e.target.value = ''
+      if (!file) return
+      try {
+        const data = new Uint8Array(await file.arrayBuffer())
+        const result = readLibraryZip(data)
+        if (result.entries.length === 0) {
+          pushToast(t('library.import.empty'), 'info')
+          return
+        }
+        setLibraryImport(result)
+      } catch (err) {
+        pushToast(t('alert.import.failed', { error: errMsg(err) }), 'error')
+      }
+    },
+    [pushToast]
+  )
+
+  // Create every missing folder segment of a nested rel path (idempotent —
+  // createFolderAt returns the existing handle when the folder is already there).
+  const ensureFolders = useCallback(
+    async (relDir: string) => {
+      if (!rootHandle || !relDir) return
+      let cur = ''
+      for (const seg of relDir.split('/').filter(Boolean)) {
+        try {
+          await createFolderAt(rootHandle, cur, seg)
+        } catch {
+          /* already exists / racing external create — continue building the path */
+        }
+        cur = cur ? `${cur}/${seg}` : seg
+      }
+    },
+    [rootHandle]
+  )
+
+  const confirmLibraryImport = useCallback(async () => {
+    const result = libraryImport
+    setLibraryImport(null)
+    if (!result || !rootHandle) return
+    let created = 0
+    let renamed = 0
+    for (const entry of result.entries) {
+      const targetFolder = dirOf(entry.relPath)
+      const base = deriveFileBaseName(baseName(entry.relPath).replace(/\.bpmn$/i, ''))
+      try {
+        // Same op-mutex as every other create so a concurrent op can't grab the
+        // same free slug; nested folders are ensured inside the critical section.
+        const relPath = await opMutexRef.current.runExclusive(async () => {
+          await ensureFolders(targetFolder)
+          const taken = await bpmnSlugsIn(rootHandle, targetFolder)
+          const guess = dedupeSlug(base, (c) => taken.has(c.toLowerCase()))
+          return createBpmnFileUnique(rootHandle, targetFolder, guess, entry.xml)
+        })
+        created += 1
+        const finalBase = baseName(relPath).replace(/\.bpmn$/i, '')
+        if (finalBase.toLowerCase() !== base.toLowerCase()) renamed += 1
+      } catch {
+        /* skip a single bad entry, keep importing the rest */
+      }
+    }
+    await refreshWorkspace(rootHandle)
+    pushToast(
+      t('toast.imported.count', { count: created, plural: created === 1 ? '' : 's' }) +
+        (renamed > 0 ? t('toast.imported.renamed', { renamed }) : '') +
+        '.',
+      'success'
+    )
+  }, [libraryImport, rootHandle, ensureFolders, refreshWorkspace, pushToast])
+
+  // Settings' org-styling toggle refreshes every live modeler so the renderer
+  // re-evaluates its canRender against the just-flipped flag (each guarded so a
+  // single mis-shaped modeler can't abort the sweep).
+  const handleOrgStylingChanged = useCallback(() => {
+    for (const m of Object.values(modelersByKey)) {
+      try {
+        refreshOrgStyling(m as Parameters<typeof refreshOrgStyling>[0])
+      } catch {
+        /* a modeler that is mid-teardown has no live services — skip it */
+      }
+    }
+  }, [modelersByKey])
+
   // --- automation hook ----------------------------------------------------
 
   useEffect(() => {
@@ -1193,10 +1681,19 @@ function App(): JSX.Element {
     <input
       ref={importInputRef}
       type="file"
-      accept=".bpmn,application/xml,text/xml"
+      accept=".bpmn,.apc,application/xml,text/xml"
       multiple
       style={{ display: 'none' }}
       onChange={(e) => void onImportInputChange(e)}
+    />
+  )
+  const hiddenLibraryInput = (
+    <input
+      ref={libraryInputRef}
+      type="file"
+      accept=".zip,application/zip"
+      style={{ display: 'none' }}
+      onChange={(e) => void onLibraryInputChange(e)}
     />
   )
 
@@ -1226,6 +1723,7 @@ function App(): JSX.Element {
             setKeysVersion((v) => v + 1)
           }}
           onKeysChanged={() => setKeysVersion((v) => v + 1)}
+          onOrgStylingChanged={handleOrgStylingChanged}
         />
       </>
     )
@@ -1238,6 +1736,7 @@ function App(): JSX.Element {
     <div style={{ display: 'grid', gridTemplateRows: 'auto 1fr auto', height: '100vh' }}>
       {hiddenFileInput}
       {hiddenImportInput}
+      {hiddenLibraryInput}
       <header
         style={{
           display: 'flex',
@@ -1353,15 +1852,6 @@ function App(): JSX.Element {
               {t('app.openBpmn')}
             </button>
           )}
-          {aiCollapsed && (
-            <button
-              className="orbitpm-lite-chrome-btn"
-              onClick={() => setAiCollapsed(false)}
-              title={t('app.showAi.title')}
-            >
-              {t('app.showAi')}
-            </button>
-          )}
           <button
             className="orbitpm-lite-chrome-btn"
             onClick={() => setSettingsOpen(true)}
@@ -1380,17 +1870,23 @@ function App(): JSX.Element {
       </header>
 
       <div
-        style={{ display: 'grid', gridTemplateColumns: '260px 1fr auto', minHeight: 0 }}
+        style={{ display: 'flex', minHeight: 0 }}
         onDragOver={handleAppDragOver}
         onDrop={handleAppDrop}
       >
-        <aside
-          style={{
-            borderInlineEnd: '1px solid var(--orbitpm-border)',
-            overflowY: 'auto',
-            padding: '0.5rem 0'
-          }}
-        >
+        {sidebarOpen && (
+          <aside
+            style={{
+              width: 'clamp(240px, 24vw, 320px)',
+              borderInlineEnd: '1px solid var(--orbitpm-border)',
+              display: 'flex',
+              flexDirection: 'column',
+              minHeight: 0
+            }}
+          >
+            {/* TOP: file explorer — the directory tree or the fallback block —
+                fills the sidebar and scrolls independently of the AI section. */}
+            <div style={{ flex: '1 1 auto', minHeight: 0, overflowY: 'auto', padding: '0.5rem 0' }}>
           {mode === 'directory' ? (
             <div>
               <div
@@ -1426,6 +1922,22 @@ function App(): JSX.Element {
                   aria-label={t('app.import')}
                 >
                   ⤓ {t('app.import')}
+                </button>
+                <button
+                  className="orbitpm-lite-chrome-btn"
+                  onClick={exportLibrary}
+                  title={t('library.export.title')}
+                  aria-label={t('library.export')}
+                >
+                  ⬇ {t('library.export')}
+                </button>
+                <button
+                  className="orbitpm-lite-chrome-btn"
+                  onClick={() => libraryInputRef.current?.click()}
+                  title={t('library.import.title')}
+                  aria-label={t('library.import')}
+                >
+                  ⬆ {t('library.import')}
                 </button>
                 <button
                   className="orbitpm-lite-chrome-btn"
@@ -1492,9 +2004,69 @@ function App(): JSX.Element {
               </button>
             </div>
           )}
-        </aside>
+            </div>
 
-        <section style={{ display: 'flex', flexDirection: 'column', minWidth: 0 }}>
+            {/* BOTTOM: AI generator. The header toggles the section (persisted);
+                when open, the embedded AiPanelLite renders only its form body. */}
+            <button
+              type="button"
+              onClick={toggleAiSection}
+              aria-expanded={!aiSectionCollapsed}
+              title={t('ai.header')}
+              style={{
+                width: '100%',
+                padding: '0.5rem 0.8rem',
+                borderTop: '1px solid var(--orbitpm-border)',
+                display: 'flex',
+                justifyContent: 'space-between',
+                alignItems: 'center',
+                background: 'transparent',
+                color: 'inherit',
+                font: 'inherit',
+                cursor: 'pointer'
+              }}
+            >
+              <strong>{t('ai.header')}</strong>
+              <span aria-hidden>{aiSectionCollapsed ? (lang === 'ar' ? '◂' : '▸') : '▾'}</span>
+            </button>
+            {!aiSectionCollapsed && (
+              <div style={{ flex: '0 1 auto', maxHeight: '55%', overflowY: 'auto' }}>
+                <AiPanelLite
+                  embedded
+                  folders={folders}
+                  onPlaceGenerated={placeGenerated}
+                  getWorkspaceGen={() => workspaceGenRef.current}
+                  onOpenSettings={() => setSettingsOpen(true)}
+                  collapsed={false}
+                  onToggle={() => {}}
+                  keysVersion={keysVersion}
+                  mode={mode}
+                  processCatalog={processCatalog}
+                  isKnownProcess={isKnownProcess}
+                  resolveProcessName={resolveProcessName}
+                />
+              </div>
+            )}
+          </aside>
+        )}
+
+        {/* RAIL: a full-height 16px toggle for the whole sidebar. The chevron
+            points toward the action — inward "⟨" to hide when open, outward
+            "⟩" to reveal when closed — and mirrors for RTL. */}
+        <button
+          type="button"
+          className="orbitpm-lite-rail"
+          onClick={() => setSidebarOpen((o) => !o)}
+          aria-label={t('sidebar.toggle.aria')}
+          aria-expanded={sidebarOpen}
+          title={t(sidebarOpen ? 'sidebar.hide.title' : 'sidebar.show.title')}
+        >
+          <span aria-hidden>
+            {lang === 'ar' ? (sidebarOpen ? '⟩' : '⟨') : sidebarOpen ? '⟨' : '⟩'}
+          </span>
+        </button>
+
+        <section style={{ display: 'flex', flexDirection: 'column', minWidth: 0, flex: 1 }}>
           <div
             style={{
               display: 'flex',
@@ -1625,12 +2197,34 @@ function App(): JSX.Element {
                         commandsRef.current[tab.key] = commands
                       }}
                       onModelerReady={(modeler) => {
+                        // Tear down any badge installer from a previous modeler for
+                        // this tab before (re)installing on the new one, and on the
+                        // null (unmount/replace) path.
+                        badgeUninstallersRef.current[tab.key]?.()
+                        delete badgeUninstallersRef.current[tab.key]
                         setModelersByKey((prev) => ({ ...prev, [tab.key]: modeler }))
+                        if (modeler) {
+                          try {
+                            badgeUninstallersRef.current[tab.key] = installLinkBadges(
+                              modeler as LinkBadgeModeler
+                            )
+                          } catch {
+                            /* overlays service may be unavailable — badges are non-essential */
+                          }
+                        }
                       }}
                       toolbarExtra={
                         isActive ? (
                           <>
                             <PrintButton onPrint={() => void handlePrint(tab)} />
+                            <button
+                              type="button"
+                              className="orbitpm-editor__button"
+                              onClick={() => setStepDetails({ tabKey: tab.key })}
+                              title={t('editor.stepDetails.title')}
+                            >
+                              {t('editor.stepDetails')}
+                            </button>
                             {mode === 'directory' && (
                               <SelectionLinkButton modeler={activeModeler} index={processIndex} />
                             )}
@@ -1659,17 +2253,6 @@ function App(): JSX.Element {
             )}
           </div>
         </section>
-
-        <AiPanelLite
-          folders={folders}
-          onPlaceGenerated={placeGenerated}
-          getWorkspaceGen={() => workspaceGenRef.current}
-          onOpenSettings={() => setSettingsOpen(true)}
-          collapsed={aiCollapsed}
-          onToggle={() => setAiCollapsed((c) => !c)}
-          keysVersion={keysVersion}
-          mode={mode}
-        />
       </div>
 
       <footer
@@ -1748,6 +2331,36 @@ function App(): JSX.Element {
         />
       )}
 
+      {libraryImport && (
+        <ConfirmDialog
+          title={t('library.import.confirmTitle')}
+          confirmLabel={t('library.import.confirm')}
+          message={
+            <>
+              <div>
+                {t('library.import.summary', { count: libraryImport.entries.length })}
+              </div>
+              {libraryImport.skipped.length > 0 && (
+                <div style={{ marginTop: 10 }}>
+                  <div style={{ color: 'var(--orbitpm-muted)', marginBottom: 4 }}>
+                    {t('library.import.skippedNote', { skipped: libraryImport.skipped.length })}
+                  </div>
+                  <ul style={{ margin: 0, paddingInlineStart: 18 }}>
+                    {libraryImport.skipped.slice(0, 5).map((s) => (
+                      <li key={s.path} style={{ color: 'var(--orbitpm-muted)' }}>
+                        {s.path} — {t(`library.skip.${s.reason}` as Key)}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+            </>
+          }
+          onConfirm={() => void confirmLibraryImport()}
+          onCancel={() => setLibraryImport(null)}
+        />
+      )}
+
       {unresolvedOpen && (
         <UnresolvedLinksPanel
           links={workspaceUnresolved}
@@ -1778,6 +2391,32 @@ function App(): JSX.Element {
       <PrintView job={printJob} />
       <Toaster toasts={toasts} onDismiss={dismissToast} />
 
+      <AssistantDrawer
+        open={assistOpen}
+        onOpen={() => setAssistOpen(true)}
+        onClose={() => setAssistOpen(false)}
+        printing={printJob != null}
+        mode={mode}
+        keysVersion={keysVersion}
+        getDigests={getDigests}
+        onOpenProcess={(relPath) => {
+          setAssistOpen(false)
+          void openDirectoryFile(relPath)
+        }}
+      />
+
+      {stepDetailsCtx && (
+        <StepDetailsDialog
+          mode={stepDetailsCtx.mode}
+          elementType={stepDetailsCtx.elementType}
+          initial={stepDetailsCtx.initial}
+          ownerEntries={ownersEntries}
+          onApply={applyStepDetails}
+          onCancel={() => setStepDetails(null)}
+          onExportOwners={exportOwners}
+        />
+      )}
+
       <SettingsDialogLite
         open={settingsOpen}
         onClose={() => {
@@ -1785,6 +2424,7 @@ function App(): JSX.Element {
           setKeysVersion((v) => v + 1)
         }}
         onKeysChanged={() => setKeysVersion((v) => v + 1)}
+        onOrgStylingChanged={handleOrgStylingChanged}
       />
     </div>
   )

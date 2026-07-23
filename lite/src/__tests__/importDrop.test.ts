@@ -1,6 +1,8 @@
 import { describe, it, expect } from 'vitest'
 import {
   isBpmnName,
+  isApcName,
+  isImportableName,
   isInternalDrag,
   collectDroppedBpmn,
   INTERNAL_DND_MIME
@@ -12,6 +14,20 @@ describe('isBpmnName', () => {
     expect(isBpmnName('ORDER.BPMN')).toBe(true)
     expect(isBpmnName('notes.txt')).toBe(false)
     expect(isBpmnName('order.bpmn.txt')).toBe(false)
+  })
+})
+
+describe('isApcName / isImportableName', () => {
+  it('matches .apc case-insensitively', () => {
+    expect(isApcName('model.apc')).toBe(true)
+    expect(isApcName('MODEL.APC')).toBe(true)
+    expect(isApcName('model.bpmn')).toBe(false)
+  })
+
+  it('accepts both bpmn and apc as importable', () => {
+    expect(isImportableName('a.bpmn')).toBe(true)
+    expect(isImportableName('b.apc')).toBe(true)
+    expect(isImportableName('c.txt')).toBe(false)
   })
 })
 
@@ -43,6 +59,15 @@ describe('collectDroppedBpmn — flat files fallback', () => {
     const out = await collectDroppedBpmn(dt)
     expect(out).toHaveLength(1)
     expect(out[0].relPath).toBe('x.bpmn')
+  })
+
+  it('also collects .apc files (experimental ARIS import)', async () => {
+    const dt = {
+      items: [],
+      files: [fakeFile('a.bpmn', 'A'), fakeFile('m.apc', 'M'), fakeFile('n.txt', 'N')]
+    }
+    const out = await collectDroppedBpmn(dt)
+    expect(out.map((d) => d.name).sort()).toEqual(['a.bpmn', 'm.apc'])
   })
 })
 

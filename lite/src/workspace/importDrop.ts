@@ -19,9 +19,21 @@ export interface DroppedBpmn {
 }
 
 const BPMN_RE = /\.bpmn$/i
+const APC_RE = /\.apc$/i
 
 export function isBpmnName(name: string): boolean {
   return BPMN_RE.test(name)
+}
+
+/** True for an ARIS (.apc) export — accepted for the experimental AML → BPMN
+ *  import; the actual conversion happens later in the App import flow. */
+export function isApcName(name: string): boolean {
+  return APC_RE.test(name)
+}
+
+/** Either an importable BPMN file or an ARIS export. */
+export function isImportableName(name: string): boolean {
+  return isBpmnName(name) || isApcName(name)
 }
 
 /** True when the drag originated inside our own tree (a move), not from
@@ -42,7 +54,7 @@ interface HandleLike {
 
 async function walkHandle(handle: HandleLike, prefix: string, out: DroppedBpmn[]): Promise<void> {
   if (handle.kind === 'file') {
-    if (!isBpmnName(handle.name)) return
+    if (!isImportableName(handle.name)) return
     const relPath = prefix ? `${prefix}/${handle.name}` : handle.name
     out.push({
       relPath,
@@ -95,7 +107,7 @@ export async function collectDroppedBpmn(dt: DataTransferLike): Promise<DroppedB
   }
 
   for (const file of Array.from(dt.files ?? [])) {
-    if (!isBpmnName(file.name)) continue
+    if (!isImportableName(file.name)) continue
     out.push({ relPath: file.name, name: file.name, getText: () => file.text() })
   }
   return out

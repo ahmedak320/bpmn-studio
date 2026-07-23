@@ -59,6 +59,39 @@ async function installMockWorkspace(page: import('@playwright/test').Page): Prom
   </bpmndi:BPMNPlane></bpmndi:BPMNDiagram>
 </bpmn2:definitions>`
 
+    // A deliberately WIDE process (9 sequential tasks spanning ~2600px of DI) that
+    // carries process-level org ownership. Wide enough that the print band engine
+    // slices it into multiple stacked snake-order bands, and its orbitpm:owner /
+    // orbitpm:ownerType feed the print header's owner line.
+    const wide = (pid: string, name: string, owner: string, ownerType: string): string => {
+      const TASKS = 9
+      let nodes = '<bpmn2:startEvent id="Start_w" name="Begin" />'
+      let shapes =
+        '<bpmndi:BPMNShape id="Start_w_di" bpmnElement="Start_w"><omgdc:Bounds x="100" y="120" width="36" height="36" /></bpmndi:BPMNShape>'
+      let edges = ''
+      let prev = 'Start_w'
+      let prevRight = 136 // Start_w right edge (100 + 36)
+      for (let i = 1; i <= TASKS; i++) {
+        const tid = `Task_${i}`
+        const fid = `Flow_${i}`
+        const x = 200 + (i - 1) * 300
+        nodes += `<bpmn2:task id="${tid}" name="Step ${i}" /><bpmn2:sequenceFlow id="${fid}" sourceRef="${prev}" targetRef="${tid}" />`
+        shapes += `<bpmndi:BPMNShape id="${tid}_di" bpmnElement="${tid}"><omgdc:Bounds x="${x}" y="98" width="100" height="80" /></bpmndi:BPMNShape>`
+        edges += `<bpmndi:BPMNEdge id="${fid}_di" bpmnElement="${fid}"><omgdi:waypoint x="${prevRight}" y="138" /><omgdi:waypoint x="${x}" y="138" /></bpmndi:BPMNEdge>`
+        prev = tid
+        prevRight = x + 100
+      }
+      return `<?xml version="1.0" encoding="UTF-8"?>
+<bpmn2:definitions ${NS} xmlns:orbitpm="http://orbitpm.ae/schema/bpmn/1.0" id="definitions_1" targetNamespace="http://bpmn.io/schema/bpmn">
+  <bpmn2:process id="${pid}" name="${name}" isExecutable="false" orbitpm:owner="${owner}" orbitpm:ownerType="${ownerType}">
+    ${nodes}
+  </bpmn2:process>
+  <bpmndi:BPMNDiagram id="D1"><bpmndi:BPMNPlane id="P1" bpmnElement="${pid}">
+    ${shapes}${edges}
+  </bpmndi:BPMNPlane></bpmndi:BPMNDiagram>
+</bpmn2:definitions>`
+    }
+
     interface FH {
       kind: 'file'
       name: string
@@ -157,7 +190,11 @@ async function installMockWorkspace(page: import('@playwright/test').Page): Prom
     const root = dirHandle('CompanyProcesses', {
       Sales: dirHandle('Sales', {
         'order.bpmn': fileHandle('order.bpmn', orderXml),
-        'ship.bpmn': fileHandle('ship.bpmn', simple('Process_ship', 'Shipping', 'Pack shipment'))
+        'ship.bpmn': fileHandle('ship.bpmn', simple('Process_ship', 'Shipping', 'Pack shipment')),
+        'operations.bpmn': fileHandle(
+          'operations.bpmn',
+          wide('Process_ops', 'Operations Workflow', 'Operations', 'department')
+        )
       }),
       HR: dirHandle('HR', {
         'hire.bpmn': fileHandle('hire.bpmn', simple('Process_hire', 'Hiring', 'Interview candidate'))
@@ -271,11 +308,13 @@ test('back / forward navigate across tab activations', async ({ page }) => {
   await expect(page.getByRole('navigation', { name: 'Breadcrumb' })).toContainText('HR')
 })
 
-test('print view renders the diagram SVG full-page with a title header', async ({ page }) => {
+test('print view wraps a wide diagram into snake-order bands with a title + owner header', async ({
+  page
+}) => {
   await installMockWorkspace(page)
   await openWorkspace(page)
 
-  await page.getByRole('button', { name: /Open Order Fulfillment/i }).click()
+  await page.getByRole('button', { name: /Open Operations Workflow/i }).click()
   await expect(page.locator('.djs-container svg').first()).toBeVisible({ timeout: 20_000 })
 
   // A dedicated print stylesheet is present in the shipped page.
@@ -283,12 +322,26 @@ test('print view renders the diagram SVG full-page with a title header', async (
   expect(styles).toContain('orbitpm-print-root')
   expect(styles).toContain('landscape')
 
-  // Trigger Print → the print view is populated with the diagram SVG + header.
+  // The document title before printing — restored once the print flow ends.
+  const originalTitle = await page.evaluate(() => document.title)
+
+  // Trigger Print → the print view is populated with the banded diagram + header.
   await page.getByRole('button', { name: 'Print / PDF' }).click()
   const printRoot = page.locator('[data-testid="print-root"]')
-  await expect(printRoot).toContainText('order') // title (file base name)
+  await expect(printRoot).toBeAttached()
+  await expect(printRoot).toContainText('Operations Workflow') // header = process name
   await expect(printRoot).toContainText('Sales') // folder header
+  // The owner line surfaces the process-level orbitpm:owner.
+  await expect(printRoot.locator('.orbitpm-print-owner')).toContainText('Operations')
+  // A wide diagram is sliced into >= 2 stacked snake-order bands.
+  expect(await page.locator('.orbitpm-print-band').count()).toBeGreaterThanOrEqual(2)
   expect(await printRoot.locator('svg').count()).toBeGreaterThan(0)
+  // document.title was swapped to the process name (PDF filename default).
+  await expect.poll(() => page.evaluate(() => document.title)).toBe('Operations Workflow')
   // window.print() was invoked (stubbed).
   expect(await page.evaluate(() => (window as unknown as { __printed: number }).__printed)).toBeGreaterThan(0)
+
+  // After afterprint, the document title is restored.
+  await page.evaluate(() => window.dispatchEvent(new Event('afterprint')))
+  await expect.poll(() => page.evaluate(() => document.title)).toBe(originalTitle)
 })

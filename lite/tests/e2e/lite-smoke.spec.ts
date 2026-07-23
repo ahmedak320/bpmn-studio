@@ -42,6 +42,21 @@ async function forceFallbackMode(page: import('@playwright/test').Page): Promise
   })
 }
 
+/** Opening a diagram auto-collapses the left sidebar (which now holds the AI
+ *  generator). Restore it via the rail, then expand the AI section if a stored
+ *  pref left it collapsed, so the AI form body is on screen. */
+async function expandAiPanel(page: import('@playwright/test').Page): Promise<void> {
+  const aside = page.locator('aside')
+  if (!(await aside.isVisible().catch(() => false))) {
+    await page.getByRole('button', { name: 'Toggle side panel' }).click()
+    await expect(aside).toBeVisible()
+  }
+  const aiHeader = page.getByRole('button', { name: /Generate with AI/i })
+  if ((await aiHeader.getAttribute('aria-expanded')) === 'false') {
+    await aiHeader.click()
+  }
+}
+
 test('loads self-contained, renders bpmn-js, and exports SVG (fallback mode)', async ({ page }) => {
   // 1) Record every request. The ONLY load-time request allowed is the main
   //    document itself; anything else would mean the page is not self-contained.
@@ -204,11 +219,39 @@ test('AI panel documents the browser-only provider limitation', async ({ page })
   })
   await page.goto(FILE_URL, { waitUntil: 'load' })
   await page.getByRole('button', { name: /New blank diagram/i }).click()
+  await expect(page.locator('.djs-container svg').first()).toBeVisible({ timeout: 20_000 })
 
-  // The AI panel (right zone) names the browser-capable providers (now
-  // Anthropic, Gemini AND OpenRouter) and the desktop-only ones. The exhaustive
-  // copy check lives in lite-providers.spec.ts; here we just assert the note is
-  // present and still warns about the CORS-gated providers.
+  // Opening the diagram collapsed the sidebar; the AI generator now lives in its
+  // bottom section, so restore it before asserting on its copy.
+  await expandAiPanel(page)
+
+  // The AI panel names the browser-capable providers (now Anthropic, Gemini AND
+  // OpenRouter) and the desktop-only ones. The exhaustive copy check lives in
+  // lite-providers.spec.ts; here we just assert the note is present and still
+  // warns about the CORS-gated providers.
   await expect(page.getByText(/can be called directly from a web page/i)).toBeVisible()
   await expect(page.getByText(/don.?t allow browser \(CORS\) access/i)).toBeVisible()
+})
+
+test('sidebar auto-collapses on open and the rail restores it', async ({ page }) => {
+  await forceFallbackMode(page)
+  await page.goto(FILE_URL, { waitUntil: 'load' })
+
+  // Create a new process via the dialog flow (the fallback landing shows the
+  // workspace picker, not the main layout, so the sidebar only exists once a
+  // diagram is open).
+  const aside = page.locator('aside')
+  await page.getByRole('button', { name: /New process/i }).first().click()
+  const dialog = page.getByRole('dialog', { name: /New Process/i })
+  await expect(dialog).toBeVisible()
+  await dialog.getByRole('textbox').fill('Sidebar Demo')
+  await dialog.getByRole('button', { name: 'Create', exact: true }).click()
+
+  // The diagram opens and the sidebar auto-collapses to the rail.
+  await expect(page.locator('.djs-container svg').first()).toBeVisible({ timeout: 20_000 })
+  await expect(aside).toBeHidden()
+
+  // Clicking the rail restores the sidebar.
+  await page.getByRole('button', { name: 'Toggle side panel' }).click()
+  await expect(aside).toBeVisible()
 })

@@ -65,12 +65,29 @@ async function forceFallbackMode(page: import('@playwright/test').Page): Promise
   })
 }
 
-/** Get into the ready 3-zone app (fallback mode) with the AI panel mounted. */
+/** Opening a diagram auto-collapses the left sidebar (which holds the AI
+ *  generator). Restore it via the rail, then expand the AI section if a stored
+ *  pref left it collapsed. */
+async function expandAiPanel(page: import('@playwright/test').Page): Promise<void> {
+  const aside = page.locator('aside')
+  if (!(await aside.isVisible().catch(() => false))) {
+    await page.getByRole('button', { name: 'Toggle side panel' }).click()
+    await expect(aside).toBeVisible()
+  }
+  const aiHeader = page.getByRole('button', { name: /Generate with AI/i })
+  if ((await aiHeader.getAttribute('aria-expanded')) === 'false') {
+    await aiHeader.click()
+  }
+}
+
+/** Get into the ready app (fallback mode) with the AI generator on screen. The
+ *  blank diagram auto-collapses the sidebar, so re-open it and its AI section. */
 async function openApp(page: import('@playwright/test').Page): Promise<void> {
   await forceFallbackMode(page)
   await page.goto(FILE_URL, { waitUntil: 'load' })
   await page.getByRole('button', { name: /New blank diagram/i }).click()
   await expect(page.locator('.djs-container svg').first()).toBeVisible({ timeout: 20_000 })
+  await expandAiPanel(page)
 }
 
 test('Settings lists all four browser providers, each with Test connection', async ({ page }) => {
