@@ -1,6 +1,6 @@
 {
   "name": "orbitpm-process-studio-lite",
-  "version": "0.3.0",
+  "version": "0.4.1",
   "description": "OrbitPM Process Studio Lite — a zero-install, single-file BPMN editor that runs entirely in the browser. Reuses the desktop app's generation pipeline; AI via CORS-capable providers (Anthropic, Gemini).",
   "private": true,
   "type": "module",
