@@ -37,6 +37,21 @@ export interface DigestStep {
   channelDetail?: string
   ccTo?: string
   kind?: string
+  /** Bilingual step names (`orbitpm:nameEn` / `orbitpm:nameAr`), when stored. */
+  nameEn?: string
+  nameAr?: string
+  /** Responsible people ("Name — Role" entries, `orbitpm:respList`). */
+  respList?: string[]
+  /** Inputs / base information the step needs (`orbitpm:inputs`). */
+  inputs?: string[]
+  /** Outputs the step produces (`orbitpm:outputs`). */
+  outputs?: string[]
+  /** Supporting system name(s) (`orbitpm:system`). */
+  system?: string[]
+  /** CC / informed parties, each ideally "Name — purpose" (`orbitpm:ccList`). */
+  ccList?: string[]
+  /** Decision basis free text (gateways + business-rule tasks). */
+  decisionBasis?: string
   /** For a callActivity: the `calledElement` process id it invokes. */
   calledProcess?: string
   nexts: Array<{ targetId: string; condition?: string }>
@@ -47,6 +62,8 @@ export interface ProcessDigest {
   folder: string
   processId: string
   processName: string
+  /** Process-level owner (`orbitpm:owner` on the <process> element). */
+  owner?: string
   trigger?: { type: string; service?: string; detail?: string }
   steps: DigestStep[]
   notes: string[]
@@ -90,6 +107,21 @@ function readAttr(el: ModdleElement, local: string): string | undefined {
     }
   }
   return undefined
+}
+
+/**
+ * Read a '\n'-joined multi-value OrbitPM attribute (respList / inputs /
+ * outputs / system / ccList) into trimmed, non-empty entries — the same
+ * convention as orgModel's splitList. Absent/empty -> undefined.
+ */
+function readListAttr(el: ModdleElement, local: string): string[] | undefined {
+  const raw = readAttr(el, local)
+  if (!raw) return undefined
+  const entries = raw
+    .split('\n')
+    .map((entry) => entry.trim())
+    .filter((entry) => entry !== '')
+  return entries.length > 0 ? entries : undefined
 }
 
 // --- type / name helpers -----------------------------------------------------
@@ -198,6 +230,22 @@ export async function buildDigest(relPath: string, xml: string): Promise<Process
       if (ccTo) step.ccTo = ccTo
       const kind = readAttr(el, 'kind')
       if (kind) step.kind = kind
+      const nameEn = readAttr(el, 'nameEn')
+      if (nameEn) step.nameEn = nameEn
+      const nameAr = readAttr(el, 'nameAr')
+      if (nameAr) step.nameAr = nameAr
+      const respList = readListAttr(el, 'respList')
+      if (respList) step.respList = respList
+      const inputs = readListAttr(el, 'inputs')
+      if (inputs) step.inputs = inputs
+      const outputs = readListAttr(el, 'outputs')
+      if (outputs) step.outputs = outputs
+      const system = readListAttr(el, 'system')
+      if (system) step.system = system
+      const ccList = readListAttr(el, 'ccList')
+      if (ccList) step.ccList = ccList
+      const decisionBasis = readAttr(el, 'decisionBasis')
+      if (decisionBasis) step.decisionBasis = decisionBasis
       if (lt === 'CallActivity') {
         const called = typeof el.calledElement === 'string' ? el.calledElement.trim() : ''
         if (called) step.calledProcess = called
@@ -270,8 +318,9 @@ export async function buildDigest(relPath: string, xml: string): Promise<Process
       typeof process.name === 'string' && process.name.trim()
         ? process.name.trim()
         : humanizeFileName(relPath)
+    const processOwner = readAttr(process, 'owner')
 
-    return {
+    const digest: ProcessDigest = {
       relPath,
       folder: folderOf(relPath),
       processId,
@@ -281,6 +330,8 @@ export async function buildDigest(relPath: string, xml: string): Promise<Process
       notes,
       callsTo
     }
+    if (processOwner) digest.owner = processOwner
+    return digest
   } catch {
     return null
   }

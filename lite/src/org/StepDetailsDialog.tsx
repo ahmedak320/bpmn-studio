@@ -4,16 +4,26 @@
 // note, or process org props + documentation + the first start event's trigger).
 //
 // Sections render conditionally on `mode` + `elementType`:
-//   * Owner  — always (owner name/type combobox + RACI role).
+//   * Names  — always (bilingual nameEn/nameAr, no section header).
+//   * Owner  — always (owner name/type combobox + RACI role); element mode
+//              additionally edits the responsible-people list.
 //   * Note   — always (element: the linked TextAnnotation; process: the docs).
+//   * Step data — element mode, every type: inputs / outputs / supporting
+//              system / CC list, plus decision basis on gateways and
+//              business-rule tasks only.
 //   * Channel — element mode, activity / sub-process / call-activity / interm. event.
-//   * CC      — element mode, task-family types only.
+//   * CC      — element mode, task-family types only (legacy checkbox + ccTo).
 //   * Trigger — process mode, or a start event in element mode. A `dmthub`
 //               trigger REQUIRES a service name (inline error, Apply disabled).
+//
+// The multi-value fields (inputs/outputs/respList/ccList) are textareas that
+// hold the '\n'-joined `orbitpm:*` attribute value VERBATIM — one entry per
+// line; the App maps them from/to the attrs (see splitList/joinList).
 
 import { useEffect, useState, type CSSProperties, type ReactNode } from 'react'
 import { OwnerPicker, type OwnerPickerLabels } from '../owner/OwnerPicker'
 import type { OwnerEntry } from '../owner/ownersIndex'
+import { isDecisionBasisType } from './orgRenderer'
 import { t } from '../i18n'
 import { useLang } from '../i18n/useLang'
 
@@ -29,6 +39,17 @@ export interface StepDetailsValues {
   trigger: string
   triggerService: string
   triggerDetail: string
+  /** Bilingual element/process names. */
+  nameEn: string
+  nameAr: string
+  /** '\n'-joined lists, held verbatim (one entry per textarea line). */
+  inputs: string
+  outputs: string
+  system: string
+  respList: string
+  ccList: string
+  /** Decision basis — only editable on gateways / business-rule tasks. */
+  decisionBasis: string
 }
 
 export interface StepDetailsDialogProps {
@@ -143,6 +164,18 @@ const inputStyle: CSSProperties = {
   width: '100%',
   boxSizing: 'border-box'
 }
+const textAreaStyle: CSSProperties = {
+  padding: '0.4rem 0.5rem',
+  borderRadius: 6,
+  border: '1px solid rgba(127,127,127,0.4)',
+  background: 'transparent',
+  color: 'inherit',
+  font: 'inherit',
+  fontSize: 13,
+  width: '100%',
+  boxSizing: 'border-box',
+  resize: 'vertical'
+}
 const closeBtn: CSSProperties = {
   border: 'none',
   background: 'transparent',
@@ -202,6 +235,10 @@ export function StepDetailsDialog({
   const showChannel = mode === 'element' && CHANNEL_TYPES.has(type)
   const showCc = mode === 'element' && TASK_FAMILY.has(type)
   const showTrigger = mode === 'process' || type === 'bpmn:StartEvent'
+  // All the wave-G step-data fields are element-mode; decision basis is
+  // additionally restricted to gateways + business-rule tasks.
+  const showStepData = mode === 'element'
+  const showDecisionBasis = showStepData && isDecisionBasisType(type)
 
   // A DMT-Hub trigger must name a service; Apply stays disabled while it is
   // blank (only enforced when the trigger section is actually on screen).
@@ -228,6 +265,31 @@ export function StepDetailsDialog({
         </header>
 
         <div style={bodyStyle}>
+          {/* Bilingual names — both modes; the field labels carry the meaning,
+              so no section header is needed. */}
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+            <label style={fieldLabel}>
+              <span style={labelText}>{t('org.nameEn.label')}</span>
+              <input
+                type="text"
+                dir="auto"
+                value={values.nameEn}
+                onChange={(e) => set('nameEn', e.target.value)}
+                style={inputStyle}
+              />
+            </label>
+            <label style={fieldLabel}>
+              <span style={labelText}>{t('org.nameAr.label')}</span>
+              <input
+                type="text"
+                dir="auto"
+                value={values.nameAr}
+                onChange={(e) => set('nameAr', e.target.value)}
+                style={inputStyle}
+              />
+            </label>
+          </div>
+
           {/* Owner — always */}
           <Section title={t('org.section.owner')}>
             <OwnerPicker
@@ -254,6 +316,20 @@ export function StepDetailsDialog({
                 <option value="I">{t('org.ownerRole.I')}</option>
               </select>
             </label>
+            {showStepData && (
+              <label style={fieldLabel}>
+                <span style={labelText}>{t('org.respList.label')}</span>
+                <textarea
+                  dir="auto"
+                  aria-label={t('org.respList.label')}
+                  value={values.respList}
+                  placeholder={t('org.respList.hint')}
+                  onChange={(e) => set('respList', e.target.value)}
+                  rows={3}
+                  style={textAreaStyle}
+                />
+              </label>
+            )}
           </Section>
 
           {/* Note — always (element: linked annotation; process: documentation) */}
@@ -268,6 +344,72 @@ export function StepDetailsDialog({
               style={{ ...inputStyle, resize: 'vertical' }}
             />
           </Section>
+
+          {/* Step data — element mode, every type: inputs / outputs / system /
+              CC list; decision basis only on gateways + business-rule tasks. */}
+          {showStepData && (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+              <label style={fieldLabel}>
+                <span style={labelText}>{t('org.inputs.label')}</span>
+                <textarea
+                  dir="auto"
+                  aria-label={t('org.inputs.label')}
+                  value={values.inputs}
+                  placeholder={t('org.inputs.hint')}
+                  onChange={(e) => set('inputs', e.target.value)}
+                  rows={3}
+                  style={textAreaStyle}
+                />
+              </label>
+              <label style={fieldLabel}>
+                <span style={labelText}>{t('org.outputs.label')}</span>
+                <textarea
+                  dir="auto"
+                  aria-label={t('org.outputs.label')}
+                  value={values.outputs}
+                  onChange={(e) => set('outputs', e.target.value)}
+                  rows={3}
+                  style={textAreaStyle}
+                />
+              </label>
+              <label style={fieldLabel}>
+                <span style={labelText}>{t('org.system.label')}</span>
+                <input
+                  type="text"
+                  dir="auto"
+                  value={values.system}
+                  onChange={(e) => set('system', e.target.value)}
+                  style={inputStyle}
+                />
+              </label>
+              <label style={fieldLabel}>
+                <span style={labelText}>{t('org.ccList.label')}</span>
+                <textarea
+                  dir="auto"
+                  aria-label={t('org.ccList.label')}
+                  value={values.ccList}
+                  placeholder={t('org.ccList.hint')}
+                  onChange={(e) => set('ccList', e.target.value)}
+                  rows={3}
+                  style={textAreaStyle}
+                />
+              </label>
+              {showDecisionBasis && (
+                <label style={fieldLabel}>
+                  <span style={labelText}>{t('org.decisionBasis.label')}</span>
+                  <textarea
+                    dir="auto"
+                    aria-label={t('org.decisionBasis.label')}
+                    value={values.decisionBasis}
+                    placeholder={t('org.decisionBasis.hint')}
+                    onChange={(e) => set('decisionBasis', e.target.value)}
+                    rows={2}
+                    style={textAreaStyle}
+                  />
+                </label>
+              )}
+            </div>
+          )}
 
           {/* Channel — element activities / sub-processes / intermediate events */}
           {showChannel && (

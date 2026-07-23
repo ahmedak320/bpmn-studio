@@ -11,6 +11,14 @@
  *
  * Note (faithful quirk): id uniqueness is checked PER LEVEL (a fresh `seenIds`
  * per recursive call), exactly like the Python original — not globally.
+ *
+ * Org-metadata leniency: the bilingual/org fields (labelEn/labelAr,
+ * conditionEn/conditionAr, owner, cc, decisionBasis, trigger, …) are declared
+ * in the Zod sub-schemas as lenient preprocess fields that coerce or silently
+ * DROP invalid shapes, so the safeParse gates below can never reject a diagram
+ * over org metadata — the conversational repair loop only ever fires on core
+ * structural problems. The raw IR is passed through untouched; the emitter
+ * re-applies the same lenient coercion when reading these fields.
  */
 import { transform } from '../transform'
 import {

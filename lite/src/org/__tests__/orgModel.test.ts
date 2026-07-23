@@ -10,6 +10,8 @@ import {
   getLinkedNote,
   setStepNote,
   getProcessElement,
+  splitList,
+  joinList,
   type OrgProps,
   type OrgModeler,
   type OrgElementLike
@@ -112,7 +114,10 @@ describe('readOrgAttrsFromTag', () => {
     const tag =
       '<bpmn:startEvent orbitpm:owner="O" orbitpm:ownerType="division" orbitpm:ownerRole="R" ' +
       'orbitpm:channel="dmthub" orbitpm:channelDetail="d" orbitpm:kind="cc" orbitpm:ccTo="cc" ' +
-      'orbitpm:trigger="email" orbitpm:triggerService="svc" orbitpm:triggerDetail="td">'
+      'orbitpm:trigger="email" orbitpm:triggerService="svc" orbitpm:triggerDetail="td" ' +
+      'orbitpm:nameEn="Review" orbitpm:nameAr="مراجعة" orbitpm:activeLang="ar" ' +
+      'orbitpm:inputs="Form A" orbitpm:outputs="Out" orbitpm:system="ERP" ' +
+      'orbitpm:respList="Sara — Approver" orbitpm:ccList="Legal" orbitpm:decisionBasis="Policy 4.2">'
     expect(readOrgAttrsFromTag(tag)).toEqual({
       owner: 'O',
       ownerType: 'division',
@@ -123,7 +128,16 @@ describe('readOrgAttrsFromTag', () => {
       ccTo: 'cc',
       trigger: 'email',
       triggerService: 'svc',
-      triggerDetail: 'td'
+      triggerDetail: 'td',
+      nameEn: 'Review',
+      nameAr: 'مراجعة',
+      activeLang: 'ar',
+      inputs: 'Form A',
+      outputs: 'Out',
+      system: 'ERP',
+      respList: 'Sara — Approver',
+      ccList: 'Legal',
+      decisionBasis: 'Policy 4.2'
     })
   })
 })
@@ -185,8 +199,122 @@ describe('setOrgProps', () => {
       'orbitpm:ccTo': undefined,
       'orbitpm:trigger': undefined,
       'orbitpm:triggerService': undefined,
-      'orbitpm:triggerDetail': undefined
+      'orbitpm:triggerDetail': undefined,
+      'orbitpm:nameEn': undefined,
+      'orbitpm:nameAr': undefined,
+      'orbitpm:activeLang': undefined,
+      'orbitpm:inputs': undefined,
+      'orbitpm:outputs': undefined,
+      'orbitpm:system': undefined,
+      'orbitpm:respList': undefined,
+      'orbitpm:ccList': undefined,
+      'orbitpm:decisionBasis': undefined
     })
+  })
+
+  it('writes every wave-G attribute under its prefixed name', () => {
+    const { modeler, rec } = makeModeler({})
+    const patch: OrgProps = {
+      nameEn: 'Review request',
+      nameAr: 'مراجعة الطلب',
+      activeLang: 'ar',
+      inputs: 'Form A\nCustomer file',
+      outputs: 'Approval memo',
+      system: 'ERP',
+      respList: 'Sara — Approver\nOmar',
+      ccList: 'Legal\nFinance',
+      decisionBasis: 'Policy 4.2'
+    }
+    setOrgProps(modeler, { id: 'T2' }, patch)
+    const properties = rec.updateProperties[0].properties
+    expect(properties['orbitpm:nameEn']).toBe('Review request')
+    expect(properties['orbitpm:nameAr']).toBe('مراجعة الطلب')
+    expect(properties['orbitpm:activeLang']).toBe('ar')
+    expect(properties['orbitpm:inputs']).toBe('Form A\nCustomer file')
+    expect(properties['orbitpm:outputs']).toBe('Approval memo')
+    expect(properties['orbitpm:system']).toBe('ERP')
+    expect(properties['orbitpm:respList']).toBe('Sara — Approver\nOmar')
+    expect(properties['orbitpm:ccList']).toBe('Legal\nFinance')
+    expect(properties['orbitpm:decisionBasis']).toBe('Policy 4.2')
+  })
+})
+
+// --- wave-G attr round-trips ------------------------------------------------
+
+describe('new attribute round-trips (setOrgProps payload -> getOrgProps)', () => {
+  const NEW_PROPS: OrgProps = {
+    nameEn: 'Review request',
+    nameAr: 'مراجعة الطلب',
+    activeLang: 'en',
+    inputs: 'Form A\nCustomer file',
+    outputs: 'Memo',
+    system: 'DMT Hub',
+    respList: 'Sara — Approver',
+    ccList: 'Legal\nFinance\nAudit',
+    decisionBasis: 'Delegation matrix §3'
+  }
+
+  it('round-trips through $attrs (extension NOT registered)', () => {
+    const { modeler, rec } = makeModeler({})
+    setOrgProps(modeler, { id: 'T1' }, NEW_PROPS)
+    // Re-materialise what updateProperties wrote as a $attrs bag…
+    const $attrs: Record<string, unknown> = {}
+    for (const [name, value] of Object.entries(rec.updateProperties[0].properties)) {
+      if (value !== undefined) $attrs[name] = value
+    }
+    // …and read it back.
+    expect(getOrgProps({ businessObject: { $type: 'bpmn:Task', $attrs } })).toEqual(NEW_PROPS)
+  })
+
+  it('round-trips through bo.get() (extension registered)', () => {
+    const { modeler, rec } = makeModeler({})
+    setOrgProps(modeler, { id: 'T1' }, NEW_PROPS)
+    const written = rec.updateProperties[0].properties
+    const element = {
+      businessObject: {
+        $type: 'bpmn:Task',
+        get: (name: string) => written[name]
+      }
+    }
+    expect(getOrgProps(element)).toEqual(NEW_PROPS)
+  })
+
+  it('reads each new attribute individually from $attrs', () => {
+    for (const [key, value] of Object.entries(NEW_PROPS)) {
+      const element = {
+        businessObject: { $type: 'bpmn:Task', $attrs: { ['orbitpm:' + key]: value } }
+      }
+      expect(getOrgProps(element)).toEqual({ [key]: value })
+    }
+  })
+})
+
+// --- splitList / joinList ----------------------------------------------------
+
+describe('splitList / joinList', () => {
+  it('splitList splits on newlines, trims, and drops blank entries', () => {
+    expect(splitList('Form A\n  Customer file \n\n\nID copy')).toEqual([
+      'Form A',
+      'Customer file',
+      'ID copy'
+    ])
+  })
+
+  it('splitList maps empty-ish input to []', () => {
+    expect(splitList('')).toEqual([])
+    expect(splitList(undefined)).toEqual([])
+    expect(splitList(null)).toEqual([])
+    expect(splitList('  \n  ')).toEqual([])
+  })
+
+  it('joinList trims, drops blanks, and joins with a newline', () => {
+    expect(joinList([' Legal ', '', 'Finance'])).toBe('Legal\nFinance')
+    expect(joinList([])).toBe('')
+  })
+
+  it('round-trips: splitList(joinList(entries)) === cleaned entries', () => {
+    const entries = ['Sara — Approver', 'Omar', 'Aisha — Reviewer']
+    expect(splitList(joinList(entries))).toEqual(entries)
   })
 })
 

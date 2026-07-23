@@ -73,6 +73,24 @@ export interface OrgProps {
   trigger?: string
   triggerService?: string
   triggerDetail?: string
+  /** Bilingual element name (English) — used by the language-toggle lane. */
+  nameEn?: string
+  /** Bilingual element name (Arabic) — used by the language-toggle lane. */
+  nameAr?: string
+  /** 'en' | 'ar', process-level; declared here, managed by the toggle lane. */
+  activeLang?: string
+  /** Inputs / base-information list for a step ('\n'-joined). */
+  inputs?: string
+  /** Outputs list ('\n'-joined; editable, not canvas-rendered this wave). */
+  outputs?: string
+  /** Supporting system name(s) ('\n'-joined). */
+  system?: string
+  /** Responsible people, each "Name — Role" or "Name" ('\n'-joined). */
+  respList?: string
+  /** CC / informed-party names ('\n'-joined). */
+  ccList?: string
+  /** Decision basis free text (gateways + business-rule tasks). */
+  decisionBasis?: string
 }
 
 /** Prop name -> fully-qualified moddle attribute name. */
@@ -86,10 +104,44 @@ const PROP_TO_ATTR: Record<keyof OrgProps, string> = {
   ccTo: 'orbitpm:ccTo',
   trigger: 'orbitpm:trigger',
   triggerService: 'orbitpm:triggerService',
-  triggerDetail: 'orbitpm:triggerDetail'
+  triggerDetail: 'orbitpm:triggerDetail',
+  nameEn: 'orbitpm:nameEn',
+  nameAr: 'orbitpm:nameAr',
+  activeLang: 'orbitpm:activeLang',
+  inputs: 'orbitpm:inputs',
+  outputs: 'orbitpm:outputs',
+  system: 'orbitpm:system',
+  respList: 'orbitpm:respList',
+  ccList: 'orbitpm:ccList',
+  decisionBasis: 'orbitpm:decisionBasis'
 }
 
 const ORG_KEYS = Object.keys(PROP_TO_ATTR) as Array<keyof OrgProps>
+
+// --- multi-value ('\n'-joined) attribute helpers ----------------------------
+
+/**
+ * Split a '\n'-joined multi-value attribute (inputs/outputs/respList/ccList/
+ * system) into trimmed, non-empty entries. `undefined`/'' -> [].
+ */
+export function splitList(value: string | null | undefined): string[] {
+  if (!value) return []
+  return value
+    .split('\n')
+    .map((entry) => entry.trim())
+    .filter((entry) => entry !== '')
+}
+
+/**
+ * Join entries back into the canonical '\n'-joined attribute value, dropping
+ * blank entries and trimming each. [] -> '' (which setOrgProps removes).
+ */
+export function joinList(entries: readonly string[]): string {
+  return entries
+    .map((entry) => entry.trim())
+    .filter((entry) => entry !== '')
+    .join('\n')
+}
 
 // --- attribute reading ------------------------------------------------------
 

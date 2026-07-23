@@ -132,6 +132,66 @@ describe('buildDigest', () => {
   })
 })
 
+// Org-pack-enriched XML: '\n'-joined list attributes ride as &#10; entities,
+// exactly how the generator/StepDetailsDialog write them.
+const ENRICHED_XML = `<?xml version="1.0" encoding="UTF-8"?>
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL"
+                  xmlns:orbitpm="http://orbitpm.ae/schema/bpmn/1.0"
+                  id="Defs_e" targetNamespace="http://bpmn.io/schema/bpmn">
+  <bpmn:process id="Proc_leave" name="Leave Request" isExecutable="false" orbitpm:owner="HR Department">
+    <bpmn:startEvent id="S1" name="Request submitted" orbitpm:trigger="dmthub">
+      <bpmn:outgoing>F1</bpmn:outgoing>
+    </bpmn:startEvent>
+    <bpmn:userTask id="T1" name="مراجعة الطلب" orbitpm:nameEn="Review request" orbitpm:nameAr="مراجعة الطلب"
+        orbitpm:owner="HR Ops" orbitpm:respList="Sara Al Marri — Reviewer&#10;Omar"
+        orbitpm:inputs="Leave form&#10;Balance report" orbitpm:outputs="Decision memo"
+        orbitpm:system="DMT HUB" orbitpm:ccList="Finance — payroll hold&#10;Legal">
+      <bpmn:incoming>F1</bpmn:incoming>
+      <bpmn:outgoing>F2</bpmn:outgoing>
+    </bpmn:userTask>
+    <bpmn:exclusiveGateway id="G1" name="Approved?" orbitpm:decisionBasis="HR policy section 7">
+      <bpmn:incoming>F2</bpmn:incoming>
+    </bpmn:exclusiveGateway>
+    <bpmn:sequenceFlow id="F1" sourceRef="S1" targetRef="T1" />
+    <bpmn:sequenceFlow id="F2" sourceRef="T1" targetRef="G1" />
+  </bpmn:process>
+</bpmn:definitions>`
+
+describe('buildDigest — org-pack enrichment', () => {
+  it('reads list attributes (respList/inputs/outputs/system/ccList) into entry arrays', async () => {
+    const d = await buildDigest('HR/Leave.bpmn', ENRICHED_XML)
+    const task = d?.steps.find((s) => s.id === 'T1')
+    expect(task?.respList).toEqual(['Sara Al Marri — Reviewer', 'Omar'])
+    expect(task?.inputs).toEqual(['Leave form', 'Balance report'])
+    expect(task?.outputs).toEqual(['Decision memo'])
+    expect(task?.system).toEqual(['DMT HUB'])
+    expect(task?.ccList).toEqual(['Finance — payroll hold', 'Legal'])
+  })
+
+  it('reads bilingual names and the gateway decision basis', async () => {
+    const d = await buildDigest('HR/Leave.bpmn', ENRICHED_XML)
+    const task = d?.steps.find((s) => s.id === 'T1')
+    expect(task?.nameEn).toBe('Review request')
+    expect(task?.nameAr).toBe('مراجعة الطلب')
+    const gw = d?.steps.find((s) => s.id === 'G1')
+    expect(gw?.decisionBasis).toBe('HR policy section 7')
+  })
+
+  it('reads the process-level owner', async () => {
+    const d = await buildDigest('HR/Leave.bpmn', ENRICHED_XML)
+    expect(d?.owner).toBe('HR Department')
+  })
+
+  it('omits enrichment fields when absent (legacy digests unchanged)', async () => {
+    const d = await buildDigest('HR/Employee_Exit.bpmn', EXIT_XML)
+    const a = d?.steps.find((s) => s.id === 'Task_A')
+    expect(a?.respList).toBeUndefined()
+    expect(a?.inputs).toBeUndefined()
+    expect(a?.decisionBasis).toBeUndefined()
+    expect(d?.owner).toBeUndefined()
+  })
+})
+
 describe('buildAllDigests', () => {
   it('digests valid files and skips the ones that fail to parse', async () => {
     const digests = await buildAllDigests([

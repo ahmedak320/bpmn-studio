@@ -13,6 +13,7 @@
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { DOMParser } from '@xmldom/xmldom'
+import { BILINGUAL_ORG_SECTION } from '../../src/gen/prompts'
 
 const ROOT = process.cwd()
 
@@ -20,6 +21,109 @@ const ROOT = process.cwd()
 export function loadIr(name: string): { process: any[] } {
   const raw = readFileSync(resolve(ROOT, 'tests/fixtures/ir', `${name}.json`), 'utf-8')
   return JSON.parse(raw)
+}
+
+/**
+ * The golden create_bpmn fixture is the REAL vendored jinja2 render; since
+ * 2026-07 composeCreateBpmn deliberately diverges by always appending the
+ * bilingual/org section between the examples (or catalog section) and the
+ * message-history framing. This splices that section into a golden render so
+ * byte-fidelity assertions stay exact around the deliberate addition.
+ */
+export function spliceBilingualOrgSection(golden: string): string {
+  const marker = '---\n\nThe following is the message history'
+  const at = golden.lastIndexOf(marker)
+  if (at === -1) {
+    throw new Error('golden prompt fixture is missing the message-history framing marker')
+  }
+  return golden.slice(0, at) + BILINGUAL_ORG_SECTION + golden.slice(at)
+}
+
+/**
+ * A representative bilingual + fully org-attributed IR (Arabic-primary):
+ * start trigger, userTask with every activity org field, an exclusive gateway
+ * with decisionBasis + bilingual branch conditions, and a linked callActivity.
+ * Returns a fresh deep copy each call so tests can mutate freely.
+ */
+export function bilingualOrgIr(): any[] {
+  return JSON.parse(
+    JSON.stringify([
+      {
+        type: 'startEvent',
+        id: 'start',
+        label: 'استلام الطلب',
+        labelEn: 'Request received',
+        labelAr: 'استلام الطلب',
+        trigger: 'Employee submits a purchase request',
+        triggerService: 'DMT HUB',
+        triggerDetail: 'PR-101 form'
+      },
+      {
+        type: 'userTask',
+        id: 'task1',
+        label: 'مراجعة الطلب',
+        labelEn: 'Review request',
+        labelAr: 'مراجعة الطلب',
+        owner: 'Procurement Section',
+        ownerRole: 'R',
+        channel: 'dmthub',
+        channelDetail: 'PR-101 form',
+        kind: 'cc',
+        cc: ['Finance Department', 'Audit Office'],
+        inputs: ['Purchase request form', 'Budget sheet'],
+        outputs: ['Approved request'],
+        respList: ['Sara Al Marri — Reviewer', 'Ahmed Ali — Approver']
+      },
+      {
+        type: 'exclusiveGateway',
+        id: 'gw',
+        label: 'هل الطلب مكتمل؟',
+        labelEn: 'Request complete?',
+        labelAr: 'هل الطلب مكتمل؟',
+        decisionBasis: 'Procurement policy section 4',
+        has_join: false,
+        branches: [
+          {
+            condition: 'نعم',
+            conditionEn: 'Yes',
+            conditionAr: 'نعم',
+            path: [
+              {
+                type: 'callActivity',
+                id: 'ca1',
+                label: 'تنفيذ الشراء',
+                labelEn: 'Run purchasing',
+                labelAr: 'تنفيذ الشراء',
+                calledProcess: 'Process_Purchasing',
+                owner: 'Procurement Section'
+              },
+              {
+                type: 'endEvent',
+                id: 'end1',
+                label: 'تم',
+                labelEn: 'Done',
+                labelAr: 'تم'
+              }
+            ]
+          },
+          {
+            condition: 'لا',
+            conditionEn: 'No',
+            conditionAr: 'لا',
+            path: [
+              {
+                type: 'endEvent',
+                id: 'end2',
+                label: 'مرفوض',
+                labelEn: 'Rejected',
+                labelAr: 'مرفوض'
+              }
+            ]
+          }
+        ]
+      }
+    ])
+  )
 }
 
 export function loadGolden(name: string): string {

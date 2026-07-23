@@ -1,9 +1,11 @@
-// The "show org-pack styling" preference (a single browser-local flag) plus the
-// live re-render helper. Storage is wrapped in try/catch exactly like
-// lite/src/ai/keys.ts — a browser page has no vault and localStorage can throw
-// in private-mode / disabled-storage, in which case styling defaults to ON.
+// The "show org-pack styling" and "highlight missing step information"
+// preferences (browser-local flags) plus the live re-render helper. Storage is
+// wrapped in try/catch exactly like lite/src/ai/keys.ts — a browser page has no
+// vault and localStorage can throw in private-mode / disabled-storage, in which
+// case both flags default to ON.
 
 const KEY = 'orbitpm.lite.orgStyling'
+const COMPLETENESS_KEY = 'orbitpm.lite.completenessOn'
 
 interface RefreshElement {
   type?: string
@@ -38,6 +40,27 @@ export function isOrgStylingOn(): boolean {
 export function setOrgStyling(on: boolean): void {
   try {
     localStorage.setItem(KEY, on ? 'true' : 'false')
+  } catch {
+    /* ignore — private mode / disabled storage */
+  }
+}
+
+/** Completeness highlighting is ON by default: unset, or any storage failure,
+ *  reads as true. Consulted live on every draw (like isOrgStylingOn) so a
+ *  toggle + refreshOrgStyling sweep repaints without a reload. */
+export function isCompletenessOn(): boolean {
+  try {
+    const raw = localStorage.getItem(COMPLETENESS_KEY)
+    if (raw == null) return true
+    return raw !== 'false' && raw !== '0'
+  } catch {
+    return true
+  }
+}
+
+export function setCompletenessOn(on: boolean): void {
+  try {
+    localStorage.setItem(COMPLETENESS_KEY, on ? 'true' : 'false')
   } catch {
     /* ignore — private mode / disabled storage */
   }

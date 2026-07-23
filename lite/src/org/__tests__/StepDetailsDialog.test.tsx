@@ -18,7 +18,15 @@ const baseInitial: StepDetailsValues = {
   ccTo: '',
   trigger: '',
   triggerService: '',
-  triggerDetail: ''
+  triggerDetail: '',
+  nameEn: '',
+  nameAr: '',
+  inputs: '',
+  outputs: '',
+  system: '',
+  respList: '',
+  ccList: '',
+  decisionBasis: ''
 }
 
 function render(props: Partial<Parameters<typeof StepDetailsDialog>[0]>): string {
@@ -88,5 +96,71 @@ describe('StepDetailsDialog (static render)', () => {
     expect(render({ elementType: 'bpmn:Task', onExportOwners: noop })).toContain(
       t('org.export.owners')
     )
+  })
+
+  it('always renders the bilingual name fields (element AND process mode)', () => {
+    for (const html of [
+      render({ mode: 'element', elementType: 'bpmn:Task' }),
+      render({ mode: 'process', elementType: undefined })
+    ]) {
+      expect(html).toContain(t('org.nameEn.label'))
+      expect(html).toContain(t('org.nameAr.label'))
+    }
+  })
+
+  it('element mode shows the step-data fields for every element type', () => {
+    for (const elementType of ['bpmn:Task', 'bpmn:ExclusiveGateway', 'bpmn:StartEvent']) {
+      const html = render({ mode: 'element', elementType })
+      expect(html).toContain(t('org.inputs.label'))
+      expect(html).toContain(t('org.outputs.label'))
+      expect(html).toContain(t('org.system.label'))
+      expect(html).toContain(t('org.ccList.label'))
+      expect(html).toContain(t('org.respList.label'))
+    }
+  })
+
+  it('process mode shows names but hides the step-data fields', () => {
+    const html = render({ mode: 'process', elementType: undefined })
+    expect(html).not.toContain(t('org.inputs.label'))
+    expect(html).not.toContain(t('org.outputs.label'))
+    expect(html).not.toContain(t('org.ccList.label'))
+    expect(html).not.toContain(t('org.respList.label'))
+    expect(html).not.toContain(t('org.decisionBasis.label'))
+  })
+
+  it('shows decision basis ONLY for gateways and business-rule tasks', () => {
+    for (const elementType of [
+      'bpmn:ExclusiveGateway',
+      'bpmn:InclusiveGateway',
+      'bpmn:ParallelGateway',
+      'bpmn:EventBasedGateway',
+      'bpmn:ComplexGateway',
+      'bpmn:BusinessRuleTask'
+    ]) {
+      expect(render({ mode: 'element', elementType })).toContain(t('org.decisionBasis.label'))
+    }
+    for (const elementType of ['bpmn:Task', 'bpmn:UserTask', 'bpmn:StartEvent']) {
+      expect(render({ mode: 'element', elementType })).not.toContain(t('org.decisionBasis.label'))
+    }
+  })
+
+  it('textareas hold the \\n-joined list values verbatim', () => {
+    const html = render({
+      mode: 'element',
+      elementType: 'bpmn:Task',
+      initial: {
+        ...baseInitial,
+        inputs: 'Form A\nCustomer file',
+        ccList: 'Legal\nFinance',
+        respList: 'Sara — Approver',
+        nameEn: 'Review request',
+        nameAr: 'مراجعة الطلب'
+      }
+    })
+    expect(html).toContain('Form A\nCustomer file')
+    expect(html).toContain('Legal\nFinance')
+    expect(html).toContain('Sara — Approver')
+    expect(html).toContain('Review request')
+    expect(html).toContain('مراجعة الطلب')
   })
 })

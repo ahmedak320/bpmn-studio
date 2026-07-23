@@ -46,7 +46,9 @@ describe('generateFromDescription', () => {
     const result = await generateFromDescription(callLLM, 'do a thing')
 
     expect(calls.length).toBe(1)
-    expect(calls[0].options.maxTokens).toBe(3000)
+    // 6000 (raised from the vendored 3000): bilingual labels + org metadata
+    // roughly double the IR JSON, and truncation would defeat the repair loop.
+    expect(calls[0].options.maxTokens).toBe(6000)
     expect(result.ir.map((e: Record<string, unknown>) => e.id)).toEqual(['start', 't1', 'end'])
     expect(result.semanticXml).toContain('id="definitions_1"')
     expect(result.semanticXml).toContain('<userTask id="t1" name="Do the thing">')

@@ -27,7 +27,17 @@ export const PALETTE = {
   tagDataBorder: '#c0504d',
   // RACI role chip (single letter R/A/C/I).
   raciBg: '#ffffff',
-  raciBorder: '#8a8a8a'
+  raciBorder: '#8a8a8a',
+  // Inputs / base-information list box. A teal-cyan family deliberately
+  // distinct from every other swatch: bluer than the step greens, greener than
+  // the muted email blue, nowhere near the note straw or owner beige.
+  inputFill: '#d3ecf2',
+  inputBorder: '#0f7d90',
+  inputText: '#0b5666',
+  // Decision-basis tag on gateways / business-rule tasks. Amber ("it's a
+  // rule") — hotter and more orange than the pale note yellow.
+  basisFill: '#fce3bd',
+  basisBorder: '#c47f17'
 } as const
 
 export type PaletteKey = keyof typeof PALETTE

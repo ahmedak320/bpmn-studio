@@ -120,7 +120,10 @@ export async function generateFromDescription(
 
     let raw: string | unknown
     try {
-      raw = await callLLM(messages, { maxTokens: 3000 })
+      // 6000 (was 3000, the vendored Python's cap): the mandatory bilingual
+      // labels + optional org metadata roughly double the IR JSON, and a
+      // truncated response would burn the whole repair loop on parse errors.
+      raw = await callLLM(messages, { maxTokens: 6000 })
     } catch (e) {
       // A transport/auth/rate-limit/timeout failure is permanent for this call:
       // surface it immediately rather than burning retries (and, for PDFs,

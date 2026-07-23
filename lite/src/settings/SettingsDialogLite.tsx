@@ -21,7 +21,7 @@ import {
   type OpenRouterCredits
 } from '../ai/credits'
 import { CreditsLine } from '../ai/CreditsLine'
-import { isOrgStylingOn, setOrgStyling } from '../org/orgSettings'
+import { isOrgStylingOn, setOrgStyling, isCompletenessOn, setCompletenessOn } from '../org/orgSettings'
 import { t } from '../i18n'
 import { useLang } from '../i18n/useLang'
 
@@ -53,6 +53,7 @@ export function SettingsDialogLite({
 }: SettingsDialogLiteProps): JSX.Element | null {
   useLang()
   const [orgStyling, setOrgStylingState] = useState<boolean>(() => isOrgStylingOn())
+  const [completeness, setCompletenessState] = useState<boolean>(() => isCompletenessOn())
   const [drafts, setDrafts] = useState<Record<string, string>>({})
   const [custom, setCustom] = useState<CustomEndpointConfig>(() => getCustomConfig())
   const [headerText, setHeaderText] = useState('')
@@ -93,6 +94,7 @@ export function SettingsDialogLite({
       setSaved(null)
       setResults({})
       setOrgStylingState(isOrgStylingOn())
+      setCompletenessState(isCompletenessOn())
       const cfg = getCustomConfig()
       setCustom(cfg)
       setHeaderText(headerLinesToText(cfg.extraHeaders))
@@ -212,6 +214,29 @@ export function SettingsDialogLite({
                 <span style={{ fontWeight: 600, fontSize: 13 }}>{t('settings.orgStyling.label')}</span>
                 <span style={{ fontSize: 11.5, color: 'var(--orbitpm-muted)' }}>
                   {t('settings.orgStyling.desc')}
+                </span>
+              </span>
+            </label>
+            <label style={{ display: 'flex', gap: 10, alignItems: 'flex-start', cursor: 'pointer' }}>
+              <input
+                type="checkbox"
+                aria-label={t('settings.completeness.label')}
+                checked={completeness}
+                onChange={(e) => {
+                  const next = e.target.checked
+                  setCompletenessOn(next)
+                  setCompletenessState(next)
+                  // Same repaint hook as the styling toggle: App sweeps every
+                  // open modeler with refreshOrgStyling, and the renderer reads
+                  // isCompletenessOn() live on each draw.
+                  onOrgStylingChanged?.()
+                }}
+                style={{ marginTop: 3 }}
+              />
+              <span style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+                <span style={{ fontWeight: 600, fontSize: 13 }}>{t('settings.completeness.label')}</span>
+                <span style={{ fontSize: 11.5, color: 'var(--orbitpm-muted)' }}>
+                  {t('settings.completeness.hint')}
                 </span>
               </span>
             </label>

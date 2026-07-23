@@ -54,6 +54,15 @@ import { FolderTreeLite } from './workspace/FolderTreeLite'
 import { EmptyWorkspaceCard } from './workspace/EmptyWorkspaceCard'
 import { AiPanelLite, type FolderOptionLite } from './ai/AiPanelLite'
 import { installLinkBadges, type LinkBadgeModeler } from './links/linkBadges'
+import { toggleDiagramLang, type LangToggleModeler } from './editor/langToggle'
+import { makeBrowserCallLLM } from './ai/browserAi'
+import { LITE_PROVIDERS, defaultLiteModelId } from './ai/providersLite'
+import { getKey, hasKey } from './ai/keys'
+import {
+  collectMissingTranslations,
+  translateDiagram,
+  type TranslateModeler
+} from './ai/translate'
 import { SettingsDialogLite } from './settings/SettingsDialogLite'
 import { ICON_DATA_URI } from './branding/icon'
 // --- W2B: file mgmt / search / catalog / navigation / print ---
@@ -111,7 +120,7 @@ import { AssistantDrawer } from './assist/AssistantDrawer'
 import { buildAllDigests, type ProcessDigest } from './assist/digest'
 import { buildLibraryZip, zipFileName } from './library/zipExport'
 import { readLibraryZip, type LibraryImportResult } from './library/zipImport'
-import { convertApcToBpmn } from './library/apcImport'
+import { convertAmlToBpmnFiles, looksLikeAml } from './library/apcImport'
 import { t, tPlural, type Key } from './i18n'
 import { useLang, setLang } from './i18n/useLang'
 import './print.css'
@@ -148,6 +157,7 @@ function errMsg(err: unknown): string {
 function apcReason(code: string): string {
   if (code === 'not-aml') return t('apc.reason.notAml')
   if (code === 'no-objects') return t('apc.reason.noObjects')
+  if (code === 'no-models') return t('apc.reason.noModels')
   return code
 }
 
@@ -289,6 +299,17 @@ function App(): JSX.Element {
     }
   })
   const [keysVersion, setKeysVersion] = useState(0)
+  // Tab whose diagram is currently being AI-translated (disables its button).
+  const [translatingTab, setTranslatingTab] = useState<string | null>(null)
+  // A pending "fill gaps in chat" request from the AI panel: opens the
+  // assistant's interview mode against the just-placed tab. Token bumps force
+  // the drawer to react even for repeated requests on the same tab.
+  const [interviewRequest, setInterviewRequest] = useState<{
+    token: number
+    tabKey: string
+    description: string
+  } | null>(null)
+  const interviewTokenRef = useRef(0)
 
   const toggleAiSection = useCallback(() => {
     setAiSectionCollapsed((prev) => {
@@ -628,10 +649,12 @@ function App(): JSX.Element {
     [contents, pushToast]
   )
 
-  const openVirtualTab = useCallback((title: string, xml: string) => {
+  const openVirtualTab = useCallback((title: string, xml: string, opts?: { collapse?: boolean }) => {
     const key = `virtual:${++virtualCounter.current}`
-    // Same as openDirectoryFile: an opening tab collapses the sidebar to the rail.
-    setSidebarOpen(false)
+    // Same as openDirectoryFile: an opening tab collapses the sidebar to the
+    // rail — EXCEPT when the caller needs the sidebar to survive (AI placement
+    // keeps the panel mounted so its success box + fill-gaps CTA can show).
+    if (opts?.collapse !== false) setSidebarOpen(false)
     setCatalogOpen(false)
     setTabs((prev) => [...prev, { key, title, relPath: null, gen: workspaceGenRef.current }])
     setContents((prev) => ({ ...prev, [key]: xml }))
@@ -1069,38 +1092,61 @@ function App(): JSX.Element {
         // .bpmn, plain .xml (sniffed below) and (experimental) .apc all land as
         // a <base>.bpmn file.
         const base = deriveFileBaseName(entry.name.replace(/\.(bpmn|apc|xml)$/i, ''))
-        const apc = isApcName(entry.name)
+        // One serialized create per output file (slug pick + write inside the
+        // shared op-mutex, as everywhere else).
+        const writeUnique = (slug: string, xml: string): Promise<string> =>
+          opMutexRef.current.runExclusive(async () => {
+            const taken = await bpmnSlugsIn(rootHandle, targetFolder)
+            const guess = dedupeSlug(slug, (c) => taken.has(c.toLowerCase()))
+            return createBpmnFileUnique(rootHandle, targetFolder, guess, xml)
+          })
         try {
-          let xml = await entry.getText()
-          // A `.xml` file is only importable when its CONTENT is a BPMN 2.0
-          // document (many tools export BPMN with a .xml extension). Anything
-          // else — build files, configs, arbitrary XML — is skipped with a
-          // per-file toast instead of landing a broken .bpmn in the workspace.
-          if (isXmlName(entry.name) && !looksLikeBpmnXml(xml)) {
-            pushToast(t('import.notBpmnXml', { name: entry.name }), 'error')
-            continue
-          }
-          if (apc) {
-            // Experimental ARIS AML → BPMN conversion; a failure skips this one
-            // file (with a toast) but never aborts the rest of the import.
-            const conv = await convertApcToBpmn(xml)
+          const text = await entry.getText()
+          // Routing is CONTENT-based: a `.xml` may be BPMN (many tools export
+          // BPMN with a .xml extension) OR an ARIS AML database export (the
+          // user's DMT exports) — and a mis-labeled `.apc` may equally carry
+          // either. Only files that are neither are rejected.
+          if (looksLikeBpmnXml(text)) {
+            const relPath = await writeUnique(base, text)
+            created += 1
+            const finalBase = baseName(relPath).replace(/\.bpmn$/i, '')
+            if (finalBase.toLowerCase() !== base.toLowerCase()) renamed += 1
+          } else if (looksLikeAml(text)) {
+            // ARIS AML → one .bpmn per contained EPC model, named from the
+            // model's name in the CURRENT app language (bilingual attrs ride
+            // along inside the XML either way). A failure skips this file but
+            // never aborts the rest of the import.
+            const conv = await convertAmlToBpmnFiles(text, { lang })
             if ('error' in conv) {
               pushToast(t('apc.failed', { reason: apcReason(conv.error) }), 'error')
               continue
             }
-            xml = conv.xml
+            for (const model of conv.files) {
+              const modelName = (lang === 'ar' ? model.nameAr : model.nameEn) || model.name
+              const slug = deriveFileBaseName(modelName || base)
+              await writeUnique(slug, model.xml)
+              created += 1
+            }
+            pushToast(
+              conv.files.length === 1
+                ? t('apc.converted', { name: entry.name })
+                : t('apc.convertedMany', { count: conv.files.length, name: entry.name }),
+              'success'
+            )
+          } else if (isXmlName(entry.name)) {
+            pushToast(t('import.notBpmnXml', { name: entry.name }), 'error')
+            continue
+          } else if (isApcName(entry.name)) {
+            pushToast(t('apc.failed', { reason: apcReason('not-aml') }), 'error')
+            continue
+          } else {
+            // A .bpmn whose content didn't match the sniff: import it anyway —
+            // the pre-sniff behavior — and let the editor surface any problem.
+            const relPath = await writeUnique(base, text)
+            created += 1
+            const finalBase = baseName(relPath).replace(/\.bpmn$/i, '')
+            if (finalBase.toLowerCase() !== base.toLowerCase()) renamed += 1
           }
-          // Serialize the slug pick + write so two concurrent imports (or an
-          // import racing an AI-place) can't both grab the same free slug.
-          const relPath = await opMutexRef.current.runExclusive(async () => {
-            const taken = await bpmnSlugsIn(rootHandle, targetFolder)
-            const guess = dedupeSlug(base, (c) => taken.has(c.toLowerCase()))
-            return createBpmnFileUnique(rootHandle, targetFolder, guess, xml)
-          })
-          created += 1
-          if (apc) pushToast(t('apc.converted', { name: baseName(relPath) }), 'success')
-          const finalBase = baseName(relPath).replace(/\.bpmn$/i, '')
-          if (finalBase.toLowerCase() !== base.toLowerCase()) renamed += 1
         } catch {
           /* skip an unreadable entry, keep importing the rest */
         }
@@ -1113,7 +1159,7 @@ function App(): JSX.Element {
         'success'
       )
     },
-    [mode, rootHandle, refreshWorkspace, pushToast]
+    [mode, rootHandle, refreshWorkspace, pushToast, lang]
   )
 
   const handleImportDrop = useCallback(
@@ -1229,10 +1275,13 @@ function App(): JSX.Element {
           return null
         }
         await refreshWorkspace(handle)
-        void openDirectoryFile(result.relPath)
+        // Keep the sidebar (and with it the AI panel) mounted: the success box
+        // carries the "fill gaps in chat" CTA, and collapsing here unmounted
+        // the panel before it could ever render (found by the interview e2e).
+        void openDirectoryFile(result.relPath, { collapse: false })
         return { label: result.relPath }
       }
-      openVirtualTab(`${slug}.bpmn`, xml)
+      openVirtualTab(`${slug}.bpmn`, xml, { collapse: false })
       return null
     },
     [mode, refreshWorkspace, openDirectoryFile, openVirtualTab, pushToast]
@@ -1483,7 +1532,15 @@ function App(): JSX.Element {
         ccTo: org.ccTo ?? '',
         trigger: org.trigger ?? '',
         triggerService: org.triggerService ?? '',
-        triggerDetail: org.triggerDetail ?? ''
+        triggerDetail: org.triggerDetail ?? '',
+        nameEn: org.nameEn ?? '',
+        nameAr: org.nameAr ?? '',
+        inputs: org.inputs ?? '',
+        outputs: org.outputs ?? '',
+        system: org.system ?? '',
+        respList: org.respList ?? '',
+        ccList: org.ccList ?? '',
+        decisionBasis: org.decisionBasis ?? ''
       }
       return { mode: 'element' as const, elementType: single.type, initial, element: single, modeler }
     }
@@ -1504,7 +1561,17 @@ function App(): JSX.Element {
       ccTo: '',
       trigger: startProps.trigger ?? '',
       triggerService: startProps.triggerService ?? '',
-      triggerDetail: startProps.triggerDetail ?? ''
+      triggerDetail: startProps.triggerDetail ?? '',
+      // Process mode edits only the bilingual names; the per-step data fields
+      // stay blank (the dialog hides them in this mode).
+      nameEn: proc.nameEn ?? '',
+      nameAr: proc.nameAr ?? '',
+      inputs: '',
+      outputs: '',
+      system: '',
+      respList: '',
+      ccList: '',
+      decisionBasis: ''
     }
     return { mode: 'process' as const, elementType: undefined, initial, element: undefined, modeler }
   }, [stepDetails, modelersByKey])
@@ -1533,8 +1600,32 @@ function App(): JSX.Element {
             kind: v.cc ? 'cc' : undefined,
             trigger: v.trigger,
             triggerService: v.triggerService,
-            triggerDetail: v.triggerDetail
+            triggerDetail: v.triggerDetail,
+            nameEn: v.nameEn,
+            nameAr: v.nameAr,
+            inputs: v.inputs,
+            outputs: v.outputs,
+            system: v.system,
+            respList: v.respList,
+            ccList: v.ccList,
+            decisionBasis: v.decisionBasis
           })
+          // Keep the VISIBLE label coherent with the edited translation for the
+          // diagram's active language — otherwise the next language toggle's
+          // write-back (visible name wins) would clobber this dialog edit.
+          const activeLang = getProcessOrgProps(modeler).activeLang === 'ar' ? 'ar' : 'en'
+          const activeName = (activeLang === 'ar' ? v.nameAr : v.nameEn).trim()
+          if (activeName) {
+            try {
+              ;(modeler as unknown as {
+                get(s: 'modeling'): { updateProperties(el: unknown, p: Record<string, unknown>): void }
+              })
+                .get('modeling')
+                .updateProperties(ctx.element, { name: activeName })
+            } catch {
+              /* label sync is best-effort; the attrs above are already saved */
+            }
+          }
           // The linked TextAnnotation is only touched when the note text changed
           // (setStepNote creates / updates / deletes it as needed).
           if (v.note !== ctx.initial.note) setStepNote(modeler, ctx.element, v.note)
@@ -1544,7 +1635,9 @@ function App(): JSX.Element {
             ...current,
             owner: v.owner,
             ownerType: v.ownerType,
-            ownerRole: v.ownerRole
+            ownerRole: v.ownerRole,
+            nameEn: v.nameEn,
+            nameAr: v.nameAr
           })
           setProcessDocumentation(modeler, v.note)
           // Process-mode trigger fields land on the FIRST start event, preserving
@@ -1680,6 +1773,124 @@ function App(): JSX.Element {
       }
     }
   }, [modelersByKey])
+
+  // Diagram-language toggle (EN⇄AR): swaps every element's visible name with
+  // its stored orbitpm:nameEn/nameAr translation (write-back first, so manual
+  // edits become the active language's translation). One command-stack entry —
+  // undoable, marks the tab dirty. A diagram with no stored translations gets
+  // an explanatory toast instead of a silent no-op.
+  const handleDiagramLangToggle = useCallback(
+    (tabKey: string) => {
+      const modeler = modelersByKey[tabKey]
+      if (!modeler) return
+      try {
+        const res = toggleDiagramLang(modeler as LangToggleModeler)
+        if (res.switched === 0) pushToast(t('editor.langToggle.missing'), 'info')
+      } catch (err) {
+        pushToast(errMsg(err), 'error')
+      }
+    },
+    [modelersByKey, pushToast]
+  )
+
+  // Translate-with-AI: fill every element's MISSING nameEn/nameAr via the
+  // first configured browser-callable provider, writing the translations as
+  // orbitpm attrs (they serialize into the .bpmn on the next save — that is
+  // what makes the EN⇄AR toggle work on previously monolingual diagrams).
+  // The visible labels are untouched; the toggle applies them on demand.
+  const handleTranslate = useCallback(
+    async (tabKey: string) => {
+      const modeler = modelersByKey[tabKey]
+      if (!modeler || translatingTab) return
+      const provider = LITE_PROVIDERS.find((p) => !p.desktopOnly && hasKey(p.id))
+      if (!provider) {
+        pushToast(t('translate.noKey'), 'info')
+        return
+      }
+      const entries = collectMissingTranslations(modeler as TranslateModeler)
+      if (entries.length === 0) {
+        pushToast(t('translate.nothing'), 'info')
+        return
+      }
+      setTranslatingTab(tabKey)
+      pushToast(t('translate.running', { count: entries.length }), 'info')
+      try {
+        const call = makeBrowserCallLLM({
+          providerId: provider.id,
+          model: defaultLiteModelId(provider.id),
+          apiKey: getKey(provider.id) ?? '',
+          referer: typeof location !== 'undefined' ? location.origin : undefined,
+          title: 'OrbitPM Process Studio Lite'
+        })
+        const res = await translateDiagram(modeler as TranslateModeler, call)
+        if (res.skipped > 0) {
+          pushToast(
+            t('translate.partial', { done: res.translated, total: res.total, skipped: res.skipped }),
+            'info'
+          )
+        } else {
+          pushToast(t('translate.done', { count: res.translated }), 'success')
+        }
+      } catch (err) {
+        pushToast(t('translate.failed', { error: errMsg(err) }), 'error')
+      } finally {
+        setTranslatingTab(null)
+      }
+    },
+    [modelersByKey, translatingTab, pushToast]
+  )
+
+  // Interview apply-path: the assistant regenerated the diagram from the
+  // running Q&A — import it into the LIVE modeler of the target tab (bypassing
+  // `contents`, which only seeds the initial mount), refit the view, and mark
+  // the tab dirty via a benign same-value command (importXML resets the command
+  // stack, which would otherwise leave regenerated-but-unsaved work looking
+  // "saved" to the close/switch guards).
+  const handleApplyInterviewXml = useCallback(
+    async (tabKey: string, xml: string) => {
+      const modeler = modelersByKey[tabKey] as
+        | {
+            importXML(x: string): Promise<{ warnings: string[] }>
+            get(name: string): unknown
+          }
+        | undefined
+      if (!modeler) throw new Error('editor not ready')
+      await modeler.importXML(xml)
+      try {
+        ;(modeler.get('canvas') as { zoom(m: 'fit-viewport'): void }).zoom('fit-viewport')
+      } catch {
+        /* zoom is cosmetic */
+      }
+      try {
+        const canvas = modeler.get('canvas') as {
+          getRootElement(): { businessObject?: { get?: (k: string) => unknown } }
+        }
+        const root = canvas.getRootElement()
+        const cur = root.businessObject?.get?.('orbitpm:activeLang')
+        ;(modeler.get('modeling') as {
+          updateProperties(el: unknown, p: Record<string, unknown>): void
+        }).updateProperties(root, { 'orbitpm:activeLang': typeof cur === 'string' && cur ? cur : 'en' })
+      } catch {
+        /* dirty-marking is best-effort; the import itself already landed */
+      }
+    },
+    [modelersByKey]
+  )
+
+  // AI panel CTA → open the assistant on the interview tab for the active
+  // (just-placed) diagram.
+  const handleContinueInChat = useCallback(
+    (info: { description: string }) => {
+      if (!activeKey) return
+      setInterviewRequest({
+        token: ++interviewTokenRef.current,
+        tabKey: activeKey,
+        description: info.description
+      })
+      setAssistOpen(true)
+    },
+    [activeKey]
+  )
 
   // --- automation hook ----------------------------------------------------
 
@@ -1886,7 +2097,13 @@ function App(): JSX.Element {
           </button>
           <button
             className="orbitpm-lite-chrome-btn"
-            onClick={() => setLang(lang === 'en' ? 'ar' : 'en')}
+            onClick={() => {
+              setLang(lang === 'en' ? 'ar' : 'en')
+              // Canvas org decorations draw localized titles (Inputs/CC/…) at
+              // paint time — poke every live modeler so they repaint in the
+              // newly-selected UI language.
+              handleOrgStylingChanged()
+            }}
             title={t('app.lang.toggle.title')}
           >
             {lang === 'en' ? t('app.lang.ar') : t('app.lang.en')}
@@ -2074,6 +2291,7 @@ function App(): JSX.Element {
                   processCatalog={processCatalog}
                   isKnownProcess={isKnownProcess}
                   resolveProcessName={resolveProcessName}
+                  onContinueInChat={handleContinueInChat}
                 />
               </div>
             )}
@@ -2246,6 +2464,23 @@ function App(): JSX.Element {
                       toolbarExtra={
                         isActive ? (
                           <>
+                            <button
+                              type="button"
+                              className="orbitpm-editor__button"
+                              onClick={() => handleDiagramLangToggle(tab.key)}
+                              title={t('editor.langToggle.title')}
+                            >
+                              {t('editor.langToggle')}
+                            </button>
+                            <button
+                              type="button"
+                              className="orbitpm-editor__button"
+                              onClick={() => void handleTranslate(tab.key)}
+                              disabled={translatingTab === tab.key}
+                              title={t('editor.translate.title')}
+                            >
+                              {t('editor.translate')}
+                            </button>
                             <PrintButton onPrint={() => void handlePrint(tab)} />
                             <button
                               type="button"
@@ -2433,6 +2668,21 @@ function App(): JSX.Element {
           setAssistOpen(false)
           void openDirectoryFile(relPath)
         }}
+        interviewRequest={
+          interviewRequest
+            ? { token: interviewRequest.token, tabKey: interviewRequest.tabKey }
+            : null
+        }
+        getActiveInterviewTarget={() => {
+          // Prefer the tab the CTA targeted; fall back to the active tab so a
+          // manual visit to the interview tab can still bind to an open diagram.
+          const key = interviewRequest?.tabKey ?? activeKey
+          if (!key) return null
+          const modeler = modelersByKey[key]
+          if (!modeler) return null
+          return { tabKey: key, modeler, description: interviewRequest?.description ?? '' }
+        }}
+        onApplyXml={handleApplyInterviewXml}
       />
 
       {stepDetailsCtx && (

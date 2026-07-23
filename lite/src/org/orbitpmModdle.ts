@@ -15,8 +15,19 @@ export const ORBITPM_PREFIX = 'orbitpm'
  * Every `orbitpm:*` attribute name in the contract, WITHOUT the prefix. The
  * union across flow nodes (owner/ownerType/ownerRole/channel/channelDetail/
  * kind/ccTo), start events (trigger/triggerService/triggerDetail) and the
- * process (owner/ownerType). One flat list because a single `OrgExtension`
- * type carries them all.
+ * process (owner/ownerType, plus activeLang for the language toggle). One flat
+ * list because a single `OrgExtension` type carries them all.
+ *
+ * DMT wave-G additions (all plain string attrs; the multi-value ones are
+ * '\n'-joined lists — see splitList/joinList in orgModel.ts):
+ *   nameEn / nameAr    bilingual element names (language toggle lane)
+ *   activeLang         'en' | 'ar', process-level (declared only here)
+ *   inputs             inputs / base-information list for a step
+ *   outputs            outputs list (editable; not canvas-rendered this wave)
+ *   system             supporting system name(s) (editable; not rendered)
+ *   respList           responsible people, each "Name — Role" or "Name"
+ *   ccList             CC / informed-party names
+ *   decisionBasis      decision basis on gateways + business-rule tasks
  */
 export const ORG_ATTR_NAMES = [
   'owner',
@@ -28,7 +39,16 @@ export const ORG_ATTR_NAMES = [
   'ccTo',
   'trigger',
   'triggerService',
-  'triggerDetail'
+  'triggerDetail',
+  'nameEn',
+  'nameAr',
+  'activeLang',
+  'inputs',
+  'outputs',
+  'system',
+  'respList',
+  'ccList',
+  'decisionBasis'
 ] as const
 
 export type OrgAttrName = (typeof ORG_ATTR_NAMES)[number]

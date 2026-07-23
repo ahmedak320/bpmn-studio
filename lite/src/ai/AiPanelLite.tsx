@@ -82,6 +82,10 @@ export interface AiPanelLiteProps {
    *  only the form body is returned, full-width. `collapsed` is ignored here
    *  because the enclosing sidebar section owns the expand/collapse toggle. */
   embedded?: boolean
+  /** Offered after a successful placement: open the assistant's interview mode
+   *  so the user can fill the draft's missing info conversationally. Receives
+   *  the description the diagram was generated from. */
+  onContinueInChat?: (info: { description: string }) => void
 }
 
 type GenMode = 'description' | 'pdf'
@@ -163,7 +167,8 @@ export function AiPanelLite({
   processCatalog,
   isKnownProcess,
   resolveProcessName,
-  embedded = false
+  embedded = false,
+  onContinueInChat
 }: AiPanelLiteProps): JSX.Element {
   useLang()
   const [providerId, setProviderId] = useState<LiteProviderId>('openrouter')
@@ -927,6 +932,20 @@ export function AiPanelLite({
           <div role="status" style={okBox}>
             <span>{t('ai.created', { resultLabel })}</span>
             {linkedSummary && <span style={{ opacity: 0.85 }}>{linkedSummary}</span>}
+            {onContinueInChat && (
+              <button
+                type="button"
+                onClick={() =>
+                  onContinueInChat({
+                    description: genMode === 'description' ? description.trim() : hint.trim()
+                  })
+                }
+                title={t('ai.continueInChat.title')}
+                style={{ ...ghostBtn, alignSelf: 'flex-start' }}
+              >
+                {t('ai.continueInChat')}
+              </button>
+            )}
           </div>
         )}
 

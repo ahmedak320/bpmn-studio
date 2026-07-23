@@ -576,6 +576,42 @@ function composeProcessCatalogSection(processCatalog: readonly CatalogProcess[])
 }
 
 /**
+ * Always-appended section teaching (1) the language rules — the primary `label`
+ * follows the language of the user's description, PLUS mandatory `labelEn` /
+ * `labelAr` (and `conditionEn`/`conditionAr` on gateway branches) — and (2) the
+ * optional DMT org-pack metadata fields, extracted only when the description
+ * supports them. Composed (never part of the AUTO-GENERATED verbatim
+ * constants); spliced between the examples (and the optional catalog section)
+ * and the message-history framing. Starts with its own "---\n\n" separator and
+ * ends with a trailing "\n" so the framing follows with no extra separator.
+ */
+export const BILINGUAL_ORG_SECTION = `---
+
+# Language and organizational metadata
+
+Language rules (apply to EVERY diagram):
+- Write \`label\` in the SAME language as the user's process description.
+- ADDITIONALLY provide \`labelEn\` (English) and \`labelAr\` (Arabic) for EVERY labeled element, and \`conditionEn\` / \`conditionAr\` for every exclusive/inclusive gateway branch condition — translate faithfully and professionally; if the description mixes languages, translate both ways.
+- Arabic must be real Modern Standard Arabic, not transliteration.
+
+Organizational metadata — all fields OPTIONAL. Extract these ONLY when the description states or clearly implies them; never invent people or systems:
+- Tasks and callActivity elements: "owner" (unit or person performing the step), "ownerRole" ("R" | "A" | "C" | "I"), "channel" ("dmthub" | "email" | "data" — the system or medium used), "channelDetail" (free text, e.g. form or template name), "cc" (array of "Name — purpose" strings — each informed party WITH the reason they are informed; always state the purpose when the description implies one, use just the name when none is stated, and never invent one), "inputs" (array: data/documents the step needs), "outputs" (array: data/documents the step produces), "respList" (array of "Name — Role" entries for everyone involved), "kind": "cc" (only for a step whose sole purpose is informing someone).
+- Exclusive/inclusive gateways and businessRuleTask elements: "decisionBasis" (the rule, policy, or criteria the decision is based on).
+- The startEvent: "trigger" (what starts the process), "triggerService" (the system/service delivering the trigger), "triggerDetail" (free text).
+
+Mini-examples:
+\`\`\`json
+{"type": "userTask", "id": "task1", "label": "مراجعة الطلب", "labelEn": "Review request", "labelAr": "مراجعة الطلب", "owner": "Procurement Section", "ownerRole": "R", "channel": "dmthub", "inputs": ["Purchase request form"], "outputs": ["Reviewed request"], "respList": ["Sara Al Marri — Reviewer"], "cc": ["Finance Department — budget verification"]}
+\`\`\`
+\`\`\`json
+{"type": "exclusiveGateway", "id": "gateway1", "label": "هل الطلب مكتمل؟", "labelEn": "Request complete?", "labelAr": "هل الطلب مكتمل؟", "decisionBasis": "Procurement policy section 4", "has_join": false, "branches": [{"condition": "نعم", "conditionEn": "Yes", "conditionAr": "نعم", "path": [{"type": "userTask", "id": "task2", "label": "اعتماد الطلب", "labelEn": "Approve request", "labelAr": "اعتماد الطلب"}]}, {"condition": "لا", "conditionEn": "No", "conditionAr": "لا", "path": []}]}
+\`\`\`
+\`\`\`json
+{"type": "startEvent", "id": "start", "label": "استلام الطلب", "labelEn": "Request received", "labelAr": "استلام الطلب", "trigger": "Employee submits a purchase request", "triggerService": "DMT HUB"}
+\`\`\`
+`
+
+/**
  * Reproduce create_bpmn.jinja2's rendered output: representation + examples +
  * the message-history framing. The single "\n" separators between the includes
  * and the framing match jinja's trim_blocks behaviour (the newline after each
@@ -583,8 +619,12 @@ function composeProcessCatalogSection(processCatalog: readonly CatalogProcess[])
  *
  * When a non-empty `processCatalog` is supplied, a workspace-process section is
  * inserted between the examples block and the message-history framing (see
- * {@link composeProcessCatalogSection}). With no catalog (undefined or empty) the
- * output is byte-identical to the golden jinja2 render.
+ * {@link composeProcessCatalogSection}).
+ *
+ * The {@link BILINGUAL_ORG_SECTION} is ALWAYS appended (after the catalog
+ * section when one is present, otherwise straight after the examples) — a
+ * deliberate divergence from the vendored jinja2 render: everything before and
+ * after the section remains byte-identical to that golden output.
  */
 export function composeCreateBpmn(
   messageHistory: string,
@@ -595,15 +635,17 @@ export function composeCreateBpmn(
     messageHistory +
     '\n```\n\nCreate a BPMN representation of the process described in the messages.'
 
-  if (processCatalog && processCatalog.length > 0) {
-    return (
-      BPMN_REPRESENTATION +
-      '\n' +
-      BPMN_EXAMPLES +
-      composeProcessCatalogSection(processCatalog) +
-      framing
-    )
-  }
+  const catalogSection =
+    processCatalog && processCatalog.length > 0
+      ? composeProcessCatalogSection(processCatalog)
+      : '\n'
 
-  return BPMN_REPRESENTATION + '\n' + BPMN_EXAMPLES + '\n' + framing
+  return (
+    BPMN_REPRESENTATION +
+    '\n' +
+    BPMN_EXAMPLES +
+    catalogSection +
+    BILINGUAL_ORG_SECTION +
+    framing
+  )
 }

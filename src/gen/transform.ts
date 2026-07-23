@@ -13,7 +13,15 @@
  *  - default flow id            = `{sourceRef}-{targetRef}`
  *  - inclusive branch flow id   = `{gatewayId}-{targetRef}` (passed explicitly)
  *  - `default=` attribute        = the inclusive default branch's flow id
+ *
+ * 2026-07 extension: elements and flows additionally carry an optional
+ * `orbitpm` bag — bilingual labels + DMT org-pack metadata mapped to
+ * `orbitpm:*` attribute local names (see buildOrbitpmAttrs) — read LENIENTLY
+ * from the raw IR via the shared coercers so junk org values degrade to
+ * "absent" instead of failing. Plain IRs produce no bags, keeping the emitted
+ * XML byte-identical to the golden fixtures.
  */
+import { coerceOrgString, coerceOrgStringArray, TASK_TYPES } from './ir/schema'
 
 /** A transformed element ready for XML emission. */
 export interface TransformedElement {
@@ -24,6 +32,12 @@ export interface TransformedElement {
   /** For callActivity: the referenced process id (rendered as `calledElement`). */
   called_element?: string
   default_flow?: string
+  /**
+   * Bilingual + DMT org-pack metadata, keyed by `orbitpm:*` attribute LOCAL
+   * name (already coerced, '\n'-joined for lists, empties omitted). Insertion
+   * order == emission order. Absent when the element carries none.
+   */
+  orbitpm?: Record<string, string>
   incoming: string[]
   outgoing: string[]
 }
@@ -34,6 +48,8 @@ export interface TransformedFlow {
   sourceRef: string
   targetRef: string
   condition: string | null
+  /** `orbitpm:*` attrs (nameEn/nameAr from the branch's conditionEn/conditionAr). */
+  orbitpm?: Record<string, string>
 }
 
 export interface TransformResult {
@@ -52,6 +68,70 @@ type IRElement = any
 type WorkingElement = Omit<TransformedElement, 'incoming' | 'outgoing'> & {
   incoming?: string[]
   outgoing?: string[]
+}
+
+// Which element types carry which org fields (mirrors the prompt contract).
+const ACTIVITY_TYPES: ReadonlySet<string> = new Set([...TASK_TYPES, 'callActivity'])
+const DECISION_BASIS_TYPES: ReadonlySet<string> = new Set([
+  'exclusiveGateway',
+  'inclusiveGateway',
+  'businessRuleTask'
+])
+
+/**
+ * Collect an element's bilingual/org metadata into an ordered attribute bag
+ * (key = `orbitpm:*` local name). Values pass through the lenient coercers, so
+ * junk drops silently; list fields are '\n'-joined. Returns undefined when the
+ * element carries nothing — plain IRs then emit byte-identical XML.
+ */
+function buildOrbitpmAttrs(element: IRElement): Record<string, string> | undefined {
+  const attrs: Record<string, string> = {}
+  const put = (key: string, value: unknown): void => {
+    const coerced = coerceOrgString(value)
+    if (coerced !== undefined) attrs[key] = coerced
+  }
+  const putList = (key: string, value: unknown): void => {
+    const coerced = coerceOrgStringArray(value)
+    if (coerced !== undefined) attrs[key] = coerced.join('\n')
+  }
+
+  put('nameEn', element.labelEn)
+  put('nameAr', element.labelAr)
+  if (ACTIVITY_TYPES.has(element.type)) {
+    put('owner', element.owner)
+    put('ownerRole', element.ownerRole)
+    put('channel', element.channel)
+    put('channelDetail', element.channelDetail)
+    put('kind', element.kind)
+    putList('ccList', element.cc)
+    putList('inputs', element.inputs)
+    putList('outputs', element.outputs)
+    putList('respList', element.respList)
+  }
+  if (DECISION_BASIS_TYPES.has(element.type)) {
+    put('decisionBasis', element.decisionBasis)
+  }
+  if (element.type === 'startEvent') {
+    put('trigger', element.trigger)
+    put('triggerService', element.triggerService)
+    put('triggerDetail', element.triggerDetail)
+  }
+
+  return Object.keys(attrs).length > 0 ? attrs : undefined
+}
+
+/**
+ * Bilingual names for the sequence flow created from a gateway branch:
+ * conditionEn/conditionAr -> orbitpm:nameEn/nameAr (the primary `condition`
+ * keeps flowing into the plain `name` attribute as before).
+ */
+function branchFlowOrbitpmAttrs(branch: IRElement): Record<string, string> | undefined {
+  const attrs: Record<string, string> = {}
+  const en = coerceOrgString(branch?.conditionEn)
+  const ar = coerceOrgString(branch?.conditionAr)
+  if (en !== undefined) attrs.nameEn = en
+  if (ar !== undefined) attrs.nameAr = ar
+  return Object.keys(attrs).length > 0 ? attrs : undefined
 }
 
 /**
@@ -84,7 +164,8 @@ export function transform(
     sourceRef: string,
     targetRef: string,
     flowId?: string,
-    condition?: string | null
+    condition?: string | null,
+    orbitpm?: Record<string, string>
   ): void {
     const cond: string | null = condition ?? null
     const sameEdge = flows.filter(
@@ -101,12 +182,13 @@ export function transform(
         id: `${base}-${sameEdge.length + 1}`,
         sourceRef,
         targetRef,
-        condition: cond
+        condition: cond,
+        ...(orbitpm ? { orbitpm } : {})
       })
       return
     }
     const id = flowId || `${sourceRef}-${targetRef}`
-    flows.push({ id, sourceRef, targetRef, condition: cond })
+    flows.push({ id, sourceRef, targetRef, condition: cond, ...(orbitpm ? { orbitpm } : {}) })
   }
 
   function handleExclusiveGateway(
@@ -124,7 +206,13 @@ export function transform(
         // Empty branch: connect to the branch's `next` or the following element.
         const targetRef: string | null = branch.next ?? nextElementId
         if (targetRef) {
-          addFlow(element.id, targetRef, undefined, branch.condition ?? null)
+          addFlow(
+            element.id,
+            targetRef,
+            undefined,
+            branch.condition ?? null,
+            branchFlowOrbitpmAttrs(branch)
+          )
         }
         continue
       }
@@ -140,7 +228,13 @@ export function transform(
 
       const firstElement = branchStructure.elements[0] ?? null
       if (firstElement) {
-        addFlow(element.id, firstElement.id, undefined, branch.condition)
+        addFlow(
+          element.id,
+          firstElement.id,
+          undefined,
+          branch.condition,
+          branchFlowOrbitpmAttrs(branch)
+        )
       }
     }
 
@@ -165,7 +259,13 @@ export function transform(
         const targetRef: string | null = branch.next ?? nextElementId
         if (targetRef) {
           const flowId = `${element.id}-${targetRef}`
-          addFlow(element.id, targetRef, flowId, branch.condition ?? null)
+          addFlow(
+            element.id,
+            targetRef,
+            flowId,
+            branch.condition ?? null,
+            branchFlowOrbitpmAttrs(branch)
+          )
           if (isDefault) {
             defaultFlowId = flowId
           }
@@ -185,7 +285,13 @@ export function transform(
       const firstElement = branchStructure.elements[0] ?? null
       if (firstElement) {
         const flowId = `${element.id}-${firstElement.id}`
-        addFlow(element.id, firstElement.id, flowId, branch.condition ?? null)
+        addFlow(
+          element.id,
+          firstElement.id,
+          flowId,
+          branch.condition ?? null,
+          branchFlowOrbitpmAttrs(branch)
+        )
         if (isDefault) {
           defaultFlowId = flowId
         }
@@ -247,6 +353,11 @@ export function transform(
     // non-empty string — an unlinked call activity behaves like a plain task.
     if (typeof element.calledProcess === 'string' && element.calledProcess.length > 0) {
       transformedElement.called_element = element.calledProcess
+    }
+    // Bilingual labels + org-pack metadata (leniently coerced; often absent).
+    const orbitpm = buildOrbitpmAttrs(element)
+    if (orbitpm) {
+      transformedElement.orbitpm = orbitpm
     }
     elements.push(transformedElement)
 

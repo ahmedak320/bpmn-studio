@@ -11,12 +11,13 @@ export {
   type TransformedElement,
   type TransformedFlow
 } from './transform'
-export { generateBpmnXml, BpmnXmlGenerator } from './xml'
+export { generateBpmnXml, BpmnXmlGenerator, arabicRatio, detectActiveLang } from './xml'
 export { layoutBpmn } from './layout'
 export { parseJsonLoose } from './parse'
 export {
   BPMN_REPRESENTATION,
   BPMN_EXAMPLES,
+  BILINGUAL_ORG_SECTION,
   composeCreateBpmn,
   messageHistoryToString,
   type LlmMessage,
