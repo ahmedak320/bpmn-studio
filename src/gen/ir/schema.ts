@@ -51,6 +51,25 @@ export interface BpmnTask {
   label: string
 }
 
+/**
+ * A call activity references another (already documented) process — the BPMN
+ * "call activity" element. Emitted by the model when a described step is
+ * performed according to / delegated to one of the workspace's existing
+ * processes (see the catalog section injected by composeCreateBpmn).
+ *  - `calledProcess`: id of the referenced process (rendered as the
+ *    `calledElement` XML attribute). Optional/nullable: an unlinked call
+ *    activity behaves like a plain task.
+ *  - `confidence`: the model's self-reported match strength ("high" only when
+ *    the description explicitly references that process, "low" otherwise).
+ */
+export interface BpmnCallActivity {
+  type: 'callActivity'
+  id: string
+  label: string
+  calledProcess?: string | null
+  confidence?: 'high' | 'low'
+}
+
 export interface BpmnEvent {
   type: EventType
   id: string
@@ -95,6 +114,7 @@ export interface ParallelGateway {
 
 export type BpmnElement =
   | BpmnTask
+  | BpmnCallActivity
   | BpmnEvent
   | ExclusiveGateway
   | InclusiveGateway
@@ -114,6 +134,14 @@ export const BpmnTaskSchema = z.object({
   label: z.string()
 })
 
+export const BpmnCallActivitySchema = z.object({
+  type: z.literal('callActivity'),
+  id: z.string(),
+  label: z.string(),
+  calledProcess: z.string().nullish(),
+  confidence: z.enum(['high', 'low']).optional()
+})
+
 export const BpmnEventSchema = z.object({
   type: z.enum(EVENT_TYPES),
   id: z.string(),
@@ -129,6 +157,7 @@ export const BpmnEventSchema = z.object({
 export const BpmnElementSchema: z.ZodType<BpmnElement> = z.lazy(() =>
   z.union([
     BpmnTaskSchema,
+    BpmnCallActivitySchema,
     BpmnEventSchema,
     ExclusiveGatewaySchema,
     InclusiveGatewaySchema,

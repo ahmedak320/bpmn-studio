@@ -21,6 +21,8 @@ export interface TransformedElement {
   type: string
   label: string | null
   eventDefinition?: string
+  /** For callActivity: the referenced process id (rendered as `calledElement`). */
+  called_element?: string
   default_flow?: string
   incoming: string[]
   outgoing: string[]
@@ -239,6 +241,12 @@ export function transform(
     }
     if ('eventDefinition' in element && element.eventDefinition !== undefined) {
       transformedElement.eventDefinition = element.eventDefinition
+    }
+    // A callActivity carries its linked process id through as `called_element`
+    // (mirroring the eventDefinition pass-through above); only when it is a
+    // non-empty string — an unlinked call activity behaves like a plain task.
+    if (typeof element.calledProcess === 'string' && element.calledProcess.length > 0) {
+      transformedElement.called_element = element.calledProcess
     }
     elements.push(transformedElement)
 

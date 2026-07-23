@@ -153,7 +153,7 @@ describe('ConfirmDialog (static render)', () => {
 })
 
 describe('PrintView (static render)', () => {
-  it('renders the title, folder and inlined SVG when a job is set', () => {
+  it('renders the title, folder and inlined SVG when a legacy job is set', () => {
     const html = renderToStaticMarkup(
       <PrintView job={{ svg: '<svg><rect /></svg>', title: 'Order', folder: 'Sales' }} />
     )
@@ -161,6 +161,47 @@ describe('PrintView (static render)', () => {
     expect(html).toContain('Sales')
     expect(html).toContain('<svg>')
     expect(html).toContain('orbitpm-print-root')
+    // No viewBox + no shapes → single legacy SVG container, no band wrapping.
+    expect(html).toContain('orbitpm-print-svg')
+    expect(html).not.toContain('orbitpm-print-band')
+  })
+  it('prefers processName and shows the owner line only when present', () => {
+    const html = renderToStaticMarkup(
+      <PrintView
+        job={{
+          svg: '<svg><rect /></svg>',
+          title: 'order',
+          folder: 'Sales',
+          processName: 'Order Process',
+          ownerLine: 'Owner: Jane'
+        }}
+      />
+    )
+    expect(html).toContain('Order Process')
+    expect(html).toContain('orbitpm-print-owner')
+    expect(html).toContain('Owner: Jane')
+  })
+  it('slices an enriched wide job into two or more snake-order bands', () => {
+    const shapes = Array.from({ length: 10 }, (_, i) => ({
+      x: i * 300,
+      y: 100,
+      width: 200,
+      height: 100
+    }))
+    const html = renderToStaticMarkup(
+      <PrintView
+        job={{
+          svg: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 3000 300"><g><rect /></g></svg>',
+          title: 'Wide',
+          folder: 'Sales',
+          shapes
+        }}
+      />
+    )
+    const bandCount = (html.match(/class="orbitpm-print-band"/g) ?? []).length
+    expect(bandCount).toBeGreaterThanOrEqual(2)
+    // Snake reading marker between bands.
+    expect(html).toContain('orbitpm-print-band-marker')
   })
   it('renders nothing when no job is active', () => {
     expect(renderToStaticMarkup(<PrintView job={null} />)).toBe('')

@@ -8,7 +8,7 @@
  * so the result is byte-comparable with the vendored golden fixtures:
  *  - definitions attrs: xmlns, xmlns:bpmndi, xmlns:dc, xmlns:di, id
  *  - process attrs:     id, isExecutable
- *  - element attrs:     id, name (if label), default (if default_flow)
+ *  - element attrs:     id, name (if label), calledElement (if called_element), default (if default_flow)
  *  - element children:  <incoming>… , <outgoing>… , then <eventDefinition …/>
  *  - sequenceFlow attrs: id, sourceRef, targetRef, name (if condition)
  *  - empty elements self-close as `<tag … />` (note the space, like ElementTree)
@@ -74,6 +74,9 @@ export function generateBpmnXml(
     let open = `<${element.type} id="${escapeAttr(element.id)}"`
     if (element.label) {
       open += ` name="${escapeAttr(element.label)}"`
+    }
+    if (element.called_element) {
+      open += ` calledElement="${escapeAttr(element.called_element)}"`
     }
     if (element.default_flow) {
       open += ` default="${escapeAttr(element.default_flow)}"`

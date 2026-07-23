@@ -17,6 +17,7 @@ import {
   TASK_TYPES,
   EVENT_TYPES,
   BpmnTaskSchema,
+  BpmnCallActivitySchema,
   ExclusiveGatewaySchema,
   InclusiveGatewaySchema,
   ParallelGatewaySchema
@@ -25,8 +26,14 @@ import {
 /* eslint-disable @typescript-eslint/no-explicit-any */
 type IRElement = any
 
+const CALL_ACTIVITY_TYPE = 'callActivity'
 const GATEWAY_TYPES = ['exclusiveGateway', 'inclusiveGateway', 'parallelGateway'] as const
-const SUPPORTED_ELEMENTS: string[] = [...TASK_TYPES, ...GATEWAY_TYPES, ...EVENT_TYPES]
+const SUPPORTED_ELEMENTS: string[] = [
+  ...TASK_TYPES,
+  CALL_ACTIVITY_TYPE,
+  ...GATEWAY_TYPES,
+  ...EVENT_TYPES
+]
 const TASK_TYPE_SET: ReadonlySet<string> = new Set(TASK_TYPES)
 
 function j(element: unknown): string {
@@ -102,6 +109,8 @@ export function validateElement(element: IRElement): void {
 
   if (TASK_TYPE_SET.has(element.type)) {
     validateTask(element)
+  } else if (element.type === CALL_ACTIVITY_TYPE) {
+    validateCallActivity(element)
   } else if (element.type === 'exclusiveGateway') {
     validateExclusiveGateway(element)
   } else if (element.type === 'inclusiveGateway') {
@@ -118,6 +127,19 @@ function validateTask(element: IRElement): void {
   }
   if (!BpmnTaskSchema.safeParse(element).success) {
     throw new Error(`Invalid task element: ${j(element)}`)
+  }
+}
+
+/**
+ * Validate a callActivity: label is required (mirroring the task rule);
+ * calledProcess/confidence are only checked for type by the Zod sub-schema.
+ */
+function validateCallActivity(element: IRElement): void {
+  if (!('label' in element)) {
+    throw new Error(`CallActivity element is missing a label: ${j(element)}`)
+  }
+  if (!BpmnCallActivitySchema.safeParse(element).success) {
+    throw new Error(`Invalid callActivity element: ${j(element)}`)
   }
 }
 

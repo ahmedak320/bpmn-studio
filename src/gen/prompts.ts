@@ -547,19 +547,63 @@ function capitalize(s: string): string {
   return s.charAt(0).toUpperCase() + s.slice(1).toLowerCase()
 }
 
+/** One documented workspace process, offered to the model as a link target. */
+export interface CatalogProcess {
+  id: string
+  name: string
+}
+
+/**
+ * Build the optional "Existing processes in this workspace" section that teaches
+ * the model to emit callActivity elements linking to already-documented
+ * processes. Returns a self-contained block that begins with its own
+ * "\n---\n\n" separator and ends with a trailing "\n", so it splices cleanly
+ * between BPMN_EXAMPLES and the message-history framing (which then follows with
+ * no extra separator). Only called with a non-empty catalog.
+ */
+function composeProcessCatalogSection(processCatalog: readonly CatalogProcess[]): string {
+  const entries = processCatalog.map((p) => `- ${p.id} — ${p.name}`).join('\n')
+  return (
+    '\n---\n\n# Existing processes in this workspace\n\n' +
+    "The user's workspace already contains these documented processes:\n\n" +
+    entries +
+    '\n\nLinking rules:\n' +
+    '- If a described step is performed according to, detailed in, or delegated to one of these existing processes, represent that step as a callActivity element instead of a task: {"type": "callActivity", "id": String, "label": String, "calledProcess": String, "confidence": "high" | "low"}.\n' +
+    '- calledProcess MUST be one of the ids listed above. Never invent an id.\n' +
+    '- Use "confidence": "high" ONLY when the description explicitly references that process; use "low" when the match is plausible but not explicit.\n' +
+    '- If no listed process matches a step, use a normal task element.\n'
+  )
+}
+
 /**
  * Reproduce create_bpmn.jinja2's rendered output: representation + examples +
  * the message-history framing. The single "\n" separators between the includes
  * and the framing match jinja's trim_blocks behaviour (the newline after each
  * {% include %} tag is trimmed; the blank source lines each emit one "\n").
+ *
+ * When a non-empty `processCatalog` is supplied, a workspace-process section is
+ * inserted between the examples block and the message-history framing (see
+ * {@link composeProcessCatalogSection}). With no catalog (undefined or empty) the
+ * output is byte-identical to the golden jinja2 render.
  */
-export function composeCreateBpmn(messageHistory: string): string {
-  return (
-    BPMN_REPRESENTATION +
-    '\n' +
-    BPMN_EXAMPLES +
-    '\n---\n\nThe following is the message history between the user and an AI assistant.\n\nMessage history:\n```\n' +
+export function composeCreateBpmn(
+  messageHistory: string,
+  processCatalog?: readonly CatalogProcess[]
+): string {
+  const framing =
+    '---\n\nThe following is the message history between the user and an AI assistant.\n\nMessage history:\n```\n' +
     messageHistory +
     '\n```\n\nCreate a BPMN representation of the process described in the messages.'
-  )
+
+  if (processCatalog && processCatalog.length > 0) {
+    return (
+      BPMN_REPRESENTATION +
+      '\n' +
+      BPMN_EXAMPLES +
+      composeProcessCatalogSection(processCatalog) +
+      framing
+    )
+  }
+
+  return BPMN_REPRESENTATION + '\n' + BPMN_EXAMPLES + '\n' + framing
 }

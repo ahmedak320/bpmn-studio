@@ -41,6 +41,13 @@ export interface GenerateResult {
 export interface GenerateOptions {
   /** Max attempts of the conversational repair loop (default 3). */
   maxRetries?: number
+  /**
+   * Optional catalog of the workspace's already-documented processes. When
+   * provided (non-empty), the prompt gains a section teaching the model to emit
+   * callActivity elements linking to these processes; forwarded verbatim to
+   * {@link composeCreateBpmn}.
+   */
+  processCatalog?: Array<{ id: string; name: string }>
 }
 
 function errMessage(error: unknown): string {
@@ -101,7 +108,7 @@ export async function generateFromDescription(
   const baseHistory: LlmMessage[] =
     history && history.length > 0 ? history : [{ role: 'user', content: description }]
 
-  const prompt = composeCreateBpmn(messageHistoryToString(baseHistory))
+  const prompt = composeCreateBpmn(messageHistoryToString(baseHistory), options?.processCatalog)
   const messages: LlmMessage[] = [{ role: 'user', content: prompt }]
 
   let attempts = 0

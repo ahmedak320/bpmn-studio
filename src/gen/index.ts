@@ -19,7 +19,8 @@ export {
   BPMN_EXAMPLES,
   composeCreateBpmn,
   messageHistoryToString,
-  type LlmMessage
+  type LlmMessage,
+  type CatalogProcess
 } from './prompts'
 export {
   generateFromDescription,

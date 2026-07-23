@@ -1,0 +1,79 @@
+// The "show org-pack styling" preference (a single browser-local flag) plus the
+// live re-render helper. Storage is wrapped in try/catch exactly like
+// lite/src/ai/keys.ts — a browser page has no vault and localStorage can throw
+// in private-mode / disabled-storage, in which case styling defaults to ON.
+
+const KEY = 'orbitpm.lite.orgStyling'
+
+interface RefreshElement {
+  type?: string
+  waypoints?: unknown
+}
+
+interface ElementRegistryLike {
+  getAll(): RefreshElement[]
+  getGraphics(element: RefreshElement): unknown
+}
+
+interface GraphicsFactoryLike {
+  update(type: 'shape' | 'connection', element: RefreshElement, gfx: unknown): void
+}
+
+interface RefreshModeler {
+  get(service: 'elementRegistry'): ElementRegistryLike
+  get(service: 'graphicsFactory'): GraphicsFactoryLike
+}
+
+/** Org styling is ON by default: unset, or any storage failure, reads as true. */
+export function isOrgStylingOn(): boolean {
+  try {
+    const raw = localStorage.getItem(KEY)
+    if (raw == null) return true
+    return raw !== 'false' && raw !== '0'
+  } catch {
+    return true
+  }
+}
+
+export function setOrgStyling(on: boolean): void {
+  try {
+    localStorage.setItem(KEY, on ? 'true' : 'false')
+  } catch {
+    /* ignore — private mode / disabled storage */
+  }
+}
+
+/**
+ * Force every shape's graphics to be re-drawn so the org renderer re-evaluates
+ * `canRender` against the just-toggled flag. `graphicsFactory.update('shape',
+ * …)` re-runs the render pipeline for one element. The root process/collab and
+ * connections are skipped; every step is defensively wrapped so a single
+ * mis-shaped element can't abort the sweep.
+ */
+export function refreshOrgStyling(modeler: RefreshModeler): void {
+  let registry: ElementRegistryLike
+  let graphicsFactory: GraphicsFactoryLike
+  try {
+    registry = modeler.get('elementRegistry')
+    graphicsFactory = modeler.get('graphicsFactory')
+  } catch {
+    return
+  }
+  let elements: RefreshElement[]
+  try {
+    elements = registry.getAll()
+  } catch {
+    return
+  }
+  for (const el of elements) {
+    const type = el.type
+    if (el.waypoints) continue
+    if (typeof type !== 'string' || !type.startsWith('bpmn:')) continue
+    if (type === 'bpmn:Process') continue
+    try {
+      graphicsFactory.update('shape', el, registry.getGraphics(el))
+    } catch {
+      /* tolerate the root / label / any element without live graphics */
+    }
+  }
+}
