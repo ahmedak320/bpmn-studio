@@ -1,16 +1,21 @@
 import { describe, it, expect, vi, afterEach } from 'vitest'
 import {
   planDecorations,
+  planMissingBadge,
   canRenderOrg,
   prepareListRows,
   listBoxHeight,
   listBoxWidth,
   stackBelow,
   isDecisionBasisType,
+  relativeLabelBox,
+  removeStockSubProcessMarker,
   OrgRenderer,
   OrgRenderModule,
-  type Decoration
+  type Decoration,
+  type MarkerDomLike
 } from '../orgRenderer'
+import { OrgDecorSync } from '../orgDecorSync'
 import { orbitpmModdleDescriptor, ORG_ATTR_NAMES } from '../orbitpmModdle'
 import { PALETTE } from '../palette'
 import { t } from '../../i18n'
@@ -169,6 +174,41 @@ describe('planDecorations', () => {
   })
 })
 
+// --- eventStyle: start/end events restyled even when bare -------------------
+
+describe('planDecorations — eventStyle', () => {
+  it('a bare StartEvent gets exactly the green restyle (stroke width 3)', () => {
+    const d = planDecorations({}, 'bpmn:StartEvent', 36, 36)
+    expect(d).toHaveLength(1)
+    expect(d[0]).toEqual({
+      kind: 'eventStyle',
+      fill: PALETTE.startFill,
+      stroke: PALETTE.startBorder,
+      strokeWidth: 3
+    })
+  })
+
+  it('a bare EndEvent gets exactly the red restyle (stroke width 4)', () => {
+    const d = planDecorations({}, 'bpmn:EndEvent', 36, 36)
+    expect(d).toHaveLength(1)
+    expect(d[0]).toEqual({
+      kind: 'eventStyle',
+      fill: PALETTE.endFill,
+      stroke: PALETTE.endBorder,
+      strokeWidth: 4
+    })
+  })
+
+  it('is emitted FIRST, alongside other decorations, and never on other types', () => {
+    const d = planDecorations({ trigger: 'manual' }, 'bpmn:StartEvent', 36, 36)
+    expect(d[0].kind).toBe('eventStyle')
+    expect(byKind(d, 'tag')).toHaveLength(1)
+    for (const type of ['bpmn:Task', 'bpmn:ExclusiveGateway', 'bpmn:IntermediateThrowEvent', 'bpmn:TextAnnotation']) {
+      expect(byKind(planDecorations({}, type, 100, 80), 'eventStyle'), type).toHaveLength(0)
+    }
+  })
+})
+
 // --- list-row preparation ----------------------------------------------------
 
 describe('prepareListRows', () => {
@@ -219,58 +259,74 @@ describe('listBox geometry helpers', () => {
 // --- below-shape stacking (pure) --------------------------------------------
 
 /** Vertical interval consumed by each stacked block, for overlap assertions. */
-function stackIntervals(layout: ReturnType<typeof stackBelow>, respRows: number): Array<[number, number]> {
+function stackIntervals(
+  layout: ReturnType<typeof stackBelow>,
+  respRows: number,
+  ccRows = 0
+): Array<[number, number]> {
   const intervals: Array<[number, number]> = []
   if (layout.ccSubLabelY !== undefined) intervals.push([layout.ccSubLabelY - 9, layout.ccSubLabelY + 4])
   if (layout.ownerY !== undefined) intervals.push([layout.ownerY, layout.ownerY + 20])
   if (layout.respY !== undefined) intervals.push([layout.respY, layout.respY + listBoxHeight(respRows)])
+  if (layout.ccY !== undefined) intervals.push([layout.ccY, layout.ccY + listBoxHeight(ccRows)])
   if (layout.basisY !== undefined) intervals.push([layout.basisY, layout.basisY + 18])
   return intervals
 }
 
 describe('stackBelow', () => {
-  it('reproduces the legacy offsets exactly', () => {
-    // owner only -> chip at height+8
-    expect(stackBelow({ height: 80, ccSubLabel: false, owner: true, respRows: 0, basis: false }).ownerY).toBe(88)
-    // cc sub-label + owner -> label baseline at height+12, chip at height+24
+  it('pins the stack offsets (12px gaps)', () => {
+    // owner only -> chip at height+12
+    expect(stackBelow({ height: 80, ccSubLabel: false, owner: true, respRows: 0, basis: false }).ownerY).toBe(92)
+    // cc sub-label + owner -> label baseline at height+12, chip at height+28
     const both = stackBelow({ height: 80, ccSubLabel: true, owner: true, respRows: 0, basis: false })
     expect(both.ccSubLabelY).toBe(92)
-    expect(both.ownerY).toBe(104)
+    expect(both.ownerY).toBe(108)
   })
 
-  it('stacks resp list under the owner chip and the basis tag last', () => {
-    const layout = stackBelow({ height: 80, ccSubLabel: false, owner: true, respRows: 3, basis: true })
-    expect(layout.ownerY).toBe(88)
-    expect(layout.respY).toBe(88 + 20 + 8) // chip bottom + gap
-    expect(layout.basisY).toBe(116 + listBoxHeight(3) + 8)
+  it('stacks resp list under the owner chip, then the cc list, and the basis tag last', () => {
+    const layout = stackBelow({ height: 80, ccSubLabel: false, owner: true, respRows: 3, ccRows: 2, basis: true })
+    expect(layout.ownerY).toBe(92)
+    expect(layout.respY).toBe(92 + 20 + 12) // chip bottom + gap
+    expect(layout.ccY).toBe(124 + listBoxHeight(3) + 12)
+    expect(layout.basisY).toBe(layout.ccY! + listBoxHeight(2) + 12)
     expect(layout.bottom).toBe(layout.basisY! + 18)
   })
 
-  it('never overlaps for ANY combination of the four blocks', () => {
+  it('never overlaps for ANY combination of the five blocks', () => {
     const bools = [false, true] as const
     for (const ccSubLabel of bools) {
       for (const owner of bools) {
         for (const respRows of [0, 3] as const) {
-          for (const basis of bools) {
-            const layout = stackBelow({ height: 80, ccSubLabel, owner, respRows, basis })
-            // presence exactly mirrors the flags
-            expect(layout.ccSubLabelY !== undefined).toBe(ccSubLabel)
-            expect(layout.ownerY !== undefined).toBe(owner)
-            expect(layout.respY !== undefined).toBe(respRows > 0)
-            expect(layout.basisY !== undefined).toBe(basis)
-            // every block sits fully below the shape and below its predecessor
-            const intervals = stackIntervals(layout, respRows)
-            let previousEnd = 80
-            for (const [start, end] of intervals) {
-              expect(start).toBeGreaterThan(80)
-              expect(start).toBeGreaterThanOrEqual(previousEnd)
-              previousEnd = end
+          for (const ccRows of [0, 2] as const) {
+            for (const basis of bools) {
+              const layout = stackBelow({ height: 80, ccSubLabel, owner, respRows, ccRows, basis })
+              // presence exactly mirrors the flags
+              expect(layout.ccSubLabelY !== undefined).toBe(ccSubLabel)
+              expect(layout.ownerY !== undefined).toBe(owner)
+              expect(layout.respY !== undefined).toBe(respRows > 0)
+              expect(layout.ccY !== undefined).toBe(ccRows > 0)
+              expect(layout.basisY !== undefined).toBe(basis)
+              // every block sits fully below the shape and below its predecessor
+              const intervals = stackIntervals(layout, respRows, ccRows)
+              let previousEnd = 80
+              for (const [start, end] of intervals) {
+                expect(start).toBeGreaterThan(80)
+                expect(start).toBeGreaterThanOrEqual(previousEnd)
+                previousEnd = end
+              }
+              expect(layout.bottom).toBe(intervals.length ? previousEnd : 80)
             }
-            expect(layout.bottom).toBe(intervals.length ? previousEnd : 80)
           }
         }
       }
     }
+  })
+
+  it('legacy 4-block calls (no ccRows) still type-check and stack identically', () => {
+    const layout = stackBelow({ height: 80, ccSubLabel: false, owner: true, respRows: 2, basis: true })
+    expect(layout.ccY).toBeUndefined()
+    expect(layout.respY).toBe(124)
+    expect(layout.basisY).toBe(124 + listBoxHeight(2) + 12)
   })
 })
 
@@ -280,8 +336,8 @@ function listBoxes(d: Decoration[]): Extract<Decoration, { kind: 'listBox' }>[] 
   return d.filter((x): x is Extract<Decoration, { kind: 'listBox' }> => x.kind === 'listBox')
 }
 
-describe('planDecorations — inputs list (left, teal)', () => {
-  it('renders a titled teal list box strictly LEFT of an activity', () => {
+describe('planDecorations — inputs list (teal)', () => {
+  it('horizontal (default): renders a titled teal list box ABOVE the activity, bottom at -30', () => {
     const d = planDecorations({ inputs: 'Form A\nCustomer file' }, 'bpmn:Task', 100, 80)
     const boxes = listBoxes(d)
     expect(boxes).toHaveLength(1)
@@ -292,9 +348,21 @@ describe('planDecorations — inputs list (left, teal)', () => {
     expect(box.stroke).toBe(PALETTE.inputBorder)
     expect(box.textColor).toBe(PALETTE.inputText)
     expect(box.personGlyph).toBe(false)
-    // strictly left of the shape with a 12px gap
+    // left-aligned above the shape, bottom edge pinned at y = -30 — clear of
+    // the channel tag (-22..-4), trigger tag (-26..-8) and badge (-20..-4)
+    expect(box.x).toBe(0)
+    expect(box.y + box.h).toBe(-30)
+    expect(box.h).toBe(listBoxHeight(2))
+  })
+
+  it('vertical orientation: renders strictly LEFT of the activity with a 12px gap', () => {
+    const d = planDecorations({ inputs: 'Form A\nCustomer file' }, 'bpmn:Task', 100, 80, {
+      orientation: 'vertical'
+    })
+    const box = listBoxes(d)[0]
     expect(box.x).toBeLessThan(0)
     expect(box.x + box.w).toBe(-12)
+    expect(box.y).toBe(0)
     expect(box.h).toBe(listBoxHeight(2))
   })
 
@@ -311,8 +379,8 @@ describe('planDecorations — inputs list (left, teal)', () => {
   })
 })
 
-describe('planDecorations — CC list (right, pink)', () => {
-  it('renders a titled pink list box strictly RIGHT of the shape, independent of kind', () => {
+describe('planDecorations — CC list (pink)', () => {
+  it('horizontal (default): joins the below-shape stack, independent of kind', () => {
     const d = planDecorations({ ccList: 'Legal\nFinance' }, 'bpmn:Task', 100, 80)
     const boxes = listBoxes(d)
     expect(boxes).toHaveLength(1)
@@ -321,10 +389,37 @@ describe('planDecorations — CC list (right, pink)', () => {
     expect(box.rows).toEqual(['Legal', 'Finance'])
     expect(box.fill).toBe(PALETTE.ccFill)
     expect(box.stroke).toBe(PALETTE.ccBorder)
-    expect(box.x).toBe(100 + 12)
+    // alone in the stack: first block at height + 12
+    expect(box.x).toBe(0)
+    expect(box.y).toBe(92)
     // no cc recolour and no legacy sub-label without kind==='cc'
     expect(byKind(d, 'ccStyle')).toHaveLength(0)
     expect(byKind(d, 'subLabel')).toHaveLength(0)
+  })
+
+  it('horizontal: stacks AFTER the responsible list and BEFORE the basis tag', () => {
+    const d = planDecorations(
+      { owner: 'Ahmed', respList: 'Sara\nOmar', ccList: 'Legal', decisionBasis: 'Matrix' },
+      'bpmn:BusinessRuleTask',
+      100,
+      80
+    )
+    const boxes = listBoxes(d)
+    const respBox = boxes.find((b) => b.personGlyph)!
+    const ccBox = boxes.find((b) => b.fill === PALETTE.ccFill)!
+    const basisTag = byKind(d, 'tag').find((x) => x.kind === 'tag' && x.fill === PALETTE.basisFill)
+    if (!basisTag || basisTag.kind !== 'tag') throw new Error('expected basis tag')
+    expect(ccBox.y).toBeGreaterThanOrEqual(respBox.y + respBox.h + 12)
+    expect(basisTag.y).toBeGreaterThanOrEqual(ccBox.y + ccBox.h + 12)
+  })
+
+  it('vertical orientation: renders strictly RIGHT of the shape with a 12px gap', () => {
+    const d = planDecorations({ ccList: 'Legal\nFinance' }, 'bpmn:Task', 100, 80, {
+      orientation: 'vertical'
+    })
+    const box = listBoxes(d)[0]
+    expect(box.x).toBe(100 + 12)
+    expect(box.y).toBe(0)
   })
 
   it('with kind==="cc" keeps the recolour but SUPPRESSES the legacy sub-label', () => {
@@ -341,8 +436,8 @@ describe('planDecorations — CC list (right, pink)', () => {
   })
 })
 
-describe('planDecorations — responsible list (below, beige, person glyphs)', () => {
-  it('renders alone at the owner-chip slot (height+8)', () => {
+describe('planDecorations — responsible list (beige, person glyphs)', () => {
+  it('renders alone at the owner-chip slot (height+12)', () => {
     const d = planDecorations({ respList: 'Sara — Approver\nOmar' }, 'bpmn:Task', 100, 80)
     const box = listBoxes(d)[0]
     expect(box.title).toBe(t('canvas.responsible'))
@@ -352,16 +447,46 @@ describe('planDecorations — responsible list (below, beige, person glyphs)', (
     expect(box.textColor).toBe(PALETTE.ownerText)
     expect(box.personGlyph).toBe(true)
     expect(box.x).toBe(0)
-    expect(box.y).toBe(88)
+    expect(box.y).toBe(92)
   })
 
-  it('stacks below the owner chip when both exist; owner chip stays at height+8', () => {
+  it('stacks below the owner chip when both exist; owner chip stays at height+12', () => {
     const d = planDecorations({ owner: 'Ahmed', respList: 'Sara\nOmar' }, 'bpmn:Task', 100, 80)
     const owner = byKind(d, 'ownerBox')[0]
     if (owner.kind !== 'ownerBox') throw new Error('expected ownerBox')
-    expect(owner.y).toBe(88)
+    expect(owner.y).toBe(92)
     const box = listBoxes(d)[0]
-    expect(box.y).toBe(88 + 20 + 8)
+    expect(box.y).toBe(92 + 20 + 12)
+  })
+
+  it('an external label below the shape pushes the whole stack under the label', () => {
+    const labelBox = { x: 5, y: 87, w: 90, h: 20 } // default 90x20 label at h+7
+    const d = planDecorations({ owner: 'Ahmed', respList: 'Sara\nOmar' }, 'bpmn:Task', 100, 80, {
+      labelBox
+    })
+    const owner = byKind(d, 'ownerBox')[0]
+    if (owner.kind !== 'ownerBox') throw new Error('expected ownerBox')
+    // base = label bottom (107) -> chip at 119, resp under it
+    expect(owner.y).toBe(119)
+    expect(listBoxes(d)[0].y).toBe(119 + 20 + 12)
+  })
+
+  it('vertical orientation: joins the right-side stack next to the shape', () => {
+    const d = planDecorations({ owner: 'Ahmed', respList: 'Sara\nOmar' }, 'bpmn:Task', 100, 80, {
+      orientation: 'vertical'
+    })
+    const owner = byKind(d, 'ownerBox')[0]
+    if (owner.kind !== 'ownerBox') throw new Error('expected ownerBox')
+    expect(owner.x).toBe(112)
+    expect(owner.y).toBe(0)
+    const box = listBoxes(d)[0]
+    expect(box.x).toBe(112)
+    expect(box.y).toBe(20 + 8) // chip bottom + side gap
+    // RACI chip keeps riding the chip's top-left corner
+    const raci = byKind(d, 'raci')[0]
+    if (raci.kind !== 'raci') throw new Error('expected raci')
+    expect(raci.x).toBe(112)
+    expect(raci.y).toBe(3)
   })
 })
 
@@ -385,7 +510,7 @@ describe('planDecorations — decision basis (amber tag)', () => {
       expect(tag.detail).toBe('Delegation matrix §3')
       expect(tag.fill).toBe(PALETTE.basisFill)
       expect(tag.stroke).toBe(PALETTE.basisBorder)
-      expect(tag.y).toBe(50 + 8) // below the shape
+      expect(tag.y).toBe(50 + 12) // below the shape
     }
   })
 
@@ -409,39 +534,36 @@ describe('planDecorations — decision basis (amber tag)', () => {
 })
 
 describe('planDecorations — everything at once stays overlap-free', () => {
-  it('cc+ccList+owner+respList+basis+inputs+channel on a business-rule task', () => {
-    const d = planDecorations(
-      {
-        kind: 'cc',
-        ccTo: 'Legal',
-        ccList: 'Legal\nFinance',
-        owner: 'Ahmed Alkatheeri',
-        ownerRole: 'A',
-        respList: 'Sara — Approver\nOmar\nZayed',
-        decisionBasis: 'Delegation matrix',
-        inputs: 'Form A\nCustomer file',
-        channel: 'dmthub',
-        channelDetail: 'inbox'
-      },
-      'bpmn:BusinessRuleTask',
-      100,
-      80
-    )
+  const EVERYTHING = {
+    kind: 'cc',
+    ccTo: 'Legal',
+    ccList: 'Legal\nFinance',
+    owner: 'Ahmed Alkatheeri',
+    ownerRole: 'A',
+    respList: 'Sara — Approver\nOmar\nZayed',
+    decisionBasis: 'Delegation matrix',
+    inputs: 'Form A\nCustomer file',
+    channel: 'dmthub',
+    channelDetail: 'inbox'
+  }
 
-    // side boxes: inputs strictly left, CC strictly right
+  it('horizontal: inputs above; owner, resp, cc, basis stack below in order', () => {
+    const d = planDecorations(EVERYTHING, 'bpmn:BusinessRuleTask', 100, 80)
+
     const boxes = listBoxes(d)
     const inputBox = boxes.find((b) => b.fill === PALETTE.inputFill)!
     const ccBox = boxes.find((b) => b.fill === PALETTE.ccFill)!
     const respBox = boxes.find((b) => b.personGlyph)!
-    expect(inputBox.x + inputBox.w).toBeLessThan(0)
-    expect(ccBox.x).toBeGreaterThanOrEqual(100)
-    expect(respBox.x).toBe(0)
+    // inputs above the shape, bottom pinned at -30
+    expect(inputBox.x).toBe(0)
+    expect(inputBox.y + inputBox.h).toBe(-30)
 
     // legacy sub-label suppressed by the CC list
     expect(byKind(d, 'subLabel')).toHaveLength(0)
     expect(byKind(d, 'ccStyle')).toHaveLength(1)
 
-    // below-shape blocks are disjoint and ordered: owner chip, resp list, basis tag
+    // below-shape blocks are disjoint and ordered:
+    // owner chip, resp list, cc list, basis tag
     const owner = byKind(d, 'ownerBox')[0]
     if (owner.kind !== 'ownerBox') throw new Error('expected ownerBox')
     const basisTag = byKind(d, 'tag').find((tag) => tag.kind === 'tag' && tag.fill === PALETTE.basisFill)
@@ -449,6 +571,7 @@ describe('planDecorations — everything at once stays overlap-free', () => {
     const blocks: Array<[number, number]> = [
       [owner.y, owner.y + owner.h],
       [respBox.y, respBox.y + respBox.h],
+      [ccBox.y, ccBox.y + ccBox.h],
       [basisTag.y, basisTag.y + basisTag.h]
     ]
     let previousEnd = 80
@@ -457,6 +580,7 @@ describe('planDecorations — everything at once stays overlap-free', () => {
       expect(start).toBeGreaterThanOrEqual(previousEnd)
       previousEnd = end
     }
+    for (const block of [owner, respBox, ccBox]) expect(block.x).toBe(0)
 
     // the RACI chip stays contained inside the owner chip's vertical extent
     const raci = byKind(d, 'raci')[0]
@@ -468,6 +592,29 @@ describe('planDecorations — everything at once stays overlap-free', () => {
     const channelTag = byKind(d, 'tag').find((tag) => tag.kind === 'tag' && tag.fill === PALETTE.tagDmthubFill)
     if (!channelTag || channelTag.kind !== 'tag') throw new Error('expected channel tag')
     expect(channelTag.y).toBeLessThan(0)
+  })
+
+  it('vertical: inputs left; owner, resp, cc, basis stack to the right in order', () => {
+    const d = planDecorations(EVERYTHING, 'bpmn:BusinessRuleTask', 100, 80, {
+      orientation: 'vertical'
+    })
+
+    const boxes = listBoxes(d)
+    const inputBox = boxes.find((b) => b.fill === PALETTE.inputFill)!
+    const ccBox = boxes.find((b) => b.fill === PALETTE.ccFill)!
+    const respBox = boxes.find((b) => b.personGlyph)!
+    expect(inputBox.x + inputBox.w).toBe(-12)
+
+    const owner = byKind(d, 'ownerBox')[0]
+    if (owner.kind !== 'ownerBox') throw new Error('expected ownerBox')
+    const basisTag = byKind(d, 'tag').find((tag) => tag.kind === 'tag' && tag.fill === PALETTE.basisFill)
+    if (!basisTag || basisTag.kind !== 'tag') throw new Error('expected basis tag')
+    // all side blocks share x = width + 12 and stack downward from y = 0
+    for (const block of [owner, respBox, ccBox, basisTag]) expect(block.x).toBe(112)
+    expect(owner.y).toBe(0)
+    expect(respBox.y).toBe(owner.y + owner.h + 8)
+    expect(ccBox.y).toBe(respBox.y + respBox.h + 8)
+    expect(basisTag.y).toBe(ccBox.y + ccBox.h + 8)
   })
 })
 
@@ -523,6 +670,109 @@ describe('canRenderOrg', () => {
   })
 })
 
+// --- missingBadge carries machine-readable categories ------------------------
+
+describe('planMissingBadge missing[] payload', () => {
+  it('pins the ordered category array (stamped as data-org-missing)', () => {
+    const badge = planMissingBadge({}, 'bpmn:Task', 100)
+    if (!badge || badge.kind !== 'missingBadge') throw new Error('expected missingBadge')
+    expect(badge.missing).toEqual(['owner', 'inputs', 'outputs'])
+    const single = planMissingBadge({}, 'bpmn:StartEvent', 36)
+    if (!single || single.kind !== 'missingBadge') throw new Error('expected missingBadge')
+    expect(single.missing).toEqual(['trigger'])
+  })
+})
+
+// --- relativeLabelBox --------------------------------------------------------
+
+describe('relativeLabelBox', () => {
+  it('translates absolute label bounds into shape-local coords', () => {
+    const element: OrgElementLike = {
+      x: 200,
+      y: 300,
+      width: 100,
+      height: 80,
+      label: { x: 205, y: 387, width: 90, height: 20 }
+    }
+    expect(relativeLabelBox(element)).toEqual({ x: 5, y: 87, w: 90, h: 20 })
+  })
+
+  it('returns null without a label or with incomplete geometry', () => {
+    expect(relativeLabelBox({ x: 0, y: 0 })).toBeNull()
+    expect(relativeLabelBox({ label: { x: 1, y: 2, width: 90, height: 20 } })).toBeNull()
+    expect(
+      relativeLabelBox({
+        x: 0,
+        y: 0,
+        label: { y: 2, width: 90, height: 20 } as unknown as NonNullable<OrgElementLike['label']>
+      })
+    ).toBeNull()
+  })
+})
+
+// --- removeStockSubProcessMarker (structural DOM fakes) ----------------------
+
+interface FakeMarkerNode {
+  tagName?: string
+  removed: boolean
+  getAttribute?(n: string): string | null
+  remove(): void
+  previousElementSibling?: FakeMarkerNode | null
+}
+
+function fakeNode(tagName: string, attrs: Record<string, string> = {}): FakeMarkerNode {
+  const node: FakeMarkerNode = {
+    tagName,
+    removed: false,
+    getAttribute: (n: string) => attrs[n] ?? null,
+    remove() {
+      node.removed = true
+    }
+  }
+  return node
+}
+
+describe('removeStockSubProcessMarker', () => {
+  it('removes the marker path AND its adjacent 14x14 rect, returns true', () => {
+    const rect = fakeNode('rect', { width: '14' })
+    const path = fakeNode('path', { 'data-marker': 'sub-process' })
+    path.previousElementSibling = rect
+    const visual: MarkerDomLike = {
+      querySelector: (sel: string) => (sel === 'path[data-marker="sub-process"]' ? path : null)
+    }
+    expect(removeStockSubProcessMarker(visual)).toBe(true)
+    expect(path.removed).toBe(true)
+    expect(rect.removed).toBe(true)
+  })
+
+  it('guards the sibling removal: wrong tag or wrong width is left alone', () => {
+    for (const sibling of [fakeNode('circle'), fakeNode('rect', { width: '99' }), null]) {
+      const path = fakeNode('path', { 'data-marker': 'sub-process' })
+      path.previousElementSibling = sibling
+      const visual: MarkerDomLike = { querySelector: () => path }
+      expect(removeStockSubProcessMarker(visual)).toBe(true)
+      expect(path.removed).toBe(true)
+      if (sibling) expect(sibling.removed).toBe(false)
+    }
+  })
+
+  it('returns false when no marker exists (expanded sub-process, plain task)', () => {
+    expect(removeStockSubProcessMarker({ querySelector: () => null })).toBe(false)
+  })
+
+  it('tolerates non-DOM inputs (node test environment) without throwing', () => {
+    expect(removeStockSubProcessMarker({} as MarkerDomLike)).toBe(false)
+    expect(removeStockSubProcessMarker(null as unknown as MarkerDomLike)).toBe(false)
+    expect(
+      removeStockSubProcessMarker({
+        querySelector: () => {
+          throw new Error('boom')
+        }
+      })
+    ).toBe(false)
+  })
+})
+
 // --- OrgRenderer instance (fake eventBus — never a real one) ----------------
 
 describe('OrgRenderer.canRender wires the settings flag', () => {
@@ -571,10 +821,28 @@ describe('OrgRenderer.canRender wires the settings flag', () => {
 // --- DI module shape --------------------------------------------------------
 
 describe('OrgRenderModule', () => {
-  it('registers orgRenderer as a type-injected service', () => {
-    expect(OrgRenderModule.__init__).toEqual(['orgRenderer'])
+  it('registers orgDecorSync + orgRenderer as type-injected services', () => {
+    expect(OrgRenderModule.__init__).toEqual(['orgDecorSync', 'orgRenderer'])
     expect(OrgRenderModule.orgRenderer[0]).toBe('type')
     expect(OrgRenderModule.orgRenderer[1]).toBe(OrgRenderer)
-    expect(OrgRenderer.$inject).toEqual(['eventBus', 'bpmnRenderer'])
+    expect(OrgRenderModule.orgDecorSync[0]).toBe('type')
+    expect(OrgRenderModule.orgDecorSync[1]).toBe(OrgDecorSync)
+    expect(OrgRenderer.$inject).toEqual(['eventBus', 'bpmnRenderer', 'orgDecorSync'])
+    expect(OrgDecorSync.$inject).toEqual(['eventBus', 'elementRegistry', 'graphicsFactory'])
+  })
+
+  it('OrgRenderer asks orgDecorSync for the orientation on every drawShape', () => {
+    const sentinel = { tagName: 'g' } as unknown as SVGElement
+    const bpmnRenderer = { drawShape: vi.fn(() => sentinel), drawConnection: vi.fn() }
+    const getOrientation = vi.fn(() => 'vertical' as const)
+    const renderer = new OrgRenderer({ on: vi.fn() }, bpmnRenderer, { getOrientation })
+    const element: OrgElementLike = {
+      type: 'bpmn:Task',
+      width: 100,
+      height: 80,
+      businessObject: { $type: 'bpmn:Task', $attrs: {} }
+    }
+    renderer.drawShape({} as unknown as SVGElement, element)
+    expect(getOrientation).toHaveBeenCalled()
   })
 })

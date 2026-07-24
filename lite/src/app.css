@@ -166,3 +166,93 @@ button {
   background: var(--orbitpm-hover);
   color: var(--orbitpm-accent);
 }
+
+/* Right side pane inside the editor: the Details card stacked above the
+   bpmn-js properties panel. Lives inside .orbitpm-editor, so the editor-scoped
+   variables resolve. The two-class selector below beats the shared
+   single-class .orbitpm-editor__properties rule (desktop EditorTab.css)
+   regardless of bundle order; the pane wrapper now owns the width/border while
+   the inner properties div stretches to fill. display (flex/none) comes from
+   the inline propsOpen toggle. */
+.orbitpm-lite-sidepane {
+  flex: 0 0 auto;
+  flex-direction: column;
+  min-height: 0;
+  width: 300px;
+  min-width: 240px;
+  max-width: 560px;
+  border-left: 1px solid var(--orbitpm-editor-border);
+  background: var(--orbitpm-editor-panel-bg);
+}
+.orbitpm-lite-sidepane .orbitpm-editor__properties {
+  flex: 1 1 auto;
+  min-height: 0;
+  min-width: 0;
+  max-width: none;
+  border-left: none;
+  overflow: auto;
+}
+
+/* Compact live "Details" card (org/DetailsCard.tsx) at the top of the side
+   pane — capped height so the properties panel below stays usable. */
+.orbitpm-lite-details-card {
+  flex: 0 0 auto;
+  max-height: 45%;
+  overflow-y: auto;
+  border-bottom: 1px solid var(--orbitpm-editor-border);
+  padding: 0.6rem 0.7rem;
+  font-size: 12.5px;
+}
+
+/* Floating canvas tooltip (editor/canvasDecor.ts). Position-critical styles
+   (fixed/pointer-events/white-space) are ALSO set inline by the installer —
+   this class is the cosmetic layer. Root-level variables, not editor-scoped
+   ones: the tooltip host is the editor root but position:fixed renders in
+   viewport space, and these resolve everywhere. */
+.orbitpm-canvas-tooltip {
+  position: fixed;
+  z-index: 4000;
+  max-width: 260px;
+  padding: 6px 9px;
+  border-radius: 8px;
+  font-size: 12px;
+  line-height: 1.45;
+  background: var(--orbitpm-panel-bg);
+  color: var(--orbitpm-fg);
+  border: 1px solid var(--orbitpm-border);
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.18);
+  pointer-events: none;
+  white-space: pre-line;
+}
+
+/* The missing-info badge is clickable (opens Step details pre-highlighted). */
+.orbitpm-editor .orbitpm-missing-badge {
+  cursor: pointer;
+}
+
+.orbitpm-editor .orbitpm-missing-badge,
+.orbitpm-editor .orbitpm-sub-chip {
+  pointer-events: all;
+}
+
+/* Pane drag handle (common/PaneResizer.tsx): a slim hit area with a 1px
+   center line; hover/drag tint it with the accent. flex/cursor/touch-action
+   are also inlined by the component (it cannot function without them). */
+.orbitpm-lite-resizer {
+  flex: 0 0 6px;
+  cursor: col-resize;
+  touch-action: none;
+  background: transparent;
+  position: relative;
+}
+.orbitpm-lite-resizer::after {
+  content: '';
+  position: absolute;
+  inset: 0 auto 0 50%;
+  width: 1px;
+  background: var(--orbitpm-border);
+}
+.orbitpm-lite-resizer:hover,
+.orbitpm-lite-resizer--dragging {
+  background: color-mix(in srgb, var(--orbitpm-accent, #157347) 18%, transparent);
+}

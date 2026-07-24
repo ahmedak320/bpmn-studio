@@ -1,5 +1,13 @@
 import { describe, it, expect } from 'vitest'
-import { collectOwners, filterOwners, type OwnerEntry } from '../ownersIndex'
+import {
+  collectOwners,
+  filterOwners,
+  mergeOwners,
+  ownerAdditionsFromValues,
+  upsertSessionOwners,
+  type OwnerEntry,
+  type SessionOwner
+} from '../ownersIndex'
 
 describe('collectOwners', () => {
   it('aggregates across multiple tags and files', () => {
@@ -135,5 +143,190 @@ describe('filterOwners', () => {
 
   it('returns empty array when nothing matches', () => {
     expect(filterOwners(entries, 'zzz')).toEqual([])
+  })
+})
+
+describe('mergeOwners', () => {
+  const disk: OwnerEntry[] = [
+    { name: 'Alice', type: 'individual', count: 5 },
+    { name: 'Sales', type: 'department', count: 2 }
+  ]
+
+  it('returns the disk entries unchanged for an empty session', () => {
+    expect(mergeOwners(disk, [])).toEqual(disk)
+    expect(mergeOwners([], [])).toEqual([])
+  })
+
+  it('disk wins for an existing name: casing, type and count all kept', () => {
+    const session: SessionOwner[] = [{ name: 'ALICE', type: 'department', count: 9 }]
+    const merged = mergeOwners(disk, session)
+    expect(merged).toHaveLength(2)
+    expect(merged[0]).toEqual({ name: 'Alice', type: 'individual', count: 5 })
+  })
+
+  it('matches disk names case-insensitively (mixed-case session collision)', () => {
+    const session: SessionOwner[] = [{ name: 'sales', count: 1 }]
+    expect(mergeOwners(disk, session)).toHaveLength(2)
+  })
+
+  it('appends session-only names with their session count and type', () => {
+    const session: SessionOwner[] = [{ name: 'Nadia', type: 'individual', count: 1 }]
+    const merged = mergeOwners(disk, session)
+    expect(merged.map((e) => e.name)).toEqual(['Alice', 'Sales', 'Nadia'])
+    expect(merged[2]).toEqual({ name: 'Nadia', type: 'individual', count: 1 })
+  })
+
+  it('re-sorts count desc then name asc across disk + session entries', () => {
+    const session: SessionOwner[] = [
+      { name: 'Big Team', count: 7 },
+      { name: 'Aaron', count: 2 } // ties Sales on count — wins on name
+    ]
+    expect(mergeOwners(disk, session).map((e) => e.name)).toEqual([
+      'Big Team',
+      'Alice',
+      'Aaron',
+      'Sales'
+    ])
+  })
+
+  it('passes session owners through when the disk is empty', () => {
+    const session: SessionOwner[] = [
+      { name: 'Zed', count: 1 },
+      { name: 'Amy', type: 'individual', count: 3 }
+    ]
+    expect(mergeOwners([], session).map((e) => e.name)).toEqual(['Amy', 'Zed'])
+  })
+
+  it('does not mutate its inputs', () => {
+    const diskCopy = disk.map((e) => ({ ...e }))
+    const session: SessionOwner[] = [{ name: 'Nadia', count: 1 }]
+    const sessionCopy = session.map((e) => ({ ...e }))
+    mergeOwners(disk, session)
+    expect(disk).toEqual(diskCopy)
+    expect(session).toEqual(sessionCopy)
+  })
+})
+
+describe('upsertSessionOwners', () => {
+  it('adds a new trimmed owner with count 1 and a validated type', () => {
+    const next = upsertSessionOwners([], [{ name: '  Nadia  ', type: 'individual' }])
+    expect(next).toEqual([{ name: 'Nadia', count: 1, type: 'individual' }])
+  })
+
+  it('increments the count per addition, case-insensitively, keeping first-seen casing', () => {
+    let owners = upsertSessionOwners([], [{ name: 'Bob Smith' }])
+    owners = upsertSessionOwners(owners, [{ name: 'BOB SMITH' }])
+    owners = upsertSessionOwners(owners, [{ name: 'bob smith' }])
+    expect(owners).toEqual([{ name: 'Bob Smith', count: 3 }])
+  })
+
+  it('a non-empty incoming type fills an UNSET type but never clobbers a set one', () => {
+    let owners = upsertSessionOwners([], [{ name: 'Erin' }])
+    expect(owners[0].type).toBeUndefined()
+    owners = upsertSessionOwners(owners, [{ name: 'Erin', type: 'department' }])
+    expect(owners[0].type).toBe('department')
+    owners = upsertSessionOwners(owners, [{ name: 'Erin', type: 'individual' }])
+    expect(owners[0]).toEqual({ name: 'Erin', count: 3, type: 'department' })
+  })
+
+  it('ignores invalid type strings', () => {
+    const owners = upsertSessionOwners([], [{ name: 'Frank', type: 'bogus' }])
+    expect(owners).toEqual([{ name: 'Frank', count: 1 }])
+  })
+
+  it('skips blank names and returns the SAME array when nothing valid was added', () => {
+    const prev: SessionOwner[] = [{ name: 'Alice', count: 1 }]
+    expect(upsertSessionOwners(prev, [{ name: '' }, { name: '   ' }])).toBe(prev)
+    expect(upsertSessionOwners(prev, [])).toBe(prev)
+  })
+
+  it('is immutable: prev is never mutated by an upsert', () => {
+    const prev: SessionOwner[] = [{ name: 'Alice', count: 1 }]
+    const next = upsertSessionOwners(prev, [{ name: 'Alice' }, { name: 'New Person' }])
+    expect(prev).toEqual([{ name: 'Alice', count: 1 }])
+    expect(next).toEqual([
+      { name: 'Alice', count: 2 },
+      { name: 'New Person', count: 1 }
+    ])
+    expect(next).not.toBe(prev)
+  })
+
+  it('handles several additions from one apply in a single call', () => {
+    const next = upsertSessionOwners(
+      [],
+      [
+        { name: 'Operations', type: 'department' },
+        { name: 'Sara', type: 'individual' },
+        { name: 'Omar', type: 'individual' }
+      ]
+    )
+    expect(next.map((e) => e.name)).toEqual(['Operations', 'Sara', 'Omar'])
+    expect(next.every((e) => e.count === 1)).toBe(true)
+  })
+})
+
+describe('ownerAdditionsFromValues', () => {
+  it('emits the owner field with its type', () => {
+    expect(
+      ownerAdditionsFromValues({ owner: 'Operations', ownerType: 'department', respList: '' })
+    ).toEqual([{ name: 'Operations', type: 'department' }])
+  })
+
+  it('emits the owner without a type key when the type is blank', () => {
+    expect(ownerAdditionsFromValues({ owner: 'Alice', ownerType: '', respList: '' })).toEqual([
+      { name: 'Alice' }
+    ])
+  })
+
+  it('skips a blank owner field', () => {
+    expect(ownerAdditionsFromValues({ owner: '   ', ownerType: 'individual', respList: '' })).toEqual(
+      []
+    )
+  })
+
+  it('extracts each respList person as an individual, splitting "Name — Role" lines', () => {
+    expect(
+      ownerAdditionsFromValues({
+        owner: '',
+        ownerType: '',
+        respList: 'Sara — Approver\nOmar'
+      })
+    ).toEqual([
+      { name: 'Sara', type: 'individual' },
+      { name: 'Omar', type: 'individual' }
+    ])
+  })
+
+  it('splits ONLY on the exact space-em-dash-space separator', () => {
+    expect(
+      ownerAdditionsFromValues({
+        owner: '',
+        ownerType: '',
+        respList: 'Jean-Pierre\nA—B\nSara — Lead'
+      })
+    ).toEqual([
+      { name: 'Jean-Pierre', type: 'individual' },
+      { name: 'A—B', type: 'individual' },
+      { name: 'Sara', type: 'individual' }
+    ])
+  })
+
+  it('splits on the FIRST separator only', () => {
+    expect(
+      ownerAdditionsFromValues({ owner: '', ownerType: '', respList: 'Sara — Lead — Ops' })
+    ).toEqual([{ name: 'Sara', type: 'individual' }])
+  })
+
+  it('drops blank respList lines and combines owner + respList additions', () => {
+    expect(
+      ownerAdditionsFromValues({
+        owner: 'Operations',
+        ownerType: 'department',
+        respList: '\n  \nSara — Approver\n'
+      })
+    ).toEqual([
+      { name: 'Operations', type: 'department' },
+      { name: 'Sara', type: 'individual' }
+    ])
   })
 })

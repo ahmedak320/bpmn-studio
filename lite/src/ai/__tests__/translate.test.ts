@@ -3,9 +3,11 @@ import type { CallLLM, LlmMessage } from '@app/gen'
 import {
   collectMissingTranslations,
   translateDiagram,
+  translateDiagramWithTexts,
   TRANSLATE_INSTRUCTION,
   TRANSLATE_MAX_TOKENS,
-  type TranslateModeler
+  type TranslateModeler,
+  type TranslateTextsFn
 } from '../translate'
 
 // translate.ts is deliberately bpmn-js-free — this suite runs with
@@ -755,6 +757,202 @@ describe('translateDiagram', () => {
 
     expect(collected).toHaveLength(3)
     expect(outcome.total).toBe(3)
+    expect(outcome.translated + outcome.skipped).toBe(outcome.total)
+  })
+})
+
+// === translateDiagramWithTexts =============================================
+// The non-LLM twin. Reuses the same modeler fakes; the injected
+// TranslateTextsFn stands in for ai/freeTranslate.ts's chain.
+
+describe('translateDiagramWithTexts', () => {
+  interface RecordedTextsCall {
+    texts: string[]
+    from: string
+    to: string
+  }
+
+  /** Recorder + canned per-direction responder (positional). */
+  function makeTranslateTexts(
+    respond: (texts: string[], to: 'en' | 'ar') => Array<string | undefined>
+  ): { translateTexts: TranslateTextsFn; calls: RecordedTextsCall[] } {
+    const calls: RecordedTextsCall[] = []
+    const translateTexts: TranslateTextsFn = async (texts, from, to) => {
+      calls.push({ texts, from, to })
+      return respond(texts, to)
+    }
+    return { translateTexts, calls }
+  }
+
+  it('groups per direction (en first, then ar; source = other side) and applies positionally', async () => {
+    const en1 = taskMissingEn('En_1', 'طلب')
+    const ar1 = taskMissingAr('Ar_1', 'Ship')
+    const ar2 = taskMissingAr('Ar_2', 'Review')
+    const { modeler, rec } = makeModeler({
+      root: processRoot({ 'orbitpm:activeLang': 'en' }),
+      // Interleaved registry order — grouping is by target, not adjacency.
+      elements: [ar1, en1, ar2]
+    })
+    const { translateTexts, calls } = makeTranslateTexts((texts, to) =>
+      texts.map((_, i) => (to === 'en' ? `English ${i}` : `ترجمة ${i}`))
+    )
+
+    const outcome = await translateDiagramWithTexts(modeler, translateTexts)
+
+    expect(outcome).toEqual({ translated: 3, skipped: 0, total: 3 })
+    // ONE call per non-empty direction: en group first, then ar; from is
+    // always the opposite language.
+    expect(calls).toEqual([
+      { texts: ['طلب'], from: 'ar', to: 'en' },
+      { texts: ['Ship', 'Review'], from: 'en', to: 'ar' }
+    ])
+    // One updateProperties per element, registry order, visible names untouched.
+    expect(rec).toEqual([
+      { element: ar1, properties: { 'orbitpm:nameAr': 'ترجمة 0' } },
+      { element: en1, properties: { 'orbitpm:nameEn': 'English 0' } },
+      { element: ar2, properties: { 'orbitpm:nameAr': 'ترجمة 1' } }
+    ])
+    expect(ar1.businessObject?.name).toBe('Ship')
+  })
+
+  it('skips the call entirely for a direction with no entries', async () => {
+    const { modeler } = makeModeler({
+      root: processRoot({ 'orbitpm:activeLang': 'en' }),
+      elements: [taskMissingAr('Ar_1', 'Ship')]
+    })
+    const { translateTexts, calls } = makeTranslateTexts((texts) => texts.map(() => 'ترجمة'))
+
+    const outcome = await translateDiagramWithTexts(modeler, translateTexts)
+
+    expect(outcome).toEqual({ translated: 1, skipped: 0, total: 1 })
+    expect(calls).toHaveLength(1)
+    expect(calls[0].to).toBe('ar')
+  })
+
+  it('applies the same validateTranslation gate as the LLM path (wrong script rejected)', async () => {
+    const elA = taskMissingAr('Task_A', 'Approve Order')
+    const elB = taskMissingAr('Task_B', 'Ship')
+    const { modeler, rec } = makeModeler({
+      root: processRoot({ 'orbitpm:activeLang': 'en' }),
+      elements: [elA, elB]
+    })
+    // First result has no Arabic codepoints for a lowercase-bearing source —
+    // invalid; second is fine.
+    const { translateTexts } = makeTranslateTexts((texts) =>
+      texts.map((text) => (text === 'Approve Order' ? 'Approved!' : 'شحن'))
+    )
+
+    const outcome = await translateDiagramWithTexts(modeler, translateTexts)
+
+    expect(outcome).toEqual({ translated: 1, skipped: 1, total: 2 })
+    expect(rec).toEqual([{ element: elB, properties: { 'orbitpm:nameAr': 'شحن' } }])
+  })
+
+  it('counts undefined result slots as skipped and applies the rest', async () => {
+    const elA = taskMissingAr('Task_A', 'Order')
+    const elB = taskMissingAr('Task_B', 'Approve')
+    const { modeler, rec } = makeModeler({
+      root: processRoot({ 'orbitpm:activeLang': 'en' }),
+      elements: [elA, elB]
+    })
+    const { translateTexts } = makeTranslateTexts((texts) =>
+      texts.map((text) => (text === 'Order' ? 'طلب' : undefined))
+    )
+
+    const outcome = await translateDiagramWithTexts(modeler, translateTexts)
+
+    expect(outcome).toEqual({ translated: 1, skipped: 1, total: 2 })
+    expect(rec).toEqual([{ element: elA, properties: { 'orbitpm:nameAr': 'طلب' } }])
+  })
+
+  it('still writes the write-back seed when a both-missing element got no translation', async () => {
+    const el: FakeElement = { id: 'Task_P', businessObject: { $type: 'bpmn:Task', name: 'Plain' } }
+    const { modeler, rec } = makeModeler({
+      root: processRoot({ 'orbitpm:activeLang': 'en' }),
+      elements: [el]
+    })
+    const { translateTexts } = makeTranslateTexts((texts) => texts.map(() => undefined))
+
+    const outcome = await translateDiagramWithTexts(modeler, translateTexts)
+
+    expect(outcome).toEqual({ translated: 0, skipped: 1, total: 1 })
+    expect(rec).toEqual([{ element: el, properties: { 'orbitpm:nameEn': 'Plain' } }])
+  })
+
+  it('bundles seed + translation into ONE write and stamps the detected activeLang', async () => {
+    const root = processRoot() // flag absent — stamped at apply
+    const el: FakeElement = { id: 'Task_P', businessObject: { $type: 'bpmn:Task', name: 'Plain Name' } }
+    const { modeler, rec } = makeModeler({ root, elements: [el] })
+    const { translateTexts } = makeTranslateTexts((texts) => texts.map(() => 'اسم عادي'))
+
+    const outcome = await translateDiagramWithTexts(modeler, translateTexts)
+
+    expect(outcome).toEqual({ translated: 1, skipped: 0, total: 1 })
+    expect(rec).toEqual([
+      { element: el, properties: { 'orbitpm:nameEn': 'Plain Name', 'orbitpm:nameAr': 'اسم عادي' } },
+      { element: root, properties: { 'orbitpm:activeLang': 'en' } }
+    ])
+  })
+
+  it('never re-stamps a stored activeLang', async () => {
+    const root = processRoot({ 'orbitpm:activeLang': 'ar' })
+    const { modeler, rec } = makeModeler({ root, elements: [taskMissingEn('Task_B', 'طلب')] })
+    const { translateTexts } = makeTranslateTexts((texts) => texts.map(() => 'Request'))
+
+    await translateDiagramWithTexts(modeler, translateTexts)
+
+    expect(rec.some((r) => 'orbitpm:activeLang' in r.properties)).toBe(false)
+  })
+
+  it('handles an empty diagram: no translateTexts calls, zero outcome, default stamp', async () => {
+    const root = processRoot()
+    const { modeler, rec } = makeModeler({ root, elements: [] })
+    const { translateTexts, calls } = makeTranslateTexts(() => {
+      throw new Error('must not be called')
+    })
+
+    const outcome = await translateDiagramWithTexts(modeler, translateTexts)
+
+    expect(outcome).toEqual({ translated: 0, skipped: 0, total: 0 })
+    expect(calls).toHaveLength(0)
+    expect(rec).toEqual([{ element: root, properties: { 'orbitpm:activeLang': 'en' } }])
+  })
+
+  it('propagates a translateTexts throw with NOTHING half-applied', async () => {
+    const { modeler, rec } = makeModeler({
+      root: processRoot({ 'orbitpm:activeLang': 'en' }),
+      elements: [taskMissingEn('En_1', 'طلب'), taskMissingAr('Ar_1', 'Ship')]
+    })
+    // The en group resolves fine; the ar group throws — the whole run must
+    // reject with zero writes (results are gathered before any apply).
+    const translateTexts: TranslateTextsFn = async (texts, _from, to) => {
+      if (to === 'ar') throw new Error('free service down')
+      return texts.map(() => 'Request')
+    }
+
+    await expect(translateDiagramWithTexts(modeler, translateTexts)).rejects.toThrow(
+      'free service down'
+    )
+    expect(rec).toEqual([])
+  })
+
+  it('outcome arithmetic always holds: translated + skipped === total', async () => {
+    const { modeler } = makeModeler({
+      root: processRoot({ 'orbitpm:activeLang': 'en' }),
+      elements: [
+        taskMissingAr('Task_A', 'Order'),
+        taskMissingEn('Task_B', 'طلب'),
+        { id: 'Task_D', businessObject: { $type: 'bpmn:Task', name: 'Plain' } } as FakeElement
+      ]
+    })
+    const collected = collectMissingTranslations(modeler)
+    const { translateTexts } = makeTranslateTexts((texts, to) =>
+      texts.map((_, i) => (i % 2 === 0 ? (to === 'en' ? `Text ${i}` : `نص ${i}`) : undefined))
+    )
+
+    const outcome = await translateDiagramWithTexts(modeler, translateTexts)
+
+    expect(outcome.total).toBe(collected.length)
     expect(outcome.translated + outcome.skipped).toBe(outcome.total)
   })
 })

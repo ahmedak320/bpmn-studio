@@ -147,8 +147,10 @@ test('PDF flow: pick a PDF + Arabic hint, hit the no-key provider gate', async (
   await expect(hint).toHaveValue(arabicHint)
 
   // With no API key stored, the UX stops at the provider gate (not a crash).
+  // The generate button is now labelled "Generate from document" (the source
+  // accepts PDFs and images alike).
   await expect(page.getByText(/No key stored for OpenRouter/i)).toBeVisible()
-  await expect(page.getByRole('button', { name: /Generate from PDF/i })).toBeDisabled()
+  await expect(page.getByRole('button', { name: /Generate from document/i })).toBeDisabled()
 
   // The whole PDF-selection UX path ran with zero network requests (no key, no
   // send) — proving the client-side flow up to the gate.

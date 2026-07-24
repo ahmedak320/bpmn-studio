@@ -19,6 +19,11 @@
 //     R1 eval_by→BR1 · BR2 alloc→R2 · POL1 affects→F1 (ignored) ·
 //     F3 refs_to→F9 (occurs in M2 → callActivity)
 // Model M2 ("Archive requests"): E8 →(ACTIV) F9 →(CRT) E9, no geometry.
+// Model V1 ("Process landscape", MT_VAL_ADD_CHN_DGM): chevron occs of F1, F9
+//   and F10 — F10 is a pure value-chain chevron (no EPC occurrence) whose
+//   ObjDef carries a whitespace-padded LinkedModels.IdRefs="Model.M2"
+//   (model assignment), matching real exports where IdRefs values arrive
+//   padded and potentially multi-valued.
 
 const LF_SAMPLE = `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE AML SYSTEM "ARIS-Export.dtd" [
@@ -235,6 +240,16 @@ const LF_SAMPLE = `<?xml version="1.0" encoding="UTF-8"?>
 				<AttrValue LocaleId="&LocaleId.USen;">Archive completed</AttrValue>
 			</AttrDef>
 		</ObjDef>
+		<ObjDef ObjDef.ID="ObjDef.F10"
+			TypeNum="OT_FUNC"
+			LinkedModels.IdRefs="  Model.M2 "
+			SymbolNum="ST_VAL_ADD_CHN_SML_1"
+>
+			<AttrDef AttrDef.Type="AT_NAME">
+				<AttrValue LocaleId="&LocaleId.AEar;"><PlainText TextValue="الأرشفة طويلة الأمد"/></AttrValue>
+				<AttrValue LocaleId="&LocaleId.USen;"><PlainText TextValue="Long-term archival"/></AttrValue>
+			</AttrDef>
+		</ObjDef>
 		<Model Model.ID="Model.M1"
 			Model.Type="MT_EEPC"
 			GridUse="YES"
@@ -392,6 +407,10 @@ const LF_SAMPLE = `<?xml version="1.0" encoding="UTF-8"?>
 			</ObjOcc>
 			<ObjOcc ObjOcc.ID="ObjOcc.V1-F9" ObjDef.IdRef="ObjDef.F9" SymbolNum="ST_VAL_ADD_CHN_SML_1">
 				<Position Pos.X="775" Pos.Y="158"/>
+				<Size Size.dX="646" Size.dY="150"/>
+			</ObjOcc>
+			<ObjOcc ObjOcc.ID="ObjOcc.V1-F10" ObjDef.IdRef="ObjDef.F10" SymbolNum="ST_VAL_ADD_CHN_SML_1">
+				<Position Pos.X="1475" Pos.Y="158"/>
 				<Size Size.dX="646" Size.dY="150"/>
 			</ObjOcc>
 		</Model>

@@ -103,6 +103,22 @@ export function deriveFileBaseName(name: string): string {
   return safe || FALLBACK_SLUG
 }
 
+/**
+ * Keep a display name human-readable while making it safe as a folder name.
+ * Unlike `deriveFileBaseName`, this deliberately preserves case, spaces and
+ * non-Latin scripts. The caller supplies its existing slug fallback for names
+ * that contain no usable characters after sanitizing.
+ */
+export function sanitizeFolderName(name: string, fallback: string): string {
+  const safe = name
+    .trim()
+    .replace(/\s+/gu, ' ')
+    .replace(/[\p{Cc}/\\:*?"<>|]/gu, '')
+    .replace(/\s+/gu, ' ')
+    .replace(/^[.\s]+|[.\s]+$/gu, '')
+  return safe || fallback
+}
+
 export function humanizeProcessId(id: string): string {
   const words = id
     .replace(/^Process[_-]?/i, '')

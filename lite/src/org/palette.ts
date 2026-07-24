@@ -37,7 +37,16 @@ export const PALETTE = {
   // Decision-basis tag on gateways / business-rule tasks. Amber ("it's a
   // rule") — hotter and more orange than the pale note yellow.
   basisFill: '#fce3bd',
-  basisBorder: '#c47f17'
+  basisBorder: '#c47f17',
+  // Start / end event restyle (eventStyle decoration): green "go" for start,
+  // muted red "stop" for end, both readable against the canvas.
+  startFill: '#e3f4ea',
+  startBorder: '#1e9e62',
+  endFill: '#fdeaea',
+  endBorder: '#c0504d',
+  // Collapsed sub-process chip (replaces the stock '+' marker).
+  subChipFill: '#ffffff',
+  subChipBorder: '#157347'
 } as const
 
 export type PaletteKey = keyof typeof PALETTE

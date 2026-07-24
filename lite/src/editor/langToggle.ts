@@ -48,9 +48,11 @@ export interface LangToggleModeler {
   get(name: string): unknown
 }
 
-// --- structural service/element shapes (internal wiring only) --------------
+// --- structural service/element shapes --------------------------------------
 
-interface BusinessObjectLike {
+/** Structural business-object surface this module reads/writes. Exported so
+ *  editor/labelSync.ts (and tests) can type against the same shape. */
+export interface LangBusinessObjectLike {
   $type?: string
   $attrs?: Record<string, unknown>
   name?: string
@@ -61,7 +63,7 @@ interface BusinessObjectLike {
 /** A registry element (shape, connection, or the canvas root) as seen through
  *  `elementRegistry.getAll()` / `canvas.getRootElement()`. */
 interface LangElementLike {
-  businessObject?: BusinessObjectLike
+  businessObject?: LangBusinessObjectLike
   /** Present (truthy) on label shapes — bpmn-js gives an external label its
    *  own registry entry that SHARES its target's business object, so
    *  processing labels too would double-count and double-write every name;
@@ -107,7 +109,7 @@ function otherLang(lang: DiagramLang): DiagramLang {
 // repeated verbatim in org/orgModel.ts and links/linkOps.ts).
 
 /** Read a plain (non-prefixed) moddle property such as `name` or `participants`. */
-function readModdleProp(bo: BusinessObjectLike | undefined, name: string): unknown {
+function readModdleProp(bo: LangBusinessObjectLike | undefined, name: string): unknown {
   if (!bo) return undefined
   if (typeof bo.get === 'function') {
     try {
@@ -122,7 +124,7 @@ function readModdleProp(bo: BusinessObjectLike | undefined, name: string): unkno
 
 /** Read one `orbitpm:*` attribute. Empty string counts as absent, same as
  *  org/orgModel.ts's `readAttr`. */
-function readAttr(bo: BusinessObjectLike | undefined, name: string): string | undefined {
+function readAttr(bo: LangBusinessObjectLike | undefined, name: string): string | undefined {
   if (!bo) return undefined
   if (typeof bo.get === 'function') {
     try {
@@ -138,7 +140,7 @@ function readAttr(bo: BusinessObjectLike | undefined, name: string): string | un
 }
 
 /** The element's current visible name, or '' if unset/not a string. */
-function readName(bo: BusinessObjectLike | undefined): string {
+function readName(bo: LangBusinessObjectLike | undefined): string {
   const value = readModdleProp(bo, 'name')
   return typeof value === 'string' ? value : ''
 }
@@ -155,7 +157,7 @@ function readName(bo: BusinessObjectLike | undefined): string {
  * bare-process diagram resolve to the same kind of target. Returns undefined
  * only when the canvas has no root at all (nothing imported yet).
  */
-export function pickRootBusinessObject(modeler: LangToggleModeler): BusinessObjectLike | undefined {
+export function pickRootBusinessObject(modeler: LangToggleModeler): LangBusinessObjectLike | undefined {
   const canvas = modeler.get('canvas') as CanvasLike
   const root = canvas.getRootElement()
   const bo = root?.businessObject
@@ -164,7 +166,7 @@ export function pickRootBusinessObject(modeler: LangToggleModeler): BusinessObje
   const participants = readModdleProp(bo, 'participants')
   if (Array.isArray(participants) && participants.length > 0) {
     const processRef = (participants[0] as { processRef?: unknown } | undefined)?.processRef
-    if (processRef) return processRef as BusinessObjectLike
+    if (processRef) return processRef as LangBusinessObjectLike
   }
   return bo
 }
@@ -199,7 +201,7 @@ export function getDiagramLang(modeler: LangToggleModeler): DiagramLang {
  *     label just because a translation hasn't been created yet.
  */
 export function resolveElementNames(
-  bo: BusinessObjectLike,
+  bo: LangBusinessObjectLike,
   from: DiagramLang,
   to: DiagramLang
 ): Record<string, string> {
@@ -216,6 +218,28 @@ export function resolveElementNames(
     properties.name = toAttr
   }
 
+  return properties
+}
+
+/**
+ * Mirror the CURRENT visible name into the ACTIVE language's stored attr —
+ * same "visible name wins, empty never clears" rule as resolveElementNames
+ * step 1 (the write-back), applied continuously after a direct label edit
+ * instead of only at toggle time. Returns {} when nothing needs writing:
+ * the name already matches the stored attr, or the name is empty (a stored
+ * translation is deliberately preserved — clearing a label must never erase
+ * the translation behind it).
+ */
+export function resolveLabelMirror(
+  bo: LangBusinessObjectLike,
+  active: DiagramLang
+): Record<string, string> {
+  const properties: Record<string, string> = {}
+  const name = readName(bo)
+  const stored = readAttr(bo, LANG_ATTR[active])
+  if (name && name !== stored) {
+    properties[LANG_ATTR[active]] = name
+  }
   return properties
 }
 

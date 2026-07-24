@@ -72,8 +72,10 @@ test('element step details: owner + CC render, and the styling toggle refreshes 
     selection.select(shape)
   })
 
-  // Open the Step-details dialog in element mode.
-  await page.getByRole('button', { name: /Details/ }).click()
+  // Open the Step-details dialog in element mode. (Exact name: the new
+  // side-pane details card adds an "Open Details…" button alongside the
+  // panel's original "Details…" button.)
+  await page.getByRole('button', { name: 'Details…', exact: true }).click()
   const dialog = page.getByRole('dialog', { name: 'Step details' })
   await expect(dialog).toBeVisible()
 
@@ -124,8 +126,9 @@ test('trigger validation: a DMT Hub trigger requires a service name before Apply
   await newProcess(page, 'Trigger Demo')
 
   // Nothing selected → process mode, which shows the Trigger section (a start
-  // event in element mode would validate identically).
-  await page.getByRole('button', { name: /Details/ }).click()
+  // event in element mode would validate identically). Exact name: the details
+  // card's "Open Details…" button would otherwise also match.
+  await page.getByRole('button', { name: 'Details…', exact: true }).click()
   const dialog = page.getByRole('dialog')
   await expect(dialog).toBeVisible()
 

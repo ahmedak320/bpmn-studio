@@ -15,13 +15,20 @@
 //   • AT_NAMEs are bilingual (the org's databases carry Arabic + English) —
 //     the requested language becomes `name`, and both locales are preserved
 //     as `orbitpm:nameEn` / `orbitpm:nameAr`;
-//   • the ARIS layout is kept: occurrence Position/Size map straight onto
-//     BPMN DI (see ARIS_UNIT_SCALE); models without geometry fall back to
-//     `layoutBpmn` auto-layout;
+//   • EVERY diagram is re-laid out by ./epcLayout (deterministic layered
+//     layout, decoration-margin aware); the ARIS occurrence Position survives
+//     only as an ordering HINT, never as output coordinates;
 //   • a function that references a process detailed in another exported model
-//     (CT_REFS_TO_2 / CT_IS_PRCS_ORNT_SUPER) becomes a `callActivity` whose
-//     `calledElement` is that model's process id — wiring the app's existing
-//     drill-down.
+//     — via the `LinkedModels.IdRefs` model assignment (primary) or a
+//     CT_REFS_TO_2 / CT_IS_PRCS_ORNT_SUPER connection (legacy secondary) —
+//     becomes a `callActivity` whose `calledElement` is that model's process
+//     id, wiring the app's existing drill-down;
+//   • when at least one EPC converts, each value-chain overview model
+//     (MT_VAL_ADD_CHN_DGM) is emitted too, LAST: its leaf chevrons (container
+//     chevrons and satellites excluded) become one task/callActivity chain —
+//     explicit CT_IS_PREDEC_OF* edges when the map has them, else the drawn
+//     reading order — and chevrons whose object occurs inside a converted EPC
+//     link to that EPC (tertiary, overview-only rule).
 //
 // The parsing itself lives in ./amlParse and stays deliberately TOLERANT:
 // regex/scan based (no DOMParser, so it runs in node unit tests), multiline-
@@ -29,7 +36,6 @@
 // best-effort by design — a real ARIS file converts to an approximate,
 // hand-tidyable diagram, never a byte-perfect round-trip. Never throws.
 
-import { layoutBpmn } from '@app/gen'
 import {
   looksLikeAml,
   parseAml,
@@ -41,6 +47,7 @@ import {
   type AmlOcc,
   type LocalizedText
 } from './amlParse'
+import { emitLayoutDi, layoutEpc, type LayoutEdge, type LayoutNode, type Orientation } from './epcLayout'
 
 export { looksLikeAml }
 
@@ -52,9 +59,21 @@ export interface ConvertedModel {
   nameAr?: string
   nameEn?: string
   xml: string
+  /** The file's BPMN process id (callActivity calledElement target). */
+  processId: string
+  /** 'epc' = one process diagram; 'overview' = the value-chain map. */
+  kind: 'epc' | 'overview'
 }
 
-export type AmlConversion = { files: ConvertedModel[] } | { error: string }
+export type AmlConversion =
+  | {
+      files: ConvertedModel[]
+      /** Suggested workspace folder for a multi-file import: the first
+       *  value-chain overview's name in the active language, else the
+       *  export's DatabaseName. */
+      folderName?: string
+    }
+  | { error: string }
 
 const NS_MODEL = 'http://www.omg.org/spec/BPMN/20100524/MODEL'
 const NS_BPMNDI = 'http://www.omg.org/spec/BPMN/20100524/DI'
@@ -64,25 +83,6 @@ const NS_DI = 'http://www.omg.org/spec/DD/20100524/DI'
 // registers this namespace as a moddle extension, so the `orbitpm:*`
 // attributes emitted here round-trip through the editor.
 const NS_ORBITPM = 'http://orbitpm.ae/schema/bpmn/1.0'
-
-/**
- * ARIS occurrence geometry → BPMN DI pixels.
- *
- * The real export stores occurrence Position/Size in ARIS logical units of
- * 1/10 mm: event symbols measure ~554×151, functions ~670×240, rule operators
- * 140×140, and whole EPC canvases run to ~6200×7600 units. Multiplying by
- * 0.25 maps an operator square (140) onto a ~35 px diamond and a function
- * onto a ~168×60 px box — right in bpmn-js's native size range (task 100×80,
- * event 36, gateway 50) — and keeps the largest real canvas under ~2000 px,
- * so the imported diagram is readable without zooming games.
- */
-const ARIS_UNIT_SCALE = 0.25
-
-// BPMN renders events as circles and gateways as diamonds, so instead of
-// stretching them to the ARIS box (wide hexagons/rectangles) we center a
-// standard-sized symbol inside the scaled ARIS bounds.
-const EVENT_SIZE = 36
-const GATEWAY_SIZE = 50
 
 // XML 1.0 forbids these C0 control chars; strip so a stray one in an AML name
 // can't produce invalid BPMN that layoutBpmn/importXML would reject.
@@ -274,11 +274,12 @@ interface PlanEdge {
 interface ModelPlan {
   model?: AmlModel
   processId: string
+  /** 'epc' = flow diagram; 'overview' = value-chain map (chevron chain). */
+  kind: 'epc' | 'overview'
   name: LocalizedText
   /** Member defs in document order (flow-capable only → nodes). */
   nodes: Map<string, PlanNode>
   edges: PlanEdge[]
-  hasGeometry: boolean
 }
 
 /** Push a metadata value onto a node, deduped, insertion-ordered. */
@@ -472,44 +473,209 @@ function planModel(
     }
   }
 
-  // The model's OWN layout is used only when it is complete: every node needs
-  // Position AND Size, otherwise a half-placed diagram would render broken —
-  // those models go through layoutBpmn instead.
-  const nodeList = [...nodes.values()]
-  const hasGeometry =
-    nodeList.length > 0 &&
-    nodeList.every(
-      (n) => n.occ && n.occ.x !== undefined && n.occ.y !== undefined && n.occ.w !== undefined && n.occ.h !== undefined
-    )
-
   return {
     model,
     processId,
+    kind: 'epc',
     name: model?.name ?? { others: [] },
     nodes,
-    edges,
-    hasGeometry
+    edges
   }
 }
 
 /**
- * Upgrade functions that reference another converted model's content to
- * callActivities: a member OT_FUNC carrying CT_REFS_TO_2 /
- * CT_IS_PRCS_ORNT_SUPER to an object occurring in ANOTHER plan links to that
- * plan's process id (the app's drill-down follows `calledElement`).
+ * Order overview leaves the way the map reads: rows top→bottom (bucketed by
+ * vertical occurrence overlap), left→right inside a row; leaves without a
+ * placed occurrence come last, by object id. Pure and deterministic.
+ */
+function rowMajor(list: PlanNode[]): PlanNode[] {
+  const placed = list.filter((n) => n.occ && n.occ.x !== undefined && n.occ.y !== undefined)
+  const unplaced = list
+    .filter((n) => !(n.occ && n.occ.x !== undefined && n.occ.y !== undefined))
+    .sort((a, b) => (a.def.id < b.def.id ? -1 : a.def.id > b.def.id ? 1 : 0))
+  placed.sort((a, b) => {
+    const ya = (a.occ as AmlOcc).y as number
+    const yb = (b.occ as AmlOcc).y as number
+    if (ya !== yb) return ya - yb
+    return a.def.id < b.def.id ? -1 : a.def.id > b.def.id ? 1 : 0
+  })
+  const buckets: PlanNode[][] = []
+  let bucketBottom = -Infinity
+  for (const n of placed) {
+    const occ = n.occ as AmlOcc
+    const y = occ.y as number
+    const h = occ.h ?? 0
+    if (y >= bucketBottom || buckets.length === 0) {
+      buckets.push([n])
+      bucketBottom = y + h
+    } else {
+      buckets[buckets.length - 1].push(n)
+      bucketBottom = Math.max(bucketBottom, y + h)
+    }
+  }
+  const ordered: PlanNode[] = []
+  for (const bucket of buckets) {
+    bucket.sort((a, b) => {
+      const xa = (a.occ as AmlOcc).x as number
+      const xb = (b.occ as AmlOcc).x as number
+      if (xa !== xb) return xa - xb
+      return a.def.id < b.def.id ? -1 : a.def.id > b.def.id ? 1 : 0
+    })
+    ordered.push(...bucket)
+  }
+  ordered.push(...unplaced)
+  return ordered
+}
+
+/**
+ * Build the conversion plan for one value-chain overview (MT_VAL_ADD_CHN_DGM):
+ * the map's LEAF chevrons become one task/callActivity chain.
+ *
+ *   • Containers ("Animal Welfare" → "Phase 1" → chevrons) are excluded: any
+ *     member with an outgoing CT_IS_PRCS_ORNT_SUPER / CT_REFS_TO* connection
+ *     to ANOTHER member of this same map is a grouping chevron, not a step.
+ *   • Satellites (OT_PERF service tiles etc.) are excluded as everywhere else.
+ *   • The chain uses explicit CT_IS_PREDEC_OF* connections between leaves
+ *     when the map draws them; real exports usually don't, so the fallback
+ *     chains the leaves in drawn reading order (rowMajor above).
+ *   • Chevrons stay plain tasks here — wireHierarchy upgrades the ones that
+ *     resolve to a converted model (LinkedModels / legacy connection / the
+ *     overview-only "occurs inside a converted EPC" rule) to callActivities.
+ */
+function planOverview(db: AmlDatabase, model: AmlModel, processId: string, taken: Set<string>): ModelPlan {
+  const { members, occByDef } = collectMembers(db, model)
+  const memberIds = new Set(members.map((m) => m.id))
+
+  const containerIds = new Set<string>()
+  for (const m of members) {
+    for (const c of m.cxns) {
+      if (!isHierarchyCxnType(c.type)) continue
+      if (c.to !== m.id && memberIds.has(c.to)) {
+        containerIds.add(m.id)
+        break
+      }
+    }
+  }
+
+  const nodes = new Map<string, PlanNode>()
+  for (const def of members) {
+    if (!isFlowCapable(def)) continue
+    if (containerIds.has(def.id)) continue
+    nodes.set(def.id, {
+      def,
+      bpmnId: sanitizeId(def.id, taken),
+      tag: 'task',
+      meta: new Map(),
+      incoming: [],
+      outgoing: [],
+      occ: occByDef.get(def.id)
+    })
+  }
+
+  // Explicit chaining first; drawn reading order as the fallback.
+  const pairs: { source: PlanNode; target: PlanNode }[] = []
+  for (const def of members) {
+    const srcNode = nodes.get(def.id)
+    if (!srcNode) continue
+    for (const c of def.cxns) {
+      if (!c.type || !/^CT_IS_PREDEC_OF/i.test(c.type)) continue
+      const tgtNode = nodes.get(c.to)
+      if (!tgtNode || tgtNode === srcNode) continue
+      pairs.push({ source: srcNode, target: tgtNode })
+    }
+  }
+  if (pairs.length === 0) {
+    const ordered = rowMajor([...nodes.values()])
+    for (let i = 0; i + 1 < ordered.length; i++) {
+      pairs.push({ source: ordered[i], target: ordered[i + 1] })
+    }
+  }
+
+  const edges: PlanEdge[] = []
+  const seenPair = new Set<string>()
+  for (const p of pairs) {
+    const key = p.source.bpmnId + '\u0000' + p.target.bpmnId
+    if (seenPair.has(key)) continue
+    seenPair.add(key)
+    const id = `flow_${edges.length + 1}`
+    edges.push({ id, source: p.source, target: p.target })
+    p.source.outgoing.push(id)
+    p.target.incoming.push(id)
+  }
+
+  return {
+    model,
+    processId,
+    kind: 'overview',
+    name: model.name,
+    nodes,
+    edges
+  }
+}
+
+/**
+ * Upgrade functions that reference another converted model to callActivities
+ * (the app's drill-down follows `calledElement`). Three rules, in order:
+ *
+ *   1. PRIMARY — model assignment: the def's `LinkedModels.IdRefs` names a
+ *      converted model's Model.ID (how ARIS 10 links a chevron to its EPC).
+ *   2. SECONDARY — legacy connection: the def carries CT_REFS_TO* /
+ *      CT_IS_PRCS_ORNT_SUPER to an object that occurs in another plan
+ *      (`plans` lists EPCs before overviews, so an EPC target wins).
+ *   3. TERTIARY, overview-only — occurrence: a leaf chevron whose def OCCURS
+ *      inside a converted EPC links to that EPC even without any explicit
+ *      assignment/connection.
+ *
+ * Self-loop guards throughout: a plan never links to itself, and a node whose
+ * resolved target IS its own process stays a plain task.
  */
 function wireHierarchy(plans: ModelPlan[]): void {
+  const planByModelId = new Map<string, ModelPlan>()
+  for (const p of plans) if (p.model) planByModelId.set(p.model.id, p)
+  // Def id → the (first) EPC plan whose diagram contains it.
+  const epcPlanByDefId = new Map<string, ModelPlan>()
+  for (const p of plans) {
+    if (p.kind !== 'epc') continue
+    for (const defId of p.nodes.keys()) {
+      if (!epcPlanByDefId.has(defId)) epcPlanByDefId.set(defId, p)
+    }
+  }
+
   for (const plan of plans) {
     for (const node of plan.nodes.values()) {
       if (node.def.typeNum !== 'OT_FUNC') continue
-      for (const c of node.def.cxns) {
-        if (!isHierarchyCxnType(c.type)) continue
-        const targetPlan = plans.find((p) => p !== plan && p.nodes.has(c.to))
-        if (targetPlan) {
-          node.tag = 'callActivity'
-          node.calledElement = targetPlan.processId
+      let target: ModelPlan | undefined
+
+      // 1) Model assignment (first resolvable ref wins, document order).
+      for (const modelId of node.def.linkedModelIds) {
+        const p = planByModelId.get(modelId)
+        if (p && p !== plan) {
+          target = p
           break
         }
+      }
+
+      // 2) Legacy hierarchy connection.
+      if (!target) {
+        for (const c of node.def.cxns) {
+          if (!isHierarchyCxnType(c.type)) continue
+          const p = plans.find((q) => q !== plan && q.nodes.has(c.to))
+          if (p) {
+            target = p
+            break
+          }
+        }
+      }
+
+      // 3) Overview chevron whose object occurs inside a converted EPC.
+      if (!target && plan.kind === 'overview') {
+        const p = epcPlanByDefId.get(node.def.id)
+        if (p && p !== plan) target = p
+      }
+
+      if (target && target.processId !== plan.processId) {
+        node.tag = 'callActivity'
+        node.calledElement = target.processId
       }
     }
   }
@@ -537,37 +703,40 @@ function orbitpmAttrs(node: PlanNode): string {
   return out
 }
 
-interface Bounds {
-  x: number
-  y: number
-  w: number
-  h: number
-}
-
-/** Scaled DI bounds for a node: tasks keep the ARIS box, events/gateways get
- *  a standard-size symbol centered inside it. */
-function nodeBounds(node: PlanNode): Bounds {
-  const occ = node.occ as AmlOcc // hasGeometry guarantees presence
-  const x = (occ.x as number) * ARIS_UNIT_SCALE
-  const y = (occ.y as number) * ARIS_UNIT_SCALE
-  const w = (occ.w as number) * ARIS_UNIT_SCALE
-  const h = (occ.h as number) * ARIS_UNIT_SCALE
-  let size: number | undefined
-  if (node.tag.endsWith('Event')) size = EVENT_SIZE
-  else if (node.tag.endsWith('Gateway')) size = GATEWAY_SIZE
-  if (size !== undefined) {
-    return {
-      x: Math.round(x + w / 2 - size / 2),
-      y: Math.round(y + h / 2 - size / 2),
-      w: size,
-      h: size
+/**
+ * Bridge a plan into ./epcLayout's input model: emit tag + display label +
+ * present orbitpm metadata (reserved decoration margins) + the ARIS occurrence
+ * Position as an ordering hint.
+ */
+function layoutInputOf(
+  plan: ModelPlan,
+  lang: 'en' | 'ar'
+): { layoutNodes: LayoutNode[]; layoutEdges: LayoutEdge[] } {
+  const layoutNodes: LayoutNode[] = []
+  for (const node of plan.nodes.values()) {
+    const attrs: { [K in MetaAttr]?: string } = {}
+    for (const [attr, values] of node.meta) {
+      if (values.length === 0) continue
+      attrs[attr] = attr === 'decisionBasis' ? values.join('; ') : values.join('\n')
     }
+    const layoutNode: LayoutNode = { id: node.bpmnId, tag: node.tag, attrs }
+    const label = pickText(node.def.name, lang)
+    if (label) layoutNode.label = label
+    if (node.occ && node.occ.x !== undefined && node.occ.y !== undefined) {
+      layoutNode.hint = { x: node.occ.x, y: node.occ.y }
+    }
+    layoutNodes.push(layoutNode)
   }
-  return { x: Math.round(x), y: Math.round(y), w: Math.round(w), h: Math.round(h) }
+  const layoutEdges: LayoutEdge[] = plan.edges.map((e) => ({
+    id: e.id,
+    source: e.source.bpmnId,
+    target: e.target.bpmnId
+  }))
+  return { layoutNodes, layoutEdges }
 }
 
-/** Emit one plan as a complete BPMN file (own DI or auto-layout). */
-async function emitModel(plan: ModelPlan, lang: 'en' | 'ar'): Promise<ConvertedModel | undefined> {
+/** Emit one plan as a complete BPMN file (single path: layered auto-layout). */
+function emitModel(plan: ModelPlan, lang: 'en' | 'ar', orientation: Orientation): ConvertedModel | undefined {
   const nodeList = [...plan.nodes.values()]
   if (nodeList.length === 0) return undefined
 
@@ -613,42 +782,18 @@ async function emitModel(plan: ModelPlan, lang: 'en' | 'ar'): Promise<ConvertedM
 
   out += '</process>'
 
-  if (plan.hasGeometry) {
-    // The ARIS diagram's own layout, scaled — shapes from occurrence bounds,
-    // edges as straight center→center lines (bpmn-js renders those fine and
-    // the user can re-route them like any manual edge).
-    const bounds = new Map<PlanNode, Bounds>()
-    for (const n of nodeList) bounds.set(n, nodeBounds(n))
-    out += '<bpmndi:BPMNDiagram id="BPMNDiagram_1">'
-    out += `<bpmndi:BPMNPlane id="BPMNPlane_1" bpmnElement="${escapeAttr(plan.processId)}">`
-    for (const n of nodeList) {
-      const b = bounds.get(n) as Bounds
-      const marker = n.tag === 'exclusiveGateway' ? ' isMarkerVisible="true"' : ''
-      out += `<bpmndi:BPMNShape id="BPMNShape_${escapeAttr(n.bpmnId)}" bpmnElement="${escapeAttr(n.bpmnId)}"${marker}>`
-      out += `<dc:Bounds x="${b.x}" y="${b.y}" width="${b.w}" height="${b.h}" />`
-      out += '</bpmndi:BPMNShape>'
-    }
-    for (const e of plan.edges) {
-      const sb = bounds.get(e.source) as Bounds
-      const tb = bounds.get(e.target) as Bounds
-      out += `<bpmndi:BPMNEdge id="BPMNEdge_${escapeAttr(e.id)}" bpmnElement="${escapeAttr(e.id)}">`
-      out += `<di:waypoint x="${Math.round(sb.x + sb.w / 2)}" y="${Math.round(sb.y + sb.h / 2)}" />`
-      out += `<di:waypoint x="${Math.round(tb.x + tb.w / 2)}" y="${Math.round(tb.y + tb.h / 2)}" />`
-      out += '</bpmndi:BPMNEdge>'
-    }
-    out += '</bpmndi:BPMNPlane></bpmndi:BPMNDiagram></definitions>'
-    return finishModel(plan, lang, out)
-  }
-
-  // No usable geometry → semantic-only document + auto-layout.
+  // ONE layout path for every model: the deterministic layered engine. The
+  // ARIS occurrence coordinates only survive as ordering hints inside it.
+  const { layoutNodes, layoutEdges } = layoutInputOf(plan, lang)
+  const layout = layoutEpc(layoutNodes, layoutEdges, { orientation })
+  out += emitLayoutDi(plan.processId, layoutNodes, layoutEdges, layout, escapeAttr)
   out += '</definitions>'
-  const layouted = await layoutBpmn(out)
-  return finishModel(plan, lang, layouted)
+  return finishModel(plan, lang, out)
 }
 
 function finishModel(plan: ModelPlan, lang: 'en' | 'ar', xml: string): ConvertedModel {
   const name = pickText(plan.name, lang) ?? plan.model?.procCode ?? plan.processId
-  const file: ConvertedModel = { name, xml }
+  const file: ConvertedModel = { name, xml, processId: plan.processId, kind: plan.kind }
   if (plan.name.en) file.nameEn = plan.name.en
   if (plan.name.ar) file.nameAr = plan.name.ar
   return file
@@ -660,33 +805,42 @@ function finishModel(plan: ModelPlan, lang: 'en' | 'ar', xml: string): Converted
 
 /**
  * Convert an ARIS AML export into one BPMN file per EPC model
- * (`Model.Type="MT_EEPC"`). Value-chain overview models
- * (MT_VAL_ADD_CHN_DGM et al.) are not flow-converted; exports with no
- * `<Model>` sections at all (the legacy minimal .apc shape) convert as a
- * single flat process. Error codes: 'not-aml' (sniff failed), 'no-objects'
- * (nothing convertible in the catalogue), 'no-models' (models exist but none
- * is a convertible EPC). Never throws.
+ * (`Model.Type="MT_EEPC"`), plus — whenever at least one EPC converted — one
+ * overview file per value-chain map (MT_VAL_ADD_CHN_DGM), appended LAST so
+ * `files[0]` is always an EPC. Exports with no `<Model>` sections at all (the
+ * legacy minimal .apc shape) convert as a single flat process. A successful
+ * multi-model conversion also suggests a `folderName` (the first overview's
+ * name in the active language, else the export's DatabaseName). Error codes:
+ * 'not-aml' (sniff failed), 'no-objects' (nothing convertible in the
+ * catalogue), 'no-models' (models exist but none is a convertible EPC).
+ * Never throws.
  */
 export async function convertAmlToBpmnFiles(
   text: string,
-  opts?: { lang?: 'en' | 'ar' }
+  opts?: { lang?: 'en' | 'ar'; orientation?: Orientation }
 ): Promise<AmlConversion> {
   try {
     if (!looksLikeAml(text)) return { error: 'not-aml' }
     const lang = opts?.lang ?? 'en'
+    const orientation = opts?.orientation ?? 'vertical'
     const db = parseAml(text)
     if (db.objects.length === 0) return { error: 'no-objects' }
 
     const epcModels = db.models.filter((m) => m.type === 'MT_EEPC')
     if (db.models.length > 0 && epcModels.length === 0) return { error: 'no-models' }
 
+    // Overviews convert only alongside at least one EPC (a lone value-chain
+    // map keeps the historical 'no-models' outcome above).
+    const overviewModels = epcModels.length > 0 ? db.models.filter((m) => m.type === 'MT_VAL_ADD_CHN_DGM') : []
+
     // Process ids are assigned up front, ALL before any model is planned
     // (AT_PROC_CODE when the model carries one, else the Model.ID; globally
     // deduped) so callActivity links can point across files regardless of
     // emission order — and so per-file node ids can be seeded against the
     // complete process-id set and can never shadow a calledElement target.
+    // EPC ids first: theirs stay stable whether or not overviews exist.
     const takenProcessIds = new Set<string>()
-    const scheduled: { model?: AmlModel; processId: string }[] =
+    const scheduledEpc: { model?: AmlModel; processId: string }[] =
       epcModels.length === 0
         ? // Legacy flat export: everything into one process.
           [{ model: undefined, processId: sanitizeId('Process_1', takenProcessIds) }]
@@ -694,19 +848,35 @@ export async function convertAmlToBpmnFiles(
             model,
             processId: sanitizeId(model.procCode?.trim() || model.id, takenProcessIds)
           }))
-    const plans: ModelPlan[] = scheduled.map(({ model, processId }) =>
-      planModel(db, model, processId, lang, new Set(takenProcessIds))
-    )
+    const scheduledOverview = overviewModels.map((model) => ({
+      model,
+      processId: sanitizeId(model.procCode?.trim() || model.id, takenProcessIds)
+    }))
+
+    const plans: ModelPlan[] = [
+      ...scheduledEpc.map(({ model, processId }) => planModel(db, model, processId, lang, new Set(takenProcessIds))),
+      ...scheduledOverview.map(({ model, processId }) =>
+        planOverview(db, model, processId, new Set(takenProcessIds))
+      )
+    ]
 
     wireHierarchy(plans)
 
-    const files: ConvertedModel[] = []
+    const epcFiles: ConvertedModel[] = []
+    const overviewFiles: ConvertedModel[] = []
     for (const plan of plans) {
-      const file = await emitModel(plan, lang)
-      if (file) files.push(file)
+      const file = emitModel(plan, lang, orientation)
+      if (!file) continue
+      if (plan.kind === 'overview') overviewFiles.push(file)
+      else epcFiles.push(file)
     }
-    if (files.length === 0) return { error: db.models.length > 0 ? 'no-models' : 'no-objects' }
-    return { files }
+    // The overview only ships when a real EPC converted with it.
+    if (epcFiles.length === 0) return { error: db.models.length > 0 ? 'no-models' : 'no-objects' }
+    const files = [...epcFiles, ...overviewFiles]
+
+    const firstOverview = overviewModels.length > 0 ? overviewModels[0] : undefined
+    const folderName = (firstOverview ? pickText(firstOverview.name, lang) : undefined) ?? db.databaseName
+    return folderName ? { files, folderName } : { files }
   } catch (err) {
     return { error: err instanceof Error ? err.message : String(err) }
   }

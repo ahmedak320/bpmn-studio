@@ -20,7 +20,7 @@
 // hold the '\n'-joined `orbitpm:*` attribute value VERBATIM — one entry per
 // line; the App maps them from/to the attrs (see splitList/joinList).
 
-import { useEffect, useState, type CSSProperties, type ReactNode } from 'react'
+import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react'
 import { OwnerPicker, type OwnerPickerLabels } from '../owner/OwnerPicker'
 import type { OwnerEntry } from '../owner/ownersIndex'
 import { isDecisionBasisType } from './orgRenderer'
@@ -63,6 +63,15 @@ export interface StepDetailsDialogProps {
   onCancel: () => void
   /** When provided, a tertiary "Export owners (CSV)" button is shown. */
   onExportOwners?: () => void
+  /**
+   * Missing-info categories to visually highlight (MissingCategory names:
+   * 'owner' | 'inputs' | 'outputs' | 'basis' | 'trigger') — the canvas
+   * missing-badge click hands its categories here. Each highlight is an amber
+   * ring + hint on the matching control, cleared as soon as that field is
+   * edited; the first highlighted control is scrolled into view on open.
+   * Categories whose section is hidden for the current mode/type are ignored.
+   */
+  highlightFields?: string[]
 }
 
 // --- which element types get which sections ---------------------------------
@@ -99,9 +108,39 @@ function ownerPickerLabels(): OwnerPickerLabels {
     typeDepartment: t('owner.type.department'),
     typeDivision: t('owner.type.division'),
     typeNone: t('owner.type.none'),
-    suggestionsAria: t('owner.suggestions.aria')
+    suggestionsAria: t('owner.suggestions.aria'),
+    browseAria: t('owner.browse.aria'),
+    emptyState: t('owner.empty')
   }
 }
+
+// --- missing-info highlighting -----------------------------------------------
+
+/** Edited field → the highlighted MissingCategory that edit satisfies (the
+ *  matching amber ring is cleared on the first change to any mapped field). */
+const FIELD_TO_CATEGORY: Partial<Record<keyof StepDetailsValues, string>> = {
+  owner: 'owner',
+  ownerType: 'owner',
+  respList: 'owner',
+  inputs: 'inputs',
+  outputs: 'outputs',
+  decisionBasis: 'basis',
+  trigger: 'trigger',
+  triggerService: 'trigger',
+  triggerDetail: 'trigger'
+}
+
+/** Categories in on-screen order — the scroll-into-view target is the FIRST
+ *  highlighted one that actually rendered a control. */
+const HIGHLIGHT_ORDER = ['owner', 'inputs', 'outputs', 'basis', 'trigger'] as const
+
+/** Amber ring — #c47f17 is PALETTE.basisBorder, the canvas badge's own color. */
+const highlightRing: CSSProperties = {
+  boxShadow: '0 0 0 2px #c47f17',
+  borderRadius: 8,
+  padding: 4
+}
+const highlightHintStyle: CSSProperties = { fontSize: 11.5, color: '#c47f17' }
 
 // --- shared inline styles (var(--orbitpm-*) + logical props for RTL) ---------
 
@@ -194,10 +233,35 @@ const ghostBtn: CSSProperties = {
   color: 'inherit'
 }
 
-function Section({ title, children }: { title: string; children: ReactNode }): JSX.Element {
+function Section({
+  title,
+  children,
+  sectionRef,
+  highlight
+}: {
+  title: string
+  children: ReactNode
+  /** Ref hook for the missing-info scroll-into-view target. */
+  sectionRef?: (node: HTMLElement | null) => void
+  /** Paints the amber missing-info ring + hint on the whole section. */
+  highlight?: boolean
+}): JSX.Element {
   return (
-    <section style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+    <section
+      ref={sectionRef}
+      style={{
+        display: 'flex',
+        flexDirection: 'column',
+        gap: 8,
+        ...(highlight ? highlightRing : undefined)
+      }}
+    >
       <div style={sectionTitle}>{title}</div>
+      {highlight && (
+        <span role="note" style={highlightHintStyle}>
+          {t('missing.highlight.hint')}
+        </span>
+      )}
       {children}
     </section>
   )
@@ -210,10 +274,15 @@ export function StepDetailsDialog({
   ownerEntries,
   onApply,
   onCancel,
-  onExportOwners
+  onExportOwners,
+  highlightFields
 }: StepDetailsDialogProps): JSX.Element {
   useLang()
   const [values, setValues] = useState<StepDetailsValues>(initial)
+  // The dialog is mounted fresh per open (App renders it conditionally), so a
+  // lazy initializer from the prop is enough — no re-sync needed.
+  const [highlights, setHighlights] = useState<Set<string>>(() => new Set(highlightFields ?? []))
+  const highlightRefs = useRef<Record<string, HTMLElement | null>>({})
 
   // Escape closes the dialog (consistent with the app's other modals).
   useEffect(() => {
@@ -227,8 +296,43 @@ export function StepDetailsDialog({
     return () => window.removeEventListener('keydown', onKeyDown)
   }, [onCancel])
 
+  // Scroll the FIRST highlighted control into view once, on mount. Highlights
+  // whose section is hidden for this mode/type never rendered a ref and are
+  // skipped (they are simply ignored, per the prop contract).
+  useEffect(() => {
+    for (const category of HIGHLIGHT_ORDER) {
+      if (!highlights.has(category)) continue
+      const node = highlightRefs.current[category]
+      if (node && typeof node.scrollIntoView === 'function') {
+        node.scrollIntoView({ block: 'center' })
+        break
+      }
+    }
+    // Mount-only: the INITIAL highlight set decides the scroll target.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  const isHighlighted = (category: string): boolean => highlights.has(category)
+
+  const highlightRef =
+    (category: string) =>
+    (node: HTMLElement | null): void => {
+      highlightRefs.current[category] = node
+    }
+
+  const clearHighlight = (category: string): void => {
+    setHighlights((prev) => {
+      if (!prev.has(category)) return prev
+      const next = new Set(prev)
+      next.delete(category)
+      return next
+    })
+  }
+
   const set = <K extends keyof StepDetailsValues>(key: K, value: StepDetailsValues[K]): void => {
     setValues((prev) => ({ ...prev, [key]: value }))
+    const category = FIELD_TO_CATEGORY[key]
+    if (category) clearHighlight(category)
   }
 
   const type = elementType ?? ''
@@ -291,15 +395,20 @@ export function StepDetailsDialog({
           </div>
 
           {/* Owner — always */}
-          <Section title={t('org.section.owner')}>
+          <Section
+            title={t('org.section.owner')}
+            sectionRef={highlightRef('owner')}
+            highlight={isHighlighted('owner')}
+          >
             <OwnerPicker
               value={values.owner}
               ownerType={values.ownerType}
               entries={ownerEntries}
               labels={ownerPickerLabels()}
-              onChange={(name, ownerType) =>
+              onChange={(name, ownerType) => {
+                clearHighlight('owner')
                 setValues((prev) => ({ ...prev, owner: name, ownerType }))
-              }
+              }}
               autoFocus
             />
             <label style={fieldLabel}>
@@ -349,7 +458,10 @@ export function StepDetailsDialog({
               CC list; decision basis only on gateways + business-rule tasks. */}
           {showStepData && (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-              <label style={fieldLabel}>
+              <label
+                ref={highlightRef('inputs')}
+                style={{ ...fieldLabel, ...(isHighlighted('inputs') ? highlightRing : undefined) }}
+              >
                 <span style={labelText}>{t('org.inputs.label')}</span>
                 <textarea
                   dir="auto"
@@ -360,8 +472,16 @@ export function StepDetailsDialog({
                   rows={3}
                   style={textAreaStyle}
                 />
+                {isHighlighted('inputs') && (
+                  <span role="note" style={highlightHintStyle}>
+                    {t('missing.highlight.hint')}
+                  </span>
+                )}
               </label>
-              <label style={fieldLabel}>
+              <label
+                ref={highlightRef('outputs')}
+                style={{ ...fieldLabel, ...(isHighlighted('outputs') ? highlightRing : undefined) }}
+              >
                 <span style={labelText}>{t('org.outputs.label')}</span>
                 <textarea
                   dir="auto"
@@ -371,6 +491,11 @@ export function StepDetailsDialog({
                   rows={3}
                   style={textAreaStyle}
                 />
+                {isHighlighted('outputs') && (
+                  <span role="note" style={highlightHintStyle}>
+                    {t('missing.highlight.hint')}
+                  </span>
+                )}
               </label>
               <label style={fieldLabel}>
                 <span style={labelText}>{t('org.system.label')}</span>
@@ -395,7 +520,10 @@ export function StepDetailsDialog({
                 />
               </label>
               {showDecisionBasis && (
-                <label style={fieldLabel}>
+                <label
+                  ref={highlightRef('basis')}
+                  style={{ ...fieldLabel, ...(isHighlighted('basis') ? highlightRing : undefined) }}
+                >
                   <span style={labelText}>{t('org.decisionBasis.label')}</span>
                   <textarea
                     dir="auto"
@@ -406,6 +534,11 @@ export function StepDetailsDialog({
                     rows={2}
                     style={textAreaStyle}
                   />
+                  {isHighlighted('basis') && (
+                    <span role="note" style={highlightHintStyle}>
+                      {t('missing.highlight.hint')}
+                    </span>
+                  )}
                 </label>
               )}
             </div>
@@ -475,7 +608,10 @@ export function StepDetailsDialog({
           {/* Trigger — process mode, or a start event in element mode */}
           {showTrigger && (
             <Section title={t('org.section.trigger')}>
-              <label style={fieldLabel}>
+              <label
+                ref={highlightRef('trigger')}
+                style={{ ...fieldLabel, ...(isHighlighted('trigger') ? highlightRing : undefined) }}
+              >
                 <span style={labelText}>{t('org.trigger.label')}</span>
                 <select
                   aria-label={t('org.trigger.label')}
@@ -490,6 +626,11 @@ export function StepDetailsDialog({
                   <option value="schedule">{t('org.trigger.schedule')}</option>
                   <option value="other">{t('org.trigger.other')}</option>
                 </select>
+                {isHighlighted('trigger') && (
+                  <span role="note" style={highlightHintStyle}>
+                    {t('missing.highlight.hint')}
+                  </span>
+                )}
               </label>
               {values.trigger === 'dmthub' && (
                 <label style={fieldLabel}>

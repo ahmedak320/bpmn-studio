@@ -6,9 +6,22 @@
 // BPMN tools export with a plain .xml extension); it lands under a
 // `.bpmn`-suffixed relPath so downstream file creation (which always writes
 // `.bpmn`) treats it exactly like a native entry.
+//
+// Two ROOT-LEVEL extras our own export writes alongside the diagrams are
+// recognized (rather than reported as skipped noise):
+//   - `library-manifest.json` → parsed into `result.manifest`;
+//   - `process-owners.csv`    → passed through verbatim as `result.ownersCsv`.
+// The owners CSV is INFORMATIONAL only: process owners live in orbitpm:*
+// attributes inside the .bpmn files themselves, which round-trip through
+// export/import — nothing is (re)applied from the CSV.
 
 import { unzipSync } from 'fflate'
 import { looksLikeBpmnXml } from '../workspace/importDrop'
+import { LIBRARY_MANIFEST_NAME, parseLibraryManifest, type LibraryManifest } from './libraryManifest'
+
+/** Root-level owners-list extra written by the library export (see App's
+ *  exportLibrary): recognized on import, surfaced verbatim, never applied. */
+export const PROCESS_OWNERS_CSV_NAME = 'process-owners.csv'
 
 export type SkipReason = 'not-bpmn' | 'unsafe-path' | 'too-large' | 'decode-failed'
 
@@ -25,6 +38,10 @@ export interface LibraryImportSkipped {
 export interface LibraryImportResult {
   entries: LibraryImportEntry[]
   skipped: LibraryImportSkipped[]
+  /** Parsed root-level `library-manifest.json`, when present and well-formed. */
+  manifest?: LibraryManifest
+  /** Raw text of a root-level `process-owners.csv`, when present. */
+  ownersCsv?: string
 }
 
 const MAX_ENTRY_BYTES = 5 * 1024 * 1024
@@ -77,6 +94,8 @@ export function readLibraryZip(data: Uint8Array): LibraryImportResult {
 
   const entries: LibraryImportEntry[] = []
   const skipped: LibraryImportSkipped[] = []
+  let manifest: LibraryManifest | undefined
+  let ownersCsv: string | undefined
   let totalAccepted = 0
 
   const paths = Object.keys(unzipped).sort();
@@ -101,8 +120,13 @@ export function readLibraryZip(data: Uint8Array): LibraryImportResult {
 
     const bpmnPath = isBpmnPath(normalized)
     const xmlPath = !bpmnPath && isXmlPath(normalized)
+    // Our own export's extras, by EXACT root-level name only — a nested
+    // `sub/library-manifest.json` is somebody's diagram folder content and
+    // falls through to the ordinary skip reporting below.
+    const rootExtra =
+      normalized === LIBRARY_MANIFEST_NAME || normalized === PROCESS_OWNERS_CSV_NAME
 
-    if (!bpmnPath && !xmlPath) {
+    if (!bpmnPath && !xmlPath && !rootExtra) {
       skipped.push({ path: normalized, reason: 'not-bpmn' })
       continue
     }
@@ -113,6 +137,22 @@ export function readLibraryZip(data: Uint8Array): LibraryImportResult {
       xml = decoder.decode(bytes)
     } catch {
       skipped.push({ path: normalized, reason: 'decode-failed' })
+      continue
+    }
+
+    if (rootExtra) {
+      if (normalized === PROCESS_OWNERS_CSV_NAME) {
+        ownersCsv = xml
+        continue
+      }
+      const parsed = parseLibraryManifest(xml)
+      if (parsed) {
+        manifest = parsed
+        continue
+      }
+      // Unparseable manifest (foreign zip reusing the name, corrupt JSON):
+      // fall through to the existing skip handling for unknown entries.
+      skipped.push({ path: normalized, reason: 'not-bpmn' })
       continue
     }
 
@@ -137,5 +177,8 @@ export function readLibraryZip(data: Uint8Array): LibraryImportResult {
     throw new Error('Library too large (max 50 MB)')
   }
 
-  return { entries, skipped }
+  const result: LibraryImportResult = { entries, skipped }
+  if (manifest) result.manifest = manifest
+  if (ownersCsv !== undefined) result.ownersCsv = ownersCsv
+  return result
 }

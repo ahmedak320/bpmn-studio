@@ -1,4 +1,4 @@
-import { useMemo, useState, type CSSProperties, type KeyboardEvent } from 'react'
+import { useMemo, useRef, useState, type CSSProperties, type KeyboardEvent } from 'react'
 import type { OwnerEntry } from './ownersIndex'
 import { filterOwners } from './ownersIndex'
 
@@ -11,6 +11,10 @@ export interface OwnerPickerLabels {
   typeDivision: string
   typeNone: string
   suggestionsAria: string
+  /** aria-label for the ▾ browse-all affordance inside the name input. */
+  browseAria: string
+  /** Single non-interactive row shown when the workspace has no owners yet. */
+  emptyState: string
 }
 
 export const DEFAULT_OWNER_PICKER_LABELS: OwnerPickerLabels = {
@@ -21,7 +25,9 @@ export const DEFAULT_OWNER_PICKER_LABELS: OwnerPickerLabels = {
   typeDepartment: 'Department',
   typeDivision: 'Division',
   typeNone: '—',
-  suggestionsAria: 'Owner suggestions'
+  suggestionsAria: 'Owner suggestions',
+  browseAria: 'Browse all owners',
+  emptyState: 'No owners yet — type a name to add one.'
 }
 
 export interface OwnerPickerProps {
@@ -43,6 +49,15 @@ export function ownerSuggestions(entries: OwnerEntry[], query: string, max = 8):
   return filterOwners(entries, query).slice(0, max)
 }
 
+/**
+ * Pure helper: the browse list for an EMPTY query — the top `max` entries
+ * exactly as given (`collectOwners`/`mergeOwners` already sort count desc,
+ * name asc), so focusing the empty input surfaces the most-used owners.
+ */
+export function browseOwners(entries: OwnerEntry[], max = 12): OwnerEntry[] {
+  return entries.slice(0, max)
+}
+
 const inputStyle: CSSProperties = {
   padding: '0.4rem 0.5rem',
   borderRadius: 6,
@@ -60,10 +75,12 @@ const labelText: CSSProperties = { fontSize: 12, opacity: 0.8 }
 
 /**
  * Controlled owner name/type combobox. Text input with an inline suggestion
- * listbox (filtered against `entries`, max 8 rows), plus a plain `<select>`
+ * listbox (filtered against `entries` when a query is typed, or the top
+ * browse entries when the focused query is empty), plus a plain `<select>`
  * for the owner type. Free typing always calls `onChange(text, ownerType)`
  * immediately — selecting a suggestion also fills in that entry's type when
- * known.
+ * known. A ▾ affordance inside the input toggles the browse list open, and a
+ * workspace with zero owners shows a single non-interactive empty-state row.
  */
 export function OwnerPicker({
   value,
@@ -75,9 +92,14 @@ export function OwnerPicker({
 }: OwnerPickerProps): JSX.Element {
   const [focused, setFocused] = useState(false)
   const [activeIndex, setActiveIndex] = useState(-1)
+  const inputRef = useRef<HTMLInputElement | null>(null)
 
-  const suggestions = useMemo(() => ownerSuggestions(entries, value), [entries, value])
-  const showList = focused && suggestions.length > 0
+  const suggestions = useMemo(
+    () => (value.trim() ? ownerSuggestions(entries, value) : browseOwners(entries)),
+    [entries, value]
+  )
+  // Zero owners + focused shows the list too — it carries the empty-state row.
+  const showList = focused && (suggestions.length > 0 || entries.length === 0)
 
   const selectEntry = (entry: OwnerEntry): void => {
     onChange(entry.name, entry.type ?? ownerType)
@@ -87,6 +109,14 @@ export function OwnerPicker({
 
   const onKeyDown = (e: KeyboardEvent<HTMLInputElement>): void => {
     if (!showList) return
+    if (e.key === 'Escape') {
+      setFocused(false)
+      setActiveIndex(-1)
+      return
+    }
+    // Only the non-interactive empty-state row is showing — nothing to
+    // navigate or select (guards Enter and the modulo-by-zero arrows).
+    if (suggestions.length === 0) return
     if (e.key === 'ArrowDown') {
       e.preventDefault()
       setActiveIndex((i) => (i + 1) % suggestions.length)
@@ -98,9 +128,6 @@ export function OwnerPicker({
         e.preventDefault()
         selectEntry(suggestions[activeIndex])
       }
-    } else if (e.key === 'Escape') {
-      setFocused(false)
-      setActiveIndex(-1)
     }
   }
 
@@ -110,6 +137,7 @@ export function OwnerPicker({
         <span style={labelText}>{labels.nameLabel}</span>
         <div style={{ position: 'relative' }}>
           <input
+            ref={inputRef}
             type="text"
             dir="auto"
             role="combobox"
@@ -119,7 +147,7 @@ export function OwnerPicker({
             autoFocus={autoFocus}
             value={value}
             placeholder={labels.namePlaceholder}
-            style={inputStyle}
+            style={{ ...inputStyle, paddingInlineEnd: 26 }}
             onChange={(e) => {
               onChange(e.target.value, ownerType)
               setActiveIndex(-1)
@@ -128,6 +156,43 @@ export function OwnerPicker({
             onBlur={() => setFocused(false)}
             onKeyDown={onKeyDown}
           />
+          <button
+            type="button"
+            tabIndex={-1}
+            aria-label={labels.browseAria}
+            aria-expanded={showList}
+            onMouseDown={(e) => {
+              // Same trick as the option rows below: preventDefault keeps the
+              // input from blurring (a blur would close the list before the
+              // click could land).
+              e.preventDefault()
+              if (showList) {
+                setFocused(false)
+                setActiveIndex(-1)
+              } else {
+                // focus() is a no-op when the input already holds DOM focus
+                // (e.g. reopening after Escape), so set the state explicitly.
+                inputRef.current?.focus()
+                setFocused(true)
+              }
+            }}
+            style={{
+              position: 'absolute',
+              insetInlineEnd: 6,
+              top: '50%',
+              transform: 'translateY(-50%)',
+              border: 'none',
+              background: 'transparent',
+              color: 'inherit',
+              opacity: 0.7,
+              cursor: 'pointer',
+              fontSize: 11,
+              lineHeight: 1,
+              padding: 2
+            }}
+          >
+            ▾
+          </button>
           {showList && (
             <ul
               role="listbox"
@@ -150,6 +215,14 @@ export function OwnerPicker({
                 zIndex: 10
               }}
             >
+              {suggestions.length === 0 && (
+                <li
+                  role="status"
+                  style={{ padding: '0.35rem 0.5rem', fontSize: 12.5, opacity: 0.75 }}
+                >
+                  {labels.emptyState}
+                </li>
+              )}
               {suggestions.map((entry, i) => (
                 <li
                   key={entry.name.toLowerCase()}

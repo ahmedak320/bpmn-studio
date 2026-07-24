@@ -7,8 +7,11 @@ import {
   OrgRenderer,
   MISSING_BADGE_SIZE,
   isMissingBadgeEligibleType,
+  computeDecorLayout,
   type Decoration,
-  type MissingCategory
+  type MissingCategory,
+  type Box,
+  type DecorLayout
 } from '../orgRenderer'
 import { isCompletenessOn, setCompletenessOn, isOrgStylingOn, setOrgStyling } from '../orgSettings'
 import { PALETTE } from '../palette'
@@ -200,8 +203,11 @@ function extentOf(d: Decoration): [number, number, number, number] | null {
       return [d.x, d.y - 9, d.x + 250, d.y + 4]
     case 'missingBadge':
       return [d.x, d.y, d.x + d.size, d.y + d.size]
+    case 'subChip':
+      return [d.x, d.y, d.x + d.w, d.y + d.h]
     case 'ccStyle':
     case 'noteStyle':
+    case 'eventStyle':
       return null
   }
 }
@@ -210,8 +216,34 @@ function overlaps(a: [number, number, number, number], b: [number, number, numbe
   return a[0] < b[2] && b[0] < a[2] && a[1] < b[3] && b[1] < a[3]
 }
 
+/** The Box-valued fields of a DecorLayout, with their names for messages. */
+const LAYOUT_BOX_KEYS = [
+  'channelTag',
+  'triggerTag',
+  'inputsBox',
+  'ccBox',
+  'ownerChip',
+  'respBox',
+  'basisTag',
+  'badge',
+  'subChip'
+] as const
+
+function layoutBoxes(layout: DecorLayout): Array<{ key: string; box: Box }> {
+  const out: Array<{ key: string; box: Box }> = []
+  for (const key of LAYOUT_BOX_KEYS) {
+    const box = layout[key]
+    if (box) out.push({ key, box })
+  }
+  return out
+}
+
+function boxesOverlap(a: Box, b: Box): boolean {
+  return a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h
+}
+
 describe('missing badge geometry vs every existing decoration', () => {
-  it('never overlaps any decoration across the full prop-combination grid', () => {
+  it('badge never overlaps; all layout boxes pairwise disjoint, clear of label + shape (full grid)', () => {
     const bools = [false, true] as const
     // A deliberately over-long unknown channel clamps its tag to the FULL shape
     // width — the worst case for anything near the top edge.
@@ -220,41 +252,103 @@ describe('missing badge geometry vs every existing decoration', () => {
       { type: 'bpmn:Task', w: 100, h: 80 },
       { type: 'bpmn:BusinessRuleTask', w: 100, h: 80 },
       { type: 'bpmn:ExclusiveGateway', w: 50, h: 50 },
-      { type: 'bpmn:SubProcess', w: 350, h: 200 }
+      { type: 'bpmn:SubProcess', w: 350, h: 200 },
+      // Narrow event: its 90px-minimum external label protrudes past BOTH
+      // side edges — the worst case for the vertical side stack.
+      { type: 'bpmn:StartEvent', w: 36, h: 36 }
     ]
+    const orientations = ['horizontal', 'vertical'] as const
     let checked = 0
+    let disjointChecked = 0
     for (const { type, w, h } of cases) {
-      for (const channel of channels) {
-        for (const cc of bools) {
-          for (const ccList of bools) {
-            for (const owner of bools) {
-              for (const respList of bools) {
-                for (const inputs of bools) {
-                  for (const outputs of bools) {
-                    for (const basis of bools) {
-                      const props: OrgProps = {
-                        channel: channel || undefined,
-                        channelDetail: channel ? 'inbox' : undefined,
-                        kind: cc ? 'cc' : undefined,
-                        ccTo: cc ? 'Legal' : undefined,
-                        ccList: ccList ? 'Legal\nFinance' : undefined,
-                        owner: owner ? 'Ahmed Alkatheeri' : undefined,
-                        ownerRole: owner ? 'A' : undefined,
-                        respList: respList ? 'Sara — Approver\nOmar\nZayed' : undefined,
-                        inputs: inputs ? 'Form A\nB\nC\nD\nE\nF\nG' : undefined,
-                        outputs: outputs ? 'Approval memo' : undefined,
-                        decisionBasis: basis ? 'Delegation matrix §3' : undefined
+      // No label / the default 90x20 below-centred label / a tall 2-line one.
+      const labelBoxes: Array<Box | null> = [
+        null,
+        { x: (w - 90) / 2, y: h + 7, w: 90, h: 20 },
+        { x: (w - 90) / 2, y: h + 7, w: 90, h: 34 }
+      ]
+      for (const orientation of orientations) {
+        for (const labelBox of labelBoxes) {
+          for (const channel of channels) {
+            for (const cc of bools) {
+              for (const ccList of bools) {
+                for (const owner of bools) {
+                  for (const respList of bools) {
+                    for (const inputs of bools) {
+                      for (const outputs of bools) {
+                        for (const basis of bools) {
+                          const props: OrgProps = {
+                            channel: channel || undefined,
+                            channelDetail: channel ? 'inbox' : undefined,
+                            kind: cc ? 'cc' : undefined,
+                            ccTo: cc ? 'Legal' : undefined,
+                            ccList: ccList ? 'Legal\nFinance' : undefined,
+                            owner: owner ? 'Ahmed Alkatheeri' : undefined,
+                            ownerRole: owner ? 'A' : undefined,
+                            respList: respList ? 'Sara — Approver\nOmar\nZayed' : undefined,
+                            inputs: inputs ? 'Form A\nB\nC\nD\nE\nF\nG' : undefined,
+                            outputs: outputs ? 'Approval memo' : undefined,
+                            decisionBasis: basis ? 'Delegation matrix §3' : undefined
+                          }
+                          const grid = `${type}/${orientation}/label=${labelBox ? labelBox.h : 'none'}`
+                          const decorations = planDecorations(props, type, w, h, {
+                            orientation,
+                            labelBox
+                          })
+                          const badge = planMissingBadge(props, type, w)
+                          if (badge) {
+                            const badgeBox = extentOf(badge)!
+                            for (const d of decorations) {
+                              const box = extentOf(d)
+                              if (!box) continue
+                              expect(
+                                overlaps(badgeBox, box),
+                                `${grid} badge overlaps ${d.kind}`
+                              ).toBe(false)
+                            }
+                            checked++
+                          }
+
+                          // Layout invariants: every reserved box pairwise
+                          // disjoint, none touching the external label, and
+                          // none inside the shape rect (subChip excepted —
+                          // it deliberately sits where the '+' marker was).
+                          const layout = computeDecorLayout({
+                            props,
+                            elementType: type,
+                            width: w,
+                            height: h,
+                            orientation,
+                            completenessOn: true,
+                            labelBox
+                          })
+                          const boxes = layoutBoxes(layout)
+                          for (let i = 0; i < boxes.length; i++) {
+                            for (let j = i + 1; j < boxes.length; j++) {
+                              expect(
+                                boxesOverlap(boxes[i].box, boxes[j].box),
+                                `${grid} ${boxes[i].key} overlaps ${boxes[j].key}`
+                              ).toBe(false)
+                            }
+                          }
+                          const shapeRect: Box = { x: 0, y: 0, w, h }
+                          for (const { key, box } of boxes) {
+                            if (labelBox) {
+                              expect(
+                                boxesOverlap(box, labelBox),
+                                `${grid} ${key} overlaps the external label`
+                              ).toBe(false)
+                            }
+                            if (key !== 'subChip') {
+                              expect(
+                                boxesOverlap(box, shapeRect),
+                                `${grid} ${key} overlaps the shape`
+                              ).toBe(false)
+                            }
+                            disjointChecked++
+                          }
+                        }
                       }
-                      const decorations = planDecorations(props, type, w, h)
-                      const badge = planMissingBadge(props, type, w)
-                      if (!badge) continue
-                      const badgeBox = extentOf(badge)!
-                      for (const d of decorations) {
-                        const box = extentOf(d)
-                        if (!box) continue
-                        expect(overlaps(badgeBox, box), `${type} badge overlaps ${d.kind}`).toBe(false)
-                      }
-                      checked++
                     }
                   }
                 }
@@ -264,8 +358,10 @@ describe('missing badge geometry vs every existing decoration', () => {
         }
       }
     }
-    // The grid must actually have exercised badge-bearing combinations.
+    // The grid must actually have exercised badge-bearing combinations and a
+    // healthy number of reserved boxes.
     expect(checked).toBeGreaterThan(500)
+    expect(disjointChecked).toBeGreaterThan(5000)
   })
 
   it('clears the mega-decorated business-rule task from the existing stacking suite', () => {
@@ -333,14 +429,31 @@ describe('canRenderOrg with the completeness flag', () => {
     businessObject: { $type: 'bpmn:Task', $attrs: { 'orbitpm:owner': 'X' } }
   }
 
-  it('flag OFF (and the legacy 2-arg call) keeps the current behavior for bare elements', () => {
+  it('flag OFF (and the legacy 2-arg call) keeps the current behavior for bare non-restyled types', () => {
     expect(canRenderOrg(bare('bpmn:Task'), true)).toBe(false)
     expect(canRenderOrg(bare('bpmn:Task'), true, false)).toBe(false)
     expect(canRenderOrg(bare('bpmn:ExclusiveGateway'), true, false)).toBe(false)
-    expect(canRenderOrg(bare('bpmn:StartEvent'), true, false)).toBe(false)
     // props still render, flag or not
     expect(canRenderOrg(withOwner, true, false)).toBe(true)
     expect(canRenderOrg(withOwner, true, true)).toBe(true)
+  })
+
+  it('always-restyled types (start/end events, sub-process containers) are claimed whenever styling is on', () => {
+    for (const type of [
+      'bpmn:StartEvent',
+      'bpmn:EndEvent',
+      'bpmn:CallActivity',
+      'bpmn:SubProcess',
+      'bpmn:Transaction',
+      'bpmn:AdHocSubProcess'
+    ]) {
+      // Either completeness flag state — the restyle/chip has its own claim.
+      expect(canRenderOrg(bare(type), true), type).toBe(true)
+      expect(canRenderOrg(bare(type), true, false), type).toBe(true)
+      expect(canRenderOrg(bare(type), true, true), type).toBe(true)
+      // Org styling stays the master switch.
+      expect(canRenderOrg(bare(type), false, true), type).toBe(false)
+    }
   })
 
   it('flag ON claims bare badge-eligible types: activities, gateways, start events', () => {
@@ -349,8 +462,14 @@ describe('canRenderOrg with the completeness flag', () => {
     }
   })
 
-  it('flag ON still ignores ineligible bare types (incl. the CallActivity exemption)', () => {
-    for (const type of ['bpmn:CallActivity', 'bpmn:EndEvent', 'bpmn:IntermediateThrowEvent', 'bpmn:Participant']) {
+  it('flag ON still ignores bare types outside both the badge and restyle sets', () => {
+    for (const type of [
+      'bpmn:IntermediateThrowEvent',
+      'bpmn:IntermediateCatchEvent',
+      'bpmn:BoundaryEvent',
+      'bpmn:Participant',
+      'bpmn:Lane'
+    ]) {
       expect(canRenderOrg(bare(type), true, true), type).toBe(false)
     }
   })

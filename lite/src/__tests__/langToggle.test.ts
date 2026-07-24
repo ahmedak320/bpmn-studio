@@ -4,6 +4,7 @@ import {
   toggleDiagramLang,
   pickRootBusinessObject,
   resolveElementNames,
+  resolveLabelMirror,
   type LangToggleModeler
 } from '../editor/langToggle'
 
@@ -192,6 +193,51 @@ describe('resolveElementNames', () => {
     }
     const bo = { $type: 'bpmn:Task', get: (key: string) => values[key] }
     expect(resolveElementNames(bo, 'en', 'ar')).toEqual({ name: 'طلب' })
+  })
+})
+
+// --- resolveLabelMirror (pure) -------------------------------------------
+
+describe('resolveLabelMirror', () => {
+  it('mirrors a changed visible name into the ACTIVE language attr', () => {
+    const bo = { name: 'Order v2', $attrs: { 'orbitpm:nameEn': 'Order' } }
+    expect(resolveLabelMirror(bo, 'en')).toEqual({ 'orbitpm:nameEn': 'Order v2' })
+  })
+
+  it('writes the ar attr when Arabic is the active language', () => {
+    const bo = { name: 'طلب جديد', $attrs: { 'orbitpm:nameAr': 'طلب', 'orbitpm:nameEn': 'Order' } }
+    expect(resolveLabelMirror(bo, 'ar')).toEqual({ 'orbitpm:nameAr': 'طلب جديد' })
+  })
+
+  it('captures a never-stored name on first edit (self-healing, like the toggle)', () => {
+    expect(resolveLabelMirror({ name: 'Plain Name' }, 'en')).toEqual({
+      'orbitpm:nameEn': 'Plain Name'
+    })
+  })
+
+  it('returns {} when the visible name already matches the stored attr', () => {
+    const bo = { name: 'Order', $attrs: { 'orbitpm:nameEn': 'Order' } }
+    expect(resolveLabelMirror(bo, 'en')).toEqual({})
+  })
+
+  it('returns {} for an EMPTY visible name — a stale translation is preserved by design', () => {
+    const bo = { name: '', $attrs: { 'orbitpm:nameEn': 'Order', 'orbitpm:nameAr': 'طلب' } }
+    expect(resolveLabelMirror(bo, 'en')).toEqual({})
+    expect(resolveLabelMirror({ $attrs: { 'orbitpm:nameAr': 'طلب' } }, 'ar')).toEqual({})
+  })
+
+  it('never touches the other language or the visible name itself', () => {
+    const bo = { name: 'Order v2', $attrs: { 'orbitpm:nameEn': 'Order', 'orbitpm:nameAr': 'طلب' } }
+    const result = resolveLabelMirror(bo, 'en')
+    expect(result).toEqual({ 'orbitpm:nameEn': 'Order v2' })
+    expect(Object.keys(result)).not.toContain('orbitpm:nameAr')
+    expect(Object.keys(result)).not.toContain('name')
+  })
+
+  it('reads through businessObject.get() when the moddle extension is registered', () => {
+    const values: Record<string, unknown> = { name: 'Edited', 'orbitpm:nameEn': 'Original' }
+    const bo = { $type: 'bpmn:Task', get: (key: string) => values[key] }
+    expect(resolveLabelMirror(bo, 'en')).toEqual({ 'orbitpm:nameEn': 'Edited' })
   })
 })
 

@@ -28,6 +28,8 @@ export interface OrgElementLike {
   height?: number
   waypoints?: unknown
   labelTarget?: unknown
+  /** External-label shape bounds (ABSOLUTE canvas coords, diagram-js `Shape.label`). */
+  label?: { x: number; y: number; width: number; height: number }
 }
 
 interface ModelingLike {

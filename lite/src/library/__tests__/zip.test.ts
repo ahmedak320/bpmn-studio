@@ -2,7 +2,12 @@ import { describe, expect, it } from 'vitest'
 import { zipSync } from 'fflate'
 
 import { buildLibraryZip, zipFileName } from '../zipExport'
-import { readLibraryZip } from '../zipImport'
+import { readLibraryZip, PROCESS_OWNERS_CSV_NAME } from '../zipImport'
+import {
+  LIBRARY_MANIFEST_NAME,
+  serializeLibraryManifest,
+  type LibraryManifest
+} from '../libraryManifest'
 
 const SAMPLE_BPMN = (name: string) =>
   `<?xml version="1.0" encoding="UTF-8"?><definitions id="${name}"><process id="p_${name}" /></definitions>`
@@ -117,6 +122,112 @@ describe('buildLibraryZip / readLibraryZip round-trip', () => {
 
     const zip = buildLibraryZip(files)
     expect(() => readLibraryZip(zip)).toThrow(/Library too large/)
+  })
+})
+
+describe('readLibraryZip — root-level library extras (manifest + owners CSV)', () => {
+  const MANIFEST: LibraryManifest = {
+    version: 1,
+    generator: 'orbitpm-lite',
+    files: ['a.bpmn', 'nested/b.bpmn'],
+    hierarchy: [
+      {
+        parentFile: 'a.bpmn',
+        parentProcessId: 'p_a',
+        childFile: 'nested/b.bpmn',
+        childProcessId: 'p_b',
+        via: 'callActivity'
+      }
+    ]
+  }
+  const OWNERS_CSV = 'relPath,processId,owner\na.bpmn,p_a,أحمد\nnested/b.bpmn,p_b,Sara\n'
+
+  it('recognizes both extras — parsed manifest + verbatim CSV, neither skipped', () => {
+    const files = [
+      { relPath: 'a.bpmn', xml: SAMPLE_BPMN('a') },
+      { relPath: 'nested/b.bpmn', xml: SAMPLE_BPMN('b') },
+    ]
+    const extras = [
+      { relPath: LIBRARY_MANIFEST_NAME, content: serializeLibraryManifest(MANIFEST) },
+      { relPath: PROCESS_OWNERS_CSV_NAME, content: OWNERS_CSV },
+    ]
+
+    const result = readLibraryZip(buildLibraryZip(files, extras))
+
+    expect(result.skipped).toEqual([])
+    expect(result.entries.map((e) => e.relPath).sort()).toEqual(['a.bpmn', 'nested/b.bpmn'])
+    expect(result.manifest).toEqual(MANIFEST)
+    expect(result.ownersCsv).toBe(OWNERS_CSV)
+  })
+
+  it('leaves manifest/ownersCsv unset for zips without the extras', () => {
+    const result = readLibraryZip(buildLibraryZip([{ relPath: 'a.bpmn', xml: SAMPLE_BPMN('a') }]))
+    expect(result.manifest).toBeUndefined()
+    expect(result.ownersCsv).toBeUndefined()
+  })
+
+  it('falls back to the ordinary skip for an unparseable library-manifest.json', () => {
+    const extras = [{ relPath: LIBRARY_MANIFEST_NAME, content: '{broken json' }]
+    const result = readLibraryZip(buildLibraryZip([], extras))
+
+    expect(result.manifest).toBeUndefined()
+    expect(result.skipped).toEqual([{ path: LIBRARY_MANIFEST_NAME, reason: 'not-bpmn' }])
+  })
+
+  it("skips a FOREIGN zip's same-named manifest whose JSON has the wrong shape", () => {
+    const extras = [{ relPath: LIBRARY_MANIFEST_NAME, content: '{"name":"someone-elses"}' }]
+    const result = readLibraryZip(buildLibraryZip([], extras))
+
+    expect(result.manifest).toBeUndefined()
+    expect(result.skipped).toEqual([{ path: LIBRARY_MANIFEST_NAME, reason: 'not-bpmn' }])
+  })
+
+  it('only recognizes the extras at the zip ROOT — nested copies stay skipped', () => {
+    const extras = [
+      { relPath: `sub/${LIBRARY_MANIFEST_NAME}`, content: serializeLibraryManifest(MANIFEST) },
+      { relPath: `sub/${PROCESS_OWNERS_CSV_NAME}`, content: OWNERS_CSV },
+    ]
+    const result = readLibraryZip(buildLibraryZip([], extras))
+
+    expect(result.manifest).toBeUndefined()
+    expect(result.ownersCsv).toBeUndefined()
+    expect(result.skipped).toEqual([
+      { path: `sub/${LIBRARY_MANIFEST_NAME}`, reason: 'not-bpmn' },
+      { path: `sub/${PROCESS_OWNERS_CSV_NAME}`, reason: 'not-bpmn' },
+    ])
+  })
+
+  it('keeps zip bytes deterministic with extras regardless of input order', () => {
+    const files = [
+      { relPath: 'b.bpmn', xml: SAMPLE_BPMN('b') },
+      { relPath: 'a.bpmn', xml: SAMPLE_BPMN('a') },
+    ]
+    const extras = [
+      { relPath: PROCESS_OWNERS_CSV_NAME, content: OWNERS_CSV },
+      { relPath: LIBRARY_MANIFEST_NAME, content: serializeLibraryManifest(MANIFEST) },
+    ]
+    const zipA = buildLibraryZip(files, extras)
+    const zipB = buildLibraryZip([...files].reverse(), [...extras].reverse())
+    expect(Array.from(zipA)).toEqual(Array.from(zipB))
+  })
+
+  it('reports decode-failed for an undecodable process-owners.csv', () => {
+    const invalidUtf8 = new Uint8Array([0xff, 0xd8, 0xff, 0xe0])
+    const zip = zipSync({ [PROCESS_OWNERS_CSV_NAME]: invalidUtf8 })
+    const result = readLibraryZip(zip)
+
+    expect(result.ownersCsv).toBeUndefined()
+    expect(result.skipped).toEqual([{ path: PROCESS_OWNERS_CSV_NAME, reason: 'decode-failed' }])
+  })
+
+  it('still lists any OTHER non-bpmn extra as skipped (foreign zips unaffected)', () => {
+    const extras = [{ relPath: 'README.txt', content: 'hello' }]
+    const result = readLibraryZip(buildLibraryZip([{ relPath: 'a.bpmn', xml: SAMPLE_BPMN('a') }], extras))
+
+    expect(result.entries).toHaveLength(1)
+    expect(result.skipped).toEqual([{ path: 'README.txt', reason: 'not-bpmn' }])
+    expect(result.manifest).toBeUndefined()
+    expect(result.ownersCsv).toBeUndefined()
   })
 })
 

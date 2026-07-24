@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs'
 import { describe, it, expect } from 'vitest'
 import BpmnModdle from 'bpmn-moddle'
 import { convertAmlToBpmnFiles, convertApcToBpmn, looksLikeAml } from '../apcImport'
+import { parseAml } from '../amlParse'
 import { AML_SAMPLE } from '../__fixtures__/aml-sample'
 
 // The real ARIS 10 "DMT" database export this converter was rebuilt against.
@@ -49,16 +50,62 @@ describe('looksLikeAml', () => {
   })
 })
 
+describe('parseAml — LinkedModels.IdRefs + database name (parse level)', () => {
+  it('collects a whitespace-padded LinkedModels.IdRefs into linkedModelIds', () => {
+    const db = parseAml(AML_SAMPLE)
+    // The fixture's F10 chevron carries `LinkedModels.IdRefs="  Model.M2 "`.
+    expect(db.objectById.get('ObjDef.F10')?.linkedModelIds).toEqual(['Model.M2'])
+  })
+
+  it('defaults linkedModelIds to [] when the attribute is absent', () => {
+    const db = parseAml(AML_SAMPLE)
+    expect(db.objectById.get('ObjDef.F1')?.linkedModelIds).toEqual([])
+    expect(db.objectById.get('ObjDef.F9')?.linkedModelIds).toEqual([])
+    expect(db.objectById.get('ObjDef.E1')?.linkedModelIds).toEqual([])
+  })
+
+  it('splits a multi-valued IdRefs on runs of whitespace (newlines included)', () => {
+    const aml =
+      '<AML><ObjDef ObjDef.ID="ObjDef.X" TypeNum="OT_FUNC"\r\n' +
+      '\tLinkedModels.IdRefs="  Model.A \r\n\t Model.B "/></AML>'
+    const db = parseAml(aml)
+    expect(db.objectById.get('ObjDef.X')?.linkedModelIds).toEqual(['Model.A', 'Model.B'])
+  })
+
+  it('reads DatabaseName off the multi-line self-closing Header-Info', () => {
+    expect(parseAml(AML_SAMPLE).databaseName).toBe('DMT')
+  })
+
+  it('leaves databaseName undefined when there is no Header-Info', () => {
+    const db = parseAml('<AML><ObjDef ObjDef.ID="ObjDef.X" TypeNum="OT_FUNC"/></AML>')
+    expect(db.databaseName).toBeUndefined()
+  })
+})
+
 describe('convertAmlToBpmnFiles — model splitting', () => {
-  it('emits one file per MT_EEPC model and skips the value-chain map', async () => {
+  it('emits one file per MT_EEPC model plus the value-chain overview LAST', async () => {
     const result = await convertAmlToBpmnFiles(AML_SAMPLE)
     expect('files' in result).toBe(true)
     if (!('files' in result)) return
-    expect(result.files).toHaveLength(2)
+    expect(result.files).toHaveLength(3)
     expect(result.files[0].name).toBe('Register animal owner')
     expect(result.files[1].name).toBe('Archive requests')
-    // The MT_VAL_ADD_CHN_DGM landscape produced no file.
-    expect(result.files.some((f) => f.name === 'Process landscape')).toBe(false)
+    // The MT_VAL_ADD_CHN_DGM landscape now converts too — appended last.
+    expect(result.files[2].name).toBe('Process landscape')
+    expect(result.files.map((f) => f.kind)).toEqual(['epc', 'epc', 'overview'])
+    expect(result.files.map((f) => f.processId)).toEqual(['AWF-REG-01', 'Model_M2', 'Model_V1'])
+    // Suggested folder = the overview's name in the active language.
+    expect(result.folderName).toBe('Process landscape')
+  })
+
+  it("skips overview conversion when the export has no convertible EPC — and falls back to the export's DatabaseName for the folder", async () => {
+    // Header-Info gives DMT as DatabaseName; no VACD → folderName falls back.
+    const noVacd = AML_SAMPLE.replace('MT_VAL_ADD_CHN_DGM', 'MT_ORG_CHRT')
+    const result = await convertAmlToBpmnFiles(noVacd)
+    if (!('files' in result)) throw new Error('conversion failed')
+    expect(result.files).toHaveLength(2)
+    expect(result.files.every((f) => f.kind === 'epc')).toBe(true)
+    expect(result.folderName).toBe('DMT')
   })
 
   it('resolves internal-DTD locale entities: Arabic names arrive intact', async () => {
@@ -174,39 +221,148 @@ describe('convertAmlToBpmnFiles — flow vs metadata partition', () => {
   })
 })
 
-describe('convertAmlToBpmnFiles — geometry', () => {
-  it('passes the ARIS layout through as BPMN DI (scale 0.25)', async () => {
+describe('convertAmlToBpmnFiles — layout', () => {
+  /** Pull every DI bounds + waypoint list out of an emitted file. */
+  function parseDi(xml: string): {
+    shapes: Array<{ id: string; x: number; y: number; w: number; h: number }>
+    edges: Array<Array<{ x: number; y: number }>>
+  } {
+    const shapes: Array<{ id: string; x: number; y: number; w: number; h: number }> = []
+    const shapeRe = /<bpmndi:BPMNShape[^>]*bpmnElement="([^"]*)"[^>]*><dc:Bounds x="(-?\d+)" y="(-?\d+)" width="(\d+)" height="(\d+)"/g
+    let m: RegExpExecArray | null
+    while ((m = shapeRe.exec(xml))) {
+      shapes.push({ id: m[1], x: Number(m[2]), y: Number(m[3]), w: Number(m[4]), h: Number(m[5]) })
+    }
+    const edges: Array<Array<{ x: number; y: number }>> = []
+    const edgeRe = /<bpmndi:BPMNEdge[\s\S]*?<\/bpmndi:BPMNEdge>/g
+    const wpRe = /<di:waypoint x="(-?\d+)" y="(-?\d+)"/g
+    let e: RegExpExecArray | null
+    while ((e = edgeRe.exec(xml))) {
+      const wps: Array<{ x: number; y: number }> = []
+      let w: RegExpExecArray | null
+      wpRe.lastIndex = 0
+      while ((w = wpRe.exec(e[0]))) wps.push({ x: Number(w[1]), y: Number(w[2]) })
+      edges.push(wps)
+    }
+    return { shapes, edges }
+  }
+
+  it('every emitted file carries a generated BPMNDiagram with sane DI', async () => {
     const result = await convertAmlToBpmnFiles(AML_SAMPLE)
     if (!('files' in result)) throw new Error('conversion failed')
-    const xml = result.files[0].xml
-    expect(xml).toContain('<bpmndi:BPMNDiagram')
-    // Function F1: ARIS box (1200,700 670×240) × 0.25 → (300,175 168×60).
-    expect(xml).toContain(
-      '<bpmndi:BPMNShape id="BPMNShape_ObjDef_F1" bpmnElement="ObjDef_F1"><dc:Bounds x="300" y="175" width="168" height="60" />'
-    )
-    // Event E1: a standard 36×36 circle centered in the scaled ARIS box.
-    expect(xml).toContain(
-      '<bpmndi:BPMNShape id="BPMNShape_ObjDef_E1" bpmnElement="ObjDef_E1"><dc:Bounds x="351" y="101" width="36" height="36" />'
-    )
-    // Gateway R1: a standard 50×50 diamond centered in the scaled operator box.
-    expect(xml).toContain('<dc:Bounds x="348" y="268" width="50" height="50" />')
-    // Edges run straight center→center (E1 → F1 is the first drawn flow).
-    expect(xml).toContain(
-      '<bpmndi:BPMNEdge id="BPMNEdge_flow_1" bpmnElement="flow_1"><di:waypoint x="369" y="119" /><di:waypoint x="384" y="205" /></bpmndi:BPMNEdge>'
-    )
+    expect(result.files).toHaveLength(3)
+    for (const file of result.files) {
+      expect(file.xml).toContain('<bpmndi:BPMNDiagram id="BPMNDiagram_1">')
+      const { shapes, edges } = parseDi(file.xml)
+      expect(shapes.length).toBeGreaterThan(0)
+      expect(edges.length).toBeGreaterThan(0)
+      for (const s of shapes) {
+        expect(s.x, `${file.name} ${s.id} x`).toBeGreaterThanOrEqual(0)
+        expect(s.y, `${file.name} ${s.id} y`).toBeGreaterThanOrEqual(0)
+      }
+      // Orthogonal-only routing, everywhere.
+      for (const wps of edges) {
+        expect(wps.length).toBeGreaterThanOrEqual(2)
+        for (let i = 1; i < wps.length; i++) {
+          expect(wps[i - 1].x === wps[i].x || wps[i - 1].y === wps[i].y).toBe(true)
+        }
+      }
+    }
   })
 
-  it('falls back to auto-layout when a model has no geometry', async () => {
+  it('re-lays out even models WITH full ARIS geometry (hints only, no copy)', async () => {
+    const result = await convertAmlToBpmnFiles(AML_SAMPLE)
+    if (!('files' in result)) throw new Error('conversion failed')
+    const { shapes } = parseDi(result.files[0].xml)
+    const byId = new Map(shapes.map((s) => [s.id, s]))
+    // Standard bpmn-js element sizes, not scaled ARIS boxes (F1 was 670×240).
+    expect(byId.get('ObjDef_F1')).toMatchObject({ w: 100, h: 80 })
+    expect(byId.get('ObjDef_E1')).toMatchObject({ w: 36, h: 36 })
+    expect(byId.get('ObjDef_R1')).toMatchObject({ w: 50, h: 50 })
+    // The sequential spine E1 → F1 → R1 shares ONE vertical axis…
+    const axis = (id: string): number => {
+      const s = byId.get(id) as { x: number; w: number }
+      return s.x + s.w / 2
+    }
+    expect(axis('ObjDef_E1')).toBe(axis('ObjDef_F1'))
+    expect(axis('ObjDef_F1')).toBe(axis('ObjDef_R1'))
+    // …and the ARIS reading order survives as branch order: E2 (drawn left)
+    // stays left of E3 (drawn right) under the XOR split.
+    expect(axis('ObjDef_E2')).toBeLessThan(axis('ObjDef_E3'))
+    // External labels for named events/gateways get BPMNLabel bounds.
+    expect(result.files[0].xml).toContain('<bpmndi:BPMNLabel>')
+  })
+
+  it('models without geometry lay out the same way (no hints at all)', async () => {
     const result = await convertAmlToBpmnFiles(AML_SAMPLE)
     if (!('files' in result)) throw new Error('conversion failed')
     const xml = result.files[1].xml // Model.M2 has occurrences but no Position/Size
-    expect(xml).toContain('BPMNDiagram') // added by layoutBpmn
+    expect(xml).toContain('<bpmndi:BPMNDiagram id="BPMNDiagram_1">')
     expect(xml).toContain('<startEvent')
     expect(xml).toContain('<endEvent')
-    // orbitpm attrs survive the auto-layout round-trip.
+    // orbitpm attrs survive.
     expect(xml).toContain('orbitpm:nameAr="معالجة الأرشيف"')
     // The legacy bare-AttrValue name shape still parses.
     expect(xml).toContain('Archive completed')
+    // The E8 → F9 → E9 chain is one straight spine.
+    const { shapes } = parseDi(xml)
+    const centers = shapes
+      .filter((s) => ['ObjDef_E8', 'ObjDef_F9', 'ObjDef_E9'].includes(s.id))
+      .map((s) => s.x + s.w / 2)
+    expect(centers).toHaveLength(3)
+    expect(new Set(centers).size).toBe(1)
+  })
+
+  it('conversion is deterministic: same input, byte-identical output', async () => {
+    const a = await convertAmlToBpmnFiles(AML_SAMPLE)
+    const b = await convertAmlToBpmnFiles(AML_SAMPLE)
+    if (!('files' in a) || !('files' in b)) throw new Error('conversion failed')
+    expect(a.files.map((f) => f.xml)).toEqual(b.files.map((f) => f.xml))
+  })
+})
+
+describe('convertAmlToBpmnFiles — value-chain overview', () => {
+  async function overviewXml(): Promise<string> {
+    const result = await convertAmlToBpmnFiles(AML_SAMPLE)
+    if (!('files' in result)) throw new Error('conversion failed')
+    return result.files[2].xml
+  }
+
+  it('turns the leaf chevrons into callActivities onto the converted EPCs', async () => {
+    const xml = await overviewXml()
+    // F1 occurs inside converted EPC M1 → overview-occurrence rule.
+    const f1 = startTagOf(xml, 'ObjDef_F1')
+    expect(f1.startsWith('<callActivity')).toBe(true)
+    expect(f1).toContain('calledElement="AWF-REG-01"')
+    // F9 occurs inside converted EPC M2.
+    const f9 = startTagOf(xml, 'ObjDef_F9')
+    expect(f9).toContain('calledElement="Model_M2"')
+    // F10 has NO EPC occurrence — its LinkedModels.IdRefs assignment resolves.
+    const f10 = startTagOf(xml, 'ObjDef_F10')
+    expect(f10.startsWith('<callActivity')).toBe(true)
+    expect(f10).toContain('calledElement="Model_M2"')
+    // Chevron names ride along bilingually.
+    expect(f10).toContain('orbitpm:nameEn="Long-term archival"')
+    expect(f10).toContain('orbitpm:nameAr="الأرشفة طويلة الأمد"')
+  })
+
+  it('chains the chevrons in drawn reading order (no CT_IS_PREDEC_OF drawn)', async () => {
+    const xml = await overviewXml()
+    // Drawn x order: F1 (75) → F9 (775) → F10 (1475).
+    expect(xml).toMatch(/<sequenceFlow[^>]*sourceRef="ObjDef_F1"[^>]*targetRef="ObjDef_F9"/)
+    expect(xml).toMatch(/<sequenceFlow[^>]*sourceRef="ObjDef_F9"[^>]*targetRef="ObjDef_F10"/)
+    expect((xml.match(/<sequenceFlow\b/g) ?? []).length).toBe(2)
+    // No events are inferred on an overview.
+    expect(xml).not.toContain('<startEvent')
+    expect(xml).not.toContain('<endEvent')
+  })
+
+  it('keeps the overview process bilingual and marked with its model name', async () => {
+    const result = await convertAmlToBpmnFiles(AML_SAMPLE)
+    if (!('files' in result)) throw new Error('conversion failed')
+    const overview = result.files[2]
+    expect(overview.kind).toBe('overview')
+    expect(overview.xml).toContain('<process id="Model_V1" name="Process landscape"')
   })
 })
 
@@ -276,16 +432,17 @@ describe('convertAmlToBpmnFiles — error codes', () => {
 })
 
 describe('emitted BPMN imports cleanly', () => {
-  it('bpmn-moddle parses both fixture files without warnings', async () => {
+  it('bpmn-moddle parses all three fixture files without warnings', async () => {
     const result = await convertAmlToBpmnFiles(AML_SAMPLE)
     if (!('files' in result)) throw new Error('conversion failed')
+    expect(result.files).toHaveLength(3)
     const moddle = new BpmnModdle()
     for (const file of result.files) {
       const { rootElement, warnings } = await moddle.fromXML(file.xml)
       expect(rootElement.$type).toBe('bpmn:Definitions')
       expect(warnings).toEqual([])
     }
-    // The geometry file's DI plane really carries the shapes + edges.
+    // The first EPC's DI plane really carries the shapes + edges.
     const { rootElement } = await moddle.fromXML(result.files[0].xml)
     const plane = rootElement.diagrams[0].plane
     // 10 flow nodes + 9 sequence flows.

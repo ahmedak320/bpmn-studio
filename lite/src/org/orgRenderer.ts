@@ -2,24 +2,72 @@
 // priority (1500) than the stock BpmnRenderer (1000): it lets the base renderer
 // draw the shape as normal, then paints the org decorations (owner chip, RACI
 // role, channel band + chevrons + tag, CC styling, note styling, start-event
-// trigger tag) INTO the same graphics group so bpmn-js's `saveSVG` serialises
-// them verbatim into the exported diagram.
+// trigger tag, lists, missing-info badge, start/end restyle, sub-process chip)
+// INTO the same graphics group so bpmn-js's `saveSVG` serialises them verbatim
+// into the exported diagram.
 //
-// The design is split in two so the geometry/colour logic is unit-testable in a
+// The design is split so the geometry/colour logic is unit-testable in a
 // plain node environment (no DOM, no bpmn-js):
+//   * decorExtents.computeDecorLayout — PURE geometry, single source of truth
 //   * planDecorations()  — PURE: props + geometry -> Decoration[]  (tested)
 //   * applyDecorations()  — DOM: Decoration[] -> tiny-svg nodes      (e2e only)
 
 import BaseRenderer from 'diagram-js/lib/draw/BaseRenderer'
 import { append as svgAppend, create as svgCreate, attr as svgAttr } from 'tiny-svg'
 
-import { PALETTE, CHANNEL_TAG_LABELS } from './palette'
-import { getOrgProps, splitList, type OrgProps, type OrgElementLike } from './orgModel'
+import { PALETTE } from './palette'
+import { getOrgProps, type OrgProps, type OrgElementLike } from './orgModel'
 import { isOrgStylingOn, isCompletenessOn } from './orgSettings'
+import { OrgDecorSync } from './orgDecorSync'
+import {
+  computeDecorLayout,
+  planBadgeBox,
+  planSubChipBox,
+  planMissingInfo,
+  isMissingBadgeEligibleType,
+  prepareListRows,
+  truncate,
+  channelLabel,
+  triggerLabel,
+  isActivityType,
+  type Box,
+  type FlowOrientation,
+  type MissingCategory
+} from './decorExtents'
 // `t` is a plain function over the module-level language state — safe to call
 // from this non-React module; used only for the canvas list/tag titles and the
-// missing-info badge tooltip.
+// missing-info badge / sub-process chip tooltips.
 import { t, type Key } from '../i18n'
+
+// --- moved geometry helpers, re-exported so existing imports keep compiling
+// (StepDetailsDialog.tsx, assist/interview.ts, the org test suites) ----------
+
+export {
+  truncate,
+  isActivityType,
+  isDecisionBasisType,
+  prepareListRows,
+  listBoxHeight,
+  listBoxWidth,
+  stackBelow,
+  planMissingInfo,
+  isMissingBadgeEligibleType,
+  computeDecorLayout,
+  computeDecorMargins,
+  detectOrientation,
+  planBadgeBox,
+  planSubChipBox,
+  LIST_MAX_ROWS,
+  LIST_ROW_CHARS,
+  MISSING_BADGE_SIZE,
+  type BelowStackInput,
+  type BelowStackLayout,
+  type MissingCategory,
+  type Box,
+  type FlowOrientation,
+  type DecorLayout,
+  type DecorLayoutInput
+} from './decorExtents'
 
 // --- decoration model -------------------------------------------------------
 
@@ -57,6 +105,13 @@ export type Decoration =
   | { kind: 'raci'; x: number; y: number; size: number; letter: string; fill: string; stroke: string }
   | { kind: 'ccStyle'; fill: string; stroke: string }
   | { kind: 'noteStyle'; fill: string; stroke: string }
+  | {
+      /** Restyle of the stock start/end event circle (fill + ring). */
+      kind: 'eventStyle'
+      fill: string
+      stroke: string
+      strokeWidth: number
+    }
   | { kind: 'subLabel'; x: number; y: number; text: string; fill: string }
   | {
       kind: 'listBox'
@@ -81,44 +136,28 @@ export type Decoration =
       size: number
       /** Number of missing categories; rendered as "!" (1) or "!N" (>1). */
       count: number
-      /** Full localized tooltip — becomes a native SVG <title> child. */
+      /** Full localized tooltip (custom canvas tooltip, no native <title>). */
       titleText: string
+      /** Machine-readable missing categories, stamped as `data-org-missing`. */
+      missing: MissingCategory[]
+      fill: string
+      stroke: string
+    }
+  | {
+      /** "Contains a sub-process" pill replacing the stock '+' marker on
+       *  collapsed SubProcess / CallActivity shapes. Non-interactive. */
+      kind: 'subChip'
+      x: number
+      y: number
+      w: number
+      h: number
+      label: string
+      tooltip: string
       fill: string
       stroke: string
     }
 
-// --- pure helpers -----------------------------------------------------------
-
-const ACTIVITY_TYPES: ReadonlySet<string> = new Set([
-  'bpmn:Task',
-  'bpmn:UserTask',
-  'bpmn:ServiceTask',
-  'bpmn:SendTask',
-  'bpmn:ReceiveTask',
-  'bpmn:ManualTask',
-  'bpmn:BusinessRuleTask',
-  'bpmn:ScriptTask',
-  'bpmn:CallActivity',
-  'bpmn:SubProcess',
-  'bpmn:Transaction',
-  'bpmn:AdHocSubProcess'
-])
-
-function isActivityType(type: string): boolean {
-  return ACTIVITY_TYPES.has(type)
-}
-
-/** Truncate to `max` characters, appending an ellipsis when it overflows. */
-export function truncate(value: string, max: number): string {
-  if (value.length <= max) return value
-  if (max <= 1) return value.slice(0, max)
-  return value.slice(0, max - 1) + '…'
-}
-
-function capitalize(value: string): string {
-  if (!value) return value
-  return value.charAt(0).toUpperCase() + value.slice(1)
-}
+// --- pure colour helpers -----------------------------------------------------
 
 /** Colour pair for a channel / trigger kind; unknown kinds fall back to the
  *  neutral RACI palette so manual/schedule/other triggers still read as tags. */
@@ -135,172 +174,62 @@ function tagColorsFor(kind: string): RectStyle {
   }
 }
 
-function channelLabel(channel: string): string {
-  return CHANNEL_TAG_LABELS[channel] ?? channel.toUpperCase()
-}
+// --- planDecorations ---------------------------------------------------------
 
-function triggerLabel(trigger: string): string {
-  switch (trigger) {
-    case 'dmthub':
-      return 'DMT HUB'
-    case 'email':
-      return 'EMAIL'
-    default:
-      return capitalize(trigger)
-  }
-}
-
-function tagWidth(label: string, maxWidth: number): number {
-  return Math.min(maxWidth, 12 + 7 * label.length)
-}
-
-// --- list boxes + below-shape stacking (all PURE, unit-tested) ---------------
-
-/** Element types that may carry a rendered `decisionBasis` tag. */
-const DECISION_BASIS_TYPES: ReadonlySet<string> = new Set([
-  'bpmn:ExclusiveGateway',
-  'bpmn:InclusiveGateway',
-  'bpmn:ParallelGateway',
-  'bpmn:EventBasedGateway',
-  'bpmn:ComplexGateway',
-  'bpmn:BusinessRuleTask'
-])
-
-export function isDecisionBasisType(type: string): boolean {
-  return DECISION_BASIS_TYPES.has(type)
-}
-
-/** Row caps shared by every list box. */
-export const LIST_MAX_ROWS = 5
-export const LIST_ROW_CHARS = 20
-/** Horizontal gap between the shape edge and a side list box. */
-const LIST_GAP_X = 12
-/** Vertical gap between stacked below-shape blocks. */
-const STACK_GAP = 8
-/** Owner chip height (unchanged from the original renderer). */
-const OWNER_CHIP_H = 20
-/** Decision-basis tag height (same as the channel/trigger tags). */
-const BASIS_TAG_H = 18
-/** Vertical room consumed by the legacy "CC: …" sub-label text line. */
-const SUB_LABEL_ADVANCE = 16
-/** List-box internals: title band height and per-row height. */
-const LIST_TITLE_H = 22
-const LIST_ROW_H = 13
-
-/**
- * PURE: turn a '\n'-joined multi-value attribute into display rows — trimmed,
- * blank lines dropped, each row truncated to `maxChars`, capped at `maxRows`
- * content rows plus a final "+N" overflow row when entries remain.
- */
-export function prepareListRows(
-  raw: string | undefined,
-  maxRows: number = LIST_MAX_ROWS,
-  maxChars: number = LIST_ROW_CHARS
-): string[] {
-  const entries = splitList(raw)
-  if (entries.length === 0) return []
-  const rows = entries.slice(0, maxRows).map((entry) => truncate(entry, maxChars))
-  if (entries.length > maxRows) rows.push('+' + (entries.length - maxRows))
-  return rows
-}
-
-/** PURE: list-box height for `rowCount` rows (title band + rows). */
-export function listBoxHeight(rowCount: number): number {
-  return LIST_TITLE_H + LIST_ROW_H * rowCount
-}
-
-/** PURE: list-box width sized to the longest of title/rows, clamped 70..170. */
-export function listBoxWidth(title: string, rows: string[], personGlyph: boolean): number {
-  let maxLen = title.length
-  for (const row of rows) maxLen = Math.max(maxLen, row.length)
-  const indent = personGlyph ? 12 : 0
-  return Math.max(70, Math.min(170, 16 + indent + 6 * maxLen))
-}
-
-export interface BelowStackInput {
-  /** Shape height — the stack grows downward from this baseline. */
-  height: number
-  /** Legacy "CC: …" sub-label present (kind==='cc' AND no ccList box). */
-  ccSubLabel: boolean
-  /** Owner chip (+ RACI letter) present. */
-  owner: boolean
-  /** Prepared responsible-list row count (0 = no list box). */
-  respRows: number
-  /** Decision-basis tag present. */
-  basis: boolean
-}
-
-export interface BelowStackLayout {
-  /** Text BASELINE y of the legacy CC sub-label (matches the original +12). */
-  ccSubLabelY?: number
-  /** Top y of the owner chip (original: height+8, or height+24 after a CC sub-label). */
-  ownerY?: number
-  /** Top y of the responsible list box. */
-  respY?: number
-  /** Top y of the decision-basis tag. */
-  basisY?: number
-  /** First free y below the whole stack. */
-  bottom: number
-}
-
-/**
- * PURE: below-shape stacking. Blocks stack strictly in this order — legacy CC
- * sub-label, owner chip, responsible list, decision-basis tag — each one
- * advancing a cursor past its own height plus a fixed gap, so no combination
- * can ever overlap. Reproduces the pre-list offsets exactly: owner-only sits
- * at height+8 and CC-sub-label+owner puts the chip at height+24.
- */
-export function stackBelow(input: BelowStackInput): BelowStackLayout {
-  let cursor = input.height
-  const out: BelowStackLayout = { bottom: cursor }
-  if (input.ccSubLabel) {
-    out.ccSubLabelY = cursor + 12
-    cursor += SUB_LABEL_ADVANCE
-  }
-  if (input.owner) {
-    out.ownerY = cursor + STACK_GAP
-    cursor = out.ownerY + OWNER_CHIP_H
-  }
-  if (input.respRows > 0) {
-    out.respY = cursor + STACK_GAP
-    cursor = out.respY + listBoxHeight(input.respRows)
-  }
-  if (input.basis) {
-    out.basisY = cursor + STACK_GAP
-    cursor = out.basisY + BASIS_TAG_H
-  }
-  out.bottom = cursor
-  return out
+/** Extra planning context; omitted -> horizontal orientation, no label. */
+export interface PlanContext {
+  orientation?: FlowOrientation
+  labelBox?: Box | null
 }
 
 /**
  * PURE: turn a set of org props + the shape's type/geometry into an ordered
- * list of decorations. No DOM, no bpmn-js — safe to unit-test directly.
+ * list of decorations. Every positioned decoration sits exactly on the Box
+ * reported by decorExtents.computeDecorLayout for the same inputs (parity is
+ * pinned by decorExtents.test.ts), so the auto-layout lane and the painted
+ * pixels can never disagree. No DOM, no bpmn-js — safe to unit-test directly.
  */
 export function planDecorations(
   props: OrgProps,
   elementType: string,
   width: number,
-  height: number
+  height: number,
+  ctx?: PlanContext
 ): Decoration[] {
   // Text annotations are only ever "note"-styled; nothing else applies.
   if (elementType === 'bpmn:TextAnnotation') {
     return [{ kind: 'noteStyle', fill: PALETTE.noteFill, stroke: PALETTE.noteBorder }]
   }
 
+  const layout = computeDecorLayout({
+    props,
+    elementType,
+    width,
+    height,
+    orientation: ctx?.orientation ?? 'horizontal',
+    // The badge stays a separate composition step (planMissingBadge) so this
+    // function keeps its flag-free signature.
+    completenessOn: false,
+    labelBox: ctx?.labelBox ?? null
+  })
+
   const out: Decoration[] = []
-  const isCc = props.kind === 'cc'
-  const isActivity = isActivityType(elementType)
-  const isStartEvent = elementType === 'bpmn:StartEvent'
+
+  // Start/end events get their base circle restyled (green go / red stop).
+  if (elementType === 'bpmn:StartEvent') {
+    out.push({ kind: 'eventStyle', fill: PALETTE.startFill, stroke: PALETTE.startBorder, strokeWidth: 3 })
+  } else if (elementType === 'bpmn:EndEvent') {
+    out.push({ kind: 'eventStyle', fill: PALETTE.endFill, stroke: PALETTE.endBorder, strokeWidth: 4 })
+  }
 
   // CC styling recolours the base shape.
-  if (isCc) {
+  if (props.kind === 'cc') {
     out.push({ kind: 'ccStyle', fill: PALETTE.ccFill, stroke: PALETTE.ccBorder })
   }
 
-  // Channel: green step band + chevrons glyph + channel tag (activities only).
-  if (props.channel && isActivity) {
-    const label = channelLabel(props.channel)
+  // Channel: green step band + chevrons glyph + channel tag (activities only —
+  // layout.channelTag presence already encodes the type gate).
+  if (layout.channelTag && props.channel) {
     const colors = tagColorsFor(props.channel)
     out.push({ kind: 'band', x: 0, y: 0, w: width, h: 6, fill: PALETTE.stepGreenBand })
     out.push({
@@ -313,11 +242,11 @@ export function planDecorations(
     })
     out.push({
       kind: 'tag',
-      x: 0,
-      y: -22,
-      w: tagWidth(label, width),
-      h: 18,
-      label,
+      x: layout.channelTag.x,
+      y: layout.channelTag.y,
+      w: layout.channelTag.w,
+      h: layout.channelTag.h,
+      label: channelLabel(props.channel),
       detail: props.channelDetail ? truncate(props.channelDetail, 18) : '',
       fill: colors.fill,
       stroke: colors.stroke
@@ -325,38 +254,33 @@ export function planDecorations(
   }
 
   // Start-event trigger tag (above the event).
-  if (props.trigger && isStartEvent) {
-    const label = triggerLabel(props.trigger)
+  if (layout.triggerTag && props.trigger) {
     const colors = tagColorsFor(props.trigger)
-    const detail =
-      props.trigger === 'dmthub' && props.triggerService ? truncate(props.triggerService, 18) : ''
     out.push({
       kind: 'tag',
-      x: 0,
-      y: -26,
-      w: tagWidth(label, Math.max(width, 60)),
-      h: 18,
-      label,
-      detail,
+      x: layout.triggerTag.x,
+      y: layout.triggerTag.y,
+      w: layout.triggerTag.w,
+      h: layout.triggerTag.h,
+      label: triggerLabel(props.trigger),
+      detail:
+        props.trigger === 'dmthub' && props.triggerService ? truncate(props.triggerService, 18) : '',
       fill: colors.fill,
       stroke: colors.stroke
     })
   }
 
-  // Inputs / base-information list box to the LEFT of an activity (x < 0),
-  // in the dedicated teal scheme so the input feed reads distinctly.
-  const inputRows = isActivity ? prepareListRows(props.inputs) : []
-  if (inputRows.length > 0) {
-    const title = t('canvas.inputs')
-    const w = listBoxWidth(title, inputRows, false)
+  // Inputs / base-information list box (teal): above the shape in horizontal
+  // flow, left of the shape in vertical flow — geometry from the layout.
+  if (layout.inputsBox) {
     out.push({
       kind: 'listBox',
-      x: -(w + LIST_GAP_X),
-      y: 0,
-      w,
-      h: listBoxHeight(inputRows.length),
-      title,
-      rows: inputRows,
+      x: layout.inputsBox.x,
+      y: layout.inputsBox.y,
+      w: layout.inputsBox.w,
+      h: layout.inputsBox.h,
+      title: t('canvas.inputs'),
+      rows: prepareListRows(props.inputs),
       fill: PALETTE.inputFill,
       stroke: PALETTE.inputBorder,
       textColor: PALETTE.inputText,
@@ -364,21 +288,18 @@ export function planDecorations(
     })
   }
 
-  // CC / informed-party list box to the RIGHT of the shape (pink CC scheme).
-  // Independent of kind==='cc'; when present it REPLACES the legacy single-line
-  // "CC: …" sub-label so the same names are never painted twice.
-  const ccRows = prepareListRows(props.ccList)
-  if (ccRows.length > 0) {
-    const title = t('canvas.cc')
-    const w = listBoxWidth(title, ccRows, false)
+  // CC / informed-party list box (pink): below-stack member in horizontal
+  // flow, right-side stack member in vertical flow. Independent of kind==='cc';
+  // when present it REPLACES the legacy single-line "CC: …" sub-label.
+  if (layout.ccBox) {
     out.push({
       kind: 'listBox',
-      x: width + LIST_GAP_X,
-      y: 0,
-      w,
-      h: listBoxHeight(ccRows.length),
-      title,
-      rows: ccRows,
+      x: layout.ccBox.x,
+      y: layout.ccBox.y,
+      w: layout.ccBox.w,
+      h: layout.ccBox.h,
+      title: t('canvas.cc'),
+      rows: prepareListRows(props.ccList),
       fill: PALETTE.ccFill,
       stroke: PALETTE.ccBorder,
       textColor: PALETTE.ccBorder,
@@ -386,41 +307,28 @@ export function planDecorations(
     })
   }
 
-  // Below the shape everything shares one overlap-free stack: legacy CC
-  // sub-label, owner chip (+RACI), responsible list, decision-basis tag.
-  const respRows = prepareListRows(props.respList)
-  const hasBasis = Boolean(props.decisionBasis) && isDecisionBasisType(elementType)
-  const stack = stackBelow({
-    height,
-    ccSubLabel: isCc && ccRows.length === 0,
-    owner: Boolean(props.owner),
-    respRows: respRows.length,
-    basis: hasBasis
-  })
-
   // Legacy CC sub-label ("CC: <recipient>") — kept for kind==='cc' diagrams
-  // that predate ccList; suppressed above whenever the CC list box renders.
-  if (stack.ccSubLabelY !== undefined) {
+  // that predate ccList; suppressed whenever the CC list box renders.
+  if (layout.ccSubLabelY !== undefined) {
     out.push({
       kind: 'subLabel',
       x: 0,
-      y: stack.ccSubLabelY,
+      y: layout.ccSubLabelY,
       text: 'CC: ' + truncate(props.ccTo ?? '', 24),
       fill: PALETTE.ccBorder
     })
   }
 
-  // Owner chip + RACI role letter below the shape.
-  if (props.owner && stack.ownerY !== undefined) {
-    const text = truncate(props.owner, 22)
-    const ownerY = stack.ownerY
+  // Owner chip + RACI role letter (below stack / right stack per orientation).
+  if (layout.ownerChip && props.owner) {
+    const chip = layout.ownerChip
     out.push({
       kind: 'ownerBox',
-      x: 0,
-      y: ownerY,
-      w: Math.min(160, 24 + 7 * text.length),
-      h: 20,
-      text,
+      x: chip.x,
+      y: chip.y,
+      w: chip.w,
+      h: chip.h,
+      text: truncate(props.owner, 22),
       fill: PALETTE.ownerFill,
       stroke: PALETTE.ownerBorder,
       textColor: PALETTE.ownerText,
@@ -428,8 +336,8 @@ export function planDecorations(
     })
     out.push({
       kind: 'raci',
-      x: 0,
-      y: ownerY + 3,
+      x: chip.x,
+      y: chip.y + 3,
       size: 14,
       letter: props.ownerRole || 'R',
       fill: PALETTE.raciBg,
@@ -437,18 +345,16 @@ export function planDecorations(
     })
   }
 
-  // Responsible-people list box (owner beige, one person glyph per row),
-  // stacked under the owner chip when both are present.
-  if (respRows.length > 0 && stack.respY !== undefined) {
-    const title = t('canvas.responsible')
+  // Responsible-people list box (owner beige, one person glyph per row).
+  if (layout.respBox) {
     out.push({
       kind: 'listBox',
-      x: 0,
-      y: stack.respY,
-      w: listBoxWidth(title, respRows, true),
-      h: listBoxHeight(respRows.length),
-      title,
-      rows: respRows,
+      x: layout.respBox.x,
+      y: layout.respBox.y,
+      w: layout.respBox.w,
+      h: layout.respBox.h,
+      title: t('canvas.responsible'),
+      rows: prepareListRows(props.respList),
       fill: PALETTE.ownerFill,
       stroke: PALETTE.ownerBorder,
       textColor: PALETTE.ownerText,
@@ -456,19 +362,17 @@ export function planDecorations(
     })
   }
 
-  // Decision-basis tag (amber) on gateways / business-rule tasks, always the
-  // last block of the below-shape stack.
-  if (hasBasis && stack.basisY !== undefined) {
-    const label = t('canvas.basis')
-    const detail = truncate(props.decisionBasis ?? '', 28)
+  // Decision-basis tag (amber) on gateways / business-rule tasks — always the
+  // last block of its stack.
+  if (layout.basisTag) {
     out.push({
       kind: 'tag',
-      x: 0,
-      y: stack.basisY,
-      w: tagWidth(label + ': ' + detail, 220),
-      h: BASIS_TAG_H,
-      label,
-      detail,
+      x: layout.basisTag.x,
+      y: layout.basisTag.y,
+      w: layout.basisTag.w,
+      h: layout.basisTag.h,
+      label: t('canvas.basis'),
+      detail: truncate(props.decisionBasis ?? '', 28),
       fill: PALETTE.basisFill,
       stroke: PALETTE.basisBorder
     })
@@ -477,11 +381,7 @@ export function planDecorations(
   return out
 }
 
-// --- completeness highlighting (all PURE, unit-tested) -----------------------
-
-/** One category of key process information a shape can be missing. The names
- *  map 1:1 onto the `missing.*` i18n keys. */
-export type MissingCategory = 'owner' | 'inputs' | 'outputs' | 'basis' | 'trigger'
+// --- completeness badge ------------------------------------------------------
 
 const MISSING_LABEL_KEYS: Record<MissingCategory, Key> = {
   owner: 'missing.owner',
@@ -492,59 +392,11 @@ const MISSING_LABEL_KEYS: Record<MissingCategory, Key> = {
 }
 
 /**
- * PURE: is this a type the completeness badge can ever apply to? Activities
- * (except CallActivity — a linked call gets its data from the called process),
- * the decision-basis set (gateways + business-rule tasks) and start events.
- */
-export function isMissingBadgeEligibleType(type: string): boolean {
-  if (isActivityType(type) && type !== 'bpmn:CallActivity') return true
-  if (isDecisionBasisType(type)) return true
-  return type === 'bpmn:StartEvent'
-}
-
-/**
- * PURE: which key process information is this element missing? Empty means
- * complete (or a type the completeness check does not apply to).
- *   - activities (minus CallActivity): responsible party (owner AND respList
- *     both empty), inputs, outputs
- *   - decision-basis set (all gateways + business-rule tasks): decisionBasis
- *   - start events: trigger
- * List-valued props count as missing when they contain no non-blank entry
- * (matching what prepareListRows would actually render).
- */
-export function planMissingInfo(props: OrgProps, elementType: string): MissingCategory[] {
-  const out: MissingCategory[] = []
-  if (isActivityType(elementType) && elementType !== 'bpmn:CallActivity') {
-    if (!props.owner && splitList(props.respList).length === 0) out.push('owner')
-    if (splitList(props.inputs).length === 0) out.push('inputs')
-    if (splitList(props.outputs).length === 0) out.push('outputs')
-  }
-  if (isDecisionBasisType(elementType) && !props.decisionBasis) out.push('basis')
-  if (elementType === 'bpmn:StartEvent' && !props.trigger) out.push('trigger')
-  return out
-}
-
-/** Side length of the square missing-info chip. */
-export const MISSING_BADGE_SIZE = 16
-/** Horizontal clearance between the shape's right edge and the chip. */
-const MISSING_BADGE_GAP_X = 2
-/** Vertical clearance between the chip's bottom edge and the shape's top edge. */
-const MISSING_BADGE_GAP_Y = 4
-
-/**
  * PURE: the missing-info badge for an element, or null when nothing is missing.
- * Geometry: a 16x16 chip floating diagonally OFF the shape's top-right corner —
- * x starts 2px right of the right edge (x = width + 2) and the chip bottom ends
- * 4px above the top edge (y = -20 .. -4). That region is disjoint from every
- * other decoration this renderer can paint on the same element:
- *   - band (0..width x 0..6) and chevrons (width-16..width x 1..17): both stop
- *     at x = width, the chip starts at width + 2;
- *   - channel tag (y -22..-4, x 0..tagWidth<=width): same — never past width;
- *   - CC list box (x >= width+12, y >= 0): the chip ends at y = -4 < 0;
- *   - inputs box (x < 0) and the whole below-shape stack (y >= height): far away;
- *   - start-event trigger tag (can overhang width on narrow events): mutually
- *     exclusive with the badge — the trigger tag renders only when `trigger` is
- *     SET, the badge on a start event only when it is MISSING.
+ * Geometry from decorExtents.planBadgeBox: a 16x16 chip floating diagonally OFF
+ * the shape's top-right corner (x = width+2, y = -20..-4) — disjoint from every
+ * other decoration this renderer can paint on the same element (pinned by the
+ * completeness grid test).
  */
 export function planMissingBadge(
   props: OrgProps,
@@ -554,31 +406,47 @@ export function planMissingBadge(
   const missing = planMissingInfo(props, elementType)
   if (missing.length === 0) return null
   const list = missing.map((category) => t(MISSING_LABEL_KEYS[category])).join(', ')
+  const box = planBadgeBox(width)
   return {
     kind: 'missingBadge',
-    x: width + MISSING_BADGE_GAP_X,
-    y: -(MISSING_BADGE_SIZE + MISSING_BADGE_GAP_Y),
-    size: MISSING_BADGE_SIZE,
+    x: box.x,
+    y: box.y,
+    size: box.w,
     count: missing.length,
     titleText: t('missing.title', { list }),
+    missing,
     fill: PALETTE.basisFill,
     stroke: PALETTE.basisBorder
   }
 }
 
-/**
- * PURE: does the org renderer own this element? Styling must be on, the element
- * must be a non-label, non-connection `bpmn:*` shape, and it must either be a
- * text annotation (always note-styled), carry at least one org prop, or — when
- * completeness highlighting is on — be a badge-eligible type (activities /
- * gateways / start events), since bare elements are exactly the ones that need
- * a missing-info badge.
- */
+// --- ownership (canRender) ---------------------------------------------------
+
+/** Types the org renderer restyles even when they carry NO org props (start /
+ *  end events get the eventStyle recolour; sub-process-capable containers get
+ *  the collapsed-marker chip swap) — claimed whenever org styling is on. */
+const ORG_RESTYLED_TYPES: ReadonlySet<string> = new Set([
+  'bpmn:StartEvent',
+  'bpmn:EndEvent',
+  'bpmn:CallActivity',
+  'bpmn:SubProcess',
+  'bpmn:Transaction',
+  'bpmn:AdHocSubProcess'
+])
+
 export function hasAnyOrgProp(element: OrgElementLike): boolean {
   const props = getOrgProps(element)
   return Object.values(props).some((v) => v !== undefined && v !== '')
 }
 
+/**
+ * PURE: does the org renderer own this element? Styling must be on, the element
+ * must be a non-label, non-connection `bpmn:*` shape, and it must be one of:
+ * a text annotation (always note-styled), an always-restyled type (start/end
+ * events, sub-process-capable containers), a badge-eligible type while
+ * completeness highlighting is on, or any element carrying at least one org
+ * prop.
+ */
 export function canRenderOrg(
   element: OrgElementLike | null | undefined,
   stylingOn: boolean,
@@ -589,13 +457,111 @@ export function canRenderOrg(
   const type = element.type
   if (typeof type !== 'string' || !type.startsWith('bpmn:')) return false
   if (type === 'bpmn:TextAnnotation') return true
+  if (ORG_RESTYLED_TYPES.has(type)) return true
   if (completenessOn && isMissingBadgeEligibleType(type)) return true
   return hasAnyOrgProp(element)
+}
+
+// --- external-label helper ---------------------------------------------------
+
+/**
+ * PURE: the element's external-label bounds RELATIVE to the shape's top-left
+ * (the coordinate space computeDecorLayout expects), or null when the element
+ * has no external label / incomplete geometry.
+ */
+export function relativeLabelBox(element: OrgElementLike): Box | null {
+  const label = element.label
+  if (!label) return null
+  if (
+    typeof label.x !== 'number' ||
+    typeof label.y !== 'number' ||
+    typeof label.width !== 'number' ||
+    typeof label.height !== 'number' ||
+    typeof element.x !== 'number' ||
+    typeof element.y !== 'number'
+  ) {
+    return null
+  }
+  return { x: label.x - element.x, y: label.y - element.y, w: label.width, h: label.height }
+}
+
+// --- collapsed sub-process marker swap ---------------------------------------
+
+/** Minimal structural DOM surface so the marker swap is unit-testable with
+ *  plain object fakes (no jsdom). */
+export interface MarkerDomLike {
+  querySelector(sel: string): {
+    previousElementSibling?: {
+      tagName?: string
+      getAttribute?(n: string): string | null
+      remove(): void
+    } | null
+    remove(): void
+  } | null
+}
+
+/**
+ * Removes the stock collapsed-sub-process '+' marker (the path bpmn-js stamps
+ * with `data-marker="sub-process"`, plus its adjacent 14x14 background rect).
+ * Returns true when a marker was found (== the element is a collapsed
+ * SubProcess / CallActivity), whether or not removal fully succeeded.
+ */
+export function removeStockSubProcessMarker(visual: MarkerDomLike): boolean {
+  if (!visual || typeof visual.querySelector !== 'function') return false
+  let path: ReturnType<MarkerDomLike['querySelector']>
+  try {
+    path = visual.querySelector('path[data-marker="sub-process"]')
+  } catch {
+    return false
+  }
+  if (!path) return false
+  try {
+    // bpmn-js's SubProcessMarker appends a plain 14x14 rect immediately before
+    // the path; only remove it when it is exactly that rect (guards against
+    // marker-DOM changes in future bpmn-js versions).
+    const prev = path.previousElementSibling
+    if (prev && prev.tagName?.toLowerCase() === 'rect' && prev.getAttribute?.('width') === '14') {
+      prev.remove()
+    }
+  } catch {
+    /* rect removal is best-effort */
+  }
+  try {
+    path.remove()
+  } catch {
+    /* path removal is best-effort */
+  }
+  return true
+}
+
+/** Does the element's business object carry a `calledElement` (a CallActivity
+ *  linked to a concrete process)? Read across both moddle worlds. */
+function hasCalledElement(element: OrgElementLike): boolean {
+  const bo = element.businessObject
+  if (!bo) return false
+  if (typeof bo.get === 'function') {
+    try {
+      const value = bo.get('calledElement')
+      if (value != null && value !== '') return true
+    } catch {
+      /* fall through */
+    }
+  }
+  const direct = bo['calledElement']
+  if (direct != null && direct !== '') return true
+  const attr = bo.$attrs?.['calledElement']
+  return attr != null && attr !== ''
 }
 
 // --- DOM applier (tiny-svg) --------------------------------------------------
 
 const FONT_FAMILY = 'inherit'
+
+/** Class + data-attribute contract shared with editor/canvasDecor.ts (kept as
+ *  literals on both sides so org/ never imports from editor/). */
+const BADGE_CLASS = 'orbitpm-missing-badge'
+const TOOLTIP_ATTR = 'data-org-tooltip'
+const MISSING_ATTR = 'data-org-missing'
 
 /** The base `.djs-visual` group bpmn-js drew into, falling back to parentGfx. */
 function baseVisual(parentGfx: SVGElement): SVGElement {
@@ -603,7 +569,8 @@ function baseVisual(parentGfx: SVGElement): SVGElement {
   return (inner as SVGElement | null) ?? parentGfx
 }
 
-/** First fillable primitive of the base shape, for ccStyle / noteStyle recolour. */
+/** First fillable primitive of the base shape, for ccStyle / noteStyle /
+ *  eventStyle recolour. */
 function firstShapeChild(parentGfx: SVGElement): SVGElement | null {
   const visual = baseVisual(parentGfx)
   return visual.querySelector?.('rect, polygon, path, circle') ?? null
@@ -629,6 +596,13 @@ export function applyDecorations(parentGfx: SVGElement, decorations: Decoration[
         case 'noteStyle': {
           const target = firstShapeChild(parentGfx)
           if (target) svgAttr(target, { fill: d.fill, stroke: d.stroke })
+          break
+        }
+        case 'eventStyle': {
+          const target = firstShapeChild(parentGfx)
+          if (target) {
+            svgAttr(target, { fill: d.fill, stroke: d.stroke, 'stroke-width': d.strokeWidth })
+          }
           break
         }
         case 'band': {
@@ -772,12 +746,16 @@ export function applyDecorations(parentGfx: SVGElement, decorations: Decoration[
           break
         }
         case 'missingBadge': {
-          // One <g> per badge so the native <title> tooltip covers the whole
-          // chip (rect + glyph) on hover.
-          const group = svgCreate('g')
-          const title = svgCreate('title')
-          title.textContent = d.titleText
-          svgAppend(group, title)
+          // One <g> per badge so the custom canvas tooltip + click handling
+          // (editor/canvasDecor.ts) cover the whole chip. No native <title> —
+          // the delegated tooltip replaces it (never both).
+          const group = svgCreate('g', {
+            class: BADGE_CLASS,
+            [TOOLTIP_ATTR]: d.titleText + '\n' + t('missing.tooltip.action'),
+            [MISSING_ATTR]: d.missing.join(','),
+            cursor: 'pointer',
+            'pointer-events': 'all'
+          })
           const rect = svgCreate('rect', {
             x: d.x,
             y: d.y,
@@ -801,6 +779,31 @@ export function applyDecorations(parentGfx: SVGElement, decorations: Decoration[
           svgAppend(parentGfx, group)
           break
         }
+        case 'subChip': {
+          // Non-interactive pill (tooltip only) where the stock '+' sat.
+          const group = svgCreate('g', {
+            class: 'orbitpm-sub-chip',
+            [TOOLTIP_ATTR]: d.tooltip,
+            'pointer-events': 'all'
+          })
+          const rect = svgCreate('rect', {
+            x: d.x,
+            y: d.y,
+            width: d.w,
+            height: d.h,
+            rx: 3,
+            fill: d.fill,
+            stroke: d.stroke
+          })
+          svgAppend(group, rect)
+          svgAppend(group, makeText(d.x + 4, d.y + 10, '⧉', { fill: d.stroke, 'font-size': 9 }))
+          svgAppend(
+            group,
+            makeText(d.x + 14, d.y + 10, d.label, { fill: d.stroke, 'font-size': 8 })
+          )
+          svgAppend(parentGfx, group)
+          break
+        }
       }
     } catch {
       /* one bad decoration must never break the base shape */
@@ -817,14 +820,26 @@ interface BpmnRendererLike {
   drawConnection(parentGfx: SVGElement, connection: unknown): SVGElement
 }
 
+/** The one method OrgRenderer needs from OrgDecorSync (kept structural so the
+ *  2-arg test constructions and any fake stay valid). */
+interface OrientationSourceLike {
+  getOrientation(): FlowOrientation
+}
+
 export class OrgRenderer extends BaseRenderer {
-  static $inject = ['eventBus', 'bpmnRenderer']
+  static $inject = ['eventBus', 'bpmnRenderer', 'orgDecorSync']
 
   private readonly bpmnRenderer: BpmnRendererLike
+  private readonly orgDecorSync?: OrientationSourceLike
 
-  constructor(eventBus: EventBusLike, bpmnRenderer: BpmnRendererLike) {
+  constructor(
+    eventBus: EventBusLike,
+    bpmnRenderer: BpmnRendererLike,
+    orgDecorSync?: OrientationSourceLike
+  ) {
     super(eventBus as unknown as ConstructorParameters<typeof BaseRenderer>[0], 1500)
     this.bpmnRenderer = bpmnRenderer
+    this.orgDecorSync = orgDecorSync
   }
 
   canRender(element: OrgElementLike): boolean {
@@ -840,12 +855,35 @@ export class OrgRenderer extends BaseRenderer {
       const type = typeof element.type === 'string' ? element.type : ''
       const props = getOrgProps(element)
       const width = element.width ?? 0
-      const decorations = planDecorations(props, type, width, element.height ?? 0)
+      const height = element.height ?? 0
+      const ctx: PlanContext = {
+        orientation: this.orgDecorSync?.getOrientation() ?? 'horizontal',
+        labelBox: relativeLabelBox(element)
+      }
+      const decorations = planDecorations(props, type, width, height, ctx)
       // Completeness badge composed as a separate step so planDecorations keeps
-      // its flag-free signature (and its existing e2e-pinned output) untouched.
+      // its flag-free signature.
       if (isCompletenessOn()) {
         const badge = planMissingBadge(props, type, width)
         if (badge) decorations.push(badge)
+      }
+      // Collapsed SubProcess / CallActivity: bpmn-js stamped its '+' marker
+      // into the visual — swap it for the DMT-style sub-process chip.
+      if (removeStockSubProcessMarker(parentGfx as unknown as MarkerDomLike)) {
+        const box = planSubChipBox(width, height)
+        decorations.push({
+          kind: 'subChip',
+          x: box.x,
+          y: box.y,
+          w: box.w,
+          h: box.h,
+          label: t('canvas.subchip'),
+          tooltip: hasCalledElement(element)
+            ? t('canvas.subprocess.tooltip')
+            : t('canvas.subprocess.tooltip.generic'),
+          fill: PALETTE.subChipFill,
+          stroke: PALETTE.subChipBorder
+        })
       }
       applyDecorations(parentGfx, decorations)
     } catch {
@@ -861,8 +899,10 @@ export class OrgRenderer extends BaseRenderer {
 
 export const OrgRenderModule: {
   __init__: string[]
+  orgDecorSync: [string, typeof OrgDecorSync]
   orgRenderer: [string, typeof OrgRenderer]
 } = {
-  __init__: ['orgRenderer'],
+  __init__: ['orgDecorSync', 'orgRenderer'],
+  orgDecorSync: ['type', OrgDecorSync],
   orgRenderer: ['type', OrgRenderer]
 }

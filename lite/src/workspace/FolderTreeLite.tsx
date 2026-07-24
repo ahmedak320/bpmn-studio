@@ -4,6 +4,13 @@ import { INTERNAL_DND_MIME, isInternalDrag } from './importDrop'
 import { t } from '../i18n'
 import { useLang } from '../i18n/useLang'
 
+/** A resolved callActivity reference shown as a nested "link" row. */
+export interface LinkChildRef {
+  relPath: string
+  processId: string
+  label: string
+}
+
 export interface FolderTreeLiteProps {
   root: LiteTreeNode | null
   activePath?: string | null
@@ -23,6 +30,9 @@ export interface FolderTreeLiteProps {
   onMoveDrop: (fromRel: string, fromType: 'file' | 'directory', toFolderRel: string) => void
   /** Files/folders were dragged in from OUTSIDE the browser (Explorer import). */
   onImportDrop?: (dataTransfer: DataTransfer, toFolderRel: string) => void
+  /** Resolve a file's callActivity children (relPath → refs); absent = no
+   *  nesting UI. Expected to be cheap (memoized over App's link graph). */
+  linkChildrenOf?: (relPath: string) => LinkChildRef[]
 }
 
 interface MenuState {
@@ -64,7 +74,12 @@ interface RowActions {
   onDragOverFolder: (event: React.DragEvent, folderRel: string) => void
   onDragLeaveFolder: (event: React.DragEvent, folderRel: string) => void
   onDropFolder: (event: React.DragEvent, folderRel: string) => void
+  linkChildrenOf?: (relPath: string) => LinkChildRef[]
 }
+
+/** Max nesting of linked-child rows below a real file row. Deeper levels are
+ *  replaced by a muted "more levels not shown" row. */
+const MAX_LINK_DEPTH = 8
 
 /**
  * Folder tree over a File-System-Access-backed workspace. Adds three ways to
@@ -85,7 +100,8 @@ export function FolderTreeLite({
   onDelete,
   onMove,
   onMoveDrop,
-  onImportDrop
+  onImportDrop,
+  linkChildrenOf
 }: FolderTreeLiteProps): JSX.Element {
   useLang()
   const [expanded, setExpanded] = useState<Set<string>>(() => new Set(['']))
@@ -168,7 +184,8 @@ export function FolderTreeLite({
       onDragStartNode,
       onDragOverFolder,
       onDragLeaveFolder,
-      onDropFolder
+      onDropFolder,
+      linkChildrenOf
     }),
     [
       activePath,
@@ -185,7 +202,8 @@ export function FolderTreeLite({
       onDragStartNode,
       onDragOverFolder,
       onDragLeaveFolder,
-      onDropFolder
+      onDropFolder,
+      linkChildrenOf
     ]
   )
 
@@ -258,6 +276,13 @@ function TreeLevel({ node, depth, actions }: TreeLevelProps): JSX.Element {
   const isActive = node.type === 'file' && node.relPath === actions.activePath
   const folderRel = dropFolderOf(node)
   const isDropTarget = !isRoot && actions.dropTargetRel === folderRel && node.type === 'directory'
+  // Linked (callActivity) children of a file row. Self-references are dropped
+  // up front so a file whose only reference is itself gets no expander.
+  const hasLinkKids =
+    node.type === 'file' && actions.linkChildrenOf
+      ? actions.linkChildrenOf(node.relPath).some((c) => c.relPath !== node.relPath)
+      : false
+  const isLinkOpen = hasLinkKids && actions.expanded.has(node.relPath)
 
   return (
     <div>
@@ -306,8 +331,30 @@ function TreeLevel({ node, depth, actions }: TreeLevelProps): JSX.Element {
           }
           title={node.relPath}
         >
-          <span style={{ opacity: 0.6, width: 12, display: 'inline-block', flex: '0 0 auto' }}>
-            {node.type === 'directory' ? (isOpen ? '▾' : '▸') : ''}
+          <span
+            style={{
+              opacity: 0.6,
+              width: 12,
+              display: 'inline-block',
+              flex: '0 0 auto',
+              cursor: hasLinkKids ? 'pointer' : undefined
+            }}
+            // File rows: the row itself opens the file, so the expander glyph
+            // is its own click target for toggling the linked-children rows.
+            role={hasLinkKids ? 'button' : undefined}
+            aria-label={hasLinkKids ? t('tree.linkedChildren') : undefined}
+            aria-expanded={hasLinkKids ? isLinkOpen : undefined}
+            onClick={
+              hasLinkKids
+                ? (e) => {
+                    e.stopPropagation()
+                    actions.onToggle(node.relPath)
+                  }
+                : undefined
+            }
+            onDoubleClick={hasLinkKids ? (e) => e.stopPropagation() : undefined}
+          >
+            {node.type === 'directory' ? (isOpen ? '▾' : '▸') : hasLinkKids ? (isLinkOpen ? '▾' : '▸') : ''}
           </span>
           <span style={{ flex: '0 0 auto' }}>{node.type === 'directory' ? '📁' : '📄'}</span>
           <span style={{ flex: '1 1 auto', overflow: 'hidden', textOverflow: 'ellipsis' }}>
@@ -348,6 +395,145 @@ function TreeLevel({ node, depth, actions }: TreeLevelProps): JSX.Element {
           ))}
         </div>
       )}
+      {node.type === 'file' && isLinkOpen && (
+        <LinkRefLevel
+          fileRel={node.relPath}
+          pathKey={node.relPath}
+          depth={depth}
+          linkDepth={1}
+          visited={new Set([node.relPath])}
+          actions={actions}
+        />
+      )}
+    </div>
+  )
+}
+
+interface LinkRefLevelProps {
+  /** relPath of the file whose linked children this level renders. */
+  fileRel: string
+  /** Expansion-scope key of the parent row: the file's relPath for the first
+   *  level, then the child's own `link:…` key at each deeper level — so the
+   *  SAME child file expands independently under different parents. */
+  pathKey: string
+  /** Tree depth of the parent row; child rows indent at depth + 1. */
+  depth: number
+  /** 1 for the first level of linked children below a real file row. */
+  linkDepth: number
+  /** relPaths already on this branch (the file itself + ancestors): children
+   *  found here are skipped, which makes cycles safe. Each branch recurses
+   *  with its own fresh copy so a DAG's shared child renders under EVERY
+   *  parent, not just the first one visited. */
+  visited: ReadonlySet<string>
+  actions: RowActions
+}
+
+/**
+ * Read-only reference rows for a file's callActivity children. Clicking a row
+ * opens the referenced file (double-click focuses it); rows are deliberately
+ * NOT draggable and expose no rename/move/delete — they are views into the
+ * link graph, not tree nodes.
+ */
+function LinkRefLevel({
+  fileRel,
+  pathKey,
+  depth,
+  linkDepth,
+  visited,
+  actions
+}: LinkRefLevelProps): JSX.Element | null {
+  const resolve = actions.linkChildrenOf
+  if (!resolve) return null
+  const children = resolve(fileRel).filter((c) => !visited.has(c.relPath))
+  if (children.length === 0) return null
+  return (
+    <div>
+      {children.map((child) => {
+        const childKey = `link:${pathKey}/${child.relPath}`
+        const branchVisited = new Set(visited)
+        branchVisited.add(child.relPath)
+        const hasGrandKids = resolve(child.relPath).some((g) => !branchVisited.has(g.relPath))
+        const isOpen = hasGrandKids && actions.expanded.has(childKey)
+        const isActive = child.relPath === actions.activePath
+        return (
+          <div key={childKey}>
+            <div
+              className="orbitpm-tree-row"
+              onClick={() => actions.onOpenFile(child.relPath)}
+              onDoubleClick={() => actions.onOpenFileFocus?.(child.relPath)}
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: 6,
+                padding: '3px 6px',
+                paddingInlineStart: 8 + (depth + 1) * 14,
+                cursor: 'pointer',
+                fontSize: 13,
+                borderRadius: 4,
+                whiteSpace: 'nowrap',
+                background: isActive ? 'var(--orbitpm-hover)' : 'transparent'
+              }}
+              onMouseEnter={(e) => (e.currentTarget.style.background = 'var(--orbitpm-hover)')}
+              onMouseLeave={(e) =>
+                (e.currentTarget.style.background = isActive ? 'var(--orbitpm-hover)' : 'transparent')
+              }
+              title={child.relPath}
+            >
+              <span
+                style={{
+                  opacity: 0.6,
+                  width: 12,
+                  display: 'inline-block',
+                  flex: '0 0 auto',
+                  cursor: hasGrandKids ? 'pointer' : undefined
+                }}
+                role={hasGrandKids ? 'button' : undefined}
+                aria-label={hasGrandKids ? t('tree.linkedChildren') : undefined}
+                aria-expanded={hasGrandKids ? isOpen : undefined}
+                onClick={
+                  hasGrandKids
+                    ? (e) => {
+                        e.stopPropagation()
+                        actions.onToggle(childKey)
+                      }
+                    : undefined
+                }
+                onDoubleClick={hasGrandKids ? (e) => e.stopPropagation() : undefined}
+              >
+                {hasGrandKids ? (isOpen ? '▾' : '▸') : ''}
+              </span>
+              <span style={{ flex: '0 0 auto' }}>🔗</span>
+              <span style={{ flex: '1 1 auto', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                {child.label}
+              </span>
+            </div>
+            {isOpen &&
+              (linkDepth < MAX_LINK_DEPTH ? (
+                <LinkRefLevel
+                  fileRel={child.relPath}
+                  pathKey={childKey}
+                  depth={depth + 1}
+                  linkDepth={linkDepth + 1}
+                  visited={branchVisited}
+                  actions={actions}
+                />
+              ) : (
+                <div
+                  style={{
+                    padding: '3px 6px',
+                    paddingInlineStart: 8 + (depth + 2) * 14,
+                    fontSize: 12,
+                    opacity: 0.55,
+                    whiteSpace: 'nowrap'
+                  }}
+                  title={t('tree.linkDepthCapped')}
+                >
+                  … {t('tree.linkDepthCapped')}
+                </div>
+              ))}
+          </div>
+        )
+      })}
     </div>
   )
 }

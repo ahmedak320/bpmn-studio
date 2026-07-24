@@ -421,6 +421,51 @@ function validateTranslation(entry: TranslateEntry, value: unknown): string | un
   return text
 }
 
+// --- shared apply step (LLM and non-LLM paths) -------------------------------
+
+/**
+ * Apply validated translations (and pending write-back seeds) onto the
+ * diagram: ONE `modeling.updateProperties` per element, bundling the seed
+ * with the translation so each element lands on the command stack as a single
+ * undoable edit. An element whose translation was skipped but whose seed
+ * exists still gets the seed — that is exactly the write-back the next toggle
+ * would perform, and keeping it here means a partially failed run leaves no
+ * half-adopted state. Returns how many entries actually received a
+ * translation.
+ */
+function applyTranslations(
+  modeling: ModelingLike,
+  resolution: DiagramResolution,
+  translations: Map<string, string>
+): number {
+  let translated = 0
+  for (const el of resolution.elements) {
+    const properties: Record<string, string> = { ...(el.seed ?? {}) }
+    if (el.entry) {
+      const value = translations.get(el.entry.id)
+      if (value !== undefined) {
+        properties[LANG_ATTR[el.entry.target]] = value
+        translated += 1
+      }
+    }
+    if (Object.keys(properties).length > 0) {
+      modeling.updateProperties(el.target, properties)
+    }
+  }
+  return translated
+}
+
+/**
+ * Stamp `orbitpm:activeLang` on the process root when it was absent
+ * (langToggle-style separate last write); no-op when already stored.
+ */
+function stampRoot(modeling: ModelingLike, resolution: DiagramResolution): void {
+  if (!resolution.rootStamp) return
+  modeling.updateProperties(resolution.rootStamp.target, {
+    [ATTR_ACTIVE_LANG]: resolution.rootStamp.lang
+  })
+}
+
 // --- the run -----------------------------------------------------------------
 
 /**
@@ -475,30 +520,70 @@ export async function translateDiagram(
     }
   }
 
-  // Apply: one bundled updateProperties per element (seed + translation). An
-  // element whose translation was skipped but whose seed exists still gets the
-  // seed — that is exactly the write-back the next toggle would perform, and
-  // keeping it here means a partially failed run leaves no half-adopted state.
-  let translated = 0
+  // Apply + root stamp — see applyTranslations/stampRoot above.
+  const translated = applyTranslations(modeling, resolution, translations)
+  stampRoot(modeling, resolution)
+
+  return { translated, skipped: total - translated, total }
+}
+
+// --- the non-LLM run ---------------------------------------------------------
+
+/**
+ * Per-text translator used by {@link translateDiagramWithTexts}. Results are
+ * returned POSITIONALLY — `results[i]` answers `texts[i]`; `undefined` means
+ * that text failed (its entry counts as skipped, exactly like a failed LLM
+ * chunk entry). Implementations throw only on a WHOLE-SERVICE failure (see
+ * ai/freeTranslate.ts's FreeTranslateError) — such a throw propagates out of
+ * translateDiagramWithTexts before anything is written.
+ */
+export type TranslateTextsFn = (
+  texts: string[],
+  from: DiagramLang,
+  to: DiagramLang
+) => Promise<Array<string | undefined>>
+
+/**
+ * Non-LLM twin of {@link translateDiagram}: the same resolveDiagram sweep,
+ * the same per-direction grouping ('en' targets first, then 'ar'; the source
+ * language is always the other side), the same validateTranslation gate, the
+ * same one-updateProperties-per-element apply (seed bundled) and the same
+ * final root stamp. No chunking and no retry — pacing, fallback and error
+ * classification belong to the injected `translateTexts` (see
+ * ai/freeTranslate.ts). All results are gathered BEFORE anything is applied,
+ * so a translateTexts throw leaves the diagram untouched, mirroring
+ * translateDiagram's rejected-callLLM semantics.
+ */
+export async function translateDiagramWithTexts(
+  modeler: TranslateModeler,
+  translateTexts: TranslateTextsFn
+): Promise<TranslateOutcome> {
+  const resolution = resolveDiagram(modeler)
+  const modeling = modeler.get('modeling') as ModelingLike
+
+  const entries: TranslateEntry[] = []
   for (const el of resolution.elements) {
-    const properties: Record<string, string> = { ...(el.seed ?? {}) }
-    if (el.entry) {
-      const value = translations.get(el.entry.id)
-      if (value !== undefined) {
-        properties[LANG_ATTR[el.entry.target]] = value
-        translated += 1
-      }
-    }
-    if (Object.keys(properties).length > 0) {
-      modeling.updateProperties(el.target, properties)
+    if (el.entry) entries.push(el.entry)
+  }
+  const total = entries.length
+
+  const translations = new Map<string, string>()
+  for (const target of ['en', 'ar'] as const) {
+    const group = entries.filter((entry) => entry.target === target)
+    if (group.length === 0) continue
+    const results = await translateTexts(
+      group.map((entry) => entry.text),
+      otherLang(target),
+      target
+    )
+    for (let i = 0; i < group.length; i += 1) {
+      const valid = validateTranslation(group[i], results[i])
+      if (valid !== undefined) translations.set(group[i].id, valid)
     }
   }
 
-  if (resolution.rootStamp) {
-    modeling.updateProperties(resolution.rootStamp.target, {
-      [ATTR_ACTIVE_LANG]: resolution.rootStamp.lang
-    })
-  }
+  const translated = applyTranslations(modeling, resolution, translations)
+  stampRoot(modeling, resolution)
 
   return { translated, skipped: total - translated, total }
 }

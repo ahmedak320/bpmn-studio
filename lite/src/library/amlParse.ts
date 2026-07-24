@@ -67,6 +67,14 @@ export interface AmlObj {
   typeNum: string
   name: LocalizedText
   cxns: AmlCxn[]
+  /**
+   * `LinkedModels.IdRefs` — ARIS "model assignment": the Model.IDs this
+   * object links to (a value-chain chevron pointing at the EPC it drills
+   * into). The raw attribute value is whitespace-padded and potentially
+   * multi-valued (space-separated), so it is trimmed and split on runs of
+   * whitespace. Empty array when the attribute is absent.
+   */
+  linkedModelIds: string[]
 }
 
 /** An `<ObjOcc>` — one placement of an ObjDef on one model's canvas. */
@@ -108,6 +116,8 @@ export interface AmlDatabase {
   objectById: Map<string, AmlObj>
   cxnById: Map<string, AmlCxn>
   models: AmlModel[]
+  /** `DatabaseName` from the first `<Header-Info …>` block, when present. */
+  databaseName?: string
 }
 
 /**
@@ -350,11 +360,16 @@ function parseObjDef(attrs: string, body: string, entities: Record<string, strin
   // CxnDefs may carry their own AttrDefs (connection attributes) — strip them
   // so the name scan can only see the OBJECT's attributes.
   const ownBody = stripBlocks(body, ['CxnDef'])
+  const linkedModels = readTagAttr(attrs, 'LinkedModels.IdRefs')
   return {
     id,
     typeNum: readTagAttr(attrs, 'TypeNum') ?? '',
     name: extractLocalizedAttr(ownBody, 'AT_NAME', entities),
-    cxns
+    cxns,
+    // IdRefs values are whitespace-padded and space-separated when
+    // multi-valued (verified against real exports, where the sibling
+    // `ToCxnDefs.IdRefs` carries values like "      CxnDef.4q8… ").
+    linkedModelIds: linkedModels ? linkedModels.trim().split(/\s+/).filter(Boolean) : []
   }
 }
 
@@ -448,5 +463,16 @@ export function parseAml(text: string): AmlDatabase {
     if (model) models.push(model)
   }
 
-  return { entities, objects, objectById, cxnById, models }
+  // The export-wide database name lives on the (usually single, self-closing,
+  // multi-line) `<Header-Info … DatabaseName="…"/>` prolog tag.
+  let databaseName: string | undefined
+  for (const header of scanBlocks(text, 'Header-Info')) {
+    const raw = readTagAttr(header.attrs, 'DatabaseName')
+    if (raw === undefined) continue
+    const decoded = decodeAmlEntities(raw, entities).trim()
+    if (decoded) databaseName = decoded
+    break // first Header-Info carrying the attribute wins
+  }
+
+  return { entities, objects, objectById, cxnById, models, databaseName }
 }

@@ -107,3 +107,121 @@ export function filterOwners(entries: OwnerEntry[], query: string): OwnerEntry[]
   if (!q) return entries
   return entries.filter((e) => e.name.toLowerCase().includes(q))
 }
+
+// --- session owners (applied via a dialog, possibly not yet saved to disk) ---
+
+/** Session-observed owner (applied in a dialog but possibly not yet saved to disk). */
+export interface SessionOwner {
+  name: string
+  type?: OwnerType
+  count: number
+}
+
+/** The comparator every owner list ships in: count desc, then name asc. */
+function byCountThenName(a: { name: string; count: number }, b: { name: string; count: number }): number {
+  if (b.count !== a.count) return b.count - a.count
+  return a.name.localeCompare(b.name)
+}
+
+/**
+ * Case-insensitive merge of the on-disk owner index with session-observed
+ * owners. Disk is authoritative: when a name exists on disk the disk entry is
+ * kept unchanged (its casing, type and count all win — session applies get
+ * re-counted from the XML on the next save/refresh anyway, so folding session
+ * counts in here would double-count). Session-only names are appended with
+ * their session count. The result is re-sorted count desc, then name asc
+ * (the same comparator collectOwners uses). Inputs are never mutated.
+ */
+export function mergeOwners(disk: OwnerEntry[], session: SessionOwner[]): OwnerEntry[] {
+  const diskKeys = new Set(disk.map((e) => e.name.toLowerCase()))
+  const merged: OwnerEntry[] = disk.slice()
+  for (const s of session) {
+    if (diskKeys.has(s.name.toLowerCase())) continue
+    merged.push({ name: s.name, type: s.type, count: s.count })
+  }
+  merged.sort(byCountThenName)
+  return merged
+}
+
+/**
+ * Upsert one applied dialog's owner additions into the session list.
+ * Immutable: returns a new array (`prev` untouched); when every addition is
+ * blank, `prev` is returned as-is so callers can skip a state update. Names
+ * are trimmed and keyed case-insensitively with FIRST-SEEN casing kept; each
+ * addition increments the matching entry's count by one. A non-empty incoming
+ * type (validated against the known owner types) fills an UNSET type but
+ * never clobbers an already-set one.
+ */
+export function upsertSessionOwners(
+  prev: SessionOwner[],
+  additions: Array<{ name: string; type?: string }>
+): SessionOwner[] {
+  const next = prev.map((entry) => ({ ...entry }))
+  const byKey = new Map<string, SessionOwner>()
+  for (const entry of next) byKey.set(entry.name.toLowerCase(), entry)
+
+  let changed = false
+  for (const addition of additions) {
+    const name = addition.name.trim()
+    if (!name) continue
+    changed = true
+
+    const key = name.toLowerCase()
+    let entry = byKey.get(key)
+    if (!entry) {
+      entry = { name, count: 0 }
+      byKey.set(key, entry)
+      next.push(entry)
+    }
+    entry.count += 1
+
+    const rawType = addition.type?.trim()
+    if (entry.type === undefined && rawType && VALID_TYPES.has(rawType)) {
+      entry.type = rawType as OwnerType
+    }
+  }
+
+  return changed ? next : prev
+}
+
+/** Local copy of org/orgModel.ts's splitList — ownersIndex stays dependency-free. */
+function splitLines(value: string | null | undefined): string[] {
+  if (!value) return []
+  return value
+    .split('\n')
+    .map((entry) => entry.trim())
+    .filter((entry) => entry !== '')
+}
+
+/** The "Name — Role" separator: space + em-dash (U+2014) + space, exactly. */
+const RESP_SEPARATOR = ' — '
+
+/**
+ * The owner names one applied Step-details dialog introduces: the owner field
+ * (with its selected type, passed through raw — upsertSessionOwners validates)
+ * plus every person on the responsible list, who is always an 'individual'.
+ * respList lines follow the "Name — Role" convention — ONLY the exact
+ * space-em-dash-space separator is split on (first occurrence); plain lines
+ * are taken whole. Blank fields/lines contribute nothing.
+ */
+export function ownerAdditionsFromValues(v: {
+  owner: string
+  ownerType: string
+  respList: string
+}): Array<{ name: string; type?: string }> {
+  const out: Array<{ name: string; type?: string }> = []
+
+  const owner = v.owner.trim()
+  if (owner) {
+    const type = v.ownerType.trim()
+    out.push(type ? { name: owner, type } : { name: owner })
+  }
+
+  for (const line of splitLines(v.respList)) {
+    const separatorAt = line.indexOf(RESP_SEPARATOR)
+    const name = (separatorAt >= 0 ? line.slice(0, separatorAt) : line).trim()
+    if (name) out.push({ name, type: 'individual' })
+  }
+
+  return out
+}

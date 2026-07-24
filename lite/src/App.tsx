@@ -18,7 +18,8 @@ import {
   buildNewProcessDoc,
   buildMissingProcessDoc,
   humanizeProcessId,
-  deriveFileBaseName
+  deriveFileBaseName,
+  sanitizeFolderName
 } from './editor/newProcessDoc'
 import {
   snapshotWorkspace,
@@ -54,6 +55,7 @@ import { FolderTreeLite } from './workspace/FolderTreeLite'
 import { EmptyWorkspaceCard } from './workspace/EmptyWorkspaceCard'
 import { AiPanelLite, type FolderOptionLite } from './ai/AiPanelLite'
 import { installLinkBadges, type LinkBadgeModeler } from './links/linkBadges'
+import { buildLinkGraph } from './links/linkGraph'
 import { toggleDiagramLang, type LangToggleModeler } from './editor/langToggle'
 import { makeBrowserCallLLM } from './ai/browserAi'
 import { LITE_PROVIDERS, defaultLiteModelId } from './ai/providersLite'
@@ -61,8 +63,10 @@ import { getKey, hasKey } from './ai/keys'
 import {
   collectMissingTranslations,
   translateDiagram,
+  translateDiagramWithTexts,
   type TranslateModeler
 } from './ai/translate'
+import { makeFreeTranslateTexts, FreeTranslateError } from './ai/freeTranslate'
 import { SettingsDialogLite } from './settings/SettingsDialogLite'
 import { ICON_DATA_URI } from './branding/icon'
 // --- W2B: file mgmt / search / catalog / navigation / print ---
@@ -103,22 +107,33 @@ import {
 import {
   getProcessOrgProps,
   setProcessOrgProps,
-  getProcessDocumentation,
   setProcessDocumentation,
   getOrgProps,
   setOrgProps,
-  getLinkedNote,
   setStepNote,
-  type OrgModeler,
-  type OrgElementLike
+  type OrgModeler
 } from './org/orgModel'
 import { refreshOrgStyling } from './org/orgSettings'
 import { StepDetailsDialog, type StepDetailsValues } from './org/StepDetailsDialog'
-import { collectOwners } from './owner/ownersIndex'
+import { DetailsCard } from './org/DetailsCard'
+import { deriveStepDetailsCtx, type StepDetailsModeler } from './org/stepDetailsCtx'
+import {
+  collectOwners,
+  mergeOwners,
+  upsertSessionOwners,
+  ownerAdditionsFromValues,
+  type SessionOwner
+} from './owner/ownersIndex'
 import { ownersToCsv } from './owner/ownerCsv'
+import { PaneResizer, usePaneWidth } from './common/PaneResizer'
 import { AssistantDrawer } from './assist/AssistantDrawer'
 import { buildAllDigests, type ProcessDigest } from './assist/digest'
 import { buildLibraryZip, zipFileName } from './library/zipExport'
+import {
+  LIBRARY_MANIFEST_NAME,
+  buildLibraryManifest,
+  serializeLibraryManifest
+} from './library/libraryManifest'
 import { readLibraryZip, type LibraryImportResult } from './library/zipImport'
 import { convertAmlToBpmnFiles, looksLikeAml } from './library/apcImport'
 import { t, tPlural, type Key } from './i18n'
@@ -194,23 +209,6 @@ function downloadBpmn(fileName: string, xml: string): void {
   triggerDownload(fileName, `data:application/xml;charset=utf-8,${encodeURIComponent(xml)}`)
 }
 
-/** A single selectable flow node (not a label, connection, or the process/
- *  collaboration root) — the Step-details button uses this to decide between
- *  element mode (exactly one flow node selected) and process mode. */
-function isFlowNodeElement(el: OrgElementLike | undefined | null): el is OrgElementLike {
-  if (!el) return false
-  const type = el.type
-  if (typeof type !== 'string' || !type.startsWith('bpmn:')) return false
-  if (el.waypoints != null || el.labelTarget != null) return false
-  return type !== 'bpmn:Process' && type !== 'bpmn:Collaboration'
-}
-
-/** The modeler surface the Step-details dialog needs: the org read/write helpers
- *  (OrgModeler) plus the selection service. */
-type StepDetailsModeler = OrgModeler & {
-  get(service: 'selection'): { get(): OrgElementLike[] }
-}
-
 /** A flow-node / gateway / event shape as reported by the elementRegistry. */
 interface PrintShapeElement {
   type?: string
@@ -281,7 +279,11 @@ function App(): JSX.Element {
   // The Step-details dialog targets one tab's modeler; the mode (element vs
   // process), the initial values and the target element are all derived LIVE
   // from that modeler's current selection at render time (stepDetailsCtx).
-  const [stepDetails, setStepDetails] = useState<{ tabKey: string } | null>(null)
+  // `highlight` carries the missing-info categories a canvas badge click wants
+  // ringed inside the dialog (MissingCategory names).
+  const [stepDetails, setStepDetails] = useState<{ tabKey: string; highlight?: string[] } | null>(
+    null
+  )
   // Left sidebar (file explorer on top, AI generator on the bottom). Open by
   // default; auto-collapses when a file opens so the canvas takes the full
   // window — EXCEPT for a single tree-row click, which keeps the explorer
@@ -289,6 +291,12 @@ function App(): JSX.Element {
   // The rail restores it. Deliberately NOT persisted — its state follows the
   // open/close flow, and a manual rail click wins until the next open event.
   const [sidebarOpen, setSidebarOpen] = useState(true)
+  // User-resized explorer width (persisted); null falls back to the responsive
+  // clamp() default. The PaneResizer between the aside and the rail drives it.
+  const [sidebarWidth, setSidebarWidth, resetSidebarWidth] = usePaneWidth(
+    'orbitpm.lite.sidebarWidth',
+    { min: 200, max: 560 }
+  )
   // The AI generator sub-section within the sidebar. Persisted separately so a
   // user who prefers the explorer-only sidebar keeps it collapsed across loads.
   const [aiSectionCollapsed, setAiSectionCollapsed] = useState<boolean>(() => {
@@ -332,6 +340,10 @@ function App(): JSX.Element {
   const [unresolvedOpen, setUnresolvedOpen] = useState(false)
   const [moveTarget, setMoveTarget] = useState<LiteTreeNode | null>(null)
   const [deleteTarget, setDeleteTarget] = useState<DeleteState | null>(null)
+  // Owners applied via the Step-details dialog THIS session but possibly not
+  // yet saved to disk — merged into the picker suggestions (disk wins) so an
+  // Apply on one step immediately offers that owner on the next step.
+  const [sessionOwners, setSessionOwners] = useState<SessionOwner[]>([])
   const [toasts, setToasts] = useState<ToastMsg[]>([])
   const [history, setHistory] = useState<NavHistory>(() => emptyHistory())
   const [printJob, setPrintJob] = useState<PrintJob | null>(null)
@@ -398,6 +410,7 @@ function App(): JSX.Element {
       setCatalogOpen(false)
       setMoveTarget(null)
       setDeleteTarget(null)
+      setSessionOwners([])
       setUnresolvedOpen(false)
       setHistory(emptyHistory())
       // A freshly-activated workspace has zero tabs (the catalog is showing), so
@@ -728,6 +741,23 @@ function App(): JSX.Element {
   // --- derived data (single source: `files`) ------------------------------
 
   const processIndex: ProcessIndex = useMemo(() => buildProcessIndex(files), [files])
+  // Parent→child callActivity links across the workspace — drives the
+  // explorer's nested 🔗 rows and the exported library manifest.
+  const linkGraph = useMemo(() => buildLinkGraph(files, processIndex), [files, processIndex])
+  // relPath → its resolved link children for the tree rows. Labels prefer the
+  // child's process name and fall back to the raw process id.
+  const linkChildrenOf = useCallback(
+    (relPath: string) =>
+      (linkGraph.childrenByFile.get(relPath) ?? []).map((e) => {
+        const entry = processIndex.get(e.childProcessId)
+        return {
+          relPath: e.childRelPath,
+          processId: e.childProcessId,
+          label: entry?.processName || e.childProcessId
+        }
+      }),
+    [linkGraph, processIndex]
+  )
   // Offered to the AI panel so the model can propose callActivity links to the
   // workspace's existing processes; the two resolvers back the link-verification
   // dialog and the linked-summary line.
@@ -758,10 +788,15 @@ function App(): JSX.Element {
   const folders = useMemo(() => collectFolders(tree), [tree, lang])
   const filePaths = useMemo(() => new Set(files.map((f) => f.relPath)), [files])
   // Owner suggestions for the Step-details picker + the "Export owners (CSV)"
-  // action — aggregated across every .bpmn in the workspace (empty in fallback).
+  // action — aggregated across every .bpmn in the workspace (empty in fallback)
+  // and merged with the session's applied-but-unsaved owners (disk wins).
   const ownersEntries = useMemo(
-    () => collectOwners(files.map((f) => ({ relPath: f.relPath, xml: f.xml }))),
-    [files]
+    () =>
+      mergeOwners(
+        collectOwners(files.map((f) => ({ relPath: f.relPath, xml: f.xml }))),
+        sessionOwners
+      ),
+    [files, sessionOwners]
   )
 
   // The whole-workspace file list the assistant reasons over in DIRECTORY mode
@@ -1074,6 +1109,26 @@ function App(): JSX.Element {
 
   // --- import (.bpmn from Explorer) ---------------------------------------
 
+  // Create every missing folder segment of a nested rel path (idempotent —
+  // createFolderAt returns the existing handle when the folder is already
+  // there). Declared before importEntries so the AML subfolder path and the
+  // library-zip import share the same helper.
+  const ensureFolders = useCallback(
+    async (relDir: string) => {
+      if (!rootHandle || !relDir) return
+      let cur = ''
+      for (const seg of relDir.split('/').filter(Boolean)) {
+        try {
+          await createFolderAt(rootHandle, cur, seg)
+        } catch {
+          /* already exists / racing external create — continue building the path */
+        }
+        cur = cur ? `${cur}/${seg}` : seg
+      }
+    },
+    [rootHandle]
+  )
+
   const importEntries = useCallback(
     async (entries: DroppedBpmn[], baseFolderRel: string) => {
       if (!(mode === 'directory' && rootHandle)) {
@@ -1093,12 +1148,13 @@ function App(): JSX.Element {
         // a <base>.bpmn file.
         const base = deriveFileBaseName(entry.name.replace(/\.(bpmn|apc|xml)$/i, ''))
         // One serialized create per output file (slug pick + write inside the
-        // shared op-mutex, as everywhere else).
-        const writeUnique = (slug: string, xml: string): Promise<string> =>
+        // shared op-mutex, as everywhere else). The optional `folder` override
+        // lets the multi-model AML path land its files in a subfolder.
+        const writeUnique = (slug: string, xml: string, folder: string = targetFolder): Promise<string> =>
           opMutexRef.current.runExclusive(async () => {
-            const taken = await bpmnSlugsIn(rootHandle, targetFolder)
+            const taken = await bpmnSlugsIn(rootHandle, folder)
             const guess = dedupeSlug(slug, (c) => taken.has(c.toLowerCase()))
-            return createBpmnFileUnique(rootHandle, targetFolder, guess, xml)
+            return createBpmnFileUnique(rootHandle, folder, guess, xml)
           })
         try {
           const text = await entry.getText()
@@ -1115,22 +1171,52 @@ function App(): JSX.Element {
             // ARIS AML → one .bpmn per contained EPC model, named from the
             // model's name in the CURRENT app language (bilingual attrs ride
             // along inside the XML either way). A failure skips this file but
-            // never aborts the rest of the import.
+            // never aborts the rest of the import. A MULTI-model conversion
+            // lands in its own subfolder (named after the export's landscape /
+            // database when the converter suggests one) so a single AML never
+            // floods the drop target; single-file conversions stay flat.
             const conv = await convertAmlToBpmnFiles(text, { lang })
             if ('error' in conv) {
               pushToast(t('apc.failed', { reason: apcReason(conv.error) }), 'error')
               continue
             }
+            let modelFolder = targetFolder
+            let folderName: string | null = null
+            if (conv.files.length > 1) {
+              // `folderName` is added by the importer rewrite landing alongside
+              // this change — read it defensively so either merge order compiles.
+              const suggested = (conv as { folderName?: string }).folderName
+              const baseFolderName = sanitizeFolderName(
+                suggested || '',
+                deriveFileBaseName(suggested || base)
+              )
+              // Never silently merge into an existing NON-EMPTY folder — suffix
+              // -2, -3… (the dedupeSlug convention). A missing or still-empty
+              // folder is fair game: ensureFolders creates or reuses it.
+              let cand = baseFolderName
+              for (
+                let n = 2;
+                (await countDirEntries(rootHandle, joinRel(targetFolder, cand))) > 0;
+                n += 1
+              ) {
+                cand = `${baseFolderName}-${n}`
+              }
+              folderName = cand
+              modelFolder = joinRel(targetFolder, folderName)
+              await ensureFolders(modelFolder)
+            }
             for (const model of conv.files) {
               const modelName = (lang === 'ar' ? model.nameAr : model.nameEn) || model.name
               const slug = deriveFileBaseName(modelName || base)
-              await writeUnique(slug, model.xml)
+              await writeUnique(slug, model.xml, modelFolder)
               created += 1
             }
             pushToast(
               conv.files.length === 1
                 ? t('apc.converted', { name: entry.name })
-                : t('apc.convertedMany', { count: conv.files.length, name: entry.name }),
+                : folderName
+                  ? t('apc.convertedInto', { count: conv.files.length, folder: folderName })
+                  : t('apc.convertedMany', { count: conv.files.length, name: entry.name }),
               'success'
             )
           } else if (isXmlName(entry.name)) {
@@ -1159,7 +1245,7 @@ function App(): JSX.Element {
         'success'
       )
     },
-    [mode, rootHandle, refreshWorkspace, pushToast, lang]
+    [mode, rootHandle, refreshWorkspace, pushToast, lang, ensureFolders]
   )
 
   const handleImportDrop = useCallback(
@@ -1501,80 +1587,41 @@ function App(): JSX.Element {
   // --- step details (org pack) --------------------------------------------
 
   // Derive the dialog's mode + initial values LIVE from the target tab's modeler
-  // selection. Exactly one selected flow node → element mode (its org props +
-  // linked note + type); anything else → process mode (process org props +
-  // documentation + the first start event's trigger). Recomputed only when the
-  // target or the modeler map changes; the modal overlay blocks canvas clicks so
-  // the selection can't drift while it is open.
+  // selection (element mode for exactly one selected flow node, process mode
+  // otherwise) — the shared derivation in org/stepDetailsCtx.ts, which the
+  // right-pane DetailsCard uses too, so card, badge and dialog always agree.
+  // Recomputed only when the target or the modeler map changes; the modal
+  // overlay blocks canvas clicks so the selection can't drift while open.
   const stepDetailsCtx = useMemo(() => {
     if (!stepDetails) return null
     const raw = modelersByKey[stepDetails.tabKey]
-    if (!raw) return null
-    const modeler = raw as StepDetailsModeler
-    let selection: OrgElementLike[] = []
-    try {
-      selection = modeler.get('selection').get()
-    } catch {
-      selection = []
-    }
-    const single = selection.length === 1 ? selection[0] : undefined
-    if (isFlowNodeElement(single)) {
-      const org = getOrgProps(single)
-      const note = getLinkedNote(modeler, single)?.text ?? ''
-      const initial: StepDetailsValues = {
-        owner: org.owner ?? '',
-        ownerType: org.ownerType ?? '',
-        ownerRole: org.ownerRole ?? '',
-        note,
-        channel: org.channel ?? '',
-        channelDetail: org.channelDetail ?? '',
-        cc: org.kind === 'cc',
-        ccTo: org.ccTo ?? '',
-        trigger: org.trigger ?? '',
-        triggerService: org.triggerService ?? '',
-        triggerDetail: org.triggerDetail ?? '',
-        nameEn: org.nameEn ?? '',
-        nameAr: org.nameAr ?? '',
-        inputs: org.inputs ?? '',
-        outputs: org.outputs ?? '',
-        system: org.system ?? '',
-        respList: org.respList ?? '',
-        ccList: org.ccList ?? '',
-        decisionBasis: org.decisionBasis ?? ''
-      }
-      return { mode: 'element' as const, elementType: single.type, initial, element: single, modeler }
-    }
-    const proc = getProcessOrgProps(modeler)
-    const startEvent = modeler
-      .get('elementRegistry')
-      .getAll()
-      .find((el) => el.type === 'bpmn:StartEvent')
-    const startProps = startEvent ? getOrgProps(startEvent) : {}
-    const initial: StepDetailsValues = {
-      owner: proc.owner ?? '',
-      ownerType: proc.ownerType ?? '',
-      ownerRole: proc.ownerRole ?? '',
-      note: getProcessDocumentation(modeler),
-      channel: '',
-      channelDetail: '',
-      cc: false,
-      ccTo: '',
-      trigger: startProps.trigger ?? '',
-      triggerService: startProps.triggerService ?? '',
-      triggerDetail: startProps.triggerDetail ?? '',
-      // Process mode edits only the bilingual names; the per-step data fields
-      // stay blank (the dialog hides them in this mode).
-      nameEn: proc.nameEn ?? '',
-      nameAr: proc.nameAr ?? '',
-      inputs: '',
-      outputs: '',
-      system: '',
-      respList: '',
-      ccList: '',
-      decisionBasis: ''
-    }
-    return { mode: 'process' as const, elementType: undefined, initial, element: undefined, modeler }
+    return raw ? deriveStepDetailsCtx(raw as StepDetailsModeler) : null
   }, [stepDetails, modelersByKey])
+
+  // Canvas missing-badge click → select the clicked element in that tab's
+  // modeler (synchronous, so the ctx derivation above sees it) and open the
+  // dialog with the missing categories highlighted. EditorTabLite already
+  // selected the element before invoking this; re-selecting here keeps the
+  // handler correct for any other caller too.
+  const handleOpenStepDetails = useCallback(
+    (tabKey: string, elementId: string, missing: string[]) => {
+      const raw = modelersByKey[tabKey]
+      if (raw) {
+        try {
+          const modeler = raw as {
+            get(s: 'elementRegistry'): { get(id: string): unknown }
+            get(s: 'selection'): { select(el: unknown): void }
+          }
+          const el = modeler.get('elementRegistry').get(elementId)
+          if (el) modeler.get('selection').select(el)
+        } catch {
+          /* selection is best-effort — the dialog still opens */
+        }
+      }
+      setStepDetails({ tabKey, highlight: missing })
+    },
+    [modelersByKey]
+  )
 
   const applyStepDetails = useCallback(
     (v: StepDetailsValues) => {
@@ -1656,6 +1703,9 @@ function App(): JSX.Element {
             })
           }
         }
+        // The just-applied owner (+ responsible-list people) become picker
+        // suggestions IMMEDIATELY — before any disk save (disk wins on merge).
+        setSessionOwners((prev) => upsertSessionOwners(prev, ownerAdditionsFromValues(v)))
         pushToast(t('org.applied'), 'success')
       } catch (err) {
         pushToast(t('org.applyFailed', { error: errMsg(err) }), 'error')
@@ -1677,7 +1727,16 @@ function App(): JSX.Element {
       const csv = ownersToCsv(ownersEntries)
       const data = buildLibraryZip(
         files.map((f) => ({ relPath: f.relPath, xml: f.xml })),
-        [{ relPath: 'process-owners.csv', content: csv }]
+        [
+          { relPath: 'process-owners.csv', content: csv },
+          {
+            // Machine-readable nesting (parent→child callActivity links) so a
+            // re-import — here or in another standards-aware tool — can rebuild
+            // the hierarchy without re-scanning every diagram.
+            relPath: LIBRARY_MANIFEST_NAME,
+            content: serializeLibraryManifest(buildLibraryManifest(files, processIndex, linkGraph))
+          }
+        ]
       )
       const url = URL.createObjectURL(new Blob([data as BlobPart], { type: 'application/zip' }))
       triggerDownload(zipFileName(rootName), url)
@@ -1687,7 +1746,7 @@ function App(): JSX.Element {
     } catch (err) {
       pushToast(t('alert.import.failed', { error: errMsg(err) }), 'error')
     }
-  }, [files, ownersEntries, rootName, pushToast])
+  }, [files, ownersEntries, processIndex, linkGraph, rootName, pushToast])
 
   const onLibraryInputChange = useCallback(
     async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -1707,24 +1766,6 @@ function App(): JSX.Element {
       }
     },
     [pushToast]
-  )
-
-  // Create every missing folder segment of a nested rel path (idempotent —
-  // createFolderAt returns the existing handle when the folder is already there).
-  const ensureFolders = useCallback(
-    async (relDir: string) => {
-      if (!rootHandle || !relDir) return
-      let cur = ''
-      for (const seg of relDir.split('/').filter(Boolean)) {
-        try {
-          await createFolderAt(rootHandle, cur, seg)
-        } catch {
-          /* already exists / racing external create — continue building the path */
-        }
-        cur = cur ? `${cur}/${seg}` : seg
-      }
-    },
-    [rootHandle]
   )
 
   const confirmLibraryImport = useCallback(async () => {
@@ -1802,27 +1843,37 @@ function App(): JSX.Element {
     async (tabKey: string) => {
       const modeler = modelersByKey[tabKey]
       if (!modeler || translatingTab) return
-      const provider = LITE_PROVIDERS.find((p) => !p.desktopOnly && hasKey(p.id))
-      if (!provider) {
-        pushToast(t('translate.noKey'), 'info')
-        return
-      }
+      // "Nothing to translate" wins over the key check — a fully bilingual
+      // diagram gets the same answer with or without a configured key.
       const entries = collectMissingTranslations(modeler as TranslateModeler)
       if (entries.length === 0) {
         pushToast(t('translate.nothing'), 'info')
         return
       }
+      // A configured browser-callable provider keeps the LLM path unchanged;
+      // WITHOUT one the button now falls back to the free translation chain
+      // (Google gtx → MyMemory) instead of dead-ending on a "no key" toast.
+      const provider = LITE_PROVIDERS.find((p) => !p.desktopOnly && hasKey(p.id))
       setTranslatingTab(tabKey)
-      pushToast(t('translate.running', { count: entries.length }), 'info')
+      pushToast(
+        provider
+          ? t('translate.running', { count: entries.length })
+          : t('translate.free.using', { count: entries.length }),
+        'info'
+      )
       try {
-        const call = makeBrowserCallLLM({
-          providerId: provider.id,
-          model: defaultLiteModelId(provider.id),
-          apiKey: getKey(provider.id) ?? '',
-          referer: typeof location !== 'undefined' ? location.origin : undefined,
-          title: 'OrbitPM Process Studio Lite'
-        })
-        const res = await translateDiagram(modeler as TranslateModeler, call)
+        const res = provider
+          ? await translateDiagram(
+              modeler as TranslateModeler,
+              makeBrowserCallLLM({
+                providerId: provider.id,
+                model: defaultLiteModelId(provider.id),
+                apiKey: getKey(provider.id) ?? '',
+                referer: typeof location !== 'undefined' ? location.origin : undefined,
+                title: 'OrbitPM Process Studio Lite'
+              })
+            )
+          : await translateDiagramWithTexts(modeler as TranslateModeler, makeFreeTranslateTexts())
         if (res.skipped > 0) {
           pushToast(
             t('translate.partial', { done: res.translated, total: res.total, skipped: res.skipped }),
@@ -1832,7 +1883,20 @@ function App(): JSX.Element {
           pushToast(t('translate.done', { count: res.translated }), 'success')
         }
       } catch (err) {
-        pushToast(t('translate.failed', { error: errMsg(err) }), 'error')
+        if (err instanceof FreeTranslateError) {
+          pushToast(
+            t(
+              err.code === 'rate'
+                ? 'translate.free.rate'
+                : err.code === 'offline'
+                  ? 'translate.free.offline'
+                  : 'translate.free.down'
+            ),
+            'error'
+          )
+        } else {
+          pushToast(t('translate.failed', { error: errMsg(err) }), 'error')
+        }
       } finally {
         setTranslatingTab(null)
       }
@@ -1967,6 +2031,9 @@ function App(): JSX.Element {
 
   const showCatalog = mode === 'directory' && (tabs.length === 0 || catalogOpen)
   const crumbs = activeTab && activeTab.relPath ? folderCrumbs(activeTab.relPath, rootName || t('breadcrumb.root')) : null
+  // Shell layout direction (the <html dir> follows the UI language) — the
+  // sidebar resizer's drag math needs it; the editor island stays LTR.
+  const dir: 'ltr' | 'rtl' = lang === 'ar' ? 'rtl' : 'ltr'
 
   return (
     <div style={{ display: 'grid', gridTemplateRows: 'auto 1fr auto', height: '100vh' }}>
@@ -2119,7 +2186,8 @@ function App(): JSX.Element {
         {sidebarOpen && (
           <aside
             style={{
-              width: 'clamp(240px, 24vw, 320px)',
+              width: sidebarWidth ?? 'clamp(240px, 24vw, 320px)',
+              flex: '0 0 auto',
               borderInlineEnd: '1px solid var(--orbitpm-border)',
               display: 'flex',
               flexDirection: 'column',
@@ -2212,6 +2280,7 @@ function App(): JSX.Element {
                   onMove={(n) => setMoveTarget(n)}
                   onMoveDrop={handleMoveDrop}
                   onImportDrop={handleImportDrop}
+                  linkChildrenOf={linkChildrenOf}
                 />
               )}
             </div>
@@ -2296,6 +2365,21 @@ function App(): JSX.Element {
               </div>
             )}
           </aside>
+        )}
+
+        {/* Drag handle for the explorer width — sits on the aside's inline-end
+            edge, before the rail. dir-aware so RTL drags resize correctly. */}
+        {sidebarOpen && (
+          <PaneResizer
+            edge="inline-end"
+            dir={dir}
+            width={sidebarWidth ?? 320}
+            min={200}
+            max={560}
+            onWidthChange={setSidebarWidth}
+            onReset={resetSidebarWidth}
+            ariaLabel={t('pane.resize.sidebar.aria')}
+          />
         )}
 
         {/* RAIL: a full-height 16px toggle for the whole sidebar. The chevron
@@ -2440,6 +2524,13 @@ function App(): JSX.Element {
                       onDirtyChange={(dirty) => handleDirtyChange(tab.key, dirty)}
                       onRequestSave={(xml) => handleRequestSave(tab, xml)}
                       onOpenCalledProcess={handleOpenCalledProcess}
+                      onOpenStepDetails={(id, missing) => handleOpenStepDetails(tab.key, id, missing)}
+                      sidePaneExtra={
+                        <DetailsCard
+                          modeler={(modelersByKey[tab.key] ?? null) as StepDetailsModeler | null}
+                          onOpenDetails={() => setStepDetails({ tabKey: tab.key })}
+                        />
+                      }
                       exportFileBaseName={tab.title.replace(/\.bpmn$/i, '')}
                       onCommandsReady={(commands) => {
                         commandsRef.current[tab.key] = commands
@@ -2605,6 +2696,19 @@ function App(): JSX.Element {
               <div>
                 {t('library.import.summary', { count: libraryImport.entries.length })}
               </div>
+              {libraryImport.manifest && (
+                <div style={{ marginTop: 8, color: 'var(--orbitpm-muted)' }}>
+                  {t('library.manifestInfo', {
+                    files: libraryImport.manifest.files.length,
+                    links: libraryImport.manifest.hierarchy.length
+                  })}
+                </div>
+              )}
+              {libraryImport.ownersCsv !== undefined && (
+                <div style={{ marginTop: 4, color: 'var(--orbitpm-muted)' }}>
+                  {t('library.ownersCsvInfo')}
+                </div>
+              )}
               {libraryImport.skipped.length > 0 && (
                 <div style={{ marginTop: 10 }}>
                   <div style={{ color: 'var(--orbitpm-muted)', marginBottom: 4 }}>
@@ -2691,6 +2795,7 @@ function App(): JSX.Element {
           elementType={stepDetailsCtx.elementType}
           initial={stepDetailsCtx.initial}
           ownerEntries={ownersEntries}
+          highlightFields={stepDetails?.highlight}
           onApply={applyStepDetails}
           onCancel={() => setStepDetails(null)}
           onExportOwners={exportOwners}

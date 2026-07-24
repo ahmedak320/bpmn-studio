@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { renderToStaticMarkup } from 'react-dom/server'
-import { OwnerPicker, DEFAULT_OWNER_PICKER_LABELS, ownerSuggestions } from '../OwnerPicker'
+import { OwnerPicker, DEFAULT_OWNER_PICKER_LABELS, browseOwners, ownerSuggestions } from '../OwnerPicker'
 import type { OwnerEntry } from '../ownersIndex'
 
 const noop = (): void => {}
@@ -33,6 +33,25 @@ describe('ownerSuggestions (pure helper)', () => {
 
   it('respects a custom max', () => {
     expect(ownerSuggestions(entries, 'a', 1)).toHaveLength(1)
+  })
+})
+
+describe('browseOwners (pure helper)', () => {
+  it('returns the top entries as-is (input order preserved), capped at 12 by default', () => {
+    const many: OwnerEntry[] = Array.from({ length: 20 }, (_, i) => ({
+      name: `Owner ${i}`,
+      count: 20 - i
+    }))
+    const result = browseOwners(many)
+    expect(result).toHaveLength(12)
+    expect(result[0].name).toBe('Owner 0')
+    expect(result[11].name).toBe('Owner 11')
+  })
+
+  it('returns shorter lists whole and respects a custom max', () => {
+    expect(browseOwners(entries)).toEqual(entries)
+    expect(browseOwners(entries, 2).map((e) => e.name)).toEqual(['Alice', 'Bob Smith'])
+    expect(browseOwners([], 5)).toEqual([])
   })
 })
 
@@ -104,5 +123,35 @@ describe('OwnerPicker (static render)', () => {
       />
     )
     expect(html).toContain('Custom Owner Label')
+  })
+
+  it('renders the ▾ browse-all affordance with its aria label', () => {
+    const html = renderToStaticMarkup(
+      <OwnerPicker
+        value=""
+        ownerType=""
+        entries={entries}
+        labels={DEFAULT_OWNER_PICKER_LABELS}
+        onChange={noop}
+      />
+    )
+    expect(html).toContain(`aria-label="${DEFAULT_OWNER_PICKER_LABELS.browseAria}"`)
+    expect(html).toContain('▾')
+  })
+
+  it('renders the browse affordance even with zero entries (empty state lives in the list)', () => {
+    const html = renderToStaticMarkup(
+      <OwnerPicker
+        value=""
+        ownerType=""
+        entries={[]}
+        labels={DEFAULT_OWNER_PICKER_LABELS}
+        onChange={noop}
+      />
+    )
+    expect(html).toContain(`aria-label="${DEFAULT_OWNER_PICKER_LABELS.browseAria}"`)
+    // The empty-state row only appears once the input is focused — never in a
+    // static (blur-state) render.
+    expect(html).not.toContain(DEFAULT_OWNER_PICKER_LABELS.emptyState)
   })
 })

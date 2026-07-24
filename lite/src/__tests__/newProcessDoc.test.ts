@@ -5,7 +5,8 @@ import {
   humanizeProcessId,
   buildNewProcessDoc,
   buildMissingProcessDoc,
-  deriveFileBaseName
+  deriveFileBaseName,
+  sanitizeFolderName
 } from '../editor/newProcessDoc'
 import {
   buildProcessIndex,
@@ -181,6 +182,33 @@ describe('deriveFileBaseName (Arabic / non-Latin name handling)', () => {
   it('falls back to the generic slug when an Arabic (or any) name is empty/whitespace', () => {
     expect(deriveFileBaseName('   ')).toBe('process')
     expect(deriveFileBaseName('')).toBe('process')
+  })
+})
+
+describe('sanitizeFolderName', () => {
+  it('preserves friendly Latin and Arabic names unchanged', () => {
+    expect(sanitizeFolderName('Animal Welfare Division', 'fallback-marker')).toBe(
+      'Animal Welfare Division'
+    )
+    expect(sanitizeFolderName('إدارة الرفق بالحيوان', 'fallback-marker')).toBe(
+      'إدارة الرفق بالحيوان'
+    )
+  })
+
+  it('strips filesystem-illegal characters and edge dots, then collapses whitespace', () => {
+    expect(sanitizeFolderName('..  Animal / Welfare:*?  Division.  ', 'fallback-marker')).toBe(
+      'Animal Welfare Division'
+    )
+    expect(sanitizeFolderName('  Animal\t\tWelfare\nDivision  ', 'fallback-marker')).toBe(
+      'Animal Welfare Division'
+    )
+    expect(sanitizeFolderName('إدارة\\الرفق\u0007   بالحيوان', 'fallback-marker')).toBe(
+      'إدارةالرفق بالحيوان'
+    )
+  })
+
+  it('uses the caller-provided existing slug fallback when nothing usable remains', () => {
+    expect(sanitizeFolderName('...<>:/\\|?*\u0000', 'fallback-marker')).toBe('fallback-marker')
   })
 })
 

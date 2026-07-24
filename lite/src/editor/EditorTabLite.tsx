@@ -46,8 +46,13 @@ import {
 } from '@app/renderer/src/editor/exportImage'
 import { orbitpmModdleDescriptor } from '../org/orbitpmModdle'
 import { OrgRenderModule } from '../org/orgRenderer'
+import { refreshOrgStyling } from '../org/orgSettings'
+import { PaneResizer, usePaneWidth } from '../common/PaneResizer'
 import { installDragWatchdog } from './dragWatchdog'
 import { installPaletteDrag } from './paletteDrag'
+import { installCanvasDecor } from './canvasDecor'
+import { installLabelBilingualSync } from './labelSync'
+import type { LangToggleModeler } from './langToggle'
 import { t } from '../i18n'
 import { useLang } from '../i18n/useLang'
 
@@ -60,6 +65,13 @@ export interface EditorTabProps {
   onModelerReady?: (modeler: unknown | null) => void
   toolbarExtra?: import('react').ReactNode
   onCommandsReady?: (commands: EditorTabCommands | null) => void
+  /** A canvas missing-info badge was clicked. The element has already been
+   *  selected in this modeler, so the caller can open the Step-details dialog
+   *  with the machine-readable missing categories highlighted. */
+  onOpenStepDetails?: (elementId: string, missing: string[]) => void
+  /** React content stacked ABOVE the bpmn-js properties panel inside the
+   *  right side pane (the App renders the Details card here). */
+  sidePaneExtra?: import('react').ReactNode
 }
 
 export interface EditorTabCommands {
@@ -88,6 +100,11 @@ interface ElementLike {
 
 interface ElementRegistryLike {
   getAll(): ElementLike[]
+  get(id: string): ElementLike | undefined
+}
+
+interface SelectionApiLike {
+  select(el: unknown): void
 }
 
 interface EventBusLike {
@@ -103,6 +120,7 @@ interface BpmnModelerLike {
   get(name: 'canvas'): CanvasApiLike
   get(name: 'eventBus'): EventBusLike
   get(name: 'elementRegistry'): ElementRegistryLike
+  get(name: 'selection'): SelectionApiLike
   destroy(): void
   attachTo(container: HTMLElement): void
 }
@@ -137,18 +155,23 @@ export function EditorTab(props: EditorTabProps): JSX.Element {
     exportFileBaseName,
     onModelerReady,
     toolbarExtra,
-    onCommandsReady
+    onCommandsReady,
+    onOpenStepDetails,
+    sidePaneExtra
   } = props
-  useLang()
+  const lang = useLang()
   const onModelerReadyRef = useRef(onModelerReady)
   onModelerReadyRef.current = onModelerReady
 
+  const editorRootRef = useRef<HTMLDivElement | null>(null)
   const canvasContainerRef = useRef<HTMLDivElement | null>(null)
   const propertiesContainerRef = useRef<HTMLDivElement | null>(null)
   const modelerRef = useRef<BpmnModelerLike | null>(null)
   const dirtyStateRef = useRef<DirtyState>(createDirtyState(0))
   const onOpenCalledProcessRef = useRef(onOpenCalledProcess)
   onOpenCalledProcessRef.current = onOpenCalledProcess
+  const onOpenStepDetailsRef = useRef(onOpenStepDetails)
+  onOpenStepDetailsRef.current = onOpenStepDetails
 
   const [dirty, setDirty] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -169,6 +192,12 @@ export function EditorTab(props: EditorTabProps): JSX.Element {
       return true
     }
   })
+  // Right side-pane width (Details card + properties panel), user-resizable via
+  // the PaneResizer handle; null falls back to the stylesheet default (300px).
+  const [propsWidth, setPropsWidth, resetPropsWidth] = usePaneWidth(
+    'orbitpm.lite.propsPanelWidth',
+    { min: 240, max: 560 }
+  )
 
   const togglePropsPanel = useCallback(() => {
     setPropsOpen((prev) => {
@@ -219,6 +248,13 @@ export function EditorTab(props: EditorTabProps): JSX.Element {
       // XML; OrgRenderModule (priority 1500) paints the DMT decorations over the
       // stock renderer and reads the live styling flag on every draw.
       moddleExtensions: { orbitpm: orbitpmModdleDescriptor },
+      // diagram-js's AutoScroll pans the canvas whenever a drag (hand-tool pans
+      // included) nears the viewport edge. Its trigger check is a STRICT
+      // between(): scrollThresholdOut[i] < diff < scrollThresholdIn[i]
+      // (diagram-js AutoScroll.js:90,112-118), so all-zero inner thresholds
+      // make it mathematically inert. This also disables edge auto-pan during
+      // element drags — accepted (the minimap and ctrl+scroll still navigate).
+      autoScroll: { scrollThresholdIn: [0, 0, 0, 0] },
       additionalModules: [
         BpmnPropertiesPanelModule,
         BpmnPropertiesProviderModule,
@@ -262,7 +298,35 @@ export function EditorTab(props: EditorTabProps): JSX.Element {
     // persists). The installer waits for bpmn-js to create `.djs-palette`.
     const uninstallPaletteDrag = installPaletteDrag(canvasContainerRef.current)
 
+    // Missing-info badge UX: floating HTML tooltip (delegated pointer events)
+    // plus click-through to the Step-details dialog. The click SELECTS the
+    // element first — synchronously — so the dialog derives element mode from
+    // the live selection before App reads it; the callback only fires when the
+    // badge resolved to a real data-element-id.
+    const uninstallCanvasDecor = installCanvasDecor(
+      canvasContainerRef.current,
+      editorRootRef.current ?? canvasContainerRef.current,
+      {
+        onBadgeClick: (elementId, missing) => {
+          try {
+            const el = modeler.get('elementRegistry').get(elementId)
+            if (el) modeler.get('selection').select(el)
+          } catch {
+            /* selection is best-effort — the dialog still opens */
+          }
+          onOpenStepDetailsRef.current?.(elementId, missing)
+        }
+      }
+    )
+
+    // Typing a label on the canvas mirrors the visible name into the ACTIVE
+    // diagram language's orbitpm attr (same undo step), so the Details dialog
+    // opens pre-filled instead of waiting for a language toggle to self-heal.
+    const uninstallLabelSync = installLabelBilingualSync(modeler as unknown as LangToggleModeler)
+
     return () => {
+      uninstallLabelSync()
+      uninstallCanvasDecor()
       uninstallPaletteDrag()
       uninstallDragWatchdog()
       eventBus.off('commandStack.changed', handleCommandStackChanged)
@@ -273,6 +337,14 @@ export function EditorTab(props: EditorTabProps): JSX.Element {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
+
+  // Canvas org decorations draw localized titles (Inputs/CC/…) at paint time —
+  // repaint every shape when the UI language flips so the canvas text follows
+  // immediately (the modeler survives language changes; only decor re-renders).
+  useEffect(() => {
+    const m = modelerRef.current
+    if (m) refreshOrgStyling(m as never)
+  }, [lang])
 
   useEffect(() => {
     const modeler = modelerRef.current
@@ -412,7 +484,7 @@ export function EditorTab(props: EditorTabProps): JSX.Element {
     // i18n prep §3.4). The toolbar text itself is still translated; only the
     // physical layout of this work-surface island stays LTR regardless of the
     // app's active language.
-    <div className="orbitpm-editor" dir="ltr">
+    <div ref={editorRootRef} className="orbitpm-editor" dir="ltr">
       <div className="orbitpm-editor__toolbar">
         <button
           type="button"
@@ -527,11 +599,28 @@ export function EditorTab(props: EditorTabProps): JSX.Element {
             </div>
           )}
         </div>
-        <div
-          ref={propertiesContainerRef}
-          className="orbitpm-editor__properties"
-          style={{ display: propsOpen ? undefined : 'none' }}
+        <PaneResizer
+          edge="inline-start"
+          dir="ltr"
+          width={propsWidth ?? 300}
+          min={240}
+          max={560}
+          onWidthChange={setPropsWidth}
+          onReset={resetPropsWidth}
+          ariaLabel={t('pane.resize.props.aria')}
+          visible={propsOpen}
         />
+        {/* The side pane stacks the App-provided Details card above the
+            bpmn-js properties panel. The propertiesContainerRef div MUST stay
+            mounted unconditionally — bpmn-js owns that DOM — so the visibility
+            toggle lives on this wrapper, never on the inner div. */}
+        <div
+          className="orbitpm-lite-sidepane"
+          style={{ display: propsOpen ? 'flex' : 'none', width: propsWidth ?? undefined }}
+        >
+          {sidePaneExtra}
+          <div ref={propertiesContainerRef} className="orbitpm-editor__properties" />
+        </div>
       </div>
     </div>
   )

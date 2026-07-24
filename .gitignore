@@ -14,3 +14,6 @@ build/
 tests/e2e/artifacts/
 test-results/
 playwright-report/
+
+# local ARIS export fixtures (org data — never publish)
+AnimalWF/

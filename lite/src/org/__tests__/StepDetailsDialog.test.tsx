@@ -163,4 +163,65 @@ describe('StepDetailsDialog (static render)', () => {
     expect(html).toContain('Review request')
     expect(html).toContain('مراجعة الطلب')
   })
+
+  it('passes the browse/empty labels through to the owner picker', () => {
+    const html = render({ mode: 'element', elementType: 'bpmn:Task' })
+    expect(html).toContain(t('owner.browse.aria'))
+  })
+})
+
+describe('StepDetailsDialog highlightFields', () => {
+  it('renders the amber hint for highlighted, visible categories', () => {
+    const html = render({
+      mode: 'element',
+      elementType: 'bpmn:Task',
+      highlightFields: ['owner', 'inputs', 'outputs']
+    })
+    expect(html).toContain(t('missing.highlight.hint'))
+    // One hint per highlighted block: owner section + inputs + outputs.
+    expect(html.split(t('missing.highlight.hint'))).toHaveLength(4)
+  })
+
+  it('renders no hint without highlightFields (or with an empty list)', () => {
+    expect(render({ mode: 'element', elementType: 'bpmn:Task' })).not.toContain(
+      t('missing.highlight.hint')
+    )
+    expect(
+      render({ mode: 'element', elementType: 'bpmn:Task', highlightFields: [] })
+    ).not.toContain(t('missing.highlight.hint'))
+  })
+
+  it('ignores highlights whose section is hidden for the current type', () => {
+    // A plain task renders neither the trigger section nor the basis textarea.
+    const html = render({
+      mode: 'element',
+      elementType: 'bpmn:Task',
+      highlightFields: ['trigger', 'basis']
+    })
+    expect(html).not.toContain(t('missing.highlight.hint'))
+  })
+
+  it("highlights the decision-basis textarea on gateways ('basis' category)", () => {
+    const html = render({
+      mode: 'element',
+      elementType: 'bpmn:ExclusiveGateway',
+      highlightFields: ['basis']
+    })
+    expect(html).toContain(t('missing.highlight.hint'))
+  })
+
+  it('highlights the trigger control in process mode and on start events', () => {
+    expect(render({ mode: 'process', highlightFields: ['trigger'] })).toContain(
+      t('missing.highlight.hint')
+    )
+    expect(
+      render({ mode: 'element', elementType: 'bpmn:StartEvent', highlightFields: ['trigger'] })
+    ).toContain(t('missing.highlight.hint'))
+  })
+
+  it('unknown categories are ignored', () => {
+    expect(
+      render({ mode: 'element', elementType: 'bpmn:Task', highlightFields: ['bogus'] })
+    ).not.toContain(t('missing.highlight.hint'))
+  })
 })
