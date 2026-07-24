@@ -16,9 +16,7 @@ const baseInitial: StepDetailsValues = {
   channelDetail: '',
   cc: false,
   ccTo: '',
-  trigger: '',
-  triggerService: '',
-  triggerDetail: '',
+  triggers: [],
   nameEn: '',
   nameAr: '',
   inputs: '',
@@ -71,10 +69,44 @@ describe('StepDetailsDialog (static render)', () => {
     expect(html).not.toContain(t('org.section.cc'))
   })
 
-  it('disables Apply when a dmthub trigger has no service name', () => {
+  it('renders repeatable rows with numbered labels and add/remove controls', () => {
     const html = render({
       mode: 'process',
-      initial: { ...baseInitial, trigger: 'dmthub', triggerService: '' }
+      initial: {
+        ...baseInitial,
+        triggers: [
+          { type: 'dmthub', service: 'ClaimsHub', detail: 'new claims' },
+          { type: 'email', service: '', detail: 'intake inbox' }
+        ]
+      }
+    })
+    expect(html).toContain(t('org.trigger.rowLabel', { n: 1 }))
+    expect(html).toContain(t('org.trigger.rowLabel', { n: 2 }))
+    expect(html).toContain(`aria-label="${t('org.trigger.label')} 1"`)
+    expect(html).toContain(`aria-label="${t('org.trigger.label')} 2"`)
+    expect(html.split(`aria-label="${t('org.trigger.remove.aria')}"`)).toHaveLength(3)
+    expect(html).toContain(t('org.trigger.add'))
+    expect(html).not.toContain(t('org.trigger.none'))
+  })
+
+  it('zero rows is a valid empty state with only the Add trigger control', () => {
+    const html = render({ mode: 'process' })
+    expect(html).toContain(t('org.trigger.add'))
+    expect(html).not.toContain(`aria-label="${t('org.trigger.label')} 1"`)
+    expect(html).not.toContain(t('org.trigger.remove.aria'))
+    expect(html).not.toContain(t('org.trigger.detail.label'))
+  })
+
+  it('disables Apply when any dmthub row has no service name', () => {
+    const html = render({
+      mode: 'process',
+      initial: {
+        ...baseInitial,
+        triggers: [
+          { type: 'dmthub', service: '', detail: '' },
+          { type: 'email', service: '', detail: '' }
+        ]
+      }
     })
     // The only disabled control in process mode is the Apply button; the inline
     // "service required" error is also present.
@@ -82,10 +114,16 @@ describe('StepDetailsDialog (static render)', () => {
     expect(html).toContain(t('org.trigger.serviceRequired'))
   })
 
-  it('enables Apply once the dmthub trigger has a service name', () => {
+  it('enables Apply once every dmthub row has a service; non-dmthub rows do not block', () => {
     const html = render({
       mode: 'process',
-      initial: { ...baseInitial, trigger: 'dmthub', triggerService: 'ClaimsHub' }
+      initial: {
+        ...baseInitial,
+        triggers: [
+          { type: 'dmthub', service: 'ClaimsHub', detail: '' },
+          { type: 'email', service: '', detail: '' }
+        ]
+      }
     })
     expect(html).not.toContain('disabled')
     expect(html).not.toContain(t('org.trigger.serviceRequired'))
@@ -211,9 +249,10 @@ describe('StepDetailsDialog highlightFields', () => {
   })
 
   it('highlights the trigger control in process mode and on start events', () => {
-    expect(render({ mode: 'process', highlightFields: ['trigger'] })).toContain(
-      t('missing.highlight.hint')
-    )
+    const processHtml = render({ mode: 'process', highlightFields: ['trigger'] })
+    expect(processHtml).toContain(t('missing.highlight.hint'))
+    // The ring belongs to the whole repeatable section, including its empty state.
+    expect(processHtml).toContain('box-shadow:0 0 0 2px #c47f17')
     expect(
       render({ mode: 'element', elementType: 'bpmn:StartEvent', highlightFields: ['trigger'] })
     ).toContain(t('missing.highlight.hint'))

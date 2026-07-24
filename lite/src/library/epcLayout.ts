@@ -25,6 +25,7 @@
 
 import { computeDecorMargins, type Box } from '../org/decorExtents'
 import type { OrgProps } from '../org/orgModel'
+import { fitInteriorBox } from '../editor/autoSize'
 
 export type Orientation = 'vertical' | 'horizontal'
 
@@ -33,7 +34,8 @@ export interface LayoutNode {
   /** Emit tag: 'task' | 'callActivity' | 'startEvent' | 'endEvent' |
    *  'intermediateThrowEvent' | 'exclusiveGateway' | … */
   tag: string
-  /** Display name — sizes the external label of events/gateways. */
+  /** Display name — sizes task-family shapes or the external label of
+   *  events/gateways. */
   label?: string
   /** Present orbitpm:* values → reserved decoration margins. */
   attrs?: OrgProps
@@ -109,11 +111,12 @@ const CHAN_KEEPOUT = 10
 
 // --- per-node geometry -------------------------------------------------------
 
-/** Base BPMN size for an emit tag (final-space width × height). */
-export function nodeBaseSize(tag: string): { w: number; h: number } {
+/** BPMN size for an emit tag (final-space width × height). Task-family nodes
+ *  widen, then grow taller, using the same deterministic fit as live edits. */
+export function nodeBaseSize(tag: string, label: string = ''): { w: number; h: number } {
   if (tag.endsWith('Gateway')) return { w: GATEWAY_SIZE, h: GATEWAY_SIZE }
   if (tag.endsWith('Event')) return { w: EVENT_SIZE, h: EVENT_SIZE }
-  return { w: TASK_W, h: TASK_H }
+  return fitInteriorBox(label, { reserveSubChip: tag === 'callActivity' })
 }
 
 /** 'callActivity' → 'bpmn:CallActivity' (decorExtents element-type form). */
@@ -159,7 +162,7 @@ export function estimateLabelSize(label: string): { w: number; h: number } {
 /** External-label box in shape-local FINAL-space coords (null when none). */
 function labelLocalBox(node: { tag: string; label?: string }, orientation: Orientation): Box | null {
   if (!hasExternalLabel(node)) return null
-  const { w, h } = nodeBaseSize(node.tag)
+  const { w, h } = nodeBaseSize(node.tag, node.label)
   const size = estimateLabelSize(node.label as string)
   return orientation === 'vertical'
     ? // Left of the shape, vertically centred (the right side belongs to the
@@ -186,7 +189,7 @@ export function reservedExtents(
   node: { tag: string; label?: string; attrs?: OrgProps },
   orientation: Orientation
 ): ReservedExtents {
-  const { w, h } = nodeBaseSize(node.tag)
+  const { w, h } = nodeBaseSize(node.tag, node.label)
   const labelBox = labelLocalBox(node, orientation)
   const margins = computeDecorMargins({
     props: node.attrs ?? {},
@@ -261,7 +264,7 @@ export function layoutEpc(
   const states = new Map<string, NodeState>()
   for (const node of nodes) {
     if (states.has(node.id)) continue // defensive: first definition wins
-    const { w, h } = nodeBaseSize(node.tag)
+    const { w, h } = nodeBaseSize(node.tag, node.label)
     const ext = reservedExtents(node, orientation)
     const hint = node.hint
     const key: SortKey = hint

@@ -24,7 +24,8 @@ import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from 
 import { OwnerPicker, type OwnerPickerLabels } from '../owner/OwnerPicker'
 import type { OwnerEntry } from '../owner/ownersIndex'
 import { isDecisionBasisType } from './orgRenderer'
-import { t } from '../i18n'
+import { TRIGGER_TYPES, type TriggerEntry } from './orgModel'
+import { t, type Key } from '../i18n'
 import { useLang } from '../i18n/useLang'
 
 export interface StepDetailsValues {
@@ -36,9 +37,7 @@ export interface StepDetailsValues {
   channelDetail: string
   cc: boolean
   ccTo: string
-  trigger: string
-  triggerService: string
-  triggerDetail: string
+  triggers: TriggerEntry[]
   /** Bilingual element/process names. */
   nameEn: string
   nameAr: string
@@ -125,9 +124,7 @@ const FIELD_TO_CATEGORY: Partial<Record<keyof StepDetailsValues, string>> = {
   inputs: 'inputs',
   outputs: 'outputs',
   decisionBasis: 'basis',
-  trigger: 'trigger',
-  triggerService: 'trigger',
-  triggerDetail: 'trigger'
+  triggers: 'trigger'
 }
 
 /** Categories in on-screen order — the scroll-into-view target is the FIRST
@@ -231,6 +228,24 @@ const ghostBtn: CSSProperties = {
   fontSize: 13,
   cursor: 'pointer',
   color: 'inherit'
+}
+const triggerRow: CSSProperties = {
+  display: 'flex',
+  flexDirection: 'column',
+  gap: 8,
+  padding: 10,
+  border: '1px solid rgba(127,127,127,0.28)',
+  borderRadius: 8
+}
+
+type TriggerType = (typeof TRIGGER_TYPES)[number]
+
+const TRIGGER_LABEL_KEYS: Record<TriggerType, Key> = {
+  email: 'org.trigger.email',
+  dmthub: 'org.trigger.dmthub',
+  manual: 'org.trigger.manual',
+  schedule: 'org.trigger.schedule',
+  other: 'org.trigger.other'
 }
 
 function Section({
@@ -347,8 +362,18 @@ export function StepDetailsDialog({
   // A DMT-Hub trigger must name a service; Apply stays disabled while it is
   // blank (only enforced when the trigger section is actually on screen).
   const triggerServiceMissing =
-    showTrigger && values.trigger === 'dmthub' && values.triggerService.trim() === ''
+    showTrigger &&
+    values.triggers.some((entry) => entry.type === 'dmthub' && entry.service.trim() === '')
   const applyDisabled = triggerServiceMissing
+
+  const updateTrigger = (index: number, patch: Partial<TriggerEntry>): void => {
+    set(
+      'triggers',
+      values.triggers.map((entry, rowIndex) =>
+        rowIndex === index ? { ...entry, ...patch } : entry
+      )
+    )
+  }
 
   const title = mode === 'process' ? t('org.dialog.title.process') : t('org.dialog.title.element')
 
@@ -607,66 +632,99 @@ export function StepDetailsDialog({
 
           {/* Trigger — process mode, or a start event in element mode */}
           {showTrigger && (
-            <Section title={t('org.section.trigger')}>
-              <label
-                ref={highlightRef('trigger')}
-                style={{ ...fieldLabel, ...(isHighlighted('trigger') ? highlightRing : undefined) }}
+            <Section
+              title={t('org.section.trigger')}
+              sectionRef={highlightRef('trigger')}
+              highlight={isHighlighted('trigger')}
+            >
+              {values.triggers.map((entry, index) => {
+                const serviceMissing =
+                  entry.type === 'dmthub' && entry.service.trim() === ''
+                return (
+                  <div key={index} style={triggerRow}>
+                    {values.triggers.length > 1 && (
+                      <strong style={{ fontSize: 12 }}>
+                        {t('org.trigger.rowLabel', { n: index + 1 })}
+                      </strong>
+                    )}
+                    <label style={fieldLabel}>
+                      <span style={labelText}>{t('org.trigger.label')}</span>
+                      <select
+                        aria-label={`${t('org.trigger.label')} ${index + 1}`}
+                        value={entry.type}
+                        onChange={(e) => updateTrigger(index, { type: e.target.value })}
+                        style={inputStyle}
+                      >
+                        {TRIGGER_TYPES.map((triggerType) => (
+                          <option key={triggerType} value={triggerType}>
+                            {t(TRIGGER_LABEL_KEYS[triggerType])}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    {entry.type === 'dmthub' && (
+                      <label style={fieldLabel}>
+                        <span style={labelText}>{t('org.trigger.service.label')}</span>
+                        <input
+                          type="text"
+                          dir="auto"
+                          value={entry.service}
+                          placeholder={t('org.trigger.service.placeholder')}
+                          aria-invalid={serviceMissing}
+                          onChange={(e) => updateTrigger(index, { service: e.target.value })}
+                          style={{
+                            ...inputStyle,
+                            borderColor: serviceMissing
+                              ? '#d63384'
+                              : 'rgba(127,127,127,0.4)'
+                          }}
+                        />
+                        {serviceMissing && (
+                          <span role="alert" style={{ fontSize: 11.5, color: '#d63384' }}>
+                            {t('org.trigger.serviceRequired')}
+                          </span>
+                        )}
+                      </label>
+                    )}
+                    <label style={fieldLabel}>
+                      <span style={labelText}>{t('org.trigger.detail.label')}</span>
+                      <input
+                        type="text"
+                        dir="auto"
+                        value={entry.detail}
+                        placeholder={t('org.trigger.detail.placeholder')}
+                        onChange={(e) => updateTrigger(index, { detail: e.target.value })}
+                        style={inputStyle}
+                      />
+                    </label>
+                    <button
+                      type="button"
+                      aria-label={t('org.trigger.remove.aria')}
+                      onClick={() =>
+                        set(
+                          'triggers',
+                          values.triggers.filter((_, rowIndex) => rowIndex !== index)
+                        )
+                      }
+                      style={{ ...ghostBtn, alignSelf: 'flex-end' }}
+                    >
+                      −
+                    </button>
+                  </div>
+                )
+              })}
+              <button
+                type="button"
+                onClick={() =>
+                  set('triggers', [
+                    ...values.triggers,
+                    { type: 'email', service: '', detail: '' }
+                  ])
+                }
+                style={{ ...ghostBtn, alignSelf: 'flex-start' }}
               >
-                <span style={labelText}>{t('org.trigger.label')}</span>
-                <select
-                  aria-label={t('org.trigger.label')}
-                  value={values.trigger}
-                  onChange={(e) => set('trigger', e.target.value)}
-                  style={inputStyle}
-                >
-                  <option value="">{t('org.trigger.none')}</option>
-                  <option value="email">{t('org.trigger.email')}</option>
-                  <option value="dmthub">{t('org.trigger.dmthub')}</option>
-                  <option value="manual">{t('org.trigger.manual')}</option>
-                  <option value="schedule">{t('org.trigger.schedule')}</option>
-                  <option value="other">{t('org.trigger.other')}</option>
-                </select>
-                {isHighlighted('trigger') && (
-                  <span role="note" style={highlightHintStyle}>
-                    {t('missing.highlight.hint')}
-                  </span>
-                )}
-              </label>
-              {values.trigger === 'dmthub' && (
-                <label style={fieldLabel}>
-                  <span style={labelText}>{t('org.trigger.service.label')}</span>
-                  <input
-                    type="text"
-                    dir="auto"
-                    value={values.triggerService}
-                    placeholder={t('org.trigger.service.placeholder')}
-                    aria-invalid={triggerServiceMissing}
-                    onChange={(e) => set('triggerService', e.target.value)}
-                    style={{
-                      ...inputStyle,
-                      borderColor: triggerServiceMissing ? '#d63384' : 'rgba(127,127,127,0.4)'
-                    }}
-                  />
-                  {triggerServiceMissing && (
-                    <span role="alert" style={{ fontSize: 11.5, color: '#d63384' }}>
-                      {t('org.trigger.serviceRequired')}
-                    </span>
-                  )}
-                </label>
-              )}
-              {values.trigger !== '' && (
-                <label style={fieldLabel}>
-                  <span style={labelText}>{t('org.trigger.detail.label')}</span>
-                  <input
-                    type="text"
-                    dir="auto"
-                    value={values.triggerDetail}
-                    placeholder={t('org.trigger.detail.placeholder')}
-                    onChange={(e) => set('triggerDetail', e.target.value)}
-                    style={inputStyle}
-                  />
-                </label>
-              )}
+                {t('org.trigger.add')}
+              </button>
             </Section>
           )}
         </div>

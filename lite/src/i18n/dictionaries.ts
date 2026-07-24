@@ -548,6 +548,9 @@ export const en = {
   'org.trigger.detail.label': 'Trigger detail',
   'org.trigger.detail.placeholder': 'e.g. schedule, sender or reference',
   'org.trigger.serviceRequired': 'A DMT Hub service name is required.',
+  'org.trigger.add': '＋ Add trigger',
+  'org.trigger.remove.aria': 'Remove this trigger',
+  'org.trigger.rowLabel': 'Trigger {n}',
 
   'org.note.label': 'Note',
   'org.note.placeholder': 'Add a note shown beside this step…',
@@ -1178,6 +1181,9 @@ export const ar: Record<keyof typeof en, string> = {
   'org.trigger.detail.label': 'تفاصيل المُشغِّل',
   'org.trigger.detail.placeholder': 'مثال: الجدول أو المُرسِل أو مرجع',
   'org.trigger.serviceRequired': 'اسم خدمة منصة DMT مطلوب.',
+  'org.trigger.add': '＋ إضافة مشغّل',
+  'org.trigger.remove.aria': 'إزالة هذا المشغّل',
+  'org.trigger.rowLabel': 'المشغّل {n}',
 
   'org.note.label': 'ملاحظة',
   'org.note.placeholder': 'أضف ملاحظة تظهر بجوار هذه الخطوة…',

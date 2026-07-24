@@ -53,6 +53,7 @@ import { installPaletteDrag } from './paletteDrag'
 import { installCanvasDecor } from './canvasDecor'
 import { installLabelBilingualSync } from './labelSync'
 import type { LangToggleModeler } from './langToggle'
+import { installAutoSize, type AutoSizeModeler } from './autoSize'
 import { t } from '../i18n'
 import { useLang } from '../i18n/useLang'
 
@@ -323,8 +324,10 @@ export function EditorTab(props: EditorTabProps): JSX.Element {
     // diagram language's orbitpm attr (same undo step), so the Details dialog
     // opens pre-filled instead of waiting for a language toggle to self-heal.
     const uninstallLabelSync = installLabelBilingualSync(modeler as unknown as LangToggleModeler)
+    const uninstallAutoSize = installAutoSize(modeler as unknown as AutoSizeModeler)
 
     return () => {
+      uninstallAutoSize()
       uninstallLabelSync()
       uninstallCanvasDecor()
       uninstallPaletteDrag()

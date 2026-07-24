@@ -117,6 +117,47 @@ describe('deriveStepDetailsCtx modes', () => {
     expect(ctx.initial.decisionBasis).toBe('Policy 4')
   })
 
+  it('element mode: seeds multiple triggers from the canonical list', () => {
+    const el = task('S1', {
+      type: 'bpmn:StartEvent',
+      attrs: {
+        'orbitpm:triggers':
+          'dmthub — ClaimsHub — new claim\nemail —  — sender allow-list',
+        'orbitpm:trigger': 'manual'
+      }
+    })
+    const modeler = makeModeler({
+      selection: [el],
+      elements: [el],
+      root: processRoot({ 'orbitpm:activeLang': 'en' })
+    })
+
+    expect(deriveStepDetailsCtx(modeler).initial.triggers).toEqual([
+      { type: 'dmthub', service: 'ClaimsHub', detail: 'new claim' },
+      { type: 'email', service: '', detail: 'sender allow-list' }
+    ])
+  })
+
+  it('element mode: falls back to the legacy trigger trio', () => {
+    const el = task('S1', {
+      type: 'bpmn:StartEvent',
+      attrs: {
+        'orbitpm:trigger': 'email',
+        'orbitpm:triggerService': 'Mailroom',
+        'orbitpm:triggerDetail': 'intake'
+      }
+    })
+    const modeler = makeModeler({
+      selection: [el],
+      elements: [el],
+      root: processRoot({ 'orbitpm:activeLang': 'en' })
+    })
+
+    expect(deriveStepDetailsCtx(modeler).initial.triggers).toEqual([
+      { type: 'email', service: 'Mailroom', detail: 'intake' }
+    ])
+  })
+
   it('element mode: reads the linked TextAnnotation note', () => {
     const el = task('T1', { name: 'Review' })
     const note: OrgElementLike = {
@@ -139,10 +180,13 @@ describe('deriveStepDetailsCtx modes', () => {
     expect(deriveStepDetailsCtx(modeler).initial.note).toBe('watch out')
   })
 
-  it('process mode for an empty selection: proc props + documentation + first start-event trigger', () => {
+  it('process mode for an empty selection: proc props + documentation + first start-event triggers', () => {
     const start = task('S1', {
       type: 'bpmn:StartEvent',
-      attrs: { 'orbitpm:trigger': 'email', 'orbitpm:triggerDetail': 'intake inbox' }
+      attrs: {
+        'orbitpm:triggers': 'email —  — intake inbox\nmanual',
+        'orbitpm:trigger': 'dmthub'
+      }
     })
     const root: OrgElementLike = {
       id: 'Process_1',
@@ -167,11 +211,29 @@ describe('deriveStepDetailsCtx modes', () => {
     expect(ctx.element).toBeUndefined()
     expect(ctx.initial.owner).toBe('PMO')
     expect(ctx.initial.note).toBe('About this process')
-    expect(ctx.initial.trigger).toBe('email')
-    expect(ctx.initial.triggerDetail).toBe('intake inbox')
+    expect(ctx.initial.triggers).toEqual([
+      { type: 'email', service: '', detail: 'intake inbox' },
+      { type: 'manual', service: '', detail: '' }
+    ])
     // Step-data fields stay blank in process mode.
     expect(ctx.initial.inputs).toBe('')
     expect(ctx.initial.respList).toBe('')
+  })
+
+  it('process mode falls back to the first start event legacy trio', () => {
+    const start = task('S1', {
+      type: 'bpmn:StartEvent',
+      attrs: {
+        'orbitpm:trigger': 'dmthub',
+        'orbitpm:triggerService': 'ClaimsHub',
+        'orbitpm:triggerDetail': 'legacy intake'
+      }
+    })
+    const root = processRoot({ 'orbitpm:activeLang': 'en' })
+    const ctx = deriveStepDetailsCtx(makeModeler({ selection: [], elements: [start], root }))
+    expect(ctx.initial.triggers).toEqual([
+      { type: 'dmthub', service: 'ClaimsHub', detail: 'legacy intake' }
+    ])
   })
 
   it('process mode for multi-selections and for a selected connection', () => {

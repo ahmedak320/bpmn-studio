@@ -97,9 +97,9 @@ describe('planBadgeBox / planSubChipBox', () => {
   })
 
   it('sub chip is a 34x14 pill centred at the bottom edge, inside the shape', () => {
-    expect(planSubChipBox(100, 80)).toEqual({ x: 33, y: 61, w: 34, h: 14 })
+    expect(planSubChipBox(100, 80)).toEqual({ x: 33, y: 65, w: 34, h: 14 })
     const box = planSubChipBox(350, 200)
-    expect(box).toEqual({ x: 158, y: 181, w: 34, h: 14 })
+    expect(box).toEqual({ x: 158, y: 185, w: 34, h: 14 })
     // fully inside the 350x200 shape
     expect(box.x).toBeGreaterThanOrEqual(0)
     expect(box.y).toBeGreaterThanOrEqual(0)
@@ -183,7 +183,7 @@ describe('computeDecorLayout margins', () => {
         completenessOn: true
       }),
       layoutInput({
-        props: { trigger: 'dmthub', triggerService: 'GrievanceIntake' },
+        props: { triggers: 'dmthub — GrievanceIntake' },
         elementType: 'bpmn:StartEvent',
         width: 36,
         height: 36
@@ -363,8 +363,7 @@ describe('planDecorations <-> computeDecorLayout parity', () => {
         inputs: 'Form A\nCustomer file',
         outputs: 'Approval memo',
         decisionBasis: 'Delegation matrix §3',
-        trigger: 'dmthub',
-        triggerService: 'GrievanceIntake'
+        triggers: 'dmthub — GrievanceIntake\nemail —  — backup'
       }
     }
   ]
@@ -492,5 +491,35 @@ describe('planDecorations <-> computeDecorLayout parity', () => {
     }
     // the grid must have exercised a healthy number of positioned boxes
     expect(checkedBoxes).toBeGreaterThan(200)
+  })
+})
+
+describe('repeatable trigger layout', () => {
+  it('sizes the start-event tag from the first trigger plus the +N suffix', () => {
+    const props = { triggers: 'dmthub — ClaimsHub\nemail\nmanual' }
+    const layout = computeDecorLayout({
+      props,
+      elementType: 'bpmn:StartEvent',
+      width: 100,
+      height: 36,
+      orientation: 'horizontal',
+      completenessOn: false
+    })
+    const tag = planDecorations(props, 'bpmn:StartEvent', 100, 36).find(
+      (decoration): decoration is Extract<Decoration, { kind: 'tag' }> =>
+        decoration.kind === 'tag'
+    )
+    expect(tag?.label).toBe('DMT HUB +2')
+    expect(layout.triggerTag).toEqual({
+      x: 0,
+      y: -26,
+      w: 12 + 7 * 'DMT HUB +2'.length,
+      h: 18
+    })
+    expect(tag && boxOfTag(tag)).toEqual(layout.triggerTag)
+  })
+
+  it('treats an empty canonical list as missing', () => {
+    expect(planMissingInfo({ triggers: '  \n  ' }, 'bpmn:StartEvent')).toEqual(['trigger'])
   })
 })

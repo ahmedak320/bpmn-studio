@@ -14,7 +14,7 @@
 // The exported API is a FROZEN CONTRACT for the layout lane — extend it, never
 // change existing signatures.
 
-import { splitList, type OrgProps } from './orgModel'
+import { parseTriggers, splitList, type OrgProps } from './orgModel'
 import { CHANNEL_TAG_LABELS } from './palette'
 import { t } from '../i18n'
 
@@ -269,7 +269,7 @@ export function planMissingInfo(props: OrgProps, elementType: string): MissingCa
     if (splitList(props.outputs).length === 0) out.push('outputs')
   }
   if (isDecisionBasisType(elementType) && !props.decisionBasis) out.push('basis')
-  if (elementType === 'bpmn:StartEvent' && !props.trigger) out.push('trigger')
+  if (elementType === 'bpmn:StartEvent' && parseTriggers(props).length === 0) out.push('trigger')
   return out
 }
 
@@ -292,11 +292,14 @@ export function planBadgeBox(width: number): Box {
   }
 }
 
-/** Sub-process chip geometry: a 34x14 pill centred at the shape's bottom edge,
- *  INSIDE the shape (where the stock '+' marker used to sit) — contributes
- *  nothing to margins. { x: width/2-17, y: height-19, w: 34, h: 14 }. */
+/** Sub-process chip geometry: a 34x14 pill at the shape's bottom edge, INSIDE
+ *  the shape (where the stock '+' marker used to sit) — contributes nothing
+ *  to margins. Keeping its bottom one pixel above the border makes the
+ *  auto-size lane's reserved label band real in the rendered SVG (the older
+ *  five-pixel inset overlapped four/five-line centred labels by ~2–3px).
+ *  { x: width/2-17, y: height-15, w: 34, h: 14 }. */
 export function planSubChipBox(width: number, height: number): Box {
-  return { x: width / 2 - 17, y: height - 19, w: 34, h: 14 }
+  return { x: width / 2 - 17, y: height - 15, w: 34, h: 14 }
 }
 
 // --- orientation detection ---------------------------------------------------
@@ -430,8 +433,11 @@ export function computeDecorLayout(input: DecorLayoutInput): DecorLayout {
   }
 
   // Start-event trigger tag.
-  if (props.trigger && elementType === 'bpmn:StartEvent') {
-    const label = triggerLabel(props.trigger)
+  const triggers = elementType === 'bpmn:StartEvent' ? parseTriggers(props) : []
+  if (triggers.length > 0 && elementType === 'bpmn:StartEvent') {
+    const label =
+      triggerLabel(triggers[0].type) +
+      (triggers.length > 1 ? ` +${triggers.length - 1}` : '')
     out.triggerTag = { x: 0, y: -26, w: tagWidth(label, Math.max(width, 60)), h: TAG_H }
   }
 

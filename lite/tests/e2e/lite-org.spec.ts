@@ -118,7 +118,7 @@ test('element step details: owner + CC render, and the styling toggle refreshes 
   )
 })
 
-test('trigger validation: a DMT Hub trigger requires a service name before Apply', async ({
+test('repeatable triggers validate each DMT Hub row and persist all rows', async ({
   page
 }) => {
   await forceFallbackMode(page)
@@ -132,8 +132,9 @@ test('trigger validation: a DMT Hub trigger requires a service name before Apply
   const dialog = page.getByRole('dialog')
   await expect(dialog).toBeVisible()
 
-  // Choose the DMT Hub trigger; with no service it must block Apply.
-  await dialog.getByLabel('Trigger', { exact: true }).selectOption('dmthub')
+  // Add the first row, then choose DMT Hub; without a service it blocks Apply.
+  await dialog.getByRole('button', { name: '＋ Add trigger' }).click()
+  await dialog.getByLabel('Trigger 1', { exact: true }).selectOption('dmthub')
   await expect(dialog.getByText('A DMT Hub service name is required.')).toBeVisible()
   await expect(dialog.getByRole('button', { name: 'Apply' })).toBeDisabled()
 
@@ -141,4 +142,17 @@ test('trigger validation: a DMT Hub trigger requires a service name before Apply
   await dialog.getByLabel('DMT Hub service').fill('ClaimsHub')
   await expect(dialog.getByText('A DMT Hub service name is required.')).toHaveCount(0)
   await expect(dialog.getByRole('button', { name: 'Apply' })).toBeEnabled()
+
+  // A second non-DMT row defaults to email and does not block the valid first row.
+  await dialog.getByRole('button', { name: '＋ Add trigger' }).click()
+  await expect(dialog.getByLabel('Trigger 2', { exact: true })).toHaveValue('email')
+  await expect(dialog.getByRole('button', { name: 'Apply' })).toBeEnabled()
+  await dialog.getByRole('button', { name: 'Apply' }).click()
+
+  // Reopen process details: both rows must seed from the saved canonical list.
+  await page.getByRole('button', { name: 'Details…', exact: true }).click()
+  const reopened = page.getByRole('dialog')
+  await expect(reopened.getByLabel('Trigger 1', { exact: true })).toHaveValue('dmthub')
+  await expect(reopened.getByLabel('DMT Hub service')).toHaveValue('ClaimsHub')
+  await expect(reopened.getByLabel('Trigger 2', { exact: true })).toHaveValue('email')
 })

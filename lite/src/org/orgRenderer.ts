@@ -16,7 +16,7 @@ import BaseRenderer from 'diagram-js/lib/draw/BaseRenderer'
 import { append as svgAppend, create as svgCreate, attr as svgAttr } from 'tiny-svg'
 
 import { PALETTE } from './palette'
-import { getOrgProps, type OrgProps, type OrgElementLike } from './orgModel'
+import { getOrgProps, parseTriggers, type OrgProps, type OrgElementLike } from './orgModel'
 import { isOrgStylingOn, isCompletenessOn } from './orgSettings'
 import { OrgDecorSync } from './orgDecorSync'
 import {
@@ -86,7 +86,8 @@ export type Decoration =
       w: number
       h: number
       label: string
-      detail: string
+      detail?: string
+      tooltip?: string
       fill: string
       stroke: string
     }
@@ -254,17 +255,34 @@ export function planDecorations(
   }
 
   // Start-event trigger tag (above the event).
-  if (layout.triggerTag && props.trigger) {
-    const colors = tagColorsFor(props.trigger)
+  const triggers = elementType === 'bpmn:StartEvent' ? parseTriggers(props) : []
+  if (layout.triggerTag && triggers.length > 0) {
+    const first = triggers[0]
+    const colors = tagColorsFor(first.type)
     out.push({
       kind: 'tag',
       x: layout.triggerTag.x,
       y: layout.triggerTag.y,
       w: layout.triggerTag.w,
       h: layout.triggerTag.h,
-      label: triggerLabel(props.trigger),
+      label:
+        triggerLabel(first.type) +
+        (triggers.length > 1 ? ` +${triggers.length - 1}` : ''),
+      // A multi-row tag is deliberately compact (`DMT HUB +N`); every row's
+      // service/detail remains available in the styled tooltip. Appending the
+      // first service here overflowed the start-event-width tag.
       detail:
-        props.trigger === 'dmthub' && props.triggerService ? truncate(props.triggerService, 18) : '',
+        triggers.length === 1 && first.type === 'dmthub'
+          ? truncate(first.service, 18)
+          : undefined,
+      tooltip: triggers
+        .map(
+          (entry) =>
+            triggerLabel(entry.type) +
+            (entry.service ? ` — ${entry.service}` : '') +
+            (entry.detail ? ` — ${entry.detail}` : '')
+        )
+        .join('\n'),
       fill: colors.fill,
       stroke: colors.stroke
     })
@@ -637,6 +655,16 @@ export function applyDecorations(parentGfx: SVGElement, decorations: Decoration[
           break
         }
         case 'tag': {
+          const group = svgCreate('g')
+          // .djs-visual disables pointer events by default. Tooltip-bearing
+          // tags must opt back in so the delegated canvas hover handler sees
+          // a REAL pointer target (same contract as badges/sub-chips).
+          if (d.tooltip) {
+            svgAttr(group, {
+              [TOOLTIP_ATTR]: d.tooltip,
+              'pointer-events': 'all'
+            })
+          }
           const rect = svgCreate('rect', {
             x: d.x,
             y: d.y,
@@ -646,12 +674,13 @@ export function applyDecorations(parentGfx: SVGElement, decorations: Decoration[
             fill: d.fill,
             stroke: d.stroke
           })
-          svgAppend(parentGfx, rect)
+          svgAppend(group, rect)
           const label = d.detail ? d.label + ': ' + d.detail : d.label
           svgAppend(
-            parentGfx,
+            group,
             makeText(d.x + 5, d.y + 13, label, { fill: d.stroke, 'font-size': 9 })
           )
+          svgAppend(parentGfx, group)
           break
         }
         case 'ownerBox': {

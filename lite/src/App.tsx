@@ -57,6 +57,7 @@ import { AiPanelLite, type FolderOptionLite } from './ai/AiPanelLite'
 import { installLinkBadges, type LinkBadgeModeler } from './links/linkBadges'
 import { buildLinkGraph } from './links/linkGraph'
 import { toggleDiagramLang, type LangToggleModeler } from './editor/langToggle'
+import { autoSizeAll } from './editor/autoSize'
 import { makeBrowserCallLLM } from './ai/browserAi'
 import { LITE_PROVIDERS, defaultLiteModelId } from './ai/providersLite'
 import { getKey, hasKey } from './ai/keys'
@@ -111,6 +112,7 @@ import {
   getOrgProps,
   setOrgProps,
   setStepNote,
+  serializeTriggers,
   type OrgModeler
 } from './org/orgModel'
 import { refreshOrgStyling } from './org/orgSettings'
@@ -265,6 +267,10 @@ function App(): JSX.Element {
   // installed when a tab's modeler is ready and torn down when it is replaced
   // (onModelerReady(null)) or the tab closes.
   const badgeUninstallersRef = useRef<Record<string, () => void>>({})
+  // Fresh AI placements share EditorTabLite's import path with ordinary
+  // file-open/tab-restore. Mark only their tab keys so App can run the
+  // post-import auto-size sweep without resizing an existing saved diagram.
+  const pendingAiAutoSizeRef = useRef<Set<string>>(new Set())
   const virtualCounter = useRef(0)
 
   // Data-safety plumbing (Codex C1 / M3 / M8).
@@ -619,8 +625,9 @@ function App(): JSX.Element {
   }, [activeKey, markMounted])
 
   const openDirectoryFile = useCallback(
-    async (relPath: string, opts?: { collapse?: boolean }) => {
+    async (relPath: string, opts?: { collapse?: boolean; autoSizeOnImport?: boolean }) => {
       const key = relPath
+      if (opts?.autoSizeOnImport) pendingAiAutoSizeRef.current.add(key)
       // Opening a file normally hands the canvas the full window; the rail
       // restores the sidebar. A SINGLE click on a tree row opts out
       // (collapse: false) so browsing the explorer keeps it open — only a
@@ -662,17 +669,25 @@ function App(): JSX.Element {
     [contents, pushToast]
   )
 
-  const openVirtualTab = useCallback((title: string, xml: string, opts?: { collapse?: boolean }) => {
-    const key = `virtual:${++virtualCounter.current}`
-    // Same as openDirectoryFile: an opening tab collapses the sidebar to the
-    // rail — EXCEPT when the caller needs the sidebar to survive (AI placement
-    // keeps the panel mounted so its success box + fill-gaps CTA can show).
-    if (opts?.collapse !== false) setSidebarOpen(false)
-    setCatalogOpen(false)
-    setTabs((prev) => [...prev, { key, title, relPath: null, gen: workspaceGenRef.current }])
-    setContents((prev) => ({ ...prev, [key]: xml }))
-    setActiveKey(key)
-  }, [])
+  const openVirtualTab = useCallback(
+    (
+      title: string,
+      xml: string,
+      opts?: { collapse?: boolean; autoSizeOnImport?: boolean }
+    ) => {
+      const key = `virtual:${++virtualCounter.current}`
+      if (opts?.autoSizeOnImport) pendingAiAutoSizeRef.current.add(key)
+      // Same as openDirectoryFile: an opening tab collapses the sidebar to the
+      // rail — EXCEPT when the caller needs the sidebar to survive (AI placement
+      // keeps the panel mounted so its success box + fill-gaps CTA can show).
+      if (opts?.collapse !== false) setSidebarOpen(false)
+      setCatalogOpen(false)
+      setTabs((prev) => [...prev, { key, title, relPath: null, gen: workspaceGenRef.current }])
+      setContents((prev) => ({ ...prev, [key]: xml }))
+      setActiveKey(key)
+    },
+    []
+  )
 
   const closeTabsUnder = useCallback((prefix: string) => {
     setTabs((prev) =>
@@ -1364,10 +1379,10 @@ function App(): JSX.Element {
         // Keep the sidebar (and with it the AI panel) mounted: the success box
         // carries the "fill gaps in chat" CTA, and collapsing here unmounted
         // the panel before it could ever render (found by the interview e2e).
-        void openDirectoryFile(result.relPath, { collapse: false })
+        void openDirectoryFile(result.relPath, { collapse: false, autoSizeOnImport: true })
         return { label: result.relPath }
       }
-      openVirtualTab(`${slug}.bpmn`, xml, { collapse: false })
+      openVirtualTab(`${slug}.bpmn`, xml, { collapse: false, autoSizeOnImport: true })
       return null
     },
     [mode, refreshWorkspace, openDirectoryFile, openVirtualTab, pushToast]
@@ -1645,9 +1660,7 @@ function App(): JSX.Element {
             channelDetail: v.channelDetail,
             ccTo: v.ccTo,
             kind: v.cc ? 'cc' : undefined,
-            trigger: v.trigger,
-            triggerService: v.triggerService,
-            triggerDetail: v.triggerDetail,
+            ...serializeTriggers(v.triggers),
             nameEn: v.nameEn,
             nameAr: v.nameAr,
             inputs: v.inputs,
@@ -1697,9 +1710,7 @@ function App(): JSX.Element {
             const cur = getOrgProps(startEvent)
             setOrgProps(modeler, startEvent, {
               ...cur,
-              trigger: v.trigger,
-              triggerService: v.triggerService,
-              triggerDetail: v.triggerDetail
+              ...serializeTriggers(v.triggers)
             })
           }
         }
@@ -1920,6 +1931,7 @@ function App(): JSX.Element {
         | undefined
       if (!modeler) throw new Error('editor not ready')
       await modeler.importXML(xml)
+      autoSizeAll(modeler)
       try {
         ;(modeler.get('canvas') as { zoom(m: 'fit-viewport'): void }).zoom('fit-viewport')
       } catch {
@@ -1960,9 +1972,17 @@ function App(): JSX.Element {
 
   useEffect(() => {
     const w = window as unknown as { __ORBITPM_LITE__?: Record<string, unknown> }
+    const activeModeler = activeKey ? (modelersByKey[activeKey] ?? null) : null
     w.__ORBITPM_LITE__ = {
       ...(w.__ORBITPM_LITE__ ?? {}),
-      modeler: activeKey ? (modelersByKey[activeKey] ?? null) : null
+      modeler: activeModeler,
+      // E2E/live verification fallback for AI generation, whose provider calls
+      // cannot be made without user credentials. It exercises the same sweep
+      // invoked by the two App-owned AI import paths above.
+      autoSizeAll: () =>
+        activeModeler
+          ? autoSizeAll(activeModeler as { get(name: string): unknown })
+          : 0
     }
   }, [activeKey, modelersByKey])
 
@@ -2543,6 +2563,25 @@ function App(): JSX.Element {
                         delete badgeUninstallersRef.current[tab.key]
                         setModelersByKey((prev) => ({ ...prev, [tab.key]: modeler }))
                         if (modeler) {
+                          if (pendingAiAutoSizeRef.current.has(tab.key)) {
+                            try {
+                              const eventBus = (
+                                modeler as { get(name: string): unknown }
+                              ).get('eventBus') as {
+                                on(event: string, callback: () => void): void
+                                off(event: string, callback: () => void): void
+                              }
+                              const sweepAfterImport = (): void => {
+                                pendingAiAutoSizeRef.current.delete(tab.key)
+                                eventBus.off('import.done', sweepAfterImport)
+                                autoSizeAll(modeler as { get(name: string): unknown })
+                              }
+                              eventBus.on('import.done', sweepAfterImport)
+                            } catch {
+                              // Import still proceeds; sizing is best-effort.
+                              pendingAiAutoSizeRef.current.delete(tab.key)
+                            }
+                          }
                           try {
                             badgeUninstallersRef.current[tab.key] = installLinkBadges(
                               modeler as LinkBadgeModeler

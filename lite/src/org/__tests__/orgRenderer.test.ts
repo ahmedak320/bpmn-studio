@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, afterEach } from 'vitest'
 import {
+  applyDecorations,
   planDecorations,
   planMissingBadge,
   canRenderOrg,
@@ -61,8 +62,9 @@ describe('orbitpmModdleDescriptor', () => {
     expect(type.properties).toHaveLength(ORG_ATTR_NAMES.length)
   })
 
-  it('declares every wave-G attribute', () => {
+  it('declares every wave-G and repeatable-trigger attribute', () => {
     for (const attr of [
+      'triggers',
       'nameEn',
       'nameAr',
       'activeLang',
@@ -149,9 +151,12 @@ describe('planDecorations', () => {
     expect(raci.letter).toBe('R')
   })
 
-  it('start-event dmthub trigger yields a tag carrying the trigger service', () => {
+  it('start-event trigger rows yield a compact suffixed tag and full tooltip', () => {
     const d = planDecorations(
-      { trigger: 'dmthub', triggerService: 'GrievanceIntake' },
+      {
+        triggers:
+          'dmthub — GrievanceIntake — new cases\nemail — Mailroom — fallback'
+      },
       'bpmn:StartEvent',
       36,
       36
@@ -160,8 +165,11 @@ describe('planDecorations', () => {
     expect(tags).toHaveLength(1)
     const tag = tags[0]
     if (tag.kind !== 'tag') throw new Error('expected tag')
-    expect(tag.label).toBe('DMT HUB')
-    expect(tag.detail).toBe('GrievanceIntake')
+    expect(tag.label).toBe('DMT HUB +1')
+    expect(tag.detail).toBeUndefined()
+    expect(tag.tooltip).toBe(
+      'DMT HUB — GrievanceIntake — new cases\nEMAIL — Mailroom — fallback'
+    )
     expect(tag.y).toBe(-26)
   })
 
@@ -171,6 +179,78 @@ describe('planDecorations', () => {
     if (d[0].kind !== 'noteStyle') throw new Error('expected noteStyle')
     expect(d[0].fill).toBe(PALETTE.noteFill)
     expect(d[0].stroke).toBe(PALETTE.noteBorder)
+  })
+})
+
+describe('applyDecorations trigger tooltip DOM contract', () => {
+  it('stamps data-org-tooltip on the trigger tag group', () => {
+    interface FakeSvgNode {
+      nodeType: number
+      tagName: string
+      ownerDocument: unknown
+      style: Record<string, unknown>
+      attrs: Record<string, string>
+      children: FakeSvgNode[]
+      textContent: string
+      appendChild(child: FakeSvgNode): FakeSvgNode
+      setAttributeNS(namespace: string | null, name: string, value: unknown): void
+      getAttributeNS(namespace: string | null, name: string): string | null
+    }
+
+    const fakeDocument: {
+      createElementNS(namespace: string, name: string): FakeSvgNode
+      importNode(node: FakeSvgNode): FakeSvgNode
+    } = {
+      createElementNS(_namespace, name) {
+        const node: FakeSvgNode = {
+          nodeType: 1,
+          tagName: name,
+          ownerDocument: fakeDocument,
+          style: {},
+          attrs: {},
+          children: [],
+          textContent: '',
+          appendChild(child) {
+            node.children.push(child)
+            return child
+          },
+          setAttributeNS(_namespace, attrName, value) {
+            node.attrs[attrName] = String(value)
+          },
+          getAttributeNS(_namespace, attrName) {
+            return node.attrs[attrName] ?? null
+          }
+        }
+        return node
+      },
+      importNode(node) {
+        return node
+      }
+    }
+    vi.stubGlobal('document', fakeDocument)
+    try {
+      const parent = fakeDocument.createElementNS('', 'g')
+      const tag = planDecorations(
+        { triggers: 'dmthub — ClaimsHub\nemail — Mailroom — fallback' },
+        'bpmn:StartEvent',
+        36,
+        36
+      ).find(
+        (decoration): decoration is Extract<Decoration, { kind: 'tag' }> =>
+          decoration.kind === 'tag'
+      )
+      if (!tag) throw new Error('expected trigger tag')
+
+      applyDecorations(parent as unknown as SVGElement, [tag])
+
+      expect(parent.children).toHaveLength(1)
+      expect(parent.children[0].tagName).toBe('g')
+      expect(parent.children[0].attrs['data-org-tooltip']).toBe(
+        'DMT HUB — ClaimsHub\nEMAIL — Mailroom — fallback'
+      )
+    } finally {
+      vi.unstubAllGlobals()
+    }
   })
 })
 
@@ -200,7 +280,7 @@ describe('planDecorations — eventStyle', () => {
   })
 
   it('is emitted FIRST, alongside other decorations, and never on other types', () => {
-    const d = planDecorations({ trigger: 'manual' }, 'bpmn:StartEvent', 36, 36)
+    const d = planDecorations({ triggers: 'manual' }, 'bpmn:StartEvent', 36, 36)
     expect(d[0].kind).toBe('eventStyle')
     expect(byKind(d, 'tag')).toHaveLength(1)
     for (const type of ['bpmn:Task', 'bpmn:ExclusiveGateway', 'bpmn:IntermediateThrowEvent', 'bpmn:TextAnnotation']) {
@@ -520,7 +600,7 @@ describe('planDecorations — decision basis (amber tag)', () => {
     const tag = byKind(d, 'tag')[0]
     if (tag.kind !== 'tag') throw new Error('expected tag')
     expect(tag.detail).toHaveLength(28)
-    expect(tag.detail.endsWith('…')).toBe(true)
+    expect(tag.detail?.endsWith('…')).toBe(true)
   })
 
   it('is ignored on non-decision types', () => {

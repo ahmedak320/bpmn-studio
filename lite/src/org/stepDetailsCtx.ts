@@ -25,6 +25,7 @@ import {
   getOrgProps,
   getProcessDocumentation,
   getProcessOrgProps,
+  parseTriggers,
   type OrgElementLike,
   type OrgModeler,
   type OrgProps
@@ -109,9 +110,7 @@ export function deriveStepDetailsCtx(modeler: StepDetailsModeler): StepDetailsCt
       channelDetail: org.channelDetail ?? '',
       cc: org.kind === 'cc',
       ccTo: org.ccTo ?? '',
-      trigger: org.trigger ?? '',
-      triggerService: org.triggerService ?? '',
-      triggerDetail: org.triggerDetail ?? '',
+      triggers: parseTriggers(org),
       nameEn: org.nameEn ?? '',
       nameAr: org.nameAr ?? '',
       inputs: org.inputs ?? '',
@@ -139,9 +138,7 @@ export function deriveStepDetailsCtx(modeler: StepDetailsModeler): StepDetailsCt
     channelDetail: '',
     cc: false,
     ccTo: '',
-    trigger: startProps.trigger ?? '',
-    triggerService: startProps.triggerService ?? '',
-    triggerDetail: startProps.triggerDetail ?? '',
+    triggers: parseTriggers(startProps),
     // Process mode edits only the bilingual names; the per-step data fields
     // stay blank (the dialog hides them in this mode).
     nameEn: proc.nameEn ?? '',

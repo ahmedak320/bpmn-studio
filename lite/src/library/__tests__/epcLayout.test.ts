@@ -13,6 +13,7 @@ import {
   type LayoutNode,
   type Orientation
 } from '../epcLayout'
+import { fitInteriorBox } from '../../editor/autoSize'
 
 // ---------------------------------------------------------------------------
 // Shared invariant helpers
@@ -191,6 +192,36 @@ describe('layoutEpc — straight chains', () => {
     expect(label.x + label.w).toBeLessThan((s as { x: number }).x)
     // Tasks carry their name INSIDE the shape: no external label box.
     expect(result.shapes.get('t1')?.label).toBeUndefined()
+  })
+})
+
+describe('layoutEpc — label-aware task sizes', () => {
+  it('keeps short task labels at the 100x80 native minimum', () => {
+    const nodes: LayoutNode[] = [{ id: 'short', tag: 'task', label: 'Review' }]
+    const result = layoutEpc(nodes, [])
+    expect(nodeBaseSize('task', 'Review')).toEqual({ w: 100, h: 80 })
+    expect(result.shapes.get('short')).toMatchObject({ w: 100, h: 80 })
+  })
+
+  it('emits a long-label task at the same capped/even size as the live fitter', () => {
+    const label = 'x'.repeat(100)
+    const nodes: LayoutNode[] = [{ id: 'long', tag: 'task', label }]
+    const result = layoutEpc(nodes, [])
+    const expected = fitInteriorBox(label, { reserveSubChip: false })
+    expect(expected.w).toBeLessThanOrEqual(160)
+    expect(expected.h).toBeGreaterThan(80)
+    expect(result.shapes.get('long')).toMatchObject(expected)
+    assertAllInvariants(nodes, [], result)
+  })
+
+  it('reserves the sub-chip band for imported call activities', () => {
+    const label = 'x'.repeat(100)
+    const nodes: LayoutNode[] = [{ id: 'call', tag: 'callActivity', label }]
+    const result = layoutEpc(nodes, [])
+    const expected = fitInteriorBox(label, { reserveSubChip: true })
+    expect(result.shapes.get('call')).toMatchObject(expected)
+    expect(expected.h).toBeGreaterThan(fitInteriorBox(label, { reserveSubChip: false }).h)
+    assertAllInvariants(nodes, [], result)
   })
 })
 
@@ -378,11 +409,11 @@ describe('layoutEpc — decoration margins and multiple components', () => {
   it('a single node lays out at the margin with its reserved extents', () => {
     const nodes: LayoutNode[] = [{ id: 'only', tag: 'task', label: 'Solo' }]
     const result = layoutEpc(nodes, [])
-    const s = result.shapes.get('only') as { x: number; y: number }
+    const s = result.shapes.get('only') as { x: number; y: number; w: number }
     const ext = reservedExtents(nodes[0], 'vertical')
     expect(s.x).toBe(MARGIN + ext.left)
     expect(s.y).toBe(MARGIN + ext.top)
-    expect(result.size.w).toBeGreaterThan(s.x + nodeBaseSize('task').w)
+    expect(result.size.w).toBeGreaterThan(s.x + s.w)
   })
 })
 
@@ -425,8 +456,9 @@ describe('layoutEpc — horizontal orientation', () => {
   it('shapes keep their real element size (no w/h swap leaks out)', () => {
     const result = layoutEpc(nodes, edges, { orientation: 'horizontal' })
     const b1 = result.shapes.get('b1') as { w: number; h: number }
-    expect(b1.w).toBe(100)
-    expect(b1.h).toBe(80)
+    // Both branch labels are short, so variable sizing stays at the minimum.
+    expect(b1).toMatchObject(nodeBaseSize('task', 'Yes'))
+    expect(b1).toMatchObject({ w: 100, h: 80 })
   })
 })
 

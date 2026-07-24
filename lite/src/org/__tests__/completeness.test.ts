@@ -122,8 +122,9 @@ describe('planMissingInfo', () => {
 
   it('StartEvent is missing only the trigger when bare', () => {
     expect(planMissingInfo({}, 'bpmn:StartEvent')).toEqual(['trigger'])
-    expect(planMissingInfo({ trigger: 'manual' }, 'bpmn:StartEvent')).toEqual([])
-    expect(planMissingInfo({ trigger: 'dmthub', triggerService: 'Svc' }, 'bpmn:StartEvent')).toEqual([])
+    expect(planMissingInfo({ triggers: 'manual' }, 'bpmn:StartEvent')).toEqual([])
+    expect(planMissingInfo({ triggers: 'dmthub — Svc' }, 'bpmn:StartEvent')).toEqual([])
+    expect(planMissingInfo({ triggers: '\n  ' }, 'bpmn:StartEvent')).toEqual(['trigger'])
   })
 
   it('ineligible types never report anything', () => {
@@ -150,7 +151,7 @@ describe('planMissingBadge', () => {
     expect(planMissingBadge(COMPLETE_ACTIVITY, 'bpmn:Task', 100)).toBeNull()
     expect(planMissingBadge({}, 'bpmn:CallActivity', 100)).toBeNull()
     expect(planMissingBadge({}, 'bpmn:EndEvent', 36)).toBeNull()
-    expect(planMissingBadge({ trigger: 'manual' }, 'bpmn:StartEvent', 36)).toBeNull()
+    expect(planMissingBadge({ triggers: 'manual' }, 'bpmn:StartEvent', 36)).toBeNull()
   })
 
   it('floats OFF the top-right corner: right of the right edge, above the top edge', () => {
@@ -399,14 +400,14 @@ describe('missing badge geometry vs every existing decoration', () => {
 
   it('start events: trigger tag and badge are mutually exclusive by construction', () => {
     // The trigger tag (which may overhang a narrow event's width) renders only
-    // when `trigger` is SET; the start-event badge only when it is MISSING.
-    for (const trigger of [undefined, 'dmthub', 'email', 'manual']) {
-      const props: OrgProps = trigger ? { trigger, triggerService: 'GrievanceIntake' } : {}
+    // when the parsed trigger list is non-empty; the badge only when it is empty.
+    for (const triggers of [undefined, 'dmthub — GrievanceIntake', 'email', 'manual']) {
+      const props: OrgProps = triggers ? { triggers } : {}
       const decorations = planDecorations(props, 'bpmn:StartEvent', 36, 36)
       const badge = planMissingBadge(props, 'bpmn:StartEvent', 36)
       const hasTriggerTag = decorations.some((d) => d.kind === 'tag')
       expect(hasTriggerTag && badge !== null).toBe(false)
-      if (trigger) {
+      if (triggers) {
         expect(hasTriggerTag).toBe(true)
         expect(badge).toBeNull()
       } else {

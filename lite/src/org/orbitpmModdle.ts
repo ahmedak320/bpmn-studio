@@ -14,7 +14,7 @@ export const ORBITPM_PREFIX = 'orbitpm'
 /**
  * Every `orbitpm:*` attribute name in the contract, WITHOUT the prefix. The
  * union across flow nodes (owner/ownerType/ownerRole/channel/channelDetail/
- * kind/ccTo), start events (trigger/triggerService/triggerDetail) and the
+ * kind/ccTo), start events (triggers plus the legacy trigger trio) and the
  * process (owner/ownerType, plus activeLang for the language toggle). One flat
  * list because a single `OrgExtension` type carries them all.
  *
@@ -40,6 +40,7 @@ export const ORG_ATTR_NAMES = [
   'trigger',
   'triggerService',
   'triggerDetail',
+  'triggers',
   'nameEn',
   'nameAr',
   'activeLang',

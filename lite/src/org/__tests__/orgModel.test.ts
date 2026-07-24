@@ -12,6 +12,9 @@ import {
   getProcessElement,
   splitList,
   joinList,
+  parseTriggers,
+  serializeTriggers,
+  TRIGGER_TYPES,
   type OrgProps,
   type OrgModeler,
   type OrgElementLike
@@ -115,6 +118,7 @@ describe('readOrgAttrsFromTag', () => {
       '<bpmn:startEvent orbitpm:owner="O" orbitpm:ownerType="division" orbitpm:ownerRole="R" ' +
       'orbitpm:channel="dmthub" orbitpm:channelDetail="d" orbitpm:kind="cc" orbitpm:ccTo="cc" ' +
       'orbitpm:trigger="email" orbitpm:triggerService="svc" orbitpm:triggerDetail="td" ' +
+      'orbitpm:triggers="email — svc — td\nmanual" ' +
       'orbitpm:nameEn="Review" orbitpm:nameAr="مراجعة" orbitpm:activeLang="ar" ' +
       'orbitpm:inputs="Form A" orbitpm:outputs="Out" orbitpm:system="ERP" ' +
       'orbitpm:respList="Sara — Approver" orbitpm:ccList="Legal" orbitpm:decisionBasis="Policy 4.2">'
@@ -129,6 +133,7 @@ describe('readOrgAttrsFromTag', () => {
       trigger: 'email',
       triggerService: 'svc',
       triggerDetail: 'td',
+      triggers: 'email — svc — td\nmanual',
       nameEn: 'Review',
       nameAr: 'مراجعة',
       activeLang: 'ar',
@@ -200,6 +205,7 @@ describe('setOrgProps', () => {
       'orbitpm:trigger': undefined,
       'orbitpm:triggerService': undefined,
       'orbitpm:triggerDetail': undefined,
+      'orbitpm:triggers': undefined,
       'orbitpm:nameEn': undefined,
       'orbitpm:nameAr': undefined,
       'orbitpm:activeLang': undefined,
@@ -315,6 +321,114 @@ describe('splitList / joinList', () => {
   it('round-trips: splitList(joinList(entries)) === cleaned entries', () => {
     const entries = ['Sara — Approver', 'Omar', 'Aisha — Reviewer']
     expect(splitList(joinList(entries))).toEqual(entries)
+  })
+})
+
+// --- repeatable triggers ----------------------------------------------------
+
+describe('parseTriggers / serializeTriggers', () => {
+  it('exposes the canonical trigger types in dialog order', () => {
+    expect(TRIGGER_TYPES).toEqual(['email', 'dmthub', 'manual', 'schedule', 'other'])
+  })
+
+  it('round-trips multiple rows and writes the first-row legacy mirror', () => {
+    const entries = [
+      { type: 'dmthub', service: 'ClaimsHub', detail: 'new claim' },
+      { type: 'email', service: '', detail: 'sender allow-list' },
+      { type: 'manual', service: '', detail: '' }
+    ]
+    const props = serializeTriggers(entries)
+    expect(props).toEqual({
+      triggers:
+        'dmthub — ClaimsHub — new claim\nemail —  — sender allow-list\nmanual',
+      trigger: 'dmthub',
+      triggerService: 'ClaimsHub',
+      triggerDetail: 'new claim'
+    })
+    expect(parseTriggers(props)).toEqual(entries)
+  })
+
+  it('loads a legacy-only file as one row, then saves list plus mirror', () => {
+    const legacy = {
+      trigger: 'email',
+      triggerService: 'Mailroom',
+      triggerDetail: 'intake'
+    }
+    const entries = parseTriggers(legacy)
+    expect(entries).toEqual([
+      { type: 'email', service: 'Mailroom', detail: 'intake' }
+    ])
+    expect(serializeTriggers(entries)).toEqual({
+      triggers: 'email — Mailroom — intake',
+      trigger: 'email',
+      triggerService: 'Mailroom',
+      triggerDetail: 'intake'
+    })
+  })
+
+  it('prefers a non-empty list over conflicting legacy values', () => {
+    expect(
+      parseTriggers({
+        triggers: 'manual\nschedule —  — nightly',
+        trigger: 'email',
+        triggerService: 'Legacy',
+        triggerDetail: 'ignored'
+      })
+    ).toEqual([
+      { type: 'manual', service: '', detail: '' },
+      { type: 'schedule', service: '', detail: 'nightly' }
+    ])
+  })
+
+  it('keeps separators after the second one inside detail', () => {
+    const props = {
+      triggers: 'other — source — alpha — beta — gamma',
+      trigger: '',
+      triggerService: '',
+      triggerDetail: ''
+    }
+    const entries = parseTriggers(props)
+    expect(entries).toEqual([
+      { type: 'other', service: 'source', detail: 'alpha — beta — gamma' }
+    ])
+    expect(parseTriggers(serializeTriggers(entries))).toEqual(entries)
+  })
+
+  it('drops invalid list types defensively', () => {
+    expect(
+      parseTriggers({
+        triggers: 'email\ninvalid — service — detail\nmanual',
+        trigger: 'dmthub',
+        triggerService: 'legacy',
+        triggerDetail: ''
+      })
+    ).toEqual([
+      { type: 'email', service: '', detail: '' },
+      { type: 'manual', service: '', detail: '' }
+    ])
+  })
+
+  it('serializes empty input to all four empty keys', () => {
+    expect(serializeTriggers([])).toEqual({
+      triggers: '',
+      trigger: '',
+      triggerService: '',
+      triggerDetail: ''
+    })
+    expect(serializeTriggers([{ type: '', service: 'orphan', detail: 'orphan' }])).toEqual({
+      triggers: '',
+      trigger: '',
+      triggerService: '',
+      triggerDetail: ''
+    })
+  })
+
+  it('round-trips an empty service with a non-empty detail', () => {
+    const entries = [{ type: 'schedule', service: '', detail: 'weekdays at 09:00' }]
+    expect(serializeTriggers(entries).triggers).toBe(
+      'schedule —  — weekdays at 09:00'
+    )
+    expect(parseTriggers(serializeTriggers(entries))).toEqual(entries)
   })
 })
 

@@ -75,6 +75,8 @@ export interface OrgProps {
   trigger?: string
   triggerService?: string
   triggerDetail?: string
+  /** Repeatable triggers, one canonical "type — service — detail" row per line. */
+  triggers?: string
   /** Bilingual element name (English) — used by the language-toggle lane. */
   nameEn?: string
   /** Bilingual element name (Arabic) — used by the language-toggle lane. */
@@ -107,6 +109,7 @@ const PROP_TO_ATTR: Record<keyof OrgProps, string> = {
   trigger: 'orbitpm:trigger',
   triggerService: 'orbitpm:triggerService',
   triggerDetail: 'orbitpm:triggerDetail',
+  triggers: 'orbitpm:triggers',
   nameEn: 'orbitpm:nameEn',
   nameAr: 'orbitpm:nameAr',
   activeLang: 'orbitpm:activeLang',
@@ -143,6 +146,94 @@ export function joinList(entries: readonly string[]): string {
     .map((entry) => entry.trim())
     .filter((entry) => entry !== '')
     .join('\n')
+}
+
+// --- repeatable trigger helpers --------------------------------------------
+
+export interface TriggerEntry {
+  type: string
+  service: string
+  detail: string
+}
+
+/** Canonical trigger kinds shared by the model, dialog and tests. */
+export const TRIGGER_TYPES = ['email', 'dmthub', 'manual', 'schedule', 'other'] as const
+
+const TRIGGER_SEPARATOR = ' — '
+const TRIGGER_TYPE_SET: ReadonlySet<string> = new Set(TRIGGER_TYPES)
+
+function parseTriggerLine(line: string): TriggerEntry | null {
+  const firstSeparator = line.indexOf(TRIGGER_SEPARATOR)
+  const type =
+    firstSeparator === -1 ? line.trim() : line.slice(0, firstSeparator).trim()
+  if (!TRIGGER_TYPE_SET.has(type)) return null
+
+  if (firstSeparator === -1) return { type, service: '', detail: '' }
+
+  const remainder = line.slice(firstSeparator + TRIGGER_SEPARATOR.length)
+  const secondSeparator = remainder.indexOf(TRIGGER_SEPARATOR)
+  if (secondSeparator === -1) {
+    return { type, service: remainder.trim(), detail: '' }
+  }
+  return {
+    type,
+    service: remainder.slice(0, secondSeparator).trim(),
+    // Deliberately keep any further separators as part of the detail.
+    detail: remainder.slice(secondSeparator + TRIGGER_SEPARATOR.length).trim()
+  }
+}
+
+/**
+ * Read repeatable triggers, preferring the canonical list attribute and
+ * falling back to the legacy flat trio for older files.
+ */
+export function parseTriggers(
+  props: Pick<OrgProps, 'triggers' | 'trigger' | 'triggerService' | 'triggerDetail'>
+): TriggerEntry[] {
+  if (props.triggers?.trim()) {
+    return splitList(props.triggers)
+      .map(parseTriggerLine)
+      .filter((entry): entry is TriggerEntry => entry !== null)
+  }
+  const legacyType = props.trigger?.trim() ?? ''
+  if (!legacyType) return []
+  return [
+    {
+      type: legacyType,
+      service: props.triggerService?.trim() ?? '',
+      detail: props.triggerDetail?.trim() ?? ''
+    }
+  ]
+}
+
+/**
+ * Write the canonical trigger list plus a row-zero legacy mirror so old
+ * readers continue to understand newly saved files.
+ */
+export function serializeTriggers(
+  entries: readonly TriggerEntry[]
+): Pick<OrgProps, 'triggers' | 'trigger' | 'triggerService' | 'triggerDetail'> {
+  const normalized = entries
+    .map((entry) => ({
+      type: entry.type.trim(),
+      service: entry.service.trim(),
+      detail: entry.detail.trim()
+    }))
+    .filter((entry) => entry.type !== '')
+
+  const lines = normalized.map((entry) => {
+    let line = entry.type
+    if (entry.service || entry.detail) line += TRIGGER_SEPARATOR + entry.service
+    if (entry.detail) line += TRIGGER_SEPARATOR + entry.detail
+    return line
+  })
+  const first = normalized[0]
+  return {
+    triggers: joinList(lines),
+    trigger: first?.type ?? '',
+    triggerService: first?.service ?? '',
+    triggerDetail: first?.detail ?? ''
+  }
 }
 
 // --- attribute reading ------------------------------------------------------
