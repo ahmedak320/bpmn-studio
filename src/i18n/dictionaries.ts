@@ -189,6 +189,58 @@ export const en = {
   'settings.encryption.hint':
     'AES-256-GCM with a PBKDF2-derived key is used. Losing the passphrase makes the ciphertext unrecoverable.',
   'settings.encryption.unlocked': 'Unlocked {count} encrypted key(s) for this session.',
+  'settings.localization.title': 'Bilingual resources',
+  'settings.localization.description':
+    'Edit the curated glossary and accepted translation memory for this workspace.',
+  'settings.localization.publicNotice':
+    'These are public workspace files included in complete backups. Do not add credentials or unreviewed provider output.',
+  'settings.localization.unavailable':
+    'Open a folder or browser workspace to edit portable localization resources.',
+  'settings.localization.english': 'English',
+  'settings.localization.arabic': 'Arabic',
+  'settings.localization.glossary.title': 'Glossary',
+  'settings.localization.glossary.description':
+    'Curated terms are checked in file order; the first matching source value wins.',
+  'settings.localization.glossary.empty':
+    'This workspace has no glossary terms or neutral approvals.',
+  'settings.localization.glossary.add': 'Add term',
+  'settings.localization.glossary.save': 'Save glossary',
+  'settings.localization.glossary.saved': 'Glossary saved.',
+  'settings.localization.glossary.row': 'Glossary term {index}',
+  'settings.localization.glossary.neutral': 'Do not translate (neutral)',
+  'settings.localization.glossary.neutralHint':
+    'English and Arabic must be identical when this is selected.',
+  'settings.localization.translationMemory.title': 'Translation memory',
+  'settings.localization.translationMemory.description':
+    'Only explicitly accepted pairs are stored; file order controls first-match precedence.',
+  'settings.localization.translationMemory.empty': 'No translation pairs have been accepted yet.',
+  'settings.localization.translationMemory.addAccepted': 'Add accepted pair',
+  'settings.localization.translationMemory.save': 'Save translation memory',
+  'settings.localization.translationMemory.saved': 'Translation memory saved.',
+  'settings.localization.translationMemory.row': 'Accepted pair {index}',
+  'settings.localization.translationMemory.accepted': 'Accepted',
+  'settings.localization.translationMemory.acceptedAt': 'Accepted {date}',
+  'settings.localization.moveUp': 'Move row {index} up',
+  'settings.localization.moveDown': 'Move row {index} down',
+  'settings.localization.remove': 'Remove row {index}',
+  'settings.localization.reload': 'Reload workspace resources',
+  'settings.localization.reloading': 'Reloading…',
+  'settings.localization.reloaded': 'Workspace resources reloaded.',
+  'settings.localization.saving': 'Saving…',
+  'settings.localization.conflict':
+    'These workspace resources changed elsewhere. Reload before saving again.',
+  'settings.localization.saveFailed': 'Could not save localization resources: {error}',
+  'settings.localization.validation.englishRequired': 'Enter the English value.',
+  'settings.localization.validation.arabicRequired': 'Enter the Arabic value.',
+  'settings.localization.validation.englishScript':
+    'Use meaningful English-script text, or create an explicit neutral glossary term.',
+  'settings.localization.validation.arabicScript': 'Use meaningful Arabic-script text.',
+  'settings.localization.validation.neutralMismatch':
+    'A neutral term must use the same value in English and Arabic.',
+  'settings.localization.validation.acceptedOnly':
+    'Translation memory can contain explicitly accepted pairs only.',
+  'settings.localization.validation.schema':
+    'This resource contains invalid fields, scripts, or acceptance metadata.',
 
   // --- AiPanelLite ---
   'ai.collapsedButton': '✨ Generate with AI',
@@ -717,6 +769,12 @@ export const en = {
   'translate.free.offline': 'You appear to be offline — translation needs a network connection.',
   'translate.free.down':
     'The free translation service could not be reached. Try again later or add an AI key in Settings.',
+  'translationReview.retry.service.google': 'Google Translate',
+  'translationReview.retry.service.mymemory': 'MyMemory',
+  'translationReview.retry.attempt':
+    '{service}: item {item} of {items}, request attempt {attempt} of {max}.',
+  'translationReview.retry.waiting':
+    '{service}: item {item} of {items}, request attempt {attempt} of {max}; retrying in {seconds}s.',
   'tree.linkedChildren': 'Linked sub-processes',
   'tree.linkDepthCapped': 'More levels not shown',
   'library.manifestInfo': 'Library manifest: {files} file(s), {links} link(s).',
@@ -1224,6 +1282,58 @@ export const ar: Record<keyof typeof en, string> = {
   'settings.encryption.hint':
     'يُستخدم AES-256-GCM مع مفتاح مشتق عبر PBKDF2. لا يمكن استعادة النص المشفّر عند فقدان عبارة المرور.',
   'settings.encryption.unlocked': 'تم فتح {count} من المفاتيح المشفّرة لهذه الجلسة.',
+  'settings.localization.title': 'الموارد ثنائية اللغة',
+  'settings.localization.description':
+    'حرّر المسرد المنسّق وذاكرة الترجمة المقبولة لمساحة العمل هذه.',
+  'settings.localization.publicNotice':
+    'هذه ملفات عامة في مساحة العمل وتُضمَّن في النسخ الاحتياطية الكاملة. لا تضف بيانات اعتماد أو مخرجات مزوّد لم تُراجع.',
+  'settings.localization.unavailable':
+    'افتح مجلدًا أو مساحة عمل في المتصفح لتحرير موارد الترجمة المحمولة.',
+  'settings.localization.english': 'الإنجليزية',
+  'settings.localization.arabic': 'العربية',
+  'settings.localization.glossary.title': 'المسرد',
+  'settings.localization.glossary.description':
+    'تُفحص المصطلحات المنسّقة حسب ترتيب الملف، وتكون الأولوية لأول قيمة مصدر مطابقة.',
+  'settings.localization.glossary.empty':
+    'لا تحتوي مساحة العمل هذه على مصطلحات في المسرد أو حيادات معتمدة.',
+  'settings.localization.glossary.add': 'إضافة مصطلح',
+  'settings.localization.glossary.save': 'حفظ المسرد',
+  'settings.localization.glossary.saved': 'تم حفظ المسرد.',
+  'settings.localization.glossary.row': 'مصطلح المسرد {index}',
+  'settings.localization.glossary.neutral': 'عدم الترجمة (محايد)',
+  'settings.localization.glossary.neutralHint':
+    'يجب أن تتطابق القيمتان الإنجليزية والعربية عند تحديد هذا الخيار.',
+  'settings.localization.translationMemory.title': 'ذاكرة الترجمة',
+  'settings.localization.translationMemory.description':
+    'لا تُخزَّن إلا الأزواج المقبولة صراحةً، ويحدد ترتيب الملف أولوية أول تطابق.',
+  'settings.localization.translationMemory.empty': 'لم تُقبل أي أزواج ترجمة بعد.',
+  'settings.localization.translationMemory.addAccepted': 'إضافة زوج مقبول',
+  'settings.localization.translationMemory.save': 'حفظ ذاكرة الترجمة',
+  'settings.localization.translationMemory.saved': 'تم حفظ ذاكرة الترجمة.',
+  'settings.localization.translationMemory.row': 'الزوج المقبول {index}',
+  'settings.localization.translationMemory.accepted': 'مقبول',
+  'settings.localization.translationMemory.acceptedAt': 'تم القبول في {date}',
+  'settings.localization.moveUp': 'نقل الصف {index} إلى أعلى',
+  'settings.localization.moveDown': 'نقل الصف {index} إلى أسفل',
+  'settings.localization.remove': 'إزالة الصف {index}',
+  'settings.localization.reload': 'إعادة تحميل موارد مساحة العمل',
+  'settings.localization.reloading': 'جارٍ إعادة التحميل…',
+  'settings.localization.reloaded': 'تمت إعادة تحميل موارد مساحة العمل.',
+  'settings.localization.saving': 'جارٍ الحفظ…',
+  'settings.localization.conflict':
+    'تغيّرت موارد مساحة العمل هذه في مكان آخر. أعد تحميلها قبل الحفظ مجددًا.',
+  'settings.localization.saveFailed': 'تعذر حفظ موارد الترجمة: {error}',
+  'settings.localization.validation.englishRequired': 'أدخل القيمة الإنجليزية.',
+  'settings.localization.validation.arabicRequired': 'أدخل القيمة العربية.',
+  'settings.localization.validation.englishScript':
+    'استخدم نصًا ذا معنى بحروف إنجليزية، أو أنشئ مصطلحًا محايدًا صريحًا في المسرد.',
+  'settings.localization.validation.arabicScript': 'استخدم نصًا ذا معنى بحروف عربية.',
+  'settings.localization.validation.neutralMismatch':
+    'يجب أن يستخدم المصطلح المحايد القيمة نفسها بالإنجليزية والعربية.',
+  'settings.localization.validation.acceptedOnly':
+    'لا يجوز أن تحتوي ذاكرة الترجمة إلا على أزواج مقبولة صراحةً.',
+  'settings.localization.validation.schema':
+    'يحتوي هذا المورد على حقول أو نصوص أو بيانات قبول غير صالحة.',
 
   // --- AiPanelLite ---
   'ai.collapsedButton': '✨ إنشاء بالذكاء الاصطناعي',
@@ -1742,6 +1852,12 @@ export const ar: Record<keyof typeof en, string> = {
   'translate.free.offline': 'يبدو أنك غير متصل بالإنترنت — تتطلب الترجمة اتصالًا بالشبكة.',
   'translate.free.down':
     'تعذّر الوصول إلى خدمة الترجمة المجانية. حاول لاحقًا أو أضف مفتاح ذكاء اصطناعي في الإعدادات.',
+  'translationReview.retry.service.google': 'ترجمة Google',
+  'translationReview.retry.service.mymemory': 'MyMemory',
+  'translationReview.retry.attempt':
+    '{service}: العنصر {item} من {items}، محاولة الطلب {attempt} من {max}.',
+  'translationReview.retry.waiting':
+    '{service}: العنصر {item} من {items}، محاولة الطلب {attempt} من {max}؛ ستُعاد المحاولة خلال {seconds} ث.',
   'tree.linkedChildren': 'العمليات الفرعية المرتبطة',
   'tree.linkDepthCapped': 'مستويات إضافية غير معروضة',
   'library.manifestInfo': 'بيان المكتبة: {files} ملف/ملفات، {links} رابط/روابط.',

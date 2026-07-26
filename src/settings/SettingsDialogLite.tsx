@@ -36,6 +36,10 @@ import {
 } from '../org/orgSettings'
 import { t } from '../i18n'
 import { useLang } from '../i18n/useLang'
+import {
+  LocalizationResourcesEditor,
+  type LocalizationResourcesEditorProps
+} from './LocalizationResourcesEditor'
 
 export interface SettingsDialogLiteProps {
   open: boolean
@@ -45,6 +49,8 @@ export interface SettingsDialogLiteProps {
   /** Called after the DMT org-styling flag is toggled so every open modeler can
    *  be re-rendered against the new value (App loops refreshOrgStyling). */
   onOrgStylingChanged?: () => void
+  /** Public workspace glossary/TM editor. Omit in single-file mode. */
+  localizationResources?: LocalizationResourcesEditorProps
 }
 
 /**
@@ -60,7 +66,8 @@ export function SettingsDialogLite({
   open,
   onClose,
   onKeysChanged,
-  onOrgStylingChanged
+  onOrgStylingChanged,
+  localizationResources
 }: SettingsDialogLiteProps): JSX.Element | null {
   useLang()
   const [orgStyling, setOrgStylingState] = useState<boolean>(() => isOrgStylingOn())
@@ -320,6 +327,8 @@ export function SettingsDialogLite({
               </span>
             </label>
           </section>
+
+          {localizationResources && <LocalizationResourcesEditor {...localizationResources} />}
 
           <div style={warning} role="note">
             ⚠️ {t('settings.keyStorageWarning')}
