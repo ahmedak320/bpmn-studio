@@ -3160,6 +3160,7 @@ function App(): JSX.Element {
           onKeysChanged={() => setKeysVersion((v) => v + 1)}
           onOrgStylingChanged={handleOrgStylingChanged}
         />
+        <Toaster toasts={toasts} onDismiss={dismissToast} />
       </>
     )
   }
