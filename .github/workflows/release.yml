@@ -8,6 +8,10 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
   quality:
     name: Required release-quality gates
@@ -55,18 +59,17 @@ jobs:
       - name: Assemble release candidate from tested HTML
         run: npm run release:assemble -- --html tested-dist/index.html --out release
 
-      - name: Clean second build and compare every release byte
+      - name: Clean second build and compare every verified release byte
         run: |
           npm run clean:dist
           npm run build
           npm run release:assemble -- --html dist/index.html --out release-repro
+          npm run release:verify -- release
+          npm run release:verify -- release-repro
           for candidate in release/*; do
             name="$(basename "$candidate")"
             cmp "$candidate" "release-repro/$name"
           done
-
-      - name: Verify exact asset allowlist and checksums
-        run: npm run release:verify -- release
 
       - name: Install Chromium for exact file smoke
         run: ./node_modules/.bin/playwright install --with-deps chromium
