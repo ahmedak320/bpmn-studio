@@ -15,12 +15,14 @@ import {
 } from '../contracts'
 import type { BrowserSpreadsheetParseResult } from '../browserParserAdapters'
 import { SpreadsheetError } from '../errors'
+import { computeSpreadsheetModelReview } from '../modelReview'
 import { OFFICIAL_SHEET_NAMES } from '../officialTemplate'
 import { OFFICIAL_TEMPLATE_ASSET_NAMES } from '../template'
 import { validModel } from '../testFixtures'
 
 const mocks = vi.hoisted(() => ({
   parse: vi.fn(),
+  modelReview: vi.fn(),
   draftLoad: vi.fn(),
   draftSave: vi.fn(),
   draftRemove: vi.fn(),
@@ -42,6 +44,10 @@ vi.mock('../../i18n/useLang', () => ({
 
 vi.mock('../browserParserAdapters', () => ({
   parseBrowserSpreadsheet: mocks.parse
+}))
+
+vi.mock('../browserModelReview', () => ({
+  runSpreadsheetModelReview: mocks.modelReview
 }))
 
 vi.mock('../browserDraftStore', async (importOriginal) => {
@@ -309,6 +315,12 @@ function renderPanel(
 
 beforeEach(() => {
   mocks.parse.mockReset()
+  mocks.modelReview.mockReset().mockImplementation(async (input, options) => {
+    return computeSpreadsheetModelReview(input, {
+      onProgress: options?.onProgress,
+      isCancelled: () => options?.signal?.aborted === true
+    })
+  })
   mocks.draftLoad.mockReset().mockResolvedValue(undefined)
   mocks.draftSave.mockReset().mockResolvedValue(undefined)
   mocks.draftRemove.mockReset().mockResolvedValue(undefined)

@@ -15,6 +15,11 @@ import {
   parseBrowserSpreadsheet,
   type BrowserSpreadsheetParseResult
 } from './browserParserAdapters'
+import { runSpreadsheetModelReview } from './browserModelReview'
+import {
+  SPREADSHEET_MODEL_REVIEW_STAGE_COUNT,
+  type SpreadsheetModelReviewProgress
+} from './modelReviewProtocol'
 import {
   BPMN_NODE_TYPES,
   type BpmnNodeType,
@@ -43,19 +48,13 @@ import {
 } from './destinationAdapters'
 import { SpreadsheetError } from './errors'
 import {
-  applyGraphInferencePlan,
-  assignDeterministicIds,
-  createGraphInferencePlan
-} from './inference'
-import {
   LOW_CONFIDENCE_REQUIRED_THRESHOLD,
   headerSignature,
   suggestHeaderMappings
 } from './mapping'
 import { presetMatchesHeaderSignatures } from './mappingPreset'
-import { buildProcessWorkbookModel, officialTemplatePreset } from './modelBuilder'
+import { officialTemplatePreset } from './modelBuilder'
 import { detectOfficialTemplate } from './officialTemplate'
-import { spreadsheetValidationMessageKey } from './issueCatalog'
 import { SpreadsheetValidationIssueList } from './SpreadsheetValidationIssueList'
 import {
   executeTransactionalImportPlan,
@@ -132,7 +131,9 @@ function errorText(error: unknown, fallback: string): string {
   return error instanceof Error && error.message ? `${fallback} (${error.message})` : fallback
 }
 
-function progressPhase(phase: 'preflight' | 'parse' | 'validate'): string {
+function progressPhase(
+  phase: 'preflight' | 'parse' | 'validate' | SpreadsheetModelReviewProgress['phase']
+): string {
   switch (phase) {
     case 'preflight':
       return t('spreadsheet.phase.preflight')
@@ -140,6 +141,16 @@ function progressPhase(phase: 'preflight' | 'parse' | 'validate'): string {
       return t('spreadsheet.phase.parse')
     case 'validate':
       return t('spreadsheet.phase.validate')
+    case 'build-model':
+      return t('spreadsheet.phase.buildModel')
+    case 'apply-destination':
+      return t('spreadsheet.phase.applyDestination')
+    case 'infer-graph':
+      return t('spreadsheet.phase.inferGraph')
+    case 'apply-inference':
+      return t('spreadsheet.phase.applyInference')
+    case 'validate-model':
+      return t('spreadsheet.phase.validateModel')
   }
 }
 
@@ -170,25 +181,6 @@ function stepTypeLabel(type: BpmnNodeType): string {
 
 function participantTypeLabel(type: ParticipantType): string {
   return type === 'lane' ? t('spreadsheet.type.lane') : t('spreadsheet.type.pool')
-}
-
-function withDestinationFolder(
-  model: ProcessWorkbookModel,
-  destinationFolder: string
-): ProcessWorkbookModel {
-  const prefix = destinationFolder.trim().replace(/\/+$/g, '')
-  if (!prefix) return model
-  return Object.freeze({
-    ...model,
-    processes: Object.freeze(
-      model.processes.map((process) =>
-        Object.freeze({
-          ...process,
-          folder: process.folder ? `${prefix}/${process.folder.replace(/^\/+/g, '')}` : prefix
-        })
-      )
-    )
-  })
 }
 
 function downloadWorkbookTemplate(kind: 'blank' | 'example'): void {
@@ -238,7 +230,7 @@ export function SpreadsheetImportPanel({
   const [plan, setPlan] = useState<TransactionalImportPlan | null>(null)
   const [report, setReport] = useState<SpreadsheetImportReport | null>(null)
   const [progress, setProgress] = useState<{
-    phase: 'preflight' | 'parse' | 'validate'
+    phase: 'preflight' | 'parse' | 'validate' | SpreadsheetModelReviewProgress['phase']
     completed: number
     total: number
   } | null>(null)
@@ -246,6 +238,7 @@ export function SpreadsheetImportPanel({
   const [error, setError] = useState<string | null>(null)
   const [handoffBusy, setHandoffBusy] = useState(false)
   const parserAbortRef = useRef<AbortController | null>(null)
+  const reviewAbortRef = useRef<AbortController | null>(null)
   const preparationAbortRef = useRef<AbortController | null>(null)
   const taskVersionRef = useRef(0)
   const fileInputRef = useRef<HTMLInputElement | null>(null)
@@ -258,6 +251,8 @@ export function SpreadsheetImportPanel({
     taskVersionRef.current += 1
     parserAbortRef.current?.abort()
     parserAbortRef.current = null
+    reviewAbortRef.current?.abort()
+    reviewAbortRef.current = null
     preparationAbortRef.current?.abort()
     preparationAbortRef.current = null
     setPhase('idle')
@@ -282,6 +277,8 @@ export function SpreadsheetImportPanel({
     taskVersionRef.current += 1
     parserAbortRef.current?.abort()
     parserAbortRef.current = null
+    reviewAbortRef.current?.abort()
+    reviewAbortRef.current = null
     preparationAbortRef.current?.abort()
     preparationAbortRef.current = null
     setPhase('idle')
@@ -312,6 +309,7 @@ export function SpreadsheetImportPanel({
     () => () => {
       taskVersionRef.current += 1
       parserAbortRef.current?.abort()
+      reviewAbortRef.current?.abort()
       preparationAbortRef.current?.abort()
     },
     []
@@ -378,6 +376,7 @@ export function SpreadsheetImportPanel({
     taskVersionRef.current += 1
     const taskVersion = taskVersionRef.current
     parserAbortRef.current?.abort()
+    reviewAbortRef.current?.abort()
     preparationAbortRef.current?.abort()
     const controller = new AbortController()
     parserAbortRef.current = controller
@@ -462,6 +461,7 @@ export function SpreadsheetImportPanel({
   }
 
   function updatePreset(update: (current: MappingPreset) => MappingPreset): void {
+    reviewAbortRef.current?.abort()
     setPreset((current) => (current ? update(current) : current))
     setReview(null)
     setPlan(null)
@@ -628,14 +628,26 @@ export function SpreadsheetImportPanel({
 
   async function buildReview(): Promise<void> {
     if (!parsed || !preset || !sourceFile) return
+    reviewAbortRef.current?.abort()
+    const controller = new AbortController()
+    reviewAbortRef.current = controller
     const taskVersion = taskVersionRef.current
     setPhase('reviewing')
     setReview(null)
     setPlan(null)
     setReport(null)
     setError(null)
+    setProgress({
+      phase: 'build-model',
+      completed: 0,
+      total: SPREADSHEET_MODEL_REVIEW_STAGE_COUNT
+    })
     await Promise.resolve()
-    if (taskVersion !== taskVersionRef.current) return
+    if (controller.signal.aborted || taskVersion !== taskVersionRef.current) {
+      if (reviewAbortRef.current === controller) reviewAbortRef.current = null
+      setProgress(null)
+      return
+    }
     const requiredIssues = mappingReviewIssues(parsed.workbook, preset, confirmedMappings, {
       defaultProcessId
     })
@@ -647,74 +659,52 @@ export function SpreadsheetImportPanel({
         ready: false
       })
       setPhase('review')
+      setProgress(null)
+      if (reviewAbortRef.current === controller) reviewAbortRef.current = null
       return
     }
     try {
-      const built = buildProcessWorkbookModel(parsed.workbook, {
-        fileName: sourceFile.name,
-        format: parsed.format,
-        preset,
-        officialTemplate: official,
-        templateVersion,
-        defaultProcessId: defaultProcessId.trim() || undefined,
-        defaultProcessName:
-          defaultNameEn.trim() || defaultNameAr.trim()
-            ? {
-                en: defaultNameEn.trim() || undefined,
-                ar: defaultNameAr.trim() || undefined,
-                active: lang
-              }
-            : undefined
-      })
-      const destinationModel = withDestinationFolder(built.model, destinationFolder)
-      const inference = createGraphInferencePlan(destinationModel, {
-        flowMode: preset.inference.flowMode
-      })
-      const syntheticIssue: SpreadsheetValidationIssue[] =
-        inference.requiresSyntheticBoundaryConfirmation && !syntheticConfirmed
-          ? [
-              {
-                code: 'synthetic-boundary-confirmation-required',
-                severity: 'review',
-                messageKey: spreadsheetValidationMessageKey(
-                  'synthetic-boundary-confirmation-required'
-                )
-              }
-            ]
-          : []
-      const additionalIssues = Object.freeze([
-        ...parseIssues,
-        ...built.issues,
-        ...inference.issues,
-        ...syntheticIssue
-      ])
-      let model = assignDeterministicIds(destinationModel).model
-      let ready = false
-      if (
-        !inference.issues.some(({ severity }) => severity === 'error') &&
-        (syntheticConfirmed || !inference.requiresSyntheticBoundaryConfirmation)
-      ) {
-        model = applyGraphInferencePlan(destinationModel, inference, {
+      const nextReview = await runSpreadsheetModelReview(
+        {
+          workbook: parsed.workbook,
+          buildOptions: {
+            fileName: sourceFile.name,
+            format: parsed.format,
+            preset,
+            officialTemplate: official,
+            templateVersion,
+            defaultProcessId: defaultProcessId.trim() || undefined,
+            defaultProcessName:
+              defaultNameEn.trim() || defaultNameAr.trim()
+                ? {
+                    en: defaultNameEn.trim() || undefined,
+                    ar: defaultNameAr.trim() || undefined,
+                    active: lang
+                  }
+                : undefined
+          },
+          destinationFolder,
+          knownProcessIds,
+          sourceIssues: parseIssues,
           confirmSyntheticBoundaries: syntheticConfirmed
-        })
-        ready = true
-      }
-      const validation = validateProcessWorkbookModel(model, {
-        destinationProcessIds: new Set(knownProcessIds),
-        additionalIssues
-      })
-      ready = ready && !validation.blocking
-      setReview({
-        model,
-        inference,
-        validation,
-        issues: validation.issues,
-        additionalIssues,
-        skippedRows: built.skippedRows,
-        ready
-      })
+        },
+        {
+          signal: controller.signal,
+          onProgress: setProgress
+        }
+      )
+      if (controller.signal.aborted || taskVersion !== taskVersionRef.current) return
+      setReview(nextReview)
       setPhase('review')
     } catch (cause) {
+      if (reviewAbortRef.current !== controller || taskVersion !== taskVersionRef.current) {
+        return
+      }
+      if (cause instanceof SpreadsheetError && cause.code === 'parse-cancelled') {
+        setStatus(t('spreadsheet.cancel'))
+        setPhase('mapping')
+        return
+      }
       setError(errorText(cause, t('spreadsheet.error.review')))
       setReview({
         issues: [],
@@ -723,6 +713,11 @@ export function SpreadsheetImportPanel({
         ready: false
       })
       setPhase('review')
+    } finally {
+      if (reviewAbortRef.current === controller) {
+        reviewAbortRef.current = null
+        setProgress(null)
+      }
     }
   }
 
@@ -923,7 +918,7 @@ export function SpreadsheetImportPanel({
         <span style={mutedText}>{t('spreadsheet.uploadHint')}</span>
       </label>
 
-      {phase === 'parsing' && progress && (
+      {(phase === 'parsing' || phase === 'reviewing') && progress && (
         <div role="status" aria-live="polite" style={infoBox}>
           <div>
             {t('spreadsheet.progress', {
@@ -935,7 +930,11 @@ export function SpreadsheetImportPanel({
           <button
             type="button"
             style={secondaryButton}
-            onClick={() => parserAbortRef.current?.abort()}
+            onClick={() =>
+              phase === 'parsing'
+                ? parserAbortRef.current?.abort()
+                : reviewAbortRef.current?.abort()
+            }
           >
             {t('spreadsheet.cancel')}
           </button>

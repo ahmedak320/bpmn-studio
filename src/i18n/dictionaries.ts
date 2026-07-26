@@ -1303,6 +1303,11 @@ export const en = {
   'spreadsheet.phase.preflight': 'Security preflight',
   'spreadsheet.phase.parse': 'Parsing',
   'spreadsheet.phase.validate': 'Validating',
+  'spreadsheet.phase.buildModel': 'Building workbook model',
+  'spreadsheet.phase.applyDestination': 'Applying destinations',
+  'spreadsheet.phase.inferGraph': 'Inferring process graph',
+  'spreadsheet.phase.applyInference': 'Applying reviewed inference',
+  'spreadsheet.phase.validateModel': 'Validating process model',
 
   // --- Validation Center / source editor ---
   'validation.open': 'Validate',
@@ -2628,6 +2633,11 @@ export const ar: Record<keyof typeof en, string> = {
   'spreadsheet.phase.preflight': 'الفحص الأمني المسبق',
   'spreadsheet.phase.parse': 'التحليل',
   'spreadsheet.phase.validate': 'التحقق',
+  'spreadsheet.phase.buildModel': 'إنشاء نموذج المصنف',
+  'spreadsheet.phase.applyDestination': 'تطبيق الوجهات',
+  'spreadsheet.phase.inferGraph': 'استنتاج رسم العملية',
+  'spreadsheet.phase.applyInference': 'تطبيق الاستنتاج المراجع',
+  'spreadsheet.phase.validateModel': 'التحقق من نموذج العملية',
 
   // --- مركز التحقق / محرر المصدر ---
   'validation.open': 'تحقق',
