@@ -1,6 +1,6 @@
 import BpmnModdle from 'bpmn-moddle'
 import { orbitpmModdleDescriptor } from '../org/orbitpmModdle'
-import { auditBpmnLocalization } from '../localization'
+import { auditBpmnLocalization, type LocalizationFieldException } from '../localization/audit'
 import type { BpmnValidationAdapter } from './adapters'
 import {
   createValidationSummary,
@@ -54,6 +54,10 @@ export interface BpmnValidationOptions {
   requireDi?: boolean
   /** Workspace-approved neutral terms that may be identical in both languages. */
   neutralTerms?: Iterable<string>
+  /** Reviewed mixed-script proper-name values allowed specifically in English. */
+  approvedEnglishBilingualExceptions?: Iterable<string>
+  /** Exact field-scoped exceptions retained by a reviewed ingestion decision. */
+  approvedFieldExceptions?: readonly LocalizationFieldException[]
   /** Optional worker-backed XSD/bpmnlint adapters. */
   adapters?: readonly BpmnValidationAdapter[]
 }
@@ -77,6 +81,8 @@ interface ValidationContext {
   requireBilingual: boolean
   requireDi: boolean
   neutralTerms: ReadonlySet<string>
+  approvedEnglishBilingualExceptions: readonly string[]
+  approvedFieldExceptions: readonly LocalizationFieldException[]
 }
 
 const NCNAME = /^[\p{L}_][\p{L}\p{N}_.\-\u00B7\u0300-\u036F\u203F-\u2040]*$/u
@@ -804,7 +810,9 @@ function validateSharedLocalizationAudit(
   if (!context.requireBilingual) return
   const report = auditBpmnLocalization(definitions, {
     source: 'xml',
-    approvedNeutralTerms: context.neutralTerms
+    approvedNeutralTerms: context.neutralTerms,
+    approvedEnglishBilingualExceptions: context.approvedEnglishBilingualExceptions,
+    approvedFieldExceptions: context.approvedFieldExceptions
   })
   const elementById = new Map(
     context.allElements
@@ -1123,7 +1131,11 @@ export async function validateBpmnXml(
       [...DEFAULT_NEUTRAL_TERMS, ...(options.neutralTerms ?? [])].map((term) =>
         term.trim().toLocaleUpperCase('en')
       )
-    )
+    ),
+    approvedEnglishBilingualExceptions: [...(options.approvedEnglishBilingualExceptions ?? [])],
+    approvedFieldExceptions: (options.approvedFieldExceptions ?? []).map((approval) => ({
+      ...approval
+    }))
   }
 
   validateDefinitions(context, definitions)

@@ -1,14 +1,6 @@
 import { extractBpmnLocalization } from './extract'
-import {
-  SEEDED_GLOSSARY,
-  approvedNeutralTerms,
-  normalizeLocalizationLookup
-} from './glossary'
-import {
-  classifyScript,
-  validateTargetScript,
-  type TargetValidationOptions
-} from './script'
+import { SEEDED_GLOSSARY, approvedNeutralTerms, normalizeLocalizationLookup } from './glossary'
+import { classifyScript, validateTargetScript, type TargetValidationOptions } from './script'
 import {
   LocalizationSource,
   type GlossaryEntry,
@@ -30,31 +22,72 @@ export interface LocalizationAuditOptions {
   glossary?: readonly GlossaryEntry[]
   approvedNeutralTerms?: Iterable<string>
   approvedEnglishBilingualExceptions?: Iterable<string>
+  /**
+   * Exact, field-scoped review exceptions. These never become workspace-wide
+   * glossary entries and are honored only while the identified value remains
+   * byte-for-byte current.
+   */
+  approvedFieldExceptions?: readonly LocalizationFieldException[]
   providerFailures?: readonly ProviderFailure[]
 }
 
-export interface AuditBpmnLocalizationOptions
-  extends LocalizationAuditOptions {
+export interface LocalizationFieldException {
+  processId: string
+  elementId: string
+  field: string
+  target: LanguageCode
+  value: string
+  kind: 'neutral' | 'english-bilingual'
+}
+
+export interface AuditBpmnLocalizationOptions extends LocalizationAuditOptions {
   source?: LocalizationSourceType
   defaultActive?: LanguageCode
 }
 
-function materializeTerms(
-  options: LocalizationAuditOptions
-): readonly string[] {
+function materializeTerms(options: LocalizationAuditOptions): readonly string[] {
   if (options.approvedNeutralTerms !== undefined) {
     return [...options.approvedNeutralTerms].map(String)
   }
   return approvedNeutralTerms(options.glossary ?? SEEDED_GLOSSARY)
 }
 
+function exactFieldException(
+  field: LocalizationField,
+  target: LanguageCode,
+  value: string | undefined,
+  kind: LocalizationFieldException['kind'],
+  options: LocalizationAuditOptions
+): boolean {
+  if (value === undefined) return false
+  return (options.approvedFieldExceptions ?? []).some(
+    (approval) =>
+      approval.processId === field.processId &&
+      approval.elementId === field.elementId &&
+      approval.field === field.field &&
+      approval.target === target &&
+      approval.kind === kind &&
+      approval.value === value
+  )
+}
+
 function targetOptions(
+  field: LocalizationField,
+  target: LanguageCode,
   options: LocalizationAuditOptions
 ): TargetValidationOptions {
+  const value = field.value[target]
   return {
-    approvedNeutralTerms: materializeTerms(options),
-    approvedEnglishBilingualExceptions:
-      options.approvedEnglishBilingualExceptions
+    approvedNeutralTerms: [
+      ...materializeTerms(options),
+      ...(exactFieldException(field, target, value, 'neutral', options) && value ? [value] : [])
+    ],
+    approvedEnglishBilingualExceptions: [
+      ...(options.approvedEnglishBilingualExceptions ?? []),
+      ...(exactFieldException(field, target, value, 'english-bilingual', options) && value
+        ? [value]
+        : [])
+    ]
   }
 }
 
@@ -85,7 +118,7 @@ export function auditFieldTarget(
     return [issue(field, target, 'missing', value)]
   }
 
-  const validation = validateTargetScript(value, target, targetOptions(options))
+  const validation = validateTargetScript(value, target, targetOptions(field, target, options))
   if (validation.valid) return []
   if (validation.script === 'mixed') {
     return [issue(field, target, 'mixed', value)]
@@ -125,6 +158,9 @@ function duplicateIssue(
         : field.value.active === 'en'
           ? 'ar'
           : 'en'
+  if (exactFieldException(field, target, field.value[target], 'neutral', options)) {
+    return undefined
+  }
   return issue(field, target, 'duplicate-counterpart', field.value[target])
 }
 
@@ -155,9 +191,7 @@ function summarize(
   for (const current of issues) {
     byCode[current.code] += 1
     byTarget[current.target] += 1
-    incomplete.add(
-      `${current.processId}\u0000${current.elementId}\u0000${current.field}`
-    )
+    incomplete.add(`${current.processId}\u0000${current.elementId}\u0000${current.field}`)
   }
   return {
     totalFields: fields.length,
@@ -184,7 +218,11 @@ export function auditLocalizationFields(
     approvedEnglishBilingualExceptions:
       options.approvedEnglishBilingualExceptions === undefined
         ? undefined
-        : [...options.approvedEnglishBilingualExceptions]
+        : [...options.approvedEnglishBilingualExceptions],
+    approvedFieldExceptions:
+      options.approvedFieldExceptions === undefined
+        ? undefined
+        : options.approvedFieldExceptions.map((approval) => ({ ...approval }))
   }
   const issues: LocalizationIssue[] = []
   const seen = new Set<string>()
@@ -217,9 +255,7 @@ export function auditLocalizationFields(
       field: failure.field,
       target: failure.target,
       code: 'provider-failed',
-      ...(failure.originalValue === undefined
-        ? {}
-        : { originalValue: failure.originalValue })
+      ...(failure.originalValue === undefined ? {} : { originalValue: failure.originalValue })
     }
     push(current)
   }

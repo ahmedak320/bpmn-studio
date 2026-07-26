@@ -34,64 +34,69 @@ export interface MetadataFieldSpec {
  * intentionally absent. Their free-text detail/service/list counterparts are
  * included.
  */
-export const TRANSLATABLE_METADATA_FIELDS: readonly MetadataFieldSpec[] =
-  Object.freeze([
-    { field: 'owner', base: 'owner', en: 'ownerEn', ar: 'ownerAr' },
-    {
-      field: 'department',
-      base: 'department',
-      en: 'departmentEn',
-      ar: 'departmentAr'
-    },
-    {
-      field: 'ownerRole',
-      base: 'ownerRole',
-      en: 'ownerRoleEn',
-      ar: 'ownerRoleAr'
-    },
-    {
-      field: 'channelDetail',
-      base: 'channelDetail',
-      en: 'channelDetailEn',
-      ar: 'channelDetailAr'
-    },
-    { field: 'ccTo', base: 'ccTo', en: 'ccToEn', ar: 'ccToAr' },
-    {
-      field: 'triggerService',
-      base: 'triggerService',
-      en: 'triggerServiceEn',
-      ar: 'triggerServiceAr'
-    },
-    {
-      field: 'triggerDetail',
-      base: 'triggerDetail',
-      en: 'triggerDetailEn',
-      ar: 'triggerDetailAr'
-    },
-    {
-      field: 'triggers',
-      base: 'triggers',
-      en: 'triggersEn',
-      ar: 'triggersAr'
-    },
-    { field: 'inputs', base: 'inputs', en: 'inputsEn', ar: 'inputsAr' },
-    { field: 'outputs', base: 'outputs', en: 'outputsEn', ar: 'outputsAr' },
-    { field: 'system', base: 'system', en: 'systemEn', ar: 'systemAr' },
-    {
-      field: 'respList',
-      base: 'respList',
-      en: 'respListEn',
-      ar: 'respListAr'
-    },
-    { field: 'ccList', base: 'ccList', en: 'ccListEn', ar: 'ccListAr' },
-    {
-      field: 'decisionBasis',
-      base: 'decisionBasis',
-      en: 'decisionBasisEn',
-      ar: 'decisionBasisAr'
-    },
-    { field: 'notes', base: 'notes', en: 'notesEn', ar: 'notesAr' }
-  ])
+export const TRANSLATABLE_METADATA_FIELDS: readonly MetadataFieldSpec[] = Object.freeze([
+  { field: 'owner', base: 'owner', en: 'ownerEn', ar: 'ownerAr' },
+  {
+    field: 'department',
+    base: 'department',
+    en: 'departmentEn',
+    ar: 'departmentAr'
+  },
+  {
+    field: 'ownerRole',
+    base: 'ownerRole',
+    en: 'ownerRoleEn',
+    ar: 'ownerRoleAr'
+  },
+  {
+    field: 'channelDetail',
+    base: 'channelDetail',
+    en: 'channelDetailEn',
+    ar: 'channelDetailAr'
+  },
+  { field: 'ccTo', base: 'ccTo', en: 'ccToEn', ar: 'ccToAr' },
+  {
+    field: 'triggerService',
+    base: 'triggerService',
+    en: 'triggerServiceEn',
+    ar: 'triggerServiceAr'
+  },
+  {
+    field: 'triggerDetail',
+    base: 'triggerDetail',
+    en: 'triggerDetailEn',
+    ar: 'triggerDetailAr'
+  },
+  {
+    field: 'triggers',
+    base: 'triggers',
+    en: 'triggersEn',
+    ar: 'triggersAr'
+  },
+  { field: 'inputs', base: 'inputs', en: 'inputsEn', ar: 'inputsAr' },
+  { field: 'outputs', base: 'outputs', en: 'outputsEn', ar: 'outputsAr' },
+  { field: 'system', base: 'system', en: 'systemEn', ar: 'systemAr' },
+  {
+    field: 'respList',
+    base: 'respList',
+    en: 'respListEn',
+    ar: 'respListAr'
+  },
+  { field: 'ccList', base: 'ccList', en: 'ccListEn', ar: 'ccListAr' },
+  {
+    field: 'decisionBasis',
+    base: 'decisionBasis',
+    en: 'decisionBasisEn',
+    ar: 'decisionBasisAr'
+  },
+  {
+    field: 'description',
+    base: 'description',
+    en: 'descriptionEn',
+    ar: 'descriptionAr'
+  },
+  { field: 'notes', base: 'notes', en: 'notesEn', ar: 'notesAr' }
+])
 
 const ORBITPM_PREFIX = 'orbitpm:'
 
@@ -234,10 +239,7 @@ function asArray(value: unknown): unknown[] {
   return Array.isArray(value) ? value : [value]
 }
 
-function childObjects(
-  object: ModdleElementLike,
-  skipReferences: boolean
-): ModdleElementLike[] {
+function childObjects(object: ModdleElementLike, skipReferences: boolean): ModdleElementLike[] {
   const values: unknown[] = []
   const visitedProperties = new Set<string>()
 
@@ -256,10 +258,7 @@ function childObjects(
   }
 
   for (const key of STRUCTURAL_PROPERTIES) {
-    if (
-      visitedProperties.has(key) ||
-      (skipReferences && NON_OWNED_REFERENCES.has(key))
-    ) {
+    if (visitedProperties.has(key) || (skipReferences && NON_OWNED_REFERENCES.has(key))) {
       continue
     }
     const value = readProperty(object, key)
@@ -304,21 +303,13 @@ function assignOwnedProcess(
   visit(process)
 }
 
-function addToSetMap(
-  map: Map<string, Set<string>>,
-  key: string,
-  value: string
-): void {
+function addToSetMap(map: Map<string, Set<string>>, key: string, value: string): void {
   const values = map.get(key) ?? new Set<string>()
   values.add(value)
   map.set(key, values)
 }
 
-function addToWeakSetMap(
-  map: WeakMap<object, Set<string>>,
-  key: object,
-  value: string
-): void {
+function addToWeakSetMap(map: WeakMap<object, Set<string>>, key: object, value: string): void {
   const values = map.get(key) ?? new Set<string>()
   values.add(value)
   map.set(key, values)
@@ -448,11 +439,7 @@ function extractField(
       if (projectionScript === 'arabic') effectiveActive = 'ar'
     }
     const inferred =
-      projectionScript === 'english'
-        ? 'en'
-        : projectionScript === 'arabic'
-          ? 'ar'
-          : effectiveActive
+      projectionScript === 'english' ? 'en' : projectionScript === 'arabic' ? 'ar' : effectiveActive
     sourceLanguage = inferred
     if (inferred === 'en' && en === undefined) {
       en = projection
@@ -530,9 +517,7 @@ function elementIdFor(
 ): string {
   const direct = readId(object)
   if (direct) return direct
-  const parent = isObject(object.$parent)
-    ? readId(object.$parent as ModdleElementLike)
-    : undefined
+  const parent = isObject(object.$parent) ? readId(object.$parent as ModdleElementLike) : undefined
   const localType = type.includes(':') ? type.slice(type.indexOf(':') + 1) : type || 'element'
   const key = `${processId}\u0000${parent ?? ''}\u0000${localType}`
   const ordinal = (ordinalByScope.get(key) ?? 0) + 1
@@ -599,9 +584,7 @@ export function extractBpmnLocalization(
     const collaborationId =
       readId(collaboration) ?? `__collaboration_${objects.indexOf(collaboration) + 1}`
     assignOwnedProcess(collaboration, collaborationId, processByObject)
-    for (const rawParticipant of asArray(
-      readProperty(collaboration, 'participants')
-    )) {
+    for (const rawParticipant of asArray(readProperty(collaboration, 'participants'))) {
       if (!isObject(rawParticipant)) continue
       const processRef = readProperty(rawParticipant, 'processRef')
       if (!isObject(processRef)) continue
@@ -612,42 +595,29 @@ export function extractBpmnLocalization(
 
   const planeIdsByObject = new WeakMap<object, Set<string>>()
   const planeIdsByProcess = new Map<string, Set<string>>()
-  for (const diagram of objects.filter(
-    (object) => readType(object) === 'bpmndi:BPMNDiagram'
-  )) {
+  for (const diagram of objects.filter((object) => readType(object) === 'bpmndi:BPMNDiagram')) {
     const planeRaw = readProperty(diagram, 'plane')
     if (!isObject(planeRaw)) continue
     const plane = planeRaw as ModdleElementLike
-    const planeId =
-      readId(plane) ?? readId(diagram) ?? `__plane_${objects.indexOf(diagram) + 1}`
+    const planeId = readId(plane) ?? readId(diagram) ?? `__plane_${objects.indexOf(diagram) + 1}`
     const planeRefRaw = readProperty(plane, 'bpmnElement')
-    const planeRef = isObject(planeRefRaw)
-      ? (planeRefRaw as ModdleElementLike)
-      : undefined
+    const planeRef = isObject(planeRefRaw) ? (planeRefRaw as ModdleElementLike) : undefined
     if (planeRef) addToWeakSetMap(planeIdsByObject, planeRef, planeId)
     const planeProcesses = processIdsForPlaneElement(planeRef, processByObject)
     for (const processId of planeProcesses) {
       addToSetMap(planeIdsByProcess, processId, planeId)
     }
 
-    for (const rawPlaneElement of asArray(
-      readProperty(plane, 'planeElement')
-    )) {
+    for (const rawPlaneElement of asArray(readProperty(plane, 'planeElement'))) {
       if (!isObject(rawPlaneElement)) continue
       const referencedRaw = readProperty(rawPlaneElement, 'bpmnElement')
       if (!isObject(referencedRaw)) continue
       const referenced = referencedRaw as ModdleElementLike
       addToWeakSetMap(planeIdsByObject, referenced, planeId)
-      const referencedProcesses = processIdsForPlaneElement(
-        referenced,
-        processByObject
-      )
+      const referencedProcesses = processIdsForPlaneElement(referenced, processByObject)
       const resolvedProcesses =
         referencedProcesses.length > 0 ? referencedProcesses : planeProcesses
-      if (
-        processByObject.get(referenced) === undefined &&
-        resolvedProcesses.length === 1
-      ) {
+      if (processByObject.get(referenced) === undefined && resolvedProcesses.length === 1) {
         processByObject.set(referenced, resolvedProcesses[0])
       }
       for (const processId of resolvedProcesses) {
@@ -665,24 +635,12 @@ export function extractBpmnLocalization(
 
     let processId = processByObject.get(object)
     if (!processId) {
-      const parent = isObject(object.$parent)
-        ? (object.$parent as ModdleElementLike)
-        : undefined
+      const parent = isObject(object.$parent) ? (object.$parent as ModdleElementLike) : undefined
       processId = parent ? processByObject.get(parent) : undefined
     }
     processId ??= readId(object) ?? '__unscoped__'
-    const elementId = elementIdFor(
-      object,
-      processId,
-      type,
-      ordinalByScope
-    )
-    const active = activeLanguage(
-      object,
-      processId,
-      activeByProcess,
-      fallbackActive
-    )
+    const elementId = elementIdFor(object, processId, type, ordinalByScope)
+    const active = activeLanguage(object, processId, activeByProcess, fallbackActive)
     const planeIds = [
       ...(planeIdsByProcess.get(processId) ?? []),
       ...(planeIdsByObject.get(object) ?? [])

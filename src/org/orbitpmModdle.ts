@@ -83,6 +83,9 @@ export const ORG_ATTR_NAMES = [
   'decisionBasis',
   'decisionBasisEn',
   'decisionBasisAr',
+  'description',
+  'descriptionEn',
+  'descriptionAr',
   'notes',
   'notesEn',
   'notesAr'

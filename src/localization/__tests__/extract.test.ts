@@ -6,10 +6,7 @@ import {
   extractBpmnLocalization,
   type ModdleElementLike
 } from '..'
-import {
-  ORG_ATTR_NAMES,
-  orbitpmModdleDescriptor
-} from '../../org/orbitpmModdle'
+import { ORG_ATTR_NAMES, orbitpmModdleDescriptor } from '../../org/orbitpmModdle'
 
 function bpmn(
   type: string,
@@ -25,22 +22,23 @@ function bpmn(
   }
 }
 
-function fieldKey(field: {
-  processId: string
-  elementId: string
-  field: string
-}): string {
+function fieldKey(field: { processId: string; elementId: string; field: string }): string {
   return `${field.processId}/${field.elementId}/${field.field}`
 }
 
 describe('moddle-friendly structural extraction', () => {
   it('extracts conditions, annotations, documentation, and all paired details from every process/plane', () => {
-    const documentation = bpmn('Documentation', 'Doc_1', {
-      text: 'Process note'
-    }, {
-      'orbitpm:nameEn': 'Process note',
-      'orbitpm:nameAr': 'ملاحظة العملية'
-    })
+    const documentation = bpmn(
+      'Documentation',
+      'Doc_1',
+      {
+        text: 'Process note'
+      },
+      {
+        'orbitpm:nameEn': 'Process note',
+        'orbitpm:nameAr': 'ملاحظة العملية'
+      }
+    )
     const task = bpmn(
       'UserTask',
       'Task_approve',
@@ -110,13 +108,18 @@ describe('moddle-friendly structural extraction', () => {
         'orbitpm:triggerDetailAr': 'عند الموافقة'
       }
     )
-    const subProcess = bpmn('SubProcess', 'Sub_1', {
-      name: 'Notification',
-      flowElements: [nestedTask]
-    }, {
-      'orbitpm:nameEn': 'Notification',
-      'orbitpm:nameAr': 'الإشعار'
-    })
+    const subProcess = bpmn(
+      'SubProcess',
+      'Sub_1',
+      {
+        name: 'Notification',
+        flowElements: [nestedTask]
+      },
+      {
+        'orbitpm:nameEn': 'Notification',
+        'orbitpm:nameAr': 'الإشعار'
+      }
+    )
     const processEn = bpmn(
       'Process',
       'Process_EN',
@@ -129,32 +132,23 @@ describe('moddle-friendly structural extraction', () => {
       {
         'orbitpm:activeLang': 'en',
         'orbitpm:nameEn': 'Permit approval',
-        'orbitpm:nameAr': 'اعتماد التصريح'
+        'orbitpm:nameAr': 'اعتماد التصريح',
+        'orbitpm:description': 'Permit request lifecycle',
+        'orbitpm:descriptionEn': 'Permit request lifecycle',
+        'orbitpm:descriptionAr': 'دورة حياة طلب التصريح'
       }
     )
-    for (const child of [
-      task,
-      gateway,
-      flow,
-      subProcess,
-      nestedTask,
-      annotation,
-      documentation
-    ]) {
+    for (const child of [task, gateway, flow, subProcess, nestedTask, annotation, documentation]) {
       child.$parent = processEn
     }
 
     const arabicTask = bpmn('Task', 'Task_archive', {
       name: 'أرشفة الطلب'
     })
-    const processAr = bpmn(
-      'Process',
-      'Process_AR',
-      {
-        name: 'إدارة الأرشيف',
-        flowElements: [arabicTask]
-      }
-    )
+    const processAr = bpmn('Process', 'Process_AR', {
+      name: 'إدارة الأرشيف',
+      flowElements: [arabicTask]
+    })
     arabicTask.$parent = processAr
 
     // This valid plane-referenced object is deliberately absent from
@@ -179,9 +173,7 @@ describe('moddle-friendly structural extraction', () => {
       $type: 'bpmndi:BPMNPlane',
       id: 'Plane_EN_2',
       bpmnElement: processEn,
-      planeElement: [
-        { $type: 'bpmndi:BPMNShape', id: 'Shape_task_2', bpmnElement: task }
-      ]
+      planeElement: [{ $type: 'bpmndi:BPMNShape', id: 'Shape_task_2', bpmnElement: task }]
     }
     const planeAr = {
       $type: 'bpmndi:BPMNPlane',
@@ -221,33 +213,22 @@ describe('moddle-friendly structural extraction', () => {
       ar: 'نعم',
       active: 'en'
     })
-    expect(
-      byKey.get('Process_EN/Annotation_review/annotation')?.value.ar
-    ).toBe('مراجعة المستندات الداعمة')
-    expect(byKey.get('Process_EN/Doc_1/notes')?.value.ar).toBe(
-      'ملاحظة العملية'
+    expect(byKey.get('Process_EN/Annotation_review/annotation')?.value.ar).toBe(
+      'مراجعة المستندات الداعمة'
     )
-    expect(byKey.get('Process_EN/Task_approve/owner')?.value.ar).toBe(
-      'إدارة التصاريح'
-    )
-    expect(byKey.get('Process_EN/Task_approve/inputs')?.value.ar).toBe(
-      'نموذج الطلب'
-    )
-    expect(byKey.get('Process_EN/Task_approve/outputs')?.value.ar).toBe(
-      'إشعار القرار'
-    )
-    expect(byKey.get('Process_EN/Task_approve/respList')?.value.ar).toContain(
-      'مسؤول الحالة'
-    )
-    expect(byKey.get('Process_EN/Task_approve/ccList')?.value.ar).toContain(
-      'الشؤون القانونية'
-    )
-    expect(
-      byKey.get('Process_EN/Gateway_complete/decisionBasis')?.value.ar
-    ).toBe('سياسة الاكتمال')
-    expect(
-      byKey.get('Process_EN/Task_nested/triggerDetail')?.value.ar
-    ).toBe('عند الموافقة')
+    expect(byKey.get('Process_EN/Doc_1/notes')?.value.ar).toBe('ملاحظة العملية')
+    expect(byKey.get('Process_EN/Task_approve/owner')?.value.ar).toBe('إدارة التصاريح')
+    expect(byKey.get('Process_EN/Process_EN/description')?.value).toEqual({
+      en: 'Permit request lifecycle',
+      ar: 'دورة حياة طلب التصريح',
+      active: 'en'
+    })
+    expect(byKey.get('Process_EN/Task_approve/inputs')?.value.ar).toBe('نموذج الطلب')
+    expect(byKey.get('Process_EN/Task_approve/outputs')?.value.ar).toBe('إشعار القرار')
+    expect(byKey.get('Process_EN/Task_approve/respList')?.value.ar).toContain('مسؤول الحالة')
+    expect(byKey.get('Process_EN/Task_approve/ccList')?.value.ar).toContain('الشؤون القانونية')
+    expect(byKey.get('Process_EN/Gateway_complete/decisionBasis')?.value.ar).toBe('سياسة الاكتمال')
+    expect(byKey.get('Process_EN/Task_nested/triggerDetail')?.value.ar).toBe('عند الموافقة')
 
     const taskName = byKey.get('Process_EN/Task_approve/name')
     expect(taskName?.source).toBe('backup')
@@ -313,12 +294,22 @@ describe('moddle-friendly structural extraction', () => {
   })
 
   it('uses stored-script evidence when the legacy visible projection is absent', () => {
-    const wrongArabic = bpmn('Task', 'Task_wrong_ar', {}, {
-      'orbitpm:nameAr': 'Approve request'
-    })
-    const arabicOnly = bpmn('Task', 'Task_ar_only', {}, {
-      'orbitpm:nameAr': 'أرشفة الطلب'
-    })
+    const wrongArabic = bpmn(
+      'Task',
+      'Task_wrong_ar',
+      {},
+      {
+        'orbitpm:nameAr': 'Approve request'
+      }
+    )
+    const arabicOnly = bpmn(
+      'Task',
+      'Task_ar_only',
+      {},
+      {
+        'orbitpm:nameAr': 'أرشفة الطلب'
+      }
+    )
     const process = bpmn('Process', 'Process_script', {
       flowElements: [wrongArabic, arabicOnly]
     })
@@ -329,9 +320,7 @@ describe('moddle-friendly structural extraction', () => {
       $type: 'bpmn:Definitions',
       rootElements: [process]
     })
-    const wrong = report.fields.find(
-      (field) => field.elementId === 'Task_wrong_ar'
-    )
+    const wrong = report.fields.find((field) => field.elementId === 'Task_wrong_ar')
     expect(wrong?.value).toEqual({
       en: 'Approve request',
       ar: 'Approve request',
@@ -347,9 +336,7 @@ describe('moddle-friendly structural extraction', () => {
         .map((issue) => issue.code)
     ).toEqual(['wrong-script', 'duplicate-counterpart'])
 
-    const validArabic = report.fields.find(
-      (field) => field.elementId === 'Task_ar_only'
-    )
+    const validArabic = report.fields.find((field) => field.elementId === 'Task_ar_only')
     expect(validArabic?.value.active).toBe('ar')
     expect(validArabic?.sourceLanguage).toBe('ar')
   })
@@ -411,23 +398,19 @@ describe('real bpmn-moddle acceptance across multiple processes and planes', () 
     expect(keys).toContain('Process_English/Task_English/owner')
     expect(keys).toContain('Process_Arabic/Task_Arabic/name')
     expect(
-      report.fields.find(
-        (field) => field.elementId === 'Task_Arabic' && field.field === 'name'
-      )?.planeIds
+      report.fields.find((field) => field.elementId === 'Task_Arabic' && field.field === 'name')
+        ?.planeIds
     ).toEqual(['Plane_Arabic'])
 
     expect(
-      report.issues.filter(
-        (issue) =>
-          issue.elementId === 'Task_English' && issue.target === 'ar'
-      ).map((issue) => issue.code)
+      report.issues
+        .filter((issue) => issue.elementId === 'Task_English' && issue.target === 'ar')
+        .map((issue) => issue.code)
     ).toEqual(['wrong-script', 'duplicate-counterpart'])
     expect(
       report.issues.find(
         (issue) =>
-          issue.elementId === 'Task_Arabic' &&
-          issue.target === 'en' &&
-          issue.code === 'missing'
+          issue.elementId === 'Task_Arabic' && issue.target === 'en' && issue.code === 'missing'
       )
     ).toBeTruthy()
   })
@@ -461,7 +444,9 @@ describe('real bpmn-moddle acceptance across multiple processes and planes', () 
       'ccListEn',
       'ccListAr',
       'decisionBasisEn',
-      'decisionBasisAr'
+      'decisionBasisAr',
+      'descriptionEn',
+      'descriptionAr'
     ]) {
       expect(ORG_ATTR_NAMES).toContain(attribute)
     }

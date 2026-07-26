@@ -144,6 +144,7 @@ export type LocalizationPatchReason =
   | 'translation-memory'
   | 'neutral'
   | 'provider'
+  | 'review'
   | 'projection'
   | 'partial-fallback'
 
