@@ -594,6 +594,14 @@ export class DocumentSessionController {
           if (afterReviewGuard) {
             return this.#finish(id, incarnation, afterReviewGuard)
           }
+          const afterReviewSession = this.#sessionForOperation(id, incarnation)
+          if (!afterReviewSession || afterReviewSession.revision !== savedRevision) {
+            return this.#finish(id, incarnation, {
+              status: 'stale-capture',
+              ok: false,
+              sessionId: id
+            })
+          }
           if (!sameExternalObservation(afterReview, rechecked)) {
             return this.#finish(id, incarnation, {
               status: 'external-conflict',

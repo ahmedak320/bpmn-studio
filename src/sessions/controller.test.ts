@@ -917,4 +917,42 @@ describe('DocumentSessionController saves', () => {
     })
     expect(applied).not.toHaveBeenCalled()
   })
+
+  it('rechecks the local revision after the post-preparation fingerprint inspection', async () => {
+    const persistence = new FakePersistence()
+    const pendingFinalInspection = deferred<ExternalDocument | null>()
+    let inspections = 0
+    persistence.inspect = vi.fn(async () => {
+      inspections += 1
+      return inspections === 4
+        ? pendingFinalInspection.promise
+        : external('<external/>', 'external')
+    })
+    const controller = new DocumentSessionController({
+      persistence,
+      prepareExternal: async () => ({
+        status: 'completed',
+        xml: '<reviewed-external/>'
+      })
+    })
+    controller.open({ id: 's', identity, title: 'a', xml: '<old/>', base: fp('old') })
+    controller.updateXml('s', '<local/>')
+    const reviewed = await controller.save('s')
+    if (reviewed.status !== 'external-conflict') throw new Error('expected conflict fixture')
+
+    const reload = controller.save('s', {
+      conflictDecision: { kind: 'reload-external' },
+      reviewedConflict: reviewed.conflict
+    })
+    await vi.waitFor(() => expect(inspections).toBe(4))
+    controller.updateXml('s', '<newer-local/>')
+    pendingFinalInspection.resolve(external('<external/>', 'external'))
+
+    expect(await reload).toEqual({ status: 'stale-capture', ok: false, sessionId: 's' })
+    expect(controller.store.get('s')).toMatchObject({
+      currentXml: '<newer-local/>',
+      lastSavedXml: '<old/>',
+      dirty: true
+    })
+  })
 })
