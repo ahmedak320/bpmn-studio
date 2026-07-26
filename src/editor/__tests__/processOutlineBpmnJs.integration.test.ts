@@ -195,21 +195,29 @@ beforeEach(() => {
       }) as DOMPoint
   }
   if (!SVGSVGElement.prototype.createSVGTransform) {
-    SVGSVGElement.prototype.createSVGTransform = () =>
-      ({
+    SVGSVGElement.prototype.createSVGTransform = () => {
+      interface TransformFixture {
+        matrix: TestSvgMatrix
+        setMatrix(matrix: DOMMatrix): void
+        setTranslate(x: number, y: number): void
+        setScale(x: number, y: number): void
+      }
+      const transform: TransformFixture = {
         matrix: new TestSvgMatrix(),
         setMatrix(matrix: DOMMatrix): void {
-          this.matrix = matrix as unknown as TestSvgMatrix
+          transform.matrix = matrix as unknown as TestSvgMatrix
         },
         setTranslate(x: number, y: number): void {
-          this.matrix.e = x
-          this.matrix.f = y
+          transform.matrix.e = x
+          transform.matrix.f = y
         },
         setScale(x: number, y: number): void {
-          this.matrix.a = x
-          this.matrix.d = y
+          transform.matrix.a = x
+          transform.matrix.d = y
         }
-      }) as unknown as SVGTransform
+      }
+      return transform as unknown as SVGTransform
+    }
   }
   if (!SVGSVGElement.prototype.createSVGTransformFromMatrix) {
     SVGSVGElement.prototype.createSVGTransformFromMatrix = (matrix: DOMMatrix) =>

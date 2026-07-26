@@ -377,6 +377,82 @@ describe('ProcessOutlineController bpmn-js synchronization', () => {
     expect(controller.snapshot.nodes[0].metadata.note).toBe('Linked reviewer note')
   })
 
+  it('keeps a cleared active name empty while projecting only a stored opposite-language fallback', () => {
+    const fixture = createOutlineTestModeler()
+    fixture.root.businessObject.$attrs = { 'orbitpm:activeLang': 'en' }
+    const task = fixture.addNode('Task_1', 'bpmn:Task', 'English name')
+    task.businessObject['orbitpm:nameEn'] = 'English name'
+    task.businessObject['orbitpm:nameAr'] = 'الاسم العربي'
+    const controller = createProcessOutlineController(fixture.modeler)
+
+    controller.updateNode('Task_1', {
+      metadata: {
+        ...controller.snapshot.nodes[0].metadata,
+        nameEn: ''
+      }
+    })
+
+    expect(task.businessObject.name).toBe('الاسم العربي')
+    expect(controller.snapshot.nodes[0].metadata.nameEn).toBe('')
+    expect(controller.snapshot.nodes[0].metadata.nameAr).toBe('الاسم العربي')
+
+    fixture.undo()
+    expect(task.businessObject.name).toBe('English name')
+    expect(controller.snapshot.nodes[0].metadata.nameEn).toBe('English name')
+
+    fixture.redo()
+    expect(task.businessObject.name).toBe('الاسم العربي')
+    expect(controller.snapshot.nodes[0].metadata.nameEn).toBe('')
+
+    controller.updateNode('Task_1', {
+      metadata: {
+        ...controller.snapshot.nodes[0].metadata,
+        nameEn: '',
+        nameAr: ''
+      }
+    })
+    expect(task.businessObject.name).toBeUndefined()
+    expect(controller.snapshot.nodes[0]).toMatchObject({
+      name: '',
+      metadata: {
+        nameEn: '',
+        nameAr: ''
+      }
+    })
+  })
+
+  it('preserves a future kind when CC is false while still allowing CC to be toggled off', () => {
+    const fixture = createOutlineTestModeler()
+    const task = fixture.addNode('Task_1', 'bpmn:Task', 'Review')
+    task.businessObject['orbitpm:kind'] = 'future-review-kind'
+    const controller = createProcessOutlineController(fixture.modeler)
+
+    controller.updateNode('Task_1', {
+      metadata: {
+        ...controller.snapshot.nodes[0].metadata,
+        owner: 'Operations',
+        cc: false
+      }
+    })
+    expect(task.businessObject['orbitpm:kind']).toBe('future-review-kind')
+
+    controller.updateNode('Task_1', {
+      metadata: {
+        ...controller.snapshot.nodes[0].metadata,
+        cc: true
+      }
+    })
+    expect(task.businessObject['orbitpm:kind']).toBe('cc')
+
+    controller.updateNode('Task_1', {
+      metadata: {
+        ...controller.snapshot.nodes[0].metadata,
+        cc: false
+      }
+    })
+    expect(task.businessObject['orbitpm:kind']).toBeUndefined()
+  })
+
   it('patches a rich FormalExpression in place and preserves it through undo/redo', () => {
     const fixture = createOutlineTestModeler()
     fixture.addNode('Gateway_1', 'bpmn:ExclusiveGateway', 'Decision')

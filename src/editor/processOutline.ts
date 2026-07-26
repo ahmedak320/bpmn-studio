@@ -7,10 +7,10 @@
  */
 
 import {
-  activeProcessOutlineNodeName,
   applyProcessOutlineNodeMetadata,
   emptyProcessOutlineNodeMetadata,
   getProcessOutlineActiveLanguage,
+  projectedProcessOutlineNodeName,
   readProcessOutlineNodeMetadata,
   type ProcessOutlineNodeMetadata
 } from './processOutlineMetadata'
@@ -1121,7 +1121,8 @@ export class ProcessOutlineController {
       if (activeLanguage === 'ar') metadata.nameAr = text(input.name)
       else metadata.nameEn = text(input.name)
     }
-    const projectedName = activeProcessOutlineNodeName(metadata, activeLanguage) || text(input.name)
+    const projectedName =
+      projectedProcessOutlineNodeName(metadata, activeLanguage) || text(input.name)
     let connectionRejected = false
     const created = this.transact(() => {
       const shape = this.modeling.createShape(draft, position, parent)
@@ -1142,7 +1143,7 @@ export class ProcessOutlineController {
         if (input.metadata || text(input.name)) {
           applyProcessOutlineNodeMetadata(this.modeler, shape, metadata)
         }
-        if (projectedName) updateNodeVisibleName(this.modeling, shape, projectedName)
+        updateNodeVisibleName(this.modeling, shape, projectedName)
       }
       return shape
     })
@@ -1175,10 +1176,7 @@ export class ProcessOutlineController {
       if (activeLanguage === 'ar') desiredMetadata.nameAr = input.name
       else desiredMetadata.nameEn = input.name
     }
-    const existingName = text(readProperty(node.businessObject, 'name'))
-    const activeMetadataName = activeProcessOutlineNodeName(desiredMetadata, activeLanguage)
-    const projectedName =
-      activeMetadataName || (input.name !== undefined ? text(input.name) : existingName)
+    const projectedName = projectedProcessOutlineNodeName(desiredMetadata, activeLanguage)
 
     this.transact(() => {
       if (input.metadata || input.name !== undefined) {

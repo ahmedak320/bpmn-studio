@@ -172,6 +172,25 @@ function visibleName(element: ProcessOutlineMetadataElement): string {
   return typeof value === 'string' ? value : ''
 }
 
+function hasArabicScript(value: string): boolean {
+  return /[\u0600-\u06ff\u0750-\u077f\u08a0-\u08ff\ufb50-\ufdff\ufe70-\ufeff]/.test(value)
+}
+
+function canSeedActiveName(
+  visible: string,
+  oppositeStoredName: string,
+  activeLanguage: DiagramLang
+): boolean {
+  const normalizedVisible = visible.trim()
+  if (!normalizedVisible) return false
+  if (oppositeStoredName.trim() && normalizedVisible === oppositeStoredName.trim()) {
+    return false
+  }
+  return activeLanguage === 'ar'
+    ? hasArabicScript(normalizedVisible)
+    : !hasArabicScript(normalizedVisible)
+}
+
 /**
  * Project one node's complete Step Details field set without mutating the
  * diagram. The active language alone may be seeded from a legacy visible
@@ -204,9 +223,15 @@ export function readProcessOutlineNodeMetadata(
     decisionBasis: org.decisionBasis ?? ''
   }
   const currentName = visibleName(element)
-  if (currentName.trim()) {
-    if (activeLanguage === 'en' && !metadata.nameEn.trim()) metadata.nameEn = currentName
-    if (activeLanguage === 'ar' && !metadata.nameAr.trim()) metadata.nameAr = currentName
+  if (activeLanguage === 'en' && !metadata.nameEn.trim()) {
+    if (canSeedActiveName(currentName, metadata.nameAr, activeLanguage)) {
+      metadata.nameEn = currentName
+    }
+  }
+  if (activeLanguage === 'ar' && !metadata.nameAr.trim()) {
+    if (canSeedActiveName(currentName, metadata.nameEn, activeLanguage)) {
+      metadata.nameAr = currentName
+    }
   }
   return metadata
 }
@@ -241,7 +266,7 @@ export function applyProcessOutlineNodeMetadata(
     ownerRole: metadata.ownerRole,
     channel: metadata.channel,
     channelDetail: metadata.channelDetail,
-    kind: metadata.cc ? 'cc' : undefined,
+    kind: metadata.cc ? 'cc' : current.kind === 'cc' ? undefined : current.kind,
     ccTo: metadata.ccTo,
     ...serializeTriggers(metadata.triggers),
     nameEn: metadata.nameEn,
@@ -264,4 +289,18 @@ export function activeProcessOutlineNodeName(
   activeLanguage: DiagramLang
 ): string {
   return activeLanguage === 'ar' ? metadata.nameAr.trim() : metadata.nameEn.trim()
+}
+
+/**
+ * Visible-label projection for outline edits. A missing active translation
+ * may display the stored opposite translation, but the active field remains
+ * empty so the fallback cannot masquerade as a completed translation.
+ */
+export function projectedProcessOutlineNodeName(
+  metadata: Pick<ProcessOutlineNodeMetadata, 'nameEn' | 'nameAr'>,
+  activeLanguage: DiagramLang
+): string {
+  const activeName = activeProcessOutlineNodeName(metadata, activeLanguage)
+  if (activeName) return activeName
+  return activeLanguage === 'ar' ? metadata.nameEn.trim() : metadata.nameAr.trim()
 }
