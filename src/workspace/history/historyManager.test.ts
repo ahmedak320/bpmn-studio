@@ -97,6 +97,32 @@ describe('portable workspace history', () => {
     })
   })
 
+  it('uses an explicit creation-only CAS when restoring a deleted original', async () => {
+    const adapter = new MemoryWorkspaceAdapter({
+      files: { 'process.bpmn': '<historical />' }
+    })
+    const history = new PortableHistoryManager({ adapter, now: tickingClock() })
+    const revision = await history.createRevision('process.bpmn', { reason: 'manual' })
+
+    await adapter.remove('process.bpmn')
+    const restored = await history.restore(revision, null)
+    expect(restored.outcome).toMatchObject({ status: 'success', created: true })
+    expect(restored.revision).toBeUndefined()
+    expect(decode((await adapter.read('process.bpmn')).bytes)).toBe('<historical />')
+
+    await adapter.remove('process.bpmn')
+    await expect(adapter.read('process.bpmn')).rejects.toMatchObject({ code: 'not-found' })
+    adapter.replaceExternally('process.bpmn', '<concurrently recreated />')
+
+    const collision = await history.restore(revision, null)
+    expect(collision.outcome).toMatchObject({
+      status: 'external-conflict',
+      reason: 'already-exists'
+    })
+    expect(collision.revision).toBeUndefined()
+    expect(decode((await adapter.read('process.bpmn')).bytes)).toBe('<concurrently recreated />')
+  })
+
   it('keeps only the newest configured revisions per process', async () => {
     const adapter = new MemoryWorkspaceAdapter({
       files: { 'process.bpmn': 'v0' }

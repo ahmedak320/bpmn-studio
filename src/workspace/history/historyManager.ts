@@ -295,13 +295,24 @@ export class PortableHistoryManager {
 
   async restore(
     revision: HistoryRevision,
-    expectedCurrentHash?: string
+    expectedCurrentHash: string | null
   ): Promise<HistoryWriteResult> {
     const preview = await this.preview(revision)
+    if (expectedCurrentHash === null) {
+      return {
+        outcome: await this.#adapter.writeAtomic(revision.originalPath, preview.bytes, undefined, {
+          expectedWorkspaceId: this.#adapter.id,
+          expectedMissing: true
+        })
+      }
+    }
+    if (!/^[0-9a-f]{64}$/iu.test(expectedCurrentHash)) {
+      throw new TypeError('expectedCurrentHash must be a SHA-256 digest or null.')
+    }
     return this.writeWithRevision(
       revision.originalPath,
       preview.bytes,
-      expectedCurrentHash,
+      expectedCurrentHash.toLowerCase(),
       'restore'
     )
   }

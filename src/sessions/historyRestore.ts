@@ -17,9 +17,11 @@ export interface RestoreHistoryRevisionOptions {
   workspace: WorkspaceIdentity
   /**
    * Mandatory compare-and-set boundary captured immediately before the user
-   * confirms restore. A history restore is never an implicit overwrite.
+   * confirms restore. `null` explicitly means the original path was observed
+   * missing; restoring then uses a creation-only write. A history restore is
+   * never an implicit overwrite.
    */
-  expectedCurrentHash: string
+  expectedCurrentHash: string | null
   /**
    * Optional editor integration. When omitted, a modeler exposing importXML is
    * used. Sessions without a live modeler need no importer.
@@ -120,15 +122,18 @@ function previousRevision(result: HistoryWriteResult): HistoryRevision | undefin
 export async function restoreHistoryRevision(
   options: RestoreHistoryRevisionOptions
 ): Promise<RestoreHistoryRevisionResult> {
-  if (!/^[0-9a-f]{64}$/iu.test(options.expectedCurrentHash)) {
-    throw new TypeError('expectedCurrentHash must be a SHA-256 digest.')
+  if (
+    options.expectedCurrentHash !== null &&
+    !/^[0-9a-f]{64}$/iu.test(options.expectedCurrentHash)
+  ) {
+    throw new TypeError('expectedCurrentHash must be a SHA-256 digest or null.')
   }
   const capturedSession = sessionForRevision(options.store, options.workspace, options.revision)
   let result: HistoryWriteResult
   try {
     result = await options.manager.restore(
       options.revision,
-      options.expectedCurrentHash.toLowerCase()
+      options.expectedCurrentHash === null ? null : options.expectedCurrentHash.toLowerCase()
     )
   } catch (error) {
     return {

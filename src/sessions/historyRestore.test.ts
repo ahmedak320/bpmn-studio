@@ -210,6 +210,69 @@ describe('history restore session hook', () => {
     expect(decode((await adapter.read('process.bpmn')).bytes)).toBe('<old />')
   })
 
+  it('recreates an observed-missing original and synchronizes its existing session', async () => {
+    const { adapter, history, revision, current } = await historyFixture()
+    const store = new DocumentSessionStore()
+    const importXML = vi.fn(async () => undefined)
+    const opened = store.open({
+      id: 'session',
+      identity: { workspace, path: 'process.bpmn' },
+      title: 'process.bpmn',
+      xml: '<current />',
+      base: current,
+      editor: { modeler: { importXML } }
+    })
+    await adapter.remove('process.bpmn')
+
+    const result = await restoreHistoryRevision({
+      manager: history,
+      store,
+      revision,
+      workspace,
+      expectedCurrentHash: null
+    })
+
+    expect(result).toMatchObject({
+      status: 'restored',
+      sessionId: opened.id,
+      previousRevision: undefined,
+      outcome: { status: 'success', created: true }
+    })
+    expect(importXML).toHaveBeenCalledWith('<old />')
+    expect(store.get(opened.id)).toMatchObject({
+      currentXml: '<old />',
+      lastSavedXml: '<old />',
+      dirty: false
+    })
+    expect(decode((await adapter.read('process.bpmn')).bytes)).toBe('<old />')
+  })
+
+  it('preserves bytes recreated after an observed-missing restore preflight', async () => {
+    const { adapter, history, revision } = await historyFixture()
+    await adapter.remove('process.bpmn')
+    await expect(adapter.read('process.bpmn')).rejects.toMatchObject({ code: 'not-found' })
+    adapter.replaceExternally('process.bpmn', '<recreated />')
+
+    const result = await restoreHistoryRevision({
+      manager: history,
+      store: new DocumentSessionStore(),
+      revision,
+      workspace,
+      expectedCurrentHash: null
+    })
+
+    expect(result).toMatchObject({
+      status: 'not-restored',
+      sessionId: null,
+      previousRevision: undefined,
+      outcome: {
+        status: 'external-conflict',
+        reason: 'already-exists'
+      }
+    })
+    expect(decode((await adapter.read('process.bpmn')).bytes)).toBe('<recreated />')
+  })
+
   it('requires an explicit SHA-256 CAS value before touching storage', async () => {
     const { adapter, history, revision } = await historyFixture()
     const before = await adapter.read('process.bpmn')
