@@ -1,6 +1,7 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { strToU8, zipSync } from 'fflate'
 
+import { readLibraryZipFileInWorker, type LibraryZipWorkerFactory } from '../browserZipImport'
 import { buildLibraryZip, zipFileName } from '../zipExport'
 import {
   LIBRARY_ZIP_LIMITS,
@@ -8,15 +9,14 @@ import {
   readLibraryZip,
   readLibraryZipAsync
 } from '../zipImport'
+import { handleLibraryZipWorkerRequest } from '../zipImport.worker'
+import type { LibraryZipWorkerResponse } from '../zipImportWorkerProtocol'
 import {
   LIBRARY_MANIFEST_NAME,
   serializeLibraryManifest,
   type LibraryManifest
 } from '../libraryManifest'
-import {
-  ArchivePreflightError,
-  type ArchiveErrorCode
-} from '../../security/archivePreflight'
+import { ArchivePreflightError, type ArchiveErrorCode } from '../../security/archivePreflight'
 
 const SAMPLE_BPMN = (name: string) =>
   `<?xml version="1.0" encoding="UTF-8"?><definitions id="${name}"><process id="p_${name}" /></definitions>`
@@ -29,6 +29,39 @@ const SAMPLE_BPMN = (name: string) =>
 // without looking at content.
 const SAMPLE_BPMN_XML = (name: string) =>
   `<?xml version="1.0" encoding="UTF-8"?><bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" id="${name}"><bpmn:process id="p_${name}" /></bpmn:definitions>`
+
+class FakeLibraryZipWorker {
+  readonly posted: unknown[] = []
+  terminated = false
+  private readonly messages = new Set<(event: MessageEvent<LibraryZipWorkerResponse>) => void>()
+  private readonly errors = new Set<(event: ErrorEvent) => void>()
+
+  postMessage(message: unknown): void {
+    this.posted.push(message)
+  }
+  terminate(): void {
+    this.terminated = true
+  }
+  addEventListener(type: 'message' | 'error', listener: never): void {
+    if (type === 'message') this.messages.add(listener)
+    else this.errors.add(listener)
+  }
+  removeEventListener(type: 'message' | 'error', listener: never): void {
+    if (type === 'message') this.messages.delete(listener)
+    else this.errors.delete(listener)
+  }
+  respond(response: LibraryZipWorkerResponse): void {
+    for (const listener of this.messages) {
+      listener({ data: response } as MessageEvent<LibraryZipWorkerResponse>)
+    }
+  }
+}
+
+function transferableBuffer(bytes: Uint8Array): ArrayBuffer {
+  const copy = new Uint8Array(bytes.byteLength)
+  copy.set(bytes)
+  return copy.buffer
+}
 
 function readU16(bytes: Uint8Array, offset: number): number {
   return bytes[offset] | (bytes[offset + 1] << 8)
@@ -72,9 +105,7 @@ function patchDeclaredSize(
     const nameLength = readU16(bytes, central + 28)
     const extraLength = readU16(bytes, central + 30)
     const commentLength = readU16(bytes, central + 32)
-    const actualName = decoder.decode(
-      bytes.subarray(central + 46, central + 46 + nameLength)
-    )
+    const actualName = decoder.decode(bytes.subarray(central + 46, central + 46 + nameLength))
     if (actualName === entryName) {
       writeU32(bytes, central + 24, declaredSize)
       return bytes
@@ -100,7 +131,7 @@ describe('buildLibraryZip / readLibraryZip round-trip', () => {
       { relPath: 'top.bpmn', xml: SAMPLE_BPMN('top') },
       { relPath: 'nested/child.bpmn', xml: SAMPLE_BPMN('child') },
       { relPath: 'nested/deep/grandchild.bpmn', xml: SAMPLE_BPMN('grandchild') },
-      { relPath: 'عربي/عملية.bpmn', xml: SAMPLE_BPMN('arabic') },
+      { relPath: 'عربي/عملية.bpmn', xml: SAMPLE_BPMN('arabic') }
     ]
 
     const zip = buildLibraryZip(files)
@@ -118,11 +149,11 @@ describe('buildLibraryZip / readLibraryZip round-trip', () => {
   it('produces deterministic entry order regardless of input order', () => {
     const filesA = [
       { relPath: 'b.bpmn', xml: SAMPLE_BPMN('b') },
-      { relPath: 'a.bpmn', xml: SAMPLE_BPMN('a') },
+      { relPath: 'a.bpmn', xml: SAMPLE_BPMN('a') }
     ]
     const filesB = [
       { relPath: 'a.bpmn', xml: SAMPLE_BPMN('a') },
-      { relPath: 'b.bpmn', xml: SAMPLE_BPMN('b') },
+      { relPath: 'b.bpmn', xml: SAMPLE_BPMN('b') }
     ]
 
     const zipA = buildLibraryZip(filesA)
@@ -148,7 +179,7 @@ describe('buildLibraryZip / readLibraryZip round-trip', () => {
     const files = [
       { relPath: '../x.bpmn', xml: SAMPLE_BPMN('escape') },
       { relPath: '/abs.bpmn', xml: SAMPLE_BPMN('abs') },
-      { relPath: 'C:\\evil.bpmn', xml: SAMPLE_BPMN('winabs') },
+      { relPath: 'C:\\evil.bpmn', xml: SAMPLE_BPMN('winabs') }
     ]
 
     const zip = buildLibraryZip(files)
@@ -158,7 +189,7 @@ describe('buildLibraryZip / readLibraryZip round-trip', () => {
   it('rejects a huge declared entry before expansion without allocating it', () => {
     const files = [
       { relPath: 'huge.bpmn', xml: SAMPLE_BPMN('huge') },
-      { relPath: 'small.bpmn', xml: SAMPLE_BPMN('small') },
+      { relPath: 'small.bpmn', xml: SAMPLE_BPMN('small') }
     ]
 
     const zip = patchDeclaredSize(
@@ -195,9 +226,94 @@ describe('buildLibraryZip / readLibraryZip round-trip', () => {
 
     const controller = new AbortController()
     controller.abort()
+    await expect(readLibraryZipAsync(zip, { signal: controller.signal })).rejects.toMatchObject({
+      code: 'aborted'
+    })
+  })
+})
+
+describe('browser library ZIP worker boundary', () => {
+  it('runs preflight, extraction, CRC, decoding, and result assembly in the worker handler', () => {
+    const zip = buildLibraryZip([
+      { relPath: 'a.bpmn', xml: SAMPLE_BPMN('a') },
+      { relPath: 'nested/b.bpmn', xml: SAMPLE_BPMN('b') }
+    ])
+    const responses: LibraryZipWorkerResponse[] = []
+    handleLibraryZipWorkerRequest(
+      {
+        type: 'parse',
+        requestId: 'library-worker',
+        bytes: transferableBuffer(zip)
+      },
+      (response) => responses.push(response)
+    )
+    expect(responses).toEqual([
+      {
+        type: 'result',
+        requestId: 'library-worker',
+        result: readLibraryZip(zip)
+      }
+    ])
+  })
+
+  it('transfers bounded bytes and returns the structured worker result', async () => {
+    const worker = new FakeLibraryZipWorker()
+    const zip = buildLibraryZip([{ relPath: 'a.bpmn', xml: SAMPLE_BPMN('a') }])
+    const expected = readLibraryZip(zip)
+    const parse = readLibraryZipFileInWorker(
+      {
+        size: zip.byteLength,
+        arrayBuffer: async () => transferableBuffer(zip)
+      },
+      { workerFactory: (() => worker) as LibraryZipWorkerFactory }
+    )
+    await vi.waitFor(() => expect(worker.posted).toHaveLength(1))
+    const request = worker.posted[0] as { requestId: string }
+    worker.respond({
+      type: 'result',
+      requestId: request.requestId,
+      result: expected
+    })
+
+    await expect(parse).resolves.toEqual(expected)
+    expect(worker.terminated).toBe(true)
+  })
+
+  it('rejects oversized File metadata before reading or creating a worker', async () => {
+    const arrayBuffer = vi.fn(async () => new ArrayBuffer(0))
+    const workerFactory = vi.fn()
     await expect(
-      readLibraryZipAsync(zip, { signal: controller.signal })
-    ).rejects.toMatchObject({ code: 'aborted' })
+      readLibraryZipFileInWorker(
+        {
+          size: LIBRARY_ZIP_LIMITS.maxCompressedBytes + 1,
+          arrayBuffer
+        },
+        { workerFactory }
+      )
+    ).rejects.toMatchObject({ code: 'compressed-size-limit' })
+    expect(arrayBuffer).not.toHaveBeenCalled()
+    expect(workerFactory).not.toHaveBeenCalled()
+  })
+
+  it('terminates the import worker when the caller aborts', async () => {
+    const worker = new FakeLibraryZipWorker()
+    const controller = new AbortController()
+    const zip = buildLibraryZip([{ relPath: 'a.bpmn', xml: SAMPLE_BPMN('a') }])
+    const parse = readLibraryZipFileInWorker(
+      {
+        size: zip.byteLength,
+        arrayBuffer: async () => transferableBuffer(zip)
+      },
+      {
+        signal: controller.signal,
+        workerFactory: (() => worker) as LibraryZipWorkerFactory
+      }
+    )
+    await vi.waitFor(() => expect(worker.posted).toHaveLength(1))
+    controller.abort()
+
+    await expect(parse).rejects.toMatchObject({ code: 'aborted' })
+    expect(worker.terminated).toBe(true)
   })
 })
 
@@ -221,11 +337,11 @@ describe('readLibraryZip — root-level library extras (manifest + owners CSV)',
   it('recognizes both extras — parsed manifest + verbatim CSV, neither skipped', () => {
     const files = [
       { relPath: 'a.bpmn', xml: SAMPLE_BPMN('a') },
-      { relPath: 'nested/b.bpmn', xml: SAMPLE_BPMN('b') },
+      { relPath: 'nested/b.bpmn', xml: SAMPLE_BPMN('b') }
     ]
     const extras = [
       { relPath: LIBRARY_MANIFEST_NAME, content: serializeLibraryManifest(MANIFEST) },
-      { relPath: PROCESS_OWNERS_CSV_NAME, content: OWNERS_CSV },
+      { relPath: PROCESS_OWNERS_CSV_NAME, content: OWNERS_CSV }
     ]
 
     const result = readLibraryZip(buildLibraryZip(files, extras))
@@ -261,7 +377,7 @@ describe('readLibraryZip — root-level library extras (manifest + owners CSV)',
   it('only recognizes the extras at the zip ROOT — nested copies stay skipped', () => {
     const extras = [
       { relPath: `sub/${LIBRARY_MANIFEST_NAME}`, content: serializeLibraryManifest(MANIFEST) },
-      { relPath: `sub/${PROCESS_OWNERS_CSV_NAME}`, content: OWNERS_CSV },
+      { relPath: `sub/${PROCESS_OWNERS_CSV_NAME}`, content: OWNERS_CSV }
     ]
     const result = readLibraryZip(buildLibraryZip([], extras))
 
@@ -269,18 +385,18 @@ describe('readLibraryZip — root-level library extras (manifest + owners CSV)',
     expect(result.ownersCsv).toBeUndefined()
     expect(result.skipped).toEqual([
       { path: `sub/${LIBRARY_MANIFEST_NAME}`, reason: 'not-bpmn' },
-      { path: `sub/${PROCESS_OWNERS_CSV_NAME}`, reason: 'not-bpmn' },
+      { path: `sub/${PROCESS_OWNERS_CSV_NAME}`, reason: 'not-bpmn' }
     ])
   })
 
   it('keeps zip bytes deterministic with extras regardless of input order', () => {
     const files = [
       { relPath: 'b.bpmn', xml: SAMPLE_BPMN('b') },
-      { relPath: 'a.bpmn', xml: SAMPLE_BPMN('a') },
+      { relPath: 'a.bpmn', xml: SAMPLE_BPMN('a') }
     ]
     const extras = [
       { relPath: PROCESS_OWNERS_CSV_NAME, content: OWNERS_CSV },
-      { relPath: LIBRARY_MANIFEST_NAME, content: serializeLibraryManifest(MANIFEST) },
+      { relPath: LIBRARY_MANIFEST_NAME, content: serializeLibraryManifest(MANIFEST) }
     ]
     const zipA = buildLibraryZip(files, extras)
     const zipB = buildLibraryZip([...files].reverse(), [...extras].reverse())
@@ -298,7 +414,9 @@ describe('readLibraryZip — root-level library extras (manifest + owners CSV)',
 
   it('still lists any OTHER non-bpmn extra as skipped (foreign zips unaffected)', () => {
     const extras = [{ relPath: 'README.txt', content: 'hello' }]
-    const result = readLibraryZip(buildLibraryZip([{ relPath: 'a.bpmn', xml: SAMPLE_BPMN('a') }], extras))
+    const result = readLibraryZip(
+      buildLibraryZip([{ relPath: 'a.bpmn', xml: SAMPLE_BPMN('a') }], extras)
+    )
 
     expect(result.entries).toHaveLength(1)
     expect(result.skipped).toEqual([{ path: 'README.txt', reason: 'not-bpmn' }])
@@ -396,12 +514,16 @@ describe('readLibraryZip — bare .xml entries (BPMN 2.0 exported without a .bpm
 describe('zipFileName', () => {
   it('slugifies the root name and formats the date deterministically', () => {
     const date = new Date(2026, 6, 23) // 2026-07-23 (local, month is 0-indexed)
-    expect(zipFileName('My Process Library', date)).toBe('process-library-My-Process-Library-2026-07-23.zip')
+    expect(zipFileName('My Process Library', date)).toBe(
+      'process-library-My-Process-Library-2026-07-23.zip'
+    )
   })
 
   it('strips characters outside letters/numbers/._- after replacing spaces', () => {
     const date = new Date(2024, 0, 5)
-    expect(zipFileName('  Root: Name! (v2)  ', date)).toBe('process-library-Root-Name-v2-2024-01-05.zip')
+    expect(zipFileName('  Root: Name! (v2)  ', date)).toBe(
+      'process-library-Root-Name-v2-2024-01-05.zip'
+    )
   })
 
   it('falls back to "workspace" for an empty/whitespace-only name', () => {

@@ -28,7 +28,11 @@ import {
   type ZipPreflightResult,
   type ZipSafetyLimits
 } from '../security/archivePreflight'
-import { LIBRARY_MANIFEST_NAME, parseLibraryManifest, type LibraryManifest } from './libraryManifest'
+import {
+  LIBRARY_MANIFEST_NAME,
+  parseLibraryManifest,
+  type LibraryManifest
+} from './libraryManifest'
 
 /** Root-level owners-list extra written by the library export (see App's
  *  exportLibrary): recognized on import, surfaced verbatim, never applied. */
@@ -63,6 +67,24 @@ export const LIBRARY_ZIP_LIMITS: ZipSafetyLimits = {
   maxEntryUncompressedBytes: 5 * 1024 * 1024,
   maxTotalUncompressedBytes: 50 * 1024 * 1024,
   maxCompressionRatio: 250
+}
+
+/**
+ * Reject an oversized browser File before allocating its contents. Archive
+ * preflight repeats the same limit against the transferred bytes.
+ */
+export function assertLibraryZipCompressedSize(byteLength: number): void {
+  if (
+    !Number.isSafeInteger(byteLength) ||
+    byteLength < 0 ||
+    byteLength > LIBRARY_ZIP_LIMITS.maxCompressedBytes
+  ) {
+    throw new ArchivePreflightError(
+      'compressed-size-limit',
+      `Library ZIP compressed input size ${byteLength} exceeds ` +
+        `${LIBRARY_ZIP_LIMITS.maxCompressedBytes}`
+    )
+  }
 }
 
 export interface ReadLibraryZipOptions {
@@ -124,8 +146,7 @@ function buildLibraryImportResult(
     // Our own export's extras, by EXACT root-level name only — a nested
     // `sub/library-manifest.json` is somebody's diagram folder content and
     // falls through to the ordinary skip reporting below.
-    const rootExtra =
-      normalized === LIBRARY_MANIFEST_NAME || normalized === PROCESS_OWNERS_CSV_NAME
+    const rootExtra = normalized === LIBRARY_MANIFEST_NAME || normalized === PROCESS_OWNERS_CSV_NAME
 
     if (!bpmnPath && !xmlPath && !rootExtra) {
       skipped.push({ path: normalized, reason: 'not-bpmn' })
@@ -192,6 +213,7 @@ export function readLibraryZip(
   data: Uint8Array,
   options: ReadLibraryZipOptions = {}
 ): LibraryImportResult {
+  assertLibraryZipCompressedSize(data.byteLength)
   const preflight = preflightZip(data, LIBRARY_ZIP_LIMITS, options.signal)
   const unzipped = extractPreflightedZipSync(data, preflight, {
     signal: options.signal,
@@ -208,6 +230,7 @@ export async function readLibraryZipAsync(
   data: Uint8Array,
   options: ReadLibraryZipOptions = {}
 ): Promise<LibraryImportResult> {
+  assertLibraryZipCompressedSize(data.byteLength)
   const preflight = await preflightZipAsync(data, LIBRARY_ZIP_LIMITS, options.signal)
   const unzipped = await extractPreflightedZip(data, preflight, {
     signal: options.signal,

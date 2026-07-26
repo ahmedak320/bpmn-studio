@@ -1,5 +1,6 @@
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, vi } from 'vitest'
 import { strToU8, zipSync } from 'fflate'
+import { parseDocxFileInWorker, type DocxWorkerFactory } from '../browserDocxParser'
 import {
   DOCX_ARCHIVE_LIMITS,
   DocxParseError,
@@ -7,6 +8,8 @@ import {
   extractDocxText,
   extractDocxTextAsync
 } from '../docx'
+import { handleDocxWorkerRequest } from '../docx.worker'
+import type { DocxWorkerResponse } from '../docxWorkerProtocol'
 
 // --- synthetic .docx builders ----------------------------------------------
 // vitest runs in a plain node environment, so the fixtures are built HERE with
@@ -78,9 +81,7 @@ function findCentralEntry(bytes: Uint8Array, entryName: string): number {
     const nameLength = readU16(bytes, central + 28)
     const extraLength = readU16(bytes, central + 30)
     const commentLength = readU16(bytes, central + 32)
-    const actualName = decoder.decode(
-      bytes.subarray(central + 46, central + 46 + nameLength)
-    )
+    const actualName = decoder.decode(bytes.subarray(central + 46, central + 46 + nameLength))
     if (actualName === entryName) return central
     central += 46 + nameLength + extraLength + commentLength
   }
@@ -98,13 +99,44 @@ function mutateEntry(
   return bytes
 }
 
+class FakeDocxWorker {
+  readonly posted: unknown[] = []
+  terminated = false
+  private readonly messages = new Set<(event: MessageEvent<DocxWorkerResponse>) => void>()
+  private readonly errors = new Set<(event: ErrorEvent) => void>()
+
+  postMessage(message: unknown): void {
+    this.posted.push(message)
+  }
+  terminate(): void {
+    this.terminated = true
+  }
+  addEventListener(type: 'message' | 'error', listener: never): void {
+    if (type === 'message') this.messages.add(listener)
+    else this.errors.add(listener)
+  }
+  removeEventListener(type: 'message' | 'error', listener: never): void {
+    if (type === 'message') this.messages.delete(listener)
+    else this.errors.delete(listener)
+  }
+  respond(response: DocxWorkerResponse): void {
+    for (const listener of this.messages) {
+      listener({ data: response } as MessageEvent<DocxWorkerResponse>)
+    }
+  }
+}
+
+function transferableBuffer(bytes: Uint8Array): ArrayBuffer {
+  const copy = new Uint8Array(bytes.byteLength)
+  copy.set(bytes)
+  return copy.buffer
+}
+
 // --- happy-path structure ---------------------------------------------------
 
 describe('extractDocxText — structure', () => {
   it('joins runs within a paragraph and separates paragraphs with newlines', () => {
-    const bytes = docxOf(
-      p(r('Hello ') + r('world')) + p(r('Second paragraph'))
-    )
+    const bytes = docxOf(p(r('Hello ') + r('world')) + p(r('Second paragraph')))
     expect(extractDocxText(bytes)).toBe('Hello world\nSecond paragraph')
   })
 
@@ -210,7 +242,10 @@ describe('extractDocxText — caps and failure modes', () => {
   })
 
   it('throws DocxParseError(code "no-document-xml") for a zip without word/document.xml', () => {
-    const zipButNotDocx = zipSync({ 'hello.txt': strToU8('hi'), 'word/styles.xml': strToU8('<a/>') })
+    const zipButNotDocx = zipSync({
+      'hello.txt': strToU8('hi'),
+      'word/styles.xml': strToU8('<a/>')
+    })
     try {
       extractDocxText(zipButNotDocx)
       expect.unreachable('should have thrown')
@@ -228,9 +263,9 @@ describe('extractDocxText — archive preflight security', () => {
 
     const controller = new AbortController()
     controller.abort()
-    await expect(
-      extractDocxTextAsync(bytes, { signal: controller.signal })
-    ).rejects.toMatchObject({ code: 'aborted' })
+    await expect(extractDocxTextAsync(bytes, { signal: controller.signal })).rejects.toMatchObject({
+      code: 'aborted'
+    })
   })
 
   it('rejects encrypted document.xml before expansion', () => {
@@ -265,17 +300,9 @@ describe('extractDocxText — archive preflight security', () => {
   })
 
   it('rejects a fake huge declared document without allocating huge content', () => {
-    const bytes = mutateEntry(
-      docxOf(p(r('small')), 0),
-      'word/document.xml',
-      (archive, central) => {
-        writeU32(
-          archive,
-          central + 24,
-          DOCX_ARCHIVE_LIMITS.maxEntryUncompressedBytes + 1
-        )
-      }
-    )
+    const bytes = mutateEntry(docxOf(p(r('small')), 0), 'word/document.xml', (archive, central) => {
+      writeU32(archive, central + 24, DOCX_ARCHIVE_LIMITS.maxEntryUncompressedBytes + 1)
+    })
     expect(bytes.length).toBeLessThan(1024)
     try {
       extractDocxText(bytes)
@@ -336,5 +363,85 @@ describe('extractDocxText — archive preflight security', () => {
       expect(error).toBeInstanceOf(DocxParseError)
       expect((error as DocxParseError).code).toBe('malformed-archive')
     }
+  })
+})
+
+describe('browser DOCX worker boundary', () => {
+  it('runs full DOCX extraction inside the worker handler', () => {
+    const responses: DocxWorkerResponse[] = []
+    handleDocxWorkerRequest(
+      {
+        type: 'parse',
+        requestId: 'docx-worker',
+        bytes: transferableBuffer(docxOf(p(r('Worker document'))))
+      },
+      (response) => responses.push(response)
+    )
+    expect(responses).toEqual([
+      {
+        type: 'result',
+        requestId: 'docx-worker',
+        text: 'Worker document'
+      }
+    ])
+  })
+
+  it('transfers bounded bytes and returns the worker result', async () => {
+    const worker = new FakeDocxWorker()
+    const bytes = docxOf(p(r('Transferred document')))
+    const parse = parseDocxFileInWorker(
+      {
+        size: bytes.byteLength,
+        arrayBuffer: async () => transferableBuffer(bytes)
+      },
+      { workerFactory: (() => worker) as DocxWorkerFactory }
+    )
+    await vi.waitFor(() => expect(worker.posted).toHaveLength(1))
+    const request = worker.posted[0] as { requestId: string }
+    worker.respond({
+      type: 'result',
+      requestId: request.requestId,
+      text: 'Transferred document'
+    })
+
+    await expect(parse).resolves.toBe('Transferred document')
+    expect(worker.terminated).toBe(true)
+  })
+
+  it('rejects oversized File metadata before reading or creating a worker', async () => {
+    const arrayBuffer = vi.fn(async () => new ArrayBuffer(0))
+    const workerFactory = vi.fn()
+    await expect(
+      parseDocxFileInWorker(
+        {
+          size: DOCX_ARCHIVE_LIMITS.maxCompressedBytes + 1,
+          arrayBuffer
+        },
+        { workerFactory }
+      )
+    ).rejects.toMatchObject({ code: 'archive-too-large' })
+    expect(arrayBuffer).not.toHaveBeenCalled()
+    expect(workerFactory).not.toHaveBeenCalled()
+  })
+
+  it('terminates the parser worker when the caller aborts', async () => {
+    const worker = new FakeDocxWorker()
+    const controller = new AbortController()
+    const bytes = docxOf(p(r('Cancelled document')))
+    const parse = parseDocxFileInWorker(
+      {
+        size: bytes.byteLength,
+        arrayBuffer: async () => transferableBuffer(bytes)
+      },
+      {
+        signal: controller.signal,
+        workerFactory: (() => worker) as DocxWorkerFactory
+      }
+    )
+    await vi.waitFor(() => expect(worker.posted).toHaveLength(1))
+    controller.abort()
+
+    await expect(parse).rejects.toMatchObject({ code: 'aborted' })
+    expect(worker.terminated).toBe(true)
   })
 })
