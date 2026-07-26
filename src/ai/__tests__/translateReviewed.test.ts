@@ -177,6 +177,34 @@ describe('reviewed translation execution', () => {
     expect(callLLM).toHaveBeenCalledTimes(1)
   })
 
+  it('reuses the reviewed workspace glossary for provider and post-apply audits', async () => {
+    const fake = makeModel()
+    fake.task.name = 'REVIEW REQUEST'
+    fake.task.$attrs = { 'orbitpm:nameEn': 'REVIEW REQUEST' }
+    const glossary = [{ en: 'API', ar: 'API', neutral: true }] as const
+    const review = inspectDiagramLocalization(fake.modeler, 'ar', {
+      glossary,
+      translationMemory: []
+    })
+    const disclosure = buildTranslationExternalReview(review, {
+      providerId: 'provider',
+      modelId: 'model',
+      kind: 'ai'
+    })
+    const result = await translateReviewedDiagram(fake.modeler, async () => ({ loc_1: 'API' }), {
+      review,
+      disclosure,
+      consent: grantExternalRequestConsent(disclosure)
+    })
+
+    expect(result.complete).toBe(true)
+    expect(result.providerFailures).toEqual([])
+    expect(result.review.localResources.glossary).toEqual(glossary)
+    expect(fake.task.$attrs?.['orbitpm:nameAr']).toBe('API')
+    expect(fake.task.name).toBe('API')
+    expect(fake.process.$attrs?.['orbitpm:activeLang']).toBe('ar')
+  })
+
   it('keeps invalid or omitted provider results listed and never false-succeeds', async () => {
     const fake = makeModel()
     const { review, disclosure } = reviewed(fake.modeler)

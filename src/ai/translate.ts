@@ -609,7 +609,11 @@ function virtualTranslationResult(
     const check = cloneLocalizationField(field)
     check.value[item.target] = candidate
     check.origins[item.target] = 'paired'
-    if (auditFieldTarget(check, item.target).length > 0) {
+    if (
+      auditFieldTarget(check, item.target, {
+        glossary: review.localResources.glossary
+      }).length > 0
+    ) {
       failures.push({
         processId: item.processId,
         elementId: item.elementId,
@@ -638,7 +642,8 @@ function finishReviewedTranslation(
   assertLocalizationReviewCurrent(modeler, run.review)
   const virtual = virtualTranslationResult(run.review, values)
   const projection = planLanguageProjection(virtual.fields, run.review.target, {
-    providerFailures: virtual.failures
+    providerFailures: virtual.failures,
+    glossary: run.review.localResources.glossary
   })
   const canProject = projection.blockers.length === 0
   const patches: LocalizationPatch[] = [
@@ -653,7 +658,8 @@ function finishReviewedTranslation(
   // items remain in the returned queue and are never reported as success.
   let post = inspectDiagramLocalization(modeler, run.review.target, {
     source: run.review.source,
-    providerFailures: virtual.failures
+    providerFailures: virtual.failures,
+    ...run.review.localResources
   })
   let complete =
     canProject &&
@@ -664,7 +670,8 @@ function finishReviewedTranslation(
       ;(modeler.get('commandStack') as { undo(): void }).undo()
       post = inspectDiagramLocalization(modeler, run.review.target, {
         source: run.review.source,
-        providerFailures: virtual.failures
+        providerFailures: virtual.failures,
+        ...run.review.localResources
       })
       complete = false
     } catch {
