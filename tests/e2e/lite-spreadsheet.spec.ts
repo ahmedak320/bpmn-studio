@@ -335,8 +335,8 @@ test('missing required mapping blocks review with an actionable issue', async ({
   const panel = await openSpreadsheetPanel(page)
   await uploadCsv(
     panel,
-    ['Process ID,Step ID,Order,Type,Name EN', 'process_1,Start_1,1,startEvent,Start'].join('\n'),
-    'missing-arabic.csv'
+    ['Process ID,Step ID,Order,Name EN', 'process_1,Start_1,1,Start'].join('\n'),
+    'missing-type.csv'
   )
 
   await expect(panel.getByText('Confirm every required mapping before review.')).toBeVisible()
