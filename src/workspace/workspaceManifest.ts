@@ -42,6 +42,12 @@ export interface WorkspaceManifestChecksum {
   readonly modifiedAt: number
 }
 
+export interface WorkspaceManifestWarning {
+  readonly code: 'unreadable-file'
+  readonly path: string
+  readonly message: string
+}
+
 export interface WorkspaceManifestPolicies {
   readonly checksumAlgorithm: 'SHA-256'
   readonly checksumScope: typeof WORKSPACE_MANIFEST_CHECKSUM_SCOPE
@@ -80,6 +86,7 @@ export interface WorkspaceManifestState {
   readonly snapshot: FileSnapshot
   readonly created: boolean
   readonly reconciled: boolean
+  readonly warnings: readonly WorkspaceManifestWarning[]
 }
 
 export interface EnsureWorkspaceManifestOptions {
@@ -87,6 +94,7 @@ export interface EnsureWorkspaceManifestOptions {
   createUuid?: () => string
   signal?: AbortSignal
   maxAttempts?: number
+  onWarning?: (warning: WorkspaceManifestWarning) => void
 }
 
 export interface BindWorkspaceToManifestOptions extends EnsureWorkspaceManifestOptions {
@@ -96,6 +104,7 @@ export interface BindWorkspaceToManifestOptions extends EnsureWorkspaceManifestO
    * original write/rename/move/remove as failed.
    */
   onManifestError?: (error: unknown) => void
+  onManifestWarning?: (warning: WorkspaceManifestWarning) => void
 }
 
 export interface ManifestBoundWorkspace {
@@ -495,40 +504,128 @@ function failureFromOutcome(
   }
 }
 
-function unreadableEntry(entry: WorkspaceEntry): WorkspaceOperationError {
-  return new WorkspaceOperationError(
-    entry.issue ?? {
-      code: 'storage-failure',
-      operation: 'read',
-      path: entry.path,
-      message: `Workspace file "${entry.path}" is unreadable.`
-    }
+interface WorkspaceManifestChecksumCollection {
+  readonly checksums: readonly WorkspaceManifestChecksum[]
+  readonly warnings: readonly WorkspaceManifestWarning[]
+}
+
+export interface CollectWorkspaceManifestChecksumsOptions {
+  signal?: AbortSignal
+  existingChecksums?: readonly WorkspaceManifestChecksum[]
+  onWarning?: (warning: WorkspaceManifestWarning) => void
+}
+
+function manifestWarning(path: string, error?: unknown): WorkspaceManifestWarning {
+  const detail =
+    error instanceof Error
+      ? error.message
+      : typeof error === 'object' &&
+          error !== null &&
+          'message' in error &&
+          typeof error.message === 'string'
+        ? error.message
+        : `Workspace file "${path}" is unreadable.`
+  return Object.freeze({
+    code: 'unreadable-file' as const,
+    path,
+    message: detail
+  })
+}
+
+function publishManifestWarning(
+  warning: WorkspaceManifestWarning,
+  onWarning?: (warning: WorkspaceManifestWarning) => void
+): void {
+  try {
+    onWarning?.(warning)
+  } catch {
+    // Warning observers are diagnostic and cannot make a healthy bind fail.
+  }
+}
+
+function checksumFromSnapshot(snapshot: FileSnapshot): WorkspaceManifestChecksum {
+  return Object.freeze({
+    path: snapshot.path,
+    sha256: snapshot.hash,
+    size: snapshot.size,
+    modifiedAt: snapshot.modifiedAt
+  })
+}
+
+function isCancellationError(error: unknown): boolean {
+  return (
+    (error instanceof WorkspaceOperationError && error.code === 'cancelled') ||
+    (typeof DOMException !== 'undefined' &&
+      error instanceof DOMException &&
+      error.name === 'AbortError')
   )
+}
+
+async function collectManifestChecksumsFromEntries(
+  adapter: WorkspaceAdapter,
+  entries: readonly WorkspaceEntry[],
+  options: CollectWorkspaceManifestChecksumsOptions = {}
+): Promise<WorkspaceManifestChecksumCollection> {
+  const existing = new Map(
+    (options.existingChecksums ?? []).map((checksum) => [checksum.path, checksum])
+  )
+  const checksums: WorkspaceManifestChecksum[] = []
+  const warnings: WorkspaceManifestWarning[] = []
+  for (const entry of [...entries].sort((left, right) => left.path.localeCompare(right.path))) {
+    throwIfAborted(options.signal)
+    if (entry.kind !== 'file' || !isManifestChecksumPath(entry.path)) continue
+    let snapshot: FileSnapshot | undefined
+    let warning: WorkspaceManifestWarning | undefined
+    if (!entry.readable) {
+      warning = manifestWarning(entry.path, entry.issue)
+    } else {
+      try {
+        snapshot = await adapter.read(entry.path)
+      } catch (error) {
+        throwIfAborted(options.signal)
+        if (isCancellationError(error)) throw error
+        warning = manifestWarning(entry.path, error)
+      }
+    }
+    if (snapshot && snapshot.path !== entry.path) {
+      warning = manifestWarning(
+        entry.path,
+        new Error(`Workspace read returned unexpected path "${snapshot.path}".`)
+      )
+      snapshot = undefined
+    }
+    if (snapshot) {
+      checksums.push(checksumFromSnapshot(snapshot))
+      continue
+    }
+    const preserved = existing.get(entry.path)
+    if (preserved) checksums.push(preserved)
+    if (warning) {
+      warnings.push(warning)
+      publishManifestWarning(warning, options.onWarning)
+    }
+  }
+  checksums.sort((left, right) => left.path.localeCompare(right.path))
+  warnings.sort((left, right) => left.path.localeCompare(right.path))
+  return Object.freeze({
+    checksums: Object.freeze(checksums),
+    warnings: Object.freeze(warnings)
+  })
+}
+
+async function collectWorkspaceManifestChecksumState(
+  adapter: WorkspaceAdapter,
+  options: CollectWorkspaceManifestChecksumsOptions = {}
+): Promise<WorkspaceManifestChecksumCollection> {
+  throwIfAborted(options.signal)
+  return collectManifestChecksumsFromEntries(adapter, await adapter.list(), options)
 }
 
 export async function collectWorkspaceManifestChecksums(
   adapter: WorkspaceAdapter,
-  options: { signal?: AbortSignal } = {}
+  options: CollectWorkspaceManifestChecksumsOptions = {}
 ): Promise<readonly WorkspaceManifestChecksum[]> {
-  throwIfAborted(options.signal)
-  const entries = (await adapter.list())
-    .filter((entry) => entry.kind === 'file' && isManifestChecksumPath(entry.path))
-    .sort((left, right) => left.path.localeCompare(right.path))
-  const checksums: WorkspaceManifestChecksum[] = []
-  for (const entry of entries) {
-    throwIfAborted(options.signal)
-    if (!entry.readable) throw unreadableEntry(entry)
-    const snapshot = await adapter.read(entry.path)
-    checksums.push(
-      Object.freeze({
-        path: snapshot.path,
-        sha256: snapshot.hash,
-        size: snapshot.size,
-        modifiedAt: snapshot.modifiedAt
-      })
-    )
-  }
-  return Object.freeze(checksums)
+  return (await collectWorkspaceManifestChecksumState(adapter, options)).checksums
 }
 
 function sameChecksums(
@@ -599,9 +696,12 @@ export async function ensureWorkspaceManifest(
     } catch (error) {
       if (!isNotFound(error)) throw error
     }
-    const checksums = await collectWorkspaceManifestChecksums(adapter, {
-      signal: options.signal
+    const collection = await collectWorkspaceManifestChecksumState(adapter, {
+      signal: options.signal,
+      existingChecksums: current?.document.checksums,
+      onWarning: options.onWarning
     })
+    const { checksums, warnings } = collection
     throwIfAborted(options.signal)
 
     if (!current) {
@@ -627,7 +727,8 @@ export async function ensureWorkspaceManifest(
           document,
           snapshot: outcome.snapshot,
           created: true,
-          reconciled: false
+          reconciled: false,
+          warnings
         })
       }
       if (outcome.status === 'external-conflict') continue
@@ -638,7 +739,8 @@ export async function ensureWorkspaceManifest(
       return Object.freeze({
         ...current,
         created: false,
-        reconciled: false
+        reconciled: false,
+        warnings
       })
     }
     const document = createWorkspaceManifestDocument({
@@ -661,7 +763,8 @@ export async function ensureWorkspaceManifest(
         document,
         snapshot: outcome.snapshot,
         created: false,
-        reconciled: true
+        reconciled: true,
+        warnings
       })
     }
     if (outcome.status === 'external-conflict') continue
@@ -705,6 +808,48 @@ function reservedManifestWriteOutcome(): SaveOutcome {
   }
 }
 
+function pathIsSameOrDescendant(path: string, root: string): boolean {
+  return path === root || path.startsWith(`${root}/`)
+}
+
+function relocateManifestPath(path: string, from: string, to: string): string {
+  return `${to}${path.slice(from.length)}`
+}
+
+function isFullyExcludedChecksumSubtree(pathInput: string): boolean {
+  const path = normalizeWorkspacePath(pathInput)
+  if (path === WORKSPACE_MANIFEST_PATH) return true
+  return WORKSPACE_MANIFEST_CHECKSUM_EXCLUDED_PREFIXES.some((prefix) => {
+    const root = prefix.slice(0, -1)
+    return pathIsSameOrDescendant(path, root)
+  })
+}
+
+function normalizedManifestWarnings(
+  warnings: readonly WorkspaceManifestWarning[]
+): readonly WorkspaceManifestWarning[] {
+  const byPath = new Map<string, WorkspaceManifestWarning>()
+  for (const warning of warnings) byPath.set(warning.path, warning)
+  return Object.freeze(
+    [...byPath.values()].sort((left, right) => left.path.localeCompare(right.path))
+  )
+}
+
+function sameManifestWarnings(
+  left: readonly WorkspaceManifestWarning[],
+  right: readonly WorkspaceManifestWarning[]
+): boolean {
+  return (
+    left.length === right.length &&
+    left.every(
+      (warning, index) =>
+        warning.code === right[index]?.code &&
+        warning.path === right[index]?.path &&
+        warning.message === right[index]?.message
+    )
+  )
+}
+
 /**
  * Production-facing adapter identity. The backing adapter may use a directory
  * handle/display-derived provisional id, but all sessions, draft keys,
@@ -720,9 +865,11 @@ export class ManifestBoundWorkspaceAdapter implements WorkspaceAdapter {
   readonly #now?: () => Date
   readonly #maxAttempts?: number
   readonly #onManifestError?: (error: unknown) => void
+  readonly #onManifestWarning?: (warning: WorkspaceManifestWarning) => void
   #manifest: WorkspaceManifestState
   #manifestTail: Promise<void> = Promise.resolve()
   #lastManifestError: unknown
+  #needsFullReconciliation = false
 
   constructor(
     backing: WorkspaceAdapter,
@@ -743,6 +890,7 @@ export class ManifestBoundWorkspaceAdapter implements WorkspaceAdapter {
     this.#now = options.now
     this.#maxAttempts = options.maxAttempts
     this.#onManifestError = options.onManifestError
+    this.#onManifestWarning = options.onManifestWarning ?? options.onWarning
   }
 
   get manifest(): WorkspaceManifestState {
@@ -777,39 +925,65 @@ export class ManifestBoundWorkspaceAdapter implements WorkspaceAdapter {
       expectedWorkspaceId: options.expectedWorkspaceId === undefined ? undefined : this.#backing.id
     })
     if (outcome.status === 'success' && isManifestChecksumPath(normalized)) {
-      await this.#reconcileAfterCommittedMutation()
+      await this.#afterCommittedMutation(async () => {
+        const checksum = checksumFromSnapshot(outcome.snapshot)
+        const checksums = this.#manifest.document.checksums.filter(
+          (item) => item.path !== normalized
+        )
+        checksums.push(checksum)
+        await this.#commitIncrementalManifest(
+          checksums,
+          this.#manifest.warnings.filter((warning) => warning.path !== normalized)
+        )
+      })
     }
     return outcome
   }
 
   async rename(from: string, to: string): Promise<void> {
     this.#assertManifestIsNotMoved(from, to, 'rename')
-    await this.#backing.rename(from, to)
-    if (isManifestChecksumPath(from) || isManifestChecksumPath(to)) {
-      await this.#reconcileAfterCommittedMutation()
+    const source = normalizeWorkspacePath(from)
+    const destination = normalizeWorkspacePath(to)
+    await this.#backing.rename(source, destination)
+    if (!isFullyExcludedChecksumSubtree(source) || !isFullyExcludedChecksumSubtree(destination)) {
+      await this.#afterCommittedMutation(() => this.#applyRelocationDelta(source, destination))
     }
   }
 
   async move(from: string, to: string): Promise<void> {
     this.#assertManifestIsNotMoved(from, to, 'move')
-    await this.#backing.move(from, to)
-    if (isManifestChecksumPath(from) || isManifestChecksumPath(to)) {
-      await this.#reconcileAfterCommittedMutation()
+    const source = normalizeWorkspacePath(from)
+    const destination = normalizeWorkspacePath(to)
+    await this.#backing.move(source, destination)
+    if (!isFullyExcludedChecksumSubtree(source) || !isFullyExcludedChecksumSubtree(destination)) {
+      await this.#afterCommittedMutation(() => this.#applyRelocationDelta(source, destination))
     }
   }
 
   async remove(path: string): Promise<void> {
-    if (isManifestOrAncestor(path)) {
+    const normalized = normalizeWorkspacePath(path)
+    if (isManifestOrAncestor(normalized)) {
       throw new WorkspaceOperationError({
         code: 'unsupported',
         operation: 'remove',
-        path: normalizeWorkspacePath(path),
+        path: normalized,
         message:
           'The manifest or its parent metadata folder cannot be removed through this adapter.'
       })
     }
-    await this.#backing.remove(path)
-    if (isManifestChecksumPath(path)) await this.#reconcileAfterCommittedMutation()
+    await this.#backing.remove(normalized)
+    if (!isFullyExcludedChecksumSubtree(normalized)) {
+      await this.#afterCommittedMutation(async () => {
+        await this.#commitIncrementalManifest(
+          this.#manifest.document.checksums.filter(
+            (checksum) => !pathIsSameOrDescendant(checksum.path, normalized)
+          ),
+          this.#manifest.warnings.filter(
+            (warning) => !pathIsSameOrDescendant(warning.path, normalized)
+          )
+        )
+      })
+    }
   }
 
   createFolder(path: string): Promise<void> {
@@ -818,6 +992,30 @@ export class ManifestBoundWorkspaceAdapter implements WorkspaceAdapter {
 
   exportBackup(options?: BackupExportOptions): Promise<Blob> {
     return exportWorkspaceBackup(this, options)
+  }
+
+  /**
+   * Explicit retry surface for a prior post-commit manifest warning. Ordinary
+   * successful mutations stay incremental; this method intentionally performs
+   * a complete bounded reconciliation.
+   */
+  async reconcileManifest(): Promise<WorkspaceManifestState> {
+    const reconcile = this.#manifestTail
+      .then(async () => {
+        await this.#fullReconcile()
+        this.#lastManifestError = undefined
+      })
+      .catch((error) => {
+        this.#needsFullReconciliation = true
+        this.#reportManifestError(error)
+        throw error
+      })
+    this.#manifestTail = reconcile.then(
+      () => undefined,
+      () => undefined
+    )
+    await reconcile
+    return this.#manifest
   }
 
   #assertManifestIsNotMoved(from: string, to: string, operation: 'rename' | 'move'): void {
@@ -832,32 +1030,198 @@ export class ManifestBoundWorkspaceAdapter implements WorkspaceAdapter {
     })
   }
 
-  async #reconcileAfterCommittedMutation(): Promise<void> {
-    const reconcile = this.#manifestTail.then(async () => {
-      const next = await ensureWorkspaceManifest(this.#backing, {
-        now: this.#now,
-        createUuid: () => this.id,
-        maxAttempts: this.#maxAttempts
+  async #afterCommittedMutation(update: () => Promise<void>): Promise<void> {
+    const task = this.#manifestTail
+      .then(async () => {
+        if (this.#needsFullReconciliation) {
+          await this.#fullReconcile()
+        } else {
+          await update()
+        }
+        this.#lastManifestError = undefined
       })
-      if (next.document.workspace.id !== this.id) {
-        throw new WorkspaceManifestValidationError(
-          `${WORKSPACE_MANIFEST_PATH}.workspace.id`,
-          `changed from bound id ${JSON.stringify(this.id)}.`
-        )
-      }
-      this.#manifest = next
-      this.#lastManifestError = undefined
-    })
-    this.#manifestTail = reconcile.catch(() => undefined)
+      .catch((error) => {
+        this.#needsFullReconciliation = true
+        this.#reportManifestError(error)
+        throw error
+      })
+    this.#manifestTail = task.then(
+      () => undefined,
+      () => undefined
+    )
     try {
-      await reconcile
-    } catch (error) {
-      this.#lastManifestError = error
-      try {
-        this.#onManifestError?.(error)
-      } catch {
-        // Diagnostics must never turn an already-committed mutation into a lie.
+      await task
+    } catch {
+      // The backing mutation committed; its separate manifest error is surfaced
+      // through lastManifestError/onManifestError and retried by the next task.
+    }
+  }
+
+  async #commitIncrementalManifest(
+    checksumsInput: readonly WorkspaceManifestChecksum[],
+    warningsInput: readonly WorkspaceManifestWarning[]
+  ): Promise<void> {
+    const checksums = [...checksumsInput].sort((left, right) => left.path.localeCompare(right.path))
+    const warnings = normalizedManifestWarnings(warningsInput)
+    if (
+      sameChecksums(this.#manifest.document.checksums, checksums) &&
+      sameManifestWarnings(this.#manifest.warnings, warnings)
+    ) {
+      return
+    }
+    if (sameChecksums(this.#manifest.document.checksums, checksums)) {
+      this.#manifest = Object.freeze({
+        ...this.#manifest,
+        warnings
+      })
+      return
+    }
+
+    const document = createWorkspaceManifestDocument({
+      workspaceId: this.id,
+      createdAt: this.#manifest.document.workspace.createdAt,
+      updatedAt: (this.#now?.() ?? new Date()).toISOString(),
+      checksums
+    })
+    const outcome = await this.#backing.writeAtomic(
+      WORKSPACE_MANIFEST_PATH,
+      encoder.encode(serializeWorkspaceManifest(document)),
+      this.#manifest.snapshot.hash,
+      {
+        expectedWorkspaceId: this.#backing.id
       }
+    )
+    if (outcome.status === 'external-conflict') {
+      await this.#fullReconcile()
+      return
+    }
+    if (outcome.status !== 'success') {
+      throw new WorkspaceOperationError(failureFromOutcome(outcome))
+    }
+    this.#manifest = Object.freeze({
+      document,
+      snapshot: outcome.snapshot,
+      created: false,
+      reconciled: true,
+      warnings
+    })
+  }
+
+  async #applyRelocationDelta(source: string, destination: string): Promise<void> {
+    const relocatedExisting = new Map<string, WorkspaceManifestChecksum>()
+    for (const checksum of this.#manifest.document.checksums) {
+      if (!pathIsSameOrDescendant(checksum.path, source)) continue
+      const path = relocateManifestPath(checksum.path, source, destination)
+      if (!isManifestChecksumPath(path)) continue
+      relocatedExisting.set(
+        path,
+        Object.freeze({
+          ...checksum,
+          path
+        })
+      )
+    }
+
+    const collected = isFullyExcludedChecksumSubtree(destination)
+      ? { checksums: Object.freeze([]), warnings: Object.freeze([]) }
+      : await this.#collectRelocationDestination(source, destination, relocatedExisting)
+    const checksums = this.#manifest.document.checksums.filter(
+      (checksum) => !pathIsSameOrDescendant(checksum.path, source)
+    )
+    checksums.push(...collected.checksums)
+    const warnings = this.#manifest.warnings.filter(
+      (warning) => !pathIsSameOrDescendant(warning.path, source)
+    )
+    warnings.push(...collected.warnings)
+    await this.#commitIncrementalManifest(checksums, warnings)
+  }
+
+  async #collectRelocationDestination(
+    source: string,
+    destination: string,
+    existing: ReadonlyMap<string, WorkspaceManifestChecksum>
+  ): Promise<WorkspaceManifestChecksumCollection> {
+    const sourceWasTrackedFile = this.#manifest.document.checksums.some(
+      (checksum) => checksum.path === source
+    )
+    if (sourceWasTrackedFile) {
+      return this.#collectRelocatedFile(destination, existing)
+    }
+    try {
+      const entries = await this.#backing.list(destination)
+      return collectManifestChecksumsFromEntries(this.#backing, entries, {
+        existingChecksums: [...existing.values()],
+        onWarning: (warning) => this.#publishWarning(warning)
+      })
+    } catch (error) {
+      if (error instanceof WorkspaceOperationError && error.code === 'not-a-directory') {
+        return this.#collectRelocatedFile(destination, existing)
+      }
+      throw error
+    }
+  }
+
+  async #collectRelocatedFile(
+    destination: string,
+    existing: ReadonlyMap<string, WorkspaceManifestChecksum>
+  ): Promise<WorkspaceManifestChecksumCollection> {
+    if (!isManifestChecksumPath(destination)) {
+      return Object.freeze({
+        checksums: Object.freeze([]),
+        warnings: Object.freeze([])
+      })
+    }
+    try {
+      const snapshot = await this.#backing.read(destination)
+      return Object.freeze({
+        checksums: Object.freeze([checksumFromSnapshot(snapshot)]),
+        warnings: Object.freeze([])
+      })
+    } catch (error) {
+      if (error instanceof WorkspaceOperationError && error.code === 'not-a-file') {
+        const entries = await this.#backing.list(destination)
+        return collectManifestChecksumsFromEntries(this.#backing, entries, {
+          existingChecksums: [...existing.values()],
+          onWarning: (warning) => this.#publishWarning(warning)
+        })
+      }
+      const warning = manifestWarning(destination, error)
+      this.#publishWarning(warning)
+      const preserved = existing.get(destination)
+      return Object.freeze({
+        checksums: Object.freeze(preserved ? [preserved] : []),
+        warnings: Object.freeze([warning])
+      })
+    }
+  }
+
+  async #fullReconcile(): Promise<void> {
+    const next = await ensureWorkspaceManifest(this.#backing, {
+      now: this.#now,
+      createUuid: () => this.id,
+      maxAttempts: this.#maxAttempts,
+      onWarning: (warning) => this.#publishWarning(warning)
+    })
+    if (next.document.workspace.id !== this.id) {
+      throw new WorkspaceManifestValidationError(
+        `${WORKSPACE_MANIFEST_PATH}.workspace.id`,
+        `changed from bound id ${JSON.stringify(this.id)}.`
+      )
+    }
+    this.#manifest = next
+    this.#needsFullReconciliation = false
+  }
+
+  #publishWarning(warning: WorkspaceManifestWarning): void {
+    publishManifestWarning(warning, this.#onManifestWarning)
+  }
+
+  #reportManifestError(error: unknown): void {
+    this.#lastManifestError = error
+    try {
+      this.#onManifestError?.(error)
+    } catch {
+      // Diagnostics must never turn an already-committed mutation into a lie.
     }
   }
 }
@@ -872,7 +1236,10 @@ export async function bindWorkspaceToManifest(
       manifest: backing.manifest
     })
   }
-  const manifest = await ensureWorkspaceManifest(backing, options)
+  const manifest = await ensureWorkspaceManifest(backing, {
+    ...options,
+    onWarning: options.onManifestWarning ?? options.onWarning
+  })
   return Object.freeze({
     adapter: new ManifestBoundWorkspaceAdapter(backing, manifest, options),
     manifest

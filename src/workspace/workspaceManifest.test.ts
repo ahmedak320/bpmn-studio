@@ -1,5 +1,5 @@
 import { strFromU8, unzipSync } from 'fflate'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import {
   WORKSPACE_GLOSSARY_PATH,
   WORKSPACE_TRANSLATION_MEMORY_PATH,
@@ -13,7 +13,12 @@ import {
 import {
   MemoryWorkspaceAdapter,
   SingleFileWorkspaceAdapter,
-  WORKSPACE_BACKUP_MANIFEST_PATH
+  WORKSPACE_BACKUP_MANIFEST_PATH,
+  type BackupExportOptions,
+  type SaveOutcome,
+  type WorkspaceAdapter,
+  type WorkspaceEntry,
+  type WriteAtomicOptions
 } from './adapters'
 import {
   WORKSPACE_MANIFEST_CHECKSUM_EXCLUDED_PATHS,
@@ -37,6 +42,71 @@ const UUID_A = '123e4567-e89b-42d3-a456-426614174000'
 const UUID_B = '123e4567-e89b-42d3-b456-426614174001'
 const CREATED_AT = '2026-07-26T18:00:00.000Z'
 const encoder = new TextEncoder()
+
+class InstrumentedWorkspaceAdapter implements WorkspaceAdapter {
+  readonly id: string
+  readonly mode: WorkspaceAdapter['mode']
+  readonly storage: WorkspaceAdapter['storage']
+  readonly listCalls: string[] = []
+  readonly readCalls: string[] = []
+  readonly writeCalls: string[] = []
+
+  constructor(
+    readonly target: WorkspaceAdapter,
+    private readonly entryOverride?: (entries: WorkspaceEntry[]) => WorkspaceEntry[]
+  ) {
+    this.id = target.id
+    this.mode = target.mode
+    this.storage = target.storage
+  }
+
+  clearInstrumentation(): void {
+    this.listCalls.length = 0
+    this.readCalls.length = 0
+    this.writeCalls.length = 0
+  }
+
+  async list(path?: string): Promise<WorkspaceEntry[]> {
+    this.listCalls.push(path ?? '')
+    const entries = await this.target.list(path)
+    return this.entryOverride?.(entries) ?? entries
+  }
+
+  read(path: string) {
+    this.readCalls.push(path)
+    return this.target.read(path)
+  }
+
+  writeAtomic(
+    path: string,
+    bytes: Uint8Array,
+    expectedHash?: string,
+    options?: WriteAtomicOptions
+  ): Promise<SaveOutcome> {
+    this.writeCalls.push(path)
+    return this.target.writeAtomic(path, bytes, expectedHash, options)
+  }
+
+  rename(from: string, to: string): Promise<void> {
+    return this.target.rename(from, to)
+  }
+
+  move(from: string, to: string): Promise<void> {
+    return this.target.move(from, to)
+  }
+
+  remove(path: string): Promise<void> {
+    return this.target.remove(path)
+  }
+
+  createFolder(path: string): Promise<void> {
+    return this.target.createFolder(path)
+  }
+
+  exportBackup(options?: BackupExportOptions): Promise<Blob> {
+    return this.target.exportBackup(options)
+  }
+}
 
 function manifestJson(overrides: Record<string, unknown> = {}): string {
   const document = createWorkspaceManifestDocument({
@@ -224,6 +294,287 @@ describe('public workspace manifest', () => {
       workspace: { id: string }
     }
     expect(backupManifest.workspace.id).toBe(UUID_A)
+  })
+
+  it('updates ordinary saves and i18n incrementally without listing or reading unrelated files', async () => {
+    const backing = new MemoryWorkspaceAdapter({
+      id: 'provisional',
+      files: {
+        'process.bpmn': '<before/>',
+        'unrelated/large.bin': new Uint8Array(1024)
+      }
+    })
+    const instrumented = new InstrumentedWorkspaceAdapter(backing)
+    const { adapter } = await bindWorkspaceToManifest(instrumented, {
+      createUuid: () => UUID_A,
+      now: () => new Date(CREATED_AT)
+    })
+    const process = await adapter.read('process.bpmn')
+    instrumented.clearInstrumentation()
+
+    expect(
+      await adapter.writeAtomic('process.bpmn', encoder.encode('<after/>'), process.hash, {
+        expectedWorkspaceId: UUID_A
+      })
+    ).toMatchObject({ status: 'success' })
+    expect(instrumented.listCalls).toEqual([])
+    expect(instrumented.readCalls).toEqual([])
+    expect(instrumented.writeCalls).toEqual(['process.bpmn', WORKSPACE_MANIFEST_PATH])
+    expect(
+      adapter.manifest.document.checksums.find((item) => item.path === 'process.bpmn')?.sha256
+    ).toBe((await backing.read('process.bpmn')).hash)
+
+    instrumented.clearInstrumentation()
+    expect(
+      await adapter.writeAtomic(
+        WORKSPACE_GLOSSARY_PATH,
+        encoder.encode('{"public":"glossary"}'),
+        undefined,
+        {
+          expectedWorkspaceId: UUID_A,
+          expectedMissing: true
+        }
+      )
+    ).toMatchObject({ status: 'success' })
+    expect(instrumented.listCalls).toEqual([])
+    expect(instrumented.readCalls).toEqual([])
+    expect(instrumented.writeCalls).toEqual([WORKSPACE_GLOSSARY_PATH, WORKSPACE_MANIFEST_PATH])
+    expect(adapter.manifest.document.checksums.map((item) => item.path)).toContain(
+      WORKSPACE_GLOSSARY_PATH
+    )
+  })
+
+  it('limits directory moves to the destination subtree and removes prefixes without a rescan', async () => {
+    const backing = new MemoryWorkspaceAdapter({
+      id: 'provisional',
+      folders: ['archive'],
+      files: {
+        'folder/a.bpmn': '<a/>',
+        'folder/nested/b.txt': 'b',
+        'unrelated/large.bin': new Uint8Array(1024)
+      }
+    })
+    const instrumented = new InstrumentedWorkspaceAdapter(backing)
+    const { adapter } = await bindWorkspaceToManifest(instrumented, {
+      createUuid: () => UUID_A,
+      now: () => new Date(CREATED_AT)
+    })
+    instrumented.clearInstrumentation()
+
+    await adapter.rename('folder/a.bpmn', 'folder/renamed.bpmn')
+    expect(instrumented.listCalls).toEqual([])
+    expect(instrumented.readCalls).toEqual(['folder/renamed.bpmn'])
+    expect(instrumented.readCalls).not.toContain('unrelated/large.bin')
+
+    instrumented.clearInstrumentation()
+    await adapter.move('folder', 'archive/folder')
+    expect(instrumented.listCalls).toEqual(['archive/folder'])
+    expect(instrumented.readCalls).toEqual([
+      'archive/folder/nested/b.txt',
+      'archive/folder/renamed.bpmn'
+    ])
+    expect(instrumented.readCalls).not.toContain('unrelated/large.bin')
+    expect(adapter.manifest.document.checksums.map((item) => item.path)).toEqual([
+      'archive/folder/nested/b.txt',
+      'archive/folder/renamed.bpmn',
+      'unrelated/large.bin'
+    ])
+
+    instrumented.clearInstrumentation()
+    await adapter.remove('archive/folder')
+    expect(instrumented.listCalls).toEqual([])
+    expect(instrumented.readCalls).toEqual([])
+    expect(adapter.manifest.document.checksums.map((item) => item.path)).toEqual([
+      'unrelated/large.bin'
+    ])
+  })
+
+  it('uses a bounded full reconciliation only after an exceptional manifest CAS conflict', async () => {
+    let conflictingManifestBytes: Uint8Array | undefined
+    let backing!: MemoryWorkspaceAdapter
+    backing = new MemoryWorkspaceAdapter({
+      id: 'provisional',
+      files: {
+        'process.bpmn': '<before/>',
+        'unrelated.txt': 'unrelated'
+      },
+      beforeWrite: (path) => {
+        if (path !== WORKSPACE_MANIFEST_PATH || !conflictingManifestBytes) return
+        const bytes = conflictingManifestBytes
+        conflictingManifestBytes = undefined
+        backing.replaceExternally(path, bytes)
+      }
+    })
+    const instrumented = new InstrumentedWorkspaceAdapter(backing)
+    const onManifestError = vi.fn()
+    const { adapter } = await bindWorkspaceToManifest(instrumented, {
+      createUuid: () => UUID_A,
+      now: () => new Date(CREATED_AT),
+      onManifestError
+    })
+    const process = await adapter.read('process.bpmn')
+    conflictingManifestBytes = encoder.encode(
+      serializeWorkspaceManifest(
+        createWorkspaceManifestDocument({
+          workspaceId: UUID_A,
+          createdAt: CREATED_AT,
+          updatedAt: '2026-07-26T19:00:00.000Z',
+          checksums: adapter.manifest.document.checksums
+        })
+      )
+    )
+    instrumented.clearInstrumentation()
+
+    expect(
+      await adapter.writeAtomic('process.bpmn', encoder.encode('<after/>'), process.hash, {
+        expectedWorkspaceId: UUID_A
+      })
+    ).toMatchObject({ status: 'success' })
+    expect(instrumented.listCalls).toEqual([''])
+    expect(instrumented.readCalls).toContain('unrelated.txt')
+    expect(instrumented.writeCalls.filter((path) => path === WORKSPACE_MANIFEST_PATH)).toHaveLength(
+      2
+    )
+    expect(onManifestError).not.toHaveBeenCalled()
+    expect(adapter.lastManifestError).toBeUndefined()
+    expect(
+      adapter.manifest.document.checksums.find((item) => item.path === 'process.bpmn')?.sha256
+    ).toBe((await backing.read('process.bpmn')).hash)
+  })
+
+  it('keeps data-write conflicts side-effect free and recovers after post-commit manifest failure', async () => {
+    let failManifestWrite = false
+    const backing = new MemoryWorkspaceAdapter({
+      id: 'provisional',
+      files: {
+        'process.bpmn': '<before/>',
+        'notes.txt': 'before'
+      },
+      beforeWrite: (path) => {
+        if (failManifestWrite && path === WORKSPACE_MANIFEST_PATH) {
+          throw new Error('manifest storage unavailable')
+        }
+      }
+    })
+    const instrumented = new InstrumentedWorkspaceAdapter(backing)
+    const onManifestError = vi.fn()
+    const { adapter } = await bindWorkspaceToManifest(instrumented, {
+      createUuid: () => UUID_A,
+      now: () => new Date(CREATED_AT),
+      onManifestError
+    })
+    const originalProcess = await adapter.read('process.bpmn')
+    const originalManifest = adapter.manifest
+    backing.replaceExternally('process.bpmn', '<external/>')
+    instrumented.clearInstrumentation()
+
+    expect(
+      await adapter.writeAtomic('process.bpmn', encoder.encode('<local/>'), originalProcess.hash, {
+        expectedWorkspaceId: UUID_A
+      })
+    ).toMatchObject({
+      status: 'external-conflict',
+      reason: 'hash-mismatch'
+    })
+    expect(adapter.manifest).toBe(originalManifest)
+    expect(instrumented.listCalls).toEqual([])
+    expect(instrumented.readCalls).toEqual([])
+    expect(instrumented.writeCalls).toEqual(['process.bpmn'])
+    expect(onManifestError).not.toHaveBeenCalled()
+
+    const external = await adapter.read('process.bpmn')
+    failManifestWrite = true
+    instrumented.clearInstrumentation()
+    expect(
+      await adapter.writeAtomic('process.bpmn', encoder.encode('<committed/>'), external.hash, {
+        expectedWorkspaceId: UUID_A
+      })
+    ).toMatchObject({ status: 'success' })
+    expect(onManifestError).toHaveBeenCalledOnce()
+    expect(adapter.manifest).toBe(originalManifest)
+    expect(instrumented.listCalls).toEqual([])
+    expect(instrumented.readCalls).toEqual([])
+
+    failManifestWrite = false
+    const notes = await adapter.read('notes.txt')
+    instrumented.clearInstrumentation()
+    expect(
+      await adapter.writeAtomic('notes.txt', encoder.encode('after'), notes.hash, {
+        expectedWorkspaceId: UUID_A
+      })
+    ).toMatchObject({ status: 'success' })
+    expect(instrumented.listCalls).toEqual([''])
+    expect(adapter.lastManifestError).toBeUndefined()
+    expect(
+      adapter.manifest.document.checksums.find((item) => item.path === 'process.bpmn')?.sha256
+    ).toBe((await backing.read('process.bpmn')).hash)
+    expect(
+      adapter.manifest.document.checksums.find((item) => item.path === 'notes.txt')?.sha256
+    ).toBe((await backing.read('notes.txt')).hash)
+  })
+
+  it('isolates unreadable public files while binding and preserves prior checksums when possible', async () => {
+    const issue = {
+      code: 'storage-failure' as const,
+      operation: 'read' as const,
+      path: 'unreadable.bin',
+      message: 'unreadable file metadata'
+    }
+    const markUnreadable = (entries: WorkspaceEntry[]) =>
+      entries.map((entry) =>
+        entry.path === 'unreadable.bin' ? { ...entry, readable: false, issue } : entry
+      )
+    const initialBacking = new MemoryWorkspaceAdapter({
+      id: 'provisional',
+      files: {
+        'healthy.bpmn': '<healthy/>',
+        'unreadable.bin': 'secret'
+      }
+    })
+    const initial = new InstrumentedWorkspaceAdapter(initialBacking, markUnreadable)
+    const onWarning = vi.fn()
+    const { adapter } = await bindWorkspaceToManifest(initial, {
+      createUuid: () => UUID_A,
+      now: () => new Date(CREATED_AT),
+      onManifestWarning: onWarning
+    })
+
+    expect(adapter.manifest.document.checksums.map((item) => item.path)).toEqual(['healthy.bpmn'])
+    expect(adapter.manifest.warnings).toEqual([
+      expect.objectContaining({
+        code: 'unreadable-file',
+        path: 'unreadable.bin',
+        message: 'unreadable file metadata'
+      })
+    ])
+    expect(onWarning).toHaveBeenCalledWith(expect.objectContaining({ path: 'unreadable.bin' }))
+    expect(await adapter.read('healthy.bpmn')).toMatchObject({ path: 'healthy.bpmn' })
+    expect(initial.readCalls).not.toContain('unreadable.bin')
+
+    const healthyBacking = new MemoryWorkspaceAdapter({
+      id: 'another-provisional',
+      files: {
+        'healthy.bpmn': '<healthy/>',
+        'unreadable.bin': 'original'
+      }
+    })
+    const first = await ensureWorkspaceManifest(healthyBacking, {
+      createUuid: () => UUID_B,
+      now: () => new Date(CREATED_AT)
+    })
+    const previousUnreadable = first.document.checksums.find(
+      (item) => item.path === 'unreadable.bin'
+    )
+    const reopened = await ensureWorkspaceManifest(
+      new InstrumentedWorkspaceAdapter(healthyBacking, markUnreadable),
+      {
+        now: () => new Date('2026-07-26T20:00:00.000Z')
+      }
+    )
+    expect(reopened.document.checksums.find((item) => item.path === 'unreadable.bin')).toEqual(
+      previousUnreadable
+    )
+    expect(reopened.warnings.map((warning) => warning.path)).toEqual(['unreadable.bin'])
   })
 
   it('reconciles external public-file changes with CAS while preserving identity', async () => {
