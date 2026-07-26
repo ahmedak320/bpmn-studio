@@ -3,7 +3,12 @@ import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
 import { t } from '../i18n'
 import { useLang } from '../i18n/useLang'
 import type { WorkspaceAdapter } from '../workspace/adapters'
-import { CANONICAL_FIELDS_BY_SHEET, REQUIRED_FIELDS_BY_SHEET, normalizeHeader } from './aliases'
+import {
+  CANONICAL_FIELDS_BY_SHEET,
+  REQUIRED_FIELDS_BY_SHEET,
+  normalizeHeader,
+  requiredFieldGroupForSheet
+} from './aliases'
 import { SpreadsheetBilingualAudit, SpreadsheetBpmnGenerator } from './bpmnGeneration'
 import {
   BrowserMappingDraftStore,
@@ -1086,6 +1091,7 @@ export function SpreadsheetImportPanel({
                             {CANONICAL_FIELDS_BY_SHEET[role].map((field) => {
                               const mapped = preset.fieldMappings[role]?.[field] ?? ''
                               const suggestion = suggestions.get(field)
+                              const requiredGroup = requiredFieldGroupForSheet(role, field)
                               const confidence =
                                 suggestion?.header === mapped ? suggestion.confidence : 0
                               const key = `${role}.${field}`
@@ -1099,7 +1105,9 @@ export function SpreadsheetImportPanel({
                                     <code>{field}</code>
                                     {required.has(field) && (
                                       <strong style={{ marginInlineStart: 5 }}>
-                                        {t('spreadsheet.mapping.required')}
+                                        {requiredGroup && requiredGroup.length > 1
+                                          ? t('spreadsheet.mapping.oneLanguageRequired')
+                                          : t('spreadsheet.mapping.required')}
                                       </strong>
                                     )}
                                   </span>

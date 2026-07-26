@@ -2,7 +2,8 @@ import {
   CANONICAL_FIELDS_BY_SHEET,
   REQUIRED_FIELDS_BY_SHEET,
   aliasesForField,
-  normalizeHeader
+  normalizeHeader,
+  requiredFieldGroupForSheet
 } from './aliases'
 import type { CanonicalSheet, SpreadsheetValidationIssue } from './contracts'
 import { stableHash } from './hash'
@@ -13,6 +14,7 @@ export const LOW_CONFIDENCE_REQUIRED_THRESHOLD = 0.9
 export interface HeaderMappingSuggestion {
   readonly field: string
   readonly required: boolean
+  readonly requiredGroup?: readonly string[]
   readonly header?: string
   readonly headerIndex?: number
   readonly confidence: number
@@ -117,15 +119,19 @@ export function suggestHeaderMappings(
     fields.map((field) => {
       const candidate = assignedFields.get(field)
       const isRequired = required.has(field)
+      const requiredGroup = requiredFieldGroupForSheet(sheet, field)
+      const groupHasCandidate = requiredGroup?.some((member) => assignedFields.has(member)) ?? false
       const confidence = candidate?.confidence ?? 0
       return Object.freeze({
         field,
         required: isRequired,
+        ...(requiredGroup ? { requiredGroup } : {}),
         ...(candidate ? { header: candidate.header, headerIndex: candidate.headerIndex } : {}),
         confidence,
         match: candidate?.match ?? 'none',
         confirmationRequired:
-          isRequired && (candidate === undefined || confidence < LOW_CONFIDENCE_REQUIRED_THRESHOLD)
+          isRequired &&
+          (candidate ? confidence < LOW_CONFIDENCE_REQUIRED_THRESHOLD : !groupHasCandidate)
       })
     })
   )
@@ -136,25 +142,47 @@ export function mappingConfirmationIssues(
   suggestions: readonly HeaderMappingSuggestion[],
   confirmedFields: ReadonlySet<string>
 ): readonly SpreadsheetValidationIssue[] {
-  return Object.freeze(
-    suggestions
-      .filter(
-        (suggestion) =>
-          suggestion.required &&
-          (suggestion.header === undefined ||
-            (suggestion.confirmationRequired && !confirmedFields.has(suggestion.field)))
-      )
-      .map((suggestion) => ({
-        code: suggestion.header ? 'low-confidence-mapping' : 'missing-required-mapping',
-        severity: 'review' as const,
-        messageKey: spreadsheetValidationMessageKey(
-          suggestion.header ? 'low-confidence-mapping' : 'missing-required-mapping'
-        ),
-        guidanceKey: 'spreadsheet.guidance.confirm-field-mapping' as const,
+  const groups = new Map<string, HeaderMappingSuggestion[]>()
+  for (const suggestion of suggestions) {
+    if (!suggestion.required) continue
+    const group = suggestion.requiredGroup ?? Object.freeze([suggestion.field])
+    const key = group.join('\u0000')
+    const current = groups.get(key) ?? []
+    current.push(suggestion)
+    groups.set(key, current)
+  }
+
+  const issues: SpreadsheetValidationIssue[] = []
+  for (const group of groups.values()) {
+    const mapped = group.filter(({ header }) => header !== undefined)
+    if (mapped.length === 0) {
+      const fields = group.map(({ field }) => field)
+      const normalizedValue = fields.join('|')
+      issues.push({
+        code: 'missing-required-mapping',
+        severity: 'review',
+        messageKey: spreadsheetValidationMessageKey('missing-required-mapping'),
+        guidanceKey: 'spreadsheet.guidance.confirm-field-mapping',
         worksheet,
-        rawValue: suggestion.header,
-        normalizedValue: suggestion.field,
-        details: { field: suggestion.field, confidence: suggestion.confidence }
-      }))
-  )
+        normalizedValue,
+        details: { field: normalizedValue, alternatives: fields.join(',') }
+      })
+      continue
+    }
+    for (const suggestion of mapped) {
+      if (suggestion.confirmationRequired && !confirmedFields.has(suggestion.field)) {
+        issues.push({
+          code: 'low-confidence-mapping',
+          severity: 'review',
+          messageKey: spreadsheetValidationMessageKey('low-confidence-mapping'),
+          guidanceKey: 'spreadsheet.guidance.confirm-field-mapping',
+          worksheet,
+          rawValue: suggestion.header,
+          normalizedValue: suggestion.field,
+          details: { field: suggestion.field, confidence: suggestion.confidence }
+        })
+      }
+    }
+  }
+  return Object.freeze(issues)
 }

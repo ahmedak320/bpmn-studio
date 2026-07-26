@@ -1,4 +1,8 @@
-import { CANONICAL_FIELDS_BY_SHEET, REQUIRED_FIELDS_BY_SHEET, normalizeHeader } from './aliases'
+import {
+  CANONICAL_FIELDS_BY_SHEET,
+  REQUIRED_FIELD_GROUPS_BY_SHEET,
+  normalizeHeader
+} from './aliases'
 import {
   MAPPING_PRESET_VERSION,
   type CanonicalSheet,
@@ -90,7 +94,7 @@ const ROLE_SHEET_NAMES: Readonly<Record<CanonicalSheet, readonly string[]>> = Ob
 })
 
 function candidates(workbook: ParsedWorkbookData, role: CanonicalSheet): readonly Candidate[] {
-  const required = new Set(REQUIRED_FIELDS_BY_SHEET[role])
+  const requiredGroups = REQUIRED_FIELD_GROUPS_BY_SHEET[role]
   const anchors = new Set(ROLE_ANCHOR_FIELDS[role])
   const result: Candidate[] = []
   for (const sheet of workbook.sheets) {
@@ -99,8 +103,19 @@ function candidates(workbook: ParsedWorkbookData, role: CanonicalSheet): readonl
       const headers = sheet.rows[rowIndex]!.map(displayed)
       if (headers.every((header) => !header)) continue
       const suggestions = suggestHeaderMappings(role, headers)
-      const requiredSuggestions = suggestions.filter(({ field }) => required.has(field))
-      const found = requiredSuggestions.filter(({ header }) => header !== undefined)
+      const suggestionsByField = new Map(
+        suggestions.map((suggestion) => [suggestion.field, suggestion])
+      )
+      const found = requiredGroups.flatMap((group) => {
+        const best = group
+          .map((field) => suggestionsByField.get(field))
+          .filter(
+            (suggestion): suggestion is NonNullable<typeof suggestion> =>
+              suggestion?.header !== undefined
+          )
+          .sort((left, right) => right.confidence - left.confidence)[0]
+        return best ? [best] : []
+      })
       const anchorFound = suggestions.filter(
         ({ field, header, confidence }) =>
           anchors.has(field) && header !== undefined && confidence >= 0.72
@@ -109,7 +124,7 @@ function candidates(workbook: ParsedWorkbookData, role: CanonicalSheet): readonl
         selection: { worksheet: sheet.name, headerRow: rowIndex + 1 },
         headers,
         requiredFound: found.length,
-        requiredTotal: required.size,
+        requiredTotal: requiredGroups.length,
         anchorFound,
         sheetNameMatches: ROLE_SHEET_NAMES[role]
           .map(normalizeHeader)
@@ -124,6 +139,8 @@ function candidates(workbook: ParsedWorkbookData, role: CanonicalSheet): readonl
   return result.sort(
     (left, right) =>
       right.requiredFound - left.requiredFound ||
+      Number(right.sheetNameMatches) - Number(left.sheetNameMatches) ||
+      right.anchorFound - left.anchorFound ||
       right.averageConfidence - left.averageConfidence ||
       left.selection.headerRow - right.selection.headerRow ||
       left.selection.worksheet.localeCompare(right.selection.worksheet)
@@ -243,37 +260,48 @@ export function mappingReviewIssues(
     const suggestions = new Map(
       suggestHeaderMappings(role, headers).map((suggestion) => [suggestion.field, suggestion])
     )
-    for (const field of REQUIRED_FIELDS_BY_SHEET[role]) {
-      if (role === 'steps' && field === 'process_id' && options.defaultProcessId?.trim()) {
+    for (const group of REQUIRED_FIELD_GROUPS_BY_SHEET[role]) {
+      if (
+        role === 'steps' &&
+        group.length === 1 &&
+        group[0] === 'process_id' &&
+        options.defaultProcessId?.trim()
+      ) {
         continue
       }
-      const mappedHeader = mapping[field]
-      const key = `${role}.${field}`
-      if (!mappedHeader || !headers.includes(mappedHeader)) {
+      const mapped = group.flatMap((field) => {
+        const mappedHeader = mapping[field]
+        return mappedHeader && headers.includes(mappedHeader) ? [{ field, mappedHeader }] : []
+      })
+      if (mapped.length === 0) {
+        const fields = group.join('|')
         issues.push({
           code: 'missing-required-mapping',
           severity: 'review',
           messageKey: spreadsheetValidationMessageKey('missing-required-mapping'),
           guidanceKey: 'spreadsheet.guidance.confirm-field-mapping',
           worksheet: selection.worksheet,
-          normalizedValue: field,
-          details: { role, field }
+          normalizedValue: fields,
+          details: { role, field: fields, alternatives: group.join(',') }
         })
         continue
       }
-      const suggestion = suggestions.get(field)
-      const confidence = suggestion?.header === mappedHeader ? suggestion.confidence : 0
-      if (confidence < LOW_CONFIDENCE_REQUIRED_THRESHOLD && !confirmed.has(key)) {
-        issues.push({
-          code: 'low-confidence-mapping',
-          severity: 'review',
-          messageKey: spreadsheetValidationMessageKey('low-confidence-mapping'),
-          guidanceKey: 'spreadsheet.guidance.confirm-field-mapping',
-          worksheet: selection.worksheet,
-          rawValue: mappedHeader,
-          normalizedValue: field,
-          details: { role, field, confidence }
-        })
+      for (const { field, mappedHeader } of mapped) {
+        const key = `${role}.${field}`
+        const suggestion = suggestions.get(field)
+        const confidence = suggestion?.header === mappedHeader ? suggestion.confidence : 0
+        if (confidence < LOW_CONFIDENCE_REQUIRED_THRESHOLD && !confirmed.has(key)) {
+          issues.push({
+            code: 'low-confidence-mapping',
+            severity: 'review',
+            messageKey: spreadsheetValidationMessageKey('low-confidence-mapping'),
+            guidanceKey: 'spreadsheet.guidance.confirm-field-mapping',
+            worksheet: selection.worksheet,
+            rawValue: mappedHeader,
+            normalizedValue: field,
+            details: { role, field, confidence }
+          })
+        }
       }
     }
   }
@@ -284,8 +312,10 @@ export function allMappedRequiredFields(preset: MappingPreset): ReadonlySet<stri
   const result = new Set<string>()
   for (const role of WIZARD_SHEET_ROLES) {
     if (!preset.selectedSheets[role]) continue
-    for (const field of REQUIRED_FIELDS_BY_SHEET[role]) {
-      if (preset.fieldMappings[role]?.[field]) result.add(`${role}.${field}`)
+    for (const group of REQUIRED_FIELD_GROUPS_BY_SHEET[role]) {
+      for (const field of group) {
+        if (preset.fieldMappings[role]?.[field]) result.add(`${role}.${field}`)
+      }
     }
   }
   return result

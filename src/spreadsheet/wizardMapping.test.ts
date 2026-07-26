@@ -1,7 +1,11 @@
 import { describe, expect, it } from 'vitest'
 
 import type { ParsedWorkbookData } from './contracts'
-import { mappingReviewIssues, suggestedMappingPreset } from './wizardMapping'
+import {
+  allMappedRequiredFields,
+  mappingReviewIssues,
+  suggestedMappingPreset
+} from './wizardMapping'
 
 const workbook: ParsedWorkbookData = {
   sheets: [
@@ -73,5 +77,99 @@ describe('spreadsheet mapping wizard helpers', () => {
         ({ code }) => code === 'low-confidence-mapping'
       )
     ).toBe(false)
+  })
+
+  it.each([
+    ['English', 'Name EN'],
+    ['Arabic', 'Name AR']
+  ])(
+    'hands off ordinary %s-only process, participant, and step sheets for bilingual review',
+    (_, nameHeader) => {
+      const singleLanguageWorkbook: ParsedWorkbookData = {
+        sheets: [
+          {
+            name: 'Processes',
+            rows: [
+              [{ value: 'Process ID' }, { value: nameHeader }, { value: 'Description EN' }],
+              [{ value: 'p1' }, { value: 'Onboarding' }, { value: 'Employee onboarding' }]
+            ]
+          },
+          {
+            name: 'Participants',
+            rows: [
+              [
+                { value: 'Process ID' },
+                { value: 'Participant ID' },
+                { value: 'Type' },
+                { value: nameHeader }
+              ],
+              [{ value: 'p1' }, { value: 'pool-1' }, { value: 'pool' }, { value: 'People' }]
+            ]
+          },
+          {
+            name: 'Steps',
+            rows: [
+              [
+                { value: 'Process ID' },
+                { value: 'Step ID' },
+                { value: 'Type' },
+                { value: nameHeader }
+              ],
+              [{ value: 'p1' }, { value: 'step-1' }, { value: 'task' }, { value: 'Review' }]
+            ]
+          }
+        ]
+      }
+      const preset = suggestedMappingPreset(singleLanguageWorkbook)
+      const mappedLanguage = nameHeader === 'Name EN' ? 'name_en' : 'name_ar'
+      const missingLanguage = nameHeader === 'Name EN' ? 'name_ar' : 'name_en'
+
+      expect(preset.selectedSheets).toMatchObject({
+        processes: { worksheet: 'Processes', headerRow: 1 },
+        participants: { worksheet: 'Participants', headerRow: 1 },
+        steps: { worksheet: 'Steps', headerRow: 1 }
+      })
+      for (const role of ['processes', 'participants', 'steps'] as const) {
+        expect(preset.fieldMappings[role]?.[mappedLanguage]).toBe(nameHeader)
+        expect(preset.fieldMappings[role]?.[missingLanguage]).toBeUndefined()
+      }
+      expect(
+        mappingReviewIssues(singleLanguageWorkbook, preset, allMappedRequiredFields(preset))
+      ).toEqual([])
+    }
+  )
+
+  it('keeps English and Arabic glossary columns independently required', () => {
+    const preset = suggestedMappingPreset(workbook)
+    const glossaryWorkbook: ParsedWorkbookData = {
+      ...workbook,
+      sheets: [
+        ...workbook.sheets,
+        {
+          name: 'Glossary',
+          rows: [[{ value: 'English' }], [{ value: 'Approve' }]]
+        }
+      ]
+    }
+    const withGlossary = {
+      ...preset,
+      selectedSheets: {
+        ...preset.selectedSheets,
+        glossary: { worksheet: 'Glossary', headerRow: 1 }
+      },
+      fieldMappings: {
+        ...preset.fieldMappings,
+        glossary: { english: 'English' }
+      }
+    }
+
+    expect(
+      mappingReviewIssues(glossaryWorkbook, withGlossary, allMappedRequiredFields(withGlossary))
+    ).toContainEqual(
+      expect.objectContaining({
+        code: 'missing-required-mapping',
+        normalizedValue: 'arabic'
+      })
+    )
   })
 })

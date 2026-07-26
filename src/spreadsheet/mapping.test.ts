@@ -83,10 +83,32 @@ describe('English and Arabic header mapping', () => {
     const issues = mappingConfirmationIssues('Sheet1', suggestions, new Set())
     expect(issues.length).toBeGreaterThan(0)
     expect(issues.every(({ severity }) => severity === 'review')).toBe(true)
-    expect(issues.some(({ normalizedValue }) => normalizedValue === 'name_ar')).toBe(true)
+    expect(
+      issues.some(
+        ({ normalizedValue }) =>
+          normalizedValue === 'name_en' ||
+          normalizedValue === 'name_ar' ||
+          normalizedValue === 'name_en|name_ar'
+      )
+    ).toBe(true)
     expect(issues.every(({ guidanceKey }) => guidanceKey?.includes('confirm-field-mapping'))).toBe(
       true
     )
+  })
+
+  it.each([
+    ['English', 'Name EN', 'name_en'],
+    ['Arabic', 'Name AR', 'name_ar']
+  ])('accepts a single %s name mapping as the required language group', (_, header, field) => {
+    const suggestions = suggestHeaderMappings('steps', ['Process ID', 'Type', header])
+    const issues = mappingConfirmationIssues('Steps', suggestions, new Set())
+
+    expect(issues).toEqual([])
+    expect(suggestions.find((suggestion) => suggestion.field === field)).toMatchObject({
+      header,
+      required: true,
+      confirmationRequired: false
+    })
   })
 
   it('creates stable, order-sensitive header signatures', () => {

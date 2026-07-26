@@ -71,13 +71,52 @@ export const CANONICAL_FIELDS_BY_SHEET = Object.freeze({
 
 export type CanonicalField = (typeof CANONICAL_FIELDS_BY_SHEET)[CanonicalSheet][number]
 
-export const REQUIRED_FIELDS_BY_SHEET = Object.freeze({
-  processes: Object.freeze(['process_id', 'name_en', 'name_ar']),
-  participants: Object.freeze(['process_id', 'participant_id', 'type', 'name_en', 'name_ar']),
-  steps: Object.freeze(['process_id', 'type', 'name_en', 'name_ar']),
-  flows: Object.freeze(['process_id', 'source_step_id', 'target_step_id']),
-  glossary: Object.freeze(['english', 'arabic'])
-} satisfies Readonly<Record<CanonicalSheet, readonly string[]>>)
+/**
+ * A required group is satisfied when at least one of its fields is mapped.
+ * Singleton groups remain unconditionally required. Process, participant, and
+ * step names deliberately use an English/Arabic alternative group so an
+ * ordinary single-language workbook can reach the bilingual review workflow.
+ */
+export const REQUIRED_FIELD_GROUPS_BY_SHEET = Object.freeze({
+  processes: Object.freeze([Object.freeze(['process_id']), Object.freeze(['name_en', 'name_ar'])]),
+  participants: Object.freeze([
+    Object.freeze(['process_id']),
+    Object.freeze(['participant_id']),
+    Object.freeze(['type']),
+    Object.freeze(['name_en', 'name_ar'])
+  ]),
+  steps: Object.freeze([
+    Object.freeze(['process_id']),
+    Object.freeze(['type']),
+    Object.freeze(['name_en', 'name_ar'])
+  ]),
+  flows: Object.freeze([
+    Object.freeze(['process_id']),
+    Object.freeze(['source_step_id']),
+    Object.freeze(['target_step_id'])
+  ]),
+  glossary: Object.freeze([Object.freeze(['english']), Object.freeze(['arabic'])])
+} satisfies Readonly<Record<CanonicalSheet, readonly (readonly string[])[]>>)
+
+/**
+ * Flattened compatibility view used by official-template checks and mapping
+ * field decoration. Required-field enforcement should use the grouped view.
+ */
+export const REQUIRED_FIELDS_BY_SHEET: Readonly<Record<CanonicalSheet, readonly string[]>> =
+  Object.freeze({
+    processes: Object.freeze(REQUIRED_FIELD_GROUPS_BY_SHEET.processes.flat()),
+    participants: Object.freeze(REQUIRED_FIELD_GROUPS_BY_SHEET.participants.flat()),
+    steps: Object.freeze(REQUIRED_FIELD_GROUPS_BY_SHEET.steps.flat()),
+    flows: Object.freeze(REQUIRED_FIELD_GROUPS_BY_SHEET.flows.flat()),
+    glossary: Object.freeze(REQUIRED_FIELD_GROUPS_BY_SHEET.glossary.flat())
+  })
+
+export function requiredFieldGroupForSheet(
+  sheet: CanonicalSheet,
+  field: string
+): readonly string[] | undefined {
+  return REQUIRED_FIELD_GROUPS_BY_SHEET[sheet].find((group) => group.includes(field))
+}
 
 type AliasCatalog = Readonly<Record<string, readonly string[]>>
 
