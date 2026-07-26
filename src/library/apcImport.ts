@@ -47,17 +47,31 @@ import {
   type AmlOcc,
   type LocalizedText
 } from './amlParse'
-import { emitLayoutDi, layoutEpc, type LayoutEdge, type LayoutNode, type Orientation } from './epcLayout'
+import {
+  emitLayoutDi,
+  layoutEpc,
+  type LayoutEdge,
+  type LayoutNode,
+  type Orientation
+} from './epcLayout'
 import {
   deriveContextualGatewayNames,
   matchesGenericSemanticAlias,
   SEMANTIC_NAMING,
   type SemanticGatewayType
 } from '../org/semanticNaming'
+import {
+  createArisConversionReport,
+  type ArisConversionReport,
+  type ArisConversionReportCategory,
+  type ArisConversionReportEntry,
+  type ArisConversionReportReason
+} from './arisConversionReport'
 
 export { looksLikeAml }
+export * from './arisConversionReport'
 
-export type ApcConversion = { xml: string } | { error: string }
+export type ApcConversion = { xml: string; report: ArisConversionReport } | { error: string }
 
 /** One converted BPMN file, named per locale like the source model. */
 export interface ConvertedModel {
@@ -78,6 +92,7 @@ export type AmlConversion =
        *  value-chain overview's name in the active language, else the
        *  export's DatabaseName. */
       folderName?: string
+      report: ArisConversionReport
     }
   | { error: string }
 
@@ -270,9 +285,14 @@ interface PlanNode {
   /** orbitpm metadata gathered from satellite connections (insertion-ordered,
    *  deduped). */
   meta: Map<MetaAttr, string[]>
+  metadataSources: Map<string, { sourceObjectId: string; attr: MetaAttr }>
   incoming: string[]
   outgoing: string[]
   occ?: AmlOcc
+  hierarchyCandidates?: readonly {
+    sourceModelId: string
+    targetProcessId: string
+  }[]
 }
 
 interface PlanEdge {
@@ -291,14 +311,26 @@ interface ModelPlan {
   /** Member defs in document order (flow-capable only → nodes). */
   nodes: Map<string, PlanNode>
   edges: PlanEdge[]
+  overviewContainerIds: Set<string>
 }
 
 /** Push a metadata value onto a node, deduped, insertion-ordered. */
-function addMeta(node: PlanNode, attr: MetaAttr, value: string | undefined): void {
+function addMeta(
+  node: PlanNode,
+  attr: MetaAttr,
+  value: string | undefined,
+  sourceObjectId?: string
+): void {
   if (!value) return
   const list = node.meta.get(attr)
   if (!list) node.meta.set(attr, [value])
   else if (!list.includes(value)) list.push(value)
+  if (sourceObjectId) {
+    node.metadataSources.set(`${sourceObjectId}\u0000${attr}`, {
+      sourceObjectId,
+      attr
+    })
+  }
 }
 
 /** Is this def one we materialize as a flow node? */
@@ -319,7 +351,10 @@ function isFlowCapable(def: AmlObj): boolean {
  * shape) the caller passes `model === undefined` and every object becomes a
  * member with all of its connections.
  */
-function collectMembers(db: AmlDatabase, model: AmlModel | undefined): {
+function collectMembers(
+  db: AmlDatabase,
+  model: AmlModel | undefined
+): {
   members: AmlObj[]
   occByDef: Map<string, AmlOcc>
   cxns: AmlCxn[]
@@ -383,6 +418,7 @@ function planModel(
       bpmnId: sanitizeId(def.id, taken),
       tag: 'task', // provisional; finalized below
       meta: new Map(),
+      metadataSources: new Map(),
       incoming: [],
       outgoing: [],
       occ: occByDef.get(def.id)
@@ -407,7 +443,7 @@ function planModel(
     if (srcDef.typeNum === 'OT_BUSINESS_RULE' || tgtDef.typeNum === 'OT_BUSINESS_RULE') {
       const ruleDef = srcDef.typeNum === 'OT_BUSINESS_RULE' ? srcDef : tgtDef
       const flowEnd = srcDef.typeNum === 'OT_BUSINESS_RULE' ? tgtNode : srcNode
-      if (flowEnd) addMeta(flowEnd, 'decisionBasis', displayName(ruleDef))
+      if (flowEnd) addMeta(flowEnd, 'decisionBasis', displayName(ruleDef), ruleDef.id)
       continue
     }
 
@@ -421,13 +457,18 @@ function planModel(
     if (isEvalCxnType(c.type)) {
       if (srcNode && tgtNode) {
         flowPairs.push({ source: srcNode, target: tgtNode })
-        const rule = tgtDef.typeNum === 'OT_RULE' ? tgtNode : srcDef.typeNum === 'OT_RULE' ? srcNode : undefined
+        const rule =
+          tgtDef.typeNum === 'OT_RULE'
+            ? tgtNode
+            : srcDef.typeNum === 'OT_RULE'
+              ? srcNode
+              : undefined
         const other = rule === tgtNode ? srcDef : tgtDef
-        if (rule) addMeta(rule, 'decisionBasis', displayName(other))
+        if (rule) addMeta(rule, 'decisionBasis', displayName(other), other.id)
       } else {
         const flowEnd = srcNode ?? tgtNode
         const valueDef = srcNode ? tgtDef : srcDef
-        if (flowEnd) addMeta(flowEnd, 'decisionBasis', displayName(valueDef))
+        if (flowEnd) addMeta(flowEnd, 'decisionBasis', displayName(valueDef), valueDef.id)
       }
       continue
     }
@@ -446,7 +487,7 @@ function planModel(
           valueDef = rule.valueEnd === 'source' ? tgtDef : srcDef
         }
       }
-      if (attachNode) addMeta(attachNode, rule.attr, displayName(valueDef))
+      if (attachNode) addMeta(attachNode, rule.attr, displayName(valueDef), valueDef.id)
       continue
     }
 
@@ -522,7 +563,8 @@ function planModel(
     kind: 'epc',
     name: model?.name ?? { others: [] },
     nodes,
-    edges
+    edges,
+    overviewContainerIds: new Set()
   }
 }
 
@@ -585,7 +627,12 @@ function rowMajor(list: PlanNode[]): PlanNode[] {
  *     resolve to a converted model (LinkedModels / legacy connection / the
  *     overview-only "occurs inside a converted EPC" rule) to callActivities.
  */
-function planOverview(db: AmlDatabase, model: AmlModel, processId: string, taken: Set<string>): ModelPlan {
+function planOverview(
+  db: AmlDatabase,
+  model: AmlModel,
+  processId: string,
+  taken: Set<string>
+): ModelPlan {
   const { members, occByDef } = collectMembers(db, model)
   const memberIds = new Set(members.map((m) => m.id))
 
@@ -609,6 +656,7 @@ function planOverview(db: AmlDatabase, model: AmlModel, processId: string, taken
       bpmnId: sanitizeId(def.id, taken),
       tag: 'task',
       meta: new Map(),
+      metadataSources: new Map(),
       incoming: [],
       outgoing: [],
       occ: occByDef.get(def.id)
@@ -652,7 +700,8 @@ function planOverview(db: AmlDatabase, model: AmlModel, processId: string, taken
     kind: 'overview',
     name: model.name,
     nodes,
-    edges
+    edges,
+    overviewContainerIds: containerIds
   }
 }
 
@@ -675,50 +724,58 @@ function planOverview(db: AmlDatabase, model: AmlModel, processId: string, taken
 function wireHierarchy(plans: ModelPlan[]): void {
   const planByModelId = new Map<string, ModelPlan>()
   for (const p of plans) if (p.model) planByModelId.set(p.model.id, p)
-  // Def id → the (first) EPC plan whose diagram contains it.
-  const epcPlanByDefId = new Map<string, ModelPlan>()
+  // Def id → every EPC plan whose diagram contains it, in source/model order.
+  const epcPlansByDefId = new Map<string, ModelPlan[]>()
   for (const p of plans) {
     if (p.kind !== 'epc') continue
     for (const defId of p.nodes.keys()) {
-      if (!epcPlanByDefId.has(defId)) epcPlanByDefId.set(defId, p)
+      const members = epcPlansByDefId.get(defId)
+      if (members) members.push(p)
+      else epcPlansByDefId.set(defId, [p])
     }
   }
 
   for (const plan of plans) {
     for (const node of plan.nodes.values()) {
       if (node.def.typeNum !== 'OT_FUNC') continue
-      let target: ModelPlan | undefined
+      let candidates: ModelPlan[] = []
 
-      // 1) Model assignment (first resolvable ref wins, document order).
+      // 1) Model assignment (first resolvable ref wins, document order). Keep
+      // every candidate so the report can disclose an ambiguous assignment.
       for (const modelId of node.def.linkedModelIds) {
         const p = planByModelId.get(modelId)
-        if (p && p !== plan) {
-          target = p
-          break
-        }
+        if (p && p !== plan && !candidates.includes(p)) candidates.push(p)
       }
 
       // 2) Legacy hierarchy connection.
-      if (!target) {
+      if (candidates.length === 0) {
         for (const c of node.def.cxns) {
           if (!isHierarchyCxnType(c.type)) continue
-          const p = plans.find((q) => q !== plan && q.nodes.has(c.to))
-          if (p) {
-            target = p
-            break
+          for (const p of plans) {
+            if (p !== plan && p.nodes.has(c.to) && !candidates.includes(p)) {
+              candidates.push(p)
+            }
           }
         }
       }
 
       // 3) Overview chevron whose object occurs inside a converted EPC.
-      if (!target && plan.kind === 'overview') {
-        const p = epcPlanByDefId.get(node.def.id)
-        if (p && p !== plan) target = p
+      if (candidates.length === 0 && plan.kind === 'overview') {
+        candidates = (epcPlansByDefId.get(node.def.id) ?? []).filter((p) => p !== plan)
       }
 
+      const target = candidates[0]
       if (target && target.processId !== plan.processId) {
         node.tag = 'callActivity'
         node.calledElement = target.processId
+        node.hierarchyCandidates = Object.freeze(
+          candidates.map((candidate) =>
+            Object.freeze({
+              sourceModelId: candidate.model?.id ?? candidate.processId,
+              targetProcessId: candidate.processId
+            })
+          )
+        )
       }
     }
   }
@@ -728,7 +785,14 @@ function wireHierarchy(plans: ModelPlan[]): void {
 // XML emission
 // ---------------------------------------------------------------------------
 
-const META_ATTR_ORDER: MetaAttr[] = ['respList', 'ccList', 'inputs', 'outputs', 'system', 'decisionBasis']
+const META_ATTR_ORDER: MetaAttr[] = [
+  'respList',
+  'ccList',
+  'inputs',
+  'outputs',
+  'system',
+  'decisionBasis'
+]
 
 /** Serialize a node's orbitpm attributes (names + satellite metadata). */
 function orbitpmAttrs(node: PlanNode): string {
@@ -774,8 +838,7 @@ function layoutInputOf(
     const semanticType = semanticTypeForTag(node.tag)
     const meaningfulLabel = pickText(meaningfulNodeName(node), lang)
     const sizingLabel =
-      meaningfulLabel ??
-      (semanticType ? SEMANTIC_NAMING[semanticType][lang].display : undefined)
+      meaningfulLabel ?? (semanticType ? SEMANTIC_NAMING[semanticType][lang].display : undefined)
     if (sizingLabel) layoutNode.label = sizingLabel
     if (sizingLabel && !meaningfulLabel) {
       presentationOnlyLabelIds.add(node.bpmnId)
@@ -811,7 +874,11 @@ function layoutInputOf(
 }
 
 /** Emit one plan as a complete BPMN file (single path: layered auto-layout). */
-function emitModel(plan: ModelPlan, lang: 'en' | 'ar', orientation: Orientation): ConvertedModel | undefined {
+function emitModel(
+  plan: ModelPlan,
+  lang: 'en' | 'ar',
+  orientation: Orientation
+): ConvertedModel | undefined {
   const nodeList = [...plan.nodes.values()]
   if (nodeList.length === 0) return undefined
 
@@ -859,12 +926,7 @@ function emitModel(plan: ModelPlan, lang: 'en' | 'ar', orientation: Orientation)
 
   // ONE layout path for every model: the deterministic layered engine. The
   // ARIS occurrence coordinates only survive as ordering hints inside it.
-  const {
-    layoutNodes,
-    diNodes,
-    layoutEdges,
-    presentationOnlyLabelIds
-  } = layoutInputOf(plan, lang)
+  const { layoutNodes, diNodes, layoutEdges, presentationOnlyLabelIds } = layoutInputOf(plan, lang)
   const layout = layoutEpc(layoutNodes, layoutEdges, { orientation })
   // The layout result carries external-label bounds calculated from sizing
   // labels. Strip only the presentation-default bounds from serialized DI;
@@ -895,6 +957,252 @@ function finishModel(plan: ModelPlan, lang: 'en' | 'ar', xml: string): Converted
 }
 
 // ---------------------------------------------------------------------------
+// Deterministic conversion report
+// ---------------------------------------------------------------------------
+
+type MutableReportEntries = Record<ArisConversionReportCategory, ArisConversionReportEntry[]>
+
+function emptyReportEntries(): MutableReportEntries {
+  return {
+    converted: [],
+    downgraded: [],
+    ignored: [],
+    ambiguous: [],
+    unmapped: []
+  }
+}
+
+function sourceEntry(
+  source: AmlObj | string,
+  reason: ArisConversionReportReason,
+  details: Omit<
+    ArisConversionReportEntry,
+    'sourceObjectId' | 'sourceObjectType' | 'sourceNameEn' | 'sourceNameAr' | 'reason'
+  > = {}
+): ArisConversionReportEntry {
+  if (typeof source === 'string') {
+    return { sourceObjectId: source, reason, ...details }
+  }
+  return {
+    sourceObjectId: source.id,
+    ...(source.typeNum ? { sourceObjectType: source.typeNum } : {}),
+    ...(source.name.en ? { sourceNameEn: source.name.en } : {}),
+    ...(source.name.ar ? { sourceNameAr: source.name.ar } : {}),
+    reason,
+    ...details
+  }
+}
+
+function reportModelDetails(
+  plan: ModelPlan
+): Pick<ArisConversionReportEntry, 'sourceModelId' | 'sourceModelType' | 'targetProcessId'> {
+  return {
+    ...(plan.model?.id ? { sourceModelId: plan.model.id } : {}),
+    ...(plan.model?.type ? { sourceModelType: plan.model.type } : {}),
+    targetProcessId: plan.processId
+  }
+}
+
+function hasKnownGatewaySymbol(symbol: string | undefined): boolean {
+  return !!symbol && /^ST_OPR_(?:AND|OR|XOR)/i.test(symbol)
+}
+
+function buildArisConversionReport(
+  db: AmlDatabase,
+  plans: readonly ModelPlan[],
+  files: readonly ConvertedModel[]
+): ArisConversionReport {
+  const entries = emptyReportEntries()
+  const emittedProcessIds = new Set(files.map(({ processId }) => processId))
+  const scheduledModelIds = new Set(plans.flatMap((plan) => (plan.model ? [plan.model.id] : [])))
+  const planByModelId = new Map(
+    plans.flatMap((plan) => (plan.model ? [[plan.model.id, plan] as const] : []))
+  )
+  const allOccurrenceObjectIds = new Set<string>()
+
+  for (const model of db.models) {
+    const byObjectId = new Map<string, string[]>()
+    for (const [index, occurrence] of model.occs.entries()) {
+      allOccurrenceObjectIds.add(occurrence.defId)
+      const occurrenceId = occurrence.id ?? `${model.id}:occurrence:${index + 1}`
+      const list = byObjectId.get(occurrence.defId)
+      if (list) list.push(occurrenceId)
+      else byObjectId.set(occurrence.defId, [occurrenceId])
+      if (!db.objectById.has(occurrence.defId)) {
+        entries.unmapped.push(
+          sourceEntry(occurrence.defId, 'missing-object-definition', {
+            sourceModelId: model.id,
+            sourceModelType: model.type,
+            relatedSourceIds: [occurrenceId]
+          })
+        )
+      }
+    }
+
+    if (scheduledModelIds.has(model.id)) {
+      const plan = planByModelId.get(model.id)
+      for (const [objectId, occurrences] of byObjectId) {
+        if (occurrences.length < 2) continue
+        const source = db.objectById.get(objectId)
+        entries.ambiguous.push(
+          sourceEntry(source ?? objectId, 'duplicate-object-occurrence-first-used', {
+            sourceModelId: model.id,
+            sourceModelType: model.type,
+            ...(plan ? { targetProcessId: plan.processId } : {}),
+            ...(plan?.nodes.get(objectId)
+              ? { targetElementId: plan.nodes.get(objectId)!.bpmnId }
+              : {}),
+            selectedSourceId: occurrences[0],
+            relatedSourceIds: occurrences
+          })
+        )
+      }
+    } else {
+      for (const objectId of byObjectId.keys()) {
+        const source = db.objectById.get(objectId)
+        if (!source) continue
+        entries.ignored.push(
+          sourceEntry(source, 'unsupported-model-type', {
+            sourceModelId: model.id,
+            sourceModelType: model.type
+          })
+        )
+      }
+    }
+  }
+
+  for (const plan of plans) {
+    const modelDetails = reportModelDetails(plan)
+    const emitted = emittedProcessIds.has(plan.processId)
+    const { members } = collectMembers(db, plan.model)
+    const appliedMetadataIds = new Set<string>()
+
+    if (emitted) {
+      for (const node of plan.nodes.values()) {
+        const symbol = node.occ?.symbolNum ?? node.def.symbolNum
+        if (
+          !FLOW_OBJECT_TYPES.has(node.def.typeNum) &&
+          !METADATA_OBJECT_TYPES.has(node.def.typeNum)
+        ) {
+          entries.downgraded.push(
+            sourceEntry(node.def, 'unknown-object-type-mapped-as-task', {
+              ...modelDetails,
+              targetElementId: node.bpmnId
+            })
+          )
+        } else if (node.def.typeNum === 'OT_RULE' && !hasKnownGatewaySymbol(symbol)) {
+          entries.downgraded.push(
+            sourceEntry(node.def, 'unknown-rule-symbol-mapped-as-exclusive-gateway', {
+              ...modelDetails,
+              targetElementId: node.bpmnId
+            })
+          )
+        } else {
+          const reason: ArisConversionReportReason =
+            node.calledElement !== undefined
+              ? 'mapped-call-activity'
+              : plan.kind === 'overview'
+                ? 'mapped-overview-node'
+                : 'mapped-flow-node'
+          entries.converted.push(
+            sourceEntry(node.def, reason, {
+              ...modelDetails,
+              targetElementId: node.bpmnId,
+              ...(node.calledElement ? { calledProcessId: node.calledElement } : {}),
+              ...(node.hierarchyCandidates?.[0]
+                ? { relatedSourceIds: [node.hierarchyCandidates[0].sourceModelId] }
+                : {})
+            })
+          )
+        }
+
+        for (const metadata of node.metadataSources.values()) {
+          const source = db.objectById.get(metadata.sourceObjectId)
+          if (!source || !METADATA_OBJECT_TYPES.has(source.typeNum)) continue
+          appliedMetadataIds.add(source.id)
+          entries.converted.push(
+            sourceEntry(source, 'mapped-metadata-attribute', {
+              ...modelDetails,
+              targetElementId: node.bpmnId,
+              targetProperty: `orbitpm:${metadata.attr}`
+            })
+          )
+        }
+
+        const candidates = node.hierarchyCandidates ?? []
+        if (candidates.length > 1) {
+          entries.ambiguous.push(
+            sourceEntry(node.def, 'multiple-hierarchy-targets-first-used', {
+              ...modelDetails,
+              targetElementId: node.bpmnId,
+              calledProcessId: candidates[0].targetProcessId,
+              selectedSourceId: candidates[0].sourceModelId,
+              relatedSourceIds: candidates.map(({ sourceModelId }) => sourceModelId)
+            })
+          )
+        }
+
+        for (const linkedModelId of node.def.linkedModelIds) {
+          const targetPlan = planByModelId.get(linkedModelId)
+          if (!targetPlan) {
+            entries.unmapped.push(
+              sourceEntry(node.def, 'linked-model-not-converted', {
+                ...modelDetails,
+                targetElementId: node.bpmnId,
+                relatedSourceIds: [linkedModelId]
+              })
+            )
+          } else if (targetPlan === plan) {
+            entries.unmapped.push(
+              sourceEntry(node.def, 'self-referential-model-assignment', {
+                ...modelDetails,
+                targetElementId: node.bpmnId,
+                relatedSourceIds: [linkedModelId]
+              })
+            )
+          }
+        }
+      }
+    }
+
+    for (const member of members) {
+      if (METADATA_OBJECT_TYPES.has(member.typeNum) && !appliedMetadataIds.has(member.id)) {
+        entries.ignored.push(
+          sourceEntry(member, 'satellite-not-mapped', {
+            ...modelDetails
+          })
+        )
+      }
+    }
+
+    for (const objectId of plan.overviewContainerIds) {
+      const source = db.objectById.get(objectId)
+      if (!source) continue
+      entries.ignored.push(
+        sourceEntry(source, 'overview-container-not-emitted', {
+          ...modelDetails
+        })
+      )
+    }
+  }
+
+  if (db.models.length > 0) {
+    for (const source of db.objects) {
+      if (allOccurrenceObjectIds.has(source.id)) continue
+      entries.unmapped.push(sourceEntry(source, 'not-present-in-any-model'))
+    }
+  }
+
+  return createArisConversionReport({
+    databaseName: db.databaseName,
+    objectDefinitions: db.objects.length,
+    models: db.models.length,
+    outputFiles: files.length,
+    entries
+  })
+}
+
+// ---------------------------------------------------------------------------
 // Public API
 // ---------------------------------------------------------------------------
 
@@ -905,7 +1213,8 @@ function finishModel(plan: ModelPlan, lang: 'en' | 'ar', xml: string): Converted
  * `files[0]` is always an EPC. Exports with no `<Model>` sections at all (the
  * legacy minimal .apc shape) convert as a single flat process. A successful
  * multi-model conversion also suggests a `folderName` (the first overview's
- * name in the active language, else the export's DatabaseName). Error codes:
+ * name in the active language, else the export's DatabaseName). Every success
+ * includes a deterministic, versioned object-conversion report. Error codes:
  * 'not-aml' (sniff failed), 'no-objects' (nothing convertible in the
  * catalogue), 'no-models' (models exist but none is a convertible EPC).
  * Never throws.
@@ -926,7 +1235,8 @@ export async function convertAmlToBpmnFiles(
 
     // Overviews convert only alongside at least one EPC (a lone value-chain
     // map keeps the historical 'no-models' outcome above).
-    const overviewModels = epcModels.length > 0 ? db.models.filter((m) => m.type === 'MT_VAL_ADD_CHN_DGM') : []
+    const overviewModels =
+      epcModels.length > 0 ? db.models.filter((m) => m.type === 'MT_VAL_ADD_CHN_DGM') : []
 
     // Process ids are assigned up front, ALL before any model is planned
     // (AT_PROC_CODE when the model carries one, else the Model.ID; globally
@@ -949,7 +1259,9 @@ export async function convertAmlToBpmnFiles(
     }))
 
     const plans: ModelPlan[] = [
-      ...scheduledEpc.map(({ model, processId }) => planModel(db, model, processId, lang, new Set(takenProcessIds))),
+      ...scheduledEpc.map(({ model, processId }) =>
+        planModel(db, model, processId, lang, new Set(takenProcessIds))
+      ),
       ...scheduledOverview.map(({ model, processId }) =>
         planOverview(db, model, processId, new Set(takenProcessIds))
       )
@@ -968,10 +1280,12 @@ export async function convertAmlToBpmnFiles(
     // The overview only ships when a real EPC converted with it.
     if (epcFiles.length === 0) return { error: db.models.length > 0 ? 'no-models' : 'no-objects' }
     const files = [...epcFiles, ...overviewFiles]
+    const report = buildArisConversionReport(db, plans, files)
 
     const firstOverview = overviewModels.length > 0 ? overviewModels[0] : undefined
-    const folderName = (firstOverview ? pickText(firstOverview.name, lang) : undefined) ?? db.databaseName
-    return folderName ? { files, folderName } : { files }
+    const folderName =
+      (firstOverview ? pickText(firstOverview.name, lang) : undefined) ?? db.databaseName
+    return folderName ? { files, folderName, report } : { files, report }
   } catch (err) {
     return { error: err instanceof Error ? err.message : String(err) }
   }
@@ -985,5 +1299,5 @@ export async function convertAmlToBpmnFiles(
 export async function convertApcToBpmn(text: string): Promise<ApcConversion> {
   const result = await convertAmlToBpmnFiles(text)
   if ('error' in result) return { error: result.error }
-  return { xml: result.files[0].xml }
+  return { xml: result.files[0].xml, report: result.report }
 }
