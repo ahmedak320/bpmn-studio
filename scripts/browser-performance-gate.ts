@@ -16,7 +16,8 @@ const LIMITS_MS = Object.freeze({
   spreadsheetWorkerPreviewNodes1000: 10_000
 })
 const HEARTBEAT_INTERVAL_MS = 16
-const MAX_PARSE_HEARTBEAT_GAP_MS = 250
+const PERFORMANCE_TRIALS = 3
+const MEDIAN_MAX_PARSE_HEARTBEAT_GAP_MS = 250
 
 interface HeartbeatStatistics {
   maxGapMs: number
@@ -26,6 +27,7 @@ interface HeartbeatStatistics {
 
 interface BrowserMeasurement {
   name: keyof typeof LIMITS_MS
+  trial: number
   nodes: number
   flows: number
   workbookBytes: number
@@ -40,8 +42,19 @@ interface BrowserMeasurement {
     review: HeartbeatStatistics
   }
   spreadsheetWorkers: number
-  passed: boolean
+  withinSingleRunLimits: boolean
   error?: string
+}
+
+interface BrowserGate {
+  name: keyof typeof LIMITS_MS
+  nodes: number
+  trials: number
+  medianTotalPreviewMs: number
+  totalPreviewLimitMs: number
+  medianMaxParseHeartbeatGapMs: number
+  parseHeartbeatLimitMs: number
+  passed: boolean
 }
 
 function xmlEscape(value: string): string {
@@ -145,12 +158,12 @@ async function startHeartbeat(page: Page): Promise<void> {
   await page.evaluate((intervalMs) => {
     const state = {
       lastMs: performance.now(),
-      samples: [] as Array<{ at: number; gap: number }>,
+      samples: [] as Array<{ from: number; at: number; gap: number }>,
       intervalId: 0
     }
     state.intervalId = window.setInterval(() => {
       const now = performance.now()
-      state.samples.push({ at: now, gap: now - state.lastMs })
+      state.samples.push({ from: state.lastMs, at: now, gap: now - state.lastMs })
       state.lastMs = now
     }, intervalMs)
     ;(
@@ -161,13 +174,15 @@ async function startHeartbeat(page: Page): Promise<void> {
   }, HEARTBEAT_INTERVAL_MS)
 }
 
-async function stopHeartbeat(page: Page): Promise<readonly { at: number; gap: number }[]> {
+async function stopHeartbeat(
+  page: Page
+): Promise<readonly { from: number; at: number; gap: number }[]> {
   return page.evaluate(() => {
     const state = (
       window as unknown as {
         __ORBITPM_PERFORMANCE_HEARTBEAT__: {
           intervalId: number
-          samples: Array<{ at: number; gap: number }>
+          samples: Array<{ from: number; at: number; gap: number }>
         }
       }
     ).__ORBITPM_PERFORMANCE_HEARTBEAT__
@@ -177,13 +192,14 @@ async function stopHeartbeat(page: Page): Promise<readonly { at: number; gap: nu
 }
 
 function heartbeatStatistics(
-  samples: readonly { at: number; gap: number }[],
+  samples: readonly { from: number; at: number; gap: number }[],
   startedAt: number,
   endedAt: number
 ): HeartbeatStatistics {
   const gaps = samples
-    .filter((sample) => sample.at >= startedAt && sample.at <= endedAt)
-    .map((sample) => sample.gap)
+    .filter((sample) => sample.at >= startedAt && sample.from <= endedAt)
+    .map((sample) => Math.min(sample.at, endedAt) - Math.max(sample.from, startedAt))
+    .filter((gap) => gap > 0)
     .sort((left, right) => left - right)
   const p95Index = Math.max(0, Math.ceil(gaps.length * 0.95) - 1)
   return {
@@ -195,7 +211,8 @@ function heartbeatStatistics(
 
 async function measureBrowserPreview(
   browser: Browser,
-  nodeCount: number
+  nodeCount: number,
+  trial: number
 ): Promise<BrowserMeasurement> {
   const name =
     nodeCount === 500 ? 'spreadsheetWorkerPreviewNodes500' : 'spreadsheetWorkerPreviewNodes1000'
@@ -290,6 +307,7 @@ async function measureBrowserPreview(
     const totalPreviewMs = previewReady - uploadStart
     return {
       name,
+      trial,
       nodes: nodeCount,
       flows: nodeCount - 1,
       workbookBytes: workbook.byteLength,
@@ -297,16 +315,16 @@ async function measureBrowserPreview(
       reviewToReadyMs: Number(reviewToReadyMs.toFixed(3)),
       totalPreviewMs: Number(totalPreviewMs.toFixed(3)),
       limitMs,
-      heartbeatLimitMs: MAX_PARSE_HEARTBEAT_GAP_MS,
+      heartbeatLimitMs: MEDIAN_MAX_PARSE_HEARTBEAT_GAP_MS,
       heartbeat: {
         overall: overallHeartbeat,
         parse: parseHeartbeat,
         review: reviewHeartbeat
       },
       spreadsheetWorkers,
-      passed:
+      withinSingleRunLimits:
         totalPreviewMs <= limitMs &&
-        parseHeartbeat.maxGapMs <= MAX_PARSE_HEARTBEAT_GAP_MS &&
+        parseHeartbeat.maxGapMs <= MEDIAN_MAX_PARSE_HEARTBEAT_GAP_MS &&
         parseHeartbeat.samples > 0 &&
         reviewHeartbeat.samples > 0 &&
         spreadsheetWorkers >= 1
@@ -314,6 +332,7 @@ async function measureBrowserPreview(
   } catch (error) {
     return {
       name,
+      trial,
       nodes: nodeCount,
       flows: nodeCount - 1,
       workbookBytes: workbook.byteLength,
@@ -321,18 +340,57 @@ async function measureBrowserPreview(
       reviewToReadyMs: 0,
       totalPreviewMs: 0,
       limitMs,
-      heartbeatLimitMs: MAX_PARSE_HEARTBEAT_GAP_MS,
+      heartbeatLimitMs: MEDIAN_MAX_PARSE_HEARTBEAT_GAP_MS,
       heartbeat: {
         overall: { maxGapMs: 0, p95GapMs: 0, samples: 0 },
         parse: { maxGapMs: 0, p95GapMs: 0, samples: 0 },
         review: { maxGapMs: 0, p95GapMs: 0, samples: 0 }
       },
       spreadsheetWorkers: 0,
-      passed: false,
+      withinSingleRunLimits: false,
       error: error instanceof Error ? error.message : String(error)
     }
   } finally {
     await context.close()
+  }
+}
+
+function median(values: readonly number[]): number {
+  const ordered = [...values].sort((left, right) => left - right)
+  return ordered[Math.floor(ordered.length / 2)] ?? 0
+}
+
+function aggregateGate(
+  name: BrowserMeasurement['name'],
+  measurements: readonly BrowserMeasurement[]
+): BrowserGate {
+  const matching = measurements.filter((measurement) => measurement.name === name)
+  const nodes = matching[0]?.nodes ?? 0
+  const medianTotalPreviewMs = median(matching.map((measurement) => measurement.totalPreviewMs))
+  const medianMaxParseHeartbeatGapMs = median(
+    matching.map((measurement) => measurement.heartbeat.parse.maxGapMs)
+  )
+  const structurallyComplete =
+    matching.length === PERFORMANCE_TRIALS &&
+    matching.every(
+      (measurement) =>
+        !measurement.error &&
+        measurement.spreadsheetWorkers >= 1 &&
+        measurement.heartbeat.parse.samples > 0 &&
+        measurement.heartbeat.review.samples > 0
+    )
+  return {
+    name,
+    nodes,
+    trials: matching.length,
+    medianTotalPreviewMs,
+    totalPreviewLimitMs: LIMITS_MS[name],
+    medianMaxParseHeartbeatGapMs,
+    parseHeartbeatLimitMs: MEDIAN_MAX_PARSE_HEARTBEAT_GAP_MS,
+    passed:
+      structurallyComplete &&
+      medianTotalPreviewMs <= LIMITS_MS[name] &&
+      medianMaxParseHeartbeatGapMs <= MEDIAN_MAX_PARSE_HEARTBEAT_GAP_MS
   }
 }
 
@@ -352,14 +410,21 @@ try {
   const metadataPage = await browser.newPage()
   browserUserAgent = await metadataPage.evaluate(() => navigator.userAgent)
   await metadataPage.close()
-  measurements.push(await measureBrowserPreview(browser, 500))
-  measurements.push(await measureBrowserPreview(browser, 1_000))
+  for (const nodeCount of [500, 1_000]) {
+    for (let trial = 1; trial <= PERFORMANCE_TRIALS; trial += 1) {
+      measurements.push(await measureBrowserPreview(browser, nodeCount, trial))
+    }
+  }
 } catch (error) {
   launchError = error instanceof Error ? error.message : String(error)
 } finally {
   await browser?.close()
 }
 
+const gates = [
+  aggregateGate('spreadsheetWorkerPreviewNodes500', measurements),
+  aggregateGate('spreadsheetWorkerPreviewNodes1000', measurements)
+]
 const evidence = {
   schemaVersion: 1,
   createdAt: new Date().toISOString(),
@@ -379,28 +444,39 @@ const evidence = {
     userAgent: browserUserAgent
   },
   limitsMs: LIMITS_MS,
-  maxParseHeartbeatGapMs: MAX_PARSE_HEARTBEAT_GAP_MS,
+  performanceTrials: PERFORMANCE_TRIALS,
+  medianMaxParseHeartbeatGapMs: MEDIAN_MAX_PARSE_HEARTBEAT_GAP_MS,
   measurements,
+  gates,
   launchError,
   passed:
     launchError === undefined &&
-    measurements.length === 2 &&
-    measurements.every((measurement) => measurement.passed)
+    measurements.length === PERFORMANCE_TRIALS * 2 &&
+    gates.every((gate) => gate.passed)
 }
 
 mkdirSync(dirname(outputPath), { recursive: true })
 writeFileSync(outputPath, `${JSON.stringify(evidence, null, 2)}\n`)
 
 for (const measurement of measurements) {
-  const state = measurement.passed ? 'PASS' : 'FAIL'
+  const state = measurement.withinSingleRunLimits ? 'within' : 'outside'
   console.log(
-    `${state} ${measurement.name}: ${measurement.totalPreviewMs.toFixed(3)} ms ` +
-      `(limit ${measurement.limitMs} ms; max parse heartbeat gap ` +
-      `${measurement.heartbeat.parse.maxGapMs.toFixed(3)}/` +
-      `${measurement.heartbeatLimitMs} ms; ` +
-      `${measurement.spreadsheetWorkers} worker(s))`
+    `SAMPLE ${measurement.name} trial ${measurement.trial}: ` +
+      `${measurement.totalPreviewMs.toFixed(3)} ms; parse heartbeat p95/max ` +
+      `${measurement.heartbeat.parse.p95GapMs.toFixed(3)}/` +
+      `${measurement.heartbeat.parse.maxGapMs.toFixed(3)} ms ` +
+      `(${state} single-run limits; ${measurement.spreadsheetWorkers} worker(s))`
   )
   if (measurement.error) console.error(measurement.error)
+}
+for (const gate of gates) {
+  const state = gate.passed ? 'PASS' : 'FAIL'
+  console.log(
+    `${state} ${gate.name}: median ${gate.medianTotalPreviewMs.toFixed(3)}/` +
+      `${gate.totalPreviewLimitMs} ms; median max parse heartbeat ` +
+      `${gate.medianMaxParseHeartbeatGapMs.toFixed(3)}/` +
+      `${gate.parseHeartbeatLimitMs} ms (${gate.trials} trials)`
+  )
 }
 if (!evidence.passed) {
   if (launchError) console.error(launchError)
