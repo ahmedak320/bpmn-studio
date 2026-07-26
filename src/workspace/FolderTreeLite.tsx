@@ -42,6 +42,7 @@ interface MenuState {
   x: number
   y: number
   node: LiteTreeNode
+  keyboardTrigger: HTMLElement | null
 }
 
 interface MenuItem {
@@ -59,7 +60,7 @@ interface RowActions {
   onOpenFile: (relPath: string) => void
   onOpenFileFocus?: (relPath: string) => void
   onOpenProcess: (navigation: HierarchyNavigation) => void
-  onContextMenu: (event: React.MouseEvent, node: LiteTreeNode) => void
+  onContextMenu: (event: React.MouseEvent<HTMLElement>, node: LiteTreeNode) => void
   onRename: (node: LiteTreeNode) => void
   onDelete: (node: LiteTreeNode) => void
   onMove: (node: LiteTreeNode) => void
@@ -69,6 +70,9 @@ interface RowActions {
   onDragLeaveFolder: (event: React.DragEvent, folderRel: string) => void
   onDropFolder: (event: React.DragEvent, folderRel: string) => void
   registerCanonicalRow: (key: string, element: HTMLDivElement | null) => void
+  focusedKey: string | null
+  onRowFocus: (key: string) => void
+  onKeyboardMenu: (node: LiteTreeNode, trigger: HTMLElement) => void
 }
 
 function parentOf(relPath: string): string {
@@ -109,6 +113,8 @@ export function FolderTreeLite({
   const [expanded, setExpanded] = useState<Set<string>>(() => new Set([directoryKey('')]))
   const [menu, setMenu] = useState<MenuState | null>(null)
   const [dropTargetRel, setDropTargetRel] = useState<string | null>(null)
+  const [focusedKey, setFocusedKey] = useState<string | null>(null)
+  const treeRef = useRef<HTMLDivElement | null>(null)
   const canonicalRowsRef = useRef<Map<string, HTMLDivElement>>(new Map())
   const handledRevealTokenRef = useRef<number | null>(null)
 
@@ -180,11 +186,131 @@ export function FolderTreeLite({
     }
   }, [hierarchy, revealRequest])
 
-  const openMenu = useCallback((event: React.MouseEvent, node: LiteTreeNode) => {
+  const openMenu = useCallback((event: React.MouseEvent<HTMLElement>, node: LiteTreeNode) => {
     event.preventDefault()
     event.stopPropagation()
-    setMenu({ x: event.clientX, y: event.clientY, node })
+    setMenu({
+      x: event.clientX,
+      y: event.clientY,
+      node,
+      keyboardTrigger: null
+    })
   }, [])
+
+  const openKeyboardMenu = useCallback((node: LiteTreeNode, trigger: HTMLElement) => {
+    const bounds = trigger.getBoundingClientRect()
+    setMenu({
+      x: bounds.left + Math.min(24, bounds.width),
+      y: bounds.bottom,
+      node,
+      keyboardTrigger: trigger
+    })
+  }, [])
+
+  const handleTreeKeyDown = useCallback(
+    (event: React.KeyboardEvent<HTMLDivElement>) => {
+      const target = event.target
+      if (!(target instanceof HTMLElement)) return
+      const current = target.closest<HTMLElement>('[role="treeitem"]')
+      if (!current || target !== current || !treeRef.current?.contains(current)) return
+
+      const items = [...treeRef.current.querySelectorAll<HTMLElement>('[role="treeitem"]')]
+      const currentIndex = items.indexOf(current)
+      if (currentIndex < 0) return
+
+      const focusAt = (index: number): void => {
+        const next = items[index]
+        if (!next) return
+        setFocusedKey(next.dataset.treeKey ?? null)
+        next.focus()
+      }
+
+      const level = Number(current.getAttribute('aria-level') ?? '1')
+      const expandable = current.dataset.treeExpandable === 'true'
+      const expanded = current.getAttribute('aria-expanded') === 'true'
+      const key = current.dataset.treeKey
+
+      switch (event.key) {
+        case 'ArrowDown':
+          event.preventDefault()
+          focusAt(Math.min(items.length - 1, currentIndex + 1))
+          break
+        case 'ArrowUp':
+          event.preventDefault()
+          focusAt(Math.max(0, currentIndex - 1))
+          break
+        case 'Home':
+          event.preventDefault()
+          focusAt(0)
+          break
+        case 'End':
+          event.preventDefault()
+          focusAt(items.length - 1)
+          break
+        case 'ArrowRight': {
+          event.preventDefault()
+          if (expandable && !expanded && key) {
+            toggle(key)
+            return
+          }
+          const next = items[currentIndex + 1]
+          if (
+            expandable &&
+            expanded &&
+            next &&
+            Number(next.getAttribute('aria-level') ?? '1') > level
+          ) {
+            focusAt(currentIndex + 1)
+          }
+          break
+        }
+        case 'ArrowLeft': {
+          event.preventDefault()
+          if (expandable && expanded && key) {
+            toggle(key)
+            return
+          }
+          for (let index = currentIndex - 1; index >= 0; index -= 1) {
+            const candidateLevel = Number(items[index]?.getAttribute('aria-level') ?? '1')
+            if (candidateLevel < level) {
+              focusAt(index)
+              break
+            }
+          }
+          break
+        }
+      }
+    },
+    [toggle]
+  )
+
+  const defaultFocusedKey = useMemo(() => {
+    const activeCanonical = activePath ? hierarchy.canonicalByRelPath.get(activePath) : undefined
+    const activeIsVisible =
+      activeCanonical !== undefined &&
+      activeCanonical.ancestorDirectoryPaths.every(
+        (path) => path === '' || expanded.has(directoryKey(path))
+      ) &&
+      activeCanonical.ancestorRowKeys.every((key) => expanded.has(key))
+    if (activeCanonical && activeIsVisible) return activeCanonical.key
+    return hierarchy.root?.kind === 'directory' ? (hierarchy.root.children[0]?.key ?? null) : null
+  }, [activePath, expanded, hierarchy])
+
+  const effectiveFocusedKey = focusedKey ?? defaultFocusedKey
+
+  useEffect(() => {
+    const tree = treeRef.current
+    if (!tree) return
+    const visibleItems = [...tree.querySelectorAll<HTMLElement>('[role="treeitem"]')]
+    if (visibleItems.length === 0) return
+    if (
+      effectiveFocusedKey &&
+      visibleItems.some((item) => item.dataset.treeKey === effectiveFocusedKey)
+    ) {
+      return
+    }
+    setFocusedKey(visibleItems[0]?.dataset.treeKey ?? null)
+  }, [effectiveFocusedKey, expanded, hierarchy])
 
   const onDragStartNode = useCallback((event: React.DragEvent, node: LiteTreeNode) => {
     if (node.relPath === '') return
@@ -250,7 +376,10 @@ export function FolderTreeLite({
       onDragOverFolder,
       onDragLeaveFolder,
       onDropFolder,
-      registerCanonicalRow
+      registerCanonicalRow,
+      focusedKey: effectiveFocusedKey,
+      onRowFocus: setFocusedKey,
+      onKeyboardMenu: openKeyboardMenu
     }),
     [
       activePath,
@@ -270,7 +399,9 @@ export function FolderTreeLite({
       onDragOverFolder,
       onDragLeaveFolder,
       onDropFolder,
-      registerCanonicalRow
+      registerCanonicalRow,
+      effectiveFocusedKey,
+      openKeyboardMenu
     ]
   )
 
@@ -312,11 +443,16 @@ export function FolderTreeLite({
 
   return (
     <div
+      ref={treeRef}
+      role="tree"
+      aria-label={t('tree.search.aria')}
+      tabIndex={root ? undefined : 0}
       style={{ userSelect: 'none' }}
       onContextMenu={(event) => root && openMenu(event, root.node)}
       onDragOver={(event) => onDragOverFolder(event, '')}
       onDragLeave={(event) => onDragLeaveFolder(event, '')}
       onDrop={(event) => onDropFolder(event, '')}
+      onKeyDown={handleTreeKeyDown}
     >
       <div
         style={{
@@ -334,6 +470,7 @@ export function FolderTreeLite({
           y={menu.y}
           items={buildMenuItems(menu.node)}
           onClose={() => setMenu(null)}
+          keyboardTrigger={menu.keyboardTrigger}
         />
       )}
     </div>
@@ -359,6 +496,7 @@ function PhysicalLevel({
   const references = row.kind === 'file' ? row.references : []
   const ownedChildren = row.kind === 'file' ? row.ownedChildren : []
   const hasChildren = references.length > 0 || ownedChildren.length > 0
+  const treeExpandable = row.kind === 'directory' ? row.children.length > 0 : hasChildren
   const childrenOpen = hasChildren && actions.expanded.has(row.key)
 
   const activate = (): void => {
@@ -386,14 +524,28 @@ function PhysicalLevel({
           data-process-ids={
             row.kind === 'file' && row.processIds.length > 0 ? row.processIds.join(' ') : undefined
           }
+          data-tree-key={row.key}
+          data-tree-expandable={treeExpandable ? 'true' : 'false'}
           draggable
-          tabIndex={row.kind === 'file' ? -1 : 0}
+          role="treeitem"
+          aria-level={depth}
+          aria-label={isDirty ? `${row.name} — ${t('editor.dirtyFlag.dirty')}` : row.name}
+          aria-expanded={treeExpandable ? (isDirectory ? isOpen : childrenOpen) : undefined}
+          aria-current={isActive ? 'page' : undefined}
+          tabIndex={actions.focusedKey === row.key ? 0 : -1}
+          onFocus={() => actions.onRowFocus(row.key)}
           onDragStart={(event) => actions.onDragStartNode(event, row.node)}
           onDragOver={(event) => actions.onDragOverFolder(event, folderRel)}
           onDragLeave={(event) => actions.onDragLeaveFolder(event, folderRel)}
           onDrop={(event) => actions.onDropFolder(event, folderRel)}
           onClick={activate}
           onKeyDown={(event) => {
+            if (event.target !== event.currentTarget) return
+            if (event.key === 'ContextMenu' || (event.shiftKey && event.key === 'F10')) {
+              event.preventDefault()
+              actions.onKeyboardMenu(row.node, event.currentTarget)
+              return
+            }
             if (event.key === 'Enter' || event.key === ' ') {
               event.preventDefault()
               activate()
@@ -438,9 +590,8 @@ function PhysicalLevel({
               flex: '0 0 auto',
               cursor: hasChildren ? 'pointer' : undefined
             }}
-            role={hasChildren ? 'button' : undefined}
-            aria-label={hasChildren ? t('tree.linkedChildren') : undefined}
-            aria-expanded={hasChildren ? childrenOpen : undefined}
+            aria-hidden="true"
+            title={hasChildren ? t('tree.linkedChildren') : undefined}
             onClick={
               hasChildren
                 ? (event) => {
@@ -529,7 +680,7 @@ function PhysicalLevel({
       )}
 
       {row.kind === 'directory' && isOpen && (
-        <div>
+        <div role="group">
           {row.children.map((child) => (
             <PhysicalLevel key={child.key} row={child} depth={depth + 1} actions={actions} />
           ))}
@@ -537,7 +688,7 @@ function PhysicalLevel({
       )}
 
       {row.kind === 'file' && childrenOpen && (
-        <div>
+        <div role="group">
           {row.ownedChildren.map((child) => (
             <PhysicalLevel key={child.key} row={child} depth={depth + 1} actions={actions} />
           ))}
@@ -594,11 +745,18 @@ function ReferenceRow({
         data-reference-kind="reused"
         data-cycle={row.cycle ?? undefined}
         data-read-only="true"
-        role="button"
-        tabIndex={0}
+        data-tree-key={row.key}
+        data-tree-expandable={row.expandable ? 'true' : 'false'}
+        role="treeitem"
+        aria-level={depth}
+        aria-expanded={row.expandable ? isOpen : undefined}
+        aria-current={isActive ? 'page' : undefined}
+        tabIndex={actions.focusedKey === row.key ? 0 : -1}
+        onFocus={() => actions.onRowFocus(row.key)}
         aria-label={row.label}
         onClick={() => actions.onOpenProcess(row.navigation)}
         onKeyDown={(event) => {
+          if (event.target !== event.currentTarget) return
           if (event.key === 'Enter' || event.key === ' ') {
             event.preventDefault()
             actions.onOpenProcess(row.navigation)
@@ -637,9 +795,8 @@ function ReferenceRow({
             flex: '0 0 auto',
             cursor: row.expandable ? 'pointer' : undefined
           }}
-          role={row.expandable ? 'button' : undefined}
-          aria-label={row.expandable ? t('tree.linkedChildren') : undefined}
-          aria-expanded={row.expandable ? isOpen : undefined}
+          aria-hidden="true"
+          title={row.expandable ? t('tree.linkedChildren') : undefined}
           onClick={
             row.expandable
               ? (event) => {
@@ -704,7 +861,11 @@ function ReferenceRow({
           </span>
         )}
       </div>
-      {isOpen && <ReferenceLevel rows={row.children} depth={depth + 1} actions={actions} />}
+      {isOpen && (
+        <div role="group">
+          <ReferenceLevel rows={row.children} depth={depth + 1} actions={actions} />
+        </div>
+      )}
     </div>
   )
 }
@@ -808,9 +969,11 @@ function ActionIcon({
         cursor: 'pointer',
         fontSize: 12,
         lineHeight: 1,
-        padding: '2px 3px',
+        minWidth: 24,
+        minHeight: 24,
+        padding: 2,
         borderRadius: 4,
-        color: danger ? '#d0473f' : 'inherit',
+        color: danger ? 'var(--orbitpm-fg)' : 'inherit',
         opacity: 0.75
       }}
       onMouseEnter={(event) => {
@@ -829,13 +992,17 @@ function ContextMenu({
   x,
   y,
   items,
-  onClose
+  onClose,
+  keyboardTrigger
 }: {
   x: number
   y: number
   items: MenuItem[]
   onClose: () => void
+  keyboardTrigger: HTMLElement | null
 }): JSX.Element {
+  const menuRef = useRef<HTMLDivElement | null>(null)
+
   useEffect(() => {
     const close = (): void => onClose()
     window.addEventListener('click', close)
@@ -848,9 +1015,15 @@ function ContextMenu({
     }
   }, [onClose])
 
+  useEffect(() => {
+    menuRef.current?.querySelector<HTMLButtonElement>('[role="menuitem"]')?.focus()
+  }, [])
+
   return (
     <div
+      ref={menuRef}
       role="menu"
+      aria-orientation="vertical"
       style={{
         position: 'fixed',
         top: y,
@@ -864,12 +1037,41 @@ function ContextMenu({
         padding: 4
       }}
       onClick={(event) => event.stopPropagation()}
+      onKeyDown={(event) => {
+        const target = event.target
+        if (!(target instanceof HTMLButtonElement)) return
+        const menuItems = [
+          ...(menuRef.current?.querySelectorAll<HTMLButtonElement>('[role="menuitem"]') ?? [])
+        ]
+        const index = menuItems.indexOf(target)
+        const focusAt = (nextIndex: number): void => {
+          menuItems[nextIndex]?.focus()
+        }
+        if (event.key === 'ArrowDown') {
+          event.preventDefault()
+          focusAt((index + 1) % menuItems.length)
+        } else if (event.key === 'ArrowUp') {
+          event.preventDefault()
+          focusAt((index - 1 + menuItems.length) % menuItems.length)
+        } else if (event.key === 'Home') {
+          event.preventDefault()
+          focusAt(0)
+        } else if (event.key === 'End') {
+          event.preventDefault()
+          focusAt(menuItems.length - 1)
+        } else if (event.key === 'Escape' || event.key === 'Tab') {
+          event.preventDefault()
+          onClose()
+          requestAnimationFrame(() => keyboardTrigger?.focus())
+        }
+      }}
     >
       {items.map((item) => (
         <button
           key={item.label}
           type="button"
           role="menuitem"
+          tabIndex={-1}
           onClick={() => {
             item.onClick()
             onClose()
@@ -879,8 +1081,9 @@ function ContextMenu({
             width: '100%',
             border: 'none',
             background: 'transparent',
-            color: item.danger ? '#d0473f' : 'inherit',
+            color: item.danger ? 'var(--orbitpm-fg)' : 'inherit',
             textAlign: 'start',
+            minHeight: 32,
             padding: '6px 10px',
             borderRadius: 4,
             cursor: 'pointer',
