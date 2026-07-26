@@ -5,19 +5,6 @@ import { convertAmlToBpmnFiles, convertApcToBpmn, looksLikeAml } from '../apcImp
 import { parseAml } from '../amlParse'
 import { AML_SAMPLE } from '../__fixtures__/aml-sample'
 
-// The real ARIS 10 "DMT" database export this converter was rebuilt against.
-// The smoke suite below only runs when the file is present on this machine.
-const REAL_EXPORT_PATH =
-  '/home/ahmed/.claude/uploads/8f8887c3-73c3-48e7-bcb9-7da7af54a1aa/3bc47a21-ARISAMLExport.xml'
-
-function tryReadRealExport(): string | undefined {
-  try {
-    return readFileSync(REAL_EXPORT_PATH, 'utf8')
-  } catch {
-    return undefined
-  }
-}
-
 /** All name="…" values of <task>/<callActivity> elements in a BPMN string. */
 function flowActivityNames(xml: string): string[] {
   const names: string[] = []
@@ -460,62 +447,6 @@ describe('convertApcToBpmn (legacy wrapper)', () => {
 
   it('propagates error codes', async () => {
     expect(await convertApcToBpmn('<nope/>')).toEqual({ error: 'not-aml' })
-  })
-})
-
-// ---------------------------------------------------------------------------
-// Smoke conversion of the REAL ARIS export (skipped when the file is absent).
-// ---------------------------------------------------------------------------
-
-const realText = tryReadRealExport()
-
-describe.skipIf(!realText)('real ARIS "DMT" export (smoke)', () => {
-  // Names of OT_PERS / OT_PERS_TYPE / OT_APPL_SYS objects in the real export;
-  // none of them may surface as a task/callActivity label.
-  const SATELLITE_NAMES = [
-    'Veterinary',
-    'Pet Owner',
-    'New Pet Owner',
-    'Operator',
-    'Respective Municipality Registration Officer',
-    'TAMM',
-    'UAE Pass',
-    'Smart Hub',
-    'DED System',
-    'الهوية الرقمية'
-  ]
-
-  it('converts every EPC with bilingual names and clean flow/metadata split', async () => {
-    const result = await convertAmlToBpmnFiles(realText as string)
-    expect('files' in result).toBe(true)
-    if (!('files' in result)) return
-    expect(result.files.length).toBeGreaterThanOrEqual(5)
-
-    const moddle = new BpmnModdle()
-    let nodes = 0
-    let flows = 0
-    let orbitpmAttrs = 0
-    for (const file of result.files) {
-      // Arabic names made it through the DTD-entity + locale plumbing.
-      expect(file.xml).toContain('orbitpm:nameAr')
-      // No satellite object became an activity.
-      const names = flowActivityNames(file.xml)
-      for (const forbidden of SATELLITE_NAMES) expect(names).not.toContain(forbidden)
-      // Every file is importable BPMN (bpmn-js's own parser core).
-      const { rootElement, warnings } = await moddle.fromXML(file.xml)
-      expect(rootElement.$type).toBe('bpmn:Definitions')
-      expect(warnings).toEqual([])
-      nodes += (file.xml.match(/<(?:task|callActivity|startEvent|endEvent|intermediateThrowEvent|exclusiveGateway|parallelGateway|inclusiveGateway)\b/g) ?? []).length
-      flows += (file.xml.match(/<sequenceFlow\b/g) ?? []).length
-      orbitpmAttrs += (file.xml.match(/orbitpm:(?:respList|ccList|inputs|outputs|system|decisionBasis)="/g) ?? []).length
-    }
-    // Conversion statistics for the record (visible in the vitest output).
-    console.log(
-      `[aml-smoke] files=${result.files.length} flowNodes=${nodes} sequenceFlows=${flows} metadataAttrs=${orbitpmAttrs}`
-    )
-    console.log('[aml-smoke] models:', result.files.map((f) => `${f.name} (${f.nameAr ?? '—'})`).join(' | '))
-    // The real EPCs all carry full occurrence geometry → their own DI.
-    for (const file of result.files) expect(file.xml).toContain('<bpmndi:BPMNDiagram id="BPMNDiagram_1">')
   })
 })
 

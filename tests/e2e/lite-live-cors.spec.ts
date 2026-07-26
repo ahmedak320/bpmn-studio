@@ -7,9 +7,11 @@ import type { AddressInfo } from 'node:net'
 
 // LIVE CORS verification against the REAL provider endpoints, keyless.
 //
-// This spec makes real outbound network calls (allowed — runtime AI calls are
-// exempt from the zero-network-at-LOAD rule), so it is OFF by default and only
-// runs with LITE_LIVE_CORS=1. It serves the built single file over
+// The tagged release gate sets LITE_LIVE_CORS=1 and makes real outbound
+// network calls (allowed — runtime AI calls are exempt from the zero-network-
+// at-load rule). Ordinary local runs use deterministic readable 401 responses
+// so the same UI/classification assertions still execute without a network
+// dependency. It serves the built single file over
 // http://127.0.0.1 (a real Origin — file:// would send `Origin: null`, which
 // some providers reject) and asserts the Test-connection probe reports the
 // provider is REACHABLE (i.e. CORS is open — a keyless probe expectedly gets a
@@ -27,7 +29,6 @@ let server: Server
 let baseURL = ''
 
 test.beforeAll(async () => {
-  if (!LIVE) return
   const html = readFileSync(DIST, 'utf8')
   server = createServer((_req, res) => {
     res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' })
@@ -43,10 +44,20 @@ test.afterAll(async () => {
 })
 
 test.describe('live CORS probe against real endpoints', () => {
-  test.skip(!LIVE, 'set LITE_LIVE_CORS=1 (and have internet) to run real-network CORS probes')
-
   for (const provider of ['OpenRouter', 'Anthropic', 'Google Gemini']) {
     test(`${provider} is reachable from the browser (CORS open)`, async ({ page }) => {
+      if (!LIVE) {
+        await page.route(
+          /https:\/\/(?:openrouter\.ai|api\.anthropic\.com|generativelanguage\.googleapis\.com)\//,
+          async (route) => {
+            await route.fulfill({
+              status: 401,
+              contentType: 'application/json',
+              body: JSON.stringify({ error: { message: 'deterministic keyless probe' } })
+            })
+          }
+        )
+      }
       await page.addInitScript(() => {
         // @ts-expect-error force fallback so no native folder dialog blocks us
         delete window.showDirectoryPicker
@@ -59,6 +70,9 @@ test.describe('live CORS probe against real endpoints', () => {
       const section = page
         .getByRole('dialog', { name: /Settings/i })
         .getByRole('region', { name: provider })
+      await section
+        .getByRole('checkbox', { name: /small inference request that may be billable/i })
+        .check()
       await section.getByRole('button', { name: 'Test connection' }).click()
 
       // Keyless probe: a readable 401/400 ⇒ "Reachable (CORS OK)". A thrown
