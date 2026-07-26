@@ -230,6 +230,10 @@ export const en = {
   'settings.localization.conflict':
     'These workspace resources changed elsewhere. Reload before saving again.',
   'settings.localization.saveFailed': 'Could not save localization resources: {error}',
+  'settings.localization.loadFailed':
+    'Workspace localization resources could not be loaded: {error}',
+  'settings.localization.loadFailedHint':
+    'The original files were not changed. Fix them externally, then retry. Editing remains disabled until reload succeeds.',
   'settings.localization.validation.englishRequired': 'Enter the English value.',
   'settings.localization.validation.arabicRequired': 'Enter the Arabic value.',
   'settings.localization.validation.englishScript':
@@ -268,7 +272,13 @@ export const en = {
   'ai.addOneInSettings': 'Add one in Settings',
   'ai.errorTip.offline': 'Tip: this looks like a connectivity issue. Check your network.',
   'ai.created': 'Created: {resultLabel}',
-  'ai.openedInMemory': 'Opened in a new tab (use Save to download).',
+  'ai.openedInMemory': 'Opened {label} in a new tab (use Save to download).',
+  'ai.placement.discarded.staleWorkspace':
+    'The generated diagram was discarded because the workspace changed. It was not saved or opened.',
+  'ai.placement.discarded.cancelled':
+    'The generated diagram was discarded because placement was cancelled. It was not saved or opened.',
+  'ai.placement.recoveryHint': 'Download the exact generated BPMN to recover it.',
+  'ai.placement.downloadRecovery': 'Download generated BPMN',
   'ai.folderOption.root': '/ (workspace root)',
   'ai.error.cors':
     'The provider blocked the browser request (CORS). Use one of the supported browser providers: OpenRouter, Anthropic, or Gemini.',
@@ -1323,6 +1333,9 @@ export const ar: Record<keyof typeof en, string> = {
   'settings.localization.conflict':
     'تغيّرت موارد مساحة العمل هذه في مكان آخر. أعد تحميلها قبل الحفظ مجددًا.',
   'settings.localization.saveFailed': 'تعذر حفظ موارد الترجمة: {error}',
+  'settings.localization.loadFailed': 'تعذر تحميل موارد الترجمة لمساحة العمل: {error}',
+  'settings.localization.loadFailedHint':
+    'لم تتغير الملفات الأصلية. أصلحها خارجيًا ثم أعد المحاولة. يظل التحرير معطلاً حتى تنجح إعادة التحميل.',
   'settings.localization.validation.englishRequired': 'أدخل القيمة الإنجليزية.',
   'settings.localization.validation.arabicRequired': 'أدخل القيمة العربية.',
   'settings.localization.validation.englishScript':
@@ -1359,7 +1372,13 @@ export const ar: Record<keyof typeof en, string> = {
   'ai.addOneInSettings': 'أضف واحدًا في الإعدادات',
   'ai.errorTip.offline': 'تلميح: يبدو أن هذه مشكلة في الاتصال. تحقق من شبكتك.',
   'ai.created': 'تم الإنشاء: {resultLabel}',
-  'ai.openedInMemory': 'تم الفتح في تبويب جديد (استخدم الحفظ للتنزيل).',
+  'ai.openedInMemory': 'تم فتح {label} في تبويب جديد (استخدم الحفظ للتنزيل).',
+  'ai.placement.discarded.staleWorkspace':
+    'تم تجاهل المخطط المُنشأ لأن مساحة العمل تغيّرت. لم يتم حفظه أو فتحه.',
+  'ai.placement.discarded.cancelled':
+    'تم تجاهل المخطط المُنشأ لأن وضعه أُلغي. لم يتم حفظه أو فتحه.',
+  'ai.placement.recoveryHint': 'نزّل ملف BPMN المُنشأ نفسه لاستعادته.',
+  'ai.placement.downloadRecovery': 'تنزيل ملف BPMN المُنشأ',
   'ai.folderOption.root': '/ (جذر مساحة العمل)',
   'ai.error.cors':
     'رفض المزوّد طلب المتصفح (CORS). استخدم أحد مزوّدي المتصفح المدعومين: OpenRouter أو Anthropic أو Gemini.',

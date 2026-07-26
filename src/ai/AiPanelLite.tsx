@@ -4,6 +4,7 @@ import {
   useMemo,
   useRef,
   useState,
+  useSyncExternalStore,
   type ChangeEvent,
   type CSSProperties
 } from 'react'
@@ -51,6 +52,15 @@ import {
 } from './pdf'
 import { parseDocxFileInWorker } from './browserDocxParser'
 import {
+  clearGeneratedRecovery,
+  generatedBpmnDataUrl,
+  getGeneratedRecoverySnapshot,
+  retainGeneratedRecovery,
+  subscribeGeneratedRecovery,
+  type GeneratedPlacementDiscardReason,
+  type GeneratedPlacementOutcome
+} from './placementOutcome'
+import {
   estimateGenerationRequestCount,
   inspectContextSensitivity,
   redactProcessNames,
@@ -58,6 +68,7 @@ import {
 } from './requestPrivacy'
 import { t } from '../i18n'
 import { useLang } from '../i18n/useLang'
+import { triggerDownload } from '../editor/exportImage'
 import {
   SpreadsheetImportPanel,
   type SpreadsheetImportPanelProps
@@ -69,13 +80,21 @@ export interface FolderOptionLite {
   label: string
 }
 
+/**
+ * Temporary host compatibility during the serialized App handoff. A legacy
+ * `null` is interpreted conservatively as discarded, never as in-memory
+ * success; the App follow-up removes these two legacy shapes.
+ */
+type GeneratedPlacementCallbackOutcome = GeneratedPlacementOutcome | { label: string } | null
+
 export interface AiPanelLiteProps {
   /** Target-folder options (directory mode). Empty in fallback mode. */
   folders: FolderOptionLite[]
-  /** Place a freshly-generated diagram. Returns the opened path label, or null
-   * if it was opened in-memory (fallback mode). `gen` carries the workspace
-   * generation captured when generation STARTED, so App can refuse a placement
-   * whose folder was switched out mid-generation (Codex ORIG-1b). */
+  /** Place a freshly-generated diagram. The discriminated outcome keeps a
+   * persisted file, a successful in-memory tab, and a discarded stale result
+   * observably distinct. `gen` carries the workspace generation captured when
+   * generation STARTED, so App can refuse a placement whose folder was switched
+   * out mid-generation (Codex ORIG-1b). */
   onPlaceGenerated: (
     xml: string,
     opts: {
@@ -83,8 +102,9 @@ export interface AiPanelLiteProps {
       targetFolder: string
       gen?: number
       localizationSource?: LocalizationSource
+      signal: AbortSignal
     }
-  ) => Promise<{ label: string } | null>
+  ) => Promise<GeneratedPlacementCallbackOutcome>
   /** Read the live workspace generation (captured at generation start). */
   getWorkspaceGen?: () => number
   onOpenSettings: () => void
@@ -227,6 +247,11 @@ export function AiPanelLite({
   const [error, setError] = useState<string | null>(null)
   const [offline, setOffline] = useState(false)
   const [resultLabel, setResultLabel] = useState<string | null>(null)
+  const discardedGeneration = useSyncExternalStore(
+    subscribeGeneratedRecovery,
+    getGeneratedRecoverySnapshot,
+    getGeneratedRecoverySnapshot
+  )
   // Summary of the links that survived placement ("label → process, …"); shown in
   // the success box alongside the created-file label when any link was kept.
   const [linkedSummary, setLinkedSummary] = useState<string | null>(null)
@@ -508,21 +533,56 @@ export function AiPanelLite({
   // path. `survived` is the set of links whose calledElement was kept, used to
   // build the linked-summary line. onPlaceGenerated may throw (a write failure),
   // so classify here too.
+  const reportDiscardedGeneration = useCallback(
+    (xml: string, reason: GeneratedPlacementDiscardReason): void => {
+      setError(null)
+      setOffline(false)
+      setResultLabel(null)
+      setLinkedSummary(null)
+      retainGeneratedRecovery(xml, name.trim(), reason)
+    },
+    [name]
+  )
+
   const placeAndReport = useCallback(
     async (
       finalXml: string,
       survived: ProposedLink[],
       gen: number | undefined,
-      localizationSource: LocalizationSource
+      localizationSource: LocalizationSource,
+      controller: AbortController
     ): Promise<void> => {
+      const isCurrentRun = (): boolean => requestAbortRef.current === controller
+      if (controller.signal.aborted) {
+        if (isCurrentRun()) reportDiscardedGeneration(finalXml, 'cancelled')
+        return
+      }
       try {
-        const placed = await onPlaceGenerated(finalXml, {
+        const callbackOutcome = await onPlaceGenerated(finalXml, {
           name: name.trim(),
           targetFolder,
           gen,
-          localizationSource
+          localizationSource,
+          signal: controller.signal
         })
-        setResultLabel(placed ? placed.label : t('ai.openedInMemory'))
+        if (!isCurrentRun()) return
+        const placed: GeneratedPlacementOutcome =
+          callbackOutcome === null
+            ? { status: 'discarded', reason: 'stale-workspace' }
+            : 'status' in callbackOutcome
+              ? callbackOutcome
+              : { status: 'persisted', label: callbackOutcome.label }
+        if (placed.status === 'discarded') {
+          reportDiscardedGeneration(finalXml, placed.reason)
+          return
+        }
+        clearGeneratedRecovery()
+        setResultLabel(
+          placed.status === 'persisted'
+            ? placed.label
+            : t('ai.openedInMemory', { label: placed.label })
+        )
+        setLinkedSummary(null)
         if (survived.length > 0) {
           const list = survived
             .map((l) => `${l.label} → ${resolveProcessName(l.calledProcess)}`)
@@ -530,12 +590,17 @@ export function AiPanelLite({
           setLinkedSummary(t('ai.linked.summary', { count: survived.length, list }))
         }
       } catch (err) {
+        if (!isCurrentRun()) return
+        if (controller.signal.aborted) {
+          reportDiscardedGeneration(finalXml, 'cancelled')
+          return
+        }
         const classified = classifyBrowserError(err)
         setError(errorMessageForCode(classified))
         setOffline(classified.offline || (typeof navigator !== 'undefined' && !navigator.onLine))
       }
     },
-    [name, targetFolder, onPlaceGenerated, resolveProcessName]
+    [name, targetFolder, onPlaceGenerated, reportDiscardedGeneration, resolveProcessName]
   )
 
   const handleGenerate = useCallback(async () => {
@@ -632,7 +697,7 @@ export function AiPanelLite({
       const { confident, unsure, unmatched } = partitionLinks(res.links, isKnownProcess)
       if (unsure.length + unmatched.length === 0) {
         // Nothing to vet — place with the XML unchanged; confident links stay.
-        await placeAndReport(res.xml, confident, genAtStart, localizationSource)
+        await placeAndReport(res.xml, confident, genAtStart, localizationSource, controller)
       } else {
         // Hand the uncertain/unmatched links to the verification dialog; the
         // placement waits for the user's decision.
@@ -676,14 +741,18 @@ export function AiPanelLite({
     async (accepted: Set<string>): Promise<void> => {
       const p = pending
       if (!p) return
+      const controller = new AbortController()
+      requestAbortRef.current?.abort()
+      requestAbortRef.current = controller
       setPending(null)
       setBusy(true)
       try {
         const keepIds = new Set<string>([...accepted, ...p.confident.map((l) => l.elementId)])
         const finalXml = applyLinkDecisions(p.xml, [...p.unsure, ...p.unmatched], keepIds)
         const survived = [...p.confident, ...p.unsure.filter((l) => accepted.has(l.elementId))]
-        await placeAndReport(finalXml, survived, p.gen, p.localizationSource)
+        await placeAndReport(finalXml, survived, p.gen, p.localizationSource, controller)
       } finally {
+        if (requestAbortRef.current === controller) requestAbortRef.current = null
         setBusy(false)
       }
     },
@@ -694,13 +763,17 @@ export function AiPanelLite({
   const handleVerifyCancel = useCallback(async (): Promise<void> => {
     const p = pending
     if (!p) return
+    const controller = new AbortController()
+    requestAbortRef.current?.abort()
+    requestAbortRef.current = controller
     setPending(null)
     setBusy(true)
     try {
       const keepIds = new Set<string>(p.confident.map((l) => l.elementId))
       const finalXml = applyLinkDecisions(p.xml, [...p.unsure, ...p.unmatched], keepIds)
-      await placeAndReport(finalXml, p.confident, p.gen, p.localizationSource)
+      await placeAndReport(finalXml, p.confident, p.gen, p.localizationSource, controller)
     } finally {
+      if (requestAbortRef.current === controller) requestAbortRef.current = null
       setBusy(false)
     }
   }, [pending, placeAndReport])
@@ -1224,6 +1297,31 @@ export function AiPanelLite({
             <div role="alert" style={errorBox}>
               <span>{error}</span>
               {offline && <span style={{ opacity: 0.85 }}>{t('ai.errorTip.offline')}</span>}
+            </div>
+          )}
+
+          {discardedGeneration && (
+            <div role="alert" style={errorBox}>
+              <span>
+                {t(
+                  discardedGeneration.reason === 'stale-workspace'
+                    ? 'ai.placement.discarded.staleWorkspace'
+                    : 'ai.placement.discarded.cancelled'
+                )}
+              </span>
+              <span style={{ opacity: 0.85 }}>{t('ai.placement.recoveryHint')}</span>
+              <button
+                type="button"
+                onClick={() =>
+                  triggerDownload(
+                    discardedGeneration.fileName,
+                    generatedBpmnDataUrl(discardedGeneration.xml)
+                  )
+                }
+                style={{ ...ghostBtn, alignSelf: 'flex-start' }}
+              >
+                {t('ai.placement.downloadRecovery')}
+              </button>
             </div>
           )}
 

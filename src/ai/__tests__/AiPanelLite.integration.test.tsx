@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -27,6 +27,7 @@ const mocks = vi.hoisted(() => ({
   fileToBase64: vi.fn(),
   checkAttachmentSize: vi.fn(),
   applyLinkDecisions: vi.fn(),
+  triggerDownload: vi.fn(),
   spreadsheetPanel: vi.fn()
 }))
 
@@ -120,7 +121,12 @@ vi.mock('../../spreadsheet/SpreadsheetImportPanel', () => ({
   }
 }))
 
+vi.mock('../../editor/exportImage', () => ({
+  triggerDownload: mocks.triggerDownload
+}))
+
 import { AiPanelLite, type AiPanelLiteProps } from '../AiPanelLite'
+import { clearGeneratedRecovery, type GeneratedPlacementOutcome } from '../placementOutcome'
 
 const success: GenerateOutput = {
   xml: '<definitions />',
@@ -134,7 +140,7 @@ function renderPanel(overrides: Partial<AiPanelLiteProps> = {}): ReturnType<type
         { relPath: 'hr', label: 'HR' },
         { relPath: 'finance', label: 'Finance' }
       ]}
-      onPlaceGenerated={vi.fn().mockResolvedValue({ label: 'generated.bpmn' })}
+      onPlaceGenerated={vi.fn().mockResolvedValue({ status: 'persisted', label: 'generated.bpmn' })}
       getWorkspaceGen={() => 7}
       onOpenSettings={vi.fn()}
       collapsed={false}
@@ -199,7 +205,9 @@ beforeEach(() => {
   mocks.fileToBase64.mockReset().mockResolvedValue('AQID')
   mocks.checkAttachmentSize.mockReset().mockReturnValue({ ok: true })
   mocks.applyLinkDecisions.mockReset().mockImplementation((xml: string) => `${xml}:reviewed`)
+  mocks.triggerDownload.mockReset()
   mocks.spreadsheetPanel.mockReset()
+  clearGeneratedRecovery()
   Object.defineProperty(window.navigator, 'onLine', {
     configurable: true,
     value: true
@@ -270,7 +278,7 @@ describe('AiPanelLite consented browser workflows', () => {
   it('keeps the network silent until consent, then places a redacted text result', async () => {
     selectAnthropic()
     const user = userEvent.setup()
-    const onPlaceGenerated = vi.fn().mockResolvedValue({ label: 'leave.bpmn' })
+    const onPlaceGenerated = vi.fn().mockResolvedValue({ status: 'persisted', label: 'leave.bpmn' })
     const onContinueInChat = vi.fn()
     renderPanel({ onPlaceGenerated, onContinueInChat })
 
@@ -300,7 +308,8 @@ describe('AiPanelLite consented browser workflows', () => {
       name: '',
       targetFolder: 'hr',
       gen: 7,
-      localizationSource: 'ai'
+      localizationSource: 'ai',
+      signal: expect.any(AbortSignal)
     })
     expect(await screen.findByText('ai.created')).not.toBeNull()
 
@@ -309,6 +318,60 @@ describe('AiPanelLite consented browser workflows', () => {
       description: 'Approve the employee leave request with payroll metadata'
     })
     expect((screen.getByLabelText('ai.privacy.consent') as HTMLInputElement).checked).toBe(false)
+  })
+
+  it('retains a stale workspace result across the panel remount and downloads exact XML', async () => {
+    selectAnthropic()
+    const user = userEvent.setup()
+    const xml = '<definitions name="طلب &amp; review" />'
+    mocks.generateText.mockResolvedValue({
+      xml,
+      links: [
+        {
+          elementId: 'Call_leave',
+          label: 'Leave call',
+          calledProcess: 'leave',
+          confidence: 'high'
+        }
+      ]
+    })
+    let resolvePlacement: ((outcome: GeneratedPlacementOutcome) => void) | undefined
+    const onPlaceGenerated = vi.fn(
+      async () =>
+        await new Promise<GeneratedPlacementOutcome>((resolve) => {
+          resolvePlacement = resolve
+        })
+    )
+    const firstPanel = renderPanel({ onPlaceGenerated, onContinueInChat: vi.fn() })
+    fireEvent.change(screen.getByLabelText('ai.description.label'), {
+      target: { value: 'A process generated during a workspace switch' }
+    })
+    fireEvent.change(screen.getByLabelText('ai.name.label'), {
+      target: { value: 'Switch Victim' }
+    })
+    await user.click(screen.getByLabelText('ai.privacy.consent'))
+    await user.click(screen.getByRole('button', { name: 'ai.generate' }))
+    await waitFor(() => expect(onPlaceGenerated).toHaveBeenCalledOnce())
+
+    firstPanel.unmount()
+    renderPanel()
+    await act(async () => {
+      resolvePlacement?.({
+        status: 'discarded',
+        reason: 'stale-workspace'
+      })
+    })
+
+    expect(await screen.findByText('ai.placement.discarded.staleWorkspace')).not.toBeNull()
+    expect(screen.queryByText('ai.created')).toBeNull()
+    expect(screen.queryByText('ai.linked.summary')).toBeNull()
+    expect(screen.queryByRole('button', { name: 'ai.continueInChat' })).toBeNull()
+
+    await user.click(screen.getByRole('button', { name: 'ai.placement.downloadRecovery' }))
+    expect(mocks.triggerDownload).toHaveBeenCalledWith(
+      'switch-victim-recovery.bpmn',
+      `data:application/xml;charset=utf-8,${encodeURIComponent(xml)}`
+    )
   })
 
   it('shows retry state and cancels an in-flight request', async () => {
@@ -341,10 +404,41 @@ describe('AiPanelLite consented browser workflows', () => {
     expect(await screen.findByText('ai.error.cancelled')).not.toBeNull()
   })
 
+  it('recovers exact output when a non-cooperative generation resolves after cancellation', async () => {
+    selectAnthropic()
+    const user = userEvent.setup()
+    const xml = '<definitions id="cancelled-output" />'
+    mocks.generateText.mockImplementation(
+      async (args: { signal: AbortSignal }) =>
+        await new Promise<GenerateOutput>((resolve) => {
+          args.signal.addEventListener('abort', () => resolve({ xml, links: [] }), { once: true })
+        })
+    )
+    const onPlaceGenerated = vi.fn()
+    renderPanel({ onPlaceGenerated })
+    fireEvent.change(screen.getByLabelText('ai.description.label'), {
+      target: { value: 'A provider that resolves after cancellation' }
+    })
+    await user.click(screen.getByLabelText('ai.privacy.consent'))
+    await user.click(screen.getByRole('button', { name: 'ai.generate' }))
+    await user.click(await screen.findByRole('button', { name: 'ai.cancel' }))
+
+    expect(await screen.findByText('ai.placement.discarded.cancelled')).not.toBeNull()
+    expect(onPlaceGenerated).not.toHaveBeenCalled()
+    expect(screen.queryByText('ai.created')).toBeNull()
+    await user.click(screen.getByRole('button', { name: 'ai.placement.downloadRecovery' }))
+    expect(mocks.triggerDownload).toHaveBeenCalledWith(
+      'process-recovery.bpmn',
+      `data:application/xml;charset=utf-8,${encodeURIComponent(xml)}`
+    )
+  })
+
   it('validates document types and generates from an accepted image', async () => {
     selectAnthropic()
     const user = userEvent.setup()
-    const onPlaceGenerated = vi.fn().mockResolvedValue(null)
+    const onPlaceGenerated = vi
+      .fn()
+      .mockResolvedValue({ status: 'opened-in-memory', label: 'process.bpmn' })
     renderPanel({ onPlaceGenerated })
 
     await user.click(screen.getByRole('tab', { name: 'ai.tab.pdf' }))
@@ -457,7 +551,9 @@ describe('AiPanelLite consented browser workflows', () => {
       }
     ]
     mocks.generateText.mockResolvedValue({ xml: '<definitions />', links })
-    const onPlaceGenerated = vi.fn().mockResolvedValue({ label: 'reviewed.bpmn' })
+    const onPlaceGenerated = vi
+      .fn()
+      .mockResolvedValue({ status: 'persisted', label: 'reviewed.bpmn' })
     renderPanel({ onPlaceGenerated })
 
     const generateOnce = async (): Promise<void> => {
@@ -482,6 +578,50 @@ describe('AiPanelLite consented browser workflows', () => {
     await generateOnce()
     await user.click(screen.getByRole('button', { name: 'ai.linkVerify.cancel' }))
     await waitFor(() => expect(onPlaceGenerated).toHaveBeenCalledTimes(2))
+  })
+
+  it('keeps post-review placement cancellable and recovers the reviewed XML', async () => {
+    selectAnthropic()
+    const user = userEvent.setup()
+    const links: ProposedLink[] = [
+      {
+        elementId: 'Call_known',
+        label: 'Known call',
+        calledProcess: 'leave',
+        confidence: 'low'
+      }
+    ]
+    mocks.generateText.mockResolvedValue({ xml: '<definitions />', links })
+    const onPlaceGenerated = vi.fn(
+      async (_xml: string, options: { signal: AbortSignal }): Promise<GeneratedPlacementOutcome> =>
+        await new Promise((_resolve, reject) => {
+          options.signal.addEventListener(
+            'abort',
+            () => reject(new DOMException('cancelled', 'AbortError')),
+            { once: true }
+          )
+        })
+    )
+    renderPanel({ onPlaceGenerated })
+    fireEvent.change(screen.getByLabelText('ai.description.label'), {
+      target: { value: 'Review then cancel placement' }
+    })
+    await user.click(screen.getByLabelText('ai.privacy.consent'))
+    await user.click(screen.getByRole('button', { name: 'ai.generate' }))
+    await user.click(await screen.findByRole('button', { name: 'ai.linkVerify.confirm' }))
+    await waitFor(() => expect(onPlaceGenerated).toHaveBeenCalledOnce())
+    const placementSignal = onPlaceGenerated.mock.calls[0]?.[1]?.signal as AbortSignal
+    expect(placementSignal.aborted).toBe(false)
+
+    await user.click(screen.getByRole('button', { name: 'ai.cancel' }))
+
+    expect(placementSignal.aborted).toBe(true)
+    expect(await screen.findByText('ai.placement.discarded.cancelled')).not.toBeNull()
+    await user.click(screen.getByRole('button', { name: 'ai.placement.downloadRecovery' }))
+    expect(mocks.triggerDownload).toHaveBeenCalledWith(
+      'process-recovery.bpmn',
+      `data:application/xml;charset=utf-8,${encodeURIComponent('<definitions />:reviewed')}`
+    )
   })
 
   it('handles provider selection failure, offline changes, and balance refresh errors', async () => {
