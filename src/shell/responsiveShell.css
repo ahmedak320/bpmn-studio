@@ -1,0 +1,263 @@
+.orbitpm-responsive-shell {
+  --orbitpm-shell-surface: var(--orbitpm-bg, #fff);
+  --orbitpm-shell-panel: var(--orbitpm-panel-bg, #fff);
+  --orbitpm-shell-fg: var(--orbitpm-fg, #1a1a1e);
+  --orbitpm-shell-muted: var(--orbitpm-muted, #6b6b74);
+  --orbitpm-shell-border: var(--orbitpm-border, rgba(127, 127, 127, 0.3));
+  --orbitpm-shell-accent: var(--orbitpm-accent, #2563eb);
+
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  inline-size: 100%;
+  max-inline-size: 100%;
+  block-size: 100vh;
+  block-size: 100dvh;
+  min-inline-size: 0;
+  min-block-size: 0;
+  overflow: hidden;
+  color: var(--orbitpm-shell-fg);
+  background: var(--orbitpm-shell-surface);
+}
+
+.orbitpm-responsive-shell,
+.orbitpm-responsive-shell *,
+.orbitpm-responsive-shell *::before,
+.orbitpm-responsive-shell *::after {
+  box-sizing: border-box;
+}
+
+.orbitpm-responsive-shell__header,
+.orbitpm-responsive-shell__footer,
+.orbitpm-responsive-shell__body,
+.orbitpm-responsive-shell__body > * {
+  min-inline-size: 0;
+  max-inline-size: 100%;
+}
+
+.orbitpm-responsive-shell__header,
+.orbitpm-responsive-shell__footer {
+  position: relative;
+  z-index: 20;
+}
+
+.orbitpm-responsive-shell__body {
+  position: relative;
+  display: flex;
+  min-block-size: 0;
+  overflow: hidden;
+}
+
+.orbitpm-responsive-shell__content {
+  flex: 1 1 auto;
+  inline-size: 100%;
+  min-inline-size: 0;
+  min-block-size: 0;
+  overflow: hidden;
+}
+
+.orbitpm-responsive-drawer {
+  min-inline-size: 0;
+  min-block-size: 0;
+  overflow: auto;
+  color: var(--orbitpm-shell-fg);
+  background: var(--orbitpm-shell-panel);
+}
+
+.orbitpm-responsive-drawer__persistent-content {
+  display: contents;
+}
+
+.orbitpm-responsive-drawer--docked {
+  position: relative;
+  flex: 0 0 var(--orbitpm-responsive-drawer-inline-size, 300px);
+  inline-size: var(--orbitpm-responsive-drawer-inline-size, 300px);
+  max-inline-size: min(42vw, 560px);
+}
+
+.orbitpm-responsive-drawer--docked[data-side='inline-start'] {
+  border-inline-end: 1px solid var(--orbitpm-shell-border);
+}
+
+.orbitpm-responsive-drawer--docked[data-side='inline-end'] {
+  border-inline-start: 1px solid var(--orbitpm-shell-border);
+}
+
+.orbitpm-responsive-drawer__backdrop {
+  position: fixed;
+  z-index: 1200;
+  inset: 0;
+  display: block;
+  max-inline-size: 100%;
+  overflow: hidden;
+  background: rgba(15, 23, 42, 0.4);
+}
+
+.orbitpm-responsive-drawer:not(.orbitpm-responsive-drawer--docked) {
+  position: absolute;
+  inset-block: 0;
+  inline-size: min(360px, calc(100% - 44px));
+  max-inline-size: 100%;
+  max-block-size: 100vh;
+  max-block-size: 100dvh;
+  border: 0;
+  box-shadow: 0 0 28px rgba(0, 0, 0, 0.28);
+  animation: orbitpm-responsive-drawer-enter 160ms ease-out;
+}
+
+.orbitpm-responsive-drawer--inline-start:not(.orbitpm-responsive-drawer--docked) {
+  inset-inline-start: 0;
+  border-inline-end: 1px solid var(--orbitpm-shell-border);
+}
+
+.orbitpm-responsive-drawer--inline-end:not(.orbitpm-responsive-drawer--docked) {
+  inset-inline-end: 0;
+  border-inline-start: 1px solid var(--orbitpm-shell-border);
+}
+
+.orbitpm-details-rail {
+  position: relative;
+  z-index: 30;
+  display: flex;
+  flex: 0 0 36px;
+  align-items: flex-start;
+  justify-content: center;
+  inline-size: 36px;
+  min-inline-size: 36px;
+  margin-inline-start: auto;
+  border-inline-start: 1px solid var(--orbitpm-shell-border);
+  background: var(--orbitpm-shell-surface);
+}
+
+.orbitpm-details-rail__toggle {
+  position: relative;
+  display: inline-grid;
+  place-items: center;
+  inline-size: 36px;
+  min-inline-size: 32px;
+  min-block-size: 44px;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  color: var(--orbitpm-shell-fg);
+  background: transparent;
+  cursor: pointer;
+  touch-action: manipulation;
+}
+
+.orbitpm-details-rail__toggle::after {
+  content: '';
+  position: absolute;
+  inset-block: 10px;
+  inset-inline-end: 2px;
+  inline-size: 2px;
+  border-radius: 999px;
+  background: var(--orbitpm-shell-accent);
+}
+
+.orbitpm-details-rail__toggle:hover {
+  background: color-mix(in srgb, var(--orbitpm-shell-accent) 12%, transparent);
+}
+
+.orbitpm-details-rail__toggle:focus-visible,
+.orbitpm-details-resizer .orbitpm-lite-resizer:focus-visible,
+.orbitpm-responsive-drawer:focus-visible {
+  outline: 2px solid var(--orbitpm-shell-accent);
+  outline-offset: -3px;
+}
+
+.orbitpm-details-rail__glyph {
+  display: inline-block;
+  font-size: 1.35rem;
+  line-height: 1;
+}
+
+.orbitpm-details-rail[dir='rtl'] .orbitpm-details-rail__glyph {
+  transform: scaleX(-1);
+}
+
+.orbitpm-details-resizer {
+  position: relative;
+  z-index: 25;
+  display: flex;
+  flex: 0 0 16px;
+  inline-size: 16px;
+  min-inline-size: 16px;
+  align-self: stretch;
+}
+
+.orbitpm-details-resizer > .orbitpm-lite-resizer {
+  flex: 1 1 16px !important;
+  inline-size: 16px;
+  min-inline-size: 16px;
+}
+
+.orbitpm-details-resizer > .orbitpm-lite-resizer::after {
+  inset-inline-start: 50%;
+}
+
+@keyframes orbitpm-responsive-drawer-enter {
+  from {
+    opacity: 0;
+  }
+
+  to {
+    opacity: 1;
+  }
+}
+
+@media (min-width: 1200px) {
+  .orbitpm-responsive-shell[data-responsive-mode='docked'] .orbitpm-responsive-shell__header {
+    flex-wrap: nowrap;
+  }
+}
+
+@media (min-width: 768px) and (max-width: 1199px) {
+  .orbitpm-responsive-shell[data-responsive-mode='overlay'] .orbitpm-responsive-shell__header {
+    min-inline-size: 0;
+    flex-wrap: wrap;
+  }
+}
+
+@media (max-width: 767px) {
+  .orbitpm-responsive-shell[data-responsive-mode='compact'] {
+    grid-template-rows: auto minmax(0, 1fr) auto;
+  }
+
+  .orbitpm-responsive-shell[data-responsive-mode='compact'] .orbitpm-responsive-shell__header {
+    display: flex;
+    min-inline-size: 0;
+    min-block-size: 44px;
+    align-items: center;
+    flex-wrap: wrap;
+    overflow: hidden;
+  }
+
+  .orbitpm-responsive-shell[data-responsive-mode='compact'] .orbitpm-responsive-drawer,
+  .orbitpm-responsive-drawer--compact {
+    position: fixed;
+    inset-block: 0;
+    inline-size: 100%;
+    max-inline-size: 100%;
+    block-size: 100vh;
+    block-size: 100dvh;
+    max-block-size: 100vh;
+    max-block-size: 100dvh;
+    box-shadow: none;
+  }
+
+  .orbitpm-responsive-shell[data-responsive-mode='compact'] .orbitpm-details-resizer {
+    display: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .orbitpm-responsive-drawer {
+    animation: none;
+    scroll-behavior: auto;
+  }
+
+  .orbitpm-details-rail__toggle,
+  .orbitpm-details-resizer {
+    transition: none;
+  }
+}
