@@ -28,7 +28,8 @@ const mocks = vi.hoisted(() => ({
   readPreset: vi.fn(),
   downloadBlob: vi.fn(),
   prepare: vi.fn(),
-  execute: vi.fn()
+  execute: vi.fn(),
+  reviewWorkbook: vi.fn()
 }))
 
 vi.mock('../../i18n', () => ({
@@ -71,6 +72,14 @@ vi.mock('../transaction', async (importOriginal) => {
     ...actual,
     prepareTransactionalImportPlan: mocks.prepare,
     executeTransactionalImportPlan: mocks.execute
+  }
+})
+
+vi.mock('../bilingualReview', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../bilingualReview')>()
+  return {
+    ...actual,
+    reviewProcessWorkbookBilingual: mocks.reviewWorkbook
   }
 })
 
@@ -237,6 +246,29 @@ const readyPlan: TransactionalImportPlan = {
   skippedRows: []
 }
 
+const translationBlockedPlan: TransactionalImportPlan = {
+  ...readyPlan,
+  status: 'blocked',
+  delivery: 'open-single',
+  validation: {
+    issues: [
+      {
+        code: 'translation-review-required',
+        severity: 'review',
+        messageKey: 'spreadsheet.validation.translation-review-required',
+        processId: graph.process.id,
+        details: { missing: 1, invalid: 0 }
+      }
+    ],
+    blocking: true,
+    errorCount: 0,
+    reviewCount: 1,
+    warningCount: 0
+  },
+  artifacts: [],
+  blockingReason: 'translation-review'
+}
+
 const committedReport: SpreadsheetImportReport = {
   reportVersion: 1,
   planId: readyPlan.id,
@@ -285,6 +317,20 @@ beforeEach(() => {
   mocks.downloadBlob.mockReset()
   mocks.prepare.mockReset().mockResolvedValue(readyPlan)
   mocks.execute.mockReset().mockResolvedValue(committedReport)
+  mocks.reviewWorkbook.mockReset().mockImplementation(async (reviewModel, options) => {
+    const result = await options.review({
+      version: 1,
+      processId: reviewModel.processes[0]!.id,
+      suggestedName: `${reviewModel.processes[0]!.id}.bpmn`,
+      xml: '<definitions />',
+      ordinal: 1,
+      total: 1,
+      signal: options.signal ?? new AbortController().signal
+    })
+    return result.status === 'cancelled'
+      ? { status: 'cancelled', processId: reviewModel.processes[0]!.id }
+      : { status: 'completed', model: reviewModel }
+  })
 })
 
 afterEach(() => {
@@ -457,6 +503,66 @@ describe('SpreadsheetImportPanel browser workflow', () => {
     await waitFor(() =>
       expect(screen.getByRole('status').textContent).toContain('spreadsheet.cancel')
     )
+  })
+
+  it('awaits reviewed XML, keeps writes at zero, then re-prepares the original plan', async () => {
+    const user = userEvent.setup()
+    mocks.parse.mockResolvedValue(parseResult(officialWorkbook(), 'xlsx'))
+    mocks.prepare.mockResolvedValueOnce(translationBlockedPlan).mockResolvedValueOnce(readyPlan)
+    let finishReview: ((result: { status: 'completed'; reviewedXml: string }) => void) | undefined
+    const onReviewBilingual = vi.fn(
+      async () =>
+        await new Promise<{ status: 'completed'; reviewedXml: string }>((resolve) => {
+          finishReview = resolve
+        })
+    )
+    renderPanel({ onReviewBilingual })
+
+    await user.upload(
+      screen.getByLabelText(/spreadsheet\.upload/),
+      new File([new Uint8Array([80, 75, 3, 4])], 'official.xlsx', {
+        type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+      })
+    )
+    await user.click(await screen.findByRole('button', { name: 'spreadsheet.review' }))
+    await user.click(await screen.findByRole('button', { name: 'spreadsheet.prepare' }))
+    await user.click(await screen.findByRole('button', { name: 'spreadsheet.translation.handoff' }))
+
+    await waitFor(() => expect(onReviewBilingual).toHaveBeenCalledOnce())
+    expect(mocks.prepare).toHaveBeenCalledOnce()
+    expect(mocks.execute).not.toHaveBeenCalled()
+    expect(finishReview).toBeTypeOf('function')
+
+    finishReview?.({ status: 'completed', reviewedXml: '<reviewed />' })
+    await waitFor(() => expect(mocks.prepare).toHaveBeenCalledTimes(2))
+    expect(await screen.findByText('spreadsheet.plan.ready')).not.toBeNull()
+    expect(mocks.execute).not.toHaveBeenCalled()
+    expect(mocks.prepare.mock.calls[1]?.[1]).toMatchObject({
+      collisionBehavior: 'rename'
+    })
+  })
+
+  it('treats bilingual review cancellation as all-or-nothing', async () => {
+    const user = userEvent.setup()
+    mocks.parse.mockResolvedValue(parseResult(officialWorkbook(), 'xlsx'))
+    mocks.prepare.mockResolvedValueOnce(translationBlockedPlan)
+    const onReviewBilingual = vi.fn(async () => ({ status: 'cancelled' as const }))
+    renderPanel({ onReviewBilingual })
+
+    await user.upload(
+      screen.getByLabelText(/spreadsheet\.upload/),
+      new File([new Uint8Array([80, 75, 3, 4])], 'official.xlsx', {
+        type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+      })
+    )
+    await user.click(await screen.findByRole('button', { name: 'spreadsheet.review' }))
+    await user.click(await screen.findByRole('button', { name: 'spreadsheet.prepare' }))
+    await user.click(await screen.findByRole('button', { name: 'spreadsheet.translation.handoff' }))
+
+    await waitFor(() => expect(onReviewBilingual).toHaveBeenCalledOnce())
+    expect(mocks.prepare).toHaveBeenCalledOnce()
+    expect(mocks.execute).not.toHaveBeenCalled()
+    expect(screen.getByText('spreadsheet.cancel')).not.toBeNull()
   })
 
   it('aborts stale work when the workspace changes', async () => {

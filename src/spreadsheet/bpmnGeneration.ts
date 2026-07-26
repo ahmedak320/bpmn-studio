@@ -3,11 +3,13 @@ import { layoutProcess } from 'bpmn-auto-layout'
 
 import {
   LocalizationSource,
+  SEEDED_GLOSSARY,
+  approvedNeutralTerms,
   auditLocalizationFields,
   type LocalizationField
 } from '../localization'
 import { layoutBpmnValidated, type LayoutFunction } from '../generation/layout'
-import { orbitpmModdleDescriptor } from '../org/orbitpmModdle'
+import { ORG_ATTR_NAMES, orbitpmModdleDescriptor } from '../org/orbitpmModdle'
 import {
   evaluateValidationPolicy,
   getRuntimeValidationAdapters,
@@ -69,6 +71,8 @@ export interface SpreadsheetBpmnGeneratorOptions {
   readonly validationAdapters?: readonly BpmnValidationAdapter[]
 }
 
+type BilingualEmissionMode = 'strict' | 'review'
+
 const NODE_ELEMENT_TYPES: Readonly<Record<WorkbookNode['type'], string>> = Object.freeze({
   task: 'bpmn:Task',
   userTask: 'bpmn:UserTask',
@@ -103,16 +107,38 @@ const EVENT_DEFINITION_TYPES = Object.freeze({
   terminate: 'bpmn:TerminateEventDefinition'
 } as const)
 
+const REGISTERED_ORBITPM_ATTRIBUTES = new Set<string>(ORG_ATTR_NAMES)
+
+function setOrbitpmAttribute(element: ModdleElement, property: string, value: string): void {
+  if (REGISTERED_ORBITPM_ATTRIBUTES.has(property)) {
+    element[property] = value
+    return
+  }
+  element.$attrs ??= {}
+  element.$attrs[`orbitpm:${property}`] = value
+}
+
 function projected(value: BilingualValue): string {
   return value.active === 'ar' ? value.ar || value.en || '' : value.en || value.ar || ''
 }
 
-function pairProperties(prefix: string, value: BilingualValue | undefined): Record<string, string> {
+function pairProperties(
+  prefix: string,
+  value: BilingualValue | undefined,
+  mode: BilingualEmissionMode
+): Record<string, string> {
   if (!value) return {}
+  const projection = projected(value)
+  if (mode === 'review' && !(value.en?.trim() && value.ar?.trim())) {
+    // A partial pair is deliberately represented as a projection-only review
+    // seed. The shared extractor can infer its source script, while the
+    // compatibility validator does not mistake it for a completed pair.
+    return projection ? { [prefix]: projection } : {}
+  }
   return {
     ...(value.en ? { [`${prefix}En`]: value.en } : {}),
     ...(value.ar ? { [`${prefix}Ar`]: value.ar } : {}),
-    ...(projected(value) ? { [prefix]: projected(value) } : {})
+    ...(projection ? { [prefix]: projection } : {})
   }
 }
 
@@ -124,36 +150,49 @@ function joined(values: readonly BilingualValue[] | undefined, language: 'en' | 
     .join('\n')
 }
 
-function setPair(element: ModdleElement, prefix: string, value: BilingualValue | undefined): void {
-  for (const [property, text] of Object.entries(pairProperties(prefix, value))) {
-    element[property] = text
+function setPair(
+  element: ModdleElement,
+  prefix: string,
+  value: BilingualValue | undefined,
+  mode: BilingualEmissionMode
+): void {
+  for (const [property, text] of Object.entries(pairProperties(prefix, value, mode))) {
+    setOrbitpmAttribute(element, property, text)
   }
 }
 
-function setBilingualName(element: ModdleElement, value: BilingualValue): void {
+function setBilingualName(
+  element: ModdleElement,
+  value: BilingualValue,
+  mode: BilingualEmissionMode
+): void {
   element.name = projected(value)
-  if (value.en) element.nameEn = value.en
-  if (value.ar) element.nameAr = value.ar
+  if (mode === 'strict' || (value.en?.trim() && value.ar?.trim())) {
+    if (value.en) element.nameEn = value.en
+    if (value.ar) element.nameAr = value.ar
+  }
   element.activeLang = value.active
 }
 
 function setNodeMetadata(
   moddle: SpreadsheetModdle,
   element: ModdleElement,
-  node: WorkbookNode
+  node: WorkbookNode,
+  mode: BilingualEmissionMode
 ): void {
   const metadata = node.metadata
-  setPair(element, 'owner', metadata.owner)
-  setPair(element, 'channelDetail', metadata.channelDetail)
-  setPair(element, 'decisionBasis', metadata.decisionBasis)
-  setPair(element, 'triggers', metadata.triggers)
-  setPair(element, 'notes', metadata.notes)
+  setPair(element, 'owner', metadata.owner, mode)
+  setPair(element, 'channelDetail', metadata.channelDetail, mode)
+  setPair(element, 'decisionBasis', metadata.decisionBasis, mode)
+  setPair(element, 'triggers', metadata.triggers, mode)
+  setPair(element, 'notes', metadata.notes, mode)
   if (metadata.channel) {
-    element.channel = projected(metadata.channel)
-    if (metadata.channel.en) element.channelEn = metadata.channel.en
-    if (metadata.channel.ar) element.channelAr = metadata.channel.ar
+    const values = pairProperties('channel', metadata.channel, mode)
+    for (const [property, text] of Object.entries(values)) {
+      setOrbitpmAttribute(element, property, text)
+    }
   }
-  if (metadata.raci) element.raci = metadata.raci
+  if (metadata.raci) setOrbitpmAttribute(element, 'raci', metadata.raci)
 
   for (const [prefix, values] of [
     ['respList', metadata.responsibleParties],
@@ -163,10 +202,16 @@ function setNodeMetadata(
   ] as const) {
     const en = joined(values, 'en')
     const ar = joined(values, 'ar')
-    if (en) element[`${prefix}En`] = en
-    if (ar) element[`${prefix}Ar`] = ar
     const active = node.name.active === 'ar' ? ar || en : en || ar
-    if (active) element[prefix] = active
+    const complete =
+      values !== undefined &&
+      values.length > 0 &&
+      values.every((value) => value.en?.trim() && value.ar?.trim())
+    if (mode === 'strict' || complete) {
+      if (en) setOrbitpmAttribute(element, `${prefix}En`, en)
+      if (ar) setOrbitpmAttribute(element, `${prefix}Ar`, ar)
+    }
+    if (active) setOrbitpmAttribute(element, prefix, active)
   }
 
   if (
@@ -239,7 +284,8 @@ function addLanes(
   moddle: SpreadsheetModdle,
   process: ModdleElement,
   graph: ProcessGraphModel,
-  nodes: ReadonlyMap<string, ModdleElement>
+  nodes: ReadonlyMap<string, ModdleElement>,
+  mode: BilingualEmissionMode
 ): void {
   const laneRecords = graph.participants.filter(({ type }) => type === 'lane')
   if (laneRecords.length === 0) return
@@ -254,7 +300,7 @@ function addLanes(
         .map((node) => nodes.get(node.id))
         .filter((node): node is ModdleElement => Boolean(node))
     })
-    setBilingualName(lane, record.name)
+    setBilingualName(lane, record.name, mode)
     lanes.set(record.id, lane)
   }
 
@@ -282,15 +328,19 @@ function addLanes(
   ]
 }
 
-function buildDefinitions(moddle: SpreadsheetModdle, graph: ProcessGraphModel): ModdleElement {
+function buildDefinitions(
+  moddle: SpreadsheetModdle,
+  graph: ProcessGraphModel,
+  mode: BilingualEmissionMode
+): ModdleElement {
   const process = moddle.create('bpmn:Process', {
     id: graph.process.id,
     isExecutable: false,
     flowElements: []
   })
-  setBilingualName(process, graph.process.name)
-  setPair(process, 'owner', graph.process.owner)
-  setPair(process, 'description', graph.process.description)
+  setBilingualName(process, graph.process.name, mode)
+  setPair(process, 'owner', graph.process.owner, mode)
+  setPair(process, 'description', graph.process.description, mode)
 
   const nodeElements = new Map<string, ModdleElement>()
   for (const node of graph.nodes) {
@@ -299,8 +349,8 @@ function buildDefinitions(moddle: SpreadsheetModdle, graph: ProcessGraphModel): 
       incoming: [],
       outgoing: []
     })
-    setBilingualName(element, node.name)
-    setNodeMetadata(moddle, element, node)
+    setBilingualName(element, node.name, mode)
+    setNodeMetadata(moddle, element, node, mode)
     const definition = eventDefinition(moddle, node)
     if (definition) element.eventDefinitions = [definition]
     nodeElements.set(node.id, element)
@@ -317,7 +367,7 @@ function buildDefinitions(moddle: SpreadsheetModdle, graph: ProcessGraphModel): 
       targetRef: target
     })
     if (flow.condition?.en?.trim() || flow.condition?.ar?.trim()) {
-      setBilingualName(sequenceFlow, flow.condition)
+      setBilingualName(sequenceFlow, flow.condition, mode)
       if (!flow.isDefault) {
         sequenceFlow.conditionExpression = moddle.create('bpmn:FormalExpression', {
           body: projected(flow.condition)
@@ -330,7 +380,7 @@ function buildDefinitions(moddle: SpreadsheetModdle, graph: ProcessGraphModel): 
     process.flowElements?.push(sequenceFlow)
   }
 
-  addLanes(moddle, process, graph, nodeElements)
+  addLanes(moddle, process, graph, nodeElements, mode)
   const rootElements: ModdleElement[] = [process]
   const pools = graph.participants.filter(({ type }) => type === 'pool')
   if (pools.length > 0) {
@@ -341,7 +391,7 @@ function buildDefinitions(moddle: SpreadsheetModdle, graph: ProcessGraphModel): 
           id: record.id,
           processRef: process
         })
-        setBilingualName(participant, record.name)
+        setBilingualName(participant, record.name, mode)
         return participant
       })
     })
@@ -468,7 +518,11 @@ export class SpreadsheetBpmnGenerator implements BpmnModelGenerationAdapter {
     const moddle = new BpmnModdle({
       orbitpm: orbitpmModdleDescriptor as unknown as Record<string, unknown>
     }) as unknown as SpreadsheetModdle
-    const definitions = buildDefinitions(moddle, graph)
+    const definitions = buildDefinitions(
+      moddle,
+      graph,
+      this.options.requireBilingual === false ? 'review' : 'strict'
+    )
     const semanticXml = (await moddle.toXML(definitions, { format: true, preamble: true })).xml
     throwIfAborted(signal)
     const validationAdapters = this.options.validationAdapters ?? getRuntimeValidationAdapters()
@@ -600,7 +654,14 @@ function collectBilingualFields(graph: ProcessGraphModel): readonly Localization
 
 export class SpreadsheetBilingualAudit implements SpreadsheetBilingualAuditAdapter {
   audit(graph: ProcessGraphModel): BilingualAuditSummary {
-    const report = auditLocalizationFields(collectBilingualFields(graph))
+    const report = auditLocalizationFields(collectBilingualFields(graph), {
+      approvedNeutralTerms: [
+        ...approvedNeutralTerms(SEEDED_GLOSSARY),
+        ...graph.glossary
+          .filter(({ doNotTranslate }) => doNotTranslate)
+          .flatMap(({ english, arabic }) => [english, arabic])
+      ]
+    })
     const missing = report.issues.filter(({ code }) => code === 'missing').length
     const invalid = report.issues.length - missing
     return Object.freeze({

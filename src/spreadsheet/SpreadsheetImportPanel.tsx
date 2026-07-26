@@ -20,7 +20,6 @@ import {
   type CollisionBehavior,
   type GraphInferencePlan,
   type MappingPreset,
-  type ProcessGraphModel,
   type ProcessWorkbookModel,
   type RecordProvenance,
   type SpreadsheetImportReport,
@@ -28,6 +27,10 @@ import {
   type TransactionalImportPlan,
   type WorkbookValidationReport
 } from './contracts'
+import {
+  reviewProcessWorkbookBilingual,
+  type SpreadsheetBilingualReviewCallback
+} from './bilingualReview'
 import {
   BrowserImportDeliveryTransactionFactory,
   EmptySpreadsheetDestinationInspector,
@@ -77,6 +80,16 @@ export interface SpreadsheetImportPanelProps {
   readonly getCurrentWorkspaceId?: () => string | undefined
   readonly runWorkspaceExclusive?: <T>(operation: () => Promise<T>) => Promise<T>
   readonly onOpenSingle: (xml: string, name: string) => void | Promise<void>
+  /**
+   * Awaited review protocol. The callback resolves only after the user
+   * explicitly completes or cancels the named process review.
+   */
+  readonly onReviewBilingual?: SpreadsheetBilingualReviewCallback
+  /**
+   * @deprecated Compatibility placeholder for the old fire-and-forget App
+   * integration. The panel intentionally never invokes it because opening an
+   * orphan tab cannot complete an import transaction.
+   */
   readonly onOpenBilingualReview?: (xml: string, name: string) => void | Promise<void>
   readonly onCommitted?: (report: SpreadsheetImportReport) => void | Promise<void>
 }
@@ -144,27 +157,6 @@ function withDestinationFolder(
   })
 }
 
-function graphsFromModel(model: ProcessWorkbookModel): readonly ProcessGraphModel[] {
-  return Object.freeze(
-    model.processes.map((process) =>
-      Object.freeze({
-        process,
-        participants: Object.freeze(
-          model.participants.filter(({ processId }) => processId === process.id)
-        ),
-        nodes: Object.freeze(model.nodes.filter(({ processId }) => processId === process.id)),
-        flows: Object.freeze(model.flows.filter(({ processId }) => processId === process.id)),
-        glossary: model.glossary
-      })
-    )
-  )
-}
-
-function safeBpmnName(processId: string): string {
-  const safe = processId.replace(/[^A-Za-z0-9_.-]+/g, '-').replace(/^-+|-+$/g, '')
-  return `${safe || 'process'}.bpmn`
-}
-
 function downloadWorkbookTemplate(kind: 'blank' | 'example'): void {
   const generated = createOfficialWorkbookTemplate(kind)
   const owned = new Uint8Array(generated.byteLength)
@@ -190,7 +182,7 @@ export function SpreadsheetImportPanel({
   getCurrentWorkspaceId,
   runWorkspaceExclusive,
   onOpenSingle,
-  onOpenBilingualReview,
+  onReviewBilingual,
   onCommitted
 }: SpreadsheetImportPanelProps): JSX.Element {
   const lang = useLang()
@@ -667,26 +659,7 @@ export function SpreadsheetImportPanel({
     setReport(null)
     setError(null)
     try {
-      const inspector =
-        multipleFiles && workspaceAdapter
-          ? new WorkspaceSpreadsheetDestinationInspector(workspaceAdapter)
-          : new EmptySpreadsheetDestinationInspector()
-      const nextPlan = await prepareTransactionalImportPlan(review.model, {
-        mode: multipleFiles && workspaceAdapter ? workspaceAdapter.mode : 'single-file',
-        collisionBehavior,
-        inspector,
-        generator: new SpreadsheetBpmnGenerator({
-          knownProcessIds
-        }),
-        bilingualAudit: new SpreadsheetBilingualAudit(),
-        destinationProcessIds: new Set(knownProcessIds),
-        additionalIssues: review.additionalIssues,
-        generatedIds: review.inference?.generatedIds,
-        inferredFlows: review.inference?.inferredFlowRecords,
-        skippedRows: review.skippedRows,
-        mappingPreset: preset,
-        signal: controller.signal
-      })
+      const nextPlan = await prepareModelPlan(review.model, review, controller.signal)
       if (controller.signal.aborted || taskVersion !== taskVersionRef.current) return
       setPlan(nextPlan)
       setPhase('plan')
@@ -703,29 +676,92 @@ export function SpreadsheetImportPanel({
     }
   }
 
+  async function prepareModelPlan(
+    model: ProcessWorkbookModel,
+    currentReview: WorkbookReview,
+    signal: AbortSignal
+  ): Promise<TransactionalImportPlan> {
+    if (!preset) {
+      throw new SpreadsheetError('adapter-contract-violation', {
+        contract: 'spreadsheet-mapping-preset'
+      })
+    }
+    const inspector =
+      multipleFiles && workspaceAdapter
+        ? new WorkspaceSpreadsheetDestinationInspector(workspaceAdapter)
+        : new EmptySpreadsheetDestinationInspector()
+    return await prepareTransactionalImportPlan(model, {
+      mode: multipleFiles && workspaceAdapter ? workspaceAdapter.mode : 'single-file',
+      collisionBehavior,
+      inspector,
+      generator: new SpreadsheetBpmnGenerator({
+        knownProcessIds
+      }),
+      bilingualAudit: new SpreadsheetBilingualAudit(),
+      destinationProcessIds: new Set(knownProcessIds),
+      additionalIssues: currentReview.additionalIssues,
+      generatedIds: currentReview.inference?.generatedIds,
+      inferredFlows: currentReview.inference?.inferredFlowRecords,
+      skippedRows: currentReview.skippedRows,
+      mappingPreset: preset,
+      signal
+    })
+  }
+
   async function handoffBilingualReview(): Promise<void> {
-    if (!review?.model || !onOpenBilingualReview) return
+    if (!review?.model || !onReviewBilingual) return
     preparationAbortRef.current?.abort()
     const controller = new AbortController()
     preparationAbortRef.current = controller
     const taskVersion = taskVersionRef.current
     setHandoffBusy(true)
+    setPhase('preparing')
     setError(null)
     try {
-      const generator = new SpreadsheetBpmnGenerator({
+      const outcome = await reviewProcessWorkbookBilingual(review.model, {
+        generator: new SpreadsheetBpmnGenerator({
+          knownProcessIds,
+          requireBilingual: false
+        }),
+        review: onReviewBilingual,
         knownProcessIds,
-        requireBilingual: false
+        signal: controller.signal
       })
-      for (const graph of graphsFromModel(review.model)) {
-        const artifact = await generator.generate(graph, controller.signal)
-        if (controller.signal.aborted || taskVersion !== taskVersionRef.current) return
-        await onOpenBilingualReview(artifact.layoutedXml, safeBpmnName(graph.process.id))
+      if (controller.signal.aborted || taskVersion !== taskVersionRef.current) return
+      if (outcome.status === 'cancelled') {
+        setStatus(t('spreadsheet.cancel'))
+        setPhase('plan')
+        return
       }
+
+      const validation = validateProcessWorkbookModel(outcome.model, {
+        destinationProcessIds: new Set(knownProcessIds),
+        additionalIssues: review.additionalIssues
+      })
+      const nextReview: WorkbookReview = {
+        ...review,
+        model: outcome.model,
+        validation,
+        issues: validation.issues,
+        ready: !validation.blocking
+      }
+      setReview(nextReview)
+      if (validation.blocking) {
+        setPlan(null)
+        setPhase('review')
+        return
+      }
+
+      const nextPlan = await prepareModelPlan(outcome.model, nextReview, controller.signal)
+      if (controller.signal.aborted || taskVersion !== taskVersionRef.current) return
+      setPlan(nextPlan)
+      setPhase('plan')
     } catch (cause) {
       if (cause instanceof SpreadsheetError && cause.code === 'parse-cancelled') {
         return
       }
       setError(errorText(cause, t('spreadsheet.error.prepare')))
+      setPhase('plan')
     } finally {
       if (preparationAbortRef.current === controller) {
         preparationAbortRef.current = null
@@ -1353,7 +1389,7 @@ export function SpreadsheetImportPanel({
           {plan.blockingReason === 'translation-review' && (
             <div role="alert" style={warnBox}>
               <span>{t('spreadsheet.translation.required', translationCounts)}</span>
-              {onOpenBilingualReview && review?.model && (
+              {onReviewBilingual && review?.model && (
                 <button
                   type="button"
                   style={secondaryButton}
