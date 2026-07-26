@@ -39,7 +39,19 @@ const fake = vi.hoisted(() => ({
   validationSummary: null as ValidationSummary | null,
   preservationSummary: null as ValidationSummary | null,
   lang: 'en' as 'en' | 'ar',
-  modelerInstances: 0
+  modelerInstances: 0,
+  commandHandlers: new Map<
+    string,
+    {
+      execute?: (context: Record<string, unknown>) => void
+      revert?: (context: Record<string, unknown>) => void
+    }
+  >(),
+  commandActions: [] as Array<{ command: string; context: Record<string, unknown> }>,
+  commandActionIndex: -1,
+  diagramLang: 'en' as 'en' | 'ar',
+  importedXml: [] as string[],
+  operationLog: [] as string[]
 }))
 
 const mocks = vi.hoisted(() => ({
@@ -58,7 +70,11 @@ const mocks = vi.hoisted(() => ({
   onValidationRun: vi.fn(),
   onSourceValidate: vi.fn(),
   onSourceApply: vi.fn(),
-  onSourceAutoLayout: vi.fn()
+  onSourceApplyError: vi.fn(),
+  onSourceAutoLayout: vi.fn(),
+  reviewBpmnXmlLocalization: vi.fn(),
+  commandExecute: vi.fn(),
+  commandUndo: vi.fn()
 }))
 
 vi.mock('../../i18n', () => ({
@@ -126,6 +142,34 @@ vi.mock('bpmn-js/lib/Modeler', () => ({
     private readonly commandStack = {
       get _stackIdx(): number {
         return fake.stackIndex
+      },
+      register: (
+        command: string,
+        handler: {
+          execute?: (context: Record<string, unknown>) => void
+          revert?: (context: Record<string, unknown>) => void
+        }
+      ): void => {
+        fake.commandHandlers.set(command, handler)
+      },
+      execute: (command: string, context: Record<string, unknown>): void => {
+        const handler = fake.commandHandlers.get(command)
+        if (!handler) throw new Error(`missing command handler ${command}`)
+        handler.execute?.(context)
+        fake.commandActions.splice(fake.commandActionIndex + 1)
+        fake.commandActions.push({ command, context })
+        fake.commandActionIndex = fake.commandActions.length - 1
+        fake.stackIndex += 1
+        mocks.commandExecute(command, context)
+        fake.handlers.get('commandStack.changed')?.({})
+      },
+      undo: (): void => {
+        const action = fake.commandActions[fake.commandActionIndex]
+        if (!action) return
+        fake.commandHandlers.get(action.command)?.revert?.(action.context)
+        fake.commandActionIndex -= 1
+        fake.stackIndex -= 1
+        fake.handlers.get('commandStack.changed')?.({})
       }
     }
 
@@ -139,7 +183,10 @@ vi.mock('bpmn-js/lib/Modeler', () => ({
       getRootElement: () => ({
         id: 'Process_1',
         type: 'bpmn:Process',
-        businessObject: { id: 'Process_1' }
+        businessObject: {
+          id: 'Process_1',
+          $attrs: { 'orbitpm:activeLang': fake.diagramLang }
+        }
       }),
       scrollToElement: (element: unknown, padding?: number) => {
         mocks.scrollToElement(element, padding)
@@ -186,10 +233,20 @@ vi.mock('bpmn-js/lib/Modeler', () => ({
       fake.destroyed = false
       fake.modelerInstances += 1
       mocks.modelerConstructed(options)
+      mocks.commandUndo.mockImplementation(() => {
+        this.commandStack.undo()
+      })
     }
 
     async importXML(xml: string): Promise<{ warnings: string[] }> {
       if (fake.importError) throw fake.importError
+      await Promise.resolve()
+      fake.importedXml.push(xml)
+      fake.operationLog.push(`import:${xml}`)
+      fake.commandActions = []
+      fake.commandActionIndex = -1
+      fake.stackIndex = -1
+      fake.handlers.get('commandStack.changed')?.({})
       fake.currentXml = xml
       return { warnings: fake.importWarnings }
     }
@@ -289,6 +346,10 @@ vi.mock('../../generation/layout', () => ({
   layoutBpmnValidated: mocks.layout
 }))
 
+vi.mock('../../localization/xmlIngestion', () => ({
+  reviewBpmnXmlLocalization: mocks.reviewBpmnXmlLocalization
+}))
+
 vi.mock('../../validation/model', () => ({
   validateBpmnXml: mocks.validateBpmnXml
 }))
@@ -358,7 +419,15 @@ vi.mock('../../validation/SourceEditorDialog', () => ({
     open: boolean
     originalXml: string
     validate: (xml: string, requireDi: boolean) => Promise<ValidationSummary>
-    apply: (xml: string) => Promise<void>
+    apply: (
+      xml: string,
+      signal: AbortSignal
+    ) => Promise<
+      | void
+      | { status: 'applied' }
+      | { status: 'cancelled' }
+      | { status: 'blocked'; message?: string }
+    >
     autoLayout: (xml: string) => Promise<string>
     onClose: () => void
   }) => {
@@ -379,9 +448,15 @@ vi.mock('../../validation/SourceEditorDialog', () => ({
         <button
           type="button"
           onClick={() => {
-            void props.apply('<definitions id="candidate" />').then(() => {
-              mocks.onSourceApply()
-            })
+            const controller = new AbortController()
+            void props
+              .apply('<definitions id="candidate" />', controller.signal)
+              .then((outcome) => {
+                mocks.onSourceApply(outcome)
+              })
+              .catch((error: unknown) => {
+                mocks.onSourceApplyError(error)
+              })
           }}
         >
           source-apply
@@ -490,6 +565,12 @@ beforeEach(() => {
   fake.preservationSummary = validSummary
   fake.lang = 'en'
   fake.modelerInstances = 0
+  fake.commandHandlers.clear()
+  fake.commandActions = []
+  fake.commandActionIndex = -1
+  fake.diagramLang = 'en'
+  fake.importedXml = []
+  fake.operationLog = []
   mocks.zoom.mockReset()
   mocks.scrollToElement.mockReset()
   mocks.selectionSelect.mockReset()
@@ -507,7 +588,18 @@ beforeEach(() => {
   mocks.onValidationRun.mockReset()
   mocks.onSourceValidate.mockReset()
   mocks.onSourceApply.mockReset()
+  mocks.onSourceApplyError.mockReset()
   mocks.onSourceAutoLayout.mockReset()
+  mocks.reviewBpmnXmlLocalization.mockReset().mockImplementation(async (candidateXml: string) => {
+    fake.operationLog.push(`review:${candidateXml}`)
+    return {
+      status: 'completed',
+      xml: candidateXml,
+      evidence: { reviewedApprovals: [] }
+    }
+  })
+  mocks.commandExecute.mockReset()
+  mocks.commandUndo.mockReset()
   localStorage.clear()
   Object.defineProperty(window, 'matchMedia', {
     configurable: true,
@@ -551,7 +643,7 @@ describe('EditorTab browser integration', () => {
 
     await waitFor(() => expect(mocks.i18nChanged).toHaveBeenCalledOnce())
     expect(fake.modelerInstances).toBe(1)
-    expect(fake.stackIndex).toBe(0)
+    expect(fake.stackIndex).toBe(-1)
     expect(mocks.modelingUpdate).not.toHaveBeenCalled()
     expect(mocks.modelerConstructed).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -578,7 +670,7 @@ describe('EditorTab browser integration', () => {
     await waitFor(() => expect(mocks.i18nChanged).toHaveBeenCalledTimes(2))
     expect(fake.modelerInstances).toBe(1)
     expect(fake.destroyed).toBe(false)
-    expect(fake.stackIndex).toBe(0)
+    expect(fake.stackIndex).toBe(-1)
     expect(mocks.modelingUpdate).not.toHaveBeenCalled()
     expect(onDirtyChange).not.toHaveBeenCalledWith(true)
   })
@@ -879,7 +971,7 @@ describe('EditorTab browser integration', () => {
     expect(mocks.triggerDownload).toHaveBeenCalledWith('leave-process.pdf', 'blob:diagram-pdf')
   })
 
-  it('runs validation, focuses an issue, opens source repair, applies, and rolls back', async () => {
+  it('runs validation, applies source as one journal command, and one undo restores exact XML', async () => {
     const user = userEvent.setup()
     renderEditor()
 
@@ -901,10 +993,211 @@ describe('EditorTab browser integration', () => {
 
     await user.click(screen.getByRole('button', { name: 'source-apply' }))
     await waitFor(() => expect(mocks.onSourceApply).toHaveBeenCalledOnce())
-    expect(mocks.modelingUpdate).toHaveBeenCalled()
+    expect(mocks.commandExecute).toHaveBeenCalledTimes(1)
+    expect(mocks.modelingUpdate).not.toHaveBeenCalled()
+    expect(fake.currentXml).toBe('<definitions id="candidate" />')
     expect(await screen.findByText('sourceEditor.rollback')).not.toBeNull()
-    await user.click(screen.getByRole('button', { name: 'sourceEditor.rollback' }))
+
+    mocks.commandUndo()
     await waitFor(() => expect(fake.currentXml).toBe('<definitions id="original" />'))
+    await waitFor(() => expect(screen.queryByText('sourceEditor.rollback')).toBeNull())
+  })
+
+  it('uses the exact dirty pre-Apply XML as preservation and undo baseline', async () => {
+    const user = userEvent.setup()
+    const onDirtyChange = vi.fn()
+    renderEditor({ onDirtyChange })
+    await waitFor(() => expect(fake.currentXml).toBe('<definitions id="original" />'))
+
+    const dirtyXml =
+      '<definitions id="dirty" xmlns:vendor="https://vendor.example"><vendor:keep value="exact" /></definitions>'
+    fake.currentXml = dirtyXml
+    fake.stackIndex = 1
+    emit('commandStack.changed')
+    await waitFor(() => expect(onDirtyChange).toHaveBeenLastCalledWith(true))
+
+    await user.click(screen.getByRole('button', { name: 'sourceEditor.open' }))
+    expect(await screen.findByRole('dialog', { name: 'source-editor' })).not.toBeNull()
+    await user.click(screen.getByRole('button', { name: 'source-apply' }))
+    await waitFor(() => expect(mocks.onSourceApply).toHaveBeenCalledOnce())
+
+    expect(mocks.validatePreservation).toHaveBeenCalledWith(
+      dirtyXml,
+      '<definitions id="candidate" />'
+    )
+    mocks.commandUndo()
+    await waitFor(() => expect(fake.currentXml).toBe(dirtyXml))
+    expect(onDirtyChange).toHaveBeenLastCalledWith(true)
+  })
+
+  it('rolls back the exact prior XML when a post-import preservation check fails', async () => {
+    const user = userEvent.setup()
+    const preservationFailure = createValidationSummary(
+      [
+        {
+          code: 'preservation.opaque-extension-lost',
+          severity: 'error',
+          source: 'preservation',
+          message: 'vendor extension lost',
+          blocking: true
+        }
+      ],
+      { xmlWellFormed: true }
+    )
+    mocks.validatePreservation
+      .mockResolvedValueOnce(validSummary)
+      .mockResolvedValueOnce(preservationFailure)
+      .mockResolvedValue(validSummary)
+    renderEditor()
+    await waitFor(() => expect(fake.importedXml).toEqual(['<definitions id="original" />']))
+
+    await user.click(screen.getByRole('button', { name: 'sourceEditor.open' }))
+    await user.click(await screen.findByRole('button', { name: 'source-apply' }))
+    await waitFor(() => expect(mocks.onSourceApplyError).toHaveBeenCalledOnce())
+
+    expect(fake.currentXml).toBe('<definitions id="original" />')
+    expect(fake.importedXml).toEqual([
+      '<definitions id="original" />',
+      '<definitions id="candidate" />',
+      '<definitions id="original" />'
+    ])
+    expect(mocks.commandExecute).not.toHaveBeenCalled()
+    expect(screen.queryByText('sourceEditor.rollback')).toBeNull()
+  })
+
+  it('blocks missing and wrong-script localization before import or undo-state mutation', async () => {
+    const user = userEvent.setup()
+    const resources: EditorTabProps['sourceLocalizationResources'] = {
+      glossary: [{ en: 'Approved', ar: 'معتمد' }],
+      translationMemory: []
+    }
+    mocks.reviewBpmnXmlLocalization.mockImplementationOnce(async (candidateXml: string) => {
+      fake.operationLog.push(`review:${candidateXml}`)
+      return {
+        status: 'review-required',
+        request: {
+          queue: [
+            {
+              issues: [
+                { code: 'missing', target: 'ar' },
+                { code: 'wrong-script', target: 'en' }
+              ]
+            }
+          ]
+        }
+      }
+    })
+    renderEditor({ sourceLocalizationResources: resources })
+    await waitFor(() => expect(fake.importedXml).toEqual(['<definitions id="original" />']))
+    const stackBeforeApply = fake.stackIndex
+    const actionsBeforeApply = [...fake.commandActions]
+
+    await user.click(screen.getByRole('button', { name: 'sourceEditor.open' }))
+    await user.click(await screen.findByRole('button', { name: 'source-apply' }))
+    await waitFor(() =>
+      expect(mocks.onSourceApply).toHaveBeenCalledWith({
+        status: 'blocked',
+        message: 'sourceEditor.invalidBlocked'
+      })
+    )
+
+    expect(mocks.reviewBpmnXmlLocalization).toHaveBeenCalledWith(
+      '<definitions id="candidate" />',
+      expect.objectContaining({
+        source: 'xml',
+        target: 'en',
+        resources,
+        review: undefined,
+        signal: expect.any(AbortSignal),
+        isCurrent: expect.any(Function)
+      })
+    )
+    expect(fake.currentXml).toBe('<definitions id="original" />')
+    expect(fake.importedXml).toEqual(['<definitions id="original" />'])
+    expect(fake.stackIndex).toBe(stackBeforeApply)
+    expect(fake.commandActions).toEqual(actionsBeforeApply)
+    expect(mocks.commandExecute).not.toHaveBeenCalled()
+    expect(screen.getByRole('dialog', { name: 'source-editor' })).not.toBeNull()
+  })
+
+  it('keeps the exact diagram and undo state when bilingual review is cancelled', async () => {
+    const user = userEvent.setup()
+    const reviewer = vi.fn(async () => ({ status: 'cancelled' as const }))
+    mocks.reviewBpmnXmlLocalization.mockImplementationOnce(async (candidateXml: string) => {
+      fake.operationLog.push(`review:${candidateXml}`)
+      return {
+        status: 'cancelled',
+        request: {}
+      }
+    })
+    renderEditor({ onReviewSourceBilingual: reviewer })
+    await waitFor(() => expect(fake.importedXml).toEqual(['<definitions id="original" />']))
+    const stackBeforeApply = fake.stackIndex
+    const actionsBeforeApply = [...fake.commandActions]
+
+    await user.click(screen.getByRole('button', { name: 'sourceEditor.open' }))
+    await user.click(await screen.findByRole('button', { name: 'source-apply' }))
+    await waitFor(() => expect(mocks.onSourceApply).toHaveBeenCalledWith({ status: 'cancelled' }))
+
+    expect(fake.currentXml).toBe('<definitions id="original" />')
+    expect(fake.importedXml).toEqual(['<definitions id="original" />'])
+    expect(fake.stackIndex).toBe(stackBeforeApply)
+    expect(fake.commandActions).toEqual(actionsBeforeApply)
+    expect(mocks.commandExecute).not.toHaveBeenCalled()
+  })
+
+  it('imports only the exact explicitly reviewed XML and never audits after import', async () => {
+    const user = userEvent.setup()
+    const onRequestSave = vi.fn().mockResolvedValue(undefined)
+    const reviewer = vi.fn(async () => ({ status: 'cancelled' as const }))
+    const reviewedXml =
+      '<definitions id="reviewed" xmlns:orbitpm="https://orbitpm.app/schema/1.0" orbitpm:activeLang="ar" />'
+    const approval = {
+      processId: 'Process_1',
+      elementId: 'Task_1',
+      field: 'name',
+      target: 'en' as const,
+      value: 'DMT Ahmed',
+      kind: 'english-bilingual' as const
+    }
+    fake.diagramLang = 'ar'
+    mocks.reviewBpmnXmlLocalization.mockImplementationOnce(async (candidateXml: string) => {
+      fake.operationLog.push(`review:${candidateXml}`)
+      return {
+        status: 'completed',
+        xml: reviewedXml,
+        reviewMode: 'explicit',
+        evidence: { reviewedApprovals: [approval] }
+      }
+    })
+    renderEditor({ onRequestSave, onReviewSourceBilingual: reviewer })
+    await waitFor(() => expect(fake.importedXml).toEqual(['<definitions id="original" />']))
+
+    await user.click(screen.getByRole('button', { name: 'sourceEditor.open' }))
+    await user.click(await screen.findByRole('button', { name: 'source-apply' }))
+    await waitFor(() => expect(mocks.onSourceApply).toHaveBeenCalledWith({ status: 'applied' }))
+
+    expect(fake.currentXml).toBe(reviewedXml)
+    expect(fake.importedXml).toEqual(['<definitions id="original" />', reviewedXml])
+    expect(mocks.commandExecute).toHaveBeenCalledTimes(1)
+    expect(mocks.reviewBpmnXmlLocalization).toHaveBeenCalledTimes(1)
+    expect(mocks.reviewBpmnXmlLocalization).toHaveBeenCalledWith(
+      '<definitions id="candidate" />',
+      expect.objectContaining({ target: 'ar', review: reviewer })
+    )
+    expect(fake.operationLog).toEqual([
+      'import:<definitions id="original" />',
+      'review:<definitions id="candidate" />',
+      `import:${reviewedXml}`
+    ])
+
+    mocks.validateBpmnXml.mockClear()
+    await user.click(screen.getByRole('button', { name: 'editor.save' }))
+    await waitFor(() => expect(onRequestSave).toHaveBeenCalledOnce())
+    expect(mocks.validateBpmnXml).toHaveBeenCalledWith(
+      reviewedXml,
+      expect.objectContaining({ approvedFieldExceptions: [approval] })
+    )
   })
 
   it('requires and honors explicit draft confirmation for semantic blockers', async () => {

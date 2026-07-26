@@ -60,11 +60,18 @@ import { installDragWatchdog } from './dragWatchdog'
 import { installPaletteDrag } from './paletteDrag'
 import { installCanvasDecor } from './canvasDecor'
 import { installLabelBilingualSync } from './labelSync'
-import type { LangToggleModeler } from './langToggle'
+import { getDiagramLang, type LangToggleModeler } from './langToggle'
 import { installAutoSize, type AutoSizeModeler } from './autoSize'
 import { BidiTextRendererModule } from './bidiTextRenderer'
 import { t } from '../i18n'
 import { useLang } from '../i18n/useLang'
+import { SEEDED_GLOSSARY, approvedNeutralTerms } from '../localization/glossary'
+import type { LocalizationFieldException } from '../localization/audit'
+import {
+  reviewBpmnXmlLocalization,
+  type ReviewedXmlIngestionReviewer
+} from '../localization/xmlIngestion'
+import { LocalizationSource, type LocalizationResources } from '../localization/types'
 import { recommendedBpmnlintBundle } from '../validation/bpmnlintBundle'
 import { getRuntimeValidationAdapters } from '../validation/runtimeAdapters'
 import { validateBpmnXml } from '../validation/model'
@@ -76,7 +83,7 @@ import {
 } from '../validation/contracts'
 import { evaluateValidationPolicy } from '../validation/policy'
 import { ValidationCenter } from '../validation/ValidationCenter'
-import { SourceEditorDialog } from '../validation/SourceEditorDialog'
+import { SourceEditorDialog, type SourceEditorApplyResult } from '../validation/SourceEditorDialog'
 import { SaveDraftDialog } from '../validation/SaveDraftDialog'
 import { layoutBpmnValidated } from '../generation/layout'
 import { ProcessOutlineEditor } from './ProcessOutlineEditor'
@@ -120,6 +127,13 @@ export interface EditorTabProps {
   responsiveMode?: ResponsiveShellMode
   /** Notifies App so opening Details can close an overlay explorer. */
   onDetailsOpenChange?: (open: boolean) => void
+  /** Exact workspace glossary/TM snapshot for Source Apply. */
+  sourceLocalizationResources?: LocalizationResources
+  /**
+   * Awaited, digest-bound review for unresolved Source XML. Omitting it keeps
+   * unresolved drafts open and blocked; fully complete drafts still apply.
+   */
+  onReviewSourceBilingual?: ReviewedXmlIngestionReviewer
 }
 
 export interface EditorTabCommands {
@@ -129,8 +143,48 @@ export interface EditorTabCommands {
   exportPdf: () => void
 }
 
+interface SourceApplyCommandContext {
+  initialExecution: boolean
+  restorePrevious(): void
+  restoreApplied(): void
+}
+
+interface CommandHandlerLike {
+  execute?(context: SourceApplyCommandContext): void
+  revert?(context: SourceApplyCommandContext): void
+}
+
 interface CommandStackLike {
   _stackIdx: number
+  execute(command: string, context: SourceApplyCommandContext): void
+  register(command: string, handler: CommandHandlerLike): void
+}
+
+const SOURCE_APPLY_COMMAND = 'orbitpm.source-editor.apply'
+const DEFAULT_SOURCE_LOCALIZATION_RESOURCES: LocalizationResources = Object.freeze({
+  glossary: SEEDED_GLOSSARY,
+  translationMemory: Object.freeze([])
+})
+
+/**
+ * Source replacement necessarily calls bpmn-js importXML, whose diagram clear
+ * resets the command stack but retains registered handlers. We therefore
+ * register this journal handler once per modeler, then add one marker after a
+ * successful import. Undo imports the exact pre-Apply XML. That restore clears
+ * the marker (and thus redo history) by design; users can re-Apply from Source,
+ * while an impossible/stale redo can never overwrite later work.
+ */
+const sourceApplyCommandHandler: CommandHandlerLike = {
+  execute(context): void {
+    if (context.initialExecution) {
+      context.initialExecution = false
+      return
+    }
+    context.restoreApplied()
+  },
+  revert(context): void {
+    context.restorePrevious()
+  }
 }
 
 interface CanvasApiLike {
@@ -224,7 +278,9 @@ export function EditorTab(props: EditorTabProps): JSX.Element {
     sidePaneExtra,
     detailsController: sharedDetailsController,
     responsiveMode,
-    onDetailsOpenChange
+    onDetailsOpenChange,
+    sourceLocalizationResources,
+    onReviewSourceBilingual
   } = props
   const lang = useLang()
   const detailsPaneId = `orbitpm-details-pane-${useId().replaceAll(':', '')}`
@@ -243,8 +299,16 @@ export function EditorTab(props: EditorTabProps): JSX.Element {
   const modelerRef = useRef<BpmnModelerLike | null>(null)
   const dirtyStateRef = useRef<DirtyState>(createDirtyState(0))
   const originalXmlRef = useRef(xml)
-  const sourceRollbackRef = useRef<{ xml: string; wasDirty: boolean } | null>(null)
+  const sourceRollbackRef = useRef<{
+    xml: string
+    appliedXml: string
+    wasDirty: boolean
+    previousApprovals: readonly LocalizationFieldException[]
+    appliedApprovals: readonly LocalizationFieldException[]
+  } | null>(null)
+  const sourceApprovedFieldExceptionsRef = useRef<readonly LocalizationFieldException[]>([])
   const ignoreNextSourceJournalCommandRef = useRef(false)
+  const importCommandEventDepthRef = useRef(0)
   const onOpenCalledProcessRef = useRef(onOpenCalledProcess)
   onOpenCalledProcessRef.current = onOpenCalledProcess
   const onOpenStepDetailsRef = useRef(onOpenStepDetails)
@@ -420,10 +484,13 @@ export function EditorTab(props: EditorTabProps): JSX.Element {
     }) as unknown as BpmnModelerLike
 
     modelerRef.current = modeler
+    // CommandStack#clear (fired by importXML) clears actions, not handlers.
+    modeler.get('commandStack').register(SOURCE_APPLY_COMMAND, sourceApplyCommandHandler)
     setOutlineModeler(modeler as unknown as ProcessOutlineModeler)
     onModelerReadyRef.current?.(modeler)
 
     const handleCommandStackChanged = (): void => {
+      if (importCommandEventDepthRef.current > 0) return
       if (sourceRollbackRef.current) {
         if (ignoreNextSourceJournalCommandRef.current) {
           ignoreNextSourceJournalCommandRef.current = false
@@ -531,6 +598,7 @@ export function EditorTab(props: EditorTabProps): JSX.Element {
 
     let cancelled = false
     setError(null)
+    importCommandEventDepthRef.current += 1
     modeler
       .importXML(xml)
       .then(({ warnings }) => {
@@ -539,6 +607,7 @@ export function EditorTab(props: EditorTabProps): JSX.Element {
           console.warn('BPMN import warnings:', warnings)
         }
         originalXmlRef.current = xml
+        sourceApprovedFieldExceptionsRef.current = []
         sourceRollbackRef.current = null
         setSourceRollbackAvailable(false)
         setValidationSummary(null)
@@ -553,6 +622,9 @@ export function EditorTab(props: EditorTabProps): JSX.Element {
         if (cancelled) return
         setError(t('editor.error.loadFailed', { error: errorMessage(err) }))
       })
+      .finally(() => {
+        importCommandEventDepthRef.current = Math.max(0, importCommandEventDepthRef.current - 1)
+      })
 
     return () => {
       cancelled = true
@@ -564,24 +636,30 @@ export function EditorTab(props: EditorTabProps): JSX.Element {
     async (
       candidateXml: string,
       requireDi: boolean,
-      verifyPreservation: boolean
+      preservationBaseline?: string,
+      requireBilingual = false,
+      approvedFieldExceptions: readonly LocalizationFieldException[] = sourceApprovedFieldExceptionsRef.current
     ): Promise<ValidationSummary> => {
       const parsed = await validateBpmnXml(candidateXml, {
         adapters: getRuntimeValidationAdapters(),
         knownProcessIds: knownProcessIds ?? [],
-        requireBilingual: false,
+        neutralTerms: approvedNeutralTerms(
+          sourceLocalizationResources?.glossary ?? SEEDED_GLOSSARY
+        ),
+        approvedFieldExceptions,
+        requireBilingual,
         requireDi
       })
-      if (!verifyPreservation || !parsed.summary.xmlWellFormed) {
+      if (preservationBaseline === undefined || !parsed.summary.xmlWellFormed) {
         return parsed.summary
       }
       const preservation = await validateUnknownExtensionPreservation(
-        originalXmlRef.current,
+        preservationBaseline,
         candidateXml
       )
       return mergeValidationSummaries(parsed.summary, preservation)
     },
-    [knownProcessIds]
+    [knownProcessIds, sourceLocalizationResources]
   )
 
   const readCurrentXml = useCallback(async (): Promise<string> => {
@@ -612,7 +690,7 @@ export function EditorTab(props: EditorTabProps): JSX.Element {
     setError(null)
     try {
       const currentXml = await readCurrentXml()
-      const summary = await validateDocument(currentXml, true, true)
+      const summary = await validateDocument(currentXml, true, originalXmlRef.current, true)
       setValidationSummary(summary)
       return summary
     } catch (err) {
@@ -638,37 +716,179 @@ export function EditorTab(props: EditorTabProps): JSX.Element {
     }
   }, [readCurrentXml])
 
-  const markImportedDocumentDirty = useCallback(
-    (modeler: BpmnModelerLike): void => {
-      try {
-        const root = modeler.get('canvas').getRootElement()
-        const rootId = root.businessObject?.id ?? root.id
-        if (!rootId) throw new Error('canvas root has no ID')
-        // A same-value command marks the imported definitions dirty without
-        // silently adding or changing semantic/source data.
-        modeler.get('modeling').updateProperties(root, { id: rootId })
-      } catch {
-        applyDirtyState(
-          withCommandStackChanged(
-            createDirtyState(Math.min(-1, getStackIndex(modeler) - 1)),
-            getStackIndex(modeler)
-          )
-        )
-      }
+  const setImportedDocumentDirtyState = useCallback(
+    (modeler: BpmnModelerLike, shouldBeDirty: boolean): void => {
+      const stackIndex = getStackIndex(modeler)
+      applyDirtyState(
+        shouldBeDirty
+          ? withCommandStackChanged(createDirtyState(stackIndex - 1), stackIndex)
+          : createDirtyState(stackIndex)
+      )
     },
     [applyDirtyState]
   )
 
+  const restoreSourceSnapshot = useCallback(
+    async (
+      modeler: BpmnModelerLike,
+      snapshotXml: string,
+      shouldBeDirty: boolean,
+      requireBilingual: boolean,
+      approvedFieldExceptions: readonly LocalizationFieldException[]
+    ): Promise<void> => {
+      importCommandEventDepthRef.current += 1
+      try {
+        await modeler.importXML(snapshotXml)
+      } finally {
+        importCommandEventDepthRef.current = Math.max(0, importCommandEventDepthRef.current - 1)
+      }
+      if (modelerRef.current !== modeler) return
+      sourceApprovedFieldExceptionsRef.current = approvedFieldExceptions
+      modeler.get('canvas').zoom('fit-viewport')
+      setImportedDocumentDirtyState(modeler, shouldBeDirty)
+      try {
+        setValidationSummary(
+          await validateDocument(
+            snapshotXml,
+            true,
+            snapshotXml,
+            requireBilingual,
+            approvedFieldExceptions
+          )
+        )
+      } catch {
+        // The exact snapshot is already restored. A later Validation Center
+        // run can retry adapters that were temporarily unavailable.
+        setValidationSummary(null)
+      }
+    },
+    [setImportedDocumentDirtyState, validateDocument]
+  )
+
+  const queueSourceSnapshotRestore = useCallback(
+    (
+      modeler: BpmnModelerLike,
+      target: {
+        xml: string
+        dirty: boolean
+        requireBilingual: boolean
+        approvedFieldExceptions: readonly LocalizationFieldException[]
+      },
+      fallback: {
+        xml: string
+        dirty: boolean
+        requireBilingual: boolean
+        approvedFieldExceptions: readonly LocalizationFieldException[]
+      }
+    ): void => {
+      sourceRollbackRef.current = null
+      setSourceRollbackAvailable(false)
+      ignoreNextSourceJournalCommandRef.current = false
+      void restoreSourceSnapshot(
+        modeler,
+        target.xml,
+        target.dirty,
+        target.requireBilingual,
+        target.approvedFieldExceptions
+      ).catch(async (caught) => {
+        try {
+          await restoreSourceSnapshot(
+            modeler,
+            fallback.xml,
+            fallback.dirty,
+            fallback.requireBilingual,
+            fallback.approvedFieldExceptions
+          )
+        } catch {
+          // Keep the first restoration error; it identifies the requested
+          // transaction side that could not be recovered.
+        }
+        if (modelerRef.current === modeler) {
+          setError(
+            t('sourceEditor.applyFailed', {
+              error: errorMessage(caught)
+            })
+          )
+        }
+      })
+    },
+    [restoreSourceSnapshot]
+  )
+
   const handleApplySource = useCallback(
-    async (candidateXml: string): Promise<void> => {
+    async (candidateXml: string, signal: AbortSignal): Promise<SourceEditorApplyResult> => {
       const modeler = modelerRef.current
       if (!modeler) throw new Error('editor not ready')
       const previousXml = await readCurrentXml()
       const wasDirty = dirty
-      let importedCandidate = false
+      const previousApprovals = sourceApprovedFieldExceptionsRef.current
+      let sourceMutationStarted = false
+      const isSourceCurrent = async (): Promise<boolean> => {
+        if (signal.aborted || modelerRef.current !== modeler) return false
+        try {
+          return (await readCurrentXml()) === previousXml
+        } catch {
+          return false
+        }
+      }
       try {
-        await modeler.importXML(candidateXml)
-        importedCandidate = true
+        const target = getDiagramLang(modeler as unknown as LangToggleModeler)
+        const ingestion = await reviewBpmnXmlLocalization(candidateXml, {
+          source: LocalizationSource.Xml,
+          target,
+          defaultActive: target,
+          resources: sourceLocalizationResources ?? DEFAULT_SOURCE_LOCALIZATION_RESOURCES,
+          approvedFieldExceptions: previousApprovals,
+          validation: {
+            adapters: getRuntimeValidationAdapters(),
+            knownProcessIds: knownProcessIds ?? [],
+            requireDi: true
+          },
+          review: onReviewSourceBilingual,
+          signal,
+          isCurrent: isSourceCurrent
+        })
+        if (ingestion.status === 'cancelled') return { status: 'cancelled' }
+        if (ingestion.status === 'review-required') {
+          return { status: 'blocked', message: t('sourceEditor.invalidBlocked') }
+        }
+
+        const reviewedXml = ingestion.xml
+        const appliedApprovals = Object.freeze([
+          ...previousApprovals,
+          ...ingestion.evidence.reviewedApprovals
+        ])
+        const preImportValidation = await validateDocument(
+          reviewedXml,
+          true,
+          previousXml,
+          true,
+          appliedApprovals
+        )
+        if (
+          !preImportValidation.valid ||
+          !evaluateValidationPolicy(preImportValidation, 'apply-editor').allowed
+        ) {
+          return { status: 'blocked', message: t('sourceEditor.invalidBlocked') }
+        }
+        if (!(await isSourceCurrent())) {
+          return signal.aborted
+            ? { status: 'cancelled' }
+            : { status: 'blocked', message: t('sourceEditor.invalidBlocked') }
+        }
+
+        sourceMutationStarted = true
+        sourceRollbackRef.current = null
+        setSourceRollbackAvailable(false)
+        importCommandEventDepthRef.current += 1
+        try {
+          await modeler.importXML(reviewedXml)
+        } finally {
+          importCommandEventDepthRef.current = Math.max(0, importCommandEventDepthRef.current - 1)
+        }
+        if (signal.aborted) {
+          throw signal.reason ?? new DOMException('Operation was aborted.', 'AbortError')
+        }
 
         // A parseable source may still contain opaque vendor content that the
         // modeler's serializer does not understand. Verify the exact
@@ -676,46 +896,101 @@ export function EditorTab(props: EditorTabProps): JSX.Element {
         // previous definitions immediately.
         const roundTripXml = await readCurrentXml()
         const roundTripPreservation = await validateUnknownExtensionPreservation(
-          candidateXml,
+          reviewedXml,
           roundTripXml
         )
         if (!roundTripPreservation.valid) {
           throw new Error(t('sourceEditor.preservationBlocked'))
         }
 
-        const roundTripValidation = await validateDocument(roundTripXml, true, true)
-        if (!evaluateValidationPolicy(roundTripValidation, 'apply-editor').allowed) {
+        const roundTripValidation = await validateDocument(
+          roundTripXml,
+          true,
+          previousXml,
+          true,
+          appliedApprovals
+        )
+        if (
+          !roundTripValidation.valid ||
+          !evaluateValidationPolicy(roundTripValidation, 'apply-editor').allowed
+        ) {
           throw new Error(t('sourceEditor.invalidBlocked'))
         }
 
         modeler.get('canvas').zoom('fit-viewport')
-        sourceRollbackRef.current = { xml: previousXml, wasDirty }
+        sourceRollbackRef.current = {
+          xml: previousXml,
+          appliedXml: roundTripXml,
+          wasDirty,
+          previousApprovals,
+          appliedApprovals
+        }
+        sourceApprovedFieldExceptionsRef.current = appliedApprovals
         setSourceRollbackAvailable(true)
         ignoreNextSourceJournalCommandRef.current = true
-        markImportedDocumentDirty(modeler)
+        modeler.get('commandStack').execute(SOURCE_APPLY_COMMAND, {
+          initialExecution: true,
+          restorePrevious: () =>
+            queueSourceSnapshotRestore(
+              modeler,
+              {
+                xml: previousXml,
+                dirty: wasDirty,
+                requireBilingual: false,
+                approvedFieldExceptions: previousApprovals
+              },
+              {
+                xml: roundTripXml,
+                dirty: true,
+                requireBilingual: true,
+                approvedFieldExceptions: appliedApprovals
+              }
+            ),
+          restoreApplied: () =>
+            queueSourceSnapshotRestore(
+              modeler,
+              {
+                xml: roundTripXml,
+                dirty: true,
+                requireBilingual: true,
+                approvedFieldExceptions: appliedApprovals
+              },
+              {
+                xml: previousXml,
+                dirty: wasDirty,
+                requireBilingual: false,
+                approvedFieldExceptions: previousApprovals
+              }
+            )
+        })
+        setImportedDocumentDirtyState(modeler, true)
         setValidationSummary(roundTripValidation)
+        return { status: 'applied' }
       } catch (err) {
-        sourceRollbackRef.current = null
-        setSourceRollbackAvailable(false)
-        ignoreNextSourceJournalCommandRef.current = false
-        if (importedCandidate) {
+        if (sourceMutationStarted) {
+          sourceRollbackRef.current = null
+          setSourceRollbackAvailable(false)
+          ignoreNextSourceJournalCommandRef.current = false
           try {
-            await modeler.importXML(previousXml)
-            modeler.get('canvas').zoom('fit-viewport')
-            if (wasDirty) {
-              markImportedDocumentDirty(modeler)
-            } else {
-              applyDirtyState(createDirtyState(getStackIndex(modeler)))
-            }
-          } catch {
-            // Preserve the original error. The editor's visible error banner
-            // still tells the user that Apply did not complete.
+            await restoreSourceSnapshot(modeler, previousXml, wasDirty, false, previousApprovals)
+          } catch (rollbackError) {
+            throw new Error(`${errorMessage(err)}; rollback failed: ${errorMessage(rollbackError)}`)
           }
         }
         throw err
       }
     },
-    [applyDirtyState, dirty, markImportedDocumentDirty, readCurrentXml, validateDocument]
+    [
+      dirty,
+      knownProcessIds,
+      onReviewSourceBilingual,
+      queueSourceSnapshotRestore,
+      readCurrentXml,
+      restoreSourceSnapshot,
+      setImportedDocumentDirtyState,
+      sourceLocalizationResources,
+      validateDocument
+    ]
   )
 
   const handleRollbackSourceApply = useCallback(async () => {
@@ -727,20 +1002,31 @@ export function EditorTab(props: EditorTabProps): JSX.Element {
       sourceRollbackRef.current = null
       setSourceRollbackAvailable(false)
       ignoreNextSourceJournalCommandRef.current = false
-      await modeler.importXML(rollback.xml)
-      modeler.get('canvas').zoom('fit-viewport')
-      if (rollback.wasDirty) {
-        markImportedDocumentDirty(modeler)
-      } else {
-        applyDirtyState(createDirtyState(getStackIndex(modeler)))
-      }
-      setValidationSummary(await validateDocument(rollback.xml, true, true))
+      await restoreSourceSnapshot(
+        modeler,
+        rollback.xml,
+        rollback.wasDirty,
+        false,
+        rollback.previousApprovals
+      )
     } catch (err) {
+      try {
+        await restoreSourceSnapshot(
+          modeler,
+          rollback.appliedXml,
+          true,
+          true,
+          rollback.appliedApprovals
+        )
+      } catch {
+        // Report the requested rollback failure below; the diagram may already
+        // be partially unavailable, so do not claim that rollback succeeded.
+      }
       sourceRollbackRef.current = rollback
       setSourceRollbackAvailable(true)
       setError(t('sourceEditor.applyFailed', { error: errorMessage(err) }))
     }
-  }, [applyDirtyState, markImportedDocumentDirty, validateDocument])
+  }, [restoreSourceSnapshot])
 
   const handleAutoLayout = useCallback(
     async (candidateXml: string): Promise<string> => {
@@ -788,7 +1074,7 @@ export function EditorTab(props: EditorTabProps): JSX.Element {
     setError(null)
     try {
       const savedXml = await readCurrentXml()
-      const summary = await validateDocument(savedXml, true, true)
+      const summary = await validateDocument(savedXml, true, originalXmlRef.current, true)
       setValidationSummary(summary)
 
       const normalSave = evaluateValidationPolicy(summary, 'save')
@@ -1224,7 +1510,7 @@ export function EditorTab(props: EditorTabProps): JSX.Element {
       <SourceEditorDialog
         open={sourceOpen}
         originalXml={sourceXml}
-        validate={(candidateXml, requireDi) => validateDocument(candidateXml, requireDi, true)}
+        validate={(candidateXml, requireDi) => validateDocument(candidateXml, requireDi, sourceXml)}
         apply={handleApplySource}
         autoLayout={handleAutoLayout}
         onClose={() => setSourceOpen(false)}

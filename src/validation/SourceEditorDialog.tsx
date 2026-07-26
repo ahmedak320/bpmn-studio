@@ -15,10 +15,13 @@ export interface SourceEditorDialogProps {
   open: boolean
   originalXml: string
   validate: (xml: string, requireDi: boolean) => Promise<ValidationSummary>
-  apply: (xml: string) => Promise<void>
+  apply: (xml: string, signal: AbortSignal) => Promise<void | SourceEditorApplyResult>
   autoLayout: (xml: string) => Promise<string>
   onClose: () => void
 }
+
+export type SourceEditorApplyResult =
+  { status: 'applied' } | { status: 'cancelled' } | { status: 'blocked'; message?: string }
 
 interface PreviewResult {
   xml: string
@@ -34,6 +37,7 @@ export function SourceEditorDialog({
   onClose
 }: SourceEditorDialogProps): JSX.Element | null {
   const headingRef = useRef<HTMLHeadingElement | null>(null)
+  const applyAbortRef = useRef<AbortController | null>(null)
   const [draft, setDraft] = useState(originalXml)
   const [preview, setPreview] = useState<PreviewResult | null>(null)
   const [busy, setBusy] = useState<'preview' | 'apply' | 'layout' | null>(null)
@@ -41,12 +45,24 @@ export function SourceEditorDialog({
   const [layoutCandidate, setLayoutCandidate] = useState<string | null>(null)
 
   useEffect(() => {
-    if (!open) return
+    applyAbortRef.current?.abort()
+    applyAbortRef.current = null
+    if (!open) {
+      return
+    }
     setDraft(originalXml)
     setPreview(null)
     setError(null)
     setLayoutCandidate(null)
   }, [open, originalXml])
+
+  useEffect(
+    () => () => {
+      applyAbortRef.current?.abort()
+      applyAbortRef.current = null
+    },
+    []
+  )
 
   const diff = useMemo(() => summarizeXmlLineDiff(originalXml, draft), [draft, originalXml])
   const layoutDiff = useMemo(
@@ -122,8 +138,12 @@ export function SourceEditorDialog({
   const handleApply = useCallback(async () => {
     setBusy('apply')
     setError(null)
+    const controller = new AbortController()
+    applyAbortRef.current?.abort()
+    applyAbortRef.current = controller
     try {
       const checked = await previewXml(draft, true)
+      if (controller.signal.aborted) return
       setPreview(checked)
       if (
         checked.summary.issues.some(
@@ -134,7 +154,7 @@ export function SourceEditorDialog({
         return
       }
       const decision = evaluateValidationPolicy(checked.summary, 'apply-editor')
-      if (!decision.allowed) {
+      if (!decision.allowed || checked.summary.blockingErrors > 0) {
         setError(
           decision.reason === 'unsafe-preservation-loss'
             ? translate('sourceEditor.preservationBlocked')
@@ -142,15 +162,23 @@ export function SourceEditorDialog({
         )
         return
       }
-      await apply(draft)
+      const outcome = await apply(draft, controller.signal)
+      if (controller.signal.aborted) return
+      if (outcome?.status === 'cancelled') return
+      if (outcome?.status === 'blocked') {
+        setError(outcome.message ?? translate('sourceEditor.invalidBlocked'))
+        return
+      }
       onClose()
     } catch (caught) {
+      if (controller.signal.aborted) return
       setError(
         translate('sourceEditor.applyFailed', {
           error: caught instanceof Error ? caught.message : String(caught)
         })
       )
     } finally {
+      if (applyAbortRef.current === controller) applyAbortRef.current = null
       setBusy(null)
     }
   }, [apply, draft, onClose, previewXml])
