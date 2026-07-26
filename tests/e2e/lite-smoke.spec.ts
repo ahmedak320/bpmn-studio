@@ -39,9 +39,7 @@ function recordOffendingRequests(page: import('@playwright/test').Page): string[
  *  makes directoryPickerSupported() false. */
 async function forceFallbackMode(page: import('@playwright/test').Page): Promise<void> {
   await page.addInitScript(() => {
-    // @ts-expect-error deleting an optional global for the test
     delete window.showDirectoryPicker
-    // @ts-expect-error deleting an optional global for the test
     delete window.showOpenFilePicker
   })
 }
@@ -115,7 +113,10 @@ test('New process flow (fallback): modal → full palette → add a task → und
 
   // (a) The New-process button is visible with no file open; clicking it opens
   //     the name modal.
-  await page.getByRole('button', { name: /New process/i }).first().click()
+  await page
+    .getByRole('button', { name: /New process/i })
+    .first()
+    .click()
   const dialog = page.getByRole('dialog', { name: /New Process/i })
   await expect(dialog).toBeVisible()
 
@@ -209,7 +210,10 @@ test('Escape closes the New-process modal', async ({ page }) => {
   await forceFallbackMode(page)
   await page.goto(FILE_URL, { waitUntil: 'load' })
 
-  await page.getByRole('button', { name: /New process/i }).first().click()
+  await page
+    .getByRole('button', { name: /New process/i })
+    .first()
+    .click()
   const dialog = page.getByRole('dialog', { name: /New Process/i })
   await expect(dialog).toBeVisible()
   await page.keyboard.press('Escape')
@@ -218,7 +222,6 @@ test('Escape closes the New-process modal', async ({ page }) => {
 
 test('AI panel documents the browser-only provider limitation', async ({ page }) => {
   await page.addInitScript(() => {
-    // @ts-expect-error test-only
     delete window.showDirectoryPicker
   })
   await page.goto(FILE_URL, { waitUntil: 'load' })
@@ -245,7 +248,10 @@ test('sidebar auto-collapses on open and the rail restores it', async ({ page })
   // workspace picker, not the main layout, so the sidebar only exists once a
   // diagram is open).
   const aside = page.locator('aside')
-  await page.getByRole('button', { name: /New process/i }).first().click()
+  await page
+    .getByRole('button', { name: /New process/i })
+    .first()
+    .click()
   const dialog = page.getByRole('dialog', { name: /New Process/i })
   await expect(dialog).toBeVisible()
   await dialog.getByRole('textbox').fill('Sidebar Demo')

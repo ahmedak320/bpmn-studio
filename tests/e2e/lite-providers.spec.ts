@@ -60,9 +60,7 @@ function recordOffendingRequests(page: import('@playwright/test').Page): string[
 
 async function forceFallbackMode(page: import('@playwright/test').Page): Promise<void> {
   await page.addInitScript(() => {
-    // @ts-expect-error deleting an optional global for the test
     delete window.showDirectoryPicker
-    // @ts-expect-error deleting an optional global for the test
     delete window.showOpenFilePicker
   })
 }
@@ -96,7 +94,10 @@ test('Settings lists only the three supported browser providers', async ({ page 
   const offending = recordOffendingRequests(page)
   await openApp(page)
 
-  await page.getByRole('button', { name: /Settings/i }).first().click()
+  await page
+    .getByRole('button', { name: /Settings/i })
+    .first()
+    .click()
   const dialog = page.getByRole('dialog', { name: /Settings/i })
   await expect(dialog).toBeVisible()
 

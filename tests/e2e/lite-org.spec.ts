@@ -19,16 +19,17 @@ test.beforeAll(() => {
  *  that can't be automated). */
 async function forceFallbackMode(page: import('@playwright/test').Page): Promise<void> {
   await page.addInitScript(() => {
-    // @ts-expect-error deleting an optional global for the test
     delete window.showDirectoryPicker
-    // @ts-expect-error deleting an optional global for the test
     delete window.showOpenFilePicker
   })
 }
 
 /** Create a new process via the New-process modal and wait for the modeler. */
 async function newProcess(page: import('@playwright/test').Page, name: string): Promise<void> {
-  await page.getByRole('button', { name: /New process/i }).first().click()
+  await page
+    .getByRole('button', { name: /New process/i })
+    .first()
+    .click()
   const dialog = page.getByRole('dialog', { name: /New Process/i })
   await expect(dialog).toBeVisible()
   await dialog.getByRole('textbox').fill(name)
@@ -43,7 +44,9 @@ async function newProcess(page: import('@playwright/test').Page, name: string): 
 /** All text painted into the diagram SVG (base labels + org-pack decorations). */
 async function svgTexts(page: import('@playwright/test').Page): Promise<string[]> {
   return page.evaluate(() =>
-    Array.from(document.querySelectorAll('.djs-container svg text')).map((el) => el.textContent ?? '')
+    Array.from(document.querySelectorAll('.djs-container svg text')).map(
+      (el) => el.textContent ?? ''
+    )
   )
 }
 
@@ -64,7 +67,9 @@ test('element step details: owner + CC render, and the styling toggle refreshes 
     const modeling = m.get('modeling') as {
       createShape(shape: unknown, pos: { x: number; y: number }, parent: unknown): unknown
     }
-    const elementFactory = m.get('elementFactory') as { createShape(attrs: { type: string }): unknown }
+    const elementFactory = m.get('elementFactory') as {
+      createShape(attrs: { type: string }): unknown
+    }
     const canvas = m.get('canvas') as { getRootElement(): unknown }
     const selection = m.get('selection') as { select(el: unknown): void }
     const task = elementFactory.createShape({ type: 'bpmn:Task' })
@@ -98,7 +103,10 @@ test('element step details: owner + CC render, and the styling toggle refreshes 
 
   // Turn org styling OFF in Settings — every open modeler refreshes live and the
   // decorations vanish.
-  await page.locator('header').getByRole('button', { name: /Settings/i }).click()
+  await page
+    .locator('header')
+    .getByRole('button', { name: /Settings/i })
+    .click()
   const styleToggle = page.getByRole('checkbox', { name: 'DMT colour coding & step details' })
   await expect(styleToggle).toBeVisible()
   await styleToggle.uncheck()
@@ -118,9 +126,7 @@ test('element step details: owner + CC render, and the styling toggle refreshes 
   )
 })
 
-test('repeatable triggers validate each DMT Hub row and persist all rows', async ({
-  page
-}) => {
+test('repeatable triggers validate each DMT Hub row and persist all rows', async ({ page }) => {
   await forceFallbackMode(page)
   await page.goto(FILE_URL, { waitUntil: 'load' })
   await newProcess(page, 'Trigger Demo')

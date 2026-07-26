@@ -1,0 +1,18 @@
+export const REQUIRED_BROWSER_SUITES = Object.freeze([
+  'tests/e2e/details-responsive.spec.ts',
+  'tests/e2e/lite-aml-naming.spec.ts',
+  'tests/e2e/lite-assistant.spec.ts',
+  'tests/e2e/lite-autosize-triggers.spec.ts',
+  'tests/e2e/lite-canvas-ux.spec.ts',
+  'tests/e2e/lite-company-docs.spec.ts',
+  'tests/e2e/lite-i18n-rtl.spec.ts',
+  'tests/e2e/lite-live-cors.spec.ts',
+  'tests/e2e/lite-org.spec.ts',
+  'tests/e2e/lite-panes-details.spec.ts',
+  'tests/e2e/lite-providers.spec.ts',
+  'tests/e2e/lite-smoke.spec.ts',
+  'tests/e2e/lite-spreadsheet.spec.ts',
+  'tests/e2e/lite-subprocess-tree.spec.ts',
+  'tests/e2e/lite-validation.spec.ts',
+  'tests/e2e/lite-viewer-interactions.spec.ts'
+])

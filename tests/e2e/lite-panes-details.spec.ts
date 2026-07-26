@@ -30,15 +30,16 @@ test.beforeAll(() => {
 
 async function forceFallbackMode(page: Page): Promise<void> {
   await page.addInitScript(() => {
-    // @ts-expect-error deleting an optional global for the test
     delete window.showDirectoryPicker
-    // @ts-expect-error deleting an optional global for the test
     delete window.showOpenFilePicker
   })
 }
 
 async function newProcess(page: Page, name: string): Promise<void> {
-  await page.getByRole('button', { name: /New process/i }).first().click()
+  await page
+    .getByRole('button', { name: /New process/i })
+    .first()
+    .click()
   const dialog = page.getByRole('dialog', { name: /New Process/i })
   await expect(dialog).toBeVisible()
   await dialog.getByRole('textbox').fill(name)
@@ -321,9 +322,7 @@ test('persistent Details rail opens, collapses, and reopens without losing selec
   expect(await selectedElementIds(page)).toEqual([taskId])
 })
 
-test('pane persists explicit open and closed preferences across reloads', async ({
-  page
-}) => {
+test('pane persists explicit open and closed preferences across reloads', async ({ page }) => {
   await forceFallbackMode(page)
   await page.goto(FILE_URL, { waitUntil: 'load' })
   await page.evaluate((key) => localStorage.setItem(key, '1'), PROPS_OPEN_KEY)
@@ -355,7 +354,9 @@ test('pane persists explicit open and closed preferences across reloads', async 
   await expect(panelToggle).toHaveAttribute('aria-expanded', 'false')
 })
 
-test('each mounted tab preserves its selected element when Details is reopened', async ({ page }) => {
+test('each mounted tab preserves its selected element when Details is reopened', async ({
+  page
+}) => {
   await forceFallbackMode(page)
   await page.goto(FILE_URL, { waitUntil: 'load' })
   await newProcess(page, 'First Pane')
@@ -373,7 +374,12 @@ test('each mounted tab preserves its selected element when Details is reopened',
   // The persisted user preference opens a newly-mounted tab, initially at
   // process scope. Selecting its own step updates only that tab.
   await expect(toggle).toHaveAttribute('aria-expanded', 'true')
-  const secondTaskId = await createShape(page, 'bpmn:UserTask', { x: 520, y: 220 }, { select: true })
+  const secondTaskId = await createShape(
+    page,
+    'bpmn:UserTask',
+    { x: 520, y: 220 },
+    { select: true }
+  )
   await expect(editor.locator('.orbitpm-lite-details-card')).toContainText('Selected step')
   expect(await selectedElementIds(page)).toEqual([secondTaskId])
 
@@ -414,11 +420,10 @@ test('every supported activity type can open and collapse the Details pane', asy
   const panelToggle = page.getByRole('button', { name: 'Details', exact: true })
 
   for (const [index, type] of activityTypes.entries()) {
-    const id = await createShape(
-      page,
-      type,
-      { x: 220 + (index % 4) * 170, y: 180 + Math.floor(index / 4) * 130 }
-    )
+    const id = await createShape(page, type, {
+      x: 220 + (index % 4) * 170,
+      y: 180 + Math.floor(index / 4) * 130
+    })
     await page.locator(`.djs-element[data-element-id="${id}"] .djs-hit`).first().dblclick()
     await expect(sidePane, `${type} should open Details`).toBeVisible()
     expect(await selectedElementIds(page)).toEqual([id])
@@ -442,10 +447,7 @@ test('non-step, unlinked CallActivity, and linked CallActivity double-click rout
   const propsResizer = page.getByRole('separator', { name: 'Resize the properties panel' })
 
   const gatewayId = await createShape(page, 'bpmn:ExclusiveGateway', { x: 300, y: 220 })
-  await page
-    .locator(`.djs-element[data-element-id="${gatewayId}"] .djs-hit`)
-    .first()
-    .dblclick()
+  await page.locator(`.djs-element[data-element-id="${gatewayId}"] .djs-hit`).first().dblclick()
   await expect(sidePane).toBeHidden()
   await expect(propsResizer).toHaveCount(0)
   expect(await page.evaluate((key) => localStorage.getItem(key), PROPS_OPEN_KEY)).toBeNull()
@@ -467,10 +469,7 @@ test('non-step, unlinked CallActivity, and linked CallActivity double-click rout
 
   const callId = await createShape(page, 'bpmn:CallActivity', { x: 580, y: 220 })
   await updateElementProperties(page, callId, { calledElement: 'Process_link_target' })
-  await page
-    .locator(`.djs-element[data-element-id="${callId}"] .djs-hit`)
-    .first()
-    .dblclick()
+  await page.locator(`.djs-element[data-element-id="${callId}"] .djs-hit`).first().dblclick()
 
   // Fallback mode has no process index, so the drill-down callback reports the
   // unresolved target. Most importantly, the CallActivity is not treated as a
@@ -541,10 +540,7 @@ test('props-pane resizer: a11y contract, keyboard resize, bounds, reset, persist
   // The pane defaults closed; a step double-click opens it before exercising
   // handle. Width persistence remains independent of open/closed persistence.
   const firstTask = await createShape(page, 'bpmn:Task', { x: 420, y: 220 })
-  await page
-    .locator(`.djs-element[data-element-id="${firstTask}"] .djs-hit`)
-    .first()
-    .dblclick()
+  await page.locator(`.djs-element[data-element-id="${firstTask}"] .djs-hit`).first().dblclick()
   const resizer = page.getByRole('separator', { name: 'Resize the properties panel' })
   await expect(resizer).toBeVisible()
   await expect(resizer).toHaveClass(/orbitpm-lite-resizer/)
@@ -591,10 +587,7 @@ test('props-pane resizer: a11y contract, keyboard resize, bounds, reset, persist
   await page.reload({ waitUntil: 'load' })
   await newProcess(page, 'Props Resize Again')
   const secondTask = await createShape(page, 'bpmn:Task', { x: 420, y: 220 })
-  await page
-    .locator(`.djs-element[data-element-id="${secondTask}"] .djs-hit`)
-    .first()
-    .dblclick()
+  await page.locator(`.djs-element[data-element-id="${secondTask}"] .djs-hit`).first().dblclick()
   await expect(resizer).toHaveAttribute('aria-valuenow', '332')
   expect(Math.abs((await paneWidth()) - 332)).toBeLessThanOrEqual(2)
 })

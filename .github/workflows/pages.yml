@@ -1,73 +1,95 @@
-name: Deploy Lite to GitHub Pages
-
-# Builds the repository-root, self-contained browser application and publishes
-# the exact tested artifact to GitHub Pages.
+name: Deploy tested Lite artifact to Pages
 
 on:
   push:
     branches: [main]
-    paths:
-      - 'src/**'
-      - 'tests/**'
-      - 'index.html'
-      - 'package.json'
-      - 'package-lock.json'
-      - 'vite.config.ts'
-      - '.github/workflows/pages.yml'
-  workflow_dispatch: {}
+  workflow_dispatch:
 
-# Allow the deploy job to mint a Pages deployment via OIDC.
 permissions:
   contents: read
-  pages: write
-  id-token: write
 
-# One in-flight Pages deployment at a time; don't cancel a running publish.
 concurrency:
   group: pages
   cancel-in-progress: false
 
 jobs:
-  build:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Setup Node
-        uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: npm
-          cache-dependency-path: package-lock.json
-
-      - name: Install dependencies
-        run: npm ci
-
-      - name: Verify single-file artifact
-        run: |
-          npm run typecheck
-          npm test
-          npm run build
-          test -f dist/index.html
-          # Fail if the build somehow emitted extra assets (must be one file).
-          count=$(find dist -type f | wc -l)
-          echo "dist file count: $count"
-          test "$count" -eq 1
-          echo "index.html size: $(du -h dist/index.html | cut -f1)"
-
-      - name: Upload Pages artifact
-        uses: actions/upload-pages-artifact@v3
-        with:
-          path: dist
+  quality:
+    name: Required release-quality gates
+    if: github.ref == 'refs/heads/main'
+    uses: ./.github/workflows/quality.yml
 
   deploy:
-    needs: build
-    runs-on: ubuntu-latest
+    name: Deploy exact tested artifact
+    needs: quality
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
+    outputs:
+      page_url: ${{ steps.deployment.outputs.page_url }}
     steps:
-      - name: Deploy to GitHub Pages
+      - name: Download exact tested artifact
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: orbitpm-tested-pages-${{ github.sha }}
+          path: dist
+
+      - name: Package Pages artifact
+        uses: actions/upload-pages-artifact@56afc609e74202658d3ffba0e8f6dda462b719fa
+        with:
+          path: dist
+
+      - name: Deploy Pages
         id: deployment
-        uses: actions/deploy-pages@v4
+        uses: actions/deploy-pages@d6db90164ac5ed86f2b6aed7e0febac5b3c0c03e
+
+  smoke:
+    name: Verify deployed bytes and EN/AR browsers
+    needs: deploy
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+
+      - name: Set up exact Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 22.22.0
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - name: Set up exact npm
+        run: npm install --global npm@11.13.0
+
+      - name: Reproducible install
+        run: npm ci
+
+      - name: Download exact tested artifact
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: orbitpm-tested-pages-${{ github.sha }}
+          path: dist
+
+      - name: Install current Chrome, Edge, Firefox, and Safari/WebKit engines
+        run: >-
+          ./node_modules/.bin/playwright install --with-deps
+          chromium chrome msedge firefox webkit
+
+      - name: Compare deployed bytes and smoke EN/AR
+        env:
+          PAGES_URL: ${{ needs.deploy.outputs.page_url }}
+        run: >-
+          node scripts/pages-smoke.mjs
+          --artifact=dist/index.html
+          --fetch-attempts=24
+          --fetch-delay-ms=5000

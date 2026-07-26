@@ -8,6 +8,16 @@ npm-debug.log*
 # Browser test artifacts and caches
 test-results/
 playwright-report/
+/coverage/
+/release/
+/release-*/
+/compliance/
+/tested-dist/
+/draft-download/
+/accessibility-results*.json
+/performance-results.json
+/performance-browser-results.json
+/OrbitPM-Process-Studio-Lite-*.cyclonedx.json
 
 # local ARIS export fixtures (org data — never publish)
 AnimalWF/

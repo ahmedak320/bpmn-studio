@@ -39,15 +39,16 @@ interface Bounds {
 
 async function forceFallbackMode(page: Page): Promise<void> {
   await page.addInitScript(() => {
-    // @ts-expect-error force the automatable single-file fallback path
     delete window.showDirectoryPicker
-    // @ts-expect-error force the automatable single-file fallback path
     delete window.showOpenFilePicker
   })
 }
 
 async function newProcess(page: Page, name: string): Promise<void> {
-  await page.getByRole('button', { name: /New process/i }).first().click()
+  await page
+    .getByRole('button', { name: /New process/i })
+    .first()
+    .click()
   const dialog = page.getByRole('dialog', { name: /New Process/i })
   await expect(dialog).toBeVisible()
   await dialog.getByRole('textbox').fill(name)
@@ -76,11 +77,7 @@ async function createShape(
       const w = window as unknown as HookWindow
       const modeler = w.__ORBITPM_LITE__.modeler
       const modeling = modeler.get('modeling') as {
-        createShape(
-          shape: unknown,
-          pos: { x: number; y: number },
-          parent: unknown
-        ): { id: string }
+        createShape(shape: unknown, pos: { x: number; y: number }, parent: unknown): { id: string }
       }
       const elementFactory = modeler.get('elementFactory') as {
         createShape(attrs: Record<string, unknown>): unknown
@@ -154,9 +151,7 @@ async function directEdit(page: Page, id: string, name: string): Promise<void> {
   await editor.fill(name)
   await page.keyboard.press('Enter')
   await expect(editor).toHaveCount(0)
-  await expect
-    .poll(async () => (await readBounds(page, id)).name)
-    .toBe(name)
+  await expect.poll(async () => (await readBounds(page, id)).name).toBe(name)
 }
 
 async function selectElement(page: Page, id: string): Promise<void> {
@@ -281,12 +276,7 @@ test('direct editing auto-sizes activities, preserves anchor, and one undo resto
 
 test('Step Details name writes and EN⇄AR toggles re-fit the visible language', async ({ page }) => {
   await boot(page, 'Bilingual Auto-size')
-  const taskId = await createShape(
-    page,
-    'bpmn:Task',
-    { x: 420, y: 220 },
-    { select: true }
-  )
+  const taskId = await createShape(page, 'bpmn:Task', { x: 420, y: 220 }, { select: true })
 
   await page.getByRole('button', { name: 'Details…', exact: true }).click()
   let dialog = page.getByRole('dialog', { name: 'Step details' })
@@ -328,7 +318,9 @@ test('Step Details name writes and EN⇄AR toggles re-fit the visible language',
   expect({ width: bounds.width, height: bounds.height }).toEqual({ width: 100, height: 80 })
 })
 
-test('call-activity label clears the sub chip and the stock marker stays removed', async ({ page }) => {
+test('call-activity label clears the sub chip and the stock marker stays removed', async ({
+  page
+}) => {
   await boot(page, 'Sub-chip Clearance')
   const callId = await createShape(page, 'bpmn:CallActivity', { x: 420, y: 220 })
   await updateName(
@@ -400,10 +392,7 @@ test('wide unbroken call label stays inside the shape and clear of the sub chip'
     a: { x: number; y: number; width: number; height: number },
     b: { x: number; y: number; width: number; height: number }
   ): boolean =>
-    a.x < b.x + b.width &&
-    a.x + a.width > b.x &&
-    a.y < b.y + b.height &&
-    a.y + a.height > b.y
+    a.x < b.x + b.width && a.x + a.width > b.x && a.y < b.y + b.height && a.y + a.height > b.y
 
   const isContained = (
     inner: { x: number; y: number; width: number; height: number },
@@ -436,12 +425,7 @@ test('gateway, event, and expanded subprocess bounds do not change on rename', a
   const ids = [
     await createShape(page, 'bpmn:ExclusiveGateway', { x: 340, y: 180 }),
     await createShape(page, 'bpmn:IntermediateCatchEvent', { x: 500, y: 180 }),
-    await createShape(
-      page,
-      'bpmn:SubProcess',
-      { x: 700, y: 260 },
-      { extra: { isExpanded: true } }
-    )
+    await createShape(page, 'bpmn:SubProcess', { x: 700, y: 260 }, { extra: { isExpanded: true } })
   ]
   const before = await Promise.all(ids.map((id) => readBounds(page, id)))
   for (const id of ids) {
@@ -452,9 +436,9 @@ test('gateway, event, and expanded subprocess bounds do not change on rename', a
     )
   }
   const after = await Promise.all(ids.map((id) => readBounds(page, id)))
-  expect(
-    after.map(({ x, y, width, height }) => ({ x, y, width, height }))
-  ).toEqual(before.map(({ x, y, width, height }) => ({ x, y, width, height })))
+  expect(after.map(({ x, y, width, height }) => ({ x, y, width, height }))).toEqual(
+    before.map(({ x, y, width, height }) => ({ x, y, width, height }))
+  )
 })
 
 test('post-import AI sweep grows fixed-size task and call-activity shapes', async ({ page }) => {
@@ -478,7 +462,9 @@ test('post-import AI sweep grows fixed-size task and call-activity shapes', asyn
   ).toBeVisible()
 })
 
-test('repeatable trigger dialog validates, tags, tooltips, and re-seeds every row', async ({ page }) => {
+test('repeatable trigger dialog validates, tags, tooltips, and re-seeds every row', async ({
+  page
+}) => {
   await boot(page, 'Repeatable Triggers')
   const startId = await selectFirstOfType(page, 'bpmn:StartEvent')
   await page.getByRole('button', { name: 'Details…', exact: true }).click()

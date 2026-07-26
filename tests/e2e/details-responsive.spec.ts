@@ -14,15 +14,16 @@ test.beforeAll(() => {
 
 async function forceFallbackMode(page: Page): Promise<void> {
   await page.addInitScript(() => {
-    // @ts-expect-error exercise the browser fallback workspace
     delete window.showDirectoryPicker
-    // @ts-expect-error exercise the browser fallback workspace
     delete window.showOpenFilePicker
   })
 }
 
 async function newProcess(page: Page, name: string): Promise<void> {
-  await page.getByRole('button', { name: /New process/i }).first().click()
+  await page
+    .getByRole('button', { name: /New process/i })
+    .first()
+    .click()
   const dialog = page.getByRole('dialog', { name: /New Process/i })
   await dialog.getByRole('textbox').fill(name)
   await dialog.getByRole('button', { name: 'Create', exact: true }).click()
@@ -133,7 +134,9 @@ test('Details uses a viewport-safe modal drawer at 320, 375, and 768px', async (
     await expect(toggle).toHaveAttribute('aria-expanded', 'false')
     expect(await page.evaluate((key) => localStorage.getItem(key), OPEN_KEY)).toBe('0')
     expect(
-      await editor.locator('.orbitpm-editor__canvas-island').evaluate((node) => node.inert)
+      await editor
+        .locator('.orbitpm-editor__canvas-island')
+        .evaluate((node) => node instanceof HTMLElement && node.inert)
     ).toBe(false)
   }
 })

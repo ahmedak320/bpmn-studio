@@ -12,9 +12,7 @@ const FILE_URL = pathToFileURL(DIST).toString()
  *  directoryPickerSupported() false. */
 async function forceFallbackMode(page: import('@playwright/test').Page): Promise<void> {
   await page.addInitScript(() => {
-    // @ts-expect-error deleting an optional global for the test
     delete window.showDirectoryPicker
-    // @ts-expect-error deleting an optional global for the test
     delete window.showOpenFilePicker
   })
 }
@@ -23,7 +21,10 @@ async function forceFallbackMode(page: import('@playwright/test').Page): Promise
  *  Start → "Review request" → "Approve payment" through the automation hook so
  *  the assistant has a real two-step flow to answer over (no AI key needed). */
 async function createModeledProcess(page: import('@playwright/test').Page): Promise<void> {
-  await page.getByRole('button', { name: /New process/i }).first().click()
+  await page
+    .getByRole('button', { name: /New process/i })
+    .first()
+    .click()
   const dialog = page.getByRole('dialog', { name: /New Process/i })
   await expect(dialog).toBeVisible()
   await dialog.getByRole('textbox').fill('Purchase Approval')

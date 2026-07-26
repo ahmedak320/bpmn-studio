@@ -130,12 +130,7 @@ export class TransportError extends Error {
   code: TransportCode
   status?: number
   retryAfterMs?: number
-  constructor(
-    code: TransportCode,
-    message: string,
-    status?: number,
-    retryAfterMs?: number
-  ) {
+  constructor(code: TransportCode, message: string, status?: number, retryAfterMs?: number) {
     super(message)
     this.name = 'TransportError'
     this.code = code
@@ -524,9 +519,7 @@ export function makeBrowserCallLLM(
         shouldRetry: (error) =>
           (error instanceof ProviderHttpError && isTransientHttpStatus(error.status)) ||
           (error instanceof TransportError &&
-            (error.code === 'network' ||
-              error.code === 'timeout' ||
-              error.code === 'rate')),
+            (error.code === 'network' || error.code === 'timeout' || error.code === 'rate')),
         retryAfterMs: (error) =>
           error instanceof ProviderHttpError || error instanceof TransportError
             ? error.retryAfterMs
@@ -625,11 +618,7 @@ const DUMMY_PROBE_KEY = 'orbitpm-cors-probe-key'
  * COULD read a response, so CORS is open" — with the status interpolated.
  */
 export type TestVerdictCode =
-  | 'reachable-ok'
-  | 'reachable-auth'
-  | 'reachable-other'
-  | 'blocked'
-  | 'timeout'
+  'reachable-ok' | 'reachable-auth' | 'reachable-other' | 'blocked' | 'timeout'
 
 export interface TestConnectionResult {
   /** True when the browser could read ANY HTTP response (⇒ CORS is open). */
@@ -721,7 +710,7 @@ export async function testConnection(cfg: ProviderConfig): Promise<TestConnectio
       code: 'blocked',
       message:
         'Blocked or unreachable (CORS, offline, or DNS) — the browser could not read any response. ' +
-        'Try OpenRouter, Anthropic, or Gemini, or use the desktop app.'
+        'Try OpenRouter, Anthropic, or Gemini and verify your browser network settings.'
     }
   }
   return interpretProbe(status)
@@ -730,14 +719,7 @@ export async function testConnection(cfg: ProviderConfig): Promise<TestConnectio
 // --- compact error classifier (browser cases) ------------------------------
 
 /** Machine-readable error class so the UI can render an i18n (RTL-safe) message. */
-export type ErrorCode =
-  | 'auth'
-  | 'rate'
-  | 'cors'
-  | 'network'
-  | 'timeout'
-  | 'cancelled'
-  | 'unknown'
+export type ErrorCode = 'auth' | 'rate' | 'cors' | 'network' | 'timeout' | 'cancelled' | 'unknown'
 
 export interface ClassifiedError {
   /** Stable code for i18n rendering (`unknown` ⇒ show the raw `message`). */
@@ -771,7 +753,8 @@ const TIMEOUT_RE = /\btimeout\b|timed out|timeouterror|signal timed out/
 const NETWORK_RE =
   /failed to fetch|networkerror|load failed|fetch failed|err_network|network|typeerror: failed/
 const CORS_RE = /cors|cross-origin|access-control|blocked by/
-const AUTH_RE = /\b401\b|\b403\b|unauthorized|forbidden|invalid api key|invalid_api_key|api key|permission/
+const AUTH_RE =
+  /\b401\b|\b403\b|unauthorized|forbidden|invalid api key|invalid_api_key|api key|permission/
 const RATE_RE = /\b429\b|rate limit|rate_limit|too many requests|quota|overloaded/
 
 export function classifyBrowserError(error: unknown): ClassifiedError {
@@ -785,14 +768,16 @@ export function classifyBrowserError(error: unknown): ClassifiedError {
       return {
         code: 'auth',
         offline: false,
-        message: 'The provider rejected the request (authentication). Check your API key in Settings.'
+        message:
+          'The provider rejected the request (authentication). Check your API key in Settings.'
       }
     }
     if (error.code === 'rate') {
       return {
         code: 'rate',
         offline: false,
-        message: 'The provider is rate-limiting or overloaded right now. Wait a moment and try again.'
+        message:
+          'The provider is rate-limiting or overloaded right now. Wait a moment and try again.'
       }
     }
     if (error.code === 'cancelled') {
@@ -832,8 +817,8 @@ export function classifyBrowserError(error: unknown): ClassifiedError {
       code: 'cors',
       offline: false,
       message:
-        'The provider blocked the browser request (CORS). Use OpenRouter, Anthropic, or Gemini — ' +
-        'or the desktop app for other providers.'
+        'The provider blocked the browser request (CORS). ' +
+        'Use OpenRouter, Anthropic, or Gemini in this Lite build.'
     }
   }
   if (NETWORK_RE.test(hay)) {

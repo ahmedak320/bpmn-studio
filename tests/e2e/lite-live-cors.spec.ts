@@ -59,14 +59,16 @@ test.describe('live CORS probe against real endpoints', () => {
         )
       }
       await page.addInitScript(() => {
-        // @ts-expect-error force fallback so no native folder dialog blocks us
         delete window.showDirectoryPicker
       })
       await page.goto(baseURL, { waitUntil: 'load' })
       await page.getByRole('button', { name: /New blank diagram/i }).click()
       await expect(page.locator('.djs-container svg').first()).toBeVisible({ timeout: 20_000 })
 
-      await page.getByRole('button', { name: /Settings/i }).first().click()
+      await page
+        .getByRole('button', { name: /Settings/i })
+        .first()
+        .click()
       const section = page
         .getByRole('dialog', { name: /Settings/i })
         .getByRole('region', { name: provider })

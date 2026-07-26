@@ -31,9 +31,7 @@ test.beforeAll(() => {
  *  dialog that can't be automated). */
 async function forceFallbackMode(page: Page): Promise<void> {
   await page.addInitScript(() => {
-    // @ts-expect-error deleting an optional global for the test
     delete window.showDirectoryPicker
-    // @ts-expect-error deleting an optional global for the test
     delete window.showOpenFilePicker
   })
 }

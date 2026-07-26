@@ -30,15 +30,16 @@ interface HookWindow {
 
 async function forceFallbackMode(page: Page): Promise<void> {
   await page.addInitScript(() => {
-    // @ts-expect-error deleting optional browser APIs selects fallback mode
     delete window.showDirectoryPicker
-    // @ts-expect-error deleting optional browser APIs selects fallback mode
     delete window.showOpenFilePicker
   })
 }
 
 async function newProcess(page: Page, name: string): Promise<void> {
-  await page.getByRole('button', { name: /New process/i }).first().click()
+  await page
+    .getByRole('button', { name: /New process/i })
+    .first()
+    .click()
   const dialog = page.getByRole('dialog', { name: /New Process/i })
   await expect(dialog).toBeVisible()
   await dialog.getByRole('textbox').fill(name)
@@ -61,11 +62,7 @@ async function createShape(
     ({ type, position, extra }) => {
       const modeler = (window as unknown as HookWindow).__ORBITPM_LITE__.modeler
       const modeling = modeler.get('modeling') as {
-        createShape(
-          shape: unknown,
-          at: { x: number; y: number },
-          parent: unknown
-        ): { id: string }
+        createShape(shape: unknown, at: { x: number; y: number }, parent: unknown): { id: string }
       }
       const elementFactory = modeler.get('elementFactory') as {
         createShape(attrs: Record<string, unknown>): unknown
@@ -99,10 +96,7 @@ async function createRoutedConnection(
           target: unknown,
           attrs: { type: 'bpmn:SequenceFlow' }
         ): { id: string }
-        updateWaypoints(
-          connection: unknown,
-          nextWaypoints: Array<{ x: number; y: number }>
-        ): void
+        updateWaypoints(connection: unknown, nextWaypoints: Array<{ x: number; y: number }>): void
       }
       const connection = modeling.connect(registry.get(sourceId), registry.get(targetId), {
         type: 'bpmn:SequenceFlow'
@@ -124,10 +118,7 @@ async function rerouteConnection(
       const modeler = (window as unknown as HookWindow).__ORBITPM_LITE__.modeler
       const registry = modeler.get('elementRegistry') as { get(id: string): unknown }
       const modeling = modeler.get('modeling') as {
-        updateWaypoints(
-          connection: unknown,
-          nextWaypoints: Array<{ x: number; y: number }>
-        ): void
+        updateWaypoints(connection: unknown, nextWaypoints: Array<{ x: number; y: number }>): void
       }
       modeling.updateWaypoints(registry.get(connectionId), waypoints)
     },
@@ -158,14 +149,12 @@ function shapeHit(page: Page, elementId: string): Locator {
 }
 
 async function highlightedEdgeIds(page: Page): Promise<string[]> {
-  return page
-    .locator(`${HIGHLIGHT_LAYER} > ${HIGHLIGHT}`)
-    .evaluateAll((nodes) =>
-      nodes
-        .map((node) => node.getAttribute('data-edge-id') ?? '')
-        .filter(Boolean)
-        .sort()
-    )
+  return page.locator(`${HIGHLIGHT_LAYER} > ${HIGHLIGHT}`).evaluateAll((nodes) =>
+    nodes
+      .map((node) => node.getAttribute('data-edge-id') ?? '')
+      .filter(Boolean)
+      .sort()
+  )
 }
 
 async function clickCanvasBackground(page: Page): Promise<void> {
@@ -202,10 +191,8 @@ async function expectDelegatedTooltip(page: Page, anchor: Locator): Promise<void
   expect(bounds, 'semantic decoration should have visible SVG bounds').not.toBeNull()
   await page.mouse.move(1, 1)
   await page.mouse.move(
-    (bounds as { x: number; width: number }).x +
-      (bounds as { width: number }).width / 2,
-    (bounds as { y: number; height: number }).y +
-      (bounds as { height: number }).height / 2
+    (bounds as { x: number; width: number }).x + (bounds as { width: number }).width / 2,
+    (bounds as { y: number; height: number }).y + (bounds as { height: number }).height / 2
   )
   const tooltip = page.getByRole('tooltip')
   await expect(tooltip).toBeVisible()
@@ -276,9 +263,7 @@ test('an activity highlights every unique incoming/outgoing edge and no unrelate
   await expect.poll(() => highlightedEdgeIds(page)).toEqual([...connectedIds].sort())
   expect(await highlightedEdgeIds(page)).not.toContain(unrelatedId)
   await expect(
-    page.locator(
-      `${HIGHLIGHT}[data-edge-id="${connectedIds[connectedIds.length - 1]}"]`
-    )
+    page.locator(`${HIGHLIGHT}[data-edge-id="${connectedIds[connectedIds.length - 1]}"]`)
   ).toHaveCount(1)
 
   const wrappers = page.locator(`${HIGHLIGHT_LAYER} > ${HIGHLIGHT}`)
@@ -347,33 +332,29 @@ test('highlight layer wins shared-segment paint order, repaints on reroute, swit
   await shapeHit(page, selectedSource).click()
   await expect.poll(() => highlightedEdgeIds(page)).toEqual([selectedFlow])
 
-  const highlightedPath = page
-    .locator(
-      `${HIGHLIGHT}[data-edge-id="${selectedFlow}"] [data-org-highlight-route="true"]`
-    )
+  const highlightedPath = page.locator(
+    `${HIGHLIGHT}[data-edge-id="${selectedFlow}"] [data-org-highlight-route="true"]`
+  )
   const obscuringOriginal = page
     .locator(`.djs-element[data-element-id="${otherFlow}"] .djs-visual > path`)
     .first()
   await expect(highlightedPath).toHaveAttribute(
     'd',
-    await obscuringOriginal.getAttribute('d') as string
+    (await obscuringOriginal.getAttribute('d')) as string
   )
   expect(
     await obscuringOriginal.evaluate((original, highlightSelector) => {
       const highlight = document.querySelector(highlightSelector)
       return !!(
-        highlight &&
-        original.compareDocumentPosition(highlight) & Node.DOCUMENT_POSITION_FOLLOWING
+        highlight && original.compareDocumentPosition(highlight) & Node.DOCUMENT_POSITION_FOLLOWING
       )
     }, `${HIGHLIGHT}[data-edge-id="${selectedFlow}"] [data-org-highlight-route="true"]`)
   ).toBe(true)
   expect(
-    await highlightedPath.evaluate(
-      (path) => Number.parseFloat(getComputedStyle(path).strokeWidth)
-    )
+    await highlightedPath.evaluate((path) => Number.parseFloat(getComputedStyle(path).strokeWidth))
   ).toBeGreaterThan(
-    await obscuringOriginal.evaluate(
-      (path) => Number.parseFloat(getComputedStyle(path).strokeWidth)
+    await obscuringOriginal.evaluate((path) =>
+      Number.parseFloat(getComputedStyle(path).strokeWidth)
     )
   )
 
@@ -546,9 +527,7 @@ test('node fallback and every semantic decoration expose delegated tooltips, inc
     task.locator('[data-org-decoration="outputs"]'),
     task.locator('[data-org-decoration="responsible"]'),
     task.locator('[data-org-decoration="cc"]'),
-    page.locator(
-      `.djs-element[data-element-id="${ruleId}"] [data-org-semantic="basis"]`
-    ),
+    page.locator(`.djs-element[data-element-id="${ruleId}"] [data-org-semantic="basis"]`),
     page.locator(
       `.djs-element[data-element-id="${subprocessId}"] [data-org-semantic="subprocess-chip"]`
     )

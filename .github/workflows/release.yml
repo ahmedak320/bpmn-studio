@@ -1,0 +1,136 @@
+name: Verify tag and create draft Lite release
+
+on:
+  push:
+    tags:
+      - '**'
+
+permissions:
+  contents: read
+
+jobs:
+  quality:
+    name: Required release-quality gates
+    uses: ./.github/workflows/quality.yml
+
+  draft-release:
+    name: Reproduce, smoke, and stage draft
+    if: startsWith(github.ref_name, 'v')
+    needs: quality
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout full annotated tag
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Set up exact Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 22.22.0
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - name: Set up exact npm
+        run: npm install --global npm@11.13.0
+
+      - name: Reproducible install
+        run: npm ci
+
+      - name: Require annotated version tag at origin/main
+        run: |
+          git fetch --force origin main --tags
+          node scripts/check-release-tag.mjs "$GITHUB_REF_NAME" --require-origin-main
+
+      - name: Download exact tested HTML
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: orbitpm-tested-pages-${{ github.sha }}
+          path: tested-dist
+
+      - name: Assemble release candidate from tested HTML
+        run: npm run release:assemble -- --html tested-dist/index.html --out release
+
+      - name: Clean second build and compare every release byte
+        run: |
+          npm run clean:dist
+          npm run build
+          npm run release:assemble -- --html dist/index.html --out release-repro
+          for candidate in release/*; do
+            name="$(basename "$candidate")"
+            cmp "$candidate" "release-repro/$name"
+          done
+
+      - name: Verify exact asset allowlist and checksums
+        run: npm run release:verify -- release
+
+      - name: Install Chromium for exact file smoke
+        run: ./node_modules/.bin/playwright install --with-deps chromium
+
+      - name: Smoke exact release HTML from file
+        run: npm run release:file-smoke -- release/OrbitPM-Process-Studio-Lite-0.4.5.html
+
+      - name: Upload verified release candidate
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: orbitpm-release-candidate-${{ github.sha }}
+          path: release/
+          if-no-files-found: error
+          retention-days: 90
+
+      - name: Create or refresh draft release only
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh release view "$GITHUB_REF_NAME" --json isDraft >/dev/null 2>&1; then
+            test "$(gh release view "$GITHUB_REF_NAME" --json isDraft --jq .isDraft)" = "true"
+            test "$(gh release view "$GITHUB_REF_NAME" --json isPrerelease --jq .isPrerelease)" = "false"
+            gh release edit "$GITHUB_REF_NAME" \
+              --draft \
+              --prerelease=false \
+              --title "OrbitPM Process Studio Lite 0.4.5"
+            gh release upload "$GITHUB_REF_NAME" release/* --clobber
+          else
+            gh release create "$GITHUB_REF_NAME" release/* \
+              --draft \
+              --verify-tag \
+              --generate-notes \
+              --title "OrbitPM Process Studio Lite 0.4.5"
+          fi
+
+      - name: Download and re-verify draft assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir draft-download
+          gh release download "$GITHUB_REF_NAME" --dir draft-download
+          npm run release:verify -- draft-download
+          for candidate in release/*; do
+            name="$(basename "$candidate")"
+            cmp "$candidate" "draft-download/$name"
+          done
+
+      - name: Install current Pages smoke browsers
+        run: >-
+          ./node_modules/.bin/playwright install --with-deps
+          chrome msedge firefox webkit
+
+      - name: Verify Pages serves the same commit bytes
+        env:
+          PAGES_URL: https://ahmedak320.github.io/bpmn-studio/
+        run: >-
+          node scripts/pages-smoke.mjs
+          --artifact=tested-dist/index.html
+          --fetch-attempts=60
+          --fetch-delay-ms=10000
+
+      - name: Confirm release remains draft
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          test "$(gh release view "$GITHUB_REF_NAME" --json isDraft --jq .isDraft)" = "true"
+          test "$(gh release view "$GITHUB_REF_NAME" --json isPrerelease --jq .isPrerelease)" = "false"
