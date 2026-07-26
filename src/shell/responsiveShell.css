@@ -95,7 +95,7 @@
 .orbitpm-responsive-drawer:not(.orbitpm-responsive-drawer--docked) {
   position: absolute;
   inset-block: 0;
-  inline-size: min(360px, calc(100% - 44px));
+  inline-size: min(var(--orbitpm-responsive-drawer-inline-size, 360px), calc(100% - 44px));
   max-inline-size: 100%;
   max-block-size: 100vh;
   max-block-size: 100dvh;

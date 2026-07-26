@@ -1,4 +1,4 @@
-import { useCallback, useState, type ReactNode, type RefObject } from 'react'
+import { useCallback, useState, type CSSProperties, type ReactNode, type RefObject } from 'react'
 import { createPortal } from 'react-dom'
 import { AccessibleDialog } from '../common/AccessibleDialog'
 import type { ResponsiveShellMode } from './responsiveMode'
@@ -16,6 +16,10 @@ export interface ResponsiveDrawerProps {
   returnFocusRef?: RefObject<HTMLElement | null>
   describedBy?: string
   closeOnBackdrop?: boolean
+  /** Optional control rendered inside modal/overlay surfaces, never when docked. */
+  modalChrome?: ReactNode
+  /** Preferred inline size. Overlay and compact modes still cap it to the viewport. */
+  inlineSize?: number | string
   /**
    * Keeps child DOM mounted in a hidden host while closed. Use this for
    * externally-owned DOM (for example, the bpmn-js properties panel).
@@ -37,6 +41,8 @@ export function ResponsiveDrawer({
   returnFocusRef,
   describedBy,
   closeOnBackdrop = true,
+  modalChrome,
+  inlineSize,
   keepMounted = false,
   className
 }: ResponsiveDrawerProps): JSX.Element | null {
@@ -55,6 +61,13 @@ export function ResponsiveDrawer({
   const inlineChildren = keepMounted && persistentHost ? null : children
   const persistentChildren =
     keepMounted && persistentHost ? createPortal(children, persistentHost) : null
+  const drawerStyle =
+    inlineSize === undefined
+      ? undefined
+      : ({
+          '--orbitpm-responsive-drawer-inline-size':
+            typeof inlineSize === 'number' ? `${inlineSize}px` : inlineSize
+        } as CSSProperties)
 
   if (!open) {
     if (!keepMounted) return null
@@ -99,6 +112,7 @@ export function ResponsiveDrawer({
           aria-label={label}
           aria-describedby={describedBy}
           dir={direction}
+          style={drawerStyle}
         >
           {inlineChildren}
         </aside>
@@ -122,7 +136,9 @@ export function ResponsiveDrawer({
         dir={direction}
         backdropClassName="orbitpm-responsive-drawer__backdrop"
         dialogClassName={drawerClassName}
+        dialogStyle={drawerStyle}
       >
+        {modalChrome}
         {inlineChildren}
       </AccessibleDialog>
       {persistentChildren}

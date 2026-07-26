@@ -18,6 +18,12 @@
   --orbitpm-editor-danger: #c4322f;
   --orbitpm-editor-danger-bg: #fdeceb;
   --orbitpm-editor-panel-bg: #ffffff;
+  --orbitpm-shell-surface: var(--orbitpm-editor-bg);
+  --orbitpm-shell-panel: var(--orbitpm-editor-panel-bg);
+  --orbitpm-shell-fg: var(--orbitpm-editor-fg);
+  --orbitpm-shell-muted: var(--orbitpm-editor-muted-fg);
+  --orbitpm-shell-border: var(--orbitpm-editor-border);
+  --orbitpm-shell-accent: var(--orbitpm-editor-accent);
 
   display: flex;
   flex-direction: column;
@@ -157,20 +163,12 @@
   background: var(--orbitpm-editor-canvas-bg);
 }
 
-.orbitpm-process-outline-pane {
-  position: relative;
-  z-index: 20;
-  flex: 0 0 clamp(320px, 32vw, 440px);
-  width: clamp(320px, 32vw, 440px);
-  min-width: 0;
+.orbitpm-editor .orbitpm-process-outline-pane {
+  min-inline-size: 0;
+  min-block-size: 0;
   overflow: auto;
-  border-inline-end: 1px solid var(--orbitpm-editor-border);
   background: var(--orbitpm-editor-panel-bg);
   color: var(--orbitpm-editor-fg);
-}
-
-.orbitpm-process-outline-pane[hidden] {
-  display: none;
 }
 
 .orbitpm-process-outline-pane:focus-visible {
@@ -210,10 +208,6 @@
 .orbitpm-process-outline-pane__close:focus-visible {
   outline: 3px solid var(--orbitpm-editor-accent);
   outline-offset: 2px;
-}
-
-.orbitpm-process-outline-backdrop {
-  display: none;
 }
 
 /* bpmn-js draws its own SVG background rect; keep the host element itself
@@ -257,6 +251,68 @@
   color: var(--orbitpm-editor-fg);
 }
 
+.orbitpm-editor .orbitpm-editor__details-pane {
+  display: flex;
+  flex-direction: column;
+  min-inline-size: 0;
+  min-block-size: 0;
+  overflow: hidden;
+}
+
+.orbitpm-editor__details-content {
+  display: flex;
+  flex-direction: column;
+  min-inline-size: 0;
+  min-block-size: 0;
+  block-size: 100%;
+  overflow: hidden;
+}
+
+.orbitpm-editor__details-pane .orbitpm-editor__properties {
+  flex: 1 1 auto;
+  min-inline-size: 0;
+  min-block-size: 0;
+  max-inline-size: none;
+  border: 0;
+  overflow: auto;
+}
+
+.orbitpm-editor__details-heading {
+  position: absolute;
+  inline-size: 1px;
+  block-size: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}
+
+.orbitpm-editor__details-heading:focus-visible {
+  outline: 2px solid var(--orbitpm-editor-accent);
+  outline-offset: -3px;
+}
+
+.orbitpm-editor__details-pane:not(.orbitpm-responsive-drawer--docked) {
+  display: grid;
+  grid-template-columns: 36px minmax(0, 1fr);
+}
+
+.orbitpm-editor__details-pane:not(.orbitpm-responsive-drawer--docked) .orbitpm-details-rail--modal {
+  grid-column: 1;
+  grid-row: 1;
+  block-size: 100%;
+  margin-inline-start: 0;
+}
+
+.orbitpm-editor__details-pane:not(.orbitpm-responsive-drawer--docked)
+  .orbitpm-editor__details-content {
+  grid-column: 2;
+  grid-row: 1;
+}
+
 @media (max-width: 767px) {
   .orbitpm-editor__toolbar {
     flex-wrap: wrap;
@@ -267,28 +323,6 @@
   .orbitpm-editor__button {
     min-height: 32px;
     padding-inline: 0.5rem;
-  }
-}
-
-@media (max-width: 1199px) {
-  .orbitpm-process-outline-backdrop {
-    position: absolute;
-    inset: 0;
-    z-index: 40;
-    display: block;
-    background: rgba(0, 0, 0, 0.46);
-  }
-
-  .orbitpm-process-outline-pane {
-    position: absolute;
-    inset-block: 0;
-    inset-inline-start: 0;
-    inset-inline-end: auto;
-    z-index: 41;
-    width: min(440px, calc(100% - 36px));
-    max-width: none;
-    border-inline-end: 1px solid var(--orbitpm-editor-border);
-    box-shadow: 0 0 32px rgba(0, 0, 0, 0.32);
   }
 }
 

@@ -14,7 +14,6 @@ import {
   useId,
   useRef,
   useState,
-  type CSSProperties,
   type KeyboardEvent as ReactKeyboardEvent,
   type MouseEvent as ReactMouseEvent
 } from 'react'
@@ -57,7 +56,6 @@ import { isStepBlockElement } from '../org/stepDetailsCtx'
 import { ShapeLegend } from '../org/ShapeLegend'
 import { ConnectedEdgeHighlightModule } from '../org/connectedEdgeHighlight'
 import { ModelingBatchModule } from './modelingBatch'
-import { PaneResizer, usePaneWidth } from '../common/PaneResizer'
 import { installDragWatchdog } from './dragWatchdog'
 import { installPaletteDrag } from './paletteDrag'
 import { installCanvasDecor } from './canvasDecor'
@@ -85,6 +83,15 @@ import { ProcessOutlineEditor } from './ProcessOutlineEditor'
 import { processOutlineMessages } from './processOutlineMessages'
 import type { ProcessOutlineModeler } from './processOutline'
 import { EmbeddedDiagramControlsModule } from './embeddedDiagramControls'
+import {
+  DetailsRail,
+  DetailsResizer,
+  ResponsiveDrawer,
+  useDetailsPreferences,
+  useResponsiveShellMode,
+  type DetailsPreferencesController,
+  type ResponsiveShellMode
+} from '../shell'
 
 export interface EditorTabProps {
   xml: string
@@ -107,6 +114,12 @@ export interface EditorTabProps {
   /** React content stacked ABOVE the bpmn-js properties panel inside the
    *  right side pane (the App renders the Details card here). */
   sidePaneExtra?: import('react').ReactNode
+  /** Optional shared controller. App should provide one when multiple tabs stay mounted. */
+  detailsController?: DetailsPreferencesController
+  /** Optional shared viewport mode. App should provide this when coordinating both side panes. */
+  responsiveMode?: ResponsiveShellMode
+  /** Notifies App so opening Details can close an overlay explorer. */
+  onDetailsOpenChange?: (open: boolean) => void
 }
 
 export interface EditorTabCommands {
@@ -196,46 +209,6 @@ function errorMessage(err: unknown): string {
   return err instanceof Error ? err.message : String(err)
 }
 
-/** Versioned user-preference keys. A missing open preference deliberately
- * means closed, while an explicit "0" remembers a user's collapse. */
-export const DETAILS_OPEN_PREFERENCE_KEY = 'orbitpm.lite.preferences.v1.details.open'
-export const DETAILS_WIDTH_PREFERENCE_KEY = 'orbitpm.lite.preferences.v1.details.width'
-
-function readDetailsOpenPreference(): boolean {
-  try {
-    if (typeof localStorage === 'undefined') return false
-    return localStorage.getItem(DETAILS_OPEN_PREFERENCE_KEY) === '1'
-  } catch {
-    return false
-  }
-}
-
-function useDetailsOverlay(): boolean {
-  const query = '(max-width: 1199px)'
-  const [matches, setMatches] = useState(() => {
-    try {
-      return typeof window !== 'undefined' && window.matchMedia(query).matches
-    } catch {
-      return false
-    }
-  })
-
-  useEffect(() => {
-    let media: MediaQueryList
-    try {
-      media = window.matchMedia(query)
-    } catch {
-      return
-    }
-    const update = (): void => setMatches(media.matches)
-    update()
-    media.addEventListener?.('change', update)
-    return () => media.removeEventListener?.('change', update)
-  }, [])
-
-  return matches
-}
-
 export function EditorTab(props: EditorTabProps): JSX.Element {
   const {
     xml,
@@ -248,7 +221,10 @@ export function EditorTab(props: EditorTabProps): JSX.Element {
     toolbarExtra,
     onCommandsReady,
     onOpenStepDetails,
-    sidePaneExtra
+    sidePaneExtra,
+    detailsController: sharedDetailsController,
+    responsiveMode,
+    onDetailsOpenChange
   } = props
   const lang = useLang()
   const detailsPaneId = `orbitpm-details-pane-${useId().replaceAll(':', '')}`
@@ -258,16 +234,12 @@ export function EditorTab(props: EditorTabProps): JSX.Element {
   onModelerReadyRef.current = onModelerReady
 
   const editorRootRef = useRef<HTMLDivElement | null>(null)
-  const toolbarRef = useRef<HTMLDivElement | null>(null)
-  const editorBodyRef = useRef<HTMLDivElement | null>(null)
-  const canvasIslandRef = useRef<HTMLDivElement | null>(null)
   const canvasContainerRef = useRef<HTMLDivElement | null>(null)
   const propertiesContainerRef = useRef<HTMLDivElement | null>(null)
   const detailsToggleRef = useRef<HTMLButtonElement | null>(null)
   const detailsHeadingRef = useRef<HTMLHeadingElement | null>(null)
   const outlineToggleRef = useRef<HTMLButtonElement | null>(null)
-  const outlinePaneRef = useRef<HTMLElement | null>(null)
-  const outlineBackdropRef = useRef<HTMLDivElement | null>(null)
+  const outlineCloseRef = useRef<HTMLButtonElement | null>(null)
   const modelerRef = useRef<BpmnModelerLike | null>(null)
   const dirtyStateRef = useRef<DirtyState>(createDirtyState(0))
   const originalXmlRef = useRef(xml)
@@ -297,52 +269,43 @@ export function EditorTab(props: EditorTabProps): JSX.Element {
   // a Save clears the dirty flag over a now-populated diagram).
   const [isNewDiagram, setIsNewDiagram] = useState(false)
   const [hintDismissed, setHintDismissed] = useState(false)
-  // Details/properties pane visibility is a versioned preference, defaulting
-  // closed on first use. Every mounted tab retains its own live selection;
-  // collapsing only hides this wrapper and never clears bpmn-js selection.
-  // The properties container MUST remain mounted because bpmn-js owns its DOM.
-  const [propsOpen, setPropsOpenState] = useState(readDetailsOpenPreference)
+  const localDetailsController = useDetailsPreferences()
+  const detailsController = sharedDetailsController ?? localDetailsController
+  const { preferences: detailsPreferences, setWidth: setPropsWidth, resetWidth } = detailsController
+  const propsOpen = detailsPreferences.open
+  const propsWidth = detailsPreferences.width
   const focusPaneAfterOpenRef = useRef(false)
   const focusToggleAfterCloseRef = useRef(false)
-  const isDetailsOverlay = useDetailsOverlay()
+  const detectedResponsiveMode = useResponsiveShellMode()
+  const shellMode = responsiveMode ?? detectedResponsiveMode
+  const isSidePaneModal = shellMode !== 'docked'
   const [outlineOpen, setOutlineOpen] = useState(false)
   const [outlineModeler, setOutlineModeler] = useState<ProcessOutlineModeler | null>(null)
   const focusOutlineAfterOpenRef = useRef(false)
   const focusOutlineToggleAfterCloseRef = useRef(false)
-  // Right side-pane width (Details card + properties panel), user-resizable via
-  // the PaneResizer handle; null falls back to the stylesheet default (300px).
-  const [propsWidth, setPropsWidth, resetPropsWidth] = usePaneWidth(DETAILS_WIDTH_PREFERENCE_KEY, {
-    min: 240,
-    max: 560
-  })
-
-  const setPropsPanelOpen = useCallback((next: boolean): void => {
-    setPropsOpenState(next)
-    try {
-      if (typeof localStorage !== 'undefined') {
-        localStorage.setItem(DETAILS_OPEN_PREFERENCE_KEY, next ? '1' : '0')
-      }
-    } catch {
-      // Preference persistence is best-effort; the in-memory control still works.
-    }
-  }, [])
+  const setPropsPanelOpen = useCallback(
+    (next: boolean): void => {
+      detailsController.setOpen(next)
+      onDetailsOpenChange?.(next)
+    },
+    [detailsController, onDetailsOpenChange]
+  )
 
   const closePropsPanel = useCallback(() => {
     focusToggleAfterCloseRef.current = true
     setPropsPanelOpen(false)
   }, [setPropsPanelOpen])
 
-  const togglePropsPanel = useCallback(
-    (keyboardTriggered: boolean): void => {
-      if (propsOpen) {
+  const setDetailsOpenFromRail = useCallback(
+    (next: boolean): void => {
+      if (!next) {
         closePropsPanel()
         return
       }
-      if (isDetailsOverlay && outlineOpen) setOutlineOpen(false)
-      focusPaneAfterOpenRef.current = keyboardTriggered
+      if (isSidePaneModal && outlineOpen) setOutlineOpen(false)
       setPropsPanelOpen(true)
     },
-    [closePropsPanel, isDetailsOverlay, outlineOpen, propsOpen, setPropsPanelOpen]
+    [closePropsPanel, isSidePaneModal, outlineOpen, setPropsPanelOpen]
   )
 
   const closeOutline = useCallback(() => {
@@ -356,16 +319,16 @@ export function EditorTab(props: EditorTabProps): JSX.Element {
         closeOutline()
         return
       }
-      if (isDetailsOverlay && propsOpen) setPropsPanelOpen(false)
-      focusOutlineAfterOpenRef.current = keyboardTriggered || isDetailsOverlay
+      if (isSidePaneModal && propsOpen) setPropsPanelOpen(false)
+      focusOutlineAfterOpenRef.current = keyboardTriggered || isSidePaneModal
       setOutlineOpen(true)
     },
-    [closeOutline, isDetailsOverlay, outlineOpen, propsOpen, setPropsPanelOpen]
+    [closeOutline, isSidePaneModal, outlineOpen, propsOpen, setPropsPanelOpen]
   )
 
   useEffect(() => {
     if (propsOpen) {
-      if (!focusPaneAfterOpenRef.current && !isDetailsOverlay) return
+      if (!focusPaneAfterOpenRef.current) return
       focusPaneAfterOpenRef.current = false
       const frame = requestAnimationFrame(() => detailsHeadingRef.current?.focus())
       return () => cancelAnimationFrame(frame)
@@ -374,141 +337,25 @@ export function EditorTab(props: EditorTabProps): JSX.Element {
     focusToggleAfterCloseRef.current = false
     const frame = requestAnimationFrame(() => detailsToggleRef.current?.focus())
     return () => cancelAnimationFrame(frame)
-  }, [isDetailsOverlay, propsOpen])
+  }, [propsOpen])
+
+  useEffect(() => {
+    if (!isSidePaneModal || !propsOpen || !outlineOpen) return
+    setOutlineOpen(false)
+  }, [isSidePaneModal, outlineOpen, propsOpen])
 
   useEffect(() => {
     if (outlineOpen) {
-      if (!focusOutlineAfterOpenRef.current && !isDetailsOverlay) return
+      if (!focusOutlineAfterOpenRef.current) return
       focusOutlineAfterOpenRef.current = false
-      const frame = requestAnimationFrame(() => outlinePaneRef.current?.focus())
+      const frame = requestAnimationFrame(() => outlineCloseRef.current?.focus())
       return () => cancelAnimationFrame(frame)
     }
     if (!focusOutlineToggleAfterCloseRef.current) return
     focusOutlineToggleAfterCloseRef.current = false
     const frame = requestAnimationFrame(() => outlineToggleRef.current?.focus())
     return () => cancelAnimationFrame(frame)
-  }, [isDetailsOverlay, outlineOpen])
-
-  // The outline is a docked complementary region on wide screens and a modal
-  // drawer on narrower screens. Only the modal form owns focus and makes the
-  // surrounding editor inert; the docked form remains available alongside the
-  // live canvas for mouse, touch, switch, and keyboard users.
-  useEffect(() => {
-    if (!outlineOpen || !isDetailsOverlay) return
-    const pane = outlinePaneRef.current
-    const body = editorBodyRef.current
-    if (!pane || !body) return
-    const background = [
-      toolbarRef.current,
-      ...Array.from(body.children).filter(
-        (node): node is HTMLElement =>
-          node instanceof HTMLElement && node !== pane && node !== outlineBackdropRef.current
-      )
-    ].filter((node): node is HTMLElement => node != null)
-    const previousInert = background.map((node) => ({ node, inert: node.inert }))
-    for (const node of background) node.inert = true
-
-    const onKeyDown = (event: KeyboardEvent): void => {
-      const nestedDialog = Array.from(
-        document.querySelectorAll<HTMLElement>(
-          '[role="dialog"]:not([hidden]), [role="alertdialog"]:not([hidden]), dialog[open]'
-        )
-      ).find(
-        (dialog) =>
-          dialog !== pane &&
-          !pane.contains(dialog) &&
-          getComputedStyle(dialog).display !== 'none' &&
-          dialog.getClientRects().length > 0
-      )
-      if (nestedDialog) return
-
-      if (event.key === 'Escape') {
-        event.preventDefault()
-        closeOutline()
-        return
-      }
-      if (event.key !== 'Tab') return
-      const candidates = Array.from(
-        pane.querySelectorAll<HTMLElement>(
-          'button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), a[href], [tabindex]:not([tabindex="-1"])'
-        )
-      ).filter((element) => !element.hidden && element.getClientRects().length > 0)
-      const first = candidates[0] ?? pane
-      const last = candidates.at(-1) ?? pane
-      const active = document.activeElement
-      if (event.shiftKey && (active === first || !pane.contains(active))) {
-        event.preventDefault()
-        last.focus()
-      } else if (!event.shiftKey && (active === last || !pane.contains(active))) {
-        event.preventDefault()
-        first.focus()
-      }
-    }
-
-    document.addEventListener('keydown', onKeyDown, true)
-    return () => {
-      document.removeEventListener('keydown', onKeyDown, true)
-      for (const previous of previousInert) previous.node.inert = previous.inert
-    }
-  }, [closeOutline, isDetailsOverlay, outlineOpen])
-
-  // Overlay drawers keep focus inside the drawer, close on Escape, and make
-  // the editor toolbar/canvas inert until the drawer is dismissed.
-  useEffect(() => {
-    if (!propsOpen || !isDetailsOverlay) return
-    const pane = propertiesContainerRef.current?.closest<HTMLElement>('.orbitpm-lite-sidepane')
-    if (!pane) return
-    const background = [toolbarRef.current, canvasIslandRef.current].filter(
-      (node): node is HTMLDivElement => node != null
-    )
-    for (const node of background) node.inert = true
-
-    const onKeyDown = (event: KeyboardEvent): void => {
-      // A full Step-details dialog can be launched from the drawer. It owns
-      // Escape and focus while visible; the underlying drawer must not steal
-      // either from that nested modal.
-      const nestedDialog = Array.from(
-        document.querySelectorAll<HTMLElement>('[role="dialog"]:not([hidden]), dialog[open]')
-      ).find(
-        (dialog) =>
-          dialog !== pane &&
-          getComputedStyle(dialog).display !== 'none' &&
-          dialog.getClientRects().length > 0
-      )
-      if (nestedDialog) return
-
-      if (event.key === 'Escape') {
-        event.preventDefault()
-        closePropsPanel()
-        return
-      }
-      if (event.key !== 'Tab') return
-      const candidates = Array.from(
-        pane.querySelectorAll<HTMLElement>(
-          'button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), a[href], [tabindex]:not([tabindex="-1"])'
-        )
-      ).filter((element) => !element.hidden && element.getClientRects().length > 0)
-      const first = candidates[0] ?? detailsHeadingRef.current
-      const last = candidates.at(-1) ?? detailsHeadingRef.current
-      const active = document.activeElement
-      if (
-        event.shiftKey &&
-        (active === first || active === detailsHeadingRef.current || !pane.contains(active))
-      ) {
-        event.preventDefault()
-        last?.focus()
-      } else if (!event.shiftKey && (active === last || !pane.contains(active))) {
-        event.preventDefault()
-        first?.focus()
-      }
-    }
-
-    document.addEventListener('keydown', onKeyDown, true)
-    return () => {
-      document.removeEventListener('keydown', onKeyDown, true)
-      for (const node of background) node.inert = false
-    }
-  }, [closePropsPanel, isDetailsOverlay, propsOpen])
+  }, [outlineOpen])
 
   const applyDirtyState = useCallback(
     (next: DirtyState) => {
@@ -1079,14 +926,6 @@ export function EditorTab(props: EditorTabProps): JSX.Element {
   }, [])
 
   const uiDir = lang === 'ar' ? 'rtl' : 'ltr'
-  const editorClassName = [
-    'orbitpm-editor',
-    propsOpen && isDetailsOverlay ? 'orbitpm-editor--details-open' : '',
-    outlineOpen && isDetailsOverlay ? 'orbitpm-editor--outline-open' : ''
-  ]
-    .filter(Boolean)
-    .join(' ')
-
   useEffect(() => {
     onCommandsReady?.({
       save: () => void handleSave(),
@@ -1101,8 +940,8 @@ export function EditorTab(props: EditorTabProps): JSX.Element {
     // The editor chrome follows the active UI direction. Only the canvas
     // subtree remains LTR because bpmn-js's coordinates/palette/context pad
     // have no RTL mode of their own.
-    <div ref={editorRootRef} className={editorClassName} dir={uiDir}>
-      <div ref={toolbarRef} className="orbitpm-editor__toolbar">
+    <div ref={editorRootRef} className="orbitpm-editor" dir={uiDir}>
+      <div className="orbitpm-editor__toolbar">
         <button
           type="button"
           className="orbitpm-editor__button orbitpm-editor__button--primary"
@@ -1224,28 +1063,23 @@ export function EditorTab(props: EditorTabProps): JSX.Element {
         {toolbarExtra}
       </div>
       {error ? <div className="orbitpm-editor__error">{error}</div> : null}
-      <div ref={editorBodyRef} className="orbitpm-editor__body" dir={uiDir}>
-        {outlineOpen && isDetailsOverlay ? (
-          <div
-            ref={outlineBackdropRef}
-            className="orbitpm-process-outline-backdrop"
-            aria-hidden="true"
-            onClick={closeOutline}
-          />
-        ) : null}
-        <aside
-          ref={outlinePaneRef}
+      <div className="orbitpm-editor__body" dir={uiDir}>
+        <ResponsiveDrawer
           id={outlinePaneId}
           className="orbitpm-process-outline-pane"
-          role={isDetailsOverlay ? 'dialog' : 'complementary'}
-          aria-modal={isDetailsOverlay ? true : undefined}
-          aria-label={outlineMessages.title}
-          tabIndex={-1}
-          hidden={!outlineOpen}
-          dir={uiDir}
+          open={outlineOpen}
+          mode={shellMode}
+          side="inline-start"
+          label={outlineMessages.title}
+          direction={uiDir}
+          inlineSize="clamp(320px, 32vw, 440px)"
+          initialFocusRef={outlineCloseRef}
+          returnFocusRef={outlineToggleRef}
+          onClose={closeOutline}
         >
           <div className="orbitpm-process-outline-pane__controls">
             <button
+              ref={outlineCloseRef}
               type="button"
               className="orbitpm-process-outline-pane__close"
               onClick={closeOutline}
@@ -1260,10 +1094,14 @@ export function EditorTab(props: EditorTabProps): JSX.Element {
               modeler={outlineModeler}
               messages={outlineMessages}
               direction={uiDir}
+              onOpenProcessDetails={() => {
+                focusPaneAfterOpenRef.current = true
+                setDetailsOpenFromRail(true)
+              }}
             />
           ) : null}
-        </aside>
-        <div ref={canvasIslandRef} className="orbitpm-editor__canvas-island" dir="ltr">
+        </ResponsiveDrawer>
+        <div className="orbitpm-editor__canvas-island" dir="ltr">
           <div ref={canvasContainerRef} className="orbitpm-editor__canvas" dir="ltr" />
           {isNewDiagram && !hintDismissed && (
             <div
@@ -1305,73 +1143,69 @@ export function EditorTab(props: EditorTabProps): JSX.Element {
           )}
           <ShapeLegend />
         </div>
-        {propsOpen && isDetailsOverlay ? (
-          <div className="orbitpm-details-backdrop" aria-hidden="true" onClick={closePropsPanel} />
-        ) : null}
-        <div
-          className={
-            propsOpen && isDetailsOverlay
-              ? 'orbitpm-details-rail orbitpm-details-rail--drawer-open'
-              : 'orbitpm-details-rail'
-          }
-        >
-          <button
+        {!propsOpen || shellMode === 'docked' ? (
+          <DetailsRail
             ref={detailsToggleRef}
-            type="button"
-            className="orbitpm-details-toggle"
-            onClick={(event: ReactMouseEvent<HTMLButtonElement>) =>
-              togglePropsPanel(event.detail === 0)
-            }
-            onKeyDown={(event: ReactKeyboardEvent<HTMLButtonElement>) => {
-              if (event.key === 'Enter' || event.key === ' ') {
-                focusPaneAfterOpenRef.current = !propsOpen
-              }
-            }}
-            aria-label={t('pane.details.toggle')}
-            aria-expanded={propsOpen}
-            aria-controls={detailsPaneId}
+            open={propsOpen}
+            controlsId={detailsPaneId}
+            label={t('pane.details.toggle')}
             title={t('pane.details.toggle.title')}
-          >
-            <span className="orbitpm-details-toggle__glyph" aria-hidden="true">
-              {propsOpen ? '›' : '‹'}
-            </span>
-          </button>
-        </div>
-        <PaneResizer
-          edge="inline-start"
-          dir={uiDir}
-          width={propsWidth ?? 300}
-          min={240}
-          max={560}
-          onWidthChange={setPropsWidth}
-          onReset={resetPropsWidth}
+            direction={uiDir}
+            onOpenChange={setDetailsOpenFromRail}
+            onRequestPaneFocus={() => {
+              focusPaneAfterOpenRef.current = true
+            }}
+            onRequestToggleFocus={() => {
+              focusToggleAfterCloseRef.current = true
+            }}
+          />
+        ) : null}
+        <DetailsResizer
+          visible={propsOpen && shellMode === 'docked'}
+          width={propsWidth}
+          direction={uiDir}
           ariaLabel={t('pane.resize.props.aria')}
-          visible={propsOpen}
+          onWidthChange={setPropsWidth}
+          onReset={resetWidth}
         />
-        {/* The side pane stacks the App-provided Details card above the
-            bpmn-js properties panel. The propertiesContainerRef div MUST stay
-            mounted unconditionally — bpmn-js owns that DOM — so the visibility
-            toggle lives on this wrapper, never on the inner div. */}
-        <div
+        <ResponsiveDrawer
           id={detailsPaneId}
-          className="orbitpm-lite-sidepane"
-          role={isDetailsOverlay ? 'dialog' : 'complementary'}
-          aria-modal={isDetailsOverlay ? true : undefined}
-          aria-label={t('pane.details.aria')}
-          dir={uiDir}
-          hidden={!propsOpen}
-          style={
-            {
-              '--orbitpm-details-pane-width': `${propsWidth ?? 300}px`
-            } as CSSProperties
+          className="orbitpm-editor__details-pane"
+          open={propsOpen}
+          mode={shellMode}
+          side="inline-end"
+          label={t('pane.details.aria')}
+          direction={uiDir}
+          inlineSize={shellMode === 'docked' ? propsWidth : `calc(${propsWidth}px + 36px)`}
+          keepMounted
+          initialFocusRef={detailsHeadingRef}
+          onClose={closePropsPanel}
+          modalChrome={
+            propsOpen && shellMode !== 'docked' ? (
+              <DetailsRail
+                ref={detailsToggleRef}
+                className="orbitpm-details-rail--modal"
+                open
+                controlsId={detailsPaneId}
+                label={t('pane.details.toggle')}
+                title={t('pane.details.toggle.title')}
+                direction={uiDir}
+                onOpenChange={setDetailsOpenFromRail}
+                onRequestToggleFocus={() => {
+                  focusToggleAfterCloseRef.current = true
+                }}
+              />
+            ) : undefined
           }
         >
-          <h2 ref={detailsHeadingRef} className="orbitpm-details-pane__heading" tabIndex={-1}>
-            {t('pane.details.toggle')}
-          </h2>
-          {sidePaneExtra}
-          <div ref={propertiesContainerRef} className="orbitpm-editor__properties" />
-        </div>
+          <div className="orbitpm-editor__details-content">
+            <h2 ref={detailsHeadingRef} className="orbitpm-editor__details-heading" tabIndex={-1}>
+              {t('pane.details.toggle')}
+            </h2>
+            {sidePaneExtra}
+            <div ref={propertiesContainerRef} className="orbitpm-editor__properties" />
+          </div>
+        </ResponsiveDrawer>
       </div>
       <ValidationCenter
         open={validationOpen}

@@ -114,6 +114,29 @@ describe('ResponsiveDrawer', () => {
     expect(screen.queryByRole('dialog', { name: 'Localized drawer' })).toBeNull()
   })
 
+  it('renders modal chrome inside overlay dialogs and applies a preferred inline size', () => {
+    render(
+      <ResponsiveDrawer
+        open
+        mode="overlay"
+        side="inline-end"
+        id="details"
+        label="Localized details"
+        direction="ltr"
+        inlineSize={336}
+        modalChrome={<button type="button">rail toggle</button>}
+        onClose={() => undefined}
+      >
+        content
+      </ResponsiveDrawer>
+    )
+    const dialog = screen.getByRole('dialog', { name: 'Localized details' })
+    expect(screen.getByRole('button', { name: 'rail toggle' }).closest('[role="dialog"]')).toBe(
+      dialog
+    )
+    expect(dialog.style.getPropertyValue('--orbitpm-responsive-drawer-inline-size')).toBe('336px')
+  })
+
   it('renders no surface while closed', () => {
     const close = vi.fn()
     const { container } = render(

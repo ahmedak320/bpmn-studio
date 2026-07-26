@@ -2,6 +2,7 @@
 
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
+import { useEffect } from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import {
@@ -103,9 +104,15 @@ vi.mock('../ProcessOutlineEditor', () => ({
     modeler: unknown
     messages: { title: string }
     direction: 'ltr' | 'rtl'
+    onOpenProcessDetails?: () => void
   }) => (
     <div data-testid="process-outline" data-modeler-ready={String(Boolean(props.modeler))}>
       <span dir={props.direction}>{props.messages.title}</span>
+      {props.onOpenProcessDetails ? (
+        <button type="button" onClick={props.onOpenProcessDetails}>
+          process-outline-details
+        </button>
+      ) : null}
     </div>
   )
 }))
@@ -415,13 +422,8 @@ vi.mock('../../validation/SaveDraftDialog', () => ({
     ) : null
 }))
 
-import {
-  DETAILS_OPEN_PREFERENCE_KEY,
-  DETAILS_WIDTH_PREFERENCE_KEY,
-  EditorTab,
-  type EditorTabCommands,
-  type EditorTabProps
-} from '../EditorTabLite'
+import { DETAILS_OPEN_PREFERENCE_KEY, DETAILS_WIDTH_PREFERENCE_KEY } from '../../shell'
+import { EditorTab, type EditorTabCommands, type EditorTabProps } from '../EditorTabLite'
 
 const validSummary = createValidationSummary([], {
   xmlWellFormed: true
@@ -438,8 +440,8 @@ const semanticSummary = createValidationSummary([semanticIssue], {
   xmlWellFormed: true
 })
 
-function renderEditor(overrides: Partial<EditorTabProps> = {}): ReturnType<typeof render> {
-  return render(
+function editorElement(overrides: Partial<EditorTabProps> = {}): JSX.Element {
+  return (
     <EditorTab
       xml='<definitions id="original" />'
       onDirtyChange={vi.fn()}
@@ -449,6 +451,10 @@ function renderEditor(overrides: Partial<EditorTabProps> = {}): ReturnType<typeo
       {...overrides}
     />
   )
+}
+
+function renderEditor(overrides: Partial<EditorTabProps> = {}): ReturnType<typeof render> {
+  return render(editorElement(overrides))
 }
 
 function emit(event: string, payload: { element?: unknown } = {}): unknown {
@@ -505,9 +511,9 @@ beforeEach(() => {
   localStorage.clear()
   Object.defineProperty(window, 'matchMedia', {
     configurable: true,
-    value: () => ({
-      matches: false,
-      media: '(max-width: 1199px)',
+    value: (query: string) => ({
+      matches: query === '(min-width: 1200px)',
+      media: query,
       addEventListener: vi.fn(),
       removeEventListener: vi.fn()
     })
@@ -628,37 +634,145 @@ describe('EditorTab browser integration', () => {
     expect(onModelerReady).toHaveBeenLastCalledWith(null)
   })
 
-  it('persists the details rail state and traps the responsive drawer focus', async () => {
-    Object.defineProperty(window, 'matchMedia', {
-      configurable: true,
-      value: () => ({
-        matches: true,
-        media: '(max-width: 1199px)',
-        addEventListener: vi.fn(),
-        removeEventListener: vi.fn()
-      })
-    })
+  it('persists Details state and delegates overlay focus/inertness to the shared dialog', async () => {
     const user = userEvent.setup()
-    renderEditor({ sidePaneExtra: <button type="button">details-action</button> })
+    const onDetailsOpenChange = vi.fn()
+    renderEditor({
+      responsiveMode: 'overlay',
+      sidePaneExtra: <button type="button">details-action</button>,
+      onDetailsOpenChange
+    })
 
-    const toggle = screen.getByRole('button', { name: 'pane.details.toggle' })
+    let toggle = screen.getByRole('button', { name: 'pane.details.toggle' })
     expect(toggle.getAttribute('aria-expanded')).toBe('false')
-    await user.keyboard('{Tab}')
     toggle.focus()
     await user.keyboard('{Enter}')
-    expect(await screen.findByRole('dialog', { name: 'pane.details.aria' })).not.toBeNull()
+    const dialog = await screen.findByRole('dialog', { name: 'pane.details.aria' })
+    const heading = screen.getByRole('heading', { name: 'pane.details.toggle' })
+    expect(dialog).not.toBeNull()
+    expect(document.activeElement).toBe(heading)
+    expect(
+      screen.getByRole('button', { name: 'pane.details.toggle' }).closest('[role="dialog"]')
+    ).toBe(dialog)
+    expect(screen.queryByRole('separator', { name: 'pane.resize.props.aria' })).toBeNull()
     expect(localStorage.getItem(DETAILS_OPEN_PREFERENCE_KEY)).toBe('1')
+    expect(onDetailsOpenChange).toHaveBeenLastCalledWith(true)
 
     fireEvent.keyDown(document, { key: 'Escape' })
-    await waitFor(() => expect(toggle.getAttribute('aria-expanded')).toBe('false'))
+    await waitFor(() => {
+      toggle = screen.getByRole('button', { name: 'pane.details.toggle' })
+      expect(toggle.getAttribute('aria-expanded')).toBe('false')
+    })
     expect(localStorage.getItem(DETAILS_OPEN_PREFERENCE_KEY)).toBe('0')
+    expect(onDetailsOpenChange).toHaveBeenLastCalledWith(false)
     expect(document.activeElement).toBe(toggle)
 
     await user.click(toggle)
-    await user.dblClick(screen.getByRole('separator', { name: 'pane.resize.props.aria' }))
+    await user.click(document.querySelector<HTMLElement>('.orbitpm-responsive-drawer__backdrop')!)
+    await waitFor(() =>
+      expect(
+        screen.getByRole('button', { name: 'pane.details.toggle' }).getAttribute('aria-expanded')
+      ).toBe('false')
+    )
+  })
+
+  it('resizes Details only while docked and resets its versioned width', async () => {
+    const user = userEvent.setup()
+    renderEditor({ responsiveMode: 'docked' })
+    const toggle = screen.getByRole('button', { name: 'pane.details.toggle' })
+    toggle.focus()
+    await user.keyboard('{Enter}')
+
+    expect(screen.getByRole('complementary', { name: 'pane.details.aria' })).not.toBeNull()
+    expect(document.activeElement).toBe(
+      screen.getByRole('heading', { name: 'pane.details.toggle' })
+    )
+    const separator = screen.getByRole('separator', { name: 'pane.resize.props.aria' })
+    fireEvent.keyDown(separator, { key: 'ArrowRight' })
+    expect(localStorage.getItem(DETAILS_WIDTH_PREFERENCE_KEY)).toBe('284')
+    await user.dblClick(separator)
     expect(localStorage.getItem(DETAILS_WIDTH_PREFERENCE_KEY)).toBeNull()
-    await user.click(document.querySelector<HTMLElement>('.orbitpm-details-backdrop')!)
-    expect(toggle.getAttribute('aria-expanded')).toBe('false')
+  })
+
+  it('keeps the properties host and process-level no-selection slot mounted across modes', async () => {
+    const user = userEvent.setup()
+    const onMount = vi.fn()
+    function ProcessGuidance(): JSX.Element {
+      useEffect(() => {
+        onMount()
+      }, [])
+      return <p>details.card.noSelection</p>
+    }
+
+    const view = renderEditor({
+      responsiveMode: 'docked',
+      sidePaneExtra: <ProcessGuidance />
+    })
+    const propertiesHost = view.container.querySelector('.orbitpm-editor__properties')
+    expect(onMount).toHaveBeenCalledTimes(1)
+    expect(propertiesHost).not.toBeNull()
+
+    await user.click(screen.getByRole('button', { name: 'pane.details.toggle' }))
+    await user.click(screen.getByRole('button', { name: 'pane.details.toggle' }))
+    view.rerender(
+      editorElement({
+        responsiveMode: 'compact',
+        sidePaneExtra: <ProcessGuidance />
+      })
+    )
+    await user.click(screen.getByRole('button', { name: 'pane.details.toggle' }))
+
+    expect(onMount).toHaveBeenCalledTimes(1)
+    expect(view.container.querySelector('.orbitpm-editor__properties')).toBe(propertiesHost)
+    expect(screen.getByText('details.card.noSelection')).not.toBeNull()
+    expect(mocks.selectionSelect).not.toHaveBeenCalled()
+  })
+
+  it('keeps Details at logical inline-end in RTL compact mode', async () => {
+    fake.lang = 'ar'
+    const user = userEvent.setup()
+    renderEditor({ responsiveMode: 'compact' })
+    await user.click(screen.getByRole('button', { name: 'pane.details.toggle' }))
+
+    const dialog = screen.getByRole('dialog', { name: 'pane.details.aria' })
+    const rail = screen
+      .getByRole('button', { name: 'pane.details.toggle' })
+      .closest<HTMLElement>('.orbitpm-details-rail')
+    expect(dialog.dir).toBe('rtl')
+    expect(dialog.classList.contains('orbitpm-responsive-drawer--inline-end')).toBe(true)
+    expect(dialog.classList.contains('orbitpm-responsive-drawer--compact')).toBe(true)
+    expect(rail?.dir).toBe('rtl')
+  })
+
+  it('reconciles two docked panes when switching to overlay mode', async () => {
+    const user = userEvent.setup()
+    const view = renderEditor({ responsiveMode: 'docked' })
+    await user.click(screen.getByRole('button', { name: 'pane.details.toggle' }))
+    await user.click(screen.getByRole('button', { name: 'Process outline' }))
+    expect(screen.getAllByRole('complementary')).toHaveLength(2)
+
+    view.rerender(editorElement({ responsiveMode: 'overlay' }))
+    expect(await screen.findByRole('dialog', { name: 'pane.details.aria' })).not.toBeNull()
+    await waitFor(() =>
+      expect(
+        screen.getByRole('button', { name: 'Process outline' }).getAttribute('aria-expanded')
+      ).toBe('false')
+    )
+    expect(screen.queryByRole('dialog', { name: 'Process outline' })).toBeNull()
+  })
+
+  it('opens process-level Details from the outline through the same focus path', async () => {
+    const user = userEvent.setup()
+    renderEditor({ responsiveMode: 'overlay' })
+    await user.click(screen.getByRole('button', { name: 'Process outline' }))
+    await user.click(screen.getByRole('button', { name: 'process-outline-details' }))
+
+    expect(screen.queryByRole('dialog', { name: 'Process outline' })).toBeNull()
+    expect(await screen.findByRole('dialog', { name: 'pane.details.aria' })).not.toBeNull()
+    expect(document.activeElement).toBe(
+      screen.getByRole('heading', { name: 'pane.details.toggle' })
+    )
+    expect(localStorage.getItem(DETAILS_OPEN_PREFERENCE_KEY)).toBe('1')
   })
 
   it('exposes the live modeler through a labelled process-outline region', async () => {
@@ -682,27 +796,20 @@ describe('EditorTab browser integration', () => {
     expect(document.activeElement).toBe(toggle)
   })
 
-  it('treats the responsive process outline as an inert, Escape-dismissible drawer', async () => {
-    Object.defineProperty(window, 'matchMedia', {
-      configurable: true,
-      value: () => ({
-        matches: true,
-        media: '(max-width: 1199px)',
-        addEventListener: vi.fn(),
-        removeEventListener: vi.fn()
-      })
-    })
+  it('uses the shared modal drawer contract for the responsive process outline', async () => {
     const user = userEvent.setup()
-    renderEditor()
+    renderEditor({ responsiveMode: 'overlay' })
 
     const toggle = screen.getByRole('button', { name: 'Process outline' })
     toggle.focus()
     await user.keyboard('{Enter}')
 
     const pane = await screen.findByRole('dialog', { name: 'Process outline' })
+    const close = screen.getByRole('button', { name: 'Close process outline' })
     const toolbar = toggle.closest<HTMLElement>('.orbitpm-editor__toolbar')
     expect(pane.getAttribute('aria-modal')).toBe('true')
-    expect(document.activeElement).toBe(pane)
+    expect(pane.classList.contains('orbitpm-responsive-drawer--inline-start')).toBe(true)
+    expect(document.activeElement).toBe(close)
     expect(toolbar?.inert).toBe(true)
 
     fireEvent.keyDown(document, { key: 'Escape' })
@@ -713,17 +820,8 @@ describe('EditorTab browser integration', () => {
 
   it('provides a localized in-drawer close target in responsive RTL mode', async () => {
     fake.lang = 'ar'
-    Object.defineProperty(window, 'matchMedia', {
-      configurable: true,
-      value: () => ({
-        matches: true,
-        media: '(max-width: 1199px)',
-        addEventListener: vi.fn(),
-        removeEventListener: vi.fn()
-      })
-    })
     const user = userEvent.setup()
-    renderEditor()
+    renderEditor({ responsiveMode: 'overlay' })
 
     const toggle = screen.getByRole('button', { name: 'المخطط التفصيلي للعملية' })
     await user.click(toggle)
