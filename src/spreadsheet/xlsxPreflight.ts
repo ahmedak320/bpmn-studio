@@ -4,6 +4,11 @@ import { SPREADSHEET_LIMITS, XLSX_MAX_ZIP_ENTRIES } from './limits'
 const EOCD_SIGNATURE = 0x06054b50
 const CENTRAL_SIGNATURE = 0x02014b50
 const LOCAL_SIGNATURE = 0x04034b50
+const DATA_DESCRIPTOR_SIGNATURE = 0x08074b50
+const ZIP64_EXTRA_ID = 0x0001
+const AES_EXTRA_ID = 0x9901
+const ENCRYPTION_FLAGS = 0x2041
+const DATA_DESCRIPTOR_FLAG = 0x0008
 const OLE_SIGNATURE = new Uint8Array([0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1])
 
 export interface XlsxZipEntry {
@@ -89,6 +94,53 @@ function rangeFits(start: number, length: number, ceiling: number): boolean {
   )
 }
 
+function validateExtraFields(
+  view: DataView,
+  start: number,
+  length: number,
+  ceiling: number,
+  path: string
+): void {
+  if (!rangeFits(start, length, ceiling)) {
+    throw new SpreadsheetError('malformed-zip', { reason: 'extra-field-range', path })
+  }
+  const end = start + length
+  let cursor = start
+  while (cursor < end) {
+    if (!rangeFits(cursor, 4, end)) {
+      throw new SpreadsheetError('malformed-zip', {
+        reason: 'truncated-extra-field-header',
+        path
+      })
+    }
+    const id = view.getUint16(cursor, true)
+    const fieldLength = view.getUint16(cursor + 2, true)
+    cursor += 4
+    if (!rangeFits(cursor, fieldLength, end)) {
+      throw new SpreadsheetError('malformed-zip', {
+        reason: 'truncated-extra-field-payload',
+        path
+      })
+    }
+    if (id === ZIP64_EXTRA_ID) {
+      throw new SpreadsheetError('zip64-unsupported', { path })
+    }
+    if (id === AES_EXTRA_ID) {
+      throw new SpreadsheetError('encrypted-workbook', {
+        path,
+        encryption: 'aes-extra'
+      })
+    }
+    cursor += fieldLength
+  }
+}
+
+interface LocalRange {
+  readonly start: number
+  readonly end: number
+  readonly path: string
+}
+
 /**
  * Reads only the ZIP central directory and local headers. No entry is inflated
  * before all declared sizes, encryption flags, paths, and executable parts pass.
@@ -134,6 +186,7 @@ export function preflightXlsx(bytes: Uint8Array): XlsxPreflightResult {
   }
 
   const entries: XlsxZipEntry[] = []
+  const localRanges: LocalRange[] = []
   const names = new Set<string>()
   let cursor = centralOffset
   let totalUncompressed = 0
@@ -161,7 +214,7 @@ export function preflightXlsx(bytes: Uint8Array): XlsxPreflightResult {
       throw new SpreadsheetError('malformed-zip', { reason: 'central-entry-range' })
     }
     if (startDisk !== 0) throw new SpreadsheetError('multi-disk-zip')
-    if ((flags & 0x0001) !== 0 || (flags & 0x0040) !== 0) {
+    if ((flags & ENCRYPTION_FLAGS) !== 0) {
       throw new SpreadsheetError('encrypted-workbook', { entry: index })
     }
     if (compressionMethod !== 0 && compressionMethod !== 8) {
@@ -182,6 +235,7 @@ export function preflightXlsx(bytes: Uint8Array): XlsxPreflightResult {
       bytes.subarray(cursor + 46, cursor + 46 + fileNameLength),
       (flags & 0x0800) !== 0
     )
+    validateExtraFields(view, cursor + 46 + fileNameLength, extraLength, cursor + entryLength, path)
     assertSafeZipPath(path)
     if (names.has(path)) throw new SpreadsheetError('duplicate-zip-entry', { path })
     names.add(path)
@@ -199,6 +253,12 @@ export function preflightXlsx(bytes: Uint8Array): XlsxPreflightResult {
         limit: SPREADSHEET_LIMITS.declaredUncompressedBytes
       })
     }
+    if (compressionMethod === 0 && compressedBytes !== uncompressedBytes) {
+      throw new SpreadsheetError('malformed-zip', {
+        reason: 'stored-size-mismatch',
+        path
+      })
+    }
 
     if (!rangeFits(localHeaderOffset, 30, centralOffset)) {
       throw new SpreadsheetError('malformed-zip', { reason: 'local-header-range', path })
@@ -208,22 +268,96 @@ export function preflightXlsx(bytes: Uint8Array): XlsxPreflightResult {
     }
     const localFlags = view.getUint16(localHeaderOffset + 6, true)
     const localMethod = view.getUint16(localHeaderOffset + 8, true)
+    const localCrc32 = view.getUint32(localHeaderOffset + 14, true)
+    const localCompressedBytes = view.getUint32(localHeaderOffset + 18, true)
+    const localUncompressedBytes = view.getUint32(localHeaderOffset + 22, true)
     const localNameLength = view.getUint16(localHeaderOffset + 26, true)
     const localExtraLength = view.getUint16(localHeaderOffset + 28, true)
-    const dataOffset = localHeaderOffset + 30 + localNameLength + localExtraLength
-    if (localFlags !== flags || localMethod !== compressionMethod) {
+    if ((localFlags & ENCRYPTION_FLAGS) !== 0) {
+      throw new SpreadsheetError('encrypted-workbook', { path })
+    }
+    if (
+      localFlags !== flags ||
+      localMethod !== compressionMethod ||
+      localNameLength !== fileNameLength
+    ) {
       throw new SpreadsheetError('malformed-zip', { reason: 'local-central-mismatch', path })
     }
-    if (!rangeFits(dataOffset, compressedBytes, centralOffset)) {
-      throw new SpreadsheetError('malformed-zip', { reason: 'compressed-data-range', path })
+    const localNameOffset = localHeaderOffset + 30
+    if (!rangeFits(localNameOffset, localNameLength + localExtraLength, centralOffset)) {
+      throw new SpreadsheetError('malformed-zip', { reason: 'local-header-range', path })
     }
     const localPath = decodeName(
-      bytes.subarray(localHeaderOffset + 30, localHeaderOffset + 30 + localNameLength),
+      bytes.subarray(localNameOffset, localNameOffset + localNameLength),
       (localFlags & 0x0800) !== 0
     )
     if (localPath !== path) {
       throw new SpreadsheetError('malformed-zip', { reason: 'entry-name-mismatch', path })
     }
+    validateExtraFields(
+      view,
+      localNameOffset + localNameLength,
+      localExtraLength,
+      centralOffset,
+      path
+    )
+    const dataOffset = localNameOffset + localNameLength + localExtraLength
+    if (!rangeFits(dataOffset, compressedBytes, centralOffset)) {
+      throw new SpreadsheetError('malformed-zip', { reason: 'compressed-data-range', path })
+    }
+    const dataEnd = dataOffset + compressedBytes
+    let localRecordEnd = dataEnd
+    if ((flags & DATA_DESCRIPTOR_FLAG) === 0) {
+      if (
+        localCrc32 !== crc32 ||
+        localCompressedBytes !== compressedBytes ||
+        localUncompressedBytes !== uncompressedBytes
+      ) {
+        throw new SpreadsheetError('malformed-zip', {
+          reason: 'local-central-size-crc-mismatch',
+          path
+        })
+      }
+    } else {
+      if (
+        (localCrc32 !== 0 && localCrc32 !== crc32) ||
+        (localCompressedBytes !== 0 && localCompressedBytes !== compressedBytes) ||
+        (localUncompressedBytes !== 0 && localUncompressedBytes !== uncompressedBytes)
+      ) {
+        throw new SpreadsheetError('malformed-zip', {
+          reason: 'local-central-size-crc-mismatch',
+          path
+        })
+      }
+      let descriptorOffset = dataEnd
+      if (!rangeFits(descriptorOffset, 4, centralOffset)) {
+        throw new SpreadsheetError('malformed-zip', {
+          reason: 'data-descriptor-range',
+          path
+        })
+      }
+      if (view.getUint32(descriptorOffset, true) === DATA_DESCRIPTOR_SIGNATURE) {
+        descriptorOffset += 4
+      }
+      if (!rangeFits(descriptorOffset, 12, centralOffset)) {
+        throw new SpreadsheetError('malformed-zip', {
+          reason: 'data-descriptor-range',
+          path
+        })
+      }
+      if (
+        view.getUint32(descriptorOffset, true) !== crc32 ||
+        view.getUint32(descriptorOffset + 4, true) !== compressedBytes ||
+        view.getUint32(descriptorOffset + 8, true) !== uncompressedBytes
+      ) {
+        throw new SpreadsheetError('malformed-zip', {
+          reason: 'data-descriptor-mismatch',
+          path
+        })
+      }
+      localRecordEnd = descriptorOffset + 12
+    }
+    localRanges.push({ start: localHeaderOffset, end: localRecordEnd, path })
 
     entries.push(
       Object.freeze({
@@ -240,6 +374,15 @@ export function preflightXlsx(bytes: Uint8Array): XlsxPreflightResult {
 
   if (cursor !== centralOffset + centralSize) {
     throw new SpreadsheetError('malformed-zip', { reason: 'central-directory-size' })
+  }
+  localRanges.sort((left, right) => left.start - right.start)
+  for (let index = 1; index < localRanges.length; index += 1) {
+    if (localRanges[index]!.start < localRanges[index - 1]!.end) {
+      throw new SpreadsheetError('malformed-zip', {
+        reason: 'overlapping-local-entries',
+        path: localRanges[index]!.path
+      })
+    }
   }
 
   for (const required of ['[Content_Types].xml', '_rels/.rels', 'xl/workbook.xml']) {
