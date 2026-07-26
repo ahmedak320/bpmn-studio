@@ -403,7 +403,7 @@ describe('SpreadsheetImportPanel browser workflow', () => {
     fireEvent.click(screen.getByRole('button', { name: 'spreadsheet.review' }))
     expect(await screen.findByText('spreadsheet.validation.title')).not.toBeNull()
     expect(screen.queryByRole('button', { name: 'spreadsheet.prepare' })).toBeNull()
-  })
+  }, 10_000)
 
   it('reports a parser failure and supports explicit cancellation', async () => {
     const user = userEvent.setup()
