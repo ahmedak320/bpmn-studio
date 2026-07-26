@@ -908,7 +908,9 @@ const FAB_STYLE: CSSProperties = {
   // trademark notice. At the 1280×720 release viewport the watermark ends
   // around 43px above the edge; 72px leaves a stable non-overlap margin.
   insetBlockEnd: 72,
-  insetInlineEnd: 18,
+  // Keep the 44px launcher against the logical edge on narrow viewports,
+  // where the attribution mark is wider than the remaining corner gap.
+  insetInlineEnd: 4,
   zIndex: 900,
   width: 44,
   height: 44,
@@ -926,8 +928,8 @@ const PANEL_STYLE: CSSProperties = {
   position: 'fixed',
   insetBlockStart: 0,
   // Keep the open drawer out of the same mandatory attribution strip reserved
-  // for the closed launcher above.
-  insetBlockEnd: 80,
+  // for the closed launcher above, including the taller mobile watermark.
+  insetBlockEnd: 100,
   insetInlineEnd: 0,
   zIndex: 1200,
   width: 'clamp(300px, 30vw, 420px)',

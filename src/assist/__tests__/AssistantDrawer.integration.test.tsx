@@ -127,13 +127,14 @@ describe('AssistantDrawer browser consent workflows', () => {
   it('keeps the open drawer out of the reserved bpmn.io attribution strip', () => {
     renderDrawer()
     const drawer = screen.getByLabelText('assist.title')
-    expect(drawer.style.insetBlockEnd).toBe('80px')
+    expect(drawer.style.insetBlockEnd).toBe('100px')
   })
 
   it('keeps the closed launcher above the reserved bpmn.io attribution zone', () => {
     renderDrawer({ open: false })
     const launcher = screen.getByRole('button', { name: 'assist.open' })
     expect(launcher.style.insetBlockEnd).toBe('72px')
+    expect(launcher.style.insetInlineEnd).toBe('4px')
   })
 
   it('answers locally without constructing any external request', async () => {
