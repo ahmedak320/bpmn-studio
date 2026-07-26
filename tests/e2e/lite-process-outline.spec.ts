@@ -58,7 +58,7 @@ test('process outline authors BPMN and synchronizes selection with the live canv
 
   await task.focus()
   await task.press('F2')
-  await outline.getByLabel('Name or label').fill('Review completed')
+  await outline.getByLabel('Name (English)', { exact: true }).fill('Review completed')
   await outline.getByRole('button', { name: 'Save changes' }).click()
   task = tree.getByRole('treeitem', { name: /Task: Review completed/ })
   await expect(task).toBeVisible()

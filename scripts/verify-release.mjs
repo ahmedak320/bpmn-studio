@@ -62,8 +62,15 @@ if (gzipSync(html, { level: 9 }).byteLength > Math.floor(2.5 * 1024 * 1024)) {
   failures.push('release HTML exceeds the 2.5 MiB gzip limit')
 }
 const htmlText = html.toString('utf8')
-if (!htmlText.includes(`Version ${version}`)) {
-  failures.push(`release HTML does not embed the visible Version ${version} label`)
+const htmlOpeningTag = htmlText.match(/<html\b[^>]*>/i)?.[0] ?? ''
+const versionMarkers = [
+  ...htmlOpeningTag.matchAll(/\bdata-orbitpm-app-version=(?:"([^"]*)"|'([^']*)'|([^\s>]+))/gi)
+]
+const versionMarker = versionMarkers[0]?.slice(1).find((value) => value !== undefined)
+if (versionMarkers.length !== 1 || versionMarker !== version) {
+  failures.push(
+    `release HTML must contain one app-version marker for ${JSON.stringify(version)}; found ${versionMarkers.length} with value ${JSON.stringify(versionMarker ?? null)}`
+  )
 }
 if (!containsBpmnAttributionMarkup(htmlText)) {
   failures.push('release HTML does not contain the required linked bpmn.io powered-by attribution')

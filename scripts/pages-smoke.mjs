@@ -100,7 +100,10 @@ for (const { name: browserName, browserType, launchOptions } of browserTargets) 
       const buttonName = language === 'ar' ? 'مخطط فارغ جديد' : 'New blank diagram'
       await page.getByRole('button', { name: buttonName, exact: true }).click()
       await page.locator('.djs-container svg').first().waitFor({ state: 'visible' })
-      await page.locator(`[aria-label="Version ${manifest.version}"]`).waitFor({ state: 'visible' })
+      await page
+        .locator(`html[data-orbitpm-app-version="${manifest.version}"]`)
+        .waitFor({ state: 'attached' })
+      await page.getByText(`v${manifest.version}`, { exact: true }).waitFor({ state: 'visible' })
       await context.close()
     }
   } finally {

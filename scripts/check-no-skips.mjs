@@ -48,6 +48,28 @@ const prohibited = [
 ]
 
 const failures = []
+const trackedBrowserSuites = testFiles
+  .filter((path) => /^tests\/e2e\/.*\.spec\.ts$/.test(path))
+  .sort()
+const requiredBrowserSuites = [...REQUIRED_BROWSER_SUITES].sort()
+if (JSON.stringify(requiredBrowserSuites) !== JSON.stringify(trackedBrowserSuites)) {
+  const missingFromManifest = trackedBrowserSuites.filter(
+    (path) => !requiredBrowserSuites.includes(path)
+  )
+  const missingFromTree = requiredBrowserSuites.filter(
+    (path) => !trackedBrowserSuites.includes(path)
+  )
+  if (missingFromManifest.length) {
+    failures.push(
+      `release suite manifest omits tracked browser suites: ${missingFromManifest.join(', ')}`
+    )
+  }
+  if (missingFromTree.length) {
+    failures.push(
+      `release suite manifest names missing browser suites: ${missingFromTree.join(', ')}`
+    )
+  }
+}
 for (const requiredSuite of REQUIRED_BROWSER_SUITES) {
   if (!testFiles.includes(requiredSuite)) {
     failures.push(`${requiredSuite}: required release browser suite is missing`)

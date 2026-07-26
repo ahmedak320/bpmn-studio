@@ -22,6 +22,29 @@ const APP_VERSION = (
     version: string
   }
 ).version
+const APP_VERSION_MARKER = 'data-orbitpm-app-version'
+
+/**
+ * Embed one locale-neutral build identity in the shipped document. Release
+ * verification and browser smoke tests use this marker instead of translated
+ * accessible names or minifier-sensitive JavaScript literals.
+ */
+function embedAppVersionMarker(): Plugin {
+  return {
+    name: 'orbitpm-embed-app-version-marker',
+    transformIndexHtml(html) {
+      const openingTag = html.match(/<html\b[^>]*>/i)?.[0]
+      if (!openingTag) throw new Error('Cannot embed the app version: <html> is missing.')
+      if (openingTag.includes(APP_VERSION_MARKER)) {
+        throw new Error(`Cannot embed the app version: ${APP_VERSION_MARKER} already exists.`)
+      }
+      return html.replace(
+        openingTag,
+        openingTag.replace(/>$/, ` ${APP_VERSION_MARKER}="${APP_VERSION}">`)
+      )
+    }
+  }
+}
 
 /**
  * Vite 6 intentionally externalizes SVG URLs that contain a fragment. The
@@ -36,10 +59,7 @@ function stripLegacyBpmnSvgFont(): Plugin {
     enforce: 'pre',
     transform(code, id) {
       if (!id.includes('/bpmn-font/css/bpmn-embedded.css')) return null
-      return code.replace(
-        /,\s*url\(['"]?\.\.\/font\/bpmn\.svg[^)]*\)\s*format\(['"]svg['"]\)/g,
-        ''
-      )
+      return code.replace(/,\s*url\(['"]?\.\.\/font\/bpmn\.svg[^)]*\)\s*format\(['"]svg['"]\)/g, '')
     }
   }
 }
@@ -49,11 +69,7 @@ export default defineConfig({
   define: {
     __APP_VERSION__: JSON.stringify(APP_VERSION)
   },
-  plugins: [
-    stripLegacyBpmnSvgFont(),
-    react(),
-    viteSingleFile()
-  ],
+  plugins: [embedAppVersionMarker(), stripLegacyBpmnSvgFont(), react(), viteSingleFile()],
   resolve: {
     alias: {
       '@': resolve(__dirname, 'src')

@@ -130,16 +130,23 @@ test('PDF flow: pick a PDF + Arabic hint, hit the no-key provider gate', async (
   const offending = recordOffendingRequests(page)
   await openApp(page)
 
+  // Bind the flow to an explicit reviewed route. Provider/model defaults are
+  // presentation details and must never decide whether an attachment is safe.
+  await page.getByRole('combobox', { name: 'Provider', exact: true }).selectOption('openrouter')
+  const model = page.locator('input[list="models-openrouter"]')
+  await model.fill('google/gemini-3.6-flash')
+  await expect(model).toHaveValue('google/gemini-3.6-flash')
+
   // Switch the AI panel to the PDF source.
   await page.getByRole('tab', { name: /From PDF/i }).click()
 
-  // The default provider (OpenRouter, no key) supports PDF → the file input is
+  // The explicitly reviewed OpenRouter model supports PDF, so the input is
   // present. Select the tiny fixture PDF.
   const fileInput = page.locator('input[type="file"][accept*="pdf"]')
   await fileInput.setInputFiles(FIXTURE_PDF)
 
   // The chosen file name + size are surfaced (and it's within the size gate).
-  await expect(page.getByText(/tiny\.pdf/i)).toBeVisible()
+  await expect(page.getByText(/^tiny\.pdf · \d+\.\d+ MB$/i)).toBeVisible()
 
   // The "which process?" hint accepts Arabic text (RTL, no translation).
   const arabicHint = 'عملية استلام الطلب'

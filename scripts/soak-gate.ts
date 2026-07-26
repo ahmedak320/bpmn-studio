@@ -52,7 +52,11 @@ import {
 } from '../src/workspace/adapters'
 import { PortableHistoryManager } from '../src/workspace/history/historyManager'
 
-const APP_VERSION = '0.4.5'
+const APP_VERSION = (
+  JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')) as {
+    version: string
+  }
+).version
 const DEFAULT_DURATION_MS = 48 * 60 * 60 * 1_000
 const SMOKE_DURATION_MS = 60_000
 const DEFAULT_CYCLE_DELAY_MS = 1_000
@@ -986,6 +990,7 @@ async function exerciseCycle(state: HarnessState, cycle: number): Promise<void> 
     })
     state.operations.conflictsDetected += 1
     const overwrite = await controller.save(sessionId, {
+      reviewedConflict: conflict.conflict,
       conflictDecision: { kind: 'overwrite', confirmed: true }
     })
     invariant(overwrite.status === 'success', 'confirmed conflict overwrite succeeds', {
