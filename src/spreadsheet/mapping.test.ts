@@ -30,6 +30,10 @@ function validPreset(): MappingPreset {
         name_ar: 'الاسم بالعربية'
       }
     },
+    valueMappings: {
+      stepTypes: { approval: 'userTask' },
+      participantTypes: { department: 'lane' }
+    },
     delimiters: { list: ['\n', ';'] },
     inference: {
       flowMode: 'auto',
@@ -114,6 +118,33 @@ describe('versioned mapping presets', () => {
         steps: headerSignature(['different'])
       })
     ).toBe(false)
+  })
+
+  it('migrates version 1 presets with empty reviewed value mappings', () => {
+    const legacy = JSON.parse(JSON.stringify(validPreset())) as Record<string, unknown>
+    legacy.version = 1
+    delete legacy.valueMappings
+
+    expect(parseMappingPresetJson(JSON.stringify(legacy))).toMatchObject({
+      version: MAPPING_PRESET_VERSION,
+      valueMappings: { stepTypes: {}, participantTypes: {} }
+    })
+  })
+
+  it('normalizes and strictly validates reviewed type-value mappings', () => {
+    const raw = JSON.parse(JSON.stringify(validPreset())) as Record<string, unknown>
+    raw.valueMappings = {
+      stepTypes: { '  مُوَافَقَة  ': 'userTask' },
+      participantTypes: { Department: 'lane' }
+    }
+    expect(parseMappingPresetJson(JSON.stringify(raw)).valueMappings).toEqual({
+      stepTypes: { موافقة: 'userTask' },
+      participantTypes: { department: 'lane' }
+    })
+
+    const invalid = JSON.parse(JSON.stringify(validPreset())) as Record<string, unknown>
+    invalid.valueMappings = { stepTypes: { custom: 'madeUpType' }, participantTypes: {} }
+    expect(() => parseMappingPresetJson(JSON.stringify(invalid))).toThrow(SpreadsheetError)
   })
 
   it('rejects workbook rows, credentials, comma list defaults, and widened fields', () => {

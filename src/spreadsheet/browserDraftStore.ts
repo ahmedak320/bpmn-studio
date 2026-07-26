@@ -107,6 +107,7 @@ export class BrowserMappingDraftStore implements MappingDraftStore {
       headerSignatures: draft.headerSignatures,
       selectedSheets: draft.selectedSheets,
       fieldMappings: draft.fieldMappings,
+      valueMappings: draft.valueMappings,
       delimiters: draft.delimiters,
       inference: draft.inference,
       locale: draft.locale

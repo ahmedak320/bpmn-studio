@@ -163,9 +163,11 @@ function readLanguage(value: string): SpreadsheetLocale {
   return ['ar', 'arabic', 'العربية', 'عربي'].includes(normalizeHeader(value)) ? 'ar' : 'en'
 }
 
-function readNodeType(value: string): BpmnNodeType | 'unknown' {
+function readNodeType(value: string, preset: MappingPreset): BpmnNodeType | 'unknown' {
   if ((BPMN_NODE_TYPES as readonly string[]).includes(value)) return value as BpmnNodeType
   const normalized = normalizeHeader(value)
+  const reviewed = preset.valueMappings.stepTypes[normalized]
+  if (reviewed) return reviewed
   const canonical = BPMN_NODE_TYPES.find((candidate) => normalizeHeader(candidate) === normalized)
   return canonical ?? NODE_TYPE_ALIASES[normalized] ?? 'unknown'
 }
@@ -378,15 +380,17 @@ export function buildProcessWorkbookModel(
       }
       const reader = recordReader(participantCursor, row, rowIndex)
       const processId = reader.get('process_id')
-      const rawType = normalizeHeader(reader.get('type'))
+      const rawType = reader.get('type')
+      const normalizedType = normalizeHeader(rawType)
       const id = reader.get('participant_id')
       const active = processLanguage(processId, processes)
       const participantType =
-        rawType === 'lane' || rawType === 'مسار'
+        options.preset.valueMappings.participantTypes[normalizedType] ??
+        (normalizedType === 'lane' || normalizedType === 'مسار'
           ? 'lane'
-          : rawType === 'pool' || rawType === 'حوض'
+          : normalizedType === 'pool' || normalizedType === 'حوض'
             ? 'pool'
-            : undefined
+            : undefined)
       if (!participantType) {
         issues.push({
           code: 'unknown-participant-type',
@@ -397,7 +401,8 @@ export function buildProcessWorkbookModel(
           elementId: id,
           worksheet: participantCursor.name,
           cellAddress: reader.provenance().fields?.type?.address,
-          rawValue: rawType
+          rawValue: rawType,
+          normalizedValue: normalizedType
         })
       }
       participants.push(
@@ -471,8 +476,8 @@ export function buildProcessWorkbookModel(
           id,
           idOrigin: id ? 'explicit' : 'generated',
           order: readOrder(reader.get('order')),
-          type: readNodeType(rawType),
-          ...(readNodeType(rawType) === 'unknown' ? { rawType } : {}),
+          type: readNodeType(rawType, options.preset),
+          ...(readNodeType(rawType, options.preset) === 'unknown' ? { rawType } : {}),
           name: makeBilingual(reader.get('name_en'), reader.get('name_ar'), active),
           poolId: reader.get('pool_id') || undefined,
           laneId: reader.get('lane_id') || undefined,
@@ -632,6 +637,10 @@ export function officialTemplatePreset(
     headerSignatures: detection.headerSignatures,
     selectedSheets: detection.selectedSheets,
     fieldMappings: Object.freeze(fieldMappings),
+    valueMappings: Object.freeze({
+      stepTypes: Object.freeze({}),
+      participantTypes: Object.freeze({})
+    }),
     delimiters: Object.freeze({ list: DEFAULT_LIST_DELIMITERS }),
     inference: Object.freeze({
       flowMode: 'auto',

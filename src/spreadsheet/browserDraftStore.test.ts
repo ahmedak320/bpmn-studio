@@ -44,6 +44,7 @@ describe('browser spreadsheet draft store', () => {
           name_ar: 'Name AR'
         }
       },
+      valueMappings: { stepTypes: {}, participantTypes: {} },
       delimiters: { list: [';', '|'] },
       inference: {
         flowMode: 'auto' as const,

@@ -75,6 +75,7 @@ function mappingPreset(): MappingPreset {
     headerSignatures: {},
     selectedSheets: {},
     fieldMappings: {},
+    valueMappings: { stepTypes: {}, participantTypes: {} },
     delimiters: { list: [';', '\n'] },
     inference: {
       flowMode: 'auto',

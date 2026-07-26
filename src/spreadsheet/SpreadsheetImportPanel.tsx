@@ -3,7 +3,7 @@ import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
 import { t } from '../i18n'
 import { useLang } from '../i18n/useLang'
 import type { WorkspaceAdapter } from '../workspace/adapters'
-import { CANONICAL_FIELDS_BY_SHEET, REQUIRED_FIELDS_BY_SHEET } from './aliases'
+import { CANONICAL_FIELDS_BY_SHEET, REQUIRED_FIELDS_BY_SHEET, normalizeHeader } from './aliases'
 import { SpreadsheetBilingualAudit, SpreadsheetBpmnGenerator } from './bpmnGeneration'
 import {
   BrowserMappingDraftStore,
@@ -16,10 +16,13 @@ import {
   type BrowserSpreadsheetParseResult
 } from './browserParserAdapters'
 import {
+  BPMN_NODE_TYPES,
+  type BpmnNodeType,
   type CanonicalSheet,
   type CollisionBehavior,
   type GraphInferencePlan,
   type MappingPreset,
+  type ParticipantType,
   type ProcessWorkbookModel,
   type RecordProvenance,
   type SpreadsheetImportReport,
@@ -136,6 +139,35 @@ function progressPhase(phase: 'preflight' | 'parse' | 'validate'): string {
     case 'validate':
       return t('spreadsheet.phase.validate')
   }
+}
+
+function stepTypeLabel(type: BpmnNodeType): string {
+  const keys: Readonly<Record<BpmnNodeType, Parameters<typeof t>[0]>> = {
+    task: 'spreadsheet.type.task',
+    userTask: 'spreadsheet.type.userTask',
+    serviceTask: 'spreadsheet.type.serviceTask',
+    sendTask: 'spreadsheet.type.sendTask',
+    receiveTask: 'spreadsheet.type.receiveTask',
+    businessRuleTask: 'spreadsheet.type.businessRuleTask',
+    manualTask: 'spreadsheet.type.manualTask',
+    scriptTask: 'spreadsheet.type.scriptTask',
+    callActivity: 'spreadsheet.type.callActivity',
+    subProcess: 'spreadsheet.type.subProcess',
+    startEvent: 'spreadsheet.type.startEvent',
+    endEvent: 'spreadsheet.type.endEvent',
+    intermediateCatchEvent: 'spreadsheet.type.intermediateCatchEvent',
+    intermediateThrowEvent: 'spreadsheet.type.intermediateThrowEvent',
+    exclusiveGateway: 'spreadsheet.type.exclusiveGateway',
+    inclusiveGateway: 'spreadsheet.type.inclusiveGateway',
+    parallelGateway: 'spreadsheet.type.parallelGateway',
+    complexGateway: 'spreadsheet.type.complexGateway',
+    eventBasedGateway: 'spreadsheet.type.eventBasedGateway'
+  }
+  return t(keys[type])
+}
+
+function participantTypeLabel(type: ParticipantType): string {
+  return type === 'lane' ? t('spreadsheet.type.lane') : t('spreadsheet.type.pool')
 }
 
 function withDestinationFolder(
@@ -310,6 +342,23 @@ export function SpreadsheetImportPanel({
   )
 
   const allIssues = review?.issues ?? mappingIssues
+  const typeRepairIssues = useMemo(() => {
+    const result: SpreadsheetValidationIssue[] = []
+    const seen = new Set<string>()
+    for (const issue of allIssues) {
+      if (
+        (issue.code !== 'unknown-step-type' && issue.code !== 'unknown-participant-type') ||
+        typeof issue.rawValue !== 'string'
+      ) {
+        continue
+      }
+      const key = `${issue.code}\u001f${normalizeHeader(issue.rawValue)}`
+      if (seen.has(key)) continue
+      seen.add(key)
+      result.push(issue)
+    }
+    return result
+  }, [allIssues])
   const translationCounts = useMemo(() => {
     const relevant =
       plan?.validation.issues.filter(({ code }) => code === 'translation-review-required') ?? []
@@ -416,6 +465,31 @@ export function SpreadsheetImportPanel({
     setPlan(null)
     setReport(null)
     setError(null)
+  }
+
+  function repairTypeValue(
+    issue: SpreadsheetValidationIssue,
+    value: BpmnNodeType | ParticipantType
+  ): void {
+    if (typeof issue.rawValue !== 'string') return
+    const normalized = normalizeHeader(issue.rawValue)
+    if (!normalized) return
+    updatePreset((current) => ({
+      ...current,
+      valueMappings: {
+        stepTypes:
+          issue.code === 'unknown-step-type'
+            ? { ...current.valueMappings.stepTypes, [normalized]: value as BpmnNodeType }
+            : current.valueMappings.stepTypes,
+        participantTypes:
+          issue.code === 'unknown-participant-type'
+            ? {
+                ...current.valueMappings.participantTypes,
+                [normalized]: value as ParticipantType
+              }
+            : current.valueMappings.participantTypes
+      }
+    }))
   }
 
   function selectRoleSheet(role: CanonicalSheet, worksheet: string): void {
@@ -1259,6 +1333,59 @@ export function SpreadsheetImportPanel({
                   </li>
                 ))}
               </ol>
+            )}
+            {typeRepairIssues.length > 0 && (
+              <section
+                aria-labelledby="spreadsheet-type-repair-title"
+                style={{ display: 'grid', gap: 8 }}
+              >
+                <h5 id="spreadsheet-type-repair-title" style={{ margin: 0 }}>
+                  {t('spreadsheet.typeRepair.title')}
+                </h5>
+                <p style={mutedText}>{t('spreadsheet.typeRepair.guidance')}</p>
+                {typeRepairIssues.map((issue) => {
+                  const step = issue.code === 'unknown-step-type'
+                  const rawValue = String(issue.rawValue)
+                  return (
+                    <label key={`${issue.code}-${normalizeHeader(rawValue)}`} style={fieldStyle}>
+                      <span style={fieldLabel}>
+                        {step
+                          ? t('spreadsheet.typeRepair.step', { value: rawValue })
+                          : t('spreadsheet.typeRepair.participant', { value: rawValue })}
+                      </span>
+                      <select
+                        value=""
+                        aria-label={
+                          step
+                            ? t('spreadsheet.typeRepair.step', { value: rawValue })
+                            : t('spreadsheet.typeRepair.participant', { value: rawValue })
+                        }
+                        onChange={(event) => {
+                          if (!event.target.value) return
+                          repairTypeValue(
+                            issue,
+                            event.target.value as BpmnNodeType | ParticipantType
+                          )
+                        }}
+                        style={inputStyle}
+                      >
+                        <option value="">{t('spreadsheet.typeRepair.choose')}</option>
+                        {step
+                          ? BPMN_NODE_TYPES.map((type) => (
+                              <option key={type} value={type}>
+                                {stepTypeLabel(type)}
+                              </option>
+                            ))
+                          : (['pool', 'lane'] as const).map((type) => (
+                              <option key={type} value={type}>
+                                {participantTypeLabel(type)}
+                              </option>
+                            ))}
+                      </select>
+                    </label>
+                  )
+                })}
+              </section>
             )}
             {review.inference && review.inference.generatedIds.length > 0 && (
               <div style={infoBox}>

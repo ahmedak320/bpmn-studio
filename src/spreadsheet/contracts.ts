@@ -1,7 +1,7 @@
 import type { SpreadsheetErrorCode } from './errors'
 
 export const PROCESS_WORKBOOK_MODEL_VERSION = 1 as const
-export const MAPPING_PRESET_VERSION = 1 as const
+export const MAPPING_PRESET_VERSION = 2 as const
 export const OFFICIAL_TEMPLATE_VERSION = '0.4.5.1' as const
 
 export type SpreadsheetLocale = 'en' | 'ar'
@@ -214,6 +214,18 @@ export type FieldMappings = Readonly<
   Partial<Record<CanonicalSheet, Readonly<Record<string, string>>>>
 >
 
+export interface MappingValueMappings {
+  /**
+   * Normalized displayed spreadsheet value -> canonical BPMN type.
+   *
+   * Keys contain only reviewed type labels, never worksheet rows or other
+   * workbook contents.
+   */
+  readonly stepTypes: Readonly<Record<string, BpmnNodeType>>
+  /** Normalized displayed spreadsheet value -> canonical participant type. */
+  readonly participantTypes: Readonly<Record<string, ParticipantType>>
+}
+
 export interface MappingPreset {
   readonly version: typeof MAPPING_PRESET_VERSION
   readonly name: string
@@ -221,6 +233,8 @@ export interface MappingPreset {
   readonly selectedSheets: Readonly<Partial<Record<CanonicalSheet, SheetSelection>>>
   /** Canonical field -> displayed header. Never cell contents. */
   readonly fieldMappings: FieldMappings
+  /** Explicit repairs for otherwise unknown raw type labels. */
+  readonly valueMappings: MappingValueMappings
   readonly delimiters: {
     readonly list: readonly string[]
   }

@@ -151,6 +151,47 @@ describe('ProcessWorkbookModel construction', () => {
     )
   })
 
+  it('applies reviewed raw step and participant type mappings before reporting unknowns', () => {
+    const workbook = officialWorkbook()
+    const participantSheet = workbook.sheets.find(({ name }) => name === 'Participants')!
+    const stepSheet = workbook.sheets.find(({ name }) => name === 'Steps')!
+    const participantTypeColumn = CANONICAL_FIELDS_BY_SHEET.participants.indexOf('type')
+    const stepTypeColumn = CANONICAL_FIELDS_BY_SHEET.steps.indexOf('type')
+    ;(participantSheet.rows[1] as WorkbookCell[])[participantTypeColumn] = {
+      value: 'Department',
+      rawValue: 'Department'
+    }
+    ;(stepSheet.rows[2] as WorkbookCell[])[stepTypeColumn] = {
+      value: 'Approval',
+      rawValue: 'Approval'
+    }
+    const detection = detectOfficialTemplate(workbook)
+    const base = officialTemplatePreset(workbook, detection)
+    const preset: MappingPreset = {
+      ...base,
+      valueMappings: {
+        stepTypes: { approval: 'userTask' },
+        participantTypes: { department: 'lane' }
+      }
+    }
+
+    const result = buildProcessWorkbookModel(workbook, {
+      fileName: 'reviewed-types.xlsx',
+      format: 'xlsx',
+      preset
+    })
+
+    expect(result.model.participants[0]?.type).toBe('lane')
+    expect(result.model.nodes.find(({ id }) => id === 'Mystery')).toMatchObject({
+      type: 'userTask'
+    })
+    expect(
+      result.issues.some(
+        ({ code }) => code === 'unknown-step-type' || code === 'unknown-participant-type'
+      )
+    ).toBe(false)
+  })
+
   it('derives process records for an ordinary grouped single sheet', () => {
     const workbook: ParsedWorkbookData = {
       sheets: [
@@ -179,6 +220,7 @@ describe('ProcessWorkbookModel construction', () => {
           name_ar: 'Arabic'
         }
       },
+      valueMappings: { stepTypes: {}, participantTypes: {} },
       delimiters: { list: DEFAULT_LIST_DELIMITERS },
       inference: {
         flowMode: 'auto',
@@ -347,6 +389,7 @@ describe('ProcessWorkbookModel construction', () => {
           name_ar: 'Arabic'
         }
       },
+      valueMappings: { stepTypes: {}, participantTypes: {} },
       delimiters: { list: [';'] },
       inference: {
         flowMode: 'numeric-order',
@@ -386,6 +429,7 @@ describe('ProcessWorkbookModel construction', () => {
       headerSignatures: {},
       selectedSheets: { steps: { worksheet: 'Missing', headerRow: 1 } },
       fieldMappings: { steps: { type: 'Type' } },
+      valueMappings: { stepTypes: {}, participantTypes: {} },
       delimiters: { list: [';'] },
       inference: {
         flowMode: 'auto',

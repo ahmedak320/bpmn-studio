@@ -1,5 +1,12 @@
-import { CANONICAL_FIELDS_BY_SHEET } from './aliases'
-import { MAPPING_PRESET_VERSION, type CanonicalSheet, type MappingPreset } from './contracts'
+import { CANONICAL_FIELDS_BY_SHEET, normalizeHeader } from './aliases'
+import {
+  BPMN_NODE_TYPES,
+  MAPPING_PRESET_VERSION,
+  type BpmnNodeType,
+  type CanonicalSheet,
+  type MappingPreset,
+  type ParticipantType
+} from './contracts'
 import { SpreadsheetError } from './errors'
 
 const SHEETS: readonly CanonicalSheet[] = [
@@ -11,6 +18,8 @@ const SHEETS: readonly CanonicalSheet[] = [
 ]
 const FORBIDDEN_KEY =
   /^(?:credentials?|password|secret|api.?key|tokens?|rows?|cells?|workbook.?data)$/i
+const LEGACY_MAPPING_PRESET_VERSION = 1
+const MAX_VALUE_MAPPINGS_PER_ROLE = 256
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value)
@@ -56,6 +65,10 @@ export function parseMappingPresetJson(json: string): MappingPreset {
     throw new SpreadsheetError('invalid-mapping-preset', { location: 'json' }, { cause })
   }
   if (!isRecord(raw)) throw new SpreadsheetError('invalid-mapping-preset', { location: 'root' })
+  if (raw.version !== LEGACY_MAPPING_PRESET_VERSION && raw.version !== MAPPING_PRESET_VERSION) {
+    throw new SpreadsheetError('invalid-mapping-preset', { location: 'version' })
+  }
+  const legacy = raw.version === LEGACY_MAPPING_PRESET_VERSION
   assertExactKeys(
     raw,
     [
@@ -64,15 +77,13 @@ export function parseMappingPresetJson(json: string): MappingPreset {
       'headerSignatures',
       'selectedSheets',
       'fieldMappings',
+      ...(legacy ? [] : ['valueMappings']),
       'delimiters',
       'inference',
       'locale'
     ],
     'root'
   )
-  if (raw.version !== MAPPING_PRESET_VERSION) {
-    throw new SpreadsheetError('invalid-mapping-preset', { location: 'version' })
-  }
   assertString(raw.name, 'name', 120)
   if (raw.locale !== 'en' && raw.locale !== 'ar') {
     throw new SpreadsheetError('invalid-mapping-preset', { location: 'locale' })
@@ -135,6 +146,66 @@ export function parseMappingPresetJson(json: string): MappingPreset {
     return Object.freeze(mapping)
   }) as MappingPreset['fieldMappings']
 
+  const readValueMapping = <T extends string>(
+    value: unknown,
+    location: string,
+    allowed: readonly T[]
+  ): Readonly<Record<string, T>> => {
+    if (!isRecord(value)) {
+      throw new SpreadsheetError('invalid-mapping-preset', { location })
+    }
+    const entries = Object.entries(value)
+    if (entries.length > MAX_VALUE_MAPPINGS_PER_ROLE) {
+      throw new SpreadsheetError('invalid-mapping-preset', {
+        location,
+        reason: 'too-many-value-mappings'
+      })
+    }
+    const result: Record<string, T> = {}
+    for (const [rawKey, rawValue] of entries) {
+      assertString(rawKey, `${location}.key`, 256)
+      const key = normalizeHeader(rawKey)
+      if (
+        !key ||
+        FORBIDDEN_KEY.test(key) ||
+        Object.prototype.hasOwnProperty.call(result, key) ||
+        typeof rawValue !== 'string' ||
+        !allowed.includes(rawValue as T)
+      ) {
+        throw new SpreadsheetError('invalid-mapping-preset', {
+          location: `${location}.${rawKey}`
+        })
+      }
+      result[key] = rawValue as T
+    }
+    return Object.freeze(result)
+  }
+
+  let valueMappings: MappingPreset['valueMappings']
+  if (legacy) {
+    valueMappings = Object.freeze({
+      stepTypes: Object.freeze({}),
+      participantTypes: Object.freeze({})
+    })
+  } else {
+    if (!isRecord(raw.valueMappings)) {
+      throw new SpreadsheetError('invalid-mapping-preset', { location: 'valueMappings' })
+    }
+    assertExactKeys(raw.valueMappings, ['stepTypes', 'participantTypes'], 'valueMappings')
+    valueMappings = Object.freeze({
+      stepTypes: readValueMapping<BpmnNodeType>(
+        raw.valueMappings.stepTypes,
+        'valueMappings.stepTypes',
+        BPMN_NODE_TYPES
+      ),
+      participantTypes: readValueMapping<ParticipantType>(
+        raw.valueMappings.participantTypes,
+        'valueMappings.participantTypes',
+        ['pool', 'lane']
+      )
+    })
+  }
+
   if (!isRecord(raw.delimiters)) {
     throw new SpreadsheetError('invalid-mapping-preset', { location: 'delimiters' })
   }
@@ -181,6 +252,7 @@ export function parseMappingPresetJson(json: string): MappingPreset {
     headerSignatures: Object.freeze(headerSignatures),
     selectedSheets: Object.freeze(selectedSheets),
     fieldMappings: Object.freeze(fieldMappings),
+    valueMappings,
     delimiters: Object.freeze({ list: Object.freeze(delimiters) }),
     inference: Object.freeze({
       flowMode: raw.inference.flowMode as MappingPreset['inference']['flowMode'],

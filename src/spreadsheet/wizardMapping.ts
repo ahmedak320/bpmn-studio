@@ -204,6 +204,10 @@ export function suggestedMappingPreset(
     headerSignatures: Object.freeze(headerSignatures),
     selectedSheets: Object.freeze(selectedSheets),
     fieldMappings: Object.freeze(fieldMappings),
+    valueMappings: Object.freeze({
+      stepTypes: Object.freeze({}),
+      participantTypes: Object.freeze({})
+    }),
     delimiters: Object.freeze({ list: DEFAULT_LIST_DELIMITERS }),
     inference: Object.freeze({
       flowMode: 'auto',
