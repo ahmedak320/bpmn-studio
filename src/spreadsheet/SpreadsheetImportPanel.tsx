@@ -3,6 +3,7 @@ import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
 import { t } from '../i18n'
 import { useLang } from '../i18n/useLang'
 import type { WorkspaceAdapter } from '../workspace/adapters'
+import type { PortableHistoryManager } from '../workspace/history'
 import {
   CANONICAL_FIELDS_BY_SHEET,
   REQUIRED_FIELDS_BY_SHEET,
@@ -89,6 +90,8 @@ export interface SpreadsheetImportPanelProps {
   readonly knownProcessIds?: readonly string[]
   readonly getCurrentWorkspaceId?: () => string | undefined
   readonly runWorkspaceExclusive?: <T>(operation: () => Promise<T>) => Promise<T>
+  /** Reuse the App's bounded portable history for overwrite recovery. */
+  readonly historyManager?: PortableHistoryManager | null
   readonly onOpenSingle: (xml: string, name: string) => void | Promise<void>
   /**
    * Awaited review protocol. The callback resolves only after the user
@@ -217,6 +220,7 @@ export function SpreadsheetImportPanel({
   knownProcessIds = [],
   getCurrentWorkspaceId,
   runWorkspaceExclusive,
+  historyManager,
   onOpenSingle,
   onReviewBilingual,
   onCommitted
@@ -910,6 +914,7 @@ export function SpreadsheetImportPanel({
         multipleFiles && workspaceAdapter
           ? new WorkspaceImportTransactionFactory(workspaceAdapter, {
               runExclusive: runWorkspaceExclusive,
+              historyManager: historyManager ?? undefined,
               isCurrent: () =>
                 getCurrentWorkspaceId ? getCurrentWorkspaceId() === workspaceId : true
             })
