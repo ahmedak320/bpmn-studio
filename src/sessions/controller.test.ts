@@ -52,7 +52,11 @@ class FakePersistence implements SessionPersistence {
   }
 
   async writeAs(source: DocumentIdentity, path: string, xml: string) {
-    this.writes.push({ identity: { ...source, path }, xml, options: { expectedBase: null, force: false } })
+    this.writes.push({
+      identity: { ...source, path },
+      xml,
+      options: { expectedBase: null, force: false }
+    })
     return {
       status: 'written' as const,
       identity: { workspace: source.workspace, path },
@@ -421,5 +425,331 @@ describe('DocumentSessionController saves', () => {
 
     await saving
     expect(controller.store.get('s')?.currentXml).toBe('<newer/>')
+  })
+
+  it('distinguishes missing, clean, and stale caller snapshots without persistence I/O', async () => {
+    const { controller, persistence } = createController()
+    const inspect = vi.spyOn(persistence, 'inspect')
+
+    controller.setActive(null)
+    expect(await controller.saveActive()).toEqual({
+      status: 'missing-session',
+      ok: false,
+      sessionId: ''
+    })
+    expect(await controller.save('missing')).toEqual({
+      status: 'missing-session',
+      ok: false,
+      sessionId: 'missing'
+    })
+
+    controller.setActive('s')
+    expect(await controller.saveActive()).toEqual({
+      status: 'clean',
+      ok: true,
+      sessionId: 's'
+    })
+
+    controller.updateXml('s', '<new/>')
+    expect(await controller.save('s', { expectedRevision: 0 })).toEqual({
+      status: 'stale-capture',
+      ok: false,
+      sessionId: 's'
+    })
+    expect(inspect).not.toHaveBeenCalled()
+    expect(persistence.writes).toHaveLength(0)
+  })
+
+  it('writes an explicit caller snapshot and classifies serializer storage failures', async () => {
+    const { controller, persistence } = createController()
+
+    expect(await controller.save('s', { xml: '<captured/>' })).toMatchObject({
+      status: 'success',
+      savedRevision: 1
+    })
+    expect(persistence.writes[0]?.xml).toBe('<captured/>')
+
+    const failed = createController()
+    failed.controller.store.bindEditor('s', {
+      readXml: async () => {
+        throw new DOMException('Draft serialization exhausted storage', 'QuotaExceededError')
+      }
+    })
+    failed.controller.updateXml('s', '<dirty/>')
+
+    expect(await failed.controller.save('s')).toMatchObject({
+      status: 'storage-failure',
+      failure: { code: 'quota-exceeded', retriable: true }
+    })
+    expect(failed.controller.store.get('s')?.dirty).toBe(true)
+    expect(failed.persistence.writes).toHaveLength(0)
+  })
+
+  it('honors cancel and refuses to treat a deleted external file as reloadable', async () => {
+    const cancelled = createController()
+    cancelled.controller.updateXml('s', '<local/>')
+    cancelled.persistence.inspected = external('<external/>', 'external')
+
+    expect(
+      await cancelled.controller.save('s', {
+        conflictDecision: { kind: 'cancel' }
+      })
+    ).toEqual({ status: 'cancelled', ok: false, sessionId: 's' })
+    expect(cancelled.persistence.writes).toHaveLength(0)
+
+    const deleted = createController()
+    deleted.controller.updateXml('s', '<local/>')
+    deleted.persistence.inspected = null
+    expect(
+      await deleted.controller.save('s', {
+        conflictDecision: { kind: 'reload-external' }
+      })
+    ).toMatchObject({
+      status: 'external-conflict',
+      ok: false,
+      conflict: { reason: 'deleted', external: null },
+      comparisonRequested: false,
+      decisionStale: false
+    })
+    expect(deleted.controller.store.get('s')?.currentXml).toBe('<local/>')
+  })
+
+  it('keeps a dirty session retryable after inspect and write storage failures', async () => {
+    const inspecting = createController()
+    inspecting.controller.updateXml('s', '<local/>')
+    inspecting.persistence.inspect = vi
+      .fn()
+      .mockRejectedValueOnce(new DOMException('Storage unavailable', 'QuotaExceededError'))
+      .mockResolvedValue(external('<old/>', 'old'))
+
+    expect(await inspecting.controller.save('s')).toMatchObject({
+      status: 'storage-failure',
+      failure: { code: 'quota-exceeded', retriable: true }
+    })
+    expect(inspecting.controller.store.get('s')?.dirty).toBe(true)
+    expect(await inspecting.controller.save('s')).toMatchObject({ status: 'success', ok: true })
+
+    const writing = createController()
+    writing.controller.updateXml('s', '<local/>')
+    writing.persistence.write = vi
+      .fn()
+      .mockRejectedValueOnce(new DOMException('Disk is full', 'QuotaExceededError'))
+      .mockResolvedValue({ status: 'written', fingerprint: fp('recovered', 4) })
+
+    expect(await writing.controller.save('s')).toMatchObject({
+      status: 'storage-failure',
+      failure: { code: 'quota-exceeded', retriable: true }
+    })
+    expect(writing.controller.store.get('s')?.dirty).toBe(true)
+    expect(await writing.controller.save('s')).toMatchObject({
+      status: 'success',
+      fingerprint: fp('recovered', 4)
+    })
+  })
+
+  it('cancels after external inspection and releases a lock acquired just before abort', async () => {
+    const abortAfterInspect = new AbortController()
+    const inspected = createController()
+    inspected.controller.updateXml('s', '<local/>')
+    inspected.persistence.inspect = vi.fn(async () => {
+      abortAfterInspect.abort()
+      return external('<old/>', 'old')
+    })
+
+    expect(await inspected.controller.save('s', { signal: abortAfterInspect.signal })).toEqual({
+      status: 'cancelled',
+      ok: false,
+      sessionId: 's'
+    })
+    expect(inspected.persistence.writes).toHaveLength(0)
+
+    const abortAfterLock = new AbortController()
+    const release = vi.fn()
+    const persistence = new FakePersistence()
+    const controller = new DocumentSessionController({
+      persistence,
+      coordination: {
+        acquire: async () => {
+          abortAfterLock.abort()
+          return { acquired: true, lease: { release } }
+        }
+      }
+    })
+    controller.open({ id: 's', identity, title: 'a', xml: '<old/>', base: fp('old') })
+    controller.updateXml('s', '<local/>')
+
+    expect(await controller.save('s', { signal: abortAfterLock.signal })).toEqual({
+      status: 'cancelled',
+      ok: false,
+      sessionId: 's'
+    })
+    expect(release).toHaveBeenCalledOnce()
+    expect(persistence.writes).toHaveLength(0)
+  })
+
+  it('classifies lock acquisition and conflict-decision failures without losing edits', async () => {
+    const persistence = new FakePersistence()
+    const locked = new DocumentSessionController({
+      persistence,
+      coordination: {
+        acquire: async () => {
+          throw new DOMException('Lock storage unavailable', 'QuotaExceededError')
+        }
+      }
+    })
+    locked.open({ id: 's', identity, title: 'a', xml: '<old/>', base: fp('old') })
+    locked.updateXml('s', '<local/>')
+    expect(await locked.save('s')).toMatchObject({
+      status: 'storage-failure',
+      failure: { code: 'quota-exceeded' }
+    })
+    expect(locked.store.get('s')?.dirty).toBe(true)
+
+    const decidingPersistence = new FakePersistence()
+    decidingPersistence.inspected = external('<external/>', 'external')
+    const deciding = new DocumentSessionController({
+      persistence: decidingPersistence,
+      decideConflict: async () => {
+        throw new DOMException('Decision UI closed', 'AbortError')
+      }
+    })
+    deciding.open({ id: 's', identity, title: 'a', xml: '<old/>', base: fp('old') })
+    deciding.updateXml('s', '<local/>')
+    expect(await deciding.save('s')).toEqual({
+      status: 'cancelled',
+      ok: false,
+      sessionId: 's'
+    })
+    expect(deciding.store.get('s')?.dirty).toBe(true)
+  })
+
+  it('invalidates a save when the workspace changes after asynchronous inspection', async () => {
+    const persistence = new FakePersistence()
+    const inspected = deferred<ExternalDocument | null>()
+    persistence.inspect = vi.fn(async () => inspected.promise)
+    let current = true
+    const controller = new DocumentSessionController({
+      persistence,
+      isWorkspaceCurrent: () => current
+    })
+    controller.open({ id: 's', identity, title: 'a', xml: '<old/>', base: fp('old') })
+    controller.updateXml('s', '<local/>')
+
+    const saving = controller.save('s')
+    await vi.waitFor(() => expect(controller.store.get('s')?.save.phase).toBe('checking-external'))
+    current = false
+    inspected.resolve(external('<old/>', 'old'))
+
+    expect(await saving).toEqual({
+      status: 'stale-workspace',
+      ok: false,
+      sessionId: 's'
+    })
+    expect(controller.store.get('s')?.dirty).toBe(true)
+    expect(persistence.writes).toHaveLength(0)
+  })
+
+  it('adopts a serializer result when no newer revision wins the capture race', async () => {
+    const { controller, persistence } = createController()
+    controller.store.bindEditor('s', { readXml: async () => '<serialized/>' })
+    controller.updateXml('s', '<dirty/>')
+
+    expect(await controller.save('s')).toMatchObject({
+      status: 'success',
+      savedRevision: 2
+    })
+    expect(persistence.writes[0]?.xml).toBe('<serialized/>')
+    expect(controller.store.get('s')).toMatchObject({
+      currentXml: '<serialized/>',
+      lastSavedXml: '<serialized/>',
+      dirty: false
+    })
+  })
+
+  it('keeps external reload successful when post-discard cleanup fails', async () => {
+    const persistence = new FakePersistence()
+    persistence.inspected = external('<external/>', 'external')
+    const postSaveError = vi.fn()
+    const controller = new DocumentSessionController({
+      persistence,
+      onExplicitDiscard: async () => {
+        throw new DOMException('Draft database unavailable', 'QuotaExceededError')
+      },
+      onPostSaveError: postSaveError
+    })
+    controller.open({ id: 's', identity, title: 'a', xml: '<old/>', base: fp('old') })
+    controller.updateXml('s', '<local/>')
+
+    expect(
+      await controller.save('s', {
+        conflictDecision: { kind: 'reload-external' }
+      })
+    ).toMatchObject({ status: 'reloaded', ok: true })
+    expect(controller.store.get('s')?.dirty).toBe(false)
+    expect(postSaveError).toHaveBeenCalledOnce()
+  })
+
+  it('reports unsupported save-as as storage failure and preserves the source identity', async () => {
+    const persistence: SessionPersistence = {
+      inspect: async () => external('<old/>', 'old'),
+      write: async () => ({ status: 'written', fingerprint: fp('unused') })
+    }
+    const controller = new DocumentSessionController({ persistence })
+    controller.open({ id: 's', identity, title: 'a.bpmn', xml: '<old/>', base: fp('old') })
+    controller.updateXml('s', '<local/>')
+
+    expect(
+      await controller.save('s', {
+        conflictDecision: { kind: 'save-as', path: 'copy.bpmn' }
+      })
+    ).toMatchObject({
+      status: 'storage-failure',
+      failure: { code: 'invalid-state' }
+    })
+    expect(controller.store.get('s')).toMatchObject({
+      identity,
+      dirty: true
+    })
+  })
+
+  it('publishes confirmed writes and rejects a workspace switch after lock acquisition', async () => {
+    const published = vi.fn()
+    const persistence = new FakePersistence()
+    const controller = new DocumentSessionController({
+      persistence,
+      coordination: {
+        acquire: async () => ({ acquired: true, lease: { release: vi.fn() } }),
+        publishDocumentChange: published
+      }
+    })
+    controller.open({ id: 's', identity, title: 'a', xml: '<old/>', base: fp('old') })
+    controller.updateXml('s', '<local/>')
+    expect(await controller.save('s')).toMatchObject({ status: 'success', ok: true })
+    expect(published).toHaveBeenCalledWith({
+      identity,
+      kind: 'saved',
+      fingerprint: fp('new', 2)
+    })
+
+    let current = true
+    const stalePersistence = new FakePersistence()
+    const stale = new DocumentSessionController({
+      persistence: stalePersistence,
+      isWorkspaceCurrent: () => current,
+      coordination: {
+        acquire: async () => {
+          current = false
+          return { acquired: true, lease: { release: vi.fn() } }
+        }
+      }
+    })
+    stale.open({ id: 's', identity, title: 'a', xml: '<old/>', base: fp('old') })
+    stale.updateXml('s', '<local/>')
+    expect(await stale.save('s')).toEqual({
+      status: 'stale-workspace',
+      ok: false,
+      sessionId: 's'
+    })
+    expect(stalePersistence.writes).toHaveLength(0)
   })
 })

@@ -9,6 +9,8 @@ import {
   type LangToggleModeler
 } from '../editor/langToggle'
 import { translateDiagram } from '../ai/translate'
+import { UNTRUSTED_WORKSPACE_SYSTEM_GUARD } from '../ai/untrustedPrompt'
+import type { LlmMessage } from '../generation'
 
 // langToggle.ts is deliberately bpmn-js-free — this suite runs with
 // environment: 'node' (no jsdom, per vitest.config.ts) and drives the module
@@ -336,7 +338,11 @@ describe('toggleDiagramLang', () => {
     const root = processRoot()
     const el: FakeElement = {
       id: 'Task_C2',
-      businessObject: { $type: 'bpmn:Task', name: 'Reject v2', $attrs: { 'orbitpm:nameEn': 'Reject' } }
+      businessObject: {
+        $type: 'bpmn:Task',
+        name: 'Reject v2',
+        $attrs: { 'orbitpm:nameEn': 'Reject' }
+      }
     }
     const { modeler, rec } = makeModeler({ root, elements: [el] })
 
@@ -380,7 +386,10 @@ describe('toggleDiagramLang', () => {
         $attrs: { 'orbitpm:nameEn': 'Approved', 'orbitpm:nameAr': 'موافق عليه' }
       },
       // Connections carry waypoints — nothing in langToggle filters on this.
-      waypoints: [{ x: 0, y: 0 }, { x: 100, y: 40 }]
+      waypoints: [
+        { x: 0, y: 0 },
+        { x: 100, y: 40 }
+      ]
     }
     const { modeler, rec } = makeModeler({ root, elements: [flow] })
 
@@ -465,8 +474,14 @@ describe('toggleDiagramLang', () => {
 
   it('preserves English active state and self-heals plain names when Arabic coverage is zero', () => {
     const root = processRoot() // no orbitpm:activeLang -> from defaults to 'en'
-    const elG: FakeElement = { id: 'Task_G', businessObject: { $type: 'bpmn:Task', name: 'Plain Name' } }
-    const elH: FakeElement = { id: 'Task_H', businessObject: { $type: 'bpmn:Task', name: 'Another' } }
+    const elG: FakeElement = {
+      id: 'Task_G',
+      businessObject: { $type: 'bpmn:Task', name: 'Plain Name' }
+    }
+    const elH: FakeElement = {
+      id: 'Task_H',
+      businessObject: { $type: 'bpmn:Task', name: 'Another' }
+    }
     const { modeler, rec } = makeModeler({ root, elements: [elG, elH] })
 
     const result = toggleDiagramLang(modeler)
@@ -494,7 +509,11 @@ describe('toggleDiagramLang', () => {
   it('does not throw and skips the root write when there is no canvas root at all', () => {
     const el: FakeElement = {
       id: 'Task_I',
-      businessObject: { $type: 'bpmn:Task', name: 'Solo', $attrs: { 'orbitpm:nameEn': 'Solo', 'orbitpm:nameAr': 'وحيد' } }
+      businessObject: {
+        $type: 'bpmn:Task',
+        name: 'Solo',
+        $attrs: { 'orbitpm:nameEn': 'Solo', 'orbitpm:nameAr': 'وحيد' }
+      }
     }
     const { modeler, rec } = makeModeler({ elements: [el] }) // no root
 
@@ -644,15 +663,20 @@ describe('toggleDiagramLang', () => {
     expect(approve.businessObject?.$attrs).toEqual({ 'orbitpm:nameEn': 'Approve' })
     expect(approve.businessObject?.$attrs).not.toHaveProperty('orbitpm:nameAr')
 
-    const prompts: string[] = []
+    const requests: LlmMessage[][] = []
     const translated = await translateDiagram(modeler, async (messages) => {
-      prompts.push(messages[0].content)
+      requests.push(messages)
       return { Task_Order: 'طلب', Task_Approve: 'موافقة' }
     })
     expect(translated).toEqual({ translated: 2, skipped: 0, total: 2 })
-    expect(prompts).toHaveLength(1)
-    expect(prompts[0]).toContain('request: Arabic')
-    expect(prompts[0]).not.toContain('request: English')
+    expect(requests).toHaveLength(1)
+    expect(requests[0]?.[0]).toEqual({
+      role: 'system',
+      content: UNTRUSTED_WORKSPACE_SYSTEM_GUARD
+    })
+    const userPrompt = requests[0]?.find((message) => message.role === 'user')?.content
+    expect(userPrompt).toContain('request: Arabic')
+    expect(userPrompt).not.toContain('request: English')
 
     const ar = toggleDiagramLang(modeler)
     expect(ar).toEqual({ switched: 2, missing: 0, to: 'ar', active: 'ar' })

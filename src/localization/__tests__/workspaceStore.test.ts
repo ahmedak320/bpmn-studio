@@ -14,13 +14,18 @@ import {
   WorkspaceLocalizationConflictError,
   WorkspaceLocalizationStore,
   WorkspaceLocalizationValidationError,
+  createWorkspaceGlossaryDocument,
+  createWorkspaceTranslationMemoryDocument,
   parseWorkspaceGlossaryJson,
-  parseWorkspaceTranslationMemoryJson
+  parseWorkspaceTranslationMemoryJson,
+  serializeWorkspaceGlossaryDocument,
+  serializeWorkspaceTranslationMemoryDocument
 } from '../workspaceStore'
 import {
   MemoryWorkspaceAdapter,
   SingleFileWorkspaceAdapter,
-  WORKSPACE_BACKUP_MANIFEST_PATH
+  WORKSPACE_BACKUP_MANIFEST_PATH,
+  type SaveOutcome
 } from '../../workspace/adapters'
 import type { TranslationMemoryEntry } from '../types'
 
@@ -385,6 +390,141 @@ describe('public workspace localization store', () => {
     expect(decode((await adapter.read(WORKSPACE_GLOSSARY_PATH)).bytes)).toBe(external)
   })
 
+  it('keeps a failed corrupt load read-only and recovers the same queued store after repair', async () => {
+    const corrupt = '{"format":"broken","version":1,"entries":[]}'
+    const adapter = new MemoryWorkspaceAdapter({
+      id: 'workspace:corrupt-recovery',
+      files: {
+        [WORKSPACE_GLOSSARY_PATH]: corrupt,
+        [WORKSPACE_TRANSLATION_MEMORY_PATH]: serializeWorkspaceTranslationMemoryDocument(
+          createWorkspaceTranslationMemoryDocument([])
+        )
+      }
+    })
+    const store = new WorkspaceLocalizationStore(adapter)
+    const writeAtomic = vi.spyOn(adapter, 'writeAtomic')
+    const before = await adapter.read(WORKSPACE_GLOSSARY_PATH)
+
+    await expect(store.load()).rejects.toBeInstanceOf(WorkspaceLocalizationValidationError)
+    expect(store.current).toBeUndefined()
+    expect(writeAtomic).not.toHaveBeenCalled()
+    expect((await adapter.read(WORKSPACE_GLOSSARY_PATH)).hash).toBe(before.hash)
+
+    const repaired = [{ en: 'Recovered term', ar: 'مصطلح مستعاد' }]
+    adapter.replaceExternally(
+      WORKSPACE_GLOSSARY_PATH,
+      serializeWorkspaceGlossaryDocument(createWorkspaceGlossaryDocument(repaired))
+    )
+    const recovered = await store.load()
+
+    expect(recovered).toBe(store.current)
+    expect(recovered.resources.glossary).toEqual(repaired)
+    expect(recovered.resources.translationMemory).toEqual([])
+    expect(writeAtomic).not.toHaveBeenCalled()
+  })
+
+  it('adopts external files that win both creation races instead of overwriting them', async () => {
+    const glossary = [{ en: 'External term', ar: 'مصطلح خارجي' }]
+    const translationMemory = [
+      {
+        en: 'External pair',
+        ar: 'زوج خارجي',
+        accepted: true as const,
+        acceptedAt: '2026-07-26T01:02:03.000Z'
+      }
+    ]
+    const raced = new Set<string>()
+    const adapter = new MemoryWorkspaceAdapter({
+      id: 'workspace:seed-races',
+      beforeWrite(path) {
+        if (raced.has(path)) return
+        raced.add(path)
+        if (path === WORKSPACE_GLOSSARY_PATH) {
+          adapter.replaceExternally(
+            path,
+            serializeWorkspaceGlossaryDocument(createWorkspaceGlossaryDocument(glossary))
+          )
+        }
+        if (path === WORKSPACE_TRANSLATION_MEMORY_PATH) {
+          adapter.replaceExternally(
+            path,
+            serializeWorkspaceTranslationMemoryDocument(
+              createWorkspaceTranslationMemoryDocument(translationMemory)
+            )
+          )
+        }
+      }
+    })
+    const writeAtomic = vi.spyOn(adapter, 'writeAtomic')
+
+    const state = await new WorkspaceLocalizationStore(adapter).load()
+
+    expect(raced).toEqual(new Set([WORKSPACE_GLOSSARY_PATH, WORKSPACE_TRANSLATION_MEMORY_PATH]))
+    expect(writeAtomic).toHaveBeenCalledTimes(2)
+    expect(state.resources.glossary).toEqual(glossary)
+    expect(state.resources.translationMemory).toEqual(translationMemory)
+    expect(await jsonFile(adapter, WORKSPACE_GLOSSARY_PATH)).toEqual(
+      JSON.parse(serializeWorkspaceGlossaryDocument(createWorkspaceGlossaryDocument(glossary)))
+    )
+  })
+
+  it.each<{
+    name: string
+    outcome: SaveOutcome
+    expectedCode: string
+  }>([
+    {
+      name: 'storage failure',
+      outcome: {
+        ok: false,
+        status: 'storage-failure',
+        error: {
+          code: 'quota-exceeded',
+          operation: 'write',
+          path: WORKSPACE_GLOSSARY_PATH,
+          message: 'Localization storage is full.'
+        }
+      },
+      expectedCode: 'quota-exceeded'
+    },
+    {
+      name: 'stale workspace',
+      outcome: {
+        ok: false,
+        status: 'stale-workspace',
+        expectedWorkspaceId: 'workspace:seed-failure',
+        actualWorkspaceId: 'workspace:replacement'
+      },
+      expectedCode: 'stale-workspace'
+    }
+  ])(
+    'surfaces a $name during seed and succeeds on explicit reload',
+    async ({ outcome, expectedCode }) => {
+      const adapter = new MemoryWorkspaceAdapter({ id: 'workspace:seed-failure' })
+      const originalWriteAtomic = adapter.writeAtomic.bind(adapter)
+      vi.spyOn(adapter, 'writeAtomic')
+        .mockResolvedValueOnce(outcome)
+        .mockImplementation(originalWriteAtomic)
+      const store = new WorkspaceLocalizationStore(adapter)
+
+      await expect(store.load()).rejects.toMatchObject({
+        name: 'WorkspaceOperationError',
+        code: expectedCode,
+        path: WORKSPACE_GLOSSARY_PATH
+      })
+      expect(store.current).toBeUndefined()
+
+      const recovered = await store.load()
+      expect(recovered).toBe(store.current)
+      expect(recovered.resources.glossary).toEqual([
+        { en: 'API', ar: 'API', neutral: true },
+        { en: 'SLA', ar: 'SLA', neutral: true },
+        { en: 'DMT HUB', ar: 'DMT HUB', neutral: true }
+      ])
+      expect(recovered.resources.translationMemory).toEqual([])
+    }
+  )
+
   it('serializes same-store edits and exposes resources to the non-App modeler API', async () => {
     const adapter = new MemoryWorkspaceAdapter({ id: 'workspace:api-i18n' })
     const store = new WorkspaceLocalizationStore(adapter, {
@@ -426,6 +566,32 @@ describe('public workspace localization store', () => {
     expect(() =>
       assertLocalizationReviewCurrent(localizationModeler('Review request'), review)
     ).not.toThrow()
+  })
+
+  it('loads on the first edit and honors replacement arrays returned by both editors', async () => {
+    const adapter = new MemoryWorkspaceAdapter({ id: 'workspace:first-edit' })
+    const store = new WorkspaceLocalizationStore(adapter)
+
+    const afterGlossary = await store.editGlossary(() => [
+      { en: 'Replacement term', ar: 'مصطلح بديل' }
+    ])
+    expect(afterGlossary.resources.glossary).toEqual([{ en: 'Replacement term', ar: 'مصطلح بديل' }])
+
+    const afterMemory = await store.editTranslationMemory(() => [
+      {
+        en: 'Replacement pair',
+        ar: 'زوج بديل',
+        accepted: true
+      }
+    ])
+    expect(afterMemory.resources.translationMemory).toEqual([
+      {
+        en: 'Replacement pair',
+        ar: 'زوج بديل',
+        accepted: true
+      }
+    ])
+    expect(store.current).toBe(afterMemory)
   })
 
   it('preserves ordered synonyms while validating scripts, timestamps, and unknown fields', () => {
@@ -493,6 +659,112 @@ describe('public workspace localization store', () => {
         ])
       )
     ).toThrow(/ISO-8601/)
+  })
+
+  it.each([
+    {
+      name: 'a scalar document',
+      parse: () => parseWorkspaceGlossaryJson('null'),
+      message: /JSON object or a legacy top-level array/
+    },
+    {
+      name: 'non-array glossary entries',
+      parse: () =>
+        parseWorkspaceGlossaryJson(
+          JSON.stringify({
+            format: WORKSPACE_GLOSSARY_FORMAT,
+            version: 1,
+            entries: {}
+          })
+        ),
+      message: /must be an array/
+    },
+    {
+      name: 'a scalar glossary row',
+      parse: () => parseWorkspaceGlossaryJson(JSON.stringify([17])),
+      message: /must be an object/
+    },
+    {
+      name: 'a non-string term',
+      parse: () => parseWorkspaceGlossaryJson(JSON.stringify([{ en: 17, ar: 'مراجعة' }])),
+      message: /must be a string/
+    },
+    {
+      name: 'control characters',
+      parse: () =>
+        parseWorkspaceGlossaryJson(JSON.stringify([{ en: 'Bad\u0000term', ar: 'مراجعة' }])),
+      message: /control characters/
+    },
+    {
+      name: 'an empty normalized term',
+      parse: () => parseWorkspaceGlossaryJson(JSON.stringify([{ en: '   ', ar: 'مراجعة' }])),
+      message: /must not be empty/
+    },
+    {
+      name: 'multiple unsupported fields',
+      parse: () =>
+        parseWorkspaceGlossaryJson(
+          JSON.stringify({
+            format: WORKSPACE_GLOSSARY_FORMAT,
+            version: 1,
+            entries: [],
+            secret: true,
+            providerDraft: true
+          })
+        ),
+      message: /unsupported fields/
+    },
+    {
+      name: 'a non-boolean neutral marker',
+      parse: () =>
+        parseWorkspaceGlossaryJson(JSON.stringify([{ en: 'API', ar: 'API', neutral: 'yes' }])),
+      message: /must be a boolean/
+    },
+    {
+      name: 'a mismatched neutral pair',
+      parse: () =>
+        parseWorkspaceGlossaryJson(JSON.stringify([{ en: 'API', ar: 'Api', neutral: true }])),
+      message: /same normalized value/
+    },
+    {
+      name: 'Arabic text in the English field',
+      parse: () => parseWorkspaceGlossaryJson(JSON.stringify([{ en: 'مراجعة', ar: 'مراجعة' }])),
+      message: /valid English/
+    },
+    {
+      name: 'non-array translation-memory entries',
+      parse: () =>
+        parseWorkspaceTranslationMemoryJson(
+          JSON.stringify({
+            format: WORKSPACE_TRANSLATION_MEMORY_FORMAT,
+            version: 1,
+            entries: {}
+          })
+        ),
+      message: /must be an array/
+    },
+    {
+      name: 'a scalar translation-memory row',
+      parse: () => parseWorkspaceTranslationMemoryJson(JSON.stringify([17])),
+      message: /must be an object/
+    },
+    {
+      name: 'a non-string acceptance timestamp',
+      parse: () =>
+        parseWorkspaceTranslationMemoryJson(
+          JSON.stringify([
+            {
+              en: 'Review',
+              ar: 'مراجعة',
+              accepted: true,
+              acceptedAt: 17
+            }
+          ])
+        ),
+      message: /ISO-8601/
+    }
+  ])('rejects $name at the public schema boundary', ({ parse, message }) => {
+    expect(parse).toThrow(message)
   })
 
   it('refuses single-file adapters because public i18n files require a workspace', () => {
