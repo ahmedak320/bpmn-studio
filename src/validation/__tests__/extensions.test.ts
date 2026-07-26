@@ -5,6 +5,26 @@ import { snapshotUnknownExtensions, validateUnknownExtensionPreservation } from 
 import { UNKNOWN_EXTENSION_XML } from './fixtures'
 
 describe('unknown BPMN extension preservation', () => {
+  it('does not mistake canonical moddle types for extensions with a default BPMN namespace', async () => {
+    const defaultNamespaceXml = `<?xml version="1.0" encoding="UTF-8"?>
+<definitions xmlns="http://www.omg.org/spec/BPMN/20100524/MODEL"
+  id="Definitions_default"
+  targetNamespace="https://example.test/default">
+  <process id="Process_default" isExecutable="false" />
+</definitions>`
+    const prefixedXml = `<?xml version="1.0" encoding="UTF-8"?>
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL"
+  id="Definitions_default"
+  targetNamespace="https://example.test/default">
+  <bpmn:process id="Process_default" isExecutable="false" />
+</bpmn:definitions>`
+
+    await expect(snapshotUnknownExtensions(defaultNamespaceXml)).resolves.toEqual([])
+    await expect(
+      validateUnknownExtensionPreservation(defaultNamespaceXml, prefixedXml)
+    ).resolves.toMatchObject({ valid: true, issues: [] })
+  })
+
   it('captures opaque attributes and complete nested extension elements', async () => {
     const snapshots = await snapshotUnknownExtensions(UNKNOWN_EXTENSION_XML)
     expect(snapshots).toHaveLength(2)

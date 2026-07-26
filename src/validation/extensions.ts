@@ -36,6 +36,19 @@ const KNOWN_NAMESPACE_URIS = new Set([
   'http://www.w3.org/XML/1998/namespace'
 ])
 
+// `$type` values are moddle model names, not source XML qualified names.
+// bpmn-moddle therefore reports `bpmn:Definitions` even when the document
+// binds the BPMN model URI as the default namespace or uses `bpmn2`. Resolve
+// those canonical model prefixes before consulting the source namespace map.
+const MODEL_TYPE_NAMESPACES: Readonly<Record<string, string>> = {
+  bpmn: 'http://www.omg.org/spec/BPMN/20100524/MODEL',
+  bpmndi: 'http://www.omg.org/spec/BPMN/20100524/DI',
+  dc: 'http://www.omg.org/spec/DD/20100524/DC',
+  di: 'http://www.omg.org/spec/DD/20100524/DI',
+  orbitpm: 'http://orbitpm.ae/schema/bpmn/1.0',
+  xsi: 'http://www.w3.org/2001/XMLSchema-instance'
+}
+
 export interface UnknownExtensionSnapshot {
   /** Canonical semantic signature, including placement and namespace URIs. */
   signature: string
@@ -81,6 +94,21 @@ function semanticName(
   }
 }
 
+function semanticTypeName(
+  qname: string,
+  namespaces: ReadonlyMap<string, string>
+): { namespaceUri: string; localName: string; semantic: string } {
+  const { prefix, localName } = splitQName(qname)
+  const namespaceUri = prefix
+    ? (MODEL_TYPE_NAMESPACES[prefix] ?? namespaces.get(prefix) ?? `unbound:${prefix}`)
+    : (namespaces.get('') ?? '')
+  return {
+    namespaceUri,
+    localName,
+    semantic: `{${namespaceUri}}${localName}`
+  }
+}
+
 function stableObject(value: unknown): unknown {
   if (Array.isArray(value)) return value.map(stableObject)
   if (!value || typeof value !== 'object') return value
@@ -95,7 +123,7 @@ function canonicalUnknownElement(
   element: GenericElement,
   namespaces: ReadonlyMap<string, string>
 ): unknown {
-  const typeName = semanticName(element.$type ?? '', namespaces, false)
+  const typeName = semanticTypeName(element.$type ?? '', namespaces)
   const attributes: Record<string, string> = {}
   for (const [key, value] of Object.entries(element)) {
     if (key.startsWith('$') || typeof value === 'object' || value === undefined) continue
@@ -178,7 +206,7 @@ function snapshotsFromRoot(
   const visit = (element: GenericElement): void => {
     if (visited.has(element)) return
     visited.add(element)
-    const elementName = semanticName(element.$type ?? '', namespaces, false)
+    const elementName = semanticTypeName(element.$type ?? '', namespaces)
     const isUnknownElement =
       Boolean(element.$type) && !KNOWN_NAMESPACE_URIS.has(elementName.namespaceUri)
 
