@@ -20,6 +20,11 @@ check its visible version before using it as 0.4.5.
   workspaces where supported, and an explicit single-file open/download mode.
 - Portable workspace ZIP backups and bounded history for directory and OPFS
   workspaces.
+- Application-owned document sessions with active-tab-only saving, dirty-exit
+  protection, local recovery drafts, reviewed external-change choices, and
+  transactional rename, move, and delete operations.
+- Versioned public workspace manifests plus editable glossary and accepted
+  translation-memory files in directory and OPFS workspaces.
 - Layered BPMN validation, a validation center, safe source preview/apply, and
   deterministic PNG, SVG, and PDF export.
 - Deterministic, offline `.xlsx` and UTF-8 `.csv` process generation, including
@@ -70,16 +75,18 @@ provider.
 
 ## Important limitations
 
-The 0.4.5 candidate does not yet integrate the repository's document-session
-safety modules into the production App. Do not rely on automatic IndexedDB
-draft recovery, a dirty-document unload warning, cross-tab workspace locking,
-transactional rename/move/delete of dirty tabs, or the complete external-edit
-conflict choices. Current path operations close affected tabs, and a detected
-save conflict is reported as an error.
+Recovery drafts are browser-private and are not a substitute for saving or
+exporting a backup. They normally use IndexedDB; if durable browser storage is
+unavailable, the App warns that its in-memory fallback will not survive a
+reload. Cross-tab leases are advisory, with expected-hash writes as the final
+conflict guard.
 
-Single-file mode is intentionally minimal; multi-file backup and history
-affordances are designed for directory and OPFS workspaces. Manual NVDA and
-VoiceOver verification and the required 48-hour soak have not been completed.
+Single-file mode is intentionally minimal; multi-file backup, portable history,
+workspace manifests, and workspace glossary/TM editing are for directory and
+OPFS workspaces. The final browser/version matrix, manual NVDA and VoiceOver
+verification, Arabic screen-reader review, and required uninterrupted 48-hour
+soak have not been completed. No final browser-support or WCAG conformance claim
+is made for this candidate.
 
 See [docs/SUPPORT_AND_LIMITATIONS.md](docs/SUPPORT_AND_LIMITATIONS.md) for the
 full support boundary and [STATUS.md](STATUS.md) for release readiness.

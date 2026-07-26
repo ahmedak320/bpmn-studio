@@ -17,11 +17,12 @@ or an earlier passing artifact is not final release evidence.
 | Draft/published release URL                     | **PENDING**               |
 | Pages deployment URL and commit                 | **PENDING**               |
 | Final `SHA256SUMS.txt`                          | **PENDING**               |
+| Deterministic release-note file and SHA-256     | **PENDING**               |
 
 Do not replace a pending field with a branch name, local build, or intended
 value.
 
-## Candidate evidence gathered on 2026-07-26
+## Candidate evidence snapshot from 2026-07-26
 
 These results informed development but must be rerun after the documentation
 commit and from the final clean release commit.
@@ -40,11 +41,23 @@ commit and from the final clean release commit.
 | Automated accessibility          | A prior candidate artifact reported 16/16 axe combinations for English/Arabic, light/dark, desktop/mobile                                                                                                                                                                                                    | Stale; pending final artifact     |
 | Single-file artifact             | A local shared-worktree candidate was within the 8 MiB raw and 2.5 MiB gzip budgets                                                                                                                                                                                                                          | Not a clean final-commit artifact |
 
-One known browser-test mismatch remains at the time of this index: the provider
-CSP E2E assertion must include the intentional `data:` source used by embedded
-WASM. The source and built CSP static check already expects that source, but the
-full browser suite cannot be called green until the E2E assertion and final run
-agree.
+## Later focused integration evidence
+
+These focused results were gathered after the snapshot above. They still do not
+replace a clean full-suite run from the final release commit.
+
+| Area                           | Candidate evidence                                                                                                                                                                        | Final-release status           |
+| ------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------ |
+| Session-safety branch gate     | Commit `7b881b0`: 194 focused tests, 91.47% branch coverage                                                                                                                               | Pending final coverage run     |
+| Translation branch gate        | Commit `94cb681`: 150 focused tests, 90.92% branch coverage                                                                                                                               | Pending final coverage run     |
+| Import-transaction branch gate | Commit `eb4c665`: 90.05% branch coverage with the critical-profile gate enabled                                                                                                           | Pending final coverage run     |
+| Bounded archive extraction     | Commit `6aafb75`: focused archive/backup suites reported 104 passing tests                                                                                                                | Pending final malformed run    |
+| Runtime CSP negative gate      | Commit `86b5ef9`: disallowed HTTP egress was rejected before Playwright routing in focused Chromium and Firefox runs; local WebKit was unavailable because `libevent-2.1.so.7` is missing | Pending final three-engine run |
+
+The earlier CSP assertion mismatch is corrected in candidate source:
+`connect-src data:` is intentionally retained for the embedded xmllint WASM,
+while `data:` is not treated as a remote egress host. The complete three-engine
+run and exact release-artifact result remain pending.
 
 ## Required automated checklist for the final commit
 
@@ -54,6 +67,7 @@ agree.
 | Formatting, GitHub Actions lint, strict TypeScript, ESLint                       | `Lite Quality / policy` log                                 | **PENDING** |
 | No skipped/only/retried tests and Lite-only active tree                          | `Lite Quality / policy` log                                 | **PENDING** |
 | Exact source and built CSP allowlist                                             | `Lite Quality / policy` and `build` logs                    | **PENDING** |
+| Runtime success for approved CSP requests and rejection of disallowed HTTP hosts | browser security report                                     | **PENDING** |
 | Full and production dependency audit                                             | `Lite Quality / policy` log                                 | **PENDING** |
 | Current-tree and complete-history secret scan                                    | `Lite Quality / secrets` log                                | **PENDING** |
 | Lockfile-derived license inventory and CycloneDX 1.6 SBOM                        | `orbitpm-compliance-<sha>`                                  | **PENDING** |
@@ -73,23 +87,50 @@ agree.
 
 ## Required human and remote checklist
 
-| Requirement                                                                                              | State                 | Evidence to record                                       |
-| -------------------------------------------------------------------------------------------------------- | --------------------- | -------------------------------------------------------- |
-| Reviewed PR merged into protected `main`; required checks belong to merge commit                         | **PENDING**           | PR URL and merge SHA                                     |
-| `main`, `origin/main`, and `v0.4.5^{}` are identical                                                     | **PENDING**           | Three resolved SHAs and tag object                       |
-| Draft release contains exactly seven allowlisted assets and verified checksums                           | **PENDING**           | Draft URL and downloaded verification log                |
-| Pages serves byte-identical tested HTML                                                                  | **PENDING**           | Deployment URL, SHA, and byte comparison                 |
-| Pages smoke in current Chrome, Edge, Firefox, and Safari/WebKit, English and Arabic                      | **NOT PERFORMED**     | Browser/version matrix and results                       |
-| NVDA on Windows keyboard-authoring smoke                                                                 | **NOT PERFORMED**     | Operator, OS/AT/browser versions, scenarios, findings    |
-| VoiceOver on macOS keyboard-authoring smoke                                                              | **NOT PERFORMED**     | Operator, OS/AT/browser versions, scenarios, findings    |
-| Arabic screen-reader language change and mixed-language pronunciation review                             | **NOT PERFORMED**     | Operator, AT/browser versions, findings                  |
-| 48-hour edit/recovery/workspace/import/translation/history soak                                          | **NOT PERFORMED**     | Start/end, build SHA, scenario log, memory/storage trend |
-| Zero unresolved P0/P1 defect sign-off                                                                    | **PENDING**           | Reviewed defect ledger                                   |
-| Publish stable `v0.4.5` release                                                                          | **PENDING**           | Published release URL and state                          |
-| Mark older releases archived and remove historical executable/updater assets only after 0.4.5 validation | **PENDING BY DESIGN** | Release edit log matched to archive manifest             |
+| Requirement                                                                                              | State                 | Evidence to record                                        |
+| -------------------------------------------------------------------------------------------------------- | --------------------- | --------------------------------------------------------- |
+| Reviewed PR merged into protected `main`; required checks belong to merge commit                         | **PENDING**           | PR URL and merge SHA                                      |
+| `main`, `origin/main`, and `v0.4.5^{}` are identical                                                     | **PENDING**           | Three resolved SHAs and tag object                        |
+| Draft release contains exactly seven allowlisted assets and verified checksums                           | **PENDING**           | Draft URL and downloaded verification log                 |
+| Pages serves byte-identical tested HTML                                                                  | **PENDING**           | Deployment URL, SHA, and byte comparison                  |
+| File and Pages smoke in Chrome, Edge, Firefox, and Safari/WebKit, English and Arabic                     | **NOT PERFORMED**     | URL/file hash, commit, OS and exact browser versions      |
+| Previous-major browser compatibility                                                                     | **NOT PERFORMED**     | Exact OS/browser versions or an explicitly narrowed claim |
+| NVDA on Windows keyboard-authoring smoke                                                                 | **NOT PERFORMED**     | Operator, OS/NVDA/browser versions, scenarios, findings   |
+| VoiceOver on macOS keyboard-authoring smoke                                                              | **NOT PERFORMED**     | Operator, OS/VoiceOver/browser versions, scenarios        |
+| Arabic screen-reader language change and mixed-language pronunciation review                             | **NOT PERFORMED**     | Operator, OS/AT/browser versions, locale, findings        |
+| 48-hour edit/recovery/workspace/import/translation/history soak                                          | **NOT PERFORMED**     | Start/end, build SHA, scenario log, memory/storage trend  |
+| Zero unresolved P0/P1 defect sign-off                                                                    | **PENDING**           | Reviewed defect ledger                                    |
+| Publish stable `v0.4.5` release                                                                          | **PENDING**           | Published release URL and state                           |
+| Mark older releases archived and remove historical executable/updater assets only after 0.4.5 validation | **PENDING BY DESIGN** | Release edit log matched to archive manifest              |
 
 Automated axe results must never be substituted for the NVDA, VoiceOver, or
 Arabic pronunciation rows.
+
+### Browser evidence record
+
+Do not record only an engine family. Each completed row must identify the exact
+HTML SHA-256 or Pages URL, release commit, operating-system version, browser
+name/version, application locale, and result.
+
+| Delivery  | Application locale | OS/version  | Browser/version | Commit and artifact/URL | Result      |
+| --------- | ------------------ | ----------- | --------------- | ----------------------- | ----------- |
+| `file://` | English            | **PENDING** | **PENDING**     | **PENDING**             | **PENDING** |
+| `file://` | Arabic             | **PENDING** | **PENDING**     | **PENDING**             | **PENDING** |
+| Pages     | English            | **PENDING** | **PENDING**     | **PENDING**             | **PENDING** |
+| Pages     | Arabic             | **PENDING** | **PENDING**     | **PENDING**             | **PENDING** |
+
+Add rows until Chrome, Edge, Firefox, and Safari/WebKit are each represented.
+No current, previous-major, or platform-wide support claim follows from an
+unrecorded browser version.
+
+### Manual accessibility and soak record
+
+The final evidence must record operator, date/time zone, release SHA, OS,
+assistive-technology version, browser version, application locale, scenarios,
+and findings. The uninterrupted 48-hour soak must additionally record start/end
+times, restart or interruption declarations, memory/storage samples, history
+retention observations, and the reviewed P0/P1 defect ledger. All fields remain
+**PENDING**.
 
 ## Expected release asset allowlist
 
@@ -105,6 +146,11 @@ The final release may contain exactly:
 
 No executable, installer, updater manifest, blockmap, native shell, server, or
 alternate application is an allowed 0.4.5 asset.
+
+The deterministic release body is
+[RELEASE_NOTES_0.4.5.md](RELEASE_NOTES_0.4.5.md). Its final SHA-256 must be
+recorded in the identity table and the tag workflow must use those exact bytes;
+generated or provider-dependent release notes are not equivalent evidence.
 
 ## Immutable archive evidence
 

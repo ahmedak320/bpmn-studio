@@ -54,23 +54,30 @@ See [docs/PRIVACY.md](docs/PRIVACY.md) for the complete data-flow disclosure.
 
 Imported files are untrusted. Current parser boundaries include:
 
-| Input            | Principal limits                                                                                |
-| ---------------- | ----------------------------------------------------------------------------------------------- |
-| Library ZIP      | 64 MiB compressed, 2,500 entries, 5 MiB per entry, 50 MiB total uncompressed, ratio 250         |
-| DOCX             | 20 MiB compressed, 2,048 entries, 12 MiB per entry, 64 MiB total uncompressed, ratio 250        |
-| XLSX             | 20 MiB compressed, 10,000 ZIP entries, 100 MiB declared uncompressed, 25 sheets                 |
-| CSV/XLSX data    | 50,000 rows, 256 columns, 500,000 non-empty cells, 32,767 characters per cell                   |
-| Workspace backup | 120 MiB compressed, 25,000 entries, 100 MiB per entry, 250 MiB declared uncompressed, ratio 200 |
+| Input                | Principal limits                                                                                |
+| -------------------- | ----------------------------------------------------------------------------------------------- |
+| BPMN/XML/ARIS picker | 20 MiB per file; workspace import also caps 2,500 sources and 50 MiB total source bytes         |
+| Library ZIP          | 64 MiB compressed, 2,500 entries, 5 MiB per entry, 50 MiB total uncompressed, ratio 250         |
+| DOCX                 | 20 MiB compressed, 2,048 entries, 12 MiB per entry, 64 MiB total uncompressed, ratio 250        |
+| XLSX                 | 20 MiB compressed, 10,000 ZIP entries, 100 MiB declared uncompressed, 25 sheets                 |
+| CSV/XLSX data        | 50,000 rows, 256 columns, 500,000 non-empty cells, 32,767 characters per cell                   |
+| Workspace backup     | 120 MiB compressed, 25,000 entries, 100 MiB per entry, 250 MiB declared uncompressed, ratio 200 |
 
 Encrypted, multi-disk, ZIP64, unsafe-path, duplicate-entry, and unsupported
 compression archives are rejected. XLSX macro, ActiveX, embedded executable,
 and legacy encrypted content is rejected. Spreadsheet external links and data
 connections are ignored with warnings; formulas are never executed.
 
-Known residual limitation: browser file selection currently obtains the whole
-compressed file with `File.arrayBuffer()` before the parser applies its
-compressed-size gate. A very large local file can therefore allocate memory
-before preflight rejects it. Do not open untrusted oversized inputs.
+Explicit picker boundaries check the browser's `File.size` before calling
+`File.arrayBuffer()` and repeat the check against the returned byte length.
+Archive metadata, expanded sizes, CRCs, paths, entry counts, and ratios are then
+verified before or during bounded extraction.
+
+These picker gates do not make an entire user-selected directory trustworthy.
+Directory-workspace scans must read workspace BPMN files to index them, and
+browser storage implementations can still fail under memory or quota pressure.
+Keep untrusted or unusually large files outside a selected workspace and retain
+an independent backup.
 
 ## Release security evidence
 

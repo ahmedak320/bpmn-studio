@@ -13,20 +13,25 @@ features contact third parties only as described below.
 | Browser workspace files                                                                           | Origin Private File System (OPFS) for this browser profile | Yes, when the user exports a backup |
 | Single-file document                                                                              | In the open page until explicitly downloaded               | No workspace backup                 |
 | Portable history                                                                                  | `.orbitpm/history` inside a directory or OPFS workspace    | Yes                                 |
+| Public workspace manifest, glossary, and accepted translation memory                              | `.orbitpm/manifest.json` and `.orbitpm/i18n/`              | Yes                                 |
+| Dirty-document recovery drafts                                                                    | Browser IndexedDB; memory-only fallback when unavailable   | No                                  |
 | Remembered directory handle                                                                       | Browser IndexedDB                                          | No                                  |
 | Interface language, pane sizes, display preferences, provider/model selection, and mapping drafts | Browser local storage                                      | No                                  |
 | Session API keys                                                                                  | Page memory                                                | No                                  |
 | Opt-in encrypted API keys                                                                         | Ciphertext in browser local storage                        | No                                  |
 | AI usage ledger                                                                                   | Browser local storage                                      | No                                  |
 
-The document-session draft journal present in the source tree is not integrated
-into the production App. The candidate therefore does not currently persist
-automatic dirty-document recovery drafts.
+Recovery records contain the document XML, workspace/path identity, base hash,
+timestamp, and application version. They are written after a two-second dirty
+debounce and on blur or `pagehide`, and are removed only after a confirmed save
+or explicit discard. If IndexedDB is unavailable, the App reports that its
+memory-only fallback will not survive reload.
 
-Clearing site data can remove OPFS workspaces, encrypted credentials, the
-remembered directory handle, mapping drafts, usage totals, and preferences.
-It does not delete a user-selected directory workspace. Export a workspace
-backup before clearing browser data or changing profiles/devices.
+Clearing site data can remove OPFS workspaces, recovery drafts, encrypted
+credentials, the remembered directory handle, mapping drafts, usage totals,
+and preferences. It does not delete a user-selected directory workspace.
+Export a workspace backup before clearing browser data or changing
+profiles/devices.
 
 ## Network behavior
 
@@ -38,8 +43,11 @@ The production CSP permits connections only to:
 - `https://translate.googleapis.com`
 - `https://api.mymemory.translated.net`
 
-It also permits `data:` for the embedded validation WASM module. `data:` is not
-an external network host.
+The `connect-src` directive also permits `data:` so the embedded validation
+WASM can be fetched from the document itself. A `data:` URL has no remote host
+and does not perform DNS or HTTP egress. The release gate separately attempts
+disallowed HTTP origins at runtime; final evidence for that test still belongs
+to the exact release commit.
 
 When using the GitHub Pages copy, the browser first downloads the application
 from GitHub Pages. A downloaded release HTML loads its application code and
@@ -120,16 +128,17 @@ metadata, portable history, an import manifest, and SHA-256 checksums. It can
 therefore contain deleted or overwritten process content retained in history.
 Review the archive before sharing it.
 
-Browser-private keys, encrypted key records, provider usage, preferences,
-remembered handles, and mapping drafts are not part of a workspace backup.
+Browser-private recovery drafts, keys, encrypted key records, provider usage,
+preferences, remembered handles, and mapping drafts are not part of a workspace
+backup.
 
 ## Removing local data
 
 1. Use **Settings → Clear key** for every configured provider.
 2. Use the AI usage **Reset** action if local usage totals should be removed.
 3. Export any needed OPFS workspace backup.
-4. Clear the site's browser storage to remove OPFS, IndexedDB handles, local
-   preferences, encrypted key records, and mapping drafts.
+4. Clear the site's browser storage to remove OPFS, recovery drafts, IndexedDB
+   handles, local preferences, encrypted key records, and mapping drafts.
 5. Delete directory workspace files and `.orbitpm/history` from the selected
    folder separately if they should also be removed.
 

@@ -16,11 +16,18 @@ final evidence checklist.
   verification, collision review, rollback, and bounded archive preflight.
 - Portable `.orbitpm/history` revisions for directory and OPFS workspaces,
   including preview, diff, restore, and restore-as-copy.
+- Application-owned document sessions with active-tab-only shortcuts, IndexedDB
+  draft recovery, dirty-exit protection, advisory cross-tab leases and change
+  notifications, transactional path changes, and reviewed external conflicts.
+- Versioned public workspace manifests plus editable
+  `.orbitpm/i18n/glossary.json` and accepted
+  `.orbitpm/i18n/translation-memory.json` resources.
 - Layered validation using secure XML preflight, BPMN moddle diagnostics, OMG
   BPMN 2.0 XSD validation, recommended bpmnlint rules, structural/DI checks,
   bilingual checks, and unknown-extension preservation checks.
-- Validation Center, XML source preview/apply, missing-DI layout preview, an
-  explicit semantic draft-save path, and deterministic direct PDF export.
+- Validation Center, XML source preview/apply, reviewed and revalidated
+  missing-DI auto-layout, an explicit semantic draft-save path, and
+  deterministic direct PDF export.
 - Script-aware English/Arabic auditing, reviewed translation plans, visible
   label projection, cancellation, and one-command undo for language changes.
 - Deterministic `.xlsx` and UTF-8 `.csv` process generation with official
@@ -82,14 +89,14 @@ compatibility contract.
 
 ### Known candidate limitations
 
-- Production document sessions do not yet wire automatic recovery drafts,
-  unload protection, cross-tab locking, transactional dirty-tab path changes,
-  or the complete external-edit conflict choices.
-- Single-file mode is a minimal open/edit/download workflow.
-- Workspace-editable glossary and accepted translation-memory file persistence
-  are not yet wired into the App; the reviewed built-in glossary is active.
-- Final three-browser, final automated accessibility, manual assistive
-  technology, 48-hour soak, tag, release, and Pages evidence remain pending.
+- Recovery drafts are browser-private and depend on IndexedDB for durability;
+  the warned in-memory fallback does not survive reload.
+- Single-file mode is a minimal open/edit/download workflow without portable
+  history, multi-file backup, manifest, or public workspace glossary/TM files.
+- The required rendered before/after preview for missing-DI auto-layout is not
+  complete.
+- Final browser/version, automated accessibility, manual assistive technology,
+  uninterrupted 48-hour soak, tag, release, and Pages evidence remain pending.
 
 See [docs/SUPPORT_AND_LIMITATIONS.md](docs/SUPPORT_AND_LIMITATIONS.md) and
 [docs/RELEASE_EVIDENCE.md](docs/RELEASE_EVIDENCE.md).

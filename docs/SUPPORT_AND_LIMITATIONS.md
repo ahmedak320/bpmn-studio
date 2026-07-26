@@ -6,8 +6,11 @@ depends on the exact release artifact passing
 
 ## Browser and delivery support
 
-The intended release support target is the current and previous major Chrome,
-Edge, Firefox, and Safari releases.
+The release plan targets Chrome, Edge, Firefox, and Safari/WebKit, but this
+candidate does not yet make a blanket browser-version support claim. Support
+will be limited to the exact browser and operating-system versions recorded in
+the final file/Pages evidence. Previous-major compatibility has not yet been
+tested and is not claimed by this document.
 
 - Folder workspaces require the File System Access API and are intended
   principally for Chrome and Edge.
@@ -19,8 +22,8 @@ Edge, Firefox, and Safari releases.
   translation calls still require network access.
 - GitHub Pages is a convenience host, not a storage or collaboration backend.
 
-The final real-browser Pages smoke and complete release-commit browser matrix
-are pending.
+The final real-browser Pages smoke, exact release-HTML smoke, and complete
+release-commit engine matrix are pending.
 
 ## Storage modes
 
@@ -35,21 +38,26 @@ all public workspace files, and `.orbitpm/history`. Import is preflighted and
 offers collision choices. Browser-private provider keys, UI preferences, and
 usage records are not exported.
 
-### Session-safety limitations
+### Session safety and residual boundaries
 
-The repository contains tested session-safety primitives, but the production
-App does not yet import that controller. Consequently:
+The production App uses one document-session controller. Ctrl/Cmd+S routes only
+to the active session, dirty sessions install a `beforeunload` guard, and a
+two-second debounced recovery journal also flushes on blur and `pagehide`.
+Opening a document with a retained draft shows a comparison and offers restore,
+discard, and recovery download choices.
 
-- no automatic IndexedDB dirty-draft journal or reload recovery is active;
-- no dirty-document `beforeunload` warning is active;
-- no BroadcastChannel cross-tab lock or change notification is active;
-- rename, move, and delete close affected tabs rather than transactionally
-  migrating a live dirty session;
-- external changes detected on save produce an error instead of the complete
-  compare/reload/overwrite/save-as decision workflow.
+Rename, move, and delete are session-aware transactions. Dirty affected
+sessions receive Save and continue, Continue without saving, or Cancel choices;
+portable history and staging/rollback protect durable files. External changes
+receive compare, reviewed reload, explicitly confirmed overwrite, and save-as
+choices.
 
-Save important work frequently, avoid editing one workspace in multiple tabs,
-and export backups before path operations or storage-mode changes.
+Cross-tab coordination uses advisory BroadcastChannel leases and change
+notifications. Expected-hash atomic writes remain the final authority if a
+message is lost, a tab crashes, or a lease expires. IndexedDB provides durable
+drafts when available; a visible warning accompanies the in-memory fallback,
+which does not survive reload. Drafts are browser-private and do not replace
+ordinary saves or exported backups.
 
 ## Supported inputs and exports
 
@@ -74,12 +82,19 @@ expansion, 25 sheets, 50,000 rows, 256 columns, 500,000 non-empty cells, 32,767
 characters per cell, 1,000 BPMN nodes per process, and 5,000 nodes per import
 transaction. Diagrams above 250 nodes receive a readability warning.
 
+Explicit BPMN/XML/ARIS picker reads are capped at 20 MiB per source before
+allocation. A workspace import accepts at most 2,500 sources and 50 MiB total
+source bytes. Library ZIP, DOCX, spreadsheet, and backup pickers likewise check
+`File.size` before reading and then verify the returned byte length.
+
 ## BPMN and localization behavior
 
 - XML is checked by layered validation. Invalid XML cannot be applied.
 - Semantic blockers require explicit draft-save confirmation; generated and
   imported output cannot be committed with blocking findings.
-- Missing DI can be laid out only through a preview/accept flow.
+- Missing DI can be laid out only after an explicit repair decision and exact
+  output revalidation. The required rendered before/after visual preview is
+  still a release blocker.
 - Unknown extension content is compared before normalized XML replaces the
   source. A preservation failure blocks the replacement.
 - English/Arabic validity is script-aware. A nonblank target is not considered
@@ -88,9 +103,11 @@ transaction. Diagrams above 250 nodes receive a readability warning.
   targets open a review.
 - Translation review can project only complete valid results automatically;
   partial preview is explicit and provider failures remain visible.
-- The current App uses the reviewed built-in neutral glossary. Workspace-editable
-  `.orbitpm/i18n/glossary.json` and accepted translation-memory persistence are
-  not yet integrated into the production UI.
+- Directory and OPFS workspaces load an editable
+  `.orbitpm/i18n/glossary.json` and accepted
+  `.orbitpm/i18n/translation-memory.json`. Settings writes use expected-hash
+  conflict checks. Single-file mode uses the reviewed built-in resources and
+  does not create public workspace localization files.
 
 ## AI and translation support
 

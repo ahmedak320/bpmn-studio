@@ -1,6 +1,6 @@
 # OrbitPM Process Studio Lite status
 
-Last updated: 2026-07-26
+Last updated: 2026-07-27
 
 ## Release state
 
@@ -21,6 +21,12 @@ requirement by themselves.
 - Lite-only root application and allowlisted single-file release assembly
 - Directory, OPFS, and single-file workspace adapters
 - Portable workspace backup import/export and directory/OPFS recovery history
+- Application-owned document sessions, active-tab-only shortcuts, IndexedDB
+  recovery comparisons, `beforeunload` protection, advisory cross-tab leases,
+  reviewed external-conflict choices, and transactional dirty-tab path changes
+- Versioned `.orbitpm/manifest.json`, editable workspace glossary and accepted
+  translation memory, and reviewed localization at workspace import/open/restore
+  boundaries
 - Layered validation, source preview/apply, draft-with-errors confirmation, and
   deterministic PDF export
 - Script-aware English/Arabic audit, reviewed translation, cancellation, and
@@ -37,44 +43,35 @@ requirement by themselves.
 ## Current objective evidence
 
 The detailed index is [docs/RELEASE_EVIDENCE.md](docs/RELEASE_EVIDENCE.md).
-The latest reported candidate checks include:
-
-- Coverage: 1,788 tests; 81.86% lines/statements, 84.75% branches, and 84.59%
-  functions. Critical branch profiles are above 90%.
-- Validation: 53 focused tests plus real OMG BPMN XSD and bpmnlint
-  accept/reject fixtures.
-- Malformed archives and spreadsheets: 85 focused archive tests; spreadsheet
-  core and integration checks are green.
-- Stable-artifact focused browser checks: spreadsheet Chromium 6/6 and the
-  final three-case localization spot check 3/3.
-- Performance evidence: 500-node and 1,000-node real worker-to-preview medians
-  remained inside the 3 s/10 s budgets and 250 ms parse-heartbeat budget.
-- Supply chain: exact lock check, license policy, CycloneDX generation, npm
-  full/production audit with zero findings, and current/history secret scans
-  have reported green candidate runs.
+The evidence index retains dated, commit-scoped candidate results. More recent
+focused gates report session-safety branch coverage at 91.47% (194 tests),
+translation-validation branch coverage at 90.92% (150 tests), and
+import-transaction branch coverage at 90.05%. Bounded archive extraction and a
+runtime CSP negative-egress scenario also have focused candidate coverage.
+Earlier overall coverage, standards, browser, performance, accessibility, and
+supply-chain snapshots remain historical engineering evidence only.
 
 These are not a substitute for rerunning the complete workflow on the final
 documentation commit and later on the release tag.
 
 ## Known release blockers and pending evidence
 
-1. The standalone `src/sessions` recovery and coordination modules are not
-   imported by the production App. Automatic IndexedDB draft recovery,
-   `beforeunload` protection, BroadcastChannel collision handling, transactional
-   dirty-tab path operations, and the complete external-edit conflict workflow
-   must not be claimed as production behavior.
-2. The full format/lint/policy suite, fresh build, exact artifact assembly and
+1. The full format/lint/policy suite, fresh build, exact artifact assembly and
    reproducibility, complete Chromium/Firefox/WebKit matrix, and final automated
    accessibility matrix must be rerun from the final candidate commit.
-3. A provider E2E assertion still needs to be aligned with the intentional
-   `data:` CSP source used for embedded WASM before the full browser suite can
-   be considered green.
+2. Missing-DI ingestion still needs the required rendered before/after
+   auto-layout preview; a reviewed textual repair decision and revalidation are
+   not sufficient final evidence for that visual acceptance gate.
+3. Exact current browser versions and operating systems must be recorded for
+   the final Pages/file smoke. Previous-major compatibility has not been
+   evidenced and is not currently claimed.
 4. Manual NVDA/Windows, VoiceOver/macOS, Arabic language/pronunciation, real
    Pages browser smoke, and the 48-hour soak are pending.
 5. `main`, `origin/main`, and `v0.4.5^{}` do not yet point to one release commit.
    No 0.4.5 tag, draft release, published release, or 0.4.5 Pages deployment has
    been evidenced.
-6. Historical executable assets remain published until the final 0.4.5
+6. The release PR still requires substantive review and protected-branch
+   evidence. Historical executable assets remain published until the final 0.4.5
    artifact and deployment pass the release plan, as required by the archival
    sequence.
 

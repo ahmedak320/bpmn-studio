@@ -95,24 +95,61 @@ OrbitPM moddle descriptor does not understand.
 
 ## Workspace files
 
-The active portable workspace feature uses:
+Directory and OPFS workspaces use these public, portable paths:
 
-- `.orbitpm/history/` for bounded revisions in directory and OPFS workspaces.
+- `.orbitpm/history/` for bounded revisions;
+- `.orbitpm/i18n/glossary.json` for reviewed bilingual terms and explicit
+  neutral approvals;
+- `.orbitpm/i18n/translation-memory.json` for explicitly accepted bilingual
+  pairs; and
+- `.orbitpm/manifest.json` for the workspace identity, format version, public
+  checksum policy, and history/localization policy metadata.
 
-The release plan reserves these public paths:
+The localization files use version 1 envelopes:
 
-- `.orbitpm/i18n/glossary.json`
-- `.orbitpm/i18n/translation-memory.json`
-- `.orbitpm/manifest.json`
+```json
+{
+  "format": "orbitpm-localization-glossary",
+  "version": 1,
+  "entries": [{ "en": "API", "ar": "API", "neutral": true }]
+}
+```
 
-The current App does not yet provide persistence/editing UI for those glossary,
-translation-memory, or workspace-manifest files. If they already exist, the
-workspace adapter treats them as public files and includes them in a complete
-backup; do not rely on the App to update their schema in this candidate.
+```json
+{
+  "format": "orbitpm-localization-translation-memory",
+  "version": 1,
+  "entries": [
+    {
+      "en": "Approve request",
+      "ar": "اعتماد الطلب",
+      "accepted": true
+    }
+  ]
+}
+```
+
+Missing localization files are initialized with the reviewed glossary seed and
+an empty translation memory. A legacy top-level entry array is validated and
+rewritten to the version 1 envelope using an expected-hash write. Settings lets
+the user add, edit, reorder, and remove glossary/TM entries. Invalid or
+externally changed files fail closed and must be reloaded or repaired before
+they are used.
+
+The manifest-bound adapter creates or reconciles `.orbitpm/manifest.json` and
+protects its reserved path from ordinary document operations. Public
+localization files are covered by its checksum policy; managed history
+revisions are represented by policy metadata rather than checksummed as normal
+workspace documents. Complete workspace backups include all four public
+features.
+
+Single-file mode has no public workspace manifest, history, glossary, or
+translation-memory file. It uses built-in localization resources for the
+current page.
 
 Browser-private provider credentials, provider usage, interface preferences,
-mapping drafts, and remembered directory handles are never silently copied
-into a workspace backup.
+mapping drafts, recovery drafts, and remembered directory handles are never
+silently copied into a workspace backup.
 
 ## Provider settings from 0.4.4
 
