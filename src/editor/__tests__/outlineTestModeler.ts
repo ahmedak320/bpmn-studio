@@ -79,6 +79,10 @@ export interface OutlineTestModeler {
   moveShape: ReturnType<typeof vi.fn>
   removeElements: ReturnType<typeof vi.fn>
   removeConnection: ReturnType<typeof vi.fn>
+  commandExecute: ReturnType<typeof vi.fn>
+  rulesAllowed: ReturnType<typeof vi.fn>
+  undo(): void
+  redo(): void
   addNode(
     id: string,
     type: ProcessOutlineNodeType,
@@ -89,7 +93,12 @@ export interface OutlineTestModeler {
     id: string,
     sourceId: string,
     targetId: string,
-    options?: { name?: string; condition?: string; isDefault?: boolean }
+    options?: {
+      type?: 'bpmn:SequenceFlow' | 'bpmn:MessageFlow' | 'bpmn:Association'
+      name?: string
+      condition?: string
+      isDefault?: boolean
+    }
   ): TestElement
   emit(event: string): void
 }
@@ -139,13 +148,19 @@ export function createOutlineTestModeler(): OutlineTestModeler {
     id: string,
     sourceId: string,
     targetId: string,
-    options: { name?: string; condition?: string; isDefault?: boolean } = {}
+    options: {
+      type?: 'bpmn:SequenceFlow' | 'bpmn:MessageFlow' | 'bpmn:Association'
+      name?: string
+      condition?: string
+      isDefault?: boolean
+    } = {}
   ): TestElement => {
     const source = elements.get(sourceId)
     const target = elements.get(targetId)
     if (!source || !target) throw new Error('test flow endpoint missing')
     flowSequence += 1
-    const flowBusinessObject = businessObject('bpmn:SequenceFlow', id, {
+    const type = options.type ?? 'bpmn:SequenceFlow'
+    const flowBusinessObject = businessObject(type, id, {
       name: options.name || undefined,
       sourceRef: source.businessObject,
       targetRef: target.businessObject,
@@ -153,7 +168,7 @@ export function createOutlineTestModeler(): OutlineTestModeler {
     })
     const flow: TestElement = {
       id,
-      type: 'bpmn:SequenceFlow',
+      type,
       businessObject: flowBusinessObject,
       parent: root,
       source,
@@ -230,6 +245,91 @@ export function createOutlineTestModeler(): OutlineTestModeler {
     }
   }
 
+  interface ElementState {
+    element: TestElement
+    x: number | undefined
+    y: number | undefined
+    source: TestElement | undefined
+    target: TestElement | undefined
+    sourceRef: TestBusinessObject | undefined
+    targetRef: TestBusinessObject | undefined
+    defaultFlow: TestBusinessObject | undefined
+  }
+
+  const captureState = (): ElementState[] =>
+    [...elements.values()].map((element) => ({
+      element,
+      x: element.x,
+      y: element.y,
+      source: element.source,
+      target: element.target,
+      sourceRef: element.businessObject.sourceRef,
+      targetRef: element.businessObject.targetRef,
+      defaultFlow: element.businessObject.default
+    }))
+
+  const restoreState = (states: readonly ElementState[]): void => {
+    for (const state of states) {
+      state.element.x = state.x
+      state.element.y = state.y
+      state.element.source = state.source
+      state.element.target = state.target
+      state.element.businessObject.sourceRef = state.sourceRef
+      state.element.businessObject.targetRef = state.targetRef
+      state.element.businessObject.default = state.defaultFlow
+    }
+  }
+
+  const commandHandlers = new Map<
+    string,
+    { preExecute?: (context: Record<string, unknown>) => void }
+  >()
+  const commandHistory: Array<{ before: ElementState[]; after: ElementState[] }> = []
+  let commandHistoryIndex = -1
+  const commandExecute = vi.fn((command: string, context: Record<string, unknown>) => {
+    const handler = commandHandlers.get(command)
+    if (!handler) throw new Error(`missing test command handler ${command}`)
+    const before = captureState()
+    handler.preExecute?.(context)
+    commandHistory.splice(commandHistoryIndex + 1)
+    commandHistory.push({ before, after: captureState() })
+    commandHistoryIndex = commandHistory.length - 1
+    emit('commandStack.changed')
+  })
+  const undo = (): void => {
+    const entry = commandHistory[commandHistoryIndex]
+    if (!entry) return
+    restoreState(entry.before)
+    commandHistoryIndex -= 1
+    emit('elements.changed')
+    emit('commandStack.changed')
+  }
+  const redo = (): void => {
+    const entry = commandHistory[commandHistoryIndex + 1]
+    if (!entry) return
+    restoreState(entry.after)
+    commandHistoryIndex += 1
+    emit('elements.changed')
+    emit('commandStack.changed')
+  }
+
+  const rulesAllowed = vi.fn(
+    (
+      action: string,
+      context: { source?: TestElement; target?: TestElement } = {}
+    ): boolean | Record<string, string> => {
+      if (action !== 'connection.create' && action !== 'connection.reconnect') return true
+      const { source, target } = context
+      return source &&
+        target &&
+        FLOW_NODE_TYPES.has(source.type ?? '') &&
+        FLOW_NODE_TYPES.has(target.type ?? '') &&
+        source.parent?.id === target.parent?.id
+        ? { type: 'bpmn:SequenceFlow' }
+        : false
+    }
+  )
+
   const services: Record<string, unknown> = {
     elementRegistry: {
       getAll: () => [...elements.values()],
@@ -264,6 +364,18 @@ export function createOutlineTestModeler(): OutlineTestModeler {
           `${type.replace(/^bpmn:/, '')}_${nodeSequence + flowSequence}`,
           attributes
         )
+    },
+    rules: {
+      allowed: rulesAllowed
+    },
+    commandStack: {
+      register: (
+        command: string,
+        handler: { preExecute?: (context: Record<string, unknown>) => void }
+      ) => commandHandlers.set(command, handler),
+      execute: commandExecute,
+      undo,
+      redo
     },
     modeling: {
       createShape: (
@@ -315,6 +427,10 @@ export function createOutlineTestModeler(): OutlineTestModeler {
     moveShape,
     removeElements,
     removeConnection,
+    commandExecute,
+    rulesAllowed,
+    undo,
+    redo,
     addNode,
     addFlow,
     emit

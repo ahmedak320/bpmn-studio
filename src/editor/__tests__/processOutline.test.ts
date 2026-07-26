@@ -99,6 +99,39 @@ describe('process outline projection and validation', () => {
     )
   })
 
+  it('keeps message flows and associations navigable but marks sequence-only editing unavailable', () => {
+    const fixture = createOutlineTestModeler()
+    fixture.addNode('Task_A', 'bpmn:Task', 'Sender')
+    fixture.addNode('Task_B', 'bpmn:Task', 'Receiver')
+    fixture.addFlow('Message_1', 'Task_A', 'Task_B', {
+      type: 'bpmn:MessageFlow',
+      name: 'Notify'
+    })
+    fixture.addFlow('Association_1', 'Task_A', 'Task_B', {
+      type: 'bpmn:Association'
+    })
+
+    const snapshot = buildProcessOutlineSnapshot([...fixture.elements.values()])
+
+    expect(snapshot.items.map((item) => item.id)).toEqual(
+      expect.arrayContaining(['Message_1', 'Association_1'])
+    )
+    expect(snapshot.flows).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: 'Message_1',
+          type: 'bpmn:MessageFlow',
+          editable: false
+        }),
+        expect.objectContaining({
+          id: 'Association_1',
+          type: 'bpmn:Association',
+          editable: false
+        })
+      ])
+    )
+  })
+
   it('plans an adjacent semantic reorder only for a strict unconditional linear chain', () => {
     const fixture = createOutlineTestModeler()
     fixture.addNode('Start_1', 'bpmn:StartEvent')

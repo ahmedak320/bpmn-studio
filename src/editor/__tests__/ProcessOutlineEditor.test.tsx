@@ -1,11 +1,15 @@
 // @vitest-environment jsdom
 
+import { readFileSync } from 'node:fs'
+import { resolve } from 'node:path'
 import { act, cleanup, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { ProcessOutlineEditor } from '../ProcessOutlineEditor'
-import { EN_PROCESS_OUTLINE_MESSAGES } from '../processOutlineMessages'
+import { AR_PROCESS_OUTLINE_MESSAGES, EN_PROCESS_OUTLINE_MESSAGES } from '../processOutlineMessages'
 import { createOutlineTestModeler } from './outlineTestModeler'
+
+const outlineStyles = readFileSync(resolve('src/editor/ProcessOutlineEditor.css'), 'utf8')
 
 beforeEach(() => {
   vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback): number => {
@@ -115,7 +119,11 @@ describe('ProcessOutlineEditor accessibility and authoring', () => {
     if (!connectForm) throw new Error('connect form missing')
     const source = within(connectForm).getByLabelText('Source node')
     const target = within(connectForm).getByLabelText('Target node')
+    expect(within(connectForm).queryByLabelText('Set as the source node’s default flow')).toBeNull()
     await user.selectOptions(source, 'Gateway_1')
+    expect(
+      within(connectForm).getByLabelText('Set as the source node’s default flow')
+    ).not.toBeNull()
     await user.selectOptions(target, 'Task_yes')
     await user.type(within(connectForm).getByLabelText('Condition'), 'approved = true')
     await user.click(within(connectForm).getByRole('button', { name: 'Connect nodes' }))
@@ -189,5 +197,106 @@ describe('ProcessOutlineEditor accessibility and authoring', () => {
     expect(confirmDelete).toHaveBeenCalledTimes(2)
     expect(fixture.elements.has('Flow_start')).toBe(false)
     expect(fixture.elements.has('Flow_between')).toBe(false)
+  })
+
+  it('limits non-sequence connections to label editing and restores tree focus', async () => {
+    const fixture = createOutlineTestModeler()
+    fixture.addNode('Task_A', 'bpmn:Task', 'Sender')
+    fixture.addNode('Task_B', 'bpmn:Task', 'Receiver')
+    fixture.addFlow('Message_1', 'Task_A', 'Task_B', {
+      type: 'bpmn:MessageFlow',
+      name: 'Request'
+    })
+    fixture.addFlow('Association_1', 'Task_A', 'Task_B', {
+      type: 'bpmn:Association'
+    })
+    const user = userEvent.setup()
+
+    render(
+      <ProcessOutlineEditor modeler={fixture.modeler} messages={EN_PROCESS_OUTLINE_MESSAGES} />
+    )
+
+    const messageRow = screen.getByRole('treeitem', {
+      name: 'Flow Request from Task_A to Task_B'
+    })
+    expect(
+      screen.getByRole('treeitem', {
+        name: 'Flow Association_1 from Task_A to Task_B'
+      })
+    ).not.toBeNull()
+    await user.click(messageRow)
+    await user.click(screen.getByRole('button', { name: 'Edit selected item' }))
+    const nameInput = screen.getByLabelText('Name or label')
+    const editForm = nameInput.closest('form')
+    if (!editForm) throw new Error('edit form missing')
+    expect(within(editForm).queryByLabelText('Source node')).toBeNull()
+    expect(within(editForm).queryByLabelText('Target node')).toBeNull()
+    expect(within(editForm).queryByLabelText('Condition')).toBeNull()
+    expect(within(editForm).queryByLabelText('Set as the source node’s default flow')).toBeNull()
+
+    await user.clear(nameInput)
+    await user.type(nameInput, 'Response')
+    await user.click(within(editForm).getByRole('button', { name: 'Save changes' }))
+    expect(fixture.elements.get('Message_1')?.businessObject.name).toBe('Response')
+    expect(document.activeElement).toBe(messageRow)
+
+    await user.click(screen.getByRole('button', { name: 'Edit selected item' }))
+    await user.click(screen.getByRole('button', { name: 'Cancel' }))
+    expect(document.activeElement).toBe(messageRow)
+  })
+
+  it('discards an item draft when canvas selection changes instead of applying it elsewhere', async () => {
+    const fixture = createOutlineTestModeler()
+    fixture.addNode('Task_A', 'bpmn:Task', 'Alpha')
+    fixture.addNode('Task_B', 'bpmn:Task', 'Beta')
+    const user = userEvent.setup()
+
+    render(
+      <ProcessOutlineEditor modeler={fixture.modeler} messages={EN_PROCESS_OUTLINE_MESSAGES} />
+    )
+
+    await user.click(screen.getByRole('treeitem', { name: 'Task: Alpha' }))
+    await user.click(screen.getByRole('button', { name: 'Edit selected item' }))
+    const draftName = screen.getByLabelText('Name or label')
+    await user.clear(draftName)
+    await user.type(draftName, 'Stale Alpha draft')
+
+    const beta = fixture.elements.get('Task_B')
+    if (!beta) throw new Error('test fixture missing Task_B')
+    act(() => {
+      fixture.selected.splice(0, fixture.selected.length, beta)
+      fixture.emit('selection.changed')
+    })
+
+    await waitFor(() => expect(screen.queryByLabelText('Name or label')).toBeNull())
+    expect(fixture.elements.get('Task_A')?.businessObject.name).toBe('Alpha')
+    expect(fixture.elements.get('Task_B')?.businessObject.name).toBe('Beta')
+
+    await user.click(screen.getByRole('button', { name: 'Edit selected item' }))
+    expect((screen.getByLabelText('Name or label') as HTMLInputElement).value).toBe('Beta')
+  })
+
+  it('locale-formats outline counts and keeps checkbox targets at least 24 pixels', () => {
+    const fixture = createOutlineTestModeler()
+    fixture.addNode('Task_A', 'bpmn:Task', 'ألف')
+    fixture.addNode('Task_B', 'bpmn:Task', 'باء')
+
+    render(
+      <ProcessOutlineEditor
+        modeler={fixture.modeler}
+        messages={AR_PROCESS_OUTLINE_MESSAGES}
+        direction="rtl"
+      />
+    )
+
+    expect(screen.getByText('٠ أخطاء، ٢ تحذيرات')).not.toBeNull()
+    expect(screen.getAllByText('١')).toHaveLength(2)
+    expect(screen.getAllByLabelText('٠ أخطاء، ١ تحذيرات')).toHaveLength(2)
+    expect(outlineStyles).toMatch(
+      /\.orbitpm-process-outline__checkbox\s*\{[^}]*min-block-size:\s*2\.75rem/s
+    )
+    expect(outlineStyles).toMatch(
+      /\.orbitpm-process-outline__checkbox input\s*\{[^}]*inline-size:\s*1\.5rem;[^}]*min-block-size:\s*1\.5rem/s
+    )
   })
 })

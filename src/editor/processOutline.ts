@@ -30,6 +30,15 @@ export type ProcessOutlineNodeType = (typeof PROCESS_OUTLINE_NODE_TYPES)[number]
 export type ProcessOutlineItemKind = 'node' | 'flow'
 export type ProcessOutlineMoveDirection = 'up' | 'down'
 
+const DEFAULT_FLOW_GATEWAY_TYPES = new Set<string>([
+  'bpmn:ExclusiveGateway',
+  'bpmn:InclusiveGateway'
+])
+
+export function canSetProcessOutlineDefault(type: string): boolean {
+  return DEFAULT_FLOW_GATEWAY_TYPES.has(type)
+}
+
 export interface ProcessOutlineIssue {
   code:
     | 'outline.empty'
@@ -112,8 +121,10 @@ export type ProcessOutlineErrorCode =
   | 'node-not-found'
   | 'flow-not-found'
   | 'unsupported-node-type'
+  | 'flow-edit-not-supported'
   | 'invalid-connection'
   | 'default-flow-has-condition'
+  | 'default-flow-source-invalid'
   | 'connection-rejected'
   | 'reorder-not-linear'
   | 'service-unavailable'
@@ -193,6 +204,22 @@ interface BpmnFactoryLike {
   create(type: string, attributes?: Record<string, unknown>): ModdleElementLike
 }
 
+interface RulesLike {
+  allowed(
+    action: string,
+    context?: Record<string, unknown>
+  ): boolean | Record<string, unknown> | null
+}
+
+interface CommandHandlerLike {
+  preExecute?(context: AtomicReorderContext): void
+}
+
+interface CommandStackLike {
+  execute(command: string, context: AtomicReorderContext): void
+  register(command: string, handler: CommandHandlerLike): void
+}
+
 interface ModelingLike {
   createShape(
     shape: ProcessOutlineCanvasElement,
@@ -219,6 +246,44 @@ interface ModelingLike {
   removeElements?(elements: ProcessOutlineCanvasElement[]): void
   removeShape?(shape: ProcessOutlineCanvasElement): void
   removeConnection?(connection: ProcessOutlineCanvasElement): void
+}
+
+interface PreparedFlowProperties {
+  name: string | undefined
+  conditionExpression: ModdleElementLike | undefined
+  isDefault: boolean
+}
+
+interface AtomicReorderContext {
+  modeling: ModelingLike
+  first: ProcessOutlineCanvasElement
+  second: ProcessOutlineCanvasElement
+  between: ProcessOutlineCanvasElement
+  previous?: ProcessOutlineCanvasElement
+  next?: ProcessOutlineCanvasElement
+}
+
+const ATOMIC_REORDER_COMMAND = 'orbitpm.process-outline.reorder'
+
+const atomicReorderHandler: CommandHandlerLike = {
+  preExecute({ modeling, first, second, between, previous, next }): void {
+    if (previous) {
+      modeling.reconnect(previous, previous.source as ProcessOutlineCanvasElement, second)
+    }
+    modeling.reconnect(between, second, first)
+    if (next) {
+      modeling.reconnect(next, first, next.target as ProcessOutlineCanvasElement)
+    }
+
+    if (modeling.moveShape) {
+      const delta = {
+        x: (second.x ?? 0) - (first.x ?? 0),
+        y: (second.y ?? 0) - (first.y ?? 0)
+      }
+      modeling.moveShape(first, delta, first.parent)
+      modeling.moveShape(second, { x: -delta.x, y: -delta.y }, second.parent)
+    }
+  }
 }
 
 export interface ProcessOutlineModeler {
@@ -700,6 +765,18 @@ function requireElement(
   return element
 }
 
+function requireNode(registry: ElementRegistryLike, id: string): ProcessOutlineCanvasElement {
+  const element = requireElement(registry, id, 'node-not-found')
+  if (!isFlowNode(element)) throw new ProcessOutlineError('node-not-found', { id })
+  return element
+}
+
+function requireFlow(registry: ElementRegistryLike, id: string): ProcessOutlineCanvasElement {
+  const element = requireElement(registry, id, 'flow-not-found')
+  if (!isFlow(element)) throw new ProcessOutlineError('flow-not-found', { id })
+  return element
+}
+
 function isSupportedNodeType(type: string): type is ProcessOutlineNodeType {
   return PROCESS_OUTLINE_NODE_TYPES.includes(type as ProcessOutlineNodeType)
 }
@@ -714,32 +791,72 @@ function service<T>(modeler: ProcessOutlineModeler, name: string): T {
   }
 }
 
-function updateFlowProperties(
-  modeling: ModelingLike,
+function prepareFlowProperties(
   bpmnFactory: BpmnFactoryLike,
-  flow: ProcessOutlineCanvasElement,
+  source: ProcessOutlineCanvasElement,
   input: Pick<ProcessOutlineConnectInput, 'name' | 'condition' | 'isDefault'>
-): void {
+): PreparedFlowProperties {
   const condition = text(input.condition)
   if (input.isDefault && condition) {
-    throw new ProcessOutlineError('default-flow-has-condition', { flowId: flow.id })
+    throw new ProcessOutlineError('default-flow-has-condition')
   }
-  const properties: Record<string, unknown> = {
+  if (input.isDefault && !canSetProcessOutlineDefault(elementType(source))) {
+    throw new ProcessOutlineError('default-flow-source-invalid', {
+      sourceId: source.id,
+      sourceType: elementType(source)
+    })
+  }
+  return {
     name: text(input.name) || undefined,
     conditionExpression: condition
       ? bpmnFactory.create('bpmn:FormalExpression', { body: condition })
-      : undefined
+      : undefined,
+    isDefault: input.isDefault === true
   }
-  modeling.updateProperties(flow, properties)
+}
 
-  const source = flow.source
+function ensureSequenceConnectionAllowed(
+  rules: RulesLike,
+  action: 'connection.create' | 'connection.reconnect',
+  source: ProcessOutlineCanvasElement,
+  target: ProcessOutlineCanvasElement,
+  connection?: ProcessOutlineCanvasElement
+): void {
+  const allowed = rules.allowed(action, { source, target, connection })
+  const resultingType =
+    allowed && typeof allowed === 'object' && typeof allowed.type === 'string'
+      ? allowed.type
+      : undefined
+  if (
+    allowed === false ||
+    allowed === null ||
+    (resultingType && resultingType !== 'bpmn:SequenceFlow')
+  ) {
+    throw new ProcessOutlineError('connection-rejected', {
+      sourceId: source.id,
+      targetId: target.id
+    })
+  }
+}
+
+function updateFlowProperties(
+  modeling: ModelingLike,
+  flow: ProcessOutlineCanvasElement,
+  source: ProcessOutlineCanvasElement,
+  prepared: PreparedFlowProperties
+): void {
+  modeling.updateProperties(flow, {
+    name: prepared.name,
+    conditionExpression: prepared.conditionExpression
+  })
+
   const sourceBusinessObject = source?.businessObject
   const currentDefault = readProperty(sourceBusinessObject, 'default')
-  if (input.isDefault) {
-    if (source && flow.businessObject) {
+  if (prepared.isDefault) {
+    if (flow.businessObject) {
       modeling.updateProperties(source, { default: flow.businessObject })
     }
-  } else if (source && moddleId(currentDefault) === flow.id) {
+  } else if (moddleId(currentDefault) === flow.id) {
     modeling.updateProperties(source, { default: undefined })
   }
 }
@@ -755,6 +872,8 @@ export class ProcessOutlineController {
   private readonly modeling: ModelingLike
   private readonly elementFactory: ElementFactoryLike
   private readonly bpmnFactory: BpmnFactoryLike
+  private readonly rules: RulesLike
+  private readonly commandStack: CommandStackLike
   private readonly listeners = new Set<ProcessOutlineListener>()
   private snapshotValue: ProcessOutlineSnapshot
   private destroyed = false
@@ -777,6 +896,9 @@ export class ProcessOutlineController {
     this.modeling = service<ModelingLike>(modeler, 'modeling')
     this.elementFactory = service<ElementFactoryLike>(modeler, 'elementFactory')
     this.bpmnFactory = service<BpmnFactoryLike>(modeler, 'bpmnFactory')
+    this.rules = service<RulesLike>(modeler, 'rules')
+    this.commandStack = service<CommandStackLike>(modeler, 'commandStack')
+    this.commandStack.register(ATOMIC_REORDER_COMMAND, atomicReorderHandler)
     this.snapshotValue = buildProcessOutlineSnapshot(
       this.registry.getAll(),
       this.selection.get().map((element) => element.id)
@@ -822,9 +944,7 @@ export class ProcessOutlineController {
     if (!isSupportedNodeType(input.type)) {
       throw new ProcessOutlineError('unsupported-node-type', { type: input.type })
     }
-    const anchor = input.connectFromId
-      ? requireElement(this.registry, input.connectFromId, 'node-not-found')
-      : undefined
+    const anchor = input.connectFromId ? requireNode(this.registry, input.connectFromId) : undefined
     const parent = anchor?.parent ?? this.canvas.getRootElement()
     const draft = this.elementFactory.createShape({ type: input.type })
     const position = anchor
@@ -885,8 +1005,10 @@ export class ProcessOutlineController {
         targetId: input.targetId
       })
     }
-    const source = requireElement(this.registry, input.sourceId, 'node-not-found')
-    const target = requireElement(this.registry, input.targetId, 'node-not-found')
+    const source = requireNode(this.registry, input.sourceId)
+    const target = requireNode(this.registry, input.targetId)
+    const prepared = prepareFlowProperties(this.bpmnFactory, source, input)
+    ensureSequenceConnectionAllowed(this.rules, 'connection.create', source, target)
     const connection = this.modeling.connect(source, target, {
       type: 'bpmn:SequenceFlow'
     })
@@ -896,7 +1018,7 @@ export class ProcessOutlineController {
         targetId: input.targetId
       })
     }
-    updateFlowProperties(this.modeling, this.bpmnFactory, connection, input)
+    updateFlowProperties(this.modeling, connection, source, prepared)
     this.selection.select(connection)
     this.refreshFromModel()
     const flow = this.snapshotValue.flows.find((candidate) => candidate.id === connection.id)
@@ -905,27 +1027,51 @@ export class ProcessOutlineController {
   }
 
   updateFlow(flowId: string, input: ProcessOutlineUpdateFlowInput): void {
-    const flow = requireElement(this.registry, flowId, 'flow-not-found')
+    const flow = requireFlow(this.registry, flowId)
+    const currentSourceId =
+      flow.source?.id ?? moddleId(readProperty(flow.businessObject, 'sourceRef'))
+    const currentTargetId =
+      flow.target?.id ?? moddleId(readProperty(flow.businessObject, 'targetRef'))
+    if (elementType(flow) !== 'bpmn:SequenceFlow') {
+      if (
+        input.sourceId !== currentSourceId ||
+        input.targetId !== currentTargetId ||
+        text(input.condition) ||
+        input.isDefault
+      ) {
+        throw new ProcessOutlineError('flow-edit-not-supported', {
+          flowId,
+          flowType: elementType(flow)
+        })
+      }
+      this.modeling.updateProperties(flow, { name: text(input.name) || undefined })
+      this.refreshFromModel()
+      return
+    }
     if (!input.sourceId || !input.targetId || input.sourceId === input.targetId) {
       throw new ProcessOutlineError('invalid-connection', {
         sourceId: input.sourceId,
         targetId: input.targetId
       })
     }
-    const newSource = requireElement(this.registry, input.sourceId, 'node-not-found')
-    const newTarget = requireElement(this.registry, input.targetId, 'node-not-found')
+    const newSource = requireNode(this.registry, input.sourceId)
+    const newTarget = requireNode(this.registry, input.targetId)
+    const prepared = prepareFlowProperties(this.bpmnFactory, newSource, input)
+    ensureSequenceConnectionAllowed(this.rules, 'connection.reconnect', newSource, newTarget, flow)
     const oldSource = flow.source
-    if (oldSource && oldSource.id !== newSource.id) {
-      const currentDefault = readProperty(oldSource.businessObject, 'default')
-      if (moddleId(currentDefault) === flow.id) {
-        this.modeling.updateProperties(oldSource, { default: undefined })
-      }
-    }
+    const oldSourceDefault = readProperty(oldSource?.businessObject, 'default')
     if (flow.source?.id !== newSource.id || flow.target?.id !== newTarget.id) {
       this.modeling.reconnect(flow, newSource, newTarget)
     }
     const currentFlow = this.registry.get(flowId) ?? flow
-    updateFlowProperties(this.modeling, this.bpmnFactory, currentFlow, input)
+    updateFlowProperties(this.modeling, currentFlow, newSource, prepared)
+    if (
+      oldSource &&
+      oldSource.id !== newSource.id &&
+      moddleId(oldSourceDefault) === currentFlow.id
+    ) {
+      this.modeling.updateProperties(oldSource, { default: undefined })
+    }
     this.refreshFromModel()
   }
 
@@ -934,29 +1080,27 @@ export class ProcessOutlineController {
     if (!plan) {
       throw new ProcessOutlineError('reorder-not-linear', { nodeId, direction })
     }
-    const first = requireElement(this.registry, plan.firstNodeId, 'node-not-found')
-    const second = requireElement(this.registry, plan.secondNodeId, 'node-not-found')
-    const between = requireElement(this.registry, plan.betweenFlowId, 'flow-not-found')
-    if (plan.previousFlowId) {
-      const previous = requireElement(this.registry, plan.previousFlowId, 'flow-not-found')
-      if (!previous.source) throw new ProcessOutlineError('flow-not-found', { id: previous.id })
-      this.modeling.reconnect(previous, previous.source, second)
+    const first = requireNode(this.registry, plan.firstNodeId)
+    const second = requireNode(this.registry, plan.secondNodeId)
+    const between = requireFlow(this.registry, plan.betweenFlowId)
+    const previous = plan.previousFlowId
+      ? requireFlow(this.registry, plan.previousFlowId)
+      : undefined
+    const next = plan.nextFlowId ? requireFlow(this.registry, plan.nextFlowId) : undefined
+    if (previous && !previous.source) {
+      throw new ProcessOutlineError('flow-not-found', { id: previous.id })
     }
-    this.modeling.reconnect(between, second, first)
-    if (plan.nextFlowId) {
-      const next = requireElement(this.registry, plan.nextFlowId, 'flow-not-found')
-      if (!next.target) throw new ProcessOutlineError('flow-not-found', { id: next.id })
-      this.modeling.reconnect(next, first, next.target)
+    if (next && !next.target) {
+      throw new ProcessOutlineError('flow-not-found', { id: next.id })
     }
-
-    if (this.modeling.moveShape) {
-      const delta = {
-        x: (second.x ?? 0) - (first.x ?? 0),
-        y: (second.y ?? 0) - (first.y ?? 0)
-      }
-      this.modeling.moveShape(first, delta, first.parent)
-      this.modeling.moveShape(second, { x: -delta.x, y: -delta.y }, second.parent)
-    }
+    this.commandStack.execute(ATOMIC_REORDER_COMMAND, {
+      modeling: this.modeling,
+      first,
+      second,
+      between,
+      previous,
+      next
+    })
     this.selection.select(direction === 'up' ? second : first)
     this.refreshFromModel()
   }

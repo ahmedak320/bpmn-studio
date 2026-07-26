@@ -42,6 +42,7 @@ export interface ProcessOutlineMessages {
   deleteConfirmation: (item: ProcessOutlineItem) => string
   validationHeading: string
   validationEmpty: string
+  formatNumber: (value: number) => string
   validationSummary: (errors: number, warnings: number) => string
   addedStatus: (id: string) => string
   updatedStatus: (id: string) => string
@@ -101,6 +102,9 @@ function fallbackType(type: string): string {
 function itemName(item: ProcessOutlineItem): string {
   return item.name || item.id
 }
+
+const EN_NUMBER_FORMATTER = new Intl.NumberFormat('en')
+const AR_NUMBER_FORMATTER = new Intl.NumberFormat('ar-AE-u-nu-arab')
 
 function englishIssue(issue: ProcessOutlineIssue): string {
   switch (issue.code) {
@@ -164,10 +168,14 @@ function englishError(error: ProcessOutlineError): string {
       return 'The selected outline item is no longer present in the diagram.'
     case 'unsupported-node-type':
       return 'That node type cannot be added from the outline.'
+    case 'flow-edit-not-supported':
+      return 'Only the label can be edited for this connection type.'
     case 'invalid-connection':
       return 'Choose two different source and target nodes.'
     case 'default-flow-has-condition':
       return 'A default flow cannot also have a condition.'
+    case 'default-flow-source-invalid':
+      return 'Default flows can be set only from exclusive or inclusive gateways.'
     case 'connection-rejected':
       return 'BPMN rules rejected this connection.'
     case 'reorder-not-linear':
@@ -185,10 +193,14 @@ function arabicError(error: ProcessOutlineError): string {
       return 'عنصر المخطط التفصيلي المحدد لم يعد موجوداً في الرسم.'
     case 'unsupported-node-type':
       return 'لا يمكن إضافة هذا النوع من العقد من المخطط التفصيلي.'
+    case 'flow-edit-not-supported':
+      return 'يمكن تحرير التسمية فقط لهذا النوع من الاتصالات.'
     case 'invalid-connection':
       return 'اختر عقدتي مصدر وهدف مختلفتين.'
     case 'default-flow-has-condition':
       return 'لا يمكن أن يحتوي التدفق الافتراضي على شرط أيضاً.'
+    case 'default-flow-source-invalid':
+      return 'يمكن تعيين التدفقات الافتراضية من البوابات الحصرية أو الشاملة فقط.'
     case 'connection-rejected':
       return 'رفضت قواعد BPMN هذا الاتصال.'
     case 'reorder-not-linear':
@@ -236,7 +248,9 @@ export const EN_PROCESS_OUTLINE_MESSAGES: ProcessOutlineMessages = {
   deleteConfirmation: (item) => `Delete ${itemName(item)}? This can be undone from the canvas.`,
   validationHeading: 'Outline validation',
   validationEmpty: 'No outline validation findings.',
-  validationSummary: (errors, warnings) => `${errors} errors, ${warnings} warnings`,
+  formatNumber: (value) => EN_NUMBER_FORMATTER.format(value),
+  validationSummary: (errors, warnings) =>
+    `${EN_PROCESS_OUTLINE_MESSAGES.formatNumber(errors)} errors, ${EN_PROCESS_OUTLINE_MESSAGES.formatNumber(warnings)} warnings`,
   addedStatus: (id) => `${id} added.`,
   updatedStatus: (id) => `${id} updated.`,
   connectedStatus: (id) => `${id} connected.`,
@@ -289,7 +303,9 @@ export const AR_PROCESS_OUTLINE_MESSAGES: ProcessOutlineMessages = {
   deleteConfirmation: (item) => `حذف ${itemName(item)}؟ يمكن التراجع عن ذلك من لوحة الرسم.`,
   validationHeading: 'التحقق من المخطط التفصيلي',
   validationEmpty: 'لا توجد ملاحظات تحقق في المخطط التفصيلي.',
-  validationSummary: (errors, warnings) => `${errors} أخطاء، ${warnings} تحذيرات`,
+  formatNumber: (value) => AR_NUMBER_FORMATTER.format(value),
+  validationSummary: (errors, warnings) =>
+    `${AR_PROCESS_OUTLINE_MESSAGES.formatNumber(errors)} أخطاء، ${AR_PROCESS_OUTLINE_MESSAGES.formatNumber(warnings)} تحذيرات`,
   addedStatus: (id) => `تمت إضافة ${id}.`,
   updatedStatus: (id) => `تم تحديث ${id}.`,
   connectedStatus: (id) => `تم ربط ${id}.`,

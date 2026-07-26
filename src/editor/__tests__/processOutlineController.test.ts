@@ -137,6 +137,90 @@ describe('ProcessOutlineController bpmn-js synchronization', () => {
         isDefault: true
       })
     ).toThrowError(ProcessOutlineError)
+    expect(controller.snapshot.flows.find((flow) => flow.id === fallback.id)).toMatchObject({
+      sourceId: 'Gateway_1',
+      targetId: 'Task_no',
+      condition: '',
+      isDefault: true
+    })
+  })
+
+  it('prevalidates default sources and reconnect rules before mutating the diagram', () => {
+    const fixture = createOutlineTestModeler()
+    fixture.addNode('Start_1', 'bpmn:StartEvent', 'Start')
+    fixture.addNode('Task_1', 'bpmn:Task', 'Review')
+    fixture.addNode('End_1', 'bpmn:EndEvent', 'End')
+    const existing = fixture.addFlow('Flow_1', 'Start_1', 'Task_1')
+    const controller = createProcessOutlineController(fixture.modeler)
+
+    expect(() =>
+      controller.connectNodes({
+        sourceId: 'Start_1',
+        targetId: 'End_1',
+        isDefault: true
+      })
+    ).toThrowError(
+      expect.objectContaining<Partial<ProcessOutlineError>>({
+        code: 'default-flow-source-invalid'
+      })
+    )
+    expect(controller.snapshot.flows.map((flow) => flow.id)).toEqual(['Flow_1'])
+
+    fixture.rulesAllowed.mockReturnValueOnce(false)
+    expect(() =>
+      controller.updateFlow(existing.id, {
+        sourceId: 'Task_1',
+        targetId: 'End_1',
+        name: 'Rejected reroute',
+        condition: '',
+        isDefault: false
+      })
+    ).toThrowError(
+      expect.objectContaining<Partial<ProcessOutlineError>>({
+        code: 'connection-rejected'
+      })
+    )
+    expect(existing.source?.id).toBe('Start_1')
+    expect(existing.target?.id).toBe('Task_1')
+    expect(existing.businessObject.name).toBeUndefined()
+  })
+
+  it('renames non-sequence connections without exposing sequence-flow mutations', () => {
+    const fixture = createOutlineTestModeler()
+    fixture.addNode('Task_A', 'bpmn:Task', 'Sender')
+    fixture.addNode('Task_B', 'bpmn:Task', 'Receiver')
+    const message = fixture.addFlow('Message_1', 'Task_A', 'Task_B', {
+      type: 'bpmn:MessageFlow',
+      name: 'Request'
+    })
+    const controller = createProcessOutlineController(fixture.modeler)
+
+    controller.updateFlow(message.id, {
+      sourceId: 'Task_A',
+      targetId: 'Task_B',
+      name: 'Response',
+      condition: '',
+      isDefault: false
+    })
+    expect(message.businessObject.name).toBe('Response')
+    expect(fixture.reconnect).not.toHaveBeenCalled()
+
+    expect(() =>
+      controller.updateFlow(message.id, {
+        sourceId: 'Task_B',
+        targetId: 'Task_A',
+        name: 'Invalid reroute',
+        condition: 'approved',
+        isDefault: false
+      })
+    ).toThrowError(
+      expect.objectContaining<Partial<ProcessOutlineError>>({
+        code: 'flow-edit-not-supported'
+      })
+    )
+    expect(message.source?.id).toBe('Task_A')
+    expect(message.target?.id).toBe('Task_B')
+    expect(message.businessObject.name).toBe('Response')
   })
 
   it('rewires and visually swaps linear steps, then deletes with incident flows', () => {
@@ -173,6 +257,19 @@ describe('ProcessOutlineController bpmn-js synchronization', () => {
     expect(fixture.elements.get('Task_A')?.x).toBe(400)
     expect(fixture.elements.get('Task_B')?.x).toBe(200)
     expect(fixture.moveShape).toHaveBeenCalledTimes(2)
+    expect(fixture.commandExecute).toHaveBeenCalledTimes(1)
+
+    fixture.undo()
+    expect(fixture.elements.get('Flow_start')?.target?.id).toBe('Task_A')
+    expect(fixture.elements.get('Flow_between')?.source?.id).toBe('Task_A')
+    expect(fixture.elements.get('Flow_between')?.target?.id).toBe('Task_B')
+    expect(fixture.elements.get('Flow_end')?.source?.id).toBe('Task_B')
+    expect(fixture.elements.get('Task_A')?.x).toBe(200)
+    expect(fixture.elements.get('Task_B')?.x).toBe(400)
+
+    fixture.redo()
+    expect(fixture.elements.get('Flow_start')?.target?.id).toBe('Task_B')
+    expect(fixture.elements.get('Flow_end')?.source?.id).toBe('Task_A')
 
     controller.deleteItem('Task_A')
     expect(controller.snapshot.nodes.map((node) => node.id)).not.toContain('Task_A')

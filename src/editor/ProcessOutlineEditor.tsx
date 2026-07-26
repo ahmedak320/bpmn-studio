@@ -11,6 +11,7 @@ import {
 import {
   PROCESS_OUTLINE_NODE_TYPES,
   ProcessOutlineError,
+  canSetProcessOutlineDefault,
   createProcessOutlineController,
   emptyProcessOutlineSnapshot,
   planLinearNodeSwap,
@@ -34,6 +35,7 @@ export interface ProcessOutlineEditorProps {
 
 interface NodeEditState {
   kind: 'node'
+  itemId: string
   name: string
   documentation: string
   calledElement: string
@@ -41,6 +43,7 @@ interface NodeEditState {
 
 interface FlowEditState {
   kind: 'flow'
+  itemId: string
   name: string
   sourceId: string
   targetId: string
@@ -67,12 +70,14 @@ function initialEditState(item: ProcessOutlineItem): EditState {
   return item.kind === 'node'
     ? {
         kind: 'node',
+        itemId: item.id,
         name: item.name,
         documentation: item.documentation,
         calledElement: item.calledElement ?? ''
       }
     : {
         kind: 'flow',
+        itemId: item.id,
         name: item.name,
         sourceId: item.sourceId,
         targetId: item.targetId,
@@ -164,7 +169,11 @@ export function ProcessOutlineEditor({
   }, [activeId, snapshot])
 
   useEffect(() => {
-    if (editState && (!activeId || !snapshot.items.some((item) => item.id === activeId))) {
+    if (
+      editState &&
+      (editState.itemId !== activeId ||
+        !snapshot.items.some((item) => item.id === editState.itemId))
+    ) {
       setEditState(null)
     }
   }, [activeId, editState, snapshot.items])
@@ -183,6 +192,13 @@ export function ProcessOutlineEditor({
     setConnectionTargetId(snapshot.nodes[1]?.id ?? snapshot.nodes[0]?.id ?? '')
   }, [connectionTargetId, snapshot.nodes])
 
+  const connectionSource = snapshot.nodes.find((node) => node.id === connectionSourceId)
+  const connectionCanDefault = canSetProcessOutlineDefault(connectionSource?.type ?? '')
+
+  useEffect(() => {
+    if (connectionDefault && !connectionCanDefault) setConnectionDefault(false)
+  }, [connectionCanDefault, connectionDefault])
+
   const activeItem = useMemo(() => itemById(snapshot, activeId), [activeId, snapshot])
   const activeIndex = activeItem
     ? snapshot.items.findIndex((item) => item.id === activeItem.id)
@@ -193,10 +209,19 @@ export function ProcessOutlineEditor({
     activeItem?.kind === 'node' && planLinearNodeSwap(snapshot, activeItem.id, 'down') !== null
   const errors = snapshot.issues.filter((issue) => issue.severity === 'error').length
   const warnings = snapshot.issues.length - errors
+  const editedFlowSource =
+    editState?.kind === 'flow'
+      ? snapshot.nodes.find((node) => node.id === editState.sourceId)
+      : undefined
+  const editCanDefault = canSetProcessOutlineDefault(editedFlowSource?.type ?? '')
 
   const reportError = useCallback((caught: unknown) => {
     setError(caughtOutlineError(caught))
     setStatus('')
+  }, [])
+
+  const restoreItemFocus = useCallback((itemId: string) => {
+    requestAnimationFrame(() => rowRefs.current.get(itemId)?.focus())
   }, [])
 
   const focusItem = useCallback(
@@ -206,9 +231,9 @@ export function ProcessOutlineEditor({
       const id = snapshot.items[bounded]?.id
       if (!id) return
       setActiveId(id)
-      requestAnimationFrame(() => rowRefs.current.get(id)?.focus())
+      restoreItemFocus(id)
     },
-    [snapshot.items]
+    [restoreItemFocus, snapshot.items]
   )
 
   const selectItem = useCallback(
@@ -230,6 +255,12 @@ export function ProcessOutlineEditor({
     setError(null)
     requestAnimationFrame(() => firstEditInputRef.current?.focus())
   }, [])
+
+  const cancelEdit = useCallback(() => {
+    const itemId = editState?.itemId
+    setEditState(null)
+    if (itemId) restoreItemFocus(itemId)
+  }, [editState?.itemId, restoreItemFocus])
 
   const moveItem = useCallback(
     (node: ProcessOutlineNode, direction: 'up' | 'down') => {
@@ -258,12 +289,12 @@ export function ProcessOutlineEditor({
         setActiveId(nextId)
         setStatus(messages.deletedStatus(item.id))
         setError(null)
-        if (nextId) requestAnimationFrame(() => rowRefs.current.get(nextId)?.focus())
+        if (nextId) restoreItemFocus(nextId)
       } catch (caught) {
         reportError(caught)
       }
     },
-    [activeIndex, confirmDelete, messages, reportError, snapshot.items]
+    [activeIndex, confirmDelete, messages, reportError, restoreItemFocus, snapshot.items]
   )
 
   const handleItemKeyDown = useCallback(
@@ -356,17 +387,25 @@ export function ProcessOutlineEditor({
 
   const handleSaveEdit = (event: FormEvent<HTMLFormElement>): void => {
     event.preventDefault()
-    if (!activeItem || !editState) return
+    if (!editState || editState.itemId !== activeId) {
+      setEditState(null)
+      return
+    }
+    const editedItem = itemById(snapshot, editState.itemId)
+    if (!editedItem) {
+      setEditState(null)
+      return
+    }
     try {
-      if (activeItem.kind === 'node' && editState.kind === 'node') {
-        controllerRef.current?.updateNode(activeItem.id, {
+      if (editedItem.kind === 'node' && editState.kind === 'node') {
+        controllerRef.current?.updateNode(editedItem.id, {
           name: editState.name,
           documentation: editState.documentation,
           calledElement:
-            activeItem.type === 'bpmn:CallActivity' ? editState.calledElement : undefined
+            editedItem.type === 'bpmn:CallActivity' ? editState.calledElement : undefined
         })
-      } else if (activeItem.kind === 'flow' && editState.kind === 'flow') {
-        controllerRef.current?.updateFlow(activeItem.id, {
+      } else if (editedItem.kind === 'flow' && editState.kind === 'flow') {
+        controllerRef.current?.updateFlow(editedItem.id, {
           name: editState.name,
           sourceId: editState.sourceId,
           targetId: editState.targetId,
@@ -377,8 +416,9 @@ export function ProcessOutlineEditor({
         return
       }
       setEditState(null)
-      setStatus(messages.updatedStatus(activeItem.id))
+      setStatus(messages.updatedStatus(editedItem.id))
       setError(null)
+      restoreItemFocus(editedItem.id)
     } catch (caught) {
       reportError(caught)
     }
@@ -423,9 +463,11 @@ export function ProcessOutlineEditor({
             >
               {snapshot.items.map((item) => {
                 const selected = activeId === item.id
-                const issueCount = snapshot.issues.filter(
-                  (issue) => issue.itemId === item.id
+                const itemIssues = snapshot.issues.filter((issue) => issue.itemId === item.id)
+                const itemErrorCount = itemIssues.filter(
+                  (issue) => issue.severity === 'error'
                 ).length
+                const itemWarningCount = itemIssues.length - itemErrorCount
                 return (
                   <li
                     key={item.id}
@@ -469,12 +511,12 @@ export function ProcessOutlineEditor({
                         {messages.defaultFlowLabel}
                       </span>
                     ) : null}
-                    {issueCount > 0 ? (
+                    {itemIssues.length > 0 ? (
                       <span
                         className="orbitpm-process-outline__issue-count"
-                        aria-label={messages.validationSummary(issueCount, 0)}
+                        aria-label={messages.validationSummary(itemErrorCount, itemWarningCount)}
                       >
-                        {issueCount}
+                        {messages.formatNumber(itemIssues.length)}
                       </span>
                     ) : null}
                   </li>
@@ -528,18 +570,23 @@ export function ProcessOutlineEditor({
                     ) : null}
                   </>
                 ) : null}
-                {activeItem.kind === 'flow' && editState.kind === 'flow' ? (
+                {activeItem.kind === 'flow' && activeItem.editable && editState.kind === 'flow' ? (
                   <>
                     <label>
                       {messages.sourceLabel}
                       <select
                         value={editState.sourceId}
-                        onChange={(event) =>
+                        onChange={(event) => {
+                          const sourceId = event.target.value
+                          const source = snapshot.nodes.find((node) => node.id === sourceId)
                           setEditState({
                             ...editState,
-                            sourceId: event.target.value
+                            sourceId,
+                            isDefault: canSetProcessOutlineDefault(source?.type ?? '')
+                              ? editState.isDefault
+                              : false
                           })
-                        }
+                        }}
                       >
                         {snapshot.nodes.map((node) => (
                           <option key={node.id} value={node.id}>
@@ -582,25 +629,27 @@ export function ProcessOutlineEditor({
                       />
                     </label>
                     <p id={conditionHintId}>{messages.conditionHint}</p>
-                    <label className="orbitpm-process-outline__checkbox">
-                      <input
-                        type="checkbox"
-                        checked={editState.isDefault}
-                        onChange={(event) =>
-                          setEditState({
-                            ...editState,
-                            isDefault: event.target.checked,
-                            condition: event.target.checked ? '' : editState.condition
-                          })
-                        }
-                      />
-                      {messages.defaultFlowLabel}
-                    </label>
+                    {editCanDefault || editState.isDefault ? (
+                      <label className="orbitpm-process-outline__checkbox">
+                        <input
+                          type="checkbox"
+                          checked={editState.isDefault}
+                          onChange={(event) =>
+                            setEditState({
+                              ...editState,
+                              isDefault: event.target.checked,
+                              condition: event.target.checked ? '' : editState.condition
+                            })
+                          }
+                        />
+                        {messages.defaultFlowLabel}
+                      </label>
+                    ) : null}
                   </>
                 ) : null}
                 <div className="orbitpm-process-outline__actions">
                   <button type="submit">{messages.saveChanges}</button>
-                  <button type="button" onClick={() => setEditState(null)}>
+                  <button type="button" onClick={cancelEdit}>
                     {messages.cancel}
                   </button>
                 </div>
@@ -624,7 +673,7 @@ export function ProcessOutlineEditor({
                       <dd>{activeItem.documentation}</dd>
                     </div>
                   ) : null}
-                  {activeItem.kind === 'flow' && activeItem.condition ? (
+                  {activeItem.kind === 'flow' && activeItem.editable && activeItem.condition ? (
                     <div>
                       <dt>{messages.conditionLabel}</dt>
                       <dd>
@@ -760,17 +809,19 @@ export function ProcessOutlineEditor({
                 />
               </label>
               <p id={newConditionHintId}>{messages.conditionHint}</p>
-              <label className="orbitpm-process-outline__checkbox">
-                <input
-                  type="checkbox"
-                  checked={connectionDefault}
-                  onChange={(event) => {
-                    setConnectionDefault(event.target.checked)
-                    if (event.target.checked) setConnectionCondition('')
-                  }}
-                />
-                {messages.defaultFlowLabel}
-              </label>
+              {connectionCanDefault ? (
+                <label className="orbitpm-process-outline__checkbox">
+                  <input
+                    type="checkbox"
+                    checked={connectionDefault}
+                    onChange={(event) => {
+                      setConnectionDefault(event.target.checked)
+                      if (event.target.checked) setConnectionCondition('')
+                    }}
+                  />
+                  {messages.defaultFlowLabel}
+                </label>
+              ) : null}
               <button
                 type="submit"
                 disabled={snapshot.nodes.length < 2 || !connectionSourceId || !connectionTargetId}
