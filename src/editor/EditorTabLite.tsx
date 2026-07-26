@@ -8,7 +8,16 @@
 // and the editor CSS — is REUSED verbatim by direct import from the desktop
 // tree, so this file stays a thin shell around shared logic.
 
-import { useCallback, useEffect, useId, useRef, useState } from 'react'
+import {
+  useCallback,
+  useEffect,
+  useId,
+  useRef,
+  useState,
+  type CSSProperties,
+  type KeyboardEvent as ReactKeyboardEvent,
+  type MouseEvent as ReactMouseEvent
+} from 'react'
 import BpmnModeler from 'bpmn-js/lib/Modeler'
 import {
   BpmnPropertiesPanelModule,
@@ -153,6 +162,46 @@ function errorMessage(err: unknown): string {
   return err instanceof Error ? err.message : String(err)
 }
 
+/** Versioned user-preference keys. A missing open preference deliberately
+ * means closed, while an explicit "0" remembers a user's collapse. */
+export const DETAILS_OPEN_PREFERENCE_KEY = 'orbitpm.lite.preferences.v1.details.open'
+export const DETAILS_WIDTH_PREFERENCE_KEY = 'orbitpm.lite.preferences.v1.details.width'
+
+function readDetailsOpenPreference(): boolean {
+  try {
+    if (typeof localStorage === 'undefined') return false
+    return localStorage.getItem(DETAILS_OPEN_PREFERENCE_KEY) === '1'
+  } catch {
+    return false
+  }
+}
+
+function useDetailsOverlay(): boolean {
+  const query = '(max-width: 1199px)'
+  const [matches, setMatches] = useState(() => {
+    try {
+      return typeof window !== 'undefined' && window.matchMedia(query).matches
+    } catch {
+      return false
+    }
+  })
+
+  useEffect(() => {
+    let media: MediaQueryList
+    try {
+      media = window.matchMedia(query)
+    } catch {
+      return
+    }
+    const update = (): void => setMatches(media.matches)
+    update()
+    media.addEventListener?.('change', update)
+    return () => media.removeEventListener?.('change', update)
+  }, [])
+
+  return matches
+}
+
 export function EditorTab(props: EditorTabProps): JSX.Element {
   const {
     xml,
@@ -172,8 +221,12 @@ export function EditorTab(props: EditorTabProps): JSX.Element {
   onModelerReadyRef.current = onModelerReady
 
   const editorRootRef = useRef<HTMLDivElement | null>(null)
+  const toolbarRef = useRef<HTMLDivElement | null>(null)
+  const canvasIslandRef = useRef<HTMLDivElement | null>(null)
   const canvasContainerRef = useRef<HTMLDivElement | null>(null)
   const propertiesContainerRef = useRef<HTMLDivElement | null>(null)
+  const detailsToggleRef = useRef<HTMLButtonElement | null>(null)
+  const detailsHeadingRef = useRef<HTMLHeadingElement | null>(null)
   const modelerRef = useRef<BpmnModelerLike | null>(null)
   const dirtyStateRef = useRef<DirtyState>(createDirtyState(0))
   const onOpenCalledProcessRef = useRef(onOpenCalledProcess)
@@ -190,26 +243,119 @@ export function EditorTab(props: EditorTabProps): JSX.Element {
   // a Save clears the dirty flag over a now-populated diagram).
   const [isNewDiagram, setIsNewDiagram] = useState(false)
   const [hintDismissed, setHintDismissed] = useState(false)
-  // Details/properties pane visibility. It deliberately starts collapsed for
-  // every editor instance and is opened only by a step double-click. The
-  // bpmn-js panel
-  // container MUST stay mounted — bpmn-js owns that DOM — so we hide it with CSS
-  // rather than unmounting it.
-  const [propsOpen, setPropsOpenState] = useState(false)
+  // Details/properties pane visibility is a versioned preference, defaulting
+  // closed on first use. Every mounted tab retains its own live selection;
+  // collapsing only hides this wrapper and never clears bpmn-js selection.
+  // The properties container MUST remain mounted because bpmn-js owns its DOM.
+  const [propsOpen, setPropsOpenState] = useState(readDetailsOpenPreference)
+  const focusPaneAfterOpenRef = useRef(false)
+  const focusToggleAfterCloseRef = useRef(false)
+  const isDetailsOverlay = useDetailsOverlay()
   // Right side-pane width (Details card + properties panel), user-resizable via
   // the PaneResizer handle; null falls back to the stylesheet default (300px).
   const [propsWidth, setPropsWidth, resetPropsWidth] = usePaneWidth(
-    'orbitpm.lite.propsPanelWidth',
+    DETAILS_WIDTH_PREFERENCE_KEY,
     { min: 240, max: 560 }
   )
 
   const setPropsPanelOpen = useCallback((next: boolean): void => {
     setPropsOpenState(next)
+    try {
+      if (typeof localStorage !== 'undefined') {
+        localStorage.setItem(DETAILS_OPEN_PREFERENCE_KEY, next ? '1' : '0')
+      }
+    } catch {
+      // Preference persistence is best-effort; the in-memory control still works.
+    }
   }, [])
 
   const closePropsPanel = useCallback(() => {
+    focusToggleAfterCloseRef.current = true
     setPropsPanelOpen(false)
   }, [setPropsPanelOpen])
+
+  const togglePropsPanel = useCallback(
+    (keyboardTriggered: boolean): void => {
+      if (propsOpen) {
+        closePropsPanel()
+        return
+      }
+      focusPaneAfterOpenRef.current = keyboardTriggered
+      setPropsPanelOpen(true)
+    },
+    [closePropsPanel, propsOpen, setPropsPanelOpen]
+  )
+
+  useEffect(() => {
+    if (propsOpen) {
+      if (!focusPaneAfterOpenRef.current && !isDetailsOverlay) return
+      focusPaneAfterOpenRef.current = false
+      const frame = requestAnimationFrame(() => detailsHeadingRef.current?.focus())
+      return () => cancelAnimationFrame(frame)
+    }
+    if (!focusToggleAfterCloseRef.current) return
+    focusToggleAfterCloseRef.current = false
+    const frame = requestAnimationFrame(() => detailsToggleRef.current?.focus())
+    return () => cancelAnimationFrame(frame)
+  }, [isDetailsOverlay, propsOpen])
+
+  // Overlay drawers keep focus inside the drawer, close on Escape, and make
+  // the editor toolbar/canvas inert until the drawer is dismissed.
+  useEffect(() => {
+    if (!propsOpen || !isDetailsOverlay) return
+    const pane = propertiesContainerRef.current?.closest<HTMLElement>('.orbitpm-lite-sidepane')
+    if (!pane) return
+    const background = [toolbarRef.current, canvasIslandRef.current].filter(
+      (node): node is HTMLDivElement => node != null
+    )
+    for (const node of background) node.inert = true
+
+    const onKeyDown = (event: KeyboardEvent): void => {
+      // A full Step-details dialog can be launched from the drawer. It owns
+      // Escape and focus while visible; the underlying drawer must not steal
+      // either from that nested modal.
+      const nestedDialog = Array.from(
+        document.querySelectorAll<HTMLElement>('[role="dialog"]:not([hidden]), dialog[open]')
+      ).find(
+        (dialog) =>
+          dialog !== pane &&
+          getComputedStyle(dialog).display !== 'none' &&
+          dialog.getClientRects().length > 0
+      )
+      if (nestedDialog) return
+
+      if (event.key === 'Escape') {
+        event.preventDefault()
+        closePropsPanel()
+        return
+      }
+      if (event.key !== 'Tab') return
+      const candidates = Array.from(
+        pane.querySelectorAll<HTMLElement>(
+          'button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), a[href], [tabindex]:not([tabindex="-1"])'
+        )
+      ).filter((element) => !element.hidden && element.getClientRects().length > 0)
+      const first = candidates[0] ?? detailsHeadingRef.current
+      const last = candidates.at(-1) ?? detailsHeadingRef.current
+      const active = document.activeElement
+      if (
+        event.shiftKey &&
+        (active === first || active === detailsHeadingRef.current || !pane.contains(active))
+      ) {
+        event.preventDefault()
+        last?.focus()
+      } else if (!event.shiftKey && (active === last || !pane.contains(active))) {
+        event.preventDefault()
+        first?.focus()
+      }
+    }
+
+    document.addEventListener('keydown', onKeyDown, true)
+    return () => {
+      document.removeEventListener('keydown', onKeyDown, true)
+      for (const node of background) node.inert = false
+    }
+  }, [closePropsPanel, isDetailsOverlay, propsOpen])
 
   const applyDirtyState = useCallback(
     (next: DirtyState) => {
@@ -365,10 +511,6 @@ export function EditorTab(props: EditorTabProps): JSX.Element {
 
     let cancelled = false
     setError(null)
-    // A new/imported document must never inherit a pane opened for the
-    // previously displayed diagram.
-    setPropsPanelOpen(false)
-
     modeler
       .importXML(xml)
       .then(({ warnings }) => {
@@ -500,8 +642,16 @@ export function EditorTab(props: EditorTabProps): JSX.Element {
     // The editor chrome follows the active UI direction. Only the canvas
     // subtree remains LTR because bpmn-js's coordinates/palette/context pad
     // have no RTL mode of their own.
-    <div ref={editorRootRef} className="orbitpm-editor" dir={uiDir}>
-      <div className="orbitpm-editor__toolbar">
+    <div
+      ref={editorRootRef}
+      className={
+        propsOpen && isDetailsOverlay
+          ? 'orbitpm-editor orbitpm-editor--details-open'
+          : 'orbitpm-editor'
+      }
+      dir={uiDir}
+    >
+      <div ref={toolbarRef} className="orbitpm-editor__toolbar">
         <button
           type="button"
           className="orbitpm-editor__button orbitpm-editor__button--primary"
@@ -553,21 +703,6 @@ export function EditorTab(props: EditorTabProps): JSX.Element {
         >
           {t('editor.zoomFit')}
         </button>
-        {propsOpen ? (
-          <button
-            type="button"
-            className="orbitpm-editor__button orbitpm-details-toggle"
-            onClick={closePropsPanel}
-            aria-expanded="true"
-            aria-controls={detailsPaneId}
-            title={t('pane.details.toggle.title')}
-          >
-            <span className="orbitpm-details-toggle__glyph" aria-hidden="true">
-              ›
-            </span>
-            {t('pane.details.toggle')}
-          </button>
-        ) : null}
         <span
           className={
             dirty
@@ -583,8 +718,9 @@ export function EditorTab(props: EditorTabProps): JSX.Element {
       {error ? <div className="orbitpm-editor__error">{error}</div> : null}
       <div className="orbitpm-editor__body" dir={uiDir}>
         <div
+          ref={canvasIslandRef}
+          className="orbitpm-editor__canvas-island"
           dir="ltr"
-          style={{ position: 'relative', flex: '1 1 auto', minWidth: 0, display: 'flex' }}
         >
           <div ref={canvasContainerRef} className="orbitpm-editor__canvas" dir="ltr" />
           {isNewDiagram && !hintDismissed && (
@@ -625,6 +761,42 @@ export function EditorTab(props: EditorTabProps): JSX.Element {
           )}
           <ShapeLegend />
         </div>
+        {propsOpen && isDetailsOverlay ? (
+          <div
+            className="orbitpm-details-backdrop"
+            aria-hidden="true"
+            onClick={closePropsPanel}
+          />
+        ) : null}
+        <div
+          className={
+            propsOpen && isDetailsOverlay
+              ? 'orbitpm-details-rail orbitpm-details-rail--drawer-open'
+              : 'orbitpm-details-rail'
+          }
+        >
+          <button
+            ref={detailsToggleRef}
+            type="button"
+            className="orbitpm-details-toggle"
+            onClick={(event: ReactMouseEvent<HTMLButtonElement>) =>
+              togglePropsPanel(event.detail === 0)
+            }
+            onKeyDown={(event: ReactKeyboardEvent<HTMLButtonElement>) => {
+              if (event.key === 'Enter' || event.key === ' ') {
+                focusPaneAfterOpenRef.current = !propsOpen
+              }
+            }}
+            aria-label={t('pane.details.toggle')}
+            aria-expanded={propsOpen}
+            aria-controls={detailsPaneId}
+            title={t('pane.details.toggle.title')}
+          >
+            <span className="orbitpm-details-toggle__glyph" aria-hidden="true">
+              {propsOpen ? '›' : '‹'}
+            </span>
+          </button>
+        </div>
         <PaneResizer
           edge="inline-start"
           dir={uiDir}
@@ -643,11 +815,20 @@ export function EditorTab(props: EditorTabProps): JSX.Element {
         <div
           id={detailsPaneId}
           className="orbitpm-lite-sidepane"
-          role="complementary"
+          role={isDetailsOverlay ? 'dialog' : 'complementary'}
+          aria-modal={isDetailsOverlay ? true : undefined}
           aria-label={t('pane.details.aria')}
           dir={uiDir}
-          style={{ display: propsOpen ? 'flex' : 'none', width: propsWidth ?? undefined }}
+          hidden={!propsOpen}
+          style={
+            {
+              '--orbitpm-details-pane-width': `${propsWidth ?? 300}px`
+            } as CSSProperties
+          }
         >
+          <h2 ref={detailsHeadingRef} className="orbitpm-details-pane__heading" tabIndex={-1}>
+            {t('pane.details.toggle')}
+          </h2>
           {sidePaneExtra}
           <div ref={propertiesContainerRef} className="orbitpm-editor__properties" />
         </div>

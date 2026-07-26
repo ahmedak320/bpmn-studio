@@ -650,15 +650,32 @@ test('Arabic editor panes mirror their layout and resizer while the bpmn-js canv
   await expect(editor.locator('.orbitpm-editor__body')).toHaveAttribute('dir', 'rtl')
   await expect(editor.locator('.orbitpm-editor__canvas')).toHaveAttribute('dir', 'ltr')
 
-  // The Details pane is collapsed by default and exposes no reopen control
-  // until a step is double-clicked.
+  // The Details pane is collapsed by default, while its logical-end rail stays
+  // reachable and mirrors the chevron in RTL.
   const pane = editor.locator('[id^="orbitpm-details-pane-"][role="complementary"]')
   const paneId = await pane.getAttribute('id')
   if (!paneId) throw new Error('Details pane has no stable id')
   expect(paneId).toMatch(/^orbitpm-details-pane-/)
   const paneToggle = editor.locator('button[aria-controls^="orbitpm-details-pane-"]')
   await expect(pane).toBeHidden()
-  await expect(paneToggle).toHaveCount(0)
+  await expect(paneToggle).toBeVisible()
+  await expect(paneToggle).toHaveAccessibleName('التفاصيل')
+  await expect(paneToggle).toHaveAttribute('aria-expanded', 'false')
+  await expect(paneToggle).toHaveAttribute('aria-controls', paneId)
+  await expect(paneToggle.locator('.orbitpm-details-toggle__glyph')).not.toHaveCSS(
+    'transform',
+    'none'
+  )
+
+  // Keyboard expansion moves focus to the localized pane heading. Collapse
+  // restores it to the persistent rail control.
+  await paneToggle.focus()
+  await paneToggle.press('Enter')
+  await expect(pane).toBeVisible()
+  await expect(pane.getByRole('heading', { name: 'التفاصيل' })).toBeFocused()
+  await paneToggle.click()
+  await expect(pane).toBeHidden()
+  await expect(paneToggle).toBeFocused()
 
   const taskId = await createNamedTask(page, {
     name: 'مراجعة الطلب',
@@ -672,10 +689,6 @@ test('Arabic editor panes mirror their layout and resizer while the bpmn-js canv
 
   await expect(paneToggle).toHaveAttribute('aria-controls', paneId)
   await expect(paneToggle).toHaveAttribute('aria-expanded', 'true')
-  await expect(paneToggle.locator('.orbitpm-details-toggle__glyph')).not.toHaveCSS(
-    'transform',
-    'none'
-  )
 
   await expect(pane).toBeVisible()
   await expect(pane).toHaveAttribute('aria-label', 'تفاصيل الخطوة والخصائص')

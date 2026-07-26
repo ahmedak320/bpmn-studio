@@ -18,7 +18,8 @@ const DIST = resolve(HERE, '../../dist/index.html')
 const FILE_URL = pathToFileURL(DIST).toString()
 
 const AMBER_RING = '196, 127, 23' // #c47f17 — PALETTE.basisBorder
-const PROPS_OPEN_KEY = 'orbitpm.lite.propsPanelOpen'
+const PROPS_OPEN_KEY = 'orbitpm.lite.preferences.v1.details.open'
+const PROPS_WIDTH_KEY = 'orbitpm.lite.preferences.v1.details.width'
 
 test.beforeAll(() => {
   const html = readFileSync(DIST, 'utf8')
@@ -42,7 +43,7 @@ async function newProcess(page: Page, name: string): Promise<void> {
   await expect(dialog).toBeVisible()
   await dialog.getByRole('textbox').fill(name)
   await dialog.getByRole('button', { name: 'Create', exact: true }).click()
-  await expect(page.locator('.djs-container svg').first()).toBeVisible({ timeout: 20_000 })
+  await expect(page.locator('.djs-container svg:visible').first()).toBeVisible({ timeout: 20_000 })
   await page.waitForFunction(() => {
     const w = window as unknown as { __ORBITPM_LITE__?: { modeler?: unknown } }
     return !!w.__ORBITPM_LITE__?.modeler
@@ -214,7 +215,7 @@ test('badge is clickable with a REAL pointer (hit-testing reaches the badge)', a
 // Details card in the right side pane: default closed + step double-click
 // ---------------------------------------------------------------------------
 
-test('pane defaults closed; a single click only selects, while a step double-click opens Details without a modal', async ({
+test('persistent Details rail opens, collapses, and reopens without losing selection', async ({
   page
 }) => {
   await forceFallbackMode(page)
@@ -225,14 +226,20 @@ test('pane defaults closed; a single click only selects, while a step double-cli
   const panelToggle = page.getByRole('button', { name: 'Details', exact: true })
   const propsResizer = page.getByRole('separator', { name: 'Resize the properties panel' })
 
-  // Missing storage now means closed. The mounted wrapper remains available
-  // for bpmn-js, but neither it nor the resizer occupies the editor.
+  // Missing storage means closed, but the persistent rail always exposes the
+  // reopening control. The mounted pane remains available for bpmn-js.
   await expect(sidePane).toBeHidden()
   await expect(sidePane).toHaveAttribute('role', 'complementary')
   await expect(sidePane).toHaveAttribute('aria-label', /details|properties/i)
-  await expect(panelToggle).toHaveCount(0)
   const paneId = await sidePane.getAttribute('id')
   expect(paneId).toBeTruthy()
+  await expect(panelToggle).toBeVisible()
+  await expect(panelToggle).toHaveAttribute('aria-expanded', 'false')
+  await expect(panelToggle).toHaveAttribute('aria-controls', paneId!)
+  await expect(panelToggle).toHaveAttribute('title', 'Show or hide the Details pane')
+  const toggleBox = await panelToggle.boundingBox()
+  expect(toggleBox?.width).toBeGreaterThanOrEqual(32)
+  expect(toggleBox?.height).toBeGreaterThanOrEqual(44)
   await expect(propsResizer).toHaveCount(0)
   expect(await page.evaluate((key) => localStorage.getItem(key), PROPS_OPEN_KEY)).toBeNull()
 
@@ -247,16 +254,35 @@ test('pane defaults closed; a single click only selects, while a step double-cli
   await expect(propsResizer).toHaveCount(0)
   expect(await page.evaluate((key) => localStorage.getItem(key), PROPS_OPEN_KEY)).toBeNull()
 
-  // A step-block double-click selects and opens the pane. It is
-  // deliberately NOT a shortcut to the modal, and stock inline editing is
-  // suppressed for this gesture.
+  // Space invokes the native button and moves focus to the controlled pane
+  // heading. Selection is unchanged, so the card opens on the same step.
+  await panelToggle.focus()
+  await page.keyboard.press('Space')
+  const paneHeading = sidePane.getByRole('heading', { name: 'Details' })
+  await expect(sidePane).toBeVisible()
+  await expect(paneHeading).toBeFocused()
+  await expect(panelToggle).toHaveAttribute('aria-expanded', 'true')
+  await expect(propsResizer).toBeVisible()
+  expect(await page.evaluate((key) => localStorage.getItem(key), PROPS_OPEN_KEY)).toBe('1')
+  expect(await selectedElementIds(page)).toEqual([taskId])
+
+  // Collapse restores focus to the still-visible rail and persists the state.
+  await panelToggle.click()
+  await expect(sidePane).toBeHidden()
+  await expect(panelToggle).toBeFocused()
+  await expect(panelToggle).toHaveAttribute('aria-expanded', 'false')
+  await expect(propsResizer).toHaveCount(0)
+  expect(await page.evaluate((key) => localStorage.getItem(key), PROPS_OPEN_KEY)).toBe('0')
+
+  // A step-block double-click remains a convenience route. It is deliberately
+  // not a shortcut to the modal, and stock inline editing is suppressed.
   await taskHit.dblclick()
   expect(await selectedElementIds(page)).toEqual([taskId])
   await expect(sidePane).toBeVisible()
   await expect(panelToggle).toHaveAttribute('aria-expanded', 'true')
   await expect(panelToggle).toHaveAttribute('aria-controls', paneId!)
   await expect(propsResizer).toBeVisible()
-  expect(await page.evaluate((key) => localStorage.getItem(key), PROPS_OPEN_KEY)).toBeNull()
+  expect(await page.evaluate((key) => localStorage.getItem(key), PROPS_OPEN_KEY)).toBe('1')
   await expect(page.getByRole('dialog', { name: 'Step details' })).toHaveCount(0)
   await expect(page.locator('.djs-direct-editing-parent')).toHaveCount(0)
 
@@ -280,17 +306,22 @@ test('pane defaults closed; a single click only selects, while a step double-cli
   await dialog.getByRole('button', { name: 'Cancel' }).click()
   await expect(dialog).toBeHidden()
 
-  // Explicit collapse hides the whole pane (card included), removes the
-  // resizer. The control disappears too: only another step double-click can
-  // reopen the pane.
+  // Explicit collapse hides the pane and removes the desktop resizer, while
+  // the rail remains available and can reopen the same selected step.
   await panelToggle.click()
   await expect(sidePane).toBeHidden()
   await expect(propsResizer).toHaveCount(0)
-  await expect(panelToggle).toHaveCount(0)
-  expect(await page.evaluate((key) => localStorage.getItem(key), PROPS_OPEN_KEY)).toBeNull()
+  await expect(panelToggle).toBeVisible()
+  await expect(panelToggle).toHaveAttribute('aria-expanded', 'false')
+  expect(await page.evaluate((key) => localStorage.getItem(key), PROPS_OPEN_KEY)).toBe('0')
+
+  await panelToggle.click()
+  await expect(sidePane).toBeVisible()
+  await expect(card).toContainText('Missing information')
+  expect(await selectedElementIds(page)).toEqual([taskId])
 })
 
-test('pane always starts closed and ignores stale persisted visibility state', async ({
+test('pane persists explicit open and closed preferences across reloads', async ({
   page
 }) => {
   await forceFallbackMode(page)
@@ -302,23 +333,104 @@ test('pane always starts closed and ignores stale persisted visibility state', a
   const panelToggle = page.getByRole('button', { name: 'Details', exact: true })
   const propsResizer = page.getByRole('separator', { name: 'Resize the properties panel' })
 
-  const taskId = await createShape(page, 'bpmn:Task', { x: 420, y: 220 })
-  await page
-    .locator(`.djs-element[data-element-id="${taskId}"] .djs-hit`)
-    .first()
-    .dblclick()
   await expect(sidePane).toBeVisible()
   await expect(propsResizer).toBeVisible()
+  await expect(panelToggle).toHaveAttribute('aria-expanded', 'true')
 
   await page.reload({ waitUntil: 'load' })
-  await newProcess(page, 'Pane Starts Closed Again')
+  await newProcess(page, 'Pane Still Open')
+  await expect(sidePane).toBeVisible()
+  await expect(propsResizer).toBeVisible()
+  expect(await page.evaluate((key) => localStorage.getItem(key), PROPS_OPEN_KEY)).toBe('1')
+
+  await panelToggle.click()
+  await expect(sidePane).toBeHidden()
+  expect(await page.evaluate((key) => localStorage.getItem(key), PROPS_OPEN_KEY)).toBe('0')
+
+  await page.reload({ waitUntil: 'load' })
+  await newProcess(page, 'Pane Still Closed')
   await expect(sidePane).toBeHidden()
   await expect(propsResizer).toHaveCount(0)
-  await expect(panelToggle).toHaveCount(0)
-  expect(await page.evaluate((key) => localStorage.getItem(key), PROPS_OPEN_KEY)).toBe('1')
+  await expect(panelToggle).toBeVisible()
+  await expect(panelToggle).toHaveAttribute('aria-expanded', 'false')
 })
 
-test('non-step double-click leaves the pane closed; a linked CallActivity keeps drill-down precedence', async ({
+test('each mounted tab preserves its selected element when Details is reopened', async ({ page }) => {
+  await forceFallbackMode(page)
+  await page.goto(FILE_URL, { waitUntil: 'load' })
+  await newProcess(page, 'First Pane')
+
+  let editor = page.locator('.orbitpm-editor:visible')
+  let toggle = editor.getByRole('button', { name: 'Details', exact: true })
+  const firstTaskId = await createShape(page, 'bpmn:Task', { x: 360, y: 220 }, { select: true })
+  await toggle.click()
+  await expect(editor.locator('.orbitpm-lite-details-card')).toContainText('Selected step')
+  expect(await selectedElementIds(page)).toEqual([firstTaskId])
+
+  await newProcess(page, 'Second Pane')
+  editor = page.locator('.orbitpm-editor:visible')
+  toggle = editor.getByRole('button', { name: 'Details', exact: true })
+  // The persisted user preference opens a newly-mounted tab, initially at
+  // process scope. Selecting its own step updates only that tab.
+  await expect(toggle).toHaveAttribute('aria-expanded', 'true')
+  const secondTaskId = await createShape(page, 'bpmn:UserTask', { x: 520, y: 220 }, { select: true })
+  await expect(editor.locator('.orbitpm-lite-details-card')).toContainText('Selected step')
+  expect(await selectedElementIds(page)).toEqual([secondTaskId])
+
+  await page.getByText(/first-pane\.bpmn$/).click()
+  editor = page.locator('.orbitpm-editor:visible')
+  toggle = editor.getByRole('button', { name: 'Details', exact: true })
+  expect(await selectedElementIds(page)).toEqual([firstTaskId])
+  await toggle.click()
+  await expect(editor.locator('.orbitpm-lite-sidepane')).toBeHidden()
+  await toggle.click()
+  await expect(editor.locator('.orbitpm-lite-details-card')).toContainText('Selected step')
+  expect(await selectedElementIds(page)).toEqual([firstTaskId])
+
+  await page.getByText(/second-pane\.bpmn$/).click()
+  expect(await selectedElementIds(page)).toEqual([secondTaskId])
+})
+
+test('every supported activity type can open and collapse the Details pane', async ({ page }) => {
+  await forceFallbackMode(page)
+  await page.goto(FILE_URL, { waitUntil: 'load' })
+  await newProcess(page, 'Activity Details Matrix')
+
+  const activityTypes = [
+    'bpmn:Task',
+    'bpmn:UserTask',
+    'bpmn:ServiceTask',
+    'bpmn:SendTask',
+    'bpmn:ReceiveTask',
+    'bpmn:ManualTask',
+    'bpmn:BusinessRuleTask',
+    'bpmn:ScriptTask',
+    'bpmn:CallActivity',
+    'bpmn:SubProcess',
+    'bpmn:Transaction',
+    'bpmn:AdHocSubProcess'
+  ]
+  const sidePane = page.locator('.orbitpm-lite-sidepane')
+  const panelToggle = page.getByRole('button', { name: 'Details', exact: true })
+
+  for (const [index, type] of activityTypes.entries()) {
+    const id = await createShape(
+      page,
+      type,
+      { x: 220 + (index % 4) * 170, y: 180 + Math.floor(index / 4) * 130 }
+    )
+    await page.locator(`.djs-element[data-element-id="${id}"] .djs-hit`).first().dblclick()
+    await expect(sidePane, `${type} should open Details`).toBeVisible()
+    expect(await selectedElementIds(page)).toEqual([id])
+    await expect(sidePane.locator('.orbitpm-lite-details-card')).toContainText('Selected step')
+    await expect(page.getByRole('dialog', { name: 'Step details' })).toHaveCount(0)
+    await panelToggle.click()
+    await expect(sidePane).toBeHidden()
+    await expect(panelToggle).toHaveAttribute('aria-expanded', 'false')
+  }
+})
+
+test('non-step, unlinked CallActivity, and linked CallActivity double-click routes correctly', async ({
   page
 }) => {
   await forceFallbackMode(page)
@@ -326,6 +438,7 @@ test('non-step double-click leaves the pane closed; a linked CallActivity keeps 
   await newProcess(page, 'Double Click Routing Demo')
 
   const sidePane = page.locator('.orbitpm-lite-sidepane')
+  const panelToggle = page.getByRole('button', { name: 'Details', exact: true })
   const propsResizer = page.getByRole('separator', { name: 'Resize the properties panel' })
 
   const gatewayId = await createShape(page, 'bpmn:ExclusiveGateway', { x: 300, y: 220 })
@@ -338,7 +451,21 @@ test('non-step double-click leaves the pane closed; a linked CallActivity keeps 
   expect(await page.evaluate((key) => localStorage.getItem(key), PROPS_OPEN_KEY)).toBeNull()
   await page.keyboard.press('Escape')
 
-  const callId = await createShape(page, 'bpmn:CallActivity', { x: 520, y: 220 })
+  // An unlinked call activity is ordinary editable step metadata, so the
+  // double-click convenience opens Details.
+  const unlinkedCallId = await createShape(page, 'bpmn:CallActivity', { x: 430, y: 220 })
+  await page
+    .locator(`.djs-element[data-element-id="${unlinkedCallId}"] .djs-hit`)
+    .first()
+    .dblclick()
+  await expect(sidePane).toBeVisible()
+  expect(await selectedElementIds(page)).toEqual([unlinkedCallId])
+  await expect(sidePane.locator('.orbitpm-lite-details-card')).toContainText('Selected step')
+  await expect(page.getByRole('dialog', { name: 'Step details' })).toHaveCount(0)
+  await panelToggle.click()
+  await expect(sidePane).toBeHidden()
+
+  const callId = await createShape(page, 'bpmn:CallActivity', { x: 580, y: 220 })
   await updateElementProperties(page, callId, { calledElement: 'Process_link_target' })
   await page
     .locator(`.djs-element[data-element-id="${callId}"] .djs-hit`)
@@ -353,7 +480,7 @@ test('non-step double-click leaves the pane closed; a linked CallActivity keeps 
   await expect(propsResizer).toHaveCount(0)
   await expect(page.getByRole('dialog', { name: 'Step details' })).toHaveCount(0)
   await expect(page.locator('.djs-direct-editing-parent')).toHaveCount(0)
-  expect(await page.evaluate((key) => localStorage.getItem(key), PROPS_OPEN_KEY)).toBeNull()
+  expect(await page.evaluate((key) => localStorage.getItem(key), PROPS_OPEN_KEY)).toBe('0')
 })
 
 // ---------------------------------------------------------------------------
@@ -437,9 +564,7 @@ test('props-pane resizer: a11y contract, keyboard resize, bounds, reset, persist
   await page.keyboard.press('ArrowLeft')
   await expect(resizer).toHaveAttribute('aria-valuenow', '316')
   expect(Math.abs((await paneWidth()) - 316)).toBeLessThanOrEqual(2)
-  expect(
-    await page.evaluate(() => localStorage.getItem('orbitpm.lite.propsPanelWidth'))
-  ).toBe('316')
+  expect(await page.evaluate((key) => localStorage.getItem(key), PROPS_WIDTH_KEY)).toBe('316')
   await page.keyboard.press('ArrowRight')
   await expect(resizer).toHaveAttribute('aria-valuenow', '300')
 
@@ -453,9 +578,7 @@ test('props-pane resizer: a11y contract, keyboard resize, bounds, reset, persist
   // Double-click resets to the stylesheet default and clears the stored key.
   await resizer.dblclick()
   await expect(resizer).toHaveAttribute('aria-valuenow', '300')
-  expect(
-    await page.evaluate(() => localStorage.getItem('orbitpm.lite.propsPanelWidth'))
-  ).toBeNull()
+  expect(await page.evaluate((key) => localStorage.getItem(key), PROPS_WIDTH_KEY)).toBeNull()
 
   // Persist a distinctive width, then reload + re-enter fallback mode: the
   // width must be restored from localStorage.
@@ -463,9 +586,7 @@ test('props-pane resizer: a11y contract, keyboard resize, bounds, reset, persist
   await page.keyboard.press('ArrowLeft')
   await page.keyboard.press('ArrowLeft')
   await expect(resizer).toHaveAttribute('aria-valuenow', '332')
-  expect(
-    await page.evaluate(() => localStorage.getItem('orbitpm.lite.propsPanelWidth'))
-  ).toBe('332')
+  expect(await page.evaluate((key) => localStorage.getItem(key), PROPS_WIDTH_KEY)).toBe('332')
 
   await page.reload({ waitUntil: 'load' })
   await newProcess(page, 'Props Resize Again')

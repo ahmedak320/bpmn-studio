@@ -22,8 +22,13 @@
   display: flex;
   flex-direction: column;
   width: 100%;
+  max-width: 100%;
   height: 100%;
+  max-height: 100vh;
+  max-height: 100dvh;
   min-height: 0;
+  min-width: 0;
+  overflow: hidden;
   color: var(--orbitpm-editor-fg);
   background: var(--orbitpm-editor-bg);
 }
@@ -74,10 +79,12 @@
   display: flex;
   align-items: center;
   gap: 0.5rem;
+  min-width: 0;
   padding: 0.4rem 0.6rem;
   border-bottom: 1px solid var(--orbitpm-editor-border);
   background: var(--orbitpm-editor-bg);
   flex: 0 0 auto;
+  overflow: hidden;
 }
 
 .orbitpm-editor__button {
@@ -107,7 +114,7 @@
 }
 
 .orbitpm-editor__dirty-flag {
-  margin-left: auto;
+  margin-inline-start: auto;
   font-size: 0.8rem;
   color: var(--orbitpm-editor-muted-fg);
 }
@@ -131,6 +138,17 @@
   display: flex;
   flex: 1 1 auto;
   min-height: 0;
+  min-width: 0;
+  overflow: hidden;
+  isolation: isolate;
+}
+
+.orbitpm-editor__canvas-island {
+  position: relative;
+  display: flex;
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
 }
 
 .orbitpm-editor__canvas {
@@ -153,6 +171,19 @@
   border-left: 1px solid var(--orbitpm-editor-border);
   background: var(--orbitpm-editor-panel-bg);
   color: var(--orbitpm-editor-fg);
+}
+
+@media (max-width: 767px) {
+  .orbitpm-editor__toolbar {
+    flex-wrap: wrap;
+    gap: 0.35rem;
+    padding: 0.35rem;
+  }
+
+  .orbitpm-editor__button {
+    min-height: 32px;
+    padding-inline: 0.5rem;
+  }
 }
 
 /* @bpmn-io/properties-panel ships its own light-theme inline styling via

@@ -27,15 +27,29 @@
 html,
 body,
 #root {
+  width: 100%;
+  max-width: 100%;
   height: 100%;
   margin: 0;
 }
 
 body {
+  overflow-x: hidden;
   font-family:
     system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif;
   color: var(--orbitpm-fg);
   background: var(--orbitpm-bg);
+}
+
+/* The app shell is an inline-styled single-column grid. `minmax(0, 1fr)` is
+   essential at narrow widths: the default auto track otherwise expands to the
+   header toolbar's min-content width and shifts the entire editor off-screen. */
+#root > div {
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  grid-template-columns: minmax(0, 1fr);
+  overflow: hidden;
 }
 
 /* Arabic UI: Segoe UI/Tahoma carry the long-standing well-shaped Arabic
@@ -54,6 +68,34 @@ body {
 button {
   font: inherit;
   color: inherit;
+}
+
+@media (max-width: 1199px) {
+  #root > div > header,
+  #root > div > footer {
+    min-width: 0;
+    max-width: 100%;
+    flex-wrap: wrap;
+  }
+
+  #root > div > header > *,
+  #root > div > footer > * {
+    min-width: 0;
+    max-width: 100%;
+  }
+
+  #root > div > header > span:first-of-type,
+  #root > div > header > div:last-of-type {
+    flex: 1 1 auto !important;
+    flex-wrap: wrap;
+  }
+
+  #root > div > header + div,
+  #root > div > header + div > section {
+    min-width: 0;
+    max-width: 100%;
+    overflow: hidden;
+  }
 }
 
 @keyframes orbitpm-spin {
@@ -168,22 +210,25 @@ button {
 }
 
 /* Right side pane inside the editor: the Details card stacked above the
-   bpmn-js properties panel. Lives inside .orbitpm-editor, so the editor-scoped
-   variables resolve. The two-class selector below beats the shared
-   single-class .orbitpm-editor__properties rule (desktop EditorTab.css)
-   regardless of bundle order; the pane wrapper now owns the width/border while
-   the inner properties div stretches to fill. display (flex/none) comes from
-   the inline propsOpen toggle. */
+   bpmn-js properties panel. The wrapper owns the versioned, user-controlled
+   width while the inner properties div stretches to fill. */
 .orbitpm-lite-sidepane {
   flex: 0 0 auto;
+  display: flex;
   flex-direction: column;
   min-height: 0;
-  width: 300px;
+  width: var(--orbitpm-details-pane-width, 300px);
   min-width: 240px;
   max-width: 560px;
   border-left: 1px solid var(--orbitpm-editor-border);
   background: var(--orbitpm-editor-panel-bg);
+  overflow: hidden;
 }
+
+.orbitpm-lite-sidepane[hidden] {
+  display: none;
+}
+
 .orbitpm-lite-sidepane .orbitpm-editor__properties {
   flex: 1 1 auto;
   min-height: 0;
@@ -197,6 +242,7 @@ button {
    pane — capped height so the properties panel below stays usable. */
 .orbitpm-lite-details-card {
   flex: 0 0 auto;
+  min-width: 0;
   max-height: 45%;
   overflow-y: auto;
   border-bottom: 1px solid var(--orbitpm-editor-border);
@@ -235,15 +281,17 @@ button {
   pointer-events: all;
 }
 
-/* Pane drag handle (common/PaneResizer.tsx): a slim hit area with a 1px
-   center line; hover/drag tint it with the accent. flex/cursor/touch-action
-   are also inlined by the component (it cannot function without them). */
+/* Pane drag handle (common/PaneResizer.tsx): a generous invisible hit area
+   around a 1px visual line. The important flex basis intentionally overrides
+   the component's structural 6px inline fallback. */
 .orbitpm-lite-resizer {
-  flex: 0 0 6px;
+  flex: 0 0 12px !important;
+  min-width: 12px;
   cursor: col-resize;
   touch-action: none;
   background: transparent;
   position: relative;
+  z-index: 3;
 }
 .orbitpm-lite-resizer::after {
   content: '';
@@ -324,20 +372,146 @@ button {
   border-inline-start: 1px solid var(--orbitpm-editor-border);
 }
 
+.orbitpm-details-rail {
+  position: relative;
+  z-index: 130;
+  display: flex;
+  flex: 0 0 36px;
+  inline-size: 36px;
+  min-inline-size: 36px;
+  align-items: flex-start;
+  justify-content: center;
+  border-inline-start: 1px solid var(--orbitpm-editor-border);
+  background: var(--orbitpm-editor-bg);
+}
+
 .orbitpm-details-toggle {
-  display: inline-flex;
+  position: relative;
+  display: flex;
   align-items: center;
-  gap: 0.3rem;
+  justify-content: center;
+  inline-size: 36px;
+  min-inline-size: 36px;
+  min-block-size: 44px;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  color: var(--orbitpm-editor-fg);
+  background: transparent;
+  cursor: pointer;
+  touch-action: manipulation;
+}
+
+.orbitpm-details-toggle::after {
+  content: '';
+  position: absolute;
+  inset-block: 10px;
+  inset-inline-end: 2px;
+  inline-size: 2px;
+  border-radius: 2px;
+  background: var(--orbitpm-editor-accent);
+  opacity: 0.7;
+}
+
+.orbitpm-details-toggle:hover {
+  background: color-mix(in srgb, var(--orbitpm-editor-accent) 12%, transparent);
+}
+
+.orbitpm-details-toggle:focus-visible,
+.orbitpm-details-pane__heading:focus-visible {
+  outline: 2px solid var(--orbitpm-editor-accent);
+  outline-offset: -3px;
 }
 
 .orbitpm-details-toggle__glyph {
   display: inline-block;
-  font-size: 1.15em;
+  font-size: 1.35rem;
   line-height: 1;
 }
 
 .orbitpm-editor[dir='rtl'] .orbitpm-details-toggle__glyph {
   transform: scaleX(-1);
+}
+
+/* The drawer receives programmatic focus on keyboard expansion. Its heading is
+   announced without duplicating the visible title already supplied by the
+   Details card. */
+.orbitpm-details-pane__heading {
+  position: absolute;
+  inline-size: 1px;
+  block-size: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}
+
+.orbitpm-details-backdrop {
+  display: none;
+}
+
+@media (max-width: 1199px) {
+  .orbitpm-details-backdrop {
+    position: absolute;
+    z-index: 110;
+    display: block;
+    inset: 0;
+    inset-inline-end: 36px;
+    background: rgba(15, 23, 42, 0.28);
+  }
+
+  .orbitpm-lite-sidepane {
+    position: absolute;
+    z-index: 120;
+    inset-block: 0;
+    inset-inline-end: 36px;
+    width: min(var(--orbitpm-details-pane-width, 300px), calc(100% - 36px));
+    min-width: 0;
+    max-width: calc(100% - 36px);
+    box-shadow: 0 0 28px rgba(0, 0, 0, 0.28);
+  }
+
+  /* Overlay drawers do not resize the canvas and therefore need no drag
+     separator. The persisted desktop width remains untouched. */
+  .orbitpm-editor__body > .orbitpm-lite-resizer {
+    display: none;
+  }
+}
+
+@media (max-width: 767px) {
+  .orbitpm-editor--details-open {
+    position: relative;
+    z-index: 1300;
+  }
+
+  .orbitpm-editor--details-open .orbitpm-details-backdrop {
+    position: fixed;
+    inset-block: 0;
+    inset-inline: 0 36px;
+  }
+
+  .orbitpm-editor--details-open .orbitpm-details-rail--drawer-open {
+    position: fixed;
+    inset-block: 0;
+    inset-inline-end: 0;
+    block-size: 100vh;
+    block-size: 100dvh;
+  }
+
+  .orbitpm-editor--details-open .orbitpm-lite-sidepane {
+    position: fixed;
+    inset-block: 0;
+    inset-inline-end: 36px;
+    width: calc(100vw - 36px);
+    width: calc(100dvw - 36px);
+    max-width: calc(100vw - 36px);
+    max-width: calc(100dvw - 36px);
+    max-height: 100vh;
+    max-height: 100dvh;
+  }
 }
 
 /* Compact, canvas-fixed semantic legend. The component supplies its own dir,
