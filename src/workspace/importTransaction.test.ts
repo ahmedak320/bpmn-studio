@@ -13,6 +13,7 @@ import {
   confirmWorkspaceImportPlan,
   executeConfirmedWorkspaceImport,
   prepareWorkspaceImportPlan,
+  secureBpmnImportPreparer,
   type BpmnImportPreparer,
   type WorkspaceImportHistory,
   type WorkspaceImportSource
@@ -72,6 +73,12 @@ const fakePreparer: BpmnImportPreparer = {
 }
 
 const fakeReviewedBpmnIngestion: ReviewedBpmnIngestionPort = async (xml) => {
+  return reviewedResult(xml)
+}
+
+async function reviewedResult(
+  xml: string
+): Promise<Awaited<ReturnType<ReviewedBpmnIngestionPort>>> {
   const digest = await sha256Hex(new TextEncoder().encode(xml))
   const reviewDigest = `review-${digest}`
   return {
@@ -153,6 +160,22 @@ async function planFor(
     validationAdapters: [],
     amlConverter: options.amlConverter,
     now: () => new Date('2026-07-26T12:00:00.000Z')
+  })
+}
+
+async function edgePlan(
+  adapter: MemoryWorkspaceAdapter,
+  sources: readonly WorkspaceImportSource[],
+  overrides: Partial<Parameters<typeof prepareWorkspaceImportPlan>[0]> = {}
+) {
+  return prepareWorkspaceImportPlan({
+    adapter,
+    sources,
+    bpmnPreparer: fakePreparer,
+    reviewedBpmnIngestion: fakeReviewedBpmnIngestion,
+    validationAdapters: [],
+    now: () => new Date('2026-07-26T12:00:00.000Z'),
+    ...overrides
   })
 }
 
@@ -618,6 +641,291 @@ describe('general workspace import planning', () => {
     )
     expect(beforeWrite).not.toHaveBeenCalled()
   })
+
+  it('rejects every bounded-input shape before parsing or writing', async () => {
+    const adapter = new MemoryWorkspaceAdapter()
+    const first = doc('first', 'first.bpmn', documentXml('First'))
+    const second = doc('second', 'second.bpmn', documentXml('Second'))
+    const firstBytes = new TextEncoder().encode(first.text).byteLength
+    const secondBytes = new TextEncoder().encode(second.text).byteLength
+
+    await expect(edgePlan(adapter, [first], { limits: { maxSources: 0 } })).rejects.toMatchObject({
+      code: 'invalid-input'
+    })
+    await expect(
+      edgePlan(adapter, [first, second], { limits: { maxSources: 1 } })
+    ).rejects.toMatchObject({ code: 'limit-exceeded' })
+    await expect(edgePlan(adapter, [{ ...first, id: ' ' }])).rejects.toMatchObject({
+      code: 'invalid-input'
+    })
+    await expect(edgePlan(adapter, [{ ...first, name: ' ' }])).rejects.toMatchObject({
+      code: 'invalid-input'
+    })
+    await expect(
+      edgePlan(adapter, [first], { limits: { maxSourceCharacters: firstBytes - 1 } })
+    ).rejects.toMatchObject({ code: 'limit-exceeded' })
+    await expect(
+      edgePlan(adapter, [first, second], {
+        limits: {
+          maxSourceCharacters: Math.max(firstBytes, secondBytes),
+          maxTotalSourceCharacters: firstBytes + secondBytes - 1
+        }
+      })
+    ).rejects.toMatchObject({ code: 'limit-exceeded' })
+    await expect(
+      edgePlan(adapter, [first, second], {
+        limits: {
+          maxArtifactBytes: Math.max(firstBytes, secondBytes),
+          maxTotalArtifactBytes: firstBytes + secondBytes - 1
+        }
+      })
+    ).rejects.toMatchObject({ code: 'limit-exceeded' })
+
+    const unicode = await edgePlan(adapter, [
+      doc('unicode', 'unicode.bpmn', documentXml('Unicode', { marker: 'é € 😀' }))
+    ])
+    expect(unicode.status).toBe('ready')
+    expect(await adapter.list()).toEqual([])
+  })
+
+  it('fails closed for cancellation, unsafe paths, and unverifiable existing paths', async () => {
+    const adapter = new MemoryWorkspaceAdapter()
+    const cancelled = new AbortController()
+    cancelled.abort('superseded')
+    await expect(
+      edgePlan(adapter, [doc('cancelled', 'cancelled.bpmn', documentXml('Cancelled'))], {
+        signal: cancelled.signal
+      })
+    ).rejects.toMatchObject({ code: 'cancelled' })
+
+    const unsafe = await edgePlan(adapter, [
+      doc('unsafe', 'unsafe.bpmn', documentXml('Unsafe'), '../unsafe.bpmn')
+    ])
+    expect(unsafe).toMatchObject({
+      status: 'blocked',
+      skipped: [expect.objectContaining({ reason: 'unsafe-path' })]
+    })
+
+    const unverifiable = await edgePlan(
+      adapter,
+      [doc('existing', 'existing.bpmn', documentXml('Existing'))],
+      {
+        existingProcessIndex: new Map([['Existing', { relPath: '../outside.bpmn' }]])
+      }
+    )
+    expect(unverifiable).toMatchObject({
+      status: 'blocked',
+      skipped: [expect.objectContaining({ reason: 'process-id-collision' })]
+    })
+  })
+
+  it('covers failed and multilingual multi-model ARIS conversion evidence', async () => {
+    const adapter = new MemoryWorkspaceAdapter()
+    const failed = await edgePlan(adapter, [doc('failed-aml', 'failed.aml', '<AML/>')], {
+      amlConverter: async () => ({ error: 'unsupported ARIS database' })
+    })
+    expect(failed).toMatchObject({
+      status: 'blocked',
+      skipped: [expect.objectContaining({ reason: 'aml-conversion-failed' })]
+    })
+
+    const base = amlConversion()
+    if ('error' in base) throw new Error(base.error)
+    const pluralReport = createArisConversionReport({
+      databaseName: 'Arabic models',
+      objectDefinitions: 2,
+      models: 3,
+      outputFiles: 3,
+      entries: {
+        converted: [],
+        downgraded: [
+          reportEntry('unknown-object-type-mapped-as-task', 'one'),
+          reportEntry('unknown-object-type-mapped-as-task', 'two')
+        ],
+        ignored: [],
+        ambiguous: [],
+        unmapped: []
+      }
+    })
+    const converted = await edgePlan(adapter, [doc('arabic-aml', 'landscape.aml', '<AML/>')], {
+      language: 'ar',
+      amlConverter: async () => ({
+        files: [
+          {
+            ...base.files[0],
+            nameAr: 'العملية الأولى',
+            processId: 'Arabic_One',
+            xml: documentXml('Arabic_One')
+          },
+          {
+            ...base.files[0],
+            name: 'Fallback Name',
+            nameAr: '',
+            nameEn: '',
+            processId: 'Arabic_Two',
+            xml: documentXml('Arabic_Two')
+          },
+          {
+            ...base.files[0],
+            name: '',
+            nameAr: '',
+            nameEn: '',
+            processId: 'Arabic_Three',
+            xml: documentXml('Arabic_Three')
+          }
+        ],
+        report: pluralReport
+      })
+    })
+    expect(converted.artifacts).toHaveLength(3)
+    expect(converted.warnings).toContainEqual(
+      expect.objectContaining({
+        code: 'aml-downgraded',
+        count: 2,
+        message: expect.stringContaining('decisions')
+      })
+    )
+  })
+
+  it('reports structural, identity, localization, and reviewed-identity failures distinctly', async () => {
+    const adapter = new MemoryWorkspaceAdapter()
+    const source = doc('candidate', 'candidate.bpmn', documentXml('Candidate'))
+
+    const inspectString = await edgePlan(adapter, [source], {
+      bpmnPreparer: {
+        ...fakePreparer,
+        inspect: async () => {
+          throw 'non-error parse failure'
+        }
+      }
+    })
+    expect(inspectString.skipped).toContainEqual(
+      expect.objectContaining({ reason: 'invalid-bpmn', message: 'non-error parse failure' })
+    )
+
+    const preparationChanged = await edgePlan(adapter, [source], {
+      bpmnPreparer: {
+        ...fakePreparer,
+        prepare: async (xml, options) => ({
+          ...(await fakePreparer.prepare(xml, options)),
+          processIds: ['Changed_During_Preparation']
+        })
+      }
+    })
+    expect(preparationChanged.skipped).toContainEqual(
+      expect.objectContaining({ reason: 'process-identity-changed' })
+    )
+
+    const reviewedChanged = await edgePlan(adapter, [source], {
+      reviewedBpmnIngestion: async () => reviewedResult(documentXml('Changed_During_Review'))
+    })
+    expect(reviewedChanged.skipped).toContainEqual(
+      expect.objectContaining({
+        reason: 'process-identity-changed',
+        message: expect.stringContaining('Reviewed localization')
+      })
+    )
+
+    const reviewCancelled = await edgePlan(adapter, [source], {
+      reviewedBpmnIngestion: async () => {
+        throw new ReviewedBpmnBoundaryError('review-cancelled', 'reviewer closed the dialog')
+      }
+    })
+    expect(reviewCancelled.skipped).toContainEqual(
+      expect.objectContaining({ reason: 'localization-review-cancelled' })
+    )
+
+    const localizationInvalid = await edgePlan(adapter, [source], {
+      reviewedBpmnIngestion: async () => {
+        throw 'localized output failed validation'
+      }
+    })
+    expect(localizationInvalid.skipped).toContainEqual(
+      expect.objectContaining({
+        reason: 'localization-invalid',
+        message: 'localized output failed validation'
+      })
+    )
+  })
+
+  it('surfaces production parse diagnostics for malformed BPMN', async () => {
+    const adapter = new MemoryWorkspaceAdapter()
+    const plan = await prepareWorkspaceImportPlan({
+      adapter,
+      sources: [doc('malformed', 'malformed.bpmn', '<broken')],
+      validationAdapters: [],
+      reviewedBpmnIngestion: fakeReviewedBpmnIngestion
+    })
+
+    expect(plan.status).toBe('blocked')
+    expect(plan.skipped).toContainEqual(
+      expect.objectContaining({ reason: 'invalid-bpmn', message: expect.stringContaining('parse') })
+    )
+    expect(plan.warnings.length).toBeGreaterThan(0)
+    await expect(secureBpmnImportPreparer.inspect('<broken')).rejects.toThrow()
+  })
+
+  it('enforces reviewed-output byte limits and localization evidence integrity', async () => {
+    const adapter = new MemoryWorkspaceAdapter()
+    const source = doc('expanded', 'expanded.bpmn', documentXml('Expanded'))
+    const sourceBytes = new TextEncoder().encode(source.text).byteLength
+    const expandingReview: ReviewedBpmnIngestionPort = async (xml) =>
+      reviewedResult(`${xml}${' '.repeat(128)}`)
+
+    await expect(
+      edgePlan(adapter, [source], {
+        reviewedBpmnIngestion: expandingReview,
+        limits: {
+          maxArtifactBytes: sourceBytes + 32,
+          maxTotalArtifactBytes: sourceBytes + 512
+        }
+      })
+    ).rejects.toMatchObject({ code: 'limit-exceeded' })
+
+    const second = doc('expanded-two', 'expanded-two.bpmn', documentXml('Expanded_Two'))
+    const totalSourceBytes =
+      new TextEncoder().encode(source.text).byteLength +
+      new TextEncoder().encode(second.text).byteLength
+    await expect(
+      edgePlan(adapter, [source, second], {
+        reviewedBpmnIngestion: expandingReview,
+        limits: {
+          maxArtifactBytes: sourceBytes + 512,
+          maxTotalArtifactBytes: totalSourceBytes + 32
+        }
+      })
+    ).rejects.toMatchObject({ code: 'limit-exceeded' })
+
+    await expect(
+      edgePlan(adapter, [source], {
+        reviewedBpmnIngestion: async (xml) => {
+          const reviewed = await reviewedResult(xml)
+          return {
+            ...reviewed,
+            evidence: {
+              ...reviewed.evidence,
+              outputDigest: '0'.repeat(64)
+            }
+          }
+        }
+      })
+    ).rejects.toMatchObject({ code: 'plan-tampered' })
+  })
+
+  it('never relocates an existing process identity during destination de-duplication', async () => {
+    const adapter = new MemoryWorkspaceAdapter({ folders: ['owned.bpmn'] })
+    const plan = await edgePlan(adapter, [doc('owned', 'owned.bpmn', documentXml('Owned'))], {
+      existingProcessIndex: new Map([['Owned', { relPath: 'owned.bpmn' }]])
+    })
+
+    expect(plan.status).toBe('blocked')
+    expect(plan.skipped).toContainEqual(
+      expect.objectContaining({
+        reason: 'process-id-collision',
+        message: expect.stringContaining('cannot move')
+      })
+    )
+  })
 })
 
 describe('review confirmation and atomic execution', () => {
@@ -685,6 +993,7 @@ describe('review confirmation and atomic execution', () => {
       }),
       enforceRetention: vi.fn(async () => undefined)
     }
+    const signal = new AbortController().signal
     const runExclusive = async <T>(operation: () => Promise<T>): Promise<T> => {
       events.push('mutex:start')
       const result = await operation()
@@ -696,6 +1005,7 @@ describe('review confirmation and atomic execution', () => {
       adapter,
       history,
       runExclusive,
+      signal,
       processIdentityInspector: fakePreparer.inspect
     })
 
@@ -711,6 +1021,10 @@ describe('review confirmation and atomic execution', () => {
     expect(events.at(-1)).toBe('mutex:end')
     expect(decoder.decode((await adapter.read('create.bpmn')).bytes)).toBe(documentXml('Create'))
     expect(decoder.decode((await adapter.read('replace.bpmn')).bytes)).toBe(documentXml('Replace'))
+    expect(history.createRevision).toHaveBeenCalledWith(
+      'replace.bpmn',
+      expect.objectContaining({ signal })
+    )
     expect(history.enforceRetention).toHaveBeenCalledOnce()
   })
 

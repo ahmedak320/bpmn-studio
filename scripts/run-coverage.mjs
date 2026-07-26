@@ -36,8 +36,13 @@ const profiles = [
   },
   {
     name: 'import-transactions',
-    tests: ['src/spreadsheet/transaction.test.ts', 'src/workspace/adapters'],
-    include: 'src/{spreadsheet/transaction,workspace/adapters/**/*}.{ts,tsx}',
+    tests: [
+      'src/spreadsheet/transaction.test.ts',
+      'src/workspace/importTransaction.test.ts',
+      'src/workspace/adapters'
+    ],
+    include:
+      'src/{spreadsheet/transaction,workspace/importTransaction,workspace/adapters/**/*}.{ts,tsx}',
     thresholds: { branches: 90 }
   }
 ]

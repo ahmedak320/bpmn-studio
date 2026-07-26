@@ -331,6 +331,8 @@ export interface WorkspaceImportHistory {
        * pruning older recovery evidence before rollback completes.
        */
       prune: false
+      /** The exact execution signal, so history creation cannot outlive import cancellation. */
+      signal?: AbortSignal
     }
   ): Promise<unknown>
   enforceRetention?(): Promise<unknown>
@@ -2002,7 +2004,8 @@ export async function executeConfirmedWorkspaceImport(
         await options.history.createRevision(path, {
           reason: 'backup-import',
           snapshot: existing,
-          prune: false
+          prune: false,
+          signal: options.signal
         })
         historyRevisions += 1
       }
