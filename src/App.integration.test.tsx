@@ -89,7 +89,9 @@ const mocks = vi.hoisted(() => ({
   folderTreeProps: vi.fn(),
   catalogProps: vi.fn(),
   moveDialogProps: vi.fn(),
-  readLibraryZipFileInWorker: vi.fn()
+  readLibraryZipFileInWorker: vi.fn(),
+  legacyCreateFolderAt: vi.fn(),
+  legacyCreateBpmnFileUnique: vi.fn()
 }))
 
 vi.mock('./i18n', () => ({
@@ -127,6 +129,21 @@ vi.mock('./fs/workspaceHandle', () => ({
   ensurePermission: mocks.ensurePermission,
   classifyPickerError: mocks.classifyPickerError
 }))
+
+vi.mock('./fs/fsAccess', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('./fs/fsAccess')>()
+  return {
+    ...actual,
+    createFolderAt: (...args: Parameters<typeof actual.createFolderAt>) => {
+      mocks.legacyCreateFolderAt(...args)
+      return actual.createFolderAt(...args)
+    },
+    createBpmnFileUnique: (...args: Parameters<typeof actual.createBpmnFileUnique>) => {
+      mocks.legacyCreateBpmnFileUnique(...args)
+      return actual.createBpmnFileUnique(...args)
+    }
+  }
+})
 
 vi.mock('./editor/exportImage', () => ({
   triggerDownload: mocks.triggerDownload
@@ -711,6 +728,8 @@ beforeEach(() => {
     entries: [],
     skipped: []
   })
+  mocks.legacyCreateFolderAt.mockReset()
+  mocks.legacyCreateBpmnFileUnique.mockReset()
   mocks.modelerGet.mockReset().mockImplementation((name: string) => {
     if (name === 'eventBus') {
       return { on: vi.fn(), off: vi.fn() }
@@ -1234,6 +1253,97 @@ describe('App single-file browser orchestration', () => {
 })
 
 describe('App directory workspace orchestration', () => {
+  it('opens a different directory with one picker call and keeps the current workspace when cancelled', async () => {
+    const user = userEvent.setup()
+    await openDirectoryWorkspace(user)
+    const activeController = latestSessionController()
+    const activeLocalizationAdapter = mocks.workspaceLocalizationFactories.mock.calls[0]?.[0]
+
+    mocks.pickWorkspace.mockClear().mockResolvedValue(null)
+    mocks.rememberWorkspace.mockClear()
+    await user.click(screen.getByRole('button', { name: 'app.changeFolder' }))
+
+    await waitFor(() => expect(mocks.pickWorkspace).toHaveBeenCalledOnce())
+    expect(mocks.workspaceLocalizationFactories).toHaveBeenCalledTimes(1)
+    expect(mocks.workspaceLocalizationFactories.mock.calls[0]?.[0]).toBe(activeLocalizationAdapter)
+    expect(latestSessionController()).toBe(activeController)
+    expect(mocks.rememberWorkspace).not.toHaveBeenCalled()
+    expect(screen.getByTestId('catalog-view')).not.toBeNull()
+    expect(screen.getByTestId('folder-tree')).not.toBeNull()
+
+    await user.click(screen.getByRole('button', { name: 'mock-tree-open' }))
+    expect(await screen.findByTestId('editor-tab')).not.toBeNull()
+    expect(latestSessionController().store.getActive()?.identity.workspace.id).toBe(
+      (activeLocalizationAdapter as { id: string }).id
+    )
+  })
+
+  it('binds localization and document sessions to the persisted manifest UUID across reopen', async () => {
+    const user = userEvent.setup()
+    const root = populatedDirectory()
+    const handle = asDirectoryHandle(root)
+    state.directorySupport = true
+    mocks.pickWorkspace.mockResolvedValue(handle)
+
+    const firstRender = render(<App />)
+    await user.click(
+      await screen.findByRole('button', { name: 'workspace.storage.chooseDirectory' })
+    )
+    await waitFor(() => expect(mocks.workspaceLocalizationFactories).toHaveBeenCalledTimes(1))
+    const firstAdapter = mocks.workspaceLocalizationFactories.mock.calls[0]?.[0] as {
+      id: string
+    }
+    expect(firstAdapter.id).toMatch(
+      /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u
+    )
+    const persistedManifest = JSON.parse(fakeFileText(root, '.orbitpm/manifest.json')) as {
+      workspace: { id: string }
+    }
+    expect(persistedManifest.workspace.id).toBe(firstAdapter.id)
+
+    await user.click(screen.getByRole('button', { name: 'mock-tree-open' }))
+    expect(await screen.findByTestId('editor-tab')).not.toBeNull()
+    expect(latestSessionController().store.getActive()?.identity.workspace.id).toBe(firstAdapter.id)
+
+    firstRender.unmount()
+    mocks.pickWorkspace.mockResolvedValue(handle)
+    render(<App />)
+    await user.click(
+      await screen.findByRole('button', { name: 'workspace.storage.chooseDirectory' })
+    )
+    await waitFor(() => expect(mocks.workspaceLocalizationFactories).toHaveBeenCalledTimes(2))
+    const reopenedAdapter = mocks.workspaceLocalizationFactories.mock.calls[1]?.[0] as {
+      id: string
+    }
+    expect(reopenedAdapter.id).toBe(firstAdapter.id)
+
+    await user.click(screen.getByRole('button', { name: 'mock-tree-open' }))
+    expect(await screen.findByTestId('editor-tab')).not.toBeNull()
+    expect(latestSessionController().store.getActive()?.identity.workspace.id).toBe(firstAdapter.id)
+  })
+
+  it('creates folders, processes, and AI results without legacy raw-handle write helpers', async () => {
+    const user = userEvent.setup()
+    const root = await openDirectoryWorkspace(user)
+    mocks.legacyCreateFolderAt.mockClear()
+    mocks.legacyCreateBpmnFileUnique.mockClear()
+    mocks.prompt.mockResolvedValueOnce('Archive').mockResolvedValueOnce('New approval')
+
+    await user.click(screen.getByRole('button', { name: 'mock-tree-new-folder' }))
+    await waitFor(() => expect(root.directory('Archive')).toBeDefined())
+
+    await user.click(screen.getByRole('button', { name: 'mock-tree-new-process' }))
+    await waitFor(() => expect(root.file('Finance/new-approval.bpmn')).toBeDefined())
+
+    const rail = screen.getByRole('button', { name: 'sidebar.toggle.aria' })
+    if (rail.getAttribute('aria-expanded') === 'false') await user.click(rail)
+    await user.click(screen.getByRole('button', { name: 'mock-ai-place' }))
+    await waitFor(() => expect(root.file('ai-claims.bpmn')).toBeDefined())
+
+    expect(mocks.legacyCreateFolderAt).not.toHaveBeenCalled()
+    expect(mocks.legacyCreateBpmnFileUnique).not.toHaveBeenCalled()
+  })
+
   it('loads exact ordered resources and preserves CAS and accepted-only write boundaries', async () => {
     const user = userEvent.setup()
     const root = populatedDirectory()
