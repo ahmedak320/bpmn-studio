@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { useEffect } from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -766,6 +766,140 @@ describe('EditorTab browser integration', () => {
         screen.getByRole('button', { name: 'pane.details.toggle' }).getAttribute('aria-expanded')
       ).toBe('false')
     )
+  })
+
+  it('returns focus to the stable Details trigger after an externally coordinated close', async () => {
+    const controller = (open: boolean): NonNullable<EditorTabProps['detailsController']> => ({
+      preferences: { version: 1, open, width: 300 },
+      setOpen: vi.fn(),
+      setWidth: vi.fn(),
+      resetWidth: vi.fn(),
+      reset: vi.fn()
+    })
+    const view = renderEditor({
+      responsiveMode: 'compact',
+      detailsController: controller(false)
+    })
+    const trigger = screen.getByRole('button', { name: 'pane.details.toggle' })
+    trigger.focus()
+
+    view.rerender(
+      editorElement({
+        responsiveMode: 'compact',
+        detailsController: controller(true)
+      })
+    )
+    expect(await screen.findByRole('dialog', { name: 'pane.details.aria' })).not.toBeNull()
+    expect(trigger.isConnected).toBe(true)
+    expect(trigger.closest('[hidden]')).not.toBeNull()
+
+    view.rerender(
+      editorElement({
+        responsiveMode: 'compact',
+        detailsController: controller(false)
+      })
+    )
+    await waitFor(() => expect(document.activeElement).toBe(trigger))
+    expect(screen.queryByRole('dialog', { name: 'pane.details.aria' })).toBeNull()
+    expect(trigger.closest('[hidden]')).toBeNull()
+  })
+
+  it('keeps a controlled closed Details pane mounted without creating a dialog or inert state', () => {
+    const detailsController: NonNullable<EditorTabProps['detailsController']> = {
+      preferences: { version: 1, open: false, width: 300 },
+      setOpen: vi.fn(),
+      setWidth: vi.fn(),
+      resetWidth: vi.fn(),
+      reset: vi.fn()
+    }
+    const view = renderEditor({ responsiveMode: 'compact', detailsController })
+
+    expect(screen.queryByRole('dialog', { name: 'pane.details.aria' })).toBeNull()
+    expect(view.container.querySelector('.orbitpm-responsive-drawer__backdrop')).toBeNull()
+    expect(view.container.querySelector<HTMLElement>('.orbitpm-editor__toolbar')?.inert).not.toBe(
+      true
+    )
+    expect(
+      view.container.querySelector<HTMLElement>('.orbitpm-responsive-drawer__stash')?.hidden
+    ).toBe(true)
+  })
+
+  it('keeps Save and core zoom visible while exposing secondary actions through a keyboard menu', async () => {
+    const user = userEvent.setup()
+    const onExtra = vi.fn()
+    renderEditor({
+      responsiveMode: 'compact',
+      toolbarExtra: (
+        <button type="button" className="orbitpm-editor__button" onClick={onExtra}>
+          extra-toolbar-action
+        </button>
+      )
+    })
+
+    const toolbar = document.querySelector<HTMLElement>('.orbitpm-editor__toolbar')!
+    expect(within(toolbar).getByRole('button', { name: 'editor.save' })).not.toBeNull()
+    expect(within(toolbar).getByRole('button', { name: 'editor.zoomOut.title' })).not.toBeNull()
+    expect(within(toolbar).getByRole('button', { name: 'editor.zoomIn.title' })).not.toBeNull()
+    expect(within(toolbar).getByRole('button', { name: 'editor.zoomFit' })).not.toBeNull()
+    expect(screen.queryByRole('button', { name: 'editor.exportSvg' })).toBeNull()
+
+    const trigger = within(toolbar).getByRole('button', { name: 'editor.actions.menu' })
+    trigger.focus()
+    await user.keyboard('{ArrowDown}')
+
+    const menu = screen.getByRole('menu', { name: 'editor.actions.menu' })
+    const items = within(menu).getAllByRole('menuitem')
+    expect(items.map((item) => item.textContent)).toEqual([
+      'editor.exportSvg',
+      'editor.exportPng',
+      'editor.exportPdf',
+      'validation.open',
+      'sourceEditor.open',
+      'Process outline',
+      'extra-toolbar-action'
+    ])
+    expect(document.activeElement).toBe(items[0])
+
+    await user.keyboard('{ArrowDown}')
+    expect(document.activeElement).toBe(items[1])
+    await user.keyboard('{End}')
+    expect(document.activeElement).toBe(items.at(-1))
+    await user.keyboard('{Home}')
+    expect(document.activeElement).toBe(items[0])
+    await user.keyboard('{ArrowUp}')
+    expect(document.activeElement).toBe(items.at(-1))
+    await user.keyboard('{Escape}')
+    expect(screen.queryByRole('menu', { name: 'editor.actions.menu' })).toBeNull()
+    expect(document.activeElement).toBe(trigger)
+
+    await user.click(trigger)
+    await user.click(screen.getByRole('menuitem', { name: 'extra-toolbar-action' }))
+    expect(onExtra).toHaveBeenCalledOnce()
+    expect(screen.queryByRole('menu', { name: 'editor.actions.menu' })).toBeNull()
+    expect(document.activeElement).toBe(trigger)
+
+    await user.click(trigger)
+    expect(screen.getByRole('menu', { name: 'editor.actions.menu' })).not.toBeNull()
+    fireEvent.pointerDown(document.body)
+    await waitFor(() =>
+      expect(screen.queryByRole('menu', { name: 'editor.actions.menu' })).toBeNull()
+    )
+    expect(document.activeElement).toBe(trigger)
+  })
+
+  it('uses logical RTL placement and direction for the compact action menu', async () => {
+    fake.lang = 'ar'
+    const user = userEvent.setup()
+    renderEditor({ responsiveMode: 'compact' })
+
+    const editor = document.querySelector<HTMLElement>('.orbitpm-editor')
+    const trigger = screen.getByRole('button', { name: 'editor.actions.menu' })
+    expect(editor?.dir).toBe('rtl')
+    await user.click(trigger)
+
+    const menu = screen.getByRole('menu', { name: 'editor.actions.menu' })
+    expect(menu.closest<HTMLElement>('.orbitpm-action-menu')?.dir).toBe('rtl')
+    expect(menu.classList.contains('orbitpm-action-menu__surface')).toBe(true)
   })
 
   it('resizes Details only while docked and resets its versioned width', async () => {

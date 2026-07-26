@@ -113,6 +113,11 @@
   cursor: default;
 }
 
+.orbitpm-editor__button:focus-visible {
+  outline: 3px solid var(--orbitpm-editor-accent);
+  outline-offset: 2px;
+}
+
 .orbitpm-editor__button--primary {
   background: var(--orbitpm-editor-accent);
   border-color: var(--orbitpm-editor-accent);
@@ -313,16 +318,97 @@
   grid-row: 1;
 }
 
+.orbitpm-editor__details-return-target {
+  display: contents;
+}
+
+.orbitpm-editor__details-return-target[hidden] {
+  display: none;
+}
+
+.orbitpm-editor__zoom-fit-glyph {
+  display: none;
+}
+
 @media (max-width: 767px) {
   .orbitpm-editor__toolbar {
-    flex-wrap: wrap;
-    gap: 0.35rem;
-    padding: 0.35rem;
+    position: relative;
+    z-index: 500;
+    max-inline-size: 100%;
+    flex-wrap: nowrap;
+    gap: 0.25rem;
+    padding: 0.25rem;
+    overflow: visible;
   }
 
   .orbitpm-editor__button {
-    min-height: 32px;
+    min-inline-size: 44px;
+    min-block-size: 44px;
     padding-inline: 0.5rem;
+    touch-action: manipulation;
+  }
+
+  .orbitpm-editor__save {
+    flex: 0 1 auto;
+    max-inline-size: 6.5rem;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .orbitpm-editor__zoom-action,
+  .orbitpm-editor__action-menu-trigger {
+    display: inline-flex;
+    flex: 0 0 44px;
+    align-items: center;
+    justify-content: center;
+    inline-size: 44px;
+    padding-inline: 0;
+  }
+
+  .orbitpm-editor__toolbar > .orbitpm-action-menu--menu {
+    margin-inline-start: auto;
+  }
+
+  .orbitpm-editor__zoom-fit-label {
+    position: absolute;
+    inline-size: 1px;
+    block-size: 1px;
+    margin: -1px;
+    padding: 0;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    clip-path: inset(50%);
+    white-space: nowrap;
+    border: 0;
+  }
+
+  .orbitpm-editor__action-menu-label {
+    display: none;
+  }
+
+  .orbitpm-editor__zoom-fit-glyph {
+    display: inline;
+  }
+
+  .orbitpm-editor__dirty-flag {
+    position: absolute;
+    z-index: 1;
+    inset-block-start: 2px;
+    inset-inline-end: 2px;
+    flex: 0 0 8px;
+    inline-size: 8px;
+    block-size: 8px;
+    margin: 0;
+    overflow: hidden;
+    border-radius: 999px;
+    color: transparent;
+    background: var(--orbitpm-editor-muted-fg);
+    font-size: 0;
+  }
+
+  .orbitpm-editor__dirty-flag--dirty {
+    background: var(--orbitpm-editor-accent);
   }
 }
 

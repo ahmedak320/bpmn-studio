@@ -85,6 +85,7 @@ import { evaluateValidationPolicy } from '../validation/policy'
 import { ValidationCenter } from '../validation/ValidationCenter'
 import { SourceEditorDialog, type SourceEditorApplyResult } from '../validation/SourceEditorDialog'
 import { SaveDraftDialog } from '../validation/SaveDraftDialog'
+import { ActionMenu } from '../common/ActionMenu'
 import { layoutBpmnValidated } from '../generation/layout'
 import { ProcessOutlineEditor } from './ProcessOutlineEditor'
 import { processOutlineMessages } from './processOutlineMessages'
@@ -296,6 +297,7 @@ export function EditorTab(props: EditorTabProps): JSX.Element {
   const detailsHeadingRef = useRef<HTMLHeadingElement | null>(null)
   const outlineToggleRef = useRef<HTMLButtonElement | null>(null)
   const outlineCloseRef = useRef<HTMLButtonElement | null>(null)
+  const actionMenuTriggerRef = useRef<HTMLButtonElement | null>(null)
   const modelerRef = useRef<BpmnModelerLike | null>(null)
   const dirtyStateRef = useRef<DirtyState>(createDirtyState(0))
   const originalXmlRef = useRef(xml)
@@ -417,9 +419,11 @@ export function EditorTab(props: EditorTabProps): JSX.Element {
     }
     if (!focusOutlineToggleAfterCloseRef.current) return
     focusOutlineToggleAfterCloseRef.current = false
-    const frame = requestAnimationFrame(() => outlineToggleRef.current?.focus())
+    const frame = requestAnimationFrame(() =>
+      (shellMode === 'compact' ? actionMenuTriggerRef.current : outlineToggleRef.current)?.focus()
+    )
     return () => cancelAnimationFrame(frame)
-  }, [outlineOpen])
+  }, [outlineOpen, shellMode])
 
   const applyDirtyState = useCallback(
     (next: DirtyState) => {
@@ -1230,7 +1234,7 @@ export function EditorTab(props: EditorTabProps): JSX.Element {
       <div className="orbitpm-editor__toolbar">
         <button
           type="button"
-          className="orbitpm-editor__button orbitpm-editor__button--primary"
+          className="orbitpm-editor__button orbitpm-editor__button--primary orbitpm-editor__save"
           onClick={() => void handleSave()}
           disabled={saving}
           title={t('editor.save.title')}
@@ -1239,80 +1243,7 @@ export function EditorTab(props: EditorTabProps): JSX.Element {
         </button>
         <button
           type="button"
-          className="orbitpm-editor__button"
-          onClick={() => void handleExportSvg()}
-          title={t('editor.exportSvg.title')}
-        >
-          {t('editor.exportSvg')}
-        </button>
-        <button
-          type="button"
-          className="orbitpm-editor__button"
-          onClick={() => void handleExportPng()}
-          title={t('editor.exportPng.title')}
-        >
-          {t('editor.exportPng')}
-        </button>
-        <button
-          type="button"
-          className="orbitpm-editor__button"
-          onClick={() => void handleExportPdf()}
-          title={t('editor.exportPdf.title')}
-        >
-          {t('editor.exportPdf')}
-        </button>
-        <button
-          type="button"
-          className="orbitpm-editor__button"
-          onClick={handleOpenValidation}
-          disabled={validationRunning}
-          title={t('validation.open.title')}
-        >
-          {validationRunning
-            ? t('validation.running')
-            : `${t('validation.open')}${
-                validationSummary && validationSummary.blockingErrors > 0
-                  ? ` (${validationSummary.blockingErrors})`
-                  : ''
-              }`}
-        </button>
-        <button
-          type="button"
-          className="orbitpm-editor__button"
-          onClick={() => void handleOpenSource()}
-          title={t('sourceEditor.open.title')}
-        >
-          {t('sourceEditor.open')}
-        </button>
-        <button
-          ref={outlineToggleRef}
-          type="button"
-          className="orbitpm-editor__button"
-          onClick={(event: ReactMouseEvent<HTMLButtonElement>) => toggleOutline(event.detail === 0)}
-          onKeyDown={(event: ReactKeyboardEvent<HTMLButtonElement>) => {
-            if (event.key === 'Enter' || event.key === ' ') {
-              focusOutlineAfterOpenRef.current = !outlineOpen
-            }
-          }}
-          aria-expanded={outlineOpen}
-          aria-controls={outlinePaneId}
-          title={outlineMessages.title}
-        >
-          {outlineMessages.title}
-        </button>
-        {sourceRollbackAvailable ? (
-          <button
-            type="button"
-            className="orbitpm-editor__button"
-            onClick={() => void handleRollbackSourceApply()}
-            title={t('sourceEditor.rollback')}
-          >
-            {t('sourceEditor.rollback')}
-          </button>
-        ) : null}
-        <button
-          type="button"
-          className="orbitpm-editor__button"
+          className="orbitpm-editor__button orbitpm-editor__zoom-action"
           onClick={() => zoomByFactor(1 / 1.15)}
           title={t('editor.zoomOut.title')}
           aria-label={t('editor.zoomOut.title')}
@@ -1321,7 +1252,7 @@ export function EditorTab(props: EditorTabProps): JSX.Element {
         </button>
         <button
           type="button"
-          className="orbitpm-editor__button"
+          className="orbitpm-editor__button orbitpm-editor__zoom-action"
           onClick={() => zoomByFactor(1.15)}
           title={t('editor.zoomIn.title')}
           aria-label={t('editor.zoomIn.title')}
@@ -1330,12 +1261,105 @@ export function EditorTab(props: EditorTabProps): JSX.Element {
         </button>
         <button
           type="button"
-          className="orbitpm-editor__button"
+          className="orbitpm-editor__button orbitpm-editor__zoom-action"
           onClick={handleZoomFit}
           title={t('editor.zoomFit.title')}
         >
-          {t('editor.zoomFit')}
+          <span className="orbitpm-editor__zoom-fit-label">{t('editor.zoomFit')}</span>
+          <span className="orbitpm-editor__zoom-fit-glyph" aria-hidden="true">
+            ⛶
+          </span>
         </button>
+        <ActionMenu
+          mode={shellMode === 'compact' ? 'menu' : 'inline'}
+          label={t('editor.actions.menu')}
+          direction={uiDir}
+          triggerRef={actionMenuTriggerRef}
+          triggerClassName="orbitpm-editor__button orbitpm-editor__action-menu-trigger"
+          triggerContent={
+            <>
+              <span aria-hidden="true">⋯</span>
+              <span className="orbitpm-editor__action-menu-label">{t('editor.actions.more')}</span>
+            </>
+          }
+        >
+          <button
+            type="button"
+            className="orbitpm-editor__button"
+            onClick={() => void handleExportSvg()}
+            title={t('editor.exportSvg.title')}
+          >
+            {t('editor.exportSvg')}
+          </button>
+          <button
+            type="button"
+            className="orbitpm-editor__button"
+            onClick={() => void handleExportPng()}
+            title={t('editor.exportPng.title')}
+          >
+            {t('editor.exportPng')}
+          </button>
+          <button
+            type="button"
+            className="orbitpm-editor__button"
+            onClick={() => void handleExportPdf()}
+            title={t('editor.exportPdf.title')}
+          >
+            {t('editor.exportPdf')}
+          </button>
+          <button
+            type="button"
+            className="orbitpm-editor__button"
+            onClick={handleOpenValidation}
+            disabled={validationRunning}
+            title={t('validation.open.title')}
+          >
+            {validationRunning
+              ? t('validation.running')
+              : `${t('validation.open')}${
+                  validationSummary && validationSummary.blockingErrors > 0
+                    ? ` (${validationSummary.blockingErrors})`
+                    : ''
+                }`}
+          </button>
+          <button
+            type="button"
+            className="orbitpm-editor__button"
+            onClick={() => void handleOpenSource()}
+            title={t('sourceEditor.open.title')}
+          >
+            {t('sourceEditor.open')}
+          </button>
+          <button
+            ref={outlineToggleRef}
+            type="button"
+            className="orbitpm-editor__button"
+            onClick={(event: ReactMouseEvent<HTMLButtonElement>) =>
+              toggleOutline(event.detail === 0)
+            }
+            onKeyDown={(event: ReactKeyboardEvent<HTMLButtonElement>) => {
+              if (event.key === 'Enter' || event.key === ' ') {
+                focusOutlineAfterOpenRef.current = !outlineOpen
+              }
+            }}
+            aria-expanded={outlineOpen}
+            aria-controls={outlinePaneId}
+            title={outlineMessages.title}
+          >
+            {outlineMessages.title}
+          </button>
+          {sourceRollbackAvailable ? (
+            <button
+              type="button"
+              className="orbitpm-editor__button"
+              onClick={() => void handleRollbackSourceApply()}
+              title={t('sourceEditor.rollback')}
+            >
+              {t('sourceEditor.rollback')}
+            </button>
+          ) : null}
+          {toolbarExtra}
+        </ActionMenu>
         <span
           className={
             dirty
@@ -1346,7 +1370,6 @@ export function EditorTab(props: EditorTabProps): JSX.Element {
         >
           {dirty ? t('editor.dirtyFlag.dirty') : t('editor.dirtyFlag.saved')}
         </span>
-        {toolbarExtra}
       </div>
       {error ? <div className="orbitpm-editor__error">{error}</div> : null}
       <div className="orbitpm-editor__body" dir={uiDir}>
@@ -1360,7 +1383,7 @@ export function EditorTab(props: EditorTabProps): JSX.Element {
           direction={uiDir}
           inlineSize="clamp(320px, 32vw, 440px)"
           initialFocusRef={outlineCloseRef}
-          returnFocusRef={outlineToggleRef}
+          returnFocusRef={shellMode === 'compact' ? actionMenuTriggerRef : outlineToggleRef}
           onClose={closeOutline}
         >
           <div className="orbitpm-process-outline-pane__controls">
@@ -1433,7 +1456,10 @@ export function EditorTab(props: EditorTabProps): JSX.Element {
           )}
           <ShapeLegend />
         </div>
-        {!propsOpen || shellMode === 'docked' ? (
+        <div
+          className="orbitpm-editor__details-return-target"
+          hidden={propsOpen && shellMode !== 'docked'}
+        >
           <DetailsRail
             ref={detailsToggleRef}
             open={propsOpen}
@@ -1449,7 +1475,7 @@ export function EditorTab(props: EditorTabProps): JSX.Element {
               focusToggleAfterCloseRef.current = true
             }}
           />
-        ) : null}
+        </div>
         <DetailsResizer
           visible={propsOpen && shellMode === 'docked'}
           width={propsWidth}
@@ -1469,11 +1495,11 @@ export function EditorTab(props: EditorTabProps): JSX.Element {
           inlineSize={shellMode === 'docked' ? propsWidth : `calc(${propsWidth}px + 36px)`}
           keepMounted
           initialFocusRef={detailsHeadingRef}
+          returnFocusRef={detailsToggleRef}
           onClose={closePropsPanel}
           modalChrome={
             propsOpen && shellMode !== 'docked' ? (
               <DetailsRail
-                ref={detailsToggleRef}
                 className="orbitpm-details-rail--modal"
                 open
                 controlsId={detailsPaneId}
