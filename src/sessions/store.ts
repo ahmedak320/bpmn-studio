@@ -247,12 +247,19 @@ export class DocumentSessionStore {
 
   replaceWithExternal(
     id: SessionId,
-    input: { xml: string; fingerprint: FileFingerprint }
+    input: {
+      xml: string
+      fingerprint: FileFingerprint
+      identity?: DocumentIdentity
+      title?: string
+    }
   ): DocumentSession {
     return this.update(id, (session) => {
       const revision = session.currentXml === input.xml ? session.revision : session.revision + 1
       return {
         ...session,
+        identity: input.identity ?? session.identity,
+        title: input.title ?? session.title,
         currentXml: input.xml,
         lastSavedXml: input.xml,
         dirty: false,

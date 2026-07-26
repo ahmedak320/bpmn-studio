@@ -107,7 +107,7 @@ import { autoSizeAll } from './editor/autoSize'
 import { makeBrowserCallLLM } from './ai/browserAi'
 import { getProviderSelection, type ProviderSelection } from './ai/providerSelection'
 import { getLiteProvider } from './ai/providersLite'
-import { getKey, hasKey } from './ai/keys'
+import { getKey, hasKey, migrateLegacyCredentialsOnStartup } from './ai/keys'
 import {
   buildTranslationExternalReview,
   translateReviewedDiagram,
@@ -181,6 +181,7 @@ import {
 } from './workspace/importDrop'
 import {
   getProcessOrgProps,
+  mergeActiveLanguageOrgProps,
   setProcessOrgProps,
   setProcessDocumentation,
   getOrgProps,
@@ -404,9 +405,15 @@ function liveIndexPath(tab: Tab): string {
 }
 
 interface DeleteState {
+  binding: WorkspaceOperationBinding
   node: LiteTreeNode
   /** Non-empty folder → require typing this name to confirm. */
   requireTyped?: string
+}
+
+interface MoveState {
+  binding: WorkspaceOperationBinding
+  node: LiteTreeNode
 }
 
 interface TranslationReviewState {
@@ -678,6 +685,26 @@ interface WorkspaceLocalizationBinding {
   store: WorkspaceLocalizationStore
 }
 
+interface WorkspaceOperationBinding {
+  adapter: WorkspaceAdapter | null
+  controller: DocumentSessionController | null
+  drafts: DraftJournalCoordinator | null
+  generation: number
+  history: PortableHistoryManager | null
+  identity: WorkspaceIdentity | null
+  index: LiveWorkspaceIndex
+}
+
+interface LibraryImportState {
+  binding: WorkspaceOperationBinding
+  result: LibraryImportResult
+}
+
+interface BackupImportState {
+  binding: WorkspaceOperationBinding
+  plan: WorkspaceBackupImportPlan
+}
+
 /** Switch a multi-process BPMN file to the root selected by semantic id. */
 async function focusProcessRoot(modeler: unknown, processId: string): Promise<boolean> {
   try {
@@ -710,6 +737,7 @@ async function focusProcessRoot(modeler: unknown, processId: string): Promise<bo
 function App(): JSX.Element {
   const promptText = usePromptText()
   const lang = useLang()
+  const [credentialMigration] = useState(() => migrateLegacyCredentialsOnStartup())
   const support = useMemo(() => directoryPickerSupported(), [])
   const browserWorkspaceAvailable = useMemo(() => opfsSupported(), [])
 
@@ -802,6 +830,7 @@ function App(): JSX.Element {
   const workspaceActivationSequenceRef = useRef(0)
   const refreshSequenceRef = useRef(0)
   const opMutexRef = useRef(createMutex()) // serializes create / import / AI-place writes
+  const rememberWorkspaceMutexRef = useRef(createMutex())
   const [switchGuard, setSwitchGuard] = useState<{ count: number } | null>(null)
   const switchResolveRef = useRef<((choice: 'save' | 'discard' | 'cancel') => void) | null>(null)
   const [pathDirtyPrompt, setPathDirtyPrompt] = useState<PathDirtyPromptState | null>(null)
@@ -821,6 +850,29 @@ function App(): JSX.Element {
     requestId: number
     resolve: (decision: DraftRecoveryDecision | 'cancel') => void
   } | null>(null)
+  const captureWorkspaceOperation = useCallback(
+    (): WorkspaceOperationBinding => ({
+      adapter: workspaceAdapterRef.current,
+      controller: sessionControllerRef.current,
+      drafts: draftCoordinatorRef.current,
+      generation: workspaceGenRef.current,
+      history: historyManagerRef.current,
+      identity: workspaceIdentityRef.current,
+      index: liveWorkspaceIndexRef.current
+    }),
+    []
+  )
+  const isWorkspaceOperationCurrent = useCallback(
+    (binding: WorkspaceOperationBinding): boolean =>
+      workspaceAdapterRef.current === binding.adapter &&
+      sessionControllerRef.current === binding.controller &&
+      draftCoordinatorRef.current === binding.drafts &&
+      workspaceGenRef.current === binding.generation &&
+      historyManagerRef.current === binding.history &&
+      workspaceIdentityRef.current === binding.identity &&
+      liveWorkspaceIndexRef.current === binding.index,
+    []
+  )
 
   const [settingsOpen, setSettingsOpen] = useState(false)
   // The Step-details dialog targets one tab's modeler; the mode (element vs
@@ -1023,7 +1075,7 @@ function App(): JSX.Element {
   const [catSort, setCatSort] = useState<CatalogSortKey>('name')
   const [catDir, setCatDir] = useState<SortDir>('asc')
   const [unresolvedOpen, setUnresolvedOpen] = useState(false)
-  const [moveTarget, setMoveTarget] = useState<LiteTreeNode | null>(null)
+  const [moveTarget, setMoveTarget] = useState<MoveState | null>(null)
   const [deleteTarget, setDeleteTarget] = useState<DeleteState | null>(null)
   const [treeRevealRequest, setTreeRevealRequest] = useState<{
     token: number
@@ -1047,13 +1099,13 @@ function App(): JSX.Element {
   const importInputRef = useRef<HTMLInputElement | null>(null)
   const libraryInputRef = useRef<HTMLInputElement | null>(null)
   const backupInputRef = useRef<HTMLInputElement | null>(null)
-  const [backupImportPlan, setBackupImportPlan] = useState<WorkspaceBackupImportPlan | null>(null)
+  const [backupImportState, setBackupImportState] = useState<BackupImportState | null>(null)
   const [backupBusy, setBackupBusy] = useState(false)
   const [historyOpen, setHistoryOpen] = useState(false)
 
   // Process assistant (B5) + whole-library import confirmation.
   const [assistOpen, setAssistOpen] = useState(false)
-  const [libraryImport, setLibraryImport] = useState<LibraryImportResult | null>(null)
+  const [libraryImport, setLibraryImport] = useState<LibraryImportState | null>(null)
   // Memoize the (async) per-workspace digests: rebuilt only when the files
   // identity handed to the assistant changes (see `assistFiles` below), so a
   // repeated question over an unchanged workspace reuses the same parse.
@@ -1066,6 +1118,12 @@ function App(): JSX.Element {
     const id = ++toastIdRef.current
     setToasts((prev) => [...prev, { id, text, tone }])
   }, [])
+  const credentialMigrationToastShownRef = useRef(false)
+  useEffect(() => {
+    if (credentialMigration.ok || credentialMigrationToastShownRef.current) return
+    credentialMigrationToastShownRef.current = true
+    pushToast(`${t('settings.title')}: ${credentialMigration.error}`, 'error')
+  }, [credentialMigration, pushToast])
   const dismissToast = useCallback((id: number) => {
     setToasts((prev) => prev.filter((t) => t.id !== id))
   }, [])
@@ -1248,8 +1306,13 @@ function App(): JSX.Element {
         pushToast(t('workspace.manifest.repaired'), 'success')
       }
     } catch (error) {
-      setManifestRepair({ ...repair, error })
-      pushToast(t('workspace.manifest.retryFailed', { error: errMsg(error) }), 'error')
+      if (
+        workspaceAdapterRef.current === repair.adapter &&
+        workspaceGenRef.current === repair.generation
+      ) {
+        setManifestRepair({ ...repair, error })
+        pushToast(t('workspace.manifest.retryFailed', { error: errMsg(error) }), 'error')
+      }
     }
   }, [manifestRepair, pushToast])
 
@@ -1273,11 +1336,22 @@ function App(): JSX.Element {
         }
         await recovery.retry()
       })
+      if (
+        workspaceAdapterRef.current !== recovery.adapter ||
+        workspaceGenRef.current !== recovery.generation
+      ) {
+        return
+      }
       setPathRecovery(null)
       pushToast(t('workspace.path.recoverySuccess'), 'success')
     } catch (error) {
-      setPathRecovery({ ...recovery, error })
-      pushToast(t('workspace.path.recoveryFailed', { error: errMsg(error) }), 'error')
+      if (
+        workspaceAdapterRef.current === recovery.adapter &&
+        workspaceGenRef.current === recovery.generation
+      ) {
+        setPathRecovery({ ...recovery, error })
+        pushToast(t('workspace.path.recoveryFailed', { error: errMsg(error) }), 'error')
+      }
     }
   }, [pathRecovery, pushToast])
 
@@ -1290,32 +1364,55 @@ function App(): JSX.Element {
       const activationSequence = ++workspaceActivationSequenceRef.current
       let activeAdapter = adapter
       let manifestAdapter: ManifestBoundWorkspaceAdapter | null = null
+      let manifestGeneration: number | null = null
+      let manifestBindingCommitted = false
+      const pendingManifestWarnings: WorkspaceManifestWarning[] = []
+      const pendingManifestErrors: unknown[] = []
+      const manifestBindingIsCurrent = (): boolean =>
+        manifestBindingCommitted &&
+        manifestAdapter !== null &&
+        manifestGeneration !== null &&
+        workspaceAdapterRef.current === manifestAdapter &&
+        workspaceGenRef.current === manifestGeneration
+      const surfaceManifestWarning = (warning: WorkspaceManifestWarning): void => {
+        pushToast(
+          t('workspace.manifest.warning', {
+            path: warning.path,
+            error: warning.message
+          }),
+          'error'
+        )
+      }
+      const surfaceManifestError = (error: unknown): void => {
+        if (!manifestAdapter || manifestGeneration === null) return
+        setManifestRepair({
+          adapter: manifestAdapter,
+          error,
+          generation: manifestGeneration
+        })
+        pushToast(t('workspace.manifest.postCommitError', { error: errMsg(error) }), 'error')
+      }
       if (adapter.storage.capabilities.multipleFiles && adapter.storage.capabilities.directories) {
         const bound = await bindWorkspaceToManifest(adapter, {
           onManifestWarning: (warning: WorkspaceManifestWarning) => {
-            if (workspaceActivationSequenceRef.current !== activationSequence) return
-            pushToast(
-              t('workspace.manifest.warning', {
-                path: warning.path,
-                error: warning.message
-              }),
-              'error'
-            )
-          },
-          onManifestError: (error) => {
-            if (
-              !manifestAdapter ||
-              workspaceAdapterRef.current !== manifestAdapter ||
-              workspaceActivationSequenceRef.current !== activationSequence
-            ) {
+            if (!manifestBindingCommitted) {
+              if (workspaceActivationSequenceRef.current === activationSequence) {
+                pendingManifestWarnings.push(warning)
+              }
               return
             }
-            setManifestRepair({
-              adapter: manifestAdapter,
-              error,
-              generation: workspaceGenRef.current
-            })
-            pushToast(t('workspace.manifest.postCommitError', { error: errMsg(error) }), 'error')
+            if (!manifestBindingIsCurrent()) return
+            surfaceManifestWarning(warning)
+          },
+          onManifestError: (error) => {
+            if (!manifestBindingCommitted) {
+              if (workspaceActivationSequenceRef.current === activationSequence) {
+                pendingManifestErrors.push(error)
+              }
+              return
+            }
+            if (!manifestBindingIsCurrent()) return
+            surfaceManifestError(error)
           }
         })
         if (workspaceActivationSequenceRef.current !== activationSequence) return
@@ -1385,6 +1482,7 @@ function App(): JSX.Element {
       // and update the sync handle mirror BEFORE any async scan can commit.
       workspaceGenRef.current += 1
       const workspaceGeneration = workspaceGenRef.current
+      manifestGeneration = workspaceGeneration
       refreshSequenceRef.current += 1
       workspaceLocalizationBindingRef.current?.controller.abort()
       workspaceAdapterRef.current = activeAdapter
@@ -1516,7 +1614,8 @@ function App(): JSX.Element {
       setAssistOpen(false)
       digestsCacheRef.current = null
       setLibraryImport(null)
-      setBackupImportPlan(null)
+      setBackupImportState(null)
+      setBackupBusy(false)
       setHistoryOpen(false)
       setSearch('')
       setSearchOpen(false)
@@ -1552,14 +1651,35 @@ function App(): JSX.Element {
       setRootName(displayName)
       setMode(activeAdapter.mode)
       setPhase('ready')
+      if (manifestAdapter) {
+        manifestBindingCommitted = true
+        if (manifestBindingIsCurrent()) {
+          for (const warning of pendingManifestWarnings) surfaceManifestWarning(warning)
+          for (const error of pendingManifestErrors) surfaceManifestError(error)
+        }
+      }
       if (activeAdapter.mode === 'directory' && handle) {
         try {
-          await rememberWorkspace(handle)
+          await rememberWorkspaceMutexRef.current.runExclusive(() => rememberWorkspace(handle))
+          if (
+            workspaceActivationSequenceRef.current !== activationSequence ||
+            workspaceAdapterRef.current !== activeAdapter ||
+            workspaceGenRef.current !== workspaceGeneration
+          ) {
+            return
+          }
           rememberedRef.current = handle
           setRememberedName(handle.name)
         } catch {
           /* IDB may be unavailable; non-fatal */
         }
+      }
+      if (
+        workspaceActivationSequenceRef.current !== activationSequence ||
+        workspaceAdapterRef.current !== activeAdapter ||
+        workspaceGenRef.current !== workspaceGeneration
+      ) {
+        return
       }
       if (activeAdapter.storage.capabilities.multipleFiles) {
         await refreshWorkspace(handle ?? undefined, displayName)
@@ -2102,30 +2222,42 @@ function App(): JSX.Element {
         mimeType: 'application/xml'
       })
       await activateWorkspace(adapter, null, path)
+      if (workspaceAdapterRef.current !== adapter) return
+      const binding = captureWorkspaceOperation()
+      if (binding.adapter !== adapter || binding.identity?.generation !== binding.generation) {
+        return
+      }
       const snapshot = await adapter.read(path)
+      if (!isWorkspaceOperationCurrent(binding)) return
       const saved = fileMetaFromSnapshot(snapshot)
       baseHashByPathRef.current[path] = snapshot.hash
-      liveWorkspaceIndexRef.current.updateSaved(saved)
-      setLiveWorkspaceVersion(liveWorkspaceIndexRef.current.version)
+      binding.index.updateSaved(saved)
+      setLiveWorkspaceVersion(binding.index.version)
       const tab: Tab = {
         key: path,
         title: path,
         relPath: path,
-        gen: workspaceGenRef.current
+        gen: binding.generation
       }
       ensureDocumentSession(tab, xml, {
         lastSavedXml: xml,
         base: fingerprintFromSnapshot(snapshot)
       })
       const visibleXml = await reviewRecoveryDraft(tab, xml, fingerprintFromSnapshot(snapshot))
-      if (!canCommitToWorkspace(tab.gen, workspaceGenRef.current)) return
+      if (!isWorkspaceOperationCurrent(binding)) return
       localizationSourceByTabRef.current.set(path, source)
       setTabs([tab])
       setContents({ [path]: visibleXml })
       setActiveKey(path)
       setSidebarOpen(false)
     },
-    [activateWorkspace, ensureDocumentSession, reviewRecoveryDraft]
+    [
+      activateWorkspace,
+      captureWorkspaceOperation,
+      ensureDocumentSession,
+      isWorkspaceOperationCurrent,
+      reviewRecoveryDraft
+    ]
   )
 
   const closeTab = useCallback(
@@ -2252,8 +2384,13 @@ function App(): JSX.Element {
 
   const handleRequestSave = useCallback(
     async (tab: Tab, xml: string, options?: { explicitDraftWithErrors?: boolean }) => {
-      const controller = sessionControllerRef.current
+      const binding = captureWorkspaceOperation()
+      const controller = binding.controller
       if (!controller) throw new Error('Document-session controller is unavailable.')
+      const adapter = binding.adapter
+      const drafts = binding.drafts
+      const isCurrent = (): boolean =>
+        isWorkspaceOperationCurrent(binding) && tab.gen === binding.generation
       const baseHash = tab.relPath ? baseHashByPathRef.current[tab.relPath] : undefined
       const baseline = contents[tab.key] ?? xml
       const session =
@@ -2270,10 +2407,11 @@ function App(): JSX.Element {
         })
       if (!session) throw new Error(t('alert.staleWrite'))
       const current = controller.updateXml(tab.key, xml)
-      draftCoordinatorRef.current?.track(current)
+      drafts?.track(current)
 
       if (baseline) {
         const preservation = await validateUnknownExtensionPreservation(baseline, xml)
+        if (!isCurrent()) throw new Error(t('alert.staleWrite'))
         if (!preservation.valid) {
           throw new Error(
             `Save blocked because opaque BPMN extension data changed: ${preservation.issues.map((issue) => issue.code).join(', ')}`
@@ -2282,14 +2420,15 @@ function App(): JSX.Element {
       }
       await validateReleaseXml(xml, {
         action: options?.explicitDraftWithErrors ? 'save-draft-with-errors' : 'save',
-        knownProcessIds: liveWorkspaceIndexRef.current.processIndex().keys(),
-        requireBilingual: false,
+        knownProcessIds: binding.index.processIndex().keys(),
+        requireBilingual: !options?.explicitDraftWithErrors,
         requireDi: true,
         explicitDraftWithErrors: options?.explicitDraftWithErrors
       })
-      const adapter = workspaceAdapterRef.current
+      if (!isCurrent()) throw new Error(t('alert.staleWrite'))
       if (!tab.relPath || adapter?.storage.persistence === 'download') {
-        await draftCoordinatorRef.current?.flush(tab.key)
+        await drafts?.flush(tab.key)
+        if (!isCurrent()) throw new Error(t('alert.staleWrite'))
         downloadBpmn(tab.title.endsWith('.bpmn') ? tab.title : `${tab.title}.bpmn`, xml)
         setDirtyByKey((previous) => ({ ...previous, [tab.key]: current.dirty }))
         pushToast(t('session.download.draftRetained'), 'info')
@@ -2298,10 +2437,7 @@ function App(): JSX.Element {
       if (tab.relPath && adapter) {
         // Refuse a write from a tab whose workspace was switched out from under
         // it — otherwise it would land its relative path in the WRONG folder.
-        if (!canCommitToWorkspace(tab.gen, workspaceGenRef.current)) {
-          pushToast(t('alert.staleWrite'), 'error')
-          throw new Error(t('alert.staleWrite'))
-        }
+        if (!isCurrent()) throw new Error(t('alert.staleWrite'))
         const capturedRevision = controller.store.get(tab.key)!.revision
         let outcome = await controller.save(tab.key, {
           xml,
@@ -2320,21 +2456,38 @@ function App(): JSX.Element {
           outcome = await controller.save(tab.key, {
             xml,
             expectedRevision: capturedRevision,
-            conflictDecision: decision
+            conflictDecision: decision,
+            reviewedConflict: outcome.conflict
           })
         }
+        if (!isCurrent()) throw new Error(t('alert.staleWrite'))
         if (outcome.status === 'clean') {
-          await draftCoordinatorRef.current?.confirmedSave(tab.key, xml)
+          await drafts?.confirmedSave(tab.key, xml)
+          if (!isCurrent()) throw new Error(t('alert.staleWrite'))
           setDirtyByKey((previous) => ({ ...previous, [tab.key]: false }))
           return { durable: true }
         }
         if (outcome.status === 'reloaded') {
           const external = outcome.external
+          const externalPath = external.identity.path
+          if (!externalPath) {
+            throw new Error(t('session.save.failed', { status: 'missing-path' }))
+          }
           const modeler = modelersByKey[tab.key] as
             { importXML?: (candidate: string) => Promise<unknown> } | undefined
-          baseHashByPathRef.current[tab.relPath] = external.fingerprint.hash
-          liveWorkspaceIndexRef.current.updateSaved({
-            relPath: tab.relPath,
+          baseHashByPathRef.current[externalPath] = external.fingerprint.hash
+          if (externalPath !== tab.relPath) {
+            binding.index.clearDirty(tab.relPath)
+            setTabs((previous) =>
+              previous.map((candidate) =>
+                candidate.key === tab.key
+                  ? { ...candidate, relPath: externalPath, title: baseName(externalPath) }
+                  : candidate
+              )
+            )
+          }
+          binding.index.updateSaved({
+            relPath: externalPath,
             xml: external.xml,
             lastModified: external.fingerprint.modifiedAt,
             size: external.fingerprint.size
@@ -2347,16 +2500,19 @@ function App(): JSX.Element {
             // flush the captured local XML so a failed canvas refresh cannot
             // silently lose the edits still visible to the user.
             const restoredLocal = controller.updateXml(tab.key, xml)
-            draftCoordinatorRef.current?.track(restoredLocal)
+            drafts?.track(restoredLocal)
             let draftRecoveryError: unknown
             try {
-              await draftCoordinatorRef.current?.flush(tab.key)
+              await drafts?.flush(tab.key)
             } catch (draftError) {
               draftRecoveryError = draftError
-              pushToast(t('draftRecovery.error', { error: errMsg(draftError) }), 'error')
+              if (isCurrent()) {
+                pushToast(t('draftRecovery.error', { error: errMsg(draftError) }), 'error')
+              }
             }
-            liveWorkspaceIndexRef.current.updateDirty(tab.relPath, xml)
-            setLiveWorkspaceVersion(liveWorkspaceIndexRef.current.version)
+            if (!isCurrent()) throw new Error(t('alert.staleWrite'))
+            binding.index.updateDirty(externalPath, xml)
+            setLiveWorkspaceVersion(binding.index.version)
             setContents((previous) => ({ ...previous, [tab.key]: xml }))
             setDirtyByKey((previous) => ({ ...previous, [tab.key]: true }))
             throw new Error(
@@ -2367,8 +2523,9 @@ function App(): JSX.Element {
               })
             )
           }
-          liveWorkspaceIndexRef.current.clearDirty(tab.relPath)
-          setLiveWorkspaceVersion(liveWorkspaceIndexRef.current.version)
+          if (!isCurrent()) throw new Error(t('alert.staleWrite'))
+          binding.index.clearDirty(externalPath)
+          setLiveWorkspaceVersion(binding.index.version)
           setContents((previous) => ({ ...previous, [tab.key]: external.xml }))
           setDirtyByKey((previous) => ({ ...previous, [tab.key]: false }))
           return { durable: true }
@@ -2395,7 +2552,7 @@ function App(): JSX.Element {
           size: outcome.fingerprint.size
         }
         if (outcome.status === 'saved-as') {
-          liveWorkspaceIndexRef.current.clearDirty(tab.relPath)
+          binding.index.clearDirty(tab.relPath)
           setTabs((previous) =>
             previous.map((candidate) =>
               candidate.key === tab.key
@@ -2404,14 +2561,14 @@ function App(): JSX.Element {
             )
           )
         }
-        liveWorkspaceIndexRef.current.updateSaved(saved)
+        binding.index.updateSaved(saved)
         const savedSession = controller.store.get(tab.key)
         if (outcome.remainingDirty && savedSession) {
-          liveWorkspaceIndexRef.current.updateDirty(savedPath, savedSession.currentXml)
+          binding.index.updateDirty(savedPath, savedSession.currentXml)
         } else {
-          liveWorkspaceIndexRef.current.clearDirty(savedPath)
+          binding.index.clearDirty(savedPath)
         }
-        setLiveWorkspaceVersion(liveWorkspaceIndexRef.current.version)
+        setLiveWorkspaceVersion(binding.index.version)
         setContents((previous) => ({ ...previous, [tab.key]: xml }))
         setDirtyByKey((previous) => ({
           ...previous,
@@ -2420,14 +2577,19 @@ function App(): JSX.Element {
         if (outcome.remainingDirty) {
           throw new Error(t('session.save.newerEdits'))
         }
-        if (outcome.status === 'saved-as') await refreshWorkspace()
+        if (outcome.status === 'saved-as') {
+          await refreshWorkspace()
+          if (!isCurrent()) throw new Error(t('alert.staleWrite'))
+        }
         return { durable: true }
       }
       throw new Error(t('session.save.failed', { status: 'missing-workspace' }))
     },
     [
       contents,
+      captureWorkspaceOperation,
       ensureDocumentSession,
+      isWorkspaceOperationCurrent,
       modelersByKey,
       promptForSaveConflict,
       pushToast,
@@ -2448,40 +2610,41 @@ function App(): JSX.Element {
   }, [liveWorkspaceVersion])
   const handleRepairDuplicateProcessId = useCallback(
     async (processId: string) => {
-      const diagnostic = liveWorkspaceIndexRef.current
+      const binding = captureWorkspaceOperation()
+      const isCurrent = (): boolean => isWorkspaceOperationCurrent(binding)
+      const diagnostic = binding.index
         .duplicateDiagnostics()
         .find((item) => item.processId === processId)
       if (!diagnostic) return
       const target = diagnostic.occurrences[diagnostic.occurrences.length - 1]
-      const source = liveWorkspaceIndexRef.current
-        .files()
-        .find((file) => file.relPath === target.relPath)?.xml
+      const source = binding.index.files().find((file) => file.relPath === target.relPath)?.xml
       if (!source) return
       await validateReleaseXml(source, {
         action: 'apply-editor',
-        knownProcessIds: liveWorkspaceIndexRef.current.processIndex().keys(),
+        knownProcessIds: binding.index.processIndex().keys(),
         requireBilingual: false,
         requireDi: true
       })
-      const repair = await liveWorkspaceIndexRef.current.repairDuplicateProcessId(
-        target.relPath,
-        processId,
-        { occurrence: target.occurrence }
-      )
+      if (!isCurrent()) return
+      const repair = await binding.index.repairDuplicateProcessId(target.relPath, processId, {
+        occurrence: target.occurrence
+      })
+      if (!isCurrent()) return
       await validateReleaseXml(repair.xml, {
         action: 'apply-editor',
-        knownProcessIds: liveWorkspaceIndexRef.current.processIndex().keys(),
+        knownProcessIds: binding.index.processIndex().keys(),
         requireBilingual: false,
         requireDi: true
       })
-      setLiveWorkspaceVersion(liveWorkspaceIndexRef.current.version)
+      if (!isCurrent()) return
+      setLiveWorkspaceVersion(binding.index.version)
       let tab = tabs.find((item) => item.relPath === target.relPath)
       if (!tab) {
         tab = {
           key: target.relPath,
           title: baseName(target.relPath),
           relPath: target.relPath,
-          gen: workspaceGenRef.current
+          gen: binding.generation
         }
         setTabs((previous) => [...previous, tab!])
       }
@@ -2494,10 +2657,11 @@ function App(): JSX.Element {
         { importXML?: (xml: string) => Promise<unknown> } | undefined
       if (modeler?.importXML) {
         await modeler.importXML(repair.xml)
+        if (!isCurrent()) return
         setDirtyByKey((previous) => ({ ...previous, [tab!.key]: true }))
       }
     },
-    [tabs, modelersByKey]
+    [captureWorkspaceOperation, isWorkspaceOperationCurrent, modelersByKey, tabs]
   )
   // Parent→child callActivity links across the workspace — drives the
   // explorer's nested 🔗 rows and the exported library manifest.
@@ -2714,7 +2878,8 @@ function App(): JSX.Element {
 
   const handleCreateMissingProcess = useCallback(
     async (calledElementId: string) => {
-      const adapter = workspaceAdapterRef.current
+      const binding = captureWorkspaceOperation()
+      const adapter = binding.adapter
       if (!(isMultiFileMode(mode) && adapter?.storage.capabilities.multipleFiles)) {
         pushToast(t('alert.createMissingProcessNoFolder', { calledElementId }), 'info')
         return
@@ -2727,25 +2892,43 @@ function App(): JSX.Element {
         hint: t('dialog.createMissingProcess.hint', { calledElementId })
       })
       if (!name) return
+      const isCurrent = (): boolean => isWorkspaceOperationCurrent(binding)
+      if (!isCurrent()) return
       try {
         const relPath = await opMutexRef.current.runExclusive(async () => {
-          if (workspaceAdapterRef.current !== adapter) throw new Error(t('alert.staleWrite'))
+          if (!isCurrent()) throw new Error(t('alert.staleWrite'))
           const taken = await directBpmnSlugs(adapter, '')
+          if (!isCurrent()) throw new Error(t('alert.staleWrite'))
           const slug = dedupeSlug(deriveFileBaseName(name || calledElementId), (c) =>
             taken.has(c.toLowerCase())
           )
           const doc = buildMissingProcessDoc(calledElementId, name, slug)
-          return writeUniqueBpmn(adapter, '', doc.fileBaseName, doc.xml)
+          const created = await writeUniqueBpmn(adapter, '', doc.fileBaseName, doc.xml)
+          if (!isCurrent()) throw new Error(t('alert.staleWrite'))
+          return created
         })
+        if (!isCurrent()) return
         await refreshWorkspace()
+        if (!isCurrent()) return
         setSidebarOpen(true)
         requestTreeReveal(calledElementId, relPath)
         void openDirectoryFile(relPath, { collapse: false })
       } catch (err) {
-        pushToast(t('alert.createProcessFailed', { error: errMsg(err) }), 'error')
+        if (isCurrent()) {
+          pushToast(t('alert.createProcessFailed', { error: errMsg(err) }), 'error')
+        }
       }
     },
-    [mode, promptText, refreshWorkspace, openDirectoryFile, pushToast, requestTreeReveal]
+    [
+      captureWorkspaceOperation,
+      isWorkspaceOperationCurrent,
+      mode,
+      promptText,
+      refreshWorkspace,
+      openDirectoryFile,
+      pushToast,
+      requestTreeReveal
+    ]
   )
 
   const handleOpenCalledProcess = useCallback(
@@ -2771,7 +2954,8 @@ function App(): JSX.Element {
 
   const handleNewProcess = useCallback(
     async (folderRel: string) => {
-      const adapter = workspaceAdapterRef.current
+      const binding = captureWorkspaceOperation()
+      const adapter = binding.adapter
       if (!adapter?.storage.capabilities.multipleFiles) return
       const name = await promptText({
         title: t('dialog.newProcess.title'),
@@ -2781,28 +2965,46 @@ function App(): JSX.Element {
         hint: t('dialog.newProcess.hint.directory')
       })
       if (!name) return
+      const isCurrent = (): boolean => isWorkspaceOperationCurrent(binding)
+      if (!isCurrent()) return
       try {
         // Commit the canvas/sidebar intent before the storage write becomes
         // externally observable; this prevents a late post-create collapse
         // from overriding a user's immediate rail toggle.
         setSidebarOpen(false)
         const relPath = await opMutexRef.current.runExclusive(async () => {
-          if (workspaceAdapterRef.current !== adapter) throw new Error(t('alert.staleWrite'))
+          if (!isCurrent()) throw new Error(t('alert.staleWrite'))
           const taken = await directBpmnSlugs(adapter, folderRel)
+          if (!isCurrent()) throw new Error(t('alert.staleWrite'))
           const slug = dedupeSlug(deriveFileBaseName(name), (c) => taken.has(c.toLowerCase()))
           // Also de-dup the derived <process id> against the LIVE process index
           // so ANY id collision (incl. a hash clash for two Arabic names) is
           // suffixed rather than silently cross-wiring their call links (ORIG-6b).
-          const doc = buildNewProcessDoc(name, slug, (candidate) => processIndex.has(candidate))
-          return writeUniqueBpmn(adapter, folderRel, doc.fileBaseName, doc.xml)
+          const doc = buildNewProcessDoc(name, slug, (candidate) =>
+            binding.index.processIndex().has(candidate)
+          )
+          const created = await writeUniqueBpmn(adapter, folderRel, doc.fileBaseName, doc.xml)
+          if (!isCurrent()) throw new Error(t('alert.staleWrite'))
+          return created
         })
+        if (!isCurrent()) return
         await refreshWorkspace()
+        if (!isCurrent()) return
         void openDirectoryFile(relPath)
       } catch (err) {
-        pushToast(t('alert.createProcessFailed', { error: errMsg(err) }), 'error')
+        if (isCurrent()) {
+          pushToast(t('alert.createProcessFailed', { error: errMsg(err) }), 'error')
+        }
       }
     },
-    [promptText, refreshWorkspace, openDirectoryFile, pushToast, processIndex]
+    [
+      captureWorkspaceOperation,
+      isWorkspaceOperationCurrent,
+      promptText,
+      refreshWorkspace,
+      openDirectoryFile,
+      pushToast
+    ]
   )
 
   const handleNewProcessFallback = useCallback(async () => {
@@ -2830,7 +3032,8 @@ function App(): JSX.Element {
 
   const handleNewFolder = useCallback(
     async (folderRel: string) => {
-      const adapter = workspaceAdapterRef.current
+      const binding = captureWorkspaceOperation()
+      const adapter = binding.adapter
       if (!adapter?.storage.capabilities.directories) return
       const name = await promptText({
         title: t('dialog.newFolder.title'),
@@ -2839,17 +3042,30 @@ function App(): JSX.Element {
         okLabel: t('dialog.newFolder.okLabel')
       })
       if (!name) return
+      const isCurrent = (): boolean => isWorkspaceOperationCurrent(binding)
+      if (!isCurrent()) return
       try {
         await opMutexRef.current.runExclusive(async () => {
-          if (workspaceAdapterRef.current !== adapter) throw new Error(t('alert.staleWrite'))
+          if (!isCurrent()) throw new Error(t('alert.staleWrite'))
           await adapter.createFolder(joinRel(folderRel, name.trim()))
+          if (!isCurrent()) throw new Error(t('alert.staleWrite'))
         })
+        if (!isCurrent()) return
         await refreshWorkspace()
+        if (!isCurrent()) return
       } catch (err) {
-        pushToast(t('alert.createFolderFailed', { error: errMsg(err) }), 'error')
+        if (isCurrent()) {
+          pushToast(t('alert.createFolderFailed', { error: errMsg(err) }), 'error')
+        }
       }
     },
-    [promptText, refreshWorkspace, pushToast]
+    [
+      captureWorkspaceOperation,
+      isWorkspaceOperationCurrent,
+      promptText,
+      refreshWorkspace,
+      pushToast
+    ]
   )
 
   const requestPathDirtyDecision = useCallback(
@@ -2865,7 +3081,13 @@ function App(): JSX.Element {
   )
 
   const updateUiAfterPathCommit = useCallback(
-    async (plan: PathTransactionPlan): Promise<void> => {
+    async (
+      plan: PathTransactionPlan,
+      index: LiveWorkspaceIndex,
+      drafts: DraftJournalCoordinator | null,
+      isCurrent: () => boolean
+    ): Promise<void> => {
+      if (!isCurrent()) return
       const deletedIds = new Set(plan.request.kind === 'delete' ? plan.affectedSessionIds : [])
       const previousTabs = tabs
 
@@ -2877,8 +3099,8 @@ function App(): JSX.Element {
           ...deletedIds,
           ...previousTabs.filter(isDeletedTab).map((tab) => tab.key)
         ])
-        const drafts = draftCoordinatorRef.current
         for (const id of deletedUiIds) {
+          if (!isCurrent()) return
           commandUnregisterersRef.current[id]?.()
           delete commandUnregisterersRef.current[id]
           commandRouterRef.current?.unregister(id)
@@ -2895,6 +3117,7 @@ function App(): JSX.Element {
           pendingAiAutoSizeRef.current.delete(id)
           delete commandsRef.current[id]
           await drafts?.untrack(id)
+          if (!isCurrent()) return
         }
         setTabs((previous) => previous.filter((tab) => !isDeletedTab(tab)))
         setActiveKey((previous) => {
@@ -2935,7 +3158,6 @@ function App(): JSX.Element {
       }
       baseHashByPathRef.current = nextHashes
 
-      const index = liveWorkspaceIndexRef.current
       const affectedPaths = index
         .files()
         .map((file) => file.relPath)
@@ -2963,9 +3185,11 @@ function App(): JSX.Element {
       destinationPath?: string
       deleteConfirmed?: boolean
     }): Promise<'committed' | 'cancelled' | 'failed'> => {
-      const adapter = workspaceAdapterRef.current
-      const controller = sessionControllerRef.current
+      const binding = captureWorkspaceOperation()
+      const adapter = binding.adapter
+      const controller = binding.controller
       if (!adapter || !controller) throw new Error(t('workspace.path.unavailable'))
+      const isCurrent = (): boolean => isWorkspaceOperationCurrent(binding)
       let plan = planPathTransaction(controller.store.list(), {
         id:
           typeof globalThis.crypto?.randomUUID === 'function'
@@ -2980,6 +3204,7 @@ function App(): JSX.Element {
       }
       if (plan.phase === 'awaiting-dirty-decision') {
         const choice = await requestPathDirtyDecision(plan.dirtySessionIds.length, plan.request)
+        if (!isCurrent()) return 'failed'
         plan = resolveDirtyPathDecision(
           plan,
           choice === 'save'
@@ -2990,45 +3215,49 @@ function App(): JSX.Element {
         )
       }
       if (plan.phase === 'cancelled') return 'cancelled'
-      const history = historyManagerRef.current
-      const drafts = draftCoordinatorRef.current
+      const history = binding.history
+      const drafts = binding.drafts
       const mutatePath = createAdapterPathMutation(adapter, { history: history ?? undefined })
       let retryFinalize: (() => Promise<void>) | undefined
-      const result = await opMutexRef.current.runExclusive(async () => {
-        if (
-          workspaceAdapterRef.current !== adapter ||
-          sessionControllerRef.current !== controller
-        ) {
-          throw new Error(t('alert.staleWrite'))
-        }
-        return executePathTransaction(controller.store, plan, {
-          saveSession: async (sessionId) => {
-            const session = controller.store.get(sessionId)
-            const tab = tabs.find((candidate) => candidate.key === sessionId)
-            if (!session || !tab) {
-              return { sessionId, ok: false, status: 'missing-session' }
-            }
-            try {
-              const xml = session.readXml ? await session.readXml() : session.currentXml
-              const save = await requestSaveRef.current(tab, xml)
-              return {
-                sessionId,
-                ok: save.durable,
-                status: save.durable ? 'success' : 'not-durable',
-                remainingDirty: controller.store.get(sessionId)?.dirty ?? true
+      const result = await opMutexRef.current
+        .runExclusive(async () => {
+          if (!isCurrent()) throw new Error(t('alert.staleWrite'))
+          return executePathTransaction(controller.store, plan, {
+            saveSession: async (sessionId) => {
+              const session = controller.store.get(sessionId)
+              const tab = tabs.find((candidate) => candidate.key === sessionId)
+              if (!session || !tab) {
+                return { sessionId, ok: false, status: 'missing-session' }
               }
-            } catch (error) {
-              return { sessionId, ok: false, status: errMsg(error), remainingDirty: true }
-            }
-          },
-          mutateStorage: async (readyPlan) => {
-            const mutation = await mutatePath(readyPlan)
-            retryFinalize = mutation.finalize
-            return mutation
-          },
-          migrateDrafts: drafts ? (migrations) => drafts.migrateDraftRecords(migrations) : undefined
+              try {
+                const xml = session.readXml ? await session.readXml() : session.currentXml
+                const save = await requestSaveRef.current(tab, xml)
+                return {
+                  sessionId,
+                  ok: save.durable,
+                  status: save.durable ? 'success' : 'not-durable',
+                  remainingDirty: controller.store.get(sessionId)?.dirty ?? true
+                }
+              } catch (error) {
+                return { sessionId, ok: false, status: errMsg(error), remainingDirty: true }
+              }
+            },
+            mutateStorage: async (readyPlan) => {
+              const mutation = await mutatePath(readyPlan)
+              retryFinalize = mutation.finalize
+              return mutation
+            },
+            migrateDrafts: drafts
+              ? (migrations) => drafts.migrateDraftRecords(migrations)
+              : undefined
+          })
         })
-      })
+        .catch((error: unknown) => {
+          if (!isCurrent()) return null
+          throw error
+        })
+      if (!result) return 'failed'
+      if (!isCurrent()) return 'failed'
       if (result.status === 'cancelled') return 'cancelled'
       if (result.status !== 'committed') {
         if (result.status === 'failed') {
@@ -3043,17 +3272,20 @@ function App(): JSX.Element {
         }
         throw new Error(t('workspace.path.unavailable'))
       }
-      await updateUiAfterPathCommit(result.plan)
+      await updateUiAfterPathCommit(result.plan, binding.index, drafts, isCurrent)
+      if (!isCurrent()) return 'failed'
       await refreshWorkspace()
+      if (!isCurrent()) return 'failed'
       if (result.finalizeError) {
         const transactionHash = await sha256Hex(new TextEncoder().encode(result.plan.id))
+        if (!isCurrent()) return 'failed'
         const stagingPath = `${PATH_TRANSACTION_STAGING_ROOT}/tx-${transactionHash.slice(0, 32)}`
         const payloadPath = `${stagingPath}/payload`
         if (retryFinalize) {
           setPathRecovery({
             adapter,
             error: result.finalizeError,
-            generation: workspaceGenRef.current,
+            generation: binding.generation,
             payloadPath,
             retry: retryFinalize,
             stagingPath
@@ -3069,12 +3301,21 @@ function App(): JSX.Element {
       }
       return 'committed'
     },
-    [refreshWorkspace, requestPathDirtyDecision, tabs, updateUiAfterPathCommit, pushToast]
+    [
+      captureWorkspaceOperation,
+      isWorkspaceOperationCurrent,
+      refreshWorkspace,
+      requestPathDirtyDecision,
+      tabs,
+      updateUiAfterPathCommit,
+      pushToast
+    ]
   )
 
   const handleRename = useCallback(
     async (node: LiteTreeNode) => {
-      if (!workspaceAdapterRef.current) return
+      const binding = captureWorkspaceOperation()
+      if (!binding.adapter) return
       const name = await promptText({
         title: t('dialog.rename.title'),
         label: t('dialog.rename.label'),
@@ -3082,6 +3323,7 @@ function App(): JSX.Element {
         okLabel: t('dialog.rename.okLabel')
       })
       if (!name || name === node.name) return
+      if (!isWorkspaceOperationCurrent(binding)) return
       const raw = name.trim()
       if (hasPathSeparator(raw)) {
         pushToast(t('alert.rename.invalidChars'), 'error')
@@ -3101,19 +3343,27 @@ function App(): JSX.Element {
         pushToast(t('alert.renameFailed', { error: errMsg(err) }), 'error')
       }
     },
-    [promptText, runPathTransaction, pushToast]
+    [
+      captureWorkspaceOperation,
+      isWorkspaceOperationCurrent,
+      promptText,
+      runPathTransaction,
+      pushToast
+    ]
   )
 
   // Delete → confirm dialog (non-empty folders require typing the name).
   const handleDeleteRequest = useCallback(
     async (node: LiteTreeNode) => {
-      const adapter = workspaceAdapterRef.current
+      const binding = captureWorkspaceOperation()
+      const adapter = binding.adapter
       if (!adapter) return
       try {
         if (node.type === 'directory') {
           // Fail closed: an unreadable/failed listing must never weaken a
           // non-empty-folder confirmation into the simple delete dialog.
           const entries = await adapter.list(node.relPath)
+          if (!isWorkspaceOperationCurrent(binding)) return
           const unreadable = entries.find((entry) => !entry.readable)
           if (unreadable) {
             throw new WorkspaceOperationError(
@@ -3126,23 +3376,28 @@ function App(): JSX.Element {
             )
           }
           setDeleteTarget({
+            binding,
             node,
             requireTyped: entries.length > 0 ? node.name : undefined
           })
         } else {
-          setDeleteTarget({ node })
+          if (!isWorkspaceOperationCurrent(binding)) return
+          setDeleteTarget({ binding, node })
         }
       } catch (error) {
-        pushToast(t('alert.deleteFailed', { error: errMsg(error) }), 'error')
+        if (isWorkspaceOperationCurrent(binding)) {
+          pushToast(t('alert.deleteFailed', { error: errMsg(error) }), 'error')
+        }
       }
     },
-    [pushToast]
+    [captureWorkspaceOperation, isWorkspaceOperationCurrent, pushToast]
   )
 
   const performDelete = useCallback(async () => {
     const target = deleteTarget
     if (!target) return
     setDeleteTarget(null)
+    if (!isWorkspaceOperationCurrent(target.binding)) return
     try {
       const status = await runPathTransaction({
         kind: 'delete',
@@ -3156,7 +3411,7 @@ function App(): JSX.Element {
     } catch (err) {
       pushToast(t('alert.deleteFailed', { error: errMsg(err) }), 'error')
     }
-  }, [deleteTarget, runPathTransaction, pushToast])
+  }, [deleteTarget, isWorkspaceOperationCurrent, runPathTransaction, pushToast])
 
   // Move (drag-drop onto a folder, or the "Move to…" dialog).
   const performMove = useCallback(
@@ -3190,27 +3445,33 @@ function App(): JSX.Element {
 
   // Adapter createFolder is recursive and idempotent. Keeping folder creation
   // behind this helper ensures imports never bypass the manifest-bound adapter.
-  const ensureFolders = useCallback(async (relDir: string) => {
-    const adapter = workspaceAdapterRef.current
-    if (!adapter || !relDir) return
+  const ensureFolders = useCallback(async (adapter: WorkspaceAdapter, relDir: string) => {
+    if (!relDir) return
     await adapter.createFolder(relDir)
   }, [])
 
   const importEntries = useCallback(
-    async (entries: DroppedBpmn[], baseFolderRel: string) => {
-      const adapter = workspaceAdapterRef.current
-      if (!(isMultiFileMode(mode) && adapter?.storage.capabilities.multipleFiles)) {
-        pushToast(t('toast.import.openFolderFirst'), 'info')
+    async (
+      entries: DroppedBpmn[],
+      baseFolderRel: string,
+      operationBinding?: WorkspaceOperationBinding
+    ) => {
+      const binding = operationBinding ?? captureWorkspaceOperation()
+      const adapter = binding.adapter
+      const isCurrent = (): boolean => isWorkspaceOperationCurrent(binding)
+      if (!adapter?.storage.capabilities.multipleFiles) {
+        if (isCurrent()) pushToast(t('toast.import.openFolderFirst'), 'info')
         return
       }
       if (entries.length === 0) {
-        pushToast(t('toast.import.noBpmnFound'), 'info')
+        if (isCurrent()) pushToast(t('toast.import.noBpmnFound'), 'info')
         return
       }
       let created = 0
       let renamed = 0
-      const knownProcessIds = [...processIndex.keys()]
+      const knownProcessIds = [...binding.index.processIndex().keys()]
       for (const entry of entries) {
+        if (!isCurrent()) return
         const sub = dirOf(entry.relPath)
         const targetFolder = sub ? joinRel(baseFolderRel, sub) : baseFolderRel
         // .bpmn, plain .xml (sniffed below) and (experimental) .apc all land as
@@ -3225,15 +3486,20 @@ function App(): JSX.Element {
           folder: string = targetFolder
         ): Promise<string> =>
           opMutexRef.current.runExclusive(async () => {
-            if (workspaceAdapterRef.current !== adapter) throw new Error(t('alert.staleWrite'))
+            if (!isCurrent()) throw new Error(t('alert.staleWrite'))
             const taken = await directBpmnSlugs(adapter, folder)
+            if (!isCurrent()) throw new Error(t('alert.staleWrite'))
             const guess = dedupeSlug(slug, (c) => taken.has(c.toLowerCase()))
-            return writeUniqueBpmn(adapter, folder, guess, xml)
+            const relPath = await writeUniqueBpmn(adapter, folder, guess, xml)
+            if (!isCurrent()) throw new Error(t('alert.staleWrite'))
+            return relPath
           })
         try {
           const text = await entry.getText()
+          if (!isCurrent()) return
           const prepareXml = async (candidateXml: string): Promise<string | null> => {
             const prepared = await prepareImportedBpmnXml(candidateXml, knownProcessIds)
+            if (!isCurrent()) return null
             if (prepared.autoLayouted && !confirmGeneratedImportLayout()) {
               return null
             }
@@ -3245,8 +3511,10 @@ function App(): JSX.Element {
           // either. Only files that are neither are rejected.
           if (looksLikeBpmnXml(text)) {
             const candidateXml = await prepareXml(text)
+            if (!isCurrent()) return
             if (!candidateXml) continue
             const relPath = await writeUnique(base, candidateXml)
+            if (!isCurrent()) return
             localizationSourceByTabRef.current.set(relPath, LocalizationSource.Xml)
             created += 1
             const finalBase = baseName(relPath).replace(/\.bpmn$/i, '')
@@ -3260,6 +3528,7 @@ function App(): JSX.Element {
             // database when the converter suggests one) so a single AML never
             // floods the drop target; single-file conversions stay flat.
             const conv = await convertAmlToBpmnFiles(text, { lang })
+            if (!isCurrent()) return
             if ('error' in conv) {
               pushToast(t('apc.failed', { reason: apcReason(conv.error) }), 'error')
               continue
@@ -3278,23 +3547,26 @@ function App(): JSX.Element {
               // -2, -3… (the dedupeSlug convention). A missing or still-empty
               // folder is fair game: ensureFolders creates or reuses it.
               let cand = baseFolderName
-              for (
-                let n = 2;
-                (await directoryEntryCount(adapter, joinRel(targetFolder, cand))) > 0;
-                n += 1
-              ) {
+              for (let n = 2; ; n += 1) {
+                const count = await directoryEntryCount(adapter, joinRel(targetFolder, cand))
+                if (!isCurrent()) return
+                if (count === 0) break
                 cand = `${baseFolderName}-${n}`
               }
               folderName = cand
               modelFolder = joinRel(targetFolder, folderName)
-              await ensureFolders(modelFolder)
+              await ensureFolders(adapter, modelFolder)
+              if (!isCurrent()) return
             }
             for (const model of conv.files) {
+              if (!isCurrent()) return
               const modelName = (lang === 'ar' ? model.nameAr : model.nameEn) || model.name
               const slug = deriveFileBaseName(modelName || base)
               const candidateXml = await prepareXml(model.xml)
+              if (!isCurrent()) return
               if (!candidateXml) continue
               const relPath = await writeUnique(slug, candidateXml, modelFolder)
+              if (!isCurrent()) return
               localizationSourceByTabRef.current.set(relPath, LocalizationSource.Aris)
               created += 1
             }
@@ -3317,14 +3589,17 @@ function App(): JSX.Element {
             // through the authoritative validators. Invalid input never
             // reaches the workspace.
             const candidateXml = await prepareXml(text)
+            if (!isCurrent()) return
             if (!candidateXml) continue
             const relPath = await writeUnique(base, candidateXml)
+            if (!isCurrent()) return
             localizationSourceByTabRef.current.set(relPath, LocalizationSource.Xml)
             created += 1
             const finalBase = baseName(relPath).replace(/\.bpmn$/i, '')
             if (finalBase.toLowerCase() !== base.toLowerCase()) renamed += 1
           }
         } catch (error) {
+          if (!isCurrent()) return
           pushToast(
             t('alert.importFailed', {
               name: entry.name,
@@ -3334,7 +3609,9 @@ function App(): JSX.Element {
           )
         }
       }
+      if (!isCurrent()) return
       await refreshWorkspace()
+      if (!isCurrent()) return
       pushToast(
         t('toast.imported.count', { count: created, plural: created === 1 ? '' : 's' }) +
           (renamed > 0 ? t('toast.imported.renamed', { renamed }) : '') +
@@ -3342,21 +3619,32 @@ function App(): JSX.Element {
         'success'
       )
     },
-    [mode, refreshWorkspace, pushToast, lang, ensureFolders, processIndex]
+    [
+      captureWorkspaceOperation,
+      ensureFolders,
+      isWorkspaceOperationCurrent,
+      lang,
+      pushToast,
+      refreshWorkspace
+    ]
   )
 
   const handleImportDrop = useCallback(
     (dt: DataTransfer, toFolderRel: string) => {
+      const binding = captureWorkspaceOperation()
       void (async () => {
         try {
           const entries = await collectDroppedBpmn(dt)
-          await importEntries(entries, toFolderRel)
+          if (!isWorkspaceOperationCurrent(binding)) return
+          await importEntries(entries, toFolderRel, binding)
         } catch (err) {
-          pushToast(t('alert.import.failed', { error: errMsg(err) }), 'error')
+          if (isWorkspaceOperationCurrent(binding)) {
+            pushToast(t('alert.import.failed', { error: errMsg(err) }), 'error')
+          }
         }
       })()
     },
-    [importEntries, pushToast]
+    [captureWorkspaceOperation, importEntries, isWorkspaceOperationCurrent, pushToast]
   )
 
   const onImportInputChange = useCallback(
@@ -3368,6 +3656,7 @@ function App(): JSX.Element {
       const files = Array.from(e.target.files ?? [])
       e.target.value = ''
       if (files.length === 0) return
+      const binding = captureWorkspaceOperation()
       try {
         const entries: DroppedBpmn[] = files
           .filter((f) => /\.(bpmn|apc|xml)$/i.test(f.name))
@@ -3380,12 +3669,15 @@ function App(): JSX.Element {
                 path: f.name
               })
           }))
-        await importEntries(entries, '')
+        if (!isWorkspaceOperationCurrent(binding)) return
+        await importEntries(entries, '', binding)
       } catch (err) {
-        pushToast(t('alert.import.failed', { error: errMsg(err) }), 'error')
+        if (isWorkspaceOperationCurrent(binding)) {
+          pushToast(t('alert.import.failed', { error: errMsg(err) }), 'error')
+        }
       }
     },
-    [importEntries, pushToast]
+    [captureWorkspaceOperation, importEntries, isWorkspaceOperationCurrent, pushToast]
   )
 
   // Container-level drop: importing onto non-tree areas lands at the root.
@@ -3448,12 +3740,16 @@ function App(): JSX.Element {
   }, [guardWorkspaceSwitch, activateSingleFileDocument])
 
   const handleExportWorkspaceBackup = useCallback(async () => {
-    const adapter = workspaceAdapterRef.current
+    const binding = captureWorkspaceOperation()
+    const adapter = binding.adapter
     if (!adapter) return
+    const isCurrent = (): boolean => isWorkspaceOperationCurrent(binding)
     setBackupBusy(true)
     try {
       if (tabs.some((tab) => dirtyByKey[tab.key])) await saveAllDirty()
+      if (!isCurrent()) return
       const blob = await adapter.exportBackup()
+      if (!isCurrent()) return
       const safeName =
         (rootName || 'orbitpm-workspace')
           .replace(/[^A-Za-z0-9._-]+/g, '-')
@@ -3461,53 +3757,76 @@ function App(): JSX.Element {
       downloadBlob(`${safeName}-backup.zip`, blob)
       pushToast(t('workspace.storage.backupExport'), 'success')
     } catch (error) {
-      pushToast(t('alert.import.failed', { error: errMsg(error) }), 'error')
+      if (isCurrent()) {
+        pushToast(t('alert.import.failed', { error: errMsg(error) }), 'error')
+      }
     } finally {
-      setBackupBusy(false)
+      if (isCurrent()) setBackupBusy(false)
     }
-  }, [tabs, dirtyByKey, saveAllDirty, rootName, pushToast])
+  }, [
+    captureWorkspaceOperation,
+    dirtyByKey,
+    isWorkspaceOperationCurrent,
+    pushToast,
+    rootName,
+    saveAllDirty,
+    tabs
+  ])
 
   const onBackupInputChange = useCallback(
     async (event: React.ChangeEvent<HTMLInputElement>) => {
       const backup = event.target.files?.[0]
       event.target.value = ''
-      const adapter = workspaceAdapterRef.current
+      const binding = captureWorkspaceOperation()
+      const adapter = binding.adapter
       if (!backup || !adapter || !adapter.storage.capabilities.multipleFiles) {
         return
       }
+      const isCurrent = (): boolean => isWorkspaceOperationCurrent(binding)
       setBackupBusy(true)
       try {
         const plan = await inspectWorkspaceBackup(adapter, backup)
-        setBackupImportPlan(plan)
+        if (!isCurrent()) return
+        setBackupImportState({ binding, plan })
       } catch (error) {
-        pushToast(t('alert.import.failed', { error: errMsg(error) }), 'error')
+        if (isCurrent()) {
+          pushToast(t('alert.import.failed', { error: errMsg(error) }), 'error')
+        }
       } finally {
-        setBackupBusy(false)
+        if (isCurrent()) setBackupBusy(false)
       }
     },
-    [pushToast]
+    [captureWorkspaceOperation, isWorkspaceOperationCurrent, pushToast]
   )
 
   const handleApplyBackupImport = useCallback(
     async (decisions: Readonly<Record<string, WorkspaceBackupCollisionDecision>>) => {
-      const adapter = workspaceAdapterRef.current
-      const plan = backupImportPlan
-      if (!adapter || !plan) return
+      const state = backupImportState
+      const binding = state?.binding
+      const adapter = binding?.adapter
+      const plan = state?.plan
+      if (!binding || !adapter || !plan || !isWorkspaceOperationCurrent(binding)) return
+      const isCurrent = (): boolean => isWorkspaceOperationCurrent(binding)
+      const history = binding.history
       setBackupBusy(true)
       try {
-        const result = await opMutexRef.current.runExclusive(() =>
-          applyWorkspaceBackupImport(adapter, plan, {
+        const result = await opMutexRef.current.runExclusive(async () => {
+          if (!isCurrent()) throw new Error(t('alert.staleWrite'))
+          return applyWorkspaceBackupImport(adapter, plan, {
             decisions,
             beforeOverwrite: async (path, existing) => {
+              if (!isCurrent()) throw new Error(t('alert.staleWrite'))
               if (!path.startsWith('.orbitpm/')) {
-                await historyManagerRef.current?.createRevision(path, {
+                await history?.createRevision(path, {
                   reason: 'backup-import',
                   snapshot: existing
                 })
+                if (!isCurrent()) throw new Error(t('alert.staleWrite'))
               }
             }
           })
-        )
+        })
+        if (!isCurrent()) return
         if (result.status !== 'committed') {
           const detail =
             result.status === 'needs-review'
@@ -3515,8 +3834,9 @@ function App(): JSX.Element {
               : result.error.message
           throw new Error(`${result.status}: ${detail}`)
         }
-        setBackupImportPlan(null)
+        setBackupImportState(null)
         await refreshWorkspace(rootHandleRef.current ?? undefined)
+        if (!isCurrent()) return
         pushToast(
           t('toast.imported.count', {
             count: result.applied.length,
@@ -3525,20 +3845,26 @@ function App(): JSX.Element {
           'success'
         )
       } catch (error) {
-        pushToast(t('alert.import.failed', { error: errMsg(error) }), 'error')
+        if (isCurrent()) {
+          pushToast(t('alert.import.failed', { error: errMsg(error) }), 'error')
+        }
       } finally {
-        setBackupBusy(false)
+        if (isCurrent()) setBackupBusy(false)
       }
     },
-    [backupImportPlan, refreshWorkspace, pushToast]
+    [backupImportState, isWorkspaceOperationCurrent, pushToast, refreshWorkspace]
   )
 
   const handleHistoryRestore = useCallback(
-    async (revision: HistoryRevision): Promise<RestoreHistoryRevisionResult> => {
-      const adapter = workspaceAdapterRef.current
-      const manager = historyManagerRef.current
-      const controller = sessionControllerRef.current
-      const workspace = workspaceIdentityRef.current
+    async (
+      revision: HistoryRevision,
+      operationBinding?: WorkspaceOperationBinding
+    ): Promise<RestoreHistoryRevisionResult> => {
+      const binding = operationBinding ?? captureWorkspaceOperation()
+      const adapter = binding.adapter
+      const manager = binding.history
+      const controller = binding.controller
+      const workspace = binding.identity
       if (!adapter || !manager || !controller || !workspace) {
         return {
           status: 'failed',
@@ -3546,17 +3872,25 @@ function App(): JSX.Element {
           error: new Error(t('workspace.history.unavailable'))
         }
       }
-      let current: FileSnapshot
-      try {
-        current = await adapter.read(revision.originalPath)
-      } catch (error) {
-        return { status: 'failed', sessionId: null, error }
+      const isCurrent = (): boolean => isWorkspaceOperationCurrent(binding)
+      if (!isCurrent()) {
+        return {
+          status: 'failed',
+          sessionId: null,
+          error: new Error(t('alert.staleWrite'))
+        }
       }
-      if (
-        workspaceAdapterRef.current !== adapter ||
-        sessionControllerRef.current !== controller ||
-        workspaceIdentityRef.current !== workspace
-      ) {
+      let expectedCurrentHash: string | null
+      try {
+        expectedCurrentHash = (await adapter.read(revision.originalPath)).hash
+      } catch (error) {
+        if (error instanceof WorkspaceOperationError && error.code === 'not-found') {
+          expectedCurrentHash = null
+        } else {
+          return { status: 'failed', sessionId: null, error }
+        }
+      }
+      if (!isCurrent()) {
         return {
           status: 'failed',
           sessionId: null,
@@ -3568,7 +3902,7 @@ function App(): JSX.Element {
         store: controller.store,
         revision,
         workspace,
-        expectedCurrentHash: current.hash,
+        expectedCurrentHash,
         applyXml: async (session, restoredXml) => {
           const modeler = (modelersByKey[session.id] ?? session.modeler) as {
             importXML?: (xml: string) => Promise<unknown>
@@ -3576,6 +3910,7 @@ function App(): JSX.Element {
           await modeler?.importXML?.(restoredXml)
         }
       })
+      if (!isCurrent()) return result
       if (
         result.status !== 'restored' &&
         result.status !== 'storage-restored-session-refresh-failed'
@@ -3593,8 +3928,9 @@ function App(): JSX.Element {
       } catch {
         return result
       }
+      if (!isCurrent()) return result
       baseHashByPathRef.current[revision.originalPath] = snapshot.hash
-      liveWorkspaceIndexRef.current.updateSaved({
+      binding.index.updateSaved({
         relPath: revision.originalPath,
         xml: restoredXml,
         lastModified: snapshot.modifiedAt,
@@ -3602,21 +3938,42 @@ function App(): JSX.Element {
       })
       const liveSession = result.sessionId ? controller.store.get(result.sessionId) : undefined
       if (result.status === 'restored' && liveSession) {
+        try {
+          await binding.drafts?.confirmedSave(liveSession.id, restoredXml)
+        } catch (error) {
+          if (isCurrent()) {
+            pushToast(t('draftRecovery.error', { error: errMsg(error) }), 'error')
+          }
+        }
+        if (!isCurrent()) return result
         setContents((previous) => ({ ...previous, [liveSession.id]: restoredXml }))
         setDirtyByKey((previous) => ({ ...previous, [liveSession.id]: false }))
-        liveWorkspaceIndexRef.current.clearDirty(revision.originalPath)
+        binding.index.clearDirty(revision.originalPath)
       } else if (liveSession?.dirty) {
         // Storage committed but editor refresh did not. Preserve and continue
         // indexing the local draft instead of presenting the restored disk copy
         // as the active editor content.
-        liveWorkspaceIndexRef.current.updateDirty(revision.originalPath, liveSession.currentXml)
+        binding.drafts?.track(liveSession)
+        try {
+          await binding.drafts?.flush(liveSession.id)
+        } catch (error) {
+          if (isCurrent()) {
+            pushToast(t('draftRecovery.error', { error: errMsg(error) }), 'error')
+          }
+        }
+        if (!isCurrent()) return result
+        binding.index.updateDirty(revision.originalPath, liveSession.currentXml)
+        setContents((previous) => ({
+          ...previous,
+          [liveSession.id]: liveSession.currentXml
+        }))
         setDirtyByKey((previous) => ({ ...previous, [liveSession.id]: true }))
       }
-      setLiveWorkspaceVersion(liveWorkspaceIndexRef.current.version)
+      setLiveWorkspaceVersion(binding.index.version)
       digestsCacheRef.current = null
       return result
     },
-    [modelersByKey]
+    [captureWorkspaceOperation, isWorkspaceOperationCurrent, modelersByKey, pushToast]
   )
 
   // --- AI placement -------------------------------------------------------
@@ -4101,29 +4458,36 @@ function App(): JSX.Element {
           // setOrgProps has REPLACE semantics — read the current bag, layer the
           // edited fields on top, and map the CC checkbox onto the `kind` attr.
           const current = getOrgProps(ctx.element)
-          setOrgProps(modeler, ctx.element, {
-            ...current,
-            owner: v.owner,
-            ownerType: v.ownerType,
-            ownerRole: v.ownerRole,
-            channel: v.channel,
-            channelDetail: v.channelDetail,
-            ccTo: v.ccTo,
-            kind: v.cc ? 'cc' : undefined,
-            ...serializeTriggers(v.triggers),
-            nameEn: v.nameEn,
-            nameAr: v.nameAr,
-            inputs: v.inputs,
-            outputs: v.outputs,
-            system: v.system,
-            respList: v.respList,
-            ccList: v.ccList,
-            decisionBasis: v.decisionBasis
-          })
+          const activeLang = getProcessOrgProps(modeler).activeLang === 'ar' ? 'ar' : 'en'
+          setOrgProps(
+            modeler,
+            ctx.element,
+            mergeActiveLanguageOrgProps(
+              current,
+              {
+                owner: v.owner,
+                ownerType: v.ownerType,
+                ownerRole: v.ownerRole,
+                channel: v.channel,
+                channelDetail: v.channelDetail,
+                ccTo: v.ccTo,
+                kind: v.cc ? 'cc' : undefined,
+                ...serializeTriggers(v.triggers),
+                nameEn: v.nameEn,
+                nameAr: v.nameAr,
+                inputs: v.inputs,
+                outputs: v.outputs,
+                system: v.system,
+                respList: v.respList,
+                ccList: v.ccList,
+                decisionBasis: v.decisionBasis
+              },
+              activeLang
+            )
+          )
           // Keep the VISIBLE label coherent with the edited translation for the
           // diagram's active language — otherwise the next language toggle's
           // write-back (visible name wins) would clobber this dialog edit.
-          const activeLang = getProcessOrgProps(modeler).activeLang === 'ar' ? 'ar' : 'en'
           const activeName = (activeLang === 'ar' ? v.nameAr : v.nameEn).trim()
           if (activeName) {
             try {
@@ -4142,18 +4506,27 @@ function App(): JSX.Element {
           }
           // The linked TextAnnotation is only touched when the note text changed
           // (setStepNote creates / updates / deletes it as needed).
-          if (v.note !== ctx.initial.note) setStepNote(modeler, ctx.element, v.note)
+          if (v.note !== ctx.initial.note) {
+            setStepNote(modeler, ctx.element, v.note, activeLang)
+          }
         } else {
           const current = getProcessOrgProps(modeler)
-          setProcessOrgProps(modeler, {
-            ...current,
-            owner: v.owner,
-            ownerType: v.ownerType,
-            ownerRole: v.ownerRole,
-            nameEn: v.nameEn,
-            nameAr: v.nameAr
-          })
-          setProcessDocumentation(modeler, v.note)
+          const activeLang = current.activeLang === 'ar' ? 'ar' : 'en'
+          setProcessOrgProps(
+            modeler,
+            mergeActiveLanguageOrgProps(
+              current,
+              {
+                owner: v.owner,
+                ownerType: v.ownerType,
+                ownerRole: v.ownerRole,
+                nameEn: v.nameEn,
+                nameAr: v.nameAr
+              },
+              activeLang
+            )
+          )
+          setProcessDocumentation(modeler, v.note, activeLang)
           // Process-mode trigger fields land on the FIRST start event, preserving
           // its other org props.
           const startEvent = modeler
@@ -4162,10 +4535,11 @@ function App(): JSX.Element {
             .find((el) => el.type === 'bpmn:StartEvent')
           if (startEvent) {
             const cur = getOrgProps(startEvent)
-            setOrgProps(modeler, startEvent, {
-              ...cur,
-              ...serializeTriggers(v.triggers)
-            })
+            setOrgProps(
+              modeler,
+              startEvent,
+              mergeActiveLanguageOrgProps(cur, serializeTriggers(v.triggers), activeLang)
+            )
           }
         }
         // The just-applied owner (+ responsible-list people) become picker
@@ -4220,49 +4594,74 @@ function App(): JSX.Element {
       const file = e.target.files?.[0]
       e.target.value = ''
       if (!file) return
+      const binding = captureWorkspaceOperation()
       try {
         const result = await readLibraryZipFileInWorker(file)
+        if (!isWorkspaceOperationCurrent(binding)) return
         if (result.entries.length === 0) {
           pushToast(t('library.import.empty'), 'info')
           return
         }
-        setLibraryImport(result)
+        setLibraryImport({ binding, result })
       } catch (err) {
-        pushToast(t('alert.import.failed', { error: errMsg(err) }), 'error')
+        if (isWorkspaceOperationCurrent(binding)) {
+          pushToast(t('alert.import.failed', { error: errMsg(err) }), 'error')
+        }
       }
     },
-    [pushToast]
+    [captureWorkspaceOperation, isWorkspaceOperationCurrent, pushToast]
   )
 
   const confirmLibraryImport = useCallback(async () => {
-    const result = libraryImport
+    const state = libraryImport
+    const result = state?.result
+    const binding = state?.binding
+    const adapter = binding?.adapter
+    if (
+      !result ||
+      !binding ||
+      !adapter?.storage.capabilities.multipleFiles ||
+      !isWorkspaceOperationCurrent(binding)
+    ) {
+      return
+    }
     setLibraryImport(null)
-    const adapter = workspaceAdapterRef.current
-    if (!result || !adapter?.storage.capabilities.multipleFiles) return
+    const isCurrent = (): boolean => isWorkspaceOperationCurrent(binding)
     let created = 0
     let renamed = 0
     for (const entry of result.entries) {
+      if (!isCurrent()) return
       const targetFolder = dirOf(entry.relPath)
       const base = deriveFileBaseName(baseName(entry.relPath).replace(/\.bpmn$/i, ''))
       try {
-        const prepared = await prepareImportedBpmnXml(entry.xml, processIndex.keys())
+        const prepared = await prepareImportedBpmnXml(
+          entry.xml,
+          binding.index.processIndex().keys()
+        )
+        if (!isCurrent()) return
         if (prepared.autoLayouted && !confirmGeneratedImportLayout()) {
           continue
         }
         // Same op-mutex as every other create so a concurrent op can't grab the
         // same free slug; nested folders are ensured inside the critical section.
         const relPath = await opMutexRef.current.runExclusive(async () => {
-          if (workspaceAdapterRef.current !== adapter) throw new Error(t('alert.staleWrite'))
-          await ensureFolders(targetFolder)
+          if (!isCurrent()) throw new Error(t('alert.staleWrite'))
+          await ensureFolders(adapter, targetFolder)
+          if (!isCurrent()) throw new Error(t('alert.staleWrite'))
           const taken = await directBpmnSlugs(adapter, targetFolder)
+          if (!isCurrent()) throw new Error(t('alert.staleWrite'))
           const guess = dedupeSlug(base, (c) => taken.has(c.toLowerCase()))
-          return writeUniqueBpmn(adapter, targetFolder, guess, prepared.xml)
+          const createdPath = await writeUniqueBpmn(adapter, targetFolder, guess, prepared.xml)
+          if (!isCurrent()) throw new Error(t('alert.staleWrite'))
+          return createdPath
         })
+        if (!isCurrent()) return
         localizationSourceByTabRef.current.set(relPath, LocalizationSource.Backup)
         created += 1
         const finalBase = baseName(relPath).replace(/\.bpmn$/i, '')
         if (finalBase.toLowerCase() !== base.toLowerCase()) renamed += 1
       } catch (error) {
+        if (!isCurrent()) return
         pushToast(
           t('alert.importFailed', {
             name: entry.relPath,
@@ -4272,14 +4671,16 @@ function App(): JSX.Element {
         )
       }
     }
+    if (!isCurrent()) return
     await refreshWorkspace()
+    if (!isCurrent()) return
     pushToast(
       t('toast.imported.count', { count: created, plural: created === 1 ? '' : 's' }) +
         (renamed > 0 ? t('toast.imported.renamed', { renamed }) : '') +
         '.',
       'success'
     )
-  }, [libraryImport, ensureFolders, refreshWorkspace, pushToast, processIndex])
+  }, [ensureFolders, isWorkspaceOperationCurrent, libraryImport, pushToast, refreshWorkspace])
 
   // Settings' org-styling toggle refreshes every live modeler so the renderer
   // re-evaluates its canRender against the just-flipped flag (each guarded so a
@@ -4395,7 +4796,10 @@ function App(): JSX.Element {
     const modeler = modelersByKey[state.tabKey] as
       (TranslateModeler & LangToggleModeler) | undefined
     if (!modeler) return
+    const binding = captureWorkspaceOperation()
     const controller = new AbortController()
+    const operationIsCurrent = (): boolean =>
+      translationAbortRef.current === controller && isWorkspaceOperationCurrent(binding)
     translationAbortRef.current = controller
     setTranslatingTab(state.tabKey)
     setTranslationReview({
@@ -4416,7 +4820,7 @@ function App(): JSX.Element {
               modeler,
               makeFreeTranslateTexts({
                 onAttempt: (attempt) => {
-                  if (controller.signal.aborted || translationAbortRef.current !== controller) {
+                  if (controller.signal.aborted || !operationIsCurrent()) {
                     return
                   }
                   const service = t(
@@ -4443,7 +4847,7 @@ function App(): JSX.Element {
                         })
                   setTranslationReview((current) =>
                     !controller.signal.aborted &&
-                    translationAbortRef.current === controller &&
+                    operationIsCurrent() &&
                     current?.tabKey === state.tabKey &&
                     current.review === state.review
                       ? { ...current, status }
@@ -4473,6 +4877,7 @@ function App(): JSX.Element {
                 run
               )
             })()
+      if (!operationIsCurrent()) return
       if (result.complete) {
         setTranslationReview(null)
         pushToast(t('translate.done', { count: result.translated }), 'success')
@@ -4484,6 +4889,7 @@ function App(): JSX.Element {
         })
       }
     } catch (err) {
+      if (!operationIsCurrent()) return
       const cancelled =
         controller.signal.aborted || (err instanceof DOMException && err.name === 'AbortError')
       const stale = err instanceof StaleLocalizationReviewError
@@ -4520,10 +4926,20 @@ function App(): JSX.Element {
         status
       })
     } finally {
-      translationAbortRef.current = null
-      setTranslatingTab(null)
+      if (translationAbortRef.current === controller) {
+        translationAbortRef.current = null
+        if (isWorkspaceOperationCurrent(binding)) setTranslatingTab(null)
+      }
     }
-  }, [translationReview, translationDisclosure, translatingTab, modelersByKey, pushToast])
+  }, [
+    captureWorkspaceOperation,
+    isWorkspaceOperationCurrent,
+    modelersByKey,
+    pushToast,
+    translatingTab,
+    translationDisclosure,
+    translationReview
+  ])
 
   // Interview apply-path: the assistant regenerated the diagram from the
   // running Q&A — import it into the LIVE modeler of the target tab (bypassing
@@ -4728,6 +5144,7 @@ function App(): JSX.Element {
   // Shell layout direction (the <html dir> follows the UI language) — the
   // sidebar resizer's drag math needs it; the editor island stays LTR.
   const dir: 'ltr' | 'rtl' = lang === 'ar' ? 'rtl' : 'ltr'
+  const renderedWorkspaceBinding = captureWorkspaceOperation()
 
   return (
     <div style={{ display: 'grid', gridTemplateRows: 'auto 1fr auto', height: '100vh' }}>
@@ -5042,7 +5459,12 @@ function App(): JSX.Element {
                       onNewFolder={(f) => void handleNewFolder(f)}
                       onRename={(n) => void handleRename(n)}
                       onDelete={(n) => void handleDeleteRequest(n)}
-                      onMove={(n) => setMoveTarget(n)}
+                      onMove={(node) =>
+                        setMoveTarget({
+                          binding: renderedWorkspaceBinding,
+                          node
+                        })
+                      }
                       onMoveDrop={handleMoveDrop}
                       onImportDrop={handleImportDrop}
                     />
@@ -5158,11 +5580,13 @@ function App(): JSX.Element {
                     onCommitted: async (report) => {
                       if (
                         !workspaceAdapter?.storage.capabilities.multipleFiles ||
-                        workspaceAdapterRef.current?.id !== workspaceAdapter.id
+                        renderedWorkspaceBinding.adapter !== workspaceAdapter ||
+                        !isWorkspaceOperationCurrent(renderedWorkspaceBinding)
                       ) {
                         return
                       }
                       await refreshWorkspace(rootHandleRef.current ?? undefined)
+                      if (!isWorkspaceOperationCurrent(renderedWorkspaceBinding)) return
                       const first = report.artifacts[0]
                       if (first) {
                         void openDirectoryFile(first.destinationPath, {
@@ -5685,12 +6109,14 @@ function App(): JSX.Element {
 
       {moveTarget && (
         <MoveDialog
-          node={moveTarget}
+          node={moveTarget.node}
           folders={folders}
           onMove={(dest) => {
-            const node = moveTarget
+            const state = moveTarget
             setMoveTarget(null)
-            void performMove(node, dest)
+            if (isWorkspaceOperationCurrent(state.binding)) {
+              void performMove(state.node, dest)
+            }
           }}
           onCancel={() => setMoveTarget(null)}
         />
@@ -5726,27 +6152,31 @@ function App(): JSX.Element {
           confirmLabel={t('library.import.confirm')}
           message={
             <>
-              <div>{t('library.import.summary', { count: libraryImport.entries.length })}</div>
-              {libraryImport.manifest && (
+              <div>
+                {t('library.import.summary', { count: libraryImport.result.entries.length })}
+              </div>
+              {libraryImport.result.manifest && (
                 <div style={{ marginTop: 8, color: 'var(--orbitpm-muted)' }}>
                   {t('library.manifestInfo', {
-                    files: libraryImport.manifest.files.length,
-                    links: libraryImport.manifest.hierarchy.length
+                    files: libraryImport.result.manifest.files.length,
+                    links: libraryImport.result.manifest.hierarchy.length
                   })}
                 </div>
               )}
-              {libraryImport.ownersCsv !== undefined && (
+              {libraryImport.result.ownersCsv !== undefined && (
                 <div style={{ marginTop: 4, color: 'var(--orbitpm-muted)' }}>
                   {t('library.ownersCsvInfo')}
                 </div>
               )}
-              {libraryImport.skipped.length > 0 && (
+              {libraryImport.result.skipped.length > 0 && (
                 <div style={{ marginTop: 10 }}>
                   <div style={{ color: 'var(--orbitpm-muted)', marginBottom: 4 }}>
-                    {t('library.import.skippedNote', { skipped: libraryImport.skipped.length })}
+                    {t('library.import.skippedNote', {
+                      skipped: libraryImport.result.skipped.length
+                    })}
                   </div>
                   <ul style={{ margin: 0, paddingInlineStart: 18 }}>
-                    {libraryImport.skipped.slice(0, 5).map((s) => (
+                    {libraryImport.result.skipped.slice(0, 5).map((s) => (
                       <li key={s.path} style={{ color: 'var(--orbitpm-muted)' }}>
                         {s.path} — {t(`library.skip.${s.reason}` as Key)}
                       </li>
@@ -5987,12 +6417,12 @@ function App(): JSX.Element {
         />
       )}
 
-      {backupImportPlan && (
+      {backupImportState && (
         <BackupImportDialog
-          plan={backupImportPlan}
+          plan={backupImportState.plan}
           busy={backupBusy}
           onApply={(decisions) => void handleApplyBackupImport(decisions)}
-          onCancel={() => setBackupImportPlan(null)}
+          onCancel={() => setBackupImportState(null)}
         />
       )}
 
@@ -6000,8 +6430,12 @@ function App(): JSX.Element {
         <HistoryDialog
           manager={historyManagerRef.current}
           currentXml={(path) => liveFiles.find((file) => file.relPath === path)?.xml}
-          onRestore={handleHistoryRestore}
-          onChanged={() => refreshWorkspace(rootHandleRef.current ?? undefined)}
+          onRestore={(revision) => handleHistoryRestore(revision, renderedWorkspaceBinding)}
+          onChanged={() =>
+            isWorkspaceOperationCurrent(renderedWorkspaceBinding)
+              ? refreshWorkspace(rootHandleRef.current ?? undefined)
+              : Promise.resolve()
+          }
           onClose={() => setHistoryOpen(false)}
         />
       )}

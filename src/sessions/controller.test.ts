@@ -279,10 +279,13 @@ describe('DocumentSessionController saves', () => {
     })
     controller.open({ id: 's', identity, title: 'a', xml: '<old/>', base: fp('old') })
     controller.updateXml('s', '<local/>')
+    const reviewed = await controller.save('s')
+    if (reviewed.status !== 'external-conflict') throw new Error('expected conflict fixture')
 
     expect(
       await controller.save('s', {
-        conflictDecision: { kind: 'reload-external' }
+        conflictDecision: { kind: 'reload-external' },
+        reviewedConflict: reviewed.conflict
       })
     ).toMatchObject({ status: 'reloaded', ok: true })
     expect(discard).toHaveBeenCalledWith('s', 'reload-external')
@@ -297,9 +300,12 @@ describe('DocumentSessionController saves', () => {
     const { controller, persistence } = createController()
     controller.updateXml('s', '<local/>')
     persistence.inspected = external('<external/>', 'external')
+    const reviewed = await controller.save('s')
+    if (reviewed.status !== 'external-conflict') throw new Error('expected conflict fixture')
 
     const outcome = await controller.save('s', {
-      conflictDecision: { kind: 'overwrite', confirmed: true }
+      conflictDecision: { kind: 'overwrite', confirmed: true },
+      reviewedConflict: reviewed.conflict
     })
 
     expect(outcome.status).toBe('success')
@@ -500,9 +506,12 @@ describe('DocumentSessionController saves', () => {
     const deleted = createController()
     deleted.controller.updateXml('s', '<local/>')
     deleted.persistence.inspected = null
+    const reviewed = await deleted.controller.save('s')
+    if (reviewed.status !== 'external-conflict') throw new Error('expected conflict fixture')
     expect(
       await deleted.controller.save('s', {
-        conflictDecision: { kind: 'reload-external' }
+        conflictDecision: { kind: 'reload-external' },
+        reviewedConflict: reviewed.conflict
       })
     ).toMatchObject({
       status: 'external-conflict',
@@ -679,10 +688,13 @@ describe('DocumentSessionController saves', () => {
     })
     controller.open({ id: 's', identity, title: 'a', xml: '<old/>', base: fp('old') })
     controller.updateXml('s', '<local/>')
+    const reviewed = await controller.save('s')
+    if (reviewed.status !== 'external-conflict') throw new Error('expected conflict fixture')
 
     expect(
       await controller.save('s', {
-        conflictDecision: { kind: 'reload-external' }
+        conflictDecision: { kind: 'reload-external' },
+        reviewedConflict: reviewed.conflict
       })
     ).toMatchObject({ status: 'reloaded', ok: true })
     expect(controller.store.get('s')?.dirty).toBe(false)

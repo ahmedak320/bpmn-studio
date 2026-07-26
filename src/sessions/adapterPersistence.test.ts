@@ -55,10 +55,13 @@ describe('AdapterSessionPersistence integration seam', () => {
     const { adapter, controller } = await setup()
     controller.updateXml('s', '<local/>')
     adapter.replaceExternally('a.bpmn', '<external/>')
+    const reviewed = await controller.save('s')
+    if (reviewed.status !== 'external-conflict') throw new Error('expected conflict fixture')
 
     expect(
       await controller.save('s', {
-        conflictDecision: { kind: 'overwrite', confirmed: true }
+        conflictDecision: { kind: 'overwrite', confirmed: true },
+        reviewedConflict: reviewed.conflict
       })
     ).toMatchObject({ status: 'success' })
     expect(new TextDecoder().decode((await adapter.read('a.bpmn')).bytes)).toBe('<local/>')
@@ -88,10 +91,13 @@ describe('AdapterSessionPersistence integration seam', () => {
     })
     controller.updateXml('s', '<local/>')
     adapter.replaceExternally('a.bpmn', '<first-external/>')
+    const reviewed = await controller.save('s')
+    if (reviewed.status !== 'external-conflict') throw new Error('expected conflict fixture')
 
     expect(
       await controller.save('s', {
-        conflictDecision: { kind: 'overwrite', confirmed: true }
+        conflictDecision: { kind: 'overwrite', confirmed: true },
+        reviewedConflict: reviewed.conflict
       })
     ).toMatchObject({
       status: 'external-conflict',
@@ -154,6 +160,85 @@ describe('AdapterSessionPersistence integration seam', () => {
     })
     expect(new TextDecoder().decode((await adapter.read('copy.bpmn')).bytes)).toBe('<existing/>')
     expect(controller.store.get('s')?.identity.path).toBe('a.bpmn')
+  })
+
+  it('keeps overwrite resolution for a Save As collision bound to that destination', async () => {
+    const { adapter, controller } = await setup()
+    adapter.replaceExternally('copy.bpmn', '<destination-v1/>')
+    controller.updateXml('s', '<local/>')
+    adapter.replaceExternally('a.bpmn', '<source-external/>')
+
+    const collision = await controller.save('s', {
+      conflictDecision: { kind: 'save-as', path: 'copy.bpmn' }
+    })
+    if (collision.status !== 'external-conflict') {
+      throw new Error('expected Save As destination conflict')
+    }
+    adapter.replaceExternally('copy.bpmn', '<destination-v2/>')
+
+    const staleDecision = await controller.save('s', {
+      conflictDecision: { kind: 'overwrite', confirmed: true },
+      reviewedConflict: collision.conflict
+    })
+    expect(staleDecision).toMatchObject({
+      status: 'external-conflict',
+      decisionStale: true,
+      conflict: {
+        identity: { path: 'copy.bpmn' },
+        external: { xml: '<destination-v2/>' }
+      }
+    })
+    expect(new TextDecoder().decode((await adapter.read('copy.bpmn')).bytes)).toBe(
+      '<destination-v2/>'
+    )
+
+    if (staleDecision.status !== 'external-conflict') {
+      throw new Error('expected refreshed destination conflict')
+    }
+    const saved = await controller.save('s', {
+      conflictDecision: { kind: 'overwrite', confirmed: true },
+      reviewedConflict: staleDecision.conflict
+    })
+    expect(saved).toMatchObject({
+      status: 'saved-as',
+      identity: { path: 'copy.bpmn' }
+    })
+    expect(controller.store.get('s')).toMatchObject({
+      identity: { path: 'copy.bpmn' },
+      currentXml: '<local/>',
+      dirty: false
+    })
+    expect(new TextDecoder().decode((await adapter.read('copy.bpmn')).bytes)).toBe('<local/>')
+    expect(new TextDecoder().decode((await adapter.read('a.bpmn')).bytes)).toBe(
+      '<source-external/>'
+    )
+  })
+
+  it('reloads a reviewed Save As collision from the destination identity', async () => {
+    const { adapter, controller } = await setup()
+    adapter.replaceExternally('copy.bpmn', '<destination/>')
+    controller.updateXml('s', '<local/>')
+
+    const collision = await controller.save('s', {
+      conflictDecision: { kind: 'save-as', path: 'copy.bpmn' }
+    })
+    if (collision.status !== 'external-conflict') {
+      throw new Error('expected Save As destination conflict')
+    }
+    expect(
+      await controller.save('s', {
+        conflictDecision: { kind: 'reload-external' },
+        reviewedConflict: collision.conflict
+      })
+    ).toMatchObject({
+      status: 'reloaded',
+      external: { identity: { path: 'copy.bpmn' }, xml: '<destination/>' }
+    })
+    expect(controller.store.get('s')).toMatchObject({
+      identity: { path: 'copy.bpmn' },
+      currentXml: '<destination/>',
+      dirty: false
+    })
   })
 
   it('handles virtual documents, missing files, and non-missing read failures explicitly', async () => {

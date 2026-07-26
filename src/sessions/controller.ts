@@ -84,10 +84,7 @@ export interface DocumentSessionControllerOptions {
     session: DocumentSession,
     result: Extract<SessionSaveOutcome, { status: 'success' | 'saved-as' }>
   ) => void | Promise<void>
-  onExplicitDiscard?: (
-    sessionId: SessionId,
-    reason: 'reload-external'
-  ) => void | Promise<void>
+  onExplicitDiscard?: (sessionId: SessionId, reason: 'reload-external') => void | Promise<void>
   /** Post-save cleanup (for example draft deletion) must not falsify write success. */
   onPostSaveError?: (error: unknown) => void
 }
@@ -100,6 +97,12 @@ export interface SaveSessionOptions {
   xml?: string
   /** Reject a caller snapshot captured from an older store revision. */
   expectedRevision?: number
+  /**
+   * Exact conflict shown to the user before `conflictDecision` was chosen.
+   * Destructive decisions are rejected if the target identity/fingerprint no
+   * longer matches this observation.
+   */
+  reviewedConflict?: ExternalConflict
   conflictDecision?: ExternalConflictDecision
   signal?: AbortSignal
 }
@@ -189,6 +192,19 @@ function conflictFromAtomicWrite(
     localXml: xml,
     external
   }
+}
+
+function sameExternalObservation(
+  left: ExternalDocument | null,
+  right: ExternalDocument | null
+): boolean {
+  if (left === null || right === null) return left === right
+  return (
+    sameDocumentIdentity(left.identity, right.identity) &&
+    left.fingerprint.hash.trim().toLowerCase() === right.fingerprint.hash.trim().toLowerCase() &&
+    left.fingerprint.size === right.fingerprint.size &&
+    left.fingerprint.modifiedAt === right.fingerprint.modifiedAt
+  )
 }
 
 /**
@@ -320,22 +336,60 @@ export class DocumentSessionController {
 
     const externalState = classifyExternalState(session.base, inspected)
     let decision = options.conflictDecision
+    let conflict: ExternalConflict | null = null
+    let decisionBoundToConflict = false
     if (
+      options.reviewedConflict &&
+      (decision?.kind === 'overwrite' || decision?.kind === 'reload-external')
+    ) {
+      const reviewed = options.reviewedConflict
+      if (
+        reviewed.localXml !== xml ||
+        reviewed.identity.workspace.id !== session.identity.workspace.id ||
+        reviewed.identity.workspace.generation !== session.identity.workspace.generation
+      ) {
+        return this.#finish(id, {
+          status: 'external-conflict',
+          ok: false,
+          sessionId: id,
+          conflict: reviewed,
+          comparisonRequested: false,
+          decisionStale: true
+        })
+      }
+      let observed = inspected
+      if (!sameDocumentIdentity(reviewed.identity, session.identity)) {
+        try {
+          observed = await this.#persistence.inspect(reviewed.identity, options.signal)
+        } catch (error) {
+          return this.#finishFailure(id, error)
+        }
+      }
+      if (!sameExternalObservation(observed, reviewed.external)) {
+        return this.#finish(id, {
+          status: 'external-conflict',
+          ok: false,
+          sessionId: id,
+          conflict: conflictFromAtomicWrite(reviewed.identity, reviewed.base, xml, observed),
+          comparisonRequested: false,
+          decisionStale: true
+        })
+      }
+      conflict = { ...reviewed, localXml: xml, external: observed }
+      decisionBoundToConflict = true
+    } else if (
       externalState.kind === 'modified' ||
       externalState.kind === 'deleted' ||
       externalState.kind === 'untracked-existing'
     ) {
-      const conflict = toExternalConflict(session.identity, session.base, xml, externalState)
+      conflict = toExternalConflict(session.identity, session.base, xml, externalState)
+    }
+    if (conflict) {
       if (!decision && this.#decideConflict) {
-        this.#setPhase(
-          id,
-          'awaiting-conflict-decision',
-          requestId,
-          savedRevision,
-          startedAt
-        )
+        this.#setPhase(id, 'awaiting-conflict-decision', requestId, savedRevision, startedAt)
         try {
           decision = await this.#decideConflict(conflict, session)
+          decisionBoundToConflict = true
         } catch (error) {
           return this.#finishFailure(id, error)
         }
@@ -352,6 +406,19 @@ export class DocumentSessionController {
       }
       if (decision.kind === 'cancel') {
         return this.#finish(id, { status: 'cancelled', ok: false, sessionId: id })
+      }
+      if (
+        (decision.kind === 'overwrite' || decision.kind === 'reload-external') &&
+        !decisionBoundToConflict
+      ) {
+        return this.#finish(id, {
+          status: 'external-conflict',
+          ok: false,
+          sessionId: id,
+          conflict,
+          comparisonRequested: false,
+          decisionStale: true
+        })
       }
       if (decision.kind === 'reload-external') {
         if (!conflict.external) {
@@ -377,7 +444,9 @@ export class DocumentSessionController {
         }
         this.store.replaceWithExternal(id, {
           xml: conflict.external.xml,
-          fingerprint: conflict.external.fingerprint
+          fingerprint: conflict.external.fingerprint,
+          identity: conflict.identity,
+          title: titleFromPath(conflict.identity.path ?? '', session.title)
         })
         try {
           await this.#onExplicitDiscard?.(id, 'reload-external')
@@ -404,7 +473,9 @@ export class DocumentSessionController {
     const lockIdentity: DocumentIdentity =
       decision?.kind === 'save-as'
         ? { workspace: session.identity.workspace, path: decision.path }
-        : session.identity
+        : decision?.kind === 'overwrite' && conflict
+          ? conflict.identity
+          : session.identity
     if (this.#coordination && lockIdentity.path !== null) {
       this.#setPhase(id, 'acquiring-lock', requestId, savedRevision, startedAt)
       try {
@@ -435,20 +506,20 @@ export class DocumentSessionController {
 
       if (decision?.kind === 'save-as') {
         if (!this.#persistence.writeAs) {
-          return this.#finishFailure(id, new DOMException('Save as is unsupported', 'InvalidStateError'))
+          return this.#finishFailure(
+            id,
+            new DOMException('Save as is unsupported', 'InvalidStateError')
+          )
         }
-        const writeAs = await this.#persistence.writeAs(
-          session.identity,
-          decision.path,
-          xml,
-          { expectedBase: null, signal: options.signal }
-        )
+        const writeAs = await this.#persistence.writeAs(session.identity, decision.path, xml, {
+          expectedBase: null,
+          signal: options.signal
+        })
         if (writeAs.status === 'external-conflict') {
-          const destination: DocumentIdentity =
-            writeAs.external?.identity ?? {
-              workspace: session.identity.workspace,
-              path: decision.path
-            }
+          const destination: DocumentIdentity = writeAs.external?.identity ?? {
+            workspace: session.identity.workspace,
+            path: decision.path
+          }
           return this.#finish(id, {
             status: 'external-conflict',
             ok: false,
@@ -490,11 +561,11 @@ export class DocumentSessionController {
 
       const expectedBase =
         decision?.kind === 'overwrite'
-          ? inspected?.fingerprint ?? null
+          ? (conflict?.external?.fingerprint ?? null)
           : externalState.kind === 'unchanged'
             ? externalState.current.fingerprint
             : session.base
-      const write = await this.#persistence.write(session.identity, xml, {
+      const write = await this.#persistence.write(lockIdentity, xml, {
         expectedBase,
         force: decision?.kind === 'overwrite',
         signal: options.signal
@@ -505,8 +576,8 @@ export class DocumentSessionController {
           ok: false,
           sessionId: id,
           conflict: conflictFromAtomicWrite(
-            session.identity,
-            session.base,
+            lockIdentity,
+            conflict?.base ?? session.base,
             xml,
             write.external
           ),
@@ -522,21 +593,35 @@ export class DocumentSessionController {
         // do not falsely acknowledge them against a session that has since moved.
         return this.#finish(id, { status: 'stale-workspace', ok: false, sessionId: id })
       }
+      const identityChanged = !sameDocumentIdentity(lockIdentity, session.identity)
       const saved = this.store.markSaved(id, {
         xml,
         savedRevision,
-        fingerprint: write.fingerprint
-      })
-      const outcome: Extract<SessionSaveOutcome, { status: 'success' }> = {
-        status: 'success',
-        ok: true,
-        sessionId: id,
         fingerprint: write.fingerprint,
-        savedRevision,
-        remainingDirty: saved.dirty
-      }
+        identity: identityChanged ? lockIdentity : undefined,
+        title: identityChanged ? titleFromPath(lockIdentity.path ?? '', session.title) : undefined
+      })
+      const outcome: Extract<SessionSaveOutcome, { status: 'success' | 'saved-as' }> =
+        identityChanged
+          ? {
+              status: 'saved-as',
+              ok: true,
+              sessionId: id,
+              identity: lockIdentity,
+              fingerprint: write.fingerprint,
+              savedRevision,
+              remainingDirty: saved.dirty
+            }
+          : {
+              status: 'success',
+              ok: true,
+              sessionId: id,
+              fingerprint: write.fingerprint,
+              savedRevision,
+              remainingDirty: saved.dirty
+            }
       this.#coordination?.publishDocumentChange?.({
-        identity: session.identity,
+        identity: lockIdentity,
         kind: 'saved',
         fingerprint: write.fingerprint
       })

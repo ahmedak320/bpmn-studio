@@ -56,6 +56,8 @@ const sessionHarness = vi.hoisted(() => ({
 const state = vi.hoisted(() => ({
   directorySupport: false,
   opfsSupport: false,
+  emitInitialManifestWarning: false,
+  failNextManifestBind: false,
   lang: 'en' as 'en' | 'ar',
   promptResult: 'Claims approval',
   xml: `<?xml version="1.0" encoding="UTF-8"?>
@@ -101,6 +103,7 @@ const mocks = vi.hoisted(() => ({
   validateBpmn: vi.fn(),
   evaluatePolicy: vi.fn(),
   validatePreservation: vi.fn(),
+  migrateLegacyCredentialsOnStartup: vi.fn(),
   pickWorkspace: vi.fn(),
   rememberWorkspace: vi.fn(),
   loadRememberedWorkspace: vi.fn(),
@@ -109,6 +112,9 @@ const mocks = vi.hoisted(() => ({
   folderTreeProps: vi.fn(),
   catalogProps: vi.fn(),
   moveDialogProps: vi.fn(),
+  historyProps: vi.fn(),
+  restoreHistoryRevision: vi.fn(),
+  manifestBindings: [] as unknown[],
   readLibraryZipFileInWorker: vi.fn(),
   legacyCreateFolderAt: vi.fn(),
   legacyCreateBpmnFileUnique: vi.fn()
@@ -136,6 +142,14 @@ vi.mock('./i18n/useLang', () => ({
     mocks.setLang(lang)
   }
 }))
+
+vi.mock('./ai/keys', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('./ai/keys')>()
+  return {
+    ...actual,
+    migrateLegacyCredentialsOnStartup: mocks.migrateLegacyCredentialsOnStartup
+  }
+})
 
 vi.mock('@/common/prompt', () => ({
   usePromptText: () => mocks.prompt
@@ -204,6 +218,43 @@ vi.mock('./localization/TranslationReviewDialog', async (importOriginal) => {
     ) => {
       mocks.translationReviewProps(props)
       return <actual.TranslationReviewDialog {...props} />
+    }
+  }
+})
+
+vi.mock('./workspace/workspaceManifest', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('./workspace/workspaceManifest')>()
+  return {
+    ...actual,
+    bindWorkspaceToManifest: async (
+      ...args: Parameters<typeof actual.bindWorkspaceToManifest>
+    ): ReturnType<typeof actual.bindWorkspaceToManifest> => {
+      const options = args[1] ?? {}
+      mocks.manifestBindings.push(options)
+      if (state.emitInitialManifestWarning) {
+        state.emitInitialManifestWarning = false
+        options.onManifestWarning?.({
+          code: 'unreadable-file',
+          path: 'unreadable.bpmn',
+          message: 'initial warning'
+        })
+      }
+      if (state.failNextManifestBind) {
+        state.failNextManifestBind = false
+        throw new Error('manifest bind failed')
+      }
+      return actual.bindWorkspaceToManifest(...args)
+    }
+  }
+})
+
+vi.mock('./workspace/HistoryDialog', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('./workspace/HistoryDialog')>()
+  return {
+    ...actual,
+    HistoryDialog: (props: React.ComponentProps<typeof actual.HistoryDialog>) => {
+      mocks.historyProps(props)
+      return <div data-testid="history-dialog" />
     }
   }
 })
@@ -316,7 +367,8 @@ vi.mock('./sessions', async (importOriginal) => {
     ...actual,
     BroadcastWorkspaceCoordinator: TestBroadcastWorkspaceCoordinator,
     DocumentSessionController: TestDocumentSessionController,
-    IndexedDbDraftJournal: TestIndexedDbDraftJournal
+    IndexedDbDraftJournal: TestIndexedDbDraftJournal,
+    restoreHistoryRevision: mocks.restoreHistoryRevision
   }
 })
 
@@ -633,8 +685,10 @@ vi.mock('./workspace/MoveDialog', () => ({
   }
 }))
 
+import { WorkspaceOperationError } from './workspace/adapters'
 import { asDirectoryHandle, fakeRoot } from './workspace/adapters/__tests__/fakeFileSystem'
 import { ManifestBoundWorkspaceAdapter } from './workspace/workspaceManifest'
+import type { HistoryRevision } from './workspace/history'
 import {
   WORKSPACE_GLOSSARY_PATH,
   WORKSPACE_TRANSLATION_MEMORY_PATH,
@@ -659,6 +713,60 @@ function latestAiPanelProps(): TestAiPanelProps {
   const props = mocks.aiProps.mock.calls.at(-1)?.[0] as TestAiPanelProps | undefined
   if (!props) throw new Error('App did not render the AI panel')
   return props
+}
+
+function latestHistoryDialogProps(): import('./workspace/HistoryDialog').HistoryDialogProps {
+  const props = mocks.historyProps.mock.calls.at(-1)?.[0] as
+    import('./workspace/HistoryDialog').HistoryDialogProps | undefined
+  if (!props) throw new Error('App did not render the history dialog')
+  return props
+}
+
+function manifestBindingAt(
+  index: number
+): import('./workspace/workspaceManifest').BindWorkspaceToManifestOptions {
+  const binding = mocks.manifestBindings[index] as
+    import('./workspace/workspaceManifest').BindWorkspaceToManifestOptions | undefined
+  if (!binding) throw new Error(`App did not create manifest binding ${index}`)
+  return binding
+}
+
+function testHistoryRevision(originalPath: string): HistoryRevision {
+  return {
+    format: 'orbitpm-history-revision',
+    version: 1,
+    id: 'revision-1',
+    originalPath,
+    contentPath: '.orbitpm/history/revision-1/content.bpmn',
+    metadataPath: '.orbitpm/history/revision-1/metadata.json',
+    hash: '1'.repeat(64),
+    size: 1,
+    storageBytes: 2,
+    createdAt: Date.UTC(2026, 0, 1),
+    reason: 'restore',
+    applicationVersion: '0.4.5'
+  }
+}
+
+function successfulWorkspaceSave(
+  path: string,
+  xml: string
+): import('./workspace/adapters').SuccessfulSaveOutcome {
+  const bytes = new TextEncoder().encode(xml)
+  return {
+    ok: true,
+    status: 'success',
+    snapshot: {
+      path,
+      bytes,
+      hash: 'a'.repeat(64),
+      size: bytes.byteLength,
+      modifiedAt: Date.UTC(2026, 0, 2),
+      mimeType: 'application/xml'
+    },
+    created: false,
+    disposition: 'workspace'
+  }
 }
 
 function utf8Buffer(value: string): ArrayBuffer {
@@ -695,6 +803,8 @@ beforeEach(() => {
   sessionHarness.publishedChanges.length = 0
   state.directorySupport = false
   state.opfsSupport = false
+  state.emitInitialManifestWarning = false
+  state.failNextManifestBind = false
   state.lang = 'en'
   state.promptResult = 'Claims approval'
   mocks.prompt.mockReset().mockImplementation(async () => state.promptResult)
@@ -727,6 +837,10 @@ beforeEach(() => {
     valid: true,
     issues: []
   })
+  mocks.migrateLegacyCredentialsOnStartup.mockReset().mockReturnValue({
+    ok: true,
+    value: 0
+  })
   mocks.pickWorkspace.mockReset().mockResolvedValue(null)
   mocks.rememberWorkspace.mockReset().mockResolvedValue(undefined)
   mocks.loadRememberedWorkspace.mockReset().mockResolvedValue(undefined)
@@ -735,6 +849,13 @@ beforeEach(() => {
   mocks.folderTreeProps.mockReset()
   mocks.catalogProps.mockReset()
   mocks.moveDialogProps.mockReset()
+  mocks.historyProps.mockReset()
+  mocks.restoreHistoryRevision.mockReset().mockResolvedValue({
+    status: 'failed',
+    sessionId: null,
+    error: new Error('history restore mock was not configured')
+  })
+  mocks.manifestBindings.length = 0
   mocks.readLibraryZipFileInWorker.mockReset().mockResolvedValue({
     entries: [],
     skipped: []
@@ -819,6 +940,12 @@ function fakeFileText(root: ReturnType<typeof fakeRoot>, path: string): string {
   return new TextDecoder().decode(root.file(path).bytes)
 }
 
+function replaceFakeFile(root: ReturnType<typeof fakeRoot>, path: string, xml: string): void {
+  const file = root.file(path)
+  file.bytes = new TextEncoder().encode(xml)
+  file.lastModified += 1
+}
+
 function latestSettingsLocalization(): LocalizationResourcesEditorProps {
   const props = mocks.settingsProps.mock.calls.at(-1)?.[0] as
     { localizationResources?: LocalizationResourcesEditorProps } | undefined
@@ -842,6 +969,22 @@ async function openDirectoryWorkspace(
 }
 
 describe('App single-file browser orchestration', () => {
+  it('runs legacy credential migration once and surfaces startup cleanup failures', async () => {
+    const user = userEvent.setup()
+    mocks.migrateLegacyCredentialsOnStartup.mockReturnValueOnce({
+      ok: false,
+      code: 'storage-failed',
+      error: 'legacy credential cleanup blocked'
+    })
+
+    await openBlankDiagram(user)
+
+    expect(mocks.migrateLegacyCredentialsOnStartup).toHaveBeenCalledOnce()
+    expect(
+      await screen.findByText('settings.title: legacy credential cleanup blocked')
+    ).not.toBeNull()
+  })
+
   it('does not construct or expose public localization persistence in single-file mode', async () => {
     const user = userEvent.setup()
     await openBlankDiagram(user)
@@ -1338,6 +1481,39 @@ describe('App single-file browser orchestration', () => {
 })
 
 describe('App directory workspace orchestration', () => {
+  it('surfaces warnings emitted before the manifest-bound adapter is committed', async () => {
+    const user = userEvent.setup()
+    state.emitInitialManifestWarning = true
+
+    await openDirectoryWorkspace(user)
+
+    expect(await screen.findByText('workspace.manifest.warning')).not.toBeNull()
+    expect(mocks.manifestBindings).toHaveLength(1)
+  })
+
+  it('keeps active manifest callbacks live when a replacement workspace fails to bind', async () => {
+    const user = userEvent.setup()
+    const first = populatedDirectory()
+    const second = fakeRoot()
+    second.addFile('second.bpmn', state.xml)
+    await openDirectoryWorkspace(user, first)
+    const activeManifestBinding = manifestBindingAt(0)
+
+    state.failNextManifestBind = true
+    mocks.pickWorkspace.mockResolvedValue(asDirectoryHandle(second))
+    await user.click(screen.getByRole('button', { name: 'app.changeFolder' }))
+    await waitFor(() => expect(mocks.manifestBindings).toHaveLength(2))
+
+    act(() => {
+      activeManifestBinding.onManifestError?.(new Error('post-commit manifest failure'))
+    })
+
+    expect(
+      await screen.findByRole('dialog', { name: 'workspace.manifest.retryTitle' })
+    ).not.toBeNull()
+    expect(screen.getByTestId('catalog-view')).not.toBeNull()
+  })
+
   it('opens a different directory with one picker call and keeps the current workspace when cancelled', async () => {
     const user = userEvent.setup()
     await openDirectoryWorkspace(user)
@@ -1405,6 +1581,195 @@ describe('App directory workspace orchestration', () => {
     await user.click(await screen.findByRole('button', { name: 'mock-tree-open' }))
     expect(await screen.findByTestId('editor-tab')).not.toBeNull()
     expect(latestSessionController().store.getActive()?.identity.workspace.id).toBe(firstAdapter.id)
+  })
+
+  it('uses creation-only history restore only for a confirmed missing destination', async () => {
+    const user = userEvent.setup()
+    await openDirectoryWorkspace(user)
+    await user.click(screen.getByRole('button', { name: 'workspace.storage.history' }))
+    await screen.findByTestId('history-dialog')
+    const revision = testHistoryRevision('Finance/deleted.bpmn')
+
+    await act(async () => {
+      await latestHistoryDialogProps().onRestore?.(revision)
+    })
+
+    expect(mocks.restoreHistoryRevision).toHaveBeenCalledWith(
+      expect.objectContaining({
+        revision,
+        expectedCurrentHash: null
+      })
+    )
+  })
+
+  it('fails history restore preflight on non-not-found storage errors', async () => {
+    const user = userEvent.setup()
+    await openDirectoryWorkspace(user)
+    const adapter = mocks.workspaceLocalizationFactories.mock.calls.at(
+      -1
+    )?.[0] as import('./workspace/adapters').WorkspaceAdapter
+    const failure = new WorkspaceOperationError({
+      code: 'permission-loss',
+      operation: 'read',
+      path: 'Finance/existing.bpmn',
+      message: 'permission denied'
+    })
+    vi.spyOn(adapter, 'read').mockRejectedValueOnce(failure)
+    await user.click(screen.getByRole('button', { name: 'workspace.storage.history' }))
+    await screen.findByTestId('history-dialog')
+
+    let result: import('./sessions').RestoreHistoryRevisionResult | undefined
+    await act(async () => {
+      result = await latestHistoryDialogProps().onRestore?.(
+        testHistoryRevision('Finance/existing.bpmn')
+      )
+    })
+
+    expect(result).toEqual({ status: 'failed', sessionId: null, error: failure })
+    expect(mocks.restoreHistoryRevision).not.toHaveBeenCalled()
+  })
+
+  it('clears the matching recovery draft after a fully synchronized history restore', async () => {
+    const user = userEvent.setup()
+    await openDirectoryWorkspace(user)
+    await user.click(screen.getByRole('button', { name: 'mock-tree-open' }))
+    await screen.findByTestId('editor-tab')
+    const session = latestSessionController().store.getActive()
+    if (!session?.identity.path) throw new Error('expected an active persisted session')
+    const draft = seedDraft(session.identity.workspace.id, session.identity.path, state.xml)
+    const revision = testHistoryRevision(session.identity.path)
+    mocks.restoreHistoryRevision.mockResolvedValueOnce({
+      status: 'restored',
+      sessionId: session.id,
+      outcome: successfulWorkspaceSave(session.identity.path, state.xml)
+    })
+
+    await user.click(screen.getByRole('button', { name: 'workspace.storage.history' }))
+    await screen.findByTestId('history-dialog')
+    await act(async () => {
+      await latestHistoryDialogProps().onRestore?.(revision)
+    })
+
+    await waitFor(() => expect(sessionHarness.drafts.has(draft.id)).toBe(false))
+    expect(latestSessionController().store.get(session.id)?.dirty).toBe(false)
+  })
+
+  it('flushes a retained local draft when storage restores but editor refresh fails', async () => {
+    const user = userEvent.setup()
+    await openDirectoryWorkspace(user)
+    await user.click(screen.getByRole('button', { name: 'mock-tree-open' }))
+    await screen.findByTestId('editor-tab')
+    const controller = latestSessionController()
+    const session = controller.store.getActive()
+    if (!session?.identity.path) throw new Error('expected an active persisted session')
+    const localXml = `${state.xml}\n<!-- retained local edit -->`
+    const outcome = successfulWorkspaceSave(session.identity.path, state.xml)
+    mocks.restoreHistoryRevision.mockImplementationOnce(async () => {
+      controller.store.replaceWithExternal(session.id, {
+        xml: state.xml,
+        fingerprint: {
+          hash: outcome.snapshot.hash,
+          size: outcome.snapshot.size,
+          modifiedAt: outcome.snapshot.modifiedAt
+        }
+      })
+      controller.updateXml(session.id, localXml)
+      return {
+        status: 'storage-restored-session-refresh-failed',
+        sessionId: session.id,
+        outcome,
+        error: new Error('editor refresh failed')
+      }
+    })
+
+    await user.click(screen.getByRole('button', { name: 'workspace.storage.history' }))
+    await screen.findByTestId('history-dialog')
+    await act(async () => {
+      await latestHistoryDialogProps().onRestore?.(testHistoryRevision(session.identity.path!))
+    })
+
+    await waitFor(() =>
+      expect([...sessionHarness.drafts.values()].some((draft) => draft.xml === localXml)).toBe(true)
+    )
+    expect(controller.store.get(session.id)?.dirty).toBe(true)
+    expect(
+      screen.getByRole('tab', {
+        name: /existing\.bpmn.*tab\.dirty\.aria/
+      })
+    ).not.toBeNull()
+  })
+
+  it('re-prompts instead of overwriting when the reviewed external file changes again', async () => {
+    const user = userEvent.setup()
+    const root = await openDirectoryWorkspace(user)
+    await user.click(screen.getByRole('button', { name: 'mock-tree-open' }))
+    await screen.findByTestId('editor-tab')
+    const editor = mocks.editorProps.mock.calls.at(-1)?.[0] as {
+      onRequestSave(xml: string): Promise<void | { durable: boolean }>
+    }
+    const path = 'Finance/existing.bpmn'
+    const firstExternal = `${state.xml}\n<!-- first external edit -->`
+    const secondExternal = `${state.xml}\n<!-- second external edit -->`
+    const localXml = `${state.xml}\n<!-- local edit -->`
+    replaceFakeFile(root, path, firstExternal)
+
+    let pending!: Promise<void | { durable: boolean }>
+    act(() => {
+      pending = editor.onRequestSave(localXml)
+    })
+    let dialog = await screen.findByRole('dialog', { name: 'session.conflict.title' })
+    replaceFakeFile(root, path, secondExternal)
+    await user.click(within(dialog).getByRole('button', { name: 'session.conflict.overwrite' }))
+
+    dialog = await screen.findByRole('dialog', { name: 'session.conflict.title' })
+    await user.click(within(dialog).getByRole('button', { name: 'session.conflict.compare' }))
+    await waitFor(() => expect(dialog.textContent).toContain(secondExternal))
+    expect(fakeFileText(root, path)).toBe(secondExternal)
+
+    await user.click(within(dialog).getByRole('button', { name: 'session.conflict.overwrite' }))
+    await act(async () => {
+      await pending
+    })
+    expect(fakeFileText(root, path)).toBe(localXml)
+  })
+
+  it('scopes Save As collision review and overwrite to the destination file', async () => {
+    const user = userEvent.setup()
+    const root = populatedDirectory()
+    const sourcePath = 'Finance/existing.bpmn'
+    const destinationPath = 'Finance/review-copy.bpmn'
+    const destinationExternal = `${state.xml}\n<!-- destination owner -->`
+    root.addFile(destinationPath, destinationExternal)
+    await openDirectoryWorkspace(user, root)
+    await user.click(screen.getByRole('button', { name: 'mock-tree-open' }))
+    await screen.findByTestId('editor-tab')
+    const editor = mocks.editorProps.mock.calls.at(-1)?.[0] as {
+      onRequestSave(xml: string): Promise<void | { durable: boolean }>
+    }
+    const sourceExternal = `${state.xml}\n<!-- source owner -->`
+    const localXml = `${state.xml}\n<!-- save-as local -->`
+    replaceFakeFile(root, sourcePath, sourceExternal)
+
+    let pending!: Promise<void | { durable: boolean }>
+    act(() => {
+      pending = editor.onRequestSave(localXml)
+    })
+    let dialog = await screen.findByRole('dialog', { name: 'session.conflict.title' })
+    const destination = within(dialog).getByRole('textbox')
+    await user.clear(destination)
+    await user.type(destination, destinationPath)
+    await user.click(within(dialog).getByRole('button', { name: 'session.conflict.saveAs' }))
+
+    dialog = await screen.findByRole('dialog', { name: 'session.conflict.title' })
+    expect(fakeFileText(root, destinationPath)).toBe(destinationExternal)
+    await user.click(within(dialog).getByRole('button', { name: 'session.conflict.overwrite' }))
+    await act(async () => {
+      await pending
+    })
+
+    expect(fakeFileText(root, sourcePath)).toBe(sourceExternal)
+    expect(fakeFileText(root, destinationPath)).toBe(localXml)
+    expect(latestSessionController().store.getActive()?.identity.path).toBe(destinationPath)
   })
 
   it('creates folders, processes, and AI results without legacy raw-handle write helpers', async () => {
