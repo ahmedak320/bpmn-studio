@@ -1,75 +1,82 @@
-# Spreadsheet core integration
+# Spreadsheet import implementation
 
-This directory is the deterministic, offline Excel/CSV import core for OrbitPM
-0.4.5. Production code here has **no third-party runtime dependency**. It uses
-only `TextEncoder`, `TextDecoder`, typed arrays, and `AbortSignal`.
+This directory contains the production, deterministic Excel/CSV import path for
+OrbitPM 0.4.5.
 
-## Packages to pin in the application integration
-
-Versions checked from the npm registry on 2026-07-26:
+The browser worker uses the exactly pinned packages:
 
 - `read-excel-file@9.3.4`
 - `papaparse@5.5.4`
-- `@types/papaparse@5.5.2` (development only)
+- `@types/papaparse@5.5.2` for development
 
-`read-excel-file` includes its own TypeScript declarations. The existing
-`fflate@0.8.3` may be reused by the worker for selective OPC/XML inspection
-_after_ `preflightXlsx()` succeeds; the security boundary does not inflate ZIP
-entries.
+`fflate@0.8.3` performs bounded, selective OPC entry extraction only after
+`preflightXlsx()` accepts the central directory.
 
-## Required wiring order
+## Production flow
 
-1. Validate the extension/20 MB boundary with `validateSpreadsheetInput()`.
-2. CSV: implement `CsvParserAdapter` with Papa Parse in a Web Worker and call
-   `parseCsvWorkbookBoundary()`. Set Papa's worker mode, return strings only,
-   forward progress, and terminate on the supplied abort signal.
-3. XLSX: implement `XlsxParserAdapter` with the
-   `read-excel-file/web-worker` export (`read-excel-file/browser` only when
-   parsing off the UI thread is otherwise guaranteed) and call
-   `parseXlsxBoundary()`. The adapter
-   must return displayed/cached values only. It must also populate `formula`,
-   `cachedValuePresent`, and custom properties from selectively inspected OPC
-   XML; never evaluate formulas, connections, or external links.
-4. Call `detectOfficialTemplate()`. For an official workbook use
-   `officialTemplatePreset()`; otherwise drive the mapping wizard with
-   `suggestHeaderMappings()`, `mappingConfirmationIssues()`, and
-   `headerSignature()`.
-5. Export/import presets only through `serializeMappingPreset()` and
-   `parseMappingPresetJson()`. Persist an in-progress `MappingDraft` through an
-   application-owned browser-private `MappingDraftStore`.
-6. Build the graph with `buildProcessWorkbookModel()`, then show
-   `createGraphInferencePlan()` as a read-only preview. Do not call
-   `applyGraphInferencePlan()` until synthetic Start/End events are confirmed.
-7. Run `validateProcessWorkbookModel()` with destination process IDs and every
-   parser/mapping issue. Reviews are blocking, not warnings.
-8. Implement `SpreadsheetBilingualAuditAdapter` with the shared offline
-   localization audit. An incomplete audit blocks generation and is the handoff
-   to the explicit translation-consent workflow.
-9. Implement `BpmnModelGenerationAdapter` with `bpmn-moddle`, the shared
-   OrbitPM metadata writer, shared layout, and structural/XSD/lint/link/DI
-   validators. The graph is not converted through the recursive AI IR.
-10. Implement `ImportDestinationInspector` and
-    `ImportTransactionFactory` with the workspace/session/history layer.
-    `prepareTransactionalImportPlan()` generates every artifact before writes;
-    `executeTransactionalImportPlan()` stages all files and commits once.
-11. Download the stable JSON from `serializeSpreadsheetImportReport()` after
-    every blocked, committed, or rolled-back result.
+1. `validateSpreadsheetInput()` accepts only macro-free `.xlsx` and UTF-8
+   `.csv` within the 20 MiB compressed-input limit.
+2. `preflightXlsx()` rejects encryption, macros/executable parts, unsafe paths,
+   malformed archives, unsupported compression, ZIP64/multi-disk content, and
+   declared expansion beyond the limits before decompression.
+3. `BrowserXlsxParserAdapter` or `BrowserCsvParserAdapter` transfers bytes to a
+   cancelable inline Web Worker. XLSX uses `read-excel-file/web-worker`; CSV
+   uses Papa Parse worker-side and returns strings only.
+4. The worker preserves displayed/cached cell values and formula metadata.
+   Formulas are never evaluated. Missing cached results are blocking findings.
+5. Official template detection selects the versioned preset. Other workbooks
+   use header suggestions plus explicit mapping confirmation.
+6. Mapping drafts and versioned presets are validated before browser-local
+   persistence or import/export. Presets contain mappings, not workbook data or
+   credentials.
+7. `buildProcessWorkbookModel()` creates the graph and source-cell provenance.
+   The read-only inference plan exposes proposed IDs, events, and flows before
+   confirmation.
+8. Shared bilingual and workbook validation block generation while required
+   findings remain.
+9. `generateBpmnArtifact()` converts the graph through `bpmn-moddle`, the
+   shared OrbitPM metadata contract, layout, and release validation.
+10. `prepareTransactionalImportPlan()` generates and checks every artifact
+    before destination writes. `executeTransactionalImportPlan()` applies the
+    reviewed collision policy and produces a committed or rolled-back report.
+
+## Safety and scale limits
+
+- 20 MiB compressed input
+- 100 MiB total declared XLSX uncompressed content
+- 10,000 XLSX ZIP entries
+- 25 worksheets
+- 50,000 input rows
+- 256 columns
+- 500,000 non-empty cells
+- 32,767 characters per cell
+- 1,000 BPMN nodes per process
+- 5,000 BPMN nodes per import transaction
+- Readability warning above 250 nodes
+
+`.xls`, `.xlsm`, `.xlsb`, password-protected workbooks, macros, ActiveX,
+embedded executable parts, and non-UTF-8 CSV are rejected. External links and
+data connections are ignored with warnings.
 
 ## Templates and release assets
 
-`createOfficialWorkbookTemplates()` supplies byte-stable blank/example XLSX
-downloads for the single-file app. Materialize the identical release assets
-from the Lite repository root with:
-
-```sh
-npx vite-node src/spreadsheet/scripts/writeTemplates.ts dist/release-assets
-```
-
-Expected filenames:
+`createOfficialWorkbookTemplates()` supplies byte-stable blank and example XLSX
+downloads for the single-file application. Release assembly materializes the
+same bytes as:
 
 - `OrbitPM-Excel-Template-0.4.5.xlsx`
 - `OrbitPM-Excel-Example-0.4.5.xlsx`
 
-The generator fixes OPC entry ordering, timestamps, compression method, and XML
-ordering. Tests pin SHA-256 values and round-trip the example through official
-detection, graph construction, and validation.
+The template writer fixes OPC entry order, timestamps, compression method, and
+XML order. Tests pin SHA-256 digests and round-trip the example through
+production parsing, official detection, graph construction, generation, and
+validation.
+
+For a local materialization:
+
+```bash
+npx vite-node src/spreadsheet/scripts/writeTemplates.ts dist/release-assets
+```
+
+Release assembly writes templates into its own new output directory; do not
+mix `dist/release-assets` into the one-file runtime build.

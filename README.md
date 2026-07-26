@@ -1,94 +1,137 @@
 # OrbitPM Process Studio Lite
 
 OrbitPM Process Studio Lite is a bilingual, browser-based BPMN 2.0 editor. It
-runs as one self-contained HTML file, works offline for ordinary authoring, and
-stores processes as portable `.bpmn` XML.
+runs from one self-contained HTML file, works offline for ordinary authoring,
+and stores processes as portable `.bpmn` XML.
 
-Version 0.4.5 supports English and Arabic interfaces and diagrams, directory
-workspaces in browsers with the File System Access API, persistent browser
-workspaces where OPFS is available, and an explicit single-file workflow.
-External AI and translation features are optional and require review and
-consent before data leaves the device.
+Version 0.4.5 is currently a release candidate. It is not the published stable
+release until the final commit, tag, release assets, and GitHub Pages deployment
+have passed the checklist in [docs/RELEASE_EVIDENCE.md](docs/RELEASE_EVIDENCE.md).
+The hosted application remains at
+[ahmedak320.github.io/bpmn-studio](https://ahmedak320.github.io/bpmn-studio/);
+check its visible version before using it as 0.4.5.
 
-The hosted application is published at
-[ahmedak320.github.io/bpmn-studio](https://ahmedak320.github.io/bpmn-studio/).
-The release page provides the exact downloadable single-file application.
+## What 0.4.5 Lite provides
 
-## Use the application
+- English and Arabic application chrome, BPMN labels, metadata, and exports.
+- Script-aware bilingual auditing with separate commands for switching stored
+  diagram language and filling missing or invalid translations.
+- Directory workspaces through the File System Access API, browser-private OPFS
+  workspaces where supported, and an explicit single-file open/download mode.
+- Portable workspace ZIP backups and bounded history for directory and OPFS
+  workspaces.
+- Layered BPMN validation, a validation center, safe source preview/apply, and
+  deterministic PNG, SVG, and PDF export.
+- Deterministic, offline `.xlsx` and UTF-8 `.csv` process generation, including
+  official templates and a mapping workflow for ordinary spreadsheets.
+- A keyboard-oriented process outline alongside the graphical BPMN canvas.
+- Optional browser-direct AI through OpenRouter, Anthropic, or Google Gemini.
+  Process-content requests require a review and explicit consent.
 
-1. Open the hosted application or download
+AI is not required for editing, validation, workspace management, or
+spreadsheet generation.
+
+## Start using it
+
+1. Open the hosted application, or after 0.4.5 is published download
    `OrbitPM-Process-Studio-Lite-0.4.5.html`.
 2. Choose a storage mode:
-   - Directory workspace in Chrome or Edge.
-   - Persistent browser workspace in Firefox or Safari.
-   - Single-file open/download mode for a minimal portable workflow.
+   - **Folder workspace** in browsers that expose the File System Access API,
+     principally Chrome and Edge.
+   - **Browser workspace** when OPFS is available. Export backups regularly
+     because browser storage durability depends on browser and device policy.
+   - **Single file** for a minimal open, edit, and download workflow.
 3. Create or open a `.bpmn` process.
-4. Save from the header or with Ctrl/Cmd+S. Only the active document is saved.
-5. Use the language controls to switch between stored English and Arabic
-   projections. Missing or invalid counterparts are reviewed before translation.
-
-The app never requires AI for file editing, validation, workspace management,
-or Excel/CSV process generation.
+4. Save from the header or with Ctrl/Cmd+S.
+5. Use the diagram language command to project an already valid English or
+   Arabic value. If a counterpart is incomplete, review it before choosing any
+   external translation service.
 
 For an Arabic quick start, see
 [docs/QUICKSTART.ar.md](docs/QUICKSTART.ar.md).
 
-## Privacy and storage
+## Privacy in one minute
 
-- Process files remain in the selected workspace.
-- Browser-private recovery drafts are not silently included in exports.
-- API keys are session-only by default. Optional persistence is encrypted with
-  a user passphrase that is never stored.
+- Ordinary BPMN editing and Excel/CSV generation are local.
 - No telemetry is included.
-- No external request is made on import. A request preview and explicit
-  consent are required before optional AI or translation calls.
+- API keys remain in memory by default. Optional persistence encrypts a key
+  with AES-GCM using a passphrase that the application does not store.
+- Workspace context is excluded from AI requests by default. A request review
+  shows the provider/model, included text or attachment, relevant workspace
+  context, sensitivity indicators, and estimated requests before consent.
+- Free translation uses Google Translate or MyMemory only after the translation
+  review and consent flow. Their terms and data practices apply.
+- Browser-private credentials and preferences are not included in workspace
+  backups. Public workspace history is included.
+
+Read [docs/PRIVACY.md](docs/PRIVACY.md) and
+[docs/AI_AND_COSTS.md](docs/AI_AND_COSTS.md) before enabling an external
+provider.
+
+## Important limitations
+
+The 0.4.5 candidate does not yet integrate the repository's document-session
+safety modules into the production App. Do not rely on automatic IndexedDB
+draft recovery, a dirty-document unload warning, cross-tab workspace locking,
+transactional rename/move/delete of dirty tabs, or the complete external-edit
+conflict choices. Current path operations close affected tabs, and a detected
+save conflict is reported as an error.
+
+Single-file mode is intentionally minimal; multi-file backup and history
+affordances are designed for directory and OPFS workspaces. Manual NVDA and
+VoiceOver verification and the required 48-hour soak have not been completed.
+
+See [docs/SUPPORT_AND_LIMITATIONS.md](docs/SUPPORT_AND_LIMITATIONS.md) for the
+full support boundary and [STATUS.md](STATUS.md) for release readiness.
 
 ## Development
 
-Requirements:
-
-- Node.js 22
-- npm 11
-- Chromium, Firefox, and WebKit Playwright browsers for the release test matrix
+Use Node.js 22 and npm 11. The complete automated candidate checks are defined
+in `.github/workflows/quality.yml`; common local checks are:
 
 ```bash
 npm ci
+npm run format:check
+npm run check:actions
+npm run check:lock
 npm run check:lite-only
+npm run check:no-skips
+npm run check:csp
 npm run typecheck
-npm test
+npm run lint
+npm run test:coverage
+npm run test:validation
+npm run test:archives
+npm run test:performance
+npm run clean:dist
 npm run build
-npm run test:e2e
+npm run check:size
+npm run test:e2e:built
 ```
 
-The build produces exactly one runtime file at `dist/index.html`. Release
-automation renames that byte-identical file to
-`OrbitPM-Process-Studio-Lite-0.4.5.html`.
+The production build must contain exactly `dist/index.html`. Release assembly
+renames that byte-identical file to
+`OrbitPM-Process-Studio-Lite-0.4.5.html` and adds only the allowlisted templates,
+checksums, SBOM, license, and generated third-party notices.
 
-Source layout:
+See [CONTRIBUTING.md](CONTRIBUTING.md) for contribution requirements and
+[CHANGELOG.md](CHANGELOG.md) for the 0.4.5 release notes.
 
-- `src/workspace/` — workspace adapters, transactions, sessions, and recovery
-- `src/editor/` — BPMN editor, outline, validation, and export surfaces
-- `src/generation/` — shared deterministic BPMN generation
-- `src/localization/` — offline bilingual audit and reviewed translation plans
-- `src/spreadsheet/` — offline Excel/CSV parsing, mapping, preview, and generation
-- `src/ai/` — optional provider clients, privacy review, cancellation, and usage
-- `tests/e2e/` — browser, accessibility, reliability, and release scenarios
+## Lite-only product policy and migration
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) for repository and test expectations.
+The active repository, CI, Pages site, documentation, and 0.4.5 release are for
+the browser application only. Native shells, installers, updaters, servers, and
+bridges are not supported 0.4.5 products.
 
-## Lite-only product policy
-
-The active branch, CI, Pages site, documentation, and releases contain only the
-browser application. Executable installers, native shells, servers, bridges,
-and alternate programs are not supported products.
-
-The immutable 0.4.4 full-product source is retained for historical recovery on
-the [`archive/full-product-v0.4.4`](https://github.com/ahmedak320/bpmn-studio/tree/archive/full-product-v0.4.4)
-branch and the annotated `archive-full-product-v0.4.4` tag. Recovery evidence
-is recorded in [docs/archive/0.4.4.md](docs/archive/0.4.4.md).
+The immutable 0.4.4 full-product source remains available on the
+[`archive/full-product-v0.4.4`](https://github.com/ahmedak320/bpmn-studio/tree/archive/full-product-v0.4.4)
+branch and the annotated `archive-full-product-v0.4.4` tag. See
+[docs/MIGRATION_0.4.5.md](docs/MIGRATION_0.4.5.md) and
+[docs/archive/0.4.4.md](docs/archive/0.4.4.md).
 
 ## License
 
 OrbitPM Process Studio Lite is released under the [MIT License](LICENSE).
-Retained third-party components and notices are listed in
-[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+Retained component attribution is summarized in
+[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md); the exact release asset
+contains the lockfile-derived dependency inventory and license texts.

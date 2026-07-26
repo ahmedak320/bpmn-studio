@@ -2,30 +2,61 @@
 
 OrbitPM Process Studio Lite is the only active product in this repository.
 Changes must not add a native shell, installer, updater, server, bridge, or
-alternate executable program.
+alternate executable application.
 
 ## Before opening a pull request
 
+Use Node.js 22 and npm 11. Run the checks relevant to the change and, before
+release integration, the complete local candidate sequence:
+
 ```bash
 npm ci
+npm run format:check
+npm run check:actions
+npm run check:lock
 npm run check:lite-only
+npm run check:no-skips
+npm run check:csp
 npm run typecheck
-npm test
+npm run lint
+npm run test:coverage
+npm run test:validation
+npm run test:archives
+npm run test:performance
+npm run clean:dist
 npm run build
-npm run test:e2e
+npm run check:size
+npm run test:e2e:built
+npm run test:a11y
 ```
 
-Tests must run from a fresh build. Release tests may not be skipped, retried,
-quarantined, or satisfied by stale artifacts. Reliability, bilingual, import,
-accessibility, and security behavior require both focused tests and complete
-workflow coverage.
+Tests must use a fresh production build when validating the release artifact.
+Do not satisfy a release gate with a stale `dist`, skipped test, retry,
+quarantine, or known flake.
 
-Preserve unknown BPMN extension content and user data. Any operation that
-overwrites, moves, renames, deletes, imports, or restores files must use the
-shared transaction/session layer and include failure and rollback tests.
+## Data and compatibility rules
 
-English and Arabic changes receive equal implementation and testing depth.
-External AI or translation requests require an explicit reviewed disclosure and
-consent flow.
+- Preserve unknown BPMN extension content and user data.
+- Use the shared workspace transaction/history layers for operations that
+  overwrite, delete, import, restore, or replace files.
+- Keep English and Arabic behavior, copy, accessibility, and tests in parity.
+- Treat imported text as untrusted data.
+- Require an explicit reviewed disclosure and consent before any external AI or
+  translation request containing process content.
+- Do not persist plaintext API keys or add an external host without updating
+  the exact CSP and its negative tests.
+- Keep release assets to the seven-file allowlist in
+  [docs/RELEASE_EVIDENCE.md](docs/RELEASE_EVIDENCE.md).
 
-Use focused, reviewable commits. Do not rewrite an existing version tag.
+## Evidence and documentation
+
+New behavior must update its user-facing support, privacy, migration, or release
+documentation. Record commands and artifacts that actually ran; a workflow
+definition is not proof that the workflow passed.
+
+Automated axe results do not replace manual NVDA, VoiceOver, Arabic-language,
+or mixed-pronunciation checks. Never claim those checks without an operator,
+platform/browser versions, scenarios, and results.
+
+Use focused, reviewable commits. Do not rewrite or move an existing version
+tag.
