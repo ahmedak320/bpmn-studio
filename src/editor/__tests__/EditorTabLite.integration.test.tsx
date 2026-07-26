@@ -36,7 +36,8 @@ const fake = vi.hoisted(() => ({
   selected: null as unknown,
   destroyed: false,
   validationSummary: null as ValidationSummary | null,
-  preservationSummary: null as ValidationSummary | null
+  preservationSummary: null as ValidationSummary | null,
+  lang: 'en' as 'en' | 'ar'
 }))
 
 const mocks = vi.hoisted(() => ({
@@ -61,7 +62,7 @@ vi.mock('../../i18n', () => ({
 }))
 
 vi.mock('../../i18n/useLang', () => ({
-  useLang: (): 'en' => 'en'
+  useLang: (): 'en' | 'ar' => fake.lang
 }))
 
 vi.mock('bpmn-js-properties-panel', () => ({
@@ -467,6 +468,7 @@ beforeEach(() => {
   fake.destroyed = false
   fake.validationSummary = validSummary
   fake.preservationSummary = validSummary
+  fake.lang = 'en'
   mocks.zoom.mockReset()
   mocks.scrollToElement.mockReset()
   mocks.selectionSelect.mockReset()
@@ -650,6 +652,31 @@ describe('EditorTab browser integration', () => {
     fireEvent.keyDown(document, { key: 'Escape' })
     await waitFor(() => expect(toggle.getAttribute('aria-expanded')).toBe('false'))
     expect(toolbar?.inert).not.toBe(true)
+    expect(document.activeElement).toBe(toggle)
+  })
+
+  it('provides a localized in-drawer close target in responsive RTL mode', async () => {
+    fake.lang = 'ar'
+    Object.defineProperty(window, 'matchMedia', {
+      configurable: true,
+      value: () => ({
+        matches: true,
+        media: '(max-width: 1199px)',
+        addEventListener: vi.fn(),
+        removeEventListener: vi.fn()
+      })
+    })
+    const user = userEvent.setup()
+    renderEditor()
+
+    const toggle = screen.getByRole('button', { name: 'المخطط التفصيلي للعملية' })
+    await user.click(toggle)
+    const pane = await screen.findByRole('dialog', { name: 'المخطط التفصيلي للعملية' })
+    expect(pane.dir).toBe('rtl')
+
+    const close = screen.getByRole('button', { name: 'إغلاق المخطط التفصيلي للعملية' })
+    await user.click(close)
+    expect(screen.queryByRole('dialog', { name: 'المخطط التفصيلي للعملية' })).toBeNull()
     expect(document.activeElement).toBe(toggle)
   })
 

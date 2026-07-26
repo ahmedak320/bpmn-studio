@@ -1239,6 +1239,17 @@ export function EditorTab(props: EditorTabProps): JSX.Element {
           hidden={!outlineOpen}
           dir={uiDir}
         >
+          <div className="orbitpm-process-outline-pane__controls">
+            <button
+              type="button"
+              className="orbitpm-process-outline-pane__close"
+              onClick={closeOutline}
+              aria-label={outlineMessages.closeOutline}
+              title={outlineMessages.closeOutline}
+            >
+              <span aria-hidden="true">×</span>
+            </button>
+          </div>
           {outlineOpen ? (
             <ProcessOutlineEditor
               modeler={outlineModeler}

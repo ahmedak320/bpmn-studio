@@ -7,6 +7,7 @@ import type {
 
 export interface ProcessOutlineMessages {
   title: string
+  closeOutline: string
   unavailable: string
   listLabel: string
   empty: string
@@ -212,6 +213,7 @@ function arabicError(error: ProcessOutlineError): string {
 
 export const EN_PROCESS_OUTLINE_MESSAGES: ProcessOutlineMessages = {
   title: 'Process outline',
+  closeOutline: 'Close process outline',
   unavailable: 'Open a BPMN diagram to use the process outline.',
   listLabel: 'Process nodes and flows',
   empty: 'No process nodes are available.',
@@ -267,6 +269,7 @@ export const EN_PROCESS_OUTLINE_MESSAGES: ProcessOutlineMessages = {
 
 export const AR_PROCESS_OUTLINE_MESSAGES: ProcessOutlineMessages = {
   title: 'المخطط التفصيلي للعملية',
+  closeOutline: 'إغلاق المخطط التفصيلي للعملية',
   unavailable: 'افتح رسم BPMN لاستخدام المخطط التفصيلي للعملية.',
   listLabel: 'عقد العملية وتدفقاتها',
   empty: 'لا توجد عقد عملية متاحة.',
