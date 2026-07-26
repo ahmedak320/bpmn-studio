@@ -28,28 +28,61 @@ export const ORBITPM_PREFIX = 'orbitpm'
  *   respList           responsible people, each "Name — Role" or "Name"
  *   ccList             CC / informed-party names
  *   decisionBasis      decision basis on gateways + business-rule tasks
+ *
+ * 0.4.5 retains every unsuffixed value above as the active display projection
+ * and adds `*En` / `*Ar` pairs for its translatable free-text metadata. Code
+ * fields such as channel/kind/ownerType keep their unsuffixed representation.
  */
 export const ORG_ATTR_NAMES = [
   'owner',
+  'ownerEn',
+  'ownerAr',
+  'department',
+  'departmentEn',
+  'departmentAr',
   'ownerType',
   'ownerRole',
+  'ownerRoleEn',
+  'ownerRoleAr',
   'channel',
   'channelDetail',
+  'channelDetailEn',
+  'channelDetailAr',
   'kind',
   'ccTo',
+  'ccToEn',
+  'ccToAr',
   'trigger',
   'triggerService',
+  'triggerServiceEn',
+  'triggerServiceAr',
   'triggerDetail',
+  'triggerDetailEn',
+  'triggerDetailAr',
   'triggers',
+  'triggersEn',
+  'triggersAr',
   'nameEn',
   'nameAr',
   'activeLang',
   'inputs',
+  'inputsEn',
+  'inputsAr',
   'outputs',
+  'outputsEn',
+  'outputsAr',
   'system',
+  'systemEn',
+  'systemAr',
   'respList',
+  'respListEn',
+  'respListAr',
   'ccList',
-  'decisionBasis'
+  'ccListEn',
+  'ccListAr',
+  'decisionBasis',
+  'decisionBasisEn',
+  'decisionBasisAr'
 ] as const
 
 export type OrgAttrName = (typeof ORG_ATTR_NAMES)[number]
