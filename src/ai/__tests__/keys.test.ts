@@ -5,7 +5,7 @@ import {
   hasEncryptedKey,
   hasKey,
   keyLast4,
-  migrateLegacyPlaintextKeys,
+  migrateLegacyCredentialsOnStartup,
   persistEncryptedKey,
   resetSessionKeysForTests,
   setKey,
@@ -60,24 +60,103 @@ describe('session-only credentials', () => {
     expect(hasKey('anthropic')).toBe(false)
   })
 
-  it('migrates legacy plaintext into memory and deletes its stored copy', () => {
-    storage.set('orbitpm.lite.key.gemini', ' legacy-secret ')
-    const result = migrateLegacyPlaintextKeys(['openrouter', 'anthropic', 'gemini'])
-    expect(result).toEqual({ ok: true, value: 1 })
-    expect(getKey('gemini')).toBe('legacy-secret')
-    expect(storage.has('orbitpm.lite.key.gemini')).toBe(false)
+  it('migrates every active legacy key and removes all active and Custom plaintext artifacts', () => {
+    storage.set('orbitpm.lite.key.openrouter', ' legacy-openrouter ')
+    storage.set('orbitpm.lite.key.anthropic', 'legacy-anthropic')
+    storage.set('orbitpm.lite.key.gemini', ' legacy-gemini ')
+    storage.set('orbitpm.lite.key.custom', 'retired-custom-key')
+    storage.set('orbitpm.lite.key.encrypted.custom', '{"ciphertext":"retired"}')
+    storage.set(
+      'orbitpm.lite.cfg.custom',
+      '{"baseURL":"https://retired.invalid","extraHeaders":{"Authorization":"secret"}}'
+    )
+
+    expect(migrateLegacyCredentialsOnStartup()).toEqual({ ok: true, value: 3 })
+    expect(getKey('openrouter')).toBe('legacy-openrouter')
+    expect(getKey('anthropic')).toBe('legacy-anthropic')
+    expect(getKey('gemini')).toBe('legacy-gemini')
+    expect(storage.size).toBe(0)
+
+    // The exact startup call is safe under StrictMode/re-entry and preserves the
+    // already-recovered session vault without claiming another migration.
+    expect(migrateLegacyCredentialsOnStartup()).toEqual({ ok: true, value: 0 })
+    expect(getKey('openrouter')).toBe('legacy-openrouter')
+    expect(getKey('anthropic')).toBe('legacy-anthropic')
+    expect(getKey('gemini')).toBe('legacy-gemini')
   })
 
-  it('reports a migration cleanup failure instead of claiming success', () => {
+  it('recovers readable keys, attempts every deletion, and reports a partial cleanup failure', () => {
+    storage.set('orbitpm.lite.key.openrouter', 'legacy-openrouter')
+    storage.set('orbitpm.lite.key.anthropic', 'legacy-anthropic')
+    storage.set('orbitpm.lite.key.gemini', 'legacy-gemini')
+    storage.set('orbitpm.lite.key.custom', 'retired-custom-key')
+    storage.set('orbitpm.lite.key.encrypted.custom', '{"ciphertext":"retired"}')
+    storage.set('orbitpm.lite.cfg.custom', '{"extraHeaders":{"X-Secret":"value"}}')
+    const attempted: string[] = []
+    let blockAnthropicDelete = true
     vi.stubGlobal('localStorage', {
-      getItem: () => 'legacy',
-      removeItem: () => {
-        throw new Error('quota policy')
+      getItem: (key: string) => storage.get(key) ?? null,
+      removeItem: (key: string) => {
+        attempted.push(key)
+        if (blockAnthropicDelete && key === 'orbitpm.lite.key.anthropic') {
+          throw new Error('quota policy')
+        }
+        storage.delete(key)
       }
     })
-    const result = migrateLegacyPlaintextKeys(['openrouter'])
+
+    const result = migrateLegacyCredentialsOnStartup()
     expect(result).toMatchObject({ ok: false, code: 'storage-failed' })
-    expect(getKey('openrouter')).toBe('')
+    expect(result).toMatchObject({ error: expect.stringContaining('quota policy') })
+    expect(getKey('openrouter')).toBe('legacy-openrouter')
+    expect(getKey('anthropic')).toBe('legacy-anthropic')
+    expect(getKey('gemini')).toBe('legacy-gemini')
+    expect(new Set(attempted)).toEqual(
+      new Set([
+        'orbitpm.lite.key.openrouter',
+        'orbitpm.lite.key.anthropic',
+        'orbitpm.lite.key.gemini',
+        'orbitpm.lite.key.custom',
+        'orbitpm.lite.key.encrypted.custom',
+        'orbitpm.lite.cfg.custom'
+      ])
+    )
+    expect([...storage.keys()]).toEqual(['orbitpm.lite.key.anthropic'])
+
+    // A retry removes the remaining artifact without overwriting a newer
+    // session value with the stale legacy copy.
+    setKey('anthropic', 'new-session-anthropic')
+    blockAnthropicDelete = false
+    expect(migrateLegacyCredentialsOnStartup()).toEqual({ ok: true, value: 0 })
+    expect(getKey('anthropic')).toBe('new-session-anthropic')
+    expect(storage.size).toBe(0)
+  })
+
+  it('reports a read failure while recovering and cleaning every other artifact', () => {
+    storage.set('orbitpm.lite.key.openrouter', 'legacy-openrouter')
+    storage.set('orbitpm.lite.key.anthropic', 'unreadable-anthropic')
+    storage.set('orbitpm.lite.key.gemini', 'legacy-gemini')
+    storage.set('orbitpm.lite.key.custom', 'retired-custom-key')
+    storage.set('orbitpm.lite.key.encrypted.custom', '{"ciphertext":"retired"}')
+    storage.set('orbitpm.lite.cfg.custom', '{"extraHeaders":{"X-Secret":"value"}}')
+    vi.stubGlobal('localStorage', {
+      getItem: (key: string) => {
+        if (key === 'orbitpm.lite.key.anthropic') throw new Error('read blocked')
+        return storage.get(key) ?? null
+      },
+      removeItem: (key: string) => void storage.delete(key)
+    })
+
+    const result = migrateLegacyCredentialsOnStartup()
+    expect(result).toMatchObject({
+      ok: false,
+      code: 'storage-failed',
+      error: expect.stringContaining('read blocked')
+    })
+    expect(getKey('openrouter')).toBe('legacy-openrouter')
+    expect(getKey('anthropic')).toBe('')
+    expect(getKey('gemini')).toBe('legacy-gemini')
+    expect(storage.size).toBe(0)
   })
 })
 
@@ -116,9 +195,10 @@ describe('opt-in encrypted persistence', () => {
 
     resetSessionKeysForTests()
     expect(getKey('openrouter')).toBe('')
-    expect(
-      await unlockEncryptedKey('openrouter', 'correct horse battery staple')
-    ).toEqual({ ok: true, value: undefined })
+    expect(await unlockEncryptedKey('openrouter', 'correct horse battery staple')).toEqual({
+      ok: true,
+      value: undefined
+    })
     expect(getKey('openrouter')).toBe('sk-private-value')
   })
 
@@ -167,6 +247,8 @@ describe('opt-in encrypted persistence', () => {
     await persistEncryptedKey('openrouter', 'secret', 'passphrase')
     storage.set('orbitpm.lite.key.openrouter', 'old-plaintext')
     storage.set('orbitpm.lite.cfg.openrouter', '{"model":"old"}')
+    storage.set('orbitpm.lite.key.custom', 'retired-custom-key')
+    storage.set('orbitpm.lite.key.encrypted.custom', '{"ciphertext":"retired"}')
     storage.set('orbitpm.lite.cfg.custom', '{"extraHeaders":{"Authorization":"x"}}')
 
     expect(clearKey('openrouter')).toEqual({ ok: true, value: undefined })

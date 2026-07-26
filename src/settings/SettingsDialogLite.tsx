@@ -8,7 +8,7 @@ import {
   hasEncryptedKey,
   persistEncryptedKey,
   unlockEncryptedKey,
-  migrateLegacyPlaintextKeys
+  migrateLegacyCredentialsOnStartup
 } from '../ai/keys'
 import { getProviderSelection, setProviderSelection } from '../ai/providerSelection'
 import { defaultLiteModelId, getLiteProvider } from '../ai/providersLite'
@@ -128,7 +128,9 @@ export function SettingsDialogLite({
       const selection = getProviderSelection()
       setSelectedProvider(selection?.providerId ?? '')
       setSelectedModel(selection?.modelId ?? '')
-      const migration = migrateLegacyPlaintextKeys(LITE_PROVIDERS.map((provider) => provider.id))
+      // Reuse the idempotent startup upgrade rather than maintaining a second
+      // Settings-only provider list or cleanup path.
+      const migration = migrateLegacyCredentialsOnStartup()
       if (!migration.ok) setStorageError(migration.error)
     }
   }, [open])

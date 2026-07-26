@@ -1,4 +1,4 @@
-import type { LiteProviderId } from './providersLite'
+import { LITE_PROVIDERS, type LiteProviderId } from './providersLite'
 
 /**
  * Credentials are deliberately kept outside browser storage unless the user
@@ -26,8 +26,7 @@ export type KeyStorageErrorCode =
   | 'unlock-failed'
 
 export type KeyStorageResult<T = undefined> =
-  | { ok: true; value: T }
-  | { ok: false; code: KeyStorageErrorCode; error: string }
+  { ok: true; value: T } | { ok: false; code: KeyStorageErrorCode; error: string }
 
 interface EncryptedKeyEnvelope {
   version: typeof ENVELOPE_VERSION
@@ -44,10 +43,7 @@ function success<T>(value: T): KeyStorageResult<T> {
   return { ok: true, value }
 }
 
-function failure<T>(
-  code: KeyStorageErrorCode,
-  error: string
-): KeyStorageResult<T> {
+function failure<T>(code: KeyStorageErrorCode, error: string): KeyStorageResult<T> {
   return { ok: false, code, error }
 }
 
@@ -146,10 +142,7 @@ export function hasKey(providerId: LiteProviderId): boolean {
  * Save a key for this page session only. This function never writes to
  * localStorage; use persistEncryptedKey for explicit encrypted persistence.
  */
-export function setKey(
-  providerId: LiteProviderId,
-  value: string
-): KeyStorageResult<undefined> {
+export function setKey(providerId: LiteProviderId, value: string): KeyStorageResult<undefined> {
   const trimmed = value.trim()
   if (trimmed) sessionKeys.set(providerId, trimmed)
   else sessionKeys.delete(providerId)
@@ -161,9 +154,7 @@ export function setKey(
  * cleared even if browser storage refuses the cleanup, and the failure is
  * returned so the UI cannot claim that persisted data was removed.
  */
-export function clearKey(
-  providerId: LiteProviderId
-): KeyStorageResult<undefined> {
+export function clearKey(providerId: LiteProviderId): KeyStorageResult<undefined> {
   sessionKeys.delete(providerId)
   const storageResult = browserStorage()
   if (!storageResult.ok) return storageResult
@@ -172,8 +163,11 @@ export function clearKey(
     storageResult.value.removeItem(LEGACY_KEY_PREFIX + providerId)
     storageResult.value.removeItem(ENCRYPTED_KEY_PREFIX + providerId)
     storageResult.value.removeItem(CFG_PREFIX + providerId)
-    // 0.4.4 could retain arbitrary Custom-endpoint headers. Remove them while
-    // cleaning any provider so an upgrade cannot strand those credentials.
+    // 0.4.4 could retain a Custom endpoint key and arbitrary endpoint headers.
+    // Remove all retired Custom artifacts while cleaning any provider so an
+    // upgrade cannot strand them if startup migration was unable to run.
+    storageResult.value.removeItem(LEGACY_KEY_PREFIX + 'custom')
+    storageResult.value.removeItem(ENCRYPTED_KEY_PREFIX + 'custom')
     storageResult.value.removeItem(CFG_PREFIX + 'custom')
     return success(undefined)
   } catch (error) {
@@ -190,34 +184,72 @@ export function keyLast4(providerId: LiteProviderId): string {
   return key ? key.slice(-4) : ''
 }
 
+function storageErrorText(error: unknown): string {
+  return error instanceof Error ? error.message : String(error)
+}
+
 /**
- * Move any 0.4.4 plaintext keys into memory and remove the plaintext copies.
- * This is intentionally explicit so applications can surface a cleanup error.
+ * One idempotent startup upgrade for every retired 0.4.4 credential artifact.
+ *
+ * Every readable active-provider key is recovered into the session vault before
+ * cleanup begins (without overwriting a newer in-memory value). Cleanup then
+ * attempts every active plaintext slot plus the retired Custom provider's key,
+ * defensive ciphertext slot, and header-bearing config, even after an earlier
+ * read/delete failed. Any failed storage operation makes the result a truthful
+ * failure; callers must surface it because credential artifacts may remain.
+ *
+ * Safe to call again (Settings uses this same API): once cleanup succeeds, a
+ * repeated call migrates zero keys and performs only idempotent removals.
+ * The success value is the number of legacy values newly loaded into memory.
  */
-export function migrateLegacyPlaintextKeys(
-  providerIds: readonly LiteProviderId[]
-): KeyStorageResult<number> {
+export function migrateLegacyCredentialsOnStartup(): KeyStorageResult<number> {
   const storageResult = browserStorage()
   if (!storageResult.ok) return storageResult
 
-  const migrated: Array<[LiteProviderId, string]> = []
-  try {
-    for (const providerId of providerIds) {
-      const key = storageResult.value.getItem(LEGACY_KEY_PREFIX + providerId)?.trim()
-      if (key) migrated.push([providerId, key])
+  const storage = storageResult.value
+  const recovered: Array<[LiteProviderId, string]> = []
+  const failures: string[] = []
+  const providerIds = LITE_PROVIDERS.map((provider) => provider.id)
+
+  for (const providerId of providerIds) {
+    const artifact = LEGACY_KEY_PREFIX + providerId
+    try {
+      const key = storage.getItem(artifact)?.trim()
+      if (key) recovered.push([providerId, key])
+    } catch (error) {
+      failures.push(`Could not read ${artifact}: ${storageErrorText(error)}`)
     }
-    for (const [providerId] of migrated) {
-      storageResult.value.removeItem(LEGACY_KEY_PREFIX + providerId)
+  }
+
+  let migrated = 0
+  for (const [providerId, key] of recovered) {
+    if (sessionKeys.has(providerId)) continue
+    sessionKeys.set(providerId, key)
+    migrated += 1
+  }
+
+  const legacyArtifacts = [
+    ...providerIds.map((providerId) => LEGACY_KEY_PREFIX + providerId),
+    LEGACY_KEY_PREFIX + 'custom',
+    ENCRYPTED_KEY_PREFIX + 'custom',
+    CFG_PREFIX + 'custom'
+  ]
+  for (const artifact of legacyArtifacts) {
+    try {
+      storage.removeItem(artifact)
+    } catch (error) {
+      failures.push(`Could not remove ${artifact}: ${storageErrorText(error)}`)
     }
-  } catch (error) {
+  }
+
+  if (failures.length > 0) {
     return failure(
       'storage-failed',
-      error instanceof Error ? error.message : 'Could not remove a legacy plaintext key.'
+      `Legacy credential cleanup was incomplete. ${failures.join(' ')}`
     )
   }
 
-  for (const [providerId, key] of migrated) sessionKeys.set(providerId, key)
-  return success(migrated.length)
+  return success(migrated)
 }
 
 // --- opt-in encrypted persistence -----------------------------------------
@@ -249,11 +281,7 @@ export async function persistEncryptedKey(
   try {
     const salt = cryptoResult.value.getRandomValues(new Uint8Array(16))
     const iv = cryptoResult.value.getRandomValues(new Uint8Array(12))
-    const key = await deriveEncryptionKey(
-      cryptoResult.value,
-      passphrase,
-      toArrayBuffer(salt)
-    )
+    const key = await deriveEncryptionKey(cryptoResult.value, passphrase, toArrayBuffer(salt))
     const ciphertext = await cryptoResult.value.subtle.encrypt(
       {
         name: 'AES-GCM',
@@ -273,10 +301,7 @@ export async function persistEncryptedKey(
       iv: bytesToBase64(iv),
       ciphertext: bytesToBase64(new Uint8Array(ciphertext))
     }
-    storageResult.value.setItem(
-      ENCRYPTED_KEY_PREFIX + providerId,
-      JSON.stringify(envelope)
-    )
+    storageResult.value.setItem(ENCRYPTED_KEY_PREFIX + providerId, JSON.stringify(envelope))
     // A successful encrypted save also unlocks the key for this session.
     sessionKeys.set(providerId, trimmed)
     // Best-effort cleanup of a possible legacy plaintext copy is part of the
@@ -330,11 +355,7 @@ export async function unlockEncryptedKey(
     if (salt.byteLength !== 16 || iv.byteLength !== 12) {
       return failure('invalid-ciphertext', 'The encrypted key record is invalid.')
     }
-    const key = await deriveEncryptionKey(
-      cryptoResult.value,
-      passphrase,
-      toArrayBuffer(salt)
-    )
+    const key = await deriveEncryptionKey(cryptoResult.value, passphrase, toArrayBuffer(salt))
     const plaintext = await cryptoResult.value.subtle.decrypt(
       {
         name: 'AES-GCM',
@@ -368,10 +389,7 @@ export function getPref(name: string): string {
   }
 }
 
-export function setPref(
-  name: string,
-  value: string
-): KeyStorageResult<undefined> {
+export function setPref(name: string, value: string): KeyStorageResult<undefined> {
   const storageResult = browserStorage()
   if (!storageResult.ok) return storageResult
   try {
