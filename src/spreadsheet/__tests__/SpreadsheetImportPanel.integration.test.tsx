@@ -417,7 +417,10 @@ describe('SpreadsheetImportPanel browser workflow', () => {
     await user.click(screen.getByRole('button', { name: 'spreadsheet.review' }))
     expect(await screen.findByRole('button', { name: 'spreadsheet.prepare' })).not.toBeNull()
     expect(screen.getByText('spreadsheet.validation.noIssues')).not.toBeNull()
-    expect(screen.getByText('Review')).not.toBeNull()
+    expect(screen.getAllByText('Review').length).toBeGreaterThan(0)
+    expect(screen.getByTestId('topology-leave_approval')).not.toBeNull()
+    expect(screen.getByTestId('topology-row-leave_approval-unassigned')).not.toBeNull()
+    expect(screen.getByTestId('topology-edge-Flow_1')).not.toBeNull()
 
     await user.click(screen.getByRole('button', { name: 'spreadsheet.prepare' }))
     expect(await screen.findByText('spreadsheet.plan.ready')).not.toBeNull()

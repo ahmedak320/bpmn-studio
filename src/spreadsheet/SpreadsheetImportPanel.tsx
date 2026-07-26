@@ -60,6 +60,7 @@ import {
 import { presetMatchesHeaderSignatures } from './mappingPreset'
 import { officialTemplatePreset } from './modelBuilder'
 import { detectOfficialTemplate } from './officialTemplate'
+import { SpreadsheetTopologyPreview } from './SpreadsheetTopologyPreview'
 import { SpreadsheetValidationIssueList } from './SpreadsheetValidationIssueList'
 import {
   executeTransactionalImportPlan,
@@ -1497,36 +1498,24 @@ export function SpreadsheetImportPanel({
                   })}
                 </span>
               </div>
-              <div style={{ maxHeight: 300, overflow: 'auto' }}>
-                <table style={previewTable}>
-                  <thead>
-                    <tr>
-                      <th>{t('spreadsheet.preview.process')}</th>
-                      <th>{t('spreadsheet.preview.node')}</th>
-                      <th>{t('spreadsheet.preview.type')}</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {review.model.nodes.slice(0, 500).map((node) => (
-                      <tr key={`${node.processId}-${node.id}`}>
-                        <td>
-                          <code>{node.processId}</code>
-                        </td>
-                        <td dir="auto">
-                          {node.name.active === 'ar'
-                            ? node.name.ar || node.name.en
-                            : node.name.en || node.name.ar}
-                          <br />
-                          <code>{node.id}</code>
-                        </td>
-                        <td>
-                          <code>{node.type}</code>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
+              <SpreadsheetTopologyPreview
+                model={review.model}
+                labels={{
+                  process: t('spreadsheet.preview.process'),
+                  node: t('spreadsheet.preview.node'),
+                  type: t('spreadsheet.preview.type'),
+                  participant: t('spreadsheet.preview.participant'),
+                  flow: t('spreadsheet.preview.fromTo'),
+                  condition: t('spreadsheet.preview.condition'),
+                  defaultFlow: t('spreadsheet.preview.defaultFlow'),
+                  generated: t('spreadsheet.preview.generated'),
+                  explicit: t('spreadsheet.preview.origin.explicit'),
+                  mapped: t('spreadsheet.preview.origin.mapped'),
+                  inferred: t('spreadsheet.preview.origin.inferred'),
+                  synthetic: t('spreadsheet.preview.origin.synthetic'),
+                  unassigned: t('spreadsheet.preview.unassigned')
+                }}
+              />
             </section>
           )}
 
@@ -1818,11 +1807,4 @@ const issueItem: CSSProperties = {
   background: 'rgba(127,127,127,0.06)',
   fontSize: 11.5,
   overflowWrap: 'anywhere'
-}
-
-const previewTable: CSSProperties = {
-  width: '100%',
-  borderCollapse: 'collapse',
-  fontSize: 11.5,
-  textAlign: 'start'
 }
