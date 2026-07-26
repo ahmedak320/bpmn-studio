@@ -93,6 +93,18 @@ vi.mock('../modelingBatch', () => ({
   ModelingBatchModule: {}
 }))
 
+vi.mock('../ProcessOutlineEditor', () => ({
+  ProcessOutlineEditor: (props: {
+    modeler: unknown
+    messages: { title: string }
+    direction: 'ltr' | 'rtl'
+  }) => (
+    <div data-testid="process-outline" data-modeler-ready={String(Boolean(props.modeler))}>
+      <span dir={props.direction}>{props.messages.title}</span>
+    </div>
+  )
+}))
+
 vi.mock('../bidiTextRenderer', () => ({
   BidiTextRendererModule: {}
 }))
@@ -591,7 +603,57 @@ describe('EditorTab browser integration', () => {
     expect(toggle.getAttribute('aria-expanded')).toBe('false')
   })
 
-  it('saves valid XML through toolbar, shortcut, and application commands, then exports', async () => {
+  it('exposes the live modeler through a labelled process-outline region', async () => {
+    const user = userEvent.setup()
+    renderEditor()
+
+    const toggle = screen.getByRole('button', { name: 'Process outline' })
+    const paneId = toggle.getAttribute('aria-controls')
+    expect(toggle.getAttribute('aria-expanded')).toBe('false')
+    expect(paneId).toBeTruthy()
+
+    await user.click(toggle)
+    const pane = await screen.findByRole('complementary', { name: 'Process outline' })
+    expect(pane.id).toBe(paneId)
+    expect(toggle.getAttribute('aria-expanded')).toBe('true')
+    expect(screen.getByTestId('process-outline').dataset.modelerReady).toBe('true')
+
+    await user.click(toggle)
+    expect(screen.queryByRole('complementary', { name: 'Process outline' })).toBeNull()
+    expect(toggle.getAttribute('aria-expanded')).toBe('false')
+    expect(document.activeElement).toBe(toggle)
+  })
+
+  it('treats the responsive process outline as an inert, Escape-dismissible drawer', async () => {
+    Object.defineProperty(window, 'matchMedia', {
+      configurable: true,
+      value: () => ({
+        matches: true,
+        media: '(max-width: 1199px)',
+        addEventListener: vi.fn(),
+        removeEventListener: vi.fn()
+      })
+    })
+    const user = userEvent.setup()
+    renderEditor()
+
+    const toggle = screen.getByRole('button', { name: 'Process outline' })
+    toggle.focus()
+    await user.keyboard('{Enter}')
+
+    const pane = await screen.findByRole('dialog', { name: 'Process outline' })
+    const toolbar = toggle.closest<HTMLElement>('.orbitpm-editor__toolbar')
+    expect(pane.getAttribute('aria-modal')).toBe('true')
+    expect(document.activeElement).toBe(pane)
+    expect(toolbar?.inert).toBe(true)
+
+    fireEvent.keyDown(document, { key: 'Escape' })
+    await waitFor(() => expect(toggle.getAttribute('aria-expanded')).toBe('false'))
+    expect(toolbar?.inert).not.toBe(true)
+    expect(document.activeElement).toBe(toggle)
+  })
+
+  it('saves valid XML through the toolbar and application commands, then exports', async () => {
     const user = userEvent.setup()
     const onRequestSave = vi.fn().mockResolvedValue(undefined)
     let commands: EditorTabCommands | null = null
@@ -612,11 +674,8 @@ describe('EditorTab browser integration', () => {
       })
     )
 
-    fireEvent.keyDown(window, { key: 's', ctrlKey: true })
-    await waitFor(() => expect(onRequestSave).toHaveBeenCalledTimes(2))
-
     commands!.save()
-    await waitFor(() => expect(onRequestSave).toHaveBeenCalledTimes(3))
+    await waitFor(() => expect(onRequestSave).toHaveBeenCalledTimes(2))
     commands!.exportSvg()
     commands!.exportPng()
     commands!.exportPdf()

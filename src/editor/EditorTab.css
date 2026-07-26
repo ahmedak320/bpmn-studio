@@ -157,6 +157,31 @@
   background: var(--orbitpm-editor-canvas-bg);
 }
 
+.orbitpm-process-outline-pane {
+  position: relative;
+  z-index: 20;
+  flex: 0 0 clamp(320px, 32vw, 440px);
+  width: clamp(320px, 32vw, 440px);
+  min-width: 0;
+  overflow: auto;
+  border-inline-end: 1px solid var(--orbitpm-editor-border);
+  background: var(--orbitpm-editor-panel-bg);
+  color: var(--orbitpm-editor-fg);
+}
+
+.orbitpm-process-outline-pane[hidden] {
+  display: none;
+}
+
+.orbitpm-process-outline-pane:focus-visible {
+  outline: 3px solid var(--orbitpm-editor-accent);
+  outline-offset: -3px;
+}
+
+.orbitpm-process-outline-backdrop {
+  display: none;
+}
+
 /* bpmn-js draws its own SVG background rect; keep the host element itself
    themed so no hardcoded white shows through the gaps. */
 .orbitpm-editor__canvas .djs-container {
@@ -183,6 +208,29 @@
   .orbitpm-editor__button {
     min-height: 32px;
     padding-inline: 0.5rem;
+  }
+}
+
+@media (max-width: 1199px) {
+  .orbitpm-process-outline-backdrop {
+    position: absolute;
+    inset: 0;
+    z-index: 40;
+    display: block;
+    background: rgba(0, 0, 0, 0.46);
+  }
+
+  .orbitpm-process-outline-pane {
+    position: absolute;
+    inset-block: 0;
+    left: 0;
+    right: auto;
+    z-index: 41;
+    width: min(440px, calc(100% - 36px));
+    max-width: none;
+    border-inline-end: 0;
+    border-right: 1px solid var(--orbitpm-editor-border);
+    box-shadow: 12px 0 32px rgba(0, 0, 0, 0.28);
   }
 }
 

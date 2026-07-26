@@ -1,9 +1,9 @@
 .orbitpm-process-outline {
   --outline-border: var(--orbitpm-border, #cbd5e1);
-  --outline-surface: var(--orbitpm-surface, #ffffff);
-  --outline-surface-muted: var(--orbitpm-surface-muted, #f8fafc);
-  --outline-text: var(--orbitpm-text, #172033);
-  --outline-muted: var(--orbitpm-text-muted, #536176);
+  --outline-surface: var(--orbitpm-surface, var(--orbitpm-panel-bg, #ffffff));
+  --outline-surface-muted: var(--orbitpm-surface-muted, var(--orbitpm-bg, #f8fafc));
+  --outline-text: var(--orbitpm-text, var(--orbitpm-fg, #172033));
+  --outline-muted: var(--orbitpm-text-muted, var(--orbitpm-muted, #536176));
   --outline-accent: var(--orbitpm-accent, #075985);
   --outline-accent-contrast: var(--orbitpm-accent-contrast, #ffffff);
   --outline-danger: var(--orbitpm-danger, #b42318);
