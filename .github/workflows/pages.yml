@@ -1,9 +1,29 @@
-name: Deploy tested Lite artifact to Pages
+name: Deploy approved tagged Lite artifact to Pages
 
 on:
-  push:
-    branches: [main]
   workflow_dispatch:
+    inputs:
+      candidate_sha:
+        description: Exact origin/main merge commit peeled from the approved annotated tag
+        required: true
+        type: string
+      release_tag:
+        description: Approved annotated release tag
+        required: true
+        default: v0.4.5
+        type: string
+      release_run_id:
+        description: Successful protected tag-and-draft workflow run ID
+        required: true
+        type: string
+      external_evidence_url:
+        description: Reviewed NVDA, VoiceOver, Arabic, 48-hour soak, and P0/P1 evidence URL
+        required: true
+        type: string
+      external_evidence_sha256:
+        description: SHA-256 of the candidate-bound external evidence JSON
+        required: true
+        type: string
 
 permissions:
   contents: read
@@ -13,17 +33,113 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  identity:
+    name: Bind Pages to approved tag and origin/main
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      actions: read
+      contents: read
+    steps:
+      - name: Checkout exact candidate history
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ inputs.candidate_sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Require approved evidence and exact annotated tag
+        env:
+          CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+          EVIDENCE_SHA256: ${{ inputs.external_evidence_sha256 }}
+          EVIDENCE_URL: ${{ inputs.external_evidence_url }}
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.release_tag }}
+          RELEASE_RUN_ID: ${{ inputs.release_run_id }}
+        run: |
+          test "${#CANDIDATE_SHA}" -eq 40
+          case "$CANDIDATE_SHA" in
+            *[!0-9a-fA-F]*)
+              echo "candidate_sha must contain exactly 40 hexadecimal characters" >&2
+              exit 1
+              ;;
+          esac
+          case "$EVIDENCE_URL" in
+            https://?*) ;;
+            *)
+              echo "external_evidence_url must be an HTTPS evidence location" >&2
+              exit 1
+              ;;
+          esac
+          test "${#EVIDENCE_SHA256}" -eq 64
+          case "$EVIDENCE_SHA256" in
+            *[!0-9a-fA-F]*)
+              echo "external_evidence_sha256 must contain 64 hexadecimal characters" >&2
+              exit 1
+              ;;
+          esac
+          case "$RELEASE_RUN_ID" in
+            '' | *[!0-9]*)
+              echo "release_run_id must be a numeric GitHub Actions run ID" >&2
+              exit 1
+              ;;
+          esac
+          test "$GITHUB_REF" = "refs/heads/main"
+          test "$GITHUB_SHA" = "$CANDIDATE_SHA"
+          test "$(git rev-parse HEAD)" = "$CANDIDATE_SHA"
+          git fetch --force origin \
+            refs/heads/main:refs/remotes/origin/main \
+            '+refs/tags/*:refs/tags/*'
+          test "$(git rev-parse origin/main)" = "$CANDIDATE_SHA"
+          node scripts/check-release-tag.mjs "$RELEASE_TAG" --require-origin-main
+          release_json="$(gh release view "$RELEASE_TAG" --json assets,isPrerelease)"
+          test "$(jq -r .isPrerelease <<<"$release_json")" = "false"
+          actual_assets="$(jq -r '[.assets[].name] | sort | .[]' <<<"$release_json")"
+          expected_assets="$(
+            printf '%s\n' \
+              LICENSE \
+              OrbitPM-Excel-Example-0.4.5.xlsx \
+              OrbitPM-Excel-Template-0.4.5.xlsx \
+              OrbitPM-Process-Studio-Lite-0.4.5.cyclonedx.json \
+              OrbitPM-Process-Studio-Lite-0.4.5.html \
+              SHA256SUMS.txt \
+              THIRD_PARTY_NOTICES.md
+          )"
+          test "$actual_assets" = "$expected_assets"
+          release_run_json="$(
+            gh api "repos/$GITHUB_REPOSITORY/actions/runs/$RELEASE_RUN_ID"
+          )"
+          current_run_json="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID")"
+          test "$(jq -r .name <<<"$release_run_json")" = \
+            "Create annotated tag and draft Lite release"
+          test "$(jq -r .path <<<"$release_run_json")" = ".github/workflows/release.yml"
+          test "$(jq -r .event <<<"$release_run_json")" = "workflow_dispatch"
+          test "$(jq -r .status <<<"$release_run_json")" = "completed"
+          test "$(jq -r .conclusion <<<"$release_run_json")" = "success"
+          test "$(jq -r .head_sha <<<"$release_run_json")" = "$CANDIDATE_SHA"
+          test "$(jq -r .head_branch <<<"$release_run_json")" = "main"
+          RELEASE_COMPLETED_AT="$(jq -r .updated_at <<<"$release_run_json")" \
+            PAGES_STARTED_AT="$(jq -r .created_at <<<"$current_run_json")" \
+            node --eval "
+              const completed = Date.parse(process.env.RELEASE_COMPLETED_AT)
+              const started = Date.parse(process.env.PAGES_STARTED_AT)
+              if (!Number.isFinite(completed) || !Number.isFinite(started) || completed >= started) {
+                throw new Error('The selected release run did not complete before this Pages run.')
+              }
+            "
+
   quality:
     name: Required release-quality gates
-    if: github.ref == 'refs/heads/main'
+    needs: identity
     uses: ./.github/workflows/quality.yml
 
   deploy:
-    name: Deploy exact tested artifact
-    needs: quality
+    name: Protected deployment of exact tested artifact
+    needs: [identity, quality]
     runs-on: ubuntu-24.04
-    timeout-minutes: 15
+    timeout-minutes: 45
     permissions:
+      actions: read
       contents: read
       pages: write
       id-token: write
@@ -33,33 +149,44 @@ jobs:
     outputs:
       page_url: ${{ steps.deployment.outputs.page_url }}
     steps:
-      - name: Download exact tested artifact
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
-        with:
-          name: orbitpm-tested-pages-${{ github.sha }}
-          path: dist
+      - name: Require configured external-evidence approval policy
+        env:
+          APPROVAL_POLICY: ${{ vars.ORBITPM_PAGES_APPROVAL_POLICY }}
+        run: >-
+          test "$APPROVAL_POLICY" =
+          "v0.4.5-nvda-voiceover-arabic-48h-p0p1-reviewed"
 
-      - name: Package Pages artifact
-        uses: actions/upload-pages-artifact@56afc609e74202658d3ffba0e8f6dda462b719fa
-        with:
-          path: dist
+      - name: Revalidate main, annotated tag, and protected release run
+        env:
+          CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_RUN_ID: ${{ inputs.release_run_id }}
+          RELEASE_TAG: ${{ inputs.release_tag }}
+        run: |
+          release_run_json="$(
+            gh api "repos/$GITHUB_REPOSITORY/actions/runs/$RELEASE_RUN_ID"
+          )"
+          test "$(jq -r .conclusion <<<"$release_run_json")" = "success"
+          test "$(jq -r .head_sha <<<"$release_run_json")" = "$CANDIDATE_SHA"
 
-      - name: Deploy Pages
-        id: deployment
-        uses: actions/deploy-pages@d6db90164ac5ed86f2b6aed7e0febac5b3c0c03e
-
-  smoke:
-    name: Verify deployed bytes and EN/AR browsers
-    needs: deploy
-    runs-on: ubuntu-24.04
-    timeout-minutes: 30
-    permissions:
-      contents: read
-    steps:
-      - name: Checkout
+      - name: Checkout exact approved tag commit
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
+          ref: ${{ inputs.candidate_sha }}
+          fetch-depth: 0
           persist-credentials: false
+
+      - name: Revalidate immutable Git identity after approval
+        env:
+          CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+          RELEASE_TAG: ${{ inputs.release_tag }}
+        run: |
+          git fetch --force origin \
+            refs/heads/main:refs/remotes/origin/main \
+            '+refs/tags/*:refs/tags/*'
+          test "$(git rev-parse HEAD)" = "$CANDIDATE_SHA"
+          test "$(git rev-parse origin/main)" = "$CANDIDATE_SHA"
+          node scripts/check-release-tag.mjs "$RELEASE_TAG" --require-origin-main
 
       - name: Set up exact Node
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
@@ -77,19 +204,128 @@ jobs:
       - name: Download exact tested artifact
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
         with:
-          name: orbitpm-tested-pages-${{ github.sha }}
+          name: orbitpm-tested-pages-${{ inputs.candidate_sha }}
           path: dist
 
-      - name: Install current Chrome, Edge, Firefox, and Safari/WebKit engines
+      - name: Revalidate candidate-bound external evidence against deployed bytes
+        env:
+          EVIDENCE_SHA256: ${{ inputs.external_evidence_sha256 }}
+          EVIDENCE_URL: ${{ inputs.external_evidence_url }}
+        run: >-
+          node scripts/verify-external-release-evidence.mjs
+          --candidate-sha=${{ inputs.candidate_sha }}
+          --artifact=dist/index.html
+          --url="$EVIDENCE_URL"
+          --sha256="$EVIDENCE_SHA256"
+          --output=evidence/pages-external-evidence-verification.json
+
+      - name: Preserve Pages approval evidence
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: orbitpm-pages-external-evidence-${{ inputs.candidate_sha }}
+          path: evidence/pages-external-evidence-verification.json
+          if-no-files-found: error
+          retention-days: 90
+
+      - name: Install current Chrome/Edge and pinned Playwright engines before deployment
         run: >-
           ./node_modules/.bin/playwright install --with-deps
           chromium chrome msedge firefox webkit
 
+      - name: Snapshot the currently published self-contained Pages app
+        env:
+          CURRENT_PAGES_URL: https://ahmedak320.github.io/bpmn-studio/
+        run: |
+          mkdir rollback-dist
+          curl --fail --silent --show-error --location \
+            --max-time 30 \
+            "$CURRENT_PAGES_URL" \
+            --output rollback-dist/index.html
+          test -s rollback-dist/index.html
+          test "$(stat --format=%s rollback-dist/index.html)" -le 8388608
+          sha256sum rollback-dist/index.html
+
+      - name: Preserve rollback bytes for audit
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: orbitpm-pages-rollback-bytes-${{ github.run_id }}
+          path: rollback-dist/index.html
+          if-no-files-found: error
+          retention-days: 90
+
+      - name: Package rollback Pages artifact
+        uses: actions/upload-pages-artifact@56afc609e74202658d3ffba0e8f6dda462b719fa
+        with:
+          name: orbitpm-pages-rollback-${{ github.run_id }}
+          path: rollback-dist
+
+      - name: Package candidate Pages artifact
+        uses: actions/upload-pages-artifact@56afc609e74202658d3ffba0e8f6dda462b719fa
+        with:
+          name: orbitpm-pages-candidate-${{ github.run_id }}
+          path: dist
+
+      - name: Deploy candidate Pages
+        id: deployment
+        uses: actions/deploy-pages@d6db90164ac5ed86f2b6aed7e0febac5b3c0c03e
+        with:
+          artifact_name: orbitpm-pages-candidate-${{ github.run_id }}
+
+      - name: Record exact Pages browser environment evidence
+        env:
+          PAGES_URL: ${{ steps.deployment.outputs.page_url }}
+        run: >-
+          node scripts/browser-environment-evidence.mjs
+          --candidate-sha=${{ inputs.candidate_sha }}
+          --artifact=dist/index.html
+          --url="$PAGES_URL"
+          --browsers=chromium,chrome,edge,firefox,webkit-linux
+          --fetch-attempts=24
+          --fetch-delay-ms=5000
+          --output=evidence/pages-browser-environment.json
+
       - name: Compare deployed bytes and smoke EN/AR
         env:
-          PAGES_URL: ${{ needs.deploy.outputs.page_url }}
+          PAGES_URL: ${{ steps.deployment.outputs.page_url }}
         run: >-
           node scripts/pages-smoke.mjs
           --artifact=dist/index.html
           --fetch-attempts=24
           --fetch-delay-ms=5000
+
+      - name: Upload Pages browser evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: orbitpm-pages-browser-evidence-${{ inputs.candidate_sha }}
+          path: evidence/pages-browser-environment.json
+          if-no-files-found: error
+          retention-days: 90
+
+      - name: Roll back the prior Pages bytes when remote verification fails
+        id: rollback
+        if: ${{ failure() && steps.deployment.outcome == 'success' }}
+        uses: actions/deploy-pages@d6db90164ac5ed86f2b6aed7e0febac5b3c0c03e
+        with:
+          artifact_name: orbitpm-pages-rollback-${{ github.run_id }}
+
+      - name: Confirm rollback bytes are live
+        if: ${{ failure() && steps.rollback.outcome == 'success' }}
+        env:
+          PAGES_URL: ${{ steps.rollback.outputs.page_url }}
+        run: |
+          for attempt in $(seq 1 24); do
+            if curl --fail --silent --show-error --location \
+              --max-time 30 \
+              "$PAGES_URL" \
+              --output rollback-live.html &&
+              cmp rollback-dist/index.html rollback-live.html
+            then
+              exit 0
+            fi
+            if test "$attempt" -lt 24; then
+              sleep 5
+            fi
+          done
+          echo "Rollback deployment did not restore the captured Pages bytes" >&2
+          exit 1

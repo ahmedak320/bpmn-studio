@@ -66,8 +66,8 @@ const browserTargets = [
   { name: 'chromium', browserType: chromium, launchOptions: {} },
   { name: 'chrome', browserType: chromium, launchOptions: { channel: 'chrome' } },
   { name: 'edge', browserType: chromium, launchOptions: { channel: 'msedge' } },
-  { name: 'firefox', browserType: firefox, launchOptions: {} },
-  { name: 'safari-webkit', browserType: webkit, launchOptions: {} }
+  { name: 'playwright-firefox', browserType: firefox, launchOptions: {} },
+  { name: 'webkit-linux', browserType: webkit, launchOptions: {} }
 ]
 const failures = []
 for (const { name: browserName, browserType, launchOptions } of browserTargets) {
@@ -118,5 +118,5 @@ if (failures.length) {
 }
 
 console.log(
-  `Pages serves the exact tested SHA-256 ${expectedDigest} and passed EN/AR smoke in Chromium, Chrome, Edge, Firefox, and Safari/WebKit.`
+  `Pages serves the exact tested SHA-256 ${expectedDigest} and passed EN/AR smoke in Playwright Chromium, current Chrome and Edge channels, Playwright Firefox, and Playwright WebKit on Linux.`
 )

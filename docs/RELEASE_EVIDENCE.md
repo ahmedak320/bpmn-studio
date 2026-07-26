@@ -81,9 +81,9 @@ run and exact release-artifact result remain pending.
 | WebKit Playwright, zero retries/flakes/skips                                     | `orbitpm-playwright-webkit-<sha>`                           | **PENDING** |
 | Real XLSX worker-to-preview and UI-heartbeat budgets                             | `orbitpm-browser-performance-<sha>`                         | **PENDING** |
 | Axe English/Arabic × light/dark × desktop/mobile matrix                          | `orbitpm-accessibility-<sha>`                               | **PENDING** |
-| Exact seven-asset assembly, checksums, SBOM/notices, and size verification       | tag workflow release candidate                              | **PENDING** |
-| Second clean build byte-for-byte reproducibility                                 | tag workflow log                                            | **PENDING** |
-| Exact release HTML smoke from `file://` in English and Arabic                    | tag workflow log                                            | **PENDING** |
+| Exact seven-asset assembly, checksums, SBOM/notices, and size verification       | pre-tag candidate artifact and release pre-tag verifier     | **PENDING** |
+| Second clean build byte-for-byte reproducibility                                 | pre-tag candidate and release verifier logs                 | **PENDING** |
+| Exact release HTML smoke from `file://` in English and Arabic                    | pre-tag candidate and release verifier logs                 | **PENDING** |
 
 ## Required human and remote checklist
 
@@ -93,7 +93,8 @@ run and exact release-artifact result remain pending.
 | `main`, `origin/main`, and `v0.4.5^{}` are identical                                                     | **PENDING**           | Three resolved SHAs and tag object                        |
 | Draft release contains exactly seven allowlisted assets and verified checksums                           | **PENDING**           | Draft URL and downloaded verification log                 |
 | Pages serves byte-identical tested HTML                                                                  | **PENDING**           | Deployment URL, SHA, and byte comparison                  |
-| File and Pages smoke in Chrome, Edge, Firefox, and Safari/WebKit, English and Arabic                     | **NOT PERFORMED**     | URL/file hash, commit, OS and exact browser versions      |
+| Pages smoke in current Chrome/Edge and Playwright Firefox/WebKit on Linux, English and Arabic            | **NOT PERFORMED**     | URL/hash, commit, OS and exact browser versions           |
+| Pages smoke in current Safari on macOS, English and Arabic                                               | **NOT PERFORMED**     | URL/hash, commit, macOS and exact Safari version          |
 | Previous-major browser compatibility                                                                     | **NOT PERFORMED**     | Exact OS/browser versions or an explicitly narrowed claim |
 | NVDA on Windows keyboard-authoring smoke                                                                 | **NOT PERFORMED**     | Operator, OS/NVDA/browser versions, scenarios, findings   |
 | VoiceOver on macOS keyboard-authoring smoke                                                              | **NOT PERFORMED**     | Operator, OS/VoiceOver/browser versions, scenarios        |
@@ -119,9 +120,10 @@ name/version, application locale, and result.
 | Pages     | English            | **PENDING** | **PENDING**     | **PENDING**             | **PENDING** |
 | Pages     | Arabic             | **PENDING** | **PENDING**     | **PENDING**             | **PENDING** |
 
-Add rows until Chrome, Edge, Firefox, and Safari/WebKit are each represented.
-No current, previous-major, or platform-wide support claim follows from an
-unrecorded browser version.
+Add rows until current Chrome, Edge, Firefox, and Safari are each represented;
+record the additional Playwright Chromium/Firefox/WebKit Linux runs separately.
+Playwright WebKit on Linux is not Safari evidence. No current, previous-major,
+or platform-wide support claim follows from an unrecorded browser version.
 
 ### Manual accessibility and soak record
 
@@ -130,7 +132,31 @@ assistive-technology version, browser version, application locale, scenarios,
 and findings. The uninterrupted 48-hour soak must additionally record start/end
 times, restart or interruption declarations, memory/storage samples, history
 retention observations, and the reviewed P0/P1 defect ledger. All fields remain
-**PENDING**.
+**PENDING**. Before tag creation and Pages deployment, combine those records in
+the candidate-bound format shown by
+[`RELEASE_APPROVAL_EVIDENCE.example.json`](RELEASE_APPROVAL_EVIDENCE.example.json),
+publish it at an HTTPS URL, and supply its exact SHA-256 to both protected
+workflows.
+
+### Required repository protections
+
+Before dispatching the tag or Pages workflows, configure these remote controls;
+the workflow files cannot create reviewer protections by themselves:
+
+- `release-v0.4.5`: require an independent reviewer, prevent self-review and
+  administrator bypass, restrict deployments to `main`, and set environment
+  variable `ORBITPM_RELEASE_APPROVAL_POLICY` to
+  `v0.4.5-nvda-voiceover-arabic-48h-p0p1-reviewed`.
+- `github-pages`: apply the same reviewer/bypass restrictions and set
+  `ORBITPM_PAGES_APPROVAL_POLICY` to that same exact value.
+- Protect `v*` tags against direct creation, update, and deletion while
+  permitting the approved release workflow to create the one annotated tag.
+- Require at least one substantive pull-request approval for `main`, retain
+  strict required checks, and enable immutable releases before stable
+  publication.
+
+Both protected jobs fail before tag creation or deployment when their required
+environment policy variable is absent or different.
 
 ## Expected release asset allowlist
 
