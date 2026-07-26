@@ -405,6 +405,107 @@ describe('ReviewedXmlIngestionDialog', () => {
     expect(screen.getAllByText('missing', { selector: 'code' })).toHaveLength(2)
   })
 
+  it('merges distinct issue codes for one target and renders provider failures', () => {
+    const field = localizationField({
+      elementId: 'Task_Mixed',
+      en: 'Approve request',
+      ar: 'Approve request'
+    })
+    const request = reviewRequest(
+      [field],
+      [
+        localizationIssue(field, 'ar', 'wrong-script'),
+        localizationIssue(field, 'ar', 'duplicate-counterpart'),
+        localizationIssue(field, 'ar', 'provider-failed')
+      ]
+    )
+    render(<ReviewedXmlIngestionDialog request={request} onDecision={vi.fn()} />)
+
+    expect(screen.getAllByTestId('reviewed-xml-row')).toHaveLength(1)
+    const row = within(rowFor('Task_Mixed'))
+    expect(row.getByText('wrong-script', { selector: 'code' })).not.toBeNull()
+    expect(row.getByText('duplicate-counterpart', { selector: 'code' })).not.toBeNull()
+    expect(row.getByText('provider-failed', { selector: 'code' })).not.toBeNull()
+  })
+
+  it('keeps an orphaned audit issue visible and cancellable', async () => {
+    const user = userEvent.setup()
+    const orphan = localizationField({ elementId: 'Task_Orphan', en: 'Approve request' })
+    const request = reviewRequest([], [localizationIssue(orphan, 'ar', 'provider-failed')])
+    const onDecision = vi.fn()
+    render(<ReviewedXmlIngestionDialog request={request} onDecision={onDecision} />)
+
+    const row = within(rowFor('Task_Orphan'))
+    expect(row.getAllByText('Automatic translation did not produce a value.')).toHaveLength(2)
+    expect(
+      row.getByRole<HTMLInputElement>('textbox', {
+        name: 'Reviewed target value (Arabic)'
+      }).value
+    ).toBe('')
+
+    await user.click(screen.getByRole('button', { name: 'Cancel review' }))
+    expect(onDecision).toHaveBeenCalledOnce()
+  })
+
+  it('completes a valid edit without approvals and ignores a second decision', async () => {
+    const user = userEvent.setup()
+    const field = localizationField({ elementId: 'Task_1', en: 'Approve request' })
+    const request = reviewRequest([field], [localizationIssue(field, 'ar', 'missing')])
+    const onDecision = vi.fn()
+    render(<ReviewedXmlIngestionDialog request={request} onDecision={onDecision} />)
+
+    await user.type(
+      within(rowFor('Task_1')).getByRole('textbox', {
+        name: 'Reviewed target value (Arabic)'
+      }),
+      'اعتماد الطلب'
+    )
+    const complete = screen.getByRole('button', { name: 'Complete review' })
+    fireEvent.click(complete)
+    fireEvent.click(complete)
+
+    expect(onDecision).toHaveBeenCalledOnce()
+    expect(onDecision).toHaveBeenCalledWith({
+      status: 'completed',
+      reviewDigest: 'review-digest-a',
+      edits: [
+        {
+          processId: 'Process_1',
+          elementId: 'Task_1',
+          field: 'name',
+          target: 'ar',
+          expectedValue: null,
+          value: 'اعتماد الطلب'
+        }
+      ]
+    })
+  })
+
+  it('lets reviewers explicitly clear a selected approval', async () => {
+    const user = userEvent.setup()
+    const field = localizationField({
+      elementId: 'Task_API',
+      en: 'API',
+      ar: 'API'
+    })
+    const request = reviewRequest(
+      [field],
+      [localizationIssue(field, 'ar', 'duplicate-counterpart')]
+    )
+    render(<ReviewedXmlIngestionDialog request={request} onDecision={vi.fn()} />)
+
+    const approval = within(rowFor('Task_API')).getByRole<HTMLSelectElement>('combobox', {
+      name: 'Exact field approval'
+    })
+    await user.selectOptions(approval, 'neutral')
+    expect(approval.value).toBe('neutral')
+    await user.selectOptions(approval, '')
+    expect(approval.value).toBe('')
+    expect(
+      screen.getByRole<HTMLButtonElement>('button', { name: 'Complete review' }).disabled
+    ).toBe(true)
+  })
+
   it('resets values and exact approvals when the review digest changes', async () => {
     const user = userEvent.setup()
     const firstField = localizationField({

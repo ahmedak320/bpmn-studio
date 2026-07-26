@@ -191,6 +191,190 @@ describe('reviewed source-aware XML localization ingestion', () => {
     })
   })
 
+  it('honors aborts before parsing, including signals without a supplied reason', async () => {
+    const controller = new AbortController()
+    const reason = new Error('review superseded')
+    controller.abort(reason)
+    await expect(
+      reviewBpmnXmlLocalization(validMultiProcessXml(), options({ signal: controller.signal }))
+    ).rejects.toBe(reason)
+
+    const signal = {
+      aborted: true,
+      reason: undefined
+    } as unknown as AbortSignal
+    await expect(
+      reviewBpmnXmlLocalization(validMultiProcessXml(), options({ signal }))
+    ).rejects.toMatchObject({
+      name: 'AbortError'
+    })
+  })
+
+  it('rejects malformed BPMN before presenting a localization review', async () => {
+    const review = vi.fn()
+
+    await expect(
+      reviewBpmnXmlLocalization('<not-bpmn />', options({ review }))
+    ).rejects.toMatchObject({
+      code: 'invalid-input'
+    })
+    expect(review).not.toHaveBeenCalled()
+  })
+
+  it('rejects duplicate, unknown, empty, and stale reviewed edits', async () => {
+    const invalidReviews = [
+      {
+        expectedCode: 'review-invalid',
+        edits: (request: ReviewedXmlIngestionReviewRequest) => {
+          const edit = editFor(request, 'Start_1', 'انطلاق')
+          return [edit, edit]
+        }
+      },
+      {
+        expectedCode: 'review-invalid',
+        edits: () => [
+          {
+            processId: 'Process_1',
+            elementId: 'Unknown_Task',
+            field: 'name',
+            target: 'ar' as const,
+            expectedValue: null,
+            value: 'مجهول'
+          }
+        ]
+      },
+      {
+        expectedCode: 'review-invalid',
+        edits: (request: ReviewedXmlIngestionReviewRequest) => [
+          { ...editFor(request, 'Start_1', 'انطلاق'), value: '   ' }
+        ]
+      },
+      {
+        expectedCode: 'review-tampered',
+        edits: (request: ReviewedXmlIngestionReviewRequest) => [
+          { ...editFor(request, 'Start_1', 'انطلاق'), expectedValue: 'stale value' }
+        ]
+      }
+    ] as const
+
+    for (const invalid of invalidReviews) {
+      await expect(
+        reviewBpmnXmlLocalization(
+          missingArabicStart(),
+          options({
+            review: async (request) => ({
+              status: 'completed',
+              reviewDigest: request.reviewDigest,
+              edits: invalid.edits(request)
+            })
+          })
+        )
+      ).rejects.toMatchObject({ code: invalid.expectedCode })
+    }
+  })
+
+  it('rejects duplicate, unknown, and direction-invalid reviewed approvals', async () => {
+    const approvalFor = (request: ReviewedXmlIngestionReviewRequest) => {
+      const edit = editFor(request, 'Start_1', 'انطلاق')
+      return {
+        processId: edit.processId,
+        elementId: edit.elementId,
+        field: edit.field,
+        target: edit.target,
+        value: edit.value,
+        kind: 'neutral' as const
+      }
+    }
+    const invalidReviews = [
+      {
+        expectedCode: 'review-invalid',
+        approvals: (request: ReviewedXmlIngestionReviewRequest) => {
+          const approval = approvalFor(request)
+          return [approval, approval]
+        }
+      },
+      {
+        expectedCode: 'review-invalid',
+        approvals: () => [
+          {
+            processId: 'Process_1',
+            elementId: 'Unknown_Task',
+            field: 'name',
+            target: 'ar' as const,
+            value: 'مجهول',
+            kind: 'neutral' as const
+          }
+        ]
+      },
+      {
+        expectedCode: 'review-invalid',
+        approvals: (request: ReviewedXmlIngestionReviewRequest) => [
+          { ...approvalFor(request), kind: 'english-bilingual' as const }
+        ]
+      }
+    ] as const
+
+    for (const invalid of invalidReviews) {
+      await expect(
+        reviewBpmnXmlLocalization(
+          missingArabicStart(),
+          options({
+            review: async (request) => ({
+              status: 'completed',
+              reviewDigest: request.reviewDigest,
+              edits: [editFor(request, 'Start_1', 'انطلاق')],
+              approvals: invalid.approvals(request)
+            })
+          })
+        )
+      ).rejects.toMatchObject({ code: invalid.expectedCode })
+    }
+  })
+
+  it('rejects an explicitly completed review that leaves issues unresolved', async () => {
+    await expect(
+      reviewBpmnXmlLocalization(
+        missingArabicStart(),
+        options({
+          review: async (request) => ({
+            status: 'completed',
+            reviewDigest: request.reviewDigest,
+            edits: []
+          })
+        })
+      )
+    ).rejects.toMatchObject({
+      code: 'review-incomplete'
+    })
+  })
+
+  it('copies caller audit options and canonicalizes known process ids', async () => {
+    const outcome = await reviewBpmnXmlLocalization(
+      missingArabicStart(),
+      options({
+        approvedNeutralTerms: [],
+        approvedEnglishBilingualExceptions: [],
+        approvedFieldExceptions: [],
+        validation: {
+          requireDi: true,
+          knownProcessIds: [' Process_2 ', 'Process_1', 'Process_1', '']
+        },
+        review: async (request) => ({
+          status: 'completed',
+          reviewDigest: request.reviewDigest,
+          edits: [editFor(request, 'Start_1', 'انطلاق')]
+        })
+      })
+    )
+
+    expect(outcome.status).toBe('completed')
+    if (outcome.status !== 'completed') return
+    expect(outcome.request.knownProcessIds).toEqual(['Process_1', 'Process_2'])
+    expect(outcome.evidence.reviewedEdits).toEqual([
+      expect.objectContaining({ expectedValue: null, value: 'انطلاق' })
+    ])
+  })
+
   it('digest-binds field-scoped neutral and English proper-name approvals', async () => {
     const neutralXml = validMultiProcessXml()
       .replace('orbitpm:nameAr="بداية"', 'orbitpm:nameAr="CUSTOM"')

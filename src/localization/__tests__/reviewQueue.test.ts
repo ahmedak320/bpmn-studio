@@ -88,4 +88,50 @@ describe('ReviewedXmlReviewQueue', () => {
     await expect(result).resolves.toEqual({ status: 'cancelled' })
     expect(queue.activeRequest).toBeNull()
   })
+
+  it('rejects decisions without an active review and makes disposal idempotent', () => {
+    const listener = vi.fn<ReviewedXmlReviewQueueListener>()
+    const queue = new ReviewedXmlReviewQueue(listener)
+
+    expect(queue.decide({ status: 'cancelled' })).toBe(false)
+    queue.dispose()
+    queue.dispose()
+
+    expect(listener).toHaveBeenCalledOnce()
+    expect(listener).toHaveBeenCalledWith(null)
+  })
+
+  it('fails closed for a signal that is already aborted before enqueueing', async () => {
+    const listener = vi.fn<ReviewedXmlReviewQueueListener>()
+    const queue = new ReviewedXmlReviewQueue(listener)
+    const controller = new AbortController()
+    controller.abort()
+
+    await expect(
+      queue.review(request('already-aborted'), { signal: controller.signal })
+    ).resolves.toEqual({ status: 'cancelled' })
+    expect(queue.activeRequest).toBeNull()
+    expect(listener).not.toHaveBeenCalled()
+  })
+
+  it('rechecks cancellation while pumping a newly queued review', async () => {
+    let abortedReads = 0
+    const signal = {
+      get aborted() {
+        abortedReads += 1
+        return abortedReads > 1
+      },
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn()
+    } as unknown as AbortSignal
+    const listener = vi.fn<ReviewedXmlReviewQueueListener>()
+    const queue = new ReviewedXmlReviewQueue(listener)
+
+    await expect(queue.review(request('aborted-during-enqueue'), { signal })).resolves.toEqual({
+      status: 'cancelled'
+    })
+    expect(signal.removeEventListener).toHaveBeenCalledOnce()
+    expect(queue.activeRequest).toBeNull()
+    expect(listener).toHaveBeenLastCalledWith(null)
+  })
 })
