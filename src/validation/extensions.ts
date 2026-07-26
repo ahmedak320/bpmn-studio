@@ -13,6 +13,12 @@ interface GenericElement {
   $parent?: GenericElement
   $attrs?: Record<string, unknown>
   $children?: GenericElement[]
+  $descriptor?: {
+    isGeneric?: boolean
+    ns?: {
+      uri?: string
+    }
+  }
   id?: string
   [key: string]: unknown
 }
@@ -95,13 +101,17 @@ function semanticName(
 }
 
 function semanticTypeName(
-  qname: string,
+  element: GenericElement,
   namespaces: ReadonlyMap<string, string>
 ): { namespaceUri: string; localName: string; semantic: string } {
+  const qname = element.$type ?? ''
   const { prefix, localName } = splitQName(qname)
-  const namespaceUri = prefix
-    ? (MODEL_TYPE_NAMESPACES[prefix] ?? namespaces.get(prefix) ?? `unbound:${prefix}`)
-    : (namespaces.get('') ?? '')
+  const descriptorUri = element.$descriptor?.isGeneric ? element.$descriptor.ns?.uri : undefined
+  const namespaceUri =
+    descriptorUri ??
+    (prefix
+      ? (MODEL_TYPE_NAMESPACES[prefix] ?? namespaces.get(prefix) ?? `unbound:${prefix}`)
+      : (namespaces.get('') ?? ''))
   return {
     namespaceUri,
     localName,
@@ -123,15 +133,17 @@ function canonicalUnknownElement(
   element: GenericElement,
   namespaces: ReadonlyMap<string, string>
 ): unknown {
-  const typeName = semanticTypeName(element.$type ?? '', namespaces)
+  const typeName = semanticTypeName(element, namespaces)
   const attributes: Record<string, string> = {}
   for (const [key, value] of Object.entries(element)) {
     if (key.startsWith('$') || typeof value === 'object' || value === undefined) continue
+    if (key === 'xmlns' || key.startsWith('xmlns:')) continue
     const attrName = semanticName(key, namespaces, true)
     attributes[attrName.semantic] = String(value)
   }
   for (const [key, value] of Object.entries(element.$attrs ?? {})) {
     if (value === undefined) continue
+    if (key === 'xmlns' || key.startsWith('xmlns:')) continue
     const attrName = semanticName(key, namespaces, true)
     attributes[attrName.semantic] = String(value)
   }
@@ -206,7 +218,7 @@ function snapshotsFromRoot(
   const visit = (element: GenericElement): void => {
     if (visited.has(element)) return
     visited.add(element)
-    const elementName = semanticTypeName(element.$type ?? '', namespaces)
+    const elementName = semanticTypeName(element, namespaces)
     const isUnknownElement =
       Boolean(element.$type) && !KNOWN_NAMESPACE_URIS.has(elementName.namespaceUri)
 

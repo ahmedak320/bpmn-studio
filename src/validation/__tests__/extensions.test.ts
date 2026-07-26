@@ -25,6 +25,42 @@ describe('unknown BPMN extension preservation', () => {
     ).resolves.toMatchObject({ valid: true, issues: [] })
   })
 
+  it('normalizes a generic extension default namespace to its semantic URI', async () => {
+    const defaultVendorNamespace = `<?xml version="1.0" encoding="UTF-8"?>
+<definitions xmlns="http://www.omg.org/spec/BPMN/20100524/MODEL"
+  id="Definitions_vendor_default"
+  targetNamespace="https://example.test/vendor-default">
+  <process id="Process_vendor_default" isExecutable="false">
+    <extensionElements>
+      <payload xmlns="urn:example:vendor-default" key="value"><nested /></payload>
+    </extensionElements>
+  </process>
+</definitions>`
+    const prefixedVendorNamespace = `<?xml version="1.0" encoding="UTF-8"?>
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL"
+  xmlns:vendor="urn:example:vendor-default"
+  id="Definitions_vendor_default"
+  targetNamespace="https://example.test/vendor-default">
+  <bpmn:process id="Process_vendor_default" isExecutable="false">
+    <bpmn:extensionElements>
+      <vendor:payload key="value"><vendor:nested /></vendor:payload>
+    </bpmn:extensionElements>
+  </bpmn:process>
+</bpmn:definitions>`
+
+    await expect(snapshotUnknownExtensions(defaultVendorNamespace)).resolves.toEqual([
+      expect.objectContaining({
+        kind: 'element',
+        namespaceUri: 'urn:example:vendor-default',
+        localName: 'payload',
+        parentElementId: 'Process_vendor_default'
+      })
+    ])
+    await expect(
+      validateUnknownExtensionPreservation(defaultVendorNamespace, prefixedVendorNamespace)
+    ).resolves.toMatchObject({ valid: true, issues: [] })
+  })
+
   it('captures opaque attributes and complete nested extension elements', async () => {
     const snapshots = await snapshotUnknownExtensions(UNKNOWN_EXTENSION_XML)
     expect(snapshots).toHaveLength(2)
