@@ -27,6 +27,11 @@ import { ORG_ATTR_NAMES } from '../orbitpmModdle'
 
 interface Recorded {
   updateProperties: Array<{ element: unknown; properties: Record<string, unknown> }>
+  updateModdleProperties: Array<{
+    element: unknown
+    moddleElement: unknown
+    properties: Record<string, unknown>
+  }>
   createShape: Array<{ attrs: unknown; bounds: unknown; target: unknown }>
   connect: Array<{ source: unknown; target: unknown; attrs: unknown }>
   removeElements: unknown[][]
@@ -40,6 +45,7 @@ function makeModeler(options: {
 }): { modeler: OrgModeler; rec: Recorded } {
   const rec: Recorded = {
     updateProperties: [],
+    updateModdleProperties: [],
     createShape: [],
     connect: [],
     removeElements: [],
@@ -48,6 +54,13 @@ function makeModeler(options: {
   const modeling = {
     updateProperties(element: unknown, properties: Record<string, unknown>): void {
       rec.updateProperties.push({ element, properties })
+    },
+    updateModdleProperties(
+      element: unknown,
+      moddleElement: unknown,
+      properties: Record<string, unknown>
+    ): void {
+      rec.updateModdleProperties.push({ element, moddleElement, properties })
     },
     createShape(attrs: unknown, bounds: unknown, target: unknown): OrgElementLike {
       rec.createShape.push({ attrs, bounds, target })
@@ -611,7 +624,94 @@ describe('process helpers', () => {
     expect(docs[0].text).toBe('a note')
 
     setProcessDocumentation(modeler, '')
-    expect(rec.updateProperties[1].properties).toEqual({ documentation: [] })
+    expect(rec.updateProperties).toHaveLength(1)
+  })
+
+  it('updates one documentation language without replacing other documentation', () => {
+    const first = {
+      $type: 'bpmn:Documentation',
+      text: 'English note',
+      $attrs: {
+        'orbitpm:nameEn': 'English note',
+        'orbitpm:nameAr': 'ملاحظة عربية',
+        'vendor:future': 'keep'
+      }
+    }
+    const second = { $type: 'bpmn:Documentation', text: 'Unrelated second note' }
+    const root: OrgElementLike = {
+      type: 'bpmn:Process',
+      businessObject: {
+        $type: 'bpmn:Process',
+        documentation: [first, second]
+      }
+    }
+    const { modeler, rec } = makeModeler({ root })
+
+    setProcessDocumentation(modeler, 'ملاحظة محدثة', 'ar')
+    expect(rec.updateModdleProperties).toEqual([
+      {
+        element: root,
+        moddleElement: first,
+        properties: {
+          text: 'ملاحظة محدثة',
+          'orbitpm:nameAr': 'ملاحظة محدثة'
+        }
+      }
+    ])
+    expect(rec.updateProperties).toHaveLength(0)
+    expect(first.$attrs).toEqual({
+      'orbitpm:nameEn': 'English note',
+      'orbitpm:nameAr': 'ملاحظة عربية',
+      'vendor:future': 'keep'
+    })
+  })
+
+  it('clears only the active documentation pair and projects the retained opposite value', () => {
+    const first = {
+      $type: 'bpmn:Documentation',
+      text: 'English note',
+      $attrs: {
+        'orbitpm:nameEn': 'English note',
+        'orbitpm:nameAr': 'ملاحظة عربية'
+      }
+    }
+    const root: OrgElementLike = {
+      type: 'bpmn:Process',
+      businessObject: { $type: 'bpmn:Process', documentation: [first] }
+    }
+    const { modeler, rec } = makeModeler({ root })
+
+    setProcessDocumentation(modeler, '', 'en')
+    expect(rec.updateModdleProperties).toEqual([
+      {
+        element: root,
+        moddleElement: first,
+        properties: {
+          text: 'ملاحظة عربية',
+          'orbitpm:nameEn': undefined
+        }
+      }
+    ])
+    expect(rec.updateProperties).toHaveLength(0)
+  })
+
+  it('removes only the empty first documentation entry when both pairs are empty', () => {
+    const first = {
+      $type: 'bpmn:Documentation',
+      text: 'old',
+      $attrs: { 'vendor:future': 'retained only while the note exists' }
+    }
+    const second = { $type: 'bpmn:Documentation', text: 'Unrelated second note' }
+    const root: OrgElementLike = {
+      type: 'bpmn:Process',
+      businessObject: { $type: 'bpmn:Process', documentation: [first, second] }
+    }
+    const { modeler, rec } = makeModeler({ root })
+
+    setProcessDocumentation(modeler, '', 'ar')
+    expect(rec.updateProperties).toEqual([
+      { element: root, properties: { documentation: [second] } }
+    ])
   })
 })
 

@@ -36,6 +36,11 @@ export interface OrgElementLike {
 
 interface ModelingLike {
   updateProperties(element: unknown, properties: Record<string, unknown>): void
+  updateModdleProperties(
+    element: unknown,
+    moddleElement: unknown,
+    properties: Record<string, unknown>
+  ): void
   createShape(
     attrs: { type: string },
     bounds: { x: number; y: number; width: number; height: number },
@@ -491,16 +496,55 @@ export function getProcessDocumentation(modeler: OrgModeler): string {
   return ''
 }
 
-export function setProcessDocumentation(modeler: OrgModeler, text: string): void {
+/**
+ * Update the first process documentation entry without replacing unrelated
+ * documentation children. In paired mode, the visible `text` is the active
+ * projection and only that language's stored value is changed.
+ */
+export function setProcessDocumentation(
+  modeler: OrgModeler,
+  text: string,
+  activeLanguage?: OrgProjectionLanguage
+): void {
   const el = getProcessElement(modeler)
   if (!el) return
   const modeling = modeler.get('modeling')
-  if (!text) {
-    modeling.updateProperties(el, { documentation: [] })
+  const process = toBusinessObject(el)
+  const existingValue = readModdleProp(process, 'documentation')
+  const documentation = Array.isArray(existingValue) ? [...existingValue] : []
+  const existing = documentation[0] as BusinessObjectLike | undefined
+
+  if (!existing) {
+    if (!text) return
+    const properties: Record<string, unknown> = { text }
+    if (activeLanguage) {
+      properties[activeLanguage === 'ar' ? 'orbitpm:nameAr' : 'orbitpm:nameEn'] = text
+    }
+    const doc = modeler.get('bpmnFactory').create('bpmn:Documentation', properties)
+    modeling.updateProperties(el, { documentation: [doc] })
     return
   }
-  const doc = modeler.get('bpmnFactory').create('bpmn:Documentation', { text })
-  modeling.updateProperties(el, { documentation: [doc] })
+
+  if (!activeLanguage) {
+    if (text) {
+      modeling.updateModdleProperties(el, existing, { text })
+    } else {
+      modeling.updateProperties(el, { documentation: documentation.slice(1) })
+    }
+    return
+  }
+
+  const activeProperty = activeLanguage === 'ar' ? 'orbitpm:nameAr' : 'orbitpm:nameEn'
+  const oppositeProperty = activeLanguage === 'ar' ? 'orbitpm:nameEn' : 'orbitpm:nameAr'
+  const oppositeValue = readAttr(existing, oppositeProperty) ?? ''
+  if (!text && !oppositeValue) {
+    modeling.updateProperties(el, { documentation: documentation.slice(1) })
+    return
+  }
+  modeling.updateModdleProperties(el, existing, {
+    text: text || oppositeValue,
+    [activeProperty]: text || undefined
+  })
 }
 
 // --- linked text-annotation "note" -----------------------------------------
