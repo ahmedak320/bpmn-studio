@@ -55,6 +55,7 @@ import {
 import { presetMatchesHeaderSignatures } from './mappingPreset'
 import { buildProcessWorkbookModel, officialTemplatePreset } from './modelBuilder'
 import { detectOfficialTemplate } from './officialTemplate'
+import { SpreadsheetValidationIssueList } from './SpreadsheetValidationIssueList'
 import {
   executeTransactionalImportPlan,
   prepareTransactionalImportPlan,
@@ -1304,35 +1305,11 @@ export function SpreadsheetImportPanel({
             {allIssues.length === 0 ? (
               <div style={okBox}>{t('spreadsheet.validation.noIssues')}</div>
             ) : (
-              <ol style={issueList}>
-                {allIssues.slice(0, 250).map((issue, index) => (
-                  <li
-                    key={`${issue.code}-${issue.worksheet ?? ''}-${issue.cellAddress ?? ''}-${index}`}
-                    style={{
-                      ...issueItem,
-                      borderInlineStartColor:
-                        issue.severity === 'error'
-                          ? '#dc2626'
-                          : issue.severity === 'review'
-                            ? '#d97706'
-                            : '#64748b'
-                    }}
-                  >
-                    <strong>{issue.code}</strong>
-                    {(issue.worksheet || issue.cellAddress) && (
-                      <span>
-                        {t('spreadsheet.validation.location', {
-                          sheet: issue.worksheet ?? '—',
-                          cell: issue.cellAddress ?? '—'
-                        })}
-                      </span>
-                    )}
-                    {issue.rawValue !== undefined && (
-                      <code dir="auto">{String(issue.rawValue).slice(0, 300)}</code>
-                    )}
-                  </li>
-                ))}
-              </ol>
+              <SpreadsheetValidationIssueList
+                issues={allIssues.slice(0, 250)}
+                listId="spreadsheet-workbook-issues"
+                idPrefix="spreadsheet-workbook-review"
+              />
             )}
             {typeRepairIssues.length > 0 && (
               <section
@@ -1529,32 +1506,11 @@ export function SpreadsheetImportPanel({
             </div>
           )}
           {plan.status === 'blocked' && (
-            <ol style={issueList}>
-              {plan.validation.issues.slice(0, 250).map((issue, index) => (
-                <li
-                  key={`plan-${issue.code}-${issue.worksheet ?? ''}-${issue.cellAddress ?? ''}-${index}`}
-                  style={{
-                    ...issueItem,
-                    borderInlineStartColor:
-                      issue.severity === 'error'
-                        ? '#dc2626'
-                        : issue.severity === 'review'
-                          ? '#d97706'
-                          : '#64748b'
-                  }}
-                >
-                  <strong>{issue.code}</strong>
-                  {(issue.worksheet || issue.cellAddress) && (
-                    <span>
-                      {t('spreadsheet.validation.location', {
-                        sheet: issue.worksheet ?? '—',
-                        cell: issue.cellAddress ?? '—'
-                      })}
-                    </span>
-                  )}
-                </li>
-              ))}
-            </ol>
+            <SpreadsheetValidationIssueList
+              issues={plan.validation.issues.slice(0, 250)}
+              listId="spreadsheet-plan-issues"
+              idPrefix="spreadsheet-plan-review"
+            />
           )}
           {plan.artifacts.length > 0 && (
             <ul style={issueList}>
