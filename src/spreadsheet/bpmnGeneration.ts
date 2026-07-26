@@ -23,9 +23,10 @@ import type {
   PipelineDiagnostic,
   ProcessGraphModel,
   SpreadsheetBilingualAuditAdapter,
-  WorkbookNode
+  WorkbookNode,
+  WorkbookParticipant
 } from './contracts'
-import { throwIfAborted } from './errors'
+import { SpreadsheetError, throwIfAborted } from './errors'
 import { stableHash } from './hash'
 
 interface ModdleElement {
@@ -108,6 +109,76 @@ const EVENT_DEFINITION_TYPES = Object.freeze({
 } as const)
 
 const REGISTERED_ORBITPM_ATTRIBUTES = new Set<string>(ORG_ATTR_NAMES)
+
+function compareText(left: string, right: string): number {
+  return left < right ? -1 : left > right ? 1 : 0
+}
+
+function participantOrder(left: WorkbookParticipant, right: WorkbookParticipant): number {
+  const leftOrder = left.order ?? Number.POSITIVE_INFINITY
+  const rightOrder = right.order ?? Number.POSITIVE_INFINITY
+  return (
+    leftOrder - rightOrder ||
+    left.provenance.row - right.provenance.row ||
+    compareText(left.id, right.id)
+  )
+}
+
+function sortedParticipants(
+  participants: readonly WorkbookParticipant[]
+): readonly WorkbookParticipant[] {
+  return participants.slice().sort(participantOrder)
+}
+
+function assertSupportedPoolAssignments(graph: ProcessGraphModel): void {
+  const pools = sortedParticipants(graph.participants.filter(({ type }) => type === 'pool'))
+  if (pools.length <= 1) return
+  const primaryPoolId = pools[0]!.id
+  const poolIds = new Set(pools.map(({ id }) => id))
+  const lanes = new Map(
+    graph.participants.filter(({ type }) => type === 'lane').map((lane) => [lane.id, lane])
+  )
+  const lanePool = (laneId: string): string | undefined => {
+    const visited = new Set<string>()
+    let current = lanes.get(laneId)
+    while (current?.parentId && !visited.has(current.id)) {
+      visited.add(current.id)
+      if (poolIds.has(current.parentId)) return current.parentId
+      current = lanes.get(current.parentId)
+    }
+    return undefined
+  }
+  const reject = (poolId: string, elementId: string): never => {
+    throw new SpreadsheetError('blocking-validation', {
+      reason: 'secondary-pool-assignment',
+      primaryPoolId,
+      poolId,
+      elementId
+    })
+  }
+
+  for (const lane of lanes.values()) {
+    const poolId = lanePool(lane.id)
+    if (poolId && poolId !== primaryPoolId) reject(poolId, lane.id)
+  }
+  for (const node of graph.nodes) {
+    const explicitPoolIds = [
+      node.poolId && poolIds.has(node.poolId) ? node.poolId : undefined,
+      node.participantId && poolIds.has(node.participantId) ? node.participantId : undefined
+    ].filter((id): id is string => Boolean(id))
+    const laneId =
+      node.laneId && lanes.has(node.laneId)
+        ? node.laneId
+        : node.participantId && lanes.has(node.participantId)
+          ? node.participantId
+          : undefined
+    const assignedPoolIds = laneId
+      ? [...explicitPoolIds, lanePool(laneId)].filter((id): id is string => Boolean(id))
+      : explicitPoolIds
+    const secondaryPoolId = assignedPoolIds.find((poolId) => poolId !== primaryPoolId)
+    if (secondaryPoolId) reject(secondaryPoolId, node.id)
+  }
+}
 
 function setOrbitpmAttribute(element: ModdleElement, property: string, value: string): void {
   if (REGISTERED_ORBITPM_ATTRIBUTES.has(property)) {
@@ -287,7 +358,7 @@ function addLanes(
   nodes: ReadonlyMap<string, ModdleElement>,
   mode: BilingualEmissionMode
 ): void {
-  const laneRecords = graph.participants.filter(({ type }) => type === 'lane')
+  const laneRecords = sortedParticipants(graph.participants.filter(({ type }) => type === 'lane'))
   if (laneRecords.length === 0) return
   const lanes = new Map<string, ModdleElement>()
   for (const record of laneRecords) {
@@ -304,22 +375,35 @@ function addLanes(
     lanes.set(record.id, lane)
   }
 
-  const topLevel: ModdleElement[] = []
+  const laneRecordsByParent = new Map<string, WorkbookParticipant[]>()
   for (const record of laneRecords) {
-    const lane = lanes.get(record.id)!
-    const parentLane = record.parentId ? lanes.get(record.parentId) : undefined
-    if (!parentLane) {
-      topLevel.push(lane)
-      continue
-    }
-    if (!parentLane.childLaneSet) {
-      parentLane.childLaneSet = moddle.create('bpmn:LaneSet', {
-        id: `${parentLane.id}_children`,
-        lanes: []
-      })
-    }
-    parentLane.childLaneSet.lanes?.push(lane)
+    if (!record.parentId || !lanes.has(record.parentId)) continue
+    const siblings = laneRecordsByParent.get(record.parentId) ?? []
+    siblings.push(record)
+    laneRecordsByParent.set(record.parentId, siblings)
   }
+  for (const [parentId, children] of laneRecordsByParent) {
+    const parentLane = lanes.get(parentId)!
+    parentLane.childLaneSet = moddle.create('bpmn:LaneSet', {
+      id: `${parentLane.id}_children`,
+      lanes: children.sort(participantOrder).map(({ id }) => lanes.get(id)!)
+    })
+  }
+
+  const poolRank = new Map(
+    sortedParticipants(graph.participants.filter(({ type }) => type === 'pool')).map(
+      ({ id }, index) => [id, index]
+    )
+  )
+  const topLevel = laneRecords
+    .filter(({ parentId }) => !parentId || !lanes.has(parentId))
+    .sort(
+      (left, right) =>
+        (poolRank.get(left.parentId ?? '') ?? Number.POSITIVE_INFINITY) -
+          (poolRank.get(right.parentId ?? '') ?? Number.POSITIVE_INFINITY) ||
+        participantOrder(left, right)
+    )
+    .map(({ id }) => lanes.get(id)!)
   process.laneSets = [
     moddle.create('bpmn:LaneSet', {
       id: `LaneSet_${stableHash(graph.process.id).slice(0, 10)}`,
@@ -333,6 +417,7 @@ function buildDefinitions(
   graph: ProcessGraphModel,
   mode: BilingualEmissionMode
 ): ModdleElement {
+  assertSupportedPoolAssignments(graph)
   const process = moddle.create('bpmn:Process', {
     id: graph.process.id,
     isExecutable: false,
@@ -382,14 +467,17 @@ function buildDefinitions(
 
   addLanes(moddle, process, graph, nodeElements, mode)
   const rootElements: ModdleElement[] = [process]
-  const pools = graph.participants.filter(({ type }) => type === 'pool')
+  const pools = sortedParticipants(graph.participants.filter(({ type }) => type === 'pool'))
   if (pools.length > 0) {
     const collaboration = moddle.create('bpmn:Collaboration', {
       id: `Collaboration_${stableHash(graph.process.id).slice(0, 10)}`,
-      participants: pools.map((record) => {
+      participants: pools.map((record, index) => {
         const participant = moddle.create('bpmn:Participant', {
           id: record.id,
-          processRef: process
+          // BPMN permits a process to be rendered by only one participant.
+          // Additional spreadsheet pools are empty black-box participants so
+          // bpmn-js never imports the same process tree more than once.
+          ...(index === 0 ? { processRef: process } : {})
         })
         setBilingualName(participant, record.name, mode)
         return participant
@@ -459,51 +547,401 @@ function xmlAttribute(value: string): string {
     .replaceAll('>', '&gt;')
 }
 
+interface DiagramTranslation {
+  readonly x: number
+  readonly y: number
+}
+
+interface ContainerGeometry {
+  readonly bounds: ReadonlyMap<string, DiagramBounds>
+  readonly nodeTranslations: ReadonlyMap<string, DiagramTranslation>
+}
+
+const MIN_LANE_HEIGHT = 140
+const MIN_POOL_HEIGHT = 180
+const NODE_VERTICAL_PADDING = 25
+const POOL_GAP = 80
+
+function regexLiteral(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+}
+
+function diBlockPattern(kind: 'BPMNShape' | 'BPMNEdge', elementId: string): RegExp {
+  const encodedId = regexLiteral(xmlAttribute(elementId))
+  return new RegExp(
+    `<bpmndi:${kind}\\b(?=[^>]*\\bbpmnElement="${encodedId}")[^>]*>[\\s\\S]*?<\\/bpmndi:${kind}>`,
+    'g'
+  )
+}
+
+function boundsFromAttributes(attributes: string): DiagramBounds | undefined {
+  const x = numericAttribute(attributes, 'x')
+  const y = numericAttribute(attributes, 'y')
+  const width = numericAttribute(attributes, 'width')
+  const height = numericAttribute(attributes, 'height')
+  return x === undefined || y === undefined || width === undefined || height === undefined
+    ? undefined
+    : { x, y, width, height }
+}
+
+function shapeBounds(xml: string, elementId: string): DiagramBounds | undefined {
+  const block = diBlockPattern('BPMNShape', elementId).exec(xml)?.[0]
+  const attributes = block?.match(/<dc:Bounds\b([^>]*)\/>/)?.[1]
+  return attributes === undefined ? undefined : boundsFromAttributes(attributes)
+}
+
+function coordinate(value: number): string {
+  const rounded = Math.round(value * 1_000) / 1_000
+  return Object.is(rounded, -0) ? '0' : String(rounded)
+}
+
+function replaceNumericAttribute(tag: string, name: string, value: number): string {
+  const pattern = new RegExp(`(\\b${name}=")[^"]*(")`)
+  return pattern.test(tag)
+    ? tag.replace(pattern, `$1${coordinate(value)}$2`)
+    : tag.replace(/\s*\/>$/, ` ${name}="${coordinate(value)}" />`)
+}
+
+function translatedBoundsTag(tag: string, translation: DiagramTranslation): string {
+  const x = numericAttribute(tag, 'x')
+  const y = numericAttribute(tag, 'y')
+  if (x === undefined || y === undefined) return tag
+  return replaceNumericAttribute(
+    replaceNumericAttribute(tag, 'x', x + translation.x),
+    'y',
+    y + translation.y
+  )
+}
+
+function translateShape(xml: string, elementId: string, translation: DiagramTranslation): string {
+  if (translation.x === 0 && translation.y === 0) return xml
+  return xml.replace(diBlockPattern('BPMNShape', elementId), (block) =>
+    block.replace(/<dc:Bounds\b[^>]*\/>/g, (tag) => translatedBoundsTag(tag, translation))
+  )
+}
+
+function translateEdge(
+  xml: string,
+  elementId: string,
+  source: DiagramTranslation,
+  target: DiagramTranslation
+): string {
+  return xml.replace(diBlockPattern('BPMNEdge', elementId), (block) => {
+    const waypointPattern = /<di:waypoint\b[^>]*\/>/g
+    const waypointCount = block.match(waypointPattern)?.length ?? 0
+    let waypointIndex = 0
+    let translated = block.replace(waypointPattern, (tag) => {
+      const ratio = waypointCount <= 1 ? 0 : waypointIndex / (waypointCount - 1)
+      waypointIndex += 1
+      return translatedBoundsTag(tag, {
+        x: source.x + (target.x - source.x) * ratio,
+        y: source.y + (target.y - source.y) * ratio
+      })
+    })
+    const average = {
+      x: (source.x + target.x) / 2,
+      y: (source.y + target.y) / 2
+    }
+    translated = translated.replace(/<bpmndi:BPMNLabel\b[\s\S]*?<\/bpmndi:BPMNLabel>/g, (label) =>
+      label.replace(/<dc:Bounds\b[^>]*\/>/g, (tag) => translatedBoundsTag(tag, average))
+    )
+    return translated
+  })
+}
+
+function nodeBandHeight(
+  nodeIds: readonly string[],
+  nodeBounds: ReadonlyMap<string, DiagramBounds>,
+  minimum: number
+): number {
+  const shapes = nodeIds
+    .map((id) => nodeBounds.get(id))
+    .filter((bounds): bounds is DiagramBounds => Boolean(bounds))
+  if (shapes.length === 0) return minimum
+  const top = Math.min(...shapes.map(({ y }) => y))
+  const bottom = Math.max(...shapes.map(({ y, height }) => y + height))
+  return Math.max(minimum, bottom - top + NODE_VERTICAL_PADDING * 2)
+}
+
+function buildContainerGeometry(xml: string, graph: ProcessGraphModel): ContainerGeometry {
+  const pools = sortedParticipants(graph.participants.filter(({ type }) => type === 'pool'))
+  const lanes = sortedParticipants(graph.participants.filter(({ type }) => type === 'lane'))
+  const poolById = new Map(pools.map((pool) => [pool.id, pool]))
+  const laneById = new Map(lanes.map((lane) => [lane.id, lane]))
+  const nodeBounds = new Map(
+    graph.nodes
+      .map((node) => [node.id, shapeBounds(xml, node.id)] as const)
+      .filter((entry): entry is readonly [string, DiagramBounds] => entry[1] !== undefined)
+  )
+  const content =
+    nodeBounds.size === 0
+      ? contentBounds(xml)
+      : (() => {
+          const shapes = [...nodeBounds.values()]
+          const x = Math.min(...shapes.map((bounds) => bounds.x))
+          const y = Math.min(...shapes.map((bounds) => bounds.y))
+          const right = Math.max(...shapes.map((bounds) => bounds.x + bounds.width))
+          const bottom = Math.max(...shapes.map((bounds) => bounds.y + bounds.height))
+          return { x, y, width: right - x, height: bottom - y }
+        })()
+  const poolX = content.x - 70
+  const poolRight = Math.max(content.x + content.width + 70, poolX + 500)
+  const poolWidth = poolRight - poolX
+  const laneX = content.x - 40
+  const laneWidth = poolRight - laneX
+
+  const childrenByLane = new Map<string, WorkbookParticipant[]>()
+  const rootsByPool = new Map<string, WorkbookParticipant[]>()
+  const unownedRoots: WorkbookParticipant[] = []
+  for (const lane of lanes) {
+    if (lane.parentId && laneById.has(lane.parentId)) {
+      const siblings = childrenByLane.get(lane.parentId) ?? []
+      siblings.push(lane)
+      childrenByLane.set(lane.parentId, siblings)
+      continue
+    }
+    const ownerPool =
+      lane.parentId && poolById.has(lane.parentId)
+        ? lane.parentId
+        : pools.length === 1
+          ? pools[0]!.id
+          : undefined
+    if (ownerPool) {
+      const siblings = rootsByPool.get(ownerPool) ?? []
+      siblings.push(lane)
+      rootsByPool.set(ownerPool, siblings)
+    } else {
+      unownedRoots.push(lane)
+    }
+  }
+  for (const siblings of childrenByLane.values()) siblings.sort(participantOrder)
+  for (const siblings of rootsByPool.values()) siblings.sort(participantOrder)
+  unownedRoots.sort(participantOrder)
+
+  const directLaneNodes = new Map<string, string[]>()
+  const directPoolNodes = new Map<string, string[]>()
+  for (const node of graph.nodes) {
+    const laneId =
+      node.laneId && laneById.has(node.laneId)
+        ? node.laneId
+        : node.participantId && laneById.has(node.participantId)
+          ? node.participantId
+          : undefined
+    if (laneId) {
+      const ids = directLaneNodes.get(laneId) ?? []
+      ids.push(node.id)
+      directLaneNodes.set(laneId, ids)
+      continue
+    }
+    const poolId =
+      node.poolId && poolById.has(node.poolId)
+        ? node.poolId
+        : node.participantId && poolById.has(node.participantId)
+          ? node.participantId
+          : undefined
+    if (poolId) {
+      const ids = directPoolNodes.get(poolId) ?? []
+      ids.push(node.id)
+      directPoolNodes.set(poolId, ids)
+    }
+  }
+
+  const laneHeights = new Map<string, number>()
+  const visiting = new Set<string>()
+  const laneHeight = (laneId: string): number => {
+    const existing = laneHeights.get(laneId)
+    if (existing !== undefined) return existing
+    if (visiting.has(laneId)) return MIN_LANE_HEIGHT
+    visiting.add(laneId)
+    const children = childrenByLane.get(laneId) ?? []
+    const direct = directLaneNodes.get(laneId) ?? []
+    const directHeight =
+      direct.length > 0
+        ? nodeBandHeight(direct, nodeBounds, MIN_LANE_HEIGHT)
+        : children.length === 0
+          ? MIN_LANE_HEIGHT
+          : 0
+    const height = Math.max(
+      MIN_LANE_HEIGHT,
+      directHeight + children.reduce((sum, child) => sum + laneHeight(child.id), 0)
+    )
+    visiting.delete(laneId)
+    laneHeights.set(laneId, height)
+    return height
+  }
+  for (const lane of lanes) laneHeight(lane.id)
+
+  const bounds = new Map<string, DiagramBounds>()
+  const nodeTranslations = new Map<string, DiagramTranslation>()
+  const placeNodes = (nodeIds: readonly string[], band: DiagramBounds): void => {
+    const shapes = nodeIds
+      .map((id) => ({ id, bounds: nodeBounds.get(id) }))
+      .filter(
+        (entry): entry is { readonly id: string; readonly bounds: DiagramBounds } =>
+          entry.bounds !== undefined
+      )
+    if (shapes.length === 0) return
+    const top = Math.min(...shapes.map(({ bounds: shape }) => shape.y))
+    const bottom = Math.max(...shapes.map(({ bounds: shape }) => shape.y + shape.height))
+    const translation = {
+      x: 0,
+      y: band.y + (band.height - (bottom - top)) / 2 - top
+    }
+    for (const { id } of shapes) nodeTranslations.set(id, translation)
+  }
+  const placeLane = (lane: WorkbookParticipant, y: number): number => {
+    const height = laneHeight(lane.id)
+    const laneBounds = { x: laneX, y, width: laneWidth, height }
+    bounds.set(lane.id, laneBounds)
+    const direct = directLaneNodes.get(lane.id) ?? []
+    const children = childrenByLane.get(lane.id) ?? []
+    const directHeight =
+      direct.length > 0
+        ? nodeBandHeight(direct, nodeBounds, MIN_LANE_HEIGHT)
+        : children.length === 0
+          ? height
+          : 0
+    if (directHeight > 0) {
+      placeNodes(direct, { ...laneBounds, height: directHeight })
+    }
+    let childY = y + directHeight
+    for (const child of children) {
+      childY = placeLane(child, childY)
+    }
+    return y + height
+  }
+
+  let cursorY = content.y - 30
+  for (const pool of pools) {
+    const roots = rootsByPool.get(pool.id) ?? []
+    const direct = directPoolNodes.get(pool.id) ?? []
+    const directHeight =
+      direct.length > 0
+        ? nodeBandHeight(direct, nodeBounds, MIN_POOL_HEIGHT)
+        : roots.length === 0
+          ? MIN_POOL_HEIGHT
+          : 0
+    const height = Math.max(
+      MIN_POOL_HEIGHT,
+      directHeight + roots.reduce((sum, lane) => sum + laneHeight(lane.id), 0)
+    )
+    const poolBounds = { x: poolX, y: cursorY, width: poolWidth, height }
+    bounds.set(pool.id, poolBounds)
+    if (directHeight > 0) {
+      placeNodes(direct, {
+        x: laneX,
+        y: cursorY,
+        width: laneWidth,
+        height: directHeight
+      })
+    }
+    let laneY = cursorY + directHeight
+    for (const lane of roots) laneY = placeLane(lane, laneY)
+    cursorY += height + POOL_GAP
+  }
+
+  if (pools.length > 0 && unownedRoots.length > 0) cursorY += POOL_GAP
+  for (const lane of unownedRoots) {
+    cursorY = placeLane(lane, cursorY) + POOL_GAP
+  }
+  // Invalid/cyclic participant input is rejected by validation, but allocating
+  // every remaining lane keeps this boundary deterministic and finite.
+  for (const lane of lanes) {
+    if (bounds.has(lane.id)) continue
+    cursorY = placeLane(lane, cursorY) + POOL_GAP
+  }
+
+  return {
+    bounds,
+    nodeTranslations
+  }
+}
+
+function setContainerBounds(
+  xml: string,
+  elementId: string,
+  bounds: DiagramBounds
+): { readonly xml: string; readonly found: boolean } {
+  let found = false
+  const next = xml.replace(diBlockPattern('BPMNShape', elementId), (block) => {
+    found = true
+    let updated = block.replace(
+      /<dc:Bounds\b[^>]*\/>/,
+      `<dc:Bounds x="${coordinate(bounds.x)}" y="${coordinate(bounds.y)}" width="${coordinate(bounds.width)}" height="${coordinate(bounds.height)}" />`
+    )
+    updated = updated.replace(/^<bpmndi:BPMNShape\b[^>]*>/, (tag) =>
+      /\bisHorizontal=/.test(tag)
+        ? tag.replace(/\bisHorizontal="[^"]*"/, 'isHorizontal="true"')
+        : tag.replace(/>$/, ' isHorizontal="true">')
+    )
+    return updated
+  })
+  return { xml: next, found }
+}
+
+function insertContainerShapes(xml: string, graph: ProcessGraphModel, additions: string): string {
+  if (!additions) return xml
+  const planePattern = /<bpmndi:BPMNPlane\b([^>]*)>[\s\S]*?<\/bpmndi:BPMNPlane>/g
+  const planeCount = [...xml.matchAll(planePattern)].length
+  const processId = xmlAttribute(graph.process.id)
+  const collaborationId = `Collaboration_${stableHash(graph.process.id).slice(0, 10)}`
+  let inserted = false
+  return xml.replace(planePattern, (block, attributes: string) => {
+    const target = attributes.match(/\bbpmnElement="([^"]*)"/)?.[1]
+    if (inserted || (!(target === processId || target === collaborationId) && planeCount !== 1)) {
+      return block
+    }
+    inserted = true
+    let updated = block
+    if (graph.participants.some(({ type }) => type === 'pool')) {
+      updated = updated.replace(/^<bpmndi:BPMNPlane\b[^>]*>/, (tag) =>
+        /\bbpmnElement=/.test(tag)
+          ? tag.replace(/\bbpmnElement="[^"]*"/, `bpmnElement="${collaborationId}"`)
+          : tag.replace(/>$/, ` bpmnElement="${collaborationId}">`)
+      )
+    }
+    return updated.replace(/^<bpmndi:BPMNPlane\b[^>]*>/, (tag) => `${tag}\n${additions}`)
+  })
+}
+
 /**
  * bpmn-auto-layout deliberately lays out flow nodes only. Spreadsheet models
  * may also contain pools and lanes, so add deterministic container DI around
  * the generated node bounds before the shared post-layout validation runs.
  */
 function addContainerDi(xml: string, graph: ProcessGraphModel): string {
-  const containers = graph.participants.filter(({ type }) => type === 'pool' || type === 'lane')
+  const containers = sortedParticipants(
+    graph.participants.filter(({ type }) => type === 'pool' || type === 'lane')
+  )
   if (containers.length === 0) return xml
 
-  const content = contentBounds(xml)
+  const geometry = buildContainerGeometry(xml, graph)
+  let nextXml = xml
+  for (const node of graph.nodes) {
+    const translation = geometry.nodeTranslations.get(node.id)
+    if (translation) nextXml = translateShape(nextXml, node.id, translation)
+  }
+  for (const flow of graph.flows) {
+    const source = geometry.nodeTranslations.get(flow.sourceStepId) ?? { x: 0, y: 0 }
+    const target = geometry.nodeTranslations.get(flow.targetStepId) ?? { x: 0, y: 0 }
+    nextXml = translateEdge(nextXml, flow.id, source, target)
+  }
+
   const shape = (id: string, bounds: DiagramBounds): string =>
     [
       `      <bpmndi:BPMNShape id="${xmlAttribute(id)}_di" bpmnElement="${xmlAttribute(id)}" isHorizontal="true">`,
       `        <dc:Bounds x="${bounds.x}" y="${bounds.y}" width="${bounds.width}" height="${bounds.height}" />`,
       '      </bpmndi:BPMNShape>'
     ].join('\n')
-  const laneBounds: DiagramBounds = {
-    x: content.x - 50,
-    y: content.y - 30,
-    width: content.width + 100,
-    height: Math.max(100, content.height + 60)
+  const additions: string[] = []
+  for (const { id } of containers) {
+    const bounds = geometry.bounds.get(id)
+    if (!bounds) continue
+    const updated = setContainerBounds(nextXml, id, bounds)
+    nextXml = updated.xml
+    if (!updated.found) additions.push(shape(id, bounds))
   }
-  const poolBounds: DiagramBounds = {
-    x: laneBounds.x - 30,
-    y: laneBounds.y - 20,
-    width: laneBounds.width + 60,
-    height: laneBounds.height + 40
-  }
-  const additions = containers
-    .filter(({ id }) => !xml.includes(`bpmnElement="${xmlAttribute(id)}"`))
-    .map(({ id, type }) => shape(id, type === 'pool' ? poolBounds : laneBounds))
-    .join('\n')
-  if (!additions) return xml
-
-  const pools = containers.filter(({ type }) => type === 'pool')
-  return xml.replace(/<bpmndi:BPMNPlane\b[^>]*>/, (planeTag) => {
-    const plane =
-      pools.length === 0
-        ? planeTag
-        : planeTag.replace(
-            /\bbpmnElement="[^"]*"/,
-            `bpmnElement="Collaboration_${stableHash(graph.process.id).slice(0, 10)}"`
-          )
-    return `${plane}\n${additions}`
-  })
+  return insertContainerShapes(nextXml, graph, additions.join('\n'))
 }
 
 /**
