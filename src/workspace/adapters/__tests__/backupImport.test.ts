@@ -3,9 +3,10 @@ import { describe, expect, it, vi } from 'vitest'
 import {
   MemoryWorkspaceAdapter,
   WORKSPACE_BACKUP_MANIFEST_PATH,
-  applyWorkspaceBackupImport,
-  inspectWorkspaceBackup,
+  applyWorkspaceBackupImport as applyWorkspaceBackupImportCore,
+  inspectWorkspaceBackup as inspectWorkspaceBackupCore,
   preflightWorkspaceBackupZip,
+  sha256Hex,
   type BackupExportOptions,
   type FileSnapshot,
   type SaveOutcome,
@@ -14,9 +15,52 @@ import {
   type WorkspaceStorageInfo,
   type WriteAtomicOptions
 } from '..'
+import type { ReviewedBpmnIngestionPort } from '../../reviewedBpmn'
+import { validMultiProcessXml } from '../../../validation/__tests__/fixtures'
 
 const text = (value: string) => new TextEncoder().encode(value)
 const decode = (value: Uint8Array) => new TextDecoder().decode(value)
+
+const fakeProcessIdentityInspector = async (xml: string) => ({
+  processIds: [...xml.matchAll(/<(?:\w+:)?process\s+id="([^"]+)"/g)].map(
+    (match) => match[1]
+  )
+})
+
+const fakeReviewedBpmnIngestion: ReviewedBpmnIngestionPort = async (xml) => {
+  const digest = await sha256Hex(text(xml))
+  const reviewDigest = `review-${digest}`
+  return {
+    xml,
+    digest,
+    reviewDigest,
+    validation: {} as never,
+    evidence: { originalDigest: digest, outputDigest: digest, reviewDigest } as never
+  }
+}
+
+async function inspectWorkspaceBackup(
+  ...args: Parameters<typeof inspectWorkspaceBackupCore>
+) {
+  const [adapter, backup, options = {}] = args
+  return inspectWorkspaceBackupCore(adapter, backup, {
+    ...options,
+    processIdentityInspector: fakeProcessIdentityInspector,
+    reviewedBpmnIngestion: fakeReviewedBpmnIngestion
+  })
+}
+
+async function applyWorkspaceBackupImport(
+  adapter: Parameters<typeof applyWorkspaceBackupImportCore>[0],
+  plan: Parameters<typeof applyWorkspaceBackupImportCore>[1],
+  options: Parameters<typeof applyWorkspaceBackupImportCore>[2] = {}
+) {
+  return applyWorkspaceBackupImportCore(adapter, plan, {
+    reviewedDigest: plan.reviewDigest,
+    processIdentityInspector: fakeProcessIdentityInspector,
+    ...options
+  })
+}
 
 async function backupFrom(files: Record<string, string | Uint8Array>): Promise<Blob> {
   const source = new MemoryWorkspaceAdapter({
@@ -194,6 +238,53 @@ describe('bounded workspace backup inspection', () => {
       inspectWorkspaceBackup(new MemoryWorkspaceAdapter(), new Blob([zipSync(archive)]))
     ).rejects.toThrow(/inconsistent/)
   })
+
+  it('runs the production reviewed-localization boundary for every BPMN before planning', async () => {
+    const beforeWrite = vi.fn()
+    const target = new MemoryWorkspaceAdapter({ beforeWrite })
+    const valid = await backupFrom({ 'valid.bpmn': validMultiProcessXml() })
+    const plan = await inspectWorkspaceBackupCore(target, valid, {
+      validationAdapters: [],
+      targetLanguage: 'en'
+    })
+    expect(plan.files[0].reviewedBpmn).toMatchObject({
+      outputDigest: plan.files[0].sha256,
+      processIds: ['Process_1', 'Process_2']
+    })
+    expect(plan.files[0].reviewedBpmn?.evidence.originalDigest).toBe(
+      plan.files[0].archiveSha256
+    )
+
+    const incomplete = await backupFrom({
+      'incomplete.bpmn': validMultiProcessXml().replace(' orbitpm:nameAr="بداية"', '')
+    })
+    await expect(
+      inspectWorkspaceBackupCore(target, incomplete, {
+        validationAdapters: [],
+        targetLanguage: 'en'
+      })
+    ).rejects.toMatchObject({ code: 'integrity-failure' })
+    expect(beforeWrite).not.toHaveBeenCalled()
+  })
+
+  it('reviews BPMN descendants inside the portable metadata namespace too', async () => {
+    const review = vi.fn(fakeReviewedBpmnIngestion)
+    const blob = await backupFrom({
+      'active.bpmn': '<definitions><process id="Active"/></definitions>',
+      '.orbitpm/history/old.bpmn': '<definitions><process id="Historical"/></definitions>'
+    })
+    const plan = await inspectWorkspaceBackupCore(new MemoryWorkspaceAdapter(), blob, {
+      processIdentityInspector: fakeProcessIdentityInspector,
+      reviewedBpmnIngestion: review
+    })
+
+    expect(review).toHaveBeenCalledTimes(2)
+    expect(
+      plan.files
+        .filter((file) => /\.bpmn$/i.test(file.path))
+        .every((file) => Boolean(file.reviewedBpmn))
+    ).toBe(true)
+  })
 })
 
 describe('transactional workspace backup import', () => {
@@ -303,5 +394,98 @@ describe('transactional workspace backup import', () => {
       rollbackErrors: [expect.objectContaining({ code: 'integrity-failure' })]
     })
     expect(decode((await memory.read('a-replaced.bpmn')).bytes)).toBe('changed during rollback')
+  })
+
+  it('requires the exact plan digest and rejects post-review byte tampering before writes', async () => {
+    const beforeWrite = vi.fn()
+    const target = new MemoryWorkspaceAdapter({ beforeWrite })
+    const plan = await inspectWorkspaceBackup(target, await backupFrom({ 'new.txt': 'safe' }))
+
+    await expect(applyWorkspaceBackupImportCore(target, plan)).rejects.toMatchObject({
+      code: 'integrity-failure'
+    })
+    plan.files[0].bytes[0] ^= 0xff
+    await expect(
+      applyWorkspaceBackupImportCore(target, plan, {
+        reviewedDigest: plan.reviewDigest,
+        processIdentityInspector: fakeProcessIdentityInspector
+      })
+    ).rejects.toMatchObject({ code: 'integrity-failure' })
+    expect(beforeWrite).not.toHaveBeenCalled()
+    await expect(target.read('new.txt')).rejects.toMatchObject({ code: 'not-found' })
+  })
+
+  it('rejects reserved custom keep-both destinations before writes', async () => {
+    const beforeWrite = vi.fn()
+    const target = new MemoryWorkspaceAdapter({
+      files: { 'copy.bpmn': 'existing' },
+      beforeWrite
+    })
+    const plan = await inspectWorkspaceBackup(
+      target,
+      await backupFrom({ 'copy.bpmn': '<definitions><process id="Copy"/></definitions>' })
+    )
+
+    await expect(
+      applyWorkspaceBackupImportCore(target, plan, {
+        reviewedDigest: plan.reviewDigest,
+        processIdentityInspector: fakeProcessIdentityInspector,
+        decisions: {
+          'copy.bpmn': {
+            action: 'keep-both',
+            destinationPath: '.ORBITPM/restored.bpmn'
+          }
+        }
+      })
+    ).rejects.toMatchObject({ code: 'integrity-failure' })
+    expect(beforeWrite).not.toHaveBeenCalled()
+    expect(decode((await target.read('copy.bpmn')).bytes)).toBe('existing')
+  })
+
+  it('enforces multipleFiles during inspection and again during apply', async () => {
+    const beforeWrite = vi.fn()
+    const single = new MemoryWorkspaceAdapter({ beforeWrite })
+    single.storage.capabilities.multipleFiles = false
+    await expect(
+      inspectWorkspaceBackup(single, await backupFrom({ 'one.txt': '1', 'two.txt': '2' }))
+    ).rejects.toMatchObject({ code: 'integrity-failure' })
+
+    const changing = new MemoryWorkspaceAdapter({ beforeWrite })
+    const plan = await inspectWorkspaceBackup(
+      changing,
+      await backupFrom({ 'only.txt': 'one' })
+    )
+    changing.storage.capabilities.multipleFiles = false
+    await expect(
+      applyWorkspaceBackupImportCore(changing, plan, {
+        reviewedDigest: plan.reviewDigest,
+        processIdentityInspector: fakeProcessIdentityInspector
+      })
+    ).rejects.toMatchObject({ code: 'integrity-failure' })
+    expect(beforeWrite).not.toHaveBeenCalled()
+  })
+
+  it('rechecks unrelated process identities before creating folders or files', async () => {
+    const beforeWrite = vi.fn()
+    const target = new MemoryWorkspaceAdapter({ beforeWrite })
+    const plan = await inspectWorkspaceBackup(
+      target,
+      await backupFrom({
+        'incoming.bpmn': '<definitions><process id="Incoming"/></definitions>'
+      })
+    )
+
+    target.replaceExternally(
+      'unrelated.bpmn',
+      '<definitions><process id="Unrelated"/></definitions>'
+    )
+    await expect(
+      applyWorkspaceBackupImportCore(target, plan, {
+        reviewedDigest: plan.reviewDigest,
+        processIdentityInspector: fakeProcessIdentityInspector
+      })
+    ).rejects.toMatchObject({ code: 'integrity-failure' })
+    await expect(target.read('incoming.bpmn')).rejects.toMatchObject({ code: 'not-found' })
+    expect(beforeWrite).not.toHaveBeenCalled()
   })
 })

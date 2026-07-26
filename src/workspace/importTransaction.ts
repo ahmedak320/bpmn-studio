@@ -8,6 +8,11 @@ import {
   type ArisConversionReportDownload
 } from '../library/apcImport'
 import type { LibraryImportResult, SkipReason as LibrarySkipReason } from '../library/zipImport'
+import type {
+  LocalizationResources,
+  ReviewedXmlIngestionEvidence,
+  ReviewedXmlIngestionReviewer
+} from '../localization'
 import { deriveFileBaseName, sanitizeFolderName } from '../editor/newProcessDoc'
 import {
   evaluateValidationPolicy,
@@ -25,6 +30,7 @@ import {
   equalHash,
   joinWorkspacePath,
   normalizeWorkspacePath,
+  sealWorkspaceBackupImportPlan,
   sha256Hex,
   workspaceParentPath,
   workspacePathName,
@@ -36,9 +42,25 @@ import {
   type WorkspaceBackupImportOutcome,
   type WorkspaceBackupImportPlan,
   type WorkspaceBackupManifest,
-  type WorkspaceFailure
+  type WorkspaceFailure,
+  type WorkspaceProcessIdentityInspector,
+  type WorkspaceProcessIdentitySnapshotEntry
 } from './adapters'
 import { looksLikeBpmnXml } from './importDrop'
+import {
+  assertNonReservedImportPath,
+  digestProcessIdentitySnapshot,
+  normalizeProcessIdentitySnapshot,
+  scanWorkspaceProcessIdentities
+} from './processIdentity'
+import {
+  ReviewedBpmnBoundaryError,
+  defaultLocalizationResources,
+  localizationSourceForImport,
+  secureReviewedBpmnIngestion,
+  type CompletedReviewedBpmnIngestion,
+  type ReviewedBpmnIngestionPort
+} from './reviewedBpmn'
 
 const encoder = new TextEncoder()
 
@@ -138,6 +160,9 @@ export type WorkspaceImportSkipReason =
   | 'aml-conversion-failed'
   | 'process-id-collision'
   | 'process-identity-changed'
+  | 'localization-review-required'
+  | 'localization-review-cancelled'
+  | 'localization-invalid'
   | 'destination-parent-file'
   | `library-${LibrarySkipReason}`
 
@@ -167,6 +192,8 @@ export interface WorkspaceImportArtifact {
    */
   readonly replacesProcessIds: readonly string[]
   readonly validation: ValidationSummary
+  readonly localizationReviewDigest: string
+  readonly localizationEvidence: ReviewedXmlIngestionEvidence
 }
 
 export interface WorkspaceImportCollision {
@@ -203,6 +230,7 @@ export interface WorkspaceImportPlan {
   readonly createdAt: string
   readonly workspaceId: string
   readonly workspaceMode: WorkspaceAdapter['mode']
+  readonly workspaceMultipleFiles: boolean
   readonly status: 'ready' | 'blocked'
   readonly targetFolder: string
   readonly artifacts: readonly WorkspaceImportArtifact[]
@@ -212,6 +240,8 @@ export interface WorkspaceImportPlan {
   readonly warnings: readonly WorkspaceImportWarning[]
   readonly arisReports: readonly WorkspaceImportArisEvidence[]
   readonly summary: WorkspaceImportReviewSummary
+  readonly processIdentitySnapshot: readonly WorkspaceProcessIdentitySnapshotEntry[]
+  readonly processIdentityDigest: string
   readonly reviewDigest: string
 }
 
@@ -280,6 +310,10 @@ export interface PrepareWorkspaceImportOptions {
   readonly existingProcessIndex?: ReadonlyMap<string, { readonly relPath: string }>
   readonly validationAdapters?: readonly BpmnValidationAdapter[]
   readonly bpmnPreparer?: BpmnImportPreparer
+  readonly localizationResources?: LocalizationResources
+  readonly localizationReview?: ReviewedXmlIngestionReviewer
+  readonly reviewedBpmnIngestion?: ReviewedBpmnIngestionPort
+  readonly processIdentityInspector?: WorkspaceProcessIdentityInspector
   readonly amlConverter?: (text: string, options: { lang: 'en' | 'ar' }) => Promise<AmlConversion>
   readonly limits?: WorkspaceImportLimits
   readonly signal?: AbortSignal
@@ -306,6 +340,10 @@ export interface ExecuteConfirmedWorkspaceImportOptions {
   readonly adapter: WorkspaceAdapter
   readonly history?: WorkspaceImportHistory
   readonly signal?: AbortSignal
+  /** Optional caller snapshot; otherwise the adapter is securely rescanned. */
+  readonly currentProcessIndex?: ReadonlyMap<string, { readonly relPath: string }>
+  readonly currentProcessIds?: ReadonlySet<string>
+  readonly processIdentityInspector?: WorkspaceProcessIdentityInspector
   /** App supplies its operation mutex so apply and rollback share one lane. */
   readonly runExclusive?: <T>(operation: () => Promise<T>) => Promise<T>
 }
@@ -397,12 +435,15 @@ interface InspectedCandidate extends Candidate {
 
 interface PreparedCandidate extends InspectedCandidate {
   readonly prepared: PreparedBpmnImport
+  readonly reviewed: CompletedReviewedBpmnIngestion
 }
 
 interface ExistingProcessIdentities {
   readonly ids: ReadonlySet<string>
   /** Normalized paths only. Missing means the caller supplied an ID without a verifiable path. */
   readonly paths: ReadonlyMap<string, string>
+  readonly snapshot: readonly WorkspaceProcessIdentitySnapshotEntry[]
+  readonly digest: string
 }
 
 function resolvedLimits(input: WorkspaceImportLimits = {}): ResolvedWorkspaceImportLimits {
@@ -492,6 +533,24 @@ function validationFailure(summary: ValidationSummary, prefix: string): BpmnPrep
   return new BpmnPreparationFailure(`${prefix}${codes ? `: ${codes}` : ''}`, summary)
 }
 
+function evaluatePreLocalizationImportPolicy(summary: ValidationSummary) {
+  return evaluateValidationPolicy(
+    {
+      ...summary,
+      issues: summary.issues.filter(
+        (issue) =>
+          !(
+            issue.source === 'orbitpm' &&
+            (issue.code.startsWith('orbitpm.bilingual-') ||
+              issue.code === 'orbitpm.active-language' ||
+              issue.code === 'orbitpm.active-projection-mismatch')
+          )
+      )
+    },
+    'commit-import'
+  )
+}
+
 export const secureBpmnImportPreparer: BpmnImportPreparer = Object.freeze({
   async inspect(xml: string, signal?: AbortSignal) {
     throwIfAborted(signal)
@@ -512,7 +571,7 @@ export const secureBpmnImportPreparer: BpmnImportPreparer = Object.freeze({
       requireDi: false
     })
     throwIfAborted(options.signal)
-    const previewPolicy = evaluateValidationPolicy(preview.summary, 'commit-import')
+    const previewPolicy = evaluatePreLocalizationImportPolicy(preview.summary)
     if (!previewPolicy.allowed) {
       throw validationFailure(preview.summary, 'BPMN import validation failed')
     }
@@ -546,7 +605,7 @@ export const secureBpmnImportPreparer: BpmnImportPreparer = Object.freeze({
       requireDi: true
     })
     throwIfAborted(options.signal)
-    const finalPolicy = evaluateValidationPolicy(final.summary, 'commit-import')
+    const finalPolicy = evaluatePreLocalizationImportPolicy(final.summary)
     if (!finalPolicy.allowed || !final.definitions) {
       throw validationFailure(final.summary, 'Prepared BPMN import validation failed')
     }
@@ -661,6 +720,14 @@ async function flattenSources(
     const id = `${source.id}:${ordinal}`
     const pathResult = bpmnDestinationPath(sourcePath)
     const desiredPath = withTargetFolder(pathResult.path, targetFolder)
+    try {
+      assertNonReservedImportPath(desiredPath, 'Workspace import destination')
+    } catch (error) {
+      throw new WorkspaceImportError(
+        'invalid-input',
+        error instanceof Error ? error.message : String(error)
+      )
+    }
     const draft: Candidate = {
       id,
       sourceId: source.id,
@@ -696,6 +763,7 @@ async function flattenSources(
         try {
           addBpmnCandidate(source, 'library', entry.relPath, entry.xml, ordinal)
         } catch (error) {
+          if (error instanceof WorkspaceImportError) throw error
           skippedItems.push(
             skipped(
               source.id,
@@ -800,6 +868,7 @@ async function flattenSources(
       try {
         addBpmnCandidate(source, 'bpmn', sourcePath, source.text, 1)
       } catch (error) {
+        if (error instanceof WorkspaceImportError) throw error
         skippedItems.push(
           skipped(
             source.id,
@@ -831,12 +900,17 @@ function sameStringSet(left: readonly string[], right: readonly string[]): boole
   return left.length === right.length && left.every((value, index) => value === right[index])
 }
 
-function snapshotExistingProcessIdentities(
+async function snapshotExistingProcessIdentities(
   existingProcessIds: ReadonlySet<string> | undefined,
-  existingProcessIndex: ReadonlyMap<string, { readonly relPath: string }> | undefined
-): ExistingProcessIdentities {
+  existingProcessIndex: ReadonlyMap<string, { readonly relPath: string }> | undefined,
+  fallbackSnapshot: readonly WorkspaceProcessIdentitySnapshotEntry[] = []
+): Promise<ExistingProcessIdentities> {
   const ids = new Set(existingProcessIds ?? [])
   const paths = new Map<string, string>()
+  for (const entry of fallbackSnapshot) {
+    ids.add(entry.processId)
+    if (entry.path !== null) paths.set(entry.processId, entry.path)
+  }
   for (const [processId, entry] of existingProcessIndex ?? []) {
     ids.add(processId)
     try {
@@ -846,7 +920,19 @@ function snapshotExistingProcessIdentities(
       // candidates that attempt to reuse it.
     }
   }
-  return { ids, paths }
+  for (const processId of existingProcessIds ?? []) {
+    if (!existingProcessIndex?.has(processId)) paths.delete(processId)
+  }
+  const snapshot = normalizeProcessIdentitySnapshot(
+    new Map([...paths].map(([processId, relPath]) => [processId, { relPath }])),
+    ids
+  )
+  return {
+    ids,
+    paths,
+    snapshot,
+    digest: await digestProcessIdentitySnapshot(snapshot)
+  }
 }
 
 function samePortablePath(left: string, right: string): boolean {
@@ -975,6 +1061,10 @@ async function inspectCandidates(
 async function prepareCandidateClosure(
   candidates: readonly InspectedCandidate[],
   preparer: BpmnImportPreparer,
+  reviewedBpmnIngestion: ReviewedBpmnIngestionPort,
+  localizationResources: LocalizationResources,
+  localizationReview: ReviewedXmlIngestionReviewer | undefined,
+  language: 'en' | 'ar',
   validationAdapters: readonly BpmnValidationAdapter[],
   existingProcessIds: ReadonlySet<string>,
   skippedItems: WorkspaceImportSkippedItem[],
@@ -998,12 +1088,14 @@ async function prepareCandidateClosure(
     const next: PreparedCandidate[] = []
     for (const candidate of active) {
       throwIfAborted(signal)
+      let preparedStructurally = false
       try {
         const result = await preparer.prepare(candidate.xml, {
           knownProcessIds,
           validationAdapters,
           signal
         })
+        preparedStructurally = true
         const processIds = Object.freeze([...new Set(result.processIds)].sort())
         if (!sameStringSet(candidate.processIds ?? [], processIds)) {
           skippedItems.push(
@@ -1017,8 +1109,47 @@ async function prepareCandidateClosure(
           )
           continue
         }
-        const candidateWarnings = result.validation.issues
+        const reviewed = await reviewedBpmnIngestion(result.xml, {
+          source: localizationSourceForImport(candidate.sourceKind),
+          target: language,
+          resources: localizationResources,
+          knownProcessIds: [...knownProcessIds].sort((left, right) =>
+            left.localeCompare(right, 'en')
+          ),
+          validationAdapters,
+          review: localizationReview,
+          signal
+        })
+        throwIfAborted(signal)
+        const reviewedIdentity = await preparer.inspect(reviewed.xml, signal)
+        const reviewedProcessIds = Object.freeze(
+          [...new Set(reviewedIdentity.processIds)].sort((left, right) =>
+            left.localeCompare(right, 'en')
+          )
+        )
+        if (!sameStringSet(processIds, reviewedProcessIds)) {
+          skippedItems.push(
+            skipped(
+              candidate.sourceId,
+              candidate.sourceName,
+              'process-identity-changed',
+              'Reviewed localization changed the document process identity.',
+              candidate.sourcePath
+            )
+          )
+          continue
+        }
+        const candidateWarnings = [...result.validation.issues, ...reviewed.validation.issues]
           .filter((issue) => !issue.blocking)
+          .filter(
+            (issue, index, all) =>
+              all.findIndex(
+                (candidateIssue) =>
+                  candidateIssue.code === issue.code &&
+                  candidateIssue.elementId === issue.elementId &&
+                  candidateIssue.message === issue.message
+              ) === index
+          )
           .map((issue) =>
             Object.freeze({
               code: issue.code,
@@ -1031,8 +1162,9 @@ async function prepareCandidateClosure(
         next.push(
           Object.freeze({
             ...candidate,
-            processIds,
+            processIds: reviewedProcessIds,
             prepared: result,
+            reviewed,
             warnings: Object.freeze([...candidate.warnings, ...candidateWarnings]),
             repairs: Object.freeze([
               ...candidate.repairs,
@@ -1050,11 +1182,22 @@ async function prepareCandidateClosure(
         )
       } catch (error) {
         const failure = error instanceof BpmnPreparationFailure ? error : undefined
+        const reviewFailure = error instanceof ReviewedBpmnBoundaryError ? error : undefined
+        const reviewReason: WorkspaceImportSkipReason =
+          reviewFailure?.code === 'review-required'
+            ? 'localization-review-required'
+            : reviewFailure?.code === 'review-cancelled'
+              ? 'localization-review-cancelled'
+              : failure
+                ? 'invalid-bpmn'
+                : preparedStructurally
+                  ? 'localization-invalid'
+                  : 'invalid-bpmn'
         skippedItems.push(
           skipped(
             candidate.sourceId,
             candidate.sourceName,
-            'invalid-bpmn',
+            reviewReason,
             failure?.message ?? (error instanceof Error ? error.message : String(error)),
             candidate.sourcePath
           )
@@ -1242,7 +1385,7 @@ async function materializeArtifacts(
     claimed.add(pathKey(destinationPath))
     occupied.add(pathKey(destinationPath))
 
-    const bytes = encoder.encode(candidate.prepared.xml)
+    const bytes = encoder.encode(candidate.reviewed.xml)
     if (bytes.byteLength > limits.maxArtifactBytes) {
       throw new WorkspaceImportError(
         'limit-exceeded',
@@ -1257,6 +1400,15 @@ async function materializeArtifacts(
       )
     }
     const sha256 = await sha256Hex(bytes)
+    if (
+      !equalHash(sha256, candidate.reviewed.digest) ||
+      !equalHash(candidate.reviewed.digest, candidate.reviewed.evidence.outputDigest)
+    ) {
+      throw new WorkspaceImportError(
+        'plan-tampered',
+        `Reviewed BPMN artifact "${candidate.id}" has inconsistent localization evidence.`
+      )
+    }
     const artifact: WorkspaceImportArtifact = Object.freeze({
       id: candidate.id,
       sourceId: candidate.sourceId,
@@ -1264,12 +1416,14 @@ async function materializeArtifacts(
       sourceKind: candidate.sourceKind,
       sourcePath: candidate.sourcePath,
       destinationPath,
-      xml: candidate.prepared.xml,
+      xml: candidate.reviewed.xml,
       bytes: copyBytes(bytes),
       sha256,
       processIds: candidate.processIds,
       replacesProcessIds: candidate.replacesProcessIds,
-      validation: candidate.prepared.validation
+      validation: candidate.reviewed.validation,
+      localizationReviewDigest: candidate.reviewed.reviewDigest,
+      localizationEvidence: candidate.reviewed.evidence
     })
     artifacts.push(artifact)
     repairs.push(...candidate.repairs, ...destinationRepairs)
@@ -1306,6 +1460,7 @@ function reviewPayload(plan: Omit<WorkspaceImportPlan, 'id' | 'reviewDigest'>): 
     createdAt: plan.createdAt,
     workspaceId: plan.workspaceId,
     workspaceMode: plan.workspaceMode,
+    workspaceMultipleFiles: plan.workspaceMultipleFiles,
     status: plan.status,
     targetFolder: plan.targetFolder,
     artifacts: plan.artifacts.map((artifact) => ({
@@ -1319,6 +1474,8 @@ function reviewPayload(plan: Omit<WorkspaceImportPlan, 'id' | 'reviewDigest'>): 
       bytes: artifact.bytes.byteLength,
       processIds: artifact.processIds,
       replacesProcessIds: artifact.replacesProcessIds,
+      localizationReviewDigest: artifact.localizationReviewDigest,
+      localizationOutputDigest: artifact.localizationEvidence.outputDigest,
       validationIssues: artifact.validation.issues
     })),
     collisions: plan.collisions.map((collision) => ({
@@ -1333,7 +1490,9 @@ function reviewPayload(plan: Omit<WorkspaceImportPlan, 'id' | 'reviewDigest'>): 
     repairs: plan.repairs,
     warnings: plan.warnings,
     arisReports: plan.arisReports,
-    summary: plan.summary
+    summary: plan.summary,
+    processIdentitySnapshot: plan.processIdentitySnapshot,
+    processIdentityDigest: plan.processIdentityDigest
   }
 }
 
@@ -1350,12 +1509,33 @@ export async function prepareWorkspaceImportPlan(
   assertSourcesWithinLimits(options.sources, limits)
   throwIfAborted(options.signal)
   const targetFolder = normalizeWorkspacePath(options.targetFolder ?? '', { allowRoot: true })
+  try {
+    assertNonReservedImportPath(targetFolder, 'Workspace import target folder')
+  } catch (error) {
+    throw new WorkspaceImportError(
+      'invalid-input',
+      error instanceof Error ? error.message : String(error)
+    )
+  }
   const language = options.language ?? 'en'
   const preparer = options.bpmnPreparer ?? secureBpmnImportPreparer
+  const processIdentityInspector = options.processIdentityInspector ?? preparer.inspect.bind(preparer)
   const validationAdapters = options.validationAdapters ?? getRuntimeValidationAdapters()
-  const existingProcesses = snapshotExistingProcessIdentities(
+  const scannedSnapshot =
+    options.existingProcessIndex === undefined
+      ? await scanWorkspaceProcessIdentities(options.adapter, {
+          inspector: processIdentityInspector,
+          signal: options.signal
+        })
+      : Object.freeze([])
+  const scannedSnapshotDigest =
+    options.existingProcessIndex === undefined
+      ? await digestProcessIdentitySnapshot(scannedSnapshot)
+      : undefined
+  const existingProcesses = await snapshotExistingProcessIdentities(
     options.existingProcessIds,
-    options.existingProcessIndex
+    options.existingProcessIndex,
+    scannedSnapshot
   )
   const flattened = await flattenSources(
     options.sources,
@@ -1385,6 +1565,10 @@ export async function prepareWorkspaceImportPlan(
   const prepared = await prepareCandidateClosure(
     inspected,
     preparer,
+    options.reviewedBpmnIngestion ?? secureReviewedBpmnIngestion,
+    options.localizationResources ?? defaultLocalizationResources(),
+    options.localizationReview,
+    language,
     validationAdapters,
     existingProcesses.ids,
     skippedItems,
@@ -1399,6 +1583,28 @@ export async function prepareWorkspaceImportPlan(
     skippedItems,
     options.signal
   )
+  if (!options.adapter.storage.capabilities.multipleFiles && materialized.artifacts.length > 1) {
+    throw new WorkspaceImportError(
+      'invalid-input',
+      'The selected workspace adapter cannot import multiple files.'
+    )
+  }
+  if (options.existingProcessIndex === undefined) {
+    const currentSnapshot = await scanWorkspaceProcessIdentities(options.adapter, {
+      inspector: processIdentityInspector,
+      signal: options.signal
+    })
+    const currentDigest = await digestProcessIdentitySnapshot(currentSnapshot)
+    if (
+      scannedSnapshotDigest === undefined ||
+      !equalHash(currentDigest, scannedSnapshotDigest)
+    ) {
+      throw new WorkspaceImportError(
+        'workspace-changed',
+        'Workspace process identities changed while the import plan was being prepared.'
+      )
+    }
+  }
   warnings.push(...materialized.warnings)
 
   const status = materialized.artifacts.length > 0 ? 'ready' : 'blocked'
@@ -1418,6 +1624,7 @@ export async function prepareWorkspaceImportPlan(
     createdAt: (options.now ?? (() => new Date()))().toISOString(),
     workspaceId: options.adapter.id,
     workspaceMode: options.adapter.mode,
+    workspaceMultipleFiles: options.adapter.storage.capabilities.multipleFiles,
     status,
     targetFolder,
     artifacts: Object.freeze(materialized.artifacts),
@@ -1426,7 +1633,9 @@ export async function prepareWorkspaceImportPlan(
     repairs: Object.freeze(materialized.repairs),
     warnings: Object.freeze(warnings),
     arisReports: Object.freeze(flattened.arisReports),
-    summary
+    summary,
+    processIdentitySnapshot: existingProcesses.snapshot,
+    processIdentityDigest: existingProcesses.digest
   }
   const reviewDigest = await digestReview(planWithoutDigest)
   return Object.freeze({
@@ -1451,6 +1660,14 @@ function normalizedDecision(
   const destinationPath = normalizeWorkspacePath(
     input.destinationPath ?? collision.suggestedKeepBothPath
   )
+  try {
+    assertNonReservedImportPath(destinationPath, 'Workspace import keep-both destination')
+  } catch (error) {
+    throw new WorkspaceImportError(
+      'invalid-input',
+      error instanceof Error ? error.message : String(error)
+    )
+  }
   return Object.freeze({ action: 'keep-both', destinationPath })
 }
 
@@ -1489,6 +1706,12 @@ export function confirmWorkspaceImportPlan(
       options.collisionDecisions?.[collision.artifactId]
     )
     if (decision.action === 'keep-both') {
+      if (!plan.workspaceMultipleFiles) {
+        throw new WorkspaceImportError(
+          'unresolved-collision',
+          'The selected workspace adapter cannot create a keep-both import file.'
+        )
+      }
       const artifact = artifactsById.get(collision.artifactId)
       if (artifact && artifact.replacesProcessIds.length > 0) {
         throw new WorkspaceImportError(
@@ -1527,6 +1750,17 @@ async function verifyConfirmedPlan(confirmed: ConfirmedWorkspaceImport): Promise
       'The confirmed import plan changed after review.'
     )
   }
+  if (
+    !equalHash(
+      await digestProcessIdentitySnapshot(plan.processIdentitySnapshot),
+      plan.processIdentityDigest
+    )
+  ) {
+    throw new WorkspaceImportError(
+      'plan-tampered',
+      'The reviewed workspace process identity snapshot changed after review.'
+    )
+  }
   for (const artifact of plan.artifacts) {
     if (
       (await sha256Hex(artifact.bytes)) !== artifact.sha256 ||
@@ -1542,6 +1776,15 @@ async function verifyConfirmedPlan(confirmed: ConfirmedWorkspaceImport): Promise
       throw new WorkspaceImportError(
         'plan-tampered',
         `Prepared artifact XML "${artifact.id}" no longer matches its reviewed bytes.`
+      )
+    }
+    if (
+      !equalHash(artifact.sha256, artifact.localizationEvidence.outputDigest) ||
+      artifact.localizationReviewDigest !== artifact.localizationEvidence.reviewDigest
+    ) {
+      throw new WorkspaceImportError(
+        'plan-tampered',
+        `Prepared artifact localization evidence "${artifact.id}" changed after review.`
       )
     }
   }
@@ -1598,7 +1841,7 @@ function backupManifestFor(
   }
 }
 
-function backupPlanFor(plan: WorkspaceImportPlan): WorkspaceBackupImportPlan {
+async function backupPlanFor(plan: WorkspaceImportPlan): Promise<WorkspaceBackupImportPlan> {
   const directories = parentDirectories(
     plan.artifacts.map(({ destinationPath }) => destinationPath)
   )
@@ -1611,22 +1854,37 @@ function backupPlanFor(plan: WorkspaceImportPlan): WorkspaceBackupImportPlan {
     },
     identical: collision.identical
   }))
-  return {
+  return sealWorkspaceBackupImportPlan(
+    {
     manifest: backupManifestFor(plan, directories),
     directories,
     files: plan.artifacts.map((artifact) => ({
       path: artifact.destinationPath,
       bytes: copyBytes(artifact.bytes),
+      archiveSha256: artifact.sha256,
       sha256: artifact.sha256,
-      mimeType: 'application/xml'
+      mimeType: 'application/xml',
+      reviewedBpmn: {
+        reviewDigest: artifact.localizationReviewDigest,
+        outputDigest: artifact.sha256,
+        processIds: artifact.processIds,
+        replacesProcessIds: artifact.replacesProcessIds,
+        evidence: artifact.localizationEvidence
+      }
     })),
     collisions,
     compressedBytes: 0,
     declaredUncompressedBytes: plan.artifacts.reduce(
       (total, artifact) => total + artifact.bytes.byteLength,
       0
-    )
-  }
+    ),
+    workspaceId: plan.workspaceId,
+    workspaceMultipleFiles: plan.workspaceMultipleFiles,
+    processIdentitySnapshot: plan.processIdentitySnapshot,
+    processIdentityDigest: plan.processIdentityDigest
+    },
+    plan.reviewDigest
+  )
 }
 
 function backupDecisionsFor(
@@ -1682,6 +1940,44 @@ export async function executeConfirmedWorkspaceImport(
   }
   await verifyConfirmedPlan(confirmed)
   throwIfAborted(options.signal)
+  if (
+    options.adapter.storage.capabilities.multipleFiles !==
+      confirmed.plan.workspaceMultipleFiles ||
+    (!options.adapter.storage.capabilities.multipleFiles &&
+      confirmed.plan.artifacts.length > 1)
+  ) {
+    throw new WorkspaceImportError(
+      'workspace-changed',
+      'Workspace multi-file capabilities changed after the import review.'
+    )
+  }
+  if (options.currentProcessIndex !== undefined || options.currentProcessIds !== undefined) {
+    const suppliedIdentityDigest = await digestProcessIdentitySnapshot(
+      normalizeProcessIdentitySnapshot(
+        options.currentProcessIndex,
+        options.currentProcessIds
+      )
+    )
+    if (!equalHash(suppliedIdentityDigest, confirmed.plan.processIdentityDigest)) {
+      throw new WorkspaceImportError(
+        'workspace-changed',
+        'The supplied workspace process identities changed after the import review.'
+      )
+    }
+  }
+  const currentIdentityDigest = await digestProcessIdentitySnapshot(
+    await scanWorkspaceProcessIdentities(options.adapter, {
+      inspector: options.processIdentityInspector,
+      signal: options.signal
+    })
+  )
+  if (!equalHash(currentIdentityDigest, confirmed.plan.processIdentityDigest)) {
+    throw new WorkspaceImportError(
+      'workspace-changed',
+      'Workspace process identities changed after the import review.'
+    )
+  }
+  throwIfAborted(options.signal)
   const replaces = confirmed.plan.collisions.filter(
     (collision) => confirmed.collisionDecisions[collision.artifactId]?.action === 'replace'
   )
@@ -1694,8 +1990,12 @@ export async function executeConfirmedWorkspaceImport(
 
   let historyRevisions = 0
   const apply = async (): Promise<WorkspaceBackupImportOutcome> =>
-    applyWorkspaceBackupImport(options.adapter, backupPlanFor(confirmed.plan), {
+    applyWorkspaceBackupImport(options.adapter, await backupPlanFor(confirmed.plan), {
       decisions: backupDecisionsFor(confirmed),
+      reviewedDigest: confirmed.reviewedDigest,
+      currentProcessIndex: options.currentProcessIndex,
+      currentProcessIds: options.currentProcessIds,
+      processIdentityInspector: options.processIdentityInspector,
       signal: options.signal,
       beforeOverwrite: async (path, existing) => {
         if (!options.history) return

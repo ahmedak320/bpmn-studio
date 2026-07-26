@@ -1,3 +1,5 @@
+import type { ReviewedXmlIngestionEvidence } from '../../localization'
+
 export type WorkspaceMode = 'directory' | 'opfs' | 'single-file'
 
 export type WorkspaceEntryKind = 'file' | 'directory'
@@ -203,11 +205,33 @@ export interface WorkspaceBackupManifest {
  * overwriting files merely because an archive was opened.
  */
 export interface WorkspaceBackupImportCandidate {
-  path: string
-  bytes: Uint8Array
-  sha256: string
-  modifiedAt?: number
-  mimeType?: string
+  readonly path: string
+  readonly bytes: Uint8Array
+  /** Hash of the exact archive bytes before any reviewed localization edits. */
+  readonly archiveSha256: string
+  /** Hash of the exact reviewed bytes that may be written. */
+  readonly sha256: string
+  readonly modifiedAt?: number
+  readonly mimeType?: string
+  /** Present for every `.bpmn` candidate and forbidden for other files. */
+  readonly reviewedBpmn?: WorkspaceBackupReviewedBpmn
+}
+
+export interface WorkspaceBackupReviewedBpmn {
+  readonly reviewDigest: string
+  readonly outputDigest: string
+  readonly processIds: readonly string[]
+  readonly replacesProcessIds: readonly string[]
+  readonly evidence: ReviewedXmlIngestionEvidence
+}
+
+export interface WorkspaceProcessIdentitySnapshotEntry {
+  readonly processId: string
+  /**
+   * Null exists only for the legacy Set-only compatibility input. Such an
+   * identity cannot be verified for execution and therefore fails closed.
+   */
+  readonly path: string | null
 }
 
 export interface WorkspaceBackupCollision {
@@ -218,12 +242,20 @@ export interface WorkspaceBackupCollision {
 }
 
 export interface WorkspaceBackupImportPlan {
-  manifest: WorkspaceBackupManifest
-  directories: string[]
-  files: WorkspaceBackupImportCandidate[]
-  collisions: WorkspaceBackupCollision[]
-  compressedBytes: number
-  declaredUncompressedBytes: number
+  readonly manifest: WorkspaceBackupManifest
+  readonly directories: readonly string[]
+  readonly files: readonly WorkspaceBackupImportCandidate[]
+  readonly collisions: readonly WorkspaceBackupCollision[]
+  readonly compressedBytes: number
+  readonly declaredUncompressedBytes: number
+  readonly workspaceId: string
+  readonly workspaceMultipleFiles: boolean
+  readonly processIdentitySnapshot: readonly WorkspaceProcessIdentitySnapshotEntry[]
+  readonly processIdentityDigest: string
+  /** Digest of exact candidate bytes, evidence, collisions and identity state. */
+  readonly integrityDigest: string
+  /** Digest the human-reviewed apply action must echo. */
+  readonly reviewDigest: string
 }
 
 export type WorkspaceBackupCollisionDecision =
@@ -231,6 +263,12 @@ export type WorkspaceBackupCollisionDecision =
 
 export interface WorkspaceBackupImportOptions {
   decisions?: Readonly<Record<string, WorkspaceBackupCollisionDecision>>
+  /** Must echo the exact immutable plan shown before any writes are allowed. */
+  reviewedDigest?: string
+  /** Optional caller snapshot; otherwise the adapter is securely rescanned. */
+  currentProcessIndex?: ReadonlyMap<string, { readonly relPath: string }>
+  currentProcessIds?: ReadonlySet<string>
+  processIdentityInspector?: WorkspaceProcessIdentityInspector
   signal?: AbortSignal
   /**
    * Called immediately before an existing file is overwritten. App integration
@@ -238,6 +276,11 @@ export interface WorkspaceBackupImportOptions {
    */
   beforeOverwrite?: (path: string, existing: FileSnapshot) => Promise<void>
 }
+
+export type WorkspaceProcessIdentityInspector = (
+  xml: string,
+  signal?: AbortSignal
+) => Promise<{ readonly processIds: readonly string[] }>
 
 export interface WorkspaceBackupAppliedFile {
   sourcePath: string

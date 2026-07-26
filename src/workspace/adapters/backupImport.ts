@@ -1,4 +1,27 @@
 import { unzip } from 'fflate'
+import {
+  LocalizationSource,
+  type LanguageCode,
+  type LocalizationResources,
+  type ReviewedXmlIngestionReviewer
+} from '../../localization'
+import {
+  getRuntimeValidationAdapters,
+  type BpmnValidationAdapter
+} from '../../validation'
+import {
+  assertNonReservedImportPath,
+  digestProcessIdentitySnapshot,
+  isReservedOrbitPmPath,
+  normalizeProcessIdentitySnapshot,
+  scanWorkspaceProcessIdentities,
+  secureWorkspaceProcessIdentityInspector
+} from '../processIdentity'
+import {
+  defaultLocalizationResources,
+  secureReviewedBpmnIngestion,
+  type ReviewedBpmnIngestionPort
+} from '../reviewedBpmn'
 import { copyBytes, equalHash, sha256Hex } from './hash'
 import {
   joinWorkspacePath,
@@ -13,10 +36,13 @@ import type {
   WorkspaceBackupAppliedFile,
   WorkspaceBackupCollision,
   WorkspaceBackupCollisionDecision,
+  WorkspaceBackupImportCandidate,
   WorkspaceBackupImportOptions,
   WorkspaceBackupImportOutcome,
   WorkspaceBackupImportPlan,
-  WorkspaceBackupManifest
+  WorkspaceBackupManifest,
+  WorkspaceProcessIdentityInspector,
+  WorkspaceProcessIdentitySnapshotEntry
 } from './types'
 import { WorkspaceOperationError, workspaceFailure } from './workspaceError'
 
@@ -41,6 +67,13 @@ export interface BackupImportLimits {
 export interface InspectWorkspaceBackupOptions {
   signal?: AbortSignal
   limits?: BackupImportLimits
+  targetLanguage?: LanguageCode
+  localizationResources?: LocalizationResources
+  localizationReview?: ReviewedXmlIngestionReviewer
+  reviewedBpmnIngestion?: ReviewedBpmnIngestionPort
+  validationAdapters?: readonly BpmnValidationAdapter[]
+  processIdentityInspector?: WorkspaceProcessIdentityInspector
+  isCurrent?: () => boolean | Promise<boolean>
 }
 
 export interface ZipPreflightEntry {
@@ -76,6 +109,10 @@ const decoder = new TextDecoder('utf-8', { fatal: true })
 const ZIP_EOCD_SIGNATURE = 0x06054b50
 const ZIP_CENTRAL_SIGNATURE = 0x02014b50
 
+function portablePathKey(path: string): string {
+  return normalizeWorkspacePath(path).normalize('NFC').toLocaleLowerCase('en-US')
+}
+
 function resolvedLimits(input: BackupImportLimits = {}): ResolvedLimits {
   const limits = { ...DEFAULT_BACKUP_IMPORT_LIMITS, ...input }
   for (const [name, value] of Object.entries(limits)) {
@@ -105,6 +142,103 @@ function invalidBackup(message: string, path?: string): WorkspaceOperationError 
     operation: 'open',
     path,
     message
+  })
+}
+
+type UnsealedWorkspaceBackupImportPlan = Omit<
+  WorkspaceBackupImportPlan,
+  'integrityDigest' | 'reviewDigest'
+>
+
+function backupPlanIntegrityPayload(plan: UnsealedWorkspaceBackupImportPlan): unknown {
+  return {
+    manifest: plan.manifest,
+    directories: plan.directories,
+    files: plan.files.map((file) => ({
+      path: file.path,
+      archiveSha256: file.archiveSha256,
+      sha256: file.sha256,
+      size: file.bytes.byteLength,
+      modifiedAt: file.modifiedAt ?? null,
+      mimeType: file.mimeType ?? null,
+      reviewedBpmn: file.reviewedBpmn
+        ? {
+            reviewDigest: file.reviewedBpmn.reviewDigest,
+            outputDigest: file.reviewedBpmn.outputDigest,
+            processIds: file.reviewedBpmn.processIds,
+            replacesProcessIds: file.reviewedBpmn.replacesProcessIds,
+            evidence: file.reviewedBpmn.evidence
+          }
+        : null
+    })),
+    collisions: plan.collisions.map((collision) => ({
+      path: collision.path,
+      incomingHash: collision.incomingHash,
+      existingHash: collision.existing.hash,
+      existingSize: collision.existing.bytes.byteLength,
+      identical: collision.identical
+    })),
+    compressedBytes: plan.compressedBytes,
+    declaredUncompressedBytes: plan.declaredUncompressedBytes,
+    workspaceId: plan.workspaceId,
+    workspaceMultipleFiles: plan.workspaceMultipleFiles,
+    processIdentitySnapshot: plan.processIdentitySnapshot,
+    processIdentityDigest: plan.processIdentityDigest
+  }
+}
+
+async function digestWorkspaceBackupImportPlan(
+  plan: UnsealedWorkspaceBackupImportPlan
+): Promise<string> {
+  return sha256Hex(new TextEncoder().encode(JSON.stringify(backupPlanIntegrityPayload(plan))))
+}
+
+export async function sealWorkspaceBackupImportPlan(
+  plan: UnsealedWorkspaceBackupImportPlan,
+  reviewedDigest?: string
+): Promise<WorkspaceBackupImportPlan> {
+  const sealedPlan: UnsealedWorkspaceBackupImportPlan = {
+    ...plan,
+    directories: Object.freeze([...plan.directories]),
+    files: Object.freeze(
+      plan.files.map((file) =>
+        Object.freeze({
+          ...file,
+          bytes: copyBytes(file.bytes),
+          ...(file.reviewedBpmn
+            ? {
+                reviewedBpmn: Object.freeze({
+                  ...file.reviewedBpmn,
+                  processIds: Object.freeze([...file.reviewedBpmn.processIds]),
+                  replacesProcessIds: Object.freeze([
+                    ...file.reviewedBpmn.replacesProcessIds
+                  ])
+                })
+              }
+            : {})
+        })
+      )
+    ),
+    collisions: Object.freeze(
+      plan.collisions.map((collision) =>
+        Object.freeze({
+          ...collision,
+          existing: Object.freeze({
+            ...collision.existing,
+            bytes: copyBytes(collision.existing.bytes)
+          })
+        })
+      )
+    ),
+    processIdentitySnapshot: Object.freeze(
+      plan.processIdentitySnapshot.map((entry) => Object.freeze({ ...entry }))
+    )
+  }
+  const integrityDigest = await digestWorkspaceBackupImportPlan(sealedPlan)
+  return Object.freeze({
+    ...sealedPlan,
+    integrityDigest,
+    reviewDigest: reviewedDigest ?? integrityDigest
   })
 }
 
@@ -316,6 +450,17 @@ export async function inspectWorkspaceBackup(
   const manifestBytes = extracted[WORKSPACE_BACKUP_MANIFEST_PATH]
   if (!manifestBytes) throw invalidBackup('Backup manifest was not expanded.')
   const manifest = parseManifest(manifestBytes)
+  if (!adapter.storage.capabilities.multipleFiles && manifest.files.length > 1) {
+    throw invalidBackup('The selected workspace adapter cannot restore multiple files.')
+  }
+  const processIdentityInspector =
+    options.processIdentityInspector ?? secureWorkspaceProcessIdentityInspector
+  const processIdentitySnapshot = await scanWorkspaceProcessIdentities(adapter, {
+    inspector: processIdentityInspector,
+    signal: options.signal
+  })
+  const processIdentityDigest =
+    await digestProcessIdentitySnapshot(processIdentitySnapshot)
 
   const directories = [
     ...new Set(manifest.directories.map((path) => normalizeWorkspacePath(path)))
@@ -325,7 +470,7 @@ export async function inspectWorkspaceBackup(
   }
 
   const archiveFiles = new Set<string>()
-  const files = []
+  const files: WorkspaceBackupImportCandidate[] = []
   const filePaths = new Set<string>()
   for (const item of manifest.files) {
     throwIfAborted(options.signal)
@@ -357,6 +502,7 @@ export async function inspectWorkspaceBackup(
     files.push({
       path,
       bytes: copyBytes(bytes),
+      archiveSha256: actualHash,
       sha256: actualHash,
       modifiedAt: item.modifiedAt,
       mimeType: item.mimeType
@@ -367,6 +513,159 @@ export async function inspectWorkspaceBackup(
     if (entry.directory || entry.name === WORKSPACE_BACKUP_MANIFEST_PATH) continue
     if (!archiveFiles.has(entry.name)) {
       throw invalidBackup(`Backup contains unmanifested file "${entry.name}".`)
+    }
+  }
+
+  const incomingIdentityByPath = new Map<string, readonly string[]>()
+  const incomingIdentityOwners = new Map<string, string>()
+  for (const file of files) {
+    if (!/\.bpmn$/i.test(file.path)) continue
+    let xml: string
+    try {
+      xml = decoder.decode(file.bytes)
+    } catch {
+      throw invalidBackup(`Backup BPMN file "${file.path}" is not valid UTF-8.`, file.path)
+    }
+    let inspected: { readonly processIds: readonly string[] }
+    try {
+      inspected = await processIdentityInspector(xml, options.signal)
+    } catch (error) {
+      throw invalidBackup(
+        `Backup BPMN file "${file.path}" failed secure identity inspection: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+        file.path
+      )
+    }
+    const processIds = Object.freeze(
+      [...new Set(inspected.processIds.map((processId) => processId.trim()).filter(Boolean))].sort(
+        (left, right) => left.localeCompare(right, 'en')
+      )
+    )
+    incomingIdentityByPath.set(file.path, processIds)
+    if (isReservedOrbitPmPath(file.path)) continue
+    for (const processId of processIds) {
+      const previous = incomingIdentityOwners.get(processId)
+      if (previous && previous !== file.path) {
+        throw invalidBackup(
+          `Backup process id "${processId}" is duplicated by "${previous}" and "${file.path}".`,
+          file.path
+        )
+      }
+      incomingIdentityOwners.set(processId, file.path)
+    }
+  }
+
+  const currentIdentityById = new Map(
+    processIdentitySnapshot
+      .filter(
+        (
+          entry
+        ): entry is WorkspaceProcessIdentitySnapshotEntry & { readonly path: string } =>
+          entry.path !== null
+      )
+      .map((entry) => [entry.processId, entry.path])
+  )
+  const knownProcessIds = Object.freeze(
+    [...new Set([...currentIdentityById.keys(), ...incomingIdentityOwners.keys()])].sort(
+      (left, right) => left.localeCompare(right, 'en')
+    )
+  )
+  const reviewedBpmnIngestion =
+    options.reviewedBpmnIngestion ?? secureReviewedBpmnIngestion
+  const validationAdapters =
+    options.validationAdapters ?? getRuntimeValidationAdapters()
+  for (let index = 0; index < files.length; index += 1) {
+    const file = files[index]
+    const inspectedProcessIds = incomingIdentityByPath.get(file.path)
+    if (!inspectedProcessIds) continue
+    let xml: string
+    try {
+      xml = decoder.decode(file.bytes)
+    } catch {
+      throw invalidBackup(`Backup BPMN file "${file.path}" is not valid UTF-8.`, file.path)
+    }
+    let reviewed
+    try {
+      reviewed = await reviewedBpmnIngestion(xml, {
+        source: LocalizationSource.Backup,
+        target: options.targetLanguage ?? 'en',
+        resources: options.localizationResources ?? defaultLocalizationResources(),
+        knownProcessIds,
+        validationAdapters,
+        review: options.localizationReview,
+        signal: options.signal,
+        isCurrent: options.isCurrent
+      })
+    } catch (error) {
+      throw invalidBackup(
+        `Backup BPMN file "${file.path}" did not complete reviewed localization: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+        file.path
+      )
+    }
+    const reviewedBytes = new TextEncoder().encode(reviewed.xml)
+    const reviewedDigest = await sha256Hex(reviewedBytes)
+    if (
+      !equalHash(reviewedDigest, reviewed.digest) ||
+      !equalHash(reviewedDigest, reviewed.evidence.outputDigest)
+    ) {
+      throw invalidBackup(
+        `Backup BPMN file "${file.path}" returned inconsistent reviewed bytes.`,
+        file.path
+      )
+    }
+    let reviewedIdentity
+    try {
+      reviewedIdentity = await processIdentityInspector(reviewed.xml, options.signal)
+    } catch (error) {
+      throw invalidBackup(
+        `Reviewed backup BPMN file "${file.path}" failed identity inspection: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+        file.path
+      )
+    }
+    const reviewedProcessIds = Object.freeze(
+      [...new Set(reviewedIdentity.processIds)].sort((left, right) =>
+        left.localeCompare(right, 'en')
+      )
+    )
+    if (
+      reviewedProcessIds.length !== inspectedProcessIds.length ||
+      reviewedProcessIds.some((processId, ordinal) => processId !== inspectedProcessIds[ordinal])
+    ) {
+      throw invalidBackup(
+        `Reviewed localization changed process identity in "${file.path}".`,
+        file.path
+      )
+    }
+    const replacesProcessIds: string[] = []
+    if (!isReservedOrbitPmPath(file.path)) {
+      for (const processId of reviewedProcessIds) {
+        const existingPath = currentIdentityById.get(processId)
+        if (!existingPath) continue
+        if (portablePathKey(existingPath) !== portablePathKey(file.path)) {
+          throw invalidBackup(
+            `Backup process id "${processId}" belongs to "${existingPath}", not "${file.path}".`,
+            file.path
+          )
+        }
+        replacesProcessIds.push(processId)
+      }
+    }
+    files[index] = {
+      ...file,
+      bytes: copyBytes(reviewedBytes),
+      sha256: reviewedDigest,
+      reviewedBpmn: {
+        reviewDigest: reviewed.reviewDigest,
+        outputDigest: reviewedDigest,
+        processIds: reviewedProcessIds,
+        replacesProcessIds: Object.freeze(replacesProcessIds),
+        evidence: reviewed.evidence
+      }
     }
   }
 
@@ -385,14 +684,30 @@ export async function inspectWorkspaceBackup(
       identical: equalHash(file.sha256, existing.hash)
     })
   }
-  return {
+  const finalProcessIdentitySnapshot = await scanWorkspaceProcessIdentities(adapter, {
+    inspector: processIdentityInspector,
+    signal: options.signal
+  })
+  if (
+    !equalHash(
+      await digestProcessIdentitySnapshot(finalProcessIdentitySnapshot),
+      processIdentityDigest
+    )
+  ) {
+    throw invalidBackup('Workspace process identities changed during backup inspection.')
+  }
+  return sealWorkspaceBackupImportPlan({
     manifest,
     directories,
     files,
     collisions,
     compressedBytes: compressed.byteLength,
-    declaredUncompressedBytes: preflight.declaredUncompressedBytes
-  }
+    declaredUncompressedBytes: preflight.declaredUncompressedBytes,
+    workspaceId: adapter.id,
+    workspaceMultipleFiles: adapter.storage.capabilities.multipleFiles,
+    processIdentitySnapshot,
+    processIdentityDigest
+  })
 }
 
 function candidateCopyPath(path: string, occupied: Set<string>): string {
@@ -416,6 +731,79 @@ function candidateCopyPath(path: string, occupied: Set<string>): string {
     path,
     message: `Could not allocate a collision-free restored filename for "${path}".`
   })
+}
+
+async function verifyWorkspaceBackupImportPlan(
+  adapter: WorkspaceAdapter,
+  plan: WorkspaceBackupImportPlan
+): Promise<void> {
+  if (
+    adapter.id !== plan.workspaceId ||
+    adapter.storage.capabilities.multipleFiles !== plan.workspaceMultipleFiles
+  ) {
+    throw invalidBackup('The active workspace changed after backup review.')
+  }
+  if (!adapter.storage.capabilities.multipleFiles && plan.files.length > 1) {
+    throw invalidBackup('The selected workspace adapter cannot restore multiple files.')
+  }
+  if (
+    !equalHash(
+      await digestProcessIdentitySnapshot(plan.processIdentitySnapshot),
+      plan.processIdentityDigest
+    )
+  ) {
+    throw invalidBackup('The backup process identity snapshot changed after review.')
+  }
+  const { integrityDigest, reviewDigest: _reviewDigest, ...unsealed } = plan
+  if (!equalHash(await digestWorkspaceBackupImportPlan(unsealed), integrityDigest)) {
+    throw invalidBackup('The backup import plan changed after review.')
+  }
+  const manifestByPath = new Map(plan.manifest.files.map((file) => [file.path, file]))
+  const seenPaths = new Set<string>()
+  for (const file of plan.files) {
+    if (seenPaths.has(file.path)) {
+      throw invalidBackup(`The backup import plan duplicates "${file.path}".`, file.path)
+    }
+    seenPaths.add(file.path)
+    const manifestFile = manifestByPath.get(file.path)
+    if (
+      !manifestFile ||
+      !equalHash(manifestFile.sha256, file.archiveSha256) ||
+      !equalHash(await sha256Hex(file.bytes), file.sha256)
+    ) {
+      throw invalidBackup(
+        `Backup candidate "${file.path}" failed exact byte verification.`,
+        file.path
+      )
+    }
+    const bpmn = /\.bpmn$/i.test(file.path)
+    if (
+      bpmn !== Boolean(file.reviewedBpmn) ||
+      (!bpmn && !equalHash(file.archiveSha256, file.sha256)) ||
+      (file.reviewedBpmn !== undefined &&
+        (!equalHash(file.reviewedBpmn.outputDigest, file.sha256) ||
+          !equalHash(file.reviewedBpmn.evidence.outputDigest, file.sha256) ||
+          file.reviewedBpmn.evidence.reviewDigest !== file.reviewedBpmn.reviewDigest))
+    ) {
+      throw invalidBackup(
+        `Backup BPMN candidate "${file.path}" lacks completed reviewed evidence.`,
+        file.path
+      )
+    }
+  }
+  for (const collision of plan.collisions) {
+    const incoming = plan.files.find((file) => file.path === collision.path)
+    if (
+      !incoming ||
+      !equalHash(await sha256Hex(collision.existing.bytes), collision.existing.hash) ||
+      !equalHash(collision.incomingHash, incoming.sha256)
+    ) {
+      throw invalidBackup(
+        `Backup collision snapshot "${collision.path}" changed after review.`,
+        collision.path
+      )
+    }
+  }
 }
 
 function resolveOperations(
@@ -461,6 +849,19 @@ function resolveOperations(
     const requested = decision.destinationPath
       ? normalizeWorkspacePath(decision.destinationPath)
       : candidateCopyPath(file.path, occupied)
+    if (decision.destinationPath) {
+      try {
+        assertNonReservedImportPath(requested, 'Backup keep-both destination')
+      } catch (error) {
+        throw invalidBackup(error instanceof Error ? error.message : String(error), requested)
+      }
+    }
+    if ((file.reviewedBpmn?.replacesProcessIds.length ?? 0) > 0) {
+      throw invalidBackup(
+        `Backup BPMN "${file.path}" owns existing process identities and cannot use keep-both.`,
+        file.path
+      )
+    }
     if (occupied.has(requested)) {
       throw new WorkspaceOperationError({
         code: 'already-exists',
@@ -526,6 +927,35 @@ export async function applyWorkspaceBackupImport(
   plan: WorkspaceBackupImportPlan,
   options: WorkspaceBackupImportOptions = {}
 ): Promise<WorkspaceBackupImportOutcome> {
+  throwIfAborted(options.signal)
+  await verifyWorkspaceBackupImportPlan(adapter, plan)
+  if (options.currentProcessIndex !== undefined || options.currentProcessIds !== undefined) {
+    const suppliedDigest = await digestProcessIdentitySnapshot(
+      normalizeProcessIdentitySnapshot(
+        options.currentProcessIndex,
+        options.currentProcessIds
+      )
+    )
+    if (!equalHash(suppliedDigest, plan.processIdentityDigest)) {
+      throw invalidBackup('Supplied process identities changed after backup review.')
+    }
+  }
+  const assertLiveProcessIdentities = async (): Promise<void> => {
+    const currentSnapshot = await scanWorkspaceProcessIdentities(adapter, {
+      inspector: options.processIdentityInspector,
+      signal: options.signal
+    })
+    if (
+      !equalHash(
+        await digestProcessIdentitySnapshot(currentSnapshot),
+        plan.processIdentityDigest
+      )
+    ) {
+      throw invalidBackup('Workspace process identities changed after backup review.')
+    }
+  }
+  await assertLiveProcessIdentities()
+  throwIfAborted(options.signal)
   const beforeEntries = await adapter.list()
   const { operations, skipped, unresolved } = resolveOperations(
     plan,
@@ -535,6 +965,13 @@ export async function applyWorkspaceBackupImport(
   if (unresolved.length > 0) {
     return { status: 'needs-review', unresolvedCollisions: unresolved }
   }
+  if (options.reviewedDigest !== plan.reviewDigest) {
+    throw invalidBackup('The applied backup review digest does not match the current plan.')
+  }
+  if (!adapter.storage.capabilities.multipleFiles && operations.length > 1) {
+    throw invalidBackup('The selected workspace adapter cannot restore multiple files.')
+  }
+  await assertLiveProcessIdentities()
   throwIfAborted(options.signal)
 
   const existingDirectories = new Set(

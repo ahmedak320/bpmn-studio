@@ -8,7 +8,7 @@ import {
 import { readLibraryZip } from '../library/zipImport'
 import { buildLibraryZip } from '../library/zipExport'
 import { createValidationSummary, validationIssue } from '../validation'
-import { MemoryWorkspaceAdapter } from './adapters'
+import { MemoryWorkspaceAdapter, sha256Hex } from './adapters'
 import {
   confirmWorkspaceImportPlan,
   executeConfirmedWorkspaceImport,
@@ -17,6 +17,10 @@ import {
   type WorkspaceImportHistory,
   type WorkspaceImportSource
 } from './importTransaction'
+import {
+  ReviewedBpmnBoundaryError,
+  type ReviewedBpmnIngestionPort
+} from './reviewedBpmn'
 
 const decoder = new TextDecoder()
 
@@ -64,6 +68,22 @@ const fakePreparer: BpmnImportPreparer = {
       autoLayouted: xml.includes('AUTO_LAYOUT'),
       validation: createValidationSummary(warning)
     }
+  }
+}
+
+const fakeReviewedBpmnIngestion: ReviewedBpmnIngestionPort = async (xml) => {
+  const digest = await sha256Hex(new TextEncoder().encode(xml))
+  const reviewDigest = `review-${digest}`
+  return {
+    xml,
+    digest,
+    reviewDigest,
+    validation: createValidationSummary([]),
+    evidence: {
+      originalDigest: digest,
+      outputDigest: digest,
+      reviewDigest
+    } as never
   }
 }
 
@@ -129,6 +149,7 @@ async function planFor(
     existingProcessIds: options.existingProcessIds,
     existingProcessIndex: options.existingProcessIndex,
     bpmnPreparer: fakePreparer,
+    reviewedBpmnIngestion: fakeReviewedBpmnIngestion,
     validationAdapters: [],
     amlConverter: options.amlConverter,
     now: () => new Date('2026-07-26T12:00:00.000Z')
@@ -202,6 +223,15 @@ describe('general workspace import planning', () => {
       plan.arisReports[0].report.summary
     )
     expect(plan.summary.arisReports).toBe(1)
+    expect(plan.artifacts.every((artifact) => artifact.localizationReviewDigest.length > 0)).toBe(
+      true
+    )
+    expect(
+      plan.artifacts.every(
+        (artifact) => artifact.sha256 === artifact.localizationEvidence.outputDigest
+      )
+    ).toBe(true)
+    expect(plan.processIdentityDigest).toMatch(/^[a-f0-9]{64}$/)
     expect(await adapter.list()).toEqual([])
   })
 
@@ -441,9 +471,11 @@ describe('general workspace import planning', () => {
         })
       ])
     )
-    expect(plan.warnings).toEqual([
-      expect.objectContaining({ code: 'test.warning', artifactId: 'replace:1' })
-    ])
+    expect(plan.warnings).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ code: 'test.warning', artifactId: 'replace:1' })
+      ])
+    )
     expect(decoder.decode((await adapter.read('replace.bpmn')).bytes)).toBe('old content')
   })
 
@@ -489,6 +521,102 @@ describe('general workspace import planning', () => {
         reason: 'destination-parent-file'
       })
     ])
+  })
+
+  it('rejects reserved destinations, including custom keep-both paths, with zero writes', async () => {
+    const beforeWrite = vi.fn()
+    const adapter = new MemoryWorkspaceAdapter({
+      files: { 'collision.bpmn': 'old' },
+      beforeWrite
+    })
+
+    await expect(
+      planFor(adapter, [doc('target', 'target.bpmn', documentXml('Target'))], {
+        targetFolder: '.ORBITPM/imports'
+      })
+    ).rejects.toMatchObject({ code: 'invalid-input' })
+    await expect(
+      planFor(adapter, [
+        doc(
+          'source',
+          'source.bpmn',
+          documentXml('Source'),
+          '.orbitpm/incoming/source.bpmn'
+        )
+      ])
+    ).rejects.toMatchObject({ code: 'invalid-input' })
+
+    const plan = await planFor(adapter, [
+      doc('collision', 'collision.bpmn', documentXml('Collision'))
+    ])
+    expect(() =>
+      confirmWorkspaceImportPlan(plan, {
+        accepted: true,
+        reviewedDigest: plan.reviewDigest,
+        collisionDecisions: {
+          'collision:1': {
+            action: 'keep-both',
+            destinationPath: '.orbitpm/restored.bpmn'
+          }
+        }
+      })
+    ).toThrowError(expect.objectContaining({ code: 'invalid-input' }))
+    expect(beforeWrite).not.toHaveBeenCalled()
+  })
+
+  it('enforces multipleFiles at planning and execution with zero writes', async () => {
+    const beforeWrite = vi.fn()
+    const single = new MemoryWorkspaceAdapter({ beforeWrite })
+    single.storage.capabilities.multipleFiles = false
+    await expect(
+      planFor(single, [
+        doc('one', 'one.bpmn', documentXml('One')),
+        doc('two', 'two.bpmn', documentXml('Two'))
+      ])
+    ).rejects.toMatchObject({ code: 'invalid-input' })
+    expect(beforeWrite).not.toHaveBeenCalled()
+
+    const changing = new MemoryWorkspaceAdapter({ beforeWrite })
+    const plan = await planFor(changing, [
+      doc('one', 'one.bpmn', documentXml('One'))
+    ])
+    const confirmed = confirmWorkspaceImportPlan(plan, {
+      accepted: true,
+      reviewedDigest: plan.reviewDigest
+    })
+    changing.storage.capabilities.multipleFiles = false
+    await expect(
+      executeConfirmedWorkspaceImport(confirmed, {
+        adapter: changing,
+        processIdentityInspector: fakePreparer.inspect
+      })
+    ).rejects.toMatchObject({ code: 'workspace-changed' })
+    expect(beforeWrite).not.toHaveBeenCalled()
+  })
+
+  it('fails closed when localization review is unresolved', async () => {
+    const beforeWrite = vi.fn()
+    const adapter = new MemoryWorkspaceAdapter({ beforeWrite })
+    const plan = await prepareWorkspaceImportPlan({
+      adapter,
+      sources: [doc('unresolved', 'unresolved.bpmn', documentXml('Unresolved'))],
+      bpmnPreparer: fakePreparer,
+      processIdentityInspector: fakePreparer.inspect,
+      validationAdapters: [],
+      reviewedBpmnIngestion: async () => {
+        throw new ReviewedBpmnBoundaryError(
+          'review-required',
+          'Explicit bilingual review is required.'
+        )
+      }
+    })
+
+    expect(plan.status).toBe('blocked')
+    expect(plan.artifacts).toEqual([])
+    expect(plan.skipped).toContainEqual(
+      expect.objectContaining({ reason: 'localization-review-required' })
+    )
+    expect(beforeWrite).not.toHaveBeenCalled()
   })
 })
 
@@ -567,7 +695,8 @@ describe('review confirmation and atomic execution', () => {
     const outcome = await executeConfirmedWorkspaceImport(confirmed, {
       adapter,
       history,
-      runExclusive
+      runExclusive,
+      processIdentityInspector: fakePreparer.inspect
     })
 
     expect(outcome).toMatchObject({
@@ -595,7 +724,12 @@ describe('review confirmation and atomic execution', () => {
       reviewedDigest: plan.reviewDigest,
       collisionDecisions: { 'replace:1': { action: 'replace' } }
     })
-    await expect(executeConfirmedWorkspaceImport(confirmed, { adapter })).rejects.toMatchObject({
+    await expect(
+      executeConfirmedWorkspaceImport(confirmed, {
+        adapter,
+        processIdentityInspector: fakePreparer.inspect
+      })
+    ).rejects.toMatchObject({
       code: 'history-required'
     })
     expect(decoder.decode((await adapter.read('replace.bpmn')).bytes)).toBe('old')
@@ -604,7 +738,8 @@ describe('review confirmation and atomic execution', () => {
     await expect(
       executeConfirmedWorkspaceImport(confirmed, {
         adapter,
-        history: { createRevision: async () => undefined }
+        history: { createRevision: async () => undefined },
+        processIdentityInspector: fakePreparer.inspect
       })
     ).rejects.toMatchObject({ code: 'plan-tampered' })
     expect(decoder.decode((await adapter.read('replace.bpmn')).bytes)).toBe('old')
@@ -639,7 +774,8 @@ describe('review confirmation and atomic execution', () => {
     }
     const outcome = await executeConfirmedWorkspaceImport(confirmed, {
       adapter,
-      history
+      history,
+      processIdentityInspector: fakePreparer.inspect
     })
 
     expect(outcome).toMatchObject({
@@ -683,7 +819,8 @@ describe('review confirmation and atomic execution', () => {
     })
     const outcome = await executeConfirmedWorkspaceImport(confirmed, {
       adapter,
-      history: { createRevision: async () => undefined }
+      history: { createRevision: async () => undefined },
+      processIdentityInspector: fakePreparer.inspect
     })
 
     expect(outcome).toMatchObject({
@@ -694,6 +831,28 @@ describe('review confirmation and atomic execution', () => {
     await expect(adapter.read('a-create.bpmn')).rejects.toMatchObject({
       code: 'not-found'
     })
+  })
+
+  it('rechecks the full process identity snapshot so unrelated races cause zero writes', async () => {
+    const beforeWrite = vi.fn()
+    const adapter = new MemoryWorkspaceAdapter({ beforeWrite })
+    const plan = await planFor(adapter, [
+      doc('incoming', 'incoming.bpmn', documentXml('Process_Incoming'))
+    ])
+    const confirmed = confirmWorkspaceImportPlan(plan, {
+      accepted: true,
+      reviewedDigest: plan.reviewDigest
+    })
+
+    adapter.replaceExternally('unrelated.bpmn', documentXml('Process_Unrelated'))
+    await expect(
+      executeConfirmedWorkspaceImport(confirmed, {
+        adapter,
+        processIdentityInspector: fakePreparer.inspect
+      })
+    ).rejects.toMatchObject({ code: 'workspace-changed' })
+    await expect(adapter.read('incoming.bpmn')).rejects.toMatchObject({ code: 'not-found' })
+    expect(beforeWrite).not.toHaveBeenCalled()
   })
 })
 

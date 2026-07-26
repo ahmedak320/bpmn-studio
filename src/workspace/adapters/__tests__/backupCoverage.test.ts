@@ -4,15 +4,58 @@ import {
   MemoryWorkspaceAdapter,
   WORKSPACE_BACKUP_MANIFEST_PATH,
   WorkspaceOperationError,
-  applyWorkspaceBackupImport,
-  inspectWorkspaceBackup,
+  applyWorkspaceBackupImport as applyWorkspaceBackupImportCore,
+  inspectWorkspaceBackup as inspectWorkspaceBackupCore,
   preflightWorkspaceBackupZip,
+  sealWorkspaceBackupImportPlan,
   sha256Hex,
   type SaveOutcome,
   type WorkspaceBackupImportPlan
 } from '..'
+import type { ReviewedBpmnIngestionPort } from '../../reviewedBpmn'
 
 const encode = (value: string): Uint8Array => new TextEncoder().encode(value)
+
+const fakeProcessIdentityInspector = async (xml: string) => ({
+  processIds: [...xml.matchAll(/<(?:\w+:)?process\s+id="([^"]+)"/g)].map(
+    (match) => match[1]
+  )
+})
+
+const fakeReviewedBpmnIngestion: ReviewedBpmnIngestionPort = async (xml) => {
+  const digest = await sha256Hex(encode(xml))
+  const reviewDigest = `review-${digest}`
+  return {
+    xml,
+    digest,
+    reviewDigest,
+    validation: {} as never,
+    evidence: { originalDigest: digest, outputDigest: digest, reviewDigest } as never
+  }
+}
+
+async function inspectWorkspaceBackup(
+  ...args: Parameters<typeof inspectWorkspaceBackupCore>
+) {
+  const [adapter, backup, options = {}] = args
+  return inspectWorkspaceBackupCore(adapter, backup, {
+    ...options,
+    processIdentityInspector: fakeProcessIdentityInspector,
+    reviewedBpmnIngestion: fakeReviewedBpmnIngestion
+  })
+}
+
+async function applyWorkspaceBackupImport(
+  adapter: Parameters<typeof applyWorkspaceBackupImportCore>[0],
+  plan: Parameters<typeof applyWorkspaceBackupImportCore>[1],
+  options: Parameters<typeof applyWorkspaceBackupImportCore>[2] = {}
+) {
+  return applyWorkspaceBackupImportCore(adapter, plan, {
+    reviewedDigest: plan.reviewDigest,
+    processIdentityInspector: fakeProcessIdentityInspector,
+    ...options
+  })
+}
 
 function manifest(overrides: Record<string, unknown> = {}): Record<string, unknown> {
   return {
@@ -527,21 +570,64 @@ describe('backup transaction decision and rollback edge cases', () => {
   })
 
   it('handles not-found folder cleanup without turning rollback into failure', async () => {
-    const plan: WorkspaceBackupImportPlan = {
-      manifest: manifest() as never,
+    const contentBytes = encode('content')
+    const failBytes = encode('fail')
+    const contentHash = await sha256Hex(contentBytes)
+    const failHash = await sha256Hex(failBytes)
+    const target = new MemoryWorkspaceAdapter()
+    const processIdentityDigest = await sha256Hex(encode('[]'))
+    const plan: WorkspaceBackupImportPlan = await sealWorkspaceBackupImportPlan({
+      manifest: manifest({
+        files: [
+          { path: 'created/file.bpmn', sha256: contentHash },
+          { path: 'created/fail.bpmn', sha256: failHash }
+        ]
+      }) as never,
       directories: ['created'],
       files: [
         {
           path: 'created/file.bpmn',
-          bytes: encode('content'),
-          sha256: await sha256Hex(encode('content'))
+          bytes: contentBytes,
+          archiveSha256: contentHash,
+          sha256: contentHash,
+          reviewedBpmn: {
+            reviewDigest: `review-${contentHash}`,
+            outputDigest: contentHash,
+            processIds: [],
+            replacesProcessIds: [],
+            evidence: {
+              originalDigest: contentHash,
+              outputDigest: contentHash,
+              reviewDigest: `review-${contentHash}`
+            } as never
+          }
+        },
+        {
+          path: 'created/fail.bpmn',
+          bytes: failBytes,
+          archiveSha256: failHash,
+          sha256: failHash,
+          reviewedBpmn: {
+            reviewDigest: `review-${failHash}`,
+            outputDigest: failHash,
+            processIds: [],
+            replacesProcessIds: [],
+            evidence: {
+              originalDigest: failHash,
+              outputDigest: failHash,
+              reviewDigest: `review-${failHash}`
+            } as never
+          }
         }
       ],
       collisions: [],
       compressedBytes: 1,
-      declaredUncompressedBytes: 1
-    }
-    const target = new MemoryWorkspaceAdapter()
+      declaredUncompressedBytes: contentBytes.byteLength + failBytes.byteLength,
+      workspaceId: target.id,
+      workspaceMultipleFiles: true,
+      processIdentitySnapshot: [],
+      processIdentityDigest
+    })
     const originalWrite = target.writeAtomic.bind(target)
     let writeCalls = 0
     vi.spyOn(target, 'writeAtomic').mockImplementation(async (...args) => {
@@ -569,12 +655,6 @@ describe('backup transaction decision and rollback edge cases', () => {
           message: 'already gone'
         })
       )
-    // Force a failure after the first applied item by appending a second item.
-    plan.files.push({
-      path: 'created/fail.bpmn',
-      bytes: encode('fail'),
-      sha256: await sha256Hex(encode('fail'))
-    })
     expect(await applyWorkspaceBackupImport(target, plan)).toMatchObject({
       status: 'rolled-back'
     })
