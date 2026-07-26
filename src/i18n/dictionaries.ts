@@ -889,6 +889,38 @@ export const en = {
     'The diagram changed after review. Review the current outbound text before translating.',
   'translationReview.noProvider': 'Choose a translation provider first.',
 
+  // --- Manual reviewed XML ingestion ---
+  'reviewedXmlReview.title': 'Complete bilingual XML review',
+  'reviewedXmlReview.close': 'Close bilingual XML review',
+  'reviewedXmlReview.summary':
+    'Resolve {count} unique bilingual field target(s). The BPMN source is not changed until every row is valid and you explicitly complete the review.',
+  'reviewedXmlReview.pending': '{count} row(s) still require a valid reviewed value.',
+  'reviewedXmlReview.ready': 'Every row is valid. You can explicitly complete the review.',
+  'reviewedXmlReview.row.title': '{process} / {element} / {field} / {target}',
+  'reviewedXmlReview.target.en': 'English',
+  'reviewedXmlReview.target.ar': 'Arabic',
+  'reviewedXmlReview.source': 'Exact source ({language})',
+  'reviewedXmlReview.current': 'Current target ({language})',
+  'reviewedXmlReview.counterpart': 'Current counterpart ({language})',
+  'reviewedXmlReview.empty': '(missing)',
+  'reviewedXmlReview.issues': 'Detected issues',
+  'reviewedXmlReview.issue.missing': 'A target value is missing.',
+  'reviewedXmlReview.issue.wrongScript': 'The value uses the wrong script.',
+  'reviewedXmlReview.issue.duplicateCounterpart':
+    'The value duplicates its non-neutral counterpart.',
+  'reviewedXmlReview.issue.mixed': 'The value contains unapproved mixed-script text.',
+  'reviewedXmlReview.issue.providerFailed': 'Automatic translation did not produce a value.',
+  'reviewedXmlReview.targetValue': 'Reviewed target value ({language})',
+  'reviewedXmlReview.rowValid': 'Valid for this target.',
+  'reviewedXmlReview.approval': 'Exact field approval',
+  'reviewedXmlReview.approval.none': 'No exception',
+  'reviewedXmlReview.approval.neutral': 'Approve as a neutral term or code',
+  'reviewedXmlReview.approval.englishBilingual': 'Approve as an English bilingual proper name',
+  'reviewedXmlReview.approval.help':
+    'Approval is scoped to this field and exact value. Editing the value clears it.',
+  'reviewedXmlReview.cancel': 'Cancel review',
+  'reviewedXmlReview.complete': 'Complete review',
+
   // --- Workspace storage modes / recovery ---
   'workspace.storage.current': 'Storage: {mode}',
   'workspace.storage.mode.directory': 'Folder workspace',
@@ -2246,6 +2278,37 @@ export const ar: Record<keyof typeof en, string> = {
     'ما زالت بعض الحقول غير محلولة. بقيت مدرجة ولم يُعلن اكتمال لغة المخطط.',
   'translationReview.stale': 'تغيّر المخطط بعد المراجعة. راجع النص الحالي الصادر قبل الترجمة.',
   'translationReview.noProvider': 'اختر مزوّد ترجمة أولًا.',
+
+  // --- المراجعة اليدوية لإدخال XML ---
+  'reviewedXmlReview.title': 'إكمال مراجعة XML ثنائية اللغة',
+  'reviewedXmlReview.close': 'إغلاق مراجعة XML ثنائية اللغة',
+  'reviewedXmlReview.summary':
+    'عالج {count} من أهداف الحقول الثنائية اللغة الفريدة. لن يتغير مصدر BPMN حتى تصبح جميع الصفوف صالحة وتُكمل المراجعة صراحةً.',
+  'reviewedXmlReview.pending': 'ما زال {count} من الصفوف يتطلب قيمة مراجعة صالحة.',
+  'reviewedXmlReview.ready': 'جميع الصفوف صالحة. يمكنك إكمال المراجعة صراحةً.',
+  'reviewedXmlReview.row.title': '{process} / {element} / {field} / {target}',
+  'reviewedXmlReview.target.en': 'الإنجليزية',
+  'reviewedXmlReview.target.ar': 'العربية',
+  'reviewedXmlReview.source': 'النص المصدر المطابق ({language})',
+  'reviewedXmlReview.current': 'القيمة الحالية للهدف ({language})',
+  'reviewedXmlReview.counterpart': 'القيمة الحالية للنظير ({language})',
+  'reviewedXmlReview.empty': '(غير متوفر)',
+  'reviewedXmlReview.issues': 'المشكلات المكتشفة',
+  'reviewedXmlReview.issue.missing': 'قيمة اللغة الهدف غير متوفرة.',
+  'reviewedXmlReview.issue.wrongScript': 'تستخدم القيمة نظام كتابة غير صحيح.',
+  'reviewedXmlReview.issue.duplicateCounterpart': 'تكرر القيمة نظيرها غير المحايد.',
+  'reviewedXmlReview.issue.mixed': 'تحتوي القيمة على نص مختلط غير معتمد.',
+  'reviewedXmlReview.issue.providerFailed': 'لم تنتج الترجمة الآلية قيمة.',
+  'reviewedXmlReview.targetValue': 'قيمة الهدف المراجعة ({language})',
+  'reviewedXmlReview.rowValid': 'القيمة صالحة لهذه اللغة الهدف.',
+  'reviewedXmlReview.approval': 'اعتماد مطابق للحقل',
+  'reviewedXmlReview.approval.none': 'من دون استثناء',
+  'reviewedXmlReview.approval.neutral': 'اعتماد كمصطلح محايد أو رمز',
+  'reviewedXmlReview.approval.englishBilingual': 'اعتماد كاسم علم ثنائي اللغة بالإنجليزية',
+  'reviewedXmlReview.approval.help':
+    'يرتبط الاعتماد بهذا الحقل وهذه القيمة المطابقة. يؤدي تعديل القيمة إلى مسح الاعتماد.',
+  'reviewedXmlReview.cancel': 'إلغاء المراجعة',
+  'reviewedXmlReview.complete': 'إكمال المراجعة',
 
   // --- أوضاع تخزين مساحة العمل والاسترداد ---
   'workspace.storage.current': 'التخزين: {mode}',
