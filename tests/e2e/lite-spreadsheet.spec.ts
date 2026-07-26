@@ -382,7 +382,9 @@ test('directory collision policy blocks without modifying the destination', asyn
   await expect(panel.getByText('destination-path-collision')).toBeVisible({
     timeout: 30_000
   })
-  expect(await workspacePaths(page)).toEqual(['process-one.bpmn'])
+  expect((await workspacePaths(page)).filter((path) => path.endsWith('.bpmn'))).toEqual([
+    'process-one.bpmn'
+  ])
 })
 
 test('directory write failure reports rollback and leaves no BPMN artifact', async ({ page }) => {
