@@ -3489,19 +3489,38 @@ function App(): JSX.Element {
               modeler,
               makeFreeTranslateTexts({
                 onAttempt: (attempt) => {
+                  if (controller.signal.aborted || translationAbortRef.current !== controller) {
+                    return
+                  }
+                  const service = t(
+                    attempt.service === 'google'
+                      ? 'translationReview.retry.service.google'
+                      : 'translationReview.retry.service.mymemory'
+                  )
                   const status =
                     attempt.retryInMs === undefined
-                      ? t('ai.retry.attempt', {
+                      ? t('translationReview.retry.attempt', {
+                          service,
+                          item: attempt.item,
+                          items: attempt.itemCount,
                           attempt: attempt.attempt,
                           max: attempt.maxAttempts
                         })
-                      : t('ai.retry.waiting', {
+                      : t('translationReview.retry.waiting', {
+                          service,
+                          item: attempt.item,
+                          items: attempt.itemCount,
                           attempt: attempt.attempt,
                           max: attempt.maxAttempts,
                           seconds: Math.max(1, Math.ceil(attempt.retryInMs / 1000))
                         })
                   setTranslationReview((current) =>
-                    current?.tabKey === state.tabKey ? { ...current, status } : current
+                    !controller.signal.aborted &&
+                    translationAbortRef.current === controller &&
+                    current?.tabKey === state.tabKey &&
+                    current.review === state.review
+                      ? { ...current, status }
+                      : current
                   )
                 }
               }),

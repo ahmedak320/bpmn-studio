@@ -91,7 +91,17 @@ const mocks = vi.hoisted(() => ({
 }))
 
 vi.mock('./i18n', () => ({
-  t: (key: string): string => key,
+  t: (key: string, values?: Record<string, unknown>): string => {
+    if (key === 'translationReview.retry.attempt') {
+      return `${key}:${values?.service}:${values?.item}/${values?.items}:${values?.attempt}/${values?.max}`
+    }
+    if (key === 'translationReview.retry.waiting') {
+      return `${key}:${values?.service}:${values?.item}/${values?.items}:${values?.attempt}/${values?.max}:${values?.seconds}`
+    }
+    if (key === 'translationReview.retry.service.google') return 'Google Translate'
+    if (key === 'translationReview.retry.service.mymemory') return 'MyMemory'
+    return key
+  },
   tPlural: (key: string, count: number): string => `${key}:${count}`
 }))
 
@@ -752,7 +762,7 @@ describe('App single-file browser orchestration', () => {
     await user.click(screen.getByRole('button', { name: 'mock-assistant-close' }))
   })
 
-  it('shows live free-translation retry status in the review dialog', async () => {
+  it('shows per-item retry status and ignores a stale same-tab callback', async () => {
     const process: Record<string, unknown> = {
       $type: 'bpmn:Process',
       id: 'Process_1',
@@ -785,33 +795,44 @@ describe('App single-file browser orchestration', () => {
       }
       return {}
     })
+    type Attempt = {
+      attempt: number
+      maxAttempts: number
+      retryInMs?: number
+      service: 'google' | 'mymemory'
+      item: number
+      itemCount: number
+    }
+    const attemptCallbacks: Array<(attempt: Attempt) => void> = []
+    let transportIndex = 0
     mocks.makeFreeTranslateTexts.mockImplementation(
-      (options: {
-        onAttempt?: (attempt: {
-          attempt: number
-          maxAttempts: number
-          retryInMs?: number
-          service: 'google' | 'mymemory'
-          item: number
-          itemCount: number
-        }) => void
-      }) =>
-        async (_texts: string[], _from: 'en' | 'ar', _to: 'en' | 'ar', signal?: AbortSignal) => {
-          options.onAttempt?.({
-            attempt: 1,
-            maxAttempts: 3,
-            service: 'google',
-            item: 1,
-            itemCount: 1
-          })
-          options.onAttempt?.({
-            attempt: 1,
-            maxAttempts: 3,
-            retryInMs: 1_500,
-            service: 'google',
-            item: 1,
-            itemCount: 1
-          })
+      (options: { onAttempt?: (attempt: Attempt) => void }) => {
+        const currentTransport = transportIndex
+        transportIndex += 1
+        if (options.onAttempt) attemptCallbacks.push(options.onAttempt)
+        return async (
+          _texts: string[],
+          _from: 'en' | 'ar',
+          _to: 'en' | 'ar',
+          signal?: AbortSignal
+        ) => {
+          if (currentTransport === 0) {
+            options.onAttempt?.({
+              attempt: 1,
+              maxAttempts: 3,
+              service: 'google',
+              item: 2,
+              itemCount: 4
+            })
+            options.onAttempt?.({
+              attempt: 1,
+              maxAttempts: 3,
+              retryInMs: 1_500,
+              service: 'google',
+              item: 2,
+              itemCount: 4
+            })
+          }
           return await new Promise<Array<string | undefined>>((_resolve, reject) => {
             const abort = (): void =>
               reject(signal?.reason ?? new DOMException('cancelled', 'AbortError'))
@@ -819,6 +840,7 @@ describe('App single-file browser orchestration', () => {
             else signal?.addEventListener('abort', abort, { once: true })
           })
         }
+      }
     )
 
     const user = userEvent.setup()
@@ -828,29 +850,46 @@ describe('App single-file browser orchestration', () => {
     await user.selectOptions(await screen.findByRole('combobox'), 'free')
     await user.click(screen.getByRole('button', { name: 'translationReview.translateNow' }))
 
-    expect(await screen.findByText('ai.retry.waiting')).not.toBeNull()
+    expect(
+      await screen.findByText('translationReview.retry.waiting:Google Translate:2/4:1/3:2')
+    ).not.toBeNull()
     expect(mocks.makeFreeTranslateTexts).toHaveBeenCalledWith({
       onAttempt: expect.any(Function)
     })
-    const onAttempt = mocks.makeFreeTranslateTexts.mock.calls[0]?.[0]?.onAttempt as
-      | ((attempt: {
-          attempt: number
-          maxAttempts: number
-          service: 'google' | 'mymemory'
-          item: number
-          itemCount: number
-        }) => void)
-      | undefined
     act(() =>
-      onAttempt?.({
+      attemptCallbacks[0]?.({
         attempt: 2,
         maxAttempts: 3,
         service: 'google',
-        item: 1,
-        itemCount: 1
+        item: 2,
+        itemCount: 4
       })
     )
-    expect(await screen.findByText('ai.retry.attempt')).not.toBeNull()
+    expect(
+      await screen.findByText('translationReview.retry.attempt:Google Translate:2/4:2/3')
+    ).not.toBeNull()
+
+    await user.click(screen.getByRole('button', { name: 'translationReview.cancel' }))
+    expect(await screen.findByText('translationReview.cancelled')).not.toBeNull()
+
+    await user.click(screen.getByRole('button', { name: 'translationReview.postpone' }))
+    await user.click(screen.getByRole('button', { name: 'editor.translate' }))
+    await user.selectOptions(await screen.findByRole('combobox'), 'free')
+    await user.click(screen.getByRole('button', { name: 'translationReview.translateNow' }))
+    expect(await screen.findByText('translationReview.running')).not.toBeNull()
+    expect(attemptCallbacks).toHaveLength(2)
+
+    act(() =>
+      attemptCallbacks[0]?.({
+        attempt: 3,
+        maxAttempts: 3,
+        service: 'mymemory',
+        item: 4,
+        itemCount: 4
+      })
+    )
+    expect(screen.getByText('translationReview.running')).not.toBeNull()
+    expect(screen.queryByText('translationReview.retry.attempt:MyMemory:4/4:3/3')).toBeNull()
 
     await user.click(screen.getByRole('button', { name: 'translationReview.cancel' }))
     expect(await screen.findByText('translationReview.cancelled')).not.toBeNull()
