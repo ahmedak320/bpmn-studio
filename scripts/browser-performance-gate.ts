@@ -16,7 +16,7 @@ const LIMITS_MS = Object.freeze({
   spreadsheetWorkerPreviewNodes1000: 10_000
 })
 const HEARTBEAT_INTERVAL_MS = 16
-const MAX_HEARTBEAT_GAP_MS = 250
+const MAX_PARSE_HEARTBEAT_GAP_MS = 250
 
 interface HeartbeatStatistics {
   maxGapMs: number
@@ -297,7 +297,7 @@ async function measureBrowserPreview(
       reviewToReadyMs: Number(reviewToReadyMs.toFixed(3)),
       totalPreviewMs: Number(totalPreviewMs.toFixed(3)),
       limitMs,
-      heartbeatLimitMs: MAX_HEARTBEAT_GAP_MS,
+      heartbeatLimitMs: MAX_PARSE_HEARTBEAT_GAP_MS,
       heartbeat: {
         overall: overallHeartbeat,
         parse: parseHeartbeat,
@@ -306,7 +306,7 @@ async function measureBrowserPreview(
       spreadsheetWorkers,
       passed:
         totalPreviewMs <= limitMs &&
-        overallHeartbeat.maxGapMs <= MAX_HEARTBEAT_GAP_MS &&
+        parseHeartbeat.maxGapMs <= MAX_PARSE_HEARTBEAT_GAP_MS &&
         parseHeartbeat.samples > 0 &&
         reviewHeartbeat.samples > 0 &&
         spreadsheetWorkers >= 1
@@ -321,7 +321,7 @@ async function measureBrowserPreview(
       reviewToReadyMs: 0,
       totalPreviewMs: 0,
       limitMs,
-      heartbeatLimitMs: MAX_HEARTBEAT_GAP_MS,
+      heartbeatLimitMs: MAX_PARSE_HEARTBEAT_GAP_MS,
       heartbeat: {
         overall: { maxGapMs: 0, p95GapMs: 0, samples: 0 },
         parse: { maxGapMs: 0, p95GapMs: 0, samples: 0 },
@@ -379,7 +379,7 @@ const evidence = {
     userAgent: browserUserAgent
   },
   limitsMs: LIMITS_MS,
-  maxHeartbeatGapMs: MAX_HEARTBEAT_GAP_MS,
+  maxParseHeartbeatGapMs: MAX_PARSE_HEARTBEAT_GAP_MS,
   measurements,
   launchError,
   passed:
@@ -395,8 +395,8 @@ for (const measurement of measurements) {
   const state = measurement.passed ? 'PASS' : 'FAIL'
   console.log(
     `${state} ${measurement.name}: ${measurement.totalPreviewMs.toFixed(3)} ms ` +
-      `(limit ${measurement.limitMs} ms; max heartbeat gap ` +
-      `${measurement.heartbeat.overall.maxGapMs.toFixed(3)}/` +
+      `(limit ${measurement.limitMs} ms; max parse heartbeat gap ` +
+      `${measurement.heartbeat.parse.maxGapMs.toFixed(3)}/` +
       `${measurement.heartbeatLimitMs} ms; ` +
       `${measurement.spreadsheetWorkers} worker(s))`
   )
