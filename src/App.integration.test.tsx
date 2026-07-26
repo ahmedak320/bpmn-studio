@@ -47,7 +47,15 @@ const mocks = vi.hoisted(() => ({
   commandRedo: vi.fn(),
   validateBpmn: vi.fn(),
   evaluatePolicy: vi.fn(),
-  validatePreservation: vi.fn()
+  validatePreservation: vi.fn(),
+  pickWorkspace: vi.fn(),
+  rememberWorkspace: vi.fn(),
+  loadRememberedWorkspace: vi.fn(),
+  ensurePermission: vi.fn(),
+  classifyPickerError: vi.fn(),
+  folderTreeProps: vi.fn(),
+  catalogProps: vi.fn(),
+  moveDialogProps: vi.fn()
 }))
 
 vi.mock('./i18n', () => ({
@@ -69,11 +77,11 @@ vi.mock('@/common/prompt', () => ({
 
 vi.mock('./fs/workspaceHandle', () => ({
   directoryPickerSupported: () => state.directorySupport,
-  pickWorkspace: vi.fn(),
-  rememberWorkspace: vi.fn(),
-  loadRememberedWorkspace: vi.fn().mockResolvedValue(undefined),
-  ensurePermission: vi.fn().mockResolvedValue('granted'),
-  classifyPickerError: () => 'unknown'
+  pickWorkspace: mocks.pickWorkspace,
+  rememberWorkspace: mocks.rememberWorkspace,
+  loadRememberedWorkspace: mocks.loadRememberedWorkspace,
+  ensurePermission: mocks.ensurePermission,
+  classifyPickerError: mocks.classifyPickerError
 }))
 
 vi.mock('./editor/exportImage', () => ({
@@ -308,6 +316,113 @@ vi.mock('./links/SelectionLinkButtonLite', () => ({
   SelectionLinkButton: () => <button type="button">mock-selection-link</button>
 }))
 
+vi.mock('./workspace/FolderTreeLite', () => ({
+  FolderTreeLite: (props: {
+    onOpenFile(path: string): void
+    onOpenFileFocus?(path: string): void
+    onNewProcess(path: string): void
+    onNewFolder(path: string): void
+    onRename(node: { name: string; relPath: string; type: 'file' | 'directory' }): void
+    onDelete(node: { name: string; relPath: string; type: 'file' | 'directory' }): void
+    onMove(node: { name: string; relPath: string; type: 'file' | 'directory' }): void
+    onMoveDrop(from: string, type: 'file' | 'directory', destination: string): void
+  }) => {
+    mocks.folderTreeProps(props)
+    const file = {
+      name: 'existing.bpmn',
+      relPath: 'Finance/existing.bpmn',
+      type: 'file' as const
+    }
+    const deleteFile = {
+      name: 'delete-me.bpmn',
+      relPath: 'Finance/delete-me.bpmn',
+      type: 'file' as const
+    }
+    const moveFile = {
+      name: 'move-me.bpmn',
+      relPath: 'Finance/move-me.bpmn',
+      type: 'file' as const
+    }
+    const dropFile = {
+      name: 'drop-me.bpmn',
+      relPath: 'Finance/drop-me.bpmn',
+      type: 'file' as const
+    }
+    return (
+      <div data-testid="folder-tree">
+        <button type="button" onClick={() => props.onOpenFile(file.relPath)}>
+          mock-tree-open
+        </button>
+        <button type="button" onClick={() => props.onOpenFileFocus?.(file.relPath)}>
+          mock-tree-focus
+        </button>
+        <button type="button" onClick={() => props.onNewProcess('Finance')}>
+          mock-tree-new-process
+        </button>
+        <button type="button" onClick={() => props.onNewFolder('')}>
+          mock-tree-new-folder
+        </button>
+        <button type="button" onClick={() => props.onRename(file)}>
+          mock-tree-rename
+        </button>
+        <button type="button" onClick={() => props.onDelete(deleteFile)}>
+          mock-tree-delete
+        </button>
+        <button type="button" onClick={() => props.onMove(moveFile)}>
+          mock-tree-move
+        </button>
+        <button type="button" onClick={() => props.onMoveDrop(dropFile.relPath, 'file', '')}>
+          mock-tree-move-drop
+        </button>
+      </div>
+    )
+  }
+}))
+
+vi.mock('./workspace/CatalogView', () => ({
+  CatalogView: (props: {
+    onOpen(path: string, processId?: string): void
+    onNewProcess(): void
+    onOpenUnresolved(): void
+    onSort(key: string): void
+  }) => {
+    mocks.catalogProps(props)
+    return (
+      <div data-testid="catalog-view">
+        <button type="button" onClick={() => props.onOpen('Finance/existing.bpmn')}>
+          mock-catalog-open
+        </button>
+        <button type="button" onClick={props.onNewProcess}>
+          mock-catalog-new
+        </button>
+        <button type="button" onClick={props.onOpenUnresolved}>
+          mock-catalog-unresolved
+        </button>
+        <button type="button" onClick={() => props.onSort('name')}>
+          mock-catalog-sort
+        </button>
+      </div>
+    )
+  }
+}))
+
+vi.mock('./workspace/MoveDialog', () => ({
+  MoveDialog: (props: { onMove(path: string): void; onCancel(): void }) => {
+    mocks.moveDialogProps(props)
+    return (
+      <div role="dialog" aria-label="mock-move">
+        <button type="button" onClick={() => props.onMove('')}>
+          mock-move-confirm
+        </button>
+        <button type="button" onClick={props.onCancel}>
+          mock-move-cancel
+        </button>
+      </div>
+    )
+  }
+}))
+
+import { asDirectoryHandle, fakeRoot } from './workspace/adapters/__tests__/fakeFileSystem'
 import App from './App'
 
 beforeEach(() => {
@@ -342,6 +457,14 @@ beforeEach(() => {
     valid: true,
     issues: []
   })
+  mocks.pickWorkspace.mockReset().mockResolvedValue(null)
+  mocks.rememberWorkspace.mockReset().mockResolvedValue(undefined)
+  mocks.loadRememberedWorkspace.mockReset().mockResolvedValue(undefined)
+  mocks.ensurePermission.mockReset().mockResolvedValue('granted')
+  mocks.classifyPickerError.mockReset().mockReturnValue('unknown')
+  mocks.folderTreeProps.mockReset()
+  mocks.catalogProps.mockReset()
+  mocks.moveDialogProps.mockReset()
   mocks.modelerGet.mockReset().mockImplementation((name: string) => {
     if (name === 'eventBus') {
       return { on: vi.fn(), off: vi.fn() }
@@ -387,6 +510,28 @@ async function openBlankDiagram(user: ReturnType<typeof userEvent.setup>): Promi
   await user.click(await screen.findByRole('button', { name: 'picker.fallback.newDiagram' }))
   expect(await screen.findByText('app.title')).not.toBeNull()
   expect(await screen.findByTestId('editor-tab')).not.toBeNull()
+}
+
+function populatedDirectory() {
+  const root = fakeRoot()
+  root.addFile('Finance/existing.bpmn', state.xml)
+  root.addFile('Finance/delete-me.bpmn', state.xml)
+  root.addFile('Finance/move-me.bpmn', state.xml)
+  root.addFile('Finance/drop-me.bpmn', state.xml)
+  return root
+}
+
+async function openDirectoryWorkspace(
+  user: ReturnType<typeof userEvent.setup>,
+  root = populatedDirectory()
+): Promise<ReturnType<typeof populatedDirectory>> {
+  state.directorySupport = true
+  mocks.pickWorkspace.mockResolvedValue(asDirectoryHandle(root))
+  render(<App />)
+  await user.click(await screen.findByRole('button', { name: 'workspace.storage.chooseDirectory' }))
+  expect(await screen.findByTestId('catalog-view')).not.toBeNull()
+  expect(await screen.findByTestId('folder-tree')).not.toBeNull()
+  return root
 }
 
 describe('App single-file browser orchestration', () => {
@@ -525,5 +670,105 @@ describe('App single-file browser orchestration', () => {
     fireEvent.change(badInput, { target: { files: [bad] } })
     expect(await screen.findByText('alert.open.failed')).not.toBeNull()
     expect(user).toBeDefined()
+  })
+})
+
+describe('App directory workspace orchestration', () => {
+  it('activates, searches, navigates, refreshes, and exports a real directory adapter', async () => {
+    const user = userEvent.setup()
+    await openDirectoryWorkspace(user)
+
+    expect(mocks.rememberWorkspace).toHaveBeenCalledOnce()
+    expect(screen.getByText('workspace.storage.current')).not.toBeNull()
+    await user.click(screen.getByRole('button', { name: 'mock-catalog-sort' }))
+    await user.click(screen.getByRole('button', { name: 'mock-catalog-sort' }))
+    await user.click(screen.getByRole('button', { name: 'mock-catalog-open' }))
+    expect(await screen.findByTestId('editor-tab')).not.toBeNull()
+
+    await user.click(screen.getByRole('button', { name: 'app.home' }))
+    expect(await screen.findByTestId('catalog-view')).not.toBeNull()
+    await user.click(screen.getByRole('button', { name: 'mock-tree-open' }))
+    expect((await screen.findAllByText('existing.bpmn')).length).toBeGreaterThan(0)
+
+    const search = screen.getByRole('searchbox', { name: 'tree.search.aria' })
+    await user.type(search, 'Test process')
+    fireEvent.keyDown(search, { key: 'Escape' })
+    fireEvent.keyDown(search, { key: 'Enter' })
+
+    await user.click(screen.getByRole('button', { name: 'tree.refresh.aria' }))
+    expect(await screen.findByText('toast.refreshed')).not.toBeNull()
+
+    await user.click(screen.getByRole('button', { name: 'library.export' }))
+    expect(mocks.triggerDownload).toHaveBeenCalled()
+    await user.click(screen.getByRole('button', { name: 'workspace.storage.backupExport' }))
+    expect(await screen.findByText('workspace.storage.backupExport')).not.toBeNull()
+
+    fireEvent.keyDown(window, { altKey: true, key: 'ArrowLeft' })
+    fireEvent.keyDown(window, { altKey: true, key: 'ArrowRight' })
+  })
+
+  it('creates, renames, deletes, and moves directory entries through guarded UI flows', async () => {
+    const user = userEvent.setup()
+    const root = await openDirectoryWorkspace(user)
+    mocks.prompt
+      .mockResolvedValueOnce('Archive')
+      .mockResolvedValueOnce('New approval')
+      .mockResolvedValueOnce('renamed')
+
+    await user.click(screen.getByRole('button', { name: 'mock-tree-new-folder' }))
+    await waitFor(() => expect(root.directory('Archive')).toBeDefined())
+
+    await user.click(screen.getByRole('button', { name: 'mock-tree-new-process' }))
+    await waitFor(() => expect(root.file('Finance/new-approval.bpmn')).toBeDefined())
+
+    const rail = screen.getByRole('button', { name: 'sidebar.toggle.aria' })
+    if (rail.getAttribute('aria-expanded') === 'false') await user.click(rail)
+    await user.click(screen.getByRole('button', { name: 'mock-tree-rename' }))
+    await waitFor(() => expect(root.file('Finance/renamed.bpmn')).toBeDefined())
+
+    await user.click(screen.getByRole('button', { name: 'mock-tree-delete' }))
+    const deleteDialog = await screen.findByRole('dialog')
+    await user.click(within(deleteDialog).getByRole('button', { name: 'confirmDialog.confirm' }))
+    await waitFor(() =>
+      expect(() => root.file('Finance/delete-me.bpmn')).toThrow(/Missing fake file/)
+    )
+
+    await user.click(screen.getByRole('button', { name: 'mock-tree-move' }))
+    const moveDialog = await screen.findByRole('dialog', { name: 'mock-move' })
+    await user.click(within(moveDialog).getByRole('button', { name: 'mock-move-confirm' }))
+    await waitFor(() => expect(root.file('move-me.bpmn')).toBeDefined())
+
+    await user.click(screen.getByRole('button', { name: 'mock-tree-move-drop' }))
+    await waitFor(() => expect(root.file('drop-me.bpmn')).toBeDefined())
+  })
+
+  it('prompts once for dirty work and honors cancel then discard during folder switches', async () => {
+    const user = userEvent.setup()
+    const first = populatedDirectory()
+    const second = fakeRoot()
+    second.addFile('second.bpmn', state.xml)
+    state.directorySupport = true
+    mocks.pickWorkspace
+      .mockResolvedValueOnce(asDirectoryHandle(first))
+      .mockResolvedValueOnce(asDirectoryHandle(second))
+      .mockResolvedValueOnce(asDirectoryHandle(second))
+    render(<App />)
+
+    await user.click(
+      await screen.findByRole('button', { name: 'workspace.storage.chooseDirectory' })
+    )
+    await user.click(await screen.findByRole('button', { name: 'mock-tree-open' }))
+    await user.click(await screen.findByRole('button', { name: 'mock-editor-dirty' }))
+    await user.click(screen.getByRole('button', { name: 'app.changeFolder' }))
+
+    let guard = await screen.findByRole('dialog')
+    await user.click(within(guard).getByRole('button', { name: 'confirm.switch.cancel' }))
+    expect((await screen.findAllByText('existing.bpmn')).length).toBeGreaterThan(0)
+
+    await user.click(screen.getByRole('button', { name: 'app.changeFolder' }))
+    guard = await screen.findByRole('dialog')
+    await user.click(within(guard).getByRole('button', { name: 'confirm.switch.discard' }))
+    await waitFor(() => expect(screen.queryByText('existing.bpmn')).toBeNull())
+    expect(await screen.findByTestId('catalog-view')).not.toBeNull()
   })
 })
