@@ -60,6 +60,46 @@ describe('portable workspace history', () => {
     expect((await history.listRevisions()).revisions).toHaveLength(0)
   })
 
+  it.each(['content', 'metadata'] as const)(
+    'never overwrites the live BPMN when cancellation reaches history %s creation',
+    async (abortStage) => {
+      const abort = new AbortController()
+      const adapter = new MemoryWorkspaceAdapter({
+        files: { 'process.bpmn': '<live />' },
+        beforeWrite: (path) => {
+          const isHistoryContent = path.startsWith('.orbitpm/history/') && path.endsWith('.bpmn')
+          const isHistoryMetadata = path.startsWith('.orbitpm/history/') && path.endsWith('.json')
+          if (
+            (abortStage === 'content' && isHistoryContent) ||
+            (abortStage === 'metadata' && isHistoryMetadata)
+          ) {
+            abort.abort()
+          }
+        }
+      })
+      const history = new PortableHistoryManager({ adapter, now: tickingClock() })
+      const live = await adapter.read('process.bpmn')
+
+      await expect(
+        history.writeWithRevision(
+          'process.bpmn',
+          text('<reviewed restore />'),
+          live.hash,
+          'restore',
+          abort.signal
+        )
+      ).rejects.toMatchObject({ code: 'cancelled' })
+
+      expect(decode((await adapter.read('process.bpmn')).bytes)).toBe('<live />')
+      expect((await history.listRevisions('process.bpmn')).revisions).toEqual([])
+      expect(
+        (await adapter.list()).filter(
+          (entry) => entry.kind === 'file' && entry.path.startsWith('.orbitpm/history/')
+        )
+      ).toEqual([])
+    }
+  )
+
   it('previews, diffs, restores, and restores as a collision-safe copy', async () => {
     const adapter = new MemoryWorkspaceAdapter({
       files: {

@@ -39,6 +39,7 @@ export interface CreateHistoryRevisionOptions {
   reason: HistoryRevisionReason
   snapshot?: FileSnapshot
   prune?: boolean
+  signal?: AbortSignal
 }
 
 const encoder = new TextEncoder()
@@ -46,6 +47,17 @@ const decoder = new TextDecoder('utf-8', { fatal: true })
 
 function isNotFound(error: unknown): boolean {
   return error instanceof WorkspaceOperationError && error.code === 'not-found'
+}
+
+function throwIfAborted(signal: AbortSignal | undefined, path: string): void {
+  if (!signal?.aborted) return
+  throw new WorkspaceOperationError({
+    code: 'cancelled',
+    operation: 'write',
+    path,
+    message: 'Portable history write was cancelled.',
+    cause: signal.reason
+  })
 }
 
 function savedOrThrow(outcome: SaveOutcome, path: string): FileSnapshot {
@@ -109,6 +121,7 @@ export class PortableHistoryManager {
     options: CreateHistoryRevisionOptions
   ): Promise<HistoryRevision> {
     const originalPath = normalizeWorkspacePath(originalPathInput)
+    throwIfAborted(options.signal, originalPath)
     if (!/\.bpmn$/i.test(originalPath)) {
       throw new WorkspaceOperationError({
         code: 'unsupported',
@@ -118,7 +131,9 @@ export class PortableHistoryManager {
       })
     }
     const snapshot = options.snapshot ?? (await this.#adapter.read(originalPath))
+    throwIfAborted(options.signal, originalPath)
     const pathHash = await sha256Hex(encoder.encode(originalPath))
+    throwIfAborted(options.signal, originalPath)
     const createdAt = this.#now()
     const id = `${createdAt}-${++this.#sequence}-${snapshot.hash.slice(0, 12)}`
     const folder = `${HISTORY_ROOT}/${pathHash}`
@@ -139,27 +154,50 @@ export class PortableHistoryManager {
     }
     const metadataBytes = encoder.encode(JSON.stringify(metadata, null, 2))
 
+    throwIfAborted(options.signal, folder)
     await this.#adapter.createFolder(folder)
-    savedOrThrow(
-      await this.#adapter.writeAtomic(contentPath, snapshot.bytes, undefined, {
-        expectedWorkspaceId: this.#adapter.id,
-        expectedMissing: true
-      }),
-      contentPath
-    )
+    throwIfAborted(options.signal, folder)
+    let contentWritten = false
+    let metadataWritten = false
     try {
+      throwIfAborted(options.signal, contentPath)
+      savedOrThrow(
+        await this.#adapter.writeAtomic(contentPath, snapshot.bytes, undefined, {
+          expectedWorkspaceId: this.#adapter.id,
+          expectedMissing: true,
+          signal: options.signal
+        }),
+        contentPath
+      )
+      contentWritten = true
+      throwIfAborted(options.signal, contentPath)
+      throwIfAborted(options.signal, metadataPath)
       savedOrThrow(
         await this.#adapter.writeAtomic(metadataPath, metadataBytes, undefined, {
           expectedWorkspaceId: this.#adapter.id,
-          expectedMissing: true
+          expectedMissing: true,
+          signal: options.signal
         }),
         metadataPath
       )
+      metadataWritten = true
+      throwIfAborted(options.signal, metadataPath)
     } catch (error) {
-      try {
-        await this.#adapter.remove(contentPath)
-      } catch {
-        // The exact content remains recoverable as an orphan if cleanup fails.
+      // Compensating cleanup must run even when cancellation caused the
+      // failure, otherwise an unreported partial revision remains.
+      if (metadataWritten) {
+        try {
+          await this.#adapter.remove(metadataPath)
+        } catch {
+          // Retain recoverable metadata if cleanup itself fails.
+        }
+      }
+      if (contentWritten) {
+        try {
+          await this.#adapter.remove(contentPath)
+        } catch {
+          // The exact content remains recoverable as an orphan if cleanup fails.
+        }
       }
       throw error
     }
@@ -168,7 +206,11 @@ export class PortableHistoryManager {
       ...metadata,
       storageBytes: snapshot.size + metadataBytes.byteLength
     }
-    if (options.prune !== false) await this.enforceRetention()
+    if (options.prune !== false) {
+      throwIfAborted(options.signal, originalPath)
+      await this.enforceRetention()
+      throwIfAborted(options.signal, originalPath)
+    }
     return revision
   }
 
@@ -257,38 +299,49 @@ export class PortableHistoryManager {
     pathInput: string,
     bytes: Uint8Array,
     expectedHash?: string,
-    reason: HistoryRevisionReason = 'overwrite'
+    reason: HistoryRevisionReason = 'overwrite',
+    signal?: AbortSignal
   ): Promise<HistoryWriteResult> {
     const path = normalizeWorkspacePath(pathInput)
+    throwIfAborted(signal, path)
     let current: FileSnapshot | undefined
     try {
       current = await this.#adapter.read(path)
     } catch (error) {
       if (!isNotFound(error)) throw error
     }
+    throwIfAborted(signal, path)
     if (!current) {
+      throwIfAborted(signal, path)
       return {
         outcome: await this.#adapter.writeAtomic(path, bytes, expectedHash, {
           expectedWorkspaceId: this.#adapter.id,
-          expectedMissing: expectedHash === undefined
+          expectedMissing: expectedHash === undefined,
+          signal
         })
       }
     }
     if (expectedHash !== undefined && current.hash !== expectedHash) {
+      throwIfAborted(signal, path)
       return {
         outcome: await this.#adapter.writeAtomic(path, bytes, expectedHash, {
-          expectedWorkspaceId: this.#adapter.id
+          expectedWorkspaceId: this.#adapter.id,
+          signal
         })
       }
     }
+    throwIfAborted(signal, path)
     const revision = await this.createRevision(path, {
       reason,
-      snapshot: current
+      snapshot: current,
+      signal
     })
+    throwIfAborted(signal, path)
     return {
       revision,
       outcome: await this.#adapter.writeAtomic(path, bytes, current.hash, {
-        expectedWorkspaceId: this.#adapter.id
+        expectedWorkspaceId: this.#adapter.id,
+        signal
       })
     }
   }
