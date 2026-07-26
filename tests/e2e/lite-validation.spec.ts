@@ -67,7 +67,11 @@ test('worker validation, safe source preview, and direct PDF work from the singl
   await expect(source.getByText('A generated diagram layout is ready to review.')).toBeVisible({
     timeout: 30_000
   })
-  await expect(source.getByText(/changed · \d+ added · \d+ removed/)).toBeVisible()
+  await expect(
+    source
+      .locator('.orbitpm-source-editor__layout-preview')
+      .getByText(/changed · \d+ added · \d+ removed/)
+  ).toBeVisible()
   const acceptLayout = source.getByRole('button', { name: 'Accept generated layout' })
   await expect(acceptLayout).toBeEnabled()
   await acceptLayout.click()
