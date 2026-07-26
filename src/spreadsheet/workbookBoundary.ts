@@ -10,6 +10,7 @@ import { cellAddress } from './cellAddress'
 import { validateParsedWorkbookDataCooperatively } from './cooperativeValidation'
 import { SpreadsheetError, throwIfAborted } from './errors'
 import { validateSpreadsheetInput } from './fileFormat'
+import { spreadsheetValidationMessageKey } from './issueCatalog'
 import { SPREADSHEET_LIMITS } from './limits'
 import { preflightXlsx, type XlsxPreflightResult } from './xlsxPreflight'
 
@@ -103,7 +104,7 @@ export function validateParsedWorkbookData(
               issues.push({
                 code: 'formula-without-cache',
                 severity: 'error',
-                messageKey: 'spreadsheet.validation.formula-without-cache',
+                messageKey: spreadsheetValidationMessageKey('formula-without-cache'),
                 guidanceKey: 'spreadsheet.guidance.replace-formula-with-value',
                 worksheet: sheet.name,
                 cellAddress: address,
@@ -113,7 +114,7 @@ export function validateParsedWorkbookData(
               issues.push({
                 code: 'cached-formula-value',
                 severity: 'warning',
-                messageKey: 'spreadsheet.validation.cached-formula-value',
+                messageKey: spreadsheetValidationMessageKey('cached-formula-value'),
                 guidanceKey: 'spreadsheet.guidance.verify-cached-formula-value',
                 worksheet: sheet.name,
                 cellAddress: address,
@@ -179,7 +180,7 @@ export async function parseXlsxBoundary(
       ...preflight.warnings.map<SpreadsheetValidationIssue>((warning) => ({
         code: warning.code,
         severity: 'warning',
-        messageKey: `spreadsheet.validation.${warning.code}`,
+        messageKey: spreadsheetValidationMessageKey(warning.code),
         details: { entries: warning.entries.join(',') }
       })),
       ...validated.issues

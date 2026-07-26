@@ -55,6 +55,7 @@ import {
 import { presetMatchesHeaderSignatures } from './mappingPreset'
 import { buildProcessWorkbookModel, officialTemplatePreset } from './modelBuilder'
 import { detectOfficialTemplate } from './officialTemplate'
+import { spreadsheetValidationMessageKey } from './issueCatalog'
 import { SpreadsheetValidationIssueList } from './SpreadsheetValidationIssueList'
 import {
   executeTransactionalImportPlan,
@@ -675,7 +676,9 @@ export function SpreadsheetImportPanel({
               {
                 code: 'synthetic-boundary-confirmation-required',
                 severity: 'review',
-                messageKey: 'spreadsheet.validation.synthetic-boundary-confirmation-required'
+                messageKey: spreadsheetValidationMessageKey(
+                  'synthetic-boundary-confirmation-required'
+                )
               }
             ]
           : []

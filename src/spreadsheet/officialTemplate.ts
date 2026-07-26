@@ -6,6 +6,7 @@ import type {
   SpreadsheetValidationIssue
 } from './contracts'
 import { OFFICIAL_TEMPLATE_VERSION } from './contracts'
+import { spreadsheetValidationMessageKey } from './issueCatalog'
 import { headerSignature } from './mapping'
 
 export const OFFICIAL_SHEET_NAMES = Object.freeze({
@@ -66,7 +67,7 @@ export function detectOfficialTemplate(workbook: ParsedWorkbookData): OfficialTe
       issues.push({
         code: 'official-template-sheet-missing',
         severity: 'warning',
-        messageKey: 'spreadsheet.validation.official-template-sheet-missing',
+        messageKey: spreadsheetValidationMessageKey('official-template-sheet-missing'),
         details: { sheet: name }
       })
       continue
@@ -77,7 +78,7 @@ export function detectOfficialTemplate(workbook: ParsedWorkbookData): OfficialTe
       issues.push({
         code: 'official-template-header-mismatch',
         severity: 'warning',
-        messageKey: 'spreadsheet.validation.official-template-header-mismatch',
+        messageKey: spreadsheetValidationMessageKey('official-template-header-mismatch'),
         worksheet: name,
         details: {
           requiredFieldsFound: Boolean(requiredHeader),
@@ -99,7 +100,7 @@ export function detectOfficialTemplate(workbook: ParsedWorkbookData): OfficialTe
     issues.push({
       code: 'official-template-version-unsupported',
       severity: 'warning',
-      messageKey: 'spreadsheet.validation.official-template-version-unsupported',
+      messageKey: spreadsheetValidationMessageKey('official-template-version-unsupported'),
       rawValue: declaredVersion,
       normalizedValue: OFFICIAL_TEMPLATE_VERSION
     })

@@ -1075,6 +1075,171 @@ export const en = {
   'spreadsheet.validation.issueFallback': 'Review this workbook issue.',
   'spreadsheet.validation.guidanceFallback':
     'Correct the source value or mapping, then validate again.',
+  'spreadsheet.validation.bilingual-audit-failed':
+    'The bilingual audit could not validate this process.',
+  'spreadsheet.validation.branch-topology-requires-explicit-conditions':
+    'This branch needs explicit targets and conditions.',
+  'spreadsheet.validation.cached-formula-value':
+    'A cached formula result was imported; verify that it is current.',
+  'spreadsheet.validation.called-process-on-non-call-activity':
+    'A called process is assigned to an element that is not a call activity.',
+  'spreadsheet.validation.called-process-reviewed-unlinked':
+    'The missing called process was explicitly reviewed as unlinked.',
+  'spreadsheet.validation.called-process-unresolved':
+    'The called process does not exist in this import or workspace.',
+  'spreadsheet.validation.data-connections-ignored':
+    'Workbook data connections were ignored for safety.',
+  'spreadsheet.validation.default-flow-has-condition':
+    'A default flow must not also have a condition.',
+  'spreadsheet.validation.default-flow-source-invalid':
+    'This element type cannot own a default flow.',
+  'spreadsheet.validation.destination-folder-unsafe':
+    'The destination folder is not a safe relative path.',
+  'spreadsheet.validation.destination-hash-missing':
+    'The overwrite target has no verifiable content hash.',
+  'spreadsheet.validation.destination-inspection-failed':
+    'The destination could not be inspected safely.',
+  'spreadsheet.validation.destination-path-collision':
+    'More than one process resolves to the same destination path.',
+  'spreadsheet.validation.destination-process-id-collision':
+    'This process ID already exists in the destination workspace.',
+  'spreadsheet.validation.diagram-readability':
+    'This process may be difficult to read because it contains many nodes.',
+  'spreadsheet.validation.duplicate-numeric-order':
+    'Numeric step order values must be unique within a process.',
+  'spreadsheet.validation.end-event-missing': 'The process has no End event.',
+  'spreadsheet.validation.end-event-outgoing': 'An End event cannot have outgoing flows.',
+  'spreadsheet.validation.event-definition-on-non-event':
+    'An event definition is assigned to an element that is not an event.',
+  'spreadsheet.validation.explicit-flows-required':
+    'Explicit flow mode requires a Flows sheet with source and target values.',
+  'spreadsheet.validation.external-links-ignored':
+    'External workbook links were ignored for safety.',
+  'spreadsheet.validation.flow-duplicate-edge':
+    'The same source-to-target flow is defined more than once.',
+  'spreadsheet.validation.flow-id-duplicate': 'This flow ID is duplicated in its process.',
+  'spreadsheet.validation.flow-id-invalid': 'This flow ID is not a valid BPMN identifier.',
+  'spreadsheet.validation.flow-id-missing': 'A flow is missing its required ID.',
+  'spreadsheet.validation.flow-self-loop-review':
+    'This flow returns to the same element and needs review.',
+  'spreadsheet.validation.flow-source-missing': 'The flow source does not exist in this process.',
+  'spreadsheet.validation.flow-target-missing': 'The flow target does not exist in this process.',
+  'spreadsheet.validation.formula-without-cache':
+    'A formula has no cached displayed value and cannot be imported.',
+  'spreadsheet.validation.gateway-branch-count': 'A gateway must have enough outgoing branches.',
+  'spreadsheet.validation.gateway-condition-not-allowed':
+    'This gateway type does not allow conditional outgoing flows.',
+  'spreadsheet.validation.gateway-condition-required':
+    'Each non-default branch from this gateway needs a condition.',
+  'spreadsheet.validation.gateway-default-not-allowed':
+    'This gateway type does not allow a default flow.',
+  'spreadsheet.validation.gateway-topology-not-inferred':
+    'Gateway topology cannot be inferred safely from numeric order.',
+  'spreadsheet.validation.glossary-entry-duplicate':
+    'This glossary term is defined more than once.',
+  'spreadsheet.validation.glossary-entry-incomplete':
+    'A glossary entry needs both English and Arabic text.',
+  'spreadsheet.validation.invalid-boolean': 'This value is not a recognized true or false value.',
+  'spreadsheet.validation.low-confidence-mapping':
+    'This required column mapping has low confidence and needs confirmation.',
+  'spreadsheet.validation.mapped-header-duplicate':
+    'The mapped header occurs more than once in the worksheet.',
+  'spreadsheet.validation.mapped-header-missing':
+    'The mapped header no longer exists in the worksheet.',
+  'spreadsheet.validation.mapped-header-row-missing': 'The selected header row does not exist.',
+  'spreadsheet.validation.mapped-next-step-required':
+    'Next-step flow mode requires mapped next-step values.',
+  'spreadsheet.validation.mapped-sheet-missing': 'The selected worksheet no longer exists.',
+  'spreadsheet.validation.missing-required-mapping':
+    'A required canonical field is not mapped to a column.',
+  'spreadsheet.validation.missing-steps-sheet': 'Select a worksheet that contains process steps.',
+  'spreadsheet.validation.model-version-unsupported':
+    'This workbook model version is not supported.',
+  'spreadsheet.validation.multiple-default-flows':
+    'An element can have only one default outgoing flow.',
+  'spreadsheet.validation.multiple-lane-assignments':
+    'A step cannot be assigned to more than one lane.',
+  'spreadsheet.validation.node-id-duplicate': 'This step ID is duplicated in its process.',
+  'spreadsheet.validation.node-id-invalid': 'This step ID is not a valid BPMN identifier.',
+  'spreadsheet.validation.node-id-missing': 'A step is missing its required ID.',
+  'spreadsheet.validation.node-id-workbook-duplicate':
+    'This step ID is duplicated elsewhere in the workbook.',
+  'spreadsheet.validation.node-name-missing': 'A step needs an English or Arabic name.',
+  'spreadsheet.validation.node-order-invalid': 'Step order must be a finite numeric value.',
+  'spreadsheet.validation.node-participant-kind-mismatch':
+    'The referenced participant is not the required pool or lane type.',
+  'spreadsheet.validation.node-participant-missing':
+    'The step references a participant that does not exist.',
+  'spreadsheet.validation.node-process-limit': 'This process exceeds the maximum number of nodes.',
+  'spreadsheet.validation.node-process-missing':
+    'The step references a process that does not exist.',
+  'spreadsheet.validation.node-transaction-limit':
+    'This import exceeds the maximum total number of nodes.',
+  'spreadsheet.validation.node-unreachable': 'This step cannot be reached from a Start event.',
+  'spreadsheet.validation.numeric-order-required':
+    'Numeric-order inference requires an order value for every step.',
+  'spreadsheet.validation.official-template-header-mismatch':
+    'An official template worksheet has unexpected headers.',
+  'spreadsheet.validation.official-template-sheet-missing':
+    'An official template worksheet is missing.',
+  'spreadsheet.validation.official-template-version-unsupported':
+    'This official template version is not supported.',
+  'spreadsheet.validation.participant-id-duplicate':
+    'This participant ID is duplicated in its process.',
+  'spreadsheet.validation.participant-id-invalid':
+    'This participant ID is not a valid BPMN identifier.',
+  'spreadsheet.validation.participant-id-missing': 'A participant is missing its required ID.',
+  'spreadsheet.validation.participant-name-missing':
+    'A participant needs an English or Arabic name.',
+  'spreadsheet.validation.participant-parent-cycle': 'Participant parent references form a cycle.',
+  'spreadsheet.validation.participant-parent-missing': 'The parent participant does not exist.',
+  'spreadsheet.validation.participant-process-missing':
+    'The participant references a process that does not exist.',
+  'spreadsheet.validation.pipeline-diagnostic':
+    'The BPMN generation pipeline reported a validation diagnostic.',
+  'spreadsheet.validation.pipeline-generation-failed':
+    'BPMN generation failed before a valid artifact was produced.',
+  'spreadsheet.validation.pool-parent-not-allowed': 'A pool cannot have a parent participant.',
+  'spreadsheet.validation.process-id-duplicate': 'This process ID is duplicated.',
+  'spreadsheet.validation.process-id-invalid': 'This process ID is not a valid BPMN identifier.',
+  'spreadsheet.validation.process-id-missing': 'A process is missing its required ID.',
+  'spreadsheet.validation.process-name-missing': 'A process needs an English or Arabic name.',
+  'spreadsheet.validation.processes-empty': 'The workbook does not define any processes.',
+  'spreadsheet.validation.raci-invalid':
+    'The RACI value contains unsupported responsibility codes.',
+  'spreadsheet.validation.start-event-incoming': 'A Start event cannot have incoming flows.',
+  'spreadsheet.validation.start-event-missing': 'The process has no Start event.',
+  'spreadsheet.validation.synthetic-boundary-confirmation-required':
+    'Confirm the proposed Start and End events before generation.',
+  'spreadsheet.validation.synthetic-end-ambiguous':
+    'An End event cannot be added because the final step is ambiguous.',
+  'spreadsheet.validation.synthetic-start-ambiguous':
+    'A Start event cannot be added because the first step is ambiguous.',
+  'spreadsheet.validation.translation-review-required':
+    'English and Arabic process content must be reviewed before import.',
+  'spreadsheet.validation.unknown-participant-type':
+    'This participant type is unknown and needs an explicit mapping.',
+  'spreadsheet.validation.unknown-step-type':
+    'This step type is unknown and needs an explicit BPMN mapping.',
+  'spreadsheet.guidance.choose-collision-behavior':
+    'Choose whether to stop, overwrite with recovery history, or rename the file.',
+  'spreadsheet.guidance.confirm-field-mapping':
+    'Select the correct column and explicitly confirm the required mapping.',
+  'spreadsheet.guidance.correct-source-and-revalidate':
+    'Correct the referenced source value, then validate the workbook again.',
+  'spreadsheet.guidance.map-participant-type': 'Map the raw participant label to Pool or Lane.',
+  'spreadsheet.guidance.map-step-type': 'Map the raw step label to a supported BPMN element type.',
+  'spreadsheet.guidance.refresh-destination-state':
+    'Refresh the workspace and verify the destination before retrying.',
+  'spreadsheet.guidance.replace-formula-with-value':
+    'Replace the formula with a displayed value in the source workbook.',
+  'spreadsheet.guidance.retry-destination-inspection':
+    'Check workspace access, then inspect the destination again.',
+  'spreadsheet.guidance.review-inference-inputs':
+    'Review flow mode, order, next-step targets, and gateway conditions.',
+  'spreadsheet.guidance.use-boolean': 'Use a recognized true/false or yes/no value.',
+  'spreadsheet.guidance.verify-cached-formula-value':
+    'Recalculate and save the workbook, then verify the displayed value.',
   'spreadsheet.validation.noIssues': 'No workbook issues found.',
   'spreadsheet.validation.mappingBlocked': 'Confirm every required mapping before review.',
   'spreadsheet.typeRepair.title': 'Map unknown spreadsheet types',
@@ -2257,6 +2422,149 @@ export const ar: Record<keyof typeof en, string> = {
   'spreadsheet.validation.guidance': 'إرشادات الإصلاح',
   'spreadsheet.validation.issueFallback': 'راجع هذه المشكلة في المصنف.',
   'spreadsheet.validation.guidanceFallback': 'صحح قيمة المصدر أو الربط، ثم أعد التحقق.',
+  'spreadsheet.validation.bilingual-audit-failed': 'تعذر على تدقيق اللغتين التحقق من هذه العملية.',
+  'spreadsheet.validation.branch-topology-requires-explicit-conditions':
+    'يحتاج هذا التفرع إلى أهداف وشروط صريحة.',
+  'spreadsheet.validation.cached-formula-value':
+    'تم استيراد نتيجة صيغة مخزنة مؤقتًا؛ تحقق من حداثتها.',
+  'spreadsheet.validation.called-process-on-non-call-activity':
+    'تم إسناد عملية مستدعاة إلى عنصر ليس نشاط استدعاء.',
+  'spreadsheet.validation.called-process-reviewed-unlinked':
+    'تمت مراجعة العملية المستدعاة المفقودة صراحةً باعتبارها غير مرتبطة.',
+  'spreadsheet.validation.called-process-unresolved':
+    'العملية المستدعاة غير موجودة في هذا الاستيراد أو مساحة العمل.',
+  'spreadsheet.validation.data-connections-ignored':
+    'تم تجاهل اتصالات بيانات المصنف حفاظًا على الأمان.',
+  'spreadsheet.validation.default-flow-has-condition':
+    'يجب ألا يحتوي التدفق الافتراضي على شرط أيضًا.',
+  'spreadsheet.validation.default-flow-source-invalid':
+    'لا يمكن لهذا النوع من العناصر امتلاك تدفق افتراضي.',
+  'spreadsheet.validation.destination-folder-unsafe': 'مجلد الوجهة ليس مسارًا نسبيًا آمنًا.',
+  'spreadsheet.validation.destination-hash-missing':
+    'لا يملك هدف الاستبدال بصمة محتوى قابلة للتحقق.',
+  'spreadsheet.validation.destination-inspection-failed': 'تعذر فحص الوجهة بأمان.',
+  'spreadsheet.validation.destination-path-collision': 'تؤدي أكثر من عملية إلى مسار الوجهة نفسه.',
+  'spreadsheet.validation.destination-process-id-collision':
+    'معرّف العملية هذا موجود مسبقًا في مساحة العمل الوجهة.',
+  'spreadsheet.validation.diagram-readability':
+    'قد تصعب قراءة هذه العملية لأنها تحتوي على عقد كثيرة.',
+  'spreadsheet.validation.duplicate-numeric-order':
+    'يجب أن تكون قيم ترتيب الخطوات الرقمية فريدة داخل العملية.',
+  'spreadsheet.validation.end-event-missing': 'لا تحتوي العملية على حدث نهاية.',
+  'spreadsheet.validation.end-event-outgoing': 'لا يمكن أن يكون لحدث النهاية تدفقات صادرة.',
+  'spreadsheet.validation.event-definition-on-non-event': 'تم إسناد تعريف حدث إلى عنصر ليس حدثًا.',
+  'spreadsheet.validation.explicit-flows-required':
+    'يتطلب وضع التدفقات الصريحة ورقة تدفقات بقيم المصدر والهدف.',
+  'spreadsheet.validation.external-links-ignored':
+    'تم تجاهل روابط المصنف الخارجية حفاظًا على الأمان.',
+  'spreadsheet.validation.flow-duplicate-edge':
+    'تم تعريف التدفق نفسه من المصدر إلى الهدف أكثر من مرة.',
+  'spreadsheet.validation.flow-id-duplicate': 'معرّف التدفق هذا مكرر داخل العملية.',
+  'spreadsheet.validation.flow-id-invalid': 'معرّف التدفق ليس معرّف BPMN صالحًا.',
+  'spreadsheet.validation.flow-id-missing': 'يوجد تدفق بلا معرّف مطلوب.',
+  'spreadsheet.validation.flow-self-loop-review':
+    'يعود هذا التدفق إلى العنصر نفسه ويحتاج إلى مراجعة.',
+  'spreadsheet.validation.flow-source-missing': 'مصدر التدفق غير موجود في هذه العملية.',
+  'spreadsheet.validation.flow-target-missing': 'هدف التدفق غير موجود في هذه العملية.',
+  'spreadsheet.validation.formula-without-cache':
+    'لا تحتوي الصيغة على قيمة معروضة مخزنة مؤقتًا ولا يمكن استيرادها.',
+  'spreadsheet.validation.gateway-branch-count':
+    'يجب أن تحتوي البوابة على عدد كافٍ من الفروع الصادرة.',
+  'spreadsheet.validation.gateway-condition-not-allowed':
+    'هذا النوع من البوابات لا يسمح بتدفقات صادرة مشروطة.',
+  'spreadsheet.validation.gateway-condition-required':
+    'يحتاج كل فرع غير افتراضي من هذه البوابة إلى شرط.',
+  'spreadsheet.validation.gateway-default-not-allowed':
+    'هذا النوع من البوابات لا يسمح بتدفق افتراضي.',
+  'spreadsheet.validation.gateway-topology-not-inferred':
+    'لا يمكن استنتاج بنية البوابة بأمان من الترتيب الرقمي.',
+  'spreadsheet.validation.glossary-entry-duplicate': 'تم تعريف مصطلح المسرد هذا أكثر من مرة.',
+  'spreadsheet.validation.glossary-entry-incomplete': 'يحتاج إدخال المسرد إلى نص إنجليزي وعربي.',
+  'spreadsheet.validation.invalid-boolean': 'هذه القيمة ليست قيمة صواب أو خطأ معروفة.',
+  'spreadsheet.validation.low-confidence-mapping':
+    'ربط العمود المطلوب منخفض الثقة ويحتاج إلى تأكيد.',
+  'spreadsheet.validation.mapped-header-duplicate':
+    'يتكرر العنوان المرتبط أكثر من مرة في ورقة العمل.',
+  'spreadsheet.validation.mapped-header-missing': 'لم يعد العنوان المرتبط موجودًا في ورقة العمل.',
+  'spreadsheet.validation.mapped-header-row-missing': 'صف العناوين المحدد غير موجود.',
+  'spreadsheet.validation.mapped-next-step-required':
+    'يتطلب وضع الخطوة التالية قيمًا مرتبطة للخطوة التالية.',
+  'spreadsheet.validation.mapped-sheet-missing': 'لم تعد ورقة العمل المحددة موجودة.',
+  'spreadsheet.validation.missing-required-mapping': 'لم يتم ربط حقل أساسي مطلوب بعمود.',
+  'spreadsheet.validation.missing-steps-sheet': 'حدد ورقة عمل تحتوي على خطوات العملية.',
+  'spreadsheet.validation.model-version-unsupported': 'إصدار نموذج المصنف هذا غير مدعوم.',
+  'spreadsheet.validation.multiple-default-flows':
+    'يمكن أن يكون للعنصر تدفق صادر افتراضي واحد فقط.',
+  'spreadsheet.validation.multiple-lane-assignments': 'لا يمكن إسناد الخطوة إلى أكثر من مسار واحد.',
+  'spreadsheet.validation.node-id-duplicate': 'معرّف الخطوة هذا مكرر داخل العملية.',
+  'spreadsheet.validation.node-id-invalid': 'معرّف الخطوة ليس معرّف BPMN صالحًا.',
+  'spreadsheet.validation.node-id-missing': 'توجد خطوة بلا معرّف مطلوب.',
+  'spreadsheet.validation.node-id-workbook-duplicate':
+    'معرّف الخطوة هذا مكرر في موضع آخر من المصنف.',
+  'spreadsheet.validation.node-name-missing': 'تحتاج الخطوة إلى اسم إنجليزي أو عربي.',
+  'spreadsheet.validation.node-order-invalid': 'يجب أن يكون ترتيب الخطوة قيمة رقمية محدودة.',
+  'spreadsheet.validation.node-participant-kind-mismatch':
+    'المشارك المشار إليه ليس من نوع الحوض أو المسار المطلوب.',
+  'spreadsheet.validation.node-participant-missing': 'تشير الخطوة إلى مشارك غير موجود.',
+  'spreadsheet.validation.node-process-limit': 'تتجاوز هذه العملية الحد الأقصى لعدد العقد.',
+  'spreadsheet.validation.node-process-missing': 'تشير الخطوة إلى عملية غير موجودة.',
+  'spreadsheet.validation.node-transaction-limit':
+    'يتجاوز هذا الاستيراد الحد الأقصى لإجمالي العقد.',
+  'spreadsheet.validation.node-unreachable': 'لا يمكن الوصول إلى هذه الخطوة من حدث بداية.',
+  'spreadsheet.validation.numeric-order-required':
+    'يتطلب استنتاج الترتيب الرقمي قيمة ترتيب لكل خطوة.',
+  'spreadsheet.validation.official-template-header-mismatch':
+    'تحتوي ورقة من القالب الرسمي على عناوين غير متوقعة.',
+  'spreadsheet.validation.official-template-sheet-missing':
+    'توجد ورقة عمل مفقودة من القالب الرسمي.',
+  'spreadsheet.validation.official-template-version-unsupported':
+    'إصدار القالب الرسمي هذا غير مدعوم.',
+  'spreadsheet.validation.participant-id-duplicate': 'معرّف المشارك هذا مكرر داخل العملية.',
+  'spreadsheet.validation.participant-id-invalid': 'معرّف المشارك ليس معرّف BPMN صالحًا.',
+  'spreadsheet.validation.participant-id-missing': 'يوجد مشارك بلا معرّف مطلوب.',
+  'spreadsheet.validation.participant-name-missing': 'يحتاج المشارك إلى اسم إنجليزي أو عربي.',
+  'spreadsheet.validation.participant-parent-cycle': 'تكوّن مراجع المشارك الأصلية دورة.',
+  'spreadsheet.validation.participant-parent-missing': 'المشارك الأصل المشار إليه غير موجود.',
+  'spreadsheet.validation.participant-process-missing': 'يشير المشارك إلى عملية غير موجودة.',
+  'spreadsheet.validation.pipeline-diagnostic': 'أبلغ مسار إنشاء BPMN عن نتيجة تحقق.',
+  'spreadsheet.validation.pipeline-generation-failed': 'فشل إنشاء BPMN قبل إنتاج ملف صالح.',
+  'spreadsheet.validation.pool-parent-not-allowed': 'لا يمكن أن يكون للحوض مشارك أصل.',
+  'spreadsheet.validation.process-id-duplicate': 'معرّف العملية هذا مكرر.',
+  'spreadsheet.validation.process-id-invalid': 'معرّف العملية ليس معرّف BPMN صالحًا.',
+  'spreadsheet.validation.process-id-missing': 'توجد عملية بلا معرّف مطلوب.',
+  'spreadsheet.validation.process-name-missing': 'تحتاج العملية إلى اسم إنجليزي أو عربي.',
+  'spreadsheet.validation.processes-empty': 'لا يعرّف المصنف أي عمليات.',
+  'spreadsheet.validation.raci-invalid': 'تحتوي قيمة RACI على رموز مسؤولية غير مدعومة.',
+  'spreadsheet.validation.start-event-incoming': 'لا يمكن أن يكون لحدث البداية تدفقات واردة.',
+  'spreadsheet.validation.start-event-missing': 'لا تحتوي العملية على حدث بداية.',
+  'spreadsheet.validation.synthetic-boundary-confirmation-required':
+    'أكد أحداث البداية والنهاية المقترحة قبل الإنشاء.',
+  'spreadsheet.validation.synthetic-end-ambiguous':
+    'لا يمكن إضافة حدث نهاية لأن الخطوة الأخيرة ملتبسة.',
+  'spreadsheet.validation.synthetic-start-ambiguous':
+    'لا يمكن إضافة حدث بداية لأن الخطوة الأولى ملتبسة.',
+  'spreadsheet.validation.translation-review-required':
+    'يجب مراجعة محتوى العملية بالإنجليزية والعربية قبل الاستيراد.',
+  'spreadsheet.validation.unknown-participant-type':
+    'نوع المشارك هذا غير معروف ويحتاج إلى ربط صريح.',
+  'spreadsheet.validation.unknown-step-type': 'نوع الخطوة هذا غير معروف ويحتاج إلى ربط BPMN صريح.',
+  'spreadsheet.guidance.choose-collision-behavior':
+    'اختر الإيقاف أو الاستبدال مع سجل استرداد أو إعادة تسمية الملف.',
+  'spreadsheet.guidance.confirm-field-mapping': 'حدد العمود الصحيح وأكد ربط الحقل المطلوب صراحةً.',
+  'spreadsheet.guidance.correct-source-and-revalidate':
+    'صحح قيمة المصدر المشار إليها، ثم أعد التحقق من المصنف.',
+  'spreadsheet.guidance.map-participant-type': 'اربط تسمية المشارك الخام بحوض أو مسار.',
+  'spreadsheet.guidance.map-step-type': 'اربط تسمية الخطوة الخام بنوع عنصر BPMN مدعوم.',
+  'spreadsheet.guidance.refresh-destination-state':
+    'حدّث مساحة العمل وتحقق من الوجهة قبل إعادة المحاولة.',
+  'spreadsheet.guidance.replace-formula-with-value': 'استبدل الصيغة بقيمة معروضة في المصنف المصدر.',
+  'spreadsheet.guidance.retry-destination-inspection':
+    'تحقق من الوصول إلى مساحة العمل، ثم افحص الوجهة مرة أخرى.',
+  'spreadsheet.guidance.review-inference-inputs':
+    'راجع وضع التدفق والترتيب وأهداف الخطوة التالية وشروط البوابة.',
+  'spreadsheet.guidance.use-boolean': 'استخدم قيمة معروفة للصواب/الخطأ أو نعم/لا.',
+  'spreadsheet.guidance.verify-cached-formula-value':
+    'أعد حساب المصنف واحفظه، ثم تحقق من القيمة المعروضة.',
   'spreadsheet.validation.noIssues': 'لا توجد مشكلات في المصنف.',
   'spreadsheet.validation.mappingBlocked': 'أكد كل ربط مطلوب قبل المراجعة.',
   'spreadsheet.typeRepair.title': 'ربط أنواع الجدول غير المعروفة',

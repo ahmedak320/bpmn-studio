@@ -24,6 +24,7 @@ import {
   type WorkbookProcess
 } from './contracts'
 import { DEFAULT_LIST_DELIMITERS } from './limits'
+import { spreadsheetValidationMessageKey } from './issueCatalog'
 import {
   detectOfficialTemplate,
   OFFICIAL_SHEET_NAMES,
@@ -216,7 +217,7 @@ function buildCursor(
     issues.push({
       code: 'mapped-sheet-missing',
       severity: 'error',
-      messageKey: 'spreadsheet.validation.mapped-sheet-missing',
+      messageKey: spreadsheetValidationMessageKey('mapped-sheet-missing'),
       details: { role, worksheet: selection.worksheet }
     })
     return undefined
@@ -227,7 +228,7 @@ function buildCursor(
     issues.push({
       code: 'mapped-header-row-missing',
       severity: 'error',
-      messageKey: 'spreadsheet.validation.mapped-header-row-missing',
+      messageKey: spreadsheetValidationMessageKey('mapped-header-row-missing'),
       worksheet: sheet.name,
       details: { headerRow: selection.headerRow }
     })
@@ -249,10 +250,9 @@ function buildCursor(
       issues.push({
         code: candidates.length === 0 ? 'mapped-header-missing' : 'mapped-header-duplicate',
         severity: 'error',
-        messageKey:
-          candidates.length === 0
-            ? 'spreadsheet.validation.mapped-header-missing'
-            : 'spreadsheet.validation.mapped-header-duplicate',
+        messageKey: spreadsheetValidationMessageKey(
+          candidates.length === 0 ? 'mapped-header-missing' : 'mapped-header-duplicate'
+        ),
         worksheet: sheet.name,
         rawValue: mappedHeader,
         normalizedValue: field
@@ -395,7 +395,7 @@ export function buildProcessWorkbookModel(
         issues.push({
           code: 'unknown-participant-type',
           severity: 'review',
-          messageKey: 'spreadsheet.validation.unknown-participant-type',
+          messageKey: spreadsheetValidationMessageKey('unknown-participant-type'),
           guidanceKey: 'spreadsheet.guidance.map-participant-type',
           processId,
           elementId: id,
@@ -531,7 +531,8 @@ export function buildProcessWorkbookModel(
         issues.push({
           code: 'invalid-boolean',
           severity: 'error',
-          messageKey: 'spreadsheet.validation.invalid-boolean',
+          messageKey: spreadsheetValidationMessageKey('invalid-boolean'),
+          guidanceKey: 'spreadsheet.guidance.use-boolean',
           worksheet: flowCursor.name,
           cellAddress: reader.provenance().fields?.is_default?.address,
           rawValue: rawDefault,

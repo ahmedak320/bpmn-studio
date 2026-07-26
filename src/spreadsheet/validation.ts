@@ -9,6 +9,11 @@ import {
   type WorkbookNode,
   type WorkbookValidationReport
 } from './contracts'
+import {
+  spreadsheetValidationMessageKey,
+  type SpreadsheetGuidanceKey,
+  type SpreadsheetValidationIssueCode
+} from './issueCatalog'
 import { SPREADSHEET_LIMITS } from './limits'
 
 export interface WorkbookValidationOptions {
@@ -46,7 +51,7 @@ function provenanceCell(provenance: RecordProvenance, field?: string): string | 
 }
 
 function makeIssue(
-  code: string,
+  code: SpreadsheetValidationIssueCode,
   severity: ValidationSeverity,
   provenance?: RecordProvenance,
   context: {
@@ -56,14 +61,14 @@ function makeIssue(
     rawValue?: unknown
     normalizedValue?: unknown
     details?: Readonly<Record<string, string | number | boolean>>
-    guidanceCode?: string
+    guidanceKey?: SpreadsheetGuidanceKey
   } = {}
 ): SpreadsheetValidationIssue {
   return Object.freeze({
     code,
     severity,
-    messageKey: `spreadsheet.validation.${code}`,
-    guidanceKey: `spreadsheet.guidance.${context.guidanceCode ?? code}`,
+    messageKey: spreadsheetValidationMessageKey(code),
+    guidanceKey: context.guidanceKey ?? 'spreadsheet.guidance.correct-source-and-revalidate',
     ...(context.processId ? { processId: context.processId } : {}),
     ...(context.elementId ? { elementId: context.elementId } : {}),
     ...(provenance
@@ -92,17 +97,22 @@ function validBpmnId(id: string): boolean {
 
 function validateId(
   id: string,
-  kind: string,
+  kind: 'process' | 'participant' | 'node' | 'flow',
   processId: string,
   provenance: RecordProvenance,
   issues: SpreadsheetValidationIssue[],
   field: string
 ): void {
   if (!id) {
-    issues.push(makeIssue(`${kind}-id-missing`, 'error', provenance, { processId, field }))
+    issues.push(
+      makeIssue(`${kind}-id-missing` as SpreadsheetValidationIssueCode, 'error', provenance, {
+        processId,
+        field
+      })
+    )
   } else if (!validBpmnId(id)) {
     issues.push(
-      makeIssue(`${kind}-id-invalid`, 'error', provenance, {
+      makeIssue(`${kind}-id-invalid` as SpreadsheetValidationIssueCode, 'error', provenance, {
         processId,
         elementId: id,
         field,
@@ -299,7 +309,8 @@ function validateNodes(
           processId: node.processId,
           elementId: node.id,
           field: 'type',
-          rawValue: node.rawType ?? node.type
+          rawValue: node.rawType ?? node.type,
+          guidanceKey: 'spreadsheet.guidance.map-step-type'
         })
       )
     }

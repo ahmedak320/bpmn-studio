@@ -14,6 +14,10 @@ import {
 } from './contracts'
 import { SpreadsheetError } from './errors'
 import { stableHash } from './hash'
+import {
+  spreadsheetValidationMessageKey,
+  type SpreadsheetValidationIssueCode
+} from './issueCatalog'
 
 const GATEWAY_TYPES = new Set([
   'exclusiveGateway',
@@ -164,7 +168,7 @@ function syntheticProvenance(source: RecordProvenance, kind: 'start' | 'end'): R
 }
 
 function issue(
-  code: string,
+  code: SpreadsheetValidationIssueCode,
   severity: 'error' | 'review' | 'warning',
   processId: string,
   provenance?: RecordProvenance,
@@ -173,8 +177,8 @@ function issue(
   return Object.freeze({
     code,
     severity,
-    messageKey: `spreadsheet.validation.${code}`,
-    guidanceKey: `spreadsheet.guidance.${code}`,
+    messageKey: spreadsheetValidationMessageKey(code),
+    guidanceKey: 'spreadsheet.guidance.review-inference-inputs',
     processId,
     ...(provenance
       ? { worksheet: provenance.worksheet, cellAddress: provenance.fields?.order?.address }

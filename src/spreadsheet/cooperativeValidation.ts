@@ -8,6 +8,7 @@ import type {
 } from './contracts'
 import { cellAddress } from './cellAddress'
 import { SpreadsheetError, throwIfAborted } from './errors'
+import { spreadsheetValidationMessageKey } from './issueCatalog'
 import { SPREADSHEET_LIMITS } from './limits'
 
 /**
@@ -116,7 +117,7 @@ function copyValidatedCell(
       state.issues.push({
         code: 'formula-without-cache',
         severity: 'error',
-        messageKey: 'spreadsheet.validation.formula-without-cache',
+        messageKey: spreadsheetValidationMessageKey('formula-without-cache'),
         guidanceKey: 'spreadsheet.guidance.replace-formula-with-value',
         worksheet,
         cellAddress: address,
@@ -126,7 +127,7 @@ function copyValidatedCell(
       state.issues.push({
         code: 'cached-formula-value',
         severity: 'warning',
-        messageKey: 'spreadsheet.validation.cached-formula-value',
+        messageKey: spreadsheetValidationMessageKey('cached-formula-value'),
         guidanceKey: 'spreadsheet.guidance.verify-cached-formula-value',
         worksheet,
         cellAddress: address,

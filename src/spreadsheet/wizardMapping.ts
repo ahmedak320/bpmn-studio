@@ -9,6 +9,7 @@ import {
   type SpreadsheetValidationIssue
 } from './contracts'
 import { DEFAULT_LIST_DELIMITERS } from './limits'
+import { spreadsheetValidationMessageKey } from './issueCatalog'
 import {
   LOW_CONFIDENCE_REQUIRED_THRESHOLD,
   headerSignature,
@@ -232,7 +233,7 @@ export function mappingReviewIssues(
         issues.push({
           code: 'missing-steps-sheet',
           severity: 'review',
-          messageKey: 'spreadsheet.validation.missing-steps-sheet'
+          messageKey: spreadsheetValidationMessageKey('missing-steps-sheet')
         })
       }
       continue
@@ -252,7 +253,7 @@ export function mappingReviewIssues(
         issues.push({
           code: 'missing-required-mapping',
           severity: 'review',
-          messageKey: 'spreadsheet.validation.missing-required-mapping',
+          messageKey: spreadsheetValidationMessageKey('missing-required-mapping'),
           guidanceKey: 'spreadsheet.guidance.confirm-field-mapping',
           worksheet: selection.worksheet,
           normalizedValue: field,
@@ -266,7 +267,7 @@ export function mappingReviewIssues(
         issues.push({
           code: 'low-confidence-mapping',
           severity: 'review',
-          messageKey: 'spreadsheet.validation.low-confidence-mapping',
+          messageKey: spreadsheetValidationMessageKey('low-confidence-mapping'),
           guidanceKey: 'spreadsheet.guidance.confirm-field-mapping',
           worksheet: selection.worksheet,
           rawValue: mappedHeader,

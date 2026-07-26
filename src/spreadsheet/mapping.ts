@@ -6,6 +6,7 @@ import {
 } from './aliases'
 import type { CanonicalSheet, SpreadsheetValidationIssue } from './contracts'
 import { stableHash } from './hash'
+import { spreadsheetValidationMessageKey } from './issueCatalog'
 
 export const LOW_CONFIDENCE_REQUIRED_THRESHOLD = 0.9
 
@@ -146,9 +147,9 @@ export function mappingConfirmationIssues(
       .map((suggestion) => ({
         code: suggestion.header ? 'low-confidence-mapping' : 'missing-required-mapping',
         severity: 'review' as const,
-        messageKey: suggestion.header
-          ? ('spreadsheet.validation.low-confidence-mapping' as const)
-          : ('spreadsheet.validation.missing-required-mapping' as const),
+        messageKey: spreadsheetValidationMessageKey(
+          suggestion.header ? 'low-confidence-mapping' : 'missing-required-mapping'
+        ),
         guidanceKey: 'spreadsheet.guidance.confirm-field-mapping' as const,
         worksheet,
         rawValue: suggestion.header,

@@ -20,6 +20,7 @@ import {
 } from './contracts'
 import { SpreadsheetError, throwIfAborted } from './errors'
 import { sha256Hex, stableHash } from './hash'
+import { spreadsheetValidationMessageKey } from './issueCatalog'
 import { parseMappingPresetJson, serializeMappingPreset } from './mappingPreset'
 import { validateProcessWorkbookModel } from './validation'
 
@@ -124,7 +125,7 @@ async function resolveDestinations(
       issues.push({
         code: 'destination-path-collision',
         severity: 'error',
-        messageKey: 'spreadsheet.validation.destination-path-collision',
+        messageKey: spreadsheetValidationMessageKey('destination-path-collision'),
         guidanceKey: 'spreadsheet.guidance.choose-collision-behavior',
         processId: process.id,
         worksheet: process.provenance.worksheet,
@@ -137,7 +138,7 @@ async function resolveDestinations(
       issues.push({
         code: 'destination-hash-missing',
         severity: 'error',
-        messageKey: 'spreadsheet.validation.destination-hash-missing',
+        messageKey: spreadsheetValidationMessageKey('destination-hash-missing'),
         guidanceKey: 'spreadsheet.guidance.refresh-destination-state',
         processId: process.id,
         worksheet: process.provenance.worksheet,
@@ -167,7 +168,7 @@ function validationIssueFromPipeline(
     diagnostics.map((diagnostic): SpreadsheetValidationIssue => ({
       code: `pipeline-${diagnostic.stage}-${diagnostic.code}`,
       severity: diagnostic.severity,
-      messageKey: `spreadsheet.validation.pipeline-${diagnostic.stage}-${diagnostic.code}` as const,
+      messageKey: spreadsheetValidationMessageKey('pipeline-diagnostic'),
       processId,
       ...(diagnostic.details ? { details: diagnostic.details } : {})
     }))
@@ -242,7 +243,7 @@ export async function prepareTransactionalImportPlan(
     collisionIssues.push({
       code: 'destination-inspection-failed',
       severity: 'error',
-      messageKey: 'spreadsheet.validation.destination-inspection-failed',
+      messageKey: spreadsheetValidationMessageKey('destination-inspection-failed'),
       guidanceKey: 'spreadsheet.guidance.retry-destination-inspection'
     })
     destinations = Object.freeze([])
@@ -275,7 +276,7 @@ export async function prepareTransactionalImportPlan(
       auditFailures.push({
         code: 'bilingual-audit-failed',
         severity: 'error',
-        messageKey: 'spreadsheet.validation.bilingual-audit-failed',
+        messageKey: spreadsheetValidationMessageKey('bilingual-audit-failed'),
         processId: process.id,
         worksheet: process.provenance.worksheet
       })
@@ -293,7 +294,7 @@ export async function prepareTransactionalImportPlan(
     const auditIssues: SpreadsheetValidationIssue[] = incomplete.map(({ graph, summary }) => ({
       code: 'translation-review-required',
       severity: 'review',
-      messageKey: 'spreadsheet.validation.translation-review-required',
+      messageKey: spreadsheetValidationMessageKey('translation-review-required'),
       processId: graph.process.id,
       worksheet: graph.process.provenance.worksheet,
       details: { missing: summary.missing, invalid: summary.invalid }
@@ -345,7 +346,7 @@ export async function prepareTransactionalImportPlan(
       pipelineIssues.push({
         code: 'pipeline-generation-failed',
         severity: 'error',
-        messageKey: 'spreadsheet.validation.pipeline-generation-failed',
+        messageKey: spreadsheetValidationMessageKey('pipeline-generation-failed'),
         processId: process.id
       })
     }
