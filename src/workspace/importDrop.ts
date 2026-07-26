@@ -10,11 +10,16 @@
 // that lack it. Kept free of React/DOM state so the parsing is
 // unit-testable with fake DataTransfer-like objects.
 
+import { DEFAULT_XML_PREFLIGHT_LIMITS } from '../validation/preflight'
+import { WorkspaceOperationError } from './adapters/workspaceError'
 import { decodeUtf8Strict } from './utf8'
 
 /** Marks an in-app tree drag (move) so an external Explorer drop (import) can be
  *  told apart from a node being dragged within the tree. */
 export const INTERNAL_DND_MIME = 'application/x-orbitpm-node'
+
+/** Keep the browser allocation boundary aligned with the XML preflight. */
+export const MAX_DROPPED_IMPORT_BYTES = DEFAULT_XML_PREFLIGHT_LIMITS.maxBytes
 
 export interface DroppedBpmn {
   /** Posix sub-path to create under the drop target ('sub/order.bpmn' when a
@@ -101,15 +106,42 @@ export function isInternalDrag(dt: Pick<DataTransfer, 'types'>): boolean {
 interface HandleLike {
   kind: 'file' | 'directory'
   name: string
-  getFile?: () => Promise<{ arrayBuffer: () => Promise<ArrayBuffer> }>
+  getFile?: () => Promise<BrowserImportFile>
   entries?: () => AsyncIterableIterator<[string, HandleLike]>
 }
 
-async function decodeDroppedFile(
-  file: { arrayBuffer: () => Promise<ArrayBuffer> },
-  path: string
-): Promise<string> {
-  const bytes = new Uint8Array(await file.arrayBuffer())
+interface BrowserImportFile {
+  /** Native File objects always expose size; optional for legacy test/adapter shims. */
+  readonly size?: number
+  arrayBuffer: () => Promise<ArrayBuffer>
+}
+
+function assertDroppedImportSize(byteLength: number, path: string): void {
+  if (
+    !Number.isSafeInteger(byteLength) ||
+    byteLength < 0 ||
+    byteLength > MAX_DROPPED_IMPORT_BYTES
+  ) {
+    throw new WorkspaceOperationError({
+      code: 'integrity-failure',
+      operation: 'read',
+      path,
+      message:
+        `Import file "${path}" is ${byteLength} bytes; ` +
+        `the limit is ${MAX_DROPPED_IMPORT_BYTES} bytes.`
+    })
+  }
+}
+
+async function decodeDroppedFile(file: BrowserImportFile, path: string): Promise<string> {
+  // Native File.size is available without materializing the contents. Reject
+  // at that boundary so an oversized drag cannot force an ArrayBuffer
+  // allocation. Repeat against the returned bytes for non-native/dishonest
+  // File-like objects.
+  if (file.size !== undefined) assertDroppedImportSize(file.size, path)
+  const buffer = await file.arrayBuffer()
+  assertDroppedImportSize(buffer.byteLength, path)
+  const bytes = new Uint8Array(buffer)
   return decodeUtf8Strict(bytes, { operation: 'read', path })
 }
 
@@ -142,7 +174,7 @@ interface DataTransferItemLike {
 
 interface DataTransferLike {
   items?: ArrayLike<DataTransferItemLike> | null
-  files?: ArrayLike<{ name: string; arrayBuffer: () => Promise<ArrayBuffer> }> | null
+  files?: ArrayLike<BrowserImportFile & { name: string }> | null
 }
 
 /**

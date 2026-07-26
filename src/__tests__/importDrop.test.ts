@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, vi } from 'vitest'
 import {
   isBpmnName,
   isApcName,
@@ -7,7 +7,8 @@ import {
   looksLikeBpmnXml,
   isInternalDrag,
   collectDroppedBpmn,
-  INTERNAL_DND_MIME
+  INTERNAL_DND_MIME,
+  MAX_DROPPED_IMPORT_BYTES
 } from '../workspace/importDrop'
 
 describe('isBpmnName', () => {
@@ -149,16 +150,16 @@ function bytesBuffer(bytes: Uint8Array): ArrayBuffer {
 function fakeFile(
   name: string,
   text: string
-): { name: string; arrayBuffer: () => Promise<ArrayBuffer> } {
+): { name: string; size: number; arrayBuffer: () => Promise<ArrayBuffer> } {
   const bytes = new TextEncoder().encode(text)
-  return { name, arrayBuffer: async () => bytesBuffer(bytes) }
+  return { name, size: bytes.byteLength, arrayBuffer: async () => bytesBuffer(bytes) }
 }
 
 function fakeByteFile(
   name: string,
   bytes: Uint8Array
-): { name: string; arrayBuffer: () => Promise<ArrayBuffer> } {
-  return { name, arrayBuffer: async () => bytesBuffer(bytes) }
+): { name: string; size: number; arrayBuffer: () => Promise<ArrayBuffer> } {
+  return { name, size: bytes.byteLength, arrayBuffer: async () => bytesBuffer(bytes) }
 }
 
 describe('collectDroppedBpmn — flat files fallback', () => {
@@ -234,6 +235,29 @@ describe('collectDroppedBpmn — flat files fallback', () => {
       path: 'broken.bpmn',
       message: 'could not decode'
     })
+  })
+
+  it('rejects oversized File metadata before allocating its bytes', async () => {
+    const arrayBuffer = vi.fn(async () => {
+      throw new Error('oversized dropped import must not be read')
+    })
+    const out = await collectDroppedBpmn({
+      items: [],
+      files: [
+        {
+          name: 'oversized.bpmn',
+          size: MAX_DROPPED_IMPORT_BYTES + 1,
+          arrayBuffer
+        }
+      ]
+    })
+
+    await expect(out[0]!.getText()).rejects.toMatchObject({
+      code: 'integrity-failure',
+      operation: 'read',
+      path: 'oversized.bpmn'
+    })
+    expect(arrayBuffer).not.toHaveBeenCalled()
   })
 })
 
