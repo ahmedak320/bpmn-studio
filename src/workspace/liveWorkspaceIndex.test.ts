@@ -4,23 +4,76 @@ import {
   uniqueFallbackProcessId,
   type LiveWorkspaceFile
 } from './liveWorkspaceIndex'
+import { validateBpmnXml } from '../validation'
+
+const BPMN_NAMESPACES = [
+  'xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL"',
+  'xmlns:bpmndi="http://www.omg.org/spec/BPMN/20100524/DI"',
+  'xmlns:dc="http://www.omg.org/spec/DD/20100524/DC"',
+  'xmlns:di="http://www.omg.org/spec/DD/20100524/DI"',
+  'xmlns:orbitpm="http://orbitpm.ae/schema/bpmn/1.0"'
+].join(' ')
+
+function processFragment(
+  processId: string,
+  suffix: string,
+  options: { name?: string; calledElement?: string; owner?: string } = {}
+): string {
+  const call = options.calledElement
+    ? `<bpmn:callActivity id="Call_${suffix}" calledElement="${options.calledElement}" />`
+    : ''
+  const owner = options.owner ? ` orbitpm:owner="${options.owner}"` : ''
+  return [
+    `<bpmn:process id="${processId}" name="${options.name ?? processId}"${owner}>`,
+    `<bpmn:startEvent id="Start_${suffix}"><bpmn:outgoing>Flow_${suffix}</bpmn:outgoing></bpmn:startEvent>`,
+    call,
+    `<bpmn:endEvent id="End_${suffix}"><bpmn:incoming>Flow_${suffix}</bpmn:incoming></bpmn:endEvent>`,
+    `<bpmn:sequenceFlow id="Flow_${suffix}" sourceRef="Start_${suffix}" targetRef="End_${suffix}" />`,
+    '</bpmn:process>'
+  ].join('')
+}
 
 function xml(
   processId: string,
   options: { name?: string; calledElement?: string; owner?: string } = {}
 ): string {
-  const call = options.calledElement
-    ? `<bpmn:callActivity id="Call_${processId}" calledElement="${options.calledElement}" />`
-    : ''
-  const owner = options.owner ? ` orbitpm:owner="${options.owner}"` : ''
   return [
-    '<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL"',
-    ' xmlns:orbitpm="https://orbitpm.example/schema">',
-    `<bpmn:process id="${processId}" name="${options.name ?? processId}"${owner}>`,
-    call,
-    '</bpmn:process>',
+    `<bpmn:definitions ${BPMN_NAMESPACES} id="Definitions_${processId}" targetNamespace="urn:orbitpm:${processId}">`,
+    processFragment(processId, processId, options),
     '</bpmn:definitions>'
   ].join('')
+}
+
+function diagram(processId: string, suffix: string): string {
+  return [
+    `<bpmndi:BPMNDiagram id="Diagram_${suffix}">`,
+    `<bpmndi:BPMNPlane id="Plane_${suffix}" bpmnElement="${processId}">`,
+    `<bpmndi:BPMNShape id="Shape_Start_${suffix}" bpmnElement="Start_${suffix}"><dc:Bounds x="100" y="100" width="36" height="36" /></bpmndi:BPMNShape>`,
+    `<bpmndi:BPMNShape id="Shape_End_${suffix}" bpmnElement="End_${suffix}"><dc:Bounds x="300" y="100" width="36" height="36" /></bpmndi:BPMNShape>`,
+    `<bpmndi:BPMNEdge id="Edge_${suffix}" bpmnElement="Flow_${suffix}"><di:waypoint x="136" y="118" /><di:waypoint x="300" y="118" /></bpmndi:BPMNEdge>`,
+    '</bpmndi:BPMNPlane>',
+    '</bpmndi:BPMNDiagram>'
+  ].join('')
+}
+
+function collaborationMultiProcessXml(processId: string): string {
+  return [
+    '<?xml version="1.0" encoding="UTF-8"?>',
+    `<bpmn:definitions ${BPMN_NAMESPACES} id="Definitions_collaboration" targetNamespace="urn:orbitpm:collaboration">`,
+    processFragment(processId, 'Target', { name: 'Target process' }),
+    processFragment('Stable_Process', 'Stable', { name: 'Stable process' }),
+    '<bpmn:collaboration id="Collaboration_Main">',
+    `<bpmn:participant id="Participant_Target" processRef="${processId}" />`,
+    '<bpmn:participant id="Participant_Stable" processRef="Stable_Process" />',
+    '</bpmn:collaboration>',
+    diagram(processId, 'Target'),
+    diagram('Stable_Process', 'Stable'),
+    '</bpmn:definitions>'
+  ].join('')
+}
+
+function idAttributes(value: string): string[] {
+  return [...value.matchAll(/\bid\s*=\s*["']([^"']+)["']/g)].map((match) => match[1])
 }
 
 function file(relPath: string, value: string, modified = 1): LiveWorkspaceFile {
@@ -111,23 +164,18 @@ describe('LiveWorkspaceIndex', () => {
     expect(() => index.move('archive/a.bpmn', 'two/b.bpmn')).toThrow(/already exists/)
   })
 
-  it('excludes ambiguous ids, diagnoses every path, and repairs one occurrence', () => {
+  it('excludes ambiguous ids, diagnoses every path, and repairs one occurrence', async () => {
     const index = new LiveWorkspaceIndex([
       file('a.bpmn', xml('Shared', { name: 'First' })),
-      file(
-        'b.bpmn',
-        xml('Shared', { name: 'Second' }).replace(
-          '</bpmn:definitions>',
-          '<bpmn:process id="Shared" name="Third" /></bpmn:definitions>'
-        )
-      )
+      file('b.bpmn', xml('Shared', { name: 'Second' })),
+      file('c.bpmn', xml('Shared', { name: 'Third' }))
     ])
 
     expect(index.processIndex().has('Shared')).toBe(false)
     expect(index.duplicateDiagnostics()).toEqual([
       {
         processId: 'Shared',
-        paths: ['a.bpmn', 'b.bpmn'],
+        paths: ['a.bpmn', 'b.bpmn', 'c.bpmn'],
         occurrences: [
           {
             processId: 'Shared',
@@ -144,23 +192,98 @@ describe('LiveWorkspaceIndex', () => {
           {
             processId: 'Shared',
             processName: 'Third',
-            relPath: 'b.bpmn',
-            occurrence: 1
+            relPath: 'c.bpmn',
+            occurrence: 0
           }
         ]
       }
     ])
 
-    const repaired = index.repairDuplicateProcessId('b.bpmn', 'Shared', {
-      occurrence: 1,
+    const repaired = await index.repairDuplicateProcessId('c.bpmn', 'Shared', {
       processId: 'Shared_Third'
     })
     expect(repaired.xml).toContain('id="Shared_Third"')
-    expect(index.processIndex().get('Shared_Third')?.relPath).toBe('b.bpmn')
+    expect(index.processIndex().get('Shared_Third')?.relPath).toBe('c.bpmn')
     expect(index.duplicateDiagnostics()[0].occurrences).toHaveLength(2)
   })
 
-  it('allocates valid globally unique fallback ids and rejects unsafe repairs', () => {
+  it('repairs collaboration and DI references without changing unrelated ids', async () => {
+    const source = collaborationMultiProcessXml('Shared_Process')
+    const index = new LiveWorkspaceIndex([
+      file('target.bpmn', source),
+      file('duplicate.bpmn', xml('Shared_Process'))
+    ])
+
+    expect((await validateBpmnXml(source, { requireDi: true })).summary.valid).toBe(true)
+    const repaired = await index.repairDuplicateProcessId('target.bpmn', 'Shared_Process', {
+      processId: 'Shared_Process_Repaired'
+    })
+
+    expect(repaired.xml).toContain(
+      '<bpmn:participant id="Participant_Target" processRef="Shared_Process_Repaired"'
+    )
+    expect(repaired.xml).toContain(
+      '<bpmndi:BPMNPlane id="Plane_Target" bpmnElement="Shared_Process_Repaired"'
+    )
+    expect(repaired.xml).toContain(
+      '<bpmn:participant id="Participant_Stable" processRef="Stable_Process"'
+    )
+    expect(repaired.xml).toContain(
+      '<bpmndi:BPMNPlane id="Plane_Stable" bpmnElement="Stable_Process"'
+    )
+    expect(repaired.xml).not.toMatch(/(?:processRef|bpmnElement)="Shared_Process"/)
+
+    const expectedIds = idAttributes(source)
+      .map((id) => (id === 'Shared_Process' ? 'Shared_Process_Repaired' : id))
+      .sort()
+    expect(idAttributes(repaired.xml).sort()).toEqual(expectedIds)
+
+    const post = await validateBpmnXml(repaired.xml, { requireDi: true })
+    expect(post.summary.valid).toBe(true)
+    expect(post.summary.issues).not.toEqual(
+      expect.arrayContaining([expect.objectContaining({ code: 'moddle.unresolved-reference' })])
+    )
+  })
+
+  it('rejects ambiguous same-file and malformed targets without changing the index', async () => {
+    const ambiguous = xml('Shared').replace(
+      '</bpmn:definitions>',
+      `${processFragment('Shared', 'Second')}</bpmn:definitions>`
+    )
+    const ambiguousIndex = new LiveWorkspaceIndex([
+      file('ambiguous.bpmn', ambiguous),
+      file('other.bpmn', xml('Shared'))
+    ])
+    const ambiguousVersion = ambiguousIndex.version
+    await expect(
+      ambiguousIndex.repairDuplicateProcessId('ambiguous.bpmn', 'Shared', {
+        occurrence: 1,
+        processId: 'Shared_Second'
+      })
+    ).rejects.toThrow(/ambiguous/)
+    expect(ambiguousIndex.version).toBe(ambiguousVersion)
+    expect(ambiguousIndex.files().find((item) => item.relPath === 'ambiguous.bpmn')?.xml).toBe(
+      ambiguous
+    )
+
+    const malformed = xml('Broken').replace('</bpmn:process>', '')
+    const malformedIndex = new LiveWorkspaceIndex([
+      file('malformed.bpmn', malformed),
+      file('valid.bpmn', xml('Broken'))
+    ])
+    const malformedVersion = malformedIndex.version
+    await expect(
+      malformedIndex.repairDuplicateProcessId('malformed.bpmn', 'Broken', {
+        processId: 'Broken_Repaired'
+      })
+    ).rejects.toThrow(/secure BPMN validation/)
+    expect(malformedIndex.version).toBe(malformedVersion)
+    expect(malformedIndex.files().find((item) => item.relPath === 'malformed.bpmn')?.xml).toBe(
+      malformed
+    )
+  })
+
+  it('allocates valid globally unique fallback ids and rejects unsafe repairs', async () => {
     const index = new LiveWorkspaceIndex([
       file('a.bpmn', xml('Process')),
       file('b.bpmn', xml('Process_2')),
@@ -170,17 +293,19 @@ describe('LiveWorkspaceIndex', () => {
     expect(index.allocateProcessId('Process')).toBe('Process_3')
     expect(index.allocateProcessId('123 invalid')).toBe('_invalid')
     expect(uniqueFallbackProcessId(['Process', 'Process_2'])).toBe('Process_3')
-    expect(() =>
+    await expect(
       index.repairDuplicateProcessId('d.bpmn', 'Duplicate', {
         processId: 'not valid'
       })
-    ).toThrow(/XML NCName/)
-    expect(() =>
+    ).rejects.toThrow(/XML NCName/)
+    await expect(
       index.repairDuplicateProcessId('d.bpmn', 'Duplicate', {
         processId: 'Process'
       })
-    ).toThrow(/already exists/)
-    expect(() => index.repairDuplicateProcessId('d.bpmn', 'missing')).toThrow(/not duplicated/)
+    ).rejects.toThrow(/already exists/)
+    await expect(index.repairDuplicateProcessId('d.bpmn', 'missing')).rejects.toThrow(
+      /not duplicated/
+    )
   })
 
   it('meets the 1,000-file initial and one-percent incremental performance gates', () => {

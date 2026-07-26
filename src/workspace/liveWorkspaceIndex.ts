@@ -1,4 +1,8 @@
+import BpmnModdle from 'bpmn-moddle'
+
 import { parseProcessesFromXml, type ProcessEntry, type ProcessIndex } from '@/core/processIndex'
+import { orbitpmModdleDescriptor } from '../org/orbitpmModdle'
+import { validateBpmnXml, type ParsedBpmnValidation, type ValidationSource } from '../validation'
 import { buildSearchDoc, type SearchDoc } from './searchIndex'
 
 export interface LiveWorkspaceFile {
@@ -36,9 +40,22 @@ interface IndexedFile {
   search: SearchDoc
 }
 
-const PROCESS_OPEN_TAG_RE = /<(?:[a-zA-Z_][\w.-]*:)?process\b[^>]*?>/g
-const PROCESS_ID_RE = /\bid\s*=\s*(?:"([^"]*)"|'([^']*)')/
 const XML_NCNAME_RE = /^[A-Za-z_][A-Za-z0-9._-]*$/
+const REPAIR_GATE_SOURCES = new Set<ValidationSource>(['xml', 'moddle', 'structure', 'di'])
+
+interface RepairModdleElement {
+  $type?: string
+  id?: string
+  rootElements?: RepairModdleElement[]
+  [key: string]: unknown
+}
+
+interface RepairModdle {
+  toXML(
+    root: RepairModdleElement,
+    options: { format: boolean; preamble: boolean }
+  ): Promise<{ xml: string }>
+}
 
 function byteLength(value: string): number {
   return new TextEncoder().encode(value).byteLength
@@ -82,6 +99,35 @@ function assertProcessId(value: string): void {
       `Process id "${value}" must be an XML NCName (letters, digits, ".", "_", or "-").`
     )
   }
+}
+
+function topLevelProcesses(definitions: RepairModdleElement): RepairModdleElement[] {
+  return (definitions.rootElements ?? []).filter((element) => element.$type === 'bpmn:Process')
+}
+
+function repairValidationDetails(validation: ParsedBpmnValidation): string {
+  const issues = validation.summary.issues.filter(
+    (issue) => issue.blocking && REPAIR_GATE_SOURCES.has(issue.source)
+  )
+  return issues
+    .slice(0, 6)
+    .map((issue) => issue.code)
+    .join(', ')
+}
+
+function assertRepairValidation(
+  validation: ParsedBpmnValidation,
+  phase: 'before' | 'after'
+): RepairModdleElement {
+  const details = repairValidationDetails(validation)
+  if (!validation.definitions || !validation.summary.xmlWellFormed || details) {
+    throw new Error(
+      `Duplicate process-id repair failed ${phase} secure BPMN validation${
+        details ? ` (${details})` : ''
+      }.`
+    )
+  }
+  return validation.definitions as RepairModdleElement
 }
 
 function fallbackBase(value: string): string {
@@ -282,11 +328,11 @@ export class LiveWorkspaceIndex {
     throw new Error(`Could not allocate a unique process id for "${preferred}".`)
   }
 
-  repairDuplicateProcessId(
+  async repairDuplicateProcessId(
     relPath: string,
     duplicateId: string,
     options: { occurrence?: number; processId?: string } = {}
-  ): DuplicateProcessRepair {
+  ): Promise<DuplicateProcessRepair> {
     const diagnostic = this.duplicateDiagnostics().find((item) => item.processId === duplicateId)
     if (!diagnostic) {
       throw new Error(`Process id "${duplicateId}" is not duplicated.`)
@@ -309,24 +355,54 @@ export class LiveWorkspaceIndex {
     const entry = this.byPath.get(relPath)
     if (!entry) throw new Error(`Workspace file "${relPath}" was not found.`)
     const source = effectiveFile(relPath, entry).xml
-    let seen = -1
-    let replaced = false
-    PROCESS_OPEN_TAG_RE.lastIndex = 0
-    const xml = source.replace(PROCESS_OPEN_TAG_RE, (tag) => {
-      const id = PROCESS_ID_RE.exec(tag)
-        ?.slice(1)
-        .find((value) => value !== undefined)
-      if (id !== duplicateId) return tag
-      seen += 1
-      if (seen !== occurrence) return tag
-      replaced = true
-      return tag.replace(PROCESS_ID_RE, (attribute) => attribute.replace(duplicateId, processId))
-    })
-    if (!replaced) {
+
+    // Validate the exact current bytes before parsing/mutating them. This runs
+    // the secure XML preflight, bpmn-moddle import, structural references, and
+    // DI gates. Semantic authoring warnings may pre-exist, but unsafe,
+    // malformed, unresolved-IDREF, structural, and DI inputs are never
+    // rewritten.
+    const knownProcessIds = [...this.declarations.keys(), processId]
+    const before = await validateBpmnXml(source, { knownProcessIds })
+    if (!before.definitions || !before.summary.xmlWellFormed) {
+      assertRepairValidation(before, 'before')
+    }
+    const definitions = before.definitions as RepairModdleElement
+    const processes = topLevelProcesses(definitions)
+    const matches = processes.filter((process) => process.id === duplicateId)
+    if (matches.length > 1) {
+      throw new Error(
+        `Process id "${duplicateId}" is ambiguous in "${relPath}"; repair one process per file.`
+      )
+    }
+    if (matches.length !== 1 || occurrence !== 0) {
       throw new Error(
         `Process id "${duplicateId}" occurrence ${occurrence} could not be repaired in "${relPath}".`
       )
     }
+    assertRepairValidation(before, 'before')
+
+    // Moddle represents BPMN IDREF attributes as object references. Mutating
+    // the selected Process object therefore updates every reference that
+    // points to it during serialization, including Participant.processRef and
+    // BPMNPlane.bpmnElement, without touching unrelated element IDs.
+    const beforeProcessIds = processes.map((process) => process.id)
+    matches[0].id = processId
+    const moddle = new BpmnModdle({
+      orbitpm: orbitpmModdleDescriptor as unknown as Record<string, unknown>
+    }) as unknown as RepairModdle
+    const xml = (await moddle.toXML(definitions, { format: true, preamble: true })).xml
+
+    const after = await validateBpmnXml(xml, { knownProcessIds })
+    const afterDefinitions = assertRepairValidation(after, 'after')
+    const afterProcessIds = topLevelProcesses(afterDefinitions).map((process) => process.id)
+    const expectedProcessIds = beforeProcessIds.map((id) => (id === duplicateId ? processId : id))
+    if (
+      afterProcessIds.length !== expectedProcessIds.length ||
+      afterProcessIds.some((id, index) => id !== expectedProcessIds[index])
+    ) {
+      throw new Error('Duplicate process-id repair changed an unintended process id.')
+    }
+
     this.updateDirty(relPath, xml)
     return { relPath, previousProcessId: duplicateId, processId, xml }
   }
