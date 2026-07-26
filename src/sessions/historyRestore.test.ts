@@ -149,12 +149,18 @@ describe('history restore session hook', () => {
       outcome: { status: 'success' },
       error: importError
     })
-    expect(store.get(opened.id)).toBe(before)
+    expect(store.get(opened.id)).not.toBe(before)
+    expect(store.get(opened.id)).toMatchObject({
+      currentXml: '<current />',
+      lastSavedXml: '<old />',
+      dirty: true,
+      base: { hash: (await adapter.read('process.bpmn')).hash }
+    })
     expect(decode((await adapter.read('process.bpmn')).bytes)).toBe('<old />')
   })
 
   it('does not overwrite an edit made while the restore is committing', async () => {
-    const { history, revision, current } = await historyFixture()
+    const { adapter, history, revision, current } = await historyFixture()
     const store = new DocumentSessionStore()
     const opened = store.open({
       id: 'session',
@@ -186,7 +192,9 @@ describe('history restore session hook', () => {
     })
     expect(store.get(opened.id)).toMatchObject({
       currentXml: '<concurrent edit />',
-      dirty: true
+      lastSavedXml: '<old />',
+      dirty: true,
+      base: { hash: (await adapter.read('process.bpmn')).hash }
     })
   })
 

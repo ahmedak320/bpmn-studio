@@ -108,6 +108,33 @@ async function applyRestoredXml(
   await session.modeler.importXML(xml)
 }
 
+function retainLocalXmlAgainstRestoredStorage(
+  store: DocumentSessionStore,
+  captured: DocumentSession,
+  restoredXml: string,
+  outcome: SuccessfulSaveOutcome
+): void {
+  const live = store.get(captured.id)
+  if (!live || !sameDocumentIdentity(live.identity, captured.identity)) return
+
+  // Importing restored XML can itself publish editor change events before
+  // ultimately rejecting. Prefer a genuinely newer local edit, but otherwise
+  // retain the exact editor XML captured before the failed refresh.
+  const retainedXml =
+    live.revision !== captured.revision && live.currentXml !== restoredXml
+      ? live.currentXml
+      : captured.currentXml
+  store.replaceWithExternal(captured.id, {
+    xml: restoredXml,
+    fingerprint: {
+      hash: outcome.snapshot.hash,
+      size: outcome.snapshot.size,
+      modifiedAt: outcome.snapshot.modifiedAt
+    }
+  })
+  if (retainedXml !== restoredXml) store.updateXml(captured.id, retainedXml)
+}
+
 function previousRevision(result: HistoryWriteResult): HistoryRevision | undefined {
   return result.revision
 }
@@ -180,6 +207,12 @@ export async function restoreHistoryRevision(
     capturedSession &&
     !sessionStillMatches(options.store.get(capturedSession.id), capturedSession)
   ) {
+    retainLocalXmlAgainstRestoredStorage(
+      options.store,
+      capturedSession,
+      restoredXml,
+      result.outcome
+    )
     return {
       status: 'storage-restored-session-refresh-failed',
       sessionId: capturedSession.id,
@@ -204,6 +237,7 @@ export async function restoreHistoryRevision(
       }
     })
   } catch (error) {
+    retainLocalXmlAgainstRestoredStorage(options.store, session, restoredXml, result.outcome)
     return {
       status: 'storage-restored-session-refresh-failed',
       sessionId: session.id,
