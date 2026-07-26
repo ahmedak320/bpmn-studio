@@ -23,13 +23,18 @@
 // supplies the digests (memoized), an open-a-process callback, the interview
 // target accessors, and the open/close wiring.
 
-import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
+import { useEffect, useRef, useState, type CSSProperties } from 'react'
 import { t, getLang } from '../i18n'
 import { useLang } from '../i18n/useLang'
-import { generateFromDescription, type LlmMessage } from '@/generation'
+import {
+  composeCreateBpmn,
+  generateFromDescription,
+  messageHistoryToString,
+  type LlmMessage
+} from '@/generation'
 import type { ProcessDigest } from './digest'
-import { selectContextDigests, buildContext } from './retrieval'
-import { buildAssistantPrompt, extractAssistantAnswer } from './prompt'
+import { selectContextDigests } from './retrieval'
+import { extractAssistantAnswer } from './prompt'
 import { answerLocally } from './answerLocal'
 import { formatLocalAnswer, type AssistantSource } from './formatLocal'
 import { toLlmHistory } from './history'
@@ -44,12 +49,22 @@ import {
   readProcessId,
   QUESTIONS_MAX_TOKENS,
   type InterviewExchange,
+  type GapScan,
   type InterviewModeler
 } from './interview'
 import { getLiteProvider, type LiteProviderId } from '../ai/providersLite'
 import { getKey } from '../ai/keys'
 import { getProviderSelection } from '../ai/providerSelection'
 import { makeBrowserCallLLM, classifyBrowserError, type ErrorCode } from '../ai/browserAi'
+import type { RetryAttempt } from '../ai/retry'
+import {
+  grantExternalRequestConsent,
+  hasExternalRequestConsent,
+  type ExternalRequestConsent,
+  type ExternalRequestDisclosure
+} from '../localization/externalRequestReview'
+import { buildReviewedLibraryRequest, createLlmMessageDisclosure } from './requestReview'
+import { ExternalRequestPreview } from './ExternalRequestPreview'
 
 type Source = AssistantSource
 interface Message {
@@ -154,6 +169,17 @@ interface InterviewSession {
   round: number
 }
 
+interface ExternalActionPlan {
+  disclosure: ExternalRequestDisclosure
+  run(signal: AbortSignal, onAttempt: (attempt: RetryAttempt) => void): Promise<void>
+}
+
+interface PendingExternalAction {
+  id: number
+  tab: DrawerTab
+  build(includeWorkspaceContext: boolean, redactNames: boolean): ExternalActionPlan
+}
+
 function freshSession(): InterviewSession {
   return {
     started: false,
@@ -163,6 +189,42 @@ function freshSession(): InterviewSession {
     exchanges: [],
     pendingQuestions: null,
     round: 0
+  }
+}
+
+function redactInterviewSummary(summary: string): string {
+  let labelIndex = 0
+  return summary
+    .replace(/"[^"\n]*"/g, () => `"Element ${++labelIndex}"`)
+    .replace(
+      /\b(owner|responsible|systems?|CC):\s*[^|—\n]*/gi,
+      (_match, label: string) => `${label}: [redacted]`
+    )
+}
+
+function redactCatalogNames(
+  catalog: readonly { id: string; name: string }[]
+): Array<{ id: string; name: string }> {
+  return catalog.map((entry, index) => ({
+    id: entry.id,
+    name: `Process ${index + 1}`
+  }))
+}
+
+function reviewInterviewScan(
+  scan: GapScan,
+  includeWorkspaceContext: boolean,
+  redactNames: boolean
+): GapScan {
+  if (!includeWorkspaceContext) return { entries: [], clean: true }
+  if (!redactNames) return scan
+  return {
+    clean: scan.clean,
+    entries: scan.entries.map((entry, index) => ({
+      ...entry,
+      label: `Element ${index + 1}`,
+      ccMissingPurpose: entry.ccMissingPurpose.map(() => '[redacted recipient]')
+    }))
   }
 }
 
@@ -179,7 +241,7 @@ export function AssistantDrawer({
   interviewRequest,
   onApplyXml
 }: AssistantDrawerProps): JSX.Element | null {
-  const lang = useLang()
+  useLang()
   const [tab, setTab] = useState<DrawerTab>('library')
   const [messages, setMessages] = useState<Message[]>([])
   const [ivMessages, setIvMessages] = useState<Message[]>([])
@@ -188,12 +250,21 @@ export function AssistantDrawer({
   const [ivBusy, setIvBusy] = useState(false)
   const [ivDone, setIvDone] = useState(false)
   const [ivAwaiting, setIvAwaiting] = useState(false)
+  const [pendingExternal, setPendingExternal] = useState<PendingExternalAction | null>(null)
+  const [includeWorkspaceContext, setIncludeWorkspaceContext] = useState(false)
+  const [redactNames, setRedactNames] = useState(true)
+  const [externalConsent, setExternalConsent] = useState<ExternalRequestConsent | null>(null)
+  const [attemptStatus, setAttemptStatus] = useState<string | null>(null)
   const listRef = useRef<HTMLDivElement | null>(null)
   const sessionRef = useRef<InterviewSession>(freshSession())
   const lastRequestTokenRef = useRef<number | null>(null)
+  const externalRequestIdRef = useRef(0)
+  const externalAbortRef = useRef<AbortController | null>(null)
 
-  // Re-pick the provider whenever keys change (Settings dialog bumps keysVersion).
-  const provider = useMemo(() => pickProvider(), [keysVersion])
+  // The prop rerender already invalidates this read; no provider-order fallback
+  // or memoized stale credential is retained.
+  void keysVersion
+  const provider = pickProvider()
 
   // Auto-scroll the transcript to the newest message.
   useEffect(() => {
@@ -207,6 +278,13 @@ export function AssistantDrawer({
     const onKey = (e: KeyboardEvent): void => {
       if (e.key === 'Escape') {
         e.preventDefault()
+        externalAbortRef.current?.abort()
+        externalAbortRef.current = null
+        setPendingExternal(null)
+        setExternalConsent(null)
+        setAttemptStatus(null)
+        setBusy(false)
+        setIvBusy(false)
         onClose()
       }
     }
@@ -218,8 +296,95 @@ export function AssistantDrawer({
     setIvMessages((prev) => [...prev, message])
   }
 
-  const makeCall = (chosen: ChosenProvider): ReturnType<typeof makeBrowserCallLLM> =>
-    makeBrowserCallLLM({ providerId: chosen.id, model: chosen.modelId, apiKey: chosen.apiKey })
+  const makeCall = (
+    chosen: ChosenProvider,
+    signal?: AbortSignal,
+    onAttempt?: (attempt: RetryAttempt) => void
+  ): ReturnType<typeof makeBrowserCallLLM> =>
+    makeBrowserCallLLM(
+      { providerId: chosen.id, model: chosen.modelId, apiKey: chosen.apiKey },
+      { signal, onAttempt }
+    )
+
+  const queueExternal = (tabForRequest: DrawerTab, build: PendingExternalAction['build']): void => {
+    externalAbortRef.current?.abort()
+    setAttemptStatus(null)
+    setExternalConsent(null)
+    setPendingExternal({
+      id: ++externalRequestIdRef.current,
+      tab: tabForRequest,
+      build
+    })
+  }
+
+  const currentExternalPlan = pendingExternal?.build(includeWorkspaceContext, redactNames)
+  const externalConsented = Boolean(
+    currentExternalPlan &&
+    hasExternalRequestConsent(currentExternalPlan.disclosure, externalConsent)
+  )
+
+  const cancelExternal = (): void => {
+    externalAbortRef.current?.abort()
+    externalAbortRef.current = null
+    setPendingExternal(null)
+    setExternalConsent(null)
+    setAttemptStatus(null)
+    setBusy(false)
+    setIvBusy(false)
+  }
+
+  const confirmExternal = async (): Promise<void> => {
+    const pending = pendingExternal
+    const plan = currentExternalPlan
+    if (!pending || !plan || !hasExternalRequestConsent(plan.disclosure, externalConsent)) {
+      return
+    }
+    const controller = new AbortController()
+    externalAbortRef.current?.abort()
+    externalAbortRef.current = controller
+    setAttemptStatus(null)
+    if (pending.tab === 'library') setBusy(true)
+    else setIvBusy(true)
+    const onAttempt = (attempt: RetryAttempt): void => {
+      setAttemptStatus(
+        attempt.retryInMs === undefined
+          ? t('ai.retry.attempt', {
+              attempt: attempt.attempt,
+              max: attempt.maxAttempts
+            })
+          : t('ai.retry.waiting', {
+              attempt: attempt.attempt,
+              max: attempt.maxAttempts,
+              seconds: Math.max(0, Math.ceil(attempt.retryInMs / 1000))
+            })
+      )
+    }
+    try {
+      await plan.run(controller.signal, onAttempt)
+    } catch (error) {
+      const failure: Message = {
+        role: 'assistant',
+        text: errorText(error),
+        kind: 'error'
+      }
+      if (pending.tab === 'library') setMessages((previous) => [...previous, failure])
+      else pushIv(failure)
+    } finally {
+      if (externalAbortRef.current === controller) externalAbortRef.current = null
+      if (pending.tab === 'library') setBusy(false)
+      else setIvBusy(false)
+      setPendingExternal((current) => (current?.id === pending.id ? null : current))
+      setExternalConsent(null)
+      setAttemptStatus(null)
+    }
+  }
+
+  useEffect(
+    () => () => {
+      externalAbortRef.current?.abort()
+    },
+    []
+  )
 
   // --- library tab -----------------------------------------------------------
 
@@ -246,50 +411,64 @@ export function AssistantDrawer({
         ])
       }
 
-      if (provider) {
-        // Retrieval never silently skips the AI anymore: when ranking finds
-        // nothing (or the workspace is small) ALL digests go in, capped by
-        // buildContext (2,400 chars per digest, 12,000 chars total).
-        const chosen = selectContextDigests(digests, q)
-        if (chosen.length === 0) {
-          // Workspace has no parseable processes at all.
-          pushLocal()
-        } else {
-          try {
-            const call = makeCall(provider)
-            const history = toLlmHistory(prior)
-            const outgoing: LlmMessage[] = [
-              ...history,
-              { role: 'user', content: buildAssistantPrompt(buildContext(chosen), q, getLang()) }
-            ]
-            // CallLLM is typed Promise<string | unknown>; the browser adapter
-            // always resolves the model's raw text, so coerce to a string.
-            const reply = String(await call(outgoing, { maxTokens: ANSWER_MAX_TOKENS }))
+      if (!provider) {
+        pushLocal()
+        return
+      }
+
+      // Low-confidence retrieval returns no context. The user's question can
+      // still be reviewed and sent, but unrelated processes are never used as
+      // a fallback and workspace context is always opt-in.
+      const chosen = selectContextDigests(digests, q)
+      const history = toLlmHistory(prior)
+      const chosenProvider = provider
+      queueExternal('library', (includeContext, shouldRedactNames) => {
+        const reviewed = buildReviewedLibraryRequest({
+          providerId: chosenProvider.id,
+          modelId: chosenProvider.modelId,
+          question: q,
+          history,
+          rankedDigests: chosen,
+          lang: getLang(),
+          includeWorkspaceContext: includeContext,
+          redactNames: shouldRedactNames,
+          estimatedRequests: { min: 1, max: 3 }
+        })
+        return {
+          disclosure: reviewed.disclosure,
+          run: async (signal, onAttempt) => {
+            const call = makeCall(chosenProvider, signal, onAttempt)
+            const reply = String(
+              await call(reviewed.messages, {
+                maxTokens: ANSWER_MAX_TOKENS
+              })
+            )
             const text = extractAssistantAnswer(reply)
-            const sources = chosen
-              .slice(0, 3)
-              .map((r) => ({ processName: r.digest.processName, relPath: r.digest.relPath }))
-            setMessages((prev) => [
-              ...prev,
-              { role: 'assistant', text, kind: 'chat', sources: dirChips ? sources : undefined }
+            const sources = includeContext
+              ? chosen.slice(0, 3).map((ranked) => ({
+                  processName: ranked.digest.processName,
+                  relPath: ranked.digest.relPath
+                }))
+              : []
+            setMessages((previous) => [
+              ...previous,
+              {
+                role: 'assistant',
+                text,
+                kind: 'chat',
+                sources: dirChips && sources.length > 0 ? sources : undefined
+              }
             ])
-          } catch (error) {
-            // Surface the REAL failure (auth / rate limit / CORS / offline /
-            // timeout) as a chat message, then still give the local answer.
-            setMessages((prev) => [
-              ...prev,
-              { role: 'assistant', text: errorText(error), kind: 'error' }
-            ])
-            pushLocal(t('assist.fellBack'))
           }
         }
-      } else {
-        pushLocal()
-      }
+      })
     } catch {
       // getDigests should never reject (buildAllDigests drops failures), but keep
       // the drawer usable if it somehow does.
-      setMessages((prev) => [...prev, { role: 'assistant', text: t('assist.local.none'), kind: 'status' }])
+      setMessages((prev) => [
+        ...prev,
+        { role: 'assistant', text: t('assist.local.none'), kind: 'status' }
+      ])
     } finally {
       setBusy(false)
     }
@@ -309,45 +488,74 @@ export function AssistantDrawer({
       pushIv({ role: 'assistant', text: t('ai.error.noApiKey'), kind: 'error' })
       return
     }
-    setIvBusy(true)
     try {
       const modeler = target.modeler as InterviewModeler
       const scan = scanDiagramGaps(modeler)
       const summary = buildDiagramSummary(modeler)
-      const prompt = buildInterviewQuestionPrompt({
-        description: session.description || target.description,
-        summary,
-        scan,
-        exchanges: session.exchanges,
-        lang: getLang()
-      })
-      const call = makeCall(provider)
-      const reply = String(await call([{ role: 'user', content: prompt }], { maxTokens: QUESTIONS_MAX_TOKENS }))
-      const questions = parseInterviewQuestions(reply)
-      if (questions === null) {
-        pushIv({
-          role: 'assistant',
-          text: errorText(new Error(`${provider.id}: empty response from the model`)),
-          kind: 'error'
+      const chosenProvider = provider
+      const description = session.description || target.description
+      const exchanges = [...session.exchanges]
+      const lang = getLang()
+      queueExternal('interview', (includeContext, shouldRedactNames) => {
+        const reviewedSummary = includeContext
+          ? shouldRedactNames
+            ? redactInterviewSummary(summary)
+            : summary
+          : '(workspace diagram context excluded by the user)'
+        const prompt = buildInterviewQuestionPrompt({
+          description,
+          summary: reviewedSummary,
+          scan: reviewInterviewScan(scan, includeContext, shouldRedactNames),
+          exchanges,
+          lang
         })
-        return
-      }
-      const nextRound = session.round + 1
-      if (decideInterviewNext(nextRound, questions) === 'done') {
-        session.done = true
-        setIvDone(true)
-        setIvAwaiting(false)
-        pushIv({ role: 'assistant', text: t('assist.interview.done'), kind: 'status' })
-        return
-      }
-      session.round = nextRound
-      session.pendingQuestions = questions.join('\n')
-      setIvAwaiting(true)
-      pushIv({ role: 'assistant', text: session.pendingQuestions, kind: 'chat' })
+        const outgoing: LlmMessage[] = [{ role: 'user', content: prompt }]
+        return {
+          disclosure: createLlmMessageDisclosure({
+            purpose: 'assistant-interview-question',
+            providerId: chosenProvider.id,
+            modelId: chosenProvider.modelId,
+            messages: outgoing,
+            sensitiveMessageIndexes: [0],
+            estimatedRequests: { min: 1, max: 3 }
+          }),
+          run: async (signal, onAttempt) => {
+            const call = makeCall(chosenProvider, signal, onAttempt)
+            const reply = String(
+              await call(outgoing, {
+                maxTokens: QUESTIONS_MAX_TOKENS
+              })
+            )
+            const questions = parseInterviewQuestions(reply)
+            if (questions === null) {
+              throw new Error(`${chosenProvider.id}: empty response from the model`)
+            }
+            const liveSession = sessionRef.current
+            const nextRound = liveSession.round + 1
+            if (decideInterviewNext(nextRound, questions) === 'done') {
+              liveSession.done = true
+              setIvDone(true)
+              setIvAwaiting(false)
+              pushIv({
+                role: 'assistant',
+                text: t('assist.interview.done'),
+                kind: 'status'
+              })
+              return
+            }
+            liveSession.round = nextRound
+            liveSession.pendingQuestions = questions.join('\n')
+            setIvAwaiting(true)
+            pushIv({
+              role: 'assistant',
+              text: liveSession.pendingQuestions,
+              kind: 'chat'
+            })
+          }
+        }
+      })
     } catch (error) {
       pushIv({ role: 'assistant', text: errorText(error), kind: 'error' })
-    } finally {
-      setIvBusy(false)
     }
   }
 
@@ -385,7 +593,6 @@ export function AssistantDrawer({
     if (!session.started || session.done || !session.pendingQuestions || ivBusy) return
     pushIv({ role: 'user', text: answer, kind: 'chat' })
     setIvBusy(true)
-    let applied = false
     try {
       const target = getActiveInterviewTarget?.() ?? null
       if (!target) {
@@ -397,33 +604,66 @@ export function AssistantDrawer({
         return
       }
       const exchanges = [...session.exchanges, { questions: session.pendingQuestions, answer }]
-      pushIv({ role: 'assistant', text: t('assist.interview.applying'), kind: 'status' })
       const digests = await getDigests()
       const modeler = target.modeler as InterviewModeler
-      const catalog = digestsToCatalog(digests, readProcessId(modeler))
+      const fullCatalog = digestsToCatalog(digests, readProcessId(modeler))
       const description = session.description || target.description
       const history = buildGenerationHistory(description, exchanges)
-      const call = makeCall(provider)
-      const result = await generateFromDescription(
-        call,
-        description,
-        history,
-        catalog.length ? { processCatalog: catalog } : undefined
-      )
-      await onApplyXml?.(target.tabKey, result.layoutedXml)
-      // Commit the exchange only after the diagram actually updated, so a
-      // failed round can simply be answered again.
-      session.exchanges = exchanges
-      session.pendingQuestions = null
-      setIvAwaiting(false)
-      pushIv({ role: 'assistant', text: t('assist.interview.applied'), kind: 'status' })
-      applied = true
+      const chosenProvider = provider
+      queueExternal('interview', (includeContext, shouldRedactNames) => {
+        const catalog = includeContext
+          ? shouldRedactNames
+            ? redactCatalogNames(fullCatalog)
+            : fullCatalog
+          : []
+        const prompt = composeCreateBpmn(
+          messageHistoryToString(history),
+          catalog.length > 0 ? catalog : undefined
+        )
+        const outgoing: LlmMessage[] = [{ role: 'user', content: prompt }]
+        return {
+          disclosure: createLlmMessageDisclosure({
+            purpose: 'assistant-interview-regeneration',
+            providerId: chosenProvider.id,
+            modelId: chosenProvider.modelId,
+            messages: outgoing,
+            sensitiveMessageIndexes: [0],
+            // Semantic repair is deliberately limited to one reviewed payload
+            // here. The transport may retry that exact payload up to 3 times.
+            estimatedRequests: { min: 1, max: 3 }
+          }),
+          run: async (signal, onAttempt) => {
+            pushIv({
+              role: 'assistant',
+              text: t('assist.interview.applying'),
+              kind: 'status'
+            })
+            const call = makeCall(chosenProvider, signal, onAttempt)
+            const result = await generateFromDescription(call, description, history, {
+              maxRetries: 1,
+              ...(catalog.length > 0 ? { processCatalog: catalog } : {})
+            })
+            await onApplyXml?.(target.tabKey, result.layoutedXml)
+            // Commit the exchange only after the diagram actually updated, so
+            // a failed round can simply be answered again.
+            const liveSession = sessionRef.current
+            liveSession.exchanges = exchanges
+            liveSession.pendingQuestions = null
+            setIvAwaiting(false)
+            pushIv({
+              role: 'assistant',
+              text: t('assist.interview.applied'),
+              kind: 'status'
+            })
+            await runInterviewRound()
+          }
+        }
+      })
     } catch (error) {
       pushIv({ role: 'assistant', text: errorText(error), kind: 'error' })
     } finally {
       setIvBusy(false)
     }
-    if (applied) await runInterviewRound()
   }
 
   const finishInterview = (): void => {
@@ -457,8 +697,8 @@ export function AssistantDrawer({
 
   const canSend =
     tab === 'library'
-      ? !busy && input.trim() !== ''
-      : !ivBusy && !ivDone && ivAwaiting && input.trim() !== ''
+      ? !busy && pendingExternal === null && input.trim() !== ''
+      : !ivBusy && pendingExternal === null && !ivDone && ivAwaiting && input.trim() !== ''
 
   const send = async (): Promise<void> => {
     const text = input.trim()
@@ -505,7 +745,10 @@ export function AssistantDrawer({
         <strong style={{ fontSize: 13 }}>{t('assist.title')}</strong>
         <button
           type="button"
-          onClick={onClose}
+          onClick={() => {
+            cancelExternal()
+            onClose()
+          }}
           aria-label={t('assist.close')}
           title={t('assist.close')}
           style={CLOSE_STYLE}
@@ -535,7 +778,13 @@ export function AssistantDrawer({
         </button>
       </div>
 
-      <div ref={listRef} style={LIST_STYLE}>
+      <div
+        ref={listRef}
+        style={LIST_STYLE}
+        role="log"
+        aria-live="polite"
+        aria-relevant="additions text"
+      >
         {activeMessages.length === 0 && (
           <p style={{ margin: 0, color: 'var(--orbitpm-muted)', fontSize: 12.5, lineHeight: 1.6 }}>
             {emptyHint}
@@ -570,6 +819,32 @@ export function AssistantDrawer({
           </div>
         )}
       </div>
+
+      {pendingExternal && pendingExternal.tab === tab && currentExternalPlan && (
+        <ExternalRequestPreview
+          disclosure={currentExternalPlan.disclosure}
+          includeWorkspaceContext={includeWorkspaceContext}
+          redactNames={redactNames}
+          consented={externalConsented}
+          busy={activeBusy}
+          attemptStatus={attemptStatus}
+          onIncludeWorkspaceContextChange={(value) => {
+            setIncludeWorkspaceContext(value)
+            setExternalConsent(null)
+          }}
+          onRedactNamesChange={(value) => {
+            setRedactNames(value)
+            setExternalConsent(null)
+          }}
+          onConsentChange={(value) => {
+            setExternalConsent(
+              value ? grantExternalRequestConsent(currentExternalPlan.disclosure) : null
+            )
+          }}
+          onConfirm={() => void confirmExternal()}
+          onCancel={cancelExternal}
+        />
+      )}
 
       <div style={INPUT_ROW_STYLE}>
         <textarea
