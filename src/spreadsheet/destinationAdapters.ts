@@ -2,6 +2,7 @@ import { zipSync } from 'fflate'
 
 import type { FileSnapshot, SaveOutcome, WorkspaceAdapter } from '../workspace/adapters'
 import { WorkspaceOperationError } from '../workspace/adapters'
+import { PortableHistoryManager, type HistoryRevision } from '../workspace/history'
 import type {
   DestinationState,
   ImportDestinationInspector,
@@ -9,7 +10,6 @@ import type {
   ImportTransactionFactory,
   StagedImportWrite
 } from './contracts'
-import { stableHash } from './hash'
 
 function isNotFound(error: unknown): boolean {
   return error instanceof WorkspaceOperationError && error.code === 'not-found'
@@ -58,6 +58,11 @@ export interface WorkspaceImportTransactionFactoryOptions {
   readonly runExclusive?: <T>(operation: () => Promise<T>) => Promise<T>
   /** Reject a captured adapter after the user switches workspaces. */
   readonly isCurrent?: () => boolean
+  /**
+   * Reuse the workspace's shared portable history manager when one is already
+   * available. A bounded manager is created from `adapter` by default.
+   */
+  readonly historyManager?: PortableHistoryManager
 }
 
 interface AppliedWrite {
@@ -70,12 +75,12 @@ class WorkspaceImportTransaction implements ImportDestinationTransaction {
   private readonly staged = new Map<string, StagedImportWrite>()
   private readonly originals = new Map<string, FileSnapshot | undefined>()
   private readonly applied: AppliedWrite[] = []
-  private readonly recoveryPaths: string[] = []
+  private readonly recoveryRevisions: HistoryRevision[] = []
   private state: 'staging' | 'committing' | 'committed' | 'rolling-back' | 'rolled-back' = 'staging'
 
   constructor(
-    private readonly transactionId: string,
     private readonly adapter: WorkspaceAdapter,
+    private readonly historyManager: PortableHistoryManager,
     private readonly options: WorkspaceImportTransactionFactoryOptions
   ) {}
 
@@ -118,6 +123,7 @@ class WorkspaceImportTransaction implements ImportDestinationTransaction {
             applied: snapshot
           })
         }
+        await this.enforceHistoryRetention()
         this.state = 'committed'
       } catch (cause) {
         try {
@@ -166,27 +172,57 @@ class WorkspaceImportTransaction implements ImportDestinationTransaction {
     }
   }
 
-  private recoveryPath(write: StagedImportWrite): string {
-    const safeId = this.transactionId.replace(/[^A-Za-z0-9_.-]+/g, '_').slice(0, 96)
-    const name = write.path.split('/').pop() ?? 'process.bpmn'
-    return `.orbitpm/history/imports/${safeId}/${stableHash(write.path)}-${name}`
-  }
-
   private async createRecoveryRevisions(): Promise<void> {
     for (const write of this.staged.values()) {
       if (!write.createRecoveryRevision) continue
+      this.assertCurrent()
       const original = this.originals.get(write.path)
       if (!original) {
         throw new Error(`Recovery revision source is missing: ${write.path}`)
       }
-      const path = this.recoveryPath(write)
-      await requireSave(
-        await this.adapter.writeAtomic(path, original.bytes, undefined, {
-          expectedWorkspaceId: this.adapter.id,
-          expectedMissing: true
-        })
-      )
-      this.recoveryPaths.push(path)
+      const revision = await this.historyManager.createRevision(write.path, {
+        reason: 'backup-import',
+        snapshot: original,
+        // A failed transaction must not prune older recovery evidence. The
+        // shared bounded retention policy runs only after all writes commit.
+        prune: false
+      })
+      this.recoveryRevisions.push(revision)
+    }
+  }
+
+  private async enforceHistoryRetention(): Promise<void> {
+    if (this.recoveryRevisions.length === 0) return
+    await this.historyManager.enforceRetention()
+  }
+
+  private async removeRecoveryRevisions(failures: unknown[]): Promise<void> {
+    for (let index = this.recoveryRevisions.length - 1; index >= 0; index -= 1) {
+      const revision = this.recoveryRevisions[index]!
+      let contentRemoved = false
+      try {
+        await this.adapter.remove(revision.contentPath)
+        contentRemoved = true
+      } catch (error) {
+        if (isNotFound(error)) {
+          contentRemoved = true
+        } else {
+          failures.push(error)
+        }
+      }
+      // Keep the metadata beside recoverable content if content removal
+      // failed. If metadata removal alone fails, no hidden raw BPMN remains.
+      if (!contentRemoved) continue
+      try {
+        await this.adapter.remove(revision.metadataPath)
+        this.recoveryRevisions.splice(index, 1)
+      } catch (error) {
+        if (isNotFound(error)) {
+          this.recoveryRevisions.splice(index, 1)
+        } else {
+          failures.push(error)
+        }
+      }
     }
   }
 
@@ -194,7 +230,8 @@ class WorkspaceImportTransaction implements ImportDestinationTransaction {
     if (this.state === 'rolled-back') return
     this.state = 'rolling-back'
     const failures: unknown[] = []
-    for (const entry of [...this.applied].reverse()) {
+    for (let index = this.applied.length - 1; index >= 0; index -= 1) {
+      const entry = this.applied[index]!
       try {
         if (entry.original) {
           await requireSave(
@@ -214,40 +251,44 @@ class WorkspaceImportTransaction implements ImportDestinationTransaction {
           }
           await this.adapter.remove(entry.write.path)
         }
+        this.applied.splice(index, 1)
       } catch (error) {
-        if (entry.original === undefined && isNotFound(error)) continue
+        if (entry.original === undefined && isNotFound(error)) {
+          this.applied.splice(index, 1)
+          continue
+        }
         failures.push(error)
       }
     }
     if (failures.length === 0) {
-      for (const path of [...this.recoveryPaths].reverse()) {
-        try {
-          await this.adapter.remove(path)
-        } catch (error) {
-          if (!isNotFound(error)) failures.push(error)
-        }
-      }
+      await this.removeRecoveryRevisions(failures)
     }
     if (failures.length > 0) {
       throw new AggregateError(failures, 'Spreadsheet import rollback failed.')
     }
-    this.applied.length = 0
-    this.recoveryPaths.length = 0
     this.state = 'rolled-back'
   }
 }
 
 export class WorkspaceImportTransactionFactory implements ImportTransactionFactory {
+  private readonly historyManager: PortableHistoryManager
+
   constructor(
     private readonly adapter: WorkspaceAdapter,
     private readonly options: WorkspaceImportTransactionFactoryOptions = {}
-  ) {}
+  ) {
+    this.historyManager =
+      options.historyManager ??
+      new PortableHistoryManager({
+        adapter
+      })
+  }
 
-  async begin(transactionId: string): Promise<ImportDestinationTransaction> {
+  async begin(_transactionId: string): Promise<ImportDestinationTransaction> {
     if (this.options.isCurrent && !this.options.isCurrent()) {
       throw new Error('The active workspace changed before spreadsheet import.')
     }
-    return new WorkspaceImportTransaction(transactionId, this.adapter, this.options)
+    return new WorkspaceImportTransaction(this.adapter, this.historyManager, this.options)
   }
 }
 
