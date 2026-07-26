@@ -11,6 +11,7 @@ import {
   LITE_PROVIDERS,
   DESKTOP_ONLY_PROVIDERS,
   getLiteProvider,
+  getLiteModelCapabilities,
   defaultLiteModelId,
   type LiteProviderId
 } from './providersLite'
@@ -48,7 +49,7 @@ import {
   type AttachmentKind,
   type AttachmentSizeCheck
 } from './pdf'
-import { extractDocxText } from './docx'
+import { extractDocxTextAsync } from './docx'
 import {
   inspectContextSensitivity,
   redactProcessNames,
@@ -60,10 +61,7 @@ import {
   SpreadsheetImportPanel,
   type SpreadsheetImportPanelProps
 } from '../spreadsheet/SpreadsheetImportPanel'
-import {
-  localizationSourceForGeneration,
-  type LocalizationSource
-} from '../localization'
+import { localizationSourceForGeneration, type LocalizationSource } from '../localization'
 
 export interface FolderOptionLite {
   relPath: string
@@ -254,6 +252,7 @@ export function AiPanelLite({
   const docInputRef = useRef<HTMLInputElement | null>(null)
   const descInputRef = useRef<HTMLInputElement | null>(null)
   const requestAbortRef = useRef<AbortController | null>(null)
+  const attachmentAbortRef = useRef<AbortController | null>(null)
 
   // Re-read key availability whenever Settings closes.
   const configuredIds = useMemo(
@@ -275,6 +274,7 @@ export function AiPanelLite({
   useEffect(
     () => () => {
       requestAbortRef.current?.abort()
+      attachmentAbortRef.current?.abort()
     },
     []
   )
@@ -308,17 +308,21 @@ export function AiPanelLite({
 
   const keyPresent = Boolean(providerId) && hasKey(effectiveProviderId)
   const effectiveModel = modelId.trim()
+  const modelCapabilities = useMemo(
+    () => getLiteModelCapabilities(effectiveProviderId, effectiveModel),
+    [effectiveModel, effectiveProviderId]
+  )
 
   // Size gate for the document tab's selection (recomputed on file/provider
   // change) — kind-aware: PDF behavior identical to before, image caps apply
   // per provider.
   const sizeGate = useMemo<AttachmentSizeCheck>(
-    () =>
-      doc ? checkAttachmentSize(effectiveProviderId, doc.kind, doc.file.size) : { ok: true },
+    () => (doc ? checkAttachmentSize(effectiveProviderId, doc.kind, doc.file.size) : { ok: true }),
     [doc, effectiveProviderId]
   )
   // An image needs a provider/model with a verified image path.
-  const docImageUnsupported = doc?.kind === 'image' && !providerSpec.supportsImages
+  const docImageUnsupported = doc?.kind === 'image' && !modelCapabilities.images
+  const docPdfUnsupported = doc?.kind === 'pdf' && !modelCapabilities.pdf
 
   // Description-tab PDF attachment gates — same size gate as the document tab
   // (spec'd identical), plus the provider-supports-PDF check.
@@ -329,7 +333,7 @@ export function AiPanelLite({
         : { ok: true },
     [descAttach, effectiveProviderId]
   )
-  const descPdfUnsupported = descAttach?.kind === 'pdf' && !providerSpec.supportsPdf
+  const descPdfUnsupported = descAttach?.kind === 'pdf' && !modelCapabilities.pdf
 
   // The effective description-tab input: typed text, extracted .docx text, or a
   // natively-attached PDF — any one of them suffices (but not none).
@@ -340,10 +344,7 @@ export function AiPanelLite({
       : genMode === 'pdf'
         ? Boolean(doc)
         : false
-  const contextQuery =
-    genMode === 'description'
-      ? `${description}\n${descDocText ?? ''}`
-      : hint
+  const contextQuery = genMode === 'description' ? `${description}\n${descDocText ?? ''}` : hint
   const relevantProcesses = useMemo(
     () => selectRelevantProcesses(contextQuery, processCatalog),
     [contextQuery, processCatalog]
@@ -356,8 +357,7 @@ export function AiPanelLite({
     () => inspectContextSensitivity(contextQuery, outboundProcessCatalog),
     [contextQuery, outboundProcessCatalog]
   )
-  const hasLargeAttachment =
-    genMode === 'pdf' || descAttach?.kind === 'pdf'
+  const hasLargeAttachment = genMode === 'pdf' || descAttach?.kind === 'pdf'
   const estimatedRequestCount = hasLargeAttachment ? 3 : 9
   const canGenerate =
     !busy &&
@@ -369,7 +369,7 @@ export function AiPanelLite({
     requestConsent &&
     (genMode === 'description'
       ? !descPdfUnsupported && descPdfGate.ok
-      : sizeGate.ok && !docImageUnsupported)
+      : sizeGate.ok && !docImageUnsupported && !docPdfUnsupported)
 
   useEffect(() => {
     setRequestConsent(false)
@@ -438,6 +438,7 @@ export function AiPanelLite({
   // extracted RIGHT NOW — so corrupt/empty files surface immediately with a
   // per-file message instead of failing later inside generation.
   const handleDescFile = useCallback(async (file: File | null): Promise<void> => {
+    attachmentAbortRef.current?.abort()
     setError(null)
     setResultLabel(null)
     if (!file) {
@@ -449,9 +450,15 @@ export function AiPanelLite({
       setDescAttach({ file, kind: 'pdf', text: null, note: null, error: null })
       return
     }
+    const controller = new AbortController()
+    attachmentAbortRef.current = controller
     try {
       const bytes = new Uint8Array(await file.arrayBuffer())
-      const text = extractDocxText(bytes)
+      if (controller.signal.aborted) return
+      const text = await extractDocxTextAsync(bytes, {
+        signal: controller.signal
+      })
+      if (controller.signal.aborted) return
       if (!text.trim()) {
         setDescAttach({
           file,
@@ -470,6 +477,7 @@ export function AiPanelLite({
         error: null
       })
     } catch (err) {
+      if (controller.signal.aborted) return
       // DocxParseError for non-docx bytes, or a reader failure — either way the
       // message rides into the localized readFailed line.
       const msg = err instanceof Error ? err.message : String(err)
@@ -480,10 +488,16 @@ export function AiPanelLite({
         note: null,
         error: t('ai.attach.readFailed', { name: file.name, error: msg })
       })
+    } finally {
+      if (attachmentAbortRef.current === controller) {
+        attachmentAbortRef.current = null
+      }
     }
   }, [])
 
   const removeDescAttach = useCallback(() => {
+    attachmentAbortRef.current?.abort()
+    attachmentAbortRef.current = null
     setDescAttach(null)
     if (descInputRef.current) descInputRef.current.value = ''
   }, [])
@@ -558,7 +572,10 @@ export function AiPanelLite({
         if (!doc) throw new Error(t('ai.error.chooseNoPdf'))
         const gate = checkAttachmentSize(providerId, doc.kind, doc.file.size)
         if (!gate.ok) throw new Error(gate.message)
-        if (doc.kind === 'image' && !providerSpec.supportsImages) {
+        if (
+          (doc.kind === 'image' && !modelCapabilities.images) ||
+          (doc.kind === 'pdf' && !modelCapabilities.pdf)
+        ) {
           throw new Error(t('ai.attach.unsupportedProvider'))
         }
         const base64 = await fileToBase64(doc.file, controller.signal)
@@ -578,7 +595,9 @@ export function AiPanelLite({
         // Description tab with a PDF attached: the PDF goes natively through the
         // existing attachment mechanism; the TYPED DESCRIPTION acts as the hint
         // (the pdf instruction frames it as "which/what process to model").
-        if (!providerSpec.supportsPdf) throw new Error(t('ai.attach.unsupportedProvider'))
+        if (!modelCapabilities.pdf) {
+          throw new Error(t('ai.attach.unsupportedProvider'))
+        }
         const gate = checkAttachmentSize(providerId, 'pdf', descAttach.file.size)
         if (!gate.ok) throw new Error(gate.message)
         const base64 = await fileToBase64(descAttach.file, controller.signal)
@@ -636,14 +655,13 @@ export function AiPanelLite({
     }
   }, [
     providerId,
-    providerSpec,
+    modelCapabilities,
     effectiveModel,
     genMode,
     doc,
     descAttach,
     hint,
     description,
-    processCatalog,
     outboundProcessCatalog,
     isKnownProcess,
     placeAndReport,
@@ -728,510 +746,509 @@ export function AiPanelLite({
   // chrome differs, so the whole body lives in one place.
   const body = (
     <div style={{ padding: '0.8rem', display: 'flex', flexDirection: 'column', gap: 12 }}>
-        {genMode !== 'spreadsheet' && !online && (
-          <div role="status" style={warnBox}>
-            {t('ai.offlineWarning')}
-          </div>
-        )}
-
-        {genMode !== 'spreadsheet' && noKeysAtAll && (
-          <div style={infoBox}>
-            {t('ai.noKeysAtAll.note').split('{link}')[0]}
-            <button type="button" onClick={onOpenSettings} style={linkBtn}>
-              {t('ai.noKeysAtAll.link')}
-            </button>
-            {t('ai.noKeysAtAll.note').split('{link}')[1]}
-          </div>
-        )}
-
-        {/* Generation mode: description vs PDF/image document */}
-        <div role="tablist" aria-label={t('ai.tablist.aria')} style={segmentWrap}>
-          <button
-            type="button"
-            role="tab"
-            aria-selected={genMode === 'description'}
-            onClick={() => setGenMode('description')}
-            style={segmentBtn(genMode === 'description')}
-          >
-            {t('ai.tab.description')}
-          </button>
-          <button
-            type="button"
-            role="tab"
-            aria-selected={genMode === 'pdf'}
-            onClick={() => setGenMode('pdf')}
-            disabled={!providerSpec.supportsPdf}
-            title={
-              providerSpec.supportsPdf
-                ? t('ai.tab.pdf.title.supported')
-                : t('ai.tab.pdf.title.unsupported')
-            }
-            style={segmentBtn(genMode === 'pdf')}
-          >
-            {t('ai.tab.pdf')}
-          </button>
-          {spreadsheet && (
-            <button
-              type="button"
-              role="tab"
-              aria-selected={genMode === 'spreadsheet'}
-              onClick={() => setGenMode('spreadsheet')}
-              style={segmentBtn(genMode === 'spreadsheet')}
-            >
-              {t('spreadsheet.tab')}
-            </button>
-          )}
+      {genMode !== 'spreadsheet' && !online && (
+        <div role="status" style={warnBox}>
+          {t('ai.offlineWarning')}
         </div>
+      )}
 
-        {genMode === 'spreadsheet' && spreadsheet ? (
-          <SpreadsheetImportPanel {...spreadsheet} />
-        ) : (
-          <>
-        <label style={labelStyle}>
-          <span style={labelText}>{t('ai.provider.label')}</span>
-          <select
-            value={providerId}
-            onChange={(e) => {
-              const next = e.target.value as LiteProviderId
-              const nextModel = defaultLiteModelId(next)
-              setProviderId(next)
-              setModelId(nextModel)
-              const result = setProviderSelection(next, nextModel)
-              if (!result.ok) setError(result.error)
-            }}
-            style={inputStyle}
+      {genMode !== 'spreadsheet' && noKeysAtAll && (
+        <div style={infoBox}>
+          {t('ai.noKeysAtAll.note').split('{link}')[0]}
+          <button type="button" onClick={onOpenSettings} style={linkBtn}>
+            {t('ai.noKeysAtAll.link')}
+          </button>
+          {t('ai.noKeysAtAll.note').split('{link}')[1]}
+        </div>
+      )}
+
+      {/* Generation mode: description vs PDF/image document */}
+      <div role="tablist" aria-label={t('ai.tablist.aria')} style={segmentWrap}>
+        <button
+          type="button"
+          role="tab"
+          aria-selected={genMode === 'description'}
+          onClick={() => setGenMode('description')}
+          style={segmentBtn(genMode === 'description')}
+        >
+          {t('ai.tab.description')}
+        </button>
+        <button
+          type="button"
+          role="tab"
+          aria-selected={genMode === 'pdf'}
+          onClick={() => setGenMode('pdf')}
+          disabled={!modelCapabilities.pdf}
+          title={
+            modelCapabilities.pdf
+              ? t('ai.tab.pdf.title.supported')
+              : t('ai.tab.pdf.title.unsupported')
+          }
+          style={segmentBtn(genMode === 'pdf')}
+        >
+          {t('ai.tab.pdf')}
+        </button>
+        {spreadsheet && (
+          <button
+            type="button"
+            role="tab"
+            aria-selected={genMode === 'spreadsheet'}
+            onClick={() => setGenMode('spreadsheet')}
+            style={segmentBtn(genMode === 'spreadsheet')}
           >
-            <option value="">{t('ai.provider.select')}</option>
-            {LITE_PROVIDERS.map((p) => (
-              <option key={p.id} value={p.id}>
-                {p.label}
-                {hasKey(p.id) ? ' ✓' : ''}
-              </option>
-            ))}
-          </select>
-        </label>
+            {t('spreadsheet.tab')}
+          </button>
+        )}
+      </div>
 
-        {/* Provider balance: OpenRouter remaining credits, or the local session
-            usage ledger for Anthropic/Gemini (no balance API). */}
-        {balanceLine}
-
-        {/* Model selector: free-text (with suggestions) for OpenRouter/Gemini,
-            and a fixed dropdown for Anthropic. */}
-        {!providerId ? (
-          <div style={infoBox} role="note">
-            {t('ai.provider.selectHint')}
-          </div>
-        ) : providerSpec.allowCustomModel ? (
+      {genMode === 'spreadsheet' && spreadsheet ? (
+        <SpreadsheetImportPanel {...spreadsheet} />
+      ) : (
+        <>
           <label style={labelStyle}>
-            <span style={labelText}>{t('ai.model.label')}</span>
-            <input
-              type="text"
-              list={`models-${providerId}`}
-              value={modelId}
-              onChange={(e) => {
-                const nextModel = e.target.value
-                setModelId(nextModel)
-                if (nextModel.trim()) {
-                  const result = setProviderSelection(providerId, nextModel)
-                  if (!result.ok) setError(result.error)
-                }
-              }}
-              placeholder={t('ai.model.label')}
-              style={inputStyle}
-            />
-            <datalist id={`models-${providerId}`}>
-              {providerSpec.models.map((m) => (
-                <option key={m.id} value={m.id}>
-                  {m.label}
-                </option>
-              ))}
-            </datalist>
-          </label>
-        ) : (
-          <label style={labelStyle}>
-            <span style={labelText}>{t('ai.model.label')}</span>
+            <span style={labelText}>{t('ai.provider.label')}</span>
             <select
-              value={modelId}
+              value={providerId}
               onChange={(e) => {
-                const nextModel = e.target.value
+                const next = e.target.value as LiteProviderId
+                const nextModel = defaultLiteModelId(next)
+                setProviderId(next)
                 setModelId(nextModel)
-                const result = setProviderSelection(providerId, nextModel)
+                const result = setProviderSelection(next, nextModel)
                 if (!result.ok) setError(result.error)
               }}
               style={inputStyle}
             >
-              {providerSpec.models.map((m) => (
-                <option key={m.id} value={m.id}>
-                  {m.label}
+              <option value="">{t('ai.provider.select')}</option>
+              {LITE_PROVIDERS.map((p) => (
+                <option key={p.id} value={p.id}>
+                  {p.label}
+                  {hasKey(p.id) ? ' ✓' : ''}
                 </option>
               ))}
             </select>
           </label>
-        )}
 
-        {genMode === 'description' ? (
-          <>
-            <label style={labelStyle}>
-              <span style={labelText}>{t('ai.description.label')}</span>
-              <textarea
-                value={description}
-                onChange={(e) => setDescription(e.target.value)}
-                placeholder={t('ai.description.placeholder')}
-                rows={6}
-                dir="auto"
-                style={{ ...inputStyle, resize: 'vertical', minHeight: 96 }}
-              />
-            </label>
+          {/* Provider balance: OpenRouter remaining credits, or the local session
+            usage ledger for Anthropic/Gemini (no balance API). */}
+          {balanceLine}
 
-            {/* Optional "Description document" (.docx text is extracted here in
-                the browser; a .pdf goes natively to the provider at generate
-                time with the typed text as the hint). */}
+          {/* Model selector: free-text (with suggestions) for OpenRouter/Gemini,
+            and a fixed dropdown for Anthropic. */}
+          {!providerId ? (
+            <div style={infoBox} role="note">
+              {t('ai.provider.selectHint')}
+            </div>
+          ) : providerSpec.allowCustomModel ? (
             <label style={labelStyle}>
-              <span style={labelText}>
-                {t('ai.attach.label')}{' '}
-                <span style={{ opacity: 0.7 }}>{t('ai.pdfHint.optional')}</span>
-              </span>
+              <span style={labelText}>{t('ai.model.label')}</span>
               <input
-                ref={descInputRef}
-                type="file"
-                accept={DESC_DOC_ACCEPT}
-                onChange={(e) => void handleDescFile(e.target.files?.[0] ?? null)}
-                style={{ fontSize: 12.5 }}
+                type="text"
+                list={`models-${providerId}`}
+                value={modelId}
+                onChange={(e) => {
+                  const nextModel = e.target.value
+                  setModelId(nextModel)
+                  if (nextModel.trim()) {
+                    const result = setProviderSelection(providerId, nextModel)
+                    if (!result.ok) setError(result.error)
+                  }
+                }}
+                placeholder={t('ai.model.label')}
+                style={inputStyle}
               />
-            </label>
-            <div style={{ fontSize: 11, color: 'var(--orbitpm-muted)' }}>{t('ai.attach.hint')}</div>
-            {descAttach && (
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12 }}>
-                <span style={{ color: 'var(--orbitpm-muted)', overflowWrap: 'anywhere' }}>
-                  {descAttach.file.name} · {(descAttach.file.size / (1024 * 1024)).toFixed(1)} MB
-                </span>
-                <button
-                  type="button"
-                  onClick={removeDescAttach}
-                  title={t('ai.attach.remove')}
-                  style={removeBtn}
-                >
-                  {t('ai.attach.remove')}
-                </button>
-              </div>
-            )}
-            {descAttach?.note && (
-              <div role="status" style={{ fontSize: 12, color: 'var(--orbitpm-muted)' }}>
-                {descAttach.note}
-              </div>
-            )}
-            {descAttach?.error && (
-              <div role="alert" style={{ fontSize: 12, color: '#dc2626' }}>
-                {descAttach.error}
-              </div>
-            )}
-            {/* PDF-specific gates: provider must support native PDF, and the
-                size gate is identical to the document tab's. */}
-            {descPdfUnsupported && (
-              <div role="alert" style={{ fontSize: 12, color: '#dc2626' }}>
-                {t('ai.attach.unsupportedProvider')}
-              </div>
-            )}
-            {descAttach?.kind === 'pdf' && !descPdfUnsupported && !descPdfGate.ok && (
-              <div role="alert" style={{ fontSize: 12, color: '#dc2626' }}>
-                {descPdfGate.message}
-              </div>
-            )}
-            {descAttach?.kind === 'pdf' && !descPdfUnsupported && descPdfGate.ok && descPdfGate.warning && (
-              <div role="status" style={warnBox}>
-                {descPdfGate.warning}
-              </div>
-            )}
-          </>
-        ) : (
-          <>
-            <label style={labelStyle}>
-              <span style={labelText}>{t('ai.pdfDocument.label')}</span>
-              <input
-                ref={docInputRef}
-                type="file"
-                accept={DOC_TAB_ACCEPT}
-                onChange={handleDocChange}
-                style={{ fontSize: 12.5 }}
-              />
-            </label>
-            {docTypeError && (
-              <div role="alert" style={{ fontSize: 12, color: '#dc2626' }}>
-                {docTypeError}
-              </div>
-            )}
-            {doc && (
-              <div style={{ fontSize: 12, color: sizeGate.ok ? 'var(--orbitpm-muted)' : '#dc2626' }}>
-                {doc.file.name} · {(doc.file.size / (1024 * 1024)).toFixed(1)} MB
-                {!sizeGate.ok && sizeGate.message ? ` — ${sizeGate.message}` : ''}
-              </div>
-            )}
-            {doc && sizeGate.ok && sizeGate.warning && (
-              <div role="status" style={warnBox}>
-                {sizeGate.warning}
-              </div>
-            )}
-            {docImageUnsupported && (
-              <div role="alert" style={{ fontSize: 12, color: '#dc2626' }}>
-                {t('ai.attach.unsupportedProvider')}
-              </div>
-            )}
-            <div style={{ fontSize: 11, color: 'var(--orbitpm-muted)' }}>{t('ai.pdf.engineNote')}</div>
-            <div style={{ fontSize: 11, color: 'var(--orbitpm-muted)' }}>{t('ai.pdf.memoryNote')}</div>
-            <label style={labelStyle}>
-              <span style={labelText}>
-                {t('ai.pdfHint.label')} <span style={{ opacity: 0.7 }}>{t('ai.pdfHint.optional')}</span>
-              </span>
-              <textarea
-                value={hint}
-                onChange={(e) => setHint(e.target.value)}
-                placeholder={t('ai.pdfHint.placeholder')}
-                rows={2}
-                dir="auto"
-                style={{ ...inputStyle, resize: 'vertical' }}
-              />
-            </label>
-          </>
-        )}
-
-        {mode === 'directory' && folders.length > 0 && (
-          <label style={labelStyle}>
-            <span style={labelText}>{t('ai.targetFolder.label')}</span>
-            <select
-              value={targetFolder}
-              onChange={(e) => setTargetFolder(e.target.value)}
-              style={inputStyle}
-            >
-              {folders.map((f) => (
-                <option key={f.relPath} value={f.relPath}>
-                  {f.label}
-                </option>
-              ))}
-            </select>
-          </label>
-        )}
-
-        <label style={labelStyle}>
-          <span style={labelText}>{t('ai.name.label')}</span>
-          <input
-            type="text"
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-            placeholder={t('ai.name.placeholder')}
-            dir="auto"
-            style={inputStyle}
-          />
-        </label>
-
-        <section
-          aria-label={t('ai.privacy.preview.title')}
-          style={{
-            display: 'flex',
-            flexDirection: 'column',
-            gap: 8,
-            padding: 10,
-            border: '1px solid var(--orbitpm-border)',
-            borderRadius: 8
-          }}
-        >
-          <strong style={{ fontSize: 13 }}>{t('ai.privacy.preview.title')}</strong>
-          <div style={{ fontSize: 12 }}>
-            {t('ai.privacy.providerModel', {
-              provider: providerId ? providerSpec.label : t('ai.provider.select'),
-              model: effectiveModel || '—'
-            })}
-          </div>
-          {genMode === 'description' && descAttach?.kind !== 'pdf' ? (
-            <label style={labelStyle}>
-              <span style={labelText}>{t('ai.privacy.description')}</span>
-              <textarea
-                readOnly
-                value={
-                  descDocText
-                    ? `${description.trim()}\n\n${descDocText}`.trim()
-                    : description
-                }
-                rows={3}
-                dir="auto"
-                style={{ ...inputStyle, resize: 'vertical' }}
-              />
+              <datalist id={`models-${providerId}`}>
+                {providerSpec.models.map((m) => (
+                  <option key={m.id} value={m.id}>
+                    {m.label}
+                  </option>
+                ))}
+              </datalist>
             </label>
           ) : (
-            <div style={{ fontSize: 12, overflowWrap: 'anywhere' }}>
-              {t('ai.privacy.attachment', {
-                name:
-                  genMode === 'pdf'
-                    ? doc?.file.name ?? '—'
-                    : descAttach?.file.name ?? '—',
-                bytes:
-                  genMode === 'pdf'
-                    ? doc?.file.size ?? 0
-                    : descAttach?.file.size ?? 0
-              })}
-            </div>
+            <label style={labelStyle}>
+              <span style={labelText}>{t('ai.model.label')}</span>
+              <select
+                value={modelId}
+                onChange={(e) => {
+                  const nextModel = e.target.value
+                  setModelId(nextModel)
+                  const result = setProviderSelection(providerId, nextModel)
+                  if (!result.ok) setError(result.error)
+                }}
+                style={inputStyle}
+              >
+                {providerSpec.models.map((m) => (
+                  <option key={m.id} value={m.id}>
+                    {m.label}
+                  </option>
+                ))}
+              </select>
+            </label>
           )}
-          <label style={{ display: 'flex', gap: 8, alignItems: 'flex-start' }}>
+
+          {genMode === 'description' ? (
+            <>
+              <label style={labelStyle}>
+                <span style={labelText}>{t('ai.description.label')}</span>
+                <textarea
+                  value={description}
+                  onChange={(e) => setDescription(e.target.value)}
+                  placeholder={t('ai.description.placeholder')}
+                  rows={6}
+                  dir="auto"
+                  style={{ ...inputStyle, resize: 'vertical', minHeight: 96 }}
+                />
+              </label>
+
+              {/* Optional "Description document" (.docx text is extracted here in
+                the browser; a .pdf goes natively to the provider at generate
+                time with the typed text as the hint). */}
+              <label style={labelStyle}>
+                <span style={labelText}>
+                  {t('ai.attach.label')}{' '}
+                  <span style={{ opacity: 0.7 }}>{t('ai.pdfHint.optional')}</span>
+                </span>
+                <input
+                  ref={descInputRef}
+                  type="file"
+                  accept={DESC_DOC_ACCEPT}
+                  onChange={(e) => void handleDescFile(e.target.files?.[0] ?? null)}
+                  style={{ fontSize: 12.5 }}
+                />
+              </label>
+              <div style={{ fontSize: 11, color: 'var(--orbitpm-muted)' }}>
+                {t('ai.attach.hint')}
+              </div>
+              {descAttach && (
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12 }}>
+                  <span style={{ color: 'var(--orbitpm-muted)', overflowWrap: 'anywhere' }}>
+                    {descAttach.file.name} · {(descAttach.file.size / (1024 * 1024)).toFixed(1)} MB
+                  </span>
+                  <button
+                    type="button"
+                    onClick={removeDescAttach}
+                    title={t('ai.attach.remove')}
+                    style={removeBtn}
+                  >
+                    {t('ai.attach.remove')}
+                  </button>
+                </div>
+              )}
+              {descAttach?.note && (
+                <div role="status" style={{ fontSize: 12, color: 'var(--orbitpm-muted)' }}>
+                  {descAttach.note}
+                </div>
+              )}
+              {descAttach?.error && (
+                <div role="alert" style={{ fontSize: 12, color: '#dc2626' }}>
+                  {descAttach.error}
+                </div>
+              )}
+              {/* PDF-specific gates: provider must support native PDF, and the
+                size gate is identical to the document tab's. */}
+              {descPdfUnsupported && (
+                <div role="alert" style={{ fontSize: 12, color: '#dc2626' }}>
+                  {t('ai.attach.unsupportedProvider')}
+                </div>
+              )}
+              {descAttach?.kind === 'pdf' && !descPdfUnsupported && !descPdfGate.ok && (
+                <div role="alert" style={{ fontSize: 12, color: '#dc2626' }}>
+                  {descPdfGate.message}
+                </div>
+              )}
+              {descAttach?.kind === 'pdf' &&
+                !descPdfUnsupported &&
+                descPdfGate.ok &&
+                descPdfGate.warning && (
+                  <div role="status" style={warnBox}>
+                    {descPdfGate.warning}
+                  </div>
+                )}
+            </>
+          ) : (
+            <>
+              <label style={labelStyle}>
+                <span style={labelText}>{t('ai.pdfDocument.label')}</span>
+                <input
+                  ref={docInputRef}
+                  type="file"
+                  accept={DOC_TAB_ACCEPT}
+                  onChange={handleDocChange}
+                  style={{ fontSize: 12.5 }}
+                />
+              </label>
+              {docTypeError && (
+                <div role="alert" style={{ fontSize: 12, color: '#dc2626' }}>
+                  {docTypeError}
+                </div>
+              )}
+              {doc && (
+                <div
+                  style={{ fontSize: 12, color: sizeGate.ok ? 'var(--orbitpm-muted)' : '#dc2626' }}
+                >
+                  {doc.file.name} · {(doc.file.size / (1024 * 1024)).toFixed(1)} MB
+                  {!sizeGate.ok && sizeGate.message ? ` — ${sizeGate.message}` : ''}
+                </div>
+              )}
+              {doc && sizeGate.ok && sizeGate.warning && (
+                <div role="status" style={warnBox}>
+                  {sizeGate.warning}
+                </div>
+              )}
+              {(docImageUnsupported || docPdfUnsupported) && (
+                <div role="alert" style={{ fontSize: 12, color: '#dc2626' }}>
+                  {t('ai.attach.unsupportedProvider')}
+                </div>
+              )}
+              <div style={{ fontSize: 11, color: 'var(--orbitpm-muted)' }}>
+                {t('ai.pdf.engineNote')}
+              </div>
+              <div style={{ fontSize: 11, color: 'var(--orbitpm-muted)' }}>
+                {t('ai.pdf.memoryNote')}
+              </div>
+              <label style={labelStyle}>
+                <span style={labelText}>
+                  {t('ai.pdfHint.label')}{' '}
+                  <span style={{ opacity: 0.7 }}>{t('ai.pdfHint.optional')}</span>
+                </span>
+                <textarea
+                  value={hint}
+                  onChange={(e) => setHint(e.target.value)}
+                  placeholder={t('ai.pdfHint.placeholder')}
+                  rows={2}
+                  dir="auto"
+                  style={{ ...inputStyle, resize: 'vertical' }}
+                />
+              </label>
+            </>
+          )}
+
+          {mode === 'directory' && folders.length > 0 && (
+            <label style={labelStyle}>
+              <span style={labelText}>{t('ai.targetFolder.label')}</span>
+              <select
+                value={targetFolder}
+                onChange={(e) => setTargetFolder(e.target.value)}
+                style={inputStyle}
+              >
+                {folders.map((f) => (
+                  <option key={f.relPath} value={f.relPath}>
+                    {f.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+          )}
+
+          <label style={labelStyle}>
+            <span style={labelText}>{t('ai.name.label')}</span>
             <input
-              type="checkbox"
-              checked={includeWorkspaceContext}
-              onChange={(event) => setIncludeWorkspaceContext(event.target.checked)}
+              type="text"
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              placeholder={t('ai.name.placeholder')}
+              dir="auto"
+              style={inputStyle}
             />
-            <span style={{ fontSize: 12 }}>{t('ai.privacy.includeWorkspace')}</span>
           </label>
-          <label
+
+          <section
+            aria-label={t('ai.privacy.preview.title')}
             style={{
               display: 'flex',
+              flexDirection: 'column',
               gap: 8,
-              alignItems: 'flex-start',
-              opacity: includeWorkspaceContext ? 1 : 0.65
+              padding: 10,
+              border: '1px solid var(--orbitpm-border)',
+              borderRadius: 8
             }}
           >
-            <input
-              type="checkbox"
-              checked={redactNames}
-              disabled={!includeWorkspaceContext}
-              onChange={(event) => setRedactNames(event.target.checked)}
-            />
-            <span style={{ fontSize: 12 }}>{t('ai.privacy.redactNames')}</span>
-          </label>
-          <div style={{ fontSize: 12 }}>
-            {t('ai.privacy.workspaceCount', {
-              included: outboundProcessCatalog.length,
-              relevant: relevantProcesses.length,
-              total: processCatalog.length
-            })}
-          </div>
-          {outboundProcessCatalog.length > 0 && (
-            <ul style={{ margin: 0, paddingInlineStart: 20, fontSize: 11.5 }}>
-              {outboundProcessCatalog.map((process) => (
-                <li key={process.id}>
-                  <span dir="auto">{process.name}</span>{' '}
-                  <code lang="en" dir="ltr">
-                    {process.id}
-                  </code>
-                </li>
-              ))}
-            </ul>
-          )}
-          <div style={{ fontSize: 12 }}>
-            {t('ai.privacy.sensitivity', {
-              names: sensitivity.containsNames ? t('common.yes') : t('common.no'),
-              sensitive: sensitivity.containsSensitiveMetadata
-                ? t('common.yes')
-                : t('common.no')
-            })}
-          </div>
-          <div style={{ fontSize: 12 }}>
-            {t('ai.privacy.requestCount', { count: estimatedRequestCount })}
-          </div>
-          <label style={{ display: 'flex', gap: 8, alignItems: 'flex-start' }}>
-            <input
-              type="checkbox"
-              checked={requestConsent}
-              onChange={(event) => setRequestConsent(event.target.checked)}
-            />
-            <strong style={{ fontSize: 12 }}>{t('ai.privacy.consent')}</strong>
-          </label>
-        </section>
+            <strong style={{ fontSize: 13 }}>{t('ai.privacy.preview.title')}</strong>
+            <div style={{ fontSize: 12 }}>
+              {t('ai.privacy.providerModel', {
+                provider: providerId ? providerSpec.label : t('ai.provider.select'),
+                model: effectiveModel || '—'
+              })}
+            </div>
+            {genMode === 'description' && descAttach?.kind !== 'pdf' ? (
+              <label style={labelStyle}>
+                <span style={labelText}>{t('ai.privacy.description')}</span>
+                <textarea
+                  readOnly
+                  value={
+                    descDocText ? `${description.trim()}\n\n${descDocText}`.trim() : description
+                  }
+                  rows={3}
+                  dir="auto"
+                  style={{ ...inputStyle, resize: 'vertical' }}
+                />
+              </label>
+            ) : (
+              <div style={{ fontSize: 12, overflowWrap: 'anywhere' }}>
+                {t('ai.privacy.attachment', {
+                  name:
+                    genMode === 'pdf' ? (doc?.file.name ?? '—') : (descAttach?.file.name ?? '—'),
+                  bytes: genMode === 'pdf' ? (doc?.file.size ?? 0) : (descAttach?.file.size ?? 0)
+                })}
+              </div>
+            )}
+            <label style={{ display: 'flex', gap: 8, alignItems: 'flex-start' }}>
+              <input
+                type="checkbox"
+                checked={includeWorkspaceContext}
+                onChange={(event) => setIncludeWorkspaceContext(event.target.checked)}
+              />
+              <span style={{ fontSize: 12 }}>{t('ai.privacy.includeWorkspace')}</span>
+            </label>
+            <label
+              style={{
+                display: 'flex',
+                gap: 8,
+                alignItems: 'flex-start',
+                opacity: includeWorkspaceContext ? 1 : 0.65
+              }}
+            >
+              <input
+                type="checkbox"
+                checked={redactNames}
+                disabled={!includeWorkspaceContext}
+                onChange={(event) => setRedactNames(event.target.checked)}
+              />
+              <span style={{ fontSize: 12 }}>{t('ai.privacy.redactNames')}</span>
+            </label>
+            <div style={{ fontSize: 12 }}>
+              {t('ai.privacy.workspaceCount', {
+                included: outboundProcessCatalog.length,
+                relevant: relevantProcesses.length,
+                total: processCatalog.length
+              })}
+            </div>
+            {outboundProcessCatalog.length > 0 && (
+              <ul style={{ margin: 0, paddingInlineStart: 20, fontSize: 11.5 }}>
+                {outboundProcessCatalog.map((process) => (
+                  <li key={process.id}>
+                    <span dir="auto">{process.name}</span>{' '}
+                    <code lang="en" dir="ltr">
+                      {process.id}
+                    </code>
+                  </li>
+                ))}
+              </ul>
+            )}
+            <div style={{ fontSize: 12 }}>
+              {t('ai.privacy.sensitivity', {
+                names: sensitivity.containsNames ? t('common.yes') : t('common.no'),
+                sensitive: sensitivity.containsSensitiveMetadata ? t('common.yes') : t('common.no')
+              })}
+            </div>
+            <div style={{ fontSize: 12 }}>
+              {t('ai.privacy.requestCount', { count: estimatedRequestCount })}
+            </div>
+            <label style={{ display: 'flex', gap: 8, alignItems: 'flex-start' }}>
+              <input
+                type="checkbox"
+                checked={requestConsent}
+                onChange={(event) => setRequestConsent(event.target.checked)}
+              />
+              <strong style={{ fontSize: 12 }}>{t('ai.privacy.consent')}</strong>
+            </label>
+          </section>
 
-        <button
-          type="button"
-          onClick={() => void handleGenerate()}
-          disabled={!canGenerate}
-          style={{
-            ...ghostBtn,
-            background: canGenerate ? 'var(--orbitpm-accent)' : 'rgba(127,127,127,0.25)',
-            color: canGenerate ? '#fff' : 'inherit',
-            borderColor: canGenerate ? 'var(--orbitpm-accent)' : 'rgba(127,127,127,0.35)',
-            cursor: canGenerate ? 'pointer' : 'not-allowed',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            gap: 8
-          }}
-        >
-          {busy && <Spinner />}
-          {busy ? t('ai.generating') : genMode === 'pdf' ? t('ai.generateFromPdf') : t('ai.generate')}
-        </button>
-
-        {busy && (
           <button
             type="button"
-            onClick={() => requestAbortRef.current?.abort()}
-            style={ghostBtn}
+            onClick={() => void handleGenerate()}
+            disabled={!canGenerate}
+            style={{
+              ...ghostBtn,
+              background: canGenerate ? 'var(--orbitpm-accent)' : 'rgba(127,127,127,0.25)',
+              color: canGenerate ? '#fff' : 'inherit',
+              borderColor: canGenerate ? 'var(--orbitpm-accent)' : 'rgba(127,127,127,0.35)',
+              cursor: canGenerate ? 'pointer' : 'not-allowed',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              gap: 8
+            }}
           >
-            {t('ai.cancel')}
+            {busy && <Spinner />}
+            {busy
+              ? t('ai.generating')
+              : genMode === 'pdf'
+                ? t('ai.generateFromPdf')
+                : t('ai.generate')}
           </button>
-        )}
 
-        {attemptStatus && (
-          <div role="status" style={{ fontSize: 12, color: 'var(--orbitpm-muted)' }}>
-            {attemptStatus.retryInMs === undefined
-              ? t('ai.retry.attempt', {
-                  attempt: attemptStatus.attempt,
-                  max: attemptStatus.maxAttempts
-                })
-              : t('ai.retry.waiting', {
-                  attempt: attemptStatus.attempt,
-                  max: attemptStatus.maxAttempts,
-                  seconds: Math.max(1, Math.ceil(attemptStatus.retryInMs / 1000))
-                })}
-          </div>
-        )}
-
-        {Boolean(providerId) && !keyPresent && (
-          <div style={{ fontSize: 12, color: 'var(--orbitpm-muted)' }}>
-            {t('ai.noKeyForProvider', { providerLabel: providerSpec.label })}{' '}
-            <button type="button" onClick={onOpenSettings} style={linkBtn}>
-              {t('ai.addOneInSettings')}
+          {busy && (
+            <button type="button" onClick={() => requestAbortRef.current?.abort()} style={ghostBtn}>
+              {t('ai.cancel')}
             </button>
-            {t('ai.addOneInSettings.period')}
-          </div>
-        )}
+          )}
 
-        {error && (
-          <div role="alert" style={errorBox}>
-            <span>{error}</span>
-            {offline && (
-              <span style={{ opacity: 0.85 }}>
-                {t('ai.errorTip.offline')}
-              </span>
-            )}
-          </div>
-        )}
-
-        {resultLabel && (
-          <div role="status" style={okBox}>
-            <span>{t('ai.created', { resultLabel })}</span>
-            {linkedSummary && <span style={{ opacity: 0.85 }}>{linkedSummary}</span>}
-            {onContinueInChat && (
-              <button
-                type="button"
-                onClick={() =>
-                  onContinueInChat({
-                    description: genMode === 'description' ? description.trim() : hint.trim()
+          {attemptStatus && (
+            <div role="status" style={{ fontSize: 12, color: 'var(--orbitpm-muted)' }}>
+              {attemptStatus.retryInMs === undefined
+                ? t('ai.retry.attempt', {
+                    attempt: attemptStatus.attempt,
+                    max: attemptStatus.maxAttempts
                   })
-                }
-                title={t('ai.continueInChat.title')}
-                style={{ ...ghostBtn, alignSelf: 'flex-start' }}
-              >
-                {t('ai.continueInChat')}
-              </button>
-            )}
-          </div>
-        )}
+                : t('ai.retry.waiting', {
+                    attempt: attemptStatus.attempt,
+                    max: attemptStatus.maxAttempts,
+                    seconds: Math.max(1, Math.ceil(attemptStatus.retryInMs / 1000))
+                  })}
+            </div>
+          )}
 
-        <div style={noteBox}>
-          {t('ai.note.updated', {
-            anthropic: 'Anthropic',
-            gemini: 'Gemini',
-            openrouter: 'OpenRouter',
-            desktopOnlyProviders: DESKTOP_ONLY_PROVIDERS.join(', ')
-          })}
-        </div>
-          </>
-        )}
-      </div>
+          {Boolean(providerId) && !keyPresent && (
+            <div style={{ fontSize: 12, color: 'var(--orbitpm-muted)' }}>
+              {t('ai.noKeyForProvider', { providerLabel: providerSpec.label })}{' '}
+              <button type="button" onClick={onOpenSettings} style={linkBtn}>
+                {t('ai.addOneInSettings')}
+              </button>
+              {t('ai.addOneInSettings.period')}
+            </div>
+          )}
+
+          {error && (
+            <div role="alert" style={errorBox}>
+              <span>{error}</span>
+              {offline && <span style={{ opacity: 0.85 }}>{t('ai.errorTip.offline')}</span>}
+            </div>
+          )}
+
+          {resultLabel && (
+            <div role="status" style={okBox}>
+              <span>{t('ai.created', { resultLabel })}</span>
+              {linkedSummary && <span style={{ opacity: 0.85 }}>{linkedSummary}</span>}
+              {onContinueInChat && (
+                <button
+                  type="button"
+                  onClick={() =>
+                    onContinueInChat({
+                      description: genMode === 'description' ? description.trim() : hint.trim()
+                    })
+                  }
+                  title={t('ai.continueInChat.title')}
+                  style={{ ...ghostBtn, alignSelf: 'flex-start' }}
+                >
+                  {t('ai.continueInChat')}
+                </button>
+              )}
+            </div>
+          )}
+
+          <div style={noteBox}>
+            {t('ai.note.updated', {
+              anthropic: 'Anthropic',
+              gemini: 'Gemini',
+              openrouter: 'OpenRouter',
+              desktopOnlyProviders: DESKTOP_ONLY_PROVIDERS.join(', ')
+            })}
+          </div>
+        </>
+      )}
+    </div>
   )
 
   // The verification modal renders above whichever chrome variant is active, so
