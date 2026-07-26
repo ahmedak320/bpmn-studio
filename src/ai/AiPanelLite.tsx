@@ -56,6 +56,10 @@ import {
 } from './requestPrivacy'
 import { t } from '../i18n'
 import { useLang } from '../i18n/useLang'
+import {
+  localizationSourceForGeneration,
+  type LocalizationSource
+} from '../localization'
 
 export interface FolderOptionLite {
   relPath: string
@@ -71,7 +75,12 @@ export interface AiPanelLiteProps {
    * whose folder was switched out mid-generation (Codex ORIG-1b). */
   onPlaceGenerated: (
     xml: string,
-    opts: { name: string; targetFolder: string; gen?: number }
+    opts: {
+      name: string
+      targetFolder: string
+      gen?: number
+      localizationSource?: LocalizationSource
+    }
   ) => Promise<{ label: string } | null>
   /** Read the live workspace generation (captured at generation start). */
   getWorkspaceGen?: () => number
@@ -223,6 +232,7 @@ export function AiPanelLite({
     unsure: ProposedLink[]
     unmatched: ProposedLink[]
     gen?: number
+    localizationSource: LocalizationSource
   } | null>(null)
   // OpenRouter balance + local usage-ledger display state.
   const [credits, setCredits] = useState<OpenRouterCredits | null>(null)
@@ -473,9 +483,19 @@ export function AiPanelLite({
   // build the linked-summary line. onPlaceGenerated may throw (a write failure),
   // so classify here too.
   const placeAndReport = useCallback(
-    async (finalXml: string, survived: ProposedLink[], gen: number | undefined): Promise<void> => {
+    async (
+      finalXml: string,
+      survived: ProposedLink[],
+      gen: number | undefined,
+      localizationSource: LocalizationSource
+    ): Promise<void> => {
       try {
-        const placed = await onPlaceGenerated(finalXml, { name: name.trim(), targetFolder, gen })
+        const placed = await onPlaceGenerated(finalXml, {
+          name: name.trim(),
+          targetFolder,
+          gen,
+          localizationSource
+        })
         setResultLabel(placed ? placed.label : t('ai.openedInMemory'))
         if (survived.length > 0) {
           const list = survived
@@ -505,6 +525,11 @@ export function AiPanelLite({
     // Capture the workspace generation at generation START so App can refuse the
     // placement if the user switches folders during the (slow) generation (ORIG-1b).
     const genAtStart = getWorkspaceGen?.()
+    const localizationSource = localizationSourceForGeneration({
+      mode: genMode,
+      documentKind: doc?.kind,
+      descriptionAttachmentKind: descAttach?.kind
+    })
     try {
       if (!providerId) throw new Error(t('ai.error.selectProvider'))
       const apiKey = getKey(providerId)
@@ -576,11 +601,18 @@ export function AiPanelLite({
       const { confident, unsure, unmatched } = partitionLinks(res.links, isKnownProcess)
       if (unsure.length + unmatched.length === 0) {
         // Nothing to vet — place with the XML unchanged; confident links stay.
-        await placeAndReport(res.xml, confident, genAtStart)
+        await placeAndReport(res.xml, confident, genAtStart, localizationSource)
       } else {
         // Hand the uncertain/unmatched links to the verification dialog; the
         // placement waits for the user's decision.
-        setPending({ xml: res.xml, confident, unsure, unmatched, gen: genAtStart })
+        setPending({
+          xml: res.xml,
+          confident,
+          unsure,
+          unmatched,
+          gen: genAtStart,
+          localizationSource
+        })
       }
     } catch (err) {
       const classified = classifyBrowserError(err)
@@ -620,7 +652,7 @@ export function AiPanelLite({
         const keepIds = new Set<string>([...accepted, ...p.confident.map((l) => l.elementId)])
         const finalXml = applyLinkDecisions(p.xml, [...p.unsure, ...p.unmatched], keepIds)
         const survived = [...p.confident, ...p.unsure.filter((l) => accepted.has(l.elementId))]
-        await placeAndReport(finalXml, survived, p.gen)
+        await placeAndReport(finalXml, survived, p.gen, p.localizationSource)
       } finally {
         setBusy(false)
       }
@@ -637,7 +669,7 @@ export function AiPanelLite({
     try {
       const keepIds = new Set<string>(p.confident.map((l) => l.elementId))
       const finalXml = applyLinkDecisions(p.xml, [...p.unsure, ...p.unmatched], keepIds)
-      await placeAndReport(finalXml, p.confident, p.gen)
+      await placeAndReport(finalXml, p.confident, p.gen, p.localizationSource)
     } finally {
       setBusy(false)
     }
