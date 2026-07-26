@@ -1049,6 +1049,39 @@ export const en = {
   'workspace.storage.collisionKeepBoth': 'Keep both files',
   'workspace.storage.collisionIdentical': 'Identical file — no change needed',
   'workspace.storage.backupApply': 'Apply backup import',
+  'workspace.storage.backupReview.intro':
+    'Review the exact sealed backup plan and active BPMN localization evidence before applying. Closing this dialog changes no workspace files.',
+  'workspace.storage.backupReview.summary': '{files} files · {size}',
+  'workspace.storage.backupReview.sealedPlan': 'Sealed backup plan',
+  'workspace.storage.backupReview.planReviewDigest': 'Plan review digest (SHA-256)',
+  'workspace.storage.backupReview.localizationTitle': 'Active BPMN localization evidence',
+  'workspace.storage.backupReview.localizationIntro':
+    'Each active BPMN below completed reviewed localization. Reserved internal history BPMN remains exact recovery evidence and is reviewed only when restored.',
+  'workspace.storage.backupReview.localizationNone':
+    'No active BPMN files require localization evidence.',
+  'workspace.storage.backupReview.file': 'Reviewed BPMN {index}',
+  'workspace.storage.backupReview.path': 'Workspace path',
+  'workspace.storage.backupReview.mode': 'Review mode',
+  'workspace.storage.backupReview.mode.automatic': 'Automatically complete',
+  'workspace.storage.backupReview.mode.explicit': 'Explicitly reviewed',
+  'workspace.storage.backupReview.target': 'Target language',
+  'workspace.storage.backupReview.target.en': 'English',
+  'workspace.storage.backupReview.target.ar': 'Arabic',
+  'workspace.storage.backupReview.localizationReviewDigest': 'Localization review digest',
+  'workspace.storage.backupReview.outputDigest': 'Reviewed output digest',
+  'workspace.storage.backupReview.processIds': 'Process IDs',
+  'workspace.storage.backupReview.replacesProcessIds': 'Replaced process IDs',
+  'workspace.storage.backupReview.audit': 'Localization audit',
+  'workspace.storage.backupReview.auditSummary':
+    '{initial} issues before review · {final} after review',
+  'workspace.storage.backupReview.patches': 'Applied localization changes',
+  'workspace.storage.backupReview.verified':
+    'Visible target language and unknown-extension preservation verified.',
+  'workspace.storage.backupReview.none': 'None',
+  'workspace.storage.backupReview.collisions': 'File collisions',
+  'workspace.storage.backupReview.collisionDecision': 'Collision decision',
+  'workspace.storage.backupReview.keepBothIdentityDisabled':
+    'Keep both is unavailable because this BPMN replaces existing process identities.',
   'workspace.storage.history': 'Recovery history',
   'workspace.storage.switchWarning':
     'Switching storage closes the current workspace. Save or export a backup first.',
@@ -2557,6 +2590,38 @@ export const ar: Record<keyof typeof en, string> = {
   'workspace.storage.collisionKeepBoth': 'الاحتفاظ بالملفين',
   'workspace.storage.collisionIdentical': 'ملف مطابق — لا حاجة إلى تغيير',
   'workspace.storage.backupApply': 'تطبيق استيراد النسخة الاحتياطية',
+  'workspace.storage.backupReview.intro':
+    'راجع خطة النسخة الاحتياطية المختومة المطابقة وأدلة ترجمة ملفات BPMN النشطة قبل التطبيق. لا يؤدي إغلاق مربع الحوار إلى تغيير ملفات مساحة العمل.',
+  'workspace.storage.backupReview.summary': '{files} ملف · {size}',
+  'workspace.storage.backupReview.sealedPlan': 'خطة النسخة الاحتياطية المختومة',
+  'workspace.storage.backupReview.planReviewDigest': 'بصمة مراجعة الخطة (SHA-256)',
+  'workspace.storage.backupReview.localizationTitle': 'أدلة ترجمة ملفات BPMN النشطة',
+  'workspace.storage.backupReview.localizationIntro':
+    'أكمل كل ملف BPMN نشط أدناه مراجعة الترجمة. تبقى ملفات BPMN الداخلية في سجل الاسترداد أدلة مطابقة ولا تُراجع إلا عند استعادتها.',
+  'workspace.storage.backupReview.localizationNone': 'لا توجد ملفات BPMN نشطة تتطلب أدلة ترجمة.',
+  'workspace.storage.backupReview.file': 'ملف BPMN مُراجع {index}',
+  'workspace.storage.backupReview.path': 'المسار في مساحة العمل',
+  'workspace.storage.backupReview.mode': 'وضع المراجعة',
+  'workspace.storage.backupReview.mode.automatic': 'مكتملة تلقائيًا',
+  'workspace.storage.backupReview.mode.explicit': 'مراجعة صريحة',
+  'workspace.storage.backupReview.target': 'اللغة الهدف',
+  'workspace.storage.backupReview.target.en': 'الإنجليزية',
+  'workspace.storage.backupReview.target.ar': 'العربية',
+  'workspace.storage.backupReview.localizationReviewDigest': 'بصمة مراجعة الترجمة',
+  'workspace.storage.backupReview.outputDigest': 'بصمة المخرج المُراجع',
+  'workspace.storage.backupReview.processIds': 'معرّفات العمليات',
+  'workspace.storage.backupReview.replacesProcessIds': 'معرّفات العمليات المستبدلة',
+  'workspace.storage.backupReview.audit': 'تدقيق الترجمة',
+  'workspace.storage.backupReview.auditSummary':
+    'المشكلات قبل المراجعة: {initial} · بعدها: {final}',
+  'workspace.storage.backupReview.patches': 'تغييرات الترجمة المطبقة',
+  'workspace.storage.backupReview.verified':
+    'تم التحقق من اللغة الهدف الظاهرة والحفاظ على الامتدادات غير المعروفة.',
+  'workspace.storage.backupReview.none': 'لا شيء',
+  'workspace.storage.backupReview.collisions': 'تعارضات الملفات',
+  'workspace.storage.backupReview.collisionDecision': 'قرار التعارض',
+  'workspace.storage.backupReview.keepBothIdentityDisabled':
+    'يتعذر الاحتفاظ بالملفين لأن ملف BPMN هذا يستبدل معرّفات عمليات موجودة.',
   'workspace.storage.history': 'سجل الاسترداد',
   'workspace.storage.switchWarning':
     'يؤدي تبديل التخزين إلى إغلاق مساحة العمل الحالية. احفظ أو صدّر نسخة احتياطية أولًا.',
