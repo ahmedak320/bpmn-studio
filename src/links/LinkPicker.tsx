@@ -1,5 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import type { ProcessEntry, ProcessIndex } from '@/core/processIndex'
+import { t } from '../i18n'
+import { useLang } from '../i18n/useLang'
 
 export interface LinkPickerProps {
   open: boolean
@@ -33,6 +35,7 @@ export function LinkPicker({
   onPick,
   onClose
 }: LinkPickerProps): JSX.Element | null {
+  useLang()
   const [query, setQuery] = useState('')
 
   const entries = useMemo(() => {
@@ -61,7 +64,7 @@ export function LinkPicker({
       className="orbitpm-link-picker-overlay"
       role="dialog"
       aria-modal="true"
-      aria-label="Link to process"
+      aria-label={t('linkPicker.title')}
       style={{
         position: 'fixed',
         inset: 0,
@@ -97,8 +100,8 @@ export function LinkPicker({
             alignItems: 'center'
           }}
         >
-          <strong>Link to process…</strong>
-          <button type="button" onClick={onClose} aria-label="Close">
+          <strong>{t('linkPicker.title')}</strong>
+          <button type="button" onClick={onClose} aria-label={t('linkPicker.close.aria')}>
             ×
           </button>
         </header>
@@ -107,7 +110,7 @@ export function LinkPicker({
           <input
             autoFocus
             type="text"
-            placeholder="Search by id, name, or path…"
+            placeholder={t('linkPicker.searchPlaceholder')}
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             style={{ width: '100%', boxSizing: 'border-box', padding: '0.4rem 0.5rem' }}
@@ -118,8 +121,8 @@ export function LinkPicker({
           {entries.length === 0 ? (
             <p style={{ opacity: 0.6, padding: '0.5rem 0.5rem' }}>
               {index.size === 0
-                ? 'No processes found in this workspace yet.'
-                : 'No processes match your search.'}
+                ? t('linkPicker.empty.noProcesses')
+                : t('linkPicker.empty.noMatches')}
             </p>
           ) : (
             <ul style={{ listStyle: 'none', margin: 0, padding: 0 }}>
