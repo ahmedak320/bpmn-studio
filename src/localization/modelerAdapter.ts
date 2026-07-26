@@ -1,14 +1,15 @@
 import { executeModelingBatch, type ModelingBatchUpdate } from '../editor/modelingBatch'
-import type { LocalizationAuditOptions } from './audit'
 import { auditLocalizationFields } from './audit'
+import { SEEDED_GLOSSARY } from './glossary'
 import { prepareLocalizationIngestion } from './ingestion'
-import { planLanguageProjection } from './plan'
+import { planLanguageProjection, type LocalResourcePlanOptions } from './plan'
 import {
   LocalizationSource,
   type LanguageCode,
   type LocalizationField,
   type LocalizationIssue,
   type LocalizationPatch,
+  type LocalizationResources,
   type LocalizationSource as LocalizationSourceType,
   type ProviderFailure,
   type TranslationQueueItem
@@ -52,9 +53,11 @@ export interface DiagramLocalizationReview {
   unchanged: number
   blockers: LocalizationIssue[]
   complete: boolean
+  /** Exact glossary/TM inputs retained for stale checks and post-audits. */
+  localResources: LocalizationResources
 }
 
-export interface InspectDiagramLocalizationOptions extends LocalizationAuditOptions {
+export interface InspectDiagramLocalizationOptions extends LocalResourcePlanOptions {
   source?: LocalizationSourceType
   providerFailures?: readonly ProviderFailure[]
 }
@@ -201,7 +204,8 @@ export function assertLocalizationReviewCurrent(
   review: DiagramLocalizationReview
 ): void {
   const current = inspectDiagramLocalization(modeler, review.target, {
-    source: review.source
+    source: review.source,
+    ...review.localResources
   })
   if (reviewSignature(current) !== reviewSignature(review)) {
     throw new StaleLocalizationReviewError()
@@ -213,8 +217,17 @@ export function inspectDiagramLocalization(
   target: LanguageCode,
   options: InspectDiagramLocalizationOptions = {}
 ): DiagramLocalizationReview {
+  const localResources: LocalizationResources = Object.freeze({
+    glossary: Object.freeze(
+      (options.glossary ?? SEEDED_GLOSSARY).map((entry) => Object.freeze({ ...entry }))
+    ),
+    translationMemory: Object.freeze(
+      (options.translationMemory ?? []).map((entry) => Object.freeze({ ...entry }))
+    )
+  })
   const ingestion = prepareLocalizationIngestion(definitionsOf(modeler), {
     ...options,
+    ...localResources,
     source: options.source ?? LocalizationSource.Editor,
     target
   })
@@ -228,7 +241,8 @@ export function inspectDiagramLocalization(
     projected: ingestion.projection.projected,
     unchanged: ingestion.projection.unchanged,
     blockers: ingestion.projection.blockers,
-    complete: ingestion.projection.complete
+    complete: ingestion.projection.complete,
+    localResources
   }
 }
 
@@ -380,7 +394,8 @@ export function applyDiagramLocalizationReview(
 ): ApplyDiagramLocalizationResult {
   assertLocalizationReviewCurrent(modeler, review)
   const projection = planLanguageProjection(review.fields, review.target, {
-    allowPartial: options.allowPartial
+    allowPartial: options.allowPartial,
+    glossary: review.localResources.glossary
   })
   if (!projection.complete && !options.allowPartial) {
     return {
@@ -401,9 +416,12 @@ export function applyDiagramLocalizationReview(
   ]
   applyLocalizationPatchesAtomically(modeler, patches)
   let post = inspectDiagramLocalization(modeler, review.target, {
-    source: review.source
+    source: review.source,
+    ...review.localResources
   })
-  let postAudit = auditLocalizationFields(post.fields)
+  let postAudit = auditLocalizationFields(post.fields, {
+    glossary: review.localResources.glossary
+  })
   let targetIssues = postAudit.issues.filter((issue) => issue.target === review.target)
   const projectionPersisted = isDiagramLocalizationProjected(modeler, post)
   if (projection.complete && (targetIssues.length > 0 || !projectionPersisted)) {
@@ -413,9 +431,12 @@ export function applyDiagramLocalizationReview(
     try {
       ;(modeler.get('commandStack') as { undo(): void }).undo()
       post = inspectDiagramLocalization(modeler, review.target, {
-        source: review.source
+        source: review.source,
+        ...review.localResources
       })
-      postAudit = auditLocalizationFields(post.fields)
+      postAudit = auditLocalizationFields(post.fields, {
+        glossary: review.localResources.glossary
+      })
       targetIssues = postAudit.issues.filter((issue) => issue.target === review.target)
     } catch {
       /* structural test doubles have no undo service */

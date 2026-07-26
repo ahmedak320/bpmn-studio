@@ -114,6 +114,16 @@ export interface TranslationMemoryEntry {
   acceptedAt?: string
 }
 
+/**
+ * Exact local resources used by ingestion/review. Workspace callers pass the
+ * entries loaded from the public `.orbitpm/i18n` files; single-file callers
+ * can continue using the built-in glossary and an empty translation memory.
+ */
+export interface LocalizationResources {
+  glossary: readonly GlossaryEntry[]
+  translationMemory: readonly TranslationMemoryEntry[]
+}
+
 export interface LocalizationAuditSummary {
   totalFields: number
   completeFields: number
