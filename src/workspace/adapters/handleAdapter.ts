@@ -85,6 +85,16 @@ export abstract class HandleWorkspaceAdapter implements WorkspaceAdapter {
     this.now = options.now ?? (() => Date.now())
   }
 
+  /**
+   * Compatibility bridge for application features that still consume a
+   * directory handle (for example bpmn-js import helpers). Mutations should
+   * continue to go through the adapter so expected-hash and recovery policies
+   * remain enforced.
+   */
+  get directoryHandle(): FileSystemDirectoryHandle {
+    return this.root
+  }
+
   async list(path = ''): Promise<WorkspaceEntry[]> {
     const normalized = normalizeWorkspacePath(path, { allowRoot: true })
     await this.ensurePermission('list', normalized || undefined, false)
@@ -125,10 +135,7 @@ export abstract class HandleWorkspaceAdapter implements WorkspaceAdapter {
     }
 
     return this.queue.run(async () => {
-      if (
-        options.expectedWorkspaceId !== undefined &&
-        options.expectedWorkspaceId !== this.id
-      ) {
+      if (options.expectedWorkspaceId !== undefined && options.expectedWorkspaceId !== this.id) {
         return {
           ok: false,
           status: 'stale-workspace',
@@ -262,11 +269,7 @@ export abstract class HandleWorkspaceAdapter implements WorkspaceAdapter {
           await removeEntryQuietly(parent, workspacePathName(normalized), false)
         }
         if (createdDirectoryRoot) {
-          await removeEntryQuietly(
-            createdDirectoryRoot.parent,
-            createdDirectoryRoot.name,
-            true
-          )
+          await removeEntryQuietly(createdDirectoryRoot.parent, createdDirectoryRoot.name, true)
         }
         return this.failureOutcome(error, normalized)
       }
@@ -349,12 +352,7 @@ export abstract class HandleWorkspaceAdapter implements WorkspaceAdapter {
         }
         output.push(entry)
         try {
-          await this.walkDirectory(
-            handle as FileSystemDirectoryHandle,
-            path,
-            output,
-            false
-          )
+          await this.walkDirectory(handle as FileSystemDirectoryHandle, path, output, false)
         } catch (error) {
           entry.readable = false
           entry.issue = workspaceFailure(error, 'list', path)
@@ -406,11 +404,7 @@ export abstract class HandleWorkspaceAdapter implements WorkspaceAdapter {
 
     const destinationParentPath = workspaceParentPath(destinationPath)
     const destinationName = workspacePathName(destinationPath)
-    const destinationParent = await this.resolveDirectory(
-      destinationParentPath,
-      false,
-      operation
-    )
+    const destinationParent = await this.resolveDirectory(destinationParentPath, false, operation)
     const existing = await this.probeEntry(destinationParent, destinationName)
     const sameEntry = existing
       ? await handlesReferToSameEntry(source, existing, sourcePath, destinationPath)
@@ -447,11 +441,7 @@ export abstract class HandleWorkspaceAdapter implements WorkspaceAdapter {
         recursive: source.kind === 'directory'
       })
     } catch (error) {
-      await removeEntryQuietly(
-        destinationParent,
-        destinationName,
-        source.kind === 'directory'
-      )
+      await removeEntryQuietly(destinationParent, destinationName, source.kind === 'directory')
       throw asWorkspaceOperationError(error, operation, sourcePath)
     }
   }
@@ -492,11 +482,7 @@ export abstract class HandleWorkspaceAdapter implements WorkspaceAdapter {
       if (sourceRemoved) {
         const staged = await this.probeEntry(source.parent, tempName)
         if (staged) {
-          await removeEntryQuietly(
-            destinationParent,
-            destinationName,
-            source.kind === 'directory'
-          )
+          await removeEntryQuietly(destinationParent, destinationName, source.kind === 'directory')
           try {
             await this.copyEntry(staged.handle, source.parent, source.name)
             await source.parent.removeEntry(tempName, {
@@ -572,10 +558,7 @@ export abstract class HandleWorkspaceAdapter implements WorkspaceAdapter {
     return `d:${parts.join('|')}`
   }
 
-  private async snapshotFile(
-    path: string,
-    handle: FileSystemFileHandle
-  ): Promise<FileSnapshot> {
+  private async snapshotFile(path: string, handle: FileSystemFileHandle): Promise<FileSnapshot> {
     const file = await handle.getFile()
     const bytes = copyBytes(new Uint8Array(await file.arrayBuffer()))
     return {
@@ -658,16 +641,9 @@ export abstract class HandleWorkspaceAdapter implements WorkspaceAdapter {
     }
   }
 
-  private async resolveEntry(
-    path: string,
-    operation: WorkspaceOperation
-  ): Promise<ResolvedEntry> {
+  private async resolveEntry(path: string, operation: WorkspaceOperation): Promise<ResolvedEntry> {
     const normalized = normalizeWorkspacePath(path)
-    const parent = await this.resolveDirectory(
-      workspaceParentPath(normalized),
-      false,
-      operation
-    )
+    const parent = await this.resolveDirectory(workspaceParentPath(normalized), false, operation)
     const entry = await this.probeEntry(parent, workspacePathName(normalized))
     if (!entry) throw notFound(operation, normalized)
     return entry

@@ -1,14 +1,7 @@
 import { Zip, ZipPassThrough, strToU8 } from 'fflate'
 import { copyBytes } from './hash'
-import {
-  normalizeWorkspacePath,
-  workspaceParentPath
-} from './path'
-import type {
-  BackupExportOptions,
-  WorkspaceAdapter,
-  WorkspaceBackupManifest
-} from './types'
+import { normalizeWorkspacePath, workspaceParentPath } from './path'
+import type { BackupExportOptions, WorkspaceAdapter, WorkspaceBackupManifest } from './types'
 import { WorkspaceOperationError } from './workspaceError'
 
 export const WORKSPACE_BACKUP_MANIFEST_PATH = 'orbitpm-backup.json'
@@ -91,10 +84,7 @@ export async function exportWorkspaceBackup(
     files: []
   }
   const archiveEntries: Array<{ name: string; bytes: Uint8Array }> = []
-  const capturedFiles = new Map<
-    string,
-    { size: number; modifiedAt: number; readable: boolean }
-  >()
+  const capturedFiles = new Map<string, { size: number; modifiedAt: number; readable: boolean }>()
 
   // Preserve explicitly created empty folders. Directory entries are stored,
   // while the manifest remains the authoritative directory list.
@@ -164,12 +154,12 @@ export async function exportWorkspaceBackup(
   const finalFiles = finalEntries.filter((entry) => entry.kind === 'file')
   if (
     JSON.stringify(finalDirectories) !==
-    JSON.stringify(
-      entries
-        .filter((entry) => entry.kind === 'directory')
-        .map((entry) => entry.path)
-        .sort((left, right) => left.localeCompare(right))
-    ) ||
+      JSON.stringify(
+        entries
+          .filter((entry) => entry.kind === 'directory')
+          .map((entry) => entry.path)
+          .sort((left, right) => left.localeCompare(right))
+      ) ||
     finalFiles.length !== capturedFiles.size
   ) {
     throw changedDuringBackup()

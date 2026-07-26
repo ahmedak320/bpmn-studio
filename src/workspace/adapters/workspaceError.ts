@@ -1,8 +1,4 @@
-import type {
-  WorkspaceErrorCode,
-  WorkspaceFailure,
-  WorkspaceOperation
-} from './types'
+import type { WorkspaceErrorCode, WorkspaceFailure, WorkspaceOperation } from './types'
 
 export interface WorkspaceOperationErrorOptions {
   code: WorkspaceErrorCode

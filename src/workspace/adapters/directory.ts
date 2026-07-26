@@ -15,10 +15,7 @@ export interface DirectoryWorkspaceAdapterOptions {
 
 /** Chrome/Edge user-selected directory workspace. */
 export class DirectoryWorkspaceAdapter extends HandleWorkspaceAdapter {
-  constructor(
-    root: FileSystemDirectoryHandle,
-    options: DirectoryWorkspaceAdapterOptions
-  ) {
+  constructor(root: FileSystemDirectoryHandle, options: DirectoryWorkspaceAdapterOptions) {
     super('directory', root, {
       id: options.workspaceId,
       backupExporter: options.backupExporter,

@@ -30,9 +30,7 @@ export class FakeFileHandle {
     bytes: Uint8Array | string = '',
     options: { lastModified?: number; type?: string } = {}
   ) {
-    this.bytes = copyBytes(
-      typeof bytes === 'string' ? new TextEncoder().encode(bytes) : bytes
-    )
+    this.bytes = copyBytes(typeof bytes === 'string' ? new TextEncoder().encode(bytes) : bytes)
     this.lastModified = options.lastModified ?? 1
     this.type = options.type ?? (/\.bpmn$/i.test(name) ? 'application/xml' : '')
   }
@@ -138,18 +136,11 @@ export class FakeDirectoryHandle {
     return directory as unknown as FileSystemDirectoryHandle
   }
 
-  async removeEntry(
-    name: string,
-    options: { recursive?: boolean } = {}
-  ): Promise<void> {
+  async removeEntry(name: string, options: { recursive?: boolean } = {}): Promise<void> {
     const key = this.matchingKey(name)
     if (key === undefined) throw namedError('NotFoundError', `${name} was not found`)
     const entry = this.children.get(key)!
-    if (
-      entry.kind === 'directory' &&
-      entry.children.size > 0 &&
-      options.recursive !== true
-    ) {
+    if (entry.kind === 'directory' && entry.children.size > 0 && options.recursive !== true) {
       throw namedError('InvalidModificationError', `${name} is not empty`)
     }
     this.children.delete(key)
@@ -160,10 +151,7 @@ export class FakeDirectoryHandle {
   > {
     if (this.failEnumeration) throw this.failEnumeration
     for (const [name, entry] of [...this.children]) {
-      yield [
-        name,
-        entry as unknown as FileSystemFileHandle | FileSystemDirectoryHandle
-      ]
+      yield [name, entry as unknown as FileSystemFileHandle | FileSystemDirectoryHandle]
     }
   }
 
@@ -171,23 +159,22 @@ export class FakeDirectoryHandle {
     for (const [name] of this.children) yield name
   }
 
-  async *values(): AsyncIterableIterator<
-    FileSystemFileHandle | FileSystemDirectoryHandle
-  > {
+  async *values(): AsyncIterableIterator<FileSystemFileHandle | FileSystemDirectoryHandle> {
     for (const entry of this.children.values()) {
       yield entry as unknown as FileSystemFileHandle | FileSystemDirectoryHandle
     }
   }
 
   directory(path: string): FakeDirectoryHandle {
-    let directory: FakeDirectoryHandle = this
-    for (const segment of path.split('/').filter(Boolean)) {
-      const key = directory.matchingKey(segment)
-      const entry = key === undefined ? undefined : directory.children.get(key)
-      if (!entry || entry.kind !== 'directory') throw new Error(`Missing fake folder ${path}`)
-      directory = entry
-    }
-    return directory
+    return path
+      .split('/')
+      .filter(Boolean)
+      .reduce<FakeDirectoryHandle>((directory, segment) => {
+        const key = directory.matchingKey(segment)
+        const entry = key === undefined ? undefined : directory.children.get(key)
+        if (!entry || entry.kind !== 'directory') throw new Error(`Missing fake folder ${path}`)
+        return entry
+      }, this)
   }
 
   file(path: string): FakeFileHandle {
@@ -202,21 +189,21 @@ export class FakeDirectoryHandle {
   }
 
   addDirectory(path: string): FakeDirectoryHandle {
-    let directory: FakeDirectoryHandle = this
-    for (const segment of path.split('/').filter(Boolean)) {
-      const key = directory.matchingKey(segment)
-      const existing = key === undefined ? undefined : directory.children.get(key)
-      if (existing?.kind === 'file') throw new Error(`${segment} is already a file`)
-      if (existing) {
-        directory = existing
-      } else {
+    return path
+      .split('/')
+      .filter(Boolean)
+      .reduce<FakeDirectoryHandle>((directory, segment) => {
+        const key = directory.matchingKey(segment)
+        const existing = key === undefined ? undefined : directory.children.get(key)
+        if (existing?.kind === 'file') throw new Error(`${segment} is already a file`)
+        if (existing) {
+          return existing
+        }
         const child = new FakeDirectoryHandle(segment, this.caseInsensitive)
         child.permission = this.permission
         directory.children.set(segment, child)
-        directory = child
-      }
-    }
-    return directory
+        return child
+      }, this)
   }
 
   addFile(
@@ -234,9 +221,7 @@ export class FakeDirectoryHandle {
   }
 }
 
-export function fakeRoot(
-  options: { caseInsensitive?: boolean } = {}
-): FakeDirectoryHandle {
+export function fakeRoot(options: { caseInsensitive?: boolean } = {}): FakeDirectoryHandle {
   return new FakeDirectoryHandle('workspace', options.caseInsensitive ?? false)
 }
 

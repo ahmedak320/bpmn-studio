@@ -63,7 +63,7 @@ describe('MemoryWorkspaceAdapter', () => {
 
     const first = await adapter.read('sales/logo.bin')
     first.bytes[0] = 99
-    expect([...((await adapter.read('sales/logo.bin')).bytes)]).toEqual([0, 255, 7])
+    expect([...(await adapter.read('sales/logo.bin')).bytes]).toEqual([0, 255, 7])
     expect(first.size).toBe(3)
   })
 
@@ -83,9 +83,7 @@ describe('MemoryWorkspaceAdapter', () => {
     ])
     const outcomes = [left, right]
     expect(outcomes.filter((outcome) => outcome.status === 'success')).toHaveLength(1)
-    expect(
-      outcomes.filter((outcome) => outcome.status === 'external-conflict')
-    ).toHaveLength(1)
+    expect(outcomes.filter((outcome) => outcome.status === 'external-conflict')).toHaveLength(1)
     expect(['left', 'right']).toContain(decode((await adapter.read('process.bpmn')).bytes))
   })
 
@@ -109,9 +107,10 @@ describe('MemoryWorkspaceAdapter', () => {
 
     const current = await adapter.read('process.bpmn')
     adapter.removeExternally('process.bpmn')
-    expect(
-      await adapter.writeAtomic('process.bpmn', text('local'), current.hash)
-    ).toMatchObject({ status: 'external-conflict', reason: 'missing' })
+    expect(await adapter.writeAtomic('process.bpmn', text('local'), current.hash)).toMatchObject({
+      status: 'external-conflict',
+      reason: 'missing'
+    })
 
     await adapter.writeAtomic('process.bpmn', text('created'), undefined, {
       expectedMissing: true
@@ -166,9 +165,7 @@ describe('MemoryWorkspaceAdapter', () => {
     ).rejects.toMatchObject({ code: 'invalid-path' })
 
     await adapter.remove('archive/sub')
-    expect((await adapter.list()).some((entry) => entry.path.startsWith('archive/sub'))).toBe(
-      false
-    )
+    expect((await adapter.list()).some((entry) => entry.path.startsWith('archive/sub'))).toBe(false)
   })
 
   it('exports a complete ZIP with checksums, metadata, history, and empty folders', async () => {
@@ -211,9 +208,7 @@ describe('MemoryWorkspaceAdapter', () => {
     )
     expect(strFromU8(archive['workspace/process.bpmn'])).toBe('<definitions />')
 
-    const manifest = JSON.parse(
-      strFromU8(archive[WORKSPACE_BACKUP_MANIFEST_PATH])
-    ) as {
+    const manifest = JSON.parse(strFromU8(archive[WORKSPACE_BACKUP_MANIFEST_PATH])) as {
       generatedAt: string
       directories: string[]
       files: Array<{ path: string; sha256: string; size: number }>

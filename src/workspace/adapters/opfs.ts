@@ -1,8 +1,5 @@
 import { HandleWorkspaceAdapter } from './handleAdapter'
-import {
-  normalizeWorkspacePath,
-  workspaceParentPath
-} from './path'
+import { normalizeWorkspacePath, workspaceParentPath } from './path'
 import type { WorkspaceBackupExporter } from './types'
 import { WorkspaceOperationError } from './workspaceError'
 
@@ -40,10 +37,7 @@ export class OpfsWorkspaceAdapter extends HandleWorkspaceAdapter {
   readonly persisted: boolean
   readonly directoryName: string
 
-  constructor(
-    root: FileSystemDirectoryHandle,
-    options: OpfsWorkspaceAdapterOptions = {}
-  ) {
+  constructor(root: FileSystemDirectoryHandle, options: OpfsWorkspaceAdapterOptions = {}) {
     const directoryName = options.directoryName ?? root.name ?? 'orbitpm'
     const persisted = options.persisted ?? false
     super('opfs', root, {
@@ -52,9 +46,7 @@ export class OpfsWorkspaceAdapter extends HandleWorkspaceAdapter {
       now: options.now,
       checkPermission: false,
       storage: {
-        persistence: persisted
-          ? 'origin-private-durable'
-          : 'origin-private-best-effort',
+        persistence: persisted ? 'origin-private-durable' : 'origin-private-best-effort',
         portable: false,
         description: persisted
           ? 'Files are stored privately by this browser with durable storage granted.'
@@ -76,9 +68,7 @@ export class OpfsWorkspaceAdapter extends HandleWorkspaceAdapter {
   static async open(options: OpenOpfsWorkspaceOptions = {}): Promise<OpfsWorkspaceAdapter> {
     const storageManager =
       options.storageManager ??
-      (typeof navigator !== 'undefined'
-        ? (navigator.storage as OpfsStorageManager)
-        : undefined)
+      (typeof navigator !== 'undefined' ? (navigator.storage as OpfsStorageManager) : undefined)
     if (!storageManager || typeof storageManager.getDirectory !== 'function') {
       throw new WorkspaceOperationError({
         code: 'unsupported',

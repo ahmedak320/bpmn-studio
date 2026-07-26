@@ -99,11 +99,11 @@ describe('DirectoryWorkspaceAdapter', () => {
     const snapshot = await adapter.read('process.bpmn')
     file.failNextClose = new Error('disk full')
 
-    expect(
-      await adapter.writeAtomic('process.bpmn', text('partial'), snapshot.hash)
-    ).toMatchObject({
-      status: 'storage-failure'
-    })
+    expect(await adapter.writeAtomic('process.bpmn', text('partial'), snapshot.hash)).toMatchObject(
+      {
+        status: 'storage-failure'
+      }
+    )
     expect(decode(root.file('process.bpmn').bytes)).toBe('safe')
   })
 
@@ -127,12 +127,12 @@ describe('DirectoryWorkspaceAdapter', () => {
     await expect(adapter.read('source/process.bpmn')).rejects.toMatchObject({
       code: 'not-found'
     })
-    await expect(
-      adapter.move('archive', 'archive/source/inside')
-    ).rejects.toMatchObject({ code: 'invalid-path' })
-    await expect(
-      adapter.rename('renamed.bpmn', 'archive/renamed.bpmn')
-    ).rejects.toMatchObject({ code: 'invalid-path' })
+    await expect(adapter.move('archive', 'archive/source/inside')).rejects.toMatchObject({
+      code: 'invalid-path'
+    })
+    await expect(adapter.rename('renamed.bpmn', 'archive/renamed.bpmn')).rejects.toMatchObject({
+      code: 'invalid-path'
+    })
   })
 
   it('creates nested folders and recursively removes their complete contents', async () => {

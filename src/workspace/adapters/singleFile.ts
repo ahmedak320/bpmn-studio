@@ -1,10 +1,6 @@
 import { exportWorkspaceBackup } from './backup'
 import { copyBytes, equalHash, sha256Hex } from './hash'
-import {
-  normalizeWorkspacePath,
-  workspaceParentPath,
-  workspacePathName
-} from './path'
+import { normalizeWorkspacePath, workspaceParentPath, workspacePathName } from './path'
 import { SerialQueue } from './serialQueue'
 import type {
   BackupExportOptions,
@@ -16,12 +12,7 @@ import type {
   WorkspaceStorageInfo,
   WriteAtomicOptions
 } from './types'
-import {
-  WorkspaceOperationError,
-  notFound,
-  unsupported,
-  workspaceFailure
-} from './workspaceError'
+import { WorkspaceOperationError, notFound, unsupported, workspaceFailure } from './workspaceError'
 
 export interface SingleFileDownloadRequest {
   path: string
@@ -29,9 +20,7 @@ export interface SingleFileDownloadRequest {
   blob: Blob
 }
 
-export type SingleFileDownload = (
-  request: SingleFileDownloadRequest
-) => void | Promise<void>
+export type SingleFileDownload = (request: SingleFileDownloadRequest) => void | Promise<void>
 
 export interface SingleFileWorkspaceAdapterOptions {
   workspaceId?: string
@@ -188,10 +177,7 @@ export class SingleFileWorkspaceAdapter implements WorkspaceAdapter {
     }
 
     return this.queue.run(async () => {
-      if (
-        options.expectedWorkspaceId !== undefined &&
-        options.expectedWorkspaceId !== this.id
-      ) {
+      if (options.expectedWorkspaceId !== undefined && options.expectedWorkspaceId !== this.id) {
         return {
           ok: false,
           status: 'stale-workspace',
@@ -347,11 +333,7 @@ export class SingleFileWorkspaceAdapter implements WorkspaceAdapter {
   async createFolder(path: string): Promise<void> {
     const normalized = normalizeWorkspacePath(path, { allowRoot: true })
     if (!normalized) return
-    throw unsupported(
-      'create-folder',
-      normalized,
-      'Single-file mode does not support folders.'
-    )
+    throw unsupported('create-folder', normalized, 'Single-file mode does not support folders.')
   }
 
   exportBackup(options?: BackupExportOptions): Promise<Blob> {

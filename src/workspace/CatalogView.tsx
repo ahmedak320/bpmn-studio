@@ -1,3 +1,4 @@
+import { useEffect, useMemo, useRef, useState } from 'react'
 import type { CatalogRow, CatalogSortKey, SortDir } from './catalog'
 import { rowLabel } from './catalog'
 import { t, tPlural } from '../i18n'
@@ -33,6 +34,9 @@ function formatModified(ms?: number): string {
 }
 
 const GRID = '1fr 0.9fr 0.6fr 0.5fr'
+const ROW_HEIGHT = 62
+const VIRTUALIZE_AFTER = 200
+const OVERSCAN = 8
 
 /**
  * The catalog / home view: a card-table hybrid listing every process in the
@@ -58,6 +62,28 @@ export function CatalogView({
   const arrow = (key: CatalogSortKey): string =>
     sortKey === key ? (sortDir === 'asc' ? ' ▲' : ' ▼') : ''
   const unresolvedTotal = rows.reduce((s, r) => s + (r.unresolvedCount > 0 ? 1 : 0), 0)
+  const virtual = rows.length > VIRTUALIZE_AFTER
+  const rowsViewportRef = useRef<HTMLDivElement | null>(null)
+  const [viewport, setViewport] = useState({ scrollTop: 0, height: 600 })
+  useEffect(() => {
+    const element = rowsViewportRef.current
+    if (!element || !virtual) return
+    const update = (): void =>
+      setViewport((previous) => ({
+        scrollTop: previous.scrollTop,
+        height: element.clientHeight || 600
+      }))
+    update()
+    const observer = typeof ResizeObserver === 'function' ? new ResizeObserver(update) : null
+    observer?.observe(element)
+    return () => observer?.disconnect()
+  }, [virtual])
+  const windowed = useMemo(() => {
+    if (!virtual) return { start: 0, rows }
+    const start = Math.max(0, Math.floor(viewport.scrollTop / ROW_HEIGHT) - OVERSCAN)
+    const count = Math.ceil(viewport.height / ROW_HEIGHT) + OVERSCAN * 2
+    return { start, rows: rows.slice(start, start + count) }
+  }, [rows, viewport, virtual])
 
   return (
     <div
@@ -97,7 +123,11 @@ export function CatalogView({
       <p style={{ margin: '0 0 12px', fontSize: 12.5, color: 'var(--orbitpm-muted)' }}>
         {t('catalog.everyProcessIn', { rootName })}{' '}
         {query.trim()
-          ? t('catalog.showingMatching', { shown: rows.length, total: totalCount, query: query.trim() })
+          ? t('catalog.showingMatching', {
+              shown: rows.length,
+              total: totalCount,
+              query: query.trim()
+            })
           : tPlural('catalog.process', totalCount, { total: totalCount })}
         {unresolvedTotal > 0 && (
           <>
@@ -145,7 +175,13 @@ export function CatalogView({
           )}
         </div>
       ) : (
-        <div style={{ border: '1px solid var(--orbitpm-border)', borderRadius: 10, overflow: 'hidden' }}>
+        <div
+          style={{
+            border: '1px solid var(--orbitpm-border)',
+            borderRadius: 10,
+            overflow: 'hidden'
+          }}
+        >
           {/* Column header (sortable) */}
           <div
             role="row"
@@ -162,95 +198,153 @@ export function CatalogView({
               color: 'var(--orbitpm-muted)'
             }}
           >
-            <HeaderButton label={`${t('catalog.column.name')}${arrow('name')}`} onClick={() => onSort('name')} />
-            <HeaderButton label={`${t('catalog.column.folder')}${arrow('folder')}`} onClick={() => onSort('folder')} />
-            <HeaderButton label={`${t('catalog.column.modified')}${arrow('modified')}`} onClick={() => onSort('modified')} />
+            <HeaderButton
+              label={`${t('catalog.column.name')}${arrow('name')}`}
+              onClick={() => onSort('name')}
+            />
+            <HeaderButton
+              label={`${t('catalog.column.folder')}${arrow('folder')}`}
+              onClick={() => onSort('folder')}
+            />
+            <HeaderButton
+              label={`${t('catalog.column.modified')}${arrow('modified')}`}
+              onClick={() => onSort('modified')}
+            />
             <span>{t('catalog.column.links')}</span>
           </div>
-          {rows.map((row, i) => (
+          <div
+            ref={rowsViewportRef}
+            onScroll={
+              virtual
+                ? (event) =>
+                    setViewport((previous) => ({
+                      ...previous,
+                      scrollTop: event.currentTarget.scrollTop
+                    }))
+                : undefined
+            }
+            style={
+              virtual
+                ? {
+                    position: 'relative',
+                    height: 'min(70vh, 720px)',
+                    overflowY: 'auto'
+                  }
+                : undefined
+            }
+          >
             <div
-              key={`${row.relPath}::${row.processId ?? i}`}
-              role="button"
-              tabIndex={0}
-              aria-label={t('catalog.openRow.aria', { name: rowLabel(row) })}
-              onClick={() => onOpen(row.relPath, row.processId)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter' || e.key === ' ') {
-                  e.preventDefault()
-                  onOpen(row.relPath, row.processId)
-                }
-              }}
-              style={{
-                display: 'grid',
-                gridTemplateColumns: GRID,
-                gap: 8,
-                alignItems: 'center',
-                padding: '0.6rem 0.8rem',
-                borderTop: i === 0 ? 'none' : '1px solid var(--orbitpm-border)',
-                cursor: 'pointer',
-                fontSize: 13
-              }}
-              onMouseEnter={(e) => (e.currentTarget.style.background = 'var(--orbitpm-hover)')}
-              onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
+              style={
+                virtual
+                  ? {
+                      position: 'relative',
+                      height: rows.length * ROW_HEIGHT
+                    }
+                  : undefined
+              }
             >
-              <span style={{ display: 'flex', flexDirection: 'column', gap: 2, minWidth: 0 }}>
-                <span
-                  style={{
-                    fontWeight: 600,
-                    whiteSpace: 'nowrap',
-                    overflow: 'hidden',
-                    textOverflow: 'ellipsis'
-                  }}
-                >
-                  {rowLabel(row)}
-                </span>
-                <span
-                  style={{
-                    fontSize: 11,
-                    color: 'var(--orbitpm-muted)',
-                    whiteSpace: 'nowrap',
-                    overflow: 'hidden',
-                    textOverflow: 'ellipsis'
-                  }}
-                >
-                  {row.fileName}
-                </span>
-              </span>
-              <span
-                style={{
-                  color: 'var(--orbitpm-muted)',
-                  whiteSpace: 'nowrap',
-                  overflow: 'hidden',
-                  textOverflow: 'ellipsis'
-                }}
-                title={row.folder || rootName}
-              >
-                {row.folder ? `📁 ${row.folder}` : `📁 ${rootName}`}
-              </span>
-              <span style={{ color: 'var(--orbitpm-muted)', fontSize: 12 }}>
-                {formatModified(row.lastModified)}
-              </span>
-              <span>
-                {row.unresolvedCount > 0 ? (
-                  <span
-                    title={tPlural('catalog.unresolvedTooltip', row.unresolvedCount)}
-                    style={{
-                      padding: '0.05rem 0.4rem',
-                      borderRadius: 999,
-                      background: 'rgba(217,119,6,0.18)',
-                      color: '#d97706',
-                      fontSize: 11,
-                      fontWeight: 600
+              {windowed.rows.map((row, offset) => {
+                const i = windowed.start + offset
+                return (
+                  <div
+                    key={`${row.relPath}::${row.processId ?? i}`}
+                    role="button"
+                    tabIndex={0}
+                    aria-label={t('catalog.openRow.aria', { name: rowLabel(row) })}
+                    onClick={() => onOpen(row.relPath, row.processId)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' || e.key === ' ') {
+                        e.preventDefault()
+                        onOpen(row.relPath, row.processId)
+                      }
                     }}
+                    style={{
+                      display: 'grid',
+                      gridTemplateColumns: GRID,
+                      gap: 8,
+                      alignItems: 'center',
+                      padding: '0.6rem 0.8rem',
+                      borderTop: i === 0 ? 'none' : '1px solid var(--orbitpm-border)',
+                      cursor: 'pointer',
+                      fontSize: 13,
+                      ...(virtual
+                        ? {
+                            position: 'absolute',
+                            insetInline: 0,
+                            top: i * ROW_HEIGHT,
+                            height: ROW_HEIGHT,
+                            boxSizing: 'border-box' as const
+                          }
+                        : {})
+                    }}
+                    onMouseEnter={(e) =>
+                      (e.currentTarget.style.background = 'var(--orbitpm-hover)')
+                    }
+                    onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
                   >
-                    ⚠ {row.unresolvedCount}
-                  </span>
-                ) : (
-                  <span style={{ color: 'var(--orbitpm-muted)', fontSize: 12 }}>{t('catalog.ok')}</span>
-                )}
-              </span>
+                    <span style={{ display: 'flex', flexDirection: 'column', gap: 2, minWidth: 0 }}>
+                      <span
+                        style={{
+                          fontWeight: 600,
+                          whiteSpace: 'nowrap',
+                          overflow: 'hidden',
+                          textOverflow: 'ellipsis'
+                        }}
+                      >
+                        {rowLabel(row)}
+                      </span>
+                      <span
+                        style={{
+                          fontSize: 11,
+                          color: 'var(--orbitpm-muted)',
+                          whiteSpace: 'nowrap',
+                          overflow: 'hidden',
+                          textOverflow: 'ellipsis'
+                        }}
+                      >
+                        {row.fileName}
+                      </span>
+                    </span>
+                    <span
+                      style={{
+                        color: 'var(--orbitpm-muted)',
+                        whiteSpace: 'nowrap',
+                        overflow: 'hidden',
+                        textOverflow: 'ellipsis'
+                      }}
+                      title={row.folder || rootName}
+                    >
+                      {row.folder ? `📁 ${row.folder}` : `📁 ${rootName}`}
+                    </span>
+                    <span style={{ color: 'var(--orbitpm-muted)', fontSize: 12 }}>
+                      {formatModified(row.lastModified)}
+                    </span>
+                    <span>
+                      {row.unresolvedCount > 0 ? (
+                        <span
+                          title={tPlural('catalog.unresolvedTooltip', row.unresolvedCount)}
+                          style={{
+                            padding: '0.05rem 0.4rem',
+                            borderRadius: 999,
+                            background: 'rgba(217,119,6,0.18)',
+                            color: '#d97706',
+                            fontSize: 11,
+                            fontWeight: 600
+                          }}
+                        >
+                          ⚠ {row.unresolvedCount}
+                        </span>
+                      ) : (
+                        <span style={{ color: 'var(--orbitpm-muted)', fontSize: 12 }}>
+                          {t('catalog.ok')}
+                        </span>
+                      )}
+                    </span>
+                  </div>
+                )
+              })}
             </div>
-          ))}
+          </div>
         </div>
       )}
     </div>

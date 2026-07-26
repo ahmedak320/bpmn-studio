@@ -20,7 +20,6 @@ import type {
 import {
   WorkspaceOperationError,
   alreadyExists,
-  asWorkspaceOperationError,
   notFound,
   workspaceFailure
 } from './workspaceError'
@@ -103,10 +102,7 @@ export class MemoryWorkspaceAdapter implements WorkspaceAdapter {
       }
     } else {
       for (const [path, bytes] of Object.entries(options.files ?? {})) {
-        this.seedFile(
-          path,
-          typeof bytes === 'string' ? new TextEncoder().encode(bytes) : bytes
-        )
+        this.seedFile(path, typeof bytes === 'string' ? new TextEncoder().encode(bytes) : bytes)
       }
     }
   }
@@ -202,10 +198,7 @@ export class MemoryWorkspaceAdapter implements WorkspaceAdapter {
     }
 
     return this.queue.run(async () => {
-      if (
-        options.expectedWorkspaceId !== undefined &&
-        options.expectedWorkspaceId !== this.id
-      ) {
+      if (options.expectedWorkspaceId !== undefined && options.expectedWorkspaceId !== this.id) {
         return {
           ok: false,
           status: 'stale-workspace',
@@ -322,11 +315,7 @@ export class MemoryWorkspaceAdapter implements WorkspaceAdapter {
   }
 
   async move(from: string, to: string): Promise<void> {
-    await this.relocate(
-      normalizeWorkspacePath(from),
-      normalizeWorkspacePath(to),
-      'move'
-    )
+    await this.relocate(normalizeWorkspacePath(from), normalizeWorkspacePath(to), 'move')
   }
 
   async remove(path: string): Promise<void> {
@@ -377,10 +366,7 @@ export class MemoryWorkspaceAdapter implements WorkspaceAdapter {
       if (source === destination) return
       const sourceNode = this.nodes.get(source)
       if (!sourceNode) throw notFound(operation, source)
-      if (
-        sourceNode.kind === 'directory' &&
-        isPathWithin(destination, source)
-      ) {
+      if (sourceNode.kind === 'directory' && isPathWithin(destination, source)) {
         throw new WorkspaceOperationError({
           code: 'invalid-path',
           operation,

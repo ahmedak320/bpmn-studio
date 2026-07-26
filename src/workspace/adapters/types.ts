@@ -213,6 +213,7 @@ export interface WorkspaceBackupCollision {
   path: string
   incomingHash: string
   existing: FileSnapshot
+  identical: boolean
 }
 
 export interface WorkspaceBackupImportPlan {
@@ -220,7 +221,47 @@ export interface WorkspaceBackupImportPlan {
   directories: string[]
   files: WorkspaceBackupImportCandidate[]
   collisions: WorkspaceBackupCollision[]
+  compressedBytes: number
+  declaredUncompressedBytes: number
 }
+
+export type WorkspaceBackupCollisionDecision =
+  { action: 'replace' } | { action: 'skip' } | { action: 'keep-both'; destinationPath?: string }
+
+export interface WorkspaceBackupImportOptions {
+  decisions?: Readonly<Record<string, WorkspaceBackupCollisionDecision>>
+  signal?: AbortSignal
+  /**
+   * Called immediately before an existing file is overwritten. App integration
+   * uses this to create the mandatory portable history revision.
+   */
+  beforeOverwrite?: (path: string, existing: FileSnapshot) => Promise<void>
+}
+
+export interface WorkspaceBackupAppliedFile {
+  sourcePath: string
+  destinationPath: string
+  replaced: boolean
+  snapshot: FileSnapshot
+}
+
+export type WorkspaceBackupImportOutcome =
+  | {
+      status: 'needs-review'
+      unresolvedCollisions: WorkspaceBackupCollision[]
+    }
+  | {
+      status: 'committed'
+      applied: WorkspaceBackupAppliedFile[]
+      skipped: string[]
+    }
+  | {
+      status: 'rolled-back' | 'rollback-failed'
+      appliedBeforeFailure: WorkspaceBackupAppliedFile[]
+      skipped: string[]
+      error: WorkspaceFailure
+      rollbackErrors: WorkspaceFailure[]
+    }
 
 export type WorkspaceBackupExporter = (
   adapter: WorkspaceAdapter,

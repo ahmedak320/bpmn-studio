@@ -72,8 +72,7 @@ export function isPathWithin(path: string, possibleAncestor: string): boolean {
   const normalizedPath = normalizeWorkspacePath(path)
   const normalizedAncestor = normalizeWorkspacePath(possibleAncestor)
   return (
-    normalizedPath === normalizedAncestor ||
-    normalizedPath.startsWith(`${normalizedAncestor}/`)
+    normalizedPath === normalizedAncestor || normalizedPath.startsWith(`${normalizedAncestor}/`)
   )
 }
 

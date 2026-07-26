@@ -1,9 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import {
-  OpfsWorkspaceAdapter,
-  SingleFileWorkspaceAdapter,
-  opfsSupported
-} from '..'
+import { OpfsWorkspaceAdapter, SingleFileWorkspaceAdapter, opfsSupported } from '..'
 import { asDirectoryHandle, fakeRoot } from './fakeFileSystem'
 
 const text = (value: string) => new TextEncoder().encode(value)
@@ -38,13 +34,11 @@ describe('OpfsWorkspaceAdapter', () => {
   })
 
   it('detects support and fails explicitly when OPFS is unavailable', async () => {
-    expect(opfsSupported({ getDirectory: async () => asDirectoryHandle(fakeRoot()) })).toBe(
-      true
-    )
+    expect(opfsSupported({ getDirectory: async () => asDirectoryHandle(fakeRoot()) })).toBe(true)
     expect(opfsSupported({})).toBe(false)
-    await expect(
-      OpfsWorkspaceAdapter.open({ storageManager: {} as never })
-    ).rejects.toMatchObject({ code: 'unsupported' })
+    await expect(OpfsWorkspaceAdapter.open({ storageManager: {} as never })).rejects.toMatchObject({
+      code: 'unsupported'
+    })
   })
 })
 
@@ -84,9 +78,9 @@ describe('SingleFileWorkspaceAdapter', () => {
       }
     })
     const base = await adapter.read('process.bpmn')
-    expect(
-      await adapter.writeAtomic('process.bpmn', text('lost'), base.hash)
-    ).toMatchObject({ status: 'storage-failure' })
+    expect(await adapter.writeAtomic('process.bpmn', text('lost'), base.hash)).toMatchObject({
+      status: 'storage-failure'
+    })
     expect(decode((await adapter.read('process.bpmn')).bytes)).toBe('safe')
   })
 
@@ -97,9 +91,10 @@ describe('SingleFileWorkspaceAdapter', () => {
       bytes: text('base'),
       download: vi.fn()
     })
-    expect(
-      await adapter.writeAtomic('process.bpmn', text('local'), '0'.repeat(64))
-    ).toMatchObject({ status: 'external-conflict', reason: 'hash-mismatch' })
+    expect(await adapter.writeAtomic('process.bpmn', text('local'), '0'.repeat(64))).toMatchObject({
+      status: 'external-conflict',
+      reason: 'hash-mismatch'
+    })
     expect(
       await adapter.writeAtomic('process.bpmn', text('local'), undefined, {
         expectedWorkspaceId: 'single:stale'
@@ -124,13 +119,15 @@ describe('SingleFileWorkspaceAdapter', () => {
     const base = await adapter.read('process.bpmn')
     file.bytes = text('external')
 
-    expect(
-      await adapter.writeAtomic('process.bpmn', text('local'), base.hash)
-    ).toMatchObject({ status: 'external-conflict', reason: 'hash-mismatch' })
+    expect(await adapter.writeAtomic('process.bpmn', text('local'), base.hash)).toMatchObject({
+      status: 'external-conflict',
+      reason: 'hash-mismatch'
+    })
     const external = await adapter.read('process.bpmn')
-    expect(
-      await adapter.writeAtomic('process.bpmn', text('saved'), external.hash)
-    ).toMatchObject({ status: 'success', disposition: 'workspace' })
+    expect(await adapter.writeAtomic('process.bpmn', text('saved'), external.hash)).toMatchObject({
+      status: 'success',
+      disposition: 'workspace'
+    })
     expect(decode(file.bytes)).toBe('saved')
     expect(adapter.storage.persistence).toBe('external-file')
   })

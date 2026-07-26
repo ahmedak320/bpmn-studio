@@ -10,11 +10,15 @@ export interface WorkspacePickerLiteProps {
   rememberedName?: string
   busy?: boolean
   error?: string | null
+  directoryAvailable?: boolean
+  opfsAvailable?: boolean
   /** Open the directory picker (mode 'open') or re-request permission
    * (mode 'reconnect'). */
   onOpenFolder: () => void
   /** Pick a different folder (offered alongside reconnect). */
   onOpenDifferent?: () => void
+  /** Open the persistent origin-private multi-file workspace. */
+  onOpenOpfs?: () => void
   /** Open a single .bpmn file (fallback mode). */
   onOpenFile?: () => void
   /** Start a brand-new empty diagram without any folder (fallback mode). */
@@ -36,8 +40,11 @@ export function WorkspacePickerLite({
   rememberedName,
   busy,
   error,
+  directoryAvailable = true,
+  opfsAvailable = false,
   onOpenFolder,
   onOpenDifferent,
+  onOpenOpfs,
   onOpenFile,
   onNewDiagram,
   onNewProcess
@@ -76,12 +83,38 @@ export function WorkspacePickerLite({
 
       {mode === 'open' && (
         <>
-          <button className="orbitpm-lite-primary" onClick={onOpenFolder} disabled={busy}>
-            {busy ? t('picker.open.button.busy') : t('picker.open.button')}
-          </button>
-          <p style={{ margin: 0, fontSize: 12.5, color: 'var(--orbitpm-muted)', maxWidth: 440 }}>
-            {t('picker.open.hint')}
+          <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', justifyContent: 'center' }}>
+            {directoryAvailable && (
+              <button className="orbitpm-lite-primary" onClick={onOpenFolder} disabled={busy}>
+                {busy ? t('picker.open.button.busy') : t('workspace.storage.chooseDirectory')}
+              </button>
+            )}
+            {opfsAvailable && onOpenOpfs && (
+              <button className="orbitpm-lite-chrome-btn" onClick={onOpenOpfs} disabled={busy}>
+                {t('workspace.storage.openOpfs')}
+              </button>
+            )}
+            {onOpenFile && (
+              <button className="orbitpm-lite-chrome-btn" onClick={onOpenFile} disabled={busy}>
+                {t('workspace.storage.openSingleFile')}
+              </button>
+            )}
+          </div>
+          <p style={{ margin: 0, fontSize: 12.5, color: 'var(--orbitpm-muted)', maxWidth: 520 }}>
+            {directoryAvailable
+              ? t('workspace.storage.persistence.directory')
+              : opfsAvailable
+                ? t('workspace.storage.persistence.opfsBestEffort')
+                : t('workspace.storage.persistence.singleFile')}
           </p>
+          <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', justifyContent: 'center' }}>
+            <button className="orbitpm-lite-chrome-btn" onClick={onNewProcess}>
+              {t('picker.fallback.newProcess')}
+            </button>
+            <button className="orbitpm-lite-chrome-btn" onClick={onNewDiagram}>
+              {t('picker.fallback.newDiagram')}
+            </button>
+          </div>
         </>
       )}
 
@@ -97,6 +130,16 @@ export function WorkspacePickerLite({
           <button className="orbitpm-lite-chrome-btn" onClick={onOpenDifferent} disabled={busy}>
             {t('picker.reconnect.openDifferent')}
           </button>
+          {opfsAvailable && onOpenOpfs && (
+            <button className="orbitpm-lite-chrome-btn" onClick={onOpenOpfs} disabled={busy}>
+              {t('workspace.storage.openOpfs')}
+            </button>
+          )}
+          {onOpenFile && (
+            <button className="orbitpm-lite-chrome-btn" onClick={onOpenFile} disabled={busy}>
+              {t('workspace.storage.openSingleFile')}
+            </button>
+          )}
           <p style={{ margin: 0, fontSize: 12.5, color: 'var(--orbitpm-muted)', maxWidth: 440 }}>
             {t('picker.reconnect.hint')}
           </p>
@@ -106,9 +149,16 @@ export function WorkspacePickerLite({
       {mode === 'fallback' && (
         <>
           <div className="orbitpm-lite-banner" style={{ borderRadius: 8, maxWidth: 480 }}>
-            {t('picker.fallback.banner')}
+            {opfsAvailable
+              ? t('workspace.storage.persistence.opfsBestEffort')
+              : t('workspace.storage.persistence.singleFile')}
           </div>
           <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', justifyContent: 'center' }}>
+            {opfsAvailable && onOpenOpfs && (
+              <button className="orbitpm-lite-primary" onClick={onOpenOpfs} disabled={busy}>
+                {t('workspace.storage.openOpfs')}
+              </button>
+            )}
             <button className="orbitpm-lite-primary" onClick={onNewProcess}>
               {t('picker.fallback.newProcess')}
             </button>

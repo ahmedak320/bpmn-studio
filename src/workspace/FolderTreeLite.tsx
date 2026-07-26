@@ -5,8 +5,6 @@ import { useLang } from '../i18n/useLang'
 import { INTERNAL_DND_MIME, isInternalDrag } from './importDrop'
 import type {
   HierarchyDepthCapRow,
-  HierarchyDirectoryRow,
-  HierarchyFileRow,
   HierarchyNavigation,
   HierarchyPhysicalRow,
   HierarchyReferenceChild,
@@ -36,11 +34,7 @@ export interface FolderTreeLiteProps {
   onRename: (node: LiteTreeNode) => void
   onDelete: (node: LiteTreeNode) => void
   onMove: (node: LiteTreeNode) => void
-  onMoveDrop: (
-    fromRel: string,
-    fromType: 'file' | 'directory',
-    toFolderRel: string
-  ) => void
+  onMoveDrop: (fromRel: string, fromType: 'file' | 'directory', toFolderRel: string) => void
   onImportDrop?: (dataTransfer: DataTransfer, toFolderRel: string) => void
 }
 
@@ -112,9 +106,7 @@ export function FolderTreeLite({
   onImportDrop
 }: FolderTreeLiteProps): JSX.Element {
   useLang()
-  const [expanded, setExpanded] = useState<Set<string>>(
-    () => new Set([directoryKey('')])
-  )
+  const [expanded, setExpanded] = useState<Set<string>>(() => new Set([directoryKey('')]))
   const [menu, setMenu] = useState<MenuState | null>(null)
   const [dropTargetRel, setDropTargetRel] = useState<string | null>(null)
   const canonicalRowsRef = useRef<Map<string, HTMLDivElement>>(new Map())
@@ -129,13 +121,10 @@ export function FolderTreeLite({
     })
   }, [])
 
-  const registerCanonicalRow = useCallback(
-    (key: string, element: HTMLDivElement | null) => {
-      if (element) canonicalRowsRef.current.set(key, element)
-      else canonicalRowsRef.current.delete(key)
-    },
-    []
-  )
+  const registerCanonicalRow = useCallback((key: string, element: HTMLDivElement | null) => {
+    if (element) canonicalRowsRef.current.set(key, element)
+    else canonicalRowsRef.current.delete(key)
+  }, [])
 
   // A stable-id navigation asks the tree to reveal and focus the one physical
   // canonical occurrence. The token makes repeated opens focus it again.
@@ -146,9 +135,7 @@ export function FolderTreeLite({
       (revealRequest.processId
         ? hierarchy.canonicalByProcessId.get(revealRequest.processId)
         : undefined) ??
-      (revealRequest.relPath
-        ? hierarchy.canonicalByRelPath.get(revealRequest.relPath)
-        : undefined)
+      (revealRequest.relPath ? hierarchy.canonicalByRelPath.get(revealRequest.relPath) : undefined)
     if (!canonical) return
 
     setExpanded((previous) => {
@@ -199,38 +186,25 @@ export function FolderTreeLite({
     setMenu({ x: event.clientX, y: event.clientY, node })
   }, [])
 
-  const onDragStartNode = useCallback(
-    (event: React.DragEvent, node: LiteTreeNode) => {
-      if (node.relPath === '') return
-      event.dataTransfer.setData(
-        INTERNAL_DND_MIME,
-        JSON.stringify({ relPath: node.relPath, type: node.type })
-      )
-      event.dataTransfer.setData('text/plain', node.name)
-      event.dataTransfer.effectAllowed = 'move'
-    },
-    []
-  )
+  const onDragStartNode = useCallback((event: React.DragEvent, node: LiteTreeNode) => {
+    if (node.relPath === '') return
+    event.dataTransfer.setData(
+      INTERNAL_DND_MIME,
+      JSON.stringify({ relPath: node.relPath, type: node.type })
+    )
+    event.dataTransfer.setData('text/plain', node.name)
+    event.dataTransfer.effectAllowed = 'move'
+  }, [])
 
-  const onDragOverFolder = useCallback(
-    (event: React.DragEvent, folderRel: string) => {
-      event.preventDefault()
-      event.dataTransfer.dropEffect = isInternalDrag(event.dataTransfer)
-        ? 'move'
-        : 'copy'
-      setDropTargetRel(folderRel)
-    },
-    []
-  )
+  const onDragOverFolder = useCallback((event: React.DragEvent, folderRel: string) => {
+    event.preventDefault()
+    event.dataTransfer.dropEffect = isInternalDrag(event.dataTransfer) ? 'move' : 'copy'
+    setDropTargetRel(folderRel)
+  }, [])
 
-  const onDragLeaveFolder = useCallback(
-    (_event: React.DragEvent, folderRel: string) => {
-      setDropTargetRel((current) =>
-        current === folderRel ? null : current
-      )
-    },
-    []
-  )
+  const onDragLeaveFolder = useCallback((_event: React.DragEvent, folderRel: string) => {
+    setDropTargetRel((current) => (current === folderRel ? null : current))
+  }, [])
 
   const onDropFolder = useCallback(
     (event: React.DragEvent, folderRel: string) => {
@@ -346,9 +320,7 @@ export function FolderTreeLite({
     >
       <div
         style={{
-          outline: rootIsDropTarget
-            ? '2px dashed var(--orbitpm-accent)'
-            : 'none',
+          outline: rootIsDropTarget ? '2px dashed var(--orbitpm-accent)' : 'none',
           outlineOffset: -2,
           borderRadius: 6,
           minHeight: 40
@@ -383,10 +355,7 @@ function PhysicalLevel({
   const isActive = row.kind === 'file' && row.relPath === actions.activePath
   const isDirty = row.kind === 'file' && actions.dirtyPaths.has(row.relPath)
   const folderRel = dropFolderOf(row.node)
-  const isDropTarget =
-    !isRoot &&
-    isDirectory &&
-    actions.dropTargetRel === folderRel
+  const isDropTarget = !isRoot && isDirectory && actions.dropTargetRel === folderRel
   const references = row.kind === 'file' ? row.references : []
   const ownedChildren = row.kind === 'file' ? row.ownedChildren : []
   const hasChildren = references.length > 0 || ownedChildren.length > 0
@@ -409,29 +378,19 @@ function PhysicalLevel({
           className="orbitpm-tree-row"
           data-rel-path={row.relPath}
           data-canonical={row.kind === 'file' ? 'true' : undefined}
-          data-owned-subprocess={
-            row.kind === 'file' && row.owned ? 'true' : undefined
-          }
+          data-owned-subprocess={row.kind === 'file' && row.owned ? 'true' : undefined}
           data-owner-process-id={
-            row.kind === 'file'
-              ? row.ownerParentProcessId ?? undefined
-              : undefined
+            row.kind === 'file' ? (row.ownerParentProcessId ?? undefined) : undefined
           }
-          data-process-id={
-            row.kind === 'file' ? row.processIds[0] : undefined
-          }
+          data-process-id={row.kind === 'file' ? row.processIds[0] : undefined}
           data-process-ids={
-            row.kind === 'file' && row.processIds.length > 0
-              ? row.processIds.join(' ')
-              : undefined
+            row.kind === 'file' && row.processIds.length > 0 ? row.processIds.join(' ') : undefined
           }
           draggable
           tabIndex={row.kind === 'file' ? -1 : 0}
           onDragStart={(event) => actions.onDragStartNode(event, row.node)}
           onDragOver={(event) => actions.onDragOverFolder(event, folderRel)}
-          onDragLeave={(event) =>
-            actions.onDragLeaveFolder(event, folderRel)
-          }
+          onDragLeave={(event) => actions.onDragLeaveFolder(event, folderRel)}
           onDrop={(event) => actions.onDropFolder(event, folderRel)}
           onClick={activate}
           onKeyDown={(event) => {
@@ -448,6 +407,8 @@ function PhysicalLevel({
           onContextMenu={(event) => actions.onContextMenu(event, row.node)}
           style={{
             display: 'flex',
+            contentVisibility: 'auto',
+            containIntrinsicSize: '28px',
             alignItems: 'center',
             gap: 6,
             padding: '3px 6px',
@@ -456,13 +417,8 @@ function PhysicalLevel({
             fontSize: 13,
             borderRadius: 4,
             whiteSpace: 'nowrap',
-            background:
-              isDropTarget || isActive
-                ? 'var(--orbitpm-hover)'
-                : 'transparent',
-            outline: isDropTarget
-              ? '2px dashed var(--orbitpm-accent)'
-              : 'none',
+            background: isDropTarget || isActive ? 'var(--orbitpm-hover)' : 'transparent',
+            outline: isDropTarget ? '2px dashed var(--orbitpm-accent)' : 'none',
             outlineOffset: -2
           }}
           onMouseEnter={(event) => {
@@ -470,9 +426,7 @@ function PhysicalLevel({
           }}
           onMouseLeave={(event) => {
             event.currentTarget.style.background =
-              isDropTarget || isActive
-                ? 'var(--orbitpm-hover)'
-                : 'transparent'
+              isDropTarget || isActive ? 'var(--orbitpm-hover)' : 'transparent'
           }}
           title={row.relPath}
         >
@@ -485,12 +439,8 @@ function PhysicalLevel({
               cursor: hasChildren ? 'pointer' : undefined
             }}
             role={hasChildren ? 'button' : undefined}
-            aria-label={
-              hasChildren ? t('tree.linkedChildren') : undefined
-            }
-            aria-expanded={
-              hasChildren ? childrenOpen : undefined
-            }
+            aria-label={hasChildren ? t('tree.linkedChildren') : undefined}
+            aria-expanded={hasChildren ? childrenOpen : undefined}
             onClick={
               hasChildren
                 ? (event) => {
@@ -499,11 +449,7 @@ function PhysicalLevel({
                   }
                 : undefined
             }
-            onDoubleClick={
-              hasChildren
-                ? (event) => event.stopPropagation()
-                : undefined
-            }
+            onDoubleClick={hasChildren ? (event) => event.stopPropagation() : undefined}
           >
             {row.kind === 'directory'
               ? isOpen
@@ -536,12 +482,8 @@ function PhysicalLevel({
               ●
             </span>
           )}
-          {row.kind === 'file' && row.shared && (
-            <SharedPill count={row.distinctParentCount} />
-          )}
-          {row.kind === 'file' && row.owned && (
-            <OwnedPill />
-          )}
+          {row.kind === 'file' && row.shared && <SharedPill count={row.distinctParentCount} />}
+          {row.kind === 'file' && row.owned && <OwnedPill />}
           {row.kind === 'file' && row.ownerCallCount > 1 && (
             <span
               data-call-count={row.ownerCallCount}
@@ -589,12 +531,7 @@ function PhysicalLevel({
       {row.kind === 'directory' && isOpen && (
         <div>
           {row.children.map((child) => (
-            <PhysicalLevel
-              key={child.key}
-              row={child}
-              depth={depth + 1}
-              actions={actions}
-            />
+            <PhysicalLevel key={child.key} row={child} depth={depth + 1} actions={actions} />
           ))}
         </div>
       )}
@@ -602,18 +539,9 @@ function PhysicalLevel({
       {row.kind === 'file' && childrenOpen && (
         <div>
           {row.ownedChildren.map((child) => (
-            <PhysicalLevel
-              key={child.key}
-              row={child}
-              depth={depth + 1}
-              actions={actions}
-            />
+            <PhysicalLevel key={child.key} row={child} depth={depth + 1} actions={actions} />
           ))}
-          <ReferenceLevel
-            rows={row.references}
-            depth={depth + 1}
-            actions={actions}
-          />
+          <ReferenceLevel rows={row.references} depth={depth + 1} actions={actions} />
         </div>
       )}
     </div>
@@ -635,12 +563,7 @@ function ReferenceLevel({
         row.kind === 'depth-cap' ? (
           <DepthCapRow key={row.key} row={row} depth={depth} />
         ) : (
-          <ReferenceRow
-            key={row.key}
-            row={row}
-            depth={depth}
-            actions={actions}
-          />
+          <ReferenceRow key={row.key} row={row} depth={depth} actions={actions} />
         )
       )}
     </div>
@@ -687,6 +610,8 @@ function ReferenceRow({
         }}
         style={{
           display: 'flex',
+          contentVisibility: 'auto',
+          containIntrinsicSize: '28px',
           alignItems: 'center',
           gap: 6,
           padding: '3px 6px',
@@ -700,9 +625,7 @@ function ReferenceRow({
           event.currentTarget.style.background = 'var(--orbitpm-hover)'
         }}
         onMouseLeave={(event) => {
-          event.currentTarget.style.background = isActive
-            ? 'var(--orbitpm-hover)'
-            : 'transparent'
+          event.currentTarget.style.background = isActive ? 'var(--orbitpm-hover)' : 'transparent'
         }}
         title={row.canonicalPath}
       >
@@ -715,9 +638,7 @@ function ReferenceRow({
             cursor: row.expandable ? 'pointer' : undefined
           }}
           role={row.expandable ? 'button' : undefined}
-          aria-label={
-            row.expandable ? t('tree.linkedChildren') : undefined
-          }
+          aria-label={row.expandable ? t('tree.linkedChildren') : undefined}
           aria-expanded={row.expandable ? isOpen : undefined}
           onClick={
             row.expandable
@@ -778,33 +699,17 @@ function ReferenceRow({
         {row.shared && <SharedPill count={row.distinctParentCount} />}
         {!row.cycle && <ReusedPill />}
         {row.cycle && (
-          <span
-            className="orbitpm-tree-cycle-indicator"
-            title={cycleTitle}
-            aria-label={cycleTitle}
-          >
+          <span className="orbitpm-tree-cycle-indicator" title={cycleTitle} aria-label={cycleTitle}>
             ↻
           </span>
         )}
       </div>
-      {isOpen && (
-        <ReferenceLevel
-          rows={row.children}
-          depth={depth + 1}
-          actions={actions}
-        />
-      )}
+      {isOpen && <ReferenceLevel rows={row.children} depth={depth + 1} actions={actions} />}
     </div>
   )
 }
 
-function DepthCapRow({
-  row,
-  depth
-}: {
-  row: HierarchyDepthCapRow
-  depth: number
-}): JSX.Element {
+function DepthCapRow({ row, depth }: { row: HierarchyDepthCapRow; depth: number }): JSX.Element {
   return (
     <div
       data-depth-cap="true"
