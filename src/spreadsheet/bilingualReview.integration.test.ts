@@ -278,6 +278,143 @@ describe('spreadsheet bilingual review continuation', () => {
     expect(outcome).not.toHaveProperty('model')
   })
 
+  it('round-trips ordered empty secondary pools as black-box participants', async () => {
+    const base = twoProcessModel()
+    const secondaryPool: WorkbookParticipant = {
+      processId: 'Process_A',
+      id: 'Pool_A_External',
+      idOrigin: 'explicit',
+      type: 'pool',
+      order: 2,
+      name: bilingual('External service', 'الخدمة الخارجية'),
+      provenance: provenance('Participants', 20, ['process_id', 'participant_id'])
+    }
+    const model: ProcessWorkbookModel = {
+      ...base,
+      participants: [...base.participants, secondaryPool]
+    }
+    const initial = await generatedXml(model, 'Process_A')
+    expect(initial).toMatch(/<bpmn:participant[^>]*id="Pool_A"[^>]*processRef="Process_A"[^>]*\/>/)
+    expect(initial).toMatch(/<bpmn:participant[^>]*id="Pool_A_External"(?![^>]*processRef)[^>]*\/>/)
+
+    const reviewed = completeTaskName({
+      version: 1,
+      processId: 'Process_A',
+      suggestedName: 'Process_A.bpmn',
+      xml: initial,
+      ordinal: 1,
+      total: 2,
+      signal: new AbortController().signal
+    })
+    const merged = await mergeReviewedBpmnIntoWorkbook(model, 'Process_A', reviewed, {
+      validationAdapters: []
+    })
+
+    expect(
+      merged.participants
+        .filter(({ processId, type }) => processId === 'Process_A' && type === 'pool')
+        .map(({ id, order, provenance: source }) => [id, order, source])
+    ).toEqual([
+      ['Pool_A', 1, model.participants.find(({ id }) => id === 'Pool_A')!.provenance],
+      ['Pool_A_External', 2, secondaryPool.provenance]
+    ])
+    const regenerated = await generatedXml(merged, 'Process_A')
+    expect(regenerated).toMatch(
+      /<bpmn:participant[^>]*id="Pool_A"[^>]*processRef="Process_A"[^>]*\/>/
+    )
+    expect(regenerated).toMatch(
+      /<bpmn:participant[^>]*id="Pool_A_External"(?![^>]*processRef)[^>]*\/>/
+    )
+  })
+
+  it('fails closed on secondary-pool process refs, lanes, and node assignments', async () => {
+    const base = twoProcessModel()
+    const secondaryPool: WorkbookParticipant = {
+      processId: 'Process_A',
+      id: 'Pool_A_External',
+      idOrigin: 'explicit',
+      type: 'pool',
+      order: 2,
+      name: bilingual('External service', 'الخدمة الخارجية'),
+      provenance: provenance('Participants', 20, ['process_id', 'participant_id'])
+    }
+    const validModel: ProcessWorkbookModel = {
+      ...base,
+      participants: [...base.participants, secondaryPool]
+    }
+    const initial = completeTaskName({
+      version: 1,
+      processId: 'Process_A',
+      suggestedName: 'Process_A.bpmn',
+      xml: await generatedXml(validModel, 'Process_A'),
+      ordinal: 1,
+      total: 2,
+      signal: new AbortController().signal
+    })
+    const reboundSecondary = initial.replace(
+      'id="Pool_A_External"',
+      'id="Pool_A_External" processRef="Process_A"'
+    )
+    await expect(
+      mergeReviewedBpmnIntoWorkbook(validModel, 'Process_A', reboundSecondary, {
+        validationAdapters: []
+      })
+    ).rejects.toSatisfy(
+      (error: unknown) =>
+        reasonOf(error) === 'participant-schema-changed' &&
+        error instanceof SpreadsheetError &&
+        error.details.field === 'processRef'
+    )
+
+    const lane = validModel.participants.find(({ id }) => id === 'Lane_A')!
+    const secondaryLaneModel: ProcessWorkbookModel = {
+      ...validModel,
+      participants: validModel.participants.map((participant) =>
+        participant.id === lane.id
+          ? {
+              ...participant,
+              parentId: secondaryPool.id
+            }
+          : participant
+      )
+    }
+    await expect(
+      mergeReviewedBpmnIntoWorkbook(secondaryLaneModel, 'Process_A', initial, {
+        validationAdapters: []
+      })
+    ).rejects.toSatisfy(
+      (error: unknown) =>
+        reasonOf(error) === 'participant-schema-changed' &&
+        error instanceof SpreadsheetError &&
+        error.details.field === 'secondaryPoolAssignment' &&
+        error.details.elementId === 'Lane_A'
+    )
+
+    const secondaryNodeModel: ProcessWorkbookModel = {
+      ...validModel,
+      nodes: validModel.nodes.map((node) =>
+        node.id === 'Start_A'
+          ? {
+              ...node,
+              laneId: undefined,
+              poolId: secondaryPool.id
+            }
+          : node
+      )
+    }
+    await expect(
+      mergeReviewedBpmnIntoWorkbook(secondaryNodeModel, 'Process_A', initial, {
+        validationAdapters: []
+      })
+    ).rejects.toSatisfy(
+      (error: unknown) =>
+        reasonOf(error) === 'participant-schema-changed' &&
+        error instanceof SpreadsheetError &&
+        error.details.field === 'secondaryPoolAssignment' &&
+        error.details.elementId === 'Start_A'
+    )
+  })
+
   it('rejects wrong-process and stale graph results by exact stable identity', async () => {
     const model = twoProcessModel()
     const processB = completeTaskName({

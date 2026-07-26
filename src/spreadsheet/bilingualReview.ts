@@ -15,7 +15,8 @@ import type {
   ProcessGraphModel,
   ProcessWorkbookModel,
   SpreadsheetLocale,
-  WorkbookNode
+  WorkbookNode,
+  WorkbookParticipant
 } from './contracts'
 import { SpreadsheetError, throwIfAborted } from './errors'
 
@@ -383,6 +384,70 @@ function exactIds(
   }
 }
 
+function participantOrder(left: WorkbookParticipant, right: WorkbookParticipant): number {
+  const leftOrder = left.order ?? Number.POSITIVE_INFINITY
+  const rightOrder = right.order ?? Number.POSITIVE_INFINITY
+  return (
+    leftOrder - rightOrder ||
+    left.provenance.row - right.provenance.row ||
+    left.id.localeCompare(right.id, 'en')
+  )
+}
+
+function assertSecondaryPoolsAreEmpty(
+  model: ProcessWorkbookModel,
+  processId: string,
+  orderedPools: readonly WorkbookParticipant[]
+): void {
+  if (orderedPools.length <= 1) return
+  const primaryPoolId = orderedPools[0]!.id
+  const poolIds = new Set(orderedPools.map(({ id }) => id))
+  const lanes = new Map(
+    model.participants
+      .filter((participant) => participant.processId === processId && participant.type === 'lane')
+      .map((lane) => [lane.id, lane] as const)
+  )
+  const poolForLane = (laneId: string): string | undefined => {
+    const visited = new Set<string>()
+    let current = lanes.get(laneId)
+    while (current?.parentId && !visited.has(current.id)) {
+      visited.add(current.id)
+      if (poolIds.has(current.parentId)) return current.parentId
+      current = lanes.get(current.parentId)
+    }
+    return undefined
+  }
+  const reject = (poolId: string, elementId: string): never =>
+    reviewFailure('participant-schema-changed', processId, {
+      field: 'secondaryPoolAssignment',
+      primaryPoolId,
+      poolId,
+      elementId
+    })
+
+  for (const lane of lanes.values()) {
+    const poolId = poolForLane(lane.id)
+    if (poolId && poolId !== primaryPoolId) reject(poolId, lane.id)
+  }
+  for (const node of model.nodes.filter((candidate) => candidate.processId === processId)) {
+    const explicitPoolIds = [
+      node.poolId && poolIds.has(node.poolId) ? node.poolId : undefined,
+      node.participantId && poolIds.has(node.participantId) ? node.participantId : undefined
+    ].filter((id): id is string => Boolean(id))
+    const laneId =
+      node.laneId && lanes.has(node.laneId)
+        ? node.laneId
+        : node.participantId && lanes.has(node.participantId)
+          ? node.participantId
+          : undefined
+    const assignedPoolIds = laneId
+      ? [...explicitPoolIds, poolForLane(laneId)].filter((id): id is string => Boolean(id))
+      : explicitPoolIds
+    const secondaryPoolId = assignedPoolIds.find((poolId) => poolId !== primaryPoolId)
+    if (secondaryPoolId) reject(secondaryPoolId, node.id)
+  }
+}
+
 function collectLanes(
   laneSets: readonly BpmnElement[],
   lanes: Map<string, BpmnElement>,
@@ -556,9 +621,11 @@ function parseExactGraph(
   if (unexpectedRoots.length > 0 || collaborations.length > 1) {
     reviewFailure('definitions-schema-changed', processId)
   }
-  const expectedPools = model.participants.filter(
-    (participant) => participant.processId === processId && participant.type === 'pool'
-  )
+  const expectedPools = model.participants
+    .filter((participant) => participant.processId === processId && participant.type === 'pool')
+    .slice()
+    .sort(participantOrder)
+  assertSecondaryPoolsAreEmpty(model, processId, expectedPools)
   if (expectedPools.length > 0 !== (collaborations.length === 1)) {
     reviewFailure('participant-schema-changed', processId, {
       kind: 'collaboration'
@@ -581,11 +648,14 @@ function parseExactGraph(
     processId,
     'pools'
   )
-  for (const pool of expectedPools) {
-    if (idOf(pools.get(pool.id)?.processRef) !== processId) {
+  for (const [index, pool] of expectedPools.entries()) {
+    const processRef = pools.get(pool.id)?.processRef
+    const validProcessRef = index === 0 ? idOf(processRef) === processId : processRef === undefined
+    if (!validProcessRef) {
       reviewFailure('participant-schema-changed', processId, {
         elementId: pool.id,
-        field: 'processRef'
+        field: 'processRef',
+        expected: index === 0 ? processId : ''
       })
     }
   }
