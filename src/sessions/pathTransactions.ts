@@ -55,15 +55,20 @@ export interface ExecutePathTransactionDependencies {
   /**
    * Performs the filesystem mutation and returns a rollback hook. The hook is
    * required until draft migration and the one-shot session commit both finish.
+   * A staged delete may return a post-commit finalizer; finalizer failure must
+   * leave recoverable hidden data rather than roll back already-closed sessions.
    */
-  mutateStorage(plan: PathTransactionPlan): Promise<{ rollback(): Promise<void> }>
+  mutateStorage(plan: PathTransactionPlan): Promise<{
+    rollback(): Promise<void>
+    finalize?(): Promise<void>
+  }>
   migrateDrafts?(migrations: readonly SessionPathMigration[]): Promise<{
     rollback(): Promise<void>
   }>
 }
 
 export type ExecutePathTransactionResult =
-  | { status: 'committed'; plan: PathTransactionPlan }
+  | { status: 'committed'; plan: PathTransactionPlan; finalizeError?: unknown }
   | { status: 'cancelled'; plan: PathTransactionPlan }
   | { status: 'needs-delete-confirmation'; plan: PathTransactionPlan }
   | { status: 'save-failed'; plan: PathTransactionPlan; outcomes: readonly PathSaveOutcome[] }
@@ -291,9 +296,12 @@ export async function executePathTransaction(
   plan = withPhase(plan, 'applying')
   publishMigrationPhase(store, plan)
   let storageRollback: (() => Promise<void>) | undefined
+  let storageFinalize: (() => Promise<void>) | undefined
   let draftRollback: (() => Promise<void>) | undefined
   try {
-    storageRollback = (await dependencies.mutateStorage(plan)).rollback
+    const storageMutation = await dependencies.mutateStorage(plan)
+    storageRollback = storageMutation.rollback
+    storageFinalize = storageMutation.finalize
     if (dependencies.migrateDrafts) {
       draftRollback = (await dependencies.migrateDrafts(plan.migrations)).rollback
     }
@@ -321,7 +329,12 @@ export async function executePathTransaction(
       )
     }
     plan = withPhase(plan, 'committed')
-    return { status: 'committed', plan }
+    try {
+      await storageFinalize?.()
+      return { status: 'committed', plan }
+    } catch (finalizeError) {
+      return { status: 'committed', plan, finalizeError }
+    }
   } catch (error) {
     plan = withPhase(plan, 'rolling-back', error instanceof Error ? error.message : String(error))
     publishMigrationPhase(store, plan)
