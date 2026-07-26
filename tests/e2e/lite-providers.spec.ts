@@ -16,7 +16,7 @@ test.beforeAll(() => {
   )
 })
 
-test('BUILT dist CSP has the exact five-host external-request allowlist', () => {
+test('BUILT dist CSP has embedded WASM plus the exact five-host external-request allowlist', () => {
   // Strip HTML comments first — the CSP rationale comment also mentions
   // "connect-src", and we want the real directive, not the prose.
   const html = readFileSync(DIST, 'utf8').replace(/<!--[\s\S]*?-->/g, '')
@@ -25,6 +25,7 @@ test('BUILT dist CSP has the exact five-host external-request allowlist', () => 
   const connectSources = (m as RegExpMatchArray)[1].trim().split(/\s+/).sort()
   expect(connectSources).toEqual(
     [
+      'data:',
       'https://api.anthropic.com',
       'https://api.mymemory.translated.net',
       'https://generativelanguage.googleapis.com',
