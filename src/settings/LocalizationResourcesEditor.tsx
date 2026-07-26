@@ -32,6 +32,8 @@ interface EditorFailure {
 export interface LocalizationResourcesEditorProps {
   /** Latest compare-and-set snapshot returned by WorkspaceLocalizationStore. */
   snapshot: WorkspaceLocalizationState | null
+  /** Exact load failure retained while the public files remain read-only. */
+  loadError?: string | null
   onSaveGlossary: (entries: readonly GlossaryEntry[]) => Promise<WorkspaceLocalizationState>
   onSaveTranslationMemory: (
     entries: readonly TranslationMemoryEntry[]
@@ -90,6 +92,15 @@ function errorMessage(issue: LocalizationResourceDraftIssue): string {
 }
 
 function failureFrom(error: unknown, scope: PendingAction): EditorFailure {
+  if (scope === 'reload') {
+    return {
+      scope,
+      conflict: false,
+      message: t('settings.localization.loadFailed', {
+        error: error instanceof Error ? error.message : String(error)
+      })
+    }
+  }
   if (error instanceof WorkspaceLocalizationConflictError) {
     return {
       scope,
@@ -115,6 +126,7 @@ function failureFrom(error: unknown, scope: PendingAction): EditorFailure {
 
 export function LocalizationResourcesEditor({
   snapshot,
+  loadError = null,
   onSaveGlossary,
   onSaveTranslationMemory,
   onReload,
@@ -244,13 +256,38 @@ export function LocalizationResourcesEditor({
   }
 
   if (!baseline) {
+    const visibleLoadError =
+      failure?.scope === 'reload'
+        ? failure.message
+        : loadError
+          ? t('settings.localization.loadFailed', { error: loadError })
+          : null
     return (
       <section
         className="orbitpm-localization-resources"
         aria-labelledby="orbitpm-localization-resources-title"
       >
         <h2 id="orbitpm-localization-resources-title">{t('settings.localization.title')}</h2>
-        <p>{t('settings.localization.unavailable')}</p>
+        {visibleLoadError ? (
+          <>
+            <p className="orbitpm-localization-resources__failure" role="alert">
+              {visibleLoadError}
+            </p>
+            <p>{t('settings.localization.loadFailedHint')}</p>
+            <button
+              type="button"
+              className="orbitpm-localization-resources__secondary"
+              onClick={() => void reload()}
+              disabled={controlsDisabled}
+            >
+              {pending === 'reload'
+                ? t('settings.localization.reloading')
+                : t('settings.localization.reload')}
+            </button>
+          </>
+        ) : (
+          <p>{t('settings.localization.unavailable')}</p>
+        )}
       </section>
     )
   }

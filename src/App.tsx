@@ -84,12 +84,7 @@ import { EmptyWorkspaceCard } from './workspace/EmptyWorkspaceCard'
 import { AiPanelLite, type FolderOptionLite } from './ai/AiPanelLite'
 import { installLinkBadges, type LinkBadgeModeler } from './links/linkBadges'
 import { buildLinkGraph } from './links/linkGraph'
-import {
-  getDiagramLang,
-  prepareDiagramLanguageReview,
-  setDiagramLang,
-  type LangToggleModeler
-} from './editor/langToggle'
+import { getDiagramLang, type LangToggleModeler } from './editor/langToggle'
 import { autoSizeAll } from './editor/autoSize'
 import { makeBrowserCallLLM } from './ai/browserAi'
 import { getProviderSelection, type ProviderSelection } from './ai/providerSelection'
@@ -117,7 +112,12 @@ import {
   LocalizationSource,
   type LocalizationSource as LocalizationSourceType
 } from './localization/types'
-import { SettingsDialogLite } from './settings/SettingsDialogLite'
+import {
+  createWorkspaceLocalizationStore,
+  type WorkspaceLocalizationState,
+  type WorkspaceLocalizationStore
+} from './localization/workspaceStore'
+import { SettingsDialogLite, type SettingsDialogLiteProps } from './settings/SettingsDialogLite'
 import { ICON_DATA_URI } from './branding/icon'
 // --- W2B: file mgmt / search / catalog / navigation / print ---
 import {
@@ -547,6 +547,13 @@ interface ProcessRootModeler {
   open?(diagram: ProcessDiagram): Promise<unknown>
 }
 
+interface WorkspaceLocalizationBinding {
+  adapter: WorkspaceAdapter
+  controller: AbortController
+  generation: number
+  store: WorkspaceLocalizationStore
+}
+
 /** Switch a multi-process BPMN file to the root selected by semantic id. */
 async function focusProcessRoot(modeler: unknown, processId: string): Promise<boolean> {
   try {
@@ -597,6 +604,7 @@ function App(): JSX.Element {
 
   const [tree, setTree] = useState<LiteTreeNode | null>(null)
   const [workspaceIssues, setWorkspaceIssues] = useState<string[]>([])
+  const [workspaceLocalizationError, setWorkspaceLocalizationError] = useState<string | null>(null)
   const liveWorkspaceIndexRef = useRef(new LiveWorkspaceIndex())
   const [liveWorkspaceVersion, setLiveWorkspaceVersion] = useState(0)
 
@@ -639,6 +647,10 @@ function App(): JSX.Element {
   // Data-safety plumbing (Codex C1 / M3 / M8).
   const workspaceGenRef = useRef(0) // bumped on every folder switch (tab-write guard)
   const workspaceAdapterRef = useRef<WorkspaceAdapter | null>(null)
+  const workspaceLocalizationBindingRef = useRef<WorkspaceLocalizationBinding | null>(null)
+  const workspaceLocalizationSnapshotRef = useRef<WorkspaceLocalizationState | null>(null)
+  const [workspaceLocalizationSnapshot, setWorkspaceLocalizationSnapshot] =
+    useState<WorkspaceLocalizationState | null>(null)
   const historyManagerRef = useRef<PortableHistoryManager | null>(null)
   const workspaceIdentityRef = useRef<WorkspaceIdentity | null>(null)
   const sessionControllerRef = useRef<DocumentSessionController | null>(null)
@@ -661,6 +673,7 @@ function App(): JSX.Element {
     throw new Error('Document-session save controller is not ready.')
   })
   const rootHandleRef = useRef<FileSystemDirectoryHandle | null>(null) // sync mirror for async guards
+  const workspaceActivationSequenceRef = useRef(0)
   const refreshSequenceRef = useRef(0)
   const opMutexRef = useRef(createMutex()) // serializes create / import / AI-place writes
   const [switchGuard, setSwitchGuard] = useState<{ count: number } | null>(null)
@@ -766,6 +779,100 @@ function App(): JSX.Element {
       kind: 'ai'
     })
   }, [translationReview])
+
+  const commitWorkspaceLocalizationSnapshot = useCallback(
+    (
+      binding: WorkspaceLocalizationBinding,
+      next: WorkspaceLocalizationState
+    ): WorkspaceLocalizationState => {
+      if (
+        workspaceLocalizationBindingRef.current === binding &&
+        workspaceAdapterRef.current === binding.adapter &&
+        workspaceGenRef.current === binding.generation &&
+        binding.store.current === next
+      ) {
+        workspaceLocalizationSnapshotRef.current = next
+        setWorkspaceLocalizationSnapshot(next)
+        setWorkspaceLocalizationError(null)
+      }
+      return next
+    },
+    []
+  )
+
+  const settingsLocalizationResources = useMemo<
+    SettingsDialogLiteProps['localizationResources']
+  >(() => {
+    const binding = workspaceLocalizationBindingRef.current
+    if (
+      !binding ||
+      (!workspaceLocalizationSnapshot && !workspaceLocalizationError) ||
+      workspaceAdapterRef.current !== binding.adapter ||
+      workspaceGenRef.current !== binding.generation
+    ) {
+      return undefined
+    }
+    const assertCurrent = (): void => {
+      if (
+        workspaceLocalizationBindingRef.current === binding &&
+        workspaceAdapterRef.current === binding.adapter &&
+        workspaceGenRef.current === binding.generation &&
+        !binding.controller.signal.aborted
+      ) {
+        return
+      }
+      if (!binding.controller.signal.aborted) binding.controller.abort()
+      throw binding.controller.signal.reason
+    }
+    const run = async (
+      operation: (signal: AbortSignal) => Promise<WorkspaceLocalizationState>
+    ): Promise<WorkspaceLocalizationState> => {
+      assertCurrent()
+      const next = await operation(binding.controller.signal)
+      assertCurrent()
+      return commitWorkspaceLocalizationSnapshot(binding, next)
+    }
+    return {
+      snapshot: workspaceLocalizationSnapshot,
+      loadError: workspaceLocalizationError,
+      onSaveGlossary: async (entries) =>
+        run((signal) => binding.store.replaceGlossary(entries, { signal })),
+      onSaveTranslationMemory: async (entries) =>
+        run((signal) => binding.store.replaceTranslationMemory(entries, { signal })),
+      onReload: async () => {
+        try {
+          return await run((signal) => binding.store.load({ signal }))
+        } catch (error) {
+          if (
+            workspaceLocalizationBindingRef.current === binding &&
+            !binding.controller.signal.aborted
+          ) {
+            workspaceLocalizationSnapshotRef.current = null
+            setWorkspaceLocalizationSnapshot(null)
+            const message = errMsg(error)
+            setWorkspaceLocalizationError(message)
+          }
+          throw error
+        }
+      },
+      onSnapshotChange: (next) => {
+        commitWorkspaceLocalizationSnapshot(binding, next)
+      }
+    }
+  }, [
+    commitWorkspaceLocalizationSnapshot,
+    workspaceLocalizationError,
+    workspaceLocalizationSnapshot
+  ])
+
+  const inspectWithWorkspaceLocalization = useCallback(
+    (modeler: LangToggleModeler, target: 'en' | 'ar', source: LocalizationSourceType) =>
+      inspectDiagramLocalization(modeler, target, {
+        source,
+        ...(workspaceLocalizationSnapshotRef.current?.resources ?? {})
+      }),
+    []
+  )
 
   const toggleAiSection = useCallback(() => {
     setAiSectionCollapsed((prev) => {
@@ -914,6 +1021,8 @@ function App(): JSX.Element {
       sessionStoreUnsubscribeRef.current?.()
       workspaceChangeUnsubscribeRef.current?.()
       workspaceCoordinatorRef.current?.close()
+      workspaceActivationSequenceRef.current += 1
+      workspaceLocalizationBindingRef.current?.controller.abort()
       cancelPendingDraftRecovery(false)
       switchResolveRef.current?.('cancel')
       switchResolveRef.current = null
@@ -964,6 +1073,36 @@ function App(): JSX.Element {
       handle: FileSystemDirectoryHandle | null,
       displayName: string
     ) => {
+      const activationSequence = ++workspaceActivationSequenceRef.current
+      let localizationCandidate: {
+        controller: AbortController
+        error: string | null
+        snapshot: WorkspaceLocalizationState | null
+        store: WorkspaceLocalizationStore
+      } | null = null
+      if (adapter.storage.capabilities.multipleFiles && adapter.storage.capabilities.directories) {
+        const controller = new AbortController()
+        const store = createWorkspaceLocalizationStore(adapter)
+        localizationCandidate = { controller, error: null, snapshot: null, store }
+        try {
+          localizationCandidate.snapshot = await store.load({ signal: controller.signal })
+        } catch (error) {
+          if (
+            controller.signal.aborted ||
+            workspaceActivationSequenceRef.current !== activationSequence
+          ) {
+            controller.abort()
+            return
+          }
+          localizationCandidate.error = errMsg(error)
+          pushToast(localizationCandidate.error, 'error')
+        }
+        if (workspaceActivationSequenceRef.current !== activationSequence) {
+          localizationCandidate.controller.abort()
+          return
+        }
+      }
+
       cancelPendingDraftRecovery()
       const previousDrafts = draftCoordinatorRef.current
       if (previousDrafts) {
@@ -972,7 +1111,15 @@ function App(): JSX.Element {
         } catch (error) {
           pushToast(t('draftRecovery.error', { error: errMsg(error) }), 'error')
         }
+        if (workspaceActivationSequenceRef.current !== activationSequence) {
+          localizationCandidate?.controller.abort()
+          return
+        }
         previousDrafts.dispose()
+      }
+      if (workspaceActivationSequenceRef.current !== activationSequence) {
+        localizationCandidate?.controller.abort()
+        return
       }
       sessionStoreUnsubscribeRef.current?.()
       sessionStoreUnsubscribeRef.current = null
@@ -986,8 +1133,22 @@ function App(): JSX.Element {
       // New session: bump the generation (invalidates every stale tab's save)
       // and update the sync handle mirror BEFORE any async scan can commit.
       workspaceGenRef.current += 1
+      const workspaceGeneration = workspaceGenRef.current
       refreshSequenceRef.current += 1
+      workspaceLocalizationBindingRef.current?.controller.abort()
       workspaceAdapterRef.current = adapter
+      workspaceLocalizationSnapshotRef.current = null
+      setWorkspaceLocalizationSnapshot(null)
+      setWorkspaceLocalizationError(localizationCandidate?.error ?? null)
+      const workspaceLocalizationBinding = localizationCandidate
+        ? {
+            adapter,
+            controller: localizationCandidate.controller,
+            generation: workspaceGeneration,
+            store: localizationCandidate.store
+          }
+        : null
+      workspaceLocalizationBindingRef.current = workspaceLocalizationBinding
       rootHandleRef.current = handle
       const history = adapter.storage.capabilities.directories
         ? new PortableHistoryManager({
@@ -1118,6 +1279,17 @@ function App(): JSX.Element {
       // A freshly-activated workspace has zero tabs (the catalog is showing), so
       // reveal the sidebar — the auto-collapse fires again the moment a file opens.
       setSidebarOpen(true)
+      if (workspaceLocalizationBinding && localizationCandidate?.snapshot) {
+        if (
+          workspaceLocalizationBindingRef.current !== workspaceLocalizationBinding ||
+          workspaceAdapterRef.current !== adapter ||
+          workspaceGenRef.current !== workspaceGeneration
+        ) {
+          return
+        }
+        workspaceLocalizationSnapshotRef.current = localizationCandidate.snapshot
+        setWorkspaceLocalizationSnapshot(localizationCandidate.snapshot)
+      }
       setWorkspaceAdapter(adapter)
       setRootHandle(handle)
       rootNameRef.current = displayName
@@ -1192,8 +1364,35 @@ function App(): JSX.Element {
     const h = rootHandleRef.current
     if (!h) return
     await refreshWorkspace(h)
+    const binding = workspaceLocalizationBindingRef.current
+    if (binding) {
+      try {
+        const next = await binding.store.load({ signal: binding.controller.signal })
+        if (
+          workspaceLocalizationBindingRef.current !== binding ||
+          workspaceAdapterRef.current !== binding.adapter ||
+          workspaceGenRef.current !== binding.generation
+        ) {
+          return
+        }
+        commitWorkspaceLocalizationSnapshot(binding, next)
+      } catch (error) {
+        if (
+          workspaceLocalizationBindingRef.current !== binding ||
+          binding.controller.signal.aborted
+        ) {
+          return
+        }
+        workspaceLocalizationSnapshotRef.current = null
+        setWorkspaceLocalizationSnapshot(null)
+        const message = errMsg(error)
+        setWorkspaceLocalizationError(message)
+        pushToast(message, 'error')
+        return
+      }
+    }
     pushToast(t('toast.refreshed'), 'info')
-  }, [refreshWorkspace, pushToast])
+  }, [commitWorkspaceLocalizationSnapshot, refreshWorkspace, pushToast])
 
   // Auto-refresh on window focus / tab visibility, debounced 2s, so external
   // filesystem changes (files added/edited/deleted outside the app) don't leave
@@ -3374,9 +3573,9 @@ function App(): JSX.Element {
         const currentLang = getDiagramLang(modeler)
         const targetLang = currentLang === 'en' ? 'ar' : 'en'
         const source = localizationSourceByTabRef.current.get(tabKey) ?? LocalizationSource.Editor
-        const review = prepareDiagramLanguageReview(modeler, targetLang, source)
+        const review = inspectWithWorkspaceLocalization(modeler, targetLang, source)
         if (review.complete) {
-          const projected = setDiagramLang(modeler, targetLang)
+          const projected = applyDiagramLocalizationReview(modeler, review)
           pushToast(
             t(
               projected.active === targetLang
@@ -3399,7 +3598,7 @@ function App(): JSX.Element {
         pushToast(errMsg(err), 'error')
       }
     },
-    [modelersByKey, translatingTab, pushToast]
+    [inspectWithWorkspaceLocalization, modelersByKey, translatingTab, pushToast]
   )
 
   // Both toolbar actions perform the same audited read first. Only complete,
@@ -3433,11 +3632,10 @@ function App(): JSX.Element {
       )
     } catch (err) {
       if (err instanceof StaleLocalizationReviewError) {
-        const fresh = prepareDiagramLanguageReview(
-          modeler,
-          state.review.target,
-          state.review.source
-        )
+        const fresh = inspectDiagramLocalization(modeler, state.review.target, {
+          source: state.review.source,
+          ...state.review.localResources
+        })
         setTranslationReview({
           ...state,
           review: fresh,
@@ -4501,12 +4699,19 @@ function App(): JSX.Element {
                             /* live indexing falls back to the last saved snapshot */
                           }
                           try {
+                            const modelerWorkspaceAdapter = workspaceAdapterRef.current
                             const eventBus = (modeler as { get(name: string): unknown }).get(
                               'eventBus'
                             ) as {
                               on(event: string, callback: () => void): void
                             }
                             eventBus.on('import.done', () => {
+                              if (
+                                tab.gen !== workspaceGenRef.current ||
+                                workspaceAdapterRef.current !== modelerWorkspaceAdapter
+                              ) {
+                                return
+                              }
                               try {
                                 const langModeler = modeler as LangToggleModeler
                                 const current = getDiagramLang(langModeler)
@@ -4516,7 +4721,7 @@ function App(): JSX.Element {
                                   LocalizationSource.Editor
                                 localizationReviewByTabRef.current.set(
                                   tab.key,
-                                  prepareDiagramLanguageReview(langModeler, target, source)
+                                  inspectWithWorkspaceLocalization(langModeler, target, source)
                                 )
                               } catch {
                                 // Localization audit is non-destructive and
@@ -4656,6 +4861,31 @@ function App(): JSX.Element {
               }}
             >
               {tPlural('footer.unresolvedLinks', unresolvedCount)}
+            </button>
+          )}
+          {workspaceLocalizationError && (
+            <button
+              type="button"
+              onClick={() => setSettingsOpen(true)}
+              aria-label={`${t('settings.localization.title')}: ${t(
+                'settings.localization.loadFailed',
+                { error: workspaceLocalizationError }
+              )}`}
+              title={t('settings.localization.loadFailed', {
+                error: workspaceLocalizationError
+              })}
+              style={{
+                padding: '0.1rem 0.5rem',
+                border: '1px solid rgba(185,28,28,0.35)',
+                borderRadius: 999,
+                background: 'rgba(185,28,28,0.12)',
+                color: 'var(--orbitpm-fg)',
+                fontWeight: 600,
+                cursor: 'pointer',
+                font: 'inherit'
+              }}
+            >
+              ⚠ {workspaceLocalizationError}
             </button>
           )}
           {workspaceIssues.length > 0 && (
@@ -4934,6 +5164,7 @@ function App(): JSX.Element {
         }}
         onKeysChanged={() => setKeysVersion((v) => v + 1)}
         onOrgStylingChanged={handleOrgStylingChanged}
+        localizationResources={settingsLocalizationResources}
       />
     </div>
   )

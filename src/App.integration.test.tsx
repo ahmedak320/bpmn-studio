@@ -66,6 +66,8 @@ const mocks = vi.hoisted(() => ({
   editorProps: vi.fn(),
   aiProps: vi.fn(),
   settingsProps: vi.fn(),
+  translationReviewProps: vi.fn(),
+  workspaceLocalizationFactories: vi.fn(),
   assistantProps: vi.fn(),
   printJobs: vi.fn(),
   modelerGet: vi.fn(),
@@ -139,6 +141,33 @@ vi.mock('./ai/freeTranslate', async (importOriginal) => {
   return {
     ...actual,
     makeFreeTranslateTexts: mocks.makeFreeTranslateTexts
+  }
+})
+
+vi.mock('./localization/workspaceStore', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('./localization/workspaceStore')>()
+  return {
+    ...actual,
+    createWorkspaceLocalizationStore: (
+      ...args: Parameters<typeof actual.createWorkspaceLocalizationStore>
+    ) => {
+      const store = actual.createWorkspaceLocalizationStore(...args)
+      mocks.workspaceLocalizationFactories(args[0], store)
+      return store
+    }
+  }
+})
+
+vi.mock('./localization/TranslationReviewDialog', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('./localization/TranslationReviewDialog')>()
+  return {
+    ...actual,
+    TranslationReviewDialog: (
+      props: React.ComponentProps<typeof actual.TranslationReviewDialog>
+    ) => {
+      mocks.translationReviewProps(props)
+      return <actual.TranslationReviewDialog {...props} />
+    }
   }
 })
 
@@ -387,10 +416,19 @@ vi.mock('./settings/SettingsDialogLite', () => ({
     onClose(): void
     onKeysChanged(): void
     onOrgStylingChanged(): void
+    localizationResources?: import('./settings/LocalizationResourcesEditor').LocalizationResourcesEditorProps
   }) => {
     mocks.settingsProps(props)
     return props.open ? (
       <div role="dialog" aria-label="mock-settings">
+        {props.localizationResources?.loadError && (
+          <>
+            <p role="alert">{props.localizationResources.loadError}</p>
+            <button type="button" onClick={() => void props.localizationResources?.onReload()}>
+              settings.localization.reload
+            </button>
+          </>
+        )}
         <button type="button" onClick={props.onKeysChanged}>
           mock-settings-keys
         </button>
@@ -575,6 +613,18 @@ vi.mock('./workspace/MoveDialog', () => ({
 }))
 
 import { asDirectoryHandle, fakeRoot } from './workspace/adapters/__tests__/fakeFileSystem'
+import {
+  WORKSPACE_GLOSSARY_PATH,
+  WORKSPACE_TRANSLATION_MEMORY_PATH,
+  WorkspaceLocalizationConflictError,
+  WorkspaceLocalizationValidationError,
+  createWorkspaceGlossaryDocument,
+  createWorkspaceTranslationMemoryDocument,
+  serializeWorkspaceGlossaryDocument,
+  serializeWorkspaceTranslationMemoryDocument
+} from './localization/workspaceStore'
+import { SEEDED_GLOSSARY } from './localization/glossary'
+import type { LocalizationResourcesEditorProps } from './settings/LocalizationResourcesEditor'
 import App from './App'
 
 function latestSessionController(): import('./sessions').DocumentSessionController {
@@ -627,6 +677,8 @@ beforeEach(() => {
   mocks.editorProps.mockReset()
   mocks.aiProps.mockReset()
   mocks.settingsProps.mockReset()
+  mocks.translationReviewProps.mockReset()
+  mocks.workspaceLocalizationFactories.mockReset()
   mocks.assistantProps.mockReset()
   mocks.printJobs.mockReset()
   mocks.modelerDefinitions.mockReset().mockReturnValue(undefined)
@@ -716,6 +768,36 @@ function populatedDirectory() {
   return root
 }
 
+function seedWorkspaceLocalization(
+  root: ReturnType<typeof fakeRoot>,
+  glossary: Parameters<typeof createWorkspaceGlossaryDocument>[0],
+  translationMemory: Parameters<typeof createWorkspaceTranslationMemoryDocument>[0]
+): void {
+  root.addFile(
+    WORKSPACE_GLOSSARY_PATH,
+    serializeWorkspaceGlossaryDocument(createWorkspaceGlossaryDocument(glossary))
+  )
+  root.addFile(
+    WORKSPACE_TRANSLATION_MEMORY_PATH,
+    serializeWorkspaceTranslationMemoryDocument(
+      createWorkspaceTranslationMemoryDocument(translationMemory)
+    )
+  )
+}
+
+function fakeFileText(root: ReturnType<typeof fakeRoot>, path: string): string {
+  return new TextDecoder().decode(root.file(path).bytes)
+}
+
+function latestSettingsLocalization(): LocalizationResourcesEditorProps {
+  const props = mocks.settingsProps.mock.calls.at(-1)?.[0] as
+    { localizationResources?: LocalizationResourcesEditorProps } | undefined
+  if (!props?.localizationResources) {
+    throw new Error('App did not expose workspace localization Settings props')
+  }
+  return props.localizationResources
+}
+
 async function openDirectoryWorkspace(
   user: ReturnType<typeof userEvent.setup>,
   root = populatedDirectory()
@@ -730,6 +812,17 @@ async function openDirectoryWorkspace(
 }
 
 describe('App single-file browser orchestration', () => {
+  it('does not construct or expose public localization persistence in single-file mode', async () => {
+    const user = userEvent.setup()
+    await openBlankDiagram(user)
+
+    expect(mocks.workspaceLocalizationFactories).not.toHaveBeenCalled()
+    const settings = mocks.settingsProps.mock.calls.at(-1)?.[0] as {
+      localizationResources?: LocalizationResourcesEditorProps
+    }
+    expect(settings.localizationResources).toBeUndefined()
+  })
+
   it('opens a blank diagram and drives shell, settings, assistant, and language state', async () => {
     const user = userEvent.setup()
     await openBlankDiagram(user)
@@ -1126,6 +1219,244 @@ describe('App single-file browser orchestration', () => {
 })
 
 describe('App directory workspace orchestration', () => {
+  it('loads exact ordered resources and preserves CAS and accepted-only write boundaries', async () => {
+    const user = userEvent.setup()
+    const root = populatedDirectory()
+    const glossary = [
+      { en: 'API', ar: 'API', neutral: true },
+      { en: 'Review request', ar: 'مراجعة الطلب' }
+    ] as const
+    const translationMemory = [
+      {
+        en: 'Archive request',
+        ar: 'أرشفة الطلب',
+        accepted: true as const,
+        acceptedAt: '2026-07-26T01:00:00.000Z'
+      }
+    ]
+    seedWorkspaceLocalization(root, glossary, translationMemory)
+    await openDirectoryWorkspace(user, root)
+
+    expect(mocks.workspaceLocalizationFactories).toHaveBeenCalledTimes(1)
+    const initial = latestSettingsLocalization()
+    expect(initial.loadError).toBeNull()
+    expect(initial.snapshot?.resources).toEqual({ glossary, translationMemory })
+    expect(initial.snapshot?.resources.glossary).toBe(
+      initial.snapshot?.files.glossary.document.entries
+    )
+    expect(initial.snapshot?.resources.translationMemory).toBe(
+      initial.snapshot?.files.translationMemory.document.entries
+    )
+
+    const savedGlossary = [glossary[1], glossary[0], { en: 'Case code', ar: 'رمز الحالة' }] as const
+    let savedState: Awaited<ReturnType<LocalizationResourcesEditorProps['onSaveGlossary']>>
+    await act(async () => {
+      savedState = await initial.onSaveGlossary(savedGlossary)
+    })
+    await waitFor(() => expect(latestSettingsLocalization().snapshot).toBe(savedState!))
+    expect(JSON.parse(fakeFileText(root, WORKSPACE_GLOSSARY_PATH)).entries).toEqual(savedGlossary)
+
+    const beforeRejectedMemory = fakeFileText(root, WORKSPACE_TRANSLATION_MEMORY_PATH)
+    const beforeRejectedSnapshot = latestSettingsLocalization().snapshot
+    await expect(
+      latestSettingsLocalization().onSaveTranslationMemory([
+        {
+          en: 'Unreviewed result',
+          ar: 'نتيجة غير مراجعة',
+          accepted: false
+        } as never
+      ])
+    ).rejects.toBeInstanceOf(WorkspaceLocalizationValidationError)
+    expect(fakeFileText(root, WORKSPACE_TRANSLATION_MEMORY_PATH)).toBe(beforeRejectedMemory)
+    expect(latestSettingsLocalization().snapshot).toBe(beforeRejectedSnapshot)
+
+    const stale = latestSettingsLocalization()
+    const externalGlossary = [{ en: 'External term', ar: 'مصطلح خارجي' }]
+    const glossaryFile = root.file(WORKSPACE_GLOSSARY_PATH)
+    glossaryFile.bytes = new TextEncoder().encode(
+      serializeWorkspaceGlossaryDocument(createWorkspaceGlossaryDocument(externalGlossary))
+    )
+    glossaryFile.lastModified += 1
+    await expect(
+      stale.onSaveGlossary([{ en: 'Stale term', ar: 'مصطلح قديم' }])
+    ).rejects.toBeInstanceOf(WorkspaceLocalizationConflictError)
+    expect(latestSettingsLocalization().snapshot).toBe(stale.snapshot)
+
+    let reloaded: Awaited<ReturnType<LocalizationResourcesEditorProps['onReload']>>
+    await act(async () => {
+      reloaded = await stale.onReload()
+    })
+    await waitFor(() => expect(latestSettingsLocalization().snapshot).toBe(reloaded!))
+    expect(reloaded!.resources.glossary).toEqual(externalGlossary)
+    expect(reloaded!.resources.translationMemory).toEqual(translationMemory)
+  })
+
+  it('keeps stores generation-scoped across same-id folder switches and rejects stale callbacks', async () => {
+    const user = userEvent.setup()
+    const first = populatedDirectory()
+    const second = fakeRoot()
+    second.addFile('second.bpmn', state.xml)
+    seedWorkspaceLocalization(first, [{ en: 'First term', ar: 'المصطلح الأول' }], [])
+    seedWorkspaceLocalization(second, [{ en: 'Second term', ar: 'المصطلح الثاني' }], [])
+    await openDirectoryWorkspace(user, first)
+
+    const firstSettings = latestSettingsLocalization()
+    const firstGlossaryBytes = fakeFileText(first, WORKSPACE_GLOSSARY_PATH)
+    mocks.pickWorkspace.mockResolvedValue(asDirectoryHandle(second))
+    await user.click(screen.getByRole('button', { name: 'app.changeFolder' }))
+    await waitFor(() =>
+      expect(latestSettingsLocalization().snapshot?.resources.glossary).toEqual([
+        { en: 'Second term', ar: 'المصطلح الثاني' }
+      ])
+    )
+
+    expect(mocks.workspaceLocalizationFactories).toHaveBeenCalledTimes(2)
+    expect(mocks.workspaceLocalizationFactories.mock.calls[0]?.[0]).not.toBe(
+      mocks.workspaceLocalizationFactories.mock.calls[1]?.[0]
+    )
+    expect(mocks.workspaceLocalizationFactories.mock.calls[0]?.[1]).not.toBe(
+      mocks.workspaceLocalizationFactories.mock.calls[1]?.[1]
+    )
+    await expect(
+      firstSettings.onSaveGlossary([{ en: 'Late write', ar: 'كتابة متأخرة' }])
+    ).rejects.toMatchObject({ name: 'AbortError' })
+    expect(fakeFileText(first, WORKSPACE_GLOSSARY_PATH)).toBe(firstGlossaryBytes)
+    expect(JSON.parse(fakeFileText(second, WORKSPACE_GLOSSARY_PATH)).entries).toEqual([
+      { en: 'Second term', ar: 'المصطلح الثاني' }
+    ])
+  })
+
+  it('keeps corrupt localization bytes read-only, shows Settings recovery, and retries explicitly', async () => {
+    const user = userEvent.setup()
+    const root = populatedDirectory()
+    const corrupt = '{"format":"not-orbitpm","version":1,"entries":[]}'
+    root.addFile(WORKSPACE_GLOSSARY_PATH, corrupt)
+    root.addFile(
+      WORKSPACE_TRANSLATION_MEMORY_PATH,
+      serializeWorkspaceTranslationMemoryDocument(createWorkspaceTranslationMemoryDocument([]))
+    )
+    await openDirectoryWorkspace(user, root)
+
+    const failed = latestSettingsLocalization()
+    expect(failed.snapshot).toBeNull()
+    expect(failed.loadError).toContain(WORKSPACE_GLOSSARY_PATH)
+    expect(fakeFileText(root, WORKSPACE_GLOSSARY_PATH)).toBe(corrupt)
+
+    const recoveryButton = screen.getByRole('button', {
+      name: /settings\.localization\.title/
+    })
+    expect(recoveryButton.getAttribute('title')).toBe('settings.localization.loadFailed')
+    await user.click(recoveryButton)
+    const settingsDialog = await screen.findByRole('dialog', { name: 'mock-settings' })
+    expect(within(settingsDialog).getByRole('alert').textContent).toContain(WORKSPACE_GLOSSARY_PATH)
+    await expect(
+      failed.onSaveGlossary([{ en: 'Must not write', ar: 'يجب ألا يكتب' }])
+    ).rejects.toBeInstanceOf(WorkspaceLocalizationValidationError)
+    expect(fakeFileText(root, WORKSPACE_GLOSSARY_PATH)).toBe(corrupt)
+
+    await user.click(within(settingsDialog).getByRole('button', { name: 'mock-settings-close' }))
+    await user.click(screen.getByRole('button', { name: 'mock-tree-open' }))
+    await user.click(await screen.findByRole('button', { name: 'mock-editor-ready' }))
+    await user.click(screen.getByRole('button', { name: 'editor.translate' }))
+    const safeReview = mocks.translationReviewProps.mock.calls.at(-1)?.[0]
+      .review as import('./localization/modelerAdapter').DiagramLocalizationReview
+    expect(safeReview.localResources).toEqual({
+      glossary: SEEDED_GLOSSARY,
+      translationMemory: []
+    })
+    await user.click(screen.getByRole('button', { name: 'translationReview.postpone' }))
+
+    const repaired = [{ en: 'Repaired term', ar: 'مصطلح مُصلح' }]
+    const glossaryFile = root.file(WORKSPACE_GLOSSARY_PATH)
+    glossaryFile.bytes = new TextEncoder().encode(
+      serializeWorkspaceGlossaryDocument(createWorkspaceGlossaryDocument(repaired))
+    )
+    glossaryFile.lastModified += 1
+    await user.click(screen.getByRole('button', { name: 'app.settings' }))
+    await user.click(
+      within(screen.getByRole('dialog', { name: 'mock-settings' })).getByRole('button', {
+        name: 'settings.localization.reload'
+      })
+    )
+    await waitFor(() => expect(latestSettingsLocalization().loadError).toBeNull())
+    expect(latestSettingsLocalization().snapshot?.resources.glossary).toEqual(repaired)
+    expect(
+      within(screen.getByRole('dialog', { name: 'mock-settings' })).queryByRole('alert')
+    ).toBeNull()
+  })
+
+  it('freezes the exact loaded resources for an active review and uses updates only next time', async () => {
+    const process: Record<string, unknown> = {
+      $type: 'bpmn:Process',
+      id: 'Process_1',
+      $attrs: { 'orbitpm:activeLang': 'en' }
+    }
+    const task: Record<string, unknown> = {
+      $type: 'bpmn:Task',
+      id: 'Task_1',
+      name: 'Review request',
+      $attrs: { 'orbitpm:nameEn': 'Review request' },
+      $parent: process
+    }
+    process.flowElements = [task]
+    mocks.modelerDefinitions.mockReturnValue({
+      $type: 'bpmn:Definitions',
+      rootElements: [process]
+    })
+    mocks.modelerGet.mockImplementation((name: string) => {
+      if (name === 'eventBus') return { on: vi.fn(), off: vi.fn() }
+      if (name === 'canvas') {
+        return {
+          getRootElement: () => ({ id: 'Process_1', businessObject: process })
+        }
+      }
+      if (name === 'elementRegistry') {
+        return {
+          getAll: () => [{ id: 'Task_1', businessObject: task }]
+        }
+      }
+      return {}
+    })
+
+    const user = userEvent.setup()
+    const root = populatedDirectory()
+    const originalGlossary = [{ en: 'Case code', ar: 'رمز الحالة' }]
+    seedWorkspaceLocalization(root, originalGlossary, [])
+    await openDirectoryWorkspace(user, root)
+    await user.click(screen.getByRole('button', { name: 'mock-tree-open' }))
+    await user.click(await screen.findByRole('button', { name: 'mock-editor-ready' }))
+    await user.click(screen.getByRole('button', { name: 'editor.translate' }))
+
+    const initialReview = mocks.translationReviewProps.mock.calls.at(-1)?.[0].review as
+      import('./localization/modelerAdapter').DiagramLocalizationReview | undefined
+    if (!initialReview) throw new Error('expected a translation review')
+    expect(initialReview.localResources).toEqual({
+      glossary: originalGlossary,
+      translationMemory: []
+    })
+
+    const updatedGlossary = [{ en: 'Updated term', ar: 'مصطلح محدث' }]
+    await act(async () => {
+      await latestSettingsLocalization().onSaveGlossary(updatedGlossary)
+    })
+    expect(
+      (mocks.translationReviewProps.mock.calls.at(-1)?.[0].review as typeof initialReview)
+        .localResources
+    ).toEqual({
+      glossary: originalGlossary,
+      translationMemory: []
+    })
+
+    await user.click(screen.getByRole('button', { name: 'translationReview.postpone' }))
+    await user.click(screen.getByRole('button', { name: 'editor.translate' }))
+    const nextReview = mocks.translationReviewProps.mock.calls.at(-1)?.[0]
+      .review as import('./localization/modelerAdapter').DiagramLocalizationReview
+    expect(nextReview.localResources).toEqual({
+      glossary: updatedGlossary,
+      translationMemory: []
+    })
+  })
+
   it('activates, searches, navigates, refreshes, and exports a real directory adapter', async () => {
     const user = userEvent.setup()
     await openDirectoryWorkspace(user)

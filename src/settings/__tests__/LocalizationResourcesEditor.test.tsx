@@ -289,6 +289,50 @@ describe('LocalizationResourcesEditor', () => {
     expect(screen.queryByText(t('settings.localization.conflict'))).toBeNull()
   })
 
+  it('keeps corrupt resources read-only and exposes an explicit retry that restores editing', async () => {
+    const user = userEvent.setup()
+    const recovered = workspaceState(
+      [{ en: 'Recovered term', ar: 'مصطلح مستعاد' }],
+      [],
+      'recovered'
+    )
+    const handlers = {
+      ...callbacks(recovered),
+      onReload: vi.fn(async () => recovered)
+    }
+    const onSnapshotChange = vi.fn()
+    render(
+      <LocalizationResourcesEditor
+        snapshot={null}
+        loadError="glossary.json: invalid format"
+        {...handlers}
+        onSnapshotChange={onSnapshotChange}
+      />
+    )
+
+    expect(screen.getByRole('alert').textContent).toContain('glossary.json: invalid format')
+    expect(screen.getByText(t('settings.localization.loadFailedHint'))).toBeTruthy()
+    expect(
+      screen.queryByRole('button', {
+        name: t('settings.localization.glossary.add')
+      })
+    ).toBeNull()
+    expect(
+      screen.queryByRole('button', {
+        name: t('settings.localization.glossary.save')
+      })
+    ).toBeNull()
+
+    await user.click(
+      screen.getByRole('button', {
+        name: t('settings.localization.reload')
+      })
+    )
+    await waitFor(() => expect(handlers.onReload).toHaveBeenCalledTimes(1))
+    expect(onSnapshotChange).toHaveBeenCalledWith(recovered)
+    expect(screen.getByDisplayValue('Recovered term')).toBeTruthy()
+  })
+
   it('renders Arabic parity, RTL inputs, and an honest single-file unavailable state', async () => {
     setLang('ar')
     const initial = workspaceState()
