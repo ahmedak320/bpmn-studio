@@ -1,6 +1,7 @@
 import {
   useCallback,
   useEffect,
+  useId,
   useMemo,
   useRef,
   useState,
@@ -87,6 +88,15 @@ export function ProcessOutlineEditor({
   className,
   confirmDelete
 }: ProcessOutlineEditorProps): JSX.Element {
+  const instanceId = useId()
+  const titleId = `${instanceId}-title`
+  const keyboardHelpId = `${instanceId}-keyboard-help`
+  const detailsTitleId = `${instanceId}-details-title`
+  const conditionHintId = `${instanceId}-condition-hint`
+  const addTitleId = `${instanceId}-add-title`
+  const connectTitleId = `${instanceId}-connect-title`
+  const newConditionHintId = `${instanceId}-new-condition-hint`
+  const validationTitleId = `${instanceId}-validation-title`
   const controllerRef = useRef<ProcessOutlineController | null>(null)
   const announcedSelectionIdRef = useRef<string | null>(null)
   const rowRefs = useRef(new Map<string, HTMLLIElement>())
@@ -378,11 +388,11 @@ export function ProcessOutlineEditor({
   const rootClassName = ['orbitpm-process-outline', className?.trim()].filter(Boolean).join(' ')
 
   return (
-    <section className={rootClassName} dir={direction} aria-labelledby="process-outline-title">
+    <section className={rootClassName} dir={direction} aria-labelledby={titleId}>
       <header className="orbitpm-process-outline__header">
         <div>
-          <h2 id="process-outline-title">{messages.title}</h2>
-          <p id="process-outline-keyboard-help">{messages.keyboardHelp}</p>
+          <h2 id={titleId}>{messages.title}</h2>
+          <p id={keyboardHelpId}>{messages.keyboardHelp}</p>
         </div>
         <span className="orbitpm-process-outline__summary">
           {messages.validationSummary(errors, warnings)}
@@ -409,7 +419,7 @@ export function ProcessOutlineEditor({
               className="orbitpm-process-outline__tree"
               role="tree"
               aria-label={messages.listLabel}
-              aria-describedby="process-outline-keyboard-help"
+              aria-describedby={keyboardHelpId}
             >
               {snapshot.items.map((item) => {
                 const selected = activeId === item.id
@@ -473,11 +483,8 @@ export function ProcessOutlineEditor({
             </ul>
           )}
 
-          <section
-            className="orbitpm-process-outline__panel"
-            aria-labelledby="process-outline-details-title"
-          >
-            <h3 id="process-outline-details-title">{messages.detailsHeading}</h3>
+          <section className="orbitpm-process-outline__panel" aria-labelledby={detailsTitleId}>
+            <h3 id={detailsTitleId}>{messages.detailsHeading}</h3>
             {!activeItem ? (
               <p>{messages.noSelection}</p>
             ) : editState ? (
@@ -564,7 +571,7 @@ export function ProcessOutlineEditor({
                       <input
                         value={editState.condition}
                         disabled={editState.isDefault}
-                        aria-describedby="process-outline-condition-hint"
+                        aria-describedby={conditionHintId}
                         onChange={(event) =>
                           setEditState({
                             ...editState,
@@ -574,7 +581,7 @@ export function ProcessOutlineEditor({
                         }
                       />
                     </label>
-                    <p id="process-outline-condition-hint">{messages.conditionHint}</p>
+                    <p id={conditionHintId}>{messages.conditionHint}</p>
                     <label className="orbitpm-process-outline__checkbox">
                       <input
                         type="checkbox"
@@ -664,9 +671,9 @@ export function ProcessOutlineEditor({
             <form
               className="orbitpm-process-outline__panel"
               onSubmit={handleAddNode}
-              aria-labelledby="process-outline-add-title"
+              aria-labelledby={addTitleId}
             >
-              <h3 id="process-outline-add-title">{messages.addHeading}</h3>
+              <h3 id={addTitleId}>{messages.addHeading}</h3>
               <label>
                 {messages.nodeTypeLabel}
                 <select
@@ -704,9 +711,9 @@ export function ProcessOutlineEditor({
             <form
               className="orbitpm-process-outline__panel"
               onSubmit={handleConnect}
-              aria-labelledby="process-outline-connect-title"
+              aria-labelledby={connectTitleId}
             >
-              <h3 id="process-outline-connect-title">{messages.connectHeading}</h3>
+              <h3 id={connectTitleId}>{messages.connectHeading}</h3>
               <label>
                 {messages.sourceLabel}
                 <select
@@ -745,14 +752,14 @@ export function ProcessOutlineEditor({
                 <input
                   value={connectionCondition}
                   disabled={connectionDefault}
-                  aria-describedby="process-outline-new-condition-hint"
+                  aria-describedby={newConditionHintId}
                   onChange={(event) => {
                     setConnectionCondition(event.target.value)
                     setConnectionDefault(false)
                   }}
                 />
               </label>
-              <p id="process-outline-new-condition-hint">{messages.conditionHint}</p>
+              <p id={newConditionHintId}>{messages.conditionHint}</p>
               <label className="orbitpm-process-outline__checkbox">
                 <input
                   type="checkbox"
@@ -773,11 +780,8 @@ export function ProcessOutlineEditor({
             </form>
           </div>
 
-          <section
-            className="orbitpm-process-outline__panel"
-            aria-labelledby="process-outline-validation-title"
-          >
-            <h3 id="process-outline-validation-title">{messages.validationHeading}</h3>
+          <section className="orbitpm-process-outline__panel" aria-labelledby={validationTitleId}>
+            <h3 id={validationTitleId}>{messages.validationHeading}</h3>
             {snapshot.issues.length === 0 ? (
               <p>{messages.validationEmpty}</p>
             ) : (
