@@ -26,7 +26,51 @@ const RICH_BPMN = `<?xml version="1.0" encoding="UTF-8"?>
       orbitpm:nameEn="Original task"
       orbitpm:nameAr="المهمة الأصلية"
       orbitpm:owner="Original owner"
-      orbitpm:ownerEn="Future owner translation"
+      orbitpm:ownerEn="Original owner"
+      orbitpm:ownerAr="المالك الأصلي"
+      orbitpm:department="Legacy department"
+      orbitpm:departmentEn="Legacy department"
+      orbitpm:departmentAr="القسم القديم"
+      orbitpm:ownerRole="R"
+      orbitpm:ownerRoleEn="Responsible"
+      orbitpm:ownerRoleAr="مسؤول"
+      orbitpm:channelDetail="Legacy channel"
+      orbitpm:channelDetailEn="Legacy channel"
+      orbitpm:channelDetailAr="القناة القديمة"
+      orbitpm:ccTo="Legacy audit"
+      orbitpm:ccToEn="Legacy audit"
+      orbitpm:ccToAr="التدقيق القديم"
+      orbitpm:trigger="manual"
+      orbitpm:triggerService="Legacy desk"
+      orbitpm:triggerServiceEn="Legacy desk"
+      orbitpm:triggerServiceAr="المكتب القديم"
+      orbitpm:triggerDetail="Legacy review"
+      orbitpm:triggerDetailEn="Legacy review"
+      orbitpm:triggerDetailAr="المراجعة القديمة"
+      orbitpm:triggers="manual — Legacy desk — Legacy review"
+      orbitpm:triggersEn="manual — Legacy desk — Legacy review"
+      orbitpm:triggersAr="manual — المكتب القديم — المراجعة القديمة"
+      orbitpm:inputs="Legacy input"
+      orbitpm:inputsEn="Legacy input"
+      orbitpm:inputsAr="المدخل القديم"
+      orbitpm:outputs="Legacy output"
+      orbitpm:outputsEn="Legacy output"
+      orbitpm:outputsAr="المخرج القديم"
+      orbitpm:system="Legacy system"
+      orbitpm:systemEn="Legacy system"
+      orbitpm:systemAr="النظام القديم"
+      orbitpm:respList="Legacy reviewer"
+      orbitpm:respListEn="Legacy reviewer"
+      orbitpm:respListAr="المراجع القديم"
+      orbitpm:ccList="Legacy legal"
+      orbitpm:ccListEn="Legacy legal"
+      orbitpm:ccListAr="الشؤون القانونية القديمة"
+      orbitpm:decisionBasis="Legacy policy"
+      orbitpm:decisionBasisEn="Legacy policy"
+      orbitpm:decisionBasisAr="السياسة القديمة"
+      orbitpm:notes="Legacy metadata note"
+      orbitpm:notesEn="Legacy metadata note"
+      orbitpm:notesAr="ملاحظة البيانات القديمة"
       vendor:flag="keep">
       <bpmn:extensionElements>
         <vendor:payload token="opaque">
@@ -54,6 +98,14 @@ const RICH_BPMN = `<?xml version="1.0" encoding="UTF-8"?>
         language="FEEL"
         vendor:expression="keep"><![CDATA[approved = false]]></bpmn:conditionExpression>
     </bpmn:sequenceFlow>
+    <bpmn:textAnnotation
+      id="Note_1"
+      orbitpm:nameEn="Original linked note"
+      orbitpm:nameAr="ملاحظة مرتبطة"
+      vendor:annotation="keep">
+      <bpmn:text>Original linked note</bpmn:text>
+    </bpmn:textAnnotation>
+    <bpmn:association id="Association_1" sourceRef="Task_1" targetRef="Note_1" />
   </bpmn:process>
   <bpmndi:BPMNDiagram id="Diagram_1">
     <bpmndi:BPMNPlane id="Plane_1" bpmnElement="Process_1">
@@ -69,6 +121,9 @@ const RICH_BPMN = `<?xml version="1.0" encoding="UTF-8"?>
       <bpmndi:BPMNShape id="End_1_di" bpmnElement="End_1">
         <dc:Bounds x="500" y="122" width="36" height="36" />
       </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Note_1_di" bpmnElement="Note_1">
+        <dc:Bounds x="220" y="220" width="140" height="60" />
+      </bpmndi:BPMNShape>
       <bpmndi:BPMNEdge id="Flow_start_di" bpmnElement="Flow_start">
         <di:waypoint x="156" y="140" />
         <di:waypoint x="220" y="140" />
@@ -80,6 +135,10 @@ const RICH_BPMN = `<?xml version="1.0" encoding="UTF-8"?>
       <bpmndi:BPMNEdge id="Flow_condition_di" bpmnElement="Flow_condition">
         <di:waypoint x="430" y="140" />
         <di:waypoint x="500" y="140" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Association_1_di" bpmnElement="Association_1">
+        <di:waypoint x="270" y="180" />
+        <di:waypoint x="290" y="220" />
       </bpmndi:BPMNEdge>
     </bpmndi:BPMNPlane>
   </bpmndi:BPMNDiagram>
@@ -306,6 +365,23 @@ describe('ProcessOutlineController with a real bpmn-js command stack', () => {
     const firstDocumentation = documentationBefore[0]
     const secondDocumentation = documentationBefore[1]
     const extensionElements = taskBefore.businessObject.extensionElements
+    const annotationBefore = registryElement('Note_1')
+    const annotationBusinessObject = annotationBefore.businessObject
+    const oppositeLanguagePairs = {
+      ownerAr: 'المالك الأصلي',
+      ownerRoleAr: 'مسؤول',
+      channelDetailAr: 'القناة القديمة',
+      ccToAr: 'التدقيق القديم',
+      triggerServiceAr: 'المكتب القديم',
+      triggerDetailAr: 'المراجعة القديمة',
+      triggersAr: 'manual — المكتب القديم — المراجعة القديمة',
+      inputsAr: 'المدخل القديم',
+      outputsAr: 'المخرج القديم',
+      systemAr: 'النظام القديم',
+      respListAr: 'المراجع القديم',
+      ccListAr: 'الشؤون القانونية القديمة',
+      decisionBasisAr: 'السياسة القديمة'
+    }
     const metadata = {
       ...controller.snapshot.nodes.find((node) => node.id === 'Task_1')!.metadata,
       owner: 'Operations',
@@ -316,7 +392,10 @@ describe('ProcessOutlineController with a real bpmn-js command stack', () => {
       channelDetail: 'case-api',
       cc: true,
       ccTo: 'audit@example.test',
-      triggers: [],
+      triggers: [
+        { type: 'dmthub', service: 'Case Hub', detail: 'new case' },
+        { type: 'manual', service: 'Desk', detail: 'exception' }
+      ],
       nameEn: 'Approve request',
       nameAr: 'اعتماد الطلب',
       inputs: 'Application',
@@ -342,7 +421,40 @@ describe('ProcessOutlineController with a real bpmn-js command stack', () => {
     })
     expect(taskAfter.businessObject.extensionElements).toBe(extensionElements)
     expect(taskAfter.businessObject.$attrs?.['vendor:flag']).toBe('keep')
-    expect(taskAfter.businessObject.ownerEn).toBe('Future owner translation')
+    expect(taskAfter.businessObject.owner).toBe('Operations')
+    expect(taskAfter.businessObject.ownerEn).toBe('Operations')
+    expect(taskAfter.businessObject.ownerRoleEn).toBe('A')
+    expect(taskAfter.businessObject.channelDetailEn).toBe('case-api')
+    expect(taskAfter.businessObject.ccToEn).toBe('audit@example.test')
+    expect(taskAfter.businessObject.trigger).toBe('dmthub')
+    expect(taskAfter.businessObject.triggerServiceEn).toBe('Case Hub')
+    expect(taskAfter.businessObject.triggerDetailEn).toBe('new case')
+    expect(taskAfter.businessObject.triggersEn).toBe(
+      'dmthub — Case Hub — new case\nmanual — Desk — exception'
+    )
+    expect(taskAfter.businessObject.inputsEn).toBe('Application')
+    expect(taskAfter.businessObject.outputsEn).toBe('Decision')
+    expect(taskAfter.businessObject.systemEn).toBe('Case Hub')
+    expect(taskAfter.businessObject.respListEn).toBe('Reviewer — R')
+    expect(taskAfter.businessObject.ccListEn).toBe('Audit')
+    expect(taskAfter.businessObject.decisionBasisEn).toBe('Policy 7')
+    for (const [property, value] of Object.entries(oppositeLanguagePairs)) {
+      expect(taskAfter.businessObject[property]).toBe(value)
+    }
+    expect(taskAfter.businessObject.department).toBe('Legacy department')
+    expect(taskAfter.businessObject.departmentEn).toBe('Legacy department')
+    expect(taskAfter.businessObject.departmentAr).toBe('القسم القديم')
+    expect(taskAfter.businessObject.notes).toBe('Legacy metadata note')
+    expect(taskAfter.businessObject.notesEn).toBe('Legacy metadata note')
+    expect(taskAfter.businessObject.notesAr).toBe('ملاحظة البيانات القديمة')
+    expect(taskAfter.businessObject).not.toHaveProperty('channelEn')
+    expect(taskAfter.businessObject).not.toHaveProperty('triggerEn')
+    expect(registryElement('Note_1')).toBe(annotationBefore)
+    expect(registryElement('Note_1').businessObject).toBe(annotationBusinessObject)
+    expect(annotationBusinessObject.text).toBe('Linked note')
+    expect(annotationBusinessObject.nameEn).toBe('Linked note')
+    expect(annotationBusinessObject.nameAr).toBe('ملاحظة مرتبطة')
+    expect(annotationBusinessObject.$attrs?.['vendor:annotation']).toBe('keep')
     expect(controller.snapshot.nodes.find((node) => node.id === 'Task_1')?.metadata.note).toBe(
       'Linked note'
     )
@@ -354,11 +466,44 @@ describe('ProcessOutlineController with a real bpmn-js command stack', () => {
     commandStack.undo()
     expect(registryElement('Task_1').businessObject.name).toBe('Original task')
     expect(firstDocumentation.text).toBe('Original documentation')
-    expect(controller.snapshot.nodes.find((node) => node.id === 'Task_1')?.metadata.note).toBe('')
+    expect(controller.snapshot.nodes.find((node) => node.id === 'Task_1')?.metadata.note).toBe(
+      'Original linked note'
+    )
+    expect(annotationBusinessObject.text).toBe('Original linked note')
+    expect(annotationBusinessObject.nameEn).toBe('Original linked note')
+    expect(annotationBusinessObject.nameAr).toBe('ملاحظة مرتبطة')
+    expect(registryElement('Task_1').businessObject.ownerEn).toBe('Original owner')
+    expect(registryElement('Task_1').businessObject.ownerAr).toBe('المالك الأصلي')
 
     commandStack.redo()
     expect(registryElement('Task_1').businessObject.name).toBe('Approve request')
     expect(firstDocumentation.text).toBe('Updated documentation')
+    expect(annotationBusinessObject.text).toBe('Linked note')
+    expect(annotationBusinessObject.nameEn).toBe('Linked note')
+    expect(annotationBusinessObject.nameAr).toBe('ملاحظة مرتبطة')
+
+    controller.updateNode('Task_1', {
+      metadata: {
+        ...controller.snapshot.nodes.find((node) => node.id === 'Task_1')!.metadata,
+        note: ''
+      }
+    })
+    expect(annotationBusinessObject.text).toBe('ملاحظة مرتبطة')
+    expect(annotationBusinessObject.nameEn).toBeUndefined()
+    expect(annotationBusinessObject.nameAr).toBe('ملاحظة مرتبطة')
+    expect(controller.snapshot.nodes.find((node) => node.id === 'Task_1')?.metadata.note).toBe(
+      'ملاحظة مرتبطة'
+    )
+
+    commandStack.undo()
+    expect(annotationBusinessObject.text).toBe('Linked note')
+    expect(annotationBusinessObject.nameEn).toBe('Linked note')
+    commandStack.redo()
+    expect(annotationBusinessObject.text).toBe('ملاحظة مرتبطة')
+    expect(annotationBusinessObject.nameEn).toBeUndefined()
+    commandStack.undo()
+    expect(annotationBusinessObject.text).toBe('Linked note')
+    expect(annotationBusinessObject.nameEn).toBe('Linked note')
 
     const flowBefore = registryElement('Flow_condition')
     const expression = flowBefore.businessObject.conditionExpression
@@ -386,7 +531,12 @@ describe('ProcessOutlineController with a real bpmn-js command stack', () => {
     expect(xml).toContain('vendor:expression="keep"')
     expect(xml).toContain('vendor:payload')
     expect(xml).toContain('vendor:nested')
-    expect(xml).toContain('orbitpm:ownerEn="Future owner translation"')
+    expect(xml).toContain('orbitpm:ownerEn="Operations"')
+    expect(xml).toContain('orbitpm:ownerAr="المالك الأصلي"')
+    expect(xml).toContain('orbitpm:triggersEn=')
+    expect(xml).toContain('orbitpm:triggersAr=')
+    expect(xml).toContain('orbitpm:nameEn="Linked note"')
+    expect(xml).toContain('orbitpm:nameAr="ملاحظة مرتبطة"')
     expect(xml).toContain('id="Documentation_2"')
 
     await modeler.importXML(xml)
@@ -398,7 +548,17 @@ describe('ProcessOutlineController with a real bpmn-js command stack', () => {
       textFormat: 'text/markdown'
     })
     expect(reparsedTask.$attrs?.['vendor:flag']).toBe('keep')
-    expect(reparsedTask.ownerEn).toBe('Future owner translation')
+    expect(reparsedTask.ownerEn).toBe('Operations')
+    expect(reparsedTask.ownerAr).toBe('المالك الأصلي')
+    expect(reparsedTask.triggersEn).toBe('dmthub — Case Hub — new case\nmanual — Desk — exception')
+    expect(reparsedTask.triggersAr).toBe('manual — المكتب القديم — المراجعة القديمة')
+    expect(reparsedTask.departmentAr).toBe('القسم القديم')
+    expect(reparsedTask.notesAr).toBe('ملاحظة البيانات القديمة')
+    const reparsedAnnotation = registryElement('Note_1').businessObject
+    expect(reparsedAnnotation.text).toBe('Linked note')
+    expect(reparsedAnnotation.nameEn).toBe('Linked note')
+    expect(reparsedAnnotation.nameAr).toBe('ملاحظة مرتبطة')
+    expect(reparsedAnnotation.$attrs?.['vendor:annotation']).toBe('keep')
     expect(reparsedExpression).toMatchObject({
       body: 'approved = true',
       language: 'FEEL'

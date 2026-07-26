@@ -302,9 +302,31 @@ describe('ProcessOutlineController bpmn-js synchronization', () => {
       values: [{ $type: 'vendor:Payload', token: 'opaque' }]
     }
     task.businessObject.documentation = [firstDocumentation, secondDocumentation]
+    const oppositeLanguagePairs = {
+      'orbitpm:ownerEn': 'Operations EN',
+      'orbitpm:ownerRoleEn': 'Reviewer EN',
+      'orbitpm:channelDetailEn': 'Case API EN',
+      'orbitpm:ccToEn': 'Audit EN',
+      'orbitpm:triggerServiceEn': 'Desk EN',
+      'orbitpm:triggerDetailEn': 'Reviewed EN',
+      'orbitpm:triggersEn': 'manual — Desk EN — Reviewed EN',
+      'orbitpm:inputsEn': 'Application EN',
+      'orbitpm:outputsEn': 'Decision EN',
+      'orbitpm:systemEn': 'Case Hub EN',
+      'orbitpm:respListEn': 'Reviewer EN',
+      'orbitpm:ccListEn': 'Audit EN',
+      'orbitpm:decisionBasisEn': 'Policy 7 EN'
+    }
     task.businessObject.$attrs = {
       'vendor:flag': 'keep',
-      'orbitpm:ownerEn': 'Future paired owner'
+      'orbitpm:futureTranslation': 'future-value',
+      ...oppositeLanguagePairs,
+      'orbitpm:department': 'Legacy department',
+      'orbitpm:departmentEn': 'Department EN',
+      'orbitpm:departmentAr': 'القسم القديم',
+      'orbitpm:notes': 'Legacy metadata note',
+      'orbitpm:notesEn': 'Metadata note EN',
+      'orbitpm:notesAr': 'ملاحظة بيانات قديمة'
     }
     task.businessObject.extensionElements = extensionElements
     const controller = createProcessOutlineController(fixture.modeler)
@@ -340,11 +362,42 @@ describe('ProcessOutlineController bpmn-js synchronization', () => {
     expect(task.businessObject['orbitpm:nameEn']).toBe('Approve request')
     expect(task.businessObject['orbitpm:nameAr']).toBe('اعتماد الطلب')
     expect(task.businessObject['orbitpm:owner']).toBe('Operations')
+    expect(task.businessObject['orbitpm:ownerAr']).toBe('Operations')
+    expect(task.businessObject['orbitpm:ownerRoleAr']).toBe('A')
+    expect(task.businessObject['orbitpm:channelDetailAr']).toBe('case-api')
+    expect(task.businessObject['orbitpm:ccToAr']).toBe('audit@example.test')
     expect(task.businessObject['orbitpm:decisionBasis']).toBe('Policy 7')
+    expect(task.businessObject['orbitpm:decisionBasisAr']).toBe('Policy 7')
     expect(task.businessObject['orbitpm:triggers']).toBe('manual — desk — reviewed')
+    expect(task.businessObject['orbitpm:triggersAr']).toBe('manual — desk — reviewed')
+    expect(task.businessObject['orbitpm:triggerServiceAr']).toBe('desk')
+    expect(task.businessObject['orbitpm:triggerDetailAr']).toBe('reviewed')
+    expect(task.businessObject['orbitpm:inputsAr']).toBe('Application\nEvidence')
+    expect(task.businessObject['orbitpm:outputsAr']).toBe('Decision')
+    expect(task.businessObject['orbitpm:systemAr']).toBe('Case Hub')
+    expect(task.businessObject['orbitpm:respListAr']).toBe('Reviewer — R')
+    expect(task.businessObject['orbitpm:ccListAr']).toBe('Audit')
+    for (const [attribute, value] of Object.entries(oppositeLanguagePairs)) {
+      expect(task.businessObject[attribute]).toBe(value)
+    }
+    expect(task.businessObject['orbitpm:department']).toBe('Legacy department')
+    expect(task.businessObject['orbitpm:departmentEn']).toBe('Department EN')
+    expect(task.businessObject['orbitpm:departmentAr']).toBe('القسم القديم')
+    expect(task.businessObject['orbitpm:notes']).toBe('Legacy metadata note')
+    expect(task.businessObject['orbitpm:notesEn']).toBe('Metadata note EN')
+    expect(task.businessObject['orbitpm:notesAr']).toBe('ملاحظة بيانات قديمة')
+    expect(task.businessObject).not.toHaveProperty('orbitpm:channelAr')
+    expect(task.businessObject).not.toHaveProperty('orbitpm:triggerAr')
     expect(task.businessObject.$attrs).toEqual({
       'vendor:flag': 'keep',
-      'orbitpm:ownerEn': 'Future paired owner'
+      'orbitpm:futureTranslation': 'future-value',
+      ...oppositeLanguagePairs,
+      'orbitpm:department': 'Legacy department',
+      'orbitpm:departmentEn': 'Department EN',
+      'orbitpm:departmentAr': 'القسم القديم',
+      'orbitpm:notes': 'Legacy metadata note',
+      'orbitpm:notesEn': 'Metadata note EN',
+      'orbitpm:notesAr': 'ملاحظة بيانات قديمة'
     })
     expect(task.businessObject.extensionElements).toBe(extensionElements)
     expect(task.businessObject.documentation?.[0]).toBe(firstDocumentation)
@@ -359,12 +412,22 @@ describe('ProcessOutlineController bpmn-js synchronization', () => {
     expect(
       [...fixture.elements.values()].filter((element) => element.type === 'bpmn:TextAnnotation')
     ).toHaveLength(1)
+    const createdAnnotation = [...fixture.elements.values()].find(
+      (element) => element.type === 'bpmn:TextAnnotation'
+    )
+    expect(createdAnnotation?.businessObject.text).toBe('Linked reviewer note')
+    expect(createdAnnotation?.businessObject['orbitpm:nameAr']).toBe('Linked reviewer note')
+    expect(createdAnnotation?.businessObject).not.toHaveProperty('orbitpm:nameEn')
 
     fixture.undo()
     expect(task.businessObject.name).toBe('الاسم القديم')
     expect(firstDocumentation.text).toBe('Original documentation')
     expect(task.businessObject['orbitpm:owner']).toBeUndefined()
+    expect(task.businessObject['orbitpm:ownerAr']).toBeUndefined()
+    expect(task.businessObject['orbitpm:ownerEn']).toBeUndefined()
     expect(task.businessObject.$attrs?.['vendor:flag']).toBe('keep')
+    expect(task.businessObject.$attrs?.['orbitpm:futureTranslation']).toBe('future-value')
+    expect(task.businessObject.$attrs?.['orbitpm:ownerEn']).toBe('Operations EN')
     expect(task.businessObject.extensionElements).toBe(extensionElements)
     expect(
       [...fixture.elements.values()].filter((element) => element.type === 'bpmn:TextAnnotation')
@@ -374,7 +437,14 @@ describe('ProcessOutlineController bpmn-js synchronization', () => {
     expect(task.businessObject.name).toBe('اعتماد الطلب')
     expect(firstDocumentation.text).toBe('Updated documentation')
     expect(task.businessObject['orbitpm:owner']).toBe('Operations')
+    expect(task.businessObject['orbitpm:ownerAr']).toBe('Operations')
+    expect(task.businessObject['orbitpm:ownerEn']).toBe('Operations EN')
     expect(controller.snapshot.nodes[0].metadata.note).toBe('Linked reviewer note')
+    const restoredAnnotation = [...fixture.elements.values()].find(
+      (element) => element.type === 'bpmn:TextAnnotation'
+    )
+    expect(restoredAnnotation?.businessObject['orbitpm:nameAr']).toBe('Linked reviewer note')
+    expect(restoredAnnotation?.businessObject).not.toHaveProperty('orbitpm:nameEn')
   })
 
   it('keeps a cleared active name empty while projecting only a stored opposite-language fallback', () => {

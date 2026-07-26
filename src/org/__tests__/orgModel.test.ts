@@ -10,6 +10,8 @@ import {
   getLinkedNote,
   setStepNote,
   getProcessElement,
+  mergeActiveLanguageOrgProps,
+  PAIRED_ORG_PROJECTION_FIELDS,
   splitList,
   joinList,
   parseTriggers,
@@ -19,6 +21,7 @@ import {
   type OrgModeler,
   type OrgElementLike
 } from '../orgModel'
+import { ORG_ATTR_NAMES } from '../orbitpmModdle'
 
 // --- recorder fakes ---------------------------------------------------------
 
@@ -85,6 +88,54 @@ function makeModeler(options: {
   return { modeler: modeler as unknown as OrgModeler, rec }
 }
 
+const PAIRED_CONTRACT_PROPS: OrgProps = {
+  owner: 'Operations',
+  ownerEn: 'Operations',
+  ownerAr: 'العمليات',
+  department: 'Permits',
+  departmentEn: 'Permits',
+  departmentAr: 'التصاريح',
+  ownerRole: 'Reviewer',
+  ownerRoleEn: 'Reviewer',
+  ownerRoleAr: 'مراجع',
+  channelDetail: 'Permits inbox',
+  channelDetailEn: 'Permits inbox',
+  channelDetailAr: 'صندوق بريد التصاريح',
+  ccTo: 'Audit office',
+  ccToEn: 'Audit office',
+  ccToAr: 'مكتب التدقيق',
+  triggerService: 'Case service',
+  triggerServiceEn: 'Case service',
+  triggerServiceAr: 'خدمة الحالات',
+  triggerDetail: 'New application',
+  triggerDetailEn: 'New application',
+  triggerDetailAr: 'طلب جديد',
+  triggers: 'dmthub — Case service — New application',
+  triggersEn: 'dmthub — Case service — New application',
+  triggersAr: 'dmthub — خدمة الحالات — طلب جديد',
+  inputs: 'Application',
+  inputsEn: 'Application',
+  inputsAr: 'الطلب',
+  outputs: 'Decision',
+  outputsEn: 'Decision',
+  outputsAr: 'القرار',
+  system: 'Case Hub',
+  systemEn: 'Case Hub',
+  systemAr: 'منصة الحالات',
+  respList: 'Sara — Reviewer',
+  respListEn: 'Sara — Reviewer',
+  respListAr: 'سارة — مراجع',
+  ccList: 'Legal — review',
+  ccListEn: 'Legal — review',
+  ccListAr: 'الشؤون القانونية — مراجعة',
+  decisionBasis: 'Policy 7',
+  decisionBasisEn: 'Policy 7',
+  decisionBasisAr: 'السياسة 7',
+  notes: 'Escalate exceptions',
+  notesEn: 'Escalate exceptions',
+  notesAr: 'تصعيد الاستثناءات'
+}
+
 // --- readOrgAttrsFromTag ----------------------------------------------------
 
 describe('readOrgAttrsFromTag', () => {
@@ -145,6 +196,13 @@ describe('readOrgAttrsFromTag', () => {
       decisionBasis: 'Policy 4.2'
     })
   })
+
+  it('reads every paired 0.4.5 projection and language attribute', () => {
+    const attributes = Object.entries(PAIRED_CONTRACT_PROPS)
+      .map(([key, value]) => `orbitpm:${key}="${value}"`)
+      .join(' ')
+    expect(readOrgAttrsFromTag(`<bpmn:task ${attributes}>`)).toEqual(PAIRED_CONTRACT_PROPS)
+  })
 })
 
 // --- getOrgProps ------------------------------------------------------------
@@ -194,54 +252,116 @@ describe('setOrgProps', () => {
     expect(rec.updateProperties).toHaveLength(1)
     const call = rec.updateProperties[0]
     expect(call.element).toBe(element)
-    expect(call.properties).toEqual({
+    expect(Object.keys(call.properties).sort()).toEqual(
+      ORG_ATTR_NAMES.map((name) => `orbitpm:${name}`).sort()
+    )
+    expect(call.properties).toMatchObject({
       'orbitpm:owner': 'Ahmed',
-      'orbitpm:ownerType': undefined,
       'orbitpm:ownerRole': 'A',
       'orbitpm:channel': undefined, // '' -> undefined (removes attr)
-      'orbitpm:channelDetail': undefined,
-      'orbitpm:kind': 'cc',
-      'orbitpm:ccTo': undefined,
-      'orbitpm:trigger': undefined,
-      'orbitpm:triggerService': undefined,
-      'orbitpm:triggerDetail': undefined,
-      'orbitpm:triggers': undefined,
-      'orbitpm:nameEn': undefined,
-      'orbitpm:nameAr': undefined,
-      'orbitpm:activeLang': undefined,
-      'orbitpm:inputs': undefined,
-      'orbitpm:outputs': undefined,
-      'orbitpm:system': undefined,
-      'orbitpm:respList': undefined,
-      'orbitpm:ccList': undefined,
-      'orbitpm:decisionBasis': undefined
+      'orbitpm:kind': 'cc'
     })
+    expect(call.properties['orbitpm:ownerAr']).toBeUndefined()
+    expect(call.properties['orbitpm:notesAr']).toBeUndefined()
   })
 
-  it('writes every wave-G attribute under its prefixed name', () => {
+  it('writes every paired and legacy attribute under its prefixed name', () => {
     const { modeler, rec } = makeModeler({})
     const patch: OrgProps = {
+      ...PAIRED_CONTRACT_PROPS,
       nameEn: 'Review request',
       nameAr: 'مراجعة الطلب',
       activeLang: 'ar',
-      inputs: 'Form A\nCustomer file',
-      outputs: 'Approval memo',
-      system: 'ERP',
-      respList: 'Sara — Approver\nOmar',
-      ccList: 'Legal\nFinance',
-      decisionBasis: 'Policy 4.2'
+      ownerType: 'department',
+      channel: 'dmthub',
+      kind: 'cc',
+      trigger: 'dmthub'
     }
     setOrgProps(modeler, { id: 'T2' }, patch)
     const properties = rec.updateProperties[0].properties
-    expect(properties['orbitpm:nameEn']).toBe('Review request')
-    expect(properties['orbitpm:nameAr']).toBe('مراجعة الطلب')
-    expect(properties['orbitpm:activeLang']).toBe('ar')
-    expect(properties['orbitpm:inputs']).toBe('Form A\nCustomer file')
-    expect(properties['orbitpm:outputs']).toBe('Approval memo')
-    expect(properties['orbitpm:system']).toBe('ERP')
-    expect(properties['orbitpm:respList']).toBe('Sara — Approver\nOmar')
-    expect(properties['orbitpm:ccList']).toBe('Legal\nFinance')
-    expect(properties['orbitpm:decisionBasis']).toBe('Policy 4.2')
+    for (const [key, value] of Object.entries(patch)) {
+      expect(properties[`orbitpm:${key}`]).toBe(value)
+    }
+  })
+})
+
+describe('mergeActiveLanguageOrgProps', () => {
+  it('updates every active pair while retaining every opposite-language pair', () => {
+    const current: OrgProps = {}
+    const edited: OrgProps = {}
+    for (const field of PAIRED_ORG_PROJECTION_FIELDS) {
+      current[field.projection] = `old-${field.projection}`
+      current[field.en] = `en-${field.projection}`
+      current[field.ar] = `ar-${field.projection}`
+      edited[field.projection] = `edited-${field.projection}`
+    }
+    Object.assign(edited, {
+      ownerType: 'department',
+      channel: 'dmthub',
+      kind: 'cc',
+      trigger: 'email',
+      activeLang: 'ar'
+    })
+
+    const merged = mergeActiveLanguageOrgProps(current, edited, 'ar')
+
+    for (const field of PAIRED_ORG_PROJECTION_FIELDS) {
+      expect(merged[field.projection]).toBe(`edited-${field.projection}`)
+      expect(merged[field.ar]).toBe(`edited-${field.projection}`)
+      expect(merged[field.en]).toBe(`en-${field.projection}`)
+    }
+    expect(merged).toMatchObject({
+      ownerType: 'department',
+      channel: 'dmthub',
+      kind: 'cc',
+      trigger: 'email',
+      activeLang: 'ar'
+    })
+    expect(merged).not.toHaveProperty('channelEn')
+    expect(merged).not.toHaveProperty('triggerEn')
+  })
+
+  it('keeps canonical trigger and row-zero mirrors coherent without translating the type code', () => {
+    const current: OrgProps = {
+      triggersAr: 'email — البريد — قديم',
+      triggerServiceAr: 'البريد',
+      triggerDetailAr: 'قديم'
+    }
+    const serialized = serializeTriggers([
+      { type: 'dmthub', service: 'Case Hub', detail: 'new case' },
+      { type: 'manual', service: 'Desk', detail: 'exception' }
+    ])
+
+    expect(mergeActiveLanguageOrgProps(current, serialized, 'en')).toMatchObject({
+      trigger: 'dmthub',
+      triggerService: 'Case Hub',
+      triggerServiceEn: 'Case Hub',
+      triggerServiceAr: 'البريد',
+      triggerDetail: 'new case',
+      triggerDetailEn: 'new case',
+      triggerDetailAr: 'قديم',
+      triggers: 'dmthub — Case Hub — new case\nmanual — Desk — exception',
+      triggersEn: 'dmthub — Case Hub — new case\nmanual — Desk — exception',
+      triggersAr: 'email — البريد — قديم'
+    })
+  })
+
+  it('clears only the edited active projection and pair', () => {
+    expect(
+      mergeActiveLanguageOrgProps(
+        {
+          owner: 'Operations',
+          ownerEn: 'Operations',
+          ownerAr: 'العمليات'
+        },
+        { owner: '' },
+        'en'
+      )
+    ).toEqual({
+      owner: '',
+      ownerEn: '',
+      ownerAr: 'العمليات'
+    })
   })
 })
 
@@ -249,15 +369,14 @@ describe('setOrgProps', () => {
 
 describe('new attribute round-trips (setOrgProps payload -> getOrgProps)', () => {
   const NEW_PROPS: OrgProps = {
+    ...PAIRED_CONTRACT_PROPS,
     nameEn: 'Review request',
     nameAr: 'مراجعة الطلب',
     activeLang: 'en',
-    inputs: 'Form A\nCustomer file',
-    outputs: 'Memo',
-    system: 'DMT Hub',
-    respList: 'Sara — Approver',
-    ccList: 'Legal\nFinance\nAudit',
-    decisionBasis: 'Delegation matrix §3'
+    ownerType: 'department',
+    channel: 'dmthub',
+    kind: 'cc',
+    trigger: 'dmthub'
   }
 
   it('round-trips through $attrs (extension NOT registered)', () => {
@@ -339,8 +458,7 @@ describe('parseTriggers / serializeTriggers', () => {
     ]
     const props = serializeTriggers(entries)
     expect(props).toEqual({
-      triggers:
-        'dmthub — ClaimsHub — new claim\nemail —  — sender allow-list\nmanual',
+      triggers: 'dmthub — ClaimsHub — new claim\nemail —  — sender allow-list\nmanual',
       trigger: 'dmthub',
       triggerService: 'ClaimsHub',
       triggerDetail: 'new claim'
@@ -355,9 +473,7 @@ describe('parseTriggers / serializeTriggers', () => {
       triggerDetail: 'intake'
     }
     const entries = parseTriggers(legacy)
-    expect(entries).toEqual([
-      { type: 'email', service: 'Mailroom', detail: 'intake' }
-    ])
+    expect(entries).toEqual([{ type: 'email', service: 'Mailroom', detail: 'intake' }])
     expect(serializeTriggers(entries)).toEqual({
       triggers: 'email — Mailroom — intake',
       trigger: 'email',
@@ -388,9 +504,7 @@ describe('parseTriggers / serializeTriggers', () => {
       triggerDetail: ''
     }
     const entries = parseTriggers(props)
-    expect(entries).toEqual([
-      { type: 'other', service: 'source', detail: 'alpha — beta — gamma' }
-    ])
+    expect(entries).toEqual([{ type: 'other', service: 'source', detail: 'alpha — beta — gamma' }])
     expect(parseTriggers(serializeTriggers(entries))).toEqual(entries)
   })
 
@@ -425,9 +539,7 @@ describe('parseTriggers / serializeTriggers', () => {
 
   it('round-trips an empty service with a non-empty detail', () => {
     const entries = [{ type: 'schedule', service: '', detail: 'weekdays at 09:00' }]
-    expect(serializeTriggers(entries).triggers).toBe(
-      'schedule —  — weekdays at 09:00'
-    )
+    expect(serializeTriggers(entries).triggers).toBe('schedule —  — weekdays at 09:00')
     expect(parseTriggers(serializeTriggers(entries))).toEqual(entries)
   })
 })
@@ -511,7 +623,14 @@ describe('linked note (TextAnnotation via Association)', () => {
     annotation: OrgElementLike
     association: OrgElementLike
   } {
-    const step: OrgElementLike = { id: 'Task_1', type: 'bpmn:Task', x: 100, y: 100, width: 100, height: 80 }
+    const step: OrgElementLike = {
+      id: 'Task_1',
+      type: 'bpmn:Task',
+      x: 100,
+      y: 100,
+      width: 100,
+      height: 80
+    }
     const annotation: OrgElementLike = {
       id: 'Ann_1',
       type: 'bpmn:TextAnnotation',
@@ -560,7 +679,14 @@ describe('linked note (TextAnnotation via Association)', () => {
   })
 
   it('setStepNote creates + connects a new annotation when none exists', () => {
-    const step: OrgElementLike = { id: 'Task_2', type: 'bpmn:Task', x: 200, y: 150, width: 100, height: 80 }
+    const step: OrgElementLike = {
+      id: 'Task_2',
+      type: 'bpmn:Task',
+      x: 200,
+      y: 150,
+      width: 100,
+      height: 80
+    }
     const root: OrgElementLike = { id: 'Process_1', type: 'bpmn:Process' }
     const newAnnotation: OrgElementLike = { id: 'Ann_new', type: 'bpmn:TextAnnotation' }
     const { modeler, rec } = makeModeler({ elements: [step], root, nextShape: newAnnotation })
@@ -569,13 +695,127 @@ describe('linked note (TextAnnotation via Association)', () => {
 
     expect(rec.createShape).toHaveLength(1)
     expect(rec.createShape[0].attrs).toEqual({ type: 'bpmn:TextAnnotation' })
-    expect(rec.createShape[0].bounds).toEqual({ x: 200 + 100 + 90, y: 150 - 60, width: 140, height: 60 })
+    expect(rec.createShape[0].bounds).toEqual({
+      x: 200 + 100 + 90,
+      y: 150 - 60,
+      width: 140,
+      height: 60
+    })
     expect(rec.createShape[0].target).toBe(root)
-    expect(rec.updateProperties).toEqual([{ element: newAnnotation, properties: { text: 'brand new' } }])
+    expect(rec.updateProperties).toEqual([
+      { element: newAnnotation, properties: { text: 'brand new' } }
+    ])
     expect(rec.connect).toHaveLength(1)
     expect(rec.connect[0].source).toBe(step)
     expect(rec.connect[0].target).toBe(newAnnotation)
     expect(rec.connect[0].attrs).toEqual({ type: 'bpmn:Association' })
+  })
+
+  it('updates only the active annotation pair and retains the opposite pair', () => {
+    const { step, annotation, association } = scenario()
+    annotation.businessObject = {
+      $type: 'bpmn:TextAnnotation',
+      text: 'old',
+      $attrs: {
+        'orbitpm:nameEn': 'English note',
+        'orbitpm:nameAr': 'ملاحظة قديمة',
+        'vendor:future': 'keep'
+      }
+    }
+    const { modeler, rec } = makeModeler({ elements: [step, annotation, association] })
+
+    setStepNote(modeler, step, 'ملاحظة جديدة', 'ar')
+
+    expect(rec.updateProperties).toEqual([
+      {
+        element: annotation,
+        properties: {
+          text: 'ملاحظة جديدة',
+          'orbitpm:nameAr': 'ملاحظة جديدة'
+        }
+      }
+    ])
+    expect(rec.updateProperties[0].properties).not.toHaveProperty('orbitpm:nameEn')
+    expect(annotation.businessObject.$attrs).toEqual({
+      'orbitpm:nameEn': 'English note',
+      'orbitpm:nameAr': 'ملاحظة قديمة',
+      'vendor:future': 'keep'
+    })
+  })
+
+  it('clears only the active note pair and projects the retained opposite language', () => {
+    const { step, annotation, association } = scenario()
+    annotation.businessObject = {
+      $type: 'bpmn:TextAnnotation',
+      text: 'English note',
+      $attrs: {
+        'orbitpm:nameEn': 'English note',
+        'orbitpm:nameAr': 'ملاحظة عربية',
+        'vendor:future': 'keep'
+      }
+    }
+    const { modeler, rec } = makeModeler({ elements: [step, annotation, association] })
+
+    setStepNote(modeler, step, '', 'en')
+
+    expect(rec.removeElements).toHaveLength(0)
+    expect(rec.updateProperties).toEqual([
+      {
+        element: annotation,
+        properties: {
+          text: 'ملاحظة عربية',
+          'orbitpm:nameEn': undefined
+        }
+      }
+    ])
+    expect(rec.updateProperties[0].properties).not.toHaveProperty('orbitpm:nameAr')
+    expect(annotation.businessObject.$attrs?.['orbitpm:nameAr']).toBe('ملاحظة عربية')
+    expect(annotation.businessObject.$attrs?.['vendor:future']).toBe('keep')
+  })
+
+  it('removes a paired annotation only when the opposite language is empty', () => {
+    const { step, annotation, association } = scenario()
+    annotation.businessObject = {
+      $type: 'bpmn:TextAnnotation',
+      text: 'English note',
+      $attrs: {
+        'orbitpm:nameEn': 'English note',
+        'orbitpm:nameAr': '   '
+      }
+    }
+    const { modeler, rec } = makeModeler({ elements: [step, annotation, association] })
+
+    setStepNote(modeler, step, '', 'en')
+
+    expect(rec.removeElements).toEqual([[annotation]])
+    expect(rec.updateProperties).toHaveLength(0)
+  })
+
+  it('creates the active annotation pair without guessing the opposite language', () => {
+    const step: OrgElementLike = {
+      id: 'Task_2',
+      type: 'bpmn:Task',
+      x: 200,
+      y: 150,
+      width: 100,
+      height: 80
+    }
+    const root: OrgElementLike = { id: 'Process_1', type: 'bpmn:Process' }
+    const newAnnotation: OrgElementLike = { id: 'Ann_new', type: 'bpmn:TextAnnotation' }
+    const { modeler, rec } = makeModeler({ elements: [step], root, nextShape: newAnnotation })
+
+    setStepNote(modeler, step, 'New note', 'en')
+
+    expect(rec.updateProperties).toEqual([
+      {
+        element: newAnnotation,
+        properties: {
+          text: 'New note',
+          'orbitpm:nameEn': 'New note'
+        }
+      }
+    ])
+    expect(rec.updateProperties[0].properties).not.toHaveProperty('orbitpm:nameAr')
   })
 
   it('setStepNote is a no-op when emptying a step with no annotation', () => {

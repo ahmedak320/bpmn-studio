@@ -68,17 +68,34 @@ export interface OrgModeler {
 
 export interface OrgProps {
   owner?: string
+  ownerEn?: string
+  ownerAr?: string
+  department?: string
+  departmentEn?: string
+  departmentAr?: string
   ownerType?: string
   ownerRole?: string
+  ownerRoleEn?: string
+  ownerRoleAr?: string
   channel?: string
   channelDetail?: string
+  channelDetailEn?: string
+  channelDetailAr?: string
   kind?: string
   ccTo?: string
+  ccToEn?: string
+  ccToAr?: string
   trigger?: string
   triggerService?: string
+  triggerServiceEn?: string
+  triggerServiceAr?: string
   triggerDetail?: string
+  triggerDetailEn?: string
+  triggerDetailAr?: string
   /** Repeatable triggers, one canonical "type — service — detail" row per line. */
   triggers?: string
+  triggersEn?: string
+  triggersAr?: string
   /** Bilingual element name (English) — used by the language-toggle lane. */
   nameEn?: string
   /** Bilingual element name (Arabic) — used by the language-toggle lane. */
@@ -87,43 +104,146 @@ export interface OrgProps {
   activeLang?: string
   /** Inputs / base-information list for a step ('\n'-joined). */
   inputs?: string
+  inputsEn?: string
+  inputsAr?: string
   /** Outputs list ('\n'-joined; rendered as the activity's output box). */
   outputs?: string
+  outputsEn?: string
+  outputsAr?: string
   /** Supporting system name(s) ('\n'-joined). */
   system?: string
+  systemEn?: string
+  systemAr?: string
   /** Responsible people, each "Name — Role" or "Name" ('\n'-joined). */
   respList?: string
+  respListEn?: string
+  respListAr?: string
   /** CC / informed-party names ('\n'-joined). */
   ccList?: string
+  ccListEn?: string
+  ccListAr?: string
   /** Decision basis free text (gateways + business-rule tasks). */
   decisionBasis?: string
+  decisionBasisEn?: string
+  decisionBasisAr?: string
+  /** Other translatable organizational notes stored as attributes. */
+  notes?: string
+  notesEn?: string
+  notesAr?: string
 }
 
 /** Prop name -> fully-qualified moddle attribute name. */
 const PROP_TO_ATTR: Record<keyof OrgProps, string> = {
   owner: 'orbitpm:owner',
+  ownerEn: 'orbitpm:ownerEn',
+  ownerAr: 'orbitpm:ownerAr',
+  department: 'orbitpm:department',
+  departmentEn: 'orbitpm:departmentEn',
+  departmentAr: 'orbitpm:departmentAr',
   ownerType: 'orbitpm:ownerType',
   ownerRole: 'orbitpm:ownerRole',
+  ownerRoleEn: 'orbitpm:ownerRoleEn',
+  ownerRoleAr: 'orbitpm:ownerRoleAr',
   channel: 'orbitpm:channel',
   channelDetail: 'orbitpm:channelDetail',
+  channelDetailEn: 'orbitpm:channelDetailEn',
+  channelDetailAr: 'orbitpm:channelDetailAr',
   kind: 'orbitpm:kind',
   ccTo: 'orbitpm:ccTo',
+  ccToEn: 'orbitpm:ccToEn',
+  ccToAr: 'orbitpm:ccToAr',
   trigger: 'orbitpm:trigger',
   triggerService: 'orbitpm:triggerService',
+  triggerServiceEn: 'orbitpm:triggerServiceEn',
+  triggerServiceAr: 'orbitpm:triggerServiceAr',
   triggerDetail: 'orbitpm:triggerDetail',
+  triggerDetailEn: 'orbitpm:triggerDetailEn',
+  triggerDetailAr: 'orbitpm:triggerDetailAr',
   triggers: 'orbitpm:triggers',
+  triggersEn: 'orbitpm:triggersEn',
+  triggersAr: 'orbitpm:triggersAr',
   nameEn: 'orbitpm:nameEn',
   nameAr: 'orbitpm:nameAr',
   activeLang: 'orbitpm:activeLang',
   inputs: 'orbitpm:inputs',
+  inputsEn: 'orbitpm:inputsEn',
+  inputsAr: 'orbitpm:inputsAr',
   outputs: 'orbitpm:outputs',
+  outputsEn: 'orbitpm:outputsEn',
+  outputsAr: 'orbitpm:outputsAr',
   system: 'orbitpm:system',
+  systemEn: 'orbitpm:systemEn',
+  systemAr: 'orbitpm:systemAr',
   respList: 'orbitpm:respList',
+  respListEn: 'orbitpm:respListEn',
+  respListAr: 'orbitpm:respListAr',
   ccList: 'orbitpm:ccList',
-  decisionBasis: 'orbitpm:decisionBasis'
+  ccListEn: 'orbitpm:ccListEn',
+  ccListAr: 'orbitpm:ccListAr',
+  decisionBasis: 'orbitpm:decisionBasis',
+  decisionBasisEn: 'orbitpm:decisionBasisEn',
+  decisionBasisAr: 'orbitpm:decisionBasisAr',
+  notes: 'orbitpm:notes',
+  notesEn: 'orbitpm:notesEn',
+  notesAr: 'orbitpm:notesAr'
 }
 
 const ORG_KEYS = Object.keys(PROP_TO_ATTR) as Array<keyof OrgProps>
+
+export type OrgProjectionLanguage = 'en' | 'ar'
+
+/**
+ * Unsuffixed organizational fields whose values are the active-language
+ * projection. `ownerType`, `channel`, `kind`, `trigger`, and `activeLang` are
+ * categorical/code fields and deliberately remain unsuffixed.
+ */
+export const PAIRED_ORG_PROJECTION_FIELDS = [
+  { projection: 'owner', en: 'ownerEn', ar: 'ownerAr' },
+  { projection: 'department', en: 'departmentEn', ar: 'departmentAr' },
+  { projection: 'ownerRole', en: 'ownerRoleEn', ar: 'ownerRoleAr' },
+  { projection: 'channelDetail', en: 'channelDetailEn', ar: 'channelDetailAr' },
+  { projection: 'ccTo', en: 'ccToEn', ar: 'ccToAr' },
+  { projection: 'triggerService', en: 'triggerServiceEn', ar: 'triggerServiceAr' },
+  { projection: 'triggerDetail', en: 'triggerDetailEn', ar: 'triggerDetailAr' },
+  { projection: 'triggers', en: 'triggersEn', ar: 'triggersAr' },
+  { projection: 'inputs', en: 'inputsEn', ar: 'inputsAr' },
+  { projection: 'outputs', en: 'outputsEn', ar: 'outputsAr' },
+  { projection: 'system', en: 'systemEn', ar: 'systemAr' },
+  { projection: 'respList', en: 'respListEn', ar: 'respListAr' },
+  { projection: 'ccList', en: 'ccListEn', ar: 'ccListAr' },
+  { projection: 'decisionBasis', en: 'decisionBasisEn', ar: 'decisionBasisAr' },
+  { projection: 'notes', en: 'notesEn', ar: 'notesAr' }
+] as const satisfies ReadonlyArray<{
+  projection: keyof OrgProps
+  en: keyof OrgProps
+  ar: keyof OrgProps
+}>
+
+/**
+ * Merge edited legacy projections into a complete org-property bag.
+ *
+ * Every edited unsuffixed translatable field is copied to the active
+ * language's paired attribute. The opposite-language value and all recognized
+ * fields not present in `editedProjection` are retained from `current`.
+ * Explicit code/categorical edits are merged only under their unsuffixed key.
+ *
+ * Callers pass the returned COMPLETE bag to `setOrgProps`; unknown/future
+ * attributes remain untouched because `setOrgProps` only addresses the known
+ * contract names.
+ */
+export function mergeActiveLanguageOrgProps(
+  current: Readonly<OrgProps>,
+  editedProjection: Readonly<Partial<OrgProps>>,
+  activeLanguage: OrgProjectionLanguage
+): OrgProps {
+  const merged: OrgProps = { ...current, ...editedProjection }
+  for (const field of PAIRED_ORG_PROJECTION_FIELDS) {
+    if (!Object.prototype.hasOwnProperty.call(editedProjection, field.projection)) continue
+    const activeKey = activeLanguage === 'ar' ? field.ar : field.en
+    merged[activeKey] = editedProjection[field.projection]
+  }
+  return merged
+}
 
 // --- multi-value ('\n'-joined) attribute helpers ----------------------------
 
@@ -166,8 +286,7 @@ const TRIGGER_TYPE_SET: ReadonlySet<string> = new Set(TRIGGER_TYPES)
 
 function parseTriggerLine(line: string): TriggerEntry | null {
   const firstSeparator = line.indexOf(TRIGGER_SEPARATOR)
-  const type =
-    firstSeparator === -1 ? line.trim() : line.slice(0, firstSeparator).trim()
+  const type = firstSeparator === -1 ? line.trim() : line.slice(0, firstSeparator).trim()
   if (!TRIGGER_TYPE_SET.has(type)) return null
 
   if (firstSeparator === -1) return { type, service: '', detail: '' }
@@ -322,7 +441,9 @@ export function setOrgProps(modeler: OrgModeler, element: unknown, patch: OrgPro
  * Returns the canvas root when it is a `bpmn:Process`, otherwise (a
  * collaboration) the first participant's `processRef`.
  */
-export function getProcessElement(modeler: OrgModeler): OrgElementLike | BusinessObjectLike | undefined {
+export function getProcessElement(
+  modeler: OrgModeler
+): OrgElementLike | BusinessObjectLike | undefined {
   const root = modeler.get('canvas').getRootElement()
   if (!root) return undefined
   const bo = root.businessObject
@@ -337,7 +458,9 @@ export function getProcessElement(modeler: OrgModeler): OrgElementLike | Busines
 }
 
 /** Normalise whatever getProcessElement returns down to a business object. */
-function toBusinessObject(el: OrgElementLike | BusinessObjectLike | undefined): BusinessObjectLike | undefined {
+function toBusinessObject(
+  el: OrgElementLike | BusinessObjectLike | undefined
+): BusinessObjectLike | undefined {
   if (!el) return undefined
   const maybeElement = el as OrgElementLike
   if (maybeElement.businessObject) return maybeElement.businessObject
@@ -421,15 +544,41 @@ export function getLinkedNote(
 /**
  * Create / update / delete the note linked to a flow node. Non-empty text
  * updates an existing annotation or creates a new one (positioned up-and-right
- * of the shape and joined with an Association). Empty text removes an existing
- * annotation and is a no-op when there is none.
+ * of the shape and joined with an Association). In paired mode, empty text
+ * clears only the active language and projects a retained opposite-language
+ * value; the annotation is removed only when both sides are empty. Legacy
+ * unpaired calls retain the original remove-on-empty behavior.
  */
-export function setStepNote(modeler: OrgModeler, element: OrgElementLike, text: string): void {
+export function setStepNote(
+  modeler: OrgModeler,
+  element: OrgElementLike,
+  text: string,
+  activeLanguage?: OrgProjectionLanguage
+): void {
   const modeling = modeler.get('modeling')
   const existing = findLinkedAnnotation(modeler, element)
   if (existing) {
-    if (text) modeling.updateProperties(existing, { text })
-    else modeling.removeElements([existing])
+    if (text) {
+      const properties: Record<string, string | undefined> = { text }
+      if (activeLanguage) {
+        properties[activeLanguage === 'ar' ? 'orbitpm:nameAr' : 'orbitpm:nameEn'] = text
+      }
+      modeling.updateProperties(existing, properties)
+    } else if (activeLanguage) {
+      const current = getOrgProps(existing)
+      const activeKey = activeLanguage === 'ar' ? 'nameAr' : 'nameEn'
+      const opposite = activeLanguage === 'ar' ? current.nameEn : current.nameAr
+      if (opposite?.trim()) {
+        modeling.updateProperties(existing, {
+          text: opposite,
+          [PROP_TO_ATTR[activeKey]]: undefined
+        })
+      } else {
+        modeling.removeElements([existing])
+      }
+    } else {
+      modeling.removeElements([existing])
+    }
     return
   }
   if (!text) return
@@ -441,7 +590,11 @@ export function setStepNote(modeler: OrgModeler, element: OrgElementLike, text: 
     { x, y, width: 140, height: 60 },
     root
   )
-  modeling.updateProperties(annotation, { text })
+  const properties: Record<string, string> = { text }
+  if (activeLanguage) {
+    properties[activeLanguage === 'ar' ? 'orbitpm:nameAr' : 'orbitpm:nameEn'] = text
+  }
+  modeling.updateProperties(annotation, properties)
   modeling.connect(element, annotation, { type: 'bpmn:Association' })
 }
 

@@ -2,6 +2,7 @@ import { getDiagramLang, type DiagramLang, type LangToggleModeler } from './lang
 import {
   getLinkedNote,
   getOrgProps,
+  mergeActiveLanguageOrgProps,
   parseTriggers,
   serializeTriggers,
   setOrgProps,
@@ -258,29 +259,38 @@ export function applyProcessOutlineNodeMetadata(
   metadata: ProcessOutlineNodeMetadata
 ): void {
   const orgModeler = modeler as unknown as OrgModeler
+  const activeLanguage = getProcessOutlineActiveLanguage(modeler)
   const current = getOrgProps(element)
-  setOrgProps(orgModeler, element, {
-    ...current,
-    owner: metadata.owner,
-    ownerType: metadata.ownerType,
-    ownerRole: metadata.ownerRole,
-    channel: metadata.channel,
-    channelDetail: metadata.channelDetail,
-    kind: metadata.cc ? 'cc' : current.kind === 'cc' ? undefined : current.kind,
-    ccTo: metadata.ccTo,
-    ...serializeTriggers(metadata.triggers),
-    nameEn: metadata.nameEn,
-    nameAr: metadata.nameAr,
-    inputs: metadata.inputs,
-    outputs: metadata.outputs,
-    system: metadata.system,
-    respList: metadata.respList,
-    ccList: metadata.ccList,
-    decisionBasis: metadata.decisionBasis
-  })
+  const triggerProjection = serializeTriggers(metadata.triggers)
+  setOrgProps(
+    orgModeler,
+    element,
+    mergeActiveLanguageOrgProps(
+      current,
+      {
+        owner: metadata.owner,
+        ownerType: metadata.ownerType,
+        ownerRole: metadata.ownerRole,
+        channel: metadata.channel,
+        channelDetail: metadata.channelDetail,
+        kind: metadata.cc ? 'cc' : current.kind === 'cc' ? undefined : current.kind,
+        ccTo: metadata.ccTo,
+        ...triggerProjection,
+        nameEn: metadata.nameEn,
+        nameAr: metadata.nameAr,
+        inputs: metadata.inputs,
+        outputs: metadata.outputs,
+        system: metadata.system,
+        respList: metadata.respList,
+        ccList: metadata.ccList,
+        decisionBasis: metadata.decisionBasis
+      },
+      activeLanguage
+    )
+  )
 
   if ((getLinkedNote(orgModeler, element)?.text ?? '') !== metadata.note) {
-    setStepNote(orgModeler, element, metadata.note)
+    setStepNote(orgModeler, element, metadata.note, activeLanguage)
   }
 }
 
