@@ -1,6 +1,12 @@
 import { createHash } from 'node:crypto'
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
+import {
+  BPMN_JS_LICENSE,
+  lockedPackageKey,
+  normalizeNoticeText,
+  reviewedLicenseOverrides
+} from './license-policy-data.mjs'
 
 const manifest = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'))
 const lock = JSON.parse(readFileSync(new URL('../package-lock.json', import.meta.url), 'utf8'))
@@ -15,12 +21,6 @@ if (outputIndex !== -1 && !process.argv[outputIndex + 1]) {
   console.error('--output requires a path')
   process.exit(1)
 }
-
-const licenseOverrides = new Map([
-  ['bpmn-js', 'MIT'],
-  ['cli-table', 'MIT'],
-  ['rgbcolor', 'MIT']
-])
 
 function nameFromInstallPath(installPath) {
   return installPath.slice(installPath.lastIndexOf('node_modules/') + 'node_modules/'.length)
@@ -92,9 +92,14 @@ for (const [installPath, record] of productionEntries) {
 }
 
 const rootRef = purlFor(manifest.name, manifest.version)
+const bpmnLicenseText = normalizeNoticeText(
+  readFileSync(resolve('node_modules/bpmn-js', BPMN_JS_LICENSE.noticeFile), 'utf8')
+)
 const components = [...productionEntries].map(([installPath, record]) => {
   const name = record.name ?? nameFromInstallPath(installPath)
-  const declaredLicense = licenseOverrides.get(name) ?? String(record.license ?? 'UNKNOWN')
+  const packageKey = lockedPackageKey(name, record.version)
+  const declaredLicense =
+    reviewedLicenseOverrides.get(packageKey) ?? String(record.license ?? 'UNKNOWN')
   const hash = integrityHash(record.integrity)
   const spdxLike = /^[A-Za-z0-9-.+()\s]+(?:\s(?:AND|OR|WITH)\s[A-Za-z0-9-.+()\s]+)*$/.test(
     declaredLicense
@@ -104,9 +109,19 @@ const components = [...productionEntries].map(([installPath, record]) => {
     'bom-ref': references.get(installPath),
     name,
     version: record.version,
-    licenses: spdxLike
-      ? [{ expression: declaredLicense }]
-      : [{ license: { name: declaredLicense } }],
+    licenses:
+      packageKey === BPMN_JS_LICENSE.packageKey
+        ? [
+            {
+              license: {
+                name: BPMN_JS_LICENSE.classification,
+                text: { contentType: 'text/plain', content: bpmnLicenseText }
+              }
+            }
+          ]
+        : spdxLike
+          ? [{ expression: declaredLicense }]
+          : [{ license: { name: declaredLicense } }],
     purl: purlFor(name, record.version),
     hashes: hash ? [hash] : undefined,
     properties: [
@@ -177,6 +192,16 @@ if (bom.bomFormat !== 'CycloneDX' || bom.specVersion !== '1.6') {
 if (!components.length) failures.push('SBOM contains no production components')
 if (new Set(components.map((component) => component['bom-ref'])).size !== components.length) {
   failures.push('SBOM component bom-ref values are not unique')
+}
+const bpmnComponent = components.find(
+  ({ name, version }) => `${name}@${version}` === BPMN_JS_LICENSE.packageKey
+)
+const bpmnComponentLicense = bpmnComponent?.licenses?.[0]?.license
+if (
+  bpmnComponentLicense?.name !== BPMN_JS_LICENSE.classification ||
+  bpmnComponentLicense?.text?.content !== bpmnLicenseText
+) {
+  failures.push('SBOM does not preserve the reviewed bpmn-js license classification and text')
 }
 const knownRefs = new Set([rootRef, ...components.map((component) => component['bom-ref'])])
 for (const dependency of dependencies) {

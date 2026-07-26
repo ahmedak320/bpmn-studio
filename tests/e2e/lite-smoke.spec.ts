@@ -44,6 +44,54 @@ async function forceFallbackMode(page: import('@playwright/test').Page): Promise
   })
 }
 
+async function expectBpmnAttributionUnobscured(
+  page: import('@playwright/test').Page,
+  label: string
+): Promise<void> {
+  const attribution = page.locator('a.bjs-powered-by').first()
+  await expect(attribution, `${label}: powered-by link must remain visible`).toBeVisible()
+  await expect(attribution).toHaveAttribute('href', 'http://bpmn.io')
+  const attributionBox = await attribution.boundingBox()
+  expect(attributionBox?.width, `${label}: attribution must have rendered width`).toBeGreaterThan(0)
+  expect(attributionBox?.height, `${label}: attribution must have rendered height`).toBeGreaterThan(
+    0
+  )
+  const attributionVisibility = await attribution.evaluate((element) => {
+    const computed = getComputedStyle(element)
+    const rect = element.getBoundingClientRect()
+    const inset = Math.min(2, rect.width / 4, rect.height / 4)
+    const points = [
+      [rect.left + rect.width / 2, rect.top + rect.height / 2],
+      [rect.left + inset, rect.top + inset],
+      [rect.right - inset, rect.top + inset],
+      [rect.left + inset, rect.bottom - inset],
+      [rect.right - inset, rect.bottom - inset]
+    ]
+    return {
+      rendered:
+        computed.display !== 'none' &&
+        computed.visibility !== 'hidden' &&
+        Number(computed.opacity) > 0,
+      insideViewport:
+        rect.left >= 0 &&
+        rect.top >= 0 &&
+        rect.right <= window.innerWidth &&
+        rect.bottom <= window.innerHeight,
+      unobscured: points.every(([x, y]) => {
+        const topmost = document.elementFromPoint(x, y)
+        return topmost === element || (topmost !== null && element.contains(topmost))
+      })
+    }
+  })
+  expect(attributionVisibility.rendered, `${label}: attribution must be rendered`).toBe(true)
+  expect(attributionVisibility.insideViewport, `${label}: attribution must be fully visible`).toBe(
+    true
+  )
+  expect(attributionVisibility.unobscured, `${label}: attribution must not be overlapped`).toBe(
+    true
+  )
+}
+
 /** Opening a diagram auto-collapses the left sidebar (which now holds the AI
  *  generator). Restore it via the rail, then expand the AI section if a stored
  *  pref left it collapsed, so the AI form body is on screen. */
@@ -82,6 +130,14 @@ test('loads self-contained, renders bpmn-js, and exports SVG (fallback mode)', a
   const canvas = page.locator('.djs-container > svg').first()
   await expect(canvas).toBeVisible({ timeout: 20_000 })
 
+  await expectBpmnAttributionUnobscured(page, 'assistant closed')
+  await page.getByRole('button', { name: 'Ask the process assistant', exact: true }).click()
+  await expect(
+    page.getByRole('complementary', { name: 'Process assistant', exact: true })
+  ).toBeVisible()
+  await expectBpmnAttributionUnobscured(page, 'assistant open')
+  await page.getByRole('button', { name: 'Close assistant', exact: true }).click()
+
   // The blank template has a start event (rendered as an SVG <circle>) plus its
   // label — at least one diagram shape element must be present.
   await expect(page.locator('.djs-element').first()).toBeVisible({ timeout: 20_000 })
@@ -102,6 +158,36 @@ test('loads self-contained, renders bpmn-js, and exports SVG (fallback mode)', a
 
   // 6) Still no stray network requests after interacting.
   expect(offending, `unexpected requests after interaction: ${offending.join(', ')}`).toEqual([])
+})
+
+test('keeps bpmn.io attribution visible and unobscured across responsive and RTL states', async ({
+  page
+}) => {
+  const variants = [
+    { name: 'desktop-ltr', language: 'en', viewport: { width: 1280, height: 720 } },
+    { name: 'mobile-ltr', language: 'en', viewport: { width: 390, height: 844 } },
+    { name: 'mobile-rtl', language: 'ar', viewport: { width: 390, height: 844 } }
+  ]
+
+  for (const variant of variants) {
+    await page.setViewportSize(variant.viewport)
+    await forceFallbackMode(page)
+    await page.goto(FILE_URL, { waitUntil: 'load' })
+    await page.evaluate((language) => {
+      localStorage.setItem('orbitpm.lite.lang', language)
+    }, variant.language)
+    await page.reload({ waitUntil: 'load' })
+    const blankName = variant.language === 'ar' ? 'مخطط فارغ جديد' : 'New blank diagram'
+    await page.getByRole('button', { name: blankName, exact: true }).click()
+    await expect(page.locator('.djs-container > svg').first()).toBeVisible({ timeout: 20_000 })
+
+    await expectBpmnAttributionUnobscured(page, `${variant.name}/assistant-closed`)
+    const openName = variant.language === 'ar' ? 'اسأل مساعد العمليات' : 'Ask the process assistant'
+    const drawerName = variant.language === 'ar' ? 'مساعد العمليات' : 'Process assistant'
+    await page.getByRole('button', { name: openName, exact: true }).click()
+    await expect(page.getByRole('complementary', { name: drawerName, exact: true })).toBeVisible()
+    await expectBpmnAttributionUnobscured(page, `${variant.name}/assistant-open`)
+  }
 })
 
 test('New process flow (fallback): modal → full palette → add a task → undo → export', async ({

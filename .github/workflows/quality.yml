@@ -60,6 +60,9 @@ jobs:
       - name: CSP egress allowlist
         run: npm run check:csp
 
+      - name: bpmn.io license attribution source policy
+        run: npm run check:attribution
+
       - name: Dependency audit
         run: |
           npm audit --audit-level=low
@@ -220,6 +223,9 @@ jobs:
 
       - name: Built-artifact CSP egress allowlist
         run: npm run check:csp -- dist/index.html
+
+      - name: Built-artifact bpmn.io attribution
+        run: npm run check:attribution -- dist/index.html
 
       - name: Upload exact tested artifact
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02

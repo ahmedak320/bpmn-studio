@@ -30,6 +30,7 @@
     "check:lite-only": "node scripts/check-lite-only.mjs",
     "check:no-skips": "node scripts/check-no-skips.mjs",
     "check:csp": "node scripts/check-csp.mjs",
+    "check:attribution": "node scripts/check-bpmn-attribution.mjs",
     "check:size": "node scripts/check-artifact-size.mjs",
     "license:check": "node scripts/license-policy.mjs",
     "sbom": "node scripts/generate-sbom.mjs",

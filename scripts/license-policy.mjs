@@ -1,15 +1,18 @@
 import { createHash } from 'node:crypto'
 import { existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
+import {
+  BPMN_JS_LICENSE,
+  lockedPackageKey,
+  normalizeNoticeText,
+  noticeFilePattern,
+  requiredShippedNoticeFiles,
+  reviewedLicenseOverrides
+} from './license-policy-data.mjs'
 
 const manifest = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'))
 const lock = JSON.parse(readFileSync(new URL('../package-lock.json', import.meta.url), 'utf8'))
 
-const licenseOverrides = new Map([
-  ['bpmn-js', 'MIT'],
-  ['cli-table', 'MIT'],
-  ['rgbcolor', 'MIT']
-])
 const denied = /\b(?:AGPL|GPL|LGPL|SSPL|BUSL|UNLICENSED|PROPRIETARY)\b/i
 const reviewedLicenseExpressions = new Set([
   '0BSD',
@@ -22,6 +25,7 @@ const reviewedLicenseExpressions = new Set([
   'CC-BY-4.0',
   'CC0-1.0',
   'ISC',
+  BPMN_JS_LICENSE.classification,
   'MIT',
   'MPL-2.0',
   'Python-2.0',
@@ -31,8 +35,6 @@ const reviewedLicenseExpressions = new Set([
   '(MIT AND Zlib)',
   '(MPL-2.0 OR Apache-2.0)'
 ])
-const noticeFilePattern = /^(?:licen[cs]e|copying|notice|copyright|authors)(?:[._-].*)?$/i
-
 function mitLicense(copyright) {
   return `${copyright}
 
@@ -57,7 +59,7 @@ SOFTWARE.`
 
 const reviewedNoticeFallbacks = new Map([
   [
-    '@ai-sdk/provider-utils',
+    '@ai-sdk/provider-utils@5.0.12',
     () => [
       {
         source: 'reviewed Vercel AI SDK monorepo license (node_modules/ai/LICENSE)',
@@ -66,7 +68,7 @@ const reviewedNoticeFallbacks = new Map([
     ]
   ],
   [
-    '@bpmn-io/semver-compat',
+    '@bpmn-io/semver-compat@0.1.0',
     () => [
       {
         source: 'reviewed package metadata/README fallback',
@@ -75,20 +77,11 @@ const reviewedNoticeFallbacks = new Map([
     ]
   ],
   [
-    'bpmn-auto-layout',
+    'bpmn-auto-layout@0.4.0',
     () => [
       {
         source: 'reviewed package metadata/README fallback',
         text: mitLicense('Copyright (c) bpmn.io contributors')
-      }
-    ]
-  ],
-  [
-    'colors',
-    () => [
-      {
-        source: 'reviewed package metadata fallback',
-        text: mitLicense('Copyright (c) Marak Squires')
       }
     ]
   ]
@@ -105,13 +98,14 @@ const fallbackPackages = new Set()
 for (const [installPath, record] of Object.entries(lock.packages)) {
   if (!installPath || record.dev || record.link) continue
   const name = record.name ?? packageNameFromPath(installPath)
-  const declared = String(record.license ?? '').trim()
-  const license = licenseOverrides.get(name) ?? declared
 
   if (!record.version) {
     failures.push(`${name}: missing locked version`)
     continue
   }
+  const packageKey = lockedPackageKey(name, record.version)
+  const declared = String(record.license ?? '').trim()
+  const license = reviewedLicenseOverrides.get(packageKey) ?? declared
   if (!license) {
     failures.push(`${name}@${record.version}: missing license metadata and no reviewed override`)
     continue
@@ -138,8 +132,17 @@ for (const [installPath, record] of Object.entries(lock.packages)) {
         text: readFileSync(resolve(packageDirectory, fileName), 'utf8')
       }))
   }
+  const requiredNoticeFile = requiredShippedNoticeFiles.get(packageKey)
+  if (
+    requiredNoticeFile &&
+    !notices.some(({ source }) => source === `${installPath}/${requiredNoticeFile}`)
+  ) {
+    failures.push(
+      `${packageId}: required shipped notice ${requiredNoticeFile} was not preserved verbatim`
+    )
+  }
   if (!notices.length) {
-    notices = reviewedNoticeFallbacks.get(name)?.() ?? []
+    notices = reviewedNoticeFallbacks.get(packageKey)?.() ?? []
     if (notices.length) fallbackPackages.add(packageId)
   }
   if (!notices.length) {
@@ -148,10 +151,7 @@ for (const [installPath, record] of Object.entries(lock.packages)) {
   }
 
   for (const notice of notices) {
-    const normalized = notice.text
-      .replace(/^\uFEFF/, '')
-      .replace(/\r\n?/g, '\n')
-      .trimEnd()
+    const normalized = normalizeNoticeText(notice.text)
     if (!normalized || normalized.includes('\0')) {
       failures.push(`${packageId}: invalid text in ${notice.source}`)
       continue
@@ -204,9 +204,10 @@ if (reportIndex !== -1) {
     '',
     `OrbitPM Process Studio Lite ${manifest.version} includes the production dependencies listed below.`,
     'Each component remains subject to its own license. Versions and licenses are derived from',
-    'the exact release package lock. Reviewed overrides are limited to packages whose published',
-    'license file is MIT but whose npm metadata is missing or does not name an unambiguous SPDX',
-    'choice. The deduplicated verbatim LICENSE, NOTICE, COPYING, COPYRIGHT, and AUTHORS texts',
+    'the exact release package lock. Reviewed classifications and fallbacks are pinned to exact',
+    `package versions; ${BPMN_JS_LICENSE.classification} denotes the additional watermark condition`,
+    'in the shipped bpmn-js license. The deduplicated verbatim LICENSE, NOTICE, COPYING, COPYRIGHT,',
+    'and AUTHORS texts',
     `shipped by those packages follow the inventory; ${fallbackPackages.size} reviewed npm package(s) that omit`,
     'the text use the explicitly identified upstream/metadata fallback shown below.',
     '',
