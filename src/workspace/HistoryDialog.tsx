@@ -3,6 +3,7 @@ import { AccessibleDialog } from '../common/AccessibleDialog'
 import { TextInputModal } from '../common/prompt/TextInputModal'
 import { t } from '../i18n'
 import type { RestoreHistoryRevisionResult } from '../sessions/historyRestore'
+import { normalizeWorkspacePath } from './adapters'
 import {
   type HistoryDiff,
   type HistoryPreview,
@@ -34,8 +35,34 @@ interface RestoreCopyRequest {
   destination: string
 }
 
+type RestoreCopyDestination = { ok: true; path: string } | { ok: false; error: string }
+
+function invalidRestoreCopyDestination(destination: string): RestoreCopyDestination {
+  return {
+    ok: false,
+    error: t('workspace.history.copyDestinationInvalid', { destination })
+  }
+}
+
 function errorMessage(cause: unknown): string {
   return cause instanceof Error ? cause.message : String(cause)
+}
+
+function validateRestoreCopyDestination(destination: string): RestoreCopyDestination {
+  const trimmed = destination.trim()
+  if (!trimmed) {
+    return {
+      ok: false,
+      error: t('workspace.history.copyDestinationRequired')
+    }
+  }
+  try {
+    const path = normalizeWorkspacePath(trimmed)
+    if (!/\.bpmn$/iu.test(path)) return invalidRestoreCopyDestination(trimmed)
+    return { ok: true, path }
+  } catch {
+    return invalidRestoreCopyDestination(trimmed)
+  }
 }
 
 export function HistoryDialog({
@@ -96,7 +123,9 @@ export function HistoryDialog({
       const refreshError = await refreshAfterCommittedRestore()
       if (refreshError !== null) {
         throw new Error(
-          `The revision was restored in storage, but the workspace could not be refreshed: ${errorMessage(refreshError)}`
+          t('workspace.history.restoreWorkspaceRefreshFailed', {
+            error: errorMessage(refreshError)
+          })
         )
       }
       return
@@ -109,18 +138,31 @@ export function HistoryDialog({
         .filter((message, index, messages) => messages.indexOf(message) === index)
         .join(' ')
       throw new Error(
-        `The revision was restored in storage, but the open session could not be refreshed.${details ? ` ${details}` : ''}`
+        t('workspace.history.restoreSessionRefreshFailed', {
+          error: details || t('workspace.history.unknownError')
+        })
       )
     }
     if (result.status === 'failed') {
-      throw result.error instanceof Error ? result.error : new Error(errorMessage(result.error))
+      throw new Error(
+        t('workspace.history.restoreFailed', {
+          error: errorMessage(result.error)
+        })
+      )
     }
     throw new Error(
-      `Restore did not complete (${result.outcome.status}${
-        result.outcome.status === 'external-conflict' ? `: ${result.outcome.reason}` : ''
-      }).`
+      t('workspace.history.restoreNotComplete', {
+        outcome:
+          result.outcome.status === 'external-conflict'
+            ? `${result.outcome.status}: ${result.outcome.reason}`
+            : result.outcome.status
+      })
     )
   }
+
+  const restoreCopyDestination = restoreCopy
+    ? validateRestoreCopyDestination(restoreCopy.destination)
+    : null
 
   return (
     <AccessibleDialog
@@ -327,17 +369,33 @@ export function HistoryDialog({
         }
         okLabel={t('workspace.history.restoreCopy')}
         cancelLabel={t('modal.cancel')}
+        hint={
+          restoreCopyDestination && !restoreCopyDestination.ok
+            ? restoreCopyDestination.error
+            : undefined
+        }
         onOk={() => {
-          if (!restoreCopy) return
+          if (!restoreCopy || !restoreCopyDestination?.ok) return
           const request = restoreCopy
+          const destination = restoreCopyDestination.path
           setRestoreCopy(null)
           void run(async () => {
-            const outcome = await manager.restoreAsCopy(
-              request.revision,
-              request.destination.trim()
-            )
+            let outcome: Awaited<ReturnType<PortableHistoryManager['restoreAsCopy']>>
+            try {
+              outcome = await manager.restoreAsCopy(request.revision, destination)
+            } catch (cause) {
+              throw new Error(
+                t('workspace.history.copyFailed', {
+                  outcome: errorMessage(cause)
+                })
+              )
+            }
             if (outcome.status !== 'success') {
-              throw new Error(`Restore did not complete (${outcome.status}).`)
+              throw new Error(
+                t('workspace.history.copyFailed', {
+                  outcome: outcome.status
+                })
+              )
             }
             await onChanged()
           })

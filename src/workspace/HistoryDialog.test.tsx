@@ -8,7 +8,8 @@ import type { HistoryRevision } from './history/types'
 import { HistoryDialog, type HistoryDialogRestoreResult } from './HistoryDialog'
 
 vi.mock('../i18n', () => ({
-  t: (key: string): string => key
+  t: (key: string, vars?: Record<string, string | number>): string =>
+    vars ? `${key} ${Object.values(vars).join(' ')}` : key
 }))
 
 afterEach(() => {
@@ -127,7 +128,7 @@ describe('HistoryDialog restore integration', () => {
     await user.click(await screen.findByRole('button', { name: 'workspace.history.restore' }))
 
     const alert = await screen.findByRole('alert')
-    expect(alert.textContent).toContain('restored in storage')
+    expect(alert.textContent).toContain('workspace.history.restoreSessionRefreshFailed')
     expect(alert.textContent).toContain('modeler rejected restored XML')
     expect(onChanged).toHaveBeenCalledOnce()
     expect(listRevisions).toHaveBeenCalledTimes(2)
@@ -152,9 +153,9 @@ describe('HistoryDialog restore integration', () => {
 
     await user.click(await screen.findByRole('button', { name: 'workspace.history.restore' }))
 
-    expect((await screen.findByRole('alert')).textContent).toContain(
-      'external-conflict: hash-mismatch'
-    )
+    const alert = await screen.findByRole('alert')
+    expect(alert.textContent).toContain('workspace.history.restoreNotComplete')
+    expect(alert.textContent).toContain('external-conflict: hash-mismatch')
     expect(onChanged).not.toHaveBeenCalled()
     expect(listRevisions).toHaveBeenCalledOnce()
   })
@@ -175,11 +176,36 @@ describe('HistoryDialog restore integration', () => {
     }) as HTMLInputElement
     expect(input.value).toBe('process-restored.bpmn')
     await user.clear(input)
+    expect(within(dialog).getByText('workspace.history.copyDestinationRequired')).not.toBeNull()
+    await user.type(input, '../outside.bpmn')
+    expect(
+      within(dialog).getByText('workspace.history.copyDestinationInvalid ../outside.bpmn')
+    ).not.toBeNull()
+    await user.click(within(dialog).getByRole('button', { name: 'workspace.history.restoreCopy' }))
+    expect(restoreAsCopy).not.toHaveBeenCalled()
+    await user.clear(input)
     await user.type(input, 'copies/process.bpmn')
     await user.click(within(dialog).getByRole('button', { name: 'workspace.history.restoreCopy' }))
 
     await waitFor(() => expect(restoreAsCopy).toHaveBeenCalledWith(revision, 'copies/process.bpmn'))
     expect(onChanged).toHaveBeenCalledOnce()
     expect(prompt).not.toHaveBeenCalled()
+  })
+
+  it('localizes restore-as-copy storage failures', async () => {
+    const user = userEvent.setup()
+    const { manager, restoreAsCopy } = managerFixture()
+    restoreAsCopy.mockRejectedValueOnce(new Error('disk full'))
+    renderHistory(manager)
+
+    await user.click(await screen.findByRole('button', { name: 'workspace.history.restoreCopy' }))
+    const dialog = screen.getByRole('dialog', {
+      name: 'workspace.history.restoreCopy'
+    })
+    await user.click(within(dialog).getByRole('button', { name: 'workspace.history.restoreCopy' }))
+
+    const alert = await screen.findByRole('alert')
+    expect(alert.textContent).toContain('workspace.history.copyFailed')
+    expect(alert.textContent).toContain('disk full')
   })
 })

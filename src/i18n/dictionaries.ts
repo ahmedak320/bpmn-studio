@@ -922,7 +922,54 @@ export const en = {
   'workspace.history.restoreCopy': 'Restore as a copy',
   'workspace.history.empty': 'No recovery revisions are available for this file.',
   'workspace.history.copyPrompt': 'File name for the restored copy',
+  'workspace.history.copyDestinationRequired': 'Enter a destination for the restored copy.',
+  'workspace.history.copyDestinationInvalid':
+    '“{destination}” is not a valid relative BPMN file path. Use a file name ending in .bpmn.',
+  'workspace.history.copyFailed': 'Restore-as-copy did not complete ({outcome}).',
+  'workspace.history.restoreFailed': 'History restore failed: {error}',
+  'workspace.history.restoreNotComplete': 'Restore did not complete ({outcome}).',
+  'workspace.history.restoreWorkspaceRefreshFailed':
+    'The revision was restored in storage, but the workspace could not be refreshed: {error}',
+  'workspace.history.restoreSessionRefreshFailed':
+    'The revision was restored in storage, but the open session could not be refreshed: {error}',
+  'workspace.history.unknownError': 'No additional error details were provided.',
+  'workspace.history.unavailable':
+    'History restore is unavailable because the workspace session is no longer active.',
   'workspace.history.current': 'Current file',
+  'workspace.manifest.warning': 'Workspace manifest warning at “{path}”: {error}',
+  'workspace.manifest.postCommitError':
+    'Your change was saved, but the workspace manifest could not be updated: {error}',
+  'workspace.manifest.repaired': 'Workspace manifest repaired.',
+  'workspace.manifest.retryFailed': 'Workspace manifest repair failed: {error}',
+  'workspace.manifest.retryTitle': 'Repair workspace manifest?',
+  'workspace.manifest.retryMessage':
+    'Your files are saved, but workspace metadata is out of date: {error}',
+  'workspace.manifest.retryAction': 'Retry repair',
+  'workspace.path.finalizeWarning':
+    'The change to “{path}” was committed, but cleanup could not finish. Recovery data was kept: {error}',
+  'workspace.path.dirtyTitle': 'Unsaved changes in affected documents',
+  'workspace.path.dirtyMessage':
+    '{operation} “{path}” affects {count} unsaved documents. Save them before continuing, continue without saving, or cancel.',
+  'workspace.path.operation.rename': 'Renaming',
+  'workspace.path.operation.move': 'Moving',
+  'workspace.path.operation.delete': 'Deleting',
+  'workspace.path.saveContinue': 'Save and continue',
+  'workspace.path.continueWithoutSaving': 'Continue without saving',
+  'workspace.path.cancel': 'Cancel',
+  'workspace.path.recoveryTitle': 'Finish committed change cleanup',
+  'workspace.path.recoveryMessage':
+    'The change to “{path}” was committed, but recovery cleanup did not finish: {error}',
+  'workspace.path.recoveryRetry': 'Retry cleanup',
+  'workspace.path.recoveryLater': 'Keep recovery data for later',
+  'workspace.path.recoverySuccess': 'Recovery cleanup completed.',
+  'workspace.path.recoveryFailed': 'Recovery cleanup failed: {error}',
+  'workspace.path.unavailable':
+    'This workspace operation is no longer available because the workspace changed.',
+  'workspace.path.saveFailed': 'Could not save an affected document: {error}',
+  'workspace.path.failed': 'The workspace operation failed: {error}',
+  'workspace.create.stale': 'The workspace changed before the item could be created. Try again.',
+  'workspace.create.failed': 'The item could not be created ({status}).',
+  'workspace.create.noAvailableName': 'No collision-free file name is available.',
   'draftRecovery.title': 'Review recovery draft',
   'draftRecovery.summary':
     'An unsaved draft for “{title}” was found from {timestamp}. Status: {relation}. Nothing will be replaced until you choose.',
@@ -943,12 +990,27 @@ export const en = {
     '“{path}” changed in another OrbitPM tab. Your local draft was kept; review it before saving.',
   'session.save.externalConflict':
     '“{path}” changed outside this tab ({reason}). Saving was stopped and your local draft was kept.',
+  'session.save.reloadEditorFailed':
+    'The disk version was selected, but the live editor could not be refreshed. The session may still show your prior edits; review it before continuing: {error}',
   'session.save.locked':
     'Another OrbitPM tab is saving this file. Wait briefly and try again; your local draft was kept.',
   'session.save.failed': 'Save did not complete ({status}). Your local draft was kept.',
   'session.save.newerEdits': 'The captured version was saved, but newer edits remain unsaved.',
   'session.download.draftRetained':
     'The BPMN download was prepared. The session remains unsaved and its recovery draft was retained until a durable save or explicit discard.',
+  'session.conflict.title': '“{path}” changed on disk',
+  'session.conflict.message':
+    'This file changed outside this tab. Your local edits are still intact. Choose how to resolve the conflict.',
+  'session.conflict.compare': 'Compare versions',
+  'session.conflict.local': 'Your edits',
+  'session.conflict.external': 'Disk version',
+  'session.conflict.externalMissing': 'The file no longer exists on disk.',
+  'session.conflict.reload': 'Reload disk version',
+  'session.conflict.overwrite': 'Overwrite disk version',
+  'session.conflict.saveAs': 'Save as a new file',
+  'session.conflict.saveAsLabel': 'New relative .bpmn path',
+  'session.conflict.invalidDestination': 'Enter a valid relative .bpmn path for Save As.',
+  'session.conflict.cancel': 'Keep editing',
 
   // --- Spreadsheet import ---
   'spreadsheet.tab': 'Excel / CSV',
@@ -2011,7 +2073,51 @@ export const ar: Record<keyof typeof en, string> = {
   'workspace.history.restoreCopy': 'الاستعادة كنسخة',
   'workspace.history.empty': 'لا توجد نسخ استرداد متاحة لهذا الملف.',
   'workspace.history.copyPrompt': 'اسم ملف النسخة المستعادة',
+  'workspace.history.copyDestinationRequired': 'أدخل مسارًا للنسخة المستعادة.',
+  'workspace.history.copyDestinationInvalid':
+    '«{destination}» ليس مسارًا نسبيًا صالحًا لملف BPMN. استخدم اسم ملف ينتهي بـ .bpmn.',
+  'workspace.history.copyFailed': 'لم تكتمل الاستعادة كنسخة ({outcome}).',
+  'workspace.history.restoreFailed': 'فشلت استعادة السجل: {error}',
+  'workspace.history.restoreNotComplete': 'لم تكتمل الاستعادة ({outcome}).',
+  'workspace.history.restoreWorkspaceRefreshFailed':
+    'تمت استعادة النسخة في التخزين، لكن تعذّر تحديث مساحة العمل: {error}',
+  'workspace.history.restoreSessionRefreshFailed':
+    'تمت استعادة النسخة في التخزين، لكن تعذّر تحديث الجلسة المفتوحة: {error}',
+  'workspace.history.unknownError': 'لم تتوفر تفاصيل إضافية عن الخطأ.',
+  'workspace.history.unavailable': 'استعادة السجل غير متاحة لأن جلسة مساحة العمل لم تعد نشطة.',
   'workspace.history.current': 'الملف الحالي',
+  'workspace.manifest.warning': 'تحذير في بيان مساحة العمل عند «{path}»: {error}',
+  'workspace.manifest.postCommitError': 'حُفظ التغيير، لكن تعذّر تحديث بيان مساحة العمل: {error}',
+  'workspace.manifest.repaired': 'تم إصلاح بيان مساحة العمل.',
+  'workspace.manifest.retryFailed': 'تعذّر إصلاح بيان مساحة العمل: {error}',
+  'workspace.manifest.retryTitle': 'هل تريد إصلاح بيان مساحة العمل؟',
+  'workspace.manifest.retryMessage':
+    'ملفاتك محفوظة، لكن البيانات الوصفية لمساحة العمل غير محدّثة: {error}',
+  'workspace.manifest.retryAction': 'إعادة محاولة الإصلاح',
+  'workspace.path.finalizeWarning':
+    'تم تنفيذ التغيير على «{path}»، لكن تعذّر إكمال التنظيف. احتُفظ ببيانات الاسترداد: {error}',
+  'workspace.path.dirtyTitle': 'تغييرات غير محفوظة في المستندات المتأثرة',
+  'workspace.path.dirtyMessage':
+    'تؤثر عملية {operation} على «{path}» في {count} مستندات غير محفوظة. احفظها قبل المتابعة أو تابع دون حفظ أو ألغِ العملية.',
+  'workspace.path.operation.rename': 'إعادة التسمية',
+  'workspace.path.operation.move': 'النقل',
+  'workspace.path.operation.delete': 'الحذف',
+  'workspace.path.saveContinue': 'الحفظ والمتابعة',
+  'workspace.path.continueWithoutSaving': 'المتابعة دون حفظ',
+  'workspace.path.cancel': 'إلغاء',
+  'workspace.path.recoveryTitle': 'إكمال تنظيف التغيير المنفّذ',
+  'workspace.path.recoveryMessage':
+    'تم تنفيذ التغيير على «{path}»، لكن لم يكتمل تنظيف بيانات الاسترداد: {error}',
+  'workspace.path.recoveryRetry': 'إعادة محاولة التنظيف',
+  'workspace.path.recoveryLater': 'الاحتفاظ ببيانات الاسترداد لوقت لاحق',
+  'workspace.path.recoverySuccess': 'اكتمل تنظيف بيانات الاسترداد.',
+  'workspace.path.recoveryFailed': 'تعذّر تنظيف بيانات الاسترداد: {error}',
+  'workspace.path.unavailable': 'لم تعد عملية مساحة العمل هذه متاحة لأن مساحة العمل تغيّرت.',
+  'workspace.path.saveFailed': 'تعذّر حفظ أحد المستندات المتأثرة: {error}',
+  'workspace.path.failed': 'فشلت عملية مساحة العمل: {error}',
+  'workspace.create.stale': 'تغيّرت مساحة العمل قبل إنشاء العنصر. أعد المحاولة.',
+  'workspace.create.failed': 'تعذّر إنشاء العنصر ({status}).',
+  'workspace.create.noAvailableName': 'لا يتوفر اسم ملف خالٍ من التعارض.',
   'draftRecovery.title': 'مراجعة مسودة الاسترداد',
   'draftRecovery.summary':
     'عُثر على مسودة غير محفوظة للملف «{title}» من {timestamp}. الحالة: {relation}. لن يُستبدل أي محتوى قبل اختيارك.',
@@ -2032,12 +2138,27 @@ export const ar: Record<keyof typeof en, string> = {
     'تغيّر «{path}» في علامة تبويب OrbitPM أخرى. احتُفظ بمسودتك المحلية؛ راجعها قبل الحفظ.',
   'session.save.externalConflict':
     'تغيّر «{path}» خارج علامة التبويب هذه ({reason}). أُوقف الحفظ واحتُفظ بمسودتك المحلية.',
+  'session.save.reloadEditorFailed':
+    'تم اختيار نسخة القرص، لكن تعذّر تحديث المحرّر المفتوح. قد تظل الجلسة تعرض تعديلاتك السابقة؛ راجعها قبل المتابعة: {error}',
   'session.save.locked':
     'تحفظ علامة تبويب OrbitPM أخرى هذا الملف. انتظر قليلًا ثم أعد المحاولة؛ احتُفظ بمسودتك المحلية.',
   'session.save.failed': 'لم يكتمل الحفظ ({status}). احتُفظ بمسودتك المحلية.',
   'session.save.newerEdits': 'حُفظت النسخة الملتقطة، لكن ما زالت هناك تعديلات أحدث غير محفوظة.',
   'session.download.draftRetained':
     'جُهّز تنزيل BPMN. ما زالت الجلسة غير محفوظة واحتُفظ بمسودة الاسترداد حتى حفظ دائم أو تجاهل صريح.',
+  'session.conflict.title': 'تغيّر «{path}» على القرص',
+  'session.conflict.message':
+    'تغيّر هذا الملف خارج علامة التبويب. ما زالت تعديلاتك المحلية محفوظة. اختر كيفية حل التعارض.',
+  'session.conflict.compare': 'مقارنة النسختين',
+  'session.conflict.local': 'تعديلاتك',
+  'session.conflict.external': 'نسخة القرص',
+  'session.conflict.externalMissing': 'لم يعد الملف موجودًا على القرص.',
+  'session.conflict.reload': 'تحميل نسخة القرص',
+  'session.conflict.overwrite': 'الكتابة فوق نسخة القرص',
+  'session.conflict.saveAs': 'الحفظ كملف جديد',
+  'session.conflict.saveAsLabel': 'مسار .bpmn نسبي جديد',
+  'session.conflict.invalidDestination': 'أدخل مسار .bpmn نسبيًا صالحًا للحفظ باسم جديد.',
+  'session.conflict.cancel': 'متابعة التحرير',
 
   // --- استيراد جداول البيانات ---
   'spreadsheet.tab': 'Excel / CSV',
