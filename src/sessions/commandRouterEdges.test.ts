@@ -107,12 +107,14 @@ describe('ActiveSessionCommandRouter edge behavior', () => {
     const uninstall = installApplicationShortcuts(target, router)
     expect(target.addEventListener).toHaveBeenCalledOnce()
     expect(listener).not.toBeNull()
-    listener?.({
+    const registeredListener = vi.mocked(target.addEventListener).mock.calls[0]?.[1]
+    expect(registeredListener).toBeDefined()
+    registeredListener?.({
       key: 's',
       ctrlKey: true,
       metaKey: false,
       preventDefault: vi.fn()
-    } as KeyboardEvent)
+    } as unknown as KeyboardEvent)
     expect(save).toHaveBeenCalledOnce()
 
     uninstall()
