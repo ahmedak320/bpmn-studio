@@ -169,13 +169,6 @@ function setNodeMetadata(
     if (active) element[prefix] = active
   }
 
-  if (metadata.notes?.en || metadata.notes?.ar) {
-    element.documentation = [
-      moddle.create('bpmn:Documentation', {
-        text: projected(metadata.notes)
-      })
-    ]
-  }
   if (
     node.type === 'callActivity' &&
     metadata.calledProcessId &&
@@ -323,11 +316,13 @@ function buildDefinitions(moddle: SpreadsheetModdle, graph: ProcessGraphModel): 
       sourceRef: source,
       targetRef: target
     })
-    if (flow.condition) {
+    if (flow.condition?.en?.trim() || flow.condition?.ar?.trim()) {
       setBilingualName(sequenceFlow, flow.condition)
-      sequenceFlow.conditionExpression = moddle.create('bpmn:FormalExpression', {
-        body: projected(flow.condition)
-      })
+      if (!flow.isDefault) {
+        sequenceFlow.conditionExpression = moddle.create('bpmn:FormalExpression', {
+          body: projected(flow.condition)
+        })
+      }
     }
     source.outgoing?.push(sequenceFlow)
     target.incoming?.push(sequenceFlow)
