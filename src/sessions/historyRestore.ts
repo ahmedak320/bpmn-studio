@@ -5,13 +5,15 @@ import { decodeUtf8Strict } from '../workspace/utf8'
 import { DocumentSessionStore } from './store'
 import {
   sameDocumentIdentity,
+  sameSessionIncarnation,
   type DocumentSession,
   type SessionId,
   type WorkspaceIdentity
 } from './types'
 
 export interface RestoreHistoryRevisionOptions {
-  manager: Pick<PortableHistoryManager, 'restore'>
+  manager: Pick<PortableHistoryManager, 'restore'> &
+    Partial<Pick<PortableHistoryManager, 'preview'>>
   store: DocumentSessionStore
   revision: HistoryRevision
   workspace: WorkspaceIdentity
@@ -22,11 +24,43 @@ export interface RestoreHistoryRevisionOptions {
    * never an implicit overwrite.
    */
   expectedCurrentHash: string | null
+  signal?: AbortSignal
+  isWorkspaceCurrent?: (workspace: WorkspaceIdentity) => boolean
+  /**
+   * Runs only after the revision preview has passed its checksum verification.
+   * Returning anything but `completed` is a no-write outcome.
+   */
+  prepareXml?: (
+    verifiedPreviewXml: string,
+    context: {
+      revision: HistoryRevision
+      session: DocumentSession | null
+      signal?: AbortSignal
+    }
+  ) => Promise<PrepareHistoryXmlResult>
+  /**
+   * Required with `prepareXml`. This is the storage/history CAS seam: it must
+   * write exactly `xml` and honor `expectedCurrentHash` (`null` means
+   * creation-only). The successful snapshot is verified before editor refresh.
+   */
+  writePreparedXml?: (input: PreparedHistoryXmlWrite) => Promise<HistoryWriteResult>
   /**
    * Optional editor integration. When omitted, a modeler exposing importXML is
    * used. Sessions without a live modeler need no importer.
    */
   applyXml?: (session: DocumentSession, xml: string) => void | Promise<void>
+}
+
+export type PrepareHistoryXmlResult =
+  | { readonly status: 'completed'; readonly xml: string }
+  | { readonly status: 'cancelled' }
+  | { readonly status: 'review-required' }
+
+export interface PreparedHistoryXmlWrite {
+  readonly revision: HistoryRevision
+  readonly xml: string
+  readonly expectedCurrentHash: string | null
+  readonly signal?: AbortSignal
 }
 
 interface HistoryRestoreResultBase {
@@ -52,6 +86,10 @@ export type RestoreHistoryRevisionResult =
       readonly status: 'storage-restored-session-refresh-failed'
       readonly outcome: SuccessfulSaveOutcome
       readonly error: unknown
+    })
+  | (HistoryRestoreResultBase & {
+      readonly status: 'preparation-not-completed'
+      readonly reason: 'cancelled' | 'review-required' | 'stale'
     })
 
 type ImportingModeler = {
@@ -85,7 +123,7 @@ function sessionStillMatches(
 ): current is DocumentSession {
   return Boolean(
     current &&
-    current.id === captured.id &&
+    sameSessionIncarnation(current, captured) &&
     sameDocumentIdentity(current.identity, captured.identity) &&
     ((current.revision === captured.revision && current.currentXml === captured.currentXml) ||
       (restoredXml !== undefined && current.currentXml === restoredXml))
@@ -115,7 +153,13 @@ function retainLocalXmlAgainstRestoredStorage(
   outcome: SuccessfulSaveOutcome
 ): void {
   const live = store.get(captured.id)
-  if (!live || !sameDocumentIdentity(live.identity, captured.identity)) return
+  if (
+    !live ||
+    !sameSessionIncarnation(live, captured) ||
+    !sameDocumentIdentity(live.identity, captured.identity)
+  ) {
+    return
+  }
 
   // Importing restored XML can itself publish editor change events before
   // ultimately rejecting. Prefer a genuinely newer local edit, but otherwise
@@ -139,6 +183,100 @@ function previousRevision(result: HistoryWriteResult): HistoryRevision | undefin
   return result.revision
 }
 
+function byteArraysEqual(left: Uint8Array, right: Uint8Array): boolean {
+  if (left.byteLength !== right.byteLength) return false
+  for (let index = 0; index < left.byteLength; index += 1) {
+    if (left[index] !== right[index]) return false
+  }
+  return true
+}
+
+function preparationContextIsCurrent(
+  options: RestoreHistoryRevisionOptions,
+  capturedSession: DocumentSession | undefined
+): boolean {
+  if (options.signal?.aborted) return false
+  if (options.isWorkspaceCurrent && !options.isWorkspaceCurrent(options.workspace)) return false
+  const current = sessionForRevision(options.store, options.workspace, options.revision)
+  return capturedSession ? sessionStillMatches(current, capturedSession) : current === undefined
+}
+
+async function prepareHistoryWrite(
+  options: RestoreHistoryRevisionOptions,
+  capturedSession: DocumentSession | undefined
+): Promise<
+  | { status: 'ready'; result: HistoryWriteResult; preparedXml?: string }
+  | { status: 'not-completed'; reason: 'cancelled' | 'review-required' | 'stale' }
+> {
+  if (!options.prepareXml) {
+    return {
+      status: 'ready',
+      result: await options.manager.restore(
+        options.revision,
+        options.expectedCurrentHash === null ? null : options.expectedCurrentHash.toLowerCase()
+      )
+    }
+  }
+  if (!options.manager.preview || !options.writePreparedXml) {
+    throw new Error('Prepared history restore requires preview and writePreparedXml.')
+  }
+  if (!preparationContextIsCurrent(options, capturedSession)) {
+    return {
+      status: 'not-completed',
+      reason: options.signal?.aborted ? 'cancelled' : 'stale'
+    }
+  }
+
+  const preview = await options.manager.preview(options.revision)
+  if (!preparationContextIsCurrent(options, capturedSession)) {
+    return {
+      status: 'not-completed',
+      reason: options.signal?.aborted ? 'cancelled' : 'stale'
+    }
+  }
+  const prepared = await options.prepareXml(preview.xml, {
+    revision: options.revision,
+    session: capturedSession ?? null,
+    signal: options.signal
+  })
+  if (prepared.status !== 'completed') {
+    return { status: 'not-completed', reason: prepared.status }
+  }
+  if (!preparationContextIsCurrent(options, capturedSession)) {
+    return {
+      status: 'not-completed',
+      reason: options.signal?.aborted ? 'cancelled' : 'stale'
+    }
+  }
+
+  // Re-read the checksum-verified source after the asynchronous review. A
+  // changed/corrupted revision must fail before the CAS writer is called.
+  const reverified = await options.manager.preview(options.revision)
+  if (
+    reverified.revision.id !== preview.revision.id ||
+    !byteArraysEqual(reverified.bytes, preview.bytes)
+  ) {
+    throw new Error('History revision changed while its restore was being reviewed.')
+  }
+  if (!preparationContextIsCurrent(options, capturedSession)) {
+    return {
+      status: 'not-completed',
+      reason: options.signal?.aborted ? 'cancelled' : 'stale'
+    }
+  }
+  return {
+    status: 'ready',
+    preparedXml: prepared.xml,
+    result: await options.writePreparedXml({
+      revision: options.revision,
+      xml: prepared.xml,
+      expectedCurrentHash:
+        options.expectedCurrentHash === null ? null : options.expectedCurrentHash.toLowerCase(),
+      signal: options.signal
+    })
+  }
+}
+
 /**
  * Restores portable history with a mandatory disk CAS, then synchronizes the
  * matching open session without replacing its id, modeler, command stack, or
@@ -157,11 +295,18 @@ export async function restoreHistoryRevision(
   }
   const capturedSession = sessionForRevision(options.store, options.workspace, options.revision)
   let result: HistoryWriteResult
+  let preparedXml: string | undefined
   try {
-    result = await options.manager.restore(
-      options.revision,
-      options.expectedCurrentHash === null ? null : options.expectedCurrentHash.toLowerCase()
-    )
+    const prepared = await prepareHistoryWrite(options, capturedSession)
+    if (prepared.status === 'not-completed') {
+      return {
+        status: 'preparation-not-completed',
+        sessionId: capturedSession?.id ?? null,
+        reason: prepared.reason
+      }
+    }
+    result = prepared.result
+    preparedXml = prepared.preparedXml
   } catch (error) {
     return {
       status: 'failed',
@@ -184,6 +329,9 @@ export async function restoreHistoryRevision(
       operation: 'read',
       path: options.revision.originalPath
     })
+    if (preparedXml !== undefined && restoredXml !== preparedXml) {
+      throw new Error('Prepared history writer did not persist the reviewed XML exactly.')
+    }
   } catch (error) {
     return {
       status: 'storage-restored-session-refresh-failed',
@@ -193,8 +341,20 @@ export async function restoreHistoryRevision(
       error
     }
   }
-  const session =
-    capturedSession ?? sessionForRevision(options.store, options.workspace, options.revision)
+  if (
+    options.signal?.aborted ||
+    (options.isWorkspaceCurrent && !options.isWorkspaceCurrent(options.workspace))
+  ) {
+    return {
+      status: 'storage-restored-session-refresh-failed',
+      sessionId: capturedSession?.id ?? null,
+      previousRevision: previousRevision(result),
+      outcome: result.outcome,
+      error: new Error('History restore storage committed after its operation became stale.')
+    }
+  }
+  const liveForRevision = sessionForRevision(options.store, options.workspace, options.revision)
+  const session = capturedSession ?? liveForRevision
   if (!session) {
     return {
       status: 'restored',
@@ -221,11 +381,30 @@ export async function restoreHistoryRevision(
       error: new Error('The open session changed while history restore was writing storage.')
     }
   }
+  if (!capturedSession && liveForRevision) {
+    retainLocalXmlAgainstRestoredStorage(
+      options.store,
+      liveForRevision,
+      restoredXml,
+      result.outcome
+    )
+    return {
+      status: 'storage-restored-session-refresh-failed',
+      sessionId: liveForRevision.id,
+      previousRevision: previousRevision(result),
+      outcome: result.outcome,
+      error: new Error('A session opened while history restore was writing storage.')
+    }
+  }
 
   try {
     await applyRestoredXml(session, restoredXml, options.applyXml)
     const live = options.store.get(session.id)
-    if (!sessionStillMatches(live, session, restoredXml)) {
+    if (
+      options.signal?.aborted ||
+      (options.isWorkspaceCurrent && !options.isWorkspaceCurrent(options.workspace)) ||
+      !sessionStillMatches(live, session, restoredXml)
+    ) {
       throw new Error('The open session changed while restored XML was being imported.')
     }
     options.store.replaceWithExternal(session.id, {

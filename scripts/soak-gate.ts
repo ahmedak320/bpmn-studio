@@ -908,6 +908,7 @@ async function exerciseCycle(state: HarnessState, cycle: number): Promise<void> 
     controller: DocumentSessionController
     coordinator: DraftJournalCoordinator
     sessionId: string
+    incarnation: number
   }> = []
   const postSaveErrors: unknown[] = []
 
@@ -926,10 +927,10 @@ async function exerciseCycle(state: HarnessState, cycle: number): Promise<void> 
       isWorkspaceCurrent: (identity) => sameWorkspace(identity.workspace, state.activeWorkspace),
       createRequestId: () => `soak-save-${cycle}`,
       onConfirmedSave: async (session) => {
-        await coordinator.confirmedSave(session.id, session.lastSavedXml)
+        await coordinator.confirmedSave(session.id, session.incarnation, session.lastSavedXml)
       },
-      onExplicitDiscard: async (sessionId) => {
-        await coordinator.explicitDiscard(sessionId)
+      onExplicitDiscard: async (discarded) => {
+        await coordinator.explicitDiscard(discarded.id, discarded.incarnation)
       },
       onPostSaveError: (error) => postSaveErrors.push(error)
     })
@@ -941,14 +942,14 @@ async function exerciseCycle(state: HarnessState, cycle: number): Promise<void> 
       xml: loadedXml,
       base: fingerprint(loaded)
     })
-    resources.push({ controller, coordinator, sessionId })
+    resources.push({ controller, coordinator, sessionId, incarnation: session.incarnation })
     state.operations.sessionOpens += 1
 
     state.currentPhase = 'draft-review'
     session = controller.updateXml(sessionId, ordinaryBpmn(workspaceLabel, cycle * 10 + 1))
     coordinator.track(session)
     state.operations.edits += 1
-    await coordinator.flush(sessionId)
+    await coordinator.flush(sessionId, session.incarnation)
     const initialRecovery = await findDraftRecoveryComparison(
       state.draftJournal,
       { workspaceId: workspace.id, path, sessionId },
@@ -977,7 +978,7 @@ async function exerciseCycle(state: HarnessState, cycle: number): Promise<void> 
     session = controller.updateXml(sessionId, ordinaryBpmn(workspaceLabel, cycle * 10 + 2))
     coordinator.track(session)
     state.operations.edits += 1
-    await coordinator.flush(sessionId)
+    await coordinator.flush(sessionId, session.incarnation)
     adapter.replaceExternally(path, ordinaryBpmn(workspaceLabel, cycle * 10 + 3))
     const conflict = await controller.save(sessionId)
     invariant(conflict.status === 'external-conflict', 'external conflict is detected', {
@@ -996,7 +997,7 @@ async function exerciseCycle(state: HarnessState, cycle: number): Promise<void> 
     session = controller.updateXml(sessionId, ordinaryBpmn(workspaceLabel, cycle * 10 + 4))
     coordinator.track(session)
     state.operations.edits += 1
-    await coordinator.flush(sessionId)
+    await coordinator.flush(sessionId, session.incarnation)
     activateWorkspace(state, otherAdapter)
     const staleSave = await controller.save(sessionId)
     invariant(staleSave.status === 'stale-workspace', 'stale workspace save is rejected', {
@@ -1037,7 +1038,7 @@ async function exerciseCycle(state: HarnessState, cycle: number): Promise<void> 
       isWorkspaceCurrent: (identity) => sameWorkspace(identity.workspace, state.activeWorkspace),
       createRequestId: () => `soak-recovery-save-${cycle}`,
       onConfirmedSave: async (saved) => {
-        await recoveryCoordinator.confirmedSave(saved.id, saved.lastSavedXml)
+        await recoveryCoordinator.confirmedSave(saved.id, saved.incarnation, saved.lastSavedXml)
       },
       onPostSaveError: (error) => postSaveErrors.push(error)
     })
@@ -1052,11 +1053,12 @@ async function exerciseCycle(state: HarnessState, cycle: number): Promise<void> 
     resources.push({
       controller: recoveryController,
       coordinator: recoveryCoordinator,
-      sessionId: recoveryId
+      sessionId: recoveryId,
+      incarnation: recoveredSession.incarnation
     })
     state.operations.sessionOpens += 1
     recoveryCoordinator.track(recoveredSession)
-    await recoveryCoordinator.flush(recoveryId)
+    await recoveryCoordinator.flush(recoveryId, recoveredSession.incarnation)
     const recoveredSave = await recoveryController.save(recoveryId)
     invariant(recoveredSave.status === 'success', 'recovered draft save succeeds', {
       status: recoveredSave.status
@@ -1095,13 +1097,13 @@ async function exerciseCycle(state: HarnessState, cycle: number): Promise<void> 
   } finally {
     for (const resource of [...resources].reverse()) {
       try {
-        await resource.coordinator.explicitDiscard(resource.sessionId)
+        await resource.coordinator.explicitDiscard(resource.sessionId, resource.incarnation)
       } catch {
         // The primary cycle failure remains the recorded cause.
       }
       resource.coordinator.dispose()
       try {
-        await resource.coordinator.untrack(resource.sessionId)
+        await resource.coordinator.untrack(resource.sessionId, resource.incarnation)
       } catch {
         // The primary cycle failure remains the recorded cause.
       }
@@ -1362,16 +1364,10 @@ function addTrendSample(
 function addBrowserHeartbeat(state: HarnessState, heartbeat: BrowserHeartbeat): void {
   if (state.browserHeartbeatCount > 0) {
     const gap = heartbeat.elapsedMs - state.lastBrowserHeartbeatElapsedMs
-    state.maximumBrowserHeartbeatGapMs = Math.max(
-      state.maximumBrowserHeartbeatGapMs,
-      gap
-    )
+    state.maximumBrowserHeartbeatGapMs = Math.max(state.maximumBrowserHeartbeatGapMs, gap)
     invariant(
       gap <=
-        Math.max(
-          state.config.browserIntervalMs,
-          state.effectiveBrowserIntervalMs
-        ) +
+        Math.max(state.config.browserIntervalMs, state.effectiveBrowserIntervalMs) +
           BROWSER_HEARTBEAT_GRACE_MS,
       'browser heartbeat gap remains bounded',
       {

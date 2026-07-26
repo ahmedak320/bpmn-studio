@@ -4,7 +4,8 @@ import {
   type DocumentIdentity,
   type DocumentSession,
   type PathMigrationPhase,
-  type SessionId
+  type SessionId,
+  type SessionIncarnation
 } from './types'
 
 export type PathEntryKind = 'file' | 'directory'
@@ -24,6 +25,7 @@ export interface PathTransactionRequest {
 
 export interface SessionPathMigration {
   sessionId: SessionId
+  incarnation: SessionIncarnation
   from: DocumentIdentity
   to: DocumentIdentity | null
   dirty: boolean
@@ -75,7 +77,10 @@ export type ExecutePathTransactionResult =
   | { status: 'failed'; plan: PathTransactionPlan; error: unknown; rolledBack: boolean }
 
 export function normalizeWorkspacePath(path: string): string {
-  const normalized = path.replaceAll('\\', '/').replace(/^\.\/+/, '').replace(/\/+/g, '/')
+  const normalized = path
+    .replaceAll('\\', '/')
+    .replace(/^\.\/+/, '')
+    .replace(/\/+/g, '/')
   if (!normalized || normalized.startsWith('/') || normalized.endsWith('/')) {
     throw new Error(`Invalid workspace path "${path}"`)
   }
@@ -157,6 +162,7 @@ export function planPathTransaction(
     }
     migrations.push({
       sessionId: session.id,
+      incarnation: session.incarnation,
       from: session.identity,
       to,
       dirty: session.dirty,
@@ -206,11 +212,7 @@ export function resolveDirtyPathDecision(
     ...plan,
     decision,
     phase:
-      decision === 'cancel'
-        ? 'cancelled'
-        : decision === 'save-and-continue'
-          ? 'saving'
-          : 'ready'
+      decision === 'cancel' ? 'cancelled' : decision === 'save-and-continue' ? 'saving' : 'ready'
   }
 }
 
@@ -225,13 +227,10 @@ function withPhase(
 function publishMigrationPhase(store: DocumentSessionStore, plan: PathTransactionPlan): void {
   store.batch(() => {
     for (const migration of plan.migrations) {
-      if (!store.get(migration.sessionId)) continue
+      if (store.get(migration.sessionId)?.incarnation !== migration.incarnation) continue
       store.setPathMigration(migration.sessionId, {
         transactionId: plan.id,
-        phase:
-          plan.phase === 'needs-delete-confirmation'
-            ? 'awaiting-dirty-decision'
-            : plan.phase,
+        phase: plan.phase === 'needs-delete-confirmation' ? 'awaiting-dirty-decision' : plan.phase,
         fromPath: migration.from.path,
         toPath: migration.to?.path ?? null,
         error: plan.error
@@ -240,18 +239,16 @@ function publishMigrationPhase(store: DocumentSessionStore, plan: PathTransactio
   })
 }
 
-function sessionsStillMatchPlan(
-  store: DocumentSessionStore,
-  plan: PathTransactionPlan
-): boolean {
+function sessionsStillMatchPlan(store: DocumentSessionStore, plan: PathTransactionPlan): boolean {
   return plan.migrations.every((migration) => {
     const session = store.get(migration.sessionId)
     return Boolean(
       session &&
-        sameDocumentIdentity(session.identity, migration.from) &&
-        session.save.phase === 'idle' &&
-        session.revision === migration.revision &&
-        session.currentXml === migration.currentXml
+      session.incarnation === migration.incarnation &&
+      sameDocumentIdentity(session.identity, migration.from) &&
+      session.save.phase === 'idle' &&
+      session.revision === migration.revision &&
+      session.currentXml === migration.currentXml
     )
   })
 }
@@ -320,6 +317,7 @@ export async function executePathTransaction(
           if (!migration.to) throw new Error('A move/rename migration requires a destination')
           return {
             sessionId: migration.sessionId,
+            incarnation: migration.incarnation,
             from: migration.from,
             to: migration.to,
             title: migration.to.path?.split('/').pop(),

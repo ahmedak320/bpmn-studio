@@ -6,13 +6,18 @@ import {
   type ExternalDocument
 } from './externalConflict'
 import { classifySaveFailure, type ClassifiedSaveFailure } from './saveErrors'
-import { DocumentSessionStore, type OpenDocumentSessionInput } from './store'
+import {
+  DocumentSessionStore,
+  type OpenDocumentSessionInput,
+  type SessionIdentityReservation
+} from './store'
 import {
   sameDocumentIdentity,
   type DocumentIdentity,
   type DocumentSession,
   type FileFingerprint,
   type SessionId,
+  type SessionIncarnation,
   type SessionSaveState
 } from './types'
 
@@ -72,19 +77,37 @@ export type SaveConflictResolver = (
   session: DocumentSession
 ) => Promise<ExternalConflictDecision>
 
+export type PrepareExternalResult =
+  { readonly status: 'completed'; readonly xml: string } | { readonly status: 'cancelled' }
+
+export type PrepareExternal = (
+  external: ExternalDocument,
+  context: {
+    session: DocumentSession
+    conflict: ExternalConflict
+    signal?: AbortSignal
+  }
+) => Promise<PrepareExternalResult>
+
 export interface DocumentSessionControllerOptions {
   store?: DocumentSessionStore
   persistence: SessionPersistence
   coordination?: SessionCoordination
   isWorkspaceCurrent?: (identity: DocumentIdentity) => boolean
   decideConflict?: SaveConflictResolver
+  prepareExternal?: PrepareExternal
   now?: () => number
   createRequestId?: () => string
   onConfirmedSave?: (
     session: DocumentSession,
     result: Extract<SessionSaveOutcome, { status: 'success' | 'saved-as' }>
   ) => void | Promise<void>
-  onExplicitDiscard?: (sessionId: SessionId, reason: 'reload-external') => void | Promise<void>
+  onExplicitDiscard?: (session: DocumentSession, reason: 'reload-external') => void | Promise<void>
+  /** Persists the reviewed dirty XML after a transformed external reload. */
+  onPreparedExternal?: (
+    session: DocumentSession,
+    external: ExternalDocument
+  ) => void | Promise<void>
   /** Post-save cleanup (for example draft deletion) must not falsify write success. */
   onPostSaveError?: (error: unknown) => void
 }
@@ -218,10 +241,12 @@ export class DocumentSessionController {
   readonly #coordination?: SessionCoordination
   readonly #isWorkspaceCurrent: (identity: DocumentIdentity) => boolean
   readonly #decideConflict?: SaveConflictResolver
+  readonly #prepareExternal?: PrepareExternal
   readonly #now: () => number
   readonly #createRequestId: () => string
   readonly #onConfirmedSave?: DocumentSessionControllerOptions['onConfirmedSave']
   readonly #onExplicitDiscard?: DocumentSessionControllerOptions['onExplicitDiscard']
+  readonly #onPreparedExternal?: DocumentSessionControllerOptions['onPreparedExternal']
   readonly #onPostSaveError: (error: unknown) => void
   readonly #inflight = new Map<SessionId, Promise<SessionSaveOutcome>>()
 
@@ -231,10 +256,12 @@ export class DocumentSessionController {
     this.#coordination = options.coordination
     this.#isWorkspaceCurrent = options.isWorkspaceCurrent ?? (() => true)
     this.#decideConflict = options.decideConflict
+    this.#prepareExternal = options.prepareExternal
     this.#now = options.now ?? Date.now
     this.#createRequestId = options.createRequestId ?? defaultRequestId
     this.#onConfirmedSave = options.onConfirmedSave
     this.#onExplicitDiscard = options.onExplicitDiscard
+    this.#onPreparedExternal = options.onPreparedExternal
     this.#onPostSaveError = options.onPostSaveError ?? (() => undefined)
   }
 
@@ -271,6 +298,7 @@ export class DocumentSessionController {
   async #save(id: SessionId, options: SaveSessionOptions): Promise<SessionSaveOutcome> {
     let session = this.store.get(id)
     if (!session) return { status: 'missing-session', ok: false, sessionId: id }
+    const incarnation = session.incarnation
     if (
       session.pathMigration.phase === 'applying' ||
       session.pathMigration.phase === 'rolling-back'
@@ -284,13 +312,17 @@ export class DocumentSessionController {
       return { status: 'stale-capture', ok: false, sessionId: id }
     }
     if (!this.#isWorkspaceCurrent(session.identity)) {
-      return this.#finish(id, { status: 'stale-workspace', ok: false, sessionId: id })
+      return this.#finish(id, incarnation, {
+        status: 'stale-workspace',
+        ok: false,
+        sessionId: id
+      })
     }
 
     const requestId = this.#createRequestId()
     const startedAt = this.#now()
     const initialRevision = session.revision
-    this.#setPhase(id, 'capturing', requestId, initialRevision, startedAt)
+    this.#setPhase(id, incarnation, 'capturing', requestId, initialRevision, startedAt)
 
     let xml: string
     try {
@@ -300,8 +332,9 @@ export class DocumentSessionController {
       } else if (session.readXml) {
         const revisionBeforeRead = session.revision
         const serialized = await session.readXml()
-        const afterRead = this.store.get(id)
-        if (!afterRead) return { status: 'missing-session', ok: false, sessionId: id }
+        const guard = this.#postAwaitGuard(id, incarnation, session.identity, options.signal)
+        if (guard) return this.#finish(id, incarnation, guard)
+        const afterRead = this.#sessionForOperation(id, incarnation)!
         if (afterRead.revision === revisionBeforeRead) {
           session = this.store.updateXml(id, serialized)
           xml = serialized
@@ -315,23 +348,35 @@ export class DocumentSessionController {
         xml = session.currentXml
       }
     } catch (error) {
-      return this.#finishFailure(id, error)
+      const guard = this.#postAwaitGuard(id, incarnation, session.identity, options.signal)
+      return guard
+        ? this.#finish(id, incarnation, guard)
+        : this.#finishFailure(id, incarnation, error)
     }
 
     const savedRevision = session.revision
     if (!session.dirty && xml === session.lastSavedXml) {
-      return this.#finish(id, { status: 'clean', ok: true, sessionId: id })
+      return this.#finish(id, incarnation, { status: 'clean', ok: true, sessionId: id })
     }
     if (!this.#isWorkspaceCurrent(session.identity)) {
-      return this.#finish(id, { status: 'stale-workspace', ok: false, sessionId: id })
+      return this.#finish(id, incarnation, {
+        status: 'stale-workspace',
+        ok: false,
+        sessionId: id
+      })
     }
 
-    this.#setPhase(id, 'checking-external', requestId, savedRevision, startedAt)
+    this.#setPhase(id, incarnation, 'checking-external', requestId, savedRevision, startedAt)
     let inspected: ExternalDocument | null
     try {
       inspected = await this.#persistence.inspect(session.identity, options.signal)
+      const guard = this.#postAwaitGuard(id, incarnation, session.identity, options.signal)
+      if (guard) return this.#finish(id, incarnation, guard)
     } catch (error) {
-      return this.#finishFailure(id, error)
+      const guard = this.#postAwaitGuard(id, incarnation, session.identity, options.signal)
+      return guard
+        ? this.#finish(id, incarnation, guard)
+        : this.#finishFailure(id, incarnation, error)
     }
 
     const externalState = classifyExternalState(session.base, inspected)
@@ -346,9 +391,10 @@ export class DocumentSessionController {
       if (
         reviewed.localXml !== xml ||
         reviewed.identity.workspace.id !== session.identity.workspace.id ||
-        reviewed.identity.workspace.generation !== session.identity.workspace.generation
+        reviewed.identity.workspace.generation !== session.identity.workspace.generation ||
+        reviewed.identity.workspace.mode !== session.identity.workspace.mode
       ) {
-        return this.#finish(id, {
+        return this.#finish(id, incarnation, {
           status: 'external-conflict',
           ok: false,
           sessionId: id,
@@ -361,12 +407,24 @@ export class DocumentSessionController {
       if (!sameDocumentIdentity(reviewed.identity, session.identity)) {
         try {
           observed = await this.#persistence.inspect(reviewed.identity, options.signal)
+          const guard = this.#postAwaitGuard(id, incarnation, session.identity, options.signal)
+          if (guard) return this.#finish(id, incarnation, guard)
+          if (!this.#isWorkspaceCurrent(reviewed.identity)) {
+            return this.#finish(id, incarnation, {
+              status: 'stale-workspace',
+              ok: false,
+              sessionId: id
+            })
+          }
         } catch (error) {
-          return this.#finishFailure(id, error)
+          const guard = this.#postAwaitGuard(id, incarnation, session.identity, options.signal)
+          return guard
+            ? this.#finish(id, incarnation, guard)
+            : this.#finishFailure(id, incarnation, error)
         }
       }
       if (!sameExternalObservation(observed, reviewed.external)) {
-        return this.#finish(id, {
+        return this.#finish(id, incarnation, {
           status: 'external-conflict',
           ok: false,
           sessionId: id,
@@ -386,16 +444,28 @@ export class DocumentSessionController {
     }
     if (conflict) {
       if (!decision && this.#decideConflict) {
-        this.#setPhase(id, 'awaiting-conflict-decision', requestId, savedRevision, startedAt)
+        this.#setPhase(
+          id,
+          incarnation,
+          'awaiting-conflict-decision',
+          requestId,
+          savedRevision,
+          startedAt
+        )
         try {
           decision = await this.#decideConflict(conflict, session)
+          const guard = this.#postAwaitGuard(id, incarnation, session.identity, options.signal)
+          if (guard) return this.#finish(id, incarnation, guard)
           decisionBoundToConflict = true
         } catch (error) {
-          return this.#finishFailure(id, error)
+          const guard = this.#postAwaitGuard(id, incarnation, session.identity, options.signal)
+          return guard
+            ? this.#finish(id, incarnation, guard)
+            : this.#finishFailure(id, incarnation, error)
         }
       }
       if (!decision || decision.kind === 'compare') {
-        return this.#finish(id, {
+        return this.#finish(id, incarnation, {
           status: 'external-conflict',
           ok: false,
           sessionId: id,
@@ -405,13 +475,17 @@ export class DocumentSessionController {
         })
       }
       if (decision.kind === 'cancel') {
-        return this.#finish(id, { status: 'cancelled', ok: false, sessionId: id })
+        return this.#finish(id, incarnation, {
+          status: 'cancelled',
+          ok: false,
+          sessionId: id
+        })
       }
       if (
         (decision.kind === 'overwrite' || decision.kind === 'reload-external') &&
         !decisionBoundToConflict
       ) {
-        return this.#finish(id, {
+        return this.#finish(id, incarnation, {
           status: 'external-conflict',
           ok: false,
           sessionId: id,
@@ -421,8 +495,29 @@ export class DocumentSessionController {
         })
       }
       if (decision.kind === 'reload-external') {
-        if (!conflict.external) {
-          return this.#finish(id, {
+        let rechecked: ExternalDocument | null
+        try {
+          rechecked = await this.#persistence.inspect(conflict.identity, options.signal)
+          const guard = this.#postAwaitGuard(id, incarnation, session.identity, options.signal)
+          if (guard) return this.#finish(id, incarnation, guard)
+        } catch (error) {
+          const guard = this.#postAwaitGuard(id, incarnation, session.identity, options.signal)
+          return guard
+            ? this.#finish(id, incarnation, guard)
+            : this.#finishFailure(id, incarnation, error)
+        }
+        if (!sameExternalObservation(rechecked, conflict.external)) {
+          return this.#finish(id, incarnation, {
+            status: 'external-conflict',
+            ok: false,
+            sessionId: id,
+            conflict: conflictFromAtomicWrite(conflict.identity, conflict.base, xml, rechecked),
+            comparisonRequested: false,
+            decisionStale: true
+          })
+        }
+        if (!rechecked) {
+          return this.#finish(id, incarnation, {
             status: 'external-conflict',
             ok: false,
             sessionId: id,
@@ -431,9 +526,10 @@ export class DocumentSessionController {
             decisionStale: false
           })
         }
-        const current = this.store.get(id)
+        conflict = { ...conflict, external: rechecked }
+        const current = this.#sessionForOperation(id, incarnation)
         if (!current || current.revision !== savedRevision) {
-          return this.#finish(id, {
+          return this.#finish(id, incarnation, {
             status: 'external-conflict',
             ok: false,
             sessionId: id,
@@ -442,46 +538,146 @@ export class DocumentSessionController {
             decisionStale: true
           })
         }
-        this.store.replaceWithExternal(id, {
-          xml: conflict.external.xml,
-          fingerprint: conflict.external.fingerprint,
+        let reviewedXml = rechecked.xml
+        if (this.#prepareExternal) {
+          let prepared: PrepareExternalResult
+          try {
+            prepared = await this.#prepareExternal(rechecked, {
+              session: current,
+              conflict,
+              signal: options.signal
+            })
+          } catch (error) {
+            const guard = this.#postAwaitGuard(id, incarnation, session.identity, options.signal)
+            return guard
+              ? this.#finish(id, incarnation, guard)
+              : this.#finishFailure(id, incarnation, error)
+          }
+          const guard = this.#postAwaitGuard(id, incarnation, session.identity, options.signal)
+          if (guard) return this.#finish(id, incarnation, guard)
+          const afterPreparation = this.#sessionForOperation(id, incarnation)
+          if (!afterPreparation || afterPreparation.revision !== savedRevision) {
+            return this.#finish(id, incarnation, {
+              status: 'stale-capture',
+              ok: false,
+              sessionId: id
+            })
+          }
+          if (prepared.status === 'cancelled') {
+            return this.#finish(id, incarnation, {
+              status: 'cancelled',
+              ok: false,
+              sessionId: id
+            })
+          }
+          reviewedXml = prepared.xml
+          let afterReview: ExternalDocument | null
+          try {
+            afterReview = await this.#persistence.inspect(conflict.identity, options.signal)
+          } catch (error) {
+            const afterReviewGuard = this.#postAwaitGuard(
+              id,
+              incarnation,
+              session.identity,
+              options.signal
+            )
+            return afterReviewGuard
+              ? this.#finish(id, incarnation, afterReviewGuard)
+              : this.#finishFailure(id, incarnation, error)
+          }
+          const afterReviewGuard = this.#postAwaitGuard(
+            id,
+            incarnation,
+            session.identity,
+            options.signal
+          )
+          if (afterReviewGuard) {
+            return this.#finish(id, incarnation, afterReviewGuard)
+          }
+          if (!sameExternalObservation(afterReview, rechecked)) {
+            return this.#finish(id, incarnation, {
+              status: 'external-conflict',
+              ok: false,
+              sessionId: id,
+              conflict: conflictFromAtomicWrite(conflict.identity, conflict.base, xml, afterReview),
+              comparisonRequested: false,
+              decisionStale: true
+            })
+          }
+        }
+        const transformed = reviewedXml !== rechecked.xml
+        const reloaded = this.store.replaceWithExternal(id, {
+          xml: rechecked.xml,
+          reviewedXml,
+          fingerprint: rechecked.fingerprint,
           identity: conflict.identity,
           title: titleFromPath(conflict.identity.path ?? '', session.title)
         })
         try {
-          await this.#onExplicitDiscard?.(id, 'reload-external')
+          if (transformed) {
+            await this.#onPreparedExternal?.(reloaded, rechecked)
+          } else {
+            await this.#onExplicitDiscard?.(reloaded, 'reload-external')
+          }
         } catch (error) {
           this.#onPostSaveError(error)
         }
-        return this.#finish(id, {
+        const callbackGuard = this.#postAwaitGuard(
+          id,
+          incarnation,
+          reloaded.identity,
+          options.signal
+        )
+        if (callbackGuard) return this.#finish(id, incarnation, callbackGuard)
+        return this.#finish(id, incarnation, {
           status: 'reloaded',
           ok: true,
           sessionId: id,
-          external: conflict.external
+          external: rechecked
         })
       }
     }
 
-    if (!this.#isWorkspaceCurrent(session.identity)) {
-      return this.#finish(id, { status: 'stale-workspace', ok: false, sessionId: id })
-    }
-    if (options.signal?.aborted) {
-      return this.#finish(id, { status: 'cancelled', ok: false, sessionId: id })
-    }
-
-    let lease: SessionLockLease | undefined
+    const beforeWrite = this.#postAwaitGuard(id, incarnation, session.identity, options.signal)
+    if (beforeWrite) return this.#finish(id, incarnation, beforeWrite)
     const lockIdentity: DocumentIdentity =
       decision?.kind === 'save-as'
         ? { workspace: session.identity.workspace, path: decision.path }
         : decision?.kind === 'overwrite' && conflict
           ? conflict.identity
           : session.identity
-    if (this.#coordination && lockIdentity.path !== null) {
-      this.#setPhase(id, 'acquiring-lock', requestId, savedRevision, startedAt)
-      try {
+    const identityChanged = !sameDocumentIdentity(lockIdentity, session.identity)
+    let reservation: SessionIdentityReservation | undefined
+    if (identityChanged) {
+      const reserved = this.store.reserveIdentity(id, incarnation, lockIdentity)
+      if (!reserved.acquired) {
+        return this.#finish(id, incarnation, {
+          status: 'locked',
+          ok: false,
+          sessionId: id,
+          holderId: reserved.holderId
+        })
+      }
+      reservation = reserved.reservation
+    }
+
+    let lease: SessionLockLease | undefined
+    try {
+      if (this.#coordination && lockIdentity.path !== null) {
+        this.#setPhase(id, incarnation, 'acquiring-lock', requestId, savedRevision, startedAt)
         const lock = await this.#coordination.acquire(lockIdentity)
+        if (lock.acquired) lease = lock.lease
+        const guard = this.#postAwaitGuard(id, incarnation, session.identity, options.signal)
+        if (guard) return this.#finish(id, incarnation, guard)
+        if (reservation && !this.store.isIdentityReservationCurrent(reservation)) {
+          return this.#finish(id, incarnation, {
+            status: 'stale-capture',
+            ok: false,
+            sessionId: id
+          })
+        }
         if (!lock.acquired) {
-          return this.#finish(id, {
+          return this.#finish(id, incarnation, {
             status: 'locked',
             ok: false,
             sessionId: id,
@@ -489,25 +685,24 @@ export class DocumentSessionController {
             expiresAt: lock.expiresAt
           })
         }
-        lease = lock.lease
-      } catch (error) {
-        return this.#finishFailure(id, error)
       }
-    }
 
-    try {
-      if (options.signal?.aborted) {
-        return this.#finish(id, { status: 'cancelled', ok: false, sessionId: id })
+      const ready = this.#postAwaitGuard(id, incarnation, session.identity, options.signal)
+      if (ready) return this.#finish(id, incarnation, ready)
+      if (reservation && !this.store.isIdentityReservationCurrent(reservation)) {
+        return this.#finish(id, incarnation, {
+          status: 'stale-capture',
+          ok: false,
+          sessionId: id
+        })
       }
-      if (!this.#isWorkspaceCurrent(session.identity)) {
-        return this.#finish(id, { status: 'stale-workspace', ok: false, sessionId: id })
-      }
-      this.#setPhase(id, 'writing', requestId, savedRevision, startedAt)
+      this.#setPhase(id, incarnation, 'writing', requestId, savedRevision, startedAt)
 
       if (decision?.kind === 'save-as') {
         if (!this.#persistence.writeAs) {
           return this.#finishFailure(
             id,
+            incarnation,
             new DOMException('Save as is unsupported', 'InvalidStateError')
           )
         }
@@ -515,12 +710,21 @@ export class DocumentSessionController {
           expectedBase: null,
           signal: options.signal
         })
+        const guard = this.#postAwaitGuard(id, incarnation, session.identity, options.signal)
+        if (guard) return this.#finish(id, incarnation, guard)
+        if (reservation && !this.store.isIdentityReservationCurrent(reservation)) {
+          return this.#finish(id, incarnation, {
+            status: 'stale-capture',
+            ok: false,
+            sessionId: id
+          })
+        }
         if (writeAs.status === 'external-conflict') {
           const destination: DocumentIdentity = writeAs.external?.identity ?? {
             workspace: session.identity.workspace,
             path: decision.path
           }
-          return this.#finish(id, {
+          return this.#finish(id, incarnation, {
             status: 'external-conflict',
             ok: false,
             sessionId: id,
@@ -529,10 +733,15 @@ export class DocumentSessionController {
             decisionStale: true
           })
         }
-        const current = this.store.get(id)
-        if (!current) return { status: 'missing-session', ok: false, sessionId: id }
-        if (!sameDocumentIdentity(current.identity, session.identity)) {
-          return this.#finish(id, { status: 'stale-workspace', ok: false, sessionId: id })
+        if (!sameDocumentIdentity(writeAs.identity, lockIdentity)) {
+          return this.#finishFailure(
+            id,
+            incarnation,
+            new DOMException(
+              'Save-As adapter returned an identity different from the reserved destination',
+              'InvalidStateError'
+            )
+          )
         }
         const saved = this.store.markSaved(id, {
           xml,
@@ -556,7 +765,8 @@ export class DocumentSessionController {
           fingerprint: writeAs.fingerprint
         })
         await this.#notifyConfirmedSave(saved, outcome)
-        return this.#finish(id, outcome)
+        const notifiedGuard = this.#postAwaitGuard(id, incarnation, saved.identity, options.signal)
+        return this.#finish(id, incarnation, notifiedGuard ?? outcome)
       }
 
       const expectedBase =
@@ -570,8 +780,17 @@ export class DocumentSessionController {
         force: decision?.kind === 'overwrite',
         signal: options.signal
       })
+      const guard = this.#postAwaitGuard(id, incarnation, session.identity, options.signal)
+      if (guard) return this.#finish(id, incarnation, guard)
+      if (reservation && !this.store.isIdentityReservationCurrent(reservation)) {
+        return this.#finish(id, incarnation, {
+          status: 'stale-capture',
+          ok: false,
+          sessionId: id
+        })
+      }
       if (write.status === 'external-conflict') {
-        return this.#finish(id, {
+        return this.#finish(id, incarnation, {
           status: 'external-conflict',
           ok: false,
           sessionId: id,
@@ -586,14 +805,6 @@ export class DocumentSessionController {
         })
       }
 
-      const current = this.store.get(id)
-      if (!current) return { status: 'missing-session', ok: false, sessionId: id }
-      if (!sameDocumentIdentity(current.identity, session.identity)) {
-        // The immutable identity ensured bytes went to the old workspace/path;
-        // do not falsely acknowledge them against a session that has since moved.
-        return this.#finish(id, { status: 'stale-workspace', ok: false, sessionId: id })
-      }
-      const identityChanged = !sameDocumentIdentity(lockIdentity, session.identity)
       const saved = this.store.markSaved(id, {
         xml,
         savedRevision,
@@ -626,26 +837,32 @@ export class DocumentSessionController {
         fingerprint: write.fingerprint
       })
       await this.#notifyConfirmedSave(saved, outcome)
-      return this.#finish(id, outcome)
+      const notifiedGuard = this.#postAwaitGuard(id, incarnation, saved.identity, options.signal)
+      return this.#finish(id, incarnation, notifiedGuard ?? outcome)
     } catch (error) {
-      return this.#finishFailure(id, error)
+      const guard = this.#postAwaitGuard(id, incarnation, session.identity, options.signal)
+      return guard
+        ? this.#finish(id, incarnation, guard)
+        : this.#finishFailure(id, incarnation, error)
     } finally {
       try {
         await lease?.release()
       } catch (error) {
         this.#onPostSaveError(error)
       }
+      if (reservation) this.store.releaseIdentityReservation(reservation)
     }
   }
 
   #setPhase(
     id: SessionId,
+    incarnation: SessionIncarnation,
     phase: SessionSaveState['phase'],
     requestId: string,
     startedRevision: number,
     startedAt: number
   ): void {
-    if (!this.store.get(id)) return
+    if (!this.#sessionForOperation(id, incarnation)) return
     this.store.setSaveState(id, {
       phase,
       requestId,
@@ -655,21 +872,72 @@ export class DocumentSessionController {
     })
   }
 
-  #finish(id: SessionId, outcome: SessionSaveOutcome): SessionSaveOutcome {
-    if (this.store.get(id)) this.store.setSaveState(id, idleAfter(outcome))
+  #finish(
+    id: SessionId,
+    incarnation: SessionIncarnation,
+    outcome: SessionSaveOutcome
+  ): SessionSaveOutcome {
+    if (this.#sessionForOperation(id, incarnation)) {
+      this.store.setSaveState(id, idleAfter(outcome))
+    }
     return outcome
   }
 
-  #finishFailure(id: SessionId, error: unknown): SessionSaveOutcome {
+  #finishFailure(
+    id: SessionId,
+    incarnation: SessionIncarnation,
+    error: unknown
+  ): SessionSaveOutcome {
     const failure = classifySaveFailure(error)
     if (failure.code === 'aborted') {
-      return this.#finish(id, { status: 'cancelled', ok: false, sessionId: id })
+      return this.#finish(id, incarnation, {
+        status: 'cancelled',
+        ok: false,
+        sessionId: id
+      })
     }
     if (failure.code === 'stale-workspace') {
-      return this.#finish(id, { status: 'stale-workspace', ok: false, sessionId: id })
+      return this.#finish(id, incarnation, {
+        status: 'stale-workspace',
+        ok: false,
+        sessionId: id
+      })
     }
     const status = failure.code === 'permission-denied' ? 'permission-loss' : 'storage-failure'
-    return this.#finish(id, { status, ok: false, sessionId: id, failure })
+    return this.#finish(id, incarnation, { status, ok: false, sessionId: id, failure })
+  }
+
+  #sessionForOperation(
+    id: SessionId,
+    incarnation: SessionIncarnation
+  ): DocumentSession | undefined {
+    const session = this.store.get(id)
+    return session?.incarnation === incarnation ? session : undefined
+  }
+
+  #postAwaitGuard(
+    id: SessionId,
+    incarnation: SessionIncarnation,
+    expectedIdentity: DocumentIdentity,
+    signal?: AbortSignal
+  ): Extract<
+    SessionSaveOutcome,
+    { status: 'cancelled' | 'stale-capture' | 'stale-workspace' }
+  > | null {
+    if (signal?.aborted) {
+      return { status: 'cancelled', ok: false, sessionId: id }
+    }
+    const session = this.#sessionForOperation(id, incarnation)
+    if (!session) {
+      return { status: 'stale-capture', ok: false, sessionId: id }
+    }
+    if (
+      !sameDocumentIdentity(session.identity, expectedIdentity) ||
+      !this.#isWorkspaceCurrent(expectedIdentity)
+    ) {
+      return { status: 'stale-workspace', ok: false, sessionId: id }
+    }
+    return null
   }
 
   async #notifyConfirmedSave(

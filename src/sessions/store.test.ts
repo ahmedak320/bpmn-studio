@@ -115,12 +115,14 @@ describe('DocumentSessionStore', () => {
     store.migrateIdentities([
       {
         sessionId: a.id,
+        incarnation: a.incarnation,
         from: a.identity,
         to: identity('renamed/a.bpmn'),
         transactionId: 'tx'
       },
       {
         sessionId: b.id,
+        incarnation: b.incarnation,
         from: b.identity,
         to: identity('renamed/nested/b.bpmn'),
         transactionId: 'tx'
@@ -146,6 +148,7 @@ describe('DocumentSessionStore', () => {
       store.migrateIdentities([
         {
           sessionId: a.id,
+          incarnation: a.incarnation,
           from: identity('wrong.bpmn'),
           to: identity('new.bpmn')
         }
@@ -155,6 +158,7 @@ describe('DocumentSessionStore', () => {
       store.migrateIdentities([
         {
           sessionId: a.id,
+          incarnation: a.incarnation,
           from: identity('a.bpmn'),
           to: identity('occupied.bpmn')
         }

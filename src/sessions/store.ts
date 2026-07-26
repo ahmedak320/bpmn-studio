@@ -12,6 +12,7 @@ import {
   type FileFingerprint,
   type SessionEditorBinding,
   type SessionId,
+  type SessionIncarnation,
   type SessionPathMigrationState,
   type SessionSaveState,
   type SessionValidationState
@@ -44,9 +45,33 @@ export interface SessionStoreOptions {
 
 export type SessionStoreListener = () => void
 
+/**
+ * A store-local claim on a path identity. Controllers hold this across
+ * asynchronous Save-As I/O so another session cannot open or migrate onto the
+ * destination before the written bytes are acknowledged.
+ */
+export interface SessionIdentityReservation {
+  readonly token: number
+  readonly sessionId: SessionId
+  readonly incarnation: SessionIncarnation
+  readonly identity: DocumentIdentity
+}
+
+export type ReserveSessionIdentityResult =
+  | { readonly acquired: true; readonly reservation: SessionIdentityReservation }
+  | { readonly acquired: false; readonly holderId?: SessionId }
+
 function defaultCreateId(): string {
   if (typeof globalThis.crypto?.randomUUID === 'function') return globalThis.crypto.randomUUID()
   return `session-${Date.now()}-${Math.random().toString(36).slice(2)}`
+}
+
+let nextSessionIncarnation = 1
+
+function createSessionIncarnation(): SessionIncarnation {
+  const incarnation = nextSessionIncarnation
+  nextSessionIncarnation += 1
+  return incarnation
 }
 
 function cloneSaveState(state: SessionSaveState): SessionSaveState {
@@ -73,6 +98,7 @@ export class DocumentSessionStore {
   readonly #createId: () => string
   readonly #sessions = new Map<SessionId, DocumentSession>()
   readonly #identityIndex = new Map<string, SessionId>()
+  readonly #identityReservations = new Map<string, SessionIdentityReservation>()
   readonly #listeners = new Set<SessionStoreListener>()
   #activeSessionId: SessionId | null = null
   #version = 0
@@ -83,6 +109,7 @@ export class DocumentSessionStore {
   }
   #batchDepth = 0
   #batchChanged = false
+  #nextReservationToken = 1
 
   constructor(options: SessionStoreOptions = {}) {
     this.#now = options.now ?? Date.now
@@ -115,6 +142,56 @@ export class DocumentSessionStore {
     return this.#snapshot.sessions
   }
 
+  reserveIdentity(
+    sessionId: SessionId,
+    incarnation: SessionIncarnation,
+    identity: DocumentIdentity
+  ): ReserveSessionIdentityResult {
+    const session = this.#sessions.get(sessionId)
+    if (!session || session.incarnation !== incarnation) {
+      return { acquired: false }
+    }
+    const key = indexedIdentityKey(identity)
+    if (key === null) return { acquired: false }
+    const occupant = this.#identityIndex.get(key)
+    if (occupant && occupant !== sessionId) {
+      return { acquired: false, holderId: occupant }
+    }
+    const existing = this.#identityReservations.get(key)
+    if (existing) {
+      if (existing.sessionId === sessionId && existing.incarnation === incarnation) {
+        return { acquired: true, reservation: existing }
+      }
+      return { acquired: false, holderId: existing.sessionId }
+    }
+    const reservation: SessionIdentityReservation = {
+      token: this.#nextReservationToken++,
+      sessionId,
+      incarnation,
+      identity
+    }
+    this.#identityReservations.set(key, reservation)
+    return { acquired: true, reservation }
+  }
+
+  isIdentityReservationCurrent(reservation: SessionIdentityReservation): boolean {
+    const key = indexedIdentityKey(reservation.identity)
+    if (key === null) return false
+    const current = this.#identityReservations.get(key)
+    const session = this.#sessions.get(reservation.sessionId)
+    return Boolean(
+      current?.token === reservation.token && session?.incarnation === reservation.incarnation
+    )
+  }
+
+  releaseIdentityReservation(reservation: SessionIdentityReservation): void {
+    const key = indexedIdentityKey(reservation.identity)
+    if (key === null) return
+    if (this.#identityReservations.get(key)?.token === reservation.token) {
+      this.#identityReservations.delete(key)
+    }
+  }
+
   open(input: OpenDocumentSessionInput): DocumentSession {
     const identityKey = indexedIdentityKey(input.identity)
     const existingId = identityKey === null ? undefined : this.#identityIndex.get(identityKey)
@@ -123,6 +200,12 @@ export class DocumentSessionStore {
       if (!existing) throw new Error('Document-session identity index is inconsistent')
       return existing
     }
+    if (identityKey !== null) {
+      const reservation = this.#identityReservations.get(identityKey)
+      if (reservation) {
+        throw new Error(`Document identity is reserved by session "${reservation.sessionId}"`)
+      }
+    }
 
     const id = input.id ?? this.#createId()
     if (this.#sessions.has(id)) throw new Error(`Document session "${id}" already exists`)
@@ -130,6 +213,7 @@ export class DocumentSessionStore {
     const lastSavedXml = input.lastSavedXml ?? input.xml
     const session: DocumentSession = {
       id,
+      incarnation: createSessionIncarnation(),
       identity: input.identity,
       title: input.title,
       currentXml: input.xml,
@@ -249,22 +333,27 @@ export class DocumentSessionStore {
     id: SessionId,
     input: {
       xml: string
+      /** Reviewed current XML; `xml` remains the durable external baseline. */
+      reviewedXml?: string
       fingerprint: FileFingerprint
       identity?: DocumentIdentity
       title?: string
     }
   ): DocumentSession {
     return this.update(id, (session) => {
-      const revision = session.currentXml === input.xml ? session.revision : session.revision + 1
+      const currentXml = input.reviewedXml ?? input.xml
+      const externalRevision =
+        session.currentXml === input.xml ? session.revision : session.revision + 1
+      const revision = currentXml === input.xml ? externalRevision : externalRevision + 1
       return {
         ...session,
         identity: input.identity ?? session.identity,
         title: input.title ?? session.title,
-        currentXml: input.xml,
+        currentXml,
         lastSavedXml: input.xml,
-        dirty: false,
+        dirty: currentXml !== input.xml,
         revision,
-        lastSavedRevision: revision,
+        lastSavedRevision: externalRevision,
         base: input.fingerprint,
         validation: { status: 'unknown', revision: null, issues: [] }
       }
@@ -278,6 +367,7 @@ export class DocumentSessionStore {
   migrateIdentities(
     migrations: readonly {
       sessionId: SessionId
+      incarnation: SessionIncarnation
       from: DocumentIdentity
       to: DocumentIdentity
       title?: string
@@ -290,6 +380,9 @@ export class DocumentSessionStore {
     for (const migration of migrations) {
       const session = this.#sessions.get(migration.sessionId)
       if (!session) throw new Error(`Unknown document session "${migration.sessionId}"`)
+      if (session.incarnation !== migration.incarnation) {
+        throw new Error(`Document session "${migration.sessionId}" changed during path transaction`)
+      }
       if (!sameDocumentIdentity(session.identity, migration.from)) {
         throw new Error(`Document session "${migration.sessionId}" changed during path transaction`)
       }
@@ -300,6 +393,13 @@ export class DocumentSessionStore {
         const occupant = this.#identityIndex.get(key)
         if (occupant && !ids.has(occupant)) {
           throw new Error(`Path transaction destination is already open`)
+        }
+        const reservation = this.#identityReservations.get(key)
+        if (
+          reservation &&
+          (reservation.sessionId !== session.id || reservation.incarnation !== session.incarnation)
+        ) {
+          throw new Error(`Path transaction destination is reserved`)
         }
       }
     }
@@ -352,6 +452,9 @@ export class DocumentSessionStore {
     const candidate = updater(current)
     if (candidate === current) return current
     if (candidate.id !== current.id) throw new Error('A document session id is immutable')
+    if (candidate.incarnation !== current.incarnation) {
+      throw new Error('A document session incarnation is immutable')
+    }
     if (!sameDocumentIdentity(candidate.identity, current.identity)) {
       this.#replaceIdentityIndex(current, candidate.identity)
     }
@@ -367,6 +470,13 @@ export class DocumentSessionStore {
       const occupant = this.#identityIndex.get(nextKey)
       if (occupant && occupant !== current.id) {
         throw new Error('A document session for the destination identity is already open')
+      }
+      const reservation = this.#identityReservations.get(nextKey)
+      if (
+        reservation &&
+        (reservation.sessionId !== current.id || reservation.incarnation !== current.incarnation)
+      ) {
+        throw new Error('The destination identity is reserved by another document session')
       }
     }
     const currentKey = indexedIdentityKey(current.identity)

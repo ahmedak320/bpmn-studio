@@ -126,6 +126,7 @@ describe('DocumentSessionStore edge behavior', () => {
       store.migrateIdentities([
         {
           sessionId: 'missing',
+          incarnation: 0,
           from: identity('missing.bpmn'),
           to: identity('new.bpmn')
         }
@@ -135,11 +136,13 @@ describe('DocumentSessionStore edge behavior', () => {
       store.migrateIdentities([
         {
           sessionId: first.id,
+          incarnation: first.incarnation,
           from: first.identity,
           to: identity('same.bpmn')
         },
         {
           sessionId: second.id,
+          incarnation: second.incarnation,
           from: second.identity,
           to: identity('same.bpmn')
         }
@@ -149,6 +152,7 @@ describe('DocumentSessionStore edge behavior', () => {
     store.migrateIdentities([
       {
         sessionId: first.id,
+        incarnation: first.incarnation,
         from: first.identity,
         to: identity('moved.bpmn')
       }

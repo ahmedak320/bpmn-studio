@@ -1,4 +1,10 @@
-import type { DocumentIdentity, DocumentSession, FileFingerprint, SessionId } from './types'
+import type {
+  DocumentIdentity,
+  DocumentSession,
+  FileFingerprint,
+  SessionId,
+  SessionIncarnation
+} from './types'
 
 export interface DraftKey {
   workspaceId: string
@@ -26,6 +32,7 @@ export interface DraftJournal {
 
 export interface DraftSource {
   sessionId: SessionId
+  incarnation: SessionIncarnation
   identity: DocumentIdentity
   currentXml: string
   dirty: boolean
@@ -56,11 +63,7 @@ export function draftId(key: DraftKey): string {
   // A persisted file is identified by workspace+path so a newly generated
   // session id after restart still discovers its draft. Virtual documents have
   // no path, so their stable session id remains part of the key.
-  return JSON.stringify([
-    key.workspaceId,
-    key.path,
-    key.path === null ? key.sessionId : null
-  ])
+  return JSON.stringify([key.workspaceId, key.path, key.path === null ? key.sessionId : null])
 }
 
 export function createDraftRecoveryComparison(
@@ -86,9 +89,7 @@ export async function findDraftRecoveryComparison(
   loadedBaseHash: string | null
 ): Promise<DraftRecoveryComparison | null> {
   const draft = await journal.get(key)
-  return draft
-    ? createDraftRecoveryComparison(draft, loadedXml, loadedBaseHash)
-    : null
+  return draft ? createDraftRecoveryComparison(draft, loadedXml, loadedBaseHash) : null
 }
 
 export class MemoryDraftJournal implements DraftJournal {
@@ -207,9 +208,7 @@ export class IndexedDbDraftJournal implements DraftJournal {
       const tx = db.transaction(DRAFT_STORE, 'readonly')
       const done = transactionDone(tx)
       const index = tx.objectStore(DRAFT_STORE).index(WORKSPACE_INDEX)
-      const result = await requestResult(
-        index.getAll(workspaceId) as IDBRequest<DraftRecord[]>
-      )
+      const result = await requestResult(index.getAll(workspaceId) as IDBRequest<DraftRecord[]>)
       await done
       return result.sort((a, b) => b.timestamp - a.timestamp)
     } finally {
@@ -281,10 +280,7 @@ export class IndexedDbDraftJournal implements DraftJournal {
     const db = await this.#open()
     try {
       const tx = db.transaction(DRAFT_STORE, 'readwrite')
-      const cursor = tx
-        .objectStore(DRAFT_STORE)
-        .index(WORKSPACE_INDEX)
-        .openKeyCursor(workspaceId)
+      const cursor = tx.objectStore(DRAFT_STORE).index(WORKSPACE_INDEX).openKeyCursor(workspaceId)
       cursor.onsuccess = () => {
         const value = cursor.result
         if (!value) return
@@ -334,6 +330,7 @@ export interface DraftJournalCoordinatorOptions {
 
 export interface DraftPathMigrationInput {
   sessionId: SessionId
+  incarnation: SessionIncarnation
   from: DocumentIdentity
   to: DocumentIdentity | null
 }
@@ -358,9 +355,12 @@ export class DraftJournalCoordinator {
   readonly #timer: DraftTimer
   readonly #onError: (error: unknown) => void
   readonly #sources = new Map<SessionId, DraftSource>()
-  readonly #timers = new Map<SessionId, unknown>()
+  readonly #timers = new Map<SessionId, { incarnation: SessionIncarnation; handle: unknown }>()
   readonly #queues = new Map<SessionId, Promise<unknown>>()
-  readonly #lastPersistedKey = new Map<SessionId, DraftKey>()
+  readonly #lastPersistedKey = new Map<
+    SessionId,
+    { incarnation: SessionIncarnation; key: DraftKey }
+  >()
   readonly #detach = new Set<() => void>()
 
   constructor(journal: DraftJournal, options: DraftJournalCoordinatorOptions) {
@@ -378,36 +378,56 @@ export class DraftJournalCoordinator {
         ? sourceInput
         : {
             sessionId: sourceInput.id,
+            incarnation: sourceInput.incarnation,
             identity: sourceInput.identity,
             currentXml: sourceInput.currentXml,
             dirty: sourceInput.dirty,
             base: sourceInput.base
           }
     const previous = this.#sources.get(source.sessionId)
+    if (previous && source.incarnation < previous.incarnation) return
     this.#sources.set(source.sessionId, source)
-    if (previous && draftId(draftKeyOf(previous)) !== draftId(draftKeyOf(source))) {
+    if (
+      previous &&
+      previous.incarnation === source.incarnation &&
+      draftId(draftKeyOf(previous)) !== draftId(draftKeyOf(source))
+    ) {
       void this.#enqueue(source.sessionId, async () => {
+        if (!this.#sourceMatches(source.sessionId, source.incarnation, source)) return
         await this.#journal.move(draftKeyOf(previous), draftKeyOf(source))
         const persisted = this.#lastPersistedKey.get(source.sessionId)
-        if (persisted && draftId(persisted) === draftId(draftKeyOf(previous))) {
-          this.#lastPersistedKey.set(source.sessionId, draftKeyOf(source))
+        if (
+          this.#sourceMatches(source.sessionId, source.incarnation, source) &&
+          persisted?.incarnation === source.incarnation &&
+          draftId(persisted.key) === draftId(draftKeyOf(previous))
+        ) {
+          this.#lastPersistedKey.set(source.sessionId, {
+            incarnation: source.incarnation,
+            key: draftKeyOf(source)
+          })
         }
       }).catch(this.#onError)
     }
     this.#cancelTimer(source.sessionId)
     if (source.dirty) {
       const handle = this.#timer.setTimeout(() => {
-        this.#timers.delete(source.sessionId)
-        void this.flush(source.sessionId).catch(this.#onError)
+        const timer = this.#timers.get(source.sessionId)
+        if (timer?.incarnation === source.incarnation) {
+          this.#timers.delete(source.sessionId)
+        }
+        void this.flush(source.sessionId, source.incarnation).catch(this.#onError)
       }, this.#debounceMs)
-      this.#timers.set(source.sessionId, handle)
+      this.#timers.set(source.sessionId, {
+        incarnation: source.incarnation,
+        handle
+      })
     }
   }
 
-  async flush(sessionId: SessionId): Promise<void> {
-    this.#cancelTimer(sessionId)
+  async flush(sessionId: SessionId, incarnation: SessionIncarnation): Promise<void> {
+    this.#cancelTimer(sessionId, incarnation)
     const source = this.#sources.get(sessionId)
-    if (!source?.dirty) return
+    if (!source?.dirty || source.incarnation !== incarnation) return
     const key = draftKeyOf(source)
     const record: DraftRecord = {
       ...key,
@@ -418,8 +438,11 @@ export class DraftJournalCoordinator {
       appVersion: this.#appVersion
     }
     await this.#enqueue(sessionId, async () => {
+      if (!this.#sourceMatches(sessionId, incarnation, source) || !source.dirty) return
       await this.#journal.put(record)
-      this.#lastPersistedKey.set(sessionId, key)
+      if (this.#sourceMatches(sessionId, incarnation, source)) {
+        this.#lastPersistedKey.set(sessionId, { incarnation, key })
+      }
     })
   }
 
@@ -427,7 +450,7 @@ export class DraftJournalCoordinator {
     await Promise.all(
       [...this.#sources.values()]
         .filter((source) => source.dirty)
-        .map((source) => this.flush(source.sessionId))
+        .map((source) => this.flush(source.sessionId, source.incarnation))
     )
   }
 
@@ -435,47 +458,80 @@ export class DraftJournalCoordinator {
    * Delete only after durable save confirmation. If a newer edit arrived while
    * the older XML was being saved, preserve/rewrite a draft of that newer XML.
    */
-  async confirmedSave(sessionId: SessionId, savedXml: string): Promise<void> {
-    this.#cancelTimer(sessionId)
+  async confirmedSave(
+    sessionId: SessionId,
+    incarnation: SessionIncarnation,
+    savedXml: string
+  ): Promise<void> {
+    this.#cancelTimer(sessionId, incarnation)
     const source = this.#sources.get(sessionId)
-    if (!source) return
+    if (!source || source.incarnation !== incarnation) return
     if (source.currentXml !== savedXml) {
-      await this.flush(sessionId)
+      await this.flush(sessionId, incarnation)
       return
     }
     this.#sources.set(sessionId, { ...source, dirty: false, base: source.base })
     const currentKey = draftKeyOf(source)
     const persistedKey = this.#lastPersistedKey.get(sessionId)
     await this.#enqueue(sessionId, async () => {
+      if (!this.#sourceIsCleanSavedXml(sessionId, incarnation, savedXml)) return
       await this.#journal.delete(currentKey)
-      if (persistedKey && draftId(persistedKey) !== draftId(currentKey)) {
-        await this.#journal.delete(persistedKey)
+      if (!this.#sourceIsCleanSavedXml(sessionId, incarnation, savedXml)) return
+      if (
+        persistedKey?.incarnation === incarnation &&
+        draftId(persistedKey.key) !== draftId(currentKey)
+      ) {
+        await this.#journal.delete(persistedKey.key)
       }
-      this.#lastPersistedKey.delete(sessionId)
+      if (this.#sourceIsCleanSavedXml(sessionId, incarnation, savedXml)) {
+        const livePersisted = this.#lastPersistedKey.get(sessionId)
+        if (livePersisted?.incarnation === incarnation) {
+          this.#lastPersistedKey.delete(sessionId)
+        }
+      }
     })
   }
 
-  async explicitDiscard(sessionId: SessionId): Promise<void> {
-    this.#cancelTimer(sessionId)
+  async explicitDiscard(sessionId: SessionId, incarnation: SessionIncarnation): Promise<void> {
+    this.#cancelTimer(sessionId, incarnation)
     const source = this.#sources.get(sessionId)
-    if (!source) return
+    if (!source || source.incarnation !== incarnation) return
     this.#sources.set(sessionId, { ...source, dirty: false })
     const currentKey = draftKeyOf(source)
     const persistedKey = this.#lastPersistedKey.get(sessionId)
     await this.#enqueue(sessionId, async () => {
-      await this.#journal.delete(currentKey)
-      if (persistedKey && draftId(persistedKey) !== draftId(currentKey)) {
-        await this.#journal.delete(persistedKey)
+      if (!this.#sourceMatches(sessionId, incarnation) || this.#sources.get(sessionId)?.dirty) {
+        return
       }
-      this.#lastPersistedKey.delete(sessionId)
+      await this.#journal.delete(currentKey)
+      if (!this.#sourceMatches(sessionId, incarnation) || this.#sources.get(sessionId)?.dirty) {
+        return
+      }
+      if (
+        persistedKey?.incarnation === incarnation &&
+        draftId(persistedKey.key) !== draftId(currentKey)
+      ) {
+        await this.#journal.delete(persistedKey.key)
+      }
+      if (this.#sourceMatches(sessionId, incarnation)) {
+        const livePersisted = this.#lastPersistedKey.get(sessionId)
+        if (livePersisted?.incarnation === incarnation) {
+          this.#lastPersistedKey.delete(sessionId)
+        }
+      }
     })
   }
 
-  async untrack(sessionId: SessionId): Promise<void> {
-    this.#cancelTimer(sessionId)
-    this.#sources.delete(sessionId)
+  async untrack(sessionId: SessionId, incarnation: SessionIncarnation): Promise<void> {
+    this.#cancelTimer(sessionId, incarnation)
     await this.#queues.get(sessionId)
-    this.#queues.delete(sessionId)
+    if (this.#sourceMatches(sessionId, incarnation)) {
+      this.#sources.delete(sessionId)
+      const persisted = this.#lastPersistedKey.get(sessionId)
+      if (persisted?.incarnation === incarnation) {
+        this.#lastPersistedKey.delete(sessionId)
+      }
+    }
   }
 
   /**
@@ -495,7 +551,10 @@ export class DraftJournalCoordinator {
     }> = []
     try {
       for (const migration of migrations) {
-        await this.flush(migration.sessionId)
+        await this.flush(migration.sessionId, migration.incarnation)
+        if (!this.#sourceMatches(migration.sessionId, migration.incarnation)) {
+          throw new Error('Document session changed before draft migration')
+        }
         const fromKey: DraftKey = {
           workspaceId: migration.from.workspace.id,
           path: migration.from.path,
@@ -509,7 +568,13 @@ export class DraftJournalCoordinator {
             }
           : null
         const record = await this.#journal.get(fromKey)
+        if (!this.#sourceMatches(migration.sessionId, migration.incarnation)) {
+          throw new Error('Document session changed while inspecting draft migration')
+        }
         await this.#enqueue(migration.sessionId, async () => {
+          if (!this.#sourceMatches(migration.sessionId, migration.incarnation)) {
+            throw new Error('Document session changed before draft migration commit')
+          }
           if (toKey) await this.#journal.move(fromKey, toKey)
           else await this.#journal.delete(fromKey)
         })
@@ -549,20 +614,49 @@ export class DraftJournalCoordinator {
     for (const detach of [...this.#detach]) detach()
   }
 
-  #cancelTimer(sessionId: SessionId): void {
-    const handle = this.#timers.get(sessionId)
-    if (handle === undefined) return
-    this.#timer.clearTimeout(handle)
+  #cancelTimer(sessionId: SessionId, incarnation?: SessionIncarnation): void {
+    const timer = this.#timers.get(sessionId)
+    if (!timer || (incarnation !== undefined && timer.incarnation !== incarnation)) return
+    this.#timer.clearTimeout(timer.handle)
     this.#timers.delete(sessionId)
+  }
+
+  #sourceMatches(
+    sessionId: SessionId,
+    incarnation: SessionIncarnation,
+    expectedSource?: DraftSource
+  ): boolean {
+    const source = this.#sources.get(sessionId)
+    return Boolean(
+      source &&
+      source.incarnation === incarnation &&
+      (expectedSource === undefined || source === expectedSource)
+    )
+  }
+
+  #sourceIsCleanSavedXml(
+    sessionId: SessionId,
+    incarnation: SessionIncarnation,
+    savedXml: string
+  ): boolean {
+    const source = this.#sources.get(sessionId)
+    return Boolean(
+      source &&
+      source.incarnation === incarnation &&
+      !source.dirty &&
+      source.currentXml === savedXml
+    )
   }
 
   #enqueue(sessionId: SessionId, operation: () => Promise<void>): Promise<void> {
     const previous = this.#queues.get(sessionId) ?? Promise.resolve()
     const next = previous.catch(() => undefined).then(operation)
     this.#queues.set(sessionId, next)
-    void next.finally(() => {
-      if (this.#queues.get(sessionId) === next) this.#queues.delete(sessionId)
-    }).catch(() => undefined)
+    void next
+      .finally(() => {
+        if (this.#queues.get(sessionId) === next) this.#queues.delete(sessionId)
+      })
+      .catch(() => undefined)
     return next
   }
 
@@ -576,6 +670,9 @@ export class DraftJournalCoordinator {
   ): Promise<void> {
     for (const item of [...applied].reverse()) {
       await this.#enqueue(item.migration.sessionId, async () => {
+        if (!this.#sourceMatches(item.migration.sessionId, item.migration.incarnation)) {
+          return
+        }
         if (item.toKey) {
           await this.#journal.delete(item.toKey)
         }

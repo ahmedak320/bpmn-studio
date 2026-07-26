@@ -16,6 +16,7 @@ const workspace = { id: 'ws', generation: 1, mode: 'directory' as const }
 function source(overrides: Partial<DraftSource> = {}): DraftSource {
   return {
     sessionId: 's',
+    incarnation: 1,
     identity: { workspace, path: 'a.bpmn' },
     currentXml: '<dirty/>',
     dirty: true,
@@ -143,7 +144,7 @@ describe('DraftJournalCoordinator', () => {
     const journal = new MemoryDraftJournal()
     const coordinator = new DraftJournalCoordinator(journal, { appVersion: '0.4.5' })
     coordinator.track(source())
-    await coordinator.flush('s')
+    await coordinator.flush('s', 1)
     coordinator.track(source({ dirty: false }))
 
     expect(await journal.get(draftKeyOf(source()))).not.toBeNull()
@@ -153,13 +154,13 @@ describe('DraftJournalCoordinator', () => {
     const journal = new MemoryDraftJournal()
     const coordinator = new DraftJournalCoordinator(journal, { appVersion: '0.4.5' })
     coordinator.track(source())
-    await coordinator.flush('s')
-    await coordinator.confirmedSave('s', '<dirty/>')
+    await coordinator.flush('s', 1)
+    await coordinator.confirmedSave('s', 1, '<dirty/>')
     expect(await journal.get(draftKeyOf(source()))).toBeNull()
 
     coordinator.track(source({ currentXml: '<again/>' }))
-    await coordinator.flush('s')
-    await coordinator.explicitDiscard('s')
+    await coordinator.flush('s', 1)
+    await coordinator.explicitDiscard('s', 1)
     expect(await journal.get(draftKeyOf(source()))).toBeNull()
   })
 
@@ -167,10 +168,10 @@ describe('DraftJournalCoordinator', () => {
     const journal = new MemoryDraftJournal()
     const coordinator = new DraftJournalCoordinator(journal, { appVersion: '0.4.5' })
     coordinator.track(source({ currentXml: '<save-snapshot/>' }))
-    await coordinator.flush('s')
+    await coordinator.flush('s', 1)
     coordinator.track(source({ currentXml: '<newer-edit/>' }))
 
-    await coordinator.confirmedSave('s', '<save-snapshot/>')
+    await coordinator.confirmedSave('s', 1, '<save-snapshot/>')
 
     expect(await journal.get(draftKeyOf(source()))).toMatchObject({
       xml: '<newer-edit/>'
@@ -185,9 +186,9 @@ describe('DraftJournalCoordinator', () => {
       identity: { workspace, path: 'folder/moved.bpmn' }
     })
     coordinator.track(oldSource)
-    await coordinator.flush('s')
+    await coordinator.flush('s', 1)
     coordinator.track(movedSource)
-    await coordinator.flush('s')
+    await coordinator.flush('s', 1)
 
     expect(await journal.get(draftKeyOf(oldSource))).toBeNull()
     expect(await journal.get(draftKeyOf(movedSource))).toMatchObject({
@@ -202,10 +203,10 @@ describe('DraftJournalCoordinator', () => {
     const oldSource = source()
     const newIdentity = { workspace, path: 'moved/a.bpmn' }
     coordinator.track(oldSource)
-    await coordinator.flush('s')
+    await coordinator.flush('s', 1)
 
     const transaction = await coordinator.migrateDraftRecords([
-      { sessionId: 's', from: oldSource.identity, to: newIdentity }
+      { sessionId: 's', incarnation: 1, from: oldSource.identity, to: newIdentity }
     ])
     expect(await journal.get(draftKeyOf(oldSource))).toBeNull()
     expect(
@@ -241,7 +242,9 @@ describe('DraftJournalCoordinator', () => {
     await first.flushAll()
 
     await expect(
-      first.migrateDraftRecords([{ sessionId: 's', from: from.identity, to: to.identity }])
+      first.migrateDraftRecords([
+        { sessionId: 's', incarnation: 1, from: from.identity, to: to.identity }
+      ])
     ).rejects.toThrow(/already exists/)
     expect((await journal.get(draftKeyOf(from)))?.xml).toBe('<dirty/>')
     expect((await journal.get(draftKeyOf(to)))?.xml).toBe('<occupied/>')
@@ -283,7 +286,7 @@ describe('DraftJournalCoordinator', () => {
     const firstRun = source({ sessionId: 'old-session' })
     const coordinator = new DraftJournalCoordinator(journal, { appVersion: '0.4.5' })
     coordinator.track(firstRun)
-    await coordinator.flush(firstRun.sessionId)
+    await coordinator.flush(firstRun.sessionId, firstRun.incarnation)
 
     const comparison = await findDraftRecoveryComparison(
       journal,

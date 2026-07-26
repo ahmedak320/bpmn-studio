@@ -150,6 +150,13 @@ export function HistoryDialog({
         })
       )
     }
+    if (result.status === 'preparation-not-completed') {
+      throw new Error(
+        t('workspace.history.restoreNotComplete', {
+          outcome: result.reason
+        })
+      )
+    }
     throw new Error(
       t('workspace.history.restoreNotComplete', {
         outcome:

@@ -11,6 +11,7 @@ const workspace: WorkspaceIdentity = {
   mode: 'memory'
 }
 const decode = (bytes: Uint8Array) => new TextDecoder().decode(bytes)
+const encode = (xml: string) => new TextEncoder().encode(xml)
 
 async function historyFixture() {
   const adapter = new MemoryWorkspaceAdapter({
@@ -30,6 +31,34 @@ async function historyFixture() {
   adapter.replaceExternally('process.bpmn', '<current />')
   const current = await adapter.read('process.bpmn')
   return { adapter, history, revision, current }
+}
+
+function preparedWriter(adapter: MemoryWorkspaceAdapter, history: PortableHistoryManager) {
+  return async (input: {
+    revision: Parameters<PortableHistoryManager['restore']>[0]
+    xml: string
+    expectedCurrentHash: string | null
+  }) => {
+    if (input.expectedCurrentHash === null) {
+      return {
+        outcome: await adapter.writeAtomic(
+          input.revision.originalPath,
+          encode(input.xml),
+          undefined,
+          {
+            expectedWorkspaceId: adapter.id,
+            expectedMissing: true
+          }
+        )
+      }
+    }
+    return history.writeWithRevision(
+      input.revision.originalPath,
+      encode(input.xml),
+      input.expectedCurrentHash,
+      'restore'
+    )
+  }
 }
 
 describe('history restore session hook', () => {
@@ -294,5 +323,129 @@ describe('history restore session hook', () => {
       })
     ).rejects.toThrow(/SHA-256/)
     expect((await adapter.read('process.bpmn')).hash).toBe(before.hash)
+  })
+
+  it('reviews verified history XML before writing and persists the exact transformed XML', async () => {
+    const { adapter, history, revision, current } = await historyFixture()
+    const store = new DocumentSessionStore()
+    const importXML = vi.fn(async () => undefined)
+    const opened = store.open({
+      id: 'session',
+      identity: { workspace, path: revision.originalPath },
+      title: revision.originalPath,
+      xml: '<current />',
+      base: current,
+      editor: { modeler: { importXML } }
+    })
+    const prepareXml = vi.fn(async (xml: string) => ({
+      status: 'completed' as const,
+      xml: xml.replace('old', 'reviewed')
+    }))
+
+    const result = await restoreHistoryRevision({
+      manager: history,
+      store,
+      revision,
+      workspace,
+      expectedCurrentHash: current.hash,
+      prepareXml,
+      writePreparedXml: preparedWriter(adapter, history)
+    })
+
+    expect(result).toMatchObject({ status: 'restored', sessionId: opened.id })
+    expect(prepareXml).toHaveBeenCalledWith(
+      '<old />',
+      expect.objectContaining({ revision, session: expect.objectContaining({ id: opened.id }) })
+    )
+    expect(decode((await adapter.read(revision.originalPath)).bytes)).toBe('<reviewed />')
+    expect(importXML).toHaveBeenCalledWith('<reviewed />')
+    expect(store.get(opened.id)).toMatchObject({
+      currentXml: '<reviewed />',
+      lastSavedXml: '<reviewed />',
+      dirty: false
+    })
+  })
+
+  it.each(['cancelled', 'review-required'] as const)(
+    'performs no write when preparation returns %s',
+    async (status) => {
+      const { adapter, history, revision, current } = await historyFixture()
+      const writePreparedXml = vi.fn(preparedWriter(adapter, history))
+
+      const result = await restoreHistoryRevision({
+        manager: history,
+        store: new DocumentSessionStore(),
+        revision,
+        workspace,
+        expectedCurrentHash: current.hash,
+        prepareXml: async () => ({ status }),
+        writePreparedXml
+      })
+
+      expect(result).toMatchObject({
+        status: 'preparation-not-completed',
+        reason: status
+      })
+      expect(writePreparedXml).not.toHaveBeenCalled()
+      expect(decode((await adapter.read(revision.originalPath)).bytes)).toBe('<current />')
+    }
+  )
+
+  it('performs no write when the captured session becomes stale during review', async () => {
+    const { adapter, history, revision, current } = await historyFixture()
+    const store = new DocumentSessionStore()
+    const opened = store.open({
+      id: 'session',
+      identity: { workspace, path: revision.originalPath },
+      title: revision.originalPath,
+      xml: '<current />',
+      base: current
+    })
+    const writePreparedXml = vi.fn(preparedWriter(adapter, history))
+
+    const result = await restoreHistoryRevision({
+      manager: history,
+      store,
+      revision,
+      workspace,
+      expectedCurrentHash: current.hash,
+      prepareXml: async () => {
+        store.updateXml(opened.id, '<newer local />')
+        return { status: 'completed', xml: '<reviewed />' }
+      },
+      writePreparedXml
+    })
+
+    expect(result).toMatchObject({
+      status: 'preparation-not-completed',
+      reason: 'stale'
+    })
+    expect(writePreparedXml).not.toHaveBeenCalled()
+    expect(decode((await adapter.read(revision.originalPath)).bytes)).toBe('<current />')
+  })
+
+  it('re-verifies revision integrity after review and before calling the writer', async () => {
+    const { adapter, history, revision, current } = await historyFixture()
+    const preview = await history.preview(revision)
+    const integrityError = new Error('history content was tampered with')
+    const manager = {
+      restore: vi.fn(history.restore.bind(history)),
+      preview: vi.fn().mockResolvedValueOnce(preview).mockRejectedValueOnce(integrityError)
+    }
+    const writePreparedXml = vi.fn(preparedWriter(adapter, history))
+
+    const result = await restoreHistoryRevision({
+      manager,
+      store: new DocumentSessionStore(),
+      revision,
+      workspace,
+      expectedCurrentHash: current.hash,
+      prepareXml: async (xml) => ({ status: 'completed', xml }),
+      writePreparedXml
+    })
+
+    expect(result).toMatchObject({ status: 'failed', error: integrityError })
+    expect(writePreparedXml).not.toHaveBeenCalled()
+    expect(decode((await adapter.read(revision.originalPath)).bytes)).toBe('<current />')
   })
 })

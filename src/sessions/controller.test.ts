@@ -288,7 +288,10 @@ describe('DocumentSessionController saves', () => {
         reviewedConflict: reviewed.conflict
       })
     ).toMatchObject({ status: 'reloaded', ok: true })
-    expect(discard).toHaveBeenCalledWith('s', 'reload-external')
+    expect(discard).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 's', incarnation: expect.any(Number) }),
+      'reload-external'
+    )
     expect(controller.store.get('s')).toMatchObject({
       currentXml: '<external/>',
       lastSavedXml: '<external/>',
@@ -763,5 +766,155 @@ describe('DocumentSessionController saves', () => {
       sessionId: 's'
     })
     expect(stalePersistence.writes).toHaveLength(0)
+  })
+
+  it('keeps raw external XML as the saved baseline and journals reviewed XML as dirty', async () => {
+    const persistence = new FakePersistence()
+    persistence.inspected = external('<external/>', 'external')
+    const discard = vi.fn()
+    const preparedExternal = vi.fn()
+    const prepareExternal = vi.fn(async () => ({
+      status: 'completed' as const,
+      xml: '<reviewed-external/>'
+    }))
+    const controller = new DocumentSessionController({
+      persistence,
+      prepareExternal,
+      onExplicitDiscard: discard,
+      onPreparedExternal: preparedExternal
+    })
+    controller.open({ id: 's', identity, title: 'a', xml: '<old/>', base: fp('old') })
+    controller.updateXml('s', '<local/>')
+    const reviewed = await controller.save('s')
+    if (reviewed.status !== 'external-conflict') throw new Error('expected conflict fixture')
+
+    expect(
+      await controller.save('s', {
+        conflictDecision: { kind: 'reload-external' },
+        reviewedConflict: reviewed.conflict
+      })
+    ).toMatchObject({ status: 'reloaded', ok: true })
+
+    expect(prepareExternal).toHaveBeenCalledWith(
+      expect.objectContaining({ xml: '<external/>', fingerprint: fp('external') }),
+      expect.objectContaining({
+        session: expect.objectContaining({ id: 's', incarnation: expect.any(Number) }),
+        conflict: expect.objectContaining({
+          external: expect.objectContaining({ xml: '<external/>' })
+        })
+      })
+    )
+    expect(controller.store.get('s')).toMatchObject({
+      currentXml: '<reviewed-external/>',
+      lastSavedXml: '<external/>',
+      dirty: true,
+      base: fp('external')
+    })
+    expect(preparedExternal).toHaveBeenCalledWith(
+      expect.objectContaining({
+        id: 's',
+        currentXml: '<reviewed-external/>',
+        lastSavedXml: '<external/>',
+        dirty: true
+      }),
+      expect.objectContaining({ xml: '<external/>' })
+    )
+    expect(discard).not.toHaveBeenCalled()
+  })
+
+  it('does not mutate the session when external preparation is cancelled or becomes stale', async () => {
+    const cancelledPersistence = new FakePersistence()
+    cancelledPersistence.inspected = external('<external/>', 'external')
+    const discarded = vi.fn()
+    const cancelled = new DocumentSessionController({
+      persistence: cancelledPersistence,
+      prepareExternal: async () => ({ status: 'cancelled' }),
+      onExplicitDiscard: discarded,
+      onPreparedExternal: discarded
+    })
+    cancelled.open({ id: 's', identity, title: 'a', xml: '<old/>', base: fp('old') })
+    cancelled.updateXml('s', '<local/>')
+    const cancelledReview = await cancelled.save('s')
+    if (cancelledReview.status !== 'external-conflict') {
+      throw new Error('expected conflict fixture')
+    }
+    expect(
+      await cancelled.save('s', {
+        conflictDecision: { kind: 'reload-external' },
+        reviewedConflict: cancelledReview.conflict
+      })
+    ).toEqual({ status: 'cancelled', ok: false, sessionId: 's' })
+    expect(cancelled.store.get('s')).toMatchObject({
+      currentXml: '<local/>',
+      lastSavedXml: '<old/>',
+      dirty: true
+    })
+    expect(discarded).not.toHaveBeenCalled()
+
+    const stalePersistence = new FakePersistence()
+    stalePersistence.inspected = external('<external/>', 'external')
+    const preparation = deferred<{ status: 'completed'; xml: string }>()
+    const staleCallback = vi.fn()
+    const prepareStaleExternal = vi.fn(() => preparation.promise)
+    const stale = new DocumentSessionController({
+      persistence: stalePersistence,
+      prepareExternal: prepareStaleExternal,
+      onExplicitDiscard: staleCallback,
+      onPreparedExternal: staleCallback
+    })
+    stale.open({ id: 's', identity, title: 'a', xml: '<old/>', base: fp('old') })
+    stale.updateXml('s', '<local/>')
+    const staleReview = await stale.save('s')
+    if (staleReview.status !== 'external-conflict') throw new Error('expected conflict fixture')
+    const reload = stale.save('s', {
+      conflictDecision: { kind: 'reload-external' },
+      reviewedConflict: staleReview.conflict
+    })
+    await vi.waitFor(() => expect(prepareStaleExternal).toHaveBeenCalledOnce())
+    stale.updateXml('s', '<newer-local/>')
+    preparation.resolve({ status: 'completed', xml: '<reviewed-external/>' })
+
+    expect(await reload).toEqual({ status: 'stale-capture', ok: false, sessionId: 's' })
+    expect(stale.store.get('s')).toMatchObject({
+      currentXml: '<newer-local/>',
+      lastSavedXml: '<old/>',
+      dirty: true
+    })
+    expect(staleCallback).not.toHaveBeenCalled()
+  })
+
+  it('rechecks the external fingerprint after preparation before mutating the session', async () => {
+    const persistence = new FakePersistence()
+    persistence.inspected = external('<external/>', 'external')
+    const applied = vi.fn()
+    const controller = new DocumentSessionController({
+      persistence,
+      prepareExternal: async () => {
+        persistence.inspected = external('<newer-external/>', 'newer-external', 2)
+        return { status: 'completed', xml: '<reviewed-external/>' }
+      },
+      onPreparedExternal: applied
+    })
+    controller.open({ id: 's', identity, title: 'a', xml: '<old/>', base: fp('old') })
+    controller.updateXml('s', '<local/>')
+    const reviewed = await controller.save('s')
+    if (reviewed.status !== 'external-conflict') throw new Error('expected conflict fixture')
+
+    expect(
+      await controller.save('s', {
+        conflictDecision: { kind: 'reload-external' },
+        reviewedConflict: reviewed.conflict
+      })
+    ).toMatchObject({
+      status: 'external-conflict',
+      decisionStale: true,
+      conflict: { external: { xml: '<newer-external/>' } }
+    })
+    expect(controller.store.get('s')).toMatchObject({
+      currentXml: '<local/>',
+      lastSavedXml: '<old/>',
+      dirty: true
+    })
+    expect(applied).not.toHaveBeenCalled()
   })
 })

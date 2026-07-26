@@ -7,6 +7,11 @@
  */
 
 export type SessionId = string
+/**
+ * Store-assigned identity for one lifetime of a session id. Closing and
+ * reopening the same id always produces a different incarnation.
+ */
+export type SessionIncarnation = number
 
 export type WorkspaceStorageMode = 'directory' | 'opfs' | 'single-file' | 'memory'
 
@@ -107,6 +112,8 @@ export interface SessionEditorBinding {
 
 export interface DocumentSession {
   id: SessionId
+  /** Immutable for this open lifetime, even when the path identity changes. */
+  incarnation: SessionIncarnation
   identity: DocumentIdentity
   title: string
   currentXml: string
@@ -166,6 +173,13 @@ export function sameDocumentIdentity(a: DocumentIdentity, b: DocumentIdentity): 
   return sameWorkspace(a.workspace, b.workspace) && a.path === b.path
 }
 
+export function sameSessionIncarnation(
+  a: Pick<DocumentSession, 'id' | 'incarnation'>,
+  b: Pick<DocumentSession, 'id' | 'incarnation'>
+): boolean {
+  return a.id === b.id && a.incarnation === b.incarnation
+}
+
 export function documentIdentityKey(identity: DocumentIdentity): string {
   return JSON.stringify([
     identity.workspace.id,
@@ -174,4 +188,3 @@ export function documentIdentityKey(identity: DocumentIdentity): string {
     identity.path
   ])
 }
-
