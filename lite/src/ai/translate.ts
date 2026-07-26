@@ -1,37 +1,13 @@
-// "Translate with AI": fill the MISSING half of every element's bilingual name
-// pair (`orbitpm:nameEn` / `orbitpm:nameAr`) through an injected LLM call.
+// Fill missing English OR Arabic localization attributes from the label's
+// available opposite-language source. Imported non-empty translations are
+// authoritative and are never overwritten. A plain visible label is adopted
+// as English or Arabic from its script, then translated in the other direction.
+// Projection into the visible BPMN `name`/TextAnnotation `text` property and
+// ownership of `orbitpm:activeLang` belong to editor/langToggle.ts and App.tsx.
 //
-// Relationship to editor/langToggle.ts (read that module first): the toggle
-// SWITCHES the visible `name` between two STORED translations and counts the
-// sides it could not switch as `missing` — this module is the thing that
-// creates those missing sides. It never touches the visible `name` itself: a
-// run leaves the diagram looking identical, only the stored attrs (and, when
-// absent, the diagram-level `orbitpm:activeLang` flag) change, so the very
-// next toggle can switch cleanly. Element iteration follows the toggle's
-// rules exactly: external labels are skipped (`labelTarget` truthy — they
-// share their target's business object, so processing them would double-count
-// and double-write), connections are included (flow-condition names), and the
-// participants-aware process root — resolved via the toggle's own
-// `pickRootBusinessObject` — is processed too (its `name` is the process
-// title), deduplicated by business-object identity in case the registry
-// already contains it as the canvas root.
-//
-// Direction semantics — "both directions in one run": each element is
-// resolved independently, so a single diagram can simultaneously hold
-// English-labeled elements missing their Arabic side (ARIS/DMT exports) and
-// Arabic-labeled elements missing their English side; the two groups go out
-// as separate per-direction prompts. The diagram-level ACTIVE language
-// matters only for an element with NEITHER attr stored: there the visible
-// name is adopted as the active-language attr (the same self-healing
-// write-back the toggle performs — deferred to the APPLY step so
-// `collectMissingTranslations` stays strictly read-only) and only the OTHER
-// side is sent for translation. When exactly one side is stored, that stored
-// value is the translation source and the missing side is the target — the
-// seed deliberately does NOT fire there: the missing side is about to be
-// filled by a real translation, and seeding it with the visible name instead
-// would (a) fight the translation for the same attribute and (b) on a failed
-// chunk permanently pollute the attr with wrong-language text, hiding the
-// element from every future re-run.
+// External labels are skipped because they share a business object with their
+// target. Connections and the participant-aware process root are included,
+// with business-object identity de-duplication.
 //
 // Failure semantics: a chunk whose response cannot be parsed as a JSON object
 // (after ONE retry with a terser reminder appended) gives up — its entries
@@ -46,8 +22,17 @@
 // shape as langToggle.ts, so the node-environment vitest suite drives it with
 // plain object fakes — see src/ai/__tests__/translate.test.ts.
 
-import { arabicRatio, detectActiveLang, parseJsonLoose, type CallLLM, type LlmMessage } from '@app/gen'
-import { pickRootBusinessObject, type DiagramLang } from '../editor/langToggle'
+import { arabicRatio, parseJsonLoose, type CallLLM, type LlmMessage } from '@app/gen'
+import {
+  pickRootBusinessObject,
+  readVisibleLabel,
+  visibleLabelProperty,
+  type DiagramLang
+} from '../editor/langToggle'
+import {
+  executeModelingBatch,
+  type ModelingBatchUpdate
+} from '../editor/modelingBatch'
 
 // --- public shapes -----------------------------------------------------------
 
@@ -56,7 +41,7 @@ import { pickRootBusinessObject, type DiagramLang } from '../editor/langToggle'
 export interface TranslateEntry {
   id: string
   text: string
-  target: 'en' | 'ar'
+  target: DiagramLang
 }
 
 /** What a run achieved. `total` = entries collected; every entry ends up either
@@ -66,6 +51,19 @@ export interface TranslateOutcome {
   translated: number
   skipped: number
   total: number
+}
+
+/** Read-only coverage summary. `total` is partitioned into the next four
+ * counters. `omitted` means a label cannot be translated automatically (for
+ * example: blank, missing an id, or no usable source).
+ * An empty diagram is deliberately not considered complete. */
+export interface ArabicCoverageAudit {
+  total: number
+  bilingual: number
+  missingArabic: number
+  missingEnglish: number
+  omitted: number
+  complete: boolean
 }
 
 /** Same single generic `get()` surface as langToggle's LangToggleModeler —
@@ -83,6 +81,7 @@ interface BusinessObjectLike {
   $type?: string
   $attrs?: Record<string, unknown>
   name?: string
+  text?: string
   get?: (name: string) => unknown
   [key: string]: unknown
 }
@@ -103,24 +102,10 @@ interface ElementRegistryLike {
   getAll(): LangElementLike[]
 }
 
-interface ModelingLike {
-  updateProperties(element: unknown, properties: Record<string, unknown>): void
-}
-
 // --- attribute names ---------------------------------------------------------
 
 const ATTR_NAME_EN = 'orbitpm:nameEn'
 const ATTR_NAME_AR = 'orbitpm:nameAr'
-const ATTR_ACTIVE_LANG = 'orbitpm:activeLang'
-
-const LANG_ATTR: Record<DiagramLang, string> = {
-  en: ATTR_NAME_EN,
-  ar: ATTR_NAME_AR
-}
-
-function otherLang(lang: DiagramLang): DiagramLang {
-  return lang === 'en' ? 'ar' : 'en'
-}
 
 // --- dual-world attribute reading (copies of langToggle.ts's readers) --------
 
@@ -138,26 +123,40 @@ function readModdleProp(bo: BusinessObjectLike | undefined, name: string): unkno
   return bo[name]
 }
 
-/** Read one `orbitpm:*` attribute. Empty string counts as absent. */
+/** Read one `orbitpm:*` attribute. Blank values count as absent. */
 function readAttr(bo: BusinessObjectLike | undefined, name: string): string | undefined {
   if (!bo) return undefined
   if (typeof bo.get === 'function') {
     try {
       const value = bo.get(name)
-      if (value != null && value !== '') return String(value)
+      if (value != null) {
+        const text = String(value).trim()
+        if (text !== '') return text
+      }
     } catch {
       /* fall through to $attrs */
     }
   }
   const raw = bo.$attrs?.[name]
-  if (raw != null && raw !== '') return String(raw)
+  if (raw != null) {
+    const text = String(raw).trim()
+    if (text !== '') return text
+  }
   return undefined
 }
 
-/** The element's current visible name, or '' if unset/not a string. */
-function readName(bo: BusinessObjectLike | undefined): string {
-  const value = readModdleProp(bo, 'name')
-  return typeof value === 'string' ? value : ''
+/** Attribute-presence check that deliberately includes blank values so the
+ * audit can classify them instead of silently treating them as no label. */
+function hasRawAttr(bo: BusinessObjectLike | undefined, name: string): boolean {
+  if (!bo) return false
+  if (typeof bo.get === 'function') {
+    try {
+      if (bo.get(name) !== undefined) return true
+    } catch {
+      /* fall through to $attrs */
+    }
+  }
+  return Object.prototype.hasOwnProperty.call(bo.$attrs ?? {}, name)
 }
 
 /** The id used to key the LLM payload: the registry element's own id when
@@ -165,9 +164,9 @@ function readName(bo: BusinessObjectLike | undefined): string {
  *  registry element of its own). '' means "cannot round-trip — skip". */
 function readId(element: LangElementLike | undefined, bo: BusinessObjectLike): string {
   const elementId = element?.id
-  if (typeof elementId === 'string' && elementId !== '') return elementId
+  if (typeof elementId === 'string' && elementId.trim() !== '') return elementId.trim()
   const boId = readModdleProp(bo, 'id')
-  return typeof boId === 'string' ? boId : ''
+  return typeof boId === 'string' ? boId.trim() : ''
 }
 
 // --- prompt ------------------------------------------------------------------
@@ -175,8 +174,8 @@ function readId(element: LangElementLike | undefined, bo: BusinessObjectLike): s
 /** System-style instruction, sent inside the single user message per chunk. */
 export const TRANSLATE_INSTRUCTION =
   'You translate BUSINESS PROCESS diagram labels between English and Arabic for a UAE government ' +
-  'context. Translate each value faithfully and concisely; Modern Standard Arabic (never ' +
-  'transliteration); keep numbers, codes, and proper nouns like DMT as-is; return ONLY a JSON ' +
+  'context. Translate each value faithfully and concisely; use Modern Standard Arabic for Arabic ' +
+  'targets; keep numbers, codes, and proper nouns like DMT as-is; return ONLY a JSON ' +
   'object mapping each id to its translation, no commentary.'
 
 /** Appended (once) to the re-sent prompt after an unparseable response. */
@@ -189,48 +188,39 @@ export const TRANSLATE_MAX_TOKENS = 4000
 
 const DEFAULT_CHUNK_SIZE = 60
 
-function buildPrompt(target: DiagramLang, payload: Record<string, string>): string {
-  const direction = target === 'ar' ? 'Arabic' : 'English'
+function buildPrompt(payload: Record<string, string>, target: DiagramLang): string {
+  const targetName = target === 'ar' ? 'Arabic' : 'English'
   return (
     `${TRANSLATE_INSTRUCTION}\n\n` +
-    `Target language for every value in this request: ${direction}. Keep every key exactly as given.\n\n` +
+    `Target language for every value in this request: ${targetName}. ` +
+    'Keep every key exactly as given.\n\n' +
     JSON.stringify(payload)
   )
 }
 
 // --- diagram resolution (pure, shared by collect + translate) ---------------
 
-/** Per-element plan: at most ONE entry (see module doc — the seed satisfies
- *  the active side in the both-missing case, and a single-missing side is a
- *  single target), plus the optional write-back seed applied alongside it. */
+/** Per-element plan: one missing opposite-language entry plus an optional
+ * visible-label seed for the source language. */
 interface ResolvedElement {
-  /** What modeling.updateProperties receives — the registry element, or a
-   *  `{ businessObject }` wrapper for a shapeless collab processRef (bpmn-js's
-   *  UpdatePropertiesHandler reads `element.businessObject` directly — see
-   *  langToggle.ts's root-write note). */
+  /** Registry element, or a `{ businessObject }` wrapper for a processRef. */
   target: unknown
-  /** Active-language write-back ({ 'orbitpm:nameXx': visibleName }) — present
-   *  only when BOTH stored attrs were missing. */
+  /** Retained for the apply-time "translation arrived meanwhile" guard. */
+  bo: BusinessObjectLike
+  /** Visible-label write-back when its source attribute was absent. */
   seed?: Record<string, string>
-  entry?: TranslateEntry
+  entry: TranslateEntry
 }
 
 interface DiagramResolution {
   elements: ResolvedElement[]
-  /** The diagram's active language: the stored orbitpm:activeLang when present
-   *  ('ar' iff exactly 'ar', mirroring getDiagramLang's strictness), otherwise
-   *  detected from the visible labels (majority-Arabic → 'ar'). */
-  activeLang: DiagramLang
-  /** Present when orbitpm:activeLang was ABSENT and must be stamped at apply. */
-  rootStamp?: { target: unknown; lang: DiagramLang }
+  audit: ArabicCoverageAudit
 }
 
 /**
- * Single read-only sweep over the diagram producing everything both public
- * functions need. Iteration mirrors toggleDiagramLang: every registry element
- * except external labels, connections included; then the process root (via
- * pickRootBusinessObject) if the registry didn't already surface its business
- * object. Only elements with a non-empty visible `name` participate.
+ * Single read-only sweep shared by collection, audit, and translation.
+ * Explicitly blank labels are audit candidates, while ordinary BPMN elements
+ * with no name field and no localization attributes are ignored.
  */
 function resolveDiagram(modeler: TranslateModeler): DiagramResolution {
   const elementRegistry = modeler.get('elementRegistry') as ElementRegistryLike
@@ -240,113 +230,117 @@ function resolveDiagram(modeler: TranslateModeler): DiagramResolution {
     target: unknown
     bo: BusinessObjectLike
     id: string
-    name: string
+    label: string
   }
   const gathered: Gathered[] = []
   const seen = new Set<BusinessObjectLike>()
-  const labels: string[] = []
+
+  const gather = (
+    target: unknown,
+    element: LangElementLike | undefined,
+    bo: BusinessObjectLike
+  ): void => {
+    if (seen.has(bo)) return
+    seen.add(bo)
+    const rawLabel = readModdleProp(bo, visibleLabelProperty(bo))
+    const candidate =
+      typeof rawLabel === 'string' ||
+      hasRawAttr(bo, ATTR_NAME_EN) ||
+      hasRawAttr(bo, ATTR_NAME_AR)
+    if (!candidate) return
+    gathered.push({
+      target,
+      bo,
+      id: readId(element, bo),
+      label: readVisibleLabel(bo)
+    })
+  }
 
   for (const element of elementRegistry.getAll()) {
-    if (element.labelTarget != null) continue
-    const bo = element.businessObject
-    if (!bo || seen.has(bo)) continue
-    seen.add(bo)
-    const name = readName(bo)
-    if (name.trim() === '') continue
-    labels.push(name)
-    gathered.push({ target: element, bo, id: readId(element, bo), name })
+    if (element.labelTarget != null || !element.businessObject) continue
+    gather(element, element, element.businessObject)
   }
 
-  // The process root itself — the process title is translatable too. In a
-  // plain-process diagram the registry usually already yielded it (the canvas
-  // root is a registered element sharing the same business object, so the
-  // `seen` set deduplicates); in a collaboration the processRef has no shape
-  // of its own and must be added here, wrapped for updateProperties.
+  // Include the process title even when a collaboration processRef has no
+  // registry shape of its own.
   const root = canvas.getRootElement()
   const rootBo = pickRootBusinessObject(modeler)
-  let rootTarget: unknown
   if (rootBo) {
-    // The canvas root element when it carries the process directly; a wrapper
-    // for a shapeless collab processRef. The id comes from the root ELEMENT in
-    // the direct case (registry elements are keyed by it) and from the
-    // business object itself in the wrapped case.
     const rootIsElement = root !== undefined && root.businessObject === rootBo
-    rootTarget = rootIsElement ? root : { businessObject: rootBo }
-    if (!seen.has(rootBo)) {
-      seen.add(rootBo)
-      const name = readName(rootBo)
-      if (name.trim() !== '') {
-        labels.push(name)
-        gathered.push({
-          target: rootTarget,
-          bo: rootBo,
-          id: readId(rootIsElement ? root : undefined, rootBo),
-          name
-        })
-      }
-    }
+    const target: unknown = rootIsElement ? root : { businessObject: rootBo }
+    gather(target, rootIsElement ? root : undefined, rootBo)
   }
 
-  // Active language: the stored flag wins (any non-'ar' value reads as 'en',
-  // same as getDiagramLang, and a present-but-odd value is NOT re-stamped);
-  // when absent, detect from the visible labels and stamp at apply time.
-  const storedLang = readAttr(rootBo, ATTR_ACTIVE_LANG)
-  const activeLang: DiagramLang =
-    storedLang !== undefined ? (storedLang === 'ar' ? 'ar' : 'en') : detectActiveLang(labels)
-  const rootStamp =
-    rootBo && storedLang === undefined ? { target: rootTarget, lang: activeLang } : undefined
-
   const elements: ResolvedElement[] = []
+  let bilingual = 0
+  let missingArabic = 0
+  let missingEnglish = 0
+  let omitted = 0
+
   for (const g of gathered) {
     const en = readAttr(g.bo, ATTR_NAME_EN)
     const ar = readAttr(g.bo, ATTR_NAME_AR)
-    if (en !== undefined && ar !== undefined) continue // both stored — toggle-ready
-
-    // Without an id the translation cannot round-trip through the LLM's JSON
-    // response, so the element is left for a manual pass (never happens for
-    // real bpmn-js elements, which always carry ids).
-    if (g.id === '') continue
-
-    let seed: Record<string, string> | undefined
-    let entry: TranslateEntry | undefined
-    if (en === undefined && ar === undefined) {
-      // Neither side stored: the visible name IS the active language's text
-      // (the toggle's self-healing rule), so it becomes the active attr via
-      // the apply-step seed, and only the other side needs the model.
-      seed = { [LANG_ATTR[activeLang]]: g.name }
-      entry = { id: g.id, text: g.name, target: otherLang(activeLang) }
-    } else if (ar !== undefined) {
-      // nameEn missing — translate FROM the stored Arabic value.
-      entry = { id: g.id, text: ar, target: 'en' }
-    } else if (en !== undefined) {
-      // nameAr missing — translate FROM the stored English value.
-      entry = { id: g.id, text: en, target: 'ar' }
+    if (en !== undefined && ar !== undefined) {
+      bilingual += 1
+      continue
     }
 
-    // Never emit an entry with an empty source text (e.g. a stored attr that
-    // is only whitespace — readAttr already treats '' as absent).
-    if (entry !== undefined && entry.text.trim() === '') entry = undefined
-    if (entry === undefined && seed === undefined) continue
+    const visible = g.label.trim()
+    const visibleLang: DiagramLang | undefined =
+      visible === '' ? undefined : arabicRatio(visible) > 0 ? 'ar' : 'en'
+    const sourceLang: DiagramLang | undefined =
+      en !== undefined ? 'en' : ar !== undefined ? 'ar' : visibleLang
+    const source =
+      sourceLang === 'en'
+        ? en ?? (visibleLang === 'en' ? visible : undefined)
+        : sourceLang === 'ar'
+          ? ar ?? (visibleLang === 'ar' ? visible : undefined)
+          : undefined
 
-    elements.push({ target: g.target, seed, entry })
+    if (g.id === '' || sourceLang === undefined || source === undefined) {
+      omitted += 1
+      continue
+    }
+
+    const target: DiagramLang = sourceLang === 'en' ? 'ar' : 'en'
+    if (target === 'ar') missingArabic += 1
+    else missingEnglish += 1
+    elements.push({
+      target: g.target,
+      bo: g.bo,
+      seed:
+        readAttr(g.bo, sourceLang === 'en' ? ATTR_NAME_EN : ATTR_NAME_AR) ===
+        undefined
+          ? {
+              [sourceLang === 'en' ? ATTR_NAME_EN : ATTR_NAME_AR]: source
+            }
+          : undefined,
+      entry: { id: g.id, text: source, target }
+    })
   }
 
-  return { elements, activeLang, rootStamp }
+  const total = bilingual + missingArabic + missingEnglish + omitted
+  return {
+    elements,
+    audit: {
+      total,
+      bilingual,
+      missingArabic,
+      missingEnglish,
+      omitted,
+      complete: total > 0 && bilingual === total
+    }
+  }
 }
 
-/**
- * Read-only preview of what {@link translateDiagram} would send to the model:
- * one entry per element that is missing a stored translation side. Useful for
- * a "nothing to translate" pre-check and for sizing the run. Performs no
- * writes — the write-back seed described in the module doc happens only
- * inside translateDiagram's apply step.
- */
+/** Audit complete EN/AR readiness without writing or contacting a provider. */
+export function auditArabicCoverage(modeler: TranslateModeler): ArabicCoverageAudit {
+  return resolveDiagram(modeler).audit
+}
+
+/** Read-only provider work list in both directions. */
 export function collectMissingTranslations(modeler: TranslateModeler): TranslateEntry[] {
-  const out: TranslateEntry[] = []
-  for (const el of resolveDiagram(modeler).elements) {
-    if (el.entry) out.push(el.entry)
-  }
-  return out
+  return resolveDiagram(modeler).elements.map((el) => el.entry)
 }
 
 // --- LLM round-trip ----------------------------------------------------------
@@ -381,12 +375,12 @@ function coerceToRecord(raw: unknown): Record<string, unknown> | undefined {
  */
 async function requestChunk(
   callLLM: CallLLM,
-  target: DiagramLang,
   chunk: TranslateEntry[]
 ): Promise<Record<string, unknown> | undefined> {
   const payload: Record<string, string> = {}
   for (const entry of chunk) payload[entry.id] = entry.text
-  const prompt = buildPrompt(target, payload)
+  const target = chunk[0]?.target ?? 'ar'
+  const prompt = buildPrompt(payload, target)
 
   const messages: LlmMessage[] = [{ role: 'user', content: prompt }]
   const first = coerceToRecord(await callLLM(messages, { maxTokens: TRANSLATE_MAX_TOKENS }))
@@ -401,21 +395,20 @@ async function requestChunk(
  * undefined (⇒ skipped). Rules:
  *  - must be a non-empty string (identical-to-source IS allowed — "DMT HUB"
  *    legitimately translates to itself);
- *  - target 'ar' must contain at least one Arabic codepoint (arabicRatio > 0
+ *  - target Arabic must contain at least one Arabic codepoint (arabicRatio > 0
  *    ⇔ ≥ 1 codepoint in the Arabic blocks) UNLESS the source is
  *    digits/punctuation/acronym-like — heuristic: no lowercase [a-z] in the
  *    source ("DMT HUB", "R2", "§4.2" pass through untranslated);
- *  - target 'en' must contain NO Arabic codepoints.
  */
 function validateTranslation(entry: TranslateEntry, value: unknown): string | undefined {
   if (typeof value !== 'string') return undefined
   const text = value.trim()
   if (text === '') return undefined
-  const hasArabic = arabicRatio(text) > 0
   if (entry.target === 'ar') {
+    const hasArabic = arabicRatio(text) > 0
     const passthroughSource = !/[a-z]/.test(entry.text)
     if (!hasArabic && !passthroughSource) return undefined
-  } else if (hasArabic) {
+  } else if (arabicRatio(text) > 0) {
     return undefined
   }
   return text
@@ -434,55 +427,45 @@ function validateTranslation(entry: TranslateEntry, value: unknown): string | un
  * translation.
  */
 function applyTranslations(
-  modeling: ModelingLike,
+  modeler: TranslateModeler,
   resolution: DiagramResolution,
   translations: Map<string, string>
 ): number {
   let translated = 0
+  const updates: ModelingBatchUpdate[] = []
   for (const el of resolution.elements) {
-    const properties: Record<string, string> = { ...(el.seed ?? {}) }
-    if (el.entry) {
-      const value = translations.get(el.entry.id)
-      if (value !== undefined) {
-        properties[LANG_ATTR[el.entry.target]] = value
-        translated += 1
-      }
+    const targetAttr =
+      el.entry.target === 'ar' ? ATTR_NAME_AR : ATTR_NAME_EN
+    const sourceAttr =
+      el.entry.target === 'ar' ? ATTR_NAME_EN : ATTR_NAME_AR
+    // A user/import may have supplied the target while the provider request was
+    // in flight. That newer nonempty value wins; never overwrite it or apply a
+    // now-stale seed beside it.
+    if (readAttr(el.bo, targetAttr) !== undefined) continue
+
+    const properties: Record<string, string> = {}
+    if (el.seed && readAttr(el.bo, sourceAttr) === undefined) {
+      Object.assign(properties, el.seed)
+    }
+    const value = translations.get(el.entry.id)
+    if (value !== undefined) {
+      properties[targetAttr] = value
+      translated += 1
     }
     if (Object.keys(properties).length > 0) {
-      modeling.updateProperties(el.target, properties)
+      updates.push({ kind: 'properties', element: el.target, properties })
     }
   }
+  executeModelingBatch(modeler, updates)
   return translated
-}
-
-/**
- * Stamp `orbitpm:activeLang` on the process root when it was absent
- * (langToggle-style separate last write); no-op when already stored.
- */
-function stampRoot(modeling: ModelingLike, resolution: DiagramResolution): void {
-  if (!resolution.rootStamp) return
-  modeling.updateProperties(resolution.rootStamp.target, {
-    [ATTR_ACTIVE_LANG]: resolution.rootStamp.lang
-  })
 }
 
 // --- the run -----------------------------------------------------------------
 
 /**
- * Fill every missing stored translation in the diagram via `callLLM`.
- *
- * Entries are grouped by target language (each direction gets its own
- * prompts) and sent in chunks of at most `opts.chunkSize` (default 60),
- * sequentially — deterministic ordering ('en' chunks first, then 'ar') and no
- * parallel burst against provider rate limits. Every write goes through
- * `modeling.updateProperties`, ONE call per element bundling the write-back
- * seed (when both attrs were missing) with the validated translation, so each
- * element lands on the command stack as a single undoable edit; the visible
- * `name` is never touched. Finally `orbitpm:activeLang` is stamped on the
- * process root when it was absent (langToggle-style separate last write,
- * using the detected language) so the toolbar toggle starts from the right
- * side. The stamp mirrors the toggle's own root write: it fires even when
- * nothing needed translating, and never overwrites an existing value.
+ * Fill missing English and/or Arabic via `callLLM`, in deterministic
+ * single-direction chunks. This function stores attributes only; App projects
+ * the requested diagram language into visible labels afterward.
  */
 export async function translateDiagram(
   modeler: TranslateModeler,
@@ -490,12 +473,7 @@ export async function translateDiagram(
   opts?: { chunkSize?: number }
 ): Promise<TranslateOutcome> {
   const resolution = resolveDiagram(modeler)
-  const modeling = modeler.get('modeling') as ModelingLike
-
-  const entries: TranslateEntry[] = []
-  for (const el of resolution.elements) {
-    if (el.entry) entries.push(el.entry)
-  }
+  const entries = resolution.elements.map((el) => el.entry)
   const total = entries.length
 
   const rawChunkSize = opts?.chunkSize
@@ -507,12 +485,12 @@ export async function translateDiagram(
   // id → validated translation. Element ids are unique per diagram and each
   // element yields at most one entry, so a flat map is unambiguous.
   const translations = new Map<string, string>()
-  for (const target of ['en', 'ar'] as const) {
-    const group = entries.filter((entry) => entry.target === target)
-    for (let start = 0; start < group.length; start += chunkSize) {
-      const chunk = group.slice(start, start + chunkSize)
-      const response = await requestChunk(callLLM, target, chunk)
-      if (!response) continue // chunk gave up — its entries stay skipped
+  for (const target of ['ar', 'en'] as const) {
+    const directional = entries.filter((entry) => entry.target === target)
+    for (let start = 0; start < directional.length; start += chunkSize) {
+      const chunk = directional.slice(start, start + chunkSize)
+      const response = await requestChunk(callLLM, chunk)
+      if (!response) continue
       for (const entry of chunk) {
         const valid = validateTranslation(entry, response[entry.id])
         if (valid !== undefined) translations.set(entry.id, valid)
@@ -520,9 +498,7 @@ export async function translateDiagram(
     }
   }
 
-  // Apply + root stamp — see applyTranslations/stampRoot above.
-  const translated = applyTranslations(modeling, resolution, translations)
-  stampRoot(modeling, resolution)
+  const translated = applyTranslations(modeler, resolution, translations)
 
   return { translated, skipped: total - translated, total }
 }
@@ -544,46 +520,34 @@ export type TranslateTextsFn = (
 ) => Promise<Array<string | undefined>>
 
 /**
- * Non-LLM twin of {@link translateDiagram}: the same resolveDiagram sweep,
- * the same per-direction grouping ('en' targets first, then 'ar'; the source
- * language is always the other side), the same validateTranslation gate, the
- * same one-updateProperties-per-element apply (seed bundled) and the same
- * final root stamp. No chunking and no retry — pacing, fallback and error
- * classification belong to the injected `translateTexts` (see
- * ai/freeTranslate.ts). All results are gathered BEFORE anything is applied,
- * so a translateTexts throw leaves the diagram untouched, mirroring
- * translateDiagram's rejected-callLLM semantics.
+ * Non-LLM twin of {@link translateDiagram}. It makes at most one request per
+ * required direction. All results are gathered before anything is applied.
  */
 export async function translateDiagramWithTexts(
   modeler: TranslateModeler,
   translateTexts: TranslateTextsFn
 ): Promise<TranslateOutcome> {
   const resolution = resolveDiagram(modeler)
-  const modeling = modeler.get('modeling') as ModelingLike
-
-  const entries: TranslateEntry[] = []
-  for (const el of resolution.elements) {
-    if (el.entry) entries.push(el.entry)
-  }
+  const entries = resolution.elements.map((el) => el.entry)
   const total = entries.length
 
   const translations = new Map<string, string>()
-  for (const target of ['en', 'ar'] as const) {
-    const group = entries.filter((entry) => entry.target === target)
-    if (group.length === 0) continue
+  for (const target of ['ar', 'en'] as const) {
+    const directional = entries.filter((entry) => entry.target === target)
+    if (directional.length === 0) continue
+    const source: DiagramLang = target === 'ar' ? 'en' : 'ar'
     const results = await translateTexts(
-      group.map((entry) => entry.text),
-      otherLang(target),
+      directional.map((entry) => entry.text),
+      source,
       target
     )
-    for (let i = 0; i < group.length; i += 1) {
-      const valid = validateTranslation(group[i], results[i])
-      if (valid !== undefined) translations.set(group[i].id, valid)
+    for (let i = 0; i < directional.length; i += 1) {
+      const valid = validateTranslation(directional[i], results[i])
+      if (valid !== undefined) translations.set(directional[i].id, valid)
     }
   }
 
-  const translated = applyTranslations(modeling, resolution, translations)
-  stampRoot(modeling, resolution)
+  const translated = applyTranslations(modeler, resolution, translations)
 
   return { translated, skipped: total - translated, total }
 }

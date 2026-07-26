@@ -11,15 +11,19 @@ import {
   isDecisionBasisType,
   relativeLabelBox,
   removeStockSubProcessMarker,
+  gatewayPresentationForElement,
+  diagramLanguageForElement,
   OrgRenderer,
   OrgRenderModule,
   type Decoration,
   type MarkerDomLike
 } from '../orgRenderer'
 import { OrgDecorSync } from '../orgDecorSync'
+import { OrgConnectionRenderer } from '../orgConnectionRenderer'
 import { orbitpmModdleDescriptor, ORG_ATTR_NAMES } from '../orbitpmModdle'
 import { PALETTE } from '../palette'
-import { t } from '../../i18n'
+import { t, setLang } from '../../i18n'
+import { SEMANTIC_NAMING } from '../semanticNaming'
 import type { OrgElementLike } from '../orgModel'
 
 function byKind(decorations: Decoration[], kind: Decoration['kind']): Decoration[] {
@@ -182,52 +186,64 @@ describe('planDecorations', () => {
   })
 })
 
-describe('applyDecorations trigger tooltip DOM contract', () => {
-  it('stamps data-org-tooltip on the trigger tag group', () => {
-    interface FakeSvgNode {
-      nodeType: number
-      tagName: string
-      ownerDocument: unknown
-      style: Record<string, unknown>
-      attrs: Record<string, string>
-      children: FakeSvgNode[]
-      textContent: string
-      appendChild(child: FakeSvgNode): FakeSvgNode
-      setAttributeNS(namespace: string | null, name: string, value: unknown): void
-      getAttributeNS(namespace: string | null, name: string): string | null
-    }
+interface FakeSvgNode {
+  nodeType: number
+  tagName: string
+  ownerDocument: unknown
+  style: Record<string, unknown>
+  attrs: Record<string, string>
+  children: FakeSvgNode[]
+  textContent: string
+  appendChild(child: FakeSvgNode): FakeSvgNode
+  setAttributeNS(namespace: string | null, name: string, value: unknown): void
+  getAttributeNS(namespace: string | null, name: string): string | null
+}
 
-    const fakeDocument: {
-      createElementNS(namespace: string, name: string): FakeSvgNode
-      importNode(node: FakeSvgNode): FakeSvgNode
-    } = {
-      createElementNS(_namespace, name) {
-        const node: FakeSvgNode = {
-          nodeType: 1,
-          tagName: name,
-          ownerDocument: fakeDocument,
-          style: {},
-          attrs: {},
-          children: [],
-          textContent: '',
-          appendChild(child) {
-            node.children.push(child)
-            return child
-          },
-          setAttributeNS(_namespace, attrName, value) {
-            node.attrs[attrName] = String(value)
-          },
-          getAttributeNS(_namespace, attrName) {
-            return node.attrs[attrName] ?? null
-          }
+function installFakeSvgDocument(): {
+  createElementNS(namespace: string, name: string): FakeSvgNode
+  importNode(node: FakeSvgNode): FakeSvgNode
+} {
+  const fakeDocument: {
+    createElementNS(namespace: string, name: string): FakeSvgNode
+    importNode(node: FakeSvgNode): FakeSvgNode
+  } = {
+    createElementNS(_namespace, name) {
+      const node: FakeSvgNode = {
+        nodeType: 1,
+        tagName: name,
+        ownerDocument: fakeDocument,
+        style: {},
+        attrs: {},
+        children: [],
+        textContent: '',
+        appendChild(child) {
+          node.children.push(child)
+          return child
+        },
+        setAttributeNS(_namespace, attrName, value) {
+          node.attrs[attrName] = String(value)
+        },
+        getAttributeNS(_namespace, attrName) {
+          return node.attrs[attrName] ?? null
         }
-        return node
-      },
-      importNode(node) {
-        return node
       }
+      return node
+    },
+    importNode(node) {
+      return node
     }
-    vi.stubGlobal('document', fakeDocument)
+  }
+  vi.stubGlobal('document', fakeDocument)
+  return fakeDocument
+}
+
+function flattenFakeSvg(node: FakeSvgNode): FakeSvgNode[] {
+  return [node, ...node.children.flatMap(flattenFakeSvg)]
+}
+
+describe('applyDecorations DOM contracts', () => {
+  it('stamps data-org-tooltip on the trigger tag group', () => {
+    const fakeDocument = installFakeSvgDocument()
     try {
       const parent = fakeDocument.createElementNS('', 'g')
       const tag = planDecorations(
@@ -248,6 +264,202 @@ describe('applyDecorations trigger tooltip DOM contract', () => {
       expect(parent.children[0].attrs['data-org-tooltip']).toBe(
         'DMT HUB — ClaimsHub\nEMAIL — Mailroom — fallback'
       )
+    } finally {
+      vi.unstubAllGlobals()
+    }
+  })
+
+  it('wraps every list in its semantic data-org-decoration group', () => {
+    const fakeDocument = installFakeSvgDocument()
+    try {
+      const parent = fakeDocument.createElementNS('', 'g')
+      const lists = planDecorations(
+        {
+          inputs: 'Application form',
+          outputs: 'Approval memo',
+          respList: 'Case owner',
+          ccList: 'Legal'
+        },
+        'bpmn:Task',
+        100,
+        80
+      ).filter(
+        (decoration): decoration is Extract<Decoration, { kind: 'listBox' }> =>
+          decoration.kind === 'listBox'
+      )
+
+      applyDecorations(parent as unknown as SVGElement, lists)
+
+      expect(parent.children.map((child) => child.attrs['data-org-decoration'])).toEqual([
+        'inputs',
+        'outputs',
+        'cc',
+        'responsible'
+      ])
+      for (const group of parent.children) {
+        expect(group.tagName).toBe('g')
+        expect(group.children[0].tagName).toBe('rect')
+      }
+      const outputs = parent.children.find(
+        (child) => child.attrs['data-org-decoration'] === 'outputs'
+      )
+      if (!outputs) throw new Error('expected semantic outputs group')
+      expect(outputs.children[0].style.fill).toBe(PALETTE.outputFill)
+      expect(outputs.children[0].style.stroke).toBe(PALETTE.outputBorder)
+      expect(outputs.children[1].textContent).toBe(t('org.outputs.label'))
+      expect(outputs.children[3].textContent).toBe('Approval memo')
+    } finally {
+      vi.unstubAllGlobals()
+    }
+  })
+
+  it('adds localized semantic tooltip groups without disturbing child paint order', () => {
+    const fakeDocument = installFakeSvgDocument()
+    setLang('en')
+    try {
+      const parent = fakeDocument.createElementNS('', 'g')
+      const decorations = planDecorations(
+        {
+          inputs: 'Application form',
+          outputs: 'Approval memo',
+          owner: 'Ahmed',
+          ownerRole: 'A',
+          respList: 'Case owner',
+          ccList: 'Legal',
+          decisionBasis: 'Delegation matrix'
+        },
+        'bpmn:BusinessRuleTask',
+        100,
+        80
+      )
+
+      applyDecorations(parent as unknown as SVGElement, decorations)
+
+      const semanticGroups = parent.children.filter(
+        (child) => child.attrs['data-org-semantic']
+      )
+      expect(
+        semanticGroups.map((child) => [
+          child.attrs['data-org-decoration'],
+          child.attrs['data-org-semantic']
+        ])
+      ).toEqual([
+        ['inputs', 'input'],
+        ['outputs', 'output'],
+        ['cc', 'cc'],
+        ['owner', 'owner'],
+        ['responsible', 'owner'],
+        ['basis', 'basis']
+      ])
+
+      const tooltipByDecoration = Object.fromEntries(
+        semanticGroups.map((group) => [
+          group.attrs['data-org-decoration'],
+          group.attrs['data-org-tooltip']
+        ])
+      )
+      expect(tooltipByDecoration).toMatchObject({
+        inputs: t('semantic.input.tooltip'),
+        outputs: t('semantic.output.tooltip'),
+        cc: t('semantic.cc.tooltip'),
+        owner: t('semantic.owner.tooltip'),
+        responsible: t('semantic.owner.tooltip'),
+        basis: t('semantic.basis.tooltip')
+      })
+      for (const group of semanticGroups) {
+        expect(group.style['pointer-events']).toBe('all')
+      }
+      const ownerRole = parent.children.find(
+        (candidate) => candidate.attrs['data-org-decoration'] === 'owner-role'
+      )
+      expect(ownerRole?.attrs['data-org-semantic']).toBeUndefined()
+      expect(ownerRole?.attrs['data-org-tooltip']).toBe(t('semantic.owner.tooltip'))
+      expect(ownerRole?.style['pointer-events']).toBe('all')
+
+      const childTags = (decoration: string): string[] => {
+        const group = parent.children.find(
+          (candidate) => candidate.attrs['data-org-decoration'] === decoration
+        )
+        if (!group) throw new Error(`missing ${decoration} group`)
+        return group.children.map((child) => child.tagName)
+      }
+      expect(childTags('inputs')).toEqual(['rect', 'text', 'line', 'text'])
+      expect(childTags('owner')).toEqual(['rect', 'text', 'text'])
+      expect(childTags('owner-role')).toEqual(['rect', 'text'])
+      expect(childTags('basis')).toEqual(['rect', 'text'])
+      expect(flattenFakeSvg(parent).some((node) => node.tagName === 'title')).toBe(false)
+    } finally {
+      setLang('en')
+      vi.unstubAllGlobals()
+    }
+  })
+
+  it('wraps the legacy CC label in the same semantic tooltip contract', () => {
+    setLang('ar')
+    const fakeDocument = installFakeSvgDocument()
+    try {
+      const parent = fakeDocument.createElementNS('', 'g')
+      const cc = planDecorations(
+        { kind: 'cc', ccTo: 'Legal' },
+        'bpmn:Task',
+        100,
+        80
+      ).filter(
+        (decoration): decoration is Extract<Decoration, { kind: 'subLabel' }> =>
+          decoration.kind === 'subLabel'
+      )
+
+      applyDecorations(parent as unknown as SVGElement, cc)
+
+      expect(parent.children).toHaveLength(1)
+      expect(parent.children[0].attrs).toMatchObject({
+        'data-org-decoration': 'cc',
+        'data-org-semantic': 'cc',
+        'data-org-tooltip': t('semantic.cc.tooltip')
+      })
+      expect(parent.children[0].style['pointer-events']).toBe('all')
+      expect(parent.children[0].children.map((child) => child.tagName)).toEqual([
+        'text'
+      ])
+    } finally {
+      vi.unstubAllGlobals()
+      setLang('en')
+    }
+  })
+
+  it('keeps the subprocess chip wrapper and adds its canonical semantic tooltip', () => {
+    const fakeDocument = installFakeSvgDocument()
+    try {
+      const parent = fakeDocument.createElementNS('', 'g')
+      const chip: Extract<Decoration, { kind: 'subChip' }> = {
+        kind: 'subChip',
+        x: 12,
+        y: 52,
+        w: 70,
+        h: 14,
+        label: 'Sub-process',
+        tooltip: 'legacy contextual tooltip',
+        fill: PALETTE.subChipFill,
+        stroke: PALETTE.subChipBorder
+      }
+
+      applyDecorations(parent as unknown as SVGElement, [chip])
+
+      expect(parent.children).toHaveLength(1)
+      const group = parent.children[0]
+      expect(group.attrs).toMatchObject({
+        class: 'orbitpm-sub-chip',
+        'data-org-decoration': 'subprocess-chip',
+        'data-org-semantic': 'subprocess-chip',
+        'data-org-tooltip': t('semantic.subprocessChip.tooltip')
+      })
+      expect(group.style['pointer-events']).toBe('all')
+      expect(group.children.map((child) => child.tagName)).toEqual([
+        'rect',
+        'text',
+        'text'
+      ])
+      expect(flattenFakeSvg(parent).some((node) => node.tagName === 'title')).toBe(false)
     } finally {
       vi.unstubAllGlobals()
     }
@@ -456,6 +668,100 @@ describe('planDecorations — inputs list (teal)', () => {
   it('is ignored on non-activities', () => {
     expect(listBoxes(planDecorations({ inputs: 'Form A' }, 'bpmn:ExclusiveGateway', 50, 50))).toHaveLength(0)
     expect(listBoxes(planDecorations({ inputs: 'Form A' }, 'bpmn:StartEvent', 36, 36))).toHaveLength(0)
+  })
+})
+
+describe('planDecorations — outputs list', () => {
+  const props = {
+    inputs: 'Application form',
+    outputs: 'Approval memo\nArchive record',
+    owner: 'Ahmed'
+  }
+
+  it('mirrors input row sizing while using the distinct output palette and semantic', () => {
+    const boxes = listBoxes(planDecorations(props, 'bpmn:Task', 100, 80))
+    const output = boxes.find((box) => box.semantic === 'outputs')
+    if (!output) throw new Error('expected outputs list')
+    expect(output.title).toBe(t('org.outputs.label'))
+    expect(output.rows).toEqual(['Approval memo', 'Archive record'])
+    expect(output.h).toBe(listBoxHeight(2))
+    expect(output.fill).toBe(PALETTE.outputFill)
+    expect(output.stroke).toBe(PALETTE.outputBorder)
+    expect(output.textColor).toBe(PALETTE.outputText)
+    expect(output.personGlyph).toBe(false)
+  })
+
+  it('maps before/after decoration sides for all four local flow directions', () => {
+    const cases = [
+      { direction: 'right' as const, inputSide: 'top', outputSide: 'bottom' },
+      { direction: 'down' as const, inputSide: 'left', outputSide: 'right' },
+      { direction: 'left' as const, inputSide: 'bottom', outputSide: 'top' },
+      { direction: 'up' as const, inputSide: 'right', outputSide: 'left' }
+    ]
+    const sideOf = (box: Extract<Decoration, { kind: 'listBox' }>): string => {
+      if (box.y + box.h < 0) return 'top'
+      if (box.y > 80) return 'bottom'
+      if (box.x + box.w < 0) return 'left'
+      if (box.x > 100) return 'right'
+      return 'overlap'
+    }
+
+    for (const { direction, inputSide, outputSide } of cases) {
+      const boxes = listBoxes(
+        planDecorations(props, 'bpmn:Task', 100, 80, { direction })
+      )
+      const input = boxes.find((box) => box.semantic === 'inputs')
+      const output = boxes.find((box) => box.semantic === 'outputs')
+      if (!input || !output) throw new Error(`expected input/output for ${direction}`)
+      expect(sideOf(input), `${direction} input`).toBe(inputSide)
+      expect(sideOf(output), `${direction} output`).toBe(outputSide)
+    }
+  })
+
+  it('places outputs first in the after-side stack before owner/responsible/CC', () => {
+    for (const direction of ['right', 'down', 'left', 'up'] as const) {
+      const decorations = planDecorations(
+        {
+          outputs: 'Approval memo',
+          owner: 'Ahmed',
+          respList: 'Sara',
+          ccList: 'Legal'
+        },
+        'bpmn:Task',
+        100,
+        80,
+        { direction }
+      )
+      const output = listBoxes(decorations).find((box) => box.semantic === 'outputs')
+      const responsible = listBoxes(decorations).find((box) => box.semantic === 'responsible')
+      const cc = listBoxes(decorations).find((box) => box.semantic === 'cc')
+      const owner = byKind(decorations, 'ownerBox')[0]
+      if (!output || !responsible || !cc || owner.kind !== 'ownerBox') {
+        throw new Error(`expected complete after stack for ${direction}`)
+      }
+      if (direction === 'left') {
+        expect(output.y).toBeGreaterThan(owner.y)
+        expect(owner.y).toBeGreaterThan(responsible.y)
+        expect(responsible.y).toBeGreaterThan(cc.y)
+      } else {
+        expect(output.y).toBeLessThan(owner.y)
+        expect(owner.y).toBeLessThan(responsible.y)
+        expect(responsible.y).toBeLessThan(cc.y)
+      }
+    }
+  })
+
+  it('uses the shared row cap and ignores outputs on non-activities', () => {
+    const output = listBoxes(
+      planDecorations({ outputs: 'a\nb\nc\nd\ne\nf\ng' }, 'bpmn:Task', 100, 80)
+    )[0]
+    expect(output.rows).toEqual(['a', 'b', 'c', 'd', 'e', '+2'])
+    expect(output.h).toBe(listBoxHeight(6))
+    expect(
+      listBoxes(
+        planDecorations({ outputs: 'Approval memo' }, 'bpmn:ExclusiveGateway', 50, 50)
+      )
+    ).toHaveLength(0)
   })
 })
 
@@ -723,6 +1029,24 @@ describe('canRenderOrg', () => {
     expect(canRenderOrg(plainTask, true)).toBe(false)
   })
 
+  it('leaves bare gateways to the renderer-level semantic presentation path', () => {
+    for (const type of Object.keys(SEMANTIC_NAMING)) {
+      expect(
+        canRenderOrg(
+          {
+            type,
+            businessObject: { $type: type, $attrs: {} }
+          },
+          true
+        ),
+        type
+      ).toBe(false)
+    }
+    expect(
+      canRenderOrg({ type: 'bpmn:EventBasedGateway', businessObject: { $attrs: {} } }, true)
+    ).toBe(false)
+  })
+
   it('considers every wave-G prop (inputs/ccList/respList/decisionBasis/…)', () => {
     for (const attr of [
       'orbitpm:inputs',
@@ -853,6 +1177,260 @@ describe('removeStockSubProcessMarker', () => {
   })
 })
 
+// --- presentation-only semantic gateway labels ------------------------------
+
+describe('semantic gateway presentation', () => {
+  const IDS = {
+    'bpmn:ExclusiveGateway': 'gateway-exclusive',
+    'bpmn:InclusiveGateway': 'gateway-inclusive',
+    'bpmn:ParallelGateway': 'gateway-parallel'
+  } as const
+
+  it('resolves exact SEMANTIC_NAMING display/tooltip text in EN and AR', () => {
+    for (const [type, naming] of Object.entries(SEMANTIC_NAMING)) {
+      for (const lang of ['en', 'ar'] as const) {
+        expect(
+          gatewayPresentationForElement(
+            {
+              type,
+              businessObject: { $type: type, $attrs: {} }
+            },
+            lang
+          )
+        ).toEqual({
+          semantic: IDS[type as keyof typeof IDS],
+          display: naming[lang].display,
+          tooltip: naming[lang].tooltip,
+          lang
+        })
+      }
+    }
+  })
+
+  it('keeps every real gateway name and rejects unsupported element kinds', () => {
+    for (const type of Object.keys(SEMANTIC_NAMING)) {
+      expect(
+        gatewayPresentationForElement(
+          {
+            type,
+            businessObject: { $type: type, name: 'Approved?', $attrs: {} }
+          },
+          'en'
+        )
+      ).toBeNull()
+      expect(
+        gatewayPresentationForElement(
+          {
+            type,
+            businessObject: {
+              $type: type,
+              get: (key) => (key === 'name' ? 'Named through get()' : undefined),
+              $attrs: {}
+            }
+          },
+          'ar'
+        )
+      ).toBeNull()
+    }
+    expect(
+      gatewayPresentationForElement(
+        { type: 'bpmn:EventBasedGateway', businessObject: { $attrs: {} } },
+        'en'
+      )
+    ).toBeNull()
+  })
+
+  it('reads activeLang from process and collaboration roots, defaulting to EN', () => {
+    const gateway: OrgElementLike = {
+      type: 'bpmn:ExclusiveGateway',
+      businessObject: { $attrs: {} }
+    }
+    expect(
+      diagramLanguageForElement(gateway, {
+        getRootElement: () => ({
+          businessObject: {
+            $type: 'bpmn:Process',
+            $attrs: { 'orbitpm:activeLang': 'ar' }
+          }
+        })
+      })
+    ).toBe('ar')
+    expect(
+      diagramLanguageForElement(gateway, {
+        getRootElement: () => ({
+          businessObject: {
+            $type: 'bpmn:Collaboration',
+            participants: [
+              {
+                processRef: {
+                  $type: 'bpmn:Process',
+                  $attrs: { 'orbitpm:activeLang': 'ar' }
+                }
+              }
+            ],
+            $attrs: {}
+          }
+        })
+      })
+    ).toBe('ar')
+    expect(
+      diagramLanguageForElement(gateway, {
+        getRootElement: () => ({
+          businessObject: { $type: 'bpmn:Process', $attrs: {} }
+        })
+      })
+    ).toBe('en')
+  })
+
+  it('draws only the unnamed fallback, with semantic tooltip and no model write', () => {
+    setLang('en')
+    const fakeDocument = installFakeSvgDocument()
+    const store = installMemoryStorage()
+    store.set('orbitpm.lite.orgStyling', 'false')
+    store.set('orbitpm.lite.completenessOn', 'true')
+    try {
+      const sentinel = fakeDocument.createElementNS('', 'path')
+      const bpmnRenderer = {
+        drawShape: vi.fn(() => sentinel as unknown as SVGElement),
+        drawConnection: vi.fn()
+      }
+      const root: OrgElementLike = {
+        type: 'bpmn:Process',
+        businessObject: {
+          $type: 'bpmn:Process',
+          $attrs: { 'orbitpm:activeLang': 'ar' }
+        }
+      }
+      const renderer = new OrgRenderer(
+        { on: vi.fn() },
+        bpmnRenderer,
+        undefined,
+        { getRootElement: () => root }
+      )
+      const unnamed: OrgElementLike = {
+        id: 'Gateway_1',
+        type: 'bpmn:ExclusiveGateway',
+        width: 50,
+        height: 50,
+        businessObject: {
+          $type: 'bpmn:ExclusiveGateway',
+          // Styling-off must suppress both this basis tag and the default-on
+          // completeness badge, while semantic presentation stays mandatory.
+          $attrs: { 'orbitpm:decisionBasis': 'Delegation matrix' }
+        }
+      }
+      const before = JSON.stringify(unnamed.businessObject)
+      const parent = fakeDocument.createElementNS('', 'g')
+
+      expect(renderer.canRender(unnamed)).toBe(true)
+      expect(
+        renderer.drawShape(parent as unknown as SVGElement, unnamed)
+      ).toBe(sentinel)
+      expect(parent.children).toHaveLength(1)
+      const group = parent.children[0]
+      expect(group.attrs).toMatchObject({
+        class: 'orbitpm-semantic-gateway-label',
+        'data-org-semantic': 'gateway-exclusive',
+        // Help copy follows the English UI; the presentation label below
+        // independently follows the Arabic diagram language.
+        'data-org-tooltip': SEMANTIC_NAMING['bpmn:ExclusiveGateway'].en.tooltip
+      })
+      expect(group.style['pointer-events']).toBe('all')
+      expect(group.children.map((child) => child.tagName)).toEqual(['text'])
+      expect(group.children[0].textContent).toBe(
+        'قرار: Delegation matrix'
+      )
+      expect(group.children[0].attrs.lang).toBe('ar')
+      expect(group.children[0].style).toMatchObject({
+        direction: 'rtl',
+        'unicode-bidi': 'plaintext'
+      })
+      expect(JSON.stringify(unnamed.businessObject)).toBe(before)
+      expect(flattenFakeSvg(parent).some((node) => node.tagName === 'title')).toBe(false)
+
+      const namedParent = fakeDocument.createElementNS('', 'g')
+      const named: OrgElementLike = {
+        ...unnamed,
+        id: 'Gateway_named',
+        businessObject: {
+          $type: 'bpmn:ExclusiveGateway',
+          name: 'Approved?',
+          $attrs: {}
+        }
+      }
+      expect(renderer.canRender(named)).toBe(false)
+      renderer.drawShape(namedParent as unknown as SVGElement, named)
+      expect(namedParent.children).toHaveLength(0)
+      expect(named.businessObject?.name).toBe('Approved?')
+      expect(bpmnRenderer.drawShape).toHaveBeenLastCalledWith(namedParent, named)
+    } finally {
+      vi.unstubAllGlobals()
+    }
+  })
+
+  it('repaints only unnamed semantic gateways after import and command batches', () => {
+    const callbacks = new Map<string, () => void>()
+    const eventBus = {
+      on: vi.fn((event: unknown, ...args: unknown[]) => {
+        if (typeof event !== 'string') return
+        const callback = args.at(-1)
+        if (typeof callback === 'function') {
+          callbacks.set(event, callback as () => void)
+        }
+      })
+    }
+    const unnamed: OrgElementLike = {
+      id: 'Gateway_default',
+      type: 'bpmn:ParallelGateway',
+      businessObject: { $attrs: {} }
+    }
+    const named: OrgElementLike = {
+      id: 'Gateway_named',
+      type: 'bpmn:ExclusiveGateway',
+      businessObject: { name: 'Approved?', $attrs: {} }
+    }
+    const task: OrgElementLike = {
+      id: 'Task_1',
+      type: 'bpmn:Task',
+      businessObject: { $attrs: {} }
+    }
+    const gfx = {} as SVGElement
+    const registry = {
+      getAll: vi.fn(() => [unnamed, named, task]),
+      getGraphics: vi.fn(() => gfx)
+    }
+    const graphicsFactory = { update: vi.fn() }
+    new OrgRenderer(
+      eventBus,
+      { drawShape: vi.fn(), drawConnection: vi.fn() },
+      undefined,
+      { getRootElement: () => undefined },
+      registry,
+      graphicsFactory
+    )
+
+    callbacks.get('import.done')?.()
+    callbacks.get('commandStack.changed')?.()
+
+    expect(registry.getGraphics).toHaveBeenCalledTimes(2)
+    expect(registry.getGraphics).toHaveBeenNthCalledWith(1, unnamed)
+    expect(registry.getGraphics).toHaveBeenNthCalledWith(2, unnamed)
+    expect(graphicsFactory.update).toHaveBeenCalledTimes(2)
+    expect(graphicsFactory.update).toHaveBeenNthCalledWith(
+      1,
+      'shape',
+      unnamed,
+      gfx
+    )
+    expect(graphicsFactory.update).toHaveBeenNthCalledWith(
+      2,
+      'shape',
+      unnamed,
+      gfx
+    )
+  })
+})
+
 // --- OrgRenderer instance (fake eventBus — never a real one) ----------------
 
 describe('OrgRenderer.canRender wires the settings flag', () => {
@@ -901,21 +1479,39 @@ describe('OrgRenderer.canRender wires the settings flag', () => {
 // --- DI module shape --------------------------------------------------------
 
 describe('OrgRenderModule', () => {
-  it('registers orgDecorSync + orgRenderer as type-injected services', () => {
-    expect(OrgRenderModule.__init__).toEqual(['orgDecorSync', 'orgRenderer'])
+  it('registers shape sync, shape renderer and connection overlays as services', () => {
+    expect(OrgRenderModule.__init__).toEqual([
+      'orgDecorSync',
+      'orgRenderer',
+      'orgConnectionRenderer'
+    ])
     expect(OrgRenderModule.orgRenderer[0]).toBe('type')
     expect(OrgRenderModule.orgRenderer[1]).toBe(OrgRenderer)
     expect(OrgRenderModule.orgDecorSync[0]).toBe('type')
     expect(OrgRenderModule.orgDecorSync[1]).toBe(OrgDecorSync)
-    expect(OrgRenderer.$inject).toEqual(['eventBus', 'bpmnRenderer', 'orgDecorSync'])
+    expect(OrgRenderModule.orgConnectionRenderer[0]).toBe('type')
+    expect(OrgRenderModule.orgConnectionRenderer[1]).toBe(OrgConnectionRenderer)
+    expect(OrgRenderer.$inject).toEqual([
+      'eventBus',
+      'bpmnRenderer',
+      'orgDecorSync',
+      'canvas',
+      'elementRegistry',
+      'graphicsFactory'
+    ])
     expect(OrgDecorSync.$inject).toEqual(['eventBus', 'elementRegistry', 'graphicsFactory'])
+    expect(OrgConnectionRenderer.$inject).toEqual(['eventBus', 'canvas', 'elementRegistry'])
   })
 
-  it('OrgRenderer asks orgDecorSync for the orientation on every drawShape', () => {
+  it('OrgRenderer asks orgDecorSync for the element-specific direction on every drawShape', () => {
     const sentinel = { tagName: 'g' } as unknown as SVGElement
     const bpmnRenderer = { drawShape: vi.fn(() => sentinel), drawConnection: vi.fn() }
-    const getOrientation = vi.fn(() => 'vertical' as const)
-    const renderer = new OrgRenderer({ on: vi.fn() }, bpmnRenderer, { getOrientation })
+    const getDirectionFor = vi.fn(() => 'up' as const)
+    const renderer = new OrgRenderer(
+      { on: vi.fn() },
+      bpmnRenderer,
+      { getDirectionFor, getOrientation: () => 'horizontal' }
+    )
     const element: OrgElementLike = {
       type: 'bpmn:Task',
       width: 100,
@@ -923,6 +1519,6 @@ describe('OrgRenderModule', () => {
       businessObject: { $type: 'bpmn:Task', $attrs: {} }
     }
     renderer.drawShape({} as unknown as SVGElement, element)
-    expect(getOrientation).toHaveBeenCalled()
+    expect(getDirectionFor).toHaveBeenCalledWith(element)
   })
 })

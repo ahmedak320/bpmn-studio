@@ -10,6 +10,7 @@ import { describe, it, expect } from 'vitest'
 import BpmnModdle from 'bpmn-moddle'
 import { convertAmlToBpmnFiles, type ConvertedModel } from '../apcImport'
 import { reservedExtents, type LayoutNode } from '../epcLayout'
+import { analyzeEdgeVisuals, type PolylineEdge } from '../../org/edgeVisuals'
 
 const REAL_EXPORT_PATH = '/home/ahmed/Desktop/bpmn_tool/desktop/AnimalWF/ARISAMLExport.xml'
 
@@ -251,6 +252,174 @@ describe.skipIf(!text)('AnimalWF real export — full conversion', () => {
       stats.push(`${file.name} [${file.kind}]: nodes=${shapes.length} flows=${edges.length} bbox=${maxX}x${maxY}`)
     }
     console.log('[animalwf-layout]\n  ' + stats.join('\n  '))
+  })
+
+  it('routes Lease contract uploaded into the owner-profile XOR merge without a far-right lane', async () => {
+    const { files } = await convert()
+    const ownerProfile = files.find((f) => f.nameEn === 'Request to Register Animal Owner Profile')
+    expect(ownerProfile, 'owner-profile EPC').toBeTruthy()
+
+    const moddle = new BpmnModdle()
+    const { rootElement, warnings } = await moddle.fromXML((ownerProfile as ConvertedModel).xml)
+    expect(warnings).toEqual([])
+    const process = rootElement.rootElements.find((el: { $type: string }) => el.$type === 'bpmn:Process')
+    const leaseEvent = process.flowElements.find(
+      (el: { name?: string }) => el.name === 'Lease contract uploaded'
+    )
+    expect(leaseEvent, 'Lease contract uploaded event').toBeTruthy()
+
+    // Importer flow ids are generated, so identify the regression edge solely
+    // from semantic source/target topology: the target is the XOR merge also
+    // fed by "Application data inserted".
+    const mergeFlow = leaseEvent.outgoing.find((flow: {
+      targetRef: {
+        $type: string
+        incoming: Array<{ sourceRef: { name?: string } }>
+      }
+    }) =>
+      flow.targetRef.$type === 'bpmn:ExclusiveGateway' &&
+      flow.targetRef.incoming.some((incoming) => incoming.sourceRef.name === 'Application data inserted')
+    )
+    expect(mergeFlow, 'Lease event → shared XOR merge flow').toBeTruthy()
+
+    const plane = rootElement.diagrams[0].plane
+    const diEdge = plane.planeElement.find(
+      (el: { $type: string; bpmnElement?: { id: string } }) =>
+        el.$type === 'bpmndi:BPMNEdge' && el.bpmnElement?.id === mergeFlow.id
+    )
+    expect(diEdge, 'DI edge for semantic merge flow').toBeTruthy()
+
+    type Point = { x: number; y: number }
+    const points = diEdge.waypoint.map((wp: Point) => ({ x: wp.x, y: wp.y }))
+    const normalized: Point[] = []
+    for (const point of points) {
+      const previous = normalized[normalized.length - 1]
+      if (previous && previous.x === point.x && previous.y === point.y) continue
+      normalized.push(point)
+      while (normalized.length >= 3) {
+        const a = normalized[normalized.length - 3]
+        const b = normalized[normalized.length - 2]
+        const c = normalized[normalized.length - 1]
+        if ((a.x === b.x && b.x === c.x) || (a.y === b.y && b.y === c.y)) {
+          normalized.splice(normalized.length - 2, 1)
+        } else {
+          break
+        }
+      }
+    }
+
+    // Both legal ports need a vertical stub and their x coordinates differ,
+    // so two bends are the collision-free minimum in the open gap between
+    // this event and its merge. The old blanket skip-edge lane had four.
+    expect(normalized.length - 2, `normalized route ${JSON.stringify(normalized)}`).toBe(2)
+
+    const sourceId = leaseEvent.id as string
+    const targetId = mergeFlow.targetRef.id as string
+    interface RouteShape {
+      bpmnElement: { id: string }
+      bounds: { x: number; y: number; width: number; height: number }
+      label?: { bounds?: { x: number; y: number; width: number; height: number } }
+    }
+    const shapes = plane.planeElement.filter(
+      (el: { $type: string }) => el.$type === 'bpmndi:BPMNShape'
+    ) as RouteShape[]
+    const shapeById = new Map<string, RouteShape>(
+      shapes.map((shape) => [shape.bpmnElement.id, shape])
+    )
+    const sourceShape = shapeById.get(sourceId)
+    const targetShape = shapeById.get(targetId)
+    expect(sourceShape).toBeTruthy()
+    expect(targetShape).toBeTruthy()
+    if (!sourceShape || !targetShape) throw new Error('missing endpoint DI shape')
+    const sourceCenterX = sourceShape.bounds.x + sourceShape.bounds.width / 2
+    const targetCenterX = targetShape.bounds.x + targetShape.bounds.width / 2
+    expect(Math.max(...normalized.map((point) => point.x)), 'route stays out of a far-right lane')
+      .toBeLessThanOrEqual(Math.max(sourceCenterX, targetCenterX))
+
+    const crossesInterior = (
+      a: Point,
+      b: Point,
+      box: { x: number; y: number; width: number; height: number }
+    ): boolean => {
+      if (a.x === b.x) {
+        const y0 = Math.min(a.y, b.y)
+        const y1 = Math.max(a.y, b.y)
+        return a.x > box.x && a.x < box.x + box.width && y0 < box.y + box.height && y1 > box.y
+      }
+      if (a.y === b.y) {
+        const x0 = Math.min(a.x, b.x)
+        const x1 = Math.max(a.x, b.x)
+        return a.y > box.y && a.y < box.y + box.height && x0 < box.x + box.width && x1 > box.x
+      }
+      return true
+    }
+    for (const shape of shapes) {
+      const id = shape.bpmnElement.id as string
+      if (id === sourceId || id === targetId) continue
+      for (let i = 1; i < normalized.length; i++) {
+        expect(
+          crossesInterior(normalized[i - 1], normalized[i], shape.bounds),
+          `${mergeFlow.id} segment ${i} crosses shape ${id}`
+        ).toBe(false)
+      }
+    }
+    // External BPMN labels are routing obstacles too, including labels owned
+    // by the endpoints (only the endpoint base boxes receive port exemptions).
+    for (const shape of shapes) {
+      if (!shape.label?.bounds) continue
+      for (let i = 1; i < normalized.length; i++) {
+        expect(
+          crossesInterior(normalized[i - 1], normalized[i], shape.label.bounds),
+          `${mergeFlow.id} segment ${i} crosses label ${shape.bpmnElement.id}`
+        ).toBe(false)
+      }
+    }
+  })
+
+  it('keeps full-export crossing and junction analysis within a coarse budget', async () => {
+    const { files } = await convert()
+    const moddle = new BpmnModdle()
+    const diagrams: PolylineEdge[][] = []
+
+    for (const file of files) {
+      const { rootElement, warnings } = await moddle.fromXML(file.xml)
+      expect(warnings).toEqual([])
+      diagrams.push(
+        rootElement.diagrams[0].plane.planeElement
+          .filter(
+            (element: { $type: string; bpmnElement?: { $type?: string } }) =>
+              element.$type === 'bpmndi:BPMNEdge' &&
+              element.bpmnElement?.$type === 'bpmn:SequenceFlow'
+          )
+          .map(
+            (element: {
+              bpmnElement: { id: string }
+              waypoint: Array<{ x: number; y: number }>
+            }) => ({
+              id: element.bpmnElement.id,
+              waypoints: element.waypoint.map((point) => ({ x: point.x, y: point.y }))
+            })
+          )
+      )
+    }
+
+    const started = performance.now()
+    let crossings = 0
+    let junctions = 0
+    for (const edges of diagrams) {
+      const analysis = analyzeEdgeVisuals(edges)
+      crossings += analysis.crossings.length
+      junctions += analysis.junctions.length
+    }
+    const elapsedMs = performance.now() - started
+    const edgeCount = diagrams.reduce((sum, edges) => sum + edges.length, 0)
+
+    expect(edgeCount).toBe(194)
+    expect(elapsedMs).toBeLessThan(1_000)
+    console.log(
+      `[animalwf-edge-visuals] edges=${edgeCount} crossings=${crossings} ` +
+        `junctions=${junctions} analysis=${elapsedMs.toFixed(1)}ms`
+    )
   })
 
   it('conversion of the real export is deterministic', async () => {

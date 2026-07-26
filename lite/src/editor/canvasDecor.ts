@@ -1,14 +1,19 @@
 // Canvas-decoration interactivity: one delegated tooltip for every SVG node
 // the org renderer stamps with `data-org-tooltip` (missing-info badges,
-// sub-process chips, …) plus click handling for the missing-info badge.
+// sub-process chips, …), a semantic element-ID fallback for ordinary BPMN
+// shapes, plus click handling for the missing-info badge.
 //
-// Deliberately bpmn-js-free: it binds plain DOM listeners on the canvas
-// container and reads only the attribute contract the renderer writes
-// (TOOLTIP_ATTR / MISSING_ATTR / BADGE_CLASS — literals mirrored in
-// org/orgRenderer.ts so org/ never has to import from editor/). Positioning
-// uses getBoundingClientRect(), i.e. SCREEN coordinates that are already
-// correct at any zoom/pan level — no viewbox math. Covered by Playwright e2e
-// (the vitest suite runs in node without a DOM).
+// It binds plain DOM listeners on the canvas container and uses only a tiny
+// elementRegistry surface; there is no bpmn-js runtime import. Positioning uses
+// getBoundingClientRect(), i.e. SCREEN coordinates that are already correct at
+// any zoom/pan level — no viewbox math. Covered by Playwright e2e (the vitest
+// suite runs in node without a DOM).
+
+import { getLang } from '../i18n'
+import {
+  shapeSemanticForElement,
+  type ShapeSemanticElementLike
+} from '../org/shapeSemantics'
 
 export const TOOLTIP_ATTR = 'data-org-tooltip'
 export const MISSING_ATTR = 'data-org-missing'
@@ -19,6 +24,10 @@ export const TOOLTIP_CLASS = 'orbitpm-canvas-tooltip'
 export interface CanvasDecorOptions {
   /** Missing-info badge clicked; caller selects the element + opens the dialog. */
   onBadgeClick?: (elementId: string, missing: string[]) => void
+  /** Resolves a `.djs-element` ID for the semantic node-tooltip fallback. */
+  elementRegistry?: {
+    get(elementId: string): ShapeSemanticElementLike | undefined
+  }
 }
 
 /**
@@ -59,9 +68,7 @@ export function installCanvasDecor(
     if (tip) tip.style.display = 'none'
   }
 
-  const showFor = (anchor: Element): void => {
-    const text = anchor.getAttribute(TOOLTIP_ATTR)
-    if (!text) return
+  const showFor = (anchor: Element, text: string): void => {
     const el = ensureTip()
     currentAnchor = anchor
     el.textContent = text
@@ -81,23 +88,75 @@ export function installCanvasDecor(
     el.style.top = top + 'px'
   }
 
-  const anchorOf = (target: EventTarget | null): Element | null => {
+  const tooltipOf = (
+    target: EventTarget | null
+  ): { anchor: Element; text: string } | null => {
     const el = target as Element | null
     if (!el || typeof el.closest !== 'function') return null
-    return el.closest('[' + TOOLTIP_ATTR + ']')
+    const explicit = el.closest('[' + TOOLTIP_ATTR + ']')
+    if (explicit) {
+      const text = explicit.getAttribute(TOOLTIP_ATTR)
+      return text ? { anchor: explicit, text } : null
+    }
+
+    const shape = el.closest('.djs-element[data-element-id]')
+    const elementId = shape?.getAttribute('data-element-id')
+    if (!shape || !elementId) return null
+    let diagramElement: ShapeSemanticElementLike | undefined
+    try {
+      diagramElement = options?.elementRegistry?.get(elementId)
+    } catch {
+      return null
+    }
+    const semantic = shapeSemanticForElement(diagramElement, getLang())
+    return semantic ? { anchor: shape, text: semantic.explanation } : null
+  }
+
+  /**
+   * diagram-js paints its transparent `.djs-hit` surface above the visual
+   * group. Decorations that sit inside a shape (notably the sub-process chip)
+   * therefore cannot become the pointer-event target themselves. Inspect the
+   * complete hit stack at the pointer coordinate so their explicit semantic
+   * tooltip still wins without disabling the shape's selection surface.
+   */
+  const explicitTooltipAtPoint = (
+    x: number,
+    y: number
+  ): { anchor: Element; text: string } | null => {
+    if (typeof document.elementsFromPoint !== 'function') return null
+    for (const candidate of document.elementsFromPoint(x, y)) {
+      if (!canvasContainer.contains(candidate)) continue
+      const explicit = candidate.closest('[' + TOOLTIP_ATTR + ']')
+      if (!explicit || !canvasContainer.contains(explicit)) continue
+      const text = explicit.getAttribute(TOOLTIP_ATTR)
+      if (text) return { anchor: explicit, text }
+    }
+    return null
   }
 
   const onPointerOver = (e: PointerEvent): void => {
-    const anchor = anchorOf(e.target)
-    if (!anchor || anchor === currentAnchor) return
-    showFor(anchor)
+    const tooltip = tooltipOf(e.target)
+    if (!tooltip || tooltip.anchor === currentAnchor) return
+    showFor(tooltip.anchor, tooltip.text)
+  }
+
+  const onPointerMove = (e: PointerEvent): void => {
+    const tooltip =
+      explicitTooltipAtPoint(e.clientX, e.clientY) ?? tooltipOf(e.target)
+    if (!tooltip) {
+      hide()
+      return
+    }
+    if (tooltip.anchor !== currentAnchor) {
+      showFor(tooltip.anchor, tooltip.text)
+    }
   }
 
   const onPointerOut = (e: PointerEvent): void => {
     if (!currentAnchor) return
     const related = e.relatedTarget as Node | null
     if (related && currentAnchor.contains(related)) return
-    if (anchorOf(e.target) !== currentAnchor) return
+    if (tooltipOf(e.target)?.anchor !== currentAnchor) return
     hide()
   }
 
@@ -125,6 +184,7 @@ export function installCanvasDecor(
   }
 
   canvasContainer.addEventListener('pointerover', onPointerOver)
+  canvasContainer.addEventListener('pointermove', onPointerMove)
   canvasContainer.addEventListener('pointerout', onPointerOut)
   canvasContainer.addEventListener('pointerdown', onPointerDown, { capture: true })
   canvasContainer.addEventListener('wheel', onWheel, { capture: true, passive: true })
@@ -133,6 +193,7 @@ export function installCanvasDecor(
 
   return () => {
     canvasContainer.removeEventListener('pointerover', onPointerOver)
+    canvasContainer.removeEventListener('pointermove', onPointerMove)
     canvasContainer.removeEventListener('pointerout', onPointerOut)
     canvasContainer.removeEventListener('pointerdown', onPointerDown, { capture: true })
     canvasContainer.removeEventListener('wheel', onWheel, { capture: true })

@@ -48,6 +48,12 @@ import {
   type LocalizedText
 } from './amlParse'
 import { emitLayoutDi, layoutEpc, type LayoutEdge, type LayoutNode, type Orientation } from './epcLayout'
+import {
+  deriveContextualGatewayNames,
+  matchesGenericSemanticAlias,
+  SEMANTIC_NAMING,
+  type SemanticGatewayType
+} from '../org/semanticNaming'
 
 export { looksLikeAml }
 
@@ -244,6 +250,29 @@ function gatewayTag(symbolNum: string | undefined): string {
   return 'exclusiveGateway'
 }
 
+function semanticTypeForTag(tag: string): SemanticGatewayType | undefined {
+  if (tag === 'exclusiveGateway') return 'bpmn:ExclusiveGateway'
+  if (tag === 'inclusiveGateway') return 'bpmn:InclusiveGateway'
+  if (tag === 'parallelGateway') return 'bpmn:ParallelGateway'
+  return undefined
+}
+
+/**
+ * Remove ARIS' stock rule alias independently in each locale. A larger label
+ * is a real business question and survives unchanged.
+ */
+function meaningfulNodeName(node: PlanNode): LocalizedText {
+  if (node.resolvedName) return node.resolvedName
+  const semanticType = semanticTypeForTag(node.tag)
+  if (!semanticType) return node.def.name
+  const alias = SEMANTIC_NAMING[semanticType].arisAlias
+  return {
+    en: matchesGenericSemanticAlias(node.def.name.en, alias) ? undefined : node.def.name.en,
+    ar: matchesGenericSemanticAlias(node.def.name.ar, alias) ? undefined : node.def.name.ar,
+    others: node.def.name.others.filter((value) => !matchesGenericSemanticAlias(value, alias))
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Per-model conversion planning
 // ---------------------------------------------------------------------------
@@ -256,6 +285,8 @@ interface PlanNode {
    *  callActivity in the hierarchy pass. */
   tag: string
   calledElement?: string
+  /** Context-derived, business-facing gateway name. */
+  resolvedName?: LocalizedText
   /** orbitpm metadata gathered from satellite connections (insertion-ordered,
    *  deduped). */
   meta: Map<MetaAttr, string[]>
@@ -339,7 +370,7 @@ function collectMembers(db: AmlDatabase, model: AmlModel | undefined): {
   const seen = new Set<string>()
   const push = (c: AmlCxn | undefined): void => {
     if (!c) return
-    const key = `${c.from} ${c.to} ${c.type ?? ''}`
+    const key = `${c.from}\u0000${c.to}\u0000${c.type ?? ''}`
     if (seen.has(key)) return
     seen.add(key)
     cxns.push(c)
@@ -450,7 +481,7 @@ function planModel(
   const edges: PlanEdge[] = []
   const seenPair = new Set<string>()
   for (const p of flowPairs) {
-    const key = `${p.source.bpmnId} ${p.target.bpmnId}`
+    const key = `${p.source.bpmnId}\u0000${p.target.bpmnId}`
     if (seenPair.has(key)) continue // parallel duplicates collapse to one flow
     seenPair.add(key)
     const id = `flow_${edges.length + 1}`
@@ -467,9 +498,41 @@ function planModel(
       else if (node.outgoing.length === 0) node.tag = 'endEvent'
       else node.tag = 'intermediateThrowEvent'
     } else if (t === 'OT_RULE') {
-      node.tag = gatewayTag(node.occ?.symbolNum)
+      node.tag = gatewayTag(node.occ?.symbolNum ?? node.def.symbolNum)
     } else {
       node.tag = 'task' // OT_FUNC and tolerated unknown types
+    }
+  }
+
+  // Replace stock ARIS operator aliases with labels users can understand.
+  // This runs after every tag and edge degree is final so split/merge wording
+  // and neighbouring step names are available in both languages.
+  for (const node of nodes.values()) {
+    const semanticType = semanticTypeForTag(node.tag)
+    if (!semanticType) continue
+    const sourceName = meaningfulNodeName(node)
+    const incoming = edges
+      .filter((edge) => edge.target === node)
+      .map((edge) => ({ name: edge.source.def.name }))
+    const outgoing = edges
+      .filter((edge) => edge.source === node)
+      .map((edge) => ({ name: edge.target.def.name }))
+    const basis = node.meta.get('decisionBasis')?.join('; ')
+    const localizedBasis: { en?: string; ar?: string } = {}
+    if (basis) localizedBasis[lang] = basis
+    const derived = deriveContextualGatewayNames({
+      type: semanticType,
+      name: sourceName,
+      decisionBasis: localizedBasis,
+      incoming,
+      outgoing,
+      incomingCount: node.incoming.length,
+      outgoingCount: node.outgoing.length
+    })
+    node.resolvedName = {
+      en: derived.en,
+      ar: derived.ar,
+      others: sourceName.others
     }
   }
 
@@ -690,8 +753,9 @@ const META_ATTR_ORDER: MetaAttr[] = ['respList', 'ccList', 'inputs', 'outputs', 
 /** Serialize a node's orbitpm attributes (names + satellite metadata). */
 function orbitpmAttrs(node: PlanNode): string {
   let out = ''
-  if (node.def.name.en) out += ` orbitpm:nameEn="${escapeAttr(node.def.name.en)}"`
-  if (node.def.name.ar) out += ` orbitpm:nameAr="${escapeAttr(node.def.name.ar)}"`
+  const name = meaningfulNodeName(node)
+  if (name.en) out += ` orbitpm:nameEn="${escapeAttr(name.en)}"`
+  if (name.ar) out += ` orbitpm:nameAr="${escapeAttr(name.ar)}"`
   for (const attr of META_ATTR_ORDER) {
     const values = node.meta.get(attr)
     if (!values || values.length === 0) continue
@@ -711,8 +775,15 @@ function orbitpmAttrs(node: PlanNode): string {
 function layoutInputOf(
   plan: ModelPlan,
   lang: 'en' | 'ar'
-): { layoutNodes: LayoutNode[]; layoutEdges: LayoutEdge[] } {
+): {
+  layoutNodes: LayoutNode[]
+  diNodes: LayoutNode[]
+  layoutEdges: LayoutEdge[]
+  presentationOnlyLabelIds: Set<string>
+} {
   const layoutNodes: LayoutNode[] = []
+  const diNodes: LayoutNode[] = []
+  const presentationOnlyLabelIds = new Set<string>()
   for (const node of plan.nodes.values()) {
     const attrs: { [K in MetaAttr]?: string } = {}
     for (const [attr, values] of node.meta) {
@@ -720,19 +791,43 @@ function layoutInputOf(
       attrs[attr] = attr === 'decisionBasis' ? values.join('; ') : values.join('\n')
     }
     const layoutNode: LayoutNode = { id: node.bpmnId, tag: node.tag, attrs }
-    const label = pickText(node.def.name, lang)
-    if (label) layoutNode.label = label
+    const semanticType = semanticTypeForTag(node.tag)
+    const meaningfulLabel = pickText(meaningfulNodeName(node), lang)
+    const sizingLabel =
+      meaningfulLabel ??
+      (semanticType ? SEMANTIC_NAMING[semanticType][lang].display : undefined)
+    if (sizingLabel) layoutNode.label = sizingLabel
+    if (sizingLabel && !meaningfulLabel) {
+      presentationOnlyLabelIds.add(node.bpmnId)
+    }
     if (node.occ && node.occ.x !== undefined && node.occ.y !== undefined) {
       layoutNode.hint = { x: node.occ.x, y: node.occ.y }
     }
     layoutNodes.push(layoutNode)
+    // emitLayoutDi uses `label` to decide whether to serialize a BPMNLabel.
+    // Semantic defaults reserve layout space but are not persisted labels.
+    diNodes.push(
+      meaningfulLabel
+        ? layoutNode
+        : {
+            id: layoutNode.id,
+            tag: layoutNode.tag,
+            attrs: layoutNode.attrs,
+            ...(layoutNode.hint ? { hint: layoutNode.hint } : {})
+          }
+    )
   }
   const layoutEdges: LayoutEdge[] = plan.edges.map((e) => ({
     id: e.id,
     source: e.source.bpmnId,
     target: e.target.bpmnId
   }))
-  return { layoutNodes, layoutEdges }
+  return {
+    layoutNodes,
+    diNodes,
+    layoutEdges,
+    presentationOnlyLabelIds
+  }
 }
 
 /** Emit one plan as a complete BPMN file (single path: layered auto-layout). */
@@ -760,9 +855,9 @@ function emitModel(plan: ModelPlan, lang: 'en' | 'ar', orientation: Orientation)
   out += '>'
 
   for (const node of nodeList) {
-    // Unnamed objects (ARIS rules usually carry no AT_NAME) get NO name
-    // attribute — an id-as-label would clutter every gateway diamond.
-    const label = pickText(node.def.name, lang)
+    // Stock ARIS rule aliases are replaced by contextual, standards-based
+    // business labels during planning, so no "XOR rule" text is persisted.
+    const label = pickText(meaningfulNodeName(node), lang)
     let open = `<${node.tag} id="${escapeAttr(node.bpmnId)}"`
     if (label) open += ` name="${escapeAttr(label)}"`
     if (node.calledElement) open += ` calledElement="${escapeAttr(node.calledElement)}"`
@@ -784,9 +879,29 @@ function emitModel(plan: ModelPlan, lang: 'en' | 'ar', orientation: Orientation)
 
   // ONE layout path for every model: the deterministic layered engine. The
   // ARIS occurrence coordinates only survive as ordering hints inside it.
-  const { layoutNodes, layoutEdges } = layoutInputOf(plan, lang)
+  const {
+    layoutNodes,
+    diNodes,
+    layoutEdges,
+    presentationOnlyLabelIds
+  } = layoutInputOf(plan, lang)
   const layout = layoutEpc(layoutNodes, layoutEdges, { orientation })
-  out += emitLayoutDi(plan.processId, layoutNodes, layoutEdges, layout, escapeAttr)
+  // The layout result carries external-label bounds calculated from sizing
+  // labels. Strip only the presentation-default bounds from serialized DI;
+  // a later renderer may display the semantic default without pretending the
+  // BPMN model owns a business label.
+  const diShapes = new Map(layout.shapes)
+  for (const id of presentationOnlyLabelIds) {
+    const shape = diShapes.get(id)
+    if (shape?.label) diShapes.set(id, { ...shape, label: undefined })
+  }
+  out += emitLayoutDi(
+    plan.processId,
+    diNodes,
+    layoutEdges,
+    { ...layout, shapes: diShapes },
+    escapeAttr
+  )
   out += '</definitions>'
   return finishModel(plan, lang, out)
 }

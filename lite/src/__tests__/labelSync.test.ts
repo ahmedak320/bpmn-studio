@@ -162,7 +162,7 @@ describe('installLabelBilingualSync', () => {
     expect(world.rec).toHaveLength(0)
   })
 
-  it('is naturally inert for TextAnnotations (label attr is `text`, name reads empty)', () => {
+  it('mirrors a TextAnnotation through its visible `text` property', () => {
     const world = makeModeler()
     installLabelBilingualSync(world.modeler)
     const note: FakeElement = {
@@ -170,7 +170,12 @@ describe('installLabelBilingualSync', () => {
       businessObject: { $type: 'bpmn:TextAnnotation', text: 'A remark', $attrs: {} }
     }
     world.fire(EVENT, { context: { element: note } })
-    expect(world.rec).toHaveLength(0)
+    expect(world.rec).toEqual([
+      {
+        element: note,
+        properties: { 'orbitpm:nameEn': 'A remark' }
+      }
+    ])
   })
 
   it('tolerates malformed events and a missing business object', () => {

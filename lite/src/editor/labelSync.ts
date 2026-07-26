@@ -1,6 +1,6 @@
 // Label -> bilingual-attr sync: whenever the user finishes a direct label edit
 // on the canvas (bpmn-js `element.updateLabel` command), mirror the new
-// visible name into the ACTIVE language's stored attribute
+// visible label into the ACTIVE language's stored attribute
 // (`orbitpm:nameEn` / `orbitpm:nameAr`) so the language toggle's write-back
 // rule holds continuously instead of only at toggle time.
 //
@@ -12,9 +12,8 @@
 // Writing `name` via updateProperties (langToggle, dialog Apply) does NOT fire
 // `element.updateLabel`, so this can never loop.
 //
-// TextAnnotations are naturally excluded: their label attribute is `text`, so
-// the business object's `name` reads '' and resolveLabelMirror returns {}.
-// Connections (sequence-flow labels) ARE mirrored — matching
+// TextAnnotations use `text` and ordinary elements use `name`; both are
+// mirrored. Connections (sequence-flow labels) are mirrored too — matching
 // toggleDiagramLang's scope. Kept bpmn-js-free and structurally typed so the
 // vitest node suite drives it with plain object fakes.
 

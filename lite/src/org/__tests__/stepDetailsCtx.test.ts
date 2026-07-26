@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest'
 import {
   deriveStepDetailsCtx,
   isFlowNodeElement,
+  isStepBlockElement,
   type StepDetailsModeler
 } from '../stepDetailsCtx'
 import type { OrgElementLike } from '../orgModel'
@@ -81,6 +82,69 @@ describe('isFlowNodeElement', () => {
       isFlowNodeElement({ id: 'F1', type: 'bpmn:SequenceFlow', waypoints: [{ x: 0, y: 0 }] })
     ).toBe(false)
     expect(isFlowNodeElement({ id: 'L1', type: 'bpmn:Task', labelTarget: {} })).toBe(false)
+  })
+})
+
+// === isStepBlockElement =====================================================
+
+describe('isStepBlockElement', () => {
+  it('accepts the task and sub-process activity families, including CallActivity', () => {
+    for (const type of [
+      'bpmn:Task',
+      'bpmn:UserTask',
+      'bpmn:ServiceTask',
+      'bpmn:SendTask',
+      'bpmn:ReceiveTask',
+      'bpmn:ManualTask',
+      'bpmn:BusinessRuleTask',
+      'bpmn:ScriptTask',
+      'bpmn:CallActivity',
+      'bpmn:SubProcess',
+      'bpmn:Transaction',
+      'bpmn:AdHocSubProcess'
+    ]) {
+      expect(isStepBlockElement(task(type, { type })), type).toBe(true)
+    }
+  })
+
+  it('rejects events, gateways, labels, connections, roots and invalid values', () => {
+    const rejected: Array<OrgElementLike | null | undefined> = [
+      task('Start_1', { type: 'bpmn:StartEvent' }),
+      task('End_1', { type: 'bpmn:EndEvent' }),
+      task('Gateway_1', { type: 'bpmn:ExclusiveGateway' }),
+      { id: 'Label_1', type: 'bpmn:Task', labelTarget: {} },
+      {
+        id: 'Flow_1',
+        type: 'bpmn:SequenceFlow',
+        waypoints: [
+          { x: 0, y: 0 },
+          { x: 10, y: 10 }
+        ]
+      },
+      processRoot(),
+      { id: 'Collaboration_1', type: 'bpmn:Collaboration' },
+      { id: 'Participant_1', type: 'bpmn:Participant' },
+      { id: 'Other_1', type: 'custom:Task' },
+      null,
+      undefined
+    ]
+
+    for (const element of rejected) {
+      expect(isStepBlockElement(element), element?.type ?? String(element)).toBe(false)
+    }
+  })
+
+  it('rejects connection- and label-shaped activity impostors', () => {
+    expect(
+      isStepBlockElement({
+        id: 'TaskConnection_1',
+        type: 'bpmn:Task',
+        waypoints: [{ x: 0, y: 0 }]
+      })
+    ).toBe(false)
+    expect(
+      isStepBlockElement({ id: 'TaskLabel_1', type: 'bpmn:Task', labelTarget: { id: 'Task_1' } })
+    ).toBe(false)
   })
 })
 

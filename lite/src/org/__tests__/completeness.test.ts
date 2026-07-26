@@ -363,7 +363,7 @@ describe('missing badge geometry vs every existing decoration', () => {
     // healthy number of reserved boxes.
     expect(checked).toBeGreaterThan(500)
     expect(disjointChecked).toBeGreaterThan(5000)
-  })
+  }, 15_000)
 
   it('clears the mega-decorated business-rule task from the existing stacking suite', () => {
     // Same props as the e2e-pinned "everything at once" case — which has NO

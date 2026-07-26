@@ -1,7 +1,7 @@
 // Single source of truth for ALL org-decoration geometry: which boxes a shape
-// grows around itself (channel/trigger tags, inputs/CC/responsible lists,
+// grows around itself (channel/trigger tags, input/output/CC/responsible lists,
 // owner chip, decision-basis tag, missing-info badge, sub-process chip) and
-// exactly where each one sits, per flow orientation, clearing the shape's
+// exactly where each one sits, per element-local flow direction, clearing the shape's
 // external label when one is present.
 //
 // This module is deliberately PURE: no DOM, no bpmn-js — only `orgModel` types
@@ -10,7 +10,7 @@
 //   * orgRenderer.planDecorations derives every painted position from
 //     computeDecorLayout, so pixels and layout can never drift apart;
 //   * the import/auto-layout lane consumes computeDecorLayout /
-//     computeDecorMargins / detectOrientation read-only to reserve space.
+//     computeDecorMargins / direction detectors read-only to reserve space.
 // The exported API is a FROZEN CONTRACT for the layout lane — extend it, never
 // change existing signatures.
 
@@ -21,6 +21,9 @@ import { t } from '../i18n'
 // --- shared primitives -------------------------------------------------------
 
 export type FlowOrientation = 'horizontal' | 'vertical'
+/** Element-local direction of travel, derived from adjacent sequence-flow
+ *  stubs. Unlike FlowOrientation this retains the sign of the dominant axis. */
+export type FlowDirection = 'right' | 'down' | 'left' | 'up'
 
 /** Axis-aligned box in shape-local coords (origin = shape's top-left). */
 export interface Box {
@@ -280,16 +283,25 @@ const MISSING_BADGE_GAP_X = 2
 /** Vertical clearance between the chip's bottom edge and the shape's top edge. */
 const MISSING_BADGE_GAP_Y = 4
 
+function clearTopBoxFromLabel(box: Box, labelBox?: Box | null): Box {
+  if (!labelBox) return box
+  const overlapsX = box.x < labelBox.x + labelBox.w && labelBox.x < box.x + box.w
+  const overlapsY = box.y < labelBox.y + labelBox.h && labelBox.y < box.y + box.h
+  if (!overlapsX || !overlapsY) return box
+  return { ...box, y: labelBox.y - LABEL_CLEAR_GAP - box.h }
+}
+
 /** Badge geometry, shared by planMissingBadge and computeDecorLayout: a 16x16
  *  chip floating diagonally OFF the shape's top-right corner —
- *  { x: width+2, y: -20, w: 16, h: 16 } — both orientations. */
-export function planBadgeBox(width: number): Box {
-  return {
+ *  { x: width+2, y: -20, w: 16, h: 16 } by default. An optional manually
+ *  moved external label pushes it farther above without changing its x slot. */
+export function planBadgeBox(width: number, labelBox?: Box | null): Box {
+  return clearTopBoxFromLabel({
     x: width + MISSING_BADGE_GAP_X,
     y: -(MISSING_BADGE_SIZE + MISSING_BADGE_GAP_Y),
     w: MISSING_BADGE_SIZE,
     h: MISSING_BADGE_SIZE
-  }
+  }, labelBox)
 }
 
 /** Sub-process chip geometry: a 34x14 pill at the shape's bottom edge, INSIDE
@@ -307,6 +319,16 @@ export function planSubChipBox(width: number, height: number): Box {
 interface WaypointLike {
   x?: unknown
   y?: unknown
+}
+
+export interface DirectionConnectionLike {
+  type?: string
+  waypoints?: unknown
+}
+
+export interface DirectionElementLike {
+  incoming?: ReadonlyArray<DirectionConnectionLike> | null
+  outgoing?: ReadonlyArray<DirectionConnectionLike> | null
 }
 
 /** Majority axis of summed |Δx| / |Δy| over sequence-flow first→last waypoints.
@@ -337,6 +359,90 @@ export function detectOrientation(
   return dy > dx ? 'vertical' : 'horizontal'
 }
 
+interface SegmentVector {
+  dx: number
+  dy: number
+}
+
+function validWaypoint(value: unknown): value is { x: number; y: number } {
+  if (!value || typeof value !== 'object') return false
+  const point = value as WaypointLike
+  return (
+    typeof point.x === 'number' &&
+    Number.isFinite(point.x) &&
+    typeof point.y === 'number' &&
+    Number.isFinite(point.y)
+  )
+}
+
+/** The first non-zero segment leaving a sequence flow's source. */
+function firstOutgoingSegment(waypoints: unknown): SegmentVector | null {
+  if (!Array.isArray(waypoints) || waypoints.length < 2) return null
+  for (let index = 1; index < waypoints.length; index++) {
+    const from = waypoints[index - 1]
+    const to = waypoints[index]
+    if (!validWaypoint(from) || !validWaypoint(to)) continue
+    const dx = to.x - from.x
+    const dy = to.y - from.y
+    if (dx !== 0 || dy !== 0) return { dx, dy }
+  }
+  return null
+}
+
+/** The last non-zero segment entering a sequence flow's target. */
+function lastIncomingSegment(waypoints: unknown): SegmentVector | null {
+  if (!Array.isArray(waypoints) || waypoints.length < 2) return null
+  for (let index = waypoints.length - 1; index > 0; index--) {
+    const from = waypoints[index - 1]
+    const to = waypoints[index]
+    if (!validWaypoint(from) || !validWaypoint(to)) continue
+    const dx = to.x - from.x
+    const dy = to.y - from.y
+    if (dx !== 0 || dy !== 0) return { dx, dy }
+  }
+  return null
+}
+
+/**
+ * PURE: detect the direction of travel immediately beside one element.
+ *
+ * Every outgoing sequence flow contributes its first non-zero segment and
+ * every incoming sequence flow contributes its last non-zero segment. The
+ * signed vectors are summed, so a normal incoming→element→outgoing chain
+ * reinforces one local direction while symmetric fan-outs cancel. A zero
+ * vector or an exact |dx|===|dy| tie deliberately falls back to the existing
+ * diagram-wide orientation (horizontal→right, vertical→down).
+ */
+export function detectElementFlowDirection(
+  element: DirectionElementLike,
+  fallback: FlowOrientation
+): FlowDirection {
+  let dx = 0
+  let dy = 0
+
+  for (const connection of element.outgoing ?? []) {
+    if (connection.type !== 'bpmn:SequenceFlow') continue
+    const segment = firstOutgoingSegment(connection.waypoints)
+    if (!segment) continue
+    dx += segment.dx
+    dy += segment.dy
+  }
+
+  for (const connection of element.incoming ?? []) {
+    if (connection.type !== 'bpmn:SequenceFlow') continue
+    const segment = lastIncomingSegment(connection.waypoints)
+    if (!segment) continue
+    dx += segment.dx
+    dy += segment.dy
+  }
+
+  const absX = Math.abs(dx)
+  const absY = Math.abs(dy)
+  if (absX === absY) return fallback === 'vertical' ? 'down' : 'right'
+  if (absX > absY) return dx < 0 ? 'left' : 'right'
+  return dy < 0 ? 'up' : 'down'
+}
+
 // --- the layout --------------------------------------------------------------
 
 export interface DecorLayoutInput {
@@ -345,6 +451,15 @@ export interface DecorLayoutInput {
   width: number
   height: number
   orientation: FlowOrientation
+  /** Element-local direction. Omitted preserves the legacy diagram-wide
+   *  mapping: horizontal→right, vertical→down. */
+  direction?: FlowDirection
+  /**
+   * Swap the two cross-flow sides when the default side would collide with a
+   * nearby shape or connector. Horizontal flow remains above/below and
+   * vertical flow remains left/right; only the clearer side is selected.
+   */
+  flipCrossAxis?: boolean
   /** Include the missing-info badge box when info is missing. */
   completenessOn: boolean
   /** External label bounds RELATIVE to the shape's top-left, if any. */
@@ -355,12 +470,15 @@ export interface DecorLayout {
   channelTag?: Box
   triggerTag?: Box
   inputsBox?: Box
+  outputsBox?: Box
   ccBox?: Box
   ownerChip?: Box // RACI chip is contained within it
   respBox?: Box
   basisTag?: Box
   badge?: Box
   subChip?: Box // reserved slot; painted only for collapsed sub-processes
+  /** Conservative bounds for the legacy unboxed `CC: …` text. */
+  ccSubLabelBox?: Box
   ccSubLabelY?: number // legacy baseline (kind==='cc' with no ccList)
   /** Space consumed beyond the shape bbox, >= 0 per side — what auto-layout
    *  must reserve. EXCLUDES the external label itself (a real model element
@@ -372,13 +490,61 @@ const LAYOUT_BOX_KEYS = [
   'channelTag',
   'triggerTag',
   'inputsBox',
+  'outputsBox',
   'ccBox',
   'ownerChip',
   'respBox',
   'basisTag',
   'badge',
-  'subChip'
+  'subChip',
+  'ccSubLabelBox'
 ] as const
+
+/** Semantic names consumed by obstacle construction and geometry tests. */
+export type DecorBoxKind =
+  | 'channel'
+  | 'trigger'
+  | 'inputs'
+  | 'outputs'
+  | 'cc'
+  | 'owner'
+  | 'responsible'
+  | 'basis'
+  | 'badge'
+
+export interface DecorBox {
+  kind: DecorBoxKind
+  box: Box
+}
+
+type ExternalDecorLayoutKey = Exclude<(typeof LAYOUT_BOX_KEYS)[number], 'subChip'>
+
+const SEMANTIC_BOX_KEYS: ReadonlyArray<readonly [DecorBoxKind, ExternalDecorLayoutKey]> = [
+  ['channel', 'channelTag'],
+  ['trigger', 'triggerTag'],
+  ['inputs', 'inputsBox'],
+  ['outputs', 'outputsBox'],
+  ['cc', 'ccBox'],
+  ['owner', 'ownerChip'],
+  ['responsible', 'respBox'],
+  ['basis', 'basisTag'],
+  ['badge', 'badge'],
+  ['cc', 'ccSubLabelBox']
+]
+
+/**
+ * Export every external decoration rectangle with a stable semantic kind.
+ * The in-shape sub-process chip is intentionally excluded: the base shape is
+ * already an obstacle and reserving the chip separately would double-count it.
+ */
+export function decorationBoxes(layout: DecorLayout): DecorBox[] {
+  const boxes: DecorBox[] = []
+  for (const [kind, key] of SEMANTIC_BOX_KEYS) {
+    const box = layout[key]
+    if (box) boxes.push({ kind, box })
+  }
+  return boxes
+}
 
 function foldMargins(layout: DecorLayout, width: number, height: number): DecorLayout['margins'] {
   const margins = { left: 0, right: 0, top: 0, bottom: 0 }
@@ -397,20 +563,23 @@ function foldMargins(layout: DecorLayout, width: number, height: number): DecorL
  * PURE: the full decoration layout for one element. Every Box is in
  * shape-local coords. Rules:
  *
- * HORIZONTAL (default):
+ * RIGHT (default horizontal direction):
  *   - channel tag above at y=-22 (activities), trigger tag at y=-26 (start
  *     events) — mutually exclusive by type;
  *   - inputs list ABOVE the shape, left-aligned, bottom edge at y=-30;
- *   - one overlap-free below stack (all x=0): legacy CC sub-label, owner chip,
- *     responsible list, CC list, decision-basis tag, STACK_GAP=12 apart. The
- *     stack base clears the external label when `labelBox` reaches lower than
- *     the shape itself.
- * VERTICAL:
+ *   - one overlap-free below stack (all x=0): outputs list, owner chip,
+ *     responsible list, CC list and decision-basis tag, STACK_GAP=12 apart.
+ * DOWN (default vertical direction):
  *   - inputs list to the LEFT (x = -(w+12));
  *   - a right-side stack at x = width+12 (pushed further right when the label
  *     protrudes past the right edge), growing down from y=0 with
- *     SIDE_STACK_GAP=8: owner chip, responsible list, CC list, basis tag;
+ *     SIDE_STACK_GAP=8: outputs, owner, responsible, CC, basis;
  *   - the legacy CC sub-label stays below (label-cleared base).
+ * REVERSED:
+ *   - LEFT mirrors RIGHT: inputs below and the after-stack above;
+ *   - UP mirrors DOWN: inputs right and the after-stack left.
+ * In every direction outputs are nearest the shape, then owner, responsible,
+ * CC and basis progress farther through the after-side stack.
  * BOTH:
  *   - badge at planBadgeBox(width) when `completenessOn` and info is missing;
  *   - subChip reserved at planSubChipBox for sub-process-capable types
@@ -418,6 +587,8 @@ function foldMargins(layout: DecorLayout, width: number, height: number): DecorL
  */
 export function computeDecorLayout(input: DecorLayoutInput): DecorLayout {
   const { props, elementType, width, height, orientation, completenessOn } = input
+  const direction: FlowDirection =
+    input.direction ?? (orientation === 'vertical' ? 'down' : 'right')
   const labelBox = input.labelBox ?? null
   const out: DecorLayout = { margins: { left: 0, right: 0, top: 0, bottom: 0 } }
 
@@ -429,7 +600,13 @@ export function computeDecorLayout(input: DecorLayoutInput): DecorLayout {
   // Channel tag (activities only).
   if (props.channel && isActivity) {
     const label = channelLabel(props.channel)
-    out.channelTag = { x: 0, y: -22, w: tagWidth(label, width), h: TAG_H }
+    const detail = props.channelDetail ? truncate(props.channelDetail, 18) : ''
+    const painted = detail ? `${label}: ${detail}` : label
+    const w = tagWidth(painted, Number.POSITIVE_INFINITY)
+    out.channelTag = clearTopBoxFromLabel(
+      { x: Math.min(0, width - w), y: -22, w, h: TAG_H },
+      labelBox
+    )
   }
 
   // Start-event trigger tag.
@@ -438,79 +615,195 @@ export function computeDecorLayout(input: DecorLayoutInput): DecorLayout {
     const label =
       triggerLabel(triggers[0].type) +
       (triggers.length > 1 ? ` +${triggers.length - 1}` : '')
-    out.triggerTag = { x: 0, y: -26, w: tagWidth(label, Math.max(width, 60)), h: TAG_H }
+    const detail =
+      triggers.length === 1 && triggers[0].type === 'dmthub'
+        ? truncate(triggers[0].service, 18)
+        : ''
+    const painted = detail ? `${label}: ${detail}` : label
+    out.triggerTag = clearTopBoxFromLabel(
+      { x: 0, y: -26, w: tagWidth(painted, Number.POSITIVE_INFINITY), h: TAG_H },
+      labelBox
+    )
   }
 
-  // Inputs list (activities only): above in horizontal, left in vertical.
+  if (completenessOn && planMissingInfo(props, elementType).length > 0) {
+    out.badge = planBadgeBox(width, labelBox)
+  }
+
+  let beforeSide: 'top' | 'right' | 'bottom' | 'left' =
+    direction === 'right'
+      ? 'top'
+      : direction === 'down'
+        ? 'left'
+        : direction === 'left'
+          ? 'bottom'
+          : 'right'
+  let afterSide: 'top' | 'right' | 'bottom' | 'left' =
+    direction === 'right'
+      ? 'bottom'
+      : direction === 'down'
+        ? 'right'
+        : direction === 'left'
+          ? 'top'
+          : 'left'
+  if (input.flipCrossAxis) {
+    const previousBefore = beforeSide
+    beforeSide = afterSide
+    afterSide = previousBefore
+  }
+
+  const topBoundary = (): number => {
+    let boundary = -TOP_STACK_BASE
+    if (labelBox && labelBox.y < 0) {
+      boundary = Math.min(boundary, labelBox.y - LABEL_CLEAR_GAP)
+    }
+    for (const box of [out.channelTag, out.triggerTag, out.badge]) {
+      if (box) boundary = Math.min(boundary, box.y - LABEL_CLEAR_GAP)
+    }
+    return boundary
+  }
+  const bottomBase = (): number =>
+    labelBox ? Math.max(height, labelBox.y + labelBox.h) : height
+  const rightBoundary = (): number => {
+    let boundary = width + LIST_GAP_X
+    if (labelBox && labelBox.x + labelBox.w > width) {
+      boundary = Math.max(boundary, labelBox.x + labelBox.w + LABEL_CLEAR_GAP)
+    }
+    return boundary
+  }
+  const leftBoundary = (): number => {
+    let boundary = -LIST_GAP_X
+    if (labelBox && labelBox.x < 0) {
+      boundary = Math.min(boundary, labelBox.x - LABEL_CLEAR_GAP)
+    }
+    return boundary
+  }
+  const placeSingle = (side: typeof beforeSide, w: number, h: number): Box => {
+    switch (side) {
+      case 'top':
+        return { x: 0, y: topBoundary() - h, w, h }
+      case 'bottom':
+        return { x: 0, y: bottomBase() + STACK_GAP, w, h }
+      case 'left':
+        return { x: leftBoundary() - w, y: 0, w, h }
+      case 'right':
+        return { x: rightBoundary(), y: 0, w, h }
+    }
+  }
+
+  // Inputs list (activities only): the logical before-side of travel.
   const inputRows = isActivity ? prepareListRows(props.inputs) : []
   if (inputRows.length > 0) {
     const w = listBoxWidth(t('canvas.inputs'), inputRows, false)
     const h = listBoxHeight(inputRows.length)
-    out.inputsBox =
-      orientation === 'vertical'
-        ? { x: -(w + LIST_GAP_X), y: 0, w, h }
-        : { x: 0, y: -(TOP_STACK_BASE + h), w, h }
+    out.inputsBox = placeSingle(beforeSide, w, h)
   }
 
+  const outputRows = isActivity ? prepareListRows(props.outputs) : []
   const ccRows = prepareListRows(props.ccList)
   const respRows = prepareListRows(props.respList)
   const hasOwner = Boolean(props.owner)
   const hasBasis = Boolean(props.decisionBasis) && isDecisionBasisType(elementType)
   const ccSubLabel = props.kind === 'cc' && ccRows.length === 0
+  const ccSubLabelW = 6 * ('CC: ' + truncate(props.ccTo ?? '', 24)).length
 
   // Block sizes (shared by both orientations).
-  const ownerW = Math.min(160, 24 + 7 * truncate(props.owner ?? '', 22).length)
+  const outputW = listBoxWidth(t('org.outputs.label'), outputRows, false)
+  const outputH = listBoxHeight(outputRows.length)
+  const ownerW = 36 + 7 * truncate(props.owner ?? '', 22).length
   const ccW = listBoxWidth(t('canvas.cc'), ccRows, false)
   const ccH = listBoxHeight(ccRows.length)
   const respW = listBoxWidth(t('canvas.responsible'), respRows, true)
   const respH = listBoxHeight(respRows.length)
-  const basisW = tagWidth(t('canvas.basis') + ': ' + truncate(props.decisionBasis ?? '', 28), 220)
+  const basisW = tagWidth(
+    t('canvas.basis') + ': ' + truncate(props.decisionBasis ?? '', 28),
+    Number.POSITIVE_INFINITY
+  )
 
-  // Below-shape base: clear the external label when it reaches lower than the
-  // shape itself (default bpmn-js labels sit at shape bottom + 7).
-  const base = labelBox ? Math.max(height, labelBox.y + labelBox.h) : height
-
-  if (orientation === 'vertical') {
-    // Legacy CC sub-label keeps its below-shape spot (rare legacy path).
-    if (ccSubLabel) out.ccSubLabelY = base + 12
-
-    // Right-side stack. Push past a label protruding beyond the right edge
-    // (90px-minimum external labels under 36/50px events and gateways).
-    let sideX = width + LIST_GAP_X
-    if (labelBox && labelBox.x + labelBox.w > width) {
-      sideX = Math.max(sideX, labelBox.x + labelBox.w + LABEL_CLEAR_GAP)
-    }
-    let cursor = 0
-    let first = true
-    const place = (w: number, h: number): Box => {
-      const y = first ? cursor : cursor + SIDE_STACK_GAP
-      first = false
-      cursor = y + h
-      return { x: sideX, y, w, h }
-    }
-    if (hasOwner) out.ownerChip = place(ownerW, OWNER_CHIP_H)
-    if (respRows.length > 0) out.respBox = place(respW, respH)
-    if (ccRows.length > 0) out.ccBox = place(ccW, ccH)
-    if (hasBasis) out.basisTag = place(basisW, BASIS_TAG_H)
-  } else {
-    const stack = stackBelow({
-      height: base,
-      ccSubLabel,
-      owner: hasOwner,
-      respRows: respRows.length,
-      ccRows: ccRows.length,
-      basis: hasBasis
+  interface AfterBlock {
+    w: number
+    h: number
+    legacyText?: boolean
+    assign(box: Box): void
+  }
+  const blocks: AfterBlock[] = []
+  if (outputRows.length > 0) {
+    blocks.push({ w: outputW, h: outputH, assign: (box) => (out.outputsBox = box) })
+  }
+  if (hasOwner) {
+    blocks.push({ w: ownerW, h: OWNER_CHIP_H, assign: (box) => (out.ownerChip = box) })
+  }
+  if (respRows.length > 0) {
+    blocks.push({ w: respW, h: respH, assign: (box) => (out.respBox = box) })
+  }
+  if (ccRows.length > 0) {
+    blocks.push({ w: ccW, h: ccH, assign: (box) => (out.ccBox = box) })
+  } else if (ccSubLabel && (afterSide === 'top' || afterSide === 'bottom')) {
+    blocks.push({
+      w: ccSubLabelW,
+      h: SUB_LABEL_ADVANCE,
+      legacyText: true,
+      assign: (box) => {
+        out.ccSubLabelBox = box
+        out.ccSubLabelY = box.y + 12
+      }
     })
-    if (stack.ccSubLabelY !== undefined) out.ccSubLabelY = stack.ccSubLabelY
-    if (stack.ownerY !== undefined) out.ownerChip = { x: 0, y: stack.ownerY, w: ownerW, h: OWNER_CHIP_H }
-    if (stack.respY !== undefined) out.respBox = { x: 0, y: stack.respY, w: respW, h: respH }
-    if (stack.ccY !== undefined) out.ccBox = { x: 0, y: stack.ccY, w: ccW, h: ccH }
-    if (stack.basisY !== undefined) out.basisTag = { x: 0, y: stack.basisY, w: basisW, h: BASIS_TAG_H }
+  }
+  if (hasBasis) {
+    blocks.push({ w: basisW, h: BASIS_TAG_H, assign: (box) => (out.basisTag = box) })
   }
 
-  // Missing-info badge slot (top-right, both orientations).
-  if (completenessOn && planMissingInfo(props, elementType).length > 0) {
-    out.badge = planBadgeBox(width)
+  let sideStackBottom = 0
+  if (afterSide === 'bottom') {
+    let cursor = bottomBase()
+    for (let index = 0; index < blocks.length; index++) {
+      const block = blocks[index]
+      const gap = index === 0 && block.legacyText ? 0 : STACK_GAP
+      const box = { x: 0, y: cursor + gap, w: block.w, h: block.h }
+      block.assign(box)
+      cursor = box.y + box.h
+    }
+  } else if (afterSide === 'top') {
+    let cursor = topBoundary()
+    for (const block of blocks) {
+      const box = { x: 0, y: cursor - block.h, w: block.w, h: block.h }
+      block.assign(box)
+      cursor = box.y - STACK_GAP
+    }
+  } else {
+    const sideX = afterSide === 'right' ? rightBoundary() : leftBoundary()
+    let cursor = 0
+    let first = true
+    for (const block of blocks) {
+      const y = first ? cursor : cursor + SIDE_STACK_GAP
+      first = false
+      const box = {
+        x: afterSide === 'right' ? sideX : sideX - block.w,
+        y,
+        w: block.w,
+        h: block.h
+      }
+      block.assign(box)
+      cursor = y + block.h
+    }
+    sideStackBottom = cursor
+  }
+
+  // The legacy unboxed "CC: …" text predates directional box geometry. Keep
+  // its established below-shape slot; when the directional after-stack is on
+  // a side, move the baseline below that whole stack so a long legacy label
+  // cannot run through an output/owner/responsible/basis block. The before-side
+  // input list may also extend into the legacy text's x range for up-flow, so
+  // reserve its full vertical extent as well.
+  if (ccSubLabel && afterSide !== 'top' && afterSide !== 'bottom') {
+    const beforeSideBottom = out.inputsBox ? out.inputsBox.y + out.inputsBox.h : 0
+    out.ccSubLabelY = Math.max(bottomBase(), sideStackBottom, beforeSideBottom) + 12
+    out.ccSubLabelBox = {
+      x: 0,
+      y: out.ccSubLabelY - 12,
+      w: ccSubLabelW,
+      h: SUB_LABEL_ADVANCE
+    }
   }
 
   // Sub-process chip slot, reserved for every sub-process-capable type; the

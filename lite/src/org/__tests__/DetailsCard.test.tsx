@@ -1,9 +1,9 @@
-import { describe, it, expect } from 'vitest'
+import { afterEach, describe, it, expect } from 'vitest'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { DetailsCard } from '../DetailsCard'
 import type { StepDetailsModeler } from '../stepDetailsCtx'
 import type { OrgElementLike } from '../orgModel'
-import { t } from '../../i18n'
+import { setLang, t } from '../../i18n'
 
 // DetailsCard derives everything during render (the eventBus subscription is
 // an effect, which react-dom/server never runs), so a static markup render
@@ -62,7 +62,33 @@ function render(modeler: StepDetailsModeler | null): string {
   return renderToStaticMarkup(<DetailsCard modeler={modeler} onOpenDetails={noop} />)
 }
 
+afterEach(() => setLang('en'))
+
 describe('DetailsCard (static render)', () => {
+  it('uses the active English UI direction on its root', () => {
+    setLang('en')
+    const html = render(null)
+
+    expect(html).toMatch(/^<div class="orbitpm-lite-details-card" dir="ltr"/)
+    expect(html).toContain(t('details.card.title'))
+  })
+
+  it('uses the active Arabic UI direction and localized copy on its root', () => {
+    setLang('ar')
+    const modeler = makeModeler({
+      selection: [],
+      elements: [],
+      // UI direction is independent of the diagram language.
+      root: processRoot({ 'orbitpm:activeLang': 'en' }, 'Main Flow')
+    })
+    const html = render(modeler)
+
+    expect(html).toMatch(/^<div class="orbitpm-lite-details-card" dir="rtl"/)
+    expect(html).toContain(t('details.card.title'))
+    expect(html).toContain(t('details.card.processScope'))
+    expect(html).toContain(t('details.card.open'))
+  })
+
   it('element selected: name, scope label, missing chips and the open button', () => {
     const el = task('T1', { name: 'Review request' }) // owner/inputs/outputs all missing
     const modeler = makeModeler({

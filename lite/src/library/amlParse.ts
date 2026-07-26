@@ -65,6 +65,8 @@ export interface AmlObj {
   id: string
   /** `TypeNum` — OT_FUNC, OT_EVT, OT_RULE, OT_PERS, OT_APPL_SYS, … */
   typeNum: string
+  /** Definition-level symbol; an occurrence-level SymbolNum takes precedence. */
+  symbolNum?: string
   name: LocalizedText
   cxns: AmlCxn[]
   /**
@@ -364,6 +366,7 @@ function parseObjDef(attrs: string, body: string, entities: Record<string, strin
   return {
     id,
     typeNum: readTagAttr(attrs, 'TypeNum') ?? '',
+    symbolNum: readTagAttr(attrs, 'SymbolNum'),
     name: extractLocalizedAttr(ownBody, 'AT_NAME', entities),
     cxns,
     // IdRefs values are whitespace-padded and space-separated when

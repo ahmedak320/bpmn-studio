@@ -122,7 +122,8 @@ function listGlance(raw: string): string {
 // --- the card ----------------------------------------------------------------
 
 export function DetailsCard({ modeler, onOpenDetails }: DetailsCardProps): JSX.Element {
-  useLang()
+  const uiLang = useLang()
+  const uiDir = uiLang === 'ar' ? 'rtl' : 'ltr'
   const [, setTick] = useState(0)
 
   // Live re-derivation: any selection change, model edit (undo/redo included)
@@ -171,7 +172,7 @@ export function DetailsCard({ modeler, onOpenDetails }: DetailsCardProps): JSX.E
 
   if (!ctx) {
     return (
-      <div className="orbitpm-lite-details-card" style={cardStyle}>
+      <div className="orbitpm-lite-details-card" dir={uiDir} style={cardStyle}>
         {header}
         <span style={{ opacity: 0.6 }}>{t('details.card.empty')}</span>
       </div>
@@ -217,7 +218,7 @@ export function DetailsCard({ modeler, onOpenDetails }: DetailsCardProps): JSX.E
     : t('details.card.empty')
 
   return (
-    <div className="orbitpm-lite-details-card" style={cardStyle}>
+    <div className="orbitpm-lite-details-card" dir={uiDir} style={cardStyle}>
       {header}
 
       <div

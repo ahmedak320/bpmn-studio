@@ -1,9 +1,11 @@
-// Diagram-language toggle: flips every element's VISIBLE `name` between the
+// Diagram-language toggle: flips every element's VISIBLE label between the
 // diagram's stored English and Arabic translations, which a parallel lane
 // writes onto each element's businessObject as `orbitpm:nameEn` /
 // `orbitpm:nameAr` (moddle-registered attrs — same `extends: ['bpmn:BaseElement']`
 // mechanism as the `orbitpm:owner` family in org/orbitpmModdle.ts, so every
-// flow node, connection, and the process itself can carry them). This module
+// flow node, connection, text annotation, and the process itself can carry
+// them). TextAnnotation uses BPMN's `text` property; all other named elements
+// use `name`. This module
 // only READS/WRITES those attrs through the modeler's own services; it never
 // touches the moddle descriptor itself.
 //
@@ -29,15 +31,22 @@
 // object fakes in the node vitest environment — see
 // src/__tests__/langToggle.test.ts.
 
+import {
+  executeModelingBatch,
+  type ModelingBatchUpdate
+} from './modelingBatch'
+
 export type DiagramLang = 'en' | 'ar'
 
 export interface ToggleResult {
-  /** Elements whose visible name was switched to a stored `to`-language translation. */
+  /** Elements for which a target-language label could be displayed. */
   switched: number
-  /** Elements left untouched because no `to`-language translation was stored (name kept as-is). */
+  /** Elements displayed with an opposite-language fallback. */
   missing: number
-  /** The language the diagram shows now (the one just toggled TO). */
+  /** The language requested by the caller. */
   to: DiagramLang
+  /** The language actually recorded as active after projection/repair. */
+  active: DiagramLang
 }
 
 /** The modeler surface this module needs. Deliberately a single generic
@@ -56,6 +65,7 @@ export interface LangBusinessObjectLike {
   $type?: string
   $attrs?: Record<string, unknown>
   name?: string
+  text?: string
   get?: (name: string) => unknown
   [key: string]: unknown
 }
@@ -77,10 +87,6 @@ interface CanvasLike {
 
 interface ElementRegistryLike {
   getAll(): LangElementLike[]
-}
-
-interface ModelingLike {
-  updateProperties(element: unknown, properties: Record<string, unknown>): void
 }
 
 // --- attribute names ---------------------------------------------------------
@@ -122,27 +128,65 @@ function readModdleProp(bo: LangBusinessObjectLike | undefined, name: string): u
   return bo[name]
 }
 
-/** Read one `orbitpm:*` attribute. Empty string counts as absent, same as
- *  org/orgModel.ts's `readAttr`. */
+function readNonBlank(value: unknown): string | undefined {
+  if (value == null) return undefined
+  const text = String(value).trim()
+  return text === '' ? undefined : text
+}
+
+/** Read one `orbitpm:*` attribute. Blank strings count as absent. */
 function readAttr(bo: LangBusinessObjectLike | undefined, name: string): string | undefined {
   if (!bo) return undefined
   if (typeof bo.get === 'function') {
     try {
-      const value = bo.get(name)
-      if (value != null && value !== '') return String(value)
+      const value = readNonBlank(bo.get(name))
+      if (value !== undefined) return value
     } catch {
       /* fall through to $attrs */
     }
   }
-  const raw = bo.$attrs?.[name]
-  if (raw != null && raw !== '') return String(raw)
-  return undefined
+  return readNonBlank(bo.$attrs?.[name]) ?? readNonBlank(bo[name])
 }
 
-/** The element's current visible name, or '' if unset/not a string. */
-function readName(bo: LangBusinessObjectLike | undefined): string {
-  const value = readModdleProp(bo, 'name')
+/** BPMN TextAnnotation stores its visible label in `text`; ordinary named
+ * elements use `name`. Localization attributes stay uniform on BaseElement. */
+export function visibleLabelProperty(
+  bo: LangBusinessObjectLike | undefined
+): 'name' | 'text' {
+  return bo?.$type === 'bpmn:TextAnnotation' ? 'text' : 'name'
+}
+
+/** The element's current visible label, or '' if unset/not a string. */
+export function readVisibleLabel(bo: LangBusinessObjectLike | undefined): string {
+  const value = readModdleProp(bo, visibleLabelProperty(bo))
   return typeof value === 'string' ? value : ''
+}
+
+/** Arabic blocks plus presentation forms seen in imported BPMN. Mixed
+ * Arabic/Latin/numeric labels count as Arabic. */
+function hasArabicScript(value: string): boolean {
+  return /[\u0600-\u06ff\u0750-\u077f\u08a0-\u08ff\ufb50-\ufdff\ufe70-\ufeff]/.test(value)
+}
+
+/**
+ * Whether a visible label is safe to adopt as `lang`.
+ *
+ * The opposite stored value is stronger evidence than stale active-language
+ * metadata. Script compatibility then prevents an English fallback from ever
+ * being seeded as Arabic (and vice versa).
+ */
+function canCaptureVisible(
+  bo: LangBusinessObjectLike,
+  lang: DiagramLang,
+  visibleLabel: string
+): boolean {
+  const visible = visibleLabel.trim()
+  if (visible === '') return false
+
+  const opposite = readAttr(bo, LANG_ATTR[otherLang(lang)])
+  if (opposite !== undefined && visible === opposite) return false
+
+  return lang === 'ar' ? hasArabicScript(visible) : !hasArabicScript(visible)
 }
 
 // --- root resolution ---------------------------------------------------------
@@ -206,16 +250,41 @@ export function resolveElementNames(
   to: DiagramLang
 ): Record<string, string> {
   const properties: Record<string, string> = {}
-  const name = readName(bo)
+  const labelProperty = visibleLabelProperty(bo)
+  const name = readVisibleLabel(bo).trim()
+  const toAttr = readAttr(bo, LANG_ATTR[to])
 
-  const fromAttr = readAttr(bo, LANG_ATTR[from])
-  if (name && name !== fromAttr) {
-    properties[LANG_ATTR[from]] = name
+  if (toAttr !== undefined) {
+    // During a real language change, preserve a compatible edit made in the
+    // previously active language. During idempotent projection, the stored
+    // target is authoritative: this is what repairs stale visible English
+    // without replacing generated Arabic.
+    if (from !== to) {
+      const fromAttr = readAttr(bo, LANG_ATTR[from])
+      if (name !== fromAttr && canCaptureVisible(bo, from, name)) {
+        properties[LANG_ATTR[from]] = name
+      }
+    }
+    if (name !== toAttr) properties[labelProperty] = toAttr
+    return properties
   }
 
-  const toAttr = readAttr(bo, LANG_ATTR[to])
-  if (toAttr) {
-    properties.name = toAttr
+  // A missing target may be safely adopted from the visible label only with
+  // positive language evidence. In particular, Latin-only text is never
+  // invented as Arabic.
+  if (canCaptureVisible(bo, to, name)) {
+    properties[LANG_ATTR[to]] = name
+    return properties
+  }
+
+  // Keep/repair an opposite-language fallback. This also self-heals a plain
+  // English diagram on its first failed request for Arabic.
+  const fallback = otherLang(to)
+  const fallbackAttr = readAttr(bo, LANG_ATTR[fallback])
+  if (canCaptureVisible(bo, fallback, name)) {
+    if (name !== fallbackAttr) properties[LANG_ATTR[fallback]] = name
+  } else if (fallbackAttr !== undefined && name !== fallbackAttr) {
+    properties[labelProperty] = fallbackAttr
   }
 
   return properties
@@ -235,41 +304,40 @@ export function resolveLabelMirror(
   active: DiagramLang
 ): Record<string, string> {
   const properties: Record<string, string> = {}
-  const name = readName(bo)
+  const name = readVisibleLabel(bo).trim()
   const stored = readAttr(bo, LANG_ATTR[active])
-  if (name && name !== stored) {
+  if (name !== stored && canCaptureVisible(bo, active, name)) {
     properties[LANG_ATTR[active]] = name
   }
   return properties
 }
 
-// --- the toggle --------------------------------------------------------------
+// --- projection and toggle ---------------------------------------------------
 
 /**
- * Switch the whole diagram to the other language.
+ * Project `to` onto the whole diagram, even when it is already recorded as
+ * active. Re-projecting repairs stale visible labels from their stored target
+ * attributes.
  *
- * Every shape and connection that has a visible name or a stored translation
- * in either language gets resolveElementNames' write-back + switch applied;
- * labels are skipped (they ride along with the shape/connection they
- * annotate — see LangElementLike). `orbitpm:activeLang` is then flipped on
- * the process root UNCONDITIONALLY, even when nothing above had a
- * translation to apply, so the toolbar always reflects the language the user
- * just asked for — `missing` is how the caller learns whether that request
- * actually had anything to show.
+ * The root flag advances to `to` only when at least one target label can be
+ * displayed. With zero target coverage it stays on, or is repaired to, the
+ * language of the visible fallbacks.
  *
  * Every write goes through `modeling.updateProperties`, so the whole
  * operation lands on the command stack (undoable, marks the diagram dirty)
  * exactly like any hand-made edit.
  */
-export function toggleDiagramLang(modeler: LangToggleModeler): ToggleResult {
+export function setDiagramLang(
+  modeler: LangToggleModeler,
+  to: DiagramLang
+): ToggleResult {
   const from = getDiagramLang(modeler)
-  const to = otherLang(from)
 
   const elementRegistry = modeler.get('elementRegistry') as ElementRegistryLike
-  const modeling = modeler.get('modeling') as ModelingLike
-
   let switched = 0
   let missing = 0
+  let fallbackDisplayable = 0
+  const updates: ModelingBatchUpdate[] = []
 
   for (const element of elementRegistry.getAll()) {
     if (element.labelTarget != null) continue
@@ -280,25 +348,42 @@ export function toggleDiagramLang(modeler: LangToggleModeler): ToggleResult {
     // Only elements localization actually touches: something visible right
     // now, or a translation stored for either language. An element with none
     // of the three (e.g. an untitled gateway) is left alone and not counted.
-    const hasName = Boolean(readName(bo))
-    const hasFromTranslation = Boolean(readAttr(bo, LANG_ATTR[from]))
+    const visibleName = readVisibleLabel(bo).trim()
+    const hasName = visibleName !== ''
+    const hasEnTranslation = Boolean(readAttr(bo, LANG_ATTR.en))
+    const hasArTranslation = Boolean(readAttr(bo, LANG_ATTR.ar))
     const hasToTranslation = Boolean(readAttr(bo, LANG_ATTR[to]))
-    if (!hasName && !hasFromTranslation && !hasToTranslation) continue
+    if (!hasName && !hasEnTranslation && !hasArTranslation) continue
 
-    if (hasToTranslation) switched++
-    else missing++
+    const canAdoptTarget = !hasToTranslation && canCaptureVisible(bo, to, visibleName)
+    if (hasToTranslation || canAdoptTarget) {
+      switched++
+    } else {
+      missing++
+      const fallback = otherLang(to)
+      if (
+        readAttr(bo, LANG_ATTR[fallback]) !== undefined ||
+        canCaptureVisible(bo, fallback, visibleName)
+      ) {
+        fallbackDisplayable++
+      }
+    }
 
     const properties = resolveElementNames(bo, from, to)
     if (Object.keys(properties).length > 0) {
-      modeling.updateProperties(element, properties)
+      updates.push({ kind: 'properties', element, properties })
     }
   }
 
-  // Flip the diagram-level flag regardless of what the loop above found.
+  // A successful target projection wins. With zero target coverage, repair a
+  // stale flag to the language actually represented by visible fallbacks.
+  const desiredActive =
+    switched > 0 ? to : fallbackDisplayable > 0 ? otherLang(to) : from
   const canvas = modeler.get('canvas') as CanvasLike
   const root = canvas.getRootElement()
   const rootBo = pickRootBusinessObject(modeler)
-  if (rootBo) {
+  let active = from
+  if (rootBo && desiredActive !== from) {
     // The common case: the canvas root itself IS the process — a real,
     // registered diagram element — so pass it through untouched. In a
     // collaboration (pool) diagram `rootBo` is the first participant's
@@ -310,8 +395,19 @@ export function toggleDiagramLang(modeler: LangToggleModeler): ToggleResult {
     // treats a bare business object as its own element), so a bare process
     // object is wrapped rather than handed over unwrapped.
     const target: unknown = root && root.businessObject === rootBo ? root : { businessObject: rootBo }
-    modeling.updateProperties(target, { [ATTR_ACTIVE_LANG]: to })
+    updates.push({
+      kind: 'properties',
+      element: target,
+      properties: { [ATTR_ACTIVE_LANG]: desiredActive }
+    })
+    active = desiredActive
   }
 
-  return { switched, missing, to }
+  executeModelingBatch(modeler, updates)
+  return { switched, missing, to, active }
+}
+
+/** Toggle wrapper retained for the toolbar. */
+export function toggleDiagramLang(modeler: LangToggleModeler): ToggleResult {
+  return setDiagramLang(modeler, otherLang(getDiagramLang(modeler)))
 }

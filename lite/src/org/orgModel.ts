@@ -22,6 +22,8 @@ export interface OrgElementLike {
   businessObject?: BusinessObjectLike
   source?: OrgElementLike | null
   target?: OrgElementLike | null
+  incoming?: OrgElementLike[]
+  outgoing?: OrgElementLike[]
   x?: number
   y?: number
   width?: number
@@ -85,7 +87,7 @@ export interface OrgProps {
   activeLang?: string
   /** Inputs / base-information list for a step ('\n'-joined). */
   inputs?: string
-  /** Outputs list ('\n'-joined; editable, not canvas-rendered this wave). */
+  /** Outputs list ('\n'-joined; rendered as the activity's output box). */
   outputs?: string
   /** Supporting system name(s) ('\n'-joined). */
   system?: string

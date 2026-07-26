@@ -23,7 +23,7 @@ export const ORBITPM_PREFIX = 'orbitpm'
  *   nameEn / nameAr    bilingual element names (language toggle lane)
  *   activeLang         'en' | 'ar', process-level (declared only here)
  *   inputs             inputs / base-information list for a step
- *   outputs            outputs list (editable; not canvas-rendered this wave)
+ *   outputs            outputs list (rendered as an activity output box)
  *   system             supporting system name(s) (editable; not rendered)
  *   respList           responsible people, each "Name — Role" or "Name"
  *   ccList             CC / informed-party names

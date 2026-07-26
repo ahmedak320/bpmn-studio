@@ -1,0 +1,88 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<AML>
+  <ObjDef ObjDef.ID="ObjDef.Start" TypeNum="OT_EVT" SymbolNum="ST_EV">
+    <AttrDef AttrDef.Type="AT_NAME">
+      <AttrValue LocaleId="1033"><PlainText TextValue="Registration requested"/></AttrValue>
+    </AttrDef>
+    <CxnDef CxnDef.ID="CxnDef.StartSplit" CxnDef.Type="CT_IS_EVAL_BY_1" ToObjDef.IdRef="ObjDef.Split"/>
+  </ObjDef>
+  <ObjDef ObjDef.ID="ObjDef.Split" TypeNum="OT_RULE" SymbolNum="ST_OPR_XOR_1">
+    <AttrDef AttrDef.Type="AT_NAME">
+      <AttrValue LocaleId="1033"><PlainText TextValue="Documents available?"/></AttrValue>
+    </AttrDef>
+    <CxnDef CxnDef.ID="CxnDef.SplitDetails" CxnDef.Type="CT_ACTIV_1" ToObjDef.IdRef="ObjDef.Details"/>
+    <CxnDef CxnDef.ID="CxnDef.SplitLease" CxnDef.Type="CT_LEADS_TO_2" ToObjDef.IdRef="ObjDef.Lease"/>
+  </ObjDef>
+  <ObjDef ObjDef.ID="ObjDef.Details" TypeNum="OT_FUNC" SymbolNum="ST_FUNC">
+    <AttrDef AttrDef.Type="AT_NAME">
+      <AttrValue LocaleId="1033"><PlainText TextValue="Enter application details"/></AttrValue>
+    </AttrDef>
+    <CxnDef CxnDef.ID="CxnDef.DetailsAttach" CxnDef.Type="CT_LEADS_TO_1" ToObjDef.IdRef="ObjDef.Attach"/>
+  </ObjDef>
+  <ObjDef ObjDef.ID="ObjDef.Attach" TypeNum="OT_FUNC" SymbolNum="ST_FUNC">
+    <AttrDef AttrDef.Type="AT_NAME">
+      <AttrValue LocaleId="1033"><PlainText TextValue="Attach required documents"/></AttrValue>
+    </AttrDef>
+    <CxnDef CxnDef.ID="CxnDef.AttachInserted" CxnDef.Type="CT_CRT_1" ToObjDef.IdRef="ObjDef.Inserted"/>
+  </ObjDef>
+  <ObjDef ObjDef.ID="ObjDef.Inserted" TypeNum="OT_EVT" SymbolNum="ST_EV">
+    <AttrDef AttrDef.Type="AT_NAME">
+      <AttrValue LocaleId="1033"><PlainText TextValue="Application data inserted"/></AttrValue>
+    </AttrDef>
+    <CxnDef CxnDef.ID="CxnDef.InsertedMerge" CxnDef.Type="CT_IS_EVAL_BY_1" ToObjDef.IdRef="ObjDef.Merge"/>
+  </ObjDef>
+  <ObjDef ObjDef.ID="ObjDef.Lease" TypeNum="OT_EVT" SymbolNum="ST_EV">
+    <AttrDef AttrDef.Type="AT_NAME">
+      <AttrValue LocaleId="1033"><PlainText TextValue="Lease contract uploaded"/></AttrValue>
+    </AttrDef>
+    <CxnDef CxnDef.ID="CxnDef.LeaseMerge" CxnDef.Type="CT_IS_EVAL_BY_1" ToObjDef.IdRef="ObjDef.Merge"/>
+  </ObjDef>
+  <ObjDef ObjDef.ID="ObjDef.Merge" TypeNum="OT_RULE" SymbolNum="ST_OPR_XOR_1">
+    <AttrDef AttrDef.Type="AT_NAME">
+      <AttrValue LocaleId="1033"><PlainText TextValue="Owner data complete?"/></AttrValue>
+    </AttrDef>
+    <CxnDef CxnDef.ID="CxnDef.MergeEnd" CxnDef.Type="CT_LEADS_TO_2" ToObjDef.IdRef="ObjDef.End"/>
+  </ObjDef>
+  <ObjDef ObjDef.ID="ObjDef.End" TypeNum="OT_EVT" SymbolNum="ST_EV">
+    <AttrDef AttrDef.Type="AT_NAME">
+      <AttrValue LocaleId="1033"><PlainText TextValue="Owner profile ready"/></AttrValue>
+    </AttrDef>
+  </ObjDef>
+  <Model Model.ID="Model.OwnerProfile" Model.Type="MT_EEPC">
+    <AttrDef AttrDef.Type="AT_NAME">
+      <AttrValue LocaleId="1033"><PlainText TextValue="Request to Register Animal Owner Profile"/></AttrValue>
+    </AttrDef>
+    <ObjOcc ObjOcc.ID="ObjOcc.Start" ObjDef.IdRef="ObjDef.Start" SymbolNum="ST_EV">
+      <Position Pos.X="1600" Pos.Y="100"/>
+      <Size Size.dX="454" Size.dY="202"/>
+    </ObjOcc>
+    <ObjOcc ObjOcc.ID="ObjOcc.Split" ObjDef.IdRef="ObjDef.Split" SymbolNum="ST_OPR_XOR_1">
+      <Position Pos.X="1600" Pos.Y="500"/>
+      <Size Size.dX="141" Size.dY="141"/>
+    </ObjOcc>
+    <ObjOcc ObjOcc.ID="ObjOcc.Details" ObjDef.IdRef="ObjDef.Details" SymbolNum="ST_FUNC">
+      <Position Pos.X="800" Pos.Y="900"/>
+      <Size Size.dX="670" Size.dY="210"/>
+    </ObjOcc>
+    <ObjOcc ObjOcc.ID="ObjOcc.Lease" ObjDef.IdRef="ObjDef.Lease" SymbolNum="ST_EV">
+      <Position Pos.X="2400" Pos.Y="900"/>
+      <Size Size.dX="454" Size.dY="202"/>
+    </ObjOcc>
+    <ObjOcc ObjOcc.ID="ObjOcc.Attach" ObjDef.IdRef="ObjDef.Attach" SymbolNum="ST_FUNC">
+      <Position Pos.X="800" Pos.Y="1300"/>
+      <Size Size.dX="670" Size.dY="210"/>
+    </ObjOcc>
+    <ObjOcc ObjOcc.ID="ObjOcc.Inserted" ObjDef.IdRef="ObjDef.Inserted" SymbolNum="ST_EV">
+      <Position Pos.X="800" Pos.Y="1700"/>
+      <Size Size.dX="454" Size.dY="202"/>
+    </ObjOcc>
+    <ObjOcc ObjOcc.ID="ObjOcc.Merge" ObjDef.IdRef="ObjDef.Merge" SymbolNum="ST_OPR_XOR_1">
+      <Position Pos.X="1600" Pos.Y="2100"/>
+      <Size Size.dX="141" Size.dY="141"/>
+    </ObjOcc>
+    <ObjOcc ObjOcc.ID="ObjOcc.End" ObjDef.IdRef="ObjDef.End" SymbolNum="ST_EV">
+      <Position Pos.X="1600" Pos.Y="2500"/>
+      <Size Size.dX="454" Size.dY="202"/>
+    </ObjOcc>
+  </Model>
+</AML>

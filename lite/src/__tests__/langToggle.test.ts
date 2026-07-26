@@ -1,12 +1,14 @@
 import { describe, it, expect } from 'vitest'
 import {
   getDiagramLang,
+  setDiagramLang,
   toggleDiagramLang,
   pickRootBusinessObject,
   resolveElementNames,
   resolveLabelMirror,
   type LangToggleModeler
 } from '../editor/langToggle'
+import { translateDiagram } from '../ai/translate'
 
 // langToggle.ts is deliberately bpmn-js-free — this suite runs with
 // environment: 'node' (no jsdom, per vitest.config.ts) and drives the module
@@ -194,6 +196,31 @@ describe('resolveElementNames', () => {
     const bo = { $type: 'bpmn:Task', get: (key: string) => values[key] }
     expect(resolveElementNames(bo, 'en', 'ar')).toEqual({ name: 'طلب' })
   })
+
+  it('idempotently projects a stored Arabic value over stale visible English', () => {
+    const bo = {
+      name: 'Order',
+      $attrs: { 'orbitpm:nameEn': 'Order', 'orbitpm:nameAr': 'طلب' }
+    }
+    expect(resolveElementNames(bo, 'ar', 'ar')).toEqual({ name: 'طلب' })
+  })
+
+  it('never overwrites generated Arabic from stale visible English', () => {
+    const bo = {
+      name: 'Order',
+      $attrs: { 'orbitpm:nameEn': 'Order', 'orbitpm:nameAr': 'طلب' }
+    }
+    expect(resolveElementNames(bo, 'ar', 'en')).toEqual({})
+    expect(resolveElementNames(bo, 'ar', 'ar')).not.toHaveProperty('orbitpm:nameAr')
+  })
+
+  it('treats whitespace-only target attributes as missing', () => {
+    const bo = {
+      name: 'Order',
+      $attrs: { 'orbitpm:nameEn': 'Order', 'orbitpm:nameAr': '   ' }
+    }
+    expect(resolveElementNames(bo, 'en', 'ar')).toEqual({})
+  })
 })
 
 // --- resolveLabelMirror (pure) -------------------------------------------
@@ -239,6 +266,18 @@ describe('resolveLabelMirror', () => {
     const bo = { $type: 'bpmn:Task', get: (key: string) => values[key] }
     expect(resolveLabelMirror(bo, 'en')).toEqual({ 'orbitpm:nameEn': 'Edited' })
   })
+
+  it('does not mirror an English fallback into Arabic when metadata is stale', () => {
+    const bo = { name: 'Order', $attrs: { 'orbitpm:nameEn': 'Order' } }
+    expect(resolveLabelMirror(bo, 'ar')).toEqual({})
+    expect(bo.$attrs).not.toHaveProperty('orbitpm:nameAr')
+  })
+
+  it('allows Arabic plus numbers to be safely adopted as Arabic', () => {
+    expect(resolveLabelMirror({ name: 'طلب 2026' }, 'ar')).toEqual({
+      'orbitpm:nameAr': 'طلب 2026'
+    })
+  })
 })
 
 // --- toggleDiagramLang ----------------------------------------------------
@@ -266,7 +305,7 @@ describe('toggleDiagramLang', () => {
 
     const result = toggleDiagramLang(modeler)
 
-    expect(result).toEqual({ switched: 2, missing: 0, to: 'ar' })
+    expect(result).toEqual({ switched: 2, missing: 0, to: 'ar', active: 'ar' })
     // Exact call list, in registry-scan order, root write last.
     expect(rec).toEqual([
       { element: elA, properties: { name: 'طلب' } },
@@ -287,11 +326,10 @@ describe('toggleDiagramLang', () => {
 
     const result = toggleDiagramLang(modeler)
 
-    expect(result).toEqual({ switched: 0, missing: 1, to: 'ar' })
+    expect(result).toEqual({ switched: 0, missing: 1, to: 'ar', active: 'en' })
     expect(el.businessObject?.name).toBe('Reject') // untouched — never blanked
-    // Nothing needed writing for `el` (name already equals the stored en attr,
-    // and there's no ar attr to apply) — only the root's activeLang call fires.
-    expect(rec).toEqual([{ element: root, properties: { 'orbitpm:activeLang': 'ar' } }])
+    // With no Arabic to show, metadata truthfully remains English.
+    expect(rec).toEqual([])
   })
 
   it('write-back-only element (differs from from-attr) still counts as missing when to-attr is absent', () => {
@@ -304,7 +342,7 @@ describe('toggleDiagramLang', () => {
 
     const result = toggleDiagramLang(modeler)
 
-    expect(result).toEqual({ switched: 0, missing: 1, to: 'ar' })
+    expect(result).toEqual({ switched: 0, missing: 1, to: 'ar', active: 'en' })
     expect(el.businessObject?.name).toBe('Reject v2') // kept as-is, never blanked
     expect(rec[0]).toEqual({ element: el, properties: { 'orbitpm:nameEn': 'Reject v2' } })
   })
@@ -323,7 +361,7 @@ describe('toggleDiagramLang', () => {
 
     const result = toggleDiagramLang(modeler)
 
-    expect(result).toEqual({ switched: 1, missing: 0, to: 'ar' })
+    expect(result).toEqual({ switched: 1, missing: 0, to: 'ar', active: 'ar' })
     expect(rec[0]).toEqual({
       element: el,
       properties: { 'orbitpm:nameEn': 'Order (edited)', name: 'طلب' }
@@ -348,11 +386,49 @@ describe('toggleDiagramLang', () => {
 
     const result = toggleDiagramLang(modeler)
 
-    expect(result).toEqual({ switched: 1, missing: 0, to: 'ar' })
+    expect(result).toEqual({ switched: 1, missing: 0, to: 'ar', active: 'ar' })
     expect(rec).toEqual([
       { element: flow, properties: { name: 'موافق عليه' } },
       { element: root, properties: { 'orbitpm:activeLang': 'ar' } }
     ])
+  })
+
+  it('switches a TextAnnotation through BPMN text rather than a non-existent name', () => {
+    const root = processRoot()
+    const annotation: FakeElement = {
+      id: 'Annotation_1',
+      businessObject: {
+        $type: 'bpmn:TextAnnotation',
+        text: 'Check supporting documents',
+        $attrs: {
+          'orbitpm:nameEn': 'Check supporting documents',
+          'orbitpm:nameAr': 'تحقق من المستندات الداعمة'
+        }
+      }
+    }
+    const { modeler, rec } = makeModeler({
+      root,
+      elements: [annotation]
+    })
+
+    expect(toggleDiagramLang(modeler)).toEqual({
+      switched: 1,
+      missing: 0,
+      to: 'ar',
+      active: 'ar'
+    })
+    expect(rec).toEqual([
+      {
+        element: annotation,
+        properties: { text: 'تحقق من المستندات الداعمة' }
+      },
+      {
+        element: root,
+        properties: { 'orbitpm:activeLang': 'ar' }
+      }
+    ])
+    expect(annotation.businessObject?.text).toBe('تحقق من المستندات الداعمة')
+    expect(annotation.businessObject?.name).toBeUndefined()
   })
 
   it('skips label elements entirely (not counted, not written) even though they carry full translations', () => {
@@ -380,14 +456,14 @@ describe('toggleDiagramLang', () => {
 
     // Only `task` counts — `label` shares its business object but must not be
     // double-processed.
-    expect(result).toEqual({ switched: 1, missing: 0, to: 'ar' })
+    expect(result).toEqual({ switched: 1, missing: 0, to: 'ar', active: 'ar' })
     expect(rec).toEqual([
       { element: task, properties: { name: 'شحن' } },
       { element: root, properties: { 'orbitpm:activeLang': 'ar' } }
     ])
   })
 
-  it('flips activeLang unconditionally and self-heals plain names when nothing is translated yet', () => {
+  it('preserves English active state and self-heals plain names when Arabic coverage is zero', () => {
     const root = processRoot() // no orbitpm:activeLang -> from defaults to 'en'
     const elG: FakeElement = { id: 'Task_G', businessObject: { $type: 'bpmn:Task', name: 'Plain Name' } }
     const elH: FakeElement = { id: 'Task_H', businessObject: { $type: 'bpmn:Task', name: 'Another' } }
@@ -395,25 +471,24 @@ describe('toggleDiagramLang', () => {
 
     const result = toggleDiagramLang(modeler)
 
-    expect(result).toEqual({ switched: 0, missing: 2, to: 'ar' })
+    expect(result).toEqual({ switched: 0, missing: 2, to: 'ar', active: 'en' })
     expect(rec).toEqual([
       { element: elG, properties: { 'orbitpm:nameEn': 'Plain Name' } },
-      { element: elH, properties: { 'orbitpm:nameEn': 'Another' } },
-      { element: root, properties: { 'orbitpm:activeLang': 'ar' } }
+      { element: elH, properties: { 'orbitpm:nameEn': 'Another' } }
     ])
     // Names themselves are untouched (no ar translation exists yet to apply).
     expect(elG.businessObject?.name).toBe('Plain Name')
     expect(elH.businessObject?.name).toBe('Another')
   })
 
-  it('flips activeLang even with an empty registry', () => {
+  it('leaves activeLang unchanged with an empty registry', () => {
     const root = processRoot()
     const { modeler, rec } = makeModeler({ root, elements: [] })
 
     const result = toggleDiagramLang(modeler)
 
-    expect(result).toEqual({ switched: 0, missing: 0, to: 'ar' })
-    expect(rec).toEqual([{ element: root, properties: { 'orbitpm:activeLang': 'ar' } }])
+    expect(result).toEqual({ switched: 0, missing: 0, to: 'ar', active: 'en' })
+    expect(rec).toEqual([])
   })
 
   it('does not throw and skips the root write when there is no canvas root at all', () => {
@@ -425,16 +500,23 @@ describe('toggleDiagramLang', () => {
 
     const result = toggleDiagramLang(modeler)
 
-    expect(result).toEqual({ switched: 1, missing: 0, to: 'ar' })
+    expect(result).toEqual({ switched: 1, missing: 0, to: 'ar', active: 'en' })
     // Only the element write — no root/activeLang call since there is no root.
     expect(rec).toEqual([{ element: el, properties: { name: 'وحيد' } }])
   })
 
   it('passes the real root element through untouched for a plain process diagram', () => {
     const root = processRoot()
-    const { modeler, rec } = makeModeler({ root, elements: [] })
+    const task: FakeElement = {
+      id: 'Task_root_target',
+      businessObject: {
+        name: 'Order',
+        $attrs: { 'orbitpm:nameEn': 'Order', 'orbitpm:nameAr': 'طلب' }
+      }
+    }
+    const { modeler, rec } = makeModeler({ root, elements: [task] })
     toggleDiagramLang(modeler)
-    expect(rec[0].element).toBe(root) // same reference — not a copy/wrapper
+    expect(rec[1].element).toBe(root) // same reference — not a copy/wrapper
   })
 
   it('wraps the bare processRef business object for a collaboration diagram (no shape of its own)', () => {
@@ -443,19 +525,149 @@ describe('toggleDiagramLang', () => {
       id: 'Collab_1',
       businessObject: { $type: 'bpmn:Collaboration', participants: [{ processRef }] }
     }
-    const { modeler, rec } = makeModeler({ root, elements: [] })
+    const task: FakeElement = {
+      id: 'Task_collab_target',
+      businessObject: {
+        name: 'Order',
+        $attrs: { 'orbitpm:nameEn': 'Order', 'orbitpm:nameAr': 'طلب' }
+      }
+    }
+    const { modeler, rec } = makeModeler({ root, elements: [task] })
 
     const result = toggleDiagramLang(modeler)
 
-    expect(result).toEqual({ switched: 0, missing: 0, to: 'ar' })
-    expect(rec).toHaveLength(1)
+    expect(result).toEqual({ switched: 1, missing: 0, to: 'ar', active: 'ar' })
+    expect(rec).toHaveLength(2)
     // Never hand the bare business object to updateProperties as "element"
     // (bpmn-js's UpdatePropertiesHandler reads element.businessObject
     // directly with no fallback) — it must be wrapped.
-    expect(rec[0].element).not.toBe(processRef)
-    expect((rec[0].element as { businessObject?: unknown }).businessObject).toBe(processRef)
-    expect(rec[0].properties).toEqual({ 'orbitpm:activeLang': 'ar' })
+    expect(rec[1].element).not.toBe(processRef)
+    expect((rec[1].element as { businessObject?: unknown }).businessObject).toBe(processRef)
+    expect(rec[1].properties).toEqual({ 'orbitpm:activeLang': 'ar' })
     expect(processRef.$attrs).toEqual({ 'orbitpm:activeLang': 'ar' })
+  })
+
+  it('idempotently repairs stale visible English while Arabic is already active', () => {
+    const root = processRoot({ 'orbitpm:activeLang': 'ar' })
+    const el: FakeElement = {
+      id: 'Task_stale',
+      businessObject: {
+        name: 'Order',
+        $attrs: { 'orbitpm:nameEn': 'Order', 'orbitpm:nameAr': 'طلب' }
+      }
+    }
+    const { modeler, rec } = makeModeler({ root, elements: [el] })
+
+    const result = setDiagramLang(modeler, 'ar')
+
+    expect(result).toEqual({ switched: 1, missing: 0, to: 'ar', active: 'ar' })
+    expect(rec).toEqual([{ element: el, properties: { name: 'طلب' } }])
+    expect(el.businessObject?.name).toBe('طلب')
+    expect(el.businessObject?.$attrs?.['orbitpm:nameAr']).toBe('طلب')
+  })
+
+  it('repairs a stale Arabic active flag back to English when Arabic coverage is zero', () => {
+    const root = processRoot({ 'orbitpm:activeLang': 'ar' })
+    const el: FakeElement = {
+      id: 'Task_stale_zero',
+      businessObject: {
+        name: 'Order',
+        $attrs: { 'orbitpm:nameEn': 'Order' }
+      }
+    }
+    const { modeler, rec } = makeModeler({ root, elements: [el] })
+
+    const result = setDiagramLang(modeler, 'ar')
+
+    expect(result).toEqual({ switched: 0, missing: 1, to: 'ar', active: 'en' })
+    expect(rec).toEqual([{ element: root, properties: { 'orbitpm:activeLang': 'en' } }])
+    expect(el.businessObject?.name).toBe('Order')
+    expect(el.businessObject?.$attrs).not.toHaveProperty('orbitpm:nameAr')
+  })
+
+  it('reports partial target coverage and never seeds English fallbacks as Arabic', () => {
+    const root = processRoot()
+    const translated: FakeElement = {
+      id: 'Task_translated',
+      businessObject: {
+        name: 'Order',
+        $attrs: { 'orbitpm:nameEn': 'Order', 'orbitpm:nameAr': 'طلب' }
+      }
+    }
+    const fallback: FakeElement = {
+      id: 'Task_fallback',
+      businessObject: { name: 'Approve' }
+    }
+    const { modeler } = makeModeler({ root, elements: [translated, fallback] })
+
+    const result = setDiagramLang(modeler, 'ar')
+
+    expect(result).toEqual({ switched: 1, missing: 1, to: 'ar', active: 'ar' })
+    expect(translated.businessObject?.name).toBe('طلب')
+    expect(fallback.businessObject?.name).toBe('Approve')
+    expect(fallback.businessObject?.$attrs).toEqual({ 'orbitpm:nameEn': 'Approve' })
+  })
+
+  it('adopts Arabic-script visible text as Arabic, including numeric content', () => {
+    const root = processRoot()
+    const el: FakeElement = {
+      id: 'Task_imported_ar',
+      businessObject: { name: 'طلب 2026' }
+    }
+    const { modeler } = makeModeler({ root, elements: [el] })
+
+    const result = setDiagramLang(modeler, 'ar')
+
+    expect(result).toEqual({ switched: 1, missing: 0, to: 'ar', active: 'ar' })
+    expect(el.businessObject?.$attrs?.['orbitpm:nameAr']).toBe('طلب 2026')
+    expect(el.businessObject?.$attrs).not.toHaveProperty('orbitpm:nameEn')
+  })
+
+  it('reproduces zero-toggle -> AR-only translate -> toggle without corrupting generated Arabic', async () => {
+    const root = processRoot({ 'orbitpm:activeLang': 'en' })
+    const order: FakeElement = {
+      id: 'Task_Order',
+      businessObject: {
+        name: 'Order',
+        $attrs: { 'orbitpm:nameEn': 'Order', 'orbitpm:nameAr': '   ' }
+      }
+    }
+    const approve: FakeElement = {
+      id: 'Task_Approve',
+      businessObject: { name: 'Approve' }
+    }
+    const { modeler } = makeModeler({ root, elements: [order, approve] })
+
+    const zero = toggleDiagramLang(modeler)
+    expect(zero).toEqual({ switched: 0, missing: 2, to: 'ar', active: 'en' })
+    expect(getDiagramLang(modeler)).toBe('en')
+    expect(approve.businessObject?.$attrs).toEqual({ 'orbitpm:nameEn': 'Approve' })
+    expect(approve.businessObject?.$attrs).not.toHaveProperty('orbitpm:nameAr')
+
+    const prompts: string[] = []
+    const translated = await translateDiagram(modeler, async (messages) => {
+      prompts.push(messages[0].content)
+      return { Task_Order: 'طلب', Task_Approve: 'موافقة' }
+    })
+    expect(translated).toEqual({ translated: 2, skipped: 0, total: 2 })
+    expect(prompts).toHaveLength(1)
+    expect(prompts[0]).toContain('request: Arabic')
+    expect(prompts[0]).not.toContain('request: English')
+
+    const ar = toggleDiagramLang(modeler)
+    expect(ar).toEqual({ switched: 2, missing: 0, to: 'ar', active: 'ar' })
+    expect(order.businessObject?.name).toBe('طلب')
+    expect(approve.businessObject?.name).toBe('موافقة')
+    expect(order.businessObject?.$attrs?.['orbitpm:nameAr']).toBe('طلب')
+    expect(approve.businessObject?.$attrs?.['orbitpm:nameAr']).toBe('موافقة')
+
+    toggleDiagramLang(modeler)
+    const arAgain = toggleDiagramLang(modeler)
+    expect(arAgain.active).toBe('ar')
+    expect(order.businessObject?.name).toBe('طلب')
+    expect(approve.businessObject?.name).toBe('موافقة')
+    expect(order.businessObject?.$attrs?.['orbitpm:nameAr']).toBe('طلب')
+    expect(approve.businessObject?.$attrs?.['orbitpm:nameAr']).toBe('موافقة')
   })
 
   it('round-trips en -> ar -> en, restoring the ar translation untouched and preserving a manual en edit', () => {
@@ -472,7 +684,7 @@ describe('toggleDiagramLang', () => {
     const { modeler, rec } = makeModeler({ root, elements: [el] })
 
     const first = toggleDiagramLang(modeler) // en -> ar
-    expect(first).toEqual({ switched: 1, missing: 0, to: 'ar' })
+    expect(first).toEqual({ switched: 1, missing: 0, to: 'ar', active: 'ar' })
     expect(rec[0]).toEqual({
       element: el,
       properties: { 'orbitpm:nameEn': 'Edited While EN', name: 'Original AR' }
@@ -480,7 +692,7 @@ describe('toggleDiagramLang', () => {
     expect(el.businessObject?.name).toBe('Original AR')
 
     const second = toggleDiagramLang(modeler) // ar -> en
-    expect(second).toEqual({ switched: 1, missing: 0, to: 'en' })
+    expect(second).toEqual({ switched: 1, missing: 0, to: 'en', active: 'en' })
     // Visible name while ar was active never diverged from the stored ar
     // attr, so there is nothing to write back onto orbitpm:nameAr — only the
     // switch back to the (now self-healed) en attr.

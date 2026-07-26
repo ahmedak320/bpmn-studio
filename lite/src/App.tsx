@@ -52,16 +52,23 @@ import {
 } from './fs/workspaceHandle'
 import { WorkspacePickerLite } from './workspace/WorkspacePickerLite'
 import { FolderTreeLite } from './workspace/FolderTreeLite'
+import { buildProcessHierarchy } from './workspace/processHierarchy'
 import { EmptyWorkspaceCard } from './workspace/EmptyWorkspaceCard'
 import { AiPanelLite, type FolderOptionLite } from './ai/AiPanelLite'
 import { installLinkBadges, type LinkBadgeModeler } from './links/linkBadges'
 import { buildLinkGraph } from './links/linkGraph'
-import { toggleDiagramLang, type LangToggleModeler } from './editor/langToggle'
+import {
+  getDiagramLang,
+  setDiagramLang,
+  toggleDiagramLang,
+  type LangToggleModeler
+} from './editor/langToggle'
 import { autoSizeAll } from './editor/autoSize'
 import { makeBrowserCallLLM } from './ai/browserAi'
 import { LITE_PROVIDERS, defaultLiteModelId } from './ai/providersLite'
 import { getKey, hasKey } from './ai/keys'
 import {
+  auditArabicCoverage,
   collectMissingTranslations,
   translateDiagram,
   translateDiagramWithTexts,
@@ -239,6 +246,58 @@ interface ModelerWithSvg {
   get(service: 'canvas'): { getRootElement(): { businessObject?: PrintRootBusinessObject } | undefined }
 }
 
+interface ProcessRootElement {
+  id?: string
+  businessObject?: { id?: string }
+}
+
+interface ProcessDiagram {
+  id?: string
+  plane?: { bpmnElement?: { id?: string } }
+}
+
+interface ProcessRootModeler {
+  get(service: 'canvas'): {
+    getRootElements(): ProcessRootElement[]
+    setRootElement(root: ProcessRootElement): void
+    zoom(mode: 'fit-viewport'): void
+  }
+  getDefinitions?(): { diagrams?: ProcessDiagram[] }
+  open?(diagram: ProcessDiagram): Promise<unknown>
+}
+
+/** Switch a multi-process BPMN file to the root selected by semantic id. */
+async function focusProcessRoot(
+  modeler: unknown,
+  processId: string
+): Promise<boolean> {
+  try {
+    const target = modeler as ProcessRootModeler
+    const canvas = target.get('canvas')
+    const root = canvas
+      .getRootElements()
+      .find((candidate) => candidate.businessObject?.id === processId || candidate.id === processId)
+    if (root) {
+      canvas.setRootElement(root)
+      canvas.zoom('fit-viewport')
+      return true
+    }
+
+    // bpmn-js imports one BPMNDiagram plane at a time. When the selected
+    // process lives in another plane of the same file, open that exact diagram
+    // instead of treating the physical file's first root as identity.
+    const diagram = target
+      .getDefinitions?.()
+      .diagrams?.find((candidate) => candidate.plane?.bpmnElement?.id === processId)
+    if (!diagram || !target.open) return false
+    await target.open(diagram)
+    canvas.zoom('fit-viewport')
+    return true
+  } catch {
+    return false
+  }
+}
+
 function App(): JSX.Element {
   const promptText = usePromptText()
   const lang = useLang()
@@ -271,6 +330,13 @@ function App(): JSX.Element {
   // file-open/tab-restore. Mark only their tab keys so App can run the
   // post-import auto-size sweep without resizing an existing saved diagram.
   const pendingAiAutoSizeRef = useRef<Set<string>>(new Set())
+  // A stable-id open may target the second (or later) process root inside one
+  // physical BPMN file. Latch that id until the modeler's import.done event.
+  const pendingProcessFocusRef = useRef<Map<string, string>>(new Map())
+  // Serialize diagram-plane changes per physical file. Two rapid stable-id
+  // opens must finish in request order so an earlier async modeler.open()
+  // cannot overwrite the later selection.
+  const processFocusQueueRef = useRef<Map<string, Promise<void>>>(new Map())
   const virtualCounter = useRef(0)
 
   // Data-safety plumbing (Codex C1 / M3 / M8).
@@ -346,6 +412,12 @@ function App(): JSX.Element {
   const [unresolvedOpen, setUnresolvedOpen] = useState(false)
   const [moveTarget, setMoveTarget] = useState<LiteTreeNode | null>(null)
   const [deleteTarget, setDeleteTarget] = useState<DeleteState | null>(null)
+  const [treeRevealRequest, setTreeRevealRequest] = useState<{
+    token: number
+    processId?: string
+    relPath?: string
+  } | null>(null)
+  const treeRevealTokenRef = useRef(0)
   // Owners applied via the Step-details dialog THIS session but possibly not
   // yet saved to disk — merged into the picker suggestions (disk wins) so an
   // Apply on one step immediately offers that owner on the next step.
@@ -411,11 +483,14 @@ function App(): JSX.Element {
       setModelersByKey({})
       setMounted(new Set())
       commandsRef.current = {}
+      pendingProcessFocusRef.current.clear()
+      processFocusQueueRef.current.clear()
       setSearch('')
       setSearchOpen(false)
       setCatalogOpen(false)
       setMoveTarget(null)
       setDeleteTarget(null)
+      setTreeRevealRequest(null)
       setSessionOwners([])
       setUnresolvedOpen(false)
       setHistory(emptyHistory())
@@ -690,6 +765,11 @@ function App(): JSX.Element {
   )
 
   const closeTabsUnder = useCallback((prefix: string) => {
+    for (const key of pendingProcessFocusRef.current.keys()) {
+      if (key === prefix || key.startsWith(prefix + '/')) {
+        pendingProcessFocusRef.current.delete(key)
+      }
+    }
     setTabs((prev) =>
       prev.filter((t) => !(t.relPath && (t.relPath === prefix || t.relPath.startsWith(prefix + '/'))))
     )
@@ -697,6 +777,7 @@ function App(): JSX.Element {
 
   const closeTab = useCallback(
     (key: string) => {
+      pendingProcessFocusRef.current.delete(key)
       if (dirtyByKey[key]) {
         const tab = tabs.find((tb) => tb.key === key)
         const confirmed = window.confirm(t('confirm.discardUnsaved', { title: tab?.title ?? 'this file' }))
@@ -759,19 +840,12 @@ function App(): JSX.Element {
   // Parent→child callActivity links across the workspace — drives the
   // explorer's nested 🔗 rows and the exported library manifest.
   const linkGraph = useMemo(() => buildLinkGraph(files, processIndex), [files, processIndex])
-  // relPath → its resolved link children for the tree rows. Labels prefer the
-  // child's process name and fall back to the raw process id.
-  const linkChildrenOf = useCallback(
-    (relPath: string) =>
-      (linkGraph.childrenByFile.get(relPath) ?? []).map((e) => {
-        const entry = processIndex.get(e.childProcessId)
-        return {
-          relPath: e.childRelPath,
-          processId: e.childProcessId,
-          label: entry?.processName || e.childProcessId
-        }
-      }),
-    [linkGraph, processIndex]
+  // One deterministic projection for physical canonical rows plus read-only
+  // process references. relPath is carried only as the canonical file's
+  // current locator; process ids remain the semantic identity.
+  const processHierarchy = useMemo(
+    () => buildProcessHierarchy(tree, processIndex, linkGraph),
+    [tree, processIndex, linkGraph]
   )
   // Offered to the AI panel so the model can propose callActivity links to the
   // workspace's existing processes; the two resolvers back the link-verification
@@ -802,6 +876,99 @@ function App(): JSX.Element {
   const searchGroups = useMemo(() => searchWorkspace(searchIndex, search), [searchIndex, search])
   const folders = useMemo(() => collectFolders(tree), [tree, lang])
   const filePaths = useMemo(() => new Set(files.map((f) => f.relPath)), [files])
+  const dirtyFilePaths = useMemo(
+    () =>
+      new Set(
+        tabs
+          .filter((tab) => tab.relPath && dirtyByKey[tab.key])
+          .map((tab) => tab.relPath as string)
+      ),
+    [tabs, dirtyByKey]
+  )
+
+  const requestTreeReveal = useCallback((processId?: string, relPath?: string) => {
+    setTreeRevealRequest({
+      token: ++treeRevealTokenRef.current,
+      processId,
+      relPath
+    })
+  }, [])
+
+  const queueProcessFocus = useCallback(
+    (relPath: string, modeler: unknown, processId: string): void => {
+      const previous =
+        processFocusQueueRef.current.get(relPath) ?? Promise.resolve()
+      const queued = previous
+        .catch(() => undefined)
+        .then(async () => {
+          // A newer request for this file supersedes one that has not started.
+          if (pendingProcessFocusRef.current.get(relPath) !== processId) return
+          const focused = await focusProcessRoot(modeler, processId)
+          if (
+            focused &&
+            pendingProcessFocusRef.current.get(relPath) === processId
+          ) {
+            pendingProcessFocusRef.current.delete(relPath)
+          }
+        })
+      processFocusQueueRef.current.set(relPath, queued)
+      void queued.then(() => {
+        if (processFocusQueueRef.current.get(relPath) === queued) {
+          processFocusQueueRef.current.delete(relPath)
+        }
+      })
+    },
+    []
+  )
+
+  /** Open an explicitly selected physical file and reveal its sole actionable
+   * canonical row. This path is for file-level UI that has no process id. */
+  const openFileAndReveal = useCallback(
+    (relPath: string) => {
+      setSidebarOpen(true)
+      requestTreeReveal(undefined, relPath)
+      void openDirectoryFile(relPath, { collapse: false })
+    },
+    [openDirectoryFile, requestTreeReveal]
+  )
+
+  /**
+   * Resolve semantic identity to the canonical row's current locator. An
+   * ambiguous id is never resolved through ProcessIndex's last-wins entry.
+   * Physical search/catalog results may still open their explicit file through
+   * openFileAndReveal, without claiming that the duplicate process was found.
+   */
+  const openCanonicalProcess = useCallback(
+    (processId: string): boolean => {
+      // A duplicate semantic id has no canonical process occurrence. Search
+      // may still fall back to opening its explicit physical file, but it must
+      // not use that mutable path to pretend the process itself was resolved.
+      if (linkGraph.ambiguousProcessIds.has(processId)) return false
+      const relPath =
+        processHierarchy.canonicalPathByProcessId.get(processId) ??
+        processIndex.get(processId)?.relPath
+      if (!relPath) return false
+
+      pendingProcessFocusRef.current.set(relPath, processId)
+      const mountedModeler = modelersByKey[relPath]
+      if (mountedModeler) {
+        queueProcessFocus(relPath, mountedModeler, processId)
+      }
+      setSidebarOpen(true)
+      requestTreeReveal(processId, relPath)
+      void openDirectoryFile(relPath, { collapse: false })
+      return true
+    },
+    [
+      linkGraph,
+      processHierarchy,
+      processIndex,
+      modelersByKey,
+      openDirectoryFile,
+      requestTreeReveal,
+      queueProcessFocus
+    ]
+  )
   // Owner suggestions for the Step-details picker + the "Export owners (CSV)"
   // action — aggregated across every .bpmn in the workspace (empty in fallback)
   // and merged with the session's applied-but-unsaved owners (disk wins).
@@ -900,19 +1067,32 @@ function App(): JSX.Element {
           return createBpmnFileUnique(rootHandle, '', doc.fileBaseName, doc.xml)
         })
         await refreshWorkspace(rootHandle)
-        void openDirectoryFile(relPath)
+        setSidebarOpen(true)
+        requestTreeReveal(calledElementId, relPath)
+        void openDirectoryFile(relPath, { collapse: false })
       } catch (err) {
         pushToast(t('alert.createProcessFailed', { error: errMsg(err) }), 'error')
       }
     },
-    [mode, rootHandle, promptText, refreshWorkspace, openDirectoryFile, pushToast]
+    [
+      mode,
+      rootHandle,
+      promptText,
+      refreshWorkspace,
+      openDirectoryFile,
+      pushToast,
+      requestTreeReveal
+    ]
   )
 
   const handleOpenCalledProcess = useCallback(
     (processId: string) => {
-      const entry = processIndex.get(processId)
-      if (entry) {
-        void openDirectoryFile(entry.relPath)
+      if (openCanonicalProcess(processId)) return
+      // Duplicate ids are an ambiguous workspace-authoring error, not a
+      // missing target. Never create a third process or choose a last-wins
+      // locator for a canvas drill-down.
+      if (linkGraph.ambiguousProcessIds.has(processId)) {
+        pushToast(t('alert.noProcessWithId', { processId }), 'info')
         return
       }
       if (mode === 'directory' && rootHandle) {
@@ -921,7 +1101,14 @@ function App(): JSX.Element {
         pushToast(t('alert.noProcessWithId', { processId }), 'info')
       }
     },
-    [processIndex, openDirectoryFile, mode, rootHandle, handleCreateMissingProcess, pushToast]
+    [
+      openCanonicalProcess,
+      linkGraph,
+      mode,
+      rootHandle,
+      handleCreateMissingProcess,
+      pushToast
+    ]
   )
 
   // --- tree CRUD ----------------------------------------------------------
@@ -1557,18 +1744,19 @@ function App(): JSX.Element {
   const flatHits = useMemo(() => searchGroups.flatMap((g) => g.hits), [searchGroups])
 
   const openSearchHit = useCallback(
-    (relPath: string) => {
+    (relPath: string, processId?: string) => {
       setSearchOpen(false)
-      void openDirectoryFile(relPath)
+      if (processId && openCanonicalProcess(processId)) return
+      openFileAndReveal(relPath)
     },
-    [openDirectoryFile]
+    [openCanonicalProcess, openFileAndReveal]
   )
 
   const onSearchKeyDown = useCallback(
     (e: React.KeyboardEvent) => {
       if (e.key === 'Enter') {
         const first = flatHits[0]
-        if (first) openSearchHit(first.relPath)
+        if (first) openSearchHit(first.relPath, first.processId)
       } else if (e.key === 'Escape') {
         setSearchOpen(false)
       }
@@ -1826,18 +2014,26 @@ function App(): JSX.Element {
     }
   }, [modelersByKey])
 
-  // Diagram-language toggle (EN⇄AR): swaps every element's visible name with
-  // its stored orbitpm:nameEn/nameAr translation (write-back first, so manual
-  // edits become the active language's translation). One command-stack entry —
-  // undoable, marks the tab dirty. A diagram with no stored translations gets
-  // an explanatory toast instead of a silent no-op.
+  // Diagram-language toggle (EN⇄AR): projects the requested stored names into
+  // visible labels. The projection is idempotent and refuses to claim a target
+  // language when no target-language label can actually be displayed.
   const handleDiagramLangToggle = useCallback(
     (tabKey: string) => {
       const modeler = modelersByKey[tabKey]
       if (!modeler) return
       try {
         const res = toggleDiagramLang(modeler as LangToggleModeler)
-        if (res.switched === 0) pushToast(t('editor.langToggle.missing'), 'info')
+        if (res.active !== res.to) {
+          pushToast(t('editor.langToggle.missing'), 'info')
+        } else if (res.missing > 0) {
+          pushToast(
+            t('editor.langToggle.partial', {
+              switched: res.switched,
+              missing: res.missing
+            }),
+            'info'
+          )
+        }
       } catch (err) {
         pushToast(errMsg(err), 'error')
       }
@@ -1845,20 +2041,44 @@ function App(): JSX.Element {
     [modelersByKey, pushToast]
   )
 
-  // Translate-with-AI: fill every element's MISSING nameEn/nameAr via the
-  // first configured browser-callable provider, writing the translations as
-  // orbitpm attrs (they serialize into the .bpmn on the next save — that is
-  // what makes the EN⇄AR toggle work on previously monolingual diagrams).
-  // The visible labels are untouched; the toggle applies them on demand.
+  // Fill every missing EN/AR counterpart (both directions), then immediately
+  // project the opposite diagram language into the visible drawing.
   const handleTranslate = useCallback(
     async (tabKey: string) => {
       const modeler = modelersByKey[tabKey]
       if (!modeler || translatingTab) return
-      // "Nothing to translate" wins over the key check — a fully bilingual
-      // diagram gets the same answer with or without a configured key.
-      const entries = collectMissingTranslations(modeler as TranslateModeler)
+      const translateModeler = modeler as TranslateModeler
+      const langModeler = modeler as LangToggleModeler
+      const currentLang = getDiagramLang(langModeler)
+      const targetLang = currentLang === 'en' ? 'ar' : 'en'
+      // Zero eligible entries does not by itself prove bilingual completeness:
+      // blank labels, missing ids, unusable sources, and Arabic-only imports
+      // are audited separately.
+      const audit = auditArabicCoverage(translateModeler)
+      const entries = collectMissingTranslations(translateModeler)
       if (entries.length === 0) {
-        pushToast(t('translate.nothing'), 'info')
+        const projection = setDiagramLang(langModeler, targetLang)
+        if (audit.complete) {
+          pushToast(
+            t(
+              projection.active === currentLang
+                ? 'translate.nothing.alreadyArabic'
+                : 'translate.nothing.switched'
+            ),
+            'info'
+          )
+        } else if (audit.omitted > 0) {
+          pushToast(
+            t('translate.nothing.omitted', {
+              switched: projection.switched,
+              missing: projection.missing,
+              omitted: audit.omitted
+            }),
+            'info'
+          )
+        } else {
+          pushToast(t('translate.nothing'), 'info')
+        }
         return
       }
       // A configured browser-callable provider keeps the LLM path unchanged;
@@ -1884,10 +2104,20 @@ function App(): JSX.Element {
                 title: 'OrbitPM Process Studio Lite'
               })
             )
-          : await translateDiagramWithTexts(modeler as TranslateModeler, makeFreeTranslateTexts())
-        if (res.skipped > 0) {
+          : await translateDiagramWithTexts(translateModeler, makeFreeTranslateTexts())
+        const projection = setDiagramLang(langModeler, targetLang)
+        if (
+          res.skipped > 0 ||
+          projection.missing > 0 ||
+          projection.active !== targetLang
+        ) {
           pushToast(
-            t('translate.partial', { done: res.translated, total: res.total, skipped: res.skipped }),
+            t('translate.partial', {
+              done: res.translated,
+              total: res.total,
+              switched: projection.switched,
+              missing: projection.missing
+            }),
             'info'
           )
         } else {
@@ -2137,7 +2367,7 @@ function App(): JSX.Element {
                 groups={searchGroups}
                 query={search}
                 rootName={rootName || t('breadcrumb.root')}
-                onOpen={(rel) => openSearchHit(rel)}
+                onOpen={openSearchHit}
                 onClose={() => setSearchOpen(false)}
               />
             )}
@@ -2193,7 +2423,9 @@ function App(): JSX.Element {
             }}
             title={t('app.lang.toggle.title')}
           >
-            {lang === 'en' ? t('app.lang.ar') : t('app.lang.en')}
+            {t('app.lang.control', {
+              language: lang === 'en' ? t('app.lang.ar') : t('app.lang.en')
+            })}
           </button>
         </div>
       </header>
@@ -2285,14 +2517,19 @@ function App(): JSX.Element {
                 />
               ) : (
                 <FolderTreeLite
-                  root={tree}
+                  hierarchy={processHierarchy}
                   activePath={activeTab?.relPath ?? null}
+                  dirtyPaths={dirtyFilePaths}
+                  revealRequest={treeRevealRequest}
                   // Single click: open but keep the explorer visible. Double
                   // click: open AND collapse the sidebar so the canvas takes the
                   // full window (the first click of the pair already opened the
                   // tab, so this handler only needs to re-activate + collapse).
-                  onOpenFile={(rel) => void openDirectoryFile(rel, { collapse: false })}
+                  onOpenFile={openFileAndReveal}
                   onOpenFileFocus={(rel) => void openDirectoryFile(rel)}
+                  onOpenProcess={(navigation) => {
+                    openCanonicalProcess(navigation.processId)
+                  }}
                   onNewProcess={(f) => void handleNewProcess(f)}
                   onNewFolder={(f) => void handleNewFolder(f)}
                   onRename={(n) => void handleRename(n)}
@@ -2300,7 +2537,6 @@ function App(): JSX.Element {
                   onMove={(n) => setMoveTarget(n)}
                   onMoveDrop={handleMoveDrop}
                   onImportDrop={handleImportDrop}
-                  linkChildrenOf={linkChildrenOf}
                 />
               )}
             </div>
@@ -2563,6 +2799,24 @@ function App(): JSX.Element {
                         delete badgeUninstallersRef.current[tab.key]
                         setModelersByKey((prev) => ({ ...prev, [tab.key]: modeler }))
                         if (modeler) {
+                          try {
+                            const eventBus = (
+                              modeler as { get(name: string): unknown }
+                            ).get('eventBus') as {
+                              on(event: string, callback: () => void): void
+                            }
+                            eventBus.on('import.done', () => {
+                              const processId = pendingProcessFocusRef.current.get(tab.key)
+                              if (!processId) return
+                              // Let the import promise settle before opening
+                              // another BPMNDiagram plane from the same file.
+                              setTimeout(() => {
+                                queueProcessFocus(tab.key, modeler, processId)
+                              }, 0)
+                            })
+                          } catch {
+                            /* a single-root file still opens normally */
+                          }
                           if (pendingAiAutoSizeRef.current.has(tab.key)) {
                             try {
                               const eventBus = (
@@ -2638,7 +2892,7 @@ function App(): JSX.Element {
                 sortKey={catSort}
                 sortDir={catDir}
                 onSort={onSortCatalog}
-                onOpen={(rel) => void openDirectoryFile(rel)}
+                onOpen={openSearchHit}
                 query={search}
                 totalCount={catalogRows.length}
                 rootName={rootName || t('breadcrumb.root')}

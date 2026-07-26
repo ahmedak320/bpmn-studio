@@ -150,3 +150,97 @@ describe('t() / tPlural() runtime behavior', () => {
     expect(getLang()).toBe('en')
   })
 })
+
+describe('process hierarchy reference labels', () => {
+  const hierarchyKeys = [
+    'tree.reference.canonicalPath',
+    'tree.shared',
+    'tree.shared.title',
+    'tree.cycle.title'
+  ] as const
+
+  it('keeps the hierarchy keys in English/Arabic parity', () => {
+    for (const key of hierarchyKeys) {
+      expect(Object.prototype.hasOwnProperty.call(en, key)).toBe(true)
+      expect(Object.prototype.hasOwnProperty.call(ar, key)).toBe(true)
+      expect(typeof en[key]).toBe('string')
+      expect(typeof ar[key]).toBe('string')
+    }
+  })
+
+  it('interpolates canonical paths and distinct-parent counts in both languages', () => {
+    setLang('en')
+    expect(t('tree.reference.canonicalPath', { path: 'Operations/Review.bpmn' })).toBe(
+      'Canonical file: Operations/Review.bpmn'
+    )
+    expect(t('tree.shared.title', { count: 2 })).toBe('Referenced by 2 parent processes')
+
+    setLang('ar')
+    try {
+      expect(t('tree.reference.canonicalPath', { path: 'Operations/Review.bpmn' })).toBe(
+        'الملف الأساسي: Operations/Review.bpmn'
+      )
+      expect(t('tree.shared.title', { count: 2 })).toBe(
+        'تتم الإشارة إليها من 2 عمليات أصلية'
+      )
+    } finally {
+      setLang('en')
+    }
+  })
+})
+
+describe('viewer interaction labels', () => {
+  const keys = [
+    'pane.details.toggle',
+    'pane.details.toggle.title',
+    'pane.details.aria',
+    'legend.toggle',
+    'legend.toggle.title',
+    'legend.title',
+    'legend.close.aria',
+    'legend.event',
+    'legend.step',
+    'legend.subprocess',
+    'legend.gateway',
+    'legend.owner',
+    'legend.input',
+    'legend.output',
+    'legend.cc',
+    'legend.basis',
+    'legend.subprocessChip',
+    'semantic.event.tooltip',
+    'semantic.step.tooltip',
+    'semantic.subprocess.tooltip',
+    'semantic.owner.tooltip',
+    'semantic.input.tooltip',
+    'semantic.output.tooltip',
+    'semantic.cc.tooltip',
+    'semantic.basis.tooltip',
+    'semantic.subprocessChip.tooltip'
+  ] as const
+
+  it('keeps every pane, legend, and semantic-tooltip key in EN/AR parity', () => {
+    for (const key of keys) {
+      expect(Object.prototype.hasOwnProperty.call(en, key)).toBe(true)
+      expect(Object.prototype.hasOwnProperty.call(ar, key)).toBe(true)
+      expect(en[key].trim()).not.toBe('')
+      expect(ar[key].trim()).not.toBe('')
+    }
+  })
+
+  it('serves localized pane and legend copy at runtime', () => {
+    setLang('en')
+    expect(t('pane.details.aria')).toBe('Step details and properties')
+    expect(t('legend.title')).toBe('Shape legend')
+    expect(t('semantic.output.tooltip')).toContain('produced')
+
+    setLang('ar')
+    try {
+      expect(t('pane.details.aria')).toBe('تفاصيل الخطوة والخصائص')
+      expect(t('legend.title')).toBe('دليل أشكال المخطط')
+      expect(t('semantic.output.tooltip')).toContain('تنتجها')
+    } finally {
+      setLang('en')
+    }
+  })
+})

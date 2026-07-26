@@ -14,6 +14,7 @@ import {
   type Orientation
 } from '../epcLayout'
 import { fitInteriorBox } from '../../editor/autoSize'
+import { computeDecorLayout, decorationBoxes } from '../../org/decorExtents'
 
 // ---------------------------------------------------------------------------
 // Shared invariant helpers
@@ -77,6 +78,17 @@ function assertOrthogonal(result: EpcLayoutResult): void {
   }
 }
 
+function bendCount(points: Array<{ x: number; y: number }>): number {
+  let bends = 0
+  for (let i = 2; i < points.length; i++) {
+    const a = points[i - 2]
+    const b = points[i - 1]
+    const c = points[i]
+    if ((a.x === b.x) !== (b.x === c.x)) bends += 1
+  }
+  return bends
+}
+
 /** No two margins-inflated node boxes overlap (positive-area intersection). */
 function assertNoOverlap(nodes: LayoutNode[], result: EpcLayoutResult, orientation: Orientation): void {
   const boxes = nodes.map((n) => ({ id: n.id, box: inflatedBox(n, result, orientation) }))
@@ -105,22 +117,64 @@ function segmentThroughRect(a: { x: number; y: number }, b: { x: number; y: numb
   return false // non-orthogonal segments are caught by assertOrthogonal
 }
 
-/** No edge segment crosses the inflated box of a node it doesn't end at. */
+function exactObstacleBoxes(
+  node: LayoutNode,
+  result: EpcLayoutResult,
+  orientation: Orientation
+): Rect[] {
+  const shape = result.shapes.get(node.id)
+  if (!shape) throw new Error(`no shape for ${node.id}`)
+  const out: Rect[] = [{ x0: shape.x, y0: shape.y, x1: shape.x + shape.w, y1: shape.y + shape.h }]
+  if (shape.label) {
+    out.push({
+      x0: shape.label.x,
+      y0: shape.label.y,
+      x1: shape.label.x + shape.label.w,
+      y1: shape.label.y + shape.label.h
+    })
+  }
+  const layout = computeDecorLayout({
+    props: node.attrs ?? {},
+    elementType: 'bpmn:' + node.tag.charAt(0).toUpperCase() + node.tag.slice(1),
+    width: shape.w,
+    height: shape.h,
+    orientation,
+    direction: orientation === 'vertical' ? 'down' : 'right',
+    completenessOn: true,
+    labelBox: shape.label
+      ? { x: shape.label.x - shape.x, y: shape.label.y - shape.y, w: shape.label.w, h: shape.label.h }
+      : null
+  })
+  for (const { box } of decorationBoxes(layout)) {
+    out.push({
+      x0: shape.x + box.x,
+      y0: shape.y + box.y,
+      x1: shape.x + box.x + box.w,
+      y1: shape.y + box.y + box.h
+    })
+  }
+  return out
+}
+
+/** No edge segment crosses a base-shape interior, external label, or
+ * individual decoration. Endpoint ports sit on the base border, so they need
+ * no whole-rectangle exemption and endpoint decorations remain obstacles. */
 function assertNoEdgeThroughNode(
   nodes: LayoutNode[],
   edges: LayoutEdge[],
   result: EpcLayoutResult,
   orientation: Orientation
 ): void {
-  const boxes = new Map(nodes.map((n) => [n.id, inflatedBox(n, result, orientation)]))
+  const boxes = new Map(nodes.map((n) => [n.id, exactObstacleBoxes(n, result, orientation)]))
   for (const edge of edges) {
     const routedEdge = result.edges.get(edge.id)
     if (!routedEdge) continue
-    for (const [id, box] of boxes) {
-      if (id === edge.source || id === edge.target) continue
-      for (let i = 1; i < routedEdge.waypoints.length; i++) {
-        const through = segmentThroughRect(routedEdge.waypoints[i - 1], routedEdge.waypoints[i], box)
-        expect(through, `${edge.id} segment ${i} through ${id}`).toBe(false)
+    for (const [id, nodeBoxes] of boxes) {
+      for (const rect of nodeBoxes) {
+        for (let i = 1; i < routedEdge.waypoints.length; i++) {
+          const through = segmentThroughRect(routedEdge.waypoints[i - 1], routedEdge.waypoints[i], rect)
+          expect(through, `${edge.id} segment ${i} through ${id}`).toBe(false)
+        }
       }
     }
   }
@@ -296,7 +350,7 @@ describe('layoutEpc — gateway fan-out and merge', () => {
 })
 
 describe('layoutEpc — back edges, skip edges, cycles', () => {
-  it('a loop-back rides a right-side lane with 6 orthogonal waypoints', () => {
+  it('a genuine loop-back clears every intervening shape on an orthogonal outside route', () => {
     const nodes: LayoutNode[] = [
       { id: 's', tag: 'startEvent', label: 'Start' },
       { id: 't1', tag: 'task', label: 'Work' },
@@ -307,22 +361,19 @@ describe('layoutEpc — back edges, skip edges, cycles', () => {
     const result = layoutEpc(nodes, edges)
     const loop = result.edges.get('loop')
     expect(loop?.isBackEdge).toBe(true)
-    expect(loop?.waypoints).toHaveLength(6)
-    // The lane runs to the right of EVERY margins-inflated box.
-    const laneX = (loop as { waypoints: Array<{ x: number }> }).waypoints[2].x
-    expect(laneX).toBe((loop as { waypoints: Array<{ x: number }> }).waypoints[3].x)
-    for (const n of nodes) {
-      expect(laneX).toBeGreaterThan(inflatedBox(n, result, 'vertical').x1)
-    }
-    // It re-enters the target from the TOP.
+    expect(loop?.waypoints.length).toBeGreaterThanOrEqual(4)
+    expect(bendCount(loop?.waypoints ?? [])).toBeGreaterThanOrEqual(2)
+    // It re-enters through a legal point on the target's top border.
     const t1 = result.shapes.get('t1') as { x: number; y: number; w: number }
-    const last = (loop as { waypoints: Array<{ x: number; y: number }> }).waypoints[5]
-    expect(last).toEqual({ x: t1.x + t1.w / 2, y: t1.y })
+    const last = (loop as { waypoints: Array<{ x: number; y: number }> }).waypoints.at(-1)
+    expect(last?.y).toBe(t1.y)
+    expect(last?.x).toBeGreaterThanOrEqual(t1.x)
+    expect(last?.x).toBeLessThanOrEqual(t1.x + t1.w)
     expect(result.usedEntryFallback).toBe(false)
     assertAllInvariants(nodes, edges, result)
   })
 
-  it('a forward edge skipping >= 2 layers also routes via a side lane', () => {
+  it('a blocked forward edge skipping layers detours with normalized bends', () => {
     const nodes: LayoutNode[] = [
       { id: 's', tag: 'startEvent', label: 'Start' },
       { id: 't1', tag: 'task', label: 'One' },
@@ -333,7 +384,8 @@ describe('layoutEpc — back edges, skip edges, cycles', () => {
     const result = layoutEpc(nodes, edges)
     const skip = result.edges.get('skip')
     expect(skip?.isBackEdge).toBe(false)
-    expect(skip?.waypoints).toHaveLength(6)
+    expect(bendCount(skip?.waypoints ?? [])).toBeGreaterThanOrEqual(2)
+    expect(skip?.waypoints.length).toBe(bendCount(skip?.waypoints ?? []) + 2)
     assertAllInvariants(nodes, edges, result)
   })
 
@@ -355,6 +407,134 @@ describe('layoutEpc — back edges, skip edges, cycles', () => {
     const backs = [...result.edges.values()].filter((e) => e.isBackEdge)
     expect(backs).toHaveLength(1)
     assertAllInvariants(nodes, edges, result)
+  })
+})
+
+describe('layoutEpc — obstacle-aware minimum-bend routing', () => {
+  const corridorAttrs = {
+    inputs: 'Application form\nIdentity record',
+    outputs: 'Registered profile\nConfirmation',
+    respList: 'Registration officer'
+  }
+
+  it.each<Orientation>(['vertical', 'horizontal'])(
+    'keeps the clear %s input/output/responsible corridor straight',
+    (orientation) => {
+      const nodes: LayoutNode[] = [
+        { id: 'a', tag: 'task', label: 'Collect', attrs: corridorAttrs },
+        { id: 'b', tag: 'task', label: 'Register', attrs: corridorAttrs },
+        { id: 'c', tag: 'task', label: 'Confirm', attrs: corridorAttrs }
+      ]
+      const edges = chain(['a', 'b', 'c'])
+      const result = layoutEpc(nodes, edges, { orientation })
+      for (const edge of edges) {
+        expect(result.edges.get(edge.id)?.waypoints).toHaveLength(2)
+      }
+      assertAllInvariants(nodes, edges, result, orientation)
+    }
+  )
+
+  it('does not exempt channel/input/output decorations at an endpoint', () => {
+    const nodes: LayoutNode[] = [
+      { id: 's', tag: 'task', label: 'Send' },
+      {
+        id: 't',
+        tag: 'task',
+        label: 'Receive',
+        attrs: {
+          channel: 'portal',
+          inputs: 'Incoming request',
+          outputs: 'Validated request',
+          respList: 'Case owner'
+        }
+      }
+    ]
+    const edges: LayoutEdge[] = [{ id: 'f', source: 's', target: 't' }]
+    const result = layoutEpc(nodes, edges)
+    const route = result.edges.get('f')?.waypoints ?? []
+    const target = result.shapes.get('t') as { x: number; y: number; w: number }
+    const last = route.at(-1) as { x: number; y: number }
+    expect(last.y).toBe(target.y)
+    expect(last.x).toBeGreaterThanOrEqual(target.x)
+    expect(last.x).toBeLessThanOrEqual(target.x + target.w)
+    assertAllInvariants(nodes, edges, result)
+  })
+
+  it('scores equally-near legal ports by the complete route length', () => {
+    const nodes: LayoutNode[] = [
+      { id: 'aux', tag: 'task', label: 'Aux', hint: { x: 0, y: 0 } },
+      { id: 'split', tag: 'parallelGateway', hint: { x: 900, y: 0 } },
+      {
+        id: 'left',
+        tag: 'task',
+        label: 'Left',
+        // The long fallback channel tag spans the full 100px task width,
+        // blocking top-centre. Its legal left/right task-boundary ports are
+        // equally near the centre, but RIGHT is closer to the split gateway.
+        attrs: { channel: 'abcdefghijklmnop' }
+      }
+    ]
+    const edges: LayoutEdge[] = [
+      { id: 'to-left', source: 'split', target: 'left' },
+      { id: 'also-left', source: 'split', target: 'left' },
+      { id: 'from-aux', source: 'aux', target: 'left' }
+    ]
+    const result = layoutEpc(nodes, edges)
+    const left = result.shapes.get('left') as { x: number; y: number; w: number }
+    const route = result.edges.get('to-left')?.waypoints ?? []
+    expect(route.at(-1)).toEqual({ x: left.x + left.w, y: left.y })
+    for (const edgeId of ['also-left', 'from-aux']) {
+      expect(result.edges.get(edgeId)?.waypoints.at(-1)).toEqual(route.at(-1))
+    }
+    assertAllInvariants(nodes, edges, result)
+  })
+
+  function multiLayerFixture(blocked: boolean): { nodes: LayoutNode[]; edges: LayoutEdge[] } {
+    const nodes: LayoutNode[] = [
+      { id: 'split', tag: 'parallelGateway' },
+      { id: 'side1', tag: 'task', label: 'Side one', hint: { x: 0, y: 100 } },
+      { id: 'side2', tag: 'task', label: 'Side two', hint: { x: 0, y: 200 } },
+      {
+        id: 'merge',
+        tag: 'task',
+        label: 'Merge',
+        hint: { x: 450, y: 100 },
+        attrs: blocked ? { channel: 'portal' } : undefined
+      }
+    ]
+    const edges: LayoutEdge[] = [
+      { id: 'long', source: 'split', target: 'merge' },
+      { id: 's1', source: 'split', target: 'side1' },
+      { id: 's2', source: 'side1', target: 'side2' },
+      { id: 's3', source: 'side2', target: 'merge' }
+    ]
+    return { nodes, edges }
+  }
+
+  it('routes an unobstructed multi-layer edge into a merge as one straight segment', () => {
+    const { nodes, edges } = multiLayerFixture(false)
+    const result = layoutEpc(nodes, edges)
+    expect(result.edges.get('long')?.waypoints).toHaveLength(2)
+    expect(bendCount(result.edges.get('long')?.waypoints ?? [])).toBe(0)
+    assertAllInvariants(nodes, edges, result)
+  })
+
+  it('detours around the genuinely blocked counterpart and normalizes every bend', () => {
+    const { nodes, edges } = multiLayerFixture(true)
+    const result = layoutEpc(nodes, edges)
+    const route = result.edges.get('long')?.waypoints ?? []
+    expect(bendCount(route)).toBeGreaterThanOrEqual(2)
+    expect(route.length).toBe(bendCount(route) + 2)
+    for (let i = 1; i < route.length; i++) expect(route[i]).not.toEqual(route[i - 1])
+    assertAllInvariants(nodes, edges, result)
+  })
+
+  it('chooses the same stable side of a symmetric blocker after input shuffling', () => {
+    const fixture = multiLayerFixture(true)
+    const a = layoutEpc(fixture.nodes, fixture.edges).edges.get('long')?.waypoints
+    const b = layoutEpc(fixture.nodes.slice().reverse(), fixture.edges.slice().reverse()).edges.get('long')?.waypoints
+    expect(b).toEqual(a)
+    expect(a?.length).toBeGreaterThan(2)
   })
 })
 

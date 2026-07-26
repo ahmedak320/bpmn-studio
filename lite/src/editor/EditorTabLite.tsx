@@ -8,7 +8,7 @@
 // and the editor CSS — is REUSED verbatim by direct import from the desktop
 // tree, so this file stays a thin shell around shared logic.
 
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useId, useRef, useState } from 'react'
 import BpmnModeler from 'bpmn-js/lib/Modeler'
 import {
   BpmnPropertiesPanelModule,
@@ -46,7 +46,12 @@ import {
 } from '@app/renderer/src/editor/exportImage'
 import { orbitpmModdleDescriptor } from '../org/orbitpmModdle'
 import { OrgRenderModule } from '../org/orgRenderer'
+import { installAutomaticConnectionRouting } from '../org/automaticConnectionRouting'
 import { refreshOrgStyling } from '../org/orgSettings'
+import { isStepBlockElement } from '../org/stepDetailsCtx'
+import { ShapeLegend } from '../org/ShapeLegend'
+import { ConnectedEdgeHighlightModule } from '../org/connectedEdgeHighlight'
+import { ModelingBatchModule } from './modelingBatch'
 import { PaneResizer, usePaneWidth } from '../common/PaneResizer'
 import { installDragWatchdog } from './dragWatchdog'
 import { installPaletteDrag } from './paletteDrag'
@@ -54,6 +59,7 @@ import { installCanvasDecor } from './canvasDecor'
 import { installLabelBilingualSync } from './labelSync'
 import type { LangToggleModeler } from './langToggle'
 import { installAutoSize, type AutoSizeModeler } from './autoSize'
+import { BidiTextRendererModule } from './bidiTextRenderer'
 import { t } from '../i18n'
 import { useLang } from '../i18n/useLang'
 
@@ -161,6 +167,7 @@ export function EditorTab(props: EditorTabProps): JSX.Element {
     sidePaneExtra
   } = props
   const lang = useLang()
+  const detailsPaneId = `orbitpm-details-pane-${useId().replaceAll(':', '')}`
   const onModelerReadyRef = useRef(onModelerReady)
   onModelerReadyRef.current = onModelerReady
 
@@ -183,16 +190,12 @@ export function EditorTab(props: EditorTabProps): JSX.Element {
   // a Save clears the dirty flag over a now-populated diagram).
   const [isNewDiagram, setIsNewDiagram] = useState(false)
   const [hintDismissed, setHintDismissed] = useState(false)
-  // Properties-panel visibility (persisted; default shown). The bpmn-js panel
+  // Details/properties pane visibility. It deliberately starts collapsed for
+  // every editor instance and is opened only by a step double-click. The
+  // bpmn-js panel
   // container MUST stay mounted — bpmn-js owns that DOM — so we hide it with CSS
   // rather than unmounting it.
-  const [propsOpen, setPropsOpen] = useState<boolean>(() => {
-    try {
-      return localStorage.getItem('orbitpm.lite.propsPanelOpen') !== '0'
-    } catch {
-      return true
-    }
-  })
+  const [propsOpen, setPropsOpenState] = useState(false)
   // Right side-pane width (Details card + properties panel), user-resizable via
   // the PaneResizer handle; null falls back to the stylesheet default (300px).
   const [propsWidth, setPropsWidth, resetPropsWidth] = usePaneWidth(
@@ -200,17 +203,13 @@ export function EditorTab(props: EditorTabProps): JSX.Element {
     { min: 240, max: 560 }
   )
 
-  const togglePropsPanel = useCallback(() => {
-    setPropsOpen((prev) => {
-      const next = !prev
-      try {
-        localStorage.setItem('orbitpm.lite.propsPanelOpen', next ? '1' : '0')
-      } catch {
-        /* storage may be unavailable; the toggle still works for this session */
-      }
-      return next
-    })
+  const setPropsPanelOpen = useCallback((next: boolean): void => {
+    setPropsOpenState(next)
   }, [])
+
+  const closePropsPanel = useCallback(() => {
+    setPropsPanelOpen(false)
+  }, [setPropsPanelOpen])
 
   const applyDirtyState = useCallback(
     (next: DirtyState) => {
@@ -261,7 +260,10 @@ export function EditorTab(props: EditorTabProps): JSX.Element {
         BpmnPropertiesProviderModule,
         CreateAppendAnythingModule,
         minimapModule,
-        OrgRenderModule
+        BidiTextRendererModule,
+        OrgRenderModule,
+        ConnectedEdgeHighlightModule,
+        ModelingBatchModule
       ]
     }) as unknown as BpmnModelerLike
 
@@ -278,6 +280,11 @@ export function EditorTab(props: EditorTabProps): JSX.Element {
       )
       if (shouldSuppressDefaultDblClick(inspection) && inspection.calledElementId) {
         onOpenCalledProcessRef.current?.(inspection.calledElementId)
+        return false
+      }
+      if (isStepBlockElement(event.element as Parameters<typeof isStepBlockElement>[0])) {
+        modeler.get('selection').select(event.element)
+        setPropsPanelOpen(true)
         return false
       }
       return undefined
@@ -308,6 +315,7 @@ export function EditorTab(props: EditorTabProps): JSX.Element {
       canvasContainerRef.current,
       editorRootRef.current ?? canvasContainerRef.current,
       {
+        elementRegistry: modeler.get('elementRegistry'),
         onBadgeClick: (elementId, missing) => {
           try {
             const el = modeler.get('elementRegistry').get(elementId)
@@ -325,8 +333,10 @@ export function EditorTab(props: EditorTabProps): JSX.Element {
     // opens pre-filled instead of waiting for a language toggle to self-heal.
     const uninstallLabelSync = installLabelBilingualSync(modeler as unknown as LangToggleModeler)
     const uninstallAutoSize = installAutoSize(modeler as unknown as AutoSizeModeler)
+    const uninstallConnectionRouting = installAutomaticConnectionRouting(modeler)
 
     return () => {
+      uninstallConnectionRouting()
       uninstallAutoSize()
       uninstallLabelSync()
       uninstallCanvasDecor()
@@ -355,6 +365,9 @@ export function EditorTab(props: EditorTabProps): JSX.Element {
 
     let cancelled = false
     setError(null)
+    // A new/imported document must never inherit a pane opened for the
+    // previously displayed diagram.
+    setPropsPanelOpen(false)
 
     modeler
       .importXML(xml)
@@ -472,6 +485,8 @@ export function EditorTab(props: EditorTabProps): JSX.Element {
     canvas.zoom(next)
   }, [])
 
+  const uiDir = lang === 'ar' ? 'rtl' : 'ltr'
+
   useEffect(() => {
     onCommandsReady?.({
       save: () => void handleSave(),
@@ -482,12 +497,10 @@ export function EditorTab(props: EditorTabProps): JSX.Element {
   }, [onCommandsReady, handleSave, handleExportSvg, handleExportPng])
 
   return (
-    // Forced LTR: bpmn-js's canvas/palette/context-pad/minimap all assume a
-    // hardcoded LTR coordinate system with no RTL mode of their own (see the
-    // i18n prep §3.4). The toolbar text itself is still translated; only the
-    // physical layout of this work-surface island stays LTR regardless of the
-    // app's active language.
-    <div ref={editorRootRef} className="orbitpm-editor" dir="ltr">
+    // The editor chrome follows the active UI direction. Only the canvas
+    // subtree remains LTR because bpmn-js's coordinates/palette/context pad
+    // have no RTL mode of their own.
+    <div ref={editorRootRef} className="orbitpm-editor" dir={uiDir}>
       <div className="orbitpm-editor__toolbar">
         <button
           type="button"
@@ -540,15 +553,21 @@ export function EditorTab(props: EditorTabProps): JSX.Element {
         >
           {t('editor.zoomFit')}
         </button>
-        <button
-          type="button"
-          className="orbitpm-editor__button"
-          onClick={togglePropsPanel}
-          aria-pressed={propsOpen}
-          title={t('editor.propsToggle.title')}
-        >
-          {t('editor.propsToggle')}
-        </button>
+        {propsOpen ? (
+          <button
+            type="button"
+            className="orbitpm-editor__button orbitpm-details-toggle"
+            onClick={closePropsPanel}
+            aria-expanded="true"
+            aria-controls={detailsPaneId}
+            title={t('pane.details.toggle.title')}
+          >
+            <span className="orbitpm-details-toggle__glyph" aria-hidden="true">
+              ›
+            </span>
+            {t('pane.details.toggle')}
+          </button>
+        ) : null}
         <span
           className={
             dirty
@@ -562,9 +581,12 @@ export function EditorTab(props: EditorTabProps): JSX.Element {
         {toolbarExtra}
       </div>
       {error ? <div className="orbitpm-editor__error">{error}</div> : null}
-      <div className="orbitpm-editor__body">
-        <div style={{ position: 'relative', flex: '1 1 auto', minWidth: 0, display: 'flex' }}>
-          <div ref={canvasContainerRef} className="orbitpm-editor__canvas" />
+      <div className="orbitpm-editor__body" dir={uiDir}>
+        <div
+          dir="ltr"
+          style={{ position: 'relative', flex: '1 1 auto', minWidth: 0, display: 'flex' }}
+        >
+          <div ref={canvasContainerRef} className="orbitpm-editor__canvas" dir="ltr" />
           {isNewDiagram && !hintDismissed && (
             <div
               // Non-interactive so the palette, canvas and context pad underneath
@@ -601,10 +623,11 @@ export function EditorTab(props: EditorTabProps): JSX.Element {
               </div>
             </div>
           )}
+          <ShapeLegend />
         </div>
         <PaneResizer
           edge="inline-start"
-          dir="ltr"
+          dir={uiDir}
           width={propsWidth ?? 300}
           min={240}
           max={560}
@@ -618,7 +641,11 @@ export function EditorTab(props: EditorTabProps): JSX.Element {
             mounted unconditionally — bpmn-js owns that DOM — so the visibility
             toggle lives on this wrapper, never on the inner div. */}
         <div
+          id={detailsPaneId}
           className="orbitpm-lite-sidepane"
+          role="complementary"
+          aria-label={t('pane.details.aria')}
+          dir={uiDir}
           style={{ display: propsOpen ? 'flex' : 'none', width: propsWidth ?? undefined }}
         >
           {sidePaneExtra}

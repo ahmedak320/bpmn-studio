@@ -1,5 +1,5 @@
 import { resolve } from 'node:path'
-import { defineConfig } from 'vite'
+import { defineConfig, type Plugin } from 'vite'
 import react from '@vitejs/plugin-react'
 import { viteSingleFile } from 'vite-plugin-singlefile'
 
@@ -24,9 +24,31 @@ import { viteSingleFile } from 'vite-plugin-singlefile'
 // node_modules with the correct nested versions without any dedupe.
 const DEDUPE = ['react', 'react-dom', 'zod', 'bpmn-auto-layout']
 
+/**
+ * Vite 6 intentionally externalizes SVG URLs that contain a fragment. The
+ * embedded BPMN icon stylesheet has one obsolete SVG-font fallback of that
+ * form in addition to its already embedded TrueType font. Removing only that
+ * legacy source keeps the modern embedded font and preserves Lite's strict
+ * one-file distribution.
+ */
+function stripLegacyBpmnSvgFont(): Plugin {
+  return {
+    name: 'orbitpm-strip-legacy-bpmn-svg-font',
+    enforce: 'pre',
+    transform(code, id) {
+      if (!id.includes('/bpmn-font/css/bpmn-embedded.css')) return null
+      return code.replace(
+        /,\s*url\(['"]?\.\.\/font\/bpmn\.svg[^)]*\)\s*format\(['"]svg['"]\)/g,
+        ''
+      )
+    }
+  }
+}
+
 export default defineConfig({
   base: './',
   plugins: [
+    stripLegacyBpmnSvgFont(),
     react(),
     viteSingleFile()
   ],

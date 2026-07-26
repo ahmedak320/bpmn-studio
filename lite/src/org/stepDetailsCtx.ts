@@ -30,6 +30,7 @@ import {
   type OrgModeler,
   type OrgProps
 } from './orgModel'
+import { isActivityType } from './decorExtents'
 import type { StepDetailsValues } from './StepDetailsDialog'
 
 /** A single selectable flow node (not a label, connection, or the process/
@@ -41,6 +42,13 @@ export function isFlowNodeElement(el: OrgElementLike | undefined | null): el is 
   if (typeof type !== 'string' || !type.startsWith('bpmn:')) return false
   if (el.waypoints != null || el.labelTarget != null) return false
   return type !== 'bpmn:Process' && type !== 'bpmn:Collaboration'
+}
+
+/** A canvas "step block": any BPMN activity, including the task and
+ * sub-process families plus CallActivity. Events, gateways, labels,
+ * connections and diagram roots deliberately do not qualify. */
+export function isStepBlockElement(el: OrgElementLike | undefined | null): el is OrgElementLike {
+  return isFlowNodeElement(el) && isActivityType(el.type as string)
 }
 
 /** The modeler surface the Step-details derivation needs: the org read/write

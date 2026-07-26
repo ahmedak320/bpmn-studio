@@ -10,6 +10,8 @@ interface FakeElement {
   id: string
   type?: string
   waypoints?: unknown
+  incoming?: FakeElement[]
+  outgoing?: FakeElement[]
   labelTarget?: FakeElement | null
 }
 
@@ -64,6 +66,17 @@ function horizontalFlow(id: string): FakeElement {
   }
 }
 
+function directedFlow(id: string, dx: number, dy: number): FakeElement {
+  return {
+    id,
+    type: 'bpmn:SequenceFlow',
+    waypoints: [
+      { x: 50, y: 50 },
+      { x: 50 + dx, y: 50 + dy }
+    ]
+  }
+}
+
 describe('OrgDecorSync', () => {
   it('starts horizontal and recomputes on import.done', () => {
     const world = makeWorld([verticalFlow('F1'), { id: 'T1', type: 'bpmn:Task' }])
@@ -76,22 +89,27 @@ describe('OrgDecorSync', () => {
     expect(world.updates).toEqual([{ type: 'shape', element: world.registry.getAll()[1] }])
   })
 
-  it('recomputes on commandStack.changed and sweeps ONLY when the axis flips', () => {
+  it('recomputes on commandStack.changed and skips sweeps when nothing changed', () => {
     const task: FakeElement = { id: 'T1', type: 'bpmn:Task' }
     const world = makeWorld([horizontalFlow('F1'), task])
     const sync = new OrgDecorSync(world.eventBus, world.registry, world.graphicsFactory)
 
     world.fire('commandStack.changed')
     expect(sync.getOrientation()).toBe('horizontal')
-    expect(world.updates).toHaveLength(0) // no flip -> no sweep
+    // Initial cache population repaints once: import/command events are where
+    // final incoming/outgoing topology becomes authoritative.
+    expect(world.updates).toEqual([{ type: 'shape', element: task }])
 
     world.setElements([verticalFlow('F1'), verticalFlow('F2'), task])
     world.fire('commandStack.changed')
     expect(sync.getOrientation()).toBe('vertical')
-    expect(world.updates).toEqual([{ type: 'shape', element: task }])
+    expect(world.updates).toEqual([
+      { type: 'shape', element: task },
+      { type: 'shape', element: task }
+    ])
 
     world.fire('commandStack.changed') // still vertical -> no extra sweep
-    expect(world.updates).toHaveLength(1)
+    expect(world.updates).toHaveLength(2)
   })
 
   it('the sweep skips connections, the process root and non-bpmn elements', () => {
@@ -119,6 +137,77 @@ describe('OrgDecorSync', () => {
     world.fire('diagram.clear')
     expect(sync.getOrientation()).toBe('horizontal')
     expect(world.updates).toHaveLength(updatesBefore)
+  })
+
+  it.each([
+    ['right', 80, 0],
+    ['down', 0, 80],
+    ['left', -80, 0],
+    ['up', 0, -80]
+  ] as const)('caches an element-local %s flow direction', (expected, dx, dy) => {
+    const connection = directedFlow(`F_${expected}`, dx, dy)
+    const task: FakeElement = {
+      id: 'T1',
+      type: 'bpmn:Task',
+      outgoing: [connection]
+    }
+    const world = makeWorld([horizontalFlow('global-horizontal'), connection, task])
+    const sync = new OrgDecorSync(world.eventBus, world.registry, world.graphicsFactory)
+
+    world.fire('import.done')
+    expect(sync.getDirectionFor(task)).toBe(expected)
+    expect(world.updates).toEqual([{ type: 'shape', element: task }])
+  })
+
+  it('falls back to the current majority orientation for isolated elements', () => {
+    const task: FakeElement = { id: 'T1', type: 'bpmn:Task' }
+    const world = makeWorld([verticalFlow('F1'), task])
+    const sync = new OrgDecorSync(world.eventBus, world.registry, world.graphicsFactory)
+
+    expect(sync.getDirectionFor(task)).toBe('right')
+    world.fire('import.done')
+    expect(sync.getOrientation()).toBe('vertical')
+    expect(sync.getDirectionFor(task)).toBe('down')
+  })
+
+  it('sweeps when a cached element direction changes without a global axis flip', () => {
+    const local = directedFlow('local', 80, 0)
+    const task: FakeElement = {
+      id: 'T1',
+      type: 'bpmn:Task',
+      outgoing: [local]
+    }
+    const world = makeWorld([horizontalFlow('global-horizontal'), local, task])
+    const sync = new OrgDecorSync(world.eventBus, world.registry, world.graphicsFactory)
+
+    world.fire('import.done')
+    expect(sync.getDirectionFor(task)).toBe('right')
+    expect(world.updates).toEqual([{ type: 'shape', element: task }])
+    world.updates.length = 0
+
+    local.waypoints = directedFlow('changed', 0, 80).waypoints
+    world.fire('commandStack.changed')
+    expect(sync.getOrientation()).toBe('horizontal')
+    expect(sync.getDirectionFor(task)).toBe('down')
+    expect(world.updates).toEqual([{ type: 'shape', element: task }])
+  })
+
+  it('diagram.clear drops cached element directions', () => {
+    const local = directedFlow('local', -80, 0)
+    const task: FakeElement = {
+      id: 'T1',
+      type: 'bpmn:Task',
+      outgoing: [local]
+    }
+    const world = makeWorld([local, task])
+    const sync = new OrgDecorSync(world.eventBus, world.registry, world.graphicsFactory)
+
+    world.fire('import.done')
+    expect(sync.getDirectionFor(task)).toBe('left')
+
+    world.fire('diagram.clear')
+    local.waypoints = directedFlow('changed', 80, 0).waypoints
+    expect(sync.getDirectionFor(task)).toBe('right')
   })
 
   it('element.changed on an external label repaints its TARGET shape', () => {

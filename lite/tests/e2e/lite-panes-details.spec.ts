@@ -5,10 +5,10 @@ import { readFileSync } from 'node:fs'
 
 // Pane / details UX of the feature wave: the badge-click -> Step-details
 // dialog hand-off (missing categories highlighted with the amber ring, rings
-// cleared on edit), the Details card stacked above the properties panel, the
-// owner browse-on-focus flow that works WITHOUT ever saving, and the two
-// keyboard-accessible pane resizers (right props pane + left explorer) with
-// localStorage persistence across a reload.
+// cleared on edit), double-click-to-open for step blocks, explicit pane
+// collapse/persistence, the owner browse-on-focus flow that works WITHOUT ever
+// saving, and the two keyboard-accessible pane resizers (right details/props
+// pane + left explorer) with localStorage persistence across a reload.
 //
 // Same harness as lite-org.spec.ts: BUILT single file over file://, forced
 // fallback mode, programmatic modeling via window.__ORBITPM_LITE__.
@@ -18,6 +18,7 @@ const DIST = resolve(HERE, '../../dist/index.html')
 const FILE_URL = pathToFileURL(DIST).toString()
 
 const AMBER_RING = '196, 127, 23' // #c47f17 — PALETTE.basisBorder
+const PROPS_OPEN_KEY = 'orbitpm.lite.propsPanelOpen'
 
 test.beforeAll(() => {
   const html = readFileSync(DIST, 'utf8')
@@ -97,6 +98,35 @@ async function amberRingCount(root: Locator): Promise<number> {
   )
 }
 
+async function selectedElementIds(page: Page): Promise<string[]> {
+  return page.evaluate(() => {
+    const w = window as unknown as HookWindow
+    const selection = w.__ORBITPM_LITE__.modeler.get('selection') as {
+      get(): Array<{ id: string }>
+    }
+    return selection.get().map((element) => element.id)
+  })
+}
+
+async function updateElementProperties(
+  page: Page,
+  elementId: string,
+  properties: Record<string, unknown>
+): Promise<void> {
+  await page.evaluate(
+    ({ elementId, properties }) => {
+      const w = window as unknown as HookWindow
+      const modeler = w.__ORBITPM_LITE__.modeler
+      const registry = modeler.get('elementRegistry') as { get(id: string): unknown }
+      const modeling = modeler.get('modeling') as {
+        updateProperties(element: unknown, next: Record<string, unknown>): void
+      }
+      modeling.updateProperties(registry.get(elementId), properties)
+    },
+    { elementId, properties }
+  )
+}
+
 // ---------------------------------------------------------------------------
 // Badge click -> dialog with highlighted missing categories
 // ---------------------------------------------------------------------------
@@ -110,8 +140,7 @@ test('badge click selects the element and opens Step details with missing catego
 
   // Deliberately NOT selected — the badge click itself must select it.
   // The click is dispatched WITH THE BADGE AS TARGET (canvasDecor's delegated
-  // capture-phase handler); real-pointer delivery is covered (and currently
-  // red) in the next test — see the pointer-events finding there.
+  // capture-phase handler); real-pointer delivery is covered in the next test.
   const taskId = await createShape(page, 'bpmn:Task', { x: 420, y: 220 })
   const badge = page
     .locator(`.djs-element[data-element-id="${taskId}"]`)
@@ -123,14 +152,7 @@ test('badge click selects the element and opens Step details with missing catego
   await expect(dialog).toBeVisible()
 
   // The click selected the element (element-mode dialog derives from it).
-  const selectedIds = await page.evaluate(() => {
-    const w = window as unknown as HookWindow
-    const selection = w.__ORBITPM_LITE__.modeler.get('selection') as {
-      get(): Array<{ id: string }>
-    }
-    return selection.get().map((e) => e.id)
-  })
-  expect(selectedIds).toEqual([taskId])
+  expect(await selectedElementIds(page)).toEqual([taskId])
 
   // owner + inputs + outputs highlighted: one amber ring + role=note hint each.
   const notes = dialog.locator('[role="note"]')
@@ -167,10 +189,8 @@ test('badge is clickable with a REAL pointer (hit-testing reaches the badge)', a
     .locator('g.orbitpm-missing-badge')
   await expect(badge).toBeVisible()
 
-  // KNOWN GAP as of this wave: the badge inherits `pointer-events: none` from
-  // diagram-js.css's `.djs-visual` rule, so a real click lands on the root
-  // <svg> instead — the dialog can never open from a user's click even though
-  // the delegated handler itself works (previous test).
+  // Regression guard: tooltip/click wrappers must opt back into hit testing
+  // despite diagram-js.css setting `.djs-visual { pointer-events: none }`.
   const hit = await badge.evaluate((el) => {
     const rect = el.getBoundingClientRect()
     const target = document.elementFromPoint(rect.x + rect.width / 2, rect.y + rect.height / 2)
@@ -183,7 +203,7 @@ test('badge is clickable with a REAL pointer (hit-testing reaches the badge)', a
   expect(
     hit.insideBadge,
     `badge center must hit-test to the badge itself, got <${hit.hitTag}> ` +
-      `(badge computed pointer-events: ${hit.pointerEvents} — inherited from .djs-visual)`
+      `(badge computed pointer-events: ${hit.pointerEvents})`
   ).toBe(true)
 
   await badge.click()
@@ -191,26 +211,61 @@ test('badge is clickable with a REAL pointer (hit-testing reaches the badge)', a
 })
 
 // ---------------------------------------------------------------------------
-// Details card in the right side pane
+// Details card in the right side pane: default closed + step double-click
 // ---------------------------------------------------------------------------
 
-test('Details card shows missing chips for the selection and opens the dialog; Panel toggle hides the pane', async ({
+test('pane defaults closed; a single click only selects, while a step double-click opens Details without a modal', async ({
   page
 }) => {
   await forceFallbackMode(page)
   await page.goto(FILE_URL, { waitUntil: 'load' })
   await newProcess(page, 'Card Demo')
 
-  // The right side pane (Details card + properties panel) is open by default.
   const sidePane = page.locator('.orbitpm-lite-sidepane')
+  const panelToggle = page.getByRole('button', { name: 'Details', exact: true })
+  const propsResizer = page.getByRole('separator', { name: 'Resize the properties panel' })
+
+  // Missing storage now means closed. The mounted wrapper remains available
+  // for bpmn-js, but neither it nor the resizer occupies the editor.
+  await expect(sidePane).toBeHidden()
+  await expect(sidePane).toHaveAttribute('role', 'complementary')
+  await expect(sidePane).toHaveAttribute('aria-label', /details|properties/i)
+  await expect(panelToggle).toHaveCount(0)
+  const paneId = await sidePane.getAttribute('id')
+  expect(paneId).toBeTruthy()
+  await expect(propsResizer).toHaveCount(0)
+  expect(await page.evaluate((key) => localStorage.getItem(key), PROPS_OPEN_KEY)).toBeNull()
+
+  const taskId = await createShape(page, 'bpmn:Task', { x: 420, y: 220 })
+  const task = page.locator(`.djs-element[data-element-id="${taskId}"]`)
+  const taskHit = task.locator('.djs-hit').first()
+
+  // A normal click keeps the pane closed and retains stock canvas selection.
+  await taskHit.click()
+  expect(await selectedElementIds(page)).toEqual([taskId])
+  await expect(sidePane).toBeHidden()
+  await expect(propsResizer).toHaveCount(0)
+  expect(await page.evaluate((key) => localStorage.getItem(key), PROPS_OPEN_KEY)).toBeNull()
+
+  // A step-block double-click selects and opens the pane. It is
+  // deliberately NOT a shortcut to the modal, and stock inline editing is
+  // suppressed for this gesture.
+  await taskHit.dblclick()
+  expect(await selectedElementIds(page)).toEqual([taskId])
   await expect(sidePane).toBeVisible()
+  await expect(panelToggle).toHaveAttribute('aria-expanded', 'true')
+  await expect(panelToggle).toHaveAttribute('aria-controls', paneId!)
+  await expect(propsResizer).toBeVisible()
+  expect(await page.evaluate((key) => localStorage.getItem(key), PROPS_OPEN_KEY)).toBeNull()
+  await expect(page.getByRole('dialog', { name: 'Step details' })).toHaveCount(0)
+  await expect(page.locator('.djs-direct-editing-parent')).toHaveCount(0)
+
   const card = sidePane.locator('.orbitpm-lite-details-card')
   await expect(card).toBeVisible()
   await expect(card).toContainText('Details')
   await expect(card.getByRole('button', { name: 'Open Details…' })).toBeVisible()
 
-  // Selecting an incomplete task fills the card with the missing chips.
-  await createShape(page, 'bpmn:Task', { x: 420, y: 220 }, { select: true })
+  // The selected incomplete task fills the card with the missing chips.
   await expect(card).toContainText('Missing information')
   await expect(card).toContainText('responsible party')
   await expect(card).toContainText('inputs')
@@ -225,19 +280,80 @@ test('Details card shows missing chips for the selection and opens the dialog; P
   await dialog.getByRole('button', { name: 'Cancel' }).click()
   await expect(dialog).toBeHidden()
 
-  // The toolbar Panel toggle hides the whole side pane (card included) and
-  // removes the props resizer; toggling again restores both.
-  const panelToggle = page.getByRole('button', { name: 'Panel', exact: true })
-  const propsResizer = page.getByRole('separator', { name: 'Resize the properties panel' })
-  await expect(panelToggle).toHaveAttribute('aria-pressed', 'true')
+  // Explicit collapse hides the whole pane (card included), removes the
+  // resizer. The control disappears too: only another step double-click can
+  // reopen the pane.
   await panelToggle.click()
   await expect(sidePane).toBeHidden()
   await expect(propsResizer).toHaveCount(0)
-  await expect(panelToggle).toHaveAttribute('aria-pressed', 'false')
-  await panelToggle.click()
+  await expect(panelToggle).toHaveCount(0)
+  expect(await page.evaluate((key) => localStorage.getItem(key), PROPS_OPEN_KEY)).toBeNull()
+})
+
+test('pane always starts closed and ignores stale persisted visibility state', async ({
+  page
+}) => {
+  await forceFallbackMode(page)
+  await page.goto(FILE_URL, { waitUntil: 'load' })
+  await page.evaluate((key) => localStorage.setItem(key, '1'), PROPS_OPEN_KEY)
+  await newProcess(page, 'Pane Persistence Open')
+
+  const sidePane = page.locator('.orbitpm-lite-sidepane')
+  const panelToggle = page.getByRole('button', { name: 'Details', exact: true })
+  const propsResizer = page.getByRole('separator', { name: 'Resize the properties panel' })
+
+  const taskId = await createShape(page, 'bpmn:Task', { x: 420, y: 220 })
+  await page
+    .locator(`.djs-element[data-element-id="${taskId}"] .djs-hit`)
+    .first()
+    .dblclick()
   await expect(sidePane).toBeVisible()
-  await expect(card).toBeVisible()
   await expect(propsResizer).toBeVisible()
+
+  await page.reload({ waitUntil: 'load' })
+  await newProcess(page, 'Pane Starts Closed Again')
+  await expect(sidePane).toBeHidden()
+  await expect(propsResizer).toHaveCount(0)
+  await expect(panelToggle).toHaveCount(0)
+  expect(await page.evaluate((key) => localStorage.getItem(key), PROPS_OPEN_KEY)).toBe('1')
+})
+
+test('non-step double-click leaves the pane closed; a linked CallActivity keeps drill-down precedence', async ({
+  page
+}) => {
+  await forceFallbackMode(page)
+  await page.goto(FILE_URL, { waitUntil: 'load' })
+  await newProcess(page, 'Double Click Routing Demo')
+
+  const sidePane = page.locator('.orbitpm-lite-sidepane')
+  const propsResizer = page.getByRole('separator', { name: 'Resize the properties panel' })
+
+  const gatewayId = await createShape(page, 'bpmn:ExclusiveGateway', { x: 300, y: 220 })
+  await page
+    .locator(`.djs-element[data-element-id="${gatewayId}"] .djs-hit`)
+    .first()
+    .dblclick()
+  await expect(sidePane).toBeHidden()
+  await expect(propsResizer).toHaveCount(0)
+  expect(await page.evaluate((key) => localStorage.getItem(key), PROPS_OPEN_KEY)).toBeNull()
+  await page.keyboard.press('Escape')
+
+  const callId = await createShape(page, 'bpmn:CallActivity', { x: 520, y: 220 })
+  await updateElementProperties(page, callId, { calledElement: 'Process_link_target' })
+  await page
+    .locator(`.djs-element[data-element-id="${callId}"] .djs-hit`)
+    .first()
+    .dblclick()
+
+  // Fallback mode has no process index, so the drill-down callback reports the
+  // unresolved target. Most importantly, the CallActivity is not treated as a
+  // generic step: no Details pane/modal opens despite being a step-block type.
+  await expect(page.getByRole('status')).toContainText('Process_link_target')
+  await expect(sidePane).toBeHidden()
+  await expect(propsResizer).toHaveCount(0)
+  await expect(page.getByRole('dialog', { name: 'Step details' })).toHaveCount(0)
+  await expect(page.locator('.djs-direct-editing-parent')).toHaveCount(0)
+  expect(await page.evaluate((key) => localStorage.getItem(key), PROPS_OPEN_KEY)).toBeNull()
 })
 
 // ---------------------------------------------------------------------------
@@ -295,6 +411,13 @@ test('props-pane resizer: a11y contract, keyboard resize, bounds, reset, persist
   await page.goto(FILE_URL, { waitUntil: 'load' })
   await newProcess(page, 'Props Resize Demo')
 
+  // The pane defaults closed; a step double-click opens it before exercising
+  // handle. Width persistence remains independent of open/closed persistence.
+  const firstTask = await createShape(page, 'bpmn:Task', { x: 420, y: 220 })
+  await page
+    .locator(`.djs-element[data-element-id="${firstTask}"] .djs-hit`)
+    .first()
+    .dblclick()
   const resizer = page.getByRole('separator', { name: 'Resize the properties panel' })
   await expect(resizer).toBeVisible()
   await expect(resizer).toHaveClass(/orbitpm-lite-resizer/)
@@ -346,6 +469,11 @@ test('props-pane resizer: a11y contract, keyboard resize, bounds, reset, persist
 
   await page.reload({ waitUntil: 'load' })
   await newProcess(page, 'Props Resize Again')
+  const secondTask = await createShape(page, 'bpmn:Task', { x: 420, y: 220 })
+  await page
+    .locator(`.djs-element[data-element-id="${secondTask}"] .djs-hit`)
+    .first()
+    .dblclick()
   await expect(resizer).toHaveAttribute('aria-valuenow', '332')
   expect(Math.abs((await paneWidth()) - 332)).toBeLessThanOrEqual(2)
 })

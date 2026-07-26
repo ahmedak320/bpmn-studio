@@ -19,6 +19,17 @@ import { PALETTE } from './palette'
 import { getOrgProps, parseTriggers, type OrgProps, type OrgElementLike } from './orgModel'
 import { isOrgStylingOn, isCompletenessOn } from './orgSettings'
 import { OrgDecorSync } from './orgDecorSync'
+import { OrgConnectionRenderer } from './orgConnectionRenderer'
+import {
+  deriveContextualGatewayNames,
+  isGenericGatewayLabel,
+  SEMANTIC_NAMING,
+  type SemanticGatewayType
+} from './semanticNaming'
+import {
+  shapeSemanticForDecoration,
+  shapeSemanticForElement
+} from './shapeSemantics'
 import {
   computeDecorLayout,
   planBadgeBox,
@@ -31,6 +42,7 @@ import {
   triggerLabel,
   isActivityType,
   type Box,
+  type FlowDirection,
   type FlowOrientation,
   type MissingCategory
 } from './decorExtents'
@@ -55,6 +67,8 @@ export {
   computeDecorLayout,
   computeDecorMargins,
   detectOrientation,
+  detectElementFlowDirection,
+  decorationBoxes,
   planBadgeBox,
   planSubChipBox,
   LIST_MAX_ROWS,
@@ -64,6 +78,8 @@ export {
   type BelowStackLayout,
   type MissingCategory,
   type Box,
+  type DecorBox,
+  type FlowDirection,
   type FlowOrientation,
   type DecorLayout,
   type DecorLayoutInput
@@ -88,6 +104,7 @@ export type Decoration =
       label: string
       detail?: string
       tooltip?: string
+      semantic?: 'basis'
       fill: string
       stroke: string
     }
@@ -116,6 +133,7 @@ export type Decoration =
   | { kind: 'subLabel'; x: number; y: number; text: string; fill: string }
   | {
       kind: 'listBox'
+      semantic: 'inputs' | 'outputs' | 'responsible' | 'cc'
       x: number
       y: number
       w: number
@@ -177,9 +195,11 @@ function tagColorsFor(kind: string): RectStyle {
 
 // --- planDecorations ---------------------------------------------------------
 
-/** Extra planning context; omitted -> horizontal orientation, no label. */
+/** Extra planning context; omitted -> rightward horizontal flow, no label. */
 export interface PlanContext {
   orientation?: FlowOrientation
+  direction?: FlowDirection
+  flipCrossAxis?: boolean
   labelBox?: Box | null
 }
 
@@ -208,6 +228,8 @@ export function planDecorations(
     width,
     height,
     orientation: ctx?.orientation ?? 'horizontal',
+    direction: ctx?.direction,
+    flipCrossAxis: ctx?.flipCrossAxis,
     // The badge stays a separate composition step (planMissingBadge) so this
     // function keeps its flag-free signature.
     completenessOn: false,
@@ -288,11 +310,12 @@ export function planDecorations(
     })
   }
 
-  // Inputs / base-information list box (teal): above the shape in horizontal
-  // flow, left of the shape in vertical flow — geometry from the layout.
+  // Inputs / base-information list box (teal) on the logical before side of
+  // local travel — exact physical geometry comes from the shared layout.
   if (layout.inputsBox) {
     out.push({
       kind: 'listBox',
+      semantic: 'inputs',
       x: layout.inputsBox.x,
       y: layout.inputsBox.y,
       w: layout.inputsBox.w,
@@ -306,12 +329,33 @@ export function planDecorations(
     })
   }
 
-  // CC / informed-party list box (pink): below-stack member in horizontal
-  // flow, right-side stack member in vertical flow. Independent of kind==='cc';
-  // when present it REPLACES the legacy single-line "CC: …" sub-label.
+  // Outputs / produced-information list box: the first block on the logical
+  // after side of travel. It mirrors inputs in sizing and row preparation but
+  // uses a distinct palette so the two remain visually unambiguous.
+  if (layout.outputsBox) {
+    out.push({
+      kind: 'listBox',
+      semantic: 'outputs',
+      x: layout.outputsBox.x,
+      y: layout.outputsBox.y,
+      w: layout.outputsBox.w,
+      h: layout.outputsBox.h,
+      title: t('org.outputs.label'),
+      rows: prepareListRows(props.outputs),
+      fill: PALETTE.outputFill,
+      stroke: PALETTE.outputBorder,
+      textColor: PALETTE.outputText,
+      personGlyph: false
+    })
+  }
+
+  // CC / informed-party list box (pink): a logical after-stack member.
+  // Independent of kind==='cc'; when present it REPLACES the legacy
+  // single-line "CC: …" sub-label.
   if (layout.ccBox) {
     out.push({
       kind: 'listBox',
+      semantic: 'cc',
       x: layout.ccBox.x,
       y: layout.ccBox.y,
       w: layout.ccBox.w,
@@ -337,7 +381,7 @@ export function planDecorations(
     })
   }
 
-  // Owner chip + RACI role letter (below stack / right stack per orientation).
+  // Owner chip + RACI role letter in the local direction's after-side stack.
   if (layout.ownerChip && props.owner) {
     const chip = layout.ownerChip
     out.push({
@@ -367,6 +411,7 @@ export function planDecorations(
   if (layout.respBox) {
     out.push({
       kind: 'listBox',
+      semantic: 'responsible',
       x: layout.respBox.x,
       y: layout.respBox.y,
       w: layout.respBox.w,
@@ -385,6 +430,7 @@ export function planDecorations(
   if (layout.basisTag) {
     out.push({
       kind: 'tag',
+      semantic: 'basis',
       x: layout.basisTag.x,
       y: layout.basisTag.y,
       w: layout.basisTag.w,
@@ -419,12 +465,13 @@ const MISSING_LABEL_KEYS: Record<MissingCategory, Key> = {
 export function planMissingBadge(
   props: OrgProps,
   elementType: string,
-  width: number
+  width: number,
+  labelBox?: Box | null
 ): Decoration | null {
   const missing = planMissingInfo(props, elementType)
   if (missing.length === 0) return null
   const list = missing.map((category) => t(MISSING_LABEL_KEYS[category])).join(', ')
-  const box = planBadgeBox(width)
+  const box = planBadgeBox(width, labelBox)
   return {
     kind: 'missingBadge',
     x: box.x,
@@ -580,6 +627,134 @@ const FONT_FAMILY = 'inherit'
 const BADGE_CLASS = 'orbitpm-missing-badge'
 const TOOLTIP_ATTR = 'data-org-tooltip'
 const MISSING_ATTR = 'data-org-missing'
+const SEMANTIC_ATTR = 'data-org-semantic'
+
+type DiagramLang = 'en' | 'ar'
+
+function readBusinessValue(
+  businessObject: OrgElementLike['businessObject'],
+  name: string
+): unknown {
+  if (!businessObject) return undefined
+  if (typeof businessObject.get === 'function') {
+    try {
+      const value = businessObject.get(name)
+      if (value !== undefined) return value
+    } catch {
+      /* fall through to the structural property / $attrs worlds */
+    }
+  }
+  return businessObject[name] ?? businessObject.$attrs?.[name]
+}
+
+function isSemanticGatewayType(type: string | undefined): type is SemanticGatewayType {
+  return typeof type === 'string' &&
+    Object.prototype.hasOwnProperty.call(SEMANTIC_NAMING, type)
+}
+
+function hasVisibleBusinessName(element: OrgElementLike): boolean {
+  const value = readBusinessValue(element.businessObject, 'name')
+  return (
+    typeof value === 'string' &&
+    value.trim() !== '' &&
+    !isGenericGatewayLabel(value)
+  )
+}
+
+function localizedElementName(
+  element: OrgElementLike | null | undefined,
+  projectedLang: DiagramLang
+): { en?: string; ar?: string } {
+  if (!element) return {}
+  const props = getOrgProps(element)
+  const result: { en?: string; ar?: string } = {
+    en: props.nameEn,
+    ar: props.nameAr
+  }
+  const visible = readBusinessValue(element.businessObject, 'name')
+  if (
+    typeof visible === 'string' &&
+    visible.trim() !== '' &&
+    !isGenericGatewayLabel(visible) &&
+    !result[projectedLang]
+  ) {
+    result[projectedLang] = visible.trim()
+  }
+  return result
+}
+
+function gatewayConnectionNeighbours(
+  element: OrgElementLike,
+  direction: 'incoming' | 'outgoing',
+  lang: DiagramLang
+): { name: { en?: string; ar?: string } }[] {
+  const connections = element[direction] ?? []
+  return connections.map((connection) => ({
+    name: localizedElementName(
+      direction === 'incoming' ? connection.source : connection.target,
+      lang
+    )
+  }))
+}
+
+function isGenericGatewayLabelElement(element: OrgElementLike): boolean {
+  const target =
+    element.labelTarget && typeof element.labelTarget === 'object'
+      ? (element.labelTarget as OrgElementLike)
+      : undefined
+  if (!target || !isSemanticGatewayType(target.type)) {
+    return false
+  }
+  const value = readBusinessValue(target.businessObject, 'name')
+  return typeof value === 'string' && isGenericGatewayLabel(value)
+}
+
+export interface GatewayPresentation {
+  semantic: 'gateway-exclusive' | 'gateway-inclusive' | 'gateway-parallel'
+  display: string
+  tooltip: string
+  lang: DiagramLang
+}
+
+const GATEWAY_SEMANTIC_IDS: Record<
+  SemanticGatewayType,
+  GatewayPresentation['semantic']
+> = {
+  'bpmn:ExclusiveGateway': 'gateway-exclusive',
+  'bpmn:InclusiveGateway': 'gateway-inclusive',
+  'bpmn:ParallelGateway': 'gateway-parallel'
+}
+
+/**
+ * Presentation-only fallback for the three standard gateway symbols.
+ * A real BPMN `name` always wins; this helper never writes to the model.
+ */
+export function gatewayPresentationForElement(
+  element: OrgElementLike,
+  lang: DiagramLang
+): GatewayPresentation | null {
+  if (!isSemanticGatewayType(element.type) || hasVisibleBusinessName(element)) {
+    return null
+  }
+  const props = getOrgProps(element)
+  const basis = props.decisionBasis?.trim()
+  const names = deriveContextualGatewayNames({
+    type: element.type,
+    name: localizedElementName(element, lang),
+    decisionBasis: basis ? { [lang]: basis } : undefined,
+    incoming: gatewayConnectionNeighbours(element, 'incoming', lang),
+    outgoing: gatewayConnectionNeighbours(element, 'outgoing', lang),
+    incomingCount: element.incoming?.length,
+    outgoingCount: element.outgoing?.length
+  })
+  const naming = SEMANTIC_NAMING[element.type][lang]
+  return {
+    semantic: GATEWAY_SEMANTIC_IDS[element.type],
+    display: names[lang],
+    tooltip: naming.tooltip,
+    lang
+  }
+}
 
 /** The base `.djs-visual` group bpmn-js drew into, falling back to parentGfx. */
 function baseVisual(parentGfx: SVGElement): SVGElement {
@@ -598,6 +773,67 @@ function makeText(x: number, y: number, content: string, extra: Record<string, s
   const text = svgCreate('text', { x, y, 'font-family': FONT_FAMILY, ...extra })
   text.textContent = content
   return text
+}
+
+function applyGatewayPresentation(
+  parentGfx: SVGElement,
+  element: OrgElementLike,
+  lang: DiagramLang
+): void {
+  const presentation = gatewayPresentationForElement(element, lang)
+  if (!presentation) return
+  const semantic = shapeSemanticForElement(element)
+
+  const group = svgCreate('g', {
+    class: 'orbitpm-semantic-gateway-label',
+    [SEMANTIC_ATTR]: presentation.semantic,
+    // Canvas help follows the UI locale; only the visible fallback label
+    // follows the diagram's independent activeLang projection.
+    [TOOLTIP_ATTR]: semantic?.explanation ?? presentation.tooltip,
+    'pointer-events': 'all'
+  })
+  const text = makeText(
+    (element.width ?? 50) / 2,
+    (element.height ?? 50) + 16,
+    presentation.display,
+    {
+      fill: '#334155',
+      'font-size': 11,
+      'text-anchor': 'middle'
+    }
+  )
+  if (presentation.lang === 'ar') {
+    svgAttr(text, {
+      direction: 'rtl',
+      'unicode-bidi': 'plaintext',
+      lang: 'ar'
+    })
+  }
+  svgAppend(group, text)
+  svgAppend(parentGfx, group)
+}
+
+function semanticDecorationAttributes(
+  token: string
+): Record<string, string> {
+  const semantic = shapeSemanticForDecoration(token)
+  return semantic
+    ? {
+        [SEMANTIC_ATTR]: semantic.kind,
+        [TOOLTIP_ATTR]: semantic.explanation,
+        'pointer-events': 'all'
+      }
+    : {}
+}
+
+function decorationTooltipAttributes(token: string): Record<string, string> {
+  const semantic = shapeSemanticForDecoration(token)
+  return semantic
+    ? {
+        [TOOLTIP_ATTR]: semantic.explanation,
+        'pointer-events': 'all'
+      }
+    : {}
 }
 
 /**
@@ -655,11 +891,19 @@ export function applyDecorations(parentGfx: SVGElement, decorations: Decoration[
           break
         }
         case 'tag': {
-          const group = svgCreate('g')
+          const group = svgCreate(
+            'g',
+            d.semantic
+              ? {
+                  'data-org-decoration': d.semantic,
+                  ...semanticDecorationAttributes(d.semantic)
+                }
+              : undefined
+          )
           // .djs-visual disables pointer events by default. Tooltip-bearing
           // tags must opt back in so the delegated canvas hover handler sees
           // a REAL pointer target (same contract as badges/sub-chips).
-          if (d.tooltip) {
+          if (d.tooltip && !d.semantic) {
             svgAttr(group, {
               [TOOLTIP_ATTR]: d.tooltip,
               'pointer-events': 'all'
@@ -684,6 +928,10 @@ export function applyDecorations(parentGfx: SVGElement, decorations: Decoration[
           break
         }
         case 'ownerBox': {
+          const group = svgCreate('g', {
+            'data-org-decoration': 'owner',
+            ...semanticDecorationAttributes('owner')
+          })
           const rect = svgCreate('rect', {
             x: d.x,
             y: d.y,
@@ -693,17 +941,22 @@ export function applyDecorations(parentGfx: SVGElement, decorations: Decoration[
             fill: d.fill,
             stroke: d.stroke
           })
-          svgAppend(parentGfx, rect)
+          svgAppend(group, rect)
           if (d.personGlyph) {
-            svgAppend(parentGfx, makeText(d.x + 18, d.y + 14, '👤', { 'font-size': 10 }))
+            svgAppend(group, makeText(d.x + 18, d.y + 14, '👤', { 'font-size': 10 }))
           }
           svgAppend(
-            parentGfx,
+            group,
             makeText(d.x + 30, d.y + 14, d.text, { fill: d.textColor, 'font-size': 10 })
           )
+          svgAppend(parentGfx, group)
           break
         }
         case 'raci': {
+          const group = svgCreate('g', {
+            'data-org-decoration': 'owner-role',
+            ...decorationTooltipAttributes('owner')
+          })
           const rect = svgCreate('rect', {
             x: d.x,
             y: d.y,
@@ -713,9 +966,9 @@ export function applyDecorations(parentGfx: SVGElement, decorations: Decoration[
             fill: d.fill,
             stroke: d.stroke
           })
-          svgAppend(parentGfx, rect)
+          svgAppend(group, rect)
           svgAppend(
-            parentGfx,
+            group,
             makeText(d.x + d.size / 2, d.y + d.size - 3, d.letter, {
               fill: d.stroke,
               'font-size': 10,
@@ -723,13 +976,23 @@ export function applyDecorations(parentGfx: SVGElement, decorations: Decoration[
               'text-anchor': 'middle'
             })
           )
+          svgAppend(parentGfx, group)
           break
         }
         case 'subLabel': {
-          svgAppend(parentGfx, makeText(d.x, d.y, d.text, { fill: d.fill, 'font-size': 9 }))
+          const group = svgCreate('g', {
+            'data-org-decoration': 'cc',
+            ...semanticDecorationAttributes('cc')
+          })
+          svgAppend(group, makeText(d.x, d.y, d.text, { fill: d.fill, 'font-size': 9 }))
+          svgAppend(parentGfx, group)
           break
         }
         case 'listBox': {
+          const group = svgCreate('g', {
+            'data-org-decoration': d.semantic,
+            ...semanticDecorationAttributes(d.semantic)
+          })
           const rect = svgCreate('rect', {
             x: d.x,
             y: d.y,
@@ -739,10 +1002,10 @@ export function applyDecorations(parentGfx: SVGElement, decorations: Decoration[
             fill: d.fill,
             stroke: d.stroke
           })
-          svgAppend(parentGfx, rect)
+          svgAppend(group, rect)
           // Title band: bold title + a divider line under it.
           svgAppend(
-            parentGfx,
+            group,
             makeText(d.x + 6, d.y + 14, d.title, {
               fill: d.stroke,
               'font-size': 9,
@@ -757,21 +1020,22 @@ export function applyDecorations(parentGfx: SVGElement, decorations: Decoration[
             stroke: d.stroke,
             'stroke-width': 0.75
           })
-          svgAppend(parentGfx, divider)
+          svgAppend(group, divider)
           // Rows (already truncated/capped by prepareListRows).
           d.rows.forEach((row, i) => {
             const baseline = d.y + 32 + 13 * i
             if (d.personGlyph) {
-              svgAppend(parentGfx, makeText(d.x + 5, d.y + 31 + 13 * i, '👤', { 'font-size': 8 }))
+              svgAppend(group, makeText(d.x + 5, d.y + 31 + 13 * i, '👤', { 'font-size': 8 }))
             }
             svgAppend(
-              parentGfx,
+              group,
               makeText(d.x + (d.personGlyph ? 17 : 6), baseline, row, {
                 fill: d.textColor,
                 'font-size': 9
               })
             )
           })
+          svgAppend(parentGfx, group)
           break
         }
         case 'missingBadge': {
@@ -812,8 +1076,8 @@ export function applyDecorations(parentGfx: SVGElement, decorations: Decoration[
           // Non-interactive pill (tooltip only) where the stock '+' sat.
           const group = svgCreate('g', {
             class: 'orbitpm-sub-chip',
-            [TOOLTIP_ATTR]: d.tooltip,
-            'pointer-events': 'all'
+            'data-org-decoration': 'subprocess-chip',
+            ...semanticDecorationAttributes('subprocess-chip')
           })
           const rect = svgCreate('rect', {
             x: d.x,
@@ -849,72 +1113,188 @@ interface BpmnRendererLike {
   drawConnection(parentGfx: SVGElement, connection: unknown): SVGElement
 }
 
-/** The one method OrgRenderer needs from OrgDecorSync (kept structural so the
- *  2-arg test constructions and any fake stay valid). */
-interface OrientationSourceLike {
-  getOrientation(): FlowOrientation
+/** Structural subset of OrgDecorSync used by OrgRenderer. Optional legacy
+ *  orientation support keeps two-argument constructions and older fakes valid. */
+interface DirectionSourceLike {
+  getDirectionFor?(element: OrgElementLike): FlowDirection
+  getOrientation?(): FlowOrientation
+  getFlipFor?(element: OrgElementLike): boolean
+}
+
+interface CanvasLike {
+  getRootElement(): OrgElementLike | undefined
+}
+
+interface RendererElementRegistryLike {
+  getAll(): OrgElementLike[]
+  getGraphics(element: OrgElementLike): SVGElement
+}
+
+interface RendererGraphicsFactoryLike {
+  update(type: 'shape', element: OrgElementLike, gfx: SVGElement): void
+}
+
+function processBusinessObject(
+  canvas: CanvasLike | undefined
+): OrgElementLike['businessObject'] {
+  let root: OrgElementLike | undefined
+  try {
+    root = canvas?.getRootElement()
+  } catch {
+    return undefined
+  }
+  const rootBo = root?.businessObject
+  if (!rootBo || rootBo.$type === 'bpmn:Process') return rootBo
+  const participants = readBusinessValue(rootBo, 'participants')
+  if (Array.isArray(participants) && participants.length > 0) {
+    const processRef = (participants[0] as { processRef?: unknown } | undefined)
+      ?.processRef
+    if (processRef && typeof processRef === 'object') {
+      return processRef as NonNullable<OrgElementLike['businessObject']>
+    }
+  }
+  return rootBo
+}
+
+/** Resolve the diagram language from its process, with a business-object
+ * ancestor fallback for isolated renderer tests and unusual embedded roots. */
+export function diagramLanguageForElement(
+  element: OrgElementLike,
+  canvas?: CanvasLike
+): DiagramLang {
+  const rootBo = processBusinessObject(canvas)
+  if (readBusinessValue(rootBo, 'orbitpm:activeLang') === 'ar') return 'ar'
+  if (rootBo) return 'en'
+
+  let current = element.businessObject
+  const seen = new Set<unknown>()
+  while (current && !seen.has(current)) {
+    seen.add(current)
+    const active = readBusinessValue(current, 'orbitpm:activeLang')
+    if (active !== undefined) return active === 'ar' ? 'ar' : 'en'
+    const parent = current.$parent
+    current =
+      parent && typeof parent === 'object'
+        ? (parent as NonNullable<OrgElementLike['businessObject']>)
+        : undefined
+  }
+  return 'en'
 }
 
 export class OrgRenderer extends BaseRenderer {
-  static $inject = ['eventBus', 'bpmnRenderer', 'orgDecorSync']
+  static $inject = [
+    'eventBus',
+    'bpmnRenderer',
+    'orgDecorSync',
+    'canvas',
+    'elementRegistry',
+    'graphicsFactory'
+  ]
 
   private readonly bpmnRenderer: BpmnRendererLike
-  private readonly orgDecorSync?: OrientationSourceLike
+  private readonly orgDecorSync?: DirectionSourceLike
+  private readonly canvas?: CanvasLike
+  private readonly elementRegistry?: RendererElementRegistryLike
+  private readonly graphicsFactory?: RendererGraphicsFactoryLike
 
   constructor(
     eventBus: EventBusLike,
     bpmnRenderer: BpmnRendererLike,
-    orgDecorSync?: OrientationSourceLike
+    orgDecorSync?: DirectionSourceLike,
+    canvas?: CanvasLike,
+    elementRegistry?: RendererElementRegistryLike,
+    graphicsFactory?: RendererGraphicsFactoryLike
   ) {
     super(eventBus as unknown as ConstructorParameters<typeof BaseRenderer>[0], 1500)
     this.bpmnRenderer = bpmnRenderer
     this.orgDecorSync = orgDecorSync
+    this.canvas = canvas
+    this.elementRegistry = elementRegistry
+    this.graphicsFactory = graphicsFactory
+
+    // Unnamed gateway defaults are presentation-only, so changing the
+    // process-level activeLang does not emit an element.changed event for
+    // those gateways. Repaint just that small set after imports and command
+    // batches so their default labels always follow the diagram language.
+    const repaintSemanticGateways = (): void => this.repaintSemanticGateways()
+    eventBus.on('import.done', repaintSemanticGateways)
+    eventBus.on('commandStack.changed', repaintSemanticGateways)
   }
 
   canRender(element: OrgElementLike): boolean {
     // Both flags are read live per call so a settings toggle + refresh sweep
-    // re-evaluates ownership without a reload. Org styling stays the master
-    // switch: with it off the base renderer draws everything, badges included.
+    // re-evaluates decoration ownership without a reload. Semantic gateway
+    // presentation is independent of that styling preference.
+    if (isGenericGatewayLabelElement(element)) return true
+    if (
+      !element.labelTarget &&
+      !element.waypoints &&
+      isSemanticGatewayType(element.type) &&
+      !hasVisibleBusinessName(element)
+    ) {
+      return true
+    }
     return canRenderOrg(element, isOrgStylingOn(), isCompletenessOn())
   }
 
   drawShape(parentGfx: SVGElement, element: OrgElementLike): SVGElement {
+    // The gateway shape itself carries the contextual replacement. Suppress
+    // only the separate stock external label whose whole value is an ARIS
+    // alias such as "XOR rule".
+    if (isGenericGatewayLabelElement(element)) {
+      const blank = svgCreate('g', {
+        class: 'orbitpm-suppressed-generic-gateway-label',
+        'aria-hidden': 'true'
+      })
+      svgAppend(parentGfx, blank)
+      return blank
+    }
     const shape = this.bpmnRenderer.drawShape(parentGfx, element)
     try {
       const type = typeof element.type === 'string' ? element.type : ''
-      const props = getOrgProps(element)
-      const width = element.width ?? 0
-      const height = element.height ?? 0
-      const ctx: PlanContext = {
-        orientation: this.orgDecorSync?.getOrientation() ?? 'horizontal',
-        labelBox: relativeLabelBox(element)
+      if (isOrgStylingOn()) {
+        const props = getOrgProps(element)
+        const width = element.width ?? 0
+        const height = element.height ?? 0
+        const direction = this.orgDecorSync?.getDirectionFor?.(element)
+        const ctx: PlanContext = {
+          orientation: this.orgDecorSync?.getOrientation?.() ?? 'horizontal',
+          direction,
+          flipCrossAxis: this.orgDecorSync?.getFlipFor?.(element),
+          labelBox: relativeLabelBox(element)
+        }
+        const decorations = planDecorations(props, type, width, height, ctx)
+        // Completeness badge composed as a separate step so planDecorations
+        // keeps its flag-free signature.
+        if (isCompletenessOn()) {
+          const badge = planMissingBadge(props, type, width, ctx.labelBox)
+          if (badge) decorations.push(badge)
+        }
+        // Collapsed SubProcess / CallActivity: bpmn-js stamped its '+' marker
+        // into the visual — swap it for the DMT-style sub-process chip.
+        if (removeStockSubProcessMarker(parentGfx as unknown as MarkerDomLike)) {
+          const box = planSubChipBox(width, height)
+          decorations.push({
+            kind: 'subChip',
+            x: box.x,
+            y: box.y,
+            w: box.w,
+            h: box.h,
+            label: t('canvas.subchip'),
+            tooltip: hasCalledElement(element)
+              ? t('canvas.subprocess.tooltip')
+              : t('canvas.subprocess.tooltip.generic'),
+            fill: PALETTE.subChipFill,
+            stroke: PALETTE.subChipBorder
+          })
+        }
+        applyDecorations(parentGfx, decorations)
       }
-      const decorations = planDecorations(props, type, width, height, ctx)
-      // Completeness badge composed as a separate step so planDecorations keeps
-      // its flag-free signature.
-      if (isCompletenessOn()) {
-        const badge = planMissingBadge(props, type, width)
-        if (badge) decorations.push(badge)
-      }
-      // Collapsed SubProcess / CallActivity: bpmn-js stamped its '+' marker
-      // into the visual — swap it for the DMT-style sub-process chip.
-      if (removeStockSubProcessMarker(parentGfx as unknown as MarkerDomLike)) {
-        const box = planSubChipBox(width, height)
-        decorations.push({
-          kind: 'subChip',
-          x: box.x,
-          y: box.y,
-          w: box.w,
-          h: box.h,
-          label: t('canvas.subchip'),
-          tooltip: hasCalledElement(element)
-            ? t('canvas.subprocess.tooltip')
-            : t('canvas.subprocess.tooltip.generic'),
-          fill: PALETTE.subChipFill,
-          stroke: PALETTE.subChipBorder
-        })
-      }
-      applyDecorations(parentGfx, decorations)
+      applyGatewayPresentation(
+        parentGfx,
+        element,
+        diagramLanguageForElement(element, this.canvas)
+      )
     } catch {
       /* decoration failures must never break base rendering */
     }
@@ -924,14 +1304,45 @@ export class OrgRenderer extends BaseRenderer {
   drawConnection(parentGfx: SVGElement, connection: unknown): SVGElement {
     return this.bpmnRenderer.drawConnection(parentGfx, connection)
   }
+
+  private repaintSemanticGateways(): void {
+    if (!this.elementRegistry || !this.graphicsFactory) return
+    let elements: OrgElementLike[]
+    try {
+      elements = this.elementRegistry.getAll()
+    } catch {
+      return
+    }
+    for (const element of elements) {
+      if (
+        !isSemanticGatewayType(element.type) ||
+        element.labelTarget ||
+        element.waypoints ||
+        hasVisibleBusinessName(element)
+      ) {
+        continue
+      }
+      try {
+        this.graphicsFactory.update(
+          'shape',
+          element,
+          this.elementRegistry.getGraphics(element)
+        )
+      } catch {
+        /* stale registry graphics during import/teardown — skip this shape */
+      }
+    }
+  }
 }
 
 export const OrgRenderModule: {
   __init__: string[]
   orgDecorSync: [string, typeof OrgDecorSync]
   orgRenderer: [string, typeof OrgRenderer]
+  orgConnectionRenderer: [string, typeof OrgConnectionRenderer]
 } = {
-  __init__: ['orgDecorSync', 'orgRenderer'],
+  __init__: ['orgDecorSync', 'orgRenderer', 'orgConnectionRenderer'],
   orgDecorSync: ['type', OrgDecorSync],
-  orgRenderer: ['type', OrgRenderer]
+  orgRenderer: ['type', OrgRenderer],
+  orgConnectionRenderer: ['type', OrgConnectionRenderer]
 }

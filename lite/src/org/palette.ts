@@ -34,6 +34,11 @@ export const PALETTE = {
   inputFill: '#d3ecf2',
   inputBorder: '#0f7d90',
   inputText: '#0b5666',
+  // Outputs list box. Violet differentiates produced information from the
+  // cyan input/base-information box while retaining equivalent contrast.
+  outputFill: '#e6e0f8',
+  outputBorder: '#6750a4',
+  outputText: '#44337a',
   // Decision-basis tag on gateways / business-rule tasks. Amber ("it's a
   // rule") — hotter and more orange than the pale note yellow.
   basisFill: '#fce3bd',
@@ -46,7 +51,11 @@ export const PALETTE = {
   endBorder: '#c0504d',
   // Collapsed sub-process chip (replaces the stock '+' marker).
   subChipFill: '#ffffff',
-  subChipBorder: '#157347'
+  subChipBorder: '#157347',
+  // Selected step's incoming/outgoing sequence overlays. A saturated blue is
+  // intentionally distinct from the normal near-black flow stroke and every
+  // org-decoration family above.
+  edgeHighlightStroke: '#2563eb'
 } as const
 
 export type PaletteKey = keyof typeof PALETTE

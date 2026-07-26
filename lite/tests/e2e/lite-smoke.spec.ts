@@ -1,7 +1,7 @@
 import { test, expect } from '@playwright/test'
 import { pathToFileURL, fileURLToPath } from 'node:url'
 import { dirname, resolve } from 'node:path'
-import { readFileSync } from 'node:fs'
+import { readdirSync, readFileSync } from 'node:fs'
 
 // The BUILT single file (must be built first: `cd lite && npm run build`).
 const HERE = dirname(fileURLToPath(import.meta.url))
@@ -14,6 +14,10 @@ test.beforeAll(() => {
   expect(html.length, 'dist/index.html should be a multi-hundred-KB single file').toBeGreaterThan(
     500_000
   )
+  expect(
+    readdirSync(dirname(DIST)).sort(),
+    'the release artifact must contain exactly one self-contained HTML file'
+  ).toEqual(['index.html'])
 })
 
 /** Attach a request recorder that flags any load/runtime request that is not

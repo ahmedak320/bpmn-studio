@@ -87,6 +87,115 @@ async function createShape(
   )
 }
 
+/** Connect two existing shapes, then replace the auto-route with a known
+ * orthogonal polyline. The explicit waypoints make edge-visual assertions
+ * independent of bpmn-js layouter changes. */
+async function createRoutedConnection(
+  page: Page,
+  sourceId: string,
+  targetId: string,
+  waypoints: Array<{ x: number; y: number }>
+): Promise<string> {
+  return page.evaluate(
+    ({ sourceId, targetId, waypoints }) => {
+      const w = window as unknown as HookWindow
+      const m = w.__ORBITPM_LITE__.modeler
+      const registry = m.get('elementRegistry') as { get(id: string): unknown }
+      const modeling = m.get('modeling') as {
+        connect(
+          source: unknown,
+          target: unknown,
+          attrs: { type: 'bpmn:SequenceFlow' }
+        ): { id: string }
+        updateWaypoints(
+          connection: unknown,
+          nextWaypoints: Array<{ x: number; y: number }>
+        ): void
+      }
+      const connection = modeling.connect(registry.get(sourceId), registry.get(targetId), {
+        type: 'bpmn:SequenceFlow'
+      })
+      modeling.updateWaypoints(connection, waypoints)
+      return connection.id
+    },
+    { sourceId, targetId, waypoints }
+  )
+}
+
+/**
+ * Pin a visual-analysis fixture after the production router has completed.
+ * This deliberately bypasses the command stack: ordinary modeling commands
+ * should remove avoidable crossings, while this test needs one remaining
+ * crossing to verify the bridge renderer itself.
+ */
+async function pinVisualRoutes(
+  page: Page,
+  routes: Array<{
+    id: string
+    waypoints: Array<{ x: number; y: number }>
+  }>
+): Promise<void> {
+  await page.evaluate((fixtures) => {
+    const modeler = (window as unknown as HookWindow).__ORBITPM_LITE__.modeler
+    type Connection = {
+      waypoints: Array<{ x: number; y: number }>
+    }
+    const registry = modeler.get('elementRegistry') as {
+      get(id: string): Connection
+      getGraphics(element: Connection): SVGElement
+    }
+    const graphicsFactory = modeler.get('graphicsFactory') as {
+      update(kind: 'connection', element: Connection, gfx: SVGElement): void
+    }
+    const eventBus = modeler.get('eventBus') as {
+      fire(event: string): void
+    }
+    for (const fixture of fixtures) {
+      const connection = registry.get(fixture.id)
+      connection.waypoints = fixture.waypoints.map((point) => ({ ...point }))
+      graphicsFactory.update(
+        'connection',
+        connection,
+        registry.getGraphics(connection)
+      )
+    }
+    eventBus.fire('commandStack.changed')
+  }, routes)
+}
+
+/** Write moddle-backed org attributes through the command stack so both the
+ * org decoration and edge-visual refresh listeners see the mutation. */
+async function updateOrgProperties(
+  page: Page,
+  elementId: string,
+  properties: Record<string, unknown>
+): Promise<void> {
+  await page.evaluate(
+    ({ elementId, properties }) => {
+      const w = window as unknown as HookWindow
+      const m = w.__ORBITPM_LITE__.modeler
+      const registry = m.get('elementRegistry') as { get(id: string): unknown }
+      const modeling = m.get('modeling') as {
+        updateProperties(element: unknown, nextProperties: Record<string, unknown>): void
+      }
+      modeling.updateProperties(registry.get(elementId), properties)
+    },
+    { elementId, properties }
+  )
+}
+
+/** Read the fallback-mode SVG download as text. */
+async function exportSvg(page: Page): Promise<string> {
+  const [download] = await Promise.all([
+    page.waitForEvent('download'),
+    page.getByRole('button', { name: 'Export SVG' }).click()
+  ])
+  const stream = await download.createReadStream()
+  const chunks: Buffer[] = []
+  for await (const chunk of stream) chunks.push(chunk as Buffer)
+  return Buffer.concat(chunks).toString('utf8')
+}
+
 /** name / orbitpm:nameEn / orbitpm:nameAr of an element's business object. */
 async function readNames(
   page: Page,
@@ -116,6 +225,21 @@ async function readNames(
       nameAr: attr('orbitpm:nameAr')
     }
   }, id)
+}
+
+/** Activate bpmn-js direct editing through its service. Step-block
+ *  double-click is reserved for opening the Details pane. */
+async function activateDirectEditing(page: Page, id: string): Promise<void> {
+  const activated = await page.evaluate((elementId) => {
+    const w = window as unknown as HookWindow
+    const modeler = w.__ORBITPM_LITE__.modeler
+    const registry = modeler.get('elementRegistry') as { get(id: string): unknown }
+    const directEditing = modeler.get('directEditing') as {
+      activate(element: unknown): boolean
+    }
+    return directEditing.activate(registry.get(elementId))
+  }, id)
+  expect(activated, `direct editing should activate for ${id}`).toBe(true)
 }
 
 // ---------------------------------------------------------------------------
@@ -286,7 +410,10 @@ test('collapsed sub-process and call activity get the org chip instead of the st
   const callGfx = page.locator(`.djs-element[data-element-id="${callId}"]`)
   const callChip = callGfx.locator('g.orbitpm-sub-chip')
   await expect(callChip).toBeVisible()
-  await expect(callChip).toHaveAttribute('data-org-tooltip', /Contains a sub-process/)
+  await expect(callChip).toHaveAttribute(
+    'data-org-tooltip',
+    /collapsed or linked sub-process/
+  )
   await expect(callGfx.locator('path[data-marker="sub-process"]')).toHaveCount(0)
 
   // A collapsed SubProcess -> same swap.
@@ -300,6 +427,220 @@ test('collapsed sub-process and call activity get the org chip instead of the st
   await expect(subGfx.locator('g.orbitpm-sub-chip')).toBeVisible()
   await expect(subGfx.locator('g.orbitpm-sub-chip')).toHaveAttribute('data-org-tooltip', /.+/)
   await expect(subGfx.locator('path[data-marker="sub-process"]')).toHaveCount(0)
+})
+
+// ---------------------------------------------------------------------------
+// Directional input/output geometry + connection crossings/junctions
+// ---------------------------------------------------------------------------
+
+test('right-flow output box is the first after-side block with distinct output styling', async ({
+  page
+}) => {
+  await forceFallbackMode(page)
+  await page.goto(FILE_URL, { waitUntil: 'load' })
+  await newProcess(page, 'Directed Decorations Demo')
+
+  const sourceId = await createShape(page, 'bpmn:Task', { x: 220, y: 220 })
+  const taskId = await createShape(
+    page,
+    'bpmn:Task',
+    { x: 460, y: 220 },
+    { width: 100, height: 72 }
+  )
+  const targetId = await createShape(page, 'bpmn:Task', { x: 700, y: 220 })
+  await createRoutedConnection(page, sourceId, taskId, [
+    { x: 270, y: 220 },
+    { x: 410, y: 220 }
+  ])
+  await createRoutedConnection(page, taskId, targetId, [
+    { x: 510, y: 220 },
+    { x: 650, y: 220 }
+  ])
+  await updateOrgProperties(page, taskId, {
+    'orbitpm:inputs': 'Source dossier',
+    'orbitpm:outputs': 'Approval memo\nAudit trail',
+    'orbitpm:owner': 'Process owner'
+  })
+
+  const taskGfx = page.locator(`.djs-element[data-element-id="${taskId}"]`)
+  const inputs = taskGfx.locator('[data-org-decoration="inputs"]')
+  const outputs = taskGfx.locator('[data-org-decoration="outputs"]')
+  await expect(inputs).toHaveCount(1)
+  await expect(outputs).toHaveCount(1)
+
+  await expect(outputs).toContainText('Outputs')
+  await expect(outputs).toContainText('Approval memo')
+  await expect(outputs).toContainText('Audit trail')
+
+  const inputRect = inputs.locator('rect').first()
+  const outputRect = outputs.locator('rect').first()
+  await expect(inputRect).toHaveCSS('fill', 'rgb(211, 236, 242)')
+  await expect(outputRect).toHaveCSS('fill', 'rgb(230, 224, 248)')
+  await expect(outputRect).toHaveCSS('stroke', 'rgb(103, 80, 164)')
+  await expect(
+    outputs.locator('text').filter({ hasText: /^Approval memo$/ })
+  ).toHaveCSS('fill', 'rgb(68, 51, 122)')
+
+  // Exact shape-local geometry for the explicit 100x72 fixture. Right-flow maps the
+  // before-side input above the shape and the after-side output below it.
+  // Output is first in that stack, so the owner starts one 12px gap later.
+  const geometry = await taskGfx.evaluate((gfx) => {
+    const semanticRect = (kind: string): SVGRectElement => {
+      const found = gfx.querySelector(
+        `[data-org-decoration="${kind}"] rect`
+      ) as SVGRectElement | null
+      if (!found) throw new Error(`missing ${kind} decoration rect`)
+      return found
+    }
+    const ownerRect = Array.from(gfx.querySelectorAll('rect')).find(
+      (rect) => getComputedStyle(rect).fill === 'rgb(217, 203, 168)'
+    ) as SVGRectElement | undefined
+    if (!ownerRect) throw new Error('missing owner decoration rect')
+    const read = (el: SVGRectElement) => ({
+      x: Number(el.getAttribute('x')),
+      y: Number(el.getAttribute('y')),
+      w: Number(el.getAttribute('width')),
+      h: Number(el.getAttribute('height'))
+    })
+    return {
+      inputs: read(semanticRect('inputs')),
+      outputs: read(semanticRect('outputs')),
+      owner: read(ownerRect)
+    }
+  })
+  expect(geometry.inputs).toEqual({ x: 0, y: -65, w: 100, h: 35 })
+  expect(geometry.outputs).toEqual({ x: 0, y: 84, w: 94, h: 48 })
+  expect(geometry.owner.y).toBe(144)
+})
+
+test('edge overlay paints one hop per strict crossing and one dot per split/merge junction', async ({
+  page
+}) => {
+  await forceFallbackMode(page)
+  await page.goto(FILE_URL, { waitUntil: 'load' })
+  await newProcess(page, 'Edge Visuals Demo')
+
+  // One unrelated strict crossing at (440, 180).
+  const crossLeft = await createShape(page, 'bpmn:Task', { x: 180, y: 180 })
+  const crossRight = await createShape(page, 'bpmn:Task', { x: 700, y: 180 })
+  const crossTop = await createShape(page, 'bpmn:Task', { x: 440, y: 60 })
+  const crossBottom = await createShape(page, 'bpmn:Task', { x: 440, y: 300 })
+  const crossHorizontalWaypoints = [
+    { x: 230, y: 180 },
+    { x: 650, y: 180 }
+  ]
+  const crossHorizontal = await createRoutedConnection(
+    page,
+    crossLeft,
+    crossRight,
+    crossHorizontalWaypoints
+  )
+  const crossVerticalWaypoints = [
+    { x: 440, y: 100 },
+    { x: 440, y: 260 }
+  ]
+  const crossVertical = await createRoutedConnection(
+    page,
+    crossTop,
+    crossBottom,
+    crossVerticalWaypoints
+  )
+
+  // A two-edge source prefix ending at (330, 700), and a two-edge target
+  // suffix starting at (630, 700). Shared endpoint stubs must yield one dot
+  // at each actual junction, not one dot per participating connection.
+  const splitSource = await createShape(page, 'bpmn:Task', { x: 180, y: 700 })
+  const upper = await createShape(page, 'bpmn:Task', { x: 480, y: 590 })
+  const lower = await createShape(page, 'bpmn:Task', { x: 480, y: 810 })
+  const mergeTarget = await createShape(page, 'bpmn:Task', { x: 780, y: 700 })
+  const splitUpperWaypoints = [
+    { x: 230, y: 700 },
+    { x: 330, y: 700 },
+    { x: 330, y: 590 },
+    { x: 430, y: 590 }
+  ]
+  const splitUpper = await createRoutedConnection(
+    page,
+    splitSource,
+    upper,
+    splitUpperWaypoints
+  )
+  const splitLowerWaypoints = [
+    { x: 230, y: 700 },
+    { x: 330, y: 700 },
+    { x: 330, y: 810 },
+    { x: 430, y: 810 }
+  ]
+  const splitLower = await createRoutedConnection(
+    page,
+    splitSource,
+    lower,
+    splitLowerWaypoints
+  )
+  const mergeUpperWaypoints = [
+    { x: 530, y: 590 },
+    { x: 630, y: 590 },
+    { x: 630, y: 700 },
+    { x: 730, y: 700 }
+  ]
+  const mergeUpper = await createRoutedConnection(
+    page,
+    upper,
+    mergeTarget,
+    mergeUpperWaypoints
+  )
+  const mergeLowerWaypoints = [
+    { x: 530, y: 810 },
+    { x: 630, y: 810 },
+    { x: 630, y: 700 },
+    { x: 730, y: 700 }
+  ]
+  const mergeLower = await createRoutedConnection(
+    page,
+    lower,
+    mergeTarget,
+    mergeLowerWaypoints
+  )
+
+  await pinVisualRoutes(page, [
+    { id: crossHorizontal, waypoints: crossHorizontalWaypoints },
+    { id: crossVertical, waypoints: crossVerticalWaypoints },
+    { id: splitUpper, waypoints: splitUpperWaypoints },
+    { id: splitLower, waypoints: splitLowerWaypoints },
+    { id: mergeUpper, waypoints: mergeUpperWaypoints },
+    { id: mergeLower, waypoints: mergeLowerWaypoints }
+  ])
+
+  const overlay = page.locator('g.orbitpm-connection-visuals')
+  await expect(overlay).toHaveCount(1)
+  await expect(overlay).toHaveAttribute('aria-hidden', 'true')
+  await expect(overlay).toHaveAttribute('pointer-events', 'none')
+  await expect(overlay).toHaveCSS('pointer-events', 'none')
+
+  const hops = overlay.locator('[data-org-edge-visual="hop"]')
+  const junctions = overlay.locator('[data-org-edge-visual="junction"]')
+  await expect(hops).toHaveCount(1)
+  await expect(junctions).toHaveCount(2)
+  await expect(
+    overlay.locator('[data-org-edge-visual="junction"][data-junction-kind="split"]')
+  ).toHaveCount(1)
+  await expect(
+    overlay.locator('[data-org-edge-visual="junction"][data-junction-kind="merge"]')
+  ).toHaveCount(1)
+
+  // The SVG geometry itself pins the requested 5px hop and 3.5px dots.
+  await expect(hops).toHaveAttribute('data-radius', '5')
+  for (const dot of await junctions.all()) {
+    await expect(dot).toHaveAttribute('r', '3.5')
+  }
+
+  // saveSVG must serialize overlays along with the ordinary BPMN graphics.
+  const svg = await exportSvg(page)
+  expect(svg).toContain('class="orbitpm-connection-visuals"')
+  expect(svg.match(/data-org-edge-visual="hop"/g)).toHaveLength(1)
+  expect(svg.match(/data-org-edge-visual="junction"/g)).toHaveLength(2)
+  expect(svg).toContain('aria-hidden="true"')
+  expect(svg).toContain('pointer-events="none"')
 })
 
 // ---------------------------------------------------------------------------
@@ -375,12 +716,10 @@ test('typing a label mirrors into orbitpm:nameEn and a single undo reverts both'
   await newProcess(page, 'Mirror Demo')
 
   const taskId = await createShape(page, 'bpmn:Task', { x: 420, y: 220 })
-  const gfxBox = await page.locator(`.djs-element[data-element-id="${taskId}"]`).boundingBox()
-  expect(gfxBox).not.toBeNull()
-  if (!gfxBox) return
 
-  // Double-click opens bpmn-js direct editing; type the name and commit (Enter).
-  await page.mouse.dblclick(gfxBox.x + gfxBox.width / 2, gfxBox.y + gfxBox.height / 2)
+  // Direct editing remains available through bpmn-js even though step-block
+  // double-click now opens Details instead of renaming.
+  await activateDirectEditing(page, taskId)
   await expect(page.locator('.djs-direct-editing-content')).toBeVisible()
   await page.keyboard.type('Review Invoice')
   await page.keyboard.press('Enter')
@@ -507,7 +846,8 @@ test.describe('free translate without a provider key (stubbed endpoints)', () =>
       page.getByRole('status').filter({ hasText: 'free translation service' })
     ).toBeVisible()
 
-    // The missing Arabic side lands on the business object (visible name untouched).
+    // The missing Arabic side lands on the business object and the whole
+    // drawing is projected to Arabic immediately.
     await page.waitForFunction(
       (id) => {
         const w = window as unknown as {
@@ -522,7 +862,7 @@ test.describe('free translate without a provider key (stubbed endpoints)', () =>
       { timeout: 20_000 }
     )
     const names = await readNames(page, taskId)
-    expect(names.name).toBe('Review order')
+    expect(names.name).toBe('ترجمة')
     expect(names.nameAr).toBe('ترجمة')
 
     // Completion toast, then verify the network shape: one gtx GET per label

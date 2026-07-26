@@ -139,11 +139,16 @@ async function updateName(page: Page, id: string, name: string): Promise<void> {
 }
 
 async function directEdit(page: Page, id: string, name: string): Promise<void> {
-  const gfx = page.locator(`.djs-element[data-element-id="${id}"]`)
-  const box = await gfx.boundingBox()
-  expect(box).not.toBeNull()
-  if (!box) return
-  await page.mouse.dblclick(box.x + box.width / 2, box.y + box.height / 2)
+  const activated = await page.evaluate((elementId) => {
+    const w = window as unknown as HookWindow
+    const modeler = w.__ORBITPM_LITE__.modeler
+    const registry = modeler.get('elementRegistry') as { get(id: string): unknown }
+    const directEditing = modeler.get('directEditing') as {
+      activate(element: unknown): boolean
+    }
+    return directEditing.activate(registry.get(elementId))
+  }, id)
+  expect(activated, `direct editing should activate for ${id}`).toBe(true)
   const editor = page.locator('.djs-direct-editing-content')
   await expect(editor).toBeVisible()
   await editor.fill(name)

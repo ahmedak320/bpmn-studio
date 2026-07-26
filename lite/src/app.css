@@ -256,3 +256,218 @@ button {
 .orbitpm-lite-resizer--dragging {
   background: color-mix(in srgb, var(--orbitpm-accent, #157347) 18%, transparent);
 }
+
+/* Read-only process-hierarchy references. Logical spacing keeps the nested
+   metadata and status markers aligned in both LTR and RTL interfaces. */
+.orbitpm-tree-reference-row {
+  color: var(--orbitpm-muted);
+  cursor: pointer;
+}
+
+.orbitpm-tree-reference-row:hover,
+.orbitpm-tree-reference-row:focus-within {
+  color: var(--orbitpm-fg);
+}
+
+.orbitpm-tree-reference-path {
+  min-inline-size: 0;
+  margin-inline-start: 0.35rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  unicode-bidi: plaintext;
+}
+
+.orbitpm-tree-shared-pill,
+.orbitpm-tree-owned-pill,
+.orbitpm-tree-reused-pill {
+  flex: 0 0 auto;
+  margin-inline-start: 0.4rem;
+  padding-block: 0.05rem;
+  padding-inline: 0.38rem;
+  border: 1px solid var(--orbitpm-border);
+  border-radius: 999px;
+  background: var(--orbitpm-hover);
+  color: var(--orbitpm-muted);
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 1.35;
+}
+
+.orbitpm-tree-owned-pill {
+  border-color: #15803d;
+  background: #dcfce7;
+  color: #166534;
+}
+
+.orbitpm-tree-reused-pill {
+  border-color: #7c3aed;
+  background: #f3e8ff;
+  color: #6b21a8;
+}
+
+.orbitpm-tree-cycle-indicator {
+  flex: 0 0 auto;
+  margin-inline-start: 0.3rem;
+  color: var(--orbitpm-muted);
+  font-size: 11px;
+}
+
+.orbitpm-tree-reference-row--cycle {
+  cursor: default;
+}
+
+/* Viewer-interaction lane: the Details pane follows the interface's logical
+   side while bpmn-js remains an explicitly LTR canvas island. */
+.orbitpm-lite-sidepane {
+  border-left: 0;
+  border-inline-start: 1px solid var(--orbitpm-editor-border);
+}
+
+.orbitpm-details-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+}
+
+.orbitpm-details-toggle__glyph {
+  display: inline-block;
+  font-size: 1.15em;
+  line-height: 1;
+}
+
+.orbitpm-editor[dir='rtl'] .orbitpm-details-toggle__glyph {
+  transform: scaleX(-1);
+}
+
+/* Compact, canvas-fixed semantic legend. The component supplies its own dir,
+   so logical positioning and text alignment mirror with the interface while
+   the BPMN coordinate subtree underneath stays LTR. */
+.orbitpm-shape-legend {
+  position: absolute;
+  z-index: 60;
+  inset-block-start: 0.65rem;
+  inset-inline-end: 0.65rem;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  max-height: calc(100% - 1.3rem);
+  color: var(--orbitpm-editor-fg);
+  pointer-events: none;
+}
+
+.orbitpm-shape-legend[dir='rtl'] {
+  align-items: flex-start;
+}
+
+.orbitpm-shape-legend__toggle,
+.orbitpm-shape-legend__close {
+  border: 1px solid var(--orbitpm-editor-border);
+  color: var(--orbitpm-editor-fg);
+  background: var(--orbitpm-editor-panel-bg);
+  box-shadow: 0 3px 14px rgba(0, 0, 0, 0.14);
+  cursor: pointer;
+  pointer-events: auto;
+}
+
+.orbitpm-shape-legend__toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  min-height: 30px;
+  padding: 0.3rem 0.55rem;
+  border-radius: 7px;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.orbitpm-shape-legend__toggle:hover,
+.orbitpm-shape-legend__toggle:focus-visible,
+.orbitpm-shape-legend__close:hover,
+.orbitpm-shape-legend__close:focus-visible {
+  border-color: var(--orbitpm-accent);
+  color: var(--orbitpm-accent);
+}
+
+.orbitpm-shape-legend__panel {
+  width: min(330px, calc(100vw - 2rem));
+  max-height: calc(100% - 38px);
+  margin-block-start: 0.4rem;
+  overflow: auto;
+  border: 1px solid var(--orbitpm-editor-border);
+  border-radius: 9px;
+  background: var(--orbitpm-editor-panel-bg);
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.18);
+  pointer-events: auto;
+}
+
+.orbitpm-shape-legend__header {
+  position: sticky;
+  z-index: 1;
+  inset-block-start: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding: 0.55rem 0.65rem;
+  border-block-end: 1px solid var(--orbitpm-editor-border);
+  background: var(--orbitpm-editor-panel-bg);
+}
+
+.orbitpm-shape-legend__title {
+  margin: 0;
+  font-size: 13px;
+}
+
+.orbitpm-shape-legend__close {
+  display: inline-grid;
+  place-items: center;
+  inline-size: 26px;
+  block-size: 26px;
+  padding: 0;
+  border-radius: 6px;
+  font-size: 18px;
+  line-height: 1;
+}
+
+.orbitpm-shape-legend__items {
+  display: grid;
+  gap: 0.2rem;
+  margin: 0;
+  padding: 0.4rem;
+  list-style: none;
+}
+
+.orbitpm-shape-legend__item {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.55rem;
+  padding: 0.35rem;
+  border-radius: 6px;
+}
+
+.orbitpm-shape-legend__item:hover {
+  background: var(--orbitpm-hover);
+}
+
+.orbitpm-shape-legend__icon {
+  display: inline-flex;
+  flex: 0 0 24px;
+}
+
+.orbitpm-shape-legend__copy {
+  display: grid;
+  min-inline-size: 0;
+  gap: 0.1rem;
+  text-align: start;
+}
+
+.orbitpm-shape-legend__label {
+  font-size: 12px;
+}
+
+.orbitpm-shape-legend__explanation {
+  color: var(--orbitpm-editor-muted-fg);
+  font-size: 11px;
+  line-height: 1.35;
+}

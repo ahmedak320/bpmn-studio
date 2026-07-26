@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import type { CallLLM, LlmMessage } from '@app/gen'
 import {
+  auditArabicCoverage,
   collectMissingTranslations,
   translateDiagram,
   translateDiagramWithTexts,
@@ -131,13 +132,17 @@ function payloadOf(call: RecordedCall): Record<string, string> {
   return JSON.parse(content.slice(start, end + 1)) as Record<string, string>
 }
 
-/** Echo-translators: valid per-direction responses derived from the payload. */
+/** Valid Arabic responses derived from the payload. */
 const echoAr = (call: RecordedCall): string =>
   JSON.stringify(
     Object.fromEntries(Object.entries(payloadOf(call)).map(([id, text]) => [id, `ترجمة ${text}`]))
   )
+
+/** Valid English responses derived from an Arabic payload. */
 const echoEn = (call: RecordedCall): string =>
-  JSON.stringify(Object.fromEntries(Object.keys(payloadOf(call)).map((id) => [id, `EN ${id}`])))
+  JSON.stringify(
+    Object.fromEntries(Object.keys(payloadOf(call)).map((id) => [id, `English ${id}`]))
+  )
 
 // --- element factories -----------------------------------------------------
 
@@ -160,7 +165,7 @@ function taskMissingEn(id: string, ar: string): FakeElement {
 // === collectMissingTranslations ============================================
 
 describe('collectMissingTranslations', () => {
-  it('produces both directions from one mixed diagram, skipping both-stored and unnamed elements', () => {
+  it('collects missing labels in both directions from usable sources', () => {
     const root = processRoot({ 'orbitpm:activeLang': 'en' })
     const missingAr = taskMissingAr('Task_A', 'Order')
     const missingEn = taskMissingEn('Task_B', 'طلب')
@@ -172,8 +177,8 @@ describe('collectMissingTranslations', () => {
         $attrs: { 'orbitpm:nameEn': 'Ship', 'orbitpm:nameAr': 'شحن' }
       }
     }
-    // Neither attr stored — visible name seeds the ACTIVE (en) side at apply,
-    // so collect emits ONE entry, for the other (ar) side.
+    // Neither attr stored: visible English is a valid source and is seeded only
+    // later, during apply.
     const bothMissing: FakeElement = {
       id: 'Task_D',
       businessObject: { $type: 'bpmn:Task', name: 'Plain' }
@@ -191,10 +196,7 @@ describe('collectMissingTranslations', () => {
     ])
   })
 
-  it('uses the stored other-side value (not the visible name) as the source text', () => {
-    // Hand-edited while ar was active: visible name diverged from the stored
-    // ar attr. The entry's source is the STORED value — the visible-name
-    // reconciliation is the toggle's write-back job, not translate's.
+  it('uses the authoritative stored Arabic for an English request', () => {
     const root = processRoot({ 'orbitpm:activeLang': 'ar' })
     const el: FakeElement = {
       id: 'Task_A',
@@ -207,7 +209,7 @@ describe('collectMissingTranslations', () => {
     ])
   })
 
-  it('targets en for a both-missing element when the stored active language is ar', () => {
+  it('infers an Arabic visible label as the source for English', () => {
     const root = processRoot({ 'orbitpm:activeLang': 'ar' })
     const el: FakeElement = { id: 'Task_A', businessObject: { $type: 'bpmn:Task', name: 'مهمة' } }
     const { modeler } = makeModeler({ root, elements: [el] })
@@ -217,20 +219,19 @@ describe('collectMissingTranslations', () => {
     ])
   })
 
-  it('detects the active language from labels when orbitpm:activeLang is absent (Arabic majority)', () => {
+  it('infers Arabic-to-English work from Arabic-majority labels', () => {
     const root = processRoot() // no activeLang stored
     const elA: FakeElement = { id: 'Task_A', businessObject: { $type: 'bpmn:Task', name: 'مهمة أولى' } }
     const elB: FakeElement = { id: 'Task_B', businessObject: { $type: 'bpmn:Task', name: 'مهمة ثانية' } }
     const { modeler } = makeModeler({ root, elements: [elA, elB] })
 
-    // Majority-Arabic labels ⇒ active 'ar' ⇒ both-missing elements target 'en'.
     expect(collectMissingTranslations(modeler)).toEqual([
       { id: 'Task_A', text: 'مهمة أولى', target: 'en' },
       { id: 'Task_B', text: 'مهمة ثانية', target: 'en' }
     ])
   })
 
-  it('detects en from majority-English labels when orbitpm:activeLang is absent', () => {
+  it('uses non-Arabic visible text when stored English is absent', () => {
     const root = processRoot()
     const el: FakeElement = { id: 'Task_A', businessObject: { $type: 'bpmn:Task', name: 'Review order' } }
     const { modeler } = makeModeler({ root, elements: [el] })
@@ -312,7 +313,7 @@ describe('collectMissingTranslations', () => {
     ])
   })
 
-  it('resolves the collaboration root to the first participant processRef (id from the business object)', () => {
+  it('requests English for an Arabic-only collaboration processRef', () => {
     const processRef: FakeBusinessObject = {
       $type: 'bpmn:Process',
       id: 'Process_9',
@@ -358,19 +359,139 @@ describe('collectMissingTranslations', () => {
     expect(root.businessObject?.$attrs).toEqual({})
   })
 
-  it('never emits entries with empty source text (whitespace-only names and attrs)', () => {
+  it('never emits an empty source but can use a nonblank Arabic visible label', () => {
     const root = processRoot({ 'orbitpm:activeLang': 'en' })
     const blankName: FakeElement = {
       id: 'Task_A',
       businessObject: { $type: 'bpmn:Task', name: '   ' }
     }
-    const blankSource: FakeElement = {
+    const ArabicVisibleWithBlankAr: FakeElement = {
       id: 'Task_B',
-      businessObject: { $type: 'bpmn:Task', name: 'X', $attrs: { 'orbitpm:nameAr': '   ' } }
+      businessObject: { $type: 'bpmn:Task', name: 'مهمة', $attrs: { 'orbitpm:nameAr': '   ' } }
     }
-    const { modeler } = makeModeler({ root, elements: [blankName, blankSource] })
+    const { modeler } = makeModeler({ root, elements: [blankName, ArabicVisibleWithBlankAr] })
 
-    expect(collectMissingTranslations(modeler)).toEqual([])
+    expect(collectMissingTranslations(modeler)).toEqual([
+      { id: 'Task_B', text: 'مهمة', target: 'en' }
+    ])
+  })
+
+  it('treats blank Arabic as missing and trims the stored English source', () => {
+    const el: FakeElement = {
+      id: 'Task_A',
+      businessObject: {
+        $type: 'bpmn:Task',
+        name: 'stale',
+        $attrs: { 'orbitpm:nameEn': '  Review order  ', 'orbitpm:nameAr': '   ' }
+      }
+    }
+    const { modeler } = makeModeler({ root: processRoot(), elements: [el] })
+
+    expect(collectMissingTranslations(modeler)).toEqual([
+      { id: 'Task_A', text: 'Review order', target: 'ar' }
+    ])
+  })
+})
+
+// === auditArabicCoverage ===================================================
+
+describe('auditArabicCoverage', () => {
+  it('partitions bilingual, actionable missing-Arabic, and omitted labels', () => {
+    const bilingual: FakeElement = {
+      id: 'Task_Bilingual',
+      businessObject: {
+        $type: 'bpmn:Task',
+        name: 'Ready',
+        $attrs: { 'orbitpm:nameEn': 'Ready', 'orbitpm:nameAr': 'جاهز' }
+      }
+    }
+    const visibleEnglish: FakeElement = {
+      id: 'Task_Visible',
+      businessObject: { $type: 'bpmn:Task', name: 'Visible English' }
+    }
+    const explicitBlank: FakeElement = {
+      id: 'Task_Blank',
+      businessObject: { $type: 'bpmn:Task', name: '   ' }
+    }
+    const missingId: FakeElement = {
+      id: '',
+      businessObject: {
+        $type: 'bpmn:Task',
+        name: 'No round trip',
+        $attrs: { 'orbitpm:nameEn': 'No round trip' }
+      }
+    }
+    const unnamed: FakeElement = {
+      id: 'Task_Unnamed',
+      businessObject: { $type: 'bpmn:Task' }
+    }
+    const { modeler } = makeModeler({
+      root: processRoot(),
+      elements: [
+        bilingual,
+        taskMissingAr('Task_Missing', 'Order'),
+        visibleEnglish,
+        taskMissingEn('Task_ArOnly', 'طلب'),
+        explicitBlank,
+        missingId,
+        unnamed
+      ]
+    })
+
+    expect(auditArabicCoverage(modeler)).toEqual({
+      total: 6,
+      bilingual: 1,
+      missingArabic: 2,
+      missingEnglish: 1,
+      omitted: 2,
+      complete: false
+    })
+  })
+
+  it('is complete only when every candidate has usable English and Arabic', () => {
+    const both: FakeElement = {
+      id: 'Task_A',
+      businessObject: {
+        $type: 'bpmn:Task',
+        name: 'Order',
+        $attrs: { 'orbitpm:nameEn': 'Order', 'orbitpm:nameAr': 'طلب' }
+      }
+    }
+    const { modeler } = makeModeler({ root: processRoot(), elements: [both] })
+
+    expect(auditArabicCoverage(modeler)).toEqual({
+      total: 1,
+      bilingual: 1,
+      missingArabic: 0,
+      missingEnglish: 0,
+      omitted: 0,
+      complete: true
+    })
+  })
+
+  it('does not call an empty or Arabic-only diagram complete', () => {
+    const empty = makeModeler({ root: processRoot(), elements: [] }).modeler
+    const arOnly = makeModeler({
+      root: processRoot(),
+      elements: [taskMissingEn('Task_A', 'طلب')]
+    }).modeler
+
+    expect(auditArabicCoverage(empty)).toEqual({
+      total: 0,
+      bilingual: 0,
+      missingArabic: 0,
+      missingEnglish: 0,
+      omitted: 0,
+      complete: false
+    })
+    expect(auditArabicCoverage(arOnly)).toEqual({
+      total: 1,
+      bilingual: 0,
+      missingArabic: 0,
+      missingEnglish: 1,
+      omitted: 0,
+      complete: false
+    })
   })
 })
 
@@ -398,18 +519,15 @@ describe('translateDiagram', () => {
       JSON.stringify({ Task_A: 'Order', Task_B: 'Approve' })
     )
     expect(calls[0].options).toEqual({ maxTokens: TRANSLATE_MAX_TOKENS })
-    // One updateProperties per element; visible names untouched; no activeLang
-    // write since the flag is already stored.
     expect(rec).toEqual([
       { element: elA, properties: { 'orbitpm:nameAr': 'طلب' } },
       { element: elB, properties: { 'orbitpm:nameAr': 'موافقة' } }
     ])
-    expect(elA.businessObject?.name).toBe('Order')
     expect(elA.businessObject?.$attrs).toEqual({ 'orbitpm:nameEn': 'Order', 'orbitpm:nameAr': 'طلب' })
   })
 
-  it('bundles the write-back seed and the translation into ONE updateProperties for a both-missing element', async () => {
-    const root = processRoot() // activeLang absent — will be stamped from detection
+  it('bundles an adopted visible-English seed and Arabic in one update', async () => {
+    const root = processRoot()
     const el: FakeElement = {
       id: 'Task_P',
       businessObject: { $type: 'bpmn:Task', name: 'Plain Name' }
@@ -420,19 +538,15 @@ describe('translateDiagram', () => {
     const outcome = await translateDiagram(modeler, callLLM)
 
     expect(outcome).toEqual({ translated: 1, skipped: 0, total: 1 })
-    // Exact shapes: seed + translation in one element write, then the
-    // detected activeLang stamped on the root as the separate final write.
     expect(rec).toEqual([
       {
         element: el,
         properties: { 'orbitpm:nameEn': 'Plain Name', 'orbitpm:nameAr': 'اسم عادي' }
-      },
-      { element: root, properties: { 'orbitpm:activeLang': 'en' } }
+      }
     ])
-    expect(el.businessObject?.name).toBe('Plain Name') // visible name never changed
   })
 
-  it('seeds the ar side and stamps activeLang ar for an Arabic-authored diagram (absent flag)', async () => {
+  it('translates Arabic-authored content to English and seeds its Arabic side', async () => {
     const root = processRoot()
     const el: FakeElement = { id: 'Task_Q', businessObject: { $type: 'bpmn:Task', name: 'مهمة' } }
     const { modeler, rec } = makeModeler({ root, elements: [el] })
@@ -441,10 +555,16 @@ describe('translateDiagram', () => {
     const outcome = await translateDiagram(modeler, callLLM)
 
     expect(outcome).toEqual({ translated: 1, skipped: 0, total: 1 })
-    expect(calls[0].messages[0].content).toContain('Target language for every value in this request: English.')
+    expect(calls).toHaveLength(1)
+    expect(calls[0].messages[0].content).toContain('request: English')
     expect(rec).toEqual([
-      { element: el, properties: { 'orbitpm:nameAr': 'مهمة', 'orbitpm:nameEn': 'Task' } },
-      { element: root, properties: { 'orbitpm:activeLang': 'ar' } }
+      {
+        element: el,
+        properties: {
+          'orbitpm:nameAr': 'مهمة',
+          'orbitpm:nameEn': 'Task'
+        }
+      }
     ])
   })
 
@@ -572,17 +692,22 @@ describe('translateDiagram', () => {
     expect(rec).toEqual([{ element: el, properties: { 'orbitpm:nameAr': 'DMT HUB' } }])
   })
 
-  it('rejects an en-target translation that contains Arabic codepoints', async () => {
+  it('sends and applies an Arabic-to-English provider request', async () => {
+    const el = taskMissingEn('Task_B', 'طلب')
     const { modeler, rec } = makeModeler({
       root: processRoot({ 'orbitpm:activeLang': 'ar' }),
-      elements: [taskMissingEn('Task_B', 'طلب')]
+      elements: [el]
     })
-    const { callLLM } = makeCallLLM(['{"Task_B":"طلب Request"}'])
+    const { callLLM, calls } = makeCallLLM(['{"Task_B":"Request"}'])
 
     const outcome = await translateDiagram(modeler, callLLM)
 
-    expect(outcome).toEqual({ translated: 0, skipped: 1, total: 1 })
-    expect(rec).toEqual([])
+    expect(outcome).toEqual({ translated: 1, skipped: 0, total: 1 })
+    expect(calls).toHaveLength(1)
+    expect(calls[0].messages[0].content).toContain('request: English')
+    expect(rec).toEqual([
+      { element: el, properties: { 'orbitpm:nameEn': 'Request' } }
+    ])
   })
 
   it('rejects non-string and empty response values', async () => {
@@ -611,7 +736,7 @@ describe('translateDiagram', () => {
     expect(rec).toEqual([{ element: el, properties: { 'orbitpm:nameAr': 'طلب' } }])
   })
 
-  it('chunks by direction and size: chunkSize 2 over 2 en + 3 ar entries makes 3 single-direction calls', async () => {
+  it('chunks each translation direction independently', async () => {
     const en1 = taskMissingEn('En_1', 'طلب')
     const en2 = taskMissingEn('En_2', 'موافقة')
     const ar1 = taskMissingAr('Ar_1', 'Ship')
@@ -619,23 +744,22 @@ describe('translateDiagram', () => {
     const ar3 = taskMissingAr('Ar_3', 'Archive')
     const { modeler, rec } = makeModeler({
       root: processRoot({ 'orbitpm:activeLang': 'en' }),
-      // Interleaved registry order — grouping is by target, not adjacency.
       elements: [ar1, en1, ar2, en2, ar3]
     })
-    const { callLLM, calls } = makeCallLLM([echoEn, echoAr, echoAr])
+    const { callLLM, calls } = makeCallLLM([echoAr, echoAr, echoEn])
 
     const outcome = await translateDiagram(modeler, callLLM, { chunkSize: 2 })
 
     expect(outcome).toEqual({ translated: 5, skipped: 0, total: 5 })
     expect(calls).toHaveLength(3)
-    // en group first (one chunk), then the ar group split 2 + 1.
-    expect(calls[0].messages[0].content).toContain('request: English')
-    expect(Object.keys(payloadOf(calls[0]))).toEqual(['En_1', 'En_2'])
-    expect(calls[1].messages[0].content).toContain('request: Arabic')
-    expect(Object.keys(payloadOf(calls[1]))).toEqual(['Ar_1', 'Ar_2'])
-    expect(calls[2].messages[0].content).toContain('request: Arabic')
-    expect(Object.keys(payloadOf(calls[2]))).toEqual(['Ar_3'])
-    expect(rec).toHaveLength(5) // one write per element, none dropped
+    expect(calls.slice(0, 2).every((call) =>
+      call.messages[0].content.includes('request: Arabic')
+    )).toBe(true)
+    expect(calls[2].messages[0].content).toContain('request: English')
+    expect(Object.keys(payloadOf(calls[0]))).toEqual(['Ar_1', 'Ar_2'])
+    expect(Object.keys(payloadOf(calls[1]))).toEqual(['Ar_3'])
+    expect(Object.keys(payloadOf(calls[2]))).toEqual(['En_1', 'En_2'])
+    expect(rec).toHaveLength(5)
   })
 
   it('defaults to 60 entries per chunk', async () => {
@@ -654,18 +778,18 @@ describe('translateDiagram', () => {
     expect(Object.keys(payloadOf(calls[1]))).toHaveLength(1)
   })
 
-  it('never writes orbitpm:activeLang when it is already stored', async () => {
-    const root = processRoot({ 'orbitpm:activeLang': 'ar' })
-    const { modeler, rec } = makeModeler({ root, elements: [taskMissingEn('Task_B', 'طلب')] })
-    const { callLLM } = makeCallLLM(['{"Task_B":"Request"}'])
+  it('never writes activeLang because App owns post-translation projection', async () => {
+    const root = processRoot()
+    const { modeler, rec } = makeModeler({ root, elements: [taskMissingAr('Task_B', 'Request')] })
+    const { callLLM } = makeCallLLM(['{"Task_B":"طلب"}'])
 
     await translateDiagram(modeler, callLLM)
 
     expect(rec.some((r) => 'orbitpm:activeLang' in r.properties)).toBe(false)
-    expect(root.businessObject?.$attrs?.['orbitpm:activeLang']).toBe('ar')
+    expect(root.businessObject?.$attrs).toEqual({})
   })
 
-  it('handles an empty diagram: no LLM calls, zero outcome, absent activeLang stamped with the default', async () => {
+  it('handles an empty diagram with no provider call or metadata write', async () => {
     const root = processRoot()
     const { modeler, rec } = makeModeler({ root, elements: [] })
     const { callLLM, calls } = makeCallLLM([]) // any call would throw
@@ -674,43 +798,35 @@ describe('translateDiagram', () => {
 
     expect(outcome).toEqual({ translated: 0, skipped: 0, total: 0 })
     expect(calls).toHaveLength(0)
-    // No labels to detect from ⇒ 'en', the same default the toggle assumes for
-    // an absent flag — stamping it is a no-op semantically, and mirrors the
-    // toggle's own unconditional root write.
-    expect(rec).toEqual([{ element: root, properties: { 'orbitpm:activeLang': 'en' } }])
+    expect(rec).toEqual([])
   })
 
-  it('writes through a wrapped element for a collaboration processRef (bag and stamp share the wrapper)', async () => {
+  it('writes Arabic through a wrapper for an English collaboration processRef', async () => {
     const processRef: FakeBusinessObject = {
       $type: 'bpmn:Process',
       id: 'Process_9',
-      name: 'عملية رئيسية',
-      $attrs: { 'orbitpm:nameAr': 'عملية رئيسية' }
+      name: 'Main Process',
+      $attrs: { 'orbitpm:nameEn': 'Main Process' }
     }
     const root: FakeElement = {
       id: 'Collab_1',
       businessObject: { $type: 'bpmn:Collaboration', participants: [{ processRef }] }
     }
     const { modeler, rec } = makeModeler({ root, elements: [] })
-    const { callLLM } = makeCallLLM(['{"Process_9":"Main Process"}'])
+    const { callLLM } = makeCallLLM(['{"Process_9":"عملية رئيسية"}'])
 
     const outcome = await translateDiagram(modeler, callLLM)
 
     expect(outcome).toEqual({ translated: 1, skipped: 0, total: 1 })
-    expect(rec).toHaveLength(2)
+    expect(rec).toHaveLength(1)
     // Never hand the bare business object to updateProperties (bpmn-js's
     // UpdatePropertiesHandler reads element.businessObject with no fallback):
-    // both the translation write and the activeLang stamp go through the SAME
-    // wrapper object.
     expect(rec[0].element).not.toBe(processRef)
     expect((rec[0].element as { businessObject?: unknown }).businessObject).toBe(processRef)
-    expect(rec[1].element).toBe(rec[0].element)
-    expect(rec[0].properties).toEqual({ 'orbitpm:nameEn': 'Main Process' })
-    expect(rec[1].properties).toEqual({ 'orbitpm:activeLang': 'ar' }) // detected from the Arabic label
+    expect(rec[0].properties).toEqual({ 'orbitpm:nameAr': 'عملية رئيسية' })
     expect(processRef.$attrs).toEqual({
-      'orbitpm:nameAr': 'عملية رئيسية',
       'orbitpm:nameEn': 'Main Process',
-      'orbitpm:activeLang': 'ar'
+      'orbitpm:nameAr': 'عملية رئيسية'
     })
   })
 
@@ -751,13 +867,56 @@ describe('translateDiagram', () => {
     ]
     const { modeler } = makeModeler({ root, elements })
     const collected = collectMissingTranslations(modeler)
-    const { callLLM } = makeCallLLM([echoEn, echoAr])
+    const { callLLM } = makeCallLLM([echoAr, echoEn])
 
     const outcome = await translateDiagram(modeler, callLLM)
 
     expect(collected).toHaveLength(3)
     expect(outcome.total).toBe(3)
     expect(outcome.translated + outcome.skipped).toBe(outcome.total)
+  })
+
+  it('preserves imported Arabic and makes no provider call when coverage is complete', async () => {
+    const el: FakeElement = {
+      id: 'Task_A',
+      businessObject: {
+        $type: 'bpmn:Task',
+        name: 'stale visible English',
+        $attrs: { 'orbitpm:nameEn': 'Order', 'orbitpm:nameAr': 'طلب' }
+      }
+    }
+    const { modeler, rec } = makeModeler({ root: processRoot(), elements: [el] })
+    const { callLLM, calls } = makeCallLLM([])
+
+    expect(auditArabicCoverage(modeler).complete).toBe(true)
+    expect(await translateDiagram(modeler, callLLM)).toEqual({
+      translated: 0,
+      skipped: 0,
+      total: 0
+    })
+    expect(calls).toEqual([])
+    expect(rec).toEqual([])
+    expect(el.businessObject?.$attrs?.['orbitpm:nameAr']).toBe('طلب')
+  })
+
+  it('does not overwrite Arabic imported while the provider request is in flight', async () => {
+    const el = taskMissingAr('Task_A', 'Order')
+    const { modeler, rec } = makeModeler({ root: processRoot(), elements: [el] })
+    const callLLM: CallLLM = async () => {
+      el.businessObject!.$attrs = {
+        ...(el.businessObject!.$attrs ?? {}),
+        'orbitpm:nameAr': 'عربي مستورد'
+      }
+      return { Task_A: 'عربي مولد' }
+    }
+
+    expect(await translateDiagram(modeler, callLLM)).toEqual({
+      translated: 0,
+      skipped: 1,
+      total: 1
+    })
+    expect(rec).toEqual([])
+    expect(el.businessObject?.$attrs?.['orbitpm:nameAr']).toBe('عربي مستورد')
   })
 })
 
@@ -784,38 +943,33 @@ describe('translateDiagramWithTexts', () => {
     return { translateTexts, calls }
   }
 
-  it('groups per direction (en first, then ar; source = other side) and applies positionally', async () => {
+  it('requests both required directions and applies results positionally', async () => {
     const en1 = taskMissingEn('En_1', 'طلب')
     const ar1 = taskMissingAr('Ar_1', 'Ship')
     const ar2 = taskMissingAr('Ar_2', 'Review')
     const { modeler, rec } = makeModeler({
       root: processRoot({ 'orbitpm:activeLang': 'en' }),
-      // Interleaved registry order — grouping is by target, not adjacency.
       elements: [ar1, en1, ar2]
     })
     const { translateTexts, calls } = makeTranslateTexts((texts, to) =>
-      texts.map((_, i) => (to === 'en' ? `English ${i}` : `ترجمة ${i}`))
+      texts.map((_, i) => to === 'ar' ? `ترجمة ${i}` : `Translation ${i}`)
     )
 
     const outcome = await translateDiagramWithTexts(modeler, translateTexts)
 
     expect(outcome).toEqual({ translated: 3, skipped: 0, total: 3 })
-    // ONE call per non-empty direction: en group first, then ar; from is
-    // always the opposite language.
     expect(calls).toEqual([
-      { texts: ['طلب'], from: 'ar', to: 'en' },
-      { texts: ['Ship', 'Review'], from: 'en', to: 'ar' }
+      { texts: ['Ship', 'Review'], from: 'en', to: 'ar' },
+      { texts: ['طلب'], from: 'ar', to: 'en' }
     ])
-    // One updateProperties per element, registry order, visible names untouched.
     expect(rec).toEqual([
       { element: ar1, properties: { 'orbitpm:nameAr': 'ترجمة 0' } },
-      { element: en1, properties: { 'orbitpm:nameEn': 'English 0' } },
+      { element: en1, properties: { 'orbitpm:nameEn': 'Translation 0' } },
       { element: ar2, properties: { 'orbitpm:nameAr': 'ترجمة 1' } }
     ])
-    expect(ar1.businessObject?.name).toBe('Ship')
   })
 
-  it('skips the call entirely for a direction with no entries', async () => {
+  it('uses exactly one English-to-Arabic call when work exists', async () => {
     const { modeler } = makeModeler({
       root: processRoot({ 'orbitpm:activeLang': 'en' }),
       elements: [taskMissingAr('Ar_1', 'Ship')]
@@ -826,6 +980,7 @@ describe('translateDiagramWithTexts', () => {
 
     expect(outcome).toEqual({ translated: 1, skipped: 0, total: 1 })
     expect(calls).toHaveLength(1)
+    expect(calls[0].from).toBe('en')
     expect(calls[0].to).toBe('ar')
   })
 
@@ -879,8 +1034,8 @@ describe('translateDiagramWithTexts', () => {
     expect(rec).toEqual([{ element: el, properties: { 'orbitpm:nameEn': 'Plain' } }])
   })
 
-  it('bundles seed + translation into ONE write and stamps the detected activeLang', async () => {
-    const root = processRoot() // flag absent — stamped at apply
+  it('bundles the English seed and Arabic translation into one write', async () => {
+    const root = processRoot()
     const el: FakeElement = { id: 'Task_P', businessObject: { $type: 'bpmn:Task', name: 'Plain Name' } }
     const { modeler, rec } = makeModeler({ root, elements: [el] })
     const { translateTexts } = makeTranslateTexts((texts) => texts.map(() => 'اسم عادي'))
@@ -889,22 +1044,35 @@ describe('translateDiagramWithTexts', () => {
 
     expect(outcome).toEqual({ translated: 1, skipped: 0, total: 1 })
     expect(rec).toEqual([
-      { element: el, properties: { 'orbitpm:nameEn': 'Plain Name', 'orbitpm:nameAr': 'اسم عادي' } },
-      { element: root, properties: { 'orbitpm:activeLang': 'en' } }
+      { element: el, properties: { 'orbitpm:nameEn': 'Plain Name', 'orbitpm:nameAr': 'اسم عادي' } }
     ])
   })
 
-  it('never re-stamps a stored activeLang', async () => {
-    const root = processRoot({ 'orbitpm:activeLang': 'ar' })
-    const { modeler, rec } = makeModeler({ root, elements: [taskMissingEn('Task_B', 'طلب')] })
-    const { translateTexts } = makeTranslateTexts((texts) => texts.map(() => 'Request'))
+  it('does not call the free translator when Arabic coverage is complete', async () => {
+    const complete: FakeElement = {
+      id: 'Task_B',
+      businessObject: {
+        $type: 'bpmn:Task',
+        name: 'Request',
+        $attrs: { 'orbitpm:nameEn': 'Request', 'orbitpm:nameAr': 'طلب' }
+      }
+    }
+    const { modeler, rec } = makeModeler({ root: processRoot(), elements: [complete] })
+    const { translateTexts, calls } = makeTranslateTexts(() => {
+      throw new Error('must not be called')
+    })
 
-    await translateDiagramWithTexts(modeler, translateTexts)
+    expect(await translateDiagramWithTexts(modeler, translateTexts)).toEqual({
+      translated: 0,
+      skipped: 0,
+      total: 0
+    })
 
-    expect(rec.some((r) => 'orbitpm:activeLang' in r.properties)).toBe(false)
+    expect(calls).toEqual([])
+    expect(rec).toEqual([])
   })
 
-  it('handles an empty diagram: no translateTexts calls, zero outcome, default stamp', async () => {
+  it('handles an empty diagram without a translator call or metadata write', async () => {
     const root = processRoot()
     const { modeler, rec } = makeModeler({ root, elements: [] })
     const { translateTexts, calls } = makeTranslateTexts(() => {
@@ -915,19 +1083,16 @@ describe('translateDiagramWithTexts', () => {
 
     expect(outcome).toEqual({ translated: 0, skipped: 0, total: 0 })
     expect(calls).toHaveLength(0)
-    expect(rec).toEqual([{ element: root, properties: { 'orbitpm:activeLang': 'en' } }])
+    expect(rec).toEqual([])
   })
 
   it('propagates a translateTexts throw with NOTHING half-applied', async () => {
     const { modeler, rec } = makeModeler({
       root: processRoot({ 'orbitpm:activeLang': 'en' }),
-      elements: [taskMissingEn('En_1', 'طلب'), taskMissingAr('Ar_1', 'Ship')]
+      elements: [taskMissingAr('Ar_1', 'Ship'), taskMissingAr('Ar_2', 'Review')]
     })
-    // The en group resolves fine; the ar group throws — the whole run must
-    // reject with zero writes (results are gathered before any apply).
-    const translateTexts: TranslateTextsFn = async (texts, _from, to) => {
-      if (to === 'ar') throw new Error('free service down')
-      return texts.map(() => 'Request')
+    const translateTexts: TranslateTextsFn = async () => {
+      throw new Error('free service down')
     }
 
     await expect(translateDiagramWithTexts(modeler, translateTexts)).rejects.toThrow(
