@@ -7,11 +7,7 @@ import { SelectionLinkButton, type SelectionLinkModeler } from './links/Selectio
 import { createNewDiagramXml } from '@/editor/newDiagram'
 import { triggerDownload } from '@/editor/exportImage'
 import { usePromptText } from '@/common/prompt'
-import {
-  buildProcessIndex,
-  listUnresolvedCalledElements,
-  type ProcessIndex
-} from '@/core/processIndex'
+import { listUnresolvedCalledElements, type ProcessIndex } from '@/core/processIndex'
 import { dedupeSlug } from '@/core/slug'
 // --- lite-local ---
 import {
@@ -22,12 +18,8 @@ import {
   sanitizeFolderName
 } from './editor/newProcessDoc'
 import {
-  snapshotWorkspace,
-  readFileAt,
-  writeFileAt,
   createFolderAt,
   createBpmnFileUnique,
-  deleteAt,
   renameAt,
   moveAt,
   countDirEntries,
@@ -45,12 +37,29 @@ import {
   pickWorkspace,
   rememberWorkspace,
   loadRememberedWorkspace,
-  forgetWorkspace,
   ensurePermission,
   classifyPickerError,
   type PickerErrorCode
 } from './fs/workspaceHandle'
 import { WorkspacePickerLite } from './workspace/WorkspacePickerLite'
+import { BackupImportDialog } from './workspace/BackupImportDialog'
+import { HistoryDialog } from './workspace/HistoryDialog'
+import { snapshotAdapterWorkspace } from './workspace/adapterSnapshot'
+import {
+  DirectoryWorkspaceAdapter,
+  OpfsWorkspaceAdapter,
+  SingleFileWorkspaceAdapter,
+  applyWorkspaceBackupImport,
+  inspectWorkspaceBackup,
+  opfsSupported,
+  type FileSnapshot,
+  type WorkspaceAdapter,
+  type WorkspaceBackupCollisionDecision,
+  type WorkspaceBackupImportPlan,
+  type WorkspaceMode
+} from './workspace/adapters'
+import { PortableHistoryManager } from './workspace/history'
+import { LiveWorkspaceIndex } from './workspace/liveWorkspaceIndex'
 import { FolderTreeLite } from './workspace/FolderTreeLite'
 import { buildProcessHierarchy } from './workspace/processHierarchy'
 import { EmptyWorkspaceCard } from './workspace/EmptyWorkspaceCard'
@@ -65,10 +74,7 @@ import {
 } from './editor/langToggle'
 import { autoSizeAll } from './editor/autoSize'
 import { makeBrowserCallLLM } from './ai/browserAi'
-import {
-  getProviderSelection,
-  type ProviderSelection
-} from './ai/providerSelection'
+import { getProviderSelection, type ProviderSelection } from './ai/providerSelection'
 import { getLiteProvider } from './ai/providersLite'
 import { getKey, hasKey } from './ai/keys'
 import {
@@ -96,9 +102,15 @@ import {
 import { SettingsDialogLite } from './settings/SettingsDialogLite'
 import { ICON_DATA_URI } from './branding/icon'
 // --- W2B: file mgmt / search / catalog / navigation / print ---
-import { buildCatalog, sortCatalog, filterCatalog, type CatalogSortKey, type SortDir } from './workspace/catalog'
+import {
+  buildCatalog,
+  sortCatalog,
+  filterCatalog,
+  type CatalogSortKey,
+  type SortDir
+} from './workspace/catalog'
 import { CatalogView } from './workspace/CatalogView'
-import { buildSearchIndex, searchWorkspace, countHits } from './workspace/searchIndex'
+import { searchWorkspace, countHits } from './workspace/searchIndex'
 import { SearchResults } from './workspace/SearchResults'
 import { collectWorkspaceUnresolved, type WorkspaceUnresolvedLink } from './workspace/unresolved'
 import { UnresolvedLinksPanel } from './workspace/UnresolvedLinksPanel'
@@ -118,7 +130,7 @@ import { ConfirmDialog } from './workspace/ConfirmDialog'
 import { UnsavedSwitchDialog } from './workspace/UnsavedSwitchDialog'
 import { createMutex } from './workspace/mutex'
 import { partitionDirtyTabs } from './workspace/dirtySave'
-import { createRefreshGuard, canCommitToWorkspace, commitIfCurrent } from './workspace/workspaceSession'
+import { canCommitToWorkspace, commitIfCurrent } from './workspace/workspaceSession'
 import { MoveDialog } from './workspace/MoveDialog'
 import { PrintButton } from './workspace/PrintButton'
 import { PrintView, type PrintJob } from './workspace/PrintView'
@@ -163,12 +175,60 @@ import {
 } from './library/libraryManifest'
 import { readLibraryZipAsync, type LibraryImportResult } from './library/zipImport'
 import { convertAmlToBpmnFiles, looksLikeAml } from './library/apcImport'
+import {
+  evaluateValidationPolicy,
+  getRuntimeValidationAdapters,
+  validateBpmnXml,
+  validateUnknownExtensionPreservation,
+  type ValidationAction,
+  type ValidationSummary
+} from './validation'
+import { layoutBpmnValidated } from './generation'
 import { t, tPlural, type Key } from './i18n'
 import { useLang, setLang } from './i18n/useLang'
 import './print.css'
 
 type Phase = 'loading' | 'need-open' | 'need-reconnect' | 'ready'
-type Mode = 'directory' | 'fallback'
+type Mode = WorkspaceMode
+
+function isMultiFileMode(mode: Mode): boolean {
+  return mode === 'directory' || mode === 'opfs'
+}
+
+let workspaceInstanceSequence = 0
+
+function workspaceInstanceId(kind: WorkspaceMode, name: string): string {
+  workspaceInstanceSequence += 1
+  return `${kind}:${encodeURIComponent(name || 'workspace')}:${workspaceInstanceSequence}`
+}
+
+function directoryWorkspaceId(handle: FileSystemDirectoryHandle): string {
+  return workspaceInstanceId('directory', handle.name)
+}
+
+function fileMetaFromSnapshot(snapshot: FileSnapshot): FileMeta {
+  return {
+    relPath: snapshot.path,
+    xml: new TextDecoder().decode(snapshot.bytes),
+    lastModified: snapshot.modifiedAt,
+    size: snapshot.size
+  }
+}
+
+function downloadBlob(name: string, blob: Blob): void {
+  const url = URL.createObjectURL(blob)
+  try {
+    const anchor = document.createElement('a')
+    anchor.href = url
+    anchor.download = name
+    anchor.style.display = 'none'
+    document.body.append(anchor)
+    anchor.click()
+    anchor.remove()
+  } finally {
+    URL.revokeObjectURL(url)
+  }
+}
 
 interface Tab {
   key: string
@@ -179,6 +239,10 @@ interface Tab {
    *  still matches the live generation, so a tab from a previous folder can
    *  never write through the new root handle after a switch (Codex CRITICAL-1). */
   gen: number
+}
+
+function liveIndexPath(tab: Tab): string {
+  return tab.relPath ?? `.orbitpm/live/${encodeURIComponent(tab.key)}/${tab.title}`
 }
 
 interface DeleteState {
@@ -214,7 +278,9 @@ function apcReason(code: string): string {
 /** Map a classified picker/reconnect failure to its i18n key (ORIG-12) — raw
  *  browser exception text is never shown to the user. `aborted` (the user
  *  dismissed the dialog) is handled by the caller as a no-op. */
-function pickerErrorKey(code: PickerErrorCode): 'alert.picker.security' | 'alert.picker.notAllowed' | 'alert.picker.unknown' {
+function pickerErrorKey(
+  code: PickerErrorCode
+): 'alert.picker.security' | 'alert.picker.notAllowed' | 'alert.picker.unknown' {
   switch (code) {
     case 'security':
       return 'alert.picker.security'
@@ -262,6 +328,84 @@ interface PrintRootBusinessObject {
   participants?: Array<{ processRef?: { name?: string } | undefined } | undefined>
 }
 
+interface ReleaseValidationOptions {
+  action: ValidationAction
+  knownProcessIds: Iterable<string>
+  requireBilingual: boolean
+  requireDi: boolean
+  explicitDraftWithErrors?: boolean
+}
+
+async function validateReleaseXml(
+  xml: string,
+  options: ReleaseValidationOptions
+): Promise<ValidationSummary> {
+  const parsed = await validateBpmnXml(xml, {
+    adapters: getRuntimeValidationAdapters(),
+    knownProcessIds: options.knownProcessIds,
+    requireBilingual: options.requireBilingual,
+    requireDi: options.requireDi
+  })
+  const decision = evaluateValidationPolicy(parsed.summary, options.action, {
+    explicitDraftConfirmation: options.explicitDraftWithErrors === true
+  })
+  if (!decision.allowed) {
+    const codes = decision.blockingIssues
+      .slice(0, 8)
+      .map((issue) => issue.code)
+      .join(', ')
+    throw new Error(`BPMN validation blocked this operation${codes ? `: ${codes}` : ''}`)
+  }
+  return parsed.summary
+}
+
+async function prepareImportedBpmnXml(
+  xml: string,
+  knownProcessIds: Iterable<string>
+): Promise<{ xml: string; autoLayouted: boolean; summary: ValidationSummary }> {
+  const processIds = [...knownProcessIds]
+  const preview = await validateReleaseXml(xml, {
+    action: 'commit-import',
+    knownProcessIds: processIds,
+    requireBilingual: false,
+    requireDi: false
+  })
+  const missingDi = preview.issues.some(
+    (issue) => issue.code === 'di.process-missing' || issue.code === 'bpmnlint.no-bpmndi'
+  )
+  if (!missingDi) {
+    const summary = await validateReleaseXml(xml, {
+      action: 'commit-import',
+      knownProcessIds: processIds,
+      requireBilingual: false,
+      requireDi: true
+    })
+    return { xml, autoLayouted: false, summary }
+  }
+
+  const layout = await layoutBpmnValidated(xml, {
+    validation: {
+      knownProcessIds: processIds,
+      requireBilingual: false
+    }
+  })
+  const preservation = await validateUnknownExtensionPreservation(xml, layout.xml)
+  if (!preservation.valid) {
+    throw new Error('Auto-layout would discard or mutate opaque BPMN extension data.')
+  }
+  const summary = await validateReleaseXml(layout.xml, {
+    action: 'commit-import',
+    knownProcessIds: processIds,
+    requireBilingual: false,
+    requireDi: true
+  })
+  return { xml: layout.xml, autoLayouted: true, summary }
+}
+
+function confirmGeneratedImportLayout(): boolean {
+  return window.confirm(`${t('sourceEditor.layoutReady')}\n\n${t('sourceEditor.layoutAccept')}?`)
+}
+
 // Structural (never the concrete bpmn-js class) so it stays a local port like the
 // other lite modeler shells: saveSVG for the diagram, plus the two services the
 // print header needs — the element registry (band-cut rects) and the canvas
@@ -269,7 +413,9 @@ interface PrintRootBusinessObject {
 interface ModelerWithSvg {
   saveSVG?: () => Promise<{ svg: string }>
   get(service: 'elementRegistry'): { getAll(): PrintShapeElement[] }
-  get(service: 'canvas'): { getRootElement(): { businessObject?: PrintRootBusinessObject } | undefined }
+  get(service: 'canvas'): {
+    getRootElement(): { businessObject?: PrintRootBusinessObject } | undefined
+  }
 }
 
 interface ProcessRootElement {
@@ -293,10 +439,7 @@ interface ProcessRootModeler {
 }
 
 /** Switch a multi-process BPMN file to the root selected by semantic id. */
-async function focusProcessRoot(
-  modeler: unknown,
-  processId: string
-): Promise<boolean> {
+async function focusProcessRoot(modeler: unknown, processId: string): Promise<boolean> {
   try {
     const target = modeler as ProcessRootModeler
     const canvas = target.get('canvas')
@@ -328,23 +471,32 @@ function App(): JSX.Element {
   const promptText = usePromptText()
   const lang = useLang()
   const support = useMemo(() => directoryPickerSupported(), [])
+  const browserWorkspaceAvailable = useMemo(() => opfsSupported(), [])
 
   const [phase, setPhase] = useState<Phase>('loading')
-  const [mode, setMode] = useState<Mode>(support ? 'directory' : 'fallback')
+  const [mode, setMode] = useState<Mode>(
+    support ? 'directory' : browserWorkspaceAvailable ? 'opfs' : 'single-file'
+  )
+  const [workspaceAdapter, setWorkspaceAdapter] = useState<WorkspaceAdapter | null>(null)
   const [rootHandle, setRootHandle] = useState<FileSystemDirectoryHandle | null>(null)
   const [rootName, setRootName] = useState<string>('')
+  const rootNameRef = useRef('')
   const rememberedRef = useRef<FileSystemDirectoryHandle | null>(null)
   const [rememberedName, setRememberedName] = useState<string>('')
   const [pickBusy, setPickBusy] = useState(false)
   const [pickError, setPickError] = useState<string | null>(null)
 
   const [tree, setTree] = useState<LiteTreeNode | null>(null)
-  const [files, setFiles] = useState<FileMeta[]>([])
+  const [workspaceIssues, setWorkspaceIssues] = useState<string[]>([])
+  const liveWorkspaceIndexRef = useRef(new LiveWorkspaceIndex())
+  const [liveWorkspaceVersion, setLiveWorkspaceVersion] = useState(0)
 
   const [tabs, setTabs] = useState<Tab[]>([])
   const [activeKey, setActiveKey] = useState<string | null>(null)
   const [contents, setContents] = useState<Record<string, string>>({})
   const [dirtyByKey, setDirtyByKey] = useState<Record<string, boolean>>({})
+  const baseHashByPathRef = useRef<Record<string, string>>({})
+  const liveXmlTimersRef = useRef<Record<string, ReturnType<typeof setTimeout>>>({})
   const [mounted, setMounted] = useState<Set<string>>(() => new Set())
   const [modelersByKey, setModelersByKey] = useState<Record<string, unknown>>({})
   const commandsRef = useRef<Record<string, EditorTabCommands | null>>({})
@@ -352,6 +504,7 @@ function App(): JSX.Element {
   // installed when a tab's modeler is ready and torn down when it is replaced
   // (onModelerReady(null)) or the tab closes.
   const badgeUninstallersRef = useRef<Record<string, () => void>>({})
+  const liveXmlUninstallersRef = useRef<Record<string, () => void>>({})
   // Fresh AI placements share EditorTabLite's import path with ordinary
   // file-open/tab-restore. Mark only their tab keys so App can run the
   // post-import auto-size sweep without resizing an existing saved diagram.
@@ -367,8 +520,10 @@ function App(): JSX.Element {
 
   // Data-safety plumbing (Codex C1 / M3 / M8).
   const workspaceGenRef = useRef(0) // bumped on every folder switch (tab-write guard)
+  const workspaceAdapterRef = useRef<WorkspaceAdapter | null>(null)
+  const historyManagerRef = useRef<PortableHistoryManager | null>(null)
   const rootHandleRef = useRef<FileSystemDirectoryHandle | null>(null) // sync mirror for async guards
-  const refreshGuardRef = useRef(createRefreshGuard()) // discards stale/out-of-order scans
+  const refreshSequenceRef = useRef(0)
   const opMutexRef = useRef(createMutex()) // serializes create / import / AI-place writes
   const [switchGuard, setSwitchGuard] = useState<{ count: number } | null>(null)
   const switchResolveRef = useRef<((choice: 'save' | 'discard' | 'cancel') => void) | null>(null)
@@ -407,17 +562,12 @@ function App(): JSX.Element {
   const [keysVersion, setKeysVersion] = useState(0)
   // Tab whose diagram is currently being AI-translated (disables its button).
   const [translatingTab, setTranslatingTab] = useState<string | null>(null)
-  const [translationReview, setTranslationReview] =
-    useState<TranslationReviewState | null>(null)
+  const [translationReview, setTranslationReview] = useState<TranslationReviewState | null>(null)
   const translationAbortRef = useRef<AbortController | null>(null)
   // Provenance survives file placement/opening so the same read-only
   // localization ingestion adapter can audit every reachable boundary.
-  const localizationSourceByTabRef = useRef<
-    Map<string, LocalizationSourceType>
-  >(new Map())
-  const localizationReviewByTabRef = useRef<
-    Map<string, DiagramLocalizationReview>
-  >(new Map())
+  const localizationSourceByTabRef = useRef<Map<string, LocalizationSourceType>>(new Map())
+  const localizationReviewByTabRef = useRef<Map<string, DiagramLocalizationReview>>(new Map())
   // A pending "fill gaps in chat" request from the AI panel: opens the
   // assistant's interview mode against the just-placed tab. Token bumps force
   // the drawer to react even for repeated requests on the same tab.
@@ -506,6 +656,10 @@ function App(): JSX.Element {
   const fileInputRef = useRef<HTMLInputElement | null>(null)
   const importInputRef = useRef<HTMLInputElement | null>(null)
   const libraryInputRef = useRef<HTMLInputElement | null>(null)
+  const backupInputRef = useRef<HTMLInputElement | null>(null)
+  const [backupImportPlan, setBackupImportPlan] = useState<WorkspaceBackupImportPlan | null>(null)
+  const [backupBusy, setBackupBusy] = useState(false)
+  const [historyOpen, setHistoryOpen] = useState(false)
 
   // Process assistant (B5) + whole-library import confirmation.
   const [assistOpen, setAssistOpen] = useState(false)
@@ -525,40 +679,92 @@ function App(): JSX.Element {
   const dismissToast = useCallback((id: number) => {
     setToasts((prev) => prev.filter((t) => t.id !== id))
   }, [])
+  const liveFiles = useMemo(() => {
+    void liveWorkspaceVersion
+    return liveWorkspaceIndexRef.current.files()
+  }, [liveWorkspaceVersion])
 
   // --- workspace lifecycle -------------------------------------------------
 
-  const refreshWorkspace = useCallback(async (handle: FileSystemDirectoryHandle) => {
-    // Each scan claims a token; a slower earlier scan (or one begun before a
-    // folder switch) is discarded rather than overwriting a newer/other one.
-    const token = refreshGuardRef.current.begin()
-    // ONE traversal yields both the tree and the file-meta list, so the tree and
-    // the indexes derived from `files` are always coherent (Codex NEW-minor).
-    const { tree: nextTree, files: scanned } = await snapshotWorkspace(handle, handle.name)
-    if (!refreshGuardRef.current.shouldCommit(token, handle, rootHandleRef.current)) return
-    setTree(nextTree)
-    setFiles(scanned)
-  }, [])
+  const refreshWorkspace = useCallback(
+    async (_handle?: FileSystemDirectoryHandle, displayName?: string) => {
+      const adapter = workspaceAdapterRef.current
+      if (!adapter || !adapter.storage.capabilities.multipleFiles) return
+      const token = ++refreshSequenceRef.current
+      const snapshot = await snapshotAdapterWorkspace(
+        adapter,
+        displayName || rootNameRef.current || (adapter.mode === 'opfs' ? 'OrbitPM' : 'Workspace')
+      )
+      if (token !== refreshSequenceRef.current || workspaceAdapterRef.current !== adapter) {
+        return
+      }
+      liveWorkspaceIndexRef.current.replaceSavedFiles(snapshot.files)
+      setLiveWorkspaceVersion(liveWorkspaceIndexRef.current.version)
+      setTree(snapshot.tree)
+      setWorkspaceIssues(
+        snapshot.issues.map((issue) => `${issue.path ?? t('breadcrumb.root')}: ${issue.message}`)
+      )
+    },
+    []
+  )
 
   const activateWorkspace = useCallback(
-    async (handle: FileSystemDirectoryHandle) => {
+    async (
+      adapter: WorkspaceAdapter,
+      handle: FileSystemDirectoryHandle | null,
+      displayName: string
+    ) => {
       // New session: bump the generation (invalidates every stale tab's save)
       // and update the sync handle mirror BEFORE any async scan can commit.
       workspaceGenRef.current += 1
+      refreshSequenceRef.current += 1
+      workspaceAdapterRef.current = adapter
       rootHandleRef.current = handle
+      historyManagerRef.current = adapter.storage.capabilities.directories
+        ? new PortableHistoryManager({
+            adapter,
+            applicationVersion: __APP_VERSION__
+          })
+        : null
       // Full reset BEFORE the new scan so no tab / tree / index / dirty flag /
       // modeler from the previous folder survives the switch (Codex CRITICAL-1).
+      for (const uninstall of Object.values(badgeUninstallersRef.current)) {
+        uninstall()
+      }
+      badgeUninstallersRef.current = {}
+      for (const uninstall of Object.values(liveXmlUninstallersRef.current)) {
+        uninstall()
+      }
+      liveXmlUninstallersRef.current = {}
+      translationAbortRef.current?.abort()
+      translationAbortRef.current = null
+      liveWorkspaceIndexRef.current = new LiveWorkspaceIndex()
+      setLiveWorkspaceVersion(liveWorkspaceIndexRef.current.version)
       setTree(null)
-      setFiles([])
+      setWorkspaceIssues([])
       setTabs([])
       setActiveKey(null)
       setContents({})
       setDirtyByKey({})
+      baseHashByPathRef.current = {}
+      for (const timer of Object.values(liveXmlTimersRef.current)) clearTimeout(timer)
+      liveXmlTimersRef.current = {}
       setModelersByKey({})
       setMounted(new Set())
       commandsRef.current = {}
       pendingProcessFocusRef.current.clear()
       processFocusQueueRef.current.clear()
+      pendingAiAutoSizeRef.current.clear()
+      localizationSourceByTabRef.current.clear()
+      localizationReviewByTabRef.current.clear()
+      setTranslationReview(null)
+      setTranslatingTab(null)
+      setInterviewRequest(null)
+      setAssistOpen(false)
+      digestsCacheRef.current = null
+      setLibraryImport(null)
+      setBackupImportPlan(null)
+      setHistoryOpen(false)
       setSearch('')
       setSearchOpen(false)
       setCatalogOpen(false)
@@ -571,16 +777,24 @@ function App(): JSX.Element {
       // A freshly-activated workspace has zero tabs (the catalog is showing), so
       // reveal the sidebar — the auto-collapse fires again the moment a file opens.
       setSidebarOpen(true)
+      setWorkspaceAdapter(adapter)
       setRootHandle(handle)
-      setRootName(handle.name)
-      setMode('directory')
+      rootNameRef.current = displayName
+      setRootName(displayName)
+      setMode(adapter.mode)
       setPhase('ready')
-      try {
-        await rememberWorkspace(handle)
-      } catch {
-        /* IDB may be unavailable; non-fatal */
+      if (adapter.mode === 'directory' && handle) {
+        try {
+          await rememberWorkspace(handle)
+          rememberedRef.current = handle
+          setRememberedName(handle.name)
+        } catch {
+          /* IDB may be unavailable; non-fatal */
+        }
       }
-      await refreshWorkspace(handle)
+      if (adapter.storage.capabilities.multipleFiles) {
+        await refreshWorkspace(handle ?? undefined, displayName)
+      }
     },
     [refreshWorkspace]
   )
@@ -590,7 +804,7 @@ function App(): JSX.Element {
     let cancelled = false
     ;(async () => {
       if (!support) {
-        setMode('fallback')
+        setMode(browserWorkspaceAvailable ? 'opfs' : 'single-file')
         setPhase('need-open')
         return
       }
@@ -613,7 +827,13 @@ function App(): JSX.Element {
       }
       if (cancelled) return
       if (state === 'granted') {
-        await activateWorkspace(handle)
+        await activateWorkspace(
+          new DirectoryWorkspaceAdapter(handle, {
+            workspaceId: directoryWorkspaceId(handle)
+          }),
+          handle,
+          handle.name
+        )
       } else {
         rememberedRef.current = handle
         setRememberedName(handle.name)
@@ -623,7 +843,7 @@ function App(): JSX.Element {
     return () => {
       cancelled = true
     }
-  }, [support, activateWorkspace])
+  }, [support, browserWorkspaceAvailable, activateWorkspace])
 
   // Manual "Refresh" (tree header): re-scan the folder for changes made outside
   // the app. The refresh guard makes concurrent/stale scans safe (Codex M7/M8).
@@ -638,7 +858,7 @@ function App(): JSX.Element {
   // filesystem changes (files added/edited/deleted outside the app) don't leave
   // the tree, search, catalog and links stale indefinitely (Codex MAJOR-7-lite).
   useEffect(() => {
-    if (mode !== 'directory') return
+    if (!isMultiFileMode(mode)) return
     let timer: ReturnType<typeof setTimeout> | undefined
     const schedule = (): void => {
       if (typeof document !== 'undefined' && document.visibilityState === 'hidden') return
@@ -663,25 +883,99 @@ function App(): JSX.Element {
     // Partition so NO dirty tab is silently dropped: directory tabs write to disk;
     // fallback/virtual tabs (relPath === null) take the download-on-save path so
     // their unsaved work survives the switch instead of being discarded (NEW-C2).
-    const { writable, downloadable } = partitionDirtyTabs(tabs, (tab) => Boolean(dirtyByKey[tab.key]))
-    const readXml = async (key: string): Promise<string | undefined> => {
-      const modeler = modelersByKey[key] as
-        | { saveXML?: (o: { format: boolean }) => Promise<{ xml?: string }> }
-        | undefined
-      if (!modeler?.saveXML) return undefined
-      const { xml } = await modeler.saveXML({ format: true })
-      return xml
+    const { writable, downloadable } = partitionDirtyTabs(tabs, (tab) =>
+      Boolean(dirtyByKey[tab.key])
+    )
+    const knownProcessIds = [...liveWorkspaceIndexRef.current.processIndex().keys()]
+    const indexedXmlByPath = new Map(
+      liveWorkspaceIndexRef.current.files().map((file) => [file.relPath, file.xml])
+    )
+    const readXml = async (tab: Tab): Promise<string> => {
+      const modeler = modelersByKey[tab.key] as
+        { saveXML?: (o: { format: boolean }) => Promise<{ xml?: string }> } | undefined
+      if (modeler?.saveXML) {
+        const { xml } = await modeler.saveXML({ format: true })
+        if (xml) return xml
+      }
+      const fallback = indexedXmlByPath.get(liveIndexPath(tab)) ?? contents[tab.key]
+      if (!fallback) {
+        throw new Error(`Could not serialize the unsaved tab "${tab.title}".`)
+      }
+      return fallback
     }
+    const adapter = workspaceAdapterRef.current
     for (const tab of writable) {
-      if (!tab.relPath || !rootHandle) continue
-      const xml = await readXml(tab.key)
-      if (xml) await writeFileAt(rootHandle, tab.relPath, xml)
+      if (!tab.relPath || !adapter) continue
+      const xml = await readXml(tab)
+      if (xml) {
+        const baseline = contents[tab.key]
+        if (baseline) {
+          const preservation = await validateUnknownExtensionPreservation(baseline, xml)
+          if (!preservation.valid) {
+            throw new Error(
+              `Save blocked because opaque BPMN extension data changed: ${preservation.issues.map((issue) => issue.code).join(', ')}`
+            )
+          }
+        }
+        await validateReleaseXml(xml, {
+          action: 'save',
+          knownProcessIds,
+          requireBilingual: false,
+          requireDi: true
+        })
+        const bytes = new TextEncoder().encode(xml)
+        const expectedHash = baseHashByPathRef.current[tab.relPath]
+        const result = historyManagerRef.current
+          ? await historyManagerRef.current.writeWithRevision(
+              tab.relPath,
+              bytes,
+              expectedHash,
+              'overwrite'
+            )
+          : {
+              outcome: await adapter.writeAtomic(tab.relPath, bytes, expectedHash, {
+                expectedWorkspaceId: adapter.id
+              })
+            }
+        if (result.outcome.status !== 'success') {
+          if ('error' in result.outcome) {
+            throw new Error(result.outcome.error.message)
+          }
+          throw new Error(`Save did not complete (${result.outcome.status}).`)
+        }
+        baseHashByPathRef.current[tab.relPath] = result.outcome.snapshot.hash
+        const saved = fileMetaFromSnapshot(result.outcome.snapshot)
+        liveWorkspaceIndexRef.current.updateSaved(saved)
+        liveWorkspaceIndexRef.current.clearDirty(tab.relPath)
+        setLiveWorkspaceVersion(liveWorkspaceIndexRef.current.version)
+        setContents((previous) => ({ ...previous, [tab.key]: xml }))
+        setDirtyByKey((previous) => ({ ...previous, [tab.key]: false }))
+      }
     }
     for (const tab of downloadable) {
-      const xml = await readXml(tab.key)
-      if (xml) downloadBpmn(tab.title.endsWith('.bpmn') ? tab.title : `${tab.title}.bpmn`, xml)
+      const xml = await readXml(tab)
+      if (xml) {
+        const baseline = contents[tab.key]
+        if (baseline) {
+          const preservation = await validateUnknownExtensionPreservation(baseline, xml)
+          if (!preservation.valid) {
+            throw new Error(
+              `Save blocked because opaque BPMN extension data changed: ${preservation.issues.map((issue) => issue.code).join(', ')}`
+            )
+          }
+        }
+        await validateReleaseXml(xml, {
+          action: 'save',
+          knownProcessIds,
+          requireBilingual: false,
+          requireDi: true
+        })
+        downloadBpmn(tab.title.endsWith('.bpmn') ? tab.title : `${tab.title}.bpmn`, xml)
+        setContents((previous) => ({ ...previous, [tab.key]: xml }))
+        setDirtyByKey((previous) => ({ ...previous, [tab.key]: false }))
+      }
     }
-  }, [tabs, dirtyByKey, modelersByKey, rootHandle])
+  }, [tabs, dirtyByKey, modelersByKey, contents])
 
   const resolveSwitch = useCallback((choice: 'save' | 'discard' | 'cancel') => {
     setSwitchGuard(null)
@@ -725,7 +1019,13 @@ function App(): JSX.Element {
       // Prompt for unsaved work BEFORE we reset state onto the new folder.
       const proceed = await guardWorkspaceSwitch()
       if (!proceed) return
-      await activateWorkspace(handle)
+      await activateWorkspace(
+        new DirectoryWorkspaceAdapter(handle, {
+          workspaceId: directoryWorkspaceId(handle)
+        }),
+        handle,
+        handle.name
+      )
     } catch (err) {
       const code = classifyPickerError(err)
       if (code !== 'aborted') setPickError(t(pickerErrorKey(code)))
@@ -748,7 +1048,13 @@ function App(): JSX.Element {
         setPickError(t('alert.permissionNotGranted.reconnect'))
         return
       }
-      await activateWorkspace(handle)
+      await activateWorkspace(
+        new DirectoryWorkspaceAdapter(handle, {
+          workspaceId: directoryWorkspaceId(handle)
+        }),
+        handle,
+        handle.name
+      )
     } catch (err) {
       const code = classifyPickerError(err)
       if (code !== 'aborted') setPickError(t(pickerErrorKey(code)))
@@ -758,10 +1064,27 @@ function App(): JSX.Element {
   }, [activateWorkspace])
 
   const handleOpenDifferent = useCallback(async () => {
-    await forgetWorkspace()
-    rememberedRef.current = null
     await handleOpenFolder()
   }, [handleOpenFolder])
+
+  const handleOpenOpfs = useCallback(async () => {
+    setPickBusy(true)
+    setPickError(null)
+    try {
+      const adapter = await OpfsWorkspaceAdapter.open({
+        workspaceId: workspaceInstanceId('opfs', 'orbitpm'),
+        directoryName: 'orbitpm',
+        requestPersistence: true
+      })
+      const proceed = await guardWorkspaceSwitch()
+      if (!proceed) return
+      await activateWorkspace(adapter, adapter.directoryHandle, t('workspace.storage.mode.opfs'))
+    } catch (error) {
+      setPickError(error instanceof Error ? error.message : String(error))
+    } finally {
+      setPickBusy(false)
+    }
+  }, [activateWorkspace, guardWorkspaceSwitch])
 
   // --- tabs ---------------------------------------------------------------
 
@@ -783,10 +1106,7 @@ function App(): JSX.Element {
       }
     ) => {
       const key = relPath
-      if (
-        opts?.localizationSource ||
-        !localizationSourceByTabRef.current.has(key)
-      ) {
+      if (opts?.localizationSource || !localizationSourceByTabRef.current.has(key)) {
         localizationSourceByTabRef.current.set(
           key,
           opts?.localizationSource ?? LocalizationSource.Xml
@@ -808,18 +1128,20 @@ function App(): JSX.Element {
       )
       setActiveKey(key)
       if (contents[key] !== undefined) return
-      // Read through the LIVE handle mirror and guard the commit against a
+      // Read through the LIVE adapter mirror and guard the commit against a
       // mid-read folder switch: neither the loaded content nor its error toast is
       // committed if the workspace changed while the read was in flight, so a
       // stale read from the previous folder can never land in the new one (ORIG-1a).
-      const handle = rootHandleRef.current
-      if (!handle) return
+      const adapter = workspaceAdapterRef.current
+      if (!adapter) return
       let failed: unknown = null
       const outcome = await commitIfCurrent(
         () => workspaceGenRef.current,
         async () => {
           try {
-            return await readFileAt(handle, relPath)
+            const snapshot = await adapter.read(relPath)
+            baseHashByPathRef.current[relPath] = snapshot.hash
+            return new TextDecoder().decode(snapshot.bytes)
           } catch (err) {
             failed = err
             return ''
@@ -855,11 +1177,51 @@ function App(): JSX.Element {
       // keeps the panel mounted so its success box + fill-gaps CTA can show).
       if (opts?.collapse !== false) setSidebarOpen(false)
       setCatalogOpen(false)
-      setTabs((prev) => [...prev, { key, title, relPath: null, gen: workspaceGenRef.current }])
+      const tab: Tab = {
+        key,
+        title,
+        relPath: null,
+        gen: workspaceGenRef.current
+      }
+      setTabs((prev) => [...prev, tab])
       setContents((prev) => ({ ...prev, [key]: xml }))
+      liveWorkspaceIndexRef.current.updateDirty(liveIndexPath(tab), xml)
+      setLiveWorkspaceVersion(liveWorkspaceIndexRef.current.version)
       setActiveKey(key)
+      return key
     },
     []
+  )
+
+  const activateSingleFileDocument = useCallback(
+    async (title: string, xml: string, source: LocalizationSourceType): Promise<void> => {
+      const path = title.toLocaleLowerCase('en-US').endsWith('.bpmn') ? title : `${title}.bpmn`
+      const adapter = new SingleFileWorkspaceAdapter({
+        workspaceId: workspaceInstanceId('single-file', path),
+        path,
+        bytes: new TextEncoder().encode(xml),
+        modifiedAt: Date.now(),
+        mimeType: 'application/xml'
+      })
+      await activateWorkspace(adapter, null, path)
+      const snapshot = await adapter.read(path)
+      const saved = fileMetaFromSnapshot(snapshot)
+      baseHashByPathRef.current[path] = snapshot.hash
+      liveWorkspaceIndexRef.current.updateSaved(saved)
+      setLiveWorkspaceVersion(liveWorkspaceIndexRef.current.version)
+      const tab: Tab = {
+        key: path,
+        title: path,
+        relPath: path,
+        gen: workspaceGenRef.current
+      }
+      localizationSourceByTabRef.current.set(path, source)
+      setTabs([tab])
+      setContents({ [path]: xml })
+      setActiveKey(path)
+      setSidebarOpen(false)
+    },
+    [activateWorkspace]
   )
 
   const closeTabsUnder = useCallback((prefix: string) => {
@@ -868,17 +1230,27 @@ function App(): JSX.Element {
         pendingProcessFocusRef.current.delete(key)
       }
     }
+    for (const key of localizationSourceByTabRef.current.keys()) {
+      if (key === prefix || key.startsWith(prefix + '/')) {
+        localizationSourceByTabRef.current.delete(key)
+        localizationReviewByTabRef.current.delete(key)
+      }
+    }
     setTabs((prev) =>
-      prev.filter((t) => !(t.relPath && (t.relPath === prefix || t.relPath.startsWith(prefix + '/'))))
+      prev.filter(
+        (t) => !(t.relPath && (t.relPath === prefix || t.relPath.startsWith(prefix + '/')))
+      )
     )
   }, [])
 
   const closeTab = useCallback(
     (key: string) => {
       pendingProcessFocusRef.current.delete(key)
+      const closingTab = tabs.find((tab) => tab.key === key)
       if (dirtyByKey[key]) {
-        const tab = tabs.find((tb) => tb.key === key)
-        const confirmed = window.confirm(t('confirm.discardUnsaved', { title: tab?.title ?? 'this file' }))
+        const confirmed = window.confirm(
+          t('confirm.discardUnsaved', { title: closingTab?.title ?? 'this file' })
+        )
         if (!confirmed) return
       }
       // Closing the last tab returns to an empty canvas (or the catalog) — bring
@@ -899,6 +1271,17 @@ function App(): JSX.Element {
       setContents(drop)
       setDirtyByKey(drop)
       setModelersByKey(drop)
+      localizationSourceByTabRef.current.delete(key)
+      localizationReviewByTabRef.current.delete(key)
+      liveXmlUninstallersRef.current[key]?.()
+      delete liveXmlUninstallersRef.current[key]
+      const timer = liveXmlTimersRef.current[key]
+      if (timer) clearTimeout(timer)
+      delete liveXmlTimersRef.current[key]
+      if (closingTab) {
+        liveWorkspaceIndexRef.current.clearDirty(liveIndexPath(closingTab))
+        setLiveWorkspaceVersion(liveWorkspaceIndexRef.current.version)
+      }
       delete commandsRef.current[key]
       setMounted((prev) => {
         if (!prev.has(key)) return prev
@@ -914,30 +1297,147 @@ function App(): JSX.Element {
     setDirtyByKey((prev) => (prev[key] === dirty ? prev : { ...prev, [key]: dirty }))
   }, [])
 
+  const scheduleLiveXmlCapture = useCallback(
+    (
+      tab: Tab,
+      modeler: {
+        saveXML?: (options: { format: boolean }) => Promise<{ xml?: string }>
+      }
+    ) => {
+      const existing = liveXmlTimersRef.current[tab.key]
+      if (existing) clearTimeout(existing)
+      liveXmlTimersRef.current[tab.key] = setTimeout(() => {
+        delete liveXmlTimersRef.current[tab.key]
+        void modeler
+          .saveXML?.({ format: true })
+          .then(({ xml }) => {
+            if (!xml || workspaceGenRef.current !== tab.gen) return
+            liveWorkspaceIndexRef.current.updateDirty(liveIndexPath(tab), xml)
+            setLiveWorkspaceVersion(liveWorkspaceIndexRef.current.version)
+            digestsCacheRef.current = null
+          })
+          .catch(() => {
+            // A transient serialization error must not discard the last coherent
+            // live index snapshot.
+          })
+      }, 120)
+    },
+    []
+  )
+
   const handleRequestSave = useCallback(
-    async (tab: Tab, xml: string) => {
-      if (tab.relPath && rootHandle) {
+    async (tab: Tab, xml: string, options?: { explicitDraftWithErrors?: boolean }) => {
+      const baseline = contents[tab.key]
+      if (baseline) {
+        const preservation = await validateUnknownExtensionPreservation(baseline, xml)
+        if (!preservation.valid) {
+          throw new Error(
+            `Save blocked because opaque BPMN extension data changed: ${preservation.issues.map((issue) => issue.code).join(', ')}`
+          )
+        }
+      }
+      await validateReleaseXml(xml, {
+        action: options?.explicitDraftWithErrors ? 'save-draft-with-errors' : 'save',
+        knownProcessIds: liveWorkspaceIndexRef.current.processIndex().keys(),
+        requireBilingual: false,
+        requireDi: true,
+        explicitDraftWithErrors: options?.explicitDraftWithErrors
+      })
+      const adapter = workspaceAdapterRef.current
+      if (tab.relPath && adapter) {
         // Refuse a write from a tab whose workspace was switched out from under
         // it — otherwise it would land its relative path in the WRONG folder.
         if (!canCommitToWorkspace(tab.gen, workspaceGenRef.current)) {
           pushToast(t('alert.staleWrite'), 'error')
-          return
+          throw new Error(t('alert.staleWrite'))
         }
-        await writeFileAt(rootHandle, tab.relPath, xml)
-        await refreshWorkspace(rootHandle)
+        const bytes = new TextEncoder().encode(xml)
+        const expectedHash = baseHashByPathRef.current[tab.relPath]
+        const history = historyManagerRef.current
+        const result = history
+          ? await history.writeWithRevision(tab.relPath, bytes, expectedHash, 'overwrite')
+          : {
+              outcome: await adapter.writeAtomic(tab.relPath, bytes, expectedHash, {
+                expectedWorkspaceId: adapter.id
+              })
+            }
+        const outcome = result.outcome
+        if (outcome.status !== 'success') {
+          if (outcome.status === 'external-conflict') {
+            const detail = outcome.actual
+              ? ` External version: ${outcome.actual.modifiedAt || 'unknown time'}, ${outcome.actual.size} bytes.`
+              : ''
+            throw new Error(`The file changed outside OrbitPM (${outcome.reason}).${detail}`)
+          }
+          if ('error' in outcome) throw new Error(outcome.error.message)
+          throw new Error(`Save did not complete (${outcome.status}).`)
+        }
+        baseHashByPathRef.current[tab.relPath] = outcome.snapshot.hash
+        const saved = fileMetaFromSnapshot(outcome.snapshot)
+        liveWorkspaceIndexRef.current.updateSaved(saved)
+        liveWorkspaceIndexRef.current.clearDirty(tab.relPath)
+        setLiveWorkspaceVersion(liveWorkspaceIndexRef.current.version)
+        setContents((previous) => ({ ...previous, [tab.key]: xml }))
       } else {
         downloadBpmn(tab.title.endsWith('.bpmn') ? tab.title : `${tab.title}.bpmn`, xml)
       }
     },
-    [rootHandle, refreshWorkspace, pushToast]
+    [contents, pushToast]
   )
 
-  // --- derived data (single source: `files`) ------------------------------
+  // --- derived data (saved files overlaid with live dirty XML) ------------
 
-  const processIndex: ProcessIndex = useMemo(() => buildProcessIndex(files), [files])
+  const processIndex: ProcessIndex = useMemo(() => {
+    void liveWorkspaceVersion
+    return liveWorkspaceIndexRef.current.processIndex()
+  }, [liveWorkspaceVersion])
+  const duplicateProcessDiagnostics = useMemo(() => {
+    void liveWorkspaceVersion
+    return liveWorkspaceIndexRef.current.duplicateDiagnostics()
+  }, [liveWorkspaceVersion])
+  const handleRepairDuplicateProcessId = useCallback(
+    async (processId: string) => {
+      const diagnostic = liveWorkspaceIndexRef.current
+        .duplicateDiagnostics()
+        .find((item) => item.processId === processId)
+      if (!diagnostic) return
+      const target = diagnostic.occurrences[diagnostic.occurrences.length - 1]
+      const repair = liveWorkspaceIndexRef.current.repairDuplicateProcessId(
+        target.relPath,
+        processId,
+        { occurrence: target.occurrence }
+      )
+      setLiveWorkspaceVersion(liveWorkspaceIndexRef.current.version)
+      let tab = tabs.find((item) => item.relPath === target.relPath)
+      if (!tab) {
+        tab = {
+          key: target.relPath,
+          title: baseName(target.relPath),
+          relPath: target.relPath,
+          gen: workspaceGenRef.current
+        }
+        setTabs((previous) => [...previous, tab!])
+      }
+      localizationSourceByTabRef.current.set(tab.key, LocalizationSource.Editor)
+      setContents((previous) => ({ ...previous, [tab!.key]: repair.xml }))
+      setDirtyByKey((previous) => ({ ...previous, [tab!.key]: true }))
+      setActiveKey(tab.key)
+      setCatalogOpen(false)
+      const modeler = modelersByKey[tab.key] as
+        { importXML?: (xml: string) => Promise<unknown> } | undefined
+      if (modeler?.importXML) {
+        await modeler.importXML(repair.xml)
+        setDirtyByKey((previous) => ({ ...previous, [tab!.key]: true }))
+      }
+    },
+    [tabs, modelersByKey]
+  )
   // Parent→child callActivity links across the workspace — drives the
   // explorer's nested 🔗 rows and the exported library manifest.
-  const linkGraph = useMemo(() => buildLinkGraph(files, processIndex), [files, processIndex])
+  const linkGraph = useMemo(
+    () => buildLinkGraph(liveFiles, processIndex),
+    [liveFiles, processIndex]
+  )
   // One deterministic projection for physical canonical rows plus read-only
   // process references. relPath is carried only as the canonical file's
   // current locator; process ids remain the semantic identity.
@@ -964,22 +1464,29 @@ function App(): JSX.Element {
     },
     [processIndex]
   )
-  const searchIndex = useMemo(() => buildSearchIndex(files), [files])
-  const xmlByPath = useMemo(() => new Map(files.map((f) => [f.relPath, f.xml])), [files])
-  const catalogRows = useMemo(() => buildCatalog(files, processIndex), [files, processIndex])
+  const searchIndex = useMemo(() => {
+    void liveWorkspaceVersion
+    return liveWorkspaceIndexRef.current.searchDocuments()
+  }, [liveWorkspaceVersion])
+  const xmlByPath = useMemo(
+    () => new Map(liveFiles.map((file) => [file.relPath, file.xml])),
+    [liveFiles]
+  )
+  const catalogRows = useMemo(
+    () => buildCatalog(liveFiles, processIndex),
+    [liveFiles, processIndex]
+  )
   const visibleCatalog = useMemo(
     () => sortCatalog(filterCatalog(catalogRows, search, xmlByPath), catSort, catDir),
     [catalogRows, search, xmlByPath, catSort, catDir]
   )
   const searchGroups = useMemo(() => searchWorkspace(searchIndex, search), [searchIndex, search])
-  const folders = useMemo(() => collectFolders(tree), [tree, lang])
-  const filePaths = useMemo(() => new Set(files.map((f) => f.relPath)), [files])
+  const folders = useMemo(() => collectFolders(tree), [tree])
+  const filePaths = useMemo(() => new Set(liveFiles.map((file) => file.relPath)), [liveFiles])
   const dirtyFilePaths = useMemo(
     () =>
       new Set(
-        tabs
-          .filter((tab) => tab.relPath && dirtyByKey[tab.key])
-          .map((tab) => tab.relPath as string)
+        tabs.filter((tab) => tab.relPath && dirtyByKey[tab.key]).map((tab) => tab.relPath as string)
       ),
     [tabs, dirtyByKey]
   )
@@ -994,18 +1501,14 @@ function App(): JSX.Element {
 
   const queueProcessFocus = useCallback(
     (relPath: string, modeler: unknown, processId: string): void => {
-      const previous =
-        processFocusQueueRef.current.get(relPath) ?? Promise.resolve()
+      const previous = processFocusQueueRef.current.get(relPath) ?? Promise.resolve()
       const queued = previous
         .catch(() => undefined)
         .then(async () => {
           // A newer request for this file supersedes one that has not started.
           if (pendingProcessFocusRef.current.get(relPath) !== processId) return
           const focused = await focusProcessRoot(modeler, processId)
-          if (
-            focused &&
-            pendingProcessFocusRef.current.get(relPath) === processId
-          ) {
+          if (focused && pendingProcessFocusRef.current.get(relPath) === processId) {
             pendingProcessFocusRef.current.delete(relPath)
           }
         })
@@ -1073,22 +1576,22 @@ function App(): JSX.Element {
   const ownersEntries = useMemo(
     () =>
       mergeOwners(
-        collectOwners(files.map((f) => ({ relPath: f.relPath, xml: f.xml }))),
+        collectOwners(liveFiles.map((f) => ({ relPath: f.relPath, xml: f.xml }))),
         sessionOwners
       ),
-    [files, sessionOwners]
+    [liveFiles, sessionOwners]
   )
 
   // The whole-workspace file list the assistant reasons over in DIRECTORY mode
   // (kept in sync with disk via `files`). Its stable reference keys the digest
   // memo so repeated questions over an unchanged workspace reuse one parse.
   const assistFiles = useMemo<Array<{ relPath: string; xml: string }>>(
-    () => files.map((f) => ({ relPath: f.relPath, xml: f.xml })),
-    [files]
+    () => liveFiles.map((f) => ({ relPath: f.relPath, xml: f.xml })),
+    [liveFiles]
   )
 
   const getDigests = useCallback(async (): Promise<ProcessDigest[]> => {
-    if (mode === 'directory') {
+    if (isMultiFileMode(mode)) {
       const cached = digestsCacheRef.current
       if (cached && cached.files === assistFiles) return cached.promise
       const promise = buildAllDigests(assistFiles)
@@ -1102,8 +1605,7 @@ function App(): JSX.Element {
     const collected: Array<{ relPath: string; xml: string }> = []
     for (const tb of tabs) {
       const modeler = modelersByKey[tb.key] as
-        | { saveXML?: (o: { format: boolean }) => Promise<{ xml?: string }> }
-        | undefined
+        { saveXML?: (o: { format: boolean }) => Promise<{ xml?: string }> } | undefined
       let xml = contents[tb.key]
       if (modeler?.saveXML) {
         try {
@@ -1122,7 +1624,9 @@ function App(): JSX.Element {
   const activeModeler = (activeKey ? modelersByKey[activeKey] : null) as SelectionLinkModeler | null
 
   const workspaceUnresolved = useMemo<WorkspaceUnresolvedLink[]>(() => {
-    if (mode === 'directory') return collectWorkspaceUnresolved(files, processIndex)
+    if (isMultiFileMode(mode)) {
+      return collectWorkspaceUnresolved(liveFiles, processIndex)
+    }
     // Fallback: only the active in-memory tab can be inspected.
     if (!activeKey) return []
     const xml = contents[activeKey]
@@ -1136,14 +1640,14 @@ function App(): JSX.Element {
       elementId: u.elementId,
       calledElement: u.calledElement
     }))
-  }, [mode, files, processIndex, activeKey, contents, tabs])
+  }, [mode, liveFiles, processIndex, activeKey, contents, tabs])
   const unresolvedCount = workspaceUnresolved.length
 
   // --- linking / drill-down ----------------------------------------------
 
   const handleCreateMissingProcess = useCallback(
     async (calledElementId: string) => {
-      if (!(mode === 'directory' && rootHandle)) {
+      if (!(isMultiFileMode(mode) && rootHandle)) {
         pushToast(t('alert.createMissingProcessNoFolder', { calledElementId }), 'info')
         return
       }
@@ -1193,20 +1697,13 @@ function App(): JSX.Element {
         pushToast(t('alert.noProcessWithId', { processId }), 'info')
         return
       }
-      if (mode === 'directory' && rootHandle) {
+      if (isMultiFileMode(mode) && rootHandle) {
         void handleCreateMissingProcess(processId)
       } else {
         pushToast(t('alert.noProcessWithId', { processId }), 'info')
       }
     },
-    [
-      openCanonicalProcess,
-      linkGraph,
-      mode,
-      rootHandle,
-      handleCreateMissingProcess,
-      pushToast
-    ]
+    [openCanonicalProcess, linkGraph, mode, rootHandle, handleCreateMissingProcess, pushToast]
   )
 
   // --- tree CRUD ----------------------------------------------------------
@@ -1254,13 +1751,13 @@ function App(): JSX.Element {
     // directory path (ORIG-6b); in fallback mode the index is empty, so this is a
     // no-op but keeps the two creation paths from drifting.
     const doc = buildNewProcessDoc(name, undefined, (candidate) => processIndex.has(candidate))
-    setMode('fallback')
-    setPhase('ready')
-    openVirtualTab(`${doc.fileBaseName}.bpmn`, doc.xml)
-  }, [promptText, openVirtualTab, processIndex])
+    const proceed = await guardWorkspaceSwitch()
+    if (!proceed) return
+    await activateSingleFileDocument(`${doc.fileBaseName}.bpmn`, doc.xml, LocalizationSource.Editor)
+  }, [promptText, processIndex, guardWorkspaceSwitch, activateSingleFileDocument])
 
   const handleNewProcessClick = useCallback(() => {
-    if (mode === 'directory' && rootHandle) void handleNewProcess('')
+    if (isMultiFileMode(mode) && rootHandle) void handleNewProcess('')
     else void handleNewProcessFallback()
   }, [mode, rootHandle, handleNewProcess, handleNewProcessFallback])
 
@@ -1352,12 +1849,35 @@ function App(): JSX.Element {
 
   const performDelete = useCallback(async () => {
     const target = deleteTarget
-    if (!target || !rootHandle) return
+    const adapter = workspaceAdapterRef.current
+    if (!target || !adapter) return
     setDeleteTarget(null)
     try {
-      await deleteAt(rootHandle, target.node.relPath, target.node.type)
+      const history = historyManagerRef.current
+      if (target.node.type === 'file' && history) {
+        await history.removeWithRevision(target.node.relPath)
+      } else {
+        if (history && target.node.type === 'directory') {
+          const descendants = await adapter.list(target.node.relPath)
+          const unreadableBpmn = descendants.find(
+            (entry) => entry.kind === 'file' && !entry.readable && /\.bpmn$/i.test(entry.path)
+          )
+          if (unreadableBpmn) {
+            throw new Error(
+              `Cannot delete "${target.node.relPath}" because "${unreadableBpmn.path}" could not be copied to portable history.`
+            )
+          }
+          for (const entry of descendants) {
+            if (entry.kind !== 'file' || !/\.bpmn$/i.test(entry.path)) {
+              continue
+            }
+            await history.createRevision(entry.path, { reason: 'delete' })
+          }
+        }
+        await adapter.remove(target.node.relPath)
+      }
       closeTabsUnder(target.node.relPath)
-      await refreshWorkspace(rootHandle)
+      await refreshWorkspace(rootHandle ?? undefined)
       pushToast(t('toast.deleted', { name: target.node.name }), 'success')
     } catch (err) {
       pushToast(t('alert.deleteFailed', { error: errMsg(err) }), 'error')
@@ -1431,7 +1951,7 @@ function App(): JSX.Element {
 
   const importEntries = useCallback(
     async (entries: DroppedBpmn[], baseFolderRel: string) => {
-      if (!(mode === 'directory' && rootHandle)) {
+      if (!(isMultiFileMode(mode) && rootHandle)) {
         pushToast(t('toast.import.openFolderFirst'), 'info')
         return
       }
@@ -1441,6 +1961,7 @@ function App(): JSX.Element {
       }
       let created = 0
       let renamed = 0
+      const knownProcessIds = [...processIndex.keys()]
       for (const entry of entries) {
         const sub = dirOf(entry.relPath)
         const targetFolder = sub ? joinRel(baseFolderRel, sub) : baseFolderRel
@@ -1450,7 +1971,11 @@ function App(): JSX.Element {
         // One serialized create per output file (slug pick + write inside the
         // shared op-mutex, as everywhere else). The optional `folder` override
         // lets the multi-model AML path land its files in a subfolder.
-        const writeUnique = (slug: string, xml: string, folder: string = targetFolder): Promise<string> =>
+        const writeUnique = (
+          slug: string,
+          xml: string,
+          folder: string = targetFolder
+        ): Promise<string> =>
           opMutexRef.current.runExclusive(async () => {
             const taken = await bpmnSlugsIn(rootHandle, folder)
             const guess = dedupeSlug(slug, (c) => taken.has(c.toLowerCase()))
@@ -1458,12 +1983,22 @@ function App(): JSX.Element {
           })
         try {
           const text = await entry.getText()
+          const prepareXml = async (candidateXml: string): Promise<string | null> => {
+            const prepared = await prepareImportedBpmnXml(candidateXml, knownProcessIds)
+            if (prepared.autoLayouted && !confirmGeneratedImportLayout()) {
+              return null
+            }
+            return prepared.xml
+          }
           // Routing is CONTENT-based: a `.xml` may be BPMN (many tools export
           // BPMN with a .xml extension) OR an ARIS AML database export (the
           // user's DMT exports) — and a mis-labeled `.apc` may equally carry
           // either. Only files that are neither are rejected.
           if (looksLikeBpmnXml(text)) {
-            const relPath = await writeUnique(base, text)
+            const candidateXml = await prepareXml(text)
+            if (!candidateXml) continue
+            const relPath = await writeUnique(base, candidateXml)
+            localizationSourceByTabRef.current.set(relPath, LocalizationSource.Xml)
             created += 1
             const finalBase = baseName(relPath).replace(/\.bpmn$/i, '')
             if (finalBase.toLowerCase() !== base.toLowerCase()) renamed += 1
@@ -1508,7 +2043,10 @@ function App(): JSX.Element {
             for (const model of conv.files) {
               const modelName = (lang === 'ar' ? model.nameAr : model.nameEn) || model.name
               const slug = deriveFileBaseName(modelName || base)
-              await writeUnique(slug, model.xml, modelFolder)
+              const candidateXml = await prepareXml(model.xml)
+              if (!candidateXml) continue
+              const relPath = await writeUnique(slug, candidateXml, modelFolder)
+              localizationSourceByTabRef.current.set(relPath, LocalizationSource.Aris)
               created += 1
             }
             pushToast(
@@ -1526,15 +2064,25 @@ function App(): JSX.Element {
             pushToast(t('apc.failed', { reason: apcReason('not-aml') }), 'error')
             continue
           } else {
-            // A .bpmn whose content didn't match the sniff: import it anyway —
-            // the pre-sniff behavior — and let the editor surface any problem.
-            const relPath = await writeUnique(base, text)
+            // A .bpmn whose content did not match the fast sniff still goes
+            // through the authoritative validators. Invalid input never
+            // reaches the workspace.
+            const candidateXml = await prepareXml(text)
+            if (!candidateXml) continue
+            const relPath = await writeUnique(base, candidateXml)
+            localizationSourceByTabRef.current.set(relPath, LocalizationSource.Xml)
             created += 1
             const finalBase = baseName(relPath).replace(/\.bpmn$/i, '')
             if (finalBase.toLowerCase() !== base.toLowerCase()) renamed += 1
           }
-        } catch {
-          /* skip an unreadable entry, keep importing the rest */
+        } catch (error) {
+          pushToast(
+            t('alert.importFailed', {
+              name: entry.name,
+              error: errMsg(error)
+            }),
+            'error'
+          )
         }
       }
       await refreshWorkspace(rootHandle)
@@ -1545,7 +2093,7 @@ function App(): JSX.Element {
         'success'
       )
     },
-    [mode, rootHandle, refreshWorkspace, pushToast, lang, ensureFolders]
+    [mode, rootHandle, refreshWorkspace, pushToast, lang, ensureFolders, processIndex]
   )
 
   const handleImportDrop = useCallback(
@@ -1612,22 +2160,118 @@ function App(): JSX.Element {
       e.target.value = ''
       if (!file) return
       try {
-        const xml = await file.text()
-        setMode('fallback')
-        setPhase('ready')
-        openVirtualTab(file.name, xml)
+        const sourceXml = await file.text()
+        const prepared = await prepareImportedBpmnXml(sourceXml, processIndex.keys())
+        if (prepared.autoLayouted && !confirmGeneratedImportLayout()) {
+          return
+        }
+        const proceed = await guardWorkspaceSwitch()
+        if (!proceed) return
+        await activateSingleFileDocument(file.name, prepared.xml, LocalizationSource.Xml)
       } catch (err) {
         pushToast(t('alert.open.failed', { error: errMsg(err) }), 'error')
       }
     },
-    [openVirtualTab, pushToast]
+    [processIndex, pushToast, guardWorkspaceSwitch, activateSingleFileDocument]
   )
 
   const startBlankDiagram = useCallback(() => {
-    setMode('fallback')
-    setPhase('ready')
-    openVirtualTab('untitled.bpmn', createNewDiagramXml())
-  }, [openVirtualTab])
+    void (async () => {
+      const proceed = await guardWorkspaceSwitch()
+      if (!proceed) return
+      await activateSingleFileDocument(
+        'untitled.bpmn',
+        createNewDiagramXml(),
+        LocalizationSource.Editor
+      )
+    })()
+  }, [guardWorkspaceSwitch, activateSingleFileDocument])
+
+  const handleExportWorkspaceBackup = useCallback(async () => {
+    const adapter = workspaceAdapterRef.current
+    if (!adapter) return
+    setBackupBusy(true)
+    try {
+      if (tabs.some((tab) => dirtyByKey[tab.key])) await saveAllDirty()
+      const blob = await adapter.exportBackup()
+      const safeName =
+        (rootName || 'orbitpm-workspace')
+          .replace(/[^A-Za-z0-9._-]+/g, '-')
+          .replace(/^-+|-+$/g, '') || 'orbitpm-workspace'
+      downloadBlob(`${safeName}-backup.zip`, blob)
+      pushToast(t('workspace.storage.backupExport'), 'success')
+    } catch (error) {
+      pushToast(t('alert.import.failed', { error: errMsg(error) }), 'error')
+    } finally {
+      setBackupBusy(false)
+    }
+  }, [tabs, dirtyByKey, saveAllDirty, rootName, pushToast])
+
+  const onBackupInputChange = useCallback(
+    async (event: React.ChangeEvent<HTMLInputElement>) => {
+      const backup = event.target.files?.[0]
+      event.target.value = ''
+      const adapter = workspaceAdapterRef.current
+      if (!backup || !adapter || !adapter.storage.capabilities.multipleFiles) {
+        return
+      }
+      setBackupBusy(true)
+      try {
+        const plan = await inspectWorkspaceBackup(adapter, backup)
+        setBackupImportPlan(plan)
+      } catch (error) {
+        pushToast(t('alert.import.failed', { error: errMsg(error) }), 'error')
+      } finally {
+        setBackupBusy(false)
+      }
+    },
+    [pushToast]
+  )
+
+  const handleApplyBackupImport = useCallback(
+    async (decisions: Readonly<Record<string, WorkspaceBackupCollisionDecision>>) => {
+      const adapter = workspaceAdapterRef.current
+      const plan = backupImportPlan
+      if (!adapter || !plan) return
+      setBackupBusy(true)
+      try {
+        const result = await opMutexRef.current.runExclusive(() =>
+          applyWorkspaceBackupImport(adapter, plan, {
+            decisions,
+            beforeOverwrite: async (path, existing) => {
+              if (!path.startsWith('.orbitpm/')) {
+                await historyManagerRef.current?.createRevision(path, {
+                  reason: 'backup-import',
+                  snapshot: existing
+                })
+              }
+            }
+          })
+        )
+        if (result.status !== 'committed') {
+          const detail =
+            result.status === 'needs-review'
+              ? `${result.unresolvedCollisions.length}`
+              : result.error.message
+          throw new Error(`${result.status}: ${detail}`)
+        }
+        setBackupImportPlan(null)
+        await refreshWorkspace(rootHandleRef.current ?? undefined)
+        pushToast(
+          t('toast.imported.count', {
+            count: result.applied.length,
+            plural: result.applied.length === 1 ? '' : 's'
+          }),
+          'success'
+        )
+      } catch (error) {
+        pushToast(t('alert.import.failed', { error: errMsg(error) }), 'error')
+      } finally {
+        setBackupBusy(false)
+      }
+    },
+    [backupImportPlan, refreshWorkspace, pushToast]
+  )
 
   // --- AI placement -------------------------------------------------------
 
@@ -1642,6 +2286,12 @@ function App(): JSX.Element {
       }
     ) => {
       const slug = deriveFileBaseName(opts.name || 'process')
+      await validateReleaseXml(xml, {
+        action: 'create-generated',
+        knownProcessIds: processIndex.keys(),
+        requireBilingual: true,
+        requireDi: true
+      })
       // Validate the workspace generation captured when generation STARTED against
       // the live one, both before enqueuing AND at write time inside the mutex: a
       // folder switch during the (slow) generation must not land the diagram in
@@ -1649,7 +2299,7 @@ function App(): JSX.Element {
       const handle = rootHandleRef.current
       const stale = (): boolean =>
         opts.gen !== undefined && !canCommitToWorkspace(opts.gen, workspaceGenRef.current)
-      if (mode === 'directory' && handle) {
+      if (isMultiFileMode(mode) && handle) {
         if (stale()) {
           pushToast(t('alert.staleGeneration'), 'error')
           return null
@@ -1675,16 +2325,14 @@ function App(): JSX.Element {
         void openDirectoryFile(result.relPath, {
           collapse: false,
           autoSizeOnImport: true,
-          localizationSource:
-            opts.localizationSource ?? LocalizationSource.Ai
+          localizationSource: opts.localizationSource ?? LocalizationSource.Ai
         })
         return { label: result.relPath }
       }
       openVirtualTab(`${slug}.bpmn`, xml, {
         collapse: false,
         autoSizeOnImport: true,
-        localizationSource:
-          opts.localizationSource ?? LocalizationSource.Ai
+        localizationSource: opts.localizationSource ?? LocalizationSource.Ai
       })
       return null
     },
@@ -1981,9 +2629,13 @@ function App(): JSX.Element {
           const activeName = (activeLang === 'ar' ? v.nameAr : v.nameEn).trim()
           if (activeName) {
             try {
-              ;(modeler as unknown as {
-                get(s: 'modeling'): { updateProperties(el: unknown, p: Record<string, unknown>): void }
-              })
+              ;(
+                modeler as unknown as {
+                  get(s: 'modeling'): {
+                    updateProperties(el: unknown, p: Record<string, unknown>): void
+                  }
+                }
+              )
                 .get('modeling')
                 .updateProperties(ctx.element, { name: activeName })
             } catch {
@@ -2041,7 +2693,7 @@ function App(): JSX.Element {
     try {
       const csv = ownersToCsv(ownersEntries)
       const data = buildLibraryZip(
-        files.map((f) => ({ relPath: f.relPath, xml: f.xml })),
+        liveFiles.map((f) => ({ relPath: f.relPath, xml: f.xml })),
         [
           { relPath: 'process-owners.csv', content: csv },
           {
@@ -2049,7 +2701,9 @@ function App(): JSX.Element {
             // re-import — here or in another standards-aware tool — can rebuild
             // the hierarchy without re-scanning every diagram.
             relPath: LIBRARY_MANIFEST_NAME,
-            content: serializeLibraryManifest(buildLibraryManifest(files, processIndex, linkGraph))
+            content: serializeLibraryManifest(
+              buildLibraryManifest(liveFiles, processIndex, linkGraph)
+            )
           }
         ]
       )
@@ -2057,11 +2711,11 @@ function App(): JSX.Element {
       triggerDownload(zipFileName(rootName), url)
       // Revoke once the click-initiated download has grabbed the blob.
       setTimeout(() => URL.revokeObjectURL(url), 10_000)
-      pushToast(t('library.exported', { count: files.length }), 'success')
+      pushToast(t('library.exported', { count: liveFiles.length }), 'success')
     } catch (err) {
       pushToast(t('alert.import.failed', { error: errMsg(err) }), 'error')
     }
-  }, [files, ownersEntries, processIndex, linkGraph, rootName, pushToast])
+  }, [liveFiles, ownersEntries, processIndex, linkGraph, rootName, pushToast])
 
   const onLibraryInputChange = useCallback(
     async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -2093,19 +2747,30 @@ function App(): JSX.Element {
       const targetFolder = dirOf(entry.relPath)
       const base = deriveFileBaseName(baseName(entry.relPath).replace(/\.bpmn$/i, ''))
       try {
+        const prepared = await prepareImportedBpmnXml(entry.xml, processIndex.keys())
+        if (prepared.autoLayouted && !confirmGeneratedImportLayout()) {
+          continue
+        }
         // Same op-mutex as every other create so a concurrent op can't grab the
         // same free slug; nested folders are ensured inside the critical section.
         const relPath = await opMutexRef.current.runExclusive(async () => {
           await ensureFolders(targetFolder)
           const taken = await bpmnSlugsIn(rootHandle, targetFolder)
           const guess = dedupeSlug(base, (c) => taken.has(c.toLowerCase()))
-          return createBpmnFileUnique(rootHandle, targetFolder, guess, entry.xml)
+          return createBpmnFileUnique(rootHandle, targetFolder, guess, prepared.xml)
         })
+        localizationSourceByTabRef.current.set(relPath, LocalizationSource.Backup)
         created += 1
         const finalBase = baseName(relPath).replace(/\.bpmn$/i, '')
         if (finalBase.toLowerCase() !== base.toLowerCase()) renamed += 1
-      } catch {
-        /* skip a single bad entry, keep importing the rest */
+      } catch (error) {
+        pushToast(
+          t('alert.importFailed', {
+            name: entry.relPath,
+            error: errMsg(error)
+          }),
+          'error'
+        )
       }
     }
     await refreshWorkspace(rootHandle)
@@ -2115,7 +2780,7 @@ function App(): JSX.Element {
         '.',
       'success'
     )
-  }, [libraryImport, rootHandle, ensureFolders, refreshWorkspace, pushToast])
+  }, [libraryImport, rootHandle, ensureFolders, refreshWorkspace, pushToast, processIndex])
 
   // Settings' org-styling toggle refreshes every live modeler so the renderer
   // re-evaluates its canRender against the just-flipped flag (each guarded so a
@@ -2137,14 +2802,8 @@ function App(): JSX.Element {
       try {
         const currentLang = getDiagramLang(modeler)
         const targetLang = currentLang === 'en' ? 'ar' : 'en'
-        const source =
-          localizationSourceByTabRef.current.get(tabKey) ??
-          LocalizationSource.Editor
-        const review = prepareDiagramLanguageReview(
-          modeler,
-          targetLang,
-          source
-        )
+        const source = localizationSourceByTabRef.current.get(tabKey) ?? LocalizationSource.Editor
+        const review = prepareDiagramLanguageReview(modeler, targetLang, source)
         if (review.complete) {
           const projected = setDiagramLang(modeler, targetLang)
           pushToast(
@@ -2187,9 +2846,7 @@ function App(): JSX.Element {
   const handleTranslationPartialPreview = useCallback(() => {
     const state = translationReview
     if (!state || translatingTab) return
-    const modeler = modelersByKey[state.tabKey] as
-      | LangToggleModeler
-      | undefined
+    const modeler = modelersByKey[state.tabKey] as LangToggleModeler | undefined
     if (!modeler) return
     try {
       const result = applyDiagramLocalizationReview(modeler, state.review, {
@@ -2238,8 +2895,7 @@ function App(): JSX.Element {
       return
     }
     const modeler = modelersByKey[state.tabKey] as
-      | (TranslateModeler & LangToggleModeler)
-      | undefined
+      (TranslateModeler & LangToggleModeler) | undefined
     if (!modeler) return
     const controller = new AbortController()
     translationAbortRef.current = controller
@@ -2258,11 +2914,7 @@ function App(): JSX.Element {
       }
       const result =
         state.providerId === 'free'
-          ? await translateReviewedDiagramWithTexts(
-              modeler,
-              makeFreeTranslateTexts(),
-              run
-            )
+          ? await translateReviewedDiagramWithTexts(modeler, makeFreeTranslateTexts(), run)
           : await (() => {
               const selection = state.aiSelection
               if (!selection || !hasKey(selection.providerId)) {
@@ -2275,10 +2927,7 @@ function App(): JSX.Element {
                     providerId: selection.providerId,
                     model: selection.modelId,
                     apiKey: getKey(selection.providerId) ?? '',
-                    referer:
-                      typeof location !== 'undefined'
-                        ? location.origin
-                        : undefined,
+                    referer: typeof location !== 'undefined' ? location.origin : undefined,
                     title: 'OrbitPM Process Studio Lite'
                   },
                   { signal: controller.signal }
@@ -2288,10 +2937,7 @@ function App(): JSX.Element {
             })()
       if (result.complete) {
         setTranslationReview(null)
-        pushToast(
-          t('translate.done', { count: result.translated }),
-          'success'
-        )
+        pushToast(t('translate.done', { count: result.translated }), 'success')
       } else {
         setTranslationReview({
           ...state,
@@ -2301,8 +2947,7 @@ function App(): JSX.Element {
       }
     } catch (err) {
       const cancelled =
-        controller.signal.aborted ||
-        (err instanceof DOMException && err.name === 'AbortError')
+        controller.signal.aborted || (err instanceof DOMException && err.name === 'AbortError')
       const stale = err instanceof StaleLocalizationReviewError
       const failures = stale
         ? []
@@ -2313,14 +2958,10 @@ function App(): JSX.Element {
             target: item.target,
             originalValue: item.sourceValue
           }))
-      const failedReview = inspectDiagramLocalization(
-        modeler,
-        state.review.target,
-        {
-          source: state.review.source,
-          providerFailures: failures
-        }
-      )
+      const failedReview = inspectDiagramLocalization(modeler, state.review.target, {
+        source: state.review.source,
+        providerFailures: failures
+      })
       const status = cancelled
         ? t('translationReview.cancelled')
         : stale
@@ -2343,13 +2984,7 @@ function App(): JSX.Element {
       translationAbortRef.current = null
       setTranslatingTab(null)
     }
-  }, [
-    translationReview,
-    translationDisclosure,
-    translatingTab,
-    modelersByKey,
-    pushToast
-  ])
+  }, [translationReview, translationDisclosure, translatingTab, modelersByKey, pushToast])
 
   // Interview apply-path: the assistant regenerated the diagram from the
   // running Q&A — import it into the LIVE modeler of the target tab (bypassing
@@ -2362,11 +2997,40 @@ function App(): JSX.Element {
       const modeler = modelersByKey[tabKey] as
         | {
             importXML(x: string): Promise<{ warnings: string[] }>
+            saveXML(options: { format: boolean }): Promise<{ xml?: string }>
             get(name: string): unknown
           }
         | undefined
       if (!modeler) throw new Error('editor not ready')
-      await modeler.importXML(xml)
+      const { xml: previousXml } = await modeler.saveXML({ format: true })
+      if (!previousXml) throw new Error('editor returned no XML')
+      await validateReleaseXml(xml, {
+        action: 'create-generated',
+        knownProcessIds: processIndex.keys(),
+        requireBilingual: true,
+        requireDi: true
+      })
+      const replacementPreservation = await validateUnknownExtensionPreservation(previousXml, xml)
+      if (!replacementPreservation.valid) {
+        throw new Error(t('sourceEditor.preservationBlocked'))
+      }
+      localizationSourceByTabRef.current.set(tabKey, LocalizationSource.Ai)
+      try {
+        await modeler.importXML(xml)
+        const { xml: roundTripXml } = await modeler.saveXML({ format: true })
+        if (!roundTripXml) throw new Error('editor returned no XML after import')
+        const roundTripPreservation = await validateUnknownExtensionPreservation(xml, roundTripXml)
+        if (!roundTripPreservation.valid) {
+          throw new Error(t('sourceEditor.preservationBlocked'))
+        }
+      } catch (error) {
+        try {
+          await modeler.importXML(previousXml)
+        } catch {
+          /* preserve the original replacement error */
+        }
+        throw error
+      }
       autoSizeAll(modeler)
       try {
         ;(modeler.get('canvas') as { zoom(m: 'fit-viewport'): void }).zoom('fit-viewport')
@@ -2379,14 +3043,18 @@ function App(): JSX.Element {
         }
         const root = canvas.getRootElement()
         const cur = root.businessObject?.get?.('orbitpm:activeLang')
-        ;(modeler.get('modeling') as {
-          updateProperties(el: unknown, p: Record<string, unknown>): void
-        }).updateProperties(root, { 'orbitpm:activeLang': typeof cur === 'string' && cur ? cur : 'en' })
+        ;(
+          modeler.get('modeling') as {
+            updateProperties(el: unknown, p: Record<string, unknown>): void
+          }
+        ).updateProperties(root, {
+          'orbitpm:activeLang': typeof cur === 'string' && cur ? cur : 'en'
+        })
       } catch {
         /* dirty-marking is best-effort; the import itself already landed */
       }
     },
-    [modelersByKey]
+    [modelersByKey, processIndex]
   )
 
   // AI panel CTA → open the assistant on the interview tab for the active
@@ -2416,9 +3084,7 @@ function App(): JSX.Element {
       // cannot be made without user credentials. It exercises the same sweep
       // invoked by the two App-owned AI import paths above.
       autoSizeAll: () =>
-        activeModeler
-          ? autoSizeAll(activeModeler as { get(name: string): unknown })
-          : 0
+        activeModeler ? autoSizeAll(activeModeler as { get(name: string): unknown }) : 0
     }
   }, [activeKey, modelersByKey])
 
@@ -2452,6 +3118,15 @@ function App(): JSX.Element {
       onChange={(e) => void onLibraryInputChange(e)}
     />
   )
+  const hiddenBackupInput = (
+    <input
+      ref={backupInputRef}
+      type="file"
+      accept=".zip,application/zip"
+      style={{ display: 'none' }}
+      onChange={(event) => void onBackupInputChange(event)}
+    />
+  )
 
   if (phase === 'loading') {
     return <div style={{ padding: '2rem' }}>{t('app.loading')}</div>
@@ -2461,13 +3136,17 @@ function App(): JSX.Element {
     return (
       <>
         {hiddenFileInput}
+        {hiddenBackupInput}
         <WorkspacePickerLite
-          mode={phase === 'need-reconnect' ? 'reconnect' : mode === 'fallback' ? 'fallback' : 'open'}
+          mode={phase === 'need-reconnect' ? 'reconnect' : support ? 'open' : 'fallback'}
           rememberedName={rememberedName}
           busy={pickBusy}
           error={pickError}
+          directoryAvailable={support}
+          opfsAvailable={browserWorkspaceAvailable}
           onOpenFolder={phase === 'need-reconnect' ? handleReconnect : handleOpenFolder}
           onOpenDifferent={handleOpenDifferent}
+          onOpenOpfs={handleOpenOpfs}
           onOpenFile={openFileFromDisk}
           onNewDiagram={startBlankDiagram}
           onNewProcess={() => void handleNewProcessFallback()}
@@ -2485,8 +3164,27 @@ function App(): JSX.Element {
     )
   }
 
-  const showCatalog = mode === 'directory' && (tabs.length === 0 || catalogOpen)
-  const crumbs = activeTab && activeTab.relPath ? folderCrumbs(activeTab.relPath, rootName || t('breadcrumb.root')) : null
+  const showCatalog = isMultiFileMode(mode) && (tabs.length === 0 || catalogOpen)
+  const crumbs =
+    activeTab && activeTab.relPath
+      ? folderCrumbs(activeTab.relPath, rootName || t('breadcrumb.root'))
+      : null
+  const storageModeLabel = t(
+    mode === 'directory'
+      ? 'workspace.storage.mode.directory'
+      : mode === 'opfs'
+        ? 'workspace.storage.mode.opfs'
+        : 'workspace.storage.mode.singleFile'
+  )
+  const storagePersistence = t(
+    mode === 'directory'
+      ? 'workspace.storage.persistence.directory'
+      : workspaceAdapter?.storage.persistence === 'origin-private-durable'
+        ? 'workspace.storage.persistence.opfsDurable'
+        : mode === 'opfs'
+          ? 'workspace.storage.persistence.opfsBestEffort'
+          : 'workspace.storage.persistence.singleFile'
+  )
   // Shell layout direction (the <html dir> follows the UI language) — the
   // sidebar resizer's drag math needs it; the editor island stays LTR.
   const dir: 'ltr' | 'rtl' = lang === 'ar' ? 'rtl' : 'ltr'
@@ -2496,6 +3194,7 @@ function App(): JSX.Element {
       {hiddenFileInput}
       {hiddenImportInput}
       {hiddenLibraryInput}
+      {hiddenBackupInput}
       <header
         style={{
           display: 'flex',
@@ -2509,11 +3208,21 @@ function App(): JSX.Element {
         <span style={{ display: 'flex', alignItems: 'center', gap: 8, flex: '0 0 auto' }}>
           <img src={ICON_DATA_URI} width={20} height={20} alt="" style={{ borderRadius: 5 }} />
           <strong style={{ fontSize: 13 }}>{t('app.title')}</strong>
-          <span
-            aria-label={`Version ${__APP_VERSION__}`}
-            style={{ fontSize: 11, opacity: 0.65 }}
-          >
+          <span aria-label={`Version ${__APP_VERSION__}`} style={{ fontSize: 11, opacity: 0.65 }}>
             v{__APP_VERSION__}
+          </span>
+          <span
+            title={storagePersistence}
+            style={{
+              maxWidth: 190,
+              overflow: 'hidden',
+              textOverflow: 'ellipsis',
+              whiteSpace: 'nowrap',
+              fontSize: 11,
+              opacity: 0.72
+            }}
+          >
+            {t('workspace.storage.current', { mode: storageModeLabel })}
           </span>
           <span style={{ display: 'inline-flex', gap: 2, marginInlineStart: 6 }}>
             <button
@@ -2536,7 +3245,7 @@ function App(): JSX.Element {
             >
               {lang === 'ar' ? '◀' : '▶'}
             </button>
-            {mode === 'directory' && (
+            {isMultiFileMode(mode) && (
               <button
                 className="orbitpm-lite-chrome-btn"
                 onClick={() => setCatalogOpen(true)}
@@ -2550,7 +3259,7 @@ function App(): JSX.Element {
           </span>
         </span>
 
-        {mode === 'directory' && (
+        {isMultiFileMode(mode) && (
           <div ref={searchBoxRef} style={{ position: 'relative', flex: '1 1 auto', maxWidth: 440 }}>
             <input
               type="search"
@@ -2592,15 +3301,15 @@ function App(): JSX.Element {
             onClick={handleNewProcessClick}
             title={t('app.newProcess.title')}
             style={{
-              background: 'var(--orbitpm-accent)',
-              color: '#fff',
-              borderColor: 'var(--orbitpm-accent)',
+              background: 'var(--orbitpm-primary-bg)',
+              color: 'var(--orbitpm-primary-fg)',
+              borderColor: 'var(--orbitpm-primary-bg)',
               fontWeight: 600
             }}
           >
             {t('app.newProcess')}
           </button>
-          {mode === 'directory' ? (
+          {isMultiFileMode(mode) && support ? (
             <button
               className="orbitpm-lite-chrome-btn"
               onClick={() => void handleOpenDifferent()}
@@ -2616,6 +3325,30 @@ function App(): JSX.Element {
             >
               {t('app.openBpmn')}
             </button>
+          )}
+          {workspaceAdapter?.storage.capabilities.backup && (
+            <button
+              className="orbitpm-lite-chrome-btn"
+              onClick={() => void handleExportWorkspaceBackup()}
+              disabled={backupBusy}
+              title={storagePersistence}
+            >
+              {t('workspace.storage.backupExport')}
+            </button>
+          )}
+          {workspaceAdapter?.storage.capabilities.multipleFiles && (
+            <>
+              <button
+                className="orbitpm-lite-chrome-btn"
+                onClick={() => backupInputRef.current?.click()}
+                disabled={backupBusy}
+              >
+                {t('workspace.storage.backupImport')}
+              </button>
+              <button className="orbitpm-lite-chrome-btn" onClick={() => setHistoryOpen(true)}>
+                {t('workspace.storage.history')}
+              </button>
+            </>
           )}
           <button
             className="orbitpm-lite-chrome-btn"
@@ -2661,133 +3394,139 @@ function App(): JSX.Element {
             {/* TOP: file explorer — the directory tree or the fallback block —
                 fills the sidebar and scrolls independently of the AI section. */}
             <div style={{ flex: '1 1 auto', minHeight: 0, overflowY: 'auto', padding: '0.5rem 0' }}>
-          {mode === 'directory' ? (
-            <div>
-              <div
-                style={{
-                  display: 'flex',
-                  gap: 6,
-                  padding: '0 0.6rem 0.5rem',
-                  marginBottom: 6,
-                  borderBottom: '1px solid var(--orbitpm-border)',
-                  flexWrap: 'wrap'
-                }}
-              >
-                <button
-                  className="orbitpm-lite-chrome-btn"
-                  style={{ flex: '1 1 auto' }}
-                  onClick={() => void handleNewProcess('')}
-                  title={t('tree.newProcess.title')}
-                >
-                  {t('tree.newProcess')}
-                </button>
-                <button
-                  className="orbitpm-lite-chrome-btn"
-                  onClick={() => void handleNewFolder('')}
-                  title={t('tree.newFolder.title')}
-                  aria-label={t('tree.newFolder.aria')}
-                >
-                  📁＋
-                </button>
-                <button
-                  className="orbitpm-lite-chrome-btn"
-                  onClick={() => importInputRef.current?.click()}
-                  title={t('app.import.title')}
-                  aria-label={t('app.import')}
-                >
-                  ⤓ {t('app.import')}
-                </button>
-                <button
-                  className="orbitpm-lite-chrome-btn"
-                  onClick={exportLibrary}
-                  title={t('library.export.title')}
-                  aria-label={t('library.export')}
-                >
-                  ⬇ {t('library.export')}
-                </button>
-                <button
-                  className="orbitpm-lite-chrome-btn"
-                  onClick={() => libraryInputRef.current?.click()}
-                  title={t('library.import.title')}
-                  aria-label={t('library.import')}
-                >
-                  ⬆ {t('library.import')}
-                </button>
-                <button
-                  className="orbitpm-lite-chrome-btn"
-                  onClick={() => void handleManualRefresh()}
-                  title={t('tree.refresh.title')}
-                  aria-label={t('tree.refresh.aria')}
-                >
-                  {t('tree.refresh')}
-                </button>
-              </div>
-              {countBpmnFiles(tree) === 0 ? (
-                <EmptyWorkspaceCard
-                  folderName={rootName}
-                  onCreateFirst={() => void handleNewProcess('')}
-                />
+              {isMultiFileMode(mode) ? (
+                <div>
+                  <div
+                    style={{
+                      display: 'flex',
+                      gap: 6,
+                      padding: '0 0.6rem 0.5rem',
+                      marginBottom: 6,
+                      borderBottom: '1px solid var(--orbitpm-border)',
+                      flexWrap: 'wrap'
+                    }}
+                  >
+                    <button
+                      className="orbitpm-lite-chrome-btn"
+                      style={{ flex: '1 1 auto' }}
+                      onClick={() => void handleNewProcess('')}
+                      title={t('tree.newProcess.title')}
+                    >
+                      {t('tree.newProcess')}
+                    </button>
+                    <button
+                      className="orbitpm-lite-chrome-btn"
+                      onClick={() => void handleNewFolder('')}
+                      title={t('tree.newFolder.title')}
+                      aria-label={t('tree.newFolder.aria')}
+                    >
+                      📁＋
+                    </button>
+                    <button
+                      className="orbitpm-lite-chrome-btn"
+                      onClick={() => importInputRef.current?.click()}
+                      title={t('app.import.title')}
+                      aria-label={t('app.import')}
+                    >
+                      ⤓ {t('app.import')}
+                    </button>
+                    <button
+                      className="orbitpm-lite-chrome-btn"
+                      onClick={exportLibrary}
+                      title={t('library.export.title')}
+                      aria-label={t('library.export')}
+                    >
+                      ⬇ {t('library.export')}
+                    </button>
+                    <button
+                      className="orbitpm-lite-chrome-btn"
+                      onClick={() => libraryInputRef.current?.click()}
+                      title={t('library.import.title')}
+                      aria-label={t('library.import')}
+                    >
+                      ⬆ {t('library.import')}
+                    </button>
+                    <button
+                      className="orbitpm-lite-chrome-btn"
+                      onClick={() => void handleManualRefresh()}
+                      title={t('tree.refresh.title')}
+                      aria-label={t('tree.refresh.aria')}
+                    >
+                      {t('tree.refresh')}
+                    </button>
+                  </div>
+                  {countBpmnFiles(tree) === 0 ? (
+                    <EmptyWorkspaceCard
+                      folderName={rootName}
+                      onCreateFirst={() => void handleNewProcess('')}
+                    />
+                  ) : (
+                    <FolderTreeLite
+                      hierarchy={processHierarchy}
+                      activePath={activeTab?.relPath ?? null}
+                      dirtyPaths={dirtyFilePaths}
+                      revealRequest={treeRevealRequest}
+                      // Single click: open but keep the explorer visible. Double
+                      // click: open AND collapse the sidebar so the canvas takes the
+                      // full window (the first click of the pair already opened the
+                      // tab, so this handler only needs to re-activate + collapse).
+                      onOpenFile={openFileAndReveal}
+                      onOpenFileFocus={(rel) => void openDirectoryFile(rel)}
+                      onOpenProcess={(navigation) => {
+                        openCanonicalProcess(navigation.processId)
+                      }}
+                      onNewProcess={(f) => void handleNewProcess(f)}
+                      onNewFolder={(f) => void handleNewFolder(f)}
+                      onRename={(n) => void handleRename(n)}
+                      onDelete={(n) => void handleDeleteRequest(n)}
+                      onMove={(n) => setMoveTarget(n)}
+                      onMoveDrop={handleMoveDrop}
+                      onImportDrop={handleImportDrop}
+                    />
+                  )}
+                </div>
               ) : (
-                <FolderTreeLite
-                  hierarchy={processHierarchy}
-                  activePath={activeTab?.relPath ?? null}
-                  dirtyPaths={dirtyFilePaths}
-                  revealRequest={treeRevealRequest}
-                  // Single click: open but keep the explorer visible. Double
-                  // click: open AND collapse the sidebar so the canvas takes the
-                  // full window (the first click of the pair already opened the
-                  // tab, so this handler only needs to re-activate + collapse).
-                  onOpenFile={openFileAndReveal}
-                  onOpenFileFocus={(rel) => void openDirectoryFile(rel)}
-                  onOpenProcess={(navigation) => {
-                    openCanonicalProcess(navigation.processId)
+                <div
+                  style={{
+                    padding: '0.6rem 0.8rem',
+                    fontSize: 12.5,
+                    color: 'var(--orbitpm-muted)'
                   }}
-                  onNewProcess={(f) => void handleNewProcess(f)}
-                  onNewFolder={(f) => void handleNewFolder(f)}
-                  onRename={(n) => void handleRename(n)}
-                  onDelete={(n) => void handleDeleteRequest(n)}
-                  onMove={(n) => setMoveTarget(n)}
-                  onMoveDrop={handleMoveDrop}
-                  onImportDrop={handleImportDrop}
-                />
+                >
+                  <p style={{ marginTop: 0 }}>{t('fallback.singleFileNote')}</p>
+                  <button
+                    className="orbitpm-lite-chrome-btn"
+                    style={{
+                      width: '100%',
+                      marginBottom: 6,
+                      background: 'var(--orbitpm-primary-bg)',
+                      color: 'var(--orbitpm-primary-fg)',
+                      borderColor: 'var(--orbitpm-primary-bg)',
+                      fontWeight: 600
+                    }}
+                    onClick={() => void handleNewProcessFallback()}
+                    title={t('fallback.newProcess.title')}
+                  >
+                    {t('fallback.newProcess')}
+                  </button>
+                  <button
+                    className="orbitpm-lite-chrome-btn"
+                    style={{ width: '100%', marginBottom: 6 }}
+                    onClick={openFileFromDisk}
+                    title={t('fallback.openBpmnFile.title')}
+                  >
+                    {t('fallback.openBpmnFile')}
+                  </button>
+                  <button
+                    className="orbitpm-lite-chrome-btn"
+                    style={{ width: '100%' }}
+                    onClick={startBlankDiagram}
+                    title={t('fallback.newBlank.title')}
+                  >
+                    {t('fallback.newBlank')}
+                  </button>
+                </div>
               )}
-            </div>
-          ) : (
-            <div style={{ padding: '0.6rem 0.8rem', fontSize: 12.5, color: 'var(--orbitpm-muted)' }}>
-              <p style={{ marginTop: 0 }}>{t('fallback.singleFileNote')}</p>
-              <button
-                className="orbitpm-lite-chrome-btn"
-                style={{
-                  width: '100%',
-                  marginBottom: 6,
-                  background: 'var(--orbitpm-accent)',
-                  color: '#fff',
-                  borderColor: 'var(--orbitpm-accent)',
-                  fontWeight: 600
-                }}
-                onClick={() => void handleNewProcessFallback()}
-                title={t('fallback.newProcess.title')}
-              >
-                {t('fallback.newProcess')}
-              </button>
-              <button
-                className="orbitpm-lite-chrome-btn"
-                style={{ width: '100%', marginBottom: 6 }}
-                onClick={openFileFromDisk}
-                title={t('fallback.openBpmnFile.title')}
-              >
-                {t('fallback.openBpmnFile')}
-              </button>
-              <button
-                className="orbitpm-lite-chrome-btn"
-                style={{ width: '100%' }}
-                onClick={startBlankDiagram}
-                title={t('fallback.newBlank.title')}
-              >
-                {t('fallback.newBlank')}
-              </button>
-            </div>
-          )}
             </div>
 
             {/* BOTTOM: AI generator. The header toggles the section (persisted);
@@ -2816,6 +3555,7 @@ function App(): JSX.Element {
             {!aiSectionCollapsed && (
               <div style={{ flex: '0 1 auto', maxHeight: '55%', overflowY: 'auto' }}>
                 <AiPanelLite
+                  key={`ai:${workspaceAdapter?.id ?? 'none'}:${workspaceGenRef.current}`}
                   embedded
                   folders={folders}
                   onPlaceGenerated={placeGenerated}
@@ -2824,7 +3564,7 @@ function App(): JSX.Element {
                   collapsed={false}
                   onToggle={() => {}}
                   keysVersion={keysVersion}
-                  mode={mode}
+                  mode={isMultiFileMode(mode) ? 'directory' : 'fallback'}
                   processCatalog={processCatalog}
                   isKnownProcess={isKnownProcess}
                   resolveProcessName={resolveProcessName}
@@ -2976,7 +3716,10 @@ function App(): JSX.Element {
               }}
             >
               {crumbs.map((c, i) => (
-                <span key={c.relPath || 'root'} style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+                <span
+                  key={c.relPath || 'root'}
+                  style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}
+                >
                   {i > 0 && <span style={{ opacity: 0.5 }}>/</span>}
                   {i === 0 ? (
                     <button
@@ -3005,7 +3748,7 @@ function App(): JSX.Element {
           )}
 
           <div style={{ position: 'relative', flex: 1, minHeight: 0 }}>
-            {tabs.length === 0 && mode === 'fallback' && (
+            {tabs.length === 0 && mode === 'single-file' && (
               <div style={{ padding: '1.5rem', opacity: 0.6, lineHeight: 1.6 }}>
                 {t('emptyTab.fallback')}
               </div>
@@ -3026,14 +3769,19 @@ function App(): JSX.Element {
                   }}
                 >
                   {content === undefined ? (
-                    <div style={{ padding: '1.5rem', opacity: 0.6 }}>{t('editor.loadingDiagram')}</div>
+                    <div style={{ padding: '1.5rem', opacity: 0.6 }}>
+                      {t('editor.loadingDiagram')}
+                    </div>
                   ) : (
                     <EditorTab
                       xml={content}
                       onDirtyChange={(dirty) => handleDirtyChange(tab.key, dirty)}
-                      onRequestSave={(xml) => handleRequestSave(tab, xml)}
+                      onRequestSave={(xml, options) => handleRequestSave(tab, xml, options)}
+                      knownProcessIds={[...processIndex.keys()]}
                       onOpenCalledProcess={handleOpenCalledProcess}
-                      onOpenStepDetails={(id, missing) => handleOpenStepDetails(tab.key, id, missing)}
+                      onOpenStepDetails={(id, missing) =>
+                        handleOpenStepDetails(tab.key, id, missing)
+                      }
                       sidePaneExtra={
                         <DetailsCard
                           modeler={(modelersByKey[tab.key] ?? null) as StepDetailsModeler | null}
@@ -3050,32 +3798,50 @@ function App(): JSX.Element {
                         // null (unmount/replace) path.
                         badgeUninstallersRef.current[tab.key]?.()
                         delete badgeUninstallersRef.current[tab.key]
+                        liveXmlUninstallersRef.current[tab.key]?.()
+                        delete liveXmlUninstallersRef.current[tab.key]
                         setModelersByKey((prev) => ({ ...prev, [tab.key]: modeler }))
                         if (modeler) {
                           try {
-                            const eventBus = (
-                              modeler as { get(name: string): unknown }
-                            ).get('eventBus') as {
+                            const eventBus = (modeler as { get(name: string): unknown }).get(
+                              'eventBus'
+                            ) as {
+                              on(event: string, callback: () => void): void
+                              off(event: string, callback: () => void): void
+                            }
+                            const capture = (): void =>
+                              scheduleLiveXmlCapture(
+                                tab,
+                                modeler as {
+                                  saveXML?: (options: {
+                                    format: boolean
+                                  }) => Promise<{ xml?: string }>
+                                }
+                              )
+                            eventBus.on('commandStack.changed', capture)
+                            liveXmlUninstallersRef.current[tab.key] = () => {
+                              eventBus.off('commandStack.changed', capture)
+                            }
+                          } catch {
+                            /* live indexing falls back to the last saved snapshot */
+                          }
+                          try {
+                            const eventBus = (modeler as { get(name: string): unknown }).get(
+                              'eventBus'
+                            ) as {
                               on(event: string, callback: () => void): void
                             }
                             eventBus.on('import.done', () => {
                               try {
-                                const langModeler =
-                                  modeler as LangToggleModeler
+                                const langModeler = modeler as LangToggleModeler
                                 const current = getDiagramLang(langModeler)
-                                const target =
-                                  current === 'en' ? 'ar' : 'en'
+                                const target = current === 'en' ? 'ar' : 'en'
                                 const source =
-                                  localizationSourceByTabRef.current.get(
-                                    tab.key
-                                  ) ?? LocalizationSource.Editor
+                                  localizationSourceByTabRef.current.get(tab.key) ??
+                                  LocalizationSource.Editor
                                 localizationReviewByTabRef.current.set(
                                   tab.key,
-                                  prepareDiagramLanguageReview(
-                                    langModeler,
-                                    target,
-                                    source
-                                  )
+                                  prepareDiagramLanguageReview(langModeler, target, source)
                                 )
                               } catch {
                                 // Localization audit is non-destructive and
@@ -3095,9 +3861,9 @@ function App(): JSX.Element {
                           }
                           if (pendingAiAutoSizeRef.current.has(tab.key)) {
                             try {
-                              const eventBus = (
-                                modeler as { get(name: string): unknown }
-                              ).get('eventBus') as {
+                              const eventBus = (modeler as { get(name: string): unknown }).get(
+                                'eventBus'
+                              ) as {
                                 on(event: string, callback: () => void): void
                                 off(event: string, callback: () => void): void
                               }
@@ -3150,7 +3916,7 @@ function App(): JSX.Element {
                             >
                               {t('editor.stepDetails')}
                             </button>
-                            {mode === 'directory' && (
+                            {isMultiFileMode(mode) && (
                               <SelectionLinkButton modeler={activeModeler} index={processIndex} />
                             )}
                           </>
@@ -3192,8 +3958,10 @@ function App(): JSX.Element {
         }}
       >
         <span style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-          {mode === 'directory' ? t('footer.folderPrefix', { folderName: rootName }) : t('footer.singleFileMode')}
-          {search.trim() && mode === 'directory' && (
+          {isMultiFileMode(mode)
+            ? t('footer.folderPrefix', { folderName: rootName })
+            : t('footer.singleFileMode')}
+          {search.trim() && isMultiFileMode(mode) && (
             <span>· {tPlural('search.matches', countHits(searchGroups))}</span>
           )}
           {unresolvedCount > 0 && (
@@ -3215,6 +3983,37 @@ function App(): JSX.Element {
               {tPlural('footer.unresolvedLinks', unresolvedCount)}
             </button>
           )}
+          {workspaceIssues.length > 0 && (
+            <span
+              role="status"
+              title={workspaceIssues.join('\n')}
+              style={{ color: '#d97706', fontWeight: 600 }}
+            >
+              ⚠ {workspaceIssues.length}
+            </span>
+          )}
+          {duplicateProcessDiagnostics.map((diagnostic) => (
+            <button
+              key={diagnostic.processId}
+              type="button"
+              onClick={() => void handleRepairDuplicateProcessId(diagnostic.processId)}
+              title={t('workspace.duplicate.title', {
+                id: diagnostic.processId,
+                paths: diagnostic.paths.join(' ↔ ')
+              })}
+              style={{
+                padding: '0.1rem 0.5rem',
+                borderRadius: 999,
+                border: '1px solid rgba(217,119,6,0.45)',
+                background: 'rgba(217,119,6,0.12)',
+                color: '#d97706',
+                cursor: 'pointer',
+                font: 'inherit'
+              }}
+            >
+              {diagnostic.processId} · {t('workspace.duplicate.repair')}
+            </button>
+          ))}
         </span>
         <span>{t('footer.tagline')}</span>
       </footer>
@@ -3228,11 +4027,7 @@ function App(): JSX.Element {
           busy={translatingTab === translationReview.tabKey}
           status={translationReview.status}
           onProviderChange={(providerId) => {
-            if (
-              providerId !== '' &&
-              providerId !== 'selected-ai' &&
-              providerId !== 'free'
-            ) {
+            if (providerId !== '' && providerId !== 'selected-ai' && providerId !== 'free') {
               return
             }
             setTranslationReview((current) =>
@@ -3297,9 +4092,7 @@ function App(): JSX.Element {
           confirmLabel={t('library.import.confirm')}
           message={
             <>
-              <div>
-                {t('library.import.summary', { count: libraryImport.entries.length })}
-              </div>
+              <div>{t('library.import.summary', { count: libraryImport.entries.length })}</div>
               {libraryImport.manifest && (
                 <div style={{ marginTop: 8, color: 'var(--orbitpm-muted)' }}>
                   {t('library.manifestInfo', {
@@ -3337,7 +4130,7 @@ function App(): JSX.Element {
       {unresolvedOpen && (
         <UnresolvedLinksPanel
           links={workspaceUnresolved}
-          canCreate={mode === 'directory' && !!rootHandle}
+          canCreate={isMultiFileMode(mode) && !!rootHandle}
           onCreate={(called) => {
             setUnresolvedOpen(false)
             void handleCreateMissingProcess(called)
@@ -3349,6 +4142,24 @@ function App(): JSX.Element {
             }
           }}
           onClose={() => setUnresolvedOpen(false)}
+        />
+      )}
+
+      {backupImportPlan && (
+        <BackupImportDialog
+          plan={backupImportPlan}
+          busy={backupBusy}
+          onApply={(decisions) => void handleApplyBackupImport(decisions)}
+          onCancel={() => setBackupImportPlan(null)}
+        />
+      )}
+
+      {historyOpen && historyManagerRef.current && (
+        <HistoryDialog
+          manager={historyManagerRef.current}
+          currentXml={(path) => liveFiles.find((file) => file.relPath === path)?.xml}
+          onChanged={() => refreshWorkspace(rootHandleRef.current ?? undefined)}
+          onClose={() => setHistoryOpen(false)}
         />
       )}
 
@@ -3365,11 +4176,12 @@ function App(): JSX.Element {
       <Toaster toasts={toasts} onDismiss={dismissToast} />
 
       <AssistantDrawer
+        key={`assistant:${workspaceAdapter?.id ?? 'none'}:${workspaceGenRef.current}`}
         open={assistOpen}
         onOpen={() => setAssistOpen(true)}
         onClose={() => setAssistOpen(false)}
         printing={printJob != null}
-        mode={mode}
+        mode={isMultiFileMode(mode) ? 'directory' : 'fallback'}
         keysVersion={keysVersion}
         getDigests={getDigests}
         onOpenProcess={(relPath) => {
