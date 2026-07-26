@@ -1,4 +1,3 @@
-/// <reference path="./ambient.d.ts" />
 import React from 'react'
 import ReactDOM from 'react-dom/client'
 // Reuse the desktop renderer's in-app prompt modal (Electron/browser both lack

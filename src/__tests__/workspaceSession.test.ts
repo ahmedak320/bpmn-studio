@@ -69,7 +69,7 @@ describe('createRefreshGuard (MAJOR-8 stale/out-of-order scan guard)', () => {
 
 describe('commitIfCurrent (ORIG-1: async read / AI-placement cross-workspace guard)', () => {
   it('commits when the workspace generation is unchanged across the async op', async () => {
-    let gen = 1
+    const gen = 1
     let committed: string | null = null
     const outcome = await commitIfCurrent(
       () => gen,

@@ -13,12 +13,8 @@
 // `orbitpm:` but not guaranteed — so every read falls back to matching the
 // attribute local-name (`endsWith(':owner')`) regardless of prefix.
 
-// bpmn-moddle ships no TypeScript types and, resolving to plain JS, cannot be
-// augmented via `declare module` from a module file — and this is the only file
-// importing it, so there is no shim in the (non-mine) ambient.d.ts. Suppress the
-// untyped-import diagnostic on this one line, then re-attach a precise local
-// type via BpmnModdle below so every downstream use stays fully typed.
-// @ts-ignore -- untyped third-party module (bpmn-moddle)
+// Re-attach the precise slice this parser uses so downstream traversal remains
+// fully typed even though bpmn-moddle's public tree is intentionally dynamic.
 import BpmnModdleUntyped from 'bpmn-moddle'
 
 interface ModdleInstance {

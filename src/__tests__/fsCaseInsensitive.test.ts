@@ -4,7 +4,6 @@ import {
   writeBytesAt,
   readFileAt,
   readBytesAt,
-  createFolderAt,
   renameAt,
   resolveDir
 } from '../fs/fsAccess'

@@ -40,7 +40,6 @@ import {
   truncate,
   channelLabel,
   triggerLabel,
-  isActivityType,
   type Box,
   type FlowDirection,
   type FlowOrientation,

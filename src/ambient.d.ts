@@ -2,8 +2,8 @@
 
 declare const __APP_VERSION__: string
 
-// Ambient declarations for the Lite build. Pulled into the program via a
-// triple-slash reference from main.tsx so it is always part of the compilation.
+// Ambient declarations for the Lite build. tsconfig.json includes this file
+// directly with the rest of src/.
 //
 // Two jobs:
 //  1. Fill the File System Access API gaps that the installed lib.dom lacks
@@ -57,7 +57,7 @@ declare module 'bpmn-auto-layout' {
 // bpmn-js additionalModules take opaque DI "module descriptors"; typed as `any`
 // (matching how the desktop app consumes them without type stubs) so they slot
 // into bpmn-js's ModuleDeclaration[] without a per-call cast.
-/* eslint-disable @typescript-eslint/no-explicit-any */
+/* eslint-disable @typescript-eslint/no-explicit-any -- third-party module descriptors are intentionally opaque */
 declare module 'bpmn-js-properties-panel' {
   export const BpmnPropertiesPanelModule: any
   export const BpmnPropertiesProviderModule: any
@@ -69,4 +69,27 @@ declare module 'bpmn-js-create-append-anything' {
 declare module 'diagram-js-minimap' {
   const minimapModule: any
   export default minimapModule
+}
+declare module 'bpmn-js-bpmnlint' {
+  const bpmnLintModule: any
+  export default bpmnLintModule
+}
+/* eslint-enable @typescript-eslint/no-explicit-any */
+
+declare module 'bpmnlint' {
+  export class Linter {
+    constructor(options: {
+      config?: unknown
+      resolver: {
+        resolveRule(pkg: string, ruleName: string): unknown
+        resolveConfig?(pkg: string, configName: string): unknown
+      }
+    })
+    lint(root: unknown, config?: unknown): Promise<Record<string, unknown[]>>
+  }
+}
+
+declare module 'bpmnlint/rules/*' {
+  const ruleFactory: (options?: unknown) => unknown
+  export default ruleFactory
 }

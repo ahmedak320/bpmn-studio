@@ -5,7 +5,7 @@ declare module 'bpmn-moddle' {
   export interface ModdleImportResult {
     // The moddle element tree is untyped here on purpose — tests only poke a
     // few well-known properties ($type, diagrams, plane, …).
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- dynamic third-party moddle tree
     rootElement: any
     warnings: { message: string }[]
   }

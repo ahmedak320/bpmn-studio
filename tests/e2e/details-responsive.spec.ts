@@ -41,7 +41,6 @@ test('Details uses a viewport-safe modal drawer at 320, 375, and 768px', async (
     const editor = page.locator('.orbitpm-editor')
     const pane = editor.locator('.orbitpm-lite-sidepane')
     const toggle = editor.getByRole('button', { name: 'Details', exact: true })
-    const rail = editor.locator('.orbitpm-details-rail')
 
     await expect(toggle).toBeVisible()
     await expect(toggle).toHaveAttribute('aria-expanded', 'false')
@@ -150,7 +149,6 @@ test('the 375px drawer and rail move to logical inline-end in Arabic', async ({ 
   const editor = page.locator('.orbitpm-editor')
   const body = editor.locator('.orbitpm-editor__body')
   const pane = editor.locator('.orbitpm-lite-sidepane')
-  const rail = editor.locator('.orbitpm-details-rail')
   const toggle = editor.getByRole('button', { name: 'التفاصيل', exact: true })
 
   await expect(editor).toHaveAttribute('dir', 'rtl')

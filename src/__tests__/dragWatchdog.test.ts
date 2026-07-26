@@ -297,7 +297,7 @@ describe('installDragWatchdog (fake doc/win)', () => {
   })
 
   it('visibilitychange → hidden rescues; a visible-change does not', () => {
-    const { scope, win, doc } = makeHarness()
+    const { scope, doc } = makeHarness()
     scope.emit('mousedown', { type: 'mousedown', buttons: 1, clientX: 0, clientY: 0 })
 
     doc.emit('visibilitychange', { type: 'visibilitychange' }) // still 'visible'

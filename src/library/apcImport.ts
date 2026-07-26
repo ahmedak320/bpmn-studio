@@ -169,26 +169,6 @@ const METADATA_OBJECT_TYPES = new Set([
 ])
 
 /**
- * Control-flow connection types (the EPC backbone), direction source→target
- * as written in the export:
- *   CT_ACTIV_1        event/rule activates function
- *   CT_CRT_1          function creates event
- *   CT_LEADS_TO_1/2   function leads to rule / rule leads to event
- *   CT_IS_PREDEC_OF_1 function is predecessor of function
- * CT_CRT_OUT_TO ("creates output to") must NOT match the CT_CRT rule — the
- * pattern requires a digit suffix.
- */
-function isFlowCxnType(type: string | undefined): boolean {
-  if (!type) return true // legacy exports omit the type on plain flow edges
-  return (
-    /^CT_LEADS_TO/i.test(type) ||
-    /^CT_ACTIV/i.test(type) ||
-    /^CT_CRT(_\d+)?$/i.test(type) ||
-    /^CT_IS_PREDEC_OF/i.test(type)
-  )
-}
-
-/**
  * "Event is evaluated by rule" — in a real ARIS 10 EPC this connects an
  * OT_EVT to the OT_RULE gateway that weighs it, i.e. it IS part of the
  * control flow (dropping it would leave every such gateway with no inputs).

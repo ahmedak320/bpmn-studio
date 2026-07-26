@@ -33,7 +33,7 @@ import {
   ParallelGatewaySchema
 } from './schema'
 
-/* eslint-disable @typescript-eslint/no-explicit-any */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- validated dynamically by the Zod IR schema
 type IRElement = any
 
 const CALL_ACTIVITY_TYPE = 'callActivity'

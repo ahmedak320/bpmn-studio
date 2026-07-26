@@ -37,7 +37,7 @@ export interface TransformResult {
   flows: TransformedFlow[]
 }
 
-/* eslint-disable @typescript-eslint/no-explicit-any */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- narrowed by the validated IR discriminators below
 type IRElement = any
 
 type WorkingElement = Omit<TransformedElement, 'incoming' | 'outgoing'> & {
