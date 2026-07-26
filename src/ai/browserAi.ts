@@ -24,6 +24,12 @@ import {
 import { defaultLiteModelId, type LiteProviderId } from './providersLite'
 import { buildImageInstruction, buildPdfInstruction, type GenAttachment } from './pdf'
 import { extractUsage, recordUsage } from './credits'
+import {
+  isTransientHttpStatus,
+  parseRetryAfter,
+  withBoundedRetry,
+  type RetryAttempt
+} from './retry'
 
 export type { LiteProviderId } from './providersLite'
 
@@ -77,10 +83,6 @@ export interface ProviderConfig {
   providerId: LiteProviderId
   model: string
   apiKey: string
-  /** Custom OpenAI-compatible endpoint root (no trailing /chat/completions). */
-  baseURL?: string
-  /** Custom endpoint extra headers (besides Authorization). */
-  extraHeaders?: Record<string, string>
   /** OpenRouter optional attribution headers. */
   referer?: string
   title?: string
@@ -102,15 +104,18 @@ export interface BuildOpts {
 
 /** Error carrying the HTTP status so the classifier can read it. */
 export class ProviderHttpError extends Error {
+  readonly transport = true as const
   status: number
-  constructor(status: number, message: string) {
+  retryAfterMs?: number
+  constructor(status: number, message: string, retryAfterMs?: number) {
     super(message)
     this.name = 'ProviderHttpError'
     this.status = status
+    this.retryAfterMs = retryAfterMs
   }
 }
 
-export type TransportCode = 'auth' | 'rate' | 'network' | 'timeout'
+export type TransportCode = 'auth' | 'rate' | 'network' | 'timeout' | 'cancelled'
 
 /**
  * A provider/TRANSPORT-layer failure — auth (401/403), rate-limit (429), a
@@ -124,11 +129,18 @@ export class TransportError extends Error {
   readonly transport = true as const
   code: TransportCode
   status?: number
-  constructor(code: TransportCode, message: string, status?: number) {
+  retryAfterMs?: number
+  constructor(
+    code: TransportCode,
+    message: string,
+    status?: number,
+    retryAfterMs?: number
+  ) {
     super(message)
     this.name = 'TransportError'
     this.code = code
     this.status = status
+    this.retryAfterMs = retryAfterMs
   }
 }
 
@@ -160,10 +172,20 @@ async function fetchWithTimeout<T>(
   url: string,
   init: RequestInit,
   timeoutMs: number,
-  consume: (res: Response) => Promise<T>
+  consume: (res: Response) => Promise<T>,
+  callerSignal?: AbortSignal
 ): Promise<T> {
   const ctrl = new AbortController()
   let timedOut = false
+  let callerAborted = false
+  const onCallerAbort = (): void => {
+    callerAborted = true
+    ctrl.abort()
+  }
+  if (callerSignal?.aborted) {
+    throw new TransportError('cancelled', 'The request was cancelled.')
+  }
+  callerSignal?.addEventListener('abort', onCallerAbort, { once: true })
   const timer = setTimeout(() => {
     timedOut = true
     ctrl.abort()
@@ -175,7 +197,9 @@ async function fetchWithTimeout<T>(
     res = await fetch(url, { ...init, signal: ctrl.signal })
   } catch (error) {
     clearTimeout(timer)
+    callerSignal?.removeEventListener('abort', onCallerAbort)
     if (timedOut) throw timeoutError()
+    if (callerAborted) throw new TransportError('cancelled', 'The request was cancelled.')
     throw toTransportError(error)
   }
   try {
@@ -187,6 +211,7 @@ async function fetchWithTimeout<T>(
     throw error
   } finally {
     clearTimeout(timer)
+    callerSignal?.removeEventListener('abort', onCallerAbort)
   }
 }
 
@@ -199,7 +224,7 @@ function firstUserIndex(messages: LlmMessage[]): number {
   return messages.findIndex((m) => m.role === 'user')
 }
 
-// --- OpenAI-shaped message conversion (OpenRouter + Custom) ----------------
+// --- OpenAI-shaped message conversion (OpenRouter) -------------------------
 
 interface OpenAiTextPart {
   type: 'text'
@@ -358,7 +383,14 @@ export function buildOpenRouterRequest(
   const body: Record<string, unknown> = {
     model: cfg.model,
     messages: toOpenAiMessages(messages, opts.attachment),
-    max_tokens: opts.maxTokens
+    max_tokens: opts.maxTokens,
+    // Enforce both documented OpenRouter privacy controls per request. If no
+    // endpoint for the model satisfies them, OpenRouter rejects the request
+    // instead of silently routing workspace content to a retaining provider.
+    provider: {
+      zdr: true,
+      data_collection: 'deny'
+    }
   }
   if (opts.jsonMode) body.response_format = { type: 'json_object' }
   if (opts.attachment?.kind === 'pdf') {
@@ -380,27 +412,6 @@ export function buildOpenRouterRequest(
   return { url: 'https://openrouter.ai/api/v1/chat/completions', headers, body }
 }
 
-export function buildCustomRequest(
-  cfg: ProviderConfig,
-  messages: LlmMessage[],
-  opts: BuildOpts
-): BuiltRequest {
-  const base = (cfg.baseURL ?? '').replace(/\/+$/, '')
-  const body: Record<string, unknown> = {
-    model: cfg.model,
-    // No PDF/image part for custom endpoints (no verified attachment contract).
-    messages: toOpenAiMessages(messages, undefined),
-    max_tokens: opts.maxTokens
-  }
-  if (opts.jsonMode) body.response_format = { type: 'json_object' }
-  const headers: Record<string, string> = {
-    authorization: `Bearer ${cfg.apiKey}`,
-    'content-type': 'application/json',
-    ...(cfg.extraHeaders ?? {})
-  }
-  return { url: `${base}/chat/completions`, headers, body }
-}
-
 export function buildRequest(
   cfg: ProviderConfig,
   messages: LlmMessage[],
@@ -413,8 +424,6 @@ export function buildRequest(
       return buildGeminiRequest(cfg, messages, opts)
     case 'openrouter':
       return buildOpenRouterRequest(cfg, messages, opts)
-    case 'custom':
-      return buildCustomRequest(cfg, messages, opts)
   }
 }
 
@@ -442,7 +451,7 @@ export function extractText(providerId: LiteProviderId, data: unknown): string {
     const parts = (data as GeminiResponse).candidates?.[0]?.content?.parts ?? []
     return parts.map((p) => p.text ?? '').join('')
   }
-  // openrouter + custom (OpenAI shape)
+  // OpenRouter uses the OpenAI-compatible response shape.
   const content = (data as OpenAiResponse).choices?.[0]?.message?.content
   if (typeof content === 'string') return content
   if (Array.isArray(content)) return content.map((c) => c.text ?? '').join('')
@@ -459,41 +468,70 @@ export function extractText(providerId: LiteProviderId, data: unknown): string {
  */
 export function makeBrowserCallLLM(
   cfg: ProviderConfig,
-  extra?: { attachment?: GenAttachment }
+  extra?: {
+    attachment?: GenAttachment
+    signal?: AbortSignal
+    onAttempt?: (attempt: RetryAttempt) => void
+  }
 ): CallLLM {
-  const attachment = extra?.attachment
+  let attachmentAvailable = extra?.attachment
   return async (messages: LlmMessage[], { maxTokens }: { maxTokens: number }) => {
+    // A large attachment is included only in the first model turn. If semantic
+    // repair needs another turn, the conversation carries the prior output and
+    // validation feedback without silently uploading the same bytes again.
+    const attachment = attachmentAvailable
+    attachmentAvailable = undefined
     const req = buildRequest(cfg, messages, { maxTokens, jsonMode: true, attachment })
-    // fetchWithTimeout throws a TransportError on network/CORS/timeout (which the
-    // repair loop will NOT retry); the timeout now covers the body read too.
-    return fetchWithTimeout(
-      req.url,
-      { method: 'POST', headers: req.headers, body: JSON.stringify(req.body) },
-      GENERATION_TIMEOUT_MS,
-      async (res) => {
-        if (!res.ok) {
-          const errText = await res.text().catch(() => '')
-          const message = `${cfg.providerId} ${res.status}: ${truncate(errText)}`
-          // 401/403/429 are permanent for this call — mark them transport so the
-          // repair loop surfaces them once instead of re-sending (re-uploading the
-          // PDF) three times. Other statuses stay ProviderHttpError, still retriable.
-          if (res.status === 401 || res.status === 403) throw new TransportError('auth', message, res.status)
-          if (res.status === 429) throw new TransportError('rate', message, res.status)
-          throw new ProviderHttpError(res.status, message)
-        }
-        const data: unknown = await res.json()
-        // Best-effort usage accounting — accumulate the reported token counts for
-        // the local usage/cost ledger. It must NEVER throw/reject the generation
-        // call, so it is fully guarded even though extract/record are defensive.
-        try {
-          const usage = extractUsage(cfg.providerId, data)
-          if (usage) recordUsage(cfg.providerId, { ...usage, modelId: cfg.model })
-        } catch {
-          /* usage accounting is best-effort only */
-        }
-        const text = extractText(cfg.providerId, data)
-        if (!text.trim()) throw new Error(`${cfg.providerId}: empty response from the model`)
-        return text
+    return withBoundedRetry(
+      async () =>
+        fetchWithTimeout(
+          req.url,
+          { method: 'POST', headers: req.headers, body: JSON.stringify(req.body) },
+          GENERATION_TIMEOUT_MS,
+          async (res) => {
+            if (!res.ok) {
+              const errText = await res.text().catch(() => '')
+              const message = `${cfg.providerId} ${res.status}: ${truncate(errText)}`
+              const retryAfterMs = parseRetryAfter(res.headers.get('retry-after'))
+              if (res.status === 401 || res.status === 403) {
+                throw new TransportError('auth', message, res.status)
+              }
+              if (res.status === 429) {
+                throw new TransportError('rate', message, res.status, retryAfterMs)
+              }
+              throw new ProviderHttpError(res.status, message, retryAfterMs)
+            }
+            const data: unknown = await res.json()
+            try {
+              const usage = extractUsage(cfg.providerId, data)
+              if (usage) recordUsage(cfg.providerId, { ...usage, modelId: cfg.model })
+            } catch {
+              /* usage accounting is best-effort only */
+            }
+            const text = extractText(cfg.providerId, data)
+            if (!text.trim()) {
+              throw new Error(`${cfg.providerId}: empty response from the model`)
+            }
+            return text
+          },
+          extra?.signal
+        ),
+      {
+        // Do not silently resend a large attachment. The user may explicitly
+        // retry after seeing the failure; text-only calls receive three tries.
+        maxAttempts: attachment ? 1 : 3,
+        signal: extra?.signal,
+        shouldRetry: (error) =>
+          (error instanceof ProviderHttpError && isTransientHttpStatus(error.status)) ||
+          (error instanceof TransportError &&
+            (error.code === 'network' ||
+              error.code === 'timeout' ||
+              error.code === 'rate')),
+        retryAfterMs: (error) =>
+          error instanceof ProviderHttpError || error instanceof TransportError
+            ? error.retryAfterMs
+            : undefined,
+        onAttempt: extra?.onAttempt
       }
     )
   }
@@ -506,8 +544,8 @@ export interface GenerateArgs {
   providerId: LiteProviderId
   modelId: string
   apiKey: string
-  baseURL?: string
-  extraHeaders?: Record<string, string>
+  signal?: AbortSignal
+  onAttempt?: (attempt: RetryAttempt) => void
   /** Workspace processes offered to the model for callActivity linking. */
   processCatalog?: Array<{ id: string; name: string }>
 }
@@ -523,8 +561,6 @@ function toConfig(args: GenerateArgs): ProviderConfig {
     providerId: args.providerId,
     model: args.modelId,
     apiKey: args.apiKey,
-    baseURL: args.baseURL,
-    extraHeaders: args.extraHeaders,
     referer: typeof location !== 'undefined' ? location.origin : undefined,
     title: 'OrbitPM Process Studio Lite'
   }
@@ -532,7 +568,10 @@ function toConfig(args: GenerateArgs): ProviderConfig {
 
 /** Generate a laid-out BPMN 2.0 XML string (+ proposed links) from a text description. */
 export async function generateDiagramXml(args: GenerateArgs): Promise<GenerateOutput> {
-  const call = makeBrowserCallLLM(toConfig(args))
+  const call = makeBrowserCallLLM(toConfig(args), {
+    signal: args.signal,
+    onAttempt: args.onAttempt
+  })
   const result = await generateFromDescription(call, args.description, undefined, {
     processCatalog: args.processCatalog
   })
@@ -561,7 +600,11 @@ export async function generateDiagramXmlFromDocument(
     args.attachment.kind === 'image'
       ? buildImageInstruction(args.hint)
       : buildPdfInstruction(args.hint)
-  const call = makeBrowserCallLLM(toConfig(args), { attachment: args.attachment })
+  const call = makeBrowserCallLLM(toConfig(args), {
+    attachment: args.attachment,
+    signal: args.signal,
+    onAttempt: args.onAttempt
+  })
   const result = await generateFromDescription(call, instruction, undefined, {
     processCatalog: args.processCatalog
   })
@@ -582,7 +625,6 @@ const DUMMY_PROBE_KEY = 'orbitpm-cors-probe-key'
  * COULD read a response, so CORS is open" — with the status interpolated.
  */
 export type TestVerdictCode =
-  | 'need-base-url'
   | 'reachable-ok'
   | 'reachable-auth'
   | 'reachable-other'
@@ -645,9 +687,6 @@ function interpretProbe(status: number): TestConnectionResult {
  * a key (this is also the e2e's key-free way to prove the providers are live).
  */
 export async function testConnection(cfg: ProviderConfig): Promise<TestConnectionResult> {
-  if (cfg.providerId === 'custom' && !(cfg.baseURL && cfg.baseURL.trim())) {
-    return { reachable: false, blockedOrUnreachable: false, code: 'need-base-url', message: 'Enter a base URL first.' }
-  }
   const probeCfg: ProviderConfig = {
     ...cfg,
     apiKey: cfg.apiKey || DUMMY_PROBE_KEY,
@@ -691,7 +730,14 @@ export async function testConnection(cfg: ProviderConfig): Promise<TestConnectio
 // --- compact error classifier (browser cases) ------------------------------
 
 /** Machine-readable error class so the UI can render an i18n (RTL-safe) message. */
-export type ErrorCode = 'auth' | 'rate' | 'cors' | 'network' | 'timeout' | 'unknown'
+export type ErrorCode =
+  | 'auth'
+  | 'rate'
+  | 'cors'
+  | 'network'
+  | 'timeout'
+  | 'cancelled'
+  | 'unknown'
 
 export interface ClassifiedError {
   /** Stable code for i18n rendering (`unknown` ⇒ show the raw `message`). */
@@ -720,7 +766,8 @@ function haystack(error: unknown): string {
   return parts.join(' ').toLowerCase()
 }
 
-const TIMEOUT_RE = /\btimeout\b|timed out|timeouterror|aborterror|operation was aborted|signal timed out/
+const CANCEL_RE = /\bcancelled\b|\bcanceled\b|aborterror|operation was aborted/
+const TIMEOUT_RE = /\btimeout\b|timed out|timeouterror|signal timed out/
 const NETWORK_RE =
   /failed to fetch|networkerror|load failed|fetch failed|err_network|network|typeerror: failed/
 const CORS_RE = /cors|cross-origin|access-control|blocked by/
@@ -748,6 +795,9 @@ export function classifyBrowserError(error: unknown): ClassifiedError {
         message: 'The provider is rate-limiting or overloaded right now. Wait a moment and try again.'
       }
     }
+    if (error.code === 'cancelled') {
+      return { code: 'cancelled', offline: false, message: 'The request was cancelled.' }
+    }
     return {
       code: 'network',
       offline: true,
@@ -755,6 +805,9 @@ export function classifyBrowserError(error: unknown): ClassifiedError {
     }
   }
   const hay = haystack(error)
+  if (CANCEL_RE.test(hay)) {
+    return { code: 'cancelled', offline: false, message: 'The request was cancelled.' }
+  }
   if (TIMEOUT_RE.test(hay)) {
     return { code: 'timeout', offline: false, message: 'The request timed out. Try again.' }
   }

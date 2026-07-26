@@ -4,9 +4,12 @@ import {
   CreditsError,
   recordUsage,
   getUsage,
+  getUsageSnapshot,
   resetUsage,
+  resetSessionUsageForTests,
   estimateCostUsd,
-  extractUsage
+  extractUsage,
+  ESTIMATED_PRICE_AS_OF
 } from '../credits'
 
 // In-memory localStorage stub (vitest env is node — no DOM storage). Matches
@@ -24,6 +27,7 @@ function installMemoryStorage(): Map<string, string> {
 
 beforeEach(() => {
   installMemoryStorage()
+  resetSessionUsageForTests()
 })
 
 function jsonResponse(status: number, body: unknown): Response {
@@ -132,7 +136,8 @@ describe('usage store', () => {
     expect(usage!.inputTokens).toBe(100)
     expect(usage!.outputTokens).toBe(50)
     expect(usage!.since).toBeGreaterThanOrEqual(before)
-    expect(usage!.estCostUsd).toBeCloseTo((100 / 1e6) * 3 + (50 / 1e6) * 15, 10)
+    expect(usage!.costUsd).toBeCloseTo((100 / 1e6) * 3 + (50 / 1e6) * 15, 10)
+    expect(usage!.costKind).toBe('estimated')
   })
 
   it('accumulates across multiple calls, preserving since', () => {
@@ -146,18 +151,53 @@ describe('usage store', () => {
     expect(second.since).toBe(first.since)
   })
 
-  it('leaves estCostUsd as-is when model is unpriced, without losing prior cost', () => {
+  it('marks the aggregate cost unknown when any model is unpriced', () => {
     recordUsage('anthropic', { inputTokens: 100, outputTokens: 50, modelId: 'claude-sonnet-5' })
-    const priced = getUsage('anthropic')!.estCostUsd
     recordUsage('anthropic', { inputTokens: 10, outputTokens: 10, modelId: 'unknown/model' })
     const usage = getUsage('anthropic')!
-    expect(usage.estCostUsd).toBe(priced)
+    expect(usage.costUsd).toBeNull()
+    expect(usage.costKind).toBe('unknown')
     expect(usage.inputTokens).toBe(110)
   })
 
-  it('estCostUsd stays null when every call is unpriced', () => {
+  it('cost stays null when every call is unpriced', () => {
     recordUsage('gemini', { inputTokens: 10, outputTokens: 10, modelId: 'unknown/model' })
-    expect(getUsage('gemini')!.estCostUsd).toBeNull()
+    expect(getUsage('gemini')!.costUsd).toBeNull()
+  })
+
+  it('keeps session and all-time totals separate and prefers provider cost', () => {
+    localStorage.setItem(
+      'orbitpm.lite.usage.openrouter',
+      JSON.stringify({
+        requests: 4,
+        inputTokens: 400,
+        outputTokens: 200,
+        reasoningTokens: 50,
+        costUsd: 1,
+        costKind: 'provider',
+        since: 1
+      })
+    )
+    recordUsage('openrouter', {
+      inputTokens: 10,
+      outputTokens: 5,
+      reasoningTokens: 3,
+      providerCostUsd: 0.000123,
+      modelId: 'unknown/model'
+    })
+    const snapshot = getUsageSnapshot('openrouter')
+    expect(snapshot.session).toMatchObject({
+      requests: 1,
+      reasoningTokens: 3,
+      costUsd: 0.000123,
+      costKind: 'provider'
+    })
+    expect(snapshot.allTime).toMatchObject({
+      requests: 5,
+      reasoningTokens: 53,
+      costUsd: 1.000123,
+      costKind: 'provider'
+    })
   })
 
   it('resetUsage clears the record', () => {
@@ -185,6 +225,10 @@ describe('usage store', () => {
 })
 
 describe('estimateCostUsd', () => {
+  it('publishes the review date for locally estimated prices', () => {
+    expect(ESTIMATED_PRICE_AS_OF).toMatch(/^\d{4}-\d{2}-\d{2}$/)
+  })
+
   it('computes exact arithmetic for a known OpenRouter slug', () => {
     // z-ai/glm-5.2: in 0.6, out 2.2 per 1M tokens
     const cost = estimateCostUsd('z-ai/glm-5.2', 1_000_000, 1_000_000)
@@ -210,7 +254,8 @@ describe('extractUsage', () => {
   it('extracts anthropic usage', () => {
     expect(extractUsage('anthropic', { usage: { input_tokens: 12, output_tokens: 34 } })).toEqual({
       inputTokens: 12,
-      outputTokens: 34
+      outputTokens: 34,
+      reasoningTokens: 0
     })
   })
 
@@ -219,19 +264,24 @@ describe('extractUsage', () => {
       extractUsage('gemini', {
         usageMetadata: { promptTokenCount: 5, candidatesTokenCount: 6 }
       })
-    ).toEqual({ inputTokens: 5, outputTokens: 6 })
+    ).toEqual({ inputTokens: 5, outputTokens: 6, reasoningTokens: 0 })
   })
 
   it('extracts openrouter usage', () => {
     expect(
-      extractUsage('openrouter', { usage: { prompt_tokens: 1, completion_tokens: 2 } })
-    ).toEqual({ inputTokens: 1, outputTokens: 2 })
-  })
-
-  it('extracts custom (OpenAI-shaped) usage', () => {
-    expect(extractUsage('custom', { usage: { prompt_tokens: 9, completion_tokens: 8 } })).toEqual({
-      inputTokens: 9,
-      outputTokens: 8
+      extractUsage('openrouter', {
+        usage: {
+          prompt_tokens: 1,
+          completion_tokens: 2,
+          completion_tokens_details: { reasoning_tokens: 7 },
+          cost: 0.004
+        }
+      })
+    ).toEqual({
+      inputTokens: 1,
+      outputTokens: 2,
+      reasoningTokens: 7,
+      providerCostUsd: 0.004
     })
   })
 

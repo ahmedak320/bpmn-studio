@@ -79,9 +79,7 @@ export function imageMediaTypeFromName(name: string): string | null {
 export const PDF_SIZE_LIMITS: Record<LiteProviderId, number> = {
   anthropic: 20 * 1024 * 1024,
   openrouter: 20 * 1024 * 1024,
-  gemini: 20 * 1024 * 1024,
-  // Custom endpoints have no verified PDF path — see providersLite.supportsPdf.
-  custom: 0
+  gemini: 20 * 1024 * 1024
 }
 
 // Client-side RAW-size gates for images, one per provider. LIVE-VERIFIED
@@ -101,12 +99,10 @@ export const PDF_SIZE_LIMITS: Record<LiteProviderId, number> = {
 //    PDF caps above — it shares Anthropic's gate, the strictest common vision
 //    downstream [openrouter.ai/docs/guides/overview/multimodal/
 //    image-understanding].
-//  - Custom: no image path (providersLite.supportsImages is false).
 export const IMAGE_SIZE_LIMITS: Record<LiteProviderId, number> = {
   anthropic: 5 * 1024 * 1024,
   openrouter: 5 * 1024 * 1024,
-  gemini: 12 * 1024 * 1024,
-  custom: 0
+  gemini: 12 * 1024 * 1024
 }
 
 // Above this RAW size a PDF is still accepted, but a soft heads-up is shown:
@@ -136,12 +132,6 @@ function mb(bytes: number): string {
  */
 export function checkPdfSize(providerId: LiteProviderId, sizeBytes: number): PdfSizeCheck {
   const limit = PDF_SIZE_LIMITS[providerId]
-  if (limit <= 0) {
-    return {
-      ok: false,
-      message: t('ai.pdf.sizeGate.customUnavailable')
-    }
-  }
   if (sizeBytes > limit) {
     // All browser providers now share the 20 MiB cap, so the only useful advice
     // is to split the document (no "try Gemini — larger limit" anymore).
@@ -162,8 +152,7 @@ export function checkPdfSize(providerId: LiteProviderId, sizeBytes: number): Pdf
  * it DELEGATES to checkPdfSize so the PDF behavior (limits, messages, the
  * 15 MiB soft warning) stays byte-identical. For `kind === 'image'` it applies
  * the per-provider {@link IMAGE_SIZE_LIMITS}: a provider without an image path
- * (custom) gets the generic unsupported-attachments message, an over-limit
- * image gets a compress/crop rejection, and there is no soft-warn tier (every
+ * gets a compress/crop rejection, and there is no soft-warn tier (every
  * image cap already sits below the PDF soft-warn threshold).
  */
 export function checkAttachmentSize(
@@ -173,9 +162,6 @@ export function checkAttachmentSize(
 ): AttachmentSizeCheck {
   if (kind === 'pdf') return checkPdfSize(providerId, sizeBytes)
   const limit = IMAGE_SIZE_LIMITS[providerId]
-  if (limit <= 0) {
-    return { ok: false, message: t('ai.attach.unsupportedProvider') }
-  }
   if (sizeBytes > limit) {
     return {
       ok: false,
@@ -193,11 +179,29 @@ export function checkAttachmentSize(
  * (Codex M4). Browser-only; kept thin so the payload builders (which take the
  * base64 string) stay pure and unit-testable in node.
  */
-export function fileToBase64(file: File): Promise<string> {
+export function fileToBase64(file: File, signal?: AbortSignal): Promise<string> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader()
-    reader.onerror = () => reject(reader.error ?? new Error('Failed to read file'))
+    const cleanup = (): void => signal?.removeEventListener('abort', onAbort)
+    const onAbort = (): void => {
+      reader.abort()
+      cleanup()
+      const error = new Error('The upload was cancelled.')
+      error.name = 'AbortError'
+      reject(Object.assign(error, { transport: true as const, code: 'cancelled' as const }))
+    }
+    if (signal?.aborted) {
+      onAbort()
+      return
+    }
+    signal?.addEventListener('abort', onAbort, { once: true })
+    reader.onerror = () => {
+      cleanup()
+      reject(reader.error ?? new Error('Failed to read file'))
+    }
+    reader.onabort = () => cleanup()
     reader.onload = () => {
+      cleanup()
       const result = reader.result
       if (typeof result !== 'string') {
         reject(new Error('Unexpected FileReader result'))

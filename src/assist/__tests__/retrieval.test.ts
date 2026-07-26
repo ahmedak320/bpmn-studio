@@ -169,13 +169,13 @@ describe('rankDigests', () => {
 })
 
 describe('selectContextDigests', () => {
-  it('returns every digest for a small workspace, ranked matches first', () => {
+  it('returns only ranked digests even for a small workspace', () => {
     expect(all.length).toBeLessThanOrEqual(SMALL_WORKSPACE_ALL)
     const chosen = selectContextDigests(all, 'exit interview')
-    expect(chosen).toHaveLength(all.length)
+    expect(chosen).toHaveLength(1)
     expect(chosen[0].digest.processName).toBe('Employee Exit')
   })
-  it('falls back to ALL digests (capped) when ranking finds nothing in a big workspace', () => {
+  it('returns no digests when ranking confidence is zero', () => {
     const many: ProcessDigest[] = []
     for (let i = 0; i < 8; i++) {
       many.push({
@@ -189,8 +189,7 @@ describe('selectContextDigests', () => {
       })
     }
     const chosen = selectContextDigests(many, 'زززز غير موجود')
-    expect(chosen).toHaveLength(6)
-    expect(chosen[0].digest.processId).toBe('p0')
+    expect(chosen).toEqual([])
   })
   it('keeps only the ranked matches in a big workspace when ranking succeeds', () => {
     const many: ProcessDigest[] = []

@@ -90,7 +90,7 @@ async function openApp(page: import('@playwright/test').Page): Promise<void> {
   await expandAiPanel(page)
 }
 
-test('Settings lists all four browser providers, each with Test connection', async ({ page }) => {
+test('Settings lists only the three supported browser providers', async ({ page }) => {
   const offending = recordOffendingRequests(page)
   await openApp(page)
 
@@ -98,20 +98,17 @@ test('Settings lists all four browser providers, each with Test connection', asy
   const dialog = page.getByRole('dialog', { name: /Settings/i })
   await expect(dialog).toBeVisible()
 
-  // All four provider sections are present.
-  for (const label of ['OpenRouter', 'Anthropic', 'Google Gemini', 'Custom OpenAI-compatible']) {
+  for (const label of ['OpenRouter', 'Anthropic', 'Google Gemini']) {
     await expect(dialog.getByRole('region', { name: label })).toBeVisible()
   }
-  // One "Test connection" button per provider (the CORS-vs-auth probe).
-  await expect(dialog.getByRole('button', { name: 'Test connection' })).toHaveCount(4)
+  await expect(dialog.getByRole('region', { name: 'Custom OpenAI-compatible' })).toHaveCount(0)
+  await expect(dialog.getByRole('button', { name: 'Test connection' })).toHaveCount(3)
 
-  // The unencrypted-storage warning is shown.
-  await expect(dialog.getByText(/stored unencrypted in this browser profile/i)).toBeVisible()
-
-  // The Custom endpoint exposes base URL + model + extra-headers fields.
-  await expect(dialog.getByLabel('Base URL')).toBeVisible()
-  await expect(dialog.getByLabel('Model id')).toBeVisible()
-  await expect(dialog.getByLabel('Extra headers')).toBeVisible()
+  await expect(dialog.getByText(/only in memory for this browser session/i)).toBeVisible()
+  await expect(dialog.getByLabel('Encryption passphrase')).toBeVisible()
+  await expect(
+    dialog.getByText(/small inference request that may be billable/i).first()
+  ).toBeVisible()
 
   // Opening Settings made ZERO network requests (we haven't probed yet).
   expect(offending, `unexpected requests: ${offending.join(', ')}`).toEqual([])
@@ -155,11 +152,4 @@ test('PDF flow: pick a PDF + Arabic hint, hit the no-key provider gate', async (
   // The whole PDF-selection UX path ran with zero network requests (no key, no
   // send) — proving the client-side flow up to the gate.
   expect(offending, `unexpected requests: ${offending.join(', ')}`).toEqual([])
-})
-
-test('switching to the Custom provider disables the PDF source', async ({ page }) => {
-  await openApp(page)
-  await page.getByLabel('Provider').selectOption('custom')
-  // Custom has no verified PDF path — the From PDF tab is disabled.
-  await expect(page.getByRole('tab', { name: /From PDF/i })).toBeDisabled()
 })

@@ -1,8 +1,24 @@
 import { describe, it, expect } from 'vitest'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { CreditsLine } from '../CreditsLine'
+import type { UsageTotals } from '../credits'
 
 const noop = (): void => {}
+const usage = (
+  requests: number,
+  inputTokens: number,
+  outputTokens: number,
+  costUsd: number | null,
+  reasoningTokens = 0
+): UsageTotals => ({
+  requests,
+  inputTokens,
+  outputTokens,
+  reasoningTokens,
+  costUsd,
+  costKind: costUsd === null ? 'unknown' : 'provider',
+  since: 1
+})
 
 describe('CreditsLine (static render)', () => {
   it('loading state shows the checking-balance text', () => {
@@ -33,21 +49,31 @@ describe('CreditsLine (static render)', () => {
   it('usage state formats tokens (input+output) and a dollar cost, with a reset link', () => {
     const html = renderToStaticMarkup(
       <CreditsLine
-        state={{ kind: 'usage', requests: 3, inputTokens: 1000, outputTokens: 500, estCostUsd: 0.12 }}
+        state={{
+          kind: 'usage',
+          session: usage(3, 1000, 500, 0.12, 25),
+          allTime: usage(5, 2000, 1000, 0.2, 40)
+        }}
         onReset={noop}
       />
     )
-    expect(html).toContain('3 requests')
+    expect(html).toContain('Session: 3 requests')
     // 1000 + 500 = 1500 → toLocaleString → "1,500"
-    expect(html).toContain('1,500 tokens')
+    expect(html).toContain('1,500 input/output tokens')
     expect(html).toContain('$0.12')
+    expect(html).toContain('25 reasoning tokens')
+    expect(html).toContain('All time: 5 requests')
     expect(html).toContain('Reset')
   })
 
   it('usage state with a null cost renders "n/a" (never $0)', () => {
     const html = renderToStaticMarkup(
       <CreditsLine
-        state={{ kind: 'usage', requests: 1, inputTokens: 100, outputTokens: 50, estCostUsd: null }}
+        state={{
+          kind: 'usage',
+          session: usage(1, 100, 50, null),
+          allTime: usage(1, 100, 50, null)
+        }}
         onReset={noop}
       />
     )
@@ -55,10 +81,28 @@ describe('CreditsLine (static render)', () => {
     expect(html).not.toContain('$0.00')
   })
 
+  it('does not round a small nonzero cost down to $0.00', () => {
+    const html = renderToStaticMarkup(
+      <CreditsLine
+        state={{
+          kind: 'usage',
+          session: usage(1, 10, 5, 0.000123),
+          allTime: usage(1, 10, 5, 0.000123)
+        }}
+      />
+    )
+    expect(html).toContain('$0.000123')
+    expect(html).not.toContain('$0.00<')
+  })
+
   it('usage state shows the no-balance-API note when note is set', () => {
     const html = renderToStaticMarkup(
       <CreditsLine
-        state={{ kind: 'usage', requests: 0, inputTokens: 0, outputTokens: 0, estCostUsd: null }}
+        state={{
+          kind: 'usage',
+          session: usage(0, 0, 0, null),
+          allTime: usage(0, 0, 0, null)
+        }}
         onReset={noop}
         note
       />

@@ -22,11 +22,17 @@ import {
   type GenerateOutput,
   type ProposedLink
 } from './browserAi'
-import { getKey, hasKey, getCustomConfig, customConfigReady } from './keys'
+import { getKey, hasKey } from './keys'
+import {
+  getProviderSelection,
+  setProviderSelection,
+  subscribeProviderSelection
+} from './providerSelection'
 import {
   fetchOpenRouterCredits,
-  getUsage,
+  getUsageSnapshot,
   resetUsage,
+  subscribeUsage,
   CreditsError,
   type CreditsErrorKind,
   type OpenRouterCredits
@@ -43,6 +49,11 @@ import {
   type AttachmentSizeCheck
 } from './pdf'
 import { extractDocxText } from './docx'
+import {
+  inspectContextSensitivity,
+  redactProcessNames,
+  selectRelevantProcesses
+} from './requestPrivacy'
 import { t } from '../i18n'
 import { useLang } from '../i18n/useLang'
 
@@ -150,6 +161,8 @@ function errorMessageForCode(c: ClassifiedError): string {
       return t('ai.error.network')
     case 'timeout':
       return t('ai.error.timeout')
+    case 'cancelled':
+      return t('ai.error.cancelled')
     default:
       return c.message
   }
@@ -171,8 +184,11 @@ export function AiPanelLite({
   onContinueInChat
 }: AiPanelLiteProps): JSX.Element {
   useLang()
-  const [providerId, setProviderId] = useState<LiteProviderId>('openrouter')
-  const [modelId, setModelId] = useState<string>(() => defaultLiteModelId('openrouter'))
+  const initialSelection = useMemo(() => getProviderSelection(), [])
+  const [providerId, setProviderId] = useState<LiteProviderId | ''>(
+    initialSelection?.providerId ?? ''
+  )
+  const [modelId, setModelId] = useState<string>(initialSelection?.modelId ?? '')
   const [genMode, setGenMode] = useState<GenMode>('description')
   const [description, setDescription] = useState('')
   // "From PDF / image" tab selection (PDF document or process-drawing image).
@@ -185,6 +201,14 @@ export function AiPanelLite({
   const [name, setName] = useState('')
   const [targetFolder, setTargetFolder] = useState('')
   const [busy, setBusy] = useState(false)
+  const [attemptStatus, setAttemptStatus] = useState<{
+    attempt: number
+    maxAttempts: number
+    retryInMs?: number
+  } | null>(null)
+  const [includeWorkspaceContext, setIncludeWorkspaceContext] = useState(false)
+  const [redactNames, setRedactNames] = useState(true)
+  const [requestConsent, setRequestConsent] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [offline, setOffline] = useState(false)
   const [resultLabel, setResultLabel] = useState<string | null>(null)
@@ -212,19 +236,14 @@ export function AiPanelLite({
   )
   const docInputRef = useRef<HTMLInputElement | null>(null)
   const descInputRef = useRef<HTMLInputElement | null>(null)
+  const requestAbortRef = useRef<AbortController | null>(null)
 
-  // Re-read key + custom-endpoint availability whenever Settings closes.
+  // Re-read key availability whenever Settings closes.
   const configuredIds = useMemo(
     () => LITE_PROVIDERS.filter((p) => hasKey(p.id)).map((p) => p.id),
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [keysVersion]
   )
-  const customCfg = useMemo(
-    () => getCustomConfig(),
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [keysVersion]
-  )
-
   useEffect(() => {
     const goOnline = (): void => setOnline(true)
     const goOffline = (): void => setOnline(false)
@@ -236,45 +255,52 @@ export function AiPanelLite({
     }
   }, [])
 
-  // Default the provider to the first one with a key, once keys are known.
-  useEffect(() => {
-    if (configuredIds.length === 0) return
-    setProviderId((prev) => (configuredIds.includes(prev) ? prev : configuredIds[0]))
-  }, [configuredIds])
+  useEffect(
+    () => () => {
+      requestAbortRef.current?.abort()
+    },
+    []
+  )
 
-  const providerSpec = getLiteProvider(providerId)
+  useEffect(
+    () =>
+      subscribeUsage(() => {
+        bumpUsage((value) => value + 1)
+      }),
+    []
+  )
 
+  // Keep every AI surface on the one explicit provider/model selection. There
+  // is deliberately no provider-order or "first key" fallback.
   useEffect(() => {
-    setModelId(defaultLiteModelId(providerId))
-  }, [providerId])
+    return subscribeProviderSelection((selection) => {
+      setProviderId(selection?.providerId ?? '')
+      setModelId(selection?.modelId ?? '')
+    })
+  }, [])
 
-  // Custom endpoint has no verified attachment path (PDF or image) — snap back
-  // to description mode.
-  useEffect(() => {
-    if (!providerSpec.supportsPdf && genMode === 'pdf') setGenMode('description')
-  }, [providerSpec.supportsPdf, genMode])
+  // A placeholder spec lets the form render before an explicit choice, while
+  // canGenerate remains false until providerId is non-empty.
+  const effectiveProviderId: LiteProviderId = providerId || 'openrouter'
+  const providerSpec = getLiteProvider(effectiveProviderId)
 
   useEffect(() => {
     if (folders.length === 0) return
     setTargetFolder((prev) => (folders.some((f) => f.relPath === prev) ? prev : folders[0].relPath))
   }, [folders])
 
-  const keyPresent = hasKey(providerId)
-  const isCustom = providerId === 'custom'
-  // Providers not on the page's CSP connect-src allowlist (the Custom endpoint)
-  // cannot be reached from the browser — generation is desktop-app only.
-  const desktopOnly = Boolean(providerSpec.desktopOnly)
-  const customReady = isCustom ? customConfigReady(customCfg) : true
-  const effectiveModel = isCustom ? customCfg.model : modelId.trim()
+  const keyPresent = Boolean(providerId) && hasKey(effectiveProviderId)
+  const effectiveModel = modelId.trim()
 
   // Size gate for the document tab's selection (recomputed on file/provider
   // change) — kind-aware: PDF behavior identical to before, image caps apply
   // per provider.
   const sizeGate = useMemo<AttachmentSizeCheck>(
-    () => (doc ? checkAttachmentSize(providerId, doc.kind, doc.file.size) : { ok: true }),
-    [doc, providerId]
+    () =>
+      doc ? checkAttachmentSize(effectiveProviderId, doc.kind, doc.file.size) : { ok: true },
+    [doc, effectiveProviderId]
   )
-  // An image needs a provider with a verified image path (all but custom).
+  // An image needs a provider/model with a verified image path.
   const docImageUnsupported = doc?.kind === 'image' && !providerSpec.supportsImages
 
   // Description-tab PDF attachment gates — same size gate as the document tab
@@ -282,9 +308,9 @@ export function AiPanelLite({
   const descPdfGate = useMemo<AttachmentSizeCheck>(
     () =>
       descAttach?.kind === 'pdf'
-        ? checkAttachmentSize(providerId, 'pdf', descAttach.file.size)
+        ? checkAttachmentSize(effectiveProviderId, 'pdf', descAttach.file.size)
         : { ok: true },
-    [descAttach, providerId]
+    [descAttach, effectiveProviderId]
   )
   const descPdfUnsupported = descAttach?.kind === 'pdf' && !providerSpec.supportsPdf
 
@@ -295,17 +321,50 @@ export function AiPanelLite({
     genMode === 'description'
       ? Boolean(description.trim()) || Boolean(descDocText) || descAttach?.kind === 'pdf'
       : Boolean(doc)
+  const contextQuery =
+    genMode === 'description'
+      ? `${description}\n${descDocText ?? ''}`
+      : hint
+  const relevantProcesses = useMemo(
+    () => selectRelevantProcesses(contextQuery, processCatalog),
+    [contextQuery, processCatalog]
+  )
+  const outboundProcessCatalog = useMemo(() => {
+    if (!includeWorkspaceContext) return []
+    return redactNames ? redactProcessNames(relevantProcesses) : relevantProcesses
+  }, [includeWorkspaceContext, redactNames, relevantProcesses])
+  const sensitivity = useMemo(
+    () => inspectContextSensitivity(contextQuery, outboundProcessCatalog),
+    [contextQuery, outboundProcessCatalog]
+  )
+  const hasLargeAttachment =
+    genMode === 'pdf' || descAttach?.kind === 'pdf'
+  const estimatedRequestCount = hasLargeAttachment ? 3 : 9
   const canGenerate =
     !busy &&
-    online &&
-    !desktopOnly &&
+    Boolean(providerId) &&
     keyPresent &&
-    customReady &&
     Boolean(effectiveModel) &&
     hasInput &&
+    requestConsent &&
     (genMode === 'description'
       ? !descPdfUnsupported && descPdfGate.ok
       : sizeGate.ok && !docImageUnsupported)
+
+  useEffect(() => {
+    setRequestConsent(false)
+  }, [
+    providerId,
+    modelId,
+    genMode,
+    description,
+    hint,
+    doc,
+    descAttach,
+    includeWorkspaceContext,
+    redactNames,
+    processCatalog
+  ])
 
   // OpenRouter balance lookup — only when the current provider is OpenRouter and
   // a key is stored (keyless renders show nothing and issue no request). Fetches
@@ -332,13 +391,6 @@ export function AiPanelLite({
       setCreditsLoading(false)
     }
   }, [providerId])
-
-  useEffect(() => {
-    void refreshCredits()
-    // Re-run on provider switch (refreshCredits identity depends on providerId)
-    // and whenever the stored keys change.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [providerId, keysVersion])
 
   // Document-tab file pick: classify as PDF vs image; anything else is rejected
   // inline (and the input cleared so re-picking the same file re-fires change).
@@ -441,7 +493,11 @@ export function AiPanelLite({
   )
 
   const handleGenerate = useCallback(async () => {
+    const controller = new AbortController()
+    requestAbortRef.current?.abort()
+    requestAbortRef.current = controller
     setBusy(true)
+    setAttemptStatus(null)
     setError(null)
     setOffline(false)
     setResultLabel(null)
@@ -450,15 +506,16 @@ export function AiPanelLite({
     // placement if the user switches folders during the (slow) generation (ORIG-1b).
     const genAtStart = getWorkspaceGen?.()
     try {
+      if (!providerId) throw new Error(t('ai.error.selectProvider'))
       const apiKey = getKey(providerId)
       if (!apiKey) throw new Error(t('ai.error.noApiKey'))
       const common = {
         providerId,
         modelId: effectiveModel,
         apiKey,
-        baseURL: isCustom ? customCfg.baseURL : undefined,
-        extraHeaders: isCustom ? customCfg.extraHeaders : undefined,
-        processCatalog
+        processCatalog: outboundProcessCatalog,
+        signal: controller.signal,
+        onAttempt: setAttemptStatus
       }
       let res: GenerateOutput
       if (genMode === 'pdf') {
@@ -469,7 +526,7 @@ export function AiPanelLite({
         if (doc.kind === 'image' && !providerSpec.supportsImages) {
           throw new Error(t('ai.attach.unsupportedProvider'))
         }
-        const base64 = await fileToBase64(doc.file)
+        const base64 = await fileToBase64(doc.file, controller.signal)
         res = await generateDiagramXmlFromDocument({
           ...common,
           description: '',
@@ -489,7 +546,7 @@ export function AiPanelLite({
         if (!providerSpec.supportsPdf) throw new Error(t('ai.attach.unsupportedProvider'))
         const gate = checkAttachmentSize(providerId, 'pdf', descAttach.file.size)
         if (!gate.ok) throw new Error(gate.message)
-        const base64 = await fileToBase64(descAttach.file)
+        const base64 = await fileToBase64(descAttach.file, controller.signal)
         res = await generateDiagramXmlFromDocument({
           ...common,
           description: '',
@@ -513,10 +570,9 @@ export function AiPanelLite({
         }
         res = await generateDiagramXml({ ...common, description: effective })
       }
-      // The generation call recorded usage and (for OpenRouter) spent credits —
-      // refresh both balance lines.
+      // The generation call recorded usage; remote balance lookup remains an
+      // explicit action on the credits line.
       bumpUsage((v) => v + 1)
-      void refreshCredits()
       const { confident, unsure, unmatched } = partitionLinks(res.links, isKnownProcess)
       if (unsure.length + unmatched.length === 0) {
         // Nothing to vet — place with the XML unchanged; confident links stay.
@@ -531,23 +587,24 @@ export function AiPanelLite({
       setError(errorMessageForCode(classified))
       setOffline(classified.offline || (typeof navigator !== 'undefined' && !navigator.onLine))
     } finally {
+      if (requestAbortRef.current === controller) requestAbortRef.current = null
+      setAttemptStatus(null)
+      setRequestConsent(false)
       setBusy(false)
     }
   }, [
     providerId,
     providerSpec,
     effectiveModel,
-    isCustom,
-    customCfg,
     genMode,
     doc,
     descAttach,
     hint,
     description,
     processCatalog,
+    outboundProcessCatalog,
     isKnownProcess,
     placeAndReport,
-    refreshCredits,
     getWorkspaceGen
   ])
 
@@ -592,12 +649,12 @@ export function AiPanelLite({
   // render; bumpUsage() forces the re-render after a generation or a reset.
   const sessionUsage =
     keyPresent && (providerId === 'anthropic' || providerId === 'gemini')
-      ? getUsage(providerId)
+      ? getUsageSnapshot(providerId)
       : null
 
   // The balance/usage status line shown directly under the provider selector.
   const balanceLine =
-    !desktopOnly && keyPresent && providerId === 'openrouter' ? (
+    keyPresent && providerId === 'openrouter' ? (
       <CreditsLine
         state={
           creditsLoading
@@ -606,7 +663,7 @@ export function AiPanelLite({
               ? { kind: 'error', errorKind: creditsError }
               : credits
                 ? { kind: 'credits', remaining: credits.remaining }
-                : { kind: 'loading' }
+                : { kind: 'idle' }
         }
         onRefresh={() => void refreshCredits()}
       />
@@ -614,10 +671,8 @@ export function AiPanelLite({
       <CreditsLine
         state={{
           kind: 'usage',
-          requests: sessionUsage?.requests ?? 0,
-          inputTokens: sessionUsage?.inputTokens ?? 0,
-          outputTokens: sessionUsage?.outputTokens ?? 0,
-          estCostUsd: sessionUsage?.estCostUsd ?? null
+          session: sessionUsage!.session,
+          allTime: sessionUsage!.allTime
         }}
         onReset={() => {
           resetUsage(providerId)
@@ -679,9 +734,17 @@ export function AiPanelLite({
           <span style={labelText}>{t('ai.provider.label')}</span>
           <select
             value={providerId}
-            onChange={(e) => setProviderId(e.target.value as LiteProviderId)}
+            onChange={(e) => {
+              const next = e.target.value as LiteProviderId
+              const nextModel = defaultLiteModelId(next)
+              setProviderId(next)
+              setModelId(nextModel)
+              const result = setProviderSelection(next, nextModel)
+              if (!result.ok) setError(result.error)
+            }}
             style={inputStyle}
           >
+            <option value="">{t('ai.provider.select')}</option>
             {LITE_PROVIDERS.map((p) => (
               <option key={p.id} value={p.id}>
                 {p.label}
@@ -696,10 +759,10 @@ export function AiPanelLite({
         {balanceLine}
 
         {/* Model selector: free-text (with suggestions) for OpenRouter/Gemini,
-            a fixed dropdown for Anthropic, and a Settings-driven note for Custom. */}
-        {isCustom ? (
+            and a fixed dropdown for Anthropic. */}
+        {!providerId ? (
           <div style={infoBox} role="note">
-            🖥️ <strong>{t('settings.desktopOnly.badge')}</strong> — {t('ai.custom.desktopOnly')}
+            {t('ai.provider.selectHint')}
           </div>
         ) : providerSpec.allowCustomModel ? (
           <label style={labelStyle}>
@@ -708,7 +771,14 @@ export function AiPanelLite({
               type="text"
               list={`models-${providerId}`}
               value={modelId}
-              onChange={(e) => setModelId(e.target.value)}
+              onChange={(e) => {
+                const nextModel = e.target.value
+                setModelId(nextModel)
+                if (nextModel.trim()) {
+                  const result = setProviderSelection(providerId, nextModel)
+                  if (!result.ok) setError(result.error)
+                }
+              }}
               placeholder={t('ai.model.label')}
               style={inputStyle}
             />
@@ -723,7 +793,16 @@ export function AiPanelLite({
         ) : (
           <label style={labelStyle}>
             <span style={labelText}>{t('ai.model.label')}</span>
-            <select value={modelId} onChange={(e) => setModelId(e.target.value)} style={inputStyle}>
+            <select
+              value={modelId}
+              onChange={(e) => {
+                const nextModel = e.target.value
+                setModelId(nextModel)
+                const result = setProviderSelection(providerId, nextModel)
+                if (!result.ok) setError(result.error)
+              }}
+              style={inputStyle}
+            >
               {providerSpec.models.map((m) => (
                 <option key={m.id} value={m.id}>
                   {m.label}
@@ -887,6 +966,117 @@ export function AiPanelLite({
           />
         </label>
 
+        <section
+          aria-label={t('ai.privacy.preview.title')}
+          style={{
+            display: 'flex',
+            flexDirection: 'column',
+            gap: 8,
+            padding: 10,
+            border: '1px solid var(--orbitpm-border)',
+            borderRadius: 8
+          }}
+        >
+          <strong style={{ fontSize: 13 }}>{t('ai.privacy.preview.title')}</strong>
+          <div style={{ fontSize: 12 }}>
+            {t('ai.privacy.providerModel', {
+              provider: providerId ? providerSpec.label : t('ai.provider.select'),
+              model: effectiveModel || '—'
+            })}
+          </div>
+          {genMode === 'description' && descAttach?.kind !== 'pdf' ? (
+            <label style={labelStyle}>
+              <span style={labelText}>{t('ai.privacy.description')}</span>
+              <textarea
+                readOnly
+                value={
+                  descDocText
+                    ? `${description.trim()}\n\n${descDocText}`.trim()
+                    : description
+                }
+                rows={3}
+                dir="auto"
+                style={{ ...inputStyle, resize: 'vertical' }}
+              />
+            </label>
+          ) : (
+            <div style={{ fontSize: 12, overflowWrap: 'anywhere' }}>
+              {t('ai.privacy.attachment', {
+                name:
+                  genMode === 'pdf'
+                    ? doc?.file.name ?? '—'
+                    : descAttach?.file.name ?? '—',
+                bytes:
+                  genMode === 'pdf'
+                    ? doc?.file.size ?? 0
+                    : descAttach?.file.size ?? 0
+              })}
+            </div>
+          )}
+          <label style={{ display: 'flex', gap: 8, alignItems: 'flex-start' }}>
+            <input
+              type="checkbox"
+              checked={includeWorkspaceContext}
+              onChange={(event) => setIncludeWorkspaceContext(event.target.checked)}
+            />
+            <span style={{ fontSize: 12 }}>{t('ai.privacy.includeWorkspace')}</span>
+          </label>
+          <label
+            style={{
+              display: 'flex',
+              gap: 8,
+              alignItems: 'flex-start',
+              opacity: includeWorkspaceContext ? 1 : 0.65
+            }}
+          >
+            <input
+              type="checkbox"
+              checked={redactNames}
+              disabled={!includeWorkspaceContext}
+              onChange={(event) => setRedactNames(event.target.checked)}
+            />
+            <span style={{ fontSize: 12 }}>{t('ai.privacy.redactNames')}</span>
+          </label>
+          <div style={{ fontSize: 12 }}>
+            {t('ai.privacy.workspaceCount', {
+              included: outboundProcessCatalog.length,
+              relevant: relevantProcesses.length,
+              total: processCatalog.length
+            })}
+          </div>
+          {outboundProcessCatalog.length > 0 && (
+            <ul style={{ margin: 0, paddingInlineStart: 20, fontSize: 11.5 }}>
+              {outboundProcessCatalog.map((process) => (
+                <li key={process.id}>
+                  <span dir="auto">{process.name}</span>{' '}
+                  <code lang="en" dir="ltr">
+                    {process.id}
+                  </code>
+                </li>
+              ))}
+            </ul>
+          )}
+          <div style={{ fontSize: 12 }}>
+            {t('ai.privacy.sensitivity', {
+              names: sensitivity.containsNames ? t('common.yes') : t('common.no'),
+              sensitive: sensitivity.containsSensitiveMetadata
+                ? t('common.yes')
+                : t('common.no')
+            })}
+          </div>
+          <div style={{ fontSize: 12 }}>
+            {t('ai.privacy.requestCount', { count: estimatedRequestCount })}
+          </div>
+          <label style={{ display: 'flex', gap: 8, alignItems: 'flex-start' }}>
+            <input
+              type="checkbox"
+              checked={requestConsent}
+              onChange={(event) => setRequestConsent(event.target.checked)}
+            />
+            <strong style={{ fontSize: 12 }}>{t('ai.privacy.consent')}</strong>
+          </label>
+        </section>
+
         <button
           type="button"
           onClick={() => void handleGenerate()}
@@ -907,7 +1097,32 @@ export function AiPanelLite({
           {busy ? t('ai.generating') : genMode === 'pdf' ? t('ai.generateFromPdf') : t('ai.generate')}
         </button>
 
-        {!desktopOnly && !keyPresent && (
+        {busy && (
+          <button
+            type="button"
+            onClick={() => requestAbortRef.current?.abort()}
+            style={ghostBtn}
+          >
+            {t('ai.cancel')}
+          </button>
+        )}
+
+        {attemptStatus && (
+          <div role="status" style={{ fontSize: 12, color: 'var(--orbitpm-muted)' }}>
+            {attemptStatus.retryInMs === undefined
+              ? t('ai.retry.attempt', {
+                  attempt: attemptStatus.attempt,
+                  max: attemptStatus.maxAttempts
+                })
+              : t('ai.retry.waiting', {
+                  attempt: attemptStatus.attempt,
+                  max: attemptStatus.maxAttempts,
+                  seconds: Math.max(1, Math.ceil(attemptStatus.retryInMs / 1000))
+                })}
+          </div>
+        )}
+
+        {Boolean(providerId) && !keyPresent && (
           <div style={{ fontSize: 12, color: 'var(--orbitpm-muted)' }}>
             {t('ai.noKeyForProvider', { providerLabel: providerSpec.label })}{' '}
             <button type="button" onClick={onOpenSettings} style={linkBtn}>

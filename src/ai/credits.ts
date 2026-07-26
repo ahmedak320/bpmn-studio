@@ -9,6 +9,8 @@
 import type { LiteProviderId } from './providersLite'
 
 const USAGE_PREFIX = 'orbitpm.lite.usage.'
+const USAGE_EVENT = 'orbitpm:ai-usage'
+const sessionUsage = new Map<LiteProviderId, UsageTotals>()
 
 // --- OpenRouter credits lookup ---------------------------------------------
 
@@ -101,8 +103,28 @@ export interface UsageTotals {
   requests: number
   inputTokens: number
   outputTokens: number
-  estCostUsd: number | null
+  reasoningTokens: number
+  /** Null means at least one request had an unknown cost. */
+  costUsd: number | null
+  costKind: 'provider' | 'estimated' | 'mixed' | 'unknown'
   since: number
+}
+
+export interface UsageSnapshot {
+  session: UsageTotals
+  allTime: UsageTotals
+}
+
+function emptyUsage(since = Date.now()): UsageTotals {
+  return {
+    requests: 0,
+    inputTokens: 0,
+    outputTokens: 0,
+    reasoningTokens: 0,
+    costUsd: 0,
+    costKind: 'estimated',
+    since
+  }
 }
 
 function usageKey(providerId: LiteProviderId): string {
@@ -123,12 +145,34 @@ export function getUsage(providerId: LiteProviderId): UsageTotals | null {
     ) {
       return null
     }
-    const estCostUsd = typeof parsed.estCostUsd === 'number' ? parsed.estCostUsd : null
+    const legacyCost =
+      typeof (parsed as Partial<UsageTotals> & { estCostUsd?: unknown }).estCostUsd ===
+      'number'
+        ? (parsed as Partial<UsageTotals> & { estCostUsd: number }).estCostUsd
+        : null
+    const costUsd =
+      typeof parsed.costUsd === 'number'
+        ? parsed.costUsd
+        : parsed.costUsd === null
+          ? null
+          : legacyCost
+    const costKind: UsageTotals['costKind'] =
+      parsed.costKind === 'provider' ||
+      parsed.costKind === 'estimated' ||
+      parsed.costKind === 'mixed' ||
+      parsed.costKind === 'unknown'
+        ? parsed.costKind
+        : costUsd === null
+          ? 'unknown'
+          : 'estimated'
     return {
       requests: parsed.requests,
       inputTokens: parsed.inputTokens,
       outputTokens: parsed.outputTokens,
-      estCostUsd,
+      reasoningTokens:
+        typeof parsed.reasoningTokens === 'number' ? parsed.reasoningTokens : 0,
+      costUsd,
+      costKind,
       since: parsed.since
     }
   } catch {
@@ -147,33 +191,95 @@ function writeUsage(providerId: LiteProviderId, totals: UsageTotals): void {
 export interface RecordUsageInput {
   inputTokens: number
   outputTokens: number
+  reasoningTokens?: number
+  /** Provider-reported request cost, preferred over local estimation. */
+  providerCostUsd?: number
   modelId: string
 }
 
-/** Accumulate one request's token usage (and estimated cost, when computable). */
+function combineCostKind(
+  existing: UsageTotals['costKind'] | undefined,
+  next: UsageTotals['costKind']
+): UsageTotals['costKind'] {
+  if (!existing || existing === next) return next
+  if (existing === 'unknown' || next === 'unknown') return 'unknown'
+  return 'mixed'
+}
+
+function addUsage(
+  existing: UsageTotals | null,
+  input: RecordUsageInput,
+  now: number
+): UsageTotals {
+  const estimated = estimateCostUsd(input.modelId, input.inputTokens, input.outputTokens)
+  const costDelta =
+    typeof input.providerCostUsd === 'number' ? input.providerCostUsd : estimated
+  const deltaKind: UsageTotals['costKind'] =
+    typeof input.providerCostUsd === 'number'
+      ? 'provider'
+      : estimated === null
+        ? 'unknown'
+        : 'estimated'
+  return {
+    requests: (existing?.requests ?? 0) + 1,
+    inputTokens: (existing?.inputTokens ?? 0) + input.inputTokens,
+    outputTokens: (existing?.outputTokens ?? 0) + input.outputTokens,
+    reasoningTokens: (existing?.reasoningTokens ?? 0) + (input.reasoningTokens ?? 0),
+    // Once any component is unknown, the aggregate is unknown; never display a
+    // misleading partial dollar sum.
+    costUsd:
+      costDelta === null || existing?.costUsd === null
+        ? null
+        : (existing?.costUsd ?? 0) + costDelta,
+    costKind: combineCostKind(existing?.costKind, deltaKind),
+    since: existing?.since ?? now
+  }
+}
+
+function notifyUsage(providerId: LiteProviderId): void {
+  if (typeof window !== 'undefined') {
+    window.dispatchEvent(new CustomEvent(USAGE_EVENT, { detail: providerId }))
+  }
+}
+
+/** Accumulate one request in separate session and all-time ledgers. */
 export function recordUsage(providerId: LiteProviderId, input: RecordUsageInput): void {
-  const existing = getUsage(providerId)
-  const costDelta = estimateCostUsd(input.modelId, input.inputTokens, input.outputTokens)
+  const now = Date.now()
+  const allTime = addUsage(getUsage(providerId), input, now)
+  const session = addUsage(sessionUsage.get(providerId) ?? null, input, now)
+  writeUsage(providerId, allTime)
+  sessionUsage.set(providerId, session)
+  notifyUsage(providerId)
+}
 
-  const requests = (existing?.requests ?? 0) + 1
-  const inputTokens = (existing?.inputTokens ?? 0) + input.inputTokens
-  const outputTokens = (existing?.outputTokens ?? 0) + input.outputTokens
-  const since = existing?.since ?? Date.now()
-  const estCostUsd =
-    costDelta === null
-      ? (existing?.estCostUsd ?? null)
-      : (existing?.estCostUsd ?? 0) + costDelta
-
-  writeUsage(providerId, { requests, inputTokens, outputTokens, estCostUsd, since })
+export function getUsageSnapshot(providerId: LiteProviderId): UsageSnapshot {
+  return {
+    session: sessionUsage.get(providerId) ?? emptyUsage(),
+    allTime: getUsage(providerId) ?? emptyUsage()
+  }
 }
 
 /** Clear the stored usage ledger for a provider. */
 export function resetUsage(providerId: LiteProviderId): void {
+  sessionUsage.delete(providerId)
   try {
     localStorage.removeItem(usageKey(providerId))
   } catch {
     /* ignore */
   }
+  notifyUsage(providerId)
+}
+
+export function subscribeUsage(listener: (providerId: LiteProviderId) => void): () => void {
+  if (typeof window === 'undefined') return () => undefined
+  const onUsage = (event: Event): void =>
+    listener((event as CustomEvent<LiteProviderId>).detail)
+  window.addEventListener(USAGE_EVENT, onUsage)
+  return () => window.removeEventListener(USAGE_EVENT, onUsage)
+}
+
+export function resetSessionUsageForTests(): void {
+  sessionUsage.clear()
 }
 
 // --- cost estimation ---------------------------------------------------------
@@ -185,7 +291,10 @@ interface ModelPrice {
   out: number
 }
 
-// Best-effort public list prices (USD / 1M tokens) as of this writing. Not
+/** Date on which the bundled fallback prices were last reviewed. */
+export const ESTIMATED_PRICE_AS_OF = '2026-07-26'
+
+// Best-effort public list prices (USD / 1M tokens) as of the date above. Not
 // guaranteed to the cent — surfaced in the UI as an estimate only. Includes
 // both the OpenRouter `provider/model` slugs (providersLite.ts) and the bare
 // vendor ids used directly by the Anthropic/Gemini adapters
@@ -223,6 +332,8 @@ export function estimateCostUsd(
 export interface ExtractedUsage {
   inputTokens: number
   outputTokens: number
+  reasoningTokens: number
+  providerCostUsd?: number
 }
 
 /**
@@ -243,7 +354,14 @@ export function extractUsage(
       const inputTokens = usage?.input_tokens
       const outputTokens = usage?.output_tokens
       if (typeof inputTokens !== 'number' || typeof outputTokens !== 'number') return null
-      return { inputTokens, outputTokens }
+      const outputDetails = usage?.output_tokens_details as
+        | Record<string, unknown>
+        | undefined
+      const reasoningTokens =
+        typeof outputDetails?.reasoning_tokens === 'number'
+          ? outputDetails.reasoning_tokens
+          : 0
+      return { inputTokens, outputTokens, reasoningTokens }
     }
 
     if (providerId === 'gemini') {
@@ -251,15 +369,30 @@ export function extractUsage(
       const inputTokens = usageMetadata?.promptTokenCount
       const outputTokens = usageMetadata?.candidatesTokenCount
       if (typeof inputTokens !== 'number' || typeof outputTokens !== 'number') return null
-      return { inputTokens, outputTokens }
+      const thoughts = usageMetadata?.thoughtsTokenCount
+      return {
+        inputTokens,
+        outputTokens,
+        reasoningTokens: typeof thoughts === 'number' ? thoughts : 0
+      }
     }
 
-    // openrouter + custom (OpenAI-shaped)
+    // OpenRouter uses the OpenAI-compatible usage shape.
     const usage = obj.usage as Record<string, unknown> | undefined
     const inputTokens = usage?.prompt_tokens
     const outputTokens = usage?.completion_tokens
     if (typeof inputTokens !== 'number' || typeof outputTokens !== 'number') return null
-    return { inputTokens, outputTokens }
+    const details = usage?.completion_tokens_details as
+      | Record<string, unknown>
+      | undefined
+    const reasoning = details?.reasoning_tokens
+    const providerCost = usage?.cost
+    return {
+      inputTokens,
+      outputTokens,
+      reasoningTokens: typeof reasoning === 'number' ? reasoning : 0,
+      ...(typeof providerCost === 'number' ? { providerCostUsd: providerCost } : {})
+    }
   } catch {
     return null
   }

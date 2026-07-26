@@ -5,17 +5,22 @@ import {
   setKey,
   clearKey,
   keyLast4,
-  getCustomConfig,
-  setCustomConfig,
-  parseHeaderLines,
-  headerLinesToText,
-  type CustomEndpointConfig
+  hasEncryptedKey,
+  persistEncryptedKey,
+  unlockEncryptedKey,
+  migrateLegacyPlaintextKeys
 } from '../ai/keys'
+import {
+  getProviderSelection,
+  setProviderSelection
+} from '../ai/providerSelection'
+import { defaultLiteModelId, getLiteProvider } from '../ai/providersLite'
 import { testConnection, type ProviderConfig, type TestConnectionResult } from '../ai/browserAi'
 import {
   fetchOpenRouterCredits,
-  getUsage,
+  getUsageSnapshot,
   resetUsage,
+  subscribeUsage,
   CreditsError,
   type CreditsErrorKind,
   type OpenRouterCredits
@@ -36,14 +41,13 @@ export interface SettingsDialogLiteProps {
 }
 
 /**
- * Per-provider API-key manager for the four browser-callable providers.
+ * Per-provider API-key manager for the three browser-callable providers.
  * Key fields are write-only: an already-stored key shows a "Configured
  * (••••1234)" placeholder and is only overwritten when you type a new value +
- * Save; Clear removes it. The Custom endpoint additionally captures a base URL /
- * model / extra headers. Every provider has a "Test connection" button that
+ * Save; Clear removes it. Every provider has a "Test connection" button that
  * truthfully distinguishes a CORS block from an auth failure (see
  * browserAi.testConnection). Everything lives in localStorage — the warning
- * banner makes that explicit.
+ * banner makes the session-only default and encrypted opt-in explicit.
  */
 export function SettingsDialogLite({
   open,
@@ -55,10 +59,17 @@ export function SettingsDialogLite({
   const [orgStyling, setOrgStylingState] = useState<boolean>(() => isOrgStylingOn())
   const [completeness, setCompletenessState] = useState<boolean>(() => isCompletenessOn())
   const [drafts, setDrafts] = useState<Record<string, string>>({})
-  const [custom, setCustom] = useState<CustomEndpointConfig>(() => getCustomConfig())
-  const [headerText, setHeaderText] = useState('')
   const [saved, setSaved] = useState<string | null>(null)
+  const [storageError, setStorageError] = useState<string | null>(null)
+  const [persistEncrypted, setPersistEncrypted] = useState(false)
+  const [passphrase, setPassphrase] = useState('')
+  const initialSelection = getProviderSelection()
+  const [selectedProvider, setSelectedProvider] = useState<LiteProviderId | ''>(
+    initialSelection?.providerId ?? ''
+  )
+  const [selectedModel, setSelectedModel] = useState(initialSelection?.modelId ?? '')
   const [testing, setTesting] = useState<Record<string, boolean>>({})
+  const [testConsent, setTestConsent] = useState<Record<string, boolean>>({})
   const [results, setResults] = useState<Record<string, TestConnectionResult>>({})
   // OpenRouter balance display state (Anthropic/Gemini have no balance API — they
   // show the local usage ledger instead, re-read via a bump on reset).
@@ -92,17 +103,28 @@ export function SettingsDialogLite({
     if (open) {
       setDrafts({})
       setSaved(null)
+      setStorageError(null)
+      setPersistEncrypted(false)
+      setPassphrase('')
       setResults({})
+      setTestConsent({})
       setOrgStylingState(isOrgStylingOn())
       setCompletenessState(isCompletenessOn())
-      const cfg = getCustomConfig()
-      setCustom(cfg)
-      setHeaderText(headerLinesToText(cfg.extraHeaders))
-      // Only fetches when an OpenRouter key is already stored — a keyless open
-      // (e.g. the e2e) issues no network request.
-      void refreshCredits()
+      const selection = getProviderSelection()
+      setSelectedProvider(selection?.providerId ?? '')
+      setSelectedModel(selection?.modelId ?? '')
+      const migration = migrateLegacyPlaintextKeys(LITE_PROVIDERS.map((provider) => provider.id))
+      if (!migration.ok) setStorageError(migration.error)
     }
-  }, [open, refreshCredits])
+  }, [open])
+
+  useEffect(
+    () =>
+      subscribeUsage(() => {
+        bumpUsage((value) => value + 1)
+      }),
+    []
+  )
 
   // Escape closes the dialog (consistent with the app's other modals).
   useEffect(() => {
@@ -119,21 +141,50 @@ export function SettingsDialogLite({
 
   if (!open) return null
 
-  const persistCustom = (next: CustomEndpointConfig): void => {
-    setCustom(next)
-    setCustomConfig(next)
-  }
-
-  const save = (): void => {
+  const save = async (): Promise<void> => {
+    const failures: string[] = []
     for (const p of LITE_PROVIDERS) {
       const draft = drafts[p.id]
-      if (draft !== undefined && draft.trim().length > 0) setKey(p.id, draft)
+      if (draft !== undefined && draft.trim().length > 0) {
+        const result = persistEncrypted
+          ? await persistEncryptedKey(p.id, draft, passphrase)
+          : setKey(p.id, draft)
+        if (!result.ok) failures.push(`${p.label}: ${result.error}`)
+      }
     }
-    // Persist the custom endpoint (base URL / model / headers) too.
-    setCustomConfig({ ...custom, extraHeaders: parseHeaderLines(headerText) })
+    if (selectedProvider) {
+      const selectionResult = setProviderSelection(selectedProvider, selectedModel)
+      if (!selectionResult.ok) failures.push(selectionResult.error)
+    }
     setDrafts({})
-    setSaved(t('settings.saved'))
+    if (failures.length > 0) {
+      setSaved(null)
+      setStorageError(failures.join(' '))
+    } else {
+      setStorageError(null)
+      setSaved(t('settings.saved'))
+    }
     onKeysChanged()
+  }
+
+  const unlockStoredKeys = async (): Promise<void> => {
+    const failures: string[] = []
+    let unlocked = 0
+    for (const provider of LITE_PROVIDERS) {
+      if (!hasEncryptedKey(provider.id)) continue
+      const result = await unlockEncryptedKey(provider.id, passphrase)
+      if (result.ok) unlocked += 1
+      else failures.push(`${provider.label}: ${result.error}`)
+    }
+    if (failures.length > 0) {
+      setSaved(null)
+      setStorageError(failures.join(' '))
+    } else {
+      setStorageError(null)
+      setSaved(t('settings.encryption.unlocked', { count: unlocked }))
+      setPassphrase('')
+      onKeysChanged()
+    }
   }
 
   const runTest = async (providerId: LiteProviderId): Promise<void> => {
@@ -149,10 +200,11 @@ export function SettingsDialogLite({
     const apiKey = draftKey && draftKey.trim() ? draftKey.trim() : getKey(providerId)
     const cfg: ProviderConfig = {
       providerId,
-      model: providerId === 'custom' ? custom.model : '',
+      model:
+        selectedProvider === providerId && selectedModel.trim()
+          ? selectedModel.trim()
+          : defaultLiteModelId(providerId),
       apiKey,
-      baseURL: providerId === 'custom' ? custom.baseURL : undefined,
-      extraHeaders: providerId === 'custom' ? parseHeaderLines(headerText) : undefined,
       referer: typeof location !== 'undefined' ? location.origin : undefined,
       title: t('app.title')
     }
@@ -175,6 +227,10 @@ export function SettingsDialogLite({
       setTesting((t) => ({ ...t, [providerId]: false }))
     }
   }
+
+  const hasStoredCiphertext = LITE_PROVIDERS.some((provider) =>
+    hasEncryptedKey(provider.id)
+  )
 
   return (
     <div
@@ -246,8 +302,120 @@ export function SettingsDialogLite({
             ⚠️ {t('settings.keyStorageWarning')}
           </div>
 
+          <section
+            aria-label={t('settings.aiSelection.title')}
+            style={{ display: 'flex', flexDirection: 'column', gap: 8 }}
+          >
+            <span style={{ fontWeight: 600, fontSize: 14 }}>
+              {t('settings.aiSelection.title')}
+            </span>
+            <label style={labelStack}>
+              <span>{t('ai.provider.label')}</span>
+              <select
+                value={selectedProvider}
+                onChange={(event) => {
+                  const providerId = event.target.value as LiteProviderId | ''
+                  setSelectedProvider(providerId)
+                  setSelectedModel(providerId ? defaultLiteModelId(providerId) : '')
+                }}
+                style={input}
+              >
+                <option value="">{t('ai.provider.select')}</option>
+                {LITE_PROVIDERS.map((provider) => (
+                  <option key={provider.id} value={provider.id}>
+                    {provider.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+            {selectedProvider &&
+              (getLiteProvider(selectedProvider).allowCustomModel ? (
+                <label style={labelStack}>
+                  <span>{t('ai.model.label')}</span>
+                  <input
+                    type="text"
+                    value={selectedModel}
+                    list="settings-ai-models"
+                    onChange={(event) => setSelectedModel(event.target.value)}
+                    style={input}
+                  />
+                  <datalist id="settings-ai-models">
+                    {getLiteProvider(selectedProvider).models.map((model) => (
+                      <option key={model.id} value={model.id}>
+                        {model.label}
+                      </option>
+                    ))}
+                  </datalist>
+                </label>
+              ) : (
+                <label style={labelStack}>
+                  <span>{t('ai.model.label')}</span>
+                  <select
+                    value={selectedModel}
+                    onChange={(event) => setSelectedModel(event.target.value)}
+                    style={input}
+                  >
+                    {getLiteProvider(selectedProvider).models.map((model) => (
+                      <option key={model.id} value={model.id}>
+                        {model.label}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              ))}
+            <span style={{ fontSize: 11.5, color: 'var(--orbitpm-muted)' }}>
+              {t('settings.aiSelection.hint')}
+            </span>
+          </section>
+
+          <section
+            aria-label={t('settings.encryption.title')}
+            style={{ display: 'flex', flexDirection: 'column', gap: 8 }}
+          >
+            <span style={{ fontWeight: 600, fontSize: 14 }}>
+              {t('settings.encryption.title')}
+            </span>
+            <label style={{ display: 'flex', gap: 10, alignItems: 'flex-start' }}>
+              <input
+                type="checkbox"
+                checked={persistEncrypted}
+                onChange={(event) => setPersistEncrypted(event.target.checked)}
+              />
+              <span>{t('settings.encryption.persist')}</span>
+            </label>
+            <input
+              type="password"
+              autoComplete="new-password"
+              value={passphrase}
+              onChange={(event) => setPassphrase(event.target.value)}
+              aria-label={t('settings.encryption.passphrase')}
+              placeholder={t('settings.encryption.passphrase')}
+              style={input}
+            />
+            {hasStoredCiphertext && (
+              <button
+                type="button"
+                onClick={() => void unlockStoredKeys()}
+                disabled={!passphrase}
+                style={ghostBtn}
+              >
+                {t('settings.encryption.unlock')}
+              </button>
+            )}
+            <span style={{ fontSize: 11.5, color: 'var(--orbitpm-muted)' }}>
+              {t('settings.encryption.hint')}
+            </span>
+          </section>
+
+          {storageError && (
+            <div role="alert" style={errorBox}>
+              {storageError}
+            </div>
+          )}
+
           {LITE_PROVIDERS.map((p) => {
             const configured = getKey(p.id).length > 0
+            const encryptedStored = hasEncryptedKey(p.id)
             const last4 = keyLast4(p.id)
             const value = drafts[p.id] ?? ''
             const result = results[p.id]
@@ -274,35 +442,6 @@ export function SettingsDialogLite({
                   {providerDescription(p.id)}
                 </div>
 
-                {p.desktopOnly && (
-                  <div style={desktopOnlyNote} role="note">
-                    🖥️ <strong>{t('settings.desktopOnly.badge')}</strong> — {t('settings.desktopOnly.hint')}
-                  </div>
-                )}
-
-                {p.needsEndpointConfig && (
-                  <>
-                    <input
-                      type="text"
-                      autoComplete="off"
-                      aria-label={t('settings.baseUrl.aria')}
-                      value={custom.baseURL}
-                      placeholder={t('settings.baseUrl.placeholder')}
-                      onChange={(e) => persistCustom({ ...custom, baseURL: e.target.value })}
-                      style={input}
-                    />
-                    <input
-                      type="text"
-                      autoComplete="off"
-                      aria-label={t('settings.modelId.aria')}
-                      value={custom.model}
-                      placeholder={t('settings.modelId.placeholder')}
-                      onChange={(e) => persistCustom({ ...custom, model: e.target.value })}
-                      style={input}
-                    />
-                  </>
-                )}
-
                 <input
                   type="password"
                   autoComplete="off"
@@ -311,44 +450,55 @@ export function SettingsDialogLite({
                   placeholder={
                     configured
                       ? t('settings.keyPlaceholder.configured', { last4 })
+                      : encryptedStored
+                        ? t('settings.keyPlaceholder.encrypted')
                       : t('settings.keyPlaceholder.empty')
                   }
                   onChange={(e) => setDrafts((d) => ({ ...d, [p.id]: e.target.value }))}
                   style={input}
                 />
 
-                {p.needsEndpointConfig && (
-                  <textarea
-                    aria-label={t('settings.extraHeaders.aria')}
-                    value={headerText}
-                    placeholder={t('settings.extraHeaders.placeholder')}
-                    onChange={(e) => setHeaderText(e.target.value)}
-                    rows={2}
-                    style={{ ...input, resize: 'vertical', fontFamily: 'monospace', fontSize: 12 }}
+                <label style={{ display: 'flex', gap: 8, alignItems: 'flex-start' }}>
+                  <input
+                    type="checkbox"
+                    checked={Boolean(testConsent[p.id])}
+                    onChange={(event) =>
+                      setTestConsent((current) => ({
+                        ...current,
+                        [p.id]: event.target.checked
+                      }))
+                    }
                   />
-                )}
-
+                  <span style={{ fontSize: 11.5, color: 'var(--orbitpm-muted)' }}>
+                    {t('settings.testConnection.billableDisclosure')}
+                  </span>
+                </label>
                 <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
                   <button
                     type="button"
                     onClick={() => void runTest(p.id)}
-                    disabled={testing[p.id] || Boolean(p.desktopOnly)}
-                    title={p.desktopOnly ? t('settings.desktopOnly.badge') : undefined}
+                    disabled={testing[p.id] || !testConsent[p.id]}
                     style={ghostBtn}
                   >
                     {testing[p.id] ? t('settings.testConnection.testing') : t('settings.testConnection')}
                   </button>
-                  {configured && (
+                  {(configured || encryptedStored) && (
                     <button
                       type="button"
                       onClick={() => {
-                        clearKey(p.id)
+                        const result = clearKey(p.id)
                         setDrafts((d) => {
                           const next = { ...d }
                           delete next[p.id]
                           return next
                         })
-                        setSaved(t('settings.keyCleared'))
+                        if (result.ok) {
+                          setStorageError(null)
+                          setSaved(t('settings.keyCleared'))
+                        } else {
+                          setSaved(null)
+                          setStorageError(result.error)
+                        }
                         onKeysChanged()
                       }}
                       style={ghostBtn}
@@ -367,7 +517,7 @@ export function SettingsDialogLite({
                           ? { kind: 'error', errorKind: creditsError }
                           : credits
                             ? { kind: 'credits', remaining: credits.remaining }
-                            : { kind: 'loading' }
+                            : { kind: 'idle' }
                     }
                     onRefresh={() => void refreshCredits()}
                   />
@@ -393,7 +543,12 @@ export function SettingsDialogLite({
           <button type="button" onClick={onClose} style={ghostBtn}>
             {t('settings.close')}
           </button>
-          <button type="button" onClick={save} className="orbitpm-lite-primary" style={{ fontSize: 13 }}>
+          <button
+            type="button"
+            onClick={() => void save()}
+            className="orbitpm-lite-primary"
+            style={{ fontSize: 13 }}
+          >
             {t('settings.saveKeys')}
           </button>
         </footer>
@@ -403,7 +558,7 @@ export function SettingsDialogLite({
 }
 
 /** Local usage-ledger line for a provider with no balance API (Anthropic/Gemini):
- *  the session totals + a reset link + the "no balance API" note. getUsage is
+ *  session/all-time totals + a reset link + the "no balance API" note.
  *  re-read on every render; the parent's onReset bump forces that re-render. */
 function UsageLine({
   providerId,
@@ -412,15 +567,13 @@ function UsageLine({
   providerId: LiteProviderId
   onReset: () => void
 }): JSX.Element {
-  const usage = getUsage(providerId)
+  const usage = getUsageSnapshot(providerId)
   return (
     <CreditsLine
       state={{
         kind: 'usage',
-        requests: usage?.requests ?? 0,
-        inputTokens: usage?.inputTokens ?? 0,
-        outputTokens: usage?.outputTokens ?? 0,
-        estCostUsd: usage?.estCostUsd ?? null
+        session: usage.session,
+        allTime: usage.allTime
       }}
       onReset={() => {
         resetUsage(providerId)
@@ -440,8 +593,6 @@ function providerDescription(id: LiteProviderId): string {
       return t('ai.provider.anthropic.desc')
     case 'gemini':
       return t('ai.provider.gemini.desc')
-    case 'custom':
-      return t('ai.provider.custom.desc')
   }
 }
 
@@ -450,8 +601,6 @@ function providerDescription(id: LiteProviderId): string {
 function verdictMessage(r: TestConnectionResult): string {
   const status = r.status ?? ''
   switch (r.code) {
-    case 'need-base-url':
-      return t('settings.verdict.needBaseUrl')
     case 'reachable-ok':
       return t('settings.verdict.reachableOk', { status })
     case 'reachable-auth':
@@ -529,13 +678,20 @@ const warning: CSSProperties = {
   background: 'rgba(234,179,8,0.15)',
   border: '1px solid rgba(234,179,8,0.4)'
 }
-const desktopOnlyNote: CSSProperties = {
-  fontSize: 11.5,
+const labelStack: CSSProperties = {
+  display: 'flex',
+  flexDirection: 'column',
+  gap: 5,
+  fontSize: 12
+}
+const errorBox: CSSProperties = {
+  fontSize: 12,
   lineHeight: 1.5,
-  padding: '0.45rem 0.55rem',
-  borderRadius: 6,
-  background: 'rgba(59,130,246,0.1)',
-  border: '1px solid rgba(59,130,246,0.35)'
+  padding: '0.6rem 0.7rem',
+  borderRadius: 8,
+  color: 'var(--orbitpm-danger, #b91c1c)',
+  background: 'rgba(239,68,68,0.1)',
+  border: '1px solid rgba(239,68,68,0.4)'
 }
 const input: CSSProperties = {
   padding: '0.45rem 0.55rem',

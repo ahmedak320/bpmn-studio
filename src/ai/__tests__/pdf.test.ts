@@ -45,12 +45,6 @@ describe('checkPdfSize', () => {
     expect(PDF_SIZE_LIMITS.openrouter).toBe(20 * 1024 * 1024)
     expect(PDF_SIZE_LIMITS.gemini).toBe(20 * 1024 * 1024)
   })
-
-  it('disables PDF for the custom endpoint', () => {
-    const r = checkPdfSize('custom', 1024)
-    expect(r.ok).toBe(false)
-    expect(r.message).toMatch(/not available for the Custom endpoint/i)
-  })
 })
 
 describe('checkPdfSize soft warning (large-but-allowed files)', () => {
@@ -84,7 +78,7 @@ describe("checkAttachmentSize(kind: 'pdf') — byte-identical delegation to chec
       20 * 1024 * 1024 + 1, // just over
       30 * 1024 * 1024 // far over
     ]
-    for (const providerId of ['anthropic', 'gemini', 'openrouter', 'custom'] as const) {
+    for (const providerId of ['anthropic', 'gemini', 'openrouter'] as const) {
       for (const size of sizes) {
         expect(checkAttachmentSize(providerId, 'pdf', size)).toEqual(
           checkPdfSize(providerId, size)
@@ -95,7 +89,7 @@ describe("checkAttachmentSize(kind: 'pdf') — byte-identical delegation to chec
 })
 
 describe("checkAttachmentSize(kind: 'image')", () => {
-  it('encodes the verified conservative caps: 5 MiB Anthropic/OpenRouter, 12 MiB Gemini, 0 custom', () => {
+  it('encodes the verified conservative caps: 5 MiB Anthropic/OpenRouter and 12 MiB Gemini', () => {
     // Anthropic direct API: ≤10 MB base64-encoded per image (5 MiB raw ≈ 7 MB
     // base64); OpenRouter forwards downstream so it shares that gate; Gemini
     // inline requests cap the WHOLE request at 20 MB (12 MiB raw ≈ 16 MiB
@@ -103,7 +97,6 @@ describe("checkAttachmentSize(kind: 'image')", () => {
     expect(IMAGE_SIZE_LIMITS.anthropic).toBe(5 * 1024 * 1024)
     expect(IMAGE_SIZE_LIMITS.openrouter).toBe(5 * 1024 * 1024)
     expect(IMAGE_SIZE_LIMITS.gemini).toBe(12 * 1024 * 1024)
-    expect(IMAGE_SIZE_LIMITS.custom).toBe(0)
   })
 
   it('accepts images at each provider limit and rejects one byte over', () => {
@@ -129,12 +122,6 @@ describe("checkAttachmentSize(kind: 'image')", () => {
       expect(r.ok).toBe(true)
       expect(r.warning).toBeUndefined()
     }
-  })
-
-  it('rejects images outright for the custom endpoint (no verified image path)', () => {
-    const r = checkAttachmentSize('custom', 'image', 1024)
-    expect(r.ok).toBe(false)
-    expect(r.message).toMatch(/not available for this provider/i)
   })
 })
 

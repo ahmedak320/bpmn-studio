@@ -3,7 +3,6 @@ import {
   buildAnthropicRequest,
   buildGeminiRequest,
   buildOpenRouterRequest,
-  buildCustomRequest,
   buildRequest,
   extractText,
   type ProviderConfig
@@ -182,6 +181,7 @@ describe('OpenRouter payload', () => {
     expect(req.body.model).toBe('z-ai/glm-5.2')
     expect(req.body.response_format).toEqual({ type: 'json_object' })
     expect(req.body.messages).toEqual([{ role: 'user', content: 'Model an order process.' }])
+    expect(req.body.provider).toEqual({ zdr: true, data_collection: 'deny' })
     expect(req.body.plugins).toBeUndefined()
   })
 
@@ -226,56 +226,13 @@ describe('OpenRouter payload', () => {
   })
 })
 
-describe('Custom OpenAI-compatible payload', () => {
-  it('strips a trailing slash, appends /chat/completions, merges extra headers', () => {
-    const req = buildCustomRequest(
-      cfg({
-        providerId: 'custom',
-        model: 'llama',
-        baseURL: 'https://api.example.com/v1/',
-        extraHeaders: { 'X-Org': 'acme' }
-      }),
-      TEXT_MSGS,
-      { maxTokens: 3000, jsonMode: true }
-    )
-    expect(req.url).toBe('https://api.example.com/v1/chat/completions')
-    expect(req.headers.authorization).toBe('Bearer sk-test')
-    expect(req.headers['X-Org']).toBe('acme')
-    expect(req.body.response_format).toEqual({ type: 'json_object' })
-  })
-
-  it('never adds a PDF part (no verified document contract)', () => {
-    const req = buildCustomRequest(
-      cfg({ providerId: 'custom', model: 'm', baseURL: 'https://x' }),
-      TEXT_MSGS,
-      { maxTokens: 3000, jsonMode: true, attachment: PDF }
-    )
-    // content stays a plain string — no file part injected.
-    expect((req.body.messages as Array<{ content: unknown }>)[0].content).toBe(
-      'Model an order process.'
-    )
-  })
-
-  it('never adds an image part either (attachments are dropped entirely)', () => {
-    const req = buildCustomRequest(
-      cfg({ providerId: 'custom', model: 'm', baseURL: 'https://x' }),
-      TEXT_MSGS,
-      { maxTokens: 3000, jsonMode: true, attachment: IMG }
-    )
-    expect((req.body.messages as Array<{ content: unknown }>)[0].content).toBe(
-      'Model an order process.'
-    )
-    expect(req.body.plugins).toBeUndefined()
-  })
-})
-
 describe('Arabic hint / RTL passthrough', () => {
   const arabic = 'عملية الموافقة على الفاتورة'
   const msgs: LlmMessage[] = [{ role: 'user', content: `Instruction with hint: "${arabic}"` }]
 
   it('carries Arabic text verbatim into every provider body', () => {
-    for (const providerId of ['anthropic', 'gemini', 'openrouter', 'custom'] as const) {
-      const req = buildRequest(cfg({ providerId, baseURL: 'https://x', model: 'm' }), msgs, {
+    for (const providerId of ['anthropic', 'gemini', 'openrouter'] as const) {
+      const req = buildRequest(cfg({ providerId, model: 'm' }), msgs, {
         maxTokens: 100,
         jsonMode: true
       })
@@ -293,10 +250,12 @@ describe('response extraction', () => {
     const data = { candidates: [{ content: { parts: [{ text: '{"a":' }, { text: '1}' }] } }] }
     expect(extractText('gemini', data)).toBe('{"a":1}')
   })
-  it('reads OpenAI-shaped choices (string + array content)', () => {
+  it('reads OpenRouter choices (string + array content)', () => {
     expect(extractText('openrouter', { choices: [{ message: { content: 'hi' } }] })).toBe('hi')
     expect(
-      extractText('custom', { choices: [{ message: { content: [{ text: 'a' }, { text: 'b' }] } }] })
+      extractText('openrouter', {
+        choices: [{ message: { content: [{ text: 'a' }, { text: 'b' }] } }]
+      })
     ).toBe('ab')
   })
   it('returns empty string on a malformed response (pipeline then repairs)', () => {

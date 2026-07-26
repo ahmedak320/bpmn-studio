@@ -2,6 +2,7 @@ import { type CSSProperties } from 'react'
 import { t, type Key } from '../i18n'
 import { useLang } from '../i18n/useLang'
 import type { CreditsErrorKind } from './credits'
+import { ESTIMATED_PRICE_AS_OF, type UsageTotals } from './credits'
 
 /**
  * Discriminated display state for {@link CreditsLine}. The first three are the
@@ -10,16 +11,14 @@ import type { CreditsErrorKind } from './credits'
  * balance API (Anthropic / Gemini).
  */
 export type CreditsLineState =
+  | { kind: 'idle' }
   | { kind: 'loading' }
   | { kind: 'credits'; remaining: number }
   | { kind: 'error'; errorKind: CreditsErrorKind }
   | {
       kind: 'usage'
-      requests: number
-      inputTokens: number
-      outputTokens: number
-      /** null ⇒ cost is unknown for this model — render "n/a", never $0. */
-      estCostUsd: number | null
+      session: UsageTotals
+      allTime: UsageTotals
     }
 
 export interface CreditsLineProps {
@@ -52,16 +51,49 @@ function creditsErrorKey(kind: CreditsErrorKind): Key {
  * and in Settings, and so each state can be unit-tested via renderToStaticMarkup.
  */
 export function CreditsLine({ state, onRefresh, onReset, note }: CreditsLineProps): JSX.Element {
-  useLang()
+  const lang = useLang()
 
   if (state.kind === 'usage') {
-    const tokens = (state.inputTokens + state.outputTokens).toLocaleString()
-    const cost = state.estCostUsd === null ? t('ai.usage.costNa') : `$${state.estCostUsd.toFixed(2)}`
+    const number = new Intl.NumberFormat(lang)
+    const formatCost = (value: number | null): string => {
+      if (value === null) return t('ai.usage.costNa')
+      return new Intl.NumberFormat(lang, {
+        style: 'currency',
+        currency: 'USD',
+        minimumFractionDigits: value > 0 && value < 0.01 ? 4 : 2,
+        maximumFractionDigits: value > 0 && value < 0.01 ? 8 : 2
+      }).format(value)
+    }
+    const sessionTokens = state.session.inputTokens + state.session.outputTokens
+    const allTimeTokens = state.allTime.inputTokens + state.allTime.outputTokens
+    const estimated =
+      state.session.costKind === 'estimated' ||
+      state.session.costKind === 'mixed' ||
+      state.allTime.costKind === 'estimated' ||
+      state.allTime.costKind === 'mixed'
     return (
       <div style={wrap}>
         <span style={textStyle}>
-          {t('ai.usage.session', { requests: state.requests, tokens, cost })}
+          {t('ai.usage.sessionDetailed', {
+            requests: number.format(state.session.requests),
+            tokens: number.format(sessionTokens),
+            reasoning: number.format(state.session.reasoningTokens),
+            cost: formatCost(state.session.costUsd)
+          })}
         </span>
+        <span style={{ ...textStyle, flexBasis: '100%' }}>
+          {t('ai.usage.allTimeDetailed', {
+            requests: number.format(state.allTime.requests),
+            tokens: number.format(allTimeTokens),
+            reasoning: number.format(state.allTime.reasoningTokens),
+            cost: formatCost(state.allTime.costUsd)
+          })}
+        </span>
+        {estimated && (
+          <span style={noteStyle}>
+            {t('ai.usage.priceAsOf', { date: ESTIMATED_PRICE_AS_OF })}
+          </span>
+        )}
         {onReset && (
           <button type="button" onClick={onReset} style={linkBtn}>
             {t('ai.usage.reset')}
@@ -73,7 +105,8 @@ export function CreditsLine({ state, onRefresh, onReset, note }: CreditsLineProp
   }
 
   let text: string
-  if (state.kind === 'loading') text = t('ai.credits.loading')
+  if (state.kind === 'idle') text = t('ai.credits.refreshHint')
+  else if (state.kind === 'loading') text = t('ai.credits.loading')
   else if (state.kind === 'credits') text = t('ai.credits.remaining', { amount: state.remaining.toFixed(2) })
   else text = t(creditsErrorKey(state.errorKind))
 

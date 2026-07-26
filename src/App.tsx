@@ -65,7 +65,7 @@ import {
 } from './editor/langToggle'
 import { autoSizeAll } from './editor/autoSize'
 import { makeBrowserCallLLM } from './ai/browserAi'
-import { LITE_PROVIDERS, defaultLiteModelId } from './ai/providersLite'
+import { getProviderSelection } from './ai/providerSelection'
 import { getKey, hasKey } from './ai/keys'
 import {
   auditArabicCoverage,
@@ -2084,7 +2084,11 @@ function App(): JSX.Element {
       // A configured browser-callable provider keeps the LLM path unchanged;
       // WITHOUT one the button now falls back to the free translation chain
       // (Google gtx → MyMemory) instead of dead-ending on a "no key" toast.
-      const provider = LITE_PROVIDERS.find((p) => !p.desktopOnly && hasKey(p.id))
+      const selection = getProviderSelection()
+      const provider =
+        selection && hasKey(selection.providerId)
+          ? { id: selection.providerId, modelId: selection.modelId }
+          : null
       setTranslatingTab(tabKey)
       pushToast(
         provider
@@ -2098,7 +2102,7 @@ function App(): JSX.Element {
               modeler as TranslateModeler,
               makeBrowserCallLLM({
                 providerId: provider.id,
-                model: defaultLiteModelId(provider.id),
+                model: provider.modelId,
                 apiKey: getKey(provider.id) ?? '',
                 referer: typeof location !== 'undefined' ? location.origin : undefined,
                 title: 'OrbitPM Process Studio Lite'

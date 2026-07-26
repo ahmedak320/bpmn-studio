@@ -18,8 +18,8 @@
 //     logic + stop conditions.
 //
 // The component is self-contained: it owns its message lists + input state and
-// picks its own provider (first browser-capable provider with a stored key, in
-// LITE_PROVIDERS order, with its default model — shown in the footer). The App
+// reads the shared provider/model choice the user explicitly made (shown in the
+// footer). The App
 // supplies the digests (memoized), an open-a-process callback, the interview
 // target accessors, and the open/close wiring.
 
@@ -46,8 +46,9 @@ import {
   type InterviewExchange,
   type InterviewModeler
 } from './interview'
-import { LITE_PROVIDERS, defaultLiteModelId, type LiteProviderId } from '../ai/providersLite'
+import { getLiteProvider, type LiteProviderId } from '../ai/providersLite'
 import { getKey } from '../ai/keys'
+import { getProviderSelection } from '../ai/providerSelection'
 import { makeBrowserCallLLM, classifyBrowserError, type ErrorCode } from '../ai/browserAi'
 
 type Source = AssistantSource
@@ -106,18 +107,18 @@ export interface AssistantDrawerProps {
   onApplyXml?: (tabKey: string, xml: string) => Promise<void> | void
 }
 
-/** First browser-callable provider (skips the desktop-only Custom endpoint) that
- *  has a stored key, in LITE_PROVIDERS order, with its default model. */
+/** The one provider/model explicitly selected for every AI surface. */
 function pickProvider(): ChosenProvider | null {
-  for (const p of LITE_PROVIDERS) {
-    if (p.desktopOnly) continue
-    const apiKey = getKey(p.id)
-    if (!apiKey) continue
-    const modelId = defaultLiteModelId(p.id)
-    if (!modelId) continue
-    return { id: p.id, label: p.label, modelId, apiKey }
+  const selection = getProviderSelection()
+  if (!selection) return null
+  const apiKey = getKey(selection.providerId)
+  if (!apiKey) return null
+  return {
+    id: selection.providerId,
+    label: getLiteProvider(selection.providerId).label,
+    modelId: selection.modelId,
+    apiKey
   }
-  return null
 }
 
 /** Map a classified browser error onto the ai.error.* dictionary (the unknown
@@ -127,7 +128,8 @@ const ERROR_KEY: Record<Exclude<ErrorCode, 'unknown'>, Parameters<typeof t>[0]> 
   rate: 'ai.error.rateLimit',
   cors: 'ai.error.cors',
   network: 'ai.error.network',
-  timeout: 'ai.error.timeout'
+  timeout: 'ai.error.timeout',
+  cancelled: 'ai.error.cancelled'
 }
 
 function errorText(error: unknown): string {

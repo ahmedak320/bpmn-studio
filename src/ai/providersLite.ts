@@ -18,45 +18,28 @@
 //                   the @google/genai SDK — its Api-Revision header breaks the
 //                   CORS preflight). Native PDF AND images (same `inlineData`
 //                   part, different mime).
-//   - Custom      — user-supplied OpenAI-compatible endpoint (baseURL/key/model/
-//                   extraHeaders): the escape hatch for self-hosted proxies and
-//                   any other CORS-enabled OpenAI-shaped API. No attachments
-//                   (neither PDF nor image — no verified contract).
-//
 // Direct-vendor APIs for OpenAI / Azure / GLM / Kimi / DeepSeek are NOT
 // browser-callable (no CORS, and several vendors' ToS forbid client-side keys)
-// — reach those models through OpenRouter or the Custom endpoint instead.
+// — reach those models through OpenRouter instead.
 
 import { PROVIDERS, type ModelSpec } from './providerCatalog'
 
-export type LiteProviderId = 'openrouter' | 'anthropic' | 'gemini' | 'custom'
+export type LiteProviderId = 'openrouter' | 'anthropic' | 'gemini'
 
 export interface LiteProviderSpec {
   id: LiteProviderId
   label: string
   /** Curated model list shown in the picker's dropdown. */
   models: ModelSpec[]
-  /** Whether the user may also type a free-text model id (OpenRouter / Custom /
-   * Gemini, whose ids drift). */
+  /** Whether the user may also type a free-text model id (OpenRouter/Gemini). */
   allowCustomModel: boolean
   /** Whether this provider accepts a PDF document directly from the browser. */
   supportsPdf: boolean
   /** Whether this provider accepts an IMAGE of a process drawing directly from
    * the browser (photo/screenshot of a flowchart or whiteboard). Same trio as
-   * PDF: OpenRouter/Anthropic/Gemini have a verified image part; Custom has
-   * none. Used by AiPanelLite to gate the image path per provider. */
+   * PDF: OpenRouter/Anthropic/Gemini have a verified image part. Used by
+   * AiPanelLite to gate the image path per provider. */
   supportsImages: boolean
-  /** True when the user must configure a base URL (Custom OpenAI-compatible). */
-  needsEndpointConfig: boolean
-  /**
-   * True when this provider CANNOT be reached from the browser under the page's
-   * strict CSP connect-src allowlist (only self + OpenRouter/Anthropic/Gemini
-   * are whitelisted). The Custom OpenAI-compatible endpoint points at an
-   * arbitrary user host that is not — and cannot be — on that allowlist, so it
-   * is surfaced as "desktop app only": its Test/Generate actions are disabled in
-   * Lite. See index.html's CSP and the note copy in the dictionaries.
-   */
-  desktopOnly?: boolean
   /** Where to get an API key (link shown in Settings). */
   keysUrl: string
 }
@@ -87,7 +70,6 @@ export const LITE_PROVIDERS: LiteProviderSpec[] = [
     // `image_url` parts are native to chat/completions for vision models —
     // no plugin needed (unlike PDFs).
     supportsImages: true,
-    needsEndpointConfig: false,
     keysUrl: 'https://openrouter.ai/keys'
   },
   {
@@ -98,7 +80,6 @@ export const LITE_PROVIDERS: LiteProviderSpec[] = [
     supportsPdf: true,
     // Native `image` content block (base64 source, image before text).
     supportsImages: true,
-    needsEndpointConfig: false,
     keysUrl: 'https://console.anthropic.com/settings/keys'
   },
   {
@@ -110,23 +91,7 @@ export const LITE_PROVIDERS: LiteProviderSpec[] = [
     supportsPdf: true,
     // Same `inlineData` part as PDFs, with an image mime.
     supportsImages: true,
-    needsEndpointConfig: false,
     keysUrl: 'https://aistudio.google.com/apikey'
-  },
-  {
-    id: 'custom',
-    label: 'Custom OpenAI-compatible',
-    models: [],
-    allowCustomModel: true,
-    // A user endpoint MAY support attachments, but we can't assume it — keep
-    // PDF and image input to the providers with a verified native path.
-    supportsPdf: false,
-    supportsImages: false,
-    needsEndpointConfig: true,
-    // An arbitrary user host is not on the page's CSP connect-src allowlist, so
-    // it cannot be reached from the browser: desktop app only.
-    desktopOnly: true,
-    keysUrl: ''
   }
 ]
 
@@ -143,8 +108,8 @@ export function defaultLiteModelId(id: LiteProviderId): string {
 /**
  * Providers whose DIRECT vendor API can't be called from a browser (no CORS or
  * ToS-forbidden client-side keys). Shown as a note so users know to reach these
- * models through OpenRouter or the Custom endpoint instead of expecting a
- * built-in direct option. Sourced from the shared desktop catalog labels.
+ * models through OpenRouter instead of expecting a built-in direct option.
+ * Sourced from the shared catalog labels.
  */
 export const DESKTOP_ONLY_PROVIDERS: string[] = [
   PROVIDERS.openai.label,

@@ -78,13 +78,4 @@ describe('CORS-vs-auth discriminator', () => {
     const body = JSON.parse(init.body as string)
     expect(String(body.model).length).toBeGreaterThan(0)
   })
-
-  it('refuses to probe a custom endpoint with no base URL (not a CORS block)', async () => {
-    mockFetch(() => new Response('', { status: 200 }))
-    const r = await testConnection(cfg({ providerId: 'custom', baseURL: '' }))
-    expect(r.reachable).toBe(false)
-    expect(r.blockedOrUnreachable).toBe(false)
-    expect(r.message).toMatch(/base url/i)
-    expect(fetchMock()).not.toHaveBeenCalled()
-  })
 })

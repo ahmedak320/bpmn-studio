@@ -143,35 +143,20 @@ export function rankDigests(
     .slice(0, k)
 }
 
-/** Below this many processes the whole workspace fits comfortably in the
- *  context budget, so retrieval always includes ALL of them. */
+/** Retained for API compatibility; workspace size no longer bypasses relevance. */
 export const SMALL_WORKSPACE_ALL = 4
 
 /**
- * Pick the digests to ground the LLM on: the ranked matches first, then — when
- * the workspace is small (≤ {@link SMALL_WORKSPACE_ALL} processes) — every
- * remaining digest in workspace order, and when ranking found NOTHING at all,
- * every digest (capped at `k`). The AI path is therefore never silently
- * skipped just because token overlap came up empty (frequent for short or
- * paraphrased Arabic questions).
+ * Pick only positively ranked digests. Zero confidence returns an empty list;
+ * unrelated "first processes" are never disclosed merely to fill a context
+ * budget.
  */
 export function selectContextDigests(
   digests: ProcessDigest[],
   query: string,
   k = 6
 ): Array<{ digest: ProcessDigest; score: number }> {
-  const ranked = rankDigests(digests, query, k)
-  if (digests.length <= SMALL_WORKSPACE_ALL) {
-    const seen = new Set(ranked.map((r) => r.digest.relPath))
-    const rest = digests
-      .filter((d) => !seen.has(d.relPath))
-      .map((digest) => ({ digest, score: 0 }))
-    return [...ranked, ...rest]
-  }
-  if (ranked.length === 0) {
-    return digests.slice(0, k).map((digest) => ({ digest, score: 0 }))
-  }
-  return ranked
+  return rankDigests(digests, query, k)
 }
 
 /** Compact single-word type label for context lines. */

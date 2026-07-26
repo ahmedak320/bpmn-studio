@@ -2,6 +2,11 @@ import { afterEach, describe, it, expect } from 'vitest'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { AssistantDrawer, type AssistantDrawerProps } from '../AssistantDrawer'
 import { t } from '../../i18n'
+import { resetSessionKeysForTests, setKey } from '../../ai/keys'
+import {
+  resetProviderSelectionForTests,
+  setProviderSelection
+} from '../../ai/providerSelection'
 
 const noop = (): void => {}
 const base: AssistantDrawerProps = {
@@ -68,16 +73,20 @@ describe('AssistantDrawer (static render)', () => {
 
 describe('AssistantDrawer footer (provider picked from stored keys)', () => {
   afterEach(() => {
+    resetSessionKeysForTests()
+    resetProviderSelectionForTests()
     delete (globalThis as { localStorage?: unknown }).localStorage
   })
 
-  it('shows the answering model + provider once a key is stored', () => {
-    const store = new Map<string, string>([['orbitpm.lite.key.openrouter', 'sk-test']])
+  it('shows the explicitly selected model and provider once its session key is set', () => {
+    const store = new Map<string, string>()
     ;(globalThis as { localStorage?: unknown }).localStorage = {
       getItem: (k: string) => store.get(k) ?? null,
       setItem: (k: string, v: string) => void store.set(k, v),
       removeItem: (k: string) => void store.delete(k)
     }
+    setKey('openrouter', 'sk-test')
+    setProviderSelection('openrouter', 'z-ai/glm-5.2')
     const html = render({ open: true, keysVersion: 1 })
     expect(html).toContain(
       t('assist.model.line', { model: 'z-ai/glm-5.2', provider: 'OpenRouter' })

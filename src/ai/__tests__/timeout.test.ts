@@ -53,9 +53,10 @@ describe('generation timeout covers the response BODY (ORIG-10)', () => {
         outcome = e instanceof TransportError ? e.code : 'other-error'
       }
     )
-    await vi.advanceTimersByTimeAsync(GENERATION_TIMEOUT_MS + 1000)
+    await vi.advanceTimersByTimeAsync(GENERATION_TIMEOUT_MS * 3 + 10_000)
     for (let i = 0; i < 5; i++) await Promise.resolve()
     expect(outcome).toBe('timeout')
+    expect(fetch).toHaveBeenCalledTimes(3)
   })
 
   it('a normal (non-stalled) response still resolves with the model text', async () => {
@@ -73,17 +74,30 @@ describe('generation timeout covers the response BODY (ORIG-10)', () => {
     expect(text).toBe('HELLO-XML')
   })
 
-  it('preserves error typing: 401 → TransportError(auth), 500 → ProviderHttpError (retriable)', async () => {
-    vi.stubGlobal('fetch', vi.fn(() => Promise.resolve(new Response('nope', { status: 401 }))))
+  it('never retries permanent 4xx and bounds selected 5xx retries', async () => {
+    const authFetch = vi.fn(() => Promise.resolve(new Response('nope', { status: 401 })))
+    vi.stubGlobal('fetch', authFetch)
     await expect(makeBrowserCallLLM(cfg)(msgs, { maxTokens: 1 })).rejects.toMatchObject({
       transport: true,
       code: 'auth'
     })
+    expect(authFetch).toHaveBeenCalledTimes(1)
 
-    vi.stubGlobal('fetch', vi.fn(() => Promise.resolve(new Response('boom', { status: 500 }))))
+    const serverFetch = vi.fn(() => Promise.resolve(new Response('boom', { status: 500 })))
+    vi.stubGlobal('fetch', serverFetch)
     await expect(makeBrowserCallLLM(cfg)(msgs, { maxTokens: 1 })).rejects.toBeInstanceOf(
       ProviderHttpError
     )
+    expect(serverFetch).toHaveBeenCalledTimes(3)
+
+    const badRequestFetch = vi.fn(() =>
+      Promise.resolve(new Response('bad request', { status: 400 }))
+    )
+    vi.stubGlobal('fetch', badRequestFetch)
+    await expect(makeBrowserCallLLM(cfg)(msgs, { maxTokens: 1 })).rejects.toBeInstanceOf(
+      ProviderHttpError
+    )
+    expect(badRequestFetch).toHaveBeenCalledTimes(1)
   })
 
   it('an empty-text response stays a plain (retriable) error, not a transport error', async () => {
