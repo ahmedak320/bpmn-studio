@@ -1,17 +1,11 @@
 node_modules/
-out/
 dist/
 *.local
 .DS_Store
 *.log
 npm-debug.log*
 
-# electron-builder / electron-vite artifacts
-release/
-build/
-
-# playwright-electron e2e artifacts (screenshots/traces on failure) + caches
-tests/e2e/artifacts/
+# Browser test artifacts and caches
 test-results/
 playwright-report/
 
