@@ -1,7 +1,8 @@
 import { describe, expect, it, vi } from 'vitest'
 
-import { BrowserCsvParserAdapter } from './browserParserAdapters'
+import { BrowserCsvParserAdapter, parseBrowserSpreadsheet } from './browserParserAdapters'
 import { SpreadsheetError } from './errors'
+import { SPREADSHEET_LIMITS } from './limits'
 import type { SpreadsheetWorkerResponse } from './workerProtocol'
 
 class FakeWorker {
@@ -74,4 +75,23 @@ describe('browser spreadsheet parser adapters', () => {
     } satisfies Partial<SpreadsheetError>)
     expect(worker.terminated).toBe(true)
   })
+
+  it.each(['xlsx', 'csv'] as const)(
+    'rejects an oversized %s file before allocating its bytes',
+    async (extension) => {
+      const arrayBuffer = vi.fn(async () => {
+        throw new Error('oversized spreadsheet must not be read')
+      })
+      await expect(
+        parseBrowserSpreadsheet({
+          name: `oversized.${extension}`,
+          size: SPREADSHEET_LIMITS.compressedInputBytes + 1,
+          arrayBuffer
+        })
+      ).rejects.toMatchObject({
+        code: 'compressed-size-limit'
+      } satisfies Partial<SpreadsheetError>)
+      expect(arrayBuffer).not.toHaveBeenCalled()
+    }
+  )
 })

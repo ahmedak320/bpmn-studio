@@ -91,9 +91,13 @@ vi.mock('../credits', async (importOriginal) => {
   }
 })
 
-vi.mock('../docx', () => ({
-  extractDocxTextAsync: mocks.extractDocx
-}))
+vi.mock('../docx', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../docx')>()
+  return {
+    ...actual,
+    extractDocxTextAsync: mocks.extractDocx
+  }
+})
 
 vi.mock('../pdf', () => ({
   ACCEPTED_IMAGE_TYPES: ['image/png', 'image/jpeg', 'image/webp', 'image/gif'],
@@ -119,6 +123,7 @@ vi.mock('../../spreadsheet/SpreadsheetImportPanel', () => ({
 }))
 
 import { AiPanelLite, type AiPanelLiteProps } from '../AiPanelLite'
+import { DOCX_ARCHIVE_LIMITS } from '../docx'
 
 const success: GenerateOutput = {
   xml: '<definitions />',
@@ -398,6 +403,34 @@ describe('AiPanelLite consented browser workflows', () => {
       },
       hint: 'Use this policy'
     })
+  })
+
+  it('rejects an oversized DOCX before allocating its bytes', async () => {
+    const user = userEvent.setup()
+    renderPanel()
+
+    const arrayBuffer = vi.fn(async () => {
+      throw new Error('oversized DOCX must not be read')
+    })
+    const oversized = new File([], 'oversized.docx', {
+      type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+    })
+    Object.defineProperties(oversized, {
+      size: {
+        configurable: true,
+        value: DOCX_ARCHIVE_LIMITS.maxCompressedBytes + 1
+      },
+      arrayBuffer: {
+        configurable: true,
+        value: arrayBuffer
+      }
+    })
+
+    await user.upload(screen.getByLabelText(/ai\.attach\.label/), oversized)
+
+    expect(await screen.findByText('ai.attach.readFailed')).not.toBeNull()
+    expect(arrayBuffer).not.toHaveBeenCalled()
+    expect(mocks.extractDocx).not.toHaveBeenCalled()
   })
 
   it('requires review for uncertain links and applies confirm and cancel decisions', async () => {

@@ -61,6 +61,25 @@ export const DOCX_ARCHIVE_LIMITS: ZipSafetyLimits = {
   maxCompressionRatio: 250
 }
 
+/**
+ * Reject an oversized browser File before allocating its contents. The ZIP
+ * preflight repeats this check against the bytes it receives, so callers are
+ * protected both before and after the browser read boundary.
+ */
+export function assertDocxCompressedSize(byteLength: number): void {
+  if (
+    !Number.isSafeInteger(byteLength) ||
+    byteLength < 0 ||
+    byteLength > DOCX_ARCHIVE_LIMITS.maxCompressedBytes
+  ) {
+    throw new DocxParseError(
+      'archive-too-large',
+      `Unsafe .docx archive: compressed input size ${byteLength} exceeds ` +
+        `${DOCX_ARCHIVE_LIMITS.maxCompressedBytes}`
+    )
+  }
+}
+
 export interface ExtractDocxTextOptions {
   signal?: AbortSignal
 }
@@ -147,7 +166,10 @@ function mapArchiveError(error: unknown): DocxParseError {
     case 'unsupported-filename-encoding':
     case 'zip64-unsupported':
     case 'multi-disk-unsupported':
-      return new DocxParseError('unsupported-archive', `Unsupported .docx archive: ${error.message}`)
+      return new DocxParseError(
+        'unsupported-archive',
+        `Unsupported .docx archive: ${error.message}`
+      )
     case 'malformed':
     case 'crc-mismatch':
       return new DocxParseError('malformed-archive', `Malformed .docx archive: ${error.message}`)
@@ -212,11 +234,9 @@ function requireMainDocument(entries: Record<string, Uint8Array>): Uint8Array {
  * Synchronous compatibility API. Central-directory limits and local headers
  * are validated before the single required XML entry is expanded.
  */
-export function extractDocxText(
-  bytes: Uint8Array,
-  options: ExtractDocxTextOptions = {}
-): string {
+export function extractDocxText(bytes: Uint8Array, options: ExtractDocxTextOptions = {}): string {
   try {
+    assertDocxCompressedSize(bytes.byteLength)
     const preflight = preflightZip(bytes, DOCX_ARCHIVE_LIMITS, options.signal)
     if (!preflight.entries.some(isMainDocument)) {
       throw new DocxParseError(
@@ -244,6 +264,7 @@ export async function extractDocxTextAsync(
   options: ExtractDocxTextOptions = {}
 ): Promise<string> {
   try {
+    assertDocxCompressedSize(bytes.byteLength)
     const preflight = await preflightZipAsync(bytes, DOCX_ARCHIVE_LIMITS, options.signal)
     if (!preflight.entries.some(isMainDocument)) {
       throw new DocxParseError(

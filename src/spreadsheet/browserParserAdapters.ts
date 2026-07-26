@@ -172,13 +172,16 @@ export interface ParseBrowserSpreadsheetOptions extends SpreadsheetParseOptions 
 }
 
 export async function parseBrowserSpreadsheet(
-  file: Pick<File, 'name' | 'arrayBuffer'>,
+  file: Pick<File, 'name' | 'size' | 'arrayBuffer'>,
   options: ParseBrowserSpreadsheetOptions = {}
 ): Promise<BrowserSpreadsheetParseResult> {
   throwIfAborted(options.signal)
+  const format = validateSpreadsheetInput(file.name, file.size)
   const bytes = new Uint8Array(await file.arrayBuffer())
   throwIfAborted(options.signal)
-  const format = validateSpreadsheetInput(file.name, bytes.length)
+  // Recheck the bytes supplied by the browser so the worker boundary remains
+  // safe even if a non-native File-like object reports inconsistent metadata.
+  validateSpreadsheetInput(file.name, bytes.length)
   if (format === 'xlsx') {
     const result = await parseXlsxBoundary(
       file.name,

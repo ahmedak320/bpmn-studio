@@ -49,7 +49,7 @@ import {
   type AttachmentKind,
   type AttachmentSizeCheck
 } from './pdf'
-import { extractDocxTextAsync } from './docx'
+import { assertDocxCompressedSize, extractDocxTextAsync } from './docx'
 import {
   inspectContextSensitivity,
   redactProcessNames,
@@ -453,6 +453,7 @@ export function AiPanelLite({
     const controller = new AbortController()
     attachmentAbortRef.current = controller
     try {
+      assertDocxCompressedSize(file.size)
       const bytes = new Uint8Array(await file.arrayBuffer())
       if (controller.signal.aborted) return
       const text = await extractDocxTextAsync(bytes, {
