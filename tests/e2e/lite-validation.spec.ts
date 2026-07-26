@@ -27,9 +27,7 @@ test.beforeAll(() => {
 
 test.beforeEach(async ({ page }) => {
   await page.addInitScript(() => {
-    // @ts-expect-error test-only fallback mode
     delete window.showDirectoryPicker
-    // @ts-expect-error test-only fallback mode
     delete window.showOpenFilePicker
   })
   await page.goto(FILE_URL, { waitUntil: 'load' })
