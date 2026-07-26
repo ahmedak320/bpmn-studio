@@ -44,6 +44,20 @@ export interface LiteProviderSpec {
   keysUrl: string
 }
 
+export interface LiteModelCapabilities {
+  /** Text generation is required for every selectable model. */
+  text: true
+  /** Direct PDF/document attachment has been verified for this exact model. */
+  pdf: boolean
+  /** Direct image attachment has been verified for this exact model. */
+  images: boolean
+  /**
+   * False for a free-text model id that is not in the reviewed registry.
+   * Attachment controls must fail closed until that model is reviewed.
+   */
+  verified: boolean
+}
+
 // OpenRouter curated slugs — LIVE-VERIFIED against GET
 // https://openrouter.ai/api/v1/models on 2026-07-22 (all present, all list
 // `response_format` + `structured_outputs` in supported_parameters). Ordered
@@ -103,6 +117,35 @@ export function getLiteProvider(id: LiteProviderId): LiteProviderSpec {
 
 export function defaultLiteModelId(id: LiteProviderId): string {
   return getLiteProvider(id).models[0]?.id ?? ''
+}
+
+/**
+ * Attachment capability is model-specific. In particular, OpenRouter accepts
+ * arbitrary model ids, but an OpenRouter route being browser-callable does not
+ * imply that the selected model can consume images or documents. Unknown ids
+ * therefore remain usable for text while attachment paths fail closed.
+ */
+export function getLiteModelCapabilities(
+  providerId: LiteProviderId,
+  modelId: string
+): LiteModelCapabilities {
+  const normalizedModel = modelId.trim()
+  const provider = getLiteProvider(providerId)
+  const reviewed = provider.models.some((model) => model.id === normalizedModel)
+  if (!reviewed) {
+    return { text: true, pdf: false, images: false, verified: false }
+  }
+
+  if (providerId === 'anthropic' || providerId === 'gemini') {
+    return { text: true, pdf: true, images: true, verified: true }
+  }
+
+  // OpenRouter's PDF parser can provide reviewed text models with document
+  // content. Native image parts are enabled only for the reviewed Claude and
+  // Gemini routes; the remaining curated routes are text-only in Lite.
+  const images =
+    normalizedModel.startsWith('anthropic/') || normalizedModel.startsWith('google/')
+  return { text: true, pdf: true, images, verified: true }
 }
 
 /**
