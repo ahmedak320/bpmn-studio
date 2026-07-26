@@ -1,0 +1,1627 @@
+import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
+
+import { t } from '../i18n'
+import { useLang } from '../i18n/useLang'
+import type { WorkspaceAdapter } from '../workspace/adapters'
+import { CANONICAL_FIELDS_BY_SHEET, REQUIRED_FIELDS_BY_SHEET } from './aliases'
+import { SpreadsheetBilingualAudit, SpreadsheetBpmnGenerator } from './bpmnGeneration'
+import {
+  BrowserMappingDraftStore,
+  downloadMappingPreset,
+  mappingDraftKey,
+  readMappingPresetFile
+} from './browserDraftStore'
+import {
+  parseBrowserSpreadsheet,
+  type BrowserSpreadsheetParseResult
+} from './browserParserAdapters'
+import {
+  type CanonicalSheet,
+  type CollisionBehavior,
+  type GraphInferencePlan,
+  type MappingPreset,
+  type ProcessGraphModel,
+  type ProcessWorkbookModel,
+  type RecordProvenance,
+  type SpreadsheetImportReport,
+  type SpreadsheetValidationIssue,
+  type TransactionalImportPlan,
+  type WorkbookValidationReport
+} from './contracts'
+import {
+  BrowserImportDeliveryTransactionFactory,
+  EmptySpreadsheetDestinationInspector,
+  WorkspaceImportTransactionFactory,
+  WorkspaceSpreadsheetDestinationInspector,
+  downloadSpreadsheetBlob
+} from './destinationAdapters'
+import { SpreadsheetError } from './errors'
+import {
+  applyGraphInferencePlan,
+  assignDeterministicIds,
+  createGraphInferencePlan
+} from './inference'
+import {
+  LOW_CONFIDENCE_REQUIRED_THRESHOLD,
+  headerSignature,
+  suggestHeaderMappings
+} from './mapping'
+import { presetMatchesHeaderSignatures } from './mappingPreset'
+import { buildProcessWorkbookModel, officialTemplatePreset } from './modelBuilder'
+import { detectOfficialTemplate } from './officialTemplate'
+import {
+  executeTransactionalImportPlan,
+  prepareTransactionalImportPlan,
+  serializeSpreadsheetImportReport
+} from './transaction'
+import { createOfficialWorkbookTemplate } from './template'
+import { validateProcessWorkbookModel } from './validation'
+import {
+  WIZARD_SHEET_ROLES,
+  allMappedRequiredFields,
+  headersForSelection,
+  mappingReviewIssues,
+  suggestedMappingPreset
+} from './wizardMapping'
+
+export interface SpreadsheetFolderOption {
+  readonly relPath: string
+  readonly label: string
+}
+
+export interface SpreadsheetImportPanelProps {
+  readonly workspaceId: string
+  readonly workspaceAdapter: WorkspaceAdapter | null
+  readonly folders?: readonly SpreadsheetFolderOption[]
+  readonly knownProcessIds?: readonly string[]
+  readonly getCurrentWorkspaceId?: () => string | undefined
+  readonly runWorkspaceExclusive?: <T>(operation: () => Promise<T>) => Promise<T>
+  readonly onOpenSingle: (xml: string, name: string) => void | Promise<void>
+  readonly onOpenBilingualReview?: (xml: string, name: string) => void | Promise<void>
+  readonly onCommitted?: (report: SpreadsheetImportReport) => void | Promise<void>
+}
+
+interface WorkbookReview {
+  readonly model?: ProcessWorkbookModel
+  readonly inference?: GraphInferencePlan
+  readonly validation?: WorkbookValidationReport
+  readonly issues: readonly SpreadsheetValidationIssue[]
+  readonly additionalIssues: readonly SpreadsheetValidationIssue[]
+  readonly skippedRows: readonly RecordProvenance[]
+  readonly ready: boolean
+}
+
+type PanelPhase =
+  | 'idle'
+  | 'parsing'
+  | 'mapping'
+  | 'reviewing'
+  | 'review'
+  | 'preparing'
+  | 'plan'
+  | 'committing'
+  | 'report'
+
+const draftStore = new BrowserMappingDraftStore()
+
+function errorText(error: unknown, fallback: string): string {
+  if (error instanceof SpreadsheetError) {
+    const facts = Object.entries(error.details)
+      .map(([key, value]) => `${key}: ${String(value)}`)
+      .join(' · ')
+    return facts ? `${fallback} (${error.code}: ${facts})` : `${fallback} (${error.code})`
+  }
+  return error instanceof Error && error.message ? `${fallback} (${error.message})` : fallback
+}
+
+function progressPhase(phase: 'preflight' | 'parse' | 'validate'): string {
+  switch (phase) {
+    case 'preflight':
+      return t('spreadsheet.phase.preflight')
+    case 'parse':
+      return t('spreadsheet.phase.parse')
+    case 'validate':
+      return t('spreadsheet.phase.validate')
+  }
+}
+
+function withDestinationFolder(
+  model: ProcessWorkbookModel,
+  destinationFolder: string
+): ProcessWorkbookModel {
+  const prefix = destinationFolder.trim().replace(/\/+$/g, '')
+  if (!prefix) return model
+  return Object.freeze({
+    ...model,
+    processes: Object.freeze(
+      model.processes.map((process) =>
+        Object.freeze({
+          ...process,
+          folder: process.folder ? `${prefix}/${process.folder.replace(/^\/+/g, '')}` : prefix
+        })
+      )
+    )
+  })
+}
+
+function graphsFromModel(model: ProcessWorkbookModel): readonly ProcessGraphModel[] {
+  return Object.freeze(
+    model.processes.map((process) =>
+      Object.freeze({
+        process,
+        participants: Object.freeze(
+          model.participants.filter(({ processId }) => processId === process.id)
+        ),
+        nodes: Object.freeze(model.nodes.filter(({ processId }) => processId === process.id)),
+        flows: Object.freeze(model.flows.filter(({ processId }) => processId === process.id)),
+        glossary: model.glossary
+      })
+    )
+  )
+}
+
+function safeBpmnName(processId: string): string {
+  const safe = processId.replace(/[^A-Za-z0-9_.-]+/g, '-').replace(/^-+|-+$/g, '')
+  return `${safe || 'process'}.bpmn`
+}
+
+function downloadWorkbookTemplate(kind: 'blank' | 'example'): void {
+  const generated = createOfficialWorkbookTemplate(kind)
+  const owned = new Uint8Array(generated.byteLength)
+  owned.set(generated)
+  const blob = new Blob([owned.buffer], {
+    type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+  })
+  downloadSpreadsheetBlob(blob, `OrbitPM-Process-Import-${kind}.xlsx`)
+}
+
+function downloadReport(report: SpreadsheetImportReport): void {
+  const blob = new Blob([serializeSpreadsheetImportReport(report)], {
+    type: 'application/json'
+  })
+  downloadSpreadsheetBlob(blob, `orbitpm-import-report-${report.planId}.json`)
+}
+
+export function SpreadsheetImportPanel({
+  workspaceId,
+  workspaceAdapter,
+  folders = [],
+  knownProcessIds = [],
+  getCurrentWorkspaceId,
+  runWorkspaceExclusive,
+  onOpenSingle,
+  onOpenBilingualReview,
+  onCommitted
+}: SpreadsheetImportPanelProps): JSX.Element {
+  const lang = useLang()
+  const [phase, setPhase] = useState<PanelPhase>('idle')
+  const [sourceFile, setSourceFile] = useState<File | null>(null)
+  const [parsed, setParsed] = useState<BrowserSpreadsheetParseResult | null>(null)
+  const [parseIssues, setParseIssues] = useState<readonly SpreadsheetValidationIssue[]>([])
+  const [official, setOfficial] = useState(false)
+  const [templateVersion, setTemplateVersion] = useState<string | undefined>()
+  const [preset, setPreset] = useState<MappingPreset | null>(null)
+  const [confirmedMappings, setConfirmedMappings] = useState<ReadonlySet<string>>(new Set())
+  const [defaultProcessId, setDefaultProcessId] = useState('process_1')
+  const [defaultNameEn, setDefaultNameEn] = useState('')
+  const [defaultNameAr, setDefaultNameAr] = useState('')
+  const [destinationFolder, setDestinationFolder] = useState('')
+  const [collisionBehavior, setCollisionBehavior] = useState<CollisionBehavior>('rename')
+  const [syntheticConfirmed, setSyntheticConfirmed] = useState(false)
+  const [review, setReview] = useState<WorkbookReview | null>(null)
+  const [plan, setPlan] = useState<TransactionalImportPlan | null>(null)
+  const [report, setReport] = useState<SpreadsheetImportReport | null>(null)
+  const [progress, setProgress] = useState<{
+    phase: 'preflight' | 'parse' | 'validate'
+    completed: number
+    total: number
+  } | null>(null)
+  const [status, setStatus] = useState<string | null>(null)
+  const [error, setError] = useState<string | null>(null)
+  const [handoffBusy, setHandoffBusy] = useState(false)
+  const parserAbortRef = useRef<AbortController | null>(null)
+  const preparationAbortRef = useRef<AbortController | null>(null)
+  const taskVersionRef = useRef(0)
+  const fileInputRef = useRef<HTMLInputElement | null>(null)
+  const presetInputRef = useRef<HTMLInputElement | null>(null)
+
+  const multipleFiles = workspaceAdapter?.storage.capabilities.multipleFiles === true
+  const draftKey = sourceFile === null ? null : mappingDraftKey(workspaceId, sourceFile.name)
+
+  const reset = (): void => {
+    taskVersionRef.current += 1
+    parserAbortRef.current?.abort()
+    parserAbortRef.current = null
+    preparationAbortRef.current?.abort()
+    preparationAbortRef.current = null
+    setPhase('idle')
+    setSourceFile(null)
+    setParsed(null)
+    setParseIssues([])
+    setOfficial(false)
+    setTemplateVersion(undefined)
+    setPreset(null)
+    setConfirmedMappings(new Set())
+    setSyntheticConfirmed(false)
+    setReview(null)
+    setPlan(null)
+    setReport(null)
+    setProgress(null)
+    setStatus(null)
+    setError(null)
+    if (fileInputRef.current) fileInputRef.current.value = ''
+  }
+
+  useEffect(() => {
+    taskVersionRef.current += 1
+    parserAbortRef.current?.abort()
+    parserAbortRef.current = null
+    preparationAbortRef.current?.abort()
+    preparationAbortRef.current = null
+    setPhase('idle')
+    setSourceFile(null)
+    setParsed(null)
+    setParseIssues([])
+    setOfficial(false)
+    setTemplateVersion(undefined)
+    setPreset(null)
+    setConfirmedMappings(new Set())
+    setDefaultProcessId('process_1')
+    setDefaultNameEn('')
+    setDefaultNameAr('')
+    setDestinationFolder('')
+    setCollisionBehavior('rename')
+    setSyntheticConfirmed(false)
+    setReview(null)
+    setPlan(null)
+    setReport(null)
+    setProgress(null)
+    setStatus(null)
+    setError(null)
+    setHandoffBusy(false)
+    if (fileInputRef.current) fileInputRef.current.value = ''
+  }, [workspaceId, workspaceAdapter])
+
+  useEffect(
+    () => () => {
+      taskVersionRef.current += 1
+      parserAbortRef.current?.abort()
+      preparationAbortRef.current?.abort()
+    },
+    []
+  )
+
+  useEffect(() => {
+    if (!draftKey || !preset || phase === 'idle' || phase === 'parsing') return
+    const timeout = window.setTimeout(() => {
+      void draftStore
+        .save({
+          ...preset,
+          draftKey,
+          updatedAt: new Date().toISOString(),
+          destinationFolder,
+          collisionBehavior
+        })
+        .catch(() => undefined)
+    }, 350)
+    return () => window.clearTimeout(timeout)
+  }, [collisionBehavior, destinationFolder, draftKey, phase, preset])
+
+  const mappingIssues = useMemo(
+    () =>
+      parsed && preset
+        ? mappingReviewIssues(parsed.workbook, preset, confirmedMappings, {
+            defaultProcessId
+          })
+        : [],
+    [confirmedMappings, defaultProcessId, parsed, preset]
+  )
+
+  const allIssues = review?.issues ?? mappingIssues
+  const translationCounts = useMemo(() => {
+    const relevant =
+      plan?.validation.issues.filter(({ code }) => code === 'translation-review-required') ?? []
+    return relevant.reduce(
+      (counts, issue) => ({
+        missing: counts.missing + Number(issue.details?.missing ?? 0),
+        invalid: counts.invalid + Number(issue.details?.invalid ?? 0)
+      }),
+      { missing: 0, invalid: 0 }
+    )
+  }, [plan])
+
+  async function handleFile(file: File | null): Promise<void> {
+    if (!file) return
+    taskVersionRef.current += 1
+    const taskVersion = taskVersionRef.current
+    parserAbortRef.current?.abort()
+    preparationAbortRef.current?.abort()
+    const controller = new AbortController()
+    parserAbortRef.current = controller
+    setSourceFile(file)
+    setPhase('parsing')
+    setParsed(null)
+    setPreset(null)
+    setReview(null)
+    setPlan(null)
+    setReport(null)
+    setError(null)
+    setStatus(null)
+    setProgress({ phase: 'preflight', completed: 0, total: 1 })
+    try {
+      const result = await parseBrowserSpreadsheet(file, {
+        signal: controller.signal,
+        onProgress: setProgress
+      })
+      if (controller.signal.aborted || taskVersion !== taskVersionRef.current) {
+        throw new SpreadsheetError('parse-cancelled')
+      }
+      const detection = detectOfficialTemplate(result.workbook)
+      let nextPreset = detection.official
+        ? officialTemplatePreset(result.workbook, detection)
+        : suggestedMappingPreset(result.workbook, {
+            name: file.name.replace(/\.(?:xlsx|csv)$/i, ''),
+            locale: lang
+          })
+      const nextDraftKey = mappingDraftKey(workspaceId, file.name)
+      const draft = await draftStore.load(nextDraftKey)
+      if (controller.signal.aborted || taskVersion !== taskVersionRef.current) {
+        throw new SpreadsheetError('parse-cancelled')
+      }
+      if (draft && !detection.official) {
+        const signatures = Object.fromEntries(
+          WIZARD_SHEET_ROLES.flatMap((role) => {
+            const selection = draft.selectedSheets[role]
+            if (!selection) return []
+            const headers = headersForSelection(result.workbook, selection)
+            if (headers.length === 0) return []
+            return [[role, headerSignature(headers)]]
+          })
+        )
+        if (presetMatchesHeaderSignatures(draft, signatures)) {
+          const {
+            draftKey: _draftKey,
+            updatedAt: _updatedAt,
+            destinationFolder: restoredFolder,
+            collisionBehavior: restoredCollision,
+            ...restoredPreset
+          } = draft
+          void _draftKey
+          void _updatedAt
+          nextPreset = restoredPreset
+          setDestinationFolder(restoredFolder ?? '')
+          setCollisionBehavior(restoredCollision ?? 'rename')
+          setStatus(t('spreadsheet.mapping.presetLoaded'))
+        }
+      }
+      setParsed(result)
+      setOfficial(detection.official)
+      setTemplateVersion(detection.templateVersion)
+      setPreset(nextPreset)
+      setParseIssues(
+        Object.freeze([...result.issues, ...(detection.official ? detection.issues : [])])
+      )
+      setConfirmedMappings(detection.official ? allMappedRequiredFields(nextPreset) : new Set())
+      setPhase('mapping')
+      setProgress(null)
+    } catch (cause) {
+      if (cause instanceof SpreadsheetError && cause.code === 'parse-cancelled') {
+        setStatus(t('spreadsheet.cancel'))
+        setPhase('idle')
+      } else {
+        setError(errorText(cause, t('spreadsheet.error.parse')))
+        setPhase('idle')
+      }
+      setProgress(null)
+    } finally {
+      if (parserAbortRef.current === controller) parserAbortRef.current = null
+    }
+  }
+
+  function updatePreset(update: (current: MappingPreset) => MappingPreset): void {
+    setPreset((current) => (current ? update(current) : current))
+    setReview(null)
+    setPlan(null)
+    setReport(null)
+    setError(null)
+  }
+
+  function selectRoleSheet(role: CanonicalSheet, worksheet: string): void {
+    if (!parsed) return
+    updatePreset((current) => {
+      if (!worksheet) {
+        const selectedSheets = { ...current.selectedSheets }
+        const fieldMappings = { ...current.fieldMappings }
+        const headerSignatures = { ...current.headerSignatures }
+        delete selectedSheets[role]
+        delete fieldMappings[role]
+        delete headerSignatures[role]
+        return {
+          ...current,
+          selectedSheets,
+          fieldMappings,
+          headerSignatures
+        }
+      }
+      const selection = { worksheet, headerRow: 1 }
+      const headers = headersForSelection(parsed.workbook, selection)
+      const mapping = Object.fromEntries(
+        suggestHeaderMappings(role, headers)
+          .filter(
+            (suggestion): suggestion is typeof suggestion & { readonly header: string } =>
+              suggestion.header !== undefined
+          )
+          .map(({ field, header }) => [field, header])
+      )
+      return {
+        ...current,
+        selectedSheets: { ...current.selectedSheets, [role]: selection },
+        fieldMappings: { ...current.fieldMappings, [role]: mapping },
+        headerSignatures: {
+          ...current.headerSignatures,
+          [role]: headerSignature(headers)
+        }
+      }
+    })
+    setConfirmedMappings((current) => {
+      const next = new Set(current)
+      for (const key of next) if (key.startsWith(`${role}.`)) next.delete(key)
+      return next
+    })
+  }
+
+  function changeHeaderRow(role: CanonicalSheet, headerRow: number): void {
+    if (!parsed || !preset?.selectedSheets[role]) return
+    const selection = {
+      worksheet: preset.selectedSheets[role]!.worksheet,
+      headerRow: Math.max(1, Math.floor(headerRow) || 1)
+    }
+    updatePreset((current) => {
+      const headers = headersForSelection(parsed.workbook, selection)
+      const mapping = Object.fromEntries(
+        suggestHeaderMappings(role, headers)
+          .filter(
+            (suggestion): suggestion is typeof suggestion & { readonly header: string } =>
+              suggestion.header !== undefined
+          )
+          .map(({ field, header }) => [field, header])
+      )
+      return {
+        ...current,
+        selectedSheets: { ...current.selectedSheets, [role]: selection },
+        fieldMappings: { ...current.fieldMappings, [role]: mapping },
+        headerSignatures: {
+          ...current.headerSignatures,
+          [role]: headerSignature(headers)
+        }
+      }
+    })
+    setConfirmedMappings((current) => {
+      const next = new Set(current)
+      for (const key of next) if (key.startsWith(`${role}.`)) next.delete(key)
+      return next
+    })
+  }
+
+  function changeField(role: CanonicalSheet, field: string, header: string): void {
+    updatePreset((current) => {
+      const mapping = { ...(current.fieldMappings[role] ?? {}) }
+      for (const [mappedField, mappedHeader] of Object.entries(mapping)) {
+        if (mappedField !== field && mappedHeader === header && header) {
+          delete mapping[mappedField]
+        }
+      }
+      if (header) mapping[field] = header
+      else delete mapping[field]
+      return {
+        ...current,
+        fieldMappings: { ...current.fieldMappings, [role]: mapping }
+      }
+    })
+    setConfirmedMappings((current) => {
+      const next = new Set(current)
+      if (header) next.add(`${role}.${field}`)
+      else next.delete(`${role}.${field}`)
+      return next
+    })
+  }
+
+  async function importPreset(file: File | null): Promise<void> {
+    if (!file || !parsed) return
+    try {
+      const imported = await readMappingPresetFile(file)
+      // Exact signatures are checked again by buildProcessWorkbookModel; this
+      // early check prevents an apparently successful cross-workbook restore.
+      const signatures = Object.fromEntries(
+        WIZARD_SHEET_ROLES.flatMap((role) => {
+          const selection = imported.selectedSheets[role]
+          if (!selection) return []
+          const headers = headersForSelection(parsed.workbook, selection)
+          return headers.length > 0 ? [[role, headerSignature(headers)]] : []
+        })
+      )
+      if (!presetMatchesHeaderSignatures(imported, signatures)) {
+        throw new SpreadsheetError('invalid-mapping-preset', {
+          location: 'header-signatures'
+        })
+      }
+      setPreset(imported)
+      setConfirmedMappings(allMappedRequiredFields(imported))
+      setReview(null)
+      setPlan(null)
+      setStatus(t('spreadsheet.mapping.presetLoaded'))
+      setError(null)
+    } catch (cause) {
+      setError(errorText(cause, t('spreadsheet.error.review')))
+    } finally {
+      if (presetInputRef.current) presetInputRef.current.value = ''
+    }
+  }
+
+  async function buildReview(): Promise<void> {
+    if (!parsed || !preset || !sourceFile) return
+    const taskVersion = taskVersionRef.current
+    setPhase('reviewing')
+    setReview(null)
+    setPlan(null)
+    setReport(null)
+    setError(null)
+    await Promise.resolve()
+    if (taskVersion !== taskVersionRef.current) return
+    const requiredIssues = mappingReviewIssues(parsed.workbook, preset, confirmedMappings, {
+      defaultProcessId
+    })
+    if (requiredIssues.length > 0) {
+      setReview({
+        issues: requiredIssues,
+        additionalIssues: requiredIssues,
+        skippedRows: [],
+        ready: false
+      })
+      setPhase('review')
+      return
+    }
+    try {
+      const built = buildProcessWorkbookModel(parsed.workbook, {
+        fileName: sourceFile.name,
+        format: parsed.format,
+        preset,
+        officialTemplate: official,
+        templateVersion,
+        defaultProcessId: defaultProcessId.trim() || undefined,
+        defaultProcessName:
+          defaultNameEn.trim() || defaultNameAr.trim()
+            ? {
+                en: defaultNameEn.trim() || undefined,
+                ar: defaultNameAr.trim() || undefined,
+                active: lang
+              }
+            : undefined
+      })
+      const destinationModel = withDestinationFolder(built.model, destinationFolder)
+      const inference = createGraphInferencePlan(destinationModel, {
+        flowMode: preset.inference.flowMode
+      })
+      const syntheticIssue: SpreadsheetValidationIssue[] =
+        inference.requiresSyntheticBoundaryConfirmation && !syntheticConfirmed
+          ? [
+              {
+                code: 'synthetic-boundary-confirmation-required',
+                severity: 'review',
+                messageKey: 'spreadsheet.validation.synthetic-boundary-confirmation-required'
+              }
+            ]
+          : []
+      const additionalIssues = Object.freeze([
+        ...parseIssues,
+        ...built.issues,
+        ...inference.issues,
+        ...syntheticIssue
+      ])
+      let model = assignDeterministicIds(destinationModel).model
+      let ready = false
+      if (
+        !inference.issues.some(({ severity }) => severity === 'error') &&
+        (syntheticConfirmed || !inference.requiresSyntheticBoundaryConfirmation)
+      ) {
+        model = applyGraphInferencePlan(destinationModel, inference, {
+          confirmSyntheticBoundaries: syntheticConfirmed
+        })
+        ready = true
+      }
+      const validation = validateProcessWorkbookModel(model, {
+        destinationProcessIds: new Set(knownProcessIds),
+        additionalIssues
+      })
+      ready = ready && !validation.blocking
+      setReview({
+        model,
+        inference,
+        validation,
+        issues: validation.issues,
+        additionalIssues,
+        skippedRows: built.skippedRows,
+        ready
+      })
+      setPhase('review')
+    } catch (cause) {
+      setError(errorText(cause, t('spreadsheet.error.review')))
+      setReview({
+        issues: [],
+        additionalIssues: [],
+        skippedRows: [],
+        ready: false
+      })
+      setPhase('review')
+    }
+  }
+
+  async function preparePlan(): Promise<void> {
+    if (!review?.model || !review.ready || !preset || !sourceFile) return
+    preparationAbortRef.current?.abort()
+    const controller = new AbortController()
+    preparationAbortRef.current = controller
+    const taskVersion = taskVersionRef.current
+    setPhase('preparing')
+    setPlan(null)
+    setReport(null)
+    setError(null)
+    try {
+      const inspector =
+        multipleFiles && workspaceAdapter
+          ? new WorkspaceSpreadsheetDestinationInspector(workspaceAdapter)
+          : new EmptySpreadsheetDestinationInspector()
+      const nextPlan = await prepareTransactionalImportPlan(review.model, {
+        mode: multipleFiles && workspaceAdapter ? workspaceAdapter.mode : 'single-file',
+        collisionBehavior,
+        inspector,
+        generator: new SpreadsheetBpmnGenerator({
+          knownProcessIds
+        }),
+        bilingualAudit: new SpreadsheetBilingualAudit(),
+        destinationProcessIds: new Set(knownProcessIds),
+        additionalIssues: review.additionalIssues,
+        generatedIds: review.inference?.generatedIds,
+        inferredFlows: review.inference?.inferredFlowRecords,
+        skippedRows: review.skippedRows,
+        mappingPreset: preset,
+        signal: controller.signal
+      })
+      if (controller.signal.aborted || taskVersion !== taskVersionRef.current) return
+      setPlan(nextPlan)
+      setPhase('plan')
+    } catch (cause) {
+      if (cause instanceof SpreadsheetError && cause.code === 'parse-cancelled') {
+        return
+      }
+      setError(errorText(cause, t('spreadsheet.error.prepare')))
+      setPhase('review')
+    } finally {
+      if (preparationAbortRef.current === controller) {
+        preparationAbortRef.current = null
+      }
+    }
+  }
+
+  async function handoffBilingualReview(): Promise<void> {
+    if (!review?.model || !onOpenBilingualReview) return
+    preparationAbortRef.current?.abort()
+    const controller = new AbortController()
+    preparationAbortRef.current = controller
+    const taskVersion = taskVersionRef.current
+    setHandoffBusy(true)
+    setError(null)
+    try {
+      const generator = new SpreadsheetBpmnGenerator({
+        knownProcessIds,
+        requireBilingual: false
+      })
+      for (const graph of graphsFromModel(review.model)) {
+        const artifact = await generator.generate(graph, controller.signal)
+        if (controller.signal.aborted || taskVersion !== taskVersionRef.current) return
+        await onOpenBilingualReview(artifact.layoutedXml, safeBpmnName(graph.process.id))
+      }
+    } catch (cause) {
+      if (cause instanceof SpreadsheetError && cause.code === 'parse-cancelled') {
+        return
+      }
+      setError(errorText(cause, t('spreadsheet.error.prepare')))
+    } finally {
+      if (preparationAbortRef.current === controller) {
+        preparationAbortRef.current = null
+        setHandoffBusy(false)
+      }
+    }
+  }
+
+  async function commitPlan(): Promise<void> {
+    if (!plan || plan.status !== 'ready') return
+    setPhase('committing')
+    setError(null)
+    try {
+      const transactionFactory =
+        multipleFiles && workspaceAdapter
+          ? new WorkspaceImportTransactionFactory(workspaceAdapter, {
+              runExclusive: runWorkspaceExclusive,
+              isCurrent: () =>
+                getCurrentWorkspaceId ? getCurrentWorkspaceId() === workspaceId : true
+            })
+          : new BrowserImportDeliveryTransactionFactory({
+              openSingle: async (xml, path) => await onOpenSingle(xml, path)
+            })
+      const nextReport = await executeTransactionalImportPlan(plan, {
+        transactionFactory
+      })
+      setReport(nextReport)
+      setPhase('report')
+      if (nextReport.status === 'committed') {
+        await onCommitted?.(nextReport)
+        if (draftKey) await draftStore.remove(draftKey)
+      }
+    } catch (cause) {
+      setError(errorText(cause, t('spreadsheet.error.prepare')))
+      setPhase('plan')
+    }
+  }
+
+  const percent = progress
+    ? Math.max(
+        0,
+        Math.min(100, Math.round((progress.completed / Math.max(1, progress.total)) * 100))
+      )
+    : 0
+
+  return (
+    <section aria-labelledby="spreadsheet-import-title" style={panelStyle}>
+      <div>
+        <h3 id="spreadsheet-import-title" style={{ margin: 0, fontSize: 15 }}>
+          {t('spreadsheet.title')}
+        </h3>
+        <p style={mutedText}>{t('spreadsheet.intro')}</p>
+      </div>
+
+      <div style={buttonRow}>
+        <button
+          type="button"
+          style={secondaryButton}
+          onClick={() => downloadWorkbookTemplate('blank')}
+        >
+          {t('spreadsheet.template.blank')}
+        </button>
+        <button
+          type="button"
+          style={secondaryButton}
+          onClick={() => downloadWorkbookTemplate('example')}
+        >
+          {t('spreadsheet.template.example')}
+        </button>
+      </div>
+
+      <label style={fieldStyle}>
+        <span style={fieldLabel}>{t('spreadsheet.upload')}</span>
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,.csv,text/csv"
+          disabled={phase === 'parsing' || phase === 'committing'}
+          onChange={(event) => void handleFile(event.target.files?.[0] ?? null)}
+        />
+        <span style={mutedText}>{t('spreadsheet.uploadHint')}</span>
+      </label>
+
+      {phase === 'parsing' && progress && (
+        <div role="status" aria-live="polite" style={infoBox}>
+          <div>
+            {t('spreadsheet.progress', {
+              phase: progressPhase(progress.phase),
+              percent
+            })}
+          </div>
+          <progress value={percent} max={100} style={{ width: '100%' }} />
+          <button
+            type="button"
+            style={secondaryButton}
+            onClick={() => parserAbortRef.current?.abort()}
+          >
+            {t('spreadsheet.cancel')}
+          </button>
+        </div>
+      )}
+
+      {parsed && preset && sourceFile && (
+        <>
+          <div role="status" style={official ? okBox : infoBox}>
+            {official
+              ? t('spreadsheet.officialDetected', {
+                  version: templateVersion ?? 'structural'
+                })
+              : t('spreadsheet.ordinaryDetected')}
+          </div>
+
+          <section aria-labelledby="spreadsheet-mapping-title" style={cardStyle}>
+            <h4 id="spreadsheet-mapping-title" style={cardTitle}>
+              {t('spreadsheet.mapping.title')}
+            </h4>
+            <label style={fieldStyle}>
+              <span style={fieldLabel}>{t('spreadsheet.mapping.presetName')}</span>
+              <input
+                value={preset.name}
+                maxLength={120}
+                onChange={(event) =>
+                  updatePreset((current) => ({
+                    ...current,
+                    name: event.target.value || 'Spreadsheet mapping'
+                  }))
+                }
+                style={inputStyle}
+              />
+            </label>
+
+            {!official &&
+              WIZARD_SHEET_ROLES.map((role) => {
+                const selection = preset.selectedSheets[role]
+                const headers = headersForSelection(parsed.workbook, selection)
+                const suggestions = new Map(
+                  suggestHeaderMappings(role, headers).map((suggestion) => [
+                    suggestion.field,
+                    suggestion
+                  ])
+                )
+                const required = new Set(REQUIRED_FIELDS_BY_SHEET[role])
+                return (
+                  <details key={role} open={role === 'steps'} style={mappingGroup}>
+                    <summary style={{ cursor: 'pointer', fontWeight: 650 }}>
+                      {t(
+                        role === 'processes'
+                          ? 'spreadsheet.mapping.role.processes'
+                          : role === 'participants'
+                            ? 'spreadsheet.mapping.role.participants'
+                            : role === 'steps'
+                              ? 'spreadsheet.mapping.role.steps'
+                              : role === 'flows'
+                                ? 'spreadsheet.mapping.role.flows'
+                                : 'spreadsheet.mapping.role.glossary'
+                      )}
+                    </summary>
+                    <div style={{ display: 'grid', gap: 9, marginTop: 10 }}>
+                      <label style={fieldStyle}>
+                        <span style={fieldLabel}>{t('spreadsheet.mapping.sheet')}</span>
+                        <select
+                          value={selection?.worksheet ?? ''}
+                          onChange={(event) => selectRoleSheet(role, event.target.value)}
+                          style={inputStyle}
+                        >
+                          <option value="">{t('spreadsheet.mapping.noSheet')}</option>
+                          {parsed.workbook.sheets.map((sheet) => (
+                            <option key={sheet.name} value={sheet.name}>
+                              {sheet.name}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                      {selection && (
+                        <>
+                          <label style={fieldStyle}>
+                            <span style={fieldLabel}>{t('spreadsheet.mapping.headerRow')}</span>
+                            <input
+                              type="number"
+                              min={1}
+                              max={
+                                parsed.workbook.sheets.find(
+                                  ({ name }) => name === selection.worksheet
+                                )?.rows.length ?? 1
+                              }
+                              value={selection.headerRow}
+                              onChange={(event) =>
+                                changeHeaderRow(role, Number(event.target.value))
+                              }
+                              style={inputStyle}
+                            />
+                          </label>
+                          <div style={mappingGrid}>
+                            {CANONICAL_FIELDS_BY_SHEET[role].map((field) => {
+                              const mapped = preset.fieldMappings[role]?.[field] ?? ''
+                              const suggestion = suggestions.get(field)
+                              const confidence =
+                                suggestion?.header === mapped ? suggestion.confidence : 0
+                              const key = `${role}.${field}`
+                              const needsConfirmation =
+                                required.has(field) &&
+                                Boolean(mapped) &&
+                                confidence < LOW_CONFIDENCE_REQUIRED_THRESHOLD
+                              return (
+                                <label key={field} style={mappingField}>
+                                  <span style={{ fontSize: 11.5 }}>
+                                    <code>{field}</code>
+                                    {required.has(field) && (
+                                      <strong style={{ marginInlineStart: 5 }}>
+                                        {t('spreadsheet.mapping.required')}
+                                      </strong>
+                                    )}
+                                  </span>
+                                  <select
+                                    value={mapped}
+                                    onChange={(event) =>
+                                      changeField(role, field, event.target.value)
+                                    }
+                                    style={inputStyle}
+                                  >
+                                    <option value="">—</option>
+                                    {headers.map((header, index) =>
+                                      header ? (
+                                        <option key={`${header}-${index}`} value={header}>
+                                          {header}
+                                        </option>
+                                      ) : null
+                                    )}
+                                  </select>
+                                  {mapped && (
+                                    <span style={mutedText}>
+                                      {t('spreadsheet.mapping.confidence', {
+                                        percent: Math.round(confidence * 100)
+                                      })}
+                                    </span>
+                                  )}
+                                  {needsConfirmation && (
+                                    <span
+                                      style={{
+                                        display: 'flex',
+                                        gap: 6,
+                                        alignItems: 'flex-start'
+                                      }}
+                                    >
+                                      <input
+                                        type="checkbox"
+                                        checked={confirmedMappings.has(key)}
+                                        onChange={(event) =>
+                                          setConfirmedMappings((current) => {
+                                            const next = new Set(current)
+                                            if (event.target.checked) next.add(key)
+                                            else next.delete(key)
+                                            return next
+                                          })
+                                        }
+                                      />
+                                      <span style={{ fontSize: 11.5 }}>
+                                        {t('spreadsheet.mapping.confirm')}
+                                      </span>
+                                    </span>
+                                  )}
+                                </label>
+                              )
+                            })}
+                          </div>
+                        </>
+                      )}
+                    </div>
+                  </details>
+                )
+              })}
+
+            {!official && (
+              <div style={mappingGrid}>
+                <label style={fieldStyle}>
+                  <span style={fieldLabel}>{t('spreadsheet.mapping.defaultProcessId')}</span>
+                  <input
+                    value={defaultProcessId}
+                    onChange={(event) => setDefaultProcessId(event.target.value)}
+                    style={inputStyle}
+                    dir="ltr"
+                  />
+                </label>
+                <label style={fieldStyle}>
+                  <span style={fieldLabel}>{t('spreadsheet.mapping.defaultNameEn')}</span>
+                  <input
+                    value={defaultNameEn}
+                    onChange={(event) => setDefaultNameEn(event.target.value)}
+                    style={inputStyle}
+                    dir="auto"
+                  />
+                </label>
+                <label style={fieldStyle}>
+                  <span style={fieldLabel}>{t('spreadsheet.mapping.defaultNameAr')}</span>
+                  <input
+                    value={defaultNameAr}
+                    onChange={(event) => setDefaultNameAr(event.target.value)}
+                    style={inputStyle}
+                    dir="auto"
+                  />
+                </label>
+              </div>
+            )}
+
+            <div style={mappingGrid}>
+              <label style={fieldStyle}>
+                <span style={fieldLabel}>{t('spreadsheet.mapping.delimiters')}</span>
+                <input
+                  value={preset.delimiters.list.join(' ')}
+                  onChange={(event) => {
+                    const delimiters = event.target.value
+                      .split(/\s+/)
+                      .filter((value) => value && value !== ',' && value.length <= 2)
+                      .slice(0, 4)
+                    if (delimiters.length === 0) return
+                    updatePreset((current) => ({
+                      ...current,
+                      delimiters: { list: delimiters }
+                    }))
+                  }}
+                  style={inputStyle}
+                  dir="ltr"
+                />
+              </label>
+              <label style={fieldStyle}>
+                <span style={fieldLabel}>{t('spreadsheet.mapping.flowMode')}</span>
+                <select
+                  value={preset.inference.flowMode}
+                  onChange={(event) =>
+                    updatePreset((current) => ({
+                      ...current,
+                      inference: {
+                        ...current.inference,
+                        flowMode: event.target.value as MappingPreset['inference']['flowMode']
+                      }
+                    }))
+                  }
+                  style={inputStyle}
+                >
+                  <option value="auto">{t('spreadsheet.mapping.flow.auto')}</option>
+                  <option value="explicit">{t('spreadsheet.mapping.flow.explicit')}</option>
+                  <option value="next-step">{t('spreadsheet.mapping.flow.next')}</option>
+                  <option value="numeric-order">{t('spreadsheet.mapping.flow.order')}</option>
+                </select>
+              </label>
+            </div>
+
+            <div style={buttonRow}>
+              <button
+                type="button"
+                style={secondaryButton}
+                onClick={() => {
+                  if (!draftKey) return
+                  void draftStore
+                    .save({
+                      ...preset,
+                      draftKey,
+                      updatedAt: new Date().toISOString(),
+                      destinationFolder,
+                      collisionBehavior
+                    })
+                    .then(() => setStatus(t('spreadsheet.mapping.draftSaved')))
+                    .catch((cause) => setError(errorText(cause, t('spreadsheet.error.review'))))
+                }}
+              >
+                {t('spreadsheet.mapping.saveDraft')}
+              </button>
+              <button
+                type="button"
+                style={secondaryButton}
+                onClick={() => downloadMappingPreset(preset)}
+              >
+                {t('spreadsheet.mapping.exportPreset')}
+              </button>
+              <button
+                type="button"
+                style={secondaryButton}
+                onClick={() => presetInputRef.current?.click()}
+              >
+                {t('spreadsheet.mapping.importPreset')}
+              </button>
+              <input
+                ref={presetInputRef}
+                type="file"
+                accept=".json,application/json"
+                hidden
+                onChange={(event) => void importPreset(event.target.files?.[0] ?? null)}
+              />
+            </div>
+          </section>
+
+          <section aria-labelledby="spreadsheet-destination-title" style={cardStyle}>
+            <h4 id="spreadsheet-destination-title" style={cardTitle}>
+              {t('spreadsheet.destination.title')}
+            </h4>
+            <label style={fieldStyle}>
+              <span style={fieldLabel}>{t('spreadsheet.destination.folder')}</span>
+              <input
+                list="spreadsheet-folder-options"
+                value={destinationFolder}
+                onChange={(event) => {
+                  setDestinationFolder(event.target.value)
+                  setReview(null)
+                  setPlan(null)
+                }}
+                style={inputStyle}
+                dir="auto"
+              />
+              <datalist id="spreadsheet-folder-options">
+                {folders.map((folder) => (
+                  <option key={folder.relPath} value={folder.relPath}>
+                    {folder.label}
+                  </option>
+                ))}
+              </datalist>
+            </label>
+            <label style={fieldStyle}>
+              <span style={fieldLabel}>{t('spreadsheet.destination.collision')}</span>
+              <select
+                value={collisionBehavior}
+                onChange={(event) => {
+                  setCollisionBehavior(event.target.value as CollisionBehavior)
+                  setPlan(null)
+                }}
+                style={inputStyle}
+              >
+                <option value="error">{t('spreadsheet.destination.error')}</option>
+                <option value="overwrite">{t('spreadsheet.destination.overwrite')}</option>
+                <option value="rename">{t('spreadsheet.destination.rename')}</option>
+              </select>
+            </label>
+          </section>
+
+          {mappingIssues.length > 0 && !review && (
+            <div role="alert" style={warnBox}>
+              {t('spreadsheet.validation.mappingBlocked')}
+            </div>
+          )}
+
+          <button
+            type="button"
+            onClick={() => void buildReview()}
+            disabled={phase === 'reviewing'}
+            style={primaryButton}
+          >
+            {phase === 'reviewing' ? t('spreadsheet.reviewing') : t('spreadsheet.review')}
+          </button>
+        </>
+      )}
+
+      {review && (
+        <>
+          <section aria-labelledby="spreadsheet-validation-title" style={cardStyle}>
+            <h4 id="spreadsheet-validation-title" style={cardTitle}>
+              {t('spreadsheet.validation.title')}
+            </h4>
+            {review.validation ? (
+              <strong>
+                {t('spreadsheet.validation.summary', {
+                  errors: review.validation.errorCount,
+                  reviews: review.validation.reviewCount,
+                  warnings: review.validation.warningCount
+                })}
+              </strong>
+            ) : null}
+            {allIssues.length === 0 ? (
+              <div style={okBox}>{t('spreadsheet.validation.noIssues')}</div>
+            ) : (
+              <ol style={issueList}>
+                {allIssues.slice(0, 250).map((issue, index) => (
+                  <li
+                    key={`${issue.code}-${issue.worksheet ?? ''}-${issue.cellAddress ?? ''}-${index}`}
+                    style={{
+                      ...issueItem,
+                      borderInlineStartColor:
+                        issue.severity === 'error'
+                          ? '#dc2626'
+                          : issue.severity === 'review'
+                            ? '#d97706'
+                            : '#64748b'
+                    }}
+                  >
+                    <strong>{issue.code}</strong>
+                    {(issue.worksheet || issue.cellAddress) && (
+                      <span>
+                        {t('spreadsheet.validation.location', {
+                          sheet: issue.worksheet ?? '—',
+                          cell: issue.cellAddress ?? '—'
+                        })}
+                      </span>
+                    )}
+                    {issue.rawValue !== undefined && (
+                      <code dir="auto">{String(issue.rawValue).slice(0, 300)}</code>
+                    )}
+                  </li>
+                ))}
+              </ol>
+            )}
+            {review.inference && review.inference.generatedIds.length > 0 && (
+              <div style={infoBox}>
+                {t('spreadsheet.repair.generatedIds', {
+                  count: review.inference.generatedIds.length
+                })}
+              </div>
+            )}
+            {review.inference && review.inference.syntheticBoundaries.length > 0 && (
+              <label style={warnBox}>
+                <span>
+                  {t('spreadsheet.repair.synthetic', {
+                    count: review.inference.syntheticBoundaries.length
+                  })}
+                </span>
+                <span
+                  style={{
+                    display: 'flex',
+                    gap: 7,
+                    alignItems: 'flex-start'
+                  }}
+                >
+                  <input
+                    type="checkbox"
+                    checked={syntheticConfirmed}
+                    onChange={(event) => {
+                      setSyntheticConfirmed(event.target.checked)
+                      setReview(null)
+                      setPlan(null)
+                    }}
+                  />
+                  {t('spreadsheet.repair.confirmSynthetic')}
+                </span>
+              </label>
+            )}
+            {review.skippedRows.length > 0 && (
+              <div style={infoBox}>
+                {t('spreadsheet.repair.skippedRows', {
+                  count: review.skippedRows.length
+                })}
+              </div>
+            )}
+          </section>
+
+          {review.model && (
+            <section aria-labelledby="spreadsheet-preview-title" style={cardStyle}>
+              <h4 id="spreadsheet-preview-title" style={cardTitle}>
+                {t('spreadsheet.preview.title')}
+              </h4>
+              <div style={buttonRow}>
+                <span>
+                  {t('spreadsheet.preview.processes', {
+                    count: review.model.processes.length
+                  })}
+                </span>
+                <span>
+                  {t('spreadsheet.preview.nodes', {
+                    count: review.model.nodes.length
+                  })}
+                </span>
+                <span>
+                  {t('spreadsheet.preview.flows', {
+                    count: review.model.flows.length
+                  })}
+                </span>
+              </div>
+              <div style={{ maxHeight: 300, overflow: 'auto' }}>
+                <table style={previewTable}>
+                  <thead>
+                    <tr>
+                      <th>{t('spreadsheet.preview.process')}</th>
+                      <th>{t('spreadsheet.preview.node')}</th>
+                      <th>{t('spreadsheet.preview.type')}</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {review.model.nodes.slice(0, 500).map((node) => (
+                      <tr key={`${node.processId}-${node.id}`}>
+                        <td>
+                          <code>{node.processId}</code>
+                        </td>
+                        <td dir="auto">
+                          {node.name.active === 'ar'
+                            ? node.name.ar || node.name.en
+                            : node.name.en || node.name.ar}
+                          <br />
+                          <code>{node.id}</code>
+                        </td>
+                        <td>
+                          <code>{node.type}</code>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </section>
+          )}
+
+          {review.inference?.requiresSyntheticBoundaryConfirmation && !syntheticConfirmed && (
+            <button type="button" style={secondaryButton} onClick={() => void buildReview()}>
+              {t('spreadsheet.review')}
+            </button>
+          )}
+
+          {review.ready && (
+            <button
+              type="button"
+              onClick={() => void preparePlan()}
+              disabled={phase === 'preparing'}
+              style={primaryButton}
+            >
+              {phase === 'preparing' ? t('spreadsheet.preparing') : t('spreadsheet.prepare')}
+            </button>
+          )}
+        </>
+      )}
+
+      {plan && (
+        <section aria-labelledby="spreadsheet-plan-title" style={cardStyle}>
+          <h4 id="spreadsheet-plan-title" style={cardTitle}>
+            {plan.status === 'ready'
+              ? t('spreadsheet.plan.ready', {
+                  count: plan.artifacts.length
+                })
+              : t('spreadsheet.plan.blocked')}
+          </h4>
+          {plan.blockingReason === 'translation-review' && (
+            <div role="alert" style={warnBox}>
+              <span>{t('spreadsheet.translation.required', translationCounts)}</span>
+              {onOpenBilingualReview && review?.model && (
+                <button
+                  type="button"
+                  style={secondaryButton}
+                  disabled={handoffBusy}
+                  onClick={() => void handoffBilingualReview()}
+                >
+                  {t('spreadsheet.translation.handoff')}
+                </button>
+              )}
+            </div>
+          )}
+          {plan.status === 'blocked' && (
+            <ol style={issueList}>
+              {plan.validation.issues.slice(0, 250).map((issue, index) => (
+                <li
+                  key={`plan-${issue.code}-${issue.worksheet ?? ''}-${issue.cellAddress ?? ''}-${index}`}
+                  style={{
+                    ...issueItem,
+                    borderInlineStartColor:
+                      issue.severity === 'error'
+                        ? '#dc2626'
+                        : issue.severity === 'review'
+                          ? '#d97706'
+                          : '#64748b'
+                  }}
+                >
+                  <strong>{issue.code}</strong>
+                  {(issue.worksheet || issue.cellAddress) && (
+                    <span>
+                      {t('spreadsheet.validation.location', {
+                        sheet: issue.worksheet ?? '—',
+                        cell: issue.cellAddress ?? '—'
+                      })}
+                    </span>
+                  )}
+                </li>
+              ))}
+            </ol>
+          )}
+          {plan.artifacts.length > 0 && (
+            <ul style={issueList}>
+              {plan.artifacts.map((artifact) => (
+                <li key={artifact.graph.process.id} style={issueItem}>
+                  <strong>{artifact.graph.process.id}</strong>
+                  <span>{artifact.destination.path}</span>
+                  <code dir="ltr">{artifact.checksumSha256}</code>
+                </li>
+              ))}
+            </ul>
+          )}
+          {plan.status === 'ready' && (
+            <button
+              type="button"
+              onClick={() => void commitPlan()}
+              disabled={phase === 'committing'}
+              style={primaryButton}
+            >
+              {phase === 'committing' ? t('spreadsheet.committing') : t('spreadsheet.commit')}
+            </button>
+          )}
+        </section>
+      )}
+
+      {report && (
+        <section aria-live="polite" style={cardStyle}>
+          <div
+            role={report.status === 'committed' ? 'status' : 'alert'}
+            style={
+              report.status === 'committed'
+                ? okBox
+                : report.status === 'rollback-failed'
+                  ? errorBox
+                  : warnBox
+            }
+          >
+            {report.status === 'committed'
+              ? t('spreadsheet.report.committed')
+              : report.status === 'rollback-failed'
+                ? t('spreadsheet.report.rollbackFailed')
+                : t('spreadsheet.report.rolledBack')}
+          </div>
+          <ul style={issueList}>
+            {report.artifacts.map((artifact) => (
+              <li key={artifact.processId} style={issueItem}>
+                <strong>{artifact.processId}</strong>
+                <span>
+                  {t('spreadsheet.report.destination')}: {artifact.destinationPath}
+                </span>
+                <code dir="ltr">
+                  {t('spreadsheet.report.checksum')}: {artifact.checksumSha256}
+                </code>
+              </li>
+            ))}
+          </ul>
+          <button type="button" style={secondaryButton} onClick={() => downloadReport(report)}>
+            {t('spreadsheet.report.download')}
+          </button>
+        </section>
+      )}
+
+      {status && (
+        <div role="status" style={infoBox}>
+          {status}
+        </div>
+      )}
+      {error && (
+        <div role="alert" style={errorBox}>
+          {error}
+        </div>
+      )}
+      {sourceFile && phase !== 'parsing' && (
+        <button type="button" onClick={reset} style={secondaryButton}>
+          {t('spreadsheet.reset')}
+        </button>
+      )}
+    </section>
+  )
+}
+
+const panelStyle: CSSProperties = {
+  display: 'flex',
+  flexDirection: 'column',
+  gap: 12,
+  padding: '0.8rem',
+  minWidth: 0
+}
+
+const cardStyle: CSSProperties = {
+  display: 'grid',
+  gap: 10,
+  padding: 10,
+  border: '1px solid var(--orbitpm-border)',
+  borderRadius: 8,
+  minWidth: 0
+}
+
+const cardTitle: CSSProperties = {
+  margin: 0,
+  fontSize: 13.5
+}
+
+const fieldStyle: CSSProperties = {
+  display: 'flex',
+  flexDirection: 'column',
+  gap: 5,
+  minWidth: 0
+}
+
+const fieldLabel: CSSProperties = {
+  fontWeight: 600,
+  fontSize: 12
+}
+
+const inputStyle: CSSProperties = {
+  width: '100%',
+  minWidth: 0,
+  boxSizing: 'border-box',
+  padding: '0.45rem 0.55rem',
+  borderRadius: 6,
+  border: '1px solid var(--orbitpm-border)',
+  color: 'inherit',
+  background: 'var(--orbitpm-surface)'
+}
+
+const mutedText: CSSProperties = {
+  margin: 0,
+  color: 'var(--orbitpm-muted)',
+  fontSize: 11.5,
+  lineHeight: 1.45
+}
+
+const buttonRow: CSSProperties = {
+  display: 'flex',
+  flexWrap: 'wrap',
+  gap: 8,
+  alignItems: 'center'
+}
+
+const secondaryButton: CSSProperties = {
+  padding: '0.42rem 0.65rem',
+  borderRadius: 6,
+  border: '1px solid var(--orbitpm-border)',
+  background: 'transparent',
+  color: 'inherit',
+  cursor: 'pointer'
+}
+
+const primaryButton: CSSProperties = {
+  ...secondaryButton,
+  background: 'var(--orbitpm-accent)',
+  borderColor: 'var(--orbitpm-accent)',
+  color: '#fff',
+  fontWeight: 700
+}
+
+const infoBox: CSSProperties = {
+  display: 'grid',
+  gap: 7,
+  padding: 9,
+  borderRadius: 7,
+  border: '1px solid rgba(59,130,246,0.3)',
+  background: 'rgba(59,130,246,0.09)',
+  fontSize: 12
+}
+
+const okBox: CSSProperties = {
+  ...infoBox,
+  borderColor: 'rgba(22,163,74,0.3)',
+  background: 'rgba(22,163,74,0.09)'
+}
+
+const warnBox: CSSProperties = {
+  ...infoBox,
+  borderColor: 'rgba(217,119,6,0.35)',
+  background: 'rgba(217,119,6,0.10)'
+}
+
+const errorBox: CSSProperties = {
+  ...infoBox,
+  borderColor: 'rgba(220,38,38,0.35)',
+  background: 'rgba(220,38,38,0.10)'
+}
+
+const mappingGroup: CSSProperties = {
+  padding: 8,
+  border: '1px solid var(--orbitpm-border)',
+  borderRadius: 7
+}
+
+const mappingGrid: CSSProperties = {
+  display: 'grid',
+  gridTemplateColumns: 'repeat(auto-fit, minmax(190px, 1fr))',
+  gap: 9
+}
+
+const mappingField: CSSProperties = {
+  display: 'flex',
+  flexDirection: 'column',
+  gap: 4,
+  minWidth: 0,
+  padding: 7,
+  border: '1px solid var(--orbitpm-border)',
+  borderRadius: 6
+}
+
+const issueList: CSSProperties = {
+  display: 'grid',
+  gap: 7,
+  listStyle: 'none',
+  padding: 0,
+  margin: 0,
+  maxHeight: 360,
+  overflow: 'auto'
+}
+
+const issueItem: CSSProperties = {
+  display: 'grid',
+  gap: 4,
+  padding: '7px 8px',
+  borderInlineStart: '3px solid var(--orbitpm-border)',
+  background: 'rgba(127,127,127,0.06)',
+  fontSize: 11.5,
+  overflowWrap: 'anywhere'
+}
+
+const previewTable: CSSProperties = {
+  width: '100%',
+  borderCollapse: 'collapse',
+  fontSize: 11.5,
+  textAlign: 'start'
+}

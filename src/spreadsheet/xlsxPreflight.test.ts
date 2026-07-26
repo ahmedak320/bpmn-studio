@@ -3,10 +3,7 @@ import type { ParsedWorkbookData, WorkbookCell } from './contracts'
 import { SpreadsheetError } from './errors'
 import { SPREADSHEET_LIMITS } from './limits'
 import { createOfficialWorkbookTemplate } from './template'
-import {
-  parseXlsxBoundary,
-  validateParsedWorkbookData
-} from './workbookBoundary'
+import { parseXlsxBoundary, validateParsedWorkbookData } from './workbookBoundary'
 import { preflightXlsx } from './xlsxPreflight'
 
 function clone(bytes: Uint8Array): Uint8Array {
@@ -64,9 +61,7 @@ describe('XLSX ZIP central-directory preflight', () => {
   it('recognizes OLE/encrypted containers and malformed archives before inflation', () => {
     expectCode(
       () =>
-        preflightXlsx(
-          new Uint8Array([0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1, 0, 0, 0, 0])
-        ),
+        preflightXlsx(new Uint8Array([0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1, 0, 0, 0, 0])),
       'encrypted-workbook'
     )
     expectCode(() => preflightXlsx(new Uint8Array([1, 2, 3])), 'malformed-zip')
@@ -86,11 +81,7 @@ describe('XLSX ZIP central-directory preflight', () => {
     const bytes = clone(createOfficialWorkbookTemplate('blank'))
     const view = new DataView(bytes.buffer)
     const central = firstCentral(bytes)
-    view.setUint32(
-      central + 24,
-      SPREADSHEET_LIMITS.declaredUncompressedBytes + 1,
-      true
-    )
+    view.setUint32(central + 24, SPREADSHEET_LIMITS.declaredUncompressedBytes + 1, true)
     expectCode(() => preflightXlsx(bytes), 'uncompressed-size-limit')
   })
 
@@ -246,4 +237,3 @@ describe('XLSX displayed-value parser boundary', () => {
     )
   })
 })
-

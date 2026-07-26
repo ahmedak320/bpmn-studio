@@ -18,4 +18,3 @@ describe('deterministic hashes', () => {
     expect(stableHash('same')).toMatch(/^[0-9a-f]{16}$/)
   })
 })
-

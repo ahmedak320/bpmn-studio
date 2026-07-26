@@ -37,11 +37,7 @@ const DEFAULT_SOURCE_TYPES = new Set([
   'inclusiveGateway',
   'complexGateway'
 ])
-const CONDITIONAL_GATEWAYS = new Set([
-  'exclusiveGateway',
-  'inclusiveGateway',
-  'complexGateway'
-])
+const CONDITIONAL_GATEWAYS = new Set(['exclusiveGateway', 'inclusiveGateway', 'complexGateway'])
 const NON_CONDITIONAL_GATEWAYS = new Set(['parallelGateway', 'eventBasedGateway'])
 
 function provenanceCell(provenance: RecordProvenance, field?: string): string | undefined {
@@ -77,9 +73,7 @@ function makeIssue(
         }
       : {}),
     ...(context.rawValue !== undefined ? { rawValue: context.rawValue } : {}),
-    ...(context.normalizedValue !== undefined
-      ? { normalizedValue: context.normalizedValue }
-      : {}),
+    ...(context.normalizedValue !== undefined ? { normalizedValue: context.normalizedValue } : {}),
     ...(context.details ? { details: context.details } : {})
   })
 }
@@ -105,9 +99,7 @@ function validateId(
   field: string
 ): void {
   if (!id) {
-    issues.push(
-      makeIssue(`${kind}-id-missing`, 'error', provenance, { processId, field })
-    )
+    issues.push(makeIssue(`${kind}-id-missing`, 'error', provenance, { processId, field }))
   } else if (!validBpmnId(id)) {
     issues.push(
       makeIssue(`${kind}-id-invalid`, 'error', provenance, {
@@ -238,10 +230,7 @@ function validateParticipants(
     visitState.set(key, 1)
     const participant = byKey.get(key)
     if (participant?.parentId) {
-      visit(
-        `${participant.processId}\u001f${participant.parentId}`,
-        [...trail, participant.id]
-      )
+      visit(`${participant.processId}\u001f${participant.parentId}`, [...trail, participant.id])
     }
     visitState.set(key, 2)
   }
@@ -304,10 +293,7 @@ function validateNodes(
         })
       )
     }
-    if (
-      node.type === 'unknown' ||
-      !(BPMN_NODE_TYPES as readonly string[]).includes(node.type)
-    ) {
+    if (node.type === 'unknown' || !(BPMN_NODE_TYPES as readonly string[]).includes(node.type)) {
       issues.push(
         makeIssue('unknown-step-type', 'review', node.provenance, {
           processId: node.processId,
@@ -364,12 +350,9 @@ function validateNodes(
     if (
       node.metadata.eventDefinition &&
       node.metadata.eventDefinition !== 'none' &&
-      ![
-        'startEvent',
-        'endEvent',
-        'intermediateCatchEvent',
-        'intermediateThrowEvent'
-      ].includes(node.type)
+      !['startEvent', 'endEvent', 'intermediateCatchEvent', 'intermediateThrowEvent'].includes(
+        node.type
+      )
     ) {
       issues.push(
         makeIssue('event-definition-on-non-event', 'error', node.provenance, {
@@ -695,10 +678,7 @@ function validateCalls(
   }
 }
 
-function validateGlossary(
-  model: ProcessWorkbookModel,
-  issues: SpreadsheetValidationIssue[]
-): void {
+function validateGlossary(model: ProcessWorkbookModel, issues: SpreadsheetValidationIssue[]): void {
   const seen = new Set<string>()
   for (const entry of model.glossary) {
     if (!entry.english || (!entry.arabic && !entry.doNotTranslate)) {
@@ -708,9 +688,7 @@ function validateGlossary(
         })
       )
     }
-    const key = entry.caseSensitive
-      ? entry.english
-      : entry.english.toLocaleLowerCase('en-US')
+    const key = entry.caseSensitive ? entry.english : entry.english.toLocaleLowerCase('en-US')
     if (seen.has(key)) {
       issues.push(
         makeIssue('glossary-entry-duplicate', 'warning', entry.provenance, {
@@ -787,12 +765,7 @@ export function validateProcessWorkbookModel(
   const nodesByKey = validateNodes(model, processIds, issues)
   validateParticipantReferences(model, nodesByKey, issues)
   validateFlows(model, nodesByKey, issues)
-  validateCalls(
-    model,
-    processIds,
-    options.destinationProcessIds ?? new Set(),
-    issues
-  )
+  validateCalls(model, processIds, options.destinationProcessIds ?? new Set(), issues)
   validateGlossary(model, issues)
 
   const sorted = sortedIssues(issues)

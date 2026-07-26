@@ -203,12 +203,7 @@ export interface ProcessWorkbookModel {
   readonly glossary: readonly WorkbookGlossaryEntry[]
 }
 
-export type CanonicalSheet =
-  | 'processes'
-  | 'participants'
-  | 'steps'
-  | 'flows'
-  | 'glossary'
+export type CanonicalSheet = 'processes' | 'participants' | 'steps' | 'flows' | 'glossary'
 
 export interface SheetSelection {
   readonly worksheet: string
@@ -348,6 +343,7 @@ export interface SyntheticBoundaryRecord {
 
 export interface GraphInferencePlan {
   readonly modelFingerprint: string
+  readonly flowMode: MappingPreset['inference']['flowMode']
   readonly generatedIds: readonly GeneratedIdRecord[]
   readonly inferredFlows: readonly WorkbookFlow[]
   readonly inferredFlowRecords: readonly InferredFlowRecord[]

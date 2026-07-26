@@ -57,6 +57,10 @@ import {
 import { t } from '../i18n'
 import { useLang } from '../i18n/useLang'
 import {
+  SpreadsheetImportPanel,
+  type SpreadsheetImportPanelProps
+} from '../spreadsheet/SpreadsheetImportPanel'
+import {
   localizationSourceForGeneration,
   type LocalizationSource
 } from '../localization'
@@ -106,9 +110,11 @@ export interface AiPanelLiteProps {
    *  so the user can fill the draft's missing info conversationally. Receives
    *  the description the diagram was generated from. */
   onContinueInChat?: (info: { description: string }) => void
+  /** Offline Excel/CSV ingestion; omitted only when the host has no delivery seam. */
+  spreadsheet?: SpreadsheetImportPanelProps
 }
 
-type GenMode = 'description' | 'pdf'
+type GenMode = 'description' | 'pdf' | 'spreadsheet'
 
 /** The document tab's selection: a PDF or an image of a process drawing. */
 interface DocSelection {
@@ -190,7 +196,8 @@ export function AiPanelLite({
   isKnownProcess,
   resolveProcessName,
   embedded = false,
-  onContinueInChat
+  onContinueInChat,
+  spreadsheet
 }: AiPanelLiteProps): JSX.Element {
   useLang()
   const initialSelection = useMemo(() => getProviderSelection(), [])
@@ -330,7 +337,9 @@ export function AiPanelLite({
   const hasInput =
     genMode === 'description'
       ? Boolean(description.trim()) || Boolean(descDocText) || descAttach?.kind === 'pdf'
-      : Boolean(doc)
+      : genMode === 'pdf'
+        ? Boolean(doc)
+        : false
   const contextQuery =
     genMode === 'description'
       ? `${description}\n${descDocText ?? ''}`
@@ -352,6 +361,7 @@ export function AiPanelLite({
   const estimatedRequestCount = hasLargeAttachment ? 3 : 9
   const canGenerate =
     !busy &&
+    genMode !== 'spreadsheet' &&
     Boolean(providerId) &&
     keyPresent &&
     Boolean(effectiveModel) &&
@@ -718,13 +728,13 @@ export function AiPanelLite({
   // chrome differs, so the whole body lives in one place.
   const body = (
     <div style={{ padding: '0.8rem', display: 'flex', flexDirection: 'column', gap: 12 }}>
-        {!online && (
+        {genMode !== 'spreadsheet' && !online && (
           <div role="status" style={warnBox}>
             {t('ai.offlineWarning')}
           </div>
         )}
 
-        {noKeysAtAll && (
+        {genMode !== 'spreadsheet' && noKeysAtAll && (
           <div style={infoBox}>
             {t('ai.noKeysAtAll.note').split('{link}')[0]}
             <button type="button" onClick={onOpenSettings} style={linkBtn}>
@@ -760,8 +770,23 @@ export function AiPanelLite({
           >
             {t('ai.tab.pdf')}
           </button>
+          {spreadsheet && (
+            <button
+              type="button"
+              role="tab"
+              aria-selected={genMode === 'spreadsheet'}
+              onClick={() => setGenMode('spreadsheet')}
+              style={segmentBtn(genMode === 'spreadsheet')}
+            >
+              {t('spreadsheet.tab')}
+            </button>
+          )}
         </div>
 
+        {genMode === 'spreadsheet' && spreadsheet ? (
+          <SpreadsheetImportPanel {...spreadsheet} />
+        ) : (
+          <>
         <label style={labelStyle}>
           <span style={labelText}>{t('ai.provider.label')}</span>
           <select
@@ -1204,6 +1229,8 @@ export function AiPanelLite({
             desktopOnlyProviders: DESKTOP_ONLY_PROVIDERS.join(', ')
           })}
         </div>
+          </>
+        )}
       </div>
   )
 

@@ -8,11 +8,7 @@ import {
 } from './inference'
 import { bilingual, provenance, validModel, validNodes } from './testFixtures'
 
-function task(
-  id: string,
-  order: number,
-  overrides: Partial<WorkbookNode> = {}
-): WorkbookNode {
+function task(id: string, order: number, overrides: Partial<WorkbookNode> = {}): WorkbookNode {
   return {
     processId: 'leave_approval',
     id,
@@ -57,9 +53,7 @@ describe('deterministic IDs and graph inference', () => {
     const second = assignDeterministicIds(model)
 
     expect(first.generatedIds).toEqual(second.generatedIds)
-    expect(first.model.nodes[0]!.id).toMatch(
-      /^Step_leave_approval_task_1_r2_[0-9a-f]{8}$/
-    )
+    expect(first.model.nodes[0]!.id).toMatch(/^Step_leave_approval_task_1_r2_[0-9a-f]{8}$/)
     expect(first.model.participants[0]!.id).toMatch(
       /^Participant_leave_approval_manager_r7_[0-9a-f]{8}$/
     )
@@ -154,9 +148,7 @@ describe('deterministic IDs and graph inference', () => {
       task('End_A', 3, { type: 'endEvent' }),
       task('End_B', 4, { type: 'endEvent' })
     ]
-    const plan = createGraphInferencePlan(
-      validModel({ participants: [], nodes, flows: [] })
-    )
+    const plan = createGraphInferencePlan(validModel({ participants: [], nodes, flows: [] }))
     expect(plan.issues).toEqual([])
     expect(plan.inferredFlows).toHaveLength(3)
     expect(plan.inferredFlows.find(({ isDefault }) => isDefault)?.condition).toBeUndefined()
@@ -191,5 +183,122 @@ describe('deterministic IDs and graph inference', () => {
       applyGraphInferencePlan(changed, plan, { confirmSyntheticBoundaries: true })
     ).toThrowError(SpreadsheetError)
   })
-})
 
+  it('honors explicit, next-step, and numeric-order flow modes', () => {
+    const withoutFlows = validModel({
+      participants: [],
+      nodes: [task('A', 1), task('B', 2)],
+      flows: []
+    })
+    expect(createGraphInferencePlan(withoutFlows, { flowMode: 'explicit' }).issues).toContainEqual(
+      expect.objectContaining({ code: 'explicit-flows-required' })
+    )
+    expect(createGraphInferencePlan(withoutFlows, { flowMode: 'next-step' }).issues).toContainEqual(
+      expect.objectContaining({ code: 'mapped-next-step-required' })
+    )
+
+    const withExplicitAndMapped = validModel({
+      participants: [],
+      nodes: [task('A', 1, { nextStepIds: ['B'] }), task('B', 2)]
+    })
+    const numeric = createGraphInferencePlan(withExplicitAndMapped, {
+      flowMode: 'numeric-order'
+    })
+    expect(numeric.flowMode).toBe('numeric-order')
+    expect(numeric.inferredFlowRecords).toContainEqual(
+      expect.objectContaining({ reason: 'numeric-order' })
+    )
+    const applied = applyGraphInferencePlan(withExplicitAndMapped, numeric, {
+      confirmSyntheticBoundaries: true
+    })
+    expect(applied.flows.every(({ origin }) => origin !== 'explicit')).toBe(true)
+  })
+
+  it('requires mapped gateway conditions except for parallel/default paths', () => {
+    const invalid = createGraphInferencePlan(
+      validModel({
+        participants: [],
+        flows: [],
+        nodes: [
+          task('Gateway', 1, {
+            type: 'inclusiveGateway',
+            mappedTransitions: [{ targetStepId: 'End' }]
+          }),
+          task('End', 2, { type: 'endEvent' })
+        ]
+      }),
+      { flowMode: 'next-step' }
+    )
+    expect(invalid.issues).toContainEqual(
+      expect.objectContaining({ code: 'gateway-condition-required' })
+    )
+    expect(() =>
+      applyGraphInferencePlan(
+        validModel({
+          participants: [],
+          flows: [],
+          nodes: [
+            task('Gateway', 1, {
+              type: 'inclusiveGateway',
+              mappedTransitions: [{ targetStepId: 'End' }]
+            }),
+            task('End', 2, { type: 'endEvent' })
+          ]
+        }),
+        invalid,
+        { confirmSyntheticBoundaries: true }
+      )
+    ).toThrowError(SpreadsheetError)
+
+    const valid = createGraphInferencePlan(
+      validModel({
+        participants: [],
+        flows: [],
+        nodes: [
+          task('Gateway', 1, {
+            type: 'parallelGateway',
+            mappedTransitions: [{ targetStepId: 'End' }]
+          }),
+          task('End', 2, { type: 'endEvent' })
+        ]
+      }),
+      { flowMode: 'next-step' }
+    )
+    expect(valid.issues.some(({ code }) => code === 'gateway-condition-required')).toBe(false)
+  })
+
+  it('reports missing order and ambiguous synthetic boundary candidates', () => {
+    const missingOrder = validModel({
+      participants: [],
+      flows: [],
+      nodes: [task('A', 1), { ...task('B', 2), order: undefined }]
+    })
+    expect(createGraphInferencePlan(missingOrder).issues).toContainEqual(
+      expect.objectContaining({ code: 'numeric-order-required' })
+    )
+
+    const isolated = validModel({
+      participants: [],
+      flows: [],
+      nodes: [task('A', 1), task('B', 2), task('C', 3)]
+    })
+    const plan = createGraphInferencePlan(isolated, { flowMode: 'explicit' })
+    expect(plan.issues.map(({ code }) => code)).toEqual(
+      expect.arrayContaining([
+        'explicit-flows-required',
+        'synthetic-start-ambiguous',
+        'synthetic-end-ambiguous'
+      ])
+    )
+  })
+
+  it('applies an already complete explicit graph without boundary confirmation', () => {
+    const model = validModel()
+    const plan = createGraphInferencePlan(model, { flowMode: 'explicit' })
+    const applied = applyGraphInferencePlan(model, plan, {
+      confirmSyntheticBoundaries: false
+    })
+    expect(applied.nodes).toHaveLength(model.nodes.length)
+    expect(applied.flows).toHaveLength(model.flows.length)
+  })
+})

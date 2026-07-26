@@ -1,11 +1,5 @@
-import {
-  CANONICAL_FIELDS_BY_SHEET
-} from './aliases'
-import {
-  MAPPING_PRESET_VERSION,
-  type CanonicalSheet,
-  type MappingPreset
-} from './contracts'
+import { CANONICAL_FIELDS_BY_SHEET } from './aliases'
+import { MAPPING_PRESET_VERSION, type CanonicalSheet, type MappingPreset } from './contracts'
 import { SpreadsheetError } from './errors'
 
 const SHEETS: readonly CanonicalSheet[] = [
@@ -98,56 +92,48 @@ export function parseMappingPresetJson(json: string): MappingPreset {
     }
   ) as Partial<Record<CanonicalSheet, string>>
 
-  const selectedSheets = readSheetRecord(
-    raw.selectedSheets,
-    'selectedSheets',
-    (entry, sheet) => {
-      if (!isRecord(entry)) {
-        throw new SpreadsheetError('invalid-mapping-preset', {
-          location: `selectedSheets.${sheet}`
-        })
-      }
-      assertExactKeys(entry, ['worksheet', 'headerRow'], `selectedSheets.${sheet}`)
-      assertString(entry.worksheet, `selectedSheets.${sheet}.worksheet`, 128)
-      if (
-        !Number.isInteger(entry.headerRow) ||
-        (entry.headerRow as number) < 1 ||
-        (entry.headerRow as number) > 50_000
-      ) {
-        throw new SpreadsheetError('invalid-mapping-preset', {
-          location: `selectedSheets.${sheet}.headerRow`
-        })
-      }
-      return Object.freeze({ worksheet: entry.worksheet, headerRow: entry.headerRow as number })
+  const selectedSheets = readSheetRecord(raw.selectedSheets, 'selectedSheets', (entry, sheet) => {
+    if (!isRecord(entry)) {
+      throw new SpreadsheetError('invalid-mapping-preset', {
+        location: `selectedSheets.${sheet}`
+      })
     }
-  ) as MappingPreset['selectedSheets']
+    assertExactKeys(entry, ['worksheet', 'headerRow'], `selectedSheets.${sheet}`)
+    assertString(entry.worksheet, `selectedSheets.${sheet}.worksheet`, 128)
+    if (
+      !Number.isInteger(entry.headerRow) ||
+      (entry.headerRow as number) < 1 ||
+      (entry.headerRow as number) > 50_000
+    ) {
+      throw new SpreadsheetError('invalid-mapping-preset', {
+        location: `selectedSheets.${sheet}.headerRow`
+      })
+    }
+    return Object.freeze({ worksheet: entry.worksheet, headerRow: entry.headerRow as number })
+  }) as MappingPreset['selectedSheets']
 
-  const fieldMappings = readSheetRecord(
-    raw.fieldMappings,
-    'fieldMappings',
-    (entry, sheet) => {
-      if (!isRecord(entry)) {
+  const fieldMappings = readSheetRecord(raw.fieldMappings, 'fieldMappings', (entry, sheet) => {
+    if (!isRecord(entry)) {
+      throw new SpreadsheetError('invalid-mapping-preset', {
+        location: `fieldMappings.${sheet}`
+      })
+    }
+    assertExactKeys(entry, CANONICAL_FIELDS_BY_SHEET[sheet], `fieldMappings.${sheet}`)
+    const mapping: Record<string, string> = {}
+    const seenHeaders = new Set<string>()
+    for (const [field, header] of Object.entries(entry)) {
+      assertString(header, `fieldMappings.${sheet}.${field}`, 256)
+      if (seenHeaders.has(header)) {
         throw new SpreadsheetError('invalid-mapping-preset', {
-          location: `fieldMappings.${sheet}`
+          location: `fieldMappings.${sheet}.${field}`,
+          reason: 'duplicate-header'
         })
       }
-      assertExactKeys(entry, CANONICAL_FIELDS_BY_SHEET[sheet], `fieldMappings.${sheet}`)
-      const mapping: Record<string, string> = {}
-      const seenHeaders = new Set<string>()
-      for (const [field, header] of Object.entries(entry)) {
-        assertString(header, `fieldMappings.${sheet}.${field}`, 256)
-        if (seenHeaders.has(header)) {
-          throw new SpreadsheetError('invalid-mapping-preset', {
-            location: `fieldMappings.${sheet}.${field}`,
-            reason: 'duplicate-header'
-          })
-        }
-        seenHeaders.add(header)
-        mapping[field] = header
-      }
-      return Object.freeze(mapping)
+      seenHeaders.add(header)
+      mapping[field] = header
     }
-  ) as MappingPreset['fieldMappings']
+    return Object.freeze(mapping)
+  }) as MappingPreset['fieldMappings']
 
   if (!isRecord(raw.delimiters)) {
     throw new SpreadsheetError('invalid-mapping-preset', { location: 'delimiters' })
@@ -198,8 +184,8 @@ export function parseMappingPresetJson(json: string): MappingPreset {
     delimiters: Object.freeze({ list: Object.freeze(delimiters) }),
     inference: Object.freeze({
       flowMode: raw.inference.flowMode as MappingPreset['inference']['flowMode'],
-      syntheticBoundaries:
-        raw.inference.syntheticBoundaries as MappingPreset['inference']['syntheticBoundaries'],
+      syntheticBoundaries: raw.inference
+        .syntheticBoundaries as MappingPreset['inference']['syntheticBoundaries'],
       requireGatewayConditions: true
     }),
     locale: raw.locale

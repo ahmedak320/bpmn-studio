@@ -4,23 +4,21 @@ import type {
   ImportDestinationInspector,
   ImportDestinationTransaction,
   ImportTransactionFactory,
+  MappingPreset,
   ProcessWorkbookModel,
   SpreadsheetBilingualAuditAdapter,
   WorkbookFlow,
   WorkbookNode
 } from './contracts'
+import { MAPPING_PRESET_VERSION } from './contracts'
+import { SpreadsheetError } from './errors'
 import { sha256Hex } from './hash'
 import {
   executeTransactionalImportPlan,
   prepareTransactionalImportPlan,
   serializeSpreadsheetImportReport
 } from './transaction'
-import {
-  bilingual,
-  provenance,
-  validModel,
-  validProcess
-} from './testFixtures'
+import { bilingual, provenance, validModel, validProcess } from './testFixtures'
 
 const encoder = new TextEncoder()
 
@@ -52,7 +50,9 @@ function audit(complete = true): SpreadsheetBilingualAuditAdapter {
   }
 }
 
-function inspector(existing: Readonly<Record<string, string | true>> = {}): ImportDestinationInspector {
+function inspector(
+  existing: Readonly<Record<string, string | true>> = {}
+): ImportDestinationInspector {
   return {
     inspect: vi.fn(async (paths: readonly string[]) =>
       paths.map((path) => ({
@@ -66,6 +66,23 @@ function inspector(existing: Readonly<Record<string, string | true>> = {}): Impo
 
 function fixedNow(value = '2026-07-26T12:00:00.000Z'): () => Date {
   return () => new Date(value)
+}
+
+function mappingPreset(): MappingPreset {
+  return {
+    version: MAPPING_PRESET_VERSION,
+    name: 'Reviewed mapping',
+    headerSignatures: {},
+    selectedSheets: {},
+    fieldMappings: {},
+    delimiters: { list: [';', '\n'] },
+    inference: {
+      flowMode: 'auto',
+      syntheticBoundaries: 'review',
+      requireGatewayConditions: true
+    },
+    locale: 'en'
+  }
 }
 
 function secondProcessModel(): ProcessWorkbookModel {
@@ -179,9 +196,7 @@ describe('transactional import preparation', () => {
       path: 'leave-approval.bpmn',
       behavior: 'create'
     })
-    expect(plan.artifacts[0]!.checksumSha256).toBe(
-      sha256Hex(plan.artifacts[0]!.generated.bytes)
-    )
+    expect(plan.artifacts[0]!.checksumSha256).toBe(sha256Hex(plan.artifacts[0]!.generated.bytes))
     expect(bpmn.generate).toHaveBeenCalledOnce()
     expect(plan.generatedIds).toHaveLength(1)
     expect(plan.inferredFlows).toHaveLength(1)
@@ -190,19 +205,18 @@ describe('transactional import preparation', () => {
   it('does no parsing/generation work after blocking validation', async () => {
     const bpmn = generator()
     const destination = inspector()
-    const plan = await prepareTransactionalImportPlan(
-      validModel({ nodes: [], flows: [] }),
-      {
-        mode: 'directory',
-        collisionBehavior: 'error',
-        inspector: destination,
-        generator: bpmn,
-        bilingualAudit: audit(),
-        now: fixedNow()
-      }
-    )
+    const plan = await prepareTransactionalImportPlan(validModel({ nodes: [], flows: [] }), {
+      mode: 'directory',
+      collisionBehavior: 'error',
+      inspector: destination,
+      generator: bpmn,
+      bilingualAudit: audit(),
+      mappingPreset: mappingPreset(),
+      now: fixedNow()
+    })
     expect(plan.status).toBe('blocked')
     expect(plan.blockingReason).toBe('blocking-validation')
+    expect(plan.mappingPreset).toEqual(mappingPreset())
     expect(bpmn.generate).not.toHaveBeenCalled()
     expect(destination.inspect).not.toHaveBeenCalled()
   })
@@ -316,6 +330,18 @@ describe('transactional import preparation', () => {
     expect(auditFailure.validation.issues).toContainEqual(
       expect.objectContaining({ code: 'bilingual-audit-failed' })
     )
+
+    const missingState = await prepareTransactionalImportPlan(validModel(), {
+      mode: 'directory',
+      collisionBehavior: 'error',
+      inspector: { inspect: async () => [] },
+      generator: generator(),
+      bilingualAudit: audit(),
+      now: fixedNow()
+    })
+    expect(missingState.validation.issues).toContainEqual(
+      expect.objectContaining({ code: 'destination-inspection-failed' })
+    )
   })
 
   it('blocks any structural/XSD/lint/link/DI pipeline error and keeps previews read-only', async () => {
@@ -324,7 +350,12 @@ describe('transactional import preparation', () => {
       collisionBehavior: 'error',
       inspector: inspector(),
       generator: generator([
-        { stage: 'xsd', severity: 'error', code: 'invalid-sequence-flow' },
+        {
+          stage: 'xsd',
+          severity: 'error',
+          code: 'invalid-sequence-flow',
+          details: { elementId: 'Flow_1' }
+        },
         { stage: 'lint', severity: 'warning', code: 'label-style' }
       ]),
       bilingualAudit: audit(),
@@ -339,6 +370,97 @@ describe('transactional import preparation', () => {
         expect.objectContaining({ code: 'pipeline-lint-label-style' })
       ])
     )
+  })
+
+  it('derives safe localized destination names, folders, and reserved-name escapes', async () => {
+    const cases = [
+      {
+        process: validProcess({
+          name: bilingual('CON', 'كون'),
+          folder: 'Operations'
+        }),
+        path: 'Operations/con-file.bpmn'
+      },
+      {
+        process: validProcess({
+          name: bilingual('', 'عملية', 'ar'),
+          activeLanguage: 'ar'
+        }),
+        path: /^process-[a-f0-9]{8}\.bpmn$/
+      },
+      {
+        process: validProcess({
+          name: bilingual('PRN', '', 'ar'),
+          activeLanguage: 'ar'
+        }),
+        path: 'prn-file.bpmn'
+      },
+      {
+        process: validProcess({
+          name: bilingual('', 'AUX'),
+          activeLanguage: 'en'
+        }),
+        path: 'aux-file.bpmn'
+      }
+    ] as const
+
+    for (const entry of cases) {
+      const plan = await prepareTransactionalImportPlan(
+        validModel({ processes: [entry.process] }),
+        {
+          mode: 'directory',
+          collisionBehavior: 'error',
+          inspector: inspector(),
+          generator: generator(),
+          bilingualAudit: audit(),
+          now: fixedNow()
+        }
+      )
+      expect(plan.status).toBe('ready')
+      if (entry.path instanceof RegExp) {
+        expect(plan.artifacts[0]!.destination.path).toMatch(entry.path)
+      } else {
+        expect(plan.artifacts[0]!.destination.path).toBe(entry.path)
+      }
+    }
+  })
+
+  it('rejects invalid generator contracts and preserves explicit cancellation', async () => {
+    const invalid = await prepareTransactionalImportPlan(validModel(), {
+      mode: 'directory',
+      collisionBehavior: 'error',
+      inspector: inspector(),
+      generator: {
+        generate: async () => ({
+          processId: 'wrong-process',
+          semanticXml: '<definitions/>',
+          layoutedXml: '<definitions/>',
+          bytes: new Uint8Array(),
+          diagnostics: []
+        })
+      },
+      bilingualAudit: audit(),
+      now: fixedNow()
+    })
+    expect(invalid.status).toBe('blocked')
+    expect(invalid.validation.issues).toContainEqual(
+      expect.objectContaining({ code: 'pipeline-generation-failed' })
+    )
+
+    await expect(
+      prepareTransactionalImportPlan(validModel(), {
+        mode: 'directory',
+        collisionBehavior: 'error',
+        inspector: inspector(),
+        generator: {
+          generate: async () => {
+            throw new SpreadsheetError('parse-cancelled')
+          }
+        },
+        bilingualAudit: audit(),
+        now: fixedNow()
+      })
+    ).rejects.toMatchObject({ code: 'parse-cancelled' })
   })
 
   it('selects open-single or ZIP delivery without changing graph generation semantics', async () => {
@@ -370,9 +492,7 @@ describe('transaction execution and import reports', () => {
     return prepareTransactionalImportPlan(validModel(), {
       mode: 'directory',
       collisionBehavior: overwrite ? 'overwrite' : 'error',
-      inspector: inspector(
-        overwrite ? { 'leave-approval.bpmn': 'base-hash' } : {}
-      ),
+      inspector: inspector(overwrite ? { 'leave-approval.bpmn': 'base-hash' } : {}),
       generator: generator(),
       bilingualAudit: audit(),
       now: fixedNow()
@@ -471,23 +591,45 @@ describe('transaction execution and import reports', () => {
   })
 
   it('never opens a transaction for a blocked plan', async () => {
-    const blocked = await prepareTransactionalImportPlan(
-      validModel({ nodes: [], flows: [] }),
-      {
+    const blocked = await prepareTransactionalImportPlan(validModel({ nodes: [], flows: [] }), {
       mode: 'directory',
       collisionBehavior: 'error',
       inspector: inspector(),
       generator: generator(),
       bilingualAudit: audit(),
       now: fixedNow()
-      }
-    )
+    })
     const factory = { begin: vi.fn() }
     const report = await executeTransactionalImportPlan(blocked, {
       transactionFactory: factory,
       now: fixedNow()
     })
     expect(report.status).toBe('blocked')
+    expect(report.mapping).toBeUndefined()
     expect(factory.begin).not.toHaveBeenCalled()
+  })
+
+  it('uses real timestamps by default and carries a sanitized mapping into reports', async () => {
+    const plan = await prepareTransactionalImportPlan(validModel(), {
+      mode: 'directory',
+      collisionBehavior: 'error',
+      inspector: inspector(),
+      generator: generator(),
+      bilingualAudit: audit(),
+      mappingPreset: mappingPreset()
+    })
+    const report = await executeTransactionalImportPlan(plan, {
+      transactionFactory: {
+        begin: async () => ({
+          stage: async () => undefined,
+          commit: async () => undefined,
+          rollback: async () => undefined
+        })
+      }
+    })
+
+    expect(Number.isNaN(Date.parse(plan.createdAt))).toBe(false)
+    expect(Number.isNaN(Date.parse(report.completedAt))).toBe(false)
+    expect(report.mapping).toEqual(mappingPreset())
   })
 })

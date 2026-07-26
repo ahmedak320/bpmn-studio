@@ -114,27 +114,32 @@ const COMMON_ALIASES: AliasCatalog = {
     'اسم الخطوة بالعربية',
     'اسم العملية بالعربية'
   ],
-  description_en: [
-    'description en',
-    'english description',
-    'الوصف بالانجليزية',
-    'الوصف الإنجليزي'
-  ],
+  description_en: ['description en', 'english description', 'الوصف بالانجليزية', 'الوصف الإنجليزي'],
   description_ar: ['description ar', 'arabic description', 'الوصف بالعربية', 'الوصف العربي'],
   owner_en: ['owner en', 'english owner', 'process owner en', 'المالك بالانجليزية'],
   owner_ar: ['owner ar', 'arabic owner', 'process owner ar', 'المالك بالعربية'],
   folder: ['folder', 'destination folder', 'path', 'المجلد', 'مجلد الوجهة', 'المسار'],
   active_language: ['active language', 'language', 'locale', 'اللغة النشطة', 'اللغة'],
-  participant_id: [
-    'participant id',
-    'pool lane id',
-    'معرف المشارك',
-    'معرف المسار',
-    'رمز المشارك'
+  participant_id: ['participant id', 'pool lane id', 'معرف المشارك', 'معرف المسار', 'رمز المشارك'],
+  type: [
+    'type',
+    'step type',
+    'activity type',
+    'participant type',
+    'النوع',
+    'نوع الخطوة',
+    'نوع النشاط'
   ],
-  type: ['type', 'step type', 'activity type', 'participant type', 'النوع', 'نوع الخطوة', 'نوع النشاط'],
   parent_id: ['parent id', 'parent lane', 'معرف الاصل', 'معرف الأصل', 'المسار الاب', 'المسار الأب'],
-  order: ['order', 'sequence', 'sequence number', 'step number', 'الترتيب', 'التسلسل', 'رقم الخطوة'],
+  order: [
+    'order',
+    'sequence',
+    'sequence number',
+    'step number',
+    'الترتيب',
+    'التسلسل',
+    'رقم الخطوة'
+  ],
   step_id: ['step id', 'activity id', 'node id', 'معرف الخطوة', 'معرف النشاط', 'رمز الخطوة'],
   pool_id: ['pool id', 'pool', 'معرف الحوض', 'الحوض'],
   lane_id: ['lane id', 'lane', 'swimlane', 'معرف المسار', 'المسار'],
@@ -172,8 +177,21 @@ const COMMON_ALIASES: AliasCatalog = {
   next_step_id: ['next step id', 'next id', 'معرف الخطوة التالية'],
   next_step_ids: ['next step ids', 'next ids', 'معرفات الخطوات التالية'],
   flow_id: ['flow id', 'sequence flow id', 'معرف التدفق', 'رمز التدفق'],
-  source_step_id: ['source step id', 'source id', 'from step id', 'معرف الخطوة المصدر', 'من الخطوة'],
-  target_step_id: ['target step id', 'target id', 'to step id', 'معرف الخطوة الهدف', 'الى الخطوة', 'إلى الخطوة'],
+  source_step_id: [
+    'source step id',
+    'source id',
+    'from step id',
+    'معرف الخطوة المصدر',
+    'من الخطوة'
+  ],
+  target_step_id: [
+    'target step id',
+    'target id',
+    'to step id',
+    'معرف الخطوة الهدف',
+    'الى الخطوة',
+    'إلى الخطوة'
+  ],
   condition_en: ['condition en', 'english condition', 'الشرط بالانجليزية'],
   condition_ar: ['condition ar', 'arabic condition', 'الشرط بالعربية'],
   is_default: ['is default', 'default flow', 'default', 'افتراضي', 'هو الافتراضي'],
@@ -202,4 +220,3 @@ export function aliasesForField(field: string): readonly string[] {
   const aliases = COMMON_ALIASES[field === 'participant_id' ? 'participant_id' : field] ?? []
   return Object.freeze([field, field.replaceAll('_', ' '), ...aliases])
 }
-

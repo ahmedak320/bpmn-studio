@@ -27,4 +27,3 @@ export function validateSpreadsheetInput(
   }
   throw new SpreadsheetError('unsupported-format', { extension })
 }
-

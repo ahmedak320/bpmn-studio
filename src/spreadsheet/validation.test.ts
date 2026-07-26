@@ -47,11 +47,7 @@ describe('ProcessWorkbookModel validation', () => {
           id: 'Flow_Broken',
           sourceStepId: 'Missing_Source',
           targetStepId: 'Missing_Target',
-          provenance: provenance('Flows', 8, [
-            'flow_id',
-            'source_step_id',
-            'target_step_id'
-          ])
+          provenance: provenance('Flows', 8, ['flow_id', 'source_step_id', 'target_step_id'])
         }
       ]
     })
@@ -196,10 +192,7 @@ describe('ProcessWorkbookModel validation', () => {
         flows: flows.map((flow) => ({
           ...flow,
           isDefault: flow.id === 'Flow_Approved',
-          condition:
-            flow.id === 'Flow_Rejected'
-              ? bilingual('Condition', 'شرط')
-              : undefined
+          condition: flow.id === 'Flow_Rejected' ? bilingual('Condition', 'شرط') : undefined
         }))
       })
     )
@@ -233,14 +226,12 @@ describe('ProcessWorkbookModel validation', () => {
         provenance: provenance('Flows', 4)
       }
     ]
-    expect(
-      codes(validModel({ nodes: [validNodes()[0]!, gateway, endA, endB], flows }))
-    ).toContain('gateway-condition-required')
+    expect(codes(validModel({ nodes: [validNodes()[0]!, gateway, endA, endB], flows }))).toContain(
+      'gateway-condition-required'
+    )
 
     flows[1] = { ...flows[1]!, condition: bilingual('A', 'أ') }
-    const fixed = codes(
-      validModel({ nodes: [validNodes()[0]!, gateway, endA, endB], flows })
-    )
+    const fixed = codes(validModel({ nodes: [validNodes()[0]!, gateway, endA, endB], flows }))
     expect(fixed).not.toContain('gateway-condition-required')
     expect(fixed).not.toContain('default-flow-has-condition')
   })
@@ -290,10 +281,7 @@ describe('ProcessWorkbookModel validation', () => {
       destinationProcessIds: new Set(['leave_approval'])
     })
     expect(report.issues.map(({ code }) => code)).toEqual(
-      expect.arrayContaining([
-        'destination-process-id-collision',
-        'destination-folder-unsafe'
-      ])
+      expect.arrayContaining(['destination-process-id-collision', 'destination-folder-unsafe'])
     )
   })
 
@@ -305,15 +293,18 @@ describe('ProcessWorkbookModel validation', () => {
         id: `Task_${index}`,
         idOrigin: 'explicit',
         order: index,
-        type: index === 0 ? 'startEvent' : index === SPREADSHEET_LIMITS.nodesPerProcess ? 'endEvent' : 'task',
+        type:
+          index === 0
+            ? 'startEvent'
+            : index === SPREADSHEET_LIMITS.nodesPerProcess
+              ? 'endEvent'
+              : 'task',
         name: bilingual(`Task ${index}`, `مهمة ${index}`),
         metadata: {},
         provenance: provenance('Steps', index + 2)
       })
     )
-    const overProcess = validateProcessWorkbookModel(
-      validModel({ nodes: manyNodes, flows: [] })
-    )
+    const overProcess = validateProcessWorkbookModel(validModel({ nodes: manyNodes, flows: [] }))
     expect(overProcess.issues).toContainEqual(
       expect.objectContaining({
         code: 'node-process-limit',
@@ -324,10 +315,7 @@ describe('ProcessWorkbookModel validation', () => {
       })
     )
 
-    const readableNodes = manyNodes.slice(
-      0,
-      SPREADSHEET_LIMITS.diagramReadabilityWarningNodes + 1
-    )
+    const readableNodes = manyNodes.slice(0, SPREADSHEET_LIMITS.diagramReadabilityWarningNodes + 1)
     readableNodes[readableNodes.length - 1] = {
       ...readableNodes[readableNodes.length - 1]!,
       type: 'endEvent'
@@ -355,9 +343,7 @@ describe('ProcessWorkbookModel validation', () => {
       })
     )
     expect(
-      validateProcessWorkbookModel(
-        validModel({ nodes: transactionNodes, flows: [] })
-      ).issues
+      validateProcessWorkbookModel(validModel({ nodes: transactionNodes, flows: [] })).issues
     ).toContainEqual(
       expect.objectContaining({
         code: 'node-transaction-limit',

@@ -56,4 +56,3 @@ export function throwIfAborted(signal?: AbortSignal): void {
     throw new SpreadsheetError('parse-cancelled')
   }
 }
-

@@ -17,4 +17,3 @@ await mkdir(outputDirectory, { recursive: true })
 for (const { fileName, bytes } of Object.values(createOfficialWorkbookTemplates())) {
   await writeFile(resolve(outputDirectory, fileName), bytes)
 }
-

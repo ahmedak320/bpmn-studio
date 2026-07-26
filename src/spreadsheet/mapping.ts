@@ -4,10 +4,7 @@ import {
   aliasesForField,
   normalizeHeader
 } from './aliases'
-import type {
-  CanonicalSheet,
-  SpreadsheetValidationIssue
-} from './contracts'
+import type { CanonicalSheet, SpreadsheetValidationIssue } from './contracts'
 import { stableHash } from './hash'
 
 export const LOW_CONFIDENCE_REQUIRED_THRESHOLD = 0.9
@@ -33,8 +30,7 @@ function levenshtein(left: string, right: string): number {
       current[rightIndex] = Math.min(
         current[rightIndex - 1]! + 1,
         previous[rightIndex]! + 1,
-        previous[rightIndex - 1]! +
-          (left[leftIndex - 1] === right[rightIndex - 1] ? 0 : 1)
+        previous[rightIndex - 1]! + (left[leftIndex - 1] === right[rightIndex - 1] ? 0 : 1)
       )
     }
     previous = current
@@ -42,7 +38,10 @@ function levenshtein(left: string, right: string): number {
   return previous[right.length]!
 }
 
-function score(header: string, field: string): {
+function score(
+  header: string,
+  field: string
+): {
   confidence: number
   match: HeaderMappingSuggestion['match']
 } {
@@ -66,10 +65,7 @@ function score(header: string, field: string): {
     if (union > 0) bestToken = Math.max(bestToken, intersection / union)
     const maximumLength = Math.max(alias.length, normalizedHeader.length)
     if (maximumLength > 0) {
-      bestFuzzy = Math.max(
-        bestFuzzy,
-        1 - levenshtein(alias, normalizedHeader) / maximumLength
-      )
+      bestFuzzy = Math.max(bestFuzzy, 1 - levenshtein(alias, normalizedHeader) / maximumLength)
     }
   }
   if (bestToken >= 0.66) {
@@ -161,4 +157,3 @@ export function mappingConfirmationIssues(
       }))
   )
 }
-

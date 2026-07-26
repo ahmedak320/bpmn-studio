@@ -2829,6 +2829,47 @@ function App(): JSX.Element {
                   isKnownProcess={isKnownProcess}
                   resolveProcessName={resolveProcessName}
                   onContinueInChat={handleContinueInChat}
+                  spreadsheet={{
+                    workspaceId:
+                      workspaceAdapter?.id ?? `browser-delivery:${workspaceGenRef.current}`,
+                    workspaceAdapter,
+                    folders,
+                    knownProcessIds: processCatalog.map(({ id }) => id),
+                    getCurrentWorkspaceId: () => workspaceAdapterRef.current?.id,
+                    runWorkspaceExclusive: (operation) =>
+                      opMutexRef.current.runExclusive(operation),
+                    onOpenSingle: (xml, name) => {
+                      openVirtualTab(baseName(name), xml, {
+                        collapse: false,
+                        autoSizeOnImport: true,
+                        localizationSource: LocalizationSource.Excel
+                      })
+                    },
+                    onOpenBilingualReview: (xml, name) => {
+                      openVirtualTab(baseName(name), xml, {
+                        collapse: false,
+                        autoSizeOnImport: true,
+                        localizationSource: LocalizationSource.Excel
+                      })
+                    },
+                    onCommitted: async (report) => {
+                      if (
+                        !workspaceAdapter?.storage.capabilities.multipleFiles ||
+                        workspaceAdapterRef.current?.id !== workspaceAdapter.id
+                      ) {
+                        return
+                      }
+                      await refreshWorkspace(rootHandleRef.current ?? undefined)
+                      const first = report.artifacts[0]
+                      if (first) {
+                        void openDirectoryFile(first.destinationPath, {
+                          collapse: false,
+                          autoSizeOnImport: true,
+                          localizationSource: LocalizationSource.Excel
+                        })
+                      }
+                    }
+                  }}
                 />
               </div>
             )}

@@ -118,14 +118,16 @@ describe('CSV boundary', () => {
       'cell-length-limit'
     )
     expectCode(
-      () => parseCsvText(Array(SPREADSHEET_LIMITS.columns + 1).fill('x').join(',')),
+      () =>
+        parseCsvText(
+          Array(SPREADSHEET_LIMITS.columns + 1)
+            .fill('x')
+            .join(',')
+        ),
       'column-limit'
     )
     expectCode(
-      () =>
-        validateCsvRows(
-          Array.from({ length: SPREADSHEET_LIMITS.inputRows + 1 }, () => [''])
-        ),
+      () => validateCsvRows(Array.from({ length: SPREADSHEET_LIMITS.inputRows + 1 }, () => [''])),
       'row-limit'
     )
     const wideRows = Array.from(
@@ -144,18 +146,11 @@ describe('CSV boundary', () => {
     )
     expectCode(() => validateSpreadsheetInput('book.xls', 1), 'legacy-excel-format')
     for (const extension of ['xlsm', 'xlsb', 'xlam']) {
-      expectCode(
-        () => validateSpreadsheetInput(`book.${extension}`, 1),
-        'macro-enabled-format'
-      )
+      expectCode(() => validateSpreadsheetInput(`book.${extension}`, 1), 'macro-enabled-format')
     }
     expectCode(() => validateSpreadsheetInput('book.ods', 1), 'unsupported-format')
     expectCode(
-      () =>
-        validateSpreadsheetInput(
-          'book.csv',
-          SPREADSHEET_LIMITS.compressedInputBytes + 1
-        ),
+      () => validateSpreadsheetInput('book.csv', SPREADSHEET_LIMITS.compressedInputBytes + 1),
       'compressed-size-limit'
     )
   })

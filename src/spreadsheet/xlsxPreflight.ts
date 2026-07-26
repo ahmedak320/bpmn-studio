@@ -48,11 +48,7 @@ function decodeName(bytes: Uint8Array, utf8: boolean): string {
   try {
     return new TextDecoder('utf-8', { fatal: true }).decode(bytes)
   } catch (cause) {
-    throw new SpreadsheetError(
-      'malformed-zip',
-      { reason: 'invalid-entry-name' },
-      { cause }
-    )
+    throw new SpreadsheetError('malformed-zip', { reason: 'invalid-entry-name' }, { cause })
   }
 }
 
@@ -123,11 +119,7 @@ export function preflightXlsx(bytes: Uint8Array): XlsxPreflightResult {
   if (diskNumber !== 0 || centralDisk !== 0 || entriesOnDisk !== entryCount) {
     throw new SpreadsheetError('multi-disk-zip')
   }
-  if (
-    entryCount === 0xffff ||
-    centralSize === 0xffff_ffff ||
-    centralOffset === 0xffff_ffff
-  ) {
+  if (entryCount === 0xffff || centralSize === 0xffff_ffff || centralOffset === 0xffff_ffff) {
     throw new SpreadsheetError('zip64-unsupported')
   }
   if (entryCount > XLSX_MAX_ZIP_ENTRIES) {
@@ -300,4 +292,3 @@ export function preflightXlsx(bytes: Uint8Array): XlsxPreflightResult {
     warnings: Object.freeze(warnings)
   })
 }
-

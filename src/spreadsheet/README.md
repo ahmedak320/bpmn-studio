@@ -14,7 +14,7 @@ Versions checked from the npm registry on 2026-07-26:
 
 `read-excel-file` includes its own TypeScript declarations. The existing
 `fflate@0.8.3` may be reused by the worker for selective OPC/XML inspection
-*after* `preflightXlsx()` succeeds; the security boundary does not inflate ZIP
+_after_ `preflightXlsx()` succeeds; the security boundary does not inflate ZIP
 entries.
 
 ## Required wiring order

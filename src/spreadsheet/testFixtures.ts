@@ -32,17 +32,11 @@ export function provenance(
   }
 }
 
-export function bilingual(
-  en: string,
-  ar: string,
-  active: 'en' | 'ar' = 'en'
-): BilingualValue {
+export function bilingual(en: string, ar: string, active: 'en' | 'ar' = 'en'): BilingualValue {
   return { en, ar, active }
 }
 
-export function validProcess(
-  overrides: Partial<WorkbookProcess> = {}
-): WorkbookProcess {
+export function validProcess(overrides: Partial<WorkbookProcess> = {}): WorkbookProcess {
   return {
     id: 'leave_approval',
     idOrigin: 'explicit',
@@ -132,11 +126,7 @@ export function validParticipants(): WorkbookParticipant[] {
       type: 'pool',
       order: 1,
       name: bilingual('Leave approval', 'الموافقة على الإجازة'),
-      provenance: provenance('Participants', 2, [
-        'process_id',
-        'participant_id',
-        'type'
-      ])
+      provenance: provenance('Participants', 2, ['process_id', 'participant_id', 'type'])
     },
     {
       processId: 'leave_approval',
@@ -156,9 +146,7 @@ export function validParticipants(): WorkbookParticipant[] {
   ]
 }
 
-export function validModel(
-  overrides: Partial<ProcessWorkbookModel> = {}
-): ProcessWorkbookModel {
+export function validModel(overrides: Partial<ProcessWorkbookModel> = {}): ProcessWorkbookModel {
   return {
     version: PROCESS_WORKBOOK_MODEL_VERSION,
     source: {
@@ -175,4 +163,3 @@ export function validModel(
     ...overrides
   }
 }
-

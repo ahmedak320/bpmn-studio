@@ -22,4 +22,3 @@ export const XLSX_MAX_ZIP_ENTRIES = 10_000
 
 /** Spreadsheet import never treats comma as a list delimiter by default. */
 export const DEFAULT_LIST_DELIMITERS = Object.freeze(['\n', ';'] as const)
-

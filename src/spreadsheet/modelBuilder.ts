@@ -138,11 +138,7 @@ function displayed(value: CellPrimitive): string {
   return String(value).trim()
 }
 
-function makeBilingual(
-  en: string,
-  ar: string,
-  active: SpreadsheetLocale
-): BilingualValue {
+function makeBilingual(en: string, ar: string, active: SpreadsheetLocale): BilingualValue {
   return Object.freeze({
     ...(en ? { en } : {}),
     ...(ar ? { ar } : {}),
@@ -170,9 +166,7 @@ function readLanguage(value: string): SpreadsheetLocale {
 function readNodeType(value: string): BpmnNodeType | 'unknown' {
   if ((BPMN_NODE_TYPES as readonly string[]).includes(value)) return value as BpmnNodeType
   const normalized = normalizeHeader(value)
-  const canonical = BPMN_NODE_TYPES.find(
-    (candidate) => normalizeHeader(candidate) === normalized
-  )
+  const canonical = BPMN_NODE_TYPES.find((candidate) => normalizeHeader(candidate) === normalized)
   return canonical ?? NODE_TYPE_ALIASES[normalized] ?? 'unknown'
 }
 
@@ -295,12 +289,7 @@ function recordReader(cursor: SheetCursor, row: readonly WorkbookCell[], rowInde
   return { get, provenance }
 }
 
-function provenanceFor(
-  worksheet: string,
-  row: number,
-  column: number,
-  cell?: WorkbookCell
-) {
+function provenanceFor(worksheet: string, row: number, column: number, cell?: WorkbookCell) {
   return Object.freeze({
     worksheet,
     row,
@@ -429,11 +418,7 @@ export function buildProcessWorkbookModel(
   const nodes: WorkbookNode[] = []
   const stepCursor = cursors.get('steps')
   if (stepCursor) {
-    for (
-      let rowIndex = stepCursor.headerRow;
-      rowIndex < stepCursor.rows.length;
-      rowIndex += 1
-    ) {
+    for (let rowIndex = stepCursor.headerRow; rowIndex < stepCursor.rows.length; rowIndex += 1) {
       const row = stepCursor.rows[rowIndex]!
       if (rowIsBlank(row)) {
         skippedRows.push({ worksheet: stepCursor.name, row: rowIndex + 1 })
@@ -525,11 +510,7 @@ export function buildProcessWorkbookModel(
   const flows: WorkbookFlow[] = []
   const flowCursor = cursors.get('flows')
   if (flowCursor) {
-    for (
-      let rowIndex = flowCursor.headerRow;
-      rowIndex < flowCursor.rows.length;
-      rowIndex += 1
-    ) {
+    for (let rowIndex = flowCursor.headerRow; rowIndex < flowCursor.rows.length; rowIndex += 1) {
       const row = flowCursor.rows[rowIndex]!
       if (rowIsBlank(row)) {
         skippedRows.push({ worksheet: flowCursor.name, row: rowIndex + 1 })
@@ -559,11 +540,7 @@ export function buildProcessWorkbookModel(
           idOrigin: id ? 'explicit' : 'generated',
           sourceStepId: reader.get('source_step_id'),
           targetStepId: reader.get('target_step_id'),
-          condition: makeBilingual(
-            reader.get('condition_en'),
-            reader.get('condition_ar'),
-            active
-          ),
+          condition: makeBilingual(reader.get('condition_en'), reader.get('condition_ar'), active),
           isDefault: parsedDefault ?? false,
           origin: 'explicit',
           provenance: reader.provenance()
@@ -644,7 +621,8 @@ export function officialTemplatePreset(
     const mapping: Record<string, string> = {}
     for (const header of headers) {
       const normalized = normalizeHeader(header)
-      if (header && !Object.values(mapping).includes(header)) mapping[normalized.replaceAll(' ', '_')] = header
+      if (header && !Object.values(mapping).includes(header))
+        mapping[normalized.replaceAll(' ', '_')] = header
     }
     fieldMappings[role] = Object.freeze(mapping)
   }

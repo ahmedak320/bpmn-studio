@@ -18,4 +18,3 @@ export function cellAddress(row: number, column: number): string {
   }
   return `${columnNumberToLetters(column)}${row}`
 }
-

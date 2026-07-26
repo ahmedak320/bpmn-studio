@@ -26,8 +26,8 @@ const ZIP_STORED = 0
 const ZIP_DOS_TIME = 0
 const ZIP_DOS_DATE = 0x0021 // 1980-01-01
 
-const EXAMPLE_ROWS: Readonly<Record<string, readonly (readonly CellPrimitive[])[]>> =
-  Object.freeze({
+const EXAMPLE_ROWS: Readonly<Record<string, readonly (readonly CellPrimitive[])[]>> = Object.freeze(
+  {
     Processes: Object.freeze([
       Object.freeze([
         'leave_approval',
@@ -332,15 +332,7 @@ const EXAMPLE_ROWS: Readonly<Record<string, readonly (readonly CellPrimitive[])[
       ])
     ]),
     Flows: Object.freeze([
-      Object.freeze([
-        'leave_approval',
-        'Flow_1',
-        'Start_Request',
-        'Submit_Request',
-        '',
-        '',
-        false
-      ]),
+      Object.freeze(['leave_approval', 'Flow_1', 'Start_Request', 'Submit_Request', '', '', false]),
       Object.freeze([
         'leave_approval',
         'Flow_2',
@@ -377,31 +369,16 @@ const EXAMPLE_ROWS: Readonly<Record<string, readonly (readonly CellPrimitive[])[
         '',
         true
       ]),
-      Object.freeze([
-        'leave_approval',
-        'Flow_4',
-        'Approve_Request',
-        'End_Request',
-        '',
-        '',
-        false
-      ]),
-      Object.freeze([
-        'leave_approval',
-        'Flow_5',
-        'Reject_Request',
-        'End_Request',
-        '',
-        '',
-        false
-      ])
+      Object.freeze(['leave_approval', 'Flow_4', 'Approve_Request', 'End_Request', '', '', false]),
+      Object.freeze(['leave_approval', 'Flow_5', 'Reject_Request', 'End_Request', '', '', false])
     ]),
     Glossary: Object.freeze([
       Object.freeze(['API', 'API', true, true]),
       Object.freeze(['SLA', 'SLA', true, true]),
       Object.freeze(['DMT HUB', 'DMT HUB', true, false])
     ])
-  })
+  }
+)
 
 function xmlEscape(value: string): string {
   return value
@@ -430,9 +407,7 @@ function worksheetXml(rows: readonly (readonly CellPrimitive[])[]): string {
       } else {
         const text = value instanceof Date ? value.toISOString() : String(value)
         const preserve = /^\s|\s$|\n/.test(text) ? ' xml:space="preserve"' : ''
-        xml += `<c r="${reference}" t="inlineStr"><is><t${preserve}>${xmlEscape(
-          text
-        )}</t></is></c>`
+        xml += `<c r="${reference}" t="inlineStr"><is><t${preserve}>${xmlEscape(text)}</t></is></c>`
       }
     }
     xml += '</row>'
@@ -549,8 +524,7 @@ function workbookEntries(kind: OfficialTemplateKind): readonly ZipSource[] {
     ['xl/styles.xml', styles],
     ['xl/workbook.xml', workbook],
     ...sheets.map(
-      (sheet, index) =>
-        [`xl/worksheets/sheet${index + 1}.xml`, worksheetXml(sheet.rows)] as const
+      (sheet, index) => [`xl/worksheets/sheet${index + 1}.xml`, worksheetXml(sheet.rows)] as const
     )
   ]
   return Object.freeze(
@@ -588,12 +562,7 @@ function writeUint16(output: number[], value: number): void {
 }
 
 function writeUint32(output: number[], value: number): void {
-  output.push(
-    value & 0xff,
-    (value >>> 8) & 0xff,
-    (value >>> 16) & 0xff,
-    (value >>> 24) & 0xff
-  )
+  output.push(value & 0xff, (value >>> 8) & 0xff, (value >>> 16) & 0xff, (value >>> 24) & 0xff)
 }
 
 function pushBytes(output: number[], bytes: Uint8Array): void {

@@ -1,8 +1,4 @@
-import {
-  CANONICAL_FIELDS_BY_SHEET,
-  REQUIRED_FIELDS_BY_SHEET,
-  normalizeHeader
-} from './aliases'
+import { CANONICAL_FIELDS_BY_SHEET, REQUIRED_FIELDS_BY_SHEET, normalizeHeader } from './aliases'
 import type {
   CanonicalSheet,
   ParsedWorkbookData,
@@ -57,9 +53,7 @@ function findHeaderRow(
   return undefined
 }
 
-export function detectOfficialTemplate(
-  workbook: ParsedWorkbookData
-): OfficialTemplateDetection {
+export function detectOfficialTemplate(workbook: ParsedWorkbookData): OfficialTemplateDetection {
   const issues: SpreadsheetValidationIssue[] = []
   const selectedSheets: Partial<Record<CanonicalSheet, SheetSelection>> = {}
   const headerSignatures: Partial<Record<CanonicalSheet, string>> = {}
@@ -79,10 +73,7 @@ export function detectOfficialTemplate(
     }
     const header = findHeaderRow(sheet.rows, CANONICAL_FIELDS_BY_SHEET[sheetRole])
     if (!header) {
-      const requiredHeader = findHeaderRow(
-        sheet.rows,
-        REQUIRED_FIELDS_BY_SHEET[sheetRole]
-      )
+      const requiredHeader = findHeaderRow(sheet.rows, REQUIRED_FIELDS_BY_SHEET[sheetRole])
       issues.push({
         code: 'official-template-header-mismatch',
         severity: 'warning',
@@ -102,7 +93,8 @@ export function detectOfficialTemplate(
 
   const declaredVersion = workbook.customProperties?.OrbitPMTemplateVersion
   const structuralMatch = matchedSheets === Object.keys(OFFICIAL_SHEET_NAMES).length
-  const versionMatches = declaredVersion === undefined || declaredVersion === OFFICIAL_TEMPLATE_VERSION
+  const versionMatches =
+    declaredVersion === undefined || declaredVersion === OFFICIAL_TEMPLATE_VERSION
   if (declaredVersion !== undefined && !versionMatches) {
     issues.push({
       code: 'official-template-version-unsupported',
@@ -116,10 +108,13 @@ export function detectOfficialTemplate(
   return Object.freeze({
     official: structuralMatch && versionMatches,
     ...(declaredVersion ? { templateVersion: declaredVersion } : {}),
-    confidence: structuralMatch ? (declaredVersion === OFFICIAL_TEMPLATE_VERSION ? 1 : 0.95) : matchedSheets / 5,
+    confidence: structuralMatch
+      ? declaredVersion === OFFICIAL_TEMPLATE_VERSION
+        ? 1
+        : 0.95
+      : matchedSheets / 5,
     selectedSheets: Object.freeze(selectedSheets),
     headerSignatures: Object.freeze(headerSignatures),
     issues: Object.freeze(issues)
   })
 }
-

@@ -1,8 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import {
-  CANONICAL_FIELDS_BY_SHEET,
-  normalizeHeader
-} from './aliases'
+import { CANONICAL_FIELDS_BY_SHEET, normalizeHeader } from './aliases'
 import {
   MAPPING_PRESET_VERSION,
   OFFICIAL_TEMPLATE_VERSION,
@@ -10,11 +7,7 @@ import {
   type ParsedWorkbookData
 } from './contracts'
 import { SpreadsheetError } from './errors'
-import {
-  headerSignature,
-  mappingConfirmationIssues,
-  suggestHeaderMappings
-} from './mapping'
+import { headerSignature, mappingConfirmationIssues, suggestHeaderMappings } from './mapping'
 import {
   parseMappingPresetJson,
   presetMatchesHeaderSignatures,
@@ -82,11 +75,7 @@ describe('English and Arabic header mapping', () => {
   })
 
   it('requires confirmation for missing or low-confidence required mappings', () => {
-    const suggestions = suggestHeaderMappings('steps', [
-      'proces ident',
-      'kind-ish',
-      'label maybe'
-    ])
+    const suggestions = suggestHeaderMappings('steps', ['proces ident', 'kind-ish', 'label maybe'])
     const issues = mappingConfirmationIssues('Sheet1', suggestions, new Set())
     expect(issues.length).toBeGreaterThan(0)
     expect(issues.every(({ severity }) => severity === 'review')).toBe(true)
@@ -139,9 +128,8 @@ describe('versioned mapping presets', () => {
         ;(preset.delimiters as { list: string[] }).list = [',']
       },
       (preset: Record<string, unknown>) => {
-        ;(
-          (preset.fieldMappings as Record<string, Record<string, string>>).steps
-        ).unknown_field = 'Anything'
+        ;(preset.fieldMappings as Record<string, Record<string, string>>).steps.unknown_field =
+          'Anything'
       }
     ]) {
       const raw = JSON.parse(JSON.stringify(validPreset())) as Record<string, unknown>
@@ -149,20 +137,121 @@ describe('versioned mapping presets', () => {
       expect(() => parseMappingPresetJson(JSON.stringify(raw))).toThrow(SpreadsheetError)
     }
   })
+
+  it('fails closed for every malformed preset contract branch', () => {
+    const reject = (mutate: (raw: Record<string, unknown>) => void): void => {
+      const raw = JSON.parse(JSON.stringify(validPreset())) as Record<string, unknown>
+      mutate(raw)
+      expect(() => parseMappingPresetJson(JSON.stringify(raw))).toThrow(SpreadsheetError)
+    }
+
+    expect(() => parseMappingPresetJson('{')).toThrow(SpreadsheetError)
+    expect(() => parseMappingPresetJson('[]')).toThrow(SpreadsheetError)
+    reject((raw) => {
+      raw.version = 99
+    })
+    reject((raw) => {
+      raw.name = ''
+    })
+    reject((raw) => {
+      raw.name = 'x'.repeat(121)
+    })
+    reject((raw) => {
+      raw.locale = 'fr'
+    })
+    reject((raw) => {
+      raw.headerSignatures = []
+    })
+    reject((raw) => {
+      raw.headerSignatures = { unknown: 'orbitpm-header-v1-0000000000000000' }
+    })
+    reject((raw) => {
+      raw.headerSignatures = { steps: 'bad-signature' }
+    })
+    reject((raw) => {
+      raw.selectedSheets = []
+    })
+    reject((raw) => {
+      ;(raw.selectedSheets as Record<string, unknown>).steps = 'Activities'
+    })
+    reject((raw) => {
+      ;(raw.selectedSheets as Record<string, unknown>).steps = {
+        worksheet: '',
+        headerRow: 1
+      }
+    })
+    for (const headerRow of [0, 1.5, 50_001]) {
+      reject((raw) => {
+        ;(raw.selectedSheets as Record<string, unknown>).steps = {
+          worksheet: 'Activities',
+          headerRow
+        }
+      })
+    }
+    reject((raw) => {
+      raw.fieldMappings = []
+    })
+    reject((raw) => {
+      ;(raw.fieldMappings as Record<string, unknown>).steps = 'bad'
+    })
+    reject((raw) => {
+      ;(raw.fieldMappings as Record<string, Record<string, string>>).steps = {
+        process_id: 'Same',
+        type: 'Same'
+      }
+    })
+    reject((raw) => {
+      raw.delimiters = []
+    })
+    for (const list of [[], [';', '|', '\n', '/', ':'], ['']]) {
+      reject((raw) => {
+        raw.delimiters = { list }
+      })
+    }
+    reject((raw) => {
+      raw.delimiters = { list: ['abc'] }
+    })
+    reject((raw) => {
+      raw.inference = []
+    })
+    reject((raw) => {
+      raw.inference = {
+        flowMode: 'guess',
+        syntheticBoundaries: 'review',
+        requireGatewayConditions: true
+      }
+    })
+    reject((raw) => {
+      raw.inference = {
+        flowMode: 'auto',
+        syntheticBoundaries: 'always',
+        requireGatewayConditions: true
+      }
+    })
+    reject((raw) => {
+      raw.inference = {
+        flowMode: 'auto',
+        syntheticBoundaries: 'review',
+        requireGatewayConditions: false
+      }
+    })
+
+    expect(presetMatchesHeaderSignatures({ ...validPreset(), headerSignatures: {} }, {})).toBe(
+      false
+    )
+  })
 })
 
 describe('official-template detection', () => {
   function officialWorkbook(): ParsedWorkbookData {
     return {
       customProperties: { OrbitPMTemplateVersion: OFFICIAL_TEMPLATE_VERSION },
-      sheets: (
-        Object.keys(OFFICIAL_SHEET_NAMES) as Array<keyof typeof OFFICIAL_SHEET_NAMES>
-      ).map((role) => ({
-        name: OFFICIAL_SHEET_NAMES[role],
-        rows: [
-          CANONICAL_FIELDS_BY_SHEET[role].map((value) => ({ value }))
-        ]
-      }))
+      sheets: (Object.keys(OFFICIAL_SHEET_NAMES) as Array<keyof typeof OFFICIAL_SHEET_NAMES>).map(
+        (role) => ({
+          name: OFFICIAL_SHEET_NAMES[role],
+          rows: [CANONICAL_FIELDS_BY_SHEET[role].map((value) => ({ value }))]
+        })
+      )
     }
   }
 
@@ -193,5 +282,34 @@ describe('official-template detection', () => {
       expect.objectContaining({ code: 'official-template-version-unsupported' })
     )
   })
-})
 
+  it('accepts a structural template without a marker and reports partial headers', () => {
+    const structural = officialWorkbook()
+    const withoutMarker = { sheets: structural.sheets }
+    expect(detectOfficialTemplate(withoutMarker)).toMatchObject({
+      official: true,
+      confidence: 0.95
+    })
+
+    const processes = structural.sheets.find(({ name }) => name === OFFICIAL_SHEET_NAMES.processes)!
+    const requiredOnly = CANONICAL_FIELDS_BY_SHEET.processes.slice(0, 3)
+    const partial = detectOfficialTemplate({
+      ...structural,
+      sheets: structural.sheets.map((sheet) =>
+        sheet === processes
+          ? {
+              ...sheet,
+              rows: [[{ value: null }], requiredOnly.map((value) => ({ value }))]
+            }
+          : sheet
+      )
+    })
+    expect(partial.official).toBe(false)
+    expect(partial.issues).toContainEqual(
+      expect.objectContaining({
+        code: 'official-template-header-mismatch',
+        details: expect.objectContaining({ requiredFieldsFound: true })
+      })
+    )
+  })
+})

@@ -1,8 +1,4 @@
-import type {
-  CsvParserAdapter,
-  ParsedWorkbookData,
-  SpreadsheetParseOptions
-} from './contracts'
+import type { CsvParserAdapter, ParsedWorkbookData, SpreadsheetParseOptions } from './contracts'
 import { SpreadsheetError, throwIfAborted } from './errors'
 import { validateSpreadsheetInput } from './fileFormat'
 import { SPREADSHEET_LIMITS } from './limits'
@@ -275,11 +271,7 @@ export function csvRowsToWorkbookData(
         name: worksheet,
         rows: Object.freeze(
           validated.map((row) =>
-            Object.freeze(
-              row.map((value) =>
-                Object.freeze({ value, rawValue: value })
-              )
-            )
+            Object.freeze(row.map((value) => Object.freeze({ value, rawValue: value })))
           )
         )
       })
@@ -293,8 +285,5 @@ export async function parseCsvWorkbookBoundary(
   worksheet: string,
   options: CsvParseOptions = {}
 ): Promise<ParsedWorkbookData> {
-  return csvRowsToWorkbookData(
-    await parseCsvBoundary(fileName, bytes, options),
-    worksheet
-  )
+  return csvRowsToWorkbookData(await parseCsvBoundary(fileName, bytes, options), worksheet)
 }

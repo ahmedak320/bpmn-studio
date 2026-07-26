@@ -53,9 +53,7 @@ function safeSlug(value: string): string {
     .replace(/^-+|-+$/g, '')
     .slice(0, 80)
   const base = normalized || `process-${stableHash(value).slice(0, 8)}`
-  return /^(?:con|prn|aux|nul|com[1-9]|lpt[1-9])$/i.test(base)
-    ? `${base}-file`
-    : base
+  return /^(?:con|prn|aux|nul|com[1-9]|lpt[1-9])$/i.test(base) ? `${base}-file` : base
 }
 
 function pathForProcess(
@@ -163,21 +161,16 @@ async function resolveDestinations(
 
 function validationIssueFromPipeline(
   processId: string,
-  diagnostics: Awaited<
-    ReturnType<BpmnModelGenerationAdapter['generate']>
-  >['diagnostics']
+  diagnostics: Awaited<ReturnType<BpmnModelGenerationAdapter['generate']>>['diagnostics']
 ): readonly SpreadsheetValidationIssue[] {
   return Object.freeze(
-    diagnostics.map(
-      (diagnostic): SpreadsheetValidationIssue => ({
-        code: `pipeline-${diagnostic.stage}-${diagnostic.code}`,
-        severity: diagnostic.severity,
-        messageKey:
-          `spreadsheet.validation.pipeline-${diagnostic.stage}-${diagnostic.code}` as const,
-        processId,
-        ...(diagnostic.details ? { details: diagnostic.details } : {})
-      })
-    )
+    diagnostics.map((diagnostic): SpreadsheetValidationIssue => ({
+      code: `pipeline-${diagnostic.stage}-${diagnostic.code}`,
+      severity: diagnostic.severity,
+      messageKey: `spreadsheet.validation.pipeline-${diagnostic.stage}-${diagnostic.code}` as const,
+      processId,
+      ...(diagnostic.details ? { details: diagnostic.details } : {})
+    }))
   )
 }
 
@@ -209,9 +202,7 @@ function blockedPlan(
     artifacts: Object.freeze(artifacts),
     generatedIds: Object.freeze([...(options.generatedIds ?? [])]),
     inferredFlows: Object.freeze([...(options.inferredFlows ?? [])]),
-    warnings: Object.freeze(
-      validation.issues.filter(({ severity }) => severity === 'warning')
-    ),
+    warnings: Object.freeze(validation.issues.filter(({ severity }) => severity === 'warning')),
     skippedRows: Object.freeze([...(options.skippedRows ?? [])]),
     ...(sanitizedPreset ? { mappingPreset: sanitizedPreset } : {}),
     blockingReason: reason
@@ -333,9 +324,7 @@ export async function prepareTransactionalImportPlan(
       }
       const diagnostics = validationIssueFromPipeline(process.id, generated.diagnostics)
       pipelineIssues.push(...diagnostics)
-      const destination = destinations.find(
-        (candidate) => candidate.processId === process.id
-      )
+      const destination = destinations.find((candidate) => candidate.processId === process.id)
       if (!destination) {
         throw new SpreadsheetError('adapter-contract-violation', {
           contract: 'destination-resolution',
@@ -366,28 +355,14 @@ export async function prepareTransactionalImportPlan(
       destinationProcessIds: options.destinationProcessIds,
       additionalIssues: [...(options.additionalIssues ?? []), ...pipelineIssues]
     })
-    return blockedPlan(
-      model,
-      createdAt,
-      validation,
-      options,
-      'pipeline-validation',
-      prepared
-    )
+    return blockedPlan(model, createdAt, validation, options, 'pipeline-validation', prepared)
   }
   validation = validateProcessWorkbookModel(model, {
     destinationProcessIds: options.destinationProcessIds,
     additionalIssues: [...(options.additionalIssues ?? []), ...pipelineIssues]
   })
   if (validation.blocking) {
-    return blockedPlan(
-      model,
-      createdAt,
-      validation,
-      options,
-      'pipeline-validation',
-      prepared
-    )
+    return blockedPlan(model, createdAt, validation, options, 'pipeline-validation', prepared)
   }
   const sanitizedPreset = options.mappingPreset
     ? parseMappingPresetJson(serializeMappingPreset(options.mappingPreset))
@@ -419,9 +394,7 @@ export async function prepareTransactionalImportPlan(
     artifacts: Object.freeze(prepared),
     generatedIds: Object.freeze([...(options.generatedIds ?? [])]),
     inferredFlows: Object.freeze([...(options.inferredFlows ?? [])]),
-    warnings: Object.freeze(
-      validation.issues.filter(({ severity }) => severity === 'warning')
-    ),
+    warnings: Object.freeze(validation.issues.filter(({ severity }) => severity === 'warning')),
     skippedRows: Object.freeze([...(options.skippedRows ?? [])]),
     ...(sanitizedPreset ? { mappingPreset: sanitizedPreset } : {})
   })

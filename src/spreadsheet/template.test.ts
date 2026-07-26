@@ -1,15 +1,8 @@
 import { unzipSync } from 'fflate'
 import { describe, expect, it } from 'vitest'
-import {
-  OFFICIAL_TEMPLATE_VERSION,
-  type ParsedWorkbookData,
-  type WorkbookCell
-} from './contracts'
+import { OFFICIAL_TEMPLATE_VERSION, type ParsedWorkbookData, type WorkbookCell } from './contracts'
 import { sha256Hex } from './hash'
-import {
-  buildProcessWorkbookModel,
-  officialTemplatePreset
-} from './modelBuilder'
+import { buildProcessWorkbookModel, officialTemplatePreset } from './modelBuilder'
 import { detectOfficialTemplate } from './officialTemplate'
 import {
   createOfficialWorkbookTemplate,
@@ -67,9 +60,7 @@ function parseGeneratedWorkbook(bytes: Uint8Array): ParsedWorkbookData {
     customProperties: { OrbitPMTemplateVersion: OFFICIAL_TEMPLATE_VERSION },
     sheets: names.map((name, index) => ({
       name,
-      rows: parseGeneratedSheet(
-        decoder.decode(unzipped[`xl/worksheets/sheet${index + 1}.xml`])
-      )
+      rows: parseGeneratedSheet(decoder.decode(unzipped[`xl/worksheets/sheet${index + 1}.xml`]))
     }))
   }
 }

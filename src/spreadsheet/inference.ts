@@ -91,12 +91,7 @@ export function assignDeterministicIds(model: ProcessWorkbookModel): {
   })
   const nodes = model.nodes.map((node) => {
     if (node.id) return node
-    const id = generatedId(
-      'Step',
-      node.processId,
-      labelText(node.name),
-      node.provenance.row
-    )
+    const id = generatedId('Step', node.processId, labelText(node.name), node.provenance.row)
     generatedIds.push({
       entity: 'node',
       processId: node.processId,
@@ -129,9 +124,13 @@ export function assignDeterministicIds(model: ProcessWorkbookModel): {
   })
 }
 
-function fingerprint(model: ProcessWorkbookModel): string {
+function fingerprint(
+  model: ProcessWorkbookModel,
+  flowMode: GraphInferencePlan['flowMode'] = 'auto'
+): string {
   return stableHash(
     JSON.stringify({
+      flowMode,
       processes: model.processes.map(({ id }) => id),
       nodes: model.nodes.map(({ processId, id, order, type, nextStepIds, mappedTransitions }) => ({
         processId,
@@ -155,10 +154,7 @@ function fingerprint(model: ProcessWorkbookModel): string {
   )
 }
 
-function syntheticProvenance(
-  source: RecordProvenance,
-  kind: 'start' | 'end'
-): RecordProvenance {
+function syntheticProvenance(source: RecordProvenance, kind: 'start' | 'end'): RecordProvenance {
   return Object.freeze({
     worksheet: source.worksheet,
     row: source.row,
@@ -214,18 +210,25 @@ function planProcessFlows(
   processId: string,
   nodes: readonly WorkbookNode[],
   explicitFlows: readonly WorkbookFlow[],
+  flowMode: GraphInferencePlan['flowMode'],
   issues: SpreadsheetValidationIssue[],
   inferred: WorkbookFlow[],
   records: InferredFlowRecord[]
 ): void {
-  if (explicitFlows.length > 0) return
+  if (flowMode === 'auto' && explicitFlows.length > 0) return
+  if (flowMode === 'explicit') {
+    if (explicitFlows.length === 0) {
+      issues.push(issue('explicit-flows-required', 'error', processId, nodes[0]?.provenance))
+    }
+    return
+  }
 
   const hasMappedTransitions = nodes.some(
     (node) => node.mappedTransitions && node.mappedTransitions.length > 0
   )
   const hasMappedNext = nodes.some((node) => node.nextStepIds && node.nextStepIds.length > 0)
 
-  if (hasMappedTransitions) {
+  if (hasMappedTransitions && flowMode !== 'numeric-order') {
     for (const node of nodes) {
       const transitions = node.mappedTransitions ?? []
       for (const [index, transition] of transitions.entries()) {
@@ -267,15 +270,21 @@ function planProcessFlows(
     return
   }
 
-  if (hasMappedNext) {
+  if (hasMappedNext && flowMode !== 'numeric-order') {
     for (const node of nodes) {
       const targets = node.nextStepIds ?? []
       if (targets.length > 1 || (GATEWAY_TYPES.has(node.type) && targets.length > 0)) {
         issues.push(
-          issue('branch-topology-requires-explicit-conditions', 'error', processId, node.provenance, {
-            nodeId: node.id,
-            targets: targets.length
-          })
+          issue(
+            'branch-topology-requires-explicit-conditions',
+            'error',
+            processId,
+            node.provenance,
+            {
+              nodeId: node.id,
+              targets: targets.length
+            }
+          )
         )
         continue
       }
@@ -291,6 +300,11 @@ function planProcessFlows(
         })
       }
     }
+    return
+  }
+
+  if (flowMode === 'next-step') {
+    issues.push(issue('mapped-next-step-required', 'error', processId, nodes[0]?.provenance))
     return
   }
 
@@ -386,13 +400,7 @@ function planBoundaries(
         metadata: Object.freeze({}),
         provenance: syntheticProvenance(target.provenance, 'start')
       })
-      const flow = inferredFlow(
-        processId,
-        node,
-        target.id,
-        0,
-        'synthetic-boundary'
-      )
+      const flow = inferredFlow(processId, node, target.id, 0, 'synthetic-boundary')
       boundaries.push({ processId, kind: 'start', node, flow })
       records.push({
         processId,
@@ -425,13 +433,7 @@ function planBoundaries(
         metadata: Object.freeze({}),
         provenance: syntheticProvenance(source.provenance, 'end')
       })
-      const flow = inferredFlow(
-        processId,
-        source,
-        node.id,
-        0,
-        'synthetic-boundary'
-      )
+      const flow = inferredFlow(processId, source, node.id, 0, 'synthetic-boundary')
       boundaries.push({ processId, kind: 'end', node, flow })
       records.push({
         processId,
@@ -444,7 +446,11 @@ function planBoundaries(
   }
 }
 
-export function createGraphInferencePlan(model: ProcessWorkbookModel): GraphInferencePlan {
+export function createGraphInferencePlan(
+  model: ProcessWorkbookModel,
+  options: { readonly flowMode?: GraphInferencePlan['flowMode'] } = {}
+): GraphInferencePlan {
+  const flowMode = options.flowMode ?? 'auto'
   const assigned = assignDeterministicIds(model)
   const issues: SpreadsheetValidationIssue[] = []
   const inferredFlows: WorkbookFlow[] = []
@@ -454,15 +460,21 @@ export function createGraphInferencePlan(model: ProcessWorkbookModel): GraphInfe
   for (const process of assigned.model.processes) {
     const nodes = assigned.model.nodes.filter((node) => node.processId === process.id)
     const explicitFlows = assigned.model.flows.filter((flow) => flow.processId === process.id)
+    const retainedExplicitFlows =
+      flowMode === 'auto' || flowMode === 'explicit' ? explicitFlows : []
     planProcessFlows(
       process.id,
       nodes,
       explicitFlows,
+      flowMode,
       issues,
       inferredFlows,
       inferredFlowRecords
     )
-    const processFlows = [...explicitFlows, ...inferredFlows.filter((flow) => flow.processId === process.id)]
+    const processFlows = [
+      ...retainedExplicitFlows,
+      ...inferredFlows.filter((flow) => flow.processId === process.id)
+    ]
     planBoundaries(
       process.id,
       nodes,
@@ -474,7 +486,8 @@ export function createGraphInferencePlan(model: ProcessWorkbookModel): GraphInfe
   }
 
   return Object.freeze({
-    modelFingerprint: fingerprint(assigned.model),
+    modelFingerprint: fingerprint(assigned.model, flowMode),
+    flowMode,
     generatedIds: assigned.generatedIds,
     inferredFlows: Object.freeze(inferredFlows),
     inferredFlowRecords: Object.freeze(inferredFlowRecords),
@@ -490,7 +503,7 @@ export function applyGraphInferencePlan(
   options: { readonly confirmSyntheticBoundaries: boolean }
 ): ProcessWorkbookModel {
   const assigned = assignDeterministicIds(model).model
-  if (fingerprint(assigned) !== plan.modelFingerprint) {
+  if (fingerprint(assigned, plan.flowMode) !== plan.modelFingerprint) {
     throw new SpreadsheetError('blocking-validation', { reason: 'stale-inference-plan' })
   }
   if (plan.issues.some((candidate) => candidate.severity === 'error')) {
@@ -511,7 +524,10 @@ export function applyGraphInferencePlan(
     assigned,
     assigned.participants,
     [...assigned.nodes, ...boundaryNodes],
-    [...assigned.flows, ...plan.inferredFlows, ...boundaryFlows]
+    [
+      ...(plan.flowMode === 'auto' || plan.flowMode === 'explicit' ? assigned.flows : []),
+      ...plan.inferredFlows,
+      ...boundaryFlows
+    ]
   )
 }
-
