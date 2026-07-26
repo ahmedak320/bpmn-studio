@@ -80,13 +80,6 @@ export interface FolderOptionLite {
   label: string
 }
 
-/**
- * Temporary host compatibility during the serialized App handoff. A legacy
- * `null` is interpreted conservatively as discarded, never as in-memory
- * success; the App follow-up removes these two legacy shapes.
- */
-type GeneratedPlacementCallbackOutcome = GeneratedPlacementOutcome | { label: string } | null
-
 export interface AiPanelLiteProps {
   /** Target-folder options (directory mode). Empty in fallback mode. */
   folders: FolderOptionLite[]
@@ -104,7 +97,7 @@ export interface AiPanelLiteProps {
       localizationSource?: LocalizationSource
       signal: AbortSignal
     }
-  ) => Promise<GeneratedPlacementCallbackOutcome>
+  ) => Promise<GeneratedPlacementOutcome>
   /** Read the live workspace generation (captured at generation start). */
   getWorkspaceGen?: () => number
   onOpenSettings: () => void
@@ -558,7 +551,7 @@ export function AiPanelLite({
         return
       }
       try {
-        const callbackOutcome = await onPlaceGenerated(finalXml, {
+        const placed = await onPlaceGenerated(finalXml, {
           name: name.trim(),
           targetFolder,
           gen,
@@ -566,12 +559,6 @@ export function AiPanelLite({
           signal: controller.signal
         })
         if (!isCurrentRun()) return
-        const placed: GeneratedPlacementOutcome =
-          callbackOutcome === null
-            ? { status: 'discarded', reason: 'stale-workspace' }
-            : 'status' in callbackOutcome
-              ? callbackOutcome
-              : { status: 'persisted', label: callbackOutcome.label }
         if (placed.status === 'discarded') {
           reportDiscardedGeneration(finalXml, placed.reason)
           return

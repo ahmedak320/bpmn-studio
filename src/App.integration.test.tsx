@@ -25,6 +25,26 @@ interface TestWorkspaceCoordinator {
   emit(change: TestWorkspaceChange): void
 }
 
+interface TestAiPanelProps {
+  onPlaceGenerated(
+    xml: string,
+    options: {
+      name: string
+      targetFolder: string
+      gen?: number
+      localizationSource?: string
+      signal: AbortSignal
+    }
+  ): Promise<import('./ai/placementOutcome').GeneratedPlacementOutcome>
+  getWorkspaceGen?(): number
+  onOpenSettings(): void
+  onContinueInChat?(info: { description: string }): void
+  spreadsheet: {
+    onOpenSingle(xml: string, name: string): void
+    onOpenBilingualReview(xml: string, name: string): void
+  }
+}
+
 const sessionHarness = vi.hoisted(() => ({
   indexedDbAvailable: true,
   drafts: new Map<string, TestDraftRecord>(),
@@ -367,24 +387,7 @@ const mockModeler = {
 }
 
 vi.mock('./ai/AiPanelLite', () => ({
-  AiPanelLite: (props: {
-    onPlaceGenerated(
-      xml: string,
-      options: {
-        name?: string
-        targetFolder?: string
-        gen?: number
-        localizationSource?: string
-      }
-    ): Promise<unknown> | unknown
-    getWorkspaceGen?(): number
-    onOpenSettings(): void
-    onContinueInChat?(info: { description: string }): void
-    spreadsheet: {
-      onOpenSingle(xml: string, name: string): void
-      onOpenBilingualReview(xml: string, name: string): void
-    }
-  }) => {
+  AiPanelLite: (props: TestAiPanelProps) => {
     mocks.aiProps(props)
     return (
       <div data-testid="ai-panel">
@@ -398,7 +401,8 @@ vi.mock('./ai/AiPanelLite', () => ({
               name: 'AI claims',
               targetFolder: '',
               gen: props.getWorkspaceGen?.(),
-              localizationSource: 'ai'
+              localizationSource: 'ai',
+              signal: new AbortController().signal
             })
           }
         >
@@ -630,6 +634,7 @@ vi.mock('./workspace/MoveDialog', () => ({
 }))
 
 import { asDirectoryHandle, fakeRoot } from './workspace/adapters/__tests__/fakeFileSystem'
+import { ManifestBoundWorkspaceAdapter } from './workspace/workspaceManifest'
 import {
   WORKSPACE_GLOSSARY_PATH,
   WORKSPACE_TRANSLATION_MEMORY_PATH,
@@ -648,6 +653,12 @@ function latestSessionController(): import('./sessions').DocumentSessionControll
   const controller = sessionHarness.controllers.at(-1)
   if (!controller) throw new Error('App did not create a document-session controller')
   return controller as import('./sessions').DocumentSessionController
+}
+
+function latestAiPanelProps(): TestAiPanelProps {
+  const props = mocks.aiProps.mock.calls.at(-1)?.[0] as TestAiPanelProps | undefined
+  if (!props) throw new Error('App did not render the AI panel')
+  return props
 }
 
 function utf8Buffer(value: string): ArrayBuffer {
@@ -1062,6 +1073,80 @@ describe('App single-file browser orchestration', () => {
     expect(await screen.findByRole('button', { name: 'mock-assistant-close' })).not.toBeNull()
   })
 
+  it('reports a validated fallback placement as a true in-memory success', async () => {
+    const user = userEvent.setup()
+    await openBlankDiagram(user)
+    const rail = screen.getByRole('button', { name: 'sidebar.toggle.aria' })
+    if (rail.getAttribute('aria-expanded') === 'false') await user.click(rail)
+    await screen.findByTestId('ai-panel')
+    const props = latestAiPanelProps()
+    const controller = new AbortController()
+    let outcome: import('./ai/placementOutcome').GeneratedPlacementOutcome | undefined
+
+    await act(async () => {
+      outcome = await props.onPlaceGenerated(state.xml, {
+        name: 'AI outcome',
+        targetFolder: '',
+        gen: props.getWorkspaceGen?.(),
+        localizationSource: 'ai',
+        signal: controller.signal
+      })
+    })
+
+    expect(outcome).toEqual({ status: 'opened-in-memory', label: 'ai-outcome.bpmn' })
+    expect(await screen.findByText(/ai-outcome\.bpmn/)).not.toBeNull()
+  })
+
+  it('discards a pre-aborted fallback placement before validation', async () => {
+    const user = userEvent.setup()
+    await openBlankDiagram(user)
+    const props = latestAiPanelProps()
+    const controller = new AbortController()
+    controller.abort()
+    mocks.validateBpmn.mockClear()
+
+    await expect(
+      props.onPlaceGenerated(state.xml, {
+        name: 'Pre-aborted placement',
+        targetFolder: '',
+        gen: props.getWorkspaceGen?.(),
+        localizationSource: 'ai',
+        signal: controller.signal
+      })
+    ).resolves.toEqual({ status: 'discarded', reason: 'cancelled' })
+
+    expect(mocks.validateBpmn).not.toHaveBeenCalled()
+    expect(screen.queryByText(/pre-aborted-placement\.bpmn/)).toBeNull()
+  })
+
+  it('guards the virtual open when cancellation arrives during validation', async () => {
+    const user = userEvent.setup()
+    await openBlankDiagram(user)
+    const props = latestAiPanelProps()
+    const controller = new AbortController()
+    let resolveValidation!: (value: { summary: { valid: true; issues: never[] } }) => void
+    mocks.validateBpmn.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveValidation = resolve
+        })
+    )
+
+    const pending = props.onPlaceGenerated(state.xml, {
+      name: 'Cancelled virtual',
+      targetFolder: '',
+      gen: props.getWorkspaceGen?.(),
+      localizationSource: 'ai',
+      signal: controller.signal
+    })
+    await waitFor(() => expect(mocks.validateBpmn).toHaveBeenCalledOnce())
+    controller.abort()
+    resolveValidation({ summary: { valid: true, issues: [] } })
+
+    await expect(pending).resolves.toEqual({ status: 'discarded', reason: 'cancelled' })
+    expect(screen.queryByText(/cancelled-virtual\.bpmn/)).toBeNull()
+  })
+
   it('sets up one session controller, routes save to only the active tab, and guards dirty unloads', async () => {
     const user = userEvent.setup()
     await openBlankDiagram(user)
@@ -1343,6 +1428,231 @@ describe('App directory workspace orchestration', () => {
 
     expect(mocks.legacyCreateFolderAt).not.toHaveBeenCalled()
     expect(mocks.legacyCreateBpmnFileUnique).not.toHaveBeenCalled()
+  })
+
+  it('revalidates generated XML against the live process index immediately before writing', async () => {
+    const user = userEvent.setup()
+    const root = fakeRoot()
+    root.addFile('seed-process.bpmn', state.xml.replaceAll('Process_Test', 'Process_Seed'))
+    await openDirectoryWorkspace(user, root)
+    const props = latestAiPanelProps()
+    const initialGeneration = props.getWorkspaceGen?.()
+    const originalList = ManifestBoundWorkspaceAdapter.prototype.list
+    let enteredList!: () => void
+    const listEntered = new Promise<void>((resolve) => {
+      enteredList = resolve
+    })
+    let releaseList!: () => void
+    const listRelease = new Promise<void>((resolve) => {
+      releaseList = resolve
+    })
+    vi.spyOn(ManifestBoundWorkspaceAdapter.prototype, 'list').mockImplementationOnce(
+      async function (this: ManifestBoundWorkspaceAdapter, path) {
+        const entries = await originalList.call(this, path)
+        enteredList()
+        await listRelease
+        return entries
+      }
+    )
+    mocks.validateBpmn.mockClear()
+
+    const pending = props.onPlaceGenerated(state.xml, {
+      name: 'Live index check',
+      targetFolder: '',
+      gen: initialGeneration,
+      localizationSource: 'ai',
+      signal: new AbortController().signal
+    })
+    await listEntered
+    expect([
+      ...((
+        mocks.validateBpmn.mock.calls[0]?.[1] as { knownProcessIds: Iterable<string> } | undefined
+      )?.knownProcessIds ?? [])
+    ]).not.toContain('Process_Test')
+
+    root.addFile('late-process.bpmn', state.xml)
+    await user.click(screen.getByRole('button', { name: 'tree.refresh.aria' }))
+    await screen.findByText('toast.refreshed')
+    releaseList()
+
+    await expect(pending).resolves.toEqual({
+      status: 'persisted',
+      label: 'live-index-check.bpmn'
+    })
+    expect(mocks.validateBpmn).toHaveBeenCalledTimes(2)
+    expect([
+      ...((
+        mocks.validateBpmn.mock.calls[1]?.[1] as { knownProcessIds: Iterable<string> } | undefined
+      )?.knownProcessIds ?? [])
+    ]).toContain('Process_Test')
+  })
+
+  it('honors cancellation after final validation starts but before the first mutation', async () => {
+    const user = userEvent.setup()
+    const root = await openDirectoryWorkspace(user)
+    const props = latestAiPanelProps()
+    const controller = new AbortController()
+    let resolveFinalValidation!: (value: { summary: { valid: true; issues: never[] } }) => void
+    mocks.validateBpmn
+      .mockClear()
+      .mockResolvedValueOnce({ summary: { valid: true, issues: [] } })
+      .mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            resolveFinalValidation = resolve
+          })
+      )
+    const write = vi.spyOn(ManifestBoundWorkspaceAdapter.prototype, 'writeAtomic')
+
+    const pending = props.onPlaceGenerated(state.xml, {
+      name: 'Cancelled before mutation',
+      targetFolder: '',
+      gen: props.getWorkspaceGen?.(),
+      localizationSource: 'ai',
+      signal: controller.signal
+    })
+    await waitFor(() => expect(mocks.validateBpmn).toHaveBeenCalledTimes(2))
+    controller.abort()
+    resolveFinalValidation({ summary: { valid: true, issues: [] } })
+
+    await expect(pending).resolves.toEqual({ status: 'discarded', reason: 'cancelled' })
+    expect(write).not.toHaveBeenCalled()
+    expect(() => root.file('cancelled-before-mutation.bpmn')).toThrow(/Missing fake file/)
+  })
+
+  it('passes cancellation into the bound AI write and leaves no generated file', async () => {
+    const user = userEvent.setup()
+    const root = await openDirectoryWorkspace(user)
+    const props = latestAiPanelProps()
+    const controller = new AbortController()
+    let enteredWrite!: () => void
+    const writeEntered = new Promise<void>((resolve) => {
+      enteredWrite = resolve
+    })
+    let observedSignal: AbortSignal | undefined
+    vi.spyOn(ManifestBoundWorkspaceAdapter.prototype, 'writeAtomic').mockImplementationOnce(
+      async (path, _bytes, _expectedHash, options) => {
+        observedSignal = options?.signal
+        enteredWrite()
+        await new Promise<void>((resolve) => {
+          if (options?.signal?.aborted) {
+            resolve()
+            return
+          }
+          options?.signal?.addEventListener('abort', () => resolve(), { once: true })
+        })
+        return {
+          ok: false,
+          status: 'cancelled',
+          error: {
+            code: 'cancelled',
+            operation: 'write',
+            path,
+            message: 'cancelled in test'
+          }
+        }
+      }
+    )
+
+    const pending = props.onPlaceGenerated(state.xml, {
+      name: 'Cancelled placement',
+      targetFolder: '',
+      gen: props.getWorkspaceGen?.(),
+      localizationSource: 'ai',
+      signal: controller.signal
+    })
+    await writeEntered
+    expect(observedSignal).toBe(controller.signal)
+    controller.abort()
+
+    await expect(pending).resolves.toEqual({ status: 'discarded', reason: 'cancelled' })
+    expect(() => root.file('cancelled-placement.bpmn')).toThrow(/Missing fake file/)
+  })
+
+  it('discards an old-generation AI callback before validation or mutation', async () => {
+    const user = userEvent.setup()
+    const first = populatedDirectory()
+    const second = fakeRoot()
+    second.addFile('second.bpmn', state.xml)
+    await openDirectoryWorkspace(user, first)
+    const oldProps = latestAiPanelProps()
+    const oldGeneration = oldProps.getWorkspaceGen?.()
+
+    mocks.pickWorkspace.mockResolvedValue(asDirectoryHandle(second))
+    await user.click(screen.getByRole('button', { name: 'app.changeFolder' }))
+    await waitFor(() => {
+      expect(latestAiPanelProps().getWorkspaceGen?.()).not.toBe(oldGeneration)
+    })
+    mocks.validateBpmn.mockClear()
+
+    let outcome: import('./ai/placementOutcome').GeneratedPlacementOutcome | undefined
+    await act(async () => {
+      outcome = await oldProps.onPlaceGenerated(state.xml, {
+        name: 'Stale placement',
+        targetFolder: '',
+        gen: oldGeneration,
+        localizationSource: 'ai',
+        signal: new AbortController().signal
+      })
+    })
+
+    expect(outcome).toEqual({ status: 'discarded', reason: 'stale-workspace' })
+    expect(mocks.validateBpmn).not.toHaveBeenCalled()
+    expect(() => first.file('stale-placement.bpmn')).toThrow(/Missing fake file/)
+    expect(() => second.file('stale-placement.bpmn')).toThrow(/Missing fake file/)
+  })
+
+  it('reports a committed AI file as persisted but never opens it after activation switches', async () => {
+    const user = userEvent.setup()
+    const first = populatedDirectory()
+    const second = fakeRoot()
+    second.addFile('second.bpmn', state.xml)
+    await openDirectoryWorkspace(user, first)
+    const props = latestAiPanelProps()
+    const generation = props.getWorkspaceGen?.()
+    const originalWriteAtomic = ManifestBoundWorkspaceAdapter.prototype.writeAtomic
+    let committed!: () => void
+    const committedWrite = new Promise<void>((resolve) => {
+      committed = resolve
+    })
+    let release!: () => void
+    const releaseOutcome = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    vi.spyOn(ManifestBoundWorkspaceAdapter.prototype, 'writeAtomic').mockImplementation(
+      async function (this: ManifestBoundWorkspaceAdapter, path, bytes, expectedHash, options) {
+        const outcome = await originalWriteAtomic.call(this, path, bytes, expectedHash, options)
+        if (path === 'committed-before-switch.bpmn' && outcome.status === 'success') {
+          committed()
+          await releaseOutcome
+        }
+        return outcome
+      }
+    )
+
+    const pending = props.onPlaceGenerated(state.xml, {
+      name: 'Committed before switch',
+      targetFolder: '',
+      gen: generation,
+      localizationSource: 'ai',
+      signal: new AbortController().signal
+    })
+    await committedWrite
+    expect(fakeFileText(first, 'committed-before-switch.bpmn')).toBe(state.xml)
+
+    mocks.pickWorkspace.mockResolvedValue(asDirectoryHandle(second))
+    await user.click(screen.getByRole('button', { name: 'app.changeFolder' }))
+    await waitFor(() => {
+      expect(latestAiPanelProps().getWorkspaceGen?.()).not.toBe(generation)
+    })
+    release()
+
+    await expect(pending).resolves.toEqual({
+      status: 'persisted',
+      label: 'committed-before-switch.bpmn'
+    })
+    expect(() => second.file('committed-before-switch.bpmn')).toThrow(/Missing fake file/)
+    expect(screen.queryByText(/committed-before-switch\.bpmn/)).toBeNull()
   })
 
   it('loads exact ordered resources and preserves CAS and accepted-only write boundaries', async () => {

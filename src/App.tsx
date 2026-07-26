@@ -96,6 +96,10 @@ import { FolderTreeLite } from './workspace/FolderTreeLite'
 import { buildProcessHierarchy } from './workspace/processHierarchy'
 import { EmptyWorkspaceCard } from './workspace/EmptyWorkspaceCard'
 import { AiPanelLite, type FolderOptionLite } from './ai/AiPanelLite'
+import type {
+  GeneratedPlacementDiscardReason,
+  GeneratedPlacementOutcome
+} from './ai/placementOutcome'
 import { installLinkBadges, type LinkBadgeModeler } from './links/linkBadges'
 import { buildLinkGraph } from './links/linkGraph'
 import { getDiagramLang, type LangToggleModeler } from './editor/langToggle'
@@ -3625,60 +3629,173 @@ function App(): JSX.Element {
         targetFolder: string
         gen?: number
         localizationSource?: LocalizationSourceType
+        signal: AbortSignal
       }
-    ) => {
+    ): Promise<GeneratedPlacementOutcome> => {
       const slug = deriveFileBaseName(opts.name || 'process')
-      await validateReleaseXml(xml, {
-        action: 'create-generated',
-        knownProcessIds: processIndex.keys(),
-        requireBilingual: true,
-        requireDi: true
-      })
+      const expectsMultiFile = isMultiFileMode(mode)
+      const adapter = workspaceAdapterRef.current
+      const stale = (): boolean =>
+        workspaceAdapterRef.current !== adapter ||
+        Boolean(adapter?.storage.capabilities.multipleFiles) !== expectsMultiFile ||
+        (opts.gen !== undefined && !canCommitToWorkspace(opts.gen, workspaceGenRef.current))
+      const discardReason = (): GeneratedPlacementDiscardReason | null => {
+        // A workspace switch wins over cancellation so the recovery message
+        // explains why the requested destination is no longer available.
+        if (stale()) return 'stale-workspace'
+        if (opts.signal.aborted) return 'cancelled'
+        return null
+      }
+      const reportDiscarded = (
+        reason: GeneratedPlacementDiscardReason
+      ): GeneratedPlacementOutcome => {
+        if (reason === 'stale-workspace') {
+          pushToast(t('alert.staleGeneration'), 'error')
+        }
+        return { status: 'discarded', reason }
+      }
+
+      const beforeValidation = discardReason()
+      if (beforeValidation) return reportDiscarded(beforeValidation)
+      try {
+        await validateReleaseXml(xml, {
+          action: 'create-generated',
+          knownProcessIds: processIndex.keys(),
+          requireBilingual: true,
+          requireDi: true
+        })
+      } catch (error) {
+        const reason = discardReason()
+        if (reason) return reportDiscarded(reason)
+        throw error
+      }
+      const afterValidation = discardReason()
+      if (afterValidation) return reportDiscarded(afterValidation)
+
       // Validate the workspace generation captured when generation STARTED against
       // the live one, both before enqueuing AND at write time inside the mutex: a
       // folder switch during the (slow) generation must not land the diagram in
       // the switched-in workspace's folder (Codex ORIG-1b). Capture the bound
       // adapter and reject it if activation changes while the task is queued.
-      const adapter = workspaceAdapterRef.current
-      const stale = (): boolean =>
-        (opts.gen !== undefined && !canCommitToWorkspace(opts.gen, workspaceGenRef.current)) ||
-        workspaceAdapterRef.current !== adapter
-      if (isMultiFileMode(mode) && adapter?.storage.capabilities.multipleFiles) {
-        if (stale()) {
-          pushToast(t('alert.staleGeneration'), 'error')
-          return null
+      if (expectsMultiFile) {
+        if (!adapter?.storage.capabilities.multipleFiles) {
+          return reportDiscarded('stale-workspace')
         }
+        const folderPath = normalizeWorkspacePath(opts.targetFolder, { allowRoot: true })
+        const bytes = new TextEncoder().encode(xml)
         const result = await opMutexRef.current.runExclusive(async () => {
-          // Re-check at write time — a switch could have landed while queued.
-          if (stale()) return { stale: true as const }
-          const taken = await directBpmnSlugs(adapter, opts.targetFolder)
-          const finalSlug = dedupeSlug(slug, (c) => taken.has(c.toLowerCase()))
-          return {
-            stale: false as const,
-            relPath: await writeUniqueBpmn(adapter, opts.targetFolder, finalSlug, xml)
+          const beforeList = discardReason()
+          if (beforeList) {
+            return { status: 'discarded' as const, reason: beforeList }
           }
+          let taken: Set<string>
+          try {
+            taken = await directBpmnSlugs(adapter, folderPath)
+          } catch (error) {
+            const reason = discardReason()
+            if (reason) return { status: 'discarded' as const, reason }
+            throw error
+          }
+          const beforeFinalValidation = discardReason()
+          if (beforeFinalValidation) {
+            return { status: 'discarded' as const, reason: beforeFinalValidation }
+          }
+          // Generation can be slow enough for another local operation to add a
+          // process after the first validation. Revalidate against the live
+          // index while holding the same mutation mutex, immediately before
+          // this callback's first write.
+          try {
+            await validateReleaseXml(xml, {
+              action: 'create-generated',
+              knownProcessIds: liveWorkspaceIndexRef.current.processIndex().keys(),
+              requireBilingual: true,
+              requireDi: true
+            })
+          } catch (error) {
+            const reason = discardReason()
+            if (reason) return { status: 'discarded' as const, reason }
+            throw error
+          }
+          for (let attempt = 0; attempt < 1000; attempt += 1) {
+            // This is the final guard before the first mutation. Listing and
+            // collision retries are read-only; writeAtomic receives the same
+            // signal so an abort while writing is also fail-closed.
+            const beforeWrite = discardReason()
+            if (beforeWrite) {
+              return { status: 'discarded' as const, reason: beforeWrite }
+            }
+            const finalSlug = dedupeSlug(slug, (candidate) =>
+              taken.has(candidate.toLocaleLowerCase('en-US'))
+            )
+            const relPath = joinRel(folderPath, `${finalSlug}.bpmn`)
+            let outcome
+            try {
+              outcome = await adapter.writeAtomic(relPath, bytes, undefined, {
+                expectedWorkspaceId: adapter.id,
+                expectedMissing: true,
+                signal: opts.signal
+              })
+            } catch (error) {
+              const reason = discardReason()
+              if (reason) return { status: 'discarded' as const, reason }
+              throw error
+            }
+            if (outcome.status === 'success') {
+              return { status: 'persisted' as const, label: outcome.snapshot.path }
+            }
+            const afterWrite = discardReason()
+            if (afterWrite) {
+              return { status: 'discarded' as const, reason: afterWrite }
+            }
+            if (outcome.status === 'cancelled') {
+              return { status: 'discarded' as const, reason: 'cancelled' as const }
+            }
+            if (outcome.status === 'stale-workspace') {
+              return { status: 'discarded' as const, reason: 'stale-workspace' as const }
+            }
+            if (outcome.status === 'external-conflict' && outcome.reason === 'already-exists') {
+              taken.add(finalSlug.toLocaleLowerCase('en-US'))
+              continue
+            }
+            if ('error' in outcome) throw new Error(outcome.error.message)
+            throw new Error(t('workspace.create.failed', { status: outcome.status }))
+          }
+          throw new Error(t('workspace.create.noAvailableName'))
         })
-        if (result.stale) {
-          pushToast(t('alert.staleGeneration'), 'error')
-          return null
+        if (result.status === 'discarded') {
+          return reportDiscarded(result.reason)
         }
-        await refreshWorkspace()
+        // A successful adapter outcome is durable truth. If activation changed
+        // after commit, report persistence but never refresh/open that old path
+        // through the newly active workspace.
+        if (stale()) return result
+        try {
+          await refreshWorkspace()
+        } catch {
+          return result
+        }
+        if (stale()) return result
         // Keep the sidebar (and with it the AI panel) mounted: the success box
         // carries the "fill gaps in chat" CTA, and collapsing here unmounted
         // the panel before it could ever render (found by the interview e2e).
-        void openDirectoryFile(result.relPath, {
+        void openDirectoryFile(result.label, {
           collapse: false,
           autoSizeOnImport: true,
           localizationSource: opts.localizationSource ?? LocalizationSource.Ai
         })
-        return { label: result.relPath }
+        return result
       }
-      openVirtualTab(`${slug}.bpmn`, xml, {
+      // The virtual-tab open is synchronous. Re-check immediately beforehand
+      // so a callback captured in another workspace cannot fall through here.
+      const beforeVirtualOpen = discardReason()
+      if (beforeVirtualOpen) return reportDiscarded(beforeVirtualOpen)
+      const label = `${slug}.bpmn`
+      openVirtualTab(label, xml, {
         collapse: false,
         autoSizeOnImport: true,
         localizationSource: opts.localizationSource ?? LocalizationSource.Ai
       })
-      return null
+      return { status: 'opened-in-memory', label }
     },
     [mode, refreshWorkspace, openDirectoryFile, openVirtualTab, pushToast, processIndex]
   )
