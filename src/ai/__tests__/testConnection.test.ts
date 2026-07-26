@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach } from 'vitest'
-import { testConnection, type ProviderConfig } from '../browserAi'
+import { buildTestConnectionReview, testConnection, type ProviderConfig } from '../browserAi'
 
 const cfg = (over: Partial<ProviderConfig>): ProviderConfig => ({
   providerId: 'openrouter',
@@ -21,6 +21,29 @@ afterEach(() => {
 })
 
 describe('CORS-vs-auth discriminator', () => {
+  it('reviews the exact provider, model, one-request payload, and billable flag', async () => {
+    const providerConfig = cfg({
+      providerId: 'openrouter',
+      model: 'vendor/exact-model',
+      apiKey: 'secret-never-in-body'
+    })
+    const review = buildTestConnectionReview(providerConfig)
+
+    expect(review).toMatchObject({
+      providerId: 'openrouter',
+      modelId: 'vendor/exact-model',
+      requestCount: 1,
+      mayBeBillable: true
+    })
+    expect(JSON.stringify(review.payload)).toContain('"content":"ping"')
+    expect(JSON.stringify(review.payload)).not.toContain(providerConfig.apiKey)
+
+    mockFetch(() => new Response('', { status: 401 }))
+    await testConnection(providerConfig)
+    const [, init] = fetchMock().mock.calls[0] as [string, RequestInit]
+    expect(JSON.parse(init.body as string)).toEqual(review.payload)
+  })
+
   it('a READABLE 401 ⇒ reachable, CORS open, "key invalid" verdict', async () => {
     mockFetch(() => new Response('unauthorized', { status: 401 }))
     const r = await testConnection(cfg({ providerId: 'anthropic', apiKey: '' }))

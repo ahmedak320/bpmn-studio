@@ -28,6 +28,12 @@
 
 import type { DiagramLang } from '../editor/langToggle'
 import type { TranslateTextsFn } from './translate'
+import {
+  isTransientHttpStatus,
+  parseRetryAfter,
+  withBoundedRetry,
+  type RetryAttempt
+} from './retry'
 
 // --- typed failure -----------------------------------------------------------
 
@@ -142,13 +148,33 @@ export interface FreeTranslateOpts {
   minDelayMs?: number
   /** Per-request abort budget, covering headers AND body (default 20000ms). */
   timeoutMs?: number
+  /** Bounded attempts per service hop (default 3). */
+  maxAttempts?: number
+  /** Initial transient-failure backoff (default 500ms). */
+  baseRetryDelayMs?: number
+  /** Maximum transient-failure backoff (default 8000ms). */
+  maxRetryDelayMs?: number
+  /** Reports each physical request and any scheduled retry. */
+  onAttempt?: (attempt: FreeTranslationAttempt) => void
+  /** Test seam; defaults to the shared abortable timer. */
+  retryWait?: (delayMs: number, signal?: AbortSignal) => Promise<void>
   /** Optional caller cancellation; per-run signals take precedence. */
   signal?: AbortSignal
+}
+
+export interface FreeTranslationAttempt extends RetryAttempt {
+  service: 'google' | 'mymemory'
+  /** One-based source-text position within this translation call. */
+  item: number
+  itemCount: number
 }
 
 const DEFAULT_CONCURRENCY = 4
 const DEFAULT_MIN_DELAY_MS = 150
 const DEFAULT_TIMEOUT_MS = 20000
+const DEFAULT_MAX_ATTEMPTS = 3
+const DEFAULT_BASE_RETRY_DELAY_MS = 500
+const DEFAULT_MAX_RETRY_DELAY_MS = 8000
 
 function isOffline(): boolean {
   try {
@@ -183,39 +209,104 @@ function sleep(ms: number, signal?: AbortSignal): Promise<void> {
 
 type JsonOutcome = { ok: true; data: unknown } | { ok: false; code: FreeErrorCode }
 
-/** One GET, classified: rejection ⇒ offline/service, 429 ⇒ rate, other
- *  non-OK / unparseable body ⇒ service. A single abort timer spans the whole
- *  request, body read included. */
+class FreeRequestFailure extends Error {
+  constructor(
+    readonly code: FreeErrorCode,
+    readonly retryable: boolean,
+    readonly retryAfterMs?: number
+  ) {
+    super(`free translation request failed (${code})`)
+    this.name = 'FreeRequestFailure'
+  }
+}
+
+interface FreeRequestPolicy {
+  service: FreeTranslationAttempt['service']
+  item: number
+  itemCount: number
+  maxAttempts: number
+  baseRetryDelayMs: number
+  maxRetryDelayMs: number
+  onAttempt?: FreeTranslateOpts['onAttempt']
+  retryWait?: FreeTranslateOpts['retryWait']
+}
+
+/**
+ * One service hop under bounded transient-only retry. Network/timeouts,
+ * 408/429 and the allow-listed transient 5xx statuses are retried; permanent
+ * 4xx responses and malformed successful payloads are returned immediately so
+ * the chain can move to its fallback without silently resending them.
+ */
 async function requestJson(
   fetchImpl: typeof fetch,
   url: string,
   timeoutMs: number,
+  policy: FreeRequestPolicy,
   callerSignal?: AbortSignal
 ): Promise<JsonOutcome> {
-  throwIfAborted(callerSignal)
-  const controller = new AbortController()
-  const onCallerAbort = (): void => controller.abort(callerSignal?.reason)
-  callerSignal?.addEventListener('abort', onCallerAbort, { once: true })
-  const timer = setTimeout(() => controller.abort(), timeoutMs)
   try {
-    let response: Response
-    try {
-      response = await fetchImpl(url, { signal: controller.signal })
-    } catch {
-      throwIfAborted(callerSignal)
-      return { ok: false, code: isOffline() ? 'offline' : 'service' }
+    const data = await withBoundedRetry(
+      async () => {
+        throwIfAborted(callerSignal)
+        const controller = new AbortController()
+        const onCallerAbort = (): void => controller.abort(callerSignal?.reason)
+        callerSignal?.addEventListener('abort', onCallerAbort, { once: true })
+        const timer = setTimeout(() => controller.abort(), timeoutMs)
+        try {
+          let response: Response
+          try {
+            response = await fetchImpl(url, { signal: controller.signal })
+          } catch {
+            throwIfAborted(callerSignal)
+            const code: FreeErrorCode = isOffline() ? 'offline' : 'service'
+            throw new FreeRequestFailure(code, code === 'service')
+          }
+          if (!response.ok) {
+            const code: FreeErrorCode = response.status === 429 ? 'rate' : 'service'
+            throw new FreeRequestFailure(
+              code,
+              isTransientHttpStatus(response.status),
+              parseRetryAfter(response.headers?.get('retry-after') ?? null)
+            )
+          }
+          try {
+            return await response.json()
+          } catch {
+            throwIfAborted(callerSignal)
+            // A readable 2xx response with an unusable body is not evidence of
+            // a transient transport failure. Let the fallback service try it.
+            throw new FreeRequestFailure(isOffline() ? 'offline' : 'service', false)
+          }
+        } finally {
+          clearTimeout(timer)
+          callerSignal?.removeEventListener('abort', onCallerAbort)
+        }
+      },
+      {
+        maxAttempts: policy.maxAttempts,
+        baseDelayMs: policy.baseRetryDelayMs,
+        maxDelayMs: policy.maxRetryDelayMs,
+        signal: callerSignal,
+        shouldRetry: (error) => error instanceof FreeRequestFailure && error.retryable === true,
+        retryAfterMs: (error) =>
+          error instanceof FreeRequestFailure ? error.retryAfterMs : undefined,
+        onAttempt: (attempt) =>
+          policy.onAttempt?.({
+            ...attempt,
+            service: policy.service,
+            item: policy.item,
+            itemCount: policy.itemCount
+          }),
+        wait: policy.retryWait
+      }
+    )
+    return { ok: true, data }
+  } catch (error) {
+    throwIfAborted(callerSignal)
+    return {
+      ok: false,
+      code: error instanceof FreeRequestFailure ? error.code : 'service'
     }
-    if (response.status === 429) return { ok: false, code: 'rate' }
-    if (!response.ok) return { ok: false, code: 'service' }
-    try {
-      return { ok: true, data: await response.json() }
-    } catch {
-      throwIfAborted(callerSignal)
-      return { ok: false, code: isOffline() ? 'offline' : 'service' }
-    }
-  } finally {
-    clearTimeout(timer)
-    callerSignal?.removeEventListener('abort', onCallerAbort)
   }
 }
 
@@ -230,10 +321,17 @@ async function translateOne(
   from: DiagramLang,
   to: DiagramLang,
   timeoutMs: number,
+  policy: Omit<FreeRequestPolicy, 'service'>,
   signal?: AbortSignal
 ): Promise<TextOutcome> {
   let googleCode: FreeErrorCode
-  const google = await requestJson(fetchImpl, googleUrl(text, from, to), timeoutMs, signal)
+  const google = await requestJson(
+    fetchImpl,
+    googleUrl(text, from, to),
+    timeoutMs,
+    { ...policy, service: 'google' },
+    signal
+  )
   if (google.ok) {
     const parsed = parseGoogleResponse(google.data)
     if (parsed !== undefined) return { ok: true, text: parsed }
@@ -243,7 +341,13 @@ async function translateOne(
   }
 
   let myMemoryCode: FreeErrorCode
-  const myMemory = await requestJson(fetchImpl, myMemoryUrl(text, from, to), timeoutMs, signal)
+  const myMemory = await requestJson(
+    fetchImpl,
+    myMemoryUrl(text, from, to),
+    timeoutMs,
+    { ...policy, service: 'mymemory' },
+    signal
+  )
   if (myMemory.ok) {
     try {
       const parsed = parseMyMemoryResponse(myMemory.data)
@@ -280,6 +384,12 @@ export function makeFreeTranslateTexts(opts: FreeTranslateOpts = {}): TranslateT
   const concurrency = Math.max(1, Math.floor(opts.concurrency ?? DEFAULT_CONCURRENCY))
   const minDelayMs = Math.max(0, opts.minDelayMs ?? DEFAULT_MIN_DELAY_MS)
   const timeoutMs = Math.max(1, opts.timeoutMs ?? DEFAULT_TIMEOUT_MS)
+  const maxAttempts = Math.max(1, Math.floor(opts.maxAttempts ?? DEFAULT_MAX_ATTEMPTS))
+  const baseRetryDelayMs = Math.max(0, opts.baseRetryDelayMs ?? DEFAULT_BASE_RETRY_DELAY_MS)
+  const maxRetryDelayMs = Math.max(
+    baseRetryDelayMs,
+    opts.maxRetryDelayMs ?? DEFAULT_MAX_RETRY_DELAY_MS
+  )
 
   return async (texts, from, to, runSignal) => {
     const signal = runSignal ?? opts.signal
@@ -298,7 +408,23 @@ export function makeFreeTranslateTexts(opts: FreeTranslateOpts = {}): TranslateT
         if (!first && minDelayMs > 0) await sleep(minDelayMs, signal)
         first = false
         throwIfAborted(signal)
-        const outcome = await translateOne(fetchImpl, texts[index], from, to, timeoutMs, signal)
+        const outcome = await translateOne(
+          fetchImpl,
+          texts[index],
+          from,
+          to,
+          timeoutMs,
+          {
+            item: index + 1,
+            itemCount: texts.length,
+            maxAttempts,
+            baseRetryDelayMs,
+            maxRetryDelayMs,
+            onAttempt: opts.onAttempt,
+            retryWait: opts.retryWait
+          },
+          signal
+        )
         if (outcome.ok) results[index] = outcome.text
         else failures[index] = outcome.code
       }

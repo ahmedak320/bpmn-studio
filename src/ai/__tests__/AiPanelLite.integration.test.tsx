@@ -91,11 +91,9 @@ vi.mock('../credits', async (importOriginal) => {
   }
 })
 
-vi.mock('../docx', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('../docx')>()
+vi.mock('../browserDocxParser', () => {
   return {
-    ...actual,
-    extractDocxTextAsync: mocks.extractDocx
+    parseDocxFileInWorker: mocks.extractDocx
   }
 })
 
@@ -123,7 +121,6 @@ vi.mock('../../spreadsheet/SpreadsheetImportPanel', () => ({
 }))
 
 import { AiPanelLite, type AiPanelLiteProps } from '../AiPanelLite'
-import { DOCX_ARCHIVE_LIMITS } from '../docx'
 
 const success: GenerateOutput = {
   xml: '<definitions />',
@@ -382,7 +379,10 @@ describe('AiPanelLite consented browser workflows', () => {
     )
     await user.upload(attachmentInput, docx)
     expect(await screen.findByText('ai.attach.extracted')).not.toBeNull()
-    expect(mocks.extractDocx).toHaveBeenCalledOnce()
+    expect(mocks.extractDocx).toHaveBeenCalledWith(
+      docx,
+      expect.objectContaining({ signal: expect.any(AbortSignal) })
+    )
     await user.click(screen.getByRole('button', { name: 'ai.attach.remove' }))
 
     await user.upload(
@@ -405,32 +405,19 @@ describe('AiPanelLite consented browser workflows', () => {
     })
   })
 
-  it('rejects an oversized DOCX before allocating its bytes', async () => {
+  it('surfaces a worker/parser rejection through the localized read-failure boundary', async () => {
     const user = userEvent.setup()
     renderPanel()
 
-    const arrayBuffer = vi.fn(async () => {
-      throw new Error('oversized DOCX must not be read')
-    })
-    const oversized = new File([], 'oversized.docx', {
+    mocks.extractDocx.mockRejectedValueOnce(new Error('archive-too-large'))
+    const rejected = new File([], 'rejected.docx', {
       type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
     })
-    Object.defineProperties(oversized, {
-      size: {
-        configurable: true,
-        value: DOCX_ARCHIVE_LIMITS.maxCompressedBytes + 1
-      },
-      arrayBuffer: {
-        configurable: true,
-        value: arrayBuffer
-      }
-    })
 
-    await user.upload(screen.getByLabelText(/ai\.attach\.label/), oversized)
+    await user.upload(screen.getByLabelText(/ai\.attach\.label/), rejected)
 
     expect(await screen.findByText('ai.attach.readFailed')).not.toBeNull()
-    expect(arrayBuffer).not.toHaveBeenCalled()
-    expect(mocks.extractDocx).not.toHaveBeenCalled()
+    expect(mocks.extractDocx).toHaveBeenCalledOnce()
   })
 
   it('requires review for uncertain links and applies confirm and cancel decisions', async () => {

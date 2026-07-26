@@ -113,4 +113,14 @@ describe('SettingsDialogLite (static render)', () => {
     expect(html).toContain('All time:')
     expect(html).toContain(escapeHtmlText(t('ai.credits.refreshHint')))
   })
+
+  it('shows the exact Test Connection review before consent', () => {
+    installMemoryStorage()
+    const html = render()
+    expect(html).toContain(escapeHtmlText(t('ai.privacy.preview.title')))
+    expect(html).toContain('OpenRouter / z-ai/glm-5.2')
+    expect(html).toContain(escapeHtmlText(t('ai.privacy.requestCount', { count: 1 })))
+    expect(html).toContain('&quot;content&quot;:&quot;ping&quot;')
+    expect(html).toContain(escapeHtmlText(t('settings.testConnection.billableDisclosure')))
+  })
 })

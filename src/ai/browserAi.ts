@@ -635,10 +635,58 @@ export interface TestConnectionResult {
   message: string
 }
 
+export interface TestConnectionReview {
+  providerId: LiteProviderId
+  modelId: string
+  /** The probe always performs one physical inference request. */
+  requestCount: 1
+  mayBeBillable: true
+  /** Exact provider body; credentials live only in headers/the Gemini URL. */
+  payload: Record<string, unknown>
+}
+
 function fallbackProbeModel(providerId: LiteProviderId): string {
   const d = defaultLiteModelId(providerId)
   if (d) return d
   return providerId === 'openrouter' ? 'z-ai/glm-5.2' : 'probe'
+}
+
+const TEST_CONNECTION_MESSAGES: LlmMessage[] = [{ role: 'user', content: 'ping' }]
+const TEST_CONNECTION_BUILD_OPTS: BuildOpts = {
+  maxTokens: 1,
+  jsonMode: false
+}
+
+function buildTestConnectionRequest(cfg: ProviderConfig): {
+  cfg: ProviderConfig
+  request: BuiltRequest
+} {
+  const probeCfg: ProviderConfig = {
+    ...cfg,
+    apiKey: cfg.apiKey || DUMMY_PROBE_KEY,
+    model: cfg.model || fallbackProbeModel(cfg.providerId)
+  }
+  return {
+    cfg: probeCfg,
+    request: buildRequest(probeCfg, TEST_CONNECTION_MESSAGES, TEST_CONNECTION_BUILD_OPTS)
+  }
+}
+
+/**
+ * Exact, credential-free review data for the probe that testConnection sends.
+ * The UI renders this before enabling consent, and both paths share the same
+ * request builder/constants so the reviewed payload cannot drift from the
+ * executed one.
+ */
+export function buildTestConnectionReview(cfg: ProviderConfig): TestConnectionReview {
+  const built = buildTestConnectionRequest(cfg)
+  return {
+    providerId: built.cfg.providerId,
+    modelId: built.cfg.model,
+    requestCount: 1,
+    mayBeBillable: true,
+    payload: built.request.body
+  }
 }
 
 function interpretProbe(status: number): TestConnectionResult {
@@ -676,15 +724,7 @@ function interpretProbe(status: number): TestConnectionResult {
  * a key (this is also the e2e's key-free way to prove the providers are live).
  */
 export async function testConnection(cfg: ProviderConfig): Promise<TestConnectionResult> {
-  const probeCfg: ProviderConfig = {
-    ...cfg,
-    apiKey: cfg.apiKey || DUMMY_PROBE_KEY,
-    model: cfg.model || fallbackProbeModel(cfg.providerId)
-  }
-  const req = buildRequest(probeCfg, [{ role: 'user', content: 'ping' }], {
-    maxTokens: 1,
-    jsonMode: false
-  })
+  const { request: req } = buildTestConnectionRequest(cfg)
   let status: number
   try {
     // The probe only needs the status (CORS-open ⇔ any readable response); it

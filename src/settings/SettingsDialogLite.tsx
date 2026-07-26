@@ -12,7 +12,12 @@ import {
 } from '../ai/keys'
 import { getProviderSelection, setProviderSelection } from '../ai/providerSelection'
 import { defaultLiteModelId, getLiteProvider } from '../ai/providersLite'
-import { testConnection, type ProviderConfig, type TestConnectionResult } from '../ai/browserAi'
+import {
+  buildTestConnectionReview,
+  testConnection,
+  type ProviderConfig,
+  type TestConnectionResult
+} from '../ai/browserAi'
 import {
   fetchOpenRouterCredits,
   getUsageSnapshot,
@@ -189,6 +194,11 @@ export function SettingsDialogLite({
     }
   }
 
+  const testModelFor = (providerId: LiteProviderId): string =>
+    selectedProvider === providerId && selectedModel.trim()
+      ? selectedModel.trim()
+      : defaultLiteModelId(providerId)
+
   const runTest = async (providerId: LiteProviderId): Promise<void> => {
     setTesting((t) => ({ ...t, [providerId]: true }))
     setResults((r) => {
@@ -202,10 +212,7 @@ export function SettingsDialogLite({
     const apiKey = draftKey && draftKey.trim() ? draftKey.trim() : getKey(providerId)
     const cfg: ProviderConfig = {
       providerId,
-      model:
-        selectedProvider === providerId && selectedModel.trim()
-          ? selectedModel.trim()
-          : defaultLiteModelId(providerId),
+      model: testModelFor(providerId),
       apiKey,
       referer: typeof location !== 'undefined' ? location.origin : undefined,
       title: t('app.title')
@@ -331,6 +338,8 @@ export function SettingsDialogLite({
                   const providerId = event.target.value as LiteProviderId | ''
                   setSelectedProvider(providerId)
                   setSelectedModel(providerId ? defaultLiteModelId(providerId) : '')
+                  setTestConsent({})
+                  setResults({})
                 }}
                 style={input}
               >
@@ -350,7 +359,11 @@ export function SettingsDialogLite({
                     type="text"
                     value={selectedModel}
                     list="settings-ai-models"
-                    onChange={(event) => setSelectedModel(event.target.value)}
+                    onChange={(event) => {
+                      setSelectedModel(event.target.value)
+                      setTestConsent({})
+                      setResults({})
+                    }}
                     style={input}
                   />
                   <datalist id="settings-ai-models">
@@ -366,7 +379,11 @@ export function SettingsDialogLite({
                   <span>{t('ai.model.label')}</span>
                   <select
                     value={selectedModel}
-                    onChange={(event) => setSelectedModel(event.target.value)}
+                    onChange={(event) => {
+                      setSelectedModel(event.target.value)
+                      setTestConsent({})
+                      setResults({})
+                    }}
                     style={input}
                   >
                     {getLiteProvider(selectedProvider).models.map((model) => (
@@ -431,6 +448,11 @@ export function SettingsDialogLite({
             const last4 = keyLast4(p.id)
             const value = drafts[p.id] ?? ''
             const result = results[p.id]
+            const testReview = buildTestConnectionReview({
+              providerId: p.id,
+              model: testModelFor(p.id),
+              apiKey: ''
+            })
             return (
               <section
                 key={p.id}
@@ -475,6 +497,45 @@ export function SettingsDialogLite({
                   onChange={(e) => setDrafts((d) => ({ ...d, [p.id]: e.target.value }))}
                   style={input}
                 />
+
+                <div
+                  role="note"
+                  aria-label={t('ai.privacy.preview.title')}
+                  style={{
+                    padding: 8,
+                    border: '1px solid var(--orbitpm-border)',
+                    borderRadius: 6,
+                    display: 'grid',
+                    gap: 4,
+                    fontSize: 11.5,
+                    color: 'var(--orbitpm-muted)'
+                  }}
+                >
+                  <strong style={{ color: 'inherit' }}>{t('ai.privacy.preview.title')}</strong>
+                  <span>
+                    {t('ai.privacy.providerModel', {
+                      provider: p.label,
+                      model: testReview.modelId
+                    })}
+                  </span>
+                  <span>
+                    {t('ai.privacy.requestCount', {
+                      count: testReview.requestCount
+                    })}
+                  </span>
+                  <code
+                    dir="ltr"
+                    style={{
+                      padding: 6,
+                      borderRadius: 4,
+                      background: 'rgba(127,127,127,0.08)',
+                      overflowWrap: 'anywhere',
+                      whiteSpace: 'pre-wrap'
+                    }}
+                  >
+                    {JSON.stringify(testReview.payload)}
+                  </code>
+                </div>
 
                 <label style={{ display: 'flex', gap: 8, alignItems: 'flex-start' }}>
                   <input

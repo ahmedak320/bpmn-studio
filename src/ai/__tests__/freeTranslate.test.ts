@@ -192,12 +192,79 @@ describe('makeFreeTranslateTexts', () => {
     expect(myMemoryUrls[0]).toContain('q=B')
   })
 
+  it('retries transient failures with bounded exponential backoff and reports attempts', async () => {
+    let googleCalls = 0
+    const waits: number[] = []
+    const attempts: Array<{
+      service: string
+      attempt: number
+      retryInMs?: number
+    }> = []
+    const { fetchImpl, urls } = makeFetch(() => {
+      googleCalls += 1
+      return googleCalls < 3 ? jsonResponse('temporarily down', 503) : googleOk('طلب')
+    })
+    const translate = makeFreeTranslateTexts({
+      fetchImpl,
+      minDelayMs: 0,
+      maxAttempts: 3,
+      baseRetryDelayMs: 10,
+      maxRetryDelayMs: 20,
+      retryWait: async (delayMs) => void waits.push(delayMs),
+      onAttempt: (attempt) => attempts.push(attempt)
+    })
+
+    await expect(translate(['Order'], 'en', 'ar')).resolves.toEqual(['طلب'])
+    expect(urls).toHaveLength(3)
+    expect(waits).toEqual([10, 20])
+    expect(
+      attempts
+        .filter((attempt) => attempt.retryInMs === undefined)
+        .map(({ service, attempt }) => [service, attempt])
+    ).toEqual([
+      ['google', 1],
+      ['google', 2],
+      ['google', 3]
+    ])
+    expect(attempts.filter((attempt) => attempt.retryInMs !== undefined)).toMatchObject([
+      { service: 'google', attempt: 1, retryInMs: 10 },
+      { service: 'google', attempt: 2, retryInMs: 20 }
+    ])
+  })
+
+  it('does not retry a permanent 4xx and moves directly to the fallback', async () => {
+    const waits: number[] = []
+    const attempts: Array<{ service: string; attempt: number; retryInMs?: number }> = []
+    const { fetchImpl, urls } = makeFetch((url) =>
+      url.startsWith(GOOGLE_FREE_URL) ? jsonResponse('bad request', 400) : myMemoryOk('طلب')
+    )
+    const translate = makeFreeTranslateTexts({
+      fetchImpl,
+      minDelayMs: 0,
+      baseRetryDelayMs: 10,
+      retryWait: async (delayMs) => void waits.push(delayMs),
+      onAttempt: (attempt) => attempts.push(attempt)
+    })
+
+    await expect(translate(['Order'], 'en', 'ar')).resolves.toEqual(['طلب'])
+    expect(urls).toHaveLength(2)
+    expect(waits).toEqual([])
+    expect(attempts).toEqual([
+      { service: 'google', item: 1, itemCount: 1, attempt: 1, maxAttempts: 3 },
+      { service: 'mymemory', item: 1, itemCount: 1, attempt: 1, maxAttempts: 3 }
+    ])
+  })
+
   it('leaves a positional undefined slot when both services fail for one text', async () => {
     const { fetchImpl } = makeFetch((url) => {
       if (q(url) === 'bad') return jsonResponse('broken', 500)
       return url.startsWith(GOOGLE_FREE_URL) ? googleOk(`G:${q(url)}`) : myMemoryOk(`MM:${q(url)}`)
     })
-    const translate = makeFreeTranslateTexts({ fetchImpl, minDelayMs: 0 })
+    const translate = makeFreeTranslateTexts({
+      fetchImpl,
+      minDelayMs: 0,
+      baseRetryDelayMs: 0
+    })
 
     const results = await translate(['ok1', 'bad', 'ok2'], 'en', 'ar')
 
@@ -206,7 +273,11 @@ describe('makeFreeTranslateTexts', () => {
 
   it('throws FreeTranslateError(service, chain) when EVERY text fails the same way', async () => {
     const { fetchImpl } = makeFetch(() => jsonResponse('down', 503))
-    const translate = makeFreeTranslateTexts({ fetchImpl, minDelayMs: 0 })
+    const translate = makeFreeTranslateTexts({
+      fetchImpl,
+      minDelayMs: 0,
+      baseRetryDelayMs: 0
+    })
 
     const err = await translate(['A', 'B'], 'en', 'ar').then(
       () => null,
@@ -222,7 +293,11 @@ describe('makeFreeTranslateTexts', () => {
     const { fetchImpl } = makeFetch((url) =>
       url.startsWith(GOOGLE_FREE_URL) ? jsonResponse('x', 500) : jsonResponse(null, 429)
     )
-    const translate = makeFreeTranslateTexts({ fetchImpl, minDelayMs: 0 })
+    const translate = makeFreeTranslateTexts({
+      fetchImpl,
+      minDelayMs: 0,
+      baseRetryDelayMs: 0
+    })
 
     const err = await translate(['A'], 'en', 'ar').then(
       () => null,
@@ -244,7 +319,11 @@ describe('makeFreeTranslateTexts', () => {
             }
           })
     )
-    const err = await makeFreeTranslateTexts({ fetchImpl, minDelayMs: 0 })(['A'], 'en', 'ar').then(
+    const err = await makeFreeTranslateTexts({
+      fetchImpl,
+      minDelayMs: 0,
+      baseRetryDelayMs: 0
+    })(['A'], 'en', 'ar').then(
       () => null,
       (e: unknown) => e
     )
@@ -256,7 +335,11 @@ describe('makeFreeTranslateTexts', () => {
     const { fetchImpl } = makeFetch(() => {
       throw new Error('network down')
     })
-    const err = await makeFreeTranslateTexts({ fetchImpl, minDelayMs: 0 })(['A'], 'en', 'ar').then(
+    const err = await makeFreeTranslateTexts({
+      fetchImpl,
+      minDelayMs: 0,
+      baseRetryDelayMs: 0
+    })(['A'], 'en', 'ar').then(
       () => null,
       (e: unknown) => e
     )
@@ -269,7 +352,11 @@ describe('makeFreeTranslateTexts', () => {
     const { fetchImpl } = makeFetch(() => {
       throw new Error('connection reset')
     })
-    const err = await makeFreeTranslateTexts({ fetchImpl, minDelayMs: 0 })(['A'], 'en', 'ar').then(
+    const err = await makeFreeTranslateTexts({
+      fetchImpl,
+      minDelayMs: 0,
+      baseRetryDelayMs: 0
+    })(['A'], 'en', 'ar').then(
       () => null,
       (e: unknown) => e
     )
@@ -282,11 +369,11 @@ describe('makeFreeTranslateTexts', () => {
       if (q(url) === 'b') return jsonResponse(null, 429)
       return jsonResponse('broken', 500)
     })
-    const results = await makeFreeTranslateTexts({ fetchImpl, minDelayMs: 0 })(
-      ['a', 'b'],
-      'en',
-      'ar'
-    )
+    const results = await makeFreeTranslateTexts({
+      fetchImpl,
+      minDelayMs: 0,
+      baseRetryDelayMs: 0
+    })(['a', 'b'], 'en', 'ar')
     expect(results).toEqual([undefined, undefined])
   })
 

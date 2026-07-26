@@ -113,7 +113,7 @@ describe('reviewed translation execution', () => {
         providerId: 'free',
         kind: 'free'
       }).estimatedRequests
-    ).toEqual({ min: 1, max: 2 })
+    ).toEqual({ min: 1, max: 6 })
   })
 
   it('does not call a provider before consent for the exact current disclosure', async () => {

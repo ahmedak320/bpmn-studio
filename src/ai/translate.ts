@@ -478,7 +478,12 @@ export function buildTranslationExternalReview(
     outbound,
     estimatedRequests:
       provider.kind === 'free'
-        ? { min: outbound.length, max: outbound.length * 2 }
+        ? {
+            min: outbound.length,
+            // Each text tries Google first, then MyMemory as a fallback. Both
+            // service hops have up to three transient-only transport attempts.
+            max: outbound.length * 6
+          }
         : {
             min: requests,
             // One malformed model response can trigger one parse-repair call;
