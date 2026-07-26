@@ -3,6 +3,7 @@ import { strToU8, zipSync } from 'fflate'
 
 import {
   ArchivePreflightError,
+  archiveCrc32,
   extractPreflightedZip,
   extractPreflightedZipSync,
   preflightZip,
@@ -62,10 +63,7 @@ function centralEntries(bytes: Uint8Array): number[] {
   for (let index = 0; index < count; index += 1) {
     offsets.push(cursor)
     cursor +=
-      46 +
-      readU16(bytes, cursor + 28) +
-      readU16(bytes, cursor + 30) +
-      readU16(bytes, cursor + 32)
+      46 + readU16(bytes, cursor + 28) + readU16(bytes, cursor + 30) + readU16(bytes, cursor + 32)
   }
   return offsets
 }
@@ -84,10 +82,7 @@ function localForCentral(bytes: Uint8Array, central: number): number {
   return readU32(bytes, central + 42)
 }
 
-function cloneAndMutate(
-  source: Uint8Array,
-  mutate: (bytes: Uint8Array) => void
-): Uint8Array {
+function cloneAndMutate(source: Uint8Array, mutate: (bytes: Uint8Array) => void): Uint8Array {
   const copy = source.slice()
   mutate(copy)
   return copy
@@ -138,22 +133,15 @@ describe('ZIP central-directory preflight', () => {
 
     expect(Object.keys(syncResult)).toEqual(['nested/diagram.bpmn', 'عربي/عملية.bpmn'])
     expect(Object.keys(asyncResult)).toEqual(Object.keys(syncResult))
-    expect(new TextDecoder().decode(asyncResult['nested/diagram.bpmn'])).toBe(
-      '<definitions/>'
-    )
+    expect(new TextDecoder().decode(asyncResult['nested/diagram.bpmn'])).toBe('<definitions/>')
   })
 
   it('normalizes ordinary backslash separators but rejects traversal and absolute paths', () => {
     const safe = stored({ 'nested\\diagram.bpmn': strToU8('ok') })
-    expect(preflightZip(safe, LIMITS).entries[0].normalizedName).toBe(
-      'nested/diagram.bpmn'
-    )
+    expect(preflightZip(safe, LIMITS).entries[0].normalizedName).toBe('nested/diagram.bpmn')
 
     for (const name of ['../escape.bpmn', 'safe\\..\\escape.bpmn', '/abs.bpmn', 'C:\\x.bpmn']) {
-      expectArchiveCode(
-        () => preflightZip(stored({ [name]: strToU8('x') }), LIMITS),
-        'unsafe-path'
-      )
+      expectArchiveCode(() => preflightZip(stored({ [name]: strToU8('x') }), LIMITS), 'unsafe-path')
     }
   })
 
@@ -165,10 +153,10 @@ describe('ZIP central-directory preflight', () => {
     )
     expectArchiveCode(
       () =>
-        preflightZip(
-          stored({ 'one.txt': strToU8('1'), 'two.txt': strToU8('2') }),
-          { ...LIMITS, maxEntries: 1 }
-        ),
+        preflightZip(stored({ 'one.txt': strToU8('1'), 'two.txt': strToU8('2') }), {
+          ...LIMITS,
+          maxEntries: 1
+        }),
       'too-many-entries'
     )
     expectArchiveCode(
@@ -238,10 +226,7 @@ describe('ZIP central-directory preflight', () => {
       writeU16(bytes, central + 10, 99)
       writeU16(bytes, local + 8, 99)
     })
-    expectArchiveCode(
-      () => preflightZip(unsupportedMethod, LIMITS),
-      'unsupported-compression'
-    )
+    expectArchiveCode(() => preflightZip(unsupportedMethod, LIMITS), 'unsupported-compression')
 
     const zip64 = cloneAndMutate(base, (bytes) => {
       writeU32(bytes, centralEntries(bytes)[0] + 24, 0xffffffff)
@@ -272,10 +257,7 @@ describe('ZIP central-directory preflight', () => {
       writeU16(bytes, central + 8, readU16(bytes, central + 8) & ~0x0800)
       writeU16(bytes, local + 6, readU16(bytes, local + 6) & ~0x0800)
     })
-    expectArchiveCode(
-      () => preflightZip(archive, LIMITS),
-      'unsupported-filename-encoding'
-    )
+    expectArchiveCode(() => preflightZip(archive, LIMITS), 'unsupported-filename-encoding')
   })
 
   it('rejects malformed central/local headers and truncated archives', () => {
@@ -308,10 +290,40 @@ describe('ZIP central-directory preflight', () => {
       writeU32(bytes, local + 14, wrongCrc)
     })
     const preflight = preflightZip(archive, LIMITS)
-    expectArchiveCode(
-      () => extractPreflightedZipSync(archive, preflight),
-      'crc-mismatch'
+    expectArchiveCode(() => extractPreflightedZipSync(archive, preflight), 'crc-mismatch')
+  })
+
+  it('rejects a deflate stream whose real output exceeds matching declared metadata', async () => {
+    const archive = cloneAndMutate(
+      zipSync({ 'file.txt': strToU8('A'.repeat(16_384)) }),
+      (bytes) => {
+        const central = centralEntryNamed(bytes, 'file.txt')
+        const local = localForCentral(bytes, central)
+        const truncated = strToU8('A')
+        const truncatedCrc = archiveCrc32(truncated)
+        writeU32(bytes, central + 16, truncatedCrc)
+        writeU32(bytes, central + 24, truncated.byteLength)
+        writeU32(bytes, local + 14, truncatedCrc)
+        writeU32(bytes, local + 22, truncated.byteLength)
+      }
     )
+    const preflight = preflightZip(archive, LIMITS)
+
+    expectArchiveCode(() => extractPreflightedZipSync(archive, preflight), 'malformed')
+    await expect(extractPreflightedZip(archive, preflight)).rejects.toMatchObject({
+      code: 'malformed',
+      entry: 'file.txt'
+    })
+  })
+
+  it('rejects mismatched local size metadata before expansion', () => {
+    const archive = cloneAndMutate(stored({ 'file.txt': strToU8('data') }), (bytes) => {
+      const central = centralEntryNamed(bytes, 'file.txt')
+      const local = localForCentral(bytes, central)
+      writeU32(bytes, local + 22, readU32(bytes, local + 22) + 1)
+    })
+
+    expectArchiveCode(() => preflightZip(archive, LIMITS), 'malformed')
   })
 
   it('provides async preflight/extraction APIs with AbortSignal cancellation', async () => {
@@ -327,6 +339,23 @@ describe('ZIP central-directory preflight', () => {
     await expect(
       extractPreflightedZip(archive, preflight, { signal: controller.signal })
     ).rejects.toMatchObject({ code: 'aborted' })
-  })
 
+    const runningController = new AbortController()
+    let randomState = 0x12345678
+    const incompressible = Uint8Array.from({ length: 512 * 1024 }, () => {
+      randomState ^= randomState << 13
+      randomState ^= randomState >>> 17
+      randomState ^= randomState << 5
+      return randomState & 0xff
+    })
+    const compressed = zipSync({
+      'large.bin': incompressible
+    })
+    const runningPreflight = preflightZip(compressed, LIMITS)
+    const extraction = extractPreflightedZip(compressed, runningPreflight, {
+      signal: runningController.signal
+    })
+    runningController.abort()
+    await expect(extraction).rejects.toMatchObject({ code: 'aborted' })
+  })
 })

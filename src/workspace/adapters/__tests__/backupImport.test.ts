@@ -22,10 +22,41 @@ import { validMultiProcessXml } from '../../../validation/__tests__/fixtures'
 const text = (value: string) => new TextEncoder().encode(value)
 const decode = (value: Uint8Array) => new TextDecoder().decode(value)
 
+function readU16(bytes: Uint8Array, offset: number): number {
+  return new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength).getUint16(offset, true)
+}
+
+function readU32(bytes: Uint8Array, offset: number): number {
+  return new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength).getUint32(offset, true)
+}
+
+function writeU32(bytes: Uint8Array, offset: number, value: number): void {
+  new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength).setUint32(offset, value, true)
+}
+
+function centralEntryNamed(bytes: Uint8Array, expected: string): number {
+  let eocd = bytes.byteLength - 22
+  while (eocd >= 0 && readU32(bytes, eocd) !== 0x06054b50) eocd -= 1
+  if (eocd < 0) throw new Error('test ZIP has no end record')
+  const count = readU16(bytes, eocd + 10)
+  let central = readU32(bytes, eocd + 16)
+  for (let index = 0; index < count; index += 1) {
+    const nameLength = readU16(bytes, central + 28)
+    const name = decode(bytes.subarray(central + 46, central + 46 + nameLength))
+    if (name === expected) return central
+    central += 46 + nameLength + readU16(bytes, central + 30) + readU16(bytes, central + 32)
+  }
+  throw new Error(`test ZIP has no central entry named ${expected}`)
+}
+
+function descriptorForCentral(bytes: Uint8Array, central: number): number {
+  const local = readU32(bytes, central + 42)
+  const dataStart = local + 30 + readU16(bytes, local + 26) + readU16(bytes, local + 28)
+  return dataStart + readU32(bytes, central + 20)
+}
+
 const fakeProcessIdentityInspector = async (xml: string) => ({
-  processIds: [...xml.matchAll(/<(?:\w+:)?process\s+id="([^"]+)"/g)].map(
-    (match) => match[1]
-  )
+  processIds: [...xml.matchAll(/<(?:\w+:)?process\s+id="([^"]+)"/g)].map((match) => match[1])
 })
 
 const fakeReviewedBpmnIngestion: ReviewedBpmnIngestionPort = async (xml) => {
@@ -40,9 +71,7 @@ const fakeReviewedBpmnIngestion: ReviewedBpmnIngestionPort = async (xml) => {
   }
 }
 
-async function inspectWorkspaceBackup(
-  ...args: Parameters<typeof inspectWorkspaceBackupCore>
-) {
+async function inspectWorkspaceBackup(...args: Parameters<typeof inspectWorkspaceBackupCore>) {
   const [adapter, backup, options = {}] = args
   return inspectWorkspaceBackupCore(adapter, backup, {
     ...options,
@@ -222,6 +251,40 @@ describe('bounded workspace backup inspection', () => {
     ).rejects.toMatchObject({ code: 'cancelled' })
   })
 
+  it('cross-checks local headers, data descriptors, and expanded CRC before parsing', async () => {
+    const blob = await backupFrom({ 'notes.txt': 'safe backup content' })
+    const original = new Uint8Array(await blob.arrayBuffer())
+    const central = centralEntryNamed(original, 'workspace/notes.txt')
+    const local = readU32(original, central + 42)
+    expect(readU16(original, central + 8) & 0x0008).toBe(0x0008)
+
+    const lyingLocal = original.slice()
+    writeU32(lyingLocal, local + 22, 1)
+    expect(() => preflightWorkspaceBackupZip(lyingLocal)).toThrow(/local header disagrees/)
+
+    const lyingDescriptor = original.slice()
+    const descriptor = descriptorForCentral(lyingDescriptor, central)
+    const descriptorValues =
+      readU32(lyingDescriptor, descriptor) === 0x08074b50 ? descriptor + 4 : descriptor
+    writeU32(
+      lyingDescriptor,
+      descriptorValues + 8,
+      readU32(lyingDescriptor, descriptorValues + 8) + 1
+    )
+    expect(() => preflightWorkspaceBackupZip(lyingDescriptor)).toThrow(/data descriptor disagrees/)
+
+    const lyingCrc = original.slice()
+    const crc = (readU32(lyingCrc, central + 16) ^ 1) >>> 0
+    writeU32(lyingCrc, central + 16, crc)
+    const crcDescriptor = descriptorForCentral(lyingCrc, central)
+    const crcField =
+      readU32(lyingCrc, crcDescriptor) === 0x08074b50 ? crcDescriptor + 4 : crcDescriptor
+    writeU32(lyingCrc, crcField, crc)
+    await expect(
+      inspectWorkspaceBackup(new MemoryWorkspaceAdapter(), new Blob([lyingCrc]))
+    ).rejects.toThrow(/CRC check/)
+  })
+
   it('rejects malformed or unsupported manifests', async () => {
     const blob = await backupFrom({ 'a.bpmn': '<safe />' })
     const archive = unzipSync(new Uint8Array(await blob.arrayBuffer()))
@@ -252,9 +315,7 @@ describe('bounded workspace backup inspection', () => {
       outputDigest: plan.files[0].sha256,
       processIds: ['Process_1', 'Process_2']
     })
-    expect(plan.files[0].reviewedBpmn?.evidence.originalDigest).toBe(
-      plan.files[0].archiveSha256
-    )
+    expect(plan.files[0].reviewedBpmn?.evidence.originalDigest).toBe(plan.files[0].archiveSha256)
 
     const incomplete = await backupFrom({
       'incomplete.bpmn': validMultiProcessXml().replace(' orbitpm:nameAr="بداية"', '')
@@ -512,10 +573,7 @@ describe('transactional workspace backup import', () => {
     ).rejects.toMatchObject({ code: 'integrity-failure' })
 
     const changing = new MemoryWorkspaceAdapter({ beforeWrite })
-    const plan = await inspectWorkspaceBackup(
-      changing,
-      await backupFrom({ 'only.txt': 'one' })
-    )
+    const plan = await inspectWorkspaceBackup(changing, await backupFrom({ 'only.txt': 'one' }))
     changing.storage.capabilities.multipleFiles = false
     await expect(
       applyWorkspaceBackupImportCore(changing, plan, {

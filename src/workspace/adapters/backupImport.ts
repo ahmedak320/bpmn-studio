@@ -1,4 +1,3 @@
-import { unzip } from 'fflate'
 import {
   LocalizationSource,
   type LanguageCode,
@@ -6,9 +5,13 @@ import {
   type ReviewedXmlIngestionReviewer
 } from '../../localization'
 import {
-  getRuntimeValidationAdapters,
-  type BpmnValidationAdapter
-} from '../../validation'
+  ArchivePreflightError,
+  extractPreflightedZip,
+  preflightZip,
+  type ZipPreflightResult,
+  type ZipSafetyLimits
+} from '../../security/archivePreflight'
+import { getRuntimeValidationAdapters, type BpmnValidationAdapter } from '../../validation'
 import {
   assertNonReservedImportPath,
   digestProcessIdentitySnapshot,
@@ -108,6 +111,8 @@ interface ApplyOperation {
 const decoder = new TextDecoder('utf-8', { fatal: true })
 const ZIP_EOCD_SIGNATURE = 0x06054b50
 const ZIP_CENTRAL_SIGNATURE = 0x02014b50
+const MAX_BACKUP_ENTRY_NAME_BYTES = 4 * 1024
+const verifiedZipPreflights = new WeakMap<ZipPreflight, ZipPreflightResult>()
 
 function portablePathKey(path: string): string {
   return normalizeWorkspacePath(path).normalize('NFC').toLocaleLowerCase('en-US')
@@ -154,6 +159,28 @@ function invalidBackup(message: string, path?: string): WorkspaceOperationError 
     path,
     message
   })
+}
+
+function archiveFailure(error: unknown): WorkspaceOperationError {
+  if (error instanceof ArchivePreflightError) {
+    if (error.code === 'aborted') return cancelled(error.entry)
+    return invalidBackup(`Backup ZIP integrity check failed: ${error.message}`, error.entry)
+  }
+  return invalidBackup(
+    `Backup ZIP integrity check failed: ${error instanceof Error ? error.message : String(error)}`
+  )
+}
+
+function sharedZipLimits(limits: ResolvedLimits): ZipSafetyLimits {
+  return {
+    maxCompressedBytes: limits.maxCompressedBytes,
+    maxEntries: limits.maxEntries,
+    maxCentralDirectoryBytes: limits.maxCompressedBytes,
+    maxEntryNameBytes: MAX_BACKUP_ENTRY_NAME_BYTES,
+    maxEntryUncompressedBytes: limits.maxEntryBytes,
+    maxTotalUncompressedBytes: limits.maxDeclaredUncompressedBytes,
+    maxCompressionRatio: limits.maxCompressionRatio
+  }
 }
 
 type UnsealedWorkspaceBackupImportPlan = Omit<
@@ -221,9 +248,7 @@ export async function sealWorkspaceBackupImportPlan(
                 reviewedBpmn: Object.freeze({
                   ...file.reviewedBpmn,
                   processIds: Object.freeze([...file.reviewedBpmn.processIds]),
-                  replacesProcessIds: Object.freeze([
-                    ...file.reviewedBpmn.replacesProcessIds
-                  ])
+                  replacesProcessIds: Object.freeze([...file.reviewedBpmn.replacesProcessIds])
                 })
               }
             : {})
@@ -287,9 +312,11 @@ function decodeZipName(bytes: Uint8Array, utf8: boolean): string {
  */
 export function preflightWorkspaceBackupZip(
   bytesInput: Uint8Array,
-  limitsInput: BackupImportLimits = {}
+  limitsInput: BackupImportLimits = {},
+  signal?: AbortSignal
 ): ZipPreflight {
   const limits = resolvedLimits(limitsInput)
+  throwIfAborted(signal)
   if (bytesInput.byteLength > limits.maxCompressedBytes) {
     throw invalidBackup('Backup exceeds the compressed-size limit.')
   }
@@ -325,6 +352,7 @@ export function preflightWorkspaceBackupZip(
   let declaredUncompressedBytes = 0
   let offset = centralOffset
   for (let index = 0; index < totalEntries; index += 1) {
+    throwIfAborted(signal)
     if (offset + 46 > eocd || uint32(view, offset) !== ZIP_CENTRAL_SIGNATURE) {
       throw invalidBackup('Backup ZIP central directory is truncated.')
     }
@@ -396,32 +424,16 @@ export function preflightWorkspaceBackupZip(
   if (manifest.uncompressedSize > limits.maxManifestBytes) {
     throw invalidBackup('Backup manifest exceeds its size limit.')
   }
-  return { entries, declaredUncompressedBytes }
-}
 
-function extractZip(
-  bytes: Uint8Array,
-  signal: AbortSignal | undefined
-): Promise<Record<string, Uint8Array<ArrayBuffer>>> {
-  throwIfAborted(signal)
-  return new Promise((resolve, reject) => {
-    const expansion: { terminate?: () => void } = {}
-    const onAbort = (): void => {
-      expansion.terminate?.()
-      reject(cancelled())
-    }
-    signal?.addEventListener('abort', onAbort, { once: true })
-    expansion.terminate = unzip(copyBytes(bytes), (error, files) => {
-      signal?.removeEventListener('abort', onAbort)
-      if (error) {
-        reject(invalidBackup(`Backup ZIP expansion failed: ${error.message}`))
-        return
-      }
-      const copied: Record<string, Uint8Array<ArrayBuffer>> = {}
-      for (const [name, value] of Object.entries(files)) copied[name] = copyBytes(value)
-      resolve(copied)
-    })
-  })
+  let verified: ZipPreflightResult
+  try {
+    verified = preflightZip(bytes, sharedZipLimits(limits), signal)
+  } catch (error) {
+    throw archiveFailure(error)
+  }
+  const result = { entries, declaredUncompressedBytes }
+  verifiedZipPreflights.set(result, verified)
+  return result
 }
 
 function parseManifest(bytes: Uint8Array): WorkspaceBackupManifest {
@@ -456,8 +468,18 @@ export async function inspectWorkspaceBackup(
   }
   throwIfAborted(options.signal)
   const compressed = copyBytes(new Uint8Array(await backup.arrayBuffer()))
-  const preflight = preflightWorkspaceBackupZip(compressed, limits)
-  const extracted = await extractZip(compressed, options.signal)
+  throwIfAborted(options.signal)
+  const preflight = preflightWorkspaceBackupZip(compressed, limits, options.signal)
+  const verified = verifiedZipPreflights.get(preflight)
+  if (!verified) throw invalidBackup('Backup ZIP preflight evidence is unavailable.')
+  let extracted: Record<string, Uint8Array>
+  try {
+    extracted = await extractPreflightedZip(compressed, verified, {
+      signal: options.signal
+    })
+  } catch (error) {
+    throw archiveFailure(error)
+  }
   const manifestBytes = extracted[WORKSPACE_BACKUP_MANIFEST_PATH]
   if (!manifestBytes) throw invalidBackup('Backup manifest was not expanded.')
   const manifest = parseManifest(manifestBytes)
@@ -470,8 +492,7 @@ export async function inspectWorkspaceBackup(
     inspector: processIdentityInspector,
     signal: options.signal
   })
-  const processIdentityDigest =
-    await digestProcessIdentitySnapshot(processIdentitySnapshot)
+  const processIdentityDigest = await digestProcessIdentitySnapshot(processIdentitySnapshot)
 
   const directories = [
     ...new Set(manifest.directories.map((path) => normalizeWorkspacePath(path)))
@@ -569,9 +590,7 @@ export async function inspectWorkspaceBackup(
   const currentIdentityById = new Map(
     processIdentitySnapshot
       .filter(
-        (
-          entry
-        ): entry is WorkspaceProcessIdentitySnapshotEntry & { readonly path: string } =>
+        (entry): entry is WorkspaceProcessIdentitySnapshotEntry & { readonly path: string } =>
           entry.path !== null
       )
       .map((entry) => [entry.processId, entry.path])
@@ -581,10 +600,8 @@ export async function inspectWorkspaceBackup(
       (left, right) => left.localeCompare(right, 'en')
     )
   )
-  const reviewedBpmnIngestion =
-    options.reviewedBpmnIngestion ?? secureReviewedBpmnIngestion
-  const validationAdapters =
-    options.validationAdapters ?? getRuntimeValidationAdapters()
+  const reviewedBpmnIngestion = options.reviewedBpmnIngestion ?? secureReviewedBpmnIngestion
+  const validationAdapters = options.validationAdapters ?? getRuntimeValidationAdapters()
   for (let index = 0; index < files.length; index += 1) {
     const file = files[index]
     const inspectedProcessIds = incomingIdentityByPath.get(file.path)
@@ -941,10 +958,7 @@ export async function applyWorkspaceBackupImport(
   await verifyWorkspaceBackupImportPlan(adapter, plan)
   if (options.currentProcessIndex !== undefined || options.currentProcessIds !== undefined) {
     const suppliedDigest = await digestProcessIdentitySnapshot(
-      normalizeProcessIdentitySnapshot(
-        options.currentProcessIndex,
-        options.currentProcessIds
-      )
+      normalizeProcessIdentitySnapshot(options.currentProcessIndex, options.currentProcessIds)
     )
     if (!equalHash(suppliedDigest, plan.processIdentityDigest)) {
       throw invalidBackup('Supplied process identities changed after backup review.')
@@ -956,10 +970,7 @@ export async function applyWorkspaceBackupImport(
       signal: options.signal
     })
     if (
-      !equalHash(
-        await digestProcessIdentitySnapshot(currentSnapshot),
-        plan.processIdentityDigest
-      )
+      !equalHash(await digestProcessIdentitySnapshot(currentSnapshot), plan.processIdentityDigest)
     ) {
       throw invalidBackup('Workspace process identities changed after backup review.')
     }

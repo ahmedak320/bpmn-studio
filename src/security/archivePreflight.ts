@@ -1,4 +1,4 @@
-import { unzip, unzipSync } from 'fflate'
+import { Inflate } from 'fflate'
 
 /** Limits are deliberately supplied by each archive consumer. */
 export interface ZipSafetyLimits {
@@ -55,6 +55,8 @@ export interface ZipPreflightEntry {
   crc32: number
   flags: number
   localHeaderOffset: number
+  /** Start of the raw compressed payload verified from the local header. */
+  dataOffset: number
   directory: boolean
 }
 
@@ -82,6 +84,8 @@ const ENCRYPTION_FLAGS = 0x2041 // traditional, strong, or central-directory enc
 const DATA_DESCRIPTOR_FLAG = 0x0008
 const UTF8_FLAG = 0x0800
 const CONTROL_CHARS = /[\x00-\x1f\x7f]/
+const INFLATE_INPUT_CHUNK_BYTES = 4 * 1024
+const INFLATE_CHUNKS_PER_YIELD = 16
 
 function fail(code: ArchiveErrorCode, message: string, entry?: string): never {
   throw new ArchivePreflightError(code, message, entry)
@@ -172,10 +176,7 @@ function validateExtraFields(
 
 function decodeEntryName(bytes: Uint8Array, utf8: boolean): string {
   if (!utf8 && bytes.some((byte) => byte >= 0x80)) {
-    fail(
-      'unsupported-filename-encoding',
-      'Non-ASCII ZIP names must use the UTF-8 filename flag'
-    )
+    fail('unsupported-filename-encoding', 'Non-ASCII ZIP names must use the UTF-8 filename flag')
   }
   try {
     return new TextDecoder('utf-8', { fatal: true }).decode(bytes)
@@ -201,9 +202,7 @@ export function normalizeZipEntryPath(rawName: string): string {
   const components = body.split('/')
   if (
     body === '' ||
-    components.some(
-      (component) => component === '' || component === '.' || component === '..'
-    )
+    components.some((component) => component === '' || component === '.' || component === '..')
   ) {
     fail('unsafe-path', 'ZIP entry path contains an unsafe segment', rawName)
   }
@@ -244,10 +243,7 @@ export function preflightZip(
 ): ZipPreflightResult {
   assertNotAborted(signal)
   if (data.byteLength > limits.maxCompressedBytes) {
-    fail(
-      'compressed-size-limit',
-      `Compressed archive exceeds ${limits.maxCompressedBytes} bytes`
-    )
+    fail('compressed-size-limit', `Compressed archive exceeds ${limits.maxCompressedBytes} bytes`)
   }
 
   const eocdOffset = findEocd(data)
@@ -278,12 +274,7 @@ export function preflightZip(
       `ZIP central directory exceeds ${limits.maxCentralDirectoryBytes} bytes`
     )
   }
-  const centralEnd = checkedEnd(
-    centralOffset,
-    centralSize,
-    data.length,
-    'ZIP central directory'
-  )
+  const centralEnd = checkedEnd(centralOffset, centralSize, data.length, 'ZIP central directory')
   if (centralEnd !== eocdOffset) {
     fail('malformed', 'ZIP central directory does not end at the end record')
   }
@@ -335,10 +326,7 @@ export function preflightZip(
       fail('unsupported-compression', `ZIP compression method ${method} is not supported`)
     }
     if (nameLength === 0 || nameLength > limits.maxEntryNameBytes) {
-      fail(
-        'entry-name-limit',
-        `ZIP entry name length exceeds ${limits.maxEntryNameBytes} bytes`
-      )
+      fail('entry-name-limit', `ZIP entry name length exceeds ${limits.maxEntryNameBytes} bytes`)
     }
 
     const variableLength = nameLength + extraLength + commentLength
@@ -430,12 +418,7 @@ export function preflightZip(
       centralOffset,
       'ZIP local header'
     )
-    const dataEnd = checkedEnd(
-      dataStart,
-      compressedSize,
-      centralOffset,
-      'ZIP compressed entry'
-    )
+    const dataEnd = checkedEnd(dataStart, compressedSize, centralOffset, 'ZIP compressed entry')
 
     let localRecordEnd = dataEnd
     if ((flags & DATA_DESCRIPTOR_FLAG) === 0) {
@@ -447,22 +430,31 @@ export function preflightZip(
         fail('malformed', 'ZIP local and central sizes or CRC disagree', normalizedName)
       }
     } else {
-      let descriptor = dataEnd
-      if (readU32(data, descriptor) === DATA_DESCRIPTOR_SIGNATURE) descriptor += 4
-      const descriptorEnd = checkedEnd(
-        descriptor,
-        12,
-        centralOffset,
-        'ZIP data descriptor'
-      )
-      if (
-        readU32(data, descriptor) !== crc ||
-        readU32(data, descriptor + 4) !== compressedSize ||
-        readU32(data, descriptor + 8) !== uncompressedSize
-      ) {
+      const localFieldsAreEmpty =
+        localCrc === 0 && localCompressedSize === 0 && localUncompressedSize === 0
+      const localFieldsMatch =
+        localCrc === crc &&
+        localCompressedSize === compressedSize &&
+        localUncompressedSize === uncompressedSize
+      if (!localFieldsAreEmpty && !localFieldsMatch) {
+        fail('malformed', 'ZIP local header disagrees with its data descriptor', normalizedName)
+      }
+
+      const unsignedDescriptorEnd = checkedEnd(dataEnd, 12, centralOffset, 'ZIP data descriptor')
+      const unsignedDescriptorMatches =
+        readU32(data, dataEnd) === crc &&
+        readU32(data, dataEnd + 4) === compressedSize &&
+        readU32(data, dataEnd + 8) === uncompressedSize
+      const signedDescriptorMatches =
+        readU32(data, dataEnd) === DATA_DESCRIPTOR_SIGNATURE &&
+        dataEnd + 16 <= centralOffset &&
+        readU32(data, dataEnd + 4) === crc &&
+        readU32(data, dataEnd + 8) === compressedSize &&
+        readU32(data, dataEnd + 12) === uncompressedSize
+      if (!unsignedDescriptorMatches && !signedDescriptorMatches) {
         fail('malformed', 'ZIP data descriptor disagrees with the central header', normalizedName)
       }
-      localRecordEnd = descriptorEnd
+      localRecordEnd = signedDescriptorMatches ? dataEnd + 16 : unsignedDescriptorEnd
     }
 
     const directory = normalizedName.endsWith('/')
@@ -475,6 +467,7 @@ export function preflightZip(
       crc32: crc,
       flags,
       localHeaderOffset,
+      dataOffset: dataStart,
       directory
     })
     localRanges.push({ start: localHeaderOffset, end: localRecordEnd, name: normalizedName })
@@ -542,27 +535,141 @@ function selectedEntries(
   return preflight.entries.filter((entry) => !entry.directory && (!include || include(entry)))
 }
 
-function validateExtracted(
-  extracted: Record<string, Uint8Array>,
-  selected: ZipPreflightEntry[],
+function compressedEntryBytes(data: Uint8Array, entry: ZipPreflightEntry): Uint8Array {
+  const end = checkedEnd(
+    entry.dataOffset,
+    entry.compressedSize,
+    data.length,
+    'ZIP compressed entry'
+  )
+  return data.subarray(entry.dataOffset, end)
+}
+
+function validateExpandedEntry(
+  bytes: Uint8Array,
+  entry: ZipPreflightEntry,
   signal?: AbortSignal
-): Record<string, Uint8Array> {
-  const result: Record<string, Uint8Array> = Object.create(null) as Record<
-    string,
-    Uint8Array
-  >
-  for (const entry of selected) {
-    assertNotAborted(signal)
-    const bytes = extracted[entry.name]
-    if (!bytes || bytes.byteLength !== entry.uncompressedSize) {
-      fail('malformed', 'Expanded ZIP entry does not match its declared size', entry.normalizedName)
-    }
-    if (archiveCrc32(bytes) !== entry.crc32) {
-      fail('crc-mismatch', 'Expanded ZIP entry failed its CRC check', entry.normalizedName)
-    }
-    result[entry.normalizedName] = bytes
+): Uint8Array {
+  assertNotAborted(signal)
+  if (bytes.byteLength !== entry.uncompressedSize) {
+    fail('malformed', 'Expanded ZIP entry does not match its declared size', entry.normalizedName)
   }
-  return result
+  if (archiveCrc32(bytes) !== entry.crc32) {
+    fail('crc-mismatch', 'Expanded ZIP entry failed its CRC check', entry.normalizedName)
+  }
+  return bytes
+}
+
+interface BoundedEntryInflater {
+  readonly push: (chunk: Uint8Array, final: boolean) => void
+  readonly finish: () => Uint8Array
+}
+
+/**
+ * Allocate only the reviewed output size, then copy streamed inflate chunks
+ * into that buffer while counting every actual byte. Compressed input is fed
+ * in small pieces so a lying deflate stream is stopped after a bounded amount
+ * of work instead of being fully expanded before the caller regains control.
+ */
+function createBoundedEntryInflater(entry: ZipPreflightEntry): BoundedEntryInflater {
+  let output: Uint8Array
+  try {
+    output = new Uint8Array(entry.uncompressedSize)
+  } catch (error) {
+    fail(
+      'entry-size-limit',
+      `Could not allocate the bounded ZIP entry output: ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+      entry.normalizedName
+    )
+  }
+  let written = 0
+  let overflow = false
+  const inflater = new Inflate((chunk) => {
+    if (overflow) return
+    if (written + chunk.byteLength > output.byteLength) {
+      overflow = true
+      return
+    }
+    output.set(chunk, written)
+    written += chunk.byteLength
+  })
+
+  return {
+    push(chunk, final) {
+      try {
+        inflater.push(chunk, final)
+      } catch (error) {
+        fail(
+          'malformed',
+          `ZIP decompression failed: ${error instanceof Error ? error.message : String(error)}`,
+          entry.normalizedName
+        )
+      }
+      if (overflow) {
+        fail('malformed', 'Expanded ZIP entry exceeds its declared size', entry.normalizedName)
+      }
+    },
+    finish() {
+      if (written !== output.byteLength) {
+        fail(
+          'malformed',
+          'Expanded ZIP entry does not match its declared size',
+          entry.normalizedName
+        )
+      }
+      return output
+    }
+  }
+}
+
+function extractEntrySync(
+  data: Uint8Array,
+  entry: ZipPreflightEntry,
+  signal?: AbortSignal
+): Uint8Array {
+  const compressed = compressedEntryBytes(data, entry)
+  if (entry.compressionMethod === 0) return compressed.slice()
+  const bounded = createBoundedEntryInflater(entry)
+  if (compressed.byteLength === 0) {
+    assertNotAborted(signal)
+    bounded.push(compressed, true)
+  }
+  for (let offset = 0; offset < compressed.byteLength; offset += INFLATE_INPUT_CHUNK_BYTES) {
+    assertNotAborted(signal)
+    const end = Math.min(offset + INFLATE_INPUT_CHUNK_BYTES, compressed.byteLength)
+    bounded.push(compressed.subarray(offset, end), end === compressed.byteLength)
+  }
+  return bounded.finish()
+}
+
+async function extractEntry(
+  data: Uint8Array,
+  entry: ZipPreflightEntry,
+  signal?: AbortSignal
+): Promise<Uint8Array> {
+  assertNotAborted(signal)
+  const compressed = compressedEntryBytes(data, entry)
+  if (entry.compressionMethod === 0) return compressed.slice()
+  const bounded = createBoundedEntryInflater(entry)
+  if (compressed.byteLength === 0) {
+    bounded.push(compressed, true)
+  }
+  let chunkOrdinal = 0
+  for (let offset = 0; offset < compressed.byteLength; offset += INFLATE_INPUT_CHUNK_BYTES) {
+    assertNotAborted(signal)
+    const end = Math.min(offset + INFLATE_INPUT_CHUNK_BYTES, compressed.byteLength)
+    bounded.push(compressed.subarray(offset, end), end === compressed.byteLength)
+    chunkOrdinal += 1
+    if (end < compressed.byteLength && chunkOrdinal % INFLATE_CHUNKS_PER_YIELD === 0) {
+      await new Promise<void>((resolve) => {
+        setTimeout(resolve, 0)
+      })
+    }
+  }
+  assertNotAborted(signal)
+  return bounded.finish()
 }
 
 /**
@@ -580,93 +687,38 @@ export function extractPreflightedZipSync(
   }
   const selected = selectedEntries(preflight, options.include)
   if (selected.length === 0) return {}
-  const selectedNames = new Set(selected.map((entry) => entry.name))
-  let extracted: Record<string, Uint8Array>
-  try {
-    extracted = unzipSync(data, {
-      filter: (entry) => selectedNames.has(entry.name)
-    })
-  } catch (error) {
-    if (error instanceof ArchivePreflightError) throw error
-    fail(
-      'malformed',
-      `ZIP decompression failed: ${error instanceof Error ? error.message : String(error)}`
+  const result: Record<string, Uint8Array> = Object.create(null) as Record<string, Uint8Array>
+  for (const entry of selected) {
+    assertNotAborted(options.signal)
+    result[entry.normalizedName] = validateExpandedEntry(
+      extractEntrySync(data, entry, options.signal),
+      entry,
+      options.signal
     )
   }
-  return validateExtracted(extracted, selected, options.signal)
+  return result
 }
 
 /**
  * Async/worker-friendly bounded extraction with a real termination seam for
  * fflate's worker-backed inflaters.
  */
-export function extractPreflightedZip(
+export async function extractPreflightedZip(
   data: Uint8Array,
   preflight: ZipPreflightResult,
   options: ExtractPreflightedZipOptions = {}
 ): Promise<Record<string, Uint8Array>> {
-  try {
-    assertNotAborted(options.signal)
-    if (data.byteLength !== preflight.compressedSize) {
-      fail('malformed', 'Archive bytes do not match their preflight result')
-    }
-  } catch (error) {
-    return Promise.reject(error)
+  assertNotAborted(options.signal)
+  if (data.byteLength !== preflight.compressedSize) {
+    fail('malformed', 'Archive bytes do not match their preflight result')
   }
 
   const selected = selectedEntries(preflight, options.include)
-  if (selected.length === 0) return Promise.resolve({})
-  const selectedNames = new Set(selected.map((entry) => entry.name))
-
-  return new Promise((resolve, reject) => {
-    let settled = false
-    let terminate: (() => void) | undefined
-    const finishReject = (error: unknown): void => {
-      if (settled) return
-      settled = true
-      options.signal?.removeEventListener('abort', onAbort)
-      reject(error)
-    }
-    const onAbort = (): void => {
-      terminate?.()
-      finishReject(new ArchivePreflightError('aborted', 'Archive processing was cancelled'))
-    }
-    options.signal?.addEventListener('abort', onAbort, { once: true })
-
-    try {
-      terminate = unzip(
-        data,
-        { filter: (entry) => selectedNames.has(entry.name) },
-        (error, extracted) => {
-          if (settled) return
-          if (error || !extracted) {
-            finishReject(
-              new ArchivePreflightError(
-                'malformed',
-                `ZIP decompression failed: ${error?.message ?? 'no output'}`
-              )
-            )
-            return
-          }
-          try {
-            const validated = validateExtracted(extracted, selected, options.signal)
-            settled = true
-            options.signal?.removeEventListener('abort', onAbort)
-            resolve(validated)
-          } catch (validationError) {
-            finishReject(validationError)
-          }
-        }
-      )
-    } catch (error) {
-      finishReject(
-        error instanceof ArchivePreflightError
-          ? error
-          : new ArchivePreflightError(
-              'malformed',
-              `ZIP decompression failed: ${error instanceof Error ? error.message : String(error)}`
-            )
-      )
-    }
-  })
+  const result: Record<string, Uint8Array> = Object.create(null) as Record<string, Uint8Array>
+  for (const entry of selected) {
+    assertNotAborted(options.signal)
+    const expanded = await extractEntry(data, entry, options.signal)
+    result[entry.normalizedName] = validateExpandedEntry(expanded, entry, options.signal)
+  }
+  return result
 }
