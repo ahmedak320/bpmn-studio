@@ -6,11 +6,13 @@ import {
   useRef,
   useState,
   type FormEvent,
-  type KeyboardEvent
+  type KeyboardEvent,
+  type Ref
 } from 'react'
 import {
   PROCESS_OUTLINE_NODE_TYPES,
   ProcessOutlineError,
+  canSetProcessOutlineCondition,
   canSetProcessOutlineDefault,
   createProcessOutlineController,
   emptyProcessOutlineSnapshot,
@@ -22,7 +24,9 @@ import {
   type ProcessOutlineNodeType,
   type ProcessOutlineSnapshot
 } from './processOutline'
+import { processOutlineMetadataVisibility } from './processOutlineMetadata'
 import type { ProcessOutlineMessages } from './processOutlineMessages'
+import { TRIGGER_TYPES } from '../org/orgModel'
 import './ProcessOutlineEditor.css'
 
 export interface ProcessOutlineEditorProps {
@@ -31,6 +35,7 @@ export interface ProcessOutlineEditorProps {
   direction?: 'ltr' | 'rtl'
   className?: string
   confirmDelete?: (item: ProcessOutlineItem) => boolean | Promise<boolean>
+  onOpenProcessDetails?: () => void
 }
 
 interface NodeEditState {
@@ -39,6 +44,7 @@ interface NodeEditState {
   name: string
   documentation: string
   calledElement: string
+  metadata: ProcessOutlineNode['metadata']
 }
 
 interface FlowEditState {
@@ -52,6 +58,308 @@ interface FlowEditState {
 }
 
 type EditState = NodeEditState | FlowEditState
+
+type ProcessOutlineNodeMetadata = ProcessOutlineNode['metadata']
+
+function hasMissingTriggerService(metadata: ProcessOutlineNodeMetadata): boolean {
+  return metadata.triggers.some((entry) => entry.type === 'dmthub' && entry.service.trim() === '')
+}
+
+interface NodeMetadataFieldsProps {
+  metadata: ProcessOutlineNodeMetadata
+  nodeType: string
+  messages: ProcessOutlineMessages
+  firstInputRef: Ref<HTMLInputElement>
+  onChange: (metadata: ProcessOutlineNodeMetadata) => void
+}
+
+function NodeMetadataFields({
+  metadata,
+  nodeType,
+  messages,
+  firstInputRef,
+  onChange
+}: NodeMetadataFieldsProps): JSX.Element {
+  const triggerErrorIdPrefix = useId()
+  const visibility = processOutlineMetadataVisibility(nodeType)
+
+  const update = <Key extends keyof ProcessOutlineNodeMetadata>(
+    key: Key,
+    value: ProcessOutlineNodeMetadata[Key]
+  ): void => {
+    onChange({ ...metadata, [key]: value })
+  }
+
+  const updateTrigger = (
+    index: number,
+    patch: Partial<ProcessOutlineNodeMetadata['triggers'][number]>
+  ): void => {
+    update(
+      'triggers',
+      metadata.triggers.map((entry, rowIndex) =>
+        rowIndex === index ? { ...entry, ...patch } : entry
+      )
+    )
+  }
+
+  return (
+    <>
+      <fieldset className="orbitpm-process-outline__fieldset">
+        <legend>{messages.labelsHeading}</legend>
+        <label>
+          {messages.nameEnLabel}
+          <input
+            ref={firstInputRef}
+            dir="auto"
+            value={metadata.nameEn}
+            onChange={(event) => update('nameEn', event.target.value)}
+          />
+        </label>
+        <label>
+          {messages.nameArLabel}
+          <input
+            dir="auto"
+            value={metadata.nameAr}
+            onChange={(event) => update('nameAr', event.target.value)}
+          />
+        </label>
+      </fieldset>
+
+      <fieldset className="orbitpm-process-outline__fieldset">
+        <legend>{messages.ownerHeading}</legend>
+        <label>
+          {messages.ownerLabel}
+          <input
+            dir="auto"
+            value={metadata.owner}
+            onChange={(event) => update('owner', event.target.value)}
+          />
+        </label>
+        <label>
+          {messages.ownerTypeLabel}
+          <select
+            value={metadata.ownerType}
+            onChange={(event) => update('ownerType', event.target.value)}
+          >
+            <option value="">{messages.ownerTypeNone}</option>
+            <option value="individual">{messages.ownerTypeIndividual}</option>
+            <option value="department">{messages.ownerTypeDepartment}</option>
+            <option value="division">{messages.ownerTypeDivision}</option>
+          </select>
+        </label>
+        <label>
+          {messages.ownerRoleLabel}
+          <select
+            value={metadata.ownerRole || 'R'}
+            onChange={(event) => update('ownerRole', event.target.value)}
+          >
+            <option value="R">{messages.ownerRoleResponsible}</option>
+            <option value="A">{messages.ownerRoleAccountable}</option>
+            <option value="C">{messages.ownerRoleConsulted}</option>
+            <option value="I">{messages.ownerRoleInformed}</option>
+          </select>
+        </label>
+        <label>
+          {messages.responsiblePeopleLabel}
+          <textarea
+            dir="auto"
+            value={metadata.respList}
+            onChange={(event) => update('respList', event.target.value)}
+          />
+        </label>
+      </fieldset>
+
+      <fieldset className="orbitpm-process-outline__fieldset">
+        <legend>{messages.noteHeading}</legend>
+        <label>
+          {messages.noteLabel}
+          <textarea
+            dir="auto"
+            value={metadata.note}
+            onChange={(event) => update('note', event.target.value)}
+          />
+        </label>
+      </fieldset>
+
+      <fieldset className="orbitpm-process-outline__fieldset">
+        <legend>{messages.stepDataHeading}</legend>
+        <label>
+          {messages.inputsLabel}
+          <textarea
+            dir="auto"
+            value={metadata.inputs}
+            onChange={(event) => update('inputs', event.target.value)}
+          />
+        </label>
+        <label>
+          {messages.outputsLabel}
+          <textarea
+            dir="auto"
+            value={metadata.outputs}
+            onChange={(event) => update('outputs', event.target.value)}
+          />
+        </label>
+        <label>
+          {messages.systemLabel}
+          <input
+            dir="auto"
+            value={metadata.system}
+            onChange={(event) => update('system', event.target.value)}
+          />
+        </label>
+        <label>
+          {messages.ccListLabel}
+          <textarea
+            dir="auto"
+            value={metadata.ccList}
+            onChange={(event) => update('ccList', event.target.value)}
+          />
+        </label>
+        {visibility.decisionBasis ? (
+          <label>
+            {messages.decisionBasisLabel}
+            <textarea
+              dir="auto"
+              value={metadata.decisionBasis}
+              onChange={(event) => update('decisionBasis', event.target.value)}
+            />
+          </label>
+        ) : null}
+      </fieldset>
+
+      {visibility.channel ? (
+        <fieldset className="orbitpm-process-outline__fieldset">
+          <legend>{messages.channelHeading}</legend>
+          <label>
+            {messages.channelLabel}
+            <select
+              value={metadata.channel}
+              onChange={(event) => update('channel', event.target.value)}
+            >
+              <option value="">{messages.channelNone}</option>
+              <option value="dmthub">{messages.channelDmthub}</option>
+              <option value="email">{messages.channelEmail}</option>
+              <option value="data">{messages.channelData}</option>
+            </select>
+          </label>
+          {metadata.channel ? (
+            <label>
+              {messages.channelDetailLabel}
+              <input
+                dir="auto"
+                value={metadata.channelDetail}
+                onChange={(event) => update('channelDetail', event.target.value)}
+              />
+            </label>
+          ) : null}
+        </fieldset>
+      ) : null}
+
+      {visibility.cc ? (
+        <fieldset className="orbitpm-process-outline__fieldset">
+          <legend>{messages.ccHeading}</legend>
+          <label className="orbitpm-process-outline__checkbox">
+            <input
+              type="checkbox"
+              checked={metadata.cc}
+              onChange={(event) => update('cc', event.target.checked)}
+            />
+            {messages.ccLabel}
+          </label>
+          <label>
+            {messages.ccToLabel}
+            <input
+              dir="auto"
+              value={metadata.ccTo}
+              disabled={!metadata.cc}
+              onChange={(event) => update('ccTo', event.target.value)}
+            />
+          </label>
+        </fieldset>
+      ) : null}
+
+      {visibility.triggers ? (
+        <fieldset className="orbitpm-process-outline__fieldset">
+          <legend>{messages.triggerHeading}</legend>
+          {metadata.triggers.map((entry, index) => {
+            const serviceMissing = entry.type === 'dmthub' && entry.service.trim() === ''
+            return (
+              <div className="orbitpm-process-outline__trigger-row" key={index}>
+                <strong>{messages.triggerRowLabel(index + 1)}</strong>
+                <label>
+                  {messages.triggerTypeLabel}
+                  <select
+                    aria-label={messages.triggerTypeRowLabel(index + 1)}
+                    value={entry.type}
+                    onChange={(event) => updateTrigger(index, { type: event.target.value })}
+                  >
+                    {TRIGGER_TYPES.map((type) => (
+                      <option key={type} value={type}>
+                        {messages.triggerType(type)}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                {entry.type === 'dmthub' ? (
+                  <label>
+                    {messages.triggerServiceLabel}
+                    <input
+                      dir="auto"
+                      value={entry.service}
+                      aria-label={messages.triggerServiceLabel}
+                      aria-invalid={serviceMissing}
+                      aria-describedby={
+                        serviceMissing ? `${triggerErrorIdPrefix}-${index}` : undefined
+                      }
+                      onChange={(event) => updateTrigger(index, { service: event.target.value })}
+                    />
+                    {serviceMissing ? (
+                      <span
+                        id={`${triggerErrorIdPrefix}-${index}`}
+                        className="orbitpm-process-outline__field-error"
+                        role="alert"
+                      >
+                        {messages.triggerServiceRequired}
+                      </span>
+                    ) : null}
+                  </label>
+                ) : null}
+                <label>
+                  {messages.triggerDetailLabel}
+                  <input
+                    dir="auto"
+                    value={entry.detail}
+                    onChange={(event) => updateTrigger(index, { detail: event.target.value })}
+                  />
+                </label>
+                <button
+                  type="button"
+                  aria-label={messages.removeTriggerLabel(index + 1)}
+                  onClick={() =>
+                    update(
+                      'triggers',
+                      metadata.triggers.filter((_, rowIndex) => rowIndex !== index)
+                    )
+                  }
+                >
+                  {messages.removeTrigger}
+                </button>
+              </div>
+            )
+          })}
+          <button
+            type="button"
+            onClick={() =>
+              update('triggers', [...metadata.triggers, { type: 'email', service: '', detail: '' }])
+            }
+          >
+            {messages.addTrigger}
+          </button>
+        </fieldset>
+      ) : null}
+    </>
+  )
+}
 
 function caughtOutlineError(caught: unknown): ProcessOutlineError {
   return caught instanceof ProcessOutlineError
@@ -73,7 +381,11 @@ function initialEditState(item: ProcessOutlineItem): EditState {
         itemId: item.id,
         name: item.name,
         documentation: item.documentation,
-        calledElement: item.calledElement ?? ''
+        calledElement: item.calledElement ?? '',
+        metadata: {
+          ...item.metadata,
+          triggers: item.metadata.triggers.map((entry) => ({ ...entry }))
+        }
       }
     : {
         kind: 'flow',
@@ -91,7 +403,8 @@ export function ProcessOutlineEditor({
   messages,
   direction = 'ltr',
   className,
-  confirmDelete
+  confirmDelete,
+  onOpenProcessDetails
 }: ProcessOutlineEditorProps): JSX.Element {
   const instanceId = useId()
   const titleId = `${instanceId}-title`
@@ -179,6 +492,10 @@ export function ProcessOutlineEditor({
   }, [activeId, editState, snapshot.items])
 
   useEffect(() => {
+    if (editState?.itemId) firstEditInputRef.current?.focus()
+  }, [editState?.itemId])
+
+  useEffect(() => {
     if (connectionSourceId && snapshot.nodes.some((node) => node.id === connectionSourceId)) {
       return
     }
@@ -194,10 +511,15 @@ export function ProcessOutlineEditor({
 
   const connectionSource = snapshot.nodes.find((node) => node.id === connectionSourceId)
   const connectionCanDefault = canSetProcessOutlineDefault(connectionSource?.type ?? '')
+  const connectionCanCondition = canSetProcessOutlineCondition(connectionSource?.type ?? '')
 
   useEffect(() => {
     if (connectionDefault && !connectionCanDefault) setConnectionDefault(false)
   }, [connectionCanDefault, connectionDefault])
+
+  useEffect(() => {
+    if (connectionCondition && !connectionCanCondition) setConnectionCondition('')
+  }, [connectionCanCondition, connectionCondition])
 
   const activeItem = useMemo(() => itemById(snapshot, activeId), [activeId, snapshot])
   const activeIndex = activeItem
@@ -214,6 +536,12 @@ export function ProcessOutlineEditor({
       ? snapshot.nodes.find((node) => node.id === editState.sourceId)
       : undefined
   const editCanDefault = canSetProcessOutlineDefault(editedFlowSource?.type ?? '')
+  const editCanCondition = canSetProcessOutlineCondition(editedFlowSource?.type ?? '')
+  const editHasMissingTriggerService =
+    activeItem?.kind === 'node' &&
+    activeItem.type === 'bpmn:StartEvent' &&
+    editState?.kind === 'node' &&
+    hasMissingTriggerService(editState.metadata)
 
   const reportError = useCallback((caught: unknown) => {
     setError(caughtOutlineError(caught))
@@ -251,9 +579,9 @@ export function ProcessOutlineEditor({
   )
 
   const beginEdit = useCallback((item: ProcessOutlineItem) => {
+    if (item.kind === 'flow' && !item.labelEditable) return
     setEditState(initialEditState(item))
     setError(null)
-    requestAnimationFrame(() => firstEditInputRef.current?.focus())
   }, [])
 
   const cancelEdit = useCallback(() => {
@@ -402,7 +730,8 @@ export function ProcessOutlineEditor({
           name: editState.name,
           documentation: editState.documentation,
           calledElement:
-            editedItem.type === 'bpmn:CallActivity' ? editState.calledElement : undefined
+            editedItem.type === 'bpmn:CallActivity' ? editState.calledElement : undefined,
+          metadata: editState.metadata
         })
       } else if (editedItem.kind === 'flow' && editState.kind === 'flow') {
         controllerRef.current?.updateFlow(editedItem.id, {
@@ -434,9 +763,16 @@ export function ProcessOutlineEditor({
           <h2 id={titleId}>{messages.title}</h2>
           <p id={keyboardHelpId}>{messages.keyboardHelp}</p>
         </div>
-        <span className="orbitpm-process-outline__summary">
-          {messages.validationSummary(errors, warnings)}
-        </span>
+        <div className="orbitpm-process-outline__header-actions">
+          {onOpenProcessDetails ? (
+            <button type="button" onClick={onOpenProcessDetails}>
+              {messages.editProcessDetails}
+            </button>
+          ) : null}
+          <span className="orbitpm-process-outline__summary">
+            {messages.validationSummary(errors, warnings)}
+          </span>
+        </div>
       </header>
 
       {!modeler ? (
@@ -531,16 +867,15 @@ export function ProcessOutlineEditor({
               <p>{messages.noSelection}</p>
             ) : editState ? (
               <form onSubmit={handleSaveEdit}>
-                <label>
-                  {messages.itemNameLabel}
-                  <input
-                    ref={firstEditInputRef}
-                    value={editState.name}
-                    onChange={(event) => setEditState({ ...editState, name: event.target.value })}
-                  />
-                </label>
                 {activeItem.kind === 'node' && editState.kind === 'node' ? (
                   <>
+                    <NodeMetadataFields
+                      metadata={editState.metadata}
+                      nodeType={activeItem.type}
+                      messages={messages}
+                      firstInputRef={firstEditInputRef}
+                      onChange={(metadata) => setEditState({ ...editState, metadata })}
+                    />
                     <label>
                       {messages.documentationLabel}
                       <textarea
@@ -569,7 +904,16 @@ export function ProcessOutlineEditor({
                       </label>
                     ) : null}
                   </>
-                ) : null}
+                ) : (
+                  <label>
+                    {messages.itemNameLabel}
+                    <input
+                      ref={firstEditInputRef}
+                      value={editState.name}
+                      onChange={(event) => setEditState({ ...editState, name: event.target.value })}
+                    />
+                  </label>
+                )}
                 {activeItem.kind === 'flow' && activeItem.editable && editState.kind === 'flow' ? (
                   <>
                     <label>
@@ -582,6 +926,9 @@ export function ProcessOutlineEditor({
                           setEditState({
                             ...editState,
                             sourceId,
+                            condition: canSetProcessOutlineCondition(source?.type ?? '')
+                              ? editState.condition
+                              : '',
                             isDefault: canSetProcessOutlineDefault(source?.type ?? '')
                               ? editState.isDefault
                               : false
@@ -617,7 +964,7 @@ export function ProcessOutlineEditor({
                       {messages.conditionLabel}
                       <input
                         value={editState.condition}
-                        disabled={editState.isDefault}
+                        disabled={editState.isDefault || !editCanCondition}
                         aria-describedby={conditionHintId}
                         onChange={(event) =>
                           setEditState({
@@ -648,7 +995,9 @@ export function ProcessOutlineEditor({
                   </>
                 ) : null}
                 <div className="orbitpm-process-outline__actions">
-                  <button type="submit">{messages.saveChanges}</button>
+                  <button type="submit" disabled={editHasMissingTriggerService}>
+                    {messages.saveChanges}
+                  </button>
                   <button type="button" onClick={cancelEdit}>
                     {messages.cancel}
                   </button>
@@ -683,9 +1032,11 @@ export function ProcessOutlineEditor({
                   ) : null}
                 </dl>
                 <div className="orbitpm-process-outline__actions">
-                  <button type="button" onClick={() => beginEdit(activeItem)}>
-                    {messages.editItem}
-                  </button>
+                  {activeItem.kind === 'node' || activeItem.labelEditable ? (
+                    <button type="button" onClick={() => beginEdit(activeItem)}>
+                      {messages.editItem}
+                    </button>
+                  ) : null}
                   {activeItem.kind === 'node' ? (
                     <>
                       <button
@@ -800,7 +1151,7 @@ export function ProcessOutlineEditor({
                 {messages.conditionLabel}
                 <input
                   value={connectionCondition}
-                  disabled={connectionDefault}
+                  disabled={connectionDefault || !connectionCanCondition}
                   aria-describedby={newConditionHintId}
                   onChange={(event) => {
                     setConnectionCondition(event.target.value)

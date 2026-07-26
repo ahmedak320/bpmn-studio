@@ -1,9 +1,11 @@
 import { describe, expect, it } from 'vitest'
 import {
+  PROCESS_OUTLINE_NODE_TYPES,
   buildProcessOutlineSnapshot,
   planLinearNodeSwap,
   validateProcessOutline
 } from '../processOutline'
+import { processOutlineMetadataVisibility } from '../processOutlineMetadata'
 import { createOutlineTestModeler } from './outlineTestModeler'
 
 describe('process outline projection and validation', () => {
@@ -85,6 +87,7 @@ describe('process outline projection and validation', () => {
           targetId: 'Missing',
           condition: '',
           isDefault: false,
+          labelEditable: true,
           editable: true
         }
       ]
@@ -121,15 +124,82 @@ describe('process outline projection and validation', () => {
         expect.objectContaining({
           id: 'Message_1',
           type: 'bpmn:MessageFlow',
+          labelEditable: true,
           editable: false
         }),
         expect.objectContaining({
           id: 'Association_1',
           type: 'bpmn:Association',
+          labelEditable: false,
           editable: false
         })
       ])
     )
+  })
+
+  it('recognizes every supported activity/gateway type and mirrors Step Details visibility', () => {
+    expect(PROCESS_OUTLINE_NODE_TYPES).toEqual(
+      expect.arrayContaining([
+        'bpmn:Transaction',
+        'bpmn:AdHocSubProcess',
+        'bpmn:EventBasedGateway',
+        'bpmn:ComplexGateway'
+      ])
+    )
+
+    expect(processOutlineMetadataVisibility('bpmn:Transaction')).toMatchObject({
+      owner: true,
+      note: true,
+      stepData: true,
+      channel: true,
+      cc: false,
+      triggers: false,
+      decisionBasis: false
+    })
+    expect(processOutlineMetadataVisibility('bpmn:BusinessRuleTask')).toMatchObject({
+      channel: true,
+      cc: true,
+      decisionBasis: true
+    })
+    expect(processOutlineMetadataVisibility('bpmn:StartEvent')).toMatchObject({
+      stepData: true,
+      channel: false,
+      cc: false,
+      triggers: true
+    })
+    for (const type of [
+      'bpmn:ExclusiveGateway',
+      'bpmn:InclusiveGateway',
+      'bpmn:ParallelGateway',
+      'bpmn:EventBasedGateway',
+      'bpmn:ComplexGateway'
+    ]) {
+      expect(processOutlineMetadataVisibility(type).decisionBasis).toBe(true)
+    }
+  })
+
+  it('keeps legal participant and annotation endpoints navigable without false dangling errors', () => {
+    const fixture = createOutlineTestModeler()
+    fixture.addNode('Task_1', 'bpmn:Task', 'Review')
+    fixture.addArtifact('Annotation_1', 'bpmn:TextAnnotation', { text: 'Review note' })
+    fixture.addArtifact('Participant_1', 'bpmn:Participant', { name: 'Customer' })
+    fixture.addFlow('Association_1', 'Task_1', 'Annotation_1', {
+      type: 'bpmn:Association'
+    })
+    fixture.addFlow('Message_1', 'Participant_1', 'Task_1', {
+      type: 'bpmn:MessageFlow',
+      name: 'Request'
+    })
+
+    const snapshot = buildProcessOutlineSnapshot([...fixture.elements.values()])
+
+    expect(snapshot.flows.map((flow) => flow.id)).toEqual(
+      expect.arrayContaining(['Association_1', 'Message_1'])
+    )
+    expect(snapshot.issues).not.toEqual(
+      expect.arrayContaining([expect.objectContaining({ code: 'outline.flow-endpoint-missing' })])
+    )
+    expect(snapshot.nodes.find((node) => node.id === 'Task_1')?.metadata.note).toBe('Review note')
   })
 
   it('plans an adjacent semantic reorder only for a strict unconditional linear chain', () => {

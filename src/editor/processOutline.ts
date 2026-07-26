@@ -6,6 +6,17 @@
  * embedded in any responsive pane or dialog.
  */
 
+import {
+  activeProcessOutlineNodeName,
+  applyProcessOutlineNodeMetadata,
+  emptyProcessOutlineNodeMetadata,
+  getProcessOutlineActiveLanguage,
+  readProcessOutlineNodeMetadata,
+  type ProcessOutlineNodeMetadata
+} from './processOutlineMetadata'
+
+export type { ProcessOutlineNodeMetadata } from './processOutlineMetadata'
+
 export const PROCESS_OUTLINE_NODE_TYPES = [
   'bpmn:StartEvent',
   'bpmn:IntermediateCatchEvent',
@@ -21,22 +32,43 @@ export const PROCESS_OUTLINE_NODE_TYPES = [
   'bpmn:ScriptTask',
   'bpmn:CallActivity',
   'bpmn:SubProcess',
+  'bpmn:Transaction',
+  'bpmn:AdHocSubProcess',
   'bpmn:ExclusiveGateway',
   'bpmn:InclusiveGateway',
-  'bpmn:ParallelGateway'
+  'bpmn:ParallelGateway',
+  'bpmn:EventBasedGateway',
+  'bpmn:ComplexGateway'
 ] as const
 
 export type ProcessOutlineNodeType = (typeof PROCESS_OUTLINE_NODE_TYPES)[number]
 export type ProcessOutlineItemKind = 'node' | 'flow'
 export type ProcessOutlineMoveDirection = 'up' | 'down'
 
-const DEFAULT_FLOW_GATEWAY_TYPES = new Set<string>([
+const DEFAULT_FLOW_SOURCE_TYPES = new Set<string>([
+  'bpmn:Task',
+  'bpmn:UserTask',
+  'bpmn:ServiceTask',
+  'bpmn:ManualTask',
+  'bpmn:SendTask',
+  'bpmn:ReceiveTask',
+  'bpmn:BusinessRuleTask',
+  'bpmn:ScriptTask',
+  'bpmn:CallActivity',
+  'bpmn:SubProcess',
+  'bpmn:Transaction',
+  'bpmn:AdHocSubProcess',
   'bpmn:ExclusiveGateway',
-  'bpmn:InclusiveGateway'
+  'bpmn:InclusiveGateway',
+  'bpmn:ComplexGateway'
 ])
 
 export function canSetProcessOutlineDefault(type: string): boolean {
-  return DEFAULT_FLOW_GATEWAY_TYPES.has(type)
+  return DEFAULT_FLOW_SOURCE_TYPES.has(type)
+}
+
+export function canSetProcessOutlineCondition(type: string): boolean {
+  return DEFAULT_FLOW_SOURCE_TYPES.has(type)
 }
 
 export interface ProcessOutlineIssue {
@@ -64,6 +96,7 @@ export interface ProcessOutlineNode {
   name: string
   documentation: string
   calledElement?: string
+  metadata: ProcessOutlineNodeMetadata
   parentId?: string
   x: number
   y: number
@@ -80,6 +113,9 @@ export interface ProcessOutlineFlow {
   targetId: string
   condition: string
   isDefault: boolean
+  /** Whether BPMN permits a human-readable label on this connection type. */
+  labelEditable: boolean
+  /** Whether source/target, condition and default semantics are editable. */
   editable: boolean
 }
 
@@ -97,13 +133,15 @@ export interface ProcessOutlineAddNodeInput {
   type: ProcessOutlineNodeType
   name?: string
   documentation?: string
+  metadata?: ProcessOutlineNodeMetadata
   connectFromId?: string
 }
 
 export interface ProcessOutlineUpdateNodeInput {
-  name: string
-  documentation: string
+  name?: string
+  documentation?: string
   calledElement?: string
+  metadata?: ProcessOutlineNodeMetadata
 }
 
 export interface ProcessOutlineConnectInput {
@@ -125,6 +163,7 @@ export type ProcessOutlineErrorCode =
   | 'invalid-connection'
   | 'default-flow-has-condition'
   | 'default-flow-source-invalid'
+  | 'condition-flow-source-invalid'
   | 'connection-rejected'
   | 'reorder-not-linear'
   | 'service-unavailable'
@@ -149,13 +188,16 @@ interface ModdleElementLike {
   $instanceOf?: (type: string) => boolean
   id?: string
   name?: string
+  text?: string
   documentation?: Array<{ text?: string }>
   calledElement?: string
   conditionExpression?: { body?: string }
+  body?: string
   default?: ModdleElementLike
   sourceRef?: ModdleElementLike
   targetRef?: ModdleElementLike
   get?: (name: string) => unknown
+  [key: string]: unknown
 }
 
 export interface ProcessOutlineCanvasElement {
@@ -212,11 +254,11 @@ interface RulesLike {
 }
 
 interface CommandHandlerLike {
-  preExecute?(context: AtomicReorderContext): void
+  preExecute?(context: AtomicOutlineTransactionContext): void
 }
 
 interface CommandStackLike {
-  execute(command: string, context: AtomicReorderContext): void
+  execute(command: string, context: AtomicOutlineTransactionContext): void
   register(command: string, handler: CommandHandlerLike): void
 }
 
@@ -238,6 +280,12 @@ interface ModelingLike {
     dockingOrPoints?: unknown
   ): void
   updateProperties(element: ProcessOutlineCanvasElement, properties: Record<string, unknown>): void
+  updateModdleProperties?(
+    element: ProcessOutlineCanvasElement,
+    moddleElement: ModdleElementLike,
+    properties: Record<string, unknown>
+  ): void
+  updateLabel?(element: ProcessOutlineCanvasElement, label: string): void
   moveShape?(
     shape: ProcessOutlineCanvasElement,
     delta: { x: number; y: number },
@@ -250,41 +298,23 @@ interface ModelingLike {
 
 interface PreparedFlowProperties {
   name: string | undefined
-  conditionExpression: ModdleElementLike | undefined
+  condition: string
   isDefault: boolean
 }
 
-interface AtomicReorderContext {
-  modeling: ModelingLike
-  first: ProcessOutlineCanvasElement
-  second: ProcessOutlineCanvasElement
-  between: ProcessOutlineCanvasElement
-  previous?: ProcessOutlineCanvasElement
-  next?: ProcessOutlineCanvasElement
+interface AtomicOutlineTransactionContext {
+  run(): void
 }
 
-const ATOMIC_REORDER_COMMAND = 'orbitpm.process-outline.reorder'
+const ATOMIC_OUTLINE_COMMAND = 'orbitpm.process-outline.transaction'
 
-const atomicReorderHandler: CommandHandlerLike = {
-  preExecute({ modeling, first, second, between, previous, next }): void {
-    if (previous) {
-      modeling.reconnect(previous, previous.source as ProcessOutlineCanvasElement, second)
-    }
-    modeling.reconnect(between, second, first)
-    if (next) {
-      modeling.reconnect(next, first, next.target as ProcessOutlineCanvasElement)
-    }
-
-    if (modeling.moveShape) {
-      const delta = {
-        x: (second.x ?? 0) - (first.x ?? 0),
-        y: (second.y ?? 0) - (first.y ?? 0)
-      }
-      modeling.moveShape(first, delta, first.parent)
-      modeling.moveShape(second, { x: -delta.x, y: -delta.y }, second.parent)
-    }
+const atomicOutlineHandler: CommandHandlerLike = {
+  preExecute({ run }): void {
+    run()
   }
 }
+
+const registeredOutlineCommandStacks = new WeakSet<object>()
 
 export interface ProcessOutlineModeler {
   get(name: string): unknown
@@ -440,7 +470,8 @@ function interleaveItems(
 }
 
 export function validateProcessOutline(
-  snapshot: Pick<ProcessOutlineSnapshot, 'nodes' | 'flows'>
+  snapshot: Pick<ProcessOutlineSnapshot, 'nodes' | 'flows'>,
+  knownEndpointIds: ReadonlySet<string> = new Set(snapshot.nodes.map((node) => node.id))
 ): ProcessOutlineIssue[] {
   const issues: ProcessOutlineIssue[] = []
   const allIds = new Map<string, number>()
@@ -462,10 +493,9 @@ export function validateProcessOutline(
     issues.push({ code: 'outline.empty', severity: 'error' })
   }
 
-  const nodes = new Map(snapshot.nodes.map((node) => [node.id, node]))
   const pairCounts = new Map<string, number>()
   for (const flow of snapshot.flows) {
-    if (!nodes.has(flow.sourceId) || !nodes.has(flow.targetId)) {
+    if (!knownEndpointIds.has(flow.sourceId) || !knownEndpointIds.has(flow.targetId)) {
       issues.push({
         code: 'outline.flow-endpoint-missing',
         severity: 'error',
@@ -568,7 +598,8 @@ export function validateProcessOutline(
 
 export function buildProcessOutlineSnapshot(
   elements: readonly ProcessOutlineCanvasElement[],
-  selectedIds: readonly string[] = []
+  selectedIds: readonly string[] = [],
+  activeLanguage: 'en' | 'ar' = 'en'
 ): ProcessOutlineSnapshot {
   const mutableNodes: MutableNode[] = elements.filter(isFlowNode).map((element) => {
     const businessObject = element.businessObject
@@ -584,6 +615,7 @@ export function buildProcessOutlineSnapshot(
           ? text((firstDocumentation as { text?: unknown }).text)
           : '',
       calledElement: text(readProperty(businessObject, 'calledElement')) || undefined,
+      metadata: readProcessOutlineNodeMetadata(element, elements, activeLanguage),
       parentId: element.parent?.id,
       x: element.x ?? 0,
       y: element.y ?? 0,
@@ -614,6 +646,7 @@ export function buildProcessOutlineSnapshot(
           ? text((condition as { body?: unknown }).body)
           : '',
       isDefault: moddleId(defaultFlow) === element.id,
+      labelEditable: elementType(element) !== 'bpmn:Association',
       editable: elementType(element) === 'bpmn:SequenceFlow'
     }
   })
@@ -649,7 +682,10 @@ export function buildProcessOutlineSnapshot(
   }
   return {
     ...snapshot,
-    issues: validateProcessOutline(snapshot)
+    issues: validateProcessOutline(
+      snapshot,
+      new Set(elements.filter((element) => !element.labelTarget).map((element) => element.id))
+    )
   }
 }
 
@@ -682,6 +718,8 @@ const REORDERABLE_TYPES = new Set<string>([
   'bpmn:ScriptTask',
   'bpmn:CallActivity',
   'bpmn:SubProcess',
+  'bpmn:Transaction',
+  'bpmn:AdHocSubProcess',
   'bpmn:IntermediateCatchEvent',
   'bpmn:IntermediateThrowEvent'
 ])
@@ -792,7 +830,6 @@ function service<T>(modeler: ProcessOutlineModeler, name: string): T {
 }
 
 function prepareFlowProperties(
-  bpmnFactory: BpmnFactoryLike,
   source: ProcessOutlineCanvasElement,
   input: Pick<ProcessOutlineConnectInput, 'name' | 'condition' | 'isDefault'>
 ): PreparedFlowProperties {
@@ -806,11 +843,15 @@ function prepareFlowProperties(
       sourceType: elementType(source)
     })
   }
+  if (condition && !canSetProcessOutlineCondition(elementType(source))) {
+    throw new ProcessOutlineError('condition-flow-source-invalid', {
+      sourceId: source.id,
+      sourceType: elementType(source)
+    })
+  }
   return {
     name: text(input.name) || undefined,
-    conditionExpression: condition
-      ? bpmnFactory.create('bpmn:FormalExpression', { body: condition })
-      : undefined,
+    condition,
     isDefault: input.isDefault === true
   }
 }
@@ -841,23 +882,105 @@ function ensureSequenceConnectionAllowed(
 
 function updateFlowProperties(
   modeling: ModelingLike,
+  bpmnFactory: BpmnFactoryLike,
   flow: ProcessOutlineCanvasElement,
   source: ProcessOutlineCanvasElement,
   prepared: PreparedFlowProperties
 ): void {
-  modeling.updateProperties(flow, {
-    name: prepared.name,
-    conditionExpression: prepared.conditionExpression
-  })
+  const currentName = text(readProperty(flow.businessObject, 'name')) || undefined
+  if (currentName !== prepared.name) {
+    modeling.updateProperties(flow, { name: prepared.name })
+  }
+
+  const currentExpression = readProperty(flow.businessObject, 'conditionExpression') as
+    ModdleElementLike | undefined
+  const currentCondition =
+    currentExpression && typeof currentExpression === 'object' ? text(currentExpression.body) : ''
+  if (currentCondition !== prepared.condition) {
+    if (!prepared.condition) {
+      modeling.updateProperties(flow, { conditionExpression: undefined })
+    } else if (currentExpression) {
+      if (!modeling.updateModdleProperties) {
+        throw new ProcessOutlineError('service-unavailable', {
+          service: 'updateModdleProperties'
+        })
+      }
+      modeling.updateModdleProperties(flow, currentExpression, {
+        body: prepared.condition
+      })
+    } else {
+      modeling.updateProperties(flow, {
+        conditionExpression: bpmnFactory.create('bpmn:FormalExpression', {
+          body: prepared.condition
+        })
+      })
+    }
+  }
 
   const sourceBusinessObject = source?.businessObject
   const currentDefault = readProperty(sourceBusinessObject, 'default')
-  if (prepared.isDefault) {
+  const isCurrentDefault = moddleId(currentDefault) === flow.id
+  if (prepared.isDefault && !isCurrentDefault) {
     if (flow.businessObject) {
       modeling.updateProperties(source, { default: flow.businessObject })
     }
-  } else if (moddleId(currentDefault) === flow.id) {
+  } else if (!prepared.isDefault && isCurrentDefault) {
     modeling.updateProperties(source, { default: undefined })
+  }
+}
+
+function documentationElements(element: ProcessOutlineCanvasElement): ModdleElementLike[] {
+  const value = readProperty(element.businessObject, 'documentation')
+  return Array.isArray(value)
+    ? value.filter((candidate): candidate is ModdleElementLike =>
+        Boolean(candidate && typeof candidate === 'object')
+      )
+    : []
+}
+
+function updateNodeDocumentation(
+  modeling: ModelingLike,
+  bpmnFactory: BpmnFactoryLike,
+  node: ProcessOutlineCanvasElement,
+  documentation: string
+): void {
+  const desired = text(documentation)
+  const documents = documentationElements(node)
+  const first = documents[0]
+  const current = first ? text(readProperty(first, 'text')) : ''
+  if (current === desired) return
+
+  if (first && desired) {
+    if (!modeling.updateModdleProperties) {
+      throw new ProcessOutlineError('service-unavailable', {
+        service: 'updateModdleProperties'
+      })
+    }
+    modeling.updateModdleProperties(node, first, { text: desired })
+    return
+  }
+
+  if (!desired) {
+    modeling.updateProperties(node, { documentation: documents.slice(1) })
+    return
+  }
+
+  modeling.updateProperties(node, {
+    documentation: [bpmnFactory.create('bpmn:Documentation', { text: desired }), ...documents]
+  })
+}
+
+function updateNodeVisibleName(
+  modeling: ModelingLike,
+  node: ProcessOutlineCanvasElement,
+  desiredName: string
+): void {
+  const currentName = text(readProperty(node.businessObject, 'name'))
+  if (currentName === desiredName) return
+  if (modeling.updateLabel) {
+    modeling.updateLabel(node, desiredName)
+  } else {
+    modeling.updateProperties(node, { name: desiredName || undefined })
   }
 }
 
@@ -878,12 +1001,25 @@ export class ProcessOutlineController {
   private snapshotValue: ProcessOutlineSnapshot
   private destroyed = false
 
+  private activeLanguage(): 'en' | 'ar' {
+    try {
+      return getProcessOutlineActiveLanguage(this.modeler)
+    } catch {
+      return 'en'
+    }
+  }
+
+  private readSnapshot(): ProcessOutlineSnapshot {
+    return buildProcessOutlineSnapshot(
+      this.registry.getAll(),
+      this.selection.get().map((element) => element.id),
+      this.activeLanguage()
+    )
+  }
+
   private readonly refreshFromModel = (): void => {
     if (this.destroyed) return
-    this.snapshotValue = buildProcessOutlineSnapshot(
-      this.registry.getAll(),
-      this.selection.get().map((element) => element.id)
-    )
+    this.snapshotValue = this.readSnapshot()
     for (const listener of this.listeners) listener(this.snapshotValue)
   }
 
@@ -898,11 +1034,11 @@ export class ProcessOutlineController {
     this.bpmnFactory = service<BpmnFactoryLike>(modeler, 'bpmnFactory')
     this.rules = service<RulesLike>(modeler, 'rules')
     this.commandStack = service<CommandStackLike>(modeler, 'commandStack')
-    this.commandStack.register(ATOMIC_REORDER_COMMAND, atomicReorderHandler)
-    this.snapshotValue = buildProcessOutlineSnapshot(
-      this.registry.getAll(),
-      this.selection.get().map((element) => element.id)
-    )
+    if (!registeredOutlineCommandStacks.has(this.commandStack as object)) {
+      this.commandStack.register(ATOMIC_OUTLINE_COMMAND, atomicOutlineHandler)
+      registeredOutlineCommandStacks.add(this.commandStack as object)
+    }
+    this.snapshotValue = this.readSnapshot()
     for (const event of [
       'import.done',
       'elements.changed',
@@ -929,6 +1065,23 @@ export class ProcessOutlineController {
     return this.snapshotValue
   }
 
+  private transact<T>(operation: () => T): T {
+    let completed = false
+    let result: T | undefined
+    this.commandStack.execute(ATOMIC_OUTLINE_COMMAND, {
+      run: () => {
+        result = operation()
+        completed = true
+      }
+    })
+    if (!completed) {
+      throw new ProcessOutlineError('service-unavailable', {
+        service: 'commandStack'
+      })
+    }
+    return result as T
+  }
+
   select(itemId: string): void {
     const element = requireElement(this.registry, itemId, 'item-not-found')
     this.selection.select(element)
@@ -947,6 +1100,7 @@ export class ProcessOutlineController {
     const anchor = input.connectFromId ? requireNode(this.registry, input.connectFromId) : undefined
     const parent = anchor?.parent ?? this.canvas.getRootElement()
     const draft = this.elementFactory.createShape({ type: input.type })
+    draft.parent = parent
     const position = anchor
       ? {
           x: (anchor.x ?? 0) + (anchor.width ?? 100) + 140,
@@ -956,24 +1110,47 @@ export class ProcessOutlineController {
           x: 240,
           y: 140 + this.snapshotValue.nodes.length * 110
         }
-    const created = this.modeling.createShape(draft, position, parent)
-    const documentation = text(input.documentation)
-    this.modeling.updateProperties(created, {
-      name: text(input.name) || undefined,
-      documentation: documentation
-        ? [this.bpmnFactory.create('bpmn:Documentation', { text: documentation })]
-        : []
-    })
     if (anchor) {
-      const connection = this.modeling.connect(anchor, created, {
-        type: 'bpmn:SequenceFlow'
-      })
-      if (!connection) {
-        throw new ProcessOutlineError('connection-rejected', {
-          sourceId: anchor.id,
-          targetId: created.id
+      ensureSequenceConnectionAllowed(this.rules, 'connection.create', anchor, draft)
+    }
+    const activeLanguage = this.activeLanguage()
+    const metadata = input.metadata
+      ? { ...input.metadata, triggers: input.metadata.triggers.map((trigger) => ({ ...trigger })) }
+      : emptyProcessOutlineNodeMetadata()
+    if (!input.metadata && text(input.name)) {
+      if (activeLanguage === 'ar') metadata.nameAr = text(input.name)
+      else metadata.nameEn = text(input.name)
+    }
+    const projectedName = activeProcessOutlineNodeName(metadata, activeLanguage) || text(input.name)
+    let connectionRejected = false
+    const created = this.transact(() => {
+      const shape = this.modeling.createShape(draft, position, parent)
+      if (anchor) {
+        const connection = this.modeling.connect(anchor, shape, {
+          type: 'bpmn:SequenceFlow'
         })
+        if (!connection) {
+          connectionRejected = true
+          if (this.modeling.removeElements) this.modeling.removeElements([shape])
+          else if (this.modeling.removeShape) this.modeling.removeShape(shape)
+        }
       }
+      if (!connectionRejected) {
+        if (input.documentation !== undefined) {
+          updateNodeDocumentation(this.modeling, this.bpmnFactory, shape, input.documentation)
+        }
+        if (input.metadata || text(input.name)) {
+          applyProcessOutlineNodeMetadata(this.modeler, shape, metadata)
+        }
+        if (projectedName) updateNodeVisibleName(this.modeling, shape, projectedName)
+      }
+      return shape
+    })
+    if (connectionRejected) {
+      throw new ProcessOutlineError('connection-rejected', {
+        sourceId: anchor?.id ?? '',
+        targetId: created.id
+      })
     }
     this.selection.select(created)
     this.refreshFromModel()
@@ -983,18 +1160,44 @@ export class ProcessOutlineController {
   }
 
   updateNode(nodeId: string, input: ProcessOutlineUpdateNodeInput): void {
-    const node = requireElement(this.registry, nodeId, 'node-not-found')
-    const documentation = text(input.documentation)
-    const properties: Record<string, unknown> = {
-      name: text(input.name) || undefined,
-      documentation: documentation
-        ? [this.bpmnFactory.create('bpmn:Documentation', { text: documentation })]
-        : []
+    const node = requireNode(this.registry, nodeId)
+    const activeLanguage = this.activeLanguage()
+    const currentNode = this.snapshotValue.nodes.find((candidate) => candidate.id === nodeId)
+    const desiredMetadata = input.metadata
+      ? { ...input.metadata, triggers: input.metadata.triggers.map((trigger) => ({ ...trigger })) }
+      : currentNode
+        ? {
+            ...currentNode.metadata,
+            triggers: currentNode.metadata.triggers.map((trigger) => ({ ...trigger }))
+          }
+        : readProcessOutlineNodeMetadata(node, this.registry.getAll(), activeLanguage)
+    if (!input.metadata && input.name !== undefined) {
+      if (activeLanguage === 'ar') desiredMetadata.nameAr = input.name
+      else desiredMetadata.nameEn = input.name
     }
-    if (input.calledElement !== undefined) {
-      properties.calledElement = text(input.calledElement) || undefined
-    }
-    this.modeling.updateProperties(node, properties)
+    const existingName = text(readProperty(node.businessObject, 'name'))
+    const activeMetadataName = activeProcessOutlineNodeName(desiredMetadata, activeLanguage)
+    const projectedName =
+      activeMetadataName || (input.name !== undefined ? text(input.name) : existingName)
+
+    this.transact(() => {
+      if (input.metadata || input.name !== undefined) {
+        applyProcessOutlineNodeMetadata(this.modeler, node, desiredMetadata)
+        updateNodeVisibleName(this.modeling, node, projectedName)
+      }
+      if (input.documentation !== undefined) {
+        updateNodeDocumentation(this.modeling, this.bpmnFactory, node, input.documentation)
+      }
+      if (
+        input.calledElement !== undefined &&
+        elementType(node) === 'bpmn:CallActivity' &&
+        text(readProperty(node.businessObject, 'calledElement')) !== text(input.calledElement)
+      ) {
+        this.modeling.updateProperties(node, {
+          calledElement: text(input.calledElement) || undefined
+        })
+      }
+    })
     this.refreshFromModel()
   }
 
@@ -1007,18 +1210,26 @@ export class ProcessOutlineController {
     }
     const source = requireNode(this.registry, input.sourceId)
     const target = requireNode(this.registry, input.targetId)
-    const prepared = prepareFlowProperties(this.bpmnFactory, source, input)
+    const prepared = prepareFlowProperties(source, input)
     ensureSequenceConnectionAllowed(this.rules, 'connection.create', source, target)
-    const connection = this.modeling.connect(source, target, {
-      type: 'bpmn:SequenceFlow'
+    let connectionRejected = false
+    const connection = this.transact(() => {
+      const created = this.modeling.connect(source, target, {
+        type: 'bpmn:SequenceFlow'
+      })
+      if (!created) {
+        connectionRejected = true
+        return undefined
+      }
+      updateFlowProperties(this.modeling, this.bpmnFactory, created, source, prepared)
+      return created
     })
-    if (!connection) {
+    if (connectionRejected || !connection) {
       throw new ProcessOutlineError('connection-rejected', {
         sourceId: input.sourceId,
         targetId: input.targetId
       })
     }
-    updateFlowProperties(this.modeling, connection, source, prepared)
     this.selection.select(connection)
     this.refreshFromModel()
     const flow = this.snapshotValue.flows.find((candidate) => candidate.id === connection.id)
@@ -1033,6 +1244,12 @@ export class ProcessOutlineController {
     const currentTargetId =
       flow.target?.id ?? moddleId(readProperty(flow.businessObject, 'targetRef'))
     if (elementType(flow) !== 'bpmn:SequenceFlow') {
+      if (elementType(flow) === 'bpmn:Association') {
+        throw new ProcessOutlineError('flow-edit-not-supported', {
+          flowId,
+          flowType: elementType(flow)
+        })
+      }
       if (
         input.sourceId !== currentSourceId ||
         input.targetId !== currentTargetId ||
@@ -1044,7 +1261,13 @@ export class ProcessOutlineController {
           flowType: elementType(flow)
         })
       }
-      this.modeling.updateProperties(flow, { name: text(input.name) || undefined })
+      const desiredName = text(input.name) || undefined
+      const currentName = text(readProperty(flow.businessObject, 'name')) || undefined
+      this.transact(() => {
+        if (currentName !== desiredName) {
+          this.modeling.updateProperties(flow, { name: desiredName })
+        }
+      })
       this.refreshFromModel()
       return
     }
@@ -1056,22 +1279,24 @@ export class ProcessOutlineController {
     }
     const newSource = requireNode(this.registry, input.sourceId)
     const newTarget = requireNode(this.registry, input.targetId)
-    const prepared = prepareFlowProperties(this.bpmnFactory, newSource, input)
+    const prepared = prepareFlowProperties(newSource, input)
     ensureSequenceConnectionAllowed(this.rules, 'connection.reconnect', newSource, newTarget, flow)
     const oldSource = flow.source
     const oldSourceDefault = readProperty(oldSource?.businessObject, 'default')
-    if (flow.source?.id !== newSource.id || flow.target?.id !== newTarget.id) {
-      this.modeling.reconnect(flow, newSource, newTarget)
-    }
-    const currentFlow = this.registry.get(flowId) ?? flow
-    updateFlowProperties(this.modeling, currentFlow, newSource, prepared)
-    if (
-      oldSource &&
-      oldSource.id !== newSource.id &&
-      moddleId(oldSourceDefault) === currentFlow.id
-    ) {
-      this.modeling.updateProperties(oldSource, { default: undefined })
-    }
+    this.transact(() => {
+      if (flow.source?.id !== newSource.id || flow.target?.id !== newTarget.id) {
+        this.modeling.reconnect(flow, newSource, newTarget)
+      }
+      const currentFlow = this.registry.get(flowId) ?? flow
+      updateFlowProperties(this.modeling, this.bpmnFactory, currentFlow, newSource, prepared)
+      if (
+        oldSource &&
+        oldSource.id !== newSource.id &&
+        moddleId(oldSourceDefault) === currentFlow.id
+      ) {
+        this.modeling.updateProperties(oldSource, { default: undefined })
+      }
+    })
     this.refreshFromModel()
   }
 
@@ -1093,13 +1318,23 @@ export class ProcessOutlineController {
     if (next && !next.target) {
       throw new ProcessOutlineError('flow-not-found', { id: next.id })
     }
-    this.commandStack.execute(ATOMIC_REORDER_COMMAND, {
-      modeling: this.modeling,
-      first,
-      second,
-      between,
-      previous,
-      next
+    this.transact(() => {
+      if (previous) {
+        this.modeling.reconnect(previous, previous.source as ProcessOutlineCanvasElement, second)
+      }
+      this.modeling.reconnect(between, second, first)
+      if (next) {
+        this.modeling.reconnect(next, first, next.target as ProcessOutlineCanvasElement)
+      }
+
+      if (this.modeling.moveShape) {
+        const delta = {
+          x: (second.x ?? 0) - (first.x ?? 0),
+          y: (second.y ?? 0) - (first.y ?? 0)
+        }
+        this.modeling.moveShape(first, delta, first.parent)
+        this.modeling.moveShape(second, { x: -delta.x, y: -delta.y }, second.parent)
+      }
     })
     this.selection.select(direction === 'up' ? second : first)
     this.refreshFromModel()
@@ -1107,21 +1342,27 @@ export class ProcessOutlineController {
 
   deleteItem(itemId: string): void {
     const element = requireElement(this.registry, itemId, 'item-not-found')
-    if (element.waypoints || (element.source && element.target)) {
-      if (this.modeling.removeConnection) {
-        this.modeling.removeConnection(element)
+    this.transact(() => {
+      if (element.waypoints || (element.source && element.target)) {
+        if (this.modeling.removeConnection) {
+          this.modeling.removeConnection(element)
+        } else if (this.modeling.removeElements) {
+          this.modeling.removeElements([element])
+        } else {
+          throw new ProcessOutlineError('service-unavailable', {
+            service: 'removeConnection'
+          })
+        }
       } else if (this.modeling.removeElements) {
         this.modeling.removeElements([element])
+      } else if (this.modeling.removeShape) {
+        this.modeling.removeShape(element)
       } else {
-        throw new ProcessOutlineError('service-unavailable', { service: 'removeConnection' })
+        throw new ProcessOutlineError('service-unavailable', {
+          service: 'removeElements'
+        })
       }
-    } else if (this.modeling.removeElements) {
-      this.modeling.removeElements([element])
-    } else if (this.modeling.removeShape) {
-      this.modeling.removeShape(element)
-    } else {
-      throw new ProcessOutlineError('service-unavailable', { service: 'removeElements' })
-    }
+    })
     this.selection.select(null)
     this.refreshFromModel()
   }

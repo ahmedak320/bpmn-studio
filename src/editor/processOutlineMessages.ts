@@ -15,6 +15,7 @@ export interface ProcessOutlineMessages {
   flowKind: string
   selected: (id: string) => string
   keyboardHelp: string
+  editProcessDetails: string
   addHeading: string
   nodeTypeLabel: string
   newNodeLabel: string
@@ -37,6 +38,51 @@ export interface ProcessOutlineMessages {
   cancel: string
   documentationLabel: string
   calledElementLabel: string
+  labelsHeading: string
+  nameEnLabel: string
+  nameArLabel: string
+  ownerHeading: string
+  ownerLabel: string
+  ownerTypeLabel: string
+  ownerTypeNone: string
+  ownerTypeIndividual: string
+  ownerTypeDepartment: string
+  ownerTypeDivision: string
+  ownerRoleLabel: string
+  ownerRoleResponsible: string
+  ownerRoleAccountable: string
+  ownerRoleConsulted: string
+  ownerRoleInformed: string
+  noteHeading: string
+  noteLabel: string
+  stepDataHeading: string
+  inputsLabel: string
+  outputsLabel: string
+  systemLabel: string
+  responsiblePeopleLabel: string
+  ccListLabel: string
+  decisionBasisLabel: string
+  channelHeading: string
+  channelLabel: string
+  channelNone: string
+  channelDmthub: string
+  channelEmail: string
+  channelData: string
+  channelDetailLabel: string
+  ccHeading: string
+  ccLabel: string
+  ccToLabel: string
+  triggerHeading: string
+  triggerTypeLabel: string
+  triggerType: (type: string) => string
+  triggerRowLabel: (row: number) => string
+  triggerTypeRowLabel: (row: number) => string
+  triggerServiceLabel: string
+  triggerDetailLabel: string
+  triggerServiceRequired: string
+  addTrigger: string
+  removeTrigger: string
+  removeTriggerLabel: (row: number) => string
   moveUp: string
   moveDown: string
   deleteItem: string
@@ -71,9 +117,13 @@ const EN_NODE_TYPES: Readonly<Record<ProcessOutlineNodeType, string>> = {
   'bpmn:ScriptTask': 'Script task',
   'bpmn:CallActivity': 'Call activity',
   'bpmn:SubProcess': 'Sub-process',
+  'bpmn:Transaction': 'Transaction',
+  'bpmn:AdHocSubProcess': 'Ad hoc sub-process',
   'bpmn:ExclusiveGateway': 'Exclusive gateway',
   'bpmn:InclusiveGateway': 'Inclusive gateway',
-  'bpmn:ParallelGateway': 'Parallel gateway'
+  'bpmn:ParallelGateway': 'Parallel gateway',
+  'bpmn:ComplexGateway': 'Complex gateway',
+  'bpmn:EventBasedGateway': 'Event-based gateway'
 }
 
 const AR_NODE_TYPES: Readonly<Record<ProcessOutlineNodeType, string>> = {
@@ -91,9 +141,29 @@ const AR_NODE_TYPES: Readonly<Record<ProcessOutlineNodeType, string>> = {
   'bpmn:ScriptTask': 'مهمة برنامج نصي',
   'bpmn:CallActivity': 'نشاط استدعاء',
   'bpmn:SubProcess': 'عملية فرعية',
+  'bpmn:Transaction': 'معاملة',
+  'bpmn:AdHocSubProcess': 'عملية فرعية مخصصة',
   'bpmn:ExclusiveGateway': 'بوابة حصرية',
   'bpmn:InclusiveGateway': 'بوابة شاملة',
-  'bpmn:ParallelGateway': 'بوابة متوازية'
+  'bpmn:ParallelGateway': 'بوابة متوازية',
+  'bpmn:ComplexGateway': 'بوابة معقدة',
+  'bpmn:EventBasedGateway': 'بوابة قائمة على الحدث'
+}
+
+const EN_TRIGGER_TYPES: Readonly<Record<string, string>> = {
+  email: 'Email',
+  dmthub: 'DMT Hub',
+  manual: 'Manual',
+  schedule: 'Schedule',
+  other: 'Other'
+}
+
+const AR_TRIGGER_TYPES: Readonly<Record<string, string>> = {
+  email: 'بريد إلكتروني',
+  dmthub: 'منصة DMT',
+  manual: 'يدوي',
+  schedule: 'مُجدوَل',
+  other: 'أخرى'
 }
 
 function fallbackType(type: string): string {
@@ -176,7 +246,9 @@ function englishError(error: ProcessOutlineError): string {
     case 'default-flow-has-condition':
       return 'A default flow cannot also have a condition.'
     case 'default-flow-source-invalid':
-      return 'Default flows can be set only from exclusive or inclusive gateways.'
+      return 'Default flows can be set only from activities or eligible gateways.'
+    case 'condition-flow-source-invalid':
+      return 'Conditions can be set only on flows from activities or eligible gateways.'
     case 'connection-rejected':
       return 'BPMN rules rejected this connection.'
     case 'reorder-not-linear':
@@ -201,7 +273,9 @@ function arabicError(error: ProcessOutlineError): string {
     case 'default-flow-has-condition':
       return 'لا يمكن أن يحتوي التدفق الافتراضي على شرط أيضاً.'
     case 'default-flow-source-invalid':
-      return 'يمكن تعيين التدفقات الافتراضية من البوابات الحصرية أو الشاملة فقط.'
+      return 'يمكن تعيين التدفقات الافتراضية فقط من الأنشطة أو البوابات المؤهلة.'
+    case 'condition-flow-source-invalid':
+      return 'يمكن تعيين الشروط فقط على التدفقات الصادرة من الأنشطة أو البوابات المؤهلة.'
     case 'connection-rejected':
       return 'رفضت قواعد BPMN هذا الاتصال.'
     case 'reorder-not-linear':
@@ -222,6 +296,7 @@ export const EN_PROCESS_OUTLINE_MESSAGES: ProcessOutlineMessages = {
   selected: (id) => `${id} selected on the canvas.`,
   keyboardHelp:
     'Use Arrow keys, Home, and End to navigate. Enter selects on the canvas. F2 edits. Delete removes after confirmation. Control plus Arrow reorders a linear step.',
+  editProcessDetails: 'Edit process details',
   addHeading: 'Add node',
   nodeTypeLabel: 'Node type',
   newNodeLabel: 'Node label',
@@ -234,7 +309,8 @@ export const EN_PROCESS_OUTLINE_MESSAGES: ProcessOutlineMessages = {
   itemNameLabel: 'Name or label',
   flowLabel: 'Flow label',
   conditionLabel: 'Condition',
-  conditionHint: 'Required for non-default branches from exclusive and inclusive gateways.',
+  conditionHint:
+    'Available on flows from activities and eligible gateways; gateway branches need a condition or default.',
   defaultFlowLabel: 'Set as the source node’s default flow',
   connectNodes: 'Connect nodes',
   detailsHeading: 'Selected item',
@@ -244,6 +320,51 @@ export const EN_PROCESS_OUTLINE_MESSAGES: ProcessOutlineMessages = {
   cancel: 'Cancel',
   documentationLabel: 'Documentation',
   calledElementLabel: 'Called process ID',
+  labelsHeading: 'Bilingual label',
+  nameEnLabel: 'Name (English)',
+  nameArLabel: 'Name (Arabic)',
+  ownerHeading: 'Owner',
+  ownerLabel: 'Owner name',
+  ownerTypeLabel: 'Owner type',
+  ownerTypeNone: 'None',
+  ownerTypeIndividual: 'Individual',
+  ownerTypeDepartment: 'Department',
+  ownerTypeDivision: 'Division',
+  ownerRoleLabel: 'RACI role',
+  ownerRoleResponsible: 'Responsible',
+  ownerRoleAccountable: 'Accountable',
+  ownerRoleConsulted: 'Consulted',
+  ownerRoleInformed: 'Informed',
+  noteHeading: 'Note',
+  noteLabel: 'Linked step note',
+  stepDataHeading: 'Step data',
+  inputsLabel: 'Inputs / base information',
+  outputsLabel: 'Outputs',
+  systemLabel: 'Supporting system',
+  responsiblePeopleLabel: 'Responsible people',
+  ccListLabel: 'CC (informed parties)',
+  decisionBasisLabel: 'Decision basis',
+  channelHeading: 'Channel',
+  channelLabel: 'Channel',
+  channelNone: 'None',
+  channelDmthub: 'DMT Hub',
+  channelEmail: 'Email',
+  channelData: 'Data',
+  channelDetailLabel: 'Channel detail',
+  ccHeading: 'Carbon copy (CC)',
+  ccLabel: 'Mark this step as CC',
+  ccToLabel: 'CC recipients',
+  triggerHeading: 'Trigger',
+  triggerTypeLabel: 'Trigger type',
+  triggerType: (type) => EN_TRIGGER_TYPES[type] ?? type,
+  triggerRowLabel: (row) => `Trigger ${EN_PROCESS_OUTLINE_MESSAGES.formatNumber(row)}`,
+  triggerTypeRowLabel: (row) => `Trigger type ${EN_PROCESS_OUTLINE_MESSAGES.formatNumber(row)}`,
+  triggerServiceLabel: 'DMT Hub service',
+  triggerDetailLabel: 'Trigger detail',
+  triggerServiceRequired: 'A DMT Hub service name is required.',
+  addTrigger: 'Add trigger',
+  removeTrigger: 'Remove',
+  removeTriggerLabel: (row) => `Remove trigger ${EN_PROCESS_OUTLINE_MESSAGES.formatNumber(row)}`,
   moveUp: 'Move earlier',
   moveDown: 'Move later',
   deleteItem: 'Delete selected item',
@@ -278,6 +399,7 @@ export const AR_PROCESS_OUTLINE_MESSAGES: ProcessOutlineMessages = {
   selected: (id) => `تم تحديد ${id} على لوحة الرسم.`,
   keyboardHelp:
     'استخدم مفاتيح الأسهم وHome وEnd للتنقل. يحدد Enter العنصر على اللوحة، ويبدأ F2 التحرير، ويحذف Delete بعد التأكيد، ويعيد Control مع سهم ترتيب خطوة خطية.',
+  editProcessDetails: 'تحرير تفاصيل العملية',
   addHeading: 'إضافة عقدة',
   nodeTypeLabel: 'نوع العقدة',
   newNodeLabel: 'تسمية العقدة',
@@ -290,7 +412,8 @@ export const AR_PROCESS_OUTLINE_MESSAGES: ProcessOutlineMessages = {
   itemNameLabel: 'الاسم أو التسمية',
   flowLabel: 'تسمية التدفق',
   conditionLabel: 'الشرط',
-  conditionHint: 'مطلوب للفروع غير الافتراضية من البوابات الحصرية والشاملة.',
+  conditionHint:
+    'متاح للتدفقات من الأنشطة والبوابات المؤهلة؛ وتحتاج فروع البوابة إلى شرط أو تدفق افتراضي.',
   defaultFlowLabel: 'تعيين كتدفق افتراضي لعقدة المصدر',
   connectNodes: 'ربط العقد',
   detailsHeading: 'العنصر المحدد',
@@ -300,6 +423,51 @@ export const AR_PROCESS_OUTLINE_MESSAGES: ProcessOutlineMessages = {
   cancel: 'إلغاء',
   documentationLabel: 'التوثيق',
   calledElementLabel: 'معرّف العملية المستدعاة',
+  labelsHeading: 'التسمية ثنائية اللغة',
+  nameEnLabel: 'الاسم (بالإنجليزية)',
+  nameArLabel: 'الاسم (بالعربية)',
+  ownerHeading: 'المالك',
+  ownerLabel: 'اسم المالك',
+  ownerTypeLabel: 'نوع المالك',
+  ownerTypeNone: 'بلا',
+  ownerTypeIndividual: 'فرد',
+  ownerTypeDepartment: 'إدارة',
+  ownerTypeDivision: 'قطاع',
+  ownerRoleLabel: 'دور RACI',
+  ownerRoleResponsible: 'مسؤول التنفيذ',
+  ownerRoleAccountable: 'المُساءَل',
+  ownerRoleConsulted: 'مُستشار',
+  ownerRoleInformed: 'مُطّلِع',
+  noteHeading: 'ملاحظة',
+  noteLabel: 'ملاحظة الخطوة المرتبطة',
+  stepDataHeading: 'بيانات الخطوة',
+  inputsLabel: 'المدخلات / المعلومات الأساسية',
+  outputsLabel: 'المخرجات',
+  systemLabel: 'النظام الداعم',
+  responsiblePeopleLabel: 'الأشخاص المسؤولون',
+  ccListLabel: 'نسخة إلى (أطراف مُطلَعة)',
+  decisionBasisLabel: 'أساس القرار',
+  channelHeading: 'القناة',
+  channelLabel: 'القناة',
+  channelNone: 'بلا',
+  channelDmthub: 'منصة DMT',
+  channelEmail: 'بريد إلكتروني',
+  channelData: 'بيانات',
+  channelDetailLabel: 'تفاصيل القناة',
+  ccHeading: 'نسخة كربونية (CC)',
+  ccLabel: 'تعيين هذه الخطوة كنسخة كربونية',
+  ccToLabel: 'مستلمو النسخة الكربونية',
+  triggerHeading: 'المُشغِّل',
+  triggerTypeLabel: 'نوع المُشغِّل',
+  triggerType: (type) => AR_TRIGGER_TYPES[type] ?? type,
+  triggerRowLabel: (row) => `المُشغِّل ${AR_PROCESS_OUTLINE_MESSAGES.formatNumber(row)}`,
+  triggerTypeRowLabel: (row) => `نوع المُشغِّل ${AR_PROCESS_OUTLINE_MESSAGES.formatNumber(row)}`,
+  triggerServiceLabel: 'خدمة منصة DMT',
+  triggerDetailLabel: 'تفاصيل المُشغِّل',
+  triggerServiceRequired: 'اسم خدمة منصة DMT مطلوب.',
+  addTrigger: 'إضافة مشغّل',
+  removeTrigger: 'إزالة',
+  removeTriggerLabel: (row) => `إزالة المُشغِّل ${AR_PROCESS_OUTLINE_MESSAGES.formatNumber(row)}`,
   moveUp: 'نقل إلى موضع أسبق',
   moveDown: 'نقل إلى موضع لاحق',
   deleteItem: 'حذف العنصر المحدد',

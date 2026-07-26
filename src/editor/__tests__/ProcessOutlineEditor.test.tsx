@@ -24,6 +24,26 @@ afterEach(() => {
 })
 
 describe('ProcessOutlineEditor accessibility and authoring', () => {
+  it('exposes the optional process-details integration callback', async () => {
+    const fixture = createOutlineTestModeler()
+    const onOpenProcessDetails = vi.fn()
+    const user = userEvent.setup()
+    const { rerender } = render(
+      <ProcessOutlineEditor modeler={fixture.modeler} messages={EN_PROCESS_OUTLINE_MESSAGES} />
+    )
+
+    expect(screen.queryByRole('button', { name: 'Edit process details' })).toBeNull()
+    rerender(
+      <ProcessOutlineEditor
+        modeler={fixture.modeler}
+        messages={EN_PROCESS_OUTLINE_MESSAGES}
+        onOpenProcessDetails={onOpenProcessDetails}
+      />
+    )
+    await user.click(screen.getByRole('button', { name: 'Edit process details' }))
+    expect(onOpenProcessDetails).toHaveBeenCalledOnce()
+  })
+
   it('uses roving keyboard focus and synchronizes selection in both directions', async () => {
     const fixture = createOutlineTestModeler()
     fixture.addNode('Start_1', 'bpmn:StartEvent', 'Start')
@@ -44,8 +64,22 @@ describe('ProcessOutlineEditor accessibility and authoring', () => {
     expect(treeItems.filter((item) => item.tabIndex === 0)).toHaveLength(1)
 
     treeItems[0].focus()
-    await user.keyboard('{ArrowDown}')
-    expect(document.activeElement?.getAttribute('data-outline-id')).toBe('Flow_start')
+    const expectedKeyboardOrder = [
+      'Start_1',
+      'Flow_start',
+      'Task_A',
+      'Flow_between',
+      'Task_B',
+      'Flow_end',
+      'End_1'
+    ]
+    for (const [index, expectedId] of expectedKeyboardOrder.entries()) {
+      expect(document.activeElement?.getAttribute('data-outline-id')).toBe(expectedId)
+      await user.keyboard(index % 2 === 0 ? '{Enter}' : ' ')
+      expect(fixture.selected[0]?.id).toBe(expectedId)
+      if (index < expectedKeyboardOrder.length - 1) await user.keyboard('{ArrowDown}')
+    }
+
     await user.keyboard('{End}')
     expect(document.activeElement?.getAttribute('data-outline-id')).toBe('End_1')
     await user.keyboard('{Home}')
@@ -88,7 +122,20 @@ describe('ProcessOutlineEditor accessibility and authoring', () => {
 
     const addForm = screen.getByRole('heading', { name: 'Add node' }).closest('form')
     if (!addForm) throw new Error('add form missing')
-    await user.selectOptions(within(addForm).getByLabelText('Node type'), 'bpmn:UserTask')
+    const nodeType = within(addForm).getByLabelText('Node type')
+    for (const supportedType of [
+      'bpmn:Transaction',
+      'bpmn:AdHocSubProcess',
+      'bpmn:ComplexGateway',
+      'bpmn:EventBasedGateway'
+    ]) {
+      expect(
+        within(nodeType).getByRole('option', {
+          name: EN_PROCESS_OUTLINE_MESSAGES.nodeType(supportedType)
+        })
+      ).toHaveProperty('value', supportedType)
+    }
+    await user.selectOptions(nodeType, 'bpmn:UserTask')
     await user.type(within(addForm).getByLabelText('Node label'), 'Review request')
     await user.selectOptions(within(addForm).getByLabelText('Connect after'), 'Start_1')
     await user.click(within(addForm).getByRole('button', { name: 'Add node' }))
@@ -96,16 +143,48 @@ describe('ProcessOutlineEditor accessibility and authoring', () => {
     const added = screen.getByRole('treeitem', { name: 'User task: Review request' })
     expect(added.getAttribute('aria-selected')).toBe('true')
     await user.click(screen.getByRole('button', { name: 'Edit selected item' }))
-    const name = screen.getByLabelText('Name or label')
-    await user.clear(name)
-    await user.type(name, 'Approve request')
+    const nameEn = screen.getByLabelText('Name (English)')
+    expect(document.activeElement).toBe(nameEn)
+    await user.clear(nameEn)
+    await user.type(nameEn, 'Approve request')
+    await user.type(screen.getByLabelText('Name (Arabic)'), 'اعتماد الطلب')
+    await user.type(screen.getByLabelText('Owner name'), 'Operations')
+    await user.selectOptions(screen.getByLabelText('Owner type'), 'department')
+    await user.selectOptions(screen.getByLabelText('RACI role'), 'A')
+    await user.type(screen.getByLabelText('Responsible people'), 'Sara — Approver')
+    await user.type(screen.getByLabelText('Linked step note'), 'Escalate incomplete requests.')
+    await user.type(screen.getByLabelText('Inputs / base information'), 'Application')
+    await user.type(screen.getByLabelText('Outputs'), 'Decision')
+    await user.type(screen.getByLabelText('Supporting system'), 'Workflow')
+    await user.type(screen.getByLabelText('CC (informed parties)'), 'Quality')
+    expect(screen.queryByLabelText('Decision basis')).toBeNull()
+    await user.selectOptions(screen.getByLabelText('Channel'), 'email')
+    await user.type(screen.getByLabelText('Channel detail'), 'approvals@example.test')
+    await user.click(screen.getByLabelText('Mark this step as CC'))
+    await user.type(screen.getByLabelText('CC recipients'), 'Audit')
+    expect(screen.queryByText('Trigger type')).toBeNull()
     await user.type(screen.getByLabelText('Documentation'), 'Check all required fields.')
     await user.click(screen.getByRole('button', { name: 'Save changes' }))
 
-    const createdNode = [...fixture.elements.values()].find(
-      (element) => element.businessObject.name === 'Approve request'
+    const createdNode = [...fixture.elements.values()].find((element) =>
+      element.id.startsWith('UserTask_')
     )
+    expect(createdNode?.businessObject.name).toBe('Approve request')
     expect(createdNode?.businessObject.documentation?.[0]?.text).toBe('Check all required fields.')
+    expect(createdNode?.businessObject['orbitpm:nameEn']).toBe('Approve request')
+    expect(createdNode?.businessObject['orbitpm:nameAr']).toBe('اعتماد الطلب')
+    expect(createdNode?.businessObject['orbitpm:owner']).toBe('Operations')
+    expect(createdNode?.businessObject['orbitpm:ownerType']).toBe('department')
+    expect(createdNode?.businessObject['orbitpm:ownerRole']).toBe('A')
+    expect(createdNode?.businessObject['orbitpm:channel']).toBe('email')
+    expect(createdNode?.businessObject['orbitpm:channelDetail']).toBe('approvals@example.test')
+    expect(createdNode?.businessObject['orbitpm:kind']).toBe('cc')
+    expect(createdNode?.businessObject['orbitpm:ccTo']).toBe('Audit')
+    expect(createdNode?.businessObject['orbitpm:inputs']).toBe('Application')
+    expect(createdNode?.businessObject['orbitpm:outputs']).toBe('Decision')
+    expect(createdNode?.businessObject['orbitpm:system']).toBe('Workflow')
+    expect(createdNode?.businessObject['orbitpm:respList']).toBe('Sara — Approver')
+    expect(createdNode?.businessObject['orbitpm:ccList']).toBe('Quality')
     expect(
       [...fixture.elements.values()].some(
         (element) =>
@@ -114,6 +193,47 @@ describe('ProcessOutlineEditor accessibility and authoring', () => {
           element.target?.id === createdNode?.id
       )
     ).toBe(true)
+    expect(
+      [...fixture.elements.values()].some(
+        (element) =>
+          element.type === 'bpmn:TextAnnotation' &&
+          element.businessObject.text === 'Escalate incomplete requests.'
+      )
+    ).toBe(true)
+
+    await user.click(screen.getByRole('treeitem', { name: 'Start event: Start' }))
+    await user.click(screen.getByRole('button', { name: 'Edit selected item' }))
+    expect(screen.queryByLabelText('Channel')).toBeNull()
+    expect(screen.queryByLabelText('Mark this step as CC')).toBeNull()
+    expect(screen.queryByLabelText('Decision basis')).toBeNull()
+    await user.click(screen.getByRole('button', { name: 'Add trigger' }))
+    await user.selectOptions(screen.getByLabelText('Trigger type 1'), 'dmthub')
+    const startSave = screen.getByRole('button', { name: 'Save changes' })
+    expect((startSave as HTMLButtonElement).disabled).toBe(true)
+    expect(screen.getByRole('alert').textContent).toBe('A DMT Hub service name is required.')
+    await user.type(screen.getByLabelText('DMT Hub service'), 'intake-service')
+    await user.type(screen.getByLabelText('Trigger detail'), 'New application')
+    expect((startSave as HTMLButtonElement).disabled).toBe(false)
+    await user.click(startSave)
+    expect(fixture.elements.get('Start_1')?.businessObject['orbitpm:trigger']).toBe('dmthub')
+    expect(fixture.elements.get('Start_1')?.businessObject['orbitpm:triggerService']).toBe(
+      'intake-service'
+    )
+    expect(fixture.elements.get('Start_1')?.businessObject['orbitpm:triggerDetail']).toBe(
+      'New application'
+    )
+
+    await user.click(screen.getByRole('treeitem', { name: 'Exclusive gateway: Decision' }))
+    await user.click(screen.getByRole('button', { name: 'Edit selected item' }))
+    expect(screen.getByLabelText('Decision basis')).not.toBeNull()
+    expect(screen.queryByLabelText('Channel')).toBeNull()
+    expect(screen.queryByLabelText('Mark this step as CC')).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Add trigger' })).toBeNull()
+    await user.type(screen.getByLabelText('Decision basis'), 'Policy 42')
+    await user.click(screen.getByRole('button', { name: 'Save changes' }))
+    expect(fixture.elements.get('Gateway_1')?.businessObject['orbitpm:decisionBasis']).toBe(
+      'Policy 42'
+    )
 
     const connectForm = screen.getByRole('heading', { name: 'Connect nodes' }).closest('form')
     if (!connectForm) throw new Error('connect form missing')
@@ -145,7 +265,7 @@ describe('ProcessOutlineEditor accessibility and authoring', () => {
       gatewayFlows.find((flow) => flow.target?.id === 'Task_no')?.id
     )
     expect(screen.queryByText('outline.gateway-condition-missing')).toBeNull()
-  })
+  }, 10_000)
 
   it('supports keyboard reorder/delete confirmation and exposes validation findings', async () => {
     const fixture = createOutlineTestModeler()
@@ -219,11 +339,9 @@ describe('ProcessOutlineEditor accessibility and authoring', () => {
     const messageRow = screen.getByRole('treeitem', {
       name: 'Flow Request from Task_A to Task_B'
     })
-    expect(
-      screen.getByRole('treeitem', {
-        name: 'Flow Association_1 from Task_A to Task_B'
-      })
-    ).not.toBeNull()
+    const associationRow = screen.getByRole('treeitem', {
+      name: 'Flow Association_1 from Task_A to Task_B'
+    })
     await user.click(messageRow)
     await user.click(screen.getByRole('button', { name: 'Edit selected item' }))
     const nameInput = screen.getByLabelText('Name or label')
@@ -243,6 +361,13 @@ describe('ProcessOutlineEditor accessibility and authoring', () => {
     await user.click(screen.getByRole('button', { name: 'Edit selected item' }))
     await user.click(screen.getByRole('button', { name: 'Cancel' }))
     expect(document.activeElement).toBe(messageRow)
+
+    await user.click(associationRow)
+    expect(fixture.selected[0]?.id).toBe('Association_1')
+    expect(screen.queryByRole('button', { name: 'Edit selected item' })).toBeNull()
+    associationRow.focus()
+    await user.keyboard('{F2}')
+    expect(screen.queryByLabelText('Name or label')).toBeNull()
   })
 
   it('discards an item draft when canvas selection changes instead of applying it elsewhere', async () => {
@@ -257,7 +382,7 @@ describe('ProcessOutlineEditor accessibility and authoring', () => {
 
     await user.click(screen.getByRole('treeitem', { name: 'Task: Alpha' }))
     await user.click(screen.getByRole('button', { name: 'Edit selected item' }))
-    const draftName = screen.getByLabelText('Name or label')
+    const draftName = screen.getByLabelText('Name (English)')
     await user.clear(draftName)
     await user.type(draftName, 'Stale Alpha draft')
 
@@ -268,12 +393,12 @@ describe('ProcessOutlineEditor accessibility and authoring', () => {
       fixture.emit('selection.changed')
     })
 
-    await waitFor(() => expect(screen.queryByLabelText('Name or label')).toBeNull())
+    await waitFor(() => expect(screen.queryByLabelText('Name (English)')).toBeNull())
     expect(fixture.elements.get('Task_A')?.businessObject.name).toBe('Alpha')
     expect(fixture.elements.get('Task_B')?.businessObject.name).toBe('Beta')
 
     await user.click(screen.getByRole('button', { name: 'Edit selected item' }))
-    expect((screen.getByLabelText('Name or label') as HTMLInputElement).value).toBe('Beta')
+    expect((screen.getByLabelText('Name (English)') as HTMLInputElement).value).toBe('Beta')
   })
 
   it('locale-formats outline counts and keeps checkbox targets at least 24 pixels', () => {
@@ -301,12 +426,8 @@ describe('ProcessOutlineEditor accessibility and authoring', () => {
   })
 
   it('uses the theme primary contrast pair for outline action buttons', () => {
-    expect(outlineStyles).toMatch(
-      /--outline-action-bg:\s*var\(--orbitpm-primary-bg,\s*#2563eb\)/
-    )
-    expect(outlineStyles).toMatch(
-      /--outline-action-fg:\s*var\(--orbitpm-primary-fg,\s*#ffffff\)/
-    )
+    expect(outlineStyles).toMatch(/--outline-action-bg:\s*var\(--orbitpm-primary-bg,\s*#2563eb\)/)
+    expect(outlineStyles).toMatch(/--outline-action-fg:\s*var\(--orbitpm-primary-fg,\s*#ffffff\)/)
     expect(outlineStyles).toMatch(
       /--outline-danger:\s*var\(--orbitpm-editor-danger,\s*var\(--orbitpm-danger,\s*#b42318\)\)/
     )

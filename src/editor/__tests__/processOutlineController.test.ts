@@ -81,6 +81,7 @@ describe('ProcessOutlineController bpmn-js synchronization', () => {
       sourceId: task.id,
       targetId: 'End_1'
     })
+    expect(fixture.commandExecute).toHaveBeenCalledTimes(3)
   })
 
   it('persists gateway conditions/defaults and reconnects both endpoints', () => {
@@ -276,5 +277,241 @@ describe('ProcessOutlineController bpmn-js synchronization', () => {
     expect(controller.snapshot.flows.map((flow) => flow.id)).not.toContain('Flow_between')
     expect(controller.snapshot.flows.map((flow) => flow.id)).not.toContain('Flow_end')
     expect(fixture.removeElements).toHaveBeenCalledOnce()
+    expect(fixture.commandExecute).toHaveBeenCalledTimes(2)
+  })
+
+  it('updates the complete Step Details metadata bag in one undoable transaction', () => {
+    const fixture = createOutlineTestModeler()
+    fixture.root.businessObject.$attrs = { 'orbitpm:activeLang': 'ar' }
+    const task = fixture.addNode('Task_1', 'bpmn:BusinessRuleTask', 'الاسم القديم')
+    const firstDocumentation = {
+      $type: 'bpmn:Documentation',
+      id: 'Documentation_1',
+      text: 'Original documentation',
+      textFormat: 'text/markdown',
+      $attrs: { 'vendor:doc': 'keep' },
+      extensionElements: { values: [{ $type: 'vendor:DocPayload', value: 'keep' }] }
+    }
+    const secondDocumentation = {
+      $type: 'bpmn:Documentation',
+      id: 'Documentation_2',
+      text: 'Secondary documentation',
+      $attrs: { 'vendor:secondary': 'keep' }
+    }
+    const extensionElements = {
+      values: [{ $type: 'vendor:Payload', token: 'opaque' }]
+    }
+    task.businessObject.documentation = [firstDocumentation, secondDocumentation]
+    task.businessObject.$attrs = {
+      'vendor:flag': 'keep',
+      'orbitpm:ownerEn': 'Future paired owner'
+    }
+    task.businessObject.extensionElements = extensionElements
+    const controller = createProcessOutlineController(fixture.modeler)
+
+    const metadata = {
+      ...controller.snapshot.nodes[0].metadata,
+      owner: 'Operations',
+      ownerType: 'department',
+      ownerRole: 'A',
+      note: 'Linked reviewer note',
+      channel: 'dmthub',
+      channelDetail: 'case-api',
+      cc: true,
+      ccTo: 'audit@example.test',
+      triggers: [{ type: 'manual', service: 'desk', detail: 'reviewed' }],
+      nameEn: 'Approve request',
+      nameAr: 'اعتماد الطلب',
+      inputs: 'Application\nEvidence',
+      outputs: 'Decision',
+      system: 'Case Hub',
+      respList: 'Reviewer — R',
+      ccList: 'Audit',
+      decisionBasis: 'Policy 7'
+    }
+
+    controller.updateNode('Task_1', {
+      documentation: 'Updated documentation',
+      metadata
+    })
+
+    expect(fixture.commandExecute).toHaveBeenCalledTimes(1)
+    expect(task.businessObject.name).toBe('اعتماد الطلب')
+    expect(task.businessObject['orbitpm:nameEn']).toBe('Approve request')
+    expect(task.businessObject['orbitpm:nameAr']).toBe('اعتماد الطلب')
+    expect(task.businessObject['orbitpm:owner']).toBe('Operations')
+    expect(task.businessObject['orbitpm:decisionBasis']).toBe('Policy 7')
+    expect(task.businessObject['orbitpm:triggers']).toBe('manual — desk — reviewed')
+    expect(task.businessObject.$attrs).toEqual({
+      'vendor:flag': 'keep',
+      'orbitpm:ownerEn': 'Future paired owner'
+    })
+    expect(task.businessObject.extensionElements).toBe(extensionElements)
+    expect(task.businessObject.documentation?.[0]).toBe(firstDocumentation)
+    expect(firstDocumentation).toMatchObject({
+      text: 'Updated documentation',
+      textFormat: 'text/markdown',
+      $attrs: { 'vendor:doc': 'keep' }
+    })
+    expect(task.businessObject.documentation?.[1]).toBe(secondDocumentation)
+    expect(controller.snapshot.nodes[0].metadata).toMatchObject(metadata)
+    expect(controller.snapshot.nodes[0].metadata.note).toBe('Linked reviewer note')
+    expect(
+      [...fixture.elements.values()].filter((element) => element.type === 'bpmn:TextAnnotation')
+    ).toHaveLength(1)
+
+    fixture.undo()
+    expect(task.businessObject.name).toBe('الاسم القديم')
+    expect(firstDocumentation.text).toBe('Original documentation')
+    expect(task.businessObject['orbitpm:owner']).toBeUndefined()
+    expect(task.businessObject.$attrs?.['vendor:flag']).toBe('keep')
+    expect(task.businessObject.extensionElements).toBe(extensionElements)
+    expect(
+      [...fixture.elements.values()].filter((element) => element.type === 'bpmn:TextAnnotation')
+    ).toHaveLength(0)
+
+    fixture.redo()
+    expect(task.businessObject.name).toBe('اعتماد الطلب')
+    expect(firstDocumentation.text).toBe('Updated documentation')
+    expect(task.businessObject['orbitpm:owner']).toBe('Operations')
+    expect(controller.snapshot.nodes[0].metadata.note).toBe('Linked reviewer note')
+  })
+
+  it('patches a rich FormalExpression in place and preserves it through undo/redo', () => {
+    const fixture = createOutlineTestModeler()
+    fixture.addNode('Gateway_1', 'bpmn:ExclusiveGateway', 'Decision')
+    fixture.addNode('Task_1', 'bpmn:Task', 'Review')
+    const flow = fixture.addFlow('Flow_1', 'Gateway_1', 'Task_1', {
+      name: 'Original',
+      condition: 'old = true'
+    })
+    const expression = {
+      $type: 'bpmn:FormalExpression',
+      id: 'Expression_1',
+      body: 'old = true',
+      language: 'FEEL',
+      evaluatesToTypeRef: { $type: 'bpmn:ItemDefinition', id: 'BooleanType' },
+      $attrs: { 'vendor:flag': 'keep', 'orbitpm:conditionAr': 'قديم' },
+      extensionElements: { values: [{ $type: 'vendor:ExpressionData', value: 7 }] }
+    }
+    flow.businessObject.conditionExpression = expression
+    const controller = createProcessOutlineController(fixture.modeler)
+
+    controller.updateFlow('Flow_1', {
+      sourceId: 'Gateway_1',
+      targetId: 'Task_1',
+      name: 'Updated',
+      condition: 'approved = true',
+      isDefault: false
+    })
+
+    expect(fixture.commandExecute).toHaveBeenCalledTimes(1)
+    expect(flow.businessObject.conditionExpression).toBe(expression)
+    expect(expression).toMatchObject({
+      body: 'approved = true',
+      language: 'FEEL',
+      $attrs: { 'vendor:flag': 'keep', 'orbitpm:conditionAr': 'قديم' }
+    })
+    expect(expression.extensionElements.values[0]).toMatchObject({
+      $type: 'vendor:ExpressionData',
+      value: 7
+    })
+
+    fixture.undo()
+    expect(flow.businessObject.name).toBe('Original')
+    expect(flow.businessObject.conditionExpression).toBe(expression)
+    expect(expression.body).toBe('old = true')
+
+    fixture.redo()
+    expect(flow.businessObject.name).toBe('Updated')
+    expect(flow.businessObject.conditionExpression).toBe(expression)
+    expect(expression.body).toBe('approved = true')
+  })
+
+  it('enforces legal condition/default sources and never writes a name onto an Association', () => {
+    const fixture = createOutlineTestModeler()
+    fixture.addNode('Start_1', 'bpmn:StartEvent', 'Start')
+    fixture.addNode('Task_1', 'bpmn:Task', 'Task')
+    fixture.addNode('Complex_1', 'bpmn:ComplexGateway', 'Complex')
+    fixture.addNode('End_1', 'bpmn:EndEvent', 'End')
+    const association = fixture.addFlow('Association_1', 'Task_1', 'End_1', {
+      type: 'bpmn:Association'
+    })
+    const controller = createProcessOutlineController(fixture.modeler)
+
+    expect(() =>
+      controller.connectNodes({
+        sourceId: 'Start_1',
+        targetId: 'Task_1',
+        condition: 'illegal'
+      })
+    ).toThrowError(
+      expect.objectContaining<Partial<ProcessOutlineError>>({
+        code: 'condition-flow-source-invalid'
+      })
+    )
+
+    const activityDefault = controller.connectNodes({
+      sourceId: 'Task_1',
+      targetId: 'End_1',
+      isDefault: true
+    })
+    expect(activityDefault.isDefault).toBe(true)
+    const complexDefault = controller.connectNodes({
+      sourceId: 'Complex_1',
+      targetId: 'End_1',
+      isDefault: true
+    })
+    expect(complexDefault.isDefault).toBe(true)
+
+    const commandCount = fixture.commandExecute.mock.calls.length
+    expect(() =>
+      controller.updateFlow(association.id, {
+        sourceId: 'Task_1',
+        targetId: 'End_1',
+        name: 'Invalid association label',
+        condition: '',
+        isDefault: false
+      })
+    ).toThrowError(
+      expect.objectContaining<Partial<ProcessOutlineError>>({
+        code: 'flow-edit-not-supported'
+      })
+    )
+    expect(fixture.commandExecute).toHaveBeenCalledTimes(commandCount)
+    expect(association.businessObject.name).toBeUndefined()
+  })
+
+  it('rolls back an add-and-connect action when connection creation fails', () => {
+    const fixture = createOutlineTestModeler()
+    fixture.addNode('Start_1', 'bpmn:StartEvent', 'Start')
+    const controller = createProcessOutlineController(fixture.modeler)
+    fixture.connect.mockReturnValueOnce(undefined)
+
+    expect(() =>
+      controller.addNode({
+        type: 'bpmn:UserTask',
+        name: 'Must not survive',
+        documentation: 'Must not survive',
+        metadata: {
+          ...controller.snapshot.nodes[0].metadata,
+          note: 'Must not survive',
+          nameEn: 'Must not survive'
+        },
+        connectFromId: 'Start_1'
+      })
+    ).toThrowError(
+      expect.objectContaining<Partial<ProcessOutlineError>>({
+        code: 'connection-rejected'
+      })
+    )
+
+    expect(fixture.commandExecute).toHaveBeenCalledTimes(1)
+    expect(controller.refresh().nodes.map((node) => node.id)).toEqual(['Start_1'])
+    expect(
+      [...fixture.elements.values()].filter(
+        (element) => element.type === 'bpmn:TextAnnotation' || element.type === 'bpmn:Association'
+      )
+    ).toHaveLength(0)
   })
 })
