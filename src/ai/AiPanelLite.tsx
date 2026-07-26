@@ -51,6 +51,7 @@ import {
 } from './pdf'
 import { assertDocxCompressedSize, extractDocxTextAsync } from './docx'
 import {
+  estimateGenerationRequestCount,
   inspectContextSensitivity,
   redactProcessNames,
   selectRelevantProcesses
@@ -358,7 +359,10 @@ export function AiPanelLite({
     [contextQuery, outboundProcessCatalog]
   )
   const hasLargeAttachment = genMode === 'pdf' || descAttach?.kind === 'pdf'
-  const estimatedRequestCount = hasLargeAttachment ? 3 : 9
+  // Three semantic generation attempts, each with up to three transport tries.
+  // A large attachment is sent once (1), then any two repair turns are text-only
+  // and may each use three transport attempts: 1 + 3 + 3 = 7.
+  const estimatedRequestCount = estimateGenerationRequestCount(hasLargeAttachment)
   const canGenerate =
     !busy &&
     genMode !== 'spreadsheet' &&
@@ -706,34 +710,42 @@ export function AiPanelLite({
 
   const noKeysAtAll = configuredIds.length === 0
 
-  // Local usage ledger for the balance line (Anthropic/Gemini). Re-read every
-  // render; bumpUsage() forces the re-render after a generation or a reset.
-  const sessionUsage =
-    keyPresent && (providerId === 'anthropic' || providerId === 'gemini')
-      ? getUsageSnapshot(providerId)
-      : null
+  // Local usage ledger for every provider. Re-read every render; the shared
+  // usage event makes generation, assistant, interview, and translation calls
+  // refresh this surface even when the request originated elsewhere.
+  const currentUsage = keyPresent && providerId ? getUsageSnapshot(providerId) : null
 
   // The balance/usage status line shown directly under the provider selector.
   const balanceLine =
     keyPresent && providerId === 'openrouter' ? (
-      <CreditsLine
-        state={
-          creditsLoading
-            ? { kind: 'loading' }
-            : creditsError
-              ? { kind: 'error', errorKind: creditsError }
-              : credits
-                ? { kind: 'credits', remaining: credits.remaining }
-                : { kind: 'idle' }
-        }
-        onRefresh={() => void refreshCredits()}
-      />
+      <>
+        <CreditsLine
+          state={
+            creditsLoading
+              ? { kind: 'loading' }
+              : creditsError
+                ? { kind: 'error', errorKind: creditsError }
+                : credits
+                  ? { kind: 'credits', remaining: credits.remaining }
+                  : { kind: 'idle' }
+          }
+          onRefresh={() => void refreshCredits()}
+        />
+        <CreditsLine
+          state={{
+            kind: 'usage',
+            session: currentUsage!.session,
+            allTime: currentUsage!.allTime
+          }}
+          onReset={() => resetUsage(providerId)}
+        />
+      </>
     ) : keyPresent && (providerId === 'anthropic' || providerId === 'gemini') ? (
       <CreditsLine
         state={{
           kind: 'usage',
-          session: sessionUsage!.session,
-          allTime: sessionUsage!.allTime
+          session: currentUsage!.session,
+          allTime: currentUsage!.allTime
         }}
         onReset={() => {
           resetUsage(providerId)

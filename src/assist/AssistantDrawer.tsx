@@ -45,7 +45,7 @@ import {
   parseInterviewQuestions,
   buildGenerationHistory,
   decideInterviewNext,
-  digestsToCatalog,
+  relevantDigestsToCatalog,
   readProcessId,
   QUESTIONS_MAX_TOKENS,
   type InterviewExchange,
@@ -65,6 +65,7 @@ import {
 } from '../localization/externalRequestReview'
 import { buildReviewedLibraryRequest, createLlmMessageDisclosure } from './requestReview'
 import { ExternalRequestPreview } from './ExternalRequestPreview'
+import { UNTRUSTED_WORKSPACE_SYSTEM_GUARD } from '../ai/untrustedPrompt'
 
 type Source = AssistantSource
 interface Message {
@@ -509,14 +510,17 @@ export function AssistantDrawer({
           exchanges,
           lang
         })
-        const outgoing: LlmMessage[] = [{ role: 'user', content: prompt }]
+        const outgoing: LlmMessage[] = [
+          { role: 'system', content: UNTRUSTED_WORKSPACE_SYSTEM_GUARD },
+          { role: 'user', content: prompt }
+        ]
         return {
           disclosure: createLlmMessageDisclosure({
             purpose: 'assistant-interview-question',
             providerId: chosenProvider.id,
             modelId: chosenProvider.modelId,
             messages: outgoing,
-            sensitiveMessageIndexes: [0],
+            sensitiveMessageIndexes: [outgoing.length - 1],
             estimatedRequests: { min: 1, max: 3 }
           }),
           run: async (signal, onAttempt) => {
@@ -606,9 +610,13 @@ export function AssistantDrawer({
       const exchanges = [...session.exchanges, { questions: session.pendingQuestions, answer }]
       const digests = await getDigests()
       const modeler = target.modeler as InterviewModeler
-      const fullCatalog = digestsToCatalog(digests, readProcessId(modeler))
       const description = session.description || target.description
       const history = buildGenerationHistory(description, exchanges)
+      const fullCatalog = relevantDigestsToCatalog(
+        digests,
+        messageHistoryToString(history),
+        readProcessId(modeler)
+      )
       const chosenProvider = provider
       queueExternal('interview', (includeContext, shouldRedactNames) => {
         const catalog = includeContext
@@ -620,14 +628,17 @@ export function AssistantDrawer({
           messageHistoryToString(history),
           catalog.length > 0 ? catalog : undefined
         )
-        const outgoing: LlmMessage[] = [{ role: 'user', content: prompt }]
+        const outgoing: LlmMessage[] = [
+          { role: 'system', content: UNTRUSTED_WORKSPACE_SYSTEM_GUARD },
+          { role: 'user', content: prompt }
+        ]
         return {
           disclosure: createLlmMessageDisclosure({
             purpose: 'assistant-interview-regeneration',
             providerId: chosenProvider.id,
             modelId: chosenProvider.modelId,
             messages: outgoing,
-            sensitiveMessageIndexes: [0],
+            sensitiveMessageIndexes: [outgoing.length - 1],
             // Semantic repair is deliberately limited to one reviewed payload
             // here. The transport may retry that exact payload up to 3 times.
             estimatedRequests: { min: 1, max: 3 }

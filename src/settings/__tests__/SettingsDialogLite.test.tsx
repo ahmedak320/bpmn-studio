@@ -2,6 +2,7 @@ import { describe, it, expect, vi, afterEach } from 'vitest'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { SettingsDialogLite } from '../SettingsDialogLite'
 import { t } from '../../i18n'
+import { resetSessionKeysForTests, setKey } from '../../ai/keys'
 
 const noop = (): void => {}
 
@@ -18,7 +19,12 @@ function installMemoryStorage(): Map<string, string> {
 
 function render(open = true): string {
   return renderToStaticMarkup(
-    <SettingsDialogLite open={open} onClose={noop} onKeysChanged={noop} onOrgStylingChanged={noop} />
+    <SettingsDialogLite
+      open={open}
+      onClose={noop}
+      onKeysChanged={noop}
+      onOrgStylingChanged={noop}
+    />
   )
 }
 
@@ -50,7 +56,10 @@ function checkboxIsChecked(html: string, label: string): boolean {
 }
 
 describe('SettingsDialogLite (static render)', () => {
-  afterEach(() => vi.unstubAllGlobals())
+  afterEach(() => {
+    resetSessionKeysForTests()
+    vi.unstubAllGlobals()
+  })
 
   it('renders nothing when closed', () => {
     installMemoryStorage()
@@ -94,5 +103,14 @@ describe('SettingsDialogLite (static render)', () => {
     const html = render()
     expect(checkboxIsChecked(html, t('settings.orgStyling.label'))).toBe(false)
     expect(checkboxIsChecked(html, t('settings.completeness.label'))).toBe(true)
+  })
+
+  it('shows the recorded session/all-time usage ledger for OpenRouter as well as credits', () => {
+    installMemoryStorage()
+    setKey('openrouter', 'session-key')
+    const html = render()
+    expect(html).toContain('Session:')
+    expect(html).toContain('All time:')
+    expect(html).toContain(escapeHtmlText(t('ai.credits.refreshHint')))
   })
 })

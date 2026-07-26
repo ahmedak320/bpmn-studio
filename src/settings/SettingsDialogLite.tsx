@@ -10,10 +10,7 @@ import {
   unlockEncryptedKey,
   migrateLegacyPlaintextKeys
 } from '../ai/keys'
-import {
-  getProviderSelection,
-  setProviderSelection
-} from '../ai/providerSelection'
+import { getProviderSelection, setProviderSelection } from '../ai/providerSelection'
 import { defaultLiteModelId, getLiteProvider } from '../ai/providersLite'
 import { testConnection, type ProviderConfig, type TestConnectionResult } from '../ai/browserAi'
 import {
@@ -26,7 +23,12 @@ import {
   type OpenRouterCredits
 } from '../ai/credits'
 import { CreditsLine } from '../ai/CreditsLine'
-import { isOrgStylingOn, setOrgStyling, isCompletenessOn, setCompletenessOn } from '../org/orgSettings'
+import {
+  isOrgStylingOn,
+  setOrgStyling,
+  isCompletenessOn,
+  setCompletenessOn
+} from '../org/orgSettings'
 import { t } from '../i18n'
 import { useLang } from '../i18n/useLang'
 
@@ -228,9 +230,7 @@ export function SettingsDialogLite({
     }
   }
 
-  const hasStoredCiphertext = LITE_PROVIDERS.some((provider) =>
-    hasEncryptedKey(provider.id)
-  )
+  const hasStoredCiphertext = LITE_PROVIDERS.some((provider) => hasEncryptedKey(provider.id))
 
   return (
     <div
@@ -245,15 +245,25 @@ export function SettingsDialogLite({
       <div style={panel}>
         <header style={header}>
           <strong>{t('settings.title.providers')}</strong>
-          <button type="button" onClick={onClose} aria-label={t('settings.close.aria')} style={closeBtn}>
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label={t('settings.close.aria')}
+            style={closeBtn}
+          >
             ×
           </button>
         </header>
 
         <div style={{ padding: '0.9rem 1rem', display: 'flex', flexDirection: 'column', gap: 18 }}>
-          <section aria-label={t('settings.diagram.title')} style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+          <section
+            aria-label={t('settings.diagram.title')}
+            style={{ display: 'flex', flexDirection: 'column', gap: 8 }}
+          >
             <span style={{ fontWeight: 600, fontSize: 14 }}>{t('settings.diagram.title')}</span>
-            <label style={{ display: 'flex', gap: 10, alignItems: 'flex-start', cursor: 'pointer' }}>
+            <label
+              style={{ display: 'flex', gap: 10, alignItems: 'flex-start', cursor: 'pointer' }}
+            >
               <input
                 type="checkbox"
                 aria-label={t('settings.orgStyling.label')}
@@ -267,13 +277,17 @@ export function SettingsDialogLite({
                 style={{ marginTop: 3 }}
               />
               <span style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
-                <span style={{ fontWeight: 600, fontSize: 13 }}>{t('settings.orgStyling.label')}</span>
+                <span style={{ fontWeight: 600, fontSize: 13 }}>
+                  {t('settings.orgStyling.label')}
+                </span>
                 <span style={{ fontSize: 11.5, color: 'var(--orbitpm-muted)' }}>
                   {t('settings.orgStyling.desc')}
                 </span>
               </span>
             </label>
-            <label style={{ display: 'flex', gap: 10, alignItems: 'flex-start', cursor: 'pointer' }}>
+            <label
+              style={{ display: 'flex', gap: 10, alignItems: 'flex-start', cursor: 'pointer' }}
+            >
               <input
                 type="checkbox"
                 aria-label={t('settings.completeness.label')}
@@ -290,7 +304,9 @@ export function SettingsDialogLite({
                 style={{ marginTop: 3 }}
               />
               <span style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
-                <span style={{ fontWeight: 600, fontSize: 13 }}>{t('settings.completeness.label')}</span>
+                <span style={{ fontWeight: 600, fontSize: 13 }}>
+                  {t('settings.completeness.label')}
+                </span>
                 <span style={{ fontSize: 11.5, color: 'var(--orbitpm-muted)' }}>
                   {t('settings.completeness.hint')}
                 </span>
@@ -306,9 +322,7 @@ export function SettingsDialogLite({
             aria-label={t('settings.aiSelection.title')}
             style={{ display: 'flex', flexDirection: 'column', gap: 8 }}
           >
-            <span style={{ fontWeight: 600, fontSize: 14 }}>
-              {t('settings.aiSelection.title')}
-            </span>
+            <span style={{ fontWeight: 600, fontSize: 14 }}>{t('settings.aiSelection.title')}</span>
             <label style={labelStack}>
               <span>{t('ai.provider.label')}</span>
               <select
@@ -372,9 +386,7 @@ export function SettingsDialogLite({
             aria-label={t('settings.encryption.title')}
             style={{ display: 'flex', flexDirection: 'column', gap: 8 }}
           >
-            <span style={{ fontWeight: 600, fontSize: 14 }}>
-              {t('settings.encryption.title')}
-            </span>
+            <span style={{ fontWeight: 600, fontSize: 14 }}>{t('settings.encryption.title')}</span>
             <label style={{ display: 'flex', gap: 10, alignItems: 'flex-start' }}>
               <input
                 type="checkbox"
@@ -425,7 +437,13 @@ export function SettingsDialogLite({
                 aria-label={p.label}
                 style={{ display: 'flex', flexDirection: 'column', gap: 6 }}
               >
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
+                <div
+                  style={{
+                    display: 'flex',
+                    justifyContent: 'space-between',
+                    alignItems: 'baseline'
+                  }}
+                >
                   <span style={{ fontWeight: 600, fontSize: 14 }}>{p.label}</span>
                   {p.keysUrl && (
                     <a
@@ -452,7 +470,7 @@ export function SettingsDialogLite({
                       ? t('settings.keyPlaceholder.configured', { last4 })
                       : encryptedStored
                         ? t('settings.keyPlaceholder.encrypted')
-                      : t('settings.keyPlaceholder.empty')
+                        : t('settings.keyPlaceholder.empty')
                   }
                   onChange={(e) => setDrafts((d) => ({ ...d, [p.id]: e.target.value }))}
                   style={input}
@@ -480,7 +498,9 @@ export function SettingsDialogLite({
                     disabled={testing[p.id] || !testConsent[p.id]}
                     style={ghostBtn}
                   >
-                    {testing[p.id] ? t('settings.testConnection.testing') : t('settings.testConnection')}
+                    {testing[p.id]
+                      ? t('settings.testConnection.testing')
+                      : t('settings.testConnection')}
                   </button>
                   {(configured || encryptedStored) && (
                     <button
@@ -522,8 +542,12 @@ export function SettingsDialogLite({
                     onRefresh={() => void refreshCredits()}
                   />
                 )}
-                {configured && (p.id === 'anthropic' || p.id === 'gemini') && (
-                  <UsageLine providerId={p.id} onReset={() => bumpUsage((v) => v + 1)} />
+                {configured && (
+                  <UsageLine
+                    providerId={p.id}
+                    onReset={() => bumpUsage((v) => v + 1)}
+                    note={p.id !== 'openrouter'}
+                  />
                 )}
 
                 {result && (
@@ -562,10 +586,12 @@ export function SettingsDialogLite({
  *  re-read on every render; the parent's onReset bump forces that re-render. */
 function UsageLine({
   providerId,
-  onReset
+  onReset,
+  note
 }: {
   providerId: LiteProviderId
   onReset: () => void
+  note: boolean
 }): JSX.Element {
   const usage = getUsageSnapshot(providerId)
   return (
@@ -579,7 +605,7 @@ function UsageLine({
         resetUsage(providerId)
         onReset()
       }}
-      note
+      note={note}
     />
   )
 }

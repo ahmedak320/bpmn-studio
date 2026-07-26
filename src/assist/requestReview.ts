@@ -6,6 +6,7 @@ import {
   createExternalRequestDisclosure,
   type ExternalRequestDisclosure
 } from '../localization/externalRequestReview'
+import { UNTRUSTED_WORKSPACE_SYSTEM_GUARD } from '../ai/untrustedPrompt'
 
 export interface RankedProcessDigest {
   digest: ProcessDigest
@@ -123,6 +124,7 @@ export function buildReviewedLibraryRequest(input: {
     : []
   const context = buildContext(selected)
   const messages: LlmMessage[] = [
+    { role: 'system', content: UNTRUSTED_WORKSPACE_SYSTEM_GUARD },
     ...input.history,
     {
       role: 'user',

@@ -98,6 +98,24 @@ function reviewed(modeler: ReturnType<typeof makeModel>['modeler']) {
 }
 
 describe('reviewed translation execution', () => {
+  it('discloses worst-case transport and parse-repair request counts', () => {
+    const fake = makeModel()
+    const review = inspectDiagramLocalization(fake.modeler, 'ar')
+    expect(
+      buildTranslationExternalReview(review, {
+        providerId: 'provider',
+        modelId: 'model',
+        kind: 'ai'
+      }).estimatedRequests
+    ).toEqual({ min: 1, max: 6 })
+    expect(
+      buildTranslationExternalReview(review, {
+        providerId: 'free',
+        kind: 'free'
+      }).estimatedRequests
+    ).toEqual({ min: 1, max: 2 })
+  })
+
   it('does not call a provider before consent for the exact current disclosure', async () => {
     const fake = makeModel()
     const { review, disclosure } = reviewed(fake.modeler)

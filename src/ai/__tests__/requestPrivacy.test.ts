@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
+  estimateGenerationRequestCount,
   inspectContextSensitivity,
   redactProcessNames,
   selectRelevantProcesses
@@ -13,6 +14,12 @@ const CATALOG = [
 ]
 
 describe('privacy-preserving process retrieval', () => {
+  it('counts worst-case transport attempts without repeating a large attachment', () => {
+    expect(estimateGenerationRequestCount(false)).toBe(9)
+    expect(estimateGenerationRequestCount(true)).toBe(7)
+    expect(estimateGenerationRequestCount(true, 1, 3)).toBe(1)
+  })
+
   it('returns only positively matching processes', () => {
     expect(selectRelevantProcesses('Create an invoice approval flow', CATALOG)).toEqual([
       CATALOG[1]
@@ -40,9 +47,10 @@ describe('privacy-preserving process retrieval', () => {
   })
 
   it('reports names and obvious sensitive metadata', () => {
-    expect(
-      inspectContextSensitivity('Contact jane@example.com', CATALOG.slice(0, 1))
-    ).toEqual({ containsNames: true, containsSensitiveMetadata: true })
+    expect(inspectContextSensitivity('Contact jane@example.com', CATALOG.slice(0, 1))).toEqual({
+      containsNames: true,
+      containsSensitiveMetadata: true
+    })
     expect(inspectContextSensitivity('No context', [])).toEqual({
       containsNames: false,
       containsSensitiveMetadata: false

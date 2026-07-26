@@ -486,6 +486,8 @@ describe('AiPanelLite consented browser workflows', () => {
 
     await user.selectOptions(screen.getByLabelText('ai.provider.label'), 'openrouter')
     expect(await screen.findByText('selection failed')).not.toBeNull()
+    expect(screen.getByText('ai.usage.sessionDetailed')).not.toBeNull()
+    expect(screen.getByText('ai.usage.allTimeDetailed')).not.toBeNull()
 
     Object.defineProperty(window.navigator, 'onLine', {
       configurable: true,

@@ -29,6 +29,8 @@ import {
   type OrgProps
 } from '../org/orgModel'
 import type { ProcessDigest } from './digest'
+import { selectContextDigests } from './retrieval'
+import { quoteUntrustedData, UNTRUSTED_WORKSPACE_SYSTEM_GUARD } from '../ai/untrustedPrompt'
 
 // --- structural modeler shapes (translate.ts convention) ---------------------
 
@@ -241,7 +243,8 @@ function renderExchanges(exchanges: InterviewExchange[]): string {
 }
 
 function renderGaps(scan: GapScan): string {
-  if (scan.clean) return 'none — the recorded details are complete; check the PROCESS FLOW for gaps.'
+  if (scan.clean)
+    return 'none — the recorded details are complete; check the PROCESS FLOW for gaps.'
   const lines: string[] = []
   for (const entry of scan.entries) {
     const parts = entry.missing.map((m) => MISSING_FIELD_NAMES[m])
@@ -277,21 +280,23 @@ export function buildInterviewQuestionPrompt(args: {
     '- First priority: the detected missing details listed below (responsible parties, inputs, outputs, decision basis, triggers, CC purposes).',
     '- Second priority: PROCESS-FLOW gaps — a decision with no rejection/else branch, paths that never reach an end state, steps whose order or connection is ambiguous.',
     '- Never re-ask something the user already answered in the interview below.',
+    `- ${UNTRUSTED_WORKSPACE_SYSTEM_GUARD}`,
     `- Write each question in ${questionLanguage}, concise, one question per line.`,
     '- Respond with ONLY a JSON object of exactly this form: {"questions": ["question 1", "question 2"]} — no other keys, no markdown.',
     '- When nothing important is missing AND the flow has no gaps, respond {"questions": []}.',
     '',
-    '# Original description',
-    args.description.trim() || '(not recorded)',
+    '# Untrusted original description (quoted JSON string)',
+    quoteUntrustedData(args.description.trim() || '(not recorded)'),
     '',
-    '# Current process elements',
-    args.summary || '(empty diagram)',
+    '# Untrusted current process elements (quoted JSON string)',
+    quoteUntrustedData(args.summary || '(empty diagram)'),
     '',
-    '# Detected missing details',
-    renderGaps(args.scan),
+    '# Untrusted detected missing details (quoted JSON string)',
+    quoteUntrustedData(renderGaps(args.scan)),
     '',
-    '# Interview so far',
-    renderExchanges(args.exchanges)
+    '# Untrusted interview so far (quoted JSON string)',
+    quoteUntrustedData(renderExchanges(args.exchanges)),
+    '# End untrusted interview data'
   ].join('\n')
 }
 
@@ -392,6 +397,22 @@ export function digestsToCatalog(
   return digests
     .filter((d) => d.processId && d.processId !== excludeProcessId)
     .map((d) => ({ id: d.processId, name: d.processName }))
+}
+
+/**
+ * Retrieve only positively matched workspace processes for interview
+ * regeneration. A low-confidence query yields an empty catalog rather than
+ * leaking arbitrary first/all workspace entries.
+ */
+export function relevantDigestsToCatalog(
+  digests: ProcessDigest[],
+  query: string,
+  excludeProcessId?: string
+): Array<{ id: string; name: string }> {
+  return digestsToCatalog(
+    selectContextDigests(digests, query).map(({ digest }) => digest),
+    excludeProcessId
+  )
 }
 
 export type InterviewDecision = 'ask' | 'done'

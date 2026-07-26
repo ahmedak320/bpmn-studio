@@ -11,6 +11,7 @@
  * the conversation so it can see and correct its mistake.
  */
 import { composeCreateBpmn, messageHistoryToString, type LlmMessage } from './prompts'
+import { UNTRUSTED_WORKSPACE_SYSTEM_GUARD } from '../ai/untrustedPrompt'
 import { parseJsonLoose } from './parse'
 import { validateBpmn } from './ir/validate'
 import { BpmnGenerationIdentityError, generateBpmnXml, type BpmnXmlGenerationOptions } from './xml'
@@ -124,7 +125,10 @@ export async function generateFromDescription(
     history && history.length > 0 ? history : [{ role: 'user', content: description }]
 
   const prompt = composeCreateBpmn(messageHistoryToString(baseHistory), options?.processCatalog)
-  const messages: LlmMessage[] = [{ role: 'user', content: prompt }]
+  const messages: LlmMessage[] = [
+    { role: 'system', content: UNTRUSTED_WORKSPACE_SYSTEM_GUARD },
+    { role: 'user', content: prompt }
+  ]
 
   let attempts = 0
   let lastError: unknown = null

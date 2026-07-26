@@ -63,13 +63,26 @@ export function selectRelevantProcesses(
     .map(({ entry }) => ({ ...entry }))
 }
 
-export function redactProcessNames(
-  catalog: readonly ProcessContextEntry[]
-): ProcessContextEntry[] {
+export function redactProcessNames(catalog: readonly ProcessContextEntry[]): ProcessContextEntry[] {
   return catalog.map((entry, index) => ({
     id: entry.id,
     name: `Process ${index + 1}`
   }))
+}
+
+/**
+ * Worst-case physical provider requests for the generation repair envelope.
+ * A large attachment is deliberately sent only on the first semantic attempt;
+ * later repair turns are text-only and retain the normal transport retry cap.
+ */
+export function estimateGenerationRequestCount(
+  hasLargeAttachment: boolean,
+  semanticAttempts = 3,
+  transportAttempts = 3
+): number {
+  const semantic = Math.max(1, Math.floor(semanticAttempts))
+  const transport = Math.max(1, Math.floor(transportAttempts))
+  return hasLargeAttachment ? 1 + (semantic - 1) * transport : semantic * transport
 }
 
 const EMAIL_RE = /\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/i
