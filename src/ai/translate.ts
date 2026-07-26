@@ -24,15 +24,34 @@
 
 import { arabicRatio, parseJsonLoose, type CallLLM, type LlmMessage } from '@/generation'
 import {
+  getDiagramLang,
   pickRootBusinessObject,
   readVisibleLabel,
   visibleLabelProperty,
   type DiagramLang
 } from '../editor/langToggle'
+import { executeModelingBatch, type ModelingBatchUpdate } from '../editor/modelingBatch'
 import {
-  executeModelingBatch,
-  type ModelingBatchUpdate
-} from '../editor/modelingBatch'
+  applyLocalizationPatchesAtomically,
+  assertLocalizationReviewCurrent,
+  inspectDiagramLocalization,
+  isDiagramLocalizationProjected,
+  type DiagramLocalizationReview
+} from '../localization/modelerAdapter'
+import { auditFieldTarget } from '../localization/audit'
+import { planLanguageProjection } from '../localization/plan'
+import {
+  createExternalRequestDisclosure,
+  hasExternalRequestConsent,
+  type ExternalRequestConsent,
+  type ExternalRequestDisclosure
+} from '../localization/externalRequestReview'
+import type {
+  LocalizationField,
+  LocalizationPatch,
+  ProviderFailure,
+  TranslationQueueItem
+} from '../localization/types'
 
 // --- public shapes -----------------------------------------------------------
 
@@ -51,6 +70,27 @@ export interface TranslateOutcome {
   translated: number
   skipped: number
   total: number
+}
+
+export interface ReviewedTranslationOutcome extends TranslateOutcome {
+  complete: boolean
+  active: DiagramLang
+  review: DiagramLocalizationReview
+  providerFailures: ProviderFailure[]
+}
+
+export interface TranslationProviderReview {
+  providerId: string
+  modelId?: string
+  kind: 'ai' | 'free'
+  chunkSize?: number
+}
+
+export class ExternalRequestConsentRequiredError extends Error {
+  constructor() {
+    super('Explicit consent for the current outbound translation text is required.')
+    this.name = 'ExternalRequestConsentRequiredError'
+  }
 }
 
 /** Read-only coverage summary. `total` is partitioned into the next four
@@ -244,9 +284,7 @@ function resolveDiagram(modeler: TranslateModeler): DiagramResolution {
     seen.add(bo)
     const rawLabel = readModdleProp(bo, visibleLabelProperty(bo))
     const candidate =
-      typeof rawLabel === 'string' ||
-      hasRawAttr(bo, ATTR_NAME_EN) ||
-      hasRawAttr(bo, ATTR_NAME_AR)
+      typeof rawLabel === 'string' || hasRawAttr(bo, ATTR_NAME_EN) || hasRawAttr(bo, ATTR_NAME_AR)
     if (!candidate) return
     gathered.push({
       target,
@@ -292,9 +330,9 @@ function resolveDiagram(modeler: TranslateModeler): DiagramResolution {
       en !== undefined ? 'en' : ar !== undefined ? 'ar' : visibleLang
     const source =
       sourceLang === 'en'
-        ? en ?? (visibleLang === 'en' ? visible : undefined)
+        ? (en ?? (visibleLang === 'en' ? visible : undefined))
         : sourceLang === 'ar'
-          ? ar ?? (visibleLang === 'ar' ? visible : undefined)
+          ? (ar ?? (visibleLang === 'ar' ? visible : undefined))
           : undefined
 
     if (g.id === '' || sourceLang === undefined || source === undefined) {
@@ -309,8 +347,7 @@ function resolveDiagram(modeler: TranslateModeler): DiagramResolution {
       target: g.target,
       bo: g.bo,
       seed:
-        readAttr(g.bo, sourceLang === 'en' ? ATTR_NAME_EN : ATTR_NAME_AR) ===
-        undefined
+        readAttr(g.bo, sourceLang === 'en' ? ATTR_NAME_EN : ATTR_NAME_AR) === undefined
           ? {
               [sourceLang === 'en' ? ATTR_NAME_EN : ATTR_NAME_AR]: source
             }
@@ -390,6 +427,284 @@ async function requestChunk(
   return coerceToRecord(await callLLM(retryMessages, { maxTokens: TRANSLATE_MAX_TOKENS }))
 }
 
+function reviewedItemId(index: number): string {
+  return `loc_${index + 1}`
+}
+
+function sensitiveTranslationItem(item: TranslationQueueItem): boolean {
+  return (
+    item.field === 'owner' ||
+    item.field === 'ownerRole' ||
+    item.field === 'respList' ||
+    item.field === 'ccList' ||
+    item.field === 'ccTo'
+  )
+}
+
+export function buildTranslationExternalReview(
+  review: DiagramLocalizationReview,
+  provider: TranslationProviderReview
+): ExternalRequestDisclosure {
+  const outbound = review.queue
+    .filter((item) => item.requiresSegmentationReview !== true)
+    .map((item, index) => ({
+      id: reviewedItemId(index),
+      text: item.sourceValue,
+      context: `${item.processId} / ${item.elementId} / ${item.field} / ${item.sourceLanguage}→${item.target}`,
+      sensitive: sensitiveTranslationItem(item)
+    }))
+  const chunkSize = Math.max(1, Math.floor(provider.chunkSize ?? DEFAULT_CHUNK_SIZE))
+  let requests = 0
+  for (const target of ['ar', 'en'] as const) {
+    const count = review.queue.filter(
+      (item) => item.target === target && item.requiresSegmentationReview !== true
+    ).length
+    requests += Math.ceil(count / chunkSize)
+  }
+  return createExternalRequestDisclosure({
+    purpose: 'diagram-localization',
+    providerId: provider.providerId,
+    modelId: provider.modelId,
+    outbound,
+    estimatedRequests:
+      provider.kind === 'free'
+        ? { min: outbound.length, max: outbound.length * 2 }
+        : { min: requests, max: requests }
+  })
+}
+
+export interface ReviewedTranslationRun {
+  review: DiagramLocalizationReview
+  disclosure: ExternalRequestDisclosure
+  consent: ExternalRequestConsent
+  signal?: AbortSignal
+}
+
+function assertReviewedRun(modeler: TranslateModeler, run: ReviewedTranslationRun): void {
+  if (!hasExternalRequestConsent(run.disclosure, run.consent)) {
+    throw new ExternalRequestConsentRequiredError()
+  }
+  run.signal?.throwIfAborted()
+  assertLocalizationReviewCurrent(modeler, run.review)
+  const expected = run.review.queue
+    .filter((item) => item.requiresSegmentationReview !== true)
+    .map((item) => item.sourceValue)
+  if (
+    expected.length !== run.disclosure.outbound.length ||
+    expected.some((value, index) => value !== run.disclosure.outbound[index]?.text)
+  ) {
+    throw new ExternalRequestConsentRequiredError()
+  }
+}
+
+function cloneLocalizationField(field: LocalizationField): LocalizationField {
+  return {
+    ...field,
+    value: { ...field.value },
+    origins: { ...field.origins },
+    storage: { ...field.storage },
+    planeIds: [...field.planeIds]
+  }
+}
+
+function queueKey(item: TranslationQueueItem): string {
+  return `${item.processId}\u0000${item.elementId}\u0000${item.field}\u0000${item.target}`
+}
+
+function providerPatch(
+  field: LocalizationField,
+  item: TranslationQueueItem,
+  value: string
+): LocalizationPatch {
+  const previous = field.value[item.target]
+  return {
+    source: item.source,
+    processId: item.processId,
+    elementId: item.elementId,
+    field: item.field,
+    property: item.target === 'en' ? field.storage.enProperty : field.storage.arProperty,
+    value,
+    ...(previous === undefined ? {} : { expectedValue: previous }),
+    target: item.target,
+    reason: 'provider'
+  }
+}
+
+function activePatches(
+  fields: readonly LocalizationField[],
+  target: DiagramLang
+): LocalizationPatch[] {
+  return [...new Set(fields.map((field) => field.processId))].map((processId) => ({
+    source: fields[0]?.source ?? 'editor',
+    processId,
+    elementId: processId,
+    field: '__activeLang',
+    property: 'orbitpm:activeLang',
+    value: target,
+    target,
+    reason: 'projection'
+  }))
+}
+
+function virtualTranslationResult(
+  review: DiagramLocalizationReview,
+  values: ReadonlyMap<string, string>
+): {
+  fields: LocalizationField[]
+  patches: LocalizationPatch[]
+  failures: ProviderFailure[]
+} {
+  const fields = review.fields.map(cloneLocalizationField)
+  const patches: LocalizationPatch[] = []
+  const failures: ProviderFailure[] = []
+  for (const item of review.queue) {
+    if (item.requiresSegmentationReview) {
+      failures.push({
+        processId: item.processId,
+        elementId: item.elementId,
+        field: item.field,
+        target: item.target,
+        originalValue: item.sourceValue
+      })
+      continue
+    }
+    const field = fields.find(
+      (candidate) =>
+        candidate.processId === item.processId &&
+        candidate.elementId === item.elementId &&
+        candidate.field === item.field
+    )
+    const candidate = values.get(queueKey(item))
+    if (!field || candidate === undefined) {
+      failures.push({
+        processId: item.processId,
+        elementId: item.elementId,
+        field: item.field,
+        target: item.target,
+        originalValue: item.sourceValue
+      })
+      continue
+    }
+    const check = cloneLocalizationField(field)
+    check.value[item.target] = candidate
+    check.origins[item.target] = 'paired'
+    if (auditFieldTarget(check, item.target).length > 0) {
+      failures.push({
+        processId: item.processId,
+        elementId: item.elementId,
+        field: item.field,
+        target: item.target,
+        originalValue: candidate
+      })
+      continue
+    }
+    patches.push(providerPatch(field, item, candidate))
+    field.value[item.target] = candidate
+    field.origins[item.target] = 'paired'
+  }
+  return { fields, patches, failures }
+}
+
+function finishReviewedTranslation(
+  modeler: TranslateModeler,
+  run: ReviewedTranslationRun,
+  values: ReadonlyMap<string, string>
+): ReviewedTranslationOutcome {
+  run.signal?.throwIfAborted()
+  // Re-check after the potentially slow external round-trip. A user/import
+  // supplied target or source edit made while the request was in flight wins;
+  // no provider result may overwrite it.
+  assertLocalizationReviewCurrent(modeler, run.review)
+  const virtual = virtualTranslationResult(run.review, values)
+  const projection = planLanguageProjection(virtual.fields, run.review.target, {
+    providerFailures: virtual.failures
+  })
+  const canProject = projection.blockers.length === 0
+  const patches: LocalizationPatch[] = [
+    ...run.review.localUpdates,
+    ...virtual.patches,
+    ...(canProject ? projection.updates : []),
+    ...(canProject ? activePatches(virtual.fields, run.review.target) : [])
+  ]
+  applyLocalizationPatchesAtomically(modeler, patches)
+
+  // Completion is based only on a fresh post-mutation audit. Failed/cancelled
+  // items remain in the returned queue and are never reported as success.
+  let post = inspectDiagramLocalization(modeler, run.review.target, {
+    source: run.review.source,
+    providerFailures: virtual.failures
+  })
+  let complete =
+    canProject &&
+    post.issues.filter((issue) => issue.target === run.review.target).length === 0 &&
+    isDiagramLocalizationProjected(modeler, post)
+  if (canProject && !complete) {
+    try {
+      ;(modeler.get('commandStack') as { undo(): void }).undo()
+      post = inspectDiagramLocalization(modeler, run.review.target, {
+        source: run.review.source,
+        providerFailures: virtual.failures
+      })
+      complete = false
+    } catch {
+      /* structural test doubles have no undo service */
+    }
+  }
+  const translated = virtual.patches.length
+  return {
+    translated,
+    skipped: run.review.queue.length - translated,
+    total: run.review.queue.length,
+    complete,
+    active: complete ? run.review.target : getDiagramLang(modeler),
+    review: post,
+    providerFailures: virtual.failures
+  }
+}
+
+/**
+ * Execute the exact AI-provider request approved in a disclosure. Merely
+ * constructing a review never calls `callLLM`; this function refuses to call
+ * it when consent is absent/stale or diagram text changed.
+ */
+export async function translateReviewedDiagram(
+  modeler: TranslateModeler,
+  callLLM: CallLLM,
+  run: ReviewedTranslationRun,
+  opts?: { chunkSize?: number }
+): Promise<ReviewedTranslationOutcome> {
+  assertReviewedRun(modeler, run)
+  const sendable = run.review.queue.filter((item) => item.requiresSegmentationReview !== true)
+  const entries = sendable.map((item, index): TranslateEntry => ({
+    id: reviewedItemId(index),
+    text: item.sourceValue,
+    target: item.target
+  }))
+  const rawChunkSize = opts?.chunkSize
+  const chunkSize =
+    typeof rawChunkSize === 'number' && Number.isFinite(rawChunkSize) && rawChunkSize >= 1
+      ? Math.floor(rawChunkSize)
+      : DEFAULT_CHUNK_SIZE
+  const values = new Map<string, string>()
+  for (const target of ['ar', 'en'] as const) {
+    const directional = entries.filter((entry) => entry.target === target)
+    for (let start = 0; start < directional.length; start += chunkSize) {
+      run.signal?.throwIfAborted()
+      const chunk = directional.slice(start, start + chunkSize)
+      const response = await requestChunk(callLLM, chunk)
+      if (!response) continue
+      for (const entry of chunk) {
+        const valid = validateTranslation(entry, response[entry.id])
+        if (valid === undefined) continue
+        const index = Number(entry.id.slice('loc_'.length)) - 1
+        const item = sendable[index]
+        if (item) values.set(queueKey(item), valid)
+      }
+    }
+  }
+  return finishReviewedTranslation(modeler, run, values)
+}
+
 /**
  * Validate one model-provided translation; returns the trimmed value or
  * undefined (⇒ skipped). Rules:
@@ -434,10 +749,8 @@ function applyTranslations(
   let translated = 0
   const updates: ModelingBatchUpdate[] = []
   for (const el of resolution.elements) {
-    const targetAttr =
-      el.entry.target === 'ar' ? ATTR_NAME_AR : ATTR_NAME_EN
-    const sourceAttr =
-      el.entry.target === 'ar' ? ATTR_NAME_EN : ATTR_NAME_AR
+    const targetAttr = el.entry.target === 'ar' ? ATTR_NAME_AR : ATTR_NAME_EN
+    const sourceAttr = el.entry.target === 'ar' ? ATTR_NAME_EN : ATTR_NAME_AR
     // A user/import may have supplied the target while the provider request was
     // in flight. That newer nonempty value wins; never overwrite it or apply a
     // now-stale seed beside it.
@@ -516,8 +829,45 @@ export async function translateDiagram(
 export type TranslateTextsFn = (
   texts: string[],
   from: DiagramLang,
-  to: DiagramLang
+  to: DiagramLang,
+  signal?: AbortSignal
 ) => Promise<Array<string | undefined>>
+
+/** Reviewed, consent-gated twin for per-text/free translation transports. */
+export async function translateReviewedDiagramWithTexts(
+  modeler: TranslateModeler,
+  translateTexts: TranslateTextsFn,
+  run: ReviewedTranslationRun
+): Promise<ReviewedTranslationOutcome> {
+  assertReviewedRun(modeler, run)
+  const sendable = run.review.queue.filter((item) => item.requiresSegmentationReview !== true)
+  const values = new Map<string, string>()
+  for (const target of ['ar', 'en'] as const) {
+    run.signal?.throwIfAborted()
+    const directional = sendable.filter((item) => item.target === target)
+    if (directional.length === 0) continue
+    const source: DiagramLang = target === 'ar' ? 'en' : 'ar'
+    const results = await translateTexts(
+      directional.map((item) => item.sourceValue),
+      source,
+      target,
+      run.signal
+    )
+    for (let index = 0; index < directional.length; index += 1) {
+      const item = directional[index]
+      const valid = validateTranslation(
+        {
+          id: reviewedItemId(sendable.indexOf(item)),
+          text: item.sourceValue,
+          target: item.target
+        },
+        results[index]
+      )
+      if (valid !== undefined) values.set(queueKey(item), valid)
+    }
+  }
+  return finishReviewedTranslation(modeler, run, values)
+}
 
 /**
  * Non-LLM twin of {@link translateDiagram}. It makes at most one request per

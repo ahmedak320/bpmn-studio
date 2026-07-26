@@ -27,8 +27,7 @@ export const LocalizationSource = {
   Editor: 'editor'
 } as const
 
-export type LocalizationSource =
-  (typeof LocalizationSource)[keyof typeof LocalizationSource]
+export type LocalizationSource = (typeof LocalizationSource)[keyof typeof LocalizationSource]
 
 export const LOCALIZATION_SOURCES = Object.freeze(
   Object.values(LocalizationSource)
@@ -41,11 +40,7 @@ export interface BilingualValue {
 }
 
 export type LocalizationIssueCode =
-  | 'missing'
-  | 'wrong-script'
-  | 'duplicate-counterpart'
-  | 'mixed'
-  | 'provider-failed'
+  'missing' | 'wrong-script' | 'duplicate-counterpart' | 'mixed' | 'provider-failed'
 
 export interface LocalizationIssue {
   source: LocalizationSource
@@ -57,17 +52,9 @@ export interface LocalizationIssue {
   originalValue?: string
 }
 
-export type LocalizationFieldKind =
-  | 'name'
-  | 'condition'
-  | 'annotation'
-  | 'notes'
-  | 'metadata'
+export type LocalizationFieldKind = 'name' | 'condition' | 'annotation' | 'notes' | 'metadata'
 
-export type LocalizationValueOrigin =
-  | 'paired'
-  | 'projection'
-  | 'script-inferred'
+export type LocalizationValueOrigin = 'paired' | 'projection' | 'script-inferred'
 
 /**
  * Property names are the keys expected by moddle/modeling updates:
@@ -146,6 +133,7 @@ export type LocalizationPatchReason =
   | 'glossary'
   | 'translation-memory'
   | 'neutral'
+  | 'provider'
   | 'projection'
   | 'partial-fallback'
 

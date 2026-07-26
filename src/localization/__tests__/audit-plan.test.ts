@@ -5,6 +5,7 @@ import {
   buildTranslationQueue,
   planLanguageProjection,
   planLocalResourceApplication,
+  findLocalPair,
   type LanguageCode,
   type LocalizationField,
   type TranslationMemoryEntry
@@ -38,13 +39,8 @@ function field(
   }
 }
 
-function issueCodes(
-  input: readonly LocalizationField[]
-): Array<[string, LanguageCode]> {
-  return auditLocalizationFields(input).issues.map((issue) => [
-    issue.code,
-    issue.target
-  ])
+function issueCodes(input: readonly LocalizationField[]): Array<[string, LanguageCode]> {
+  return auditLocalizationFields(input).issues.map((issue) => [issue.code, issue.target])
 }
 
 describe('issue-driven bilingual audit', () => {
@@ -96,14 +92,8 @@ describe('issue-driven bilingual audit', () => {
   it('reports wrong-script, mixed, and unknown values with the contract codes', () => {
     expect(
       issueCodes([
-        field(
-          { en: 'مراجعة الطلب', ar: 'Review request' },
-          { elementId: 'wrong' }
-        ),
-        field(
-          { en: 'Review مراجعة', ar: 'مراجعة Review' },
-          { elementId: 'mixed' }
-        ),
+        field({ en: 'مراجعة الطلب', ar: 'Review request' }, { elementId: 'wrong' }),
+        field({ en: 'Review مراجعة', ar: 'مراجعة Review' }, { elementId: 'mixed' }),
         field({ en: '✓', ar: '✓' }, { elementId: 'unknown' })
       ])
     ).toEqual([
@@ -155,12 +145,42 @@ describe('issue-driven bilingual audit', () => {
         }
       ]
     })
-    expect(report.issues.map((issue) => issue.code)).toEqual([
-      'missing',
-      'provider-failed'
-    ])
+    expect(report.issues.map((issue) => issue.code)).toEqual(['missing', 'provider-failed'])
     expect(report.summary.issueCount).toBe(2)
     expect(report.summary.byCode['provider-failed']).toBe(1)
+  })
+
+  it('classifies Arabic and active-Arabic duplicate counterparts in both directions', () => {
+    expect(
+      auditLocalizationFields([
+        field(
+          { en: 'اعتماد الطلب', ar: 'اعتماد الطلب', active: 'ar' },
+          { elementId: 'arabic-duplicate' }
+        ),
+        field({ en: '✓', ar: '✓', active: 'ar' }, { elementId: 'unknown-ar' })
+      ])
+        .issues.filter((issue) => issue.code === 'duplicate-counterpart')
+        .map((issue) => issue.target)
+    ).toEqual(['en', 'en'])
+  })
+
+  it('deduplicates provider failures and falls back to field/default provenance', () => {
+    const failure = {
+      processId: 'missing-process',
+      elementId: 'missing-element',
+      field: 'name',
+      target: 'ar' as const
+    }
+    const withField = auditLocalizationFields(
+      [field({ en: 'Approve request' }, { source: LocalizationSource.Backup })],
+      { providerFailures: [failure, failure] }
+    )
+    expect(withField.issues.filter((issue) => issue.code === 'provider-failed')).toEqual([
+      expect.objectContaining({ source: LocalizationSource.Backup })
+    ])
+    expect(auditLocalizationFields([], { providerFailures: [failure] }).issues[0].source).toBe(
+      LocalizationSource.Xml
+    )
   })
 })
 
@@ -312,21 +332,32 @@ describe('deterministic local glossary and translation-memory application', () =
         accepted: false
       }
     ] as unknown as readonly TranslationMemoryEntry[]
-    const plan = planLocalResourceApplication(
-      [field({ en: 'Approve request' })],
-      { translationMemory: malformed }
-    )
+    const plan = planLocalResourceApplication([field({ en: 'Approve request' })], {
+      translationMemory: malformed
+    })
     expect(plan.translationMemoryMatches).toBe(0)
     expect(plan.fields[0].value.ar).toBeUndefined()
   })
 
   it('lets an edited workspace glossary remove a seeded neutral approval', () => {
-    const plan = planLocalResourceApplication(
-      [field({ en: 'API' })],
-      { glossary: [] }
-    )
+    const plan = planLocalResourceApplication([field({ en: 'API' })], { glossary: [] })
     expect(plan.glossaryMatches).toBe(0)
     expect(plan.issues.map((issue) => issue.code)).toEqual(['missing'])
+  })
+
+  it('covers rejected local candidates and explicit iterable audit options', () => {
+    const plan = planLocalResourceApplication([field({ en: 'Review request' })], {
+      glossary: [{ en: 'Review request', ar: 'Still English' }],
+      approvedNeutralTerms: new Set(['API']),
+      approvedEnglishBilingualExceptions: new Set(['DMT دائرة'])
+    })
+    expect(plan.fields[0].value.ar).toBeUndefined()
+    expect(plan.issues.map((issue) => issue.code)).toEqual(['missing'])
+  })
+
+  it('returns no local pair for same-direction and blank lookups', () => {
+    expect(findLocalPair('API', 'en', 'en', [], [])).toBeUndefined()
+    expect(findLocalPair('   ', 'en', 'ar', [], [])).toBeUndefined()
   })
 
   it.each(['123', 'Task_42', 'owner@example.ae', 'https://example.ae'])(
@@ -355,6 +386,16 @@ describe('projection and explicit translation-review plans', () => {
     expect(plan.fallbackCount).toBe(0)
   })
 
+  it('projects a valid target with no prior visible projection', () => {
+    const input = field({ en: 'Approve request', ar: 'اعتماد الطلب' }, { projection: undefined })
+    const plan = planLanguageProjection([input], 'ar', {
+      approvedNeutralTerms: ['API'],
+      approvedEnglishBilingualExceptions: ['DMT دائرة']
+    })
+    expect(plan.complete).toBe(true)
+    expect(plan.updates[0]).not.toHaveProperty('expectedValue')
+  })
+
   it('keeps a provider failure as a projection blocker, never a false completion', () => {
     const input = field({ en: 'Approve request', ar: 'اعتماد الطلب' })
     const plan = planLanguageProjection([input], 'ar', {
@@ -368,17 +409,12 @@ describe('projection and explicit translation-review plans', () => {
       ]
     })
     expect(plan.complete).toBe(false)
-    expect(plan.blockers.map((issue) => issue.code)).toEqual([
-      'provider-failed'
-    ])
+    expect(plan.blockers.map((issue) => issue.code)).toEqual(['provider-failed'])
     expect(plan.updates).toEqual([])
   })
 
   it('uses an opposite-language label only after explicit partial-preview choice', () => {
-    const input = field(
-      { en: 'Approve request' },
-      { projection: 'Old visible label' }
-    )
+    const input = field({ en: 'Approve request' }, { projection: 'Old visible label' })
     const plan = planLanguageProjection([input], 'ar', {
       allowPartial: true
     })
@@ -401,10 +437,7 @@ describe('projection and explicit translation-review plans', () => {
 
   it('projects actual Arabic into names, annotations, conditions, and unsuffixed details', () => {
     const inputs = [
-      field(
-        { en: 'Approve', ar: 'اعتماد' },
-        { elementId: 'Task', projection: 'Approve' }
-      ),
+      field({ en: 'Approve', ar: 'اعتماد' }, { elementId: 'Task', projection: 'Approve' }),
       field(
         { en: 'Yes', ar: 'نعم' },
         {
@@ -454,9 +487,7 @@ describe('projection and explicit translation-review plans', () => {
       ['text', 'ملاحظة المراجعة'],
       ['orbitpm:decisionBasis', 'القسم 7 من السياسة']
     ])
-    expect(
-      plan.updates.every((update) => /[\p{Script=Arabic}]/u.test(update.value))
-    ).toBe(true)
+    expect(plan.updates.every((update) => /[\p{Script=Arabic}]/u.test(update.value))).toBe(true)
   })
 
   it('queues unresolved and provider-failed fields with exact outbound source text, but executes nothing', () => {
@@ -481,13 +512,15 @@ describe('projection and explicit translation-review plans', () => {
         }
       ]
     })
-    expect(queue.map((item) => ({
-      elementId: item.elementId,
-      sourceLanguage: item.sourceLanguage,
-      sourceValue: item.sourceValue,
-      target: item.target,
-      codes: item.issues.map((issue) => issue.code)
-    }))).toEqual([
+    expect(
+      queue.map((item) => ({
+        elementId: item.elementId,
+        sourceLanguage: item.sourceLanguage,
+        sourceValue: item.sourceValue,
+        target: item.target,
+        codes: item.issues.map((issue) => issue.code)
+      }))
+    ).toEqual([
       {
         elementId: 'Task_approve',
         sourceLanguage: 'en',

@@ -347,6 +347,28 @@ describe('makeFreeTranslateTexts', () => {
     expect(urls[0]).toContain('tl=en')
     expect(urls[1]).toContain('langpair=ar%7Cen')
   })
+
+  it('aborts an in-flight free-service request from the caller signal', async () => {
+    const controller = new AbortController()
+    let observedSignal: AbortSignal | undefined
+    const fetchImpl = vi.fn(
+      async (_input: RequestInfo | URL, init?: RequestInit): Promise<Response> =>
+        new Promise((_resolve, reject) => {
+          observedSignal = init?.signal ?? undefined
+          observedSignal?.addEventListener('abort', () => reject(observedSignal?.reason), {
+            once: true
+          })
+        })
+    ) as unknown as typeof fetch
+    const pending = makeFreeTranslateTexts({
+      fetchImpl,
+      minDelayMs: 0
+    })(['Review request'], 'en', 'ar', controller.signal)
+    controller.abort(new DOMException('cancelled', 'AbortError'))
+    await expect(pending).rejects.toMatchObject({ name: 'AbortError' })
+    expect(observedSignal?.aborted).toBe(true)
+    expect(fetchImpl).toHaveBeenCalledTimes(1)
+  })
 })
 
 // === FreeTranslateError ======================================================

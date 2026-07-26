@@ -36,10 +36,7 @@ class MemoryBroadcastChannel implements BroadcastChannelLike {
     }
   }
 
-  addEventListener(
-    _type: 'message',
-    listener: (event: BroadcastMessageEventLike) => void
-  ): void {
+  addEventListener(_type: 'message', listener: (event: BroadcastMessageEventLike) => void): void {
     this.listeners.add(listener)
   }
 
@@ -75,30 +72,117 @@ function createPair(options: { leaseMs?: number; now?: () => number } = {}) {
 
 describe('workspace BroadcastChannel protocol', () => {
   it('validates the versioned protocol and rejects malformed payloads', () => {
+    const base = {
+      protocol: WORKSPACE_CHANNEL_PROTOCOL,
+      version: WORKSPACE_CHANNEL_VERSION,
+      workspaceId: 'ws',
+      senderId: 'a',
+      sentAt: 1
+    }
+    expect(isWorkspaceChannelMessage({ ...base, type: 'hello' })).toBe(true)
     expect(
       isWorkspaceChannelMessage({
-        protocol: WORKSPACE_CHANNEL_PROTOCOL,
-        version: WORKSPACE_CHANNEL_VERSION,
-        workspaceId: 'ws',
-        senderId: 'a',
-        sentAt: 1,
+        ...base,
+        type: 'lock-request',
+        path: 'a.bpmn',
+        requestId: 'request',
+        requestedAt: 1,
+        expiresAt: 2
+      })
+    ).toBe(true)
+    for (const type of ['lock-held', 'lock-acquired', 'lock-renewed']) {
+      expect(
+        isWorkspaceChannelMessage({
+          ...base,
+          type,
+          path: 'a.bpmn',
+          requestId: 'request',
+          expiresAt: 2
+        })
+      ).toBe(true)
+    }
+    expect(
+      isWorkspaceChannelMessage({
+        ...base,
+        type: 'lock-released',
+        path: 'a.bpmn',
+        requestId: 'request'
+      })
+    ).toBe(true)
+    expect(
+      isWorkspaceChannelMessage({
+        ...base,
         type: 'document-change',
         change: 'saved',
         path: 'a.bpmn',
         fingerprint: { hash: 'x', size: 1, modifiedAt: 1 }
       })
     ).toBe(true)
-    expect(isWorkspaceChannelMessage({ type: 'document-change' })).toBe(false)
     expect(
       isWorkspaceChannelMessage({
-        protocol: WORKSPACE_CHANNEL_PROTOCOL,
-        version: 99,
-        workspaceId: 'ws',
-        senderId: 'a',
-        sentAt: 1,
-        type: 'hello'
+        ...base,
+        type: 'document-change',
+        change: 'deleted',
+        path: 'a.bpmn'
       })
-    ).toBe(false)
+    ).toBe(true)
+    expect(
+      isWorkspaceChannelMessage({
+        ...base,
+        type: 'document-change',
+        change: 'moved',
+        path: 'new.bpmn',
+        previousPath: 'old.bpmn'
+      })
+    ).toBe(true)
+
+    for (const malformed of [
+      null,
+      'message',
+      { ...base, protocol: 'wrong', type: 'hello' },
+      { ...base, version: 99, type: 'hello' },
+      { ...base, workspaceId: 1, type: 'hello' },
+      { ...base, senderId: null, type: 'hello' },
+      { ...base, sentAt: 'now', type: 'hello' },
+      { ...base, type: 1 },
+      { ...base, type: 'unknown' },
+      { ...base, type: 'lock-request', path: 1, requestId: 'r', requestedAt: 1, expiresAt: 2 },
+      { ...base, type: 'lock-request', path: 'a', requestId: 1, requestedAt: 1, expiresAt: 2 },
+      { ...base, type: 'lock-request', path: 'a', requestId: 'r', requestedAt: 'x', expiresAt: 2 },
+      { ...base, type: 'lock-request', path: 'a', requestId: 'r', requestedAt: 1, expiresAt: 'x' },
+      { ...base, type: 'lock-held', path: 1, requestId: 'r', expiresAt: 2 },
+      { ...base, type: 'lock-acquired', path: 'a', requestId: 1, expiresAt: 2 },
+      { ...base, type: 'lock-renewed', path: 'a', requestId: 'r', expiresAt: 'x' },
+      { ...base, type: 'lock-released', path: 1, requestId: 'r' },
+      { ...base, type: 'lock-released', path: 'a', requestId: 1 },
+      { ...base, type: 'document-change', change: 'unknown', path: 'a' },
+      { ...base, type: 'document-change', change: 'saved', path: 1 },
+      { ...base, type: 'document-change', change: 'saved', path: 'a', previousPath: 1 },
+      {
+        ...base,
+        type: 'document-change',
+        change: 'saved',
+        path: 'a',
+        fingerprint: { hash: 1, size: 1, modifiedAt: 1 }
+      },
+      {
+        ...base,
+        type: 'document-change',
+        change: 'saved',
+        path: 'a',
+        fingerprint: { hash: 'x', size: Number.NaN, modifiedAt: 1 }
+      },
+      {
+        ...base,
+        type: 'document-change',
+        change: 'saved',
+        path: 'a',
+        fingerprint: { hash: 'x', size: 1, modifiedAt: Number.NaN }
+      }
+    ]) {
+      expect(isWorkspaceChannelMessage(malformed)).toBe(false)
+    }
+    expect(isWorkspaceChannelMessage({ type: 'document-change' })).toBe(false)
   })
 
   it('prevents a second tab from taking a held document lock', async () => {
@@ -187,10 +271,174 @@ describe('workspace BroadcastChannel protocol', () => {
     })
     const listener = vi.fn()
     b.subscribeChanges(listener)
-    a.publishDocumentChange({ identity: { ...identity('a.bpmn'), workspace: { ...workspace, id: 'ws-a' } }, kind: 'saved' })
+    a.publishDocumentChange({
+      identity: { ...identity('a.bpmn'), workspace: { ...workspace, id: 'ws-a' } },
+      kind: 'saved'
+    })
     expect(listener).not.toHaveBeenCalled()
     a.close()
     b.close()
   })
-})
 
+  it('covers virtual locks, lease renew/release idempotence, unsubscribe, and closed guards', async () => {
+    const { a, b } = createPair()
+    const listener = vi.fn()
+    const unsubscribe = b.subscribeChanges(listener)
+    unsubscribe()
+    a.publishDocumentChange({ identity: identity('a.bpmn'), kind: 'saved' })
+    expect(listener).not.toHaveBeenCalled()
+
+    const virtual = await a.acquire({ workspace, path: null })
+    expect(virtual.acquired).toBe(true)
+    if (virtual.acquired) await virtual.lease.release()
+
+    const held = await a.acquire(identity('held.bpmn'))
+    expect(held.acquired).toBe(true)
+    if (held.acquired) {
+      await held.lease.renew?.()
+      await held.lease.release()
+      await held.lease.release()
+      await held.lease.renew?.()
+    }
+
+    await expect(
+      a.acquire({
+        workspace: { ...workspace, id: 'different' },
+        path: 'a.bpmn'
+      })
+    ).rejects.toThrow(/different workspace/)
+    a.close()
+    a.close()
+    await expect(a.acquire(identity('a.bpmn'))).rejects.toThrow(/closed/)
+    b.close()
+  })
+
+  it('ignores publication for a different workspace and virtual documents', () => {
+    const { a, b } = createPair()
+    const listener = vi.fn()
+    b.subscribeChanges(listener)
+    a.publishDocumentChange({
+      identity: {
+        workspace: { ...workspace, id: 'different' },
+        path: 'a.bpmn'
+      },
+      kind: 'saved'
+    })
+    a.publishDocumentChange({
+      identity: { workspace, path: null },
+      kind: 'deleted'
+    })
+    expect(listener).not.toHaveBeenCalled()
+    a.close()
+    b.close()
+  })
+
+  it('announces an already-held lock to a tab that opens later', async () => {
+    const bus = new MemoryBroadcastBus()
+    const common = {
+      workspaceId: 'ws',
+      factory: bus.factory,
+      contentionMs: 1,
+      leaseMs: 100
+    }
+    const a = new BroadcastWorkspaceCoordinator({
+      ...common,
+      instanceId: 'a'
+    })
+    const held = await a.acquire(identity('late.bpmn'))
+    const b = new BroadcastWorkspaceCoordinator({
+      ...common,
+      instanceId: 'b'
+    })
+    await expect(b.acquire(identity('late.bpmn'))).resolves.toMatchObject({
+      acquired: false,
+      holderId: 'a'
+    })
+    if (held.acquired) await held.lease.release()
+    a.close()
+    b.close()
+  })
+
+  it('prunes expired local/request state and makes stale lease methods harmless', async () => {
+    let now = 0
+    const bus = new MemoryBroadcastBus()
+    const coordinator = new BroadcastWorkspaceCoordinator({
+      workspaceId: 'ws',
+      instanceId: 'a',
+      factory: bus.factory,
+      contentionMs: 1,
+      leaseMs: 5,
+      now: () => now
+    })
+    const leaseResult = await coordinator.acquire(identity('expired.bpmn'))
+    const raw = bus.factory('orbitpm-workspace:ws')
+    raw.postMessage({
+      protocol: WORKSPACE_CHANNEL_PROTOCOL,
+      version: WORKSPACE_CHANNEL_VERSION,
+      workspaceId: 'ws',
+      senderId: 'remote',
+      sentAt: 0,
+      type: 'lock-request',
+      path: 'remote.bpmn',
+      requestId: 'remote-request',
+      requestedAt: 0,
+      expiresAt: 5
+    })
+    now = 20
+    const fresh = await coordinator.acquire(identity('fresh.bpmn'))
+    if (leaseResult.acquired) {
+      await leaseResult.lease.renew?.()
+      await leaseResult.lease.release()
+    }
+    if (fresh.acquired) await fresh.lease.release()
+    raw.close()
+    coordinator.close()
+  })
+
+  it('ignores malformed, foreign, and self-authored messages delivered on the same channel', () => {
+    const bus = new MemoryBroadcastBus()
+    const coordinator = new BroadcastWorkspaceCoordinator({
+      workspaceId: 'ws',
+      instanceId: 'a',
+      factory: bus.factory
+    })
+    const listener = vi.fn()
+    coordinator.subscribeChanges(listener)
+    const raw = bus.factory('orbitpm-workspace:ws')
+    const change = {
+      protocol: WORKSPACE_CHANNEL_PROTOCOL,
+      version: WORKSPACE_CHANNEL_VERSION,
+      sentAt: 1,
+      type: 'document-change',
+      change: 'saved',
+      path: 'a.bpmn'
+    }
+    raw.postMessage({ broken: true })
+    raw.postMessage({
+      ...change,
+      workspaceId: 'foreign',
+      senderId: 'remote'
+    })
+    raw.postMessage({
+      ...change,
+      workspaceId: 'ws',
+      senderId: 'a'
+    })
+    expect(listener).not.toHaveBeenCalled()
+    raw.close()
+    coordinator.close()
+    coordinator.publishDocumentChange({
+      identity: identity('after-close.bpmn'),
+      kind: 'saved'
+    })
+  })
+
+  it('uses the native BroadcastChannel factory when no test factory is supplied', () => {
+    const coordinator = new BroadcastWorkspaceCoordinator({
+      workspaceId: `native-${Date.now()}`,
+      instanceId: 'native',
+      channelNamePrefix: 'orbitpm-test-native'
+    })
+    coordinator.close()
+  })
+})

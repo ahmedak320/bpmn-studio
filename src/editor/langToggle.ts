@@ -31,10 +31,16 @@
 // object fakes in the node vitest environment — see
 // src/__tests__/langToggle.test.ts.
 
+import { executeModelingBatch, type ModelingBatchUpdate } from './modelingBatch'
 import {
-  executeModelingBatch,
-  type ModelingBatchUpdate
-} from './modelingBatch'
+  applyDiagramLocalizationReview,
+  inspectDiagramLocalization,
+  type DiagramLocalizationReview
+} from '../localization/modelerAdapter'
+import {
+  LocalizationSource,
+  type LocalizationSource as LocalizationSourceType
+} from '../localization/types'
 
 export type DiagramLang = 'en' | 'ar'
 
@@ -55,6 +61,7 @@ export interface ToggleResult {
  *  Modeler as-is; tests hand in a tiny fake with the same shape. */
 export interface LangToggleModeler {
   get(name: string): unknown
+  getDefinitions?: () => unknown
 }
 
 // --- structural service/element shapes --------------------------------------
@@ -150,9 +157,7 @@ function readAttr(bo: LangBusinessObjectLike | undefined, name: string): string 
 
 /** BPMN TextAnnotation stores its visible label in `text`; ordinary named
  * elements use `name`. Localization attributes stay uniform on BaseElement. */
-export function visibleLabelProperty(
-  bo: LangBusinessObjectLike | undefined
-): 'name' | 'text' {
+export function visibleLabelProperty(bo: LangBusinessObjectLike | undefined): 'name' | 'text' {
   return bo?.$type === 'bpmn:TextAnnotation' ? 'text' : 'name'
 }
 
@@ -201,7 +206,9 @@ function canCaptureVisible(
  * bare-process diagram resolve to the same kind of target. Returns undefined
  * only when the canvas has no root at all (nothing imported yet).
  */
-export function pickRootBusinessObject(modeler: LangToggleModeler): LangBusinessObjectLike | undefined {
+export function pickRootBusinessObject(
+  modeler: LangToggleModeler
+): LangBusinessObjectLike | undefined {
   const canvas = modeler.get('canvas') as CanvasLike
   const root = canvas.getRootElement()
   const bo = root?.businessObject
@@ -327,11 +334,37 @@ export function resolveLabelMirror(
  * operation lands on the command stack (undoable, marks the diagram dirty)
  * exactly like any hand-made edit.
  */
-export function setDiagramLang(
-  modeler: LangToggleModeler,
-  to: DiagramLang
-): ToggleResult {
+export function setDiagramLang(modeler: LangToggleModeler, to: DiagramLang): ToggleResult {
   const from = getDiagramLang(modeler)
+
+  // Real bpmn-js modelers expose the complete definitions graph. Route those
+  // through the structural core so names, conditions, annotations, notes, and
+  // paired detail metadata are audited together. An incomplete/wrong-script
+  // target performs no writes and must be resolved by the explicit review UI.
+  if (typeof modeler.getDefinitions === 'function') {
+    const review = prepareDiagramLanguageReview(modeler, to)
+    const visible = review.fields.filter(
+      (field) => field.kind === 'name' || field.kind === 'condition' || field.kind === 'annotation'
+    )
+    const blockedKeys = new Set(
+      review.blockers.map(
+        (issue) => `${issue.processId}\u0000${issue.elementId}\u0000${issue.field}`
+      )
+    )
+    const switched = visible.filter(
+      (field) => !blockedKeys.has(`${field.processId}\u0000${field.elementId}\u0000${field.field}`)
+    ).length
+    const missing = visible.length - switched
+    if (!review.complete) return { switched, missing, to, active: from }
+
+    const applied = applyDiagramLocalizationReview(modeler, review)
+    if (!applied.complete) {
+      // The adapter post-audits and rolls its single command-stack batch back
+      // when a real modeler fails to persist/project the validated patches.
+      return { switched: 0, missing: visible.length, to, active: getDiagramLang(modeler) }
+    }
+    return { switched, missing: 0, to, active: getDiagramLang(modeler) }
+  }
 
   const elementRegistry = modeler.get('elementRegistry') as ElementRegistryLike
   let switched = 0
@@ -377,8 +410,7 @@ export function setDiagramLang(
 
   // A successful target projection wins. With zero target coverage, repair a
   // stale flag to the language actually represented by visible fallbacks.
-  const desiredActive =
-    switched > 0 ? to : fallbackDisplayable > 0 ? otherLang(to) : from
+  const desiredActive = switched > 0 ? to : fallbackDisplayable > 0 ? otherLang(to) : from
   const canvas = modeler.get('canvas') as CanvasLike
   const root = canvas.getRootElement()
   const rootBo = pickRootBusinessObject(modeler)
@@ -394,7 +426,8 @@ export function setDiagramLang(
     // do `element.businessObject`, not the `getBusinessObject()` util that
     // treats a bare business object as its own element), so a bare process
     // object is wrapped rather than handed over unwrapped.
-    const target: unknown = root && root.businessObject === rootBo ? root : { businessObject: rootBo }
+    const target: unknown =
+      root && root.businessObject === rootBo ? root : { businessObject: rootBo }
     updates.push({
       kind: 'properties',
       element: target,
@@ -410,4 +443,17 @@ export function setDiagramLang(
 /** Toggle wrapper retained for the toolbar. */
 export function toggleDiagramLang(modeler: LangToggleModeler): ToggleResult {
   return setDiagramLang(modeler, otherLang(getDiagramLang(modeler)))
+}
+
+/**
+ * Read-only review used by toolbar toggle and Translate. Creating it performs
+ * glossary/TM planning locally, but never mutates the diagram or contacts a
+ * provider.
+ */
+export function prepareDiagramLanguageReview(
+  modeler: LangToggleModeler,
+  to: DiagramLang,
+  source: LocalizationSourceType = LocalizationSource.Editor
+): DiagramLocalizationReview {
+  return inspectDiagramLocalization(modeler, to, { source })
 }

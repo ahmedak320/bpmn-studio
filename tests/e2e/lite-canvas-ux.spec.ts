@@ -40,7 +40,10 @@ async function forceFallbackMode(page: Page): Promise<void> {
 
 /** Create a new process via the New-process modal and wait for the modeler. */
 async function newProcess(page: Page, name: string): Promise<void> {
-  await page.getByRole('button', { name: /New process/i }).first().click()
+  await page
+    .getByRole('button', { name: /New process/i })
+    .first()
+    .click()
   const dialog = page.getByRole('dialog', { name: /New Process/i })
   await expect(dialog).toBeVisible()
   await dialog.getByRole('textbox').fill(name)
@@ -107,10 +110,7 @@ async function createRoutedConnection(
           target: unknown,
           attrs: { type: 'bpmn:SequenceFlow' }
         ): { id: string }
-        updateWaypoints(
-          connection: unknown,
-          nextWaypoints: Array<{ x: number; y: number }>
-        ): void
+        updateWaypoints(connection: unknown, nextWaypoints: Array<{ x: number; y: number }>): void
       }
       const connection = modeling.connect(registry.get(sourceId), registry.get(targetId), {
         type: 'bpmn:SequenceFlow'
@@ -153,11 +153,7 @@ async function pinVisualRoutes(
     for (const fixture of fixtures) {
       const connection = registry.get(fixture.id)
       connection.waypoints = fixture.waypoints.map((point) => ({ ...point }))
-      graphicsFactory.update(
-        'connection',
-        connection,
-        registry.getGraphics(connection)
-      )
+      graphicsFactory.update('connection', connection, registry.getGraphics(connection))
     }
     eventBus.fire('commandStack.changed')
   }, routes)
@@ -410,10 +406,7 @@ test('collapsed sub-process and call activity get the org chip instead of the st
   const callGfx = page.locator(`.djs-element[data-element-id="${callId}"]`)
   const callChip = callGfx.locator('g.orbitpm-sub-chip')
   await expect(callChip).toBeVisible()
-  await expect(callChip).toHaveAttribute(
-    'data-org-tooltip',
-    /collapsed or linked sub-process/
-  )
+  await expect(callChip).toHaveAttribute('data-org-tooltip', /collapsed or linked sub-process/)
   await expect(callGfx.locator('path[data-marker="sub-process"]')).toHaveCount(0)
 
   // A collapsed SubProcess -> same swap.
@@ -477,9 +470,10 @@ test('right-flow output box is the first after-side block with distinct output s
   await expect(inputRect).toHaveCSS('fill', 'rgb(211, 236, 242)')
   await expect(outputRect).toHaveCSS('fill', 'rgb(230, 224, 248)')
   await expect(outputRect).toHaveCSS('stroke', 'rgb(103, 80, 164)')
-  await expect(
-    outputs.locator('text').filter({ hasText: /^Approval memo$/ })
-  ).toHaveCSS('fill', 'rgb(68, 51, 122)')
+  await expect(outputs.locator('text').filter({ hasText: /^Approval memo$/ })).toHaveCSS(
+    'fill',
+    'rgb(68, 51, 122)'
+  )
 
   // Exact shape-local geometry for the explicit 100x72 fixture. Right-flow maps the
   // before-side input above the shape and the after-side output below it.
@@ -559,48 +553,28 @@ test('edge overlay paints one hop per strict crossing and one dot per split/merg
     { x: 330, y: 590 },
     { x: 430, y: 590 }
   ]
-  const splitUpper = await createRoutedConnection(
-    page,
-    splitSource,
-    upper,
-    splitUpperWaypoints
-  )
+  const splitUpper = await createRoutedConnection(page, splitSource, upper, splitUpperWaypoints)
   const splitLowerWaypoints = [
     { x: 230, y: 700 },
     { x: 330, y: 700 },
     { x: 330, y: 810 },
     { x: 430, y: 810 }
   ]
-  const splitLower = await createRoutedConnection(
-    page,
-    splitSource,
-    lower,
-    splitLowerWaypoints
-  )
+  const splitLower = await createRoutedConnection(page, splitSource, lower, splitLowerWaypoints)
   const mergeUpperWaypoints = [
     { x: 530, y: 590 },
     { x: 630, y: 590 },
     { x: 630, y: 700 },
     { x: 730, y: 700 }
   ]
-  const mergeUpper = await createRoutedConnection(
-    page,
-    upper,
-    mergeTarget,
-    mergeUpperWaypoints
-  )
+  const mergeUpper = await createRoutedConnection(page, upper, mergeTarget, mergeUpperWaypoints)
   const mergeLowerWaypoints = [
     { x: 530, y: 810 },
     { x: 630, y: 810 },
     { x: 630, y: 700 },
     { x: 730, y: 700 }
   ]
-  const mergeLower = await createRoutedConnection(
-    page,
-    lower,
-    mergeTarget,
-    mergeLowerWaypoints
-  )
+  const mergeLower = await createRoutedConnection(page, lower, mergeTarget, mergeLowerWaypoints)
 
   await pinVisualRoutes(page, [
     { id: crossHorizontal, waypoints: crossHorizontalWaypoints },
@@ -757,7 +731,9 @@ test('typing a label mirrors into orbitpm:nameEn and a single undo reverts both'
   expect(afterUndo.nameEn ?? '').toBe('')
   // The visible label text is gone from the diagram SVG too.
   const texts = await page.evaluate(() =>
-    Array.from(document.querySelectorAll('.djs-container svg text')).map((el) => el.textContent ?? '')
+    Array.from(document.querySelectorAll('.djs-container svg text')).map(
+      (el) => el.textContent ?? ''
+    )
   )
   expect(texts.some((s) => s.includes('Review Invoice'))).toBe(false)
 })
@@ -841,10 +817,16 @@ test.describe('free translate without a provider key (stubbed endpoints)', () =>
     const taskId = await bootTranslateDiagram(page)
     await page.getByRole('button', { name: /Translate/ }).click()
 
-    // The keyless run announces the free service (i18n translate.free.using).
-    await expect(
-      page.getByRole('status').filter({ hasText: 'free translation service' })
-    ).toBeVisible()
+    const review = page.getByRole('dialog', { name: 'Review translation' })
+    await expect(review).toBeVisible()
+    await expect(review).toContainText('Review order')
+    // Review and provider selection alone never authorize a network request.
+    expect(googleCalls).toHaveLength(0)
+    expect(myMemoryCalls).toHaveLength(0)
+    await review.getByLabel('Translation provider').selectOption('free')
+    await expect(review).toContainText('Google Translate')
+    expect(googleCalls).toHaveLength(0)
+    await review.getByRole('button', { name: 'Translate now' }).click()
 
     // The missing Arabic side lands on the business object and the whole
     // drawing is projected to Arabic immediately.
@@ -901,12 +883,12 @@ test.describe('free translate without a provider key (stubbed endpoints)', () =>
 
     const taskId = await bootTranslateDiagram(page)
     await page.getByRole('button', { name: /Translate/ }).click()
-
-    await expect(
-      page.getByRole('status').filter({ hasText: 'free translation service' })
-    ).toBeVisible()
+    const review = page.getByRole('dialog', { name: 'Review translation' })
+    await expect(review).toBeVisible()
+    await review.getByLabel('Translation provider').selectOption('free')
+    await review.getByRole('button', { name: 'Translate now' }).click()
     // i18n translate.free.rate
-    await expect(page.getByRole('status').filter({ hasText: /daily limit/ })).toBeVisible({
+    await expect(review.getByRole('alert').filter({ hasText: /daily limit/ })).toBeVisible({
       timeout: 20_000
     })
 

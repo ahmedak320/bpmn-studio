@@ -142,6 +142,8 @@ export interface FreeTranslateOpts {
   minDelayMs?: number
   /** Per-request abort budget, covering headers AND body (default 20000ms). */
   timeoutMs?: number
+  /** Optional caller cancellation; per-run signals take precedence. */
+  signal?: AbortSignal
 }
 
 const DEFAULT_CONCURRENCY = 4
@@ -156,8 +158,27 @@ function isOffline(): boolean {
   }
 }
 
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms))
+function abortError(): DOMException {
+  return new DOMException('Translation cancelled', 'AbortError')
+}
+
+function throwIfAborted(signal?: AbortSignal): void {
+  if (signal?.aborted) throw signal.reason ?? abortError()
+}
+
+function sleep(ms: number, signal?: AbortSignal): Promise<void> {
+  throwIfAborted(signal)
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      signal?.removeEventListener('abort', onAbort)
+      resolve()
+    }, ms)
+    const onAbort = (): void => {
+      clearTimeout(timer)
+      reject(signal?.reason ?? abortError())
+    }
+    signal?.addEventListener('abort', onAbort, { once: true })
+  })
 }
 
 type JsonOutcome = { ok: true; data: unknown } | { ok: false; code: FreeErrorCode }
@@ -168,15 +189,20 @@ type JsonOutcome = { ok: true; data: unknown } | { ok: false; code: FreeErrorCod
 async function requestJson(
   fetchImpl: typeof fetch,
   url: string,
-  timeoutMs: number
+  timeoutMs: number,
+  callerSignal?: AbortSignal
 ): Promise<JsonOutcome> {
+  throwIfAborted(callerSignal)
   const controller = new AbortController()
+  const onCallerAbort = (): void => controller.abort(callerSignal?.reason)
+  callerSignal?.addEventListener('abort', onCallerAbort, { once: true })
   const timer = setTimeout(() => controller.abort(), timeoutMs)
   try {
     let response: Response
     try {
       response = await fetchImpl(url, { signal: controller.signal })
     } catch {
+      throwIfAborted(callerSignal)
       return { ok: false, code: isOffline() ? 'offline' : 'service' }
     }
     if (response.status === 429) return { ok: false, code: 'rate' }
@@ -184,10 +210,12 @@ async function requestJson(
     try {
       return { ok: true, data: await response.json() }
     } catch {
+      throwIfAborted(callerSignal)
       return { ok: false, code: isOffline() ? 'offline' : 'service' }
     }
   } finally {
     clearTimeout(timer)
+    callerSignal?.removeEventListener('abort', onCallerAbort)
   }
 }
 
@@ -201,10 +229,11 @@ async function translateOne(
   text: string,
   from: DiagramLang,
   to: DiagramLang,
-  timeoutMs: number
+  timeoutMs: number,
+  signal?: AbortSignal
 ): Promise<TextOutcome> {
   let googleCode: FreeErrorCode
-  const google = await requestJson(fetchImpl, googleUrl(text, from, to), timeoutMs)
+  const google = await requestJson(fetchImpl, googleUrl(text, from, to), timeoutMs, signal)
   if (google.ok) {
     const parsed = parseGoogleResponse(google.data)
     if (parsed !== undefined) return { ok: true, text: parsed }
@@ -214,7 +243,7 @@ async function translateOne(
   }
 
   let myMemoryCode: FreeErrorCode
-  const myMemory = await requestJson(fetchImpl, myMemoryUrl(text, from, to), timeoutMs)
+  const myMemory = await requestJson(fetchImpl, myMemoryUrl(text, from, to), timeoutMs, signal)
   if (myMemory.ok) {
     try {
       const parsed = parseMyMemoryResponse(myMemory.data)
@@ -252,7 +281,9 @@ export function makeFreeTranslateTexts(opts: FreeTranslateOpts = {}): TranslateT
   const minDelayMs = Math.max(0, opts.minDelayMs ?? DEFAULT_MIN_DELAY_MS)
   const timeoutMs = Math.max(1, opts.timeoutMs ?? DEFAULT_TIMEOUT_MS)
 
-  return async (texts, from, to) => {
+  return async (texts, from, to, runSignal) => {
+    const signal = runSignal ?? opts.signal
+    throwIfAborted(signal)
     const results: Array<string | undefined> = new Array(texts.length).fill(undefined)
     if (texts.length === 0) return results
     const failures: Array<FreeErrorCode | undefined> = new Array(texts.length).fill(undefined)
@@ -264,16 +295,15 @@ export function makeFreeTranslateTexts(opts: FreeTranslateOpts = {}): TranslateT
         const index = nextIndex
         nextIndex += 1
         if (index >= texts.length) return
-        if (!first && minDelayMs > 0) await sleep(minDelayMs)
+        if (!first && minDelayMs > 0) await sleep(minDelayMs, signal)
         first = false
-        const outcome = await translateOne(fetchImpl, texts[index], from, to, timeoutMs)
+        throwIfAborted(signal)
+        const outcome = await translateOne(fetchImpl, texts[index], from, to, timeoutMs, signal)
         if (outcome.ok) results[index] = outcome.text
         else failures[index] = outcome.code
       }
     }
-    await Promise.all(
-      Array.from({ length: Math.min(concurrency, texts.length) }, () => worker())
-    )
+    await Promise.all(Array.from({ length: Math.min(concurrency, texts.length) }, () => worker()))
 
     // Whole-service failure: every text failed AND every failure classified
     // to one consistent cause. Mixed causes stay a quiet all-skipped result —

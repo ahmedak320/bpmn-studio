@@ -3,6 +3,7 @@ import {
   DraftJournalCoordinator,
   MemoryDraftJournal,
   createDraftRecoveryComparison,
+  draftId,
   draftKeyOf,
   findDraftRecoveryComparison,
   type DraftLifecycleTarget,
@@ -63,6 +64,16 @@ class LifecycleTarget implements DraftLifecycleTarget {
 }
 
 describe('DraftJournalCoordinator', () => {
+  it('uses the session id to distinguish virtual-document drafts', () => {
+    const first = draftKeyOf(
+      source({ sessionId: 'virtual-a', identity: { workspace, path: null } })
+    )
+    const second = draftKeyOf(
+      source({ sessionId: 'virtual-b', identity: { workspace, path: null } })
+    )
+    expect(draftId(first)).not.toBe(draftId(second))
+  })
+
   it('writes dirty XML only after the configured two-second debounce', async () => {
     const journal = new MemoryDraftJournal()
     const timer = new ManualTimer()
@@ -230,9 +241,7 @@ describe('DraftJournalCoordinator', () => {
     await first.flushAll()
 
     await expect(
-      first.migrateDraftRecords([
-        { sessionId: 's', from: from.identity, to: to.identity }
-      ])
+      first.migrateDraftRecords([{ sessionId: 's', from: from.identity, to: to.identity }])
     ).rejects.toThrow(/already exists/)
     expect((await journal.get(draftKeyOf(from)))?.xml).toBe('<dirty/>')
     expect((await journal.get(draftKeyOf(to)))?.xml).toBe('<occupied/>')

@@ -26,7 +26,10 @@ interface HookWindow {
 }
 
 async function bootEnglishDiagram(page: Page, name: string): Promise<void> {
-  await page.getByRole('button', { name: /New process/i }).first().click()
+  await page
+    .getByRole('button', { name: /New process/i })
+    .first()
+    .click()
   const dialog = page.getByRole('dialog')
   await dialog.getByRole('textbox').fill(name)
   await dialog.getByRole('button', { name: 'Create', exact: true }).click()
@@ -72,9 +75,11 @@ async function setActiveDiagramLang(page: Page, lang: 'en' | 'ar'): Promise<void
   await page.evaluate((target) => {
     const modeler = (window as unknown as HookWindow).__ORBITPM_LITE__.modeler
     const root = (modeler.get('canvas') as { getRootElement(): unknown }).getRootElement()
-    ;(modeler.get('modeling') as {
-      updateProperties(element: unknown, properties: Record<string, unknown>): void
-    }).updateProperties(root, { 'orbitpm:activeLang': target })
+    ;(
+      modeler.get('modeling') as {
+        updateProperties(element: unknown, properties: Record<string, unknown>): void
+      }
+    ).updateProperties(root, { 'orbitpm:activeLang': target })
   }, lang)
 }
 
@@ -105,12 +110,7 @@ async function makeNamedElementsBilingual(
       if (!bo || element.labelTarget != null || seen.has(bo)) continue
       seen.add(bo)
       const viaGet = typeof bo.get === 'function' ? bo.get('name') : undefined
-      const name =
-        typeof viaGet === 'string'
-          ? viaGet
-          : typeof bo.name === 'string'
-            ? bo.name
-            : ''
+      const name = typeof viaGet === 'string' ? viaGet : typeof bo.name === 'string' ? bo.name : ''
       if (name.trim() === '') continue
       modeling.updateProperties(element, {
         'orbitpm:nameEn': name,
@@ -142,9 +142,11 @@ async function readDiagramState(
     const registry = modeler.get('elementRegistry') as {
       get(id: string): { businessObject?: BusinessObject } | undefined
     }
-    const root = (modeler.get('canvas') as {
-      getRootElement(): { businessObject?: BusinessObject }
-    }).getRootElement()
+    const root = (
+      modeler.get('canvas') as {
+        getRootElement(): { businessObject?: BusinessObject }
+      }
+    ).getRootElement()
     const attr = (bo: BusinessObject | undefined, key: string): string | null => {
       const viaGet = typeof bo?.get === 'function' ? bo.get(key) : undefined
       const raw = viaGet ?? bo?.$attrs?.[key]
@@ -153,12 +155,7 @@ async function readDiagramState(
     const bo = registry.get(elementId)?.businessObject
     const viaGet = typeof bo?.get === 'function' ? bo.get('name') : undefined
     return {
-      name:
-        typeof viaGet === 'string'
-          ? viaGet
-          : typeof bo?.name === 'string'
-            ? bo.name
-            : null,
+      name: typeof viaGet === 'string' ? viaGet : typeof bo?.name === 'string' ? bo.name : null,
       nameEn: attr(bo, 'orbitpm:nameEn'),
       nameAr: attr(bo, 'orbitpm:nameAr'),
       activeLang: attr(root.businessObject, 'orbitpm:activeLang')
@@ -187,9 +184,11 @@ async function readVisibleLocalizedValue(
     const registry = modeler.get('elementRegistry') as {
       get(id: string): { businessObject?: BusinessObject } | undefined
     }
-    const root = (modeler.get('canvas') as {
-      getRootElement(): { businessObject?: BusinessObject }
-    }).getRootElement()
+    const root = (
+      modeler.get('canvas') as {
+        getRootElement(): { businessObject?: BusinessObject }
+      }
+    ).getRootElement()
     const read = (bo: BusinessObject | undefined, key: string): unknown => {
       const viaGet = typeof bo?.get === 'function' ? bo.get(key) : undefined
       return viaGet ?? bo?.[key as keyof BusinessObject] ?? bo?.$attrs?.[key]
@@ -227,7 +226,9 @@ test('language toggle: EN -> Arabic sets dir=rtl and translates chrome, then bac
   await expect(page.locator('html')).toHaveAttribute('lang', 'ar')
 
   // A known button now shows Arabic text (New process -> ＋ عملية جديدة).
-  await expect(page.getByRole('button', { name: 'عملية جديدة', exact: false }).first()).toBeVisible()
+  await expect(
+    page.getByRole('button', { name: 'عملية جديدة', exact: false }).first()
+  ).toBeVisible()
 
   // Persisted across the toggle: localStorage carries the language.
   const stored = await page.evaluate(() => localStorage.getItem('orbitpm.lite.lang'))
@@ -255,13 +256,15 @@ test('header interface locale leaves diagram language and labels unchanged', asy
 
   await expect(page.locator('html')).toHaveAttribute('lang', 'ar')
   await expect(page.locator('html')).toHaveAttribute('dir', 'rtl')
-  await expect.poll(() => readDiagramState(page, taskId)).toMatchObject({
-    name: 'Review request',
-    activeLang: 'en'
-  })
-  await expect(
-    page.locator(`.djs-element[data-element-id="${taskId}"] .djs-label`)
-  ).toContainText('Review request')
+  await expect
+    .poll(() => readDiagramState(page, taskId))
+    .toMatchObject({
+      name: 'Review request',
+      activeLang: 'en'
+    })
+  await expect(page.locator(`.djs-element[data-element-id="${taskId}"] .djs-label`)).toContainText(
+    'Review request'
+  )
 })
 
 test('diagram toolbar toggle updates businessObject.name and rendered SVG text', async ({
@@ -275,21 +278,74 @@ test('diagram toolbar toggle updates businessObject.name and rendered SVG text',
     nameEn: 'Approve application',
     nameAr: 'اعتماد الطلب'
   })
+  await makeNamedElementsBilingual(page, {
+    [taskId]: 'اعتماد الطلب'
+  })
   await setActiveDiagramLang(page, 'en')
 
   await page.getByRole('button', { name: /EN⇄AR/ }).click()
 
-  await expect.poll(() => readDiagramState(page, taskId)).toMatchObject({
-    name: 'اعتماد الطلب',
-    nameEn: 'Approve application',
-    nameAr: 'اعتماد الطلب',
-    activeLang: 'ar'
-  })
+  await expect
+    .poll(() => readDiagramState(page, taskId))
+    .toMatchObject({
+      name: 'اعتماد الطلب',
+      nameEn: 'Approve application',
+      nameAr: 'اعتماد الطلب',
+      activeLang: 'ar'
+    })
   await expect(
     page.locator(`.djs-element[data-element-id="${taskId}"] .djs-label tspan`, {
       hasText: 'اعتماد الطلب'
     })
   ).toBeVisible()
+})
+
+test('incomplete diagram toggle opens review without mutation/network; partial preview is explicit', async ({
+  page
+}) => {
+  const translationCalls: string[] = []
+  await page.route('https://translate.googleapis.com/**', async (route) => {
+    translationCalls.push(route.request().url())
+    await route.abort()
+  })
+  await page.route('https://api.mymemory.translated.net/**', async (route) => {
+    translationCalls.push(route.request().url())
+    await route.abort()
+  })
+  await forceFallbackMode(page)
+  await page.goto(FILE_URL, { waitUntil: 'load' })
+  await bootEnglishDiagram(page, 'Incomplete projection')
+  await makeNamedElementsBilingual(page)
+  const taskId = await createNamedTask(page, {
+    name: 'Manual review required',
+    nameEn: 'Manual review required'
+  })
+  await setActiveDiagramLang(page, 'en')
+
+  await page.getByRole('button', { name: /EN⇄AR/ }).click()
+  const review = page.getByRole('dialog', { name: 'Review translation' })
+  await expect(review).toBeVisible()
+  await expect(review).toContainText('Manual review required')
+  expect(translationCalls).toEqual([])
+  await expect
+    .poll(() => readDiagramState(page, taskId))
+    .toMatchObject({
+      name: 'Manual review required',
+      nameAr: null,
+      activeLang: 'en'
+    })
+
+  await review.getByRole('button', { name: 'Preview translated fields only' }).click()
+  await expect(review).toBeHidden()
+  await expect
+    .poll(() => readDiagramState(page, taskId))
+    .toMatchObject({
+      name: 'Manual review required',
+      nameEn: 'Manual review required',
+      nameAr: null,
+      activeLang: 'ar'
+    })
+  expect(translationCalls).toEqual([])
 })
 
 test('diagram language projection updates TextAnnotation text atomically and one undo restores every label', async ({
@@ -311,10 +367,7 @@ test('diagram language projection updates TextAnnotation text atomically and one
         position: { x: number; y: number },
         parent: unknown
       ): { id: string }
-      updateProperties(
-        element: unknown,
-        properties: Record<string, unknown>
-      ): void
+      updateProperties(element: unknown, properties: Record<string, unknown>): void
     }
     const factory = modeler.get('elementFactory') as {
       createShape(attributes: Record<string, unknown>): unknown
@@ -336,6 +389,10 @@ test('diagram language projection updates TextAnnotation text atomically and one
     canvas.zoom('fit-viewport')
     return annotation.id
   })
+  await makeNamedElementsBilingual(page, {
+    [taskId]: 'مراجعة الطلب',
+    [annotationId]: 'تحقق من المستندات الداعمة'
+  })
   await setActiveDiagramLang(page, 'en')
 
   const stackBefore = await page.evaluate(() => {
@@ -344,10 +401,12 @@ test('diagram language projection updates TextAnnotation text atomically and one
   })
   await page.getByRole('button', { name: /EN⇄AR/ }).click()
 
-  await expect.poll(() => readVisibleLocalizedValue(page, taskId)).toMatchObject({
-    visible: 'مراجعة الطلب',
-    activeLang: 'ar'
-  })
+  await expect
+    .poll(() => readVisibleLocalizedValue(page, taskId))
+    .toMatchObject({
+      visible: 'مراجعة الطلب',
+      activeLang: 'ar'
+    })
   await expect
     .poll(() => readVisibleLocalizedValue(page, annotationId))
     .toMatchObject({
@@ -380,10 +439,12 @@ test('diagram language projection updates TextAnnotation text atomically and one
       })
     )
     .toBe(stackBefore)
-  await expect.poll(() => readVisibleLocalizedValue(page, taskId)).toMatchObject({
-    visible: 'Review request',
-    activeLang: 'en'
-  })
+  await expect
+    .poll(() => readVisibleLocalizedValue(page, taskId))
+    .toMatchObject({
+      visible: 'Review request',
+      activeLang: 'en'
+    })
   await expect
     .poll(() => readVisibleLocalizedValue(page, annotationId))
     .toMatchObject({
@@ -404,9 +465,7 @@ test.describe('Translate projects Arabic immediately', () => {
       response.writeHead(200, { 'content-type': 'text/html; charset=utf-8' })
       response.end(html)
     })
-    await new Promise<void>((resolveListen) =>
-      server?.listen(0, '127.0.0.1', resolveListen)
-    )
+    await new Promise<void>((resolveListen) => server?.listen(0, '127.0.0.1', resolveListen))
     const { port } = server.address() as AddressInfo
     baseUrl = `http://127.0.0.1:${port}/`
   })
@@ -455,6 +514,15 @@ test.describe('Translate projects Arabic immediately', () => {
     })
 
     await page.getByRole('button', { name: /Translate/ }).click()
+    const review = page.getByRole('dialog', { name: 'Review translation' })
+    await expect(review).toBeVisible()
+    await expect(review).toContainText('Review order')
+    // Opening/reviewing the dialog is read-only: no text leaves the browser.
+    expect(googleCalls).toHaveLength(0)
+    expect(myMemoryCalls).toHaveLength(0)
+    await review.getByLabel('Translation provider').selectOption('free')
+    expect(googleCalls).toHaveLength(0)
+    await review.getByRole('button', { name: 'Translate now' }).click()
 
     await expect
       .poll(() => readDiagramState(page, taskId), { timeout: 20_000 })
@@ -505,12 +573,14 @@ test.describe('Translate projects Arabic immediately', () => {
 
     await page.getByRole('button', { name: /Translate/ }).click()
 
-    await expect.poll(() => readDiagramState(page, taskId)).toMatchObject({
-      name: 'طلب جاهز',
-      nameEn: 'Ready request',
-      nameAr: 'طلب جاهز',
-      activeLang: 'ar'
-    })
+    await expect
+      .poll(() => readDiagramState(page, taskId))
+      .toMatchObject({
+        name: 'طلب جاهز',
+        nameEn: 'Ready request',
+        nameAr: 'طلب جاهز',
+        activeLang: 'ar'
+      })
     await expect(
       page.locator(`.djs-element[data-element-id="${taskId}"] .djs-label`)
     ).toContainText('طلب جاهز')
@@ -550,6 +620,12 @@ test.describe('Translate projects Arabic immediately', () => {
     await setActiveDiagramLang(page, 'ar')
 
     await page.getByRole('button', { name: /Translate/ }).click()
+    const review = page.getByRole('dialog', { name: 'Review translation' })
+    await expect(review).toBeVisible()
+    await expect(review).toContainText('مراجعة طلب مالك الحيوان')
+    expect(googleCalls).toHaveLength(0)
+    await review.getByLabel('Translation provider').selectOption('free')
+    await review.getByRole('button', { name: 'Translate now' }).click()
 
     await expect
       .poll(() => readDiagramState(page, taskId), { timeout: 20_000 })
@@ -578,7 +654,10 @@ test('create a process with an Arabic name (fallback mode) and export SVG contai
   await page.getByRole('button', { name: /العربية/ }).click()
   await expect(page.locator('html')).toHaveAttribute('dir', 'rtl')
 
-  await page.getByRole('button', { name: /عملية جديدة/ }).first().click()
+  await page
+    .getByRole('button', { name: /عملية جديدة/ })
+    .first()
+    .click()
   const dialog = page.getByRole('dialog')
   await expect(dialog).toBeVisible()
   const input = dialog.getByRole('textbox')
@@ -640,7 +719,10 @@ test('Arabic editor panes mirror their layout and resizer while the bpmn-js canv
   await forceFallbackMode(page)
   await page.goto(FILE_URL, { waitUntil: 'load' })
   await page.getByRole('button', { name: /العربية/ }).click()
-  await page.getByRole('button', { name: /عملية جديدة/ }).first().click()
+  await page
+    .getByRole('button', { name: /عملية جديدة/ })
+    .first()
+    .click()
   const dialog = page.getByRole('dialog')
   await dialog.getByRole('button', { name: 'إنشاء', exact: true }).click()
 
@@ -682,10 +764,7 @@ test('Arabic editor panes mirror their layout and resizer while the bpmn-js canv
     nameEn: 'Review request',
     nameAr: 'مراجعة الطلب'
   })
-  await page
-    .locator(`.djs-element[data-element-id="${taskId}"] .djs-hit`)
-    .first()
-    .dblclick()
+  await page.locator(`.djs-element[data-element-id="${taskId}"] .djs-hit`).first().dblclick()
 
   await expect(paneToggle).toHaveAttribute('aria-controls', paneId)
   await expect(paneToggle).toHaveAttribute('aria-expanded', 'true')

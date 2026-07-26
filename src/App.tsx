@@ -59,22 +59,40 @@ import { installLinkBadges, type LinkBadgeModeler } from './links/linkBadges'
 import { buildLinkGraph } from './links/linkGraph'
 import {
   getDiagramLang,
+  prepareDiagramLanguageReview,
   setDiagramLang,
-  toggleDiagramLang,
   type LangToggleModeler
 } from './editor/langToggle'
 import { autoSizeAll } from './editor/autoSize'
 import { makeBrowserCallLLM } from './ai/browserAi'
-import { getProviderSelection } from './ai/providerSelection'
+import {
+  getProviderSelection,
+  type ProviderSelection
+} from './ai/providerSelection'
+import { getLiteProvider } from './ai/providersLite'
 import { getKey, hasKey } from './ai/keys'
 import {
-  auditArabicCoverage,
-  collectMissingTranslations,
-  translateDiagram,
-  translateDiagramWithTexts,
+  buildTranslationExternalReview,
+  translateReviewedDiagram,
+  translateReviewedDiagramWithTexts,
   type TranslateModeler
 } from './ai/translate'
 import { makeFreeTranslateTexts, FreeTranslateError } from './ai/freeTranslate'
+import {
+  TranslationReviewDialog,
+  type TranslationReviewProviderOption
+} from './localization/TranslationReviewDialog'
+import {
+  applyDiagramLocalizationReview,
+  inspectDiagramLocalization,
+  StaleLocalizationReviewError,
+  type DiagramLocalizationReview
+} from './localization/modelerAdapter'
+import { grantExternalRequestConsent } from './localization/externalRequestReview'
+import {
+  LocalizationSource,
+  type LocalizationSource as LocalizationSourceType
+} from './localization/types'
 import { SettingsDialogLite } from './settings/SettingsDialogLite'
 import { ICON_DATA_URI } from './branding/icon'
 // --- W2B: file mgmt / search / catalog / navigation / print ---
@@ -167,6 +185,14 @@ interface DeleteState {
   node: LiteTreeNode
   /** Non-empty folder → require typing this name to confirm. */
   requireTyped?: string
+}
+
+interface TranslationReviewState {
+  tabKey: string
+  review: DiagramLocalizationReview
+  providerId: '' | 'selected-ai' | 'free'
+  aiSelection: ProviderSelection | null
+  status: string | null
 }
 
 function baseName(relPath: string): string {
@@ -381,6 +407,17 @@ function App(): JSX.Element {
   const [keysVersion, setKeysVersion] = useState(0)
   // Tab whose diagram is currently being AI-translated (disables its button).
   const [translatingTab, setTranslatingTab] = useState<string | null>(null)
+  const [translationReview, setTranslationReview] =
+    useState<TranslationReviewState | null>(null)
+  const translationAbortRef = useRef<AbortController | null>(null)
+  // Provenance survives file placement/opening so the same read-only
+  // localization ingestion adapter can audit every reachable boundary.
+  const localizationSourceByTabRef = useRef<
+    Map<string, LocalizationSourceType>
+  >(new Map())
+  const localizationReviewByTabRef = useRef<
+    Map<string, DiagramLocalizationReview>
+  >(new Map())
   // A pending "fill gaps in chat" request from the AI panel: opens the
   // assistant's interview mode against the just-placed tab. Token bumps force
   // the drawer to react even for repeated requests on the same tab.
@@ -390,6 +427,43 @@ function App(): JSX.Element {
     description: string
   } | null>(null)
   const interviewTokenRef = useRef(0)
+
+  const translationProviders: TranslationReviewProviderOption[] = (() => {
+    if (!translationReview) return []
+    const options: TranslationReviewProviderOption[] = []
+    if (translationReview.aiSelection) {
+      const spec = getLiteProvider(translationReview.aiSelection.providerId)
+      options.push({
+        id: 'selected-ai',
+        label: `${spec.label} · ${translationReview.aiSelection.modelId}`,
+        description: t('translationReview.provider.ai'),
+        disabled: !hasKey(translationReview.aiSelection.providerId)
+      })
+    }
+    options.push({
+      id: 'free',
+      label: 'Google Translate → MyMemory',
+      description: t('translationReview.provider.free')
+    })
+    return options
+  })()
+
+  const translationDisclosure = useMemo(() => {
+    if (!translationReview || !translationReview.providerId) return null
+    if (translationReview.providerId === 'free') {
+      return buildTranslationExternalReview(translationReview.review, {
+        providerId: 'google-translate+mymemory',
+        kind: 'free'
+      })
+    }
+    const selection = translationReview.aiSelection
+    if (!selection) return null
+    return buildTranslationExternalReview(translationReview.review, {
+      providerId: selection.providerId,
+      modelId: selection.modelId,
+      kind: 'ai'
+    })
+  }, [translationReview])
 
   const toggleAiSection = useCallback(() => {
     setAiSectionCollapsed((prev) => {
@@ -700,8 +774,24 @@ function App(): JSX.Element {
   }, [activeKey, markMounted])
 
   const openDirectoryFile = useCallback(
-    async (relPath: string, opts?: { collapse?: boolean; autoSizeOnImport?: boolean }) => {
+    async (
+      relPath: string,
+      opts?: {
+        collapse?: boolean
+        autoSizeOnImport?: boolean
+        localizationSource?: LocalizationSourceType
+      }
+    ) => {
       const key = relPath
+      if (
+        opts?.localizationSource ||
+        !localizationSourceByTabRef.current.has(key)
+      ) {
+        localizationSourceByTabRef.current.set(
+          key,
+          opts?.localizationSource ?? LocalizationSource.Xml
+        )
+      }
       if (opts?.autoSizeOnImport) pendingAiAutoSizeRef.current.add(key)
       // Opening a file normally hands the canvas the full window; the rail
       // restores the sidebar. A SINGLE click on a tree row opts out
@@ -748,9 +838,17 @@ function App(): JSX.Element {
     (
       title: string,
       xml: string,
-      opts?: { collapse?: boolean; autoSizeOnImport?: boolean }
+      opts?: {
+        collapse?: boolean
+        autoSizeOnImport?: boolean
+        localizationSource?: LocalizationSourceType
+      }
     ) => {
       const key = `virtual:${++virtualCounter.current}`
+      localizationSourceByTabRef.current.set(
+        key,
+        opts?.localizationSource ?? LocalizationSource.Editor
+      )
       if (opts?.autoSizeOnImport) pendingAiAutoSizeRef.current.add(key)
       // Same as openDirectoryFile: an opening tab collapses the sidebar to the
       // rail — EXCEPT when the caller needs the sidebar to survive (AI placement
@@ -1534,7 +1632,15 @@ function App(): JSX.Element {
   // --- AI placement -------------------------------------------------------
 
   const placeGenerated = useCallback(
-    async (xml: string, opts: { name: string; targetFolder: string; gen?: number }) => {
+    async (
+      xml: string,
+      opts: {
+        name: string
+        targetFolder: string
+        gen?: number
+        localizationSource?: LocalizationSourceType
+      }
+    ) => {
       const slug = deriveFileBaseName(opts.name || 'process')
       // Validate the workspace generation captured when generation STARTED against
       // the live one, both before enqueuing AND at write time inside the mutex: a
@@ -1566,13 +1672,23 @@ function App(): JSX.Element {
         // Keep the sidebar (and with it the AI panel) mounted: the success box
         // carries the "fill gaps in chat" CTA, and collapsing here unmounted
         // the panel before it could ever render (found by the interview e2e).
-        void openDirectoryFile(result.relPath, { collapse: false, autoSizeOnImport: true })
+        void openDirectoryFile(result.relPath, {
+          collapse: false,
+          autoSizeOnImport: true,
+          localizationSource:
+            opts.localizationSource ?? LocalizationSource.Ai
+        })
         return { label: result.relPath }
       }
-      openVirtualTab(`${slug}.bpmn`, xml, { collapse: false, autoSizeOnImport: true })
+      openVirtualTab(`${slug}.bpmn`, xml, {
+        collapse: false,
+        autoSizeOnImport: true,
+        localizationSource:
+          opts.localizationSource ?? LocalizationSource.Ai
+      })
       return null
     },
-    [mode, refreshWorkspace, openDirectoryFile, openVirtualTab, pushToast]
+    [mode, refreshWorkspace, openDirectoryFile, openVirtualTab, pushToast, processIndex]
   )
 
   // --- navigation (back / forward / Alt+Arrows) ---------------------------
@@ -2014,140 +2130,226 @@ function App(): JSX.Element {
     }
   }, [modelersByKey])
 
-  // Diagram-language toggle (EN⇄AR): projects the requested stored names into
-  // visible labels. The projection is idempotent and refuses to claim a target
-  // language when no target-language label can actually be displayed.
-  const handleDiagramLangToggle = useCallback(
+  const openTranslationReview = useCallback(
     (tabKey: string) => {
-      const modeler = modelersByKey[tabKey]
-      if (!modeler) return
+      const modeler = modelersByKey[tabKey] as LangToggleModeler | undefined
+      if (!modeler || translatingTab) return
       try {
-        const res = toggleDiagramLang(modeler as LangToggleModeler)
-        if (res.active !== res.to) {
-          pushToast(t('editor.langToggle.missing'), 'info')
-        } else if (res.missing > 0) {
+        const currentLang = getDiagramLang(modeler)
+        const targetLang = currentLang === 'en' ? 'ar' : 'en'
+        const source =
+          localizationSourceByTabRef.current.get(tabKey) ??
+          LocalizationSource.Editor
+        const review = prepareDiagramLanguageReview(
+          modeler,
+          targetLang,
+          source
+        )
+        if (review.complete) {
+          const projected = setDiagramLang(modeler, targetLang)
           pushToast(
-            t('editor.langToggle.partial', {
-              switched: res.switched,
-              missing: res.missing
-            }),
+            t(
+              projected.active === targetLang
+                ? 'translate.nothing.switched'
+                : 'translate.nothing.alreadyArabic'
+            ),
             'info'
           )
+          return
         }
+        const selection = getProviderSelection()
+        setTranslationReview({
+          tabKey,
+          review,
+          providerId: selection ? 'selected-ai' : '',
+          aiSelection: selection,
+          status: null
+        })
       } catch (err) {
         pushToast(errMsg(err), 'error')
       }
     },
-    [modelersByKey, pushToast]
-  )
-
-  // Fill every missing EN/AR counterpart (both directions), then immediately
-  // project the opposite diagram language into the visible drawing.
-  const handleTranslate = useCallback(
-    async (tabKey: string) => {
-      const modeler = modelersByKey[tabKey]
-      if (!modeler || translatingTab) return
-      const translateModeler = modeler as TranslateModeler
-      const langModeler = modeler as LangToggleModeler
-      const currentLang = getDiagramLang(langModeler)
-      const targetLang = currentLang === 'en' ? 'ar' : 'en'
-      // Zero eligible entries does not by itself prove bilingual completeness:
-      // blank labels, missing ids, unusable sources, and Arabic-only imports
-      // are audited separately.
-      const audit = auditArabicCoverage(translateModeler)
-      const entries = collectMissingTranslations(translateModeler)
-      if (entries.length === 0) {
-        const projection = setDiagramLang(langModeler, targetLang)
-        if (audit.complete) {
-          pushToast(
-            t(
-              projection.active === currentLang
-                ? 'translate.nothing.alreadyArabic'
-                : 'translate.nothing.switched'
-            ),
-            'info'
-          )
-        } else if (audit.omitted > 0) {
-          pushToast(
-            t('translate.nothing.omitted', {
-              switched: projection.switched,
-              missing: projection.missing,
-              omitted: audit.omitted
-            }),
-            'info'
-          )
-        } else {
-          pushToast(t('translate.nothing'), 'info')
-        }
-        return
-      }
-      // A configured browser-callable provider keeps the LLM path unchanged;
-      // WITHOUT one the button now falls back to the free translation chain
-      // (Google gtx → MyMemory) instead of dead-ending on a "no key" toast.
-      const selection = getProviderSelection()
-      const provider =
-        selection && hasKey(selection.providerId)
-          ? { id: selection.providerId, modelId: selection.modelId }
-          : null
-      setTranslatingTab(tabKey)
-      pushToast(
-        provider
-          ? t('translate.running', { count: entries.length })
-          : t('translate.free.using', { count: entries.length }),
-        'info'
-      )
-      try {
-        const res = provider
-          ? await translateDiagram(
-              modeler as TranslateModeler,
-              makeBrowserCallLLM({
-                providerId: provider.id,
-                model: provider.modelId,
-                apiKey: getKey(provider.id) ?? '',
-                referer: typeof location !== 'undefined' ? location.origin : undefined,
-                title: 'OrbitPM Process Studio Lite'
-              })
-            )
-          : await translateDiagramWithTexts(translateModeler, makeFreeTranslateTexts())
-        const projection = setDiagramLang(langModeler, targetLang)
-        if (
-          res.skipped > 0 ||
-          projection.missing > 0 ||
-          projection.active !== targetLang
-        ) {
-          pushToast(
-            t('translate.partial', {
-              done: res.translated,
-              total: res.total,
-              switched: projection.switched,
-              missing: projection.missing
-            }),
-            'info'
-          )
-        } else {
-          pushToast(t('translate.done', { count: res.translated }), 'success')
-        }
-      } catch (err) {
-        if (err instanceof FreeTranslateError) {
-          pushToast(
-            t(
-              err.code === 'rate'
-                ? 'translate.free.rate'
-                : err.code === 'offline'
-                  ? 'translate.free.offline'
-                  : 'translate.free.down'
-            ),
-            'error'
-          )
-        } else {
-          pushToast(t('translate.failed', { error: errMsg(err) }), 'error')
-        }
-      } finally {
-        setTranslatingTab(null)
-      }
-    },
     [modelersByKey, translatingTab, pushToast]
   )
+
+  // Both toolbar actions perform the same audited read first. Only complete,
+  // valid targets project immediately; incomplete/wrong-script targets open
+  // the disclosure review and perform no mutation or network operation.
+  const handleDiagramLangToggle = useCallback(
+    (tabKey: string) => openTranslationReview(tabKey),
+    [openTranslationReview]
+  )
+  const handleTranslate = useCallback(
+    (tabKey: string) => openTranslationReview(tabKey),
+    [openTranslationReview]
+  )
+
+  const handleTranslationPartialPreview = useCallback(() => {
+    const state = translationReview
+    if (!state || translatingTab) return
+    const modeler = modelersByKey[state.tabKey] as
+      | LangToggleModeler
+      | undefined
+    if (!modeler) return
+    try {
+      const result = applyDiagramLocalizationReview(modeler, state.review, {
+        allowPartial: true
+      })
+      setTranslationReview(null)
+      pushToast(
+        t('editor.langToggle.partial', {
+          switched: result.switched,
+          missing: result.missing
+        }),
+        'info'
+      )
+    } catch (err) {
+      if (err instanceof StaleLocalizationReviewError) {
+        const fresh = prepareDiagramLanguageReview(
+          modeler,
+          state.review.target,
+          state.review.source
+        )
+        setTranslationReview({
+          ...state,
+          review: fresh,
+          status: t('translationReview.stale')
+        })
+      } else {
+        pushToast(errMsg(err), 'error')
+      }
+    }
+  }, [translationReview, translatingTab, modelersByKey, pushToast])
+
+  const handleTranslationCancel = useCallback(() => {
+    translationAbortRef.current?.abort()
+  }, [])
+
+  const handleTranslationNow = useCallback(async () => {
+    const state = translationReview
+    const disclosure = translationDisclosure
+    if (!state || !disclosure || !state.providerId || translatingTab) {
+      if (state && !state.providerId) {
+        setTranslationReview({
+          ...state,
+          status: t('translationReview.noProvider')
+        })
+      }
+      return
+    }
+    const modeler = modelersByKey[state.tabKey] as
+      | (TranslateModeler & LangToggleModeler)
+      | undefined
+    if (!modeler) return
+    const controller = new AbortController()
+    translationAbortRef.current = controller
+    setTranslatingTab(state.tabKey)
+    setTranslationReview({
+      ...state,
+      status: t('translationReview.running')
+    })
+    const consent = grantExternalRequestConsent(disclosure)
+    try {
+      const run = {
+        review: state.review,
+        disclosure,
+        consent,
+        signal: controller.signal
+      }
+      const result =
+        state.providerId === 'free'
+          ? await translateReviewedDiagramWithTexts(
+              modeler,
+              makeFreeTranslateTexts(),
+              run
+            )
+          : await (() => {
+              const selection = state.aiSelection
+              if (!selection || !hasKey(selection.providerId)) {
+                throw new Error(t('translate.noKey'))
+              }
+              return translateReviewedDiagram(
+                modeler,
+                makeBrowserCallLLM(
+                  {
+                    providerId: selection.providerId,
+                    model: selection.modelId,
+                    apiKey: getKey(selection.providerId) ?? '',
+                    referer:
+                      typeof location !== 'undefined'
+                        ? location.origin
+                        : undefined,
+                    title: 'OrbitPM Process Studio Lite'
+                  },
+                  { signal: controller.signal }
+                ),
+                run
+              )
+            })()
+      if (result.complete) {
+        setTranslationReview(null)
+        pushToast(
+          t('translate.done', { count: result.translated }),
+          'success'
+        )
+      } else {
+        setTranslationReview({
+          ...state,
+          review: result.review,
+          status: t('translationReview.partialStatus')
+        })
+      }
+    } catch (err) {
+      const cancelled =
+        controller.signal.aborted ||
+        (err instanceof DOMException && err.name === 'AbortError')
+      const stale = err instanceof StaleLocalizationReviewError
+      const failures = stale
+        ? []
+        : state.review.queue.map((item) => ({
+            processId: item.processId,
+            elementId: item.elementId,
+            field: item.field,
+            target: item.target,
+            originalValue: item.sourceValue
+          }))
+      const failedReview = inspectDiagramLocalization(
+        modeler,
+        state.review.target,
+        {
+          source: state.review.source,
+          providerFailures: failures
+        }
+      )
+      const status = cancelled
+        ? t('translationReview.cancelled')
+        : stale
+          ? t('translationReview.stale')
+          : err instanceof FreeTranslateError
+            ? t(
+                err.code === 'rate'
+                  ? 'translate.free.rate'
+                  : err.code === 'offline'
+                    ? 'translate.free.offline'
+                    : 'translate.free.down'
+              )
+            : t('translate.failed', { error: errMsg(err) })
+      setTranslationReview({
+        ...state,
+        review: failedReview,
+        status
+      })
+    } finally {
+      translationAbortRef.current = null
+      setTranslatingTab(null)
+    }
+  }, [
+    translationReview,
+    translationDisclosure,
+    translatingTab,
+    modelersByKey,
+    pushToast
+  ])
 
   // Interview apply-path: the assistant regenerated the diagram from the
   // running Q&A — import it into the LIVE modeler of the target tab (bypassing
@@ -2816,6 +3018,29 @@ function App(): JSX.Element {
                               on(event: string, callback: () => void): void
                             }
                             eventBus.on('import.done', () => {
+                              try {
+                                const langModeler =
+                                  modeler as LangToggleModeler
+                                const current = getDiagramLang(langModeler)
+                                const target =
+                                  current === 'en' ? 'ar' : 'en'
+                                const source =
+                                  localizationSourceByTabRef.current.get(
+                                    tab.key
+                                  ) ?? LocalizationSource.Editor
+                                localizationReviewByTabRef.current.set(
+                                  tab.key,
+                                  prepareDiagramLanguageReview(
+                                    langModeler,
+                                    target,
+                                    source
+                                  )
+                                )
+                              } catch {
+                                // Localization audit is non-destructive and
+                                // best-effort; import diagnostics remain owned
+                                // by the editor/validation center.
+                              }
                               const processId = pendingProcessFocusRef.current.get(tab.key)
                               if (!processId) return
                               // Let the import promise settle before opening
@@ -2952,6 +3177,41 @@ function App(): JSX.Element {
         </span>
         <span>{t('footer.tagline')}</span>
       </footer>
+
+      {translationReview && (
+        <TranslationReviewDialog
+          review={translationReview.review}
+          disclosure={translationDisclosure}
+          providers={translationProviders}
+          providerId={translationReview.providerId}
+          busy={translatingTab === translationReview.tabKey}
+          status={translationReview.status}
+          onProviderChange={(providerId) => {
+            if (
+              providerId !== '' &&
+              providerId !== 'selected-ai' &&
+              providerId !== 'free'
+            ) {
+              return
+            }
+            setTranslationReview((current) =>
+              current
+                ? {
+                    ...current,
+                    providerId,
+                    // Provider/model changes invalidate any prior consent. The
+                    // disclosure fingerprint is regenerated from this state.
+                    status: null
+                  }
+                : null
+            )
+          }}
+          onTranslateNow={() => void handleTranslationNow()}
+          onPartialPreview={handleTranslationPartialPreview}
+          onPostpone={() => setTranslationReview(null)}
+          onCancelTranslation={handleTranslationCancel}
+        />
+      )}
 
       {moveTarget && (
         <MoveDialog
