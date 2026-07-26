@@ -1,5 +1,6 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useMemo, useRef, useState } from 'react'
 import type { ProcessEntry, ProcessIndex } from '@/core/processIndex'
+import { AccessibleDialog } from '../common/AccessibleDialog'
 import { t } from '../i18n'
 import { useLang } from '../i18n/useLang'
 
@@ -37,35 +38,25 @@ export function LinkPicker({
 }: LinkPickerProps): JSX.Element | null {
   useLang()
   const [query, setQuery] = useState('')
+  const searchRef = useRef<HTMLInputElement | null>(null)
 
   const entries = useMemo(() => {
     const all = Array.from(index.values()).sort((a, b) => a.processId.localeCompare(b.processId))
     return all.filter((entry) => matches(entry, query))
   }, [index, query])
 
-  // Escape closes the picker (matches the app's other modals). Bound to the
-  // window so it fires regardless of which element inside the dialog has focus.
-  useEffect(() => {
-    if (!open) return
-    const onKeyDown = (event: KeyboardEvent): void => {
-      if (event.key === 'Escape') {
-        event.preventDefault()
-        onClose()
-      }
-    }
-    window.addEventListener('keydown', onKeyDown)
-    return () => window.removeEventListener('keydown', onKeyDown)
-  }, [open, onClose])
-
   if (!open) return null
 
   return (
-    <div
-      className="orbitpm-link-picker-overlay"
-      role="dialog"
-      aria-modal="true"
-      aria-label={t('linkPicker.title')}
-      style={{
+    <AccessibleDialog
+      backdropClassName="orbitpm-link-picker-overlay"
+      dialogClassName="orbitpm-link-picker"
+      ariaLabel={t('linkPicker.title')}
+      onClose={onClose}
+      closeOnEscape
+      closeOnBackdrop
+      initialFocusRef={searchRef}
+      backdropStyle={{
         position: 'fixed',
         inset: 0,
         background: 'rgba(0,0,0,0.4)',
@@ -74,90 +65,80 @@ export function LinkPicker({
         justifyContent: 'center',
         zIndex: 1000
       }}
-      onClick={onClose}
+      dialogStyle={{
+        background: 'var(--orbitpm-panel-bg, #fff)',
+        color: 'inherit',
+        borderRadius: 8,
+        width: 420,
+        maxWidth: '90vw',
+        maxHeight: '70vh',
+        display: 'flex',
+        flexDirection: 'column',
+        boxShadow: '0 8px 30px rgba(0,0,0,0.3)'
+      }}
     >
-      <div
-        className="orbitpm-link-picker"
+      <header
         style={{
-          background: 'var(--orbitpm-panel-bg, #fff)',
-          color: 'inherit',
-          borderRadius: 8,
-          width: 420,
-          maxWidth: '90vw',
-          maxHeight: '70vh',
+          padding: '0.75rem 1rem',
+          borderBottom: '1px solid rgba(127,127,127,0.25)',
           display: 'flex',
-          flexDirection: 'column',
-          boxShadow: '0 8px 30px rgba(0,0,0,0.3)'
+          justifyContent: 'space-between',
+          alignItems: 'center'
         }}
-        onClick={(e) => e.stopPropagation()}
       >
-        <header
-          style={{
-            padding: '0.75rem 1rem',
-            borderBottom: '1px solid rgba(127,127,127,0.25)',
-            display: 'flex',
-            justifyContent: 'space-between',
-            alignItems: 'center'
-          }}
-        >
-          <strong>{t('linkPicker.title')}</strong>
-          <button type="button" onClick={onClose} aria-label={t('linkPicker.close.aria')}>
-            ×
-          </button>
-        </header>
+        <strong>{t('linkPicker.title')}</strong>
+        <button type="button" onClick={onClose} aria-label={t('linkPicker.close.aria')}>
+          ×
+        </button>
+      </header>
 
-        <div style={{ padding: '0.5rem 1rem' }}>
-          <input
-            autoFocus
-            type="text"
-            placeholder={t('linkPicker.searchPlaceholder')}
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            style={{ width: '100%', boxSizing: 'border-box', padding: '0.4rem 0.5rem' }}
-          />
-        </div>
-
-        <div style={{ overflowY: 'auto', flex: 1, padding: '0 0.5rem 0.5rem' }}>
-          {entries.length === 0 ? (
-            <p style={{ opacity: 0.6, padding: '0.5rem 0.5rem' }}>
-              {index.size === 0
-                ? t('linkPicker.empty.noProcesses')
-                : t('linkPicker.empty.noMatches')}
-            </p>
-          ) : (
-            <ul style={{ listStyle: 'none', margin: 0, padding: 0 }}>
-              {entries.map((entry) => (
-                <li key={entry.processId}>
-                  <button
-                    type="button"
-                    onClick={() => onPick(entry.processId)}
-                    style={{
-                      width: '100%',
-                      textAlign: 'start',
-                      padding: '0.5rem',
-                      borderRadius: 6,
-                      border: 'none',
-                      background:
-                        entry.processId === currentProcessId
-                          ? 'rgba(37,99,235,0.15)'
-                          : 'transparent',
-                      cursor: 'pointer'
-                    }}
-                  >
-                    <div style={{ fontSize: 13, fontWeight: 600 }}>
-                      {entry.processName || entry.processId}
-                    </div>
-                    <div style={{ fontSize: 11, opacity: 0.65 }}>
-                      {entry.processId} · {entry.relPath}
-                    </div>
-                  </button>
-                </li>
-              ))}
-            </ul>
-          )}
-        </div>
+      <div style={{ padding: '0.5rem 1rem' }}>
+        <input
+          ref={searchRef}
+          type="text"
+          placeholder={t('linkPicker.searchPlaceholder')}
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          style={{ width: '100%', boxSizing: 'border-box', padding: '0.4rem 0.5rem' }}
+        />
       </div>
-    </div>
+
+      <div style={{ overflowY: 'auto', flex: 1, padding: '0 0.5rem 0.5rem' }}>
+        {entries.length === 0 ? (
+          <p style={{ opacity: 0.6, padding: '0.5rem 0.5rem' }}>
+            {index.size === 0 ? t('linkPicker.empty.noProcesses') : t('linkPicker.empty.noMatches')}
+          </p>
+        ) : (
+          <ul style={{ listStyle: 'none', margin: 0, padding: 0 }}>
+            {entries.map((entry) => (
+              <li key={entry.processId}>
+                <button
+                  type="button"
+                  onClick={() => onPick(entry.processId)}
+                  style={{
+                    width: '100%',
+                    textAlign: 'start',
+                    padding: '0.5rem',
+                    borderRadius: 6,
+                    border: 'none',
+                    background:
+                      entry.processId === currentProcessId ? 'rgba(37,99,235,0.15)' : 'transparent',
+                    cursor: 'pointer'
+                  }}
+                >
+                  <div style={{ fontSize: 13, fontWeight: 600 }}>
+                    {entry.processName || entry.processId}
+                  </div>
+                  <div style={{ fontSize: 11, opacity: 0.65 }}>
+                    {entry.processId} · {entry.relPath}
+                  </div>
+                </button>
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
+    </AccessibleDialog>
   )
 }
 

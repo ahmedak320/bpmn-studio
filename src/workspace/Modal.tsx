@@ -1,4 +1,5 @@
-import { useEffect, type ReactNode } from 'react'
+import { type ReactNode } from 'react'
+import { AccessibleDialog } from '../common/AccessibleDialog'
 import { t } from '../i18n'
 import { useLang } from '../i18n/useLang'
 
@@ -27,22 +28,14 @@ export function Modal({
   ariaLabel
 }: ModalProps): JSX.Element {
   useLang()
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent): void => {
-      if (e.key === 'Escape') {
-        e.stopPropagation()
-        onClose()
-      }
-    }
-    window.addEventListener('keydown', onKey, true)
-    return () => window.removeEventListener('keydown', onKey, true)
-  }, [onClose])
 
   return (
-    <div
-      role="presentation"
-      onClick={onClose}
-      style={{
+    <AccessibleDialog
+      ariaLabel={ariaLabel ?? title}
+      onClose={onClose}
+      closeOnEscape
+      closeOnBackdrop
+      backdropStyle={{
         position: 'fixed',
         inset: 0,
         zIndex: 3000,
@@ -52,69 +45,62 @@ export function Modal({
         justifyContent: 'center',
         padding: '1rem'
       }}
+      dialogStyle={{
+        width: '100%',
+        maxWidth,
+        maxHeight: '85vh',
+        display: 'flex',
+        flexDirection: 'column',
+        background: 'var(--orbitpm-panel-bg)',
+        color: 'var(--orbitpm-fg)',
+        border: '1px solid var(--orbitpm-border)',
+        borderRadius: 12,
+        boxShadow: '0 18px 60px rgba(0,0,0,0.4)'
+      }}
     >
-      <div
-        role="dialog"
-        aria-modal="true"
-        aria-label={ariaLabel ?? title}
-        onClick={(e) => e.stopPropagation()}
+      <header
         style={{
-          width: '100%',
-          maxWidth,
-          maxHeight: '85vh',
+          padding: '0.8rem 1rem',
+          borderBottom: '1px solid var(--orbitpm-border)',
           display: 'flex',
-          flexDirection: 'column',
-          background: 'var(--orbitpm-panel-bg)',
-          color: 'var(--orbitpm-fg)',
-          border: '1px solid var(--orbitpm-border)',
-          borderRadius: 12,
-          boxShadow: '0 18px 60px rgba(0,0,0,0.4)'
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          gap: 12
         }}
       >
-        <header
+        <strong style={{ fontSize: 15 }}>{title}</strong>
+        <button
+          type="button"
+          onClick={onClose}
+          aria-label={t('modal.close.aria')}
+          title={t('modal.close.aria')}
           style={{
-            padding: '0.8rem 1rem',
-            borderBottom: '1px solid var(--orbitpm-border)',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'space-between',
-            gap: 12
+            border: 'none',
+            background: 'transparent',
+            fontSize: 18,
+            cursor: 'pointer',
+            lineHeight: 1,
+            color: 'inherit'
           }}
         >
-          <strong style={{ fontSize: 15 }}>{title}</strong>
-          <button
-            type="button"
-            onClick={onClose}
-            aria-label={t('modal.close.aria')}
-            title={t('modal.close.aria')}
-            style={{
-              border: 'none',
-              background: 'transparent',
-              fontSize: 18,
-              cursor: 'pointer',
-              lineHeight: 1,
-              color: 'inherit'
-            }}
-          >
-            ×
-          </button>
-        </header>
-        <div style={{ padding: '1rem', overflowY: 'auto', minHeight: 0 }}>{children}</div>
-        {footer && (
-          <footer
-            style={{
-              padding: '0.7rem 1rem',
-              borderTop: '1px solid var(--orbitpm-border)',
-              display: 'flex',
-              justifyContent: 'flex-end',
-              gap: 8
-            }}
-          >
-            {footer}
-          </footer>
-        )}
-      </div>
-    </div>
+          ×
+        </button>
+      </header>
+      <div style={{ padding: '1rem', overflowY: 'auto', minHeight: 0 }}>{children}</div>
+      {footer && (
+        <footer
+          style={{
+            padding: '0.7rem 1rem',
+            borderTop: '1px solid var(--orbitpm-border)',
+            display: 'flex',
+            justifyContent: 'flex-end',
+            gap: 8
+          }}
+        >
+          {footer}
+        </footer>
+      )}
+    </AccessibleDialog>
   )
 }
 

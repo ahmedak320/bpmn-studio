@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
+import { AccessibleDialog } from '../common/AccessibleDialog'
 import { t } from '../i18n'
 import {
   type HistoryDiff,
@@ -51,11 +52,12 @@ export function HistoryDialog({
   }
 
   return (
-    <div
-      role="dialog"
-      aria-modal="true"
-      aria-labelledby="history-dialog-title"
-      style={{
+    <AccessibleDialog
+      ariaLabelledby="history-dialog-title"
+      onClose={onClose}
+      closeOnEscape
+      closeOnBackdrop={false}
+      backdropStyle={{
         position: 'fixed',
         inset: 0,
         zIndex: 10020,
@@ -64,201 +66,198 @@ export function HistoryDialog({
         padding: 20,
         background: 'rgba(0,0,0,0.52)'
       }}
+      dialogStyle={{
+        width: 'min(920px, 96vw)',
+        maxHeight: '90vh',
+        overflow: 'auto',
+        padding: 18,
+        border: '1px solid var(--orbitpm-border)',
+        borderRadius: 12,
+        background: 'var(--orbitpm-panel-bg, var(--orbitpm-bg))',
+        color: 'var(--orbitpm-fg)'
+      }}
     >
-      <section
+      <div
         style={{
-          width: 'min(920px, 96vw)',
-          maxHeight: '90vh',
-          overflow: 'auto',
-          padding: 18,
-          border: '1px solid var(--orbitpm-border)',
-          borderRadius: 12,
-          background: 'var(--orbitpm-panel-bg, var(--orbitpm-bg))',
-          color: 'var(--orbitpm-fg)'
+          display: 'flex',
+          justifyContent: 'space-between',
+          alignItems: 'center',
+          gap: 12
         }}
       >
-        <div
+        <h2 id="history-dialog-title" style={{ margin: 0, fontSize: 18 }}>
+          {t('workspace.storage.history')}
+        </h2>
+        <button type="button" className="orbitpm-lite-chrome-btn" onClick={onClose}>
+          {t('modal.cancel')}
+        </button>
+      </div>
+
+      {error && (
+        <pre
+          role="alert"
           style={{
-            display: 'flex',
-            justifyContent: 'space-between',
-            alignItems: 'center',
-            gap: 12
+            whiteSpace: 'pre-wrap',
+            color: '#c4322f',
+            font: 'inherit',
+            fontSize: 12
           }}
         >
-          <h2 id="history-dialog-title" style={{ margin: 0, fontSize: 18 }}>
-            {t('workspace.storage.history')}
-          </h2>
-          <button type="button" className="orbitpm-lite-chrome-btn" onClick={onClose}>
-            {t('modal.cancel')}
-          </button>
+          {error}
+        </pre>
+      )}
+
+      {revisions.length === 0 ? (
+        <p style={{ color: 'var(--orbitpm-muted)' }}>{t('workspace.history.empty')}</p>
+      ) : (
+        <div style={{ display: 'grid', gap: 8, marginTop: 14 }}>
+          {revisions.map((revision) => (
+            <article
+              key={revision.id}
+              style={{
+                display: 'grid',
+                gridTemplateColumns: 'minmax(0, 1fr) auto',
+                gap: 12,
+                alignItems: 'center',
+                padding: 10,
+                border: '1px solid var(--orbitpm-border)',
+                borderRadius: 8
+              }}
+            >
+              <span style={{ minWidth: 0 }}>
+                <strong style={{ display: 'block', overflowWrap: 'anywhere' }}>
+                  {revision.originalPath}
+                </strong>
+                <small style={{ color: 'var(--orbitpm-muted)' }}>
+                  {new Date(revision.createdAt).toLocaleString()} · {revision.reason} ·{' '}
+                  {Math.round(revision.size / 1024)} KiB
+                </small>
+              </span>
+              <span style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                <button
+                  type="button"
+                  className="orbitpm-lite-chrome-btn"
+                  disabled={busy}
+                  onClick={() =>
+                    void run(async () => {
+                      setDiff(null)
+                      setPreview(await manager.preview(revision))
+                    })
+                  }
+                >
+                  {t('workspace.history.preview')}
+                </button>
+                <button
+                  type="button"
+                  className="orbitpm-lite-chrome-btn"
+                  disabled={busy}
+                  onClick={() =>
+                    void run(async () => {
+                      setPreview(null)
+                      setDiff(await manager.diff(revision, currentXml(revision.originalPath)))
+                    })
+                  }
+                >
+                  {t('workspace.history.diff')}
+                </button>
+                <button
+                  type="button"
+                  className="orbitpm-lite-chrome-btn"
+                  disabled={busy}
+                  onClick={() =>
+                    void run(async () => {
+                      const result = await manager.restore(revision)
+                      if (result.outcome.status !== 'success') {
+                        throw new Error(`Restore did not complete (${result.outcome.status}).`)
+                      }
+                      await onChanged()
+                      await load()
+                    })
+                  }
+                >
+                  {t('workspace.history.restore')}
+                </button>
+                <button
+                  type="button"
+                  className="orbitpm-lite-chrome-btn"
+                  disabled={busy}
+                  onClick={() => {
+                    const destination = window.prompt(
+                      t('workspace.history.copyPrompt'),
+                      revision.originalPath.replace(/\.bpmn$/i, '-restored.bpmn')
+                    )
+                    if (!destination) return
+                    void run(async () => {
+                      const outcome = await manager.restoreAsCopy(revision, destination)
+                      if (outcome.status !== 'success') {
+                        throw new Error(`Restore did not complete (${outcome.status}).`)
+                      }
+                      await onChanged()
+                    })
+                  }}
+                >
+                  {t('workspace.history.restoreCopy')}
+                </button>
+              </span>
+            </article>
+          ))}
         </div>
+      )}
 
-        {error && (
-          <pre
-            role="alert"
-            style={{
-              whiteSpace: 'pre-wrap',
-              color: '#c4322f',
-              font: 'inherit',
-              fontSize: 12
-            }}
-          >
-            {error}
-          </pre>
-        )}
+      {preview && (
+        <pre
+          style={{
+            marginTop: 14,
+            maxHeight: 320,
+            overflow: 'auto',
+            whiteSpace: 'pre-wrap',
+            direction: 'ltr',
+            textAlign: 'left',
+            padding: 12,
+            borderRadius: 8,
+            background: 'rgba(127,127,127,0.09)'
+          }}
+        >
+          {preview.xml}
+        </pre>
+      )}
 
-        {revisions.length === 0 ? (
-          <p style={{ color: 'var(--orbitpm-muted)' }}>{t('workspace.history.empty')}</p>
-        ) : (
-          <div style={{ display: 'grid', gap: 8, marginTop: 14 }}>
-            {revisions.map((revision) => (
-              <article
-                key={revision.id}
-                style={{
-                  display: 'grid',
-                  gridTemplateColumns: 'minmax(0, 1fr) auto',
-                  gap: 12,
-                  alignItems: 'center',
-                  padding: 10,
-                  border: '1px solid var(--orbitpm-border)',
-                  borderRadius: 8
-                }}
-              >
-                <span style={{ minWidth: 0 }}>
-                  <strong style={{ display: 'block', overflowWrap: 'anywhere' }}>
-                    {revision.originalPath}
-                  </strong>
-                  <small style={{ color: 'var(--orbitpm-muted)' }}>
-                    {new Date(revision.createdAt).toLocaleString()} · {revision.reason} ·{' '}
-                    {Math.round(revision.size / 1024)} KiB
-                  </small>
-                </span>
-                <span style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-                  <button
-                    type="button"
-                    className="orbitpm-lite-chrome-btn"
-                    disabled={busy}
-                    onClick={() =>
-                      void run(async () => {
-                        setDiff(null)
-                        setPreview(await manager.preview(revision))
-                      })
-                    }
-                  >
-                    {t('workspace.history.preview')}
-                  </button>
-                  <button
-                    type="button"
-                    className="orbitpm-lite-chrome-btn"
-                    disabled={busy}
-                    onClick={() =>
-                      void run(async () => {
-                        setPreview(null)
-                        setDiff(await manager.diff(revision, currentXml(revision.originalPath)))
-                      })
-                    }
-                  >
-                    {t('workspace.history.diff')}
-                  </button>
-                  <button
-                    type="button"
-                    className="orbitpm-lite-chrome-btn"
-                    disabled={busy}
-                    onClick={() =>
-                      void run(async () => {
-                        const result = await manager.restore(revision)
-                        if (result.outcome.status !== 'success') {
-                          throw new Error(`Restore did not complete (${result.outcome.status}).`)
-                        }
-                        await onChanged()
-                        await load()
-                      })
-                    }
-                  >
-                    {t('workspace.history.restore')}
-                  </button>
-                  <button
-                    type="button"
-                    className="orbitpm-lite-chrome-btn"
-                    disabled={busy}
-                    onClick={() => {
-                      const destination = window.prompt(
-                        t('workspace.history.copyPrompt'),
-                        revision.originalPath.replace(/\.bpmn$/i, '-restored.bpmn')
-                      )
-                      if (!destination) return
-                      void run(async () => {
-                        const outcome = await manager.restoreAsCopy(revision, destination)
-                        if (outcome.status !== 'success') {
-                          throw new Error(`Restore did not complete (${outcome.status}).`)
-                        }
-                        await onChanged()
-                      })
-                    }}
-                  >
-                    {t('workspace.history.restoreCopy')}
-                  </button>
-                </span>
-              </article>
-            ))}
-          </div>
-        )}
-
-        {preview && (
-          <pre
-            style={{
-              marginTop: 14,
-              maxHeight: 320,
-              overflow: 'auto',
-              whiteSpace: 'pre-wrap',
-              direction: 'ltr',
-              textAlign: 'left',
-              padding: 12,
-              borderRadius: 8,
-              background: 'rgba(127,127,127,0.09)'
-            }}
-          >
-            {preview.xml}
-          </pre>
-        )}
-
-        {diff && (
-          <div
-            style={{
-              marginTop: 14,
-              maxHeight: 320,
-              overflow: 'auto',
-              direction: 'ltr',
-              textAlign: 'left',
-              padding: 12,
-              borderRadius: 8,
-              background: 'rgba(127,127,127,0.09)',
-              fontFamily: 'ui-monospace, monospace',
-              fontSize: 12
-            }}
-          >
-            {diff.identical
-              ? t('workspace.history.current')
-              : diff.hunks.map((hunk, index) => (
-                  <div key={`${hunk.oldStart}:${hunk.newStart}:${index}`}>
-                    <div>
-                      @@ -{hunk.oldStart},{hunk.oldLines} +{hunk.newStart},{hunk.newLines} @@
-                    </div>
-                    {hunk.removed.map((line, lineIndex) => (
-                      <div key={`removed:${lineIndex}`} style={{ color: '#b42318' }}>
-                        - {line}
-                      </div>
-                    ))}
-                    {hunk.added.map((line, lineIndex) => (
-                      <div key={`added:${lineIndex}`} style={{ color: '#067647' }}>
-                        + {line}
-                      </div>
-                    ))}
+      {diff && (
+        <div
+          style={{
+            marginTop: 14,
+            maxHeight: 320,
+            overflow: 'auto',
+            direction: 'ltr',
+            textAlign: 'left',
+            padding: 12,
+            borderRadius: 8,
+            background: 'rgba(127,127,127,0.09)',
+            fontFamily: 'ui-monospace, monospace',
+            fontSize: 12
+          }}
+        >
+          {diff.identical
+            ? t('workspace.history.current')
+            : diff.hunks.map((hunk, index) => (
+                <div key={`${hunk.oldStart}:${hunk.newStart}:${index}`}>
+                  <div>
+                    @@ -{hunk.oldStart},{hunk.oldLines} +{hunk.newStart},{hunk.newLines} @@
                   </div>
-                ))}
-          </div>
-        )}
-      </section>
-    </div>
+                  {hunk.removed.map((line, lineIndex) => (
+                    <div key={`removed:${lineIndex}`} style={{ color: '#b42318' }}>
+                      - {line}
+                    </div>
+                  ))}
+                  {hunk.added.map((line, lineIndex) => (
+                    <div key={`added:${lineIndex}`} style={{ color: '#067647' }}>
+                      + {line}
+                    </div>
+                  ))}
+                </div>
+              ))}
+        </div>
+      )}
+    </AccessibleDialog>
   )
 }

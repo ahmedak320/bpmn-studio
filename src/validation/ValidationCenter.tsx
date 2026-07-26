@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useRef } from 'react'
+import { useMemo, useRef } from 'react'
+import { AccessibleDialog } from '../common/AccessibleDialog'
 import { t, type Key } from '../i18n'
 import { triggerDownload } from '../editor/exportImage'
 import type { ValidationIssue, ValidationSeverity, ValidationSummary } from './contracts'
@@ -138,18 +139,6 @@ export function ValidationCenter({
       : translate('validation.invalid', { count: summary.blockingErrors })
   }, [running, summary])
 
-  useEffect(() => {
-    if (!open) return
-    headingRef.current?.focus()
-    const onKeyDown = (event: KeyboardEvent): void => {
-      if (event.key !== 'Escape') return
-      event.preventDefault()
-      onClose()
-    }
-    document.addEventListener('keydown', onKeyDown)
-    return () => document.removeEventListener('keydown', onKeyDown)
-  }, [onClose, open])
-
   if (!open) return null
 
   const exportReport = (): void => {
@@ -159,72 +148,68 @@ export function ValidationCenter({
   }
 
   return (
-    <div className="orbitpm-validation__backdrop" onMouseDown={onClose}>
-      <section
-        className="orbitpm-validation"
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="orbitpm-validation-title"
-        onMouseDown={(event) => event.stopPropagation()}
-      >
-        <header className="orbitpm-validation__header">
-          <div>
-            <h2 id="orbitpm-validation-title" ref={headingRef} tabIndex={-1}>
-              {translate('validation.title')}
-            </h2>
-            <p aria-live="polite">{status}</p>
-          </div>
-          <button type="button" onClick={onClose} aria-label={translate('validation.close')}>
-            ×
-          </button>
-        </header>
-
-        {summary ? (
-          <div
-            className="orbitpm-validation__counts"
-            aria-label={translate('validation.summary', {
-              errors: summary.errors,
-              warnings: summary.warnings,
-              infos: summary.infos
-            })}
-          >
-            <span className="orbitpm-validation__count orbitpm-validation__count--error">
-              {translate('validation.errors')}: {summary.errors}
-            </span>
-            <span className="orbitpm-validation__count orbitpm-validation__count--warning">
-              {translate('validation.warnings')}: {summary.warnings}
-            </span>
-            <span className="orbitpm-validation__count">
-              {translate('validation.infos')}: {summary.infos}
-            </span>
-          </div>
-        ) : null}
-
-        <div className="orbitpm-validation__content">
-          <ValidationIssueList
-            issues={summary?.issues ?? []}
-            onFocus={onFocus}
-            onRepair={onRepair}
-          />
+    <AccessibleDialog
+      backdropClassName="orbitpm-validation__backdrop"
+      dialogClassName="orbitpm-validation"
+      ariaLabelledby="orbitpm-validation-title"
+      onClose={onClose}
+      closeOnEscape
+      closeOnBackdrop
+      initialFocusRef={headingRef}
+    >
+      <header className="orbitpm-validation__header">
+        <div>
+          <h2 id="orbitpm-validation-title" ref={headingRef} tabIndex={-1}>
+            {translate('validation.title')}
+          </h2>
+          <p aria-live="polite">{status}</p>
         </div>
+        <button type="button" onClick={onClose} aria-label={translate('validation.close')}>
+          ×
+        </button>
+      </header>
 
-        <footer className="orbitpm-validation__footer">
-          <button type="button" onClick={onRun} disabled={running}>
-            {running ? translate('validation.running') : translate('validation.open')}
-          </button>
-          <button
-            type="button"
-            onClick={exportReport}
-            disabled={!summary}
-            title={translate('validation.export.title')}
-          >
-            {translate('validation.export')}
-          </button>
-          <button type="button" onClick={onClose}>
-            {translate('validation.close')}
-          </button>
-        </footer>
-      </section>
-    </div>
+      {summary ? (
+        <div
+          className="orbitpm-validation__counts"
+          aria-label={translate('validation.summary', {
+            errors: summary.errors,
+            warnings: summary.warnings,
+            infos: summary.infos
+          })}
+        >
+          <span className="orbitpm-validation__count orbitpm-validation__count--error">
+            {translate('validation.errors')}: {summary.errors}
+          </span>
+          <span className="orbitpm-validation__count orbitpm-validation__count--warning">
+            {translate('validation.warnings')}: {summary.warnings}
+          </span>
+          <span className="orbitpm-validation__count">
+            {translate('validation.infos')}: {summary.infos}
+          </span>
+        </div>
+      ) : null}
+
+      <div className="orbitpm-validation__content">
+        <ValidationIssueList issues={summary?.issues ?? []} onFocus={onFocus} onRepair={onRepair} />
+      </div>
+
+      <footer className="orbitpm-validation__footer">
+        <button type="button" onClick={onRun} disabled={running}>
+          {running ? translate('validation.running') : translate('validation.open')}
+        </button>
+        <button
+          type="button"
+          onClick={exportReport}
+          disabled={!summary}
+          title={translate('validation.export.title')}
+        >
+          {translate('validation.export')}
+        </button>
+        <button type="button" onClick={onClose}>
+          {translate('validation.close')}
+        </button>
+      </footer>
+    </AccessibleDialog>
   )
 }

@@ -27,6 +27,7 @@ import { isDecisionBasisType } from './orgRenderer'
 import { TRIGGER_TYPES, type TriggerEntry } from './orgModel'
 import { t, type Key } from '../i18n'
 import { useLang } from '../i18n/useLang'
+import { AccessibleDialog } from '../common/AccessibleDialog'
 
 export interface StepDetailsValues {
   owner: string
@@ -186,7 +187,12 @@ const footerStyle: CSSProperties = {
   alignItems: 'center',
   gap: 8
 }
-const sectionTitle: CSSProperties = { fontSize: 12, fontWeight: 700, opacity: 0.75, letterSpacing: 0.2 }
+const sectionTitle: CSSProperties = {
+  fontSize: 12,
+  fontWeight: 700,
+  opacity: 0.75,
+  letterSpacing: 0.2
+}
 const labelText: CSSProperties = { fontSize: 12, opacity: 0.8 }
 const fieldLabel: CSSProperties = { display: 'flex', flexDirection: 'column', gap: 4 }
 const inputStyle: CSSProperties = {
@@ -299,18 +305,6 @@ export function StepDetailsDialog({
   const [highlights, setHighlights] = useState<Set<string>>(() => new Set(highlightFields ?? []))
   const highlightRefs = useRef<Record<string, HTMLElement | null>>({})
 
-  // Escape closes the dialog (consistent with the app's other modals).
-  useEffect(() => {
-    const onKeyDown = (event: KeyboardEvent): void => {
-      if (event.key === 'Escape') {
-        event.preventDefault()
-        onCancel()
-      }
-    }
-    window.addEventListener('keydown', onKeyDown)
-    return () => window.removeEventListener('keydown', onKeyDown)
-  }, [onCancel])
-
   // Scroll the FIRST highlighted control into view once, on mount. Highlights
   // whose section is hidden for this mode/type never rendered a ref and are
   // skipped (they are simply ignored, per the prop contract).
@@ -378,392 +372,390 @@ export function StepDetailsDialog({
   const title = mode === 'process' ? t('org.dialog.title.process') : t('org.dialog.title.element')
 
   return (
-    <div
-      role="presentation"
-      style={overlay}
-      onMouseDown={(e) => {
-        if (e.target === e.currentTarget) onCancel()
-      }}
+    <AccessibleDialog
+      ariaLabel={title}
+      onClose={onCancel}
+      closeOnEscape
+      closeOnBackdrop
+      backdropStyle={overlay}
+      dialogStyle={panel}
     >
-      <div role="dialog" aria-modal="true" aria-label={title} style={panel}>
-        <header style={headerStyle}>
-          <strong style={{ fontSize: 15 }}>{title}</strong>
-          <button type="button" onClick={onCancel} aria-label={t('modal.close.aria')} style={closeBtn}>
-            ×
-          </button>
-        </header>
+      <header style={headerStyle}>
+        <strong style={{ fontSize: 15 }}>{title}</strong>
+        <button
+          type="button"
+          onClick={onCancel}
+          aria-label={t('modal.close.aria')}
+          style={closeBtn}
+        >
+          ×
+        </button>
+      </header>
 
-        <div style={bodyStyle}>
-          {/* Bilingual names — both modes; the field labels carry the meaning,
+      <div style={bodyStyle}>
+        {/* Bilingual names — both modes; the field labels carry the meaning,
               so no section header is needed. */}
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-            <label style={fieldLabel}>
-              <span style={labelText}>{t('org.nameEn.label')}</span>
-              <input
-                type="text"
-                dir="auto"
-                value={values.nameEn}
-                onChange={(e) => set('nameEn', e.target.value)}
-                style={inputStyle}
-              />
-            </label>
-            <label style={fieldLabel}>
-              <span style={labelText}>{t('org.nameAr.label')}</span>
-              <input
-                type="text"
-                dir="auto"
-                value={values.nameAr}
-                onChange={(e) => set('nameAr', e.target.value)}
-                style={inputStyle}
-              />
-            </label>
-          </div>
-
-          {/* Owner — always */}
-          <Section
-            title={t('org.section.owner')}
-            sectionRef={highlightRef('owner')}
-            highlight={isHighlighted('owner')}
-          >
-            <OwnerPicker
-              value={values.owner}
-              ownerType={values.ownerType}
-              entries={ownerEntries}
-              labels={ownerPickerLabels()}
-              onChange={(name, ownerType) => {
-                clearHighlight('owner')
-                setValues((prev) => ({ ...prev, owner: name, ownerType }))
-              }}
-              autoFocus
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+          <label style={fieldLabel}>
+            <span style={labelText}>{t('org.nameEn.label')}</span>
+            <input
+              type="text"
+              dir="auto"
+              value={values.nameEn}
+              onChange={(e) => set('nameEn', e.target.value)}
+              style={inputStyle}
             />
+          </label>
+          <label style={fieldLabel}>
+            <span style={labelText}>{t('org.nameAr.label')}</span>
+            <input
+              type="text"
+              dir="auto"
+              value={values.nameAr}
+              onChange={(e) => set('nameAr', e.target.value)}
+              style={inputStyle}
+            />
+          </label>
+        </div>
+
+        {/* Owner — always */}
+        <Section
+          title={t('org.section.owner')}
+          sectionRef={highlightRef('owner')}
+          highlight={isHighlighted('owner')}
+        >
+          <OwnerPicker
+            value={values.owner}
+            ownerType={values.ownerType}
+            entries={ownerEntries}
+            labels={ownerPickerLabels()}
+            onChange={(name, ownerType) => {
+              clearHighlight('owner')
+              setValues((prev) => ({ ...prev, owner: name, ownerType }))
+            }}
+            autoFocus
+          />
+          <label style={fieldLabel}>
+            <span style={labelText}>{t('org.ownerRole.label')}</span>
+            <select
+              aria-label={t('org.ownerRole.label')}
+              value={values.ownerRole || 'R'}
+              onChange={(e) => set('ownerRole', e.target.value)}
+              style={inputStyle}
+            >
+              <option value="R">{t('org.ownerRole.R')}</option>
+              <option value="A">{t('org.ownerRole.A')}</option>
+              <option value="C">{t('org.ownerRole.C')}</option>
+              <option value="I">{t('org.ownerRole.I')}</option>
+            </select>
+          </label>
+          {showStepData && (
             <label style={fieldLabel}>
-              <span style={labelText}>{t('org.ownerRole.label')}</span>
-              <select
-                aria-label={t('org.ownerRole.label')}
-                value={values.ownerRole || 'R'}
-                onChange={(e) => set('ownerRole', e.target.value)}
-                style={inputStyle}
-              >
-                <option value="R">{t('org.ownerRole.R')}</option>
-                <option value="A">{t('org.ownerRole.A')}</option>
-                <option value="C">{t('org.ownerRole.C')}</option>
-                <option value="I">{t('org.ownerRole.I')}</option>
-              </select>
+              <span style={labelText}>{t('org.respList.label')}</span>
+              <textarea
+                dir="auto"
+                aria-label={t('org.respList.label')}
+                value={values.respList}
+                placeholder={t('org.respList.hint')}
+                onChange={(e) => set('respList', e.target.value)}
+                rows={3}
+                style={textAreaStyle}
+              />
             </label>
-            {showStepData && (
-              <label style={fieldLabel}>
-                <span style={labelText}>{t('org.respList.label')}</span>
+          )}
+        </Section>
+
+        {/* Note — always (element: linked annotation; process: documentation) */}
+        <Section title={t('org.section.note')}>
+          <textarea
+            dir="auto"
+            aria-label={t('org.note.label')}
+            value={values.note}
+            placeholder={t('org.note.placeholder')}
+            onChange={(e) => set('note', e.target.value)}
+            rows={3}
+            style={{ ...inputStyle, resize: 'vertical' }}
+          />
+        </Section>
+
+        {/* Step data — element mode, every type: inputs / outputs / system /
+              CC list; decision basis only on gateways + business-rule tasks. */}
+        {showStepData && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+            <label
+              ref={highlightRef('inputs')}
+              style={{ ...fieldLabel, ...(isHighlighted('inputs') ? highlightRing : undefined) }}
+            >
+              <span style={labelText}>{t('org.inputs.label')}</span>
+              <textarea
+                dir="auto"
+                aria-label={t('org.inputs.label')}
+                value={values.inputs}
+                placeholder={t('org.inputs.hint')}
+                onChange={(e) => set('inputs', e.target.value)}
+                rows={3}
+                style={textAreaStyle}
+              />
+              {isHighlighted('inputs') && (
+                <span role="note" style={highlightHintStyle}>
+                  {t('missing.highlight.hint')}
+                </span>
+              )}
+            </label>
+            <label
+              ref={highlightRef('outputs')}
+              style={{ ...fieldLabel, ...(isHighlighted('outputs') ? highlightRing : undefined) }}
+            >
+              <span style={labelText}>{t('org.outputs.label')}</span>
+              <textarea
+                dir="auto"
+                aria-label={t('org.outputs.label')}
+                value={values.outputs}
+                onChange={(e) => set('outputs', e.target.value)}
+                rows={3}
+                style={textAreaStyle}
+              />
+              {isHighlighted('outputs') && (
+                <span role="note" style={highlightHintStyle}>
+                  {t('missing.highlight.hint')}
+                </span>
+              )}
+            </label>
+            <label style={fieldLabel}>
+              <span style={labelText}>{t('org.system.label')}</span>
+              <input
+                type="text"
+                dir="auto"
+                value={values.system}
+                onChange={(e) => set('system', e.target.value)}
+                style={inputStyle}
+              />
+            </label>
+            <label style={fieldLabel}>
+              <span style={labelText}>{t('org.ccList.label')}</span>
+              <textarea
+                dir="auto"
+                aria-label={t('org.ccList.label')}
+                value={values.ccList}
+                placeholder={t('org.ccList.hint')}
+                onChange={(e) => set('ccList', e.target.value)}
+                rows={3}
+                style={textAreaStyle}
+              />
+            </label>
+            {showDecisionBasis && (
+              <label
+                ref={highlightRef('basis')}
+                style={{ ...fieldLabel, ...(isHighlighted('basis') ? highlightRing : undefined) }}
+              >
+                <span style={labelText}>{t('org.decisionBasis.label')}</span>
                 <textarea
                   dir="auto"
-                  aria-label={t('org.respList.label')}
-                  value={values.respList}
-                  placeholder={t('org.respList.hint')}
-                  onChange={(e) => set('respList', e.target.value)}
-                  rows={3}
+                  aria-label={t('org.decisionBasis.label')}
+                  value={values.decisionBasis}
+                  placeholder={t('org.decisionBasis.hint')}
+                  onChange={(e) => set('decisionBasis', e.target.value)}
+                  rows={2}
                   style={textAreaStyle}
+                />
+                {isHighlighted('basis') && (
+                  <span role="note" style={highlightHintStyle}>
+                    {t('missing.highlight.hint')}
+                  </span>
+                )}
+              </label>
+            )}
+          </div>
+        )}
+
+        {/* Channel — element activities / sub-processes / intermediate events */}
+        {showChannel && (
+          <Section title={t('org.section.channel')}>
+            <select
+              aria-label={t('org.section.channel')}
+              value={values.channel}
+              onChange={(e) => set('channel', e.target.value)}
+              style={inputStyle}
+            >
+              <option value="">{t('org.channel.none')}</option>
+              <option value="dmthub">{t('org.channel.dmthub')}</option>
+              <option value="email">{t('org.channel.email')}</option>
+              <option value="data">{t('org.channel.data')}</option>
+            </select>
+            {values.channel !== '' && (
+              <label style={fieldLabel}>
+                <span style={labelText}>{t('org.channel.detail.label')}</span>
+                <input
+                  type="text"
+                  dir="auto"
+                  value={values.channelDetail}
+                  placeholder={
+                    values.channel === 'dmthub'
+                      ? t('org.channel.dmthub.placeholder')
+                      : t('org.channel.detail.placeholder')
+                  }
+                  onChange={(e) => set('channelDetail', e.target.value)}
+                  style={inputStyle}
                 />
               </label>
             )}
           </Section>
+        )}
 
-          {/* Note — always (element: linked annotation; process: documentation) */}
-          <Section title={t('org.section.note')}>
-            <textarea
-              dir="auto"
-              aria-label={t('org.note.label')}
-              value={values.note}
-              placeholder={t('org.note.placeholder')}
-              onChange={(e) => set('note', e.target.value)}
-              rows={3}
-              style={{ ...inputStyle, resize: 'vertical' }}
-            />
+        {/* CC — element task-family only */}
+        {showCc && (
+          <Section title={t('org.section.cc')}>
+            <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}>
+              <input
+                type="checkbox"
+                aria-label={t('org.cc.label')}
+                checked={values.cc}
+                onChange={(e) => set('cc', e.target.checked)}
+              />
+              <span style={{ fontSize: 13 }}>{t('org.cc.label')}</span>
+            </label>
+            <label style={fieldLabel}>
+              <span style={labelText}>{t('org.cc.to.label')}</span>
+              <input
+                type="text"
+                dir="auto"
+                value={values.ccTo}
+                placeholder={t('org.cc.to.placeholder')}
+                disabled={!values.cc}
+                onChange={(e) => set('ccTo', e.target.value)}
+                style={{ ...inputStyle, opacity: values.cc ? 1 : 0.5 }}
+              />
+            </label>
           </Section>
+        )}
 
-          {/* Step data — element mode, every type: inputs / outputs / system /
-              CC list; decision basis only on gateways + business-rule tasks. */}
-          {showStepData && (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-              <label
-                ref={highlightRef('inputs')}
-                style={{ ...fieldLabel, ...(isHighlighted('inputs') ? highlightRing : undefined) }}
-              >
-                <span style={labelText}>{t('org.inputs.label')}</span>
-                <textarea
-                  dir="auto"
-                  aria-label={t('org.inputs.label')}
-                  value={values.inputs}
-                  placeholder={t('org.inputs.hint')}
-                  onChange={(e) => set('inputs', e.target.value)}
-                  rows={3}
-                  style={textAreaStyle}
-                />
-                {isHighlighted('inputs') && (
-                  <span role="note" style={highlightHintStyle}>
-                    {t('missing.highlight.hint')}
-                  </span>
-                )}
-              </label>
-              <label
-                ref={highlightRef('outputs')}
-                style={{ ...fieldLabel, ...(isHighlighted('outputs') ? highlightRing : undefined) }}
-              >
-                <span style={labelText}>{t('org.outputs.label')}</span>
-                <textarea
-                  dir="auto"
-                  aria-label={t('org.outputs.label')}
-                  value={values.outputs}
-                  onChange={(e) => set('outputs', e.target.value)}
-                  rows={3}
-                  style={textAreaStyle}
-                />
-                {isHighlighted('outputs') && (
-                  <span role="note" style={highlightHintStyle}>
-                    {t('missing.highlight.hint')}
-                  </span>
-                )}
-              </label>
-              <label style={fieldLabel}>
-                <span style={labelText}>{t('org.system.label')}</span>
-                <input
-                  type="text"
-                  dir="auto"
-                  value={values.system}
-                  onChange={(e) => set('system', e.target.value)}
-                  style={inputStyle}
-                />
-              </label>
-              <label style={fieldLabel}>
-                <span style={labelText}>{t('org.ccList.label')}</span>
-                <textarea
-                  dir="auto"
-                  aria-label={t('org.ccList.label')}
-                  value={values.ccList}
-                  placeholder={t('org.ccList.hint')}
-                  onChange={(e) => set('ccList', e.target.value)}
-                  rows={3}
-                  style={textAreaStyle}
-                />
-              </label>
-              {showDecisionBasis && (
-                <label
-                  ref={highlightRef('basis')}
-                  style={{ ...fieldLabel, ...(isHighlighted('basis') ? highlightRing : undefined) }}
-                >
-                  <span style={labelText}>{t('org.decisionBasis.label')}</span>
-                  <textarea
-                    dir="auto"
-                    aria-label={t('org.decisionBasis.label')}
-                    value={values.decisionBasis}
-                    placeholder={t('org.decisionBasis.hint')}
-                    onChange={(e) => set('decisionBasis', e.target.value)}
-                    rows={2}
-                    style={textAreaStyle}
-                  />
-                  {isHighlighted('basis') && (
-                    <span role="note" style={highlightHintStyle}>
-                      {t('missing.highlight.hint')}
-                    </span>
+        {/* Trigger — process mode, or a start event in element mode */}
+        {showTrigger && (
+          <Section
+            title={t('org.section.trigger')}
+            sectionRef={highlightRef('trigger')}
+            highlight={isHighlighted('trigger')}
+          >
+            {values.triggers.map((entry, index) => {
+              const serviceMissing = entry.type === 'dmthub' && entry.service.trim() === ''
+              return (
+                <div key={index} style={triggerRow}>
+                  {values.triggers.length > 1 && (
+                    <strong style={{ fontSize: 12 }}>
+                      {t('org.trigger.rowLabel', { n: index + 1 })}
+                    </strong>
                   )}
-                </label>
-              )}
-            </div>
-          )}
-
-          {/* Channel — element activities / sub-processes / intermediate events */}
-          {showChannel && (
-            <Section title={t('org.section.channel')}>
-              <select
-                aria-label={t('org.section.channel')}
-                value={values.channel}
-                onChange={(e) => set('channel', e.target.value)}
-                style={inputStyle}
-              >
-                <option value="">{t('org.channel.none')}</option>
-                <option value="dmthub">{t('org.channel.dmthub')}</option>
-                <option value="email">{t('org.channel.email')}</option>
-                <option value="data">{t('org.channel.data')}</option>
-              </select>
-              {values.channel !== '' && (
-                <label style={fieldLabel}>
-                  <span style={labelText}>{t('org.channel.detail.label')}</span>
-                  <input
-                    type="text"
-                    dir="auto"
-                    value={values.channelDetail}
-                    placeholder={
-                      values.channel === 'dmthub'
-                        ? t('org.channel.dmthub.placeholder')
-                        : t('org.channel.detail.placeholder')
-                    }
-                    onChange={(e) => set('channelDetail', e.target.value)}
-                    style={inputStyle}
-                  />
-                </label>
-              )}
-            </Section>
-          )}
-
-          {/* CC — element task-family only */}
-          {showCc && (
-            <Section title={t('org.section.cc')}>
-              <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}>
-                <input
-                  type="checkbox"
-                  aria-label={t('org.cc.label')}
-                  checked={values.cc}
-                  onChange={(e) => set('cc', e.target.checked)}
-                />
-                <span style={{ fontSize: 13 }}>{t('org.cc.label')}</span>
-              </label>
-              <label style={fieldLabel}>
-                <span style={labelText}>{t('org.cc.to.label')}</span>
-                <input
-                  type="text"
-                  dir="auto"
-                  value={values.ccTo}
-                  placeholder={t('org.cc.to.placeholder')}
-                  disabled={!values.cc}
-                  onChange={(e) => set('ccTo', e.target.value)}
-                  style={{ ...inputStyle, opacity: values.cc ? 1 : 0.5 }}
-                />
-              </label>
-            </Section>
-          )}
-
-          {/* Trigger — process mode, or a start event in element mode */}
-          {showTrigger && (
-            <Section
-              title={t('org.section.trigger')}
-              sectionRef={highlightRef('trigger')}
-              highlight={isHighlighted('trigger')}
-            >
-              {values.triggers.map((entry, index) => {
-                const serviceMissing =
-                  entry.type === 'dmthub' && entry.service.trim() === ''
-                return (
-                  <div key={index} style={triggerRow}>
-                    {values.triggers.length > 1 && (
-                      <strong style={{ fontSize: 12 }}>
-                        {t('org.trigger.rowLabel', { n: index + 1 })}
-                      </strong>
-                    )}
+                  <label style={fieldLabel}>
+                    <span style={labelText}>{t('org.trigger.label')}</span>
+                    <select
+                      aria-label={`${t('org.trigger.label')} ${index + 1}`}
+                      value={entry.type}
+                      onChange={(e) => updateTrigger(index, { type: e.target.value })}
+                      style={inputStyle}
+                    >
+                      {TRIGGER_TYPES.map((triggerType) => (
+                        <option key={triggerType} value={triggerType}>
+                          {t(TRIGGER_LABEL_KEYS[triggerType])}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  {entry.type === 'dmthub' && (
                     <label style={fieldLabel}>
-                      <span style={labelText}>{t('org.trigger.label')}</span>
-                      <select
-                        aria-label={`${t('org.trigger.label')} ${index + 1}`}
-                        value={entry.type}
-                        onChange={(e) => updateTrigger(index, { type: e.target.value })}
-                        style={inputStyle}
-                      >
-                        {TRIGGER_TYPES.map((triggerType) => (
-                          <option key={triggerType} value={triggerType}>
-                            {t(TRIGGER_LABEL_KEYS[triggerType])}
-                          </option>
-                        ))}
-                      </select>
-                    </label>
-                    {entry.type === 'dmthub' && (
-                      <label style={fieldLabel}>
-                        <span style={labelText}>{t('org.trigger.service.label')}</span>
-                        <input
-                          type="text"
-                          dir="auto"
-                          value={entry.service}
-                          placeholder={t('org.trigger.service.placeholder')}
-                          aria-invalid={serviceMissing}
-                          onChange={(e) => updateTrigger(index, { service: e.target.value })}
-                          style={{
-                            ...inputStyle,
-                            borderColor: serviceMissing
-                              ? '#d63384'
-                              : 'rgba(127,127,127,0.4)'
-                          }}
-                        />
-                        {serviceMissing && (
-                          <span role="alert" style={{ fontSize: 11.5, color: '#d63384' }}>
-                            {t('org.trigger.serviceRequired')}
-                          </span>
-                        )}
-                      </label>
-                    )}
-                    <label style={fieldLabel}>
-                      <span style={labelText}>{t('org.trigger.detail.label')}</span>
+                      <span style={labelText}>{t('org.trigger.service.label')}</span>
                       <input
                         type="text"
                         dir="auto"
-                        value={entry.detail}
-                        placeholder={t('org.trigger.detail.placeholder')}
-                        onChange={(e) => updateTrigger(index, { detail: e.target.value })}
-                        style={inputStyle}
+                        value={entry.service}
+                        placeholder={t('org.trigger.service.placeholder')}
+                        aria-invalid={serviceMissing}
+                        onChange={(e) => updateTrigger(index, { service: e.target.value })}
+                        style={{
+                          ...inputStyle,
+                          borderColor: serviceMissing ? '#d63384' : 'rgba(127,127,127,0.4)'
+                        }}
                       />
+                      {serviceMissing && (
+                        <span role="alert" style={{ fontSize: 11.5, color: '#d63384' }}>
+                          {t('org.trigger.serviceRequired')}
+                        </span>
+                      )}
                     </label>
-                    <button
-                      type="button"
-                      aria-label={t('org.trigger.remove.aria')}
-                      onClick={() =>
-                        set(
-                          'triggers',
-                          values.triggers.filter((_, rowIndex) => rowIndex !== index)
-                        )
-                      }
-                      style={{ ...ghostBtn, alignSelf: 'flex-end' }}
-                    >
-                      −
-                    </button>
-                  </div>
-                )
-              })}
-              <button
-                type="button"
-                onClick={() =>
-                  set('triggers', [
-                    ...values.triggers,
-                    { type: 'email', service: '', detail: '' }
-                  ])
-                }
-                style={{ ...ghostBtn, alignSelf: 'flex-start' }}
-              >
-                {t('org.trigger.add')}
-              </button>
-            </Section>
-          )}
-        </div>
-
-        <footer style={footerStyle}>
-          {onExportOwners && (
+                  )}
+                  <label style={fieldLabel}>
+                    <span style={labelText}>{t('org.trigger.detail.label')}</span>
+                    <input
+                      type="text"
+                      dir="auto"
+                      value={entry.detail}
+                      placeholder={t('org.trigger.detail.placeholder')}
+                      onChange={(e) => updateTrigger(index, { detail: e.target.value })}
+                      style={inputStyle}
+                    />
+                  </label>
+                  <button
+                    type="button"
+                    aria-label={t('org.trigger.remove.aria')}
+                    onClick={() =>
+                      set(
+                        'triggers',
+                        values.triggers.filter((_, rowIndex) => rowIndex !== index)
+                      )
+                    }
+                    style={{ ...ghostBtn, alignSelf: 'flex-end' }}
+                  >
+                    −
+                  </button>
+                </div>
+              )
+            })}
             <button
               type="button"
-              onClick={onExportOwners}
-              style={{ ...ghostBtn, marginInlineEnd: 'auto' }}
+              onClick={() =>
+                set('triggers', [...values.triggers, { type: 'email', service: '', detail: '' }])
+              }
+              style={{ ...ghostBtn, alignSelf: 'flex-start' }}
             >
-              {t('org.export.owners')}
+              {t('org.trigger.add')}
             </button>
-          )}
-          <button type="button" onClick={onCancel} style={ghostBtn}>
-            {t('org.cancel')}
-          </button>
+          </Section>
+        )}
+      </div>
+
+      <footer style={footerStyle}>
+        {onExportOwners && (
           <button
             type="button"
-            onClick={() => !applyDisabled && onApply(values)}
-            disabled={applyDisabled}
-            className="orbitpm-lite-primary"
-            style={{
-              fontSize: 13,
-              fontWeight: 600,
-              background: 'var(--orbitpm-accent)',
-              color: '#fff',
-              border: '1px solid var(--orbitpm-accent)',
-              borderRadius: 6,
-              padding: '0.45rem 0.9rem',
-              cursor: applyDisabled ? 'not-allowed' : 'pointer',
-              opacity: applyDisabled ? 0.5 : 1
-            }}
+            onClick={onExportOwners}
+            style={{ ...ghostBtn, marginInlineEnd: 'auto' }}
           >
-            {t('org.apply')}
+            {t('org.export.owners')}
           </button>
-        </footer>
-      </div>
-    </div>
+        )}
+        <button type="button" onClick={onCancel} style={ghostBtn}>
+          {t('org.cancel')}
+        </button>
+        <button
+          type="button"
+          onClick={() => !applyDisabled && onApply(values)}
+          disabled={applyDisabled}
+          className="orbitpm-lite-primary"
+          style={{
+            fontSize: 13,
+            fontWeight: 600,
+            background: 'var(--orbitpm-accent)',
+            color: '#fff',
+            border: '1px solid var(--orbitpm-accent)',
+            borderRadius: 6,
+            padding: '0.45rem 0.9rem',
+            cursor: applyDisabled ? 'not-allowed' : 'pointer',
+            opacity: applyDisabled ? 0.5 : 1
+          }}
+        >
+          {t('org.apply')}
+        </button>
+      </footer>
+    </AccessibleDialog>
   )
 }
 

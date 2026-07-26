@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { AccessibleDialog } from '../common/AccessibleDialog'
 import { t, type Key } from '../i18n'
 import { mergeValidationSummaries, type ValidationSummary } from './contracts'
 import { evaluateValidationPolicy } from './policy'
@@ -45,19 +46,7 @@ export function SourceEditorDialog({
     setPreview(null)
     setError(null)
     setLayoutCandidate(null)
-    requestAnimationFrame(() => headingRef.current?.focus())
   }, [open, originalXml])
-
-  useEffect(() => {
-    if (!open) return
-    const onKeyDown = (event: KeyboardEvent): void => {
-      if (event.key !== 'Escape' || busy) return
-      event.preventDefault()
-      onClose()
-    }
-    document.addEventListener('keydown', onKeyDown)
-    return () => document.removeEventListener('keydown', onKeyDown)
-  }, [busy, onClose, open])
 
   const diff = useMemo(() => summarizeXmlLineDiff(originalXml, draft), [draft, originalXml])
   const layoutDiff = useMemo(
@@ -169,143 +158,138 @@ export function SourceEditorDialog({
   if (!open) return null
 
   return (
-    <div className="orbitpm-validation__backdrop">
-      <section
-        className="orbitpm-source-editor"
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="orbitpm-source-editor-title"
-      >
-        <header className="orbitpm-validation__header">
+    <AccessibleDialog
+      backdropClassName="orbitpm-validation__backdrop"
+      dialogClassName="orbitpm-source-editor"
+      ariaLabelledby="orbitpm-source-editor-title"
+      onClose={onClose}
+      closeOnEscape={busy === null}
+      closeOnBackdrop={false}
+      initialFocusRef={headingRef}
+    >
+      <header className="orbitpm-validation__header">
+        <div>
+          <h2 id="orbitpm-source-editor-title" ref={headingRef} tabIndex={-1}>
+            {translate('sourceEditor.title')}
+          </h2>
+          <p>
+            {diff.changedLines === 0
+              ? translate('sourceEditor.noChanges')
+              : translate('sourceEditor.changedLines', {
+                  changed: diff.changedLines,
+                  added: diff.addedLines,
+                  removed: diff.removedLines,
+                  line: diff.firstChangedLine ?? 1
+                })}
+          </p>
+        </div>
+        <button
+          type="button"
+          onClick={onClose}
+          disabled={busy !== null}
+          aria-label={translate('sourceEditor.close')}
+        >
+          ×
+        </button>
+      </header>
+
+      <label className="orbitpm-source-editor__label" htmlFor="orbitpm-source-editor-textarea">
+        {translate('sourceEditor.diff')}
+      </label>
+      <textarea
+        id="orbitpm-source-editor-textarea"
+        className="orbitpm-source-editor__textarea"
+        dir="ltr"
+        spellCheck={false}
+        value={draft}
+        onChange={(event) => {
+          setDraft(event.target.value)
+          setPreview(null)
+          setLayoutCandidate(null)
+        }}
+        disabled={busy !== null}
+      />
+
+      {error ? (
+        <p className="orbitpm-source-editor__error" role="alert">
+          {error}
+        </p>
+      ) : null}
+
+      {layoutCandidate ? (
+        <div className="orbitpm-source-editor__layout-preview">
           <div>
-            <h2 id="orbitpm-source-editor-title" ref={headingRef} tabIndex={-1}>
-              {translate('sourceEditor.title')}
-            </h2>
-            <p>
-              {diff.changedLines === 0
-                ? translate('sourceEditor.noChanges')
-                : translate('sourceEditor.changedLines', {
-                    changed: diff.changedLines,
-                    added: diff.addedLines,
-                    removed: diff.removedLines,
-                    line: diff.firstChangedLine ?? 1
-                  })}
-            </p>
+            <p>{translate('sourceEditor.layoutReady')}</p>
+            {layoutDiff ? (
+              <p>
+                {translate('sourceEditor.changedLines', {
+                  changed: layoutDiff.changedLines,
+                  added: layoutDiff.addedLines,
+                  removed: layoutDiff.removedLines,
+                  line: layoutDiff.firstChangedLine ?? 1
+                })}
+              </p>
+            ) : null}
           </div>
           <button
             type="button"
-            onClick={onClose}
-            disabled={busy !== null}
-            aria-label={translate('sourceEditor.close')}
+            onClick={acceptLayout}
+            disabled={busy !== null || (layoutDecision !== null && !layoutDecision.allowed)}
           >
-            ×
+            {translate('sourceEditor.layoutAccept')}
           </button>
-        </header>
+        </div>
+      ) : null}
 
-        <label className="orbitpm-source-editor__label" htmlFor="orbitpm-source-editor-textarea">
-          {translate('sourceEditor.diff')}
-        </label>
-        <textarea
-          id="orbitpm-source-editor-textarea"
-          className="orbitpm-source-editor__textarea"
-          dir="ltr"
-          spellCheck={false}
-          value={draft}
-          onChange={(event) => {
-            setDraft(event.target.value)
+      {preview && (preview.xml === draft || preview.xml === layoutCandidate) ? (
+        <div className="orbitpm-source-editor__results" aria-live="polite">
+          <ValidationIssueList issues={preview.summary.issues} compact />
+        </div>
+      ) : null}
+
+      <footer className="orbitpm-validation__footer">
+        <button type="button" onClick={() => void handlePreview()} disabled={busy !== null}>
+          {busy === 'preview'
+            ? translate('sourceEditor.previewing')
+            : translate('sourceEditor.preview')}
+        </button>
+        {missingDi && currentDecision?.allowed ? (
+          <button type="button" onClick={() => void handleLayoutPreview()} disabled={busy !== null}>
+            {busy === 'layout'
+              ? translate('sourceEditor.previewing')
+              : translate('sourceEditor.layoutPreview')}
+          </button>
+        ) : null}
+        <button
+          type="button"
+          onClick={() => {
+            setDraft(originalXml)
             setPreview(null)
             setLayoutCandidate(null)
+            setError(null)
           }}
-          disabled={busy !== null}
-        />
-
-        {error ? (
-          <p className="orbitpm-source-editor__error" role="alert">
-            {error}
-          </p>
-        ) : null}
-
-        {layoutCandidate ? (
-          <div className="orbitpm-source-editor__layout-preview">
-            <div>
-              <p>{translate('sourceEditor.layoutReady')}</p>
-              {layoutDiff ? (
-                <p>
-                  {translate('sourceEditor.changedLines', {
-                    changed: layoutDiff.changedLines,
-                    added: layoutDiff.addedLines,
-                    removed: layoutDiff.removedLines,
-                    line: layoutDiff.firstChangedLine ?? 1
-                  })}
-                </p>
-              ) : null}
-            </div>
-            <button
-              type="button"
-              onClick={acceptLayout}
-              disabled={busy !== null || (layoutDecision !== null && !layoutDecision.allowed)}
-            >
-              {translate('sourceEditor.layoutAccept')}
-            </button>
-          </div>
-        ) : null}
-
-        {preview && (preview.xml === draft || preview.xml === layoutCandidate) ? (
-          <div className="orbitpm-source-editor__results" aria-live="polite">
-            <ValidationIssueList issues={preview.summary.issues} compact />
-          </div>
-        ) : null}
-
-        <footer className="orbitpm-validation__footer">
-          <button type="button" onClick={() => void handlePreview()} disabled={busy !== null}>
-            {busy === 'preview'
-              ? translate('sourceEditor.previewing')
-              : translate('sourceEditor.preview')}
-          </button>
-          {missingDi && currentDecision?.allowed ? (
-            <button
-              type="button"
-              onClick={() => void handleLayoutPreview()}
-              disabled={busy !== null}
-            >
-              {busy === 'layout'
-                ? translate('sourceEditor.previewing')
-                : translate('sourceEditor.layoutPreview')}
-            </button>
-          ) : null}
-          <button
-            type="button"
-            onClick={() => {
-              setDraft(originalXml)
-              setPreview(null)
-              setLayoutCandidate(null)
-              setError(null)
-            }}
-            disabled={busy !== null || draft === originalXml}
-          >
-            {translate('sourceEditor.rollback')}
-          </button>
-          <button
-            type="button"
-            className="orbitpm-validation__primary"
-            onClick={() => void handleApply()}
-            disabled={
-              busy !== null ||
-              diff.changedLines === 0 ||
-              layoutCandidate !== null ||
-              missingDi === true ||
-              (currentDecision !== null && !currentDecision.allowed)
-            }
-          >
-            {busy === 'apply'
-              ? translate('sourceEditor.applying')
-              : translate('sourceEditor.apply')}
-          </button>
-          <button type="button" onClick={onClose} disabled={busy !== null}>
-            {translate('sourceEditor.close')}
-          </button>
-        </footer>
-      </section>
-    </div>
+          disabled={busy !== null || draft === originalXml}
+        >
+          {translate('sourceEditor.rollback')}
+        </button>
+        <button
+          type="button"
+          className="orbitpm-validation__primary"
+          onClick={() => void handleApply()}
+          disabled={
+            busy !== null ||
+            diff.changedLines === 0 ||
+            layoutCandidate !== null ||
+            missingDi === true ||
+            (currentDecision !== null && !currentDecision.allowed)
+          }
+        >
+          {busy === 'apply' ? translate('sourceEditor.applying') : translate('sourceEditor.apply')}
+        </button>
+        <button type="button" onClick={onClose} disabled={busy !== null}>
+          {translate('sourceEditor.close')}
+        </button>
+      </footer>
+    </AccessibleDialog>
   )
 }

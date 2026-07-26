@@ -36,6 +36,7 @@ import {
 } from '../org/orgSettings'
 import { t } from '../i18n'
 import { useLang } from '../i18n/useLang'
+import { AccessibleDialog } from '../common/AccessibleDialog'
 import {
   LocalizationResourcesEditor,
   type LocalizationResourcesEditorProps
@@ -140,19 +141,6 @@ export function SettingsDialogLite({
     []
   )
 
-  // Escape closes the dialog (consistent with the app's other modals).
-  useEffect(() => {
-    if (!open) return
-    const onKeyDown = (event: KeyboardEvent): void => {
-      if (event.key === 'Escape') {
-        event.preventDefault()
-        onClose()
-      }
-    }
-    window.addEventListener('keydown', onKeyDown)
-    return () => window.removeEventListener('keydown', onKeyDown)
-  }, [open, onClose])
-
   if (!open) return null
 
   const save = async (): Promise<void> => {
@@ -247,407 +235,400 @@ export function SettingsDialogLite({
   const hasStoredCiphertext = LITE_PROVIDERS.some((provider) => hasEncryptedKey(provider.id))
 
   return (
-    <div
-      role="dialog"
-      aria-modal="true"
-      aria-label={t('settings.title')}
-      style={overlay}
-      onMouseDown={(e) => {
-        if (e.target === e.currentTarget) onClose()
-      }}
+    <AccessibleDialog
+      ariaLabel={t('settings.title')}
+      onClose={onClose}
+      closeOnEscape
+      closeOnBackdrop
+      backdropStyle={overlay}
+      dialogStyle={panel}
     >
-      <div style={panel}>
-        <header style={header}>
-          <strong>{t('settings.title.providers')}</strong>
-          <button
-            type="button"
-            onClick={onClose}
-            aria-label={t('settings.close.aria')}
-            style={closeBtn}
-          >
-            ×
-          </button>
-        </header>
+      <header style={header}>
+        <strong>{t('settings.title.providers')}</strong>
+        <button
+          type="button"
+          onClick={onClose}
+          aria-label={t('settings.close.aria')}
+          style={closeBtn}
+        >
+          ×
+        </button>
+      </header>
 
-        <div style={{ padding: '0.9rem 1rem', display: 'flex', flexDirection: 'column', gap: 18 }}>
-          <section
-            aria-label={t('settings.diagram.title')}
-            style={{ display: 'flex', flexDirection: 'column', gap: 8 }}
-          >
-            <span style={{ fontWeight: 600, fontSize: 14 }}>{t('settings.diagram.title')}</span>
-            <label
-              style={{ display: 'flex', gap: 10, alignItems: 'flex-start', cursor: 'pointer' }}
-            >
-              <input
-                type="checkbox"
-                aria-label={t('settings.orgStyling.label')}
-                checked={orgStyling}
-                onChange={(e) => {
-                  const next = e.target.checked
-                  setOrgStyling(next)
-                  setOrgStylingState(next)
-                  onOrgStylingChanged?.()
-                }}
-                style={{ marginTop: 3 }}
-              />
-              <span style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
-                <span style={{ fontWeight: 600, fontSize: 13 }}>
-                  {t('settings.orgStyling.label')}
-                </span>
-                <span style={{ fontSize: 11.5, color: 'var(--orbitpm-muted)' }}>
-                  {t('settings.orgStyling.desc')}
-                </span>
-              </span>
-            </label>
-            <label
-              style={{ display: 'flex', gap: 10, alignItems: 'flex-start', cursor: 'pointer' }}
-            >
-              <input
-                type="checkbox"
-                aria-label={t('settings.completeness.label')}
-                checked={completeness}
-                onChange={(e) => {
-                  const next = e.target.checked
-                  setCompletenessOn(next)
-                  setCompletenessState(next)
-                  // Same repaint hook as the styling toggle: App sweeps every
-                  // open modeler with refreshOrgStyling, and the renderer reads
-                  // isCompletenessOn() live on each draw.
-                  onOrgStylingChanged?.()
-                }}
-                style={{ marginTop: 3 }}
-              />
-              <span style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
-                <span style={{ fontWeight: 600, fontSize: 13 }}>
-                  {t('settings.completeness.label')}
-                </span>
-                <span style={{ fontSize: 11.5, color: 'var(--orbitpm-muted)' }}>
-                  {t('settings.completeness.hint')}
-                </span>
-              </span>
-            </label>
-          </section>
-
-          {localizationResources && <LocalizationResourcesEditor {...localizationResources} />}
-
-          <div style={warning} role="note">
-            ⚠️ {t('settings.keyStorageWarning')}
-          </div>
-
-          <section
-            aria-label={t('settings.aiSelection.title')}
-            style={{ display: 'flex', flexDirection: 'column', gap: 8 }}
-          >
-            <span style={{ fontWeight: 600, fontSize: 14 }}>{t('settings.aiSelection.title')}</span>
-            <label style={labelStack}>
-              <span>{t('ai.provider.label')}</span>
-              <select
-                value={selectedProvider}
-                onChange={(event) => {
-                  const providerId = event.target.value as LiteProviderId | ''
-                  setSelectedProvider(providerId)
-                  setSelectedModel(providerId ? defaultLiteModelId(providerId) : '')
-                  setTestConsent({})
-                  setResults({})
-                }}
-                style={input}
-              >
-                <option value="">{t('ai.provider.select')}</option>
-                {LITE_PROVIDERS.map((provider) => (
-                  <option key={provider.id} value={provider.id}>
-                    {provider.label}
-                  </option>
-                ))}
-              </select>
-            </label>
-            {selectedProvider &&
-              (getLiteProvider(selectedProvider).allowCustomModel ? (
-                <label style={labelStack}>
-                  <span>{t('ai.model.label')}</span>
-                  <input
-                    type="text"
-                    value={selectedModel}
-                    list="settings-ai-models"
-                    onChange={(event) => {
-                      setSelectedModel(event.target.value)
-                      setTestConsent({})
-                      setResults({})
-                    }}
-                    style={input}
-                  />
-                  <datalist id="settings-ai-models">
-                    {getLiteProvider(selectedProvider).models.map((model) => (
-                      <option key={model.id} value={model.id}>
-                        {model.label}
-                      </option>
-                    ))}
-                  </datalist>
-                </label>
-              ) : (
-                <label style={labelStack}>
-                  <span>{t('ai.model.label')}</span>
-                  <select
-                    value={selectedModel}
-                    onChange={(event) => {
-                      setSelectedModel(event.target.value)
-                      setTestConsent({})
-                      setResults({})
-                    }}
-                    style={input}
-                  >
-                    {getLiteProvider(selectedProvider).models.map((model) => (
-                      <option key={model.id} value={model.id}>
-                        {model.label}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-              ))}
-            <span style={{ fontSize: 11.5, color: 'var(--orbitpm-muted)' }}>
-              {t('settings.aiSelection.hint')}
-            </span>
-          </section>
-
-          <section
-            aria-label={t('settings.encryption.title')}
-            style={{ display: 'flex', flexDirection: 'column', gap: 8 }}
-          >
-            <span style={{ fontWeight: 600, fontSize: 14 }}>{t('settings.encryption.title')}</span>
-            <label style={{ display: 'flex', gap: 10, alignItems: 'flex-start' }}>
-              <input
-                type="checkbox"
-                checked={persistEncrypted}
-                onChange={(event) => setPersistEncrypted(event.target.checked)}
-              />
-              <span>{t('settings.encryption.persist')}</span>
-            </label>
+      <div style={{ padding: '0.9rem 1rem', display: 'flex', flexDirection: 'column', gap: 18 }}>
+        <section
+          aria-label={t('settings.diagram.title')}
+          style={{ display: 'flex', flexDirection: 'column', gap: 8 }}
+        >
+          <span style={{ fontWeight: 600, fontSize: 14 }}>{t('settings.diagram.title')}</span>
+          <label style={{ display: 'flex', gap: 10, alignItems: 'flex-start', cursor: 'pointer' }}>
             <input
-              type="password"
-              autoComplete="new-password"
-              value={passphrase}
-              onChange={(event) => setPassphrase(event.target.value)}
-              aria-label={t('settings.encryption.passphrase')}
-              placeholder={t('settings.encryption.passphrase')}
-              style={input}
+              type="checkbox"
+              aria-label={t('settings.orgStyling.label')}
+              checked={orgStyling}
+              onChange={(e) => {
+                const next = e.target.checked
+                setOrgStyling(next)
+                setOrgStylingState(next)
+                onOrgStylingChanged?.()
+              }}
+              style={{ marginTop: 3 }}
             />
-            {hasStoredCiphertext && (
-              <button
-                type="button"
-                onClick={() => void unlockStoredKeys()}
-                disabled={!passphrase}
-                style={ghostBtn}
-              >
-                {t('settings.encryption.unlock')}
-              </button>
-            )}
-            <span style={{ fontSize: 11.5, color: 'var(--orbitpm-muted)' }}>
-              {t('settings.encryption.hint')}
+            <span style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+              <span style={{ fontWeight: 600, fontSize: 13 }}>
+                {t('settings.orgStyling.label')}
+              </span>
+              <span style={{ fontSize: 11.5, color: 'var(--orbitpm-muted)' }}>
+                {t('settings.orgStyling.desc')}
+              </span>
             </span>
-          </section>
+          </label>
+          <label style={{ display: 'flex', gap: 10, alignItems: 'flex-start', cursor: 'pointer' }}>
+            <input
+              type="checkbox"
+              aria-label={t('settings.completeness.label')}
+              checked={completeness}
+              onChange={(e) => {
+                const next = e.target.checked
+                setCompletenessOn(next)
+                setCompletenessState(next)
+                // Same repaint hook as the styling toggle: App sweeps every
+                // open modeler with refreshOrgStyling, and the renderer reads
+                // isCompletenessOn() live on each draw.
+                onOrgStylingChanged?.()
+              }}
+              style={{ marginTop: 3 }}
+            />
+            <span style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+              <span style={{ fontWeight: 600, fontSize: 13 }}>
+                {t('settings.completeness.label')}
+              </span>
+              <span style={{ fontSize: 11.5, color: 'var(--orbitpm-muted)' }}>
+                {t('settings.completeness.hint')}
+              </span>
+            </span>
+          </label>
+        </section>
 
-          {storageError && (
-            <div role="alert" style={errorBox}>
-              {storageError}
-            </div>
-          )}
+        {localizationResources && <LocalizationResourcesEditor {...localizationResources} />}
 
-          {LITE_PROVIDERS.map((p) => {
-            const configured = getKey(p.id).length > 0
-            const encryptedStored = hasEncryptedKey(p.id)
-            const last4 = keyLast4(p.id)
-            const value = drafts[p.id] ?? ''
-            const result = results[p.id]
-            const testReview = buildTestConnectionReview({
-              providerId: p.id,
-              model: testModelFor(p.id),
-              apiKey: ''
-            })
-            return (
-              <section
-                key={p.id}
-                aria-label={p.label}
-                style={{ display: 'flex', flexDirection: 'column', gap: 6 }}
-              >
-                <div
-                  style={{
-                    display: 'flex',
-                    justifyContent: 'space-between',
-                    alignItems: 'baseline'
-                  }}
-                >
-                  <span style={{ fontWeight: 600, fontSize: 14 }}>{p.label}</span>
-                  {p.keysUrl && (
-                    <a
-                      href={p.keysUrl}
-                      target="_blank"
-                      rel="noreferrer noopener"
-                      style={{ fontSize: 12, color: 'var(--orbitpm-accent)' }}
-                    >
-                      {t('settings.getKey')}
-                    </a>
-                  )}
-                </div>
-                <div style={{ fontSize: 11.5, color: 'var(--orbitpm-muted)' }}>
-                  {providerDescription(p.id)}
-                </div>
-
-                <input
-                  type="password"
-                  autoComplete="off"
-                  aria-label={t('settings.apiKey.aria', { label: p.label })}
-                  value={value}
-                  placeholder={
-                    configured
-                      ? t('settings.keyPlaceholder.configured', { last4 })
-                      : encryptedStored
-                        ? t('settings.keyPlaceholder.encrypted')
-                        : t('settings.keyPlaceholder.empty')
-                  }
-                  onChange={(e) => setDrafts((d) => ({ ...d, [p.id]: e.target.value }))}
-                  style={input}
-                />
-
-                <div
-                  role="note"
-                  aria-label={t('ai.privacy.preview.title')}
-                  style={{
-                    padding: 8,
-                    border: '1px solid var(--orbitpm-border)',
-                    borderRadius: 6,
-                    display: 'grid',
-                    gap: 4,
-                    fontSize: 11.5,
-                    color: 'var(--orbitpm-muted)'
-                  }}
-                >
-                  <strong style={{ color: 'inherit' }}>{t('ai.privacy.preview.title')}</strong>
-                  <span>
-                    {t('ai.privacy.providerModel', {
-                      provider: p.label,
-                      model: testReview.modelId
-                    })}
-                  </span>
-                  <span>
-                    {t('ai.privacy.requestCount', {
-                      count: testReview.requestCount
-                    })}
-                  </span>
-                  <code
-                    dir="ltr"
-                    style={{
-                      padding: 6,
-                      borderRadius: 4,
-                      background: 'rgba(127,127,127,0.08)',
-                      overflowWrap: 'anywhere',
-                      whiteSpace: 'pre-wrap'
-                    }}
-                  >
-                    {JSON.stringify(testReview.payload)}
-                  </code>
-                </div>
-
-                <label style={{ display: 'flex', gap: 8, alignItems: 'flex-start' }}>
-                  <input
-                    type="checkbox"
-                    checked={Boolean(testConsent[p.id])}
-                    onChange={(event) =>
-                      setTestConsent((current) => ({
-                        ...current,
-                        [p.id]: event.target.checked
-                      }))
-                    }
-                  />
-                  <span style={{ fontSize: 11.5, color: 'var(--orbitpm-muted)' }}>
-                    {t('settings.testConnection.billableDisclosure')}
-                  </span>
-                </label>
-                <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
-                  <button
-                    type="button"
-                    onClick={() => void runTest(p.id)}
-                    disabled={testing[p.id] || !testConsent[p.id]}
-                    style={ghostBtn}
-                  >
-                    {testing[p.id]
-                      ? t('settings.testConnection.testing')
-                      : t('settings.testConnection')}
-                  </button>
-                  {(configured || encryptedStored) && (
-                    <button
-                      type="button"
-                      onClick={() => {
-                        const result = clearKey(p.id)
-                        setDrafts((d) => {
-                          const next = { ...d }
-                          delete next[p.id]
-                          return next
-                        })
-                        if (result.ok) {
-                          setStorageError(null)
-                          setSaved(t('settings.keyCleared'))
-                        } else {
-                          setSaved(null)
-                          setStorageError(result.error)
-                        }
-                        onKeysChanged()
-                      }}
-                      style={ghostBtn}
-                    >
-                      {t('settings.clearKey')}
-                    </button>
-                  )}
-                </div>
-
-                {configured && p.id === 'openrouter' && (
-                  <CreditsLine
-                    state={
-                      creditsLoading
-                        ? { kind: 'loading' }
-                        : creditsError
-                          ? { kind: 'error', errorKind: creditsError }
-                          : credits
-                            ? { kind: 'credits', remaining: credits.remaining }
-                            : { kind: 'idle' }
-                    }
-                    onRefresh={() => void refreshCredits()}
-                  />
-                )}
-                {configured && (
-                  <UsageLine
-                    providerId={p.id}
-                    onReset={() => bumpUsage((v) => v + 1)}
-                    note={p.id !== 'openrouter'}
-                  />
-                )}
-
-                {result && (
-                  <div role="status" style={verdictStyle(result)}>
-                    {result.blockedOrUnreachable ? '⛔ ' : result.reachable ? '✅ ' : 'ℹ️ '}
-                    {verdictMessage(result)}
-                  </div>
-                )}
-              </section>
-            )
-          })}
+        <div style={warning} role="note">
+          ⚠️ {t('settings.keyStorageWarning')}
         </div>
 
-        <footer style={footer}>
-          {saved && <span style={{ fontSize: 12, color: 'var(--orbitpm-muted)' }}>{saved}</span>}
-          <span style={{ flex: 1 }} />
-          <button type="button" onClick={onClose} style={ghostBtn}>
-            {t('settings.close')}
-          </button>
-          <button
-            type="button"
-            onClick={() => void save()}
-            className="orbitpm-lite-primary"
-            style={{ fontSize: 13 }}
-          >
-            {t('settings.saveKeys')}
-          </button>
-        </footer>
+        <section
+          aria-label={t('settings.aiSelection.title')}
+          style={{ display: 'flex', flexDirection: 'column', gap: 8 }}
+        >
+          <span style={{ fontWeight: 600, fontSize: 14 }}>{t('settings.aiSelection.title')}</span>
+          <label style={labelStack}>
+            <span>{t('ai.provider.label')}</span>
+            <select
+              value={selectedProvider}
+              onChange={(event) => {
+                const providerId = event.target.value as LiteProviderId | ''
+                setSelectedProvider(providerId)
+                setSelectedModel(providerId ? defaultLiteModelId(providerId) : '')
+                setTestConsent({})
+                setResults({})
+              }}
+              style={input}
+            >
+              <option value="">{t('ai.provider.select')}</option>
+              {LITE_PROVIDERS.map((provider) => (
+                <option key={provider.id} value={provider.id}>
+                  {provider.label}
+                </option>
+              ))}
+            </select>
+          </label>
+          {selectedProvider &&
+            (getLiteProvider(selectedProvider).allowCustomModel ? (
+              <label style={labelStack}>
+                <span>{t('ai.model.label')}</span>
+                <input
+                  type="text"
+                  value={selectedModel}
+                  list="settings-ai-models"
+                  onChange={(event) => {
+                    setSelectedModel(event.target.value)
+                    setTestConsent({})
+                    setResults({})
+                  }}
+                  style={input}
+                />
+                <datalist id="settings-ai-models">
+                  {getLiteProvider(selectedProvider).models.map((model) => (
+                    <option key={model.id} value={model.id}>
+                      {model.label}
+                    </option>
+                  ))}
+                </datalist>
+              </label>
+            ) : (
+              <label style={labelStack}>
+                <span>{t('ai.model.label')}</span>
+                <select
+                  value={selectedModel}
+                  onChange={(event) => {
+                    setSelectedModel(event.target.value)
+                    setTestConsent({})
+                    setResults({})
+                  }}
+                  style={input}
+                >
+                  {getLiteProvider(selectedProvider).models.map((model) => (
+                    <option key={model.id} value={model.id}>
+                      {model.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            ))}
+          <span style={{ fontSize: 11.5, color: 'var(--orbitpm-muted)' }}>
+            {t('settings.aiSelection.hint')}
+          </span>
+        </section>
+
+        <section
+          aria-label={t('settings.encryption.title')}
+          style={{ display: 'flex', flexDirection: 'column', gap: 8 }}
+        >
+          <span style={{ fontWeight: 600, fontSize: 14 }}>{t('settings.encryption.title')}</span>
+          <label style={{ display: 'flex', gap: 10, alignItems: 'flex-start' }}>
+            <input
+              type="checkbox"
+              checked={persistEncrypted}
+              onChange={(event) => setPersistEncrypted(event.target.checked)}
+            />
+            <span>{t('settings.encryption.persist')}</span>
+          </label>
+          <input
+            type="password"
+            autoComplete="new-password"
+            value={passphrase}
+            onChange={(event) => setPassphrase(event.target.value)}
+            aria-label={t('settings.encryption.passphrase')}
+            placeholder={t('settings.encryption.passphrase')}
+            style={input}
+          />
+          {hasStoredCiphertext && (
+            <button
+              type="button"
+              onClick={() => void unlockStoredKeys()}
+              disabled={!passphrase}
+              style={ghostBtn}
+            >
+              {t('settings.encryption.unlock')}
+            </button>
+          )}
+          <span style={{ fontSize: 11.5, color: 'var(--orbitpm-muted)' }}>
+            {t('settings.encryption.hint')}
+          </span>
+        </section>
+
+        {storageError && (
+          <div role="alert" style={errorBox}>
+            {storageError}
+          </div>
+        )}
+
+        {LITE_PROVIDERS.map((p) => {
+          const configured = getKey(p.id).length > 0
+          const encryptedStored = hasEncryptedKey(p.id)
+          const last4 = keyLast4(p.id)
+          const value = drafts[p.id] ?? ''
+          const result = results[p.id]
+          const testReview = buildTestConnectionReview({
+            providerId: p.id,
+            model: testModelFor(p.id),
+            apiKey: ''
+          })
+          return (
+            <section
+              key={p.id}
+              aria-label={p.label}
+              style={{ display: 'flex', flexDirection: 'column', gap: 6 }}
+            >
+              <div
+                style={{
+                  display: 'flex',
+                  justifyContent: 'space-between',
+                  alignItems: 'baseline'
+                }}
+              >
+                <span style={{ fontWeight: 600, fontSize: 14 }}>{p.label}</span>
+                {p.keysUrl && (
+                  <a
+                    href={p.keysUrl}
+                    target="_blank"
+                    rel="noreferrer noopener"
+                    style={{ fontSize: 12, color: 'var(--orbitpm-accent)' }}
+                  >
+                    {t('settings.getKey')}
+                  </a>
+                )}
+              </div>
+              <div style={{ fontSize: 11.5, color: 'var(--orbitpm-muted)' }}>
+                {providerDescription(p.id)}
+              </div>
+
+              <input
+                type="password"
+                autoComplete="off"
+                aria-label={t('settings.apiKey.aria', { label: p.label })}
+                value={value}
+                placeholder={
+                  configured
+                    ? t('settings.keyPlaceholder.configured', { last4 })
+                    : encryptedStored
+                      ? t('settings.keyPlaceholder.encrypted')
+                      : t('settings.keyPlaceholder.empty')
+                }
+                onChange={(e) => setDrafts((d) => ({ ...d, [p.id]: e.target.value }))}
+                style={input}
+              />
+
+              <div
+                role="note"
+                aria-label={t('ai.privacy.preview.title')}
+                style={{
+                  padding: 8,
+                  border: '1px solid var(--orbitpm-border)',
+                  borderRadius: 6,
+                  display: 'grid',
+                  gap: 4,
+                  fontSize: 11.5,
+                  color: 'var(--orbitpm-muted)'
+                }}
+              >
+                <strong style={{ color: 'inherit' }}>{t('ai.privacy.preview.title')}</strong>
+                <span>
+                  {t('ai.privacy.providerModel', {
+                    provider: p.label,
+                    model: testReview.modelId
+                  })}
+                </span>
+                <span>
+                  {t('ai.privacy.requestCount', {
+                    count: testReview.requestCount
+                  })}
+                </span>
+                <code
+                  dir="ltr"
+                  style={{
+                    padding: 6,
+                    borderRadius: 4,
+                    background: 'rgba(127,127,127,0.08)',
+                    overflowWrap: 'anywhere',
+                    whiteSpace: 'pre-wrap'
+                  }}
+                >
+                  {JSON.stringify(testReview.payload)}
+                </code>
+              </div>
+
+              <label style={{ display: 'flex', gap: 8, alignItems: 'flex-start' }}>
+                <input
+                  type="checkbox"
+                  checked={Boolean(testConsent[p.id])}
+                  onChange={(event) =>
+                    setTestConsent((current) => ({
+                      ...current,
+                      [p.id]: event.target.checked
+                    }))
+                  }
+                />
+                <span style={{ fontSize: 11.5, color: 'var(--orbitpm-muted)' }}>
+                  {t('settings.testConnection.billableDisclosure')}
+                </span>
+              </label>
+              <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+                <button
+                  type="button"
+                  onClick={() => void runTest(p.id)}
+                  disabled={testing[p.id] || !testConsent[p.id]}
+                  style={ghostBtn}
+                >
+                  {testing[p.id]
+                    ? t('settings.testConnection.testing')
+                    : t('settings.testConnection')}
+                </button>
+                {(configured || encryptedStored) && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const result = clearKey(p.id)
+                      setDrafts((d) => {
+                        const next = { ...d }
+                        delete next[p.id]
+                        return next
+                      })
+                      if (result.ok) {
+                        setStorageError(null)
+                        setSaved(t('settings.keyCleared'))
+                      } else {
+                        setSaved(null)
+                        setStorageError(result.error)
+                      }
+                      onKeysChanged()
+                    }}
+                    style={ghostBtn}
+                  >
+                    {t('settings.clearKey')}
+                  </button>
+                )}
+              </div>
+
+              {configured && p.id === 'openrouter' && (
+                <CreditsLine
+                  state={
+                    creditsLoading
+                      ? { kind: 'loading' }
+                      : creditsError
+                        ? { kind: 'error', errorKind: creditsError }
+                        : credits
+                          ? { kind: 'credits', remaining: credits.remaining }
+                          : { kind: 'idle' }
+                  }
+                  onRefresh={() => void refreshCredits()}
+                />
+              )}
+              {configured && (
+                <UsageLine
+                  providerId={p.id}
+                  onReset={() => bumpUsage((v) => v + 1)}
+                  note={p.id !== 'openrouter'}
+                />
+              )}
+
+              {result && (
+                <div role="status" style={verdictStyle(result)}>
+                  {result.blockedOrUnreachable ? '⛔ ' : result.reachable ? '✅ ' : 'ℹ️ '}
+                  {verdictMessage(result)}
+                </div>
+              )}
+            </section>
+          )
+        })}
       </div>
-    </div>
+
+      <footer style={footer}>
+        {saved && <span style={{ fontSize: 12, color: 'var(--orbitpm-muted)' }}>{saved}</span>}
+        <span style={{ flex: 1 }} />
+        <button type="button" onClick={onClose} style={ghostBtn}>
+          {t('settings.close')}
+        </button>
+        <button
+          type="button"
+          onClick={() => void save()}
+          className="orbitpm-lite-primary"
+          style={{ fontSize: 13 }}
+        >
+          {t('settings.saveKeys')}
+        </button>
+      </footer>
+    </AccessibleDialog>
   )
 }
 
