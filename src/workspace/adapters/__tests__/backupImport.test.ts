@@ -16,6 +16,7 @@ import {
   type WriteAtomicOptions
 } from '..'
 import type { ReviewedBpmnIngestionPort } from '../../reviewedBpmn'
+import { PortableHistoryManager } from '../../history'
 import { validMultiProcessXml } from '../../../validation/__tests__/fixtures'
 
 const text = (value: string) => new TextEncoder().encode(value)
@@ -239,7 +240,7 @@ describe('bounded workspace backup inspection', () => {
     ).rejects.toThrow(/inconsistent/)
   })
 
-  it('runs the production reviewed-localization boundary for every BPMN before planning', async () => {
+  it('runs the production reviewed-localization boundary for every active BPMN before planning', async () => {
     const beforeWrite = vi.fn()
     const target = new MemoryWorkspaceAdapter({ beforeWrite })
     const valid = await backupFrom({ 'valid.bpmn': validMultiProcessXml() })
@@ -267,23 +268,83 @@ describe('bounded workspace backup inspection', () => {
     expect(beforeWrite).not.toHaveBeenCalled()
   })
 
-  it('reviews BPMN descendants inside the portable metadata namespace too', async () => {
-    const review = vi.fn(fakeReviewedBpmnIngestion)
-    const blob = await backupFrom({
-      'active.bpmn': '<definitions><process id="Active"/></definitions>',
-      '.orbitpm/history/old.bpmn': '<definitions><process id="Historical"/></definitions>'
+  it('keeps reserved portable-history BPMN byte-exact while reviewing active diagrams', async () => {
+    const archivedXml = validMultiProcessXml().replace(
+      '</bpmn:definitions>',
+      '  <!-- archived revision -->\n</bpmn:definitions>'
+    )
+    const currentXml = archivedXml.replace(
+      '<!-- archived revision -->',
+      '<!-- current workspace version -->'
+    )
+    const source = new MemoryWorkspaceAdapter({
+      id: 'backup:history-source',
+      files: { 'active.bpmn': archivedXml }
     })
-    const plan = await inspectWorkspaceBackupCore(new MemoryWorkspaceAdapter(), blob, {
+    const sourceHistory = new PortableHistoryManager({
+      adapter: source,
+      now: () => Date.parse('2026-07-26T01:00:00.000Z')
+    })
+    const revision = await sourceHistory.createRevision('active.bpmn', {
+      reason: 'manual'
+    })
+    source.replaceExternally('active.bpmn', currentXml)
+    const backup = await source.exportBackup({
+      generatedAt: new Date('2026-07-26T02:00:00.000Z')
+    })
+
+    const review = vi.fn<ReviewedBpmnIngestionPort>(async (xml) => {
+      const originalDigest = await sha256Hex(text(xml))
+      const reviewedXml = xml.replace(
+        '</bpmn:definitions>',
+        '  <!-- reviewed active diagram -->\n</bpmn:definitions>'
+      )
+      const digest = await sha256Hex(text(reviewedXml))
+      const reviewDigest = `review-${digest}`
+      return {
+        xml: reviewedXml,
+        digest,
+        reviewDigest,
+        validation: {} as never,
+        evidence: {
+          originalDigest,
+          outputDigest: digest,
+          reviewDigest
+        } as never
+      }
+    })
+    const target = new MemoryWorkspaceAdapter({ id: 'backup:history-target' })
+    const plan = await inspectWorkspaceBackupCore(target, backup, {
       processIdentityInspector: fakeProcessIdentityInspector,
       reviewedBpmnIngestion: review
     })
 
-    expect(review).toHaveBeenCalledTimes(2)
-    expect(
-      plan.files
-        .filter((file) => /\.bpmn$/i.test(file.path))
-        .every((file) => Boolean(file.reviewedBpmn))
-    ).toBe(true)
+    expect(review).toHaveBeenCalledTimes(1)
+    const active = plan.files.find((file) => file.path === 'active.bpmn')
+    expect(active?.reviewedBpmn).toBeDefined()
+    expect(decode(active!.bytes)).toContain('reviewed active diagram')
+    const archived = plan.files.find((file) => file.path === revision.contentPath)
+    expect(archived).toMatchObject({
+      archiveSha256: revision.hash,
+      sha256: revision.hash
+    })
+    expect(archived?.reviewedBpmn).toBeUndefined()
+    expect(decode(archived!.bytes)).toBe(archivedXml)
+
+    await expect(
+      applyWorkspaceBackupImportCore(target, plan, {
+        reviewedDigest: plan.reviewDigest,
+        processIdentityInspector: fakeProcessIdentityInspector
+      })
+    ).resolves.toMatchObject({ status: 'committed' })
+
+    const restoredHistory = new PortableHistoryManager({ adapter: target })
+    const listing = await restoredHistory.listRevisions('active.bpmn')
+    expect(listing.issues).toEqual([])
+    expect(listing.revisions).toHaveLength(1)
+    const preview = await restoredHistory.preview(listing.revisions[0])
+    expect(preview.xml).toBe(archivedXml)
+    expect(await sha256Hex(preview.bytes)).toBe(revision.hash)
   })
 })
 

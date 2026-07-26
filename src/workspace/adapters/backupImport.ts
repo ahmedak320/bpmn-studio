@@ -113,6 +113,17 @@ function portablePathKey(path: string): string {
   return normalizeWorkspacePath(path).normalize('NFC').toLocaleLowerCase('en-US')
 }
 
+/**
+ * Reserved `.orbitpm` BPMN files are recovery/internal evidence, not active
+ * workspace diagrams. Changing a portable-history content file without also
+ * rewriting its paired metadata would invalidate the recorded hash and size.
+ * Those bytes therefore remain exact until an explicit history restore runs
+ * the reviewed-ingestion boundary.
+ */
+function requiresReviewedBpmnEvidence(path: string): boolean {
+  return /\.bpmn$/i.test(path) && !isReservedOrbitPmPath(path)
+}
+
 function resolvedLimits(input: BackupImportLimits = {}): ResolvedLimits {
   const limits = { ...DEFAULT_BACKUP_IMPORT_LIMITS, ...input }
   for (const [name, value] of Object.entries(limits)) {
@@ -519,7 +530,7 @@ export async function inspectWorkspaceBackup(
   const incomingIdentityByPath = new Map<string, readonly string[]>()
   const incomingIdentityOwners = new Map<string, string>()
   for (const file of files) {
-    if (!/\.bpmn$/i.test(file.path)) continue
+    if (!requiresReviewedBpmnEvidence(file.path)) continue
     let xml: string
     try {
       xml = decoder.decode(file.bytes)
@@ -543,7 +554,6 @@ export async function inspectWorkspaceBackup(
       )
     )
     incomingIdentityByPath.set(file.path, processIds)
-    if (isReservedOrbitPmPath(file.path)) continue
     for (const processId of processIds) {
       const previous = incomingIdentityOwners.get(processId)
       if (previous && previous !== file.path) {
@@ -776,10 +786,10 @@ async function verifyWorkspaceBackupImportPlan(
         file.path
       )
     }
-    const bpmn = /\.bpmn$/i.test(file.path)
+    const reviewedBpmnRequired = requiresReviewedBpmnEvidence(file.path)
     if (
-      bpmn !== Boolean(file.reviewedBpmn) ||
-      (!bpmn && !equalHash(file.archiveSha256, file.sha256)) ||
+      reviewedBpmnRequired !== Boolean(file.reviewedBpmn) ||
+      (!reviewedBpmnRequired && !equalHash(file.archiveSha256, file.sha256)) ||
       (file.reviewedBpmn !== undefined &&
         (!equalHash(file.reviewedBpmn.outputDigest, file.sha256) ||
           !equalHash(file.reviewedBpmn.evidence.outputDigest, file.sha256) ||

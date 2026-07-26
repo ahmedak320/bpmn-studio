@@ -213,7 +213,11 @@ export interface WorkspaceBackupImportCandidate {
   readonly sha256: string
   readonly modifiedAt?: number
   readonly mimeType?: string
-  /** Present for every `.bpmn` candidate and forbidden for other files. */
+  /**
+   * Present for every active, non-reserved `.bpmn` candidate. Reserved
+   * `.orbitpm` BPMN files are immutable internal/recovery evidence and retain
+   * their exact archive bytes until an explicit restore reviews them.
+   */
   readonly reviewedBpmn?: WorkspaceBackupReviewedBpmn
 }
 
