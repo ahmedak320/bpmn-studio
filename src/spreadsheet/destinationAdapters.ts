@@ -7,9 +7,11 @@ import type {
   DestinationState,
   ImportDestinationInspector,
   ImportDestinationTransaction,
+  ImportTransactionCommitOptions,
   ImportTransactionFactory,
   StagedImportWrite
 } from './contracts'
+import { throwIfAborted } from './errors'
 
 function isNotFound(error: unknown): boolean {
   return error instanceof WorkspaceOperationError && error.code === 'not-found'
@@ -28,6 +30,18 @@ function saveFailure(outcome: Exclude<SaveOutcome, { ok: true }>): Error {
 async function requireSave(outcome: SaveOutcome): Promise<FileSnapshot> {
   if (!outcome.ok) throw saveFailure(outcome)
   return outcome.snapshot
+}
+
+function reportCommitProgress(
+  options: ImportTransactionCommitOptions,
+  completed: number,
+  total: number
+): void {
+  try {
+    options.onProgress?.(Object.freeze({ completed, total }))
+  } catch {
+    // Progress is observational and cannot change delivery/rollback truth.
+  }
 }
 
 export class WorkspaceSpreadsheetDestinationInspector implements ImportDestinationInspector {
@@ -100,31 +114,46 @@ class WorkspaceImportTransaction implements ImportDestinationTransaction {
     )
   }
 
-  async commit(): Promise<void> {
+  async commit(options: ImportTransactionCommitOptions = {}): Promise<void> {
     if (this.state !== 'staging') throw new Error('The import transaction is closed.')
+    const total = this.staged.size
+    reportCommitProgress(options, 0, total)
+    throwIfAborted(options.signal)
     this.state = 'committing'
     const run = this.options.runExclusive ?? (async (operation) => await operation())
     await run(async () => {
       try {
-        this.assertCurrent()
-        await this.captureAllOriginals()
-        await this.createRecoveryRevisions()
+        this.checkpoint(options.signal)
+        await this.captureAllOriginals(options.signal)
+        await this.createRecoveryRevisions(options.signal)
+        let completed = 0
         for (const write of this.staged.values()) {
-          this.assertCurrent()
-          const snapshot = await requireSave(
-            await this.adapter.writeAtomic(write.path, write.bytes, write.expectedHash, {
+          this.checkpoint(options.signal)
+          const outcome = await this.adapter.writeAtomic(
+            write.path,
+            write.bytes,
+            write.expectedHash,
+            {
               expectedWorkspaceId: this.adapter.id,
-              expectedMissing: write.expectedHash === undefined
-            })
+              expectedMissing: write.expectedHash === undefined,
+              ...(options.signal ? { signal: options.signal } : {})
+            }
           )
+          if (!outcome.ok) throwIfAborted(options.signal)
+          const snapshot = await requireSave(outcome)
           this.applied.push({
             write,
             original: this.originals.get(write.path),
             applied: snapshot
           })
+          completed += 1
+          if (completed < total) reportCommitProgress(options, completed, total)
+          this.checkpoint(options.signal)
         }
+        this.checkpoint(options.signal)
         await this.enforceHistoryRetention()
         this.state = 'committed'
+        reportCommitProgress(options, total, total)
       } catch (cause) {
         try {
           await this.rollbackInternal()
@@ -154,28 +183,36 @@ class WorkspaceImportTransaction implements ImportDestinationTransaction {
     }
   }
 
-  private async captureAllOriginals(): Promise<void> {
+  private checkpoint(signal?: AbortSignal): void {
+    this.assertCurrent()
+    throwIfAborted(signal)
+  }
+
+  private async captureAllOriginals(signal?: AbortSignal): Promise<void> {
     for (const write of this.staged.values()) {
+      this.checkpoint(signal)
       try {
         const original = await this.adapter.read(write.path)
         if (!write.expectedHash || original.hash !== write.expectedHash) {
           throw new Error(`Destination changed before import: ${write.path}`)
         }
         this.originals.set(write.path, original)
+        this.checkpoint(signal)
       } catch (error) {
         if (!isNotFound(error)) throw error
         if (write.expectedHash) {
           throw new Error(`Overwrite destination disappeared: ${write.path}`)
         }
         this.originals.set(write.path, undefined)
+        this.checkpoint(signal)
       }
     }
   }
 
-  private async createRecoveryRevisions(): Promise<void> {
+  private async createRecoveryRevisions(signal?: AbortSignal): Promise<void> {
     for (const write of this.staged.values()) {
       if (!write.createRecoveryRevision) continue
-      this.assertCurrent()
+      this.checkpoint(signal)
       const original = this.originals.get(write.path)
       if (!original) {
         throw new Error(`Recovery revision source is missing: ${write.path}`)
@@ -188,6 +225,7 @@ class WorkspaceImportTransaction implements ImportDestinationTransaction {
         prune: false
       })
       this.recoveryRevisions.push(revision)
+      this.checkpoint(signal)
     }
   }
 
@@ -329,7 +367,8 @@ export function downloadSpreadsheetBlob(blob: Blob, fileName: string): void {
 
 class BrowserDeliveryTransaction implements ImportDestinationTransaction {
   private readonly staged = new Map<string, Uint8Array>()
-  private committed = false
+  private state: 'staging' | 'delivering' | 'committed' | 'indeterminate' | 'rolled-back' =
+    'staging'
 
   constructor(
     private readonly transactionId: string,
@@ -337,32 +376,52 @@ class BrowserDeliveryTransaction implements ImportDestinationTransaction {
   ) {}
 
   async stage(write: StagedImportWrite): Promise<void> {
-    if (this.committed) throw new Error('The browser delivery is closed.')
+    if (this.state !== 'staging') throw new Error('The browser delivery is closed.')
     if (this.staged.has(write.path)) throw new Error(`Duplicate delivery path: ${write.path}`)
     const bytes = new Uint8Array(write.bytes.byteLength)
     bytes.set(write.bytes)
     this.staged.set(write.path, bytes)
   }
 
-  async commit(): Promise<void> {
-    if (this.committed) throw new Error('The browser delivery is closed.')
+  async commit(options: ImportTransactionCommitOptions = {}): Promise<void> {
+    if (this.state !== 'staging') throw new Error('The browser delivery is closed.')
     const files = [...this.staged].map(([path, bytes]) => ({ path, bytes }))
     if (files.length === 0) throw new Error('There are no generated BPMN files.')
+    const total = files.length
+    reportCommitProgress(options, 0, total)
+    throwIfAborted(options.signal)
+
+    let deliver: () => void | Promise<void>
     if (files.length === 1) {
-      await this.options.openSingle(new TextDecoder().decode(files[0]!.bytes), files[0]!.path)
+      const xml = new TextDecoder().decode(files[0]!.bytes)
+      const path = files[0]!.path
+      deliver = () => this.options.openSingle(xml, path)
     } else {
       const blob = buildSpreadsheetImportZip(files)
       const fileName = `orbitpm-spreadsheet-${this.transactionId.slice(-12)}.zip`
-      await (this.options.downloadZip ?? downloadSpreadsheetBlob)(blob, fileName)
+      deliver = () => (this.options.downloadZip ?? downloadSpreadsheetBlob)(blob, fileName)
     }
-    this.committed = true
+
+    // From the callback invocation onward the browser/UI may already have
+    // delivered the file. Cancellation cannot prove that it is recallable.
+    throwIfAborted(options.signal)
+    this.state = 'delivering'
+    try {
+      await deliver()
+    } catch (cause) {
+      this.state = 'indeterminate'
+      throw cause
+    }
+    this.state = 'committed'
+    reportCommitProgress(options, total, total)
   }
 
   async rollback(): Promise<void> {
-    if (this.committed) {
+    if (this.state === 'rolled-back') return
+    if (this.state !== 'staging')
       throw new Error('A delivered browser download cannot be recalled.')
-    }
     this.staged.clear()
+    this.state = 'rolled-back'
   }
 }
 

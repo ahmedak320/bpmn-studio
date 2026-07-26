@@ -13,6 +13,8 @@ import {
   type ProcessWorkbookModel,
   type RecordProvenance,
   type SpreadsheetBilingualAuditAdapter,
+  type SpreadsheetImportProgress,
+  type SpreadsheetImportProgressPhase,
   type SpreadsheetImportReport,
   type SpreadsheetValidationIssue,
   type SyntheticBoundaryRecord,
@@ -40,12 +42,56 @@ export interface PrepareTransactionalImportOptions {
   readonly skippedRows?: readonly RecordProvenance[]
   readonly mappingPreset?: MappingPreset
   readonly signal?: AbortSignal
+  readonly onProgress?: (progress: SpreadsheetImportProgress) => void
   readonly now?: () => Date
 }
 
 export interface ExecuteTransactionalImportOptions {
   readonly transactionFactory: ImportTransactionFactory
+  readonly signal?: AbortSignal
+  readonly onProgress?: (progress: SpreadsheetImportProgress) => void
   readonly now?: () => Date
+}
+
+function cooperativeYield(): Promise<void> {
+  return new Promise((resolve) => globalThis.setTimeout(resolve, 0))
+}
+
+function progressEmitter(
+  phase: SpreadsheetImportProgressPhase,
+  totalInput: number,
+  onProgress?: (progress: SpreadsheetImportProgress) => void
+): (completed: number) => void {
+  const total = Math.max(0, Math.floor(totalInput))
+  let lastCompleted = -1
+  return (completedInput): void => {
+    if (!onProgress) return
+    const finiteCompleted = Number.isFinite(completedInput) ? Math.floor(completedInput) : 0
+    const completed = Math.max(lastCompleted, Math.min(total, Math.max(0, finiteCompleted)))
+    if (completed === lastCompleted) return
+    lastCompleted = completed
+    try {
+      onProgress(Object.freeze({ phase, completed, total }))
+    } catch {
+      // Progress is observational and must never alter transactional truth.
+    }
+  }
+}
+
+function transactionFailureCode(
+  cause: unknown,
+  signal?: AbortSignal
+): 'parse-cancelled' | 'transaction-failed' {
+  const abortError =
+    signal?.aborted === true &&
+    (cause === signal.reason ||
+      (typeof cause === 'object' &&
+        cause !== null &&
+        'name' in cause &&
+        cause.name === 'AbortError'))
+  return abortError || (cause instanceof SpreadsheetError && cause.code === 'parse-cancelled')
+    ? 'parse-cancelled'
+    : 'transaction-failed'
 }
 
 function safeSlug(value: string): string {
@@ -329,11 +375,21 @@ export async function prepareTransactionalImportPlan(
 
   const prepared: PreparedImportArtifact[] = []
   const pipelineIssues: SpreadsheetValidationIssue[] = []
-  for (const process of model.processes) {
+  const emitGenerationProgress = progressEmitter(
+    'generate',
+    model.processes.length,
+    options.onProgress
+  )
+  emitGenerationProgress(0)
+  throwIfAborted(options.signal)
+  await cooperativeYield()
+  throwIfAborted(options.signal)
+  for (const [processIndex, process] of model.processes.entries()) {
     throwIfAborted(options.signal)
     const audit = auditByProcess.get(process.id)!
     try {
       const generated = await options.generator.generate(audit.graph, options.signal)
+      throwIfAborted(options.signal)
       if (
         generated.processId !== process.id ||
         !(generated.bytes instanceof Uint8Array) ||
@@ -364,12 +420,19 @@ export async function prepareTransactionalImportPlan(
       )
     } catch (cause) {
       if (cause instanceof SpreadsheetError && cause.code === 'parse-cancelled') throw cause
+      throwIfAborted(options.signal)
       pipelineIssues.push({
         code: 'pipeline-generation-failed',
         severity: 'error',
         messageKey: spreadsheetValidationMessageKey('pipeline-generation-failed'),
         processId: process.id
       })
+    }
+    emitGenerationProgress(processIndex + 1)
+    throwIfAborted(options.signal)
+    if (processIndex + 1 < model.processes.length) {
+      await cooperativeYield()
+      throwIfAborted(options.signal)
     }
   }
   if (pipelineIssues.some(({ severity }) => severity === 'error')) {
@@ -478,33 +541,71 @@ export async function executeTransactionalImportPlan(
       stage: 'prepare'
     })
   }
-  let transaction: Awaited<ReturnType<ImportTransactionFactory['begin']>>
+
+  const emitStageProgress = progressEmitter('stage', plan.artifacts.length, options.onProgress)
+  emitStageProgress(0)
   try {
-    transaction = await options.transactionFactory.begin(plan.id)
-  } catch {
+    throwIfAborted(options.signal)
+  } catch (cause) {
     return makeReport(plan, startedAt, now().toISOString(), 'rolled-back', {
-      code: 'transaction-failed',
+      code: transactionFailureCode(cause, options.signal),
       stage: 'stage'
     })
   }
+
+  let transaction: Awaited<ReturnType<ImportTransactionFactory['begin']>>
+  try {
+    transaction = await options.transactionFactory.begin(plan.id)
+  } catch (cause) {
+    return makeReport(plan, startedAt, now().toISOString(), 'rolled-back', {
+      code: transactionFailureCode(cause, options.signal),
+      stage: 'stage'
+    })
+  }
+
   let failureStage: 'stage' | 'commit' = 'stage'
   try {
-    for (const artifact of plan.artifacts) {
+    throwIfAborted(options.signal)
+    for (const [artifactIndex, artifact] of plan.artifacts.entries()) {
+      throwIfAborted(options.signal)
       await transaction.stage({
         path: artifact.destination.path,
         bytes: artifact.generated.bytes,
         expectedHash: artifact.destination.expectedHash,
         createRecoveryRevision: artifact.destination.behavior === 'overwrite'
       })
+      throwIfAborted(options.signal)
+      emitStageProgress(artifactIndex + 1)
+      throwIfAborted(options.signal)
+      if (artifactIndex + 1 < plan.artifacts.length) {
+        await cooperativeYield()
+        throwIfAborted(options.signal)
+      }
     }
+
     failureStage = 'commit'
-    await transaction.commit()
+    const commitTotal = plan.artifacts.length
+    const emitCommitProgress = progressEmitter('commit', commitTotal, options.onProgress)
+    emitCommitProgress(0)
+    throwIfAborted(options.signal)
+    await transaction.commit({
+      ...(options.signal ? { signal: options.signal } : {}),
+      onProgress: ({ completed }) => emitCommitProgress(completed)
+    })
+    // Resolution is the adapter's irreversible success boundary. A signal
+    // raised by this final notification is therefore late and cannot turn a
+    // successful commit into a rolled-back report.
+    emitCommitProgress(commitTotal)
     return makeReport(plan, startedAt, now().toISOString(), 'committed')
-  } catch {
+  } catch (cause) {
+    const failureCode = transactionFailureCode(cause, options.signal)
+    const emitRollbackProgress = progressEmitter('rollback', 1, options.onProgress)
+    emitRollbackProgress(0)
     try {
       await transaction.rollback()
+      emitRollbackProgress(1)
       return makeReport(plan, startedAt, now().toISOString(), 'rolled-back', {
-        code: 'transaction-failed',
+        code: failureCode,
         stage: failureStage
       })
     } catch {

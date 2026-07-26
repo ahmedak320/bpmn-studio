@@ -1,9 +1,10 @@
 import { strFromU8, unzipSync } from 'fflate'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 
 import { MemoryWorkspaceAdapter } from '../workspace/adapters'
 import { PortableHistoryManager } from '../workspace/history'
 import {
+  BrowserImportDeliveryTransactionFactory,
   WorkspaceImportTransactionFactory,
   WorkspaceSpreadsheetDestinationInspector,
   buildSpreadsheetImportZip
@@ -39,8 +40,22 @@ describe('spreadsheet destination adapters', () => {
       bytes: bytes('<created />'),
       createRecoveryRevision: false
     })
-    await transaction.commit()
+    const controller = new AbortController()
+    const progress: { completed: number; total: number }[] = []
+    await transaction.commit({
+      signal: controller.signal,
+      onProgress: (event) => {
+        progress.push(event)
+        if (event.completed === event.total) controller.abort()
+      }
+    })
 
+    expect(controller.signal.aborted).toBe(true)
+    expect(progress).toEqual([
+      { completed: 0, total: 2 },
+      { completed: 1, total: 2 },
+      { completed: 2, total: 2 }
+    ])
     expect(new TextDecoder().decode((await adapter.read('existing.bpmn')).bytes)).toBe('<new />')
     expect(new TextDecoder().decode((await adapter.read('new.bpmn')).bytes)).toBe('<created />')
     const listing = await historyManager.listRevisions('existing.bpmn')
@@ -66,6 +81,120 @@ describe('spreadsheet destination adapters', () => {
     expect(
       (await adapter.list()).some((entry) => entry.path.startsWith('.orbitpm/history/imports/'))
     ).toBe(false)
+  })
+
+  it('checks cancellation after original reads before creating history or writing', async () => {
+    const controller = new AbortController()
+    const adapter = new MemoryWorkspaceAdapter({
+      files: { 'process.bpmn': '<old />' }
+    })
+    const original = await adapter.read('process.bpmn')
+    const read = adapter.read.bind(adapter)
+    adapter.read = vi.fn(async (path) => {
+      const snapshot = await read(path)
+      if (path === 'process.bpmn') controller.abort()
+      return snapshot
+    })
+    const historyManager = new PortableHistoryManager({ adapter })
+    const createRevision = vi.spyOn(historyManager, 'createRevision')
+    const writeAtomic = vi.spyOn(adapter, 'writeAtomic')
+    const transaction = await new WorkspaceImportTransactionFactory(adapter, {
+      historyManager
+    }).begin('abort-after-read')
+    await transaction.stage({
+      path: 'process.bpmn',
+      bytes: bytes('<new />'),
+      expectedHash: original.hash,
+      createRecoveryRevision: true
+    })
+
+    await expect(transaction.commit({ signal: controller.signal })).rejects.toMatchObject({
+      code: 'parse-cancelled'
+    })
+    expect(createRevision).not.toHaveBeenCalled()
+    expect(writeAtomic).not.toHaveBeenCalled()
+    expect(new TextDecoder().decode((await read('process.bpmn')).bytes)).toBe('<old />')
+  })
+
+  it('records then cleans recovery history when cancellation lands after revision creation', async () => {
+    const controller = new AbortController()
+    const adapter = new MemoryWorkspaceAdapter({
+      files: { 'process.bpmn': '<old />' }
+    })
+    const original = await adapter.read('process.bpmn')
+    const historyManager = new PortableHistoryManager({ adapter })
+    const createRevision = historyManager.createRevision.bind(historyManager)
+    vi.spyOn(historyManager, 'createRevision').mockImplementation(async (path, options) => {
+      const revision = await createRevision(path, options)
+      controller.abort()
+      return revision
+    })
+    const writeAtomic = vi.spyOn(adapter, 'writeAtomic')
+    const transaction = await new WorkspaceImportTransactionFactory(adapter, {
+      historyManager
+    }).begin('abort-after-history')
+    await transaction.stage({
+      path: 'process.bpmn',
+      bytes: bytes('<new />'),
+      expectedHash: original.hash,
+      createRecoveryRevision: true
+    })
+
+    await expect(transaction.commit({ signal: controller.signal })).rejects.toMatchObject({
+      code: 'parse-cancelled'
+    })
+    expect(writeAtomic.mock.calls.filter(([path]) => path === 'process.bpmn')).toHaveLength(0)
+    expect(new TextDecoder().decode((await adapter.read('process.bpmn')).bytes)).toBe('<old />')
+    expect((await historyManager.listRevisions()).revisions).toEqual([])
+  })
+
+  it('records an applied write before abort and restores it without forwarding the signal', async () => {
+    const controller = new AbortController()
+    const adapter = new MemoryWorkspaceAdapter({
+      files: { 'first.bpmn': '<old />' }
+    })
+    const original = await adapter.read('first.bpmn')
+    const writeAtomic = adapter.writeAtomic.bind(adapter)
+    const firstWriteSignals: (AbortSignal | undefined)[] = []
+    const attemptedPaths: string[] = []
+    adapter.writeAtomic = vi.fn(async (path, value, expectedHash, options) => {
+      attemptedPaths.push(path)
+      const outcome = await writeAtomic(path, value, expectedHash, options)
+      if (path === 'first.bpmn') {
+        firstWriteSignals.push(options?.signal)
+        if (
+          outcome.ok &&
+          new TextDecoder().decode(value) === '<changed />' &&
+          !controller.signal.aborted
+        ) {
+          controller.abort()
+        }
+      }
+      return outcome
+    })
+    const transaction = await new WorkspaceImportTransactionFactory(adapter).begin(
+      'abort-after-write'
+    )
+    await transaction.stage({
+      path: 'first.bpmn',
+      bytes: bytes('<changed />'),
+      expectedHash: original.hash,
+      createRecoveryRevision: false
+    })
+    await transaction.stage({
+      path: 'second.bpmn',
+      bytes: bytes('<second />'),
+      createRecoveryRevision: false
+    })
+
+    await expect(transaction.commit({ signal: controller.signal })).rejects.toMatchObject({
+      code: 'parse-cancelled'
+    })
+    expect(new TextDecoder().decode((await adapter.read('first.bpmn')).bytes)).toBe('<old />')
+    await expect(adapter.read('second.bpmn')).rejects.toMatchObject({ code: 'not-found' })
+    expect(attemptedPaths.filter((path) => path === 'second.bpmn')).toHaveLength(0)
+    expect(firstWriteSignals).toEqual([controller.signal, undefined])
+    await expect(transaction.rollback()).resolves.toBeUndefined()
   })
 
   it('automatically restores every applied destination when a later write fails', async () => {
@@ -211,6 +340,76 @@ describe('spreadsheet destination adapters', () => {
     )
     expect(new TextDecoder().decode((await adapter.read('process.bpmn')).bytes)).toBe('<old />')
     expect((await historyManager.listRevisions()).revisions).toEqual([])
+  })
+
+  it('cancels browser delivery cleanly before invoking the callback', async () => {
+    const openSingle = vi.fn(async () => undefined)
+    const transaction = await new BrowserImportDeliveryTransactionFactory({
+      openSingle
+    }).begin('browser-pre-delivery')
+    await transaction.stage({
+      path: 'process.bpmn',
+      bytes: bytes('<definitions />'),
+      createRecoveryRevision: false
+    })
+    const controller = new AbortController()
+    controller.abort()
+
+    await expect(transaction.commit({ signal: controller.signal })).rejects.toMatchObject({
+      code: 'parse-cancelled'
+    })
+    expect(openSingle).not.toHaveBeenCalled()
+    await expect(transaction.rollback()).resolves.toBeUndefined()
+  })
+
+  it('treats a pending browser callback as irreversible and commits after late abort', async () => {
+    let resolveDelivery: (() => void) | undefined
+    const openSingle = vi.fn(
+      async () =>
+        await new Promise<void>((resolve) => {
+          resolveDelivery = resolve
+        })
+    )
+    const transaction = await new BrowserImportDeliveryTransactionFactory({
+      openSingle
+    }).begin('browser-pending')
+    await transaction.stage({
+      path: 'process.bpmn',
+      bytes: bytes('<definitions />'),
+      createRecoveryRevision: false
+    })
+    const controller = new AbortController()
+    const progress: { completed: number; total: number }[] = []
+
+    const commit = transaction.commit({
+      signal: controller.signal,
+      onProgress: (event) => progress.push(event)
+    })
+    await vi.waitFor(() => expect(openSingle).toHaveBeenCalledOnce())
+    controller.abort()
+    await expect(transaction.rollback()).rejects.toThrow('cannot be recalled')
+    resolveDelivery?.()
+    await expect(commit).resolves.toBeUndefined()
+    expect(progress).toEqual([
+      { completed: 0, total: 1 },
+      { completed: 1, total: 1 }
+    ])
+  })
+
+  it('keeps rejected browser delivery indeterminate instead of claiming rollback', async () => {
+    const transaction = await new BrowserImportDeliveryTransactionFactory({
+      openSingle: async () => {
+        throw new Error('delivery rejected')
+      }
+    }).begin('browser-rejected')
+    await transaction.stage({
+      path: 'process.bpmn',
+      bytes: bytes('<definitions />'),
+      createRecoveryRevision: false
+    })
+
+    await expect(transaction.commit()).rejects.toThrow('delivery rejected')
+    await expect(transaction.rollback()).rejects.toThrow('cannot be recalled')
   })
 
   it('builds a deterministic multi-process ZIP', async () => {

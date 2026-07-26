@@ -436,6 +436,14 @@ export interface SpreadsheetBilingualAuditAdapter {
 export type CollisionBehavior = 'error' | 'overwrite' | 'rename'
 export type WorkspaceDeliveryMode = 'directory' | 'opfs' | 'single-file'
 
+export type SpreadsheetImportProgressPhase = 'generate' | 'stage' | 'commit' | 'rollback'
+
+export interface SpreadsheetImportProgress {
+  readonly phase: SpreadsheetImportProgressPhase
+  readonly completed: number
+  readonly total: number
+}
+
 export interface ImportDestination {
   readonly processId: string
   readonly path: string
@@ -488,9 +496,25 @@ export interface StagedImportWrite {
   readonly createRecoveryRevision: boolean
 }
 
+export interface ImportTransactionCounterProgress {
+  readonly completed: number
+  readonly total: number
+}
+
+export interface ImportTransactionCommitOptions {
+  /**
+   * Cancellation is honored only while the adapter can still prove a clean
+   * rollback. An irreversible browser delivery resolves or rejects according
+   * to the delivery callback instead of racing the signal.
+   */
+  readonly signal?: AbortSignal
+  readonly onProgress?: (progress: ImportTransactionCounterProgress) => void
+}
+
 export interface ImportDestinationTransaction {
   stage(write: StagedImportWrite): Promise<void>
-  commit(): Promise<void>
+  commit(options?: ImportTransactionCommitOptions): Promise<void>
+  /** Rollback is deliberately unsignalled so cancellation cannot cancel cleanup. */
   rollback(): Promise<void>
 }
 

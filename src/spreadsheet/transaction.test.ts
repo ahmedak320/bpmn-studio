@@ -3,15 +3,18 @@ import type {
   BpmnModelGenerationAdapter,
   ImportDestinationInspector,
   ImportDestinationTransaction,
+  ImportTransactionCommitOptions,
   ImportTransactionFactory,
   MappingPreset,
   ProcessWorkbookModel,
   SpreadsheetBilingualAuditAdapter,
+  SpreadsheetImportProgress,
   SyntheticBoundaryRecord,
   WorkbookFlow,
   WorkbookNode
 } from './contracts'
 import { MAPPING_PRESET_VERSION } from './contracts'
+import { BrowserImportDeliveryTransactionFactory } from './destinationAdapters'
 import { SpreadsheetError } from './errors'
 import { sha256Hex } from './hash'
 import {
@@ -539,6 +542,50 @@ describe('transactional import preparation', () => {
     ).rejects.toMatchObject({ code: 'parse-cancelled' })
   })
 
+  it('reports bounded per-process generation progress', async () => {
+    const progress: SpreadsheetImportProgress[] = []
+    const plan = await prepareTransactionalImportPlan(secondProcessModel(), {
+      mode: 'directory',
+      collisionBehavior: 'error',
+      inspector: inspector(),
+      generator: generator(),
+      bilingualAudit: audit(),
+      onProgress: (event) => progress.push(event),
+      now: fixedNow()
+    })
+
+    expect(plan.status).toBe('ready')
+    expect(progress).toEqual([
+      { phase: 'generate', completed: 0, total: 2 },
+      { phase: 'generate', completed: 1, total: 2 },
+      { phase: 'generate', completed: 2, total: 2 }
+    ])
+  })
+
+  it('yields before generation so a queued cancellation prevents generator work', async () => {
+    const controller = new AbortController()
+    const bpmn = generator()
+
+    await expect(
+      prepareTransactionalImportPlan(validModel(), {
+        mode: 'directory',
+        collisionBehavior: 'error',
+        inspector: inspector(),
+        generator: bpmn,
+        bilingualAudit: audit(),
+        signal: controller.signal,
+        onProgress: ({ phase, completed }) => {
+          if (phase === 'generate' && completed === 0) {
+            globalThis.setTimeout(() => controller.abort(), 0)
+          }
+        },
+        now: fixedNow()
+      })
+    ).rejects.toMatchObject({ code: 'parse-cancelled' })
+
+    expect(bpmn.generate).not.toHaveBeenCalled()
+  })
+
   it('selects open-single or ZIP delivery without changing graph generation semantics', async () => {
     const single = await prepareTransactionalImportPlan(validModel(), {
       mode: 'single-file',
@@ -572,6 +619,17 @@ describe('transaction execution and import reports', () => {
       generator: generator(),
       bilingualAudit: audit(),
       syntheticBoundaries: syntheticBoundaryRecords(),
+      now: fixedNow()
+    })
+  }
+
+  async function readyMultiPlan() {
+    return prepareTransactionalImportPlan(secondProcessModel(), {
+      mode: 'directory',
+      collisionBehavior: 'error',
+      inspector: inspector(),
+      generator: generator(),
+      bilingualAudit: audit(),
       now: fixedNow()
     })
   }
@@ -615,6 +673,204 @@ describe('transaction execution and import reports', () => {
     )
     expect(serialized).not.toContain('"node":')
     expect(serialized).not.toContain('"flow":')
+  })
+
+  it('reports bounded monotonic stage and commit counters', async () => {
+    const plan = await readyMultiPlan()
+    const progress: SpreadsheetImportProgress[] = []
+    const transaction: ImportDestinationTransaction = {
+      stage: vi.fn(async () => undefined),
+      commit: vi.fn(async (options?: ImportTransactionCommitOptions) => {
+        options?.onProgress?.({ completed: 0, total: 2 })
+        options?.onProgress?.({ completed: 1, total: 2 })
+        options?.onProgress?.({ completed: -1, total: 2 })
+        options?.onProgress?.({ completed: 99, total: 2 })
+      }),
+      rollback: vi.fn(async () => undefined)
+    }
+
+    const report = await executeTransactionalImportPlan(plan, {
+      transactionFactory: { begin: async () => transaction },
+      onProgress: (event) => progress.push(event),
+      now: fixedNow()
+    })
+
+    expect(report.status).toBe('committed')
+    expect(progress).toEqual([
+      { phase: 'stage', completed: 0, total: 2 },
+      { phase: 'stage', completed: 1, total: 2 },
+      { phase: 'stage', completed: 2, total: 2 },
+      { phase: 'commit', completed: 0, total: 2 },
+      { phase: 'commit', completed: 1, total: 2 },
+      { phase: 'commit', completed: 2, total: 2 }
+    ])
+    expect(progress.every(({ completed, total }) => completed >= 0 && completed <= total)).toBe(
+      true
+    )
+    expect(transaction.rollback).not.toHaveBeenCalled()
+  })
+
+  it('cooperatively observes cancellation between staged artifacts and rolls back unsignalled', async () => {
+    const plan = await readyMultiPlan()
+    const controller = new AbortController()
+    const transaction: ImportDestinationTransaction = {
+      stage: vi.fn(async () => undefined),
+      commit: vi.fn(async () => undefined),
+      rollback: vi.fn(async () => undefined)
+    }
+    const progress: SpreadsheetImportProgress[] = []
+
+    const report = await executeTransactionalImportPlan(plan, {
+      transactionFactory: { begin: async () => transaction },
+      signal: controller.signal,
+      onProgress: (event) => {
+        progress.push(event)
+        if (event.phase === 'stage' && event.completed === 1) {
+          globalThis.setTimeout(() => controller.abort(), 0)
+        }
+      },
+      now: fixedNow()
+    })
+
+    expect(report.status).toBe('rolled-back')
+    expect(report.failure).toEqual({ code: 'parse-cancelled', stage: 'stage' })
+    expect(transaction.stage).toHaveBeenCalledOnce()
+    expect(transaction.commit).not.toHaveBeenCalled()
+    expect(transaction.rollback).toHaveBeenCalledWith()
+    expect(progress).toEqual([
+      { phase: 'stage', completed: 0, total: 2 },
+      { phase: 'stage', completed: 1, total: 2 },
+      { phase: 'rollback', completed: 0, total: 1 },
+      { phase: 'rollback', completed: 1, total: 1 }
+    ])
+    expect(JSON.parse(serializeSpreadsheetImportReport(report)).failure).toEqual({
+      code: 'parse-cancelled',
+      stage: 'stage'
+    })
+  })
+
+  it('rolls back commit cancellation but preserves success after commit resolves', async () => {
+    const cancelledPlan = await readyPlan()
+    const cancelledController = new AbortController()
+    const cancelledTransaction: ImportDestinationTransaction = {
+      stage: vi.fn(async () => undefined),
+      commit: vi.fn(async () => {
+        cancelledController.abort()
+        throw new SpreadsheetError('parse-cancelled')
+      }),
+      rollback: vi.fn(async () => undefined)
+    }
+    const cancelled = await executeTransactionalImportPlan(cancelledPlan, {
+      transactionFactory: { begin: async () => cancelledTransaction },
+      signal: cancelledController.signal,
+      now: fixedNow()
+    })
+    expect(cancelled.status).toBe('rolled-back')
+    expect(cancelled.failure).toEqual({ code: 'parse-cancelled', stage: 'commit' })
+    expect(cancelledTransaction.rollback).toHaveBeenCalledWith()
+
+    const committedPlan = await readyPlan()
+    const lateController = new AbortController()
+    const committedTransaction: ImportDestinationTransaction = {
+      stage: vi.fn(async () => undefined),
+      commit: vi.fn(async (options?: ImportTransactionCommitOptions) => {
+        options?.onProgress?.({ completed: 1, total: 1 })
+        lateController.abort()
+      }),
+      rollback: vi.fn(async () => undefined)
+    }
+    const committed = await executeTransactionalImportPlan(committedPlan, {
+      transactionFactory: { begin: async () => committedTransaction },
+      signal: lateController.signal,
+      onProgress: () => {
+        throw new Error('observer failure')
+      },
+      now: fixedNow()
+    })
+    expect(committed.status).toBe('committed')
+    expect(committed.failure).toBeUndefined()
+    expect(committedTransaction.rollback).not.toHaveBeenCalled()
+  })
+
+  it('reports cancellation rollback failure as indeterminate', async () => {
+    const plan = await readyPlan()
+    const controller = new AbortController()
+    const report = await executeTransactionalImportPlan(plan, {
+      transactionFactory: {
+        begin: async () => ({
+          stage: async () => {
+            controller.abort()
+          },
+          commit: async () => undefined,
+          rollback: async () => {
+            throw new Error('cleanup failed')
+          }
+        })
+      },
+      signal: controller.signal,
+      now: fixedNow()
+    })
+
+    expect(report.status).toBe('rollback-failed')
+    expect(report.failure).toEqual({ code: 'transaction-failed', stage: 'rollback' })
+  })
+
+  it('keeps browser delivery cancellation truthful across the irreversible callback boundary', async () => {
+    const preDeliveryPlan = await readyPlan()
+    const preDeliveryController = new AbortController()
+    const preDelivery = vi.fn(async () => undefined)
+    const cleanCancellation = await executeTransactionalImportPlan(preDeliveryPlan, {
+      transactionFactory: new BrowserImportDeliveryTransactionFactory({
+        openSingle: preDelivery
+      }),
+      signal: preDeliveryController.signal,
+      onProgress: ({ phase, completed }) => {
+        if (phase === 'commit' && completed === 0) preDeliveryController.abort()
+      },
+      now: fixedNow()
+    })
+    expect(cleanCancellation.status).toBe('rolled-back')
+    expect(cleanCancellation.failure).toEqual({
+      code: 'parse-cancelled',
+      stage: 'commit'
+    })
+    expect(preDelivery).not.toHaveBeenCalled()
+
+    const pendingPlan = await readyPlan()
+    const pendingController = new AbortController()
+    let resolveDelivery: (() => void) | undefined
+    const pendingDelivery = vi.fn(
+      async () =>
+        await new Promise<void>((resolve) => {
+          resolveDelivery = resolve
+          pendingController.abort()
+        })
+    )
+    const pendingReport = executeTransactionalImportPlan(pendingPlan, {
+      transactionFactory: new BrowserImportDeliveryTransactionFactory({
+        openSingle: pendingDelivery
+      }),
+      signal: pendingController.signal,
+      now: fixedNow()
+    })
+    await vi.waitFor(() => expect(pendingDelivery).toHaveBeenCalledOnce())
+    resolveDelivery?.()
+    expect((await pendingReport).status).toBe('committed')
+
+    const rejectedPlan = await readyPlan()
+    const rejected = await executeTransactionalImportPlan(rejectedPlan, {
+      transactionFactory: new BrowserImportDeliveryTransactionFactory({
+        openSingle: async () => {
+          throw new Error('delivery callback rejected')
+        }
+      }),
+      now: fixedNow()
+    })
+    expect(rejected.status).toBe('rollback-failed')
+    expect(rejected.failure).toEqual({
+      code: 'transaction-failed',
+      stage: 'rollback'
+    })
   })
 
   it('rolls back stage and commit failures without a false-success report', async () => {
