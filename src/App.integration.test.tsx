@@ -84,7 +84,8 @@ const mocks = vi.hoisted(() => ({
   classifyPickerError: vi.fn(),
   folderTreeProps: vi.fn(),
   catalogProps: vi.fn(),
-  moveDialogProps: vi.fn()
+  moveDialogProps: vi.fn(),
+  readLibraryZipFileInWorker: vi.fn()
 }))
 
 vi.mock('./i18n', () => ({
@@ -115,6 +116,10 @@ vi.mock('./fs/workspaceHandle', () => ({
 
 vi.mock('./editor/exportImage', () => ({
   triggerDownload: mocks.triggerDownload
+}))
+
+vi.mock('./library/browserZipImport', () => ({
+  readLibraryZipFileInWorker: mocks.readLibraryZipFileInWorker
 }))
 
 vi.mock('./links/linkBadges', () => ({
@@ -557,6 +562,10 @@ function latestSessionController(): import('./sessions').DocumentSessionControll
   return controller as import('./sessions').DocumentSessionController
 }
 
+function utf8Buffer(value: string): ArrayBuffer {
+  return Uint8Array.from(new TextEncoder().encode(value)).buffer
+}
+
 function seedUntitledDraft(xml: string): TestDraftRecord {
   return seedDraft('single-file:untitled.bpmn', 'untitled.bpmn', xml)
 }
@@ -623,6 +632,10 @@ beforeEach(() => {
   mocks.folderTreeProps.mockReset()
   mocks.catalogProps.mockReset()
   mocks.moveDialogProps.mockReset()
+  mocks.readLibraryZipFileInWorker.mockReset().mockResolvedValue({
+    entries: [],
+    skipped: []
+  })
   mocks.modelerGet.mockReset().mockImplementation((name: string) => {
     if (name === 'eventBus') {
       return { on: vi.fn(), off: vi.fn() }
@@ -932,9 +945,9 @@ describe('App single-file browser orchestration', () => {
     const input = container.querySelector('input[type="file"]')
     if (!(input instanceof HTMLInputElement)) throw new Error('missing file input')
     const file = new File([state.xml], 'uploaded.bpmn', { type: 'application/xml' })
-    Object.defineProperty(file, 'text', {
+    Object.defineProperty(file, 'arrayBuffer', {
       configurable: true,
-      value: async () => state.xml
+      value: async () => utf8Buffer(state.xml)
     })
     fireEvent.change(input, { target: { files: [file] } })
     expect((await screen.findAllByText('uploaded.bpmn')).length).toBeGreaterThan(0)
@@ -946,9 +959,9 @@ describe('App single-file browser orchestration', () => {
     const badInput = second.container.querySelector('input[type="file"]')
     if (!(badInput instanceof HTMLInputElement)) throw new Error('missing second file input')
     const bad = new File(['bad'], 'bad.bpmn', { type: 'application/xml' })
-    Object.defineProperty(bad, 'text', {
+    Object.defineProperty(bad, 'arrayBuffer', {
       configurable: true,
-      value: async () => 'bad'
+      value: async () => utf8Buffer('bad')
     })
     fireEvent.change(badInput, { target: { files: [bad] } })
     expect(await screen.findByText('alert.open.failed')).not.toBeNull()
@@ -1011,6 +1024,30 @@ describe('App directory workspace orchestration', () => {
 
     expect(await screen.findByText('workspace.coordination.changed')).not.toBeNull()
     expect(controller.store.get(session.id)?.dirty).toBe(true)
+  })
+
+  it('hands library ZIP Files directly to the browser worker boundary', async () => {
+    const user = userEvent.setup()
+    await openDirectoryWorkspace(user)
+    mocks.readLibraryZipFileInWorker.mockResolvedValueOnce({
+      entries: [{ relPath: 'worker-result.bpmn', xml: state.xml }],
+      skipped: []
+    })
+    const input = document.querySelectorAll<HTMLInputElement>(
+      'input[type="file"][accept=".zip,application/zip"]'
+    )[0]
+    if (!input) throw new Error('missing library ZIP input')
+    const file = new File(['worker bytes'], 'library.zip', { type: 'application/zip' })
+    const arrayBuffer = vi.fn(async () => utf8Buffer('worker bytes'))
+    Object.defineProperty(file, 'arrayBuffer', { configurable: true, value: arrayBuffer })
+
+    fireEvent.change(input, { target: { files: [file] } })
+
+    await waitFor(() => expect(mocks.readLibraryZipFileInWorker).toHaveBeenCalledWith(file))
+    expect(arrayBuffer).not.toHaveBeenCalled()
+    expect(
+      await screen.findByRole('dialog', { name: 'library.import.confirmTitle' })
+    ).not.toBeNull()
   })
 
   it('cancels the active and queued draft reviews when the workspace switches', async () => {

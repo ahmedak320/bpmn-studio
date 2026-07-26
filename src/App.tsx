@@ -191,8 +191,10 @@ import {
   buildLibraryManifest,
   serializeLibraryManifest
 } from './library/libraryManifest'
-import { readLibraryZipAsync, type LibraryImportResult } from './library/zipImport'
+import { readLibraryZipFileInWorker } from './library/browserZipImport'
+import type { LibraryImportResult } from './library/zipImport'
 import { convertAmlToBpmnFiles, looksLikeAml } from './library/apcImport'
+import { decodeUtf8Strict } from './workspace/utf8'
 import {
   evaluateValidationPolicy,
   getRuntimeValidationAdapters,
@@ -229,7 +231,10 @@ function directoryWorkspaceId(handle: FileSystemDirectoryHandle): string {
 function fileMetaFromSnapshot(snapshot: FileSnapshot): FileMeta {
   return {
     relPath: snapshot.path,
-    xml: new TextDecoder().decode(snapshot.bytes),
+    xml: decodeUtf8Strict(snapshot.bytes, {
+      operation: 'read',
+      path: snapshot.path
+    }),
     lastModified: snapshot.modifiedAt,
     size: snapshot.size
   }
@@ -1560,7 +1565,10 @@ function App(): JSX.Element {
       if (outcome === 'committed' && loaded) {
         const snapshot = loaded as FileSnapshot
         baseHashByPathRef.current[relPath] = snapshot.hash
-        const loadedXml = new TextDecoder().decode(snapshot.bytes)
+        const loadedXml = decodeUtf8Strict(snapshot.bytes, {
+          operation: 'read',
+          path: relPath
+        })
         ensureDocumentSession(tab, loadedXml, {
           lastSavedXml: loadedXml,
           base: fingerprintFromSnapshot(snapshot)
@@ -2675,7 +2683,15 @@ function App(): JSX.Element {
       try {
         const entries: DroppedBpmn[] = files
           .filter((f) => /\.(bpmn|apc|xml)$/i.test(f.name))
-          .map((f) => ({ relPath: f.name, name: f.name, getText: () => f.text() }))
+          .map((f) => ({
+            relPath: f.name,
+            name: f.name,
+            getText: async () =>
+              decodeUtf8Strict(new Uint8Array(await f.arrayBuffer()), {
+                operation: 'read',
+                path: f.name
+              })
+          }))
         await importEntries(entries, '')
       } catch (err) {
         pushToast(t('alert.import.failed', { error: errMsg(err) }), 'error')
@@ -2713,7 +2729,10 @@ function App(): JSX.Element {
       e.target.value = ''
       if (!file) return
       try {
-        const sourceXml = await file.text()
+        const sourceXml = decodeUtf8Strict(new Uint8Array(await file.arrayBuffer()), {
+          operation: 'read',
+          path: file.name
+        })
         const prepared = await prepareImportedBpmnXml(sourceXml, processIndex.keys())
         if (prepared.autoLayouted && !confirmGeneratedImportLayout()) {
           return
@@ -3276,8 +3295,7 @@ function App(): JSX.Element {
       e.target.value = ''
       if (!file) return
       try {
-        const data = new Uint8Array(await file.arrayBuffer())
-        const result = await readLibraryZipAsync(data)
+        const result = await readLibraryZipFileInWorker(file)
         if (result.entries.length === 0) {
           pushToast(t('library.import.empty'), 'info')
           return
