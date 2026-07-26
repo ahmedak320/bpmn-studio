@@ -98,6 +98,9 @@ async function validateAndPrepare(
   await expect(panel.getByText('No workbook issues found.')).toBeVisible({
     timeout: 20_000
   })
+  await expect(panel.locator('svg[data-testid^="topology-"]').first()).toBeVisible({
+    timeout: 20_000
+  })
   await panel.getByRole('button', { name: 'Prepare BPMN files' }).click()
   await expect(panel.getByText(/BPMN files are ready/i)).toBeVisible({
     timeout: 30_000

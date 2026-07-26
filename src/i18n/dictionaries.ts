@@ -1161,6 +1161,8 @@ export const en = {
   'spreadsheet.uploadHint': 'Excel (.xlsx only) or UTF-8 CSV',
   'spreadsheet.parsing': 'Reading spreadsheet…',
   'spreadsheet.cancel': 'Cancel',
+  'spreadsheet.cancelling': 'Cancelling…',
+  'spreadsheet.cancelled': 'Operation cancelled.',
   'spreadsheet.progress': '{phase}: {percent}%',
   'spreadsheet.reset': 'Start over',
   'spreadsheet.officialDetected':
@@ -1456,6 +1458,10 @@ export const en = {
   'spreadsheet.phase.inferGraph': 'Inferring process graph',
   'spreadsheet.phase.applyInference': 'Applying reviewed inference',
   'spreadsheet.phase.validateModel': 'Validating process model',
+  'spreadsheet.phase.generate': 'Generating BPMN files',
+  'spreadsheet.phase.stage': 'Staging files',
+  'spreadsheet.phase.commit': 'Committing files',
+  'spreadsheet.phase.rollback': 'Rolling back changes',
 
   // --- Validation Center / source editor ---
   'validation.open': 'Validate',
@@ -2660,6 +2666,8 @@ export const ar: Record<keyof typeof en, string> = {
   'spreadsheet.uploadHint': 'Excel ‏(.xlsx فقط) أو CSV بترميز UTF-8',
   'spreadsheet.parsing': 'جارٍ قراءة الجدول…',
   'spreadsheet.cancel': 'إلغاء',
+  'spreadsheet.cancelling': 'جارٍ الإلغاء…',
+  'spreadsheet.cancelled': 'أُلغيت العملية.',
   'spreadsheet.progress': '{phase}: {percent}%',
   'spreadsheet.reset': 'البدء من جديد',
   'spreadsheet.officialDetected':
@@ -2931,6 +2939,10 @@ export const ar: Record<keyof typeof en, string> = {
   'spreadsheet.phase.inferGraph': 'استنتاج رسم العملية',
   'spreadsheet.phase.applyInference': 'تطبيق الاستنتاج المراجع',
   'spreadsheet.phase.validateModel': 'التحقق من نموذج العملية',
+  'spreadsheet.phase.generate': 'إنشاء ملفات BPMN',
+  'spreadsheet.phase.stage': 'تجهيز الملفات',
+  'spreadsheet.phase.commit': 'تنفيذ كتابة الملفات',
+  'spreadsheet.phase.rollback': 'التراجع عن التغييرات',
 
   // --- مركز التحقق / محرر المصدر ---
   'validation.open': 'تحقق',

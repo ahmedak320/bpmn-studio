@@ -36,6 +36,7 @@ import {
   type ParticipantType,
   type ProcessWorkbookModel,
   type RecordProvenance,
+  type SpreadsheetImportProgress,
   type SpreadsheetImportReport,
   type SpreadsheetValidationIssue,
   type TransactionalImportPlan,
@@ -141,7 +142,12 @@ function errorText(error: unknown, fallback: string): string {
 }
 
 function progressPhase(
-  phase: 'preflight' | 'parse' | 'validate' | SpreadsheetModelReviewProgress['phase']
+  phase:
+    | 'preflight'
+    | 'parse'
+    | 'validate'
+    | SpreadsheetModelReviewProgress['phase']
+    | SpreadsheetImportProgress['phase']
 ): string {
   switch (phase) {
     case 'preflight':
@@ -160,6 +166,14 @@ function progressPhase(
       return t('spreadsheet.phase.applyInference')
     case 'validate-model':
       return t('spreadsheet.phase.validateModel')
+    case 'generate':
+      return t('spreadsheet.phase.generate')
+    case 'stage':
+      return t('spreadsheet.phase.stage')
+    case 'commit':
+      return t('spreadsheet.phase.commit')
+    case 'rollback':
+      return t('spreadsheet.phase.rollback')
   }
 }
 
@@ -244,16 +258,23 @@ export function SpreadsheetImportPanel({
   const [plan, setPlan] = useState<TransactionalImportPlan | null>(null)
   const [report, setReport] = useState<SpreadsheetImportReport | null>(null)
   const [progress, setProgress] = useState<{
-    phase: 'preflight' | 'parse' | 'validate' | SpreadsheetModelReviewProgress['phase']
+    phase:
+      | 'preflight'
+      | 'parse'
+      | 'validate'
+      | SpreadsheetModelReviewProgress['phase']
+      | SpreadsheetImportProgress['phase']
     completed: number
     total: number
   } | null>(null)
   const [status, setStatus] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [handoffBusy, setHandoffBusy] = useState(false)
+  const [cancelRequested, setCancelRequested] = useState(false)
   const parserAbortRef = useRef<AbortController | null>(null)
   const reviewAbortRef = useRef<AbortController | null>(null)
   const preparationAbortRef = useRef<AbortController | null>(null)
+  const commitAbortRef = useRef<AbortController | null>(null)
   const taskVersionRef = useRef(0)
   const fileInputRef = useRef<HTMLInputElement | null>(null)
   const presetInputRef = useRef<HTMLInputElement | null>(null)
@@ -269,6 +290,8 @@ export function SpreadsheetImportPanel({
     reviewAbortRef.current = null
     preparationAbortRef.current?.abort()
     preparationAbortRef.current = null
+    commitAbortRef.current?.abort()
+    commitAbortRef.current = null
     setPhase('idle')
     setSourceFile(null)
     setParsed(null)
@@ -289,6 +312,7 @@ export function SpreadsheetImportPanel({
     setProgress(null)
     setStatus(null)
     setError(null)
+    setCancelRequested(false)
     if (fileInputRef.current) fileInputRef.current.value = ''
   }
 
@@ -300,6 +324,8 @@ export function SpreadsheetImportPanel({
     reviewAbortRef.current = null
     preparationAbortRef.current?.abort()
     preparationAbortRef.current = null
+    commitAbortRef.current?.abort()
+    commitAbortRef.current = null
     setPhase('idle')
     setSourceFile(null)
     setParsed(null)
@@ -321,6 +347,7 @@ export function SpreadsheetImportPanel({
     setStatus(null)
     setError(null)
     setHandoffBusy(false)
+    setCancelRequested(false)
     if (fileInputRef.current) fileInputRef.current.value = ''
   }, [workspaceId, workspaceAdapter])
 
@@ -330,6 +357,7 @@ export function SpreadsheetImportPanel({
       parserAbortRef.current?.abort()
       reviewAbortRef.current?.abort()
       preparationAbortRef.current?.abort()
+      commitAbortRef.current?.abort()
     },
     []
   )
@@ -415,8 +443,10 @@ export function SpreadsheetImportPanel({
     parserAbortRef.current?.abort()
     reviewAbortRef.current?.abort()
     preparationAbortRef.current?.abort()
+    commitAbortRef.current?.abort()
     const controller = new AbortController()
     parserAbortRef.current = controller
+    setCancelRequested(false)
     setSourceFile(file)
     setPhase('parsing')
     setParsed(null)
@@ -509,7 +539,7 @@ export function SpreadsheetImportPanel({
       setProgress(null)
     } catch (cause) {
       if (cause instanceof SpreadsheetError && cause.code === 'parse-cancelled') {
-        setStatus(t('spreadsheet.cancel'))
+        setStatus(t('spreadsheet.cancelled'))
         setPhase('idle')
       } else {
         setError(errorText(cause, t('spreadsheet.error.parse')))
@@ -517,17 +547,24 @@ export function SpreadsheetImportPanel({
       }
       setProgress(null)
     } finally {
-      if (parserAbortRef.current === controller) parserAbortRef.current = null
+      if (parserAbortRef.current === controller) {
+        parserAbortRef.current = null
+        setCancelRequested(false)
+      }
     }
   }
 
   function updatePreset(update: (current: MappingPreset) => MappingPreset): void {
     reviewAbortRef.current?.abort()
+    preparationAbortRef.current?.abort()
+    commitAbortRef.current?.abort()
     setPreset((current) => (current ? update(current) : current))
     setReview(null)
     setPlan(null)
     setReport(null)
     setError(null)
+    setStatus(null)
+    setCancelRequested(false)
   }
 
   function repairTypeValue(
@@ -698,6 +735,8 @@ export function SpreadsheetImportPanel({
     setPlan(null)
     setReport(null)
     setError(null)
+    setStatus(null)
+    setCancelRequested(false)
     setProgress({
       phase: 'build-model',
       completed: 0,
@@ -707,6 +746,7 @@ export function SpreadsheetImportPanel({
     if (controller.signal.aborted || taskVersion !== taskVersionRef.current) {
       if (reviewAbortRef.current === controller) reviewAbortRef.current = null
       setProgress(null)
+      setCancelRequested(false)
       return
     }
     const requiredIssues = mappingReviewIssues(parsed.workbook, preset, confirmedMappings, {
@@ -722,6 +762,7 @@ export function SpreadsheetImportPanel({
       setPhase('review')
       setProgress(null)
       if (reviewAbortRef.current === controller) reviewAbortRef.current = null
+      setCancelRequested(false)
       return
     }
     try {
@@ -762,7 +803,7 @@ export function SpreadsheetImportPanel({
         return
       }
       if (cause instanceof SpreadsheetError && cause.code === 'parse-cancelled') {
-        setStatus(t('spreadsheet.cancel'))
+        setStatus(t('spreadsheet.cancelled'))
         setPhase('mapping')
         return
       }
@@ -778,6 +819,7 @@ export function SpreadsheetImportPanel({
       if (reviewAbortRef.current === controller) {
         reviewAbortRef.current = null
         setProgress(null)
+        setCancelRequested(false)
       }
     }
   }
@@ -788,17 +830,39 @@ export function SpreadsheetImportPanel({
     const controller = new AbortController()
     preparationAbortRef.current = controller
     const taskVersion = taskVersionRef.current
+    const processCount = review.model.processes.length
     setPhase('preparing')
     setPlan(null)
     setReport(null)
     setError(null)
+    setStatus(null)
+    setCancelRequested(false)
+    setProgress({ phase: 'generate', completed: 0, total: processCount })
     try {
-      const nextPlan = await prepareModelPlan(review.model, review, controller.signal)
-      if (controller.signal.aborted || taskVersion !== taskVersionRef.current) return
+      const nextPlan = await prepareModelPlan(
+        review.model,
+        review,
+        controller.signal,
+        (nextProgress) => {
+          if (
+            preparationAbortRef.current === controller &&
+            taskVersion === taskVersionRef.current
+          ) {
+            setProgress(nextProgress)
+          }
+        }
+      )
+      if (taskVersion !== taskVersionRef.current) return
+      if (controller.signal.aborted) throw new SpreadsheetError('parse-cancelled')
       setPlan(nextPlan)
       setPhase('plan')
     } catch (cause) {
+      if (preparationAbortRef.current !== controller || taskVersion !== taskVersionRef.current) {
+        return
+      }
       if (cause instanceof SpreadsheetError && cause.code === 'parse-cancelled') {
+        setStatus(t('spreadsheet.cancelled'))
+        setPhase('review')
         return
       }
       setError(errorText(cause, t('spreadsheet.error.prepare')))
@@ -806,6 +870,8 @@ export function SpreadsheetImportPanel({
     } finally {
       if (preparationAbortRef.current === controller) {
         preparationAbortRef.current = null
+        setProgress(null)
+        setCancelRequested(false)
       }
     }
   }
@@ -813,7 +879,8 @@ export function SpreadsheetImportPanel({
   async function prepareModelPlan(
     model: ProcessWorkbookModel,
     currentReview: WorkbookReview,
-    signal: AbortSignal
+    signal: AbortSignal,
+    onProgress?: (progress: SpreadsheetImportProgress) => void
   ): Promise<TransactionalImportPlan> {
     if (!preset) {
       throw new SpreadsheetError('adapter-contract-violation', {
@@ -839,7 +906,8 @@ export function SpreadsheetImportPanel({
       syntheticBoundaries: currentReview.inference?.syntheticBoundaries,
       skippedRows: currentReview.skippedRows,
       mappingPreset: preset,
-      signal
+      signal,
+      onProgress
     })
   }
 
@@ -849,9 +917,13 @@ export function SpreadsheetImportPanel({
     const controller = new AbortController()
     preparationAbortRef.current = controller
     const taskVersion = taskVersionRef.current
+    const processCount = review.model.processes.length
     setHandoffBusy(true)
     setPhase('preparing')
     setError(null)
+    setStatus(null)
+    setCancelRequested(false)
+    setProgress({ phase: 'generate', completed: 0, total: processCount })
     try {
       const outcome = await reviewProcessWorkbookBilingual(review.model, {
         generator: new SpreadsheetBpmnGenerator({
@@ -862,9 +934,11 @@ export function SpreadsheetImportPanel({
         knownProcessIds,
         signal: controller.signal
       })
-      if (controller.signal.aborted || taskVersion !== taskVersionRef.current) return
+      if (taskVersion !== taskVersionRef.current) return
+      if (controller.signal.aborted) throw new SpreadsheetError('parse-cancelled')
+      setProgress({ phase: 'generate', completed: processCount, total: processCount })
       if (outcome.status === 'cancelled') {
-        setStatus(t('spreadsheet.cancel'))
+        setStatus(t('spreadsheet.cancelled'))
         setPhase('plan')
         return
       }
@@ -887,12 +961,30 @@ export function SpreadsheetImportPanel({
         return
       }
 
-      const nextPlan = await prepareModelPlan(outcome.model, nextReview, controller.signal)
-      if (controller.signal.aborted || taskVersion !== taskVersionRef.current) return
+      const nextPlan = await prepareModelPlan(
+        outcome.model,
+        nextReview,
+        controller.signal,
+        (nextProgress) => {
+          if (
+            preparationAbortRef.current === controller &&
+            taskVersion === taskVersionRef.current
+          ) {
+            setProgress(nextProgress)
+          }
+        }
+      )
+      if (taskVersion !== taskVersionRef.current) return
+      if (controller.signal.aborted) throw new SpreadsheetError('parse-cancelled')
       setPlan(nextPlan)
       setPhase('plan')
     } catch (cause) {
+      if (preparationAbortRef.current !== controller || taskVersion !== taskVersionRef.current) {
+        return
+      }
       if (cause instanceof SpreadsheetError && cause.code === 'parse-cancelled') {
+        setStatus(t('spreadsheet.cancelled'))
+        setPhase(plan ? 'plan' : 'review')
         return
       }
       setError(errorText(cause, t('spreadsheet.error.prepare')))
@@ -901,14 +993,23 @@ export function SpreadsheetImportPanel({
       if (preparationAbortRef.current === controller) {
         preparationAbortRef.current = null
         setHandoffBusy(false)
+        setProgress(null)
+        setCancelRequested(false)
       }
     }
   }
 
   async function commitPlan(): Promise<void> {
     if (!plan || plan.status !== 'ready') return
+    commitAbortRef.current?.abort()
+    const controller = new AbortController()
+    commitAbortRef.current = controller
+    const taskVersion = taskVersionRef.current
     setPhase('committing')
     setError(null)
+    setStatus(null)
+    setCancelRequested(false)
+    setProgress({ phase: 'stage', completed: 0, total: plan.artifacts.length })
     try {
       const transactionFactory =
         multipleFiles && workspaceAdapter
@@ -922,17 +1023,64 @@ export function SpreadsheetImportPanel({
               openSingle: async (xml, path) => await onOpenSingle(xml, path)
             })
       const nextReport = await executeTransactionalImportPlan(plan, {
-        transactionFactory
+        transactionFactory,
+        signal: controller.signal,
+        onProgress: (nextProgress) => {
+          if (commitAbortRef.current === controller && taskVersion === taskVersionRef.current) {
+            setProgress(nextProgress)
+          }
+        }
       })
+      if (commitAbortRef.current !== controller || taskVersion !== taskVersionRef.current) {
+        return
+      }
       setReport(nextReport)
       setPhase('report')
+      if (nextReport.failure?.code === 'parse-cancelled') {
+        setStatus(t('spreadsheet.cancelled'))
+      }
       if (nextReport.status === 'committed') {
-        await onCommitted?.(nextReport)
-        if (draftKey) await draftStore.remove(draftKey)
+        try {
+          await onCommitted?.(nextReport)
+          if (draftKey) await draftStore.remove(draftKey)
+        } catch (cause) {
+          setError(errorText(cause, t('spreadsheet.error.prepare')))
+        }
       }
     } catch (cause) {
-      setError(errorText(cause, t('spreadsheet.error.prepare')))
+      if (commitAbortRef.current !== controller || taskVersion !== taskVersionRef.current) {
+        return
+      }
+      if (cause instanceof SpreadsheetError && cause.code === 'parse-cancelled') {
+        setStatus(t('spreadsheet.cancelled'))
+      } else {
+        setError(errorText(cause, t('spreadsheet.error.prepare')))
+      }
       setPhase('plan')
+    } finally {
+      if (commitAbortRef.current === controller) {
+        commitAbortRef.current = null
+        setProgress(null)
+        setCancelRequested(false)
+      }
+    }
+  }
+
+  const cancelActiveOperation = (): void => {
+    setCancelRequested(true)
+    switch (phase) {
+      case 'parsing':
+        parserAbortRef.current?.abort()
+        break
+      case 'reviewing':
+        reviewAbortRef.current?.abort()
+        break
+      case 'preparing':
+        preparationAbortRef.current?.abort()
+        break
+      case 'committing':
+        commitAbortRef.current?.abort()
+        break
     }
   }
 
@@ -981,28 +1129,29 @@ export function SpreadsheetImportPanel({
         <span style={mutedText}>{t('spreadsheet.uploadHint')}</span>
       </label>
 
-      {(phase === 'parsing' || phase === 'reviewing') && progress && (
-        <div role="status" aria-live="polite" style={infoBox}>
-          <div>
-            {t('spreadsheet.progress', {
-              phase: progressPhase(progress.phase),
-              percent
-            })}
+      {(phase === 'parsing' ||
+        phase === 'reviewing' ||
+        phase === 'preparing' ||
+        phase === 'committing') &&
+        progress && (
+          <div role="status" aria-live="polite" style={infoBox}>
+            <div>
+              {t('spreadsheet.progress', {
+                phase: progressPhase(progress.phase),
+                percent
+              })}
+            </div>
+            <progress value={percent} max={100} style={{ width: '100%' }} />
+            <button
+              type="button"
+              style={secondaryButton}
+              disabled={cancelRequested}
+              onClick={cancelActiveOperation}
+            >
+              {cancelRequested ? t('spreadsheet.cancelling') : t('spreadsheet.cancel')}
+            </button>
           </div>
-          <progress value={percent} max={100} style={{ width: '100%' }} />
-          <button
-            type="button"
-            style={secondaryButton}
-            onClick={() =>
-              phase === 'parsing'
-                ? parserAbortRef.current?.abort()
-                : reviewAbortRef.current?.abort()
-            }
-          >
-            {t('spreadsheet.cancel')}
-          </button>
-        </div>
-      )}
+        )}
 
       {parsed && preset && sourceFile && (
         <>
@@ -1659,7 +1808,7 @@ export function SpreadsheetImportPanel({
           {error}
         </div>
       )}
-      {sourceFile && phase !== 'parsing' && (
+      {sourceFile && phase !== 'parsing' && phase !== 'preparing' && phase !== 'committing' && (
         <button type="button" onClick={reset} style={secondaryButton}>
           {t('spreadsheet.reset')}
         </button>

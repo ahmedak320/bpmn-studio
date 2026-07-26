@@ -9,6 +9,7 @@ import {
   OFFICIAL_TEMPLATE_VERSION,
   type CanonicalSheet,
   type ParsedWorkbookData,
+  type SpreadsheetImportProgress,
   type SpreadsheetImportReport,
   type SyntheticBoundarySummaryRecord,
   type TransactionalImportPlan,
@@ -38,7 +39,11 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock('../../i18n', () => ({
   t: (key: string, values?: Readonly<Record<string, unknown>>): string =>
-    key === 'spreadsheet.repair.synthetic' ? `${key}:${String(values?.count)}` : key
+    key === 'spreadsheet.repair.synthetic'
+      ? `${key}:${String(values?.count)}`
+      : key === 'spreadsheet.progress'
+        ? `${String(values?.phase)}:${String(values?.percent)}%`
+        : key
 }))
 
 vi.mock('../../i18n/useLang', () => ({
@@ -316,6 +321,15 @@ const committedReport: SpreadsheetImportReport = {
       translation
     }
   ]
+}
+
+const cancelledReport: SpreadsheetImportReport = {
+  ...committedReport,
+  status: 'rolled-back',
+  failure: {
+    code: 'parse-cancelled',
+    stage: 'stage'
+  }
 }
 
 function renderPanel(
@@ -691,6 +705,194 @@ describe('SpreadsheetImportPanel browser workflow', () => {
     )
   })
 
+  it('shows generation progress and returns to review after preparation cancellation', async () => {
+    const user = userEvent.setup()
+    let prepareSignal: AbortSignal | undefined
+    mocks.parse.mockResolvedValue(parseResult(officialWorkbook(), 'xlsx'))
+    mocks.prepare.mockImplementation(
+      async (
+        _model: unknown,
+        options: {
+          signal?: AbortSignal
+          onProgress?: (progress: SpreadsheetImportProgress) => void
+        }
+      ) => {
+        prepareSignal = options.signal
+        options.onProgress?.({ phase: 'generate', completed: 1, total: 2 })
+        return await new Promise<TransactionalImportPlan>((_resolve, reject) => {
+          options.signal?.addEventListener(
+            'abort',
+            () => reject(new SpreadsheetError('parse-cancelled')),
+            { once: true }
+          )
+        })
+      }
+    )
+    renderPanel()
+
+    await user.upload(
+      screen.getByLabelText(/spreadsheet\.upload/),
+      new File([new Uint8Array([80, 75, 3, 4])], 'prepare-cancel.xlsx', {
+        type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+      })
+    )
+    await user.click(await screen.findByRole('button', { name: 'spreadsheet.review' }))
+    await user.click(await screen.findByRole('button', { name: 'spreadsheet.prepare' }))
+
+    expect(await screen.findByText('spreadsheet.phase.generate:50%')).not.toBeNull()
+    await user.click(screen.getByRole('button', { name: 'spreadsheet.cancel' }))
+
+    expect(await screen.findByText('spreadsheet.cancelled')).not.toBeNull()
+    expect(prepareSignal?.aborted).toBe(true)
+    expect(screen.getByRole('button', { name: 'spreadsheet.prepare' })).not.toBeNull()
+    expect(screen.queryByText('spreadsheet.plan.ready')).toBeNull()
+  })
+
+  it('shows commit progress and reports a clean cancellation only after rollback', async () => {
+    const user = userEvent.setup()
+    const onCommitted = vi.fn()
+    let commitSignal: AbortSignal | undefined
+    mocks.parse.mockResolvedValue(parseResult(officialWorkbook(), 'xlsx'))
+    mocks.execute.mockImplementation(
+      async (
+        _plan: TransactionalImportPlan,
+        options: {
+          signal?: AbortSignal
+          onProgress?: (progress: SpreadsheetImportProgress) => void
+        }
+      ) => {
+        commitSignal = options.signal
+        options.onProgress?.({ phase: 'stage', completed: 1, total: 2 })
+        return await new Promise<SpreadsheetImportReport>((resolve) => {
+          options.signal?.addEventListener(
+            'abort',
+            () => {
+              options.onProgress?.({ phase: 'rollback', completed: 0, total: 1 })
+              queueMicrotask(() => {
+                options.onProgress?.({ phase: 'rollback', completed: 1, total: 1 })
+                resolve(cancelledReport)
+              })
+            },
+            { once: true }
+          )
+        })
+      }
+    )
+    renderPanel({ onCommitted })
+
+    await user.upload(
+      screen.getByLabelText(/spreadsheet\.upload/),
+      new File([new Uint8Array([80, 75, 3, 4])], 'commit-cancel.xlsx', {
+        type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+      })
+    )
+    await user.click(await screen.findByRole('button', { name: 'spreadsheet.review' }))
+    await user.click(await screen.findByRole('button', { name: 'spreadsheet.prepare' }))
+    await user.click(await screen.findByRole('button', { name: 'spreadsheet.commit' }))
+
+    expect(await screen.findByText('spreadsheet.phase.stage:50%')).not.toBeNull()
+    await user.click(screen.getByRole('button', { name: 'spreadsheet.cancel' }))
+
+    expect(await screen.findByText('spreadsheet.report.rolledBack')).not.toBeNull()
+    expect(screen.getByText('spreadsheet.cancelled')).not.toBeNull()
+    expect(commitSignal?.aborted).toBe(true)
+    expect(onCommitted).not.toHaveBeenCalled()
+    expect(mocks.draftRemove).not.toHaveBeenCalled()
+  })
+
+  it('trusts a completed commit even when cancellation races with irreversible delivery', async () => {
+    const user = userEvent.setup()
+    const onCommitted = vi.fn()
+    let finishCommit: (() => void) | undefined
+    let commitSignal: AbortSignal | undefined
+    mocks.parse.mockResolvedValue(parseResult(officialWorkbook(), 'xlsx'))
+    mocks.execute.mockImplementation(
+      async (
+        _plan: TransactionalImportPlan,
+        options: {
+          signal?: AbortSignal
+          onProgress?: (progress: SpreadsheetImportProgress) => void
+        }
+      ) => {
+        commitSignal = options.signal
+        options.onProgress?.({ phase: 'commit', completed: 0, total: 1 })
+        return await new Promise<SpreadsheetImportReport>((resolve) => {
+          finishCommit = () => resolve(committedReport)
+        })
+      }
+    )
+    renderPanel({ onCommitted })
+
+    await user.upload(
+      screen.getByLabelText(/spreadsheet\.upload/),
+      new File([new Uint8Array([80, 75, 3, 4])], 'late-cancel.xlsx', {
+        type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+      })
+    )
+    await user.click(await screen.findByRole('button', { name: 'spreadsheet.review' }))
+    await user.click(await screen.findByRole('button', { name: 'spreadsheet.prepare' }))
+    await user.click(await screen.findByRole('button', { name: 'spreadsheet.commit' }))
+
+    expect(await screen.findByText('spreadsheet.phase.commit:0%')).not.toBeNull()
+    await user.click(screen.getByRole('button', { name: 'spreadsheet.cancel' }))
+    expect(commitSignal?.aborted).toBe(true)
+    expect(finishCommit).toBeTypeOf('function')
+    finishCommit?.()
+
+    expect(await screen.findByText('spreadsheet.report.committed')).not.toBeNull()
+    await waitFor(() => expect(onCommitted).toHaveBeenCalledWith(committedReport))
+    expect(mocks.draftRemove).toHaveBeenCalledWith('workspace-1\u001flate-cancel.xlsx')
+  })
+
+  it('aborts an in-flight commit when the workspace binding changes', async () => {
+    const user = userEvent.setup()
+    const onCommitted = vi.fn()
+    let commitSignal: AbortSignal | undefined
+    mocks.parse.mockResolvedValue(parseResult(officialWorkbook(), 'xlsx'))
+    mocks.execute.mockImplementation(
+      async (
+        _plan: TransactionalImportPlan,
+        options: {
+          signal?: AbortSignal
+          onProgress?: (progress: SpreadsheetImportProgress) => void
+        }
+      ) => {
+        commitSignal = options.signal
+        options.onProgress?.({ phase: 'commit', completed: 0, total: 1 })
+        return await new Promise<SpreadsheetImportReport>((resolve) => {
+          options.signal?.addEventListener('abort', () => resolve(cancelledReport), {
+            once: true
+          })
+        })
+      }
+    )
+    const { rerender } = renderPanel({ onCommitted })
+
+    await user.upload(
+      screen.getByLabelText(/spreadsheet\.upload/),
+      new File([new Uint8Array([80, 75, 3, 4])], 'workspace-change.xlsx', {
+        type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+      })
+    )
+    await user.click(await screen.findByRole('button', { name: 'spreadsheet.review' }))
+    await user.click(await screen.findByRole('button', { name: 'spreadsheet.prepare' }))
+    await user.click(await screen.findByRole('button', { name: 'spreadsheet.commit' }))
+    expect(await screen.findByText('spreadsheet.phase.commit:0%')).not.toBeNull()
+
+    rerender(
+      <SpreadsheetImportPanel
+        workspaceId="workspace-2"
+        workspaceAdapter={null}
+        onOpenSingle={vi.fn()}
+        onCommitted={onCommitted}
+      />
+    )
+
+    await waitFor(() => expect(commitSignal?.aborted).toBe(true))
+    expect(screen.queryByText('spreadsheet.report.rolledBack')).toBeNull()
+    expect(onCommitted).not.toHaveBeenCalled()
+  })
+
   it('awaits reviewed XML, keeps writes at zero, then re-prepares the original plan', async () => {
     const user = userEvent.setup()
     mocks.parse.mockResolvedValue(parseResult(officialWorkbook(), 'xlsx'))
@@ -748,7 +950,7 @@ describe('SpreadsheetImportPanel browser workflow', () => {
     await waitFor(() => expect(onReviewBilingual).toHaveBeenCalledOnce())
     expect(mocks.prepare).toHaveBeenCalledOnce()
     expect(mocks.execute).not.toHaveBeenCalled()
-    expect(screen.getByText('spreadsheet.cancel')).not.toBeNull()
+    expect(await screen.findByText('spreadsheet.cancelled')).not.toBeNull()
   })
 
   it('aborts stale work when the workspace changes', async () => {
