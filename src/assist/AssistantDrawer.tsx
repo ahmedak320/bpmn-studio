@@ -904,7 +904,10 @@ export default AssistantDrawer
 
 const FAB_STYLE: CSSProperties = {
   position: 'fixed',
-  insetBlockEnd: 18,
+  // Reserve the lower-right attribution zone required by the bpmn.io
+  // trademark notice. At the 1280×720 release viewport the watermark ends
+  // around 43px above the edge; 72px leaves a stable non-overlap margin.
+  insetBlockEnd: 72,
   insetInlineEnd: 18,
   zIndex: 900,
   width: 44,
@@ -922,7 +925,9 @@ const FAB_STYLE: CSSProperties = {
 const PANEL_STYLE: CSSProperties = {
   position: 'fixed',
   insetBlockStart: 0,
-  insetBlockEnd: 0,
+  // Keep the open drawer out of the same mandatory attribution strip reserved
+  // for the closed launcher above.
+  insetBlockEnd: 80,
   insetInlineEnd: 0,
   zIndex: 1200,
   width: 'clamp(300px, 30vw, 420px)',

@@ -124,6 +124,18 @@ afterEach(() => {
 })
 
 describe('AssistantDrawer browser consent workflows', () => {
+  it('keeps the open drawer out of the reserved bpmn.io attribution strip', () => {
+    renderDrawer()
+    const drawer = screen.getByLabelText('assist.title')
+    expect(drawer.style.insetBlockEnd).toBe('80px')
+  })
+
+  it('keeps the closed launcher above the reserved bpmn.io attribution zone', () => {
+    renderDrawer({ open: false })
+    const launcher = screen.getByRole('button', { name: 'assist.open' })
+    expect(launcher.style.insetBlockEnd).toBe('72px')
+  })
+
   it('answers locally without constructing any external request', async () => {
     const user = userEvent.setup()
     const getDigests = vi.fn().mockResolvedValue([digest])
