@@ -1005,7 +1005,14 @@ describe('App single-file browser orchestration', () => {
     expect(mocks.prompt).toHaveBeenCalledOnce()
 
     await user.click(screen.getByRole('button', { name: 'mock-editor-dirty' }))
-    expect(screen.getByText(/● claims-approval\.bpmn/)).not.toBeNull()
+    const processTab = screen.getByRole('tab', {
+      name: /claims-approval\.bpmn.*tab\.dirty\.aria/
+    })
+    expect(screen.getByRole('tablist', { name: 'tab.list.aria' })).not.toBeNull()
+    expect(processTab.getAttribute('aria-selected')).toBe('true')
+    const controlledPanel = processTab.getAttribute('aria-controls')
+    expect(controlledPanel).toBeTruthy()
+    expect(screen.getByRole('tabpanel').id).toBe(controlledPanel)
     await user.click(screen.getByTitle('tab.closeTitle'))
     expect(confirm).toHaveBeenCalledOnce()
     expect(screen.getByTestId('editor-tab')).not.toBeNull()
@@ -1106,7 +1113,11 @@ describe('App single-file browser orchestration', () => {
       'ai-claims.bpmn',
       expect.stringContaining('data:application/xml')
     )
-    expect(screen.getByText(/● ai-claims\.bpmn/)).not.toBeNull()
+    expect(
+      screen.getByRole('tab', {
+        name: /ai-claims\.bpmn.*tab\.dirty\.aria/
+      })
+    ).not.toBeNull()
     expect([...sessionHarness.drafts.values()].some((draft) => draft.xml === state.xml)).toBe(true)
     expect(latestSessionController().store.getActive()?.dirty).toBe(true)
   })
@@ -1134,7 +1145,11 @@ describe('App single-file browser orchestration', () => {
     await user.click(restore)
     expect(await screen.findByTestId('editor-tab')).not.toBeNull()
     expect(screen.getByTestId('editor-xml').textContent).toBe(state.xml)
-    expect(screen.getByText(/● untitled\.bpmn/)).not.toBeNull()
+    expect(
+      screen.getByRole('tab', {
+        name: /untitled\.bpmn.*tab\.dirty\.aria/
+      })
+    ).not.toBeNull()
     expect(sessionHarness.drafts.has(draft.id)).toBe(true)
   })
 
@@ -1473,9 +1488,16 @@ describe('App directory workspace orchestration', () => {
     await user.click(screen.getByRole('button', { name: 'mock-tree-open' }))
     expect((await screen.findAllByText('existing.bpmn')).length).toBeGreaterThan(0)
 
-    const search = screen.getByRole('searchbox', { name: 'tree.search.aria' })
+    const search = screen.getByRole('combobox', { name: 'tree.search.aria' })
     await user.type(search, 'Test process')
+    await waitFor(() => expect(search.getAttribute('aria-expanded')).toBe('true'))
+    const listbox = screen.getByRole('listbox', { name: 'search.results.title' })
+    expect(search.getAttribute('aria-controls')).toBe(listbox.id)
+    expect(search.getAttribute('aria-activedescendant')).toBe(
+      'orbitpm-workspace-search-results-option-0'
+    )
     fireEvent.keyDown(search, { key: 'Escape' })
+    expect(search.getAttribute('aria-expanded')).toBe('false')
     fireEvent.keyDown(search, { key: 'Enter' })
 
     await user.click(screen.getByRole('button', { name: 'tree.refresh.aria' }))
@@ -1645,7 +1667,11 @@ describe('App directory workspace orchestration', () => {
     const rail = screen.getByRole('button', { name: 'sidebar.toggle.aria' })
     if (rail.getAttribute('aria-expanded') === 'false') await user.click(rail)
     await user.click(await screen.findByRole('button', { name: 'mock-sheet-open' }))
-    expect(await screen.findByText(/● sheet-flow\.bpmn/)).not.toBeNull()
+    expect(
+      await screen.findByRole('tab', {
+        name: /sheet-flow\.bpmn.*tab\.dirty\.aria/
+      })
+    ).not.toBeNull()
 
     await user.click(screen.getByRole('button', { name: 'app.changeFolder' }))
     const unsaved = await screen.findByRole('dialog', { name: 'confirm.switch.title' })

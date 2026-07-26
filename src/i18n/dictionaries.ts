@@ -56,6 +56,8 @@ export const en = {
 
   // --- Tab strip ---
   'tab.closeTitle': 'Close',
+  'tab.list.aria': 'Open process diagrams',
+  'tab.dirty.aria': 'Unsaved changes',
 
   // --- Footer ---
   'footer.folderPrefix': '📁 {folderName}',
@@ -1160,6 +1162,8 @@ export const ar: Record<keyof typeof en, string> = {
 
   // --- Tab strip ---
   'tab.closeTitle': 'إغلاق',
+  'tab.list.aria': 'مخططات العمليات المفتوحة',
+  'tab.dirty.aria': 'تغييرات غير محفوظة',
 
   // --- Footer ---
   'footer.folderPrefix': '📁 {folderName}',

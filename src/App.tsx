@@ -7,6 +7,7 @@ import { SelectionLinkButton, type SelectionLinkModeler } from './links/Selectio
 import { createNewDiagramXml } from '@/editor/newDiagram'
 import { triggerDownload } from '@/editor/exportImage'
 import { usePromptText } from '@/common/prompt'
+import { ProcessTabList, processTabId, processTabPanelId } from './common/ProcessTabList'
 import { listUnresolvedCalledElements, type ProcessIndex } from '@/core/processIndex'
 import { dedupeSlug } from '@/core/slug'
 // --- lite-local ---
@@ -129,7 +130,7 @@ import {
 } from './workspace/catalog'
 import { CatalogView } from './workspace/CatalogView'
 import { searchWorkspace, countHits } from './workspace/searchIndex'
-import { SearchResults } from './workspace/SearchResults'
+import { SEARCH_RESULTS_ID, SearchResults, searchResultOptionId } from './workspace/SearchResults'
 import { collectWorkspaceUnresolved, type WorkspaceUnresolvedLink } from './workspace/unresolved'
 import { UnresolvedLinksPanel } from './workspace/UnresolvedLinksPanel'
 import {
@@ -889,6 +890,7 @@ function App(): JSX.Element {
   // W2B feature state
   const [search, setSearch] = useState('')
   const [searchOpen, setSearchOpen] = useState(false)
+  const [searchActiveIndex, setSearchActiveIndex] = useState(-1)
   const [catalogOpen, setCatalogOpen] = useState(false)
   const [catSort, setCatSort] = useState<CatalogSortKey>('name')
   const [catDir, setCatDir] = useState<SortDir>('asc')
@@ -911,6 +913,7 @@ function App(): JSX.Element {
   const suppressPushRef = useRef(false)
   const toastIdRef = useRef(0)
   const searchBoxRef = useRef<HTMLDivElement | null>(null)
+  const editorRegionRef = useRef<HTMLElement | null>(null)
 
   const fileInputRef = useRef<HTMLInputElement | null>(null)
   const importInputRef = useRef<HTMLInputElement | null>(null)
@@ -1896,7 +1899,7 @@ function App(): JSX.Element {
   }, [])
 
   const closeTab = useCallback(
-    (key: string) => {
+    (key: string): boolean => {
       pendingProcessFocusRef.current.delete(key)
       const closingTab = tabs.find((tab) => tab.key === key)
       const explicitlyDiscarded = Boolean(dirtyByKey[key])
@@ -1904,7 +1907,7 @@ function App(): JSX.Element {
         const confirmed = window.confirm(
           t('confirm.discardUnsaved', { title: closingTab?.title ?? 'this file' })
         )
-        if (!confirmed) return
+        if (!confirmed) return false
       }
       // Closing the last tab returns to an empty canvas (or the catalog) — bring
       // the sidebar back so the explorer / AI generator are reachable again.
@@ -1955,6 +1958,7 @@ function App(): JSX.Element {
         next.delete(key)
         return next
       })
+      return true
     },
     [dirtyByKey, pushToast, tabs]
   )
@@ -3281,6 +3285,7 @@ function App(): JSX.Element {
   const openSearchHit = useCallback(
     (relPath: string, processId?: string) => {
       setSearchOpen(false)
+      setSearchActiveIndex(-1)
       if (processId && openCanonicalProcess(processId)) return
       openFileAndReveal(relPath)
     },
@@ -3288,16 +3293,51 @@ function App(): JSX.Element {
   )
 
   const onSearchKeyDown = useCallback(
-    (e: React.KeyboardEvent) => {
+    (e: React.KeyboardEvent<HTMLInputElement>) => {
+      const moveTo = (index: number): void => {
+        if (flatHits.length === 0) return
+        e.preventDefault()
+        setSearchOpen(true)
+        setSearchActiveIndex((index + flatHits.length) % flatHits.length)
+      }
+      if (e.key === 'ArrowDown') {
+        moveTo(searchActiveIndex < 0 ? 0 : searchActiveIndex + 1)
+        return
+      }
+      if (e.key === 'ArrowUp') {
+        moveTo(searchActiveIndex < 0 ? flatHits.length - 1 : searchActiveIndex - 1)
+        return
+      }
+      if (searchOpen && e.key === 'Home') {
+        moveTo(0)
+        return
+      }
+      if (searchOpen && e.key === 'End') {
+        moveTo(flatHits.length - 1)
+        return
+      }
       if (e.key === 'Enter') {
-        const first = flatHits[0]
-        if (first) openSearchHit(first.relPath, first.processId)
+        const selected = flatHits[searchActiveIndex] ?? flatHits[0]
+        if (selected) {
+          e.preventDefault()
+          openSearchHit(selected.relPath, selected.processId)
+        }
       } else if (e.key === 'Escape') {
+        e.preventDefault()
         setSearchOpen(false)
+        setSearchActiveIndex(-1)
       }
     },
-    [flatHits, openSearchHit]
+    [flatHits, openSearchHit, searchActiveIndex, searchOpen]
   )
+
+  useEffect(() => {
+    if (!searchOpen || !search.trim() || flatHits.length === 0) {
+      setSearchActiveIndex(-1)
+      return
+    }
+    setSearchActiveIndex((current) => (current >= 0 && current < flatHits.length ? current : 0))
+  }, [flatHits, search, searchOpen])
 
   // Close the search dropdown on an outside click.
   useEffect(() => {
@@ -3305,6 +3345,7 @@ function App(): JSX.Element {
     const onDown = (e: MouseEvent): void => {
       if (searchBoxRef.current && !searchBoxRef.current.contains(e.target as Node)) {
         setSearchOpen(false)
+        setSearchActiveIndex(-1)
       }
     }
     window.addEventListener('mousedown', onDown)
@@ -4077,14 +4118,29 @@ function App(): JSX.Element {
           <div ref={searchBoxRef} style={{ position: 'relative', flex: '1 1 auto', maxWidth: 440 }}>
             <input
               type="search"
+              role="combobox"
               value={search}
               placeholder={t('tree.search.placeholder')}
               aria-label={t('tree.search.aria')}
+              aria-autocomplete="list"
+              aria-haspopup="listbox"
+              aria-expanded={searchOpen && Boolean(search.trim())}
+              aria-controls={SEARCH_RESULTS_ID}
+              aria-activedescendant={
+                searchOpen && searchActiveIndex >= 0 && flatHits[searchActiveIndex]
+                  ? searchResultOptionId(searchActiveIndex)
+                  : undefined
+              }
               onChange={(e) => {
                 setSearch(e.target.value)
                 setSearchOpen(true)
+                setSearchActiveIndex(-1)
               }}
-              onFocus={() => search.trim() && setSearchOpen(true)}
+              onFocus={() => {
+                if (!search.trim()) return
+                setSearchOpen(true)
+                setSearchActiveIndex(flatHits.length > 0 ? 0 : -1)
+              }}
               onKeyDown={onSearchKeyDown}
               style={{
                 width: '100%',
@@ -4103,7 +4159,12 @@ function App(): JSX.Element {
                 query={search}
                 rootName={rootName || t('breadcrumb.root')}
                 onOpen={openSearchHit}
-                onClose={() => setSearchOpen(false)}
+                onClose={() => {
+                  setSearchOpen(false)
+                  setSearchActiveIndex(-1)
+                }}
+                activeIndex={searchActiveIndex}
+                onActiveIndexChange={setSearchActiveIndex}
               />
             )}
           </div>
@@ -4461,57 +4522,32 @@ function App(): JSX.Element {
           </span>
         </button>
 
-        <section style={{ display: 'flex', flexDirection: 'column', minWidth: 0, flex: 1 }}>
-          <div
-            style={{
-              display: 'flex',
-              borderBottom: '1px solid var(--orbitpm-border)',
-              overflowX: 'auto',
-              flex: '0 0 auto'
-            }}
-          >
-            {tabs.map((tab) => {
-              const isActive = activeKey === tab.key
-              return (
-                <div
-                  key={tab.key}
-                  onClick={() => {
-                    setCatalogOpen(false)
-                    setActiveKey(tab.key)
-                  }}
-                  style={{
-                    padding: '0.5rem 0.9rem',
-                    fontSize: 13,
-                    cursor: 'pointer',
-                    whiteSpace: 'nowrap',
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: 8,
-                    borderBottom:
-                      isActive && !catalogOpen
-                        ? '2px solid var(--orbitpm-accent)'
-                        : '2px solid transparent',
-                    opacity: isActive && !catalogOpen ? 1 : 0.65
-                  }}
-                >
-                  <span>
-                    {dirtyByKey[tab.key] ? '● ' : ''}
-                    {tab.title}
-                  </span>
-                  <span
-                    onClick={(e) => {
-                      e.stopPropagation()
-                      closeTab(tab.key)
-                    }}
-                    title={t('tab.closeTitle')}
-                    style={{ opacity: 0.5 }}
-                  >
-                    ×
-                  </span>
-                </div>
+        <main
+          ref={editorRegionRef}
+          tabIndex={-1}
+          style={{ display: 'flex', flexDirection: 'column', minWidth: 0, flex: 1 }}
+        >
+          <ProcessTabList
+            tabs={tabs}
+            activeKey={activeKey}
+            dirtyKeys={
+              new Set(
+                Object.entries(dirtyByKey)
+                  .filter(([, dirty]) => dirty)
+                  .map(([key]) => key)
               )
-            })}
-          </div>
+            }
+            dir={dir}
+            ariaLabel={t('tab.list.aria')}
+            closeTitle={t('tab.closeTitle')}
+            dirtyLabel={t('tab.dirty.aria')}
+            onActivate={(key) => {
+              setCatalogOpen(false)
+              setActiveKey(key)
+            }}
+            onClose={closeTab}
+            onEmptyFocus={() => editorRegionRef.current?.focus()}
+          />
 
           {crumbs && !showCatalog && (
             <nav
@@ -4574,6 +4610,11 @@ function App(): JSX.Element {
               return (
                 <div
                   key={tab.key}
+                  id={processTabPanelId(tab.key)}
+                  role="tabpanel"
+                  aria-labelledby={processTabId(tab.key)}
+                  tabIndex={isActive && !showCatalog ? 0 : -1}
+                  hidden={!isActive || showCatalog}
                   style={{
                     position: 'absolute',
                     inset: 0,
@@ -4823,7 +4864,7 @@ function App(): JSX.Element {
               />
             )}
           </div>
-        </section>
+        </main>
       </div>
 
       <footer
