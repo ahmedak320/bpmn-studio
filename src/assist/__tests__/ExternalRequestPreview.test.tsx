@@ -1,15 +1,16 @@
 import { describe, expect, it } from 'vitest'
 import { renderToStaticMarkup } from 'react-dom/server'
-import { createExternalRequestDisclosure } from '../../localization/externalRequestReview'
 import { ExternalRequestPreview } from '../ExternalRequestPreview'
 import { t } from '../../i18n'
+import { createLlmMessageDisclosure } from '../requestReview'
 
 const noop = (): void => {}
-const disclosure = createExternalRequestDisclosure({
+const disclosure = createLlmMessageDisclosure({
   purpose: 'assistant',
   providerId: 'OpenRouter',
   modelId: 'reviewed/model',
-  outbound: [{ id: 'one', text: 'Exact outbound text', context: 'user', sensitive: true }],
+  messages: [{ role: 'user', content: 'Exact outbound text' }],
+  sensitiveMessageIndexes: [0],
   estimatedRequests: { min: 1, max: 3 }
 })
 
@@ -54,5 +55,41 @@ describe('ExternalRequestPreview', () => {
     expect(html).toContain('Attempt 2 of 3')
     expect(html).toContain('role="status"')
     expect(html).toContain(t('ai.cancel'))
+  })
+
+  it('renders name and sensitive-metadata classifications independently', () => {
+    const renderSensitivity = (content: string): string =>
+      renderToStaticMarkup(
+        <ExternalRequestPreview
+          disclosure={createLlmMessageDisclosure({
+            purpose: 'assistant',
+            providerId: 'OpenRouter',
+            modelId: 'reviewed/model',
+            messages: [{ role: 'user', content }]
+          })}
+          includeWorkspaceContext={false}
+          redactNames={false}
+          consented={false}
+          busy={false}
+          onIncludeWorkspaceContextChange={noop}
+          onRedactNamesChange={noop}
+          onConsentChange={noop}
+          onConfirm={noop}
+          onCancel={noop}
+        />
+      )
+
+    expect(renderSensitivity('Alice Smith approves')).toContain(
+      t('ai.privacy.sensitivity', {
+        names: t('common.yes'),
+        sensitive: t('common.no')
+      })
+    )
+    expect(renderSensitivity('Contact alice@example.test')).toContain(
+      t('ai.privacy.sensitivity', {
+        names: t('common.no'),
+        sensitive: t('common.yes')
+      })
+    )
   })
 })

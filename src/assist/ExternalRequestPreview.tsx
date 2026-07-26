@@ -1,10 +1,10 @@
 import type { CSSProperties } from 'react'
 import { t } from '../i18n'
 import { useLang } from '../i18n/useLang'
-import type { ExternalRequestDisclosure } from '../localization/externalRequestReview'
+import type { ReviewedExternalRequestDisclosure } from './requestReview'
 
 export interface ExternalRequestPreviewProps {
-  disclosure: ExternalRequestDisclosure
+  disclosure: ReviewedExternalRequestDisclosure
   includeWorkspaceContext: boolean
   redactNames: boolean
   consented: boolean
@@ -49,19 +49,19 @@ export function ExternalRequestPreview({
         />
         <span>{t('ai.privacy.includeWorkspace')}</span>
       </label>
-      <label style={{ ...CHECK_STYLE, opacity: includeWorkspaceContext ? 1 : 0.65 }}>
+      <label style={CHECK_STYLE}>
         <input
           type="checkbox"
           checked={redactNames}
-          disabled={busy || !includeWorkspaceContext}
+          disabled={busy}
           onChange={(event) => onRedactNamesChange(event.target.checked)}
         />
         <span>{t('ai.privacy.redactNames')}</span>
       </label>
       <div>
         {t('ai.privacy.sensitivity', {
-          names: disclosure.sensitiveItemCount > 0 ? t('common.yes') : t('common.no'),
-          sensitive: disclosure.sensitiveItemCount > 0 ? t('common.yes') : t('common.no')
+          names: disclosure.containsNames ? t('common.yes') : t('common.no'),
+          sensitive: disclosure.containsSensitiveMetadata ? t('common.yes') : t('common.no')
         })}
       </div>
       <div>

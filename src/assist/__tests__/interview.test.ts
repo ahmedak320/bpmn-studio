@@ -9,6 +9,8 @@ import {
   digestsToCatalog,
   relevantDigestsToCatalog,
   readProcessId,
+  redactInterviewExchanges,
+  redactInterviewSummary,
   decideInterviewNext,
   MAX_INTERVIEW_ROUNDS,
   MAX_QUESTIONS_PER_ROUND,
@@ -197,6 +199,52 @@ describe('buildDiagramSummary', () => {
   it('does not list flows or labels as elements', () => {
     expect(summary).not.toContain('[SequenceFlow]')
     expect(summary).not.toContain('[Label]')
+  })
+
+  it('redacts names from every structured value while retaining topology', () => {
+    const privateSummary =
+      '- "Alice Review" [UserTask] — owner: Bob | responsible: Carol — reviewer | ' +
+      'inputs: Diana dossier | outputs: Eve memo | systems: Frank Hub | CC: Grace — audit | ' +
+      'decision basis: Heidi policy | trigger: Ivan called | trigger service: Judy Desk ' +
+      '— MISSING: owner; CC purpose for: Karl Recipient ' +
+      '-> next: "Mallory Approval" (Niaj agrees)'
+    const redacted = redactInterviewSummary(privateSummary)
+
+    for (const name of [
+      'Alice',
+      'Bob',
+      'Carol',
+      'Diana',
+      'Eve',
+      'Frank',
+      'Grace',
+      'Heidi',
+      'Ivan',
+      'Judy',
+      'Karl',
+      'Mallory',
+      'Niaj'
+    ]) {
+      expect(redacted).not.toContain(name)
+    }
+    expect(redacted).toContain('[UserTask]')
+    expect(redacted).toContain('-> next:')
+  })
+})
+
+describe('interview exchange redaction', () => {
+  it('removes English and Arabic names from prior questions and answers', () => {
+    const redacted = redactInterviewExchanges([
+      {
+        questions: 'Does Alice Smith approve this?',
+        answer: 'أحمد علي يوافق على الطلب'
+      }
+    ])
+    const text = JSON.stringify(redacted)
+    expect(text).not.toContain('Alice')
+    expect(text).not.toContain('Smith')
+    expect(text).not.toContain('أحمد')
+    expect(text).not.toContain('علي')
   })
 })
 

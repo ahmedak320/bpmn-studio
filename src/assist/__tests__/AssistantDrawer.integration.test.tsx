@@ -242,7 +242,8 @@ describe('AssistantDrawer browser consent workflows', () => {
     expect(await screen.findByText('ai.retry.waiting')).not.toBeNull()
     await user.click(within(preview).getByRole('button', { name: 'ai.cancel' }))
     await waitFor(() => expect(observedSignal?.aborted).toBe(true))
-    expect(await screen.findByText('ai.error.cancelled')).not.toBeNull()
+    expect(screen.queryByRole('region', { name: 'ai.privacy.preview.title' })).toBeNull()
+    expect(screen.queryByText('ai.error.cancelled')).toBeNull()
   })
 
   it('handles digest failures, interview-without-modeler, close, and Escape', async () => {

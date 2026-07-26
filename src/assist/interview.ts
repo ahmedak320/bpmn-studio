@@ -30,6 +30,7 @@ import {
 } from '../org/orgModel'
 import type { ProcessDigest } from './digest'
 import { selectContextDigests } from './retrieval'
+import { redactPersonNames } from './requestReview'
 import { quoteUntrustedData, UNTRUSTED_WORKSPACE_SYSTEM_GUARD } from '../ai/untrustedPrompt'
 
 // --- structural modeler shapes (translate.ts convention) ---------------------
@@ -230,6 +231,54 @@ export const QUESTIONS_MAX_TOKENS = 700
 export interface InterviewExchange {
   questions: string
   answer: string
+}
+
+/**
+ * Remove every free-text value emitted by buildDiagramSummary while retaining
+ * element type, missing-field categories, and connectivity. Replacing complete
+ * structured values is intentionally conservative: inputs, outputs, decision
+ * bases, triggers, and services can all contain a person's name even when they
+ * are not nominally "person" fields.
+ */
+export function redactInterviewSummary(summary: string): string {
+  let aliasIndex = 0
+  const aliases = new Map<string, string>()
+  const aliasFor = (raw: string): string => {
+    const existing = aliases.get(raw)
+    if (existing) return existing
+    const alias = `Element ${++aliasIndex}`
+    aliases.set(raw, alias)
+    return alias
+  }
+
+  return summary
+    .replace(/"([^"\n]*)"/g, (_match, label: string) => `"${aliasFor(label)}"`)
+    .replace(
+      /\b(trigger service|decision basis|owner|responsible|inputs|outputs|systems?|CC|trigger):\s*.*?(?=\s+\|\s+|\s+—\s+MISSING:|\s+->\s+next:|$)/gim,
+      (_match, label: string) => `${label}: [redacted]`
+    )
+    .replace(/(CC purpose for:\s*).*?(?=;|\s+->\s+next:|$)/gim, '$1[redacted recipient]')
+    .replace(/\([^()\n]*\)/g, '([redacted])')
+}
+
+export function redactInterviewScan(scan: GapScan): GapScan {
+  return {
+    clean: scan.clean,
+    entries: scan.entries.map((entry, index) => ({
+      ...entry,
+      label: `Element ${index + 1}`,
+      ccMissingPurpose: entry.ccMissingPurpose.map(() => '[redacted recipient]')
+    }))
+  }
+}
+
+export function redactInterviewExchanges(
+  exchanges: readonly InterviewExchange[]
+): InterviewExchange[] {
+  return exchanges.map((exchange) => ({
+    questions: redactPersonNames(exchange.questions),
+    answer: redactPersonNames(exchange.answer)
+  }))
 }
 
 function renderExchanges(exchanges: InterviewExchange[]): string {
