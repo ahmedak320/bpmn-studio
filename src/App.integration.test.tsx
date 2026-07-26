@@ -69,6 +69,8 @@ const mocks = vi.hoisted(() => ({
   assistantProps: vi.fn(),
   printJobs: vi.fn(),
   modelerGet: vi.fn(),
+  modelerDefinitions: vi.fn(),
+  makeFreeTranslateTexts: vi.fn(),
   saveSvg: vi.fn(),
   saveXml: vi.fn(),
   commandSave: vi.fn(),
@@ -121,6 +123,14 @@ vi.mock('./editor/exportImage', () => ({
 vi.mock('./library/browserZipImport', () => ({
   readLibraryZipFileInWorker: mocks.readLibraryZipFileInWorker
 }))
+
+vi.mock('./ai/freeTranslate', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('./ai/freeTranslate')>()
+  return {
+    ...actual,
+    makeFreeTranslateTexts: mocks.makeFreeTranslateTexts
+  }
+})
 
 vi.mock('./links/linkBadges', () => ({
   installLinkBadges: mocks.installLinkBadges
@@ -295,6 +305,7 @@ vi.mock('./editor/EditorTabLite', () => ({
 
 const mockModeler = {
   get: (name: string): unknown => mocks.modelerGet(name),
+  getDefinitions: (): unknown => mocks.modelerDefinitions(),
   saveSVG: (): Promise<{ svg: string }> => mocks.saveSvg(),
   saveXML: (): Promise<{ xml: string }> => mocks.saveXml()
 }
@@ -608,6 +619,8 @@ beforeEach(() => {
   mocks.settingsProps.mockReset()
   mocks.assistantProps.mockReset()
   mocks.printJobs.mockReset()
+  mocks.modelerDefinitions.mockReset().mockReturnValue(undefined)
+  mocks.makeFreeTranslateTexts.mockReset().mockReturnValue(async () => [])
   mocks.saveSvg.mockReset().mockResolvedValue({ svg: '<svg />' })
   mocks.saveXml.mockReset().mockResolvedValue({ xml: state.xml })
   mocks.commandSave.mockReset()
@@ -711,7 +724,7 @@ describe('App single-file browser orchestration', () => {
     const user = userEvent.setup()
     await openBlankDiagram(user)
 
-    expect(screen.getByLabelText('Version 0.4.5')).not.toBeNull()
+    expect(screen.getByLabelText('app.version.aria').textContent).toBe('v0.4.5')
     expect(screen.getAllByTitle('workspace.storage.persistence.singleFile').length).toBeGreaterThan(
       0
     )
@@ -737,6 +750,110 @@ describe('App single-file browser orchestration', () => {
     await user.click(screen.getByRole('button', { name: 'mock-assistant-open' }))
     expect(await screen.findByRole('button', { name: 'mock-assistant-close' })).not.toBeNull()
     await user.click(screen.getByRole('button', { name: 'mock-assistant-close' }))
+  })
+
+  it('shows live free-translation retry status in the review dialog', async () => {
+    const process: Record<string, unknown> = {
+      $type: 'bpmn:Process',
+      id: 'Process_1',
+      $attrs: { 'orbitpm:activeLang': 'en' }
+    }
+    const task: Record<string, unknown> = {
+      $type: 'bpmn:Task',
+      id: 'Task_1',
+      name: 'Review request',
+      $attrs: { 'orbitpm:nameEn': 'Review request' },
+      $parent: process
+    }
+    process.flowElements = [task]
+    mocks.modelerDefinitions.mockReturnValue({
+      $type: 'bpmn:Definitions',
+      rootElements: [process]
+    })
+    const eventBus = { on: vi.fn(), off: vi.fn() }
+    mocks.modelerGet.mockImplementation((name: string) => {
+      if (name === 'eventBus') return eventBus
+      if (name === 'canvas') {
+        return {
+          getRootElement: () => ({ id: 'Process_1', businessObject: process })
+        }
+      }
+      if (name === 'elementRegistry') {
+        return {
+          getAll: () => [{ id: 'Task_1', businessObject: task }]
+        }
+      }
+      return {}
+    })
+    mocks.makeFreeTranslateTexts.mockImplementation(
+      (options: {
+        onAttempt?: (attempt: {
+          attempt: number
+          maxAttempts: number
+          retryInMs?: number
+          service: 'google' | 'mymemory'
+          item: number
+          itemCount: number
+        }) => void
+      }) =>
+        async (_texts: string[], _from: 'en' | 'ar', _to: 'en' | 'ar', signal?: AbortSignal) => {
+          options.onAttempt?.({
+            attempt: 1,
+            maxAttempts: 3,
+            service: 'google',
+            item: 1,
+            itemCount: 1
+          })
+          options.onAttempt?.({
+            attempt: 1,
+            maxAttempts: 3,
+            retryInMs: 1_500,
+            service: 'google',
+            item: 1,
+            itemCount: 1
+          })
+          return await new Promise<Array<string | undefined>>((_resolve, reject) => {
+            const abort = (): void =>
+              reject(signal?.reason ?? new DOMException('cancelled', 'AbortError'))
+            if (signal?.aborted) abort()
+            else signal?.addEventListener('abort', abort, { once: true })
+          })
+        }
+    )
+
+    const user = userEvent.setup()
+    await openBlankDiagram(user)
+    await user.click(screen.getByRole('button', { name: 'mock-editor-ready' }))
+    await user.click(screen.getByRole('button', { name: 'editor.translate' }))
+    await user.selectOptions(await screen.findByRole('combobox'), 'free')
+    await user.click(screen.getByRole('button', { name: 'translationReview.translateNow' }))
+
+    expect(await screen.findByText('ai.retry.waiting')).not.toBeNull()
+    expect(mocks.makeFreeTranslateTexts).toHaveBeenCalledWith({
+      onAttempt: expect.any(Function)
+    })
+    const onAttempt = mocks.makeFreeTranslateTexts.mock.calls[0]?.[0]?.onAttempt as
+      | ((attempt: {
+          attempt: number
+          maxAttempts: number
+          service: 'google' | 'mymemory'
+          item: number
+          itemCount: number
+        }) => void)
+      | undefined
+    act(() =>
+      onAttempt?.({
+        attempt: 2,
+        maxAttempts: 3,
+        service: 'google',
+        item: 1,
+        itemCount: 1
+      })
+    )
+    expect(await screen.findByText('ai.retry.attempt')).not.toBeNull()
+
+    await user.click(screen.getByRole('button', { name: 'translationReview.cancel' }))
+    expect(await screen.findByText('translationReview.cancelled')).not.toBeNull()
   })
 
   it('warns when persistent browser draft recovery is unavailable', async () => {

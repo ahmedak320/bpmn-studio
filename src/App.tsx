@@ -3485,7 +3485,28 @@ function App(): JSX.Element {
       }
       const result =
         state.providerId === 'free'
-          ? await translateReviewedDiagramWithTexts(modeler, makeFreeTranslateTexts(), run)
+          ? await translateReviewedDiagramWithTexts(
+              modeler,
+              makeFreeTranslateTexts({
+                onAttempt: (attempt) => {
+                  const status =
+                    attempt.retryInMs === undefined
+                      ? t('ai.retry.attempt', {
+                          attempt: attempt.attempt,
+                          max: attempt.maxAttempts
+                        })
+                      : t('ai.retry.waiting', {
+                          attempt: attempt.attempt,
+                          max: attempt.maxAttempts,
+                          seconds: Math.max(1, Math.ceil(attempt.retryInMs / 1000))
+                        })
+                  setTranslationReview((current) =>
+                    current?.tabKey === state.tabKey ? { ...current, status } : current
+                  )
+                }
+              }),
+              run
+            )
           : await (() => {
               const selection = state.aiSelection
               if (!selection || !hasKey(selection.providerId)) {
@@ -3531,7 +3552,8 @@ function App(): JSX.Element {
           }))
       const failedReview = inspectDiagramLocalization(modeler, state.review.target, {
         source: state.review.source,
-        providerFailures: failures
+        providerFailures: failures,
+        ...state.review.localResources
       })
       const status = cancelled
         ? t('translationReview.cancelled')
