@@ -143,7 +143,7 @@ import {
   buildLibraryManifest,
   serializeLibraryManifest
 } from './library/libraryManifest'
-import { readLibraryZip, type LibraryImportResult } from './library/zipImport'
+import { readLibraryZipAsync, type LibraryImportResult } from './library/zipImport'
 import { convertAmlToBpmnFiles, looksLikeAml } from './library/apcImport'
 import { t, tPlural, type Key } from './i18n'
 import { useLang, setLang } from './i18n/useLang'
@@ -1954,7 +1954,7 @@ function App(): JSX.Element {
       if (!file) return
       try {
         const data = new Uint8Array(await file.arrayBuffer())
-        const result = readLibraryZip(data)
+        const result = await readLibraryZipAsync(data)
         if (result.entries.length === 0) {
           pushToast(t('library.import.empty'), 'info')
           return
