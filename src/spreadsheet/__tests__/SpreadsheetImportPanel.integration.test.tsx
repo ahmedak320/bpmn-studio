@@ -16,6 +16,7 @@ import {
 import type { BrowserSpreadsheetParseResult } from '../browserParserAdapters'
 import { SpreadsheetError } from '../errors'
 import { OFFICIAL_SHEET_NAMES } from '../officialTemplate'
+import { OFFICIAL_TEMPLATE_ASSET_NAMES } from '../template'
 import { validModel } from '../testFixtures'
 
 const mocks = vi.hoisted(() => ({
@@ -317,6 +318,16 @@ describe('SpreadsheetImportPanel browser workflow', () => {
     await user.click(screen.getByRole('button', { name: 'spreadsheet.template.blank' }))
     await user.click(screen.getByRole('button', { name: 'spreadsheet.template.example' }))
     expect(mocks.downloadBlob).toHaveBeenCalledTimes(2)
+    expect(mocks.downloadBlob).toHaveBeenNthCalledWith(
+      1,
+      expect.any(Blob),
+      OFFICIAL_TEMPLATE_ASSET_NAMES.blank
+    )
+    expect(mocks.downloadBlob).toHaveBeenNthCalledWith(
+      2,
+      expect.any(Blob),
+      OFFICIAL_TEMPLATE_ASSET_NAMES.example
+    )
 
     const file = new File([new Uint8Array([80, 75, 3, 4])], 'official.xlsx', {
       type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'

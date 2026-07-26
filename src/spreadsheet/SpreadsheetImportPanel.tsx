@@ -54,7 +54,7 @@ import {
   prepareTransactionalImportPlan,
   serializeSpreadsheetImportReport
 } from './transaction'
-import { createOfficialWorkbookTemplate } from './template'
+import { createOfficialWorkbookTemplate, OFFICIAL_TEMPLATE_ASSET_NAMES } from './template'
 import { validateProcessWorkbookModel } from './validation'
 import {
   WIZARD_SHEET_ROLES,
@@ -172,7 +172,7 @@ function downloadWorkbookTemplate(kind: 'blank' | 'example'): void {
   const blob = new Blob([owned.buffer], {
     type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
   })
-  downloadSpreadsheetBlob(blob, `OrbitPM-Process-Import-${kind}.xlsx`)
+  downloadSpreadsheetBlob(blob, OFFICIAL_TEMPLATE_ASSET_NAMES[kind])
 }
 
 function downloadReport(report: SpreadsheetImportReport): void {

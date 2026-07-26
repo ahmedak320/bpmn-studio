@@ -3,7 +3,10 @@ import { readFileSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 
-import { createOfficialWorkbookTemplate } from '../../src/spreadsheet/template'
+import {
+  createOfficialWorkbookTemplate,
+  OFFICIAL_TEMPLATE_ASSET_NAMES
+} from '../../src/spreadsheet/template'
 
 const HERE = dirname(fileURLToPath(import.meta.url))
 const DIST = resolve(HERE, '../../dist/index.html')
@@ -287,7 +290,7 @@ test('official Excel template imports through the worker and opens validated BPM
   const panel = await openSpreadsheetPanel(page)
   const workbook = createOfficialWorkbookTemplate('example')
   await panel.locator('input[type="file"][accept*=".xlsx"]').setInputFiles({
-    name: 'OrbitPM-Process-Import-example.xlsx',
+    name: OFFICIAL_TEMPLATE_ASSET_NAMES.example,
     mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
     buffer: Buffer.from(workbook)
   })
