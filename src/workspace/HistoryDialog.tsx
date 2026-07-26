@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useState } from 'react'
 import { AccessibleDialog } from '../common/AccessibleDialog'
+import { TextInputModal } from '../common/prompt/TextInputModal'
 import { t } from '../i18n'
+import type { RestoreHistoryRevisionResult } from '../sessions/historyRestore'
 import {
   type HistoryDiff,
   type HistoryPreview,
@@ -8,22 +10,45 @@ import {
   PortableHistoryManager
 } from './history'
 
+export type HistoryDialogRestoreResult = RestoreHistoryRevisionResult
+export type HistoryDialogRestoreHandler = (
+  revision: HistoryRevision
+) => Promise<HistoryDialogRestoreResult>
+
 export interface HistoryDialogProps {
   manager: PortableHistoryManager
   currentXml: (path: string) => string | undefined
   onChanged: () => void | Promise<void>
+  /**
+   * Restoring an existing file must pass through the document-session
+   * integration so storage and a matching live editor cannot silently
+   * diverge. The dialog remains useful for preview/diff/copy without this
+   * callback, but disables in-place restore.
+   */
+  onRestore?: HistoryDialogRestoreHandler
   onClose: () => void
+}
+
+interface RestoreCopyRequest {
+  revision: HistoryRevision
+  destination: string
+}
+
+function errorMessage(cause: unknown): string {
+  return cause instanceof Error ? cause.message : String(cause)
 }
 
 export function HistoryDialog({
   manager,
   currentXml,
   onChanged,
+  onRestore,
   onClose
 }: HistoryDialogProps): JSX.Element {
   const [revisions, setRevisions] = useState<HistoryRevision[]>([])
   const [preview, setPreview] = useState<HistoryPreview | null>(null)
   const [diff, setDiff] = useState<HistoryDiff | null>(null)
+  const [restoreCopy, setRestoreCopy] = useState<RestoreCopyRequest | null>(null)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
@@ -49,6 +74,52 @@ export function HistoryDialog({
     } finally {
       setBusy(false)
     }
+  }
+
+  const refreshAfterCommittedRestore = async (): Promise<unknown | null> => {
+    let refreshError: unknown | null = null
+    try {
+      await onChanged()
+    } catch (cause) {
+      refreshError = cause
+    }
+    try {
+      await load()
+    } catch (cause) {
+      refreshError ??= cause
+    }
+    return refreshError
+  }
+
+  const handleRestoreResult = async (result: HistoryDialogRestoreResult): Promise<void> => {
+    if (result.status === 'restored') {
+      const refreshError = await refreshAfterCommittedRestore()
+      if (refreshError !== null) {
+        throw new Error(
+          `The revision was restored in storage, but the workspace could not be refreshed: ${errorMessage(refreshError)}`
+        )
+      }
+      return
+    }
+    if (result.status === 'storage-restored-session-refresh-failed') {
+      const refreshError = await refreshAfterCommittedRestore()
+      const details = [result.error, refreshError]
+        .filter((cause): cause is unknown => cause !== null)
+        .map(errorMessage)
+        .filter((message, index, messages) => messages.indexOf(message) === index)
+        .join(' ')
+      throw new Error(
+        `The revision was restored in storage, but the open session could not be refreshed.${details ? ` ${details}` : ''}`
+      )
+    }
+    if (result.status === 'failed') {
+      throw result.error instanceof Error ? result.error : new Error(errorMessage(result.error))
+    }
+    throw new Error(
+      `Restore did not complete (${result.outcome.status}${
+        result.outcome.status === 'external-conflict' ? `: ${result.outcome.reason}` : ''
+      }).`
+    )
   }
 
   return (
@@ -163,17 +234,13 @@ export function HistoryDialog({
                 <button
                   type="button"
                   className="orbitpm-lite-chrome-btn"
-                  disabled={busy}
-                  onClick={() =>
+                  disabled={busy || !onRestore}
+                  onClick={() => {
+                    if (!onRestore) return
                     void run(async () => {
-                      const result = await manager.restore(revision)
-                      if (result.outcome.status !== 'success') {
-                        throw new Error(`Restore did not complete (${result.outcome.status}).`)
-                      }
-                      await onChanged()
-                      await load()
+                      await handleRestoreResult(await onRestore(revision))
                     })
-                  }
+                  }}
                 >
                   {t('workspace.history.restore')}
                 </button>
@@ -181,20 +248,12 @@ export function HistoryDialog({
                   type="button"
                   className="orbitpm-lite-chrome-btn"
                   disabled={busy}
-                  onClick={() => {
-                    const destination = window.prompt(
-                      t('workspace.history.copyPrompt'),
-                      revision.originalPath.replace(/\.bpmn$/i, '-restored.bpmn')
-                    )
-                    if (!destination) return
-                    void run(async () => {
-                      const outcome = await manager.restoreAsCopy(revision, destination)
-                      if (outcome.status !== 'success') {
-                        throw new Error(`Restore did not complete (${outcome.status}).`)
-                      }
-                      await onChanged()
+                  onClick={() =>
+                    setRestoreCopy({
+                      revision,
+                      destination: revision.originalPath.replace(/\.bpmn$/i, '-restored.bpmn')
                     })
-                  }}
+                  }
                 >
                   {t('workspace.history.restoreCopy')}
                 </button>
@@ -258,6 +317,33 @@ export function HistoryDialog({
               ))}
         </div>
       )}
+      <TextInputModal
+        open={restoreCopy !== null}
+        title={t('workspace.history.restoreCopy')}
+        label={t('workspace.history.copyPrompt')}
+        value={restoreCopy?.destination ?? ''}
+        onChange={(destination) =>
+          setRestoreCopy((current) => (current ? { ...current, destination } : null))
+        }
+        okLabel={t('workspace.history.restoreCopy')}
+        cancelLabel={t('modal.cancel')}
+        onOk={() => {
+          if (!restoreCopy) return
+          const request = restoreCopy
+          setRestoreCopy(null)
+          void run(async () => {
+            const outcome = await manager.restoreAsCopy(
+              request.revision,
+              request.destination.trim()
+            )
+            if (outcome.status !== 'success') {
+              throw new Error(`Restore did not complete (${outcome.status}).`)
+            }
+            await onChanged()
+          })
+        }}
+        onCancel={() => setRestoreCopy(null)}
+      />
     </AccessibleDialog>
   )
 }
