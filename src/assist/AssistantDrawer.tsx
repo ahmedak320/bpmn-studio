@@ -957,7 +957,7 @@ const TAB_STYLE: CSSProperties = {
   borderBottom: '2px solid transparent',
   background: 'transparent',
   color: 'var(--orbitpm-muted)',
-  font: 'inherit',
+  fontFamily: 'inherit',
   fontSize: 12.5,
   padding: '0.3rem 0.5rem 0.45rem',
   cursor: 'pointer'
