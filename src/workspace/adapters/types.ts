@@ -28,6 +28,7 @@ export interface WorkspaceStorageInfo {
 
 export type WorkspaceErrorCode =
   | 'invalid-path'
+  | 'invalid-encoding'
   | 'not-found'
   | 'already-exists'
   | 'not-a-file'

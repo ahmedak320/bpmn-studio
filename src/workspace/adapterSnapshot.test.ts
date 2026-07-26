@@ -87,6 +87,51 @@ describe('snapshotAdapterWorkspace', () => {
     ])
   })
 
+  it('isolates a BPMN file whose bytes are not valid UTF-8', async () => {
+    const memory = new MemoryWorkspaceAdapter({
+      files: {
+        'good.bpmn': '<good />',
+        'broken.bpmn': '<placeholder />'
+      }
+    })
+    const adapter: WorkspaceAdapter = {
+      ...memory,
+      id: memory.id,
+      mode: memory.mode,
+      storage: memory.storage,
+      list: (...args) => memory.list(...args),
+      read: async (path) => {
+        const snapshot = await memory.read(path)
+        return path === 'broken.bpmn'
+          ? {
+              ...snapshot,
+              bytes: new Uint8Array([0x3c, 0xff, 0x3e]),
+              size: 3
+            }
+          : snapshot
+      },
+      writeAtomic: (...args) => memory.writeAtomic(...args),
+      rename: (...args) => memory.rename(...args),
+      move: (...args) => memory.move(...args),
+      remove: (...args) => memory.remove(...args),
+      createFolder: (...args) => memory.createFolder(...args),
+      exportBackup: (...args) => memory.exportBackup(...args)
+    }
+
+    const snapshot = await snapshotAdapterWorkspace(adapter, 'Workspace')
+
+    expect(snapshot.files.map((file) => file.relPath)).toEqual(['good.bpmn'])
+    expect(snapshot.issues).toEqual([
+      expect.objectContaining({
+        code: 'invalid-encoding',
+        operation: 'read',
+        path: 'broken.bpmn',
+        message: 'could not decode'
+      })
+    ])
+    expect(snapshot.tree.children?.map((node) => node.name)).toEqual(['broken.bpmn', 'good.bpmn'])
+  })
+
   it('keeps portable history internals out of the user tree and index', async () => {
     const adapter = new MemoryWorkspaceAdapter({
       files: {

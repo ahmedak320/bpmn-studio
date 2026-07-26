@@ -103,7 +103,9 @@ describe('looksLikeBpmnXml', () => {
 
   it('rejects SVG', () => {
     expect(
-      looksLikeBpmnXml('<svg xmlns="http://www.w3.org/2000/svg"><rect width="10" height="10"/></svg>')
+      looksLikeBpmnXml(
+        '<svg xmlns="http://www.w3.org/2000/svg"><rect width="10" height="10"/></svg>'
+      )
     ).toBe(false)
   })
 
@@ -125,9 +127,9 @@ describe('looksLikeBpmnXml', () => {
   })
 
   it('rejects a definitions element with no BPMN namespace anywhere in the document', () => {
-    expect(looksLikeBpmnXml('<definitions xmlns="http://example.com/not-bpmn"><process/></definitions>')).toBe(
-      false
-    )
+    expect(
+      looksLikeBpmnXml('<definitions xmlns="http://example.com/not-bpmn"><process/></definitions>')
+    ).toBe(false)
   })
 })
 
@@ -139,8 +141,24 @@ describe('isInternalDrag', () => {
   })
 })
 
-function fakeFile(name: string, text: string): { name: string; text: () => Promise<string> } {
-  return { name, text: async () => text }
+function bytesBuffer(bytes: Uint8Array): ArrayBuffer {
+  const owned = Uint8Array.from(bytes)
+  return owned.buffer
+}
+
+function fakeFile(
+  name: string,
+  text: string
+): { name: string; arrayBuffer: () => Promise<ArrayBuffer> } {
+  const bytes = new TextEncoder().encode(text)
+  return { name, arrayBuffer: async () => bytesBuffer(bytes) }
+}
+
+function fakeByteFile(
+  name: string,
+  bytes: Uint8Array
+): { name: string; arrayBuffer: () => Promise<ArrayBuffer> } {
+  return { name, arrayBuffer: async () => bytesBuffer(bytes) }
 }
 
 describe('collectDroppedBpmn — flat files fallback', () => {
@@ -175,7 +193,10 @@ describe('collectDroppedBpmn — flat files fallback', () => {
       items: [],
       files: [
         fakeFile('a.bpmn', 'A'),
-        fakeFile('process.xml', '<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" />'),
+        fakeFile(
+          'process.xml',
+          '<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" />'
+        ),
         fakeFile('PROCESS2.XML', 'not actually bpmn content'),
         fakeFile('n.txt', 'N')
       ]
@@ -200,6 +221,20 @@ describe('collectDroppedBpmn — flat files fallback', () => {
     const out = await collectDroppedBpmn(dt)
     expect(out.map((d) => d.name).sort()).toEqual(['a.bpmn', 'b.apc', 'c.xml'])
   })
+
+  it('rejects malformed UTF-8 with a stable error code instead of replacement characters', async () => {
+    const out = await collectDroppedBpmn({
+      items: [],
+      files: [fakeByteFile('broken.bpmn', new Uint8Array([0x3c, 0xff, 0x3e]))]
+    })
+
+    await expect(out[0]!.getText()).rejects.toMatchObject({
+      code: 'invalid-encoding',
+      operation: 'read',
+      path: 'broken.bpmn',
+      message: 'could not decode'
+    })
+  })
 })
 
 describe('collectDroppedBpmn — handle walk (folder support)', () => {
@@ -207,7 +242,7 @@ describe('collectDroppedBpmn — handle walk (folder support)', () => {
     const fileHandle = (name: string, text: string): unknown => ({
       kind: 'file',
       name,
-      getFile: async () => ({ text: async () => text })
+      getFile: async () => fakeFile(name, text)
     })
     const dirHandle = {
       kind: 'directory',
@@ -224,7 +259,9 @@ describe('collectDroppedBpmn — handle walk (folder support)', () => {
       ]
     }
     const out = await collectDroppedBpmn(dt as never)
-    const byPath = Object.fromEntries(await Promise.all(out.map(async (d) => [d.relPath, await d.getText()])))
+    const byPath = Object.fromEntries(
+      await Promise.all(out.map(async (d) => [d.relPath, await d.getText()]))
+    )
     expect(byPath).toEqual({ 'order.bpmn': 'ORDER', 'Sub/inner.bpmn': 'INNER' })
   })
 
@@ -232,7 +269,7 @@ describe('collectDroppedBpmn — handle walk (folder support)', () => {
     const fileHandle = (name: string, text: string): unknown => ({
       kind: 'file',
       name,
-      getFile: async () => ({ text: async () => text })
+      getFile: async () => fakeFile(name, text)
     })
     const dirHandle = {
       kind: 'directory',
@@ -250,7 +287,9 @@ describe('collectDroppedBpmn — handle walk (folder support)', () => {
       ]
     }
     const out = await collectDroppedBpmn(dt as never)
-    const byPath = Object.fromEntries(await Promise.all(out.map(async (d) => [d.relPath, await d.getText()])))
+    const byPath = Object.fromEntries(
+      await Promise.all(out.map(async (d) => [d.relPath, await d.getText()]))
+    )
     expect(byPath).toEqual({
       'order.xml': 'ORDER_XML',
       'Sub/inner.xml': 'INNER_XML',

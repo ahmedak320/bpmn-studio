@@ -1,6 +1,7 @@
 import type { LiteTreeNode, FileMeta } from '../fs/fsAccess'
 import type { WorkspaceAdapter, WorkspaceEntry, WorkspaceFailure } from './adapters'
 import { workspaceFailure } from './adapters'
+import { decodeUtf8Strict } from './utf8'
 
 export interface AdapterWorkspaceSnapshot {
   tree: LiteTreeNode
@@ -118,7 +119,10 @@ export async function snapshotAdapterWorkspace(
         const snapshot = await adapter.read(entry.path)
         return {
           relPath: entry.path,
-          xml: new TextDecoder().decode(snapshot.bytes),
+          xml: decodeUtf8Strict(snapshot.bytes, {
+            operation: 'read',
+            path: entry.path
+          }),
           lastModified: snapshot.modifiedAt,
           size: snapshot.size
         }

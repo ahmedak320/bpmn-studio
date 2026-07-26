@@ -10,6 +10,8 @@
 // that lack it. Kept free of React/DOM state so the parsing is
 // unit-testable with fake DataTransfer-like objects.
 
+import { decodeUtf8Strict } from './utf8'
+
 /** Marks an in-app tree drag (move) so an external Explorer drop (import) can be
  *  told apart from a node being dragged within the tree. */
 export const INTERNAL_DND_MIME = 'application/x-orbitpm-node'
@@ -99,8 +101,16 @@ export function isInternalDrag(dt: Pick<DataTransfer, 'types'>): boolean {
 interface HandleLike {
   kind: 'file' | 'directory'
   name: string
-  getFile?: () => Promise<{ text: () => Promise<string> }>
+  getFile?: () => Promise<{ arrayBuffer: () => Promise<ArrayBuffer> }>
   entries?: () => AsyncIterableIterator<[string, HandleLike]>
+}
+
+async function decodeDroppedFile(
+  file: { arrayBuffer: () => Promise<ArrayBuffer> },
+  path: string
+): Promise<string> {
+  const bytes = new Uint8Array(await file.arrayBuffer())
+  return decodeUtf8Strict(bytes, { operation: 'read', path })
 }
 
 async function walkHandle(handle: HandleLike, prefix: string, out: DroppedBpmn[]): Promise<void> {
@@ -112,7 +122,7 @@ async function walkHandle(handle: HandleLike, prefix: string, out: DroppedBpmn[]
       name: handle.name,
       getText: async () => {
         const file = await handle.getFile!()
-        return file.text()
+        return decodeDroppedFile(file, relPath)
       }
     })
     return
@@ -132,7 +142,7 @@ interface DataTransferItemLike {
 
 interface DataTransferLike {
   items?: ArrayLike<DataTransferItemLike> | null
-  files?: ArrayLike<{ name: string; text: () => Promise<string> }> | null
+  files?: ArrayLike<{ name: string; arrayBuffer: () => Promise<ArrayBuffer> }> | null
 }
 
 /**
@@ -164,7 +174,11 @@ export async function collectDroppedBpmn(dt: DataTransferLike): Promise<DroppedB
 
   for (const file of Array.from(dt.files ?? [])) {
     if (!isImportableName(file.name)) continue
-    out.push({ relPath: file.name, name: file.name, getText: () => file.text() })
+    out.push({
+      relPath: file.name,
+      name: file.name,
+      getText: () => decodeDroppedFile(file, file.name)
+    })
   }
   return out
 }
