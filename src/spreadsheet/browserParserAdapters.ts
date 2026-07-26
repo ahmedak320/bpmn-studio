@@ -7,7 +7,7 @@ import type {
   SpreadsheetValidationIssue,
   XlsxParserAdapter
 } from './contracts'
-import { csvRowsToWorkbookData, decodeUtf8Csv, parseCsvBoundary } from './csv'
+import { parseCsvWorkbookBoundary } from './csv'
 import { SpreadsheetError, throwIfAborted } from './errors'
 import { validateSpreadsheetInput } from './fileFormat'
 import { parseXlsxBoundary, type WorkbookBoundaryResult } from './workbookBoundary'
@@ -197,17 +197,19 @@ export async function parseBrowserSpreadsheet(
     })
   }
 
-  // Fatal decoding remains on the trusted boundary before the worker receives
-  // normalized UTF-8, matching parseCsvBoundary's contract.
-  decodeUtf8Csv(bytes)
-  const rows = await parseCsvBoundary(file.name, bytes, {
-    ...options,
-    delimiter: options.delimiter,
-    adapter: options.csvAdapter ?? new BrowserCsvParserAdapter()
-  })
+  const workbook = await parseCsvWorkbookBoundary(
+    file.name,
+    bytes,
+    options.worksheetName ?? 'CSV',
+    {
+      ...options,
+      delimiter: options.delimiter,
+      adapter: options.csvAdapter ?? new BrowserCsvParserAdapter()
+    }
+  )
   return Object.freeze({
     format,
-    workbook: csvRowsToWorkbookData(rows, options.worksheetName ?? 'CSV'),
+    workbook,
     issues: Object.freeze([])
   })
 }

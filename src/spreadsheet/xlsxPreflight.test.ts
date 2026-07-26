@@ -370,6 +370,33 @@ describe('XLSX displayed-value parser boundary', () => {
     expect(adapter.parseDisplayedValues).not.toHaveBeenCalled()
   })
 
+  it('keeps post-worker validation cancelable inside a large worksheet', async () => {
+    const controller = new AbortController()
+    const workbook: ParsedWorkbookData = {
+      sheets: [
+        {
+          name: 'Wide',
+          rows: [
+            Array.from({ length: SPREADSHEET_LIMITS.columns }, (_, index) => ({
+              value: `cell-${index}`
+            }))
+          ]
+        }
+      ]
+    }
+    const adapter = { parseDisplayedValues: vi.fn(async () => workbook) }
+
+    await expect(
+      parseXlsxBoundary('book.xlsx', template, adapter, {
+        signal: controller.signal,
+        onProgress: (progress) => {
+          if (progress.phase === 'validate' && progress.completed > 0) controller.abort()
+        }
+      })
+    ).rejects.toMatchObject({ code: 'parse-cancelled' })
+    expect(adapter.parseDisplayedValues).toHaveBeenCalledOnce()
+  })
+
   it('ignores formatting properties supplied outside the adapter contract', () => {
     const cell = {
       value: 'displayed',

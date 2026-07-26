@@ -7,6 +7,7 @@ import type {
   XlsxParserAdapter
 } from './contracts'
 import { cellAddress } from './cellAddress'
+import { validateParsedWorkbookDataCooperatively } from './cooperativeValidation'
 import { SpreadsheetError, throwIfAborted } from './errors'
 import { validateSpreadsheetInput } from './fileFormat'
 import { SPREADSHEET_LIMITS } from './limits'
@@ -170,7 +171,7 @@ export async function parseXlsxBoundary(
   throwIfAborted(options.signal)
   const parsed = await adapter.parseDisplayedValues(bytes, options)
   throwIfAborted(options.signal)
-  const validated = validateParsedWorkbookData(parsed, options)
+  const validated = await validateParsedWorkbookDataCooperatively(parsed, options)
   return Object.freeze({
     workbook: validated.workbook,
     preflight,

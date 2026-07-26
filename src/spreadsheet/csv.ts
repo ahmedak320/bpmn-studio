@@ -1,4 +1,13 @@
-import type { CsvParserAdapter, ParsedWorkbookData, SpreadsheetParseOptions } from './contracts'
+import type {
+  CsvParserAdapter,
+  ParsedWorkbookData,
+  SpreadsheetParseOptions,
+  WorkbookCell
+} from './contracts'
+import {
+  DEFAULT_COOPERATIVE_VALIDATION_CHUNK_SIZE,
+  MAX_COOPERATIVE_VALIDATION_CHUNK_SIZE
+} from './cooperativeValidation'
 import { SpreadsheetError, throwIfAborted } from './errors'
 import { validateSpreadsheetInput } from './fileFormat'
 import { SPREADSHEET_LIMITS } from './limits'
@@ -6,6 +15,49 @@ import { SPREADSHEET_LIMITS } from './limits'
 export interface CsvParseOptions extends SpreadsheetParseOptions {
   readonly delimiter?: string
   readonly adapter?: CsvParserAdapter
+  /** Bounded row/cell units between event-loop yields. */
+  readonly chunkSize?: number
+  /** Deterministic test seam; production yields to a new browser task. */
+  readonly yieldControl?: () => Promise<void>
+}
+
+function cooperativeChunkSize(value: number | undefined): number {
+  if (value === undefined || !Number.isFinite(value)) {
+    return DEFAULT_COOPERATIVE_VALIDATION_CHUNK_SIZE
+  }
+  return Math.min(MAX_COOPERATIVE_VALIDATION_CHUNK_SIZE, Math.max(1, Math.floor(value)))
+}
+
+function yieldToBrowser(): Promise<void> {
+  return new Promise((resolve) => globalThis.setTimeout(resolve, 0))
+}
+
+async function validateUtf8BytesCooperatively(
+  bytes: Uint8Array,
+  options: CsvParseOptions
+): Promise<void> {
+  const decoder = new TextDecoder('utf-8', { fatal: true })
+  const byteChunkSize = 1024 * 1024
+  try {
+    for (let offset = 0; offset < bytes.length; offset += byteChunkSize) {
+      throwIfAborted(options.signal)
+      decoder.decode(bytes.subarray(offset, Math.min(bytes.length, offset + byteChunkSize)), {
+        stream: true
+      })
+      await (options.yieldControl ?? yieldToBrowser)()
+      throwIfAborted(options.signal)
+    }
+    decoder.decode()
+  } catch (cause) {
+    if (cause instanceof SpreadsheetError) throw cause
+    throw new SpreadsheetError('invalid-utf8', {}, { cause })
+  }
+}
+
+function withoutUtf8Bom(bytes: Uint8Array): Uint8Array {
+  return bytes.length >= 3 && bytes[0] === 0xef && bytes[1] === 0xbb && bytes[2] === 0xbf
+    ? bytes.subarray(3)
+    : bytes
 }
 
 function validateDelimiter(delimiter: string): void {
@@ -81,6 +133,86 @@ export function validateCsvRows(
       })
     )
   })
+}
+
+async function validateCsvRowsCooperatively(
+  input: readonly (readonly string[])[],
+  options: CsvParseOptions,
+  toWorkbookCells: boolean
+): Promise<readonly (readonly (string | Readonly<WorkbookCell>)[])[]> {
+  if (input.length > SPREADSHEET_LIMITS.inputRows) {
+    throw new SpreadsheetError('row-limit', {
+      actual: input.length,
+      limit: SPREADSHEET_LIMITS.inputRows
+    })
+  }
+  throwIfAborted(options.signal)
+  const rows: (readonly (string | Readonly<WorkbookCell>)[])[] = []
+  const chunkSize = cooperativeChunkSize(options.chunkSize)
+  const yieldControl = options.yieldControl ?? yieldToBrowser
+  let workRemaining = chunkSize
+  let nonEmptyCells = 0
+
+  const checkpoint = async (completed: number): Promise<void> => {
+    throwIfAborted(options.signal)
+    options.onProgress?.({ phase: 'validate', completed, total: input.length })
+    throwIfAborted(options.signal)
+    await yieldControl()
+    throwIfAborted(options.signal)
+    workRemaining = chunkSize
+  }
+
+  options.onProgress?.({ phase: 'validate', completed: 0, total: input.length })
+  throwIfAborted(options.signal)
+  for (let rowIndex = 0; rowIndex < input.length; rowIndex += 1) {
+    const sourceRow = input[rowIndex]!
+    if (!Array.isArray(sourceRow)) {
+      throw new SpreadsheetError('adapter-contract-violation', {
+        contract: 'csv-row',
+        row: rowIndex + 1
+      })
+    }
+    if (sourceRow.length > SPREADSHEET_LIMITS.columns) {
+      throw new SpreadsheetError('column-limit', {
+        row: rowIndex + 1,
+        actual: sourceRow.length,
+        limit: SPREADSHEET_LIMITS.columns
+      })
+    }
+    workRemaining -= 1
+    if (workRemaining === 0) await checkpoint(rowIndex)
+
+    const row: (string | Readonly<WorkbookCell>)[] = []
+    for (let columnIndex = 0; columnIndex < sourceRow.length; columnIndex += 1) {
+      const value = sourceRow[columnIndex]
+      if (typeof value !== 'string') {
+        throw new SpreadsheetError('adapter-contract-violation', {
+          contract: 'csv-string-cell',
+          row: rowIndex + 1,
+          column: columnIndex + 1
+        })
+      }
+      limitCell(value, rowIndex + 1, columnIndex + 1)
+      if (value.length > 0) {
+        nonEmptyCells += 1
+        if (nonEmptyCells > SPREADSHEET_LIMITS.nonEmptyCells) {
+          throw new SpreadsheetError('cell-count-limit', {
+            actual: nonEmptyCells,
+            limit: SPREADSHEET_LIMITS.nonEmptyCells
+          })
+        }
+      }
+      row.push(toWorkbookCells ? Object.freeze({ value, rawValue: value }) : value)
+      workRemaining -= 1
+      if (workRemaining === 0) {
+        await checkpoint(rowIndex + (columnIndex + 1) / Math.max(1, sourceRow.length))
+      }
+    }
+    rows.push(Object.freeze(row))
+  }
+  options.onProgress?.({ phase: 'validate', completed: input.length, total: input.length })
+  throwIfAborted(options.signal)
+  return Object.freeze(rows)
 }
 
 /**
@@ -230,7 +362,7 @@ export function parseCsvText(
   return Object.freeze(rows.map((entry) => Object.freeze(entry.slice())))
 }
 
-export async function parseCsvBoundary(
+async function parseRawCsvBoundary(
   fileName: string,
   bytes: Uint8Array,
   options: CsvParseOptions = {}
@@ -243,20 +375,32 @@ export async function parseCsvBoundary(
   validateDelimiter(delimiter)
   throwIfAborted(options.signal)
 
-  // Always perform a fatal UTF-8 decode before an injected adapter gets the
-  // bytes, so worker implementations cannot silently accept a legacy encoding.
-  const decoded = decodeUtf8Csv(bytes)
+  // Always perform a fatal, cooperative UTF-8 scan before an injected adapter
+  // gets the bytes, so worker implementations cannot silently accept a legacy
+  // encoding and the browser thread remains responsive for the maximum file.
+  await validateUtf8BytesCooperatively(bytes, options)
   if (!options.adapter) {
-    return parseCsvText(decoded, options)
+    return parseCsvText(decodeUtf8Csv(bytes), options)
   }
-  const normalizedBytes = new TextEncoder().encode(decoded)
-  const rows = await options.adapter.parseUtf8(normalizedBytes, {
+  return await options.adapter.parseUtf8(withoutUtf8Bom(bytes), {
     delimiter,
     signal: options.signal,
     onProgress: options.onProgress
   })
+}
+
+export async function parseCsvBoundary(
+  fileName: string,
+  bytes: Uint8Array,
+  options: CsvParseOptions = {}
+): Promise<readonly (readonly string[])[]> {
+  const rows = await parseRawCsvBoundary(fileName, bytes, options)
   throwIfAborted(options.signal)
-  return Object.freeze(validateCsvRows(rows))
+  return (await validateCsvRowsCooperatively(
+    rows,
+    options,
+    false
+  )) as readonly (readonly string[])[]
 }
 
 /** Converts parser output to the common displayed-value workbook contract. */
@@ -285,5 +429,18 @@ export async function parseCsvWorkbookBoundary(
   worksheet: string,
   options: CsvParseOptions = {}
 ): Promise<ParsedWorkbookData> {
-  return csvRowsToWorkbookData(await parseCsvBoundary(fileName, bytes, options), worksheet)
+  const rows = await parseRawCsvBoundary(fileName, bytes, options)
+  const workbookRows = (await validateCsvRowsCooperatively(
+    rows,
+    options,
+    true
+  )) as readonly (readonly Readonly<WorkbookCell>[])[]
+  return Object.freeze({
+    sheets: Object.freeze([
+      Object.freeze({
+        name: worksheet,
+        rows: workbookRows
+      })
+    ])
+  })
 }

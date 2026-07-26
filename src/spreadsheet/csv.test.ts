@@ -98,6 +98,34 @@ describe('CSV boundary', () => {
     })
   })
 
+  it('yields, reports granular validation progress, and cancels during CSV workbook conversion', async () => {
+    const controller = new AbortController()
+    const yieldControl = vi.fn(async () => {})
+    const progress: number[] = []
+    const adapter = {
+      parseUtf8: vi.fn(async () => [Array.from({ length: 40 }, (_, index) => `value-${index}`)])
+    }
+
+    await expect(
+      parseCsvWorkbookBoundary('data.csv', encoder.encode('placeholder'), 'Activities', {
+        adapter,
+        signal: controller.signal,
+        chunkSize: 8,
+        yieldControl,
+        onProgress: (event) => {
+          if (event.phase !== 'validate') return
+          progress.push(event.completed)
+          if (event.completed > 0) controller.abort()
+        }
+      })
+    ).rejects.toMatchObject({ code: 'parse-cancelled' })
+
+    expect(adapter.parseUtf8).toHaveBeenCalledOnce()
+    expect(yieldControl).toHaveBeenCalled()
+    expect(progress[0]).toBe(0)
+    expect(progress.some((completed) => completed > 0 && completed < 1)).toBe(true)
+  })
+
   it('supports cancellation and cancelable progress', () => {
     const controller = new AbortController()
     const onProgress = vi.fn(() => controller.abort())
