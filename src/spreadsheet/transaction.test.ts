@@ -7,6 +7,7 @@ import type {
   MappingPreset,
   ProcessWorkbookModel,
   SpreadsheetBilingualAuditAdapter,
+  SyntheticBoundaryRecord,
   WorkbookFlow,
   WorkbookNode
 } from './contracts'
@@ -18,7 +19,14 @@ import {
   prepareTransactionalImportPlan,
   serializeSpreadsheetImportReport
 } from './transaction'
-import { bilingual, provenance, validModel, validProcess } from './testFixtures'
+import {
+  bilingual,
+  provenance,
+  validFlows,
+  validModel,
+  validNodes,
+  validProcess
+} from './testFixtures'
 
 const encoder = new TextEncoder()
 
@@ -85,6 +93,66 @@ function mappingPreset(): MappingPreset {
     locale: 'en'
   }
 }
+
+function syntheticBoundaryRecords(): readonly SyntheticBoundaryRecord[] {
+  const [startBase, , endBase] = validNodes()
+  const [startFlowBase, endFlowBase] = validFlows()
+  const startNode: WorkbookNode = {
+    ...startBase!,
+    id: 'Synthetic_Start',
+    idOrigin: 'generated'
+  }
+  const endNode: WorkbookNode = {
+    ...endBase!,
+    id: 'Synthetic_End',
+    idOrigin: 'generated'
+  }
+  return [
+    {
+      processId: 'leave_approval',
+      kind: 'start',
+      node: startNode,
+      flow: {
+        ...startFlowBase!,
+        id: 'Synthetic_Start_Flow',
+        idOrigin: 'generated',
+        sourceStepId: startNode.id,
+        targetStepId: 'Task_1',
+        origin: 'synthetic-boundary'
+      }
+    },
+    {
+      processId: 'leave_approval',
+      kind: 'end',
+      node: endNode,
+      flow: {
+        ...endFlowBase!,
+        id: 'Synthetic_End_Flow',
+        idOrigin: 'generated',
+        sourceStepId: 'Task_1',
+        targetStepId: endNode.id,
+        origin: 'synthetic-boundary'
+      }
+    }
+  ]
+}
+
+const EXPECTED_SYNTHETIC_BOUNDARY_SUMMARIES = [
+  {
+    processId: 'leave_approval',
+    kind: 'start',
+    nodeId: 'Synthetic_Start',
+    flowId: 'Synthetic_Start_Flow',
+    adjacentStepId: 'Task_1'
+  },
+  {
+    processId: 'leave_approval',
+    kind: 'end',
+    nodeId: 'Synthetic_End',
+    flowId: 'Synthetic_End_Flow',
+    adjacentStepId: 'Task_1'
+  }
+] as const
 
 function secondProcessModel(): ProcessWorkbookModel {
   const secondNodes: WorkbookNode[] = [
@@ -185,6 +253,7 @@ describe('transactional import preparation', () => {
           reason: 'numeric-order'
         }
       ],
+      syntheticBoundaries: syntheticBoundaryRecords(),
       now: fixedNow()
     })
 
@@ -201,6 +270,9 @@ describe('transactional import preparation', () => {
     expect(bpmn.generate).toHaveBeenCalledOnce()
     expect(plan.generatedIds).toHaveLength(1)
     expect(plan.inferredFlows).toHaveLength(1)
+    expect(plan.syntheticBoundaries).toEqual(EXPECTED_SYNTHETIC_BOUNDARY_SUMMARIES)
+    expect(plan.syntheticBoundaries[0]).not.toHaveProperty('node')
+    expect(plan.syntheticBoundaries[0]).not.toHaveProperty('flow')
   })
 
   it('does no parsing/generation work after blocking validation', async () => {
@@ -212,12 +284,14 @@ describe('transactional import preparation', () => {
       inspector: destination,
       generator: bpmn,
       bilingualAudit: audit(),
+      syntheticBoundaries: syntheticBoundaryRecords(),
       mappingPreset: mappingPreset(),
       now: fixedNow()
     })
     expect(plan.status).toBe('blocked')
     expect(plan.blockingReason).toBe('blocking-validation')
     expect(plan.mappingPreset).toEqual(mappingPreset())
+    expect(plan.syntheticBoundaries).toEqual(EXPECTED_SYNTHETIC_BOUNDARY_SUMMARIES)
     expect(bpmn.generate).not.toHaveBeenCalled()
     expect(destination.inspect).not.toHaveBeenCalled()
   })
@@ -251,6 +325,7 @@ describe('transactional import preparation', () => {
       inspector: inspector(existing),
       generator: generator(),
       bilingualAudit: audit(),
+      syntheticBoundaries: syntheticBoundaryRecords(),
       now: fixedNow()
     })
     expect(blocked.status).toBe('blocked')
@@ -496,6 +571,7 @@ describe('transaction execution and import reports', () => {
       inspector: inspector(overwrite ? { 'leave-approval.bpmn': 'base-hash' } : {}),
       generator: generator(),
       bilingualAudit: audit(),
+      syntheticBoundaries: syntheticBoundaryRecords(),
       now: fixedNow()
     })
   }
@@ -530,9 +606,15 @@ describe('transaction execution and import reports', () => {
       destinationPath: 'leave-approval.bpmn',
       checksumSha256: plan.artifacts[0]!.checksumSha256
     })
+    expect(report.syntheticBoundaries).toEqual(EXPECTED_SYNTHETIC_BOUNDARY_SUMMARIES)
     const serialized = serializeSpreadsheetImportReport(report)
     expect(serialized.endsWith('\n')).toBe(true)
     expect(serializeSpreadsheetImportReport(report)).toBe(serialized)
+    expect(JSON.parse(serialized).syntheticBoundaries).toEqual(
+      EXPECTED_SYNTHETIC_BOUNDARY_SUMMARIES
+    )
+    expect(serialized).not.toContain('"node":')
+    expect(serialized).not.toContain('"flow":')
   })
 
   it('rolls back stage and commit failures without a false-success report', async () => {
@@ -552,6 +634,7 @@ describe('transaction execution and import reports', () => {
         now: fixedNow()
       })
       expect(report.status).toBe('rolled-back')
+      expect(report.syntheticBoundaries).toEqual(EXPECTED_SYNTHETIC_BOUNDARY_SUMMARIES)
       expect(report.failure).toEqual({ code: 'transaction-failed', stage: failure })
       expect(transaction.rollback).toHaveBeenCalledOnce()
     }
@@ -574,6 +657,7 @@ describe('transaction execution and import reports', () => {
       now: fixedNow()
     })
     expect(report.status).toBe('rollback-failed')
+    expect(report.syntheticBoundaries).toEqual(EXPECTED_SYNTHETIC_BOUNDARY_SUMMARIES)
     expect(report.failure).toEqual({ code: 'transaction-failed', stage: 'rollback' })
   })
 
@@ -588,6 +672,7 @@ describe('transaction execution and import reports', () => {
       now: fixedNow()
     })
     expect(report.status).toBe('rolled-back')
+    expect(report.syntheticBoundaries).toEqual(EXPECTED_SYNTHETIC_BOUNDARY_SUMMARIES)
     expect(report.failure).toEqual({ code: 'transaction-failed', stage: 'stage' })
   })
 
@@ -598,6 +683,7 @@ describe('transaction execution and import reports', () => {
       inspector: inspector(),
       generator: generator(),
       bilingualAudit: audit(),
+      syntheticBoundaries: syntheticBoundaryRecords(),
       now: fixedNow()
     })
     const factory = { begin: vi.fn() }
@@ -606,6 +692,7 @@ describe('transaction execution and import reports', () => {
       now: fixedNow()
     })
     expect(report.status).toBe('blocked')
+    expect(report.syntheticBoundaries).toEqual(EXPECTED_SYNTHETIC_BOUNDARY_SUMMARIES)
     expect(report.mapping).toBeUndefined()
     expect(factory.begin).not.toHaveBeenCalled()
   })

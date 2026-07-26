@@ -831,6 +831,7 @@ export function SpreadsheetImportPanel({
       additionalIssues: currentReview.additionalIssues,
       generatedIds: currentReview.inference?.generatedIds,
       inferredFlows: currentReview.inference?.inferredFlowRecords,
+      syntheticBoundaries: currentReview.inference?.syntheticBoundaries,
       skippedRows: currentReview.skippedRows,
       mappingPreset: preset,
       signal
@@ -1557,6 +1558,13 @@ export function SpreadsheetImportPanel({
                 })
               : t('spreadsheet.plan.blocked')}
           </h4>
+          {plan.syntheticBoundaries.length > 0 && (
+            <div style={infoBox}>
+              {t('spreadsheet.repair.synthetic', {
+                count: plan.syntheticBoundaries.length
+              })}
+            </div>
+          )}
           {plan.blockingReason === 'translation-review' && (
             <div role="alert" style={warnBox}>
               <span>{t('spreadsheet.translation.required', translationCounts)}</span>
@@ -1621,6 +1629,13 @@ export function SpreadsheetImportPanel({
                 ? t('spreadsheet.report.rollbackFailed')
                 : t('spreadsheet.report.rolledBack')}
           </div>
+          {report.syntheticBoundaries.length > 0 && (
+            <div style={infoBox}>
+              {t('spreadsheet.repair.synthetic', {
+                count: report.syntheticBoundaries.length
+              })}
+            </div>
+          )}
           <ul style={issueList}>
             {report.artifacts.map((artifact) => (
               <li key={artifact.processId} style={issueItem}>

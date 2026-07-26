@@ -10,6 +10,7 @@ import {
   type CanonicalSheet,
   type ParsedWorkbookData,
   type SpreadsheetImportReport,
+  type SyntheticBoundarySummaryRecord,
   type TransactionalImportPlan,
   type WorkbookCell
 } from '../contracts'
@@ -36,7 +37,8 @@ const mocks = vi.hoisted(() => ({
 }))
 
 vi.mock('../../i18n', () => ({
-  t: (key: string): string => key
+  t: (key: string, values?: Readonly<Record<string, unknown>>): string =>
+    key === 'spreadsheet.repair.synthetic' ? `${key}:${String(values?.count)}` : key
 }))
 
 vi.mock('../../i18n/useLang', () => ({
@@ -213,6 +215,22 @@ const translation = {
   invalid: 0,
   translationRequired: false
 }
+const syntheticBoundarySummaries = [
+  {
+    processId: graph.process.id,
+    kind: 'start',
+    nodeId: 'Synthetic_Start',
+    flowId: 'Synthetic_Start_Flow',
+    adjacentStepId: 'Task_1'
+  },
+  {
+    processId: graph.process.id,
+    kind: 'end',
+    nodeId: 'Synthetic_End',
+    flowId: 'Synthetic_End_Flow',
+    adjacentStepId: 'Task_1'
+  }
+] as const satisfies readonly SyntheticBoundarySummaryRecord[]
 const readyPlan: TransactionalImportPlan = {
   version: 1,
   id: 'import-ready',
@@ -249,6 +267,7 @@ const readyPlan: TransactionalImportPlan = {
   ],
   generatedIds: [],
   inferredFlows: [],
+  syntheticBoundaries: syntheticBoundarySummaries,
   warnings: [],
   skippedRows: []
 }
@@ -285,6 +304,7 @@ const committedReport: SpreadsheetImportReport = {
   status: 'committed',
   generatedIds: [],
   inferredFlows: [],
+  syntheticBoundaries: syntheticBoundarySummaries,
   issues: [],
   skippedRows: [],
   artifacts: [
@@ -401,9 +421,11 @@ describe('SpreadsheetImportPanel browser workflow', () => {
 
     await user.click(screen.getByRole('button', { name: 'spreadsheet.prepare' }))
     expect(await screen.findByText('spreadsheet.plan.ready')).not.toBeNull()
+    expect(screen.getAllByText('spreadsheet.repair.synthetic:2')).toHaveLength(1)
     await user.click(screen.getByRole('button', { name: 'spreadsheet.commit' }))
 
     expect(await screen.findByText('spreadsheet.report.committed')).not.toBeNull()
+    expect(screen.getAllByText('spreadsheet.repair.synthetic:2')).toHaveLength(2)
     expect(mocks.prepare).toHaveBeenCalledOnce()
     expect(mocks.execute).toHaveBeenCalledOnce()
     expect(onCommitted).toHaveBeenCalledWith(committedReport)
@@ -413,6 +435,66 @@ describe('SpreadsheetImportPanel browser workflow', () => {
     expect(mocks.downloadBlob).toHaveBeenCalledTimes(3)
     await user.click(screen.getByRole('button', { name: 'spreadsheet.reset' }))
     expect(screen.queryByText('spreadsheet.officialDetected')).toBeNull()
+  })
+
+  it('passes confirmed synthetic boundary records into the plan and renders their count', async () => {
+    const user = userEvent.setup()
+    const workbook = officialWorkbook()
+    const steps = workbook.sheets.find(({ name }) => name === OFFICIAL_SHEET_NAMES.steps)!
+    const flows = workbook.sheets.find(({ name }) => name === OFFICIAL_SHEET_NAMES.flows)!
+    const boundaryWorkbook: ParsedWorkbookData = {
+      ...workbook,
+      sheets: workbook.sheets.map((sheet) =>
+        sheet === steps
+          ? {
+              ...sheet,
+              rows: [
+                sheet.rows[0]!,
+                objectRow('steps', {
+                  process_id: 'leave_approval',
+                  step_id: 'Task_1',
+                  order: 1,
+                  type: 'userTask',
+                  name_en: 'Review',
+                  name_ar: 'مراجعة'
+                })
+              ]
+            }
+          : sheet === flows
+            ? { ...sheet, rows: [sheet.rows[0]!] }
+            : sheet
+      )
+    }
+    mocks.parse.mockResolvedValue(parseResult(boundaryWorkbook, 'xlsx'))
+    renderPanel()
+
+    await user.upload(
+      screen.getByLabelText(/spreadsheet\.upload/),
+      new File([new Uint8Array([80, 75, 3, 4])], 'boundaries.xlsx', {
+        type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+      })
+    )
+    await user.click(await screen.findByRole('button', { name: 'spreadsheet.review' }))
+    const confirmation = await screen.findByRole('checkbox', {
+      name: /spreadsheet\.repair\.confirmSynthetic/
+    })
+    await user.click(confirmation)
+    await user.click(screen.getByRole('button', { name: 'spreadsheet.review' }))
+    await user.click(await screen.findByRole('button', { name: 'spreadsheet.prepare' }))
+
+    const passed = mocks.prepare.mock.calls[0]?.[1]?.syntheticBoundaries
+    expect(passed?.map(({ kind }: { kind: string }) => kind)).toEqual(['start', 'end'])
+    expect(passed?.[0]).toMatchObject({
+      kind: 'start',
+      node: { type: 'startEvent' },
+      flow: { targetStepId: 'Task_1', origin: 'synthetic-boundary' }
+    })
+    expect(passed?.[1]).toMatchObject({
+      kind: 'end',
+      node: { type: 'endEvent' },
+      flow: { sourceStepId: 'Task_1', origin: 'synthetic-boundary' }
+    })
+    expect(screen.getAllByText('spreadsheet.repair.synthetic:2')).toHaveLength(2)
   })
 
   it('supports ordinary-sheet mapping edits, draft save, and preset failures', async () => {

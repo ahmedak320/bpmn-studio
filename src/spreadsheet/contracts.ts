@@ -367,6 +367,18 @@ export interface SyntheticBoundaryRecord {
   readonly flow: WorkbookFlow
 }
 
+/**
+ * Report-safe synthetic boundary provenance. Unlike SyntheticBoundaryRecord,
+ * this contains IDs only and never embeds workbook rows, labels, or metadata.
+ */
+export interface SyntheticBoundarySummaryRecord {
+  readonly processId: string
+  readonly kind: 'start' | 'end'
+  readonly nodeId: string
+  readonly flowId: string
+  readonly adjacentStepId: string
+}
+
 export interface GraphInferencePlan {
   readonly modelFingerprint: string
   readonly flowMode: MappingPreset['inference']['flowMode']
@@ -451,6 +463,7 @@ export interface TransactionalImportPlan {
   readonly artifacts: readonly PreparedImportArtifact[]
   readonly generatedIds: readonly GeneratedIdRecord[]
   readonly inferredFlows: readonly InferredFlowRecord[]
+  readonly syntheticBoundaries: readonly SyntheticBoundarySummaryRecord[]
   readonly warnings: readonly SpreadsheetValidationIssue[]
   readonly skippedRows: readonly RecordProvenance[]
   readonly mappingPreset?: MappingPreset
@@ -503,6 +516,7 @@ export interface SpreadsheetImportReport {
   readonly mapping?: MappingPreset
   readonly generatedIds: readonly GeneratedIdRecord[]
   readonly inferredFlows: readonly InferredFlowRecord[]
+  readonly syntheticBoundaries: readonly SyntheticBoundarySummaryRecord[]
   readonly issues: readonly SpreadsheetValidationIssue[]
   readonly skippedRows: readonly RecordProvenance[]
   readonly artifacts: readonly ImportReportArtifact[]

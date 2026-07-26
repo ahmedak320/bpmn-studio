@@ -15,6 +15,8 @@ import {
   type SpreadsheetBilingualAuditAdapter,
   type SpreadsheetImportReport,
   type SpreadsheetValidationIssue,
+  type SyntheticBoundaryRecord,
+  type SyntheticBoundarySummaryRecord,
   type TransactionalImportPlan,
   type WorkspaceDeliveryMode
 } from './contracts'
@@ -34,6 +36,7 @@ export interface PrepareTransactionalImportOptions {
   readonly additionalIssues?: readonly SpreadsheetValidationIssue[]
   readonly generatedIds?: readonly GeneratedIdRecord[]
   readonly inferredFlows?: readonly InferredFlowRecord[]
+  readonly syntheticBoundaries?: readonly SyntheticBoundaryRecord[]
   readonly skippedRows?: readonly RecordProvenance[]
   readonly mappingPreset?: MappingPreset
   readonly signal?: AbortSignal
@@ -175,6 +178,23 @@ function validationIssueFromPipeline(
   )
 }
 
+function syntheticBoundarySummaries(
+  records: readonly SyntheticBoundaryRecord[] = []
+): readonly SyntheticBoundarySummaryRecord[] {
+  return Object.freeze(
+    records.map((record) =>
+      Object.freeze({
+        processId: record.processId,
+        kind: record.kind,
+        nodeId: record.node.id,
+        flowId: record.flow.id,
+        adjacentStepId:
+          record.kind === 'start' ? record.flow.targetStepId : record.flow.sourceStepId
+      })
+    )
+  )
+}
+
 function blockedPlan(
   model: ProcessWorkbookModel,
   createdAt: string,
@@ -203,6 +223,7 @@ function blockedPlan(
     artifacts: Object.freeze(artifacts),
     generatedIds: Object.freeze([...(options.generatedIds ?? [])]),
     inferredFlows: Object.freeze([...(options.inferredFlows ?? [])]),
+    syntheticBoundaries: syntheticBoundarySummaries(options.syntheticBoundaries),
     warnings: Object.freeze(validation.issues.filter(({ severity }) => severity === 'warning')),
     skippedRows: Object.freeze([...(options.skippedRows ?? [])]),
     ...(sanitizedPreset ? { mappingPreset: sanitizedPreset } : {}),
@@ -395,6 +416,7 @@ export async function prepareTransactionalImportPlan(
     artifacts: Object.freeze(prepared),
     generatedIds: Object.freeze([...(options.generatedIds ?? [])]),
     inferredFlows: Object.freeze([...(options.inferredFlows ?? [])]),
+    syntheticBoundaries: syntheticBoundarySummaries(options.syntheticBoundaries),
     warnings: Object.freeze(validation.issues.filter(({ severity }) => severity === 'warning')),
     skippedRows: Object.freeze([...(options.skippedRows ?? [])]),
     ...(sanitizedPreset ? { mappingPreset: sanitizedPreset } : {})
@@ -432,6 +454,7 @@ function makeReport(
     ...(plan.mappingPreset ? { mapping: plan.mappingPreset } : {}),
     generatedIds: plan.generatedIds,
     inferredFlows: plan.inferredFlows,
+    syntheticBoundaries: plan.syntheticBoundaries,
     issues: plan.validation.issues,
     skippedRows: plan.skippedRows,
     artifacts: reportArtifacts(plan),
