@@ -16,21 +16,22 @@ test.beforeAll(() => {
   )
 })
 
-test('BUILT dist CSP whitelists exactly the three browser-callable providers (incl. OpenRouter)', () => {
+test('BUILT dist CSP has the exact five-host external-request allowlist', () => {
   // Strip HTML comments first — the CSP rationale comment also mentions
   // "connect-src", and we want the real directive, not the prose.
   const html = readFileSync(DIST, 'utf8').replace(/<!--[\s\S]*?-->/g, '')
   const m = html.match(/connect-src ([^;]+)/)
   expect(m, 'built HTML must carry a connect-src directive').not.toBeNull()
-  const connectSrc = (m as RegExpMatchArray)[1]
-  // OpenRouter (the flagship provider) MUST be reachable — its absence is the F1 bug.
-  expect(connectSrc).toContain('https://openrouter.ai')
-  // The other two browser-callable providers + self stay.
-  expect(connectSrc).toContain("'self'")
-  expect(connectSrc).toContain('https://api.anthropic.com')
-  expect(connectSrc).toContain('https://generativelanguage.googleapis.com')
-  // Nothing broader: no wildcard / http: / ws: egress.
-  expect(connectSrc).not.toMatch(/\*|http:|ws:|wss:/)
+  const connectSources = (m as RegExpMatchArray)[1].trim().split(/\s+/).sort()
+  expect(connectSources).toEqual(
+    [
+      'https://api.anthropic.com',
+      'https://api.mymemory.translated.net',
+      'https://generativelanguage.googleapis.com',
+      'https://openrouter.ai',
+      'https://translate.googleapis.com'
+    ].sort()
+  )
 })
 
 test('BUILT dist CSP carries the hardening directives (object-src/base-uri/form-action)', () => {
@@ -43,6 +44,7 @@ test('BUILT dist CSP carries the hardening directives (object-src/base-uri/form-
   expect(policy).toContain("object-src 'none'")
   expect(policy).toContain("base-uri 'self'")
   expect(policy).toContain("form-action 'self'")
+  expect(policy).toContain("worker-src 'self' blob:")
 })
 
 function recordOffendingRequests(page: import('@playwright/test').Page): string[] {
