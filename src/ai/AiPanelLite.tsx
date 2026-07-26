@@ -1381,8 +1381,8 @@ function segmentBtn(active: boolean): CSSProperties {
     border: 'none',
     fontSize: 12.5,
     cursor: 'pointer',
-    background: active ? 'var(--orbitpm-accent)' : 'transparent',
-    color: active ? '#fff' : 'inherit',
+    background: active ? 'var(--orbitpm-primary-bg)' : 'transparent',
+    color: active ? 'var(--orbitpm-primary-fg)' : 'inherit',
     font: 'inherit'
   }
 }

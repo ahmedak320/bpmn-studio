@@ -6,7 +6,9 @@
   --outline-muted: var(--orbitpm-text-muted, var(--orbitpm-muted, #536176));
   --outline-accent: var(--orbitpm-accent, #075985);
   --outline-accent-contrast: var(--orbitpm-accent-contrast, #ffffff);
-  --outline-danger: var(--orbitpm-danger, #b42318);
+  --outline-action-bg: var(--orbitpm-primary-bg, #2563eb);
+  --outline-action-fg: var(--orbitpm-primary-fg, #ffffff);
+  --outline-danger: var(--orbitpm-editor-danger, var(--orbitpm-danger, #b42318));
   --outline-focus: var(--orbitpm-focus, #2563eb);
 
   display: grid;
@@ -221,8 +223,15 @@
 }
 
 .orbitpm-process-outline button[type='submit'] {
-  color: var(--outline-accent-contrast);
-  background: var(--outline-accent);
+  border-color: var(--outline-action-bg);
+  color: var(--outline-action-fg);
+  background: var(--outline-action-bg);
+}
+
+.orbitpm-process-outline__actions > button:not(.orbitpm-process-outline__danger) {
+  border-color: var(--outline-action-bg);
+  color: var(--outline-action-fg);
+  background: var(--outline-action-bg);
 }
 
 .orbitpm-process-outline button:disabled {

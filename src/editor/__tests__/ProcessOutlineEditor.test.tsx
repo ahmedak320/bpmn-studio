@@ -299,4 +299,19 @@ describe('ProcessOutlineEditor accessibility and authoring', () => {
       /\.orbitpm-process-outline__checkbox input\s*\{[^}]*inline-size:\s*1\.5rem;[^}]*min-block-size:\s*1\.5rem/s
     )
   })
+
+  it('uses the theme primary contrast pair for outline action buttons', () => {
+    expect(outlineStyles).toMatch(
+      /--outline-action-bg:\s*var\(--orbitpm-primary-bg,\s*#2563eb\)/
+    )
+    expect(outlineStyles).toMatch(
+      /--outline-action-fg:\s*var\(--orbitpm-primary-fg,\s*#ffffff\)/
+    )
+    expect(outlineStyles).toMatch(
+      /--outline-danger:\s*var\(--orbitpm-editor-danger,\s*var\(--orbitpm-danger,\s*#b42318\)\)/
+    )
+    expect(outlineStyles).toMatch(
+      /\.orbitpm-process-outline__actions > button:not\(\.orbitpm-process-outline__danger\)\s*\{[^}]*border-color:\s*var\(--outline-action-bg\);[^}]*color:\s*var\(--outline-action-fg\);[^}]*background:\s*var\(--outline-action-bg\)/s
+    )
+  })
 })

@@ -42,6 +42,7 @@
     "test:archives": "vitest run --retry=0 --reporter=default --reporter=./scripts/vitest-release-reporter.mjs src/security src/ai/__tests__/docx.test.ts src/library/__tests__/zip.test.ts src/spreadsheet/xlsxPreflight.test.ts src/spreadsheet/csv.test.ts",
     "test:performance": "vite-node scripts/performance-gate.ts",
     "test:performance:browser": "vite-node scripts/browser-performance-gate.ts",
+    "test:soak": "vite-node scripts/soak-gate.ts",
     "test:e2e:built": "playwright test",
     "test:e2e": "npm run clean:dist && npm run build && npm run test:e2e:built",
     "test:a11y": "node scripts/accessibility-audit.mjs",

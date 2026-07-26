@@ -248,6 +248,25 @@ describe('AiPanelLite consented browser workflows', () => {
     expect(mocks.spreadsheetPanel).toHaveBeenCalledOnce()
   })
 
+  it('uses the theme primary contrast pair for the selected spreadsheet tab', async () => {
+    const user = userEvent.setup()
+    renderPanel({
+      embedded: true,
+      spreadsheet: {
+        workspaceId: 'workspace',
+        workspaceAdapter: null,
+        onOpenSingle: vi.fn()
+      }
+    })
+
+    const spreadsheetTab = screen.getByRole('tab', { name: 'spreadsheet.tab' })
+    await user.click(spreadsheetTab)
+
+    expect(spreadsheetTab.getAttribute('aria-selected')).toBe('true')
+    expect(spreadsheetTab.style.background).toBe('var(--orbitpm-primary-bg)')
+    expect(spreadsheetTab.style.color).toBe('var(--orbitpm-primary-fg)')
+  })
+
   it('keeps the network silent until consent, then places a redacted text result', async () => {
     selectAnthropic()
     const user = userEvent.setup()
