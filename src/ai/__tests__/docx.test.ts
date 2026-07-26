@@ -1,6 +1,12 @@
 import { describe, it, expect } from 'vitest'
 import { strToU8, zipSync } from 'fflate'
-import { extractDocxText, DocxParseError, MAX_DOCX_TEXT_CHARS } from '../docx'
+import {
+  DOCX_ARCHIVE_LIMITS,
+  DocxParseError,
+  MAX_DOCX_TEXT_CHARS,
+  extractDocxText,
+  extractDocxTextAsync
+} from '../docx'
 
 // --- synthetic .docx builders ----------------------------------------------
 // vitest runs in a plain node environment, so the fixtures are built HERE with
@@ -8,24 +14,89 @@ import { extractDocxText, DocxParseError, MAX_DOCX_TEXT_CHARS } from '../docx'
 // checking binary .docx files into the repo: a minimal OPC package with a
 // word/document.xml whose body we control per test.
 
-function docxOf(bodyXml: string): Uint8Array {
+function docxOf(bodyXml: string, level: 0 | 6 = 6): Uint8Array {
   const documentXml =
     '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>' +
     '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">' +
     `<w:body>${bodyXml}</w:body></w:document>`
-  return zipSync({
-    // A real docx has more parts ([Content_Types].xml, _rels, …); the extractor
-    // only needs word/document.xml, but we include one sibling to keep the zip
-    // realistic.
-    '[Content_Types].xml': strToU8('<?xml version="1.0"?><Types/>'),
-    'word/document.xml': strToU8(documentXml)
-  })
+  return zipSync(
+    {
+      // A real docx has more parts ([Content_Types].xml, _rels, …); the extractor
+      // only needs word/document.xml, but we include one sibling to keep the zip
+      // realistic.
+      '[Content_Types].xml': strToU8('<?xml version="1.0"?><Types/>'),
+      'word/document.xml': strToU8(documentXml)
+    },
+    { level }
+  )
 }
 
 /** One paragraph wrapping raw run XML. */
 const p = (inner: string): string => `<w:p>${inner}</w:p>`
 /** One run with a single text node (optional extra attributes on w:t). */
 const r = (text: string, tAttrs = ''): string => `<w:r><w:t${tAttrs}>${text}</w:t></w:r>`
+
+function readU16(bytes: Uint8Array, offset: number): number {
+  return bytes[offset] | (bytes[offset + 1] << 8)
+}
+
+function readU32(bytes: Uint8Array, offset: number): number {
+  return (
+    (bytes[offset] |
+      (bytes[offset + 1] << 8) |
+      (bytes[offset + 2] << 16) |
+      (bytes[offset + 3] << 24)) >>>
+    0
+  )
+}
+
+function writeU16(bytes: Uint8Array, offset: number, value: number): void {
+  bytes[offset] = value & 0xff
+  bytes[offset + 1] = (value >>> 8) & 0xff
+}
+
+function writeU32(bytes: Uint8Array, offset: number, value: number): void {
+  bytes[offset] = value & 0xff
+  bytes[offset + 1] = (value >>> 8) & 0xff
+  bytes[offset + 2] = (value >>> 16) & 0xff
+  bytes[offset + 3] = (value >>> 24) & 0xff
+}
+
+function findEocd(bytes: Uint8Array): number {
+  for (let offset = bytes.length - 22; offset >= 0; offset -= 1) {
+    if (readU32(bytes, offset) === 0x06054b50) return offset
+  }
+  throw new Error('test fixture has no ZIP end record')
+}
+
+function findCentralEntry(bytes: Uint8Array, entryName: string): number {
+  const eocd = findEocd(bytes)
+  const count = readU16(bytes, eocd + 10)
+  let central = readU32(bytes, eocd + 16)
+  const decoder = new TextDecoder()
+  for (let index = 0; index < count; index += 1) {
+    const nameLength = readU16(bytes, central + 28)
+    const extraLength = readU16(bytes, central + 30)
+    const commentLength = readU16(bytes, central + 32)
+    const actualName = decoder.decode(
+      bytes.subarray(central + 46, central + 46 + nameLength)
+    )
+    if (actualName === entryName) return central
+    central += 46 + nameLength + extraLength + commentLength
+  }
+  throw new Error(`test fixture has no entry named ${entryName}`)
+}
+
+function mutateEntry(
+  source: Uint8Array,
+  entryName: string,
+  mutate: (bytes: Uint8Array, central: number, local: number) => void
+): Uint8Array {
+  const bytes = source.slice()
+  const central = findCentralEntry(bytes, entryName)
+  mutate(bytes, central, readU32(bytes, central + 42))
+  return bytes
+}
 
 // --- happy-path structure ---------------------------------------------------
 
@@ -113,7 +184,9 @@ describe('extractDocxText — entities and whitespace', () => {
 describe('extractDocxText — caps and failure modes', () => {
   it('caps the output at MAX_DOCX_TEXT_CHARS (100k)', () => {
     expect(MAX_DOCX_TEXT_CHARS).toBe(100_000)
-    const bytes = docxOf(p(r('x'.repeat(MAX_DOCX_TEXT_CHARS + 500))))
+    // Stored on purpose: this is an output-cap test, not a compression-ratio
+    // bomb test (covered independently below).
+    const bytes = docxOf(p(r('x'.repeat(MAX_DOCX_TEXT_CHARS + 500))), 0)
     const text = extractDocxText(bytes)
     expect(text.length).toBe(MAX_DOCX_TEXT_CHARS)
     expect(text).toBe('x'.repeat(MAX_DOCX_TEXT_CHARS))
@@ -144,6 +217,124 @@ describe('extractDocxText — caps and failure modes', () => {
     } catch (err) {
       expect(err).toBeInstanceOf(DocxParseError)
       expect((err as DocxParseError).code).toBe('no-document-xml')
+    }
+  })
+})
+
+describe('extractDocxText — archive preflight security', () => {
+  it('offers async parity and rejects a pre-cancelled operation', async () => {
+    const bytes = docxOf(p(r('Async document')))
+    await expect(extractDocxTextAsync(bytes)).resolves.toBe('Async document')
+
+    const controller = new AbortController()
+    controller.abort()
+    await expect(
+      extractDocxTextAsync(bytes, { signal: controller.signal })
+    ).rejects.toMatchObject({ code: 'aborted' })
+  })
+
+  it('rejects encrypted document.xml before expansion', () => {
+    const bytes = mutateEntry(
+      docxOf(p(r('Secret')), 0),
+      'word/document.xml',
+      (archive, central, local) => {
+        writeU16(archive, central + 8, readU16(archive, central + 8) | 0x0001)
+        writeU16(archive, local + 6, readU16(archive, local + 6) | 0x0001)
+      }
+    )
+
+    expect(() => extractDocxText(bytes)).toThrowError(DocxParseError)
+    try {
+      extractDocxText(bytes)
+      expect.unreachable('should have rejected the encrypted archive')
+    } catch (error) {
+      expect((error as DocxParseError).code).toBe('encrypted-archive')
+    }
+  })
+
+  it('rejects a small high-ratio decompression-bomb fixture', () => {
+    const bytes = docxOf(p(r('x'.repeat(200_000))))
+    expect(bytes.length).toBeLessThan(2_048)
+    try {
+      extractDocxText(bytes)
+      expect.unreachable('should have rejected the compression ratio')
+    } catch (error) {
+      expect(error).toBeInstanceOf(DocxParseError)
+      expect((error as DocxParseError).code).toBe('archive-too-large')
+    }
+  })
+
+  it('rejects a fake huge declared document without allocating huge content', () => {
+    const bytes = mutateEntry(
+      docxOf(p(r('small')), 0),
+      'word/document.xml',
+      (archive, central) => {
+        writeU32(
+          archive,
+          central + 24,
+          DOCX_ARCHIVE_LIMITS.maxEntryUncompressedBytes + 1
+        )
+      }
+    )
+    expect(bytes.length).toBeLessThan(1024)
+    try {
+      extractDocxText(bytes)
+      expect.unreachable('should have rejected the declared size')
+    } catch (error) {
+      expect(error).toBeInstanceOf(DocxParseError)
+      expect((error as DocxParseError).code).toBe('archive-too-large')
+    }
+  })
+
+  it('rejects unsafe paths anywhere in the OPC archive', () => {
+    const bytes = zipSync(
+      {
+        '../escape.txt': strToU8('no'),
+        'word/document.xml': strToU8(
+          '<w:document><w:body><w:p><w:r><w:t>safe</w:t></w:r></w:p></w:body></w:document>'
+        )
+      },
+      { level: 0 }
+    )
+    try {
+      extractDocxText(bytes)
+      expect.unreachable('should have rejected the unsafe entry')
+    } catch (error) {
+      expect(error).toBeInstanceOf(DocxParseError)
+      expect((error as DocxParseError).code).toBe('unsafe-archive')
+    }
+  })
+
+  it('maps malformed local headers to malformed-archive', () => {
+    const bytes = mutateEntry(
+      docxOf(p(r('broken')), 0),
+      'word/document.xml',
+      (archive, _central, local) => {
+        archive[local] = 0
+      }
+    )
+    try {
+      extractDocxText(bytes)
+      expect.unreachable('should have rejected the malformed local header')
+    } catch (error) {
+      expect(error).toBeInstanceOf(DocxParseError)
+      expect((error as DocxParseError).code).toBe('malformed-archive')
+    }
+  })
+
+  it('rejects invalid UTF-8 in document.xml after bounded extraction', () => {
+    const bytes = zipSync(
+      {
+        'word/document.xml': new Uint8Array([0xff, 0xfe, 0xfd])
+      },
+      { level: 0 }
+    )
+    try {
+      extractDocxText(bytes)
+      expect.unreachable('should have rejected invalid document XML bytes')
+    } catch (error) {
+      expect(error).toBeInstanceOf(DocxParseError)
+      expect((error as DocxParseError).code).toBe('malformed-archive')
     }
   })
 })

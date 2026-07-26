@@ -1,8 +1,10 @@
 // Whole-workspace library import: reads a zip archive built by
 // buildLibraryZip (or any reasonably well-formed zip) and extracts .bpmn
-// entries as text, while defensively rejecting unsafe/oversized/undecodable
-// entries instead of throwing for the whole archive. A bare `.xml` entry is
-// also accepted when its content sniffs as a real BPMN 2.0 diagram (many
+// entries as text. Archive-wide security violations (unsafe paths, malformed
+// headers, encryption, decompression bombs, or exceeded resource limits)
+// reject the whole import before expansion; undecodable candidate documents
+// remain ordinary per-entry skips. A bare `.xml` entry is also accepted when
+// its content sniffs as a real BPMN 2.0 diagram (many
 // BPMN tools export with a plain .xml extension); it lands under a
 // `.bpmn`-suffixed relPath so downstream file creation (which always writes
 // `.bpmn`) treats it exactly like a native entry.
@@ -15,8 +17,17 @@
 // attributes inside the .bpmn files themselves, which round-trip through
 // export/import — nothing is (re)applied from the CSV.
 
-import { unzipSync } from 'fflate'
 import { looksLikeBpmnXml } from '../workspace/importDrop'
+import {
+  ArchivePreflightError,
+  extractPreflightedZip,
+  extractPreflightedZipSync,
+  preflightZip,
+  preflightZipAsync,
+  type ZipPreflightEntry,
+  type ZipPreflightResult,
+  type ZipSafetyLimits
+} from '../security/archivePreflight'
 import { LIBRARY_MANIFEST_NAME, parseLibraryManifest, type LibraryManifest } from './libraryManifest'
 
 /** Root-level owners-list extra written by the library export (see App's
@@ -44,29 +55,18 @@ export interface LibraryImportResult {
   ownersCsv?: string
 }
 
-const MAX_ENTRY_BYTES = 5 * 1024 * 1024
-const MAX_TOTAL_BYTES = 50 * 1024 * 1024
-
-// C0 control characters (\x00–\x1F) plus DEL (\x7F). Written with escape
-// sequences, NOT literal control bytes: a raw-byte character class survives
-// node/vitest but Vite's production build mangles the bytes into an invalid
-// range ("Range out of order in character class") once this module is bundled
-// into the browser app (Lane B5 first wires it into App.tsx).
-// eslint-disable-next-line no-control-regex
-const CONTROL_CHARS = /[\x00-\x1f\x7f]/
-
-function normalizePath(path: string): string {
-  let p = path.replace(/\\/g, '/')
-  while (p.startsWith('./')) p = p.slice(2)
-  return p
+export const LIBRARY_ZIP_LIMITS: ZipSafetyLimits = {
+  maxCompressedBytes: 64 * 1024 * 1024,
+  maxEntries: 2_500,
+  maxCentralDirectoryBytes: 8 * 1024 * 1024,
+  maxEntryNameBytes: 1_024,
+  maxEntryUncompressedBytes: 5 * 1024 * 1024,
+  maxTotalUncompressedBytes: 50 * 1024 * 1024,
+  maxCompressionRatio: 250
 }
 
-function isUnsafePath(path: string): boolean {
-  if (path.startsWith('/')) return true
-  if (path.includes('..')) return true
-  if (/^[A-Za-z]:/.test(path)) return true
-  if (CONTROL_CHARS.test(path)) return true
-  return false
+export interface ReadLibraryZipOptions {
+  signal?: AbortSignal
 }
 
 function isBpmnPath(path: string): boolean {
@@ -89,34 +89,35 @@ function xmlToBpmnPath(path: string): string {
   return path.replace(/\.xml$/i, '.bpmn')
 }
 
-export function readLibraryZip(data: Uint8Array): LibraryImportResult {
-  const unzipped = unzipSync(data)
+function shouldExtract(entry: ZipPreflightEntry): boolean {
+  const path = entry.normalizedName
+  return (
+    isBpmnPath(path) ||
+    isXmlPath(path) ||
+    path === LIBRARY_MANIFEST_NAME ||
+    path === PROCESS_OWNERS_CSV_NAME
+  )
+}
 
+function buildLibraryImportResult(
+  preflight: ZipPreflightResult,
+  unzipped: Record<string, Uint8Array>,
+  signal?: AbortSignal
+): LibraryImportResult {
   const entries: LibraryImportEntry[] = []
   const skipped: LibraryImportSkipped[] = []
   let manifest: LibraryManifest | undefined
   let ownersCsv: string | undefined
-  let totalAccepted = 0
 
-  const paths = Object.keys(unzipped).sort();
-  for (const rawPath of paths) {
-    const bytes = unzipped[rawPath]
-    const normalized = normalizePath(rawPath)
-
-    // Directory entries: skip silently (not reported).
-    if (normalized === '' || normalized.endsWith('/') || (bytes.length === 0 && rawPath.endsWith('/'))) {
-      continue
+  const archiveEntries = [...preflight.entries].sort((left, right) =>
+    left.normalizedName.localeCompare(right.normalizedName)
+  )
+  for (const archiveEntry of archiveEntries) {
+    if (signal?.aborted) {
+      throw new ArchivePreflightError('aborted', 'Archive processing was cancelled')
     }
-
-    if (isUnsafePath(normalized)) {
-      skipped.push({ path: normalized, reason: 'unsafe-path' })
-      continue
-    }
-
-    if (bytes.length > MAX_ENTRY_BYTES) {
-      skipped.push({ path: normalized, reason: 'too-large' })
-      continue
-    }
+    const normalized = archiveEntry.normalizedName
+    if (archiveEntry.directory) continue
 
     const bpmnPath = isBpmnPath(normalized)
     const xmlPath = !bpmnPath && isXmlPath(normalized)
@@ -129,6 +130,11 @@ export function readLibraryZip(data: Uint8Array): LibraryImportResult {
     if (!bpmnPath && !xmlPath && !rootExtra) {
       skipped.push({ path: normalized, reason: 'not-bpmn' })
       continue
+    }
+    const bytes = unzipped[normalized]
+    if (!bytes) {
+      // The preflighted extraction contract requires every selected entry.
+      throw new Error(`ZIP extraction omitted ${normalized}`)
     }
 
     let xml: string
@@ -170,15 +176,42 @@ export function readLibraryZip(data: Uint8Array): LibraryImportResult {
     }
 
     entries.push({ relPath: xmlPath ? xmlToBpmnPath(normalized) : normalized, xml })
-    totalAccepted += bytes.length
-  }
-
-  if (totalAccepted > MAX_TOTAL_BYTES) {
-    throw new Error('Library too large (max 50 MB)')
   }
 
   const result: LibraryImportResult = { entries, skipped }
   if (manifest) result.manifest = manifest
   if (ownersCsv !== undefined) result.ownersCsv = ownersCsv
   return result
+}
+
+/**
+ * Synchronous compatibility wrapper for the current App call site. All limits
+ * and headers are checked before the filtered inflater is invoked.
+ */
+export function readLibraryZip(
+  data: Uint8Array,
+  options: ReadLibraryZipOptions = {}
+): LibraryImportResult {
+  const preflight = preflightZip(data, LIBRARY_ZIP_LIMITS, options.signal)
+  const unzipped = extractPreflightedZipSync(data, preflight, {
+    signal: options.signal,
+    include: shouldExtract
+  })
+  return buildLibraryImportResult(preflight, unzipped, options.signal)
+}
+
+/**
+ * Worker-friendly/cancellable API for import flows that can await archive
+ * processing without blocking on the synchronous compatibility wrapper.
+ */
+export async function readLibraryZipAsync(
+  data: Uint8Array,
+  options: ReadLibraryZipOptions = {}
+): Promise<LibraryImportResult> {
+  const preflight = await preflightZipAsync(data, LIBRARY_ZIP_LIMITS, options.signal)
+  const unzipped = await extractPreflightedZip(data, preflight, {
+    signal: options.signal,
+    include: shouldExtract
+  })
+  return buildLibraryImportResult(preflight, unzipped, options.signal)
 }

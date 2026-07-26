@@ -1,13 +1,22 @@
 import { describe, expect, it } from 'vitest'
-import { zipSync } from 'fflate'
+import { strToU8, zipSync } from 'fflate'
 
 import { buildLibraryZip, zipFileName } from '../zipExport'
-import { readLibraryZip, PROCESS_OWNERS_CSV_NAME } from '../zipImport'
+import {
+  LIBRARY_ZIP_LIMITS,
+  PROCESS_OWNERS_CSV_NAME,
+  readLibraryZip,
+  readLibraryZipAsync
+} from '../zipImport'
 import {
   LIBRARY_MANIFEST_NAME,
   serializeLibraryManifest,
   type LibraryManifest
 } from '../libraryManifest'
+import {
+  ArchivePreflightError,
+  type ArchiveErrorCode
+} from '../../security/archivePreflight'
 
 const SAMPLE_BPMN = (name: string) =>
   `<?xml version="1.0" encoding="UTF-8"?><definitions id="${name}"><process id="p_${name}" /></definitions>`
@@ -20,6 +29,70 @@ const SAMPLE_BPMN = (name: string) =>
 // without looking at content.
 const SAMPLE_BPMN_XML = (name: string) =>
   `<?xml version="1.0" encoding="UTF-8"?><bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" id="${name}"><bpmn:process id="p_${name}" /></bpmn:definitions>`
+
+function readU16(bytes: Uint8Array, offset: number): number {
+  return bytes[offset] | (bytes[offset + 1] << 8)
+}
+
+function readU32(bytes: Uint8Array, offset: number): number {
+  return (
+    (bytes[offset] |
+      (bytes[offset + 1] << 8) |
+      (bytes[offset + 2] << 16) |
+      (bytes[offset + 3] << 24)) >>>
+    0
+  )
+}
+
+function writeU32(bytes: Uint8Array, offset: number, value: number): void {
+  bytes[offset] = value & 0xff
+  bytes[offset + 1] = (value >>> 8) & 0xff
+  bytes[offset + 2] = (value >>> 16) & 0xff
+  bytes[offset + 3] = (value >>> 24) & 0xff
+}
+
+function findEocd(bytes: Uint8Array): number {
+  for (let offset = bytes.length - 22; offset >= 0; offset -= 1) {
+    if (readU32(bytes, offset) === 0x06054b50) return offset
+  }
+  throw new Error('test fixture has no ZIP end record')
+}
+
+function patchDeclaredSize(
+  source: Uint8Array,
+  entryName: string,
+  declaredSize: number
+): Uint8Array {
+  const bytes = source.slice()
+  const eocd = findEocd(bytes)
+  const count = readU16(bytes, eocd + 10)
+  let central = readU32(bytes, eocd + 16)
+  const decoder = new TextDecoder()
+  for (let index = 0; index < count; index += 1) {
+    const nameLength = readU16(bytes, central + 28)
+    const extraLength = readU16(bytes, central + 30)
+    const commentLength = readU16(bytes, central + 32)
+    const actualName = decoder.decode(
+      bytes.subarray(central + 46, central + 46 + nameLength)
+    )
+    if (actualName === entryName) {
+      writeU32(bytes, central + 24, declaredSize)
+      return bytes
+    }
+    central += 46 + nameLength + extraLength + commentLength
+  }
+  throw new Error(`test fixture has no entry named ${entryName}`)
+}
+
+function expectArchiveCode(action: () => unknown, code: ArchiveErrorCode): void {
+  try {
+    action()
+    expect.unreachable(`expected ArchivePreflightError(${code})`)
+  } catch (error) {
+    expect(error).toBeInstanceOf(ArchivePreflightError)
+    expect((error as ArchivePreflightError).code).toBe(code)
+  }
+}
 
 describe('buildLibraryZip / readLibraryZip round-trip', () => {
   it('round-trips nested folders and Arabic filenames', () => {
@@ -71,7 +144,7 @@ describe('buildLibraryZip / readLibraryZip round-trip', () => {
     expect(result.skipped).toContainEqual({ path: 'manifest.csv', reason: 'not-bpmn' })
   })
 
-  it('skips unsafe paths with reason unsafe-path', () => {
+  it('rejects the whole archive when any entry has an unsafe path', () => {
     const files = [
       { relPath: '../x.bpmn', xml: SAMPLE_BPMN('escape') },
       { relPath: '/abs.bpmn', xml: SAMPLE_BPMN('abs') },
@@ -79,28 +152,22 @@ describe('buildLibraryZip / readLibraryZip round-trip', () => {
     ]
 
     const zip = buildLibraryZip(files)
-    const result = readLibraryZip(zip)
-
-    expect(result.entries).toHaveLength(0)
-    expect(result.skipped).toHaveLength(3)
-    for (const s of result.skipped) {
-      expect(s.reason).toBe('unsafe-path')
-    }
+    expectArchiveCode(() => readLibraryZip(zip), 'unsafe-path')
   })
 
-  it('skips oversize entries with reason too-large', () => {
-    const bigXml = 'x'.repeat(5 * 1024 * 1024 + 1)
+  it('rejects a huge declared entry before expansion without allocating it', () => {
     const files = [
-      { relPath: 'huge.bpmn', xml: bigXml },
+      { relPath: 'huge.bpmn', xml: SAMPLE_BPMN('huge') },
       { relPath: 'small.bpmn', xml: SAMPLE_BPMN('small') },
     ]
 
-    const zip = buildLibraryZip(files)
-    const result = readLibraryZip(zip)
-
-    expect(result.entries).toHaveLength(1)
-    expect(result.entries[0].relPath).toBe('small.bpmn')
-    expect(result.skipped).toContainEqual({ path: 'huge.bpmn', reason: 'too-large' })
+    const zip = patchDeclaredSize(
+      buildLibraryZip(files),
+      'huge.bpmn',
+      LIBRARY_ZIP_LIMITS.maxEntryUncompressedBytes + 1
+    )
+    expect(zip.length).toBeLessThan(1024)
+    expectArchiveCode(() => readLibraryZip(zip), 'entry-size-limit')
   })
 
   it('skips non-bpmn files with reason not-bpmn', () => {
@@ -113,15 +180,24 @@ describe('buildLibraryZip / readLibraryZip round-trip', () => {
     expect(result.skipped).toEqual([{ path: 'notes.txt', reason: 'not-bpmn' }])
   })
 
-  it('throws when total accepted size exceeds 50MB', () => {
-    const chunk = 'x'.repeat(5 * 1024 * 1024) // exactly at per-entry cap
-    const files = Array.from({ length: 11 }, (_, i) => ({
-      relPath: `f${i}.bpmn`,
-      xml: chunk,
-    }))
+  it('rejects a compact high-ratio decompression-bomb fixture', () => {
+    const zip = zipSync({ 'bomb.bpmn': strToU8('x'.repeat(100_000)) })
+    expect(zip.length).toBeLessThan(1024)
+    expectArchiveCode(() => readLibraryZip(zip), 'compression-ratio-limit')
+  })
 
-    const zip = buildLibraryZip(files)
-    expect(() => readLibraryZip(zip)).toThrow(/Library too large/)
+  it('exposes async parity and a cancellation seam', async () => {
+    const zip = buildLibraryZip([
+      { relPath: 'a.bpmn', xml: SAMPLE_BPMN('a') },
+      { relPath: 'nested/b.bpmn', xml: SAMPLE_BPMN('b') }
+    ])
+    await expect(readLibraryZipAsync(zip)).resolves.toEqual(readLibraryZip(zip))
+
+    const controller = new AbortController()
+    controller.abort()
+    await expect(
+      readLibraryZipAsync(zip, { signal: controller.signal })
+    ).rejects.toMatchObject({ code: 'aborted' })
   })
 })
 
@@ -288,23 +364,19 @@ describe('readLibraryZip — bare .xml entries (BPMN 2.0 exported without a .bpm
     expect(result.skipped).toEqual([{ path: 'c.xml', reason: 'not-bpmn' }])
   })
 
-  it('still applies the too-large cap to a .xml entry before ever sniffing its content', () => {
-    const bigXml = 'x'.repeat(5 * 1024 * 1024 + 1)
-    const files = [{ relPath: 'huge.xml', xml: bigXml }]
-    const zip = buildLibraryZip(files)
-    const result = readLibraryZip(zip)
-
-    expect(result.entries).toHaveLength(0)
-    expect(result.skipped).toEqual([{ path: 'huge.xml', reason: 'too-large' }])
+  it('rejects an oversized declared .xml entry before expansion or content sniffing', () => {
+    const zip = patchDeclaredSize(
+      buildLibraryZip([{ relPath: 'huge.xml', xml: SAMPLE_BPMN_XML('huge') }]),
+      'huge.xml',
+      LIBRARY_ZIP_LIMITS.maxEntryUncompressedBytes + 1
+    )
+    expectArchiveCode(() => readLibraryZip(zip), 'entry-size-limit')
   })
 
-  it('still applies unsafe-path rejection to a .xml entry', () => {
+  it('rejects the whole archive for an unsafe .xml entry path', () => {
     const files = [{ relPath: '../escape.xml', xml: SAMPLE_BPMN_XML('escape') }]
     const zip = buildLibraryZip(files)
-    const result = readLibraryZip(zip)
-
-    expect(result.entries).toHaveLength(0)
-    expect(result.skipped).toEqual([{ path: '../escape.xml', reason: 'unsafe-path' }])
+    expectArchiveCode(() => readLibraryZip(zip), 'unsafe-path')
   })
 
   it('reports decode-failed for a .xml entry with invalid UTF-8 bytes, built directly with fflate', () => {
