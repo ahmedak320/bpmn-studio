@@ -79,7 +79,7 @@ test('loads self-contained, renders bpmn-js, and exports SVG (fallback mode)', a
   // 4) Create a new diagram in-memory (fallback), then bpmn-js must render shapes.
   await page.getByRole('button', { name: /New blank diagram/i }).click()
 
-  const canvas = page.locator('.djs-container svg').first()
+  const canvas = page.locator('.djs-container > svg').first()
   await expect(canvas).toBeVisible({ timeout: 20_000 })
 
   // The blank template has a start event (rendered as an SVG <circle>) plus its
@@ -128,7 +128,7 @@ test('New process flow (fallback): modal → full palette → add a task → und
   await dialog.getByRole('button', { name: 'Create', exact: true }).click()
 
   // (b) The canvas renders with the start event.
-  const svg = page.locator('.djs-container svg').first()
+  const svg = page.locator('.djs-container > svg').first()
   await expect(svg).toBeVisible({ timeout: 20_000 })
   expect(await page.locator('.djs-container svg circle').count()).toBeGreaterThan(0)
 
@@ -226,7 +226,7 @@ test('AI panel documents the browser-only provider limitation', async ({ page })
   })
   await page.goto(FILE_URL, { waitUntil: 'load' })
   await page.getByRole('button', { name: /New blank diagram/i }).click()
-  await expect(page.locator('.djs-container svg').first()).toBeVisible({ timeout: 20_000 })
+  await expect(page.locator('.djs-container > svg').first()).toBeVisible({ timeout: 20_000 })
 
   // Opening the diagram collapsed the sidebar; the AI generator now lives in its
   // bottom section, so restore it before asserting on its copy.
@@ -258,7 +258,7 @@ test('sidebar auto-collapses on open and the rail restores it', async ({ page })
   await dialog.getByRole('button', { name: 'Create', exact: true }).click()
 
   // The diagram opens and the sidebar auto-collapses to the rail.
-  await expect(page.locator('.djs-container svg').first()).toBeVisible({ timeout: 20_000 })
+  await expect(page.locator('.djs-container > svg').first()).toBeVisible({ timeout: 20_000 })
   await expect(aside).toBeHidden()
 
   // Clicking the rail restores the sidebar.
