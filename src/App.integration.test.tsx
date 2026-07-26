@@ -41,7 +41,14 @@ interface TestAiPanelProps {
   onContinueInChat?(info: { description: string }): void
   spreadsheet: {
     onOpenSingle(xml: string, name: string): void
-    onOpenBilingualReview(xml: string, name: string): void
+    onReviewBilingual(request: {
+      processId: string
+      suggestedName: string
+      xml: string
+      ordinal: number
+      total: number
+      signal: AbortSignal
+    }): Promise<{ status: 'completed'; reviewedXml: string } | { status: 'cancelled' }>
   }
 }
 
@@ -97,6 +104,7 @@ const mocks = vi.hoisted(() => ({
   makeFreeTranslateTexts: vi.fn(),
   saveSvg: vi.fn(),
   saveXml: vi.fn(),
+  importXml: vi.fn(),
   commandSave: vi.fn(),
   commandUndo: vi.fn(),
   commandRedo: vi.fn(),
@@ -435,7 +443,8 @@ const mockModeler = {
   get: (name: string): unknown => mocks.modelerGet(name),
   getDefinitions: (): unknown => mocks.modelerDefinitions(),
   saveSVG: (): Promise<{ svg: string }> => mocks.saveSvg(),
-  saveXML: (): Promise<{ xml: string }> => mocks.saveXml()
+  saveXML: (): Promise<{ xml: string }> => mocks.saveXml(),
+  importXML: (xml: string): Promise<{ warnings: string[] }> => mocks.importXml(xml)
 }
 
 vi.mock('./ai/AiPanelLite', () => ({
@@ -468,7 +477,16 @@ vi.mock('./ai/AiPanelLite', () => ({
         </button>
         <button
           type="button"
-          onClick={() => props.spreadsheet.onOpenBilingualReview(state.xml, 'bilingual-flow.bpmn')}
+          onClick={() =>
+            void props.spreadsheet.onReviewBilingual({
+              processId: 'Process_Test',
+              suggestedName: 'bilingual-flow.bpmn',
+              xml: state.xml,
+              ordinal: 1,
+              total: 1,
+              signal: new AbortController().signal
+            })
+          }
         >
           mock-sheet-review
         </button>
@@ -521,7 +539,11 @@ vi.mock('./assist/AssistantDrawer', () => ({
     open: boolean
     onOpen(): void
     onClose(): void
-    onApplyXml?(tabKey: string, xml: string): Promise<void> | void
+    onApplyXml?(
+      tabKey: string,
+      xml: string,
+      request: import('./assist/AssistantDrawer').InterviewApplyRequest
+    ): Promise<void> | void
   }) => {
     mocks.assistantProps(props)
     return (
@@ -686,7 +708,11 @@ vi.mock('./workspace/MoveDialog', () => ({
 }))
 
 import { WorkspaceOperationError } from './workspace/adapters'
-import { asDirectoryHandle, fakeRoot } from './workspace/adapters/__tests__/fakeFileSystem'
+import {
+  FakeDirectoryHandle,
+  asDirectoryHandle,
+  fakeRoot
+} from './workspace/adapters/__tests__/fakeFileSystem'
 import { ManifestBoundWorkspaceAdapter } from './workspace/workspaceManifest'
 import type { HistoryRevision } from './workspace/history'
 import {
@@ -712,6 +738,13 @@ function latestSessionController(): import('./sessions').DocumentSessionControll
 function latestAiPanelProps(): TestAiPanelProps {
   const props = mocks.aiProps.mock.calls.at(-1)?.[0] as TestAiPanelProps | undefined
   if (!props) throw new Error('App did not render the AI panel')
+  return props
+}
+
+function latestAssistantDrawerProps(): import('./assist/AssistantDrawer').AssistantDrawerProps {
+  const props = mocks.assistantProps.mock.calls.at(-1)?.[0] as
+    import('./assist/AssistantDrawer').AssistantDrawerProps | undefined
+  if (!props) throw new Error('App did not render the assistant drawer')
   return props
 }
 
@@ -823,6 +856,7 @@ beforeEach(() => {
   mocks.makeFreeTranslateTexts.mockReset().mockReturnValue(async () => [])
   mocks.saveSvg.mockReset().mockResolvedValue({ svg: '<svg />' })
   mocks.saveXml.mockReset().mockResolvedValue({ xml: state.xml })
+  mocks.importXml.mockReset().mockResolvedValue({ warnings: [] })
   mocks.commandSave.mockReset()
   mocks.commandUndo.mockReset()
   mocks.commandRedo.mockReset()
@@ -1209,8 +1243,7 @@ describe('App single-file browser orchestration', () => {
 
     await user.click(screen.getByRole('button', { name: 'mock-sheet-open' }))
     expect(await screen.findByText(/sheet-flow\.bpmn/)).not.toBeNull()
-    await user.click(screen.getByRole('button', { name: 'mock-sheet-review' }))
-    expect(await screen.findByText(/bilingual-flow\.bpmn/)).not.toBeNull()
+    expect(typeof latestAiPanelProps().spreadsheet.onReviewBilingual).toBe('function')
 
     await user.click(screen.getByRole('button', { name: 'mock-ai-chat' }))
     expect(await screen.findByRole('button', { name: 'mock-assistant-close' })).not.toBeNull()
@@ -1449,6 +1482,62 @@ describe('App single-file browser orchestration', () => {
     )
   })
 
+  it('does not commit a print job after its tab closes during SVG serialization', async () => {
+    const user = userEvent.setup()
+    await openBlankDiagram(user)
+    await user.click(screen.getByRole('button', { name: 'mock-editor-ready' }))
+
+    let resolveSvg!: (value: { svg: string }) => void
+    mocks.saveSvg.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveSvg = resolve
+        })
+    )
+    await user.click(screen.getByRole('button', { name: 'mock-print' }))
+    await waitFor(() => expect(mocks.saveSvg).toHaveBeenCalledOnce())
+
+    await user.click(screen.getByTitle('tab.closeTitle'))
+    expect(await screen.findByText('emptyTab.fallback')).not.toBeNull()
+    await act(async () => {
+      resolveSvg({ svg: '<svg data-stale="true" />' })
+      await Promise.resolve()
+    })
+
+    expect(screen.queryByTestId('print-view')).toBeNull()
+    expect(window.print).not.toHaveBeenCalled()
+  })
+
+  it('aborts interview replacement before import when its reviewed request is cancelled', async () => {
+    const user = userEvent.setup()
+    await openBlankDiagram(user)
+    await user.click(screen.getByRole('button', { name: 'mock-editor-ready' }))
+
+    let resolveXml!: (value: { xml: string }) => void
+    mocks.saveXml.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveXml = resolve
+        })
+    )
+    const sessionId = latestSessionController().store.getActive()?.id
+    if (!sessionId) throw new Error('missing active test session')
+    const controller = new AbortController()
+    const apply = latestAssistantDrawerProps().onApplyXml?.(sessionId, state.xml, {
+      signal: controller.signal,
+      requestToken: 41
+    })
+    if (!apply) throw new Error('missing interview Apply callback')
+    await act(async () => {
+      await Promise.resolve()
+    })
+    controller.abort()
+    resolveXml({ xml: state.xml })
+
+    await expect(apply).rejects.toMatchObject({ name: 'AbortError' })
+    expect(mocks.importXml).not.toHaveBeenCalled()
+  })
+
   it('opens an uploaded BPMN file from the landing input and reports invalid input', async () => {
     const user = userEvent.setup()
     const { container } = render(<App />)
@@ -1539,6 +1628,59 @@ describe('App directory workspace orchestration', () => {
     )
   })
 
+  it('lets the newest folder-picker intent win when an older picker resolves later', async () => {
+    const user = userEvent.setup()
+    await openDirectoryWorkspace(user)
+    const older = new FakeDirectoryHandle('older-workspace')
+    older.addFile('older.bpmn', state.xml)
+    const newer = new FakeDirectoryHandle('newer-workspace')
+    newer.addFile('newer.bpmn', state.xml)
+    let resolveOlder!: (handle: FileSystemDirectoryHandle | null) => void
+    let resolveNewer!: (handle: FileSystemDirectoryHandle | null) => void
+    mocks.pickWorkspace
+      .mockReset()
+      .mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            resolveOlder = resolve
+          })
+      )
+      .mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            resolveNewer = resolve
+          })
+      )
+
+    const change = screen.getByRole('button', { name: 'app.changeFolder' })
+    fireEvent.click(change)
+    fireEvent.click(change)
+    expect(mocks.pickWorkspace).toHaveBeenCalledTimes(2)
+
+    await act(async () => {
+      resolveNewer(asDirectoryHandle(newer))
+    })
+    await waitFor(() => expect(mocks.workspaceLocalizationFactories).toHaveBeenCalledTimes(2))
+    const newerAdapter = mocks.workspaceLocalizationFactories.mock.calls.at(-1)?.[0] as {
+      id: string
+    }
+    const controllerAfterNewer = latestSessionController()
+    expect(controllerAfterNewer.store.getActive()?.identity.workspace.id).toBeUndefined()
+
+    await act(async () => {
+      resolveOlder(asDirectoryHandle(older))
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    expect(latestSessionController()).toBe(controllerAfterNewer)
+    expect(mocks.workspaceLocalizationFactories).toHaveBeenCalledTimes(2)
+    expect((mocks.workspaceLocalizationFactories.mock.calls.at(-1)?.[0] as { id: string }).id).toBe(
+      newerAdapter.id
+    )
+    expect(screen.getByTestId('catalog-view')).not.toBeNull()
+  })
+
   it('binds localization and document sessions to the persisted manifest UUID across reopen', async () => {
     const user = userEvent.setup()
     const root = populatedDirectory()
@@ -1597,7 +1739,11 @@ describe('App directory workspace orchestration', () => {
     expect(mocks.restoreHistoryRevision).toHaveBeenCalledWith(
       expect.objectContaining({
         revision,
-        expectedCurrentHash: null
+        expectedCurrentHash: null,
+        signal: expect.any(AbortSignal),
+        isWorkspaceCurrent: expect.any(Function),
+        prepareXml: expect.any(Function),
+        writePreparedXml: expect.any(Function)
       })
     )
   })
@@ -1731,6 +1877,63 @@ describe('App directory workspace orchestration', () => {
       await pending
     })
     expect(fakeFileText(root, path)).toBe(localXml)
+  })
+
+  it('keeps reviewed external reload changes dirty over the raw disk baseline', async () => {
+    const user = userEvent.setup()
+    await openDirectoryWorkspace(user)
+    await user.click(screen.getByRole('button', { name: 'mock-tree-open' }))
+    await screen.findByTestId('editor-tab')
+    await user.click(screen.getByRole('button', { name: 'mock-editor-ready' }))
+
+    const controller = latestSessionController()
+    const session = controller.store.getActive()
+    if (!session?.identity.path) throw new Error('expected an active persisted session')
+    const rawExternal = `${state.xml}\n<!-- raw external -->`
+    const reviewedExternal = `${state.xml}\n<!-- reviewed external -->`
+    const fingerprint = {
+      hash: 'b'.repeat(64),
+      size: new TextEncoder().encode(rawExternal).byteLength,
+      modifiedAt: Date.UTC(2026, 0, 3)
+    }
+    vi.spyOn(controller, 'save').mockImplementationOnce(async () => {
+      controller.store.replaceWithExternal(session.id, {
+        xml: rawExternal,
+        reviewedXml: reviewedExternal,
+        fingerprint,
+        identity: session.identity
+      })
+      return {
+        status: 'reloaded',
+        ok: true,
+        sessionId: session.id,
+        external: {
+          identity: session.identity,
+          xml: rawExternal,
+          fingerprint
+        }
+      }
+    })
+    const editor = mocks.editorProps.mock.calls.at(-1)?.[0] as {
+      onRequestSave(xml: string): Promise<void | { durable: boolean }>
+    }
+
+    await act(async () => {
+      await editor.onRequestSave(`${state.xml}\n<!-- local -->`)
+    })
+
+    expect(mocks.importXml).toHaveBeenCalledWith(reviewedExternal)
+    expect(controller.store.get(session.id)).toMatchObject({
+      currentXml: reviewedExternal,
+      lastSavedXml: rawExternal,
+      dirty: true
+    })
+    expect(screen.getByTestId('editor-xml').textContent).toBe(reviewedExternal)
+    expect(
+      screen.getByRole('tab', {
+        name: /existing\.bpmn.*tab\.dirty\.aria/
+      })
+    ).not.toBeNull()
   })
 
   it('scopes Save As collision review and overwrite to the destination file', async () => {

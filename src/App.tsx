@@ -128,8 +128,16 @@ import {
 import { grantExternalRequestConsent } from './localization/externalRequestReview'
 import {
   LocalizationSource,
+  type LocalizationResources,
   type LocalizationSource as LocalizationSourceType
 } from './localization/types'
+import { SEEDED_GLOSSARY } from './localization/glossary'
+import {
+  reviewBpmnXmlLocalization,
+  type ReviewedXmlIngestionReviewRequest
+} from './localization/xmlIngestion'
+import { ReviewedXmlIngestionDialog } from './localization/ReviewedXmlIngestionDialog'
+import { ReviewedXmlReviewQueue } from './localization/reviewQueue'
 import {
   createWorkspaceLocalizationStore,
   type WorkspaceLocalizationState,
@@ -203,7 +211,7 @@ import {
 } from './owner/ownersIndex'
 import { ownersToCsv } from './owner/ownerCsv'
 import { PaneResizer, usePaneWidth } from './common/PaneResizer'
-import { AssistantDrawer } from './assist/AssistantDrawer'
+import { AssistantDrawer, type InterviewApplyRequest } from './assist/AssistantDrawer'
 import { buildAllDigests, type ProcessDigest } from './assist/digest'
 import { buildLibraryZip, zipFileName } from './library/zipExport'
 import {
@@ -214,6 +222,7 @@ import {
 import { readLibraryZipFileInWorker } from './library/browserZipImport'
 import type { LibraryImportResult } from './library/zipImport'
 import { convertAmlToBpmnFiles, looksLikeAml } from './library/apcImport'
+import { secureBpmnImportPreparer } from './workspace/importTransaction'
 import { decodeUtf8Strict } from './workspace/utf8'
 import {
   evaluateValidationPolicy,
@@ -230,6 +239,11 @@ import './print.css'
 
 type Phase = 'loading' | 'need-open' | 'need-reconnect' | 'ready'
 type Mode = WorkspaceMode
+
+const DEFAULT_LOCALIZATION_RESOURCES: LocalizationResources = Object.freeze({
+  glossary: SEEDED_GLOSSARY,
+  translationMemory: Object.freeze([])
+})
 
 function isMultiFileMode(mode: Mode): boolean {
   return mode === 'directory' || mode === 'opfs'
@@ -737,6 +751,8 @@ async function focusProcessRoot(modeler: unknown, processId: string): Promise<bo
 function App(): JSX.Element {
   const promptText = usePromptText()
   const lang = useLang()
+  const langRef = useRef(lang)
+  langRef.current = lang
   const [credentialMigration] = useState(() => migrateLegacyCredentialsOnStartup())
   const support = useMemo(() => directoryPickerSupported(), [])
   const browserWorkspaceAvailable = useMemo(() => opfsSupported(), [])
@@ -760,6 +776,8 @@ function App(): JSX.Element {
   const [liveWorkspaceVersion, setLiveWorkspaceVersion] = useState(0)
 
   const [tabs, setTabs] = useState<Tab[]>([])
+  const tabsRef = useRef<readonly Tab[]>([])
+  tabsRef.current = tabs
   const [activeKey, setActiveKey] = useState<string | null>(null)
   const activeKeyRef = useRef<string | null>(null)
   activeKeyRef.current = activeKey
@@ -771,6 +789,8 @@ function App(): JSX.Element {
   const liveXmlTimersRef = useRef<Record<string, ReturnType<typeof setTimeout>>>({})
   const [mounted, setMounted] = useState<Set<string>>(() => new Set())
   const [modelersByKey, setModelersByKey] = useState<Record<string, unknown>>({})
+  const modelersByKeyRef = useRef<Readonly<Record<string, unknown>>>({})
+  modelersByKeyRef.current = modelersByKey
   const commandsRef = useRef<Record<string, EditorTabCommands | null>>({})
   const commandUnregisterersRef = useRef<Record<string, () => void>>({})
   const commandRouterRef = useRef<ActiveSessionCommandRouter | null>(null)
@@ -802,7 +822,17 @@ function App(): JSX.Element {
   const workspaceLocalizationSnapshotRef = useRef<WorkspaceLocalizationState | null>(null)
   const [workspaceLocalizationSnapshot, setWorkspaceLocalizationSnapshot] =
     useState<WorkspaceLocalizationState | null>(null)
+  const [reviewedXmlReviewRequest, setReviewedXmlReviewRequest] =
+    useState<ReviewedXmlIngestionReviewRequest | null>(null)
+  const reviewedXmlReviewMountedRef = useRef(true)
+  const reviewedXmlReviewQueueRef = useRef<ReviewedXmlReviewQueue | null>(null)
+  if (!reviewedXmlReviewQueueRef.current) {
+    reviewedXmlReviewQueueRef.current = new ReviewedXmlReviewQueue((request) => {
+      if (reviewedXmlReviewMountedRef.current) setReviewedXmlReviewRequest(request)
+    })
+  }
   const historyManagerRef = useRef<PortableHistoryManager | null>(null)
+  const historyRestoreAbortRef = useRef<AbortController | null>(null)
   const workspaceIdentityRef = useRef<WorkspaceIdentity | null>(null)
   const sessionControllerRef = useRef<DocumentSessionController | null>(null)
   const draftJournalRef = useRef<DraftJournal | null>(null)
@@ -828,6 +858,10 @@ function App(): JSX.Element {
   const [manifestRepair, setManifestRepair] = useState<ManifestRepairState | null>(null)
   const rootHandleRef = useRef<FileSystemDirectoryHandle | null>(null) // sync mirror for async guards
   const workspaceActivationSequenceRef = useRef(0)
+  // Claimed before any picker, decode, permission, or dirty-work prompt. A
+  // newer activation intent invalidates older asynchronous work immediately,
+  // even before the newer request reaches activateWorkspace.
+  const workspaceActivationIntentRef = useRef(0)
   const refreshSequenceRef = useRef(0)
   const opMutexRef = useRef(createMutex()) // serializes create / import / AI-place writes
   const rememberWorkspaceMutexRef = useRef(createMutex())
@@ -923,6 +957,7 @@ function App(): JSX.Element {
     description: string
   } | null>(null)
   const interviewTokenRef = useRef(0)
+  const interviewApplyTokenByTabRef = useRef(new Map<string, number>())
 
   const translationProviders: TranslationReviewProviderOption[] = (() => {
     if (!translationReview) return []
@@ -1118,6 +1153,14 @@ function App(): JSX.Element {
     const id = ++toastIdRef.current
     setToasts((prev) => [...prev, { id, text, tone }])
   }, [])
+  useEffect(() => {
+    reviewedXmlReviewMountedRef.current = true
+    const queue = reviewedXmlReviewQueueRef.current!
+    return () => {
+      reviewedXmlReviewMountedRef.current = false
+      queue.dispose()
+    }
+  }, [])
   const credentialMigrationToastShownRef = useRef(false)
   useEffect(() => {
     if (credentialMigration.ok || credentialMigrationToastShownRef.current) return
@@ -1170,7 +1213,8 @@ function App(): JSX.Element {
     (
       tab: Tab,
       comparison: DraftRecoveryComparison,
-      controller: DocumentSessionController
+      controller: DocumentSessionController,
+      incarnation: number
     ): Promise<DraftRecoveryDecision | 'cancel'> => {
       const epoch = draftRecoveryEpochRef.current
       const run = async (): Promise<DraftRecoveryDecision | 'cancel'> => {
@@ -1178,7 +1222,7 @@ function App(): JSX.Element {
           draftRecoveryEpochRef.current !== epoch ||
           sessionControllerRef.current !== controller ||
           workspaceGenRef.current !== tab.gen ||
-          !controller.store.get(tab.key)
+          controller.store.get(tab.key)?.incarnation !== incarnation
         ) {
           return 'cancel'
         }
@@ -1237,7 +1281,10 @@ function App(): JSX.Element {
       workspaceChangeUnsubscribeRef.current?.()
       workspaceCoordinatorRef.current?.close()
       workspaceActivationSequenceRef.current += 1
+      workspaceActivationIntentRef.current += 1
       workspaceLocalizationBindingRef.current?.controller.abort()
+      historyRestoreAbortRef.current?.abort()
+      historyRestoreAbortRef.current = null
       cancelPendingDraftRecovery(false)
       saveConflictResolveRef.current?.({ kind: 'cancel' })
       saveConflictResolveRef.current = null
@@ -1355,13 +1402,40 @@ function App(): JSX.Element {
     }
   }, [pathRecovery, pushToast])
 
+  const beginWorkspaceActivationIntent = useCallback((): number => {
+    const intent = ++workspaceActivationIntentRef.current
+    // These dialogs use singleton resolvers. Superseding a workspace request
+    // must settle an older decision before the newer request can install one.
+    switchResolveRef.current?.('cancel')
+    switchResolveRef.current = null
+    setSwitchGuard(null)
+    downloadSwitchResolveRef.current?.('cancel')
+    downloadSwitchResolveRef.current = null
+    setDownloadSwitchGuard(null)
+    return intent
+  }, [])
+
+  const isWorkspaceActivationIntentCurrent = useCallback(
+    (intent: number): boolean => workspaceActivationIntentRef.current === intent,
+    []
+  )
+
   const activateWorkspace = useCallback(
     async (
       adapter: WorkspaceAdapter,
       handle: FileSystemDirectoryHandle | null,
-      displayName: string
+      displayName: string,
+      claimedIntent?: number
     ) => {
+      const activationIntent = claimedIntent ?? beginWorkspaceActivationIntent()
+      if (!isWorkspaceActivationIntentCurrent(activationIntent)) return
+      historyRestoreAbortRef.current?.abort()
+      historyRestoreAbortRef.current = null
+      reviewedXmlReviewQueueRef.current?.cancelAll()
       const activationSequence = ++workspaceActivationSequenceRef.current
+      const activationIsCurrent = (): boolean =>
+        isWorkspaceActivationIntentCurrent(activationIntent) &&
+        workspaceActivationSequenceRef.current === activationSequence
       let activeAdapter = adapter
       let manifestAdapter: ManifestBoundWorkspaceAdapter | null = null
       let manifestGeneration: number | null = null
@@ -1396,7 +1470,7 @@ function App(): JSX.Element {
         const bound = await bindWorkspaceToManifest(adapter, {
           onManifestWarning: (warning: WorkspaceManifestWarning) => {
             if (!manifestBindingCommitted) {
-              if (workspaceActivationSequenceRef.current === activationSequence) {
+              if (activationIsCurrent()) {
                 pendingManifestWarnings.push(warning)
               }
               return
@@ -1406,7 +1480,7 @@ function App(): JSX.Element {
           },
           onManifestError: (error) => {
             if (!manifestBindingCommitted) {
-              if (workspaceActivationSequenceRef.current === activationSequence) {
+              if (activationIsCurrent()) {
                 pendingManifestErrors.push(error)
               }
               return
@@ -1415,7 +1489,7 @@ function App(): JSX.Element {
             surfaceManifestError(error)
           }
         })
-        if (workspaceActivationSequenceRef.current !== activationSequence) return
+        if (!activationIsCurrent()) return
         manifestAdapter = bound.adapter
         activeAdapter = bound.adapter
       }
@@ -1435,17 +1509,14 @@ function App(): JSX.Element {
         try {
           localizationCandidate.snapshot = await store.load({ signal: controller.signal })
         } catch (error) {
-          if (
-            controller.signal.aborted ||
-            workspaceActivationSequenceRef.current !== activationSequence
-          ) {
+          if (controller.signal.aborted || !activationIsCurrent()) {
             controller.abort()
             return
           }
           localizationCandidate.error = errMsg(error)
           pushToast(localizationCandidate.error, 'error')
         }
-        if (workspaceActivationSequenceRef.current !== activationSequence) {
+        if (!activationIsCurrent()) {
           localizationCandidate.controller.abort()
           return
         }
@@ -1458,14 +1529,16 @@ function App(): JSX.Element {
           await previousDrafts.flushAll()
         } catch (error) {
           pushToast(t('draftRecovery.error', { error: errMsg(error) }), 'error')
+          localizationCandidate?.controller.abort()
+          throw error
         }
-        if (workspaceActivationSequenceRef.current !== activationSequence) {
+        if (!activationIsCurrent()) {
           localizationCandidate?.controller.abort()
           return
         }
         previousDrafts.dispose()
       }
-      if (workspaceActivationSequenceRef.current !== activationSequence) {
+      if (!activationIsCurrent()) {
         localizationCandidate?.controller.abort()
         return
       }
@@ -1551,8 +1624,41 @@ function App(): JSX.Element {
           identity.workspace.id === workspaceIdentityRef.current.id &&
           identity.workspace.generation === workspaceIdentityRef.current.generation &&
           workspaceAdapterRef.current === activeAdapter,
-        onConfirmedSave: (session) => drafts.confirmedSave(session.id, session.lastSavedXml),
-        onExplicitDiscard: (sessionId) => drafts.explicitDiscard(sessionId),
+        prepareExternal: async (external, context) => {
+          const resources = workspaceLocalizationSnapshotRef.current?.resources
+          const isCurrent = (): boolean =>
+            !context.signal?.aborted &&
+            sessionControllerRef.current === controller &&
+            controller.store.get(context.session.id)?.incarnation === context.session.incarnation &&
+            workspaceAdapterRef.current === activeAdapter &&
+            workspaceGenRef.current === workspaceGeneration
+          if (!resources || !isCurrent()) return { status: 'cancelled' }
+          const outcome = await reviewBpmnXmlLocalization(external.xml, {
+            source: LocalizationSource.Xml,
+            target: langRef.current,
+            defaultActive: langRef.current,
+            resources,
+            validation: {
+              adapters: getRuntimeValidationAdapters(),
+              knownProcessIds: liveWorkspaceIndexRef.current.processIndex().keys(),
+              requireDi: true
+            },
+            validationAction: 'commit-import',
+            review: reviewedXmlReviewQueueRef.current!.review,
+            signal: context.signal,
+            isCurrent
+          })
+          return outcome.status === 'completed' && isCurrent()
+            ? { status: 'completed', xml: outcome.xml }
+            : { status: 'cancelled' }
+        },
+        onConfirmedSave: (session) =>
+          drafts.confirmedSave(session.id, session.incarnation, session.lastSavedXml),
+        onExplicitDiscard: (session) => drafts.explicitDiscard(session.id, session.incarnation),
+        onPreparedExternal: async (session) => {
+          drafts.track(session)
+          await drafts.flush(session.id, session.incarnation)
+        },
         onPostSaveError: (error) =>
           pushToast(t('draftRecovery.error', { error: errMsg(error) }), 'error')
       })
@@ -1611,12 +1717,14 @@ function App(): JSX.Element {
       setTranslationReview(null)
       setTranslatingTab(null)
       setInterviewRequest(null)
+      interviewApplyTokenByTabRef.current.clear()
       setAssistOpen(false)
       digestsCacheRef.current = null
       setLibraryImport(null)
       setBackupImportState(null)
       setBackupBusy(false)
       setHistoryOpen(false)
+      setPrintJob(null)
       setSearch('')
       setSearchOpen(false)
       setCatalogOpen(false)
@@ -1662,7 +1770,7 @@ function App(): JSX.Element {
         try {
           await rememberWorkspaceMutexRef.current.runExclusive(() => rememberWorkspace(handle))
           if (
-            workspaceActivationSequenceRef.current !== activationSequence ||
+            !activationIsCurrent() ||
             workspaceAdapterRef.current !== activeAdapter ||
             workspaceGenRef.current !== workspaceGeneration
           ) {
@@ -1675,7 +1783,7 @@ function App(): JSX.Element {
         }
       }
       if (
-        workspaceActivationSequenceRef.current !== activationSequence ||
+        !activationIsCurrent() ||
         workspaceAdapterRef.current !== activeAdapter ||
         workspaceGenRef.current !== workspaceGeneration
       ) {
@@ -1685,7 +1793,14 @@ function App(): JSX.Element {
         await refreshWorkspace(handle ?? undefined, displayName)
       }
     },
-    [cancelPendingDraftRecovery, refreshWorkspace, pushToast, resolveSaveConflictPrompt]
+    [
+      beginWorkspaceActivationIntent,
+      cancelPendingDraftRecovery,
+      isWorkspaceActivationIntentCurrent,
+      refreshWorkspace,
+      pushToast,
+      resolveSaveConflictPrompt
+    ]
   )
 
   // First-load: fallback landing, remembered-folder reconnect, or fresh open.
@@ -1799,9 +1914,16 @@ function App(): JSX.Element {
     // Partition so NO dirty tab is silently dropped: directory tabs write to disk;
     // fallback/virtual tabs (relPath === null) take the download-on-save path so
     // their unsaved work survives the switch instead of being discarded (NEW-C2).
+    const controller = sessionControllerRef.current
     const { writable, downloadable } = partitionDirtyTabs(tabs, (tab) =>
-      Boolean(dirtyByKey[tab.key])
+      Boolean(dirtyByKey[tab.key] || controller?.store.get(tab.key)?.dirty)
     )
+    const dirtySessionWithoutTab = controller?.store
+      .list()
+      .find((session) => session.dirty && !tabs.some((tab) => tab.key === session.id))
+    if (dirtySessionWithoutTab) {
+      throw new Error(`Dirty session "${dirtySessionWithoutTab.title}" has no open tab.`)
+    }
     const indexedXmlByPath = new Map(
       liveWorkspaceIndexRef.current.files().map((file) => [file.relPath, file.xml])
     )
@@ -1853,11 +1975,21 @@ function App(): JSX.Element {
   // Gate a folder switch on unsaved work. Returns true to proceed, false to
   // abort (keep the current folder). Prompts ONCE for all dirty tabs.
   const guardWorkspaceSwitch = useCallback(async (): Promise<boolean> => {
-    const dirtyCount = tabs.filter((tb) => dirtyByKey[tb.key]).length
-    if (dirtyCount === 0) return true
+    const controller = sessionControllerRef.current
+    const dirtyIds = new Set<string>()
+    for (const tab of tabs) {
+      if (dirtyByKey[tab.key] || controller?.store.get(tab.key)?.dirty) dirtyIds.add(tab.key)
+    }
+    for (const session of controller?.store.list() ?? []) {
+      if (session.dirty) dirtyIds.add(session.id)
+    }
+    if (dirtyIds.size === 0) return true
+    const capturedDirtySessions = [...dirtyIds]
+      .map((sessionId) => controller?.store.get(sessionId))
+      .filter((session) => session !== undefined)
     const choice = await new Promise<'save' | 'discard' | 'cancel'>((resolve) => {
       switchResolveRef.current = resolve
-      setSwitchGuard({ count: dirtyCount })
+      setSwitchGuard({ count: dirtyIds.size })
     })
     if (choice === 'cancel') return false
     if (choice === 'save') {
@@ -1879,7 +2011,9 @@ function App(): JSX.Element {
       if (drafts) {
         try {
           await Promise.all(
-            tabs.filter((tab) => dirtyByKey[tab.key]).map((tab) => drafts.explicitDiscard(tab.key))
+            capturedDirtySessions.map((session) =>
+              drafts.explicitDiscard(session.id, session.incarnation)
+            )
           )
         } catch (error) {
           pushToast(t('draftRecovery.error', { error: errMsg(error) }), 'error')
@@ -1891,35 +2025,50 @@ function App(): JSX.Element {
   }, [tabs, dirtyByKey, saveAllDirty, pushToast])
 
   const handleOpenFolder = useCallback(async () => {
+    const intent = beginWorkspaceActivationIntent()
     setPickBusy(true)
     setPickError(null)
     try {
       const handle = await pickWorkspace()
-      if (!handle) return
+      if (!handle || !isWorkspaceActivationIntentCurrent(intent)) return
       const state = await ensurePermission(handle, true)
+      if (!isWorkspaceActivationIntentCurrent(intent)) return
       if (state !== 'granted') {
         setPickError(t('alert.permissionNotGranted.open'))
         return
       }
       // Prompt for unsaved work BEFORE we reset state onto the new folder.
       const proceed = await guardWorkspaceSwitch()
-      if (!proceed) return
+      if (!proceed || !isWorkspaceActivationIntentCurrent(intent)) return
       await activateWorkspace(
         new DirectoryWorkspaceAdapter(handle, {
           workspaceId: directoryWorkspaceId(handle)
         }),
         handle,
-        handle.name
+        handle.name,
+        intent
       )
     } catch (err) {
+      if (!isWorkspaceActivationIntentCurrent(intent)) return
       const code = classifyPickerError(err)
-      if (code !== 'aborted') setPickError(t(pickerErrorKey(code)))
+      if (code !== 'aborted') {
+        const message = t(pickerErrorKey(code))
+        setPickError(message)
+        if (workspaceAdapterRef.current) pushToast(message, 'error')
+      }
     } finally {
-      setPickBusy(false)
+      if (isWorkspaceActivationIntentCurrent(intent)) setPickBusy(false)
     }
-  }, [activateWorkspace, guardWorkspaceSwitch])
+  }, [
+    activateWorkspace,
+    beginWorkspaceActivationIntent,
+    guardWorkspaceSwitch,
+    isWorkspaceActivationIntentCurrent,
+    pushToast
+  ])
 
   const handleReconnect = useCallback(async () => {
+    const intent = beginWorkspaceActivationIntent()
     const handle = rememberedRef.current
     if (!handle) {
       setPhase('need-open')
@@ -1929,6 +2078,7 @@ function App(): JSX.Element {
     setPickError(null)
     try {
       const state = await ensurePermission(handle, true)
+      if (!isWorkspaceActivationIntentCurrent(intent)) return
       if (state !== 'granted') {
         setPickError(t('alert.permissionNotGranted.reconnect'))
         return
@@ -1938,21 +2088,33 @@ function App(): JSX.Element {
           workspaceId: directoryWorkspaceId(handle)
         }),
         handle,
-        handle.name
+        handle.name,
+        intent
       )
     } catch (err) {
+      if (!isWorkspaceActivationIntentCurrent(intent)) return
       const code = classifyPickerError(err)
-      if (code !== 'aborted') setPickError(t(pickerErrorKey(code)))
+      if (code !== 'aborted') {
+        const message = t(pickerErrorKey(code))
+        setPickError(message)
+        if (workspaceAdapterRef.current) pushToast(message, 'error')
+      }
     } finally {
-      setPickBusy(false)
+      if (isWorkspaceActivationIntentCurrent(intent)) setPickBusy(false)
     }
-  }, [activateWorkspace])
+  }, [
+    activateWorkspace,
+    beginWorkspaceActivationIntent,
+    isWorkspaceActivationIntentCurrent,
+    pushToast
+  ])
 
   const handleOpenDifferent = useCallback(async () => {
     await handleOpenFolder()
   }, [handleOpenFolder])
 
   const handleOpenOpfs = useCallback(async () => {
+    const intent = beginWorkspaceActivationIntent()
     setPickBusy(true)
     setPickError(null)
     try {
@@ -1961,15 +2123,30 @@ function App(): JSX.Element {
         directoryName: 'orbitpm',
         requestPersistence: true
       })
+      if (!isWorkspaceActivationIntentCurrent(intent)) return
       const proceed = await guardWorkspaceSwitch()
-      if (!proceed) return
-      await activateWorkspace(adapter, adapter.directoryHandle, t('workspace.storage.mode.opfs'))
+      if (!proceed || !isWorkspaceActivationIntentCurrent(intent)) return
+      await activateWorkspace(
+        adapter,
+        adapter.directoryHandle,
+        t('workspace.storage.mode.opfs'),
+        intent
+      )
     } catch (error) {
-      setPickError(error instanceof Error ? error.message : String(error))
+      if (!isWorkspaceActivationIntentCurrent(intent)) return
+      const message = error instanceof Error ? error.message : String(error)
+      setPickError(message)
+      if (workspaceAdapterRef.current) pushToast(message, 'error')
     } finally {
-      setPickBusy(false)
+      if (isWorkspaceActivationIntentCurrent(intent)) setPickBusy(false)
     }
-  }, [activateWorkspace, guardWorkspaceSwitch])
+  }, [
+    activateWorkspace,
+    beginWorkspaceActivationIntent,
+    guardWorkspaceSwitch,
+    isWorkspaceActivationIntentCurrent,
+    pushToast
+  ])
 
   // --- tabs ---------------------------------------------------------------
 
@@ -2008,6 +2185,11 @@ function App(): JSX.Element {
       const drafts = draftCoordinatorRef.current
       const session = controller?.store.get(tab.key)
       if (!controller || !journal || !drafts || !session) return loadedXml
+      const incarnation = session.incarnation
+      const isCurrentSession = (): boolean =>
+        sessionControllerRef.current === controller &&
+        workspaceGenRef.current === tab.gen &&
+        controller.store.get(session.id)?.incarnation === incarnation
       try {
         const comparison = await findDraftRecoveryComparison(
           journal,
@@ -2019,10 +2201,10 @@ function App(): JSX.Element {
           loadedXml,
           loadedBase?.hash ?? null
         )
-        if (!comparison) return loadedXml
+        if (!isCurrentSession() || !comparison) return loadedXml
         if (comparison.relation === 'same-content') {
           // The durable file itself proves this journal record is obsolete.
-          await drafts.explicitDiscard(session.id)
+          await drafts.explicitDiscard(session.id, incarnation)
           return loadedXml
         }
         controller.store.setDraftRecovery(session.id, {
@@ -2031,17 +2213,13 @@ function App(): JSX.Element {
           timestamp: comparison.draft.timestamp,
           baseHash: comparison.draft.baseHash
         })
-        const decision = await promptForDraftRecovery(tab, comparison, controller)
-        if (
-          decision === 'cancel' ||
-          sessionControllerRef.current !== controller ||
-          workspaceGenRef.current !== tab.gen ||
-          !controller.store.get(session.id)
-        ) {
+        const decision = await promptForDraftRecovery(tab, comparison, controller, incarnation)
+        if (decision === 'cancel' || !isCurrentSession()) {
           return loadedXml
         }
         if (decision === 'discard') {
-          await drafts.explicitDiscard(session.id)
+          await drafts.explicitDiscard(session.id, incarnation)
+          if (!isCurrentSession()) return loadedXml
           controller.store.setDraftRecovery(session.id, {
             status: 'dismissed',
             draftId: comparison.draft.id,
@@ -2059,6 +2237,7 @@ function App(): JSX.Element {
         setDirtyByKey((previous) => ({ ...previous, [tab.key]: true }))
         return comparison.draft.xml
       } catch (error) {
+        if (!isCurrentSession()) return loadedXml
         controller.store.setDraftRecovery(session.id, {
           status: 'error',
           message: errMsg(error)
@@ -2212,7 +2391,14 @@ function App(): JSX.Element {
   )
 
   const activateSingleFileDocument = useCallback(
-    async (title: string, xml: string, source: LocalizationSourceType): Promise<void> => {
+    async (
+      title: string,
+      xml: string,
+      source: LocalizationSourceType,
+      claimedIntent?: number
+    ): Promise<void> => {
+      const activationIntent = claimedIntent ?? beginWorkspaceActivationIntent()
+      if (!isWorkspaceActivationIntentCurrent(activationIntent)) return
       const path = title.toLocaleLowerCase('en-US').endsWith('.bpmn') ? title : `${title}.bpmn`
       const adapter = new SingleFileWorkspaceAdapter({
         workspaceId: workspaceInstanceId('single-file', path),
@@ -2221,8 +2407,13 @@ function App(): JSX.Element {
         modifiedAt: Date.now(),
         mimeType: 'application/xml'
       })
-      await activateWorkspace(adapter, null, path)
-      if (workspaceAdapterRef.current !== adapter) return
+      await activateWorkspace(adapter, null, path, activationIntent)
+      if (
+        !isWorkspaceActivationIntentCurrent(activationIntent) ||
+        workspaceAdapterRef.current !== adapter
+      ) {
+        return
+      }
       const binding = captureWorkspaceOperation()
       if (binding.adapter !== adapter || binding.identity?.generation !== binding.generation) {
         return
@@ -2253,8 +2444,10 @@ function App(): JSX.Element {
     },
     [
       activateWorkspace,
+      beginWorkspaceActivationIntent,
       captureWorkspaceOperation,
       ensureDocumentSession,
+      isWorkspaceActivationIntentCurrent,
       isWorkspaceOperationCurrent,
       reviewRecoveryDraft
     ]
@@ -2264,7 +2457,9 @@ function App(): JSX.Element {
     (key: string): boolean => {
       pendingProcessFocusRef.current.delete(key)
       const closingTab = tabs.find((tab) => tab.key === key)
-      const explicitlyDiscarded = Boolean(dirtyByKey[key])
+      const controller = sessionControllerRef.current
+      const closingSession = controller?.store.get(key)
+      const explicitlyDiscarded = Boolean(dirtyByKey[key] || closingSession?.dirty)
       if (explicitlyDiscarded) {
         const confirmed = window.confirm(
           t('confirm.discardUnsaved', { title: closingTab?.title ?? 'this file' })
@@ -2280,12 +2475,17 @@ function App(): JSX.Element {
         return remaining.length > 0 ? remaining[remaining.length - 1].key : null
       })
       setTabs((prev) => prev.filter((t) => t.key !== key))
-      const controller = sessionControllerRef.current
       const drafts = draftCoordinatorRef.current
+      // Remove the exact live session before any asynchronous journal cleanup.
+      // A rapid reopen may reuse the tab key; delayed cleanup must never close
+      // that replacement session.
+      controller?.store.close(key)
       const closeSession = async (): Promise<void> => {
-        if (explicitlyDiscarded) await drafts?.explicitDiscard(key)
-        await drafts?.untrack(key)
-        controller?.store.close(key)
+        if (!closingSession) return
+        if (explicitlyDiscarded) {
+          await drafts?.explicitDiscard(key, closingSession.incarnation)
+        }
+        await drafts?.untrack(key, closingSession.incarnation)
       }
       void closeSession().catch((error) =>
         pushToast(t('draftRecovery.error', { error: errMsg(error) }), 'error')
@@ -2304,6 +2504,7 @@ function App(): JSX.Element {
       setModelersByKey(drop)
       localizationSourceByTabRef.current.delete(key)
       localizationReviewByTabRef.current.delete(key)
+      interviewApplyTokenByTabRef.current.delete(key)
       liveXmlUninstallersRef.current[key]?.()
       delete liveXmlUninstallersRef.current[key]
       const timer = liveXmlTimersRef.current[key]
@@ -2389,7 +2590,7 @@ function App(): JSX.Element {
       if (!controller) throw new Error('Document-session controller is unavailable.')
       const adapter = binding.adapter
       const drafts = binding.drafts
-      const isCurrent = (): boolean =>
+      const isWorkspaceCurrent = (): boolean =>
         isWorkspaceOperationCurrent(binding) && tab.gen === binding.generation
       const baseHash = tab.relPath ? baseHashByPathRef.current[tab.relPath] : undefined
       const baseline = contents[tab.key] ?? xml
@@ -2407,6 +2608,9 @@ function App(): JSX.Element {
         })
       if (!session) throw new Error(t('alert.staleWrite'))
       const current = controller.updateXml(tab.key, xml)
+      const sessionIncarnation = current.incarnation
+      const isCurrent = (): boolean =>
+        isWorkspaceCurrent() && controller.store.get(tab.key)?.incarnation === sessionIncarnation
       drafts?.track(current)
 
       if (baseline) {
@@ -2427,7 +2631,7 @@ function App(): JSX.Element {
       })
       if (!isCurrent()) throw new Error(t('alert.staleWrite'))
       if (!tab.relPath || adapter?.storage.persistence === 'download') {
-        await drafts?.flush(tab.key)
+        await drafts?.flush(tab.key, sessionIncarnation)
         if (!isCurrent()) throw new Error(t('alert.staleWrite'))
         downloadBpmn(tab.title.endsWith('.bpmn') ? tab.title : `${tab.title}.bpmn`, xml)
         setDirtyByKey((previous) => ({ ...previous, [tab.key]: current.dirty }))
@@ -2443,6 +2647,7 @@ function App(): JSX.Element {
           xml,
           expectedRevision: capturedRevision
         })
+        if (!isCurrent()) throw new Error(t('alert.staleWrite'))
         while (outcome.status === 'external-conflict') {
           const decision = await promptForSaveConflict(tab, outcome.conflict)
           if (
@@ -2459,10 +2664,10 @@ function App(): JSX.Element {
             conflictDecision: decision,
             reviewedConflict: outcome.conflict
           })
+          if (!isCurrent()) throw new Error(t('alert.staleWrite'))
         }
-        if (!isCurrent()) throw new Error(t('alert.staleWrite'))
         if (outcome.status === 'clean') {
-          await drafts?.confirmedSave(tab.key, xml)
+          await drafts?.confirmedSave(tab.key, sessionIncarnation, xml)
           if (!isCurrent()) throw new Error(t('alert.staleWrite'))
           setDirtyByKey((previous) => ({ ...previous, [tab.key]: false }))
           return { durable: true }
@@ -2475,6 +2680,12 @@ function App(): JSX.Element {
           }
           const modeler = modelersByKey[tab.key] as
             { importXML?: (candidate: string) => Promise<unknown> } | undefined
+          const reloadedSession = controller.store.get(tab.key)
+          if (!reloadedSession || reloadedSession.incarnation !== sessionIncarnation) {
+            throw new Error(t('alert.staleWrite'))
+          }
+          const visibleXml = reloadedSession.currentXml
+          const hasReviewedChanges = reloadedSession.dirty
           baseHashByPathRef.current[externalPath] = external.fingerprint.hash
           if (externalPath !== tab.relPath) {
             binding.index.clearDirty(tab.relPath)
@@ -2492,8 +2703,13 @@ function App(): JSX.Element {
             lastModified: external.fingerprint.modifiedAt,
             size: external.fingerprint.size
           })
+          if (hasReviewedChanges) {
+            binding.index.updateDirty(externalPath, visibleXml)
+          } else {
+            binding.index.clearDirty(externalPath)
+          }
           try {
-            await modeler?.importXML?.(external.xml)
+            await modeler?.importXML?.(visibleXml)
           } catch (error) {
             // The controller has already accepted the external file and
             // discarded the prior journal record. Re-track and synchronously
@@ -2503,7 +2719,7 @@ function App(): JSX.Element {
             drafts?.track(restoredLocal)
             let draftRecoveryError: unknown
             try {
-              await drafts?.flush(tab.key)
+              await drafts?.flush(tab.key, sessionIncarnation)
             } catch (draftError) {
               draftRecoveryError = draftError
               if (isCurrent()) {
@@ -2524,10 +2740,12 @@ function App(): JSX.Element {
             )
           }
           if (!isCurrent()) throw new Error(t('alert.staleWrite'))
-          binding.index.clearDirty(externalPath)
           setLiveWorkspaceVersion(binding.index.version)
-          setContents((previous) => ({ ...previous, [tab.key]: external.xml }))
-          setDirtyByKey((previous) => ({ ...previous, [tab.key]: false }))
+          setContents((previous) => ({ ...previous, [tab.key]: visibleXml }))
+          setDirtyByKey((previous) => ({
+            ...previous,
+            [tab.key]: hasReviewedChanges
+          }))
           return { durable: true }
         }
         if (outcome.status !== 'success' && outcome.status !== 'saved-as') {
@@ -3008,6 +3226,7 @@ function App(): JSX.Element {
   )
 
   const handleNewProcessFallback = useCallback(async () => {
+    const intent = beginWorkspaceActivationIntent()
     const name = await promptText({
       title: t('dialog.newProcess.title'),
       label: t('dialog.newProcess.label'),
@@ -3015,15 +3234,27 @@ function App(): JSX.Element {
       okLabel: t('dialog.newProcess.okLabel'),
       hint: t('dialog.newProcess.hint.fallback')
     })
-    if (!name) return
+    if (!name || !isWorkspaceActivationIntentCurrent(intent)) return
     // Dedup the derived id against the (in-memory) index too, for parity with the
     // directory path (ORIG-6b); in fallback mode the index is empty, so this is a
     // no-op but keeps the two creation paths from drifting.
     const doc = buildNewProcessDoc(name, undefined, (candidate) => processIndex.has(candidate))
     const proceed = await guardWorkspaceSwitch()
-    if (!proceed) return
-    await activateSingleFileDocument(`${doc.fileBaseName}.bpmn`, doc.xml, LocalizationSource.Editor)
-  }, [promptText, processIndex, guardWorkspaceSwitch, activateSingleFileDocument])
+    if (!proceed || !isWorkspaceActivationIntentCurrent(intent)) return
+    await activateSingleFileDocument(
+      `${doc.fileBaseName}.bpmn`,
+      doc.xml,
+      LocalizationSource.Editor,
+      intent
+    )
+  }, [
+    activateSingleFileDocument,
+    beginWorkspaceActivationIntent,
+    guardWorkspaceSwitch,
+    isWorkspaceActivationIntentCurrent,
+    processIndex,
+    promptText
+  ])
 
   const handleNewProcessClick = useCallback(() => {
     if (workspaceAdapter?.storage.capabilities.multipleFiles) void handleNewProcess('')
@@ -3092,6 +3323,9 @@ function App(): JSX.Element {
       const previousTabs = tabs
 
       if (plan.request.kind === 'delete') {
+        const deletedMigrationById = new Map(
+          plan.migrations.map((migration) => [migration.sessionId, migration] as const)
+        )
         const isDeletedTab = (tab: Tab): boolean =>
           deletedIds.has(tab.key) ||
           Boolean(tab.relPath && migratedPathForPlan(plan, tab.relPath) === null)
@@ -3116,7 +3350,8 @@ function App(): JSX.Element {
           pendingProcessFocusRef.current.delete(id)
           pendingAiAutoSizeRef.current.delete(id)
           delete commandsRef.current[id]
-          await drafts?.untrack(id)
+          const migration = deletedMigrationById.get(id)
+          if (migration) await drafts?.untrack(id, migration.incarnation)
           if (!isCurrent()) return
         }
         setTabs((previous) => previous.filter((tab) => !isDeletedTab(tab)))
@@ -3261,6 +3496,18 @@ function App(): JSX.Element {
       if (result.status === 'cancelled') return 'cancelled'
       if (result.status !== 'committed') {
         if (result.status === 'failed') {
+          if (!result.rolledBack) {
+            const evidence = `${result.plan.request.sourcePath}: ${errMsg(result.error)}`
+            setPathRecovery(null)
+            await refreshWorkspace()
+            if (!isCurrent()) return 'failed'
+            setWorkspaceIssues((current) =>
+              current.includes(evidence) ? current : [...current, evidence]
+            )
+            if (binding.history) setHistoryOpen(true)
+            pushToast(t('workspace.path.failed', { error: evidence }), 'error')
+            return 'failed'
+          }
           throw new Error(t('workspace.path.failed', { error: errMsg(result.error) }))
         }
         if (result.status === 'save-failed') {
@@ -3705,6 +3952,7 @@ function App(): JSX.Element {
 
   const onFileInputChange = useCallback(
     async (e: React.ChangeEvent<HTMLInputElement>) => {
+      const intent = beginWorkspaceActivationIntent()
       const file = e.target.files?.[0]
       e.target.value = ''
       if (!file) return
@@ -3713,31 +3961,49 @@ function App(): JSX.Element {
           operation: 'read',
           path: file.name
         })
+        if (!isWorkspaceActivationIntentCurrent(intent)) return
         const prepared = await prepareImportedBpmnXml(sourceXml, processIndex.keys())
+        if (!isWorkspaceActivationIntentCurrent(intent)) return
         if (prepared.autoLayouted && !confirmGeneratedImportLayout()) {
           return
         }
         const proceed = await guardWorkspaceSwitch()
-        if (!proceed) return
-        await activateSingleFileDocument(file.name, prepared.xml, LocalizationSource.Xml)
+        if (!proceed || !isWorkspaceActivationIntentCurrent(intent)) return
+        await activateSingleFileDocument(file.name, prepared.xml, LocalizationSource.Xml, intent)
       } catch (err) {
-        pushToast(t('alert.open.failed', { error: errMsg(err) }), 'error')
+        if (isWorkspaceActivationIntentCurrent(intent)) {
+          pushToast(t('alert.open.failed', { error: errMsg(err) }), 'error')
+        }
       }
     },
-    [processIndex, pushToast, guardWorkspaceSwitch, activateSingleFileDocument]
+    [
+      activateSingleFileDocument,
+      beginWorkspaceActivationIntent,
+      guardWorkspaceSwitch,
+      isWorkspaceActivationIntentCurrent,
+      processIndex,
+      pushToast
+    ]
   )
 
   const startBlankDiagram = useCallback(() => {
+    const intent = beginWorkspaceActivationIntent()
     void (async () => {
       const proceed = await guardWorkspaceSwitch()
-      if (!proceed) return
+      if (!proceed || !isWorkspaceActivationIntentCurrent(intent)) return
       await activateSingleFileDocument(
         'untitled.bpmn',
         createNewDiagramXml(),
-        LocalizationSource.Editor
+        LocalizationSource.Editor,
+        intent
       )
     })()
-  }, [guardWorkspaceSwitch, activateSingleFileDocument])
+  }, [
+    activateSingleFileDocument,
+    beginWorkspaceActivationIntent,
+    guardWorkspaceSwitch,
+    isWorkspaceActivationIntentCurrent
+  ])
 
   const handleExportWorkspaceBackup = useCallback(async () => {
     const binding = captureWorkspaceOperation()
@@ -3785,7 +4051,14 @@ function App(): JSX.Element {
       const isCurrent = (): boolean => isWorkspaceOperationCurrent(binding)
       setBackupBusy(true)
       try {
-        const plan = await inspectWorkspaceBackup(adapter, backup)
+        const plan = await inspectWorkspaceBackup(adapter, backup, {
+          targetLanguage: lang,
+          localizationResources:
+            workspaceLocalizationSnapshotRef.current?.resources ?? DEFAULT_LOCALIZATION_RESOURCES,
+          localizationReview: reviewedXmlReviewQueueRef.current!.review,
+          validationAdapters: getRuntimeValidationAdapters(),
+          isCurrent
+        })
         if (!isCurrent()) return
         setBackupImportState({ binding, plan })
       } catch (error) {
@@ -3796,7 +4069,7 @@ function App(): JSX.Element {
         if (isCurrent()) setBackupBusy(false)
       }
     },
-    [captureWorkspaceOperation, isWorkspaceOperationCurrent, pushToast]
+    [captureWorkspaceOperation, isWorkspaceOperationCurrent, lang, pushToast]
   )
 
   const handleApplyBackupImport = useCallback(
@@ -3814,6 +4087,8 @@ function App(): JSX.Element {
           if (!isCurrent()) throw new Error(t('alert.staleWrite'))
           return applyWorkspaceBackupImport(adapter, plan, {
             decisions,
+            reviewedDigest: plan.reviewDigest,
+            currentProcessIndex: binding.index.processIndex(),
             beforeOverwrite: async (path, existing) => {
               if (!isCurrent()) throw new Error(t('alert.staleWrite'))
               if (!path.startsWith('.orbitpm/')) {
@@ -3827,6 +4102,22 @@ function App(): JSX.Element {
           })
         })
         if (!isCurrent()) return
+        if (result.status === 'rollback-failed') {
+          const applied = result.appliedBeforeFailure.map((item) => item.destinationPath).join(', ')
+          const rollback = result.rollbackErrors
+            .map((failure) => `${failure.path ?? '?'}: ${failure.message}`)
+            .join('; ')
+          const evidence = `${result.error.message}; applied: ${applied || 'none'}; rollback: ${rollback || 'unknown'}`
+          setBackupImportState(null)
+          await refreshWorkspace(rootHandleRef.current ?? undefined)
+          if (!isCurrent()) return
+          setWorkspaceIssues((current) =>
+            current.includes(evidence) ? current : [...current, evidence]
+          )
+          if (history) setHistoryOpen(true)
+          pushToast(t('alert.import.failed', { error: evidence }), 'error')
+          return
+        }
         if (result.status !== 'committed') {
           const detail =
             result.status === 'needs-review'
@@ -3873,11 +4164,27 @@ function App(): JSX.Element {
         }
       }
       const isCurrent = (): boolean => isWorkspaceOperationCurrent(binding)
+      historyRestoreAbortRef.current?.abort()
+      const restoreController = new AbortController()
+      historyRestoreAbortRef.current = restoreController
+      const signal = restoreController.signal
+      const resources = workspaceLocalizationSnapshotRef.current?.resources
       if (!isCurrent()) {
         return {
           status: 'failed',
           sessionId: null,
           error: new Error(t('alert.staleWrite'))
+        }
+      }
+      if (!resources) {
+        return {
+          status: 'failed',
+          sessionId: null,
+          error: new Error(
+            t('settings.localization.loadFailed', {
+              error: workspaceLocalizationError ?? t('workspace.history.unknownError')
+            })
+          )
         }
       }
       let expectedCurrentHash: string | null
@@ -3903,8 +4210,68 @@ function App(): JSX.Element {
         revision,
         workspace,
         expectedCurrentHash,
+        signal,
+        isWorkspaceCurrent: () => isCurrent(),
+        prepareXml: async (verifiedXml, context) => {
+          const reviewSignal = context.signal ?? signal
+          if (reviewSignal.aborted || !isCurrent()) return { status: 'cancelled' }
+          const inspected = await secureBpmnImportPreparer.inspect(verifiedXml, reviewSignal)
+          const prepared = await secureBpmnImportPreparer.prepare(verifiedXml, {
+            knownProcessIds: new Set(binding.index.processIndex().keys()),
+            validationAdapters: getRuntimeValidationAdapters(),
+            signal: reviewSignal
+          })
+          if (prepared.autoLayouted) return { status: 'review-required' }
+          const outcome = await reviewBpmnXmlLocalization(prepared.xml, {
+            source: LocalizationSource.Xml,
+            target: langRef.current,
+            defaultActive: langRef.current,
+            resources,
+            validation: {
+              adapters: getRuntimeValidationAdapters(),
+              knownProcessIds:
+                inspected.processIds.length > 0
+                  ? inspected.processIds
+                  : binding.index.processIndex().keys(),
+              requireDi: true
+            },
+            validationAction: 'commit-import',
+            review: reviewedXmlReviewQueueRef.current!.review,
+            signal: reviewSignal,
+            isCurrent: () => !reviewSignal.aborted && isCurrent()
+          })
+          if (outcome.status === 'completed' && !reviewSignal.aborted && isCurrent()) {
+            return { status: 'completed', xml: outcome.xml }
+          }
+          return {
+            status: outcome.status === 'review-required' ? 'review-required' : 'cancelled'
+          }
+        },
+        writePreparedXml: async (input) => {
+          const bytes = new TextEncoder().encode(input.xml)
+          if (input.signal?.aborted || !isCurrent()) {
+            throw new DOMException('History restore was cancelled.', 'AbortError')
+          }
+          if (input.expectedCurrentHash === null) {
+            return {
+              outcome: await adapter.writeAtomic(input.revision.originalPath, bytes, undefined, {
+                expectedWorkspaceId: adapter.id,
+                expectedMissing: true,
+                signal: input.signal
+              })
+            }
+          }
+          return manager.writeWithRevision(
+            input.revision.originalPath,
+            bytes,
+            input.expectedCurrentHash,
+            'restore',
+            input.signal
+          )
+        },
         applyXml: async (session, restoredXml) => {
-          const modeler = (modelersByKey[session.id] ?? session.modeler) as {
+          if (signal.aborted || !isCurrent()) throw new Error(t('alert.staleWrite'))
+          const modeler = (modelersByKeyRef.current[session.id] ?? session.modeler) as {
             importXML?: (xml: string) => Promise<unknown>
           } | null
           await modeler?.importXML?.(restoredXml)
@@ -3939,7 +4306,7 @@ function App(): JSX.Element {
       const liveSession = result.sessionId ? controller.store.get(result.sessionId) : undefined
       if (result.status === 'restored' && liveSession) {
         try {
-          await binding.drafts?.confirmedSave(liveSession.id, restoredXml)
+          await binding.drafts?.confirmedSave(liveSession.id, liveSession.incarnation, restoredXml)
         } catch (error) {
           if (isCurrent()) {
             pushToast(t('draftRecovery.error', { error: errMsg(error) }), 'error')
@@ -3955,7 +4322,7 @@ function App(): JSX.Element {
         // as the active editor content.
         binding.drafts?.track(liveSession)
         try {
-          await binding.drafts?.flush(liveSession.id)
+          await binding.drafts?.flush(liveSession.id, liveSession.incarnation)
         } catch (error) {
           if (isCurrent()) {
             pushToast(t('draftRecovery.error', { error: errMsg(error) }), 'error')
@@ -3973,7 +4340,7 @@ function App(): JSX.Element {
       digestsCacheRef.current = null
       return result
     },
-    [captureWorkspaceOperation, isWorkspaceOperationCurrent, modelersByKey, pushToast]
+    [captureWorkspaceOperation, isWorkspaceOperationCurrent, pushToast, workspaceLocalizationError]
   )
 
   // --- AI placement -------------------------------------------------------
@@ -4235,8 +4602,17 @@ function App(): JSX.Element {
         pushToast(t('toast.print.loading'), 'info')
         return
       }
+      const binding = captureWorkspaceOperation()
+      const isCurrent = (): boolean =>
+        isWorkspaceOperationCurrent(binding) &&
+        tab.gen === binding.generation &&
+        tabsRef.current.some(
+          (candidate) => candidate.key === tab.key && candidate.gen === tab.gen
+        ) &&
+        modelersByKeyRef.current[tab.key] === modeler
       try {
         const { svg } = await modeler.saveSVG()
+        if (!isCurrent()) return
         const folderLabel = tab.relPath
           ? dirOf(tab.relPath) || rootName || t('breadcrumb.root')
           : 'Single-file'
@@ -4267,6 +4643,7 @@ function App(): JSX.Element {
         }
         // Owner line from the process-level org props (orbitpm:owner/ownerType).
         const org = getProcessOrgProps(modeler as unknown as OrgModeler)
+        if (!isCurrent()) return
         const ownerLine = org.owner
           ? t('print.ownerLine', {
               name: org.owner,
@@ -4282,10 +4659,12 @@ function App(): JSX.Element {
           shapes
         })
       } catch (err) {
-        pushToast(t('toast.print.failed', { error: errMsg(err) }), 'error')
+        if (isCurrent()) {
+          pushToast(t('toast.print.failed', { error: errMsg(err) }), 'error')
+        }
       }
     },
-    [modelersByKey, rootName, pushToast]
+    [captureWorkspaceOperation, isWorkspaceOperationCurrent, modelersByKey, rootName, pushToast]
   )
 
   useEffect(() => {
@@ -4948,51 +5327,94 @@ function App(): JSX.Element {
   // stack, which would otherwise leave regenerated-but-unsaved work looking
   // "saved" to the close/switch guards).
   const handleApplyInterviewXml = useCallback(
-    async (tabKey: string, xml: string) => {
-      const modeler = modelersByKey[tabKey] as
+    async (tabKey: string, xml: string, request: InterviewApplyRequest) => {
+      const binding = captureWorkspaceOperation()
+      const controller = binding.controller
+      const tab = tabsRef.current.find((candidate) => candidate.key === tabKey)
+      const modeler = modelersByKeyRef.current[tabKey] as
         | {
             importXML(x: string): Promise<{ warnings: string[] }>
             saveXML(options: { format: boolean }): Promise<{ xml?: string }>
             get(name: string): unknown
           }
         | undefined
-      if (!modeler) throw new Error('editor not ready')
+      const session = controller?.store.get(tabKey)
+      if (!controller || !tab || !modeler || !session || session.modeler !== modeler) {
+        throw new Error('editor not ready')
+      }
+
+      const previousToken = interviewApplyTokenByTabRef.current.get(tabKey)
+      if (previousToken !== undefined && request.requestToken < previousToken) {
+        throw new DOMException('Interview request was superseded.', 'AbortError')
+      }
+      interviewApplyTokenByTabRef.current.set(tabKey, request.requestToken)
+      const isCurrent = (): boolean =>
+        !request.signal.aborted &&
+        interviewApplyTokenByTabRef.current.get(tabKey) === request.requestToken &&
+        isWorkspaceOperationCurrent(binding) &&
+        tab.gen === binding.generation &&
+        tabsRef.current.some(
+          (candidate) => candidate.key === tabKey && candidate.gen === tab.gen
+        ) &&
+        modelersByKeyRef.current[tabKey] === modeler &&
+        controller.store.get(tabKey)?.modeler === modeler
+      const assertCurrent = (): void => {
+        if (request.signal.aborted) {
+          throw (
+            request.signal.reason ??
+            new DOMException('Interview request was cancelled.', 'AbortError')
+          )
+        }
+        if (!isCurrent()) throw new Error(t('alert.staleWrite'))
+      }
+
+      assertCurrent()
       const { xml: previousXml } = await modeler.saveXML({ format: true })
+      assertCurrent()
       if (!previousXml) throw new Error('editor returned no XML')
       await validateReleaseXml(xml, {
         action: 'create-generated',
-        knownProcessIds: processIndex.keys(),
+        knownProcessIds: binding.index.processIndex().keys(),
         requireBilingual: true,
         requireDi: true
       })
+      assertCurrent()
       const replacementPreservation = await validateUnknownExtensionPreservation(previousXml, xml)
+      assertCurrent()
       if (!replacementPreservation.valid) {
         throw new Error(t('sourceEditor.preservationBlocked'))
       }
-      localizationSourceByTabRef.current.set(tabKey, LocalizationSource.Ai)
+
+      let mutationAttempted = false
       try {
+        assertCurrent()
+        mutationAttempted = true
         await modeler.importXML(xml)
+        assertCurrent()
         const { xml: roundTripXml } = await modeler.saveXML({ format: true })
+        assertCurrent()
         if (!roundTripXml) throw new Error('editor returned no XML after import')
         const roundTripPreservation = await validateUnknownExtensionPreservation(xml, roundTripXml)
+        assertCurrent()
         if (!roundTripPreservation.valid) {
           throw new Error(t('sourceEditor.preservationBlocked'))
         }
-      } catch (error) {
+        await validateReleaseXml(roundTripXml, {
+          action: 'create-generated',
+          knownProcessIds: binding.index.processIndex().keys(),
+          requireBilingual: true,
+          requireDi: true
+        })
+        assertCurrent()
+
+        autoSizeAll(modeler)
+        assertCurrent()
         try {
-          await modeler.importXML(previousXml)
+          ;(modeler.get('canvas') as { zoom(m: 'fit-viewport'): void }).zoom('fit-viewport')
         } catch {
-          /* preserve the original replacement error */
+          /* zoom is cosmetic */
         }
-        throw error
-      }
-      autoSizeAll(modeler)
-      try {
-        ;(modeler.get('canvas') as { zoom(m: 'fit-viewport'): void }).zoom('fit-viewport')
-      } catch {
-        /* zoom is cosmetic */
-      }
-      try {
+        assertCurrent()
         const canvas = modeler.get('canvas') as {
           getRootElement(): { businessObject?: { get?: (k: string) => unknown } }
         }
@@ -5005,11 +5427,20 @@ function App(): JSX.Element {
         ).updateProperties(root, {
           'orbitpm:activeLang': typeof cur === 'string' && cur ? cur : 'en'
         })
-      } catch {
-        /* dirty-marking is best-effort; the import itself already landed */
+        assertCurrent()
+        localizationSourceByTabRef.current.set(tabKey, LocalizationSource.Ai)
+      } catch (error) {
+        if (mutationAttempted) {
+          try {
+            await modeler.importXML(previousXml)
+          } catch {
+            /* preserve the original replacement error */
+          }
+        }
+        throw error
       }
     },
-    [modelersByKey, processIndex]
+    [captureWorkspaceOperation, isWorkspaceOperationCurrent]
   )
 
   // AI panel CTA → open the assistant on the interview tab for the active
@@ -5570,12 +6001,41 @@ function App(): JSX.Element {
                         localizationSource: LocalizationSource.Excel
                       })
                     },
-                    onOpenBilingualReview: (xml, name) => {
-                      openVirtualTab(baseName(name), xml, {
-                        collapse: false,
-                        autoSizeOnImport: true,
-                        localizationSource: LocalizationSource.Excel
-                      })
+                    onReviewBilingual: async (request) => {
+                      const binding = renderedWorkspaceBinding
+                      const isCurrent = (): boolean =>
+                        !request.signal.aborted && isWorkspaceOperationCurrent(binding)
+                      try {
+                        const outcome = await reviewBpmnXmlLocalization(request.xml, {
+                          source: LocalizationSource.Excel,
+                          target: lang,
+                          defaultActive: lang,
+                          resources:
+                            workspaceLocalizationSnapshot?.resources ??
+                            DEFAULT_LOCALIZATION_RESOURCES,
+                          validation: {
+                            adapters: getRuntimeValidationAdapters(),
+                            knownProcessIds: processCatalog.map(({ id }) => id),
+                            requireDi: true
+                          },
+                          validationAction: 'create-generated',
+                          review: reviewedXmlReviewQueueRef.current!.review,
+                          signal: request.signal,
+                          isCurrent
+                        })
+                        if (!isCurrent() || outcome.status !== 'completed') {
+                          return { status: 'cancelled' }
+                        }
+                        return {
+                          status: 'completed',
+                          reviewedXml: outcome.xml
+                        }
+                      } catch (error) {
+                        if (request.signal.aborted || !isCurrent()) {
+                          return { status: 'cancelled' }
+                        }
+                        throw error
+                      }
                     },
                     onCommitted: async (report) => {
                       if (
@@ -5742,6 +6202,10 @@ function App(): JSX.Element {
                   ) : (
                     <EditorTab
                       xml={content}
+                      sourceLocalizationResources={
+                        workspaceLocalizationSnapshot?.resources ?? DEFAULT_LOCALIZATION_RESOURCES
+                      }
+                      onReviewSourceBilingual={reviewedXmlReviewQueueRef.current!.review}
                       onDirtyChange={(dirty) => handleDirtyChange(tab.key, dirty)}
                       onRequestSave={(xml, options) => handleRequestSave(tab, xml, options)}
                       knownProcessIds={[...processIndex.keys()]}
@@ -6075,6 +6539,15 @@ function App(): JSX.Element {
         </span>
         <span>{t('footer.tagline')}</span>
       </footer>
+
+      {reviewedXmlReviewRequest && (
+        <ReviewedXmlIngestionDialog
+          request={reviewedXmlReviewRequest}
+          onDecision={(decision) => {
+            reviewedXmlReviewQueueRef.current?.decide(decision)
+          }}
+        />
+      )}
 
       {translationReview && (
         <TranslationReviewDialog
@@ -6436,7 +6909,11 @@ function App(): JSX.Element {
               ? refreshWorkspace(rootHandleRef.current ?? undefined)
               : Promise.resolve()
           }
-          onClose={() => setHistoryOpen(false)}
+          onClose={() => {
+            historyRestoreAbortRef.current?.abort()
+            historyRestoreAbortRef.current = null
+            setHistoryOpen(false)
+          }}
         />
       )}
 
