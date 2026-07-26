@@ -3,10 +3,11 @@ import readXlsxFile from 'read-excel-file/web-worker'
 import { strFromU8, unzipSync } from 'fflate'
 
 import type { ParsedWorkbookData, WorkbookCell, WorkbookSheetData } from './contracts'
+import { archiveCrc32 } from '../security/archivePreflight'
 import { parseCsvText } from './csv'
 import { SpreadsheetError } from './errors'
 import { SPREADSHEET_LIMITS } from './limits'
-import { preflightXlsx } from './xlsxPreflight'
+import { preflightXlsx, type XlsxPreflightResult } from './xlsxPreflight'
 import type {
   SpreadsheetWorkerParseRequest,
   SpreadsheetWorkerRequest,
@@ -191,6 +192,34 @@ function decodeArchiveEntry(
   return entry ? strFromU8(entry) : undefined
 }
 
+/**
+ * The ZIP headers are untrusted even after structural preflight. Verify the
+ * actual bounded inflation output before any workbook parser consumes it.
+ */
+export function verifyInflatedXlsxArchive(
+  preflight: XlsxPreflightResult,
+  archive: Readonly<Record<string, Uint8Array>>
+): void {
+  for (const entry of preflight.entries) {
+    if (entry.path.endsWith('/')) continue
+    const inflated = archive[entry.path]
+    if (!inflated || inflated.byteLength !== entry.uncompressedBytes) {
+      throw new SpreadsheetError('malformed-zip', {
+        reason: 'expanded-size-mismatch',
+        path: entry.path,
+        expected: entry.uncompressedBytes,
+        actual: inflated?.byteLength ?? -1
+      })
+    }
+    if (archiveCrc32(inflated) !== entry.crc32) {
+      throw new SpreadsheetError('malformed-zip', {
+        reason: 'crc-mismatch',
+        path: entry.path
+      })
+    }
+  }
+}
+
 async function parseXlsx(
   bytes: Uint8Array,
   progress: (completed: number, total: number) => void
@@ -198,19 +227,22 @@ async function parseXlsx(
   const preflight = preflightXlsx(bytes)
   progress(0, Math.max(1, preflight.worksheetCount))
 
-  // The browser-specific entry is intentionally used inside this dedicated
-  // application worker. It returns cached/displayed values and does not expose
-  // formatting as process semantics.
-  const input = new Uint8Array(bytes.byteLength)
-  input.set(bytes)
-  const parsed = await readXlsxFile(input.buffer)
-
   let archive: Readonly<Record<string, Uint8Array>>
   try {
     archive = unzipSync(bytes)
   } catch (cause) {
     throw new SpreadsheetError('malformed-zip', { reason: 'inflate-failed' }, { cause })
   }
+  verifyInflatedXlsxArchive(preflight, archive)
+
+  // The browser-specific entry is intentionally used inside this dedicated
+  // application worker after the first bounded inflation has passed size and
+  // CRC verification. It returns cached/displayed values and does not expose
+  // formatting as process semantics.
+  const input = new Uint8Array(bytes.byteLength)
+  input.set(bytes)
+  const parsed = await readXlsxFile(input.buffer)
+
   const workbookXml = decodeArchiveEntry(archive, 'xl/workbook.xml') ?? ''
   const relationshipsXml = decodeArchiveEntry(archive, 'xl/_rels/workbook.xml.rels') ?? ''
   const paths = workbookSheetPaths(workbookXml, relationshipsXml)

@@ -4,10 +4,21 @@ import {
   customPropertiesFromXml,
   formulasFromWorksheetXml,
   handleSpreadsheetWorkerRequest,
+  verifyInflatedXlsxArchive,
   workbookSheetPaths
 } from './spreadsheet.worker'
+import { unzipSync } from 'fflate'
 import { createOfficialWorkbookTemplate } from './template'
+import { preflightXlsx } from './xlsxPreflight'
 import type { SpreadsheetWorkerResponse } from './workerProtocol'
+
+function findCentral(bytes: Uint8Array): number {
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength)
+  for (let offset = 0; offset + 46 <= bytes.length; offset += 1) {
+    if (view.getUint32(offset, true) === 0x02014b50) return offset
+  }
+  throw new Error('central directory not found')
+}
 
 describe('spreadsheet worker XML metadata', () => {
   it('maps workbook names to relationship worksheet paths', () => {
@@ -84,6 +95,68 @@ describe('spreadsheet worker XML metadata', () => {
     expect(
       result?.workbook.sheets.find(({ name }) => name === 'Steps')?.rows.length
     ).toBeGreaterThan(1)
+  })
+
+  it('verifies inflated entry lengths and CRC before workbook parsing', async () => {
+    const template = createOfficialWorkbookTemplate('blank')
+    const preflight = preflightXlsx(template)
+    const archive = unzipSync(template)
+    expect(() => verifyInflatedXlsxArchive(preflight, archive)).not.toThrow()
+
+    const entry = preflight.entries.find(
+      ({ path, uncompressedBytes }) => !path.endsWith('/') && uncompressedBytes > 0
+    )!
+    expect(() =>
+      verifyInflatedXlsxArchive(preflight, {
+        ...archive,
+        [entry.path]: archive[entry.path]!.subarray(0, entry.uncompressedBytes - 1)
+      })
+    ).toThrowError(
+      expect.objectContaining({
+        code: 'malformed-zip',
+        details: expect.objectContaining({ reason: 'expanded-size-mismatch', path: entry.path })
+      })
+    )
+
+    const corrupted = {
+      ...archive,
+      [entry.path]: archive[entry.path]!.slice()
+    }
+    corrupted[entry.path]![0] ^= 1
+    expect(() => verifyInflatedXlsxArchive(preflight, corrupted)).toThrowError(
+      expect.objectContaining({
+        code: 'malformed-zip',
+        details: expect.objectContaining({ reason: 'crc-mismatch', path: entry.path })
+      })
+    )
+  })
+
+  it('rejects a workbook whose local and central CRC fields agree on the wrong value', async () => {
+    const bytes = new Uint8Array(createOfficialWorkbookTemplate('blank'))
+    const view = new DataView(bytes.buffer)
+    const central = findCentral(bytes)
+    const local = view.getUint32(central + 42, true)
+    const wrongCrc = (view.getUint32(central + 16, true) ^ 1) >>> 0
+    view.setUint32(central + 16, wrongCrc, true)
+    view.setUint32(local + 14, wrongCrc, true)
+    const responses: SpreadsheetWorkerResponse[] = []
+
+    await handleSpreadsheetWorkerRequest(
+      {
+        type: 'parse',
+        requestId: 'xlsx-bad-crc',
+        format: 'xlsx',
+        bytes: bytes.buffer
+      },
+      (response) => responses.push(response)
+    )
+
+    expect(responses.at(-1)).toEqual({
+      type: 'error',
+      requestId: 'xlsx-bad-crc',
+      code: 'malformed-zip',
+      details: expect.objectContaining({ reason: 'crc-mismatch' })
+    })
   })
 
   it('parses multiline UTF-8 CSV through Papa without weakening the strict boundary', async () => {
