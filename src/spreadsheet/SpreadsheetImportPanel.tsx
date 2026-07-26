@@ -183,6 +183,10 @@ function participantTypeLabel(type: ParticipantType): string {
   return type === 'lane' ? t('spreadsheet.type.lane') : t('spreadsheet.type.pool')
 }
 
+function spreadsheetSourceIdentity(file: Pick<File, 'size' | 'lastModified'>): string {
+  return `${file.size}:${file.lastModified}`
+}
+
 function downloadWorkbookTemplate(kind: 'blank' | 'example'): void {
   const generated = createOfficialWorkbookTemplate(kind)
   const owned = new Uint8Array(generated.byteLength)
@@ -263,6 +267,11 @@ export function SpreadsheetImportPanel({
     setTemplateVersion(undefined)
     setPreset(null)
     setConfirmedMappings(new Set())
+    setDefaultProcessId('process_1')
+    setDefaultNameEn('')
+    setDefaultNameAr('')
+    setDestinationFolder('')
+    setCollisionBehavior('rename')
     setSyntheticConfirmed(false)
     setReview(null)
     setPlan(null)
@@ -324,12 +333,30 @@ export function SpreadsheetImportPanel({
           draftKey,
           updatedAt: new Date().toISOString(),
           destinationFolder,
-          collisionBehavior
+          collisionBehavior,
+          confirmedMappings: Object.freeze([...confirmedMappings].sort()),
+          defaultProcessId,
+          defaultNameEn,
+          defaultNameAr,
+          syntheticBoundaryConfirmed: syntheticConfirmed,
+          sourceIdentity: sourceFile ? spreadsheetSourceIdentity(sourceFile) : undefined
         })
         .catch(() => undefined)
     }, 350)
     return () => window.clearTimeout(timeout)
-  }, [collisionBehavior, destinationFolder, draftKey, phase, preset])
+  }, [
+    collisionBehavior,
+    confirmedMappings,
+    defaultNameAr,
+    defaultNameEn,
+    defaultProcessId,
+    destinationFolder,
+    draftKey,
+    phase,
+    preset,
+    sourceFile,
+    syntheticConfirmed
+  ])
 
   const mappingIssues = useMemo(
     () =>
@@ -387,6 +414,13 @@ export function SpreadsheetImportPanel({
     setReview(null)
     setPlan(null)
     setReport(null)
+    setConfirmedMappings(new Set())
+    setDefaultProcessId('process_1')
+    setDefaultNameEn('')
+    setDefaultNameAr('')
+    setDestinationFolder('')
+    setCollisionBehavior('rename')
+    setSyntheticConfirmed(false)
     setError(null)
     setStatus(null)
     setProgress({ phase: 'preflight', completed: 0, total: 1 })
@@ -405,6 +439,9 @@ export function SpreadsheetImportPanel({
             name: file.name.replace(/\.(?:xlsx|csv)$/i, ''),
             locale: lang
           })
+      let nextConfirmedMappings: ReadonlySet<string> = detection.official
+        ? allMappedRequiredFields(nextPreset)
+        : new Set()
       const nextDraftKey = mappingDraftKey(workspaceId, file.name)
       const draft = await draftStore.load(nextDraftKey)
       if (controller.signal.aborted || taskVersion !== taskVersionRef.current) {
@@ -426,13 +463,27 @@ export function SpreadsheetImportPanel({
             updatedAt: _updatedAt,
             destinationFolder: restoredFolder,
             collisionBehavior: restoredCollision,
+            confirmedMappings: restoredConfirmedMappings,
+            defaultProcessId: restoredDefaultProcessId,
+            defaultNameEn: restoredDefaultNameEn,
+            defaultNameAr: restoredDefaultNameAr,
+            syntheticBoundaryConfirmed: restoredSyntheticConfirmed,
+            sourceIdentity: restoredSourceIdentity,
             ...restoredPreset
           } = draft
           void _draftKey
           void _updatedAt
           nextPreset = restoredPreset
+          nextConfirmedMappings = new Set(restoredConfirmedMappings ?? [])
           setDestinationFolder(restoredFolder ?? '')
           setCollisionBehavior(restoredCollision ?? 'rename')
+          setDefaultProcessId(restoredDefaultProcessId ?? 'process_1')
+          setDefaultNameEn(restoredDefaultNameEn ?? '')
+          setDefaultNameAr(restoredDefaultNameAr ?? '')
+          setSyntheticConfirmed(
+            restoredSyntheticConfirmed === true &&
+              restoredSourceIdentity === spreadsheetSourceIdentity(file)
+          )
           setStatus(t('spreadsheet.mapping.presetLoaded'))
         }
       }
@@ -443,7 +494,7 @@ export function SpreadsheetImportPanel({
       setParseIssues(
         Object.freeze([...result.issues, ...(detection.official ? detection.issues : [])])
       )
-      setConfirmedMappings(detection.official ? allMappedRequiredFields(nextPreset) : new Set())
+      setConfirmedMappings(nextConfirmedMappings)
       setPhase('mapping')
       setProgress(null)
     } catch (cause) {
@@ -1198,7 +1249,13 @@ export function SpreadsheetImportPanel({
                       draftKey,
                       updatedAt: new Date().toISOString(),
                       destinationFolder,
-                      collisionBehavior
+                      collisionBehavior,
+                      confirmedMappings: Object.freeze([...confirmedMappings].sort()),
+                      defaultProcessId,
+                      defaultNameEn,
+                      defaultNameAr,
+                      syntheticBoundaryConfirmed: syntheticConfirmed,
+                      sourceIdentity: sourceFile ? spreadsheetSourceIdentity(sourceFile) : undefined
                     })
                     .then(() => setStatus(t('spreadsheet.mapping.draftSaved')))
                     .catch((cause) => setError(errorText(cause, t('spreadsheet.error.review'))))

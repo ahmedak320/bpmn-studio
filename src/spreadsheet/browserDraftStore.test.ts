@@ -58,7 +58,13 @@ describe('browser spreadsheet draft store', () => {
       draftKey: 'workspace\u001fbook.xlsx',
       updatedAt: '2026-07-26T00:00:00.000Z',
       destinationFolder: 'HR',
-      collisionBehavior: 'rename'
+      collisionBehavior: 'rename',
+      confirmedMappings: ['steps.name_en', 'steps.type'],
+      defaultProcessId: 'leave_process',
+      defaultNameEn: 'Leave process',
+      defaultNameAr: 'عملية الإجازة',
+      syntheticBoundaryConfirmed: true,
+      sourceIdentity: '128:1785016800000'
     }
     await store.save(draft)
     await expect(store.load(draft.draftKey)).resolves.toEqual(draft)
@@ -66,5 +72,75 @@ describe('browser spreadsheet draft store', () => {
       ...Array.from({ length: storage.length }, (_, index) => storage.key(index))
     ]).toHaveLength(1)
     expect(storage.getItem(storage.key(0)!)!).not.toContain('credentials')
+  })
+
+  it('migrates the legacy wrapper without inventing review confirmations', async () => {
+    const storage = new MemoryStorage()
+    const store = new BrowserMappingDraftStore(storage)
+    const draft: MappingDraft = {
+      version: MAPPING_PRESET_VERSION,
+      name: 'Legacy',
+      headerSignatures: {},
+      selectedSheets: {},
+      fieldMappings: {},
+      valueMappings: { stepTypes: {}, participantTypes: {} },
+      delimiters: { list: [';'] },
+      inference: {
+        flowMode: 'auto',
+        syntheticBoundaries: 'review',
+        requireGatewayConditions: true
+      },
+      locale: 'en',
+      draftKey: 'workspace\u001flegacy.csv',
+      updatedAt: '2026-07-26T00:00:00.000Z',
+      destinationFolder: 'Imports'
+    }
+    await store.save(draft)
+    const key = storage.key(0)!
+    const stored = JSON.parse(storage.getItem(key)!) as Record<string, unknown>
+    stored.version = 1
+    for (const field of [
+      'confirmedMappings',
+      'defaultProcessId',
+      'defaultNameEn',
+      'defaultNameAr',
+      'syntheticBoundaryConfirmed',
+      'sourceIdentity'
+    ]) {
+      delete stored[field]
+    }
+    storage.setItem(key, JSON.stringify(stored))
+
+    await expect(store.load(draft.draftKey)).resolves.toEqual(draft)
+  })
+
+  it('rejects widened or stale review state before writing it', async () => {
+    const storage = new MemoryStorage()
+    const store = new BrowserMappingDraftStore(storage)
+    const draft: MappingDraft = {
+      version: MAPPING_PRESET_VERSION,
+      name: 'Unsafe',
+      headerSignatures: {},
+      selectedSheets: {},
+      fieldMappings: {},
+      valueMappings: { stepTypes: {}, participantTypes: {} },
+      delimiters: { list: [';'] },
+      inference: {
+        flowMode: 'auto',
+        syntheticBoundaries: 'review',
+        requireGatewayConditions: true
+      },
+      locale: 'en',
+      draftKey: 'workspace\u001funsafe.csv',
+      updatedAt: '2026-07-26T00:00:00.000Z',
+      confirmedMappings: ['steps.type'],
+      syntheticBoundaryConfirmed: true,
+      sourceIdentity: 'not-a-file-identity'
+    }
+
+    await expect(store.save(draft)).rejects.toMatchObject({
+      code: 'invalid-mapping-preset'
+    })
+    expect(storage.length).toBe(0)
   })
 })

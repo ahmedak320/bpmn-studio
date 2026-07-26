@@ -19,6 +19,7 @@ import { computeSpreadsheetModelReview } from '../modelReview'
 import { OFFICIAL_SHEET_NAMES } from '../officialTemplate'
 import { OFFICIAL_TEMPLATE_ASSET_NAMES } from '../template'
 import { validModel } from '../testFixtures'
+import { allMappedRequiredFields, suggestedMappingPreset } from '../wizardMapping'
 
 const mocks = vi.hoisted(() => ({
   parse: vi.fn(),
@@ -455,6 +456,17 @@ describe('SpreadsheetImportPanel browser workflow', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'spreadsheet.mapping.saveDraft' }))
     expect(await screen.findByText('spreadsheet.mapping.draftSaved')).not.toBeNull()
+    expect(mocks.draftSave).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        defaultProcessId: 'mapped_process',
+        defaultNameEn: 'Mapped process',
+        defaultNameAr: 'عملية مهيأة',
+        destinationFolder: 'imports',
+        collisionBehavior: 'overwrite',
+        syntheticBoundaryConfirmed: false,
+        sourceIdentity: expect.stringMatching(/^[0-9]+:[0-9]+$/)
+      })
+    )
     fireEvent.click(screen.getByRole('button', { name: 'spreadsheet.mapping.exportPreset' }))
     expect(mocks.downloadPreset).toHaveBeenCalledOnce()
 
@@ -473,6 +485,83 @@ describe('SpreadsheetImportPanel browser workflow', () => {
     expect(await screen.findByText('spreadsheet.validation.title')).not.toBeNull()
     expect(screen.queryByRole('button', { name: 'spreadsheet.prepare' })).toBeNull()
   }, 10_000)
+
+  it.each([
+    ['matching', true],
+    ['changed', false]
+  ] as const)(
+    'restores a full draft while keeping %s-file synthetic approval safe',
+    async (_case, approvalExpected) => {
+      const workbook: ParsedWorkbookData = {
+        sheets: [
+          {
+            name: 'Activities',
+            rows: [
+              cells(['process_id', 'step_id', 'order', 'type', 'name_en', 'name_ar']),
+              cells(['leave', 'Review', 1, 'task', 'Review request', 'مراجعة الطلب'])
+            ]
+          }
+        ]
+      }
+      const preset = suggestedMappingPreset(workbook)
+      const file = new File(['Workflow,Identifier'], 'resume.csv', {
+        type: 'text/csv',
+        lastModified: 1_785_016_800_000
+      })
+      mocks.parse.mockResolvedValue(parseResult(workbook, 'csv'))
+      mocks.draftLoad.mockResolvedValue({
+        ...preset,
+        draftKey: 'workspace-1\u001fresume.csv',
+        updatedAt: '2026-07-26T00:00:00.000Z',
+        confirmedMappings: [...allMappedRequiredFields(preset)],
+        defaultProcessId: 'restored_process',
+        defaultNameEn: 'Restored process',
+        defaultNameAr: 'عملية مستعادة',
+        destinationFolder: 'Restored',
+        collisionBehavior: 'overwrite',
+        syntheticBoundaryConfirmed: true,
+        sourceIdentity: approvalExpected
+          ? `${file.size}:${file.lastModified}`
+          : `${file.size + 1}:${file.lastModified}`
+      })
+      renderPanel()
+
+      fireEvent.change(screen.getByLabelText(/spreadsheet\.upload/), {
+        target: { files: [file] }
+      })
+      expect(await screen.findByText('spreadsheet.mapping.presetLoaded')).not.toBeNull()
+      expect(
+        (screen.getByLabelText('spreadsheet.mapping.defaultProcessId') as HTMLInputElement).value
+      ).toBe('restored_process')
+      expect(
+        (screen.getByLabelText('spreadsheet.mapping.defaultNameEn') as HTMLInputElement).value
+      ).toBe('Restored process')
+      expect(
+        (screen.getByLabelText('spreadsheet.mapping.defaultNameAr') as HTMLInputElement).value
+      ).toBe('عملية مستعادة')
+      expect(
+        (screen.getByLabelText(/spreadsheet\.destination\.folder/) as HTMLInputElement).value
+      ).toBe('Restored')
+      expect(
+        (screen.getByLabelText('spreadsheet.destination.collision') as HTMLSelectElement).value
+      ).toBe('overwrite')
+
+      fireEvent.click(screen.getByRole('button', { name: 'spreadsheet.review' }))
+      await waitFor(() => expect(mocks.modelReview).toHaveBeenCalledOnce())
+      expect(mocks.modelReview.mock.calls[0]?.[0]).toMatchObject({
+        confirmSyntheticBoundaries: approvalExpected,
+        destinationFolder: 'Restored',
+        buildOptions: {
+          defaultProcessId: 'restored_process',
+          defaultProcessName: {
+            en: 'Restored process',
+            ar: 'عملية مستعادة'
+          }
+        }
+      })
+    },
+    10_000
+  )
 
   it('reports a parser failure and supports explicit cancellation', async () => {
     const user = userEvent.setup()

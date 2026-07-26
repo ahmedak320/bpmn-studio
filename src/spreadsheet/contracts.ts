@@ -251,6 +251,18 @@ export interface MappingDraft extends MappingPreset {
   readonly updatedAt: string
   readonly destinationFolder?: string
   readonly collisionBehavior?: CollisionBehavior
+  /** Reviewed low-confidence `sheetRole.canonicalField` mappings only. */
+  readonly confirmedMappings?: readonly string[]
+  readonly defaultProcessId?: string
+  readonly defaultNameEn?: string
+  readonly defaultNameAr?: string
+  /**
+   * Synthetic-event approval is restored only when `sourceIdentity` still
+   * matches the exact browser File metadata.
+   */
+  readonly syntheticBoundaryConfirmed?: boolean
+  /** File size and last-modified identity; never workbook contents. */
+  readonly sourceIdentity?: string
 }
 
 export interface MappingDraftStore {
