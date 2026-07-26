@@ -4,6 +4,7 @@
 export const en = {
   // --- App chrome (App.tsx) ---
   'app.title': 'OrbitPM Process Studio Lite',
+  'app.version.aria': 'Version {version}',
   'app.newProcess': '＋ New process',
   'app.newProcess.title': 'Create a new BPMN process',
   'app.changeFolder': 'Change folder…',
@@ -1040,6 +1041,7 @@ export const en = {
 export const ar: Record<keyof typeof en, string> = {
   // --- App chrome ---
   'app.title': 'OrbitPM Process Studio Lite',
+  'app.version.aria': 'الإصدار {version}',
   'app.newProcess': '＋ عملية جديدة',
   'app.newProcess.title': 'إنشاء عملية BPMN جديدة',
   'app.changeFolder': 'تغيير المجلد…',

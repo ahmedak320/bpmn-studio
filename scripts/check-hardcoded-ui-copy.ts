@@ -63,15 +63,9 @@ const USER_MESSAGE_CALLS = new Set([
 
 /**
  * Every exception is exact and reviewable. Technical/brand tokens stay
- * invariant in both languages; the App version aria-label is an App-owned
- * known violation that this isolated change is not authorized to edit.
+ * invariant in both languages.
  */
 export const HARDCODED_UI_COPY_ALLOWLIST: readonly HardcodedUiCopyAllowlistEntry[] = Object.freeze([
-  {
-    signature: 'src/App.tsx|attribute|Version ${…}',
-    reason:
-      'Known App-owned aria-label. Replace with a localized version label after the active App/session integration lands.'
-  },
   {
     signature: 'src/ai/AiPanelLite.tsx|jsx-text|MB',
     reason: 'Invariant file-size unit symbol, not English prose.'

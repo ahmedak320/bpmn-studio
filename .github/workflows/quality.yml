@@ -57,6 +57,9 @@ jobs:
       - name: Lite-only active tree
         run: npm run check:lite-only
 
+      - name: Localized user-interface copy
+        run: npm run check:ui-copy
+
       - name: CSP egress allowlist
         run: npm run check:csp
 

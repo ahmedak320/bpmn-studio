@@ -3780,7 +3780,10 @@ function App(): JSX.Element {
         <span style={{ display: 'flex', alignItems: 'center', gap: 8, flex: '0 0 auto' }}>
           <img src={ICON_DATA_URI} width={20} height={20} alt="" style={{ borderRadius: 5 }} />
           <strong style={{ fontSize: 13 }}>{t('app.title')}</strong>
-          <span aria-label={`Version ${__APP_VERSION__}`} style={{ fontSize: 11, opacity: 0.65 }}>
+          <span
+            aria-label={t('app.version.aria', { version: __APP_VERSION__ })}
+            style={{ fontSize: 11, opacity: 0.65 }}
+          >
             v{__APP_VERSION__}
           </span>
           <span
