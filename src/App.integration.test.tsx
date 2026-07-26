@@ -1271,7 +1271,7 @@ describe('App directory workspace orchestration', () => {
     expect(screen.getByTestId('catalog-view')).not.toBeNull()
     expect(screen.getByTestId('folder-tree')).not.toBeNull()
 
-    await user.click(screen.getByRole('button', { name: 'mock-tree-open' }))
+    await user.click(await screen.findByRole('button', { name: 'mock-tree-open' }))
     expect(await screen.findByTestId('editor-tab')).not.toBeNull()
     expect(latestSessionController().store.getActive()?.identity.workspace.id).toBe(
       (activeLocalizationAdapter as { id: string }).id
@@ -1301,7 +1301,7 @@ describe('App directory workspace orchestration', () => {
     }
     expect(persistedManifest.workspace.id).toBe(firstAdapter.id)
 
-    await user.click(screen.getByRole('button', { name: 'mock-tree-open' }))
+    await user.click(await screen.findByRole('button', { name: 'mock-tree-open' }))
     expect(await screen.findByTestId('editor-tab')).not.toBeNull()
     expect(latestSessionController().store.getActive()?.identity.workspace.id).toBe(firstAdapter.id)
 
@@ -1317,7 +1317,7 @@ describe('App directory workspace orchestration', () => {
     }
     expect(reopenedAdapter.id).toBe(firstAdapter.id)
 
-    await user.click(screen.getByRole('button', { name: 'mock-tree-open' }))
+    await user.click(await screen.findByRole('button', { name: 'mock-tree-open' }))
     expect(await screen.findByTestId('editor-tab')).not.toBeNull()
     expect(latestSessionController().store.getActive()?.identity.workspace.id).toBe(firstAdapter.id)
   })
@@ -1336,7 +1336,8 @@ describe('App directory workspace orchestration', () => {
     await waitFor(() => expect(root.file('Finance/new-approval.bpmn')).toBeDefined())
 
     const rail = screen.getByRole('button', { name: 'sidebar.toggle.aria' })
-    if (rail.getAttribute('aria-expanded') === 'false') await user.click(rail)
+    await waitFor(() => expect(rail.getAttribute('aria-expanded')).toBe('false'))
+    await user.click(rail)
     await user.click(screen.getByRole('button', { name: 'mock-ai-place' }))
     await waitFor(() => expect(root.file('ai-claims.bpmn')).toBeDefined())
 
@@ -1674,9 +1675,12 @@ describe('App directory workspace orchestration', () => {
     const first = populatedDirectory()
     const second = fakeRoot()
     second.addFile('second.bpmn', state.xml)
-    seedDraft('directory:workspace', 'Finance/existing.bpmn', `${state.xml}\n<!-- first -->`)
-    seedDraft('directory:workspace', 'Finance/delete-me.bpmn', `${state.xml}\n<!-- second -->`)
     await openDirectoryWorkspace(user, first)
+    const workspaceId = (
+      mocks.workspaceLocalizationFactories.mock.calls.at(-1)?.[0] as { id: string }
+    ).id
+    seedDraft(workspaceId, 'Finance/existing.bpmn', `${state.xml}\n<!-- first -->`)
+    seedDraft(workspaceId, 'Finance/delete-me.bpmn', `${state.xml}\n<!-- second -->`)
     mocks.pickWorkspace.mockResolvedValue(asDirectoryHandle(second))
 
     const tree = mocks.folderTreeProps.mock.calls.at(-1)?.[0] as {
@@ -1716,7 +1720,8 @@ describe('App directory workspace orchestration', () => {
     await waitFor(() => expect(root.file('Finance/new-approval.bpmn')).toBeDefined())
 
     const rail = screen.getByRole('button', { name: 'sidebar.toggle.aria' })
-    if (rail.getAttribute('aria-expanded') === 'false') await user.click(rail)
+    await waitFor(() => expect(rail.getAttribute('aria-expanded')).toBe('false'))
+    await user.click(rail)
     await user.click(screen.getByRole('button', { name: 'mock-tree-rename' }))
     await waitFor(() => expect(root.file('Finance/renamed.bpmn')).toBeDefined())
 

@@ -19,12 +19,6 @@ import {
   sanitizeFolderName
 } from './editor/newProcessDoc'
 import {
-  createFolderAt,
-  createBpmnFileUnique,
-  renameAt,
-  moveAt,
-  countDirEntries,
-  bpmnSlugsIn,
   countBpmnFiles,
   hasPathSeparator,
   ensureBpmnExtension,
@@ -47,19 +41,27 @@ import { BackupImportDialog } from './workspace/BackupImportDialog'
 import { HistoryDialog } from './workspace/HistoryDialog'
 import { snapshotAdapterWorkspace } from './workspace/adapterSnapshot'
 import {
+  ManifestBoundWorkspaceAdapter,
+  bindWorkspaceToManifest,
+  type WorkspaceManifestWarning
+} from './workspace/workspaceManifest'
+import {
   DirectoryWorkspaceAdapter,
   OpfsWorkspaceAdapter,
   SingleFileWorkspaceAdapter,
+  WorkspaceOperationError,
   applyWorkspaceBackupImport,
   inspectWorkspaceBackup,
+  normalizeWorkspacePath,
   opfsSupported,
+  sha256Hex,
   type FileSnapshot,
   type WorkspaceAdapter,
   type WorkspaceBackupCollisionDecision,
   type WorkspaceBackupImportPlan,
   type WorkspaceMode
 } from './workspace/adapters'
-import { PortableHistoryManager } from './workspace/history'
+import { PortableHistoryManager, type HistoryRevision } from './workspace/history'
 import {
   ActiveSessionCommandRouter,
   BroadcastWorkspaceCoordinator,
@@ -67,13 +69,24 @@ import {
   DraftJournalCoordinator,
   IndexedDbDraftJournal,
   MemoryDraftJournal,
+  PATH_TRANSACTION_STAGING_ROOT,
+  confirmPathDelete,
+  createAdapterPathMutation,
   createAdapterSessionPersistence,
+  executePathTransaction,
   findDraftRecoveryComparison,
   installApplicationShortcuts,
   installBeforeUnloadDirtyGuard,
+  planPathTransaction,
+  resolveDirtyPathDecision,
+  restoreHistoryRevision,
   type DraftRecoveryComparison,
   type DraftJournal,
+  type ExternalConflict,
+  type ExternalConflictDecision,
   type FileFingerprint,
+  type PathTransactionPlan,
+  type RestoreHistoryRevisionResult,
   type SessionPersistence,
   type WorkspaceIdentity
 } from './sessions'
@@ -147,6 +160,7 @@ import { folderCrumbs } from './workspace/breadcrumb'
 import { Toaster, type ToastMsg, type ToastTone } from './workspace/Toaster'
 import { ConfirmDialog } from './workspace/ConfirmDialog'
 import { UnsavedSwitchDialog } from './workspace/UnsavedSwitchDialog'
+import { AccessibleDialog } from './common/AccessibleDialog'
 import { createMutex } from './workspace/mutex'
 import { partitionDirtyTabs } from './workspace/dirtySave'
 import { canCommitToWorkspace, commitIfCurrent } from './workspace/workspaceSession'
@@ -351,6 +365,36 @@ interface SessionSaveRequestResult {
   durable: boolean
 }
 
+interface SaveConflictPromptState {
+  tabKey: string
+  path: string
+  conflict: ExternalConflict
+  saveAsPath: string
+  saveAsError: string | null
+  showComparison: boolean
+}
+
+interface PathDirtyPromptState {
+  count: number
+  kind: 'rename' | 'move' | 'delete'
+  path: string
+}
+
+interface PathRecoveryState {
+  adapter: WorkspaceAdapter
+  error: unknown
+  generation: number
+  payloadPath: string
+  retry: () => Promise<void>
+  stagingPath: string
+}
+
+interface ManifestRepairState {
+  adapter: ManifestBoundWorkspaceAdapter
+  error: unknown
+  generation: number
+}
+
 function liveIndexPath(tab: Tab): string {
   return tab.relPath ?? `.orbitpm/live/${encodeURIComponent(tab.key)}/${tab.title}`
 }
@@ -375,6 +419,81 @@ function baseName(relPath: string): string {
 
 function errMsg(err: unknown): string {
   return err instanceof Error ? err.message : String(err)
+}
+
+async function directBpmnSlugs(
+  adapter: WorkspaceAdapter,
+  folderPath: string
+): Promise<Set<string>> {
+  const entries = await adapter.list(folderPath || undefined)
+  return new Set(
+    entries
+      .filter(
+        (entry) =>
+          entry.kind === 'file' &&
+          entry.parentPath === folderPath &&
+          entry.name.toLocaleLowerCase('en-US').endsWith('.bpmn')
+      )
+      .map((entry) => entry.name.replace(/\.bpmn$/iu, '').toLocaleLowerCase('en-US'))
+  )
+}
+
+/**
+ * Creation-only write routed through the active workspace adapter. The
+ * expected-missing CAS closes the external-writer race; a newly occupied name
+ * is simply added to the de-dup set and retried.
+ */
+async function writeUniqueBpmn(
+  adapter: WorkspaceAdapter,
+  folderPath: string,
+  requestedSlug: string,
+  xml: string
+): Promise<string> {
+  if (folderPath) await adapter.createFolder(folderPath)
+  const taken = await directBpmnSlugs(adapter, folderPath)
+  const bytes = new TextEncoder().encode(xml)
+  for (let attempt = 0; attempt < 1000; attempt += 1) {
+    const slug = dedupeSlug(requestedSlug, (candidate) =>
+      taken.has(candidate.toLocaleLowerCase('en-US'))
+    )
+    const path = joinRel(folderPath, `${slug}.bpmn`)
+    const outcome = await adapter.writeAtomic(path, bytes, undefined, {
+      expectedWorkspaceId: adapter.id,
+      expectedMissing: true
+    })
+    if (outcome.status === 'success') return outcome.snapshot.path
+    if (outcome.status === 'external-conflict' && outcome.reason === 'already-exists') {
+      taken.add(slug.toLocaleLowerCase('en-US'))
+      continue
+    }
+    if ('error' in outcome) throw new Error(outcome.error.message)
+    if (outcome.status === 'stale-workspace') {
+      throw new Error(t('workspace.create.stale'))
+    }
+    throw new Error(t('workspace.create.failed', { status: outcome.status }))
+  }
+  throw new Error(t('workspace.create.noAvailableName'))
+}
+
+async function directoryEntryCount(adapter: WorkspaceAdapter, path: string): Promise<number> {
+  try {
+    return (await adapter.list(path)).length
+  } catch (error) {
+    if (error instanceof WorkspaceOperationError && error.code === 'not-found') return 0
+    throw error
+  }
+}
+
+function migratedPathForPlan(plan: PathTransactionPlan, path: string): string | null {
+  const source = plan.request.sourcePath
+  const affected =
+    path === source || (plan.request.entryKind === 'directory' && path.startsWith(`${source}/`))
+  if (!affected) return path
+  if (plan.request.kind === 'delete') return null
+  const destination = plan.request.destinationPath!
+  return plan.request.entryKind === 'file'
+    ? destination
+    : `${destination}${path.slice(source.length)}`
 }
 
 /** Map a convertApcToBpmn error code to friendly, localized reason text. */
@@ -595,7 +714,6 @@ function App(): JSX.Element {
     support ? 'directory' : browserWorkspaceAvailable ? 'opfs' : 'single-file'
   )
   const [workspaceAdapter, setWorkspaceAdapter] = useState<WorkspaceAdapter | null>(null)
-  const [rootHandle, setRootHandle] = useState<FileSystemDirectoryHandle | null>(null)
   const [rootName, setRootName] = useState<string>('')
   const rootNameRef = useRef('')
   const rememberedRef = useRef<FileSystemDirectoryHandle | null>(null)
@@ -673,12 +791,18 @@ function App(): JSX.Element {
   >(async () => {
     throw new Error('Document-session save controller is not ready.')
   })
+  const [saveConflictPrompt, setSaveConflictPrompt] = useState<SaveConflictPromptState | null>(null)
+  const saveConflictResolveRef = useRef<((decision: ExternalConflictDecision) => void) | null>(null)
+  const [manifestRepair, setManifestRepair] = useState<ManifestRepairState | null>(null)
   const rootHandleRef = useRef<FileSystemDirectoryHandle | null>(null) // sync mirror for async guards
   const workspaceActivationSequenceRef = useRef(0)
   const refreshSequenceRef = useRef(0)
   const opMutexRef = useRef(createMutex()) // serializes create / import / AI-place writes
   const [switchGuard, setSwitchGuard] = useState<{ count: number } | null>(null)
   const switchResolveRef = useRef<((choice: 'save' | 'discard' | 'cancel') => void) | null>(null)
+  const [pathDirtyPrompt, setPathDirtyPrompt] = useState<PathDirtyPromptState | null>(null)
+  const pathDirtyResolveRef = useRef<((choice: 'save' | 'discard' | 'cancel') => void) | null>(null)
+  const [pathRecovery, setPathRecovery] = useState<PathRecoveryState | null>(null)
   const [downloadSwitchGuard, setDownloadSwitchGuard] = useState<{ count: number } | null>(null)
   const downloadSwitchResolveRef = useRef<((choice: 'continue' | 'cancel') => void) | null>(null)
   const [draftRecoveryPrompt, setDraftRecoveryPrompt] = useState<{
@@ -941,6 +1065,32 @@ function App(): JSX.Element {
   const dismissToast = useCallback((id: number) => {
     setToasts((prev) => prev.filter((t) => t.id !== id))
   }, [])
+  const resolveSaveConflictPrompt = useCallback((decision: ExternalConflictDecision) => {
+    setSaveConflictPrompt(null)
+    const resolve = saveConflictResolveRef.current
+    saveConflictResolveRef.current = null
+    resolve?.(decision)
+  }, [])
+  const promptForSaveConflict = useCallback(
+    (tab: Tab, conflict: ExternalConflict): Promise<ExternalConflictDecision> => {
+      saveConflictResolveRef.current?.({ kind: 'cancel' })
+      const originalPath = conflict.identity.path ?? tab.relPath ?? tab.title
+      const copyName = baseName(originalPath).replace(/\.bpmn$/iu, '') + '-copy.bpmn'
+      const saveAsPath = joinRel(dirOf(originalPath), copyName)
+      return new Promise((resolve) => {
+        saveConflictResolveRef.current = resolve
+        setSaveConflictPrompt({
+          tabKey: tab.key,
+          path: originalPath,
+          conflict,
+          saveAsPath,
+          saveAsError: null,
+          showComparison: false
+        })
+      })
+    },
+    []
+  )
   const liveFiles = useMemo(() => {
     void liveWorkspaceVersion
     return liveWorkspaceIndexRef.current.files()
@@ -1027,8 +1177,12 @@ function App(): JSX.Element {
       workspaceActivationSequenceRef.current += 1
       workspaceLocalizationBindingRef.current?.controller.abort()
       cancelPendingDraftRecovery(false)
+      saveConflictResolveRef.current?.({ kind: 'cancel' })
+      saveConflictResolveRef.current = null
       switchResolveRef.current?.('cancel')
       switchResolveRef.current = null
+      pathDirtyResolveRef.current?.('cancel')
+      pathDirtyResolveRef.current = null
       downloadSwitchResolveRef.current?.('cancel')
       downloadSwitchResolveRef.current = null
       for (const unregister of Object.values(commandUnregisterersRef.current)) unregister()
@@ -1070,6 +1224,59 @@ function App(): JSX.Element {
     []
   )
 
+  const retryManifestReconciliation = useCallback(async () => {
+    const repair = manifestRepair
+    if (
+      !repair ||
+      workspaceAdapterRef.current !== repair.adapter ||
+      workspaceGenRef.current !== repair.generation
+    ) {
+      setManifestRepair(null)
+      return
+    }
+    try {
+      await repair.adapter.reconcileManifest()
+      if (
+        workspaceAdapterRef.current === repair.adapter &&
+        workspaceGenRef.current === repair.generation
+      ) {
+        setManifestRepair(null)
+        pushToast(t('workspace.manifest.repaired'), 'success')
+      }
+    } catch (error) {
+      setManifestRepair({ ...repair, error })
+      pushToast(t('workspace.manifest.retryFailed', { error: errMsg(error) }), 'error')
+    }
+  }, [manifestRepair, pushToast])
+
+  const retryPathRecoveryCleanup = useCallback(async () => {
+    const recovery = pathRecovery
+    if (
+      !recovery ||
+      workspaceAdapterRef.current !== recovery.adapter ||
+      workspaceGenRef.current !== recovery.generation
+    ) {
+      setPathRecovery(null)
+      return
+    }
+    try {
+      await opMutexRef.current.runExclusive(async () => {
+        if (
+          workspaceAdapterRef.current !== recovery.adapter ||
+          workspaceGenRef.current !== recovery.generation
+        ) {
+          throw new Error(t('workspace.create.stale'))
+        }
+        await recovery.retry()
+      })
+      setPathRecovery(null)
+      pushToast(t('workspace.path.recoverySuccess'), 'success')
+    } catch (error) {
+      setPathRecovery({ ...recovery, error })
+      pushToast(t('workspace.path.recoveryFailed', { error: errMsg(error) }), 'error')
+    }
+  }, [pathRecovery, pushToast])
+
   const activateWorkspace = useCallback(
     async (
       adapter: WorkspaceAdapter,
@@ -1077,15 +1284,52 @@ function App(): JSX.Element {
       displayName: string
     ) => {
       const activationSequence = ++workspaceActivationSequenceRef.current
+      let activeAdapter = adapter
+      let manifestAdapter: ManifestBoundWorkspaceAdapter | null = null
+      if (adapter.storage.capabilities.multipleFiles && adapter.storage.capabilities.directories) {
+        const bound = await bindWorkspaceToManifest(adapter, {
+          onManifestWarning: (warning: WorkspaceManifestWarning) => {
+            if (workspaceActivationSequenceRef.current !== activationSequence) return
+            pushToast(
+              t('workspace.manifest.warning', {
+                path: warning.path,
+                error: warning.message
+              }),
+              'error'
+            )
+          },
+          onManifestError: (error) => {
+            if (
+              !manifestAdapter ||
+              workspaceAdapterRef.current !== manifestAdapter ||
+              workspaceActivationSequenceRef.current !== activationSequence
+            ) {
+              return
+            }
+            setManifestRepair({
+              adapter: manifestAdapter,
+              error,
+              generation: workspaceGenRef.current
+            })
+            pushToast(t('workspace.manifest.postCommitError', { error: errMsg(error) }), 'error')
+          }
+        })
+        if (workspaceActivationSequenceRef.current !== activationSequence) return
+        manifestAdapter = bound.adapter
+        activeAdapter = bound.adapter
+      }
       let localizationCandidate: {
         controller: AbortController
         error: string | null
         snapshot: WorkspaceLocalizationState | null
         store: WorkspaceLocalizationStore
       } | null = null
-      if (adapter.storage.capabilities.multipleFiles && adapter.storage.capabilities.directories) {
+      if (
+        activeAdapter.storage.capabilities.multipleFiles &&
+        activeAdapter.storage.capabilities.directories
+      ) {
         const controller = new AbortController()
-        const store = createWorkspaceLocalizationStore(adapter)
+        const store = createWorkspaceLocalizationStore(activeAdapter)
         localizationCandidate = { controller, error: null, snapshot: null, store }
         try {
           localizationCandidate.snapshot = await store.load({ signal: controller.signal })
@@ -1139,13 +1383,13 @@ function App(): JSX.Element {
       const workspaceGeneration = workspaceGenRef.current
       refreshSequenceRef.current += 1
       workspaceLocalizationBindingRef.current?.controller.abort()
-      workspaceAdapterRef.current = adapter
+      workspaceAdapterRef.current = activeAdapter
       workspaceLocalizationSnapshotRef.current = null
       setWorkspaceLocalizationSnapshot(null)
       setWorkspaceLocalizationError(localizationCandidate?.error ?? null)
       const workspaceLocalizationBinding = localizationCandidate
         ? {
-            adapter,
+            adapter: activeAdapter,
             controller: localizationCandidate.controller,
             generation: workspaceGeneration,
             store: localizationCandidate.store
@@ -1153,17 +1397,17 @@ function App(): JSX.Element {
         : null
       workspaceLocalizationBindingRef.current = workspaceLocalizationBinding
       rootHandleRef.current = handle
-      const history = adapter.storage.capabilities.directories
+      const history = activeAdapter.storage.capabilities.directories
         ? new PortableHistoryManager({
-            adapter,
+            adapter: activeAdapter,
             applicationVersion: __APP_VERSION__
           })
         : null
       historyManagerRef.current = history
       const workspaceIdentity: WorkspaceIdentity = {
-        id: adapter.id,
+        id: activeAdapter.id,
         generation: workspaceGenRef.current,
-        mode: adapter.mode
+        mode: activeAdapter.mode
       }
       workspaceIdentityRef.current = workspaceIdentity
 
@@ -1188,7 +1432,7 @@ function App(): JSX.Element {
       if (typeof globalThis.BroadcastChannel === 'function') {
         try {
           coordination = new BroadcastWorkspaceCoordinator({
-            workspaceId: adapter.id,
+            workspaceId: activeAdapter.id,
             instanceId: pageInstanceIdRef.current!
           })
           workspaceCoordinatorRef.current = coordination
@@ -1198,13 +1442,13 @@ function App(): JSX.Element {
       }
 
       const controller = new DocumentSessionController({
-        persistence: sessionPersistenceWithHistory(adapter, workspaceIdentity, history),
+        persistence: sessionPersistenceWithHistory(activeAdapter, workspaceIdentity, history),
         coordination,
         isWorkspaceCurrent: (identity) =>
           workspaceIdentityRef.current !== null &&
           identity.workspace.id === workspaceIdentityRef.current.id &&
           identity.workspace.generation === workspaceIdentityRef.current.generation &&
-          workspaceAdapterRef.current === adapter,
+          workspaceAdapterRef.current === activeAdapter,
         onConfirmedSave: (session) => drafts.confirmedSave(session.id, session.lastSavedXml),
         onExplicitDiscard: (sessionId) => drafts.explicitDiscard(sessionId),
         onPostSaveError: (error) =>
@@ -1216,14 +1460,14 @@ function App(): JSX.Element {
       })
       if (coordination) {
         workspaceChangeUnsubscribeRef.current = coordination.subscribeChanges((change) => {
-          if (workspaceAdapterRef.current !== adapter) return
+          if (workspaceAdapterRef.current !== activeAdapter) return
           const openSession = controller.store
             .list()
             .find((session) => session.identity.path === change.path)
           if (openSession?.dirty) {
             pushToast(t('workspace.coordination.changed', { path: change.path }), 'error')
           }
-          if (adapter.storage.capabilities.multipleFiles) {
+          if (activeAdapter.storage.capabilities.multipleFiles) {
             void refreshWorkspace(handle ?? undefined, displayName)
           }
         })
@@ -1275,6 +1519,12 @@ function App(): JSX.Element {
       setCatalogOpen(false)
       setMoveTarget(null)
       setDeleteTarget(null)
+      setManifestRepair(null)
+      setPathRecovery(null)
+      pathDirtyResolveRef.current?.('cancel')
+      pathDirtyResolveRef.current = null
+      setPathDirtyPrompt(null)
+      resolveSaveConflictPrompt({ kind: 'cancel' })
       setTreeRevealRequest(null)
       setSessionOwners([])
       setUnresolvedOpen(false)
@@ -1285,7 +1535,7 @@ function App(): JSX.Element {
       if (workspaceLocalizationBinding && localizationCandidate?.snapshot) {
         if (
           workspaceLocalizationBindingRef.current !== workspaceLocalizationBinding ||
-          workspaceAdapterRef.current !== adapter ||
+          workspaceAdapterRef.current !== activeAdapter ||
           workspaceGenRef.current !== workspaceGeneration
         ) {
           return
@@ -1293,13 +1543,12 @@ function App(): JSX.Element {
         workspaceLocalizationSnapshotRef.current = localizationCandidate.snapshot
         setWorkspaceLocalizationSnapshot(localizationCandidate.snapshot)
       }
-      setWorkspaceAdapter(adapter)
-      setRootHandle(handle)
+      setWorkspaceAdapter(activeAdapter)
       rootNameRef.current = displayName
       setRootName(displayName)
-      setMode(adapter.mode)
+      setMode(activeAdapter.mode)
       setPhase('ready')
-      if (adapter.mode === 'directory' && handle) {
+      if (activeAdapter.mode === 'directory' && handle) {
         try {
           await rememberWorkspace(handle)
           rememberedRef.current = handle
@@ -1308,11 +1557,11 @@ function App(): JSX.Element {
           /* IDB may be unavailable; non-fatal */
         }
       }
-      if (adapter.storage.capabilities.multipleFiles) {
+      if (activeAdapter.storage.capabilities.multipleFiles) {
         await refreshWorkspace(handle ?? undefined, displayName)
       }
     },
-    [cancelPendingDraftRecovery, refreshWorkspace, pushToast]
+    [cancelPendingDraftRecovery, refreshWorkspace, pushToast, resolveSaveConflictPrompt]
   )
 
   // First-load: fallback landing, remembered-folder reconnect, or fresh open.
@@ -1461,6 +1710,13 @@ function App(): JSX.Element {
     const r = switchResolveRef.current
     switchResolveRef.current = null
     r?.(choice)
+  }, [])
+
+  const resolvePathDirtyPrompt = useCallback((choice: 'save' | 'discard' | 'cancel') => {
+    setPathDirtyPrompt(null)
+    const resolve = pathDirtyResolveRef.current
+    pathDirtyResolveRef.current = null
+    resolve?.(choice)
   }, [])
 
   const resolveDownloadedSwitch = useCallback((choice: 'continue' | 'cancel') => {
@@ -1707,7 +1963,12 @@ function App(): JSX.Element {
         localizationSource?: LocalizationSourceType
       }
     ) => {
-      const key = relPath
+      const workspace = workspaceIdentityRef.current
+      const existingSession =
+        workspace && sessionControllerRef.current
+          ? sessionControllerRef.current.store.getByIdentity({ workspace, path: relPath })
+          : undefined
+      const key = existingSession?.id ?? relPath
       const tab: Tab = {
         key,
         title: baseName(relPath),
@@ -1862,41 +2123,6 @@ function App(): JSX.Element {
     },
     [activateWorkspace, ensureDocumentSession, reviewRecoveryDraft]
   )
-
-  const closeTabsUnder = useCallback((prefix: string) => {
-    for (const key of pendingProcessFocusRef.current.keys()) {
-      if (key === prefix || key.startsWith(prefix + '/')) {
-        pendingProcessFocusRef.current.delete(key)
-      }
-    }
-    for (const key of localizationSourceByTabRef.current.keys()) {
-      if (key === prefix || key.startsWith(prefix + '/')) {
-        localizationSourceByTabRef.current.delete(key)
-        localizationReviewByTabRef.current.delete(key)
-      }
-    }
-    const controller = sessionControllerRef.current
-    const drafts = draftCoordinatorRef.current
-    const affectedSessions =
-      controller?.store
-        .list()
-        .filter(
-          (session) =>
-            session.identity.path === prefix || session.identity.path?.startsWith(`${prefix}/`)
-        ) ?? []
-    for (const session of affectedSessions) {
-      commandUnregisterersRef.current[session.id]?.()
-      delete commandUnregisterersRef.current[session.id]
-      commandRouterRef.current?.unregister(session.id)
-      void drafts?.untrack(session.id)
-      controller?.store.close(session.id)
-    }
-    setTabs((prev) =>
-      prev.filter(
-        (t) => !(t.relPath && (t.relPath === prefix || t.relPath.startsWith(prefix + '/')))
-      )
-    )
-  }, [])
 
   const closeTab = useCallback(
     (key: string): boolean => {
@@ -2073,24 +2299,77 @@ function App(): JSX.Element {
           throw new Error(t('alert.staleWrite'))
         }
         const capturedRevision = controller.store.get(tab.key)!.revision
-        const outcome = await controller.save(tab.key, {
+        let outcome = await controller.save(tab.key, {
           xml,
           expectedRevision: capturedRevision
         })
+        while (outcome.status === 'external-conflict') {
+          const decision = await promptForSaveConflict(tab, outcome.conflict)
+          if (
+            decision.kind === 'cancel' ||
+            sessionControllerRef.current !== controller ||
+            workspaceAdapterRef.current !== adapter ||
+            !canCommitToWorkspace(tab.gen, workspaceGenRef.current)
+          ) {
+            throw new Error(t('session.save.failed', { status: 'cancelled' }))
+          }
+          outcome = await controller.save(tab.key, {
+            xml,
+            expectedRevision: capturedRevision,
+            conflictDecision: decision
+          })
+        }
         if (outcome.status === 'clean') {
           await draftCoordinatorRef.current?.confirmedSave(tab.key, xml)
           setDirtyByKey((previous) => ({ ...previous, [tab.key]: false }))
           return { durable: true }
         }
-        if (outcome.status !== 'success') {
-          if (outcome.status === 'external-conflict') {
+        if (outcome.status === 'reloaded') {
+          const external = outcome.external
+          const modeler = modelersByKey[tab.key] as
+            { importXML?: (candidate: string) => Promise<unknown> } | undefined
+          baseHashByPathRef.current[tab.relPath] = external.fingerprint.hash
+          liveWorkspaceIndexRef.current.updateSaved({
+            relPath: tab.relPath,
+            xml: external.xml,
+            lastModified: external.fingerprint.modifiedAt,
+            size: external.fingerprint.size
+          })
+          try {
+            await modeler?.importXML?.(external.xml)
+          } catch (error) {
+            // The controller has already accepted the external file and
+            // discarded the prior journal record. Re-track and synchronously
+            // flush the captured local XML so a failed canvas refresh cannot
+            // silently lose the edits still visible to the user.
+            const restoredLocal = controller.updateXml(tab.key, xml)
+            draftCoordinatorRef.current?.track(restoredLocal)
+            let draftRecoveryError: unknown
+            try {
+              await draftCoordinatorRef.current?.flush(tab.key)
+            } catch (draftError) {
+              draftRecoveryError = draftError
+              pushToast(t('draftRecovery.error', { error: errMsg(draftError) }), 'error')
+            }
+            liveWorkspaceIndexRef.current.updateDirty(tab.relPath, xml)
+            setLiveWorkspaceVersion(liveWorkspaceIndexRef.current.version)
+            setContents((previous) => ({ ...previous, [tab.key]: xml }))
+            setDirtyByKey((previous) => ({ ...previous, [tab.key]: true }))
             throw new Error(
-              t('session.save.externalConflict', {
-                path: tab.relPath,
-                reason: outcome.conflict.reason
+              t('session.save.reloadEditorFailed', {
+                error: draftRecoveryError
+                  ? `${errMsg(error)}; ${errMsg(draftRecoveryError)}`
+                  : errMsg(error)
               })
             )
           }
+          liveWorkspaceIndexRef.current.clearDirty(tab.relPath)
+          setLiveWorkspaceVersion(liveWorkspaceIndexRef.current.version)
+          setContents((previous) => ({ ...previous, [tab.key]: external.xml }))
+          setDirtyByKey((previous) => ({ ...previous, [tab.key]: false }))
+          return { durable: true }
+        }
+        if (outcome.status !== 'success' && outcome.status !== 'saved-as') {
           if (outcome.status === 'locked') {
             throw new Error(t('session.save.locked'))
           }
@@ -2102,19 +2381,31 @@ function App(): JSX.Element {
           }
           throw new Error(t('session.save.failed', { status: outcome.status }))
         }
-        baseHashByPathRef.current[tab.relPath] = outcome.fingerprint.hash
+        const savedPath = outcome.status === 'saved-as' ? outcome.identity.path : tab.relPath
+        if (!savedPath) throw new Error(t('session.save.failed', { status: 'missing-path' }))
+        baseHashByPathRef.current[savedPath] = outcome.fingerprint.hash
         const saved: FileMeta = {
-          relPath: tab.relPath,
+          relPath: savedPath,
           xml,
           lastModified: outcome.fingerprint.modifiedAt,
           size: outcome.fingerprint.size
         }
+        if (outcome.status === 'saved-as') {
+          liveWorkspaceIndexRef.current.clearDirty(tab.relPath)
+          setTabs((previous) =>
+            previous.map((candidate) =>
+              candidate.key === tab.key
+                ? { ...candidate, relPath: savedPath, title: baseName(savedPath) }
+                : candidate
+            )
+          )
+        }
         liveWorkspaceIndexRef.current.updateSaved(saved)
         const savedSession = controller.store.get(tab.key)
         if (outcome.remainingDirty && savedSession) {
-          liveWorkspaceIndexRef.current.updateDirty(tab.relPath, savedSession.currentXml)
+          liveWorkspaceIndexRef.current.updateDirty(savedPath, savedSession.currentXml)
         } else {
-          liveWorkspaceIndexRef.current.clearDirty(tab.relPath)
+          liveWorkspaceIndexRef.current.clearDirty(savedPath)
         }
         setLiveWorkspaceVersion(liveWorkspaceIndexRef.current.version)
         setContents((previous) => ({ ...previous, [tab.key]: xml }))
@@ -2125,11 +2416,19 @@ function App(): JSX.Element {
         if (outcome.remainingDirty) {
           throw new Error(t('session.save.newerEdits'))
         }
+        if (outcome.status === 'saved-as') await refreshWorkspace()
         return { durable: true }
       }
       throw new Error(t('session.save.failed', { status: 'missing-workspace' }))
     },
-    [contents, ensureDocumentSession, pushToast]
+    [
+      contents,
+      ensureDocumentSession,
+      modelersByKey,
+      promptForSaveConflict,
+      pushToast,
+      refreshWorkspace
+    ]
   )
   requestSaveRef.current = handleRequestSave
 
@@ -2411,7 +2710,8 @@ function App(): JSX.Element {
 
   const handleCreateMissingProcess = useCallback(
     async (calledElementId: string) => {
-      if (!(isMultiFileMode(mode) && rootHandle)) {
+      const adapter = workspaceAdapterRef.current
+      if (!(isMultiFileMode(mode) && adapter?.storage.capabilities.multipleFiles)) {
         pushToast(t('alert.createMissingProcessNoFolder', { calledElementId }), 'info')
         return
       }
@@ -2425,14 +2725,15 @@ function App(): JSX.Element {
       if (!name) return
       try {
         const relPath = await opMutexRef.current.runExclusive(async () => {
-          const taken = await bpmnSlugsIn(rootHandle, '')
+          if (workspaceAdapterRef.current !== adapter) throw new Error(t('alert.staleWrite'))
+          const taken = await directBpmnSlugs(adapter, '')
           const slug = dedupeSlug(deriveFileBaseName(name || calledElementId), (c) =>
             taken.has(c.toLowerCase())
           )
           const doc = buildMissingProcessDoc(calledElementId, name, slug)
-          return createBpmnFileUnique(rootHandle, '', doc.fileBaseName, doc.xml)
+          return writeUniqueBpmn(adapter, '', doc.fileBaseName, doc.xml)
         })
-        await refreshWorkspace(rootHandle)
+        await refreshWorkspace()
         setSidebarOpen(true)
         requestTreeReveal(calledElementId, relPath)
         void openDirectoryFile(relPath, { collapse: false })
@@ -2440,15 +2741,7 @@ function App(): JSX.Element {
         pushToast(t('alert.createProcessFailed', { error: errMsg(err) }), 'error')
       }
     },
-    [
-      mode,
-      rootHandle,
-      promptText,
-      refreshWorkspace,
-      openDirectoryFile,
-      pushToast,
-      requestTreeReveal
-    ]
+    [mode, promptText, refreshWorkspace, openDirectoryFile, pushToast, requestTreeReveal]
   )
 
   const handleOpenCalledProcess = useCallback(
@@ -2461,20 +2754,21 @@ function App(): JSX.Element {
         pushToast(t('alert.noProcessWithId', { processId }), 'info')
         return
       }
-      if (isMultiFileMode(mode) && rootHandle) {
+      if (workspaceAdapter?.storage.capabilities.multipleFiles) {
         void handleCreateMissingProcess(processId)
       } else {
         pushToast(t('alert.noProcessWithId', { processId }), 'info')
       }
     },
-    [openCanonicalProcess, linkGraph, mode, rootHandle, handleCreateMissingProcess, pushToast]
+    [openCanonicalProcess, linkGraph, workspaceAdapter, handleCreateMissingProcess, pushToast]
   )
 
   // --- tree CRUD ----------------------------------------------------------
 
   const handleNewProcess = useCallback(
     async (folderRel: string) => {
-      if (!rootHandle) return
+      const adapter = workspaceAdapterRef.current
+      if (!adapter?.storage.capabilities.multipleFiles) return
       const name = await promptText({
         title: t('dialog.newProcess.title'),
         label: t('dialog.newProcess.label'),
@@ -2484,22 +2778,27 @@ function App(): JSX.Element {
       })
       if (!name) return
       try {
+        // Commit the canvas/sidebar intent before the storage write becomes
+        // externally observable; this prevents a late post-create collapse
+        // from overriding a user's immediate rail toggle.
+        setSidebarOpen(false)
         const relPath = await opMutexRef.current.runExclusive(async () => {
-          const taken = await bpmnSlugsIn(rootHandle, folderRel)
+          if (workspaceAdapterRef.current !== adapter) throw new Error(t('alert.staleWrite'))
+          const taken = await directBpmnSlugs(adapter, folderRel)
           const slug = dedupeSlug(deriveFileBaseName(name), (c) => taken.has(c.toLowerCase()))
           // Also de-dup the derived <process id> against the LIVE process index
           // so ANY id collision (incl. a hash clash for two Arabic names) is
           // suffixed rather than silently cross-wiring their call links (ORIG-6b).
           const doc = buildNewProcessDoc(name, slug, (candidate) => processIndex.has(candidate))
-          return createBpmnFileUnique(rootHandle, folderRel, doc.fileBaseName, doc.xml)
+          return writeUniqueBpmn(adapter, folderRel, doc.fileBaseName, doc.xml)
         })
-        await refreshWorkspace(rootHandle)
+        await refreshWorkspace()
         void openDirectoryFile(relPath)
       } catch (err) {
         pushToast(t('alert.createProcessFailed', { error: errMsg(err) }), 'error')
       }
     },
-    [rootHandle, promptText, refreshWorkspace, openDirectoryFile, pushToast, processIndex]
+    [promptText, refreshWorkspace, openDirectoryFile, pushToast, processIndex]
   )
 
   const handleNewProcessFallback = useCallback(async () => {
@@ -2521,13 +2820,14 @@ function App(): JSX.Element {
   }, [promptText, processIndex, guardWorkspaceSwitch, activateSingleFileDocument])
 
   const handleNewProcessClick = useCallback(() => {
-    if (isMultiFileMode(mode) && rootHandle) void handleNewProcess('')
+    if (workspaceAdapter?.storage.capabilities.multipleFiles) void handleNewProcess('')
     else void handleNewProcessFallback()
-  }, [mode, rootHandle, handleNewProcess, handleNewProcessFallback])
+  }, [workspaceAdapter, handleNewProcess, handleNewProcessFallback])
 
   const handleNewFolder = useCallback(
     async (folderRel: string) => {
-      if (!rootHandle) return
+      const adapter = workspaceAdapterRef.current
+      if (!adapter?.storage.capabilities.directories) return
       const name = await promptText({
         title: t('dialog.newFolder.title'),
         label: t('dialog.newFolder.label'),
@@ -2536,18 +2836,241 @@ function App(): JSX.Element {
       })
       if (!name) return
       try {
-        await createFolderAt(rootHandle, folderRel, name.trim())
-        await refreshWorkspace(rootHandle)
+        await opMutexRef.current.runExclusive(async () => {
+          if (workspaceAdapterRef.current !== adapter) throw new Error(t('alert.staleWrite'))
+          await adapter.createFolder(joinRel(folderRel, name.trim()))
+        })
+        await refreshWorkspace()
       } catch (err) {
         pushToast(t('alert.createFolderFailed', { error: errMsg(err) }), 'error')
       }
     },
-    [rootHandle, promptText, refreshWorkspace, pushToast]
+    [promptText, refreshWorkspace, pushToast]
+  )
+
+  const requestPathDirtyDecision = useCallback(
+    (
+      count: number,
+      request: Pick<PathTransactionPlan['request'], 'kind' | 'sourcePath'>
+    ): Promise<'save' | 'discard' | 'cancel'> =>
+      new Promise((resolve) => {
+        pathDirtyResolveRef.current = resolve
+        setPathDirtyPrompt({ count, kind: request.kind, path: request.sourcePath })
+      }),
+    []
+  )
+
+  const updateUiAfterPathCommit = useCallback(
+    async (plan: PathTransactionPlan): Promise<void> => {
+      const deletedIds = new Set(plan.request.kind === 'delete' ? plan.affectedSessionIds : [])
+      const previousTabs = tabs
+
+      if (plan.request.kind === 'delete') {
+        const isDeletedTab = (tab: Tab): boolean =>
+          deletedIds.has(tab.key) ||
+          Boolean(tab.relPath && migratedPathForPlan(plan, tab.relPath) === null)
+        const deletedUiIds = new Set([
+          ...deletedIds,
+          ...previousTabs.filter(isDeletedTab).map((tab) => tab.key)
+        ])
+        const drafts = draftCoordinatorRef.current
+        for (const id of deletedUiIds) {
+          commandUnregisterersRef.current[id]?.()
+          delete commandUnregisterersRef.current[id]
+          commandRouterRef.current?.unregister(id)
+          liveXmlUninstallersRef.current[id]?.()
+          delete liveXmlUninstallersRef.current[id]
+          badgeUninstallersRef.current[id]?.()
+          delete badgeUninstallersRef.current[id]
+          const timer = liveXmlTimersRef.current[id]
+          if (timer) clearTimeout(timer)
+          delete liveXmlTimersRef.current[id]
+          localizationSourceByTabRef.current.delete(id)
+          localizationReviewByTabRef.current.delete(id)
+          pendingProcessFocusRef.current.delete(id)
+          pendingAiAutoSizeRef.current.delete(id)
+          delete commandsRef.current[id]
+          await drafts?.untrack(id)
+        }
+        setTabs((previous) => previous.filter((tab) => !isDeletedTab(tab)))
+        setActiveKey((previous) => {
+          if (!previous || !deletedUiIds.has(previous)) return previous
+          const remaining = previousTabs.filter((tab) => !isDeletedTab(tab))
+          return remaining.at(-1)?.key ?? null
+        })
+        const dropDeleted = <T,>(record: Record<string, T>): Record<string, T> => {
+          if (![...deletedUiIds].some((id) => id in record)) return record
+          const next = { ...record }
+          for (const id of deletedUiIds) delete next[id]
+          return next
+        }
+        setContents(dropDeleted)
+        setDirtyByKey(dropDeleted)
+        setModelersByKey(dropDeleted)
+        setMounted((previous) => {
+          const next = new Set(previous)
+          for (const id of deletedUiIds) next.delete(id)
+          return next.size === previous.size ? previous : next
+        })
+      } else {
+        setTabs((previous) =>
+          previous.map((tab) => {
+            if (!tab.relPath) return tab
+            const relPath = migratedPathForPlan(plan, tab.relPath)
+            return relPath && relPath !== tab.relPath
+              ? { ...tab, relPath, title: baseName(relPath) }
+              : tab
+          })
+        )
+      }
+
+      const nextHashes: Record<string, string> = {}
+      for (const [path, hash] of Object.entries(baseHashByPathRef.current)) {
+        const migrated = migratedPathForPlan(plan, path)
+        if (migrated) nextHashes[migrated] = hash
+      }
+      baseHashByPathRef.current = nextHashes
+
+      const index = liveWorkspaceIndexRef.current
+      const affectedPaths = index
+        .files()
+        .map((file) => file.relPath)
+        .filter((path) => migratedPathForPlan(plan, path) !== path)
+        .sort((left, right) => right.length - left.length)
+      for (const path of affectedPaths) {
+        const migrated = migratedPathForPlan(plan, path)
+        if (migrated) index.move(path, migrated)
+        else {
+          index.clearDirty(path)
+          index.removeSaved(path)
+        }
+      }
+      setLiveWorkspaceVersion(index.version)
+      digestsCacheRef.current = null
+    },
+    [tabs]
+  )
+
+  const runPathTransaction = useCallback(
+    async (request: {
+      kind: 'rename' | 'move' | 'delete'
+      entryKind: 'file' | 'directory'
+      sourcePath: string
+      destinationPath?: string
+      deleteConfirmed?: boolean
+    }): Promise<'committed' | 'cancelled' | 'failed'> => {
+      const adapter = workspaceAdapterRef.current
+      const controller = sessionControllerRef.current
+      if (!adapter || !controller) throw new Error(t('workspace.path.unavailable'))
+      let plan = planPathTransaction(controller.store.list(), {
+        id:
+          typeof globalThis.crypto?.randomUUID === 'function'
+            ? globalThis.crypto.randomUUID()
+            : `path-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+        workspaceId: adapter.id,
+        ...request,
+        deleteConfirmed: request.kind === 'delete' ? false : request.deleteConfirmed
+      })
+      if (request.kind === 'delete' && request.deleteConfirmed) {
+        plan = confirmPathDelete(plan)
+      }
+      if (plan.phase === 'awaiting-dirty-decision') {
+        const choice = await requestPathDirtyDecision(plan.dirtySessionIds.length, plan.request)
+        plan = resolveDirtyPathDecision(
+          plan,
+          choice === 'save'
+            ? 'save-and-continue'
+            : choice === 'discard'
+              ? 'continue-without-saving'
+              : 'cancel'
+        )
+      }
+      if (plan.phase === 'cancelled') return 'cancelled'
+      const history = historyManagerRef.current
+      const drafts = draftCoordinatorRef.current
+      const mutatePath = createAdapterPathMutation(adapter, { history: history ?? undefined })
+      let retryFinalize: (() => Promise<void>) | undefined
+      const result = await opMutexRef.current.runExclusive(async () => {
+        if (
+          workspaceAdapterRef.current !== adapter ||
+          sessionControllerRef.current !== controller
+        ) {
+          throw new Error(t('alert.staleWrite'))
+        }
+        return executePathTransaction(controller.store, plan, {
+          saveSession: async (sessionId) => {
+            const session = controller.store.get(sessionId)
+            const tab = tabs.find((candidate) => candidate.key === sessionId)
+            if (!session || !tab) {
+              return { sessionId, ok: false, status: 'missing-session' }
+            }
+            try {
+              const xml = session.readXml ? await session.readXml() : session.currentXml
+              const save = await requestSaveRef.current(tab, xml)
+              return {
+                sessionId,
+                ok: save.durable,
+                status: save.durable ? 'success' : 'not-durable',
+                remainingDirty: controller.store.get(sessionId)?.dirty ?? true
+              }
+            } catch (error) {
+              return { sessionId, ok: false, status: errMsg(error), remainingDirty: true }
+            }
+          },
+          mutateStorage: async (readyPlan) => {
+            const mutation = await mutatePath(readyPlan)
+            retryFinalize = mutation.finalize
+            return mutation
+          },
+          migrateDrafts: drafts ? (migrations) => drafts.migrateDraftRecords(migrations) : undefined
+        })
+      })
+      if (result.status === 'cancelled') return 'cancelled'
+      if (result.status !== 'committed') {
+        if (result.status === 'failed') {
+          throw new Error(t('workspace.path.failed', { error: errMsg(result.error) }))
+        }
+        if (result.status === 'save-failed') {
+          throw new Error(
+            t('workspace.path.saveFailed', {
+              error: result.outcomes.map((outcome) => outcome.status).join(', ')
+            })
+          )
+        }
+        throw new Error(t('workspace.path.unavailable'))
+      }
+      await updateUiAfterPathCommit(result.plan)
+      await refreshWorkspace()
+      if (result.finalizeError) {
+        const transactionHash = await sha256Hex(new TextEncoder().encode(result.plan.id))
+        const stagingPath = `${PATH_TRANSACTION_STAGING_ROOT}/tx-${transactionHash.slice(0, 32)}`
+        const payloadPath = `${stagingPath}/payload`
+        if (retryFinalize) {
+          setPathRecovery({
+            adapter,
+            error: result.finalizeError,
+            generation: workspaceGenRef.current,
+            payloadPath,
+            retry: retryFinalize,
+            stagingPath
+          })
+        }
+        pushToast(
+          t('workspace.path.finalizeWarning', {
+            error: errMsg(result.finalizeError),
+            path: payloadPath
+          }),
+          'error'
+        )
+      }
+      return 'committed'
+    },
+    [refreshWorkspace, requestPathDirtyDecision, tabs, updateUiAfterPathCommit, pushToast]
   )
 
   const handleRename = useCallback(
     async (node: LiteTreeNode) => {
-      if (!rootHandle) return
+      if (!workspaceAdapterRef.current) return
       const name = await promptText({
         title: t('dialog.rename.title'),
         label: t('dialog.rename.label'),
@@ -2560,127 +3083,95 @@ function App(): JSX.Element {
         pushToast(t('alert.rename.invalidChars'), 'error')
         return
       }
-      // Preserve the .bpmn extension for files (auto-append if the user dropped
-      // it) so the renamed process never disappears from the .bpmn-only tree.
       const finalName = node.type === 'file' ? ensureBpmnExtension(raw) : raw
       if (finalName === node.name) return
       try {
-        // Serialize through the SAME op-mutex as create/import/AI-place so a
-        // rename can't interleave its clobber-probe→write with an in-flight
-        // in-app create racing for the same name (Codex ORIG-3). `relocate`
-        // re-probes the destination immediately before writing, inside this
-        // critical section. RESIDUAL LIMITATION: the File System Access API has
-        // no atomic create/rename, so an EXTERNAL writer (another app/tab) can
-        // still land the same name between our probe and write — unavoidable
-        // without native atomicity; documented in STATUS (ORIG-16/atomic-create).
-        const res = await opMutexRef.current.runExclusive(() =>
-          renameAt(rootHandle, node.relPath, finalName, node.type)
-        )
-        closeTabsUnder(node.relPath)
-        await refreshWorkspace(rootHandle)
-        if (res.nonBpmn > 0) {
-          pushToast(
-            t('toast.renamed.withCount', {
-              name: finalName,
-              count: res.files,
-              nonBpmn: res.nonBpmn
-            }),
-            'success'
-          )
-        } else {
-          pushToast(t('toast.renamed', { name: finalName }), 'success')
-        }
+        const status = await runPathTransaction({
+          kind: 'rename',
+          entryKind: node.type,
+          sourcePath: node.relPath,
+          destinationPath: joinRel(dirOf(node.relPath), finalName)
+        })
+        if (status === 'committed') pushToast(t('toast.renamed', { name: finalName }), 'success')
       } catch (err) {
         pushToast(t('alert.renameFailed', { error: errMsg(err) }), 'error')
       }
     },
-    [rootHandle, promptText, refreshWorkspace, closeTabsUnder, pushToast]
+    [promptText, runPathTransaction, pushToast]
   )
 
   // Delete → confirm dialog (non-empty folders require typing the name).
   const handleDeleteRequest = useCallback(
     async (node: LiteTreeNode) => {
-      if (!rootHandle) return
-      if (node.type === 'directory') {
-        const entryCount = await countDirEntries(rootHandle, node.relPath)
-        setDeleteTarget({ node, requireTyped: entryCount > 0 ? node.name : undefined })
-      } else {
-        setDeleteTarget({ node })
+      const adapter = workspaceAdapterRef.current
+      if (!adapter) return
+      try {
+        if (node.type === 'directory') {
+          // Fail closed: an unreadable/failed listing must never weaken a
+          // non-empty-folder confirmation into the simple delete dialog.
+          const entries = await adapter.list(node.relPath)
+          const unreadable = entries.find((entry) => !entry.readable)
+          if (unreadable) {
+            throw new WorkspaceOperationError(
+              unreadable.issue ?? {
+                code: 'storage-failure',
+                operation: 'list',
+                path: unreadable.path,
+                message: t('workspace.path.unavailable')
+              }
+            )
+          }
+          setDeleteTarget({
+            node,
+            requireTyped: entries.length > 0 ? node.name : undefined
+          })
+        } else {
+          setDeleteTarget({ node })
+        }
+      } catch (error) {
+        pushToast(t('alert.deleteFailed', { error: errMsg(error) }), 'error')
       }
     },
-    [rootHandle]
+    [pushToast]
   )
 
   const performDelete = useCallback(async () => {
     const target = deleteTarget
-    const adapter = workspaceAdapterRef.current
-    if (!target || !adapter) return
+    if (!target) return
     setDeleteTarget(null)
     try {
-      const history = historyManagerRef.current
-      if (target.node.type === 'file' && history) {
-        await history.removeWithRevision(target.node.relPath)
-      } else {
-        if (history && target.node.type === 'directory') {
-          const descendants = await adapter.list(target.node.relPath)
-          const unreadableBpmn = descendants.find(
-            (entry) => entry.kind === 'file' && !entry.readable && /\.bpmn$/i.test(entry.path)
-          )
-          if (unreadableBpmn) {
-            throw new Error(
-              `Cannot delete "${target.node.relPath}" because "${unreadableBpmn.path}" could not be copied to portable history.`
-            )
-          }
-          for (const entry of descendants) {
-            if (entry.kind !== 'file' || !/\.bpmn$/i.test(entry.path)) {
-              continue
-            }
-            await history.createRevision(entry.path, { reason: 'delete' })
-          }
-        }
-        await adapter.remove(target.node.relPath)
+      const status = await runPathTransaction({
+        kind: 'delete',
+        entryKind: target.node.type,
+        sourcePath: target.node.relPath,
+        deleteConfirmed: true
+      })
+      if (status === 'committed') {
+        pushToast(t('toast.deleted', { name: target.node.name }), 'success')
       }
-      closeTabsUnder(target.node.relPath)
-      await refreshWorkspace(rootHandle ?? undefined)
-      pushToast(t('toast.deleted', { name: target.node.name }), 'success')
     } catch (err) {
       pushToast(t('alert.deleteFailed', { error: errMsg(err) }), 'error')
     }
-  }, [deleteTarget, rootHandle, refreshWorkspace, closeTabsUnder, pushToast])
+  }, [deleteTarget, runPathTransaction, pushToast])
 
   // Move (drag-drop onto a folder, or the "Move to…" dialog).
   const performMove = useCallback(
     async (node: LiteTreeNode, toFolderRel: string) => {
-      if (!rootHandle) return
       try {
-        // Same op-mutex as create/import/AI-place/rename — a move re-probes the
-        // destination inside the critical section immediately before writing
-        // (Codex ORIG-3). Residual EXTERNAL-writer TOCTOU is unavoidable without
-        // FS-API atomic create/rename (documented in STATUS).
-        const res = await opMutexRef.current.runExclusive(() =>
-          moveAt(rootHandle, node.relPath, toFolderRel, node.type)
-        )
-        closeTabsUnder(node.relPath)
-        await refreshWorkspace(rootHandle)
-        const dest = toFolderRel || rootName
-        if (res.nonBpmn > 0) {
-          pushToast(
-            t('toast.moved.withCount', {
-              name: node.name,
-              dest,
-              count: res.files,
-              nonBpmn: res.nonBpmn
-            }),
-            'success'
-          )
-        } else {
-          pushToast(t('toast.moved', { name: node.name, dest }), 'success')
+        const status = await runPathTransaction({
+          kind: 'move',
+          entryKind: node.type,
+          sourcePath: node.relPath,
+          destinationPath: joinRel(toFolderRel, node.name)
+        })
+        if (status === 'committed') {
+          pushToast(t('toast.moved', { name: node.name, dest: toFolderRel || rootName }), 'success')
         }
       } catch (err) {
         pushToast(t('alert.moveFailed', { error: errMsg(err) }), 'error')
       }
     },
-    [rootHandle, refreshWorkspace, closeTabsUnder, pushToast, rootName]
+    [runPathTransaction, pushToast, rootName]
   )
 
   const handleMoveDrop = useCallback(
@@ -2693,29 +3184,18 @@ function App(): JSX.Element {
 
   // --- import (.bpmn from Explorer) ---------------------------------------
 
-  // Create every missing folder segment of a nested rel path (idempotent —
-  // createFolderAt returns the existing handle when the folder is already
-  // there). Declared before importEntries so the AML subfolder path and the
-  // library-zip import share the same helper.
-  const ensureFolders = useCallback(
-    async (relDir: string) => {
-      if (!rootHandle || !relDir) return
-      let cur = ''
-      for (const seg of relDir.split('/').filter(Boolean)) {
-        try {
-          await createFolderAt(rootHandle, cur, seg)
-        } catch {
-          /* already exists / racing external create — continue building the path */
-        }
-        cur = cur ? `${cur}/${seg}` : seg
-      }
-    },
-    [rootHandle]
-  )
+  // Adapter createFolder is recursive and idempotent. Keeping folder creation
+  // behind this helper ensures imports never bypass the manifest-bound adapter.
+  const ensureFolders = useCallback(async (relDir: string) => {
+    const adapter = workspaceAdapterRef.current
+    if (!adapter || !relDir) return
+    await adapter.createFolder(relDir)
+  }, [])
 
   const importEntries = useCallback(
     async (entries: DroppedBpmn[], baseFolderRel: string) => {
-      if (!(isMultiFileMode(mode) && rootHandle)) {
+      const adapter = workspaceAdapterRef.current
+      if (!(isMultiFileMode(mode) && adapter?.storage.capabilities.multipleFiles)) {
         pushToast(t('toast.import.openFolderFirst'), 'info')
         return
       }
@@ -2741,9 +3221,10 @@ function App(): JSX.Element {
           folder: string = targetFolder
         ): Promise<string> =>
           opMutexRef.current.runExclusive(async () => {
-            const taken = await bpmnSlugsIn(rootHandle, folder)
+            if (workspaceAdapterRef.current !== adapter) throw new Error(t('alert.staleWrite'))
+            const taken = await directBpmnSlugs(adapter, folder)
             const guess = dedupeSlug(slug, (c) => taken.has(c.toLowerCase()))
-            return createBpmnFileUnique(rootHandle, folder, guess, xml)
+            return writeUniqueBpmn(adapter, folder, guess, xml)
           })
         try {
           const text = await entry.getText()
@@ -2795,7 +3276,7 @@ function App(): JSX.Element {
               let cand = baseFolderName
               for (
                 let n = 2;
-                (await countDirEntries(rootHandle, joinRel(targetFolder, cand))) > 0;
+                (await directoryEntryCount(adapter, joinRel(targetFolder, cand))) > 0;
                 n += 1
               ) {
                 cand = `${baseFolderName}-${n}`
@@ -2849,7 +3330,7 @@ function App(): JSX.Element {
           )
         }
       }
-      await refreshWorkspace(rootHandle)
+      await refreshWorkspace()
       pushToast(
         t('toast.imported.count', { count: created, plural: created === 1 ? '' : 's' }) +
           (renamed > 0 ? t('toast.imported.renamed', { renamed }) : '') +
@@ -2857,7 +3338,7 @@ function App(): JSX.Element {
         'success'
       )
     },
-    [mode, rootHandle, refreshWorkspace, pushToast, lang, ensureFolders, processIndex]
+    [mode, refreshWorkspace, pushToast, lang, ensureFolders, processIndex]
   )
 
   const handleImportDrop = useCallback(
@@ -3048,6 +3529,92 @@ function App(): JSX.Element {
     [backupImportPlan, refreshWorkspace, pushToast]
   )
 
+  const handleHistoryRestore = useCallback(
+    async (revision: HistoryRevision): Promise<RestoreHistoryRevisionResult> => {
+      const adapter = workspaceAdapterRef.current
+      const manager = historyManagerRef.current
+      const controller = sessionControllerRef.current
+      const workspace = workspaceIdentityRef.current
+      if (!adapter || !manager || !controller || !workspace) {
+        return {
+          status: 'failed',
+          sessionId: null,
+          error: new Error(t('workspace.history.unavailable'))
+        }
+      }
+      let current: FileSnapshot
+      try {
+        current = await adapter.read(revision.originalPath)
+      } catch (error) {
+        return { status: 'failed', sessionId: null, error }
+      }
+      if (
+        workspaceAdapterRef.current !== adapter ||
+        sessionControllerRef.current !== controller ||
+        workspaceIdentityRef.current !== workspace
+      ) {
+        return {
+          status: 'failed',
+          sessionId: null,
+          error: new Error(t('alert.staleWrite'))
+        }
+      }
+      const result = await restoreHistoryRevision({
+        manager,
+        store: controller.store,
+        revision,
+        workspace,
+        expectedCurrentHash: current.hash,
+        applyXml: async (session, restoredXml) => {
+          const modeler = (modelersByKey[session.id] ?? session.modeler) as {
+            importXML?: (xml: string) => Promise<unknown>
+          } | null
+          await modeler?.importXML?.(restoredXml)
+        }
+      })
+      if (
+        result.status !== 'restored' &&
+        result.status !== 'storage-restored-session-refresh-failed'
+      ) {
+        return result
+      }
+
+      const snapshot = result.outcome.snapshot
+      let restoredXml: string
+      try {
+        restoredXml = decodeUtf8Strict(snapshot.bytes, {
+          operation: 'read',
+          path: revision.originalPath
+        })
+      } catch {
+        return result
+      }
+      baseHashByPathRef.current[revision.originalPath] = snapshot.hash
+      liveWorkspaceIndexRef.current.updateSaved({
+        relPath: revision.originalPath,
+        xml: restoredXml,
+        lastModified: snapshot.modifiedAt,
+        size: snapshot.size
+      })
+      const liveSession = result.sessionId ? controller.store.get(result.sessionId) : undefined
+      if (result.status === 'restored' && liveSession) {
+        setContents((previous) => ({ ...previous, [liveSession.id]: restoredXml }))
+        setDirtyByKey((previous) => ({ ...previous, [liveSession.id]: false }))
+        liveWorkspaceIndexRef.current.clearDirty(revision.originalPath)
+      } else if (liveSession?.dirty) {
+        // Storage committed but editor refresh did not. Preserve and continue
+        // indexing the local draft instead of presenting the restored disk copy
+        // as the active editor content.
+        liveWorkspaceIndexRef.current.updateDirty(revision.originalPath, liveSession.currentXml)
+        setDirtyByKey((previous) => ({ ...previous, [liveSession.id]: true }))
+      }
+      setLiveWorkspaceVersion(liveWorkspaceIndexRef.current.version)
+      digestsCacheRef.current = null
+      return result
+    },
+    [modelersByKey]
+  )
+
   // --- AI placement -------------------------------------------------------
 
   const placeGenerated = useCallback(
@@ -3070,11 +3637,13 @@ function App(): JSX.Element {
       // Validate the workspace generation captured when generation STARTED against
       // the live one, both before enqueuing AND at write time inside the mutex: a
       // folder switch during the (slow) generation must not land the diagram in
-      // the switched-in workspace's folder (Codex ORIG-1b). Read the LIVE handle.
-      const handle = rootHandleRef.current
+      // the switched-in workspace's folder (Codex ORIG-1b). Capture the bound
+      // adapter and reject it if activation changes while the task is queued.
+      const adapter = workspaceAdapterRef.current
       const stale = (): boolean =>
-        opts.gen !== undefined && !canCommitToWorkspace(opts.gen, workspaceGenRef.current)
-      if (isMultiFileMode(mode) && handle) {
+        (opts.gen !== undefined && !canCommitToWorkspace(opts.gen, workspaceGenRef.current)) ||
+        workspaceAdapterRef.current !== adapter
+      if (isMultiFileMode(mode) && adapter?.storage.capabilities.multipleFiles) {
         if (stale()) {
           pushToast(t('alert.staleGeneration'), 'error')
           return null
@@ -3082,18 +3651,18 @@ function App(): JSX.Element {
         const result = await opMutexRef.current.runExclusive(async () => {
           // Re-check at write time — a switch could have landed while queued.
           if (stale()) return { stale: true as const }
-          const taken = await bpmnSlugsIn(handle, opts.targetFolder)
+          const taken = await directBpmnSlugs(adapter, opts.targetFolder)
           const finalSlug = dedupeSlug(slug, (c) => taken.has(c.toLowerCase()))
           return {
             stale: false as const,
-            relPath: await createBpmnFileUnique(handle, opts.targetFolder, finalSlug, xml)
+            relPath: await writeUniqueBpmn(adapter, opts.targetFolder, finalSlug, xml)
           }
         })
         if (result.stale) {
           pushToast(t('alert.staleGeneration'), 'error')
           return null
         }
-        await refreshWorkspace(handle)
+        await refreshWorkspace()
         // Keep the sidebar (and with it the AI panel) mounted: the success box
         // carries the "fill gaps in chat" CTA, and collapsing here unmounted
         // the panel before it could ever render (found by the interview e2e).
@@ -3551,7 +4120,8 @@ function App(): JSX.Element {
   const confirmLibraryImport = useCallback(async () => {
     const result = libraryImport
     setLibraryImport(null)
-    if (!result || !rootHandle) return
+    const adapter = workspaceAdapterRef.current
+    if (!result || !adapter?.storage.capabilities.multipleFiles) return
     let created = 0
     let renamed = 0
     for (const entry of result.entries) {
@@ -3565,10 +4135,11 @@ function App(): JSX.Element {
         // Same op-mutex as every other create so a concurrent op can't grab the
         // same free slug; nested folders are ensured inside the critical section.
         const relPath = await opMutexRef.current.runExclusive(async () => {
+          if (workspaceAdapterRef.current !== adapter) throw new Error(t('alert.staleWrite'))
           await ensureFolders(targetFolder)
-          const taken = await bpmnSlugsIn(rootHandle, targetFolder)
+          const taken = await directBpmnSlugs(adapter, targetFolder)
           const guess = dedupeSlug(base, (c) => taken.has(c.toLowerCase()))
-          return createBpmnFileUnique(rootHandle, targetFolder, guess, prepared.xml)
+          return writeUniqueBpmn(adapter, targetFolder, guess, prepared.xml)
         })
         localizationSourceByTabRef.current.set(relPath, LocalizationSource.Backup)
         created += 1
@@ -3584,14 +4155,14 @@ function App(): JSX.Element {
         )
       }
     }
-    await refreshWorkspace(rootHandle)
+    await refreshWorkspace()
     pushToast(
       t('toast.imported.count', { count: created, plural: created === 1 ? '' : 's' }) +
         (renamed > 0 ? t('toast.imported.renamed', { renamed }) : '') +
         '.',
       'success'
     )
-  }, [libraryImport, rootHandle, ensureFolders, refreshWorkspace, pushToast, processIndex])
+  }, [libraryImport, ensureFolders, refreshWorkspace, pushToast, processIndex])
 
   // Settings' org-styling toggle refreshes every live modeler so the renderer
   // re-evaluates its canRender against the just-flipped flag (each guarded so a
@@ -5076,7 +5647,7 @@ function App(): JSX.Element {
       {unresolvedOpen && (
         <UnresolvedLinksPanel
           links={workspaceUnresolved}
-          canCreate={isMultiFileMode(mode) && !!rootHandle}
+          canCreate={Boolean(workspaceAdapter?.storage.capabilities.multipleFiles)}
           onCreate={(called) => {
             setUnresolvedOpen(false)
             void handleCreateMissingProcess(called)
@@ -5088,6 +5659,193 @@ function App(): JSX.Element {
             }
           }}
           onClose={() => setUnresolvedOpen(false)}
+        />
+      )}
+
+      {saveConflictPrompt && (
+        <AccessibleDialog
+          ariaLabelledby="save-conflict-title"
+          onClose={() => resolveSaveConflictPrompt({ kind: 'cancel' })}
+          closeOnEscape
+          closeOnBackdrop={false}
+          backdropStyle={{
+            position: 'fixed',
+            inset: 0,
+            zIndex: 10060,
+            display: 'grid',
+            placeItems: 'center',
+            padding: 20,
+            background: 'rgba(0,0,0,0.52)'
+          }}
+          dialogStyle={{
+            width: 'min(900px, 96vw)',
+            maxHeight: '90vh',
+            overflow: 'auto',
+            padding: 18,
+            border: '1px solid var(--orbitpm-border)',
+            borderRadius: 12,
+            background: 'var(--orbitpm-panel-bg, var(--orbitpm-bg))',
+            color: 'var(--orbitpm-fg)'
+          }}
+        >
+          <h2 id="save-conflict-title" style={{ marginTop: 0 }}>
+            {t('session.conflict.title', { path: saveConflictPrompt.path })}
+          </h2>
+          <p>{t('session.conflict.message')}</p>
+          {saveConflictPrompt.showComparison && (
+            <div
+              style={{
+                display: 'grid',
+                gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))',
+                gap: 12,
+                direction: 'ltr',
+                textAlign: 'left'
+              }}
+            >
+              <section>
+                <h3>{t('session.conflict.local')}</h3>
+                <pre style={{ maxHeight: 280, overflow: 'auto', whiteSpace: 'pre-wrap' }}>
+                  {saveConflictPrompt.conflict.localXml}
+                </pre>
+              </section>
+              <section>
+                <h3>{t('session.conflict.external')}</h3>
+                <pre style={{ maxHeight: 280, overflow: 'auto', whiteSpace: 'pre-wrap' }}>
+                  {saveConflictPrompt.conflict.external?.xml ??
+                    t('session.conflict.externalMissing')}
+                </pre>
+              </section>
+            </div>
+          )}
+          <label style={{ display: 'grid', gap: 6, marginTop: 12 }}>
+            <span>{t('session.conflict.saveAsLabel')}</span>
+            <input
+              value={saveConflictPrompt.saveAsPath}
+              onChange={(event) =>
+                setSaveConflictPrompt((current) =>
+                  current
+                    ? { ...current, saveAsPath: event.target.value, saveAsError: null }
+                    : current
+                )
+              }
+              dir="ltr"
+            />
+          </label>
+          {saveConflictPrompt.saveAsError && (
+            <p role="alert" style={{ color: '#c4322f' }}>
+              {saveConflictPrompt.saveAsError}
+            </p>
+          )}
+          <div
+            style={{
+              display: 'flex',
+              justifyContent: 'flex-end',
+              flexWrap: 'wrap',
+              gap: 8,
+              marginTop: 16
+            }}
+          >
+            <button
+              type="button"
+              className="orbitpm-lite-chrome-btn"
+              onClick={() =>
+                setSaveConflictPrompt((current) =>
+                  current ? { ...current, showComparison: true } : current
+                )
+              }
+            >
+              {t('session.conflict.compare')}
+            </button>
+            <button
+              type="button"
+              className="orbitpm-lite-chrome-btn"
+              disabled={!saveConflictPrompt.conflict.external}
+              onClick={() => resolveSaveConflictPrompt({ kind: 'reload-external' })}
+            >
+              {t('session.conflict.reload')}
+            </button>
+            <button
+              type="button"
+              className="orbitpm-lite-chrome-btn"
+              onClick={() => resolveSaveConflictPrompt({ kind: 'overwrite', confirmed: true })}
+            >
+              {t('session.conflict.overwrite')}
+            </button>
+            <button
+              type="button"
+              className="orbitpm-lite-chrome-btn"
+              disabled={!saveConflictPrompt.saveAsPath.trim()}
+              onClick={() => {
+                const path = saveConflictPrompt.saveAsPath.trim()
+                if (!path) return
+                try {
+                  const normalized = normalizeWorkspacePath(
+                    /\.bpmn$/iu.test(path) ? path : `${path}.bpmn`
+                  )
+                  if (
+                    normalized === saveConflictPrompt.conflict.identity.path ||
+                    normalized === '.orbitpm' ||
+                    normalized.startsWith('.orbitpm/')
+                  ) {
+                    setSaveConflictPrompt((current) =>
+                      current
+                        ? {
+                            ...current,
+                            saveAsError: t('session.conflict.invalidDestination')
+                          }
+                        : current
+                    )
+                    return
+                  }
+                  resolveSaveConflictPrompt({ kind: 'save-as', path: normalized })
+                } catch {
+                  setSaveConflictPrompt((current) =>
+                    current
+                      ? {
+                          ...current,
+                          saveAsError: t('session.conflict.invalidDestination')
+                        }
+                      : current
+                  )
+                }
+              }}
+            >
+              {t('session.conflict.saveAs')}
+            </button>
+            <button
+              type="button"
+              className="orbitpm-lite-chrome-btn"
+              onClick={() => resolveSaveConflictPrompt({ kind: 'cancel' })}
+            >
+              {t('session.conflict.cancel')}
+            </button>
+          </div>
+        </AccessibleDialog>
+      )}
+
+      {manifestRepair && (
+        <ConfirmDialog
+          title={t('workspace.manifest.retryTitle')}
+          message={t('workspace.manifest.retryMessage', {
+            error: errMsg(manifestRepair.error)
+          })}
+          confirmLabel={t('workspace.manifest.retryAction')}
+          onConfirm={() => void retryManifestReconciliation()}
+          onCancel={() => setManifestRepair(null)}
+        />
+      )}
+
+      {pathRecovery && (
+        <ConfirmDialog
+          title={t('workspace.path.recoveryTitle')}
+          message={t('workspace.path.recoveryMessage', {
+            error: errMsg(pathRecovery.error),
+            path: pathRecovery.payloadPath
+          })}
+          confirmLabel={t('workspace.path.recoveryRetry')}
+          cancelLabel={t('workspace.path.recoveryLater')}
+          onConfirm={() => void retryPathRecoveryCleanup()}
+          onCancel={() => setPathRecovery(null)}
         />
       )}
 
@@ -5125,6 +5883,7 @@ function App(): JSX.Element {
         <HistoryDialog
           manager={historyManagerRef.current}
           currentXml={(path) => liveFiles.find((file) => file.relPath === path)?.xml}
+          onRestore={handleHistoryRestore}
           onChanged={() => refreshWorkspace(rootHandleRef.current ?? undefined)}
           onClose={() => setHistoryOpen(false)}
         />
@@ -5137,6 +5896,73 @@ function App(): JSX.Element {
           onDiscard={() => resolveSwitch('discard')}
           onCancel={() => resolveSwitch('cancel')}
         />
+      )}
+
+      {pathDirtyPrompt && (
+        <AccessibleDialog
+          ariaLabelledby="path-dirty-title"
+          onClose={() => resolvePathDirtyPrompt('cancel')}
+          closeOnEscape
+          closeOnBackdrop={false}
+          backdropStyle={{
+            position: 'fixed',
+            inset: 0,
+            zIndex: 10070,
+            display: 'grid',
+            placeItems: 'center',
+            padding: 20,
+            background: 'rgba(0,0,0,0.52)'
+          }}
+          dialogStyle={{
+            width: 'min(520px, 94vw)',
+            padding: 18,
+            border: '1px solid var(--orbitpm-border)',
+            borderRadius: 12,
+            background: 'var(--orbitpm-panel-bg, var(--orbitpm-bg))',
+            color: 'var(--orbitpm-fg)'
+          }}
+        >
+          <h2 id="path-dirty-title" style={{ marginTop: 0 }}>
+            {t('workspace.path.dirtyTitle')}
+          </h2>
+          <p>
+            {t('workspace.path.dirtyMessage', {
+              count: pathDirtyPrompt.count,
+              operation: t(`workspace.path.operation.${pathDirtyPrompt.kind}` as Key),
+              path: pathDirtyPrompt.path
+            })}
+          </p>
+          <div
+            style={{
+              display: 'flex',
+              justifyContent: 'flex-end',
+              flexWrap: 'wrap',
+              gap: 8
+            }}
+          >
+            <button
+              type="button"
+              className="orbitpm-lite-chrome-btn"
+              onClick={() => resolvePathDirtyPrompt('save')}
+            >
+              {t('workspace.path.saveContinue')}
+            </button>
+            <button
+              type="button"
+              className="orbitpm-lite-chrome-btn"
+              onClick={() => resolvePathDirtyPrompt('discard')}
+            >
+              {t('workspace.path.continueWithoutSaving')}
+            </button>
+            <button
+              type="button"
+              className="orbitpm-lite-chrome-btn"
+              onClick={() => resolvePathDirtyPrompt('cancel')}
+            >
+              {t('workspace.path.cancel')}
+            </button>
+          </div>
+        </AccessibleDialog>
       )}
 
       {downloadSwitchGuard && (
