@@ -3,6 +3,8 @@ import { validationIssue, type ValidationIssue } from './contracts'
 export interface ExternalValidationContext {
   /** IDs of processes intentionally resolved by the current workspace. */
   knownProcessIds: ReadonlySet<string>
+  /** False during semantic pre-layout validation, true for persisted output. */
+  requireDi: boolean
 }
 
 export interface BpmnValidationAdapter {
@@ -61,17 +63,16 @@ export interface BpmnlintDiagnostic {
 }
 
 export type BpmnlintFunction = (
-  xml: string
+  xml: string,
+  context: ExternalValidationContext
 ) => Promise<readonly BpmnlintDiagnostic[]> | readonly BpmnlintDiagnostic[]
 
 /** Adapter seam for a worker-hosted `bpmnlint`/`bpmn-js-bpmnlint` runner. */
-export function createBpmnlintValidationAdapter(
-  lint: BpmnlintFunction
-): BpmnValidationAdapter {
+export function createBpmnlintValidationAdapter(lint: BpmnlintFunction): BpmnValidationAdapter {
   return {
     source: 'bpmnlint',
-    async validate(xml) {
-      const diagnostics = await lint(xml)
+    async validate(xml, context) {
+      const diagnostics = await lint(xml, context)
       return diagnostics.map((diagnostic) => {
         const severity =
           diagnostic.category === 'warn'

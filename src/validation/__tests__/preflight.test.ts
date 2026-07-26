@@ -1,9 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import {
-  DEFAULT_XML_PREFLIGHT_LIMITS,
-  preflightXml,
-  sourceLocationAt
-} from '../preflight'
+import { DEFAULT_XML_PREFLIGHT_LIMITS, preflightXml, sourceLocationAt } from '../preflight'
 
 const SAFE =
   '<definitions xmlns="http://www.omg.org/spec/BPMN/20100524/MODEL" id="D" targetNamespace="urn:test"><process id="P"/></definitions>'
@@ -18,7 +14,11 @@ describe('secure XML preflight', () => {
   })
 
   it.each([
-    ['DOCTYPE', `<!DOCTYPE definitions SYSTEM "https://attacker.invalid/bpmn.dtd">${SAFE}`, 'xml.doctype'],
+    [
+      'DOCTYPE',
+      `<!DOCTYPE definitions SYSTEM "https://attacker.invalid/bpmn.dtd">${SAFE}`,
+      'xml.doctype'
+    ],
     [
       'entity declarations',
       `<!DOCTYPE definitions [<!ENTITY xxe SYSTEM "file:///etc/passwd">]>${SAFE}`,
@@ -26,7 +26,10 @@ describe('secure XML preflight', () => {
     ],
     [
       'XInclude',
-      SAFE.replace('<process id="P"/>', '<xi:include xmlns:xi="urn:xi" href="https://attacker.invalid/x"/>'),
+      SAFE.replace(
+        '<process id="P"/>',
+        '<xi:include xmlns:xi="urn:xi" href="https://attacker.invalid/x"/>'
+      ),
       'xml.external-include'
     ],
     [
@@ -48,9 +51,7 @@ describe('secure XML preflight', () => {
   })
 
   it('enforces independent byte, element, depth, attribute and text limits', () => {
-    expect(preflightXml(SAFE, { maxBytes: 5 }).summary.issues[0].code).toBe(
-      'xml.size-limit'
-    )
+    expect(preflightXml(SAFE, { maxBytes: 5 }).summary.issues[0].code).toBe('xml.size-limit')
     expect(preflightXml('<a><b/><c/></a>', { maxElements: 2 }).summary.issues).toEqual(
       expect.arrayContaining([expect.objectContaining({ code: 'xml.element-count-limit' })])
     )

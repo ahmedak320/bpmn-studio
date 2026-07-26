@@ -69,7 +69,11 @@ function semanticName(
   attribute: boolean
 ): { namespaceUri: string; localName: string; semantic: string } {
   const { prefix, localName } = splitQName(qname)
-  const namespaceUri = prefix ? namespaces.get(prefix) ?? `unbound:${prefix}` : attribute ? '' : namespaces.get('') ?? ''
+  const namespaceUri = prefix
+    ? (namespaces.get(prefix) ?? `unbound:${prefix}`)
+    : attribute
+      ? ''
+      : (namespaces.get('') ?? '')
   return {
     namespaceUri,
     localName,
@@ -107,9 +111,7 @@ function canonicalUnknownElement(
     type: typeName.semantic,
     attributes,
     body: typeof element.$body === 'string' ? element.$body : undefined,
-    children: (element.$children ?? []).map((child) =>
-      canonicalUnknownElement(child, namespaces)
-    )
+    children: (element.$children ?? []).map((child) => canonicalUnknownElement(child, namespaces))
   })
 }
 
@@ -127,11 +129,19 @@ function containmentChildren(element: GenericElement): GenericElement[] {
     }
     if (Array.isArray(value)) {
       for (const entry of value) {
-        if (entry && typeof entry === 'object' && typeof (entry as GenericElement).$type === 'string') {
+        if (
+          entry &&
+          typeof entry === 'object' &&
+          typeof (entry as GenericElement).$type === 'string'
+        ) {
           children.push(entry as GenericElement)
         }
       }
-    } else if (value && typeof value === 'object' && typeof (value as GenericElement).$type === 'string') {
+    } else if (
+      value &&
+      typeof value === 'object' &&
+      typeof (value as GenericElement).$type === 'string'
+    ) {
       children.push(value as GenericElement)
     }
   }
@@ -312,7 +322,8 @@ export async function validateUnknownExtensionPreservation(
         source: 'preservation',
         message: `Unknown extension ${snapshot.kind} {${snapshot.namespaceUri}}${snapshot.localName} was removed, changed or moved.`,
         elementId: snapshot.parentElementId,
-        suggestedRepair: 'Restore the opaque vendor content byte-semantically or keep the original XML.',
+        suggestedRepair:
+          'Restore the opaque vendor content byte-semantically or keep the original XML.',
         details: {
           namespace: snapshot.namespaceUri,
           localName: snapshot.localName,

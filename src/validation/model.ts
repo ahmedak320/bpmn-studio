@@ -13,11 +13,7 @@ import {
   type ValidationStageStatus,
   type ValidationSummary
 } from './contracts'
-import {
-  preflightXml,
-  sourceLocationAt,
-  type XmlPreflightLimits
-} from './preflight'
+import { preflightXml, sourceLocationAt, type XmlPreflightLimits } from './preflight'
 
 interface ModdleElement {
   $type?: string
@@ -227,7 +223,7 @@ function normalizeModdleWarnings(warnings: readonly ModdleWarning[]): Validation
               value:
                 typeof warning.value === 'string'
                   ? warning.value
-                  : JSON.stringify(warning.value) ?? ''
+                  : (JSON.stringify(warning.value) ?? '')
             }
           : undefined
     })
@@ -245,10 +241,6 @@ function processAncestor(element: ModdleElement | undefined): ModdleElement | un
 
 function directFlowElements(container: ModdleElement): ModdleElement[] {
   return asElements(container.flowElements).filter((element) => element.$parent === container)
-}
-
-function refId(value: unknown): string | undefined {
-  return idOf(asElement(value))
 }
 
 function validateDefinitions(context: ValidationContext, definitions: ModdleElement): void {
@@ -335,7 +327,8 @@ function validateGlobalIds(context: ValidationContext): void {
         message: `ID "${id}" is not a valid XML NCName.`,
         process: processAncestor(element),
         element,
-        suggestedRepair: 'Use a letter or underscore first, followed by letters, numbers, dots, dashes or underscores.'
+        suggestedRepair:
+          'Use a letter or underscore first, followed by letters, numbers, dots, dashes or underscores.'
       })
     }
   }
@@ -490,17 +483,16 @@ function validateSequenceFlows(context: ValidationContext, process: ModdleElemen
             message: `Non-default branch "${idOf(flow)}" requires a conditionExpression.`,
             process,
             element: flow,
-            suggestedRepair: 'Add a formal condition or mark exactly one outgoing branch as default.'
+            suggestedRepair:
+              'Add a formal condition or mark exactly one outgoing branch as default.'
           })
         }
         if (
           flow.conditionExpression &&
           !instanceOf(node, 'bpmn:Activity') &&
-          ![
-            'bpmn:ExclusiveGateway',
-            'bpmn:InclusiveGateway',
-            'bpmn:ComplexGateway'
-          ].includes(typeOf(node))
+          !['bpmn:ExclusiveGateway', 'bpmn:InclusiveGateway', 'bpmn:ComplexGateway'].includes(
+            typeOf(node)
+          )
         ) {
           addIssue(context, {
             code: 'semantic.condition-source',
@@ -517,9 +509,7 @@ function validateSequenceFlows(context: ValidationContext, process: ModdleElemen
     // Connectedness is checked for every process and subprocess, rather than
     // stopping at the first root process. Boundary events are connected by
     // attachedToRef and therefore handled separately.
-    const boundaryEvents = new Set(
-      nodes.filter((node) => typeOf(node) === 'bpmn:BoundaryEvent')
-    )
+    const boundaryEvents = new Set(nodes.filter((node) => typeOf(node) === 'bpmn:BoundaryEvent'))
     const starts = nodes.filter(
       (node) =>
         typeOf(node) === 'bpmn:StartEvent' ||
@@ -667,10 +657,7 @@ function validateDi(context: ValidationContext): void {
     }
 
     const target = asElement(plane.bpmnElement)
-    if (
-      !target ||
-      !['bpmn:Process', 'bpmn:Collaboration'].includes(typeOf(target))
-    ) {
+    if (!target || !['bpmn:Process', 'bpmn:Collaboration'].includes(typeOf(target))) {
       addIssue(context, {
         code: 'di.plane-target',
         severity: 'error',
@@ -744,9 +731,7 @@ function validateDi(context: ValidationContext): void {
         const waypoints = asElements(planeElement.waypoint)
         if (
           waypoints.length < 2 ||
-          waypoints.some(
-            (waypoint) => !isFiniteNumber(waypoint.x) || !isFiniteNumber(waypoint.y)
-          )
+          waypoints.some((waypoint) => !isFiniteNumber(waypoint.x) || !isFiniteNumber(waypoint.y))
         ) {
           addIssue(context, {
             code: 'di.edge-waypoints',
@@ -860,10 +845,7 @@ function validateSharedLocalizationAudit(
   }
 }
 
-function validateOrbitPm(
-  context: ValidationContext,
-  definitions: ModdleElement
-): void {
+function validateOrbitPm(context: ValidationContext, definitions: ModdleElement): void {
   validateSharedLocalizationAudit(context, definitions)
   const allProcessIds = new Set(
     context.processes.map(idOf).filter((id): id is string => Boolean(id))
@@ -899,8 +881,7 @@ function validateOrbitPm(
         const projected =
           visible &&
           active &&
-          ((active === 'en' && en && visible !== en) ||
-            (active === 'ar' && ar && visible !== ar))
+          ((active === 'en' && en && visible !== en) || (active === 'ar' && ar && visible !== ar))
         if (projected) {
           addIssue(context, {
             code: 'orbitpm.active-projection-mismatch',
@@ -1027,10 +1008,7 @@ function validateOrbitPm(
           process,
           element
         })
-      } else if (
-        !allProcessIds.has(calledElement) &&
-        !context.knownProcessIds.has(calledElement)
-      ) {
+      } else if (!allProcessIds.has(calledElement) && !context.knownProcessIds.has(calledElement)) {
         addIssue(context, {
           code: 'orbitpm.call-unresolved',
           severity: 'error',
@@ -1038,7 +1016,8 @@ function validateOrbitPm(
           message: `Call activity "${idOf(element)}" references unknown process "${calledElement}".`,
           process,
           element,
-          suggestedRepair: 'Link the call activity to an unambiguous workspace process or create the missing process.'
+          suggestedRepair:
+            'Link the call activity to an unambiguous workspace process or create the missing process.'
         })
       }
     }
@@ -1128,9 +1107,7 @@ export async function validateBpmnXml(
   const allElements = collectBpmnElements(definitions)
   const rootElements = asElements(definitions.rootElements)
   const processes = rootElements.filter((element) => typeOf(element) === 'bpmn:Process')
-  const collaborations = rootElements.filter(
-    (element) => typeOf(element) === 'bpmn:Collaboration'
-  )
+  const collaborations = rootElements.filter((element) => typeOf(element) === 'bpmn:Collaboration')
   const diagrams = asElements(definitions.diagrams)
   const context: ValidationContext = {
     xml: preflight.xml,
@@ -1183,7 +1160,8 @@ export async function validateBpmnXml(
     const stage = adapter.source
     try {
       const adapterIssues = await adapter.validate(preflight.xml, {
-        knownProcessIds: context.knownProcessIds
+        knownProcessIds: context.knownProcessIds,
+        requireDi: context.requireDi
       })
       issues.push(...adapterIssues)
       stages[stage] = adapterIssues.some((issue) => issue.blocking) ? 'failed' : 'passed'

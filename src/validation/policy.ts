@@ -1,11 +1,7 @@
 import type { ValidationIssue, ValidationSummary } from './contracts'
 
 export type ValidationAction =
-  | 'apply-editor'
-  | 'save'
-  | 'save-draft-with-errors'
-  | 'create-generated'
-  | 'commit-import'
+  'apply-editor' | 'save' | 'save-draft-with-errors' | 'create-generated' | 'commit-import'
 
 export interface ValidationPolicyOptions {
   /** Required for `save-draft-with-errors` when semantic blockers exist. */
@@ -28,6 +24,7 @@ function unsafeMutationIssue(issue: ValidationIssue): boolean {
   return (
     issue.blocking &&
     (issue.source === 'xml' ||
+      issue.source === 'xsd' ||
       (issue.source === 'moddle' &&
         [
           'moddle.parse-error',

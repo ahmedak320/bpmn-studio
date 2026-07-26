@@ -1,9 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import {
-  createBpmnlintValidationAdapter,
-  createXsdValidationAdapter,
-  validateBpmnXml
-} from '..'
+import { createBpmnlintValidationAdapter, createXsdValidationAdapter, validateBpmnXml } from '..'
 import { validGatewayXml, validMultiProcessXml } from './fixtures'
 
 describe('layered BPMN validation', () => {
@@ -31,8 +27,10 @@ describe('layered BPMN validation', () => {
   it('does not stop validation after the first valid process or plane', async () => {
     const broken = validMultiProcessXml()
       .replace('sourceRef="Start_2"', 'sourceRef="Missing_2"')
-      .replace('width="36" height="36" />\n      </bpmndi:BPMNShape>\n      <bpmndi:BPMNEdge id="Edge_2"',
-        'width="0" height="36" />\n      </bpmndi:BPMNShape>\n      <bpmndi:BPMNEdge id="Edge_2"')
+      .replace(
+        'width="36" height="36" />\n      </bpmndi:BPMNShape>\n      <bpmndi:BPMNEdge id="Edge_2"',
+        'width="0" height="36" />\n      </bpmndi:BPMNShape>\n      <bpmndi:BPMNEdge id="Edge_2"'
+      )
     const result = await validateBpmnXml(broken, { requireDi: true })
     expect(result.summary.valid).toBe(false)
     expect(result.summary.issues).toEqual(
@@ -129,9 +127,7 @@ describe('layered BPMN validation', () => {
       '<bpmn:sequenceFlow id="Flow_default" sourceRef="Decision" targetRef="Reject"><bpmn:conditionExpression xsi:type="bpmn:tFormalExpression">otherwise</bpmn:conditionExpression></bpmn:sequenceFlow>'
     )
     expect((await validateBpmnXml(defaultWithCondition)).summary.issues).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({ code: 'semantic.default-has-condition' })
-      ])
+      expect.arrayContaining([expect.objectContaining({ code: 'semantic.default-has-condition' })])
     )
 
     const missingCondition = validGatewayXml().replace(
@@ -171,7 +167,10 @@ describe('layered BPMN validation', () => {
   it('checks OrbitPM script, duplicate-counterpart and visible projection rules', async () => {
     const wrong = validMultiProcessXml()
       .replace('orbitpm:nameAr="بداية"', 'orbitpm:nameAr="Start"')
-      .replace('name="End"\n      orbitpm:nameEn="End"', 'name="Wrong projection"\n      orbitpm:nameEn="End"')
+      .replace(
+        'name="End"\n      orbitpm:nameEn="End"',
+        'name="Wrong projection"\n      orbitpm:nameEn="End"'
+      )
     const result = await validateBpmnXml(wrong, { requireBilingual: true })
     expect(result.summary.issues).toEqual(
       expect.arrayContaining([
@@ -183,10 +182,15 @@ describe('layered BPMN validation', () => {
   })
 
   it('resolves call activities against every local and explicitly known workspace process', async () => {
-    const call = validGatewayXml().replace(
-      '<bpmn:task id="Approve">',
-      '<bpmn:callActivity id="Approve" calledElement="Process_external">'
-    ).replace('</bpmn:task>\n    <bpmn:task id="Reject">', '</bpmn:callActivity>\n    <bpmn:task id="Reject">')
+    const call = validGatewayXml()
+      .replace(
+        '<bpmn:task id="Approve">',
+        '<bpmn:callActivity id="Approve" calledElement="Process_external">'
+      )
+      .replace(
+        '</bpmn:task>\n    <bpmn:task id="Reject">',
+        '</bpmn:callActivity>\n    <bpmn:task id="Reject">'
+      )
     expect((await validateBpmnXml(call)).summary.issues).toEqual(
       expect.arrayContaining([expect.objectContaining({ code: 'orbitpm.call-unresolved' })])
     )

@@ -239,7 +239,10 @@ export function preflightXml(
           `Processing instruction "${processingInstruction[1]}" is not allowed.`
         )
       )
-    } else if (processingInstruction.index !== 0 && !/^\uFEFF?\s*$/.test(rawXml.slice(0, processingInstruction.index))) {
+    } else if (
+      processingInstruction.index !== 0 &&
+      !/^\uFEFF?\s*$/.test(rawXml.slice(0, processingInstruction.index))
+    ) {
       issues.push(
         issueAt(
           xml,
@@ -343,12 +346,7 @@ export function preflightXml(
       }
       if (depth > limits.maxDepth) {
         issues.push(
-          issueAt(
-            xml,
-            open,
-            'xml.depth-limit',
-            `XML nesting exceeds ${limits.maxDepth} levels.`
-          )
+          issueAt(xml, open, 'xml.depth-limit', `XML nesting exceeds ${limits.maxDepth} levels.`)
         )
         break
       }

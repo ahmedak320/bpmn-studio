@@ -74,4 +74,22 @@ describe('blocking save/apply policy', () => {
       })
     ).toMatchObject({ allowed: false, reason: 'unsafe-preservation-loss' })
   })
+
+  it('treats schema-invalid XML as unsafe for Apply and draft save', () => {
+    const summary = createValidationSummary([
+      validationIssue({
+        code: 'xsd.schema-1',
+        severity: 'error',
+        source: 'xsd',
+        message: 'Attribute is not allowed.'
+      })
+    ])
+
+    expect(evaluateValidationPolicy(summary, 'apply-editor').reason).toBe('invalid-xml')
+    expect(
+      evaluateValidationPolicy(summary, 'save-draft-with-errors', {
+        explicitDraftConfirmation: true
+      }).allowed
+    ).toBe(false)
+  })
 })

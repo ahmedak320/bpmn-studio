@@ -150,8 +150,7 @@ export function createValidationSummary(
   const warnings = normalized.filter((issue) => issue.severity === 'warning').length
   const infos = normalized.filter((issue) => issue.severity === 'info').length
   const blockingErrors = normalized.filter((issue) => issue.blocking).length
-  const xmlWellFormed =
-    options.xmlWellFormed ?? !normalized.some((issue) => isXmlFatal(issue))
+  const xmlWellFormed = options.xmlWellFormed ?? !normalized.some((issue) => isXmlFatal(issue))
 
   return Object.freeze({
     issues: Object.freeze(normalized),

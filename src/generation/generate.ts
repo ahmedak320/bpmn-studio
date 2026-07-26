@@ -13,15 +13,12 @@
 import { composeCreateBpmn, messageHistoryToString, type LlmMessage } from './prompts'
 import { parseJsonLoose } from './parse'
 import { validateBpmn } from './ir/validate'
-import {
-  BpmnGenerationIdentityError,
-  generateBpmnXml,
-  type BpmnXmlGenerationOptions
-} from './xml'
+import { BpmnGenerationIdentityError, generateBpmnXml, type BpmnXmlGenerationOptions } from './xml'
 import { layoutBpmnValidated } from './layout'
 import type { BpmnElement } from './ir/schema'
 import {
   canCreateGenerated,
+  getRuntimeValidationAdapters,
   validateBpmnXml,
   type BpmnValidationAdapter,
   type ValidationSummary
@@ -134,6 +131,7 @@ export async function generateFromDescription(
   let process: Record<string, unknown>[] | null = null
   let semanticXml: string | null = null
   let preLayoutValidation: ValidationSummary | null = null
+  const validationAdapters = options?.validationAdapters ?? getRuntimeValidationAdapters()
 
   while (attempts < maxRetries) {
     attempts += 1
@@ -162,13 +160,12 @@ export async function generateFromDescription(
         ...options?.identity,
         identitySeed: options?.identity?.identitySeed ?? description,
         existingProcessIds:
-          options?.identity?.existingProcessIds ??
-          options?.processCatalog?.map((entry) => entry.id)
+          options?.identity?.existingProcessIds ?? options?.processCatalog?.map((entry) => entry.id)
       })
       const candidateValidation = await validateBpmnXml(candidateXml, {
         knownProcessIds: options?.processCatalog?.map((entry) => entry.id),
         requireBilingual: options?.requireBilingual ?? true,
-        adapters: options?.validationAdapters,
+        adapters: validationAdapters,
         requireDi: false
       })
       if (!canCreateGenerated(candidateValidation.summary)) {
@@ -209,7 +206,7 @@ export async function generateFromDescription(
     validation: {
       knownProcessIds: options?.processCatalog?.map((entry) => entry.id),
       requireBilingual: options?.requireBilingual ?? true,
-      adapters: options?.validationAdapters
+      adapters: validationAdapters
     }
   })
 

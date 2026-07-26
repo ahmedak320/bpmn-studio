@@ -1,10 +1,7 @@
 import BpmnModdle from 'bpmn-moddle'
 import { describe, expect, it } from 'vitest'
 import { orbitpmModdleDescriptor } from '../../org/orbitpmModdle'
-import {
-  snapshotUnknownExtensions,
-  validateUnknownExtensionPreservation
-} from '../extensions'
+import { snapshotUnknownExtensions, validateUnknownExtensionPreservation } from '../extensions'
 import { UNKNOWN_EXTENSION_XML } from './fixtures'
 
 describe('unknown BPMN extension preservation', () => {
@@ -35,21 +32,20 @@ describe('unknown BPMN extension preservation', () => {
         .valid
     ).toBe(true)
 
-    const renamedPrefix = UNKNOWN_EXTENSION_XML
-      .replace('xmlns:foo=', 'xmlns:vendor=')
-      .replaceAll('foo:', 'vendor:')
+    const renamedPrefix = UNKNOWN_EXTENSION_XML.replace('xmlns:foo=', 'xmlns:vendor=').replaceAll(
+      'foo:',
+      'vendor:'
+    )
     expect(
       (await validateUnknownExtensionPreservation(UNKNOWN_EXTENSION_XML, renamedPrefix)).valid
     ).toBe(true)
   })
 
   it('blocks dropped or mutated opaque vendor content', async () => {
-    const removed = UNKNOWN_EXTENSION_XML
-      .replace(' foo:checksum="abc123"', '')
-      .replace(
-        '<bpmn:extensionElements>\n      <foo:payload foo:key="value"><foo:nested foo:version="2">opaque text</foo:nested></foo:payload>\n    </bpmn:extensionElements>',
-        ''
-      )
+    const removed = UNKNOWN_EXTENSION_XML.replace(' foo:checksum="abc123"', '').replace(
+      '<bpmn:extensionElements>\n      <foo:payload foo:key="value"><foo:nested foo:version="2">opaque text</foo:nested></foo:payload>\n    </bpmn:extensionElements>',
+      ''
+    )
     const summary = await validateUnknownExtensionPreservation(UNKNOWN_EXTENSION_XML, removed)
     expect(summary.valid).toBe(false)
     expect(summary.issues).toEqual(
@@ -78,10 +74,7 @@ describe('unknown BPMN extension preservation', () => {
     // This pinned moddle version serializes `foo:key` on a generic element as
     // unqualified `key`. The preservation gate must catch it instead of
     // silently accepting data loss.
-    const summary = await validateUnknownExtensionPreservation(
-      UNKNOWN_EXTENSION_XML,
-      serialized
-    )
+    const summary = await validateUnknownExtensionPreservation(UNKNOWN_EXTENSION_XML, serialized)
     expect(summary.valid).toBe(false)
     expect(summary.issues).toEqual(
       expect.arrayContaining([
