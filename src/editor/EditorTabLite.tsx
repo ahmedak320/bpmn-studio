@@ -1095,6 +1095,10 @@ export function EditorTab(props: EditorTabProps): JSX.Element {
               messages={outlineMessages}
               direction={uiDir}
               onOpenProcessDetails={() => {
+                // Process Details is an explicit no-element context. Clear the
+                // live bpmn-js selection first so the properties panel cannot
+                // retain element mode while the process card is active.
+                modelerRef.current?.get('selection').select(null)
                 focusPaneAfterOpenRef.current = true
                 setDetailsOpenFromRail(true)
               }}

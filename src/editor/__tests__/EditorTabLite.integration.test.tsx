@@ -761,12 +761,19 @@ describe('EditorTab browser integration', () => {
     expect(screen.queryByRole('dialog', { name: 'Process outline' })).toBeNull()
   })
 
-  it('opens process-level Details from the outline through the same focus path', async () => {
+  it('clears element selection before opening process-level Details through the shared focus path', async () => {
     const user = userEvent.setup()
     renderEditor({ responsiveMode: 'overlay' })
+    const selectedElement = fake.elements[0]
+    fake.selected = selectedElement
+    expect(fake.selected).toBe(selectedElement)
+
     await user.click(screen.getByRole('button', { name: 'Process outline' }))
     await user.click(screen.getByRole('button', { name: 'process-outline-details' }))
 
+    expect(mocks.selectionSelect).toHaveBeenCalledOnce()
+    expect(mocks.selectionSelect).toHaveBeenCalledWith(null)
+    expect(fake.selected).toBeNull()
     expect(screen.queryByRole('dialog', { name: 'Process outline' })).toBeNull()
     expect(await screen.findByRole('dialog', { name: 'pane.details.aria' })).not.toBeNull()
     expect(document.activeElement).toBe(
