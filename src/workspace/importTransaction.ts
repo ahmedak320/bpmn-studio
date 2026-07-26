@@ -161,6 +161,11 @@ export interface WorkspaceImportArtifact {
   readonly bytes: Uint8Array
   readonly sha256: string
   readonly processIds: readonly string[]
+  /**
+   * Existing process identities bound to this exact destination. These may be
+   * replaced or skipped, but never written to a keep-both path.
+   */
+  readonly replacesProcessIds: readonly string[]
   readonly validation: ValidationSummary
 }
 
@@ -260,7 +265,19 @@ export interface PrepareWorkspaceImportOptions {
   readonly sources: readonly WorkspaceImportSource[]
   readonly targetFolder?: string
   readonly language?: 'en' | 'ar'
+  /**
+   * Legacy compatibility input. An ID without a corresponding entry in
+   * `existingProcessIndex` is treated as an unverifiable collision and skipped.
+   */
   readonly existingProcessIds?: ReadonlySet<string>
+  /**
+   * Workspace process identity snapshot. This is structurally compatible with
+   * the App's `ProcessIndex`; only each entry's portable `relPath` is consumed.
+   *
+   * An incoming process may replace an existing process only when its reviewed
+   * destination resolves to the same normalized, case-insensitive path.
+   */
+  readonly existingProcessIndex?: ReadonlyMap<string, { readonly relPath: string }>
   readonly validationAdapters?: readonly BpmnValidationAdapter[]
   readonly bpmnPreparer?: BpmnImportPreparer
   readonly amlConverter?: (text: string, options: { lang: 'en' | 'ar' }) => Promise<AmlConversion>
@@ -369,11 +386,23 @@ interface Candidate {
   readonly repairs: readonly WorkspaceImportRepair[]
   readonly warnings: readonly WorkspaceImportWarning[]
   readonly processIds?: readonly string[]
+  /** Existing IDs whose reviewed owner is this candidate's destination. */
+  readonly replacesProcessIds?: readonly string[]
 }
 
-interface PreparedCandidate extends Candidate {
+interface InspectedCandidate extends Candidate {
   readonly processIds: readonly string[]
+  readonly replacesProcessIds: readonly string[]
+}
+
+interface PreparedCandidate extends InspectedCandidate {
   readonly prepared: PreparedBpmnImport
+}
+
+interface ExistingProcessIdentities {
+  readonly ids: ReadonlySet<string>
+  /** Normalized paths only. Missing means the caller supplied an ID without a verifiable path. */
+  readonly paths: ReadonlyMap<string, string>
 }
 
 function resolvedLimits(input: WorkspaceImportLimits = {}): ResolvedWorkspaceImportLimits {
@@ -802,14 +831,36 @@ function sameStringSet(left: readonly string[], right: readonly string[]): boole
   return left.length === right.length && left.every((value, index) => value === right[index])
 }
 
+function snapshotExistingProcessIdentities(
+  existingProcessIds: ReadonlySet<string> | undefined,
+  existingProcessIndex: ReadonlyMap<string, { readonly relPath: string }> | undefined
+): ExistingProcessIdentities {
+  const ids = new Set(existingProcessIds ?? [])
+  const paths = new Map<string, string>()
+  for (const [processId, entry] of existingProcessIndex ?? []) {
+    ids.add(processId)
+    try {
+      paths.set(processId, normalizeWorkspacePath(entry.relPath))
+    } catch {
+      // Keep the ID without a path. Identity verification will fail safe for
+      // candidates that attempt to reuse it.
+    }
+  }
+  return { ids, paths }
+}
+
+function samePortablePath(left: string, right: string): boolean {
+  return pathKey(left) === pathKey(right)
+}
+
 async function inspectCandidates(
   candidates: readonly Candidate[],
   preparer: BpmnImportPreparer,
   skippedItems: WorkspaceImportSkippedItem[],
   warnings: WorkspaceImportWarning[],
-  existingProcessIds: ReadonlySet<string>,
+  existingProcesses: ExistingProcessIdentities,
   signal?: AbortSignal
-): Promise<Candidate[]> {
+): Promise<InspectedCandidate[]> {
   const parsed: Array<{ candidate: Candidate; processIds: readonly string[] }> = []
   for (const candidate of candidates) {
     throwIfAborted(signal)
@@ -848,7 +899,7 @@ async function inspectCandidates(
       incomingCounts.set(processId, (incomingCounts.get(processId) ?? 0) + 1)
     }
   }
-  const inspected: Candidate[] = []
+  const inspected: InspectedCandidate[] = []
   for (const { candidate, processIds } of parsed) {
     const duplicate = processIds.find((id) => (incomingCounts.get(id) ?? 0) > 1)
     if (duplicate) {
@@ -863,25 +914,66 @@ async function inspectCandidates(
       )
       continue
     }
+    const replacesProcessIds: string[] = []
+    let identityCollision = false
     for (const processId of processIds) {
-      if (existingProcessIds.has(processId)) {
-        warnings.push(
-          Object.freeze({
-            code: 'existing-process-id-collision',
-            sourceId: candidate.sourceId,
-            artifactId: candidate.id,
-            message: `Process id "${processId}" already exists in the workspace.`
-          })
+      if (!existingProcesses.ids.has(processId)) continue
+      const existingPath = existingProcesses.paths.get(processId)
+      if (!existingPath) {
+        skippedItems.push(
+          skipped(
+            candidate.sourceId,
+            candidate.sourceName,
+            'process-id-collision',
+            `Process id "${processId}" already exists, but its workspace path was not supplied; replacement identity cannot be verified.`,
+            candidate.sourcePath
+          )
         )
+        identityCollision = true
+        break
       }
+      if (!samePortablePath(existingPath, candidate.desiredPath)) {
+        skippedItems.push(
+          skipped(
+            candidate.sourceId,
+            candidate.sourceName,
+            'process-id-collision',
+            `Process id "${processId}" belongs to workspace path "${existingPath}", not reviewed destination "${candidate.desiredPath}".`,
+            candidate.sourcePath
+          )
+        )
+        identityCollision = true
+        break
+      }
+      replacesProcessIds.push(processId)
     }
-    inspected.push(Object.freeze({ ...candidate, processIds }))
+    if (identityCollision) continue
+    if (replacesProcessIds.length > 0) {
+      warnings.push(
+        Object.freeze({
+          code: 'same-path-process-replacement',
+          sourceId: candidate.sourceId,
+          artifactId: candidate.id,
+          count: replacesProcessIds.length,
+          message: `${replacesProcessIds.length} existing process id${
+            replacesProcessIds.length === 1 ? '' : 's'
+          } will be replaced only at the same reviewed workspace path.`
+        })
+      )
+    }
+    inspected.push(
+      Object.freeze({
+        ...candidate,
+        processIds,
+        replacesProcessIds: Object.freeze(replacesProcessIds)
+      })
+    )
   }
   return inspected
 }
 
 async function prepareCandidateClosure(
-  candidates: readonly Candidate[],
+  candidates: readonly InspectedCandidate[],
   preparer: BpmnImportPreparer,
   validationAdapters: readonly BpmnValidationAdapter[],
   existingProcessIds: ReadonlySet<string>,
@@ -1046,6 +1138,7 @@ function candidateSiblingPath(path: string, occupied: ReadonlySet<string>, label
 async function materializeArtifacts(
   prepared: readonly PreparedCandidate[],
   adapter: WorkspaceAdapter,
+  existingProcesses: ExistingProcessIdentities,
   limits: ResolvedWorkspaceImportLimits,
   skippedItems: WorkspaceImportSkippedItem[],
   signal: AbortSignal | undefined
@@ -1076,6 +1169,7 @@ async function materializeArtifacts(
   for (const candidate of prepared) {
     throwIfAborted(signal)
     let destinationPath = candidate.desiredPath
+    const destinationRepairs: WorkspaceImportRepair[] = []
     let parent = workspaceParentPath(destinationPath)
     let blockedParent: string | undefined
     while (parent) {
@@ -1102,7 +1196,7 @@ async function materializeArtifacts(
     if (existingByCase?.kind === 'file' && existingByCase.path !== destinationPath) {
       const before = destinationPath
       destinationPath = existingByCase.path
-      repairs.push(
+      destinationRepairs.push(
         repair(
           'destination-case-normalized',
           candidate,
@@ -1119,7 +1213,7 @@ async function materializeArtifacts(
         new Set([...occupied, ...claimed]),
         'imported'
       )
-      repairs.push(
+      destinationRepairs.push(
         repair(
           'destination-deduplicated',
           candidate,
@@ -1128,6 +1222,22 @@ async function materializeArtifacts(
           destinationPath
         )
       )
+    }
+    const displacedProcessId = candidate.replacesProcessIds.find((processId) => {
+      const existingPath = existingProcesses.paths.get(processId)
+      return !existingPath || !samePortablePath(existingPath, destinationPath)
+    })
+    if (displacedProcessId) {
+      skippedItems.push(
+        skipped(
+          candidate.sourceId,
+          candidate.sourceName,
+          'process-id-collision',
+          `Process id "${displacedProcessId}" cannot move from its reviewed workspace path during destination planning.`,
+          candidate.sourcePath
+        )
+      )
+      continue
     }
     claimed.add(pathKey(destinationPath))
     occupied.add(pathKey(destinationPath))
@@ -1158,10 +1268,11 @@ async function materializeArtifacts(
       bytes: copyBytes(bytes),
       sha256,
       processIds: candidate.processIds,
+      replacesProcessIds: candidate.replacesProcessIds,
       validation: candidate.prepared.validation
     })
     artifacts.push(artifact)
-    repairs.push(...candidate.repairs)
+    repairs.push(...candidate.repairs, ...destinationRepairs)
     warnings.push(...candidate.warnings)
 
     const matchingEntry = byKey.get(pathKey(destinationPath))
@@ -1207,6 +1318,7 @@ function reviewPayload(plan: Omit<WorkspaceImportPlan, 'id' | 'reviewDigest'>): 
       sha256: artifact.sha256,
       bytes: artifact.bytes.byteLength,
       processIds: artifact.processIds,
+      replacesProcessIds: artifact.replacesProcessIds,
       validationIssues: artifact.validation.issues
     })),
     collisions: plan.collisions.map((collision) => ({
@@ -1241,7 +1353,10 @@ export async function prepareWorkspaceImportPlan(
   const language = options.language ?? 'en'
   const preparer = options.bpmnPreparer ?? secureBpmnImportPreparer
   const validationAdapters = options.validationAdapters ?? getRuntimeValidationAdapters()
-  const existingProcessIds = options.existingProcessIds ?? new Set<string>()
+  const existingProcesses = snapshotExistingProcessIdentities(
+    options.existingProcessIds,
+    options.existingProcessIndex
+  )
   const flattened = await flattenSources(
     options.sources,
     language,
@@ -1264,14 +1379,14 @@ export async function prepareWorkspaceImportPlan(
     preparer,
     skippedItems,
     warnings,
-    existingProcessIds,
+    existingProcesses,
     options.signal
   )
   const prepared = await prepareCandidateClosure(
     inspected,
     preparer,
     validationAdapters,
-    existingProcessIds,
+    existingProcesses.ids,
     skippedItems,
     warnings,
     options.signal
@@ -1279,6 +1394,7 @@ export async function prepareWorkspaceImportPlan(
   const materialized = await materializeArtifacts(
     prepared,
     options.adapter,
+    existingProcesses,
     limits,
     skippedItems,
     options.signal
@@ -1365,6 +1481,7 @@ export function confirmWorkspaceImportPlan(
   }
 
   const decisions: Record<string, WorkspaceImportCollisionDecision> = {}
+  const artifactsById = new Map(plan.artifacts.map((artifact) => [artifact.id, artifact]))
   const occupied = new Set(plan.artifacts.map(({ destinationPath }) => pathKey(destinationPath)))
   for (const collision of plan.collisions) {
     const decision = normalizedDecision(
@@ -1372,6 +1489,13 @@ export function confirmWorkspaceImportPlan(
       options.collisionDecisions?.[collision.artifactId]
     )
     if (decision.action === 'keep-both') {
+      const artifact = artifactsById.get(collision.artifactId)
+      if (artifact && artifact.replacesProcessIds.length > 0) {
+        throw new WorkspaceImportError(
+          'unresolved-collision',
+          `Reviewed artifact "${artifact.id}" owns existing process identities at "${collision.path}" and cannot use keep-both.`
+        )
+      }
       const key = pathKey(decision.destinationPath ?? collision.suggestedKeepBothPath)
       if (occupied.has(key)) {
         throw new WorkspaceImportError(

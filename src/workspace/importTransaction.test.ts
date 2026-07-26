@@ -26,6 +26,10 @@ function documentXml(processId: string, options: { ref?: string; marker?: string
   }</process></definitions>`
 }
 
+function multiProcessXml(...ids: string[]): string {
+  return `<definitions>${ids.map((id) => `<process id="${id}"/>`).join('')}</definitions>`
+}
+
 function processIds(xml: string): string[] {
   return [...xml.matchAll(/<(?:\w+:)?process\s+id="([^"]+)"/g)].map((match) => match[1]).sort()
 }
@@ -114,12 +118,16 @@ async function planFor(
   options: {
     amlConverter?: () => Promise<AmlConversion>
     targetFolder?: string
+    existingProcessIds?: ReadonlySet<string>
+    existingProcessIndex?: ReadonlyMap<string, { readonly relPath: string }>
   } = {}
 ) {
   return prepareWorkspaceImportPlan({
     adapter,
     sources,
     targetFolder: options.targetFolder,
+    existingProcessIds: options.existingProcessIds,
+    existingProcessIndex: options.existingProcessIndex,
     bpmnPreparer: fakePreparer,
     validationAdapters: [],
     amlConverter: options.amlConverter,
@@ -221,6 +229,179 @@ describe('general workspace import planning', () => {
     expect(duplicated.skipped).toEqual([
       expect.objectContaining({ sourceId: 'first', reason: 'process-id-collision' }),
       expect.objectContaining({ sourceId: 'second', reason: 'process-id-collision' })
+    ])
+  })
+
+  it('allows an explicitly reviewed same-path process replacement without writing during planning', async () => {
+    const beforeWrite = vi.fn()
+    const previousXml = documentXml('Process_Replace', { marker: '<old/>' })
+    const incomingXml = documentXml('Process_Replace', { marker: '<new/>' })
+    const adapter = new MemoryWorkspaceAdapter({
+      files: { 'reviewed/process.bpmn': previousXml },
+      beforeWrite
+    })
+    const plan = await planFor(
+      adapter,
+      [doc('replace', 'process.bpmn', incomingXml, 'reviewed/process.bpmn')],
+      {
+        existingProcessIndex: new Map([['Process_Replace', { relPath: 'reviewed/process.bpmn' }]])
+      }
+    )
+
+    expect(plan.status).toBe('ready')
+    expect(plan.artifacts).toEqual([
+      expect.objectContaining({
+        id: 'replace:1',
+        destinationPath: 'reviewed/process.bpmn',
+        replacesProcessIds: ['Process_Replace']
+      })
+    ])
+    expect(plan.collisions).toEqual([
+      expect.objectContaining({ artifactId: 'replace:1', path: 'reviewed/process.bpmn' })
+    ])
+    expect(plan.warnings).toContainEqual(
+      expect.objectContaining({
+        code: 'same-path-process-replacement',
+        artifactId: 'replace:1',
+        count: 1
+      })
+    )
+    expect(() =>
+      confirmWorkspaceImportPlan(plan, {
+        accepted: true,
+        reviewedDigest: plan.reviewDigest,
+        collisionDecisions: { 'replace:1': { action: 'keep-both' } }
+      })
+    ).toThrowError(expect.objectContaining({ code: 'unresolved-collision' }))
+    expect(
+      confirmWorkspaceImportPlan(plan, {
+        accepted: true,
+        reviewedDigest: plan.reviewDigest,
+        collisionDecisions: { 'replace:1': { action: 'replace' } }
+      }).collisionDecisions
+    ).toEqual({ 'replace:1': { action: 'replace' } })
+    expect(beforeWrite).not.toHaveBeenCalled()
+    expect(decoder.decode((await adapter.read('reviewed/process.bpmn')).bytes)).toBe(previousXml)
+  })
+
+  it('blocks different-path identities and fails safe for Set-only callers with zero writes', async () => {
+    const beforeWrite = vi.fn()
+    const ownedXml = documentXml('Process_Owned')
+    const adapter = new MemoryWorkspaceAdapter({
+      files: { 'owned/process.bpmn': ownedXml },
+      beforeWrite
+    })
+
+    const differentPath = await planFor(
+      adapter,
+      [doc('incoming', 'incoming.bpmn', documentXml('Process_Owned'))],
+      {
+        existingProcessIndex: new Map([['Process_Owned', { relPath: 'owned/process.bpmn' }]])
+      }
+    )
+    expect(differentPath.status).toBe('blocked')
+    expect(differentPath.artifacts).toEqual([])
+    expect(differentPath.skipped).toEqual([
+      expect.objectContaining({
+        sourceId: 'incoming',
+        reason: 'process-id-collision',
+        message: expect.stringContaining('owned/process.bpmn')
+      })
+    ])
+
+    const setOnly = await planFor(
+      adapter,
+      [doc('legacy', 'process.bpmn', documentXml('Process_Owned'), 'owned/process.bpmn')],
+      { existingProcessIds: new Set(['Process_Owned']) }
+    )
+    expect(setOnly.status).toBe('blocked')
+    expect(setOnly.artifacts).toEqual([])
+    expect(setOnly.skipped).toEqual([
+      expect.objectContaining({
+        sourceId: 'legacy',
+        reason: 'process-id-collision',
+        message: expect.stringContaining('path was not supplied')
+      })
+    ])
+    expect(beforeWrite).not.toHaveBeenCalled()
+    expect(decoder.decode((await adapter.read('owned/process.bpmn')).bytes)).toBe(ownedXml)
+  })
+
+  it('matches existing process ownership using portable case-normalized paths', async () => {
+    const adapter = new MemoryWorkspaceAdapter({
+      files: { 'Folder/Existing.BPMN': documentXml('Process_Case', { marker: '<old/>' }) }
+    })
+    const plan = await planFor(
+      adapter,
+      [
+        doc(
+          'case',
+          'existing.bpmn',
+          documentXml('Process_Case', { marker: '<new/>' }),
+          'folder/existing.bpmn'
+        )
+      ],
+      {
+        existingProcessIndex: new Map([['Process_Case', { relPath: 'FOLDER/EXISTING.bpmn' }]])
+      }
+    )
+
+    expect(plan.status).toBe('ready')
+    expect(plan.artifacts[0]).toMatchObject({
+      destinationPath: 'Folder/Existing.BPMN',
+      replacesProcessIds: ['Process_Case']
+    })
+    expect(plan.collisions[0]).toMatchObject({
+      artifactId: 'case:1',
+      path: 'Folder/Existing.BPMN'
+    })
+    expect(plan.repairs).toContainEqual(
+      expect.objectContaining({
+        code: 'destination-case-normalized',
+        before: 'folder/existing.bpmn',
+        after: 'Folder/Existing.BPMN'
+      })
+    )
+  })
+
+  it('checks every process identity in a multi-process file as one artifact', async () => {
+    const adapter = new MemoryWorkspaceAdapter({
+      files: {
+        'bundle.bpmn': multiProcessXml('Process_A', 'Process_B'),
+        'elsewhere.bpmn': documentXml('Process_B')
+      }
+    })
+    const samePath = await planFor(
+      adapter,
+      [doc('bundle', 'bundle.bpmn', multiProcessXml('Process_A', 'Process_B'))],
+      {
+        existingProcessIndex: new Map([
+          ['Process_A', { relPath: 'bundle.bpmn' }],
+          ['Process_B', { relPath: 'bundle.bpmn' }]
+        ])
+      }
+    )
+    expect(samePath.status).toBe('ready')
+    expect(samePath.artifacts[0].replacesProcessIds).toEqual(['Process_A', 'Process_B'])
+
+    const mixedOwnership = await planFor(
+      adapter,
+      [doc('mixed', 'bundle.bpmn', multiProcessXml('Process_A', 'Process_B'))],
+      {
+        existingProcessIndex: new Map([
+          ['Process_A', { relPath: 'bundle.bpmn' }],
+          ['Process_B', { relPath: 'elsewhere.bpmn' }]
+        ])
+      }
+    )
+    expect(mixedOwnership.status).toBe('blocked')
+    expect(mixedOwnership.artifacts).toEqual([])
+    expect(mixedOwnership.skipped).toEqual([
+      expect.objectContaining({
+        sourceId: 'mixed',
+        reason: 'process-id-collision',
+        message: expect.stringContaining('elsewhere.bpmn')
+      })
     ])
   })
 
