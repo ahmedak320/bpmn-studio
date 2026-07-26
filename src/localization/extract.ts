@@ -89,7 +89,8 @@ export const TRANSLATABLE_METADATA_FIELDS: readonly MetadataFieldSpec[] =
       base: 'decisionBasis',
       en: 'decisionBasisEn',
       ar: 'decisionBasisAr'
-    }
+    },
+    { field: 'notes', base: 'notes', en: 'notesEn', ar: 'notesAr' }
   ])
 
 const ORBITPM_PREFIX = 'orbitpm:'

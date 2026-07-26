@@ -82,7 +82,10 @@ export const ORG_ATTR_NAMES = [
   'ccListAr',
   'decisionBasis',
   'decisionBasisEn',
-  'decisionBasisAr'
+  'decisionBasisAr',
+  'notes',
+  'notesEn',
+  'notesAr'
 ] as const
 
 export type OrgAttrName = (typeof ORG_ATTR_NAMES)[number]

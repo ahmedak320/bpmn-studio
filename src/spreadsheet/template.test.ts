@@ -115,7 +115,7 @@ describe('deterministic official workbook assets', () => {
       '3145d9e2ad4e12298c820d945a472cbad45b23089376acbae90d28414d1a24bf'
     )
     expect(sha256Hex(createOfficialWorkbookTemplate('example'))).toBe(
-      'c5f29e5b38b675a3a882981e4bf2893ddfe5d734e843f772f56a1fffae331d3e'
+      '9f7e8f03702f74ad2be89331828c7e181a7804bd7ed96c028d00979e3e04e617'
     )
   })
 
