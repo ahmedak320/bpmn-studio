@@ -88,6 +88,13 @@ export function estimateGenerationRequestCount(
 const EMAIL_RE = /\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/i
 const PHONE_RE = /(?:\+?\d[\d\s().-]{7,}\d)/
 const SECRETISH_RE = /\b(?:api[_ -]?key|password|secret|token)\b/i
+const MULTIWORD_CAPITALIZED_NAME_RE =
+  /(?:^|[^\p{L}\p{M}])\p{Lu}[\p{L}\p{M}'’.-]{1,}(?:\s+\p{Lu}[\p{L}\p{M}'’.-]{1,})+(?=$|[^\p{L}\p{M}])/u
+const PERSON_LABEL_RE =
+  /\b(?:approver|customer|employee|manager|owner|requester|responsible)\s*[:=-]?\s+[\p{L}\p{M}'’.-]{2,}(?:\s+[\p{L}\p{M}'’.-]{2,})?/iu
+const ARABIC_PERSON_LABEL_RE =
+  /(?:السيد(?:ة)?|الموظف(?:ة)?|المدير(?:ة)?|المسؤول(?:ة)?|العميل(?:ة)?)\s+[\p{Script=Arabic}\p{M}]{2,}(?:\s+[\p{Script=Arabic}\p{M}]{2,})?/u
+const REDACTED_PROCESS_ALIAS_RE = /^Process \d+$/i
 
 export interface ContextSensitivity {
   containsNames: boolean
@@ -102,7 +109,14 @@ export function inspectContextSensitivity(
     .map((entry) => `${entry.id}\n${entry.name}`)
     .join('\n')}`
   return {
-    containsNames: catalog.some((entry) => entry.name.trim().length > 0),
+    containsNames:
+      MULTIWORD_CAPITALIZED_NAME_RE.test(description) ||
+      PERSON_LABEL_RE.test(description) ||
+      ARABIC_PERSON_LABEL_RE.test(description) ||
+      catalog.some((entry) => {
+        const name = entry.name.trim()
+        return name.length > 0 && !REDACTED_PROCESS_ALIAS_RE.test(name)
+      }),
     containsSensitiveMetadata:
       EMAIL_RE.test(combined) || PHONE_RE.test(combined) || SECRETISH_RE.test(combined)
   }

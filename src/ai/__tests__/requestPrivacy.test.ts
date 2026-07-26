@@ -51,6 +51,26 @@ describe('privacy-preserving process retrieval', () => {
       containsNames: true,
       containsSensitiveMetadata: true
     })
+    expect(inspectContextSensitivity('Alice Smith approves this request', [])).toEqual({
+      containsNames: true,
+      containsSensitiveMetadata: false
+    })
+    expect(inspectContextSensitivity('Send the PDF hint to owner: Fatima', [])).toEqual({
+      containsNames: true,
+      containsSensitiveMetadata: false
+    })
+    expect(inspectContextSensitivity('Contact jane@example.com', [])).toEqual({
+      containsNames: false,
+      containsSensitiveMetadata: true
+    })
+    expect(
+      inspectContextSensitivity('No private names remain', [
+        { id: 'Process_Order_Intake', name: 'Process 1' }
+      ])
+    ).toEqual({
+      containsNames: false,
+      containsSensitiveMetadata: false
+    })
     expect(inspectContextSensitivity('No context', [])).toEqual({
       containsNames: false,
       containsSensitiveMetadata: false

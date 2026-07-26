@@ -98,13 +98,14 @@ vi.mock('../browserDocxParser', () => {
   }
 })
 
-vi.mock('../pdf', () => ({
-  ACCEPTED_IMAGE_TYPES: ['image/png', 'image/jpeg', 'image/webp', 'image/gif'],
-  checkAttachmentSize: mocks.checkAttachmentSize,
-  fileToBase64: mocks.fileToBase64,
-  imageMediaTypeFromName: (name: string): string | null =>
-    name.toLowerCase().endsWith('.png') ? 'image/png' : null
-}))
+vi.mock('../pdf', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../pdf')>()
+  return {
+    ...actual,
+    checkAttachmentSize: mocks.checkAttachmentSize,
+    fileToBase64: mocks.fileToBase64
+  }
+})
 
 vi.mock('../linkReview', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../linkReview')>()
@@ -164,6 +165,14 @@ function selectAnthropic(): void {
     modelId: LITE_PROVIDERS.find(({ id }) => id === 'anthropic')!.models[0]!.id
   }
   state.keyed.add('anthropic')
+}
+
+function selectGemini(): void {
+  state.selection = {
+    providerId: 'gemini',
+    modelId: LITE_PROVIDERS.find(({ id }) => id === 'gemini')!.models[0]!.id
+  }
+  state.keyed.add('gemini')
 }
 
 function attachArrayBuffer(file: File, bytes = new Uint8Array([1, 2, 3])): File {
@@ -404,14 +413,24 @@ describe('AiPanelLite consented browser workflows', () => {
     expect(await screen.findByText('ai.error.cancelled')).not.toBeNull()
   })
 
-  it('recovers exact output when a non-cooperative generation resolves after cancellation', async () => {
+  it('recovers exact output without opening link review when generation resolves after cancellation', async () => {
     selectAnthropic()
     const user = userEvent.setup()
     const xml = '<definitions id="cancelled-output" />'
+    const lateLinks: ProposedLink[] = [
+      {
+        elementId: 'Call_leave',
+        label: 'Late uncertain call',
+        calledProcess: 'leave',
+        confidence: 'low'
+      }
+    ]
     mocks.generateText.mockImplementation(
       async (args: { signal: AbortSignal }) =>
         await new Promise<GenerateOutput>((resolve) => {
-          args.signal.addEventListener('abort', () => resolve({ xml, links: [] }), { once: true })
+          args.signal.addEventListener('abort', () => resolve({ xml, links: lateLinks }), {
+            once: true
+          })
         })
     )
     const onPlaceGenerated = vi.fn()
@@ -425,6 +444,8 @@ describe('AiPanelLite consented browser workflows', () => {
 
     expect(await screen.findByText('ai.placement.discarded.cancelled')).not.toBeNull()
     expect(onPlaceGenerated).not.toHaveBeenCalled()
+    expect(screen.queryByText('ai.linkVerify.title')).toBeNull()
+    expect(mocks.applyLinkDecisions).not.toHaveBeenCalled()
     expect(screen.queryByText('ai.created')).toBeNull()
     await user.click(screen.getByRole('button', { name: 'ai.placement.downloadRecovery' }))
     expect(mocks.triggerDownload).toHaveBeenCalledWith(
@@ -458,6 +479,9 @@ describe('AiPanelLite consented browser workflows', () => {
     fireEvent.change(screen.getByLabelText(/ai\.pdfHint\.label/), {
       target: { value: 'Model this photographed process' }
     })
+    expect((screen.getByLabelText('ai.privacy.description') as HTMLTextAreaElement).value).toBe(
+      'Model this photographed process'
+    )
     await user.click(screen.getByLabelText('ai.privacy.consent'))
     await user.click(screen.getByRole('button', { name: 'ai.generateFromPdf' }))
 
@@ -479,6 +503,32 @@ describe('AiPanelLite consented browser workflows', () => {
     expect(await screen.findByText('ai.created')).not.toBeNull()
   })
 
+  it('blocks undocumented Gemini GIF input before encoding or network', async () => {
+    selectGemini()
+    const user = userEvent.setup()
+    const onPlaceGenerated = vi.fn()
+    renderPanel({ onPlaceGenerated })
+
+    await user.click(screen.getByRole('tab', { name: 'ai.tab.pdf' }))
+    fireEvent.change(screen.getByLabelText('ai.pdfDocument.label'), {
+      target: {
+        files: [new File(['gif'], 'animated-flow.gif', { type: 'image/gif' })]
+      }
+    })
+    fireEvent.change(screen.getByLabelText(/ai\.pdfHint\.label/), {
+      target: { value: 'Model the animated process' }
+    })
+    await user.click(screen.getByLabelText('ai.privacy.consent'))
+
+    expect(await screen.findByText('ai.attach.unsupportedProvider')).not.toBeNull()
+    expect(
+      (screen.getByRole('button', { name: 'ai.generateFromPdf' }) as HTMLButtonElement).disabled
+    ).toBe(true)
+    expect(mocks.fileToBase64).not.toHaveBeenCalled()
+    expect(mocks.generateDocument).not.toHaveBeenCalled()
+    expect(onPlaceGenerated).not.toHaveBeenCalled()
+  })
+
   it('extracts DOCX text, removes it, and sends an attached PDF natively', async () => {
     selectAnthropic()
     const user = userEvent.setup()
@@ -496,6 +546,19 @@ describe('AiPanelLite consented browser workflows', () => {
       docx,
       expect.objectContaining({ signal: expect.any(AbortSignal) })
     )
+    fireEvent.change(screen.getByLabelText('ai.description.label'), {
+      target: { value: 'Use this extracted brief' }
+    })
+    const exactDocxDescription =
+      'Use this extracted brief\n\n--- Attached document: process.docx ---\nExtracted document text'
+    expect((screen.getByLabelText('ai.privacy.description') as HTMLTextAreaElement).value).toBe(
+      exactDocxDescription
+    )
+    await user.click(screen.getByLabelText('ai.privacy.consent'))
+    await user.click(screen.getByRole('button', { name: 'ai.generate' }))
+    await waitFor(() => expect(mocks.generateText).toHaveBeenCalledOnce())
+    expect(mocks.generateText.mock.calls[0]?.[0].description).toBe(exactDocxDescription)
+
     await user.click(screen.getByRole('button', { name: 'ai.attach.remove' }))
 
     await user.upload(
@@ -505,6 +568,9 @@ describe('AiPanelLite consented browser workflows', () => {
     fireEvent.change(screen.getByLabelText('ai.description.label'), {
       target: { value: 'Use this policy' }
     })
+    expect((screen.getByLabelText('ai.privacy.description') as HTMLTextAreaElement).value).toBe(
+      'Use this policy'
+    )
     await user.click(screen.getByLabelText('ai.privacy.consent'))
     await user.click(screen.getByRole('button', { name: 'ai.generate' }))
 
@@ -533,7 +599,7 @@ describe('AiPanelLite consented browser workflows', () => {
     expect(mocks.extractDocx).toHaveBeenCalledOnce()
   })
 
-  it('requires review for uncertain links and applies confirm and cancel decisions', async () => {
+  it('places only on review confirmation while cancel and close remain non-mutating', async () => {
     selectAnthropic()
     const user = userEvent.setup()
     const links: ProposedLink[] = [
@@ -577,7 +643,19 @@ describe('AiPanelLite consented browser workflows', () => {
 
     await generateOnce()
     await user.click(screen.getByRole('button', { name: 'ai.linkVerify.cancel' }))
-    await waitFor(() => expect(onPlaceGenerated).toHaveBeenCalledTimes(2))
+    expect(onPlaceGenerated).toHaveBeenCalledTimes(1)
+    expect(mocks.applyLinkDecisions).toHaveBeenCalledTimes(1)
+    expect(await screen.findByText('ai.placement.discarded.cancelled')).not.toBeNull()
+    await user.click(screen.getByRole('button', { name: 'ai.placement.downloadRecovery' }))
+    expect(mocks.triggerDownload).toHaveBeenCalledWith(
+      'process-recovery.bpmn',
+      `data:application/xml;charset=utf-8,${encodeURIComponent('<definitions />')}`
+    )
+
+    await generateOnce()
+    await user.click(screen.getByRole('button', { name: 'modal.close.aria' }))
+    expect(onPlaceGenerated).toHaveBeenCalledTimes(1)
+    expect(mocks.applyLinkDecisions).toHaveBeenCalledTimes(1)
   })
 
   it('keeps post-review placement cancellable and recovers the reviewed XML', async () => {

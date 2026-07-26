@@ -5,6 +5,7 @@ import {
   buildPdfInstruction,
   buildImageInstruction,
   imageMediaTypeFromName,
+  isAttachmentMediaTypeSupported,
   PDF_SIZE_LIMITS,
   IMAGE_SIZE_LIMITS,
   PDF_SOFT_WARN_BYTES,
@@ -80,9 +81,7 @@ describe("checkAttachmentSize(kind: 'pdf') — byte-identical delegation to chec
     ]
     for (const providerId of ['anthropic', 'gemini', 'openrouter'] as const) {
       for (const size of sizes) {
-        expect(checkAttachmentSize(providerId, 'pdf', size)).toEqual(
-          checkPdfSize(providerId, size)
-        )
+        expect(checkAttachmentSize(providerId, 'pdf', size)).toEqual(checkPdfSize(providerId, size))
       }
     }
   })
@@ -144,6 +143,37 @@ describe('accepted image types + extension fallback', () => {
     expect(imageMediaTypeFromName('doc.pdf')).toBeNull()
     expect(imageMediaTypeFromName('archive.zip')).toBeNull()
     expect(imageMediaTypeFromName('no-extension')).toBeNull()
+  })
+})
+
+describe('provider/model/media capability gate', () => {
+  it('rejects undocumented GIF input for direct and OpenRouter Gemini routes', () => {
+    expect(
+      isAttachmentMediaTypeSupported('gemini', 'gemini-flash-latest', 'image', 'image/gif')
+    ).toBe(false)
+    expect(
+      isAttachmentMediaTypeSupported('openrouter', 'google/gemini-3.6-flash', 'image', 'image/gif')
+    ).toBe(false)
+  })
+
+  it('retains GIF for reviewed routes that document it and fails closed elsewhere', () => {
+    expect(
+      isAttachmentMediaTypeSupported('anthropic', 'claude-sonnet-5', 'image', 'image/gif')
+    ).toBe(true)
+    expect(
+      isAttachmentMediaTypeSupported(
+        'openrouter',
+        'anthropic/claude-sonnet-5',
+        'image',
+        'image/gif'
+      )
+    ).toBe(true)
+    expect(
+      isAttachmentMediaTypeSupported('gemini', 'gemini-unreviewed-preview', 'image', 'image/png')
+    ).toBe(false)
+    expect(
+      isAttachmentMediaTypeSupported('anthropic', 'claude-sonnet-5', 'image', 'image/tiff')
+    ).toBe(false)
   })
 })
 

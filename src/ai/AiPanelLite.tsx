@@ -47,6 +47,7 @@ import {
   checkAttachmentSize,
   fileToBase64,
   imageMediaTypeFromName,
+  isAttachmentMediaTypeSupported,
   type AttachmentKind,
   type AttachmentSizeCheck
 } from './pdf'
@@ -249,7 +250,7 @@ export function AiPanelLite({
   // the success box alongside the created-file label when any link was kept.
   const [linkedSummary, setLinkedSummary] = useState<string | null>(null)
   // A generation awaiting user verification of its uncertain links. Held until
-  // the LinkVerifyDialog resolves; placement happens on confirm/cancel.
+  // the LinkVerifyDialog resolves; placement happens only on explicit confirm.
   const [pending, setPending] = useState<{
     xml: string
     confident: ProposedLink[]
@@ -339,9 +340,16 @@ export function AiPanelLite({
     () => (doc ? checkAttachmentSize(effectiveProviderId, doc.kind, doc.file.size) : { ok: true }),
     [doc, effectiveProviderId]
   )
-  // An image needs a provider/model with a verified image path.
-  const docImageUnsupported = doc?.kind === 'image' && !modelCapabilities.images
-  const docPdfUnsupported = doc?.kind === 'pdf' && !modelCapabilities.pdf
+  // Attachment support is checked against the exact provider, reviewed model,
+  // kind, and media type. This keeps undocumented formats (notably Gemini GIF)
+  // fail-closed before encoding/network while still letting the user switch to
+  // a route that has verified support for the selected file.
+  const docImageUnsupported =
+    doc?.kind === 'image' &&
+    !isAttachmentMediaTypeSupported(effectiveProviderId, effectiveModel, doc.kind, doc.mediaType)
+  const docPdfUnsupported =
+    doc?.kind === 'pdf' &&
+    !isAttachmentMediaTypeSupported(effectiveProviderId, effectiveModel, doc.kind, doc.mediaType)
 
   // Description-tab PDF attachment gates — same size gate as the document tab
   // (spec'd identical), plus the provider-supports-PDF check.
@@ -352,7 +360,9 @@ export function AiPanelLite({
         : { ok: true },
     [descAttach, effectiveProviderId]
   )
-  const descPdfUnsupported = descAttach?.kind === 'pdf' && !modelCapabilities.pdf
+  const descPdfUnsupported =
+    descAttach?.kind === 'pdf' &&
+    !isAttachmentMediaTypeSupported(effectiveProviderId, effectiveModel, 'pdf', 'application/pdf')
 
   // The effective description-tab input: typed text, extracted .docx text, or a
   // natively-attached PDF — any one of them suffices (but not none).
@@ -363,7 +373,25 @@ export function AiPanelLite({
       : genMode === 'pdf'
         ? Boolean(doc)
         : false
-  const contextQuery = genMode === 'description' ? `${description}\n${descDocText ?? ''}` : hint
+  // One canonical copy of the user-provided text that will leave the browser.
+  // The preview, sensitivity disclosure, retrieval query, and request execution
+  // all consume this value so their whitespace/separators cannot drift.
+  const outboundDescription = useMemo(() => {
+    if (genMode === 'pdf') return hint.trim()
+    const typed = description.trim()
+    if (descAttach?.kind === 'docx' && descAttach.text) {
+      const attachedText = `--- Attached document: ${descAttach.file.name} ---\n${descAttach.text}`
+      return [typed, attachedText].filter(Boolean).join('\n\n')
+    }
+    return typed
+  }, [descAttach, description, genMode, hint])
+  const nativeAttachmentName =
+    genMode === 'pdf'
+      ? (doc?.file.name ?? null)
+      : descAttach?.kind === 'pdf'
+        ? descAttach.file.name
+        : null
+  const contextQuery = outboundDescription
   const relevantProcesses = useMemo(
     () => selectRelevantProcesses(contextQuery, processCatalog),
     [contextQuery, processCatalog]
@@ -372,10 +400,12 @@ export function AiPanelLite({
     if (!includeWorkspaceContext) return []
     return redactNames ? redactProcessNames(relevantProcesses) : relevantProcesses
   }, [includeWorkspaceContext, redactNames, relevantProcesses])
-  const sensitivity = useMemo(
-    () => inspectContextSensitivity(contextQuery, outboundProcessCatalog),
-    [contextQuery, outboundProcessCatalog]
-  )
+  const sensitivity = useMemo(() => {
+    const exactDisclosedText = nativeAttachmentName
+      ? `${outboundDescription}\n${nativeAttachmentName}`
+      : outboundDescription
+    return inspectContextSensitivity(exactDisclosedText, outboundProcessCatalog)
+  }, [nativeAttachmentName, outboundDescription, outboundProcessCatalog])
   const hasLargeAttachment = genMode === 'pdf' || descAttach?.kind === 'pdf'
   // Three semantic generation attempts, each with up to three transport tries.
   // A large attachment is sent once (1), then any two repair turns are text-only
@@ -626,10 +656,7 @@ export function AiPanelLite({
         if (!doc) throw new Error(t('ai.error.chooseNoPdf'))
         const gate = checkAttachmentSize(providerId, doc.kind, doc.file.size)
         if (!gate.ok) throw new Error(gate.message)
-        if (
-          (doc.kind === 'image' && !modelCapabilities.images) ||
-          (doc.kind === 'pdf' && !modelCapabilities.pdf)
-        ) {
+        if (!isAttachmentMediaTypeSupported(providerId, effectiveModel, doc.kind, doc.mediaType)) {
           throw new Error(t('ai.attach.unsupportedProvider'))
         }
         const base64 = await fileToBase64(doc.file, controller.signal)
@@ -643,13 +670,13 @@ export function AiPanelLite({
             fileName: doc.file.name,
             sizeBytes: doc.file.size
           },
-          hint
+          hint: outboundDescription
         })
       } else if (descAttach?.kind === 'pdf') {
         // Description tab with a PDF attached: the PDF goes natively through the
         // existing attachment mechanism; the TYPED DESCRIPTION acts as the hint
         // (the pdf instruction frames it as "which/what process to model").
-        if (!modelCapabilities.pdf) {
+        if (!isAttachmentMediaTypeSupported(providerId, effectiveModel, 'pdf', 'application/pdf')) {
           throw new Error(t('ai.attach.unsupportedProvider'))
         }
         const gate = checkAttachmentSize(providerId, 'pdf', descAttach.file.size)
@@ -665,22 +692,24 @@ export function AiPanelLite({
             fileName: descAttach.file.name,
             sizeBytes: descAttach.file.size
           },
-          hint: description.trim()
+          hint: outboundDescription
         })
       } else {
-        // Plain text path — with an attached .docx, its extracted text rides
-        // along under a named separator (either part may be empty, not both;
-        // canGenerate enforces that).
-        const typed = description.trim()
-        let effective = typed
-        if (descAttach && descAttach.kind === 'docx' && descAttach.text) {
-          effective = `${typed}\n\n--- Attached document: ${descAttach.file.name} ---\n${descAttach.text}`
-        }
-        res = await generateDiagramXml({ ...common, description: effective })
+        // Plain text and extracted DOCX content use the same canonical string
+        // rendered in the external-request preview above.
+        res = await generateDiagramXml({ ...common, description: outboundDescription })
       }
       // The generation call recorded usage; remote balance lookup remains an
       // explicit action on the credits line.
       bumpUsage((v) => v + 1)
+      if (controller.signal.aborted) {
+        // Some provider/test adapters do not reject when their signal aborts.
+        // Never let such a late result open Link Review or reach placement.
+        if (requestAbortRef.current === controller) {
+          reportDiscardedGeneration(res.xml, 'cancelled')
+        }
+        return
+      }
       const { confident, unsure, unmatched } = partitionLinks(res.links, isKnownProcess)
       if (unsure.length + unmatched.length === 0) {
         // Nothing to vet — place with the XML unchanged; confident links stay.
@@ -709,16 +738,15 @@ export function AiPanelLite({
     }
   }, [
     providerId,
-    modelCapabilities,
     effectiveModel,
     genMode,
     doc,
     descAttach,
-    hint,
-    description,
+    outboundDescription,
     outboundProcessCatalog,
     isKnownProcess,
     placeAndReport,
+    reportDiscardedGeneration,
     getWorkspaceGen
   ])
 
@@ -746,24 +774,15 @@ export function AiPanelLite({
     [pending, placeAndReport]
   )
 
-  // Verify-dialog cancel: keep only the confident links (dismiss all uncertain).
-  const handleVerifyCancel = useCallback(async (): Promise<void> => {
+  // Verify-dialog cancel is non-mutating: discard the pending proposal without
+  // stripping links or placing a diagram. Retain the exact raw XML so the user
+  // can still recover/download work they chose not to commit.
+  const handleVerifyCancel = useCallback((): void => {
     const p = pending
     if (!p) return
-    const controller = new AbortController()
-    requestAbortRef.current?.abort()
-    requestAbortRef.current = controller
     setPending(null)
-    setBusy(true)
-    try {
-      const keepIds = new Set<string>(p.confident.map((l) => l.elementId))
-      const finalXml = applyLinkDecisions(p.xml, [...p.unsure, ...p.unmatched], keepIds)
-      await placeAndReport(finalXml, p.confident, p.gen, p.localizationSource, controller)
-    } finally {
-      if (requestAbortRef.current === controller) requestAbortRef.current = null
-      setBusy(false)
-    }
-  }, [pending, placeAndReport])
+    reportDiscardedGeneration(p.xml, 'cancelled')
+  }, [pending, reportDiscardedGeneration])
 
   const noKeysAtAll = configuredIds.length === 0
 
@@ -1141,27 +1160,25 @@ export function AiPanelLite({
                 model: effectiveModel || '—'
               })}
             </div>
-            {genMode === 'description' && descAttach?.kind !== 'pdf' ? (
+            {nativeAttachmentName && (
+              <div style={{ fontSize: 12, overflowWrap: 'anywhere' }}>
+                {t('ai.privacy.attachment', {
+                  name: nativeAttachmentName,
+                  bytes: genMode === 'pdf' ? (doc?.file.size ?? 0) : (descAttach?.file.size ?? 0)
+                })}
+              </div>
+            )}
+            {(!nativeAttachmentName || outboundDescription) && (
               <label style={labelStyle}>
                 <span style={labelText}>{t('ai.privacy.description')}</span>
                 <textarea
                   readOnly
-                  value={
-                    descDocText ? `${description.trim()}\n\n${descDocText}`.trim() : description
-                  }
+                  value={outboundDescription}
                   rows={3}
                   dir="auto"
                   style={{ ...inputStyle, resize: 'vertical' }}
                 />
               </label>
-            ) : (
-              <div style={{ fontSize: 12, overflowWrap: 'anywhere' }}>
-                {t('ai.privacy.attachment', {
-                  name:
-                    genMode === 'pdf' ? (doc?.file.name ?? '—') : (descAttach?.file.name ?? '—'),
-                  bytes: genMode === 'pdf' ? (doc?.file.size ?? 0) : (descAttach?.file.size ?? 0)
-                })}
-              </div>
             )}
             <label style={{ display: 'flex', gap: 8, alignItems: 'flex-start' }}>
               <input

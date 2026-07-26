@@ -8,7 +8,7 @@
 // (photos/screenshots of flowcharts, whiteboards, scanned diagrams): Anthropic
 // `image` block / Gemini `inlineData` part / OpenRouter `image_url` part.
 
-import type { LiteProviderId } from './providersLite'
+import { getLiteModelCapabilities, type LiteProviderId } from './providersLite'
 import { t } from '../i18n'
 
 /** What the user attached: a PDF document or an image of a process drawing. */
@@ -31,20 +31,46 @@ export interface GenAttachment {
 /** Back-compat alias — the pre-image name for {@link GenAttachment}. */
 export type PdfAttachment = GenAttachment
 
-// Image mime types the "From PDF / image" tab accepts. All four are LIVE-VERIFIED
-// (2026-07-23) as accepted image inputs by Anthropic
+// Image mime types the "From PDF / image" tab can classify. All four are
+// LIVE-VERIFIED (2026-07-23) as accepted image inputs by Anthropic
 // (platform.claude.com/docs/en/build-with-claude/vision — JPEG/PNG/GIF/WebP) and
 // OpenRouter (docs/guides/overview/multimodal/image-understanding — png/jpeg/
 // webp/gif). Gemini's documented list (ai.google.dev/gemini-api/docs/
-// image-understanding) is PNG/JPEG/WebP/HEIC/HEIF — GIF is UNdocumented there,
-// so a GIF sent to Gemini may be rejected server-side; we still accept it
-// client-side and let the provider error surface if so.
+// image-understanding) is PNG/JPEG/WebP/HEIC/HEIF — GIF is undocumented there.
+// The picker can retain a GIF while the provider/model-aware gate below rejects
+// Gemini routes before the file is encoded or any request is sent.
 export const ACCEPTED_IMAGE_TYPES: readonly string[] = [
   'image/png',
   'image/jpeg',
   'image/webp',
   'image/gif'
 ]
+
+/**
+ * Fail-closed attachment capability check for the exact provider, model, kind,
+ * and media type that would be sent. Unknown model ids inherit the registry's
+ * text-only behavior. GIF is deliberately blocked for both direct Gemini and
+ * reviewed Gemini-through-OpenRouter routes because that format is absent from
+ * Gemini's documented image-input list.
+ */
+export function isAttachmentMediaTypeSupported(
+  providerId: LiteProviderId,
+  modelId: string,
+  kind: AttachmentKind,
+  mediaType: string
+): boolean {
+  const capabilities = getLiteModelCapabilities(providerId, modelId)
+  if (kind === 'pdf') {
+    return capabilities.pdf && mediaType === 'application/pdf'
+  }
+  if (!capabilities.images || !ACCEPTED_IMAGE_TYPES.includes(mediaType)) {
+    return false
+  }
+  const isGeminiRoute =
+    providerId === 'gemini' ||
+    (providerId === 'openrouter' && modelId.trim().toLowerCase().startsWith('google/'))
+  return !(isGeminiRoute && mediaType === 'image/gif')
+}
 
 /**
  * Map a file name's extension to its image mime type — the fallback for
