@@ -1,8 +1,37 @@
 // @vitest-environment jsdom
 
-import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+
+interface TestDraftRecord {
+  id: string
+  workspaceId: string
+  path: string | null
+  sessionId: string
+  xml: string
+  baseHash: string | null
+  timestamp: number
+  appVersion: string
+}
+
+interface TestWorkspaceChange {
+  kind: 'saved' | 'moved' | 'deleted'
+  path: string
+  previousPath?: string
+}
+
+interface TestWorkspaceCoordinator {
+  emit(change: TestWorkspaceChange): void
+}
+
+const sessionHarness = vi.hoisted(() => ({
+  indexedDbAvailable: true,
+  drafts: new Map<string, TestDraftRecord>(),
+  controllers: [] as unknown[],
+  coordinators: [] as TestWorkspaceCoordinator[],
+  publishedChanges: [] as unknown[]
+}))
 
 const state = vi.hoisted(() => ({
   directorySupport: false,
@@ -103,6 +132,103 @@ vi.mock('./validation', () => ({
   validateUnknownExtensionPreservation: mocks.validatePreservation
 }))
 
+vi.mock('./sessions', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('./sessions')>()
+
+  class TestIndexedDbDraftJournal {
+    constructor() {
+      if (!sessionHarness.indexedDbAvailable) throw new Error('IndexedDB unavailable')
+    }
+
+    async put(record: TestDraftRecord): Promise<void> {
+      sessionHarness.drafts.set(record.id, { ...record })
+    }
+
+    async get(key: { workspaceId: string; path: string | null; sessionId: string }) {
+      const record = sessionHarness.drafts.get(actual.draftId(key))
+      return record ? { ...record } : null
+    }
+
+    async listWorkspace(workspaceId: string) {
+      return [...sessionHarness.drafts.values()]
+        .filter((record) => record.workspaceId === workspaceId)
+        .map((record) => ({ ...record }))
+    }
+
+    async delete(key: { workspaceId: string; path: string | null; sessionId: string }) {
+      sessionHarness.drafts.delete(actual.draftId(key))
+    }
+
+    async move(
+      from: { workspaceId: string; path: string | null; sessionId: string },
+      to: { workspaceId: string; path: string | null; sessionId: string }
+    ) {
+      const fromId = actual.draftId(from)
+      const toId = actual.draftId(to)
+      if (fromId === toId) return
+      const record = sessionHarness.drafts.get(fromId)
+      if (!record) return
+      if (sessionHarness.drafts.has(toId)) {
+        throw new Error('A recovery draft already exists at the destination path')
+      }
+      sessionHarness.drafts.delete(fromId)
+      sessionHarness.drafts.set(toId, { ...record, ...to, id: toId })
+    }
+
+    async clearWorkspace(workspaceId: string) {
+      for (const [id, record] of sessionHarness.drafts) {
+        if (record.workspaceId === workspaceId) sessionHarness.drafts.delete(id)
+      }
+    }
+  }
+
+  class TestDocumentSessionController extends actual.DocumentSessionController {
+    constructor(options: ConstructorParameters<typeof actual.DocumentSessionController>[0]) {
+      super(options)
+      sessionHarness.controllers.push(this)
+    }
+  }
+
+  class TestBroadcastWorkspaceCoordinator {
+    readonly #listeners = new Set<(change: TestWorkspaceChange) => void>()
+
+    constructor() {
+      sessionHarness.coordinators.push(this)
+    }
+
+    async acquire() {
+      return {
+        acquired: true as const,
+        lease: { release: () => undefined }
+      }
+    }
+
+    publishDocumentChange(change: unknown): void {
+      sessionHarness.publishedChanges.push(change)
+    }
+
+    subscribeChanges(listener: (change: TestWorkspaceChange) => void): () => void {
+      this.#listeners.add(listener)
+      return () => this.#listeners.delete(listener)
+    }
+
+    emit(change: TestWorkspaceChange): void {
+      for (const listener of this.#listeners) listener(change)
+    }
+
+    close(): void {
+      this.#listeners.clear()
+    }
+  }
+
+  return {
+    ...actual,
+    BroadcastWorkspaceCoordinator: TestBroadcastWorkspaceCoordinator,
+    DocumentSessionController: TestDocumentSessionController,
+    IndexedDbDraftJournal: TestIndexedDbDraftJournal
+  }
+})
+
 vi.mock('./editor/EditorTabLite', () => ({
   EditorTab: (props: {
     xml: string
@@ -110,7 +236,7 @@ vi.mock('./editor/EditorTabLite', () => ({
     onRequestSave(
       xml: string,
       options?: { explicitDraftWithErrors?: boolean }
-    ): Promise<void> | void
+    ): Promise<void | { durable: boolean }> | void
     onOpenCalledProcess(processId: string): void
     onOpenStepDetails(id: string, missing: string[]): void
     onCommandsReady(commands: unknown): void
@@ -425,8 +551,40 @@ vi.mock('./workspace/MoveDialog', () => ({
 import { asDirectoryHandle, fakeRoot } from './workspace/adapters/__tests__/fakeFileSystem'
 import App from './App'
 
+function latestSessionController(): import('./sessions').DocumentSessionController {
+  const controller = sessionHarness.controllers.at(-1)
+  if (!controller) throw new Error('App did not create a document-session controller')
+  return controller as import('./sessions').DocumentSessionController
+}
+
+function seedUntitledDraft(xml: string): TestDraftRecord {
+  return seedDraft('single-file:untitled.bpmn', 'untitled.bpmn', xml)
+}
+
+function seedDraft(workspaceId: string, path: string, xml: string): TestDraftRecord {
+  const id = JSON.stringify([workspaceId, path, null])
+  const record: TestDraftRecord = {
+    id,
+    workspaceId,
+    path,
+    sessionId: path,
+    xml,
+    baseHash: null,
+    timestamp: Date.UTC(2026, 0, 2, 12, 30),
+    appVersion: '0.4.5'
+  }
+  sessionHarness.drafts.set(id, record)
+  return record
+}
+
 beforeEach(() => {
   vi.stubGlobal('__APP_VERSION__', '0.4.5')
+  vi.stubGlobal('BroadcastChannel', class TestBroadcastChannel {})
+  sessionHarness.indexedDbAvailable = true
+  sessionHarness.drafts.clear()
+  sessionHarness.controllers.length = 0
+  sessionHarness.coordinators.length = 0
+  sessionHarness.publishedChanges.length = 0
   state.directorySupport = false
   state.opfsSupport = false
   state.lang = 'en'
@@ -500,6 +658,7 @@ beforeEach(() => {
 afterEach(() => {
   cleanup()
   vi.restoreAllMocks()
+  vi.unstubAllGlobals()
   document.body.className = ''
   document.title = ''
   delete (window as Window & { __ORBITPM_LITE__?: unknown }).__ORBITPM_LITE__
@@ -567,6 +726,13 @@ describe('App single-file browser orchestration', () => {
     await user.click(screen.getByRole('button', { name: 'mock-assistant-close' }))
   })
 
+  it('warns when persistent browser draft recovery is unavailable', async () => {
+    sessionHarness.indexedDbAvailable = false
+    const user = userEvent.setup()
+    await openBlankDiagram(user)
+    expect(await screen.findByText('draftRecovery.degraded')).not.toBeNull()
+  })
+
   it('creates a named process, preserves dirty work on cancel, saves, and closes it', async () => {
     const user = userEvent.setup()
     const confirm = vi.spyOn(window, 'confirm').mockReturnValue(false)
@@ -596,16 +762,133 @@ describe('App single-file browser orchestration', () => {
 
     await user.click(screen.getByRole('button', { name: 'sidebar.toggle.aria' }))
     await user.click(screen.getByRole('button', { name: 'mock-ai-place' }))
-    await waitFor(() => expect(screen.getByText('ai-claims.bpmn')).not.toBeNull())
+    await waitFor(() => expect(screen.getByText(/ai-claims\.bpmn/)).not.toBeNull())
     expect(mocks.validateBpmn).toHaveBeenCalled()
 
     await user.click(screen.getByRole('button', { name: 'mock-sheet-open' }))
-    expect(await screen.findByText('sheet-flow.bpmn')).not.toBeNull()
+    expect(await screen.findByText(/sheet-flow\.bpmn/)).not.toBeNull()
     await user.click(screen.getByRole('button', { name: 'mock-sheet-review' }))
-    expect(await screen.findByText('bilingual-flow.bpmn')).not.toBeNull()
+    expect(await screen.findByText(/bilingual-flow\.bpmn/)).not.toBeNull()
 
     await user.click(screen.getByRole('button', { name: 'mock-ai-chat' }))
     expect(await screen.findByRole('button', { name: 'mock-assistant-close' })).not.toBeNull()
+  })
+
+  it('sets up one session controller, routes save to only the active tab, and guards dirty unloads', async () => {
+    const user = userEvent.setup()
+    await openBlankDiagram(user)
+
+    const controller = latestSessionController()
+    expect(controller.store.list()).toHaveLength(1)
+    const firstEditor = mocks.editorProps.mock.calls.at(-1)?.[0] as {
+      onCommandsReady(commands: { save(): void }): void
+    }
+    const firstSave = vi.fn()
+    act(() => firstEditor.onCommandsReady({ save: firstSave }))
+
+    await user.click(screen.getByRole('button', { name: 'mock-editor-dirty' }))
+    const dirtyExit = new Event('beforeunload', { cancelable: true })
+    window.dispatchEvent(dirtyExit)
+    expect(dirtyExit.defaultPrevented).toBe(true)
+
+    await user.click(screen.getByRole('button', { name: 'mock-editor-clean' }))
+    const cleanExit = new Event('beforeunload', { cancelable: true })
+    window.dispatchEvent(cleanExit)
+    expect(cleanExit.defaultPrevented).toBe(false)
+
+    await user.click(screen.getByRole('button', { name: 'sidebar.toggle.aria' }))
+    await user.click(screen.getByRole('button', { name: 'mock-ai-place' }))
+    await screen.findByText(/ai-claims\.bpmn/)
+    expect(controller.store.list()).toHaveLength(2)
+    const secondEditor = mocks.editorProps.mock.calls.at(-1)?.[0] as {
+      onCommandsReady(commands: { save(): void }): void
+    }
+    const secondSave = vi.fn()
+    act(() => secondEditor.onCommandsReady({ save: secondSave }))
+
+    const activeSave = new KeyboardEvent('keydown', {
+      key: 's',
+      ctrlKey: true,
+      cancelable: true
+    })
+    window.dispatchEvent(activeSave)
+    expect(activeSave.defaultPrevented).toBe(true)
+    expect(secondSave).toHaveBeenCalledOnce()
+    expect(firstSave).not.toHaveBeenCalled()
+
+    await user.click(screen.getAllByText('untitled.bpmn')[0]!)
+    window.dispatchEvent(
+      new KeyboardEvent('keydown', { key: 's', metaKey: true, cancelable: true })
+    )
+    expect(firstSave).toHaveBeenCalledOnce()
+    expect(secondSave).toHaveBeenCalledOnce()
+  })
+
+  it('retains a recovery draft and dirty state when a virtual document is downloaded', async () => {
+    const user = userEvent.setup()
+    await openBlankDiagram(user)
+    await user.click(screen.getByRole('button', { name: 'sidebar.toggle.aria' }))
+    await user.click(screen.getByRole('button', { name: 'mock-ai-place' }))
+    await screen.findByText(/ai-claims\.bpmn/)
+
+    const activeEditor = mocks.editorProps.mock.calls.at(-1)?.[0] as {
+      onRequestSave(xml: string): Promise<void | { durable: boolean }>
+    }
+    let outcome: void | { durable: boolean }
+    await act(async () => {
+      outcome = await activeEditor.onRequestSave(state.xml)
+    })
+
+    expect(outcome!).toEqual({ durable: false })
+    expect(mocks.triggerDownload).toHaveBeenCalledWith(
+      'ai-claims.bpmn',
+      expect.stringContaining('data:application/xml')
+    )
+    expect(screen.getByText(/● ai-claims\.bpmn/)).not.toBeNull()
+    expect([...sessionHarness.drafts.values()].some((draft) => draft.xml === state.xml)).toBe(true)
+    expect(latestSessionController().store.getActive()?.dirty).toBe(true)
+  })
+
+  it('reviews a persisted draft side by side, downloads it, and restores it explicitly', async () => {
+    const user = userEvent.setup()
+    const draft = seedUntitledDraft(state.xml)
+    render(<App />)
+    await user.click(await screen.findByRole('button', { name: 'picker.fallback.newDiagram' }))
+
+    const dialog = await screen.findByRole('dialog', { name: 'draftRecovery.title' })
+    expect(within(dialog).getByText('draftRecovery.saved')).not.toBeNull()
+    expect(within(dialog).getByText('draftRecovery.draft')).not.toBeNull()
+    expect(dialog.querySelectorAll('pre')[1]?.textContent).toBe(state.xml)
+    const restore = within(dialog).getByRole('button', { name: 'draftRecovery.restore' })
+    expect(document.activeElement).toBe(restore)
+
+    await user.click(within(dialog).getByRole('button', { name: 'draftRecovery.download' }))
+    expect(mocks.triggerDownload).toHaveBeenCalledWith(
+      'untitled-recovery-draft.bpmn',
+      expect.stringContaining('data:application/xml')
+    )
+    expect(sessionHarness.drafts.has(draft.id)).toBe(true)
+
+    await user.click(restore)
+    expect(await screen.findByTestId('editor-tab')).not.toBeNull()
+    expect(screen.getByTestId('editor-xml').textContent).toBe(state.xml)
+    expect(screen.getByText(/● untitled\.bpmn/)).not.toBeNull()
+    expect(sessionHarness.drafts.has(draft.id)).toBe(true)
+  })
+
+  it('keeps the saved file and deletes a recovery draft only after explicit discard', async () => {
+    const user = userEvent.setup()
+    const draft = seedUntitledDraft(state.xml)
+    render(<App />)
+    await user.click(await screen.findByRole('button', { name: 'picker.fallback.newDiagram' }))
+
+    const dialog = await screen.findByRole('dialog', { name: 'draftRecovery.title' })
+    expect(sessionHarness.drafts.has(draft.id)).toBe(true)
+    await user.click(within(dialog).getByRole('button', { name: 'draftRecovery.discard' }))
+
+    expect(await screen.findByTestId('editor-tab')).not.toBeNull()
+    expect(screen.getByTestId('editor-xml').textContent).not.toBe(state.xml)
+    expect(sessionHarness.drafts.has(draft.id)).toBe(false)
   })
 
   it('wires modeler lifecycle, details, called-process feedback, printing, and automation', async () => {
@@ -701,10 +984,65 @@ describe('App directory workspace orchestration', () => {
     await user.click(screen.getByRole('button', { name: 'library.export' }))
     expect(mocks.triggerDownload).toHaveBeenCalled()
     await user.click(screen.getByRole('button', { name: 'workspace.storage.backupExport' }))
-    expect(await screen.findByText('workspace.storage.backupExport')).not.toBeNull()
+    await waitFor(() =>
+      expect(screen.getAllByText('workspace.storage.backupExport').length).toBeGreaterThan(1)
+    )
 
     fireEvent.keyDown(window, { altKey: true, key: 'ArrowLeft' })
     fireEvent.keyDown(window, { altKey: true, key: 'ArrowRight' })
+  })
+
+  it('notifies a dirty session when another tab publishes a workspace change', async () => {
+    const user = userEvent.setup()
+    await openDirectoryWorkspace(user)
+    await user.click(screen.getByRole('button', { name: 'mock-tree-open' }))
+    await screen.findByTestId('editor-tab')
+
+    const controller = latestSessionController()
+    const session = controller.store.getActive()
+    if (!session) throw new Error('expected an active directory session')
+    act(() => {
+      controller.updateXml(session.id, `${session.currentXml}\n<!-- local edit -->`)
+      sessionHarness.coordinators.at(-1)?.emit({
+        kind: 'saved',
+        path: 'Finance/existing.bpmn'
+      })
+    })
+
+    expect(await screen.findByText('workspace.coordination.changed')).not.toBeNull()
+    expect(controller.store.get(session.id)?.dirty).toBe(true)
+  })
+
+  it('cancels the active and queued draft reviews when the workspace switches', async () => {
+    const user = userEvent.setup()
+    const first = populatedDirectory()
+    const second = fakeRoot()
+    second.addFile('second.bpmn', state.xml)
+    seedDraft('directory:workspace', 'Finance/existing.bpmn', `${state.xml}\n<!-- first -->`)
+    seedDraft('directory:workspace', 'Finance/delete-me.bpmn', `${state.xml}\n<!-- second -->`)
+    await openDirectoryWorkspace(user, first)
+    mocks.pickWorkspace.mockResolvedValue(asDirectoryHandle(second))
+
+    const tree = mocks.folderTreeProps.mock.calls.at(-1)?.[0] as {
+      onOpenFile(path: string): void
+    }
+    act(() => {
+      tree.onOpenFile('Finance/existing.bpmn')
+      tree.onOpenFile('Finance/delete-me.bpmn')
+    })
+    expect(await screen.findByRole('dialog', { name: 'draftRecovery.title' })).not.toBeNull()
+    expect(screen.getAllByRole('dialog', { name: 'draftRecovery.title' })).toHaveLength(1)
+
+    fireEvent.click(screen.getByRole('button', { name: 'app.changeFolder' }))
+    await waitFor(() =>
+      expect(screen.queryByRole('dialog', { name: 'draftRecovery.title' })).toBeNull()
+    )
+    expect(await screen.findByTestId('catalog-view')).not.toBeNull()
+    await act(async () => {
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+    expect(screen.queryByRole('dialog', { name: 'draftRecovery.title' })).toBeNull()
   })
 
   it('creates, renames, deletes, and moves directory entries through guarded UI flows', async () => {
@@ -770,5 +1108,35 @@ describe('App directory workspace orchestration', () => {
     await user.click(within(guard).getByRole('button', { name: 'confirm.switch.discard' }))
     await waitFor(() => expect(screen.queryByText('existing.bpmn')).toBeNull())
     expect(await screen.findByTestId('catalog-view')).not.toBeNull()
+  })
+
+  it('requires explicit confirmation after Save all downloads a virtual draft', async () => {
+    const user = userEvent.setup()
+    const first = populatedDirectory()
+    const second = fakeRoot()
+    second.addFile('second.bpmn', state.xml)
+    await openDirectoryWorkspace(user, first)
+    mocks.pickWorkspace.mockResolvedValue(asDirectoryHandle(second))
+
+    const rail = screen.getByRole('button', { name: 'sidebar.toggle.aria' })
+    if (rail.getAttribute('aria-expanded') === 'false') await user.click(rail)
+    await user.click(await screen.findByRole('button', { name: 'mock-sheet-open' }))
+    expect(await screen.findByText(/● sheet-flow\.bpmn/)).not.toBeNull()
+
+    await user.click(screen.getByRole('button', { name: 'app.changeFolder' }))
+    const unsaved = await screen.findByRole('dialog', { name: 'confirm.switch.title' })
+    await user.click(within(unsaved).getByRole('button', { name: 'confirm.switch.saveAll' }))
+
+    const downloaded = await screen.findByRole('dialog', {
+      name: 'confirm.switch.downloadedTitle'
+    })
+    expect(mocks.triggerDownload).toHaveBeenCalledWith(
+      'sheet-flow.bpmn',
+      expect.stringContaining('data:application/xml')
+    )
+    expect(latestSessionController().store.getActive()?.dirty).toBe(true)
+    await user.click(within(downloaded).getByRole('button', { name: 'confirm.switch.continue' }))
+    expect(await screen.findByTestId('catalog-view')).not.toBeNull()
+    await waitFor(() => expect(screen.queryByText(/sheet-flow\.bpmn/)).toBeNull())
   })
 })

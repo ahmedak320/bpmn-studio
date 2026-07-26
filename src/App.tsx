@@ -59,6 +59,24 @@ import {
   type WorkspaceMode
 } from './workspace/adapters'
 import { PortableHistoryManager } from './workspace/history'
+import {
+  ActiveSessionCommandRouter,
+  BroadcastWorkspaceCoordinator,
+  DocumentSessionController,
+  DraftJournalCoordinator,
+  IndexedDbDraftJournal,
+  MemoryDraftJournal,
+  createAdapterSessionPersistence,
+  findDraftRecoveryComparison,
+  installApplicationShortcuts,
+  installBeforeUnloadDirtyGuard,
+  type DraftRecoveryComparison,
+  type DraftJournal,
+  type FileFingerprint,
+  type SessionPersistence,
+  type WorkspaceIdentity
+} from './sessions'
+import { DraftRecoveryDialog, type DraftRecoveryDecision } from './sessions/DraftRecoveryDialog'
 import { LiveWorkspaceIndex } from './workspace/liveWorkspaceIndex'
 import { FolderTreeLite } from './workspace/FolderTreeLite'
 import { buildProcessHierarchy } from './workspace/processHierarchy'
@@ -195,11 +213,13 @@ function isMultiFileMode(mode: Mode): boolean {
   return mode === 'directory' || mode === 'opfs'
 }
 
-let workspaceInstanceSequence = 0
-
 function workspaceInstanceId(kind: WorkspaceMode, name: string): string {
-  workspaceInstanceSequence += 1
-  return `${kind}:${encodeURIComponent(name || 'workspace')}:${workspaceInstanceSequence}`
+  // Draft recovery and cross-tab coordination both require an identity that is
+  // stable across reloads and independent browser tabs. Directory handles do
+  // not expose an absolute path, so the picker-scoped display name is the
+  // strongest portable browser identifier available without writing metadata
+  // into the user's folder. OPFS and single-file names are naturally stable.
+  return `${kind}:${encodeURIComponent(name || 'workspace')}`
 }
 
 function directoryWorkspaceId(handle: FileSystemDirectoryHandle): string {
@@ -213,6 +233,86 @@ function fileMetaFromSnapshot(snapshot: FileSnapshot): FileMeta {
     lastModified: snapshot.modifiedAt,
     size: snapshot.size
   }
+}
+
+function fingerprintFromSnapshot(snapshot: FileSnapshot): FileFingerprint {
+  return {
+    hash: snapshot.hash,
+    size: snapshot.size,
+    modifiedAt: snapshot.modifiedAt
+  }
+}
+
+function sessionPersistenceWithHistory(
+  adapter: WorkspaceAdapter,
+  workspace: WorkspaceIdentity,
+  history: PortableHistoryManager | null
+): SessionPersistence {
+  const direct = createAdapterSessionPersistence({ adapter, workspace })
+  if (!history) return direct
+  const encoder = new TextEncoder()
+  const decoder = new TextDecoder('utf-8', { fatal: true })
+
+  return {
+    inspect: (identity, signal) => direct.inspect(identity, signal),
+    writeAs: direct.writeAs
+      ? (identity, path, xml, options) => direct.writeAs!(identity, path, xml, options)
+      : undefined,
+    async write(identity, xml, options) {
+      if (identity.path === null) return direct.write(identity, xml, options)
+
+      // A null base means "the reviewed destination is absent". Preserve that
+      // creation-only contract rather than letting history turn a TOCTOU create
+      // into an overwrite if another writer creates the file after inspection.
+      if (options.expectedBase === null) {
+        return direct.write(identity, xml, options)
+      }
+
+      const result = await history.writeWithRevision(
+        identity.path,
+        encoder.encode(xml),
+        options.expectedBase.hash,
+        'overwrite'
+      )
+      const outcome = result.outcome
+      if (outcome.status === 'success') {
+        return {
+          status: 'written',
+          fingerprint: fingerprintFromSnapshot(outcome.snapshot)
+        }
+      }
+      if (outcome.status === 'external-conflict') {
+        return {
+          status: 'external-conflict',
+          external: outcome.actual
+            ? {
+                identity,
+                xml: decoder.decode(outcome.actual.bytes),
+                fingerprint: fingerprintFromSnapshot(outcome.actual)
+              }
+            : null
+        }
+      }
+      if ('error' in outcome) throw outcome.error
+      throw new Error(`Workspace save did not complete (${outcome.status}).`)
+    }
+  }
+}
+
+function createBrowserDraftJournal(): { journal: DraftJournal; durable: boolean } {
+  try {
+    return { journal: new IndexedDbDraftJournal(), durable: true }
+  } catch {
+    // Private browsing or a restricted embedding may omit IndexedDB. The
+    // in-memory fallback keeps the live safety controller coherent while the
+    // caller explicitly reports that recovery will not survive a reload.
+    return { journal: new MemoryDraftJournal(), durable: false }
+  }
+}
+
+function createPageInstanceId(): string {
+  if (typeof globalThis.crypto?.randomUUID === 'function') return globalThis.crypto.randomUUID()
+  return `page-${Date.now()}-${Math.random().toString(36).slice(2)}`
 }
 
 function downloadBlob(name: string, blob: Blob): void {
@@ -239,6 +339,10 @@ interface Tab {
    *  still matches the live generation, so a tab from a previous folder can
    *  never write through the new root handle after a switch (Codex CRITICAL-1). */
   gen: number
+}
+
+interface SessionSaveRequestResult {
+  durable: boolean
 }
 
 function liveIndexPath(tab: Tab): string {
@@ -493,13 +597,22 @@ function App(): JSX.Element {
 
   const [tabs, setTabs] = useState<Tab[]>([])
   const [activeKey, setActiveKey] = useState<string | null>(null)
+  const activeKeyRef = useRef<string | null>(null)
+  activeKeyRef.current = activeKey
   const [contents, setContents] = useState<Record<string, string>>({})
   const [dirtyByKey, setDirtyByKey] = useState<Record<string, boolean>>({})
+  const dirtyByKeyRef = useRef<Record<string, boolean>>({})
+  dirtyByKeyRef.current = dirtyByKey
   const baseHashByPathRef = useRef<Record<string, string>>({})
   const liveXmlTimersRef = useRef<Record<string, ReturnType<typeof setTimeout>>>({})
   const [mounted, setMounted] = useState<Set<string>>(() => new Set())
   const [modelersByKey, setModelersByKey] = useState<Record<string, unknown>>({})
   const commandsRef = useRef<Record<string, EditorTabCommands | null>>({})
+  const commandUnregisterersRef = useRef<Record<string, () => void>>({})
+  const commandRouterRef = useRef<ActiveSessionCommandRouter | null>(null)
+  if (!commandRouterRef.current) {
+    commandRouterRef.current = new ActiveSessionCommandRouter(() => activeKeyRef.current)
+  }
   // Per-tab uninstall handles for the "linked" call-activity badge overlays,
   // installed when a tab's modeler is ready and torn down when it is replaced
   // (onModelerReady(null)) or the tab closes.
@@ -522,11 +635,45 @@ function App(): JSX.Element {
   const workspaceGenRef = useRef(0) // bumped on every folder switch (tab-write guard)
   const workspaceAdapterRef = useRef<WorkspaceAdapter | null>(null)
   const historyManagerRef = useRef<PortableHistoryManager | null>(null)
+  const workspaceIdentityRef = useRef<WorkspaceIdentity | null>(null)
+  const sessionControllerRef = useRef<DocumentSessionController | null>(null)
+  const draftJournalRef = useRef<DraftJournal | null>(null)
+  const draftJournalDurableRef = useRef(true)
+  const draftJournalWarningShownRef = useRef(false)
+  const draftCoordinatorRef = useRef<DraftJournalCoordinator | null>(null)
+  const workspaceCoordinatorRef = useRef<BroadcastWorkspaceCoordinator | null>(null)
+  const sessionStoreUnsubscribeRef = useRef<(() => void) | null>(null)
+  const workspaceChangeUnsubscribeRef = useRef<(() => void) | null>(null)
+  const pageInstanceIdRef = useRef<string | null>(null)
+  pageInstanceIdRef.current ??= createPageInstanceId()
+  const requestSaveRef = useRef<
+    (
+      tab: Tab,
+      xml: string,
+      options?: { explicitDraftWithErrors?: boolean }
+    ) => Promise<SessionSaveRequestResult>
+  >(async () => {
+    throw new Error('Document-session save controller is not ready.')
+  })
   const rootHandleRef = useRef<FileSystemDirectoryHandle | null>(null) // sync mirror for async guards
   const refreshSequenceRef = useRef(0)
   const opMutexRef = useRef(createMutex()) // serializes create / import / AI-place writes
   const [switchGuard, setSwitchGuard] = useState<{ count: number } | null>(null)
   const switchResolveRef = useRef<((choice: 'save' | 'discard' | 'cancel') => void) | null>(null)
+  const [downloadSwitchGuard, setDownloadSwitchGuard] = useState<{ count: number } | null>(null)
+  const downloadSwitchResolveRef = useRef<((choice: 'continue' | 'cancel') => void) | null>(null)
+  const [draftRecoveryPrompt, setDraftRecoveryPrompt] = useState<{
+    requestId: number
+    tab: Tab
+    comparison: DraftRecoveryComparison
+  } | null>(null)
+  const draftRecoveryRequestIdRef = useRef(0)
+  const draftRecoveryEpochRef = useRef(0)
+  const draftRecoveryQueueRef = useRef<Promise<void>>(Promise.resolve())
+  const draftRecoveryPendingRef = useRef<{
+    requestId: number
+    resolve: (decision: DraftRecoveryDecision | 'cancel') => void
+  } | null>(null)
 
   const [settingsOpen, setSettingsOpen] = useState(false)
   // The Step-details dialog targets one tab's modeler; the mode (element vs
@@ -684,6 +831,104 @@ function App(): JSX.Element {
     return liveWorkspaceIndexRef.current.files()
   }, [liveWorkspaceVersion])
 
+  const cancelPendingDraftRecovery = useCallback((hidePrompt = true) => {
+    draftRecoveryEpochRef.current += 1
+    const pending = draftRecoveryPendingRef.current
+    draftRecoveryPendingRef.current = null
+    pending?.resolve('cancel')
+    if (hidePrompt) setDraftRecoveryPrompt(null)
+  }, [])
+
+  const promptForDraftRecovery = useCallback(
+    (
+      tab: Tab,
+      comparison: DraftRecoveryComparison,
+      controller: DocumentSessionController
+    ): Promise<DraftRecoveryDecision | 'cancel'> => {
+      const epoch = draftRecoveryEpochRef.current
+      const run = async (): Promise<DraftRecoveryDecision | 'cancel'> => {
+        if (
+          draftRecoveryEpochRef.current !== epoch ||
+          sessionControllerRef.current !== controller ||
+          workspaceGenRef.current !== tab.gen ||
+          !controller.store.get(tab.key)
+        ) {
+          return 'cancel'
+        }
+        const requestId = ++draftRecoveryRequestIdRef.current
+        const decision = await new Promise<DraftRecoveryDecision | 'cancel'>((resolve) => {
+          draftRecoveryPendingRef.current = { requestId, resolve }
+          setDraftRecoveryPrompt({ requestId, tab, comparison })
+        })
+        if (draftRecoveryPendingRef.current?.requestId === requestId) {
+          draftRecoveryPendingRef.current = null
+        }
+        setDraftRecoveryPrompt((current) => (current?.requestId === requestId ? null : current))
+        return draftRecoveryEpochRef.current === epoch ? decision : 'cancel'
+      }
+      const queued = draftRecoveryQueueRef.current.catch(() => undefined).then(run)
+      draftRecoveryQueueRef.current = queued.then(
+        () => undefined,
+        () => undefined
+      )
+      return queued
+    },
+    []
+  )
+
+  // One application-level shortcut listener routes only to the active tab.
+  // Dirty exit protection reads the controller snapshot, with the immediate
+  // editor dirty event as a conservative fallback until async XML capture
+  // updates that session.
+  useEffect(() => {
+    const router = commandRouterRef.current!
+    const removeShortcuts = installApplicationShortcuts(window, router)
+    const removeBeforeUnload = installBeforeUnloadDirtyGuard(window, () => {
+      const controller = sessionControllerRef.current
+      if (!controller) {
+        return Object.values(dirtyByKeyRef.current).map((dirty) => ({ dirty }))
+      }
+      const sessions = controller.store.list()
+      const known = new Set(sessions.map((session) => session.id))
+      return [
+        ...sessions.map((session) => ({
+          dirty: session.dirty || Boolean(dirtyByKeyRef.current[session.id])
+        })),
+        ...Object.entries(dirtyByKeyRef.current)
+          .filter(([id]) => !known.has(id))
+          .map(([, dirty]) => ({ dirty }))
+      ]
+    })
+    return () => {
+      removeShortcuts()
+      removeBeforeUnload()
+      const drafts = draftCoordinatorRef.current
+      if (drafts) {
+        void drafts.flushAll().finally(() => drafts.dispose())
+      }
+      sessionStoreUnsubscribeRef.current?.()
+      workspaceChangeUnsubscribeRef.current?.()
+      workspaceCoordinatorRef.current?.close()
+      cancelPendingDraftRecovery(false)
+      switchResolveRef.current?.('cancel')
+      switchResolveRef.current = null
+      downloadSwitchResolveRef.current?.('cancel')
+      downloadSwitchResolveRef.current = null
+      for (const unregister of Object.values(commandUnregisterersRef.current)) unregister()
+      commandUnregisterersRef.current = {}
+    }
+  }, [cancelPendingDraftRecovery])
+
+  useEffect(() => {
+    const controller = sessionControllerRef.current
+    if (!controller) return
+    if (activeKey && controller.store.get(activeKey)) {
+      controller.setActive(activeKey)
+    } else if (!activeKey) {
+      controller.setActive(null)
+    }
+  }, [activeKey])
+
   // --- workspace lifecycle -------------------------------------------------
 
   const refreshWorkspace = useCallback(
@@ -714,18 +959,107 @@ function App(): JSX.Element {
       handle: FileSystemDirectoryHandle | null,
       displayName: string
     ) => {
+      cancelPendingDraftRecovery()
+      const previousDrafts = draftCoordinatorRef.current
+      if (previousDrafts) {
+        try {
+          await previousDrafts.flushAll()
+        } catch (error) {
+          pushToast(t('draftRecovery.error', { error: errMsg(error) }), 'error')
+        }
+        previousDrafts.dispose()
+      }
+      sessionStoreUnsubscribeRef.current?.()
+      sessionStoreUnsubscribeRef.current = null
+      workspaceChangeUnsubscribeRef.current?.()
+      workspaceChangeUnsubscribeRef.current = null
+      workspaceCoordinatorRef.current?.close()
+      workspaceCoordinatorRef.current = null
+      sessionControllerRef.current = null
+      draftCoordinatorRef.current = null
+
       // New session: bump the generation (invalidates every stale tab's save)
       // and update the sync handle mirror BEFORE any async scan can commit.
       workspaceGenRef.current += 1
       refreshSequenceRef.current += 1
       workspaceAdapterRef.current = adapter
       rootHandleRef.current = handle
-      historyManagerRef.current = adapter.storage.capabilities.directories
+      const history = adapter.storage.capabilities.directories
         ? new PortableHistoryManager({
             adapter,
             applicationVersion: __APP_VERSION__
           })
         : null
+      historyManagerRef.current = history
+      const workspaceIdentity: WorkspaceIdentity = {
+        id: adapter.id,
+        generation: workspaceGenRef.current,
+        mode: adapter.mode
+      }
+      workspaceIdentityRef.current = workspaceIdentity
+
+      if (!draftJournalRef.current) {
+        const created = createBrowserDraftJournal()
+        draftJournalRef.current = created.journal
+        draftJournalDurableRef.current = created.durable
+      }
+      if (!draftJournalDurableRef.current && !draftJournalWarningShownRef.current) {
+        draftJournalWarningShownRef.current = true
+        pushToast(t('draftRecovery.degraded'), 'error')
+      }
+      const drafts = new DraftJournalCoordinator(draftJournalRef.current, {
+        appVersion: __APP_VERSION__,
+        debounceMs: 2000,
+        onError: (error) => pushToast(t('draftRecovery.error', { error: errMsg(error) }), 'error')
+      })
+      drafts.attachLifecycle(window)
+      draftCoordinatorRef.current = drafts
+
+      let coordination: BroadcastWorkspaceCoordinator | undefined
+      if (typeof globalThis.BroadcastChannel === 'function') {
+        try {
+          coordination = new BroadcastWorkspaceCoordinator({
+            workspaceId: adapter.id,
+            instanceId: pageInstanceIdRef.current!
+          })
+          workspaceCoordinatorRef.current = coordination
+        } catch (error) {
+          pushToast(t('workspace.coordination.error', { error: errMsg(error) }), 'error')
+        }
+      }
+
+      const controller = new DocumentSessionController({
+        persistence: sessionPersistenceWithHistory(adapter, workspaceIdentity, history),
+        coordination,
+        isWorkspaceCurrent: (identity) =>
+          workspaceIdentityRef.current !== null &&
+          identity.workspace.id === workspaceIdentityRef.current.id &&
+          identity.workspace.generation === workspaceIdentityRef.current.generation &&
+          workspaceAdapterRef.current === adapter,
+        onConfirmedSave: (session) => drafts.confirmedSave(session.id, session.lastSavedXml),
+        onExplicitDiscard: (sessionId) => drafts.explicitDiscard(sessionId),
+        onPostSaveError: (error) =>
+          pushToast(t('draftRecovery.error', { error: errMsg(error) }), 'error')
+      })
+      sessionControllerRef.current = controller
+      sessionStoreUnsubscribeRef.current = controller.store.subscribe(() => {
+        for (const session of controller.store.list()) drafts.track(session)
+      })
+      if (coordination) {
+        workspaceChangeUnsubscribeRef.current = coordination.subscribeChanges((change) => {
+          if (workspaceAdapterRef.current !== adapter) return
+          const openSession = controller.store
+            .list()
+            .find((session) => session.identity.path === change.path)
+          if (openSession?.dirty) {
+            pushToast(t('workspace.coordination.changed', { path: change.path }), 'error')
+          }
+          if (adapter.storage.capabilities.multipleFiles) {
+            void refreshWorkspace(handle ?? undefined, displayName)
+          }
+        })
+      }
+
       // Full reset BEFORE the new scan so no tab / tree / index / dirty flag /
       // modeler from the previous folder survives the switch (Codex CRITICAL-1).
       for (const uninstall of Object.values(badgeUninstallersRef.current)) {
@@ -752,6 +1086,8 @@ function App(): JSX.Element {
       setModelersByKey({})
       setMounted(new Set())
       commandsRef.current = {}
+      for (const unregister of Object.values(commandUnregisterersRef.current)) unregister()
+      commandUnregisterersRef.current = {}
       pendingProcessFocusRef.current.clear()
       processFocusQueueRef.current.clear()
       pendingAiAutoSizeRef.current.clear()
@@ -796,7 +1132,7 @@ function App(): JSX.Element {
         await refreshWorkspace(handle ?? undefined, displayName)
       }
     },
-    [refreshWorkspace]
+    [cancelPendingDraftRecovery, refreshWorkspace, pushToast]
   )
 
   // First-load: fallback landing, remembered-folder reconnect, or fresh open.
@@ -879,14 +1215,13 @@ function App(): JSX.Element {
 
   // Save every dirty directory-mode tab through the CURRENT root handle (called
   // before a folder switch, while the old handle is still active).
-  const saveAllDirty = useCallback(async () => {
+  const saveAllDirty = useCallback(async (): Promise<{ downloaded: number }> => {
     // Partition so NO dirty tab is silently dropped: directory tabs write to disk;
     // fallback/virtual tabs (relPath === null) take the download-on-save path so
     // their unsaved work survives the switch instead of being discarded (NEW-C2).
     const { writable, downloadable } = partitionDirtyTabs(tabs, (tab) =>
       Boolean(dirtyByKey[tab.key])
     )
-    const knownProcessIds = [...liveWorkspaceIndexRef.current.processIndex().keys()]
     const indexedXmlByPath = new Map(
       liveWorkspaceIndexRef.current.files().map((file) => [file.relPath, file.xml])
     )
@@ -903,78 +1238,15 @@ function App(): JSX.Element {
       }
       return fallback
     }
-    const adapter = workspaceAdapterRef.current
-    for (const tab of writable) {
-      if (!tab.relPath || !adapter) continue
+    let downloaded = 0
+    for (const tab of [...writable, ...downloadable]) {
       const xml = await readXml(tab)
       if (xml) {
-        const baseline = contents[tab.key]
-        if (baseline) {
-          const preservation = await validateUnknownExtensionPreservation(baseline, xml)
-          if (!preservation.valid) {
-            throw new Error(
-              `Save blocked because opaque BPMN extension data changed: ${preservation.issues.map((issue) => issue.code).join(', ')}`
-            )
-          }
-        }
-        await validateReleaseXml(xml, {
-          action: 'save',
-          knownProcessIds,
-          requireBilingual: false,
-          requireDi: true
-        })
-        const bytes = new TextEncoder().encode(xml)
-        const expectedHash = baseHashByPathRef.current[tab.relPath]
-        const result = historyManagerRef.current
-          ? await historyManagerRef.current.writeWithRevision(
-              tab.relPath,
-              bytes,
-              expectedHash,
-              'overwrite'
-            )
-          : {
-              outcome: await adapter.writeAtomic(tab.relPath, bytes, expectedHash, {
-                expectedWorkspaceId: adapter.id
-              })
-            }
-        if (result.outcome.status !== 'success') {
-          if ('error' in result.outcome) {
-            throw new Error(result.outcome.error.message)
-          }
-          throw new Error(`Save did not complete (${result.outcome.status}).`)
-        }
-        baseHashByPathRef.current[tab.relPath] = result.outcome.snapshot.hash
-        const saved = fileMetaFromSnapshot(result.outcome.snapshot)
-        liveWorkspaceIndexRef.current.updateSaved(saved)
-        liveWorkspaceIndexRef.current.clearDirty(tab.relPath)
-        setLiveWorkspaceVersion(liveWorkspaceIndexRef.current.version)
-        setContents((previous) => ({ ...previous, [tab.key]: xml }))
-        setDirtyByKey((previous) => ({ ...previous, [tab.key]: false }))
+        const result = await requestSaveRef.current(tab, xml)
+        if (!result.durable) downloaded += 1
       }
     }
-    for (const tab of downloadable) {
-      const xml = await readXml(tab)
-      if (xml) {
-        const baseline = contents[tab.key]
-        if (baseline) {
-          const preservation = await validateUnknownExtensionPreservation(baseline, xml)
-          if (!preservation.valid) {
-            throw new Error(
-              `Save blocked because opaque BPMN extension data changed: ${preservation.issues.map((issue) => issue.code).join(', ')}`
-            )
-          }
-        }
-        await validateReleaseXml(xml, {
-          action: 'save',
-          knownProcessIds,
-          requireBilingual: false,
-          requireDi: true
-        })
-        downloadBpmn(tab.title.endsWith('.bpmn') ? tab.title : `${tab.title}.bpmn`, xml)
-        setContents((previous) => ({ ...previous, [tab.key]: xml }))
-        setDirtyByKey((previous) => ({ ...previous, [tab.key]: false }))
-      }
-    }
+    return { downloaded }
   }, [tabs, dirtyByKey, modelersByKey, contents])
 
   const resolveSwitch = useCallback((choice: 'save' | 'discard' | 'cancel') => {
@@ -982,6 +1254,13 @@ function App(): JSX.Element {
     const r = switchResolveRef.current
     switchResolveRef.current = null
     r?.(choice)
+  }, [])
+
+  const resolveDownloadedSwitch = useCallback((choice: 'continue' | 'cancel') => {
+    setDownloadSwitchGuard(null)
+    const resolve = downloadSwitchResolveRef.current
+    downloadSwitchResolveRef.current = null
+    resolve?.(choice)
   }, [])
 
   // Gate a folder switch on unsaved work. Returns true to proceed, false to
@@ -996,10 +1275,29 @@ function App(): JSX.Element {
     if (choice === 'cancel') return false
     if (choice === 'save') {
       try {
-        await saveAllDirty()
+        const { downloaded } = await saveAllDirty()
+        if (downloaded > 0) {
+          const proceed = await new Promise<'continue' | 'cancel'>((resolve) => {
+            downloadSwitchResolveRef.current = resolve
+            setDownloadSwitchGuard({ count: downloaded })
+          })
+          if (proceed === 'cancel') return false
+        }
       } catch (err) {
         pushToast(t('alert.saveAll.failed', { error: errMsg(err) }), 'error')
         return false
+      }
+    } else {
+      const drafts = draftCoordinatorRef.current
+      if (drafts) {
+        try {
+          await Promise.all(
+            tabs.filter((tab) => dirtyByKey[tab.key]).map((tab) => drafts.explicitDiscard(tab.key))
+          )
+        } catch (error) {
+          pushToast(t('draftRecovery.error', { error: errMsg(error) }), 'error')
+          return false
+        }
       }
     }
     return true
@@ -1088,6 +1386,103 @@ function App(): JSX.Element {
 
   // --- tabs ---------------------------------------------------------------
 
+  const ensureDocumentSession = useCallback(
+    (
+      tab: Tab,
+      xml: string,
+      options?: {
+        lastSavedXml?: string
+        base?: FileFingerprint | null
+      }
+    ) => {
+      const controller = sessionControllerRef.current
+      const workspace = workspaceIdentityRef.current
+      if (!controller || !workspace || tab.gen !== workspace.generation) return null
+      const existing = controller.store.get(tab.key)
+      if (existing) return existing
+      const opened = controller.open({
+        id: tab.key,
+        identity: { workspace, path: tab.relPath },
+        title: tab.title,
+        xml,
+        lastSavedXml: options?.lastSavedXml ?? xml,
+        base: options?.base ?? null
+      })
+      if (activeKeyRef.current === tab.key) controller.setActive(tab.key)
+      return opened
+    },
+    []
+  )
+
+  const reviewRecoveryDraft = useCallback(
+    async (tab: Tab, loadedXml: string, loadedBase: FileFingerprint | null): Promise<string> => {
+      const controller = sessionControllerRef.current
+      const journal = draftJournalRef.current
+      const drafts = draftCoordinatorRef.current
+      const session = controller?.store.get(tab.key)
+      if (!controller || !journal || !drafts || !session) return loadedXml
+      try {
+        const comparison = await findDraftRecoveryComparison(
+          journal,
+          {
+            workspaceId: session.identity.workspace.id,
+            path: session.identity.path,
+            sessionId: session.id
+          },
+          loadedXml,
+          loadedBase?.hash ?? null
+        )
+        if (!comparison) return loadedXml
+        if (comparison.relation === 'same-content') {
+          // The durable file itself proves this journal record is obsolete.
+          await drafts.explicitDiscard(session.id)
+          return loadedXml
+        }
+        controller.store.setDraftRecovery(session.id, {
+          status: 'available',
+          draftId: comparison.draft.id,
+          timestamp: comparison.draft.timestamp,
+          baseHash: comparison.draft.baseHash
+        })
+        const decision = await promptForDraftRecovery(tab, comparison, controller)
+        if (
+          decision === 'cancel' ||
+          sessionControllerRef.current !== controller ||
+          workspaceGenRef.current !== tab.gen ||
+          !controller.store.get(session.id)
+        ) {
+          return loadedXml
+        }
+        if (decision === 'discard') {
+          await drafts.explicitDiscard(session.id)
+          controller.store.setDraftRecovery(session.id, {
+            status: 'dismissed',
+            draftId: comparison.draft.id,
+            timestamp: comparison.draft.timestamp
+          })
+          return loadedXml
+        }
+        controller.updateXml(session.id, comparison.draft.xml)
+        controller.store.setDraftRecovery(session.id, {
+          status: 'restored',
+          draftId: comparison.draft.id,
+          timestamp: comparison.draft.timestamp
+        })
+        drafts.track(controller.store.get(session.id)!)
+        setDirtyByKey((previous) => ({ ...previous, [tab.key]: true }))
+        return comparison.draft.xml
+      } catch (error) {
+        controller.store.setDraftRecovery(session.id, {
+          status: 'error',
+          message: errMsg(error)
+        })
+        pushToast(t('draftRecovery.error', { error: errMsg(error) }), 'error')
+        return loadedXml
+      }
+    },
+    [promptForDraftRecovery, pushToast]
+  )
+
   const markMounted = useCallback((key: string) => {
     setMounted((prev) => (prev.has(key) ? prev : new Set(prev).add(key)))
   }, [])
@@ -1106,6 +1501,12 @@ function App(): JSX.Element {
       }
     ) => {
       const key = relPath
+      const tab: Tab = {
+        key,
+        title: baseName(relPath),
+        relPath,
+        gen: workspaceGenRef.current
+      }
       if (opts?.localizationSource || !localizationSourceByTabRef.current.has(key)) {
         localizationSourceByTabRef.current.set(
           key,
@@ -1121,13 +1522,13 @@ function App(): JSX.Element {
       // until the next collapsing open event.
       if (opts?.collapse !== false) setSidebarOpen(false)
       setCatalogOpen(false)
-      setTabs((prev) =>
-        prev.some((t) => t.key === key)
-          ? prev
-          : [...prev, { key, title: baseName(relPath), relPath, gen: workspaceGenRef.current }]
-      )
+      setTabs((prev) => (prev.some((t) => t.key === key) ? prev : [...prev, tab]))
       setActiveKey(key)
-      if (contents[key] !== undefined) return
+      if (contents[key] !== undefined) {
+        const controller = sessionControllerRef.current
+        if (controller?.store.get(key)) controller.setActive(key)
+        return
+      }
       // Read through the LIVE adapter mirror and guard the commit against a
       // mid-read folder switch: neither the loaded content nor its error toast is
       // committed if the workspace changed while the read was in flight, so a
@@ -1135,25 +1536,45 @@ function App(): JSX.Element {
       const adapter = workspaceAdapterRef.current
       if (!adapter) return
       let failed: unknown = null
+      let loaded: FileSnapshot | null = null
       const outcome = await commitIfCurrent(
         () => workspaceGenRef.current,
         async () => {
           try {
             const snapshot = await adapter.read(relPath)
-            baseHashByPathRef.current[relPath] = snapshot.hash
-            return new TextDecoder().decode(snapshot.bytes)
+            return snapshot
           } catch (err) {
             failed = err
-            return ''
+            return null
           }
         },
-        (xml) => setContents((prev) => ({ ...prev, [key]: xml }))
+        (snapshot) => {
+          loaded = snapshot
+        }
       )
       if (outcome === 'committed' && failed) {
+        setContents((prev) => ({ ...prev, [key]: '' }))
         pushToast(t('alert.openFileFailed', { relPath, error: errMsg(failed) }), 'error')
+        return
+      }
+      if (outcome === 'committed' && loaded) {
+        const snapshot = loaded as FileSnapshot
+        baseHashByPathRef.current[relPath] = snapshot.hash
+        const loadedXml = new TextDecoder().decode(snapshot.bytes)
+        ensureDocumentSession(tab, loadedXml, {
+          lastSavedXml: loadedXml,
+          base: fingerprintFromSnapshot(snapshot)
+        })
+        const visibleXml = await reviewRecoveryDraft(
+          tab,
+          loadedXml,
+          fingerprintFromSnapshot(snapshot)
+        )
+        if (!canCommitToWorkspace(tab.gen, workspaceGenRef.current)) return
+        setContents((prev) => ({ ...prev, [key]: visibleXml }))
       }
     },
-    [contents, pushToast]
+    [contents, ensureDocumentSession, pushToast, reviewRecoveryDraft]
   )
 
   const openVirtualTab = useCallback(
@@ -1183,14 +1604,16 @@ function App(): JSX.Element {
         relPath: null,
         gen: workspaceGenRef.current
       }
+      ensureDocumentSession(tab, xml, { lastSavedXml: '' })
       setTabs((prev) => [...prev, tab])
       setContents((prev) => ({ ...prev, [key]: xml }))
+      setDirtyByKey((prev) => ({ ...prev, [key]: true }))
       liveWorkspaceIndexRef.current.updateDirty(liveIndexPath(tab), xml)
       setLiveWorkspaceVersion(liveWorkspaceIndexRef.current.version)
       setActiveKey(key)
       return key
     },
-    []
+    [ensureDocumentSession]
   )
 
   const activateSingleFileDocument = useCallback(
@@ -1215,13 +1638,19 @@ function App(): JSX.Element {
         relPath: path,
         gen: workspaceGenRef.current
       }
+      ensureDocumentSession(tab, xml, {
+        lastSavedXml: xml,
+        base: fingerprintFromSnapshot(snapshot)
+      })
+      const visibleXml = await reviewRecoveryDraft(tab, xml, fingerprintFromSnapshot(snapshot))
+      if (!canCommitToWorkspace(tab.gen, workspaceGenRef.current)) return
       localizationSourceByTabRef.current.set(path, source)
       setTabs([tab])
-      setContents({ [path]: xml })
+      setContents({ [path]: visibleXml })
       setActiveKey(path)
       setSidebarOpen(false)
     },
-    [activateWorkspace]
+    [activateWorkspace, ensureDocumentSession, reviewRecoveryDraft]
   )
 
   const closeTabsUnder = useCallback((prefix: string) => {
@@ -1236,6 +1665,22 @@ function App(): JSX.Element {
         localizationReviewByTabRef.current.delete(key)
       }
     }
+    const controller = sessionControllerRef.current
+    const drafts = draftCoordinatorRef.current
+    const affectedSessions =
+      controller?.store
+        .list()
+        .filter(
+          (session) =>
+            session.identity.path === prefix || session.identity.path?.startsWith(`${prefix}/`)
+        ) ?? []
+    for (const session of affectedSessions) {
+      commandUnregisterersRef.current[session.id]?.()
+      delete commandUnregisterersRef.current[session.id]
+      commandRouterRef.current?.unregister(session.id)
+      void drafts?.untrack(session.id)
+      controller?.store.close(session.id)
+    }
     setTabs((prev) =>
       prev.filter(
         (t) => !(t.relPath && (t.relPath === prefix || t.relPath.startsWith(prefix + '/')))
@@ -1247,7 +1692,8 @@ function App(): JSX.Element {
     (key: string) => {
       pendingProcessFocusRef.current.delete(key)
       const closingTab = tabs.find((tab) => tab.key === key)
-      if (dirtyByKey[key]) {
+      const explicitlyDiscarded = Boolean(dirtyByKey[key])
+      if (explicitlyDiscarded) {
         const confirmed = window.confirm(
           t('confirm.discardUnsaved', { title: closingTab?.title ?? 'this file' })
         )
@@ -1262,6 +1708,19 @@ function App(): JSX.Element {
         return remaining.length > 0 ? remaining[remaining.length - 1].key : null
       })
       setTabs((prev) => prev.filter((t) => t.key !== key))
+      const controller = sessionControllerRef.current
+      const drafts = draftCoordinatorRef.current
+      const closeSession = async (): Promise<void> => {
+        if (explicitlyDiscarded) await drafts?.explicitDiscard(key)
+        await drafts?.untrack(key)
+        controller?.store.close(key)
+      }
+      void closeSession().catch((error) =>
+        pushToast(t('draftRecovery.error', { error: errMsg(error) }), 'error')
+      )
+      commandUnregisterersRef.current[key]?.()
+      delete commandUnregisterersRef.current[key]
+      commandRouterRef.current?.unregister(key)
       const drop = <T,>(obj: Record<string, T>): Record<string, T> => {
         if (!(key in obj)) return obj
         const next = { ...obj }
@@ -1290,11 +1749,13 @@ function App(): JSX.Element {
         return next
       })
     },
-    [dirtyByKey, tabs]
+    [dirtyByKey, pushToast, tabs]
   )
 
   const handleDirtyChange = useCallback((key: string, dirty: boolean) => {
     setDirtyByKey((prev) => (prev[key] === dirty ? prev : { ...prev, [key]: dirty }))
+    const session = sessionControllerRef.current?.store.get(key)
+    if (session) draftCoordinatorRef.current?.track(session)
   }, [])
 
   const scheduleLiveXmlCapture = useCallback(
@@ -1312,6 +1773,29 @@ function App(): JSX.Element {
           .saveXML?.({ format: true })
           .then(({ xml }) => {
             if (!xml || workspaceGenRef.current !== tab.gen) return
+            const baseline = contents[tab.key] ?? xml
+            const baseHash = tab.relPath ? baseHashByPathRef.current[tab.relPath] : undefined
+            const existing =
+              sessionControllerRef.current?.store.get(tab.key) ??
+              ensureDocumentSession(tab, xml, {
+                lastSavedXml: baseline,
+                base: baseHash
+                  ? {
+                      hash: baseHash,
+                      size: new TextEncoder().encode(baseline).byteLength,
+                      modifiedAt: 0
+                    }
+                  : null
+              })
+            if (existing) {
+              const updated = sessionControllerRef.current!.updateXml(tab.key, xml)
+              draftCoordinatorRef.current?.track(updated)
+              setDirtyByKey((previous) =>
+                previous[tab.key] === updated.dirty
+                  ? previous
+                  : { ...previous, [tab.key]: updated.dirty }
+              )
+            }
             liveWorkspaceIndexRef.current.updateDirty(liveIndexPath(tab), xml)
             setLiveWorkspaceVersion(liveWorkspaceIndexRef.current.version)
             digestsCacheRef.current = null
@@ -1322,12 +1806,31 @@ function App(): JSX.Element {
           })
       }, 120)
     },
-    []
+    [contents, ensureDocumentSession]
   )
 
   const handleRequestSave = useCallback(
     async (tab: Tab, xml: string, options?: { explicitDraftWithErrors?: boolean }) => {
-      const baseline = contents[tab.key]
+      const controller = sessionControllerRef.current
+      if (!controller) throw new Error('Document-session controller is unavailable.')
+      const baseHash = tab.relPath ? baseHashByPathRef.current[tab.relPath] : undefined
+      const baseline = contents[tab.key] ?? xml
+      const session =
+        controller.store.get(tab.key) ??
+        ensureDocumentSession(tab, xml, {
+          lastSavedXml: baseline,
+          base: baseHash
+            ? {
+                hash: baseHash,
+                size: new TextEncoder().encode(baseline).byteLength,
+                modifiedAt: 0
+              }
+            : null
+        })
+      if (!session) throw new Error(t('alert.staleWrite'))
+      const current = controller.updateXml(tab.key, xml)
+      draftCoordinatorRef.current?.track(current)
+
       if (baseline) {
         const preservation = await validateUnknownExtensionPreservation(baseline, xml)
         if (!preservation.valid) {
@@ -1344,6 +1847,13 @@ function App(): JSX.Element {
         explicitDraftWithErrors: options?.explicitDraftWithErrors
       })
       const adapter = workspaceAdapterRef.current
+      if (!tab.relPath || adapter?.storage.persistence === 'download') {
+        await draftCoordinatorRef.current?.flush(tab.key)
+        downloadBpmn(tab.title.endsWith('.bpmn') ? tab.title : `${tab.title}.bpmn`, xml)
+        setDirtyByKey((previous) => ({ ...previous, [tab.key]: current.dirty }))
+        pushToast(t('session.download.draftRetained'), 'info')
+        return { durable: false }
+      }
       if (tab.relPath && adapter) {
         // Refuse a write from a tab whose workspace was switched out from under
         // it — otherwise it would land its relative path in the WRONG folder.
@@ -1351,39 +1861,66 @@ function App(): JSX.Element {
           pushToast(t('alert.staleWrite'), 'error')
           throw new Error(t('alert.staleWrite'))
         }
-        const bytes = new TextEncoder().encode(xml)
-        const expectedHash = baseHashByPathRef.current[tab.relPath]
-        const history = historyManagerRef.current
-        const result = history
-          ? await history.writeWithRevision(tab.relPath, bytes, expectedHash, 'overwrite')
-          : {
-              outcome: await adapter.writeAtomic(tab.relPath, bytes, expectedHash, {
-                expectedWorkspaceId: adapter.id
-              })
-            }
-        const outcome = result.outcome
+        const capturedRevision = controller.store.get(tab.key)!.revision
+        const outcome = await controller.save(tab.key, {
+          xml,
+          expectedRevision: capturedRevision
+        })
+        if (outcome.status === 'clean') {
+          await draftCoordinatorRef.current?.confirmedSave(tab.key, xml)
+          setDirtyByKey((previous) => ({ ...previous, [tab.key]: false }))
+          return { durable: true }
+        }
         if (outcome.status !== 'success') {
           if (outcome.status === 'external-conflict') {
-            const detail = outcome.actual
-              ? ` External version: ${outcome.actual.modifiedAt || 'unknown time'}, ${outcome.actual.size} bytes.`
-              : ''
-            throw new Error(`The file changed outside OrbitPM (${outcome.reason}).${detail}`)
+            throw new Error(
+              t('session.save.externalConflict', {
+                path: tab.relPath,
+                reason: outcome.conflict.reason
+              })
+            )
           }
-          if ('error' in outcome) throw new Error(outcome.error.message)
-          throw new Error(`Save did not complete (${outcome.status}).`)
+          if (outcome.status === 'locked') {
+            throw new Error(t('session.save.locked'))
+          }
+          if (outcome.status === 'stale-workspace' || outcome.status === 'stale-capture') {
+            throw new Error(t('alert.staleWrite'))
+          }
+          if (outcome.status === 'permission-loss' || outcome.status === 'storage-failure') {
+            throw new Error(outcome.failure.message)
+          }
+          throw new Error(t('session.save.failed', { status: outcome.status }))
         }
-        baseHashByPathRef.current[tab.relPath] = outcome.snapshot.hash
-        const saved = fileMetaFromSnapshot(outcome.snapshot)
+        baseHashByPathRef.current[tab.relPath] = outcome.fingerprint.hash
+        const saved: FileMeta = {
+          relPath: tab.relPath,
+          xml,
+          lastModified: outcome.fingerprint.modifiedAt,
+          size: outcome.fingerprint.size
+        }
         liveWorkspaceIndexRef.current.updateSaved(saved)
-        liveWorkspaceIndexRef.current.clearDirty(tab.relPath)
+        const savedSession = controller.store.get(tab.key)
+        if (outcome.remainingDirty && savedSession) {
+          liveWorkspaceIndexRef.current.updateDirty(tab.relPath, savedSession.currentXml)
+        } else {
+          liveWorkspaceIndexRef.current.clearDirty(tab.relPath)
+        }
         setLiveWorkspaceVersion(liveWorkspaceIndexRef.current.version)
         setContents((previous) => ({ ...previous, [tab.key]: xml }))
-      } else {
-        downloadBpmn(tab.title.endsWith('.bpmn') ? tab.title : `${tab.title}.bpmn`, xml)
+        setDirtyByKey((previous) => ({
+          ...previous,
+          [tab.key]: outcome.remainingDirty
+        }))
+        if (outcome.remainingDirty) {
+          throw new Error(t('session.save.newerEdits'))
+        }
+        return { durable: true }
       }
+      throw new Error(t('session.save.failed', { status: 'missing-workspace' }))
     },
-    [contents, pushToast]
+    [contents, ensureDocumentSession, pushToast]
   )
+  requestSaveRef.current = handleRequestSave
 
   // --- derived data (saved files overlaid with live dirty XML) ------------
 
@@ -1402,11 +1939,27 @@ function App(): JSX.Element {
         .find((item) => item.processId === processId)
       if (!diagnostic) return
       const target = diagnostic.occurrences[diagnostic.occurrences.length - 1]
-      const repair = liveWorkspaceIndexRef.current.repairDuplicateProcessId(
+      const source = liveWorkspaceIndexRef.current
+        .files()
+        .find((file) => file.relPath === target.relPath)?.xml
+      if (!source) return
+      await validateReleaseXml(source, {
+        action: 'apply-editor',
+        knownProcessIds: liveWorkspaceIndexRef.current.processIndex().keys(),
+        requireBilingual: false,
+        requireDi: true
+      })
+      const repair = await liveWorkspaceIndexRef.current.repairDuplicateProcessId(
         target.relPath,
         processId,
         { occurrence: target.occurrence }
       )
+      await validateReleaseXml(repair.xml, {
+        action: 'apply-editor',
+        knownProcessIds: liveWorkspaceIndexRef.current.processIndex().keys(),
+        requireBilingual: false,
+        requireDi: true
+      })
       setLiveWorkspaceVersion(liveWorkspaceIndexRef.current.version)
       let tab = tabs.find((item) => item.relPath === target.relPath)
       if (!tab) {
@@ -3791,7 +4344,19 @@ function App(): JSX.Element {
                       }
                       exportFileBaseName={tab.title.replace(/\.bpmn$/i, '')}
                       onCommandsReady={(commands) => {
+                        commandUnregisterersRef.current[tab.key]?.()
+                        delete commandUnregisterersRef.current[tab.key]
                         commandsRef.current[tab.key] = commands
+                        if (commands) {
+                          commandUnregisterersRef.current[tab.key] =
+                            commandRouterRef.current!.register(tab.key, {
+                              save: commands.save,
+                              exportSvg: commands.exportSvg,
+                              exportPng: commands.exportPng
+                            })
+                        } else {
+                          commandRouterRef.current?.unregister(tab.key)
+                        }
                       }}
                       onModelerReady={(modeler) => {
                         // Tear down any badge installer from a previous modeler for
@@ -3802,6 +4367,53 @@ function App(): JSX.Element {
                         liveXmlUninstallersRef.current[tab.key]?.()
                         delete liveXmlUninstallersRef.current[tab.key]
                         setModelersByKey((prev) => ({ ...prev, [tab.key]: modeler }))
+                        const controller = sessionControllerRef.current
+                        const session =
+                          controller?.store.get(tab.key) ??
+                          (content !== undefined
+                            ? ensureDocumentSession(tab, content, {
+                                lastSavedXml: content,
+                                base:
+                                  tab.relPath && baseHashByPathRef.current[tab.relPath]
+                                    ? {
+                                        hash: baseHashByPathRef.current[tab.relPath]!,
+                                        size: new TextEncoder().encode(content).byteLength,
+                                        modifiedAt: 0
+                                      }
+                                    : null
+                              })
+                            : null)
+                        if (controller && session) {
+                          let commandStack: unknown | null = null
+                          if (modeler) {
+                            try {
+                              commandStack = (modeler as { get(name: string): unknown }).get(
+                                'commandStack'
+                              )
+                            } catch {
+                              commandStack = null
+                            }
+                          }
+                          controller.store.bindEditor(tab.key, {
+                            modeler,
+                            commandStack,
+                            readXml: modeler
+                              ? async () => {
+                                  const result = await (
+                                    modeler as {
+                                      saveXML(options: {
+                                        format: boolean
+                                      }): Promise<{ xml?: string }>
+                                    }
+                                  ).saveXML({ format: true })
+                                  if (typeof result.xml !== 'string') {
+                                    throw new Error('bpmn-js returned no XML')
+                                  }
+                                  return result.xml
+                                }
+                              : null
+                          })
+                        }
                         if (modeler) {
                           try {
                             const eventBus = (modeler as { get(name: string): unknown }).get(
@@ -4146,6 +4758,27 @@ function App(): JSX.Element {
         />
       )}
 
+      {draftRecoveryPrompt && (
+        <DraftRecoveryDialog
+          lang={lang}
+          title={draftRecoveryPrompt.tab.title}
+          comparison={draftRecoveryPrompt.comparison}
+          onDecision={(decision) => {
+            const pending = draftRecoveryPendingRef.current
+            if (pending?.requestId === draftRecoveryPrompt.requestId) {
+              pending.resolve(decision)
+            }
+          }}
+          onDownload={() => {
+            const base = draftRecoveryPrompt.tab.title.replace(/\.bpmn$/i, '')
+            downloadBpmn(
+              `${base || 'process'}-recovery-draft.bpmn`,
+              draftRecoveryPrompt.comparison.draft.xml
+            )
+          }}
+        />
+      )}
+
       {backupImportPlan && (
         <BackupImportDialog
           plan={backupImportPlan}
@@ -4170,6 +4803,18 @@ function App(): JSX.Element {
           onSaveAll={() => resolveSwitch('save')}
           onDiscard={() => resolveSwitch('discard')}
           onCancel={() => resolveSwitch('cancel')}
+        />
+      )}
+
+      {downloadSwitchGuard && (
+        <ConfirmDialog
+          title={t('confirm.switch.downloadedTitle')}
+          confirmLabel={t('confirm.switch.continue')}
+          message={t('confirm.switch.downloadedBody', {
+            count: downloadSwitchGuard.count
+          })}
+          onConfirm={() => resolveDownloadedSwitch('continue')}
+          onCancel={() => resolveDownloadedSwitch('cancel')}
         />
       )}
 

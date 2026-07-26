@@ -81,6 +81,16 @@ describe('DocumentSessionStore', () => {
     expect(store.list()).toHaveLength(1)
   })
 
+  it('allows multiple virtual sessions without a filesystem identity', () => {
+    const store = new DocumentSessionStore()
+    const virtualIdentity: DocumentIdentity = { workspace, path: null }
+    store.open({ id: 'virtual:1', identity: virtualIdentity, title: 'one', xml: 'one' })
+    store.open({ id: 'virtual:2', identity: virtualIdentity, title: 'two', xml: 'two' })
+
+    expect(store.list().map((session) => session.id)).toEqual(['virtual:1', 'virtual:2'])
+    expect(store.getByIdentity(virtualIdentity)).toBeUndefined()
+  })
+
   it('migrates multiple identities atomically without replacing editor bindings', () => {
     let nextId = 0
     const store = new DocumentSessionStore({ createId: () => `s${++nextId}` })
@@ -153,4 +163,3 @@ describe('DocumentSessionStore', () => {
     expect(store.get(a.id)?.identity.path).toBe('a.bpmn')
   })
 })
-

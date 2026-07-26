@@ -85,7 +85,10 @@ import { layoutBpmnValidated } from '../generation/layout'
 export interface EditorTabProps {
   xml: string
   onDirtyChange: (dirty: boolean) => void
-  onRequestSave: (xml: string, options?: { explicitDraftWithErrors?: boolean }) => Promise<void>
+  onRequestSave: (
+    xml: string,
+    options?: { explicitDraftWithErrors?: boolean }
+  ) => Promise<void | { durable: boolean }>
   onOpenCalledProcess?: (processId: string) => void
   /** Workspace process IDs used to resolve cross-file call activities. */
   knownProcessIds?: readonly string[]
@@ -631,7 +634,8 @@ export function EditorTab(props: EditorTabProps): JSX.Element {
 
   const persistXml = useCallback(
     async (savedXml: string, explicitDraftWithErrors = false): Promise<void> => {
-      await onRequestSave(savedXml, { explicitDraftWithErrors })
+      const outcome = await onRequestSave(savedXml, { explicitDraftWithErrors })
+      if (outcome && !outcome.durable) return
       originalXmlRef.current = savedXml
       sourceRollbackRef.current = null
       setSourceRollbackAvailable(false)
@@ -868,17 +872,6 @@ export function EditorTab(props: EditorTabProps): JSX.Element {
       setSaving(false)
     }
   }, [pendingDraft, persistXml, saving])
-
-  useEffect(() => {
-    const handleKeyDown = (event: KeyboardEvent): void => {
-      const isSaveCombo = (event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 's'
-      if (!isSaveCombo) return
-      event.preventDefault()
-      void handleSave()
-    }
-    window.addEventListener('keydown', handleKeyDown)
-    return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [handleSave])
 
   // Latch the hint dismissed on the first edit; never bring it back.
   useEffect(() => {

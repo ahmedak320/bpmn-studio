@@ -57,6 +57,13 @@ function clonePathState(state: SessionPathMigrationState): SessionPathMigrationS
   return { ...state }
 }
 
+function indexedIdentityKey(identity: DocumentIdentity): string | null {
+  // Virtual documents deliberately have no filesystem identity. More than one
+  // may be open in the same workspace, so only path-backed documents belong in
+  // the one-session-per-identity index.
+  return identity.path === null ? null : documentIdentityKey(identity)
+}
+
 /**
  * Small external store suitable for React.useSyncExternalStore, but with no
  * React dependency. Every public mutation publishes one coherent snapshot.
@@ -94,7 +101,9 @@ export class DocumentSessionStore {
   }
 
   getByIdentity(identity: DocumentIdentity): DocumentSession | undefined {
-    const id = this.#identityIndex.get(documentIdentityKey(identity))
+    const key = indexedIdentityKey(identity)
+    if (key === null) return undefined
+    const id = this.#identityIndex.get(key)
     return id ? this.#sessions.get(id) : undefined
   }
 
@@ -107,8 +116,8 @@ export class DocumentSessionStore {
   }
 
   open(input: OpenDocumentSessionInput): DocumentSession {
-    const identityKey = documentIdentityKey(input.identity)
-    const existingId = this.#identityIndex.get(identityKey)
+    const identityKey = indexedIdentityKey(input.identity)
+    const existingId = identityKey === null ? undefined : this.#identityIndex.get(identityKey)
     if (existingId) {
       const existing = this.#sessions.get(existingId)
       if (!existing) throw new Error('Document-session identity index is inconsistent')
@@ -140,7 +149,7 @@ export class DocumentSessionStore {
       updatedAt: now
     }
     this.#sessions.set(id, session)
-    this.#identityIndex.set(identityKey, id)
+    if (identityKey !== null) this.#identityIndex.set(identityKey, id)
     this.#activeSessionId ??= id
     this.#changed()
     return session
@@ -150,7 +159,8 @@ export class DocumentSessionStore {
     const session = this.#sessions.get(id)
     if (!session) return false
     this.#sessions.delete(id)
-    this.#identityIndex.delete(documentIdentityKey(session.identity))
+    const identityKey = indexedIdentityKey(session.identity)
+    if (identityKey !== null) this.#identityIndex.delete(identityKey)
     if (this.#activeSessionId === id) {
       const remaining = [...this.#sessions.keys()]
       this.#activeSessionId = remaining.length > 0 ? remaining[remaining.length - 1] : null
@@ -213,10 +223,7 @@ export class DocumentSessionStore {
     return this.update(id, (session) => ({ ...session, save: cloneSaveState(save) }))
   }
 
-  setPathMigration(
-    id: SessionId,
-    pathMigration: SessionPathMigrationState
-  ): DocumentSession {
+  setPathMigration(id: SessionId, pathMigration: SessionPathMigrationState): DocumentSession {
     return this.update(id, (session) => ({
       ...session,
       pathMigration: clonePathState(pathMigration)
@@ -243,8 +250,7 @@ export class DocumentSessionStore {
     input: { xml: string; fingerprint: FileFingerprint }
   ): DocumentSession {
     return this.update(id, (session) => {
-      const revision =
-        session.currentXml === input.xml ? session.revision : session.revision + 1
+      const revision = session.currentXml === input.xml ? session.revision : session.revision + 1
       return {
         ...session,
         currentXml: input.xml,
@@ -280,19 +286,22 @@ export class DocumentSessionStore {
       if (!sameDocumentIdentity(session.identity, migration.from)) {
         throw new Error(`Document session "${migration.sessionId}" changed during path transaction`)
       }
-      const key = documentIdentityKey(migration.to)
-      if (destinationKeys.has(key)) throw new Error(`Duplicate path transaction destination`)
-      destinationKeys.add(key)
-      const occupant = this.#identityIndex.get(key)
-      if (occupant && !ids.has(occupant)) {
-        throw new Error(`Path transaction destination is already open`)
+      const key = indexedIdentityKey(migration.to)
+      if (key !== null) {
+        if (destinationKeys.has(key)) throw new Error(`Duplicate path transaction destination`)
+        destinationKeys.add(key)
+        const occupant = this.#identityIndex.get(key)
+        if (occupant && !ids.has(occupant)) {
+          throw new Error(`Path transaction destination is already open`)
+        }
       }
     }
 
     this.batch(() => {
       for (const migration of migrations) {
         const session = this.#sessions.get(migration.sessionId)!
-        this.#identityIndex.delete(documentIdentityKey(session.identity))
+        const identityKey = indexedIdentityKey(session.identity)
+        if (identityKey !== null) this.#identityIndex.delete(identityKey)
       }
       for (const migration of migrations) {
         const session = this.#sessions.get(migration.sessionId)!
@@ -310,7 +319,8 @@ export class DocumentSessionStore {
           updatedAt: this.#now()
         }
         this.#sessions.set(migration.sessionId, next)
-        this.#identityIndex.set(documentIdentityKey(migration.to), migration.sessionId)
+        const identityKey = indexedIdentityKey(migration.to)
+        if (identityKey !== null) this.#identityIndex.set(identityKey, migration.sessionId)
         this.#changed()
       }
     })
@@ -345,13 +355,16 @@ export class DocumentSessionStore {
   }
 
   #replaceIdentityIndex(current: DocumentSession, nextIdentity: DocumentIdentity): void {
-    const nextKey = documentIdentityKey(nextIdentity)
-    const occupant = this.#identityIndex.get(nextKey)
-    if (occupant && occupant !== current.id) {
-      throw new Error('A document session for the destination identity is already open')
+    const nextKey = indexedIdentityKey(nextIdentity)
+    if (nextKey !== null) {
+      const occupant = this.#identityIndex.get(nextKey)
+      if (occupant && occupant !== current.id) {
+        throw new Error('A document session for the destination identity is already open')
+      }
     }
-    this.#identityIndex.delete(documentIdentityKey(current.identity))
-    this.#identityIndex.set(nextKey, current.id)
+    const currentKey = indexedIdentityKey(current.identity)
+    if (currentKey !== null) this.#identityIndex.delete(currentKey)
+    if (nextKey !== null) this.#identityIndex.set(nextKey, current.id)
   }
 
   #changed(): void {

@@ -38,7 +38,8 @@ export const en = {
   'tree.search.aria': 'Search processes',
 
   // --- Sidebar: fallback mode ---
-  'fallback.singleFileNote': 'Single-file mode — no folder is open. Saving downloads the .bpmn file.',
+  'fallback.singleFileNote':
+    'Single-file mode — no folder is open. Saving downloads the .bpmn file.',
   'fallback.newProcess': '＋ New process',
   'fallback.newProcess.title': 'Create a new named process (Save downloads the file)',
   'fallback.openBpmnFile': 'Open a .bpmn file…',
@@ -47,7 +48,8 @@ export const en = {
   'fallback.newBlank.title': 'Start an unnamed blank diagram',
 
   // --- Empty-tab placeholder ---
-  'emptyTab.directory': 'Select a .bpmn file from the tree to open it, or press ＋ New process (top-right or in the sidebar) to start one. You can also generate a draft with AI.',
+  'emptyTab.directory':
+    'Select a .bpmn file from the tree to open it, or press ＋ New process (top-right or in the sidebar) to start one. You can also generate a draft with AI.',
   'emptyTab.fallback': 'Press ＋ New process to start drawing, or open an existing .bpmn file.',
   'editor.loadingDiagram': 'Loading diagram…',
 
@@ -59,20 +61,24 @@ export const en = {
   'footer.singleFileMode': 'Single-file mode (saving downloads)',
   'footer.unresolvedLinks.one': '{count} unresolved link',
   'footer.unresolvedLinks.other': '{count} unresolved links',
-  'footer.unresolvedLinks.title.directory': 'Click to create the missing linked process "{calledElement}"',
-  'footer.unresolvedLinks.title.fallback': 'Call activities linked to a process id not found in this workspace',
+  'footer.unresolvedLinks.title.directory':
+    'Click to create the missing linked process "{calledElement}"',
+  'footer.unresolvedLinks.title.fallback':
+    'Call activities linked to a process id not found in this workspace',
   'footer.tagline': 'Zero-install · runs in your browser',
 
   // --- Dialogs (promptText call sites) ---
   'dialog.createMissingProcess.title': 'Create linked process',
   'dialog.createMissingProcess.label': 'Process name',
   'dialog.createMissingProcess.okLabel': 'Create & open',
-  'dialog.createMissingProcess.hint': 'Creates a new .bpmn whose process id is "{calledElementId}", so this call activity resolves.',
+  'dialog.createMissingProcess.hint':
+    'Creates a new .bpmn whose process id is "{calledElementId}", so this call activity resolves.',
   'dialog.newProcess.title': 'New Process',
   'dialog.newProcess.label': 'Process name',
   'dialog.newProcess.initialValue': 'New Process',
   'dialog.newProcess.okLabel': 'Create',
-  'dialog.newProcess.hint.directory': 'A .bpmn file with a start event is created; other processes can link to it.',
+  'dialog.newProcess.hint.directory':
+    'A .bpmn file with a start event is created; other processes can link to it.',
   'dialog.newProcess.hint.fallback': 'No folder is open, so Save will download the .bpmn file.',
   'dialog.newFolder.title': 'New Folder',
   'dialog.newFolder.label': 'Folder name',
@@ -89,9 +95,11 @@ export const en = {
 
   // --- alert()/confirm() strings ---
   'alert.openFileFailed': 'Could not open {relPath}: {error}',
-  'alert.createMissingProcessNoFolder': 'Process "{calledElementId}" doesn’t exist yet. Open a folder to create and link processes.',
+  'alert.createMissingProcessNoFolder':
+    'Process "{calledElementId}" doesn’t exist yet. Open a folder to create and link processes.',
   'alert.createProcessFailed': 'Could not create process: {error}',
-  'alert.noProcessWithId': 'No process with id "{processId}" in this workspace — link a different process or open a folder to create it.',
+  'alert.noProcessWithId':
+    'No process with id "{processId}" in this workspace — link a different process or open a folder to create it.',
   'alert.createFolderFailed': 'Could not create folder: {error}',
   'alert.renameFailed': 'Could not rename: {error}',
   'alert.deleteFailed': 'Could not delete: {error}',
@@ -99,26 +107,35 @@ export const en = {
   'alert.importFailed': 'Could not import {name}: {error}',
   'confirm.discardUnsaved': 'Discard unsaved changes to {title}?',
   'confirm.deleteNode': 'Delete "{name}"? This cannot be undone.',
-  'confirm.deleteFolder.notEmptyBody': 'is not empty. Deleting it removes the folder and everything inside it. This cannot be undone.',
+  'confirm.deleteFolder.notEmptyBody':
+    'is not empty. Deleting it removes the folder and everything inside it. This cannot be undone.',
   'confirm.deleteFolder.typeNameLabel': 'Type the folder name "{name}" to confirm deletion',
   'alert.permissionNotGranted.open': 'Permission to read/write the folder was not granted.',
-  'alert.permissionNotGranted.reconnect': 'Permission was not granted. Try opening the folder again.',
-  'alert.picker.security': 'The browser blocked folder access for security reasons. Try a folder inside your user profile (for example, Documents), or use a browser workspace or single BPMN file.',
-  'alert.picker.notAllowed': 'The browser did not allow folder access. Check this site’s file-system permission in your browser settings, then retry or use a browser workspace or single BPMN file.',
-  'alert.picker.unknown': 'Could not open the folder. Try again, or use a browser workspace or open a single BPMN file.',
+  'alert.permissionNotGranted.reconnect':
+    'Permission was not granted. Try opening the folder again.',
+  'alert.picker.security':
+    'The browser blocked folder access for security reasons. Try a folder inside your user profile (for example, Documents), or use a browser workspace or single BPMN file.',
+  'alert.picker.notAllowed':
+    'The browser did not allow folder access. Check this site’s file-system permission in your browser settings, then retry or use a browser workspace or single BPMN file.',
+  'alert.picker.unknown':
+    'Could not open the folder. Try again, or use a browser workspace or open a single BPMN file.',
 
   // --- WorkspacePickerLite ---
   'picker.title': 'OrbitPM Process Studio Lite',
-  'picker.subtitle': 'Draw BPMN 2.0 diagrams, organize them in folders, link processes, and generate from a description with AI — all in your browser, nothing to install.',
+  'picker.subtitle':
+    'Draw BPMN 2.0 diagrams, organize them in folders, link processes, and generate from a description with AI — all in your browser, nothing to install.',
   'picker.open.button': 'Open a folder…',
   'picker.open.button.busy': 'Opening…',
-  'picker.open.hint': 'Choose a folder on your computer (e.g. a OneDrive folder) to hold your .bpmn files. The browser asks permission the first time and remembers the folder for next time.',
+  'picker.open.hint':
+    'Choose a folder on your computer (e.g. a OneDrive folder) to hold your .bpmn files. The browser asks permission the first time and remembers the folder for next time.',
   'picker.reconnect.button': 'Reconnect to "{rememberedName}"',
   'picker.reconnect.button.busy': 'Reconnecting…',
   'picker.reconnect.button.fallbackName': 'your folder',
   'picker.reconnect.openDifferent': 'Open a different folder…',
-  'picker.reconnect.hint': 'Your browser needs you to re-grant read/write access to this folder for this session.',
-  'picker.fallback.banner': "This browser doesn't allow opening a folder (the File System Access API is unavailable or disabled by policy). Use a browser workspace for local multi-file storage, or open a single .bpmn file. Microsoft Edge or Google Chrome can provide direct folder access.",
+  'picker.reconnect.hint':
+    'Your browser needs you to re-grant read/write access to this folder for this session.',
+  'picker.fallback.banner':
+    "This browser doesn't allow opening a folder (the File System Access API is unavailable or disabled by policy). Use a browser workspace for local multi-file storage, or open a single .bpmn file. Microsoft Edge or Google Chrome can provide direct folder access.",
   'picker.fallback.newProcess': '＋ New process',
   'picker.fallback.openFile': 'Open a .bpmn file…',
   'picker.fallback.newDiagram': 'New blank diagram',
@@ -126,7 +143,8 @@ export const en = {
   // --- EmptyWorkspaceCard ---
   'emptyWorkspace.heading': 'No processes yet',
   'emptyWorkspace.createFirst': '＋ Create your first process',
-  'emptyWorkspace.explain': 'Each process is one .bpmn file saved in {folderName}. Make folders to group related processes; right-click the tree for more.',
+  'emptyWorkspace.explain':
+    'Each process is one .bpmn file saved in {folderName}. Make folders to group related processes; right-click the tree for more.',
   'emptyWorkspace.explain.fallbackFolderName': 'this folder',
 
   // --- FolderTreeLite context menu ---
@@ -143,7 +161,8 @@ export const en = {
   // --- SettingsDialogLite ---
   'settings.title': 'Settings — AI keys',
   'settings.close.aria': 'Close',
-  'settings.keyStorageWarning': 'API keys stay only in memory for this browser session by default. Optional persistence encrypts a key with your passphrase; the passphrase is never stored.',
+  'settings.keyStorageWarning':
+    'API keys stay only in memory for this browser session by default. Optional persistence encrypts a key with your passphrase; the passphrase is never stored.',
   'settings.getKey': 'Get a key ↗',
   'settings.keyPlaceholder.configured': 'Configured (••••{last4}) — type to replace',
   'settings.keyPlaceholder.encrypted': 'Encrypted key available — enter the passphrase to unlock',
@@ -157,28 +176,35 @@ export const en = {
   'settings.apiKey.aria': '{label} API key',
   'settings.testConnection': 'Test connection',
   'settings.testConnection.testing': 'Testing…',
-  'settings.testConnection.billableDisclosure': 'I understand this sends a small inference request that may be billable.',
+  'settings.testConnection.billableDisclosure':
+    'I understand this sends a small inference request that may be billable.',
   'settings.aiSelection.title': 'AI provider and model',
-  'settings.aiSelection.hint': 'This explicit choice is shared by generation, assistant, interview, and translation.',
+  'settings.aiSelection.hint':
+    'This explicit choice is shared by generation, assistant, interview, and translation.',
   'settings.encryption.title': 'Credential storage',
   'settings.encryption.persist': 'Encrypt newly entered keys and persist them in this browser',
   'settings.encryption.passphrase': 'Encryption passphrase',
   'settings.encryption.unlock': 'Unlock encrypted keys for this session',
-  'settings.encryption.hint': 'AES-256-GCM with a PBKDF2-derived key is used. Losing the passphrase makes the ciphertext unrecoverable.',
+  'settings.encryption.hint':
+    'AES-256-GCM with a PBKDF2-derived key is used. Losing the passphrase makes the ciphertext unrecoverable.',
   'settings.encryption.unlocked': 'Unlocked {count} encrypted key(s) for this session.',
 
   // --- AiPanelLite ---
   'ai.collapsedButton': '✨ Generate with AI',
   'ai.header': '✨ Generate with AI',
   'ai.hide.title': 'Hide AI panel',
-  'ai.offlineWarning': 'You appear to be offline. AI generation needs an internet connection; drawing and organizing diagrams still works.',
-  'ai.noKeys.note': 'Add an OpenRouter, Anthropic, or Gemini API key to generate diagrams from a description.',
+  'ai.offlineWarning':
+    'You appear to be offline. AI generation needs an internet connection; drawing and organizing diagrams still works.',
+  'ai.noKeys.note':
+    'Add an OpenRouter, Anthropic, or Gemini API key to generate diagrams from a description.',
   'ai.noKeys.openSettings': 'Open Settings',
   'ai.description.label': 'Description',
-  'ai.description.placeholder': 'Describe the process in plain language, e.g. "A customer submits an order; if it’s valid it’s fulfilled, otherwise it’s rejected."',
+  'ai.description.placeholder':
+    'Describe the process in plain language, e.g. "A customer submits an order; if it’s valid it’s fulfilled, otherwise it’s rejected."',
   'ai.provider.label': 'Provider',
   'ai.provider.select': 'Select a provider…',
-  'ai.provider.selectHint': 'Choose a provider and model explicitly before any AI request can be sent.',
+  'ai.provider.selectHint':
+    'Choose a provider and model explicitly before any AI request can be sent.',
   'ai.model.label': 'Model',
   'ai.targetFolder.label': 'Target folder',
   'ai.name.label': 'Name',
@@ -191,17 +217,22 @@ export const en = {
   'ai.created': 'Created: {resultLabel}',
   'ai.openedInMemory': 'Opened in a new tab (use Save to download).',
   'ai.folderOption.root': '/ (workspace root)',
-  'ai.error.cors': 'The provider blocked the browser request (CORS). Use one of the supported browser providers: OpenRouter, Anthropic, or Gemini.',
-  'ai.error.network': 'Could not reach the AI provider. Check your internet connection, then try again.',
-  'ai.error.auth': 'The provider rejected the request (authentication). Check your API key in Settings.',
-  'ai.error.rateLimit': 'The provider is rate-limiting or overloaded right now. Wait a moment and try again.',
+  'ai.error.cors':
+    'The provider blocked the browser request (CORS). Use one of the supported browser providers: OpenRouter, Anthropic, or Gemini.',
+  'ai.error.network':
+    'Could not reach the AI provider. Check your internet connection, then try again.',
+  'ai.error.auth':
+    'The provider rejected the request (authentication). Check your API key in Settings.',
+  'ai.error.rateLimit':
+    'The provider is rate-limiting or overloaded right now. Wait a moment and try again.',
   'ai.error.noApiKey': 'No API key for this provider. Add one in Settings.',
   'ai.error.selectProvider': 'Select a provider and model before generating.',
   'ai.pdf.label': 'Or upload a PDF',
   'ai.pdf.button': 'Upload PDF…',
   'ai.pdf.extracting': 'Extracting text…',
   'ai.pdf.error': 'Could not read the PDF: {error}',
-  'ai.noKeysAtAll.note': 'No API keys yet. Pick a provider below and {link} to generate — you can also test provider connectivity there without a key.',
+  'ai.noKeysAtAll.note':
+    'No API keys yet. Pick a provider below and {link} to generate — you can also test provider connectivity there without a key.',
   'ai.noKeysAtAll.link': 'add a key in Settings',
   'ai.tablist.aria': 'Generation source',
   'ai.tab.description': 'From description',
@@ -211,30 +242,38 @@ export const en = {
   'ai.pdfDocument.label': 'PDF document or image',
   'ai.pdfHint.label': 'Which process?',
   'ai.pdfHint.optional': '(optional)',
-  'ai.pdfHint.placeholder': 'Which process from this document? / ما هي العملية المطلوبة من هذا المستند؟',
+  'ai.pdfHint.placeholder':
+    'Which process from this document? / ما هي العملية المطلوبة من هذا المستند؟',
   'ai.targetFolder.aria': 'Target folder',
   'ai.generateFromPdf': 'Generate from document',
   'ai.addOneInSettings.period': '.',
-  'ai.note.updated': '{anthropic}, {gemini}, and {openrouter} can be called directly from a web page. Reach GLM, Kimi, and DeepSeek through OpenRouter. The direct vendor APIs for {desktopOnlyProviders} don’t allow browser (CORS) access — reach those models through OpenRouter here.',
+  'ai.note.updated':
+    '{anthropic}, {gemini}, and {openrouter} can be called directly from a web page. Reach GLM, Kimi, and DeepSeek through OpenRouter. The direct vendor APIs for {desktopOnlyProviders} don’t allow browser (CORS) access — reach those models through OpenRouter here.',
   'ai.error.chooseNoPdf': 'Choose a PDF or image file first.',
-  'ai.pdf.sizeGate.overLimit': 'PDF is {size} — over the {limit} limit for this provider. Please {alt}.',
+  'ai.pdf.sizeGate.overLimit':
+    'PDF is {size} — over the {limit} limit for this provider. Please {alt}.',
   'ai.pdf.sizeGate.alt.splitOnly': 'split the file',
   'ai.pdf.sizeGate.alt.tryGeminiOrSplit': 'try Gemini (larger limit) or split the file',
   'ai.attach.label': 'Description document',
-  'ai.attach.hint': 'Attach a Word (.docx) or PDF file that contains the process description — it is read together with the text above.',
+  'ai.attach.hint':
+    'Attach a Word (.docx) or PDF file that contains the process description — it is read together with the text above.',
   'ai.attach.extracted': '{name} · {chars} characters of text extracted',
   'ai.attach.docxEmpty': 'No readable text found in {name} — is it a scanned document?',
   'ai.attach.readFailed': 'Could not read {name}: {error}',
   'ai.attach.remove': 'Remove attachment',
-  'ai.attach.unsupportedProvider': 'Attachments are not available for this provider. Use OpenRouter, Anthropic, or Gemini, or remove the attachment.',
-  'ai.image.sizeGate.overLimit': 'Image is {size} — over the {limit} limit for this provider. Compress or crop it and try again.',
+  'ai.attach.unsupportedProvider':
+    'Attachments are not available for this provider. Use OpenRouter, Anthropic, or Gemini, or remove the attachment.',
+  'ai.image.sizeGate.overLimit':
+    'Image is {size} — over the {limit} limit for this provider. Compress or crop it and try again.',
   'ai.image.unsupportedType': 'Unsupported image type. Use PNG, JPEG, WebP, or GIF.',
   'import.notBpmnXml': '{name} is XML but not a BPMN diagram — skipped.',
   'palette.grip.title': 'Drag to move the tools · double-click to reset',
   'editor.langToggle': '🌐 Diagram: EN⇄AR',
   'editor.langToggle.title': 'Switch the diagram labels between English and Arabic',
-  'editor.langToggle.missing': 'No labels can be shown in the requested diagram language, so the diagram language was not changed.',
-  'editor.langToggle.partial': 'Showing {switched} labels in the requested diagram language; {missing} remain in the previous language.',
+  'editor.langToggle.missing':
+    'No labels can be shown in the requested diagram language, so the diagram language was not changed.',
+  'editor.langToggle.partial':
+    'Showing {switched} labels in the requested diagram language; {missing} remain in the previous language.',
   'canvas.inputs': 'Inputs',
   'canvas.cc': 'CC',
   'canvas.responsible': 'Responsible',
@@ -244,7 +283,8 @@ export const en = {
   'org.inputs.label': 'Inputs / base information',
   'org.inputs.hint': 'One per line — data, documents, or base information this step needs.',
   'org.ccList.label': 'CC (informed parties)',
-  'org.ccList.hint': 'One per line — add the purpose after a dash, e.g. "Finance — budget check". Shown as a list beside the step.',
+  'org.ccList.hint':
+    'One per line — add the purpose after a dash, e.g. "Finance — budget check". Shown as a list beside the step.',
   'org.respList.label': 'Responsible people',
   'org.respList.hint': 'One per line, e.g. "Sara Al Marri — Approver".',
   'org.decisionBasis.label': 'Decision basis',
@@ -254,18 +294,26 @@ export const en = {
   'apc.convertedMany': 'Converted {count} process models from {name}.',
   'apc.reason.noModels': 'No process models found in the ARIS export.',
   'editor.translate': '✨ Translate',
-  'editor.translate.title': 'Fill every missing English or Arabic label, then show the other language',
+  'editor.translate.title':
+    'Fill every missing English or Arabic label, then show the other language',
   'translate.noKey': 'No AI key configured — add one in Settings to translate.',
-  'translate.nothing': 'No named label has enough source text to create a missing English or Arabic counterpart.',
-  'translate.nothing.switched': 'No translation was needed — the diagram is now showing the other language.',
-  'translate.nothing.alreadyArabic': 'No translation was needed, and the requested language could not replace the current display.',
-  'translate.nothing.omitted': 'No eligible labels need translation. Showing {switched} labels in the requested language; {missing} remain unchanged. {omitted} labels lack usable source text or an id.',
+  'translate.nothing':
+    'No named label has enough source text to create a missing English or Arabic counterpart.',
+  'translate.nothing.switched':
+    'No translation was needed — the diagram is now showing the other language.',
+  'translate.nothing.alreadyArabic':
+    'No translation was needed, and the requested language could not replace the current display.',
+  'translate.nothing.omitted':
+    'No eligible labels need translation. Showing {switched} labels in the requested language; {missing} remain unchanged. {omitted} labels lack usable source text or an id.',
   'translate.running': 'Translating {count} labels…',
-  'translate.done': 'Translated {count} labels and switched the diagram language. Save to keep the changes.',
-  'translate.partial': 'Translated {done} of {total} eligible labels. Showing {switched} labels in the requested language; {missing} remain unchanged. Save to keep the changes.',
+  'translate.done':
+    'Translated {count} labels and switched the diagram language. Save to keep the changes.',
+  'translate.partial':
+    'Translated {done} of {total} eligible labels. Showing {switched} labels in the requested language; {missing} remain unchanged. Save to keep the changes.',
   'translate.failed': 'Translation failed: {error}',
   'settings.completeness.label': 'Highlight missing step information',
-  'settings.completeness.hint': 'Marks steps that lack a responsible party, inputs, or outputs — and decisions lacking a basis, start events lacking a trigger.',
+  'settings.completeness.hint':
+    'Marks steps that lack a responsible party, inputs, or outputs — and decisions lacking a basis, start events lacking a trigger.',
   'missing.title': 'Missing: {list}',
   'missing.owner': 'responsible party',
   'missing.inputs': 'inputs',
@@ -279,16 +327,20 @@ export const en = {
   'canvas.subchip': 'sub',
   'assist.tab.library': 'Ask the library',
   'assist.tab.interview': 'Complete this process',
-  'assist.interview.start': 'I generated a draft from your description. I will ask a few questions to fill the gaps — answer in either language, or press Finish anytime.',
+  'assist.interview.start':
+    'I generated a draft from your description. I will ask a few questions to fill the gaps — answer in either language, or press Finish anytime.',
   'assist.interview.finish': 'Finish',
   'assist.interview.applying': 'Updating the diagram…',
   'assist.interview.applied': 'Diagram updated.',
-  'assist.interview.done': 'All key information is filled in. You can keep refining or close the chat.',
+  'assist.interview.done':
+    'All key information is filled in. You can keep refining or close the chat.',
   'assist.interview.noModeler': 'Open the generated process first, then start the interview.',
-  'assist.interview.editWarning': 'Answers regenerate the diagram — finish manual canvas edits after the interview.',
+  'assist.interview.editWarning':
+    'Answers regenerate the diagram — finish manual canvas edits after the interview.',
   'assist.model.line': 'Model: {model} ({provider})',
   'ai.continueInChat': '💬 Fill gaps in chat',
-  'ai.continueInChat.title': 'Open the assistant and answer its questions to complete the missing step information',
+  'ai.continueInChat.title':
+    'Open the assistant and answer its questions to complete the missing step information',
 
   // --- EditorTabLite toolbar ---
   'editor.save': 'Save',
@@ -313,8 +365,10 @@ export const en = {
   'editor.error.exportSvgFailed': 'SVG export failed: {error}',
   'editor.error.exportPngFailed': 'PNG export failed: {error}',
   'editor.hint.startDrawing': 'Start drawing',
-  'editor.hint.startDrawing.body': 'Drag a shape from the palette on the left (or click one) to add it. Double-click any element to rename it.',
-  'editor.print.title': 'Print or Save as PDF — opens the print dialog with a full-page, landscape view of this diagram',
+  'editor.hint.startDrawing.body':
+    'Drag a shape from the palette on the left (or click one) to add it. Double-click any element to rename it.',
+  'editor.print.title':
+    'Print or Save as PDF — opens the print dialog with a full-page, landscape view of this diagram',
   'editor.print': 'Print / PDF',
 
   // --- Link picker ---
@@ -343,9 +397,12 @@ export const en = {
   'ai.credits.error.timeout': 'Balance check timed out.',
   'ai.credits.error.unexpected': 'Balance check failed.',
   'ai.usage.session': 'This session: {requests} requests · {tokens} tokens · {cost}',
-  'ai.usage.sessionDetailed': 'Session: {requests} requests · {tokens} input/output tokens · {reasoning} reasoning tokens · {cost}',
-  'ai.usage.allTimeDetailed': 'All time: {requests} requests · {tokens} input/output tokens · {reasoning} reasoning tokens · {cost}',
-  'ai.usage.priceAsOf': 'Local price estimate last reviewed {date}; provider-reported cost is used when available.',
+  'ai.usage.sessionDetailed':
+    'Session: {requests} requests · {tokens} input/output tokens · {reasoning} reasoning tokens · {cost}',
+  'ai.usage.allTimeDetailed':
+    'All time: {requests} requests · {tokens} input/output tokens · {reasoning} reasoning tokens · {cost}',
+  'ai.usage.priceAsOf':
+    'Local price estimate last reviewed {date}; provider-reported cost is used when available.',
   'ai.usage.costNa': 'cost n/a',
   'ai.usage.reset': 'Reset',
   'settings.credits.noBalanceApi':
@@ -406,10 +463,13 @@ export const en = {
   'unresolved.badge.title': 'Unresolved links — click to view',
   'unresolved.title.count': 'Unresolved links ({count})',
   'unresolved.close': 'Close',
-  'unresolved.empty.full': 'No unresolved links — every call activity points at a process that exists in this workspace.',
+  'unresolved.empty.full':
+    'No unresolved links — every call activity points at a process that exists in this workspace.',
   'unresolved.intro': 'Each row is a call activity whose target process isn’t in this workspace. ',
-  'unresolved.intro.canCreate': 'Create the missing process (its id is fixed so the link resolves), or open the source to fix it.',
-  'unresolved.intro.cannotCreate': 'Open a folder to create the missing processes; here you can jump to each source.',
+  'unresolved.intro.canCreate':
+    'Create the missing process (its id is fixed so the link resolves), or open the source to fix it.',
+  'unresolved.intro.cannotCreate':
+    'Open a folder to create the missing processes; here you can jump to each source.',
   'unresolved.createNow.title': 'Create a process with id "{calledElement}"',
   'unresolved.openSource.title': 'Open the file that contains this call activity',
 
@@ -465,8 +525,10 @@ export const en = {
   'alert.rename.invalidChars': 'A name cannot contain "/" or "\\".',
   'alert.import.failed': 'Import failed: {error}',
   'alert.open.failed': 'Could not open the file: {error}',
-  'alert.staleWrite': 'This diagram belongs to a folder that is no longer open — its save was skipped.',
-  'alert.staleGeneration': 'The workspace folder changed while generating — the diagram was not saved. Open it again and re-generate.',
+  'alert.staleWrite':
+    'This diagram belongs to a folder that is no longer open — its save was skipped.',
+  'alert.staleGeneration':
+    'The workspace folder changed while generating — the diagram was not saved. Open it again and re-generate.',
   'alert.saveAll.failed': 'Could not save all changes: {error}. Keeping the current folder open.',
   'confirm.switch.title': 'Unsaved changes',
   'confirm.switch.body':
@@ -474,6 +536,10 @@ export const en = {
   'confirm.switch.saveAll': 'Save all & switch',
   'confirm.switch.discard': 'Discard & switch',
   'confirm.switch.cancel': 'Cancel',
+  'confirm.switch.downloadedTitle': 'Downloaded drafts remain unsaved',
+  'confirm.switch.downloadedBody':
+    '{count} draft download(s) were prepared, but downloads are not durable workspace saves. Continue switching and keep the recovery drafts, or cancel and return to the open documents.',
+  'confirm.switch.continue': 'Continue switching',
 
   // --- FX2 lane: AI/provider/CSP/naming/i18n fixes (F1 + Codex M4/5/6/9/10) ---
   // Provider blurbs — rendered via i18n (RTL-safe) instead of English literals.
@@ -503,7 +569,8 @@ export const en = {
   'ai.privacy.attachment': 'Included attachment: {name} ({bytes} bytes)',
   'ai.privacy.includeWorkspace': 'Include relevant workspace process context',
   'ai.privacy.redactNames': 'Redact process names (stable process IDs remain for linking)',
-  'ai.privacy.workspaceCount': 'Workspace context: {included} included, {relevant} relevant, {total} total. Zero-confidence matches are never sent.',
+  'ai.privacy.workspaceCount':
+    'Workspace context: {included} included, {relevant} relevant, {total} total. Zero-confidence matches are never sent.',
   'ai.privacy.sensitivity': 'Contains names: {names}. Obvious sensitive metadata: {sensitive}.',
   'ai.privacy.requestCount': 'Estimated maximum inference requests for this action: {count}.',
   'ai.privacy.consent': 'I reviewed this request and consent to sending the listed data.',
@@ -644,9 +711,11 @@ export const en = {
   'pane.resize.props.aria': 'Resize the properties panel',
   'pane.resize.hint': 'Drag to resize — double-click to reset',
   'translate.free.using': 'No AI key — translating {count} labels with a free translation service…',
-  'translate.free.rate': 'The free translation service hit its daily limit. Try again later or add an AI key in Settings.',
+  'translate.free.rate':
+    'The free translation service hit its daily limit. Try again later or add an AI key in Settings.',
   'translate.free.offline': 'You appear to be offline — translation needs a network connection.',
-  'translate.free.down': 'The free translation service could not be reached. Try again later or add an AI key in Settings.',
+  'translate.free.down':
+    'The free translation service could not be reached. Try again later or add an AI key in Settings.',
   'tree.linkedChildren': 'Linked sub-processes',
   'tree.linkDepthCapped': 'More levels not shown',
   'library.manifestInfo': 'Library manifest: {files} file(s), {links} link(s).',
@@ -692,14 +761,18 @@ export const en = {
   'legend.subprocessChip': 'Sub-process link',
   'semantic.event.tooltip': 'Marks where a process starts, ends, or waits for something.',
   'semantic.event.start.tooltip': 'Starts the process when its trigger occurs.',
-  'semantic.event.intermediate.tooltip': 'Waits for or throws an event while the process is running.',
+  'semantic.event.intermediate.tooltip':
+    'Waits for or throws an event while the process is running.',
   'semantic.event.end.tooltip': 'Ends this path through the process.',
   'semantic.step.tooltip': 'Performs one unit of work in the process.',
   'semantic.subprocess.tooltip': 'Groups a detailed flow inside a larger process.',
   'semantic.gateway.eventBased.tooltip': 'Chooses a path according to which event happens first.',
-  'semantic.gateway.complex.tooltip': 'Uses a custom combination rule for splitting or joining paths.',
-  'semantic.participant.tooltip': 'Shows one participating organization, role, or system and contains its process.',
-  'semantic.lane.tooltip': 'Groups work assigned to one role, team, or responsibility inside a pool.',
+  'semantic.gateway.complex.tooltip':
+    'Uses a custom combination rule for splitting or joining paths.',
+  'semantic.participant.tooltip':
+    'Shows one participating organization, role, or system and contains its process.',
+  'semantic.lane.tooltip':
+    'Groups work assigned to one role, team, or responsibility inside a pool.',
   'semantic.annotation.tooltip': 'Adds explanatory text without changing the process flow.',
   'semantic.dataObject.tooltip': 'Shows information or a document used or produced by the process.',
   'semantic.dataStore.tooltip': 'Shows information kept in persistent storage.',
@@ -714,26 +787,35 @@ export const en = {
   'translationReview.title': 'Review translation',
   'translationReview.direction.enAr': 'English → Arabic',
   'translationReview.direction.arEn': 'Arabic → English',
-  'translationReview.summary': '{fields} bilingual fields checked · {missing} missing · {invalid} wrong-script/mixed · {failed} provider failures',
+  'translationReview.summary':
+    '{fields} bilingual fields checked · {missing} missing · {invalid} wrong-script/mixed · {failed} provider failures',
   'translationReview.fields.title': 'Fields requiring review',
   'translationReview.fields.issue': '{issue}',
   'translationReview.provider': 'Translation provider',
   'translationReview.provider.choose': 'Choose a provider…',
-  'translationReview.provider.ai': 'The exact texts below will be sent to the selected AI provider and model.',
-  'translationReview.provider.free': 'Each exact text will be sent to Google Translate; failed items may be sent to MyMemory.',
+  'translationReview.provider.ai':
+    'The exact texts below will be sent to the selected AI provider and model.',
+  'translationReview.provider.free':
+    'Each exact text will be sent to Google Translate; failed items may be sent to MyMemory.',
   'translationReview.outbound.title': 'Exact text leaving this browser',
-  'translationReview.outbound.disclosure': '{provider} will receive {count} text item(s) in an estimated {min}–{max} external request(s). Nothing is sent until you press Translate now.',
-  'translationReview.outbound.chooseProvider': 'Choose a provider to see the final disclosure and request estimate. Nothing has been sent.',
-  'translationReview.sensitive': '{count} item(s) are owner/responsibility fields and may contain people’s names.',
-  'translationReview.mixedManual': 'Mixed-script source items remain listed for segmentation or manual review and will not be sent automatically.',
+  'translationReview.outbound.disclosure':
+    '{provider} will receive {count} text item(s) in an estimated {min}–{max} external request(s). Nothing is sent until you press Translate now.',
+  'translationReview.outbound.chooseProvider':
+    'Choose a provider to see the final disclosure and request estimate. Nothing has been sent.',
+  'translationReview.sensitive':
+    '{count} item(s) are owner/responsibility fields and may contain people’s names.',
+  'translationReview.mixedManual':
+    'Mixed-script source items remain listed for segmentation or manual review and will not be sent automatically.',
   'translationReview.translateNow': 'Translate now',
   'translationReview.partialPreview': 'Preview translated fields only',
   'translationReview.postpone': 'Postpone',
   'translationReview.cancel': 'Cancel translation',
   'translationReview.running': 'Translation is running…',
   'translationReview.cancelled': 'Translation was cancelled. All unresolved fields remain listed.',
-  'translationReview.partialStatus': 'Some fields are still unresolved. They remain listed and the diagram language was not reported as complete.',
-  'translationReview.stale': 'The diagram changed after review. Review the current outbound text before translating.',
+  'translationReview.partialStatus':
+    'Some fields are still unresolved. They remain listed and the diagram language was not reported as complete.',
+  'translationReview.stale':
+    'The diagram changed after review. Review the current outbound text before translating.',
   'translationReview.noProvider': 'Choose a translation provider first.',
 
   // --- Workspace storage modes / recovery ---
@@ -743,8 +825,10 @@ export const en = {
   'workspace.storage.mode.singleFile': 'Single file',
   'workspace.storage.persistence.directory': 'Files persist in the folder you selected.',
   'workspace.storage.persistence.opfsDurable': 'Browser storage is durable on this device.',
-  'workspace.storage.persistence.opfsBestEffort': 'Browser storage is best-effort; export backups regularly.',
-  'workspace.storage.persistence.singleFile': 'Saving downloads a BPMN file; no workspace is retained.',
+  'workspace.storage.persistence.opfsBestEffort':
+    'Browser storage is best-effort; export backups regularly.',
+  'workspace.storage.persistence.singleFile':
+    'Saving downloads a BPMN file; no workspace is retained.',
   'workspace.storage.chooseDirectory': 'Choose folder workspace',
   'workspace.storage.openOpfs': 'Open browser workspace',
   'workspace.storage.openSingleFile': 'Open a single BPMN file',
@@ -757,7 +841,8 @@ export const en = {
   'workspace.storage.collisionIdentical': 'Identical file — no change needed',
   'workspace.storage.backupApply': 'Apply backup import',
   'workspace.storage.history': 'Recovery history',
-  'workspace.storage.switchWarning': 'Switching storage closes the current workspace. Save or export a backup first.',
+  'workspace.storage.switchWarning':
+    'Switching storage closes the current workspace. Save or export a backup first.',
   'workspace.duplicate.title': 'Process ID {id} appears in multiple files: {paths}',
   'workspace.duplicate.repair': 'Repair duplicate process IDs',
   'workspace.history.preview': 'Preview revision',
@@ -767,11 +852,38 @@ export const en = {
   'workspace.history.empty': 'No recovery revisions are available for this file.',
   'workspace.history.copyPrompt': 'File name for the restored copy',
   'workspace.history.current': 'Current file',
+  'draftRecovery.title': 'Review recovery draft',
+  'draftRecovery.summary':
+    'An unsaved draft for “{title}” was found from {timestamp}. Status: {relation}. Nothing will be replaced until you choose.',
+  'draftRecovery.saved': 'Saved version',
+  'draftRecovery.draft': 'Recovery draft',
+  'draftRecovery.download': 'Download draft',
+  'draftRecovery.discard': 'Keep saved and discard draft',
+  'draftRecovery.restore': 'Restore draft',
+  'draftRecovery.relation.same-content': 'content matches',
+  'draftRecovery.relation.same-base': 'draft is based on the current saved version',
+  'draftRecovery.relation.base-diverged': 'saved content changed after this draft was created',
+  'draftRecovery.relation.unknown-base': 'the draft base could not be verified',
+  'draftRecovery.error': 'Draft recovery failed: {error}',
+  'draftRecovery.degraded':
+    'Persistent draft recovery is unavailable in this browser session. Unsaved drafts can be downloaded, but they will not survive a reload.',
+  'workspace.coordination.error': 'Workspace coordination failed: {error}',
+  'workspace.coordination.changed':
+    '“{path}” changed in another OrbitPM tab. Your local draft was kept; review it before saving.',
+  'session.save.externalConflict':
+    '“{path}” changed outside this tab ({reason}). Saving was stopped and your local draft was kept.',
+  'session.save.locked':
+    'Another OrbitPM tab is saving this file. Wait briefly and try again; your local draft was kept.',
+  'session.save.failed': 'Save did not complete ({status}). Your local draft was kept.',
+  'session.save.newerEdits': 'The captured version was saved, but newer edits remain unsaved.',
+  'session.download.draftRetained':
+    'The BPMN download was prepared. The session remains unsaved and its recovery draft was retained until a durable save or explicit discard.',
 
   // --- Spreadsheet import ---
   'spreadsheet.tab': 'Excel / CSV',
   'spreadsheet.title': 'Import Excel or CSV',
-  'spreadsheet.intro': 'Build validated BPMN processes locally from an .xlsx or UTF-8 .csv file. Spreadsheet data never leaves this browser.',
+  'spreadsheet.intro':
+    'Build validated BPMN processes locally from an .xlsx or UTF-8 .csv file. Spreadsheet data never leaves this browser.',
   'spreadsheet.template.blank': 'Download blank template',
   'spreadsheet.template.example': 'Download example template',
   'spreadsheet.upload': 'Choose .xlsx or .csv',
@@ -780,8 +892,10 @@ export const en = {
   'spreadsheet.cancel': 'Cancel',
   'spreadsheet.progress': '{phase}: {percent}%',
   'spreadsheet.reset': 'Start over',
-  'spreadsheet.officialDetected': 'Official OrbitPM template detected ({version}). Mapping was applied automatically.',
-  'spreadsheet.ordinaryDetected': 'Ordinary spreadsheet detected. Review the sheet and column mapping.',
+  'spreadsheet.officialDetected':
+    'Official OrbitPM template detected ({version}). Mapping was applied automatically.',
+  'spreadsheet.ordinaryDetected':
+    'Ordinary spreadsheet detected. Review the sheet and column mapping.',
   'spreadsheet.mapping.title': 'Map spreadsheet columns',
   'spreadsheet.mapping.presetName': 'Preset name',
   'spreadsheet.mapping.sheet': 'Worksheet',
@@ -834,7 +948,8 @@ export const en = {
   'spreadsheet.preview.node': 'Node',
   'spreadsheet.preview.type': 'Type',
   'spreadsheet.preview.fromTo': 'Flow',
-  'spreadsheet.translation.required': 'Bilingual review required: {missing} missing and {invalid} invalid values.',
+  'spreadsheet.translation.required':
+    'Bilingual review required: {missing} missing and {invalid} invalid values.',
   'spreadsheet.translation.handoff': 'Open bilingual review',
   'spreadsheet.prepare': 'Prepare BPMN files',
   'spreadsheet.preparing': 'Generating and validating BPMN…',
@@ -844,7 +959,8 @@ export const en = {
   'spreadsheet.committing': 'Writing all files atomically…',
   'spreadsheet.report.committed': 'Import committed successfully.',
   'spreadsheet.report.rolledBack': 'Import failed; destination changes were rolled back.',
-  'spreadsheet.report.rollbackFailed': 'Import failed and rollback needs attention. Recovery copies were retained.',
+  'spreadsheet.report.rollbackFailed':
+    'Import failed and rollback needs attention. Recovery copies were retained.',
   'spreadsheet.report.destination': 'Destination',
   'spreadsheet.report.checksum': 'SHA-256',
   'spreadsheet.report.download': 'Download import report',
@@ -898,10 +1014,12 @@ export const en = {
   'sourceEditor.applying': 'Applying…',
   'sourceEditor.rollback': 'Roll back',
   'sourceEditor.diff': 'Change preview',
-  'sourceEditor.changedLines': '{changed} changed · {added} added · {removed} removed · first change at line {line}',
+  'sourceEditor.changedLines':
+    '{changed} changed · {added} added · {removed} removed · first change at line {line}',
   'sourceEditor.noChanges': 'No source changes.',
   'sourceEditor.invalidBlocked': 'Apply is blocked because the edited XML is invalid.',
-  'sourceEditor.preservationBlocked': 'Apply is blocked because required diagram data would be lost.',
+  'sourceEditor.preservationBlocked':
+    'Apply is blocked because required diagram data would be lost.',
   'sourceEditor.layoutPreview': 'Preview generated layout',
   'sourceEditor.layoutAccept': 'Accept generated layout',
   'sourceEditor.layoutReady': 'A generated diagram layout is ready to review.',
@@ -965,7 +1083,8 @@ export const ar: Record<keyof typeof en, string> = {
   'fallback.newBlank.title': 'بدء مخطط فارغ بلا اسم',
 
   // --- Empty-tab placeholder ---
-  'emptyTab.directory': 'اختر ملف .bpmn من الشجرة لفتحه، أو اضغط ＋ عملية جديدة (أعلى اليمين أو في الشريط الجانبي) لبدء عملية. يمكنك أيضًا توليد مسودة بالذكاء الاصطناعي.',
+  'emptyTab.directory':
+    'اختر ملف .bpmn من الشجرة لفتحه، أو اضغط ＋ عملية جديدة (أعلى اليمين أو في الشريط الجانبي) لبدء عملية. يمكنك أيضًا توليد مسودة بالذكاء الاصطناعي.',
   'emptyTab.fallback': 'اضغط ＋ عملية جديدة لبدء الرسم، أو افتح ملف .bpmn موجود.',
   'editor.loadingDiagram': 'جارٍ تحميل المخطط…',
 
@@ -977,20 +1096,24 @@ export const ar: Record<keyof typeof en, string> = {
   'footer.singleFileMode': 'وضع الملف الواحد (الحفظ يقوم بالتنزيل)',
   'footer.unresolvedLinks.one': 'رابط واحد غير محلول',
   'footer.unresolvedLinks.other': '{count} روابط غير محلولة',
-  'footer.unresolvedLinks.title.directory': 'انقر لإنشاء العملية المرتبطة المفقودة "{calledElement}"',
-  'footer.unresolvedLinks.title.fallback': 'أنشطة استدعاء مرتبطة بمعرّف عملية غير موجود في مساحة العمل هذه',
+  'footer.unresolvedLinks.title.directory':
+    'انقر لإنشاء العملية المرتبطة المفقودة "{calledElement}"',
+  'footer.unresolvedLinks.title.fallback':
+    'أنشطة استدعاء مرتبطة بمعرّف عملية غير موجود في مساحة العمل هذه',
   'footer.tagline': 'بلا تثبيت · يعمل في متصفحك',
 
   // --- Dialogs ---
   'dialog.createMissingProcess.title': 'إنشاء عملية مرتبطة',
   'dialog.createMissingProcess.label': 'اسم العملية',
   'dialog.createMissingProcess.okLabel': 'إنشاء وفتح',
-  'dialog.createMissingProcess.hint': 'يُنشئ ملف .bpmn جديدًا معرّف العملية فيه "{calledElementId}"، بحيث يُحل نشاط الاستدعاء هذا.',
+  'dialog.createMissingProcess.hint':
+    'يُنشئ ملف .bpmn جديدًا معرّف العملية فيه "{calledElementId}"، بحيث يُحل نشاط الاستدعاء هذا.',
   'dialog.newProcess.title': 'عملية جديدة',
   'dialog.newProcess.label': 'اسم العملية',
   'dialog.newProcess.initialValue': 'عملية جديدة',
   'dialog.newProcess.okLabel': 'إنشاء',
-  'dialog.newProcess.hint.directory': 'يُنشأ ملف .bpmn يحتوي على حدث بداية؛ يمكن للعمليات الأخرى الارتباط به.',
+  'dialog.newProcess.hint.directory':
+    'يُنشأ ملف .bpmn يحتوي على حدث بداية؛ يمكن للعمليات الأخرى الارتباط به.',
   'dialog.newProcess.hint.fallback': 'لا يوجد مجلد مفتوح، لذا سيقوم الحفظ بتنزيل ملف .bpmn.',
   'dialog.newFolder.title': 'مجلد جديد',
   'dialog.newFolder.label': 'اسم المجلد',
@@ -1007,9 +1130,11 @@ export const ar: Record<keyof typeof en, string> = {
 
   // --- alert()/confirm() strings ---
   'alert.openFileFailed': 'تعذّر فتح {relPath}: {error}',
-  'alert.createMissingProcessNoFolder': 'العملية "{calledElementId}" غير موجودة بعد. افتح مجلدًا لإنشاء العمليات وربطها.',
+  'alert.createMissingProcessNoFolder':
+    'العملية "{calledElementId}" غير موجودة بعد. افتح مجلدًا لإنشاء العمليات وربطها.',
   'alert.createProcessFailed': 'تعذّر إنشاء العملية: {error}',
-  'alert.noProcessWithId': 'لا توجد عملية بالمعرّف "{processId}" في مساحة العمل هذه — اربط عملية أخرى أو افتح مجلدًا لإنشائها.',
+  'alert.noProcessWithId':
+    'لا توجد عملية بالمعرّف "{processId}" في مساحة العمل هذه — اربط عملية أخرى أو افتح مجلدًا لإنشائها.',
   'alert.createFolderFailed': 'تعذّر إنشاء المجلد: {error}',
   'alert.renameFailed': 'تعذّرت إعادة التسمية: {error}',
   'alert.deleteFailed': 'تعذّر الحذف: {error}',
@@ -1017,26 +1142,34 @@ export const ar: Record<keyof typeof en, string> = {
   'alert.importFailed': 'تعذّر استيراد {name}: {error}',
   'confirm.discardUnsaved': 'هل تريد تجاهل التغييرات غير المحفوظة في {title}؟',
   'confirm.deleteNode': 'حذف "{name}"؟ لا يمكن التراجع عن هذا الإجراء.',
-  'confirm.deleteFolder.notEmptyBody': 'غير فارغ. سيؤدي حذفه إلى إزالة المجلد وكل ما بداخله. لا يمكن التراجع عن هذا الإجراء.',
+  'confirm.deleteFolder.notEmptyBody':
+    'غير فارغ. سيؤدي حذفه إلى إزالة المجلد وكل ما بداخله. لا يمكن التراجع عن هذا الإجراء.',
   'confirm.deleteFolder.typeNameLabel': 'اكتب اسم المجلد "{name}" لتأكيد الحذف',
   'alert.permissionNotGranted.open': 'لم يتم منح إذن القراءة/الكتابة للمجلد.',
   'alert.permissionNotGranted.reconnect': 'لم يُمنح الإذن. حاول فتح المجلد مرة أخرى.',
-  'alert.picker.security': 'منع المتصفح الوصول إلى المجلد لأسباب أمنية. جرّب مجلدًا داخل ملف تعريف المستخدم (مثل Documents)، أو استخدم مساحة عمل المتصفح أو ملف BPMN واحدًا.',
-  'alert.picker.notAllowed': 'لم يسمح المتصفح بالوصول إلى المجلد. تحقّق من إذن نظام الملفات لهذا الموقع في إعدادات المتصفح، ثم أعد المحاولة أو استخدم مساحة عمل المتصفح أو ملف BPMN واحدًا.',
-  'alert.picker.unknown': 'تعذّر فتح المجلد. حاول مرة أخرى، أو استخدم مساحة عمل المتصفح أو افتح ملف BPMN واحدًا.',
+  'alert.picker.security':
+    'منع المتصفح الوصول إلى المجلد لأسباب أمنية. جرّب مجلدًا داخل ملف تعريف المستخدم (مثل Documents)، أو استخدم مساحة عمل المتصفح أو ملف BPMN واحدًا.',
+  'alert.picker.notAllowed':
+    'لم يسمح المتصفح بالوصول إلى المجلد. تحقّق من إذن نظام الملفات لهذا الموقع في إعدادات المتصفح، ثم أعد المحاولة أو استخدم مساحة عمل المتصفح أو ملف BPMN واحدًا.',
+  'alert.picker.unknown':
+    'تعذّر فتح المجلد. حاول مرة أخرى، أو استخدم مساحة عمل المتصفح أو افتح ملف BPMN واحدًا.',
 
   // --- WorkspacePickerLite ---
   'picker.title': 'OrbitPM Process Studio Lite',
-  'picker.subtitle': 'ارسم مخططات BPMN 2.0، ونظّمها في مجلدات، واربط العمليات، وولّد مخططات من وصف نصي بالذكاء الاصطناعي — كل ذلك في متصفحك، دون أي تثبيت.',
+  'picker.subtitle':
+    'ارسم مخططات BPMN 2.0، ونظّمها في مجلدات، واربط العمليات، وولّد مخططات من وصف نصي بالذكاء الاصطناعي — كل ذلك في متصفحك، دون أي تثبيت.',
   'picker.open.button': 'فتح مجلد…',
   'picker.open.button.busy': 'جارٍ الفتح…',
-  'picker.open.hint': 'اختر مجلدًا على جهازك (مثل مجلد OneDrive) لحفظ ملفات .bpmn فيه. سيطلب المتصفح الإذن أول مرة ويتذكّر المجلد لاحقًا.',
+  'picker.open.hint':
+    'اختر مجلدًا على جهازك (مثل مجلد OneDrive) لحفظ ملفات .bpmn فيه. سيطلب المتصفح الإذن أول مرة ويتذكّر المجلد لاحقًا.',
   'picker.reconnect.button': 'إعادة الاتصال بـ "{rememberedName}"',
   'picker.reconnect.button.busy': 'جارٍ إعادة الاتصال…',
   'picker.reconnect.button.fallbackName': 'مجلدك',
   'picker.reconnect.openDifferent': 'فتح مجلد مختلف…',
-  'picker.reconnect.hint': 'يحتاج متصفحك إلى إعادة منح إذن القراءة/الكتابة لهذا المجلد لهذه الجلسة.',
-  'picker.fallback.banner': 'هذا المتصفح لا يسمح بفتح مجلد (واجهة File System Access غير متاحة أو معطّلة بسياسة إدارية). استخدم مساحة عمل المتصفح للتخزين المحلي متعدد الملفات، أو افتح ملف .bpmn واحدًا. يوفّر Microsoft Edge أو Google Chrome وصولًا مباشرًا إلى المجلدات.',
+  'picker.reconnect.hint':
+    'يحتاج متصفحك إلى إعادة منح إذن القراءة/الكتابة لهذا المجلد لهذه الجلسة.',
+  'picker.fallback.banner':
+    'هذا المتصفح لا يسمح بفتح مجلد (واجهة File System Access غير متاحة أو معطّلة بسياسة إدارية). استخدم مساحة عمل المتصفح للتخزين المحلي متعدد الملفات، أو افتح ملف .bpmn واحدًا. يوفّر Microsoft Edge أو Google Chrome وصولًا مباشرًا إلى المجلدات.',
   'picker.fallback.newProcess': '＋ عملية جديدة',
   'picker.fallback.openFile': 'فتح ملف .bpmn…',
   'picker.fallback.newDiagram': 'مخطط فارغ جديد',
@@ -1044,7 +1177,8 @@ export const ar: Record<keyof typeof en, string> = {
   // --- EmptyWorkspaceCard ---
   'emptyWorkspace.heading': 'لا توجد عمليات بعد',
   'emptyWorkspace.createFirst': '＋ أنشئ عمليتك الأولى',
-  'emptyWorkspace.explain': 'كل عملية هي ملف .bpmn واحد محفوظ في {folderName}. أنشئ مجلدات لتجميع العمليات المرتبطة؛ انقر بزر الفأرة الأيمن على الشجرة لمزيد من الخيارات.',
+  'emptyWorkspace.explain':
+    'كل عملية هي ملف .bpmn واحد محفوظ في {folderName}. أنشئ مجلدات لتجميع العمليات المرتبطة؛ انقر بزر الفأرة الأيمن على الشجرة لمزيد من الخيارات.',
   'emptyWorkspace.explain.fallbackFolderName': 'هذا المجلد',
 
   // --- FolderTreeLite context menu ---
@@ -1061,7 +1195,8 @@ export const ar: Record<keyof typeof en, string> = {
   // --- SettingsDialogLite ---
   'settings.title': 'الإعدادات — مفاتيح الذكاء الاصطناعي',
   'settings.close.aria': 'إغلاق',
-  'settings.keyStorageWarning': 'تبقى مفاتيح API في الذاكرة لهذه الجلسة فقط افتراضيًا. ويمكن حفظ المفتاح اختياريًا بعد تشفيره بعبارة مرور لا يتم تخزينها مطلقًا.',
+  'settings.keyStorageWarning':
+    'تبقى مفاتيح API في الذاكرة لهذه الجلسة فقط افتراضيًا. ويمكن حفظ المفتاح اختياريًا بعد تشفيره بعبارة مرور لا يتم تخزينها مطلقًا.',
   'settings.getKey': 'الحصول على مفتاح ↗',
   'settings.keyPlaceholder.configured': 'مُهيَّأ (••••{last4}) — اكتب للاستبدال',
   'settings.keyPlaceholder.encrypted': 'يوجد مفتاح مشفّر — أدخل عبارة المرور لفتحه',
@@ -1075,25 +1210,30 @@ export const ar: Record<keyof typeof en, string> = {
   'settings.apiKey.aria': 'مفتاح API لـ {label}',
   'settings.testConnection': 'اختبار الاتصال',
   'settings.testConnection.testing': 'جارٍ الاختبار…',
-  'settings.testConnection.billableDisclosure': 'أفهم أن هذا يرسل طلب استدلال صغيرًا قد يكون مدفوعًا.',
+  'settings.testConnection.billableDisclosure':
+    'أفهم أن هذا يرسل طلب استدلال صغيرًا قد يكون مدفوعًا.',
   'settings.aiSelection.title': 'مزوّد ونموذج الذكاء الاصطناعي',
-  'settings.aiSelection.hint': 'يُستخدم هذا الاختيار الصريح في الإنشاء والمساعد والمقابلة والترجمة.',
+  'settings.aiSelection.hint':
+    'يُستخدم هذا الاختيار الصريح في الإنشاء والمساعد والمقابلة والترجمة.',
   'settings.encryption.title': 'تخزين بيانات الاعتماد',
   'settings.encryption.persist': 'تشفير المفاتيح المُدخلة حديثًا وحفظها في هذا المتصفح',
   'settings.encryption.passphrase': 'عبارة مرور التشفير',
   'settings.encryption.unlock': 'فتح المفاتيح المشفّرة لهذه الجلسة',
-  'settings.encryption.hint': 'يُستخدم AES-256-GCM مع مفتاح مشتق عبر PBKDF2. لا يمكن استعادة النص المشفّر عند فقدان عبارة المرور.',
+  'settings.encryption.hint':
+    'يُستخدم AES-256-GCM مع مفتاح مشتق عبر PBKDF2. لا يمكن استعادة النص المشفّر عند فقدان عبارة المرور.',
   'settings.encryption.unlocked': 'تم فتح {count} من المفاتيح المشفّرة لهذه الجلسة.',
 
   // --- AiPanelLite ---
   'ai.collapsedButton': '✨ إنشاء بالذكاء الاصطناعي',
   'ai.header': '✨ إنشاء بالذكاء الاصطناعي',
   'ai.hide.title': 'إخفاء لوحة الذكاء الاصطناعي',
-  'ai.offlineWarning': 'يبدو أنك غير متصل بالإنترنت. يتطلب التوليد بالذكاء الاصطناعي اتصالًا بالإنترنت؛ لا يزال الرسم والتنظيم يعملان.',
+  'ai.offlineWarning':
+    'يبدو أنك غير متصل بالإنترنت. يتطلب التوليد بالذكاء الاصطناعي اتصالًا بالإنترنت؛ لا يزال الرسم والتنظيم يعملان.',
   'ai.noKeys.note': 'أضف مفتاح API من OpenRouter أو Anthropic أو Gemini لتوليد مخططات من وصف نصي.',
   'ai.noKeys.openSettings': 'فتح الإعدادات',
   'ai.description.label': 'الوصف',
-  'ai.description.placeholder': 'صف العملية بلغة بسيطة، مثال: "يقدّم العميل طلبًا؛ إذا كان صالحًا يُنفَّذ، وإلا يُرفض."',
+  'ai.description.placeholder':
+    'صف العملية بلغة بسيطة، مثال: "يقدّم العميل طلبًا؛ إذا كان صالحًا يُنفَّذ، وإلا يُرفض."',
   'ai.provider.label': 'المزوّد',
   'ai.provider.select': 'اختر مزوّدًا…',
   'ai.provider.selectHint': 'اختر المزوّد والنموذج صراحةً قبل السماح بإرسال أي طلب ذكاء اصطناعي.',
@@ -1109,17 +1249,21 @@ export const ar: Record<keyof typeof en, string> = {
   'ai.created': 'تم الإنشاء: {resultLabel}',
   'ai.openedInMemory': 'تم الفتح في تبويب جديد (استخدم الحفظ للتنزيل).',
   'ai.folderOption.root': '/ (جذر مساحة العمل)',
-  'ai.error.cors': 'رفض المزوّد طلب المتصفح (CORS). استخدم أحد مزوّدي المتصفح المدعومين: OpenRouter أو Anthropic أو Gemini.',
-  'ai.error.network': 'تعذّر الوصول إلى مزوّد الذكاء الاصطناعي. تحقق من اتصالك بالإنترنت، ثم حاول مرة أخرى.',
+  'ai.error.cors':
+    'رفض المزوّد طلب المتصفح (CORS). استخدم أحد مزوّدي المتصفح المدعومين: OpenRouter أو Anthropic أو Gemini.',
+  'ai.error.network':
+    'تعذّر الوصول إلى مزوّد الذكاء الاصطناعي. تحقق من اتصالك بالإنترنت، ثم حاول مرة أخرى.',
   'ai.error.auth': 'رفض المزوّد الطلب (خطأ في المصادقة). تحقق من مفتاح API في الإعدادات.',
-  'ai.error.rateLimit': 'المزوّد يحدّ من المعدل أو محمّل بشكل زائد الآن. انتظر لحظة وحاول مرة أخرى.',
+  'ai.error.rateLimit':
+    'المزوّد يحدّ من المعدل أو محمّل بشكل زائد الآن. انتظر لحظة وحاول مرة أخرى.',
   'ai.error.noApiKey': 'لا يوجد مفتاح API لهذا المزوّد. أضف واحدًا في الإعدادات.',
   'ai.error.selectProvider': 'اختر المزوّد والنموذج قبل الإنشاء.',
   'ai.pdf.label': 'أو ارفع ملف PDF',
   'ai.pdf.button': 'رفع PDF…',
   'ai.pdf.extracting': 'جارٍ استخراج النص…',
   'ai.pdf.error': 'تعذّرت قراءة ملف PDF: {error}',
-  'ai.noKeysAtAll.note': 'لا توجد مفاتيح API بعد. اختر مزوّدًا أدناه و{link} للتوليد — يمكنك أيضًا اختبار الاتصال بالمزوّد هناك دون مفتاح.',
+  'ai.noKeysAtAll.note':
+    'لا توجد مفاتيح API بعد. اختر مزوّدًا أدناه و{link} للتوليد — يمكنك أيضًا اختبار الاتصال بالمزوّد هناك دون مفتاح.',
   'ai.noKeysAtAll.link': 'أضف مفتاحًا في الإعدادات',
   'ai.tablist.aria': 'مصدر التوليد',
   'ai.tab.description': 'من وصف نصي',
@@ -1133,26 +1277,33 @@ export const ar: Record<keyof typeof en, string> = {
   'ai.targetFolder.aria': 'المجلد الهدف',
   'ai.generateFromPdf': 'التوليد من المستند',
   'ai.addOneInSettings.period': '.',
-  'ai.note.updated': 'يمكن استدعاء {anthropic} و{gemini} و{openrouter} مباشرة من صفحة ويب. يمكن الوصول إلى GLM وKimi وDeepSeek عبر OpenRouter. لا تسمح واجهات المزوّدين المباشرة لـ {desktopOnlyProviders} بالوصول من المتصفح (CORS) — يمكن الوصول إلى تلك النماذج عبر OpenRouter هنا.',
+  'ai.note.updated':
+    'يمكن استدعاء {anthropic} و{gemini} و{openrouter} مباشرة من صفحة ويب. يمكن الوصول إلى GLM وKimi وDeepSeek عبر OpenRouter. لا تسمح واجهات المزوّدين المباشرة لـ {desktopOnlyProviders} بالوصول من المتصفح (CORS) — يمكن الوصول إلى تلك النماذج عبر OpenRouter هنا.',
   'ai.error.chooseNoPdf': 'اختر ملف PDF أو صورة أولًا.',
-  'ai.pdf.sizeGate.overLimit': 'حجم PDF هو {size} — يتجاوز الحد {limit} لهذا المزوّد. الرجاء {alt}.',
+  'ai.pdf.sizeGate.overLimit':
+    'حجم PDF هو {size} — يتجاوز الحد {limit} لهذا المزوّد. الرجاء {alt}.',
   'ai.pdf.sizeGate.alt.splitOnly': 'تقسيم الملف',
   'ai.pdf.sizeGate.alt.tryGeminiOrSplit': 'تجربة Gemini (حد أكبر) أو تقسيم الملف',
   'ai.attach.label': 'مستند الوصف',
-  'ai.attach.hint': 'أرفق ملف Word ‏(.docx) أو PDF يحتوي على وصف العملية — تتم قراءته مع النص أعلاه.',
+  'ai.attach.hint':
+    'أرفق ملف Word ‏(.docx) أو PDF يحتوي على وصف العملية — تتم قراءته مع النص أعلاه.',
   'ai.attach.extracted': '{name} · تم استخراج {chars} حرفًا من النص',
   'ai.attach.docxEmpty': 'لم يتم العثور على نص قابل للقراءة في {name} — هل هو مستند ممسوح ضوئيًا؟',
   'ai.attach.readFailed': 'تعذّرت قراءة {name}: {error}',
   'ai.attach.remove': 'إزالة المرفق',
-  'ai.attach.unsupportedProvider': 'المرفقات غير متاحة لهذا المزوّد. استخدم OpenRouter أو Anthropic أو Gemini، أو أزل المرفق.',
-  'ai.image.sizeGate.overLimit': 'حجم الصورة {size} — يتجاوز الحد {limit} لهذا المزوّد. اضغط الصورة أو قصّها ثم أعد المحاولة.',
+  'ai.attach.unsupportedProvider':
+    'المرفقات غير متاحة لهذا المزوّد. استخدم OpenRouter أو Anthropic أو Gemini، أو أزل المرفق.',
+  'ai.image.sizeGate.overLimit':
+    'حجم الصورة {size} — يتجاوز الحد {limit} لهذا المزوّد. اضغط الصورة أو قصّها ثم أعد المحاولة.',
   'ai.image.unsupportedType': 'نوع الصورة غير مدعوم. استخدم PNG أو JPEG أو WebP أو GIF.',
   'import.notBpmnXml': '{name} ملف XML لكنه ليس مخطط BPMN — تم تخطيه.',
   'palette.grip.title': 'اسحب لتحريك لوحة الأدوات · انقر نقرًا مزدوجًا لإعادة الوضع',
   'editor.langToggle': '🌐 المخطط: EN⇄AR',
   'editor.langToggle.title': 'تبديل تسميات المخطط بين الإنجليزية والعربية',
-  'editor.langToggle.missing': 'لا يمكن عرض أي تسمية بلغة المخطط المطلوبة، لذلك لم تتغير لغة المخطط.',
-  'editor.langToggle.partial': 'تُعرض {switched} تسمية بلغة المخطط المطلوبة، وتبقى {missing} تسمية باللغة السابقة.',
+  'editor.langToggle.missing':
+    'لا يمكن عرض أي تسمية بلغة المخطط المطلوبة، لذلك لم تتغير لغة المخطط.',
+  'editor.langToggle.partial':
+    'تُعرض {switched} تسمية بلغة المخطط المطلوبة، وتبقى {missing} تسمية باللغة السابقة.',
   'canvas.inputs': 'المدخلات',
   'canvas.cc': 'نسخة إلى',
   'canvas.responsible': 'المسؤولون',
@@ -1160,9 +1311,11 @@ export const ar: Record<keyof typeof en, string> = {
   'org.nameEn.label': 'الاسم (بالإنجليزية)',
   'org.nameAr.label': 'الاسم (بالعربية)',
   'org.inputs.label': 'المدخلات / المعلومات الأساسية',
-  'org.inputs.hint': 'واحد في كل سطر — البيانات أو المستندات أو المعلومات الأساسية التي تحتاجها هذه الخطوة.',
+  'org.inputs.hint':
+    'واحد في كل سطر — البيانات أو المستندات أو المعلومات الأساسية التي تحتاجها هذه الخطوة.',
   'org.ccList.label': 'نسخة إلى (أطراف مُطلَعة)',
-  'org.ccList.hint': 'واحد في كل سطر — أضف الغرض بعد شرطة، مثال: "المالية — التدقيق المالي". يظهر كقائمة بجانب الخطوة.',
+  'org.ccList.hint':
+    'واحد في كل سطر — أضف الغرض بعد شرطة، مثال: "المالية — التدقيق المالي". يظهر كقائمة بجانب الخطوة.',
   'org.respList.label': 'الأشخاص المسؤولون',
   'org.respList.hint': 'واحد في كل سطر، مثال: "سارة المري — معتمِد".',
   'org.decisionBasis.label': 'أساس القرار',
@@ -1176,14 +1329,18 @@ export const ar: Record<keyof typeof en, string> = {
   'translate.noKey': 'لا يوجد مفتاح ذكاء اصطناعي — أضف واحدًا في الإعدادات للترجمة.',
   'translate.nothing': 'لا توجد تسمية ذات نص مصدر كافٍ لإنشاء المقابل الإنجليزي أو العربي الناقص.',
   'translate.nothing.switched': 'لا حاجة إلى ترجمة — يعرض المخطط الآن اللغة الأخرى.',
-  'translate.nothing.alreadyArabic': 'لا حاجة إلى ترجمة، وتعذّر استبدال العرض الحالي باللغة المطلوبة.',
-  'translate.nothing.omitted': 'لا توجد تسميات مؤهلة تحتاج إلى ترجمة. تُعرض {switched} تسمية باللغة المطلوبة وتبقى {missing} بلا تغيير. تفتقر {omitted} تسمية إلى نص مصدر صالح أو معرّف.',
+  'translate.nothing.alreadyArabic':
+    'لا حاجة إلى ترجمة، وتعذّر استبدال العرض الحالي باللغة المطلوبة.',
+  'translate.nothing.omitted':
+    'لا توجد تسميات مؤهلة تحتاج إلى ترجمة. تُعرض {switched} تسمية باللغة المطلوبة وتبقى {missing} بلا تغيير. تفتقر {omitted} تسمية إلى نص مصدر صالح أو معرّف.',
   'translate.running': 'جارٍ ترجمة {count} تسمية…',
   'translate.done': 'تمت ترجمة {count} تسمية وتبديل لغة المخطط. احفظ الملف للاحتفاظ بالتغييرات.',
-  'translate.partial': 'تمت ترجمة {done} من أصل {total} تسمية مؤهلة. تُعرض {switched} تسمية باللغة المطلوبة وتبقى {missing} بلا تغيير. احفظ الملف للاحتفاظ بالتغييرات.',
+  'translate.partial':
+    'تمت ترجمة {done} من أصل {total} تسمية مؤهلة. تُعرض {switched} تسمية باللغة المطلوبة وتبقى {missing} بلا تغيير. احفظ الملف للاحتفاظ بالتغييرات.',
   'translate.failed': 'فشلت الترجمة: {error}',
   'settings.completeness.label': 'إبراز المعلومات الناقصة في الخطوات',
-  'settings.completeness.hint': 'يميّز الخطوات التي تفتقد الجهة المسؤولة أو المدخلات أو المخرجات — والقرارات بلا أساس، وأحداث البداية بلا مشغّل.',
+  'settings.completeness.hint':
+    'يميّز الخطوات التي تفتقد الجهة المسؤولة أو المدخلات أو المخرجات — والقرارات بلا أساس، وأحداث البداية بلا مشغّل.',
   'missing.title': 'ناقص: {list}',
   'missing.owner': 'الجهة المسؤولة',
   'missing.inputs': 'المدخلات',
@@ -1197,13 +1354,15 @@ export const ar: Record<keyof typeof en, string> = {
   'canvas.subchip': 'فرعي',
   'assist.tab.library': 'اسأل المكتبة',
   'assist.tab.interview': 'أكمل هذه العملية',
-  'assist.interview.start': 'أنشأتُ مسودة من وصفك. سأطرح بضعة أسئلة لسد النواقص — أجب بأي لغة، أو اضغط إنهاء في أي وقت.',
+  'assist.interview.start':
+    'أنشأتُ مسودة من وصفك. سأطرح بضعة أسئلة لسد النواقص — أجب بأي لغة، أو اضغط إنهاء في أي وقت.',
   'assist.interview.finish': 'إنهاء',
   'assist.interview.applying': 'جارٍ تحديث المخطط…',
   'assist.interview.applied': 'تم تحديث المخطط.',
   'assist.interview.done': 'اكتملت المعلومات الأساسية. يمكنك متابعة التحسين أو إغلاق المحادثة.',
   'assist.interview.noModeler': 'افتح العملية المولَّدة أولًا ثم ابدأ المقابلة.',
-  'assist.interview.editWarning': 'الإجابات تعيد توليد المخطط — أكمل تعديلاتك اليدوية على اللوحة بعد المقابلة.',
+  'assist.interview.editWarning':
+    'الإجابات تعيد توليد المخطط — أكمل تعديلاتك اليدوية على اللوحة بعد المقابلة.',
   'assist.model.line': 'النموذج: {model} ({provider})',
   'ai.continueInChat': '💬 أكمل النواقص في المحادثة',
   'ai.continueInChat.title': 'افتح المساعد وأجب عن أسئلته لإكمال معلومات الخطوات الناقصة',
@@ -1231,8 +1390,10 @@ export const ar: Record<keyof typeof en, string> = {
   'editor.error.exportSvgFailed': 'فشل تصدير SVG: {error}',
   'editor.error.exportPngFailed': 'فشل تصدير PNG: {error}',
   'editor.hint.startDrawing': 'ابدأ الرسم',
-  'editor.hint.startDrawing.body': 'اسحب شكلًا من لوحة العناصر على اليسار (أو انقر عليه) لإضافته. انقر نقرًا مزدوجًا على أي عنصر لإعادة تسميته.',
-  'editor.print.title': 'طباعة أو حفظ كـ PDF — يفتح مربع حوار الطباعة بعرض كامل الصفحة أفقي لهذا المخطط',
+  'editor.hint.startDrawing.body':
+    'اسحب شكلًا من لوحة العناصر على اليسار (أو انقر عليه) لإضافته. انقر نقرًا مزدوجًا على أي عنصر لإعادة تسميته.',
+  'editor.print.title':
+    'طباعة أو حفظ كـ PDF — يفتح مربع حوار الطباعة بعرض كامل الصفحة أفقي لهذا المخطط',
   'editor.print': 'طباعة / PDF',
 
   // --- Link picker ---
@@ -1261,9 +1422,12 @@ export const ar: Record<keyof typeof en, string> = {
   'ai.credits.error.timeout': 'انتهت مهلة التحقق من الرصيد.',
   'ai.credits.error.unexpected': 'فشل التحقق من الرصيد.',
   'ai.usage.session': 'هذه الجلسة: {requests} طلبات · {tokens} رمز · {cost}',
-  'ai.usage.sessionDetailed': 'الجلسة: {requests} طلبات · {tokens} رمز إدخال/إخراج · {reasoning} رمز تفكير · {cost}',
-  'ai.usage.allTimeDetailed': 'الإجمالي: {requests} طلبات · {tokens} رمز إدخال/إخراج · {reasoning} رمز تفكير · {cost}',
-  'ai.usage.priceAsOf': 'آخر مراجعة لتقدير السعر المحلي في {date}؛ وتُستخدم تكلفة المزوّد عند توفرها.',
+  'ai.usage.sessionDetailed':
+    'الجلسة: {requests} طلبات · {tokens} رمز إدخال/إخراج · {reasoning} رمز تفكير · {cost}',
+  'ai.usage.allTimeDetailed':
+    'الإجمالي: {requests} طلبات · {tokens} رمز إدخال/إخراج · {reasoning} رمز تفكير · {cost}',
+  'ai.usage.priceAsOf':
+    'آخر مراجعة لتقدير السعر المحلي في {date}؛ وتُستخدم تكلفة المزوّد عند توفرها.',
   'ai.usage.costNa': 'التكلفة غير متاحة',
   'ai.usage.reset': 'إعادة تعيين',
   'settings.credits.noBalanceApi':
@@ -1324,10 +1488,13 @@ export const ar: Record<keyof typeof en, string> = {
   'unresolved.badge.title': 'روابط غير محلولة — انقر للعرض',
   'unresolved.title.count': 'الروابط غير المحلولة ({count})',
   'unresolved.close': 'إغلاق',
-  'unresolved.empty.full': 'لا توجد روابط غير محلولة — كل نشاط استدعاء يشير إلى عملية موجودة في مساحة العمل هذه.',
+  'unresolved.empty.full':
+    'لا توجد روابط غير محلولة — كل نشاط استدعاء يشير إلى عملية موجودة في مساحة العمل هذه.',
   'unresolved.intro': 'كل صف هو نشاط استدعاء لا توجد العملية المستهدفة له في مساحة العمل هذه. ',
-  'unresolved.intro.canCreate': 'أنشئ العملية المفقودة (معرّفها ثابت بحيث يُحل الرابط)، أو افتح المصدر لإصلاحه.',
-  'unresolved.intro.cannotCreate': 'افتح مجلدًا لإنشاء العمليات المفقودة؛ هنا يمكنك الانتقال إلى كل مصدر.',
+  'unresolved.intro.canCreate':
+    'أنشئ العملية المفقودة (معرّفها ثابت بحيث يُحل الرابط)، أو افتح المصدر لإصلاحه.',
+  'unresolved.intro.cannotCreate':
+    'افتح مجلدًا لإنشاء العمليات المفقودة؛ هنا يمكنك الانتقال إلى كل مصدر.',
   'unresolved.createNow.title': 'إنشاء عملية بالمعرّف "{calledElement}"',
   'unresolved.openSource.title': 'فتح الملف الذي يحتوي على نشاط الاستدعاء هذا',
 
@@ -1368,7 +1535,8 @@ export const ar: Record<keyof typeof en, string> = {
   'toast.imported.count': 'تم استيراد {count} ملف{plural}',
   'toast.imported.renamed': ' (تمت إعادة تسمية {renamed} لتجنب تعارض الأسماء)',
   'toast.import.openFolderFirst': 'افتح مجلدًا أولًا لاستيراد الملفات إلى مساحة عملك.',
-  'toast.import.noBpmnFound': 'لم يتم العثور على ملفات .bpmn أو .xml قابلة للاستيراد فيما تم إفلاته.',
+  'toast.import.noBpmnFound':
+    'لم يتم العثور على ملفات .bpmn أو .xml قابلة للاستيراد فيما تم إفلاته.',
   'toast.print.loading': 'المخطط لا يزال قيد التحميل — حاول الطباعة مرة أخرى بعد لحظة.',
   'toast.print.failed': 'فشلت الطباعة: {error}',
 
@@ -1384,13 +1552,19 @@ export const ar: Record<keyof typeof en, string> = {
   'alert.import.failed': 'فشل الاستيراد: {error}',
   'alert.open.failed': 'تعذّر فتح الملف: {error}',
   'alert.staleWrite': 'ينتمي هذا المخطط إلى مجلد لم يعد مفتوحًا — تم تخطّي حفظه.',
-  'alert.staleGeneration': 'تغيّر مجلد مساحة العمل أثناء التوليد — لم يُحفظ المخطط. افتح المجلد من جديد ثم أعد التوليد.',
+  'alert.staleGeneration':
+    'تغيّر مجلد مساحة العمل أثناء التوليد — لم يُحفظ المخطط. افتح المجلد من جديد ثم أعد التوليد.',
   'alert.saveAll.failed': 'تعذّر حفظ جميع التغييرات: {error}. سيبقى المجلد الحالي مفتوحًا.',
   'confirm.switch.title': 'تغييرات غير محفوظة',
-  'confirm.switch.body': 'لديك تغييرات غير محفوظة في {count} مخطط مفتوح. هل تريد حفظها قبل تبديل المجلد؟',
+  'confirm.switch.body':
+    'لديك تغييرات غير محفوظة في {count} مخطط مفتوح. هل تريد حفظها قبل تبديل المجلد؟',
   'confirm.switch.saveAll': 'حفظ الكل والتبديل',
   'confirm.switch.discard': 'تجاهل والتبديل',
   'confirm.switch.cancel': 'إلغاء',
+  'confirm.switch.downloadedTitle': 'المسودات المنزّلة ما زالت غير محفوظة',
+  'confirm.switch.downloadedBody':
+    'جُهّز تنزيل {count} مسودة، لكن التنزيلات ليست حفظًا دائمًا في مساحة العمل. تابع التبديل مع الاحتفاظ بمسودات الاسترداد، أو ألغِ للعودة إلى المستندات المفتوحة.',
+  'confirm.switch.continue': 'متابعة التبديل',
 
   // --- FX2 lane: AI/provider/CSP/naming/i18n fixes (F1 + Codex M4/5/6/9/10) ---
   'ai.provider.openrouter.desc':
@@ -1406,7 +1580,8 @@ export const ar: Record<keyof typeof en, string> = {
   'settings.verdict.blocked':
     'محجوب أو غير قابل للوصول (CORS أو عدم اتصال أو DNS) — تعذّر على المتصفح قراءة أي استجابة. تحقّق من الشبكة وأعد المحاولة، أو اختر مزوّدًا قابلًا للاستدعاء من المتصفح مثل OpenRouter أو Anthropic أو Gemini.',
   'settings.verdict.timeout': 'انتهت مهلة الاتصال. تحقق من شبكتك وحاول مرة أخرى.',
-  'ai.error.timeout': 'استغرق الطلب وقتًا طويلًا وانتهت مهلته. حاول مرة أخرى، أو استخدم مدخلًا أصغر.',
+  'ai.error.timeout':
+    'استغرق الطلب وقتًا طويلًا وانتهت مهلته. حاول مرة أخرى، أو استخدم مدخلًا أصغر.',
   'ai.error.cancelled': 'تم إلغاء الطلب.',
   'ai.cancel': 'إلغاء الطلب',
   'ai.retry.attempt': 'محاولة الطلب {attempt} من {max}.',
@@ -1417,7 +1592,8 @@ export const ar: Record<keyof typeof en, string> = {
   'ai.privacy.attachment': 'المرفق الذي سيتم إرساله: {name} ({bytes} بايت)',
   'ai.privacy.includeWorkspace': 'تضمين سياق عمليات مساحة العمل ذات الصلة',
   'ai.privacy.redactNames': 'حجب أسماء العمليات (تبقى معرّفات العمليات الثابتة لأغراض الربط)',
-  'ai.privacy.workspaceCount': 'سياق مساحة العمل: {included} مضمنة، و{relevant} ذات صلة، من أصل {total}. لا تُرسل المطابقات عديمة الثقة.',
+  'ai.privacy.workspaceCount':
+    'سياق مساحة العمل: {included} مضمنة، و{relevant} ذات صلة، من أصل {total}. لا تُرسل المطابقات عديمة الثقة.',
   'ai.privacy.sensitivity': 'يتضمن أسماء: {names}. بيانات حساسة واضحة: {sensitive}.',
   'ai.privacy.requestCount': 'الحد الأقصى التقديري لطلبات الاستدلال لهذا الإجراء: {count}.',
   'ai.privacy.consent': 'راجعت هذا الطلب وأوافق على إرسال البيانات المذكورة.',
@@ -1557,10 +1733,13 @@ export const ar: Record<keyof typeof en, string> = {
   'pane.resize.sidebar.aria': 'تغيير عرض لوحة المستكشف',
   'pane.resize.props.aria': 'تغيير عرض لوحة الخصائص',
   'pane.resize.hint': 'اسحب لتغيير العرض — انقر نقرًا مزدوجًا لإعادة الضبط',
-  'translate.free.using': 'لا يوجد مفتاح ذكاء اصطناعي — جارٍ ترجمة {count} تسمية عبر خدمة ترجمة مجانية…',
-  'translate.free.rate': 'بلغت خدمة الترجمة المجانية حدّها اليومي. حاول لاحقًا أو أضف مفتاح ذكاء اصطناعي في الإعدادات.',
+  'translate.free.using':
+    'لا يوجد مفتاح ذكاء اصطناعي — جارٍ ترجمة {count} تسمية عبر خدمة ترجمة مجانية…',
+  'translate.free.rate':
+    'بلغت خدمة الترجمة المجانية حدّها اليومي. حاول لاحقًا أو أضف مفتاح ذكاء اصطناعي في الإعدادات.',
   'translate.free.offline': 'يبدو أنك غير متصل بالإنترنت — تتطلب الترجمة اتصالًا بالشبكة.',
-  'translate.free.down': 'تعذّر الوصول إلى خدمة الترجمة المجانية. حاول لاحقًا أو أضف مفتاح ذكاء اصطناعي في الإعدادات.',
+  'translate.free.down':
+    'تعذّر الوصول إلى خدمة الترجمة المجانية. حاول لاحقًا أو أضف مفتاح ذكاء اصطناعي في الإعدادات.',
   'tree.linkedChildren': 'العمليات الفرعية المرتبطة',
   'tree.linkDepthCapped': 'مستويات إضافية غير معروضة',
   'library.manifestInfo': 'بيان المكتبة: {files} ملف/ملفات، {links} رابط/روابط.',
@@ -1628,25 +1807,33 @@ export const ar: Record<keyof typeof en, string> = {
   'translationReview.title': 'مراجعة الترجمة',
   'translationReview.direction.enAr': 'الإنجليزية ← العربية',
   'translationReview.direction.arEn': 'العربية ← الإنجليزية',
-  'translationReview.summary': 'تم فحص {fields} حقلًا ثنائي اللغة · {missing} ناقص · {invalid} بنص مختلط/غير صحيح · {failed} فشل لدى المزوّد',
+  'translationReview.summary':
+    'تم فحص {fields} حقلًا ثنائي اللغة · {missing} ناقص · {invalid} بنص مختلط/غير صحيح · {failed} فشل لدى المزوّد',
   'translationReview.fields.title': 'الحقول التي تتطلب مراجعة',
   'translationReview.fields.issue': '{issue}',
   'translationReview.provider': 'مزوّد الترجمة',
   'translationReview.provider.choose': 'اختر مزوّدًا…',
-  'translationReview.provider.ai': 'ستُرسل النصوص المطابقة أدناه إلى مزوّد ونموذج الذكاء الاصطناعي المحددين.',
-  'translationReview.provider.free': 'سيُرسل كل نص مطابق إلى Google Translate، وقد تُرسل العناصر الفاشلة إلى MyMemory.',
+  'translationReview.provider.ai':
+    'ستُرسل النصوص المطابقة أدناه إلى مزوّد ونموذج الذكاء الاصطناعي المحددين.',
+  'translationReview.provider.free':
+    'سيُرسل كل نص مطابق إلى Google Translate، وقد تُرسل العناصر الفاشلة إلى MyMemory.',
   'translationReview.outbound.title': 'النص المطابق الذي سيغادر هذا المتصفح',
-  'translationReview.outbound.disclosure': 'سيستلم {provider} عدد {count} من عناصر النص ضمن نحو {min}–{max} طلبات خارجية. لن يُرسل شيء حتى تضغط «ترجم الآن».',
-  'translationReview.outbound.chooseProvider': 'اختر مزوّدًا لعرض الإفصاح النهائي وتقدير الطلبات. لم يُرسل أي شيء.',
-  'translationReview.sensitive': 'هناك {count} عنصرًا من حقول المالك/المسؤولية وقد تتضمن أسماء أشخاص.',
-  'translationReview.mixedManual': 'ستبقى عناصر المصدر مختلطة النص مدرجة للتقسيم أو المراجعة اليدوية ولن تُرسل تلقائيًا.',
+  'translationReview.outbound.disclosure':
+    'سيستلم {provider} عدد {count} من عناصر النص ضمن نحو {min}–{max} طلبات خارجية. لن يُرسل شيء حتى تضغط «ترجم الآن».',
+  'translationReview.outbound.chooseProvider':
+    'اختر مزوّدًا لعرض الإفصاح النهائي وتقدير الطلبات. لم يُرسل أي شيء.',
+  'translationReview.sensitive':
+    'هناك {count} عنصرًا من حقول المالك/المسؤولية وقد تتضمن أسماء أشخاص.',
+  'translationReview.mixedManual':
+    'ستبقى عناصر المصدر مختلطة النص مدرجة للتقسيم أو المراجعة اليدوية ولن تُرسل تلقائيًا.',
   'translationReview.translateNow': 'ترجم الآن',
   'translationReview.partialPreview': 'معاينة الحقول المترجمة فقط',
   'translationReview.postpone': 'تأجيل',
   'translationReview.cancel': 'إلغاء الترجمة',
   'translationReview.running': 'جارٍ تنفيذ الترجمة…',
   'translationReview.cancelled': 'أُلغيت الترجمة. ما زالت جميع الحقول غير المحلولة مدرجة.',
-  'translationReview.partialStatus': 'ما زالت بعض الحقول غير محلولة. بقيت مدرجة ولم يُعلن اكتمال لغة المخطط.',
+  'translationReview.partialStatus':
+    'ما زالت بعض الحقول غير محلولة. بقيت مدرجة ولم يُعلن اكتمال لغة المخطط.',
   'translationReview.stale': 'تغيّر المخطط بعد المراجعة. راجع النص الحالي الصادر قبل الترجمة.',
   'translationReview.noProvider': 'اختر مزوّد ترجمة أولًا.',
 
@@ -1657,8 +1844,10 @@ export const ar: Record<keyof typeof en, string> = {
   'workspace.storage.mode.singleFile': 'ملف واحد',
   'workspace.storage.persistence.directory': 'تُحفظ الملفات في المجلد الذي اخترته.',
   'workspace.storage.persistence.opfsDurable': 'تخزين المتصفح دائم على هذا الجهاز.',
-  'workspace.storage.persistence.opfsBestEffort': 'تخزين المتصفح بأفضل جهد؛ صدّر نسخًا احتياطية بانتظام.',
-  'workspace.storage.persistence.singleFile': 'يؤدي الحفظ إلى تنزيل ملف BPMN ولا تُحتفظ بمساحة عمل.',
+  'workspace.storage.persistence.opfsBestEffort':
+    'تخزين المتصفح بأفضل جهد؛ صدّر نسخًا احتياطية بانتظام.',
+  'workspace.storage.persistence.singleFile':
+    'يؤدي الحفظ إلى تنزيل ملف BPMN ولا تُحتفظ بمساحة عمل.',
   'workspace.storage.chooseDirectory': 'اختيار مساحة عمل في مجلد',
   'workspace.storage.openOpfs': 'فتح مساحة عمل المتصفح',
   'workspace.storage.openSingleFile': 'فتح ملف BPMN واحد',
@@ -1671,7 +1860,8 @@ export const ar: Record<keyof typeof en, string> = {
   'workspace.storage.collisionIdentical': 'ملف مطابق — لا حاجة إلى تغيير',
   'workspace.storage.backupApply': 'تطبيق استيراد النسخة الاحتياطية',
   'workspace.storage.history': 'سجل الاسترداد',
-  'workspace.storage.switchWarning': 'يؤدي تبديل التخزين إلى إغلاق مساحة العمل الحالية. احفظ أو صدّر نسخة احتياطية أولًا.',
+  'workspace.storage.switchWarning':
+    'يؤدي تبديل التخزين إلى إغلاق مساحة العمل الحالية. احفظ أو صدّر نسخة احتياطية أولًا.',
   'workspace.duplicate.title': 'يظهر معرّف العملية {id} في عدة ملفات: {paths}',
   'workspace.duplicate.repair': 'إصلاح معرّفات العمليات المكررة',
   'workspace.history.preview': 'معاينة النسخة',
@@ -1681,11 +1871,38 @@ export const ar: Record<keyof typeof en, string> = {
   'workspace.history.empty': 'لا توجد نسخ استرداد متاحة لهذا الملف.',
   'workspace.history.copyPrompt': 'اسم ملف النسخة المستعادة',
   'workspace.history.current': 'الملف الحالي',
+  'draftRecovery.title': 'مراجعة مسودة الاسترداد',
+  'draftRecovery.summary':
+    'عُثر على مسودة غير محفوظة للملف «{title}» من {timestamp}. الحالة: {relation}. لن يُستبدل أي محتوى قبل اختيارك.',
+  'draftRecovery.saved': 'النسخة المحفوظة',
+  'draftRecovery.draft': 'المسودة المستردة',
+  'draftRecovery.download': 'تنزيل المسودة',
+  'draftRecovery.discard': 'الاحتفاظ بالمحفوظ وحذف المسودة',
+  'draftRecovery.restore': 'استعادة المسودة',
+  'draftRecovery.relation.same-content': 'المحتوى مطابق',
+  'draftRecovery.relation.same-base': 'المسودة مبنية على النسخة المحفوظة الحالية',
+  'draftRecovery.relation.base-diverged': 'تغيّرت النسخة المحفوظة بعد إنشاء المسودة',
+  'draftRecovery.relation.unknown-base': 'تعذّر تأكيد النسخة الأساسية',
+  'draftRecovery.error': 'فشل استرداد المسودة: {error}',
+  'draftRecovery.degraded':
+    'الاسترداد الدائم للمسودات غير متاح في جلسة المتصفح هذه. يمكن تنزيل المسودات غير المحفوظة، لكنها لن تبقى بعد إعادة التحميل.',
+  'workspace.coordination.error': 'فشل تنسيق مساحة العمل: {error}',
+  'workspace.coordination.changed':
+    'تغيّر «{path}» في علامة تبويب OrbitPM أخرى. احتُفظ بمسودتك المحلية؛ راجعها قبل الحفظ.',
+  'session.save.externalConflict':
+    'تغيّر «{path}» خارج علامة التبويب هذه ({reason}). أُوقف الحفظ واحتُفظ بمسودتك المحلية.',
+  'session.save.locked':
+    'تحفظ علامة تبويب OrbitPM أخرى هذا الملف. انتظر قليلًا ثم أعد المحاولة؛ احتُفظ بمسودتك المحلية.',
+  'session.save.failed': 'لم يكتمل الحفظ ({status}). احتُفظ بمسودتك المحلية.',
+  'session.save.newerEdits': 'حُفظت النسخة الملتقطة، لكن ما زالت هناك تعديلات أحدث غير محفوظة.',
+  'session.download.draftRetained':
+    'جُهّز تنزيل BPMN. ما زالت الجلسة غير محفوظة واحتُفظ بمسودة الاسترداد حتى حفظ دائم أو تجاهل صريح.',
 
   // --- استيراد جداول البيانات ---
   'spreadsheet.tab': 'Excel / CSV',
   'spreadsheet.title': 'استيراد Excel أو CSV',
-  'spreadsheet.intro': 'أنشئ عمليات BPMN متحققًا منها محليًا من ملف ‎.xlsx‎ أو ‎.csv‎ بترميز UTF-8. لا تغادر بيانات الجدول هذا المتصفح.',
+  'spreadsheet.intro':
+    'أنشئ عمليات BPMN متحققًا منها محليًا من ملف ‎.xlsx‎ أو ‎.csv‎ بترميز UTF-8. لا تغادر بيانات الجدول هذا المتصفح.',
   'spreadsheet.template.blank': 'تنزيل قالب فارغ',
   'spreadsheet.template.example': 'تنزيل قالب مثال',
   'spreadsheet.upload': 'اختر ‎.xlsx‎ أو ‎.csv‎',
@@ -1694,7 +1911,8 @@ export const ar: Record<keyof typeof en, string> = {
   'spreadsheet.cancel': 'إلغاء',
   'spreadsheet.progress': '{phase}: {percent}%',
   'spreadsheet.reset': 'البدء من جديد',
-  'spreadsheet.officialDetected': 'تم اكتشاف قالب OrbitPM الرسمي ({version}). طُبّق الربط تلقائيًا.',
+  'spreadsheet.officialDetected':
+    'تم اكتشاف قالب OrbitPM الرسمي ({version}). طُبّق الربط تلقائيًا.',
   'spreadsheet.ordinaryDetected': 'تم اكتشاف جدول عادي. راجع ورقة العمل وربط الأعمدة.',
   'spreadsheet.mapping.title': 'ربط أعمدة الجدول',
   'spreadsheet.mapping.presetName': 'اسم الإعداد المسبق',
@@ -1748,7 +1966,8 @@ export const ar: Record<keyof typeof en, string> = {
   'spreadsheet.preview.node': 'العقدة',
   'spreadsheet.preview.type': 'النوع',
   'spreadsheet.preview.fromTo': 'التدفق',
-  'spreadsheet.translation.required': 'مراجعة ثنائية اللغة مطلوبة: {missing} قيم ناقصة و{invalid} قيم غير صالحة.',
+  'spreadsheet.translation.required':
+    'مراجعة ثنائية اللغة مطلوبة: {missing} قيم ناقصة و{invalid} قيم غير صالحة.',
   'spreadsheet.translation.handoff': 'فتح المراجعة الثنائية',
   'spreadsheet.prepare': 'تجهيز ملفات BPMN',
   'spreadsheet.preparing': 'جارٍ إنشاء BPMN والتحقق منه…',
@@ -1758,7 +1977,8 @@ export const ar: Record<keyof typeof en, string> = {
   'spreadsheet.committing': 'جارٍ كتابة جميع الملفات ذريًا…',
   'spreadsheet.report.committed': 'تم تنفيذ الاستيراد بنجاح.',
   'spreadsheet.report.rolledBack': 'فشل الاستيراد؛ تم التراجع عن تغييرات الوجهة.',
-  'spreadsheet.report.rollbackFailed': 'فشل الاستيراد ويحتاج التراجع إلى الانتباه. تم الاحتفاظ بنسخ الاسترداد.',
+  'spreadsheet.report.rollbackFailed':
+    'فشل الاستيراد ويحتاج التراجع إلى الانتباه. تم الاحتفاظ بنسخ الاسترداد.',
   'spreadsheet.report.destination': 'الوجهة',
   'spreadsheet.report.checksum': 'SHA-256',
   'spreadsheet.report.download': 'تنزيل تقرير الاستيراد',
@@ -1812,7 +2032,8 @@ export const ar: Record<keyof typeof en, string> = {
   'sourceEditor.applying': 'جارٍ التطبيق…',
   'sourceEditor.rollback': 'تراجع',
   'sourceEditor.diff': 'معاينة التغييرات',
-  'sourceEditor.changedLines': '{changed} متغير · {added} مضاف · {removed} محذوف · أول تغيير في السطر {line}',
+  'sourceEditor.changedLines':
+    '{changed} متغير · {added} مضاف · {removed} محذوف · أول تغيير في السطر {line}',
   'sourceEditor.noChanges': 'لا توجد تغييرات في المصدر.',
   'sourceEditor.invalidBlocked': 'التطبيق محظور لأن XML المعدّل غير صالح.',
   'sourceEditor.preservationBlocked': 'التطبيق محظور لأن بيانات المخطط المطلوبة ستُفقد.',
