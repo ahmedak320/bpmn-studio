@@ -1,54 +1,34 @@
 /**
- * Faithful TypeScript port of `services/bpmn_process_transformer.py`
- * (BpmnProcessTransformer) from the vendored bpmn-assistant.
+ * Flatten the recursive generation IR into BPMN elements and sequence flows.
  *
- * Flattens the recursive IR `process` list into a flat `{ elements, flows }`
- * structure suitable for BPMN XML emission. Every ID convention, ordering and
- * branch-handling quirk of the Python original is preserved so the emitted XML
- * matches the Python golden byte-for-byte (see tests/fixtures/golden). The one
- * intentional divergence is documented on `addFlow` below (the dedup fix).
- *
- * ID conventions (identical to Python):
- *  - join gateway id            = `{gatewayId}-join`
- *  - default flow id            = `{sourceRef}-{targetRef}`
- *  - inclusive branch flow id   = `{gatewayId}-{targetRef}` (passed explicitly)
- *  - `default=` attribute        = the inclusive default branch's flow id
- *
- * 2026-07 extension: elements and flows additionally carry an optional
- * `orbitpm` bag — bilingual labels + DMT org-pack metadata mapped to
- * `orbitpm:*` attribute local names (see buildOrbitpmAttrs) — read LENIENTLY
- * from the raw IR via the shared coercers so junk org values degrade to
- * "absent" instead of failing. Plain IRs produce no bags, keeping the emitted
- * XML byte-identical to the golden fixtures.
+ * A single transform context owns every nested branch. That is important:
+ * BPMN `xsd:ID` values are document-global, while the original port allocated
+ * IDs independently inside each recursive call. The allocator below reserves
+ * all model-supplied IDs up front and then gives synthetic joins, flows and
+ * event definitions collision-free deterministic IDs.
  */
 import { coerceOrgString, coerceOrgStringArray, TASK_TYPES } from './ir/schema'
 
-/** A transformed element ready for XML emission. */
 export interface TransformedElement {
   id: string
   type: string
   label: string | null
   eventDefinition?: string
-  /** For callActivity: the referenced process id (rendered as `calledElement`). */
+  event_definition_id?: string
   called_element?: string
   default_flow?: string
-  /**
-   * Bilingual + DMT org-pack metadata, keyed by `orbitpm:*` attribute LOCAL
-   * name (already coerced, '\n'-joined for lists, empties omitted). Insertion
-   * order == emission order. Absent when the element carries none.
-   */
   orbitpm?: Record<string, string>
   incoming: string[]
   outgoing: string[]
 }
 
-/** A transformed sequence flow. */
 export interface TransformedFlow {
   id: string
   sourceRef: string
   targetRef: string
+  /** Formal branch condition; null for ordinary/default flows. */
   condition: string | null
-  /** `orbitpm:*` attrs (nameEn/nameAr from the branch's conditionEn/conditionAr). */
+  is_default: boolean
   orbitpm?: Record<string, string>
 }
 
@@ -57,20 +37,14 @@ export interface TransformResult {
   flows: TransformedFlow[]
 }
 
-// The IR is dynamically shaped (a discriminated union whose fields the
-// transformer reads via optional access, exactly like Python's dict.get). We
-// intentionally traverse it with `any` to mirror that dynamic access; the IR is
-// validated (schema + validateBpmn) before it ever reaches here.
 /* eslint-disable @typescript-eslint/no-explicit-any */
 type IRElement = any
 
-// Working element type: incoming/outgoing are attached at the end of each call.
 type WorkingElement = Omit<TransformedElement, 'incoming' | 'outgoing'> & {
   incoming?: string[]
   outgoing?: string[]
 }
 
-// Which element types carry which org fields (mirrors the prompt contract).
 const ACTIVITY_TYPES: ReadonlySet<string> = new Set([...TASK_TYPES, 'callActivity'])
 const DECISION_BASIS_TYPES: ReadonlySet<string> = new Set([
   'exclusiveGateway',
@@ -78,12 +52,6 @@ const DECISION_BASIS_TYPES: ReadonlySet<string> = new Set([
   'businessRuleTask'
 ])
 
-/**
- * Collect an element's bilingual/org metadata into an ordered attribute bag
- * (key = `orbitpm:*` local name). Values pass through the lenient coercers, so
- * junk drops silently; list fields are '\n'-joined. Returns undefined when the
- * element carries nothing — plain IRs then emit byte-identical XML.
- */
 function buildOrbitpmAttrs(element: IRElement): Record<string, string> | undefined {
   const attrs: Record<string, string> = {}
   const put = (key: string, value: unknown): void => {
@@ -99,32 +67,55 @@ function buildOrbitpmAttrs(element: IRElement): Record<string, string> | undefin
   put('nameAr', element.labelAr)
   if (ACTIVITY_TYPES.has(element.type)) {
     put('owner', element.owner)
+    put('ownerEn', element.ownerEn)
+    put('ownerAr', element.ownerAr)
+    put('department', element.department)
+    put('departmentEn', element.departmentEn)
+    put('departmentAr', element.departmentAr)
     put('ownerRole', element.ownerRole)
+    put('ownerRoleEn', element.ownerRoleEn)
+    put('ownerRoleAr', element.ownerRoleAr)
     put('channel', element.channel)
     put('channelDetail', element.channelDetail)
+    put('channelDetailEn', element.channelDetailEn)
+    put('channelDetailAr', element.channelDetailAr)
     put('kind', element.kind)
     putList('ccList', element.cc)
+    putList('ccListEn', element.ccEn)
+    putList('ccListAr', element.ccAr)
     putList('inputs', element.inputs)
+    putList('inputsEn', element.inputsEn)
+    putList('inputsAr', element.inputsAr)
     putList('outputs', element.outputs)
+    putList('outputsEn', element.outputsEn)
+    putList('outputsAr', element.outputsAr)
     putList('respList', element.respList)
+    putList('respListEn', element.respListEn)
+    putList('respListAr', element.respListAr)
+    put('system', element.system)
+    put('systemEn', element.systemEn)
+    put('systemAr', element.systemAr)
   }
   if (DECISION_BASIS_TYPES.has(element.type)) {
     put('decisionBasis', element.decisionBasis)
+    put('decisionBasisEn', element.decisionBasisEn)
+    put('decisionBasisAr', element.decisionBasisAr)
   }
   if (element.type === 'startEvent') {
     put('trigger', element.trigger)
+    put('triggers', element.trigger)
+    put('triggersEn', element.triggerEn)
+    put('triggersAr', element.triggerAr)
     put('triggerService', element.triggerService)
+    put('triggerServiceEn', element.triggerServiceEn)
+    put('triggerServiceAr', element.triggerServiceAr)
     put('triggerDetail', element.triggerDetail)
+    put('triggerDetailEn', element.triggerDetailEn)
+    put('triggerDetailAr', element.triggerDetailAr)
   }
-
   return Object.keys(attrs).length > 0 ? attrs : undefined
 }
 
-/**
- * Bilingual names for the sequence flow created from a gateway branch:
- * conditionEn/conditionAr -> orbitpm:nameEn/nameAr (the primary `condition`
- * keeps flowing into the plain `name` attribute as before).
- */
 function branchFlowOrbitpmAttrs(branch: IRElement): Record<string, string> | undefined {
   const attrs: Record<string, string> = {}
   const en = coerceOrgString(branch?.conditionEn)
@@ -134,264 +125,208 @@ function branchFlowOrbitpmAttrs(branch: IRElement): Record<string, string> | und
   return Object.keys(attrs).length > 0 ? attrs : undefined
 }
 
+function collectIrIds(process: readonly IRElement[], ids: Set<string>): void {
+  for (const element of process) {
+    ids.add(element.id)
+    if (element.type === 'exclusiveGateway' || element.type === 'inclusiveGateway') {
+      for (const branch of element.branches) collectIrIds(branch.path, ids)
+    } else if (element.type === 'parallelGateway') {
+      for (const branch of element.branches) collectIrIds(branch, ids)
+    }
+  }
+}
+
+class GlobalIdAllocator {
+  constructor(private readonly used: Set<string>) {}
+
+  allocate(preferred: string): string {
+    if (!this.used.has(preferred)) {
+      this.used.add(preferred)
+      return preferred
+    }
+    for (let suffix = 2; ; suffix += 1) {
+      const candidate = `${preferred}_${suffix}`
+      if (!this.used.has(candidate)) {
+        this.used.add(candidate)
+        return candidate
+      }
+    }
+  }
+}
+
+interface TransformContext {
+  elements: WorkingElement[]
+  flows: TransformedFlow[]
+  elementById: Map<string, WorkingElement>
+  ids: GlobalIdAllocator
+}
+
+interface LevelResult {
+  firstElementId: string | null
+}
+
 /**
- * Restructure the IR `process` into `{ elements, flows }`.
+ * Restructure a validated IR process into one flat document-global graph.
  *
- * @param process               the IR element list for this level
- * @param parentNextElementId   the element the last element of this level should
- *                              flow into (used when recursing into branches)
+ * `parentNextElementId` is retained for API compatibility and for callers that
+ * intentionally transform a branch. Normal generation calls this at top level.
  */
 export function transform(
   process: readonly IRElement[],
   parentNextElementId: string | null = null
 ): TransformResult {
-  const elements: WorkingElement[] = []
-  const flows: TransformedFlow[] = []
+  const reserved = new Set<string>()
+  collectIrIds(process, reserved)
+  const context: TransformContext = {
+    elements: [],
+    flows: [],
+    elementById: new Map(),
+    ids: new GlobalIdAllocator(reserved)
+  }
 
-  /**
-   * Append a flow.
-   *
-   * Python's original silently DROPPED any second flow sharing a
-   * (sourceRef, targetRef) pair — which loses a branch's condition label when
-   * two branches converge on the same target. The sanctioned fix:
-   *  - a re-add with the SAME condition (e.g. the redundant last-element -> join
-   *    re-add inside a parallel gateway) is still collapsed — matching Python, so
-   *    the 7 goldens are unaffected;
-   *  - a re-add with a DISTINCT condition is KEPT, with a suffixed id
-   *    (`{base}-2`, `{base}-3`, ...), so both branch labels survive.
-   */
-  function addFlow(
+  const addFlow = (
     sourceRef: string,
     targetRef: string,
-    flowId?: string,
-    condition?: string | null,
-    orbitpm?: Record<string, string>
-  ): void {
-    const cond: string | null = condition ?? null
-    const sameEdge = flows.filter(
-      (f) => f.sourceRef === sourceRef && f.targetRef === targetRef
+    options: {
+      preferredId?: string
+      condition?: string | null
+      isDefault?: boolean
+      orbitpm?: Record<string, string>
+    } = {}
+  ): TransformedFlow => {
+    const condition =
+      typeof options.condition === 'string' && options.condition.trim().length > 0
+        ? options.condition.trim()
+        : null
+    const same = context.flows.find(
+      (flow) =>
+        flow.sourceRef === sourceRef &&
+        flow.targetRef === targetRef &&
+        flow.condition === condition &&
+        flow.is_default === (options.isDefault === true)
     )
-    if (sameEdge.length > 0) {
-      // True duplicate (same edge AND same condition) -> collapse, like Python.
-      if (sameEdge.some((f) => f.condition === cond)) {
-        return
-      }
-      // Distinct condition on an existing edge -> keep both (the dedup fix).
-      const base = flowId || `${sourceRef}-${targetRef}`
-      flows.push({
-        id: `${base}-${sameEdge.length + 1}`,
-        sourceRef,
-        targetRef,
-        condition: cond,
-        ...(orbitpm ? { orbitpm } : {})
-      })
-      return
+    if (same) return same
+
+    const id = context.ids.allocate(options.preferredId ?? `${sourceRef}-${targetRef}`)
+    const flow: TransformedFlow = {
+      id,
+      sourceRef,
+      targetRef,
+      condition,
+      is_default: options.isDefault === true,
+      ...(options.orbitpm ? { orbitpm: options.orbitpm } : {})
     }
-    const id = flowId || `${sourceRef}-${targetRef}`
-    flows.push({ id, sourceRef, targetRef, condition: cond, ...(orbitpm ? { orbitpm } : {}) })
+    context.flows.push(flow)
+    return flow
   }
 
-  function handleExclusiveGateway(
-    element: IRElement,
-    nextElementId: string | null
-  ): string | null {
-    let joinGatewayId: string | null = null
-    if (element.has_join === true) {
-      joinGatewayId = `${element.id}-join`
-      elements.push({ id: joinGatewayId, type: 'exclusiveGateway', label: null })
-    }
+  const transformLevel = (
+    level: readonly IRElement[],
+    nextAfterLevel: string | null
+  ): LevelResult => {
+    const firstElementId = level.length > 0 ? level[0].id : null
 
-    for (const branch of element.branches) {
-      if (!branch.path || branch.path.length === 0) {
-        // Empty branch: connect to the branch's `next` or the following element.
-        const targetRef: string | null = branch.next ?? nextElementId
-        if (targetRef) {
-          addFlow(
-            element.id,
-            targetRef,
-            undefined,
-            branch.condition ?? null,
-            branchFlowOrbitpmAttrs(branch)
-          )
-        }
-        continue
+    for (let index = 0; index < level.length; index += 1) {
+      const element = level[index]
+      const nextElementId =
+        index < level.length - 1 ? level[index + 1].id : nextAfterLevel
+      const transformed: WorkingElement = {
+        id: element.id,
+        type: element.type,
+        label: element.label ?? null
       }
-
-      const branchNext: string | null | undefined = branch.next
-
-      const branchStructure = branchNext
-        ? transform(branch.path, branchNext)
-        : transform(branch.path, joinGatewayId ?? nextElementId)
-
-      elements.push(...branchStructure.elements)
-      flows.push(...branchStructure.flows)
-
-      const firstElement = branchStructure.elements[0] ?? null
-      if (firstElement) {
-        addFlow(
-          element.id,
-          firstElement.id,
-          undefined,
-          branch.condition,
-          branchFlowOrbitpmAttrs(branch)
+      if (element.eventDefinition !== undefined) {
+        transformed.eventDefinition = element.eventDefinition
+        transformed.event_definition_id = context.ids.allocate(
+          `${element.eventDefinition}_${element.id}`
         )
       }
-    }
+      if (typeof element.calledProcess === 'string' && element.calledProcess.trim()) {
+        transformed.called_element = element.calledProcess.trim()
+      }
+      const orbitpm = buildOrbitpmAttrs(element)
+      if (orbitpm) transformed.orbitpm = orbitpm
+      context.elements.push(transformed)
+      context.elementById.set(transformed.id, transformed)
 
-    return joinGatewayId
-  }
+      if (element.type === 'exclusiveGateway' || element.type === 'inclusiveGateway') {
+        const joinId =
+          element.has_join === true
+            ? context.ids.allocate(`${element.id}-join`)
+            : null
+        if (joinId) {
+          const join: WorkingElement = {
+            id: joinId,
+            type: element.type,
+            label: null
+          }
+          context.elements.push(join)
+          context.elementById.set(join.id, join)
+        }
 
-  function handleInclusiveGateway(
-    element: IRElement,
-    nextElementId: string | null
-  ): string | null {
-    let joinGatewayId: string | null = null
-    let defaultFlowId: string | null = null
-    if (element.has_join === true) {
-      joinGatewayId = `${element.id}-join`
-      elements.push({ id: joinGatewayId, type: 'inclusiveGateway', label: null })
-    }
-
-    for (const branch of element.branches) {
-      const isDefault: boolean = branch.is_default === true
-
-      if (!branch.path || branch.path.length === 0) {
-        const targetRef: string | null = branch.next ?? nextElementId
-        if (targetRef) {
-          const flowId = `${element.id}-${targetRef}`
-          addFlow(
-            element.id,
-            targetRef,
-            flowId,
-            branch.condition ?? null,
-            branchFlowOrbitpmAttrs(branch)
-          )
-          if (isDefault) {
-            defaultFlowId = flowId
+        for (const branch of element.branches) {
+          const isDefault = branch.is_default === true
+          const branchTarget = branch.next ?? joinId ?? nextElementId
+          let target = branchTarget
+          if (branch.path.length > 0) {
+            const nested = transformLevel(branch.path, branchTarget)
+            target = nested.firstElementId
+          }
+          if (target) {
+            const flow = addFlow(element.id, target, {
+              preferredId:
+                element.type === 'inclusiveGateway'
+                  ? `${element.id}-${target}`
+                  : undefined,
+              condition: isDefault ? null : branch.condition,
+              isDefault,
+              orbitpm: isDefault ? undefined : branchFlowOrbitpmAttrs(branch)
+            })
+            if (isDefault) transformed.default_flow = flow.id
           }
         }
-        continue
-      }
-
-      const branchNext: string | null | undefined = branch.next
-
-      const branchStructure = branchNext
-        ? transform(branch.path, branchNext)
-        : transform(branch.path, joinGatewayId ?? nextElementId)
-
-      elements.push(...branchStructure.elements)
-      flows.push(...branchStructure.flows)
-
-      const firstElement = branchStructure.elements[0] ?? null
-      if (firstElement) {
-        const flowId = `${element.id}-${firstElement.id}`
-        addFlow(
-          element.id,
-          firstElement.id,
-          flowId,
-          branch.condition ?? null,
-          branchFlowOrbitpmAttrs(branch)
-        )
-        if (isDefault) {
-          defaultFlowId = flowId
+        if (joinId && nextElementId) addFlow(joinId, nextElementId)
+      } else if (element.type === 'parallelGateway') {
+        const joinId = context.ids.allocate(`${element.id}-join`)
+        const join: WorkingElement = {
+          id: joinId,
+          type: 'parallelGateway',
+          label: null
         }
-      }
-    }
-
-    if (defaultFlowId) {
-      for (const elem of elements) {
-        if (elem.id === element.id) {
-          elem.default_flow = defaultFlowId
-          break
+        context.elements.push(join)
+        context.elementById.set(join.id, join)
+        for (const branch of element.branches) {
+          const nested = transformLevel(branch, joinId)
+          if (!nested.firstElementId) {
+            throw new Error(`Parallel gateway '${element.id}' cannot have an empty branch.`)
+          }
+          addFlow(element.id, nested.firstElementId)
         }
+        if (nextElementId) addFlow(joinId, nextElementId)
+      } else if (nextElementId && element.type !== 'endEvent') {
+        addFlow(element.id, nextElementId)
       }
     }
-
-    return joinGatewayId
+    return { firstElementId }
   }
 
-  function handleParallelGateway(element: IRElement): string {
-    const joinGatewayId = `${element.id}-join`
-    elements.push({ id: joinGatewayId, type: 'parallelGateway', label: null })
+  transformLevel(process, parentNextElementId)
 
-    for (const branch of element.branches) {
-      const branchStructure = transform(branch, joinGatewayId)
-      if (branchStructure.elements.length === 0) {
-        throw new Error(
-          `Parallel gateway '${element.id}' cannot have an empty branch. ` +
-            'Do not delete the last element in a branch; update or remove the gateway instead.'
-        )
-      }
-      elements.push(...branchStructure.elements)
-      flows.push(...branchStructure.flows)
-
-      const firstElement = branchStructure.elements[0]
-      addFlow(element.id, firstElement.id)
-
-      const lastElement = branchStructure.elements[branchStructure.elements.length - 1]
-      addFlow(lastElement.id, joinGatewayId)
-    }
-
-    return joinGatewayId
+  for (const element of context.elements) {
+    element.incoming = context.flows
+      .filter((flow) => flow.targetRef === element.id)
+      .map((flow) => flow.id)
+    element.outgoing = context.flows
+      .filter((flow) => flow.sourceRef === element.id)
+      .map((flow) => flow.id)
   }
 
-  for (let index = 0; index < process.length; index++) {
-    const element = process[index]
-    const nextElementId: string | null =
-      index < process.length - 1 ? process[index + 1].id : parentNextElementId
-
-    const transformedElement: WorkingElement = {
-      id: element.id,
-      type: element.type,
-      label: element.label ?? null
-    }
-    if ('eventDefinition' in element && element.eventDefinition !== undefined) {
-      transformedElement.eventDefinition = element.eventDefinition
-    }
-    // A callActivity carries its linked process id through as `called_element`
-    // (mirroring the eventDefinition pass-through above); only when it is a
-    // non-empty string — an unlinked call activity behaves like a plain task.
-    if (typeof element.calledProcess === 'string' && element.calledProcess.length > 0) {
-      transformedElement.called_element = element.calledProcess
-    }
-    // Bilingual labels + org-pack metadata (leniently coerced; often absent).
-    const orbitpm = buildOrbitpmAttrs(element)
-    if (orbitpm) {
-      transformedElement.orbitpm = orbitpm
-    }
-    elements.push(transformedElement)
-
-    if (element.type === 'exclusiveGateway') {
-      const joinGatewayId = handleExclusiveGateway(element, nextElementId)
-      if (joinGatewayId && nextElementId) {
-        addFlow(joinGatewayId, nextElementId)
-      }
-    } else if (element.type === 'inclusiveGateway') {
-      const joinGatewayId = handleInclusiveGateway(element, nextElementId)
-      if (joinGatewayId && nextElementId) {
-        addFlow(joinGatewayId, nextElementId)
-      }
-    } else if (element.type === 'parallelGateway') {
-      const joinGatewayId = handleParallelGateway(element)
-      if (nextElementId) {
-        addFlow(joinGatewayId, nextElementId)
-      }
-    } else if (nextElementId && element.type !== 'endEvent') {
-      addFlow(element.id, nextElementId)
-    }
+  return {
+    elements: context.elements as TransformedElement[],
+    flows: context.flows
   }
-
-  // Attach incoming/outgoing (recomputed over this call's full flow list; the
-  // top-level call sees every flow since sub-flows are spread up on each return).
-  for (const element of elements) {
-    element.incoming = flows.filter((f) => f.targetRef === element.id).map((f) => f.id)
-    element.outgoing = flows.filter((f) => f.sourceRef === element.id).map((f) => f.id)
-  }
-
-  return { elements: elements as TransformedElement[], flows }
 }
 
-/** Class shim mirroring the Python `BpmnProcessTransformer` for parity of use. */
 export class BpmnProcessTransformer {
   transform(
     process: readonly IRElement[],

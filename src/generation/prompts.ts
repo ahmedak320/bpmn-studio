@@ -73,7 +73,10 @@ Gateways determine process flow based on conditions or parallel tasks.
 
 ### Exclusive gateway
 
-Each branch must include a condition and an array of elements that are executed if the condition is met.
+Each non-default branch must include a condition and an array of elements that
+are executed if the condition is met. One branch may be marked
+\`"is_default": true\`; that branch MUST omit condition, conditionEn and
+conditionAr. Never emit more than one default branch.
 If a branch has an empty "path", it leads to the first element after the exclusive gateway.
 If the branch does not lead to the next element in the process (for example, it goes back to a previous element), specify the next element id.
 If the branch leads to the next element in the process, do not specify the next element id.
@@ -92,11 +95,13 @@ If the process description does not explicitly mention the 'else' branch or spec
             "condition": String, // condition for the branch
             "path": [], // array of elements that are executed if the condition is met (can be empty)
             "next": String, // OPTIONAL: ID of the next element if not following default sequence. Omit or set to null if following default sequence.
+            "is_default": Boolean, // OPTIONAL; false for a conditional branch
         },
         {
-            "condition": String,
+            // Default branch example — no condition or translated condition:
             "path": [],
             "next": String, // OPTIONAL: as above
+            "is_default": true,
         },
         // ... more branches
     ],
@@ -598,10 +603,11 @@ Organizational metadata — all fields OPTIONAL. Extract these ONLY when the des
 - Tasks and callActivity elements: "owner" (unit or person performing the step), "ownerRole" ("R" | "A" | "C" | "I"), "channel" ("dmthub" | "email" | "data" — the system or medium used), "channelDetail" (free text, e.g. form or template name), "cc" (array of "Name — purpose" strings — each informed party WITH the reason they are informed; always state the purpose when the description implies one, use just the name when none is stated, and never invent one), "inputs" (array: data/documents the step needs), "outputs" (array: data/documents the step produces), "respList" (array of "Name — Role" entries for everyone involved), "kind": "cc" (only for a step whose sole purpose is informing someone).
 - Exclusive/inclusive gateways and businessRuleTask elements: "decisionBasis" (the rule, policy, or criteria the decision is based on).
 - The startEvent: "trigger" (what starts the process), "triggerService" (the system/service delivering the trigger), "triggerDetail" (free text).
+- Every translatable organizational value MUST also include faithful English and Arabic counterparts. Use \`ownerEn\`/\`ownerAr\`, \`departmentEn\`/\`departmentAr\`, \`channelDetailEn\`/\`channelDetailAr\`, \`decisionBasisEn\`/\`decisionBasisAr\`, \`triggerEn\`/\`triggerAr\`, \`triggerServiceEn\`/\`triggerServiceAr\`, and \`triggerDetailEn\`/\`triggerDetailAr\`. For list fields use paired arrays: \`ccEn\`/\`ccAr\`, \`inputsEn\`/\`inputsAr\`, \`outputsEn\`/\`outputsAr\`, and \`respListEn\`/\`respListAr\`. Approved neutral codes such as R, API, SLA, and DMT HUB may be identical.
 
 Mini-examples:
 \`\`\`json
-{"type": "userTask", "id": "task1", "label": "مراجعة الطلب", "labelEn": "Review request", "labelAr": "مراجعة الطلب", "owner": "Procurement Section", "ownerRole": "R", "channel": "dmthub", "inputs": ["Purchase request form"], "outputs": ["Reviewed request"], "respList": ["Sara Al Marri — Reviewer"], "cc": ["Finance Department — budget verification"]}
+{"type": "userTask", "id": "task1", "label": "مراجعة الطلب", "labelEn": "Review request", "labelAr": "مراجعة الطلب", "owner": "قسم المشتريات", "ownerEn": "Procurement Section", "ownerAr": "قسم المشتريات", "ownerRole": "R", "ownerRoleEn": "R", "ownerRoleAr": "R", "channel": "dmthub", "inputs": ["نموذج طلب الشراء"], "inputsEn": ["Purchase request form"], "inputsAr": ["نموذج طلب الشراء"], "outputs": ["الطلب المراجع"], "outputsEn": ["Reviewed request"], "outputsAr": ["الطلب المراجع"]}
 \`\`\`
 \`\`\`json
 {"type": "exclusiveGateway", "id": "gateway1", "label": "هل الطلب مكتمل؟", "labelEn": "Request complete?", "labelAr": "هل الطلب مكتمل؟", "decisionBasis": "Procurement policy section 4", "has_join": false, "branches": [{"condition": "نعم", "conditionEn": "Yes", "conditionAr": "نعم", "path": [{"type": "userTask", "id": "task2", "label": "اعتماد الطلب", "labelEn": "Approve request", "labelAr": "اعتماد الطلب"}]}, {"condition": "لا", "conditionEn": "No", "conditionAr": "لا", "path": []}]}

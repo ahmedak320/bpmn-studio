@@ -13,9 +13,19 @@
 import { composeCreateBpmn, messageHistoryToString, type LlmMessage } from './prompts'
 import { parseJsonLoose } from './parse'
 import { validateBpmn } from './ir/validate'
-import { generateBpmnXml } from './xml'
-import { layoutBpmn } from './layout'
+import {
+  BpmnGenerationIdentityError,
+  generateBpmnXml,
+  type BpmnXmlGenerationOptions
+} from './xml'
+import { layoutBpmnValidated } from './layout'
 import type { BpmnElement } from './ir/schema'
+import {
+  canCreateGenerated,
+  validateBpmnXml,
+  type BpmnValidationAdapter,
+  type ValidationSummary
+} from '../validation'
 
 export type { LlmMessage } from './prompts'
 
@@ -36,6 +46,8 @@ export interface GenerateResult {
   semanticXml: string
   /** Semantic XML with auto-layout DI added (ready for bpmn-js importXML). */
   layoutedXml: string
+  preLayoutValidation: ValidationSummary
+  postLayoutValidation: ValidationSummary
 }
 
 export interface GenerateOptions {
@@ -48,6 +60,12 @@ export interface GenerateOptions {
    * {@link composeCreateBpmn}.
    */
   processCatalog?: Array<{ id: string; name: string }>
+  /** Stable document identity supplied by spreadsheet/import/session callers. */
+  identity?: BpmnXmlGenerationOptions
+  /** Worker-backed XSD and bpmnlint adapters when configured by the app. */
+  validationAdapters?: readonly BpmnValidationAdapter[]
+  /** Defaults to true for release generation; false is for legacy migration only. */
+  requireBilingual?: boolean
 }
 
 function errMessage(error: unknown): string {
@@ -114,6 +132,8 @@ export async function generateFromDescription(
   let attempts = 0
   let lastError: unknown = null
   let process: Record<string, unknown>[] | null = null
+  let semanticXml: string | null = null
+  let preLayoutValidation: ValidationSummary | null = null
 
   while (attempts < maxRetries) {
     attempts += 1
@@ -138,9 +158,35 @@ export async function generateFromDescription(
       const parsed = typeof raw === 'string' ? parseJsonLoose(raw) : raw
       const proc = extractProcess(parsed)
       validateBpmn(proc)
+      const candidateXml = generateBpmnXml(proc, {
+        ...options?.identity,
+        identitySeed: options?.identity?.identitySeed ?? description,
+        existingProcessIds:
+          options?.identity?.existingProcessIds ??
+          options?.processCatalog?.map((entry) => entry.id)
+      })
+      const candidateValidation = await validateBpmnXml(candidateXml, {
+        knownProcessIds: options?.processCatalog?.map((entry) => entry.id),
+        requireBilingual: options?.requireBilingual ?? true,
+        adapters: options?.validationAdapters,
+        requireDi: false
+      })
+      if (!canCreateGenerated(candidateValidation.summary)) {
+        const codes = candidateValidation.summary.issues
+          .filter((issue) => issue.blocking)
+          .slice(0, 8)
+          .map((issue) => issue.code)
+          .join(', ')
+        throw new Error(`Generated BPMN failed validation: ${codes}`)
+      }
       process = proc
+      semanticXml = candidateXml
+      preLayoutValidation = candidateValidation.summary
       break
     } catch (e) {
+      // Identity/collision configuration is caller-owned and cannot be fixed by
+      // asking the model to repeat the same process JSON.
+      if (e instanceof BpmnGenerationIdentityError) throw e
       lastError = e
       // Surface the model's own output back to it, then the correction request.
       messages.push({
@@ -151,7 +197,7 @@ export async function generateFromDescription(
     }
   }
 
-  if (!process) {
+  if (!process || !semanticXml || !preLayoutValidation) {
     let message = 'Max number of retries reached. Could not create the BPMN process.'
     if (lastError) {
       message += ` Last error: ${errMessage(lastError)}`
@@ -159,8 +205,19 @@ export async function generateFromDescription(
     throw new Error(message)
   }
 
-  const semanticXml = generateBpmnXml(process)
-  const layoutedXml = await layoutBpmn(semanticXml)
+  const layout = await layoutBpmnValidated(semanticXml, {
+    validation: {
+      knownProcessIds: options?.processCatalog?.map((entry) => entry.id),
+      requireBilingual: options?.requireBilingual ?? true,
+      adapters: options?.validationAdapters
+    }
+  })
 
-  return { ir: process as unknown as BpmnElement[], semanticXml, layoutedXml }
+  return {
+    ir: process as unknown as BpmnElement[],
+    semanticXml,
+    layoutedXml: layout.xml,
+    preLayoutValidation,
+    postLayoutValidation: layout.postLayoutValidation
+  }
 }

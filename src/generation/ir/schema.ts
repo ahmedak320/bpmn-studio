@@ -133,13 +133,33 @@ export interface BilingualLabelFields {
  */
 export interface OrgActivityFields {
   owner?: string
+  ownerEn?: string
+  ownerAr?: string
+  department?: string
+  departmentEn?: string
+  departmentAr?: string
   ownerRole?: string
+  ownerRoleEn?: string
+  ownerRoleAr?: string
   channel?: string
   channelDetail?: string
+  channelDetailEn?: string
+  channelDetailAr?: string
   cc?: string[]
+  ccEn?: string[]
+  ccAr?: string[]
   inputs?: string[]
+  inputsEn?: string[]
+  inputsAr?: string[]
   outputs?: string[]
+  outputsEn?: string[]
+  outputsAr?: string[]
   respList?: string[]
+  respListEn?: string[]
+  respListAr?: string[]
+  system?: string
+  systemEn?: string
+  systemAr?: string
   kind?: string
 }
 
@@ -149,6 +169,8 @@ export interface BpmnTask extends BilingualLabelFields, OrgActivityFields {
   label: string
   /** Decision criteria — meaningful on businessRuleTask (and emitted only there). */
   decisionBasis?: string
+  decisionBasisEn?: string
+  decisionBasisAr?: string
 }
 
 /**
@@ -177,16 +199,24 @@ export interface BpmnEvent extends BilingualLabelFields {
   eventDefinition?: EventDefinitionType
   /** What starts the process — meaningful on startEvent (and emitted only there). */
   trigger?: string
+  triggerEn?: string
+  triggerAr?: string
   /** System/service delivering the trigger — startEvent only. */
   triggerService?: string
+  triggerServiceEn?: string
+  triggerServiceAr?: string
   /** Free-text trigger detail — startEvent only. */
   triggerDetail?: string
+  triggerDetailEn?: string
+  triggerDetailAr?: string
 }
 
 export interface ExclusiveGatewayBranch {
-  condition: string
+  /** Required for non-default branches; absent on the single default branch. */
+  condition?: string | null
   path: BpmnElement[]
   next?: string | null
+  is_default?: boolean
   /** Faithful English translation of `condition` (emitted on the branch flow). */
   conditionEn?: string
   /** Faithful Arabic translation of `condition` (emitted on the branch flow). */
@@ -201,6 +231,8 @@ export interface ExclusiveGateway extends BilingualLabelFields {
   branches: ExclusiveGatewayBranch[]
   /** The rule/policy/criteria the decision is based on. */
   decisionBasis?: string
+  decisionBasisEn?: string
+  decisionBasisAr?: string
 }
 
 export interface InclusiveGatewayBranch {
@@ -222,6 +254,8 @@ export interface InclusiveGateway extends BilingualLabelFields {
   branches: InclusiveGatewayBranch[]
   /** The rule/policy/criteria the decision is based on. */
   decisionBasis?: string
+  decisionBasisEn?: string
+  decisionBasisAr?: string
 }
 
 export interface ParallelGateway {
@@ -255,13 +289,33 @@ const bilingualLabelShape = {
 /** Zod shape fragment for {@link OrgActivityFields} (lenient). */
 const orgActivityShape = {
   owner: LooseOrgString,
+  ownerEn: LooseOrgString,
+  ownerAr: LooseOrgString,
+  department: LooseOrgString,
+  departmentEn: LooseOrgString,
+  departmentAr: LooseOrgString,
   ownerRole: LooseOrgString,
+  ownerRoleEn: LooseOrgString,
+  ownerRoleAr: LooseOrgString,
   channel: LooseOrgString,
   channelDetail: LooseOrgString,
+  channelDetailEn: LooseOrgString,
+  channelDetailAr: LooseOrgString,
   cc: LooseOrgStringArray,
+  ccEn: LooseOrgStringArray,
+  ccAr: LooseOrgStringArray,
   inputs: LooseOrgStringArray,
+  inputsEn: LooseOrgStringArray,
+  inputsAr: LooseOrgStringArray,
   outputs: LooseOrgStringArray,
+  outputsEn: LooseOrgStringArray,
+  outputsAr: LooseOrgStringArray,
   respList: LooseOrgStringArray,
+  respListEn: LooseOrgStringArray,
+  respListAr: LooseOrgStringArray,
+  system: LooseOrgString,
+  systemEn: LooseOrgString,
+  systemAr: LooseOrgString,
   kind: LooseOrgString
 }
 
@@ -271,7 +325,9 @@ export const BpmnTaskSchema = z.object({
   label: z.string(),
   ...bilingualLabelShape,
   ...orgActivityShape,
-  decisionBasis: LooseOrgString
+  decisionBasis: LooseOrgString,
+  decisionBasisEn: LooseOrgString,
+  decisionBasisAr: LooseOrgString
 })
 
 export const BpmnCallActivitySchema = z.object({
@@ -291,8 +347,14 @@ export const BpmnEventSchema = z.object({
   eventDefinition: z.enum(EVENT_DEFINITION_TYPES).optional(),
   ...bilingualLabelShape,
   trigger: LooseOrgString,
+  triggerEn: LooseOrgString,
+  triggerAr: LooseOrgString,
   triggerService: LooseOrgString,
-  triggerDetail: LooseOrgString
+  triggerServiceEn: LooseOrgString,
+  triggerServiceAr: LooseOrgString,
+  triggerDetail: LooseOrgString,
+  triggerDetailEn: LooseOrgString,
+  triggerDetailAr: LooseOrgString
 })
 
 /**
@@ -312,9 +374,10 @@ export const BpmnElementSchema: z.ZodType<BpmnElement> = z.lazy(() =>
 )
 
 export const ExclusiveGatewayBranchSchema: z.ZodType<ExclusiveGatewayBranch> = z.object({
-  condition: z.string(),
+  condition: z.string().nullish(),
   path: z.array(BpmnElementSchema).default([]),
   next: z.string().nullish(),
+  is_default: z.boolean().default(false),
   conditionEn: LooseOrgString,
   conditionAr: LooseOrgString
 })
@@ -326,7 +389,9 @@ export const ExclusiveGatewaySchema: z.ZodType<ExclusiveGateway> = z.object({
   has_join: z.boolean(),
   branches: z.array(ExclusiveGatewayBranchSchema),
   ...bilingualLabelShape,
-  decisionBasis: LooseOrgString
+  decisionBasis: LooseOrgString,
+  decisionBasisEn: LooseOrgString,
+  decisionBasisAr: LooseOrgString
 })
 
 export const InclusiveGatewayBranchSchema: z.ZodType<InclusiveGatewayBranch> = z.object({
@@ -345,7 +410,9 @@ export const InclusiveGatewaySchema: z.ZodType<InclusiveGateway> = z.object({
   has_join: z.boolean(),
   branches: z.array(InclusiveGatewayBranchSchema),
   ...bilingualLabelShape,
-  decisionBasis: LooseOrgString
+  decisionBasis: LooseOrgString,
+  decisionBasisEn: LooseOrgString,
+  decisionBasisAr: LooseOrgString
 })
 
 export const ParallelGatewaySchema: z.ZodType<ParallelGateway> = z.object({

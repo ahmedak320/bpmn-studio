@@ -9,8 +9,9 @@
  * top-level step is the transformer smoke test (validation fails if the IR
  * cannot be flattened, e.g. an empty parallel branch).
  *
- * Note (faithful quirk): id uniqueness is checked PER LEVEL (a fresh `seenIds`
- * per recursive call), exactly like the Python original — not globally.
+ * IDs are validated globally across the complete recursive IR. This deliberately
+ * fixes the old per-level check, which allowed a top-level element and a nested
+ * branch element to serialize with the same XML ID.
  *
  * Org-metadata leniency: the bilingual/org fields (labelEn/labelAr,
  * conditionEn/conditionAr, owner, cc, decisionBasis, trigger, …) are declared
@@ -26,6 +27,7 @@ import {
   EVENT_TYPES,
   BpmnTaskSchema,
   BpmnCallActivitySchema,
+  BpmnEventSchema,
   ExclusiveGatewaySchema,
   InclusiveGatewaySchema,
   ParallelGatewaySchema
@@ -43,6 +45,7 @@ const SUPPORTED_ELEMENTS: string[] = [
   ...EVENT_TYPES
 ]
 const TASK_TYPE_SET: ReadonlySet<string> = new Set(TASK_TYPES)
+const NCNAME = /^[\p{L}_][\p{L}\p{N}_.\-\u00B7\u0300-\u036F\u203F-\u2040]*$/u
 
 function j(element: unknown): string {
   return JSON.stringify(element)
@@ -54,37 +57,91 @@ function j(element: unknown): string {
  * @param isTopLevel  whether this is the top-level process (not a branch).
  */
 export function validateBpmn(process: readonly IRElement[], isTopLevel = true): void {
+  if (!Array.isArray(process)) {
+    throw new Error('BPMN process must be an array')
+  }
+
   const seenIds = new Set<string>()
+  const referencedNextIds: Array<{ gatewayId: string; next: string }> = []
   let startEventCount = 0
 
-  for (const element of process) {
-    validateElement(element)
+  const walk = (
+    level: readonly IRElement[],
+    topLevel: boolean,
+    parentContinuation: boolean
+  ): void => {
+    for (let index = 0; index < level.length; index += 1) {
+      const element = level[index]
+      validateElement(element)
 
-    if (seenIds.has(element.id)) {
-      throw new Error(`Duplicate element ID found: ${element.id}`)
-    }
-    seenIds.add(element.id)
-
-    if (isTopLevel && element.type === 'startEvent') {
-      startEventCount += 1
-    }
-
-    if (element.type === 'exclusiveGateway') {
-      for (const branch of element.branches) {
-        validateBpmn(branch.path, false)
+      if (typeof element.id !== 'string' || !NCNAME.test(element.id)) {
+        throw new Error(`Invalid element ID '${String(element.id)}': expected an XML NCName`)
       }
-    }
-    if (element.type === 'inclusiveGateway') {
-      for (const branch of element.branches) {
-        validateBpmn(branch.path, false)
+      if (seenIds.has(element.id)) {
+        throw new Error(`Duplicate element ID found: ${element.id}`)
       }
-    }
-    if (element.type === 'parallelGateway') {
-      for (const branch of element.branches) {
-        validateBpmn(branch, false)
+      seenIds.add(element.id)
+
+      if (topLevel && element.type === 'startEvent') {
+        startEventCount += 1
+      }
+
+      if (element.type === 'exclusiveGateway' || element.type === 'inclusiveGateway') {
+        let defaultCount = 0
+        const hasImplicitContinuation =
+          element.has_join === true ||
+          index < level.length - 1 ||
+          parentContinuation
+        for (const branch of element.branches) {
+          const isDefault = branch.is_default === true
+          const condition =
+            typeof branch.condition === 'string' ? branch.condition.trim() : ''
+          if (isDefault) {
+            defaultCount += 1
+            if (condition.length > 0) {
+              throw new Error(
+                `Default branch in gateway '${element.id}' must not have a condition`
+              )
+            }
+            if (coercedBranchTranslation(branch.conditionEn) || coercedBranchTranslation(branch.conditionAr)) {
+              throw new Error(
+                `Default branch in gateway '${element.id}' must not have translated conditions`
+              )
+            }
+          } else if (condition.length === 0) {
+            throw new Error(
+              `Non-default branch in gateway '${element.id}' must have a condition`
+            )
+          }
+          if (typeof branch.next === 'string' && branch.next.length > 0) {
+            referencedNextIds.push({ gatewayId: element.id, next: branch.next })
+          }
+          if (
+            branch.path.length === 0 &&
+            !(typeof branch.next === 'string' && branch.next.length > 0) &&
+            !hasImplicitContinuation
+          ) {
+            throw new Error(
+              `Empty branch in gateway '${element.id}' has no continuation target`
+            )
+          }
+          walk(
+            branch.path,
+            false,
+            Boolean(branch.next) || hasImplicitContinuation
+          )
+        }
+        if (defaultCount > 1) {
+          throw new Error(`Gateway '${element.id}' may have at most one default branch`)
+        }
+      } else if (element.type === 'parallelGateway') {
+        for (const branch of element.branches) {
+          walk(branch, false, true)
+        }
       }
     }
   }
+  walk(process, isTopLevel, false)
 
   if (isTopLevel && startEventCount !== 1) {
     throw new Error(`Process must contain exactly one start event, found ${startEventCount}`)
@@ -92,10 +149,21 @@ export function validateBpmn(process: readonly IRElement[], isTopLevel = true): 
   if (isTopLevel && !processHasEndEvent(process)) {
     throw new Error('Process must contain at least one end event')
   }
+  for (const reference of referencedNextIds) {
+    if (!seenIds.has(reference.next)) {
+      throw new Error(
+        `Gateway '${reference.gatewayId}' references unknown next element '${reference.next}'`
+      )
+    }
+  }
   if (isTopLevel) {
     // Ensure the process can be transformed into BPMN XML (smoke test).
     transform(process)
   }
+}
+
+function coercedBranchTranslation(value: unknown): string {
+  return typeof value === 'string' ? value.trim() : ''
 }
 
 /** Validate a single BPMN element. */
@@ -125,8 +193,9 @@ export function validateElement(element: IRElement): void {
     validateInclusiveGateway(element)
   } else if (element.type === 'parallelGateway') {
     validateParallelGateway(element)
+  } else if (!BpmnEventSchema.safeParse(element).success) {
+    throw new Error(`Invalid event element: ${j(element)}`)
   }
-  // Events carry no further structural validation (matching Python).
 }
 
 function validateTask(element: IRElement): void {
@@ -160,7 +229,7 @@ function validateExclusiveGateway(element: IRElement): void {
   }
   const branchPaths: unknown[][] = []
   for (const branch of element.branches) {
-    if (!('condition' in branch) || !('path' in branch)) {
+    if (!('path' in branch)) {
       throw new Error(`Invalid branch in exclusive gateway: ${j(branch)}`)
     }
     if (!Array.isArray(branch.path)) {
@@ -169,10 +238,8 @@ function validateExclusiveGateway(element: IRElement): void {
     branchPaths.push(branch.path)
   }
 
-  if (branchPaths.length > 0 && branchPaths.every((path) => path.length === 0)) {
-    throw new Error(
-      'Exclusive gateway must have at least one branch with elements; all branch paths are empty.'
-    )
+  if (branchPaths.length < 2) {
+    throw new Error('Exclusive gateway must have at least two branches.')
   }
 
   if (!ExclusiveGatewaySchema.safeParse(element).success) {
@@ -197,6 +264,9 @@ function validateInclusiveGateway(element: IRElement): void {
       )
     }
   }
+  if (element.branches.length < 2) {
+    throw new Error('Inclusive gateway must have at least two branches.')
+  }
 
   if (!InclusiveGatewaySchema.safeParse(element).success) {
     throw new Error(`Invalid inclusive gateway element: ${j(element)}`)
@@ -209,6 +279,12 @@ function validateParallelGateway(element: IRElement): void {
   }
   if (!ParallelGatewaySchema.safeParse(element).success) {
     throw new Error(`Invalid parallel gateway element: ${j(element)}`)
+  }
+  if (element.branches.length < 2) {
+    throw new Error('Parallel gateway must have at least two branches.')
+  }
+  if (element.branches.some((branch: unknown[]) => branch.length === 0)) {
+    throw new Error(`Parallel gateway '${element.id}' cannot have an empty branch.`)
   }
 }
 

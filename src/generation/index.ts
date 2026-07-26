@@ -11,8 +11,23 @@ export {
   type TransformedElement,
   type TransformedFlow
 } from './transform'
-export { generateBpmnXml, BpmnXmlGenerator, arabicRatio, detectActiveLang } from './xml'
-export { layoutBpmn } from './layout'
+export {
+  generateBpmnXml,
+  deriveGenerationIdentity,
+  BpmnGenerationIdentityError,
+  BpmnXmlGenerator,
+  arabicRatio,
+  detectActiveLang,
+  type BpmnXmlGenerationOptions,
+  type BpmnGenerationIdentity
+} from './xml'
+export {
+  layoutBpmn,
+  layoutBpmnValidated,
+  BpmnLayoutValidationError,
+  type LayoutBpmnOptions,
+  type ValidatedLayoutResult
+} from './layout'
 export { parseJsonLoose } from './parse'
 export {
   BPMN_REPRESENTATION,
