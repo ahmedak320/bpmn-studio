@@ -37,7 +37,8 @@ const fake = vi.hoisted(() => ({
   destroyed: false,
   validationSummary: null as ValidationSummary | null,
   preservationSummary: null as ValidationSummary | null,
-  lang: 'en' as 'en' | 'ar'
+  lang: 'en' as 'en' | 'ar',
+  modelerInstances: 0
 }))
 
 const mocks = vi.hoisted(() => ({
@@ -45,6 +46,8 @@ const mocks = vi.hoisted(() => ({
   scrollToElement: vi.fn(),
   selectionSelect: vi.fn(),
   modelingUpdate: vi.fn(),
+  i18nChanged: vi.fn(),
+  modelerConstructed: vi.fn(),
   modelerReady: vi.fn(),
   triggerDownload: vi.fn(),
   validateBpmnXml: vi.fn(),
@@ -58,6 +61,7 @@ const mocks = vi.hoisted(() => ({
 }))
 
 vi.mock('../../i18n', () => ({
+  getLang: (): 'en' | 'ar' => fake.lang,
   t: (key: string): string => key
 }))
 
@@ -165,8 +169,16 @@ vi.mock('bpmn-js/lib/Modeler', () => ({
       }
     }
 
-    constructor() {
+    private readonly i18n = {
+      changed: (): void => {
+        mocks.i18nChanged()
+      }
+    }
+
+    constructor(options: unknown) {
       fake.destroyed = false
+      fake.modelerInstances += 1
+      mocks.modelerConstructed(options)
     }
 
     async importXML(xml: string): Promise<{ warnings: string[] }> {
@@ -199,6 +211,8 @@ vi.mock('bpmn-js/lib/Modeler', () => ({
           return this.selection
         case 'modeling':
           return this.modeling
+        case 'i18n':
+          return this.i18n
         default:
           throw new Error(`Unknown service ${name}`)
       }
@@ -469,10 +483,13 @@ beforeEach(() => {
   fake.validationSummary = validSummary
   fake.preservationSummary = validSummary
   fake.lang = 'en'
+  fake.modelerInstances = 0
   mocks.zoom.mockReset()
   mocks.scrollToElement.mockReset()
   mocks.selectionSelect.mockReset()
   mocks.modelingUpdate.mockReset()
+  mocks.i18nChanged.mockReset()
+  mocks.modelerConstructed.mockReset()
   mocks.modelerReady.mockReset()
   mocks.triggerDownload.mockReset()
   mocks.validateBpmnXml.mockReset().mockImplementation(async () => ({
@@ -521,6 +538,45 @@ afterEach(() => {
 })
 
 describe('EditorTab browser integration', () => {
+  it('refreshes embedded controls on language changes without recreating or editing the modeler', async () => {
+    const onDirtyChange = vi.fn()
+    const onRequestSave = vi.fn().mockResolvedValue(undefined)
+    const { rerender } = renderEditor({ onDirtyChange, onRequestSave })
+
+    await waitFor(() => expect(mocks.i18nChanged).toHaveBeenCalledOnce())
+    expect(fake.modelerInstances).toBe(1)
+    expect(fake.stackIndex).toBe(0)
+    expect(mocks.modelingUpdate).not.toHaveBeenCalled()
+    expect(mocks.modelerConstructed).toHaveBeenCalledWith(
+      expect.objectContaining({
+        additionalModules: expect.arrayContaining([
+          expect.objectContaining({
+            translate: expect.any(Array),
+            orbitpmEmbeddedDiagramControls: expect.any(Array)
+          })
+        ])
+      })
+    )
+
+    fake.lang = 'ar'
+    rerender(
+      <EditorTab
+        xml='<definitions id="original" />'
+        onDirtyChange={onDirtyChange}
+        onRequestSave={onRequestSave}
+        knownProcessIds={['leave']}
+        exportFileBaseName="leave-process"
+      />
+    )
+
+    await waitFor(() => expect(mocks.i18nChanged).toHaveBeenCalledTimes(2))
+    expect(fake.modelerInstances).toBe(1)
+    expect(fake.destroyed).toBe(false)
+    expect(fake.stackIndex).toBe(0)
+    expect(mocks.modelingUpdate).not.toHaveBeenCalled()
+    expect(onDirtyChange).not.toHaveBeenCalledWith(true)
+  })
+
   it('mounts the modeler, scopes dirty events, badges, double-clicks, and zoom commands', async () => {
     const user = userEvent.setup()
     const onDirtyChange = vi.fn()

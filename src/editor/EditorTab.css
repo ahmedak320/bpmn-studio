@@ -222,6 +222,31 @@
   background-color: var(--orbitpm-editor-canvas-bg);
 }
 
+/* diagram-js renders palette commands as non-semantic divs. The editor's
+   final palette provider emits real buttons while retaining the upstream
+   .entry classes and delegated click/drag behavior; neutralize only native
+   button chrome so the stock BPMN icon sizing remains unchanged. */
+.orbitpm-editor__canvas .djs-palette button.entry {
+  appearance: none;
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+}
+
+.orbitpm-editor__canvas .djs-palette button.entry:focus-visible,
+.orbitpm-editor__canvas .djs-palette-toggle[role='button']:focus-visible,
+.orbitpm-editor__canvas .djs-minimap .toggle[role='button']:focus-visible {
+  outline: 3px solid var(--orbitpm-editor-accent);
+  outline-offset: -3px;
+}
+
+.orbitpm-editor__canvas .djs-palette-toggle[role='button'],
+.orbitpm-editor__canvas .djs-minimap .toggle[role='button'] {
+  cursor: pointer;
+}
+
 .orbitpm-editor__properties {
   flex: 0 0 300px;
   min-width: 240px;

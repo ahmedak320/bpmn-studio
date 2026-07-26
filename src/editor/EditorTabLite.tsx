@@ -84,6 +84,7 @@ import { layoutBpmnValidated } from '../generation/layout'
 import { ProcessOutlineEditor } from './ProcessOutlineEditor'
 import { processOutlineMessages } from './processOutlineMessages'
 import type { ProcessOutlineModeler } from './processOutline'
+import { EmbeddedDiagramControlsModule } from './embeddedDiagramControls'
 
 export interface EditorTabProps {
   xml: string
@@ -169,6 +170,7 @@ interface BpmnModelerLike {
   get(name: 'elementRegistry'): ElementRegistryLike
   get(name: 'selection'): SelectionApiLike
   get(name: 'modeling'): ModelingApiLike
+  get(name: 'i18n'): { changed(): void }
   destroy(): void
   attachTo(container: HTMLElement): void
 }
@@ -565,7 +567,8 @@ export function EditorTab(props: EditorTabProps): JSX.Element {
         OrgRenderModule,
         ConnectedEdgeHighlightModule,
         ModelingBatchModule,
-        BpmnLintModule
+        BpmnLintModule,
+        EmbeddedDiagramControlsModule
       ]
     }) as unknown as BpmnModelerLike
 
@@ -665,12 +668,14 @@ export function EditorTab(props: EditorTabProps): JSX.Element {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
-  // Canvas org decorations draw localized titles (Inputs/CC/…) at paint time —
-  // repaint every shape when the UI language flips so the canvas text follows
-  // immediately (the modeler survives language changes; only decor re-renders).
+  // The modeler survives language changes. Ask diagram-js controls to rebuild
+  // their translated labels, then repaint the OrbitPM canvas decorations that
+  // also resolve localized text at draw time.
   useEffect(() => {
     const m = modelerRef.current
-    if (m) refreshOrgStyling(m as never)
+    if (!m) return
+    m.get('i18n').changed()
+    refreshOrgStyling(m as never)
   }, [lang])
 
   useEffect(() => {
