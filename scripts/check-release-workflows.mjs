@@ -290,7 +290,7 @@ if (
 }
 requireText(
   finalAuthority,
-  /environment:[\s\S]*name: release-finalize-authority-v0\.4\.5[\s\S]*contents: read[\s\S]*Checkout exact candidate after approval[\s\S]*orbitpm-finalization-publication-authority/u,
+  /environment:[\s\S]*name: release-finalize-authority-v0\.4\.5[\s\S]*contents: write[^\n]*# drafts require push-level visibility to read[\s\S]*Checkout exact candidate after approval[\s\S]*orbitpm-finalization-publication-authority/u,
   'post-approval repo-code authority must use the separate zero-secret protected environment'
 )
 requireText(

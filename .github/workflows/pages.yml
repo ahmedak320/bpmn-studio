@@ -59,7 +59,7 @@ jobs:
     timeout-minutes: 15
     permissions:
       actions: read
-      contents: read
+      contents: write # drafts require push-level visibility to read
     steps:
       - name: Checkout exact candidate history
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
@@ -245,7 +245,7 @@ jobs:
       pages-artifact-id: ${{ steps.upload-pages.outputs.artifact-id }}
     permissions:
       actions: read
-      contents: read
+      contents: write # drafts require push-level visibility to read
     steps:
       - name: Checkout exact approved tag commit
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
@@ -421,7 +421,7 @@ jobs:
       release-projection-sha256: ${{ steps.release-authority.outputs.release-projection-sha256 }}
     permissions:
       actions: read
-      contents: read
+      contents: write # drafts require push-level visibility to read
     steps:
       - name: Download clean-tag release authority from the successful release run
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
@@ -805,7 +805,7 @@ jobs:
       cancel-in-progress: false
     permissions:
       actions: read
-      contents: read
+      contents: write # drafts require push-level visibility to read
       id-token: write
       pages: write
     environment:
@@ -936,7 +936,7 @@ jobs:
     timeout-minutes: 35
     permissions:
       actions: read
-      contents: read
+      contents: write # drafts require push-level visibility to read
     steps:
       - name: Checkout exact approved candidate for read-only evidence
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262

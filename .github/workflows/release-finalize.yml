@@ -59,7 +59,7 @@ jobs:
     timeout-minutes: 25
     permissions:
       actions: read
-      contents: read
+      contents: write # drafts require push-level visibility to read
     steps:
       - name: Checkout exact candidate
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
@@ -313,7 +313,7 @@ jobs:
       authority-artifact-id: ${{ steps.upload-authority.outputs.artifact-id }}
     permissions:
       actions: read
-      contents: read
+      contents: write # drafts require push-level visibility to read
     steps:
       - name: Require finalization approval policy
         env:
@@ -901,7 +901,7 @@ jobs:
     timeout-minutes: 25
     permissions:
       actions: read
-      contents: read
+      contents: write # drafts require push-level visibility to read
     steps:
       - name: Checkout exact stable candidate
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
