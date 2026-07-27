@@ -537,9 +537,10 @@ jobs:
               gh api "repos/$GITHUB_REPOSITORY/releases/assets/$asset_id" \
                 --method DELETE
             done
-          gh api "repos/$GITHUB_REPOSITORY/releases?per_page=100" |
-            jq --arg tag v0.4.5 '[.[] | select(.tag_name == $tag)] | .[0]' > draft-release.json
-          test "$(jq -r .tag_name draft-release.json)" = "v0.4.5"
+          # Re-read through the release ID from the create/get response:
+          # drafts are invisible to tag/list lookups under some tokens.
+          gh api "repos/$GITHUB_REPOSITORY/releases/$release_id" > draft-release.json
+          test "$(jq -r .id draft-release.json)" = "$release_id"
           for name in \
             LICENSE \
             OrbitPM-Excel-Example-0.4.5.xlsx \
@@ -556,9 +557,8 @@ jobs:
               gh release upload v0.4.5 "release/$name"
             fi
           done
-          gh api "repos/$GITHUB_REPOSITORY/releases?per_page=100" |
-            jq --arg tag v0.4.5 '[.[] | select(.tag_name == $tag)] | .[0]' > draft-release.json
-          test "$(jq -r .tag_name draft-release.json)" = "v0.4.5"
+          gh api "repos/$GITHUB_REPOSITORY/releases/$release_id" > draft-release.json
+          test "$(jq -r .id draft-release.json)" = "$release_id"
           jq -e \
             --arg candidate "$CANDIDATE_SHA" \
             --rawfile notes "$notes" \
@@ -629,7 +629,7 @@ jobs:
     timeout-minutes: 30
     permissions:
       actions: read
-      contents: read
+      contents: write # drafts require push-level visibility to read
     steps:
       - name: Checkout the actual annotated release tag
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
