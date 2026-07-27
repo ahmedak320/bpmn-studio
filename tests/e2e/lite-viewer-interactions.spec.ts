@@ -332,7 +332,20 @@ test('highlight layer wins shared-segment paint order, repaints on reroute, swit
   )
   const otherFlow = await createRoutedConnection(page, otherSource, otherTarget, sharedSegment)
 
-  await shapeHit(page, selectedSource).click()
+  // fit-viewport does not account for the open palette; with different font
+  // metrics a left-edge shape can land underneath it. Scroll the target into
+  // the clear viewport area before every click instead of forcing anything.
+  const clickShape = async (elementId: string): Promise<void> => {
+    await page.evaluate((id) => {
+      const modeler = (window as unknown as HookWindow).__ORBITPM_LITE__.modeler
+      const registry = modeler.get('elementRegistry') as { get(id: string): unknown }
+      const canvas = modeler.get('canvas') as { scrollToElement(element: unknown): void }
+      canvas.scrollToElement(registry.get(id))
+    }, elementId)
+    await shapeHit(page, elementId).click()
+  }
+
+  await clickShape(selectedSource)
   await expect.poll(() => highlightedEdgeIds(page)).toEqual([selectedFlow])
 
   const highlightedPath = page.locator(
@@ -374,12 +387,12 @@ test('highlight layer wins shared-segment paint order, repaints on reroute, swit
   // Switching to another activity removes the stale wrapper before painting
   // that activity's edge. Switching to a gateway is an invalid selection and
   // clears the layer entirely.
-  await shapeHit(page, otherSource).click()
+  await clickShape(otherSource)
   await expect.poll(() => highlightedEdgeIds(page)).toEqual([otherFlow])
-  await shapeHit(page, nonActivity).click()
+  await clickShape(nonActivity)
   await expect(page.locator(`${HIGHLIGHT_LAYER} > ${HIGHLIGHT}`)).toHaveCount(0)
 
-  await shapeHit(page, selectedSource).click()
+  await clickShape(selectedSource)
   await expect.poll(() => highlightedEdgeIds(page)).toEqual([selectedFlow])
   await clickCanvasBackground(page)
   await expect(page.locator(`${HIGHLIGHT_LAYER} > ${HIGHLIGHT}`)).toHaveCount(0)

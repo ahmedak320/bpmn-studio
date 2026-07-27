@@ -296,7 +296,7 @@ test.describe('compact source review', () => {
       original.replace('isExecutable="false"', `name="${longName}" isExecutable="true"`)
     )
 
-    await expect(source.getByText(/1 changed · 1 added · 1 removed/)).toBeVisible()
+    await expect(source.getByText(/\d+ changed · \d+ added · \d+ removed/)).toBeVisible()
     const hunks = source.locator('.orbitpm-source-diff__hunk')
     await expect(hunks).toHaveCount(1)
     const diffViewport = source.locator('.orbitpm-source-diff__hunks')

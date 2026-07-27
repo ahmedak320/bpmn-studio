@@ -1802,13 +1802,17 @@ test('mandatory spreadsheet X3/X10: a complex official workbook commits folders,
   await expect(page.locator('.djs-element[data-element-id="Task_child_review"]')).toBeVisible()
   await page.getByRole('button', { name: /EN⇄AR/ }).click()
   // The switch audits workspace localization and projects Arabic labels
-  // asynchronously; give the projection the same bound this file uses for its
-  // other worker-backed renders.
-  await expect(
-    page.locator('.djs-element[data-element-id="Task_child_review"] .djs-label', {
-      hasText: 'التحقق من قواعد الجودة'
+  // asynchronously. Label lines wrap with the host's font metrics, so compare
+  // the text with whitespace collapsed instead of an exact spaced string.
+  const childReviewLabel = page.locator(
+    '.djs-element[data-element-id="Task_child_review"] .djs-label'
+  )
+  await expect(childReviewLabel).toBeVisible({ timeout: 20_000 })
+  await expect
+    .poll(async () => (await childReviewLabel.textContent())?.replace(/\s+/g, '') ?? '', {
+      timeout: 20_000
     })
-  ).toBeVisible({ timeout: 20_000 })
+    .toContain('التحقق من قواعد الجودة'.replace(/\s+/g, ''))
 
   const [reportDownload] = await Promise.all([
     page.waitForEvent('download'),
@@ -2074,13 +2078,15 @@ test('mandatory spreadsheet X6: RFC-4180 quoted multiline Arabic CSV survives wo
   await sourceDialog.getByRole('button', { name: 'Close', exact: true }).last().click()
   await page.getByRole('button', { name: /EN⇄AR/ }).click()
   // The switch audits workspace localization and projects Arabic labels
-  // asynchronously; give the projection the same bound this file uses for its
-  // other worker-backed renders.
-  await expect(
-    page.locator('.djs-element[data-element-id="Task_csv"] .djs-label', {
-      hasText: 'مراجعة الطلب'
+  // asynchronously. Label lines wrap with the host's font metrics, so compare
+  // the text with whitespace collapsed instead of an exact spaced string.
+  const csvLabel = page.locator('.djs-element[data-element-id="Task_csv"] .djs-label')
+  await expect(csvLabel).toBeVisible({ timeout: 20_000 })
+  await expect
+    .poll(async () => (await csvLabel.textContent())?.replace(/\s+/g, '') ?? '', {
+      timeout: 20_000
     })
-  ).toBeVisible({ timeout: 20_000 })
+    .toContain('مراجعة الطلب'.replace(/\s+/g, ''))
 })
 
 test('mandatory spreadsheet X7: formula cells with and without cached displayed values are distinguished in the browser', async ({
