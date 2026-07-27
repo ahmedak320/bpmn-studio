@@ -93,8 +93,8 @@ source bytes. Library ZIP, DOCX, spreadsheet, and backup pickers likewise check
 - Semantic blockers require explicit draft-save confirmation; generated and
   imported output cannot be committed with blocking findings.
 - Missing DI can be laid out only after an explicit repair decision and exact
-  output revalidation. The required rendered before/after visual preview is
-  still a release blocker.
+  output revalidation. The sealed repaired XML is then rendered in a read-only
+  BPMN preview and must be approved before the import transaction can write it.
 - Unknown extension content is compared before normalized XML replaces the
   source. A preservation failure blocks the replacement.
 - English/Arabic validity is script-aware. A nonblank target is not considered

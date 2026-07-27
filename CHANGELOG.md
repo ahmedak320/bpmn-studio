@@ -93,8 +93,9 @@ compatibility contract.
   the warned in-memory fallback does not survive reload.
 - Single-file mode is a minimal open/edit/download workflow without portable
   history, multi-file backup, manifest, or public workspace glossary/TM files.
-- The required rendered before/after preview for missing-DI auto-layout is not
-  complete.
+- Missing-DI repair now presents the sealed, revalidated auto-layout result in
+  a read-only BPMN preview before approval; final exact-artifact acceptance
+  evidence remains pending.
 - Final browser/version, automated accessibility, manual assistive technology,
   uninterrupted 48-hour soak, tag, release, and Pages evidence remain pending.
 

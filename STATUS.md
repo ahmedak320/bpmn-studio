@@ -59,9 +59,10 @@ documentation commit and later on the release tag.
 1. The full format/lint/policy suite, fresh build, exact artifact assembly and
    reproducibility, complete Chromium/Firefox/WebKit matrix, and final automated
    accessibility matrix must be rerun from the final candidate commit.
-2. Missing-DI ingestion still needs the required rendered before/after
-   auto-layout preview; a reviewed textual repair decision and revalidation are
-   not sufficient final evidence for that visual acceptance gate.
+2. Missing-DI ingestion now renders the sealed, revalidated auto-layout result
+   in a read-only BPMN preview before the user can approve any write. The final
+   candidate still needs the ordinary exact-artifact acceptance rerun for this
+   path.
 3. Exact current browser versions and operating systems must be recorded for
    the final Pages/file smoke. Previous-major compatibility has not been
    evidenced and is not currently claimed.
