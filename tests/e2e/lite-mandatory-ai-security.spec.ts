@@ -231,6 +231,18 @@ async function openFallbackApp(page: Page): Promise<void> {
   await waitForModeler(page)
 }
 
+async function enterFreshFallbackApp(page: Page, processName: string): Promise<void> {
+  await page
+    .getByRole('button', { name: /New process/i })
+    .first()
+    .click()
+  const dialog = page.getByRole('dialog', { name: /New Process/i })
+  await expect(dialog).toBeVisible()
+  await dialog.getByRole('textbox').fill(processName)
+  await dialog.getByRole('button', { name: 'Create', exact: true }).click()
+  await waitForModeler(page)
+}
+
 async function openDirectoryApp(page: Page): Promise<void> {
   await gotoLanding(page)
   await page.getByRole('button', { name: 'Choose folder workspace' }).click()
@@ -453,10 +465,7 @@ test('mandatory AI credentials: session-only keys never enter storage and disapp
 
   await page.reload({ waitUntil: 'load' })
   await expect(page.getByRole('heading', { name: 'OrbitPM Process Studio Lite' })).toBeVisible()
-  await page.getByRole('button', { name: 'Open browser workspace' }).click()
-  await expect(page.getByRole('heading', { name: 'Process catalog' })).toBeVisible({
-    timeout: 25_000
-  })
+  await enterFreshFallbackApp(page, 'Session credential reload')
 
   const dialog = await openSettings(page)
   await expect(dialog.getByLabel('OpenRouter API key')).toHaveAttribute(
@@ -512,10 +521,7 @@ test('mandatory AI credentials: AES-GCM persistence requires the passphrase and 
 
   await page.reload({ waitUntil: 'load' })
   await expect(page.getByRole('heading', { name: 'OrbitPM Process Studio Lite' })).toBeVisible()
-  await page.getByRole('button', { name: 'Open browser workspace' }).click()
-  await expect(page.getByRole('heading', { name: 'Process catalog' })).toBeVisible({
-    timeout: 25_000
-  })
+  await enterFreshFallbackApp(page, 'Encrypted credential reload')
   dialog = await openSettings(page)
   const keyInput = dialog.getByLabel('OpenRouter API key')
   await expect(keyInput).toHaveAttribute(
