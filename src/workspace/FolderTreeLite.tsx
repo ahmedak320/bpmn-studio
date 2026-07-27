@@ -561,6 +561,8 @@ function PhysicalLevel({
             display: 'flex',
             contentVisibility: 'auto',
             containIntrinsicSize: '28px',
+            boxSizing: 'border-box',
+            minHeight: 28,
             alignItems: 'center',
             gap: 6,
             padding: '3px 6px',
@@ -585,8 +587,13 @@ function PhysicalLevel({
           <span
             style={{
               opacity: 0.6,
-              width: 12,
-              display: 'inline-block',
+              width: 24,
+              minWidth: 24,
+              minHeight: 24,
+              marginInline: -6,
+              display: 'inline-flex',
+              alignItems: 'center',
+              justifyContent: 'center',
               flex: '0 0 auto',
               cursor: hasChildren ? 'pointer' : undefined
             }}
@@ -770,6 +777,8 @@ function ReferenceRow({
           display: 'flex',
           contentVisibility: 'auto',
           containIntrinsicSize: '28px',
+          boxSizing: 'border-box',
+          minHeight: 28,
           alignItems: 'center',
           gap: 6,
           padding: '3px 6px',
@@ -790,8 +799,13 @@ function ReferenceRow({
         <span
           style={{
             opacity: 0.6,
-            width: 12,
-            display: 'inline-block',
+            width: 24,
+            minWidth: 24,
+            minHeight: 24,
+            marginInline: -6,
+            display: 'inline-flex',
+            alignItems: 'center',
+            justifyContent: 'center',
             flex: '0 0 auto',
             cursor: row.expandable ? 'pointer' : undefined
           }}
@@ -969,8 +983,9 @@ function ActionIcon({
         cursor: 'pointer',
         fontSize: 12,
         lineHeight: 1,
-        minWidth: 24,
-        minHeight: 24,
+        boxSizing: 'border-box',
+        width: 28,
+        height: 28,
         padding: 2,
         borderRadius: 4,
         color: danger ? 'var(--orbitpm-fg)' : 'inherit',

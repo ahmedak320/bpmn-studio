@@ -23,9 +23,17 @@
 // supplies the digests (memoized), an open-a-process callback, the interview
 // target accessors, and the open/close wiring.
 
-import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties } from 'react'
+import {
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type CSSProperties,
+  type KeyboardEvent as ReactKeyboardEvent
+} from 'react'
 import { t, getLang } from '../i18n'
 import { useLang } from '../i18n/useLang'
+import { AccessibleDialog } from '../common/AccessibleDialog'
 import {
   composeCreateBpmn,
   generateFromDescription,
@@ -242,6 +250,7 @@ export function AssistantDrawer({
   onApplyXml
 }: AssistantDrawerProps): JSX.Element | null {
   useLang()
+  const direction = getLang() === 'ar' ? 'rtl' : 'ltr'
   const [tab, setTab] = useState<DrawerTab>('library')
   const [messages, setMessages] = useState<Message[]>([])
   const [ivMessages, setIvMessages] = useState<Message[]>([])
@@ -256,10 +265,16 @@ export function AssistantDrawer({
   const [externalConsent, setExternalConsent] = useState<ExternalRequestConsent | null>(null)
   const [attemptStatus, setAttemptStatus] = useState<string | null>(null)
   const listRef = useRef<HTMLDivElement | null>(null)
+  const launcherRef = useRef<HTMLButtonElement | null>(null)
+  const returnFocusTargetRef = useRef<HTMLElement | null>(null)
+  const closeButtonRef = useRef<HTMLButtonElement | null>(null)
+  const libraryTabRef = useRef<HTMLButtonElement | null>(null)
+  const interviewTabRef = useRef<HTMLButtonElement | null>(null)
   const sessionRef = useRef<InterviewSession>(freshSession())
   const lastRequestTokenRef = useRef<number | null>(null)
   const externalRequestTokenRef = useRef(0)
   const externalAbortRef = useRef<AbortController | null>(null)
+  const wasOpenRef = useRef(false)
 
   // The prop rerender already invalidates this read; no provider-order fallback
   // or memoized stale credential is retained.
@@ -339,22 +354,21 @@ export function AssistantDrawer({
     setIvBusy(false)
   }
 
-  // Escape and a parent-driven close invalidate preparation, generation, and
-  // apply work, not merely the visible consent card.
-  useEffect(() => {
-    if (!open) return
-    const onKey = (event: KeyboardEvent): void => {
-      if (event.key !== 'Escape') return
-      event.preventDefault()
-      cancelExternal()
-      onClose()
-    }
-    window.addEventListener('keydown', onKey)
-    return () => window.removeEventListener('keydown', onKey)
-  }, [open, onClose])
-
+  // Capture the real opener before the modal's passive focus effect runs.
+  // This may be the floating launcher or an external "continue in chat" CTA.
   useClientLayoutEffect(() => {
-    if (open) return
+    const wasOpen = wasOpenRef.current
+    wasOpenRef.current = open
+    if (open) {
+      if (!wasOpen) {
+        const active = document.activeElement
+        returnFocusTargetRef.current =
+          active instanceof HTMLElement && active !== document.body && active.isConnected
+            ? active
+            : launcherRef.current
+      }
+      return
+    }
     cancelExternal()
   }, [open])
 
@@ -841,6 +855,33 @@ export function AssistantDrawer({
     }
   }
 
+  const handleTabKeyDown = (event: ReactKeyboardEvent<HTMLButtonElement>): void => {
+    let next: DrawerTab | null = null
+    if (event.key === 'ArrowRight' || event.key === 'ArrowLeft') {
+      const index = DRAWER_TAB_ORDER.indexOf(tab)
+      const towardDomEnd =
+        (event.key === 'ArrowRight' && direction === 'ltr') ||
+        (event.key === 'ArrowLeft' && direction === 'rtl')
+      const offset = towardDomEnd ? 1 : -1
+      next =
+        DRAWER_TAB_ORDER[(index + offset + DRAWER_TAB_ORDER.length) % DRAWER_TAB_ORDER.length] ??
+        null
+    }
+    if (event.key === 'End') next = 'interview'
+    if (event.key === 'Home') next = 'library'
+    if (!next) return
+
+    event.preventDefault()
+    if (next !== tab) switchTab(next)
+    const nextTab = next === 'library' ? libraryTabRef.current : interviewTabRef.current
+    nextTab?.focus()
+  }
+
+  const closeDrawer = (): void => {
+    cancelExternal()
+    onClose()
+  }
+
   // --- shared input ----------------------------------------------------------
 
   const canSend =
@@ -858,19 +899,26 @@ export function AssistantDrawer({
 
   if (printing) return null
 
-  if (!open) {
-    return (
-      <button
-        type="button"
-        onClick={onOpen}
-        aria-label={t('assist.open')}
-        title={t('assist.open')}
-        style={FAB_STYLE}
-      >
-        💬
-      </button>
-    )
-  }
+  // Keep the launcher mounted while the modal drawer is open so it remains a
+  // valid restoration target when it was the control that opened the drawer.
+  const launcher = (
+    <button
+      ref={launcherRef}
+      type="button"
+      onClick={(event) => {
+        returnFocusTargetRef.current = event.currentTarget
+        onOpen()
+      }}
+      aria-label={t('assist.open')}
+      title={t('assist.open')}
+      style={FAB_STYLE}
+      hidden={open}
+    >
+      💬
+    </button>
+  )
+
+  if (!open) return launcher
 
   const footer = provider
     ? t('assist.model.line', { model: provider.modelId, provider: provider.label })
@@ -887,45 +935,8 @@ export function AssistantDrawer({
     return BUBBLE_ASSISTANT
   }
 
-  return (
-    <aside style={PANEL_STYLE} aria-label={t('assist.title')}>
-      <header style={HEADER_STYLE}>
-        <strong style={{ fontSize: 13 }}>{t('assist.title')}</strong>
-        <button
-          type="button"
-          onClick={() => {
-            cancelExternal()
-            onClose()
-          }}
-          aria-label={t('assist.close')}
-          title={t('assist.close')}
-          style={CLOSE_STYLE}
-        >
-          ×
-        </button>
-      </header>
-
-      <div style={TABS_ROW_STYLE} role="tablist">
-        <button
-          type="button"
-          role="tab"
-          aria-selected={tab === 'library'}
-          onClick={() => switchTab('library')}
-          style={tab === 'library' ? TAB_ACTIVE_STYLE : TAB_STYLE}
-        >
-          {t('assist.tab.library')}
-        </button>
-        <button
-          type="button"
-          role="tab"
-          aria-selected={tab === 'interview'}
-          onClick={() => switchTab('interview')}
-          style={tab === 'interview' ? TAB_ACTIVE_STYLE : TAB_STYLE}
-        >
-          {t('assist.tab.interview')}
-        </button>
-      </div>
-
+  const panelContent = (
+    <>
       <div
         ref={listRef}
         style={LIST_STYLE}
@@ -1042,13 +1053,107 @@ export function AssistantDrawer({
       </div>
 
       <div style={FOOTER_STYLE}>{footer}</div>
-    </aside>
+    </>
+  )
+
+  return (
+    <>
+      {launcher}
+      <AccessibleDialog
+        ariaLabel={t('assist.title')}
+        onClose={closeDrawer}
+        closeOnEscape
+        closeOnBackdrop
+        initialFocusRef={closeButtonRef}
+        returnFocusRef={returnFocusTargetRef}
+        backdropStyle={BACKDROP_STYLE}
+        dialogStyle={PANEL_STYLE}
+        dir={direction}
+      >
+        <header style={HEADER_STYLE}>
+          <strong style={{ fontSize: 13 }}>{t('assist.title')}</strong>
+          <button
+            ref={closeButtonRef}
+            type="button"
+            onClick={closeDrawer}
+            aria-label={t('assist.close')}
+            title={t('assist.close')}
+            style={CLOSE_STYLE}
+          >
+            ×
+          </button>
+        </header>
+
+        <div style={TABS_ROW_STYLE} role="tablist" aria-label={t('assist.title')}>
+          <button
+            ref={libraryTabRef}
+            id={LIBRARY_TAB_ID}
+            type="button"
+            role="tab"
+            aria-selected={tab === 'library'}
+            aria-controls={LIBRARY_PANEL_ID}
+            tabIndex={tab === 'library' ? 0 : -1}
+            onClick={() => switchTab('library')}
+            onKeyDown={handleTabKeyDown}
+            style={tab === 'library' ? TAB_ACTIVE_STYLE : TAB_STYLE}
+          >
+            {t('assist.tab.library')}
+          </button>
+          <button
+            ref={interviewTabRef}
+            id={INTERVIEW_TAB_ID}
+            type="button"
+            role="tab"
+            aria-selected={tab === 'interview'}
+            aria-controls={INTERVIEW_PANEL_ID}
+            tabIndex={tab === 'interview' ? 0 : -1}
+            onClick={() => switchTab('interview')}
+            onKeyDown={handleTabKeyDown}
+            style={tab === 'interview' ? TAB_ACTIVE_STYLE : TAB_STYLE}
+          >
+            {t('assist.tab.interview')}
+          </button>
+        </div>
+
+        <div
+          id={LIBRARY_PANEL_ID}
+          role="tabpanel"
+          aria-labelledby={LIBRARY_TAB_ID}
+          hidden={tab !== 'library'}
+          style={TAB_PANEL_STYLE}
+        >
+          {tab === 'library' ? panelContent : null}
+        </div>
+        <div
+          id={INTERVIEW_PANEL_ID}
+          role="tabpanel"
+          aria-labelledby={INTERVIEW_TAB_ID}
+          hidden={tab !== 'interview'}
+          style={TAB_PANEL_STYLE}
+        >
+          {tab === 'interview' ? panelContent : null}
+        </div>
+      </AccessibleDialog>
+    </>
   )
 }
 
 export default AssistantDrawer
 
 // --- styles (inline; logical props for RTL) ---------------------------------
+
+const LIBRARY_TAB_ID = 'orbitpm-assistant-library-tab'
+const LIBRARY_PANEL_ID = 'orbitpm-assistant-library-panel'
+const INTERVIEW_TAB_ID = 'orbitpm-assistant-interview-tab'
+const INTERVIEW_PANEL_ID = 'orbitpm-assistant-interview-panel'
+const DRAWER_TAB_ORDER: readonly DrawerTab[] = ['library', 'interview']
+
+const BACKDROP_STYLE: CSSProperties = {
+  position: 'fixed',
+  inset: 0,
+  zIndex: 1200,
+  background: 'rgba(15, 23, 42, 0.4)'
+}
 
 const FAB_STYLE: CSSProperties = {
   position: 'fixed',
@@ -1107,7 +1212,11 @@ const CLOSE_STYLE: CSSProperties = {
   fontSize: 20,
   lineHeight: 1,
   cursor: 'pointer',
-  padding: '0 4px'
+  boxSizing: 'border-box',
+  width: 32,
+  height: 32,
+  padding: 0,
+  borderRadius: 4
 }
 
 const TABS_ROW_STYLE: CSSProperties = {
@@ -1116,6 +1225,13 @@ const TABS_ROW_STYLE: CSSProperties = {
   padding: '0.4rem 0.8rem 0',
   borderBottom: '1px solid var(--orbitpm-border)',
   flex: '0 0 auto'
+}
+
+const TAB_PANEL_STYLE: CSSProperties = {
+  display: 'flex',
+  flex: '1 1 auto',
+  flexDirection: 'column',
+  minHeight: 0
 }
 
 const TAB_STYLE: CSSProperties = {
@@ -1186,6 +1302,7 @@ const CHIP_STYLE: CSSProperties = {
   color: 'var(--orbitpm-accent)',
   font: 'inherit',
   fontSize: 11.5,
+  minHeight: 24,
   padding: '0.15rem 0.5rem',
   borderRadius: 999,
   cursor: 'pointer'

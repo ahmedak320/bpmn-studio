@@ -5,7 +5,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { ProcessIndex } from '@/core/processIndex'
 import type { LiteTreeNode } from '../../fs/fsAccess'
 import { FolderTreeLite } from '../FolderTreeLite'
-import { buildProcessHierarchy } from '../processHierarchy'
+import { buildProcessHierarchy, type ProcessHierarchyLink } from '../processHierarchy'
 
 afterEach(() => {
   cleanup()
@@ -59,6 +59,33 @@ function hierarchy() {
   })
 }
 
+function reusedHierarchy() {
+  const root: LiteTreeNode = {
+    name: 'Workspace',
+    relPath: '',
+    type: 'directory',
+    children: [file('a.bpmn'), file('b.bpmn'), file('child.bpmn')]
+  }
+  const index: ProcessIndex = new Map([
+    ['A', { processId: 'A', processName: 'A', relPath: 'a.bpmn' }],
+    ['B', { processId: 'B', processName: 'B', relPath: 'b.bpmn' }],
+    ['C', { processId: 'C', processName: 'Shared child', relPath: 'child.bpmn' }]
+  ])
+  const link = (parentProcessId: 'A' | 'B'): ProcessHierarchyLink => ({
+    key: `${parentProcessId}-C`,
+    parentProcessId,
+    childProcessId: 'C',
+    parentRelPath: `${parentProcessId.toLocaleLowerCase('en-US')}.bpmn`,
+    childRelPath: 'child.bpmn',
+    callActivityIds: [`Call_${parentProcessId}_C`],
+    count: 1
+  })
+  return buildProcessHierarchy(root, index, {
+    links: [link('A'), link('B')],
+    ambiguousProcessIds: new Set()
+  })
+}
+
 function renderTree(overrides: Partial<React.ComponentProps<typeof FolderTreeLite>> = {}) {
   const onOpenFile = vi.fn()
   const result = render(
@@ -79,6 +106,31 @@ function renderTree(overrides: Partial<React.ComponentProps<typeof FolderTreeLit
 }
 
 describe('FolderTreeLite keyboard tree', () => {
+  it('keeps dense row, disclosure, and action targets at least 24 by 24 pixels', () => {
+    renderTree()
+    const sales = screen.getByRole('treeitem', { name: 'Sales' })
+    const disclosure = sales.querySelector<HTMLElement>('span[aria-hidden="true"]')
+    const rename = within(sales).getByRole('button', { name: 'Rename Sales' })
+
+    expect(sales.style.minHeight).toBe('28px')
+    expect(disclosure?.style.width).toBe('24px')
+    expect(disclosure?.style.minHeight).toBe('24px')
+    expect(disclosure?.style.marginInline).toBe('-6px')
+    expect(rename.style.width).toBe('28px')
+    expect(rename.style.height).toBe('28px')
+  })
+
+  it('keeps read-only reference rows at least 24 pixels high', async () => {
+    renderTree({ hierarchy: reusedHierarchy() })
+    const secondaryParent = screen.getByRole('treeitem', { name: 'b.bpmn' })
+    secondaryParent.focus()
+    fireEvent.keyDown(secondaryParent, { key: 'ArrowRight' })
+
+    const reference = await screen.findByRole('treeitem', { name: 'Shared child' })
+    expect(reference.dataset.referenceKind).toBe('reused')
+    expect(reference.style.minHeight).toBe('28px')
+  })
+
   it('uses one roving tab stop and supports Arrow, Home, End, and activation keys', async () => {
     const { onOpenFile } = renderTree()
     const tree = screen.getByRole('tree', { name: 'Search processes' })

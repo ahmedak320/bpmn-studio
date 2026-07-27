@@ -2,6 +2,7 @@
 
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
+import { useState } from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { LiteProviderId } from '../../ai/providersLite'
@@ -9,7 +10,8 @@ import type { ProcessDigest } from '../digest'
 
 const state = vi.hoisted(() => ({
   selection: null as { providerId: LiteProviderId; modelId: string } | null,
-  keyed: new Set<LiteProviderId>()
+  keyed: new Set<LiteProviderId>(),
+  lang: 'en' as 'en' | 'ar'
 }))
 
 const mocks = vi.hoisted(() => ({
@@ -19,12 +21,12 @@ const mocks = vi.hoisted(() => ({
 }))
 
 vi.mock('../../i18n', () => ({
-  getLang: (): 'en' => 'en',
+  getLang: (): 'en' | 'ar' => state.lang,
   t: (key: string): string => key
 }))
 
 vi.mock('../../i18n/useLang', () => ({
-  useLang: (): 'en' => 'en'
+  useLang: (): 'en' | 'ar' => state.lang
 }))
 
 vi.mock('../../ai/keys', () => ({
@@ -88,6 +90,46 @@ function renderDrawer(overrides: Partial<AssistantDrawerProps> = {}): ReturnType
   )
 }
 
+function AccessibleDrawerHarness(): JSX.Element {
+  const [open, setOpen] = useState(false)
+  return (
+    <div>
+      <button type="button">Outside action</button>
+      <AssistantDrawer
+        open={open}
+        onOpen={() => setOpen(true)}
+        onClose={() => setOpen(false)}
+        printing={false}
+        mode="directory"
+        keysVersion={1}
+        getDigests={vi.fn().mockResolvedValue([digest])}
+        onOpenProcess={vi.fn()}
+      />
+    </div>
+  )
+}
+
+function ProgrammaticDrawerHarness(): JSX.Element {
+  const [open, setOpen] = useState(false)
+  return (
+    <div>
+      <button type="button" onClick={() => setOpen(true)}>
+        Fill gaps in chat
+      </button>
+      <AssistantDrawer
+        open={open}
+        onOpen={() => setOpen(true)}
+        onClose={() => setOpen(false)}
+        printing={false}
+        mode="directory"
+        keysVersion={1}
+        getDigests={vi.fn().mockResolvedValue([digest])}
+        onOpenProcess={vi.fn()}
+      />
+    </div>
+  )
+}
+
 function selectAnthropic(): void {
   state.selection = {
     providerId: 'anthropic',
@@ -107,6 +149,7 @@ async function queueLibraryRequest(user: ReturnType<typeof userEvent.setup>): Pr
 beforeEach(() => {
   state.selection = null
   state.keyed.clear()
+  state.lang = 'en'
   mocks.llmCall.mockReset().mockResolvedValue('{"answer":"Grounded response"}')
   mocks.makeCallFactory.mockReset().mockImplementation(() => mocks.llmCall)
   mocks.classify.mockReset().mockImplementation((error: unknown) => {
@@ -124,9 +167,108 @@ afterEach(() => {
 })
 
 describe('AssistantDrawer browser consent workflows', () => {
+  it('uses the shared modal focus, inertness, Escape, and trigger-restoration contract', async () => {
+    const user = userEvent.setup()
+    render(<AccessibleDrawerHarness />)
+    const outside = screen.getByRole('button', { name: 'Outside action' })
+    const launcher = screen.getByRole('button', { name: 'assist.open' })
+
+    await user.click(launcher)
+    const dialog = screen.getByRole('dialog', { name: 'assist.title' })
+    const close = within(dialog).getByRole('button', { name: 'assist.close' })
+    const textarea = within(dialog).getByRole('textbox', { name: 'assist.placeholder' })
+    await waitFor(() => expect(document.activeElement).toBe(close))
+    expect(outside.inert).toBe(true)
+    expect(launcher.inert).toBe(true)
+
+    textarea.focus()
+    fireEvent.keyDown(document, { key: 'Tab' })
+    expect(document.activeElement).toBe(close)
+    fireEvent.keyDown(document, { key: 'Tab', shiftKey: true })
+    expect(document.activeElement).toBe(textarea)
+
+    fireEvent.keyDown(document, { key: 'Escape' })
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'assist.title' })).toBeNull())
+    expect(outside.inert).toBe(false)
+    expect(document.activeElement).toBe(launcher)
+  })
+
+  it('restores focus to a non-launcher control that programmatically opened the drawer', async () => {
+    const user = userEvent.setup()
+    render(<ProgrammaticDrawerHarness />)
+    const trigger = screen.getByRole('button', { name: 'Fill gaps in chat' })
+
+    await user.click(trigger)
+    await waitFor(() =>
+      expect(document.activeElement).toBe(
+        screen.getByRole('button', {
+          name: 'assist.close'
+        })
+      )
+    )
+    fireEvent.keyDown(document, { key: 'Escape' })
+
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'assist.title' })).toBeNull())
+    expect(document.activeElement).toBe(trigger)
+  })
+
+  it('binds tabs to panels and supports roving Arrow, Home, and End navigation', async () => {
+    renderDrawer()
+    const dialog = screen.getByRole('dialog', { name: 'assist.title' })
+    const library = within(dialog).getByRole('tab', { name: 'assist.tab.library' })
+    const interview = within(dialog).getByRole('tab', { name: 'assist.tab.interview' })
+    const libraryPanel = document.getElementById(library.getAttribute('aria-controls') ?? '')
+    const interviewPanel = document.getElementById(interview.getAttribute('aria-controls') ?? '')
+
+    expect(library.tabIndex).toBe(0)
+    expect(interview.tabIndex).toBe(-1)
+    expect(libraryPanel?.getAttribute('role')).toBe('tabpanel')
+    expect(libraryPanel?.getAttribute('aria-labelledby')).toBe(library.id)
+    expect(interviewPanel?.getAttribute('aria-labelledby')).toBe(interview.id)
+    expect(libraryPanel?.hidden).toBe(false)
+    expect(interviewPanel?.hidden).toBe(true)
+    expect(within(libraryPanel!).getByRole('log')).not.toBeNull()
+
+    library.focus()
+    fireEvent.keyDown(library, { key: 'ArrowRight' })
+    await waitFor(() => expect(interview.getAttribute('aria-selected')).toBe('true'))
+    expect(document.activeElement).toBe(interview)
+    expect(library.tabIndex).toBe(-1)
+    expect(interview.tabIndex).toBe(0)
+    expect(libraryPanel?.hidden).toBe(true)
+    expect(interviewPanel?.hidden).toBe(false)
+    expect(within(interviewPanel!).getByRole('log')).not.toBeNull()
+
+    fireEvent.keyDown(interview, { key: 'ArrowRight' })
+    expect(document.activeElement).toBe(library)
+    fireEvent.keyDown(library, { key: 'ArrowLeft' })
+    expect(document.activeElement).toBe(interview)
+    fireEvent.keyDown(interview, { key: 'Home' })
+    expect(document.activeElement).toBe(library)
+    fireEvent.keyDown(library, { key: 'End' })
+    expect(document.activeElement).toBe(interview)
+    fireEvent.keyDown(interview, { key: 'ArrowLeft' })
+    expect(document.activeElement).toBe(library)
+  })
+
+  it('uses the active language direction on the modal drawer', () => {
+    state.lang = 'ar'
+    renderDrawer()
+    const dialog = screen.getByRole('dialog', { name: 'assist.title' })
+    const library = within(dialog).getByRole('tab', { name: 'assist.tab.library' })
+    const interview = within(dialog).getByRole('tab', { name: 'assist.tab.interview' })
+    expect(dialog.getAttribute('dir')).toBe('rtl')
+
+    library.focus()
+    fireEvent.keyDown(library, { key: 'ArrowLeft' })
+    expect(document.activeElement).toBe(interview)
+    fireEvent.keyDown(interview, { key: 'ArrowRight' })
+    expect(document.activeElement).toBe(library)
+  })
+
   it('keeps the open drawer out of the reserved bpmn.io attribution strip', () => {
     renderDrawer()
-    const drawer = screen.getByLabelText('assist.title')
+    const drawer = screen.getByRole('dialog', { name: 'assist.title' })
     expect(drawer.style.insetBlockEnd).toBe('100px')
   })
 
@@ -265,7 +407,7 @@ describe('AssistantDrawer browser consent workflows', () => {
     await user.click(screen.getByRole('button', { name: 'assist.close' }))
     expect(onClose).toHaveBeenCalledOnce()
 
-    fireEvent.keyDown(window, { key: 'Escape' })
+    fireEvent.keyDown(document, { key: 'Escape' })
     expect(onClose).toHaveBeenCalledTimes(2)
   })
 })
