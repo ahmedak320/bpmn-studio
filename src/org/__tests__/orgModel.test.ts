@@ -144,6 +144,9 @@ const PAIRED_CONTRACT_PROPS: OrgProps = {
   decisionBasis: 'Policy 7',
   decisionBasisEn: 'Policy 7',
   decisionBasisAr: 'السياسة 7',
+  description: 'Review the permit request',
+  descriptionEn: 'Review the permit request',
+  descriptionAr: 'مراجعة طلب التصريح',
   notes: 'Escalate exceptions',
   notesEn: 'Escalate exceptions',
   notesAr: 'تصعيد الاستثناءات'

@@ -291,11 +291,20 @@ test('official Excel template imports through the worker and opens validated BPM
   await forceSingleFileMode(page)
   await page.goto(FILE_URL, { waitUntil: 'load' })
   const panel = await openSpreadsheetPanel(page)
-  const workbook = createOfficialWorkbookTemplate('example')
+
+  const downloadStarted = page.waitForEvent('download')
+  await panel.getByRole('button', { name: 'Download example template' }).click()
+  const download = await downloadStarted
+  expect(download.suggestedFilename()).toBe(OFFICIAL_TEMPLATE_ASSET_NAMES.example)
+  const downloadedPath = await download.path()
+  if (!downloadedPath) throw new Error('Playwright did not retain the downloaded Excel template')
+  const workbook = readFileSync(downloadedPath)
+  expect(workbook).toEqual(Buffer.from(createOfficialWorkbookTemplate('example')))
+
   await panel.locator('input[type="file"][accept*=".xlsx"]').setInputFiles({
-    name: OFFICIAL_TEMPLATE_ASSET_NAMES.example,
+    name: download.suggestedFilename(),
     mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-    buffer: Buffer.from(workbook)
+    buffer: workbook
   })
 
   await expect(panel.getByText(/Official OrbitPM template detected/i)).toBeVisible({

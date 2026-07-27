@@ -126,6 +126,157 @@ test('AI panel documents the updated browser-capable provider set', async ({ pag
   await expect(page.getByText(/don.?t allow browser \(CORS\) access/i)).toBeVisible()
 })
 
+test('OpenRouter generation sends only the consent-reviewed payload and opens the result', async ({
+  page
+}) => {
+  const apiKey = 'e2e-openrouter-key'
+  const modelId = 'z-ai/glm-5.2'
+  const description = 'Review a permit request and record the decision.'
+  const generatedProcess = [
+    {
+      type: 'startEvent',
+      id: 'Start_Request',
+      label: 'Request received',
+      labelEn: 'Request received',
+      labelAr: 'استلام الطلب'
+    },
+    {
+      type: 'userTask',
+      id: 'Review_Request',
+      label: 'Review request',
+      labelEn: 'Review request',
+      labelAr: 'مراجعة الطلب'
+    },
+    {
+      type: 'endEvent',
+      id: 'End_Request',
+      label: 'Decision recorded',
+      labelEn: 'Decision recorded',
+      labelAr: 'تسجيل القرار'
+    }
+  ]
+  const chatRequests: Array<{
+    headers: Record<string, string>
+    body: Record<string, unknown>
+  }> = []
+
+  await page.route('https://openrouter.ai/**', async (route) => {
+    const request = route.request()
+    const requestHeaders = request.headers()
+    const corsHeaders = {
+      'access-control-allow-origin': requestHeaders.origin ?? '*',
+      'access-control-allow-headers':
+        requestHeaders['access-control-request-headers'] ??
+        'authorization, content-type, http-referer, x-title',
+      'access-control-allow-methods': 'GET, POST, OPTIONS'
+    }
+    if (request.method() === 'OPTIONS') {
+      await route.fulfill({ status: 204, headers: corsHeaders, body: '' })
+      return
+    }
+    const pathname = new URL(request.url()).pathname
+    if (pathname === '/api/v1/credits') {
+      await route.fulfill({
+        status: 200,
+        headers: { ...corsHeaders, 'content-type': 'application/json' },
+        body: JSON.stringify({ data: { total_credits: 10, total_usage: 1 } })
+      })
+      return
+    }
+    if (pathname === '/api/v1/chat/completions' && request.method() === 'POST') {
+      chatRequests.push({
+        headers: requestHeaders,
+        body: request.postDataJSON() as Record<string, unknown>
+      })
+      await route.fulfill({
+        status: 200,
+        headers: { ...corsHeaders, 'content-type': 'application/json' },
+        body: JSON.stringify({
+          choices: [
+            {
+              message: {
+                content: JSON.stringify({ process: generatedProcess })
+              }
+            }
+          ],
+          usage: {
+            prompt_tokens: 100,
+            completion_tokens: 50,
+            total_tokens: 150
+          }
+        })
+      })
+      return
+    }
+    await route.abort()
+  })
+
+  await openApp(page)
+  await page
+    .getByRole('button', { name: /Settings/i })
+    .first()
+    .click()
+  const settings = page.getByRole('dialog', { name: /Settings/i })
+  const aiSelection = settings.getByRole('region', { name: 'AI provider and model' })
+  await aiSelection
+    .getByRole('combobox', { name: 'Provider', exact: true })
+    .selectOption('openrouter')
+  await aiSelection.getByRole('combobox', { name: 'Model', exact: true }).fill(modelId)
+  await settings.getByLabel('OpenRouter API key').fill(apiKey)
+  await settings.getByRole('button', { name: 'Save keys' }).click()
+  await expect(settings.getByText('Saved.')).toBeVisible()
+  await settings.getByRole('button', { name: 'Close', exact: true }).last().click()
+  await expect(settings).toBeHidden()
+  await expandAiPanel(page)
+
+  const aiPanel = page.locator('aside')
+  await aiPanel.getByLabel('Description', { exact: true }).fill(description)
+  await aiPanel.getByRole('textbox', { name: 'Name', exact: true }).fill('Consent path')
+  const preview = aiPanel.getByRole('region', { name: 'External request preview' })
+  await expect(preview.getByText(`Provider/model: OpenRouter / ${modelId}`)).toBeVisible()
+  await expect(preview.getByLabel('Included description')).toHaveValue(description)
+  await expect(preview.getByText(/Workspace context: 0 included/)).toBeVisible()
+
+  const generate = aiPanel.getByRole('button', { name: 'Generate', exact: true })
+  await expect(generate).toBeDisabled()
+  expect(chatRequests).toEqual([])
+  await preview
+    .getByLabel('I reviewed this request and consent to sending the listed data.')
+    .check()
+  await expect(generate).toBeEnabled()
+  await generate.click()
+
+  await expect(
+    page.getByRole('status').filter({ hasText: 'Created: Opened consent-path.bpmn' })
+  ).toBeVisible({ timeout: 30_000 })
+  await expect(
+    page.locator('.djs-container:visible .djs-label', { hasText: 'Review request' }).first()
+  ).toBeVisible({ timeout: 30_000 })
+
+  expect(chatRequests).toHaveLength(1)
+  const outbound = chatRequests[0]
+  expect(outbound.headers.authorization).toBe(`Bearer ${apiKey}`)
+  expect(outbound.headers['content-type']).toContain('application/json')
+  expect(outbound.headers['x-title']).toBe('OrbitPM Process Studio Lite')
+  expect(outbound.body).toMatchObject({
+    model: modelId,
+    max_tokens: 6000,
+    provider: {
+      zdr: true,
+      data_collection: 'deny'
+    },
+    response_format: { type: 'json_object' }
+  })
+  expect(outbound.body).not.toHaveProperty('plugins')
+  const messages = outbound.body.messages as Array<{ role: string; content: string }>
+  expect(messages).toHaveLength(2)
+  expect(messages.map(({ role }) => role)).toEqual(['system', 'user'])
+  expect(messages[0].content).toContain('SECURITY BOUNDARY:')
+  expect(messages[1].content).toContain(JSON.stringify(`User: ${description}`))
+  expect(messages[1].content).not.toContain('# Existing processes in this workspace')
+  expect(messages[1].content.split(description)).toHaveLength(2)
+})
+
 test('PDF flow: pick a PDF + Arabic hint, hit the no-key provider gate', async ({ page }) => {
   const offending = recordOffendingRequests(page)
   await openApp(page)

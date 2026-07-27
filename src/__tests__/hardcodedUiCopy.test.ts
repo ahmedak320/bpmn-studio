@@ -1,12 +1,19 @@
-import { describe, expect, it } from 'vitest'
+import { beforeAll, describe, expect, it } from 'vitest'
 import {
   HARDCODED_UI_COPY_ALLOWLIST,
   auditHardcodedUiCopy,
   formatHardcodedUiCopyFinding,
-  scanTsxSource
+  scanTsxSource,
+  type HardcodedUiCopyAudit
 } from '../../scripts/check-hardcoded-ui-copy'
 
 describe('hard-coded user-facing English gate', () => {
+  let productionAudit: HardcodedUiCopyAudit
+
+  beforeAll(() => {
+    productionAudit = auditHardcodedUiCopy()
+  }, 15_000)
+
   it('rejects visible JSX, accessibility copy, and user-message calls', () => {
     const source = `
       export function BadCopy() {
@@ -35,13 +42,11 @@ describe('hard-coded user-facing English gate', () => {
   })
 
   it('keeps production components free of unreviewed hard-coded English', () => {
-    const audit = auditHardcodedUiCopy()
-    expect(audit.violations.map(formatHardcodedUiCopyFinding)).toEqual([])
+    expect(productionAudit.violations.map(formatHardcodedUiCopyFinding)).toEqual([])
   })
 
   it('requires every exact allowlist entry to remain present and justified', () => {
-    const audit = auditHardcodedUiCopy()
-    expect(audit.staleAllowlist).toEqual([])
+    expect(productionAudit.staleAllowlist).toEqual([])
     expect(
       HARDCODED_UI_COPY_ALLOWLIST.every(
         (entry) => entry.signature.length > 0 && entry.reason.length >= 20

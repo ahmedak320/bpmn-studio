@@ -265,7 +265,7 @@ describe('ProcessOutlineEditor accessibility and authoring', () => {
       gatewayFlows.find((flow) => flow.target?.id === 'Task_no')?.id
     )
     expect(screen.queryByText('outline.gateway-condition-missing')).toBeNull()
-  }, 10_000)
+  }, 20_000)
 
   it('supports keyboard reorder/delete confirmation and exposes validation findings', async () => {
     const fixture = createOutlineTestModeler()

@@ -131,6 +131,10 @@ export interface OrgProps {
   decisionBasis?: string
   decisionBasisEn?: string
   decisionBasisAr?: string
+  /** Process or element description stored as a bilingual attribute pair. */
+  description?: string
+  descriptionEn?: string
+  descriptionAr?: string
   /** Other translatable organizational notes stored as attributes. */
   notes?: string
   notesEn?: string
@@ -188,6 +192,9 @@ const PROP_TO_ATTR: Record<keyof OrgProps, string> = {
   decisionBasis: 'orbitpm:decisionBasis',
   decisionBasisEn: 'orbitpm:decisionBasisEn',
   decisionBasisAr: 'orbitpm:decisionBasisAr',
+  description: 'orbitpm:description',
+  descriptionEn: 'orbitpm:descriptionEn',
+  descriptionAr: 'orbitpm:descriptionAr',
   notes: 'orbitpm:notes',
   notesEn: 'orbitpm:notesEn',
   notesAr: 'orbitpm:notesAr'
@@ -217,6 +224,7 @@ export const PAIRED_ORG_PROJECTION_FIELDS = [
   { projection: 'respList', en: 'respListEn', ar: 'respListAr' },
   { projection: 'ccList', en: 'ccListEn', ar: 'ccListAr' },
   { projection: 'decisionBasis', en: 'decisionBasisEn', ar: 'decisionBasisAr' },
+  { projection: 'description', en: 'descriptionEn', ar: 'descriptionAr' },
   { projection: 'notes', en: 'notesEn', ar: 'notesAr' }
 ] as const satisfies ReadonlyArray<{
   projection: keyof OrgProps

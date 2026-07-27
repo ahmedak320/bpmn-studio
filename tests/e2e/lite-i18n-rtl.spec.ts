@@ -541,6 +541,87 @@ test.describe('Translate projects Arabic immediately', () => {
     expect(myMemoryCalls).toHaveLength(0)
   })
 
+  test('cancelling an in-flight free translation keeps the diagram unchanged', async ({ page }) => {
+    let googleCalls = 0
+    let myMemoryCalls = 0
+    let markRequestStarted!: () => void
+    let releaseResponse!: () => void
+    let markRouteFinished!: () => void
+    const requestStarted = new Promise<void>((resolve) => {
+      markRequestStarted = resolve
+    })
+    const responseGate = new Promise<void>((resolve) => {
+      releaseResponse = resolve
+    })
+    const routeFinished = new Promise<void>((resolve) => {
+      markRouteFinished = resolve
+    })
+
+    await page.route('https://translate.googleapis.com/**', async (route) => {
+      googleCalls += 1
+      markRequestStarted()
+      await responseGate
+      try {
+        await route.fulfill({
+          status: 200,
+          headers: {
+            'content-type': 'application/json; charset=utf-8',
+            'access-control-allow-origin': '*'
+          },
+          body: JSON.stringify([
+            [['ترجمة متأخرة', 'Cancel this translation', null, null]],
+            null,
+            'en'
+          ])
+        })
+      } catch {
+        // The browser may dispose the intercepted request immediately after
+        // AbortController fires. Either outcome must leave the model untouched.
+      } finally {
+        markRouteFinished()
+      }
+    })
+    await page.route('https://api.mymemory.translated.net/**', async (route) => {
+      myMemoryCalls += 1
+      await route.abort()
+    })
+
+    await forceFallbackMode(page)
+    await page.goto(baseUrl, { waitUntil: 'load' })
+    await bootEnglishDiagram(page, 'Cancelled translation')
+    await makeNamedElementsBilingual(page)
+    const taskId = await createNamedTask(page, {
+      name: 'Cancel this translation',
+      nameEn: 'Cancel this translation'
+    })
+
+    await page.getByRole('button', { name: /Translate/ }).click()
+    const review = page.getByRole('dialog', { name: 'Review translation' })
+    await expect(review).toBeVisible()
+    await review.getByLabel('Translation provider').selectOption('free')
+    await review.getByRole('button', { name: 'Translate now' }).click()
+    await requestStarted
+
+    await review.getByRole('button', { name: 'Cancel translation' }).click()
+    releaseResponse()
+    await routeFinished
+
+    await expect(review).toContainText('Translation was cancelled.')
+    await expect
+      .poll(() => readDiagramState(page, taskId))
+      .toMatchObject({
+        name: 'Cancel this translation',
+        nameEn: 'Cancel this translation',
+        nameAr: null,
+        activeLang: 'en'
+      })
+    await expect(
+      page.locator(`.djs-element[data-element-id="${taskId}"] .djs-label`)
+    ).toContainText('Cancel this translation')
+    expect(googleCalls).toBe(1)
+    expect(myMemoryCalls).toBe(0)
+  })
+
   test('zero-work Translate switches to stored Arabic without network', async ({ page }) => {
     const translationCalls: string[] = []
     for (const host of [
@@ -732,7 +813,9 @@ test('Arabic editor panes mirror their layout and resizer while the bpmn-js canv
 
   // The Details pane is collapsed by default, while its logical-end rail stays
   // reachable and mirrors the chevron in RTL.
-  const pane = editor.locator('[id^="orbitpm-details-pane-"][role="complementary"]')
+  // While closed, keepMounted uses a hidden, role-free stash. The same stable
+  // id becomes the complementary <aside> when the docked pane opens.
+  const pane = editor.locator('[id^="orbitpm-details-pane-"]')
   const paneId = await pane.getAttribute('id')
   if (!paneId) throw new Error('Details pane has no stable id')
   expect(paneId).toMatch(/^orbitpm-details-pane-/)
@@ -742,7 +825,7 @@ test('Arabic editor panes mirror their layout and resizer while the bpmn-js canv
   await expect(paneToggle).toHaveAccessibleName('التفاصيل')
   await expect(paneToggle).toHaveAttribute('aria-expanded', 'false')
   await expect(paneToggle).toHaveAttribute('aria-controls', paneId)
-  await expect(paneToggle.locator('.orbitpm-details-toggle__glyph')).not.toHaveCSS(
+  await expect(paneToggle.locator('.orbitpm-details-rail__glyph')).not.toHaveCSS(
     'transform',
     'none'
   )
@@ -752,6 +835,7 @@ test('Arabic editor panes mirror their layout and resizer while the bpmn-js canv
   await paneToggle.focus()
   await paneToggle.press('Enter')
   await expect(pane).toBeVisible()
+  await expect(pane).toHaveRole('complementary')
   await expect(pane.getByRole('heading', { name: 'التفاصيل' })).toBeFocused()
   await paneToggle.click()
   await expect(pane).toBeHidden()
