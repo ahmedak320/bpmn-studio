@@ -510,7 +510,7 @@ jobs:
               .tag_name == "v0.4.5" and
               .target_commitish == $candidate and
               .name == "OrbitPM Process Studio Lite 0.4.5" and
-              .body == $notes and
+              ((.body | gsub("\\n+$"; "")) == ($notes | gsub("\\n+$"; ""))) and
               .draft == true and
               .prerelease == false and
               .published_at == null and
@@ -566,7 +566,7 @@ jobs:
               .tag_name == "v0.4.5" and
               .target_commitish == $candidate and
               .name == "OrbitPM Process Studio Lite 0.4.5" and
-              .body == $notes and
+              ((.body | gsub("\\n+$"; "")) == ($notes | gsub("\\n+$"; ""))) and
               .draft == true and
               .prerelease == false and
               .published_at == null and

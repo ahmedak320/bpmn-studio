@@ -65,7 +65,11 @@ if (release.tag_name !== expectedTag) {
 if (release.name !== expectedTitle) {
   failures.push(`release title must be ${JSON.stringify(expectedTitle)}`)
 }
-if ((release.body ?? '') !== readFileSync(notesPath, 'utf8')) {
+// GitHub normalizes stored release bodies to end with a newline, so exact
+// byte equality with the committed file cannot hold. Compare with trailing
+// newlines trimmed on both sides.
+const normalizeBody = (value) => (value ?? '').replace(/\n+$/, '')
+if (normalizeBody(release.body) !== normalizeBody(readFileSync(notesPath, 'utf8'))) {
   failures.push('release body does not match the committed release-note bytes')
 }
 if (release.prerelease !== false) {
