@@ -132,7 +132,7 @@ describe('fitInteriorBox', () => {
     const withChip = fitInteriorBox(name, { reserveSubChip: true })
     expect(withChip.w).toBe(160)
     expect(withChip.h).toBeGreaterThan(plain.h)
-    expect(withChip.h).toBe(104)
+    expect(withChip.h).toBe(108)
   })
 
   it('counts wide hard-split glyph runs safely while retaining the legacy count as a floor', () => {
@@ -147,7 +147,7 @@ describe('fitInteriorBox', () => {
     })
     expect(fitInteriorBox(uppercase, { reserveSubChip: true })).toEqual({
       w: 160,
-      h: 134
+      h: 138
     })
   })
 
@@ -157,21 +157,21 @@ describe('fitInteriorBox', () => {
     expect(wrapCount('A'.repeat(90), Math.floor((160 - 14) / 6.5))).toBe(5)
     expect(fitInteriorBox('A'.repeat(90), { reserveSubChip: true })).toEqual({
       w: 160,
-      h: 120
+      h: 124
     })
   })
 
   it('does not balloon the audited realistic call-activity sentence', () => {
     const name = 'Review the complete delegated case and all supporting evidence before continuing'
-    expect(fitInteriorBox(name, { reserveSubChip: true })).toEqual({ w: 160, h: 90 })
+    expect(fitInteriorBox(name, { reserveSubChip: true })).toEqual({ w: 160, h: 94 })
   })
 
   it('grows for a four-line capped label only when the bottom chip is reserved', () => {
-    // Three lines fit even with the chip (75.2px total); four lines are the
+    // Three lines fit even with the chip (79.2px total); four lines are the
     // first case that distinguishes the two 80px budgets.
     const name = Array(4).fill('12345678901234567890').join(' ')
     expect(fitInteriorBox(name, { reserveSubChip: false })).toEqual({ w: 150, h: 80 })
-    expect(fitInteriorBox(name, { reserveSubChip: true })).toEqual({ w: 160, h: 90 })
+    expect(fitInteriorBox(name, { reserveSubChip: true })).toEqual({ w: 160, h: 94 })
   })
 
   it('fits Arabic text to finite positive dimensions', () => {

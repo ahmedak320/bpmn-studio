@@ -453,7 +453,7 @@ test('wide unbroken call label stays inside the shape and clear of the sub chip'
   // failure, not a synthetic business-object mutation.
   await directEdit(page, callId, 'C'.repeat(100))
   const uppercase = await readLocalGeometry()
-  expect(uppercase.shape).toEqual({ x: 0, y: 0, width: 160, height: 134 })
+  expect(uppercase.shape).toEqual({ x: 0, y: 0, width: 160, height: 138 })
   expect(intersects(uppercase.label, uppercase.chip), JSON.stringify(uppercase)).toBe(false)
   expect(isContained(uppercase.label, uppercase.shape), JSON.stringify(uppercase)).toBe(true)
 
@@ -461,7 +461,7 @@ test('wide unbroken call label stays inside the shape and clear of the sub chip'
     'Review the complete delegated case and all supporting evidence before continuing'
   await directEdit(page, callId, sentence)
   const realistic = await readLocalGeometry()
-  expect(realistic.shape).toEqual({ x: 0, y: 0, width: 160, height: 90 })
+  expect(realistic.shape).toEqual({ x: 0, y: 0, width: 160, height: 94 })
   expect(intersects(realistic.label, realistic.chip), JSON.stringify(realistic)).toBe(false)
   expect(isContained(realistic.label, realistic.shape), JSON.stringify(realistic)).toBe(true)
 })

@@ -6,7 +6,9 @@
 // below approximate that wrapping deterministically with conservative
 // per-glyph widths, widening activities first (up to 160px), then growing their
 // height. Collapsed sub-process-family shapes also reserve the bottom chip's
-// 14px band plus a 4px text gap.
+// 14px band plus an 8px cross-engine text clearance budget. Since bpmn-js
+// vertically centres the label in the entire activity, each 2px of extra
+// height creates 1px of painted separation from the bottom chip.
 //
 // This module intentionally uses structural modeler/element types. The only
 // product dependency is the shared activity predicate that defines which BPMN
@@ -21,7 +23,7 @@ const LEGACY_CHAR_W = 6.5
 const LINE_H = 14.4
 const PAD_V = 14
 const PAD_H = 14
-const CHIP_CLEAR = 18
+const CHIP_CLEAR = 22
 
 const UPDATE_LABEL_EVENT = 'commandStack.element.updateLabel.postExecuted'
 const UPDATE_PROPERTIES_EVENT = 'commandStack.element.updateProperties.postExecuted'
@@ -244,7 +246,12 @@ function safeWrapCount(name: string, availableWidth: number): number {
 /**
  * Fit an interior task label. Three lines, including the sub-chip clearance,
  * still fit inside the 80px minimum:
- * `3 * 14.4 + 14 + 18 = 75.2`.
+ * `3 * 14.4 + 14 + 22 = 79.2`.
+ *
+ * The four extra clearance pixels over the chip's nominal 14px + 4px band
+ * produce two painted pixels because the label remains vertically centred.
+ * This absorbs Firefox's larger SVG text/client bounds without changing the
+ * compact three-line case.
  */
 export function fitInteriorBox(
   name: string,
