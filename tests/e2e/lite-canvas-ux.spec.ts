@@ -781,9 +781,7 @@ test.describe('free translate without a provider key (stubbed endpoints)', () =>
     return taskId
   }
 
-  test('✨ Translate falls back to the free service and stores orbitpm:nameAr', async ({
-    page
-  }) => {
+  test('✨ Translate stages free-service proposals until reviewed Apply', async ({ page }) => {
     const googleCalls: string[] = []
     const myMemoryCalls: string[] = []
     // Canned gtx payload: segments array whose [i][0] parts join to 'ترجمة'
@@ -826,8 +824,36 @@ test.describe('free translate without a provider key (stubbed endpoints)', () =>
     expect(googleCalls).toHaveLength(0)
     await review.getByRole('button', { name: 'Translate now' }).click()
 
-    // The missing Arabic side lands on the business object and the whole
-    // drawing is projected to Arabic immediately.
+    const acceptProposal = review.getByRole('button', { name: 'Accept this proposal' })
+    await expect(acceptProposal).toHaveCount(3)
+
+    // Provider output is only a proposal. Neither receiving it nor reviewing
+    // it may mutate the BPMN or project the target language.
+    const proposedNames = await readNames(page, taskId)
+    expect(proposedNames.name).toBe('Review order')
+    expect(proposedNames.nameAr).toBeNull()
+    await expect(
+      page.locator(`.djs-element[data-element-id="${taskId}"] .djs-label`)
+    ).toContainText('Review order')
+
+    // Explicitly accept every rendered proposal. Accepted values are still
+    // staged and do not reach the BPMN until the separate final Apply action.
+    for (let remaining = 3; remaining > 0; remaining -= 1) {
+      await expect(acceptProposal).toHaveCount(remaining)
+      await acceptProposal.first().click()
+      await expect(acceptProposal).toHaveCount(remaining - 1)
+    }
+    await expect(
+      review.getByRole('button', { name: 'Apply completed language view' })
+    ).toBeEnabled()
+    const stagedNames = await readNames(page, taskId)
+    expect(stagedNames.name).toBe('Review order')
+    expect(stagedNames.nameAr).toBeNull()
+
+    await review.getByRole('button', { name: 'Apply completed language view' }).click()
+    await expect(review).toBeHidden()
+
+    // Final Apply writes the accepted Arabic side and projects the drawing.
     await page.waitForFunction(
       (id) => {
         const w = window as unknown as {
@@ -845,11 +871,8 @@ test.describe('free translate without a provider key (stubbed endpoints)', () =>
     expect(names.name).toBe('ترجمة')
     expect(names.nameAr).toBe('ترجمة')
 
-    // Completion toast, then verify the network shape: one gtx GET per label
-    // (process name + "Start" + the task), Google only.
-    await expect(page.getByRole('status').filter({ hasText: /Translated 3 labels/ })).toBeVisible({
-      timeout: 15_000
-    })
+    // Verify the network shape: one gtx GET per label (process name + "Start"
+    // + the task), Google only. Review/accept/apply adds no extra requests.
     expect(googleCalls.length).toBe(3)
     for (const url of googleCalls) {
       expect(url).toContain('client=gtx')

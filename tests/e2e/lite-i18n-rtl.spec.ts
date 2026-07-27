@@ -453,7 +453,7 @@ test('diagram language projection updates TextAnnotation text atomically and one
     })
 })
 
-test.describe('Translate projects Arabic immediately', () => {
+test.describe('Translate stages reviewed language projection', () => {
   let server: Server | undefined
   let baseUrl = ''
 
@@ -474,7 +474,7 @@ test.describe('Translate projects Arabic immediately', () => {
     }
   })
 
-  test('mocked EN-to-AR endpoint shows generated Arabic immediately', async ({ page }) => {
+  test('mocked EN-to-AR endpoint stages Arabic until reviewed Apply', async ({ page }) => {
     const googleCalls: string[] = []
     const myMemoryCalls: string[] = []
     await page.route('https://translate.googleapis.com/**', async (route) => {
@@ -522,6 +522,43 @@ test.describe('Translate projects Arabic immediately', () => {
     expect(googleCalls).toHaveLength(0)
     await review.getByRole('button', { name: 'Translate now' }).click()
 
+    const acceptProposal = review.getByRole('button', { name: 'Accept this proposal' })
+    await expect(acceptProposal).toBeVisible()
+    expect(googleCalls).toHaveLength(1)
+    expect(myMemoryCalls).toHaveLength(0)
+
+    // Receiving a provider proposal must not mutate or re-project the diagram.
+    await expect
+      .poll(() => readDiagramState(page, taskId))
+      .toMatchObject({
+        name: 'Review order',
+        nameEn: 'Review order',
+        nameAr: null,
+        activeLang: 'en'
+      })
+    await expect(
+      page.locator(`.djs-element[data-element-id="${taskId}"] .djs-label`)
+    ).toContainText('Review order')
+
+    await acceptProposal.click()
+    const applyCompleted = review.getByRole('button', {
+      name: 'Apply completed language view'
+    })
+    await expect(applyCompleted).toBeEnabled()
+
+    // Acceptance stages the reviewed value; final Apply is the mutation
+    // boundary and remains a distinct, explicit action.
+    await expect
+      .poll(() => readDiagramState(page, taskId))
+      .toMatchObject({
+        name: 'Review order',
+        nameEn: 'Review order',
+        nameAr: null,
+        activeLang: 'en'
+      })
+
+    await applyCompleted.click()
+    await expect(review).toBeHidden()
     await expect
       .poll(() => readDiagramState(page, taskId), { timeout: 20_000 })
       .toMatchObject({
@@ -535,10 +572,8 @@ test.describe('Translate projects Arabic immediately', () => {
         hasText: 'مراجعة الطلب'
       })
     ).toBeVisible()
-    expect(googleCalls).toHaveLength(1)
     expect(googleCalls[0]).toContain('sl=en')
     expect(googleCalls[0]).toContain('tl=ar')
-    expect(myMemoryCalls).toHaveLength(0)
   })
 
   test('cancelling an in-flight free translation keeps the diagram unchanged', async ({ page }) => {
@@ -666,9 +701,7 @@ test.describe('Translate projects Arabic immediately', () => {
     expect(translationCalls).toHaveLength(0)
   })
 
-  test('mocked AR-to-EN endpoint translates Arabic-authored labels and projects English immediately', async ({
-    page
-  }) => {
+  test('mocked AR-to-EN endpoint stages English until reviewed Apply', async ({ page }) => {
     const googleCalls: string[] = []
     await page.route('https://translate.googleapis.com/**', async (route) => {
       googleCalls.push(route.request().url())
@@ -706,6 +739,42 @@ test.describe('Translate projects Arabic immediately', () => {
     await review.getByLabel('Translation provider').selectOption('free')
     await review.getByRole('button', { name: 'Translate now' }).click()
 
+    const acceptProposal = review.getByRole('button', { name: 'Accept this proposal' })
+    await expect(acceptProposal).toBeVisible()
+    expect(googleCalls).toHaveLength(1)
+
+    // The Arabic-authored BPMN remains untouched while the English result is
+    // only a provider proposal.
+    await expect
+      .poll(() => readDiagramState(page, taskId))
+      .toMatchObject({
+        name: 'مراجعة طلب مالك الحيوان',
+        nameEn: null,
+        nameAr: 'مراجعة طلب مالك الحيوان',
+        activeLang: 'ar'
+      })
+    await expect(
+      page.locator(`.djs-element[data-element-id="${taskId}"] .djs-label`)
+    ).toContainText('مراجعة طلب مالك الحيوان')
+
+    await acceptProposal.click()
+    const applyCompleted = review.getByRole('button', {
+      name: 'Apply completed language view'
+    })
+    await expect(applyCompleted).toBeEnabled()
+
+    // Accepted output is staged until the explicit final Apply.
+    await expect
+      .poll(() => readDiagramState(page, taskId))
+      .toMatchObject({
+        name: 'مراجعة طلب مالك الحيوان',
+        nameEn: null,
+        nameAr: 'مراجعة طلب مالك الحيوان',
+        activeLang: 'ar'
+      })
+
+    await applyCompleted.click()
+    await expect(review).toBeHidden()
     await expect
       .poll(() => readDiagramState(page, taskId), { timeout: 20_000 })
       .toMatchObject({
@@ -717,7 +786,6 @@ test.describe('Translate projects Arabic immediately', () => {
     await expect(
       page.locator(`.djs-element[data-element-id="${taskId}"] .djs-label`)
     ).toContainText('Review animal-owner request')
-    expect(googleCalls).toHaveLength(1)
     expect(googleCalls[0]).toContain('sl=ar')
     expect(googleCalls[0]).toContain('tl=en')
   })

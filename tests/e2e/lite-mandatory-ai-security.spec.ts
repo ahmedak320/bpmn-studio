@@ -12,6 +12,8 @@ const DIST = resolve(HERE, '../../dist/index.html')
 const OPENROUTER_KEY = ['mandatory', 'ai', 'browser', 'credential'].join(':')
 const OPENROUTER_MODEL = 'z-ai/glm-5.2'
 const VISION_MODEL = 'google/gemini-3.6-flash'
+const OPENROUTER_ENCRYPTED_SLOT_PREFIX = 'orbitpm.lite.key.encrypted.slot.openrouter.'
+const OPENROUTER_CREDENTIAL_OPERATION_PREFIX = 'orbitpm.lite.key.operation.openrouter.'
 
 let loopbackServer: Server
 let appUrl = ''
@@ -365,6 +367,13 @@ async function browserStorageSnapshot(page: Page): Promise<BrowserStorageSnapsho
   })
 }
 
+function storageEntriesWithPrefix(
+  storage: Record<string, string>,
+  prefix: string
+): Array<[string, string]> {
+  return Object.entries(storage).filter(([key]) => key.startsWith(prefix))
+}
+
 function stableReviewStringify(value: unknown): string {
   if (Array.isArray(value)) {
     return `[${value.map(stableReviewStringify).join(',')}]`
@@ -472,11 +481,27 @@ test('mandatory AI credentials: AES-GCM persistence requires the passphrase and 
   await expect(dialog.getByText('Saved.', { exact: true })).toBeVisible({ timeout: 30_000 })
 
   const encryptedStorage = await browserStorageSnapshot(page)
-  const rawEnvelope = encryptedStorage.local['orbitpm.lite.key.encrypted.openrouter']
-  expect(rawEnvelope).toBeTruthy()
+  const encryptedSlots = storageEntriesWithPrefix(
+    encryptedStorage.local,
+    OPENROUTER_ENCRYPTED_SLOT_PREFIX
+  )
+  expect(encryptedSlots).toHaveLength(1)
+  const [encryptedSlotKey, rawEnvelope] = encryptedSlots[0]!
+  const operationToken = encryptedSlotKey.slice(OPENROUTER_ENCRYPTED_SLOT_PREFIX.length)
+  expect(operationToken).toMatch(/^[a-zA-Z0-9_-]{16,128}$/u)
+  expect(encryptedStorage.local).not.toHaveProperty('orbitpm.lite.key.encrypted.openrouter')
+  expect(
+    storageEntriesWithPrefix(encryptedStorage.local, OPENROUTER_CREDENTIAL_OPERATION_PREFIX)
+  ).toHaveLength(0)
   expect(JSON.stringify(encryptedStorage)).not.toContain(OPENROUTER_KEY)
   expect(JSON.stringify(encryptedStorage)).not.toContain(passphrase)
   expect(JSON.parse(rawEnvelope)).toMatchObject({
+    recordVersion: 1,
+    kind: 'encrypted',
+    operation: {
+      startedAtMicros: expect.stringMatching(/^\d{1,20}$/u),
+      token: operationToken
+    },
     version: 1,
     providerId: 'openrouter',
     algorithm: 'AES-GCM',
@@ -539,6 +564,24 @@ test('mandatory AI credentials: AES-GCM persistence requires the passphrase and 
     expect(clearedStorage.local).not.toHaveProperty(artifact)
     expect(clearedStorage.session).not.toHaveProperty(artifact)
   }
+  expect(
+    storageEntriesWithPrefix(clearedStorage.local, OPENROUTER_ENCRYPTED_SLOT_PREFIX)
+  ).toHaveLength(0)
+  const clearBarriers = storageEntriesWithPrefix(
+    clearedStorage.local,
+    OPENROUTER_CREDENTIAL_OPERATION_PREFIX
+  )
+  expect(clearBarriers).toHaveLength(1)
+  expect(JSON.parse(clearBarriers[0]![1])).toMatchObject({
+    recordVersion: 1,
+    kind: 'clear',
+    operation: {
+      startedAtMicros: expect.stringMatching(/^\d{1,20}$/u),
+      token: expect.stringMatching(/^[a-zA-Z0-9_-]{16,128}$/u)
+    }
+  })
+  expect(JSON.stringify(clearedStorage)).not.toContain(OPENROUTER_KEY)
+  expect(JSON.stringify(clearedStorage)).not.toContain(passphrase)
   await closeSettings(dialog)
 })
 
@@ -551,7 +594,7 @@ test('mandatory AI credentials: encrypted-storage failure is reported and never 
     Object.defineProperty(Storage.prototype, 'setItem', {
       configurable: true,
       value(this: Storage, key: string, value: string): void {
-        if (key === 'orbitpm.lite.key.encrypted.openrouter') {
+        if (key.startsWith('orbitpm.lite.key.encrypted.slot.openrouter.')) {
           throw new DOMException('E2E encrypted credential storage denied', 'QuotaExceededError')
         }
         original.call(this, key, value)
@@ -571,9 +614,22 @@ test('mandatory AI credentials: encrypted-storage failure is reported and never 
   )
   await expect(storageAlert).toContainText('E2E encrypted credential storage denied')
   await expect(dialog.getByText('Saved.', { exact: true })).toHaveCount(0)
-  expect((await browserStorageSnapshot(page)).local).not.toHaveProperty(
-    'orbitpm.lite.key.encrypted.openrouter'
+  const failedStorage = await browserStorageSnapshot(page)
+  expect(failedStorage.local).not.toHaveProperty('orbitpm.lite.key.encrypted.openrouter')
+  expect(
+    storageEntriesWithPrefix(failedStorage.local, OPENROUTER_ENCRYPTED_SLOT_PREFIX)
+  ).toHaveLength(0)
+  const failedOperations = storageEntriesWithPrefix(
+    failedStorage.local,
+    OPENROUTER_CREDENTIAL_OPERATION_PREFIX
   )
+  expect(failedOperations).toHaveLength(1)
+  expect(JSON.parse(failedOperations[0]![1])).toMatchObject({
+    recordVersion: 1,
+    kind: 'failed-save'
+  })
+  expect(JSON.stringify(failedStorage)).not.toContain(OPENROUTER_KEY)
+  expect(JSON.stringify(failedStorage)).not.toContain('storage failure passphrase')
   await closeSettings(dialog)
   await expect((await expandAiPanel(page)).getByText('No key stored for OpenRouter')).toBeVisible()
 })
@@ -648,9 +704,11 @@ test('mandatory AI privacy: preview opt-out, relevance, redaction, adversarial q
     .getByLabel('I reviewed this request and consent to sending the listed data.')
     .check()
   await panel.getByRole('button', { name: 'Generate', exact: true }).click()
-  await expect(panel.getByRole('alert')).toContainText('context opt-out binding probe', {
+  await expect.poll(() => chatBodies.length).toBe(1)
+  await expect(panel.getByRole('alert')).toContainText('openrouter: HTTP 400', {
     timeout: 20_000
   })
+  await expect(panel.getByRole('alert')).not.toContainText('context opt-out binding probe')
   expect(chatBodies).toHaveLength(1)
   const optedOutMessages = chatBodies[0].messages as Array<{ role: string; content: string }>
   expect(optedOutMessages[1].content).not.toContain('# Existing processes in this workspace')
@@ -668,9 +726,9 @@ test('mandatory AI privacy: preview opt-out, relevance, redaction, adversarial q
   await expect(generate).toBeDisabled()
   await consent.check()
   await generate.click()
-  await expect(panel.getByRole('alert')).toContainText('redacted context binding probe', {
-    timeout: 20_000
-  })
+  await expect.poll(() => chatBodies.length).toBe(2)
+  await expect(panel.getByRole('alert')).toContainText('openrouter: HTTP 400')
+  await expect(panel.getByRole('alert')).not.toContainText('redacted context binding probe')
 
   expect(chatBodies).toHaveLength(2)
   const redactedOutbound = chatBodies[1]
@@ -889,11 +947,13 @@ test('mandatory AI reliability: permanent data-policy failure is attempted once 
     'permanent-error'
   )
   await generate.click()
-  await expect(panel.getByRole('alert')).toContainText(
-    /No endpoints satisfy zero-data-retention|openrouter 400/i,
-    { timeout: 20_000 }
+  await expect.poll(() => chatRequests).toBe(1)
+  await expect(panel.getByRole('alert')).toContainText('openrouter: HTTP 400', {
+    timeout: 20_000
+  })
+  await expect(panel.getByRole('alert')).not.toContainText(
+    'No endpoints satisfy zero-data-retention'
   )
-  expect(chatRequests).toBe(1)
   await expect(panel.getByText(/retrying in/i)).toHaveCount(0)
 })
 

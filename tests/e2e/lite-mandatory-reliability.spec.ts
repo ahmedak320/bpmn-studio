@@ -808,7 +808,9 @@ test('mandatory workspace switch aborts in-flight generation, assistant, and int
     await expect(
       page.getByRole('tablist', { name: 'Open process diagrams' }).getByRole('tab')
     ).toHaveCount(0)
-    await expect(page.getByText(`📁 ${expected.rootName}`, { exact: true })).toBeVisible()
+    await expect(
+      page.getByRole('contentinfo').getByText(`📁 ${expected.rootName}`, { exact: true })
+    ).toBeVisible()
     await expect(physicalRow(page, expected.visibleFile)).toBeVisible()
     await expect(physicalRow(page, expected.hiddenFile)).toHaveCount(0)
     await expect(page.getByText(expected.visibleSentinel, { exact: true })).toBeVisible()

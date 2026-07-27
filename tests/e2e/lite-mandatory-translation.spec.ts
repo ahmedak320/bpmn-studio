@@ -1714,12 +1714,12 @@ test('TR6: cancellation, HTTP 429 per-field retry, partial failure and per-field
     0
   )
   releaseRetrySuccess()
-  await expect(retryRow).toHaveCount(0, { timeout: 30_000 })
   await expect(review.getByText('Translation is running…')).toHaveCount(0)
   await expect(review.getByText('Retrying this field…')).toHaveCount(0)
+  await expect(retryRow).toContainText('Provider proposal', { timeout: 30_000 })
+  await expect(retryRow).toContainText(retryArabic)
   await expect(review).toContainText(
-    'Some fields are still unresolved. They remain listed and the diagram language was not reported as complete.',
-    { timeout: 30_000 }
+    '1 provider translation proposals require your acceptance, edit, or rejection before anything is applied.'
   )
   await expect(review).not.toContainText('Translation provider failed')
   await expect
@@ -1729,9 +1729,25 @@ test('TR6: cancellation, HTTP 429 per-field retry, partial failure and per-field
       nameAr: 'إعادة المحاولة الأولى',
       owner: retrySource,
       ownerEn: retrySource,
-      ownerAr: retryArabic
+      ownerAr: null
     })
   expect(googleAttempts.get(retrySource)).toBe(2)
+  await retryRow.getByRole('button', { name: 'Accept this proposal' }).click()
+  await expect(retryRow).toContainText('Accepted for final apply')
+  await expect(retryRow).toContainText(retryArabic)
+  await expect(retryRow.getByRole('button', { name: 'Retry this field' })).toHaveCount(0)
+  await expect(review).toContainText(
+    '1 reviewed value(s) are staged. Nothing changes until final Apply.'
+  )
+  await expect
+    .poll(() => elementState(page, 'Task_Retry'))
+    .toMatchObject({
+      name: 'Retry one',
+      nameAr: 'إعادة المحاولة الأولى',
+      owner: retrySource,
+      ownerEn: retrySource,
+      ownerAr: null
+    })
 
   await manualRow.getByRole('button', { name: 'Retry this field' }).click()
   const manualDisclosure = manualRow.getByRole('region', {
@@ -1776,13 +1792,16 @@ test('TR6: cancellation, HTTP 429 per-field retry, partial failure and per-field
   const saveReviewed = manualRow.getByRole('button', { name: 'Save reviewed value' })
   await expect(saveReviewed).toBeEnabled()
   await saveReviewed.click()
-  await expect(manualRow).toHaveCount(0)
+  await expect(manualRow).toContainText('Accepted for final apply')
+  await expect(manualRow).toContainText('المراجعة اليدوية الثانية')
+  await expect
+    .poll(() => elementState(page, 'Task_Manual'))
+    .toMatchObject({ name: 'Manual two', nameAr: null })
   await expect(
     review.getByText(
       'All target fields now pass the bilingual audit. Apply the completed language view to finish.'
     )
   ).toBeVisible()
-  await expect(review).not.toContainText('Translation provider failed')
   await expect(
     review.getByText(
       'Some fields are still unresolved. They remain listed and the diagram language was not reported as complete.'
@@ -1911,7 +1930,7 @@ test('TR6/TR10: workspace translation-memory recovery and late finalization stay
     page.getByText('Every process in TmPrimaryWorkspace.', { exact: false })
   ).toBeVisible()
   await openTreeFile(page, 'tm-recovery.bpmn')
-  await clearArabicNames(page, ['Task_Tm_Retry', 'Task_Tm_Continue'])
+  await clearArabicNames(page, ['Task_Tm_Retry'])
   await page.getByRole('button', { name: /Translate/ }).click()
   const review = page.getByRole('dialog', { name: 'Review translation' })
   await expect(review).toBeVisible()
@@ -1919,16 +1938,12 @@ test('TR6/TR10: workspace translation-memory recovery and late finalization stay
     name: 'Task_Tm_Retry · name · en→ar',
     exact: true
   })
-  const continueRow = review.getByRole('listitem', {
-    name: 'Task_Tm_Continue · name · en→ar',
-    exact: true
-  })
   await expect(retryRow).toBeVisible()
-  await expect(continueRow).toBeVisible()
 
-  // The diagram mutation commits first. A storage failure then locks every
-  // unrelated action until the exact accepted pair batch is retried or
-  // explicitly skipped.
+  // A manual review is private staged state. The final Apply commits the
+  // diagram mutation first; a storage failure then locks every unrelated
+  // action until the exact accepted pair batch is retried or explicitly
+  // skipped.
   const retryAttemptsBefore = await page.evaluate(
     (path) => window.__ORBITPM_MANDATORY_TRANSLATION_FS__.writeAttempts(path),
     WORKSPACE_TRANSLATION_MEMORY_PATH
@@ -1938,22 +1953,37 @@ test('TR6/TR10: workspace translation-memory recovery and late finalization stay
     WORKSPACE_TRANSLATION_MEMORY_PATH
   )
   await editManually(retryRow, 'إعادة محاولة حفظ الذاكرة')
+  await expect(retryRow).toContainText('Accepted for final apply')
   await expect(review).toContainText(
-    'The translation was applied, but accepted translation pairs could not be saved to workspace translation memory:',
-    { timeout: 30_000 }
+    '1 reviewed value(s) are staged. Nothing changes until final Apply.'
   )
   await expect
     .poll(() => elementState(page, 'Task_Tm_Retry'))
     .toMatchObject({
       name: 'Retry memory save',
+      nameAr: null
+    })
+  expect(
+    await page.evaluate(
+      (path) => window.__ORBITPM_MANDATORY_TRANSLATION_FS__.writeAttempts(path),
+      WORKSPACE_TRANSLATION_MEMORY_PATH
+    )
+  ).toBe(retryAttemptsBefore)
+  await review.getByRole('button', { name: 'Apply completed language view' }).click()
+  await expect(review).toContainText(
+    'The translation was applied, but accepted translation pairs could not be saved to workspace translation memory.',
+    { timeout: 30_000 }
+  )
+  await expect
+    .poll(() => elementState(page, 'Task_Tm_Retry'))
+    .toMatchObject({
+      name: 'إعادة محاولة حفظ الذاكرة',
       nameAr: 'إعادة محاولة حفظ الذاكرة'
     })
   const stackAfterRetryMutation = await stackIndex()
   await expect(review.getByLabel('Translation provider')).toBeDisabled()
   await expect(review.getByRole('button', { name: 'Postpone' })).toBeDisabled()
-  await expect(
-    review.getByRole('button', { name: 'Preview translated fields only' })
-  ).toBeDisabled()
+  await expect(review.getByRole('button', { name: 'Apply completed language view' })).toBeDisabled()
   const memoryRetry = review.getByRole('button', {
     name: 'Retry saving accepted translations'
   })
@@ -1962,15 +1992,12 @@ test('TR6/TR10: workspace translation-memory recovery and late finalization stay
   })
   await expect(memoryRetry).toBeEnabled()
   await expect(memoryContinue).toBeEnabled()
-  await review.getByRole('button', { name: 'Close' }).click()
+  await expect(review.getByRole('button', { name: 'Close' })).toHaveCount(0)
   await expect(review).toBeVisible()
   expect((await readMemory()).entries).toEqual([])
 
   await memoryRetry.click()
-  await expect(memoryRetry).toHaveCount(0, { timeout: 30_000 })
-  await expect(review).toContainText(
-    'Some fields are still unresolved. They remain listed and the diagram language was not reported as complete.'
-  )
+  await expect(review).toBeHidden({ timeout: 30_000 })
   expect(await stackIndex()).toBe(stackAfterRetryMutation)
   expect(
     await page.evaluate(
@@ -1986,21 +2013,52 @@ test('TR6/TR10: workspace translation-memory recovery and late finalization stay
     })
   ])
 
+  // Return to the English projection before creating a second missing Arabic
+  // target, so the next review has one exact staged pair of its own.
+  await clickDiagramLanguageToggle(page)
+  await expect.poll(() => activeDiagramLanguage(page)).toBe('en')
+  await clearArabicNames(page, ['Task_Tm_Continue'])
+  await page.getByRole('button', { name: /Translate/ }).click()
+  await expect(review).toBeVisible()
+  const continueRow = review.getByRole('listitem', {
+    name: 'Task_Tm_Continue · name · en→ar',
+    exact: true
+  })
+  await expect(continueRow).toBeVisible()
+
   // A repeated failure offers an explicit truthful continuation. It preserves
   // the already-applied diagram mutation and does not add the skipped pair.
+  const continueAttemptsBefore = await page.evaluate(
+    (path) => window.__ORBITPM_MANDATORY_TRANSLATION_FS__.writeAttempts(path),
+    WORKSPACE_TRANSLATION_MEMORY_PATH
+  )
   await page.evaluate(
     (path) => window.__ORBITPM_MANDATORY_TRANSLATION_FS__.failNextWrites(path, 2),
     WORKSPACE_TRANSLATION_MEMORY_PATH
   )
   await editManually(continueRow, 'متابعة حفظ الذاكرة')
+  await expect(continueRow).toContainText('Accepted for final apply')
+  await expect
+    .poll(() => elementState(page, 'Task_Tm_Continue'))
+    .toMatchObject({
+      name: 'Continue memory save',
+      nameAr: null
+    })
+  expect(
+    await page.evaluate(
+      (path) => window.__ORBITPM_MANDATORY_TRANSLATION_FS__.writeAttempts(path),
+      WORKSPACE_TRANSLATION_MEMORY_PATH
+    )
+  ).toBe(continueAttemptsBefore)
+  await review.getByRole('button', { name: 'Apply completed language view' }).click()
   await expect(review).toContainText(
-    'The translation was applied, but accepted translation pairs could not be saved to workspace translation memory:',
+    'The translation was applied, but accepted translation pairs could not be saved to workspace translation memory.',
     { timeout: 30_000 }
   )
   const stackAfterContinueMutation = await stackIndex()
   await review.getByRole('button', { name: 'Retry saving accepted translations' }).click()
   await expect(review).toContainText(
-    'The translation was applied, but accepted translation pairs could not be saved to workspace translation memory:',
+    'The translation was applied, but accepted translation pairs could not be saved to workspace translation memory.',
     { timeout: 30_000 }
   )
   await expect(
@@ -2008,17 +2066,23 @@ test('TR6/TR10: workspace translation-memory recovery and late finalization stay
   ).toBeEnabled()
   expect(await stackIndex()).toBe(stackAfterContinueMutation)
   await review.getByRole('button', { name: 'Continue without saving these pairs' }).click()
-  await expect(review).toContainText(
-    'The translation remains applied, but these accepted pairs were not saved to workspace translation memory.'
-  )
-  await expect(
-    review.getByRole('button', { name: 'Retry saving accepted translations' })
-  ).toHaveCount(0)
-  await expect(review.getByRole('button', { name: 'Postpone' })).toBeEnabled()
-  await expect(review.getByRole('button', { name: 'Apply completed language view' })).toBeEnabled()
-  expect((await readMemory()).entries).toHaveLength(1)
-  await review.getByRole('button', { name: 'Apply completed language view' }).click()
   await expect(review).toBeHidden()
+  await expect(
+    page.getByText(
+      'The translation remains applied. OrbitPM continued without another attempt to save these pairs to workspace translation memory.'
+    )
+  ).toBeVisible()
+  await expect(
+    page.getByRole('button', { name: 'Retry saving accepted translations' })
+  ).toHaveCount(0)
+  expect(
+    await page.evaluate(
+      (path) => window.__ORBITPM_MANDATORY_TRANSLATION_FS__.writeAttempts(path),
+      WORKSPACE_TRANSLATION_MEMORY_PATH
+    )
+  ).toBe(continueAttemptsBefore + 2)
+  expect(await stackIndex()).toBe(stackAfterContinueMutation)
+  expect((await readMemory()).entries).toHaveLength(1)
   await expect.poll(() => activeDiagramLanguage(page)).toBe('ar')
   await expect.poll(() => renderedText(page, 'Task_Tm_Retry')).toContain('إعادة محاولة حفظ الذاكرة')
   await expect.poll(() => renderedText(page, 'Task_Tm_Continue')).toContain('متابعة حفظ الذاكرة')
@@ -2039,6 +2103,14 @@ test('TR6/TR10: workspace translation-memory recovery and late finalization stay
     WORKSPACE_TRANSLATION_MEMORY_PATH
   )
   await editManually(lateRow, 'إنهاء ترجمة مساحة العمل')
+  await expect(lateRow).toContainText('Accepted for final apply')
+  await expect
+    .poll(() => elementState(page, 'Task_Tm_Late'))
+    .toMatchObject({
+      name: 'Finalize workspace translation',
+      nameAr: null
+    })
+  await review.getByRole('button', { name: 'Apply completed language view' }).click()
   await page.evaluate(
     (path) => window.__ORBITPM_MANDATORY_TRANSLATION_FS__.waitForHeldWrite(path),
     WORKSPACE_TRANSLATION_MEMORY_PATH
@@ -2050,12 +2122,12 @@ test('TR6/TR10: workspace translation-memory recovery and late finalization stay
   await expect(review.getByLabel('Translation provider')).toBeDisabled()
   await expect(review.getByRole('button', { name: 'Postpone' })).toBeDisabled()
   await expect(review.getByRole('button', { name: 'Apply completed language view' })).toBeDisabled()
-  await review.getByRole('button', { name: 'Close' }).click()
+  await expect(review.getByRole('button', { name: 'Close' })).toHaveCount(0)
   await expect(review).toBeVisible()
   await expect
     .poll(() => elementState(page, 'Task_Tm_Late'))
     .toMatchObject({
-      name: 'Finalize workspace translation',
+      name: 'إنهاء ترجمة مساحة العمل',
       nameAr: 'إنهاء ترجمة مساحة العمل'
     })
   expect((await readMemory()).entries).toHaveLength(1)
@@ -2081,7 +2153,7 @@ test('TR6/TR10: workspace translation-memory recovery and late finalization stay
     (path) => window.__ORBITPM_MANDATORY_TRANSLATION_FS__.waitForHeldWriteSettled(path),
     WORKSPACE_TRANSLATION_MEMORY_PATH
   )
-  await expect(review.getByRole('button', { name: 'Apply completed language view' })).toBeEnabled()
+  await expect(review).toBeHidden({ timeout: 30_000 })
   expect((await readMemory()).entries).toEqual([
     expect.objectContaining({
       en: 'Retry memory save',
@@ -2094,8 +2166,6 @@ test('TR6/TR10: workspace translation-memory recovery and late finalization stay
       accepted: true
     })
   ])
-  await review.getByRole('button', { name: 'Apply completed language view' }).click()
-  await expect(review).toBeHidden()
   await expect
     .poll(() => changeFolder.evaluate((button) => Boolean(button.closest('[inert]'))))
     .toBe(false)
