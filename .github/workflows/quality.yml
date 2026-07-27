@@ -3,6 +3,29 @@ name: Lite Quality
 on:
   pull_request:
   workflow_call:
+    inputs:
+      source_ref:
+        description: Git ref resolved once by identity before exact-SHA quality checkouts
+        required: false
+        type: string
+      expected_sha:
+        description: Exact 40-character commit expected from source_ref
+        required: false
+        type: string
+      artifact_prefix:
+        description: Namespace for the single-file build artifact
+        required: false
+        default: orbitpm-tested-pages
+        type: string
+      release_tag:
+        description: Annotated tag required when release_mode is true
+        required: false
+        type: string
+      release_mode:
+        description: Enable tag-bound release checks and live-CORS browser probes
+        required: false
+        default: false
+        type: boolean
 
 permissions:
   contents: read
@@ -12,16 +35,59 @@ env:
   NPM_VERSION: 11.13.0
 
 jobs:
+  identity:
+    name: Bind every quality job to one immutable source identity
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Checkout requested source
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ inputs.source_ref || github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Verify exact commit and optional annotated release tag
+        env:
+          EXPECTED_SHA: ${{ inputs.expected_sha || github.sha }}
+          RELEASE_MODE: ${{ inputs.release_mode }}
+          RELEASE_TAG: ${{ inputs.release_tag }}
+        run: |
+          test "${#EXPECTED_SHA}" -eq 40
+          case "$EXPECTED_SHA" in
+            *[!0-9a-fA-F]*)
+              echo "expected_sha must contain exactly 40 hexadecimal characters" >&2
+              exit 1
+              ;;
+          esac
+          test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
+          if test "$RELEASE_MODE" = "true"; then
+            test -n "$RELEASE_TAG"
+            git fetch --force origin \
+              refs/heads/main:refs/remotes/origin/main \
+              "+refs/tags/$RELEASE_TAG:refs/tags/$RELEASE_TAG"
+            test "$(git rev-parse origin/main)" = "$EXPECTED_SHA"
+            test "$(git cat-file -t "refs/tags/$RELEASE_TAG")" = "tag"
+            test "$(git rev-parse "refs/tags/$RELEASE_TAG^{commit}")" = "$EXPECTED_SHA"
+          fi
+
   policy:
     name: Policy, types, lint, and supply chain
+    needs: identity
     runs-on: ubuntu-24.04
     timeout-minutes: 25
     steps:
       - name: Checkout full history
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
+          ref: ${{ inputs.expected_sha || github.sha }}
           fetch-depth: 0
           persist-credentials: false
+
+      - name: Verify exact checkout
+        env:
+          EXPECTED_SHA: ${{ inputs.expected_sha || github.sha }}
+        run: test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
 
       - name: Set up exact Node
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
@@ -44,6 +110,21 @@ jobs:
 
       - name: GitHub Actions syntax and shell safety
         run: npm run check:actions
+
+      - name: Release lifecycle static invariants
+        run: node scripts/check-release-workflows.mjs
+
+      - name: Release evidence verifier regression tests
+        run: >-
+          node --test
+          scripts/browser-environment-evidence.test.mjs
+          scripts/historical-release-cleanup.test.mjs
+          scripts/pages-evidence-chain.test.mjs
+          scripts/release-evidence-chain.test.mjs
+          scripts/release-review-gate.test.mjs
+          scripts/verify-browser-compatibility-evidence.test.mjs
+          scripts/verify-external-release-evidence.test.mjs
+          scripts/workflow-action-pins.test.mjs
 
       - name: Strict TypeScript
         run: npm run typecheck
@@ -87,14 +168,21 @@ jobs:
 
   secrets:
     name: Current-tree and history secret scan
+    needs: identity
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
       - name: Checkout full history
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
+          ref: ${{ inputs.expected_sha || github.sha }}
           fetch-depth: 0
           persist-credentials: false
+
+      - name: Verify exact checkout
+        env:
+          EXPECTED_SHA: ${{ inputs.expected_sha || github.sha }}
+        run: test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
 
       - name: Install checksum-verified Gitleaks 8.30.1
         env:
@@ -118,13 +206,20 @@ jobs:
 
   unit:
     name: Unit, integration, standards, archives, and coverage
+    needs: identity
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     steps:
       - name: Checkout
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
+          ref: ${{ inputs.expected_sha || github.sha }}
           persist-credentials: false
+
+      - name: Verify exact checkout
+        env:
+          EXPECTED_SHA: ${{ inputs.expected_sha || github.sha }}
+        run: test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
 
       - name: Set up exact Node
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
@@ -159,13 +254,20 @@ jobs:
 
   performance:
     name: Performance budgets at release fixture sizes
+    needs: identity
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
       - name: Checkout
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
+          ref: ${{ inputs.expected_sha || github.sha }}
           persist-credentials: false
+
+      - name: Verify exact checkout
+        env:
+          EXPECTED_SHA: ${{ inputs.expected_sha || github.sha }}
+        run: test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
 
       - name: Set up exact Node
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
@@ -194,14 +296,20 @@ jobs:
 
   build:
     name: Fresh single-file release build
-    needs: [policy, secrets, unit, performance]
+    needs: [identity, policy, secrets, unit, performance]
     runs-on: ubuntu-24.04
     timeout-minutes: 25
     steps:
       - name: Checkout
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
+          ref: ${{ inputs.expected_sha || github.sha }}
           persist-credentials: false
+
+      - name: Verify exact checkout
+        env:
+          EXPECTED_SHA: ${{ inputs.expected_sha || github.sha }}
+        run: test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
 
       - name: Set up exact Node
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
@@ -233,7 +341,7 @@ jobs:
       - name: Upload exact tested artifact
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: orbitpm-tested-pages-${{ github.sha }}
+          name: ${{ inputs.artifact_prefix || 'orbitpm-tested-pages' }}-${{ inputs.expected_sha || github.sha }}
           path: dist/index.html
           if-no-files-found: error
           retention-days: 30
@@ -251,7 +359,13 @@ jobs:
       - name: Checkout
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
+          ref: ${{ inputs.expected_sha || github.sha }}
           persist-credentials: false
+
+      - name: Verify exact checkout
+        env:
+          EXPECTED_SHA: ${{ inputs.expected_sha || github.sha }}
+        run: test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
 
       - name: Set up exact Node
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
@@ -269,7 +383,7 @@ jobs:
       - name: Download exact build
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
         with:
-          name: orbitpm-tested-pages-${{ github.sha }}
+          name: ${{ inputs.artifact_prefix || 'orbitpm-tested-pages' }}-${{ inputs.expected_sha || github.sha }}
           path: dist
 
       - name: Verify downloaded build
@@ -279,23 +393,18 @@ jobs:
         run: ./node_modules/.bin/playwright install --with-deps ${{ matrix.browser }}
 
       - name: Record exact browser, platform, artifact, URL, and locale evidence
-        env:
-          MATRIX_BROWSER: ${{ matrix.browser }}
+        if: ${{ matrix.browser == 'chromium' }}
         run: |
-          evidence_browser="$MATRIX_BROWSER"
-          if test "$evidence_browser" = "webkit"; then
-            evidence_browser="webkit-linux"
-          fi
           node scripts/browser-environment-evidence.mjs \
             --candidate-sha="$GITHUB_SHA" \
             --artifact=dist/index.html \
-            --browsers="$evidence_browser" \
-            --output="test-results/environment-$MATRIX_BROWSER.json"
+            --browsers=chromium \
+            --output=test-results/environment-chromium.json
 
       - name: Run browser suite without rebuild, skip, flake, or retry
         env:
           CI: true
-          LITE_LIVE_CORS: ${{ startsWith(github.ref, 'refs/tags/') && '1' || '0' }}
+          LITE_LIVE_CORS: ${{ inputs.release_mode && '1' || '0' }}
           ORBITPM_PLAYWRIGHT_SUMMARY: test-results/release-${{ matrix.browser }}.json
         run: >-
           ./node_modules/.bin/playwright test
@@ -324,7 +433,13 @@ jobs:
       - name: Checkout
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
+          ref: ${{ inputs.expected_sha || github.sha }}
           persist-credentials: false
+
+      - name: Verify exact checkout
+        env:
+          EXPECTED_SHA: ${{ inputs.expected_sha || github.sha }}
+        run: test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
 
       - name: Set up exact Node
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
@@ -342,7 +457,7 @@ jobs:
       - name: Download exact build
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
         with:
-          name: orbitpm-tested-pages-${{ github.sha }}
+          name: ${{ inputs.artifact_prefix || 'orbitpm-tested-pages' }}-${{ inputs.expected_sha || github.sha }}
           path: dist
 
       - name: Verify downloaded build
@@ -376,7 +491,13 @@ jobs:
       - name: Checkout
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
+          ref: ${{ inputs.expected_sha || github.sha }}
           persist-credentials: false
+
+      - name: Verify exact checkout
+        env:
+          EXPECTED_SHA: ${{ inputs.expected_sha || github.sha }}
+        run: test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
 
       - name: Set up exact Node
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
@@ -394,7 +515,7 @@ jobs:
       - name: Download exact build
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
         with:
-          name: orbitpm-tested-pages-${{ github.sha }}
+          name: ${{ inputs.artifact_prefix || 'orbitpm-tested-pages' }}-${{ inputs.expected_sha || github.sha }}
           path: dist
 
       - name: Install Chromium

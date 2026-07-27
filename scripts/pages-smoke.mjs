@@ -17,8 +17,8 @@ if (!pagesUrl) {
   console.error('Pages smoke requires --url=<deployment-url> or PAGES_URL.')
   process.exit(1)
 }
-if (!Number.isInteger(fetchAttempts) || fetchAttempts < 1 || fetchAttempts > 120) {
-  console.error('--fetch-attempts must be an integer from 1 through 120.')
+if (!Number.isInteger(fetchAttempts) || fetchAttempts < 1 || fetchAttempts > 180) {
+  console.error('--fetch-attempts must be an integer from 1 through 180.')
   process.exit(1)
 }
 if (!Number.isInteger(fetchDelayMs) || fetchDelayMs < 0 || fetchDelayMs > 60_000) {

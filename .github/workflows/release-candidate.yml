@@ -56,9 +56,10 @@ jobs:
             exit 1
           fi
           pulls_json="$(
-            gh api \
+            gh api --paginate \
               --header 'Accept: application/vnd.github+json' \
-              "repos/$GITHUB_REPOSITORY/commits/$CANDIDATE_SHA/pulls"
+              "repos/$GITHUB_REPOSITORY/commits/$CANDIDATE_SHA/pulls?per_page=100" |
+              jq -s 'add'
           )"
           candidate_pr="$(
             jq \
@@ -73,42 +74,44 @@ jobs:
           test "$(jq length <<<"$candidate_pr")" -eq 1
           pr_number="$(jq -r '.[0].number' <<<"$candidate_pr")"
           pr_author="$(jq -r '.[0].user.login' <<<"$candidate_pr")"
+          pr_head_sha="$(jq -r '.[0].head.sha' <<<"$candidate_pr")"
           merged_at="$(jq -r '.[0].merged_at' <<<"$candidate_pr")"
-          reviews_json="$(
-            gh api \
-              --header 'Accept: application/vnd.github+json' \
-              "repos/$GITHUB_REPOSITORY/pulls/$pr_number/reviews"
-          )"
-          approval_count="$(
-            jq \
-              --arg author "$pr_author" \
-              --arg merged "$merged_at" \
-              '[
-                .[]
-                | select(
-                    .submitted_at <= $merged and
-                    .user.login != $author and
-                    .user.type == "User" and
-                    (
-                      .state == "APPROVED" or
-                      .state == "CHANGES_REQUESTED" or
-                      .state == "DISMISSED"
-                    )
-                  )
-              ]
-              | sort_by(.user.login)
-              | group_by(.user.login)
-              | map(sort_by(.submitted_at) | last)
-              | map(select(.state == "APPROVED"))
-              | length' \
-              <<<"$reviews_json"
-          )"
-          test "$approval_count" -ge 1
+          test "${#pr_head_sha}" -eq 40
+          gh api --paginate \
+            --header 'Accept: application/vnd.github+json' \
+            "repos/$GITHUB_REPOSITORY/pulls/$pr_number/reviews?per_page=100" |
+            jq -s 'add' > all-pr-reviews.json
+          node scripts/release-review-gate.mjs \
+            --reviews=all-pr-reviews.json \
+            --author="$pr_author" \
+            --head-sha="$pr_head_sha" \
+            --merged-at="$merged_at" \
+            --output=effective-pr-approvals.json
+          trusted_approvals=0
+          while IFS= read -r reviewer; do
+            permission="$(
+              gh api \
+                --header 'Accept: application/vnd.github+json' \
+                "repos/$GITHUB_REPOSITORY/collaborators/$reviewer/permission" \
+                --jq .permission
+            )"
+            case "$permission" in
+              admin | maintain | write) ;;
+              *) exit 1 ;;
+            esac
+            ((trusted_approvals += 1))
+          done < <(jq -r '.approvals[].login' effective-pr-approvals.json)
+          test "$trusted_approvals" -ge 1
 
   quality:
     name: Required release-quality gates
     needs: identity
     uses: ./.github/workflows/quality.yml
+    with:
+      source_ref: ${{ inputs.candidate_sha }}
+      expected_sha: ${{ inputs.candidate_sha }}
+      artifact_prefix: orbitpm-tested-pages
+      release_mode: false
 
   candidate:
     name: Assemble, reproduce, verify, and file-smoke exact assets

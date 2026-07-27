@@ -32,6 +32,8 @@ jobs:
     name: Verify earlier merge-SHA candidate evidence
     runs-on: ubuntu-24.04
     timeout-minutes: 40
+    outputs:
+      candidate_ready_at: ${{ steps.pretag_binding.outputs.candidate_ready_at }}
     permissions:
       actions: read
       contents: read
@@ -43,7 +45,7 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
-      - name: Require exact current origin/main and reviewed evidence
+      - name: Require exact current origin/main and immutable tag identity if resumed
         env:
           CANDIDATE_SHA: ${{ inputs.candidate_sha }}
           EVIDENCE_SHA256: ${{ inputs.external_evidence_sha256 }}
@@ -84,8 +86,13 @@ jobs:
             refs/heads/main:refs/remotes/origin/main \
             '+refs/tags/*:refs/tags/*'
           test "$(git rev-parse origin/main)" = "$CANDIDATE_SHA"
+          if git show-ref --verify --quiet refs/tags/v0.4.5; then
+            test "$(git cat-file -t refs/tags/v0.4.5)" = "tag"
+            test "$(git rev-parse 'refs/tags/v0.4.5^{commit}')" = "$CANDIDATE_SHA"
+          fi
 
-      - name: Verify successful earlier pre-tag workflow identity
+      - name: Verify successful earlier pre-tag workflow and candidate artifact identity
+        id: pretag_binding
         env:
           CANDIDATE_SHA: ${{ inputs.candidate_sha }}
           GH_TOKEN: ${{ github.token }}
@@ -100,36 +107,55 @@ jobs:
           test "$(jq -r .conclusion <<<"$run_json")" = "success"
           test "$(jq -r .head_sha <<<"$run_json")" = "$CANDIDATE_SHA"
           test "$(jq -r .head_branch <<<"$run_json")" = "main"
-          PRETAG_COMPLETED_AT="$(jq -r .updated_at <<<"$run_json")" \
-            RELEASE_STARTED_AT="$(jq -r .created_at <<<"$current_run_json")" \
-            node --eval "
-              const completed = Date.parse(process.env.PRETAG_COMPLETED_AT)
-              const started = Date.parse(process.env.RELEASE_STARTED_AT)
-              if (!Number.isFinite(completed) || !Number.isFinite(started) || completed >= started) {
-                throw new Error('The selected pre-tag run did not complete before this release run.')
-              }
-            "
-          if git show-ref --verify --quiet refs/tags/v0.4.5; then
-            echo "v0.4.5 already exists; release tag creation is fail-closed" >&2
-            exit 1
-          fi
           artifacts_json="$(
             gh api "repos/$GITHUB_REPOSITORY/actions/runs/$PRETAG_RUN_ID/artifacts?per_page=100"
           )"
           test "$(jq -r .total_count <<<"$artifacts_json")" -le 100
-          candidate_artifact_count="$(
-            jq \
-              --arg name "orbitpm-pretag-release-candidate-$CANDIDATE_SHA" \
-              '[.artifacts[] | select(.name == $name)] | length' \
+          candidate_name="orbitpm-pretag-release-candidate-$CANDIDATE_SHA"
+          candidate_artifact="$(
+            jq --arg name "$candidate_name" \
+              '[.artifacts[] | select(.name == $name and .expired == false)]' \
               <<<"$artifacts_json"
           )"
-          test "$candidate_artifact_count" -eq 1
-          test "$(
-            jq \
-              --arg name "orbitpm-pretag-release-candidate-$CANDIDATE_SHA" \
-              '[.artifacts[] | select(.name == $name)][0].expired' \
-              <<<"$artifacts_json"
-          )" = "false"
+          test "$(jq length <<<"$candidate_artifact")" -eq 1
+          test "$(jq -r '.[0].workflow_run.id' <<<"$candidate_artifact")" = \
+            "$PRETAG_RUN_ID"
+          test "$(jq -r '.[0].workflow_run.head_sha' <<<"$candidate_artifact")" = \
+            "$CANDIDATE_SHA"
+          candidate_artifact_created_at="$(jq -r '.[0].created_at' <<<"$candidate_artifact")"
+          candidate_ready_at_raw="$(jq -r .updated_at <<<"$run_json")"
+          candidate_ready_at="$(
+            CANDIDATE_READY_AT_RAW="$candidate_ready_at_raw" node --eval "
+              const value = Date.parse(process.env.CANDIDATE_READY_AT_RAW)
+              if (!Number.isFinite(value)) {
+                throw new Error('Successful pre-tag completion is not a timestamp.')
+              }
+              process.stdout.write(new Date(value).toISOString())
+            "
+          )"
+          ARTIFACT_CREATED_AT="$candidate_artifact_created_at" \
+          PRETAG_STARTED_AT="$(jq -r .created_at <<<"$run_json")" \
+            CANDIDATE_READY_AT="$candidate_ready_at" \
+            PRETAG_COMPLETED_AT="$(jq -r .updated_at <<<"$run_json")" \
+            RELEASE_STARTED_AT="$(jq -r .created_at <<<"$current_run_json")" \
+            node --eval "
+              const artifactCreated = Date.parse(process.env.ARTIFACT_CREATED_AT)
+              const pretagStarted = Date.parse(process.env.PRETAG_STARTED_AT)
+              const candidateReady = Date.parse(process.env.CANDIDATE_READY_AT)
+              const pretagCompleted = Date.parse(process.env.PRETAG_COMPLETED_AT)
+              const releaseStarted = Date.parse(process.env.RELEASE_STARTED_AT)
+              if (
+                ![artifactCreated, pretagStarted, candidateReady, pretagCompleted, releaseStarted]
+                  .every(Number.isFinite) ||
+                artifactCreated < pretagStarted ||
+                artifactCreated > pretagCompleted ||
+                candidateReady !== pretagCompleted ||
+                pretagCompleted >= releaseStarted
+              ) {
+                throw new Error('Candidate readiness must equal trusted pre-tag completion.')
+              }
+            "
+          echo "candidate_ready_at=$candidate_ready_at" >> "$GITHUB_OUTPUT"
 
       - name: Set up exact Node
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
@@ -156,8 +182,6 @@ jobs:
           --dir release
 
       - name: Clean rebuild, assemble, and compare exact candidate bytes
-        env:
-          CANDIDATE_SHA: ${{ inputs.candidate_sha }}
         run: |
           npm run clean:dist
           npm run build
@@ -169,10 +193,6 @@ jobs:
             name="$(basename "$candidate")"
             cmp "$candidate" "release-repro/$name"
           done
-          if git show-ref --verify --quiet refs/tags/v0.4.5; then
-            echo "v0.4.5 already exists; refusing release workflow recovery mutation" >&2
-            exit 1
-          fi
 
       - name: Verify candidate-bound external human and soak evidence
         env:
@@ -181,15 +201,29 @@ jobs:
         run: >-
           node scripts/verify-external-release-evidence.mjs
           --candidate-sha=${{ inputs.candidate_sha }}
+          --candidate-ready-at=${{ steps.pretag_binding.outputs.candidate_ready_at }}
           --artifact=release/OrbitPM-Process-Studio-Lite-0.4.5.html
           --url="$EVIDENCE_URL"
           --sha256="$EVIDENCE_SHA256"
           --output=release-evidence/external-evidence-verification.json
 
+      - name: Verify retained aggregate binds the trusted candidate-ready instant
+        env:
+          EVIDENCE_SHA256: ${{ inputs.external_evidence_sha256 }}
+          EVIDENCE_URL: ${{ inputs.external_evidence_url }}
+        run: >-
+          node scripts/release-evidence-chain.mjs verify
+          --aggregate=release-evidence/external-evidence-verification.json
+          --candidate-sha=${{ inputs.candidate_sha }}
+          --candidate-ready-at=${{ steps.pretag_binding.outputs.candidate_ready_at }}
+          --artifact=release/OrbitPM-Process-Studio-Lite-0.4.5.html
+          --source-url="$EVIDENCE_URL"
+          --source-sha256="$EVIDENCE_SHA256"
+
       - name: Install Chromium for independent exact file smoke
         run: ./node_modules/.bin/playwright install --with-deps chromium
 
-      - name: Re-smoke exact candidate before any tag exists
+      - name: Re-smoke exact candidate
         run: npm run release:file-smoke -- release/OrbitPM-Process-Studio-Lite-0.4.5.html
 
       - name: Preserve verified candidate for protected release job
@@ -209,21 +243,95 @@ jobs:
           retention-days: 90
 
   tag-and-draft:
-    name: Protected annotated tag and deterministic draft
+    name: Protected resumable annotated tag and deterministic draft
     needs: verify-pretag
     runs-on: ubuntu-24.04
-    timeout-minutes: 15
+    timeout-minutes: 20
     permissions:
       contents: write
     environment:
       name: release-v0.4.5
     steps:
-      - name: Require configured external-evidence approval policy
+      - name: Require prerequisites and create the protected tag with isolated admin token
         env:
           APPROVAL_POLICY: ${{ vars.ORBITPM_RELEASE_APPROVAL_POLICY }}
-        run: >-
-          test "$APPROVAL_POLICY" =
-          "v0.4.5-nvda-voiceover-arabic-48h-p0p1-reviewed"
+          CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+          GH_ADMIN_TOKEN: ${{ secrets.ORBITPM_RELEASE_ADMIN_TOKEN }}
+          RULESET_BYPASS_ACTOR_ID: ${{ vars.ORBITPM_RELEASE_TAG_BYPASS_ACTOR_ID }}
+          RULESET_ID: ${{ vars.ORBITPM_RELEASE_TAG_RULESET_ID }}
+        run: |
+          test "$APPROVAL_POLICY" = \
+            "v0.4.5-nvda-voiceover-arabic-48h-p0p1-reviewed"
+          test -n "$GH_ADMIN_TOKEN"
+          for numeric in "$RULESET_ID" "$RULESET_BYPASS_ACTOR_ID"; do
+            case "$numeric" in
+              '' | *[!0-9]*) exit 1 ;;
+            esac
+          done
+          test "$RULESET_BYPASS_ACTOR_ID" = "5"
+          immutable_json="$(
+            GH_TOKEN="$GH_ADMIN_TOKEN" gh api \
+              --header 'X-GitHub-Api-Version: 2026-03-10' \
+              "repos/$GITHUB_REPOSITORY/immutable-releases"
+          )"
+          test "$(jq -r .enabled <<<"$immutable_json")" = "true"
+          ruleset_json="$(
+            GH_TOKEN="$GH_ADMIN_TOKEN" gh api \
+              --header 'X-GitHub-Api-Version: 2026-03-10' \
+              "repos/$GITHUB_REPOSITORY/rulesets/$RULESET_ID"
+          )"
+          jq -e \
+            --argjson actor "$RULESET_BYPASS_ACTOR_ID" \
+            --argjson id "$RULESET_ID" \
+            '
+              .id == $id and
+              .name == "OrbitPM protected v* release tags" and
+              .target == "tag" and
+              .enforcement == "active" and
+              .conditions.ref_name.include == ["refs/tags/v*"] and
+              .conditions.ref_name.exclude == [] and
+              ([.rules[].type] | sort) == ["creation", "deletion", "update"] and
+              .bypass_actors == [{
+                actor_id: $actor,
+                actor_type: "RepositoryRole",
+                bypass_mode: "always"
+              }]
+            ' <<<"$ruleset_json" >/dev/null
+          main_ref_json="$(
+            GH_TOKEN="$GH_ADMIN_TOKEN" gh api \
+              "repos/$GITHUB_REPOSITORY/git/ref/heads/main"
+          )"
+          test "$(jq -r .object.sha <<<"$main_ref_json")" = "$CANDIDATE_SHA"
+          if ! GH_TOKEN="$GH_ADMIN_TOKEN" gh api \
+            "repos/$GITHUB_REPOSITORY/git/ref/tags/v0.4.5" \
+            > protected-tag-ref.json 2>/dev/null
+          then
+            tag_object="$(
+              GH_TOKEN="$GH_ADMIN_TOKEN" gh api \
+                "repos/$GITHUB_REPOSITORY/git/tags" \
+                --method POST \
+                --field tag=v0.4.5 \
+                --field message='OrbitPM Process Studio Lite 0.4.5' \
+                --field object="$CANDIDATE_SHA" \
+                --field type=commit \
+                --jq .sha
+            )"
+            GH_TOKEN="$GH_ADMIN_TOKEN" gh api \
+              "repos/$GITHUB_REPOSITORY/git/refs" \
+              --method POST \
+              --field ref=refs/tags/v0.4.5 \
+              --field sha="$tag_object" \
+              > protected-tag-ref.json
+          fi
+          tag_object_sha="$(jq -er .object.sha protected-tag-ref.json)"
+          GH_TOKEN="$GH_ADMIN_TOKEN" gh api \
+            "repos/$GITHUB_REPOSITORY/git/tags/$tag_object_sha" \
+            > protected-tag-object.json
+          test "$(jq -r .tag protected-tag-object.json)" = "v0.4.5"
+          test "$(jq -r .message protected-tag-object.json)" = \
+            "OrbitPM Process Studio Lite 0.4.5"
+          test "$(jq -r .object.type protected-tag-object.json)" = "commit"
+          test "$(jq -r .object.sha protected-tag-object.json)" = "$CANDIDATE_SHA"
 
       - name: Checkout exact candidate
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
@@ -232,7 +340,7 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
-      - name: Revalidate origin/main and immutable tag identity after approval
+      - name: Revalidate origin/main and existing tag without moving it
         env:
           CANDIDATE_SHA: ${{ inputs.candidate_sha }}
         run: |
@@ -242,8 +350,8 @@ jobs:
           test "$(git rev-parse HEAD)" = "$CANDIDATE_SHA"
           test "$(git rev-parse origin/main)" = "$CANDIDATE_SHA"
           if git show-ref --verify --quiet refs/tags/v0.4.5; then
-            echo "v0.4.5 already exists; refusing any release mutation" >&2
-            exit 1
+            test "$(git cat-file -t refs/tags/v0.4.5)" = "tag"
+            test "$(git rev-parse 'refs/tags/v0.4.5^{commit}')" = "$CANDIDATE_SHA"
           fi
 
       - name: Download protected-job candidate
@@ -252,43 +360,111 @@ jobs:
           name: orbitpm-verified-release-candidate-${{ inputs.candidate_sha }}
           path: release
 
-      - name: Create immutable annotated tag through GitHub
+      - name: Read back the protected annotated tag without moving it
+        env:
+          CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+        run: |
+          git fetch --force origin refs/tags/v0.4.5:refs/tags/v0.4.5
+          test "$(git cat-file -t refs/tags/v0.4.5)" = "tag"
+          test "$(git rev-parse 'refs/tags/v0.4.5^{commit}')" = "$CANDIDATE_SHA"
+
+      - name: Create or validate the deterministic draft metadata
         env:
           CANDIDATE_SHA: ${{ inputs.candidate_sha }}
           GH_TOKEN: ${{ github.token }}
         run: |
-          if gh release view v0.4.5 >/dev/null 2>&1; then
-            echo "A v0.4.5 release already exists; refusing to replace its assets" >&2
-            exit 1
+          if ! gh api "repos/$GITHUB_REPOSITORY/releases/tags/v0.4.5" \
+            > draft-release.json 2>/dev/null
+          then
+            jq -n \
+              --arg tag v0.4.5 \
+              --arg target "$CANDIDATE_SHA" \
+              --arg name "OrbitPM Process Studio Lite 0.4.5" \
+              --rawfile body docs/RELEASE_NOTES_0.4.5.md \
+              '{
+                tag_name: $tag,
+                target_commitish: $target,
+                name: $name,
+                body: $body,
+                draft: true,
+                prerelease: false,
+                make_latest: "false"
+              }' |
+              gh api "repos/$GITHUB_REPOSITORY/releases" \
+                --method POST \
+                --input - \
+                > draft-release.json
           fi
-          tag_object="$(
-            gh api "repos/$GITHUB_REPOSITORY/git/tags" \
-              --method POST \
-              --field tag=v0.4.5 \
-              --field message='OrbitPM Process Studio Lite 0.4.5' \
-              --field object="$CANDIDATE_SHA" \
-              --field type=commit \
-              --jq .sha
-          )"
-          gh api "repos/$GITHUB_REPOSITORY/git/refs" \
-            --method POST \
-            --field ref=refs/tags/v0.4.5 \
-            --field sha="$tag_object"
+          jq -e \
+            --arg candidate "$CANDIDATE_SHA" \
+            --rawfile notes docs/RELEASE_NOTES_0.4.5.md \
+            '
+              .tag_name == "v0.4.5" and
+              .target_commitish == $candidate and
+              .name == "OrbitPM Process Studio Lite 0.4.5" and
+              .body == $notes and
+              .draft == true and
+              .prerelease == false
+            ' draft-release.json >/dev/null
+          release_id="$(jq -er .id draft-release.json)"
+          jq -c '.assets[] | select(.state == "starter")' draft-release.json |
+            while IFS= read -r starter; do
+              asset_id="$(jq -er .id <<<"$starter")"
+              asset_name="$(jq -er .name <<<"$starter")"
+              test "$asset_name" = "$(basename "$asset_name")"
+              test -f "release/$asset_name"
+              test "$(jq -er .size <<<"$starter")" -eq 0
+              gh api "repos/$GITHUB_REPOSITORY/releases/assets/$asset_id" \
+                > starter-before-delete.json
+              test "$(jq -r .name starter-before-delete.json)" = "$asset_name"
+              test "$(jq -r .state starter-before-delete.json)" = "starter"
+              test "$(jq -r .size starter-before-delete.json)" -eq 0
+              gh api "repos/$GITHUB_REPOSITORY/releases/$release_id" \
+                > draft-before-starter-delete.json
+              test "$(jq -r .tag_name draft-before-starter-delete.json)" = "v0.4.5"
+              test "$(jq -r .draft draft-before-starter-delete.json)" = "true"
+              test "$(jq -r .id draft-before-starter-delete.json)" = "$release_id"
+              gh api "repos/$GITHUB_REPOSITORY/releases/assets/$asset_id" \
+                --method DELETE
+            done
+          gh api "repos/$GITHUB_REPOSITORY/releases/tags/v0.4.5" \
+            > draft-release.json
+          node scripts/release-state.mjs \
+            --release-json=draft-release.json \
+            --assets=release \
+            --notes=docs/RELEASE_NOTES_0.4.5.md \
+            --tag=v0.4.5 \
+            --title="OrbitPM Process Studio Lite 0.4.5" \
+            --state=draft \
+            --allow-missing-assets=true
 
-      - name: Create deterministic substantive draft release
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: >-
-          gh release create v0.4.5 release/*
-          --draft
-          --verify-tag
-          --notes-file docs/RELEASE_NOTES_0.4.5.md
-          --title "OrbitPM Process Studio Lite 0.4.5"
-
-      - name: Download and compare all seven draft assets
+      - name: Upload only missing manifest assets
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          for candidate in release/*; do
+            name="$(basename "$candidate")"
+            if ! jq -e --arg name "$name" \
+              '.assets[] | select(.name == $name)' \
+              draft-release.json >/dev/null
+            then
+              gh release upload v0.4.5 "$candidate"
+            fi
+          done
+
+      - name: Read back and compare exact draft state and bytes
+        env:
+          CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh api "repos/$GITHUB_REPOSITORY/releases/tags/v0.4.5" > draft-release.json
+          node scripts/release-state.mjs \
+            --release-json=draft-release.json \
+            --assets=release \
+            --notes=docs/RELEASE_NOTES_0.4.5.md \
+            --tag=v0.4.5 \
+            --title="OrbitPM Process Studio Lite 0.4.5" \
+            --state=draft
           mkdir draft-download
           gh release download v0.4.5 --dir draft-download
           test "$(find draft-download -maxdepth 1 -type f | wc -l)" -eq 7
@@ -296,21 +472,141 @@ jobs:
             name="$(basename "$candidate")"
             cmp "$candidate" "draft-download/$name"
           done
+          git fetch --force origin \
+            refs/heads/main:refs/remotes/origin/main \
+            refs/tags/v0.4.5:refs/tags/v0.4.5
+          test "$(git rev-parse origin/main)" = "$CANDIDATE_SHA"
+          test "$(git cat-file -t refs/tags/v0.4.5)" = "tag"
+          test "$(git rev-parse 'refs/tags/v0.4.5^{commit}')" = "$CANDIDATE_SHA"
 
-      - name: Verify and record deterministic release-note bytes
+  tag-quality:
+    name: Full clean quality rebuild from the actual annotated tag
+    needs: tag-and-draft
+    permissions:
+      contents: read
+    uses: ./.github/workflows/quality.yml
+    with:
+      source_ref: refs/tags/v0.4.5
+      expected_sha: ${{ inputs.candidate_sha }}
+      artifact_prefix: orbitpm-tag-tested-pages
+      release_tag: v0.4.5
+      release_mode: true
+
+  verify-tag-release:
+    name: Bind draft assets to the clean tag-quality rebuild
+    needs: [verify-pretag, tag-quality]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      actions: read
+      contents: read
+    steps:
+      - name: Checkout the actual annotated release tag
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: refs/tags/v0.4.5
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Revalidate tag and origin/main
+        env:
+          CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+        run: |
+          git fetch --force origin \
+            refs/heads/main:refs/remotes/origin/main \
+            refs/tags/v0.4.5:refs/tags/v0.4.5
+          test "$(git rev-parse HEAD)" = "$CANDIDATE_SHA"
+          test "$(git rev-parse origin/main)" = "$CANDIDATE_SHA"
+          node scripts/check-release-tag.mjs v0.4.5 --require-origin-main
+
+      - name: Set up exact Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 22.22.0
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - name: Set up exact npm
+        run: npm install --global npm@11.13.0
+
+      - name: Reproducible install
+        run: npm ci
+
+      - name: Download the tag-quality HTML
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: orbitpm-tag-tested-pages-${{ inputs.candidate_sha }}
+          path: tag-dist
+
+      - name: Download the independently verified pre-tag asset set
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: orbitpm-verified-release-candidate-${{ inputs.candidate_sha }}
+          path: verified-candidate
+
+      - name: Download the initial trusted external-evidence aggregate
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: orbitpm-verified-external-evidence-${{ inputs.candidate_sha }}
+          path: initial-evidence
+
+      - name: Assemble and compare all seven clean tag bytes
+        run: |
+          npm run release:assemble -- --html tag-dist/index.html --out tag-release
+          npm run release:verify -- tag-release
+          npm run release:verify -- verified-candidate
+          for candidate in tag-release/*; do
+            name="$(basename "$candidate")"
+            cmp "$candidate" "verified-candidate/$name"
+          done
+
+      - name: Re-download the draft and bind metadata and bytes
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           gh api "repos/$GITHUB_REPOSITORY/releases/tags/v0.4.5" > draft-release.json
-          node --input-type=module --eval "
-            import { readFileSync, writeFileSync } from 'node:fs'
-            const release = JSON.parse(readFileSync('draft-release.json', 'utf8'))
-            writeFileSync('draft-release-notes.md', release.body)
-          "
-          cmp docs/RELEASE_NOTES_0.4.5.md draft-release-notes.md
-          sha256sum docs/RELEASE_NOTES_0.4.5.md
+          mkdir draft-download
+          gh release download v0.4.5 --dir draft-download
+          npm run release:verify -- draft-download
+          node scripts/release-state.mjs \
+            --release-json=draft-release.json \
+            --assets=draft-download \
+            --expected-assets=tag-release \
+            --notes=docs/RELEASE_NOTES_0.4.5.md \
+            --tag=v0.4.5 \
+            --title="OrbitPM Process Studio Lite 0.4.5" \
+            --state=draft
 
-      - name: Confirm immutable tag and draft state
+      - name: Reverify external evidence against clean tag bytes
+        env:
+          EVIDENCE_SHA256: ${{ inputs.external_evidence_sha256 }}
+          EVIDENCE_URL: ${{ inputs.external_evidence_url }}
+        run: >-
+          node scripts/verify-external-release-evidence.mjs
+          --candidate-sha=${{ inputs.candidate_sha }}
+          --candidate-ready-at=${{ needs.verify-pretag.outputs.candidate_ready_at }}
+          --artifact=tag-release/OrbitPM-Process-Studio-Lite-0.4.5.html
+          --url="$EVIDENCE_URL"
+          --sha256="$EVIDENCE_SHA256"
+          --output=release-evidence/tag-external-evidence-verification.json
+
+      - name: Compare tag verification with the retained pre-tag aggregate
+        env:
+          EVIDENCE_SHA256: ${{ inputs.external_evidence_sha256 }}
+          EVIDENCE_URL: ${{ inputs.external_evidence_url }}
+        run: |
+          node scripts/release-evidence-chain.mjs verify \
+            --aggregate=release-evidence/tag-external-evidence-verification.json \
+            --candidate-sha=${{ inputs.candidate_sha }} \
+            --candidate-ready-at=${{ needs.verify-pretag.outputs.candidate_ready_at }} \
+            --artifact=tag-release/OrbitPM-Process-Studio-Lite-0.4.5.html \
+            --source-url="$EVIDENCE_URL" \
+            --source-sha256="$EVIDENCE_SHA256"
+          node scripts/release-evidence-chain.mjs compare \
+            --trusted=initial-evidence/external-evidence-verification.json \
+            --observed=release-evidence/tag-external-evidence-verification.json
+
+      - name: Final immutable identity read-back
         env:
           CANDIDATE_SHA: ${{ inputs.candidate_sha }}
           GH_TOKEN: ${{ github.token }}
@@ -319,7 +615,29 @@ jobs:
             refs/heads/main:refs/remotes/origin/main \
             refs/tags/v0.4.5:refs/tags/v0.4.5
           test "$(git rev-parse origin/main)" = "$CANDIDATE_SHA"
-          test "$(git cat-file -t refs/tags/v0.4.5)" = "tag"
-          test "$(git rev-parse 'refs/tags/v0.4.5^{commit}')" = "$CANDIDATE_SHA"
-          test "$(gh release view v0.4.5 --json isDraft --jq .isDraft)" = "true"
-          test "$(gh release view v0.4.5 --json isPrerelease --jq .isPrerelease)" = "false"
+          node scripts/check-release-tag.mjs v0.4.5 --require-origin-main
+          gh api "repos/$GITHUB_REPOSITORY/releases/tags/v0.4.5" > final-draft-release.json
+          node scripts/release-state.mjs \
+            --release-json=final-draft-release.json \
+            --assets=draft-download \
+            --expected-assets=tag-release \
+            --notes=docs/RELEASE_NOTES_0.4.5.md \
+            --tag=v0.4.5 \
+            --title="OrbitPM Process Studio Lite 0.4.5" \
+            --state=draft
+
+      - name: Preserve exact tag-built release assets
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: orbitpm-tag-release-assets-${{ inputs.candidate_sha }}
+          path: tag-release/
+          if-no-files-found: error
+          retention-days: 90
+
+      - name: Preserve tag-bound external evidence
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: orbitpm-tag-external-evidence-${{ inputs.candidate_sha }}
+          path: release-evidence/tag-external-evidence-verification.json
+          if-no-files-found: error
+          retention-days: 90

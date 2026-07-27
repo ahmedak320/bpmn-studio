@@ -1,0 +1,361 @@
+{
+  "schemaVersion": 1,
+  "stableReleaseTag": "v0.4.5",
+  "expectedDeletionCount": 28,
+  "archivalNotice": "> [!WARNING]\n> **Archived and unsupported.** This historical release is retained for source and Lite history only. Desktop executables and updater assets were removed after OrbitPM Process Studio Lite 0.4.5 passed release, Pages, and recovery verification. Use v0.4.5 or later.",
+  "releases": [
+    {
+      "tag": "v0.4.4",
+      "releaseId": 359962244,
+      "tagRefSha": "cd842b6e0b8d7283e2704ae71ec207440b9e54f2",
+      "peeledCommitSha": "cd842b6e0b8d7283e2704ae71ec207440b9e54f2",
+      "originalName": "v0.4.4 — Lite workflow clarity & routing",
+      "originalBodySha256": "b2e1ec5e850ed4078bc9f34c9eabdacd2e15a95f8174faa7a2843aecc971ce87",
+      "draft": false,
+      "prerelease": false,
+      "assets": [
+        {
+          "id": 490188889,
+          "name": "latest.yml",
+          "size": 372,
+          "sha256": "2ac520c03081163581cc6f43e2f50a5cf00166d6a197a59edb5edfda0b2fb686",
+          "action": "delete"
+        },
+        {
+          "id": 490411721,
+          "name": "OrbitPM-Process-Studio-Lite.html",
+          "size": 2674460,
+          "sha256": "874294dd41beab992a057924b7d23bf992892363023372cf0221cb215e0c931e",
+          "action": "retain"
+        },
+        {
+          "id": 490188861,
+          "name": "OrbitPM-Process-Studio-Setup-0.4.4.exe",
+          "size": 88704867,
+          "sha256": "2d89f78d56da5891a7fc6ce06697756ed320c1627ad2d44b58d4ec3193d4fe84",
+          "action": "delete"
+        },
+        {
+          "id": 490188862,
+          "name": "OrbitPM-Process-Studio-Setup-0.4.4.exe.blockmap",
+          "size": 92256,
+          "sha256": "f4ea69bc744a73f5315972aab4a0228d8f19c5934ffe76d6ded401eed36f87fc",
+          "action": "delete"
+        }
+      ]
+    },
+    {
+      "tag": "v0.4.3",
+      "releaseId": 359577456,
+      "tagRefSha": "49c5ee736c1fdd2428bf3cd72964656bf0436e23",
+      "peeledCommitSha": "49c5ee736c1fdd2428bf3cd72964656bf0436e23",
+      "originalName": "v0.4.3 — Multi-trigger steps & auto-sizing blocks",
+      "originalBodySha256": "406b2c49cf2e935e1ad1eba257a1fff2a0ce8b75c3805d89842a4247e7c4ba2a",
+      "draft": false,
+      "prerelease": false,
+      "assets": [
+        {
+          "id": 488886307,
+          "name": "latest.yml",
+          "size": 372,
+          "sha256": "fd131315cdd9ee892d8797b1040c653a8dbf092a49bd269a8a2c69a6c16a1d30",
+          "action": "delete"
+        },
+        {
+          "id": 488886885,
+          "name": "OrbitPM-Process-Studio-Lite.html",
+          "size": 2790543,
+          "sha256": "5bb12753930900e79be932734716cc19bae4094778b12876187e44e385c72920",
+          "action": "retain"
+        },
+        {
+          "id": 488886232,
+          "name": "OrbitPM-Process-Studio-Setup-0.4.3.exe",
+          "size": 88704889,
+          "sha256": "ed26589e8e4ca6c823b4654316c53632e0b6da8a88ee536cd3931c5ec171f24a",
+          "action": "delete"
+        },
+        {
+          "id": 488886233,
+          "name": "OrbitPM-Process-Studio-Setup-0.4.3.exe.blockmap",
+          "size": 92151,
+          "sha256": "65e77c3b344008843809afd0861609fac647b592935fe240d98ee25194e29b6c",
+          "action": "delete"
+        }
+      ]
+    },
+    {
+      "tag": "v0.4.2",
+      "releaseId": 359068771,
+      "tagRefSha": "ad33bbd748494d253af0f6bd7dbf1b0d97d27b54",
+      "peeledCommitSha": "ad33bbd748494d253af0f6bd7dbf1b0d97d27b54",
+      "originalName": "v0.4.2 — Hierarchy import, layout engine & UX wave",
+      "originalBodySha256": "c701f5e1e6cdf302866ed6cf459df49cd3e02174e81d29f67cabf46b2bf8dce4",
+      "draft": false,
+      "prerelease": false,
+      "assets": [
+        {
+          "id": 487961997,
+          "name": "latest.yml",
+          "size": 372,
+          "sha256": "d50b3b891089896bc12acbc6d1dbfb0410ed230ca2d4b9423b716a3eac964dd6",
+          "action": "delete"
+        },
+        {
+          "id": 487958230,
+          "name": "OrbitPM-Process-Studio-Lite.html",
+          "size": 2784936,
+          "sha256": "0aafd68e996df65d143a7c9b9a220b1c4073732fd604be08ea1643249125a5df",
+          "action": "retain"
+        },
+        {
+          "id": 487961944,
+          "name": "OrbitPM-Process-Studio-Setup-0.4.2.exe",
+          "size": 88704973,
+          "sha256": "4b114a14e3a5fc652f8023db885e684467e1cd3ff48f6659eaef21940f6fed5b",
+          "action": "delete"
+        },
+        {
+          "id": 487961943,
+          "name": "OrbitPM-Process-Studio-Setup-0.4.2.exe.blockmap",
+          "size": 92165,
+          "sha256": "77a4a8c3f2bd6306167cf1237ec75979766a74bd3c41b5c6f58a6279b4a461e8",
+          "action": "delete"
+        }
+      ]
+    },
+    {
+      "tag": "v0.4.1",
+      "releaseId": 358824956,
+      "tagRefSha": "cd6b87ed7ac9aaf506ccef5c781c04c14bdf33c4",
+      "peeledCommitSha": "cd6b87ed7ac9aaf506ccef5c781c04c14bdf33c4",
+      "originalName": "v0.4.1 — Bilingual, ARIS import & interview wave",
+      "originalBodySha256": "ea0585654cdd8034135d9a0e5f177638f2377d62ac7fff4237bc40bf49c870c8",
+      "draft": false,
+      "prerelease": false,
+      "assets": [
+        {
+          "id": 487406876,
+          "name": "latest.yml",
+          "size": 372,
+          "sha256": "7094ac66a8147c3043d2861bbc69c5b11e8ef2e590d44e77110c511dd5bb94cd",
+          "action": "delete"
+        },
+        {
+          "id": 487407764,
+          "name": "OrbitPM-Process-Studio-Lite.html",
+          "size": 2739549,
+          "sha256": "98d2a62c5c8860dca687ad62975c64dc75d3a1c2924efb3c4c79feabada487c1",
+          "action": "retain"
+        },
+        {
+          "id": 487406819,
+          "name": "OrbitPM-Process-Studio-Setup-0.4.1.exe",
+          "size": 88704912,
+          "sha256": "3b940d42b5ff1d5e9162739a264b874afcb08c8b0da61e2e6a4782127183f9a6",
+          "action": "delete"
+        },
+        {
+          "id": 487406817,
+          "name": "OrbitPM-Process-Studio-Setup-0.4.1.exe.blockmap",
+          "size": 92179,
+          "sha256": "1917aac85ac69eae6181bf5e1364093dcbc5218d8f2ad7fd2ad1fde0d3f9603a",
+          "action": "delete"
+        }
+      ]
+    },
+    {
+      "tag": "v0.3.0",
+      "releaseId": 358644247,
+      "tagRefSha": "9fae0151b99af9aaad75094b36cf6e3787118b92",
+      "peeledCommitSha": "9fae0151b99af9aaad75094b36cf6e3787118b92",
+      "originalName": "v0.3.0 — Lite fix wave",
+      "originalBodySha256": "756e53c184a0d11d7028fdc0e00ee53b87d35494481b71979a862a86642b7521",
+      "draft": false,
+      "prerelease": false,
+      "assets": [
+        {
+          "id": 487129201,
+          "name": "latest.yml",
+          "size": 372,
+          "sha256": "937263850d119236b2a58fab3cfa72dd28b1cd2d6ac597d35b9e6b257cdd0dbf",
+          "action": "delete"
+        },
+        {
+          "id": 487124001,
+          "name": "OrbitPM-Process-Studio-Lite.html",
+          "size": 2689211,
+          "sha256": "51c308f6de63056ff4938633084886e8c6d527457a8bea2407cd87a6cd67eddd",
+          "action": "retain"
+        },
+        {
+          "id": 487129165,
+          "name": "OrbitPM-Process-Studio-Setup-0.3.0.exe",
+          "size": 88702931,
+          "sha256": "3fc1ea59d2a04c7537adfe2c66ed57759dfc136703fe6be0ee292073e3d2e816",
+          "action": "delete"
+        },
+        {
+          "id": 487129164,
+          "name": "OrbitPM-Process-Studio-Setup-0.3.0.exe.blockmap",
+          "size": 92162,
+          "sha256": "e2045409a3d105d32737ee05a2788b8384b4871ef95d05c7bd709382da745ca1",
+          "action": "delete"
+        }
+      ]
+    },
+    {
+      "tag": "v0.2.0",
+      "releaseId": 358560752,
+      "tagRefSha": "273f9e97ad7bb612bc2fd11c76dcbc7451e54f58",
+      "peeledCommitSha": "273f9e97ad7bb612bc2fd11c76dcbc7451e54f58",
+      "originalName": "v0.2.0 — Lite feature wave",
+      "originalBodySha256": "72f161e287ea92f27e20171230461a725483befa4e8edc661666868042f786b9",
+      "draft": false,
+      "prerelease": false,
+      "assets": [
+        {
+          "id": 486982855,
+          "name": "latest.yml",
+          "size": 372,
+          "sha256": "7e0b7c51dbee3c6c24460ebe29d3d2b70c68e25ccb834d1a9e964a2c69b19e0a",
+          "action": "delete"
+        },
+        {
+          "id": 486984067,
+          "name": "OrbitPM-Process-Studio-Lite.html",
+          "size": 2673930,
+          "sha256": "9d664ea5c94cc2998a3e3ed547a591b1dc4ef41593a1e34b4ec92451e70f16c2",
+          "action": "retain"
+        },
+        {
+          "id": 486982788,
+          "name": "OrbitPM-Process-Studio-Setup-0.2.0.exe",
+          "size": 88702951,
+          "sha256": "a89a30ecd47d42c4d36214e68c3fe5a8f8c32fb2ec2b609609e77fa2aa91d3ef",
+          "action": "delete"
+        },
+        {
+          "id": 486982790,
+          "name": "OrbitPM-Process-Studio-Setup-0.2.0.exe.blockmap",
+          "size": 92150,
+          "sha256": "c88a07fbc744caef9cfae51e69906698e54d7a3eef04b2e7db38f69fc287bcb1",
+          "action": "delete"
+        }
+      ]
+    },
+    {
+      "tag": "v0.1.2",
+      "releaseId": 358092983,
+      "tagRefSha": "fbe828e9a2627ec1f945d9076384bc8e056b9f74",
+      "peeledCommitSha": "fbe828e9a2627ec1f945d9076384bc8e056b9f74",
+      "originalName": "0.1.2",
+      "originalBodySha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "draft": false,
+      "prerelease": false,
+      "assets": [
+        {
+          "id": 486054593,
+          "name": "latest.yml",
+          "size": 372,
+          "sha256": "eb8db6575c29a0e8a0aa8a6cbdfa5028e07ba2a46d808798ac2fb43f7d53c5bd",
+          "action": "delete"
+        },
+        {
+          "id": 486489196,
+          "name": "OrbitPM-Process-Studio-Lite.html",
+          "size": 2514266,
+          "sha256": "231dbbe13074fd535cf5218215f67c4c92c8ef75e814fc6a340a660e9cb695a7",
+          "action": "retain"
+        },
+        {
+          "id": 486210242,
+          "name": "OrbitPM-Process-Studio-Portable-0.1.2.exe",
+          "size": 79470042,
+          "sha256": "c4cc8f18dc6753ebed27427737c6a8bb18d08644fbb40c715e04d0e62b9f237d",
+          "action": "delete"
+        },
+        {
+          "id": 486054549,
+          "name": "OrbitPM-Process-Studio-Setup-0.1.2.exe",
+          "size": 88702669,
+          "sha256": "9cfb624f0c5433c194a6ff72873e6ff601d2ec372332656a40c8b1f16959cbc1",
+          "action": "delete"
+        },
+        {
+          "id": 486054550,
+          "name": "OrbitPM-Process-Studio-Setup-0.1.2.exe.blockmap",
+          "size": 91985,
+          "sha256": "ac0bebe3cae5870fa62f4b96b4b5dab971ec3451d107b50a551fd244357f18ca",
+          "action": "delete"
+        }
+      ]
+    },
+    {
+      "tag": "v0.1.1",
+      "releaseId": 358070323,
+      "tagRefSha": "39d5a9f82385630cba2512aefd794153a5031862",
+      "peeledCommitSha": "39d5a9f82385630cba2512aefd794153a5031862",
+      "originalName": "0.1.1",
+      "originalBodySha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "draft": false,
+      "prerelease": true,
+      "assets": [
+        {
+          "id": 486018083,
+          "name": "latest.yml",
+          "size": 372,
+          "sha256": "4c51036977c655872774b48e6edd571106f75821f35924bab776102c5c5404c3",
+          "action": "delete"
+        },
+        {
+          "id": 486018022,
+          "name": "OrbitPM-Process-Studio-Setup-0.1.1.exe",
+          "size": 88700833,
+          "sha256": "99d7743c0800a20e23980e2b8c28e38f2a20a7ca714010dff94ef0536876c0ff",
+          "action": "delete"
+        },
+        {
+          "id": 486018023,
+          "name": "OrbitPM-Process-Studio-Setup-0.1.1.exe.blockmap",
+          "size": 92021,
+          "sha256": "1b77907dd119c21eb36da0c985449aaaadbd34d89b3348839a64b46453d4b3f8",
+          "action": "delete"
+        }
+      ]
+    },
+    {
+      "tag": "v0.0.1-alpha.2",
+      "releaseId": 357973416,
+      "tagRefSha": "f4fcf0a40669e2e1badc131fb79b988b0e2173ca",
+      "peeledCommitSha": "f4fcf0a40669e2e1badc131fb79b988b0e2173ca",
+      "originalName": "0.0.1-alpha.2",
+      "originalBodySha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "draft": false,
+      "prerelease": true,
+      "assets": [
+        {
+          "id": 485890440,
+          "name": "latest.yml",
+          "size": 396,
+          "sha256": "5eee0ffcad1415507e110ffd4215041618dcd4525234a25d0589c6491225d646",
+          "action": "delete"
+        },
+        {
+          "id": 485890393,
+          "name": "OrbitPM-Process-Studio-Setup-0.0.1-alpha.2.exe",
+          "size": 81977440,
+          "sha256": "fa31c229f4b839a00916061e7ebc272ac7a4b82cbcfa344f14b113af84e80e01",
+          "action": "delete"
+        },
+        {
+          "id": 485890392,
+          "name": "OrbitPM-Process-Studio-Setup-0.0.1-alpha.2.exe.blockmap",
+          "size": 85951,
+          "sha256": "1735a381881299ae370fad8490989c3315ba1dbf492faf9243c6f2f95286938b",
+          "action": "delete"
+        }
+      ]
+    }
+  ]
+}

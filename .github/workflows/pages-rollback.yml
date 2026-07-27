@@ -1,0 +1,398 @@
+name: Restore verified prior Lite artifact to Pages
+
+on:
+  workflow_call:
+    inputs:
+      authority_sha:
+        description: Exact current origin/main commit authorizing rollback
+        required: true
+        type: string
+      authority_tag:
+        description: Current release tag that must peel to authority_sha
+        required: true
+        type: string
+      known_good_tag:
+        description: Published prior release supplying rollback bytes
+        required: true
+        type: string
+      known_good_commit_sha:
+        description: Exact commit peeled from known_good_tag
+        required: true
+        type: string
+      known_good_asset_name:
+        description: Exact self-contained Lite HTML asset name
+        required: true
+        type: string
+      known_good_asset_sha256:
+        description: Recorded SHA-256 for the known-good asset
+        required: true
+        type: string
+      automatic_rollback:
+        description: Trusted caller marker; unavailable to manual dispatch
+        required: true
+        type: boolean
+  workflow_dispatch:
+    inputs:
+      authority_sha:
+        description: Exact current origin/main commit authorizing rollback
+        required: true
+        type: string
+      authority_tag:
+        description: Current release tag that must peel to authority_sha
+        required: true
+        default: v0.4.5
+        type: string
+      known_good_tag:
+        description: Published prior release supplying rollback bytes
+        required: true
+        default: v0.4.4
+        type: string
+      known_good_commit_sha:
+        description: Exact commit peeled from known_good_tag
+        required: true
+        default: cd842b6e0b8d7283e2704ae71ec207440b9e54f2
+        type: string
+      known_good_asset_name:
+        description: Exact self-contained Lite HTML asset name
+        required: true
+        default: OrbitPM-Process-Studio-Lite.html
+        type: string
+      known_good_asset_sha256:
+        description: Recorded SHA-256 for the known-good asset
+        required: true
+        default: 874294dd41beab992a057924b7d23bf992892363023372cf0221cb215e0c931e
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    name: Verify rollback authority and known-good release bytes
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout exact rollback authority
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ inputs.authority_sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Validate immutable identities and published prior release
+        env:
+          AUTOMATIC_ROLLBACK: ${{ inputs.automatic_rollback }}
+          AUTHORITY_SHA: ${{ inputs.authority_sha }}
+          AUTHORITY_TAG: ${{ inputs.authority_tag }}
+          GH_TOKEN: ${{ github.token }}
+          KNOWN_GOOD_ASSET: ${{ inputs.known_good_asset_name }}
+          KNOWN_GOOD_SHA: ${{ inputs.known_good_commit_sha }}
+          KNOWN_GOOD_TAG: ${{ inputs.known_good_tag }}
+          KNOWN_GOOD_ASSET_SHA256: ${{ inputs.known_good_asset_sha256 }}
+        run: |
+          for digest in "$AUTHORITY_SHA" "$KNOWN_GOOD_SHA"; do
+            test "${#digest}" -eq 40
+            case "$digest" in
+              *[!0-9a-fA-F]*) exit 1 ;;
+            esac
+          done
+          test "${#KNOWN_GOOD_ASSET_SHA256}" -eq 64
+          case "$KNOWN_GOOD_ASSET_SHA256" in
+            *[!0-9a-fA-F]*) exit 1 ;;
+          esac
+          test "$AUTHORITY_TAG" = "v0.4.5"
+          test "$KNOWN_GOOD_TAG" = "v0.4.4"
+          test "$KNOWN_GOOD_SHA" = "cd842b6e0b8d7283e2704ae71ec207440b9e54f2"
+          test "$KNOWN_GOOD_ASSET" = "OrbitPM-Process-Studio-Lite.html"
+          test "$KNOWN_GOOD_ASSET_SHA256" = \
+            "874294dd41beab992a057924b7d23bf992892363023372cf0221cb215e0c931e"
+          test "$KNOWN_GOOD_ASSET" = "$(basename "$KNOWN_GOOD_ASSET")"
+          test "${KNOWN_GOOD_ASSET##*.}" = "html"
+          test "$GITHUB_REF" = "refs/heads/main"
+          git fetch --force origin \
+            refs/heads/main:refs/remotes/origin/main \
+            "+refs/tags/$AUTHORITY_TAG:refs/tags/$AUTHORITY_TAG" \
+            "+refs/tags/$KNOWN_GOOD_TAG:refs/tags/$KNOWN_GOOD_TAG"
+          test "$(git rev-parse HEAD)" = "$AUTHORITY_SHA"
+          git merge-base --is-ancestor "$AUTHORITY_SHA" origin/main
+          if test "$AUTOMATIC_ROLLBACK" = "true"; then
+            test "$GITHUB_SHA" = "$AUTHORITY_SHA"
+          else
+            git merge-base --is-ancestor "$AUTHORITY_SHA" "$GITHUB_SHA"
+            git merge-base --is-ancestor "$GITHUB_SHA" origin/main
+          fi
+          test "$(git cat-file -t "refs/tags/$AUTHORITY_TAG")" = "tag"
+          test "$(git rev-parse "refs/tags/$AUTHORITY_TAG^{commit}")" = "$AUTHORITY_SHA"
+          test "$(git rev-parse "refs/tags/$KNOWN_GOOD_TAG^{commit}")" = "$KNOWN_GOOD_SHA"
+          gh api "repos/$GITHUB_REPOSITORY/releases/tags/$AUTHORITY_TAG" \
+            > authority-release.json
+          if test "$AUTOMATIC_ROLLBACK" != "true"; then
+            test "$(jq -r .draft authority-release.json)" = "false"
+            test "$(jq -r .prerelease authority-release.json)" = "false"
+            test "$(jq -r .immutable authority-release.json)" = "true"
+          fi
+          gh api "repos/$GITHUB_REPOSITORY/releases/tags/$KNOWN_GOOD_TAG" \
+            > known-good-release.json
+          test "$(jq -r .draft known-good-release.json)" = "false"
+          test "$(jq -r .prerelease known-good-release.json)" = "false"
+          test "$(jq -r .tag_name known-good-release.json)" = "$KNOWN_GOOD_TAG"
+          test "$(
+            jq --arg name "$KNOWN_GOOD_ASSET" \
+              '[.assets[] | select(
+                .name == $name and
+                .state == "uploaded"
+              )] | length' \
+              known-good-release.json
+          )" -eq 1
+          test "$(
+            jq -r --arg name "$KNOWN_GOOD_ASSET" \
+              '.assets[] | select(.name == $name) | .digest' \
+              known-good-release.json
+          )" = "sha256:$KNOWN_GOOD_ASSET_SHA256"
+
+      - name: Download and hash the exact known-good asset
+        env:
+          GH_TOKEN: ${{ github.token }}
+          KNOWN_GOOD_ASSET: ${{ inputs.known_good_asset_name }}
+          KNOWN_GOOD_ASSET_SHA256: ${{ inputs.known_good_asset_sha256 }}
+          KNOWN_GOOD_TAG: ${{ inputs.known_good_tag }}
+        run: |
+          mkdir known-good
+          gh release download "$KNOWN_GOOD_TAG" \
+            --pattern "$KNOWN_GOOD_ASSET" \
+            --dir known-good
+          test "$(find known-good -maxdepth 1 -type f | wc -l)" -eq 1
+          echo "$KNOWN_GOOD_ASSET_SHA256  known-good/$KNOWN_GOOD_ASSET" |
+            sha256sum --check -
+          test -s "known-good/$KNOWN_GOOD_ASSET"
+          test "$(stat --format=%s "known-good/$KNOWN_GOOD_ASSET")" -le 8388608
+          grep -qi '<html' "known-good/$KNOWN_GOOD_ASSET"
+
+      - name: Preserve verified rollback bytes
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: orbitpm-verified-pages-rollback-${{ github.run_id }}
+          path: known-good/
+          if-no-files-found: error
+          retention-days: 90
+
+  deploy:
+    name: Protected rollback deployment with identity read-back
+    needs: verify
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    concurrency:
+      group: orbitpm-pages-deployment
+      cancel-in-progress: false
+    permissions:
+      actions: read
+      contents: read
+      id-token: write
+      pages: write
+    environment:
+      name: >-
+        ${{
+          inputs.automatic_rollback &&
+          'github-pages-rollback-auto-v0.4.5' ||
+          'github-pages-rollback-manual-v0.4.5'
+        }}
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Bind automatic rollback to the trusted caller or require manual approval
+        env:
+          AUTOMATIC_ROLLBACK: ${{ inputs.automatic_rollback }}
+          AUTO_POLICY: ${{ vars.ORBITPM_PAGES_AUTO_ROLLBACK_POLICY }}
+          APPROVAL_POLICY: ${{ vars.ORBITPM_PAGES_ROLLBACK_POLICY }}
+          CANDIDATE_SHA: ${{ inputs.authority_sha }}
+        run: |
+          expected_called_ref="$GITHUB_REPOSITORY/.github/workflows/pages-rollback.yml@refs/heads/main"
+          if test "$AUTOMATIC_ROLLBACK" = "true"; then
+            test "$GITHUB_SHA" = "$CANDIDATE_SHA"
+            test "$GITHUB_WORKFLOW" = \
+              "Deploy approved tagged Lite artifact to Pages"
+            test "$GITHUB_WORKFLOW_REF" = \
+              "$GITHUB_REPOSITORY/.github/workflows/pages.yml@refs/heads/main"
+            test "$AUTO_POLICY" = \
+              "v0.4.5-main-only-no-reviewer-no-secrets-known-good-auto-rollback"
+          else
+            test "$GITHUB_WORKFLOW" = "Restore verified prior Lite artifact to Pages"
+            test "$GITHUB_WORKFLOW_REF" = "$expected_called_ref"
+            test "$APPROVAL_POLICY" = \
+              "v0.4.5-verified-known-good-pages-rollback"
+          fi
+
+      - name: Checkout exact rollback authority after approval
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ inputs.authority_sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Download verified rollback bytes
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: orbitpm-verified-pages-rollback-${{ github.run_id }}
+          path: verified-rollback
+
+      - name: Re-download and compare known-good bytes after approval
+        env:
+          AUTOMATIC_ROLLBACK: ${{ inputs.automatic_rollback }}
+          AUTHORITY_SHA: ${{ inputs.authority_sha }}
+          AUTHORITY_TAG: ${{ inputs.authority_tag }}
+          GH_TOKEN: ${{ github.token }}
+          KNOWN_GOOD_ASSET: ${{ inputs.known_good_asset_name }}
+          KNOWN_GOOD_ASSET_SHA256: ${{ inputs.known_good_asset_sha256 }}
+          KNOWN_GOOD_SHA: ${{ inputs.known_good_commit_sha }}
+          KNOWN_GOOD_TAG: ${{ inputs.known_good_tag }}
+        run: |
+          git fetch --force origin \
+            refs/heads/main:refs/remotes/origin/main \
+            "+refs/tags/$AUTHORITY_TAG:refs/tags/$AUTHORITY_TAG" \
+            "+refs/tags/$KNOWN_GOOD_TAG:refs/tags/$KNOWN_GOOD_TAG"
+          git merge-base --is-ancestor "$AUTHORITY_SHA" origin/main
+          if test "$AUTOMATIC_ROLLBACK" = "true"; then
+            test "$GITHUB_SHA" = "$AUTHORITY_SHA"
+          else
+            git merge-base --is-ancestor "$AUTHORITY_SHA" "$GITHUB_SHA"
+            git merge-base --is-ancestor "$GITHUB_SHA" origin/main
+          fi
+          test "$(git cat-file -t "refs/tags/$AUTHORITY_TAG")" = "tag"
+          test "$(git rev-parse "refs/tags/$AUTHORITY_TAG^{commit}")" = "$AUTHORITY_SHA"
+          test "$(git rev-parse "refs/tags/$KNOWN_GOOD_TAG^{commit}")" = "$KNOWN_GOOD_SHA"
+          gh api "repos/$GITHUB_REPOSITORY/releases/tags/$AUTHORITY_TAG" \
+            > authority-release-after-approval.json
+          if test "$AUTOMATIC_ROLLBACK" != "true"; then
+            test "$(jq -r .draft authority-release-after-approval.json)" = "false"
+            test "$(jq -r .prerelease authority-release-after-approval.json)" = "false"
+            test "$(jq -r .immutable authority-release-after-approval.json)" = "true"
+          fi
+          gh api "repos/$GITHUB_REPOSITORY/releases/tags/$KNOWN_GOOD_TAG" \
+            > known-good-release-after-approval.json
+          test "$(jq -r .draft known-good-release-after-approval.json)" = "false"
+          test "$(jq -r .prerelease known-good-release-after-approval.json)" = "false"
+          test "$(
+            jq -r --arg name "$KNOWN_GOOD_ASSET" \
+              '.assets[] | select(.name == $name) | .digest' \
+              known-good-release-after-approval.json
+          )" = "sha256:$KNOWN_GOOD_ASSET_SHA256"
+          mkdir rollback-redownload rollback-dist
+          gh release download "$KNOWN_GOOD_TAG" \
+            --pattern "$KNOWN_GOOD_ASSET" \
+            --dir rollback-redownload
+          cmp \
+            "verified-rollback/$KNOWN_GOOD_ASSET" \
+            "rollback-redownload/$KNOWN_GOOD_ASSET"
+          cp "verified-rollback/$KNOWN_GOOD_ASSET" rollback-dist/index.html
+
+      - name: Package verified rollback artifact
+        uses: actions/upload-pages-artifact@56afc609e74202658d3ffba0e8f6dda462b719fa
+        with:
+          name: orbitpm-pages-rollback-${{ github.run_id }}
+          path: rollback-dist
+
+      - name: Recheck identities immediately before rollback deployment
+        env:
+          AUTOMATIC_ROLLBACK: ${{ inputs.automatic_rollback }}
+          AUTHORITY_SHA: ${{ inputs.authority_sha }}
+          AUTHORITY_TAG: ${{ inputs.authority_tag }}
+          GH_TOKEN: ${{ github.token }}
+          KNOWN_GOOD_ASSET: ${{ inputs.known_good_asset_name }}
+          KNOWN_GOOD_ASSET_SHA256: ${{ inputs.known_good_asset_sha256 }}
+          KNOWN_GOOD_SHA: ${{ inputs.known_good_commit_sha }}
+          KNOWN_GOOD_TAG: ${{ inputs.known_good_tag }}
+        run: |
+          git fetch --force origin \
+            refs/heads/main:refs/remotes/origin/main \
+            "+refs/tags/$AUTHORITY_TAG:refs/tags/$AUTHORITY_TAG" \
+            "+refs/tags/$KNOWN_GOOD_TAG:refs/tags/$KNOWN_GOOD_TAG"
+          git merge-base --is-ancestor "$AUTHORITY_SHA" origin/main
+          if test "$AUTOMATIC_ROLLBACK" = "true"; then
+            test "$GITHUB_SHA" = "$AUTHORITY_SHA"
+          else
+            git merge-base --is-ancestor "$AUTHORITY_SHA" "$GITHUB_SHA"
+            git merge-base --is-ancestor "$GITHUB_SHA" origin/main
+          fi
+          test "$(git rev-parse "refs/tags/$AUTHORITY_TAG^{commit}")" = "$AUTHORITY_SHA"
+          test "$(git rev-parse "refs/tags/$KNOWN_GOOD_TAG^{commit}")" = "$KNOWN_GOOD_SHA"
+          gh api "repos/$GITHUB_REPOSITORY/releases/tags/$AUTHORITY_TAG" \
+            > authority-release-before-deploy.json
+          if test "$AUTOMATIC_ROLLBACK" != "true"; then
+            test "$(jq -r .draft authority-release-before-deploy.json)" = "false"
+            test "$(jq -r .prerelease authority-release-before-deploy.json)" = "false"
+            test "$(jq -r .immutable authority-release-before-deploy.json)" = "true"
+          fi
+          gh api "repos/$GITHUB_REPOSITORY/releases/tags/$KNOWN_GOOD_TAG" \
+            > known-good-release-before-deploy.json
+          release_digest="$(
+            jq -r --arg name "$KNOWN_GOOD_ASSET" \
+              '.assets[] | select(.name == $name) | .digest' \
+              known-good-release-before-deploy.json
+          )"
+          test "$release_digest" = "sha256:$KNOWN_GOOD_ASSET_SHA256"
+
+      - name: Deploy verified rollback artifact
+        id: deployment
+        uses: actions/deploy-pages@d6db90164ac5ed86f2b6aed7e0febac5b3c0c03e
+        with:
+          artifact_name: orbitpm-pages-rollback-${{ github.run_id }}
+
+      - name: Require the canonical production rollback URL
+        env:
+          DEPLOYMENT_URL: ${{ steps.deployment.outputs.page_url }}
+        run: test "$DEPLOYMENT_URL" = "https://ahmedak320.github.io/bpmn-studio/"
+
+      - name: Confirm rollback bytes and identities after deployment
+        env:
+          AUTOMATIC_ROLLBACK: ${{ inputs.automatic_rollback }}
+          AUTHORITY_SHA: ${{ inputs.authority_sha }}
+          AUTHORITY_TAG: ${{ inputs.authority_tag }}
+          GH_TOKEN: ${{ github.token }}
+          KNOWN_GOOD_ASSET: ${{ inputs.known_good_asset_name }}
+          KNOWN_GOOD_ASSET_SHA256: ${{ inputs.known_good_asset_sha256 }}
+          KNOWN_GOOD_SHA: ${{ inputs.known_good_commit_sha }}
+          KNOWN_GOOD_TAG: ${{ inputs.known_good_tag }}
+          PAGES_URL: https://ahmedak320.github.io/bpmn-studio/
+        run: |
+          for attempt in $(seq 1 150); do
+            if curl --fail --silent --show-error --location \
+              --max-time 30 \
+              "$PAGES_URL" \
+              --output rollback-live.html &&
+              cmp rollback-dist/index.html rollback-live.html
+            then
+              break
+            fi
+            test "$attempt" -lt 150
+            sleep 5
+          done
+          git fetch --force origin \
+            refs/heads/main:refs/remotes/origin/main \
+            "+refs/tags/$AUTHORITY_TAG:refs/tags/$AUTHORITY_TAG" \
+            "+refs/tags/$KNOWN_GOOD_TAG:refs/tags/$KNOWN_GOOD_TAG"
+          git merge-base --is-ancestor "$AUTHORITY_SHA" origin/main
+          if test "$AUTOMATIC_ROLLBACK" = "true"; then
+            test "$GITHUB_SHA" = "$AUTHORITY_SHA"
+          else
+            git merge-base --is-ancestor "$AUTHORITY_SHA" "$GITHUB_SHA"
+            git merge-base --is-ancestor "$GITHUB_SHA" origin/main
+          fi
+          test "$(git rev-parse "refs/tags/$AUTHORITY_TAG^{commit}")" = "$AUTHORITY_SHA"
+          test "$(git rev-parse "refs/tags/$KNOWN_GOOD_TAG^{commit}")" = "$KNOWN_GOOD_SHA"
+          gh api "repos/$GITHUB_REPOSITORY/releases/tags/$AUTHORITY_TAG" \
+            > authority-release-postdeploy.json
+          if test "$AUTOMATIC_ROLLBACK" != "true"; then
+            test "$(jq -r .draft authority-release-postdeploy.json)" = "false"
+            test "$(jq -r .prerelease authority-release-postdeploy.json)" = "false"
+            test "$(jq -r .immutable authority-release-postdeploy.json)" = "true"
+          fi
+          mkdir rollback-postdeploy
+          gh release download "$KNOWN_GOOD_TAG" \
+            --pattern "$KNOWN_GOOD_ASSET" \
+            --dir rollback-postdeploy
+          echo "$KNOWN_GOOD_ASSET_SHA256  rollback-postdeploy/$KNOWN_GOOD_ASSET" |
+            sha256sum --check -
+          cmp \
+            "verified-rollback/$KNOWN_GOOD_ASSET" \
+            "rollback-postdeploy/$KNOWN_GOOD_ASSET"

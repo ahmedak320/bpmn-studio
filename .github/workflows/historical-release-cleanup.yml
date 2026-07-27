@@ -1,0 +1,521 @@
+name: Archive historical releases after immutable stable verification
+
+on:
+  workflow_dispatch:
+    inputs:
+      candidate_sha:
+        description: Exact origin/main commit peeled from stable v0.4.5
+        required: true
+        type: string
+      release_tag:
+        description: Published immutable stable release tag
+        required: true
+        default: v0.4.5
+        type: string
+      finalization_run_id:
+        description: Successful protected immutable finalization workflow run ID
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: historical-release-cleanup-v0.4.5
+  cancel-in-progress: false
+
+jobs:
+  stable:
+    name: Prove immutable stable release and Pages before cleanup
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      actions: read
+      contents: read
+    steps:
+      - name: Checkout exact stable candidate
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ inputs.candidate_sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Verify finalization run and immutable Git identity
+        env:
+          CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+          FINALIZATION_RUN_ID: ${{ inputs.finalization_run_id }}
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.release_tag }}
+        run: |
+          test "${#CANDIDATE_SHA}" -eq 40
+          case "$CANDIDATE_SHA" in
+            *[!0-9a-fA-F]*) exit 1 ;;
+          esac
+          case "$FINALIZATION_RUN_ID" in
+            '' | *[!0-9]*) exit 1 ;;
+          esac
+          test "$GITHUB_REF" = "refs/heads/main"
+          test "$GITHUB_SHA" = "$CANDIDATE_SHA"
+          git fetch --force origin \
+            refs/heads/main:refs/remotes/origin/main \
+            '+refs/tags/*:refs/tags/*'
+          test "$(git rev-parse HEAD)" = "$CANDIDATE_SHA"
+          test "$(git rev-parse origin/main)" = "$CANDIDATE_SHA"
+          node scripts/check-release-tag.mjs "$RELEASE_TAG" --require-origin-main
+          run_json="$(
+            gh api "repos/$GITHUB_REPOSITORY/actions/runs/$FINALIZATION_RUN_ID"
+          )"
+          current_run_json="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID")"
+          test "$(jq -r .name <<<"$run_json")" = \
+            "Publish and verify immutable Lite stable release"
+          test "$(jq -r .path <<<"$run_json")" = \
+            ".github/workflows/release-finalize.yml"
+          test "$(jq -r .event <<<"$run_json")" = "workflow_dispatch"
+          test "$(jq -r .conclusion <<<"$run_json")" = "success"
+          test "$(jq -r .head_sha <<<"$run_json")" = "$CANDIDATE_SHA"
+          test "$(jq -r .head_branch <<<"$run_json")" = "main"
+          FINALIZED_AT="$(jq -r .updated_at <<<"$run_json")" \
+            CLEANUP_STARTED_AT="$(jq -r .created_at <<<"$current_run_json")" \
+            node --eval "
+              const finalized = Date.parse(process.env.FINALIZED_AT)
+              const cleanup = Date.parse(process.env.CLEANUP_STARTED_AT)
+              if (!Number.isFinite(finalized) || !Number.isFinite(cleanup) || finalized >= cleanup) {
+                throw new Error('Finalization must complete before historical cleanup starts.')
+              }
+            "
+          artifacts_json="$(
+            gh api "repos/$GITHUB_REPOSITORY/actions/runs/$FINALIZATION_RUN_ID/artifacts?per_page=100"
+          )"
+          evidence_name="orbitpm-immutable-stable-release-$CANDIDATE_SHA"
+          test "$(
+            jq --arg name "$evidence_name" \
+              '[.artifacts[] | select(.name == $name and .expired == false)] | length' \
+              <<<"$artifacts_json"
+          )" -eq 1
+
+      - name: Download trusted immutable-finalization evidence
+        env:
+          CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+          FINALIZATION_RUN_ID: ${{ inputs.finalization_run_id }}
+          GH_TOKEN: ${{ github.token }}
+        run: >-
+          gh run download "$FINALIZATION_RUN_ID"
+          --repo "$GITHUB_REPOSITORY"
+          --name "orbitpm-immutable-stable-release-$CANDIDATE_SHA"
+          --dir finalization-evidence
+
+      - name: Verify exact latest stable release, inherited evidence, and Pages bytes
+        env:
+          CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+          FINALIZATION_RUN_ID: ${{ inputs.finalization_run_id }}
+          GH_TOKEN: ${{ github.token }}
+          PAGES_URL: https://ahmedak320.github.io/bpmn-studio/
+          RELEASE_TAG: ${{ inputs.release_tag }}
+        run: |
+          gh api "repos/$GITHUB_REPOSITORY/releases/tags/$RELEASE_TAG" \
+            > stable-release.json
+          gh api "repos/$GITHUB_REPOSITORY/releases/latest" > latest-release.json
+          test "$(jq -r .id stable-release.json)" = "$(jq -r .id latest-release.json)"
+          mkdir stable-release
+          gh release download "$RELEASE_TAG" --dir stable-release
+          node scripts/release-state.mjs \
+            --release-json=stable-release.json \
+            --assets=stable-release \
+            --notes=docs/RELEASE_NOTES_0.4.5.md \
+            --tag="$RELEASE_TAG" \
+            --title="OrbitPM Process Studio Lite 0.4.5" \
+            --state=stable
+          curl --fail --silent --show-error --location \
+            --max-time 30 \
+            "$PAGES_URL" \
+            --output pages-stable.html
+          cmp \
+            stable-release/OrbitPM-Process-Studio-Lite-0.4.5.html \
+            pages-stable.html
+          chain=finalization-evidence/finalize-evidence/finalization-chain.json
+          browser_evidence=finalization-evidence/finalize-evidence/browser-compatibility-evidence-verification.json
+          release_evidence=finalization-evidence/finalize-evidence/trusted-release-external-evidence-verification.json
+          pages_evidence=finalization-evidence/finalize-evidence/pages/pages-browser-environment.json
+          pages_release_evidence=finalization-evidence/finalize-evidence/pages/trusted-release-external-evidence-verification.json
+          test "$(jq -r .schemaVersion "$chain")" = "1"
+          test "$(jq -r .gate "$chain")" = "orbitpm-lite-finalization-chain"
+          test "$(jq -r .status "$chain")" = "passed"
+          test "$(jq -r .candidateSha "$chain")" = "$CANDIDATE_SHA"
+          test "$(jq -r .releaseTag "$chain")" = "$RELEASE_TAG"
+          test "$(jq -r .finalizationRunId "$chain")" = "$FINALIZATION_RUN_ID"
+          test "$(jq -r .pagesUrl "$chain")" = "$PAGES_URL"
+          test "$(jq -r .releaseEvidenceSha256 "$chain")" = \
+            "$(sha256sum "$release_evidence" | cut -d' ' -f1)"
+          test "$(jq -r .pagesEvidenceSha256 "$chain")" = \
+            "$(sha256sum "$pages_evidence" | cut -d' ' -f1)"
+          test "$(jq -r .browserCompatibilityEvidenceSha256 "$chain")" = \
+            "$(sha256sum "$browser_evidence" | cut -d' ' -f1)"
+          test "$(jq -r .artifactSha256 "$chain")" = \
+            "$(sha256sum stable-release/OrbitPM-Process-Studio-Lite-0.4.5.html | cut -d' ' -f1)"
+          test "$(jq -r .id stable-release.json)" = \
+            "$(jq -r .id finalization-evidence/stable-release.json)"
+          test "$(jq -r .id latest-release.json)" = \
+            "$(jq -r .id finalization-evidence/latest-release.json)"
+          candidate_ready_at="$(jq -er .candidateReadyAt "$chain")"
+          pages_run_id="$(jq -er .pagesRunId "$chain")"
+          case "$pages_run_id" in
+            '' | *[!0-9]*) exit 1 ;;
+          esac
+          node scripts/release-evidence-chain.mjs verify \
+            --aggregate="$release_evidence" \
+            --candidate-sha="$CANDIDATE_SHA" \
+            --candidate-ready-at="$candidate_ready_at" \
+            --artifact=stable-release/OrbitPM-Process-Studio-Lite-0.4.5.html
+          node scripts/release-evidence-chain.mjs compare \
+            --trusted="$release_evidence" \
+            --observed="$pages_release_evidence"
+          node scripts/pages-evidence-chain.mjs verify \
+            --evidence="$pages_evidence" \
+            --candidate-sha="$CANDIDATE_SHA" \
+            --artifact=stable-release/OrbitPM-Process-Studio-Lite-0.4.5.html \
+            --url="$PAGES_URL" \
+            --run-id="$pages_run_id" \
+            --repository="$GITHUB_REPOSITORY"
+          test "$(jq -r .gate "$browser_evidence")" = \
+            "orbitpm-lite-browser-compatibility-evidence"
+          test "$(jq -r .status "$browser_evidence")" = "passed"
+          test "$(jq -r .candidateSha "$browser_evidence")" = "$CANDIDATE_SHA"
+          test "$(jq -r .candidateReadyAt "$browser_evidence")" = "$candidate_ready_at"
+          test "$(jq -r .artifactSha256 "$browser_evidence")" = \
+            "$(jq -r .artifactSha256 "$chain")"
+          test "$(jq -r .pagesUrl "$browser_evidence")" = "$PAGES_URL"
+          test "$(jq -r .pagesDeploymentEvidence.sha256 "$browser_evidence")" = \
+            "$(sha256sum "$pages_evidence" | cut -d' ' -f1)"
+          pages_run_json="$(
+            gh api "repos/$GITHUB_REPOSITORY/actions/runs/$pages_run_id"
+          )"
+          test "$(jq -r .name <<<"$pages_run_json")" = \
+            "Deploy approved tagged Lite artifact to Pages"
+          test "$(jq -r .path <<<"$pages_run_json")" = ".github/workflows/pages.yml"
+          test "$(jq -r .conclusion <<<"$pages_run_json")" = "success"
+          test "$(jq -r .head_sha <<<"$pages_run_json")" = "$CANDIDATE_SHA"
+
+  cleanup:
+    name: Protected manifest-bound historical mutation and read-back
+    needs: stable
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    concurrency:
+      group: orbitpm-pages-deployment
+      cancel-in-progress: false
+    permissions:
+      actions: read
+      contents: write
+    environment:
+      name: historical-release-cleanup-v0.4.5
+    steps:
+      - name: Require configured cleanup approval policy
+        env:
+          APPROVAL_POLICY: ${{ vars.ORBITPM_HISTORICAL_CLEANUP_POLICY }}
+        run: >-
+          test "$APPROVAL_POLICY" =
+          "v0.4.5-immutable-stable-pages-verified-manifest-28-assets"
+
+      - name: Checkout exact stable candidate after approval
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ inputs.candidate_sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Re-download immutable-finalization evidence after approval
+        env:
+          CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+          FINALIZATION_RUN_ID: ${{ inputs.finalization_run_id }}
+          GH_TOKEN: ${{ github.token }}
+        run: >-
+          gh run download "$FINALIZATION_RUN_ID"
+          --repo "$GITHUB_REPOSITORY"
+          --name "orbitpm-immutable-stable-release-$CANDIDATE_SHA"
+          --dir trusted-finalization-evidence
+
+      - name: Reverify stable release, inherited evidence, Pages, and all tag refs
+        env:
+          CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+          FINALIZATION_RUN_ID: ${{ inputs.finalization_run_id }}
+          GH_TOKEN: ${{ github.token }}
+          PAGES_URL: https://ahmedak320.github.io/bpmn-studio/
+          RELEASE_TAG: ${{ inputs.release_tag }}
+        run: |
+          git fetch --force origin \
+            refs/heads/main:refs/remotes/origin/main \
+            '+refs/tags/*:refs/tags/*'
+          test "$(git rev-parse HEAD)" = "$CANDIDATE_SHA"
+          test "$(git rev-parse origin/main)" = "$CANDIDATE_SHA"
+          node scripts/check-release-tag.mjs "$RELEASE_TAG" --require-origin-main
+          gh api "repos/$GITHUB_REPOSITORY/releases/tags/$RELEASE_TAG" \
+            > stable-before-cleanup.json
+          gh api "repos/$GITHUB_REPOSITORY/releases/latest" \
+            > latest-before-cleanup.json
+          test "$(jq -r .id stable-before-cleanup.json)" = \
+            "$(jq -r .id latest-before-cleanup.json)"
+          mkdir stable-before-cleanup
+          gh release download "$RELEASE_TAG" --dir stable-before-cleanup
+          node scripts/release-state.mjs \
+            --release-json=stable-before-cleanup.json \
+            --assets=stable-before-cleanup \
+            --notes=docs/RELEASE_NOTES_0.4.5.md \
+            --tag="$RELEASE_TAG" \
+            --title="OrbitPM Process Studio Lite 0.4.5" \
+            --state=stable
+          curl --fail --silent --show-error --location \
+            --max-time 30 \
+            "$PAGES_URL" \
+            --output pages-before-cleanup.html
+          cmp \
+            stable-before-cleanup/OrbitPM-Process-Studio-Lite-0.4.5.html \
+            pages-before-cleanup.html
+          chain=trusted-finalization-evidence/finalize-evidence/finalization-chain.json
+          browser_evidence=trusted-finalization-evidence/finalize-evidence/browser-compatibility-evidence-verification.json
+          release_evidence=trusted-finalization-evidence/finalize-evidence/trusted-release-external-evidence-verification.json
+          pages_evidence=trusted-finalization-evidence/finalize-evidence/pages/pages-browser-environment.json
+          pages_release_evidence=trusted-finalization-evidence/finalize-evidence/pages/trusted-release-external-evidence-verification.json
+          test "$(jq -r .schemaVersion "$chain")" = "1"
+          test "$(jq -r .gate "$chain")" = "orbitpm-lite-finalization-chain"
+          test "$(jq -r .status "$chain")" = "passed"
+          test "$(jq -r .candidateSha "$chain")" = "$CANDIDATE_SHA"
+          test "$(jq -r .releaseTag "$chain")" = "$RELEASE_TAG"
+          test "$(jq -r .finalizationRunId "$chain")" = "$FINALIZATION_RUN_ID"
+          test "$(jq -r .pagesUrl "$chain")" = "$PAGES_URL"
+          test "$(jq -r .releaseEvidenceSha256 "$chain")" = \
+            "$(sha256sum "$release_evidence" | cut -d' ' -f1)"
+          test "$(jq -r .pagesEvidenceSha256 "$chain")" = \
+            "$(sha256sum "$pages_evidence" | cut -d' ' -f1)"
+          test "$(jq -r .browserCompatibilityEvidenceSha256 "$chain")" = \
+            "$(sha256sum "$browser_evidence" | cut -d' ' -f1)"
+          test "$(jq -r .artifactSha256 "$chain")" = \
+            "$(sha256sum stable-before-cleanup/OrbitPM-Process-Studio-Lite-0.4.5.html | cut -d' ' -f1)"
+          test "$(jq -r .id stable-before-cleanup.json)" = \
+            "$(jq -r .id trusted-finalization-evidence/stable-release.json)"
+          test "$(jq -r .id latest-before-cleanup.json)" = \
+            "$(jq -r .id trusted-finalization-evidence/latest-release.json)"
+          candidate_ready_at="$(jq -er .candidateReadyAt "$chain")"
+          pages_run_id="$(jq -er .pagesRunId "$chain")"
+          case "$pages_run_id" in
+            '' | *[!0-9]*) exit 1 ;;
+          esac
+          node scripts/release-evidence-chain.mjs verify \
+            --aggregate="$release_evidence" \
+            --candidate-sha="$CANDIDATE_SHA" \
+            --candidate-ready-at="$candidate_ready_at" \
+            --artifact=stable-before-cleanup/OrbitPM-Process-Studio-Lite-0.4.5.html
+          node scripts/release-evidence-chain.mjs compare \
+            --trusted="$release_evidence" \
+            --observed="$pages_release_evidence"
+          node scripts/pages-evidence-chain.mjs verify \
+            --evidence="$pages_evidence" \
+            --candidate-sha="$CANDIDATE_SHA" \
+            --artifact=stable-before-cleanup/OrbitPM-Process-Studio-Lite-0.4.5.html \
+            --url="$PAGES_URL" \
+            --run-id="$pages_run_id" \
+            --repository="$GITHUB_REPOSITORY"
+          test "$(jq -r .gate "$browser_evidence")" = \
+            "orbitpm-lite-browser-compatibility-evidence"
+          test "$(jq -r .status "$browser_evidence")" = "passed"
+          test "$(jq -r .candidateSha "$browser_evidence")" = "$CANDIDATE_SHA"
+          test "$(jq -r .candidateReadyAt "$browser_evidence")" = "$candidate_ready_at"
+          test "$(jq -r .artifactSha256 "$browser_evidence")" = \
+            "$(jq -r .artifactSha256 "$chain")"
+          test "$(jq -r .pagesUrl "$browser_evidence")" = "$PAGES_URL"
+          test "$(jq -r .pagesDeploymentEvidence.sha256 "$browser_evidence")" = \
+            "$(sha256sum "$pages_evidence" | cut -d' ' -f1)"
+          jq -r \
+            '.releases[] | [.tag, .tagRefSha, .peeledCommitSha] | @tsv' \
+            scripts/historical-release-cleanup-manifest.json |
+            while IFS=$'\t' read -r tag ref_sha commit_sha; do
+              test "$(git rev-parse "refs/tags/$tag")" = "$ref_sha"
+              test "$(git rev-parse "refs/tags/$tag^{commit}")" = "$commit_sha"
+            done
+
+      - name: Build a fail-closed resumable cleanup plan from live metadata
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh api --paginate "repos/$GITHUB_REPOSITORY/releases?per_page=100" |
+            jq -s 'add' > historical-before.json
+          node scripts/historical-release-cleanup.mjs \
+            --mode=preflight \
+            --manifest=scripts/historical-release-cleanup-manifest.json \
+            --releases=historical-before.json \
+            --output=historical-plan-before.json
+
+      - name: Mark historical releases archived before removing assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          jq -c '.releaseEdits[]' historical-plan-before.json |
+            while IFS= read -r edit; do
+              release_id="$(jq -r .id <<<"$edit")"
+              gh api "repos/$GITHUB_REPOSITORY/releases/$release_id" \
+                > release-immediately-before-metadata-patch.json
+              node scripts/historical-release-cleanup.mjs \
+                --mode=metadata-patch \
+                --manifest=scripts/historical-release-cleanup-manifest.json \
+                --release-json=release-immediately-before-metadata-patch.json \
+                --release-id="$release_id" \
+                --output=metadata-patch-plan.json
+              if test "$(jq -r .state metadata-patch-plan.json)" = "original"; then
+                jq '.patch' metadata-patch-plan.json |
+                  gh api "repos/$GITHUB_REPOSITORY/releases/$release_id" \
+                    --method PATCH \
+                    --input - \
+                    >/dev/null
+              fi
+              gh api "repos/$GITHUB_REPOSITORY/releases/$release_id" \
+                > release-immediately-after-metadata-patch.json
+              node scripts/historical-release-cleanup.mjs \
+                --mode=metadata-patch \
+                --manifest=scripts/historical-release-cleanup-manifest.json \
+                --release-json=release-immediately-after-metadata-patch.json \
+                --release-id="$release_id" \
+                --output=metadata-patch-readback.json
+              test "$(jq -r .state metadata-patch-readback.json)" = "archived"
+            done
+
+      - name: Replan after metadata edits before any deletion
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh api --paginate "repos/$GITHUB_REPOSITORY/releases?per_page=100" |
+            jq -s 'add' > historical-before-delete.json
+          node scripts/historical-release-cleanup.mjs \
+            --mode=preflight \
+            --manifest=scripts/historical-release-cleanup-manifest.json \
+            --releases=historical-before-delete.json \
+            --output=historical-delete-plan.json
+          test "$(jq '.releaseEdits | length' historical-delete-plan.json)" -eq 0
+
+      - name: Delete only still-present manifest-bound executable and updater assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          jq -c '.assetDeletes[]' historical-delete-plan.json |
+            while IFS= read -r deletion; do
+              asset_id="$(jq -r .id <<<"$deletion")"
+              expected_name="$(jq -r .name <<<"$deletion")"
+              expected_release_id="$(jq -r .releaseId <<<"$deletion")"
+              bound="$(
+                jq -c \
+                  --argjson asset_id "$asset_id" \
+                  --argjson release_id "$expected_release_id" \
+                  '.releases[]
+                    | select(.releaseId == $release_id)
+                    | .assets[]
+                    | select(.id == $asset_id)' \
+                  scripts/historical-release-cleanup-manifest.json
+              )"
+              test "$(jq -r .name <<<"$bound")" = "$expected_name"
+              gh api "repos/$GITHUB_REPOSITORY/releases/assets/$asset_id" \
+                > asset-before-delete.json
+              test "$(jq -r .name asset-before-delete.json)" = "$expected_name"
+              test "$(jq -r .size asset-before-delete.json)" = \
+                "$(jq -r .size <<<"$bound")"
+              test "$(jq -r .digest asset-before-delete.json)" = \
+                "sha256:$(jq -r .sha256 <<<"$bound")"
+              gh api "repos/$GITHUB_REPOSITORY/releases/assets/$asset_id" \
+                --method DELETE
+            done
+
+      - name: Verify exact post-cleanup state, retained Lite assets, and unchanged tags
+        env:
+          CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+          GH_TOKEN: ${{ github.token }}
+          PAGES_URL: https://ahmedak320.github.io/bpmn-studio/
+          RELEASE_TAG: ${{ inputs.release_tag }}
+        run: |
+          gh api --paginate "repos/$GITHUB_REPOSITORY/releases?per_page=100" |
+            jq -s 'add' > historical-after.json
+          node scripts/historical-release-cleanup.mjs \
+            --mode=verify \
+            --manifest=scripts/historical-release-cleanup-manifest.json \
+            --releases=historical-after.json \
+            --output=historical-verification.json
+          test "$(jq .expectedDeletionCount historical-verification.json)" -eq 28
+          test "$(jq .remainingDeletionCount historical-verification.json)" -eq 0
+          test "$(jq .retainedAssetCount historical-verification.json)" -eq 7
+          git fetch --force origin \
+            refs/heads/main:refs/remotes/origin/main \
+            '+refs/tags/*:refs/tags/*'
+          test "$(git rev-parse origin/main)" = "$CANDIDATE_SHA"
+          node scripts/check-release-tag.mjs "$RELEASE_TAG" --require-origin-main
+          jq -r \
+            '.releases[] | [.tag, .tagRefSha, .peeledCommitSha] | @tsv' \
+            scripts/historical-release-cleanup-manifest.json |
+            while IFS=$'\t' read -r tag ref_sha commit_sha; do
+              test "$(git rev-parse "refs/tags/$tag")" = "$ref_sha"
+              test "$(git rev-parse "refs/tags/$tag^{commit}")" = "$commit_sha"
+            done
+          gh api "repos/$GITHUB_REPOSITORY/releases/tags/$RELEASE_TAG" \
+            > stable-after-cleanup.json
+          gh api "repos/$GITHUB_REPOSITORY/releases/latest" \
+            > latest-after-cleanup.json
+          test "$(jq -r .id stable-after-cleanup.json)" = \
+            "$(jq -r .id latest-after-cleanup.json)"
+          mkdir stable-after-cleanup
+          gh release download "$RELEASE_TAG" --dir stable-after-cleanup
+          node scripts/release-state.mjs \
+            --release-json=stable-after-cleanup.json \
+            --assets=stable-after-cleanup \
+            --notes=docs/RELEASE_NOTES_0.4.5.md \
+            --tag="$RELEASE_TAG" \
+            --title="OrbitPM Process Studio Lite 0.4.5" \
+            --state=stable
+          curl --fail --silent --show-error --location \
+            --max-time 30 \
+            "$PAGES_URL" \
+            --output pages-after-cleanup.html
+          cmp \
+            stable-after-cleanup/OrbitPM-Process-Studio-Lite-0.4.5.html \
+            pages-after-cleanup.html
+          chain=trusted-finalization-evidence/finalize-evidence/finalization-chain.json
+          browser_evidence=trusted-finalization-evidence/finalize-evidence/browser-compatibility-evidence-verification.json
+          release_evidence=trusted-finalization-evidence/finalize-evidence/trusted-release-external-evidence-verification.json
+          pages_evidence=trusted-finalization-evidence/finalize-evidence/pages/pages-browser-environment.json
+          pages_release_evidence=trusted-finalization-evidence/finalize-evidence/pages/trusted-release-external-evidence-verification.json
+          candidate_ready_at="$(jq -er .candidateReadyAt "$chain")"
+          pages_run_id="$(jq -er .pagesRunId "$chain")"
+          test "$(jq -r .artifactSha256 "$chain")" = \
+            "$(sha256sum stable-after-cleanup/OrbitPM-Process-Studio-Lite-0.4.5.html | cut -d' ' -f1)"
+          test "$(jq -r .browserCompatibilityEvidenceSha256 "$chain")" = \
+            "$(sha256sum "$browser_evidence" | cut -d' ' -f1)"
+          node scripts/release-evidence-chain.mjs verify \
+            --aggregate="$release_evidence" \
+            --candidate-sha="$CANDIDATE_SHA" \
+            --candidate-ready-at="$candidate_ready_at" \
+            --artifact=stable-after-cleanup/OrbitPM-Process-Studio-Lite-0.4.5.html
+          node scripts/release-evidence-chain.mjs compare \
+            --trusted="$release_evidence" \
+            --observed="$pages_release_evidence"
+          node scripts/pages-evidence-chain.mjs verify \
+            --evidence="$pages_evidence" \
+            --candidate-sha="$CANDIDATE_SHA" \
+            --artifact=stable-after-cleanup/OrbitPM-Process-Studio-Lite-0.4.5.html \
+            --url="$PAGES_URL" \
+            --run-id="$pages_run_id" \
+            --repository="$GITHUB_REPOSITORY"
+          test "$(jq -r .gate "$browser_evidence")" = \
+            "orbitpm-lite-browser-compatibility-evidence"
+          test "$(jq -r .status "$browser_evidence")" = "passed"
+          test "$(jq -r .candidateSha "$browser_evidence")" = "$CANDIDATE_SHA"
+          test "$(jq -r .candidateReadyAt "$browser_evidence")" = "$candidate_ready_at"
+          test "$(jq -r .artifactSha256 "$browser_evidence")" = \
+            "$(jq -r .artifactSha256 "$chain")"
+          test "$(jq -r .pagesUrl "$browser_evidence")" = "$PAGES_URL"
+          test "$(jq -r .pagesDeploymentEvidence.sha256 "$browser_evidence")" = \
+            "$(sha256sum "$pages_evidence" | cut -d' ' -f1)"
+
+      - name: Preserve cleanup plan and verified read-back
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: orbitpm-historical-cleanup-${{ inputs.candidate_sha }}
+          path: |
+            historical-plan-before.json
+            historical-delete-plan.json
+            historical-verification.json
+          if-no-files-found: error
+          retention-days: 90

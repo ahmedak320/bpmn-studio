@@ -13,7 +13,7 @@ on:
         default: v0.4.5
         type: string
       release_run_id:
-        description: Successful protected tag-and-draft workflow run ID
+        description: Successful tag, draft, and clean tag-quality workflow run ID
         required: true
         type: string
       external_evidence_url:
@@ -24,19 +24,39 @@ on:
         description: SHA-256 of the candidate-bound external evidence JSON
         required: true
         type: string
+      rollback_tag:
+        description: Published known-good tag used only if this deployment must roll back
+        required: true
+        default: v0.4.4
+        type: string
+      rollback_commit_sha:
+        description: Exact commit peeled from rollback_tag
+        required: true
+        default: cd842b6e0b8d7283e2704ae71ec207440b9e54f2
+        type: string
+      rollback_asset_name:
+        description: Exact self-contained Lite HTML asset in rollback_tag
+        required: true
+        default: OrbitPM-Process-Studio-Lite.html
+        type: string
+      rollback_asset_sha256:
+        description: Recorded SHA-256 for the known-good rollback asset
+        required: true
+        default: 874294dd41beab992a057924b7d23bf992892363023372cf0221cb215e0c931e
+        type: string
 
 permissions:
   contents: read
 
 concurrency:
-  group: pages
+  group: pages-v0.4.5
   cancel-in-progress: false
 
 jobs:
   identity:
-    name: Bind Pages to approved tag and origin/main
+    name: Bind Pages to draft bytes, tag quality, and origin/main
     runs-on: ubuntu-24.04
-    timeout-minutes: 10
+    timeout-minutes: 15
     permissions:
       actions: read
       contents: read
@@ -48,64 +68,38 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
-      - name: Require approved evidence and exact annotated tag
+      - name: Require exact Git and successful tag-quality workflow identity
         env:
           CANDIDATE_SHA: ${{ inputs.candidate_sha }}
           EVIDENCE_SHA256: ${{ inputs.external_evidence_sha256 }}
           EVIDENCE_URL: ${{ inputs.external_evidence_url }}
           GH_TOKEN: ${{ github.token }}
-          RELEASE_TAG: ${{ inputs.release_tag }}
           RELEASE_RUN_ID: ${{ inputs.release_run_id }}
+          RELEASE_TAG: ${{ inputs.release_tag }}
         run: |
           test "${#CANDIDATE_SHA}" -eq 40
           case "$CANDIDATE_SHA" in
-            *[!0-9a-fA-F]*)
-              echo "candidate_sha must contain exactly 40 hexadecimal characters" >&2
-              exit 1
-              ;;
+            *[!0-9a-fA-F]*) exit 1 ;;
           esac
           case "$EVIDENCE_URL" in
             https://?*) ;;
-            *)
-              echo "external_evidence_url must be an HTTPS evidence location" >&2
-              exit 1
-              ;;
+            *) exit 1 ;;
           esac
           test "${#EVIDENCE_SHA256}" -eq 64
           case "$EVIDENCE_SHA256" in
-            *[!0-9a-fA-F]*)
-              echo "external_evidence_sha256 must contain 64 hexadecimal characters" >&2
-              exit 1
-              ;;
+            *[!0-9a-fA-F]*) exit 1 ;;
           esac
           case "$RELEASE_RUN_ID" in
-            '' | *[!0-9]*)
-              echo "release_run_id must be a numeric GitHub Actions run ID" >&2
-              exit 1
-              ;;
+            '' | *[!0-9]*) exit 1 ;;
           esac
           test "$GITHUB_REF" = "refs/heads/main"
           test "$GITHUB_SHA" = "$CANDIDATE_SHA"
-          test "$(git rev-parse HEAD)" = "$CANDIDATE_SHA"
           git fetch --force origin \
             refs/heads/main:refs/remotes/origin/main \
-            '+refs/tags/*:refs/tags/*'
+            "+refs/tags/$RELEASE_TAG:refs/tags/$RELEASE_TAG"
+          test "$(git rev-parse HEAD)" = "$CANDIDATE_SHA"
           test "$(git rev-parse origin/main)" = "$CANDIDATE_SHA"
           node scripts/check-release-tag.mjs "$RELEASE_TAG" --require-origin-main
-          release_json="$(gh release view "$RELEASE_TAG" --json assets,isPrerelease)"
-          test "$(jq -r .isPrerelease <<<"$release_json")" = "false"
-          actual_assets="$(jq -r '[.assets[].name] | sort | .[]' <<<"$release_json")"
-          expected_assets="$(
-            printf '%s\n' \
-              LICENSE \
-              OrbitPM-Excel-Example-0.4.5.xlsx \
-              OrbitPM-Excel-Template-0.4.5.xlsx \
-              OrbitPM-Process-Studio-Lite-0.4.5.cyclonedx.json \
-              OrbitPM-Process-Studio-Lite-0.4.5.html \
-              SHA256SUMS.txt \
-              THIRD_PARTY_NOTICES.md
-          )"
-          test "$actual_assets" = "$expected_assets"
           release_run_json="$(
             gh api "repos/$GITHUB_REPOSITORY/actions/runs/$RELEASE_RUN_ID"
           )"
@@ -127,27 +121,122 @@ jobs:
                 throw new Error('The selected release run did not complete before this Pages run.')
               }
             "
+          artifacts_json="$(
+            gh api "repos/$GITHUB_REPOSITORY/actions/runs/$RELEASE_RUN_ID/artifacts?per_page=100"
+          )"
+          artifact_name="orbitpm-tag-release-assets-$CANDIDATE_SHA"
+          test "$(
+            jq --arg name "$artifact_name" \
+              '[.artifacts[] | select(.name == $name and .expired == false)] | length' \
+              <<<"$artifacts_json"
+          )" -eq 1
+          evidence_name="orbitpm-tag-external-evidence-$CANDIDATE_SHA"
+          test "$(
+            jq --arg name "$evidence_name" \
+              '[.artifacts[] | select(.name == $name and .expired == false)] | length' \
+              <<<"$artifacts_json"
+          )" -eq 1
 
-  quality:
-    name: Required release-quality gates
-    needs: identity
-    uses: ./.github/workflows/quality.yml
+      - name: Download exact clean-tag asset artifact
+        env:
+          CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_RUN_ID: ${{ inputs.release_run_id }}
+        run: >-
+          gh run download "$RELEASE_RUN_ID"
+          --repo "$GITHUB_REPOSITORY"
+          --name "orbitpm-tag-release-assets-$CANDIDATE_SHA"
+          --dir tag-release
+
+      - name: Download trusted tag-bound external-evidence aggregate
+        env:
+          CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_RUN_ID: ${{ inputs.release_run_id }}
+        run: >-
+          gh run download "$RELEASE_RUN_ID"
+          --repo "$GITHUB_REPOSITORY"
+          --name "orbitpm-tag-external-evidence-$CANDIDATE_SHA"
+          --dir release-evidence
+
+      - name: Re-download and hash all seven draft assets before approval
+        env:
+          EVIDENCE_URL: ${{ inputs.external_evidence_url }}
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.release_tag }}
+        run: |
+          gh api "repos/$GITHUB_REPOSITORY/releases/tags/$RELEASE_TAG" \
+            > draft-release.json
+          mkdir draft-preapproval
+          gh release download "$RELEASE_TAG" --dir draft-preapproval
+          node scripts/release-state.mjs \
+            --release-json=draft-release.json \
+            --assets=draft-preapproval \
+            --expected-assets=tag-release \
+            --notes=docs/RELEASE_NOTES_0.4.5.md \
+            --tag="$RELEASE_TAG" \
+            --title="OrbitPM Process Studio Lite 0.4.5" \
+            --state=draft
+          candidate_ready_at="$(
+            jq -er .candidateReadyAt \
+              release-evidence/tag-external-evidence-verification.json
+          )"
+          node scripts/release-evidence-chain.mjs verify \
+            --aggregate=release-evidence/tag-external-evidence-verification.json \
+            --candidate-sha=${{ inputs.candidate_sha }} \
+            --candidate-ready-at="$candidate_ready_at" \
+            --artifact=tag-release/OrbitPM-Process-Studio-Lite-0.4.5.html \
+            --source-url="$EVIDENCE_URL" \
+            --source-sha256=${{ inputs.external_evidence_sha256 }}
+
+      - name: Preflight the exact known-good rollback release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ROLLBACK_ASSET: ${{ inputs.rollback_asset_name }}
+          ROLLBACK_ASSET_SHA256: ${{ inputs.rollback_asset_sha256 }}
+          ROLLBACK_SHA: ${{ inputs.rollback_commit_sha }}
+          ROLLBACK_TAG: ${{ inputs.rollback_tag }}
+        run: |
+          test "$ROLLBACK_TAG" = "v0.4.4"
+          test "$ROLLBACK_SHA" = "cd842b6e0b8d7283e2704ae71ec207440b9e54f2"
+          test "$ROLLBACK_ASSET" = "OrbitPM-Process-Studio-Lite.html"
+          test "$ROLLBACK_ASSET_SHA256" = \
+            "874294dd41beab992a057924b7d23bf992892363023372cf0221cb215e0c931e"
+          git fetch --force origin \
+            "+refs/tags/$ROLLBACK_TAG:refs/tags/$ROLLBACK_TAG"
+          test "$(git rev-parse "refs/tags/$ROLLBACK_TAG^{commit}")" = "$ROLLBACK_SHA"
+          gh api "repos/$GITHUB_REPOSITORY/releases/tags/$ROLLBACK_TAG" \
+            > rollback-release.json
+          test "$(jq -r .draft rollback-release.json)" = "false"
+          test "$(jq -r .prerelease rollback-release.json)" = "false"
+          test "$(
+            jq -r --arg name "$ROLLBACK_ASSET" \
+              '.assets[] | select(.name == $name) | .digest' \
+              rollback-release.json
+          )" = "sha256:$ROLLBACK_ASSET_SHA256"
+          mkdir rollback-preflight
+          gh release download "$ROLLBACK_TAG" \
+            --pattern "$ROLLBACK_ASSET" \
+            --dir rollback-preflight
+          echo "$ROLLBACK_ASSET_SHA256  rollback-preflight/$ROLLBACK_ASSET" |
+            sha256sum --check -
 
   deploy:
-    name: Protected deployment of exact tested artifact
-    needs: [identity, quality]
+    name: Protected deployment of exact draft release bytes
+    needs: identity
     runs-on: ubuntu-24.04
-    timeout-minutes: 45
+    timeout-minutes: 50
+    concurrency:
+      group: orbitpm-pages-deployment
+      cancel-in-progress: false
     permissions:
       actions: read
       contents: read
-      pages: write
       id-token: write
+      pages: write
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
-    outputs:
-      page_url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - name: Require configured external-evidence approval policy
         env:
@@ -156,37 +245,12 @@ jobs:
           test "$APPROVAL_POLICY" =
           "v0.4.5-nvda-voiceover-arabic-48h-p0p1-reviewed"
 
-      - name: Revalidate main, annotated tag, and protected release run
-        env:
-          CANDIDATE_SHA: ${{ inputs.candidate_sha }}
-          GH_TOKEN: ${{ github.token }}
-          RELEASE_RUN_ID: ${{ inputs.release_run_id }}
-          RELEASE_TAG: ${{ inputs.release_tag }}
-        run: |
-          release_run_json="$(
-            gh api "repos/$GITHUB_REPOSITORY/actions/runs/$RELEASE_RUN_ID"
-          )"
-          test "$(jq -r .conclusion <<<"$release_run_json")" = "success"
-          test "$(jq -r .head_sha <<<"$release_run_json")" = "$CANDIDATE_SHA"
-
-      - name: Checkout exact approved tag commit
+      - name: Checkout exact approved tag commit after approval
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
           ref: ${{ inputs.candidate_sha }}
           fetch-depth: 0
           persist-credentials: false
-
-      - name: Revalidate immutable Git identity after approval
-        env:
-          CANDIDATE_SHA: ${{ inputs.candidate_sha }}
-          RELEASE_TAG: ${{ inputs.release_tag }}
-        run: |
-          git fetch --force origin \
-            refs/heads/main:refs/remotes/origin/main \
-            '+refs/tags/*:refs/tags/*'
-          test "$(git rev-parse HEAD)" = "$CANDIDATE_SHA"
-          test "$(git rev-parse origin/main)" = "$CANDIDATE_SHA"
-          node scripts/check-release-tag.mjs "$RELEASE_TAG" --require-origin-main
 
       - name: Set up exact Node
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
@@ -201,69 +265,161 @@ jobs:
       - name: Reproducible install
         run: npm ci
 
-      - name: Download exact tested artifact
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
-        with:
-          name: orbitpm-tested-pages-${{ inputs.candidate_sha }}
-          path: dist
+      - name: Download clean-tag reference assets from the successful release run
+        env:
+          CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_RUN_ID: ${{ inputs.release_run_id }}
+        run: >-
+          gh run download "$RELEASE_RUN_ID"
+          --repo "$GITHUB_REPOSITORY"
+          --name "orbitpm-tag-release-assets-$CANDIDATE_SHA"
+          --dir tag-release
 
-      - name: Revalidate candidate-bound external evidence against deployed bytes
+      - name: Download the trusted release evidence aggregate after approval
+        env:
+          CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_RUN_ID: ${{ inputs.release_run_id }}
+        run: >-
+          gh run download "$RELEASE_RUN_ID"
+          --repo "$GITHUB_REPOSITORY"
+          --name "orbitpm-tag-external-evidence-$CANDIDATE_SHA"
+          --dir trusted-release-evidence
+
+      - name: Revalidate run, Git identity, draft metadata, checksums, and all bytes
+        env:
+          CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_RUN_ID: ${{ inputs.release_run_id }}
+          RELEASE_TAG: ${{ inputs.release_tag }}
+        run: |
+          release_run_json="$(
+            gh api "repos/$GITHUB_REPOSITORY/actions/runs/$RELEASE_RUN_ID"
+          )"
+          test "$(jq -r .conclusion <<<"$release_run_json")" = "success"
+          test "$(jq -r .head_sha <<<"$release_run_json")" = "$CANDIDATE_SHA"
+          git fetch --force origin \
+            refs/heads/main:refs/remotes/origin/main \
+            "+refs/tags/$RELEASE_TAG:refs/tags/$RELEASE_TAG"
+          test "$(git rev-parse HEAD)" = "$CANDIDATE_SHA"
+          test "$(git rev-parse origin/main)" = "$CANDIDATE_SHA"
+          node scripts/check-release-tag.mjs "$RELEASE_TAG" --require-origin-main
+          gh api "repos/$GITHUB_REPOSITORY/releases/tags/$RELEASE_TAG" \
+            > draft-before-deploy.json
+          mkdir draft-before-deploy
+          gh release download "$RELEASE_TAG" --dir draft-before-deploy
+          npm run release:verify -- draft-before-deploy
+          node scripts/release-state.mjs \
+            --release-json=draft-before-deploy.json \
+            --assets=draft-before-deploy \
+            --expected-assets=tag-release \
+            --notes=docs/RELEASE_NOTES_0.4.5.md \
+            --tag="$RELEASE_TAG" \
+            --title="OrbitPM Process Studio Lite 0.4.5" \
+            --state=draft
+
+      - name: Revalidate candidate-bound external evidence against release bytes
         env:
           EVIDENCE_SHA256: ${{ inputs.external_evidence_sha256 }}
           EVIDENCE_URL: ${{ inputs.external_evidence_url }}
-        run: >-
-          node scripts/verify-external-release-evidence.mjs
-          --candidate-sha=${{ inputs.candidate_sha }}
-          --artifact=dist/index.html
-          --url="$EVIDENCE_URL"
-          --sha256="$EVIDENCE_SHA256"
-          --output=evidence/pages-external-evidence-verification.json
+        run: |
+          candidate_ready_at="$(
+            jq -er .candidateReadyAt \
+              trusted-release-evidence/tag-external-evidence-verification.json
+          )"
+          node scripts/release-evidence-chain.mjs verify \
+            --aggregate=trusted-release-evidence/tag-external-evidence-verification.json \
+            --candidate-sha=${{ inputs.candidate_sha }} \
+            --candidate-ready-at="$candidate_ready_at" \
+            --artifact=draft-before-deploy/OrbitPM-Process-Studio-Lite-0.4.5.html \
+            --source-url="$EVIDENCE_URL" \
+            --source-sha256="$EVIDENCE_SHA256"
+          node scripts/verify-external-release-evidence.mjs \
+            --candidate-sha=${{ inputs.candidate_sha }} \
+            --candidate-ready-at="$candidate_ready_at" \
+            --artifact=draft-before-deploy/OrbitPM-Process-Studio-Lite-0.4.5.html \
+            --url="$EVIDENCE_URL" \
+            --sha256="$EVIDENCE_SHA256" \
+            --output=evidence/pages-external-evidence-verification.json
+          node scripts/release-evidence-chain.mjs compare \
+            --trusted=trusted-release-evidence/tag-external-evidence-verification.json \
+            --observed=evidence/pages-external-evidence-verification.json
+          cp \
+            trusted-release-evidence/tag-external-evidence-verification.json \
+            evidence/trusted-release-external-evidence-verification.json
 
-      - name: Preserve Pages approval evidence
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
-        with:
-          name: orbitpm-pages-external-evidence-${{ inputs.candidate_sha }}
-          path: evidence/pages-external-evidence-verification.json
-          if-no-files-found: error
-          retention-days: 90
-
-      - name: Install current Chrome/Edge and pinned Playwright engines before deployment
+      - name: Install current Chrome/Edge and pinned Playwright engines
         run: >-
           ./node_modules/.bin/playwright install --with-deps
           chromium chrome msedge firefox webkit
 
-      - name: Snapshot the currently published self-contained Pages app
-        env:
-          CURRENT_PAGES_URL: https://ahmedak320.github.io/bpmn-studio/
+      - name: Build Pages directory from the verified draft HTML
         run: |
-          mkdir rollback-dist
-          curl --fail --silent --show-error --location \
-            --max-time 30 \
-            "$CURRENT_PAGES_URL" \
-            --output rollback-dist/index.html
-          test -s rollback-dist/index.html
-          test "$(stat --format=%s rollback-dist/index.html)" -le 8388608
-          sha256sum rollback-dist/index.html
+          mkdir pages-dist
+          cp \
+            draft-before-deploy/OrbitPM-Process-Studio-Lite-0.4.5.html \
+            pages-dist/index.html
 
-      - name: Preserve rollback bytes for audit
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
-        with:
-          name: orbitpm-pages-rollback-bytes-${{ github.run_id }}
-          path: rollback-dist/index.html
-          if-no-files-found: error
-          retention-days: 90
-
-      - name: Package rollback Pages artifact
-        uses: actions/upload-pages-artifact@56afc609e74202658d3ffba0e8f6dda462b719fa
-        with:
-          name: orbitpm-pages-rollback-${{ github.run_id }}
-          path: rollback-dist
+      - name: Re-download all assets immediately before packaging
+        env:
+          CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.release_tag }}
+        run: |
+          git fetch --force origin \
+            refs/heads/main:refs/remotes/origin/main \
+            "+refs/tags/$RELEASE_TAG:refs/tags/$RELEASE_TAG"
+          test "$(git rev-parse origin/main)" = "$CANDIDATE_SHA"
+          node scripts/check-release-tag.mjs "$RELEASE_TAG" --require-origin-main
+          gh api "repos/$GITHUB_REPOSITORY/releases/tags/$RELEASE_TAG" \
+            > draft-prepackage.json
+          mkdir draft-prepackage
+          gh release download "$RELEASE_TAG" --dir draft-prepackage
+          node scripts/release-state.mjs \
+            --release-json=draft-prepackage.json \
+            --assets=draft-prepackage \
+            --expected-assets=tag-release \
+            --notes=docs/RELEASE_NOTES_0.4.5.md \
+            --tag="$RELEASE_TAG" \
+            --title="OrbitPM Process Studio Lite 0.4.5" \
+            --state=draft
+          cmp \
+            pages-dist/index.html \
+            draft-prepackage/OrbitPM-Process-Studio-Lite-0.4.5.html
 
       - name: Package candidate Pages artifact
         uses: actions/upload-pages-artifact@56afc609e74202658d3ffba0e8f6dda462b719fa
         with:
           name: orbitpm-pages-candidate-${{ github.run_id }}
-          path: dist
+          path: pages-dist
+
+      - name: Recheck release identity immediately before deployment
+        env:
+          CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.release_tag }}
+        run: |
+          git fetch --force origin \
+            refs/heads/main:refs/remotes/origin/main \
+            "+refs/tags/$RELEASE_TAG:refs/tags/$RELEASE_TAG"
+          test "$(git rev-parse origin/main)" = "$CANDIDATE_SHA"
+          node scripts/check-release-tag.mjs "$RELEASE_TAG" --require-origin-main
+          gh api "repos/$GITHUB_REPOSITORY/releases/tags/$RELEASE_TAG" \
+            > draft-at-deploy.json
+          mkdir draft-at-deploy
+          gh release download "$RELEASE_TAG" --dir draft-at-deploy
+          node scripts/release-state.mjs \
+            --release-json=draft-at-deploy.json \
+            --assets=draft-at-deploy \
+            --expected-assets=tag-release \
+            --notes=docs/RELEASE_NOTES_0.4.5.md \
+            --tag="$RELEASE_TAG" \
+            --title="OrbitPM Process Studio Lite 0.4.5" \
+            --state=draft
+          cmp \
+            pages-dist/index.html \
+            draft-at-deploy/OrbitPM-Process-Studio-Lite-0.4.5.html
 
       - name: Deploy candidate Pages
         id: deployment
@@ -271,61 +427,84 @@ jobs:
         with:
           artifact_name: orbitpm-pages-candidate-${{ github.run_id }}
 
+      - name: Require the canonical production deployment URL
+        env:
+          DEPLOYMENT_URL: ${{ steps.deployment.outputs.page_url }}
+        run: test "$DEPLOYMENT_URL" = "https://ahmedak320.github.io/bpmn-studio/"
+
       - name: Record exact Pages browser environment evidence
         env:
-          PAGES_URL: ${{ steps.deployment.outputs.page_url }}
+          PAGES_URL: https://ahmedak320.github.io/bpmn-studio/
         run: >-
           node scripts/browser-environment-evidence.mjs
           --candidate-sha=${{ inputs.candidate_sha }}
-          --artifact=dist/index.html
+          --artifact=pages-dist/index.html
           --url="$PAGES_URL"
           --browsers=chromium,chrome,edge,firefox,webkit-linux
-          --fetch-attempts=24
+          --fetch-attempts=150
           --fetch-delay-ms=5000
           --output=evidence/pages-browser-environment.json
 
       - name: Compare deployed bytes and smoke EN/AR
         env:
-          PAGES_URL: ${{ steps.deployment.outputs.page_url }}
+          PAGES_URL: https://ahmedak320.github.io/bpmn-studio/
         run: >-
           node scripts/pages-smoke.mjs
-          --artifact=dist/index.html
-          --fetch-attempts=24
+          --artifact=pages-dist/index.html
+          --fetch-attempts=150
           --fetch-delay-ms=5000
 
-      - name: Upload Pages browser evidence
+      - name: Read back release bytes and identities immediately after deployment
+        env:
+          CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.release_tag }}
+        run: |
+          git fetch --force origin \
+            refs/heads/main:refs/remotes/origin/main \
+            "+refs/tags/$RELEASE_TAG:refs/tags/$RELEASE_TAG"
+          test "$(git rev-parse origin/main)" = "$CANDIDATE_SHA"
+          node scripts/check-release-tag.mjs "$RELEASE_TAG" --require-origin-main
+          gh api "repos/$GITHUB_REPOSITORY/releases/tags/$RELEASE_TAG" \
+            > draft-postdeploy.json
+          mkdir draft-postdeploy
+          gh release download "$RELEASE_TAG" --dir draft-postdeploy
+          node scripts/release-state.mjs \
+            --release-json=draft-postdeploy.json \
+            --assets=draft-postdeploy \
+            --expected-assets=tag-release \
+            --notes=docs/RELEASE_NOTES_0.4.5.md \
+            --tag="$RELEASE_TAG" \
+            --title="OrbitPM Process Studio Lite 0.4.5" \
+            --state=draft
+          cmp \
+            pages-dist/index.html \
+            draft-postdeploy/OrbitPM-Process-Studio-Lite-0.4.5.html
+
+      - name: Preserve Pages approval and browser evidence
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: orbitpm-pages-browser-evidence-${{ inputs.candidate_sha }}
-          path: evidence/pages-browser-environment.json
+          name: orbitpm-pages-evidence-${{ inputs.candidate_sha }}
+          path: evidence/
           if-no-files-found: error
           retention-days: 90
 
-      - name: Roll back the prior Pages bytes when remote verification fails
-        id: rollback
-        if: ${{ failure() && steps.deployment.outcome == 'success' }}
-        uses: actions/deploy-pages@d6db90164ac5ed86f2b6aed7e0febac5b3c0c03e
-        with:
-          artifact_name: orbitpm-pages-rollback-${{ github.run_id }}
-
-      - name: Confirm rollback bytes are live
-        if: ${{ failure() && steps.rollback.outcome == 'success' }}
-        env:
-          PAGES_URL: ${{ steps.rollback.outputs.page_url }}
-        run: |
-          for attempt in $(seq 1 24); do
-            if curl --fail --silent --show-error --location \
-              --max-time 30 \
-              "$PAGES_URL" \
-              --output rollback-live.html &&
-              cmp rollback-dist/index.html rollback-live.html
-            then
-              exit 0
-            fi
-            if test "$attempt" -lt 24; then
-              sleep 5
-            fi
-          done
-          echo "Rollback deployment did not restore the captured Pages bytes" >&2
-          exit 1
+  rollback:
+    name: Restore verified v0.4.4 bytes after a failed deployment attempt
+    needs: [identity, deploy]
+    if: ${{ always() && needs.identity.result == 'success' && needs.deploy.result != 'success' }}
+    permissions:
+      actions: read
+      contents: read
+      id-token: write
+      pages: write
+    uses: ./.github/workflows/pages-rollback.yml
+    with:
+      authority_sha: ${{ inputs.candidate_sha }}
+      authority_tag: ${{ inputs.release_tag }}
+      known_good_tag: ${{ inputs.rollback_tag }}
+      known_good_commit_sha: ${{ inputs.rollback_commit_sha }}
+      known_good_asset_name: ${{ inputs.rollback_asset_name }}
+      known_good_asset_sha256: ${{ inputs.rollback_asset_sha256 }}
+      automatic_rollback: true
