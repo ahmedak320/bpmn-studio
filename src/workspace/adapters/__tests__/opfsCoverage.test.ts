@@ -3,6 +3,7 @@ import { OpfsWorkspaceAdapter, opfsSupported } from '..'
 import { asDirectoryHandle, fakeRoot } from './fakeFileSystem'
 
 afterEach(() => {
+  vi.useRealTimers()
   vi.restoreAllMocks()
   vi.unstubAllGlobals()
 })
@@ -82,6 +83,28 @@ describe('OpfsWorkspaceAdapter edge coverage', () => {
     expect(adapter.persisted).toBe(false)
     expect(persist).not.toHaveBeenCalled()
     expect(adapter.storage.persistence).toBe('origin-private-best-effort')
+  })
+
+  it('opens best-effort OPFS when the optional persistence request never settles', async () => {
+    vi.useFakeTimers()
+    const origin = fakeRoot()
+    const persist = vi.fn(() => new Promise<boolean>(() => undefined))
+    const opening = OpfsWorkspaceAdapter.open({
+      requestPersistence: true,
+      storageManager: {
+        getDirectory: async () => asDirectoryHandle(origin),
+        persisted: async () => false,
+        persist
+      }
+    })
+
+    await vi.runAllTimersAsync()
+    const adapter = await opening
+
+    expect(persist).toHaveBeenCalledOnce()
+    expect(adapter.persisted).toBe(false)
+    expect(adapter.storage.persistence).toBe('origin-private-best-effort')
+    expect(origin.directory('orbitpm')).toBeDefined()
   })
 
   it('honors an explicit persistence state without querying browser persistence', async () => {

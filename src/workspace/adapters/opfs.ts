@@ -27,6 +27,29 @@ export interface OpenOpfsWorkspaceOptions extends OpfsWorkspaceAdapterOptions {
   requestPersistence?: boolean
 }
 
+const PERSISTENCE_REQUEST_TIMEOUT_MS = 1_000
+
+async function requestPersistenceWithin(
+  storageManager: OpfsStorageManager,
+  timeoutMs = PERSISTENCE_REQUEST_TIMEOUT_MS
+): Promise<boolean> {
+  if (!storageManager.persist) return false
+
+  let timeout: ReturnType<typeof setTimeout> | undefined
+  try {
+    return await Promise.race([
+      storageManager.persist(),
+      new Promise<false>((resolve) => {
+        timeout = setTimeout(() => resolve(false), timeoutMs)
+      })
+    ])
+  } catch {
+    return false
+  } finally {
+    if (timeout !== undefined) clearTimeout(timeout)
+  }
+}
+
 /**
  * Persistent, multi-file browser workspace for Firefox/Safari and as an
  * alternative in Chromium. It uses the same recursive handle implementation as
@@ -94,7 +117,11 @@ export class OpfsWorkspaceAdapter extends HandleWorkspaceAdapter {
       try {
         persisted = (await storageManager.persisted?.()) ?? false
         if (!persisted && options.requestPersistence && storageManager.persist) {
-          persisted = await storageManager.persist()
+          // The persistence grant is an optional durability improvement, not a
+          // prerequisite for using OPFS. Firefox can expose a functional OPFS
+          // while leaving persist() pending indefinitely, so never let that
+          // browser-policy request block opening the workspace.
+          persisted = await requestPersistenceWithin(storageManager)
         }
       } catch {
         persisted = false
