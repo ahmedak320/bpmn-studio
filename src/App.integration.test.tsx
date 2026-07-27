@@ -1740,7 +1740,7 @@ describe('App single-file browser orchestration', () => {
     const viewport = installControllableMatchMedia(1440)
     const user = userEvent.setup()
     await openDirectoryWorkspace(user)
-    await user.click(screen.getByRole('button', { name: 'mock-tree-open' }))
+    await user.click(await screen.findByRole('button', { name: 'mock-tree-open' }))
     await screen.findByTestId('editor-tab')
     act(() => {
       latestAiPanelProps().spreadsheet.onOpenSingle(state.xml, 'responsive-second.bpmn')
@@ -1804,7 +1804,7 @@ describe('App single-file browser orchestration', () => {
   it('hands raw Outline ownership to an inactive editor so it cannot reopen from catalog', async () => {
     const user = userEvent.setup()
     await openDirectoryWorkspace(user)
-    await user.click(screen.getByRole('button', { name: 'mock-tree-open' }))
+    await user.click(await screen.findByRole('button', { name: 'mock-tree-open' }))
     await screen.findByTestId('editor-tab')
     const activeEditor = mocks.editorProps.mock.calls.at(-1)?.[0] as {
       outlineOpen?: boolean
@@ -2552,7 +2552,7 @@ describe('App single-file browser orchestration', () => {
     )
     const user = userEvent.setup()
     await openDirectoryWorkspace(user)
-    await user.click(screen.getByRole('button', { name: 'mock-tree-open' }))
+    await user.click(await screen.findByRole('button', { name: 'mock-tree-open' }))
     await user.click(await screen.findByRole('button', { name: 'mock-editor-ready' }))
     await user.click(screen.getByRole('button', { name: 'editor.translate' }))
     await screen.findByRole('dialog', { name: 'translationReview.title' })
@@ -3440,7 +3440,7 @@ describe('App single-file browser orchestration', () => {
       return {}
     })
     await openDirectoryWorkspace(user)
-    await user.click(screen.getByRole('button', { name: 'mock-tree-open' }))
+    await user.click(await screen.findByRole('button', { name: 'mock-tree-open' }))
     await screen.findByTestId('editor-tab')
     await user.click(screen.getByRole('button', { name: 'mock-editor-ready' }))
     const editor = mocks.editorProps.mock.calls.at(-1)?.[0] as {
@@ -4126,7 +4126,7 @@ describe('App directory workspace orchestration', () => {
     state.lang = 'ar'
     const user = userEvent.setup()
     await openDirectoryWorkspace(user)
-    await user.click(screen.getByRole('button', { name: 'mock-tree-open' }))
+    await user.click(await screen.findByRole('button', { name: 'mock-tree-open' }))
     await screen.findByTestId('editor-tab')
     const issueCode = 'preservation.extension-element-changed'
     mocks.validatePreservation.mockResolvedValueOnce({
@@ -4172,7 +4172,7 @@ describe('App directory workspace orchestration', () => {
     state.lang = 'ar'
     const user = userEvent.setup()
     await openDirectoryWorkspace(user)
-    await user.click(screen.getByRole('button', { name: 'mock-tree-open' }))
+    await user.click(await screen.findByRole('button', { name: 'mock-tree-open' }))
     await screen.findByTestId('editor-tab')
     const controller = latestSessionController()
     const session = controller.store.getActive()
@@ -4218,7 +4218,7 @@ describe('App directory workspace orchestration', () => {
   it('clears the matching recovery draft after a fully synchronized history restore', async () => {
     const user = userEvent.setup()
     await openDirectoryWorkspace(user)
-    await user.click(screen.getByRole('button', { name: 'mock-tree-open' }))
+    await user.click(await screen.findByRole('button', { name: 'mock-tree-open' }))
     await screen.findByTestId('editor-tab')
     const session = latestSessionController().store.getActive()
     if (!session?.identity.path) throw new Error('expected an active persisted session')
@@ -4244,7 +4244,7 @@ describe('App directory workspace orchestration', () => {
     state.lang = 'ar'
     const user = userEvent.setup()
     await openDirectoryWorkspace(user)
-    await user.click(screen.getByRole('button', { name: 'mock-tree-open' }))
+    await user.click(await screen.findByRole('button', { name: 'mock-tree-open' }))
     await screen.findByTestId('editor-tab')
     const controller = latestSessionController()
     const session = controller.store.getActive()
@@ -4305,7 +4305,7 @@ describe('App directory workspace orchestration', () => {
   it('keeps a coordinated history restore clean when live serialization reformats the XML', async () => {
     const user = userEvent.setup()
     const root = await openDirectoryWorkspace(user)
-    await user.click(screen.getByRole('button', { name: 'mock-tree-open' }))
+    await user.click(await screen.findByRole('button', { name: 'mock-tree-open' }))
     await screen.findByTestId('editor-tab')
     await user.click(screen.getByRole('button', { name: 'mock-editor-ready' }))
     const controller = latestSessionController()
@@ -4392,7 +4392,7 @@ describe('App directory workspace orchestration', () => {
   it('flushes a retained local draft when storage restores but editor refresh fails', async () => {
     const user = userEvent.setup()
     await openDirectoryWorkspace(user)
-    await user.click(screen.getByRole('button', { name: 'mock-tree-open' }))
+    await user.click(await screen.findByRole('button', { name: 'mock-tree-open' }))
     await screen.findByTestId('editor-tab')
     const controller = latestSessionController()
     const session = controller.store.getActive()
@@ -4437,7 +4437,7 @@ describe('App directory workspace orchestration', () => {
   it('re-journals a newer edit that arrives while history cleanup deletes the restored draft', async () => {
     const user = userEvent.setup()
     const root = await openDirectoryWorkspace(user)
-    await user.click(screen.getByRole('button', { name: 'mock-tree-open' }))
+    await user.click(await screen.findByRole('button', { name: 'mock-tree-open' }))
     await screen.findByTestId('editor-tab')
     await user.click(screen.getByRole('button', { name: 'mock-editor-ready' }))
     const controller = latestSessionController()
@@ -4521,7 +4521,7 @@ describe('App directory workspace orchestration', () => {
   it('fails history restore before storage preflight when immediate dirty XML cannot be read', async () => {
     const user = userEvent.setup()
     const root = await openDirectoryWorkspace(user)
-    await user.click(screen.getByRole('button', { name: 'mock-tree-open' }))
+    await user.click(await screen.findByRole('button', { name: 'mock-tree-open' }))
     await screen.findByTestId('editor-tab')
     await user.click(screen.getByRole('button', { name: 'mock-editor-ready' }))
     const controller = latestSessionController()
@@ -4568,7 +4568,7 @@ describe('App directory workspace orchestration', () => {
   it('requires a fresh decision when the history target changes during storage preflight', async () => {
     const user = userEvent.setup()
     await openDirectoryWorkspace(user)
-    await user.click(screen.getByRole('button', { name: 'mock-tree-open' }))
+    await user.click(await screen.findByRole('button', { name: 'mock-tree-open' }))
     await screen.findByTestId('editor-tab')
     const controller = latestSessionController()
     const session = controller.store.getActive()
@@ -4629,7 +4629,7 @@ describe('App directory workspace orchestration', () => {
   it('re-prompts instead of overwriting when the reviewed external file changes again', async () => {
     const user = userEvent.setup()
     const root = await openDirectoryWorkspace(user)
-    await user.click(screen.getByRole('button', { name: 'mock-tree-open' }))
+    await user.click(await screen.findByRole('button', { name: 'mock-tree-open' }))
     await screen.findByTestId('editor-tab')
     const editor = mocks.editorProps.mock.calls.at(-1)?.[0] as {
       onRequestSave(xml: string): Promise<void | { durable: boolean }>
@@ -4663,7 +4663,7 @@ describe('App directory workspace orchestration', () => {
   it('keeps a newer edit dirty and journaled when it arrives after the save write commits', async () => {
     const user = userEvent.setup()
     const root = await openDirectoryWorkspace(user)
-    await user.click(screen.getByRole('button', { name: 'mock-tree-open' }))
+    await user.click(await screen.findByRole('button', { name: 'mock-tree-open' }))
     await screen.findByTestId('editor-tab')
     await user.click(screen.getByRole('button', { name: 'mock-editor-ready' }))
     const controller = latestSessionController()
@@ -4742,7 +4742,7 @@ describe('App directory workspace orchestration', () => {
   it('keeps reviewed external reload changes dirty over the raw disk baseline', async () => {
     const user = userEvent.setup()
     await openDirectoryWorkspace(user)
-    await user.click(screen.getByRole('button', { name: 'mock-tree-open' }))
+    await user.click(await screen.findByRole('button', { name: 'mock-tree-open' }))
     await screen.findByTestId('editor-tab')
     await user.click(screen.getByRole('button', { name: 'mock-editor-ready' }))
 
@@ -4820,7 +4820,7 @@ describe('App directory workspace orchestration', () => {
   it('leaves an unserializable canvas untouched when save-conflict reload also fails', async () => {
     const user = userEvent.setup()
     await openDirectoryWorkspace(user)
-    await user.click(screen.getByRole('button', { name: 'mock-tree-open' }))
+    await user.click(await screen.findByRole('button', { name: 'mock-tree-open' }))
     await screen.findByTestId('editor-tab')
     await user.click(screen.getByRole('button', { name: 'mock-editor-ready' }))
 
@@ -4911,7 +4911,7 @@ describe('App directory workspace orchestration', () => {
     const destinationExternal = `${state.xml}\n<!-- destination owner -->`
     root.addFile(destinationPath, destinationExternal)
     await openDirectoryWorkspace(user, root)
-    await user.click(screen.getByRole('button', { name: 'mock-tree-open' }))
+    await user.click(await screen.findByRole('button', { name: 'mock-tree-open' }))
     await screen.findByTestId('editor-tab')
     const editor = mocks.editorProps.mock.calls.at(-1)?.[0] as {
       onRequestSave(xml: string): Promise<void | { durable: boolean }>
@@ -5286,7 +5286,7 @@ describe('App directory workspace orchestration', () => {
     const staleMemoryHash = staleSettings.snapshot!.files.translationMemory.hash
     const store = latestWorkspaceLocalizationStore()
     const accept = vi.spyOn(store, 'acceptTranslationPairs')
-    await user.click(screen.getByRole('button', { name: 'mock-tree-open' }))
+    await user.click(await screen.findByRole('button', { name: 'mock-tree-open' }))
     await user.click(await screen.findByRole('button', { name: 'mock-editor-ready' }))
     await user.click(screen.getByRole('button', { name: 'editor.translate' }))
     await screen.findByRole('dialog', { name: 'translationReview.title' })
@@ -5340,7 +5340,7 @@ describe('App directory workspace orchestration', () => {
     await openDirectoryWorkspace(user, root)
     const store = latestWorkspaceLocalizationStore()
     const accept = vi.spyOn(store, 'acceptTranslationPairs')
-    await user.click(screen.getByRole('button', { name: 'mock-tree-open' }))
+    await user.click(await screen.findByRole('button', { name: 'mock-tree-open' }))
     await user.click(await screen.findByRole('button', { name: 'mock-editor-ready' }))
     await user.click(screen.getByRole('button', { name: 'editor.translate' }))
     await screen.findByRole('dialog', { name: 'translationReview.title' })
@@ -5397,7 +5397,7 @@ describe('App directory workspace orchestration', () => {
     seedWorkspaceLocalization(root, [], [])
     await openDirectoryWorkspace(user, root)
     const accept = vi.spyOn(latestWorkspaceLocalizationStore(), 'acceptTranslationPairs')
-    await user.click(screen.getByRole('button', { name: 'mock-tree-open' }))
+    await user.click(await screen.findByRole('button', { name: 'mock-tree-open' }))
     await user.click(await screen.findByRole('button', { name: 'mock-editor-ready' }))
     await user.click(screen.getByRole('button', { name: 'editor.translate' }))
     await screen.findByRole('dialog', { name: 'translationReview.title' })
@@ -5442,7 +5442,7 @@ describe('App directory workspace orchestration', () => {
       await releaseSave.promise
       return originalAccept(pairs, options)
     })
-    await user.click(screen.getByRole('button', { name: 'mock-tree-open' }))
+    await user.click(await screen.findByRole('button', { name: 'mock-tree-open' }))
     await user.click(await screen.findByRole('button', { name: 'mock-editor-ready' }))
     await user.click(screen.getByRole('button', { name: 'editor.translate' }))
     await screen.findByRole('dialog', { name: 'translationReview.title' })
@@ -5511,7 +5511,7 @@ describe('App directory workspace orchestration', () => {
       await releaseSave.promise
       return originalAccept(pairs, options)
     })
-    await user.click(screen.getByRole('button', { name: 'mock-tree-open' }))
+    await user.click(await screen.findByRole('button', { name: 'mock-tree-open' }))
     await user.click(await screen.findByRole('button', { name: 'mock-editor-ready' }))
     await user.click(screen.getByRole('button', { name: 'editor.translate' }))
     await screen.findByRole('dialog', { name: 'translationReview.title' })
@@ -5560,7 +5560,7 @@ describe('App directory workspace orchestration', () => {
         })
       }
     )
-    await user.click(screen.getByRole('button', { name: 'mock-tree-open' }))
+    await user.click(await screen.findByRole('button', { name: 'mock-tree-open' }))
     await user.click(await screen.findByRole('button', { name: 'mock-editor-ready' }))
     await user.click(screen.getByRole('button', { name: 'editor.translate' }))
     await screen.findByRole('dialog', { name: 'translationReview.title' })
@@ -5593,7 +5593,7 @@ describe('App directory workspace orchestration', () => {
     const writeAtomic = vi.spyOn(adapter, 'writeAtomic').mockRejectedValueOnce(new Error('quota'))
     const store = latestWorkspaceLocalizationStore()
     const accept = vi.spyOn(store, 'acceptTranslationPairs')
-    await user.click(screen.getByRole('button', { name: 'mock-tree-open' }))
+    await user.click(await screen.findByRole('button', { name: 'mock-tree-open' }))
     await user.click(await screen.findByRole('button', { name: 'mock-editor-ready' }))
     await user.click(screen.getByRole('button', { name: 'editor.translate' }))
     let props = await latestTranslationReviewProps()
@@ -5688,7 +5688,7 @@ describe('App directory workspace orchestration', () => {
         }
         return originalAccept(pairs, options)
       })
-    await user.click(screen.getByRole('button', { name: 'mock-tree-open' }))
+    await user.click(await screen.findByRole('button', { name: 'mock-tree-open' }))
     await user.click(await screen.findByRole('button', { name: 'mock-editor-ready' }))
     await user.click(screen.getByRole('button', { name: 'editor.translate' }))
     await screen.findByRole('dialog', { name: 'translationReview.title' })
@@ -5745,7 +5745,7 @@ describe('App directory workspace orchestration', () => {
     const writeAtomic = vi
       .spyOn(latestWorkspaceLocalizationAdapter(), 'writeAtomic')
       .mockRejectedValue(new Error('permission denied'))
-    await user.click(screen.getByRole('button', { name: 'mock-tree-open' }))
+    await user.click(await screen.findByRole('button', { name: 'mock-tree-open' }))
     await user.click(await screen.findByRole('button', { name: 'mock-editor-ready' }))
     await user.click(screen.getByRole('button', { name: 'editor.translate' }))
     await screen.findByRole('dialog', { name: 'translationReview.title' })
@@ -5811,7 +5811,7 @@ describe('App directory workspace orchestration', () => {
     const writeAtomic = vi
       .spyOn(latestWorkspaceLocalizationAdapter(), 'writeAtomic')
       .mockRejectedValue(new Error('read-only workspace'))
-    await user.click(screen.getByRole('button', { name: 'mock-tree-open' }))
+    await user.click(await screen.findByRole('button', { name: 'mock-tree-open' }))
     await user.click(await screen.findByRole('button', { name: 'mock-editor-ready' }))
     await user.click(screen.getByRole('button', { name: 'editor.translate' }))
     await user.selectOptions(
@@ -5885,7 +5885,7 @@ describe('App directory workspace orchestration', () => {
     mocks.makeFreeTranslateTexts.mockReturnValue(async () => ['مراجعة الطلب', undefined])
     await openDirectoryWorkspace(user, root)
     const accept = vi.spyOn(latestWorkspaceLocalizationStore(), 'acceptTranslationPairs')
-    await user.click(screen.getByRole('button', { name: 'mock-tree-open' }))
+    await user.click(await screen.findByRole('button', { name: 'mock-tree-open' }))
     await user.click(await screen.findByRole('button', { name: 'mock-editor-ready' }))
     await user.click(screen.getByRole('button', { name: 'editor.translate' }))
     await user.selectOptions(
@@ -5935,7 +5935,7 @@ describe('App directory workspace orchestration', () => {
     mocks.makeFreeTranslateTexts.mockReturnValue(async () => ['API'])
     await openDirectoryWorkspace(user, root)
     const accept = vi.spyOn(latestWorkspaceLocalizationStore(), 'acceptTranslationPairs')
-    await user.click(screen.getByRole('button', { name: 'mock-tree-open' }))
+    await user.click(await screen.findByRole('button', { name: 'mock-tree-open' }))
     await user.click(await screen.findByRole('button', { name: 'mock-editor-ready' }))
     await user.click(screen.getByRole('button', { name: 'editor.translate' }))
     await user.selectOptions(
@@ -6274,7 +6274,7 @@ describe('App directory workspace orchestration', () => {
     expect(fakeFileText(root, WORKSPACE_GLOSSARY_PATH)).toBe(corrupt)
 
     await user.click(within(settingsDialog).getByRole('button', { name: 'mock-settings-close' }))
-    await user.click(screen.getByRole('button', { name: 'mock-tree-open' }))
+    await user.click(await screen.findByRole('button', { name: 'mock-tree-open' }))
     expect(await screen.findByText('settings.localization.loadFailed')).not.toBeNull()
     expect(screen.queryByTestId('editor-tab')).toBeNull()
     expect(latestSessionController().store.list()).toHaveLength(0)
@@ -6301,7 +6301,7 @@ describe('App directory workspace orchestration', () => {
         name: 'mock-settings-close'
       })
     )
-    await user.click(screen.getByRole('button', { name: 'mock-tree-open' }))
+    await user.click(await screen.findByRole('button', { name: 'mock-tree-open' }))
     await user.click(await screen.findByRole('button', { name: 'mock-editor-ready' }))
     await user.click(screen.getByRole('button', { name: 'editor.translate' }))
     await screen.findByRole('dialog', { name: 'translationReview.title' })
@@ -6436,7 +6436,7 @@ describe('App directory workspace orchestration', () => {
         : validationResultForXml(xml)
     )
 
-    await user.click(screen.getByRole('button', { name: 'mock-tree-open' }))
+    await user.click(await screen.findByRole('button', { name: 'mock-tree-open' }))
     const recovery = await screen.findByRole('dialog', { name: 'draftRecovery.title' })
     await user.click(
       within(recovery).getByRole('button', {
@@ -6559,7 +6559,7 @@ describe('App directory workspace orchestration', () => {
     const originalGlossary = [{ en: 'Case code', ar: 'رمز الحالة' }]
     seedWorkspaceLocalization(root, originalGlossary, [])
     await openDirectoryWorkspace(user, root)
-    await user.click(screen.getByRole('button', { name: 'mock-tree-open' }))
+    await user.click(await screen.findByRole('button', { name: 'mock-tree-open' }))
     await user.click(await screen.findByRole('button', { name: 'mock-editor-ready' }))
     await user.click(screen.getByRole('button', { name: 'editor.translate' }))
 
@@ -6614,7 +6614,7 @@ describe('App directory workspace orchestration', () => {
 
     await user.click(screen.getByRole('button', { name: 'app.home' }))
     expect(await screen.findByTestId('catalog-view')).not.toBeNull()
-    await user.click(screen.getByRole('button', { name: 'mock-tree-open' }))
+    await user.click(await screen.findByRole('button', { name: 'mock-tree-open' }))
     expect((await screen.findAllByText('existing.bpmn')).length).toBeGreaterThan(0)
 
     const search = screen.getByRole('combobox', { name: 'tree.search.aria' })
@@ -6646,7 +6646,7 @@ describe('App directory workspace orchestration', () => {
   it('notifies a dirty session when another tab publishes a workspace change', async () => {
     const user = userEvent.setup()
     await openDirectoryWorkspace(user)
-    await user.click(screen.getByRole('button', { name: 'mock-tree-open' }))
+    await user.click(await screen.findByRole('button', { name: 'mock-tree-open' }))
     await screen.findByTestId('editor-tab')
 
     const controller = latestSessionController()
@@ -6709,7 +6709,7 @@ describe('App directory workspace orchestration', () => {
       return {}
     })
     const root = await openDirectoryWorkspace(user)
-    await user.click(screen.getByRole('button', { name: 'mock-tree-open' }))
+    await user.click(await screen.findByRole('button', { name: 'mock-tree-open' }))
     await screen.findByTestId('editor-tab')
     await user.click(screen.getByRole('button', { name: 'mock-editor-ready' }))
     if (!commandStackChanged) throw new Error('missing live XML capture listener')
@@ -6738,7 +6738,7 @@ describe('App directory workspace orchestration', () => {
   it('does not import a duplicate-id repair prepared from a refreshed index snapshot', async () => {
     const user = userEvent.setup()
     const root = await openDirectoryWorkspace(user, duplicateProcessDirectory())
-    await user.click(screen.getByRole('button', { name: 'mock-tree-open' }))
+    await user.click(await screen.findByRole('button', { name: 'mock-tree-open' }))
     await screen.findByTestId('editor-tab')
     await user.click(screen.getByRole('button', { name: 'mock-editor-ready' }))
     installMockEditorXmlTransactionCommands()
@@ -6785,7 +6785,7 @@ describe('App directory workspace orchestration', () => {
   it('does not overwrite a live edit made before duplicate repair validation settles', async () => {
     const user = userEvent.setup()
     await openDirectoryWorkspace(user, duplicateProcessDirectory())
-    await user.click(screen.getByRole('button', { name: 'mock-tree-open' }))
+    await user.click(await screen.findByRole('button', { name: 'mock-tree-open' }))
     await screen.findByTestId('editor-tab')
     await user.click(screen.getByRole('button', { name: 'mock-editor-ready' }))
     installMockEditorXmlTransactionCommands()
@@ -6829,7 +6829,7 @@ describe('App directory workspace orchestration', () => {
   it('lets only the current duplicate-repair click commit', async () => {
     const user = userEvent.setup()
     await openDirectoryWorkspace(user, duplicateProcessDirectory())
-    await user.click(screen.getByRole('button', { name: 'mock-tree-open' }))
+    await user.click(await screen.findByRole('button', { name: 'mock-tree-open' }))
     await screen.findByTestId('editor-tab')
     await user.click(screen.getByRole('button', { name: 'mock-editor-ready' }))
     const markDirty = vi.fn()
@@ -6877,7 +6877,7 @@ describe('App directory workspace orchestration', () => {
   it('rolls back a partial duplicate-id editor import without dirtying a clean session', async () => {
     const user = userEvent.setup()
     await openDirectoryWorkspace(user, duplicateProcessDirectory())
-    await user.click(screen.getByRole('button', { name: 'mock-tree-open' }))
+    await user.click(await screen.findByRole('button', { name: 'mock-tree-open' }))
     await screen.findByTestId('editor-tab')
     await user.click(screen.getByRole('button', { name: 'mock-editor-ready' }))
     installMockEditorXmlTransactionCommands()
