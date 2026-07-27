@@ -1,6 +1,15 @@
-import { expect, test, type Locator, type Page, type Request } from '@playwright/test'
+import {
+  expect,
+  test,
+  type BrowserContext,
+  type BrowserType,
+  type Locator,
+  type Page,
+  type Request
+} from '@playwright/test'
 import { readFileSync } from 'node:fs'
 import { createServer, type Server } from 'node:http'
+import { createRequire } from 'node:module'
 import type { AddressInfo } from 'node:net'
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
@@ -17,6 +26,7 @@ import {
 const HERE = dirname(fileURLToPath(import.meta.url))
 const DIST = resolve(HERE, '../../dist/index.html')
 const FILE_URL = pathToFileURL(DIST).toString()
+const loadNodeModule = createRequire(import.meta.url)
 let loopbackServer: Server
 let HTTP_URL = ''
 
@@ -390,39 +400,77 @@ function openRouterResponseForPhase(phase: AsyncWorkspacePhase): string {
   })
 }
 
-test('mandatory recovery: real OPFS restores a dirty draft after reload', async ({ page }) => {
-  await page.addInitScript(() => {
-    delete window.showDirectoryPicker
-    delete window.showOpenFilePicker
-  })
-  await gotoBuiltApp(page, HTTP_URL)
-  const xml = bpmn('Process_opfs_recovery', 'OPFS recovery')
-  await page.evaluate(
-    async ({ contents }) => {
-      const originRoot = await navigator.storage.getDirectory()
-      const workspace = await originRoot.getDirectoryHandle('orbitpm', { create: true })
-      const file = await workspace.getFileHandle('opfs-recovery.bpmn', { create: true })
-      const writable = await file.createWritable()
-      await writable.write(contents)
-      await writable.close()
-    },
-    { contents: xml }
-  )
-  await page.getByRole('button', { name: 'Open browser workspace' }).click()
-  await expect(page.getByRole('heading', { name: 'Process catalog' })).toBeVisible({
-    timeout: 25_000
-  })
-  await openDirectoryFile(page, 'opfs-recovery.bpmn')
-  await dirtyActiveTask(page, 'Recovered from real OPFS')
-  await waitForDraftFlush(page)
+test('mandatory recovery: real OPFS restores a dirty draft after reload', async ({
+  browserName,
+  page
+}) => {
+  let webkitOpfsContext: BrowserContext | undefined
+  let opfsPage = page
 
-  await reloadToLanding(page)
-  await page.getByRole('button', { name: 'Open browser workspace' }).click()
-  await expect(page.getByRole('heading', { name: 'Process catalog' })).toBeVisible({
-    timeout: 25_000
-  })
-  await physicalRow(page, 'opfs-recovery.bpmn').click()
-  await restoreDraft(page, 'Recovered from real OPFS')
+  if (browserName === 'webkit') {
+    // Playwright's WPE MiniBrowser ships these stable/mature engine features,
+    // but disables them in its default embedder settings. A persistent/default
+    // context is required because WebKit contexts created through
+    // browser.newContext() do not inherit MiniBrowser's --features settings.
+    // The empty profile path asks Playwright for an automatically cleaned-up
+    // temporary profile; the implementation exercised below remains WebKit's
+    // real origin-private file system.
+    //
+    // Use a fresh client for this second browser. The test runner's
+    // worker-scoped Playwright singleton has tracing/default instrumentation
+    // attached, and a nested persistent WPE launch from that singleton does
+    // not retain MiniBrowser's feature settings.
+    const coreBundle = loadNodeModule('playwright-core/lib/coreBundle') as {
+      inprocess: {
+        createInProcessPlaywright(): { webkit: BrowserType }
+      }
+    }
+    const opfsPlaywright = coreBundle.inprocess.createInProcessPlaywright()
+    webkitOpfsContext = await opfsPlaywright.webkit.launchPersistentContext('', {
+      headless: true,
+      args: ['--features=StorageAPI,FileSystem,FileSystemWritableStream,AccessHandle']
+    })
+    opfsPage = webkitOpfsContext.pages()[0] ?? (await webkitOpfsContext.newPage())
+    opfsPage.setDefaultTimeout(20_000)
+    opfsPage.setDefaultNavigationTimeout(30_000)
+  }
+
+  try {
+    await opfsPage.addInitScript(() => {
+      delete window.showDirectoryPicker
+      delete window.showOpenFilePicker
+    })
+    await gotoBuiltApp(opfsPage, HTTP_URL)
+    const xml = bpmn('Process_opfs_recovery', 'OPFS recovery')
+    await opfsPage.evaluate(
+      async ({ contents }) => {
+        const originRoot = await navigator.storage.getDirectory()
+        const workspace = await originRoot.getDirectoryHandle('orbitpm', { create: true })
+        const file = await workspace.getFileHandle('opfs-recovery.bpmn', { create: true })
+        const writable = await file.createWritable()
+        await writable.write(contents)
+        await writable.close()
+      },
+      { contents: xml }
+    )
+    await opfsPage.getByRole('button', { name: 'Open browser workspace' }).click()
+    await expect(opfsPage.getByRole('heading', { name: 'Process catalog' })).toBeVisible({
+      timeout: 25_000
+    })
+    await openDirectoryFile(opfsPage, 'opfs-recovery.bpmn')
+    await dirtyActiveTask(opfsPage, 'Recovered from real OPFS')
+    await waitForDraftFlush(opfsPage)
+
+    await reloadToLanding(opfsPage)
+    await opfsPage.getByRole('button', { name: 'Open browser workspace' }).click()
+    await expect(opfsPage.getByRole('heading', { name: 'Process catalog' })).toBeVisible({
+      timeout: 25_000
+    })
+    await physicalRow(opfsPage, 'opfs-recovery.bpmn').click()
+    await restoreDraft(opfsPage, 'Recovered from real OPFS')
+  } finally {
+    await webkitOpfsContext?.close()
+  }
 })
 
 test('mandatory recovery: single-file upload restores a dirty draft after reload', async ({

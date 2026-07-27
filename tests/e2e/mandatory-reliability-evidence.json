@@ -27,7 +27,7 @@
   },
   "fixtureSemantics": {
     "fileSystemAccess": "The application uses its production DirectoryWorkspaceAdapter and document-session stack. The fixture supplies byte-backed picker handles because Playwright cannot operate Chromium's native folder chooser.",
-    "opfs": "The OPFS case uses Chromium's real navigator.storage.getDirectory() on a loopback origin and the exact built dist/index.html.",
+    "opfs": "The OPFS case uses each engine's real navigator.storage.getDirectory() on a loopback origin and the exact built dist/index.html. Playwright's WPE MiniBrowser disables its shipped StorageAPI, FileSystem, FileSystemWritableStream, and AccessHandle features by default and does not propagate startup feature settings to ordinary ephemeral contexts, so the WebKit path explicitly enables those supported features in an automatically cleaned-up temporary persistent context; no storage shim is installed.",
     "persistence": "Fixture bytes, permissions, picker behavior, write failures, and write logs persist through localStorage so reload and cross-tab cases share backing state.",
     "limitations": [
       "The fixture is not a native operating-system directory picker.",
