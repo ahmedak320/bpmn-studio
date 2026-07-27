@@ -222,8 +222,9 @@ jobs:
           VERSION_BASELINE_SHA256: ${{ inputs.browser_version_baseline_sha256 }}
           VERSION_BASELINE_URL: ${{ inputs.browser_version_baseline_url }}
         run: |
-          gh api "repos/$GITHUB_REPOSITORY/releases/tags/$RELEASE_TAG" \
-            > release-before-finalize.json
+          gh api "repos/$GITHUB_REPOSITORY/releases?per_page=100" |
+            jq --arg tag "$RELEASE_TAG" '[.[] | select(.tag_name == $tag)] | .[0]' > release-before-finalize.json
+          test "$(jq -r .tag_name release-before-finalize.json)" = "$RELEASE_TAG"
           mkdir release-before-finalize
           gh release download "$RELEASE_TAG" --dir release-before-finalize
           state=draft
@@ -377,8 +378,9 @@ jobs:
           test "$(git rev-parse HEAD)" = "$CANDIDATE_SHA"
           test "$(git rev-parse origin/main)" = "$CANDIDATE_SHA"
           node scripts/check-release-tag.mjs "$RELEASE_TAG" --require-origin-main
-          gh api "repos/$GITHUB_REPOSITORY/releases/tags/$RELEASE_TAG" \
-            > release-at-authority.json
+          gh api "repos/$GITHUB_REPOSITORY/releases?per_page=100" |
+            jq --arg tag "$RELEASE_TAG" '[.[] | select(.tag_name == $tag)] | .[0]' > release-at-authority.json
+          test "$(jq -r .tag_name release-at-authority.json)" = "$RELEASE_TAG"
           mkdir release-at-authority
           gh release download "$RELEASE_TAG" --dir release-at-authority
           state=draft
@@ -790,7 +792,9 @@ jobs:
           test "$(jq -r .object.type protected-tag-object.json)" = "commit"
           test "$(jq -r .object.sha protected-tag-object.json)" = "$CANDIDATE_SHA"
           GH_TOKEN="$GH_ADMIN_TOKEN" gh api \
-            "repos/$GITHUB_REPOSITORY/releases/tags/v0.4.5" > release-at-publish.json
+            "repos/$GITHUB_REPOSITORY/releases?per_page=100" |
+            jq --arg tag v0.4.5 '[.[] | select(.tag_name == $tag)] | .[0]' > release-at-publish.json
+          test "$(jq -r .tag_name release-at-publish.json)" = "v0.4.5"
           jq -e \
             --slurpfile authority publication-authority.json \
             '
@@ -954,8 +958,9 @@ jobs:
           test "$(git rev-parse origin/main)" = "$CANDIDATE_SHA"
           node scripts/check-release-tag.mjs "$RELEASE_TAG" --require-origin-main
           for attempt in $(seq 1 12); do
-            gh api "repos/$GITHUB_REPOSITORY/releases/tags/$RELEASE_TAG" \
-              > stable-release.json
+            gh api "repos/$GITHUB_REPOSITORY/releases?per_page=100" |
+              jq --arg tag "$RELEASE_TAG" '[.[] | select(.tag_name == $tag)] | .[0]' > stable-release.json
+            test "$(jq -r .tag_name stable-release.json)" = "$RELEASE_TAG"
             gh api "repos/$GITHUB_REPOSITORY/releases/latest" > latest-release.json
             if test "$(jq -r .draft stable-release.json)" = "false" &&
               test "$(jq -r .prerelease stable-release.json)" = "false" &&

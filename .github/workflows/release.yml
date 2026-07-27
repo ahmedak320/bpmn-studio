@@ -537,8 +537,9 @@ jobs:
               gh api "repos/$GITHUB_REPOSITORY/releases/assets/$asset_id" \
                 --method DELETE
             done
-          gh api "repos/$GITHUB_REPOSITORY/releases/tags/v0.4.5" \
-            > draft-release.json
+          gh api "repos/$GITHUB_REPOSITORY/releases?per_page=100" |
+            jq --arg tag v0.4.5 '[.[] | select(.tag_name == $tag)] | .[0]' > draft-release.json
+          test "$(jq -r .tag_name draft-release.json)" = "v0.4.5"
           for name in \
             LICENSE \
             OrbitPM-Excel-Example-0.4.5.xlsx \
@@ -555,7 +556,9 @@ jobs:
               gh release upload v0.4.5 "release/$name"
             fi
           done
-          gh api "repos/$GITHUB_REPOSITORY/releases/tags/v0.4.5" > draft-release.json
+          gh api "repos/$GITHUB_REPOSITORY/releases?per_page=100" |
+            jq --arg tag v0.4.5 '[.[] | select(.tag_name == $tag)] | .[0]' > draft-release.json
+          test "$(jq -r .tag_name draft-release.json)" = "v0.4.5"
           jq -e \
             --arg candidate "$CANDIDATE_SHA" \
             --rawfile notes "$notes" \
@@ -693,7 +696,9 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh api "repos/$GITHUB_REPOSITORY/releases/tags/v0.4.5" > draft-release.json
+          gh api "repos/$GITHUB_REPOSITORY/releases?per_page=100" |
+            jq --arg tag v0.4.5 '[.[] | select(.tag_name == $tag)] | .[0]' > draft-release.json
+          test "$(jq -r .tag_name draft-release.json)" = "v0.4.5"
           mkdir draft-download
           gh release download v0.4.5 --dir draft-download
           npm run release:verify -- draft-download
@@ -749,7 +754,9 @@ jobs:
             refs/tags/v0.4.5:refs/tags/v0.4.5
           test "$(git rev-parse origin/main)" = "$CANDIDATE_SHA"
           node scripts/check-release-tag.mjs v0.4.5 --require-origin-main
-          gh api "repos/$GITHUB_REPOSITORY/releases/tags/v0.4.5" > final-draft-release.json
+          gh api "repos/$GITHUB_REPOSITORY/releases?per_page=100" |
+            jq --arg tag v0.4.5 '[.[] | select(.tag_name == $tag)] | .[0]' > final-draft-release.json
+          test "$(jq -r .tag_name final-draft-release.json)" = "v0.4.5"
           node scripts/release-state.mjs \
             --release-json=final-draft-release.json \
             --assets=draft-download \

@@ -175,8 +175,9 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ inputs.release_tag }}
         run: |
-          gh api "repos/$GITHUB_REPOSITORY/releases/tags/$RELEASE_TAG" \
-            > draft-release.json
+          gh api "repos/$GITHUB_REPOSITORY/releases?per_page=100" |
+            jq --arg tag "$RELEASE_TAG" '[.[] | select(.tag_name == $tag)] | .[0]' > draft-release.json
+          test "$(jq -r .tag_name draft-release.json)" = "$RELEASE_TAG"
           mkdir draft-preapproval
           gh release download "$RELEASE_TAG" --dir draft-preapproval
           node scripts/release-state.mjs \
@@ -308,8 +309,9 @@ jobs:
           test "$(git rev-parse HEAD)" = "$CANDIDATE_SHA"
           test "$(git rev-parse origin/main)" = "$CANDIDATE_SHA"
           node scripts/check-release-tag.mjs "$RELEASE_TAG" --require-origin-main
-          gh api "repos/$GITHUB_REPOSITORY/releases/tags/$RELEASE_TAG" \
-            > draft-before-deploy.json
+          gh api "repos/$GITHUB_REPOSITORY/releases?per_page=100" |
+            jq --arg tag "$RELEASE_TAG" '[.[] | select(.tag_name == $tag)] | .[0]' > draft-before-deploy.json
+          test "$(jq -r .tag_name draft-before-deploy.json)" = "$RELEASE_TAG"
           mkdir draft-before-deploy
           gh release download "$RELEASE_TAG" --dir draft-before-deploy
           npm run release:verify -- draft-before-deploy
@@ -369,8 +371,9 @@ jobs:
             "+refs/tags/$RELEASE_TAG:refs/tags/$RELEASE_TAG"
           test "$(git rev-parse origin/main)" = "$CANDIDATE_SHA"
           node scripts/check-release-tag.mjs "$RELEASE_TAG" --require-origin-main
-          gh api "repos/$GITHUB_REPOSITORY/releases/tags/$RELEASE_TAG" \
-            > draft-prepackage.json
+          gh api "repos/$GITHUB_REPOSITORY/releases?per_page=100" |
+            jq --arg tag "$RELEASE_TAG" '[.[] | select(.tag_name == $tag)] | .[0]' > draft-prepackage.json
+          test "$(jq -r .tag_name draft-prepackage.json)" = "$RELEASE_TAG"
           mkdir draft-prepackage
           gh release download "$RELEASE_TAG" --dir draft-prepackage
           node scripts/release-state.mjs \
@@ -685,8 +688,9 @@ jobs:
           test "$(jq -r .tag protected-tag-object.json)" = "$RELEASE_TAG"
           test "$(jq -r .object.type protected-tag-object.json)" = "commit"
           test "$(jq -r .object.sha protected-tag-object.json)" = "$CANDIDATE_SHA"
-          gh api "repos/$GITHUB_REPOSITORY/releases/tags/$RELEASE_TAG" \
-            > draft-at-deploy.json
+          gh api "repos/$GITHUB_REPOSITORY/releases?per_page=100" |
+            jq --arg tag "$RELEASE_TAG" '[.[] | select(.tag_name == $tag)] | .[0]' > draft-at-deploy.json
+          test "$(jq -r .tag_name draft-at-deploy.json)" = "$RELEASE_TAG"
           jq -e \
             --arg candidate "$CANDIDATE_SHA" \
             --rawfile notes "$notes" \
@@ -886,8 +890,11 @@ jobs:
           test "$(jq -r .object.type <<<"$tag_object")" = "commit"
           test "$(jq -r .object.sha <<<"$tag_object")" = "$CANDIDATE_SHA"
           release_json="$(
-            gh api "repos/$GITHUB_REPOSITORY/releases/tags/$RELEASE_TAG"
+            gh api "repos/$GITHUB_REPOSITORY/releases?per_page=100" |
+              jq --arg tag "$RELEASE_TAG" \
+                '[.[] | select(.tag_name == $tag)] | .[0]'
           )"
+          test "$(jq -r .tag_name <<<"$release_json")" = "$RELEASE_TAG"
           release_projection_sha256="$(
             jq -S -c \
               '{
@@ -1098,8 +1105,9 @@ jobs:
             "+refs/tags/$RELEASE_TAG:refs/tags/$RELEASE_TAG"
           test "$(git rev-parse origin/main)" = "$CANDIDATE_SHA"
           node scripts/check-release-tag.mjs "$RELEASE_TAG" --require-origin-main
-          gh api "repos/$GITHUB_REPOSITORY/releases/tags/$RELEASE_TAG" \
-            > draft-postdeploy.json
+          gh api "repos/$GITHUB_REPOSITORY/releases?per_page=100" |
+            jq --arg tag "$RELEASE_TAG" '[.[] | select(.tag_name == $tag)] | .[0]' > draft-postdeploy.json
+          test "$(jq -r .tag_name draft-postdeploy.json)" = "$RELEASE_TAG"
           mkdir draft-postdeploy
           gh release download "$RELEASE_TAG" --dir draft-postdeploy
           node scripts/release-state.mjs \
