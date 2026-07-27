@@ -447,6 +447,13 @@ async function measureBrowserPreview(
         construct(target, argumentsList, newTarget) {
           state.workers += 1
           const worker = Reflect.construct(target, argumentsList, newTarget) as Worker
+          // Bind the native methods before returning the proxy. The
+          // application's retained inline-worker bootstrap replaces
+          // `worker.terminate` with a wrapper that calls the previously bound
+          // method; resolving `instance.terminate` lazily here would recurse
+          // through that wrapper until the stack overflows.
+          const nativePostMessage = worker.postMessage.bind(worker)
+          const nativeTerminate = worker.terminate.bind(worker)
           const ownedRequests: WorkerRequestProbe[] = []
           worker.addEventListener('message', (event) => {
             const response = event.data as {
@@ -489,7 +496,7 @@ async function measureBrowserPreview(
                     ownedRequests.push(request)
                     state.requests.push(request)
                   }
-                  const postMessage = instance.postMessage.bind(instance) as (
+                  const postMessage = nativePostMessage as (
                     message: unknown,
                     ...arguments_: unknown[]
                   ) => void
@@ -502,7 +509,7 @@ async function measureBrowserPreview(
                   for (const request of ownedRequests) {
                     request.completedAt ??= completedAt
                   }
-                  return instance.terminate()
+                  return nativeTerminate()
                 }
               }
               const value = Reflect.get(instance, property, instance)
