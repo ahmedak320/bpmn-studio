@@ -66,6 +66,15 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: >-
+    ${{
+      inputs.automatic_rollback &&
+      format('orbitpm-pages-auto-rollback-{0}', github.run_id) ||
+      'orbitpm-release-lifecycle-v0.4.5'
+    }}
+  cancel-in-progress: false
+
 jobs:
   verify:
     name: Verify rollback authority and known-good release bytes
@@ -128,7 +137,15 @@ jobs:
           test "$(git rev-parse "refs/tags/$KNOWN_GOOD_TAG^{commit}")" = "$KNOWN_GOOD_SHA"
           gh api "repos/$GITHUB_REPOSITORY/releases/tags/$AUTHORITY_TAG" \
             > authority-release.json
-          if test "$AUTOMATIC_ROLLBACK" != "true"; then
+          if test "$AUTOMATIC_ROLLBACK" = "true"; then
+            jq -e \
+              '
+                .draft == true and
+                .prerelease == false and
+                .published_at == null and
+                .immutable != true
+              ' authority-release.json >/dev/null
+          else
             test "$(jq -r .draft authority-release.json)" = "false"
             test "$(jq -r .prerelease authority-release.json)" = "false"
             test "$(jq -r .immutable authority-release.json)" = "true"
@@ -229,7 +246,15 @@ jobs:
           test "$(git rev-parse "refs/tags/$KNOWN_GOOD_TAG^{commit}")" = "$KNOWN_GOOD_SHA"
           gh api "repos/$GITHUB_REPOSITORY/releases/tags/$AUTHORITY_TAG" \
             > authority-release-after-approval.json
-          if test "$AUTOMATIC_ROLLBACK" != "true"; then
+          if test "$AUTOMATIC_ROLLBACK" = "true"; then
+            jq -e \
+              '
+                .draft == true and
+                .prerelease == false and
+                .published_at == null and
+                .immutable != true
+              ' authority-release-after-approval.json >/dev/null
+          else
             test "$(jq -r .draft authority-release-after-approval.json)" = "false"
             test "$(jq -r .prerelease authority-release-after-approval.json)" = "false"
             test "$(jq -r .immutable authority-release-after-approval.json)" = "true"
@@ -531,7 +556,15 @@ jobs:
           fi
           gh api "repos/$GITHUB_REPOSITORY/releases/tags/$AUTHORITY_TAG" \
             > authority-release-before-deploy.json
-          if test "$AUTOMATIC_ROLLBACK" != "true"; then
+          if test "$AUTOMATIC_ROLLBACK" = "true"; then
+            jq -e \
+              '
+                .draft == true and
+                .prerelease == false and
+                .published_at == null and
+                .immutable != true
+              ' authority-release-before-deploy.json >/dev/null
+          else
             test "$(jq -r .draft authority-release-before-deploy.json)" = "false"
             test "$(jq -r .prerelease authority-release-before-deploy.json)" = "false"
             test "$(jq -r .immutable authority-release-before-deploy.json)" = "true"
@@ -781,6 +814,22 @@ jobs:
           known_good_release="$(
             gh api "repos/$GITHUB_REPOSITORY/releases/tags/$KNOWN_GOOD_TAG"
           )"
+          if test "$AUTOMATIC_ROLLBACK" = "true"; then
+            jq -e \
+              '
+                .draft == true and
+                .prerelease == false and
+                .published_at == null and
+                .immutable != true
+              ' <<<"$authority_release" >/dev/null
+          else
+            jq -e \
+              '
+                .draft == false and
+                .prerelease == false and
+                .immutable == true
+              ' <<<"$authority_release" >/dev/null
+          fi
           authority_projection="$(
             jq -S -c \
               '{
@@ -954,7 +1003,15 @@ jobs:
           fi
           gh api "repos/$GITHUB_REPOSITORY/releases/tags/$AUTHORITY_TAG" \
             > authority-release-postdeploy.json
-          if test "$AUTOMATIC_ROLLBACK" != "true"; then
+          if test "$AUTOMATIC_ROLLBACK" = "true"; then
+            jq -e \
+              '
+                .draft == true and
+                .prerelease == false and
+                .published_at == null and
+                .immutable != true
+              ' authority-release-postdeploy.json >/dev/null
+          else
             test "$(jq -r .draft authority-release-postdeploy.json)" = "false"
             test "$(jq -r .prerelease authority-release-postdeploy.json)" = "false"
             test "$(jq -r .immutable authority-release-postdeploy.json)" = "true"

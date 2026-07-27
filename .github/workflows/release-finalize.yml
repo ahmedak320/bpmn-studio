@@ -49,7 +49,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: release-v0.4.5
+  group: orbitpm-release-lifecycle-v0.4.5
   cancel-in-progress: false
 
 jobs:
@@ -713,9 +713,11 @@ jobs:
               | unique
               | . == [$sole_writer]
             ' collaborators-at-publish.json >/dev/null
-          GH_TOKEN="$GH_ADMIN_TOKEN" gh api --paginate \
-            "repos/$GITHUB_REPOSITORY/actions/runs?status=in_progress&per_page=100" |
-            jq -s '[.[].workflow_runs[]]' > in-progress-runs-at-publish.json
+          for status in queued in_progress; do
+            GH_TOKEN="$GH_ADMIN_TOKEN" gh api --paginate \
+              "repos/$GITHUB_REPOSITORY/actions/runs?status=$status&per_page=100"
+          done |
+            jq -s '[.[].workflow_runs[]]' > active-runs-at-publish.json
           jq -e \
             --arg current_run "$GITHUB_RUN_ID" \
             '
@@ -725,13 +727,15 @@ jobs:
                     (
                       .path == ".github/workflows/release.yml" or
                       .path == ".github/workflows/release-finalize.yml" or
-                      .path == ".github/workflows/historical-release-cleanup.yml"
+                      .path == ".github/workflows/historical-release-cleanup.yml" or
+                      .path == ".github/workflows/pages.yml" or
+                      .path == ".github/workflows/pages-rollback.yml"
                     ) and
                     (.id | tostring) != $current_run
                   )
               ]
               | length == 0
-            ' in-progress-runs-at-publish.json >/dev/null
+            ' active-runs-at-publish.json >/dev/null
           main_ref="$(
             GH_TOKEN="$GH_ADMIN_TOKEN" gh api \
               "repos/$GITHUB_REPOSITORY/git/ref/heads/main"

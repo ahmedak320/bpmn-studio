@@ -16,12 +16,20 @@ on:
         description: Successful protected immutable finalization workflow run ID
         required: true
         type: string
+      archive_evidence_url:
+        description: Candidate-pinned immutable legacy archive recovery manifest URL
+        required: true
+        type: string
+      archive_evidence_sha256:
+        description: SHA-256 of the immutable legacy archive recovery manifest
+        required: true
+        type: string
 
 permissions:
   contents: read
 
 concurrency:
-  group: historical-release-cleanup-v0.4.5
+  group: orbitpm-release-lifecycle-v0.4.5
   cancel-in-progress: false
 
 jobs:
@@ -67,9 +75,17 @@ jobs:
           test "$GITHUB_SHA" = "$CANDIDATE_SHA"
           git fetch --force origin \
             refs/heads/main:refs/remotes/origin/main \
+            refs/heads/archive/full-product-v0.4.4:refs/remotes/origin/archive/full-product-v0.4.4 \
             '+refs/tags/*:refs/tags/*'
           test "$(git rev-parse HEAD)" = "$CANDIDATE_SHA"
           test "$(git rev-parse origin/main)" = "$CANDIDATE_SHA"
+          test "$(git rev-parse origin/archive/full-product-v0.4.4)" = \
+            "cd842b6e0b8d7283e2704ae71ec207440b9e54f2"
+          test "$(git cat-file -t refs/tags/archive-full-product-v0.4.4)" = "tag"
+          test "$(git rev-parse refs/tags/archive-full-product-v0.4.4)" = \
+            "4fd3fa1e5b7025e1c7d3c280a058c120594be645"
+          test "$(git rev-parse "refs/tags/archive-full-product-v0.4.4^{commit}")" = \
+            "cd842b6e0b8d7283e2704ae71ec207440b9e54f2"
           node scripts/check-release-tag.mjs "$RELEASE_TAG" --require-origin-main
           run_json="$(
             gh api "repos/$GITHUB_REPOSITORY/actions/runs/$FINALIZATION_RUN_ID"
@@ -108,6 +124,19 @@ jobs:
               test "$(git rev-parse "refs/tags/$tag")" = "$ref_sha"
               test "$(git rev-parse "refs/tags/$tag^{commit}")" = "$commit_sha"
             done
+
+      - name: Verify immutable legacy archive refs and recovery bundles
+        env:
+          ARCHIVE_EVIDENCE_SHA256: ${{ inputs.archive_evidence_sha256 }}
+          ARCHIVE_EVIDENCE_URL: ${{ inputs.archive_evidence_url }}
+          CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+        run: |
+          node scripts/verify-archive-recovery-evidence.mjs \
+            --candidate-sha="$CANDIDATE_SHA" \
+            --url="$ARCHIVE_EVIDENCE_URL" \
+            --sha256="$ARCHIVE_EVIDENCE_SHA256" \
+            --bundles-dir=archive-recovery-bundles \
+            --output=archive-recovery-verification.json
 
       - name: Download trusted immutable-finalization evidence
         env:
@@ -222,6 +251,8 @@ jobs:
 
       - name: Build manifest-bound cleanup plan and fixed-data authority
         env:
+          ARCHIVE_EVIDENCE_SHA256: ${{ inputs.archive_evidence_sha256 }}
+          ARCHIVE_EVIDENCE_URL: ${{ inputs.archive_evidence_url }}
           CANDIDATE_SHA: ${{ inputs.candidate_sha }}
           FINALIZATION_RUN_ID: ${{ inputs.finalization_run_id }}
           GH_TOKEN: ${{ github.token }}
@@ -266,8 +297,20 @@ jobs:
           cp \
             stable-release/OrbitPM-Process-Studio-Lite-0.4.5.html \
             cleanup-authority/stable.html
+          cp \
+            archive-recovery-verification.json \
+            cleanup-authority/archive-recovery-verification.json
+          cp \
+            archive-recovery-bundles/bpmn-studio-full-product-v0.4.4.bundle \
+            cleanup-authority/bpmn-studio-full-product-v0.4.4.bundle
+          cp \
+            archive-recovery-bundles/bpmn-tool-outer-legacy-v0.4.4.bundle \
+            cleanup-authority/bpmn-tool-outer-legacy-v0.4.4.bundle
           files="$(jq -n '[]')"
           for file in \
+            archive-recovery-verification.json \
+            bpmn-studio-full-product-v0.4.4.bundle \
+            bpmn-tool-outer-legacy-v0.4.4.bundle \
             browser-compatibility-evidence-verification.json \
             finalization-chain.json \
             historical-before.json \
@@ -289,12 +332,18 @@ jobs:
             )"
           done
           chain=cleanup-authority/finalization-chain.json
+          archive_recovery=cleanup-authority/archive-recovery-verification.json
           jq -n \
+            --arg archiveEvidenceSha256 "$ARCHIVE_EVIDENCE_SHA256" \
+            --arg archiveEvidenceUrl "$ARCHIVE_EVIDENCE_URL" \
+            --arg archiveVerificationSha256 \
+              "$(sha256sum "$archive_recovery" | cut -d' ' -f1)" \
             --arg candidateSha "$CANDIDATE_SHA" \
             --arg finalizationRunId "$FINALIZATION_RUN_ID" \
             --arg pagesUrl "$PAGES_URL" \
             --arg releaseTag "$RELEASE_TAG" \
             --argjson files "$files" \
+            --slurpfile archiveRecovery "$archive_recovery" \
             --slurpfile chain "$chain" \
             '{
               schemaVersion: 1,
@@ -307,6 +356,14 @@ jobs:
               manifestSha256: "484fa611b1bdd4494ef48e2e77ef1d672c1a1a7f769e8ff431a8f911513407d8",
               expectedDeletionCount: 28,
               retainedAssetCount: 7,
+              archiveRecoveryEvidence: {
+                url: $archiveEvidenceUrl,
+                sourceSha256: $archiveEvidenceSha256,
+                verificationSha256: $archiveVerificationSha256,
+                archiveBranch: $archiveRecovery[0].archiveBranch,
+                archiveTag: $archiveRecovery[0].archiveTag,
+                bundles: $archiveRecovery[0].bundles
+              },
               browserCompatibilityEvidence: $chain[0].browserCompatibilityEvidence,
               browserVersionBaseline: $chain[0].browserVersionBaseline,
               files: ($files | sort_by(.name))
@@ -337,6 +394,8 @@ jobs:
     steps:
       - name: Fetch and bind the exact immutable cleanup authority
         env:
+          ARCHIVE_EVIDENCE_SHA256: ${{ inputs.archive_evidence_sha256 }}
+          ARCHIVE_EVIDENCE_URL: ${{ inputs.archive_evidence_url }}
           AUTHORITY_ARTIFACT_DIGEST: ${{ needs.plan.outputs.cleanup-authority-digest }}
           AUTHORITY_ARTIFACT_ID: ${{ needs.plan.outputs.cleanup-authority-id }}
           CANDIDATE_SHA: ${{ inputs.candidate_sha }}
@@ -399,6 +458,9 @@ jobs:
             "$expected_digest"
           expected_entries="$(
             printf '%s\n' \
+              archive-recovery-verification.json \
+              bpmn-studio-full-product-v0.4.4.bundle \
+              bpmn-tool-outer-legacy-v0.4.4.bundle \
               browser-compatibility-evidence-verification.json \
               cleanup-authority.json \
               finalization-chain.json \
@@ -420,6 +482,8 @@ jobs:
           test "$(sha256sum "$manifest" | cut -d' ' -f1)" = \
             "484fa611b1bdd4494ef48e2e77ef1d672c1a1a7f769e8ff431a8f911513407d8"
           jq -e \
+            --arg archiveEvidenceSha256 "$ARCHIVE_EVIDENCE_SHA256" \
+            --arg archiveEvidenceUrl "$ARCHIVE_EVIDENCE_URL" \
             --arg candidate "$CANDIDATE_SHA" \
             --arg finalizationRunId "${{ inputs.finalization_run_id }}" \
             '
@@ -433,16 +497,177 @@ jobs:
               .manifestSha256 == "484fa611b1bdd4494ef48e2e77ef1d672c1a1a7f769e8ff431a8f911513407d8" and
               .expectedDeletionCount == 28 and
               .retainedAssetCount == 7 and
+              .archiveRecoveryEvidence.url == $archiveEvidenceUrl and
+              .archiveRecoveryEvidence.sourceSha256 == $archiveEvidenceSha256 and
+              (.archiveRecoveryEvidence.verificationSha256 | test("^[0-9a-f]{64}$")) and
               (.browserCompatibilityEvidence.aggregateSha256 | test("^[0-9a-f]{64}$")) and
               (.browserVersionBaseline.sha256 | test("^[0-9a-f]{64}$")) and
               (.browserVersionBaseline.sourceSha256 == .browserVersionBaseline.sha256) and
-              (.files | length) == 10
+              (.files | length) == 13 and
+              ([.files[].name] | sort) == [
+                "archive-recovery-verification.json",
+                "bpmn-studio-full-product-v0.4.4.bundle",
+                "bpmn-tool-outer-legacy-v0.4.4.bundle",
+                "browser-compatibility-evidence-verification.json",
+                "finalization-chain.json",
+                "historical-before.json",
+                "historical-plan-before.json",
+                "historical-release-cleanup-manifest.json",
+                "pages-browser-environment.json",
+                "publication-authority.json",
+                "stable.html",
+                "trusted-pages-release-external-evidence-verification.json",
+                "trusted-release-external-evidence-verification.json"
+              ]
             ' "$authority" >/dev/null
           while IFS=$'\t' read -r name size sha256; do
             test "$name" = "$(basename "$name")"
             test "$(stat --format=%s "cleanup-authority/$name")" = "$size"
             test "$(sha256sum "cleanup-authority/$name" | cut -d' ' -f1)" = "$sha256"
           done < <(jq -r '.files[] | [.name, .size, .sha256] | @tsv' "$authority")
+          archive_recovery=cleanup-authority/archive-recovery-verification.json
+          test "$(sha256sum "$archive_recovery" | cut -d' ' -f1)" = \
+            "$(jq -r .archiveRecoveryEvidence.verificationSha256 "$authority")"
+          jq -e \
+            --slurpfile recovery "$archive_recovery" \
+            '
+              .archiveRecoveryEvidence.archiveBranch == $recovery[0].archiveBranch and
+              .archiveRecoveryEvidence.archiveTag == $recovery[0].archiveTag and
+              .archiveRecoveryEvidence.bundles == $recovery[0].bundles
+            ' "$authority" >/dev/null
+          jq -e \
+            --arg candidate "$CANDIDATE_SHA" \
+            --arg evidenceSha256 "$ARCHIVE_EVIDENCE_SHA256" \
+            --arg evidenceUrl "$ARCHIVE_EVIDENCE_URL" \
+            '
+              .schemaVersion == 1 and
+              .gate == "orbitpm-legacy-archive-recovery" and
+              .status == "passed" and
+              .candidateSha == $candidate and
+              .source.url == $evidenceUrl and
+              .source.finalUrl == $evidenceUrl and
+              .source.sha256 == $evidenceSha256 and
+              .archiveBranch == {
+                name: "archive/full-product-v0.4.4",
+                commitSha: "cd842b6e0b8d7283e2704ae71ec207440b9e54f2"
+              } and
+              .archiveTag == {
+                name: "archive-full-product-v0.4.4",
+                objectSha: "4fd3fa1e5b7025e1c7d3c280a058c120594be645",
+                peeledCommitSha: "cd842b6e0b8d7283e2704ae71ec207440b9e54f2"
+              } and
+              (.bundles | map(del(.url, .finalUrl))) == [
+                {
+                  id: "full-product",
+                  name: "bpmn-studio-full-product-v0.4.4.bundle",
+                  sha256: "aeaebf41b8a2cac89a6b16af7ab49c372cd5feb43319d58231f22ccc3f3553b6",
+                  sizeBytes: 1200974,
+                  recoveryCommitSha: "cd842b6e0b8d7283e2704ae71ec207440b9e54f2",
+                  bundleVerify: "passed",
+                  recoveryClone: "passed",
+                  recoveredCommitSha: "cd842b6e0b8d7283e2704ae71ec207440b9e54f2"
+                },
+                {
+                  id: "outer-legacy",
+                  name: "bpmn-tool-outer-legacy-v0.4.4.bundle",
+                  sha256: "18254bbc68f9554aa3ceff7f208d14b9400da1a6adb3585ae575f4dce04dcb75",
+                  sizeBytes: 924817,
+                  recoveryCommitSha: "b1b288939e39c5dd9c2e064f76e24c85ad519fac",
+                  bundleVerify: "passed",
+                  recoveryClone: "passed",
+                  recoveredCommitSha: "b1b288939e39c5dd9c2e064f76e24c85ad519fac"
+                }
+              ] and
+              .bundles[0].url == .bundles[0].finalUrl and
+              (.bundles[0].url | startswith("https://")) and
+              (.bundles[0].url | endswith("/bpmn-studio-full-product-v0.4.4.bundle")) and
+              .bundles[1].url == .bundles[1].finalUrl and
+              (.bundles[1].url | startswith("https://")) and
+              (.bundles[1].url | endswith("/bpmn-tool-outer-legacy-v0.4.4.bundle"))
+            ' "$archive_recovery" >/dev/null
+          jq -j .source.bodyBase64 "$archive_recovery" |
+            base64 --decode > archive-recovery-source.json
+          test "$(stat --format=%s archive-recovery-source.json)" = \
+            "$(jq -r .source.sizeBytes "$archive_recovery")"
+          test "$(sha256sum archive-recovery-source.json | cut -d' ' -f1)" = \
+            "$ARCHIVE_EVIDENCE_SHA256"
+          jq -e \
+            --arg candidate "$CANDIDATE_SHA" \
+            --slurpfile recovery "$archive_recovery" \
+            '
+              (keys | sort) == [
+                "archiveBranch",
+                "archiveTag",
+                "bundles",
+                "candidateSha",
+                "evidenceType",
+                "schemaVersion"
+              ] and
+              .schemaVersion == 1 and
+              .evidenceType == "orbitpm-legacy-archive-recovery" and
+              .candidateSha == $candidate and
+              .archiveBranch == $recovery[0].archiveBranch and
+              .archiveTag == $recovery[0].archiveTag and
+              .bundles == [
+                $recovery[0].bundles[] |
+                {id, name, url, sha256, sizeBytes, recoveryCommitSha}
+              ]
+            ' archive-recovery-source.json >/dev/null
+          test "$(stat --format=%s cleanup-authority/bpmn-studio-full-product-v0.4.4.bundle)" = \
+            "1200974"
+          test "$(sha256sum cleanup-authority/bpmn-studio-full-product-v0.4.4.bundle | cut -d' ' -f1)" = \
+            "aeaebf41b8a2cac89a6b16af7ab49c372cd5feb43319d58231f22ccc3f3553b6"
+          test "$(stat --format=%s cleanup-authority/bpmn-tool-outer-legacy-v0.4.4.bundle)" = \
+            "924817"
+          test "$(sha256sum cleanup-authority/bpmn-tool-outer-legacy-v0.4.4.bundle | cut -d' ' -f1)" = \
+            "18254bbc68f9554aa3ceff7f208d14b9400da1a6adb3585ae575f4dce04dcb75"
+          verify_archive_refs() {
+            archive_branch_ref="$(
+              gh api \
+                "repos/$GITHUB_REPOSITORY/git/ref/heads/archive/full-product-v0.4.4"
+            )"
+            test "$(jq -r .object.type <<<"$archive_branch_ref")" = "commit"
+            test "$(jq -r .object.sha <<<"$archive_branch_ref")" = \
+              "cd842b6e0b8d7283e2704ae71ec207440b9e54f2"
+            archive_tag_ref="$(
+              gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/archive-full-product-v0.4.4"
+            )"
+            test "$(jq -r .object.type <<<"$archive_tag_ref")" = "tag"
+            test "$(jq -r .object.sha <<<"$archive_tag_ref")" = \
+              "4fd3fa1e5b7025e1c7d3c280a058c120594be645"
+            archive_tag_object="$(
+              gh api \
+                "repos/$GITHUB_REPOSITORY/git/tags/4fd3fa1e5b7025e1c7d3c280a058c120594be645"
+            )"
+            test "$(jq -r .object.type <<<"$archive_tag_object")" = "commit"
+            test "$(jq -r .object.sha <<<"$archive_tag_object")" = \
+              "cd842b6e0b8d7283e2704ae71ec207440b9e54f2"
+          }
+          verify_archive_bundle() {
+            bundle_name="$1"
+            commit_sha="$2"
+            bundle_path="$PWD/cleanup-authority/$bundle_name"
+            verification_repo="$RUNNER_TEMP/archive-verify-${bundle_name%.bundle}.git"
+            recovery_clone="$RUNNER_TEMP/archive-recover-${bundle_name%.bundle}"
+            git init --bare "$verification_repo" >/dev/null
+            git -C "$verification_repo" bundle verify "$bundle_path"
+            git -c core.hooksPath=/dev/null clone \
+              --no-checkout \
+              --no-hardlinks \
+              "$bundle_path" \
+              "$recovery_clone"
+            git -C "$recovery_clone" -c core.hooksPath=/dev/null checkout \
+              --detach "$commit_sha"
+            test "$(git -C "$recovery_clone" rev-parse HEAD)" = "$commit_sha"
+            git -C "$recovery_clone" fsck --full
+          }
+          verify_archive_refs
+          verify_archive_bundle \
+            bpmn-studio-full-product-v0.4.4.bundle \
+            cd842b6e0b8d7283e2704ae71ec207440b9e54f2
+          verify_archive_bundle \
+            bpmn-tool-outer-legacy-v0.4.4.bundle \
+            b1b288939e39c5dd9c2e064f76e24c85ad519fac
           chain=cleanup-authority/finalization-chain.json
           browser_evidence=cleanup-authority/browser-compatibility-evidence-verification.json
           jq -e \
@@ -537,6 +762,26 @@ jobs:
           set -euo pipefail
           test "$APPROVAL_POLICY" = \
             "v0.4.5-immutable-stable-pages-verified-manifest-28-assets"
+          archive_branch_ref="$(
+            gh api \
+              "repos/$GITHUB_REPOSITORY/git/ref/heads/archive/full-product-v0.4.4"
+          )"
+          test "$(jq -r .object.type <<<"$archive_branch_ref")" = "commit"
+          test "$(jq -r .object.sha <<<"$archive_branch_ref")" = \
+            "cd842b6e0b8d7283e2704ae71ec207440b9e54f2"
+          archive_tag_ref="$(
+            gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/archive-full-product-v0.4.4"
+          )"
+          test "$(jq -r .object.type <<<"$archive_tag_ref")" = "tag"
+          test "$(jq -r .object.sha <<<"$archive_tag_ref")" = \
+            "4fd3fa1e5b7025e1c7d3c280a058c120594be645"
+          archive_tag_object="$(
+            gh api \
+              "repos/$GITHUB_REPOSITORY/git/tags/4fd3fa1e5b7025e1c7d3c280a058c120594be645"
+          )"
+          test "$(jq -r .object.type <<<"$archive_tag_object")" = "commit"
+          test "$(jq -r .object.sha <<<"$archive_tag_object")" = \
+            "cd842b6e0b8d7283e2704ae71ec207440b9e54f2"
           manifest=cleanup-authority/historical-release-cleanup-manifest.json
           publication_authority=cleanup-authority/publication-authority.json
           validate_stable_and_pages() {
@@ -701,6 +946,62 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
+          authority=cleanup-authority/cleanup-authority.json
+          archive_recovery=cleanup-authority/archive-recovery-verification.json
+          test "$(sha256sum "$archive_recovery" | cut -d' ' -f1)" = \
+            "$(jq -r .archiveRecoveryEvidence.verificationSha256 "$authority")"
+          test "$(stat --format=%s cleanup-authority/bpmn-studio-full-product-v0.4.4.bundle)" = \
+            "1200974"
+          test "$(sha256sum cleanup-authority/bpmn-studio-full-product-v0.4.4.bundle | cut -d' ' -f1)" = \
+            "aeaebf41b8a2cac89a6b16af7ab49c372cd5feb43319d58231f22ccc3f3553b6"
+          test "$(stat --format=%s cleanup-authority/bpmn-tool-outer-legacy-v0.4.4.bundle)" = \
+            "924817"
+          test "$(sha256sum cleanup-authority/bpmn-tool-outer-legacy-v0.4.4.bundle | cut -d' ' -f1)" = \
+            "18254bbc68f9554aa3ceff7f208d14b9400da1a6adb3585ae575f4dce04dcb75"
+          archive_branch_ref="$(
+            gh api \
+              "repos/$GITHUB_REPOSITORY/git/ref/heads/archive/full-product-v0.4.4"
+          )"
+          test "$(jq -r .object.type <<<"$archive_branch_ref")" = "commit"
+          test "$(jq -r .object.sha <<<"$archive_branch_ref")" = \
+            "cd842b6e0b8d7283e2704ae71ec207440b9e54f2"
+          archive_tag_ref="$(
+            gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/archive-full-product-v0.4.4"
+          )"
+          test "$(jq -r .object.type <<<"$archive_tag_ref")" = "tag"
+          test "$(jq -r .object.sha <<<"$archive_tag_ref")" = \
+            "4fd3fa1e5b7025e1c7d3c280a058c120594be645"
+          archive_tag_object="$(
+            gh api \
+              "repos/$GITHUB_REPOSITORY/git/tags/4fd3fa1e5b7025e1c7d3c280a058c120594be645"
+          )"
+          test "$(jq -r .object.type <<<"$archive_tag_object")" = "commit"
+          test "$(jq -r .object.sha <<<"$archive_tag_object")" = \
+            "cd842b6e0b8d7283e2704ae71ec207440b9e54f2"
+          verify_pre_delete_bundle() {
+            bundle_name="$1"
+            commit_sha="$2"
+            bundle_path="$PWD/cleanup-authority/$bundle_name"
+            verification_repo="$RUNNER_TEMP/pre-delete-verify-${bundle_name%.bundle}.git"
+            recovery_clone="$RUNNER_TEMP/pre-delete-recover-${bundle_name%.bundle}"
+            git init --bare "$verification_repo" >/dev/null
+            git -C "$verification_repo" bundle verify "$bundle_path"
+            git -c core.hooksPath=/dev/null clone \
+              --no-checkout \
+              --no-hardlinks \
+              "$bundle_path" \
+              "$recovery_clone"
+            git -C "$recovery_clone" -c core.hooksPath=/dev/null checkout \
+              --detach "$commit_sha"
+            test "$(git -C "$recovery_clone" rev-parse HEAD)" = "$commit_sha"
+            git -C "$recovery_clone" fsck --full
+          }
+          verify_pre_delete_bundle \
+            bpmn-studio-full-product-v0.4.4.bundle \
+            cd842b6e0b8d7283e2704ae71ec207440b9e54f2
+          verify_pre_delete_bundle \
+            bpmn-tool-outer-legacy-v0.4.4.bundle \
+            b1b288939e39c5dd9c2e064f76e24c85ad519fac
           manifest=cleanup-authority/historical-release-cleanup-manifest.json
           plan=cleanup-authority/historical-plan-before.json
           gh api --paginate "repos/$GITHUB_REPOSITORY/releases?per_page=100" |
@@ -889,12 +1190,24 @@ jobs:
 
       - name: Verify exact post-cleanup state, inherited evidence, tags, and Pages
         env:
+          ARCHIVE_EVIDENCE_SHA256: ${{ inputs.archive_evidence_sha256 }}
+          ARCHIVE_EVIDENCE_URL: ${{ inputs.archive_evidence_url }}
           CANDIDATE_SHA: ${{ inputs.candidate_sha }}
           FINALIZATION_RUN_ID: ${{ inputs.finalization_run_id }}
           GH_TOKEN: ${{ github.token }}
           PAGES_URL: https://ahmedak320.github.io/bpmn-studio/
           RELEASE_TAG: ${{ inputs.release_tag }}
         run: |
+          set -euo pipefail
+          authority=cleanup-authority/cleanup-authority.json
+          archive_recovery=cleanup-authority/archive-recovery-verification.json
+          test "$(sha256sum "$archive_recovery" | cut -d' ' -f1)" = \
+            "$(jq -r .archiveRecoveryEvidence.verificationSha256 "$authority")"
+          test "$(jq -r .candidateSha "$archive_recovery")" = "$CANDIDATE_SHA"
+          test "$(jq -r .source.url "$archive_recovery")" = "$ARCHIVE_EVIDENCE_URL"
+          test "$(jq -r .source.finalUrl "$archive_recovery")" = "$ARCHIVE_EVIDENCE_URL"
+          test "$(jq -r .source.sha256 "$archive_recovery")" = \
+            "$ARCHIVE_EVIDENCE_SHA256"
           manifest=cleanup-authority/historical-release-cleanup-manifest.json
           test "$(sha256sum "$manifest" | cut -d' ' -f1)" = \
             "484fa611b1bdd4494ef48e2e77ef1d672c1a1a7f769e8ff431a8f911513407d8"
@@ -910,8 +1223,40 @@ jobs:
           test "$(jq -r .retainedAssetCount historical-verification.json)" = "7"
           git fetch --force origin \
             refs/heads/main:refs/remotes/origin/main \
+            refs/heads/archive/full-product-v0.4.4:refs/remotes/origin/archive/full-product-v0.4.4 \
             '+refs/tags/*:refs/tags/*'
           test "$(git rev-parse origin/main)" = "$CANDIDATE_SHA"
+          test "$(git rev-parse origin/archive/full-product-v0.4.4)" = \
+            "cd842b6e0b8d7283e2704ae71ec207440b9e54f2"
+          test "$(git cat-file -t refs/tags/archive-full-product-v0.4.4)" = "tag"
+          test "$(git rev-parse refs/tags/archive-full-product-v0.4.4)" = \
+            "4fd3fa1e5b7025e1c7d3c280a058c120594be645"
+          test "$(git rev-parse "refs/tags/archive-full-product-v0.4.4^{commit}")" = \
+            "cd842b6e0b8d7283e2704ae71ec207440b9e54f2"
+          verify_readback_bundle() {
+            bundle_name="$1"
+            commit_sha="$2"
+            bundle_path="$PWD/cleanup-authority/$bundle_name"
+            verification_repo="$RUNNER_TEMP/readback-verify-${bundle_name%.bundle}.git"
+            recovery_clone="$RUNNER_TEMP/readback-recover-${bundle_name%.bundle}"
+            git init --bare "$verification_repo" >/dev/null
+            git -C "$verification_repo" bundle verify "$bundle_path"
+            git -c core.hooksPath=/dev/null clone \
+              --no-checkout \
+              --no-hardlinks \
+              "$bundle_path" \
+              "$recovery_clone"
+            git -C "$recovery_clone" -c core.hooksPath=/dev/null checkout \
+              --detach "$commit_sha"
+            test "$(git -C "$recovery_clone" rev-parse HEAD)" = "$commit_sha"
+            git -C "$recovery_clone" fsck --full
+          }
+          verify_readback_bundle \
+            bpmn-studio-full-product-v0.4.4.bundle \
+            cd842b6e0b8d7283e2704ae71ec207440b9e54f2
+          verify_readback_bundle \
+            bpmn-tool-outer-legacy-v0.4.4.bundle \
+            b1b288939e39c5dd9c2e064f76e24c85ad519fac
           node scripts/check-release-tag.mjs "$RELEASE_TAG" --require-origin-main
           jq -r \
             '.releases[] | [.tag, .tagRefSha, .peeledCommitSha] | @tsv' \
@@ -1060,6 +1405,9 @@ jobs:
         with:
           name: orbitpm-historical-cleanup-${{ inputs.candidate_sha }}
           path: |
+            cleanup-authority/archive-recovery-verification.json
+            cleanup-authority/bpmn-studio-full-product-v0.4.4.bundle
+            cleanup-authority/bpmn-tool-outer-legacy-v0.4.4.bundle
             cleanup-authority/cleanup-authority.json
             cleanup-authority/historical-plan-before.json
             historical-verification.json

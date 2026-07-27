@@ -121,7 +121,10 @@ jobs:
           scripts/historical-release-cleanup.test.mjs
           scripts/pages-evidence-chain.test.mjs
           scripts/release-evidence-chain.test.mjs
+          scripts/release-reporter.test.mjs
           scripts/release-review-gate.test.mjs
+          scripts/release-workflow-critical-invariants.test.mjs
+          scripts/verify-archive-recovery-evidence.test.mjs
           scripts/verify-browser-compatibility-evidence.test.mjs
           scripts/verify-external-release-evidence.test.mjs
           scripts/workflow-action-pins.test.mjs
@@ -257,6 +260,9 @@ jobs:
     needs: identity
     runs-on: ubuntu-24.04
     timeout-minutes: 20
+    env:
+      ORBITPM_PERFORMANCE_HARDWARE_PROFILE: github-hosted-ubuntu-24.04-x64-runner-class-v1
+      ORBITPM_PERFORMANCE_EXPECTED_SHA: ${{ inputs.expected_sha || github.sha }}
     steps:
       - name: Checkout
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
@@ -283,7 +289,10 @@ jobs:
         run: npm ci
 
       - name: Run measured release-size fixtures
-        run: npm run test:performance -- --output=performance-results.json
+        run: >-
+          npm run test:performance --
+          --output=performance-results.json
+          --require-release-evidence
 
       - name: Upload performance evidence
         if: always()
@@ -429,6 +438,9 @@ jobs:
     needs: build
     runs-on: ubuntu-24.04
     timeout-minutes: 25
+    env:
+      ORBITPM_PERFORMANCE_HARDWARE_PROFILE: github-hosted-ubuntu-24.04-x64-runner-class-v1
+      ORBITPM_PERFORMANCE_EXPECTED_SHA: ${{ inputs.expected_sha || github.sha }}
     steps:
       - name: Checkout
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
@@ -472,6 +484,8 @@ jobs:
         run: >-
           npm run test:performance:browser --
           --output=performance-browser-results.json
+          --artifact=dist/index.html
+          --require-release-evidence
 
       - name: Upload browser performance evidence
         if: always()

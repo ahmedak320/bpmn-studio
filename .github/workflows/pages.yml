@@ -49,7 +49,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: pages-v0.4.5
+  group: orbitpm-release-lifecycle-v0.4.5
   cancel-in-progress: false
 
 jobs:

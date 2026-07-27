@@ -2,6 +2,10 @@ import { spawnSync } from 'node:child_process'
 import { resolve } from 'node:path'
 
 const vitest = resolve('node_modules/.bin/vitest')
+// Keep timing-sensitive large-input assertions isolated from host-level
+// oversubscription. Four workers matches the release runner class while the
+// dedicated performance job remains the authority for strict product budgets.
+const maxVitestWorkers = 4
 const profiles = [
   {
     name: 'overall',
@@ -52,6 +56,7 @@ for (const profile of profiles) {
   const args = [
     'run',
     ...profile.tests,
+    `--maxWorkers=${maxVitestWorkers}`,
     '--retry=0',
     '--reporter=default',
     '--reporter=./scripts/vitest-release-reporter.mjs',

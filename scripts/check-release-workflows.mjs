@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto'
 import { readdirSync, readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { findActionPinFailures } from './workflow-action-pins.mjs'
+import { findCriticalReleaseWorkflowFailures } from './release-workflow-critical-invariants.mjs'
 
 const root = resolve(new URL('..', import.meta.url).pathname)
 const read = (path) => readFileSync(resolve(root, path), 'utf8')
@@ -77,6 +78,7 @@ if (actualWorkflowFiles.join('\n') !== expectedWorkflowFiles.join('\n')) {
 for (const [name, source] of Object.entries(workflows)) {
   failures.push(...findActionPinFailures(source, `.github/workflows/${workflowFiles[name]}`))
 }
+failures.push(...findCriticalReleaseWorkflowFailures(workflows))
 
 const allWorkflowText = Object.values(workflows).join('\n')
 for (const [pattern, description] of [
@@ -139,8 +141,8 @@ requireText(
 )
 requireText(
   workflows.quality,
-  /verify-browser-compatibility-evidence\.test\.mjs[\s\S]*verify-external-release-evidence\.test\.mjs[\s\S]*workflow-action-pins\.test\.mjs/u,
-  'quality must execute browser, external-evidence, and action-pin regressions'
+  /release-workflow-critical-invariants\.test\.mjs[\s\S]*verify-archive-recovery-evidence\.test\.mjs[\s\S]*verify-browser-compatibility-evidence\.test\.mjs[\s\S]*verify-external-release-evidence\.test\.mjs[\s\S]*workflow-action-pins\.test\.mjs/u,
+  'quality must execute workflow, archive, browser, external-evidence, and action-pin regressions'
 )
 requireText(
   workflows.candidate,
@@ -298,7 +300,7 @@ requireText(
 )
 requireText(
   finalPublish,
-  /collaborators\?affiliation=all&per_page=100[\s\S]*actions\/runs\?status=in_progress&per_page=100/u,
+  /collaborators\?affiliation=all&per_page=100[\s\S]*for status in queued in_progress[\s\S]*actions\/runs\?status=\$status&per_page=100/u,
   'publisher must enforce sole-writer and concurrent-workflow freeze'
 )
 requireText(
