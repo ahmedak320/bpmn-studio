@@ -3,6 +3,7 @@
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import type { EditorTabCommands, EditorXmlTransaction } from './editor/EditorTabLite'
 
 interface TestDraftRecord {
   id: string
@@ -72,9 +73,12 @@ const state = vi.hoisted(() => ({
   xmlns:bpmndi="http://www.omg.org/spec/BPMN/20100524/DI"
   xmlns:dc="http://www.omg.org/spec/DD/20100524/DC"
   xmlns:di="http://www.omg.org/spec/DD/20100524/DI"
+  xmlns:orbitpm="http://orbitpm.ae/schema/bpmn/1.0"
   id="Definitions_Test" targetNamespace="https://orbitpm.local/test">
-  <bpmn:process id="Process_Test" name="Test process" isExecutable="false">
-    <bpmn:startEvent id="StartEvent_1" name="Start" />
+  <bpmn:process id="Process_Test" name="Test process" isExecutable="false"
+    orbitpm:nameEn="Test process" orbitpm:nameAr="عملية اختبار" orbitpm:activeLang="en">
+    <bpmn:startEvent id="StartEvent_1" name="Start"
+      orbitpm:nameEn="Start" orbitpm:nameAr="بدء" />
   </bpmn:process>
   <bpmndi:BPMNDiagram id="Diagram_Test">
     <bpmndi:BPMNPlane id="Plane_Test" bpmnElement="Process_Test">
@@ -121,7 +125,10 @@ const mocks = vi.hoisted(() => ({
   catalogProps: vi.fn(),
   moveDialogProps: vi.fn(),
   historyProps: vi.fn(),
+  workspaceImportReviewProps: vi.fn(),
   restoreHistoryRevision: vi.fn(),
+  beforeDraftPut: vi.fn(),
+  beforeDraftDelete: vi.fn(),
   manifestBindings: [] as unknown[],
   readLibraryZipFileInWorker: vi.fn(),
   legacyCreateFolderAt: vi.fn(),
@@ -267,6 +274,29 @@ vi.mock('./workspace/HistoryDialog', async (importOriginal) => {
   }
 })
 
+vi.mock('./workspace/WorkspaceImportReviewDialog', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('./workspace/WorkspaceImportReviewDialog')>()
+  return {
+    ...actual,
+    WorkspaceImportReviewDialog: (
+      props: React.ComponentProps<typeof actual.WorkspaceImportReviewDialog>
+    ) => {
+      mocks.workspaceImportReviewProps(props)
+      return (
+        <div role="dialog" aria-label="mock-workspace-import-review">
+          <output data-testid="workspace-import-digest">{props.plan.reviewDigest}</output>
+          <button type="button" onClick={props.onConfirm}>
+            mock-workspace-import-confirm
+          </button>
+          <button type="button" onClick={props.onCancel}>
+            mock-workspace-import-cancel
+          </button>
+        </div>
+      )
+    }
+  }
+})
+
 vi.mock('./links/linkBadges', () => ({
   installLinkBadges: mocks.installLinkBadges
 }))
@@ -291,6 +321,7 @@ vi.mock('./sessions', async (importOriginal) => {
     }
 
     async put(record: TestDraftRecord): Promise<void> {
+      await mocks.beforeDraftPut(record)
       sessionHarness.drafts.set(record.id, { ...record })
     }
 
@@ -306,6 +337,7 @@ vi.mock('./sessions', async (importOriginal) => {
     }
 
     async delete(key: { workspaceId: string; path: string | null; sessionId: string }) {
+      await mocks.beforeDraftDelete(key)
       sessionHarness.drafts.delete(actual.draftId(key))
     }
 
@@ -707,7 +739,8 @@ vi.mock('./workspace/MoveDialog', () => ({
   }
 }))
 
-import { WorkspaceOperationError } from './workspace/adapters'
+import { MemoryWorkspaceAdapter, WorkspaceOperationError } from './workspace/adapters'
+import { MAX_DROPPED_IMPORT_BYTES } from './workspace/importDrop'
 import {
   FakeDirectoryHandle,
   asDirectoryHandle,
@@ -715,6 +748,8 @@ import {
 } from './workspace/adapters/__tests__/fakeFileSystem'
 import { ManifestBoundWorkspaceAdapter } from './workspace/workspaceManifest'
 import type { HistoryRevision } from './workspace/history'
+import BpmnModdle from 'bpmn-moddle'
+import { orbitpmModdleDescriptor } from './org/orbitpmModdle'
 import {
   WORKSPACE_GLOSSARY_PATH,
   WORKSPACE_TRANSLATION_MEMORY_PATH,
@@ -725,7 +760,6 @@ import {
   serializeWorkspaceGlossaryDocument,
   serializeWorkspaceTranslationMemoryDocument
 } from './localization/workspaceStore'
-import { SEEDED_GLOSSARY } from './localization/glossary'
 import type { LocalizationResourcesEditorProps } from './settings/LocalizationResourcesEditor'
 import App from './App'
 
@@ -752,6 +786,13 @@ function latestHistoryDialogProps(): import('./workspace/HistoryDialog').History
   const props = mocks.historyProps.mock.calls.at(-1)?.[0] as
     import('./workspace/HistoryDialog').HistoryDialogProps | undefined
   if (!props) throw new Error('App did not render the history dialog')
+  return props
+}
+
+function latestWorkspaceImportReviewProps(): import('./workspace/WorkspaceImportReviewDialog').WorkspaceImportReviewDialogProps {
+  const props = mocks.workspaceImportReviewProps.mock.calls.at(-1)?.[0] as
+    import('./workspace/WorkspaceImportReviewDialog').WorkspaceImportReviewDialogProps | undefined
+  if (!props) throw new Error('App did not render the workspace import review')
   return props
 }
 
@@ -804,6 +845,76 @@ function successfulWorkspaceSave(
 
 function utf8Buffer(value: string): ArrayBuffer {
   return Uint8Array.from(new TextEncoder().encode(value)).buffer
+}
+
+function deferred<T = void>(): {
+  promise: Promise<T>
+  resolve(value: T): void
+  reject(error: unknown): void
+} {
+  let resolve!: (value: T) => void
+  let reject!: (error: unknown) => void
+  const promise = new Promise<T>((onResolve, onReject) => {
+    resolve = onResolve
+    reject = onReject
+  })
+  return { promise, resolve, reject }
+}
+
+function withProcessId(xml: string, processId: string): string {
+  return xml.replaceAll('Process_Test', processId)
+}
+
+function withoutArabicMetadata(xml: string): string {
+  return xml.replaceAll(/\s+orbitpm:nameAr="[^"]*"/gu, '')
+}
+
+function validationResultForXml(xml: string) {
+  const processId = /<bpmn:process\b[^>]*\bid="([^"]+)"/u.exec(xml)?.[1] ?? 'Process_Test'
+  return {
+    summary: { valid: true, xmlWellFormed: true, issues: [] },
+    definitions: {
+      rootElements: [{ $type: 'bpmn:Process', id: processId }]
+    }
+  }
+}
+
+async function parsedValidationResultForXml(xml: string) {
+  const moddle = new BpmnModdle({
+    orbitpm: orbitpmModdleDescriptor as unknown as Record<string, unknown>
+  })
+  const parsed = await moddle.fromXML(xml)
+  return {
+    summary: { valid: true, xmlWellFormed: true, issues: [] },
+    definitions: parsed.rootElement
+  }
+}
+
+function missingArabicValidationResult(processId: string) {
+  const process: Record<string, unknown> = {
+    $type: 'bpmn:Process',
+    id: processId,
+    name: 'Legacy process',
+    $attrs: {
+      'orbitpm:nameEn': 'Legacy process',
+      'orbitpm:activeLang': 'en'
+    }
+  }
+  const start: Record<string, unknown> = {
+    $type: 'bpmn:StartEvent',
+    id: `${processId}_Start`,
+    name: 'Start',
+    $attrs: { 'orbitpm:nameEn': 'Start' },
+    $parent: process
+  }
+  process.flowElements = [start]
+  return {
+    summary: { valid: true, xmlWellFormed: true, issues: [] },
+    definitions: {
+      $type: 'bpmn:Definitions',
+      rootElements: [process]
+    }
+  }
 }
 
 function seedUntitledDraft(xml: string): TestDraftRecord {
@@ -860,9 +971,9 @@ beforeEach(() => {
   mocks.commandSave.mockReset()
   mocks.commandUndo.mockReset()
   mocks.commandRedo.mockReset()
-  mocks.validateBpmn.mockReset().mockResolvedValue({
-    summary: { valid: true, issues: [] }
-  })
+  mocks.validateBpmn
+    .mockReset()
+    .mockImplementation(async (xml: string) => validationResultForXml(xml))
   mocks.evaluatePolicy.mockReset().mockReturnValue({
     allowed: true,
     blockingIssues: []
@@ -884,11 +995,14 @@ beforeEach(() => {
   mocks.catalogProps.mockReset()
   mocks.moveDialogProps.mockReset()
   mocks.historyProps.mockReset()
+  mocks.workspaceImportReviewProps.mockReset()
   mocks.restoreHistoryRevision.mockReset().mockResolvedValue({
     status: 'failed',
     sessionId: null,
     error: new Error('history restore mock was not configured')
   })
+  mocks.beforeDraftPut.mockReset().mockResolvedValue(undefined)
+  mocks.beforeDraftDelete.mockReset().mockResolvedValue(undefined)
   mocks.manifestBindings.length = 0
   mocks.readLibraryZipFileInWorker.mockReset().mockResolvedValue({
     entries: [],
@@ -944,12 +1058,88 @@ async function openBlankDiagram(user: ReturnType<typeof userEvent.setup>): Promi
   expect(await screen.findByTestId('editor-tab')).not.toBeNull()
 }
 
+function installMockEditorXmlTransactionCommands(options?: {
+  applyExternalXml?: EditorTabCommands['applyExternalXml']
+  markDirty?: () => void
+  restoreDirtyState?: () => void
+}): void {
+  const editor = mocks.editorProps.mock.calls.at(-1)?.[0] as
+    | {
+        onCommandsReady(commands: EditorTabCommands): void
+      }
+    | undefined
+  if (!editor) throw new Error('missing editor command registration callback')
+  let tail: Promise<void> = Promise.resolve()
+  const runExclusiveXmlTransaction: EditorTabCommands['runExclusiveXmlTransaction'] = <Result,>(
+    operation: (transaction: EditorXmlTransaction) => Promise<Result> | Result
+  ): Promise<Result> => {
+    const queued = tail
+      .catch(() => undefined)
+      .then(() =>
+        operation({
+          modeler: mockModeler,
+          importXml: (xml) => mocks.importXml(xml),
+          assertActive: () => undefined,
+          markDirty: options?.markDirty ?? (() => undefined),
+          restoreDirtyState: options?.restoreDirtyState ?? (() => undefined)
+        })
+      )
+    tail = queued.then(
+      () => undefined,
+      () => undefined
+    )
+    return queued
+  }
+  act(() => {
+    editor.onCommandsReady({
+      save: mocks.commandSave,
+      exportSvg: vi.fn(),
+      exportPng: vi.fn(),
+      exportPdf: vi.fn(),
+      applyExternalXml:
+        options?.applyExternalXml ??
+        (async (xml) => {
+          await mocks.importXml(xml)
+        }),
+      runExclusiveXmlTransaction
+    })
+  })
+}
+
+async function completeReviewedXmlReview(
+  user: ReturnType<typeof userEvent.setup>,
+  values: readonly string[] = ['عملية قديمة', 'بداية قديمة']
+): Promise<void> {
+  const dialog = await screen.findByRole('dialog', { name: 'reviewedXmlReview.title' })
+  const inputs = within(dialog).getAllByRole('textbox')
+  expect(inputs).toHaveLength(values.length)
+  for (const [index, input] of inputs.entries()) {
+    await user.clear(input)
+    await user.type(input, values[index]!)
+  }
+  const complete = within(dialog).getByRole('button', {
+    name: 'reviewedXmlReview.complete'
+  }) as HTMLButtonElement
+  await waitFor(() => expect(complete.disabled).toBe(false))
+  await user.click(complete)
+  await waitFor(() =>
+    expect(screen.queryByRole('dialog', { name: 'reviewedXmlReview.title' })).toBeNull()
+  )
+}
+
 function populatedDirectory() {
   const root = fakeRoot()
   root.addFile('Finance/existing.bpmn', state.xml)
   root.addFile('Finance/delete-me.bpmn', state.xml)
   root.addFile('Finance/move-me.bpmn', state.xml)
   root.addFile('Finance/drop-me.bpmn', state.xml)
+  return root
+}
+
+function duplicateProcessDirectory() {
+  const root = fakeRoot()
+  root.addFile('Finance/a.bpmn', state.xml)
+  root.addFile('Finance/existing.bpmn', state.xml)
   return root
 }
 
@@ -1225,8 +1415,20 @@ describe('App single-file browser orchestration', () => {
     expect(screen.getByTestId('editor-tab')).not.toBeNull()
 
     confirm.mockReturnValue(true)
-    await user.click(screen.getByRole('button', { name: 'mock-editor-save' }))
-    await waitFor(() => expect(mocks.validatePreservation).toHaveBeenCalled())
+    const session = latestSessionController().store.getActive()
+    if (!session) throw new Error('expected the created process session')
+    const editor = mocks.editorProps.mock.calls.at(-1)?.[0] as {
+      onRequestSave(xml: string): Promise<void | { durable: boolean }>
+    }
+    await act(async () => {
+      await editor.onRequestSave(session.currentXml)
+    })
+    expect(mocks.validatePreservation).not.toHaveBeenCalled()
+    expect(mocks.validateBpmn).toHaveBeenCalled()
+    expect(mocks.triggerDownload).toHaveBeenCalledWith(
+      'claims-approval.bpmn',
+      expect.stringContaining('data:application/xml')
+    )
     await user.click(screen.getByRole('button', { name: 'mock-editor-clean' }))
     await user.click(screen.getByTitle('tab.closeTitle'))
     expect(await screen.findByText('emptyTab.fallback')).not.toBeNull()
@@ -1329,21 +1531,34 @@ describe('App single-file browser orchestration', () => {
 
     const controller = latestSessionController()
     expect(controller.store.list()).toHaveLength(1)
+    expect(controller.store.getActive()?.dirty).toBe(true)
+    expect(
+      screen.getByRole('tab', {
+        name: /untitled\.bpmn.*tab\.dirty\.aria/
+      })
+    ).not.toBeNull()
+    await waitFor(() =>
+      expect(
+        [...sessionHarness.drafts.values()].some(
+          (draft) =>
+            draft.path === 'untitled.bpmn' && draft.xml === controller.store.getActive()?.currentXml
+        )
+      ).toBe(true)
+    )
     const firstEditor = mocks.editorProps.mock.calls.at(-1)?.[0] as {
       onCommandsReady(commands: { save(): void }): void
     }
     const firstSave = vi.fn()
     act(() => firstEditor.onCommandsReady({ save: firstSave }))
 
-    await user.click(screen.getByRole('button', { name: 'mock-editor-dirty' }))
     const dirtyExit = new Event('beforeunload', { cancelable: true })
     window.dispatchEvent(dirtyExit)
     expect(dirtyExit.defaultPrevented).toBe(true)
 
     await user.click(screen.getByRole('button', { name: 'mock-editor-clean' }))
-    const cleanExit = new Event('beforeunload', { cancelable: true })
-    window.dispatchEvent(cleanExit)
-    expect(cleanExit.defaultPrevented).toBe(false)
+    const stillDirtyExit = new Event('beforeunload', { cancelable: true })
+    window.dispatchEvent(stillDirtyExit)
+    expect(stillDirtyExit.defaultPrevented).toBe(true)
 
     await user.click(screen.getByRole('button', { name: 'sidebar.toggle.aria' }))
     await user.click(screen.getByRole('button', { name: 'mock-ai-place' }))
@@ -1445,7 +1660,11 @@ describe('App single-file browser orchestration', () => {
 
     expect(await screen.findByTestId('editor-tab')).not.toBeNull()
     expect(screen.getByTestId('editor-xml').textContent).not.toBe(state.xml)
-    expect(sessionHarness.drafts.has(draft.id)).toBe(false)
+    await waitFor(() => {
+      const replacement = sessionHarness.drafts.get(draft.id)
+      expect(replacement?.xml).toBe(latestSessionController().store.getActive()?.currentXml)
+      expect(replacement?.xml).not.toBe(state.xml)
+    })
   })
 
   it('wires modeler lifecycle, details, called-process feedback, printing, and automation', async () => {
@@ -1512,6 +1731,7 @@ describe('App single-file browser orchestration', () => {
     const user = userEvent.setup()
     await openBlankDiagram(user)
     await user.click(screen.getByRole('button', { name: 'mock-editor-ready' }))
+    installMockEditorXmlTransactionCommands()
 
     let resolveXml!: (value: { xml: string }) => void
     mocks.saveXml.mockImplementationOnce(
@@ -1536,6 +1756,185 @@ describe('App single-file browser orchestration', () => {
 
     await expect(apply).rejects.toMatchObject({ name: 'AbortError' })
     expect(mocks.importXml).not.toHaveBeenCalled()
+  })
+
+  it('rolls back a superseded interview transaction before the newer request imports', async () => {
+    const user = userEvent.setup()
+    const rootElement = {
+      id: 'Process_Test',
+      businessObject: {
+        get: (name: string) => (name === 'orbitpm:activeLang' ? 'en' : undefined)
+      }
+    }
+    mocks.modelerGet.mockImplementation((name: string) => {
+      if (name === 'eventBus') return { on: vi.fn(), off: vi.fn() }
+      if (name === 'canvas') {
+        return {
+          getRootElement: () => rootElement,
+          zoom: vi.fn()
+        }
+      }
+      if (name === 'modeling') return { updateProperties: vi.fn() }
+      if (name === 'elementRegistry') return { getAll: () => [] }
+      return {}
+    })
+    await openBlankDiagram(user)
+    await user.click(screen.getByRole('button', { name: 'mock-editor-ready' }))
+    installMockEditorXmlTransactionCommands()
+
+    const firstXml = `${state.xml}\n<!-- superseded interview -->`
+    const secondXml = `${state.xml}\n<!-- current interview -->`
+    let liveXml = state.xml
+    mocks.saveXml.mockImplementation(async () => ({ xml: liveXml }))
+    const firstImportStarted = deferred()
+    const releaseFirstImport = deferred()
+    let firstImport = true
+    mocks.importXml.mockImplementation(async (candidate: string) => {
+      liveXml = candidate
+      if (candidate === firstXml && firstImport) {
+        firstImport = false
+        firstImportStarted.resolve()
+        await releaseFirstImport.promise
+      }
+      return { warnings: [] }
+    })
+
+    const sessionId = latestSessionController().store.getActive()?.id
+    const applyInterview = latestAssistantDrawerProps().onApplyXml
+    if (!sessionId || !applyInterview) throw new Error('missing interview Apply callback')
+    const firstController = new AbortController()
+    const secondController = new AbortController()
+    const firstApply = Promise.resolve(
+      applyInterview(sessionId, firstXml, {
+        signal: firstController.signal,
+        requestToken: 51
+      })
+    )
+    const firstOutcome = firstApply.then(
+      () => ({ ok: true as const }),
+      (error: unknown) => ({ ok: false as const, error })
+    )
+    await firstImportStarted.promise
+
+    const secondApply = applyInterview(sessionId, secondXml, {
+      signal: secondController.signal,
+      requestToken: 52
+    })
+    releaseFirstImport.resolve()
+    await act(async () => {
+      await secondApply
+    })
+    const result = await firstOutcome
+
+    expect(result).toMatchObject({
+      ok: false,
+      error: expect.objectContaining({ name: 'AbortError' })
+    })
+    expect(mocks.importXml.mock.calls.map(([candidate]) => candidate)).toEqual([
+      firstXml,
+      state.xml,
+      secondXml
+    ])
+    expect(liveXml).toBe(secondXml)
+    expect(latestSessionController().store.get(sessionId)).toMatchObject({
+      currentXml: secondXml,
+      dirty: true
+    })
+    expect(
+      screen.getByRole('tab', {
+        name: /tab\.dirty\.aria/
+      })
+    ).not.toBeNull()
+  })
+
+  it('restores a clean editor state when interview validation is cancelled after autosize', async () => {
+    const user = userEvent.setup()
+    const editorDirty = {
+      change: undefined as ((dirty: boolean) => void) | undefined
+    }
+    const rootElement = {
+      id: 'Process_Test',
+      businessObject: {
+        get: (name: string) => (name === 'orbitpm:activeLang' ? 'en' : undefined)
+      }
+    }
+    mocks.modelerGet.mockImplementation((name: string) => {
+      if (name === 'eventBus') return { on: vi.fn(), off: vi.fn() }
+      if (name === 'canvas') {
+        return {
+          getRootElement: () => rootElement,
+          zoom: vi.fn()
+        }
+      }
+      if (name === 'modeling') {
+        return {
+          updateProperties: () => editorDirty.change?.(true)
+        }
+      }
+      if (name === 'elementRegistry') return { getAll: () => [] }
+      return {}
+    })
+    await openDirectoryWorkspace(user)
+    await user.click(screen.getByRole('button', { name: 'mock-tree-open' }))
+    await screen.findByTestId('editor-tab')
+    await user.click(screen.getByRole('button', { name: 'mock-editor-ready' }))
+    const editor = mocks.editorProps.mock.calls.at(-1)?.[0] as {
+      onDirtyChange(dirty: boolean): void
+    }
+    editorDirty.change = editor.onDirtyChange
+    installMockEditorXmlTransactionCommands({
+      restoreDirtyState: () => editor.onDirtyChange(false)
+    })
+
+    const replacementXml = `${state.xml}\n<!-- cancelled after autosize -->`
+    let liveXml = state.xml
+    let saveCount = 0
+    const finalSaveStarted = deferred()
+    const releaseFinalSave = deferred()
+    mocks.saveXml.mockImplementation(async () => {
+      saveCount += 1
+      if (saveCount === 4) {
+        finalSaveStarted.resolve()
+        await releaseFinalSave.promise
+      }
+      return { xml: liveXml }
+    })
+    mocks.importXml.mockImplementation(async (candidate: string) => {
+      liveXml = candidate
+      return { warnings: [] }
+    })
+
+    const session = latestSessionController().store.getActive()
+    const applyInterview = latestAssistantDrawerProps().onApplyXml
+    if (!session || !applyInterview) throw new Error('missing interview Apply callback')
+    const request = new AbortController()
+    const apply = Promise.resolve(
+      applyInterview(session.id, replacementXml, {
+        signal: request.signal,
+        requestToken: 61
+      })
+    )
+    await finalSaveStarted.promise
+    request.abort()
+    releaseFinalSave.resolve()
+
+    await expect(apply).rejects.toMatchObject({ name: 'AbortError' })
+    expect(mocks.autoSizeAll).toHaveBeenCalled()
+    expect(mocks.importXml.mock.calls.map(([candidate]) => candidate)).toEqual([
+      replacementXml,
+      state.xml
+    ])
+    expect(liveXml).toBe(state.xml)
+    expect(latestSessionController().store.get(session.id)).toMatchObject({
+      currentXml: state.xml,
+      lastSavedXml: state.xml,
+      dirty: false
+    })
+    expect(
+      screen.queryByRole('tab', {
+        name: /tab\.dirty\.aria/
+      })
+    ).toBeNull()
   })
 
   it('opens an uploaded BPMN file from the landing input and reports invalid input', async () => {
@@ -1566,6 +1965,58 @@ describe('App single-file browser orchestration', () => {
     fireEvent.change(badInput, { target: { files: [bad] } })
     expect(await screen.findByText('alert.open.failed')).not.toBeNull()
     expect(user).toBeDefined()
+  })
+
+  it('keeps reviewed single-file localization dirty over the exact uploaded baseline', async () => {
+    const user = userEvent.setup()
+    const { container } = render(<App />)
+    await screen.findByRole('button', { name: 'picker.fallback.openFile' })
+    const input = container.querySelector('input[type="file"]')
+    if (!(input instanceof HTMLInputElement)) throw new Error('missing file input')
+    const processId = 'Process_Single_File_Reviewed'
+    const uploadedXml = withoutArabicMetadata(withProcessId(state.xml, processId))
+    mocks.validateBpmn.mockImplementation(parsedValidationResultForXml)
+    const file = new File([uploadedXml], 'reviewed-upload.bpmn', {
+      type: 'application/xml'
+    })
+    Object.defineProperty(file, 'arrayBuffer', {
+      configurable: true,
+      value: async () => utf8Buffer(uploadedXml)
+    })
+
+    fireEvent.change(input, { target: { files: [file] } })
+    await completeReviewedXmlReview(user, ['عملية ملف', 'بداية ملف'])
+
+    const session = await waitFor(() => {
+      const current = latestSessionController().store.get('reviewed-upload.bpmn')
+      expect(current).toBeDefined()
+      return current!
+    })
+    expect(session.lastSavedXml).toBe(uploadedXml)
+    expect(session.currentXml).not.toBe(uploadedXml)
+    expect(session.currentXml).toContain('عملية ملف')
+    expect(session.dirty).toBe(true)
+    expect(screen.getByTestId('editor-xml').textContent).toBe(session.currentXml)
+  })
+
+  it('rejects an oversized single-file upload before allocating its bytes', async () => {
+    const { container } = render(<App />)
+    await screen.findByRole('button', { name: 'picker.fallback.openFile' })
+    const input = container.querySelector('input[type="file"]')
+    if (!(input instanceof HTMLInputElement)) throw new Error('missing file input')
+    const file = new File(['small'], 'oversized.bpmn', { type: 'application/xml' })
+    const arrayBuffer = vi.fn(async () => utf8Buffer('small'))
+    Object.defineProperty(file, 'size', {
+      configurable: true,
+      value: MAX_DROPPED_IMPORT_BYTES + 1
+    })
+    Object.defineProperty(file, 'arrayBuffer', { configurable: true, value: arrayBuffer })
+
+    fireEvent.change(input, { target: { files: [file] } })
+
+    expect(await screen.findByText('alert.open.failed')).not.toBeNull()
+    expect(arrayBuffer).not.toHaveBeenCalled()
+    expect(screen.queryByTestId('editor-tab')).toBeNull()
   })
 })
 
@@ -1800,6 +2251,93 @@ describe('App directory workspace orchestration', () => {
     expect(latestSessionController().store.get(session.id)?.dirty).toBe(false)
   })
 
+  it('keeps a coordinated history restore clean when live serialization reformats the XML', async () => {
+    const user = userEvent.setup()
+    const root = await openDirectoryWorkspace(user)
+    await user.click(screen.getByRole('button', { name: 'mock-tree-open' }))
+    await screen.findByTestId('editor-tab')
+    await user.click(screen.getByRole('button', { name: 'mock-editor-ready' }))
+    const controller = latestSessionController()
+    const session = controller.store.getActive()
+    if (!session?.identity.path) throw new Error('expected an active persisted session')
+    const path = session.identity.path
+    const restoredXml = `${state.xml}\n<!-- restored formatting baseline -->`
+    const reformattedXml = restoredXml.replaceAll(/>\s+</gu, '><').trim()
+    expect(reformattedXml).not.toBe(restoredXml)
+    let liveXml = state.xml
+    mocks.saveXml.mockImplementation(async () => ({ xml: liveXml }))
+    const editor = mocks.editorProps.mock.calls.at(-1)?.[0] as {
+      onCommandsReady(commands: {
+        save(): void
+        exportSvg(): void
+        exportPng(): void
+        applyExternalXml(xml: string): Promise<void>
+      }): void
+    }
+    act(() => {
+      editor.onCommandsReady({
+        save: vi.fn(),
+        exportSvg: vi.fn(),
+        exportPng: vi.fn(),
+        applyExternalXml: async (xml) => {
+          expect(xml).toBe(restoredXml)
+          liveXml = reformattedXml
+        }
+      })
+    })
+    const outcome = successfulWorkspaceSave(path, restoredXml)
+    const draft = seedDraft(
+      session.identity.workspace.id,
+      path,
+      `${state.xml}\n<!-- obsolete before formatting restore -->`
+    )
+    mocks.restoreHistoryRevision.mockImplementationOnce(
+      async (options: import('./sessions').RestoreHistoryRevisionOptions) => {
+        const captured = controller.store.get(session.id)
+        if (!captured) throw new Error('history target disappeared')
+        await options.applyXml?.(captured, restoredXml)
+        replaceFakeFile(root, path, restoredXml)
+        controller.store.replaceWithExternal(session.id, {
+          xml: restoredXml,
+          fingerprint: {
+            hash: outcome.snapshot.hash,
+            size: outcome.snapshot.size,
+            modifiedAt: outcome.snapshot.modifiedAt
+          }
+        })
+        return {
+          status: 'restored',
+          sessionId: session.id,
+          outcome
+        }
+      }
+    )
+    await user.click(screen.getByRole('button', { name: 'workspace.storage.history' }))
+    await screen.findByTestId('history-dialog')
+
+    let result!: import('./sessions').RestoreHistoryRevisionResult
+    await act(async () => {
+      result = await latestHistoryDialogProps().onRestore!(
+        testHistoryRevision(session.identity.path!)
+      )
+    })
+
+    expect(result).toMatchObject({ status: 'restored', sessionId: session.id, outcome })
+    expect(mocks.saveXml).toHaveBeenCalledOnce()
+    expect(fakeFileText(root, path)).toBe(restoredXml)
+    expect(controller.store.get(session.id)).toMatchObject({
+      currentXml: restoredXml,
+      lastSavedXml: restoredXml,
+      dirty: false
+    })
+    expect(sessionHarness.drafts.has(draft.id)).toBe(false)
+    expect(
+      screen.queryByRole('tab', {
+        name: /existing\.bpmn.*tab\.dirty\.aria/
+      })
+    ).toBeNull()
+  })
+
   it('flushes a retained local draft when storage restores but editor refresh fails', async () => {
     const user = userEvent.setup()
     await openDirectoryWorkspace(user)
@@ -1845,6 +2383,198 @@ describe('App directory workspace orchestration', () => {
     ).not.toBeNull()
   })
 
+  it('re-journals a newer edit that arrives while history cleanup deletes the restored draft', async () => {
+    const user = userEvent.setup()
+    const root = await openDirectoryWorkspace(user)
+    await user.click(screen.getByRole('button', { name: 'mock-tree-open' }))
+    await screen.findByTestId('editor-tab')
+    await user.click(screen.getByRole('button', { name: 'mock-editor-ready' }))
+    const controller = latestSessionController()
+    const session = controller.store.getActive()
+    if (!session?.identity.path) throw new Error('expected an active persisted session')
+    const path = session.identity.path
+    const restoredXml = `${state.xml}\n<!-- restored history revision -->`
+    const newerXml = `${state.xml}\n<!-- edit during history cleanup -->`
+    const outcome = successfulWorkspaceSave(path, restoredXml)
+    const draft = seedDraft(
+      session.identity.workspace.id,
+      path,
+      `${state.xml}\n<!-- obsolete recovery draft -->`
+    )
+    let liveXml = state.xml
+    mocks.saveXml.mockImplementation(async () => ({ xml: liveXml }))
+    mocks.restoreHistoryRevision.mockImplementationOnce(async () => {
+      replaceFakeFile(root, path, restoredXml)
+      controller.store.replaceWithExternal(session.id, {
+        xml: restoredXml,
+        fingerprint: {
+          hash: outcome.snapshot.hash,
+          size: outcome.snapshot.size,
+          modifiedAt: outcome.snapshot.modifiedAt
+        }
+      })
+      liveXml = restoredXml
+      return {
+        status: 'restored',
+        sessionId: session.id,
+        outcome
+      }
+    })
+    const deleteStarted = deferred()
+    const releaseDelete = deferred()
+    mocks.beforeDraftDelete.mockImplementationOnce(async () => {
+      deleteStarted.resolve()
+      await releaseDelete.promise
+    })
+    const editor = mocks.editorProps.mock.calls.at(-1)?.[0] as {
+      onDirtyChange(dirty: boolean): void
+    }
+    await user.click(screen.getByRole('button', { name: 'workspace.storage.history' }))
+    await screen.findByTestId('history-dialog')
+    let restore!: Promise<import('./sessions').RestoreHistoryRevisionResult>
+    act(() => {
+      restore = latestHistoryDialogProps().onRestore!(testHistoryRevision(session.identity.path!))
+    })
+    await deleteStarted.promise
+
+    liveXml = newerXml
+    act(() => {
+      controller.updateXml(session.id, newerXml)
+      editor.onDirtyChange(true)
+    })
+    releaseDelete.resolve()
+    let result!: import('./sessions').RestoreHistoryRevisionResult
+    await act(async () => {
+      result = await restore
+    })
+
+    expect(result).toMatchObject({
+      status: 'storage-restored-session-refresh-failed',
+      sessionId: session.id,
+      outcome
+    })
+    expect(fakeFileText(root, path)).toBe(restoredXml)
+    expect(controller.store.get(session.id)).toMatchObject({
+      currentXml: newerXml,
+      lastSavedXml: restoredXml,
+      dirty: true
+    })
+    await waitFor(() => expect(sessionHarness.drafts.get(draft.id)?.xml).toBe(newerXml))
+    expect(
+      screen.getByRole('tab', {
+        name: /existing\.bpmn.*tab\.dirty\.aria/
+      })
+    ).not.toBeNull()
+  })
+
+  it('fails history restore before storage preflight when immediate dirty XML cannot be read', async () => {
+    const user = userEvent.setup()
+    const root = await openDirectoryWorkspace(user)
+    await user.click(screen.getByRole('button', { name: 'mock-tree-open' }))
+    await screen.findByTestId('editor-tab')
+    await user.click(screen.getByRole('button', { name: 'mock-editor-ready' }))
+    const controller = latestSessionController()
+    const session = controller.store.getActive()
+    if (!session?.identity.path) throw new Error('expected an active persisted session')
+    const adapter = mocks.workspaceLocalizationFactories.mock.calls.at(
+      -1
+    )?.[0] as import('./workspace/adapters').WorkspaceAdapter
+    const adapterRead = vi.spyOn(adapter, 'read')
+    const readError = new Error('live editor serialization rejected')
+    mocks.saveXml.mockRejectedValueOnce(readError)
+    const editor = mocks.editorProps.mock.calls.at(-1)?.[0] as {
+      onDirtyChange(dirty: boolean): void
+    }
+    await user.click(screen.getByRole('button', { name: 'workspace.storage.history' }))
+    await screen.findByTestId('history-dialog')
+
+    let result!: import('./sessions').RestoreHistoryRevisionResult
+    await act(async () => {
+      editor.onDirtyChange(true)
+      result = await latestHistoryDialogProps().onRestore!(
+        testHistoryRevision(session.identity.path!)
+      )
+    })
+
+    expect(result).toMatchObject({
+      status: 'failed',
+      sessionId: session.id,
+      error: expect.objectContaining({
+        message: 'session.save.reloadEditorFailed'
+      })
+    })
+    expect(mocks.saveXml).toHaveBeenCalledOnce()
+    expect(adapterRead).not.toHaveBeenCalled()
+    expect(mocks.restoreHistoryRevision).not.toHaveBeenCalled()
+    expect(fakeFileText(root, session.identity.path)).toBe(state.xml)
+    expect(
+      screen.getByRole('tab', {
+        name: /existing\.bpmn.*tab\.dirty\.aria/
+      })
+    ).not.toBeNull()
+  })
+
+  it('requires a fresh decision when the history target changes during storage preflight', async () => {
+    const user = userEvent.setup()
+    await openDirectoryWorkspace(user)
+    await user.click(screen.getByRole('button', { name: 'mock-tree-open' }))
+    await screen.findByTestId('editor-tab')
+    const controller = latestSessionController()
+    const session = controller.store.getActive()
+    if (!session?.identity.path) throw new Error('expected an active persisted session')
+    const adapter = mocks.workspaceLocalizationFactories.mock.calls.at(
+      -1
+    )?.[0] as import('./workspace/adapters').WorkspaceAdapter
+    const originalRead = adapter.read.bind(adapter)
+    const readStarted = deferred()
+    const releaseRead = deferred()
+    const adapterRead = vi.spyOn(adapter, 'read').mockImplementationOnce(async (path) => {
+      readStarted.resolve()
+      await releaseRead.promise
+      return originalRead(path)
+    })
+    const coreResult = {
+      status: 'failed' as const,
+      sessionId: null,
+      error: new Error('history core sentinel')
+    }
+    mocks.restoreHistoryRevision.mockResolvedValueOnce(coreResult)
+    const revision = testHistoryRevision(session.identity.path)
+    await user.click(screen.getByRole('button', { name: 'workspace.storage.history' }))
+    await screen.findByTestId('history-dialog')
+    let restore!: Promise<import('./sessions').RestoreHistoryRevisionResult>
+    act(() => {
+      restore = latestHistoryDialogProps().onRestore!(revision)
+    })
+    await readStarted.promise
+
+    act(() => {
+      controller.updateXml(session.id, `${state.xml}\n<!-- edit during history preflight -->`)
+    })
+    releaseRead.resolve()
+
+    const dirtyPrompt = await screen.findByRole('dialog', {
+      name: 'workspace.path.dirtyTitle'
+    })
+    expect(adapterRead).toHaveBeenCalledOnce()
+    expect(mocks.restoreHistoryRevision).not.toHaveBeenCalled()
+    await user.click(
+      within(dirtyPrompt).getByRole('button', {
+        name: 'workspace.path.continueWithoutSaving'
+      })
+    )
+
+    await expect(restore).resolves.toEqual(coreResult)
+    expect(adapterRead).toHaveBeenCalledTimes(2)
+    expect(mocks.restoreHistoryRevision).toHaveBeenCalledOnce()
+    expect(mocks.restoreHistoryRevision).toHaveBeenCalledWith(
+      expect.objectContaining({
+        revision,
+        expectedCurrentHash: expect.stringMatching(/^[0-9a-f]{64}$/u)
+      })
+    )
+  })
+
   it('re-prompts instead of overwriting when the reviewed external file changes again', async () => {
     const user = userEvent.setup()
     const root = await openDirectoryWorkspace(user)
@@ -1877,6 +2607,85 @@ describe('App directory workspace orchestration', () => {
       await pending
     })
     expect(fakeFileText(root, path)).toBe(localXml)
+  })
+
+  it('keeps a newer edit dirty and journaled when it arrives after the save write commits', async () => {
+    const user = userEvent.setup()
+    const root = await openDirectoryWorkspace(user)
+    await user.click(screen.getByRole('button', { name: 'mock-tree-open' }))
+    await screen.findByTestId('editor-tab')
+    await user.click(screen.getByRole('button', { name: 'mock-editor-ready' }))
+    const controller = latestSessionController()
+    const session = controller.store.getActive()
+    if (!session?.identity.path) throw new Error('expected an active persisted session')
+    const path = session.identity.path
+    const submittedXml = `${state.xml}\n<!-- submitted durable save -->`
+    const newestXml = `${state.xml}\n<!-- edit after durable write -->`
+    let liveXml = submittedXml
+    mocks.saveXml.mockImplementation(async () => ({ xml: liveXml }))
+    const adapter = mocks.workspaceLocalizationFactories.mock.calls.at(
+      -1
+    )?.[0] as ManifestBoundWorkspaceAdapter
+    const originalWriteAtomic = adapter.writeAtomic.bind(adapter)
+    const writeCommitted = deferred()
+    const releaseWriteOutcome = deferred()
+    vi.spyOn(adapter, 'writeAtomic').mockImplementation(
+      async (destination, bytes, expectedHash, options) => {
+        const outcome = await originalWriteAtomic(destination, bytes, expectedHash, options)
+        if (destination === path && outcome.status === 'success') {
+          writeCommitted.resolve()
+          await releaseWriteOutcome.promise
+        }
+        return outcome
+      }
+    )
+    const editor = mocks.editorProps.mock.calls.at(-1)?.[0] as {
+      onDirtyChange(dirty: boolean): void
+      onRequestSave(xml: string): Promise<void | { durable: boolean }>
+    }
+    let save!: Promise<
+      { ok: true; value: void | { durable: boolean } } | { ok: false; error: unknown }
+    >
+    act(() => {
+      save = editor.onRequestSave(submittedXml).then(
+        (value) => ({ ok: true as const, value }),
+        (error: unknown) => ({ ok: false as const, error })
+      )
+    })
+    await writeCommitted.promise
+    expect(fakeFileText(root, path)).toBe(submittedXml)
+
+    liveXml = newestXml
+    act(() => {
+      controller.updateXml(session.id, newestXml)
+      editor.onDirtyChange(true)
+    })
+    releaseWriteOutcome.resolve()
+    const saveResult = await save
+
+    expect(saveResult).toMatchObject({
+      ok: false,
+      error: expect.objectContaining({ message: 'session.save.newerEdits' })
+    })
+    expect(fakeFileText(root, path)).toBe(submittedXml)
+    expect(controller.store.get(session.id)).toMatchObject({
+      currentXml: newestXml,
+      lastSavedXml: submittedXml,
+      dirty: true
+    })
+    await waitFor(() =>
+      expect(
+        [...sessionHarness.drafts.values()].some(
+          (draft) => draft.path === path && draft.xml === newestXml
+        )
+      ).toBe(true)
+    )
+    expect(
+      screen.getByRole('tab', {
+        name: /existing\.bpmn.*tab\.dirty\.aria/
+      })
+    ).not.toBeNull()
+    expect(mocks.importXml).not.toHaveBeenCalled()
   })
 
   it('keeps reviewed external reload changes dirty over the raw disk baseline', async () => {
@@ -1916,10 +2725,31 @@ describe('App directory workspace orchestration', () => {
     })
     const editor = mocks.editorProps.mock.calls.at(-1)?.[0] as {
       onRequestSave(xml: string): Promise<void | { durable: boolean }>
+      onCommandsReady(commands: {
+        save(): void
+        exportSvg(): void
+        exportPng(): void
+        exportPdf(): void
+        applyExternalXml(xml: string, options?: { dirty?: boolean }): Promise<void>
+      }): void
     }
+    const localXml = `${state.xml}\n<!-- local -->`
+    mocks.saveXml.mockResolvedValue({ xml: localXml })
+    act(() => {
+      editor.onCommandsReady({
+        save: vi.fn(),
+        exportSvg: vi.fn(),
+        exportPng: vi.fn(),
+        exportPdf: vi.fn(),
+        applyExternalXml: async (xml) => {
+          await mocks.importXml(xml)
+          mocks.saveXml.mockResolvedValue({ xml })
+        }
+      })
+    })
 
     await act(async () => {
-      await editor.onRequestSave(`${state.xml}\n<!-- local -->`)
+      await editor.onRequestSave(localXml)
     })
 
     expect(mocks.importXml).toHaveBeenCalledWith(reviewedExternal)
@@ -1929,6 +2759,92 @@ describe('App directory workspace orchestration', () => {
       dirty: true
     })
     expect(screen.getByTestId('editor-xml').textContent).toBe(reviewedExternal)
+    expect(
+      screen.getByRole('tab', {
+        name: /existing\.bpmn.*tab\.dirty\.aria/
+      })
+    ).not.toBeNull()
+  })
+
+  it('leaves an unserializable canvas untouched when save-conflict reload also fails', async () => {
+    const user = userEvent.setup()
+    await openDirectoryWorkspace(user)
+    await user.click(screen.getByRole('button', { name: 'mock-tree-open' }))
+    await screen.findByTestId('editor-tab')
+    await user.click(screen.getByRole('button', { name: 'mock-editor-ready' }))
+
+    const controller = latestSessionController()
+    const session = controller.store.getActive()
+    if (!session?.identity.path) throw new Error('expected an active persisted session')
+    const submittedXml = `${state.xml}\n<!-- verified local before failed reload -->`
+    const externalXml = `${state.xml}\n<!-- external durable file -->`
+    const fingerprint = {
+      hash: 'c'.repeat(64),
+      size: new TextEncoder().encode(externalXml).byteLength,
+      modifiedAt: Date.UTC(2026, 0, 4)
+    }
+    vi.spyOn(controller, 'save').mockImplementationOnce(async () => {
+      controller.store.replaceWithExternal(session.id, {
+        xml: externalXml,
+        fingerprint,
+        identity: session.identity
+      })
+      return {
+        status: 'reloaded',
+        ok: true,
+        sessionId: session.id,
+        external: {
+          identity: session.identity,
+          xml: externalXml,
+          fingerprint
+        }
+      }
+    })
+    const applyExternalXml = vi.fn(async () => {
+      throw new Error('external import failed after touching the canvas')
+    })
+    installMockEditorXmlTransactionCommands({ applyExternalXml })
+    const liveReadFailure = new Error('canvas serialization unavailable')
+    mocks.saveXml
+      .mockResolvedValueOnce({ xml: submittedXml })
+      .mockRejectedValueOnce(liveReadFailure)
+
+    const editor = mocks.editorProps.mock.calls.at(-1)?.[0] as {
+      onDirtyChange(dirty: boolean): void
+      onRequestSave(xml: string): Promise<void | { durable: boolean }>
+    }
+    act(() => {
+      editor.onDirtyChange(true)
+    })
+    let outcome: { ok: true } | { ok: false; error: unknown }
+    await act(async () => {
+      outcome = await editor.onRequestSave(submittedXml).then(
+        () => ({ ok: true as const }),
+        (error: unknown) => ({ ok: false as const, error })
+      )
+    })
+
+    expect(outcome!).toMatchObject({
+      ok: false,
+      error: expect.objectContaining({
+        message: 'session.save.reloadEditorFailed'
+      })
+    })
+    expect(applyExternalXml).toHaveBeenCalledOnce()
+    expect(mocks.saveXml).toHaveBeenCalledTimes(2)
+    expect(mocks.importXml).not.toHaveBeenCalled()
+    expect(controller.store.get(session.id)).toMatchObject({
+      currentXml: submittedXml,
+      lastSavedXml: externalXml,
+      dirty: true
+    })
+    await waitFor(() =>
+      expect(
+        [...sessionHarness.drafts.values()].some(
+          (draft) => draft.path === session.identity.path && draft.xml === submittedXml
+        )
+      ).toBe(true)
+    )
     expect(
       screen.getByRole('tab', {
         name: /existing\.bpmn.*tab\.dirty\.aria/
@@ -1987,6 +2903,7 @@ describe('App directory workspace orchestration', () => {
 
     await user.click(screen.getByRole('button', { name: 'mock-tree-new-process' }))
     await waitFor(() => expect(root.file('Finance/new-approval.bpmn')).toBeDefined())
+    await screen.findByRole('tab', { name: 'new-approval.bpmn' })
 
     const rail = screen.getByRole('button', { name: 'sidebar.toggle.aria' })
     await waitFor(() => expect(rail.getAttribute('aria-expanded')).toBe('false'))
@@ -2295,6 +3212,148 @@ describe('App directory workspace orchestration', () => {
     expect(reloaded!.resources.translationMemory).toEqual(translationMemory)
   })
 
+  it('reloads restored workspace localization resources after a backup commit', async () => {
+    const user = userEvent.setup()
+    const root = fakeRoot()
+    const originalGlossary = [{ en: 'Original term', ar: 'مصطلح أصلي' }]
+    const restoredGlossary = [{ en: 'Restored term', ar: 'مصطلح مستعاد' }]
+    seedWorkspaceLocalization(root, originalGlossary, [])
+    root.addFile('existing.bpmn', state.xml)
+    await openDirectoryWorkspace(user, root)
+    expect(latestSettingsLocalization().snapshot?.resources.glossary).toEqual(originalGlossary)
+
+    const backupAdapter = new MemoryWorkspaceAdapter({
+      id: 'backup-localization-source',
+      files: {
+        [WORKSPACE_GLOSSARY_PATH]: serializeWorkspaceGlossaryDocument(
+          createWorkspaceGlossaryDocument(restoredGlossary)
+        ),
+        [WORKSPACE_TRANSLATION_MEMORY_PATH]: serializeWorkspaceTranslationMemoryDocument(
+          createWorkspaceTranslationMemoryDocument([])
+        )
+      }
+    })
+    const backupBlob = await backupAdapter.exportBackup()
+    const backupFile = new File([await backupBlob.arrayBuffer()], 'localization-backup.zip', {
+      type: 'application/zip'
+    })
+    const input = document.querySelectorAll<HTMLInputElement>(
+      'input[type="file"][accept=".zip,application/zip"]'
+    )[1]
+    if (!input) throw new Error('missing backup ZIP input')
+
+    fireEvent.change(input, { target: { files: [backupFile] } })
+    const dialog = await screen.findByRole('dialog', {
+      name: 'workspace.storage.collisionReview'
+    })
+    for (const select of within(dialog).getAllByRole('combobox') as HTMLSelectElement[]) {
+      if (!select.disabled) await user.selectOptions(select, 'replace')
+    }
+    await user.click(
+      within(dialog).getByRole('button', {
+        name: 'workspace.storage.backupApply'
+      })
+    )
+
+    await waitFor(() =>
+      expect(latestSettingsLocalization().snapshot?.resources.glossary).toEqual(restoredGlossary)
+    )
+    expect(JSON.parse(fakeFileText(root, WORKSPACE_GLOSSARY_PATH)).entries).toEqual(
+      restoredGlossary
+    )
+    expect(screen.queryByRole('dialog', { name: 'workspace.storage.collisionReview' })).toBeNull()
+  })
+
+  it('suppresses save shortcuts until committed backup reconciliation finishes', async () => {
+    const user = userEvent.setup()
+    const root = fakeRoot()
+    const path = 'shortcut-backup-lock.bpmn'
+    root.addFile(path, state.xml)
+    await openDirectoryWorkspace(user, root)
+    const tree = mocks.folderTreeProps.mock.calls.at(-1)?.[0] as {
+      onOpenFile(path: string): void
+    }
+    act(() => tree.onOpenFile(path))
+    await screen.findByTestId('editor-tab')
+    await user.click(screen.getByRole('button', { name: 'mock-editor-ready' }))
+    const applyStarted = deferred()
+    const releaseApply = deferred()
+    const editor = mocks.editorProps.mock.calls.at(-1)?.[0] as {
+      onCommandsReady(commands: {
+        save(): void
+        exportSvg(): void
+        exportPng(): void
+        applyExternalXml(xml: string): Promise<void>
+      }): void
+    }
+    act(() => {
+      editor.onCommandsReady({
+        save: mocks.commandSave,
+        exportSvg: vi.fn(),
+        exportPng: vi.fn(),
+        applyExternalXml: async () => {
+          applyStarted.resolve()
+          await releaseApply.promise
+        }
+      })
+    })
+    const restoredXml = `${state.xml}\n<!-- shortcut-locked backup -->`
+    const backupAdapter = new MemoryWorkspaceAdapter({
+      id: 'backup-shortcut-source',
+      files: { [path]: restoredXml }
+    })
+    const backupBlob = await backupAdapter.exportBackup()
+    const backupFile = new File([await backupBlob.arrayBuffer()], 'shortcut-lock-backup.zip', {
+      type: 'application/zip'
+    })
+    const input = document.querySelectorAll<HTMLInputElement>(
+      'input[type="file"][accept=".zip,application/zip"]'
+    )[1]
+    if (!input) throw new Error('missing backup ZIP input')
+    fireEvent.change(input, { target: { files: [backupFile] } })
+    const dialog = await screen.findByRole('dialog', {
+      name: 'workspace.storage.collisionReview'
+    })
+    for (const select of within(dialog).getAllByRole('combobox') as HTMLSelectElement[]) {
+      if (!select.disabled) await user.selectOptions(select, 'replace')
+    }
+    await user.click(
+      within(dialog).getByRole('button', {
+        name: 'workspace.storage.backupApply'
+      })
+    )
+    await applyStarted.promise
+    expect(fakeFileText(root, path)).toBe(restoredXml)
+
+    const ctrlSave = new KeyboardEvent('keydown', {
+      key: 's',
+      ctrlKey: true,
+      cancelable: true
+    })
+    const metaSave = new KeyboardEvent('keydown', {
+      key: 's',
+      metaKey: true,
+      cancelable: true
+    })
+    window.dispatchEvent(ctrlSave)
+    window.dispatchEvent(metaSave)
+    expect(ctrlSave.defaultPrevented).toBe(true)
+    expect(metaSave.defaultPrevented).toBe(true)
+    expect(mocks.commandSave).not.toHaveBeenCalled()
+
+    releaseApply.resolve()
+    await waitFor(() =>
+      expect(screen.queryByRole('dialog', { name: 'workspace.storage.collisionReview' })).toBeNull()
+    )
+    await act(async () => {
+      await Promise.resolve()
+    })
+    window.dispatchEvent(
+      new KeyboardEvent('keydown', { key: 's', metaKey: true, cancelable: true })
+    )
+    expect(mocks.commandSave).toHaveBeenCalledOnce()
+  })
+
   it('keeps stores generation-scoped across same-id folder switches and rejects stale callbacks', async () => {
     const user = userEvent.setup()
     const first = populatedDirectory()
@@ -2360,15 +3419,9 @@ describe('App directory workspace orchestration', () => {
 
     await user.click(within(settingsDialog).getByRole('button', { name: 'mock-settings-close' }))
     await user.click(screen.getByRole('button', { name: 'mock-tree-open' }))
-    await user.click(await screen.findByRole('button', { name: 'mock-editor-ready' }))
-    await user.click(screen.getByRole('button', { name: 'editor.translate' }))
-    const safeReview = mocks.translationReviewProps.mock.calls.at(-1)?.[0]
-      .review as import('./localization/modelerAdapter').DiagramLocalizationReview
-    expect(safeReview.localResources).toEqual({
-      glossary: SEEDED_GLOSSARY,
-      translationMemory: []
-    })
-    await user.click(screen.getByRole('button', { name: 'translationReview.postpone' }))
+    expect(await screen.findByText('settings.localization.loadFailed')).not.toBeNull()
+    expect(screen.queryByTestId('editor-tab')).toBeNull()
+    expect(latestSessionController().store.list()).toHaveLength(0)
 
     const repaired = [{ en: 'Repaired term', ar: 'مصطلح مُصلح' }]
     const glossaryFile = root.file(WORKSPACE_GLOSSARY_PATH)
@@ -2387,6 +3440,226 @@ describe('App directory workspace orchestration', () => {
     expect(
       within(screen.getByRole('dialog', { name: 'mock-settings' })).queryByRole('alert')
     ).toBeNull()
+    await user.click(
+      within(screen.getByRole('dialog', { name: 'mock-settings' })).getByRole('button', {
+        name: 'mock-settings-close'
+      })
+    )
+    await user.click(screen.getByRole('button', { name: 'mock-tree-open' }))
+    await user.click(await screen.findByRole('button', { name: 'mock-editor-ready' }))
+    await user.click(screen.getByRole('button', { name: 'editor.translate' }))
+    const safeReview = mocks.translationReviewProps.mock.calls.at(-1)?.[0]
+      .review as import('./localization/modelerAdapter').DiagramLocalizationReview
+    expect(safeReview.localResources).toEqual({
+      glossary: repaired,
+      translationMemory: []
+    })
+  })
+
+  it('opens well-formed historical BPMN under the apply-editor validation policy', async () => {
+    const user = userEvent.setup()
+    const root = fakeRoot()
+    const path = 'repairable.bpmn'
+    root.addFile(path, state.xml)
+    await openDirectoryWorkspace(user, root)
+    mocks.validateBpmn.mockImplementation(parsedValidationResultForXml)
+    mocks.evaluatePolicy.mockImplementation((_summary, action: string) => ({
+      allowed: action === 'apply-editor',
+      blockingIssues: []
+    }))
+    const tree = mocks.folderTreeProps.mock.calls.at(-1)?.[0] as {
+      onOpenFile(path: string): void
+    }
+
+    act(() => tree.onOpenFile(path))
+
+    expect(await screen.findByTestId('editor-tab')).not.toBeNull()
+    expect(latestSessionController().store.get(path)).toBeDefined()
+    expect(mocks.evaluatePolicy).toHaveBeenCalled()
+    expect(mocks.evaluatePolicy.mock.calls.every(([, action]) => action === 'apply-editor')).toBe(
+      true
+    )
+  })
+
+  it('opens no tab or session when historical XML review is cancelled', async () => {
+    const user = userEvent.setup()
+    const root = fakeRoot()
+    const path = 'legacy.bpmn'
+    const processId = 'Process_Legacy'
+    const legacyXml = withoutArabicMetadata(withProcessId(state.xml, processId))
+    root.addFile(path, legacyXml)
+    await openDirectoryWorkspace(user, root)
+    mocks.validateBpmn.mockImplementation(async (xml: string) =>
+      xml.includes(processId)
+        ? missingArabicValidationResult(processId)
+        : validationResultForXml(xml)
+    )
+    const tree = mocks.folderTreeProps.mock.calls.at(-1)?.[0] as {
+      onOpenFile(path: string): void
+    }
+
+    act(() => tree.onOpenFile(path))
+
+    const review = await screen.findByRole('dialog', { name: 'reviewedXmlReview.title' })
+    expect(screen.queryByTestId('editor-tab')).toBeNull()
+    expect(latestSessionController().store.list()).toHaveLength(0)
+    expect(fakeFileText(root, path)).toBe(legacyXml)
+
+    await user.click(
+      within(review).getByRole('button', {
+        name: 'reviewedXmlReview.cancel'
+      })
+    )
+
+    await waitFor(() =>
+      expect(screen.queryByRole('dialog', { name: 'reviewedXmlReview.title' })).toBeNull()
+    )
+    expect(screen.queryByTestId('editor-tab')).toBeNull()
+    expect(latestSessionController().store.list()).toHaveLength(0)
+    expect(fakeFileText(root, path)).toBe(legacyXml)
+  })
+
+  it('aborts historical XML review on workspace switch and ignores a late decision', async () => {
+    const user = userEvent.setup()
+    const first = fakeRoot()
+    const path = 'legacy.bpmn'
+    const processId = 'Process_Legacy_Switch'
+    const legacyXml = withoutArabicMetadata(withProcessId(state.xml, processId))
+    first.addFile(path, legacyXml)
+    const second = fakeRoot()
+    second.addFile('second.bpmn', withProcessId(state.xml, 'Process_Second'))
+    await openDirectoryWorkspace(user, first)
+    mocks.validateBpmn.mockImplementation(async (xml: string) =>
+      xml.includes(processId)
+        ? missingArabicValidationResult(processId)
+        : validationResultForXml(xml)
+    )
+    const tree = mocks.folderTreeProps.mock.calls.at(-1)?.[0] as {
+      onOpenFile(path: string): void
+    }
+    act(() => tree.onOpenFile(path))
+    const review = await screen.findByRole('dialog', { name: 'reviewedXmlReview.title' })
+    const staleCancel = within(review).getByRole('button', {
+      name: 'reviewedXmlReview.cancel'
+    })
+
+    mocks.pickWorkspace.mockResolvedValue(asDirectoryHandle(second))
+    await user.click(screen.getByRole('button', { name: 'app.changeFolder' }))
+    await waitFor(() =>
+      expect(screen.queryByRole('dialog', { name: 'reviewedXmlReview.title' })).toBeNull()
+    )
+    await screen.findByTestId('catalog-view')
+    fireEvent.click(staleCancel)
+    await act(async () => {
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    expect(screen.queryByTestId('editor-tab')).toBeNull()
+    expect(latestSessionController().store.list()).toHaveLength(0)
+    expect(fakeFileText(first, path)).toBe(legacyXml)
+    expect(() => second.file(path)).toThrow(/Missing fake file/)
+  })
+
+  it('reviews a recovery draft independently and preserves it when restore review is cancelled', async () => {
+    const user = userEvent.setup()
+    const root = fakeRoot()
+    const path = 'Finance/existing.bpmn'
+    root.addFile(path, state.xml)
+    await openDirectoryWorkspace(user, root)
+    const adapter = mocks.workspaceLocalizationFactories.mock.calls.at(-1)?.[0] as {
+      id: string
+    }
+    const processId = 'Process_Draft_Review'
+    const draftXml = withoutArabicMetadata(withProcessId(state.xml, processId))
+    const draft = seedDraft(adapter.id, path, draftXml)
+    mocks.validateBpmn.mockImplementation(async (xml: string) =>
+      xml.includes(processId)
+        ? missingArabicValidationResult(processId)
+        : validationResultForXml(xml)
+    )
+
+    await user.click(screen.getByRole('button', { name: 'mock-tree-open' }))
+    const recovery = await screen.findByRole('dialog', { name: 'draftRecovery.title' })
+    await user.click(
+      within(recovery).getByRole('button', {
+        name: 'draftRecovery.restore'
+      })
+    )
+
+    const review = await screen.findByRole('dialog', { name: 'reviewedXmlReview.title' })
+    const session = latestSessionController().store.get(path)
+    expect(session).toMatchObject({ currentXml: state.xml, lastSavedXml: state.xml, dirty: false })
+    expect(sessionHarness.drafts.has(draft.id)).toBe(true)
+    await user.click(
+      within(review).getByRole('button', {
+        name: 'reviewedXmlReview.cancel'
+      })
+    )
+
+    await waitFor(() =>
+      expect(screen.queryByRole('dialog', { name: 'reviewedXmlReview.title' })).toBeNull()
+    )
+    expect(screen.getByTestId('editor-xml').textContent).toBe(state.xml)
+    expect(latestSessionController().store.get(path)?.dirty).toBe(false)
+    expect(sessionHarness.drafts.has(draft.id)).toBe(true)
+    expect(fakeFileText(root, path)).toBe(state.xml)
+  })
+
+  it('never overwrites an older recovery draft with reviewed disk localization', async () => {
+    const user = userEvent.setup()
+    const root = fakeRoot()
+    const path = 'reviewed-disk-with-draft.bpmn'
+    const diskProcessId = 'Process_Reviewed_Disk'
+    const draftProcessId = 'Process_Older_Draft'
+    const diskXml = withoutArabicMetadata(withProcessId(state.xml, diskProcessId))
+    const draftXml = withoutArabicMetadata(withProcessId(state.xml, draftProcessId))
+    root.addFile(path, diskXml)
+    await openDirectoryWorkspace(user, root)
+    const workspace = mocks.workspaceLocalizationFactories.mock.calls.at(-1)?.[0] as {
+      id: string
+    }
+    const draft = seedDraft(workspace.id, path, draftXml)
+    mocks.validateBpmn.mockImplementation(parsedValidationResultForXml)
+    const tree = mocks.folderTreeProps.mock.calls.at(-1)?.[0] as {
+      onOpenFile(path: string): void
+    }
+
+    act(() => tree.onOpenFile(path))
+    await completeReviewedXmlReview(user, ['عملية القرص', 'بداية القرص'])
+    const recovery = await screen.findByRole('dialog', { name: 'draftRecovery.title' })
+
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 2_200))
+    })
+    expect(sessionHarness.drafts.get(draft.id)?.xml).toBe(draftXml)
+
+    await user.click(
+      within(recovery).getByRole('button', {
+        name: 'draftRecovery.restore'
+      })
+    )
+    const draftReview = await screen.findByRole('dialog', {
+      name: 'reviewedXmlReview.title'
+    })
+    await user.click(
+      within(draftReview).getByRole('button', {
+        name: 'reviewedXmlReview.cancel'
+      })
+    )
+    await waitFor(() =>
+      expect(screen.queryByRole('dialog', { name: 'reviewedXmlReview.title' })).toBeNull()
+    )
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 2_200))
+    })
+
+    const session = latestSessionController().store.get(path)
+    expect(session?.lastSavedXml).toBe(diskXml)
+    expect(session?.currentXml).toContain('عملية القرص')
+    expect(session?.dirty).toBe(true)
+    expect(sessionHarness.drafts.get(draft.id)?.xml).toBe(draftXml)
+    expect(fakeFileText(root, path)).toBe(diskXml)
   })
 
   it('freezes the exact loaded resources for an active review and uses updates only next time', async () => {
@@ -2524,11 +3797,240 @@ describe('App directory workspace orchestration', () => {
     expect(controller.store.get(session.id)?.dirty).toBe(true)
   })
 
+  it('keeps a baseline-identical live capture clean so refresh can expose external XML', async () => {
+    const user = userEvent.setup()
+    let commandStackChanged: (() => void) | undefined
+    const eventBus = {
+      on: vi.fn((event: string, callback: () => void) => {
+        if (event === 'commandStack.changed') commandStackChanged = callback
+      }),
+      off: vi.fn()
+    }
+    mocks.modelerGet.mockImplementation((name: string) => {
+      if (name === 'eventBus') return eventBus
+      if (name === 'elementRegistry') return { getAll: () => [] }
+      if (name === 'canvas') {
+        return {
+          getRootElement: () => ({
+            businessObject: { $type: 'bpmn:Process', name: 'Test process' }
+          })
+        }
+      }
+      return {}
+    })
+    const root = await openDirectoryWorkspace(user)
+    await user.click(screen.getByRole('button', { name: 'mock-tree-open' }))
+    await screen.findByTestId('editor-tab')
+    await user.click(screen.getByRole('button', { name: 'mock-editor-ready' }))
+    if (!commandStackChanged) throw new Error('missing live XML capture listener')
+
+    act(() => {
+      commandStackChanged?.()
+    })
+    await waitFor(() => expect(mocks.saveXml).toHaveBeenCalled(), { timeout: 1_000 })
+    await waitFor(() => expect(latestSessionController().store.getActive()?.dirty).toBe(false))
+    expect(
+      screen.queryByRole('tab', {
+        name: /tab\.dirty\.aria/
+      })
+    ).toBeNull()
+
+    const externalProcessId = 'Process_External_Refresh'
+    replaceFakeFile(root, 'Finance/existing.bpmn', withProcessId(state.xml, externalProcessId))
+    await user.click(screen.getByRole('button', { name: 'tree.refresh.aria' }))
+    await screen.findByText('toast.refreshed')
+    const digests = await latestAssistantDrawerProps().getDigests()
+
+    expect(digests.some((digest) => digest.processId === externalProcessId)).toBe(true)
+    expect(digests.some((digest) => digest.processId === 'Process_Test')).toBe(true)
+  })
+
+  it('does not import a duplicate-id repair prepared from a refreshed index snapshot', async () => {
+    const user = userEvent.setup()
+    const root = await openDirectoryWorkspace(user, duplicateProcessDirectory())
+    await user.click(screen.getByRole('button', { name: 'mock-tree-open' }))
+    await screen.findByTestId('editor-tab')
+    await user.click(screen.getByRole('button', { name: 'mock-editor-ready' }))
+    installMockEditorXmlTransactionCommands()
+    mocks.saveXml.mockResolvedValue({ xml: state.xml })
+    const validationStarted = deferred()
+    const releaseValidation = deferred()
+    mocks.validateBpmn
+      .mockImplementationOnce(async (xml: string) => {
+        validationStarted.resolve()
+        await releaseValidation.promise
+        return parsedValidationResultForXml(xml)
+      })
+      .mockImplementation(parsedValidationResultForXml)
+
+    await user.click(
+      screen.getByRole('button', {
+        name: /Process_Test.*workspace\.duplicate\.repair/
+      })
+    )
+    await validationStarted.promise
+    replaceFakeFile(
+      root,
+      'Finance/existing.bpmn',
+      `${state.xml}\n<!-- refreshed before repair preparation -->`
+    )
+    await user.click(screen.getByRole('button', { name: 'tree.refresh.aria' }))
+    await screen.findByText('toast.refreshed')
+    releaseValidation.resolve()
+
+    expect(await screen.findByText('session.save.reloadEditorFailed')).not.toBeNull()
+    expect(mocks.importXml).not.toHaveBeenCalled()
+    expect(latestSessionController().store.getActive()).toMatchObject({
+      currentXml: state.xml,
+      lastSavedXml: state.xml,
+      dirty: false
+    })
+    expect(
+      screen.queryByRole('tab', {
+        name: /tab\.dirty\.aria/
+      })
+    ).toBeNull()
+  })
+
+  it('does not overwrite a live edit made before duplicate repair validation settles', async () => {
+    const user = userEvent.setup()
+    await openDirectoryWorkspace(user, duplicateProcessDirectory())
+    await user.click(screen.getByRole('button', { name: 'mock-tree-open' }))
+    await screen.findByTestId('editor-tab')
+    await user.click(screen.getByRole('button', { name: 'mock-editor-ready' }))
+    installMockEditorXmlTransactionCommands()
+    let liveXml = state.xml
+    mocks.saveXml.mockImplementation(async () => ({ xml: liveXml }))
+    const validationStarted = deferred()
+    const releaseValidation = deferred()
+    mocks.validateBpmn
+      .mockImplementationOnce(async (xml: string) => {
+        validationStarted.resolve()
+        await releaseValidation.promise
+        return parsedValidationResultForXml(xml)
+      })
+      .mockImplementation(parsedValidationResultForXml)
+    const editor = mocks.editorProps.mock.calls.at(-1)?.[0] as {
+      onDirtyChange(dirty: boolean): void
+    }
+
+    await user.click(
+      screen.getByRole('button', {
+        name: /Process_Test.*workspace\.duplicate\.repair/
+      })
+    )
+    await validationStarted.promise
+    liveXml = `${state.xml}\n<!-- sub-debounce user edit -->`
+    act(() => {
+      editor.onDirtyChange(true)
+    })
+    releaseValidation.resolve()
+
+    expect(await screen.findByText('session.save.reloadEditorFailed')).not.toBeNull()
+    expect(mocks.importXml).not.toHaveBeenCalled()
+    expect(liveXml).toContain('sub-debounce user edit')
+    expect(
+      screen.getByRole('tab', {
+        name: /tab\.dirty\.aria/
+      })
+    ).not.toBeNull()
+  })
+
+  it('lets only the current duplicate-repair click commit', async () => {
+    const user = userEvent.setup()
+    await openDirectoryWorkspace(user, duplicateProcessDirectory())
+    await user.click(screen.getByRole('button', { name: 'mock-tree-open' }))
+    await screen.findByTestId('editor-tab')
+    await user.click(screen.getByRole('button', { name: 'mock-editor-ready' }))
+    const markDirty = vi.fn()
+    installMockEditorXmlTransactionCommands({ markDirty })
+    let liveXml = state.xml
+    mocks.saveXml.mockImplementation(async () => ({ xml: liveXml }))
+    mocks.importXml.mockImplementation(async (candidate: string) => {
+      liveXml = candidate
+      return { warnings: [] }
+    })
+    const firstValidationStarted = deferred()
+    const releaseFirstValidation = deferred()
+    mocks.validateBpmn
+      .mockImplementationOnce(async (xml: string) => {
+        firstValidationStarted.resolve()
+        await releaseFirstValidation.promise
+        return parsedValidationResultForXml(xml)
+      })
+      .mockImplementation(parsedValidationResultForXml)
+    const repairButton = screen.getByRole('button', {
+      name: /Process_Test.*workspace\.duplicate\.repair/
+    })
+
+    await user.click(repairButton)
+    await firstValidationStarted.promise
+    await user.click(repairButton)
+    releaseFirstValidation.resolve()
+
+    await waitFor(() => expect(mocks.importXml).toHaveBeenCalledOnce())
+    await waitFor(() =>
+      expect(
+        screen.queryByRole('button', {
+          name: /Process_Test.*workspace\.duplicate\.repair/
+        })
+      ).toBeNull()
+    )
+    expect(liveXml).not.toBe(state.xml)
+    expect(markDirty).toHaveBeenCalledOnce()
+    expect(latestSessionController().store.getActive()).toMatchObject({
+      currentXml: liveXml,
+      dirty: true
+    })
+  })
+
+  it('rolls back a partial duplicate-id editor import without dirtying a clean session', async () => {
+    const user = userEvent.setup()
+    await openDirectoryWorkspace(user, duplicateProcessDirectory())
+    await user.click(screen.getByRole('button', { name: 'mock-tree-open' }))
+    await screen.findByTestId('editor-tab')
+    await user.click(screen.getByRole('button', { name: 'mock-editor-ready' }))
+    installMockEditorXmlTransactionCommands()
+    mocks.validateBpmn.mockImplementation(parsedValidationResultForXml)
+    let liveXml = state.xml
+    mocks.saveXml.mockImplementation(async () => ({ xml: liveXml }))
+    mocks.importXml
+      .mockImplementationOnce(async (candidate: string) => {
+        liveXml = candidate
+        throw new Error('partial repair import failed')
+      })
+      .mockImplementation(async (candidate: string) => {
+        liveXml = candidate
+        return { warnings: [] }
+      })
+
+    await user.click(
+      screen.getByRole('button', {
+        name: /Process_Test.*workspace\.duplicate\.repair/
+      })
+    )
+
+    expect(await screen.findByText('session.save.reloadEditorFailed')).not.toBeNull()
+    expect(mocks.importXml).toHaveBeenCalledTimes(2)
+    expect(liveXml).toBe(state.xml)
+    expect(latestSessionController().store.getActive()).toMatchObject({
+      currentXml: state.xml,
+      lastSavedXml: state.xml,
+      dirty: false
+    })
+    expect(
+      screen.queryByRole('tab', {
+        name: /tab\.dirty\.aria/
+      })
+    ).toBeNull()
+  })
+
   it('hands library ZIP Files directly to the browser worker boundary', async () => {
     const user = userEvent.setup()
-    await openDirectoryWorkspace(user)
+    const root = await openDirectoryWorkspace(user)
+    const libraryXml = withProcessId(state.xml, 'Process_Library')
     mocks.readLibraryZipFileInWorker.mockResolvedValueOnce({
-      entries: [{ relPath: 'worker-result.bpmn', xml: state.xml }],
+      entries: [{ relPath: 'worker-result.bpmn', xml: libraryXml }],
       skipped: []
     })
     const input = document.querySelectorAll<HTMLInputElement>(
@@ -2541,11 +4043,833 @@ describe('App directory workspace orchestration', () => {
 
     fireEvent.change(input, { target: { files: [file] } })
 
-    await waitFor(() => expect(mocks.readLibraryZipFileInWorker).toHaveBeenCalledWith(file))
+    await waitFor(() =>
+      expect(mocks.readLibraryZipFileInWorker).toHaveBeenCalledWith(
+        file,
+        expect.objectContaining({ signal: expect.any(AbortSignal) })
+      )
+    )
     expect(arrayBuffer).not.toHaveBeenCalled()
     expect(
       await screen.findByRole('dialog', { name: 'library.import.confirmTitle' })
     ).not.toBeNull()
+
+    expect(() => root.file('worker-result.bpmn')).toThrow(/Missing fake file/)
+    await user.click(screen.getByRole('button', { name: 'library.import.confirm' }))
+    expect(
+      await screen.findByRole('dialog', { name: 'mock-workspace-import-review' })
+    ).not.toBeNull()
+    expect(latestWorkspaceImportReviewProps().plan.artifacts[0]?.sourceKind).toBe('library')
+    expect(() => root.file('worker-result.bpmn')).toThrow(/Missing fake file/)
+    await user.click(screen.getByRole('button', { name: 'mock-workspace-import-cancel' }))
+    expect(screen.queryByRole('dialog', { name: 'mock-workspace-import-review' })).toBeNull()
+    expect(() => root.file('worker-result.bpmn')).toThrow(/Missing fake file/)
+  })
+
+  it('reviews all picker files before a digest-bound workspace import commit', async () => {
+    const user = userEvent.setup()
+    const root = fakeRoot()
+    root.addFile('Finance/existing.bpmn', state.xml)
+    await openDirectoryWorkspace(user, root)
+    const input = document.querySelector<HTMLInputElement>(
+      'input[accept=".bpmn,.apc,.xml,application/xml,text/xml"]'
+    )
+    if (!input) throw new Error('missing workspace import input')
+    const xml = withProcessId(state.xml, 'Process_Imported')
+    const file = new File([xml], 'incoming.bpmn', { type: 'application/xml' })
+    Object.defineProperty(file, 'arrayBuffer', {
+      configurable: true,
+      value: async () => utf8Buffer(xml)
+    })
+
+    fireEvent.change(input, { target: { files: [file] } })
+
+    expect(
+      await screen.findByRole('dialog', { name: 'mock-workspace-import-review' })
+    ).not.toBeNull()
+    const review = latestWorkspaceImportReviewProps()
+    expect(review.plan.status).toBe('ready')
+    expect(review.plan.reviewDigest).toMatch(/^[0-9a-f]{64}$/u)
+    expect(review.plan.artifacts).toHaveLength(1)
+    expect(() => root.file(review.plan.artifacts[0]!.destinationPath)).toThrow(/Missing fake file/)
+
+    await act(async () => {
+      review.onConfirm()
+    })
+
+    await waitFor(() => expect(root.file(review.plan.artifacts[0]!.destinationPath)).toBeDefined())
+    expect(fakeFileText(root, review.plan.artifacts[0]!.destinationPath)).toBe(
+      review.plan.artifacts[0]!.xml
+    )
+    expect(screen.queryByRole('dialog', { name: 'mock-workspace-import-review' })).toBeNull()
+  })
+
+  it('ignores cancellation after workspace import storage has committed', async () => {
+    const user = userEvent.setup()
+    const root = fakeRoot()
+    root.addFile('existing.bpmn', state.xml)
+    await openDirectoryWorkspace(user, root)
+    const incomingXml = withProcessId(state.xml, 'Process_Committed_Boundary')
+    const file = new File([incomingXml], 'committed-boundary.bpmn', {
+      type: 'application/xml'
+    })
+    Object.defineProperty(file, 'arrayBuffer', {
+      configurable: true,
+      value: async () => utf8Buffer(incomingXml)
+    })
+    const input = document.querySelector<HTMLInputElement>(
+      'input[accept=".bpmn,.apc,.xml,application/xml,text/xml"]'
+    )
+    if (!input) throw new Error('missing workspace import input')
+    const originalWriteAtomic = ManifestBoundWorkspaceAdapter.prototype.writeAtomic
+    let committed!: () => void
+    const committedWrite = new Promise<void>((resolve) => {
+      committed = resolve
+    })
+    let release!: () => void
+    const releaseOutcome = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    let operationSignal: AbortSignal | undefined
+    vi.spyOn(ManifestBoundWorkspaceAdapter.prototype, 'writeAtomic').mockImplementation(
+      async function (this: ManifestBoundWorkspaceAdapter, path, bytes, expectedHash, options) {
+        const outcome = await originalWriteAtomic.call(this, path, bytes, expectedHash, options)
+        if (path === 'committed-boundary.bpmn' && outcome.status === 'success') {
+          operationSignal = options?.signal
+          committed()
+          await releaseOutcome
+        }
+        return outcome
+      }
+    )
+
+    fireEvent.change(input, { target: { files: [file] } })
+    await screen.findByRole('dialog', { name: 'mock-workspace-import-review' })
+    act(() => latestWorkspaceImportReviewProps().onConfirm())
+    await committedWrite
+    expect(fakeFileText(root, 'committed-boundary.bpmn')).toBe(incomingXml)
+    const busyReview = latestWorkspaceImportReviewProps()
+    expect(busyReview.busy).toBe(true)
+
+    act(() => busyReview.onCancel())
+    expect(operationSignal?.aborted).toBe(false)
+    expect(latestWorkspaceImportReviewProps().busy).toBe(true)
+    release()
+
+    await waitFor(() =>
+      expect(screen.queryByRole('dialog', { name: 'mock-workspace-import-review' })).toBeNull()
+    )
+    expect(fakeFileText(root, 'committed-boundary.bpmn')).toBe(incomingXml)
+  })
+
+  it('suppresses save shortcuts until committed import reconciliation finishes', async () => {
+    const user = userEvent.setup()
+    const root = fakeRoot()
+    const path = 'shortcut-import-lock.bpmn'
+    root.addFile(path, state.xml)
+    await openDirectoryWorkspace(user, root)
+    const tree = mocks.folderTreeProps.mock.calls.at(-1)?.[0] as {
+      onOpenFile(path: string): void
+    }
+    act(() => tree.onOpenFile(path))
+    await screen.findByTestId('editor-tab')
+    await user.click(screen.getByRole('button', { name: 'mock-editor-ready' }))
+    const applyStarted = deferred()
+    const releaseApply = deferred()
+    const editor = mocks.editorProps.mock.calls.at(-1)?.[0] as {
+      onCommandsReady(commands: {
+        save(): void
+        exportSvg(): void
+        exportPng(): void
+        applyExternalXml(xml: string): Promise<void>
+      }): void
+    }
+    act(() => {
+      editor.onCommandsReady({
+        save: mocks.commandSave,
+        exportSvg: vi.fn(),
+        exportPng: vi.fn(),
+        applyExternalXml: async () => {
+          applyStarted.resolve()
+          await releaseApply.promise
+        }
+      })
+    })
+    const incomingXml = `${state.xml}\n<!-- shortcut-locked import -->`
+    const file = new File([incomingXml], path, { type: 'application/xml' })
+    Object.defineProperty(file, 'arrayBuffer', {
+      configurable: true,
+      value: async () => utf8Buffer(incomingXml)
+    })
+    const input = document.querySelector<HTMLInputElement>(
+      'input[accept=".bpmn,.apc,.xml,application/xml,text/xml"]'
+    )
+    if (!input) throw new Error('missing workspace import input')
+    fireEvent.change(input, { target: { files: [file] } })
+    await screen.findByRole('dialog', { name: 'mock-workspace-import-review' })
+    let review = latestWorkspaceImportReviewProps()
+    const collision = review.plan.collisions[0]
+    if (!collision) throw new Error('expected a replacement collision')
+    act(() => review.onDecision(collision.artifactId, { action: 'replace' }))
+    review = latestWorkspaceImportReviewProps()
+    act(() => review.onConfirm())
+    await applyStarted.promise
+    expect(fakeFileText(root, path)).toBe(review.plan.artifacts[0]!.xml)
+    expect(latestWorkspaceImportReviewProps().busy).toBe(true)
+
+    const ctrlSave = new KeyboardEvent('keydown', {
+      key: 's',
+      ctrlKey: true,
+      cancelable: true
+    })
+    const metaSave = new KeyboardEvent('keydown', {
+      key: 's',
+      metaKey: true,
+      cancelable: true
+    })
+    window.dispatchEvent(ctrlSave)
+    window.dispatchEvent(metaSave)
+    expect(ctrlSave.defaultPrevented).toBe(true)
+    expect(metaSave.defaultPrevented).toBe(true)
+    expect(mocks.commandSave).not.toHaveBeenCalled()
+
+    releaseApply.resolve()
+    await waitFor(() =>
+      expect(screen.queryByRole('dialog', { name: 'mock-workspace-import-review' })).toBeNull()
+    )
+    await act(async () => {
+      await Promise.resolve()
+    })
+    window.dispatchEvent(
+      new KeyboardEvent('keydown', { key: 's', metaKey: true, cancelable: true })
+    )
+    expect(mocks.commandSave).toHaveBeenCalledOnce()
+  })
+
+  it('prompts for an immediate editor dirty signal before its XML debounce runs', async () => {
+    const user = userEvent.setup()
+    const root = fakeRoot()
+    const path = 'immediate-dirty.bpmn'
+    root.addFile(path, state.xml)
+    await openDirectoryWorkspace(user, root)
+    const tree = mocks.folderTreeProps.mock.calls.at(-1)?.[0] as {
+      onOpenFile(path: string): void
+    }
+    act(() => tree.onOpenFile(path))
+    await screen.findByTestId('editor-tab')
+    const controller = latestSessionController()
+    expect(controller.store.get(path)?.dirty).toBe(false)
+    await user.click(screen.getByRole('button', { name: 'mock-editor-dirty' }))
+    expect(controller.store.get(path)?.dirty).toBe(false)
+
+    const incomingXml = `${state.xml}\n<!-- immediate dirty replacement -->`
+    const file = new File([incomingXml], path, { type: 'application/xml' })
+    Object.defineProperty(file, 'arrayBuffer', {
+      configurable: true,
+      value: async () => utf8Buffer(incomingXml)
+    })
+    const input = document.querySelector<HTMLInputElement>(
+      'input[accept=".bpmn,.apc,.xml,application/xml,text/xml"]'
+    )
+    if (!input) throw new Error('missing workspace import input')
+    fireEvent.change(input, { target: { files: [file] } })
+
+    await screen.findByRole('dialog', { name: 'mock-workspace-import-review' })
+    let review = latestWorkspaceImportReviewProps()
+    const collision = review.plan.collisions[0]
+    if (!collision) throw new Error('expected a replacement collision')
+    act(() => review.onDecision(collision.artifactId, { action: 'replace' }))
+    review = latestWorkspaceImportReviewProps()
+    act(() => review.onConfirm())
+
+    const dirtyPrompt = await screen.findByRole('dialog', {
+      name: 'workspace.path.dirtyTitle'
+    })
+    await user.click(
+      within(dirtyPrompt).getByRole('button', {
+        name: 'workspace.path.cancel'
+      })
+    )
+    expect(fakeFileText(root, path)).toBe(state.xml)
+    expect(controller.store.get(path)).toBeDefined()
+    expect(latestWorkspaceImportReviewProps().busy).toBe(false)
+  })
+
+  it('keeps the committed import baseline while an immediate dirty editor read fails', async () => {
+    const user = userEvent.setup()
+    const root = fakeRoot()
+    const path = 'read-failure-after-commit.bpmn'
+    root.addFile(path, state.xml)
+    await openDirectoryWorkspace(user, root)
+    const tree = mocks.folderTreeProps.mock.calls.at(-1)?.[0] as {
+      onOpenFile(path: string): void
+    }
+    act(() => tree.onOpenFile(path))
+    await screen.findByTestId('editor-tab')
+    await user.click(screen.getByRole('button', { name: 'mock-editor-ready' }))
+    const editor = mocks.editorProps.mock.calls.at(-1)?.[0] as {
+      onDirtyChange(dirty: boolean): void
+      onCommandsReady(commands: {
+        save(): void
+        exportSvg(): void
+        exportPng(): void
+        applyExternalXml(xml: string): Promise<void>
+      }): void
+    }
+    act(() => {
+      editor.onCommandsReady({
+        save: vi.fn(),
+        exportSvg: vi.fn(),
+        exportPng: vi.fn(),
+        applyExternalXml: async (xml) => {
+          await mocks.importXml(xml)
+        }
+      })
+    })
+    const committedImport = deferred<{ warnings: string[] }>()
+    mocks.importXml.mockImplementationOnce(() => committedImport.promise)
+    const incomingXml = `${state.xml}\n<!-- committed read-failure replacement -->`
+    const file = new File([incomingXml], path, { type: 'application/xml' })
+    Object.defineProperty(file, 'arrayBuffer', {
+      configurable: true,
+      value: async () => utf8Buffer(incomingXml)
+    })
+    const input = document.querySelector<HTMLInputElement>(
+      'input[accept=".bpmn,.apc,.xml,application/xml,text/xml"]'
+    )
+    if (!input) throw new Error('missing workspace import input')
+    fireEvent.change(input, { target: { files: [file] } })
+    await screen.findByRole('dialog', { name: 'mock-workspace-import-review' })
+    let review = latestWorkspaceImportReviewProps()
+    const collision = review.plan.collisions[0]
+    if (!collision) throw new Error('expected a replacement collision')
+    act(() => review.onDecision(collision.artifactId, { action: 'replace' }))
+    review = latestWorkspaceImportReviewProps()
+    act(() => review.onConfirm())
+    await waitFor(() => expect(mocks.importXml).toHaveBeenCalledOnce())
+
+    const readError = new Error('post-commit live editor serialization rejected')
+    mocks.saveXml.mockRejectedValue(readError)
+    act(() => editor.onDirtyChange(true))
+    committedImport.resolve({ warnings: [] })
+
+    await waitFor(() =>
+      expect(screen.queryByRole('dialog', { name: 'mock-workspace-import-review' })).toBeNull()
+    )
+    const committedXml = review.plan.artifacts[0]!.xml
+    const session = latestSessionController().store.get(path)
+    expect(fakeFileText(root, path)).toBe(committedXml)
+    expect(session).toMatchObject({
+      currentXml: state.xml,
+      lastSavedXml: committedXml,
+      dirty: true
+    })
+    expect(screen.getByTestId('editor-xml').textContent).toBe(state.xml)
+    await waitFor(() =>
+      expect(
+        [...sessionHarness.drafts.values()].some(
+          (draft) => draft.path === path && draft.xml === state.xml
+        )
+      ).toBe(true)
+    )
+    expect(mocks.importXml).toHaveBeenCalledTimes(1)
+    expect(screen.getByTitle(/post-commit live editor serialization rejected/u)).not.toBeNull()
+  })
+
+  it('re-captures and journals the newest edit when it changes during import draft flush', async () => {
+    const user = userEvent.setup()
+    const root = fakeRoot()
+    const path = 'draft-flush-after-commit.bpmn'
+    root.addFile(path, state.xml)
+    await openDirectoryWorkspace(user, root)
+    const tree = mocks.folderTreeProps.mock.calls.at(-1)?.[0] as {
+      onOpenFile(path: string): void
+    }
+    act(() => tree.onOpenFile(path))
+    await screen.findByTestId('editor-tab')
+    await user.click(screen.getByRole('button', { name: 'mock-editor-ready' }))
+    const editor = mocks.editorProps.mock.calls.at(-1)?.[0] as {
+      onDirtyChange(dirty: boolean): void
+      onCommandsReady(commands: {
+        save(): void
+        exportSvg(): void
+        exportPng(): void
+        applyExternalXml(xml: string): Promise<void>
+      }): void
+    }
+    act(() => {
+      editor.onCommandsReady({
+        save: vi.fn(),
+        exportSvg: vi.fn(),
+        exportPng: vi.fn(),
+        applyExternalXml: async (xml) => {
+          await mocks.importXml(xml)
+        }
+      })
+    })
+    const committedImport = deferred<{ warnings: string[] }>()
+    mocks.importXml.mockImplementationOnce(() => committedImport.promise)
+    const incomingXml = `${state.xml}\n<!-- committed flush-race replacement -->`
+    const file = new File([incomingXml], path, { type: 'application/xml' })
+    Object.defineProperty(file, 'arrayBuffer', {
+      configurable: true,
+      value: async () => utf8Buffer(incomingXml)
+    })
+    const input = document.querySelector<HTMLInputElement>(
+      'input[accept=".bpmn,.apc,.xml,application/xml,text/xml"]'
+    )
+    if (!input) throw new Error('missing workspace import input')
+    fireEvent.change(input, { target: { files: [file] } })
+    await screen.findByRole('dialog', { name: 'mock-workspace-import-review' })
+    let review = latestWorkspaceImportReviewProps()
+    const collision = review.plan.collisions[0]
+    if (!collision) throw new Error('expected a replacement collision')
+    act(() => review.onDecision(collision.artifactId, { action: 'replace' }))
+    review = latestWorkspaceImportReviewProps()
+    act(() => review.onConfirm())
+    await waitFor(() => expect(mocks.importXml).toHaveBeenCalledOnce())
+
+    const controller = latestSessionController()
+    const session = controller.store.get(path)
+    if (!session) throw new Error('expected an open persisted session')
+    const firstLocalXml = `${state.xml}\n<!-- first edit during committed import -->`
+    const newestLocalXml = `${state.xml}\n<!-- newest edit during draft flush -->`
+    const putStarted = deferred()
+    const releasePut = deferred()
+    mocks.beforeDraftPut.mockImplementationOnce(async (record: TestDraftRecord) => {
+      expect(record.xml).toBe(firstLocalXml)
+      putStarted.resolve()
+      await releasePut.promise
+    })
+    mocks.saveXml.mockResolvedValue({ xml: firstLocalXml })
+    act(() => {
+      controller.updateXml(session.id, firstLocalXml)
+      editor.onDirtyChange(true)
+    })
+    committedImport.resolve({ warnings: [] })
+    await putStarted.promise
+
+    mocks.saveXml.mockResolvedValue({ xml: newestLocalXml })
+    act(() => {
+      controller.updateXml(session.id, newestLocalXml)
+      editor.onDirtyChange(true)
+    })
+    releasePut.resolve()
+
+    await waitFor(() =>
+      expect(screen.queryByRole('dialog', { name: 'mock-workspace-import-review' })).toBeNull()
+    )
+    const committedXml = review.plan.artifacts[0]!.xml
+    expect(fakeFileText(root, path)).toBe(committedXml)
+    expect(controller.store.get(session.id)).toMatchObject({
+      currentXml: newestLocalXml,
+      lastSavedXml: committedXml,
+      dirty: true
+    })
+    await waitFor(() =>
+      expect([...sessionHarness.drafts.values()].find((draft) => draft.path === path)?.xml).toBe(
+        newestLocalXml
+      )
+    )
+    expect(mocks.importXml).toHaveBeenCalledTimes(1)
+    expect(mocks.importXml).toHaveBeenCalledWith(committedXml)
+  })
+
+  it('retains a newer local revision when it arrives during committed editor synchronization', async () => {
+    const user = userEvent.setup()
+    const root = fakeRoot()
+    const path = 'concurrent-sync.bpmn'
+    root.addFile(path, state.xml)
+    await openDirectoryWorkspace(user, root)
+    const tree = mocks.folderTreeProps.mock.calls.at(-1)?.[0] as {
+      onOpenFile(path: string): void
+    }
+    act(() => tree.onOpenFile(path))
+    await screen.findByTestId('editor-tab')
+    await user.click(screen.getByRole('button', { name: 'mock-editor-ready' }))
+    const editor = mocks.editorProps.mock.calls.at(-1)?.[0] as {
+      onCommandsReady(commands: {
+        save(): void
+        exportSvg(): void
+        exportPng(): void
+        applyExternalXml(xml: string): Promise<void>
+      }): void
+    }
+    act(() => {
+      editor.onCommandsReady({
+        save: vi.fn(),
+        exportSvg: vi.fn(),
+        exportPng: vi.fn(),
+        applyExternalXml: async (xml) => {
+          await mocks.importXml(xml)
+        }
+      })
+    })
+    const controller = latestSessionController()
+    const opened = controller.store.get(path)
+    if (!opened) throw new Error('expected an open persisted session')
+    let resolveCommittedImport!: (value: { warnings: string[] }) => void
+    mocks.importXml.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveCommittedImport = resolve
+        })
+    )
+
+    const incomingXml = `${state.xml}\n<!-- committed replacement -->`
+    const file = new File([incomingXml], path, { type: 'application/xml' })
+    Object.defineProperty(file, 'arrayBuffer', {
+      configurable: true,
+      value: async () => utf8Buffer(incomingXml)
+    })
+    const input = document.querySelector<HTMLInputElement>(
+      'input[accept=".bpmn,.apc,.xml,application/xml,text/xml"]'
+    )
+    if (!input) throw new Error('missing workspace import input')
+    fireEvent.change(input, { target: { files: [file] } })
+    await screen.findByRole('dialog', { name: 'mock-workspace-import-review' })
+    let review = latestWorkspaceImportReviewProps()
+    const collision = review.plan.collisions[0]
+    if (!collision) throw new Error('expected a replacement collision')
+    act(() => review.onDecision(collision.artifactId, { action: 'replace' }))
+    review = latestWorkspaceImportReviewProps()
+    act(() => review.onConfirm())
+    await waitFor(() => expect(mocks.importXml).toHaveBeenCalledOnce())
+
+    const concurrentXml = `${state.xml}\n<!-- newer local revision -->`
+    act(() => {
+      controller.updateXml(opened.id, concurrentXml)
+    })
+    await act(async () => {
+      resolveCommittedImport({ warnings: [] })
+      await Promise.resolve()
+    })
+
+    await waitFor(() => {
+      expect(fakeFileText(root, path)).toBe(review.plan.artifacts[0]!.xml)
+      expect(controller.store.get(opened.id)).toMatchObject({
+        currentXml: concurrentXml,
+        lastSavedXml: review.plan.artifacts[0]!.xml,
+        dirty: true,
+        incarnation: opened.incarnation
+      })
+    })
+    expect(screen.getByTestId('editor-xml').textContent).toBe(concurrentXml)
+    expect(
+      [...sessionHarness.drafts.values()].some(
+        (draft) => draft.path === path && draft.xml === concurrentXml
+      )
+    ).toBe(true)
+    expect(mocks.importXml).toHaveBeenLastCalledWith(concurrentXml)
+  })
+
+  it('preserves a dirty replacement on cancel and discards only the exact confirmed session', async () => {
+    const user = userEvent.setup()
+    const root = fakeRoot()
+    const path = 'existing.bpmn'
+    root.addFile(path, state.xml)
+    await openDirectoryWorkspace(user, root)
+    const tree = mocks.folderTreeProps.mock.calls.at(-1)?.[0] as {
+      onOpenFile(path: string): void
+    }
+    act(() => tree.onOpenFile(path))
+    await screen.findByTestId('editor-tab')
+    const controller = latestSessionController()
+    const session = controller.store.get(path)
+    if (!session) throw new Error('expected an open persisted session')
+    const localXml = `${state.xml}\n<!-- retained local edit -->`
+    controller.updateXml(session.id, localXml)
+    const draft = seedDraft(session.identity.workspace.id, path, localXml)
+    const incomingXml = `${state.xml}\n<!-- reviewed replacement -->`
+    const file = new File([incomingXml], path, { type: 'application/xml' })
+    Object.defineProperty(file, 'arrayBuffer', {
+      configurable: true,
+      value: async () => utf8Buffer(incomingXml)
+    })
+    const input = document.querySelector<HTMLInputElement>(
+      'input[accept=".bpmn,.apc,.xml,application/xml,text/xml"]'
+    )
+    if (!input) throw new Error('missing workspace import input')
+
+    fireEvent.change(input, { target: { files: [file] } })
+
+    await screen.findByRole('dialog', { name: 'mock-workspace-import-review' })
+    let review = latestWorkspaceImportReviewProps()
+    const collision = review.plan.collisions[0]
+    if (!collision) throw new Error('expected a reviewed replacement collision')
+    act(() => review.onDecision(collision.artifactId, { action: 'replace' }))
+    review = latestWorkspaceImportReviewProps()
+    act(() => review.onConfirm())
+    let dirtyPrompt = await screen.findByRole('dialog', {
+      name: 'workspace.path.dirtyTitle'
+    })
+    await user.click(
+      within(dirtyPrompt).getByRole('button', {
+        name: 'workspace.path.cancel'
+      })
+    )
+
+    expect(fakeFileText(root, path)).toBe(state.xml)
+    expect(controller.store.get(session.id)).toMatchObject({
+      currentXml: localXml,
+      dirty: true,
+      incarnation: session.incarnation
+    })
+    expect(sessionHarness.drafts.has(draft.id)).toBe(true)
+    expect(latestWorkspaceImportReviewProps().busy).toBe(false)
+
+    act(() => latestWorkspaceImportReviewProps().onConfirm())
+    dirtyPrompt = await screen.findByRole('dialog', {
+      name: 'workspace.path.dirtyTitle'
+    })
+    await user.click(
+      within(dirtyPrompt).getByRole('button', {
+        name: 'workspace.path.continueWithoutSaving'
+      })
+    )
+
+    await screen.findByRole('dialog', { name: 'mock-workspace-import-review' })
+    review = latestWorkspaceImportReviewProps()
+    const replannedCollision = review.plan.collisions[0]
+    if (!replannedCollision) throw new Error('expected the discarded workspace to be re-planned')
+    act(() => review.onDecision(replannedCollision.artifactId, { action: 'replace' }))
+    act(() => latestWorkspaceImportReviewProps().onConfirm())
+
+    await waitFor(() => expect(fakeFileText(root, path)).toBe(incomingXml))
+    expect(controller.store.get(session.id)).toBeUndefined()
+    expect(sessionHarness.drafts.has(draft.id)).toBe(false)
+    expect(screen.queryByRole('dialog', { name: 'mock-workspace-import-review' })).toBeNull()
+  })
+
+  it('aborts a reviewed import plan on workspace switch and ignores late confirmation', async () => {
+    const user = userEvent.setup()
+    const first = fakeRoot()
+    first.addFile('first.bpmn', withProcessId(state.xml, 'Process_First'))
+    const second = fakeRoot()
+    second.addFile('second.bpmn', withProcessId(state.xml, 'Process_Second'))
+    await openDirectoryWorkspace(user, first)
+    const incomingXml = withProcessId(state.xml, 'Process_Reviewed_Switch')
+    const file = new File([incomingXml], 'late-import.bpmn', { type: 'application/xml' })
+    Object.defineProperty(file, 'arrayBuffer', {
+      configurable: true,
+      value: async () => utf8Buffer(incomingXml)
+    })
+    const input = document.querySelector<HTMLInputElement>(
+      'input[accept=".bpmn,.apc,.xml,application/xml,text/xml"]'
+    )
+    if (!input) throw new Error('missing workspace import input')
+    fireEvent.change(input, { target: { files: [file] } })
+    const review = await screen.findByRole('dialog', {
+      name: 'mock-workspace-import-review'
+    })
+    const staleConfirm = within(review).getByRole('button', {
+      name: 'mock-workspace-import-confirm'
+    })
+
+    mocks.pickWorkspace.mockResolvedValue(asDirectoryHandle(second))
+    await user.click(screen.getByRole('button', { name: 'app.changeFolder' }))
+    await waitFor(() =>
+      expect(screen.queryByRole('dialog', { name: 'mock-workspace-import-review' })).toBeNull()
+    )
+    fireEvent.click(staleConfirm)
+    await act(async () => {
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    expect(() => first.file('late-import.bpmn')).toThrow(/Missing fake file/)
+    expect(() => second.file('late-import.bpmn')).toThrow(/Missing fake file/)
+    expect(latestSessionController().store.list()).toHaveLength(0)
+  })
+
+  it('does not leak a rejected old-workspace live read into the next workspace', async () => {
+    const user = userEvent.setup()
+    const first = fakeRoot()
+    const path = 'stale-live-read.bpmn'
+    first.addFile(path, state.xml)
+    const second = fakeRoot()
+    second.addFile('second.bpmn', withProcessId(state.xml, 'Process_Second_Live_Read'))
+    await openDirectoryWorkspace(user, first)
+    const tree = mocks.folderTreeProps.mock.calls.at(-1)?.[0] as {
+      onOpenFile(path: string): void
+    }
+    act(() => tree.onOpenFile(path))
+    await screen.findByTestId('editor-tab')
+    await user.click(screen.getByRole('button', { name: 'mock-editor-ready' }))
+    const applyStarted = deferred()
+    const releaseApply = deferred()
+    const editor = mocks.editorProps.mock.calls.at(-1)?.[0] as {
+      onDirtyChange(dirty: boolean): void
+      onCommandsReady(commands: {
+        save(): void
+        exportSvg(): void
+        exportPng(): void
+        applyExternalXml(xml: string): Promise<void>
+      }): void
+    }
+    act(() => {
+      editor.onCommandsReady({
+        save: vi.fn(),
+        exportSvg: vi.fn(),
+        exportPng: vi.fn(),
+        applyExternalXml: async () => {
+          applyStarted.resolve()
+          await releaseApply.promise
+        }
+      })
+    })
+    const readStarted = deferred()
+    const liveRead = deferred<{ xml: string }>()
+    mocks.saveXml.mockImplementationOnce(() => {
+      readStarted.resolve()
+      return liveRead.promise
+    })
+    const incomingXml = `${state.xml}\n<!-- committed before stale live read -->`
+    const file = new File([incomingXml], path, { type: 'application/xml' })
+    Object.defineProperty(file, 'arrayBuffer', {
+      configurable: true,
+      value: async () => utf8Buffer(incomingXml)
+    })
+    const input = document.querySelector<HTMLInputElement>(
+      'input[accept=".bpmn,.apc,.xml,application/xml,text/xml"]'
+    )
+    if (!input) throw new Error('missing workspace import input')
+    fireEvent.change(input, { target: { files: [file] } })
+    await screen.findByRole('dialog', { name: 'mock-workspace-import-review' })
+    const review = latestWorkspaceImportReviewProps()
+    const collision = review.plan.collisions[0]
+    if (!collision) throw new Error('expected a replacement collision')
+    act(() => review.onDecision(collision.artifactId, { action: 'replace' }))
+    act(() => latestWorkspaceImportReviewProps().onConfirm())
+    await applyStarted.promise
+    act(() => editor.onDirtyChange(true))
+    releaseApply.resolve()
+    await readStarted.promise
+
+    const oldController = latestSessionController()
+    mocks.pickWorkspace.mockResolvedValue(asDirectoryHandle(second))
+    await user.click(screen.getByRole('button', { name: 'app.changeFolder' }))
+    const switchGuard = await screen.findByRole('dialog', { name: 'confirm.switch.title' })
+    await user.click(within(switchGuard).getByRole('button', { name: 'confirm.switch.discard' }))
+    await waitFor(() => expect(latestSessionController()).not.toBe(oldController))
+    expect(await screen.findByTestId('catalog-view')).not.toBeNull()
+
+    liveRead.reject(new Error('late stale old-workspace live read'))
+    await act(async () => {
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    expect(screen.queryByTitle(/late stale old-workspace live read/u)).toBeNull()
+    expect(screen.queryByText('session.save.reloadEditorFailed')).toBeNull()
+    expect(latestSessionController().store.list()).toHaveLength(0)
+  })
+
+  it('does not carry an old-workspace draft flush rejection into the next workspace', async () => {
+    const user = userEvent.setup()
+    const first = fakeRoot()
+    const path = 'stale-draft-flush.bpmn'
+    first.addFile(path, state.xml)
+    const second = fakeRoot()
+    second.addFile('second.bpmn', withProcessId(state.xml, 'Process_Second_Draft_Flush'))
+    await openDirectoryWorkspace(user, first)
+    const tree = mocks.folderTreeProps.mock.calls.at(-1)?.[0] as {
+      onOpenFile(path: string): void
+    }
+    act(() => tree.onOpenFile(path))
+    await screen.findByTestId('editor-tab')
+    await user.click(screen.getByRole('button', { name: 'mock-editor-ready' }))
+    const applyStarted = deferred()
+    const releaseApply = deferred()
+    const editor = mocks.editorProps.mock.calls.at(-1)?.[0] as {
+      onDirtyChange(dirty: boolean): void
+      onCommandsReady(commands: {
+        save(): void
+        exportSvg(): void
+        exportPng(): void
+        applyExternalXml(xml: string): Promise<void>
+      }): void
+    }
+    act(() => {
+      editor.onCommandsReady({
+        save: vi.fn(),
+        exportSvg: vi.fn(),
+        exportPng: vi.fn(),
+        applyExternalXml: async () => {
+          applyStarted.resolve()
+          await releaseApply.promise
+        }
+      })
+    })
+    const localXml = `${state.xml}\n<!-- retained before stale draft rejection -->`
+    const putStarted = deferred()
+    const rejectPut = deferred()
+    mocks.beforeDraftPut.mockImplementationOnce(async (record: TestDraftRecord) => {
+      expect(record.xml).toBe(localXml)
+      putStarted.resolve()
+      await rejectPut.promise
+    })
+    mocks.saveXml.mockResolvedValue({ xml: localXml })
+    const incomingXml = `${state.xml}\n<!-- committed before stale draft rejection -->`
+    const file = new File([incomingXml], path, { type: 'application/xml' })
+    Object.defineProperty(file, 'arrayBuffer', {
+      configurable: true,
+      value: async () => utf8Buffer(incomingXml)
+    })
+    const input = document.querySelector<HTMLInputElement>(
+      'input[accept=".bpmn,.apc,.xml,application/xml,text/xml"]'
+    )
+    if (!input) throw new Error('missing workspace import input')
+    fireEvent.change(input, { target: { files: [file] } })
+    await screen.findByRole('dialog', { name: 'mock-workspace-import-review' })
+    const review = latestWorkspaceImportReviewProps()
+    const collision = review.plan.collisions[0]
+    if (!collision) throw new Error('expected a replacement collision')
+    act(() => review.onDecision(collision.artifactId, { action: 'replace' }))
+    act(() => latestWorkspaceImportReviewProps().onConfirm())
+    await applyStarted.promise
+    const oldController = latestSessionController()
+    const session = oldController.store.get(path)
+    if (!session) throw new Error('expected an open persisted session')
+    act(() => {
+      oldController.updateXml(session.id, localXml)
+      editor.onDirtyChange(true)
+    })
+    releaseApply.resolve()
+    await putStarted.promise
+
+    mocks.pickWorkspace.mockResolvedValue(asDirectoryHandle(second))
+    await user.click(screen.getByRole('button', { name: 'app.changeFolder' }))
+    const switchGuard = await screen.findByRole('dialog', { name: 'confirm.switch.title' })
+    rejectPut.reject(new Error('late stale old-workspace draft flush'))
+    await user.click(within(switchGuard).getByRole('button', { name: 'confirm.switch.discard' }))
+    await waitFor(() => expect(latestSessionController()).not.toBe(oldController))
+    expect(await screen.findByTestId('catalog-view')).not.toBeNull()
+
+    expect(screen.queryByTitle(/late stale old-workspace draft flush/u)).toBeNull()
+    expect(screen.queryByText('draftRecovery.error')).toBeNull()
+    expect(latestSessionController().store.list()).toHaveLength(0)
+  })
+
+  it('rejects an oversized multi-file picker item before allocating its bytes', async () => {
+    await openDirectoryWorkspace(userEvent.setup())
+    const input = document.querySelector<HTMLInputElement>(
+      'input[accept=".bpmn,.apc,.xml,application/xml,text/xml"]'
+    )
+    if (!input) throw new Error('missing workspace import input')
+    const file = new File(['small'], 'oversized.bpmn', { type: 'application/xml' })
+    const arrayBuffer = vi.fn(async () => utf8Buffer('small'))
+    Object.defineProperty(file, 'size', {
+      configurable: true,
+      value: MAX_DROPPED_IMPORT_BYTES + 1
+    })
+    Object.defineProperty(file, 'arrayBuffer', { configurable: true, value: arrayBuffer })
+
+    fireEvent.change(input, { target: { files: [file] } })
+
+    expect(await screen.findByText('alert.import.failed')).not.toBeNull()
+    expect(arrayBuffer).not.toHaveBeenCalled()
+    expect(mocks.workspaceImportReviewProps).not.toHaveBeenCalled()
   })
 
   it('cancels the active and queued draft reviews when the workspace switches', async () => {
@@ -2596,6 +4920,7 @@ describe('App directory workspace orchestration', () => {
 
     await user.click(screen.getByRole('button', { name: 'mock-tree-new-process' }))
     await waitFor(() => expect(root.file('Finance/new-approval.bpmn')).toBeDefined())
+    await screen.findByRole('tab', { name: 'new-approval.bpmn' })
 
     const rail = screen.getByRole('button', { name: 'sidebar.toggle.aria' })
     await waitFor(() => expect(rail.getAttribute('aria-expanded')).toBe('false'))

@@ -15,8 +15,7 @@ import {
   buildNewProcessDoc,
   buildMissingProcessDoc,
   humanizeProcessId,
-  deriveFileBaseName,
-  sanitizeFolderName
+  deriveFileBaseName
 } from './editor/newProcessDoc'
 import {
   countBpmnFiles,
@@ -82,6 +81,7 @@ import {
   restoreHistoryRevision,
   type DraftRecoveryComparison,
   type DraftJournal,
+  type DocumentSession,
   type ExternalConflict,
   type ExternalConflictDecision,
   type FileFingerprint,
@@ -140,6 +140,8 @@ import { ReviewedXmlIngestionDialog } from './localization/ReviewedXmlIngestionD
 import { ReviewedXmlReviewQueue } from './localization/reviewQueue'
 import {
   createWorkspaceLocalizationStore,
+  WORKSPACE_GLOSSARY_PATH,
+  WORKSPACE_TRANSLATION_MEMORY_PATH,
   type WorkspaceLocalizationState,
   type WorkspaceLocalizationStore
 } from './localization/workspaceStore'
@@ -175,16 +177,14 @@ import { UnsavedSwitchDialog } from './workspace/UnsavedSwitchDialog'
 import { AccessibleDialog } from './common/AccessibleDialog'
 import { createMutex } from './workspace/mutex'
 import { partitionDirtyTabs } from './workspace/dirtySave'
-import { canCommitToWorkspace, commitIfCurrent } from './workspace/workspaceSession'
+import { canCommitToWorkspace } from './workspace/workspaceSession'
 import { MoveDialog } from './workspace/MoveDialog'
 import { PrintButton } from './workspace/PrintButton'
 import { PrintView, type PrintJob } from './workspace/PrintView'
 import {
   collectDroppedBpmn,
   isInternalDrag,
-  isApcName,
-  isXmlName,
-  looksLikeBpmnXml,
+  MAX_DROPPED_IMPORT_BYTES,
   type DroppedBpmn
 } from './workspace/importDrop'
 import {
@@ -221,8 +221,17 @@ import {
 } from './library/libraryManifest'
 import { readLibraryZipFileInWorker } from './library/browserZipImport'
 import type { LibraryImportResult } from './library/zipImport'
-import { convertAmlToBpmnFiles, looksLikeAml } from './library/apcImport'
-import { secureBpmnImportPreparer } from './workspace/importTransaction'
+import {
+  confirmWorkspaceImportPlan,
+  DEFAULT_WORKSPACE_IMPORT_LIMITS,
+  executeConfirmedWorkspaceImport,
+  prepareWorkspaceImportPlan,
+  secureBpmnImportPreparer,
+  type WorkspaceImportCollisionDecision,
+  type WorkspaceImportPlan,
+  type WorkspaceImportSource
+} from './workspace/importTransaction'
+import { WorkspaceImportReviewDialog } from './workspace/WorkspaceImportReviewDialog'
 import { decodeUtf8Strict } from './workspace/utf8'
 import {
   evaluateValidationPolicy,
@@ -232,7 +241,6 @@ import {
   type ValidationAction,
   type ValidationSummary
 } from './validation'
-import { layoutBpmnValidated } from './generation'
 import { t, tPlural, type Key } from './i18n'
 import { useLang, setLang } from './i18n/useLang'
 import './print.css'
@@ -382,6 +390,7 @@ interface Tab {
 
 interface SessionSaveRequestResult {
   durable: boolean
+  acceptedSubmittedXml?: boolean
 }
 
 interface SaveConflictPromptState {
@@ -395,7 +404,7 @@ interface SaveConflictPromptState {
 
 interface PathDirtyPromptState {
   count: number
-  kind: 'rename' | 'move' | 'delete'
+  kind: 'rename' | 'move' | 'delete' | 'import' | 'history'
   path: string
 }
 
@@ -500,15 +509,6 @@ async function writeUniqueBpmn(
   throw new Error(t('workspace.create.noAvailableName'))
 }
 
-async function directoryEntryCount(adapter: WorkspaceAdapter, path: string): Promise<number> {
-  try {
-    return (await adapter.list(path)).length
-  } catch (error) {
-    if (error instanceof WorkspaceOperationError && error.code === 'not-found') return 0
-    throw error
-  }
-}
-
 function migratedPathForPlan(plan: PathTransactionPlan, path: string): string | null {
   const source = plan.request.sourcePath
   const affected =
@@ -519,14 +519,6 @@ function migratedPathForPlan(plan: PathTransactionPlan, path: string): string | 
   return plan.request.entryKind === 'file'
     ? destination
     : `${destination}${path.slice(source.length)}`
-}
-
-/** Map a convertApcToBpmn error code to friendly, localized reason text. */
-function apcReason(code: string): string {
-  if (code === 'not-aml') return t('apc.reason.notAml')
-  if (code === 'no-objects') return t('apc.reason.noObjects')
-  if (code === 'no-models') return t('apc.reason.noModels')
-  return code
 }
 
 /** Map a classified picker/reconnect failure to its i18n key (ORIG-12) — raw
@@ -562,6 +554,45 @@ function collectFolders(node: LiteTreeNode | null): FolderOptionLite[] {
 
 function downloadBpmn(fileName: string, xml: string): void {
   triggerDownload(fileName, `data:application/xml;charset=utf-8,${encodeURIComponent(xml)}`)
+}
+
+function assertImportAllocationSize(byteLength: number, path: string): void {
+  if (
+    !Number.isSafeInteger(byteLength) ||
+    byteLength < 0 ||
+    byteLength > MAX_DROPPED_IMPORT_BYTES
+  ) {
+    throw new WorkspaceOperationError({
+      code: 'integrity-failure',
+      operation: 'read',
+      path,
+      message: `Import file "${path}" exceeds the ${MAX_DROPPED_IMPORT_BYTES}-byte limit.`
+    })
+  }
+}
+
+async function readBrowserImportFile(file: File, signal?: AbortSignal): Promise<string> {
+  assertImportAllocationSize(file.size, file.name)
+  if (signal?.aborted) throw new DOMException('Import was cancelled.', 'AbortError')
+  const buffer = await file.arrayBuffer()
+  if (signal?.aborted) throw new DOMException('Import was cancelled.', 'AbortError')
+  assertImportAllocationSize(buffer.byteLength, file.name)
+  return decodeUtf8Strict(new Uint8Array(buffer), {
+    operation: 'read',
+    path: file.name
+  })
+}
+
+function isWorkspaceLocalizationResourcePath(path: string): boolean {
+  try {
+    const normalized = normalizeWorkspacePath(path).toLocaleLowerCase('en-US')
+    return (
+      normalized === WORKSPACE_GLOSSARY_PATH.toLocaleLowerCase('en-US') ||
+      normalized === WORKSPACE_TRANSLATION_MEMORY_PATH.toLocaleLowerCase('en-US')
+    )
+  } catch {
+    return false
+  }
 }
 
 /** A flow-node / gateway / event shape as reported by the elementRegistry. */
@@ -611,49 +642,6 @@ async function validateReleaseXml(
     throw new Error(`BPMN validation blocked this operation${codes ? `: ${codes}` : ''}`)
   }
   return parsed.summary
-}
-
-async function prepareImportedBpmnXml(
-  xml: string,
-  knownProcessIds: Iterable<string>
-): Promise<{ xml: string; autoLayouted: boolean; summary: ValidationSummary }> {
-  const processIds = [...knownProcessIds]
-  const preview = await validateReleaseXml(xml, {
-    action: 'commit-import',
-    knownProcessIds: processIds,
-    requireBilingual: false,
-    requireDi: false
-  })
-  const missingDi = preview.issues.some(
-    (issue) => issue.code === 'di.process-missing' || issue.code === 'bpmnlint.no-bpmndi'
-  )
-  if (!missingDi) {
-    const summary = await validateReleaseXml(xml, {
-      action: 'commit-import',
-      knownProcessIds: processIds,
-      requireBilingual: false,
-      requireDi: true
-    })
-    return { xml, autoLayouted: false, summary }
-  }
-
-  const layout = await layoutBpmnValidated(xml, {
-    validation: {
-      knownProcessIds: processIds,
-      requireBilingual: false
-    }
-  })
-  const preservation = await validateUnknownExtensionPreservation(xml, layout.xml)
-  if (!preservation.valid) {
-    throw new Error('Auto-layout would discard or mutate opaque BPMN extension data.')
-  }
-  const summary = await validateReleaseXml(layout.xml, {
-    action: 'commit-import',
-    knownProcessIds: processIds,
-    requireBilingual: false,
-    requireDi: true
-  })
-  return { xml: layout.xml, autoLayouted: true, summary }
 }
 
 function confirmGeneratedImportLayout(): boolean {
@@ -711,13 +699,40 @@ interface WorkspaceOperationBinding {
 
 interface LibraryImportState {
   binding: WorkspaceOperationBinding
+  name: string
   result: LibraryImportResult
+}
+
+interface WorkspaceImportReviewState {
+  binding: WorkspaceOperationBinding
+  controller: AbortController
+  plan: WorkspaceImportPlan
+  sources: readonly WorkspaceImportSource[]
+  targetFolder: string
+  decisions: Readonly<Record<string, WorkspaceImportCollisionDecision>>
+  busy: boolean
+  error: string | null
 }
 
 interface BackupImportState {
   binding: WorkspaceOperationBinding
+  controller: AbortController
+  backup: File
   plan: WorkspaceBackupImportPlan
 }
+
+interface OpenSessionCommitGuard {
+  id: string
+  incarnation: number
+  revision: number
+  currentXml: string
+  uiDirty: boolean
+}
+
+type LiveSessionCaptureResult =
+  | { status: 'captured'; session: DocumentSession }
+  | { status: 'stale' }
+  | { status: 'unavailable'; error: unknown; session: DocumentSession }
 
 /** Switch a multi-process BPMN file to the root selected by semantic id. */
 async function focusProcessRoot(modeler: unknown, processId: string): Promise<boolean> {
@@ -771,6 +786,7 @@ function App(): JSX.Element {
 
   const [tree, setTree] = useState<LiteTreeNode | null>(null)
   const [workspaceIssues, setWorkspaceIssues] = useState<string[]>([])
+  const workspaceRuntimeIssuesRef = useRef<Set<string>>(new Set())
   const [workspaceLocalizationError, setWorkspaceLocalizationError] = useState<string | null>(null)
   const liveWorkspaceIndexRef = useRef(new LiveWorkspaceIndex())
   const [liveWorkspaceVersion, setLiveWorkspaceVersion] = useState(0)
@@ -785,8 +801,11 @@ function App(): JSX.Element {
   const [dirtyByKey, setDirtyByKey] = useState<Record<string, boolean>>({})
   const dirtyByKeyRef = useRef<Record<string, boolean>>({})
   dirtyByKeyRef.current = dirtyByKey
+  const forcedUndurableDirtyByKeyRef = useRef<Set<string>>(new Set())
   const baseHashByPathRef = useRef<Record<string, string>>({})
   const liveXmlTimersRef = useRef<Record<string, ReturnType<typeof setTimeout>>>({})
+  const liveXmlCaptureEpochByKeyRef = useRef<Record<string, number>>({})
+  const duplicateRepairTokenByPathRef = useRef<Map<string, symbol>>(new Map())
   const [mounted, setMounted] = useState<Set<string>>(() => new Set())
   const [modelersByKey, setModelersByKey] = useState<Record<string, unknown>>({})
   const modelersByKeyRef = useRef<Readonly<Record<string, unknown>>>({})
@@ -794,6 +813,17 @@ function App(): JSX.Element {
   const commandsRef = useRef<Record<string, EditorTabCommands | null>>({})
   const commandUnregisterersRef = useRef<Record<string, () => void>>({})
   const commandRouterRef = useRef<ActiveSessionCommandRouter | null>(null)
+  const persistenceInteractionLockedRef = useRef(false)
+  const persistenceInteractionLocksRef = useRef<Set<symbol>>(new Set())
+  const acquirePersistenceInteractionLock = useCallback((): (() => void) => {
+    const token = Symbol('persistence-interaction')
+    persistenceInteractionLocksRef.current.add(token)
+    persistenceInteractionLockedRef.current = true
+    return () => {
+      persistenceInteractionLocksRef.current.delete(token)
+      persistenceInteractionLockedRef.current = persistenceInteractionLocksRef.current.size > 0
+    }
+  }, [])
   if (!commandRouterRef.current) {
     commandRouterRef.current = new ActiveSessionCommandRouter(() => activeKeyRef.current)
   }
@@ -880,6 +910,8 @@ function App(): JSX.Element {
   const draftRecoveryRequestIdRef = useRef(0)
   const draftRecoveryEpochRef = useRef(0)
   const draftRecoveryQueueRef = useRef<Promise<void>>(Promise.resolve())
+  const draftRecoveryFlowQueueRef = useRef<Promise<void>>(Promise.resolve())
+  const skipDraftTrackingOnceRef = useRef<Set<string>>(new Set())
   const draftRecoveryPendingRef = useRef<{
     requestId: number
     resolve: (decision: DraftRecoveryDecision | 'cancel') => void
@@ -1135,12 +1167,20 @@ function App(): JSX.Element {
   const libraryInputRef = useRef<HTMLInputElement | null>(null)
   const backupInputRef = useRef<HTMLInputElement | null>(null)
   const [backupImportState, setBackupImportState] = useState<BackupImportState | null>(null)
+  const backupImportAbortRef = useRef<AbortController | null>(null)
   const [backupBusy, setBackupBusy] = useState(false)
   const [historyOpen, setHistoryOpen] = useState(false)
 
   // Process assistant (B5) + whole-library import confirmation.
   const [assistOpen, setAssistOpen] = useState(false)
   const [libraryImport, setLibraryImport] = useState<LibraryImportState | null>(null)
+  const libraryImportAbortRef = useRef<AbortController | null>(null)
+  const [workspaceImportReview, setWorkspaceImportReview] =
+    useState<WorkspaceImportReviewState | null>(null)
+  const workspaceImportAbortRef = useRef<AbortController | null>(null)
+  const singleFileImportAbortRef = useRef<AbortController | null>(null)
+  const singleFileRecoveryAbortRef = useRef<AbortController | null>(null)
+  const directoryOpenAbortRef = useRef<Map<string, AbortController>>(new Map())
   // Memoize the (async) per-workspace digests: rebuilt only when the files
   // identity handed to the assistant changes (see `assistFiles` below), so a
   // repeated question over an unchanged workspace reuses the same parse.
@@ -1153,6 +1193,21 @@ function App(): JSX.Element {
     const id = ++toastIdRef.current
     setToasts((prev) => [...prev, { id, text, tone }])
   }, [])
+  const recordWorkspaceIssue = useCallback(
+    (issue: string, binding?: WorkspaceOperationBinding): void => {
+      if (
+        binding &&
+        (workspaceGenRef.current !== binding.generation ||
+          workspaceAdapterRef.current !== binding.adapter ||
+          sessionControllerRef.current !== binding.controller)
+      ) {
+        return
+      }
+      workspaceRuntimeIssuesRef.current.add(issue)
+      setWorkspaceIssues((current) => (current.includes(issue) ? current : [...current, issue]))
+    },
+    []
+  )
   useEffect(() => {
     reviewedXmlReviewMountedRef.current = true
     const queue = reviewedXmlReviewQueueRef.current!
@@ -1253,6 +1308,9 @@ function App(): JSX.Element {
   // updates that session.
   useEffect(() => {
     const router = commandRouterRef.current!
+    const directoryOpenControllers = directoryOpenAbortRef.current
+    const skipDraftTrackingOnce = skipDraftTrackingOnceRef.current
+    const persistenceInteractionLocks = persistenceInteractionLocksRef.current
     const removeShortcuts = installApplicationShortcuts(window, router)
     const removeBeforeUnload = installBeforeUnloadDirtyGuard(window, () => {
       const controller = sessionControllerRef.current
@@ -1285,6 +1343,21 @@ function App(): JSX.Element {
       workspaceLocalizationBindingRef.current?.controller.abort()
       historyRestoreAbortRef.current?.abort()
       historyRestoreAbortRef.current = null
+      workspaceImportAbortRef.current?.abort()
+      workspaceImportAbortRef.current = null
+      libraryImportAbortRef.current?.abort()
+      libraryImportAbortRef.current = null
+      singleFileImportAbortRef.current?.abort()
+      singleFileImportAbortRef.current = null
+      singleFileRecoveryAbortRef.current?.abort()
+      singleFileRecoveryAbortRef.current = null
+      for (const controller of directoryOpenControllers.values()) controller.abort()
+      directoryOpenControllers.clear()
+      skipDraftTrackingOnce.clear()
+      backupImportAbortRef.current?.abort()
+      backupImportAbortRef.current = null
+      persistenceInteractionLocks.clear()
+      persistenceInteractionLockedRef.current = false
       cancelPendingDraftRecovery(false)
       saveConflictResolveRef.current?.({ kind: 'cancel' })
       saveConflictResolveRef.current = null
@@ -1326,9 +1399,14 @@ function App(): JSX.Element {
       liveWorkspaceIndexRef.current.replaceSavedFiles(snapshot.files)
       setLiveWorkspaceVersion(liveWorkspaceIndexRef.current.version)
       setTree(snapshot.tree)
-      setWorkspaceIssues(
-        snapshot.issues.map((issue) => `${issue.path ?? t('breadcrumb.root')}: ${issue.message}`)
-      )
+      setWorkspaceIssues([
+        ...new Set([
+          ...snapshot.issues.map(
+            (issue) => `${issue.path ?? t('breadcrumb.root')}: ${issue.message}`
+          ),
+          ...workspaceRuntimeIssuesRef.current
+        ])
+      ])
     },
     []
   )
@@ -1404,11 +1482,30 @@ function App(): JSX.Element {
 
   const beginWorkspaceActivationIntent = useCallback((): number => {
     const intent = ++workspaceActivationIntentRef.current
+    singleFileImportAbortRef.current?.abort()
+    singleFileImportAbortRef.current = null
+    singleFileRecoveryAbortRef.current?.abort()
+    singleFileRecoveryAbortRef.current = null
+    workspaceImportAbortRef.current?.abort()
+    workspaceImportAbortRef.current = null
+    libraryImportAbortRef.current?.abort()
+    libraryImportAbortRef.current = null
+    for (const controller of directoryOpenAbortRef.current.values()) controller.abort()
+    directoryOpenAbortRef.current.clear()
+    backupImportAbortRef.current?.abort()
+    backupImportAbortRef.current = null
+    persistenceInteractionLocksRef.current.clear()
+    persistenceInteractionLockedRef.current = false
+    setWorkspaceImportReview(null)
+    setBackupImportState(null)
     // These dialogs use singleton resolvers. Superseding a workspace request
     // must settle an older decision before the newer request can install one.
     switchResolveRef.current?.('cancel')
     switchResolveRef.current = null
     setSwitchGuard(null)
+    pathDirtyResolveRef.current?.('cancel')
+    pathDirtyResolveRef.current = null
+    setPathDirtyPrompt(null)
     downloadSwitchResolveRef.current?.('cancel')
     downloadSwitchResolveRef.current = null
     setDownloadSwitchGuard(null)
@@ -1643,7 +1740,7 @@ function App(): JSX.Element {
               knownProcessIds: liveWorkspaceIndexRef.current.processIndex().keys(),
               requireDi: true
             },
-            validationAction: 'commit-import',
+            validationAction: 'apply-editor',
             review: reviewedXmlReviewQueueRef.current!.review,
             signal: context.signal,
             isCurrent
@@ -1664,7 +1761,11 @@ function App(): JSX.Element {
       })
       sessionControllerRef.current = controller
       sessionStoreUnsubscribeRef.current = controller.store.subscribe(() => {
-        for (const session of controller.store.list()) drafts.track(session)
+        for (const session of controller.store.list()) {
+          const token = `${session.id}\u0000${session.incarnation}`
+          if (skipDraftTrackingOnceRef.current.delete(token)) continue
+          drafts.track(session)
+        }
       })
       if (coordination) {
         workspaceChangeUnsubscribeRef.current = coordination.subscribeChanges((change) => {
@@ -1696,14 +1797,20 @@ function App(): JSX.Element {
       liveWorkspaceIndexRef.current = new LiveWorkspaceIndex()
       setLiveWorkspaceVersion(liveWorkspaceIndexRef.current.version)
       setTree(null)
+      workspaceRuntimeIssuesRef.current.clear()
       setWorkspaceIssues([])
+      skipDraftTrackingOnceRef.current.clear()
       setTabs([])
       setActiveKey(null)
       setContents({})
+      forcedUndurableDirtyByKeyRef.current.clear()
+      dirtyByKeyRef.current = {}
       setDirtyByKey({})
       baseHashByPathRef.current = {}
       for (const timer of Object.values(liveXmlTimersRef.current)) clearTimeout(timer)
       liveXmlTimersRef.current = {}
+      liveXmlCaptureEpochByKeyRef.current = {}
+      duplicateRepairTokenByPathRef.current.clear()
       setModelersByKey({})
       setMounted(new Set())
       commandsRef.current = {}
@@ -1721,6 +1828,11 @@ function App(): JSX.Element {
       setAssistOpen(false)
       digestsCacheRef.current = null
       setLibraryImport(null)
+      workspaceImportAbortRef.current?.abort()
+      workspaceImportAbortRef.current = null
+      setWorkspaceImportReview(null)
+      backupImportAbortRef.current?.abort()
+      backupImportAbortRef.current = null
       setBackupImportState(null)
       setBackupBusy(false)
       setHistoryOpen(false)
@@ -2179,72 +2291,141 @@ function App(): JSX.Element {
   )
 
   const reviewRecoveryDraft = useCallback(
-    async (tab: Tab, loadedXml: string, loadedBase: FileFingerprint | null): Promise<string> => {
-      const controller = sessionControllerRef.current
-      const journal = draftJournalRef.current
-      const drafts = draftCoordinatorRef.current
-      const session = controller?.store.get(tab.key)
-      if (!controller || !journal || !drafts || !session) return loadedXml
-      const incarnation = session.incarnation
-      const isCurrentSession = (): boolean =>
-        sessionControllerRef.current === controller &&
-        workspaceGenRef.current === tab.gen &&
-        controller.store.get(session.id)?.incarnation === incarnation
-      try {
-        const comparison = await findDraftRecoveryComparison(
-          journal,
-          {
-            workspaceId: session.identity.workspace.id,
-            path: session.identity.path,
-            sessionId: session.id
-          },
-          loadedXml,
-          loadedBase?.hash ?? null
-        )
-        if (!isCurrentSession() || !comparison) return loadedXml
-        if (comparison.relation === 'same-content') {
-          // The durable file itself proves this journal record is obsolete.
-          await drafts.explicitDiscard(session.id, incarnation)
-          return loadedXml
+    async (
+      tab: Tab,
+      loadedXml: string,
+      loadedBase: FileFingerprint | null,
+      context?: {
+        signal?: AbortSignal
+        isCurrent?: () => boolean
+        resources?: LocalizationResources
+        reviewedXml?: string
+      }
+    ): Promise<string> => {
+      const run = async (): Promise<string> => {
+        const controller = sessionControllerRef.current
+        const journal = draftJournalRef.current
+        const drafts = draftCoordinatorRef.current
+        const session = controller?.store.get(tab.key)
+        if (!controller || !journal || !drafts || !session) return loadedXml
+        const incarnation = session.incarnation
+        const reviewedDiskXml = context?.reviewedXml ?? loadedXml
+        const isCurrentSession = (): boolean =>
+          !context?.signal?.aborted &&
+          (context?.isCurrent?.() ?? true) &&
+          sessionControllerRef.current === controller &&
+          workspaceGenRef.current === tab.gen &&
+          controller.store.get(session.id)?.incarnation === incarnation
+        const currentVisibleXml = (): string =>
+          controller.store.get(session.id)?.currentXml ?? loadedXml
+        const applyVisibleXml = (xml: string, preserveExistingDraft: boolean): string => {
+          if (!isCurrentSession()) return currentVisibleXml()
+          const current = controller.store.get(session.id)
+          if (!current || current.currentXml === xml) return current?.currentXml ?? loadedXml
+          if (preserveExistingDraft) {
+            skipDraftTrackingOnceRef.current.add(`${session.id}\u0000${incarnation}`)
+          }
+          const updated = controller.updateXml(session.id, xml)
+          setDirtyByKey((previous) => ({ ...previous, [tab.key]: updated.dirty }))
+          if (updated.dirty) {
+            const latestSession = sessionControllerRef.current?.store.get(tab.key)
+            if (latestSession?.dirty || forcedUndurableDirtyByKeyRef.current.has(tab.key)) {
+              liveWorkspaceIndexRef.current.updateDirty(liveIndexPath(tab), xml)
+            } else {
+              liveWorkspaceIndexRef.current.clearDirty(liveIndexPath(tab))
+            }
+          } else if (tab.relPath) {
+            liveWorkspaceIndexRef.current.clearDirty(tab.relPath)
+          }
+          setLiveWorkspaceVersion(liveWorkspaceIndexRef.current.version)
+          return updated.currentXml
         }
-        controller.store.setDraftRecovery(session.id, {
-          status: 'available',
-          draftId: comparison.draft.id,
-          timestamp: comparison.draft.timestamp,
-          baseHash: comparison.draft.baseHash
-        })
-        const decision = await promptForDraftRecovery(tab, comparison, controller, incarnation)
-        if (decision === 'cancel' || !isCurrentSession()) {
-          return loadedXml
-        }
-        if (decision === 'discard') {
-          await drafts.explicitDiscard(session.id, incarnation)
-          if (!isCurrentSession()) return loadedXml
+        let comparison: DraftRecoveryComparison | null = null
+        try {
+          comparison = await findDraftRecoveryComparison(
+            journal,
+            {
+              workspaceId: session.identity.workspace.id,
+              path: session.identity.path,
+              sessionId: session.id
+            },
+            loadedXml,
+            loadedBase?.hash ?? null
+          )
+          if (!isCurrentSession()) return currentVisibleXml()
+          if (!comparison) return applyVisibleXml(reviewedDiskXml, false)
+          if (comparison.relation === 'same-content') {
+            // The durable file itself proves this journal record is obsolete.
+            await drafts.explicitDiscard(session.id, incarnation)
+            return applyVisibleXml(reviewedDiskXml, false)
+          }
           controller.store.setDraftRecovery(session.id, {
-            status: 'dismissed',
+            status: 'available',
+            draftId: comparison.draft.id,
+            timestamp: comparison.draft.timestamp,
+            baseHash: comparison.draft.baseHash
+          })
+          const decision = await promptForDraftRecovery(tab, comparison, controller, incarnation)
+          if (!isCurrentSession()) return currentVisibleXml()
+          if (decision === 'cancel') {
+            return applyVisibleXml(reviewedDiskXml, true)
+          }
+          if (decision === 'discard') {
+            await drafts.explicitDiscard(session.id, incarnation)
+            if (!isCurrentSession()) return currentVisibleXml()
+            controller.store.setDraftRecovery(session.id, {
+              status: 'dismissed',
+              draftId: comparison.draft.id,
+              timestamp: comparison.draft.timestamp
+            })
+            return applyVisibleXml(reviewedDiskXml, false)
+          }
+          const reviewedDraft = await reviewBpmnXmlLocalization(comparison.draft.xml, {
+            source: LocalizationSource.Editor,
+            target: langRef.current,
+            defaultActive: langRef.current,
+            resources:
+              context?.resources ??
+              workspaceLocalizationSnapshotRef.current?.resources ??
+              DEFAULT_LOCALIZATION_RESOURCES,
+            validation: {
+              adapters: getRuntimeValidationAdapters(),
+              knownProcessIds: liveWorkspaceIndexRef.current.processIndex().keys(),
+              requireDi: true
+            },
+            validationAction: 'apply-editor',
+            review: reviewedXmlReviewQueueRef.current!.review,
+            signal: context?.signal,
+            isCurrent: isCurrentSession
+          })
+          if (reviewedDraft.status !== 'completed' || !isCurrentSession()) {
+            return applyVisibleXml(reviewedDiskXml, true)
+          }
+          const restoredXml = applyVisibleXml(reviewedDraft.xml, false)
+          controller.store.setDraftRecovery(session.id, {
+            status: 'restored',
             draftId: comparison.draft.id,
             timestamp: comparison.draft.timestamp
           })
-          return loadedXml
+          localizationSourceByTabRef.current.set(tab.key, LocalizationSource.Editor)
+          drafts.track(controller.store.get(session.id)!)
+          return restoredXml
+        } catch (error) {
+          if (!isCurrentSession()) return currentVisibleXml()
+          controller.store.setDraftRecovery(session.id, {
+            status: 'error',
+            message: errMsg(error)
+          })
+          pushToast(t('draftRecovery.error', { error: errMsg(error) }), 'error')
+          return applyVisibleXml(reviewedDiskXml, comparison !== null)
         }
-        controller.updateXml(session.id, comparison.draft.xml)
-        controller.store.setDraftRecovery(session.id, {
-          status: 'restored',
-          draftId: comparison.draft.id,
-          timestamp: comparison.draft.timestamp
-        })
-        drafts.track(controller.store.get(session.id)!)
-        setDirtyByKey((previous) => ({ ...previous, [tab.key]: true }))
-        return comparison.draft.xml
-      } catch (error) {
-        if (!isCurrentSession()) return loadedXml
-        controller.store.setDraftRecovery(session.id, {
-          status: 'error',
-          message: errMsg(error)
-        })
-        pushToast(t('draftRecovery.error', { error: errMsg(error) }), 'error')
-        return loadedXml
       }
+      const queued = draftRecoveryFlowQueueRef.current.catch(() => undefined).then(run)
+      draftRecoveryFlowQueueRef.current = queued.then(
+        () => undefined,
+        () => undefined
+      )
+      return queued
     },
     [promptForDraftRecovery, pushToast]
   )
@@ -2266,89 +2447,149 @@ function App(): JSX.Element {
         localizationSource?: LocalizationSourceType
       }
     ) => {
-      const workspace = workspaceIdentityRef.current
+      const binding = captureWorkspaceOperation()
+      const workspace = binding.identity
       const existingSession =
-        workspace && sessionControllerRef.current
-          ? sessionControllerRef.current.store.getByIdentity({ workspace, path: relPath })
+        workspace && binding.controller
+          ? binding.controller.store.getByIdentity({ workspace, path: relPath })
           : undefined
       const key = existingSession?.id ?? relPath
       const tab: Tab = {
         key,
         title: baseName(relPath),
         relPath,
-        gen: workspaceGenRef.current
+        gen: binding.generation
       }
-      if (opts?.localizationSource || !localizationSourceByTabRef.current.has(key)) {
-        localizationSourceByTabRef.current.set(
-          key,
-          opts?.localizationSource ?? LocalizationSource.Xml
-        )
-      }
-      if (opts?.autoSizeOnImport) pendingAiAutoSizeRef.current.add(key)
-      // Opening a file normally hands the canvas the full window; the rail
-      // restores the sidebar. A SINGLE click on a tree row opts out
-      // (collapse: false) so browsing the explorer keeps it open — only a
-      // double-click (and every non-tree open path: catalog, search, drill-down,
-      // AI placement) takes the full window. A manual rail click after this wins
-      // until the next collapsing open event.
-      if (opts?.collapse !== false) setSidebarOpen(false)
-      setCatalogOpen(false)
-      setTabs((prev) => (prev.some((t) => t.key === key) ? prev : [...prev, tab]))
-      setActiveKey(key)
-      if (contents[key] !== undefined) {
-        const controller = sessionControllerRef.current
-        if (controller?.store.get(key)) controller.setActive(key)
-        return
-      }
-      // Read through the LIVE adapter mirror and guard the commit against a
-      // mid-read folder switch: neither the loaded content nor its error toast is
-      // committed if the workspace changed while the read was in flight, so a
-      // stale read from the previous folder can never land in the new one (ORIG-1a).
-      const adapter = workspaceAdapterRef.current
-      if (!adapter) return
-      let failed: unknown = null
-      let loaded: FileSnapshot | null = null
-      const outcome = await commitIfCurrent(
-        () => workspaceGenRef.current,
-        async () => {
-          try {
-            const snapshot = await adapter.read(relPath)
-            return snapshot
-          } catch (err) {
-            failed = err
-            return null
-          }
-        },
-        (snapshot) => {
-          loaded = snapshot
+      const activateReviewedTab = (): void => {
+        if (opts?.localizationSource || !localizationSourceByTabRef.current.has(key)) {
+          localizationSourceByTabRef.current.set(
+            key,
+            opts?.localizationSource ?? LocalizationSource.Xml
+          )
         }
-      )
-      if (outcome === 'committed' && failed) {
-        setContents((prev) => ({ ...prev, [key]: '' }))
-        pushToast(t('alert.openFileFailed', { relPath, error: errMsg(failed) }), 'error')
+        if (opts?.autoSizeOnImport) pendingAiAutoSizeRef.current.add(key)
+        // Opening a file normally hands the canvas the full window; the rail
+        // restores the sidebar. A SINGLE click on a tree row opts out
+        // (collapse: false) so browsing the explorer keeps it open — only a
+        // double-click (and every non-tree open path: catalog, search, drill-down,
+        // AI placement) takes the full window. A manual rail click after this wins
+        // until the next collapsing open event.
+        if (opts?.collapse !== false) setSidebarOpen(false)
+        setCatalogOpen(false)
+        setTabs((previous) =>
+          previous.some((candidate) => candidate.key === key) ? previous : [...previous, tab]
+        )
+        setActiveKey(key)
+      }
+      if (existingSession || contents[key] !== undefined) {
+        activateReviewedTab()
+        if (existingSession) {
+          binding.controller?.setActive(existingSession.id)
+          if (contents[key] === undefined) {
+            setContents((previous) => ({ ...previous, [key]: existingSession.currentXml }))
+          }
+        }
         return
       }
-      if (outcome === 'committed' && loaded) {
-        const snapshot = loaded as FileSnapshot
+      const adapter = binding.adapter
+      const resources = workspaceLocalizationSnapshotRef.current?.resources
+      if (
+        !adapter ||
+        !binding.controller ||
+        !workspace ||
+        !resources ||
+        !isWorkspaceOperationCurrent(binding)
+      ) {
+        if (adapter && !resources && isWorkspaceOperationCurrent(binding)) {
+          pushToast(
+            t('settings.localization.loadFailed', {
+              error: workspaceLocalizationError ?? t('workspace.history.unknownError')
+            }),
+            'error'
+          )
+        }
+        return
+      }
+      const openKey = normalizeWorkspacePath(relPath).toLocaleLowerCase('en-US')
+      directoryOpenAbortRef.current.get(openKey)?.abort()
+      const openController = new AbortController()
+      directoryOpenAbortRef.current.set(openKey, openController)
+      const isCurrent = (): boolean =>
+        !openController.signal.aborted &&
+        directoryOpenAbortRef.current.get(openKey) === openController &&
+        isWorkspaceOperationCurrent(binding)
+      try {
+        const snapshot = await adapter.read(relPath)
+        if (!isCurrent()) return
         baseHashByPathRef.current[relPath] = snapshot.hash
         const loadedXml = decodeUtf8Strict(snapshot.bytes, {
           operation: 'read',
           path: relPath
         })
-        ensureDocumentSession(tab, loadedXml, {
+        const reviewed = await reviewBpmnXmlLocalization(loadedXml, {
+          source: opts?.localizationSource ?? LocalizationSource.Xml,
+          target: langRef.current,
+          defaultActive: langRef.current,
+          resources,
+          validation: {
+            adapters: getRuntimeValidationAdapters(),
+            knownProcessIds: binding.index.processIndex().keys(),
+            requireDi: true
+          },
+          validationAction: 'apply-editor',
+          review: reviewedXmlReviewQueueRef.current!.review,
+          signal: openController.signal,
+          isCurrent
+        })
+        if (!isCurrent() || reviewed.status !== 'completed') return
+        const opened = ensureDocumentSession(tab, loadedXml, {
           lastSavedXml: loadedXml,
           base: fingerprintFromSnapshot(snapshot)
         })
+        if (!opened || !isCurrent()) return
+        activateReviewedTab()
         const visibleXml = await reviewRecoveryDraft(
           tab,
           loadedXml,
-          fingerprintFromSnapshot(snapshot)
+          fingerprintFromSnapshot(snapshot),
+          {
+            signal: openController.signal,
+            isCurrent,
+            resources,
+            reviewedXml: reviewed.xml
+          }
         )
-        if (!canCommitToWorkspace(tab.gen, workspaceGenRef.current)) return
-        setContents((prev) => ({ ...prev, [key]: visibleXml }))
+        if (!isCurrent()) return
+        const visibleSession = binding.controller.store.get(opened.id)
+        setDirtyByKey((previous) => ({
+          ...previous,
+          [key]: visibleSession?.dirty ?? visibleXml !== loadedXml
+        }))
+        if (visibleSession?.dirty ?? visibleXml !== loadedXml) {
+          binding.index.updateDirty(relPath, visibleXml)
+          setLiveWorkspaceVersion(binding.index.version)
+        }
+        setContents((previous) => ({ ...previous, [key]: visibleXml }))
+      } catch (error) {
+        if (isCurrent()) {
+          pushToast(t('alert.openFileFailed', { relPath, error: errMsg(error) }), 'error')
+        }
+      } finally {
+        if (directoryOpenAbortRef.current.get(openKey) === openController) {
+          directoryOpenAbortRef.current.delete(openKey)
+        }
+        openController.abort()
       }
     },
-    [contents, ensureDocumentSession, pushToast, reviewRecoveryDraft]
+    [
+      captureWorkspaceOperation,
+      contents,
+      ensureDocumentSession,
+      isWorkspaceOperationCurrent,
+      pushToast,
+      reviewRecoveryDraft,
+      workspaceLocalizationError
+    ]
   )
 
   const openVirtualTab = useCallback(
@@ -2395,15 +2636,21 @@ function App(): JSX.Element {
       title: string,
       xml: string,
       source: LocalizationSourceType,
-      claimedIntent?: number
+      options?: {
+        claimedIntent?: number
+        durableXml?: string
+        initiallyDirty?: boolean
+        signal?: AbortSignal
+      }
     ): Promise<void> => {
-      const activationIntent = claimedIntent ?? beginWorkspaceActivationIntent()
+      const activationIntent = options?.claimedIntent ?? beginWorkspaceActivationIntent()
       if (!isWorkspaceActivationIntentCurrent(activationIntent)) return
       const path = title.toLocaleLowerCase('en-US').endsWith('.bpmn') ? title : `${title}.bpmn`
+      const durableXml = options?.durableXml ?? xml
       const adapter = new SingleFileWorkspaceAdapter({
         workspaceId: workspaceInstanceId('single-file', path),
         path,
-        bytes: new TextEncoder().encode(xml),
+        bytes: new TextEncoder().encode(durableXml),
         modifiedAt: Date.now(),
         mimeType: 'application/xml'
       })
@@ -2418,29 +2665,93 @@ function App(): JSX.Element {
       if (binding.adapter !== adapter || binding.identity?.generation !== binding.generation) {
         return
       }
-      const snapshot = await adapter.read(path)
-      if (!isWorkspaceOperationCurrent(binding)) return
-      const saved = fileMetaFromSnapshot(snapshot)
-      baseHashByPathRef.current[path] = snapshot.hash
-      binding.index.updateSaved(saved)
-      setLiveWorkspaceVersion(binding.index.version)
-      const tab: Tab = {
-        key: path,
-        title: path,
-        relPath: path,
-        gen: binding.generation
+      singleFileRecoveryAbortRef.current?.abort()
+      const recoveryController = new AbortController()
+      singleFileRecoveryAbortRef.current = recoveryController
+      const abortRecovery = (): void => recoveryController.abort()
+      if (options?.signal?.aborted) recoveryController.abort()
+      else options?.signal?.addEventListener('abort', abortRecovery, { once: true })
+      const isCurrent = (): boolean =>
+        !recoveryController.signal.aborted &&
+        singleFileRecoveryAbortRef.current === recoveryController &&
+        isWorkspaceActivationIntentCurrent(activationIntent) &&
+        isWorkspaceOperationCurrent(binding)
+      try {
+        const snapshot = await adapter.read(path)
+        if (!isCurrent()) return
+        const fingerprint = fingerprintFromSnapshot(snapshot)
+        const saved = fileMetaFromSnapshot(snapshot)
+        baseHashByPathRef.current[path] = snapshot.hash
+        binding.index.updateSaved(saved)
+        setLiveWorkspaceVersion(binding.index.version)
+        const tab: Tab = {
+          key: path,
+          title: path,
+          relPath: path,
+          gen: binding.generation
+        }
+        const opened = ensureDocumentSession(tab, durableXml, {
+          lastSavedXml: durableXml,
+          base: fingerprint
+        })
+        if (!opened || !isCurrent()) return
+        localizationSourceByTabRef.current.set(path, source)
+        const visibleXml = await reviewRecoveryDraft(tab, durableXml, fingerprint, {
+          signal: recoveryController.signal,
+          isCurrent,
+          resources: DEFAULT_LOCALIZATION_RESOURCES,
+          reviewedXml: xml
+        })
+        if (!isCurrent()) {
+          binding.controller?.store.close(opened.id)
+          await binding.drafts?.untrack(opened.id, opened.incarnation)
+          return
+        }
+        let visibleSession = binding.controller?.store.get(opened.id)
+        const retainedPriorDraft =
+          visibleSession?.draftRecovery.status === 'available' ||
+          visibleSession?.draftRecovery.status === 'error'
+        if (options?.initiallyDirty && visibleSession && !visibleSession.dirty) {
+          if (!retainedPriorDraft) {
+            visibleSession = binding.controller!.store.replaceWithExternal(visibleSession.id, {
+              xml: '',
+              reviewedXml: visibleXml,
+              fingerprint
+            })
+            binding.drafts?.track(visibleSession)
+            try {
+              await binding.drafts?.flush(visibleSession.id, visibleSession.incarnation)
+            } catch (error) {
+              if (isCurrent()) {
+                pushToast(t('draftRecovery.error', { error: errMsg(error) }), 'error')
+              }
+            }
+            if (!isCurrent()) return
+          }
+        }
+        const visibleDirty = Boolean(visibleSession?.dirty || options?.initiallyDirty)
+        if (visibleDirty) {
+          binding.index.updateDirty(path, visibleXml)
+          setLiveWorkspaceVersion(binding.index.version)
+        }
+        if (options?.initiallyDirty) {
+          forcedUndurableDirtyByKeyRef.current.add(path)
+        } else {
+          forcedUndurableDirtyByKeyRef.current.delete(path)
+        }
+        setTabs([tab])
+        setContents({ [path]: visibleXml })
+        dirtyByKeyRef.current = { [path]: visibleDirty }
+        setDirtyByKey({ [path]: visibleDirty })
+        setActiveKey(path)
+        setSidebarOpen(false)
+      } finally {
+        options?.signal?.removeEventListener('abort', abortRecovery)
+        if (singleFileRecoveryAbortRef.current === recoveryController) {
+          singleFileRecoveryAbortRef.current = null
+        }
+        recoveryController.abort()
       }
-      ensureDocumentSession(tab, xml, {
-        lastSavedXml: xml,
-        base: fingerprintFromSnapshot(snapshot)
-      })
-      const visibleXml = await reviewRecoveryDraft(tab, xml, fingerprintFromSnapshot(snapshot))
-      if (!isWorkspaceOperationCurrent(binding)) return
-      localizationSourceByTabRef.current.set(path, source)
-      setTabs([tab])
-      setContents({ [path]: visibleXml })
-      setActiveKey(path)
-      setSidebarOpen(false)
     },
     [
       activateWorkspace,
@@ -2449,22 +2760,29 @@ function App(): JSX.Element {
       ensureDocumentSession,
       isWorkspaceActivationIntentCurrent,
       isWorkspaceOperationCurrent,
+      pushToast,
       reviewRecoveryDraft
     ]
   )
 
   const closeTab = useCallback(
-    (key: string): boolean => {
+    (key: string, discardAlreadyConfirmed = false): boolean => {
       pendingProcessFocusRef.current.delete(key)
       const closingTab = tabs.find((tab) => tab.key === key)
       const controller = sessionControllerRef.current
       const closingSession = controller?.store.get(key)
       const explicitlyDiscarded = Boolean(dirtyByKey[key] || closingSession?.dirty)
-      if (explicitlyDiscarded) {
+      if (explicitlyDiscarded && !discardAlreadyConfirmed) {
         const confirmed = window.confirm(
           t('confirm.discardUnsaved', { title: closingTab?.title ?? 'this file' })
         )
         if (!confirmed) return false
+      }
+      forcedUndurableDirtyByKeyRef.current.delete(key)
+      if (key in dirtyByKeyRef.current) {
+        const nextDirty = { ...dirtyByKeyRef.current }
+        delete nextDirty[key]
+        dirtyByKeyRef.current = nextDirty
       }
       // Closing the last tab returns to an empty canvas (or the catalog) — bring
       // the sidebar back so the explorer / AI generator are reachable again.
@@ -2510,6 +2828,7 @@ function App(): JSX.Element {
       const timer = liveXmlTimersRef.current[key]
       if (timer) clearTimeout(timer)
       delete liveXmlTimersRef.current[key]
+      delete liveXmlCaptureEpochByKeyRef.current[key]
       if (closingTab) {
         liveWorkspaceIndexRef.current.clearDirty(liveIndexPath(closingTab))
         setLiveWorkspaceVersion(liveWorkspaceIndexRef.current.version)
@@ -2526,9 +2845,90 @@ function App(): JSX.Element {
     [dirtyByKey, pushToast, tabs]
   )
 
+  const discardAndCloseSessions = useCallback(
+    async (
+      binding: WorkspaceOperationBinding,
+      sessions: readonly DocumentSession[],
+      isCurrent: () => boolean
+    ): Promise<void> => {
+      const controller = binding.controller
+      if (!controller || sessions.length === 0) return
+      for (const captured of sessions) {
+        const current = controller.store.get(captured.id)
+        if (!isCurrent() || !current || current.incarnation !== captured.incarnation) {
+          throw new Error(t('alert.staleWrite'))
+        }
+        await binding.drafts?.explicitDiscard(captured.id, captured.incarnation)
+        await binding.drafts?.untrack(captured.id, captured.incarnation)
+      }
+      if (!isCurrent()) throw new Error(t('alert.staleWrite'))
+
+      const ids = new Set(sessions.map((session) => session.id))
+      const previousTabs = tabsRef.current
+      controller.store.closeMany([...ids])
+      if ([...ids].some((id) => id in dirtyByKeyRef.current)) {
+        const nextDirty = { ...dirtyByKeyRef.current }
+        for (const id of ids) delete nextDirty[id]
+        dirtyByKeyRef.current = nextDirty
+      }
+      for (const session of sessions) {
+        const id = session.id
+        forcedUndurableDirtyByKeyRef.current.delete(id)
+        commandUnregisterersRef.current[id]?.()
+        delete commandUnregisterersRef.current[id]
+        commandRouterRef.current?.unregister(id)
+        liveXmlUninstallersRef.current[id]?.()
+        delete liveXmlUninstallersRef.current[id]
+        badgeUninstallersRef.current[id]?.()
+        delete badgeUninstallersRef.current[id]
+        const timer = liveXmlTimersRef.current[id]
+        if (timer) clearTimeout(timer)
+        delete liveXmlTimersRef.current[id]
+        delete liveXmlCaptureEpochByKeyRef.current[id]
+        localizationSourceByTabRef.current.delete(id)
+        localizationReviewByTabRef.current.delete(id)
+        interviewApplyTokenByTabRef.current.delete(id)
+        pendingProcessFocusRef.current.delete(id)
+        pendingAiAutoSizeRef.current.delete(id)
+        delete commandsRef.current[id]
+        if (session.identity.path) binding.index.clearDirty(session.identity.path)
+      }
+      const dropClosed = <T,>(record: Record<string, T>): Record<string, T> => {
+        if (![...ids].some((id) => id in record)) return record
+        const next = { ...record }
+        for (const id of ids) delete next[id]
+        return next
+      }
+      const remainingTabs = previousTabs.filter((tab) => !ids.has(tab.key))
+      setTabs((current) => current.filter((tab) => !ids.has(tab.key)))
+      setActiveKey((current) =>
+        current && ids.has(current) ? (remainingTabs.at(-1)?.key ?? null) : current
+      )
+      if (remainingTabs.length === 0) setSidebarOpen(true)
+      setContents(dropClosed)
+      setDirtyByKey(dropClosed)
+      setModelersByKey(dropClosed)
+      setMounted((current) => {
+        const next = new Set(current)
+        for (const id of ids) next.delete(id)
+        return next.size === current.size ? current : next
+      })
+      setLiveWorkspaceVersion(binding.index.version)
+    },
+    []
+  )
+
   const handleDirtyChange = useCallback((key: string, dirty: boolean) => {
-    setDirtyByKey((prev) => (prev[key] === dirty ? prev : { ...prev, [key]: dirty }))
     const session = sessionControllerRef.current?.store.get(key)
+    const effectiveDirty =
+      dirty || Boolean(session?.dirty) || forcedUndurableDirtyByKeyRef.current.has(key)
+    dirtyByKeyRef.current =
+      dirtyByKeyRef.current[key] === effectiveDirty
+        ? dirtyByKeyRef.current
+        : { ...dirtyByKeyRef.current, [key]: effectiveDirty }
+    setDirtyByKey((prev) =>
+      prev[key] === effectiveDirty ? prev : { ...prev, [key]: effectiveDirty }
+    )
     if (session) draftCoordinatorRef.current?.track(session)
   }, [])
 
@@ -2539,6 +2939,8 @@ function App(): JSX.Element {
         saveXML?: (options: { format: boolean }) => Promise<{ xml?: string }>
       }
     ) => {
+      const captureEpoch = (liveXmlCaptureEpochByKeyRef.current[tab.key] ?? 0) + 1
+      liveXmlCaptureEpochByKeyRef.current[tab.key] = captureEpoch
       const existing = liveXmlTimersRef.current[tab.key]
       if (existing) clearTimeout(existing)
       liveXmlTimersRef.current[tab.key] = setTimeout(() => {
@@ -2546,11 +2948,19 @@ function App(): JSX.Element {
         void modeler
           .saveXML?.({ format: true })
           .then(({ xml }) => {
-            if (!xml || workspaceGenRef.current !== tab.gen) return
-            const baseline = contents[tab.key] ?? xml
+            if (
+              !xml ||
+              workspaceGenRef.current !== tab.gen ||
+              liveXmlCaptureEpochByKeyRef.current[tab.key] !== captureEpoch ||
+              modelersByKeyRef.current[tab.key] !== modeler
+            ) {
+              return
+            }
+            const currentSession = sessionControllerRef.current?.store.get(tab.key)
+            const baseline = currentSession?.lastSavedXml ?? contents[tab.key] ?? xml
             const baseHash = tab.relPath ? baseHashByPathRef.current[tab.relPath] : undefined
             const existing =
-              sessionControllerRef.current?.store.get(tab.key) ??
+              currentSession ??
               ensureDocumentSession(tab, xml, {
                 lastSavedXml: baseline,
                 base: baseHash
@@ -2561,16 +2971,29 @@ function App(): JSX.Element {
                     }
                   : null
               })
+            let effectiveDirty = forcedUndurableDirtyByKeyRef.current.has(tab.key)
             if (existing) {
               const updated = sessionControllerRef.current!.updateXml(tab.key, xml)
               draftCoordinatorRef.current?.track(updated)
+              effectiveDirty = updated.dirty || effectiveDirty
+              dirtyByKeyRef.current = {
+                ...dirtyByKeyRef.current,
+                [tab.key]: effectiveDirty
+              }
               setDirtyByKey((previous) =>
-                previous[tab.key] === updated.dirty
+                previous[tab.key] === effectiveDirty
                   ? previous
-                  : { ...previous, [tab.key]: updated.dirty }
+                  : {
+                      ...previous,
+                      [tab.key]: effectiveDirty
+                    }
               )
             }
-            liveWorkspaceIndexRef.current.updateDirty(liveIndexPath(tab), xml)
+            if (effectiveDirty) {
+              liveWorkspaceIndexRef.current.updateDirty(liveIndexPath(tab), xml)
+            } else {
+              liveWorkspaceIndexRef.current.clearDirty(liveIndexPath(tab))
+            }
             setLiveWorkspaceVersion(liveWorkspaceIndexRef.current.version)
             digestsCacheRef.current = null
           })
@@ -2583,6 +3006,77 @@ function App(): JSX.Element {
     [contents, ensureDocumentSession]
   )
 
+  const invalidateLiveXmlCapture = useCallback((key: string): void => {
+    liveXmlCaptureEpochByKeyRef.current[key] = (liveXmlCaptureEpochByKeyRef.current[key] ?? 0) + 1
+    const timer = liveXmlTimersRef.current[key]
+    if (timer) {
+      clearTimeout(timer)
+      delete liveXmlTimersRef.current[key]
+    }
+  }, [])
+
+  const captureLiveSession = useCallback(
+    async (
+      controller: DocumentSessionController,
+      candidate: DocumentSession,
+      requireLiveRead = false,
+      isCurrent?: () => boolean
+    ): Promise<LiveSessionCaptureResult> => {
+      const { id, incarnation } = candidate
+      for (let attempt = 0; attempt < 3; attempt += 1) {
+        if (isCurrent && !isCurrent()) return { status: 'stale' }
+        const current = controller.store.get(id)
+        if (!current || current.incarnation !== incarnation) return { status: 'stale' }
+        if (!requireLiveRead && !dirtyByKeyRef.current[id]) {
+          return { status: 'captured', session: current }
+        }
+        if (!current.readXml) {
+          return {
+            status: 'unavailable',
+            error: new Error('The live editor does not expose XML serialization.'),
+            session: current
+          }
+        }
+
+        const capturedRevision = current.revision
+        const capturedXml = current.currentXml
+        let serialized: string
+        try {
+          serialized = await current.readXml()
+        } catch (error) {
+          if (isCurrent && !isCurrent()) return { status: 'stale' }
+          const latest = controller.store.get(id)
+          if (!latest || latest.incarnation !== incarnation) return { status: 'stale' }
+          if (latest.revision !== capturedRevision || latest.currentXml !== capturedXml) {
+            continue
+          }
+          return { status: 'unavailable', error, session: latest }
+        }
+
+        if (isCurrent && !isCurrent()) return { status: 'stale' }
+        const latest = controller.store.get(id)
+        if (!latest || latest.incarnation !== incarnation) return { status: 'stale' }
+        if (latest.revision !== capturedRevision || latest.currentXml !== capturedXml) {
+          continue
+        }
+        return {
+          status: 'captured',
+          session: controller.updateXml(id, serialized)
+        }
+      }
+      const latest = controller.store.get(id)
+      if ((isCurrent && !isCurrent()) || !latest || latest.incarnation !== incarnation) {
+        return { status: 'stale' }
+      }
+      return {
+        status: 'unavailable',
+        error: new Error('The live editor kept changing while XML was being captured.'),
+        session: latest
+      }
+    },
+    []
+  )
+
   const handleRequestSave = useCallback(
     async (tab: Tab, xml: string, options?: { explicitDraftWithErrors?: boolean }) => {
       const binding = captureWorkspaceOperation()
@@ -2593,9 +3087,10 @@ function App(): JSX.Element {
       const isWorkspaceCurrent = (): boolean =>
         isWorkspaceOperationCurrent(binding) && tab.gen === binding.generation
       const baseHash = tab.relPath ? baseHashByPathRef.current[tab.relPath] : undefined
-      const baseline = contents[tab.key] ?? xml
+      const existingSession = controller.store.get(tab.key)
+      const baseline = existingSession?.lastSavedXml ?? contents[tab.key] ?? xml
       const session =
-        controller.store.get(tab.key) ??
+        existingSession ??
         ensureDocumentSession(tab, xml, {
           lastSavedXml: baseline,
           base: baseHash
@@ -2609,13 +3104,48 @@ function App(): JSX.Element {
       if (!session) throw new Error(t('alert.staleWrite'))
       const current = controller.updateXml(tab.key, xml)
       const sessionIncarnation = current.incarnation
+      const submittedRevision = current.revision
       const isCurrent = (): boolean =>
         isWorkspaceCurrent() && controller.store.get(tab.key)?.incarnation === sessionIncarnation
+      const submittedSession = (): DocumentSession | null => {
+        const live = controller.store.get(tab.key)
+        return live?.incarnation === sessionIncarnation ? live : null
+      }
+      const requireSubmittedSnapshot = async (): Promise<DocumentSession> => {
+        if (!isCurrent()) throw new Error(t('alert.staleWrite'))
+        const live = submittedSession()
+        if (!live || live.revision !== submittedRevision || live.currentXml !== xml) {
+          throw new Error(t('session.save.newerEdits'))
+        }
+        if (!live.readXml) return live
+        const captured = await captureLiveSession(controller, live, true, isCurrent)
+        if (captured.status === 'stale') throw new Error(t('alert.staleWrite'))
+        if (captured.status === 'unavailable') {
+          const evidence = `${tab.relPath ?? tab.title}: ${errMsg(captured.error)}`
+          recordWorkspaceIssue(evidence, binding)
+          throw new Error(t('session.save.reloadEditorFailed', { error: evidence }))
+        }
+        if (
+          captured.session.revision !== submittedRevision ||
+          captured.session.currentXml !== xml
+        ) {
+          throw new Error(t('session.save.newerEdits'))
+        }
+        return captured.session
+      }
       drafts?.track(current)
 
       if (baseline) {
         const preservation = await validateUnknownExtensionPreservation(baseline, xml)
-        if (!isCurrent()) throw new Error(t('alert.staleWrite'))
+        const live = submittedSession()
+        if (
+          !isCurrent() ||
+          !live ||
+          live.revision !== submittedRevision ||
+          live.currentXml !== xml
+        ) {
+          throw new Error(t('session.save.newerEdits'))
+        }
         if (!preservation.valid) {
           throw new Error(
             `Save blocked because opaque BPMN extension data changed: ${preservation.issues.map((issue) => issue.code).join(', ')}`
@@ -2629,12 +3159,20 @@ function App(): JSX.Element {
         requireDi: true,
         explicitDraftWithErrors: options?.explicitDraftWithErrors
       })
-      if (!isCurrent()) throw new Error(t('alert.staleWrite'))
+      await requireSubmittedSnapshot()
       if (!tab.relPath || adapter?.storage.persistence === 'download') {
         await drafts?.flush(tab.key, sessionIncarnation)
-        if (!isCurrent()) throw new Error(t('alert.staleWrite'))
+        await requireSubmittedSnapshot()
         downloadBpmn(tab.title.endsWith('.bpmn') ? tab.title : `${tab.title}.bpmn`, xml)
-        setDirtyByKey((previous) => ({ ...previous, [tab.key]: current.dirty }))
+        const remainsUndurable = current.dirty || forcedUndurableDirtyByKeyRef.current.has(tab.key)
+        dirtyByKeyRef.current = {
+          ...dirtyByKeyRef.current,
+          [tab.key]: remainsUndurable
+        }
+        setDirtyByKey((previous) => ({
+          ...previous,
+          [tab.key]: remainsUndurable
+        }))
         pushToast(t('session.download.draftRetained'), 'info')
         return { durable: false }
       }
@@ -2642,10 +3180,9 @@ function App(): JSX.Element {
         // Refuse a write from a tab whose workspace was switched out from under
         // it — otherwise it would land its relative path in the WRONG folder.
         if (!isCurrent()) throw new Error(t('alert.staleWrite'))
-        const capturedRevision = controller.store.get(tab.key)!.revision
         let outcome = await controller.save(tab.key, {
           xml,
-          expectedRevision: capturedRevision
+          expectedRevision: submittedRevision
         })
         if (!isCurrent()) throw new Error(t('alert.staleWrite'))
         while (outcome.status === 'external-conflict') {
@@ -2658,9 +3195,10 @@ function App(): JSX.Element {
           ) {
             throw new Error(t('session.save.failed', { status: 'cancelled' }))
           }
+          await requireSubmittedSnapshot()
           outcome = await controller.save(tab.key, {
             xml,
-            expectedRevision: capturedRevision,
+            expectedRevision: submittedRevision,
             conflictDecision: decision,
             reviewedConflict: outcome.conflict
           })
@@ -2669,6 +3207,57 @@ function App(): JSX.Element {
         if (outcome.status === 'clean') {
           await drafts?.confirmedSave(tab.key, sessionIncarnation, xml)
           if (!isCurrent()) throw new Error(t('alert.staleWrite'))
+          let finalized = controller.store.get(tab.key)
+          if (!finalized || finalized.incarnation !== sessionIncarnation) {
+            throw new Error(t('alert.staleWrite'))
+          }
+          if (finalized.readXml || dirtyByKeyRef.current[tab.key]) {
+            const captured = await captureLiveSession(controller, finalized, true, isCurrent)
+            if (captured.status === 'stale') throw new Error(t('alert.staleWrite'))
+            if (captured.status === 'unavailable') {
+              const evidence = `${tab.relPath}: ${errMsg(captured.error)}`
+              recordWorkspaceIssue(evidence, binding)
+              binding.index.updateDirty(tab.relPath, captured.session.currentXml)
+              drafts?.track(captured.session)
+              try {
+                await drafts?.flush(captured.session.id, captured.session.incarnation)
+              } catch (draftError) {
+                if (isCurrent()) {
+                  recordWorkspaceIssue(`${tab.relPath}: ${errMsg(draftError)}`, binding)
+                }
+              }
+              dirtyByKeyRef.current = {
+                ...dirtyByKeyRef.current,
+                [tab.key]: true
+              }
+              setDirtyByKey((previous) => ({ ...previous, [tab.key]: true }))
+              setLiveWorkspaceVersion(binding.index.version)
+              throw new Error(t('session.save.reloadEditorFailed', { error: evidence }))
+            }
+            finalized = captured.session
+          }
+          if (
+            finalized.revision !== submittedRevision ||
+            finalized.dirty ||
+            finalized.currentXml !== xml ||
+            dirtyByKeyRef.current[tab.key]
+          ) {
+            drafts?.track(finalized)
+            try {
+              await drafts?.flush(finalized.id, finalized.incarnation)
+            } catch (draftError) {
+              if (isCurrent()) {
+                recordWorkspaceIssue(`${tab.relPath}: ${errMsg(draftError)}`, binding)
+              }
+            }
+            if (!isCurrent()) throw new Error(t('alert.staleWrite'))
+            binding.index.updateDirty(tab.relPath, finalized.currentXml)
+            dirtyByKeyRef.current = { ...dirtyByKeyRef.current, [tab.key]: true }
+            setDirtyByKey((previous) => ({ ...previous, [tab.key]: true }))
+            setLiveWorkspaceVersion(binding.index.version)
+            throw new Error(t('session.save.newerEdits'))
+          }
+          dirtyByKeyRef.current = { ...dirtyByKeyRef.current, [tab.key]: false }
           setDirtyByKey((previous) => ({ ...previous, [tab.key]: false }))
           return { durable: true }
         }
@@ -2708,14 +3297,114 @@ function App(): JSX.Element {
           } else {
             binding.index.clearDirty(externalPath)
           }
+          invalidateLiveXmlCapture(tab.key)
           try {
-            await modeler?.importXML?.(visibleXml)
+            const coordinatedApply = commandsRef.current[tab.key]?.applyExternalXml
+            if (coordinatedApply) {
+              await coordinatedApply(visibleXml, {
+                dirty: hasReviewedChanges,
+                baselineXml: external.xml
+              })
+            } else if (modeler?.importXML) {
+              throw new Error('The editor synchronization command is not ready.')
+            }
           } catch (error) {
             // The controller has already accepted the external file and
-            // discarded the prior journal record. Re-track and synchronously
-            // flush the captured local XML so a failed canvas refresh cannot
-            // silently lose the edits still visible to the user.
-            const restoredLocal = controller.updateXml(tab.key, xml)
+            // discarded the prior journal record. The submitted XML is the last
+            // verified local snapshot from before that replacement, so restore
+            // it first instead of trusting a partially mutated/unserializable
+            // canvas after a failed import.
+            let currentAfterFailure = controller.store.get(tab.key)
+            if (!currentAfterFailure || currentAfterFailure.incarnation !== sessionIncarnation) {
+              throw new Error(t('alert.staleWrite'))
+            }
+            if (
+              (currentAfterFailure.revision !== reloadedSession.revision ||
+                currentAfterFailure.currentXml !== visibleXml ||
+                dirtyByKeyRef.current[tab.key]) &&
+              currentAfterFailure.readXml
+            ) {
+              const captured = await captureLiveSession(
+                controller,
+                currentAfterFailure,
+                true,
+                isCurrent
+              )
+              if (captured.status === 'stale') throw new Error(t('alert.staleWrite'))
+              if (captured.status === 'unavailable') {
+                const knownLocalXml =
+                  captured.session.revision !== reloadedSession.revision ||
+                  captured.session.currentXml !== visibleXml
+                    ? captured.session.currentXml
+                    : xml
+                const retained = controller.store.replaceWithExternal(tab.key, {
+                  xml: external.xml,
+                  reviewedXml: knownLocalXml,
+                  fingerprint: external.fingerprint,
+                  identity: external.identity
+                })
+                drafts?.track(retained)
+                let draftRecoveryError: unknown
+                try {
+                  await drafts?.flush(retained.id, retained.incarnation)
+                } catch (draftError) {
+                  draftRecoveryError = draftError
+                }
+                if (!isCurrent()) throw new Error(t('alert.staleWrite'))
+                const retainedAfterFlush = controller.store.get(tab.key)
+                if (!retainedAfterFlush || retainedAfterFlush.incarnation !== sessionIncarnation) {
+                  throw new Error(t('alert.staleWrite'))
+                }
+                // The canvas could not be serialized after the failed reload.
+                // Keep it untouched and preserve the last verified local XML as
+                // a dirty journal/index snapshot for explicit recovery.
+                binding.index.updateDirty(externalPath, retainedAfterFlush.currentXml)
+                setLiveWorkspaceVersion(binding.index.version)
+                dirtyByKeyRef.current = {
+                  ...dirtyByKeyRef.current,
+                  [tab.key]: true
+                }
+                setDirtyByKey((previous) => ({ ...previous, [tab.key]: true }))
+                const captureDetail = `${errMsg(error)}; live XML capture: ${errMsg(
+                  captured.error
+                )}`
+                const recoveryDetail = draftRecoveryError
+                  ? `${captureDetail}; ${errMsg(draftRecoveryError)}`
+                  : captureDetail
+                recordWorkspaceIssue(`${externalPath}: ${recoveryDetail}`, binding)
+                throw new Error(t('session.save.reloadEditorFailed', { error: recoveryDetail }))
+              }
+              currentAfterFailure = captured.session
+            }
+            const newerLocalExists =
+              currentAfterFailure.revision !== reloadedSession.revision ||
+              currentAfterFailure.currentXml !== visibleXml
+            const restoredLocal = newerLocalExists
+              ? currentAfterFailure
+              : controller.store.replaceWithExternal(tab.key, {
+                  xml: external.xml,
+                  reviewedXml: xml,
+                  fingerprint: external.fingerprint,
+                  identity: external.identity
+                })
+            const retainedXml = restoredLocal.currentXml
+            let canvasRecoveryError: unknown
+            const coordinatedRestore = commandsRef.current[tab.key]?.applyExternalXml
+            if (coordinatedRestore) {
+              invalidateLiveXmlCapture(tab.key)
+              try {
+                await coordinatedRestore(retainedXml, {
+                  dirty: true,
+                  baselineXml: external.xml
+                })
+              } catch (restoreError) {
+                canvasRecoveryError = restoreError
+              }
+            } else if (modeler?.importXML) {
+              canvasRecoveryError = new Error('The editor synchronization command is not ready.')
+            } else {
+              setContents((previous) => ({ ...previous, [tab.key]: retainedXml }))
+            }
             drafts?.track(restoredLocal)
             let draftRecoveryError: unknown
             try {
@@ -2727,26 +3416,87 @@ function App(): JSX.Element {
               }
             }
             if (!isCurrent()) throw new Error(t('alert.staleWrite'))
-            binding.index.updateDirty(externalPath, xml)
+            const retainedAfterFlush = controller.store.get(tab.key)
+            if (!retainedAfterFlush || retainedAfterFlush.incarnation !== sessionIncarnation) {
+              throw new Error(t('alert.staleWrite'))
+            }
+            binding.index.updateDirty(externalPath, retainedAfterFlush.currentXml)
             setLiveWorkspaceVersion(binding.index.version)
-            setContents((previous) => ({ ...previous, [tab.key]: xml }))
+            dirtyByKeyRef.current = { ...dirtyByKeyRef.current, [tab.key]: true }
             setDirtyByKey((previous) => ({ ...previous, [tab.key]: true }))
+            if (canvasRecoveryError === undefined && coordinatedRestore) {
+              setContents((previous) => ({ ...previous, [tab.key]: retainedXml }))
+            }
+            const recoveryDetail =
+              canvasRecoveryError === undefined
+                ? errMsg(error)
+                : `${errMsg(error)}; local canvas recovery: ${errMsg(canvasRecoveryError)}`
+            recordWorkspaceIssue(`${externalPath}: ${recoveryDetail}`, binding)
             throw new Error(
               t('session.save.reloadEditorFailed', {
                 error: draftRecoveryError
-                  ? `${errMsg(error)}; ${errMsg(draftRecoveryError)}`
-                  : errMsg(error)
+                  ? `${recoveryDetail}; ${errMsg(draftRecoveryError)}`
+                  : recoveryDetail
               })
             )
           }
           if (!isCurrent()) throw new Error(t('alert.staleWrite'))
+          let finalReloadedSession = controller.store.get(tab.key)
+          if (!finalReloadedSession || finalReloadedSession.incarnation !== sessionIncarnation) {
+            throw new Error(t('alert.staleWrite'))
+          }
+          if (dirtyByKeyRef.current[tab.key]) {
+            const captured = await captureLiveSession(
+              controller,
+              finalReloadedSession,
+              true,
+              isCurrent
+            )
+            if (captured.status === 'stale') throw new Error(t('alert.staleWrite'))
+            if (captured.status === 'unavailable') {
+              const evidence = `${externalPath}: ${errMsg(captured.error)}`
+              recordWorkspaceIssue(evidence, binding)
+              binding.index.updateDirty(externalPath, captured.session.currentXml)
+              dirtyByKeyRef.current = { ...dirtyByKeyRef.current, [tab.key]: true }
+              setDirtyByKey((previous) => ({ ...previous, [tab.key]: true }))
+              setLiveWorkspaceVersion(binding.index.version)
+              throw new Error(t('session.save.reloadEditorFailed', { error: evidence }))
+            }
+            finalReloadedSession = captured.session
+          }
+          if (
+            finalReloadedSession.revision !== reloadedSession.revision ||
+            finalReloadedSession.currentXml !== visibleXml
+          ) {
+            drafts?.track(finalReloadedSession)
+            try {
+              await drafts?.flush(finalReloadedSession.id, finalReloadedSession.incarnation)
+            } catch (draftError) {
+              if (isCurrent()) {
+                recordWorkspaceIssue(`${externalPath}: ${errMsg(draftError)}`, binding)
+              }
+            }
+            if (!isCurrent()) throw new Error(t('alert.staleWrite'))
+            binding.index.updateDirty(externalPath, finalReloadedSession.currentXml)
+            dirtyByKeyRef.current = { ...dirtyByKeyRef.current, [tab.key]: true }
+            setDirtyByKey((previous) => ({ ...previous, [tab.key]: true }))
+            setLiveWorkspaceVersion(binding.index.version)
+            throw new Error(t('session.save.newerEdits'))
+          }
           setLiveWorkspaceVersion(binding.index.version)
           setContents((previous) => ({ ...previous, [tab.key]: visibleXml }))
+          dirtyByKeyRef.current = {
+            ...dirtyByKeyRef.current,
+            [tab.key]: hasReviewedChanges
+          }
           setDirtyByKey((previous) => ({
             ...previous,
             [tab.key]: hasReviewedChanges
           }))
-          return { durable: true }
+          return {
+            durable: !hasReviewedChanges,
+            acceptedSubmittedXml: false
+          }
         }
         if (outcome.status !== 'success' && outcome.status !== 'saved-as') {
           if (outcome.status === 'locked') {
@@ -2780,21 +3530,56 @@ function App(): JSX.Element {
           )
         }
         binding.index.updateSaved(saved)
-        const savedSession = controller.store.get(tab.key)
-        if (outcome.remainingDirty && savedSession) {
-          binding.index.updateDirty(savedPath, savedSession.currentXml)
-        } else {
-          binding.index.clearDirty(savedPath)
+        let savedSession = controller.store.get(tab.key)
+        if (!savedSession || savedSession.incarnation !== sessionIncarnation) {
+          throw new Error(t('alert.staleWrite'))
         }
-        setLiveWorkspaceVersion(binding.index.version)
-        setContents((previous) => ({ ...previous, [tab.key]: xml }))
-        setDirtyByKey((previous) => ({
-          ...previous,
-          [tab.key]: outcome.remainingDirty
-        }))
-        if (outcome.remainingDirty) {
+        if (savedSession.readXml) {
+          const captured = await captureLiveSession(controller, savedSession, true, isCurrent)
+          if (captured.status === 'stale') throw new Error(t('alert.staleWrite'))
+          if (captured.status === 'unavailable') {
+            const evidence = `${savedPath}: ${errMsg(captured.error)}`
+            recordWorkspaceIssue(evidence, binding)
+            binding.index.updateDirty(savedPath, captured.session.currentXml)
+            dirtyByKeyRef.current = { ...dirtyByKeyRef.current, [tab.key]: true }
+            setDirtyByKey((previous) => ({ ...previous, [tab.key]: true }))
+            setLiveWorkspaceVersion(binding.index.version)
+            throw new Error(t('session.save.reloadEditorFailed', { error: evidence }))
+          }
+          savedSession = captured.session
+        }
+        if (savedSession.currentXml === xml && !savedSession.dirty) {
+          dirtyByKeyRef.current = { ...dirtyByKeyRef.current, [tab.key]: false }
+        }
+        const remainingDirty =
+          outcome.remainingDirty ||
+          savedSession.revision !== submittedRevision ||
+          savedSession.currentXml !== xml ||
+          savedSession.dirty ||
+          dirtyByKeyRef.current[tab.key]
+        if (remainingDirty) {
+          binding.index.updateDirty(savedPath, savedSession.currentXml)
+          drafts?.track(savedSession)
+          try {
+            await drafts?.flush(savedSession.id, savedSession.incarnation)
+          } catch (draftError) {
+            if (isCurrent()) {
+              recordWorkspaceIssue(`${savedPath}: ${errMsg(draftError)}`, binding)
+            }
+          }
+          if (!isCurrent()) throw new Error(t('alert.staleWrite'))
+          dirtyByKeyRef.current = { ...dirtyByKeyRef.current, [tab.key]: true }
+          setDirtyByKey((previous) => ({ ...previous, [tab.key]: true }))
+          setLiveWorkspaceVersion(binding.index.version)
+          // The newer XML already lives in the modeler. Replacing the React
+          // prop with the older saved XML would silently erase that edit.
           throw new Error(t('session.save.newerEdits'))
         }
+        binding.index.clearDirty(savedPath)
+        setLiveWorkspaceVersion(binding.index.version)
+        setContents((previous) => ({ ...previous, [tab.key]: xml }))
+        dirtyByKeyRef.current = { ...dirtyByKeyRef.current, [tab.key]: false }
+        setDirtyByKey((previous) => ({ ...previous, [tab.key]: false }))
         if (outcome.status === 'saved-as') {
           await refreshWorkspace()
           if (!isCurrent()) throw new Error(t('alert.staleWrite'))
@@ -2805,12 +3590,15 @@ function App(): JSX.Element {
     },
     [
       contents,
+      captureLiveSession,
       captureWorkspaceOperation,
       ensureDocumentSession,
+      invalidateLiveXmlCapture,
       isWorkspaceOperationCurrent,
       modelersByKey,
       promptForSaveConflict,
       pushToast,
+      recordWorkspaceIssue,
       refreshWorkspace
     ]
   )
@@ -2829,57 +3617,318 @@ function App(): JSX.Element {
   const handleRepairDuplicateProcessId = useCallback(
     async (processId: string) => {
       const binding = captureWorkspaceOperation()
-      const isCurrent = (): boolean => isWorkspaceOperationCurrent(binding)
       const diagnostic = binding.index
         .duplicateDiagnostics()
         .find((item) => item.processId === processId)
       if (!diagnostic) return
       const target = diagnostic.occurrences[diagnostic.occurrences.length - 1]
-      const source = binding.index.files().find((file) => file.relPath === target.relPath)?.xml
-      if (!source) return
-      await validateReleaseXml(source, {
-        action: 'apply-editor',
-        knownProcessIds: binding.index.processIndex().keys(),
-        requireBilingual: false,
-        requireDi: true
-      })
-      if (!isCurrent()) return
-      const repair = await binding.index.repairDuplicateProcessId(target.relPath, processId, {
-        occurrence: target.occurrence
-      })
-      if (!isCurrent()) return
-      await validateReleaseXml(repair.xml, {
-        action: 'apply-editor',
-        knownProcessIds: binding.index.processIndex().keys(),
-        requireBilingual: false,
-        requireDi: true
-      })
-      if (!isCurrent()) return
-      setLiveWorkspaceVersion(binding.index.version)
-      let tab = tabs.find((item) => item.relPath === target.relPath)
-      if (!tab) {
-        tab = {
-          key: target.relPath,
-          title: baseName(target.relPath),
-          relPath: target.relPath,
-          gen: binding.generation
-        }
-        setTabs((previous) => [...previous, tab!])
+      const attemptToken = Symbol(`duplicate-repair:${target.relPath}`)
+      duplicateRepairTokenByPathRef.current.set(target.relPath, attemptToken)
+      const isCurrent = (): boolean =>
+        isWorkspaceOperationCurrent(binding) &&
+        duplicateRepairTokenByPathRef.current.get(target.relPath) === attemptToken
+      const assertCurrent = (): void => {
+        if (!isCurrent()) throw new Error(t('alert.staleWrite'))
       }
-      localizationSourceByTabRef.current.set(tab.key, LocalizationSource.Editor)
-      setContents((previous) => ({ ...previous, [tab!.key]: repair.xml }))
-      setDirtyByKey((previous) => ({ ...previous, [tab!.key]: true }))
-      setActiveKey(tab.key)
-      setCatalogOpen(false)
-      const modeler = modelersByKey[tab.key] as
-        { importXML?: (xml: string) => Promise<unknown> } | undefined
-      if (modeler?.importXML) {
-        await modeler.importXML(repair.xml)
-        if (!isCurrent()) return
-        setDirtyByKey((previous) => ({ ...previous, [tab!.key]: true }))
+      const controller = binding.controller
+      const workspace = binding.identity
+
+      try {
+        const indexedSource = binding.index
+          .files()
+          .find((file) => file.relPath === target.relPath)?.xml
+        let source = indexedSource
+        if (!source) return
+        let guardedSession =
+          controller && workspace
+            ? controller.store.getByIdentity({
+                workspace,
+                path: target.relPath
+              })
+            : undefined
+        if (controller && guardedSession?.readXml) {
+          const captured = await captureLiveSession(controller, guardedSession, true, isCurrent)
+          if (captured.status === 'stale') throw new Error(t('alert.staleWrite'))
+          if (captured.status === 'unavailable') {
+            throw new Error(
+              t('session.save.reloadEditorFailed', {
+                error: errMsg(captured.error)
+              })
+            )
+          }
+          assertCurrent()
+          guardedSession = captured.session
+          source = guardedSession.currentXml
+          const effectiveDirty =
+            guardedSession.dirty ||
+            Boolean(dirtyByKeyRef.current[guardedSession.id]) ||
+            forcedUndurableDirtyByKeyRef.current.has(guardedSession.id)
+          if (effectiveDirty) {
+            binding.index.updateDirty(target.relPath, source)
+          } else {
+            binding.index.clearDirty(target.relPath)
+          }
+          setLiveWorkspaceVersion(binding.index.version)
+        }
+        assertCurrent()
+        const sessionGuard = guardedSession
+          ? {
+              id: guardedSession.id,
+              incarnation: guardedSession.incarnation,
+              revision: guardedSession.revision,
+              currentXml: guardedSession.currentXml,
+              uiDirty: Boolean(dirtyByKeyRef.current[guardedSession.id])
+            }
+          : null
+        const sessionGuardMatches = (): boolean => {
+          if (!sessionGuard || !controller) return true
+          const current = controller.store.get(sessionGuard.id)
+          return Boolean(
+            current &&
+            current.incarnation === sessionGuard.incarnation &&
+            current.revision === sessionGuard.revision &&
+            current.currentXml === sessionGuard.currentXml &&
+            Boolean(dirtyByKeyRef.current[sessionGuard.id]) === sessionGuard.uiDirty
+          )
+        }
+        const assertSessionCurrent = (): void => {
+          assertCurrent()
+          if (!sessionGuardMatches()) throw new Error(t('alert.staleWrite'))
+        }
+
+        await validateReleaseXml(source, {
+          action: 'apply-editor',
+          knownProcessIds: binding.index.processIndex().keys(),
+          requireBilingual: false,
+          requireDi: true
+        })
+        assertSessionCurrent()
+        const prepared = await binding.index.prepareDuplicateProcessIdRepair(
+          target.relPath,
+          processId,
+          {
+            occurrence: target.occurrence
+          }
+        )
+        assertSessionCurrent()
+        if (
+          prepared.relPath !== target.relPath ||
+          prepared.target.relPath !== target.relPath ||
+          prepared.target.effectiveXml !== source
+        ) {
+          throw new Error(t('session.save.newerEdits'))
+        }
+        await validateReleaseXml(prepared.xml, {
+          action: 'apply-editor',
+          knownProcessIds: binding.index.processIndex().keys(),
+          requireBilingual: false,
+          requireDi: true
+        })
+        assertSessionCurrent()
+        const preservation = await validateUnknownExtensionPreservation(source, prepared.xml)
+        assertSessionCurrent()
+        if (!preservation.valid) {
+          throw new Error(t('sourceEditor.preservationBlocked'))
+        }
+
+        let tab = tabsRef.current.find((item) => item.relPath === target.relPath)
+        const tabKey = guardedSession?.id ?? tab?.key ?? target.relPath
+        const modeler = modelersByKeyRef.current[tabKey] as
+          | {
+              saveXML(options: { format: boolean }): Promise<{ xml?: string }>
+              get(name: string): unknown
+            }
+          | undefined
+        let finalXml = prepared.xml
+        let updatedSession: DocumentSession | null = null
+        let editorTransactionApplied = false
+
+        const restorePreparedIndexTarget = (): void => {
+          if (prepared.target.dirtyXml !== null) {
+            binding.index.updateDirty(prepared.target.relPath, prepared.target.dirtyXml)
+          } else {
+            binding.index.clearDirty(prepared.target.relPath)
+          }
+        }
+
+        if (modeler) {
+          const runExclusiveXmlTransaction = commandsRef.current[tabKey]?.runExclusiveXmlTransaction
+          if (!runExclusiveXmlTransaction) {
+            throw new Error('The editor synchronization command is not ready.')
+          }
+          invalidateLiveXmlCapture(tabKey)
+          await runExclusiveXmlTransaction(async (transaction) => {
+            if (transaction.modeler !== modeler) {
+              throw new DOMException('The editor modeler is no longer active.', 'AbortError')
+            }
+            const assertTransactionCurrent = (): void => {
+              transaction.assertActive()
+              assertSessionCurrent()
+              if (modelersByKeyRef.current[tabKey] !== modeler) {
+                throw new Error(t('alert.staleWrite'))
+              }
+            }
+            assertTransactionCurrent()
+            const { xml: currentEditorXml } = await transaction.modeler.saveXML({
+              format: true
+            })
+            assertTransactionCurrent()
+            if (!currentEditorXml || currentEditorXml !== source) {
+              throw new Error(t('session.save.newerEdits'))
+            }
+
+            let mutationAttempted = false
+            let indexCommitted = false
+            let acceptedSessionXml: string | null = null
+            try {
+              mutationAttempted = true
+              await transaction.importXml(prepared.xml)
+              invalidateLiveXmlCapture(tabKey)
+              assertTransactionCurrent()
+              const { xml: roundTripXml } = await transaction.modeler.saveXML({
+                format: true
+              })
+              assertTransactionCurrent()
+              if (!roundTripXml) {
+                throw new Error('editor returned no XML after duplicate-id repair')
+              }
+              const roundTripPreservation = await validateUnknownExtensionPreservation(
+                prepared.xml,
+                roundTripXml
+              )
+              assertTransactionCurrent()
+              if (!roundTripPreservation.valid) {
+                throw new Error(t('sourceEditor.preservationBlocked'))
+              }
+              await validateReleaseXml(roundTripXml, {
+                action: 'apply-editor',
+                knownProcessIds: binding.index.processIndex().keys(),
+                requireBilingual: false,
+                requireDi: true
+              })
+              assertTransactionCurrent()
+
+              binding.index.commitDuplicateProcessIdRepair(prepared)
+              indexCommitted = true
+              if (roundTripXml !== prepared.xml) {
+                binding.index.updateDirty(target.relPath, roundTripXml)
+              }
+              if (!controller || !sessionGuard) {
+                throw new Error(t('alert.staleWrite'))
+              }
+              const currentSession = controller.store.get(sessionGuard.id)
+              if (
+                !currentSession ||
+                currentSession.incarnation !== sessionGuard.incarnation ||
+                currentSession.revision !== sessionGuard.revision ||
+                currentSession.currentXml !== sessionGuard.currentXml
+              ) {
+                throw new Error(t('alert.staleWrite'))
+              }
+              updatedSession = controller.updateXml(sessionGuard.id, roundTripXml)
+              acceptedSessionXml = roundTripXml
+              transaction.markDirty()
+              finalXml = roundTripXml
+              editorTransactionApplied = true
+            } catch (error) {
+              if (acceptedSessionXml !== null && controller && sessionGuard) {
+                const currentSession = controller.store.get(sessionGuard.id)
+                if (
+                  currentSession?.incarnation === sessionGuard.incarnation &&
+                  currentSession.currentXml === acceptedSessionXml
+                ) {
+                  try {
+                    controller.updateXml(sessionGuard.id, source)
+                  } catch {
+                    /* the original repair error remains authoritative */
+                  }
+                }
+                updatedSession = null
+              }
+              if (indexCommitted) restorePreparedIndexTarget()
+              if (mutationAttempted) {
+                try {
+                  transaction.assertActive()
+                  await transaction.importXml(source)
+                  invalidateLiveXmlCapture(tabKey)
+                  transaction.restoreDirtyState()
+                } catch {
+                  /* preserve the original repair error */
+                }
+              }
+              throw error
+            }
+          })
+        } else {
+          assertSessionCurrent()
+          binding.index.commitDuplicateProcessIdRepair(prepared)
+          if (guardedSession && controller) {
+            updatedSession = controller.updateXml(guardedSession.id, prepared.xml)
+          }
+        }
+        assertCurrent()
+
+        if (!tab) {
+          tab = {
+            key: tabKey,
+            title: baseName(target.relPath),
+            relPath: target.relPath,
+            gen: binding.generation
+          }
+          const openedTab = tab
+          setTabs((previous) =>
+            previous.some((item) => item.key === openedTab.key)
+              ? previous
+              : [...previous, openedTab]
+          )
+        }
+        if (!updatedSession && controller) {
+          const sourceHash = baseHashByPathRef.current[target.relPath]
+          const durableXml = prepared.target.saved?.xml ?? ''
+          updatedSession =
+            ensureDocumentSession(tab, finalXml, {
+              lastSavedXml: durableXml,
+              base:
+                prepared.target.saved && sourceHash
+                  ? {
+                      hash: sourceHash,
+                      size: prepared.target.saved.size,
+                      modifiedAt: prepared.target.saved.lastModified
+                    }
+                  : null
+            }) ?? null
+        }
+        if (updatedSession) binding.drafts?.track(updatedSession)
+        if (!editorTransactionApplied) {
+          setContents((previous) => ({ ...previous, [tab.key]: finalXml }))
+        }
+        localizationSourceByTabRef.current.set(tab.key, LocalizationSource.Editor)
+        dirtyByKeyRef.current = { ...dirtyByKeyRef.current, [tab.key]: true }
+        setDirtyByKey((previous) => ({ ...previous, [tab.key]: true }))
+        setLiveWorkspaceVersion(binding.index.version)
+        setActiveKey(tab.key)
+        setCatalogOpen(false)
+      } catch (error) {
+        if (isCurrent()) {
+          const evidence = `${target.relPath}: ${errMsg(error)}`
+          recordWorkspaceIssue(evidence, binding)
+          pushToast(t('session.save.reloadEditorFailed', { error: evidence }), 'error')
+        }
+      } finally {
+        if (duplicateRepairTokenByPathRef.current.get(target.relPath) === attemptToken) {
+          duplicateRepairTokenByPathRef.current.delete(target.relPath)
+        }
       }
     },
-    [captureWorkspaceOperation, isWorkspaceOperationCurrent, modelersByKey, tabs]
+    [
+      captureLiveSession,
+      captureWorkspaceOperation,
+      ensureDocumentSession,
+      invalidateLiveXmlCapture,
+      isWorkspaceOperationCurrent,
+      pushToast,
+      recordWorkspaceIssue
+    ]
   )
   // Parent→child callActivity links across the workspace — drives the
   // explorer's nested 🔗 rows and the exported library manifest.
@@ -3245,7 +4294,7 @@ function App(): JSX.Element {
       `${doc.fileBaseName}.bpmn`,
       doc.xml,
       LocalizationSource.Editor,
-      intent
+      { claimedIntent: intent, initiallyDirty: true }
     )
   }, [
     activateSingleFileDocument,
@@ -3302,9 +4351,10 @@ function App(): JSX.Element {
   const requestPathDirtyDecision = useCallback(
     (
       count: number,
-      request: Pick<PathTransactionPlan['request'], 'kind' | 'sourcePath'>
+      request: { kind: PathDirtyPromptState['kind']; sourcePath: string }
     ): Promise<'save' | 'discard' | 'cancel'> =>
       new Promise((resolve) => {
+        pathDirtyResolveRef.current?.('cancel')
         pathDirtyResolveRef.current = resolve
         setPathDirtyPrompt({ count, kind: request.kind, path: request.sourcePath })
       }),
@@ -3450,108 +4500,113 @@ function App(): JSX.Element {
         )
       }
       if (plan.phase === 'cancelled') return 'cancelled'
-      const history = binding.history
-      const drafts = binding.drafts
-      const mutatePath = createAdapterPathMutation(adapter, { history: history ?? undefined })
-      let retryFinalize: (() => Promise<void>) | undefined
-      const result = await opMutexRef.current
-        .runExclusive(async () => {
-          if (!isCurrent()) throw new Error(t('alert.staleWrite'))
-          return executePathTransaction(controller.store, plan, {
-            saveSession: async (sessionId) => {
-              const session = controller.store.get(sessionId)
-              const tab = tabs.find((candidate) => candidate.key === sessionId)
-              if (!session || !tab) {
-                return { sessionId, ok: false, status: 'missing-session' }
-              }
-              try {
-                const xml = session.readXml ? await session.readXml() : session.currentXml
-                const save = await requestSaveRef.current(tab, xml)
-                return {
-                  sessionId,
-                  ok: save.durable,
-                  status: save.durable ? 'success' : 'not-durable',
-                  remainingDirty: controller.store.get(sessionId)?.dirty ?? true
+      const releasePersistenceInteractionLock = acquirePersistenceInteractionLock()
+      try {
+        const history = binding.history
+        const drafts = binding.drafts
+        const mutatePath = createAdapterPathMutation(adapter, { history: history ?? undefined })
+        let retryFinalize: (() => Promise<void>) | undefined
+        const result = await opMutexRef.current
+          .runExclusive(async () => {
+            if (!isCurrent()) throw new Error(t('alert.staleWrite'))
+            return executePathTransaction(controller.store, plan, {
+              saveSession: async (sessionId) => {
+                const session = controller.store.get(sessionId)
+                const tab = tabs.find((candidate) => candidate.key === sessionId)
+                if (!session || !tab) {
+                  return { sessionId, ok: false, status: 'missing-session' }
                 }
-              } catch (error) {
-                return { sessionId, ok: false, status: errMsg(error), remainingDirty: true }
-              }
-            },
-            mutateStorage: async (readyPlan) => {
-              const mutation = await mutatePath(readyPlan)
-              retryFinalize = mutation.finalize
-              return mutation
-            },
-            migrateDrafts: drafts
-              ? (migrations) => drafts.migrateDraftRecords(migrations)
-              : undefined
-          })
-        })
-        .catch((error: unknown) => {
-          if (!isCurrent()) return null
-          throw error
-        })
-      if (!result) return 'failed'
-      if (!isCurrent()) return 'failed'
-      if (result.status === 'cancelled') return 'cancelled'
-      if (result.status !== 'committed') {
-        if (result.status === 'failed') {
-          if (!result.rolledBack) {
-            const evidence = `${result.plan.request.sourcePath}: ${errMsg(result.error)}`
-            setPathRecovery(null)
-            await refreshWorkspace()
-            if (!isCurrent()) return 'failed'
-            setWorkspaceIssues((current) =>
-              current.includes(evidence) ? current : [...current, evidence]
-            )
-            if (binding.history) setHistoryOpen(true)
-            pushToast(t('workspace.path.failed', { error: evidence }), 'error')
-            return 'failed'
-          }
-          throw new Error(t('workspace.path.failed', { error: errMsg(result.error) }))
-        }
-        if (result.status === 'save-failed') {
-          throw new Error(
-            t('workspace.path.saveFailed', {
-              error: result.outcomes.map((outcome) => outcome.status).join(', ')
+                try {
+                  const xml = session.readXml ? await session.readXml() : session.currentXml
+                  const save = await requestSaveRef.current(tab, xml)
+                  return {
+                    sessionId,
+                    ok: save.durable,
+                    status: save.durable ? 'success' : 'not-durable',
+                    remainingDirty: controller.store.get(sessionId)?.dirty ?? true
+                  }
+                } catch (error) {
+                  return { sessionId, ok: false, status: errMsg(error), remainingDirty: true }
+                }
+              },
+              mutateStorage: async (readyPlan) => {
+                const mutation = await mutatePath(readyPlan)
+                retryFinalize = mutation.finalize
+                return mutation
+              },
+              migrateDrafts: drafts
+                ? (migrations) => drafts.migrateDraftRecords(migrations)
+                : undefined
             })
+          })
+          .catch((error: unknown) => {
+            if (!isCurrent()) return null
+            throw error
+          })
+        if (!result) return 'failed'
+        if (!isCurrent()) return 'failed'
+        if (result.status === 'cancelled') return 'cancelled'
+        if (result.status !== 'committed') {
+          if (result.status === 'failed') {
+            if (!result.rolledBack) {
+              const evidence = `${result.plan.request.sourcePath}: ${errMsg(result.error)}`
+              setPathRecovery(null)
+              await refreshWorkspace()
+              if (!isCurrent()) return 'failed'
+              recordWorkspaceIssue(evidence, binding)
+              if (binding.history) setHistoryOpen(true)
+              pushToast(t('workspace.path.failed', { error: evidence }), 'error')
+              return 'failed'
+            }
+            throw new Error(t('workspace.path.failed', { error: errMsg(result.error) }))
+          }
+          if (result.status === 'save-failed') {
+            throw new Error(
+              t('workspace.path.saveFailed', {
+                error: result.outcomes.map((outcome) => outcome.status).join(', ')
+              })
+            )
+          }
+          throw new Error(t('workspace.path.unavailable'))
+        }
+        await updateUiAfterPathCommit(result.plan, binding.index, drafts, isCurrent)
+        if (!isCurrent()) return 'failed'
+        await refreshWorkspace()
+        if (!isCurrent()) return 'failed'
+        if (result.finalizeError) {
+          const transactionHash = await sha256Hex(new TextEncoder().encode(result.plan.id))
+          if (!isCurrent()) return 'failed'
+          const stagingPath = `${PATH_TRANSACTION_STAGING_ROOT}/tx-${transactionHash.slice(0, 32)}`
+          const payloadPath = `${stagingPath}/payload`
+          if (retryFinalize) {
+            setPathRecovery({
+              adapter,
+              error: result.finalizeError,
+              generation: binding.generation,
+              payloadPath,
+              retry: retryFinalize,
+              stagingPath
+            })
+          }
+          pushToast(
+            t('workspace.path.finalizeWarning', {
+              error: errMsg(result.finalizeError),
+              path: payloadPath
+            }),
+            'error'
           )
         }
-        throw new Error(t('workspace.path.unavailable'))
+        return 'committed'
+      } finally {
+        releasePersistenceInteractionLock()
       }
-      await updateUiAfterPathCommit(result.plan, binding.index, drafts, isCurrent)
-      if (!isCurrent()) return 'failed'
-      await refreshWorkspace()
-      if (!isCurrent()) return 'failed'
-      if (result.finalizeError) {
-        const transactionHash = await sha256Hex(new TextEncoder().encode(result.plan.id))
-        if (!isCurrent()) return 'failed'
-        const stagingPath = `${PATH_TRANSACTION_STAGING_ROOT}/tx-${transactionHash.slice(0, 32)}`
-        const payloadPath = `${stagingPath}/payload`
-        if (retryFinalize) {
-          setPathRecovery({
-            adapter,
-            error: result.finalizeError,
-            generation: binding.generation,
-            payloadPath,
-            retry: retryFinalize,
-            stagingPath
-          })
-        }
-        pushToast(
-          t('workspace.path.finalizeWarning', {
-            error: errMsg(result.finalizeError),
-            path: payloadPath
-          }),
-          'error'
-        )
-      }
-      return 'committed'
     },
     [
+      acquirePersistenceInteractionLock,
       captureWorkspaceOperation,
       isWorkspaceOperationCurrent,
       refreshWorkspace,
+      recordWorkspaceIssue,
       requestPathDirtyDecision,
       tabs,
       updateUiAfterPathCommit,
@@ -3690,208 +4745,156 @@ function App(): JSX.Element {
 
   // --- import (.bpmn from Explorer) ---------------------------------------
 
-  // Adapter createFolder is recursive and idempotent. Keeping folder creation
-  // behind this helper ensures imports never bypass the manifest-bound adapter.
-  const ensureFolders = useCallback(async (adapter: WorkspaceAdapter, relDir: string) => {
-    if (!relDir) return
-    await adapter.createFolder(relDir)
+  const beginWorkspaceImportOperation = useCallback((): AbortController => {
+    workspaceImportAbortRef.current?.abort()
+    const controller = new AbortController()
+    workspaceImportAbortRef.current = controller
+    setWorkspaceImportReview(null)
+    return controller
   }, [])
 
-  const importEntries = useCallback(
+  const materializeWorkspaceImportSources = useCallback(
     async (
-      entries: DroppedBpmn[],
-      baseFolderRel: string,
-      operationBinding?: WorkspaceOperationBinding
-    ) => {
-      const binding = operationBinding ?? captureWorkspaceOperation()
+      entries: readonly DroppedBpmn[],
+      controller: AbortController,
+      isCurrent: () => boolean
+    ): Promise<readonly WorkspaceImportSource[]> => {
+      if (entries.length > DEFAULT_WORKSPACE_IMPORT_LIMITS.maxSources) {
+        throw new Error(
+          `Workspace import has ${entries.length} sources; limit is ${DEFAULT_WORKSPACE_IMPORT_LIMITS.maxSources}.`
+        )
+      }
+      const sources: WorkspaceImportSource[] = []
+      let totalBytes = 0
+      for (const [index, entry] of entries.entries()) {
+        if (controller.signal.aborted || !isCurrent()) {
+          throw new DOMException('Workspace import was cancelled.', 'AbortError')
+        }
+        const text = await entry.getText()
+        if (controller.signal.aborted || !isCurrent()) {
+          throw new DOMException('Workspace import was cancelled.', 'AbortError')
+        }
+        const bytes = new TextEncoder().encode(text).byteLength
+        assertImportAllocationSize(bytes, entry.relPath)
+        totalBytes += bytes
+        if (totalBytes > DEFAULT_WORKSPACE_IMPORT_LIMITS.maxTotalSourceCharacters) {
+          throw new Error(
+            `Workspace import exceeds the ${DEFAULT_WORKSPACE_IMPORT_LIMITS.maxTotalSourceCharacters}-byte total limit.`
+          )
+        }
+        sources.push({
+          kind: 'document',
+          id: `document:${String(index + 1).padStart(6, '0')}:${entry.relPath}`,
+          name: entry.name,
+          relPath: entry.relPath,
+          text
+        })
+      }
+      return Object.freeze(sources)
+    },
+    []
+  )
+
+  const prepareWorkspaceImportReview = useCallback(
+    async (
+      sources: readonly WorkspaceImportSource[],
+      targetFolder: string,
+      binding: WorkspaceOperationBinding,
+      controller: AbortController
+    ): Promise<boolean> => {
       const adapter = binding.adapter
-      const isCurrent = (): boolean => isWorkspaceOperationCurrent(binding)
+      const isCurrent = (): boolean =>
+        !controller.signal.aborted &&
+        workspaceImportAbortRef.current === controller &&
+        isWorkspaceOperationCurrent(binding)
       if (!adapter?.storage.capabilities.multipleFiles) {
         if (isCurrent()) pushToast(t('toast.import.openFolderFirst'), 'info')
-        return
+        return false
       }
-      if (entries.length === 0) {
+      if (sources.length === 0) {
         if (isCurrent()) pushToast(t('toast.import.noBpmnFound'), 'info')
-        return
+        return false
       }
-      let created = 0
-      let renamed = 0
-      const knownProcessIds = [...binding.index.processIndex().keys()]
-      for (const entry of entries) {
-        if (!isCurrent()) return
-        const sub = dirOf(entry.relPath)
-        const targetFolder = sub ? joinRel(baseFolderRel, sub) : baseFolderRel
-        // .bpmn, plain .xml (sniffed below) and (experimental) .apc all land as
-        // a <base>.bpmn file.
-        const base = deriveFileBaseName(entry.name.replace(/\.(bpmn|apc|xml)$/i, ''))
-        // One serialized create per output file (slug pick + write inside the
-        // shared op-mutex, as everywhere else). The optional `folder` override
-        // lets the multi-model AML path land its files in a subfolder.
-        const writeUnique = (
-          slug: string,
-          xml: string,
-          folder: string = targetFolder
-        ): Promise<string> =>
-          opMutexRef.current.runExclusive(async () => {
-            if (!isCurrent()) throw new Error(t('alert.staleWrite'))
-            const taken = await directBpmnSlugs(adapter, folder)
-            if (!isCurrent()) throw new Error(t('alert.staleWrite'))
-            const guess = dedupeSlug(slug, (c) => taken.has(c.toLowerCase()))
-            const relPath = await writeUniqueBpmn(adapter, folder, guess, xml)
-            if (!isCurrent()) throw new Error(t('alert.staleWrite'))
-            return relPath
-          })
-        try {
-          const text = await entry.getText()
-          if (!isCurrent()) return
-          const prepareXml = async (candidateXml: string): Promise<string | null> => {
-            const prepared = await prepareImportedBpmnXml(candidateXml, knownProcessIds)
-            if (!isCurrent()) return null
-            if (prepared.autoLayouted && !confirmGeneratedImportLayout()) {
-              return null
-            }
-            return prepared.xml
-          }
-          // Routing is CONTENT-based: a `.xml` may be BPMN (many tools export
-          // BPMN with a .xml extension) OR an ARIS AML database export (the
-          // user's DMT exports) — and a mis-labeled `.apc` may equally carry
-          // either. Only files that are neither are rejected.
-          if (looksLikeBpmnXml(text)) {
-            const candidateXml = await prepareXml(text)
-            if (!isCurrent()) return
-            if (!candidateXml) continue
-            const relPath = await writeUnique(base, candidateXml)
-            if (!isCurrent()) return
-            localizationSourceByTabRef.current.set(relPath, LocalizationSource.Xml)
-            created += 1
-            const finalBase = baseName(relPath).replace(/\.bpmn$/i, '')
-            if (finalBase.toLowerCase() !== base.toLowerCase()) renamed += 1
-          } else if (looksLikeAml(text)) {
-            // ARIS AML → one .bpmn per contained EPC model, named from the
-            // model's name in the CURRENT app language (bilingual attrs ride
-            // along inside the XML either way). A failure skips this file but
-            // never aborts the rest of the import. A MULTI-model conversion
-            // lands in its own subfolder (named after the export's landscape /
-            // database when the converter suggests one) so a single AML never
-            // floods the drop target; single-file conversions stay flat.
-            const conv = await convertAmlToBpmnFiles(text, { lang })
-            if (!isCurrent()) return
-            if ('error' in conv) {
-              pushToast(t('apc.failed', { reason: apcReason(conv.error) }), 'error')
-              continue
-            }
-            let modelFolder = targetFolder
-            let folderName: string | null = null
-            if (conv.files.length > 1) {
-              // `folderName` is added by the importer rewrite landing alongside
-              // this change — read it defensively so either merge order compiles.
-              const suggested = (conv as { folderName?: string }).folderName
-              const baseFolderName = sanitizeFolderName(
-                suggested || '',
-                deriveFileBaseName(suggested || base)
-              )
-              // Never silently merge into an existing NON-EMPTY folder — suffix
-              // -2, -3… (the dedupeSlug convention). A missing or still-empty
-              // folder is fair game: ensureFolders creates or reuses it.
-              let cand = baseFolderName
-              for (let n = 2; ; n += 1) {
-                const count = await directoryEntryCount(adapter, joinRel(targetFolder, cand))
-                if (!isCurrent()) return
-                if (count === 0) break
-                cand = `${baseFolderName}-${n}`
-              }
-              folderName = cand
-              modelFolder = joinRel(targetFolder, folderName)
-              await ensureFolders(adapter, modelFolder)
-              if (!isCurrent()) return
-            }
-            for (const model of conv.files) {
-              if (!isCurrent()) return
-              const modelName = (lang === 'ar' ? model.nameAr : model.nameEn) || model.name
-              const slug = deriveFileBaseName(modelName || base)
-              const candidateXml = await prepareXml(model.xml)
-              if (!isCurrent()) return
-              if (!candidateXml) continue
-              const relPath = await writeUnique(slug, candidateXml, modelFolder)
-              if (!isCurrent()) return
-              localizationSourceByTabRef.current.set(relPath, LocalizationSource.Aris)
-              created += 1
-            }
-            pushToast(
-              conv.files.length === 1
-                ? t('apc.converted', { name: entry.name })
-                : folderName
-                  ? t('apc.convertedInto', { count: conv.files.length, folder: folderName })
-                  : t('apc.convertedMany', { count: conv.files.length, name: entry.name }),
-              'success'
-            )
-          } else if (isXmlName(entry.name)) {
-            pushToast(t('import.notBpmnXml', { name: entry.name }), 'error')
-            continue
-          } else if (isApcName(entry.name)) {
-            pushToast(t('apc.failed', { reason: apcReason('not-aml') }), 'error')
-            continue
-          } else {
-            // A .bpmn whose content did not match the fast sniff still goes
-            // through the authoritative validators. Invalid input never
-            // reaches the workspace.
-            const candidateXml = await prepareXml(text)
-            if (!isCurrent()) return
-            if (!candidateXml) continue
-            const relPath = await writeUnique(base, candidateXml)
-            if (!isCurrent()) return
-            localizationSourceByTabRef.current.set(relPath, LocalizationSource.Xml)
-            created += 1
-            const finalBase = baseName(relPath).replace(/\.bpmn$/i, '')
-            if (finalBase.toLowerCase() !== base.toLowerCase()) renamed += 1
-          }
-        } catch (error) {
-          if (!isCurrent()) return
+      const localizationSnapshot = workspaceLocalizationSnapshotRef.current
+      if (!localizationSnapshot) {
+        if (isCurrent()) {
           pushToast(
-            t('alert.importFailed', {
-              name: entry.name,
-              error: errMsg(error)
+            t('settings.localization.loadFailed', {
+              error: workspaceLocalizationError ?? t('workspace.history.unknownError')
             }),
             'error'
           )
         }
+        return false
       }
-      if (!isCurrent()) return
-      await refreshWorkspace()
-      if (!isCurrent()) return
-      pushToast(
-        t('toast.imported.count', { count: created, plural: created === 1 ? '' : 's' }) +
-          (renamed > 0 ? t('toast.imported.renamed', { renamed }) : '') +
-          '.',
-        'success'
-      )
+      try {
+        const plan = await prepareWorkspaceImportPlan({
+          adapter,
+          sources,
+          targetFolder,
+          language: langRef.current,
+          existingProcessIndex: binding.index.processIndex(),
+          localizationResources: localizationSnapshot.resources,
+          localizationReview: reviewedXmlReviewQueueRef.current!.review,
+          validationAdapters: getRuntimeValidationAdapters(),
+          signal: controller.signal
+        })
+        if (!isCurrent()) return false
+        setWorkspaceImportReview({
+          binding,
+          controller,
+          plan,
+          sources,
+          targetFolder,
+          decisions: Object.freeze({}),
+          busy: false,
+          error: null
+        })
+        return true
+      } catch (error) {
+        if (isCurrent()) {
+          pushToast(t('alert.import.failed', { error: errMsg(error) }), 'error')
+        }
+        return false
+      }
     },
-    [
-      captureWorkspaceOperation,
-      ensureFolders,
-      isWorkspaceOperationCurrent,
-      lang,
-      pushToast,
-      refreshWorkspace
-    ]
+    [isWorkspaceOperationCurrent, pushToast, workspaceLocalizationError]
   )
 
   const handleImportDrop = useCallback(
     (dt: DataTransfer, toFolderRel: string) => {
       const binding = captureWorkspaceOperation()
+      const controller = beginWorkspaceImportOperation()
       void (async () => {
         try {
           const entries = await collectDroppedBpmn(dt)
-          if (!isWorkspaceOperationCurrent(binding)) return
-          await importEntries(entries, toFolderRel, binding)
+          const isCurrent = (): boolean =>
+            !controller.signal.aborted &&
+            workspaceImportAbortRef.current === controller &&
+            isWorkspaceOperationCurrent(binding)
+          if (!isCurrent()) return
+          const sources = await materializeWorkspaceImportSources(entries, controller, isCurrent)
+          if (!isCurrent()) return
+          await prepareWorkspaceImportReview(sources, toFolderRel, binding, controller)
         } catch (err) {
-          if (isWorkspaceOperationCurrent(binding)) {
+          if (
+            !controller.signal.aborted &&
+            workspaceImportAbortRef.current === controller &&
+            isWorkspaceOperationCurrent(binding)
+          ) {
             pushToast(t('alert.import.failed', { error: errMsg(err) }), 'error')
           }
         }
       })()
     },
-    [captureWorkspaceOperation, importEntries, isWorkspaceOperationCurrent, pushToast]
+    [
+      beginWorkspaceImportOperation,
+      captureWorkspaceOperation,
+      isWorkspaceOperationCurrent,
+      materializeWorkspaceImportSources,
+      prepareWorkspaceImportReview,
+      pushToast
+    ]
   )
 
   const onImportInputChange = useCallback(
@@ -3904,27 +4907,756 @@ function App(): JSX.Element {
       e.target.value = ''
       if (files.length === 0) return
       const binding = captureWorkspaceOperation()
+      const controller = beginWorkspaceImportOperation()
       try {
         const entries: DroppedBpmn[] = files
           .filter((f) => /\.(bpmn|apc|xml)$/i.test(f.name))
           .map((f) => ({
             relPath: f.name,
             name: f.name,
-            getText: async () =>
-              decodeUtf8Strict(new Uint8Array(await f.arrayBuffer()), {
-                operation: 'read',
-                path: f.name
-              })
+            getText: () => readBrowserImportFile(f, controller.signal)
           }))
-        if (!isWorkspaceOperationCurrent(binding)) return
-        await importEntries(entries, '', binding)
+        const isCurrent = (): boolean =>
+          !controller.signal.aborted &&
+          workspaceImportAbortRef.current === controller &&
+          isWorkspaceOperationCurrent(binding)
+        const sources = await materializeWorkspaceImportSources(entries, controller, isCurrent)
+        if (!isCurrent()) return
+        await prepareWorkspaceImportReview(sources, '', binding, controller)
       } catch (err) {
-        if (isWorkspaceOperationCurrent(binding)) {
+        if (
+          !controller.signal.aborted &&
+          workspaceImportAbortRef.current === controller &&
+          isWorkspaceOperationCurrent(binding)
+        ) {
           pushToast(t('alert.import.failed', { error: errMsg(err) }), 'error')
         }
       }
     },
-    [captureWorkspaceOperation, importEntries, isWorkspaceOperationCurrent, pushToast]
+    [
+      beginWorkspaceImportOperation,
+      captureWorkspaceOperation,
+      isWorkspaceOperationCurrent,
+      materializeWorkspaceImportSources,
+      prepareWorkspaceImportReview,
+      pushToast
+    ]
+  )
+
+  const cancelWorkspaceImportReview = useCallback(() => {
+    const current = workspaceImportReview
+    if (current?.busy) return
+    current?.controller.abort()
+    if (workspaceImportAbortRef.current === current?.controller) {
+      workspaceImportAbortRef.current = null
+    }
+    setWorkspaceImportReview(null)
+  }, [workspaceImportReview])
+
+  const updateWorkspaceImportDecision = useCallback(
+    (artifactId: string, decision: WorkspaceImportCollisionDecision | undefined): void => {
+      setWorkspaceImportReview((current) => {
+        if (!current || current.busy) return current
+        const decisions = { ...current.decisions }
+        if (decision) decisions[artifactId] = decision
+        else delete decisions[artifactId]
+        return { ...current, decisions: Object.freeze(decisions), error: null }
+      })
+    },
+    []
+  )
+
+  const reloadWorkspaceLocalizationResources = useCallback(
+    async (binding: WorkspaceOperationBinding, reason: string): Promise<boolean> => {
+      const localizationBinding = workspaceLocalizationBindingRef.current
+      const isCurrent = (): boolean =>
+        isWorkspaceOperationCurrent(binding) &&
+        workspaceLocalizationBindingRef.current === localizationBinding &&
+        localizationBinding !== null &&
+        localizationBinding.adapter === binding.adapter &&
+        localizationBinding.generation === binding.generation &&
+        !localizationBinding.controller.signal.aborted
+      if (!localizationBinding || !isCurrent()) return false
+      try {
+        const next = await localizationBinding.store.load({
+          signal: localizationBinding.controller.signal
+        })
+        if (!isCurrent()) return false
+        commitWorkspaceLocalizationSnapshot(localizationBinding, next)
+        return true
+      } catch (error) {
+        if (!isCurrent()) return false
+        const message = `${reason}: ${errMsg(error)}`
+        workspaceLocalizationSnapshotRef.current = null
+        setWorkspaceLocalizationSnapshot(null)
+        setWorkspaceLocalizationError(message)
+        recordWorkspaceIssue(message, binding)
+        pushToast(
+          t('settings.localization.loadFailed', {
+            error: message
+          }),
+          'error'
+        )
+        return false
+      }
+    },
+    [
+      commitWorkspaceLocalizationSnapshot,
+      isWorkspaceOperationCurrent,
+      pushToast,
+      recordWorkspaceIssue
+    ]
+  )
+
+  const synchronizeCommittedBpmnSnapshot = useCallback(
+    async (
+      binding: WorkspaceOperationBinding,
+      destinationPath: string,
+      snapshot: FileSnapshot,
+      source: LocalizationSourceType,
+      isCurrent: () => boolean,
+      expectedSession: OpenSessionCommitGuard | null
+    ): Promise<boolean> => {
+      const sessionController = binding.controller
+      const workspace = binding.identity
+      if (!sessionController || !workspace || !isCurrent()) return false
+      let xml: string
+      try {
+        xml = decodeUtf8Strict(snapshot.bytes, {
+          operation: 'read',
+          path: destinationPath
+        })
+      } catch (error) {
+        const evidence = `${destinationPath}: ${errMsg(error)}`
+        recordWorkspaceIssue(evidence, binding)
+        pushToast(t('session.save.reloadEditorFailed', { error: evidence }), 'error')
+        return true
+      }
+      baseHashByPathRef.current[destinationPath] = snapshot.hash
+      binding.index.updateSaved({
+        relPath: destinationPath,
+        xml,
+        lastModified: snapshot.modifiedAt,
+        size: snapshot.size
+      })
+      localizationSourceByTabRef.current.set(destinationPath, source)
+
+      const foundSession = sessionController.store.getByIdentity({
+        workspace,
+        path: destinationPath
+      })
+      if (!foundSession) return true
+      let openSession: DocumentSession = foundSession
+      localizationSourceByTabRef.current.set(openSession.id, source)
+      const fingerprint = fingerprintFromSnapshot(snapshot)
+      const modeler = modelersByKeyRef.current[openSession.id] as
+        { importXML?: (candidate: string) => Promise<unknown> } | undefined
+      const applyToEditor = async (
+        candidate: string,
+        options?: { dirty?: boolean; baselineXml?: string }
+      ): Promise<void> => {
+        const coordinatedApply = commandsRef.current[openSession.id]?.applyExternalXml
+        invalidateLiveXmlCapture(openSession.id)
+        if (coordinatedApply) {
+          await coordinatedApply(candidate, options)
+          return
+        }
+        if (modeler?.importXML) {
+          throw new Error('The editor synchronization command is not ready.')
+        }
+      }
+
+      const currentSession = (): DocumentSession | null => {
+        const current = sessionController.store.get(openSession.id)
+        return current?.incarnation === openSession.incarnation ? current : null
+      }
+      const updateUi = (
+        session: DocumentSession,
+        options: { replaceContents?: boolean; forceDirty?: boolean } = {}
+      ): void => {
+        const dirty = options.forceDirty || session.dirty
+        if (options.replaceContents) {
+          setContents((current) => ({ ...current, [session.id]: session.currentXml }))
+        }
+        dirtyByKeyRef.current = {
+          ...dirtyByKeyRef.current,
+          [session.id]: dirty
+        }
+        setDirtyByKey((current) => ({ ...current, [session.id]: dirty }))
+        if (dirty) {
+          binding.index.updateDirty(destinationPath, session.currentXml)
+        } else {
+          binding.index.clearDirty(destinationPath)
+        }
+      }
+      const reportRetainedEditor = (reason: string): void => {
+        if (!isCurrent()) return
+        const evidence = `${destinationPath}: ${reason}`
+        recordWorkspaceIssue(evidence, binding)
+        pushToast(t('session.save.reloadEditorFailed', { error: evidence }), 'error')
+      }
+      const preserveUncapturedEditor = async (
+        fallbackXml: string,
+        reason: string,
+        captureError: unknown
+      ): Promise<boolean> => {
+        if (!isCurrent()) return false
+        const current = currentSession()
+        if (!current) return false
+        const retainedXml = current.currentXml !== xml ? current.currentXml : fallbackXml
+        const retained = sessionController.store.replaceWithExternal(current.id, {
+          xml,
+          reviewedXml: retainedXml,
+          fingerprint
+        })
+        localizationSourceByTabRef.current.set(destinationPath, LocalizationSource.Editor)
+        localizationSourceByTabRef.current.set(retained.id, LocalizationSource.Editor)
+        binding.drafts?.track(retained)
+        try {
+          await binding.drafts?.flush(retained.id, retained.incarnation)
+        } catch (draftError) {
+          if (isCurrent()) {
+            recordWorkspaceIssue(`${destinationPath}: ${errMsg(draftError)}`, binding)
+          }
+        }
+        if (!isCurrent()) return false
+        const latest = currentSession()
+        if (!latest) return false
+        if (latest.dirty) binding.drafts?.track(latest)
+        // The canvas contains XML that could not be serialized. Never change
+        // the React `xml` prop or import a fallback over that live canvas.
+        updateUi(latest, { forceDirty: true })
+        reportRetainedEditor(
+          `${reason} Live XML capture failed, so the canvas was left untouched and marked dirty: ${errMsg(captureError)}`
+        )
+        return true
+      }
+      const retainLocalXml = async (
+        preferredXml: string,
+        reason: string,
+        restoreModeler: boolean
+      ): Promise<boolean> => {
+        if (!isCurrent()) return false
+        const current = currentSession()
+        if (!current) return false
+        const retainedXml =
+          current.currentXml !== xml && current.revision !== openSession.revision
+            ? current.currentXml
+            : preferredXml
+        let retained = sessionController.store.replaceWithExternal(current.id, {
+          xml,
+          reviewedXml: retainedXml,
+          fingerprint
+        })
+        let replaceContents = restoreModeler
+        localizationSourceByTabRef.current.set(destinationPath, LocalizationSource.Editor)
+        localizationSourceByTabRef.current.set(retained.id, LocalizationSource.Editor)
+        if (restoreModeler && retained.currentXml !== xml) {
+          const restoreRevision = retained.revision
+          const restoreXml = retained.currentXml
+          try {
+            await applyToEditor(retained.currentXml, {
+              dirty: true,
+              baselineXml: xml
+            })
+          } catch (restoreError) {
+            replaceContents = false
+            if (isCurrent()) {
+              recordWorkspaceIssue(`${destinationPath}: ${errMsg(restoreError)}`, binding)
+            }
+          }
+          if (!isCurrent()) return false
+          const afterRestore = currentSession()
+          if (!afterRestore) return false
+          if (
+            afterRestore.revision !== restoreRevision ||
+            afterRestore.currentXml !== restoreXml ||
+            dirtyByKeyRef.current[afterRestore.id]
+          ) {
+            replaceContents = false
+          }
+          retained = afterRestore
+        }
+
+        let stable = false
+        for (let attempt = 0; attempt < 3; attempt += 1) {
+          if (dirtyByKeyRef.current[retained.id]) {
+            const captured = await captureLiveSession(sessionController, retained, true, isCurrent)
+            if (captured.status === 'stale') return false
+            if (captured.status === 'unavailable') {
+              return preserveUncapturedEditor(preferredXml, reason, captured.error)
+            }
+            if (
+              captured.session.revision !== retained.revision ||
+              captured.session.currentXml !== retained.currentXml
+            ) {
+              replaceContents = false
+            }
+            retained = captured.session
+          }
+
+          binding.drafts?.track(retained)
+          try {
+            await binding.drafts?.flush(retained.id, retained.incarnation)
+          } catch (draftError) {
+            if (isCurrent()) {
+              recordWorkspaceIssue(`${destinationPath}: ${errMsg(draftError)}`, binding)
+            }
+          }
+          if (!isCurrent()) return false
+
+          let latest = currentSession()
+          if (!latest) return false
+          if (dirtyByKeyRef.current[latest.id]) {
+            const captured = await captureLiveSession(sessionController, latest, true, isCurrent)
+            if (captured.status === 'stale') return false
+            if (captured.status === 'unavailable') {
+              return preserveUncapturedEditor(preferredXml, reason, captured.error)
+            }
+            latest = captured.session
+          }
+          if (latest.revision === retained.revision && latest.currentXml === retained.currentXml) {
+            retained = latest
+            stable = true
+            break
+          }
+          replaceContents = false
+          retained = latest
+        }
+
+        if (!stable) {
+          binding.drafts?.track(retained)
+          updateUi(retained, { forceDirty: true })
+          reportRetainedEditor(
+            `${reason} The editor kept changing during recovery; its canvas was left untouched and remains dirty.`
+          )
+          return true
+        }
+        // Retained XML is already visible in the live modeler. Changing the
+        // React prop here would import it again and erase newer command-stack
+        // state, so update only dirty/index evidence.
+        updateUi(retained, { replaceContents })
+        reportRetainedEditor(reason)
+        return true
+      }
+
+      const guardMatches =
+        expectedSession !== null &&
+        openSession.id === expectedSession.id &&
+        openSession.incarnation === expectedSession.incarnation &&
+        openSession.revision === expectedSession.revision &&
+        openSession.currentXml === expectedSession.currentXml &&
+        !expectedSession.uiDirty &&
+        !dirtyByKeyRef.current[openSession.id]
+      if (!guardMatches) {
+        if (dirtyByKeyRef.current[openSession.id]) {
+          const captured = await captureLiveSession(sessionController, openSession, true, isCurrent)
+          if (captured.status === 'stale') return false
+          if (captured.status === 'unavailable') {
+            return preserveUncapturedEditor(
+              openSession.currentXml,
+              'The open editor changed while the reviewed import committed.',
+              captured.error
+            )
+          }
+          openSession = captured.session
+        }
+        return retainLocalXml(
+          openSession.currentXml,
+          'The open editor changed while the reviewed import committed; its local XML was retained as a recovery draft.',
+          false
+        )
+      }
+
+      const previousXml = openSession.currentXml
+      const replaced = sessionController.store.replaceWithExternal(openSession.id, {
+        xml,
+        fingerprint
+      })
+      const synchronizedRevision = replaced.revision
+      try {
+        await applyToEditor(xml)
+      } catch (error) {
+        return retainLocalXml(previousXml, errMsg(error), true)
+      }
+      if (!isCurrent()) return false
+      const afterImport = currentSession()
+      if (!afterImport) return false
+      if (
+        afterImport.revision !== synchronizedRevision ||
+        afterImport.currentXml !== xml ||
+        dirtyByKeyRef.current[afterImport.id]
+      ) {
+        let retained = afterImport
+        const immediateEditorDirty = Boolean(dirtyByKeyRef.current[afterImport.id])
+        if (dirtyByKeyRef.current[afterImport.id]) {
+          const captured = await captureLiveSession(sessionController, afterImport, true, isCurrent)
+          if (captured.status === 'stale') return false
+          if (captured.status === 'unavailable') {
+            return preserveUncapturedEditor(
+              previousXml,
+              'The open editor changed while committed XML was being reloaded.',
+              captured.error
+            )
+          }
+          retained = captured.session
+        }
+        openSession = retained
+        return retainLocalXml(
+          retained.currentXml,
+          'The open editor changed while committed XML was being reloaded; its newer local XML was retained as a recovery draft.',
+          !immediateEditorDirty
+        )
+      }
+
+      try {
+        await binding.drafts?.confirmedSave(afterImport.id, afterImport.incarnation, xml)
+      } catch (draftError) {
+        if (isCurrent()) {
+          recordWorkspaceIssue(`${destinationPath}: ${errMsg(draftError)}`, binding)
+        }
+      }
+      if (!isCurrent()) return false
+      const finalSession = currentSession()
+      if (!finalSession) return false
+      if (
+        finalSession.revision !== synchronizedRevision ||
+        finalSession.currentXml !== xml ||
+        finalSession.dirty ||
+        dirtyByKeyRef.current[finalSession.id]
+      ) {
+        openSession = finalSession
+        return retainLocalXml(
+          finalSession.currentXml,
+          'The open editor changed during post-commit cleanup; its newer local XML was retained as a recovery draft.',
+          !dirtyByKeyRef.current[finalSession.id]
+        )
+      }
+      updateUi(finalSession, { replaceContents: true })
+      return true
+    },
+    [captureLiveSession, invalidateLiveXmlCapture, pushToast, recordWorkspaceIssue]
+  )
+
+  const reconcileBpmnPathsFromStorage = useCallback(
+    async (
+      binding: WorkspaceOperationBinding,
+      paths: readonly string[],
+      source: LocalizationSourceType,
+      guards: ReadonlyMap<string, OpenSessionCommitGuard | null>
+    ): Promise<void> => {
+      const adapter = binding.adapter
+      if (!adapter) return
+      const isCurrent = (): boolean => isWorkspaceOperationCurrent(binding)
+      const uniquePaths = [
+        ...new Set(
+          paths
+            .flatMap((path) => {
+              try {
+                return [normalizeWorkspacePath(path)]
+              } catch (error) {
+                recordWorkspaceIssue(`${path}: ${errMsg(error)}`, binding)
+                return []
+              }
+            })
+            .filter(
+              (path) =>
+                /\.bpmn$/iu.test(path) && !path.toLocaleLowerCase('en-US').startsWith('.orbitpm/')
+            )
+        )
+      ]
+      for (const path of uniquePaths) {
+        if (!isCurrent()) return
+        try {
+          const snapshot = await adapter.read(path)
+          if (!isCurrent()) return
+          const synchronized = await synchronizeCommittedBpmnSnapshot(
+            binding,
+            path,
+            snapshot,
+            source,
+            isCurrent,
+            guards.get(path.toLocaleLowerCase('en-US')) ?? null
+          )
+          if (!synchronized || !isCurrent()) return
+        } catch (error) {
+          if (!isCurrent()) return
+          const evidence = `${path}: ${errMsg(error)}`
+          recordWorkspaceIssue(evidence, binding)
+          pushToast(t('session.save.reloadEditorFailed', { error: evidence }), 'error')
+        }
+      }
+      if (!isCurrent()) return
+      setLiveWorkspaceVersion(binding.index.version)
+    },
+    [isWorkspaceOperationCurrent, pushToast, recordWorkspaceIssue, synchronizeCommittedBpmnSnapshot]
+  )
+
+  const handleConfirmWorkspaceImport = useCallback(async () => {
+    const state = workspaceImportReview
+    const adapter = state?.binding.adapter
+    const sessionController = state?.binding.controller
+    if (!state || !adapter || !sessionController || state.busy) return
+    const { binding, controller, plan } = state
+    const operationIsCurrent = (): boolean =>
+      !controller.signal.aborted &&
+      workspaceImportAbortRef.current === controller &&
+      isWorkspaceOperationCurrent(binding)
+    const bindingIsCurrent = (): boolean => isWorkspaceOperationCurrent(binding)
+    if (!operationIsCurrent()) return
+    let storageCommitted = false
+    setWorkspaceImportReview((current) =>
+      current?.controller === controller ? { ...current, busy: true, error: null } : current
+    )
+    const releasePersistenceInteractionLock = acquirePersistenceInteractionLock()
+    try {
+      const confirmed = confirmWorkspaceImportPlan(plan, {
+        accepted: true,
+        reviewedDigest: plan.reviewDigest,
+        collisionDecisions: state.decisions
+      })
+      const replacedPaths = new Set(
+        plan.collisions
+          .filter(
+            (collision) => confirmed.collisionDecisions[collision.artifactId]?.action === 'replace'
+          )
+          .map((collision) => collision.path.toLocaleLowerCase('en-US'))
+      )
+      const affectedSessions = sessionController.store
+        .list()
+        .filter(
+          (session) =>
+            session.identity.path !== null &&
+            replacedPaths.has(session.identity.path.toLocaleLowerCase('en-US'))
+        )
+      const dirtySessions = affectedSessions.filter(
+        (session) => session.dirty || Boolean(dirtyByKeyRef.current[session.id])
+      )
+      if (dirtySessions.length > 0) {
+        const choice = await requestPathDirtyDecision(dirtySessions.length, {
+          kind: 'import',
+          sourcePath: [...replacedPaths].join(', ')
+        })
+        if (!operationIsCurrent()) return
+        if (choice === 'cancel') {
+          setWorkspaceImportReview((current) =>
+            current?.controller === controller ? { ...current, busy: false } : current
+          )
+          return
+        }
+        if (choice === 'save') {
+          let saveError: unknown
+          try {
+            for (const captured of dirtySessions) {
+              const current = sessionController.store.get(captured.id)
+              if (
+                !operationIsCurrent() ||
+                !current ||
+                current.incarnation !== captured.incarnation
+              ) {
+                throw new Error(t('alert.staleWrite'))
+              }
+              const tab = tabsRef.current.find((candidate) => candidate.key === captured.id)
+              if (!tab) throw new Error(t('session.save.failed', { status: 'missing-tab' }))
+              const live = await captureLiveSession(
+                sessionController,
+                current,
+                true,
+                operationIsCurrent
+              )
+              if (live.status === 'stale') throw new Error(t('alert.staleWrite'))
+              if (live.status === 'unavailable') {
+                throw new Error(
+                  t('session.save.reloadEditorFailed', {
+                    error: errMsg(live.error)
+                  })
+                )
+              }
+              const saved = await requestSaveRef.current(tab, live.session.currentXml)
+              if (!saved.durable) {
+                throw new Error(t('session.save.failed', { status: 'not-durable' }))
+              }
+            }
+          } catch (error) {
+            saveError = error
+          }
+          if (!operationIsCurrent()) return
+          setWorkspaceImportReview(null)
+          await prepareWorkspaceImportReview(state.sources, state.targetFolder, binding, controller)
+          if (saveError) throw saveError
+          return
+        }
+        await discardAndCloseSessions(binding, dirtySessions, operationIsCurrent)
+        if (!operationIsCurrent()) return
+        setWorkspaceImportReview(null)
+        await prepareWorkspaceImportReview(state.sources, state.targetFolder, binding, controller)
+        return
+      }
+
+      const sessionGuards = new Map<string, OpenSessionCommitGuard | null>()
+      for (const session of sessionController.store.list()) {
+        if (!session.identity.path) continue
+        sessionGuards.set(
+          normalizeWorkspacePath(session.identity.path).toLocaleLowerCase('en-US'),
+          {
+            id: session.id,
+            incarnation: session.incarnation,
+            revision: session.revision,
+            currentXml: session.currentXml,
+            uiDirty: Boolean(dirtyByKeyRef.current[session.id])
+          }
+        )
+      }
+      const outcome = await executeConfirmedWorkspaceImport(confirmed, {
+        adapter,
+        history: binding.history ?? undefined,
+        currentProcessIndex: binding.index.processIndex(),
+        signal: controller.signal,
+        runExclusive: (operation) => opMutexRef.current.runExclusive(operation)
+      })
+      if (outcome.status !== 'committed') {
+        if (!bindingIsCurrent()) return
+        const applied = outcome.appliedBeforeFailure.map((item) => item.destinationPath).join(', ')
+        const rollback = outcome.rollbackErrors
+          .map((failure) => `${failure.path ?? '?'}: ${failure.message}`)
+          .join('; ')
+        const evidence =
+          `${outcome.error.message}; review: ${outcome.evidence.reviewDigest}; ` +
+          `applied: ${applied || 'none'}; rollback: ${rollback || 'complete'}`
+        if (outcome.status === 'rollback-failed') {
+          try {
+            await refreshWorkspace(rootHandleRef.current ?? undefined)
+          } catch (refreshError) {
+            recordWorkspaceIssue(`${t('breadcrumb.root')}: ${errMsg(refreshError)}`, binding)
+          }
+          if (!bindingIsCurrent()) return
+          const affectedPaths = [
+            ...outcome.appliedBeforeFailure.map((item) => item.destinationPath),
+            ...outcome.rollbackErrors.flatMap((failure) => (failure.path ? [failure.path] : []))
+          ]
+          await reconcileBpmnPathsFromStorage(
+            binding,
+            affectedPaths,
+            LocalizationSource.Xml,
+            sessionGuards
+          )
+          if (affectedPaths.some(isWorkspaceLocalizationResourcePath)) {
+            await reloadWorkspaceLocalizationResources(
+              binding,
+              'Workspace import rollback left localization resources uncertain'
+            )
+          }
+          if (!bindingIsCurrent()) return
+          recordWorkspaceIssue(evidence, binding)
+          if (binding.history) setHistoryOpen(true)
+          setWorkspaceImportReview(null)
+          controller.abort()
+          if (workspaceImportAbortRef.current === controller) {
+            workspaceImportAbortRef.current = null
+          }
+        } else {
+          setWorkspaceImportReview((current) =>
+            current?.controller === controller
+              ? { ...current, busy: false, error: evidence }
+              : current
+          )
+        }
+        pushToast(t('alert.import.failed', { error: evidence }), 'error')
+        return
+      }
+
+      storageCommitted = true
+      if (!bindingIsCurrent()) return
+      const artifactsBySourcePath = new Map(
+        plan.artifacts.map((artifact) => [
+          artifact.destinationPath.toLocaleLowerCase('en-US'),
+          artifact
+        ])
+      )
+      for (const applied of outcome.applied) {
+        if (!bindingIsCurrent()) return
+        const artifact = artifactsBySourcePath.get(applied.sourcePath.toLocaleLowerCase('en-US'))
+        const synchronized = await synchronizeCommittedBpmnSnapshot(
+          binding,
+          applied.destinationPath,
+          applied.snapshot,
+          artifact?.sourceKind === 'aml' ? LocalizationSource.Aris : LocalizationSource.Xml,
+          bindingIsCurrent,
+          sessionGuards.get(
+            normalizeWorkspacePath(applied.destinationPath).toLocaleLowerCase('en-US')
+          ) ?? null
+        )
+        if (!synchronized) return
+      }
+      setLiveWorkspaceVersion(binding.index.version)
+      try {
+        await refreshWorkspace(rootHandleRef.current ?? undefined)
+      } catch (refreshError) {
+        recordWorkspaceIssue(`${t('breadcrumb.root')}: ${errMsg(refreshError)}`, binding)
+      }
+      if (!bindingIsCurrent()) return
+      for (const warning of outcome.postCommitWarnings) {
+        recordWorkspaceIssue(warning, binding)
+        pushToast(warning, 'error')
+      }
+      setWorkspaceImportReview(null)
+      pushToast(
+        t('toast.imported.count', {
+          count: outcome.applied.length,
+          plural: outcome.applied.length === 1 ? '' : 's'
+        }),
+        'success'
+      )
+    } catch (error) {
+      if (storageCommitted && bindingIsCurrent()) {
+        const message = `Workspace import storage committed, but post-commit reconciliation failed: ${errMsg(error)}`
+        setWorkspaceImportReview(null)
+        recordWorkspaceIssue(message, binding)
+        pushToast(t('session.save.reloadEditorFailed', { error: message }), 'error')
+      } else if (operationIsCurrent()) {
+        const message = errMsg(error)
+        setWorkspaceImportReview((current) =>
+          current?.controller === controller ? { ...current, busy: false, error: message } : current
+        )
+        pushToast(t('alert.import.failed', { error: message }), 'error')
+      }
+    } finally {
+      releasePersistenceInteractionLock()
+      if (storageCommitted) {
+        controller.abort()
+        if (workspaceImportAbortRef.current === controller) {
+          workspaceImportAbortRef.current = null
+        }
+      }
+    }
+  }, [
+    acquirePersistenceInteractionLock,
+    captureLiveSession,
+    discardAndCloseSessions,
+    isWorkspaceOperationCurrent,
+    prepareWorkspaceImportReview,
+    pushToast,
+    reconcileBpmnPathsFromStorage,
+    recordWorkspaceIssue,
+    refreshWorkspace,
+    reloadWorkspaceLocalizationResources,
+    requestPathDirtyDecision,
+    synchronizeCommittedBpmnSnapshot,
+    workspaceImportReview
+  ])
+
+  const downloadWorkspaceImportArisReport = useCallback(
+    (sourceId: string) => {
+      const evidence = workspaceImportReview?.plan.arisReports.find(
+        (candidate) => candidate.sourceId === sourceId
+      )
+      if (!evidence) return
+      downloadBlob(
+        evidence.download.fileName,
+        new Blob([evidence.download.text], { type: evidence.download.mimeType })
+      )
+    },
+    [workspaceImportReview]
   )
 
   // Container-level drop: importing onto non-tree areas lands at the root.
@@ -3956,23 +5688,56 @@ function App(): JSX.Element {
       const file = e.target.files?.[0]
       e.target.value = ''
       if (!file) return
+      const controller = new AbortController()
+      singleFileImportAbortRef.current = controller
+      const isCurrent = (): boolean =>
+        !controller.signal.aborted &&
+        singleFileImportAbortRef.current === controller &&
+        isWorkspaceActivationIntentCurrent(intent)
       try {
-        const sourceXml = decodeUtf8Strict(new Uint8Array(await file.arrayBuffer()), {
-          operation: 'read',
-          path: file.name
+        const sourceXml = await readBrowserImportFile(file, controller.signal)
+        if (!isCurrent()) return
+        const inspected = await secureBpmnImportPreparer.inspect(sourceXml, controller.signal)
+        if (!isCurrent()) return
+        const prepared = await secureBpmnImportPreparer.prepare(sourceXml, {
+          knownProcessIds: new Set(inspected.processIds),
+          validationAdapters: getRuntimeValidationAdapters(),
+          signal: controller.signal
         })
-        if (!isWorkspaceActivationIntentCurrent(intent)) return
-        const prepared = await prepareImportedBpmnXml(sourceXml, processIndex.keys())
-        if (!isWorkspaceActivationIntentCurrent(intent)) return
+        if (!isCurrent()) return
         if (prepared.autoLayouted && !confirmGeneratedImportLayout()) {
           return
         }
+        const reviewed = await reviewBpmnXmlLocalization(prepared.xml, {
+          source: LocalizationSource.Xml,
+          target: langRef.current,
+          defaultActive: langRef.current,
+          resources: DEFAULT_LOCALIZATION_RESOURCES,
+          validation: {
+            adapters: getRuntimeValidationAdapters(),
+            knownProcessIds: inspected.processIds,
+            requireDi: true
+          },
+          validationAction: 'commit-import',
+          review: reviewedXmlReviewQueueRef.current!.review,
+          signal: controller.signal,
+          isCurrent
+        })
+        if (!isCurrent() || reviewed.status !== 'completed') return
         const proceed = await guardWorkspaceSwitch()
-        if (!proceed || !isWorkspaceActivationIntentCurrent(intent)) return
-        await activateSingleFileDocument(file.name, prepared.xml, LocalizationSource.Xml, intent)
+        if (!proceed || !isCurrent()) return
+        await activateSingleFileDocument(file.name, reviewed.xml, LocalizationSource.Xml, {
+          claimedIntent: intent,
+          durableXml: sourceXml,
+          signal: controller.signal
+        })
       } catch (err) {
-        if (isWorkspaceActivationIntentCurrent(intent)) {
+        if (isCurrent()) {
           pushToast(t('alert.open.failed', { error: errMsg(err) }), 'error')
+        }
+      } finally {
+        if (singleFileImportAbortRef.current === controller) {
+          singleFileImportAbortRef.current = null
         }
       }
     },
@@ -3981,7 +5746,6 @@ function App(): JSX.Element {
       beginWorkspaceActivationIntent,
       guardWorkspaceSwitch,
       isWorkspaceActivationIntentCurrent,
-      processIndex,
       pushToast
     ]
   )
@@ -3995,7 +5759,7 @@ function App(): JSX.Element {
         'untitled.bpmn',
         createNewDiagramXml(),
         LocalizationSource.Editor,
-        intent
+        { claimedIntent: intent, initiallyDirty: true }
       )
     })()
   }, [
@@ -4048,28 +5812,61 @@ function App(): JSX.Element {
       if (!backup || !adapter || !adapter.storage.capabilities.multipleFiles) {
         return
       }
-      const isCurrent = (): boolean => isWorkspaceOperationCurrent(binding)
+      backupImportAbortRef.current?.abort()
+      setBackupImportState(null)
+      const controller = new AbortController()
+      backupImportAbortRef.current = controller
+      const isCurrent = (): boolean =>
+        !controller.signal.aborted &&
+        backupImportAbortRef.current === controller &&
+        isWorkspaceOperationCurrent(binding)
+      const localizationSnapshot = workspaceLocalizationSnapshotRef.current
+      if (!localizationSnapshot) {
+        controller.abort()
+        if (backupImportAbortRef.current === controller) {
+          backupImportAbortRef.current = null
+        }
+        pushToast(
+          t('settings.localization.loadFailed', {
+            error: workspaceLocalizationError ?? t('workspace.history.unknownError')
+          }),
+          'error'
+        )
+        return
+      }
       setBackupBusy(true)
+      const releasePersistenceInteractionLock = acquirePersistenceInteractionLock()
       try {
         const plan = await inspectWorkspaceBackup(adapter, backup, {
-          targetLanguage: lang,
-          localizationResources:
-            workspaceLocalizationSnapshotRef.current?.resources ?? DEFAULT_LOCALIZATION_RESOURCES,
+          targetLanguage: langRef.current,
+          localizationResources: localizationSnapshot.resources,
           localizationReview: reviewedXmlReviewQueueRef.current!.review,
           validationAdapters: getRuntimeValidationAdapters(),
+          signal: controller.signal,
           isCurrent
         })
         if (!isCurrent()) return
-        setBackupImportState({ binding, plan })
+        setBackupImportState({ binding, controller, backup, plan })
       } catch (error) {
         if (isCurrent()) {
           pushToast(t('alert.import.failed', { error: errMsg(error) }), 'error')
         }
+        controller.abort()
+        if (backupImportAbortRef.current === controller) {
+          backupImportAbortRef.current = null
+        }
       } finally {
-        if (isCurrent()) setBackupBusy(false)
+        releasePersistenceInteractionLock()
+        if (isWorkspaceOperationCurrent(binding)) setBackupBusy(false)
       }
     },
-    [captureWorkspaceOperation, isWorkspaceOperationCurrent, lang, pushToast]
+    [
+      acquirePersistenceInteractionLock,
+      captureWorkspaceOperation,
+      isWorkspaceOperationCurrent,
+      pushToast,
+      workspaceLocalizationError
+    ]
   )
 
   const handleApplyBackupImport = useCallback(
@@ -4078,44 +5875,196 @@ function App(): JSX.Element {
       const binding = state?.binding
       const adapter = binding?.adapter
       const plan = state?.plan
-      if (!binding || !adapter || !plan || !isWorkspaceOperationCurrent(binding)) return
-      const isCurrent = (): boolean => isWorkspaceOperationCurrent(binding)
+      const controller = state?.controller
+      const sessionController = binding?.controller
+      if (
+        !binding ||
+        !adapter ||
+        !plan ||
+        !controller ||
+        !sessionController ||
+        !isWorkspaceOperationCurrent(binding)
+      ) {
+        return
+      }
+      const operationIsCurrent = (): boolean =>
+        !controller.signal.aborted &&
+        backupImportAbortRef.current === controller &&
+        isWorkspaceOperationCurrent(binding)
+      const bindingIsCurrent = (): boolean => isWorkspaceOperationCurrent(binding)
       const history = binding.history
+      let historyRevisions = 0
+      let storageCommitted = false
+      const reprepareReview = async (): Promise<void> => {
+        const localizationSnapshot = workspaceLocalizationSnapshotRef.current
+        if (!localizationSnapshot) {
+          setBackupImportState(null)
+          throw new Error(
+            t('settings.localization.loadFailed', {
+              error: workspaceLocalizationError ?? t('workspace.history.unknownError')
+            })
+          )
+        }
+        setBackupImportState(null)
+        const refreshedPlan = await inspectWorkspaceBackup(adapter, state.backup, {
+          targetLanguage: langRef.current,
+          localizationResources: localizationSnapshot.resources,
+          localizationReview: reviewedXmlReviewQueueRef.current!.review,
+          validationAdapters: getRuntimeValidationAdapters(),
+          signal: controller.signal,
+          isCurrent: operationIsCurrent
+        })
+        if (!operationIsCurrent()) return
+        setBackupImportState({ ...state, plan: refreshedPlan })
+      }
       setBackupBusy(true)
+      const releasePersistenceInteractionLock = acquirePersistenceInteractionLock()
       try {
+        const replacedPaths = new Set(
+          plan.collisions
+            .filter((collision) => decisions[collision.path]?.action === 'replace')
+            .map((collision) => normalizeWorkspacePath(collision.path).toLocaleLowerCase('en-US'))
+        )
+        const dirtySessions = sessionController.store
+          .list()
+          .filter(
+            (session) =>
+              (session.dirty || Boolean(dirtyByKeyRef.current[session.id])) &&
+              session.identity.path !== null &&
+              replacedPaths.has(
+                normalizeWorkspacePath(session.identity.path).toLocaleLowerCase('en-US')
+              )
+          )
+        if (dirtySessions.length > 0) {
+          const choice = await requestPathDirtyDecision(dirtySessions.length, {
+            kind: 'import',
+            sourcePath: [...replacedPaths].join(', ')
+          })
+          if (!operationIsCurrent()) return
+          if (choice === 'cancel') return
+          if (choice === 'save') {
+            let saveError: unknown
+            try {
+              for (const captured of dirtySessions) {
+                const current = sessionController.store.get(captured.id)
+                if (
+                  !operationIsCurrent() ||
+                  !current ||
+                  current.incarnation !== captured.incarnation
+                ) {
+                  throw new Error(t('alert.staleWrite'))
+                }
+                const tab = tabsRef.current.find((candidate) => candidate.key === captured.id)
+                if (!tab) throw new Error(t('session.save.failed', { status: 'missing-tab' }))
+                const live = await captureLiveSession(
+                  sessionController,
+                  current,
+                  true,
+                  operationIsCurrent
+                )
+                if (live.status === 'stale') throw new Error(t('alert.staleWrite'))
+                if (live.status === 'unavailable') {
+                  throw new Error(
+                    t('session.save.reloadEditorFailed', {
+                      error: errMsg(live.error)
+                    })
+                  )
+                }
+                const saved = await requestSaveRef.current(tab, live.session.currentXml)
+                if (!saved.durable) {
+                  throw new Error(t('session.save.failed', { status: 'not-durable' }))
+                }
+              }
+            } catch (error) {
+              saveError = error
+            }
+            if (!operationIsCurrent()) return
+            await reprepareReview()
+            if (saveError) throw saveError
+            return
+          }
+          await discardAndCloseSessions(binding, dirtySessions, operationIsCurrent)
+          if (!operationIsCurrent()) return
+          await reprepareReview()
+          return
+        }
+
+        const sessionGuards = new Map<string, OpenSessionCommitGuard | null>()
+        for (const session of sessionController.store.list()) {
+          if (!session.identity.path) continue
+          sessionGuards.set(
+            normalizeWorkspacePath(session.identity.path).toLocaleLowerCase('en-US'),
+            {
+              id: session.id,
+              incarnation: session.incarnation,
+              revision: session.revision,
+              currentXml: session.currentXml,
+              uiDirty: Boolean(dirtyByKeyRef.current[session.id])
+            }
+          )
+        }
         const result = await opMutexRef.current.runExclusive(async () => {
-          if (!isCurrent()) throw new Error(t('alert.staleWrite'))
+          if (!operationIsCurrent()) throw new Error(t('alert.staleWrite'))
           return applyWorkspaceBackupImport(adapter, plan, {
             decisions,
             reviewedDigest: plan.reviewDigest,
             currentProcessIndex: binding.index.processIndex(),
+            signal: controller.signal,
             beforeOverwrite: async (path, existing) => {
-              if (!isCurrent()) throw new Error(t('alert.staleWrite'))
-              if (!path.startsWith('.orbitpm/')) {
+              if (!operationIsCurrent()) throw new Error(t('alert.staleWrite'))
+              const normalized = normalizeWorkspacePath(path)
+              const lower = normalized.toLocaleLowerCase('en-US')
+              if (/\.bpmn$/iu.test(normalized) && !lower.startsWith('.orbitpm/')) {
                 await history?.createRevision(path, {
                   reason: 'backup-import',
-                  snapshot: existing
+                  snapshot: existing,
+                  prune: false,
+                  signal: controller.signal
                 })
-                if (!isCurrent()) throw new Error(t('alert.staleWrite'))
+                if (history) historyRevisions += 1
+                if (!operationIsCurrent()) throw new Error(t('alert.staleWrite'))
               }
             }
           })
         })
-        if (!isCurrent()) return
         if (result.status === 'rollback-failed') {
+          if (!bindingIsCurrent()) return
           const applied = result.appliedBeforeFailure.map((item) => item.destinationPath).join(', ')
           const rollback = result.rollbackErrors
             .map((failure) => `${failure.path ?? '?'}: ${failure.message}`)
             .join('; ')
           const evidence = `${result.error.message}; applied: ${applied || 'none'}; rollback: ${rollback || 'unknown'}`
-          setBackupImportState(null)
-          await refreshWorkspace(rootHandleRef.current ?? undefined)
-          if (!isCurrent()) return
-          setWorkspaceIssues((current) =>
-            current.includes(evidence) ? current : [...current, evidence]
+          try {
+            await refreshWorkspace(rootHandleRef.current ?? undefined)
+          } catch (refreshError) {
+            recordWorkspaceIssue(`${t('breadcrumb.root')}: ${errMsg(refreshError)}`, binding)
+          }
+          if (!bindingIsCurrent()) return
+          const affectedPaths = [
+            ...result.appliedBeforeFailure.map((item) => item.destinationPath),
+            ...result.rollbackErrors.flatMap((failure) => (failure.path ? [failure.path] : []))
+          ]
+          await reconcileBpmnPathsFromStorage(
+            binding,
+            affectedPaths,
+            LocalizationSource.Backup,
+            sessionGuards
           )
+          if (affectedPaths.some(isWorkspaceLocalizationResourcePath)) {
+            await reloadWorkspaceLocalizationResources(
+              binding,
+              'Backup rollback left localization resources uncertain'
+            )
+          }
+          if (!bindingIsCurrent()) return
+          recordWorkspaceIssue(evidence, binding)
           if (history) setHistoryOpen(true)
+          setBackupImportState(null)
           pushToast(t('alert.import.failed', { error: evidence }), 'error')
+          controller.abort()
+          if (backupImportAbortRef.current === controller) {
+            backupImportAbortRef.current = null
+          }
           return
         }
         if (result.status !== 'committed') {
@@ -4125,9 +6074,55 @@ function App(): JSX.Element {
               : result.error.message
           throw new Error(`${result.status}: ${detail}`)
         }
+        storageCommitted = true
+        if (!bindingIsCurrent()) return
+        if (historyRevisions > 0) {
+          try {
+            await history?.enforceRetention()
+          } catch (retentionError) {
+            if (!bindingIsCurrent()) return
+            const evidence = `Backup storage committed, but history retention failed: ${errMsg(retentionError)}`
+            recordWorkspaceIssue(evidence, binding)
+            pushToast(evidence, 'error')
+          }
+        }
+        for (const applied of result.applied) {
+          const normalized = normalizeWorkspacePath(applied.destinationPath)
+          if (
+            !/\.bpmn$/iu.test(normalized) ||
+            normalized.toLocaleLowerCase('en-US').startsWith('.orbitpm/')
+          ) {
+            continue
+          }
+          const synchronized = await synchronizeCommittedBpmnSnapshot(
+            binding,
+            applied.destinationPath,
+            applied.snapshot,
+            LocalizationSource.Backup,
+            bindingIsCurrent,
+            sessionGuards.get(normalized.toLocaleLowerCase('en-US')) ?? null
+          )
+          if (!synchronized) return
+        }
+        setLiveWorkspaceVersion(binding.index.version)
+        if (
+          result.applied.some((applied) =>
+            isWorkspaceLocalizationResourcePath(applied.destinationPath)
+          )
+        ) {
+          await reloadWorkspaceLocalizationResources(
+            binding,
+            'Backup committed localization resources could not be reloaded'
+          )
+          if (!bindingIsCurrent()) return
+        }
+        try {
+          await refreshWorkspace(rootHandleRef.current ?? undefined)
+        } catch (refreshError) {
+          recordWorkspaceIssue(`${t('breadcrumb.root')}: ${errMsg(refreshError)}`, binding)
+        }
+        if (!bindingIsCurrent()) return
         setBackupImportState(null)
-        await refreshWorkspace(rootHandleRef.current ?? undefined)
-        if (!isCurrent()) return
         pushToast(
           t('toast.imported.count', {
             count: result.applied.length,
@@ -4136,14 +6131,40 @@ function App(): JSX.Element {
           'success'
         )
       } catch (error) {
-        if (isCurrent()) {
+        if (storageCommitted && bindingIsCurrent()) {
+          const message = `Backup storage committed, but post-commit reconciliation failed: ${errMsg(error)}`
+          setBackupImportState(null)
+          recordWorkspaceIssue(message, binding)
+          pushToast(t('session.save.reloadEditorFailed', { error: message }), 'error')
+        } else if (operationIsCurrent()) {
           pushToast(t('alert.import.failed', { error: errMsg(error) }), 'error')
         }
       } finally {
-        if (isCurrent()) setBackupBusy(false)
+        releasePersistenceInteractionLock()
+        if (storageCommitted) {
+          controller.abort()
+          if (backupImportAbortRef.current === controller) {
+            backupImportAbortRef.current = null
+          }
+        }
+        if (bindingIsCurrent()) setBackupBusy(false)
       }
     },
-    [backupImportState, isWorkspaceOperationCurrent, pushToast, refreshWorkspace]
+    [
+      acquirePersistenceInteractionLock,
+      backupImportState,
+      captureLiveSession,
+      discardAndCloseSessions,
+      isWorkspaceOperationCurrent,
+      pushToast,
+      reconcileBpmnPathsFromStorage,
+      recordWorkspaceIssue,
+      refreshWorkspace,
+      reloadWorkspaceLocalizationResources,
+      requestPathDirtyDecision,
+      synchronizeCommittedBpmnSnapshot,
+      workspaceLocalizationError
+    ]
   )
 
   const handleHistoryRestore = useCallback(
@@ -4187,160 +6208,480 @@ function App(): JSX.Element {
           )
         }
       }
-      let expectedCurrentHash: string | null
+
+      const releasePersistenceInteractionLock = acquirePersistenceInteractionLock()
       try {
-        expectedCurrentHash = (await adapter.read(revision.originalPath)).hash
-      } catch (error) {
-        if (error instanceof WorkspaceOperationError && error.code === 'not-found') {
-          expectedCurrentHash = null
-        } else {
-          return { status: 'failed', sessionId: null, error }
-        }
-      }
-      if (!isCurrent()) {
-        return {
-          status: 'failed',
-          sessionId: null,
-          error: new Error(t('alert.staleWrite'))
-        }
-      }
-      const result = await restoreHistoryRevision({
-        manager,
-        store: controller.store,
-        revision,
-        workspace,
-        expectedCurrentHash,
-        signal,
-        isWorkspaceCurrent: () => isCurrent(),
-        prepareXml: async (verifiedXml, context) => {
-          const reviewSignal = context.signal ?? signal
-          if (reviewSignal.aborted || !isCurrent()) return { status: 'cancelled' }
-          const inspected = await secureBpmnImportPreparer.inspect(verifiedXml, reviewSignal)
-          const prepared = await secureBpmnImportPreparer.prepare(verifiedXml, {
-            knownProcessIds: new Set(binding.index.processIndex().keys()),
-            validationAdapters: getRuntimeValidationAdapters(),
-            signal: reviewSignal
-          })
-          if (prepared.autoLayouted) return { status: 'review-required' }
-          const outcome = await reviewBpmnXmlLocalization(prepared.xml, {
-            source: LocalizationSource.Xml,
-            target: langRef.current,
-            defaultActive: langRef.current,
-            resources,
-            validation: {
-              adapters: getRuntimeValidationAdapters(),
-              knownProcessIds:
-                inspected.processIds.length > 0
-                  ? inspected.processIds
-                  : binding.index.processIndex().keys(),
-              requireDi: true
-            },
-            validationAction: 'commit-import',
-            review: reviewedXmlReviewQueueRef.current!.review,
-            signal: reviewSignal,
-            isCurrent: () => !reviewSignal.aborted && isCurrent()
-          })
-          if (outcome.status === 'completed' && !reviewSignal.aborted && isCurrent()) {
-            return { status: 'completed', xml: outcome.xml }
+        const currentTargetSession = (): DocumentSession | undefined =>
+          controller.store
+            .list()
+            .find(
+              (session) =>
+                session.identity.workspace.id === workspace.id &&
+                session.identity.path === revision.originalPath
+            )
+        const settleTargetSession = async (): Promise<
+          | { status: 'ready'; guard: OpenSessionCommitGuard | null }
+          | { status: 'result'; result: RestoreHistoryRevisionResult }
+        > => {
+          let target = currentTargetSession()
+          if (!target) return { status: 'ready', guard: null }
+          if (target.readXml || dirtyByKeyRef.current[target.id]) {
+            const captured = await captureLiveSession(controller, target, true, isCurrent)
+            if (captured.status === 'stale') {
+              return {
+                status: 'result',
+                result: {
+                  status: 'failed',
+                  sessionId: target.id,
+                  error: new Error(t('alert.staleWrite'))
+                }
+              }
+            }
+            if (captured.status === 'unavailable') {
+              return {
+                status: 'result',
+                result: {
+                  status: 'failed',
+                  sessionId: target.id,
+                  error: new Error(
+                    t('session.save.reloadEditorFailed', {
+                      error: errMsg(captured.error)
+                    })
+                  )
+                }
+              }
+            }
+            target = captured.session
           }
+
+          if (target.dirty || dirtyByKeyRef.current[target.id]) {
+            const choice = await requestPathDirtyDecision(1, {
+              kind: 'history',
+              sourcePath: revision.originalPath
+            })
+            if (!isCurrent()) {
+              return {
+                status: 'result',
+                result: {
+                  status: 'failed',
+                  sessionId: target.id,
+                  error: new Error(t('alert.staleWrite'))
+                }
+              }
+            }
+            if (choice === 'cancel') {
+              return {
+                status: 'result',
+                result: {
+                  status: 'preparation-not-completed',
+                  sessionId: target.id,
+                  reason: 'cancelled'
+                }
+              }
+            }
+            if (choice === 'save') {
+              const tab = tabsRef.current.find((candidate) => candidate.key === target!.id)
+              if (!tab) {
+                return {
+                  status: 'result',
+                  result: {
+                    status: 'failed',
+                    sessionId: target.id,
+                    error: new Error(t('session.save.failed', { status: 'missing-tab' }))
+                  }
+                }
+              }
+              try {
+                const saved = await requestSaveRef.current(tab, target.currentXml)
+                if (!saved.durable) {
+                  throw new Error(t('session.save.failed', { status: 'not-durable' }))
+                }
+              } catch (error) {
+                return {
+                  status: 'result',
+                  result: { status: 'failed', sessionId: target.id, error }
+                }
+              }
+            } else {
+              await discardAndCloseSessions(binding, [target], isCurrent)
+            }
+            if (!isCurrent()) {
+              return {
+                status: 'result',
+                result: {
+                  status: 'failed',
+                  sessionId: target.id,
+                  error: new Error(t('alert.staleWrite'))
+                }
+              }
+            }
+            target = currentTargetSession()
+            if (!target) return { status: 'ready', guard: null }
+          }
+
           return {
-            status: outcome.status === 'review-required' ? 'review-required' : 'cancelled'
-          }
-        },
-        writePreparedXml: async (input) => {
-          const bytes = new TextEncoder().encode(input.xml)
-          if (input.signal?.aborted || !isCurrent()) {
-            throw new DOMException('History restore was cancelled.', 'AbortError')
-          }
-          if (input.expectedCurrentHash === null) {
-            return {
-              outcome: await adapter.writeAtomic(input.revision.originalPath, bytes, undefined, {
-                expectedWorkspaceId: adapter.id,
-                expectedMissing: true,
-                signal: input.signal
-              })
+            status: 'ready',
+            guard: {
+              id: target.id,
+              incarnation: target.incarnation,
+              revision: target.revision,
+              currentXml: target.currentXml,
+              uiDirty: Boolean(dirtyByKeyRef.current[target.id])
             }
           }
-          return manager.writeWithRevision(
-            input.revision.originalPath,
-            bytes,
-            input.expectedCurrentHash,
-            'restore',
-            input.signal
-          )
-        },
-        applyXml: async (session, restoredXml) => {
-          if (signal.aborted || !isCurrent()) throw new Error(t('alert.staleWrite'))
-          const modeler = (modelersByKeyRef.current[session.id] ?? session.modeler) as {
-            importXML?: (xml: string) => Promise<unknown>
-          } | null
-          await modeler?.importXML?.(restoredXml)
         }
-      })
-      if (!isCurrent()) return result
-      if (
-        result.status !== 'restored' &&
-        result.status !== 'storage-restored-session-refresh-failed'
-      ) {
-        return result
-      }
 
-      const snapshot = result.outcome.snapshot
-      let restoredXml: string
-      try {
-        restoredXml = decodeUtf8Strict(snapshot.bytes, {
-          operation: 'read',
-          path: revision.originalPath
+        let expectedCurrentHash: string | null = null
+        let targetStable = false
+        for (let attempt = 0; attempt < 3; attempt += 1) {
+          const settled = await settleTargetSession()
+          if (settled.status === 'result') return settled.result
+          try {
+            expectedCurrentHash = (await adapter.read(revision.originalPath)).hash
+          } catch (error) {
+            if (error instanceof WorkspaceOperationError && error.code === 'not-found') {
+              expectedCurrentHash = null
+            } else {
+              return { status: 'failed', sessionId: settled.guard?.id ?? null, error }
+            }
+          }
+          if (!isCurrent()) {
+            return {
+              status: 'failed',
+              sessionId: settled.guard?.id ?? null,
+              error: new Error(t('alert.staleWrite'))
+            }
+          }
+          const live = currentTargetSession()
+          targetStable = settled.guard
+            ? Boolean(
+                live &&
+                live.id === settled.guard.id &&
+                live.incarnation === settled.guard.incarnation &&
+                live.revision === settled.guard.revision &&
+                live.currentXml === settled.guard.currentXml &&
+                !live.dirty &&
+                !dirtyByKeyRef.current[live.id]
+              )
+            : live === undefined
+          if (targetStable) break
+        }
+        if (!targetStable) {
+          return {
+            status: 'preparation-not-completed',
+            sessionId: currentTargetSession()?.id ?? null,
+            reason: 'stale'
+          }
+        }
+
+        const result = await restoreHistoryRevision({
+          manager,
+          store: controller.store,
+          revision,
+          workspace,
+          expectedCurrentHash,
+          signal,
+          isWorkspaceCurrent: () => isCurrent(),
+          prepareXml: async (verifiedXml, context) => {
+            const reviewSignal = context.signal ?? signal
+            if (reviewSignal.aborted || !isCurrent()) return { status: 'cancelled' }
+            const inspected = await secureBpmnImportPreparer.inspect(verifiedXml, reviewSignal)
+            const prepared = await secureBpmnImportPreparer.prepare(verifiedXml, {
+              knownProcessIds: new Set(binding.index.processIndex().keys()),
+              validationAdapters: getRuntimeValidationAdapters(),
+              signal: reviewSignal
+            })
+            if (prepared.autoLayouted) return { status: 'review-required' }
+            const outcome = await reviewBpmnXmlLocalization(prepared.xml, {
+              source: LocalizationSource.Xml,
+              target: langRef.current,
+              defaultActive: langRef.current,
+              resources,
+              validation: {
+                adapters: getRuntimeValidationAdapters(),
+                knownProcessIds:
+                  inspected.processIds.length > 0
+                    ? inspected.processIds
+                    : binding.index.processIndex().keys(),
+                requireDi: true
+              },
+              validationAction: 'commit-import',
+              review: reviewedXmlReviewQueueRef.current!.review,
+              signal: reviewSignal,
+              isCurrent: () => !reviewSignal.aborted && isCurrent()
+            })
+            if (outcome.status === 'completed' && !reviewSignal.aborted && isCurrent()) {
+              return { status: 'completed', xml: outcome.xml }
+            }
+            return {
+              status: outcome.status === 'review-required' ? 'review-required' : 'cancelled'
+            }
+          },
+          writePreparedXml: async (input) => {
+            const bytes = new TextEncoder().encode(input.xml)
+            if (input.signal?.aborted || !isCurrent()) {
+              throw new DOMException('History restore was cancelled.', 'AbortError')
+            }
+            if (input.expectedCurrentHash === null) {
+              return {
+                outcome: await adapter.writeAtomic(input.revision.originalPath, bytes, undefined, {
+                  expectedWorkspaceId: adapter.id,
+                  expectedMissing: true,
+                  signal: input.signal
+                })
+              }
+            }
+            return manager.writeWithRevision(
+              input.revision.originalPath,
+              bytes,
+              input.expectedCurrentHash,
+              'restore',
+              input.signal
+            )
+          },
+          applyXml: async (session, restoredXml) => {
+            if (signal.aborted || !isCurrent()) throw new Error(t('alert.staleWrite'))
+            const beforeImport = controller.store.get(session.id)
+            if (
+              !beforeImport ||
+              beforeImport.incarnation !== session.incarnation ||
+              beforeImport.revision !== session.revision ||
+              beforeImport.currentXml !== session.currentXml
+            ) {
+              throw new Error('The open editor changed before history XML was applied.')
+            }
+            const modeler = (modelersByKeyRef.current[session.id] ?? session.modeler) as {
+              importXML?: (xml: string) => Promise<unknown>
+            } | null
+            const coordinatedApply = commandsRef.current[session.id]?.applyExternalXml
+            invalidateLiveXmlCapture(session.id)
+            if (coordinatedApply) await coordinatedApply(restoredXml)
+            else if (modeler?.importXML) {
+              throw new Error('The editor synchronization command is not ready.')
+            }
+            if (signal.aborted || !isCurrent()) throw new Error(t('alert.staleWrite'))
+            const afterImport = controller.store.get(session.id)
+            if (!afterImport || afterImport.incarnation !== session.incarnation) {
+              throw new Error('The history target session changed while XML was applied.')
+            }
+            if (dirtyByKeyRef.current[session.id]) {
+              const captured = await captureLiveSession(controller, afterImport, true, isCurrent)
+              if (captured.status === 'stale') throw new Error(t('alert.staleWrite'))
+              if (captured.status === 'unavailable') {
+                throw new Error(
+                  `History XML was applied, but the live editor could not be verified: ${errMsg(captured.error)}`
+                )
+              }
+              throw new Error('The open editor changed while history XML was applied.')
+            }
+            if (
+              afterImport.revision !== session.revision ||
+              afterImport.currentXml !== session.currentXml ||
+              dirtyByKeyRef.current[session.id]
+            ) {
+              throw new Error('The open editor changed while history XML was applied.')
+            }
+          }
         })
-      } catch {
+        if (!isCurrent()) return result
+        if (
+          result.status !== 'restored' &&
+          result.status !== 'storage-restored-session-refresh-failed'
+        ) {
+          return result
+        }
+
+        const snapshot = result.outcome.snapshot
+        let restoredXml: string
+        try {
+          restoredXml = decodeUtf8Strict(snapshot.bytes, {
+            operation: 'read',
+            path: revision.originalPath
+          })
+        } catch {
+          return result
+        }
+        if (!isCurrent()) return result
+        baseHashByPathRef.current[revision.originalPath] = snapshot.hash
+        binding.index.updateSaved({
+          relPath: revision.originalPath,
+          xml: restoredXml,
+          lastModified: snapshot.modifiedAt,
+          size: snapshot.size
+        })
+        const editorRefreshFailure = (message: string): RestoreHistoryRevisionResult => ({
+          status: 'storage-restored-session-refresh-failed',
+          sessionId: result.sessionId,
+          previousRevision: result.previousRevision,
+          outcome: result.outcome,
+          error: new Error(message)
+        })
+        const liveSession = result.sessionId ? controller.store.get(result.sessionId) : undefined
+        const retainHistoryEditor = async (
+          initial: DocumentSession,
+          reason: string,
+          existingCaptureError?: unknown
+        ): Promise<void> => {
+          let retained = initial
+          let captureError = existingCaptureError
+          if (
+            captureError === undefined &&
+            (retained.readXml || dirtyByKeyRef.current[retained.id])
+          ) {
+            const captured = await captureLiveSession(controller, retained, true, isCurrent)
+            if (captured.status === 'stale') return
+            if (captured.status === 'unavailable') {
+              retained = captured.session
+              captureError = captured.error
+            } else {
+              retained = captured.session
+            }
+          }
+          if (retained.dirty) {
+            binding.drafts?.track(retained)
+            try {
+              await binding.drafts?.flush(retained.id, retained.incarnation)
+            } catch (error) {
+              if (isCurrent()) {
+                recordWorkspaceIssue(`${revision.originalPath}: ${errMsg(error)}`, binding)
+              }
+            }
+          }
+          if (!isCurrent()) return
+          const latest = controller.store.get(retained.id)
+          if (!latest || latest.incarnation !== retained.incarnation) return
+          if (latest.dirty) binding.drafts?.track(latest)
+          binding.index.updateDirty(revision.originalPath, latest.currentXml)
+          dirtyByKeyRef.current = { ...dirtyByKeyRef.current, [latest.id]: true }
+          setDirtyByKey((previous) => ({ ...previous, [latest.id]: true }))
+          const evidence = `${revision.originalPath}: ${reason}${
+            captureError === undefined ? '' : ` ${errMsg(captureError)}`
+          }`
+          recordWorkspaceIssue(evidence, binding)
+          pushToast(t('session.save.reloadEditorFailed', { error: evidence }), 'error')
+        }
+
+        if (result.status === 'restored' && liveSession) {
+          let beforeCleanup = liveSession
+          if (dirtyByKeyRef.current[beforeCleanup.id]) {
+            const captured = await captureLiveSession(controller, beforeCleanup, true, isCurrent)
+            if (captured.status === 'stale') return result
+            if (captured.status === 'unavailable') {
+              await retainHistoryEditor(
+                captured.session,
+                'History storage was restored, but the live editor could not be verified.',
+                captured.error
+              )
+              setLiveWorkspaceVersion(binding.index.version)
+              return editorRefreshFailure(
+                'History storage was restored, but the live editor could not be verified.'
+              )
+            }
+            beforeCleanup = captured.session
+            if (beforeCleanup.currentXml === restoredXml && !beforeCleanup.dirty) {
+              dirtyByKeyRef.current = {
+                ...dirtyByKeyRef.current,
+                [beforeCleanup.id]: false
+              }
+            }
+          }
+          if (
+            beforeCleanup.currentXml !== restoredXml ||
+            beforeCleanup.dirty ||
+            dirtyByKeyRef.current[beforeCleanup.id]
+          ) {
+            await retainHistoryEditor(
+              beforeCleanup,
+              'A newer editor revision arrived before history cleanup completed.'
+            )
+            setLiveWorkspaceVersion(binding.index.version)
+            return editorRefreshFailure(
+              'A newer editor revision arrived before history cleanup completed.'
+            )
+          }
+          try {
+            await binding.drafts?.confirmedSave(
+              beforeCleanup.id,
+              beforeCleanup.incarnation,
+              restoredXml
+            )
+          } catch (error) {
+            if (isCurrent()) {
+              pushToast(t('draftRecovery.error', { error: errMsg(error) }), 'error')
+            }
+          }
+          if (!isCurrent()) return result
+          let afterCleanup = controller.store.get(beforeCleanup.id)
+          if (!afterCleanup || afterCleanup.incarnation !== beforeCleanup.incarnation) {
+            return result
+          }
+          if (dirtyByKeyRef.current[afterCleanup.id]) {
+            const captured = await captureLiveSession(controller, afterCleanup, true, isCurrent)
+            if (captured.status === 'stale') return result
+            if (captured.status === 'unavailable') {
+              await retainHistoryEditor(
+                captured.session,
+                'History cleanup completed, but the live editor could not be verified.',
+                captured.error
+              )
+              setLiveWorkspaceVersion(binding.index.version)
+              return editorRefreshFailure(
+                'History cleanup completed, but the live editor could not be verified.'
+              )
+            }
+            afterCleanup = captured.session
+            if (afterCleanup.currentXml === restoredXml && !afterCleanup.dirty) {
+              dirtyByKeyRef.current = {
+                ...dirtyByKeyRef.current,
+                [afterCleanup.id]: false
+              }
+            }
+          }
+          if (
+            afterCleanup.revision !== beforeCleanup.revision ||
+            afterCleanup.currentXml !== restoredXml ||
+            afterCleanup.dirty ||
+            dirtyByKeyRef.current[afterCleanup.id]
+          ) {
+            await retainHistoryEditor(
+              afterCleanup,
+              'A newer editor revision arrived during history cleanup.'
+            )
+            setLiveWorkspaceVersion(binding.index.version)
+            return editorRefreshFailure('A newer editor revision arrived during history cleanup.')
+          }
+          setContents((previous) => ({ ...previous, [afterCleanup.id]: restoredXml }))
+          dirtyByKeyRef.current = { ...dirtyByKeyRef.current, [afterCleanup.id]: false }
+          setDirtyByKey((previous) => ({ ...previous, [afterCleanup.id]: false }))
+          binding.index.clearDirty(revision.originalPath)
+        } else if (liveSession) {
+          // Storage committed but editor refresh did not. Preserve and continue
+          // indexing the local draft instead of presenting the restored disk copy
+          // as the active editor content.
+          await retainHistoryEditor(
+            liveSession,
+            'History storage was restored, but the editor refresh did not complete.'
+          )
+        }
+        setLiveWorkspaceVersion(binding.index.version)
+        digestsCacheRef.current = null
         return result
+      } finally {
+        releasePersistenceInteractionLock()
       }
-      if (!isCurrent()) return result
-      baseHashByPathRef.current[revision.originalPath] = snapshot.hash
-      binding.index.updateSaved({
-        relPath: revision.originalPath,
-        xml: restoredXml,
-        lastModified: snapshot.modifiedAt,
-        size: snapshot.size
-      })
-      const liveSession = result.sessionId ? controller.store.get(result.sessionId) : undefined
-      if (result.status === 'restored' && liveSession) {
-        try {
-          await binding.drafts?.confirmedSave(liveSession.id, liveSession.incarnation, restoredXml)
-        } catch (error) {
-          if (isCurrent()) {
-            pushToast(t('draftRecovery.error', { error: errMsg(error) }), 'error')
-          }
-        }
-        if (!isCurrent()) return result
-        setContents((previous) => ({ ...previous, [liveSession.id]: restoredXml }))
-        setDirtyByKey((previous) => ({ ...previous, [liveSession.id]: false }))
-        binding.index.clearDirty(revision.originalPath)
-      } else if (liveSession?.dirty) {
-        // Storage committed but editor refresh did not. Preserve and continue
-        // indexing the local draft instead of presenting the restored disk copy
-        // as the active editor content.
-        binding.drafts?.track(liveSession)
-        try {
-          await binding.drafts?.flush(liveSession.id, liveSession.incarnation)
-        } catch (error) {
-          if (isCurrent()) {
-            pushToast(t('draftRecovery.error', { error: errMsg(error) }), 'error')
-          }
-        }
-        if (!isCurrent()) return result
-        binding.index.updateDirty(revision.originalPath, liveSession.currentXml)
-        setContents((previous) => ({
-          ...previous,
-          [liveSession.id]: liveSession.currentXml
-        }))
-        setDirtyByKey((previous) => ({ ...previous, [liveSession.id]: true }))
-      }
-      setLiveWorkspaceVersion(binding.index.version)
-      digestsCacheRef.current = null
-      return result
     },
-    [captureWorkspaceOperation, isWorkspaceOperationCurrent, pushToast, workspaceLocalizationError]
+    [
+      acquirePersistenceInteractionLock,
+      captureLiveSession,
+      captureWorkspaceOperation,
+      discardAndCloseSessions,
+      invalidateLiveXmlCapture,
+      isWorkspaceOperationCurrent,
+      pushToast,
+      recordWorkspaceIssue,
+      requestPathDirtyDecision,
+      workspaceLocalizationError
+    ]
   )
 
   // --- AI placement -------------------------------------------------------
@@ -4974,18 +7315,33 @@ function App(): JSX.Element {
       e.target.value = ''
       if (!file) return
       const binding = captureWorkspaceOperation()
+      libraryImportAbortRef.current?.abort()
+      setLibraryImport(null)
+      const controller = new AbortController()
+      libraryImportAbortRef.current = controller
+      const isCurrent = (): boolean =>
+        !controller.signal.aborted &&
+        libraryImportAbortRef.current === controller &&
+        isWorkspaceOperationCurrent(binding)
       try {
-        const result = await readLibraryZipFileInWorker(file)
-        if (!isWorkspaceOperationCurrent(binding)) return
+        const result = await readLibraryZipFileInWorker(file, {
+          signal: controller.signal
+        })
+        if (!isCurrent()) return
         if (result.entries.length === 0) {
           pushToast(t('library.import.empty'), 'info')
           return
         }
-        setLibraryImport({ binding, result })
+        setLibraryImport({ binding, name: file.name, result })
       } catch (err) {
-        if (isWorkspaceOperationCurrent(binding)) {
+        if (isCurrent()) {
           pushToast(t('alert.import.failed', { error: errMsg(err) }), 'error')
         }
+      } finally {
+        if (libraryImportAbortRef.current === controller) {
+          libraryImportAbortRef.current = null
+        }
+        controller.abort()
       }
     },
     [captureWorkspaceOperation, isWorkspaceOperationCurrent, pushToast]
@@ -4993,73 +7349,39 @@ function App(): JSX.Element {
 
   const confirmLibraryImport = useCallback(async () => {
     const state = libraryImport
-    const result = state?.result
     const binding = state?.binding
     const adapter = binding?.adapter
     if (
-      !result ||
+      !state ||
       !binding ||
       !adapter?.storage.capabilities.multipleFiles ||
       !isWorkspaceOperationCurrent(binding)
     ) {
       return
     }
-    setLibraryImport(null)
-    const isCurrent = (): boolean => isWorkspaceOperationCurrent(binding)
-    let created = 0
-    let renamed = 0
-    for (const entry of result.entries) {
-      if (!isCurrent()) return
-      const targetFolder = dirOf(entry.relPath)
-      const base = deriveFileBaseName(baseName(entry.relPath).replace(/\.bpmn$/i, ''))
-      try {
-        const prepared = await prepareImportedBpmnXml(
-          entry.xml,
-          binding.index.processIndex().keys()
-        )
-        if (!isCurrent()) return
-        if (prepared.autoLayouted && !confirmGeneratedImportLayout()) {
-          continue
+    const controller = beginWorkspaceImportOperation()
+    const prepared = await prepareWorkspaceImportReview(
+      [
+        {
+          kind: 'library',
+          id: `library:${state.name}`,
+          name: state.name,
+          result: state.result
         }
-        // Same op-mutex as every other create so a concurrent op can't grab the
-        // same free slug; nested folders are ensured inside the critical section.
-        const relPath = await opMutexRef.current.runExclusive(async () => {
-          if (!isCurrent()) throw new Error(t('alert.staleWrite'))
-          await ensureFolders(adapter, targetFolder)
-          if (!isCurrent()) throw new Error(t('alert.staleWrite'))
-          const taken = await directBpmnSlugs(adapter, targetFolder)
-          if (!isCurrent()) throw new Error(t('alert.staleWrite'))
-          const guess = dedupeSlug(base, (c) => taken.has(c.toLowerCase()))
-          const createdPath = await writeUniqueBpmn(adapter, targetFolder, guess, prepared.xml)
-          if (!isCurrent()) throw new Error(t('alert.staleWrite'))
-          return createdPath
-        })
-        if (!isCurrent()) return
-        localizationSourceByTabRef.current.set(relPath, LocalizationSource.Backup)
-        created += 1
-        const finalBase = baseName(relPath).replace(/\.bpmn$/i, '')
-        if (finalBase.toLowerCase() !== base.toLowerCase()) renamed += 1
-      } catch (error) {
-        if (!isCurrent()) return
-        pushToast(
-          t('alert.importFailed', {
-            name: entry.relPath,
-            error: errMsg(error)
-          }),
-          'error'
-        )
-      }
-    }
-    if (!isCurrent()) return
-    await refreshWorkspace()
-    if (!isCurrent()) return
-    pushToast(
-      t('toast.imported.count', { count: created, plural: created === 1 ? '' : 's' }) +
-        (renamed > 0 ? t('toast.imported.renamed', { renamed }) : '') +
-        '.',
-      'success'
+      ],
+      '',
+      binding,
+      controller
     )
-  }, [ensureFolders, isWorkspaceOperationCurrent, libraryImport, pushToast, refreshWorkspace])
+    if (prepared) {
+      setLibraryImport((current) => (current === state ? null : current))
+    }
+  }, [
+    beginWorkspaceImportOperation,
+    isWorkspaceOperationCurrent,
+    libraryImport,
+    prepareWorkspaceImportReview
+  ])
 
   // Settings' org-styling toggle refreshes every live modeler so the renderer
   // re-evaluates its canRender against the just-flipped flag (each guarded so a
@@ -5333,15 +7655,25 @@ function App(): JSX.Element {
       const tab = tabsRef.current.find((candidate) => candidate.key === tabKey)
       const modeler = modelersByKeyRef.current[tabKey] as
         | {
-            importXML(x: string): Promise<{ warnings: string[] }>
             saveXML(options: { format: boolean }): Promise<{ xml?: string }>
             get(name: string): unknown
           }
         | undefined
       const session = controller?.store.get(tabKey)
-      if (!controller || !tab || !modeler || !session || session.modeler !== modeler) {
+      const runExclusiveXmlTransaction = commandsRef.current[tabKey]?.runExclusiveXmlTransaction
+      if (
+        !controller ||
+        !tab ||
+        !modeler ||
+        !session ||
+        session.modeler !== modeler ||
+        !runExclusiveXmlTransaction
+      ) {
         throw new Error('editor not ready')
       }
+      const sessionIncarnation = session.incarnation
+      const sessionRevision = session.revision
+      const sessionXml = session.currentXml
 
       const previousToken = interviewApplyTokenByTabRef.current.get(tabKey)
       if (previousToken !== undefined && request.requestToken < previousToken) {
@@ -5357,6 +7689,7 @@ function App(): JSX.Element {
           (candidate) => candidate.key === tabKey && candidate.gen === tab.gen
         ) &&
         modelersByKeyRef.current[tabKey] === modeler &&
+        controller.store.get(tabKey)?.incarnation === sessionIncarnation &&
         controller.store.get(tabKey)?.modeler === modeler
       const assertCurrent = (): void => {
         if (request.signal.aborted) {
@@ -5365,82 +7698,176 @@ function App(): JSX.Element {
             new DOMException('Interview request was cancelled.', 'AbortError')
           )
         }
+        if (interviewApplyTokenByTabRef.current.get(tabKey) !== request.requestToken) {
+          throw new DOMException('Interview request was superseded.', 'AbortError')
+        }
         if (!isCurrent()) throw new Error(t('alert.staleWrite'))
       }
 
       assertCurrent()
-      const { xml: previousXml } = await modeler.saveXML({ format: true })
-      assertCurrent()
-      if (!previousXml) throw new Error('editor returned no XML')
-      await validateReleaseXml(xml, {
-        action: 'create-generated',
-        knownProcessIds: binding.index.processIndex().keys(),
-        requireBilingual: true,
-        requireDi: true
-      })
-      assertCurrent()
-      const replacementPreservation = await validateUnknownExtensionPreservation(previousXml, xml)
-      assertCurrent()
-      if (!replacementPreservation.valid) {
-        throw new Error(t('sourceEditor.preservationBlocked'))
-      }
-
-      let mutationAttempted = false
+      invalidateLiveXmlCapture(tabKey)
       try {
-        assertCurrent()
-        mutationAttempted = true
-        await modeler.importXML(xml)
-        assertCurrent()
-        const { xml: roundTripXml } = await modeler.saveXML({ format: true })
-        assertCurrent()
-        if (!roundTripXml) throw new Error('editor returned no XML after import')
-        const roundTripPreservation = await validateUnknownExtensionPreservation(xml, roundTripXml)
-        assertCurrent()
-        if (!roundTripPreservation.valid) {
-          throw new Error(t('sourceEditor.preservationBlocked'))
-        }
-        await validateReleaseXml(roundTripXml, {
-          action: 'create-generated',
-          knownProcessIds: binding.index.processIndex().keys(),
-          requireBilingual: true,
-          requireDi: true
-        })
-        assertCurrent()
+        await runExclusiveXmlTransaction(async (transaction) => {
+          if (transaction.modeler !== modeler) {
+            throw new DOMException('The editor modeler is no longer active.', 'AbortError')
+          }
+          const assertTransactionCurrent = (): void => {
+            transaction.assertActive()
+            assertCurrent()
+          }
 
-        autoSizeAll(modeler)
-        assertCurrent()
-        try {
-          ;(modeler.get('canvas') as { zoom(m: 'fit-viewport'): void }).zoom('fit-viewport')
-        } catch {
-          /* zoom is cosmetic */
-        }
-        assertCurrent()
-        const canvas = modeler.get('canvas') as {
-          getRootElement(): { businessObject?: { get?: (k: string) => unknown } }
-        }
-        const root = canvas.getRootElement()
-        const cur = root.businessObject?.get?.('orbitpm:activeLang')
-        ;(
-          modeler.get('modeling') as {
-            updateProperties(el: unknown, p: Record<string, unknown>): void
+          assertTransactionCurrent()
+          const { xml: previousXml } = await transaction.modeler.saveXML({
+            format: true
+          })
+          assertTransactionCurrent()
+          if (!previousXml) throw new Error('editor returned no XML')
+          await validateReleaseXml(xml, {
+            action: 'create-generated',
+            knownProcessIds: binding.index.processIndex().keys(),
+            requireBilingual: true,
+            requireDi: true
+          })
+          assertTransactionCurrent()
+          const replacementPreservation = await validateUnknownExtensionPreservation(
+            previousXml,
+            xml
+          )
+          assertTransactionCurrent()
+          if (!replacementPreservation.valid) {
+            throw new Error(t('sourceEditor.preservationBlocked'))
           }
-        ).updateProperties(root, {
-          'orbitpm:activeLang': typeof cur === 'string' && cur ? cur : 'en'
-        })
-        assertCurrent()
-        localizationSourceByTabRef.current.set(tabKey, LocalizationSource.Ai)
-      } catch (error) {
-        if (mutationAttempted) {
+
+          // Validation can yield long enough for a programmatic or not-yet
+          // inert command to change the canvas. Re-read immediately before the
+          // first import so the reviewed replacement never overwrites it.
+          const { xml: preImportXml } = await transaction.modeler.saveXML({
+            format: true
+          })
+          assertTransactionCurrent()
+          if (!preImportXml || preImportXml !== previousXml) {
+            throw new Error(t('session.save.newerEdits'))
+          }
+
+          let mutationAttempted = false
           try {
-            await modeler.importXML(previousXml)
-          } catch {
-            /* preserve the original replacement error */
+            mutationAttempted = true
+            await transaction.importXml(xml)
+            invalidateLiveXmlCapture(tabKey)
+            assertTransactionCurrent()
+            const { xml: roundTripXml } = await transaction.modeler.saveXML({
+              format: true
+            })
+            assertTransactionCurrent()
+            if (!roundTripXml) throw new Error('editor returned no XML after import')
+            const roundTripPreservation = await validateUnknownExtensionPreservation(
+              xml,
+              roundTripXml
+            )
+            assertTransactionCurrent()
+            if (!roundTripPreservation.valid) {
+              throw new Error(t('sourceEditor.preservationBlocked'))
+            }
+            await validateReleaseXml(roundTripXml, {
+              action: 'create-generated',
+              knownProcessIds: binding.index.processIndex().keys(),
+              requireBilingual: true,
+              requireDi: true
+            })
+            assertTransactionCurrent()
+
+            autoSizeAll(transaction.modeler)
+            invalidateLiveXmlCapture(tabKey)
+            assertTransactionCurrent()
+            try {
+              ;(
+                transaction.modeler.get('canvas') as {
+                  zoom(m: 'fit-viewport'): void
+                }
+              ).zoom('fit-viewport')
+            } catch {
+              /* zoom is cosmetic */
+            }
+            assertTransactionCurrent()
+            const canvas = transaction.modeler.get('canvas') as {
+              getRootElement(): {
+                businessObject?: { get?: (key: string) => unknown }
+              }
+            }
+            const root = canvas.getRootElement()
+            const currentLanguage = root.businessObject?.get?.('orbitpm:activeLang')
+            ;(
+              transaction.modeler.get('modeling') as {
+                updateProperties(element: unknown, properties: Record<string, unknown>): void
+              }
+            ).updateProperties(root, {
+              'orbitpm:activeLang':
+                typeof currentLanguage === 'string' && currentLanguage ? currentLanguage : 'en'
+            })
+            invalidateLiveXmlCapture(tabKey)
+            assertTransactionCurrent()
+
+            const { xml: finalXml } = await transaction.modeler.saveXML({
+              format: true
+            })
+            assertTransactionCurrent()
+            if (!finalXml) throw new Error('editor returned no XML after import')
+            const finalPreservation = await validateUnknownExtensionPreservation(xml, finalXml)
+            assertTransactionCurrent()
+            if (!finalPreservation.valid) {
+              throw new Error(t('sourceEditor.preservationBlocked'))
+            }
+            await validateReleaseXml(finalXml, {
+              action: 'create-generated',
+              knownProcessIds: binding.index.processIndex().keys(),
+              requireBilingual: true,
+              requireDi: true
+            })
+            assertTransactionCurrent()
+
+            const currentSession = controller.store.get(tabKey)
+            if (
+              !currentSession ||
+              currentSession.incarnation !== sessionIncarnation ||
+              currentSession.modeler !== modeler ||
+              currentSession.revision !== sessionRevision ||
+              currentSession.currentXml !== sessionXml
+            ) {
+              throw new Error(t('alert.staleWrite'))
+            }
+            const updated = controller.updateXml(tabKey, finalXml)
+            binding.drafts?.track(updated)
+            binding.index.updateDirty(liveIndexPath(tab), finalXml)
+            dirtyByKeyRef.current = {
+              ...dirtyByKeyRef.current,
+              [tabKey]: true
+            }
+            setDirtyByKey((previous) => ({ ...previous, [tabKey]: true }))
+            setLiveWorkspaceVersion(binding.index.version)
+            digestsCacheRef.current = null
+            localizationSourceByTabRef.current.set(tabKey, LocalizationSource.Ai)
+          } catch (error) {
+            if (mutationAttempted) {
+              try {
+                transaction.assertActive()
+                await transaction.importXml(previousXml)
+                invalidateLiveXmlCapture(tabKey)
+                transaction.restoreDirtyState()
+              } catch {
+                /* preserve the original replacement error */
+              }
+            }
+            throw error
           }
-        }
-        throw error
+        })
+      } finally {
+        // App also listens to command-stack events for debounced live indexing.
+        // This transaction publishes its exact final XML synchronously, so any
+        // import/autosize timer is stale on either success or rollback.
+        invalidateLiveXmlCapture(tabKey)
       }
     },
-    [captureWorkspaceOperation, isWorkspaceOperationCurrent]
+    [captureWorkspaceOperation, invalidateLiveXmlCapture, isWorkspaceOperationCurrent]
   )
 
   // AI panel CTA → open the assistant on the interview tab for the active
@@ -5513,6 +7940,14 @@ function App(): JSX.Element {
       onChange={(event) => void onBackupInputChange(event)}
     />
   )
+  const reviewedXmlDialog = reviewedXmlReviewRequest ? (
+    <ReviewedXmlIngestionDialog
+      request={reviewedXmlReviewRequest}
+      onDecision={(decision) => {
+        reviewedXmlReviewQueueRef.current?.decide(decision)
+      }}
+    />
+  ) : null
 
   if (phase === 'loading') {
     return <div style={{ padding: '2rem' }}>{t('app.loading')}</div>
@@ -5546,6 +7981,7 @@ function App(): JSX.Element {
           onKeysChanged={() => setKeysVersion((v) => v + 1)}
           onOrgStylingChanged={handleOrgStylingChanged}
         />
+        {reviewedXmlDialog}
         <Toaster toasts={toasts} onDismiss={dismissToast} />
       </>
     )
@@ -5989,6 +8425,7 @@ function App(): JSX.Element {
                     workspaceId:
                       workspaceAdapter?.id ?? `browser-delivery:${workspaceGenRef.current}`,
                     workspaceAdapter,
+                    historyManager: renderedWorkspaceBinding.history,
                     folders,
                     knownProcessIds: processCatalog.map(({ id }) => id),
                     getCurrentWorkspaceId: () => workspaceAdapterRef.current?.id,
@@ -6179,6 +8616,7 @@ function App(): JSX.Element {
               const isActive = activeKey === tab.key
               if (!isActive && !mounted.has(tab.key)) return null
               const content = contents[tab.key]
+              const liveSession = sessionControllerRef.current?.store.get(tab.key)
               return (
                 <div
                   key={tab.key}
@@ -6202,6 +8640,8 @@ function App(): JSX.Element {
                   ) : (
                     <EditorTab
                       xml={content}
+                      baselineXml={liveSession?.lastSavedXml}
+                      initiallyDirty={Boolean(dirtyByKey[tab.key] || liveSession?.dirty)}
                       sourceLocalizationResources={
                         workspaceLocalizationSnapshot?.resources ?? DEFAULT_LOCALIZATION_RESOURCES
                       }
@@ -6227,7 +8667,11 @@ function App(): JSX.Element {
                         if (commands) {
                           commandUnregisterersRef.current[tab.key] =
                             commandRouterRef.current!.register(tab.key, {
-                              save: commands.save,
+                              save: () => {
+                                if (!persistenceInteractionLockedRef.current) {
+                                  commands.save()
+                                }
+                              },
                               exportSvg: commands.exportSvg,
                               exportPng: commands.exportPng
                             })
@@ -6540,14 +8984,7 @@ function App(): JSX.Element {
         <span>{t('footer.tagline')}</span>
       </footer>
 
-      {reviewedXmlReviewRequest && (
-        <ReviewedXmlIngestionDialog
-          request={reviewedXmlReviewRequest}
-          onDecision={(decision) => {
-            reviewedXmlReviewQueueRef.current?.decide(decision)
-          }}
-        />
-      )}
+      {reviewedXmlDialog}
 
       {translationReview && (
         <TranslationReviewDialog
@@ -6661,6 +9098,19 @@ function App(): JSX.Element {
           }
           onConfirm={() => void confirmLibraryImport()}
           onCancel={() => setLibraryImport(null)}
+        />
+      )}
+
+      {workspaceImportReview && (
+        <WorkspaceImportReviewDialog
+          plan={workspaceImportReview.plan}
+          decisions={workspaceImportReview.decisions}
+          busy={workspaceImportReview.busy}
+          error={workspaceImportReview.error ?? undefined}
+          onDecision={updateWorkspaceImportDecision}
+          onConfirm={() => void handleConfirmWorkspaceImport()}
+          onCancel={cancelWorkspaceImportReview}
+          onDownloadArisReport={downloadWorkspaceImportArisReport}
         />
       )}
 
@@ -6895,7 +9345,13 @@ function App(): JSX.Element {
           plan={backupImportState.plan}
           busy={backupBusy}
           onApply={(decisions) => void handleApplyBackupImport(decisions)}
-          onCancel={() => setBackupImportState(null)}
+          onCancel={() => {
+            backupImportState.controller.abort()
+            if (backupImportAbortRef.current === backupImportState.controller) {
+              backupImportAbortRef.current = null
+            }
+            setBackupImportState(null)
+          }}
         />
       )}
 
@@ -6956,7 +9412,10 @@ function App(): JSX.Element {
           <p>
             {t('workspace.path.dirtyMessage', {
               count: pathDirtyPrompt.count,
-              operation: t(`workspace.path.operation.${pathDirtyPrompt.kind}` as Key),
+              operation:
+                pathDirtyPrompt.kind === 'import'
+                  ? t('workspaceImportReview.title')
+                  : t(`workspace.path.operation.${pathDirtyPrompt.kind}` as Key),
               path: pathDirtyPrompt.path
             })}
           </p>

@@ -207,6 +207,141 @@ describe('LiveWorkspaceIndex', () => {
     expect(index.duplicateDiagnostics()[0].occurrences).toHaveLength(2)
   })
 
+  it('prepares without mutation and rejects a target changed during asynchronous validation', async () => {
+    const original = xml('Shared', { name: 'Original target' })
+    const changed = xml('Shared', { name: 'Edited while validation was pending' })
+    const index = new LiveWorkspaceIndex([
+      file('a.bpmn', xml('Shared', { name: 'Other declaration' })),
+      file('target.bpmn', original)
+    ])
+    const initialVersion = index.version
+
+    const prepared = await index.prepareDuplicateProcessIdRepair('target.bpmn', 'Shared', {
+      processId: 'Shared_Prepared'
+    })
+
+    expect(index.version).toBe(initialVersion)
+    expect(index.files().find((item) => item.relPath === 'target.bpmn')?.xml).toBe(original)
+    expect(prepared.target).toMatchObject({
+      relPath: 'target.bpmn',
+      effectiveXml: original,
+      dirtyXml: null,
+      saved: file('target.bpmn', original)
+    })
+
+    index.updateDirty('target.bpmn', changed)
+    expect(() => index.commitDuplicateProcessIdRepair(prepared)).toThrow(
+      /changed after duplicate process-id repair preparation/
+    )
+    expect(index.files().find((item) => item.relPath === 'target.bpmn')?.xml).toBe(changed)
+
+    index.clearDirty('target.bpmn')
+    const pending = index.repairDuplicateProcessId('target.bpmn', 'Shared', {
+      processId: 'Shared_Async'
+    })
+    index.updateDirty('target.bpmn', changed)
+
+    await expect(pending).rejects.toThrow(/changed after duplicate process-id repair preparation/)
+    expect(index.files().find((item) => item.relPath === 'target.bpmn')?.xml).toBe(changed)
+    expect(index.processIndex().has('Shared_Async')).toBe(false)
+
+    index.clearDirty('target.bpmn')
+    const refreshPrepared = await index.prepareDuplicateProcessIdRepair('target.bpmn', 'Shared', {
+      processId: 'Shared_After_Refresh'
+    })
+    index.replaceSavedFiles([
+      file('a.bpmn', xml('Shared', { name: 'Other declaration' })),
+      file('target.bpmn', original)
+    ])
+    expect(() => index.commitDuplicateProcessIdRepair(refreshPrepared)).toThrow(
+      /changed after duplicate process-id repair preparation/
+    )
+  })
+
+  it('allows only one of two concurrent repairs to claim the same process id', async () => {
+    const sharedTarget = xml('Shared', { name: 'Shared target' })
+    const otherTarget = xml('Other', { name: 'Other target' })
+    const index = new LiveWorkspaceIndex([
+      file('shared-a.bpmn', xml('Shared', { name: 'Shared declaration' })),
+      file('shared-target.bpmn', sharedTarget),
+      file('other-a.bpmn', xml('Other', { name: 'Other declaration' })),
+      file('other-target.bpmn', otherTarget)
+    ])
+    const initialVersion = index.version
+
+    const results = await Promise.allSettled([
+      index.repairDuplicateProcessId('shared-target.bpmn', 'Shared', {
+        processId: 'Concurrent_Repair'
+      }),
+      index.repairDuplicateProcessId('other-target.bpmn', 'Other', {
+        processId: 'Concurrent_Repair'
+      })
+    ])
+    const fulfilled = results.filter(
+      (
+        result
+      ): result is PromiseFulfilledResult<
+        Awaited<ReturnType<typeof index.repairDuplicateProcessId>>
+      > => result.status === 'fulfilled'
+    )
+    const rejected = results.filter(
+      (result): result is PromiseRejectedResult => result.status === 'rejected'
+    )
+
+    expect(fulfilled).toHaveLength(1)
+    expect(rejected).toHaveLength(1)
+    expect(rejected[0].reason).toBeInstanceOf(Error)
+    expect((rejected[0].reason as Error).message).toMatch(/already exists/)
+    expect(index.version).toBe(initialVersion + 1)
+
+    const winner = fulfilled[0].value
+    const loserPath =
+      winner.relPath === 'shared-target.bpmn' ? 'other-target.bpmn' : 'shared-target.bpmn'
+    const loserSource = loserPath === 'shared-target.bpmn' ? sharedTarget : otherTarget
+    expect(index.processIndex().get('Concurrent_Repair')?.relPath).toBe(winner.relPath)
+    expect(index.files().find((item) => item.relPath === winner.relPath)?.xml).toBe(winner.xml)
+    expect(index.files().find((item) => item.relPath === loserPath)?.xml).toBe(loserSource)
+  })
+
+  it('prevents a concurrent loser from overwriting a repair already committed to its target', async () => {
+    const targetSource = xml('Shared', { name: 'Target' })
+    const index = new LiveWorkspaceIndex([
+      file('declaration.bpmn', xml('Shared', { name: 'Declaration' })),
+      file('target.bpmn', targetSource)
+    ])
+    const initialVersion = index.version
+
+    const results = await Promise.allSettled([
+      index.repairDuplicateProcessId('target.bpmn', 'Shared', {
+        processId: 'Shared_First'
+      }),
+      index.repairDuplicateProcessId('target.bpmn', 'Shared', {
+        processId: 'Shared_Second'
+      })
+    ])
+    const winner = results.find(
+      (
+        result
+      ): result is PromiseFulfilledResult<
+        Awaited<ReturnType<typeof index.repairDuplicateProcessId>>
+      > => result.status === 'fulfilled'
+    )
+    const loser = results.find(
+      (result): result is PromiseRejectedResult => result.status === 'rejected'
+    )
+
+    expect(winner).toBeDefined()
+    expect(loser).toBeDefined()
+    expect((loser?.reason as Error).message).toMatch(
+      /changed after duplicate process-id repair preparation/
+    )
+    expect(index.version).toBe(initialVersion + 1)
+    expect(index.files().find((item) => item.relPath === 'target.bpmn')?.xml).toBe(
+      winner?.value.xml
+    )
+    expect(index.processIndex().get(winner?.value.processId ?? '')?.relPath).toBe('target.bpmn')
+  })
+
   it('repairs collaboration and DI references without changing unrelated ids', async () => {
     const source = collaborationMultiProcessXml('Shared_Process')
     const index = new LiveWorkspaceIndex([

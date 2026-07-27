@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { useEffect } from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -51,7 +51,9 @@ const fake = vi.hoisted(() => ({
   commandActionIndex: -1,
   diagramLang: 'en' as 'en' | 'ar',
   importedXml: [] as string[],
-  operationLog: [] as string[]
+  operationLog: [] as string[],
+  importGates: new Map<string, Promise<void>>(),
+  importFailures: new Map<string, { error: Error; mutateFirst: boolean }>()
 }))
 
 const mocks = vi.hoisted(() => ({
@@ -240,6 +242,9 @@ vi.mock('bpmn-js/lib/Modeler', () => ({
 
     async importXML(xml: string): Promise<{ warnings: string[] }> {
       if (fake.importError) throw fake.importError
+      await fake.importGates.get(xml)
+      const failure = fake.importFailures.get(xml)
+      if (failure && !failure.mutateFirst) throw failure.error
       await Promise.resolve()
       fake.importedXml.push(xml)
       fake.operationLog.push(`import:${xml}`)
@@ -248,6 +253,7 @@ vi.mock('bpmn-js/lib/Modeler', () => ({
       fake.stackIndex = -1
       fake.handlers.get('commandStack.changed')?.({})
       fake.currentXml = xml
+      if (failure) throw failure.error
       return { warnings: fake.importWarnings }
     }
 
@@ -571,6 +577,8 @@ beforeEach(() => {
   fake.diagramLang = 'en'
   fake.importedXml = []
   fake.operationLog = []
+  fake.importGates.clear()
+  fake.importFailures.clear()
   mocks.zoom.mockReset()
   mocks.scrollToElement.mockReset()
   mocks.selectionSelect.mockReset()
@@ -636,6 +644,513 @@ afterEach(() => {
 })
 
 describe('EditorTab browser integration', () => {
+  it('serializes prop and coordinated imports, locks interaction, and acknowledges the matching prop once', async () => {
+    let releaseInitial!: () => void
+    fake.importGates.set(
+      '<definitions id="initial" />',
+      new Promise<void>((resolve) => {
+        releaseInitial = resolve
+      })
+    )
+    let commands: EditorTabCommands | null = null
+    const onDirtyChange = vi.fn()
+    const onRequestSave = vi.fn().mockResolvedValue(undefined)
+    const view = renderEditor({
+      xml: '<definitions id="initial" />',
+      onDirtyChange,
+      onRequestSave,
+      onCommandsReady: (next) => {
+        commands = next
+      }
+    })
+    await waitFor(() => expect(commands).not.toBeNull())
+
+    let replacement!: Promise<void>
+    act(() => {
+      replacement = commands!.applyExternalXml('<definitions id="external" />')
+    })
+    const root = view.container.querySelector<HTMLElement>('.orbitpm-editor')
+    await waitFor(() => {
+      expect(root?.getAttribute('aria-busy')).toBe('true')
+      expect(root?.inert).toBe(true)
+    })
+    expect(fake.importedXml).toEqual([])
+    act(() => commands!.save())
+    await Promise.resolve()
+    expect(onRequestSave).not.toHaveBeenCalled()
+
+    releaseInitial()
+    await act(async () => {
+      await replacement
+    })
+    expect(fake.importedXml).toEqual([
+      '<definitions id="initial" />',
+      '<definitions id="external" />'
+    ])
+    expect(fake.currentXml).toBe('<definitions id="external" />')
+
+    view.rerender(
+      editorElement({
+        xml: '<definitions id="external" />',
+        baselineXml: '<definitions id="external-baseline" />',
+        initiallyDirty: true,
+        onDirtyChange,
+        onCommandsReady: (next) => {
+          commands = next
+        }
+      })
+    )
+    await waitFor(() => {
+      expect(root?.getAttribute('aria-busy')).toBe('false')
+      expect(root?.inert).toBe(false)
+    })
+    expect(fake.importedXml).toHaveLength(2)
+    expect(onDirtyChange).toHaveBeenLastCalledWith(true)
+  })
+
+  it('marks a transaction import dirty without re-importing and can restore its starting state', async () => {
+    const originalXml = '<definitions id="original" />'
+    const abandonedXml = '<definitions id="abandoned-repair" />'
+    const repairedXml = '<definitions id="repaired-once" />'
+    const onDirtyChange = vi.fn()
+    let commands: EditorTabCommands | null = null
+    renderEditor({
+      onDirtyChange,
+      onCommandsReady: (next) => {
+        commands = next
+      }
+    })
+    await waitFor(() => expect(fake.currentXml).toBe(originalXml))
+    await waitFor(() => expect(commands).not.toBeNull())
+    onDirtyChange.mockClear()
+
+    await act(async () => {
+      await commands!.runExclusiveXmlTransaction(async (transaction) => {
+        await transaction.importXml(abandonedXml)
+        transaction.markDirty()
+        await transaction.importXml(originalXml)
+        transaction.restoreDirtyState()
+      })
+    })
+    expect(onDirtyChange).toHaveBeenCalledWith(true)
+    expect(onDirtyChange).toHaveBeenLastCalledWith(false)
+    expect(fake.currentXml).toBe(originalXml)
+
+    onDirtyChange.mockClear()
+    await act(async () => {
+      await commands!.runExclusiveXmlTransaction(async (transaction) => {
+        await transaction.importXml(repairedXml)
+        transaction.markDirty()
+      })
+    })
+
+    expect(fake.importedXml.filter((xml) => xml === repairedXml)).toHaveLength(1)
+    expect(fake.currentXml).toBe(repairedXml)
+    expect(onDirtyChange).toHaveBeenCalledOnce()
+    expect(onDirtyChange).toHaveBeenLastCalledWith(true)
+  })
+
+  it('rolls back a stale queued prop before committing the latest captured metadata', async () => {
+    const firstXml = '<definitions id="first" />'
+    const secondXml = '<definitions id="second" />'
+    let releaseFirst!: () => void
+    let releaseSecond!: () => void
+    fake.importGates.set(
+      firstXml,
+      new Promise<void>((resolve) => {
+        releaseFirst = resolve
+      })
+    )
+    fake.importGates.set(
+      secondXml,
+      new Promise<void>((resolve) => {
+        releaseSecond = resolve
+      })
+    )
+    const onDirtyChange = vi.fn()
+    const onRequestSave = vi.fn().mockResolvedValue({ durable: false })
+    let commands: EditorTabCommands | null = null
+    const view = renderEditor({
+      xml: firstXml,
+      baselineXml: '<definitions id="first-baseline" />',
+      initiallyDirty: false,
+      onDirtyChange,
+      onRequestSave,
+      onCommandsReady: (next) => {
+        commands = next
+      }
+    })
+    await waitFor(() => expect(commands).not.toBeNull())
+
+    view.rerender(
+      editorElement({
+        xml: secondXml,
+        baselineXml: '<definitions id="second-baseline" />',
+        initiallyDirty: true,
+        onDirtyChange,
+        onRequestSave,
+        onCommandsReady: (next) => {
+          commands = next
+        }
+      })
+    )
+
+    releaseFirst()
+    await waitFor(() =>
+      expect(fake.importedXml).toEqual([firstXml, '<definitions id="original" />'])
+    )
+
+    releaseSecond()
+    await waitFor(() => expect(fake.currentXml).toBe(secondXml))
+    expect(fake.importedXml).toEqual([firstXml, '<definitions id="original" />', secondXml])
+    expect(onDirtyChange).toHaveBeenLastCalledWith(true)
+
+    mocks.validatePreservation.mockClear()
+    act(() => commands!.save())
+    await waitFor(() => expect(onRequestSave).toHaveBeenCalledOnce())
+    expect(mocks.validatePreservation).toHaveBeenCalledWith(
+      '<definitions id="second-baseline" />',
+      secondXml
+    )
+  })
+
+  it('keeps an acknowledged external XML final when an older prop import was already running', async () => {
+    const externalXml = '<definitions id="external-final" />'
+    const staleXml = '<definitions id="stale-prop" />'
+    let releaseExternal!: () => void
+    let releaseStale!: () => void
+    fake.importGates.set(
+      externalXml,
+      new Promise<void>((resolve) => {
+        releaseExternal = resolve
+      })
+    )
+    fake.importGates.set(
+      staleXml,
+      new Promise<void>((resolve) => {
+        releaseStale = resolve
+      })
+    )
+    let commands: EditorTabCommands | null = null
+    const onDirtyChange = vi.fn()
+    const view = renderEditor({
+      onDirtyChange,
+      onCommandsReady: (next) => {
+        commands = next
+      }
+    })
+    await waitFor(() => expect(fake.currentXml).toBe('<definitions id="original" />'))
+
+    let externalApply!: Promise<void>
+    act(() => {
+      externalApply = commands!.applyExternalXml(externalXml)
+    })
+    view.rerender(
+      editorElement({
+        xml: staleXml,
+        onDirtyChange,
+        onCommandsReady: (next) => {
+          commands = next
+        }
+      })
+    )
+    releaseExternal()
+    await act(async () => {
+      await externalApply
+    })
+    await waitFor(() =>
+      expect(fake.importedXml).toEqual(['<definitions id="original" />', externalXml])
+    )
+
+    view.rerender(
+      editorElement({
+        xml: externalXml,
+        baselineXml: '<definitions id="external-baseline" />',
+        initiallyDirty: true,
+        onDirtyChange,
+        onCommandsReady: (next) => {
+          commands = next
+        }
+      })
+    )
+    releaseStale()
+    await waitFor(() =>
+      expect(view.container.querySelector('.orbitpm-editor')?.getAttribute('aria-busy')).toBe(
+        'false'
+      )
+    )
+
+    expect(fake.importedXml).toEqual([
+      '<definitions id="original" />',
+      externalXml,
+      staleXml,
+      externalXml
+    ])
+    expect(fake.currentXml).toBe(externalXml)
+    expect(onDirtyChange).toHaveBeenLastCalledWith(true)
+  })
+
+  it('updates baseline-only prop metadata without importing over a dirty live canvas', async () => {
+    const propXml = '<definitions id="same-prop" />'
+    const onDirtyChange = vi.fn()
+    const onRequestSave = vi.fn().mockResolvedValue({ durable: false })
+    let commands: EditorTabCommands | null = null
+    const view = renderEditor({
+      xml: propXml,
+      baselineXml: '<definitions id="old-baseline" />',
+      onDirtyChange,
+      onRequestSave,
+      onCommandsReady: (next) => {
+        commands = next
+      }
+    })
+    await waitFor(() => expect(fake.currentXml).toBe(propXml))
+    fake.currentXml = '<definitions id="live-dirty" />'
+    fake.stackIndex += 1
+    act(() => {
+      emit('commandStack.changed')
+    })
+    await waitFor(() => expect(onDirtyChange).toHaveBeenLastCalledWith(true))
+
+    view.rerender(
+      editorElement({
+        xml: propXml,
+        baselineXml: '<definitions id="new-baseline" />',
+        onDirtyChange,
+        onRequestSave,
+        onCommandsReady: (next) => {
+          commands = next
+        }
+      })
+    )
+    await waitFor(() =>
+      expect(view.container.querySelector('.orbitpm-editor')?.getAttribute('aria-busy')).toBe(
+        'false'
+      )
+    )
+    expect(fake.currentXml).toBe('<definitions id="live-dirty" />')
+    expect(fake.importedXml).toEqual([propXml])
+    expect(onDirtyChange).toHaveBeenLastCalledWith(true)
+
+    mocks.validatePreservation.mockClear()
+    act(() => commands!.save())
+    await waitFor(() => expect(onRequestSave).toHaveBeenCalledOnce())
+    expect(mocks.validatePreservation).toHaveBeenCalledWith(
+      '<definitions id="new-baseline" />',
+      '<definitions id="live-dirty" />'
+    )
+  })
+
+  it('adopts baseline-only metadata even when the live canvas cannot be serialized', async () => {
+    const propXml = '<definitions id="same-prop" />'
+    const onRequestSave = vi.fn().mockResolvedValue({ durable: false })
+    let commands: EditorTabCommands | null = null
+    const view = renderEditor({
+      xml: propXml,
+      baselineXml: '<definitions id="old-baseline" />',
+      onRequestSave,
+      onCommandsReady: (next) => {
+        commands = next
+      }
+    })
+    await waitFor(() => expect(fake.currentXml).toBe(propXml))
+    const importsBeforeMetadata = [...fake.importedXml]
+    fake.saveXmlError = new Error('temporarily uncapturable')
+
+    view.rerender(
+      editorElement({
+        xml: propXml,
+        baselineXml: '<definitions id="new-baseline" />',
+        initiallyDirty: true,
+        onRequestSave,
+        onCommandsReady: (next) => {
+          commands = next
+        }
+      })
+    )
+    await waitFor(() =>
+      expect(view.container.querySelector('.orbitpm-editor')?.getAttribute('aria-busy')).toBe(
+        'false'
+      )
+    )
+    expect(fake.importedXml).toEqual(importsBeforeMetadata)
+    expect(fake.currentXml).toBe(propXml)
+
+    fake.saveXmlError = null
+    mocks.validatePreservation.mockClear()
+    act(() => commands!.save())
+    await waitFor(() => expect(onRequestSave).toHaveBeenCalledOnce())
+    expect(mocks.validatePreservation).toHaveBeenCalledWith(
+      '<definitions id="new-baseline" />',
+      propXml
+    )
+  })
+
+  it('restores the prior dirty XML when a later prop import fails after partial mutation', async () => {
+    const failedXml = '<definitions id="failed-prop" />'
+    const onDirtyChange = vi.fn()
+    const view = renderEditor({ onDirtyChange })
+    await waitFor(() => expect(fake.currentXml).toBe('<definitions id="original" />'))
+    const dirtyXml = '<definitions id="dirty-before-prop" />'
+    fake.currentXml = dirtyXml
+    fake.stackIndex += 1
+    act(() => {
+      emit('commandStack.changed')
+    })
+    await waitFor(() => expect(onDirtyChange).toHaveBeenLastCalledWith(true))
+    fake.importFailures.set(failedXml, {
+      error: new Error('partial prop import failed'),
+      mutateFirst: true
+    })
+
+    view.rerender(
+      editorElement({
+        xml: failedXml,
+        onDirtyChange
+      })
+    )
+    expect(await screen.findByText('editor.error.loadFailed')).not.toBeNull()
+    expect(fake.importedXml).toEqual(['<definitions id="original" />', failedXml, dirtyXml])
+    expect(fake.currentXml).toBe(dirtyXml)
+    expect(onDirtyChange).toHaveBeenLastCalledWith(true)
+  })
+
+  it('synchronously rejects a second save command and keeps the entire editor inert until save settles', async () => {
+    let finishSave!: () => void
+    const onRequestSave = vi.fn(
+      () =>
+        new Promise<void>((resolve) => {
+          finishSave = resolve
+        })
+    )
+    let commands: EditorTabCommands | null = null
+    const view = renderEditor({
+      onRequestSave,
+      onCommandsReady: (next) => {
+        commands = next
+      }
+    })
+    await waitFor(() => expect(commands).not.toBeNull())
+    await waitFor(() => expect(fake.currentXml).toBe('<definitions id="original" />'))
+
+    act(() => {
+      commands!.save()
+      commands!.save()
+    })
+    await waitFor(() => expect(onRequestSave).toHaveBeenCalledOnce())
+    const root = view.container.querySelector<HTMLElement>('.orbitpm-editor')
+    expect(root?.inert).toBe(true)
+    expect(root?.getAttribute('aria-busy')).toBe('true')
+
+    await act(async () => {
+      finishSave()
+      await Promise.resolve()
+    })
+    await waitFor(() => {
+      expect(root?.inert).toBe(false)
+      expect(root?.getAttribute('aria-busy')).toBe('false')
+    })
+    expect(onRequestSave).toHaveBeenCalledOnce()
+  })
+
+  it('uses the raw durable external XML as the preservation baseline for reviewed dirty reloads', async () => {
+    let commands: EditorTabCommands | null = null
+    const onDirtyChange = vi.fn()
+    const onRequestSave = vi.fn().mockResolvedValue({ durable: false })
+    renderEditor({
+      onDirtyChange,
+      onRequestSave,
+      onCommandsReady: (next) => {
+        commands = next
+      }
+    })
+    await waitFor(() => expect(commands).not.toBeNull())
+    await waitFor(() => expect(fake.currentXml).toBe('<definitions id="original" />'))
+
+    await act(async () => {
+      await commands!.applyExternalXml('<definitions id="reviewed" />', {
+        dirty: true,
+        baselineXml: '<definitions id="raw-external" />'
+      })
+    })
+    expect(onDirtyChange).toHaveBeenLastCalledWith(true)
+
+    mocks.validatePreservation.mockClear()
+    act(() => commands!.save())
+    await waitFor(() => expect(onRequestSave).toHaveBeenCalledOnce())
+    expect(mocks.validatePreservation).toHaveBeenCalledWith(
+      '<definitions id="raw-external" />',
+      '<definitions id="reviewed" />'
+    )
+  })
+
+  it('rolls back a partially failed external import without changing baseline or dirty metadata', async () => {
+    const originalXml = '<definitions id="original" />'
+    const failedXml = '<definitions id="partially-imported" />'
+    let commands: EditorTabCommands | null = null
+    const onDirtyChange = vi.fn()
+    const onRequestSave = vi.fn().mockResolvedValue({ durable: false })
+    renderEditor({
+      onDirtyChange,
+      onRequestSave,
+      onCommandsReady: (next) => {
+        commands = next
+      }
+    })
+    await waitFor(() => expect(fake.currentXml).toBe(originalXml))
+    fake.importFailures.set(failedXml, {
+      error: new Error('partial external import failed'),
+      mutateFirst: true
+    })
+
+    await expect(commands!.applyExternalXml(failedXml)).rejects.toThrow(
+      'partial external import failed'
+    )
+    expect(fake.importedXml).toEqual([originalXml, failedXml, originalXml])
+    expect(fake.currentXml).toBe(originalXml)
+    expect(onDirtyChange).toHaveBeenLastCalledWith(false)
+
+    mocks.validatePreservation.mockClear()
+    act(() => commands!.save())
+    await waitFor(() => expect(onRequestSave).toHaveBeenCalledOnce())
+    expect(mocks.validatePreservation).toHaveBeenCalledWith(originalXml, originalXml)
+  })
+
+  it('does not relabel a discarded save submission as the baseline after a clean external reload', async () => {
+    let commands: EditorTabCommands | null = null
+    let requestCount = 0
+    const onRequestSave = vi.fn(async () => {
+      requestCount += 1
+      if (requestCount === 1) {
+        await commands!.applyExternalXml('<definitions id="external" />', {
+          baselineXml: '<definitions id="external" />'
+        })
+        return { durable: true, acceptedSubmittedXml: false }
+      }
+      return { durable: true }
+    })
+    renderEditor({
+      onRequestSave,
+      onCommandsReady: (next) => {
+        commands = next
+      }
+    })
+    await waitFor(() => expect(commands).not.toBeNull())
+    await waitFor(() => expect(fake.currentXml).toBe('<definitions id="original" />'))
+
+    act(() => commands!.save())
+    await waitFor(() => expect(onRequestSave).toHaveBeenCalledOnce())
+    await waitFor(() => expect(fake.currentXml).toBe('<definitions id="external" />'))
+
+    mocks.validatePreservation.mockClear()
+    act(() => commands!.save())
+    await waitFor(() => expect(onRequestSave).toHaveBeenCalledTimes(2))
+    expect(mocks.validatePreservation).toHaveBeenCalledWith(
+      '<definitions id="external" />',
+      '<definitions id="external" />'
+    )
+  })
+
   it('refreshes embedded controls on language changes without recreating or editing the modeler', async () => {
     const onDirtyChange = vi.fn()
     const onRequestSave = vi.fn().mockResolvedValue(undefined)
@@ -1162,6 +1677,102 @@ describe('EditorTab browser integration', () => {
     mocks.commandUndo()
     await waitFor(() => expect(fake.currentXml).toBe(dirtyXml))
     expect(onDirtyChange).toHaveBeenLastCalledWith(true)
+  })
+
+  it('captures Source undo dirty metadata when its mutation lane is acquired', async () => {
+    const user = userEvent.setup()
+    let releaseReview!: () => void
+    const reviewGate = new Promise<void>((resolve) => {
+      releaseReview = resolve
+    })
+    mocks.reviewBpmnXmlLocalization.mockImplementation(async (candidateXml: string) => {
+      fake.operationLog.push(`review:${candidateXml}`)
+      await reviewGate
+      return {
+        status: 'completed',
+        xml: candidateXml,
+        evidence: { reviewedApprovals: [] }
+      }
+    })
+    const onDirtyChange = vi.fn()
+    const onRequestSave = vi.fn().mockResolvedValue(undefined)
+    let commands: EditorTabCommands | null = null
+    renderEditor({
+      onDirtyChange,
+      onRequestSave,
+      onCommandsReady: (next) => {
+        commands = next
+      }
+    })
+    await waitFor(() => expect(fake.currentXml).toBe('<definitions id="original" />'))
+    const dirtyXml = '<definitions id="dirty-before-review" />'
+    fake.currentXml = dirtyXml
+    fake.stackIndex += 1
+    act(() => {
+      emit('commandStack.changed')
+    })
+    await waitFor(() => expect(onDirtyChange).toHaveBeenLastCalledWith(true))
+
+    await user.click(screen.getByRole('button', { name: 'sourceEditor.open' }))
+    await user.click(await screen.findByRole('button', { name: 'source-apply' }))
+    await waitFor(() => expect(mocks.reviewBpmnXmlLocalization).toHaveBeenCalledOnce())
+
+    act(() => commands!.save())
+    await waitFor(() => expect(onRequestSave).toHaveBeenCalledOnce())
+    await waitFor(() => expect(onDirtyChange).toHaveBeenLastCalledWith(false))
+    releaseReview()
+    await waitFor(() => expect(mocks.onSourceApply).toHaveBeenCalledWith({ status: 'applied' }))
+
+    mocks.commandUndo()
+    await waitFor(() => expect(fake.currentXml).toBe(dirtyXml))
+    await waitFor(() => expect(onDirtyChange).toHaveBeenLastCalledWith(false))
+  })
+
+  it('keeps Source Apply ownership through post-import checks before a queued external replacement', async () => {
+    const user = userEvent.setup()
+    let releasePostImportCheck!: () => void
+    const postImportCheck = new Promise<void>((resolve) => {
+      releasePostImportCheck = resolve
+    })
+    let preservationCall = 0
+    mocks.validatePreservation.mockImplementation(async () => {
+      preservationCall += 1
+      if (preservationCall === 2) await postImportCheck
+      return validSummary
+    })
+    let commands: EditorTabCommands | null = null
+    renderEditor({
+      onCommandsReady: (next) => {
+        commands = next
+      }
+    })
+    await waitFor(() => expect(fake.currentXml).toBe('<definitions id="original" />'))
+
+    await user.click(screen.getByRole('button', { name: 'sourceEditor.open' }))
+    await user.click(await screen.findByRole('button', { name: 'source-apply' }))
+    await waitFor(() => expect(fake.currentXml).toBe('<definitions id="candidate" />'))
+
+    let externalReplacement!: Promise<void>
+    act(() => {
+      externalReplacement = commands!.applyExternalXml('<definitions id="external-after-source" />')
+    })
+    await Promise.resolve()
+    expect(fake.importedXml).toEqual([
+      '<definitions id="original" />',
+      '<definitions id="candidate" />'
+    ])
+
+    releasePostImportCheck()
+    await act(async () => {
+      await externalReplacement
+    })
+    await waitFor(() => expect(mocks.onSourceApply).toHaveBeenCalledWith({ status: 'applied' }))
+    expect(fake.importedXml).toEqual([
+      '<definitions id="original" />',
+      '<definitions id="candidate" />',
+      '<definitions id="external-after-source" />'
+    ])
+    expect(fake.currentXml).toBe('<definitions id="external-after-source" />')
   })
 
   it('rolls back the exact prior XML when a post-import preservation check fails', async () => {

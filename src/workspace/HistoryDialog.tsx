@@ -151,6 +151,7 @@ export function HistoryDialog({
       )
     }
     if (result.status === 'preparation-not-completed') {
+      if (result.reason === 'cancelled') return
       throw new Error(
         t('workspace.history.restoreNotComplete', {
           outcome: result.reason

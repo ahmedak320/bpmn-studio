@@ -103,11 +103,15 @@ import {
 
 export interface EditorTabProps {
   xml: string
+  /** Exact durable XML used for opaque-extension preservation checks. */
+  baselineXml?: string
+  /** Marks an initial/replaced prop snapshot as unsaved editor work. */
+  initiallyDirty?: boolean
   onDirtyChange: (dirty: boolean) => void
   onRequestSave: (
     xml: string,
     options?: { explicitDraftWithErrors?: boolean }
-  ) => Promise<void | { durable: boolean }>
+  ) => Promise<void | { durable: boolean; acceptedSubmittedXml?: boolean }>
   onOpenCalledProcess?: (processId: string) => void
   /** Workspace process IDs used to resolve cross-file call activities. */
   knownProcessIds?: readonly string[]
@@ -142,6 +146,34 @@ export interface EditorTabCommands {
   exportSvg: () => void
   exportPng: () => void
   exportPdf: () => void
+  /** Apply a durable external baseline once and acknowledge the next matching prop. */
+  applyExternalXml: (
+    xml: string,
+    options?: { dirty?: boolean; baselineXml?: string }
+  ) => Promise<void>
+  /**
+   * Own the editor's XML mutation lane for the complete callback. Callers must
+   * use `importXml` instead of the modeler's raw import method so imports stay
+   * bound to this live modeler and do not leak command-stack events.
+   */
+  runExclusiveXmlTransaction: <Result>(
+    operation: (transaction: EditorXmlTransaction) => Promise<Result> | Result
+  ) => Promise<Result>
+}
+
+export interface EditorXmlTransactionModeler {
+  saveXML(options: { format: boolean }): Promise<{ xml?: string }>
+  get(name: string): unknown
+}
+
+export interface EditorXmlTransaction {
+  readonly modeler: EditorXmlTransactionModeler
+  importXml(xml: string): Promise<{ warnings: string[] }>
+  assertActive(): void
+  /** Mark the current imported XML dirty without issuing another modeler command. */
+  markDirty(): void
+  /** Restore the dirty/clean state captured when this transaction acquired the lane. */
+  restoreDirtyState(): void
 }
 
 interface SourceApplyCommandContext {
@@ -228,7 +260,7 @@ interface EventBusLike {
   off(event: string, callback: (event: { element?: unknown }) => unknown): void
 }
 
-interface BpmnModelerLike {
+interface BpmnModelerLike extends EditorXmlTransactionModeler {
   importXML(xml: string): Promise<{ warnings: string[] }>
   saveXML(options: { format: boolean }): Promise<{ xml?: string }>
   saveSVG(): Promise<{ svg: string }>
@@ -239,6 +271,7 @@ interface BpmnModelerLike {
   get(name: 'selection'): SelectionApiLike
   get(name: 'modeling'): ModelingApiLike
   get(name: 'i18n'): { changed(): void }
+  get(name: string): unknown
   destroy(): void
   attachTo(container: HTMLElement): void
 }
@@ -264,9 +297,19 @@ function errorMessage(err: unknown): string {
   return err instanceof Error ? err.message : String(err)
 }
 
+async function serializeModelerXml(modeler: EditorXmlTransactionModeler): Promise<string> {
+  const { xml } = await modeler.saveXML({ format: true })
+  if (typeof xml !== 'string') {
+    throw new Error('bpmn-js returned no XML')
+  }
+  return xml
+}
+
 export function EditorTab(props: EditorTabProps): JSX.Element {
   const {
     xml,
+    baselineXml,
+    initiallyDirty,
     onDirtyChange,
     onRequestSave,
     onOpenCalledProcess,
@@ -300,7 +343,17 @@ export function EditorTab(props: EditorTabProps): JSX.Element {
   const actionMenuTriggerRef = useRef<HTMLButtonElement | null>(null)
   const modelerRef = useRef<BpmnModelerLike | null>(null)
   const dirtyStateRef = useRef<DirtyState>(createDirtyState(0))
-  const originalXmlRef = useRef(xml)
+  const xmlPropRef = useRef(xml)
+  xmlPropRef.current = xml
+  const originalXmlRef = useRef(baselineXml ?? xml)
+  const lastPropSnapshotRef = useRef<{
+    xml: string
+    baselineXml: string | undefined
+    initiallyDirty: boolean
+  } | null>(null)
+  const hasImportedXmlRef = useRef(false)
+  const externallyAppliedXmlRef = useRef<string | null>(null)
+  const savedPropAcknowledgementRef = useRef<string | null>(null)
   const sourceRollbackRef = useRef<{
     xml: string
     appliedXml: string
@@ -311,6 +364,9 @@ export function EditorTab(props: EditorTabProps): JSX.Element {
   const sourceApprovedFieldExceptionsRef = useRef<readonly LocalizationFieldException[]>([])
   const ignoreNextSourceJournalCommandRef = useRef(false)
   const importCommandEventDepthRef = useRef(0)
+  const xmlTransactionTailRef = useRef<Promise<void>>(Promise.resolve())
+  const saveInFlightRef = useRef(false)
+  const xmlTransactionCountRef = useRef(0)
   const onOpenCalledProcessRef = useRef(onOpenCalledProcess)
   onOpenCalledProcessRef.current = onOpenCalledProcess
   const onOpenStepDetailsRef = useRef(onOpenStepDetails)
@@ -319,6 +375,7 @@ export function EditorTab(props: EditorTabProps): JSX.Element {
   const [dirty, setDirty] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
+  const [xmlTransactionCount, setXmlTransactionCount] = useState(0)
   const [validationRunning, setValidationRunning] = useState(false)
   const [validationOpen, setValidationOpen] = useState(false)
   const [validationSummary, setValidationSummary] = useState<ValidationSummary | null>(null)
@@ -433,6 +490,71 @@ export function EditorTab(props: EditorTabProps): JSX.Element {
       onDirtyChange(nowDirty)
     },
     [onDirtyChange]
+  )
+
+  const runExclusiveXmlTransaction = useCallback(
+    <Result,>(
+      operation: (transaction: EditorXmlTransaction) => Promise<Result> | Result
+    ): Promise<Result> => {
+      const modeler = modelerRef.current
+      if (!modeler) return Promise.reject(new Error('editor not ready'))
+
+      xmlTransactionCountRef.current += 1
+      setXmlTransactionCount((count) => count + 1)
+      const assertActive = (): void => {
+        if (modelerRef.current !== modeler) {
+          throw new DOMException('The editor modeler is no longer active.', 'AbortError')
+        }
+      }
+      const queued = xmlTransactionTailRef.current
+        .catch(() => undefined)
+        .then(async () => {
+          assertActive()
+          const transactionStartedDirty = isDirty(dirtyStateRef.current)
+          return await operation({
+            modeler,
+            assertActive,
+            markDirty: () => {
+              assertActive()
+              const stackIndex = getStackIndex(modeler)
+              applyDirtyState(withCommandStackChanged(createDirtyState(stackIndex - 1), stackIndex))
+            },
+            restoreDirtyState: () => {
+              assertActive()
+              const stackIndex = getStackIndex(modeler)
+              applyDirtyState(
+                transactionStartedDirty
+                  ? withCommandStackChanged(createDirtyState(stackIndex - 1), stackIndex)
+                  : createDirtyState(stackIndex)
+              )
+            },
+            importXml: async (candidateXml) => {
+              assertActive()
+              importCommandEventDepthRef.current += 1
+              try {
+                const result = await modeler.importXML(candidateXml)
+                assertActive()
+                return result
+              } finally {
+                importCommandEventDepthRef.current = Math.max(
+                  0,
+                  importCommandEventDepthRef.current - 1
+                )
+              }
+            }
+          })
+        })
+        .finally(() => {
+          xmlTransactionCountRef.current = Math.max(0, xmlTransactionCountRef.current - 1)
+          setXmlTransactionCount((count) => Math.max(0, count - 1))
+        })
+      xmlTransactionTailRef.current = queued.then(
+        () => undefined,
+        () => undefined
+      )
+      return queued
+    },
+    [applyDirtyState]
   )
 
   useEffect(() => {
@@ -599,42 +721,141 @@ export function EditorTab(props: EditorTabProps): JSX.Element {
   useEffect(() => {
     const modeler = modelerRef.current
     if (!modeler) return
-
-    let cancelled = false
-    setError(null)
-    importCommandEventDepthRef.current += 1
-    modeler
-      .importXML(xml)
-      .then(({ warnings }) => {
-        if (cancelled) return
-        if (warnings && warnings.length > 0) {
-          console.warn('BPMN import warnings:', warnings)
-        }
-        originalXmlRef.current = xml
-        sourceApprovedFieldExceptionsRef.current = []
-        sourceRollbackRef.current = null
-        setSourceRollbackAvailable(false)
-        setValidationSummary(null)
-        applyDirtyState(createDirtyState(getStackIndex(modeler)))
-        modeler.get('canvas').zoom('fit-viewport')
-        // Show the palette hint only for a freshly-created, near-empty diagram
-        // (nothing but a start event), never when opening a real process file.
-        setIsNewDiagram(countFlowNodeShapes(modeler.get('elementRegistry')) <= 1)
-        setHintDismissed(false)
-      })
-      .catch((err: unknown) => {
-        if (cancelled) return
-        setError(t('editor.error.loadFailed', { error: errorMessage(err) }))
-      })
-      .finally(() => {
-        importCommandEventDepthRef.current = Math.max(0, importCommandEventDepthRef.current - 1)
-      })
-
-    return () => {
-      cancelled = true
+    const snapshot = {
+      xml,
+      baselineXml,
+      initiallyDirty: Boolean(initiallyDirty)
     }
+    const previousSnapshot = lastPropSnapshotRef.current
+    lastPropSnapshotRef.current = snapshot
+
+    const externalAcknowledgement = externallyAppliedXmlRef.current === xml
+    const savedAcknowledgement = savedPropAcknowledgementRef.current === xml
+    if (externalAcknowledgement) {
+      externallyAppliedXmlRef.current = null
+      if (savedAcknowledgement) {
+        savedPropAcknowledgementRef.current = null
+      }
+    }
+    if (savedAcknowledgement) {
+      savedPropAcknowledgementRef.current = null
+    }
+
+    setError(null)
+    const adoptMetadataWithoutImport = async (
+      transaction: EditorXmlTransaction,
+      trustedDirtyUpgrade: boolean
+    ): Promise<void> => {
+      if (transaction.modeler !== modeler || lastPropSnapshotRef.current !== snapshot) {
+        return
+      }
+      // Baseline adoption is independent of canvas serialization. Even an
+      // temporarily uncapturable dirty canvas must use the new durable XML for
+      // the next preservation check.
+      originalXmlRef.current = snapshot.baselineXml ?? snapshot.xml
+      if (!snapshot.initiallyDirty || isDirty(dirtyStateRef.current)) return
+      if (!trustedDirtyUpgrade) {
+        let currentXml: string
+        try {
+          currentXml = await serializeModelerXml(transaction.modeler)
+        } catch {
+          return
+        }
+        transaction.assertActive()
+        if (lastPropSnapshotRef.current !== snapshot || currentXml !== snapshot.xml) {
+          return
+        }
+      }
+      const stackIndex = getStackIndex(modeler)
+      applyDirtyState(withCommandStackChanged(createDirtyState(stackIndex - 1), stackIndex))
+    }
+
+    if (externalAcknowledgement || savedAcknowledgement || previousSnapshot?.xml === snapshot.xml) {
+      void runExclusiveXmlTransaction(async (transaction) => {
+        // A baseline-only prop update must never re-import `xml`: the canvas
+        // may contain newer dirty work. Matching external/save acknowledgements
+        // can conservatively upgrade clean -> dirty without reading the canvas.
+        await adoptMetadataWithoutImport(
+          transaction,
+          externalAcknowledgement || savedAcknowledgement
+        )
+      }).catch((err: unknown) => {
+        if (lastPropSnapshotRef.current === snapshot) {
+          setError(t('editor.error.loadFailed', { error: errorMessage(err) }))
+        }
+      })
+      return
+    }
+
+    void runExclusiveXmlTransaction(async (transaction) => {
+      if (transaction.modeler !== modeler) {
+        throw new DOMException('The editor modeler is no longer active.', 'AbortError')
+      }
+      if (lastPropSnapshotRef.current !== snapshot) return
+      let previousXml: string | null = null
+      try {
+        previousXml = await serializeModelerXml(transaction.modeler)
+        transaction.assertActive()
+      } catch (error) {
+        if (hasImportedXmlRef.current) throw error
+      }
+      if (lastPropSnapshotRef.current !== snapshot) return
+
+      let warnings: string[]
+      try {
+        ;({ warnings } = await transaction.importXml(snapshot.xml))
+      } catch (error) {
+        if (previousXml !== null && hasImportedXmlRef.current) {
+          try {
+            await transaction.importXml(previousXml)
+            transaction.restoreDirtyState()
+          } catch {
+            // Keep the prop import error primary; rollback is best-effort.
+          }
+        }
+        throw error
+      }
+      hasImportedXmlRef.current = true
+      transaction.assertActive()
+      if (lastPropSnapshotRef.current !== snapshot) {
+        if (previousXml !== null) {
+          await transaction.importXml(previousXml)
+          transaction.restoreDirtyState()
+        }
+        return
+      }
+      if (warnings && warnings.length > 0) {
+        console.warn('BPMN import warnings:', warnings)
+      }
+      originalXmlRef.current = snapshot.baselineXml ?? snapshot.xml
+      externallyAppliedXmlRef.current = null
+      savedPropAcknowledgementRef.current = null
+      sourceApprovedFieldExceptionsRef.current = []
+      sourceRollbackRef.current = null
+      setSourceRollbackAvailable(false)
+      setValidationSummary(null)
+      const stackIndex = getStackIndex(modeler)
+      applyDirtyState(
+        snapshot.initiallyDirty
+          ? withCommandStackChanged(createDirtyState(stackIndex - 1), stackIndex)
+          : createDirtyState(stackIndex)
+      )
+      try {
+        modeler.get('canvas').zoom('fit-viewport')
+      } catch {
+        // View fitting is cosmetic.
+      }
+      // Show the palette hint only for a freshly-created, near-empty diagram
+      // (nothing but a start event), never when opening a real process file.
+      setIsNewDiagram(countFlowNodeShapes(modeler.get('elementRegistry')) <= 1)
+      setHintDismissed(false)
+    }).catch((err: unknown) => {
+      if (lastPropSnapshotRef.current === snapshot) {
+        setError(t('editor.error.loadFailed', { error: errorMessage(err) }))
+      }
+    })
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [xml])
+  }, [xml, baselineXml, initiallyDirty])
 
   const validateDocument = useCallback(
     async (
@@ -669,17 +890,94 @@ export function EditorTab(props: EditorTabProps): JSX.Element {
   const readCurrentXml = useCallback(async (): Promise<string> => {
     const modeler = modelerRef.current
     if (!modeler) throw new Error('editor not ready')
-    const { xml: currentXml } = await modeler.saveXML({ format: true })
-    if (typeof currentXml !== 'string') {
-      throw new Error('bpmn-js returned no XML')
-    }
-    return currentXml
+    return await serializeModelerXml(modeler)
   }, [])
+
+  const applyExternalXml = useCallback(
+    async (
+      candidateXml: string,
+      options?: { dirty?: boolean; baselineXml?: string }
+    ): Promise<void> => {
+      const modeler = modelerRef.current
+      if (!modeler) throw new Error('editor not ready')
+      setError(null)
+      await runExclusiveXmlTransaction(async (transaction) => {
+        if (transaction.modeler !== modeler) {
+          throw new DOMException('The editor modeler is no longer active.', 'AbortError')
+        }
+        const previousXml = await serializeModelerXml(transaction.modeler)
+        transaction.assertActive()
+        let mutationAttempted = false
+        try {
+          mutationAttempted = true
+          const { warnings } = await transaction.importXml(candidateXml)
+          hasImportedXmlRef.current = true
+          transaction.assertActive()
+          if (warnings && warnings.length > 0) {
+            console.warn('BPMN import warnings:', warnings)
+          }
+          try {
+            modeler.get('canvas').zoom('fit-viewport')
+          } catch {
+            // View fitting is cosmetic and must not turn a committed XML
+            // replacement into a rollback attempt.
+          }
+
+          // No awaited work follows this point: XML and its editor metadata
+          // become visible as one exclusive commit.
+          externallyAppliedXmlRef.current = candidateXml
+          if (options?.baselineXml !== undefined) {
+            originalXmlRef.current = options.baselineXml
+          } else if (!options?.dirty) {
+            originalXmlRef.current = candidateXml
+          }
+          sourceApprovedFieldExceptionsRef.current = []
+          sourceRollbackRef.current = null
+          setSourceRollbackAvailable(false)
+          setValidationSummary(null)
+          const stackIndex = getStackIndex(modeler)
+          applyDirtyState(
+            options?.dirty
+              ? withCommandStackChanged(createDirtyState(stackIndex - 1), stackIndex)
+              : createDirtyState(stackIndex)
+          )
+        } catch (error) {
+          if (mutationAttempted && modelerRef.current === modeler) {
+            try {
+              await transaction.importXml(previousXml)
+              transaction.assertActive()
+              transaction.restoreDirtyState()
+            } catch {
+              // The replacement error remains primary. Import failures may
+              // occur before mutation, and rollback itself is best-effort.
+            }
+          }
+          throw error
+        }
+      })
+    },
+    [applyDirtyState, runExclusiveXmlTransaction]
+  )
 
   const persistXml = useCallback(
     async (savedXml: string, explicitDraftWithErrors = false): Promise<void> => {
-      const outcome = await onRequestSave(savedXml, { explicitDraftWithErrors })
-      if (outcome && !outcome.durable) return
+      const acknowledgeProp = savedXml !== xmlPropRef.current
+      if (acknowledgeProp) savedPropAcknowledgementRef.current = savedXml
+      let outcome: void | { durable: boolean; acceptedSubmittedXml?: boolean }
+      try {
+        outcome = await onRequestSave(savedXml, { explicitDraftWithErrors })
+      } catch (error) {
+        if (acknowledgeProp && savedPropAcknowledgementRef.current === savedXml) {
+          savedPropAcknowledgementRef.current = null
+        }
+        throw error
+      }
+      if (outcome && (!outcome.durable || outcome.acceptedSubmittedXml === false)) {
+        if (acknowledgeProp && savedPropAcknowledgementRef.current === savedXml) {
+          savedPropAcknowledgementRef.current = null
+        }
+        return
+      }
       originalXmlRef.current = savedXml
       sourceRollbackRef.current = null
       setSourceRollbackAvailable(false)
@@ -732,41 +1030,95 @@ export function EditorTab(props: EditorTabProps): JSX.Element {
     [applyDirtyState]
   )
 
-  const restoreSourceSnapshot = useCallback(
+  const restoreSourceSnapshotInTransaction = useCallback(
     async (
-      modeler: BpmnModelerLike,
+      transaction: EditorXmlTransaction,
       snapshotXml: string,
       shouldBeDirty: boolean,
       requireBilingual: boolean,
       approvedFieldExceptions: readonly LocalizationFieldException[]
     ): Promise<void> => {
-      importCommandEventDepthRef.current += 1
-      try {
-        await modeler.importXML(snapshotXml)
-      } finally {
-        importCommandEventDepthRef.current = Math.max(0, importCommandEventDepthRef.current - 1)
-      }
-      if (modelerRef.current !== modeler) return
+      const modeler = transaction.modeler as BpmnModelerLike
+      await transaction.importXml(snapshotXml)
+      hasImportedXmlRef.current = true
+      transaction.assertActive()
       sourceApprovedFieldExceptionsRef.current = approvedFieldExceptions
-      modeler.get('canvas').zoom('fit-viewport')
-      setImportedDocumentDirtyState(modeler, shouldBeDirty)
       try {
-        setValidationSummary(
-          await validateDocument(
-            snapshotXml,
-            true,
-            snapshotXml,
-            requireBilingual,
-            approvedFieldExceptions
-          )
+        modeler.get('canvas').zoom('fit-viewport')
+      } catch {
+        // View fitting is cosmetic.
+      }
+      setImportedDocumentDirtyState(modeler, shouldBeDirty)
+      let summary: ValidationSummary
+      try {
+        summary = await validateDocument(
+          snapshotXml,
+          true,
+          snapshotXml,
+          requireBilingual,
+          approvedFieldExceptions
         )
       } catch {
+        transaction.assertActive()
         // The exact snapshot is already restored. A later Validation Center
         // run can retry adapters that were temporarily unavailable.
         setValidationSummary(null)
+        return
       }
+      transaction.assertActive()
+      setValidationSummary(summary)
     },
     [setImportedDocumentDirtyState, validateDocument]
+  )
+
+  const restoreSourceSnapshot = useCallback(
+    async (
+      modeler: BpmnModelerLike,
+      target: {
+        xml: string
+        dirty: boolean
+        requireBilingual: boolean
+        approvedFieldExceptions: readonly LocalizationFieldException[]
+      },
+      fallback: {
+        xml: string
+        dirty: boolean
+        requireBilingual: boolean
+        approvedFieldExceptions: readonly LocalizationFieldException[]
+      } | null = null
+    ): Promise<void> => {
+      await runExclusiveXmlTransaction(async (transaction) => {
+        if (transaction.modeler !== modeler) {
+          throw new DOMException('The editor modeler is no longer active.', 'AbortError')
+        }
+        try {
+          await restoreSourceSnapshotInTransaction(
+            transaction,
+            target.xml,
+            target.dirty,
+            target.requireBilingual,
+            target.approvedFieldExceptions
+          )
+        } catch (caught) {
+          if (fallback) {
+            try {
+              await restoreSourceSnapshotInTransaction(
+                transaction,
+                fallback.xml,
+                fallback.dirty,
+                fallback.requireBilingual,
+                fallback.approvedFieldExceptions
+              )
+            } catch {
+              // Keep the first restoration error; it identifies the requested
+              // transaction side that could not be recovered.
+            }
+          }
+          throw caught
+        }
+      })
+    },
+    [restoreSourceSnapshotInTransaction, runExclusiveXmlTransaction]
   )
 
   const queueSourceSnapshotRestore = useCallback(
@@ -788,32 +1140,13 @@ export function EditorTab(props: EditorTabProps): JSX.Element {
       sourceRollbackRef.current = null
       setSourceRollbackAvailable(false)
       ignoreNextSourceJournalCommandRef.current = false
-      void restoreSourceSnapshot(
-        modeler,
-        target.xml,
-        target.dirty,
-        target.requireBilingual,
-        target.approvedFieldExceptions
-      ).catch(async (caught) => {
-        try {
-          await restoreSourceSnapshot(
-            modeler,
-            fallback.xml,
-            fallback.dirty,
-            fallback.requireBilingual,
-            fallback.approvedFieldExceptions
-          )
-        } catch {
-          // Keep the first restoration error; it identifies the requested
-          // transaction side that could not be recovered.
-        }
-        if (modelerRef.current === modeler) {
-          setError(
-            t('sourceEditor.applyFailed', {
-              error: errorMessage(caught)
-            })
-          )
-        }
+      void restoreSourceSnapshot(modeler, target, fallback).catch((caught) => {
+        if (modelerRef.current !== modeler) return
+        setError(
+          t('sourceEditor.applyFailed', {
+            error: errorMessage(caught)
+          })
+        )
       })
     },
     [restoreSourceSnapshot]
@@ -824,9 +1157,7 @@ export function EditorTab(props: EditorTabProps): JSX.Element {
       const modeler = modelerRef.current
       if (!modeler) throw new Error('editor not ready')
       const previousXml = await readCurrentXml()
-      const wasDirty = dirty
       const previousApprovals = sourceApprovedFieldExceptionsRef.current
-      let sourceMutationStarted = false
       const isSourceCurrent = async (): Promise<boolean> => {
         if (signal.aborted || modelerRef.current !== modeler) return false
         try {
@@ -835,162 +1166,187 @@ export function EditorTab(props: EditorTabProps): JSX.Element {
           return false
         }
       }
-      try {
-        const target = getDiagramLang(modeler as unknown as LangToggleModeler)
-        const ingestion = await reviewBpmnXmlLocalization(candidateXml, {
-          source: LocalizationSource.Xml,
-          target,
-          defaultActive: target,
-          resources: sourceLocalizationResources ?? DEFAULT_SOURCE_LOCALIZATION_RESOURCES,
-          approvedFieldExceptions: previousApprovals,
-          validation: {
-            adapters: getRuntimeValidationAdapters(),
-            knownProcessIds: knownProcessIds ?? [],
-            requireDi: true
-          },
-          review: onReviewSourceBilingual,
-          signal,
-          isCurrent: isSourceCurrent
-        })
-        if (ingestion.status === 'cancelled') return { status: 'cancelled' }
-        if (ingestion.status === 'review-required') {
+      const target = getDiagramLang(modeler as unknown as LangToggleModeler)
+      const ingestion = await reviewBpmnXmlLocalization(candidateXml, {
+        source: LocalizationSource.Xml,
+        target,
+        defaultActive: target,
+        resources: sourceLocalizationResources ?? DEFAULT_SOURCE_LOCALIZATION_RESOURCES,
+        approvedFieldExceptions: previousApprovals,
+        validation: {
+          adapters: getRuntimeValidationAdapters(),
+          knownProcessIds: knownProcessIds ?? [],
+          requireDi: true
+        },
+        review: onReviewSourceBilingual,
+        signal,
+        isCurrent: isSourceCurrent
+      })
+      if (ingestion.status === 'cancelled') return { status: 'cancelled' }
+      if (ingestion.status === 'review-required') {
+        return { status: 'blocked', message: t('sourceEditor.invalidBlocked') }
+      }
+
+      const reviewedXml = ingestion.xml
+      const appliedApprovals = Object.freeze([
+        ...previousApprovals,
+        ...ingestion.evidence.reviewedApprovals
+      ])
+      const preImportValidation = await validateDocument(
+        reviewedXml,
+        true,
+        previousXml,
+        true,
+        appliedApprovals
+      )
+      if (
+        !preImportValidation.valid ||
+        !evaluateValidationPolicy(preImportValidation, 'apply-editor').allowed
+      ) {
+        return { status: 'blocked', message: t('sourceEditor.invalidBlocked') }
+      }
+
+      return await runExclusiveXmlTransaction(async (transaction) => {
+        if (transaction.modeler !== modeler) {
+          throw new DOMException('The editor modeler is no longer active.', 'AbortError')
+        }
+        if (signal.aborted) return { status: 'cancelled' }
+        if (saveInFlightRef.current) {
           return { status: 'blocked', message: t('sourceEditor.invalidBlocked') }
         }
-
-        const reviewedXml = ingestion.xml
-        const appliedApprovals = Object.freeze([
-          ...previousApprovals,
-          ...ingestion.evidence.reviewedApprovals
-        ])
-        const preImportValidation = await validateDocument(
-          reviewedXml,
-          true,
-          previousXml,
-          true,
-          appliedApprovals
-        )
-        if (
-          !preImportValidation.valid ||
-          !evaluateValidationPolicy(preImportValidation, 'apply-editor').allowed
-        ) {
+        const mutationBaseline = await serializeModelerXml(transaction.modeler)
+        transaction.assertActive()
+        if (signal.aborted) return { status: 'cancelled' }
+        if (mutationBaseline !== previousXml) {
           return { status: 'blocked', message: t('sourceEditor.invalidBlocked') }
         }
-        if (!(await isSourceCurrent())) {
-          return signal.aborted
-            ? { status: 'cancelled' }
-            : { status: 'blocked', message: t('sourceEditor.invalidBlocked') }
-        }
+        const mutationWasDirty = isDirty(dirtyStateRef.current)
 
-        sourceMutationStarted = true
-        sourceRollbackRef.current = null
-        setSourceRollbackAvailable(false)
-        importCommandEventDepthRef.current += 1
+        let sourceMutationStarted = false
         try {
-          await modeler.importXML(reviewedXml)
-        } finally {
-          importCommandEventDepthRef.current = Math.max(0, importCommandEventDepthRef.current - 1)
-        }
-        if (signal.aborted) {
-          throw signal.reason ?? new DOMException('Operation was aborted.', 'AbortError')
-        }
-
-        // A parseable source may still contain opaque vendor content that the
-        // modeler's serializer does not understand. Verify the exact
-        // round-trip before accepting the replacement; otherwise restore the
-        // previous definitions immediately.
-        const roundTripXml = await readCurrentXml()
-        const roundTripPreservation = await validateUnknownExtensionPreservation(
-          reviewedXml,
-          roundTripXml
-        )
-        if (!roundTripPreservation.valid) {
-          throw new Error(t('sourceEditor.preservationBlocked'))
-        }
-
-        const roundTripValidation = await validateDocument(
-          roundTripXml,
-          true,
-          previousXml,
-          true,
-          appliedApprovals
-        )
-        if (
-          !roundTripValidation.valid ||
-          !evaluateValidationPolicy(roundTripValidation, 'apply-editor').allowed
-        ) {
-          throw new Error(t('sourceEditor.invalidBlocked'))
-        }
-
-        modeler.get('canvas').zoom('fit-viewport')
-        sourceRollbackRef.current = {
-          xml: previousXml,
-          appliedXml: roundTripXml,
-          wasDirty,
-          previousApprovals,
-          appliedApprovals
-        }
-        sourceApprovedFieldExceptionsRef.current = appliedApprovals
-        setSourceRollbackAvailable(true)
-        ignoreNextSourceJournalCommandRef.current = true
-        modeler.get('commandStack').execute(SOURCE_APPLY_COMMAND, {
-          initialExecution: true,
-          restorePrevious: () =>
-            queueSourceSnapshotRestore(
-              modeler,
-              {
-                xml: previousXml,
-                dirty: wasDirty,
-                requireBilingual: false,
-                approvedFieldExceptions: previousApprovals
-              },
-              {
-                xml: roundTripXml,
-                dirty: true,
-                requireBilingual: true,
-                approvedFieldExceptions: appliedApprovals
-              }
-            ),
-          restoreApplied: () =>
-            queueSourceSnapshotRestore(
-              modeler,
-              {
-                xml: roundTripXml,
-                dirty: true,
-                requireBilingual: true,
-                approvedFieldExceptions: appliedApprovals
-              },
-              {
-                xml: previousXml,
-                dirty: wasDirty,
-                requireBilingual: false,
-                approvedFieldExceptions: previousApprovals
-              }
-            )
-        })
-        setImportedDocumentDirtyState(modeler, true)
-        setValidationSummary(roundTripValidation)
-        return { status: 'applied' }
-      } catch (err) {
-        if (sourceMutationStarted) {
           sourceRollbackRef.current = null
           setSourceRollbackAvailable(false)
-          ignoreNextSourceJournalCommandRef.current = false
-          try {
-            await restoreSourceSnapshot(modeler, previousXml, wasDirty, false, previousApprovals)
-          } catch (rollbackError) {
-            throw new Error(`${errorMessage(err)}; rollback failed: ${errorMessage(rollbackError)}`)
+          sourceMutationStarted = true
+          await transaction.importXml(reviewedXml)
+          hasImportedXmlRef.current = true
+          if (signal.aborted) {
+            throw signal.reason ?? new DOMException('Operation was aborted.', 'AbortError')
           }
+
+          // A parseable source may still contain opaque vendor content that
+          // the modeler's serializer does not understand. Keep ownership of
+          // the mutation lane through round-trip checks and any rollback.
+          const roundTripXml = await serializeModelerXml(transaction.modeler)
+          transaction.assertActive()
+          const roundTripPreservation = await validateUnknownExtensionPreservation(
+            reviewedXml,
+            roundTripXml
+          )
+          transaction.assertActive()
+          if (!roundTripPreservation.valid) {
+            throw new Error(t('sourceEditor.preservationBlocked'))
+          }
+
+          const roundTripValidation = await validateDocument(
+            roundTripXml,
+            true,
+            previousXml,
+            true,
+            appliedApprovals
+          )
+          transaction.assertActive()
+          if (
+            !roundTripValidation.valid ||
+            !evaluateValidationPolicy(roundTripValidation, 'apply-editor').allowed
+          ) {
+            throw new Error(t('sourceEditor.invalidBlocked'))
+          }
+
+          try {
+            modeler.get('canvas').zoom('fit-viewport')
+          } catch {
+            // View fitting is cosmetic.
+          }
+          externallyAppliedXmlRef.current = null
+          savedPropAcknowledgementRef.current = null
+          sourceRollbackRef.current = {
+            xml: previousXml,
+            appliedXml: roundTripXml,
+            wasDirty: mutationWasDirty,
+            previousApprovals,
+            appliedApprovals
+          }
+          sourceApprovedFieldExceptionsRef.current = appliedApprovals
+          setSourceRollbackAvailable(true)
+          ignoreNextSourceJournalCommandRef.current = true
+          modeler.get('commandStack').execute(SOURCE_APPLY_COMMAND, {
+            initialExecution: true,
+            restorePrevious: () =>
+              queueSourceSnapshotRestore(
+                modeler,
+                {
+                  xml: previousXml,
+                  dirty: mutationWasDirty,
+                  requireBilingual: false,
+                  approvedFieldExceptions: previousApprovals
+                },
+                {
+                  xml: roundTripXml,
+                  dirty: true,
+                  requireBilingual: true,
+                  approvedFieldExceptions: appliedApprovals
+                }
+              ),
+            restoreApplied: () =>
+              queueSourceSnapshotRestore(
+                modeler,
+                {
+                  xml: roundTripXml,
+                  dirty: true,
+                  requireBilingual: true,
+                  approvedFieldExceptions: appliedApprovals
+                },
+                {
+                  xml: previousXml,
+                  dirty: mutationWasDirty,
+                  requireBilingual: false,
+                  approvedFieldExceptions: previousApprovals
+                }
+              )
+          })
+          setImportedDocumentDirtyState(modeler, true)
+          setValidationSummary(roundTripValidation)
+          return { status: 'applied' }
+        } catch (err) {
+          if (sourceMutationStarted) {
+            sourceRollbackRef.current = null
+            setSourceRollbackAvailable(false)
+            ignoreNextSourceJournalCommandRef.current = false
+            try {
+              await restoreSourceSnapshotInTransaction(
+                transaction,
+                previousXml,
+                mutationWasDirty,
+                false,
+                previousApprovals
+              )
+            } catch (rollbackError) {
+              throw new Error(
+                `${errorMessage(err)}; rollback failed: ${errorMessage(rollbackError)}`
+              )
+            }
+          }
+          throw err
         }
-        throw err
-      }
+      })
     },
     [
-      dirty,
       knownProcessIds,
       onReviewSourceBilingual,
       queueSourceSnapshotRestore,
       readCurrentXml,
-      restoreSourceSnapshot,
+      restoreSourceSnapshotInTransaction,
+      runExclusiveXmlTransaction,
       setImportedDocumentDirtyState,
       sourceLocalizationResources,
       validateDocument
@@ -1008,24 +1364,20 @@ export function EditorTab(props: EditorTabProps): JSX.Element {
       ignoreNextSourceJournalCommandRef.current = false
       await restoreSourceSnapshot(
         modeler,
-        rollback.xml,
-        rollback.wasDirty,
-        false,
-        rollback.previousApprovals
+        {
+          xml: rollback.xml,
+          dirty: rollback.wasDirty,
+          requireBilingual: false,
+          approvedFieldExceptions: rollback.previousApprovals
+        },
+        {
+          xml: rollback.appliedXml,
+          dirty: true,
+          requireBilingual: true,
+          approvedFieldExceptions: rollback.appliedApprovals
+        }
       )
     } catch (err) {
-      try {
-        await restoreSourceSnapshot(
-          modeler,
-          rollback.appliedXml,
-          true,
-          true,
-          rollback.appliedApprovals
-        )
-      } catch {
-        // Report the requested rollback failure below; the diagram may already
-        // be partially unavailable, so do not claim that rollback succeeded.
-      }
       sourceRollbackRef.current = rollback
       setSourceRollbackAvailable(true)
       setError(t('sourceEditor.applyFailed', { error: errorMessage(err) }))
@@ -1072,7 +1424,15 @@ export function EditorTab(props: EditorTabProps): JSX.Element {
   )
 
   const handleSave = useCallback(async () => {
-    if (!modelerRef.current || saving || validationRunning) return
+    if (
+      !modelerRef.current ||
+      saveInFlightRef.current ||
+      xmlTransactionCountRef.current > 0 ||
+      validationRunning
+    ) {
+      return
+    }
+    saveInFlightRef.current = true
     setSaving(true)
     setValidationRunning(true)
     setError(null)
@@ -1100,11 +1460,14 @@ export function EditorTab(props: EditorTabProps): JSX.Element {
     } finally {
       setValidationRunning(false)
       setSaving(false)
+      saveInFlightRef.current = false
     }
-  }, [persistXml, readCurrentXml, saving, validateDocument, validationRunning])
+  }, [persistXml, readCurrentXml, validateDocument, validationRunning])
 
   const handleConfirmDraftSave = useCallback(async () => {
-    if (!pendingDraft || saving) return
+    if (!pendingDraft || saveInFlightRef.current || xmlTransactionCountRef.current > 0) {
+      return
+    }
     const decision = evaluateValidationPolicy(pendingDraft.summary, 'save-draft-with-errors', {
       explicitDraftConfirmation: true
     })
@@ -1113,6 +1476,7 @@ export function EditorTab(props: EditorTabProps): JSX.Element {
       setValidationOpen(true)
       return
     }
+    saveInFlightRef.current = true
     setSaving(true)
     setError(null)
     try {
@@ -1122,8 +1486,9 @@ export function EditorTab(props: EditorTabProps): JSX.Element {
       setError(t('editor.error.saveFailed', { error: errorMessage(err) }))
     } finally {
       setSaving(false)
+      saveInFlightRef.current = false
     }
-  }, [pendingDraft, persistXml, saving])
+  }, [pendingDraft, persistXml])
 
   // Latch the hint dismissed on the first edit; never bring it back.
   useEffect(() => {
@@ -1216,21 +1581,40 @@ export function EditorTab(props: EditorTabProps): JSX.Element {
   }, [])
 
   const uiDir = lang === 'ar' ? 'rtl' : 'ltr'
+  const interactionLocked = saving || xmlTransactionCount > 0
+  useEffect(() => {
+    const root = editorRootRef.current
+    if (!root) return
+    root.inert = interactionLocked
+    return () => {
+      root.inert = false
+    }
+  }, [interactionLocked])
   useEffect(() => {
     onCommandsReady?.({
       save: () => void handleSave(),
       exportSvg: () => void handleExportSvg(),
       exportPng: () => void handleExportPng(),
-      exportPdf: () => void handleExportPdf()
+      exportPdf: () => void handleExportPdf(),
+      applyExternalXml,
+      runExclusiveXmlTransaction
     })
     return () => onCommandsReady?.(null)
-  }, [onCommandsReady, handleSave, handleExportSvg, handleExportPng, handleExportPdf])
+  }, [
+    onCommandsReady,
+    handleSave,
+    handleExportSvg,
+    handleExportPng,
+    handleExportPdf,
+    applyExternalXml,
+    runExclusiveXmlTransaction
+  ])
 
   return (
     // The editor chrome follows the active UI direction. Only the canvas
     // subtree remains LTR because bpmn-js's coordinates/palette/context pad
     // have no RTL mode of their own.
-    <div ref={editorRootRef} className="orbitpm-editor" dir={uiDir}>
+    <div ref={editorRootRef} className="orbitpm-editor" dir={uiDir} aria-busy={interactionLocked}>
       <div className="orbitpm-editor__toolbar">
         <button
           type="button"
@@ -1372,7 +1756,14 @@ export function EditorTab(props: EditorTabProps): JSX.Element {
         </span>
       </div>
       {error ? <div className="orbitpm-editor__error">{error}</div> : null}
-      <div className="orbitpm-editor__body" dir={uiDir}>
+      <div
+        className={
+          interactionLocked
+            ? 'orbitpm-editor__body orbitpm-editor__body--interaction-locked'
+            : 'orbitpm-editor__body'
+        }
+        dir={uiDir}
+      >
         <ResponsiveDrawer
           id={outlinePaneId}
           className="orbitpm-process-outline-pane"

@@ -33,6 +33,34 @@ export interface DuplicateProcessRepair {
   xml: string
 }
 
+/**
+ * Exact state of the repair target when its candidate XML was prepared.
+ *
+ * `pathRevision` is deliberately path-scoped: unrelated workspace updates do
+ * not invalidate a prepared repair, while delete/reopen and change-away/change-
+ * back (ABA) races on this path do.
+ */
+export interface DuplicateProcessRepairTargetState {
+  readonly relPath: string
+  readonly pathRevision: number
+  readonly effectiveXml: string
+  readonly dirtyXml: string | null
+  readonly saved: Readonly<LiveWorkspaceFile> | null
+}
+
+/**
+ * Purely prepared duplicate-id rewrite. Call `commitDuplicateProcessIdRepair`
+ * only after any additional asynchronous validation/UI coordination has
+ * completed.
+ */
+export interface PreparedDuplicateProcessRepair {
+  readonly relPath: string
+  readonly previousProcessId: string
+  readonly processId: string
+  readonly xml: string
+  readonly target: Readonly<DuplicateProcessRepairTargetState>
+}
+
 interface IndexedFile {
   saved?: LiveWorkspaceFile
   dirtyXml?: string
@@ -68,6 +96,19 @@ function normalizedFile(file: LiveWorkspaceFile): LiveWorkspaceFile {
     lastModified: Number.isFinite(file.lastModified) ? file.lastModified : 0,
     size: Number.isFinite(file.size) && file.size >= 0 ? file.size : byteLength(file.xml)
   }
+}
+
+function sameFile(
+  current: LiveWorkspaceFile | undefined,
+  expected: Readonly<LiveWorkspaceFile> | null
+): boolean {
+  if (!current || !expected) return current === undefined && expected === null
+  return (
+    current.relPath === expected.relPath &&
+    current.xml === expected.xml &&
+    current.lastModified === expected.lastModified &&
+    current.size === expected.size
+  )
 }
 
 function effectiveFile(path: string, entry: IndexedFile): LiveWorkspaceFile {
@@ -149,6 +190,8 @@ function fallbackBase(value: string): string {
 export class LiveWorkspaceIndex {
   private readonly byPath = new Map<string, IndexedFile>()
   private readonly declarations = new Map<string, DuplicateProcessOccurrence[]>()
+  private readonly pathRevisions = new Map<string, number>()
+  private pathRevisionSequence = 0
   private revision = 0
 
   constructor(files: readonly LiveWorkspaceFile[] = []) {
@@ -160,6 +203,7 @@ export class LiveWorkspaceIndex {
   }
 
   replaceSavedFiles(files: readonly LiveWorkspaceFile[]): void {
+    const touchedPaths = new Set(this.byPath.keys())
     const dirty = new Map<string, string>()
     for (const [path, entry] of this.byPath) {
       if (entry.dirtyXml !== undefined) dirty.set(path, entry.dirtyXml)
@@ -168,6 +212,7 @@ export class LiveWorkspaceIndex {
     this.byPath.clear()
     for (const input of files) {
       const file = normalizedFile(input)
+      touchedPaths.add(file.relPath)
       this.byPath.set(file.relPath, indexFile(file))
     }
     for (const [path, xml] of dirty) {
@@ -188,6 +233,7 @@ export class LiveWorkspaceIndex {
       }
     }
     this.rebuildDeclarations()
+    for (const path of touchedPaths) this.bumpPathRevision(path)
     this.revision += 1
   }
 
@@ -204,6 +250,7 @@ export class LiveWorkspaceIndex {
       this.reindex(file.relPath, current)
       this.addDeclarations(current.processes)
     }
+    this.bumpPathRevision(file.relPath)
     this.revision += 1
   }
 
@@ -212,11 +259,13 @@ export class LiveWorkspaceIndex {
     if (!current) return
     if (current.dirtyXml !== undefined) {
       current.saved = undefined
+      this.bumpPathRevision(path)
       this.revision += 1
       return
     }
     this.removeDeclarations(current.processes)
     this.byPath.delete(path)
+    this.bumpPathRevision(path)
     this.revision += 1
   }
 
@@ -234,6 +283,7 @@ export class LiveWorkspaceIndex {
       current.dirtyXml = xml
       this.byPath.set(path, current)
       this.addDeclarations(current.processes)
+      this.bumpPathRevision(path)
       this.revision += 1
       return
     }
@@ -242,6 +292,7 @@ export class LiveWorkspaceIndex {
     current.dirtyXml = xml
     this.reindex(path, current)
     this.addDeclarations(current.processes)
+    this.bumpPathRevision(path)
     this.revision += 1
   }
 
@@ -256,6 +307,7 @@ export class LiveWorkspaceIndex {
       this.reindex(path, current)
       this.addDeclarations(current.processes)
     }
+    this.bumpPathRevision(path)
     this.revision += 1
   }
 
@@ -272,6 +324,8 @@ export class LiveWorkspaceIndex {
     this.reindex(to, current)
     this.byPath.set(to, current)
     this.addDeclarations(current.processes)
+    this.bumpPathRevision(from)
+    this.bumpPathRevision(to)
     this.revision += 1
   }
 
@@ -333,6 +387,15 @@ export class LiveWorkspaceIndex {
     duplicateId: string,
     options: { occurrence?: number; processId?: string } = {}
   ): Promise<DuplicateProcessRepair> {
+    const prepared = await this.prepareDuplicateProcessIdRepair(relPath, duplicateId, options)
+    return this.commitDuplicateProcessIdRepair(prepared)
+  }
+
+  async prepareDuplicateProcessIdRepair(
+    relPath: string,
+    duplicateId: string,
+    options: { occurrence?: number; processId?: string } = {}
+  ): Promise<PreparedDuplicateProcessRepair> {
     const diagnostic = this.duplicateDiagnostics().find((item) => item.processId === duplicateId)
     if (!diagnostic) {
       throw new Error(`Process id "${duplicateId}" is not duplicated.`)
@@ -355,6 +418,13 @@ export class LiveWorkspaceIndex {
     const entry = this.byPath.get(relPath)
     if (!entry) throw new Error(`Workspace file "${relPath}" was not found.`)
     const source = effectiveFile(relPath, entry).xml
+    const targetState = Object.freeze({
+      relPath,
+      pathRevision: this.pathRevisions.get(relPath) ?? 0,
+      effectiveXml: source,
+      dirtyXml: entry.dirtyXml ?? null,
+      saved: entry.saved ? Object.freeze({ ...entry.saved }) : null
+    }) satisfies Readonly<DuplicateProcessRepairTargetState>
 
     // Validate the exact current bytes before parsing/mutating them. This runs
     // the secure XML preflight, bpmn-moddle import, structural references, and
@@ -403,14 +473,57 @@ export class LiveWorkspaceIndex {
       throw new Error('Duplicate process-id repair changed an unintended process id.')
     }
 
-    this.updateDirty(relPath, xml)
-    return { relPath, previousProcessId: duplicateId, processId, xml }
+    return Object.freeze({
+      relPath,
+      previousProcessId: duplicateId,
+      processId,
+      xml,
+      target: targetState
+    })
+  }
+
+  commitDuplicateProcessIdRepair(prepared: PreparedDuplicateProcessRepair): DuplicateProcessRepair {
+    const { relPath, processId, target } = prepared
+    const current = this.byPath.get(relPath)
+    const currentPathRevision = this.pathRevisions.get(relPath) ?? 0
+    const targetMatches =
+      target.relPath === relPath &&
+      current !== undefined &&
+      currentPathRevision === target.pathRevision &&
+      (current.dirtyXml ?? null) === target.dirtyXml &&
+      sameFile(current.saved, target.saved) &&
+      effectiveFile(relPath, current).xml === target.effectiveXml
+
+    if (!targetMatches) {
+      throw new Error(
+        `Workspace file "${relPath}" changed after duplicate process-id repair preparation; repair was not committed.`
+      )
+    }
+    assertProcessId(processId)
+    if (this.declarations.has(processId)) {
+      throw new Error(
+        `Process id "${processId}" already exists; duplicate process-id repair was not committed.`
+      )
+    }
+
+    this.updateDirty(relPath, prepared.xml)
+    return {
+      relPath,
+      previousProcessId: prepared.previousProcessId,
+      processId,
+      xml: prepared.xml
+    }
   }
 
   private reindex(path: string, entry: IndexedFile): void {
     const file = effectiveFile(path, entry)
     entry.processes = parseProcessesFromXml(file.xml, path)
     entry.search = buildSearchDoc(file)
+  }
+
+  private bumpPathRevision(path: string): void {
+    this.pathRevisionSequence += 1
+    this.pathRevisions.set(path, this.pathRevisionSequence)
   }
 
   private rebuildDeclarations(): void {

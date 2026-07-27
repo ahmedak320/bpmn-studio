@@ -154,6 +154,11 @@
   isolation: isolate;
 }
 
+.orbitpm-editor__body--interaction-locked {
+  pointer-events: none;
+  user-select: none;
+}
+
 .orbitpm-editor__canvas-island {
   position: relative;
   display: flex;

@@ -160,6 +160,26 @@ describe('HistoryDialog restore integration', () => {
     expect(listRevisions).toHaveBeenCalledOnce()
   })
 
+  it('treats an explicitly cancelled restore as a quiet no-op', async () => {
+    const user = userEvent.setup()
+    const { manager, listRevisions, restore } = managerFixture()
+    const onChanged = vi.fn()
+    const onRestore = vi.fn(async (): Promise<HistoryDialogRestoreResult> => ({
+      status: 'preparation-not-completed',
+      sessionId: 'open-session',
+      reason: 'cancelled'
+    }))
+    renderHistory(manager, { onRestore, onChanged })
+
+    await user.click(await screen.findByRole('button', { name: 'workspace.history.restore' }))
+    await waitFor(() => expect(onRestore).toHaveBeenCalledWith(revision))
+
+    expect(screen.queryByRole('alert')).toBeNull()
+    expect(onChanged).not.toHaveBeenCalled()
+    expect(listRevisions).toHaveBeenCalledOnce()
+    expect(restore).not.toHaveBeenCalled()
+  })
+
   it('collects a restore-as-copy destination in an accessible modal without window.prompt', async () => {
     const user = userEvent.setup()
     const { manager, restoreAsCopy } = managerFixture()

@@ -17,9 +17,21 @@ import type {
   WorkspaceImportPlan
 } from './importTransaction'
 
+const previewMocks = vi.hoisted(() => ({
+  props: vi.fn()
+}))
+
+vi.mock('./WorkspaceImportAutoLayoutPreview', () => ({
+  WorkspaceImportAutoLayoutPreview: (props: { artifacts: readonly unknown[] }) => {
+    previewMocks.props(props)
+    return <div data-testid="auto-layout-preview" />
+  }
+}))
+
 afterEach(() => {
   cleanup()
   setLang('en')
+  previewMocks.props.mockReset()
 })
 
 const HASH_A = 'a'.repeat(64)
@@ -299,6 +311,47 @@ describe('WorkspaceImportReviewDialog', () => {
     expect(download).toHaveBeenCalledWith('source-exact-id')
   })
 
+  it('previews only artifacts whose sealed repair evidence records auto-layout', () => {
+    const untouched = artifact('artifact-untouched', 'target/untouched.bpmn')
+    const repaired = artifact('artifact-repaired', 'target/repaired.bpmn', {
+      xml: '<definitions id="reviewed-auto-layout"/>'
+    })
+    renderDialog(
+      plan({
+        artifacts: [untouched, repaired],
+        repairs: [
+          {
+            code: 'destination-normalized',
+            sourceId: untouched.sourceId,
+            artifactId: untouched.id,
+            message: 'Normalized destination.'
+          },
+          {
+            code: 'auto-layout',
+            sourceId: repaired.sourceId,
+            artifactId: repaired.id,
+            message: 'Generated missing DI.'
+          }
+        ]
+      })
+    )
+
+    expect(screen.getByTestId('auto-layout-preview')).not.toBeNull()
+    expect(previewMocks.props).toHaveBeenCalledOnce()
+    expect(previewMocks.props.mock.calls[0]?.[0]).toEqual({
+      artifacts: [
+        {
+          artifactId: repaired.id,
+          sourceId: repaired.sourceId,
+          sourceName: repaired.sourceName,
+          sourcePath: repaired.sourcePath,
+          destinationPath: repaired.destinationPath,
+          reviewedXml: repaired.xml
+        }
+      ]
+    })
+  })
+
   it('defaults identical collisions to a disabled skip and blocks unresolved collisions', async () => {
     const user = userEvent.setup()
     const identicalArtifact = artifact('identical', 'target/identical.bpmn')
@@ -515,7 +568,7 @@ describe('WorkspaceImportReviewDialog', () => {
     )
   })
 
-  it('blocks confirmation for blocked plans, reserved plan targets, and busy state', () => {
+  it('blocks confirmation and cancellation for busy state', () => {
     const blocked = renderDialog(plan({ status: 'blocked' }))
     expect(
       (screen.getByRole('button', { name: 'Confirm import' }) as HTMLButtonElement).disabled
@@ -535,10 +588,23 @@ describe('WorkspaceImportReviewDialog', () => {
     ).toBe(true)
     reserved.unmount()
 
-    renderDialog(plan(), { busy: true, error: 'Exact apply error.' })
+    const cancel = vi.fn()
+    renderDialog(plan(), { busy: true, error: 'Exact apply error.', onCancel: cancel })
     expect(
       (screen.getByRole('button', { name: 'Confirming…' }) as HTMLButtonElement).disabled
     ).toBe(true)
+    expect(
+      (
+        screen.getByRole('button', {
+          name: 'Close workspace import review'
+        }) as HTMLButtonElement
+      ).disabled
+    ).toBe(true)
+    expect(
+      (screen.getByRole('button', { name: 'Cancel import' }) as HTMLButtonElement).disabled
+    ).toBe(true)
+    fireEvent.keyDown(document, { key: 'Escape' })
+    expect(cancel).not.toHaveBeenCalled()
     expect(screen.getByRole('alert').textContent).toContain('Exact apply error.')
   })
 

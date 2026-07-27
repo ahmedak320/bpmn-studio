@@ -10,6 +10,7 @@ import type {
   WorkspaceImportPlan
 } from './importTransaction'
 import { isReservedOrbitPmPath } from './processIdentity'
+import { WorkspaceImportAutoLayoutPreview } from './WorkspaceImportAutoLayoutPreview'
 import './WorkspaceImportReviewDialog.css'
 
 export interface WorkspaceImportReviewDialogProps {
@@ -217,6 +218,21 @@ function WorkspaceImportReviewDialogBody({
     () => collisionReviews(plan, decisions, keepBothPaths),
     [decisions, keepBothPaths, plan]
   )
+  const layoutPreviews = useMemo(() => {
+    const autoLayoutIds = new Set(
+      plan.repairs.filter(({ code }) => code === 'auto-layout').map(({ artifactId }) => artifactId)
+    )
+    return plan.artifacts
+      .filter(({ id }) => autoLayoutIds.has(id))
+      .map((artifact) => ({
+        artifactId: artifact.id,
+        sourceId: artifact.sourceId,
+        sourceName: artifact.sourceName,
+        sourcePath: artifact.sourcePath,
+        destinationPath: artifact.destinationPath,
+        reviewedXml: artifact.xml
+      }))
+  }, [plan.artifacts, plan.repairs])
   const unresolved = reviews.filter(
     ({ collision, decision }) => !collision.identical && decision === undefined
   ).length
@@ -263,8 +279,10 @@ function WorkspaceImportReviewDialogBody({
       ariaLabelledby="workspace-import-review-title"
       ariaDescribedby="workspace-import-review-intro workspace-import-review-state"
       initialFocusRef={titleRef}
-      onClose={onCancel}
-      closeOnEscape
+      onClose={() => {
+        if (!busy) onCancel()
+      }}
+      closeOnEscape={!busy}
       closeOnBackdrop={false}
       backdropClassName="workspace-import-review__backdrop"
       dialogClassName="workspace-import-review"
@@ -282,6 +300,7 @@ function WorkspaceImportReviewDialogBody({
           className="workspace-import-review__close"
           aria-label={t('workspaceImportReview.close')}
           title={t('workspaceImportReview.close')}
+          disabled={busy}
           onClick={onCancel}
         >
           ×
@@ -526,45 +545,50 @@ function WorkspaceImportReviewDialogBody({
           {plan.repairs.length === 0 ? (
             <EmptyEvidence />
           ) : (
-            <ol className="workspace-import-review__cards">
-              {plan.repairs.map((repair, index) => (
-                <li
-                  key={`${repair.sourceId}-${repair.artifactId}-${repair.code}-${index}`}
-                  className="workspace-import-review__card"
-                >
-                  <h4>{t('workspaceImportReview.repairItem', { index: index + 1 })}</h4>
-                  <dl className="workspace-import-review__evidence">
-                    {sourceNameFor(plan, repair.sourceId) ? (
-                      <EvidenceRow label={t('workspaceImportReview.sourceName')}>
-                        <span dir="auto">{sourceNameFor(plan, repair.sourceId)}</span>
+            <>
+              <ol className="workspace-import-review__cards">
+                {plan.repairs.map((repair, index) => (
+                  <li
+                    key={`${repair.sourceId}-${repair.artifactId}-${repair.code}-${index}`}
+                    className="workspace-import-review__card"
+                  >
+                    <h4>{t('workspaceImportReview.repairItem', { index: index + 1 })}</h4>
+                    <dl className="workspace-import-review__evidence">
+                      {sourceNameFor(plan, repair.sourceId) ? (
+                        <EvidenceRow label={t('workspaceImportReview.sourceName')}>
+                          <span dir="auto">{sourceNameFor(plan, repair.sourceId)}</span>
+                        </EvidenceRow>
+                      ) : null}
+                      <EvidenceRow label={t('workspaceImportReview.sourceId')} code>
+                        {repair.sourceId}
                       </EvidenceRow>
-                    ) : null}
-                    <EvidenceRow label={t('workspaceImportReview.sourceId')} code>
-                      {repair.sourceId}
-                    </EvidenceRow>
-                    <EvidenceRow label={t('workspaceImportReview.artifactId')} code>
-                      {repair.artifactId}
-                    </EvidenceRow>
-                    <EvidenceRow label={t('workspaceImportReview.code')} code>
-                      {repair.code}
-                    </EvidenceRow>
-                    <EvidenceRow label={t('workspaceImportReview.message')}>
-                      <span dir="auto">{repair.message}</span>
-                    </EvidenceRow>
-                    {repair.before !== undefined ? (
-                      <EvidenceRow label={t('workspaceImportReview.before')} code>
-                        {repair.before}
+                      <EvidenceRow label={t('workspaceImportReview.artifactId')} code>
+                        {repair.artifactId}
                       </EvidenceRow>
-                    ) : null}
-                    {repair.after !== undefined ? (
-                      <EvidenceRow label={t('workspaceImportReview.after')} code>
-                        {repair.after}
+                      <EvidenceRow label={t('workspaceImportReview.code')} code>
+                        {repair.code}
                       </EvidenceRow>
-                    ) : null}
-                  </dl>
-                </li>
-              ))}
-            </ol>
+                      <EvidenceRow label={t('workspaceImportReview.message')}>
+                        <span dir="auto">{repair.message}</span>
+                      </EvidenceRow>
+                      {repair.before !== undefined ? (
+                        <EvidenceRow label={t('workspaceImportReview.before')} code>
+                          {repair.before}
+                        </EvidenceRow>
+                      ) : null}
+                      {repair.after !== undefined ? (
+                        <EvidenceRow label={t('workspaceImportReview.after')} code>
+                          {repair.after}
+                        </EvidenceRow>
+                      ) : null}
+                    </dl>
+                  </li>
+                ))}
+              </ol>
+              {layoutPreviews.length > 0 ? (
+                <WorkspaceImportAutoLayoutPreview artifacts={layoutPreviews} />
+              ) : null}
+            </>
           )}
         </section>
 
@@ -782,7 +806,12 @@ function WorkspaceImportReviewDialogBody({
           {busy ? t('workspaceImportReview.busy') : statusMessage}
         </p>
         <div className="workspace-import-review__actions">
-          <button type="button" className="orbitpm-lite-chrome-btn" onClick={onCancel}>
+          <button
+            type="button"
+            className="orbitpm-lite-chrome-btn"
+            disabled={busy}
+            onClick={onCancel}
+          >
             {t('workspaceImportReview.cancel')}
           </button>
           <button
