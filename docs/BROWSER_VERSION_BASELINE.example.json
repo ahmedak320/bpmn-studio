@@ -1,0 +1,145 @@
+{
+  "schemaVersion": 1,
+  "gate": "orbitpm-lite-browser-vendor-version-baseline",
+  "result": "REPLACE_WITH_OBSERVED_PASS_RESULT",
+  "candidateSha": "0000000000000000000000000000000000000000",
+  "artifactSha256": "0000000000000000000000000000000000000000000000000000000000000000",
+  "pagesUrl": "REPLACE_WITH_CANONICAL_PAGES_HTTPS_URL",
+  "generatedAt": "REPLACE_WITH_CANONICAL_UTC_TIMESTAMP_AFTER_ALL_SOURCE_RETRIEVALS",
+  "versions": [
+    {
+      "browser": "chrome",
+      "release": "current",
+      "browserName": "Google Chrome",
+      "browserIdentifier": "com.google.Chrome",
+      "browserVersion": "REPLACE_WITH_EXACT_VENDOR_CURRENT_VERSION",
+      "operatingSystem": "Windows",
+      "operatingSystemVersion": "REPLACE_WITH_EXACT_DOTTED_OS_VERSION",
+      "channel": "stable",
+      "sourceId": "chrome-stable"
+    },
+    {
+      "browser": "chrome",
+      "release": "previous",
+      "browserName": "Google Chrome",
+      "browserIdentifier": "com.google.Chrome",
+      "browserVersion": "REPLACE_WITH_EXACT_VENDOR_PREVIOUS_VERSION",
+      "operatingSystem": "Windows",
+      "operatingSystemVersion": "REPLACE_WITH_EXACT_DOTTED_OS_VERSION",
+      "channel": "stable",
+      "sourceId": "chrome-stable"
+    },
+    {
+      "browser": "edge",
+      "release": "current",
+      "browserName": "Microsoft Edge",
+      "browserIdentifier": "com.microsoft.Edge",
+      "browserVersion": "REPLACE_WITH_EXACT_VENDOR_CURRENT_VERSION",
+      "operatingSystem": "Windows",
+      "operatingSystemVersion": "REPLACE_WITH_EXACT_DOTTED_OS_VERSION",
+      "channel": "stable",
+      "sourceId": "edge-stable"
+    },
+    {
+      "browser": "edge",
+      "release": "previous",
+      "browserName": "Microsoft Edge",
+      "browserIdentifier": "com.microsoft.Edge",
+      "browserVersion": "REPLACE_WITH_EXACT_VENDOR_PREVIOUS_VERSION",
+      "operatingSystem": "Windows",
+      "operatingSystemVersion": "REPLACE_WITH_EXACT_DOTTED_OS_VERSION",
+      "channel": "stable",
+      "sourceId": "edge-stable"
+    },
+    {
+      "browser": "firefox",
+      "release": "current",
+      "browserName": "Mozilla Firefox",
+      "browserIdentifier": "org.mozilla.firefox",
+      "browserVersion": "REPLACE_WITH_EXACT_VENDOR_CURRENT_VERSION",
+      "operatingSystem": "Windows",
+      "operatingSystemVersion": "REPLACE_WITH_EXACT_DOTTED_OS_VERSION",
+      "channel": "stable",
+      "sourceId": "firefox-stable"
+    },
+    {
+      "browser": "firefox",
+      "release": "previous",
+      "browserName": "Mozilla Firefox",
+      "browserIdentifier": "org.mozilla.firefox",
+      "browserVersion": "REPLACE_WITH_EXACT_VENDOR_PREVIOUS_VERSION",
+      "operatingSystem": "Windows",
+      "operatingSystemVersion": "REPLACE_WITH_EXACT_DOTTED_OS_VERSION",
+      "channel": "stable",
+      "sourceId": "firefox-stable"
+    },
+    {
+      "browser": "safari",
+      "release": "current",
+      "browserName": "Safari",
+      "browserIdentifier": "com.apple.Safari",
+      "browserVersion": "REPLACE_WITH_EXACT_VENDOR_CURRENT_VERSION",
+      "operatingSystem": "macOS",
+      "operatingSystemVersion": "REPLACE_WITH_EXACT_DOTTED_OS_VERSION",
+      "channel": "stable",
+      "sourceId": "safari-stable"
+    },
+    {
+      "browser": "safari",
+      "release": "previous",
+      "browserName": "Safari",
+      "browserIdentifier": "com.apple.Safari",
+      "browserVersion": "REPLACE_WITH_EXACT_VENDOR_PREVIOUS_VERSION",
+      "operatingSystem": "macOS",
+      "operatingSystemVersion": "REPLACE_WITH_EXACT_DOTTED_OS_VERSION",
+      "channel": "stable",
+      "sourceId": "safari-stable"
+    }
+  ],
+  "sources": [
+    {
+      "id": "chrome-stable",
+      "browser": "chrome",
+      "vendor": "Google",
+      "adapter": "chrome-version-history-v1",
+      "officialUrl": "https://versionhistory.googleapis.com/v1/chrome/platforms/win64/channels/stable/versions/all/releases?page_size=10000",
+      "retrievedAt": "REPLACE_WITH_CANONICAL_POST_TEST_UTC_TIMESTAMP",
+      "mediaType": "application/json",
+      "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+      "sizeBytes": "REPLACE_WITH_EXACT_POSITIVE_BYTE_COUNT"
+    },
+    {
+      "id": "edge-stable",
+      "browser": "edge",
+      "vendor": "Microsoft",
+      "adapter": "edge-stable-release-notes-v1",
+      "officialUrl": "https://learn.microsoft.com/en-us/deployedge/microsoft-edge-relnote-stable-channel",
+      "retrievedAt": "REPLACE_WITH_CANONICAL_POST_TEST_UTC_TIMESTAMP",
+      "mediaType": "text/html",
+      "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+      "sizeBytes": "REPLACE_WITH_EXACT_POSITIVE_BYTE_COUNT"
+    },
+    {
+      "id": "firefox-stable",
+      "browser": "firefox",
+      "vendor": "Mozilla",
+      "adapter": "mozilla-firefox-releases-v1",
+      "officialUrl": "https://product-details.mozilla.org/1.0/firefox.json",
+      "retrievedAt": "REPLACE_WITH_CANONICAL_POST_TEST_UTC_TIMESTAMP",
+      "mediaType": "application/json",
+      "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+      "sizeBytes": "REPLACE_WITH_EXACT_POSITIVE_BYTE_COUNT"
+    },
+    {
+      "id": "safari-stable",
+      "browser": "safari",
+      "vendor": "Apple",
+      "adapter": "apple-security-releases-v1",
+      "officialUrl": "https://support.apple.com/en-us/100100",
+      "retrievedAt": "REPLACE_WITH_CANONICAL_POST_TEST_UTC_TIMESTAMP",
+      "mediaType": "text/html",
+      "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+      "sizeBytes": "REPLACE_WITH_EXACT_POSITIVE_BYTE_COUNT"
+    }
+  ]
+}

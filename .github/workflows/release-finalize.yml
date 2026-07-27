@@ -1,0 +1,1089 @@
+name: Publish and verify immutable Lite stable release
+
+on:
+  workflow_dispatch:
+    inputs:
+      candidate_sha:
+        description: Exact origin/main commit peeled from v0.4.5
+        required: true
+        type: string
+      release_tag:
+        description: Approved release tag
+        required: true
+        default: v0.4.5
+        type: string
+      release_run_id:
+        description: Successful tag, draft, and clean tag-quality workflow run ID
+        required: true
+        type: string
+      pages_run_id:
+        description: Successful exact-draft Pages deployment workflow run ID
+        required: true
+        type: string
+      browser_compatibility_evidence_url:
+        description: Reviewed post-Pages current/previous browser matrix URL
+        required: true
+        type: string
+      browser_compatibility_evidence_sha256:
+        description: SHA-256 of the post-Pages browser compatibility matrix JSON
+        required: true
+        type: string
+      browser_version_baseline_url:
+        description: Immutable vendor-version baseline JSON URL bound by the matrix
+        required: true
+        type: string
+      browser_version_baseline_sha256:
+        description: SHA-256 of the immutable vendor-version baseline JSON
+        required: true
+        type: string
+      external_evidence_url:
+        description: Reviewed candidate-bound external evidence URL
+        required: true
+        type: string
+      external_evidence_sha256:
+        description: SHA-256 of the candidate-bound external evidence JSON
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: orbitpm-release-lifecycle-v0.4.5
+  cancel-in-progress: false
+
+jobs:
+  identity:
+    name: Read-only pre-approval finalization identity
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    permissions:
+      actions: read
+      contents: read
+    steps:
+      - name: Checkout exact candidate
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ inputs.candidate_sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Set up exact Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 22.22.0
+
+      - name: Validate dispatch, Git, workflow, and temporal identities
+        env:
+          BROWSER_EVIDENCE_SHA256: ${{ inputs.browser_compatibility_evidence_sha256 }}
+          BROWSER_EVIDENCE_URL: ${{ inputs.browser_compatibility_evidence_url }}
+          CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+          EVIDENCE_SHA256: ${{ inputs.external_evidence_sha256 }}
+          EVIDENCE_URL: ${{ inputs.external_evidence_url }}
+          GH_TOKEN: ${{ github.token }}
+          PAGES_RUN_ID: ${{ inputs.pages_run_id }}
+          RELEASE_RUN_ID: ${{ inputs.release_run_id }}
+          RELEASE_TAG: ${{ inputs.release_tag }}
+          VERSION_BASELINE_SHA256: ${{ inputs.browser_version_baseline_sha256 }}
+          VERSION_BASELINE_URL: ${{ inputs.browser_version_baseline_url }}
+        run: |
+          test "$RELEASE_TAG" = "v0.4.5"
+          test "${#CANDIDATE_SHA}" -eq 40
+          case "$CANDIDATE_SHA" in
+            *[!0-9a-f]*) exit 1 ;;
+          esac
+          for run_id in "$RELEASE_RUN_ID" "$PAGES_RUN_ID"; do
+            case "$run_id" in
+              '' | *[!0-9]*) exit 1 ;;
+            esac
+          done
+          for url in \
+            "$BROWSER_EVIDENCE_URL" \
+            "$VERSION_BASELINE_URL" \
+            "$EVIDENCE_URL"
+          do
+            case "$url" in
+              https://*) ;;
+              *) exit 1 ;;
+            esac
+          done
+          for digest in \
+            "$BROWSER_EVIDENCE_SHA256" \
+            "$VERSION_BASELINE_SHA256" \
+            "$EVIDENCE_SHA256"
+          do
+            test "${#digest}" -eq 64
+            case "$digest" in
+              *[!0-9a-f]*) exit 1 ;;
+            esac
+          done
+          test "$GITHUB_REF" = "refs/heads/main"
+          test "$GITHUB_SHA" = "$CANDIDATE_SHA"
+          git fetch --force origin \
+            refs/heads/main:refs/remotes/origin/main \
+            "+refs/tags/$RELEASE_TAG:refs/tags/$RELEASE_TAG"
+          test "$(git rev-parse HEAD)" = "$CANDIDATE_SHA"
+          test "$(git rev-parse origin/main)" = "$CANDIDATE_SHA"
+          node scripts/check-release-tag.mjs "$RELEASE_TAG" --require-origin-main
+          release_run_json="$(
+            gh api "repos/$GITHUB_REPOSITORY/actions/runs/$RELEASE_RUN_ID"
+          )"
+          pages_run_json="$(
+            gh api "repos/$GITHUB_REPOSITORY/actions/runs/$PAGES_RUN_ID"
+          )"
+          current_run_json="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID")"
+          test "$(jq -r .name <<<"$release_run_json")" = \
+            "Create annotated tag and draft Lite release"
+          test "$(jq -r .path <<<"$release_run_json")" = ".github/workflows/release.yml"
+          test "$(jq -r .event <<<"$release_run_json")" = "workflow_dispatch"
+          test "$(jq -r .conclusion <<<"$release_run_json")" = "success"
+          test "$(jq -r .head_sha <<<"$release_run_json")" = "$CANDIDATE_SHA"
+          test "$(jq -r .head_branch <<<"$release_run_json")" = "main"
+          test "$(jq -r .name <<<"$pages_run_json")" = \
+            "Deploy approved tagged Lite artifact to Pages"
+          test "$(jq -r .path <<<"$pages_run_json")" = ".github/workflows/pages.yml"
+          test "$(jq -r .event <<<"$pages_run_json")" = "workflow_dispatch"
+          test "$(jq -r .conclusion <<<"$pages_run_json")" = "success"
+          test "$(jq -r .head_sha <<<"$pages_run_json")" = "$CANDIDATE_SHA"
+          test "$(jq -r .head_branch <<<"$pages_run_json")" = "main"
+          RELEASE_COMPLETED_AT="$(jq -r .updated_at <<<"$release_run_json")" \
+            PAGES_STARTED_AT="$(jq -r .created_at <<<"$pages_run_json")" \
+            PAGES_COMPLETED_AT="$(jq -r .updated_at <<<"$pages_run_json")" \
+            FINALIZE_STARTED_AT="$(jq -r .created_at <<<"$current_run_json")" \
+            node --eval "
+              const releaseCompleted = Date.parse(process.env.RELEASE_COMPLETED_AT)
+              const pagesStarted = Date.parse(process.env.PAGES_STARTED_AT)
+              const pagesCompleted = Date.parse(process.env.PAGES_COMPLETED_AT)
+              const finalizeStarted = Date.parse(process.env.FINALIZE_STARTED_AT)
+              if (
+                ![releaseCompleted, pagesStarted, pagesCompleted, finalizeStarted].every(Number.isFinite) ||
+                releaseCompleted >= pagesStarted ||
+                pagesCompleted >= finalizeStarted
+              ) {
+                throw new Error('Release, Pages, and finalization workflow order is invalid.')
+              }
+            "
+          pages_artifacts="$(
+            gh api "repos/$GITHUB_REPOSITORY/actions/runs/$PAGES_RUN_ID/artifacts?per_page=100"
+          )"
+          evidence_name="orbitpm-pages-evidence-$CANDIDATE_SHA"
+          test "$(
+            jq --arg name "$evidence_name" \
+              '[.artifacts[] | select(.name == $name and .expired == false)] | length' \
+              <<<"$pages_artifacts"
+          )" -eq 1
+
+      - name: Download clean-tag assets and trusted evidence
+        env:
+          CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+          GH_TOKEN: ${{ github.token }}
+          PAGES_RUN_ID: ${{ inputs.pages_run_id }}
+          RELEASE_RUN_ID: ${{ inputs.release_run_id }}
+        run: |
+          gh run download "$RELEASE_RUN_ID" \
+            --repo "$GITHUB_REPOSITORY" \
+            --name "orbitpm-tag-release-assets-$CANDIDATE_SHA" \
+            --dir tag-release
+          gh run download "$RELEASE_RUN_ID" \
+            --repo "$GITHUB_REPOSITORY" \
+            --name "orbitpm-tag-external-evidence-$CANDIDATE_SHA" \
+            --dir release-evidence
+          gh run download "$PAGES_RUN_ID" \
+            --repo "$GITHUB_REPOSITORY" \
+            --name "orbitpm-pages-evidence-$CANDIDATE_SHA" \
+            --dir pages-evidence
+
+      - name: Verify release, evidence, baseline, and canonical production bytes
+        env:
+          BROWSER_EVIDENCE_SHA256: ${{ inputs.browser_compatibility_evidence_sha256 }}
+          BROWSER_EVIDENCE_URL: ${{ inputs.browser_compatibility_evidence_url }}
+          CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+          EVIDENCE_SHA256: ${{ inputs.external_evidence_sha256 }}
+          EVIDENCE_URL: ${{ inputs.external_evidence_url }}
+          GH_TOKEN: ${{ github.token }}
+          PAGES_RUN_ID: ${{ inputs.pages_run_id }}
+          PAGES_URL: https://ahmedak320.github.io/bpmn-studio/
+          RELEASE_TAG: ${{ inputs.release_tag }}
+          VERSION_BASELINE_SHA256: ${{ inputs.browser_version_baseline_sha256 }}
+          VERSION_BASELINE_URL: ${{ inputs.browser_version_baseline_url }}
+        run: |
+          gh api "repos/$GITHUB_REPOSITORY/releases/tags/$RELEASE_TAG" \
+            > release-before-finalize.json
+          mkdir release-before-finalize
+          gh release download "$RELEASE_TAG" --dir release-before-finalize
+          state=draft
+          if test "$(jq -r .draft release-before-finalize.json)" = "false"; then
+            state=stable
+          fi
+          node scripts/release-state.mjs \
+            --release-json=release-before-finalize.json \
+            --assets=release-before-finalize \
+            --expected-assets=tag-release \
+            --notes=docs/RELEASE_NOTES_0.4.5.md \
+            --tag="$RELEASE_TAG" \
+            --title="OrbitPM Process Studio Lite 0.4.5" \
+            --state="$state"
+          for attempt in $(seq 1 150); do
+            response="$(
+              curl --fail --silent --show-error \
+                --max-redirs 0 \
+                --max-time 30 \
+                --max-filesize 33554432 \
+                --write-out '%{http_code}\t%{url_effective}' \
+                "$PAGES_URL" \
+                --output pages-before-finalize.html
+            )" || true
+            if test "$response" = "$(printf '200\t%s' "$PAGES_URL")" &&
+              cmp \
+                release-before-finalize/OrbitPM-Process-Studio-Lite-0.4.5.html \
+                pages-before-finalize.html
+            then
+              break
+            fi
+            test "$attempt" -lt 150
+            sleep 5
+          done
+          candidate_ready_at="$(
+            jq -er .candidateReadyAt \
+              release-evidence/tag-external-evidence-verification.json
+          )"
+          node scripts/release-evidence-chain.mjs verify \
+            --aggregate=release-evidence/tag-external-evidence-verification.json \
+            --candidate-sha="$CANDIDATE_SHA" \
+            --candidate-ready-at="$candidate_ready_at" \
+            --artifact=release-before-finalize/OrbitPM-Process-Studio-Lite-0.4.5.html \
+            --source-url="$EVIDENCE_URL" \
+            --source-sha256="$EVIDENCE_SHA256"
+          node scripts/release-evidence-chain.mjs compare \
+            --trusted=release-evidence/tag-external-evidence-verification.json \
+            --observed=pages-evidence/trusted-release-external-evidence-verification.json
+          node scripts/pages-evidence-chain.mjs verify \
+            --evidence=pages-evidence/pages-browser-environment.json \
+            --candidate-sha="$CANDIDATE_SHA" \
+            --artifact=release-before-finalize/OrbitPM-Process-Studio-Lite-0.4.5.html \
+            --url="$PAGES_URL" \
+            --run-id="$PAGES_RUN_ID" \
+            --repository="$GITHUB_REPOSITORY"
+          mkdir -p identity-evidence
+          node scripts/verify-browser-compatibility-evidence.mjs \
+            --candidate-sha="$CANDIDATE_SHA" \
+            --candidate-ready-at="$candidate_ready_at" \
+            --artifact=release-before-finalize/OrbitPM-Process-Studio-Lite-0.4.5.html \
+            --pages-url="$PAGES_URL" \
+            --pages-deployment-evidence=pages-evidence/pages-browser-environment.json \
+            --url="$BROWSER_EVIDENCE_URL" \
+            --sha256="$BROWSER_EVIDENCE_SHA256" \
+            --version-baseline-url="$VERSION_BASELINE_URL" \
+            --version-baseline-sha256="$VERSION_BASELINE_SHA256" \
+            --output=identity-evidence/browser-compatibility-evidence-verification.json
+
+  publication-authority:
+    name: Protected read-only post-approval publication authority
+    needs: identity
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    environment:
+      name: release-finalize-authority-v0.4.5
+    outputs:
+      authority-artifact-digest: ${{ steps.upload-authority.outputs.artifact-digest }}
+      authority-artifact-id: ${{ steps.upload-authority.outputs.artifact-id }}
+    permissions:
+      actions: read
+      contents: read
+    steps:
+      - name: Require finalization approval policy
+        env:
+          APPROVAL_POLICY: ${{ vars.ORBITPM_RELEASE_FINALIZE_POLICY }}
+        run: >-
+          test "$APPROVAL_POLICY" =
+          "v0.4.5-pages-verified-immutable-stable-publication"
+
+      - name: Checkout exact candidate after approval
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ inputs.candidate_sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Set up exact Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 22.22.0
+
+      - name: Re-download clean-tag assets and trusted evidence
+        env:
+          CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+          GH_TOKEN: ${{ github.token }}
+          PAGES_RUN_ID: ${{ inputs.pages_run_id }}
+          RELEASE_RUN_ID: ${{ inputs.release_run_id }}
+        run: |
+          gh run download "$RELEASE_RUN_ID" \
+            --repo "$GITHUB_REPOSITORY" \
+            --name "orbitpm-tag-release-assets-$CANDIDATE_SHA" \
+            --dir tag-release
+          gh run download "$RELEASE_RUN_ID" \
+            --repo "$GITHUB_REPOSITORY" \
+            --name "orbitpm-tag-external-evidence-$CANDIDATE_SHA" \
+            --dir trusted-release-evidence
+          gh run download "$PAGES_RUN_ID" \
+            --repo "$GITHUB_REPOSITORY" \
+            --name "orbitpm-pages-evidence-$CANDIDATE_SHA" \
+            --dir trusted-pages-evidence
+
+      - name: Reverify exact state, inherited evidence, baseline, and Pages
+        env:
+          BROWSER_EVIDENCE_SHA256: ${{ inputs.browser_compatibility_evidence_sha256 }}
+          BROWSER_EVIDENCE_URL: ${{ inputs.browser_compatibility_evidence_url }}
+          CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+          EVIDENCE_SHA256: ${{ inputs.external_evidence_sha256 }}
+          EVIDENCE_URL: ${{ inputs.external_evidence_url }}
+          GH_TOKEN: ${{ github.token }}
+          PAGES_RUN_ID: ${{ inputs.pages_run_id }}
+          PAGES_URL: https://ahmedak320.github.io/bpmn-studio/
+          RELEASE_RUN_ID: ${{ inputs.release_run_id }}
+          RELEASE_TAG: ${{ inputs.release_tag }}
+          VERSION_BASELINE_SHA256: ${{ inputs.browser_version_baseline_sha256 }}
+          VERSION_BASELINE_URL: ${{ inputs.browser_version_baseline_url }}
+        run: |
+          git fetch --force origin \
+            refs/heads/main:refs/remotes/origin/main \
+            "+refs/tags/$RELEASE_TAG:refs/tags/$RELEASE_TAG"
+          test "$(git rev-parse HEAD)" = "$CANDIDATE_SHA"
+          test "$(git rev-parse origin/main)" = "$CANDIDATE_SHA"
+          node scripts/check-release-tag.mjs "$RELEASE_TAG" --require-origin-main
+          gh api "repos/$GITHUB_REPOSITORY/releases/tags/$RELEASE_TAG" \
+            > release-at-authority.json
+          mkdir release-at-authority
+          gh release download "$RELEASE_TAG" --dir release-at-authority
+          state=draft
+          if test "$(jq -r .draft release-at-authority.json)" = "false"; then
+            state=stable
+          fi
+          node scripts/release-state.mjs \
+            --release-json=release-at-authority.json \
+            --assets=release-at-authority \
+            --expected-assets=tag-release \
+            --notes=docs/RELEASE_NOTES_0.4.5.md \
+            --tag="$RELEASE_TAG" \
+            --title="OrbitPM Process Studio Lite 0.4.5" \
+            --state="$state"
+          response="$(
+            curl --fail --silent --show-error \
+              --max-redirs 0 \
+              --max-time 30 \
+              --max-filesize 33554432 \
+              --write-out '%{http_code}\t%{url_effective}' \
+              "$PAGES_URL" \
+              --output pages-at-authority.html
+          )"
+          test "$response" = "$(printf '200\t%s' "$PAGES_URL")"
+          cmp \
+            release-at-authority/OrbitPM-Process-Studio-Lite-0.4.5.html \
+            pages-at-authority.html
+          candidate_ready_at="$(
+            jq -er .candidateReadyAt \
+              trusted-release-evidence/tag-external-evidence-verification.json
+          )"
+          node scripts/release-evidence-chain.mjs verify \
+            --aggregate=trusted-release-evidence/tag-external-evidence-verification.json \
+            --candidate-sha="$CANDIDATE_SHA" \
+            --candidate-ready-at="$candidate_ready_at" \
+            --artifact=release-at-authority/OrbitPM-Process-Studio-Lite-0.4.5.html \
+            --source-url="$EVIDENCE_URL" \
+            --source-sha256="$EVIDENCE_SHA256"
+          node scripts/release-evidence-chain.mjs compare \
+            --trusted=trusted-release-evidence/tag-external-evidence-verification.json \
+            --observed=trusted-pages-evidence/trusted-release-external-evidence-verification.json
+          node scripts/pages-evidence-chain.mjs verify \
+            --evidence=trusted-pages-evidence/pages-browser-environment.json \
+            --candidate-sha="$CANDIDATE_SHA" \
+            --artifact=release-at-authority/OrbitPM-Process-Studio-Lite-0.4.5.html \
+            --url="$PAGES_URL" \
+            --run-id="$PAGES_RUN_ID" \
+            --repository="$GITHUB_REPOSITORY"
+          mkdir -p verified-finalization-evidence/pages
+          node scripts/verify-browser-compatibility-evidence.mjs \
+            --candidate-sha="$CANDIDATE_SHA" \
+            --candidate-ready-at="$candidate_ready_at" \
+            --artifact=release-at-authority/OrbitPM-Process-Studio-Lite-0.4.5.html \
+            --pages-url="$PAGES_URL" \
+            --pages-deployment-evidence=trusted-pages-evidence/pages-browser-environment.json \
+            --url="$BROWSER_EVIDENCE_URL" \
+            --sha256="$BROWSER_EVIDENCE_SHA256" \
+            --version-baseline-url="$VERSION_BASELINE_URL" \
+            --version-baseline-sha256="$VERSION_BASELINE_SHA256" \
+            --output=verified-finalization-evidence/browser-compatibility-evidence-verification.json
+          browser_evidence=verified-finalization-evidence/browser-compatibility-evidence-verification.json
+          test "$(jq -r .source.url "$browser_evidence")" = "$BROWSER_EVIDENCE_URL"
+          test "$(jq -r .source.finalUrl "$browser_evidence")" = "$BROWSER_EVIDENCE_URL"
+          test "$(jq -r .source.sha256 "$browser_evidence")" = "$BROWSER_EVIDENCE_SHA256"
+          test "$(jq -r .versionBaseline.source.url "$browser_evidence")" = \
+            "$VERSION_BASELINE_URL"
+          test "$(jq -r .versionBaseline.source.finalUrl "$browser_evidence")" = \
+            "$VERSION_BASELINE_URL"
+          test "$(jq -r .versionBaseline.source.sha256 "$browser_evidence")" = \
+            "$VERSION_BASELINE_SHA256"
+          cp \
+            trusted-release-evidence/tag-external-evidence-verification.json \
+            verified-finalization-evidence/trusted-release-external-evidence-verification.json
+          cp \
+            trusted-pages-evidence/pages-browser-environment.json \
+            verified-finalization-evidence/pages/pages-browser-environment.json
+          cp \
+            trusted-pages-evidence/trusted-release-external-evidence-verification.json \
+            verified-finalization-evidence/pages/trusted-release-external-evidence-verification.json
+          mkdir publication-authority
+          assets="$(
+            jq -n '[]'
+          )"
+          while IFS= read -r name; do
+            size="$(stat --format=%s "release-at-authority/$name")"
+            sha256="$(sha256sum "release-at-authority/$name" | cut -d' ' -f1)"
+            assets="$(
+              jq \
+                --arg name "$name" \
+                --arg sha256 "$sha256" \
+                --argjson size "$size" \
+                '. + [{name: $name, size: $size, sha256: $sha256}]' \
+                <<<"$assets"
+            )"
+          done <<'ASSETS'
+          LICENSE
+          OrbitPM-Excel-Example-0.4.5.xlsx
+          OrbitPM-Excel-Template-0.4.5.xlsx
+          OrbitPM-Process-Studio-Lite-0.4.5.cyclonedx.json
+          OrbitPM-Process-Studio-Lite-0.4.5.html
+          SHA256SUMS.txt
+          THIRD_PARTY_NOTICES.md
+          ASSETS
+          jq -n \
+            --arg browserEvidenceSha256 "$BROWSER_EVIDENCE_SHA256" \
+            --arg browserEvidenceUrl "$BROWSER_EVIDENCE_URL" \
+            --arg candidateSha "$CANDIDATE_SHA" \
+            --arg externalEvidenceSha256 "$EVIDENCE_SHA256" \
+            --arg externalEvidenceUrl "$EVIDENCE_URL" \
+            --arg pagesRunId "$PAGES_RUN_ID" \
+            --arg pagesUrl "$PAGES_URL" \
+            --arg releaseRunId "$RELEASE_RUN_ID" \
+            --arg releaseTag "$RELEASE_TAG" \
+            --arg sourceReleaseState "$state" \
+            --arg versionBaselineSha256 "$VERSION_BASELINE_SHA256" \
+            --arg versionBaselineUrl "$VERSION_BASELINE_URL" \
+            --argjson assets "$assets" \
+            --argjson releaseId "$(jq -r .id release-at-authority.json)" \
+            --rawfile notesBody docs/RELEASE_NOTES_0.4.5.md \
+            '{
+              schemaVersion: 1,
+              gate: "orbitpm-lite-finalization-publication-authority",
+              status: "passed",
+              candidateSha: $candidateSha,
+              releaseTag: $releaseTag,
+              releaseTitle: "OrbitPM Process Studio Lite 0.4.5",
+              releaseId: $releaseId,
+              sourceReleaseState: $sourceReleaseState,
+              notesSha256: "770697128d0a06b4dd4b9cf7bcbf7f63dfa286e0b929260ae4546b36893a9c1d",
+              notesBody: $notesBody,
+              assets: ($assets | sort_by(.name)),
+              pagesUrl: $pagesUrl,
+              releaseRunId: $releaseRunId,
+              pagesRunId: $pagesRunId,
+              browserCompatibilityEvidence: {
+                url: $browserEvidenceUrl,
+                sha256: $browserEvidenceSha256
+              },
+              browserVersionBaseline: {
+                url: $versionBaselineUrl,
+                sha256: $versionBaselineSha256
+              },
+              externalEvidence: {
+                url: $externalEvidenceUrl,
+                sha256: $externalEvidenceSha256
+              }
+            }' > publication-authority/publication-authority.json
+
+      - name: Upload fixed-data publication authority
+        id: upload-authority
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: orbitpm-finalization-publication-authority-${{ github.run_id }}
+          path: publication-authority/publication-authority.json
+          if-no-files-found: error
+          retention-days: 90
+
+      - name: Preserve post-approval verified evidence
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: orbitpm-finalization-verification-authority-${{ github.run_id }}
+          path: verified-finalization-evidence/
+          if-no-files-found: error
+          retention-days: 90
+
+  publish:
+    name: Isolated immutable stable publication
+    needs: publication-authority
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    concurrency:
+      group: orbitpm-pages-deployment
+      cancel-in-progress: false
+    environment:
+      name: release-finalize-v0.4.5
+    permissions:
+      actions: read
+      contents: read
+    steps:
+      - name: Fetch and bind the exact immutable publication authority
+        env:
+          AUTHORITY_ARTIFACT_DIGEST: ${{ needs.publication-authority.outputs.authority-artifact-digest }}
+          AUTHORITY_ARTIFACT_ID: ${{ needs.publication-authority.outputs.authority-artifact-id }}
+          CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          case "$AUTHORITY_ARTIFACT_ID" in
+            '' | *[!0-9]*) exit 1 ;;
+          esac
+          case "$AUTHORITY_ARTIFACT_DIGEST" in
+            sha256:[0-9a-f][0-9a-f]*) expected_digest="$AUTHORITY_ARTIFACT_DIGEST" ;;
+            [0-9a-f][0-9a-f]*) expected_digest="sha256:$AUTHORITY_ARTIFACT_DIGEST" ;;
+            *) exit 1 ;;
+          esac
+          test "${#expected_digest}" -eq 71
+          authority_name="orbitpm-finalization-publication-authority-$GITHUB_RUN_ID"
+          api_version=2026-03-10
+          gh api --header "X-GitHub-Api-Version: $api_version" \
+            "repos/$GITHUB_REPOSITORY/actions/artifacts/$AUTHORITY_ARTIFACT_ID" \
+            > authority-artifact.json
+          gh api --paginate --header "X-GitHub-Api-Version: $api_version" \
+            "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/artifacts?per_page=100" |
+            jq -s '[.[].artifacts[]]' > run-artifacts.json
+          jq -e \
+            --argjson id "$AUTHORITY_ARTIFACT_ID" \
+            --arg name "$authority_name" \
+            --argjson run "$GITHUB_RUN_ID" \
+            --arg sha "$CANDIDATE_SHA" \
+            --arg digest "$expected_digest" \
+            '
+              .id == $id and
+              .name == $name and
+              .expired == false and
+              .workflow_run.id == $run and
+              .workflow_run.head_sha == $sha and
+              .digest == $digest and
+              .size_in_bytes > 0 and
+              .size_in_bytes <= 1048576
+            ' authority-artifact.json >/dev/null
+          jq -e \
+            --argjson id "$AUTHORITY_ARTIFACT_ID" \
+            --arg name "$authority_name" \
+            '
+              [.[] | select(.name == $name)] as $matches |
+              ($matches | length) == 1 and
+              $matches[0].id == $id and
+              $matches[0].expired == false
+            ' run-artifacts.json >/dev/null
+          curl --fail --silent --show-error --location \
+            --proto '=https' \
+            --proto-redir '=https' \
+            --header 'Accept: application/vnd.github+json' \
+            --header "Authorization: Bearer $GH_TOKEN" \
+            --header "X-GitHub-Api-Version: $api_version" \
+            "${GITHUB_API_URL%/}/repos/$GITHUB_REPOSITORY/actions/artifacts/$AUTHORITY_ARTIFACT_ID/zip" \
+            --output authority.zip
+          test "$(stat --format=%s authority.zip)" = \
+            "$(jq -r .size_in_bytes authority-artifact.json)"
+          test "sha256:$(sha256sum authority.zip | cut -d' ' -f1)" = "$expected_digest"
+          test "$(unzip -Z1 authority.zip)" = "publication-authority.json"
+          unzip -p authority.zip publication-authority.json > publication-authority.tmp
+          mv publication-authority.tmp publication-authority.json
+          test "$(stat --format=%s publication-authority.json)" -le 524288
+          jq -e \
+            --arg candidate "$CANDIDATE_SHA" \
+            --arg pagesRunId "${{ inputs.pages_run_id }}" \
+            --arg releaseRunId "${{ inputs.release_run_id }}" \
+            '
+              .schemaVersion == 1 and
+              .gate == "orbitpm-lite-finalization-publication-authority" and
+              .status == "passed" and
+              .candidateSha == $candidate and
+              .releaseTag == "v0.4.5" and
+              .releaseTitle == "OrbitPM Process Studio Lite 0.4.5" and
+              (.releaseId | type) == "number" and
+              (.releaseId > 0) and
+              (.sourceReleaseState == "draft" or .sourceReleaseState == "stable") and
+              .notesSha256 == "770697128d0a06b4dd4b9cf7bcbf7f63dfa286e0b929260ae4546b36893a9c1d" and
+              (.notesBody | type) == "string" and
+              .pagesUrl == "https://ahmedak320.github.io/bpmn-studio/" and
+              .releaseRunId == $releaseRunId and
+              .pagesRunId == $pagesRunId and
+              (.assets | length) == 7 and
+              ([.assets[].name] | sort) == [
+                "LICENSE",
+                "OrbitPM-Excel-Example-0.4.5.xlsx",
+                "OrbitPM-Excel-Template-0.4.5.xlsx",
+                "OrbitPM-Process-Studio-Lite-0.4.5.cyclonedx.json",
+                "OrbitPM-Process-Studio-Lite-0.4.5.html",
+                "SHA256SUMS.txt",
+                "THIRD_PARTY_NOTICES.md"
+              ] and
+              ([.assets[] |
+                select(
+                  (.size | type) == "number" and
+                  .size > 0 and
+                  (.sha256 | test("^[0-9a-f]{64}$"))
+                )] | length) == 7 and
+              (.browserCompatibilityEvidence.url | type) == "string" and
+              (.browserCompatibilityEvidence.sha256 | test("^[0-9a-f]{64}$")) and
+              (.browserVersionBaseline.url | type) == "string" and
+              (.browserVersionBaseline.sha256 | test("^[0-9a-f]{64}$")) and
+              (.externalEvidence.url | type) == "string" and
+              (.externalEvidence.sha256 | test("^[0-9a-f]{64}$"))
+            ' publication-authority.json >/dev/null
+          test "$(jq -j .notesBody publication-authority.json | sha256sum | cut -d' ' -f1)" = \
+            "770697128d0a06b4dd4b9cf7bcbf7f63dfa286e0b929260ae4546b36893a9c1d"
+
+      - name: Publish with the entirely isolated admin token and immediate policy checks
+        env:
+          APPROVAL_POLICY: ${{ vars.ORBITPM_RELEASE_FINALIZE_POLICY }}
+          CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+          GH_ADMIN_TOKEN: ${{ secrets.ORBITPM_RELEASE_ADMIN_TOKEN }}
+          RULESET_BYPASS_ACTOR_ID: ${{ vars.ORBITPM_RELEASE_TAG_BYPASS_ACTOR_ID }}
+          RULESET_ID: ${{ vars.ORBITPM_RELEASE_TAG_RULESET_ID }}
+          SOLE_WRITER: ${{ vars.ORBITPM_RELEASE_SOLE_WRITER }}
+          WRITER_FREEZE_POLICY: ${{ vars.ORBITPM_RELEASE_WRITER_FREEZE_POLICY }}
+        run: |
+          set -euo pipefail
+          test "$APPROVAL_POLICY" = \
+            "v0.4.5-pages-verified-immutable-stable-publication"
+          test "$WRITER_FREEZE_POLICY" = \
+            "v0.4.5-sole-admin-no-manual-release-writes-during-finalization"
+          test -n "$GH_ADMIN_TOKEN"
+          test "$SOLE_WRITER" = "$GITHUB_REPOSITORY_OWNER"
+          for numeric in "$RULESET_ID" "$RULESET_BYPASS_ACTOR_ID"; do
+            case "$numeric" in
+              '' | *[!0-9]*) exit 1 ;;
+            esac
+          done
+          test "$RULESET_BYPASS_ACTOR_ID" = "5"
+          protection_check() {
+            immutable_json="$(
+              GH_TOKEN="$GH_ADMIN_TOKEN" gh api \
+                --header 'X-GitHub-Api-Version: 2026-03-10' \
+                "repos/$GITHUB_REPOSITORY/immutable-releases"
+            )"
+            test "$(jq -r .enabled <<<"$immutable_json")" = "true"
+            ruleset_json="$(
+              GH_TOKEN="$GH_ADMIN_TOKEN" gh api \
+                --header 'X-GitHub-Api-Version: 2026-03-10' \
+                "repos/$GITHUB_REPOSITORY/rulesets/$RULESET_ID"
+            )"
+            jq -e \
+              --argjson actor "$RULESET_BYPASS_ACTOR_ID" \
+              --argjson id "$RULESET_ID" \
+              '
+                .id == $id and
+                .name == "OrbitPM protected v* release tags" and
+                .target == "tag" and
+                .enforcement == "active" and
+                .conditions.ref_name.include == ["refs/tags/v*"] and
+                .conditions.ref_name.exclude == [] and
+                ([.rules[].type] | sort) == ["creation", "deletion", "update"] and
+                .bypass_actors == [{
+                  actor_id: $actor,
+                  actor_type: "RepositoryRole",
+                  bypass_mode: "always"
+                }]
+              ' <<<"$ruleset_json" >/dev/null
+          }
+          GH_TOKEN="$GH_ADMIN_TOKEN" gh api --paginate \
+            "repos/$GITHUB_REPOSITORY/collaborators?affiliation=all&per_page=100" |
+            jq -s 'add' > collaborators-at-publish.json
+          jq -e \
+            --arg sole_writer "$SOLE_WRITER" \
+            '
+              [
+                .[]
+                | select(
+                    .permissions.admin == true or
+                    .permissions.maintain == true or
+                    .permissions.push == true
+                  )
+                | .login
+              ]
+              | unique
+              | . == [$sole_writer]
+            ' collaborators-at-publish.json >/dev/null
+          for status in queued in_progress; do
+            GH_TOKEN="$GH_ADMIN_TOKEN" gh api --paginate \
+              "repos/$GITHUB_REPOSITORY/actions/runs?status=$status&per_page=100"
+          done |
+            jq -s '[.[].workflow_runs[]]' > active-runs-at-publish.json
+          jq -e \
+            --arg current_run "$GITHUB_RUN_ID" \
+            '
+              [
+                .[]
+                | select(
+                    (
+                      .path == ".github/workflows/release.yml" or
+                      .path == ".github/workflows/release-finalize.yml" or
+                      .path == ".github/workflows/historical-release-cleanup.yml" or
+                      .path == ".github/workflows/pages.yml" or
+                      .path == ".github/workflows/pages-rollback.yml"
+                    ) and
+                    (.id | tostring) != $current_run
+                  )
+              ]
+              | length == 0
+            ' active-runs-at-publish.json >/dev/null
+          main_ref="$(
+            GH_TOKEN="$GH_ADMIN_TOKEN" gh api \
+              "repos/$GITHUB_REPOSITORY/git/ref/heads/main"
+          )"
+          test "$(jq -r .object.sha <<<"$main_ref")" = "$CANDIDATE_SHA"
+          GH_TOKEN="$GH_ADMIN_TOKEN" gh api \
+            "repos/$GITHUB_REPOSITORY/git/ref/tags/v0.4.5" > protected-tag-ref.json
+          tag_object_sha="$(jq -er .object.sha protected-tag-ref.json)"
+          test "$(jq -r .object.type protected-tag-ref.json)" = "tag"
+          GH_TOKEN="$GH_ADMIN_TOKEN" gh api \
+            "repos/$GITHUB_REPOSITORY/git/tags/$tag_object_sha" \
+            > protected-tag-object.json
+          test "$(jq -r .tag protected-tag-object.json)" = "v0.4.5"
+          test "$(jq -r .object.type protected-tag-object.json)" = "commit"
+          test "$(jq -r .object.sha protected-tag-object.json)" = "$CANDIDATE_SHA"
+          GH_TOKEN="$GH_ADMIN_TOKEN" gh api \
+            "repos/$GITHUB_REPOSITORY/releases/tags/v0.4.5" > release-at-publish.json
+          jq -e \
+            --slurpfile authority publication-authority.json \
+            '
+              .id == $authority[0].releaseId and
+              .tag_name == "v0.4.5" and
+              .target_commitish == $authority[0].candidateSha and
+              .name == "OrbitPM Process Studio Lite 0.4.5" and
+              .body == $authority[0].notesBody and
+              (.draft == true or (
+                .draft == false and
+                .prerelease == false and
+                .immutable == true
+              )) and
+              .prerelease == false and
+              (.assets | length) == 7
+            ' release-at-publish.json >/dev/null
+          mkdir live-assets
+          while IFS=$'\t' read -r name size sha256; do
+            asset="$(
+              jq -c --arg name "$name" \
+                '.assets[] | select(.name == $name)' \
+                release-at-publish.json
+            )"
+            test "$(jq -s 'length' <<<"$asset")" -eq 1
+            test "$(jq -r .state <<<"$asset")" = "uploaded"
+            test "$(jq -r .size <<<"$asset")" = "$size"
+            test "$(jq -r .digest <<<"$asset")" = "sha256:$sha256"
+            asset_id="$(jq -er .id <<<"$asset")"
+            GH_TOKEN="$GH_ADMIN_TOKEN" gh api \
+              --header 'Accept: application/octet-stream' \
+              "repos/$GITHUB_REPOSITORY/releases/assets/$asset_id" \
+              > "live-assets/$name"
+            test "$(stat --format=%s "live-assets/$name")" = "$size"
+            test "$(sha256sum "live-assets/$name" | cut -d' ' -f1)" = "$sha256"
+          done < <(
+            jq -r '.assets[] | [.name, .size, .sha256] | @tsv' \
+              publication-authority.json
+          )
+          pages_url="https://ahmedak320.github.io/bpmn-studio/"
+          response="$(
+            curl --fail --silent --show-error \
+              --max-redirs 0 \
+              --max-time 30 \
+              --max-filesize 33554432 \
+              --write-out '%{http_code}\t%{url_effective}' \
+              "$pages_url" \
+              --output pages-immediately-before-publish.html
+          )"
+          test "$response" = "$(printf '200\t%s' "$pages_url")"
+          html_sha256="$(
+            jq -r \
+              '.assets[] |
+                select(.name == "OrbitPM-Process-Studio-Lite-0.4.5.html") |
+                .sha256' \
+              publication-authority.json
+          )"
+          test "$(
+            sha256sum pages-immediately-before-publish.html | cut -d' ' -f1
+          )" = "$html_sha256"
+          protection_check
+          if test "$(jq -r .draft release-at-publish.json)" = "true"; then
+            jq -n \
+              --arg target "$CANDIDATE_SHA" \
+              --slurpfile authority publication-authority.json \
+              '{
+                tag_name: "v0.4.5",
+                target_commitish: $target,
+                name: "OrbitPM Process Studio Lite 0.4.5",
+                body: $authority[0].notesBody,
+                draft: false,
+                prerelease: false,
+                make_latest: "true"
+              }' |
+              GH_TOKEN="$GH_ADMIN_TOKEN" gh api \
+                "repos/$GITHUB_REPOSITORY/releases/$(jq -r .id release-at-publish.json)" \
+                --method PATCH \
+                --input - \
+                > published-release-response.json
+          fi
+          protection_check
+          GH_TOKEN="$GH_ADMIN_TOKEN" gh api \
+            "repos/$GITHUB_REPOSITORY/releases/tags/v0.4.5" > stable-release.json
+          GH_TOKEN="$GH_ADMIN_TOKEN" gh api \
+            "repos/$GITHUB_REPOSITORY/releases/latest" > latest-release.json
+          jq -e \
+            --slurpfile authority publication-authority.json \
+            '
+              .id == $authority[0].releaseId and
+              .tag_name == "v0.4.5" and
+              .target_commitish == $authority[0].candidateSha and
+              .name == "OrbitPM Process Studio Lite 0.4.5" and
+              .body == $authority[0].notesBody and
+              .draft == false and
+              .prerelease == false and
+              .immutable == true and
+              (.assets | length) == 7
+            ' stable-release.json >/dev/null
+          test "$(jq -r .id stable-release.json)" = "$(jq -r .id latest-release.json)"
+
+  readback:
+    name: Read-only immutable stable and evidence read-back
+    needs: [publication-authority, publish]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    permissions:
+      actions: read
+      contents: read
+    steps:
+      - name: Checkout exact stable candidate
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ inputs.candidate_sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Set up exact Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 22.22.0
+
+      - name: Download publication authority and verified evidence
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: orbitpm-finalization-publication-authority-${{ github.run_id }}
+          path: publication-authority
+
+      - name: Download post-approval verification authority
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: orbitpm-finalization-verification-authority-${{ github.run_id }}
+          path: verified-finalization-evidence
+
+      - name: Download clean-tag reference assets
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: orbitpm-tag-release-assets-${{ inputs.candidate_sha }}
+          path: tag-release
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: ${{ inputs.release_run_id }}
+
+      - name: Read back exact latest immutable state, assets, tag, main, and Pages
+        env:
+          BROWSER_EVIDENCE_SHA256: ${{ inputs.browser_compatibility_evidence_sha256 }}
+          BROWSER_EVIDENCE_URL: ${{ inputs.browser_compatibility_evidence_url }}
+          CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+          EVIDENCE_SHA256: ${{ inputs.external_evidence_sha256 }}
+          EVIDENCE_URL: ${{ inputs.external_evidence_url }}
+          GH_TOKEN: ${{ github.token }}
+          PAGES_RUN_ID: ${{ inputs.pages_run_id }}
+          PAGES_URL: https://ahmedak320.github.io/bpmn-studio/
+          RELEASE_RUN_ID: ${{ inputs.release_run_id }}
+          RELEASE_TAG: ${{ inputs.release_tag }}
+          VERSION_BASELINE_SHA256: ${{ inputs.browser_version_baseline_sha256 }}
+          VERSION_BASELINE_URL: ${{ inputs.browser_version_baseline_url }}
+        run: |
+          authority=publication-authority/publication-authority.json
+          git fetch --force origin \
+            refs/heads/main:refs/remotes/origin/main \
+            "+refs/tags/$RELEASE_TAG:refs/tags/$RELEASE_TAG"
+          test "$(git rev-parse origin/main)" = "$CANDIDATE_SHA"
+          node scripts/check-release-tag.mjs "$RELEASE_TAG" --require-origin-main
+          for attempt in $(seq 1 12); do
+            gh api "repos/$GITHUB_REPOSITORY/releases/tags/$RELEASE_TAG" \
+              > stable-release.json
+            gh api "repos/$GITHUB_REPOSITORY/releases/latest" > latest-release.json
+            if test "$(jq -r .draft stable-release.json)" = "false" &&
+              test "$(jq -r .prerelease stable-release.json)" = "false" &&
+              test "$(jq -r .immutable stable-release.json)" = "true" &&
+              test "$(jq -r .id stable-release.json)" = \
+                "$(jq -r .id latest-release.json)"
+            then
+              break
+            fi
+            test "$attempt" -lt 12
+            sleep 5
+          done
+          test "$(jq -r .id stable-release.json)" = "$(jq -r .releaseId "$authority")"
+          mkdir stable-release
+          gh release download "$RELEASE_TAG" --dir stable-release
+          node scripts/release-state.mjs \
+            --release-json=stable-release.json \
+            --assets=stable-release \
+            --expected-assets=tag-release \
+            --notes=docs/RELEASE_NOTES_0.4.5.md \
+            --tag="$RELEASE_TAG" \
+            --title="OrbitPM Process Studio Lite 0.4.5" \
+            --state=stable
+          while IFS=$'\t' read -r name size sha256; do
+            test "$(stat --format=%s "stable-release/$name")" = "$size"
+            test "$(sha256sum "stable-release/$name" | cut -d' ' -f1)" = "$sha256"
+          done < <(jq -r '.assets[] | [.name, .size, .sha256] | @tsv' "$authority")
+          for attempt in $(seq 1 150); do
+            response="$(
+              curl --fail --silent --show-error \
+                --max-redirs 0 \
+                --max-time 30 \
+                --max-filesize 33554432 \
+                --write-out '%{http_code}\t%{url_effective}' \
+                "$PAGES_URL" \
+                --output pages-after-publish.html
+            )" || true
+            if test "$response" = "$(printf '200\t%s' "$PAGES_URL")" &&
+              cmp \
+                stable-release/OrbitPM-Process-Studio-Lite-0.4.5.html \
+                pages-after-publish.html
+            then
+              break
+            fi
+            test "$attempt" -lt 150
+            sleep 5
+          done
+          chain_dir=finalize-evidence
+          mkdir -p "$chain_dir/pages"
+          cp \
+            verified-finalization-evidence/trusted-release-external-evidence-verification.json \
+            "$chain_dir/trusted-release-external-evidence-verification.json"
+          cp \
+            verified-finalization-evidence/browser-compatibility-evidence-verification.json \
+            "$chain_dir/browser-compatibility-evidence-verification.json"
+          cp \
+            verified-finalization-evidence/pages/pages-browser-environment.json \
+            "$chain_dir/pages/pages-browser-environment.json"
+          cp \
+            verified-finalization-evidence/pages/trusted-release-external-evidence-verification.json \
+            "$chain_dir/pages/trusted-release-external-evidence-verification.json"
+          release_evidence="$chain_dir/trusted-release-external-evidence-verification.json"
+          browser_evidence="$chain_dir/browser-compatibility-evidence-verification.json"
+          pages_evidence="$chain_dir/pages/pages-browser-environment.json"
+          pages_release_evidence="$chain_dir/pages/trusted-release-external-evidence-verification.json"
+          candidate_ready_at="$(jq -er .candidateReadyAt "$release_evidence")"
+          node scripts/release-evidence-chain.mjs verify \
+            --aggregate="$release_evidence" \
+            --candidate-sha="$CANDIDATE_SHA" \
+            --candidate-ready-at="$candidate_ready_at" \
+            --artifact=stable-release/OrbitPM-Process-Studio-Lite-0.4.5.html \
+            --source-url="$EVIDENCE_URL" \
+            --source-sha256="$EVIDENCE_SHA256"
+          node scripts/release-evidence-chain.mjs compare \
+            --trusted="$release_evidence" \
+            --observed="$pages_release_evidence"
+          node scripts/pages-evidence-chain.mjs verify \
+            --evidence="$pages_evidence" \
+            --candidate-sha="$CANDIDATE_SHA" \
+            --artifact=stable-release/OrbitPM-Process-Studio-Lite-0.4.5.html \
+            --url="$PAGES_URL" \
+            --run-id="$PAGES_RUN_ID" \
+            --repository="$GITHUB_REPOSITORY"
+          test "$(jq -r .gate "$browser_evidence")" = \
+            "orbitpm-lite-browser-compatibility-evidence"
+          test "$(jq -r .status "$browser_evidence")" = "passed"
+          test "$(jq -r .candidateSha "$browser_evidence")" = "$CANDIDATE_SHA"
+          test "$(jq -r .candidateReadyAt "$browser_evidence")" = "$candidate_ready_at"
+          artifact_sha256="$(
+            sha256sum stable-release/OrbitPM-Process-Studio-Lite-0.4.5.html |
+              cut -d' ' -f1
+          )"
+          test "$(jq -r .artifactSha256 "$browser_evidence")" = "$artifact_sha256"
+          test "$(jq -r .pagesUrl "$browser_evidence")" = "$PAGES_URL"
+          test "$(jq -r .source.url "$browser_evidence")" = "$BROWSER_EVIDENCE_URL"
+          test "$(jq -r .source.finalUrl "$browser_evidence")" = "$BROWSER_EVIDENCE_URL"
+          test "$(jq -r .source.sha256 "$browser_evidence")" = \
+            "$BROWSER_EVIDENCE_SHA256"
+          test "$(jq -r .versionBaseline.source.url "$browser_evidence")" = \
+            "$VERSION_BASELINE_URL"
+          test "$(jq -r .versionBaseline.source.finalUrl "$browser_evidence")" = \
+            "$VERSION_BASELINE_URL"
+          test "$(jq -r .versionBaseline.source.sha256 "$browser_evidence")" = \
+            "$VERSION_BASELINE_SHA256"
+          test "$(jq -r .pagesDeploymentEvidence.sha256 "$browser_evidence")" = \
+            "$(sha256sum "$pages_evidence" | cut -d' ' -f1)"
+          jq -n \
+            --arg artifactSha256 "$artifact_sha256" \
+            --arg browserEvidenceSha256 "$(sha256sum "$browser_evidence" | cut -d' ' -f1)" \
+            --arg browserEvidenceSourceSha256 "$BROWSER_EVIDENCE_SHA256" \
+            --arg browserEvidenceUrl "$BROWSER_EVIDENCE_URL" \
+            --arg candidateReadyAt "$candidate_ready_at" \
+            --arg candidateSha "$CANDIDATE_SHA" \
+            --arg externalEvidenceSha256 "$EVIDENCE_SHA256" \
+            --arg externalEvidenceUrl "$EVIDENCE_URL" \
+            --arg finalizationRunId "$GITHUB_RUN_ID" \
+            --arg pagesEvidenceSha256 "$(sha256sum "$pages_evidence" | cut -d' ' -f1)" \
+            --arg pagesRunId "$PAGES_RUN_ID" \
+            --arg pagesUrl "$PAGES_URL" \
+            --arg publicationAuthoritySha256 "$(sha256sum "$authority" | cut -d' ' -f1)" \
+            --arg releaseEvidenceSha256 "$(sha256sum "$release_evidence" | cut -d' ' -f1)" \
+            --arg releaseRunId "$RELEASE_RUN_ID" \
+            --arg releaseTag "$RELEASE_TAG" \
+            --arg versionBaselineSha256 "$VERSION_BASELINE_SHA256" \
+            --arg versionBaselineSourceSha256 \
+              "$(jq -r .versionBaseline.source.sha256 "$browser_evidence")" \
+            --arg versionBaselineUrl "$VERSION_BASELINE_URL" \
+            '{
+              schemaVersion: 2,
+              gate: "orbitpm-lite-finalization-chain",
+              status: "passed",
+              candidateSha: $candidateSha,
+              candidateReadyAt: $candidateReadyAt,
+              artifactSha256: $artifactSha256,
+              releaseTag: $releaseTag,
+              releaseRunId: $releaseRunId,
+              pagesRunId: $pagesRunId,
+              finalizationRunId: $finalizationRunId,
+              pagesUrl: $pagesUrl,
+              releaseEvidenceSha256: $releaseEvidenceSha256,
+              pagesEvidenceSha256: $pagesEvidenceSha256,
+              publicationAuthoritySha256: $publicationAuthoritySha256,
+              browserCompatibilityEvidence: {
+                url: $browserEvidenceUrl,
+                sourceSha256: $browserEvidenceSourceSha256,
+                aggregateSha256: $browserEvidenceSha256
+              },
+              browserVersionBaseline: {
+                url: $versionBaselineUrl,
+                sha256: $versionBaselineSha256,
+                sourceSha256: $versionBaselineSourceSha256
+              },
+              externalEvidence: {
+                url: $externalEvidenceUrl,
+                sha256: $externalEvidenceSha256
+              }
+            }' > "$chain_dir/finalization-chain.json"
+
+      - name: Preserve immutable stable publication evidence
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: orbitpm-immutable-stable-release-${{ inputs.candidate_sha }}
+          path: |
+            finalize-evidence/
+            publication-authority/publication-authority.json
+            stable-release.json
+            latest-release.json
+          if-no-files-found: error
+          retention-days: 90

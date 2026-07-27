@@ -1,0 +1,1776 @@
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  useSyncExternalStore,
+  type ChangeEvent,
+  type CSSProperties,
+  type KeyboardEvent,
+  type ReactNode
+} from 'react'
+import { createPortal } from 'react-dom'
+import {
+  LITE_PROVIDERS,
+  DESKTOP_ONLY_PROVIDERS,
+  getLiteProvider,
+  getLiteModelCapabilities,
+  defaultLiteModelId,
+  type LiteProviderId
+} from './providersLite'
+import {
+  generateDiagramXml,
+  generateDiagramXmlFromDocument,
+  classifyBrowserError,
+  type ClassifiedError,
+  type GenerateOutput,
+  type ProposedLink
+} from './browserAi'
+import { getKey, hasKey } from './keys'
+import {
+  getProviderSelection,
+  setProviderSelection,
+  subscribeProviderSelection
+} from './providerSelection'
+import { keyStorageErrorMessage } from './keyStorageErrorMessage'
+import {
+  fetchOpenRouterCredits,
+  getUsageSnapshot,
+  resetUsage,
+  subscribeUsage,
+  CreditsError,
+  type CreditsErrorKind,
+  type OpenRouterCredits
+} from './credits'
+import { partitionLinks, applyLinkDecisions } from './linkReview'
+import { LinkVerifyDialog } from './LinkVerifyDialog'
+import { CreditsLine } from './CreditsLine'
+import {
+  ACCEPTED_IMAGE_TYPES,
+  checkAttachmentSize,
+  fileToBase64,
+  imageMediaTypeFromName,
+  isAttachmentMediaTypeSupported,
+  type AttachmentKind,
+  type AttachmentSizeCheck
+} from './pdf'
+import { parseDocxFileInWorker } from './browserDocxParser'
+import { DocxParseError, type DocxErrorCode } from './docx'
+import { TechnicalErrorDetail } from './TechnicalErrorDetail'
+import {
+  clearGeneratedRecovery,
+  generatedBpmnDataUrl,
+  getGeneratedRecoverySnapshot,
+  retainGeneratedRecovery,
+  subscribeGeneratedRecovery,
+  type GeneratedPlacementDiscardReason,
+  type GeneratedPlacementOutcome
+} from './placementOutcome'
+import {
+  estimateGenerationRequestCount,
+  inspectContextSensitivity,
+  redactProcessNames,
+  selectRelevantProcesses
+} from './requestPrivacy'
+import { t, type Key, type Lang } from '../i18n'
+import { useLang } from '../i18n/useLang'
+import { triggerDownload } from '../editor/exportImage'
+import {
+  SpreadsheetImportPanel,
+  type SpreadsheetImportPanelProps
+} from '../spreadsheet/SpreadsheetImportPanel'
+import { localizationSourceForGeneration, type LocalizationSource } from '../localization'
+
+export interface FolderOptionLite {
+  relPath: string
+  label: string
+}
+
+export interface AiPanelLiteProps {
+  /** Target-folder options (directory mode). Empty in fallback mode. */
+  folders: FolderOptionLite[]
+  /** Place a freshly-generated diagram. The discriminated outcome keeps a
+   * persisted file, a successful in-memory tab, and a discarded stale result
+   * observably distinct. `gen` carries the workspace generation captured when
+   * generation STARTED, so App can refuse a placement whose folder was switched
+   * out mid-generation (Codex ORIG-1b). */
+  onPlaceGenerated: (
+    xml: string,
+    opts: {
+      name: string
+      targetFolder: string
+      gen?: number
+      localizationSource?: LocalizationSource
+      signal: AbortSignal
+    }
+  ) => Promise<GeneratedPlacementOutcome>
+  /** Read the live workspace generation (captured at generation start). */
+  getWorkspaceGen?: () => number
+  onOpenSettings: () => void
+  collapsed: boolean
+  onToggle: () => void
+  /** Bump to re-read key availability after Settings closes. */
+  keysVersion: number
+  /** Directory mode shows the target-folder picker; fallback hides it. */
+  mode: 'directory' | 'fallback'
+  /** Workspace processes offered to the model for callActivity linking. */
+  processCatalog: Array<{ id: string; name: string }>
+  /** True when a BPMN process id exists in the current workspace. */
+  isKnownProcess: (id: string) => boolean
+  /** Resolve a BPMN process id to its display name (falls back to the id). */
+  resolveProcessName: (id: string) => string
+  /** Rendered inside the left sidebar's AI section: the outer fixed-width/border
+   *  chrome, the internal header row and the collapsed strip are all dropped —
+   *  only the form body is returned, full-width. `collapsed` is ignored here
+   *  because the enclosing sidebar section owns the expand/collapse toggle. */
+  embedded?: boolean
+  /** Offered after a successful placement: open the assistant's interview mode
+   *  so the user can fill the draft's missing info conversationally. Receives
+   *  the description the diagram was generated from. */
+  onContinueInChat?: (info: { description: string }) => void
+  /** Offline Excel/CSV ingestion; omitted only when the host has no delivery seam. */
+  spreadsheet?: SpreadsheetImportPanelProps
+}
+
+type GenMode = 'description' | 'pdf' | 'spreadsheet'
+
+/** The document tab's selection: a PDF or an image of a process drawing. */
+interface DocSelection {
+  file: File
+  kind: AttachmentKind
+  /** Normalized mime (File.type, or extension-derived when the OS gave none). */
+  mediaType: string
+}
+
+interface PresentedError {
+  summary: string
+  technicalDetail?: string
+}
+
+/** The description tab's optional "Description document" attachment. */
+interface DescAttach {
+  file: File
+  /** .docx text is extracted client-side; a .pdf rides natively to the provider. */
+  kind: 'docx' | 'pdf'
+  /** Extracted .docx text (null while unread / when extraction failed). */
+  text: string | null
+  /** Localized success line ("… characters of text extracted"). */
+  note: string | null
+  /** Localized inline problem plus optional isolated support evidence. */
+  error: PresentedError | null
+}
+
+// What the two file inputs accept. The description input takes documents that
+// CONTAIN the description (Word/PDF); the document tab takes what the providers
+// can look at natively (PDF + the verified image mimes).
+const DESC_DOC_ACCEPT =
+  '.docx,application/vnd.openxmlformats-officedocument.wordprocessingml.document,.pdf,application/pdf'
+const DOC_TAB_ACCEPT = 'application/pdf,.pdf,image/png,image/jpeg,image/webp,image/gif'
+const TECHNICAL_PROVIDER_TOKEN = '\u{fdd0}provider\u{fdd1}'
+const TECHNICAL_MODEL_TOKEN = '\u{fdd0}model\u{fdd1}'
+const TECHNICAL_TOKEN_PATTERN = /(\u{fdd0}(?:provider|model)\u{fdd1})/u
+
+function formatMegabytes(bytes: number, lang: Lang): string {
+  return new Intl.NumberFormat(lang, {
+    minimumFractionDigits: 1,
+    maximumFractionDigits: 1
+  }).format(bytes / (1024 * 1024))
+}
+
+function markTechnicalLabels(text: string, values: Readonly<Record<string, string>>): ReactNode[] {
+  return text.split(TECHNICAL_TOKEN_PATTERN).map((part, index) => {
+    const value = values[part]
+    return value === undefined ? (
+      part
+    ) : (
+      <span key={`${part}-${index}`} lang="en" dir="ltr">
+        {value}
+      </span>
+    )
+  })
+}
+
+/**
+ * Classify a document-tab selection as PDF or image and pin down its mime.
+ * Extension fallbacks cover File objects whose `type` is empty (some OS/browser
+ * combos). Returns null for anything the tab doesn't support.
+ */
+function detectDocMeta(file: File): { kind: AttachmentKind; mediaType: string } | null {
+  const lower = file.name.toLowerCase()
+  if (file.type === 'application/pdf' || lower.endsWith('.pdf')) {
+    return { kind: 'pdf', mediaType: 'application/pdf' }
+  }
+  if (ACCEPTED_IMAGE_TYPES.includes(file.type)) {
+    return { kind: 'image', mediaType: file.type }
+  }
+  const byName = imageMediaTypeFromName(file.name)
+  if (byName) return { kind: 'image', mediaType: byName }
+  return null
+}
+
+const BROWSER_ERROR_KEYS = Object.freeze({
+  auth: 'ai.error.auth',
+  rate: 'ai.error.rateLimit',
+  cors: 'ai.error.cors',
+  network: 'ai.error.network',
+  timeout: 'ai.error.timeout',
+  cancelled: 'ai.error.cancelled',
+  provider: 'ai.error.provider',
+  'invalid-response': 'ai.error.invalidResponse',
+  unknown: 'ai.error.unknown'
+} satisfies Record<ClassifiedError['code'], Key>)
+
+const DOCX_ERROR_KEYS = Object.freeze({
+  'not-zip': 'ai.attach.docxError.notZip',
+  'no-document-xml': 'ai.attach.docxError.missingDocument',
+  'archive-too-large': 'ai.attach.docxError.tooLarge',
+  'unsafe-archive': 'ai.attach.docxError.unsafe',
+  'encrypted-archive': 'ai.attach.docxError.encrypted',
+  'unsupported-archive': 'ai.attach.docxError.unsupported',
+  'malformed-archive': 'ai.attach.docxError.malformed',
+  aborted: 'ai.attach.docxError.cancelled'
+} satisfies Record<DocxErrorCode, Key>)
+
+class LocalizedPanelError extends Error {
+  readonly summary: string
+
+  constructor(summary: string) {
+    super('localized-panel-error')
+    this.name = 'LocalizedPanelError'
+    this.summary = summary
+  }
+}
+
+function classifiedErrorPresentation(error: ClassifiedError): PresentedError {
+  return {
+    summary: t(BROWSER_ERROR_KEYS[error.code]),
+    ...(error.technicalDetail ? { technicalDetail: error.technicalDetail } : {})
+  }
+}
+
+function docxErrorPresentation(error: unknown, fileName: string): PresentedError {
+  if (error instanceof DocxParseError) {
+    return {
+      summary: t(DOCX_ERROR_KEYS[error.code], { name: fileName }),
+      technicalDetail: error.code
+    }
+  }
+  const classified = classifyBrowserError(error)
+  return {
+    summary: t('ai.attach.docxError.unknown', { name: fileName }),
+    ...(classified.technicalDetail ? { technicalDetail: classified.technicalDetail } : {})
+  }
+}
+
+export function AiPanelLite({
+  folders,
+  onPlaceGenerated,
+  getWorkspaceGen,
+  onOpenSettings,
+  collapsed,
+  onToggle,
+  keysVersion,
+  mode,
+  processCatalog,
+  isKnownProcess,
+  resolveProcessName,
+  embedded = false,
+  onContinueInChat,
+  spreadsheet
+}: AiPanelLiteProps): JSX.Element {
+  const lang = useLang()
+  const initialSelection = useMemo(() => getProviderSelection(), [])
+  const [providerId, setProviderId] = useState<LiteProviderId | ''>(
+    initialSelection?.providerId ?? ''
+  )
+  const [modelId, setModelId] = useState<string>(initialSelection?.modelId ?? '')
+  const [genMode, setGenMode] = useState<GenMode>('description')
+  const [description, setDescription] = useState('')
+  // "From PDF / image" tab selection (PDF document or process-drawing image).
+  const [doc, setDoc] = useState<DocSelection | null>(null)
+  // Inline error when a picked file is neither a PDF nor an accepted image.
+  const [docTypeError, setDocTypeError] = useState<string | null>(null)
+  // Description tab's optional attached document (Word/PDF).
+  const [descAttach, setDescAttach] = useState<DescAttach | null>(null)
+  const [hint, setHint] = useState('')
+  const [name, setName] = useState('')
+  const [targetFolder, setTargetFolder] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [attemptStatus, setAttemptStatus] = useState<{
+    attempt: number
+    maxAttempts: number
+    retryInMs?: number
+  } | null>(null)
+  const [includeWorkspaceContext, setIncludeWorkspaceContext] = useState(false)
+  const [redactNames, setRedactNames] = useState(true)
+  const [requestConsent, setRequestConsent] = useState(false)
+  const [error, setError] = useState<PresentedError | null>(null)
+  const [offline, setOffline] = useState(false)
+  const [resultLabel, setResultLabel] = useState<string | null>(null)
+  const discardedGeneration = useSyncExternalStore(
+    subscribeGeneratedRecovery,
+    getGeneratedRecoverySnapshot,
+    getGeneratedRecoverySnapshot
+  )
+  // Summary of the links that survived placement ("label → process, …"); shown in
+  // the success box alongside the created-file label when any link was kept.
+  const [linkedSummary, setLinkedSummary] = useState<string | null>(null)
+  // A generation awaiting user verification of its uncertain links. Held until
+  // the LinkVerifyDialog resolves; placement happens only on explicit confirm.
+  const [pending, setPending] = useState<{
+    xml: string
+    confident: ProposedLink[]
+    unsure: ProposedLink[]
+    unmatched: ProposedLink[]
+    gen?: number
+    localizationSource: LocalizationSource
+  } | null>(null)
+  // OpenRouter balance + local usage-ledger display state.
+  const [credits, setCredits] = useState<OpenRouterCredits | null>(null)
+  const [creditsLoading, setCreditsLoading] = useState(false)
+  const [creditsError, setCreditsError] = useState<CreditsErrorKind | null>(null)
+  // Bumped after a generation / a usage reset so the (localStorage-backed) usage
+  // line re-reads. Only the setter is needed — the re-render re-runs getUsage.
+  const [, bumpUsage] = useState(0)
+  const [online, setOnline] = useState<boolean>(() =>
+    typeof navigator === 'undefined' ? true : navigator.onLine
+  )
+  const docInputRef = useRef<HTMLInputElement | null>(null)
+  const descInputRef = useRef<HTMLInputElement | null>(null)
+  const tabRefs = useRef<Record<GenMode, HTMLButtonElement | null>>({
+    description: null,
+    pdf: null,
+    spreadsheet: null
+  })
+  const requestAbortRef = useRef<AbortController | null>(null)
+  const attachmentAbortRef = useRef<AbortController | null>(null)
+
+  // Re-read key availability whenever Settings closes.
+  const configuredIds = useMemo(
+    () => LITE_PROVIDERS.filter((p) => hasKey(p.id)).map((p) => p.id),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [keysVersion]
+  )
+  useEffect(() => {
+    const goOnline = (): void => setOnline(true)
+    const goOffline = (): void => setOnline(false)
+    window.addEventListener('online', goOnline)
+    window.addEventListener('offline', goOffline)
+    return () => {
+      window.removeEventListener('online', goOnline)
+      window.removeEventListener('offline', goOffline)
+    }
+  }, [])
+
+  useEffect(
+    () => () => {
+      requestAbortRef.current?.abort()
+      attachmentAbortRef.current?.abort()
+    },
+    []
+  )
+
+  useEffect(
+    () =>
+      subscribeUsage(() => {
+        bumpUsage((value) => value + 1)
+      }),
+    []
+  )
+
+  // Keep every AI surface on the one explicit provider/model selection. There
+  // is deliberately no provider-order or "first key" fallback.
+  useEffect(() => {
+    return subscribeProviderSelection((selection) => {
+      setProviderId(selection?.providerId ?? '')
+      setModelId(selection?.modelId ?? '')
+    })
+  }, [])
+
+  // A placeholder spec lets the form render before an explicit choice, while
+  // canGenerate remains false until providerId is non-empty.
+  const effectiveProviderId: LiteProviderId = providerId || 'openrouter'
+  const providerSpec = getLiteProvider(effectiveProviderId)
+
+  useEffect(() => {
+    if (folders.length === 0) return
+    setTargetFolder((prev) => (folders.some((f) => f.relPath === prev) ? prev : folders[0].relPath))
+  }, [folders])
+
+  const keyPresent = Boolean(providerId) && hasKey(effectiveProviderId)
+  const effectiveModel = modelId.trim()
+  const modelCapabilities = useMemo(
+    () => getLiteModelCapabilities(effectiveProviderId, effectiveModel),
+    [effectiveModel, effectiveProviderId]
+  )
+  const enabledGenModes = useMemo<GenMode[]>(
+    () => [
+      'description',
+      ...(modelCapabilities.pdf ? (['pdf'] as const) : []),
+      ...(spreadsheet ? (['spreadsheet'] as const) : [])
+    ],
+    [modelCapabilities.pdf, spreadsheet]
+  )
+
+  useEffect(() => {
+    if (!enabledGenModes.includes(genMode)) setGenMode('description')
+  }, [enabledGenModes, genMode])
+
+  const handleTabKeyDown = useCallback(
+    (event: KeyboardEvent<HTMLButtonElement>, currentMode: GenMode): void => {
+      const currentIndex = enabledGenModes.indexOf(currentMode)
+      if (currentIndex < 0) return
+      let nextIndex: number | undefined
+      if (event.key === 'Home') {
+        nextIndex = 0
+      } else if (event.key === 'End') {
+        nextIndex = enabledGenModes.length - 1
+      } else if (event.key === 'ArrowRight' || event.key === 'ArrowLeft') {
+        const visualForward =
+          event.key === 'ArrowRight' ? (lang === 'ar' ? -1 : 1) : lang === 'ar' ? 1 : -1
+        nextIndex = (currentIndex + visualForward + enabledGenModes.length) % enabledGenModes.length
+      }
+      if (nextIndex === undefined) return
+      event.preventDefault()
+      const nextMode = enabledGenModes[nextIndex]
+      setGenMode(nextMode)
+      tabRefs.current[nextMode]?.focus()
+    },
+    [enabledGenModes, lang]
+  )
+
+  // Size gate for the document tab's selection (recomputed on file/provider
+  // change) — kind-aware: PDF behavior identical to before, image caps apply
+  // per provider.
+  const sizeGate = useMemo<AttachmentSizeCheck>(
+    () => (doc ? checkAttachmentSize(effectiveProviderId, doc.kind, doc.file.size) : { ok: true }),
+    [doc, effectiveProviderId]
+  )
+  // Attachment support is checked against the exact provider, reviewed model,
+  // kind, and media type. This keeps undocumented formats (notably Gemini GIF)
+  // fail-closed before encoding/network while still letting the user switch to
+  // a route that has verified support for the selected file.
+  const docImageUnsupported =
+    doc?.kind === 'image' &&
+    !isAttachmentMediaTypeSupported(effectiveProviderId, effectiveModel, doc.kind, doc.mediaType)
+  const docPdfUnsupported =
+    doc?.kind === 'pdf' &&
+    !isAttachmentMediaTypeSupported(effectiveProviderId, effectiveModel, doc.kind, doc.mediaType)
+
+  // Description-tab PDF attachment gates — same size gate as the document tab
+  // (spec'd identical), plus the provider-supports-PDF check.
+  const descPdfGate = useMemo<AttachmentSizeCheck>(
+    () =>
+      descAttach?.kind === 'pdf'
+        ? checkAttachmentSize(effectiveProviderId, 'pdf', descAttach.file.size)
+        : { ok: true },
+    [descAttach, effectiveProviderId]
+  )
+  const descPdfUnsupported =
+    descAttach?.kind === 'pdf' &&
+    !isAttachmentMediaTypeSupported(effectiveProviderId, effectiveModel, 'pdf', 'application/pdf')
+
+  // The effective description-tab input: typed text, extracted .docx text, or a
+  // natively-attached PDF — any one of them suffices (but not none).
+  const descDocText = descAttach?.kind === 'docx' && descAttach.text ? descAttach.text : null
+  const hasInput =
+    genMode === 'description'
+      ? Boolean(description.trim()) || Boolean(descDocText) || descAttach?.kind === 'pdf'
+      : genMode === 'pdf'
+        ? Boolean(doc)
+        : false
+  // One canonical copy of the user-provided text that will leave the browser.
+  // The preview, sensitivity disclosure, retrieval query, and request execution
+  // all consume this value so their whitespace/separators cannot drift.
+  const outboundDescription = useMemo(() => {
+    if (genMode === 'pdf') return hint.trim()
+    const typed = description.trim()
+    if (descAttach?.kind === 'docx' && descAttach.text) {
+      const attachedText = `--- Attached document: ${descAttach.file.name} ---\n${descAttach.text}`
+      return [typed, attachedText].filter(Boolean).join('\n\n')
+    }
+    return typed
+  }, [descAttach, description, genMode, hint])
+  const nativeAttachmentName =
+    genMode === 'pdf'
+      ? (doc?.file.name ?? null)
+      : descAttach?.kind === 'pdf'
+        ? descAttach.file.name
+        : null
+  const contextQuery = outboundDescription
+  const relevantProcesses = useMemo(
+    () => selectRelevantProcesses(contextQuery, processCatalog),
+    [contextQuery, processCatalog]
+  )
+  const outboundProcessCatalog = useMemo(() => {
+    if (!includeWorkspaceContext) return []
+    return redactNames ? redactProcessNames(relevantProcesses) : relevantProcesses
+  }, [includeWorkspaceContext, redactNames, relevantProcesses])
+  const sensitivity = useMemo(() => {
+    const exactDisclosedText = nativeAttachmentName
+      ? `${outboundDescription}\n${nativeAttachmentName}`
+      : outboundDescription
+    return inspectContextSensitivity(exactDisclosedText, outboundProcessCatalog)
+  }, [nativeAttachmentName, outboundDescription, outboundProcessCatalog])
+  const hasLargeAttachment = genMode === 'pdf' || descAttach?.kind === 'pdf'
+  // Three semantic generation attempts, each with up to three transport tries.
+  // A large attachment is sent once (1), then any two repair turns are text-only
+  // and may each use three transport attempts: 1 + 3 + 3 = 7.
+  const estimatedRequestCount = estimateGenerationRequestCount(hasLargeAttachment)
+  const canGenerate =
+    !busy &&
+    genMode !== 'spreadsheet' &&
+    Boolean(providerId) &&
+    keyPresent &&
+    Boolean(effectiveModel) &&
+    hasInput &&
+    requestConsent &&
+    (genMode === 'description'
+      ? !descPdfUnsupported && descPdfGate.ok
+      : sizeGate.ok && !docImageUnsupported && !docPdfUnsupported)
+
+  useEffect(() => {
+    setRequestConsent(false)
+  }, [
+    providerId,
+    modelId,
+    genMode,
+    description,
+    hint,
+    doc,
+    descAttach,
+    includeWorkspaceContext,
+    redactNames,
+    processCatalog
+  ])
+
+  // OpenRouter balance lookup — only when the current provider is OpenRouter and
+  // a key is stored (keyless renders show nothing and issue no request). Fetches
+  // on mount, on keysVersion change, on switching to OpenRouter, and after each
+  // generation (see below). Errors surface as a stable CreditsErrorKind.
+  const refreshCredits = useCallback(async () => {
+    if (providerId !== 'openrouter') return
+    const key = getKey('openrouter')
+    if (!key) {
+      setCredits(null)
+      setCreditsError(null)
+      setCreditsLoading(false)
+      return
+    }
+    setCreditsLoading(true)
+    setCreditsError(null)
+    try {
+      const c = await fetchOpenRouterCredits(key)
+      setCredits(c)
+    } catch (err) {
+      setCreditsError(err instanceof CreditsError ? err.kind : 'unexpected')
+      setCredits(null)
+    } finally {
+      setCreditsLoading(false)
+    }
+  }, [providerId])
+
+  // Document-tab file pick: classify as PDF vs image; anything else is rejected
+  // inline (and the input cleared so re-picking the same file re-fires change).
+  const handleDocChange = useCallback((e: ChangeEvent<HTMLInputElement>) => {
+    const f = e.target.files?.[0] ?? null
+    setError(null)
+    setResultLabel(null)
+    setDocTypeError(null)
+    if (!f) {
+      setDoc(null)
+      return
+    }
+    const meta = detectDocMeta(f)
+    if (!meta) {
+      setDoc(null)
+      setDocTypeError(t('ai.image.unsupportedType'))
+      if (docInputRef.current) docInputRef.current.value = ''
+      return
+    }
+    setDoc({ file: f, kind: meta.kind, mediaType: meta.mediaType })
+  }, [])
+
+  // Description-document pick. A .pdf is kept as a file (sent natively at
+  // generate time); everything else is treated as a .docx and its text is
+  // extracted RIGHT NOW — so corrupt/empty files surface immediately with a
+  // per-file message instead of failing later inside generation.
+  const handleDescFile = useCallback(async (file: File | null): Promise<void> => {
+    attachmentAbortRef.current?.abort()
+    setError(null)
+    setResultLabel(null)
+    if (!file) {
+      setDescAttach(null)
+      return
+    }
+    const lower = file.name.toLowerCase()
+    if (file.type === 'application/pdf' || lower.endsWith('.pdf')) {
+      setDescAttach({ file, kind: 'pdf', text: null, note: null, error: null })
+      return
+    }
+    const controller = new AbortController()
+    attachmentAbortRef.current = controller
+    try {
+      const text = await parseDocxFileInWorker(file, {
+        signal: controller.signal
+      })
+      if (controller.signal.aborted) return
+      if (!text.trim()) {
+        setDescAttach({
+          file,
+          kind: 'docx',
+          text: null,
+          note: null,
+          error: { summary: t('ai.attach.docxEmpty', { name: file.name }) }
+        })
+        return
+      }
+      setDescAttach({
+        file,
+        kind: 'docx',
+        text,
+        note: t('ai.attach.extracted', { name: file.name, chars: text.length }),
+        error: null
+      })
+    } catch (err) {
+      if (controller.signal.aborted) return
+      setDescAttach({
+        file,
+        kind: 'docx',
+        text: null,
+        note: null,
+        error: docxErrorPresentation(err, file.name)
+      })
+    } finally {
+      if (attachmentAbortRef.current === controller) {
+        attachmentAbortRef.current = null
+      }
+    }
+  }, [])
+
+  const removeDescAttach = useCallback(() => {
+    attachmentAbortRef.current?.abort()
+    attachmentAbortRef.current = null
+    setDescAttach(null)
+    if (descInputRef.current) descInputRef.current.value = ''
+  }, [])
+
+  // Shared placement + reporting for both the immediate path and the post-verify
+  // path. `survived` is the set of links whose calledElement was kept, used to
+  // build the linked-summary line. onPlaceGenerated may throw (a write failure),
+  // so classify here too.
+  const reportDiscardedGeneration = useCallback(
+    (xml: string, reason: GeneratedPlacementDiscardReason): void => {
+      setError(null)
+      setOffline(false)
+      setResultLabel(null)
+      setLinkedSummary(null)
+      retainGeneratedRecovery(xml, name.trim(), reason)
+    },
+    [name]
+  )
+
+  const placeAndReport = useCallback(
+    async (
+      finalXml: string,
+      survived: ProposedLink[],
+      gen: number | undefined,
+      localizationSource: LocalizationSource,
+      controller: AbortController
+    ): Promise<void> => {
+      const isCurrentRun = (): boolean => requestAbortRef.current === controller
+      if (controller.signal.aborted) {
+        if (isCurrentRun()) reportDiscardedGeneration(finalXml, 'cancelled')
+        return
+      }
+      try {
+        const placed = await onPlaceGenerated(finalXml, {
+          name: name.trim(),
+          targetFolder,
+          gen,
+          localizationSource,
+          signal: controller.signal
+        })
+        if (!isCurrentRun()) return
+        if (placed.status === 'discarded') {
+          reportDiscardedGeneration(finalXml, placed.reason)
+          return
+        }
+        clearGeneratedRecovery()
+        setResultLabel(
+          placed.status === 'persisted'
+            ? placed.label
+            : t('ai.openedInMemory', { label: placed.label })
+        )
+        setLinkedSummary(null)
+        if (survived.length > 0) {
+          const list = survived
+            .map((l) => `${l.label} → ${resolveProcessName(l.calledProcess)}`)
+            .join(', ')
+          setLinkedSummary(t('ai.linked.summary', { count: survived.length, list }))
+        }
+      } catch (err) {
+        if (!isCurrentRun()) return
+        if (controller.signal.aborted) {
+          reportDiscardedGeneration(finalXml, 'cancelled')
+          return
+        }
+        const classified = classifyBrowserError(err)
+        setError(classifiedErrorPresentation(classified))
+        setOffline(classified.offline || (typeof navigator !== 'undefined' && !navigator.onLine))
+      }
+    },
+    [name, targetFolder, onPlaceGenerated, reportDiscardedGeneration, resolveProcessName]
+  )
+
+  const handleGenerate = useCallback(async () => {
+    const controller = new AbortController()
+    requestAbortRef.current?.abort()
+    requestAbortRef.current = controller
+    setBusy(true)
+    setAttemptStatus(null)
+    setError(null)
+    setOffline(false)
+    setResultLabel(null)
+    setLinkedSummary(null)
+    // Capture the workspace generation at generation START so App can refuse the
+    // placement if the user switches folders during the (slow) generation (ORIG-1b).
+    const genAtStart = getWorkspaceGen?.()
+    const localizationSource = localizationSourceForGeneration({
+      mode: genMode,
+      documentKind: doc?.kind,
+      descriptionAttachmentKind: descAttach?.kind
+    })
+    try {
+      if (!providerId) throw new LocalizedPanelError(t('ai.error.selectProvider'))
+      const apiKey = getKey(providerId)
+      if (!apiKey) throw new LocalizedPanelError(t('ai.error.noApiKey'))
+      const common = {
+        providerId,
+        modelId: effectiveModel,
+        apiKey,
+        processCatalog: outboundProcessCatalog,
+        signal: controller.signal,
+        onAttempt: setAttemptStatus
+      }
+      let res: GenerateOutput
+      if (genMode === 'pdf') {
+        // Document tab: PDF or image, sent natively with the hint.
+        if (!doc) throw new LocalizedPanelError(t('ai.error.chooseNoPdf'))
+        const gate = checkAttachmentSize(providerId, doc.kind, doc.file.size)
+        if (!gate.ok) throw new LocalizedPanelError(gate.message ?? t('ai.error.unknown'))
+        if (!isAttachmentMediaTypeSupported(providerId, effectiveModel, doc.kind, doc.mediaType)) {
+          throw new LocalizedPanelError(t('ai.attach.unsupportedProvider'))
+        }
+        const base64 = await fileToBase64(doc.file, controller.signal)
+        res = await generateDiagramXmlFromDocument({
+          ...common,
+          description: '',
+          attachment: {
+            kind: doc.kind,
+            base64,
+            mediaType: doc.mediaType,
+            fileName: doc.file.name,
+            sizeBytes: doc.file.size
+          },
+          hint: outboundDescription
+        })
+      } else if (descAttach?.kind === 'pdf') {
+        // Description tab with a PDF attached: the PDF goes natively through the
+        // existing attachment mechanism; the TYPED DESCRIPTION acts as the hint
+        // (the pdf instruction frames it as "which/what process to model").
+        if (!isAttachmentMediaTypeSupported(providerId, effectiveModel, 'pdf', 'application/pdf')) {
+          throw new LocalizedPanelError(t('ai.attach.unsupportedProvider'))
+        }
+        const gate = checkAttachmentSize(providerId, 'pdf', descAttach.file.size)
+        if (!gate.ok) throw new LocalizedPanelError(gate.message ?? t('ai.error.unknown'))
+        const base64 = await fileToBase64(descAttach.file, controller.signal)
+        res = await generateDiagramXmlFromDocument({
+          ...common,
+          description: '',
+          attachment: {
+            kind: 'pdf',
+            base64,
+            mediaType: 'application/pdf',
+            fileName: descAttach.file.name,
+            sizeBytes: descAttach.file.size
+          },
+          hint: outboundDescription
+        })
+      } else {
+        // Plain text and extracted DOCX content use the same canonical string
+        // rendered in the external-request preview above.
+        res = await generateDiagramXml({ ...common, description: outboundDescription })
+      }
+      // The generation call recorded usage; remote balance lookup remains an
+      // explicit action on the credits line.
+      bumpUsage((v) => v + 1)
+      if (controller.signal.aborted) {
+        // Some provider/test adapters do not reject when their signal aborts.
+        // Never let such a late result open Link Review or reach placement.
+        if (requestAbortRef.current === controller) {
+          reportDiscardedGeneration(res.xml, 'cancelled')
+        }
+        return
+      }
+      const { confident, unsure, unmatched } = partitionLinks(res.links, isKnownProcess)
+      if (unsure.length + unmatched.length === 0) {
+        // Nothing to vet — place with the XML unchanged; confident links stay.
+        await placeAndReport(res.xml, confident, genAtStart, localizationSource, controller)
+      } else {
+        // Hand the uncertain/unmatched links to the verification dialog; the
+        // placement waits for the user's decision.
+        setPending({
+          xml: res.xml,
+          confident,
+          unsure,
+          unmatched,
+          gen: genAtStart,
+          localizationSource
+        })
+      }
+    } catch (err) {
+      if (err instanceof LocalizedPanelError) {
+        setError({ summary: err.summary })
+      } else {
+        const classified = classifyBrowserError(err)
+        setError(classifiedErrorPresentation(classified))
+        setOffline(classified.offline || (typeof navigator !== 'undefined' && !navigator.onLine))
+      }
+    } finally {
+      if (requestAbortRef.current === controller) requestAbortRef.current = null
+      setAttemptStatus(null)
+      setRequestConsent(false)
+      setBusy(false)
+    }
+  }, [
+    providerId,
+    effectiveModel,
+    genMode,
+    doc,
+    descAttach,
+    outboundDescription,
+    outboundProcessCatalog,
+    isKnownProcess,
+    placeAndReport,
+    reportDiscardedGeneration,
+    getWorkspaceGen
+  ])
+
+  // Verify-dialog confirm: keep confident links + the user-accepted unsure ones,
+  // strip everything else (unaccepted unsure + all unmatched).
+  const handleVerifyConfirm = useCallback(
+    async (accepted: Set<string>): Promise<void> => {
+      const p = pending
+      if (!p) return
+      const controller = new AbortController()
+      requestAbortRef.current?.abort()
+      requestAbortRef.current = controller
+      setPending(null)
+      setBusy(true)
+      try {
+        const keepIds = new Set<string>([...accepted, ...p.confident.map((l) => l.elementId)])
+        const finalXml = applyLinkDecisions(p.xml, [...p.unsure, ...p.unmatched], keepIds)
+        const survived = [...p.confident, ...p.unsure.filter((l) => accepted.has(l.elementId))]
+        await placeAndReport(finalXml, survived, p.gen, p.localizationSource, controller)
+      } finally {
+        if (requestAbortRef.current === controller) requestAbortRef.current = null
+        setBusy(false)
+      }
+    },
+    [pending, placeAndReport]
+  )
+
+  // Verify-dialog cancel is non-mutating: discard the pending proposal without
+  // stripping links or placing a diagram. Retain the exact raw XML so the user
+  // can still recover/download work they chose not to commit.
+  const handleVerifyCancel = useCallback((): void => {
+    const p = pending
+    if (!p) return
+    setPending(null)
+    reportDiscardedGeneration(p.xml, 'cancelled')
+  }, [pending, reportDiscardedGeneration])
+
+  const noKeysAtAll = configuredIds.length === 0
+
+  // Local usage ledger for every provider. Re-read every render; the shared
+  // usage event makes generation, assistant, interview, and translation calls
+  // refresh this surface even when the request originated elsewhere.
+  const currentUsage = keyPresent && providerId ? getUsageSnapshot(providerId) : null
+
+  // The balance/usage status line shown directly under the provider selector.
+  const balanceLine =
+    keyPresent && providerId === 'openrouter' ? (
+      <>
+        <CreditsLine
+          state={
+            creditsLoading
+              ? { kind: 'loading' }
+              : creditsError
+                ? { kind: 'error', errorKind: creditsError }
+                : credits
+                  ? { kind: 'credits', remaining: credits.remaining }
+                  : { kind: 'idle' }
+          }
+          onRefresh={() => void refreshCredits()}
+        />
+        <CreditsLine
+          state={{
+            kind: 'usage',
+            session: currentUsage!.session,
+            allTime: currentUsage!.allTime
+          }}
+          onReset={() => resetUsage(providerId)}
+        />
+      </>
+    ) : keyPresent && (providerId === 'anthropic' || providerId === 'gemini') ? (
+      <CreditsLine
+        state={{
+          kind: 'usage',
+          session: currentUsage!.session,
+          allTime: currentUsage!.allTime
+        }}
+        onReset={() => {
+          resetUsage(providerId)
+          bumpUsage((v) => v + 1)
+        }}
+      />
+    ) : null
+
+  // The generation form itself — shared verbatim between the embedded (left
+  // sidebar) render and the legacy (right-column) render; only the surrounding
+  // chrome differs, so the whole body lives in one place.
+  const body = (
+    <div style={{ padding: '0.8rem', display: 'flex', flexDirection: 'column', gap: 12 }}>
+      {genMode !== 'spreadsheet' && !online && (
+        <div role="status" style={warnBox}>
+          {t('ai.offlineWarning')}
+        </div>
+      )}
+
+      {genMode !== 'spreadsheet' && noKeysAtAll && (
+        <div style={infoBox}>
+          {t('ai.noKeysAtAll.note').split('{link}')[0]}
+          <button type="button" onClick={onOpenSettings} style={linkBtn}>
+            {t('ai.noKeysAtAll.link')}
+          </button>
+          {t('ai.noKeysAtAll.note').split('{link}')[1]}
+        </div>
+      )}
+
+      {/* Generation mode: description vs PDF/image document */}
+      <div
+        role="tablist"
+        aria-label={t('ai.tablist.aria')}
+        aria-orientation="horizontal"
+        style={segmentWrap}
+      >
+        <button
+          ref={(node) => {
+            tabRefs.current.description = node
+          }}
+          id="orbitpm-ai-description-tab"
+          type="button"
+          role="tab"
+          aria-selected={genMode === 'description'}
+          aria-controls="orbitpm-ai-generation-panel"
+          tabIndex={genMode === 'description' ? 0 : -1}
+          onClick={() => setGenMode('description')}
+          onKeyDown={(event) => handleTabKeyDown(event, 'description')}
+          style={segmentBtn(genMode === 'description')}
+        >
+          {t('ai.tab.description')}
+        </button>
+        <button
+          ref={(node) => {
+            tabRefs.current.pdf = node
+          }}
+          id="orbitpm-ai-document-tab"
+          type="button"
+          role="tab"
+          aria-selected={genMode === 'pdf'}
+          aria-controls="orbitpm-ai-generation-panel"
+          tabIndex={genMode === 'pdf' ? 0 : -1}
+          onClick={() => setGenMode('pdf')}
+          onKeyDown={(event) => handleTabKeyDown(event, 'pdf')}
+          disabled={!modelCapabilities.pdf}
+          title={
+            modelCapabilities.pdf
+              ? t('ai.tab.pdf.title.supported')
+              : t('ai.tab.pdf.title.unsupported')
+          }
+          style={segmentBtn(genMode === 'pdf')}
+        >
+          {t('ai.tab.pdf')}
+        </button>
+        {spreadsheet && (
+          <button
+            ref={(node) => {
+              tabRefs.current.spreadsheet = node
+            }}
+            id="orbitpm-ai-spreadsheet-tab"
+            type="button"
+            role="tab"
+            aria-selected={genMode === 'spreadsheet'}
+            aria-controls="orbitpm-ai-spreadsheet-panel"
+            tabIndex={genMode === 'spreadsheet' ? 0 : -1}
+            onClick={() => setGenMode('spreadsheet')}
+            onKeyDown={(event) => handleTabKeyDown(event, 'spreadsheet')}
+            style={segmentBtn(genMode === 'spreadsheet')}
+          >
+            {t('spreadsheet.tab')}
+          </button>
+        )}
+      </div>
+
+      <div
+        id="orbitpm-ai-generation-panel"
+        role="tabpanel"
+        aria-labelledby={
+          genMode === 'pdf' ? 'orbitpm-ai-document-tab' : 'orbitpm-ai-description-tab'
+        }
+        hidden={genMode === 'spreadsheet'}
+      >
+        <>
+          <label style={labelStyle}>
+            <span style={labelText}>{t('ai.provider.label')}</span>
+            <select
+              value={providerId}
+              lang={providerId ? 'en' : lang}
+              dir={providerId ? 'ltr' : undefined}
+              onChange={(e) => {
+                const next = e.target.value as LiteProviderId
+                const nextModel = defaultLiteModelId(next)
+                setProviderId(next)
+                setModelId(nextModel)
+                const result = setProviderSelection(next, nextModel)
+                if (!result.ok) {
+                  setError({
+                    summary: t('settings.storageError.providerSelection', {
+                      error: keyStorageErrorMessage(result.code)
+                    }),
+                    technicalDetail: result.error
+                  })
+                }
+              }}
+              style={inputStyle}
+            >
+              <option value="">{t('ai.provider.select')}</option>
+              {LITE_PROVIDERS.map((p) => (
+                <option key={p.id} value={p.id} lang="en" dir="ltr">
+                  {p.label}
+                  {hasKey(p.id) ? ' ✓' : ''}
+                </option>
+              ))}
+            </select>
+          </label>
+
+          {/* Provider balance: OpenRouter remaining credits, or the local session
+            usage ledger for Anthropic/Gemini (no balance API). */}
+          {balanceLine}
+
+          {/* Model selector: free-text (with suggestions) for OpenRouter/Gemini,
+            and a fixed dropdown for Anthropic. */}
+          {!providerId ? (
+            <div style={infoBox} role="note">
+              {t('ai.provider.selectHint')}
+            </div>
+          ) : providerSpec.allowCustomModel ? (
+            <label style={labelStyle}>
+              <span style={labelText}>{t('ai.model.label')}</span>
+              <input
+                type="text"
+                list={`models-${providerId}`}
+                value={modelId}
+                lang="en"
+                dir="ltr"
+                onChange={(e) => {
+                  const nextModel = e.target.value
+                  setModelId(nextModel)
+                  if (nextModel.trim()) {
+                    const result = setProviderSelection(providerId, nextModel)
+                    if (!result.ok) {
+                      setError({
+                        summary: t('settings.storageError.providerSelection', {
+                          error: keyStorageErrorMessage(result.code)
+                        }),
+                        technicalDetail: result.error
+                      })
+                    }
+                  }
+                }}
+                placeholder={t('ai.model.label')}
+                style={inputStyle}
+              />
+              <datalist id={`models-${providerId}`}>
+                {providerSpec.models.map((m) => (
+                  <option key={m.id} value={m.id} lang="en" dir="ltr">
+                    {m.label}
+                  </option>
+                ))}
+              </datalist>
+            </label>
+          ) : (
+            <label style={labelStyle}>
+              <span style={labelText}>{t('ai.model.label')}</span>
+              <select
+                value={modelId}
+                lang="en"
+                dir="ltr"
+                onChange={(e) => {
+                  const nextModel = e.target.value
+                  setModelId(nextModel)
+                  const result = setProviderSelection(providerId, nextModel)
+                  if (!result.ok) {
+                    setError({
+                      summary: t('settings.storageError.providerSelection', {
+                        error: keyStorageErrorMessage(result.code)
+                      }),
+                      technicalDetail: result.error
+                    })
+                  }
+                }}
+                style={inputStyle}
+              >
+                {providerSpec.models.map((m) => (
+                  <option key={m.id} value={m.id} lang="en" dir="ltr">
+                    {m.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+          )}
+
+          {genMode === 'description' ? (
+            <>
+              <label style={labelStyle}>
+                <span style={labelText}>{t('ai.description.label')}</span>
+                <textarea
+                  value={description}
+                  onChange={(e) => setDescription(e.target.value)}
+                  placeholder={t('ai.description.placeholder')}
+                  rows={6}
+                  dir="auto"
+                  style={{ ...inputStyle, resize: 'vertical', minHeight: 96 }}
+                />
+              </label>
+
+              {/* Optional "Description document" (.docx text is extracted here in
+                the browser; a .pdf goes natively to the provider at generate
+                time with the typed text as the hint). */}
+              <label style={labelStyle}>
+                <span style={labelText}>
+                  {t('ai.attach.label')}{' '}
+                  <span style={{ opacity: 0.7 }}>{t('ai.pdfHint.optional')}</span>
+                </span>
+                <input
+                  ref={descInputRef}
+                  type="file"
+                  accept={DESC_DOC_ACCEPT}
+                  onChange={(e) => void handleDescFile(e.target.files?.[0] ?? null)}
+                  style={{ fontSize: 12.5 }}
+                />
+              </label>
+              <div style={{ fontSize: 11, color: 'var(--orbitpm-muted)' }}>
+                {t('ai.attach.hint')}
+              </div>
+              {descAttach && (
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12 }}>
+                  <span style={{ color: 'var(--orbitpm-muted)', overflowWrap: 'anywhere' }}>
+                    <span dir="auto">{descAttach.file.name}</span> ·{' '}
+                    <span lang={lang}>{formatMegabytes(descAttach.file.size, lang)}</span>{' '}
+                    <span lang="en" dir="ltr">
+                      MB
+                    </span>
+                  </span>
+                  <button
+                    type="button"
+                    onClick={removeDescAttach}
+                    title={t('ai.attach.remove')}
+                    style={removeBtn}
+                  >
+                    {t('ai.attach.remove')}
+                  </button>
+                </div>
+              )}
+              {descAttach?.note && (
+                <div role="status" style={{ fontSize: 12, color: 'var(--orbitpm-muted)' }}>
+                  {descAttach.note}
+                </div>
+              )}
+              {descAttach?.error && (
+                <div role="alert" style={{ fontSize: 12, color: '#dc2626' }}>
+                  <span>{descAttach.error.summary}</span>
+                  <TechnicalErrorDetail detail={descAttach.error.technicalDetail} />
+                </div>
+              )}
+              {/* PDF-specific gates: provider must support native PDF, and the
+                size gate is identical to the document tab's. */}
+              {descPdfUnsupported && (
+                <div role="alert" style={{ fontSize: 12, color: '#dc2626' }}>
+                  {t('ai.attach.unsupportedProvider')}
+                </div>
+              )}
+              {descAttach?.kind === 'pdf' && !descPdfUnsupported && !descPdfGate.ok && (
+                <div role="alert" style={{ fontSize: 12, color: '#dc2626' }}>
+                  {descPdfGate.message}
+                </div>
+              )}
+              {descAttach?.kind === 'pdf' &&
+                !descPdfUnsupported &&
+                descPdfGate.ok &&
+                descPdfGate.warning && (
+                  <div role="status" style={warnBox}>
+                    {descPdfGate.warning}
+                  </div>
+                )}
+            </>
+          ) : (
+            <>
+              <label style={labelStyle}>
+                <span style={labelText}>{t('ai.pdfDocument.label')}</span>
+                <input
+                  ref={docInputRef}
+                  type="file"
+                  accept={DOC_TAB_ACCEPT}
+                  onChange={handleDocChange}
+                  style={{ fontSize: 12.5 }}
+                />
+              </label>
+              {docTypeError && (
+                <div role="alert" style={{ fontSize: 12, color: '#dc2626' }}>
+                  {docTypeError}
+                </div>
+              )}
+              {doc && (
+                <div
+                  style={{ fontSize: 12, color: sizeGate.ok ? 'var(--orbitpm-muted)' : '#dc2626' }}
+                >
+                  <span dir="auto">{doc.file.name}</span> ·{' '}
+                  <span lang={lang}>{formatMegabytes(doc.file.size, lang)}</span>{' '}
+                  <span lang="en" dir="ltr">
+                    MB
+                  </span>
+                  {!sizeGate.ok && sizeGate.message ? ` — ${sizeGate.message}` : ''}
+                </div>
+              )}
+              {doc && sizeGate.ok && sizeGate.warning && (
+                <div role="status" style={warnBox}>
+                  {sizeGate.warning}
+                </div>
+              )}
+              {(docImageUnsupported || docPdfUnsupported) && (
+                <div role="alert" style={{ fontSize: 12, color: '#dc2626' }}>
+                  {t('ai.attach.unsupportedProvider')}
+                </div>
+              )}
+              <div style={{ fontSize: 11, color: 'var(--orbitpm-muted)' }}>
+                {t('ai.pdf.engineNote')}
+              </div>
+              <div style={{ fontSize: 11, color: 'var(--orbitpm-muted)' }}>
+                {t('ai.pdf.memoryNote')}
+              </div>
+              <label style={labelStyle}>
+                <span style={labelText}>
+                  {t('ai.pdfHint.label')}{' '}
+                  <span style={{ opacity: 0.7 }}>{t('ai.pdfHint.optional')}</span>
+                </span>
+                <textarea
+                  value={hint}
+                  onChange={(e) => setHint(e.target.value)}
+                  placeholder={t('ai.pdfHint.placeholder')}
+                  rows={2}
+                  dir="auto"
+                  style={{ ...inputStyle, resize: 'vertical' }}
+                />
+              </label>
+            </>
+          )}
+
+          {mode === 'directory' && folders.length > 0 && (
+            <label style={labelStyle}>
+              <span style={labelText}>{t('ai.targetFolder.label')}</span>
+              <select
+                value={targetFolder}
+                onChange={(e) => setTargetFolder(e.target.value)}
+                style={inputStyle}
+              >
+                {folders.map((f) => (
+                  <option key={f.relPath} value={f.relPath}>
+                    {f.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+          )}
+
+          <label style={labelStyle}>
+            <span style={labelText}>{t('ai.name.label')}</span>
+            <input
+              type="text"
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              placeholder={t('ai.name.placeholder')}
+              dir="auto"
+              style={inputStyle}
+            />
+          </label>
+
+          <section
+            aria-label={t('ai.privacy.preview.title')}
+            style={{
+              display: 'flex',
+              flexDirection: 'column',
+              gap: 8,
+              padding: 10,
+              border: '1px solid var(--orbitpm-border)',
+              borderRadius: 8
+            }}
+          >
+            <strong style={{ fontSize: 13 }}>{t('ai.privacy.preview.title')}</strong>
+            <div style={{ fontSize: 12 }}>
+              {markTechnicalLabels(
+                t('ai.privacy.providerModel', {
+                  provider: providerId ? TECHNICAL_PROVIDER_TOKEN : t('ai.provider.select'),
+                  model: effectiveModel ? TECHNICAL_MODEL_TOKEN : '—'
+                }),
+                {
+                  [TECHNICAL_PROVIDER_TOKEN]: providerSpec.label,
+                  [TECHNICAL_MODEL_TOKEN]: effectiveModel
+                }
+              )}
+            </div>
+            {nativeAttachmentName && (
+              <div style={{ fontSize: 12, overflowWrap: 'anywhere' }}>
+                {t('ai.privacy.attachment', {
+                  name: nativeAttachmentName,
+                  bytes: genMode === 'pdf' ? (doc?.file.size ?? 0) : (descAttach?.file.size ?? 0)
+                })}
+              </div>
+            )}
+            {(!nativeAttachmentName || outboundDescription) && (
+              <label style={labelStyle}>
+                <span style={labelText}>{t('ai.privacy.description')}</span>
+                <textarea
+                  readOnly
+                  value={outboundDescription}
+                  rows={3}
+                  dir="auto"
+                  style={{ ...inputStyle, resize: 'vertical' }}
+                />
+              </label>
+            )}
+            <label style={{ display: 'flex', gap: 8, alignItems: 'flex-start' }}>
+              <input
+                type="checkbox"
+                checked={includeWorkspaceContext}
+                onChange={(event) => setIncludeWorkspaceContext(event.target.checked)}
+              />
+              <span style={{ fontSize: 12 }}>{t('ai.privacy.includeWorkspace')}</span>
+            </label>
+            <label
+              style={{
+                display: 'flex',
+                gap: 8,
+                alignItems: 'flex-start',
+                opacity: includeWorkspaceContext ? 1 : 0.65
+              }}
+            >
+              <input
+                type="checkbox"
+                checked={redactNames}
+                disabled={!includeWorkspaceContext}
+                onChange={(event) => setRedactNames(event.target.checked)}
+              />
+              <span style={{ fontSize: 12 }}>{t('ai.privacy.redactNames')}</span>
+            </label>
+            <div style={{ fontSize: 12 }}>
+              {t('ai.privacy.workspaceCount', {
+                included: outboundProcessCatalog.length,
+                relevant: relevantProcesses.length,
+                total: processCatalog.length
+              })}
+            </div>
+            {outboundProcessCatalog.length > 0 && (
+              <ul style={{ margin: 0, paddingInlineStart: 20, fontSize: 11.5 }}>
+                {outboundProcessCatalog.map((process) => (
+                  <li key={process.id}>
+                    <span dir="auto">{process.name}</span>{' '}
+                    <code lang="en" dir="ltr">
+                      {process.id}
+                    </code>
+                  </li>
+                ))}
+              </ul>
+            )}
+            <div style={{ fontSize: 12 }}>
+              {t('ai.privacy.sensitivity', {
+                names: sensitivity.containsNames ? t('common.yes') : t('common.no'),
+                sensitive: sensitivity.containsSensitiveMetadata ? t('common.yes') : t('common.no')
+              })}
+            </div>
+            <div style={{ fontSize: 12 }}>
+              {t('ai.privacy.requestCount', { count: estimatedRequestCount })}
+            </div>
+            <label style={{ display: 'flex', gap: 8, alignItems: 'flex-start' }}>
+              <input
+                type="checkbox"
+                checked={requestConsent}
+                onChange={(event) => setRequestConsent(event.target.checked)}
+              />
+              <strong style={{ fontSize: 12 }}>{t('ai.privacy.consent')}</strong>
+            </label>
+          </section>
+
+          <button
+            type="button"
+            onClick={() => void handleGenerate()}
+            disabled={!canGenerate}
+            style={{
+              ...ghostBtn,
+              background: canGenerate ? 'var(--orbitpm-accent)' : 'rgba(127,127,127,0.25)',
+              color: canGenerate ? '#fff' : 'inherit',
+              borderColor: canGenerate ? 'var(--orbitpm-accent)' : 'rgba(127,127,127,0.35)',
+              cursor: canGenerate ? 'pointer' : 'not-allowed',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              gap: 8
+            }}
+          >
+            {busy && <Spinner />}
+            {busy
+              ? t('ai.generating')
+              : genMode === 'pdf'
+                ? t('ai.generateFromPdf')
+                : t('ai.generate')}
+          </button>
+
+          {busy && (
+            <button type="button" onClick={() => requestAbortRef.current?.abort()} style={ghostBtn}>
+              {t('ai.cancel')}
+            </button>
+          )}
+
+          {attemptStatus && (
+            <div role="status" style={{ fontSize: 12, color: 'var(--orbitpm-muted)' }}>
+              {attemptStatus.retryInMs === undefined
+                ? t('ai.retry.attempt', {
+                    attempt: attemptStatus.attempt,
+                    max: attemptStatus.maxAttempts
+                  })
+                : t('ai.retry.waiting', {
+                    attempt: attemptStatus.attempt,
+                    max: attemptStatus.maxAttempts,
+                    seconds: Math.max(1, Math.ceil(attemptStatus.retryInMs / 1000))
+                  })}
+            </div>
+          )}
+
+          {Boolean(providerId) && !keyPresent && (
+            <div style={{ fontSize: 12, color: 'var(--orbitpm-muted)' }}>
+              {markTechnicalLabels(
+                t('ai.noKeyForProvider', { providerLabel: TECHNICAL_PROVIDER_TOKEN }),
+                {
+                  [TECHNICAL_PROVIDER_TOKEN]: providerSpec.label
+                }
+              )}{' '}
+              <button type="button" onClick={onOpenSettings} style={linkBtn}>
+                {t('ai.addOneInSettings')}
+              </button>
+              {t('ai.addOneInSettings.period')}
+            </div>
+          )}
+
+          {error && (
+            <div role="alert" style={errorBox}>
+              <span>{error.summary}</span>
+              <TechnicalErrorDetail detail={error.technicalDetail} />
+              {offline && <span style={{ opacity: 0.85 }}>{t('ai.errorTip.offline')}</span>}
+            </div>
+          )}
+
+          {discardedGeneration && (
+            <div role="alert" style={errorBox}>
+              <span>
+                {t(
+                  discardedGeneration.reason === 'stale-workspace'
+                    ? 'ai.placement.discarded.staleWorkspace'
+                    : 'ai.placement.discarded.cancelled'
+                )}
+              </span>
+              <span style={{ opacity: 0.85 }}>{t('ai.placement.recoveryHint')}</span>
+              <button
+                type="button"
+                onClick={() =>
+                  triggerDownload(
+                    discardedGeneration.fileName,
+                    generatedBpmnDataUrl(discardedGeneration.xml)
+                  )
+                }
+                style={{ ...ghostBtn, alignSelf: 'flex-start' }}
+              >
+                {t('ai.placement.downloadRecovery')}
+              </button>
+            </div>
+          )}
+
+          {resultLabel && (
+            <div role="status" style={okBox}>
+              <span>{t('ai.created', { resultLabel })}</span>
+              {linkedSummary && <span style={{ opacity: 0.85 }}>{linkedSummary}</span>}
+              {onContinueInChat && (
+                <button
+                  type="button"
+                  onClick={() =>
+                    onContinueInChat({
+                      description: genMode === 'description' ? description.trim() : hint.trim()
+                    })
+                  }
+                  title={t('ai.continueInChat.title')}
+                  style={{ ...ghostBtn, alignSelf: 'flex-start' }}
+                >
+                  {t('ai.continueInChat')}
+                </button>
+              )}
+            </div>
+          )}
+
+          <div style={noteBox}>
+            {t('ai.note.updated', {
+              anthropic: 'Anthropic',
+              gemini: 'Gemini',
+              openrouter: 'OpenRouter',
+              desktopOnlyProviders: DESKTOP_ONLY_PROVIDERS.join(', ')
+            })}
+          </div>
+        </>
+      </div>
+      {spreadsheet ? (
+        <div
+          id="orbitpm-ai-spreadsheet-panel"
+          role="tabpanel"
+          aria-labelledby="orbitpm-ai-spreadsheet-tab"
+          hidden={genMode !== 'spreadsheet'}
+        >
+          <SpreadsheetImportPanel {...spreadsheet} />
+        </div>
+      ) : null}
+    </div>
+  )
+
+  // The verification modal renders above whichever chrome variant is active, so
+  // it is emitted alongside every return.
+  const verifyDialog =
+    pending && typeof document !== 'undefined'
+      ? createPortal(
+          <LinkVerifyDialog
+            unsure={pending.unsure}
+            unmatched={pending.unmatched}
+            resolveProcessName={resolveProcessName}
+            onConfirm={(accepted) => void handleVerifyConfirm(accepted)}
+            onCancel={() => void handleVerifyCancel()}
+          />,
+          document.body
+        )
+      : null
+
+  // Embedded: the enclosing sidebar section owns the header + expand/collapse
+  // toggle, so drop the fixed-width/bordered wrap, the internal header row and
+  // the collapsed strip; return only the full-width form body.
+  if (embedded) {
+    return (
+      <div style={{ width: '100%' }}>
+        {body}
+        {verifyDialog}
+      </div>
+    )
+  }
+
+  if (collapsed) {
+    return (
+      <div style={collapsedWrap}>
+        <button type="button" onClick={onToggle} title={t('app.showAi.title')} style={collapsedBtn}>
+          {t('ai.collapsedButton')}
+        </button>
+        {verifyDialog}
+      </div>
+    )
+  }
+
+  return (
+    <div style={wrap}>
+      <header style={panelHeader}>
+        <strong style={{ fontSize: 14 }}>{t('ai.header')}</strong>
+        <button type="button" onClick={onToggle} title={t('ai.hide.title')} style={hideBtn}>
+          ⟩
+        </button>
+      </header>
+      {body}
+      {verifyDialog}
+    </div>
+  )
+}
+
+function Spinner(): JSX.Element {
+  return (
+    <span
+      aria-hidden
+      style={{
+        width: 14,
+        height: 14,
+        border: '2px solid rgba(255,255,255,0.5)',
+        borderTopColor: '#fff',
+        borderRadius: '50%',
+        display: 'inline-block',
+        animation: 'orbitpm-spin 0.7s linear infinite'
+      }}
+    />
+  )
+}
+
+const wrap: CSSProperties = {
+  borderInlineStart: '1px solid var(--orbitpm-border)',
+  width: 320,
+  display: 'flex',
+  flexDirection: 'column',
+  minHeight: 0,
+  overflowY: 'auto'
+}
+const collapsedWrap: CSSProperties = {
+  borderInlineStart: '1px solid var(--orbitpm-border)',
+  display: 'flex',
+  alignItems: 'flex-start',
+  justifyContent: 'center',
+  padding: '0.5rem'
+}
+const collapsedBtn: CSSProperties = {
+  writingMode: 'vertical-rl',
+  transform: 'rotate(180deg)',
+  padding: '0.6rem 0.35rem',
+  cursor: 'pointer',
+  border: '1px solid rgba(127,127,127,0.35)',
+  borderRadius: 6,
+  background: 'transparent',
+  color: 'inherit'
+}
+const panelHeader: CSSProperties = {
+  display: 'flex',
+  alignItems: 'center',
+  justifyContent: 'space-between',
+  padding: '0.6rem 0.8rem',
+  borderBottom: '1px solid var(--orbitpm-border)'
+}
+const hideBtn: CSSProperties = {
+  cursor: 'pointer',
+  border: 'none',
+  background: 'transparent',
+  fontSize: 16,
+  color: 'inherit'
+}
+const segmentWrap: CSSProperties = {
+  display: 'flex',
+  gap: 4,
+  padding: 3,
+  borderRadius: 8,
+  border: '1px solid rgba(127,127,127,0.3)'
+}
+function segmentBtn(active: boolean): CSSProperties {
+  return {
+    flex: 1,
+    padding: '0.35rem 0.4rem',
+    borderRadius: 6,
+    border: 'none',
+    fontSize: 12.5,
+    cursor: 'pointer',
+    background: active ? 'var(--orbitpm-primary-bg)' : 'transparent',
+    color: active ? 'var(--orbitpm-primary-fg)' : 'inherit',
+    font: 'inherit'
+  }
+}
+const labelStyle: CSSProperties = { display: 'flex', flexDirection: 'column', gap: 4 }
+const labelText: CSSProperties = { fontSize: 12, opacity: 0.8 }
+const inputStyle: CSSProperties = {
+  padding: '0.4rem 0.5rem',
+  borderRadius: 6,
+  border: '1px solid rgba(127,127,127,0.4)',
+  background: 'transparent',
+  color: 'inherit',
+  font: 'inherit',
+  fontSize: 13
+}
+const ghostBtn: CSSProperties = {
+  padding: '0.5rem 0.7rem',
+  borderRadius: 6,
+  border: '1px solid rgba(127,127,127,0.35)',
+  background: 'transparent',
+  font: 'inherit',
+  fontSize: 13,
+  cursor: 'pointer',
+  color: 'inherit'
+}
+const linkBtn: CSSProperties = {
+  border: 'none',
+  background: 'transparent',
+  color: 'var(--orbitpm-accent)',
+  textDecoration: 'underline',
+  cursor: 'pointer',
+  font: 'inherit',
+  padding: 0
+}
+const removeBtn: CSSProperties = {
+  border: '1px solid rgba(127,127,127,0.35)',
+  background: 'transparent',
+  color: 'inherit',
+  borderRadius: 6,
+  padding: '0.15rem 0.5rem',
+  fontSize: 11.5,
+  cursor: 'pointer',
+  flexShrink: 0
+}
+const warnBox: CSSProperties = {
+  fontSize: 12,
+  padding: '0.5rem 0.6rem',
+  borderRadius: 6,
+  background: 'rgba(234,179,8,0.15)',
+  border: '1px solid rgba(234,179,8,0.4)'
+}
+const infoBox: CSSProperties = {
+  fontSize: 12.5,
+  lineHeight: 1.5,
+  padding: '0.5rem 0.6rem',
+  borderRadius: 6,
+  background: 'rgba(59,130,246,0.12)',
+  border: '1px solid rgba(59,130,246,0.35)'
+}
+const errorBox: CSSProperties = {
+  fontSize: 12,
+  padding: '0.5rem 0.6rem',
+  borderRadius: 6,
+  background: 'rgba(239,68,68,0.12)',
+  border: '1px solid rgba(239,68,68,0.4)',
+  display: 'flex',
+  flexDirection: 'column',
+  gap: 6
+}
+const okBox: CSSProperties = {
+  fontSize: 13,
+  padding: '0.5rem 0.6rem',
+  borderRadius: 6,
+  background: 'rgba(34,197,94,0.12)',
+  border: '1px solid rgba(34,197,94,0.4)',
+  wordBreak: 'break-word',
+  display: 'flex',
+  flexDirection: 'column',
+  gap: 4
+}
+const noteBox: CSSProperties = {
+  fontSize: 11.5,
+  lineHeight: 1.5,
+  color: 'var(--orbitpm-muted)',
+  borderTop: '1px dashed var(--orbitpm-border)',
+  paddingTop: 10
+}
+
+export default AiPanelLite

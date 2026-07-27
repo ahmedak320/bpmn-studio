@@ -1,0 +1,208 @@
+{
+  "schemaVersion": 2,
+  "bundle": "ui-accessibility",
+  "sourceRequirement": "fix_plan.md §5 Mandatory end-to-end scenarios / UI/accessibility",
+  "requiredRequirementIds": [
+    "UI-01",
+    "UI-02",
+    "UI-03",
+    "UI-04",
+    "UI-05",
+    "UI-06",
+    "UI-07",
+    "UI-08",
+    "UI-09"
+  ],
+  "suite": {
+    "paths": [
+      "tests/e2e/details-responsive.spec.ts",
+      "tests/e2e/lite-assistant.spec.ts",
+      "tests/e2e/lite-company-docs.spec.ts",
+      "tests/e2e/lite-i18n-rtl.spec.ts",
+      "tests/e2e/lite-panes-details.spec.ts",
+      "tests/e2e/lite-process-outline.spec.ts",
+      "tests/e2e/lite-smoke.spec.ts",
+      "tests/e2e/lite-validation.spec.ts"
+    ],
+    "exactInventory": false
+  },
+  "requirements": [
+    {
+      "id": "UI-01",
+      "requirement": "Details rail open, close, and reopen in LTR and RTL at every breakpoint.",
+      "browserTests": [
+        {
+          "path": "tests/e2e/details-responsive.spec.ts",
+          "title": "Details uses a viewport-safe modal drawer at 320, 375, and 768px"
+        },
+        {
+          "path": "tests/e2e/details-responsive.spec.ts",
+          "title": "the 375px drawer and rail move to logical inline-end in Arabic"
+        },
+        {
+          "path": "tests/e2e/lite-panes-details.spec.ts",
+          "title": "persistent Details rail opens, collapses, and reopens without losing selection"
+        },
+        {
+          "path": "tests/e2e/lite-i18n-rtl.spec.ts",
+          "title": "Arabic editor panes mirror their layout and resizer while the bpmn-js canvas stays LTR"
+        }
+      ]
+    },
+    {
+      "id": "UI-02",
+      "requirement": "Pane state, resize, focus, touch, and no-selection behavior.",
+      "browserTests": [
+        {
+          "path": "tests/e2e/lite-panes-details.spec.ts",
+          "title": "pane persists explicit open and closed preferences across reloads"
+        },
+        {
+          "path": "tests/e2e/lite-panes-details.spec.ts",
+          "title": "each mounted tab preserves its selected element when Details is reopened"
+        },
+        {
+          "path": "tests/e2e/lite-panes-details.spec.ts",
+          "title": "Details opens at process scope with no selected element in English LTR"
+        },
+        {
+          "path": "tests/e2e/lite-panes-details.spec.ts",
+          "title": "Details opens at process scope with no selected element in Arabic RTL"
+        },
+        {
+          "path": "tests/e2e/lite-panes-details.spec.ts",
+          "title": "props-pane resizer: a11y contract, keyboard resize, bounds, reset, persistence"
+        },
+        {
+          "path": "tests/e2e/lite-panes-details.spec.ts",
+          "title": "sidebar resizer exists only while the sidebar is open; keyboard resize + persistence"
+        }
+      ]
+    },
+    {
+      "id": "UI-03",
+      "requirement": "Full keyboard-only creation and editing through the outline.",
+      "browserTests": [
+        {
+          "path": "tests/e2e/lite-process-outline.spec.ts",
+          "title": "process outline authors BPMN and synchronizes selection with the live canvas"
+        },
+        {
+          "path": "tests/e2e/lite-process-outline.spec.ts",
+          "title": "keyboard-only Process Outline create, edit, and save works in English LTR"
+        },
+        {
+          "path": "tests/e2e/lite-process-outline.spec.ts",
+          "title": "keyboard-only Process Outline create, edit, and save works in Arabic RTL"
+        }
+      ]
+    },
+    {
+      "id": "UI-04",
+      "requirement": "Semantic tabs, tree, search, menus, dialogs, and assistant.",
+      "browserTests": [
+        {
+          "path": "tests/e2e/lite-panes-details.spec.ts",
+          "title": "badge click selects the element and opens Step details with missing categories highlighted"
+        },
+        {
+          "path": "tests/e2e/lite-panes-details.spec.ts",
+          "title": "each mounted tab preserves its selected element when Details is reopened"
+        },
+        {
+          "path": "tests/e2e/lite-process-outline.spec.ts",
+          "title": "process outline authors BPMN and synchronizes selection with the live canvas"
+        },
+        {
+          "path": "tests/e2e/lite-company-docs.spec.ts",
+          "title": "search filters across names / ids / content and opens a hit"
+        },
+        {
+          "path": "tests/e2e/lite-assistant.spec.ts",
+          "title": "assistant dialog opens and closes with Escape"
+        },
+        {
+          "path": "tests/e2e/lite-smoke.spec.ts",
+          "title": "Escape closes the New-process modal"
+        },
+        {
+          "path": "tests/e2e/lite-validation.spec.ts",
+          "title": "keeps a one-line diff reachable above the separate action footer"
+        }
+      ]
+    },
+    {
+      "id": "UI-05",
+      "requirement": "320, 375, 768, and 1280 widths plus 200% and 400% zoom.",
+      "browserTests": [
+        {
+          "path": "tests/e2e/details-responsive.spec.ts",
+          "title": "Details uses a viewport-safe modal drawer at 320, 375, and 768px"
+        },
+        {
+          "path": "tests/e2e/lite-validation.spec.ts",
+          "title": "standalone generated layout keeps both decisions reachable at 640x360"
+        },
+        {
+          "path": "tests/e2e/lite-validation.spec.ts",
+          "title": "standalone generated layout keeps both decisions reachable at 320x568"
+        },
+        {
+          "path": "tests/e2e/lite-validation.spec.ts",
+          "title": "standalone generated layout keeps both decisions reachable at 1280x720 at 400%-zoom equivalent"
+        }
+      ]
+    },
+    {
+      "id": "UI-06",
+      "requirement": "No application-chrome overflow.",
+      "browserTests": [
+        {
+          "path": "tests/e2e/details-responsive.spec.ts",
+          "title": "Details uses a viewport-safe modal drawer at 320, 375, and 768px"
+        },
+        {
+          "path": "tests/e2e/lite-validation.spec.ts",
+          "title": "keeps a one-line diff reachable above the separate action footer"
+        }
+      ]
+    },
+    {
+      "id": "UI-07",
+      "requirement": "Light and dark contrast plus reduced motion.",
+      "supplementalGate": "quality.yml accessibility job runs the exact EN/AR light/dark desktop/mobile axe matrix; reduced-motion component checks run in unit coverage.",
+      "browserTests": [
+        {
+          "path": "tests/e2e/lite-smoke.spec.ts",
+          "title": "keeps bpmn.io attribution unobscured before and after responsive and RTL modals"
+        }
+      ]
+    },
+    {
+      "id": "UI-08",
+      "requirement": "NVDA on Windows and VoiceOver on macOS smoke tests.",
+      "supplementalGate": "verify-external-release-evidence.mjs requires candidate-bound independent NVDA/Windows and VoiceOver/macOS records.",
+      "browserTests": [
+        {
+          "path": "tests/e2e/lite-process-outline.spec.ts",
+          "title": "keyboard-only Process Outline create, edit, and save works in English LTR"
+        }
+      ]
+    },
+    {
+      "id": "UI-09",
+      "requirement": "Arabic screen-reader language changes and mixed-language pronunciation markers.",
+      "supplementalGate": "verify-external-release-evidence.mjs requires a candidate-bound Arabic screen-reader record.",
+      "browserTests": [
+        {
+          "path": "tests/e2e/lite-i18n-rtl.spec.ts",
+          "title": "language toggle: EN -> Arabic sets dir=rtl and translates chrome, then back to EN"
+        },
+        {
+          "path": "tests/e2e/lite-process-outline.spec.ts",
+          "title": "keyboard-only Process Outline create, edit, and save works in Arabic RTL"
+        }
+      ]
+    }
+  ]
+}

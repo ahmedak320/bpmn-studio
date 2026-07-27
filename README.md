@@ -1,403 +1,144 @@
-# OrbitPM Process Studio
+# OrbitPM Process Studio Lite
 
-A Windows desktop app for drawing [BPMN 2.0](https://www.omg.org/spec/BPMN/2.0/)
-process diagrams, organizing them in folders, linking processes together via
-call activities (with drill-down), and generating diagrams from a text
-description using AI — when you're online. Everything else works fully
-offline. Files are plain `.bpmn` XML on disk, so your workspace is portable,
-backs up with whatever you already use (OneDrive, git, a network share), and
-opens in other BPMN tools too.
+OrbitPM Process Studio Lite is a bilingual, browser-based BPMN 2.0 editor. It
+runs from one self-contained HTML file, works offline for ordinary authoring,
+and stores processes as portable `.bpmn` XML.
 
-![Screenshot placeholder](docs/screenshot.png)
+Version 0.4.5 is currently a release candidate. It is not the published stable
+release until the final commit, tag, release assets, and GitHub Pages deployment
+have passed the checklist in [docs/RELEASE_EVIDENCE.md](docs/RELEASE_EVIDENCE.md).
+The hosted application remains at
+[ahmedak320.github.io/bpmn-studio](https://ahmedak320.github.io/bpmn-studio/);
+check its visible version before using it as 0.4.5.
 
-*(Screenshot coming — open the app and you'll see: a folder tree on the
-left, a tabbed diagram editor in the middle, and a collapsible AI panel on
-the right.)*
+## What 0.4.5 Lite provides
 
----
+- English and Arabic application chrome, BPMN labels, metadata, and exports.
+- Script-aware bilingual auditing with separate commands for switching stored
+  diagram language and filling missing or invalid translations.
+- Directory workspaces through the File System Access API, browser-private OPFS
+  workspaces where supported, and an explicit single-file open/download mode.
+- Portable workspace ZIP backups and bounded history for directory and OPFS
+  workspaces.
+- Application-owned document sessions with active-tab-only saving, dirty-exit
+  protection, local recovery drafts, reviewed external-change choices, and
+  transactional rename, move, and delete operations.
+- Versioned public workspace manifests plus editable glossary and accepted
+  translation-memory files in directory and OPFS workspaces.
+- Layered BPMN validation, a validation center, safe source preview/apply, and
+  deterministic PNG, SVG, and PDF export.
+- Deterministic, offline `.xlsx` and UTF-8 `.csv` process generation, including
+  official templates and a mapping workflow for ordinary spreadsheets.
+- A keyboard-oriented process outline alongside the graphical BPMN canvas.
+- Optional browser-direct AI through OpenRouter, Anthropic, or Google Gemini.
+  Process-content requests require a review and explicit consent.
 
-## Install
+AI is not required for editing, validation, workspace management, or
+spreadsheet generation.
 
-1. Go to the [Releases page](https://github.com/ahmedak320/bpmn-studio/releases)
-   and download `OrbitPM Process Studio-Setup-<version>.exe` from the latest
-   release's Assets.
-2. Run it. **The installer is unsigned**, so Windows SmartScreen will very
-   likely show a blue "Windows protected your PC" screen. This is expected —
-   click **More info**, then **Run anyway**.
-3. The installer is per-user: it installs into your own
-   `%LOCALAPPDATA%\Programs\` folder, adds a Start-menu and desktop shortcut,
-   and associates `.bpmn` files with the app. **No admin rights are needed**
-   and nothing is installed system-wide — this is deliberate, so it works on
-   locked-down corporate laptops.
-4. The app checks GitHub Releases for updates in the background and can
-   update itself in place (still no admin needed).
+## Start using it
 
-> **Can't install? Corporate application control blocking the `.exe`?** Some
-> managed laptops block *any* unsigned executable (AppLocker/WDAC), even a
-> per-user one, after SmartScreen. If that's you, use **Lite** below — it runs
-> in your browser, with nothing to install and nothing for app-control to
-> block.
+1. Open the hosted application, or after 0.4.5 is published download
+   `OrbitPM-Process-Studio-Lite-0.4.5.html`.
+2. Choose a storage mode:
+   - **Folder workspace** in browsers that expose the File System Access API,
+     principally Chrome and Edge.
+   - **Browser workspace** when OPFS is available. Export backups regularly
+     because browser storage durability depends on browser and device policy.
+   - **Single file** for a minimal open, edit, and download workflow.
+3. Create or open a `.bpmn` process.
+4. Save from the header or with Ctrl/Cmd+S.
+5. Use the diagram language command to project an already valid English or
+   Arabic value. If a counterpart is incomplete, review it before choosing any
+   external translation service.
 
-## Lite — the zero-install browser version
+For an Arabic quick start, see
+[docs/QUICKSTART.ar.md](docs/QUICKSTART.ar.md).
 
-**OrbitPM Process Studio Lite** is the same editor as a single web page: draw
-BPMN 2.0 diagrams, organize them in real folders on your computer, link
-processes with call activities (with drill-down), export SVG/PNG, and generate
-diagrams from a description with AI. It reuses the desktop app's exact
-generation pipeline — there is **nothing to install**, so corporate application
-control (which gates executables, not web pages) doesn't block it.
+## Privacy in one minute
 
-**Two ways to get it:**
+- Ordinary BPMN editing and Excel/CSV generation are local.
+- No telemetry is included.
+- API keys remain in memory by default. Optional persistence encrypts a key
+  with AES-GCM using a passphrase that the application does not store.
+- Workspace context is excluded from AI requests by default. A request review
+  shows the provider/model, included text or attachment, relevant workspace
+  context, sensitivity indicators, and estimated requests before consent.
+- Free translation uses Google Translate or MyMemory only after the translation
+  review and consent flow. Their terms and data practices apply.
+- Browser-private credentials and preferences are not included in workspace
+  backups. Public workspace history is included.
 
-1. **Open the hosted page:** <https://ahmedak320.github.io/bpmn-studio/> — just
-   open it in Microsoft Edge or Google Chrome.
-2. **Download the single file:** grab `OrbitPM-Process-Studio-Lite.html` from
-   the [latest release's Assets](https://github.com/ahmedak320/bpmn-studio/releases/latest)
-   and double-click it (it opens in your browser). It's one self-contained
-   `.html` file — no other files, no internet needed except for AI. You can
-   keep it in your OneDrive and open it anywhere.
+Read [docs/PRIVACY.md](docs/PRIVACY.md) and
+[docs/AI_AND_COSTS.md](docs/AI_AND_COSTS.md) before enabling an external
+provider.
 
-**How to use it:**
+## Important limitations
 
-- Click **Open a folder…** and pick a folder on your computer (a OneDrive
-  folder is ideal). The browser asks permission the first time and remembers
-  the folder for next time (you re-grant access with one click on later
-  visits). Your `.bpmn` files are read and written **in place**, exactly like
-  the desktop app — Lite is not a sandbox or a copy.
-- Right-click the tree for **New process / New folder / Rename / Delete**.
-  Double-click a `.bpmn` to open it; **Ctrl+S** saves back to disk.
-- Reduced mode: if your browser blocks folder access (older browsers, or a
-  policy that disables the File System Access API), Lite falls back to opening
-  a **single `.bpmn` file** and **saving via download**. A banner explains
-  when you're in this mode. Edge and Chrome support the full folder experience;
-  Firefox/Safari get the single-file fallback.
-- The left side is one collapsible **sidebar**: a file tree on top, a
-  collapsible **AI generator** section at the bottom. A slim rail (**⟨ / ⟩**)
-  toggles it, and it auto-collapses the moment you open a `.bpmn` so the
-  canvas gets the full window — click the rail to bring the sidebar back.
-- The editor toolbar's **Panel** button shows/hides the bpmn-js properties
-  panel, independently of the sidebar.
-- **Link to process…** now works on any task, not only call activities: pick
-  a target process and Lite morphs the task into a Call Activity for you
-  (name and position preserved). Linked steps show a small 🔗 badge, and
-  double-click still drills into the linked process.
-- **Details…** in the toolbar opens one dialog for a step's — or the whole
-  process's — **owner** (Individual / Department / Division, plus an RACI
-  role: R/A/C/I). Owners render as beige boxes next to their step, on the
-  canvas and in print/export; a searchable picker suggests names already used
-  elsewhere in your workspace. **Export owners (CSV)** downloads the full
-  responsible-party list.
-- The same dialog also carries the **DMT org pack**: yellow sticky-note
-  annotations, a channel tag (DMT HUB / Email / Data), a start-event trigger
-  (Email / DMT Hub / Manual / Schedule / Other — DMT Hub triggers require a
-  hub service name), and pink "CC: `<recipient>`" steps. All of it is plain
-  `orbitpm:*` XML attributes, so files stay standard, valid BPMN 2.0 and still
-  open cleanly in other tools. Turn the live colour-coding off from
-  **Settings → DMT colour coding & step details** (on by default).
-- **Print / PDF** (toolbar) is still A4 landscape, but a wide diagram now
-  wraps into stacked bands — read top-to-bottom, with ⮕/⮡ continuation
-  arrows — so steps print larger. The suggested PDF file name is the process
-  name, and the header shows the process owner when one is set.
-- The floating 💬 button opens the **process assistant**: ask it things like
-  "what happens after X" and it answers from every documented process in your
-  workspace, citing the source process with an Open button. It uses your
-  configured AI provider when a key is set, and otherwise falls back to a
-  deterministic local answer (matched step + next steps + responsible party)
-  — so it still works offline.
-- **Export library** (toolbar) downloads your whole workspace as one `.zip`
-  (folders preserved, plus a `process-owners.csv`); **Import library**
-  restores one safely, validating paths and auto-suffixing any name
-  collisions. Experimental: `.apc` (ARIS) files are also accepted on import
-  and converted best-effort to BPMN — treat the result as a rough draft to
-  clean up, not a finished diagram.
+Recovery drafts are browser-private and are not a substitute for saving or
+exporting a backup. They normally use IndexedDB; if durable browser storage is
+unavailable, the App warns that its in-memory fallback will not survive a
+reload. Cross-tab leases are advisory, with expected-hash writes as the final
+conflict guard.
 
-**What works offline:** everything except AI generation — drawing, folders,
-opening/saving files, call-activity linking and drill-down, and SVG/PNG export
-all work with no internet. Only **Generate with AI** needs to be online.
+Single-file mode is intentionally minimal; multi-file backup, portable history,
+workspace manifests, and workspace glossary/TM editing are for directory and
+OPFS workspaces. The final browser/version matrix, manual NVDA and VoiceOver
+verification, Arabic screen-reader review, and required uninterrupted 48-hour
+soak have not been completed. No final browser-support or WCAG conformance claim
+is made for this candidate.
 
-**AI in Lite — provider support (browser CORS limitation):**
-
-A web page can only call AI providers that allow cross-origin (CORS) browser
-requests. Three built-in options do — **OpenRouter** (one key that reaches
-GLM, Kimi, DeepSeek, Claude and Gemini models, and the recommended choice in
-Lite), **Anthropic**, and **Google Gemini**. The remaining direct-vendor APIs
-must be used from the desktop app (or reached through OpenRouter).
-
-| Provider | Works in Lite? | Notes |
-|---|---|---|
-| **OpenRouter** | ✅ Yes | Recommended. One key, many models (GLM, Kimi, DeepSeek, Claude, Gemini). Shows your real remaining credits. |
-| **Anthropic (Claude)** | ✅ Yes | Uses the `anthropic-dangerous-direct-browser-access` header. |
-| **Google Gemini** | ✅ Yes | The Generative Language API allows browser access. |
-| OpenAI (direct) | ❌ No | No browser CORS — use the desktop app or OpenRouter. |
-| Moonshot (Kimi) (direct) | ❌ No | No browser CORS — use the desktop app or OpenRouter. |
-| DeepSeek (direct) | ❌ No | No browser CORS — use the desktop app or OpenRouter. |
-| Azure OpenAI | ❌ No | No browser CORS — use the desktop app. |
-| GLM (Zhipu) (direct) | ❌ No | No browser CORS — use the desktop app or OpenRouter. |
-
-> ⚠️ **API-key storage warning.** A browser page has no OS-encrypted vault, so
-> in Lite your API key (OpenRouter, Anthropic, or Gemini) is stored
-> **unencrypted in this browser profile** (`localStorage`). Anyone with access to this computer
-> profile can read it. Only enter a key on a machine you trust, and use
-> **Settings → Clear stored key** when you're done on a shared computer. (The
-> desktop app, by contrast, encrypts keys with the OS keychain/DPAPI.)
-
-AI-generated diagrams also see your workspace's existing processes: the
-model can propose call activities that link to them, each tagged with a
-confidence level. Confident, valid links are applied automatically (and
-listed in the generation's success message); anything uncertain, or pointing
-at a process Lite doesn't recognize, is held back for a quick per-link
-confirm dialog before the diagram is placed.
-
-**Credits and usage.**
-OpenRouter has a real account-balance API, so the AI panel and Settings show
-your actual remaining credits, with a refresh button. Anthropic and Gemini
-don't expose any balance API to third-party apps, so for those two Lite
-instead tracks token usage for the current browser session locally — a
-count plus a rough cost estimate, with a reset button. Treat that number as
-an estimate, never an authoritative balance.
-
-## First run
-
-On first launch you'll be asked to choose a **processes folder** — this is
-your workspace root. Everything you draw lives under it as `.bpmn` files in
-whatever folder structure you create.
-
-Recommendation: pick a folder **inside your OneDrive** (e.g.
-`OneDrive\Processes`). That gives you automatic backup and sync across
-machines for free, with no extra setup. A local folder works too, but you
-own the backup story at that point.
-
-You can change the workspace root later from the **File** menu.
-
-## Using it
-
-### Folders = organization
-
-The left sidebar is a live folder tree rooted at your workspace. Create
-folders to group related processes (by department, by project, however
-makes sense to you) and `.bpmn` files inside them. Right-click for
-create/rename/delete/move — new-folder, new-process, and rename open a
-small in-app dialog to type the name (not a browser-style prompt). Changes
-made outside the app (e.g. someone syncs a file via OneDrive) show up
-automatically.
-
-### Drawing basics
-
-Double-click a `.bpmn` file (or create a new one) to open it in an editor
-tab. It's a full BPMN 2.0 editor (built on
-[bpmn-js](https://bpmn.io/toolkit/bpmn-js/)):
-
-- Click the canvas or an element to get the context pad (append
-  tasks/gateways/events, connect elements, etc.).
-- The properties panel on the right of the canvas edits IDs, names, and
-  element-specific fields.
-- A minimap in the corner helps navigate large diagrams.
-
-### Save and export
-
-- **Ctrl+S** or the toolbar **Save** button writes the file back to disk
-  (atomic write — safe with OneDrive syncing in the background).
-- **Export SVG** / **Export PNG** in the toolbar render the current diagram
-  to an image file, e.g. for pasting into a doc or slide deck.
-- **Zoom to fit** re-centers and scales the diagram to the window.
-
-### Linking processes with call activities
-
-To model one process calling another:
-
-1. Select a **Call Activity** element on the canvas.
-2. Use the **Link to process…** button that appears in the toolbar. It
-   searches your whole workspace for processes (by their BPMN process ID,
-   not filename) and sets the call activity's `calledElement` to the one you
-   pick.
-3. From then on, double-clicking that call activity opens the linked
-   process in a new tab — drill-down navigation between related diagrams.
-
-The footer shows a badge when the current diagram has call activities whose
-`calledElement` doesn't resolve to any file in your workspace yet (e.g. the
-target hasn't been created, or was renamed/moved) — a hint to fix the link
-or create the missing process.
-
-## AI setup (optional — only needed for "Generate")
-
-Everything above works fully offline. AI diagram generation needs an
-internet connection and an API key for at least one provider. Open
-**Settings** (gear icon), where each provider has its own card:
-
-| Provider | Fields | Notes |
-|---|---|---|
-| **OpenAI** | API key | Models via `api.openai.com`. |
-| **Anthropic** | API key | Claude models via `api.anthropic.com`. |
-| **Moonshot (Kimi)** | API key, Base URL | OpenAI-compatible endpoint, default `https://api.moonshot.ai/v1`. Models `kimi-k3` / `kimi-k2.5` / `kimi-latest`. |
-| **GLM (Zhipu)** | API key, Base URL | OpenAI-compatible endpoint, default `https://open.bigmodel.cn/api/paas/v4/`. Default model `glm-5.2`; both the base URL and model id are editable text fields if Zhipu changes them. |
-| **DeepSeek** | API key | Models via `api.deepseek.com`. |
-| **Google Gemini** | API key | Gemini models via the Google Generative AI API. |
-| **Azure OpenAI** | API key, Resource endpoint, Deployment name, API version | Four fields because Azure OpenAI is deployment-driven, not model-driven: **Resource endpoint** is your `https://<resource>.openai.azure.com` URL, **Deployment name** is the deployment you created in Azure (not a model name), **API version** defaults to `2024-10-21` but is editable if your resource needs a different one. |
-
-Every card has **Save**, **Clear**, and **Test connection** (does a live
-reachability/auth check with the model you've selected). Key fields are
-**write-only**: they start empty, and once a key is stored the field shows
-a placeholder like `Configured (****ab12)` instead of the real value — the
-app never reads a stored key back out to display it. Type a new value and
-Save to overwrite it; leave the field blank and Save leaves the stored key
-untouched. Keys never leave the main process — they're stored locally,
-encrypted with Windows DPAPI via Electron's `safeStorage` (tied to your
-Windows user account), and only used from the app's background process to
-call the provider's API. They are never sent anywhere except the provider
-you configured.
-
-To generate a diagram, open the AI panel (right side), write a description
-of the process, pick a provider/model and target folder, and generate. The
-result opens as a new tab you can review and keep editing like anything
-else.
-
-If you're behind a corporate proxy, no extra configuration is needed — the
-app uses your system's proxy settings automatically for AI calls (see
-Troubleshooting if a provider still can't be reached).
-
-## Offline / online matrix
-
-| Feature | Works offline? |
-|---|---|
-| Draw, edit, save diagrams | Yes |
-| Folder tree, organize files | Yes |
-| Export SVG/PNG | Yes |
-| Call-activity linking + drill-down | Yes |
-| Settings (enter/save keys) | Yes |
-| **AI: Generate from description** | **No — requires internet + a configured provider** |
-| **AI: Test connection** | **No — requires internet** |
-| Check for / install app updates | No — requires internet |
-
-## Files are standard BPMN 2.0
-
-Every `.bpmn` file this app writes is plain semantic BPMN 2.0 XML — no
-proprietary extensions. That means:
-
-- You can open, edit, or import these files in other BPMN tools (e.g.
-  Camunda Modeler, SpiffArena, any BPMN 2.0-compliant engine).
-- Your workspace folder is just files — git, OneDrive, a zip archive, or a
-  network share all work as a backup/versioning story. Nothing is locked
-  into this app.
-
-## Troubleshooting
-
-| Problem | What to do |
-|---|---|
-| SmartScreen blocks the installer | Expected for an unsigned app — click **More info → Run anyway**. See [Install](#install). |
-| Corporate proxy / firewall blocks AI calls | The app uses the system proxy automatically, so most corporate proxies work transparently. If a specific provider is still unreachable, it's likely that provider's domain is blocked outbound by your network policy — try **Test connection** in Settings for a clear error, and try a different provider (Azure OpenAI is often already allow-listed in enterprise networks). |
-| File seems "stuck" / won't save right after a OneDrive sync | OneDrive can briefly lock a file while syncing. Wait a few seconds and Save again — saves are atomic (write-then-rename) and retried, so this is normally a transient hiccup, not data loss. |
-| AI generation fails or times out | Open `%APPDATA%\OrbitPM Process Studio\logs\ai.log` (Settings → each provider's "Test connection" will also surface the immediate error) for the full error detail behind the friendly message shown in the panel. |
-| Where are my settings/keys stored? | In your Windows user profile's app-data folder for this app (`%APPDATA%\OrbitPM Process Studio\`), never in the workspace folder you chose — so they don't get swept into OneDrive/git along with your diagrams. |
+See [docs/SUPPORT_AND_LIMITATIONS.md](docs/SUPPORT_AND_LIMITATIONS.md) for the
+full support boundary and [STATUS.md](STATUS.md) for release readiness.
 
 ## Development
 
+Use Node.js 22 and npm 11. The complete automated candidate checks are defined
+in `.github/workflows/quality.yml`; common local checks are:
+
 ```bash
 npm ci
-npm run dev          # electron-vite dev server + Electron window
+npm run format:check
+npm run check:actions
+npm run check:lock
+npm run check:lite-only
+npm run check:no-skips
+npm run check:csp
 npm run typecheck
-npm run build         # electron-vite build -> out/
-npm test              # vitest unit tests
-npm run dist:win      # build + electron-builder --win (Windows CI only for a real .exe)
-```
-
-### Smoke test
-
-```bash
+npm run lint
+npm run test:coverage
+npm run test:validation
+npm run test:archives
+npm run test:performance
+npm run clean:dist
 npm run build
-xvfb-run -a npx electron ./out/main/index.js --smoke-test
+npm run check:size
+npm run test:e2e:built
 ```
 
-Runs the app headless; prints `SMOKE_OK` and exits 0 if startup succeeds.
+The production build must contain exactly `dist/index.html`. Release assembly
+renames that byte-identical file to
+`OrbitPM-Process-Studio-Lite-0.4.5.html` and adds only the allowlisted templates,
+checksums, SBOM, license, and generated third-party notices.
 
-### E2E
+See [CONTRIBUTING.md](CONTRIBUTING.md) for contribution requirements and
+[CHANGELOG.md](CHANGELOG.md) for the 0.4.5 release notes.
 
-Playwright-electron tests live in `tests/e2e` (see `package.json` for the
-script that runs them).
+## Lite-only product policy and migration
 
-### Lite (the browser version)
+The active repository, CI, Pages site, documentation, and 0.4.5 release are for
+the browser application only. Native shells, installers, updaters, servers, and
+bridges are not supported 0.4.5 products.
 
-The zero-install web editor is a standalone Vite + React project in `lite/`
-with its **own** `package.json`, dependencies, and tests. It reuses the
-desktop app's pure code by importing straight from `../src` (the `@app/*`
-alias in `lite/vite.config.ts` + `lite/tsconfig.json`) and builds one
-self-contained `dist/index.html` via `vite-plugin-singlefile`.
+The immutable 0.4.4 full-product source remains available on the
+[`archive/full-product-v0.4.4`](https://github.com/ahmedak320/bpmn-studio/tree/archive/full-product-v0.4.4)
+branch and the annotated `archive-full-product-v0.4.4` tag. See
+[docs/MIGRATION_0.4.5.md](docs/MIGRATION_0.4.5.md) and
+[docs/archive/0.4.4.md](docs/archive/0.4.4.md).
 
-```bash
-cd lite
-npm ci
-npm run dev          # vite dev server
-npm run typecheck    # tsc over lite + the reused ../src files
-npm test             # vitest — FS-adapter glue (mocked File System Access handles)
-npm run build        # -> lite/dist/index.html (one inlined file, ~2.8 MB)
+## License
 
-# E2E smoke (headless chromium; run from the desktop/ repo root where Playwright
-# and the chromium browser are installed):
-cd .. && npx playwright test -c lite/tests/e2e/playwright.lite.config.ts
-```
-
-It's deployed to GitHub Pages by `.github/workflows/pages.yml` on any push to
-`main` that touches `lite/**`. The desktop app's own `npm ci/build/test`
-gates are unaffected — `lite/**` is excluded from the root `vitest.config.ts`.
-
-### Release process
-
-Windows installers are built on GitHub Actions (`windows-latest`) by
-`.github/workflows/build.yml`, triggered by pushing a `v*` tag (or manually
-via `workflow_dispatch`). It runs `npm ci && npm run build && npx
-electron-builder --win --publish always`, which both builds the NSIS
-installer and publishes it, `latest.yml`, and the `.blockmap` file to a
-GitHub Release matching the tag.
-
-**Critical rule: `package.json`'s `version` field and the git tag must
-match exactly** (e.g. version `0.1.0` ↔ tag `v0.1.0`). electron-builder
-names the release/artifacts from `package.json`'s version, not from the git
-tag — if they drift, the release is created under the wrong name/version
-and auto-update metadocs (`latest.yml`) won't line up with the tag that
-triggered the build. To cut a release:
-
-```bash
-# 1. bump package.json "version" (no "v" prefix) and commit
-git commit -m "release: v<version>"
-git push origin main
-
-# 2. tag exactly "v<version>" and push the tag
-git tag v<version>
-git push origin v<version>
-
-# 3. watch CI
-gh run watch --exit-status
-```
-
-Installer is per-user (NSIS `oneClick` + `perMachine: false`), no admin
-required, with `.bpmn` file association and auto-update via
-`electron-updater` against public GitHub Releases (unsigned — this is
-intentional, see `electron-builder.yml`'s notes).
-
-## Acknowledgements
-
-This app is built on open-source tooling, most notably:
-
-- [bpmn-js](https://bpmn.io/toolkit/bpmn-js/) and the rest of the
-  [bpmn.io](https://bpmn.io) toolkit — the BPMN 2.0 diagram editor at the
-  core of this app, used under the bpmn.io license. The "Powered by
-  bpmn.io" link shown in the bottom-right corner of the diagram editor is
-  part of that license and is not removed or obscured.
-- [Electron](https://www.electronjs.org/) — the desktop app shell.
-- [Vercel AI SDK](https://sdk.vercel.ai/) — the multi-provider AI
-  integration used for diagram generation.
-- [bpmn-auto-layout](https://github.com/bpmn-io/bpmn-auto-layout) — automatic
-  diagram layout for AI-generated processes.
-
-See [LICENSE](LICENSE) for this project's own license.
-
-## Repo layout
-
-This directory (`desktop/`) is its own git repository, nested inside the
-`bpmn_tool` monorepo checkout and ignored by its parent `.gitignore`. It is
-pushed independently to a public GitHub repo (`ahmedak320/bpmn-studio`) so
-the private server monorepo stays separate. See `plan.md` for the full
-build plan and `STATUS.md` for the wave-by-wave build ledger.
-
-`lite/` is the standalone browser-editor subproject (see the **Lite** section
-above and **Development → Lite**); it reuses `src/gen/**`, `src/shared/**`,
-and browser-safe renderer helpers from this same tree.
+OrbitPM Process Studio Lite is released under the [MIT License](LICENSE).
+Retained component attribution is summarized in
+[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md); the exact release asset
+contains the lockfile-derived dependency inventory and license texts.

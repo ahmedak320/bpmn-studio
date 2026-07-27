@@ -1,0 +1,1415 @@
+name: Archive historical releases after immutable stable verification
+
+on:
+  workflow_dispatch:
+    inputs:
+      candidate_sha:
+        description: Exact origin/main commit peeled from stable v0.4.5
+        required: true
+        type: string
+      release_tag:
+        description: Published immutable stable release tag
+        required: true
+        default: v0.4.5
+        type: string
+      finalization_run_id:
+        description: Successful protected immutable finalization workflow run ID
+        required: true
+        type: string
+      archive_evidence_url:
+        description: Candidate-pinned immutable legacy archive recovery manifest URL
+        required: true
+        type: string
+      archive_evidence_sha256:
+        description: SHA-256 of the immutable legacy archive recovery manifest
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: orbitpm-release-lifecycle-v0.4.5
+  cancel-in-progress: false
+
+jobs:
+  plan:
+    name: Read-only stable verification and immutable cleanup plan
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    outputs:
+      cleanup-authority-digest: ${{ steps.upload-authority.outputs.artifact-digest }}
+      cleanup-authority-id: ${{ steps.upload-authority.outputs.artifact-id }}
+    permissions:
+      actions: read
+      contents: read
+    steps:
+      - name: Checkout exact stable candidate
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ inputs.candidate_sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Set up exact Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 22.22.0
+
+      - name: Verify finalization run and immutable Git identity
+        env:
+          CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+          FINALIZATION_RUN_ID: ${{ inputs.finalization_run_id }}
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.release_tag }}
+        run: |
+          test "$RELEASE_TAG" = "v0.4.5"
+          test "${#CANDIDATE_SHA}" -eq 40
+          case "$CANDIDATE_SHA" in
+            *[!0-9a-f]*) exit 1 ;;
+          esac
+          case "$FINALIZATION_RUN_ID" in
+            '' | *[!0-9]*) exit 1 ;;
+          esac
+          test "$GITHUB_REF" = "refs/heads/main"
+          test "$GITHUB_SHA" = "$CANDIDATE_SHA"
+          git fetch --force origin \
+            refs/heads/main:refs/remotes/origin/main \
+            refs/heads/archive/full-product-v0.4.4:refs/remotes/origin/archive/full-product-v0.4.4 \
+            '+refs/tags/*:refs/tags/*'
+          test "$(git rev-parse HEAD)" = "$CANDIDATE_SHA"
+          test "$(git rev-parse origin/main)" = "$CANDIDATE_SHA"
+          test "$(git rev-parse origin/archive/full-product-v0.4.4)" = \
+            "cd842b6e0b8d7283e2704ae71ec207440b9e54f2"
+          test "$(git cat-file -t refs/tags/archive-full-product-v0.4.4)" = "tag"
+          test "$(git rev-parse refs/tags/archive-full-product-v0.4.4)" = \
+            "4fd3fa1e5b7025e1c7d3c280a058c120594be645"
+          test "$(git rev-parse "refs/tags/archive-full-product-v0.4.4^{commit}")" = \
+            "cd842b6e0b8d7283e2704ae71ec207440b9e54f2"
+          node scripts/check-release-tag.mjs "$RELEASE_TAG" --require-origin-main
+          run_json="$(
+            gh api "repos/$GITHUB_REPOSITORY/actions/runs/$FINALIZATION_RUN_ID"
+          )"
+          current_run_json="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID")"
+          test "$(jq -r .name <<<"$run_json")" = \
+            "Publish and verify immutable Lite stable release"
+          test "$(jq -r .path <<<"$run_json")" = \
+            ".github/workflows/release-finalize.yml"
+          test "$(jq -r .event <<<"$run_json")" = "workflow_dispatch"
+          test "$(jq -r .conclusion <<<"$run_json")" = "success"
+          test "$(jq -r .head_sha <<<"$run_json")" = "$CANDIDATE_SHA"
+          test "$(jq -r .head_branch <<<"$run_json")" = "main"
+          FINALIZED_AT="$(jq -r .updated_at <<<"$run_json")" \
+            CLEANUP_STARTED_AT="$(jq -r .created_at <<<"$current_run_json")" \
+            node --eval "
+              const finalized = Date.parse(process.env.FINALIZED_AT)
+              const cleanup = Date.parse(process.env.CLEANUP_STARTED_AT)
+              if (!Number.isFinite(finalized) || !Number.isFinite(cleanup) || finalized >= cleanup) {
+                throw new Error('Finalization must complete before historical cleanup starts.')
+              }
+            "
+          artifacts_json="$(
+            gh api "repos/$GITHUB_REPOSITORY/actions/runs/$FINALIZATION_RUN_ID/artifacts?per_page=100"
+          )"
+          evidence_name="orbitpm-immutable-stable-release-$CANDIDATE_SHA"
+          test "$(
+            jq --arg name "$evidence_name" \
+              '[.artifacts[] | select(.name == $name and .expired == false)] | length' \
+              <<<"$artifacts_json"
+          )" -eq 1
+          jq -r \
+            '.releases[] | [.tag, .tagRefSha, .peeledCommitSha] | @tsv' \
+            scripts/historical-release-cleanup-manifest.json |
+            while IFS=$'\t' read -r tag ref_sha commit_sha; do
+              test "$(git rev-parse "refs/tags/$tag")" = "$ref_sha"
+              test "$(git rev-parse "refs/tags/$tag^{commit}")" = "$commit_sha"
+            done
+
+      - name: Verify immutable legacy archive refs and recovery bundles
+        env:
+          ARCHIVE_EVIDENCE_SHA256: ${{ inputs.archive_evidence_sha256 }}
+          ARCHIVE_EVIDENCE_URL: ${{ inputs.archive_evidence_url }}
+          CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+        run: |
+          node scripts/verify-archive-recovery-evidence.mjs \
+            --candidate-sha="$CANDIDATE_SHA" \
+            --url="$ARCHIVE_EVIDENCE_URL" \
+            --sha256="$ARCHIVE_EVIDENCE_SHA256" \
+            --bundles-dir=archive-recovery-bundles \
+            --output=archive-recovery-verification.json
+
+      - name: Download trusted immutable-finalization evidence
+        env:
+          CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+          FINALIZATION_RUN_ID: ${{ inputs.finalization_run_id }}
+          GH_TOKEN: ${{ github.token }}
+        run: >-
+          gh run download "$FINALIZATION_RUN_ID"
+          --repo "$GITHUB_REPOSITORY"
+          --name "orbitpm-immutable-stable-release-$CANDIDATE_SHA"
+          --dir finalization-evidence
+
+      - name: Verify stable chain, retained baseline, and canonical Pages bytes
+        env:
+          CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+          FINALIZATION_RUN_ID: ${{ inputs.finalization_run_id }}
+          GH_TOKEN: ${{ github.token }}
+          PAGES_URL: https://ahmedak320.github.io/bpmn-studio/
+          RELEASE_TAG: ${{ inputs.release_tag }}
+        run: |
+          chain=finalization-evidence/finalize-evidence/finalization-chain.json
+          browser_evidence=finalization-evidence/finalize-evidence/browser-compatibility-evidence-verification.json
+          release_evidence=finalization-evidence/finalize-evidence/trusted-release-external-evidence-verification.json
+          pages_evidence=finalization-evidence/finalize-evidence/pages/pages-browser-environment.json
+          pages_release_evidence=finalization-evidence/finalize-evidence/pages/trusted-release-external-evidence-verification.json
+          publication_authority=finalization-evidence/publication-authority/publication-authority.json
+          test "$(jq -r .schemaVersion "$chain")" = "2"
+          test "$(jq -r .gate "$chain")" = "orbitpm-lite-finalization-chain"
+          test "$(jq -r .status "$chain")" = "passed"
+          test "$(jq -r .candidateSha "$chain")" = "$CANDIDATE_SHA"
+          test "$(jq -r .releaseTag "$chain")" = "$RELEASE_TAG"
+          test "$(jq -r .finalizationRunId "$chain")" = "$FINALIZATION_RUN_ID"
+          test "$(jq -r .pagesUrl "$chain")" = "$PAGES_URL"
+          test "$(jq -r .releaseEvidenceSha256 "$chain")" = \
+            "$(sha256sum "$release_evidence" | cut -d' ' -f1)"
+          test "$(jq -r .pagesEvidenceSha256 "$chain")" = \
+            "$(sha256sum "$pages_evidence" | cut -d' ' -f1)"
+          test "$(jq -r .publicationAuthoritySha256 "$chain")" = \
+            "$(sha256sum "$publication_authority" | cut -d' ' -f1)"
+          test "$(jq -r .browserCompatibilityEvidence.aggregateSha256 "$chain")" = \
+            "$(sha256sum "$browser_evidence" | cut -d' ' -f1)"
+          test "$(jq -r .browserCompatibilityEvidence.url "$chain")" = \
+            "$(jq -r .source.url "$browser_evidence")"
+          test "$(jq -r .browserCompatibilityEvidence.sourceSha256 "$chain")" = \
+            "$(jq -r .source.sha256 "$browser_evidence")"
+          test "$(jq -r .browserVersionBaseline.url "$chain")" = \
+            "$(jq -r .versionBaseline.source.url "$browser_evidence")"
+          test "$(jq -r .browserVersionBaseline.sha256 "$chain")" = \
+            "$(jq -r .versionBaseline.source.sha256 "$browser_evidence")"
+          test "$(jq -r .browserVersionBaseline.sourceSha256 "$chain")" = \
+            "$(jq -r .versionBaseline.source.sha256 "$browser_evidence")"
+          test "$(jq -r .versionBaseline.source.url "$browser_evidence")" = \
+            "$(jq -r .versionBaseline.source.finalUrl "$browser_evidence")"
+          gh api "repos/$GITHUB_REPOSITORY/releases/tags/$RELEASE_TAG" \
+            > stable-release.json
+          gh api "repos/$GITHUB_REPOSITORY/releases/latest" > latest-release.json
+          test "$(jq -r .id stable-release.json)" = "$(jq -r .id latest-release.json)"
+          test "$(jq -r .id stable-release.json)" = \
+            "$(jq -r .id finalization-evidence/stable-release.json)"
+          mkdir stable-release
+          gh release download "$RELEASE_TAG" --dir stable-release
+          node scripts/release-state.mjs \
+            --release-json=stable-release.json \
+            --assets=stable-release \
+            --notes=docs/RELEASE_NOTES_0.4.5.md \
+            --tag="$RELEASE_TAG" \
+            --title="OrbitPM Process Studio Lite 0.4.5" \
+            --state=stable
+          artifact=stable-release/OrbitPM-Process-Studio-Lite-0.4.5.html
+          test "$(jq -r .artifactSha256 "$chain")" = \
+            "$(sha256sum "$artifact" | cut -d' ' -f1)"
+          response="$(
+            curl --fail --silent --show-error \
+              --max-redirs 0 \
+              --max-time 30 \
+              --max-filesize 33554432 \
+              --write-out '%{http_code}\t%{url_effective}' \
+              "$PAGES_URL" \
+              --output pages-stable.html
+          )"
+          test "$response" = "$(printf '200\t%s' "$PAGES_URL")"
+          cmp "$artifact" pages-stable.html
+          candidate_ready_at="$(jq -er .candidateReadyAt "$chain")"
+          pages_run_id="$(jq -er .pagesRunId "$chain")"
+          case "$pages_run_id" in
+            '' | *[!0-9]*) exit 1 ;;
+          esac
+          node scripts/release-evidence-chain.mjs verify \
+            --aggregate="$release_evidence" \
+            --candidate-sha="$CANDIDATE_SHA" \
+            --candidate-ready-at="$candidate_ready_at" \
+            --artifact="$artifact" \
+            --source-url="$(jq -r .externalEvidence.url "$chain")" \
+            --source-sha256="$(jq -r .externalEvidence.sha256 "$chain")"
+          node scripts/release-evidence-chain.mjs compare \
+            --trusted="$release_evidence" \
+            --observed="$pages_release_evidence"
+          node scripts/pages-evidence-chain.mjs verify \
+            --evidence="$pages_evidence" \
+            --candidate-sha="$CANDIDATE_SHA" \
+            --artifact="$artifact" \
+            --url="$PAGES_URL" \
+            --run-id="$pages_run_id" \
+            --repository="$GITHUB_REPOSITORY"
+          test "$(jq -r .candidateSha "$browser_evidence")" = "$CANDIDATE_SHA"
+          test "$(jq -r .candidateReadyAt "$browser_evidence")" = "$candidate_ready_at"
+          test "$(jq -r .artifactSha256 "$browser_evidence")" = \
+            "$(jq -r .artifactSha256 "$chain")"
+          test "$(jq -r .pagesUrl "$browser_evidence")" = "$PAGES_URL"
+          test "$(jq -r .pagesDeploymentEvidence.sha256 "$browser_evidence")" = \
+            "$(sha256sum "$pages_evidence" | cut -d' ' -f1)"
+
+      - name: Build manifest-bound cleanup plan and fixed-data authority
+        env:
+          ARCHIVE_EVIDENCE_SHA256: ${{ inputs.archive_evidence_sha256 }}
+          ARCHIVE_EVIDENCE_URL: ${{ inputs.archive_evidence_url }}
+          CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+          FINALIZATION_RUN_ID: ${{ inputs.finalization_run_id }}
+          GH_TOKEN: ${{ github.token }}
+          PAGES_URL: https://ahmedak320.github.io/bpmn-studio/
+          RELEASE_TAG: ${{ inputs.release_tag }}
+        run: |
+          gh api --paginate "repos/$GITHUB_REPOSITORY/releases?per_page=100" |
+            jq -s 'add' > historical-before.json
+          node scripts/historical-release-cleanup.mjs \
+            --mode=preflight \
+            --manifest=scripts/historical-release-cleanup-manifest.json \
+            --releases=historical-before.json \
+            --output=historical-plan-before.json
+          test "$(jq -r .manifestSha256 historical-plan-before.json)" = \
+            "484fa611b1bdd4494ef48e2e77ef1d672c1a1a7f769e8ff431a8f911513407d8"
+          test "$(jq -r .expectedDeletionCount historical-plan-before.json)" = "28"
+          test "$(jq -r .retainedAssetCount historical-plan-before.json)" = "7"
+          mkdir cleanup-authority
+          cp \
+            scripts/historical-release-cleanup-manifest.json \
+            cleanup-authority/historical-release-cleanup-manifest.json
+          cp historical-before.json cleanup-authority/historical-before.json
+          cp historical-plan-before.json cleanup-authority/historical-plan-before.json
+          cp \
+            finalization-evidence/finalize-evidence/finalization-chain.json \
+            cleanup-authority/finalization-chain.json
+          cp \
+            finalization-evidence/finalize-evidence/browser-compatibility-evidence-verification.json \
+            cleanup-authority/browser-compatibility-evidence-verification.json
+          cp \
+            finalization-evidence/finalize-evidence/trusted-release-external-evidence-verification.json \
+            cleanup-authority/trusted-release-external-evidence-verification.json
+          cp \
+            finalization-evidence/finalize-evidence/pages/pages-browser-environment.json \
+            cleanup-authority/pages-browser-environment.json
+          cp \
+            finalization-evidence/finalize-evidence/pages/trusted-release-external-evidence-verification.json \
+            cleanup-authority/trusted-pages-release-external-evidence-verification.json
+          cp \
+            finalization-evidence/publication-authority/publication-authority.json \
+            cleanup-authority/publication-authority.json
+          cp \
+            stable-release/OrbitPM-Process-Studio-Lite-0.4.5.html \
+            cleanup-authority/stable.html
+          cp \
+            archive-recovery-verification.json \
+            cleanup-authority/archive-recovery-verification.json
+          cp \
+            archive-recovery-bundles/bpmn-studio-full-product-v0.4.4.bundle \
+            cleanup-authority/bpmn-studio-full-product-v0.4.4.bundle
+          cp \
+            archive-recovery-bundles/bpmn-tool-outer-legacy-v0.4.4.bundle \
+            cleanup-authority/bpmn-tool-outer-legacy-v0.4.4.bundle
+          files="$(jq -n '[]')"
+          for file in \
+            archive-recovery-verification.json \
+            bpmn-studio-full-product-v0.4.4.bundle \
+            bpmn-tool-outer-legacy-v0.4.4.bundle \
+            browser-compatibility-evidence-verification.json \
+            finalization-chain.json \
+            historical-before.json \
+            historical-plan-before.json \
+            historical-release-cleanup-manifest.json \
+            pages-browser-environment.json \
+            publication-authority.json \
+            stable.html \
+            trusted-pages-release-external-evidence-verification.json \
+            trusted-release-external-evidence-verification.json
+          do
+            files="$(
+              jq \
+                --arg name "$file" \
+                --arg sha256 "$(sha256sum "cleanup-authority/$file" | cut -d' ' -f1)" \
+                --argjson size "$(stat --format=%s "cleanup-authority/$file")" \
+                '. + [{name: $name, size: $size, sha256: $sha256}]' \
+                <<<"$files"
+            )"
+          done
+          chain=cleanup-authority/finalization-chain.json
+          archive_recovery=cleanup-authority/archive-recovery-verification.json
+          jq -n \
+            --arg archiveEvidenceSha256 "$ARCHIVE_EVIDENCE_SHA256" \
+            --arg archiveEvidenceUrl "$ARCHIVE_EVIDENCE_URL" \
+            --arg archiveVerificationSha256 \
+              "$(sha256sum "$archive_recovery" | cut -d' ' -f1)" \
+            --arg candidateSha "$CANDIDATE_SHA" \
+            --arg finalizationRunId "$FINALIZATION_RUN_ID" \
+            --arg pagesUrl "$PAGES_URL" \
+            --arg releaseTag "$RELEASE_TAG" \
+            --argjson files "$files" \
+            --slurpfile archiveRecovery "$archive_recovery" \
+            --slurpfile chain "$chain" \
+            '{
+              schemaVersion: 1,
+              gate: "orbitpm-lite-historical-cleanup-authority",
+              status: "passed",
+              candidateSha: $candidateSha,
+              releaseTag: $releaseTag,
+              finalizationRunId: $finalizationRunId,
+              pagesUrl: $pagesUrl,
+              manifestSha256: "484fa611b1bdd4494ef48e2e77ef1d672c1a1a7f769e8ff431a8f911513407d8",
+              expectedDeletionCount: 28,
+              retainedAssetCount: 7,
+              archiveRecoveryEvidence: {
+                url: $archiveEvidenceUrl,
+                sourceSha256: $archiveEvidenceSha256,
+                verificationSha256: $archiveVerificationSha256,
+                archiveBranch: $archiveRecovery[0].archiveBranch,
+                archiveTag: $archiveRecovery[0].archiveTag,
+                bundles: $archiveRecovery[0].bundles
+              },
+              browserCompatibilityEvidence: $chain[0].browserCompatibilityEvidence,
+              browserVersionBaseline: $chain[0].browserVersionBaseline,
+              files: ($files | sort_by(.name))
+            }' > cleanup-authority/cleanup-authority.json
+
+      - name: Upload immutable cleanup authority
+        id: upload-authority
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: orbitpm-historical-cleanup-authority-${{ github.run_id }}
+          path: cleanup-authority/
+          if-no-files-found: error
+          retention-days: 90
+
+  cleanup:
+    name: Protected fixed-shell manifest-bound mutation
+    needs: plan
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    concurrency:
+      group: orbitpm-pages-deployment
+      cancel-in-progress: false
+    permissions:
+      actions: read
+      contents: write
+    environment:
+      name: historical-release-cleanup-v0.4.5
+    steps:
+      - name: Fetch and bind the exact immutable cleanup authority
+        env:
+          ARCHIVE_EVIDENCE_SHA256: ${{ inputs.archive_evidence_sha256 }}
+          ARCHIVE_EVIDENCE_URL: ${{ inputs.archive_evidence_url }}
+          AUTHORITY_ARTIFACT_DIGEST: ${{ needs.plan.outputs.cleanup-authority-digest }}
+          AUTHORITY_ARTIFACT_ID: ${{ needs.plan.outputs.cleanup-authority-id }}
+          CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          case "$AUTHORITY_ARTIFACT_ID" in
+            '' | *[!0-9]*) exit 1 ;;
+          esac
+          case "$AUTHORITY_ARTIFACT_DIGEST" in
+            sha256:[0-9a-f][0-9a-f]*) expected_digest="$AUTHORITY_ARTIFACT_DIGEST" ;;
+            [0-9a-f][0-9a-f]*) expected_digest="sha256:$AUTHORITY_ARTIFACT_DIGEST" ;;
+            *) exit 1 ;;
+          esac
+          test "${#expected_digest}" -eq 71
+          authority_name="orbitpm-historical-cleanup-authority-$GITHUB_RUN_ID"
+          api_version=2026-03-10
+          gh api --header "X-GitHub-Api-Version: $api_version" \
+            "repos/$GITHUB_REPOSITORY/actions/artifacts/$AUTHORITY_ARTIFACT_ID" \
+            > cleanup-artifact.json
+          gh api --paginate --header "X-GitHub-Api-Version: $api_version" \
+            "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/artifacts?per_page=100" |
+            jq -s '[.[].artifacts[]]' > run-artifacts.json
+          jq -e \
+            --argjson id "$AUTHORITY_ARTIFACT_ID" \
+            --arg name "$authority_name" \
+            --argjson run "$GITHUB_RUN_ID" \
+            --arg sha "$CANDIDATE_SHA" \
+            --arg digest "$expected_digest" \
+            '
+              .id == $id and
+              .name == $name and
+              .expired == false and
+              .workflow_run.id == $run and
+              .workflow_run.head_sha == $sha and
+              .digest == $digest and
+              .size_in_bytes > 0 and
+              .size_in_bytes <= 16777216
+            ' cleanup-artifact.json >/dev/null
+          jq -e \
+            --argjson id "$AUTHORITY_ARTIFACT_ID" \
+            --arg name "$authority_name" \
+            '
+              [.[] | select(.name == $name)] as $matches |
+              ($matches | length) == 1 and
+              $matches[0].id == $id and
+              $matches[0].expired == false
+            ' run-artifacts.json >/dev/null
+          curl --fail --silent --show-error --location \
+            --proto '=https' \
+            --proto-redir '=https' \
+            --header 'Accept: application/vnd.github+json' \
+            --header "Authorization: Bearer $GH_TOKEN" \
+            --header "X-GitHub-Api-Version: $api_version" \
+            "${GITHUB_API_URL%/}/repos/$GITHUB_REPOSITORY/actions/artifacts/$AUTHORITY_ARTIFACT_ID/zip" \
+            --output cleanup-authority.zip
+          test "$(stat --format=%s cleanup-authority.zip)" = \
+            "$(jq -r .size_in_bytes cleanup-artifact.json)"
+          test "sha256:$(sha256sum cleanup-authority.zip | cut -d' ' -f1)" = \
+            "$expected_digest"
+          expected_entries="$(
+            printf '%s\n' \
+              archive-recovery-verification.json \
+              bpmn-studio-full-product-v0.4.4.bundle \
+              bpmn-tool-outer-legacy-v0.4.4.bundle \
+              browser-compatibility-evidence-verification.json \
+              cleanup-authority.json \
+              finalization-chain.json \
+              historical-before.json \
+              historical-plan-before.json \
+              historical-release-cleanup-manifest.json \
+              pages-browser-environment.json \
+              publication-authority.json \
+              stable.html \
+              trusted-pages-release-external-evidence-verification.json \
+              trusted-release-external-evidence-verification.json
+          )"
+          test "$(unzip -Z1 cleanup-authority.zip | sort)" = "$expected_entries"
+          mkdir cleanup-authority
+          unzip -q cleanup-authority.zip -d cleanup-authority
+          authority=cleanup-authority/cleanup-authority.json
+          manifest=cleanup-authority/historical-release-cleanup-manifest.json
+          plan=cleanup-authority/historical-plan-before.json
+          test "$(sha256sum "$manifest" | cut -d' ' -f1)" = \
+            "484fa611b1bdd4494ef48e2e77ef1d672c1a1a7f769e8ff431a8f911513407d8"
+          jq -e \
+            --arg archiveEvidenceSha256 "$ARCHIVE_EVIDENCE_SHA256" \
+            --arg archiveEvidenceUrl "$ARCHIVE_EVIDENCE_URL" \
+            --arg candidate "$CANDIDATE_SHA" \
+            --arg finalizationRunId "${{ inputs.finalization_run_id }}" \
+            '
+              .schemaVersion == 1 and
+              .gate == "orbitpm-lite-historical-cleanup-authority" and
+              .status == "passed" and
+              .candidateSha == $candidate and
+              .releaseTag == "v0.4.5" and
+              .finalizationRunId == $finalizationRunId and
+              .pagesUrl == "https://ahmedak320.github.io/bpmn-studio/" and
+              .manifestSha256 == "484fa611b1bdd4494ef48e2e77ef1d672c1a1a7f769e8ff431a8f911513407d8" and
+              .expectedDeletionCount == 28 and
+              .retainedAssetCount == 7 and
+              .archiveRecoveryEvidence.url == $archiveEvidenceUrl and
+              .archiveRecoveryEvidence.sourceSha256 == $archiveEvidenceSha256 and
+              (.archiveRecoveryEvidence.verificationSha256 | test("^[0-9a-f]{64}$")) and
+              (.browserCompatibilityEvidence.aggregateSha256 | test("^[0-9a-f]{64}$")) and
+              (.browserVersionBaseline.sha256 | test("^[0-9a-f]{64}$")) and
+              (.browserVersionBaseline.sourceSha256 == .browserVersionBaseline.sha256) and
+              (.files | length) == 13 and
+              ([.files[].name] | sort) == [
+                "archive-recovery-verification.json",
+                "bpmn-studio-full-product-v0.4.4.bundle",
+                "bpmn-tool-outer-legacy-v0.4.4.bundle",
+                "browser-compatibility-evidence-verification.json",
+                "finalization-chain.json",
+                "historical-before.json",
+                "historical-plan-before.json",
+                "historical-release-cleanup-manifest.json",
+                "pages-browser-environment.json",
+                "publication-authority.json",
+                "stable.html",
+                "trusted-pages-release-external-evidence-verification.json",
+                "trusted-release-external-evidence-verification.json"
+              ]
+            ' "$authority" >/dev/null
+          while IFS=$'\t' read -r name size sha256; do
+            test "$name" = "$(basename "$name")"
+            test "$(stat --format=%s "cleanup-authority/$name")" = "$size"
+            test "$(sha256sum "cleanup-authority/$name" | cut -d' ' -f1)" = "$sha256"
+          done < <(jq -r '.files[] | [.name, .size, .sha256] | @tsv' "$authority")
+          archive_recovery=cleanup-authority/archive-recovery-verification.json
+          test "$(sha256sum "$archive_recovery" | cut -d' ' -f1)" = \
+            "$(jq -r .archiveRecoveryEvidence.verificationSha256 "$authority")"
+          jq -e \
+            --slurpfile recovery "$archive_recovery" \
+            '
+              .archiveRecoveryEvidence.archiveBranch == $recovery[0].archiveBranch and
+              .archiveRecoveryEvidence.archiveTag == $recovery[0].archiveTag and
+              .archiveRecoveryEvidence.bundles == $recovery[0].bundles
+            ' "$authority" >/dev/null
+          jq -e \
+            --arg candidate "$CANDIDATE_SHA" \
+            --arg evidenceSha256 "$ARCHIVE_EVIDENCE_SHA256" \
+            --arg evidenceUrl "$ARCHIVE_EVIDENCE_URL" \
+            '
+              .schemaVersion == 1 and
+              .gate == "orbitpm-legacy-archive-recovery" and
+              .status == "passed" and
+              .candidateSha == $candidate and
+              .source.url == $evidenceUrl and
+              .source.finalUrl == $evidenceUrl and
+              .source.sha256 == $evidenceSha256 and
+              .archiveBranch == {
+                name: "archive/full-product-v0.4.4",
+                commitSha: "cd842b6e0b8d7283e2704ae71ec207440b9e54f2"
+              } and
+              .archiveTag == {
+                name: "archive-full-product-v0.4.4",
+                objectSha: "4fd3fa1e5b7025e1c7d3c280a058c120594be645",
+                peeledCommitSha: "cd842b6e0b8d7283e2704ae71ec207440b9e54f2"
+              } and
+              (.bundles | map(del(.url, .finalUrl))) == [
+                {
+                  id: "full-product",
+                  name: "bpmn-studio-full-product-v0.4.4.bundle",
+                  sha256: "aeaebf41b8a2cac89a6b16af7ab49c372cd5feb43319d58231f22ccc3f3553b6",
+                  sizeBytes: 1200974,
+                  recoveryCommitSha: "cd842b6e0b8d7283e2704ae71ec207440b9e54f2",
+                  bundleVerify: "passed",
+                  recoveryClone: "passed",
+                  recoveredCommitSha: "cd842b6e0b8d7283e2704ae71ec207440b9e54f2"
+                },
+                {
+                  id: "outer-legacy",
+                  name: "bpmn-tool-outer-legacy-v0.4.4.bundle",
+                  sha256: "18254bbc68f9554aa3ceff7f208d14b9400da1a6adb3585ae575f4dce04dcb75",
+                  sizeBytes: 924817,
+                  recoveryCommitSha: "b1b288939e39c5dd9c2e064f76e24c85ad519fac",
+                  bundleVerify: "passed",
+                  recoveryClone: "passed",
+                  recoveredCommitSha: "b1b288939e39c5dd9c2e064f76e24c85ad519fac"
+                }
+              ] and
+              .bundles[0].url == .bundles[0].finalUrl and
+              (.bundles[0].url | startswith("https://")) and
+              (.bundles[0].url | endswith("/bpmn-studio-full-product-v0.4.4.bundle")) and
+              .bundles[1].url == .bundles[1].finalUrl and
+              (.bundles[1].url | startswith("https://")) and
+              (.bundles[1].url | endswith("/bpmn-tool-outer-legacy-v0.4.4.bundle"))
+            ' "$archive_recovery" >/dev/null
+          jq -j .source.bodyBase64 "$archive_recovery" |
+            base64 --decode > archive-recovery-source.json
+          test "$(stat --format=%s archive-recovery-source.json)" = \
+            "$(jq -r .source.sizeBytes "$archive_recovery")"
+          test "$(sha256sum archive-recovery-source.json | cut -d' ' -f1)" = \
+            "$ARCHIVE_EVIDENCE_SHA256"
+          jq -e \
+            --arg candidate "$CANDIDATE_SHA" \
+            --slurpfile recovery "$archive_recovery" \
+            '
+              (keys | sort) == [
+                "archiveBranch",
+                "archiveTag",
+                "bundles",
+                "candidateSha",
+                "evidenceType",
+                "schemaVersion"
+              ] and
+              .schemaVersion == 1 and
+              .evidenceType == "orbitpm-legacy-archive-recovery" and
+              .candidateSha == $candidate and
+              .archiveBranch == $recovery[0].archiveBranch and
+              .archiveTag == $recovery[0].archiveTag and
+              .bundles == [
+                $recovery[0].bundles[] |
+                {id, name, url, sha256, sizeBytes, recoveryCommitSha}
+              ]
+            ' archive-recovery-source.json >/dev/null
+          test "$(stat --format=%s cleanup-authority/bpmn-studio-full-product-v0.4.4.bundle)" = \
+            "1200974"
+          test "$(sha256sum cleanup-authority/bpmn-studio-full-product-v0.4.4.bundle | cut -d' ' -f1)" = \
+            "aeaebf41b8a2cac89a6b16af7ab49c372cd5feb43319d58231f22ccc3f3553b6"
+          test "$(stat --format=%s cleanup-authority/bpmn-tool-outer-legacy-v0.4.4.bundle)" = \
+            "924817"
+          test "$(sha256sum cleanup-authority/bpmn-tool-outer-legacy-v0.4.4.bundle | cut -d' ' -f1)" = \
+            "18254bbc68f9554aa3ceff7f208d14b9400da1a6adb3585ae575f4dce04dcb75"
+          verify_archive_refs() {
+            archive_branch_ref="$(
+              gh api \
+                "repos/$GITHUB_REPOSITORY/git/ref/heads/archive/full-product-v0.4.4"
+            )"
+            test "$(jq -r .object.type <<<"$archive_branch_ref")" = "commit"
+            test "$(jq -r .object.sha <<<"$archive_branch_ref")" = \
+              "cd842b6e0b8d7283e2704ae71ec207440b9e54f2"
+            archive_tag_ref="$(
+              gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/archive-full-product-v0.4.4"
+            )"
+            test "$(jq -r .object.type <<<"$archive_tag_ref")" = "tag"
+            test "$(jq -r .object.sha <<<"$archive_tag_ref")" = \
+              "4fd3fa1e5b7025e1c7d3c280a058c120594be645"
+            archive_tag_object="$(
+              gh api \
+                "repos/$GITHUB_REPOSITORY/git/tags/4fd3fa1e5b7025e1c7d3c280a058c120594be645"
+            )"
+            test "$(jq -r .object.type <<<"$archive_tag_object")" = "commit"
+            test "$(jq -r .object.sha <<<"$archive_tag_object")" = \
+              "cd842b6e0b8d7283e2704ae71ec207440b9e54f2"
+          }
+          verify_archive_bundle() {
+            bundle_name="$1"
+            commit_sha="$2"
+            bundle_path="$PWD/cleanup-authority/$bundle_name"
+            verification_repo="$RUNNER_TEMP/archive-verify-${bundle_name%.bundle}.git"
+            recovery_clone="$RUNNER_TEMP/archive-recover-${bundle_name%.bundle}"
+            git init --bare "$verification_repo" >/dev/null
+            git -C "$verification_repo" bundle verify "$bundle_path"
+            git -c core.hooksPath=/dev/null clone \
+              --no-checkout \
+              --no-hardlinks \
+              "$bundle_path" \
+              "$recovery_clone"
+            git -C "$recovery_clone" -c core.hooksPath=/dev/null checkout \
+              --detach "$commit_sha"
+            test "$(git -C "$recovery_clone" rev-parse HEAD)" = "$commit_sha"
+            git -C "$recovery_clone" fsck --full
+          }
+          verify_archive_refs
+          verify_archive_bundle \
+            bpmn-studio-full-product-v0.4.4.bundle \
+            cd842b6e0b8d7283e2704ae71ec207440b9e54f2
+          verify_archive_bundle \
+            bpmn-tool-outer-legacy-v0.4.4.bundle \
+            b1b288939e39c5dd9c2e064f76e24c85ad519fac
+          chain=cleanup-authority/finalization-chain.json
+          browser_evidence=cleanup-authority/browser-compatibility-evidence-verification.json
+          jq -e \
+            --slurpfile chain "$chain" \
+            '
+              .browserCompatibilityEvidence == $chain[0].browserCompatibilityEvidence and
+              .browserVersionBaseline == $chain[0].browserVersionBaseline
+            ' "$authority" >/dev/null
+          test "$(jq -r .browserCompatibilityEvidence.aggregateSha256 "$chain")" = \
+            "$(sha256sum "$browser_evidence" | cut -d' ' -f1)"
+          verify_embedded_record() {
+            record="$1"
+            output="$2"
+            jq -j .bodyBase64 <<<"$record" | base64 --decode > "$output"
+            test "$(stat --format=%s "$output")" = "$(jq -r .sizeBytes <<<"$record")"
+            test "$(sha256sum "$output" | cut -d' ' -f1)" = \
+              "$(jq -r .sha256 <<<"$record")"
+          }
+          matrix_source="$(jq -c .source "$browser_evidence")"
+          test "$(jq -r .url <<<"$matrix_source")" = \
+            "$(jq -r .finalUrl <<<"$matrix_source")"
+          verify_embedded_record "$matrix_source" matrix-source.json
+          baseline_source="$(jq -c .versionBaseline.source "$browser_evidence")"
+          test "$(jq -r .url <<<"$baseline_source")" = \
+            "$(jq -r .finalUrl <<<"$baseline_source")"
+          verify_embedded_record "$baseline_source" version-baseline.json
+          test "$(jq -r .browserVersionBaseline.sourceSha256 "$chain")" = \
+            "$(sha256sum version-baseline.json | cut -d' ' -f1)"
+          pages_source="$(jq -c .pagesDeploymentEvidence "$browser_evidence")"
+          verify_embedded_record "$pages_source" pages-deployment-evidence.json
+          test "$(jq '.versionBaseline.officialSources | length' "$browser_evidence")" -eq 4
+          test "$(
+            jq -r '.versionBaseline.officialSources[].browser' "$browser_evidence" | sort
+          )" = "$(
+            printf '%s\n' chrome edge firefox safari
+          )"
+          jq -e \
+            '
+              .versionBaseline.officialSources as $sources |
+              ([$sources[] | select(
+                .id == "chrome-stable" and
+                .browser == "chrome" and
+                .url == .finalUrl and
+                (.url | test("^https://versionhistory[.]googleapis[.]com/v1/chrome/platforms/(win|win64|mac|mac_arm64|linux)/channels/stable/versions/all/releases[?]page_size=10000$"))
+              )] | length) == 1 and
+              ([$sources[] | select(
+                .id == "edge-stable" and
+                .browser == "edge" and
+                .url == "https://learn.microsoft.com/en-us/deployedge/microsoft-edge-relnote-stable-channel" and
+                .url == .finalUrl
+              )] | length) == 1 and
+              ([$sources[] | select(
+                .id == "firefox-stable" and
+                .browser == "firefox" and
+                .url == "https://product-details.mozilla.org/1.0/firefox.json" and
+                .url == .finalUrl
+              )] | length) == 1 and
+              ([$sources[] | select(
+                .id == "safari-stable" and
+                .browser == "safari" and
+                .url == "https://support.apple.com/en-us/100100" and
+                .url == .finalUrl
+              )] | length) == 1
+            ' "$browser_evidence" >/dev/null
+          source_index=0
+          jq -c '.versionBaseline.officialSources[]' "$browser_evidence" |
+            while IFS= read -r source; do
+              source_index=$((source_index + 1))
+              verify_embedded_record "$source" "official-source-$source_index"
+            done
+          jq -e \
+            '
+              .schemaVersion == 1 and
+              .stableReleaseTag == "v0.4.5" and
+              .expectedDeletionCount == 28 and
+              (.releases | length) == 9 and
+              ([.releases[].assets[] | select(.action == "delete")] | length) == 28 and
+              ([.releases[].assets[] | select(.action == "retain")] | length) == 7
+            ' "$manifest" >/dev/null
+          test "$(jq -r .manifestSha256 "$plan")" = \
+            "484fa611b1bdd4494ef48e2e77ef1d672c1a1a7f769e8ff431a8f911513407d8"
+          test "$(jq -r .expectedDeletionCount "$plan")" = "28"
+          test "$(jq -r .retainedAssetCount "$plan")" = "7"
+
+      - name: Mutate only fresh manifest-bound releases and assets
+        env:
+          APPROVAL_POLICY: ${{ vars.ORBITPM_HISTORICAL_CLEANUP_POLICY }}
+          CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+          GH_TOKEN: ${{ github.token }}
+          PAGES_URL: https://ahmedak320.github.io/bpmn-studio/
+        run: |
+          set -euo pipefail
+          test "$APPROVAL_POLICY" = \
+            "v0.4.5-immutable-stable-pages-verified-manifest-28-assets"
+          archive_branch_ref="$(
+            gh api \
+              "repos/$GITHUB_REPOSITORY/git/ref/heads/archive/full-product-v0.4.4"
+          )"
+          test "$(jq -r .object.type <<<"$archive_branch_ref")" = "commit"
+          test "$(jq -r .object.sha <<<"$archive_branch_ref")" = \
+            "cd842b6e0b8d7283e2704ae71ec207440b9e54f2"
+          archive_tag_ref="$(
+            gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/archive-full-product-v0.4.4"
+          )"
+          test "$(jq -r .object.type <<<"$archive_tag_ref")" = "tag"
+          test "$(jq -r .object.sha <<<"$archive_tag_ref")" = \
+            "4fd3fa1e5b7025e1c7d3c280a058c120594be645"
+          archive_tag_object="$(
+            gh api \
+              "repos/$GITHUB_REPOSITORY/git/tags/4fd3fa1e5b7025e1c7d3c280a058c120594be645"
+          )"
+          test "$(jq -r .object.type <<<"$archive_tag_object")" = "commit"
+          test "$(jq -r .object.sha <<<"$archive_tag_object")" = \
+            "cd842b6e0b8d7283e2704ae71ec207440b9e54f2"
+          manifest=cleanup-authority/historical-release-cleanup-manifest.json
+          publication_authority=cleanup-authority/publication-authority.json
+          validate_stable_and_pages() {
+            main_ref="$(gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/main")"
+            test "$(jq -r .object.sha <<<"$main_ref")" = "$CANDIDATE_SHA"
+            gh api "repos/$GITHUB_REPOSITORY/releases/tags/v0.4.5" \
+              > stable-live.json
+            gh api "repos/$GITHUB_REPOSITORY/releases/latest" > latest-live.json
+            jq -e \
+              --slurpfile authority "$publication_authority" \
+              '
+                .id == $authority[0].releaseId and
+                .tag_name == "v0.4.5" and
+                .target_commitish == $authority[0].candidateSha and
+                .name == $authority[0].releaseTitle and
+                .body == $authority[0].notesBody and
+                .draft == false and
+                .prerelease == false and
+                .immutable == true and
+                (.assets | length) == 7
+              ' stable-live.json >/dev/null
+            test "$(jq -r .id stable-live.json)" = "$(jq -r .id latest-live.json)"
+            html_sha="$(
+              jq -r \
+                '.assets[] |
+                  select(.name == "OrbitPM-Process-Studio-Lite-0.4.5.html") |
+                  .sha256' \
+                "$publication_authority"
+            )"
+            html_id="$(
+              jq -r \
+                '.assets[] |
+                  select(.name == "OrbitPM-Process-Studio-Lite-0.4.5.html") |
+                  .id' \
+                stable-live.json
+            )"
+            gh api --header 'Accept: application/octet-stream' \
+              "repos/$GITHUB_REPOSITORY/releases/assets/$html_id" \
+              > stable-live.html
+            test "$(sha256sum stable-live.html | cut -d' ' -f1)" = "$html_sha"
+            cmp stable-live.html cleanup-authority/stable.html
+            response="$(
+              curl --fail --silent --show-error \
+                --max-redirs 0 \
+                --max-time 30 \
+                --max-filesize 33554432 \
+                --write-out '%{http_code}\t%{url_effective}' \
+                "$PAGES_URL" \
+                --output pages-live.html
+            )"
+            test "$response" = "$(printf '200\t%s' "$PAGES_URL")"
+            cmp stable-live.html pages-live.html
+          }
+          validate_stable_and_pages
+          gh api --paginate "repos/$GITHUB_REPOSITORY/releases?per_page=100" |
+            jq -s 'add' > historical-live.json
+          jq -e --slurpfile manifest "$manifest" \
+            '
+              ($manifest[0].releases | map(.tag)) + [$manifest[0].stableReleaseTag] as $allowed |
+              all(.[];
+                if ($allowed | index(.tag_name)) != null then true
+                else
+                  all(.assets[];
+                    (.name | ascii_downcase) as $name |
+                    $name != "latest.yml" and
+                    ($name | endswith("." + "exe") | not) and
+                    ($name | endswith("." + "exe." + "blockmap") | not)
+                  )
+                end
+              )
+            ' historical-live.json >/dev/null
+          jq -r '.releases[] | @base64' "$manifest" |
+            while IFS= read -r encoded; do
+              entry="$(printf '%s' "$encoded" | base64 --decode)"
+              release_id="$(jq -r .releaseId <<<"$entry")"
+              tag="$(jq -r .tag <<<"$entry")"
+              ref_sha="$(jq -r .tagRefSha <<<"$entry")"
+              commit_sha="$(jq -r .peeledCommitSha <<<"$entry")"
+              ref_json="$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$tag")"
+              test "$(jq -r .object.sha <<<"$ref_json")" = "$ref_sha"
+              if test "$(jq -r .object.type <<<"$ref_json")" = "tag"; then
+                tag_json="$(
+                  gh api "repos/$GITHUB_REPOSITORY/git/tags/$(jq -r .object.sha <<<"$ref_json")"
+                )"
+                test "$(jq -r .object.type <<<"$tag_json")" = "commit"
+                test "$(jq -r .object.sha <<<"$tag_json")" = "$commit_sha"
+              else
+                test "$(jq -r .object.type <<<"$ref_json")" = "commit"
+                test "$ref_sha" = "$commit_sha"
+              fi
+              release_json="$(gh api "repos/$GITHUB_REPOSITORY/releases/$release_id")"
+              test "$(jq -r .tag_name <<<"$release_json")" = "$tag"
+              test "$(jq -r .draft <<<"$release_json")" = "$(jq -r .draft <<<"$entry")"
+              test "$(jq -r .prerelease <<<"$release_json")" = \
+                "$(jq -r .prerelease <<<"$entry")"
+              test "$(jq -r .immutable <<<"$release_json")" = "false"
+              jq -e \
+                --argjson live "$release_json" \
+                --argjson expected "$entry" \
+                '
+                  all($live.assets[];
+                    .id as $id |
+                    [.name, .size, .digest, .state] as $identity |
+                    any($expected.assets[];
+                      .id == $id and
+                      [.name, .size, ("sha256:" + .sha256), "uploaded"] == $identity
+                    )
+                  ) and
+                  all($expected.assets[] | select(.action == "retain");
+                    . as $asset |
+                    any($live.assets[];
+                      .id == $asset.id and
+                      .name == $asset.name and
+                      .size == $asset.size and
+                      .digest == ("sha256:" + $asset.sha256) and
+                      .state == "uploaded"
+                    )
+                  )
+                ' >/dev/null
+              original_name="$(jq -r .originalName <<<"$entry")"
+              original_sha="$(jq -r .originalBodySha256 <<<"$entry")"
+              notice="$(jq -r .archivalNotice "$manifest")"
+              live_name="$(jq -r .name <<<"$release_json")"
+              if test "$live_name" = "$original_name"; then
+                jq -j '.body // ""' <<<"$release_json" > original-body.txt
+                test "$(sha256sum original-body.txt | cut -d' ' -f1)" = "$original_sha"
+                jq -n \
+                  --arg name "[ARCHIVED] $original_name" \
+                  --arg notice "$notice" \
+                  --rawfile original original-body.txt \
+                  '{
+                    name: $name,
+                    body: (
+                      if ($original | length) == 0 then $notice
+                      else $notice + "\n\n" + $original
+                      end
+                    )
+                  }' |
+                  gh api "repos/$GITHUB_REPOSITORY/releases/$release_id" \
+                    --method PATCH \
+                    --input - \
+                    >/dev/null
+              else
+                test "$live_name" = "[ARCHIVED] $original_name"
+              fi
+              release_after="$(gh api "repos/$GITHUB_REPOSITORY/releases/$release_id")"
+              test "$(jq -r .name <<<"$release_after")" = "[ARCHIVED] $original_name"
+              jq -j --arg notice "$notice" \
+                '
+                  (.body // "") as $body |
+                  if $body == $notice then ""
+                  elif ($body | startswith($notice + "\n\n")) then
+                    $body[($notice | length) + 2:]
+                  else error("archived body does not preserve the manifest notice")
+                  end
+                ' <<<"$release_after" > recovered-body.txt
+              test "$(sha256sum recovered-body.txt | cut -d' ' -f1)" = "$original_sha"
+            done
+
+      - name: Delete only fresh manifest-bound executable and updater assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          authority=cleanup-authority/cleanup-authority.json
+          archive_recovery=cleanup-authority/archive-recovery-verification.json
+          test "$(sha256sum "$archive_recovery" | cut -d' ' -f1)" = \
+            "$(jq -r .archiveRecoveryEvidence.verificationSha256 "$authority")"
+          test "$(stat --format=%s cleanup-authority/bpmn-studio-full-product-v0.4.4.bundle)" = \
+            "1200974"
+          test "$(sha256sum cleanup-authority/bpmn-studio-full-product-v0.4.4.bundle | cut -d' ' -f1)" = \
+            "aeaebf41b8a2cac89a6b16af7ab49c372cd5feb43319d58231f22ccc3f3553b6"
+          test "$(stat --format=%s cleanup-authority/bpmn-tool-outer-legacy-v0.4.4.bundle)" = \
+            "924817"
+          test "$(sha256sum cleanup-authority/bpmn-tool-outer-legacy-v0.4.4.bundle | cut -d' ' -f1)" = \
+            "18254bbc68f9554aa3ceff7f208d14b9400da1a6adb3585ae575f4dce04dcb75"
+          archive_branch_ref="$(
+            gh api \
+              "repos/$GITHUB_REPOSITORY/git/ref/heads/archive/full-product-v0.4.4"
+          )"
+          test "$(jq -r .object.type <<<"$archive_branch_ref")" = "commit"
+          test "$(jq -r .object.sha <<<"$archive_branch_ref")" = \
+            "cd842b6e0b8d7283e2704ae71ec207440b9e54f2"
+          archive_tag_ref="$(
+            gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/archive-full-product-v0.4.4"
+          )"
+          test "$(jq -r .object.type <<<"$archive_tag_ref")" = "tag"
+          test "$(jq -r .object.sha <<<"$archive_tag_ref")" = \
+            "4fd3fa1e5b7025e1c7d3c280a058c120594be645"
+          archive_tag_object="$(
+            gh api \
+              "repos/$GITHUB_REPOSITORY/git/tags/4fd3fa1e5b7025e1c7d3c280a058c120594be645"
+          )"
+          test "$(jq -r .object.type <<<"$archive_tag_object")" = "commit"
+          test "$(jq -r .object.sha <<<"$archive_tag_object")" = \
+            "cd842b6e0b8d7283e2704ae71ec207440b9e54f2"
+          verify_pre_delete_bundle() {
+            bundle_name="$1"
+            commit_sha="$2"
+            bundle_path="$PWD/cleanup-authority/$bundle_name"
+            verification_repo="$RUNNER_TEMP/pre-delete-verify-${bundle_name%.bundle}.git"
+            recovery_clone="$RUNNER_TEMP/pre-delete-recover-${bundle_name%.bundle}"
+            git init --bare "$verification_repo" >/dev/null
+            git -C "$verification_repo" bundle verify "$bundle_path"
+            git -c core.hooksPath=/dev/null clone \
+              --no-checkout \
+              --no-hardlinks \
+              "$bundle_path" \
+              "$recovery_clone"
+            git -C "$recovery_clone" -c core.hooksPath=/dev/null checkout \
+              --detach "$commit_sha"
+            test "$(git -C "$recovery_clone" rev-parse HEAD)" = "$commit_sha"
+            git -C "$recovery_clone" fsck --full
+          }
+          verify_pre_delete_bundle \
+            bpmn-studio-full-product-v0.4.4.bundle \
+            cd842b6e0b8d7283e2704ae71ec207440b9e54f2
+          verify_pre_delete_bundle \
+            bpmn-tool-outer-legacy-v0.4.4.bundle \
+            b1b288939e39c5dd9c2e064f76e24c85ad519fac
+          manifest=cleanup-authority/historical-release-cleanup-manifest.json
+          plan=cleanup-authority/historical-plan-before.json
+          gh api --paginate "repos/$GITHUB_REPOSITORY/releases?per_page=100" |
+            jq -s 'add' > historical-before-delete.json
+          current_delete_ids="$(
+            jq -n \
+              --slurpfile live historical-before-delete.json \
+              --slurpfile manifest "$manifest" \
+              '[
+                $manifest[0].releases[] as $expectedRelease |
+                $live[0][] |
+                select(.id == $expectedRelease.releaseId) as $liveRelease |
+                $expectedRelease.assets[] |
+                select(.action == "delete") as $expectedAsset |
+                $liveRelease.assets[] |
+                select(.id == $expectedAsset.id) |
+                .id
+              ] | sort'
+          )"
+          planned_delete_ids="$(jq '[.assetDeletes[].id] | sort' "$plan")"
+          jq -e \
+            --argjson current "$current_delete_ids" \
+            --argjson planned "$planned_delete_ids" \
+            '($current - $planned) == []' \
+            >/dev/null
+          jq -r \
+            '.releases[].assets[] | select(.action == "delete") | .id' \
+            "$manifest" |
+            while IFS= read -r asset_id; do
+              bound="$(
+                jq -c --argjson id "$asset_id" \
+                  '.releases[].assets[] | select(.id == $id)' \
+                  "$manifest"
+              )"
+              live="$(
+                jq -c --argjson id "$asset_id" \
+                  '.[] | .assets[] | select(.id == $id)' \
+                  historical-before-delete.json
+              )"
+              if test -n "$live"; then
+                test "$(jq -r .name <<<"$live")" = "$(jq -r .name <<<"$bound")"
+                test "$(jq -r .size <<<"$live")" = "$(jq -r .size <<<"$bound")"
+                test "$(jq -r .digest <<<"$live")" = \
+                  "sha256:$(jq -r .sha256 <<<"$bound")"
+                gh api "repos/$GITHUB_REPOSITORY/releases/assets/$asset_id" \
+                  > asset-immediately-before-delete.json
+                test "$(jq -r .name asset-immediately-before-delete.json)" = \
+                  "$(jq -r .name <<<"$bound")"
+                test "$(jq -r .size asset-immediately-before-delete.json)" = \
+                  "$(jq -r .size <<<"$bound")"
+                test "$(jq -r .digest asset-immediately-before-delete.json)" = \
+                  "sha256:$(jq -r .sha256 <<<"$bound")"
+                gh api "repos/$GITHUB_REPOSITORY/releases/assets/$asset_id" \
+                  --method DELETE
+              fi
+            done
+
+      - name: Read back mutation and unchanged stable Pages authority
+        env:
+          CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+          GH_TOKEN: ${{ github.token }}
+          PAGES_URL: https://ahmedak320.github.io/bpmn-studio/
+        run: |
+          set -euo pipefail
+          manifest=cleanup-authority/historical-release-cleanup-manifest.json
+          publication_authority=cleanup-authority/publication-authority.json
+          gh api --paginate "repos/$GITHUB_REPOSITORY/releases?per_page=100" |
+            jq -s 'add' > historical-after-mutation.json
+          jq -e --slurpfile manifest "$manifest" \
+            '
+              . as $releases |
+              all($manifest[0].releases[];
+                . as $expected |
+                ($releases | map(select(.id == $expected.releaseId))) as $matches |
+                ($matches | length) == 1 and
+                $matches[0].name == ("[ARCHIVED] " + $expected.originalName) and
+                all($expected.assets[] | select(.action == "delete");
+                  .id as $id | all($matches[0].assets[]; .id != $id)
+                ) and
+                all($expected.assets[] | select(.action == "retain");
+                  . as $asset |
+                  any($matches[0].assets[];
+                    .id == $asset.id and
+                    .name == $asset.name and
+                    .size == $asset.size and
+                    .digest == ("sha256:" + $asset.sha256) and
+                    .state == "uploaded"
+                  )
+                ) and
+                all($matches[0].assets[];
+                  .id as $id |
+                  any($expected.assets[] | select(.action == "retain");
+                    .id == $id
+                  )
+                )
+              )
+            ' historical-after-mutation.json >/dev/null
+          main_ref="$(gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/main")"
+          test "$(jq -r .object.sha <<<"$main_ref")" = "$CANDIDATE_SHA"
+          gh api "repos/$GITHUB_REPOSITORY/releases/tags/v0.4.5" \
+            > stable-after-mutation.json
+          gh api "repos/$GITHUB_REPOSITORY/releases/latest" \
+            > latest-after-mutation.json
+          jq -e \
+            --slurpfile authority "$publication_authority" \
+            '
+              .id == $authority[0].releaseId and
+              .tag_name == "v0.4.5" and
+              .target_commitish == $authority[0].candidateSha and
+              .name == $authority[0].releaseTitle and
+              .body == $authority[0].notesBody and
+              .draft == false and
+              .prerelease == false and
+              .immutable == true and
+              (.assets | length) == 7
+            ' stable-after-mutation.json >/dev/null
+          test "$(jq -r .id stable-after-mutation.json)" = \
+            "$(jq -r .id latest-after-mutation.json)"
+          html_sha="$(
+            jq -r \
+              '.assets[] |
+                select(.name == "OrbitPM-Process-Studio-Lite-0.4.5.html") |
+                .sha256' \
+              "$publication_authority"
+          )"
+          html_id="$(
+            jq -r \
+              '.assets[] |
+                select(.name == "OrbitPM-Process-Studio-Lite-0.4.5.html") |
+                .id' \
+              stable-after-mutation.json
+          )"
+          gh api --header 'Accept: application/octet-stream' \
+            "repos/$GITHUB_REPOSITORY/releases/assets/$html_id" \
+            > stable-after-mutation.html
+          test "$(sha256sum stable-after-mutation.html | cut -d' ' -f1)" = "$html_sha"
+          cmp stable-after-mutation.html cleanup-authority/stable.html
+          response="$(
+            curl --fail --silent --show-error \
+              --max-redirs 0 \
+              --max-time 30 \
+              --max-filesize 33554432 \
+              --write-out '%{http_code}\t%{url_effective}' \
+              "$PAGES_URL" \
+              --output pages-after-mutation.html
+          )"
+          test "$response" = "$(printf '200\t%s' "$PAGES_URL")"
+          cmp stable-after-mutation.html pages-after-mutation.html
+          jq -n \
+            --arg candidateSha "$CANDIDATE_SHA" \
+            '{
+              schemaVersion: 1,
+              gate: "orbitpm-lite-historical-cleanup-mutation",
+              status: "passed",
+              candidateSha: $candidateSha,
+              deletedAssetCount: 28,
+              retainedAssetCount: 7
+            }' > historical-mutation-receipt.json
+
+  readback:
+    name: Read-only cleanup evidence and canonical Pages read-back
+    needs: [plan, cleanup]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    permissions:
+      actions: read
+      contents: read
+    steps:
+      - name: Checkout exact stable candidate
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ inputs.candidate_sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Set up exact Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 22.22.0
+
+      - name: Download immutable cleanup authority
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: orbitpm-historical-cleanup-authority-${{ github.run_id }}
+          path: cleanup-authority
+
+      - name: Verify exact post-cleanup state, inherited evidence, tags, and Pages
+        env:
+          ARCHIVE_EVIDENCE_SHA256: ${{ inputs.archive_evidence_sha256 }}
+          ARCHIVE_EVIDENCE_URL: ${{ inputs.archive_evidence_url }}
+          CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+          FINALIZATION_RUN_ID: ${{ inputs.finalization_run_id }}
+          GH_TOKEN: ${{ github.token }}
+          PAGES_URL: https://ahmedak320.github.io/bpmn-studio/
+          RELEASE_TAG: ${{ inputs.release_tag }}
+        run: |
+          set -euo pipefail
+          authority=cleanup-authority/cleanup-authority.json
+          archive_recovery=cleanup-authority/archive-recovery-verification.json
+          test "$(sha256sum "$archive_recovery" | cut -d' ' -f1)" = \
+            "$(jq -r .archiveRecoveryEvidence.verificationSha256 "$authority")"
+          test "$(jq -r .candidateSha "$archive_recovery")" = "$CANDIDATE_SHA"
+          test "$(jq -r .source.url "$archive_recovery")" = "$ARCHIVE_EVIDENCE_URL"
+          test "$(jq -r .source.finalUrl "$archive_recovery")" = "$ARCHIVE_EVIDENCE_URL"
+          test "$(jq -r .source.sha256 "$archive_recovery")" = \
+            "$ARCHIVE_EVIDENCE_SHA256"
+          manifest=cleanup-authority/historical-release-cleanup-manifest.json
+          test "$(sha256sum "$manifest" | cut -d' ' -f1)" = \
+            "484fa611b1bdd4494ef48e2e77ef1d672c1a1a7f769e8ff431a8f911513407d8"
+          gh api --paginate "repos/$GITHUB_REPOSITORY/releases?per_page=100" |
+            jq -s 'add' > historical-after.json
+          node scripts/historical-release-cleanup.mjs \
+            --mode=verify \
+            --manifest="$manifest" \
+            --releases=historical-after.json \
+            --output=historical-verification.json
+          test "$(jq -r .expectedDeletionCount historical-verification.json)" = "28"
+          test "$(jq -r .remainingDeletionCount historical-verification.json)" = "0"
+          test "$(jq -r .retainedAssetCount historical-verification.json)" = "7"
+          git fetch --force origin \
+            refs/heads/main:refs/remotes/origin/main \
+            refs/heads/archive/full-product-v0.4.4:refs/remotes/origin/archive/full-product-v0.4.4 \
+            '+refs/tags/*:refs/tags/*'
+          test "$(git rev-parse origin/main)" = "$CANDIDATE_SHA"
+          test "$(git rev-parse origin/archive/full-product-v0.4.4)" = \
+            "cd842b6e0b8d7283e2704ae71ec207440b9e54f2"
+          test "$(git cat-file -t refs/tags/archive-full-product-v0.4.4)" = "tag"
+          test "$(git rev-parse refs/tags/archive-full-product-v0.4.4)" = \
+            "4fd3fa1e5b7025e1c7d3c280a058c120594be645"
+          test "$(git rev-parse "refs/tags/archive-full-product-v0.4.4^{commit}")" = \
+            "cd842b6e0b8d7283e2704ae71ec207440b9e54f2"
+          verify_readback_bundle() {
+            bundle_name="$1"
+            commit_sha="$2"
+            bundle_path="$PWD/cleanup-authority/$bundle_name"
+            verification_repo="$RUNNER_TEMP/readback-verify-${bundle_name%.bundle}.git"
+            recovery_clone="$RUNNER_TEMP/readback-recover-${bundle_name%.bundle}"
+            git init --bare "$verification_repo" >/dev/null
+            git -C "$verification_repo" bundle verify "$bundle_path"
+            git -c core.hooksPath=/dev/null clone \
+              --no-checkout \
+              --no-hardlinks \
+              "$bundle_path" \
+              "$recovery_clone"
+            git -C "$recovery_clone" -c core.hooksPath=/dev/null checkout \
+              --detach "$commit_sha"
+            test "$(git -C "$recovery_clone" rev-parse HEAD)" = "$commit_sha"
+            git -C "$recovery_clone" fsck --full
+          }
+          verify_readback_bundle \
+            bpmn-studio-full-product-v0.4.4.bundle \
+            cd842b6e0b8d7283e2704ae71ec207440b9e54f2
+          verify_readback_bundle \
+            bpmn-tool-outer-legacy-v0.4.4.bundle \
+            b1b288939e39c5dd9c2e064f76e24c85ad519fac
+          node scripts/check-release-tag.mjs "$RELEASE_TAG" --require-origin-main
+          jq -r \
+            '.releases[] | [.tag, .tagRefSha, .peeledCommitSha] | @tsv' \
+            "$manifest" |
+            while IFS=$'\t' read -r tag ref_sha commit_sha; do
+              test "$(git rev-parse "refs/tags/$tag")" = "$ref_sha"
+              test "$(git rev-parse "refs/tags/$tag^{commit}")" = "$commit_sha"
+            done
+          gh api "repos/$GITHUB_REPOSITORY/releases/tags/$RELEASE_TAG" \
+            > stable-after-cleanup.json
+          gh api "repos/$GITHUB_REPOSITORY/releases/latest" \
+            > latest-after-cleanup.json
+          test "$(jq -r .id stable-after-cleanup.json)" = \
+            "$(jq -r .id latest-after-cleanup.json)"
+          mkdir stable-after-cleanup
+          gh release download "$RELEASE_TAG" --dir stable-after-cleanup
+          node scripts/release-state.mjs \
+            --release-json=stable-after-cleanup.json \
+            --assets=stable-after-cleanup \
+            --notes=docs/RELEASE_NOTES_0.4.5.md \
+            --tag="$RELEASE_TAG" \
+            --title="OrbitPM Process Studio Lite 0.4.5" \
+            --state=stable
+          artifact=stable-after-cleanup/OrbitPM-Process-Studio-Lite-0.4.5.html
+          cmp "$artifact" cleanup-authority/stable.html
+          response="$(
+            curl --fail --silent --show-error \
+              --max-redirs 0 \
+              --max-time 30 \
+              --max-filesize 33554432 \
+              --write-out '%{http_code}\t%{url_effective}' \
+              "$PAGES_URL" \
+              --output pages-after-cleanup.html
+          )"
+          test "$response" = "$(printf '200\t%s' "$PAGES_URL")"
+          cmp "$artifact" pages-after-cleanup.html
+
+      - name: Verify retained finalization and baseline bytes without refetch
+        env:
+          CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+          FINALIZATION_RUN_ID: ${{ inputs.finalization_run_id }}
+          PAGES_URL: https://ahmedak320.github.io/bpmn-studio/
+        run: |
+          chain=cleanup-authority/finalization-chain.json
+          browser_evidence=cleanup-authority/browser-compatibility-evidence-verification.json
+          release_evidence=cleanup-authority/trusted-release-external-evidence-verification.json
+          pages_evidence=cleanup-authority/pages-browser-environment.json
+          pages_release_evidence=cleanup-authority/trusted-pages-release-external-evidence-verification.json
+          publication_authority=cleanup-authority/publication-authority.json
+          artifact=stable-after-cleanup/OrbitPM-Process-Studio-Lite-0.4.5.html
+          test "$(jq -r .schemaVersion "$chain")" = "2"
+          test "$(jq -r .candidateSha "$chain")" = "$CANDIDATE_SHA"
+          test "$(jq -r .finalizationRunId "$chain")" = "$FINALIZATION_RUN_ID"
+          test "$(jq -r .artifactSha256 "$chain")" = \
+            "$(sha256sum "$artifact" | cut -d' ' -f1)"
+          test "$(jq -r .publicationAuthoritySha256 "$chain")" = \
+            "$(sha256sum "$publication_authority" | cut -d' ' -f1)"
+          test "$(jq -r .browserCompatibilityEvidence.aggregateSha256 "$chain")" = \
+            "$(sha256sum "$browser_evidence" | cut -d' ' -f1)"
+          test "$(jq -r .browserVersionBaseline.url "$chain")" = \
+            "$(jq -r .versionBaseline.source.url "$browser_evidence")"
+          test "$(jq -r .browserVersionBaseline.sha256 "$chain")" = \
+            "$(jq -r .versionBaseline.source.sha256 "$browser_evidence")"
+          test "$(jq -r .browserVersionBaseline.sourceSha256 "$chain")" = \
+            "$(jq -r .versionBaseline.source.sha256 "$browser_evidence")"
+          test "$(jq -r .versionBaseline.source.url "$browser_evidence")" = \
+            "$(jq -r .versionBaseline.source.finalUrl "$browser_evidence")"
+          verify_embedded_record() {
+            record="$1"
+            output="$2"
+            jq -j .bodyBase64 <<<"$record" | base64 --decode > "$output"
+            test "$(stat --format=%s "$output")" = "$(jq -r .sizeBytes <<<"$record")"
+            test "$(sha256sum "$output" | cut -d' ' -f1)" = \
+              "$(jq -r .sha256 <<<"$record")"
+          }
+          matrix_source="$(jq -c .source "$browser_evidence")"
+          test "$(jq -r .url <<<"$matrix_source")" = \
+            "$(jq -r .finalUrl <<<"$matrix_source")"
+          verify_embedded_record "$matrix_source" matrix-source-readback.json
+          baseline_source="$(jq -c .versionBaseline.source "$browser_evidence")"
+          verify_embedded_record "$baseline_source" baseline-source-readback.json
+          pages_source="$(jq -c .pagesDeploymentEvidence "$browser_evidence")"
+          verify_embedded_record "$pages_source" pages-source-readback.json
+          test "$(jq '.versionBaseline.officialSources | length' "$browser_evidence")" -eq 4
+          test "$(
+            jq -r '.versionBaseline.officialSources[].browser' "$browser_evidence" | sort
+          )" = "$(
+            printf '%s\n' chrome edge firefox safari
+          )"
+          jq -e \
+            '
+              .versionBaseline.officialSources as $sources |
+              ([$sources[] | select(
+                .id == "chrome-stable" and
+                .browser == "chrome" and
+                .url == .finalUrl and
+                (.url | test("^https://versionhistory[.]googleapis[.]com/v1/chrome/platforms/(win|win64|mac|mac_arm64|linux)/channels/stable/versions/all/releases[?]page_size=10000$"))
+              )] | length) == 1 and
+              ([$sources[] | select(
+                .id == "edge-stable" and
+                .browser == "edge" and
+                .url == "https://learn.microsoft.com/en-us/deployedge/microsoft-edge-relnote-stable-channel" and
+                .url == .finalUrl
+              )] | length) == 1 and
+              ([$sources[] | select(
+                .id == "firefox-stable" and
+                .browser == "firefox" and
+                .url == "https://product-details.mozilla.org/1.0/firefox.json" and
+                .url == .finalUrl
+              )] | length) == 1 and
+              ([$sources[] | select(
+                .id == "safari-stable" and
+                .browser == "safari" and
+                .url == "https://support.apple.com/en-us/100100" and
+                .url == .finalUrl
+              )] | length) == 1
+            ' "$browser_evidence" >/dev/null
+          source_index=0
+          jq -c '.versionBaseline.officialSources[]' "$browser_evidence" |
+            while IFS= read -r source; do
+              source_index=$((source_index + 1))
+              verify_embedded_record "$source" "official-source-readback-$source_index"
+            done
+          candidate_ready_at="$(jq -er .candidateReadyAt "$chain")"
+          pages_run_id="$(jq -er .pagesRunId "$chain")"
+          node scripts/release-evidence-chain.mjs verify \
+            --aggregate="$release_evidence" \
+            --candidate-sha="$CANDIDATE_SHA" \
+            --candidate-ready-at="$candidate_ready_at" \
+            --artifact="$artifact" \
+            --source-url="$(jq -r .externalEvidence.url "$chain")" \
+            --source-sha256="$(jq -r .externalEvidence.sha256 "$chain")"
+          node scripts/release-evidence-chain.mjs compare \
+            --trusted="$release_evidence" \
+            --observed="$pages_release_evidence"
+          node scripts/pages-evidence-chain.mjs verify \
+            --evidence="$pages_evidence" \
+            --candidate-sha="$CANDIDATE_SHA" \
+            --artifact="$artifact" \
+            --url="$PAGES_URL" \
+            --run-id="$pages_run_id" \
+            --repository="$GITHUB_REPOSITORY"
+
+      - name: Preserve cleanup plan and verified read-back
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: orbitpm-historical-cleanup-${{ inputs.candidate_sha }}
+          path: |
+            cleanup-authority/archive-recovery-verification.json
+            cleanup-authority/bpmn-studio-full-product-v0.4.4.bundle
+            cleanup-authority/bpmn-tool-outer-legacy-v0.4.4.bundle
+            cleanup-authority/cleanup-authority.json
+            cleanup-authority/historical-plan-before.json
+            historical-verification.json
+          if-no-files-found: error
+          retention-days: 90

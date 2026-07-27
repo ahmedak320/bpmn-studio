@@ -1,0 +1,109 @@
+{
+  "$comment": "This manifest references the human soak wrapper only. That wrapper must SHA-pin the generated schema-2 automated soak record, which in turn binds one distinct same-directory diagnostic JSON sibling by exact relative URL, SHA-256, size, and canonical operation-journal root.",
+  "schemaVersion": 2,
+  "candidateSha": "REPLACE_WITH_EXACT_40_CHARACTER_GIT_COMMIT_SHA",
+  "candidateReadyAt": "REPLACE_WITH_TRUSTED_CANDIDATE_READY_UTC_TIMESTAMP",
+  "artifactSha256": "REPLACE_WITH_EXACT_64_CHARACTER_HTML_SHA256",
+  "assembledAt": "REPLACE_WITH_CANONICAL_UTC_TIMESTAMP",
+  "soak": {
+    "passed": true,
+    "uninterrupted": true,
+    "startedAt": "REPLACE_WITH_CANONICAL_UTC_TIMESTAMP",
+    "completedAt": "REPLACE_WITH_CANONICAL_UTC_TIMESTAMP",
+    "durationMs": 172800000,
+    "locales": ["en", "ar"],
+    "scenarios": [
+      "edits",
+      "recovery",
+      "workspace-switching",
+      "imports",
+      "translation-cancellation",
+      "history-cleanup"
+    ],
+    "retentionChecks": ["draft-recovery", "history-retention", "workspace-state"],
+    "sampleIntervalMinutes": 60,
+    "memoryGrowth": "bounded",
+    "storageGrowth": "bounded",
+    "evidenceUrl": "https://raw.githubusercontent.com/ahmedak320/bpmn-studio/REPLACE_WITH_NON_ZERO_40_CHARACTER_COMMIT/release-evidence/v0.4.5/soak.json",
+    "evidenceSha256": "REPLACE_WITH_EXACT_64_CHARACTER_SOAK_RECORD_SHA256"
+  },
+  "assistiveTechnology": {
+    "nvdaWindows": {
+      "passed": true,
+      "operator": {
+        "name": "REPLACE WITH OPERATOR FULL NAME",
+        "organization": "REPLACE WITH OPERATOR ORGANIZATION",
+        "role": "NVDA test operator",
+        "accountId": "github:REPLACE_WITH_OPERATOR_USERNAME"
+      },
+      "operatingSystem": "REPLACE WITH EXACT WINDOWS VERSION",
+      "assistiveTechnologyVersion": "REPLACE WITH EXACT NVDA VERSION",
+      "browserName": "REPLACE WITH BROWSER NAME",
+      "browserVersion": "REPLACE WITH EXACT BROWSER VERSION",
+      "locale": "en",
+      "startedAt": "REPLACE_WITH_CANONICAL_UTC_TIMESTAMP",
+      "testedAt": "REPLACE_WITH_CANONICAL_UTC_TIMESTAMP",
+      "evidenceUrl": "https://raw.githubusercontent.com/ahmedak320/bpmn-studio/REPLACE_WITH_NON_ZERO_40_CHARACTER_COMMIT/release-evidence/v0.4.5/nvda-windows.json",
+      "evidenceSha256": "REPLACE_WITH_EXACT_64_CHARACTER_NVDA_RECORD_SHA256"
+    },
+    "voiceOverMacos": {
+      "passed": true,
+      "operator": {
+        "name": "REPLACE WITH OPERATOR FULL NAME",
+        "organization": "REPLACE WITH OPERATOR ORGANIZATION",
+        "role": "VoiceOver test operator",
+        "accountId": "github:REPLACE_WITH_OPERATOR_USERNAME"
+      },
+      "operatingSystem": "REPLACE WITH EXACT MACOS VERSION",
+      "assistiveTechnologyVersion": "REPLACE WITH EXACT VOICEOVER VERSION",
+      "browserName": "Safari",
+      "browserVersion": "REPLACE WITH EXACT SAFARI VERSION",
+      "locale": "en",
+      "startedAt": "REPLACE_WITH_CANONICAL_UTC_TIMESTAMP",
+      "testedAt": "REPLACE_WITH_CANONICAL_UTC_TIMESTAMP",
+      "evidenceUrl": "https://raw.githubusercontent.com/ahmedak320/bpmn-studio/REPLACE_WITH_NON_ZERO_40_CHARACTER_COMMIT/release-evidence/v0.4.5/voiceover-macos.json",
+      "evidenceSha256": "REPLACE_WITH_EXACT_64_CHARACTER_VOICEOVER_RECORD_SHA256"
+    },
+    "arabicScreenReader": {
+      "passed": true,
+      "operator": {
+        "name": "REPLACE WITH OPERATOR FULL NAME",
+        "organization": "REPLACE WITH OPERATOR ORGANIZATION",
+        "role": "Arabic screen-reader test operator",
+        "accountId": "github:REPLACE_WITH_OPERATOR_USERNAME"
+      },
+      "operatingSystem": "REPLACE WITH EXACT OS VERSION",
+      "assistiveTechnologyVersion": "REPLACE WITH EXACT SCREEN-READER VERSION",
+      "browserName": "REPLACE WITH BROWSER NAME",
+      "browserVersion": "REPLACE WITH EXACT BROWSER VERSION",
+      "locale": "ar",
+      "startedAt": "REPLACE_WITH_CANONICAL_UTC_TIMESTAMP",
+      "testedAt": "REPLACE_WITH_CANONICAL_UTC_TIMESTAMP",
+      "evidenceUrl": "https://raw.githubusercontent.com/ahmedak320/bpmn-studio/REPLACE_WITH_NON_ZERO_40_CHARACTER_COMMIT/release-evidence/v0.4.5/arabic-screen-reader.json",
+      "evidenceSha256": "REPLACE_WITH_EXACT_64_CHARACTER_ARABIC_RECORD_SHA256"
+    }
+  },
+  "defects": {
+    "unresolvedP0": 0,
+    "unresolvedP1": 0,
+    "signedOffBy": {
+      "name": "REPLACE WITH SIGNATORY FULL NAME",
+      "organization": "REPLACE WITH SIGNATORY ORGANIZATION",
+      "role": "Defect-control signatory",
+      "accountId": "github:REPLACE_WITH_SIGNATORY_USERNAME"
+    },
+    "signedOffAt": "REPLACE_WITH_CANONICAL_UTC_TIMESTAMP",
+    "evidenceUrl": "https://raw.githubusercontent.com/ahmedak320/bpmn-studio/REPLACE_WITH_NON_ZERO_40_CHARACTER_COMMIT/release-evidence/v0.4.5/defect-ledger.json",
+    "evidenceSha256": "REPLACE_WITH_EXACT_64_CHARACTER_DEFECT_LEDGER_SHA256"
+  },
+  "review": {
+    "reviewedBy": {
+      "name": "REPLACE WITH SIGNATORY FULL NAME",
+      "organization": "REPLACE WITH SIGNATORY ORGANIZATION",
+      "role": "Defect-control signatory",
+      "accountId": "github:REPLACE_WITH_SIGNATORY_USERNAME"
+    },
+    "reviewedAt": "REPLACE_WITH_CANONICAL_UTC_TIMESTAMP",
+    "independentOfEvidenceProduction": true
+  }
+}

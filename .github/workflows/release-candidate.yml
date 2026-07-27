@@ -1,0 +1,204 @@
+name: Verify pre-tag Lite release candidate
+
+on:
+  workflow_dispatch:
+    inputs:
+      candidate_sha:
+        description: Exact 40-character origin/main merge commit to verify before tagging
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-candidate-${{ inputs.candidate_sha }}
+  cancel-in-progress: false
+
+jobs:
+  identity:
+    name: Bind candidate to untagged origin/main
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: read
+    steps:
+      - name: Checkout candidate history
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ inputs.candidate_sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Require exact untagged merge commit
+        env:
+          CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          test "${#CANDIDATE_SHA}" -eq 40
+          case "$CANDIDATE_SHA" in
+            *[!0-9a-fA-F]*)
+              echo "candidate_sha must contain exactly 40 hexadecimal characters" >&2
+              exit 1
+              ;;
+          esac
+          test "$GITHUB_REF" = "refs/heads/main"
+          test "$(git rev-parse HEAD)" = "$CANDIDATE_SHA"
+          test "$GITHUB_SHA" = "$CANDIDATE_SHA"
+          test "$(git rev-list --parents -n 1 HEAD | wc -w)" -eq 3
+          git fetch --force origin \
+            refs/heads/main:refs/remotes/origin/main \
+            '+refs/tags/*:refs/tags/*'
+          test "$(git rev-parse origin/main)" = "$CANDIDATE_SHA"
+          if git show-ref --verify --quiet refs/tags/v0.4.5; then
+            echo "v0.4.5 already exists; pre-tag evidence must be created before the tag" >&2
+            exit 1
+          fi
+          pulls_json="$(
+            gh api --paginate \
+              --header 'Accept: application/vnd.github+json' \
+              "repos/$GITHUB_REPOSITORY/commits/$CANDIDATE_SHA/pulls?per_page=100" |
+              jq -s 'add'
+          )"
+          candidate_pr="$(
+            jq \
+              --arg candidate "$CANDIDATE_SHA" \
+              '[.[] | select(
+                .base.ref == "main" and
+                .merged_at != null and
+                .merge_commit_sha == $candidate
+              )]' \
+              <<<"$pulls_json"
+          )"
+          test "$(jq length <<<"$candidate_pr")" -eq 1
+          pr_number="$(jq -r '.[0].number' <<<"$candidate_pr")"
+          pr_author="$(jq -r '.[0].user.login' <<<"$candidate_pr")"
+          pr_head_sha="$(jq -r '.[0].head.sha' <<<"$candidate_pr")"
+          merged_at="$(jq -r '.[0].merged_at' <<<"$candidate_pr")"
+          test "${#pr_head_sha}" -eq 40
+          gh api --paginate \
+            --header 'Accept: application/vnd.github+json' \
+            "repos/$GITHUB_REPOSITORY/pulls/$pr_number/reviews?per_page=100" |
+            jq -s 'add' > all-pr-reviews.json
+          node scripts/release-review-gate.mjs \
+            --reviews=all-pr-reviews.json \
+            --author="$pr_author" \
+            --head-sha="$pr_head_sha" \
+            --merged-at="$merged_at" \
+            --output=effective-pr-approvals.json
+          trusted_approvals=0
+          while IFS= read -r reviewer; do
+            permission="$(
+              gh api \
+                --header 'Accept: application/vnd.github+json' \
+                "repos/$GITHUB_REPOSITORY/collaborators/$reviewer/permission" \
+                --jq .permission
+            )"
+            case "$permission" in
+              admin | maintain | write) ;;
+              *) exit 1 ;;
+            esac
+            ((trusted_approvals += 1))
+          done < <(jq -r '.approvals[].login' effective-pr-approvals.json)
+          test "$trusted_approvals" -ge 1
+
+  quality:
+    name: Required release-quality gates
+    needs: identity
+    uses: ./.github/workflows/quality.yml
+    with:
+      source_ref: ${{ inputs.candidate_sha }}
+      expected_sha: ${{ inputs.candidate_sha }}
+      artifact_prefix: orbitpm-tested-pages
+      release_mode: false
+
+  candidate:
+    name: Assemble, reproduce, verify, and file-smoke exact assets
+    needs: quality
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    steps:
+      - name: Checkout exact candidate
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ inputs.candidate_sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Set up exact Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 22.22.0
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - name: Set up exact npm
+        run: npm install --global npm@11.13.0
+
+      - name: Reproducible install
+        run: npm ci
+
+      - name: Download exact quality-tested HTML
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: orbitpm-tested-pages-${{ inputs.candidate_sha }}
+          path: tested-dist
+
+      - name: Assemble exact seven-asset candidate
+        run: npm run release:assemble -- --html tested-dist/index.html --out release
+
+      - name: Rebuild and compare every verified release byte
+        run: |
+          npm run clean:dist
+          npm run build
+          npm run release:assemble -- --html dist/index.html --out release-repro
+          npm run release:verify -- release
+          npm run release:verify -- release-repro
+          test "$(find release -maxdepth 1 -type f | wc -l)" -eq 7
+          for candidate in release/*; do
+            name="$(basename "$candidate")"
+            cmp "$candidate" "release-repro/$name"
+          done
+
+      - name: Install Chromium for exact file smoke
+        run: ./node_modules/.bin/playwright install --with-deps chromium
+
+      - name: Record exact browser and artifact evidence
+        run: >-
+          node scripts/browser-environment-evidence.mjs
+          --candidate-sha=${{ inputs.candidate_sha }}
+          --artifact=release/OrbitPM-Process-Studio-Lite-0.4.5.html
+          --browsers=chromium
+          --output=evidence/pretag-file-smoke.json
+
+      - name: Smoke exact release HTML from file
+        run: npm run release:file-smoke -- release/OrbitPM-Process-Studio-Lite-0.4.5.html
+
+      - name: Upload pre-tag browser evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: orbitpm-pretag-file-evidence-${{ inputs.candidate_sha }}
+          path: evidence/pretag-file-smoke.json
+          if-no-files-found: error
+          retention-days: 90
+
+      - name: Upload immutable exact seven-asset candidate
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: orbitpm-pretag-release-candidate-${{ inputs.candidate_sha }}
+          path: release/
+          if-no-files-found: error
+          retention-days: 90
+
+      - name: Confirm tag remains absent after all candidate checks
+        run: |
+          if ! remote_tag="$(git ls-remote --tags origin refs/tags/v0.4.5)"; then
+            echo "Could not prove the remote release tag is absent" >&2
+            exit 1
+          fi
+          if test -n "$remote_tag"; then
+            echo "v0.4.5 appeared before pre-tag verification completed" >&2
+            exit 1
+          fi

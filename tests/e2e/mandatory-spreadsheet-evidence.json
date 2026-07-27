@@ -1,0 +1,102 @@
+{
+  "schemaVersion": 2,
+  "bundle": "spreadsheet",
+  "sourceRequirement": "fix_plan.md §5 Mandatory end-to-end scenarios / Excel/CSV",
+  "requiredRequirementIds": [
+    "XLS-01",
+    "XLS-02",
+    "XLS-03",
+    "XLS-04",
+    "XLS-05",
+    "XLS-06",
+    "XLS-07",
+    "XLS-08",
+    "XLS-09",
+    "XLS-10"
+  ],
+  "suite": {
+    "path": "tests/e2e/lite-mandatory-spreadsheet.spec.ts",
+    "exactInventory": true
+  },
+  "requirements": [
+    {
+      "id": "XLS-01",
+      "requirement": "Official English, Arabic, and bilingual templates.",
+      "browserTests": [
+        "mandatory spreadsheet X1: official English template follows the production worker and language audit",
+        "mandatory spreadsheet X1: official Arabic template follows the production worker and language audit",
+        "mandatory spreadsheet X1: official bilingual template follows the production worker and language audit"
+      ]
+    },
+    {
+      "id": "XLS-02",
+      "requirement": "Ordinary single-sheet mapping.",
+      "browserTests": [
+        "mandatory spreadsheet X1/X5/X10: an ordinary noncanonical workbook exercises mapping review, deterministic inference, synthetic boundaries, and provenance reporting"
+      ]
+    },
+    {
+      "id": "XLS-03",
+      "requirement": "Multiple processes, folders, participants, lanes, gateways, default flows, and calls.",
+      "browserTests": [
+        "mandatory spreadsheet X3/X10: a complex official workbook commits folders, pools, lanes, gateway defaults, and linked calls through every runtime validation surface"
+      ]
+    },
+    {
+      "id": "XLS-04",
+      "requirement": "Sequential inference and synthetic boundary review.",
+      "browserTests": [
+        "mandatory spreadsheet X1/X5/X10: an ordinary noncanonical workbook exercises mapping review, deterministic inference, synthetic boundaries, and provenance reporting"
+      ]
+    },
+    {
+      "id": "XLS-05",
+      "requirement": "Missing and duplicate IDs, broken references, unknown types, circular lanes, and invalid defaults.",
+      "browserTests": [
+        "mandatory spreadsheet X1/X5/X10: an ordinary noncanonical workbook exercises mapping review, deterministic inference, synthetic boundaries, and provenance reporting",
+        "mandatory spreadsheet X5: row-level repair and error matrix preserves worksheet, cell, and raw-value evidence"
+      ]
+    },
+    {
+      "id": "XLS-06",
+      "requirement": "Quoted multiline CSV and Arabic Unicode.",
+      "browserTests": [
+        "mandatory spreadsheet X6: RFC-4180 quoted multiline Arabic CSV survives worker parsing, XML generation, and visible language projection"
+      ]
+    },
+    {
+      "id": "XLS-07",
+      "requirement": "Formulas with and without cached results.",
+      "browserTests": [
+        "mandatory spreadsheet X7: formula cells with and without cached displayed values are distinguished in the browser",
+        "mandatory spreadsheet X7/X8: external links and data connections are inert, ignored, and reported without network or script execution"
+      ]
+    },
+    {
+      "id": "XLS-08",
+      "requirement": "Oversize, encrypted, macro-enabled, malformed, and decompression-bomb inputs.",
+      "browserTests": [
+        "mandatory spreadsheet X7/X8: external links and data connections are inert, ignored, and reported without network or script execution",
+        "mandatory spreadsheet X8: oversize, encrypted, macro-enabled, embedded-macro, malformed, and decompression-bomb files are rejected before mapping"
+      ]
+    },
+    {
+      "id": "XLS-09",
+      "requirement": "Cancellation, destination collisions, rollback, reports, and mapping-preset reuse.",
+      "browserTests": [
+        "mandatory spreadsheet X9: cancellation aborts the real worker operation without stale completion",
+        "mandatory spreadsheet X9: collision policy blocks before writes and preserves the destination bytes",
+        "mandatory spreadsheet X9: a second-artifact write failure rolls back the first artifact and produces a truthful report",
+        "mandatory spreadsheet X9: exported mapping presets are reusable only against the matching ordinary workbook headers"
+      ]
+    },
+    {
+      "id": "XLS-10",
+      "requirement": "Generated XML passes import, XSD, lint, link, language, and visual-layout checks.",
+      "browserTests": [
+        "mandatory spreadsheet X1/X5/X10: an ordinary noncanonical workbook exercises mapping review, deterministic inference, synthetic boundaries, and provenance reporting",
+        "mandatory spreadsheet X3/X10: a complex official workbook commits folders, pools, lanes, gateway defaults, and linked calls through every runtime validation surface"
+      ]
+    }
+  ]
+}

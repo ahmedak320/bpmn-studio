@@ -1,0 +1,215 @@
+.history-dialog__backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 10020;
+  display: grid;
+  place-items: center;
+  padding: 20px;
+  background: rgb(0 0 0 / 52%);
+}
+
+.history-dialog {
+  --orbitpm-history-warning-fg: #8a3b00;
+
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  width: min(920px, 96vw);
+  max-block-size: calc(100vh - 40px);
+  max-block-size: calc(100dvh - 40px);
+  min-block-size: 0;
+  overflow: hidden;
+  border: 1px solid var(--orbitpm-border);
+  border-radius: 12px;
+  background: var(--orbitpm-panel-bg, var(--orbitpm-bg));
+  color: var(--orbitpm-fg);
+}
+
+@media (prefers-color-scheme: dark) {
+  .history-dialog {
+    --orbitpm-history-warning-fg: #ffb86c;
+  }
+}
+
+:root[data-theme='dark'] .history-dialog {
+  --orbitpm-history-warning-fg: #ffb86c;
+}
+
+:root[data-theme='light'] .history-dialog {
+  --orbitpm-history-warning-fg: #8a3b00;
+}
+
+.history-dialog__header,
+.history-dialog__footer {
+  display: flex;
+  flex: none;
+  align-items: center;
+  padding: 14px 18px;
+  background: var(--orbitpm-panel-bg, var(--orbitpm-bg));
+}
+
+.history-dialog__header {
+  justify-content: space-between;
+  gap: 12px;
+  border-block-end: 1px solid var(--orbitpm-border);
+}
+
+.history-dialog__header h2 {
+  margin: 0;
+  font-size: 18px;
+}
+
+.history-dialog__body {
+  min-block-size: 0;
+  overflow: auto;
+  overscroll-behavior: contain;
+  padding: 14px 18px 18px;
+}
+
+.history-dialog__footer {
+  justify-content: flex-end;
+  border-block-start: 1px solid var(--orbitpm-border);
+}
+
+.history-dialog__error {
+  color: var(--orbitpm-editor-danger, #c4322f);
+  font: inherit;
+  font-size: 12px;
+  text-align: start;
+}
+
+.history-dialog__empty {
+  color: var(--orbitpm-muted);
+}
+
+.history-dialog__revisions {
+  display: grid;
+  gap: 8px;
+  margin-block-start: 14px;
+}
+
+.history-dialog__revision {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  padding: 10px;
+  border: 1px solid var(--orbitpm-border);
+  border-radius: 8px;
+}
+
+.history-dialog__revision-path {
+  min-width: 0;
+}
+
+.history-dialog__revision-path strong {
+  display: block;
+  overflow-wrap: anywhere;
+}
+
+.history-dialog__revision-path small {
+  color: var(--orbitpm-muted);
+}
+
+.history-dialog__revision-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.history-dialog__pagination {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-block-start: 14px;
+}
+
+.history-dialog__pagination p {
+  margin: 0;
+  color: var(--orbitpm-muted);
+  font-size: 12px;
+}
+
+.history-dialog__pagination-actions {
+  display: flex;
+  gap: 6px;
+}
+
+.history-dialog__warning {
+  padding: 8px;
+  border: 1px solid var(--orbitpm-history-warning-fg);
+  border-radius: 6px;
+  color: var(--orbitpm-history-warning-fg);
+  text-align: start;
+}
+
+.history-dialog__preview,
+.history-dialog__diff {
+  max-block-size: 320px;
+  overflow: auto;
+  padding: 12px;
+  border-radius: 8px;
+  background: rgb(127 127 127 / 9%);
+  direction: ltr;
+  text-align: left;
+}
+
+.history-dialog__preview {
+  white-space: pre-wrap;
+}
+
+.history-dialog__diff {
+  font-family: ui-monospace, monospace;
+  font-size: 12px;
+}
+
+@media (max-width: 600px) {
+  .history-dialog__backdrop {
+    padding: 8px;
+  }
+
+  .history-dialog {
+    width: calc(100vw - 16px);
+    max-block-size: calc(100vh - 16px);
+    max-block-size: calc(100dvh - 16px);
+  }
+
+  .history-dialog__revision {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .history-dialog__revision-actions button {
+    flex: 1 1 8.5rem;
+  }
+
+  .history-dialog__pagination {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .history-dialog__pagination-actions button {
+    flex: 1;
+  }
+}
+
+@media (max-height: 480px) {
+  .history-dialog__backdrop {
+    place-items: stretch center;
+    padding: 4px 8px;
+  }
+
+  .history-dialog {
+    width: min(920px, calc(100vw - 16px));
+    max-block-size: calc(100vh - 8px);
+    max-block-size: calc(100dvh - 8px);
+  }
+
+  .history-dialog__header,
+  .history-dialog__footer {
+    padding: 8px 12px;
+  }
+
+  .history-dialog__body {
+    padding: 8px 12px;
+  }
+}

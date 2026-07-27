@@ -1,0 +1,376 @@
+import { useEffect, useMemo, useRef, useState } from 'react'
+import type { CatalogRow, CatalogSortKey, SortDir } from './catalog'
+import { rowLabel } from './catalog'
+import { t, tPlural, type Lang } from '../i18n'
+import { useLang } from '../i18n/useLang'
+
+export interface CatalogViewProps {
+  /** Rows already filtered (by the search query) and sorted by App. */
+  rows: CatalogRow[]
+  sortKey: CatalogSortKey
+  sortDir: SortDir
+  onSort: (key: CatalogSortKey) => void
+  onOpen: (relPath: string, processId?: string) => void
+  /** Active search query (drives the "showing X of N" line + empty copy). */
+  query: string
+  /** Total number of processes before the query filter. */
+  totalCount: number
+  rootName: string
+  onNewProcess: () => void
+  onOpenUnresolved: () => void
+}
+
+function formatModified(ms: number | undefined, lang: Lang): string {
+  if (!ms) return '—'
+  const d = new Date(ms)
+  if (Number.isNaN(d.getTime())) return '—'
+  const now = Date.now()
+  const diff = now - ms
+  const day = 86_400_000
+  if (diff >= 0 && diff < day && d.getDate() === new Date(now).getDate()) {
+    return d.toLocaleTimeString(lang, { hour: '2-digit', minute: '2-digit' })
+  }
+  return d.toLocaleDateString(lang, { year: 'numeric', month: 'short', day: 'numeric' })
+}
+
+const GRID = '1fr 0.9fr 0.6fr 0.5fr'
+const ROW_HEIGHT = 62
+const VIRTUALIZE_AFTER = 200
+const OVERSCAN = 8
+
+/**
+ * The catalog / home view: a card-table hybrid listing every process in the
+ * workspace so a user can browse "all of the company's processes" without
+ * hunting the tree. Sortable by name / folder / modified, honors the active
+ * search query, and each row opens its file (drilling to the matched process
+ * id when present). Presentational + controlled — App owns the data, sort
+ * state and open/new handlers — so it renders to static markup in unit tests.
+ */
+export function CatalogView({
+  rows,
+  sortKey,
+  sortDir,
+  onSort,
+  onOpen,
+  query,
+  totalCount,
+  rootName,
+  onNewProcess,
+  onOpenUnresolved
+}: CatalogViewProps): JSX.Element {
+  const lang = useLang()
+  const arrow = (key: CatalogSortKey): string =>
+    sortKey === key ? (sortDir === 'asc' ? ' ▲' : ' ▼') : ''
+  const unresolvedTotal = rows.reduce((s, r) => s + (r.unresolvedCount > 0 ? 1 : 0), 0)
+  const virtual = rows.length > VIRTUALIZE_AFTER
+  const rowsViewportRef = useRef<HTMLDivElement | null>(null)
+  const [viewport, setViewport] = useState({ scrollTop: 0, height: 600 })
+  useEffect(() => {
+    const element = rowsViewportRef.current
+    if (!element || !virtual) return
+    const update = (): void =>
+      setViewport((previous) => ({
+        scrollTop: previous.scrollTop,
+        height: element.clientHeight || 600
+      }))
+    update()
+    const observer = typeof ResizeObserver === 'function' ? new ResizeObserver(update) : null
+    observer?.observe(element)
+    return () => observer?.disconnect()
+  }, [virtual])
+  const windowed = useMemo(() => {
+    if (!virtual) return { start: 0, rows }
+    const start = Math.max(0, Math.floor(viewport.scrollTop / ROW_HEIGHT) - OVERSCAN)
+    const count = Math.ceil(viewport.height / ROW_HEIGHT) + OVERSCAN * 2
+    return { start, rows: rows.slice(start, start + count) }
+  }, [rows, viewport, virtual])
+
+  return (
+    <div
+      style={{
+        position: 'absolute',
+        inset: 0,
+        overflowY: 'auto',
+        background: 'var(--orbitpm-bg)',
+        padding: '1.1rem 1.3rem'
+      }}
+    >
+      <div
+        style={{
+          display: 'flex',
+          alignItems: 'baseline',
+          justifyContent: 'space-between',
+          gap: 12,
+          flexWrap: 'wrap',
+          marginBottom: 4
+        }}
+      >
+        <h2 style={{ margin: 0, fontSize: 18 }}>{t('catalog.title')}</h2>
+        <button
+          type="button"
+          className="orbitpm-lite-chrome-btn"
+          onClick={onNewProcess}
+          style={{
+            background: 'var(--orbitpm-accent)',
+            color: '#fff',
+            borderColor: 'var(--orbitpm-accent)',
+            fontWeight: 600
+          }}
+        >
+          {t('app.newProcess')}
+        </button>
+      </div>
+      <p style={{ margin: '0 0 12px', fontSize: 12.5, color: 'var(--orbitpm-muted)' }}>
+        {t('catalog.everyProcessIn', { rootName })}{' '}
+        {query.trim()
+          ? t('catalog.showingMatching', {
+              shown: rows.length,
+              total: totalCount,
+              query: query.trim()
+            })
+          : tPlural('catalog.process', totalCount, { total: totalCount })}
+        {unresolvedTotal > 0 && (
+          <>
+            {' '}
+            <button
+              type="button"
+              onClick={onOpenUnresolved}
+              style={{
+                border: 'none',
+                background: 'transparent',
+                color: '#d97706',
+                fontWeight: 600,
+                cursor: 'pointer',
+                font: 'inherit',
+                padding: 0,
+                textDecoration: 'underline'
+              }}
+            >
+              {t('catalog.withUnresolvedLinks', { count: unresolvedTotal })}
+            </button>
+          </>
+        )}
+      </p>
+
+      {rows.length === 0 ? (
+        <div
+          style={{
+            marginTop: 24,
+            padding: '1.4rem',
+            borderRadius: 10,
+            border: '1px dashed var(--orbitpm-border)',
+            textAlign: 'center',
+            color: 'var(--orbitpm-muted)',
+            fontSize: 13.5
+          }}
+        >
+          {query.trim() ? (
+            t('catalog.noMatch', { query: query.trim() })
+          ) : (
+            <>
+              {t('catalog.emptyBody').split('{newProcess}')[0]}
+              <strong>{t('app.newProcess')}</strong>
+              {t('catalog.emptyBody').split('{newProcess}')[1]}
+            </>
+          )}
+        </div>
+      ) : (
+        <div
+          style={{
+            border: '1px solid var(--orbitpm-border)',
+            borderRadius: 10,
+            overflow: 'hidden'
+          }}
+        >
+          {/* Column header (sortable) */}
+          <div
+            role="row"
+            style={{
+              display: 'grid',
+              gridTemplateColumns: GRID,
+              gap: 8,
+              padding: '0.5rem 0.8rem',
+              borderBottom: '1px solid var(--orbitpm-border)',
+              background: 'var(--orbitpm-hover)',
+              fontSize: 11.5,
+              textTransform: 'uppercase',
+              letterSpacing: 0.4,
+              color: 'var(--orbitpm-muted)'
+            }}
+          >
+            <HeaderButton
+              label={`${t('catalog.column.name')}${arrow('name')}`}
+              onClick={() => onSort('name')}
+            />
+            <HeaderButton
+              label={`${t('catalog.column.folder')}${arrow('folder')}`}
+              onClick={() => onSort('folder')}
+            />
+            <HeaderButton
+              label={`${t('catalog.column.modified')}${arrow('modified')}`}
+              onClick={() => onSort('modified')}
+            />
+            <span>{t('catalog.column.links')}</span>
+          </div>
+          <div
+            ref={rowsViewportRef}
+            onScroll={
+              virtual
+                ? (event) =>
+                    setViewport((previous) => ({
+                      ...previous,
+                      scrollTop: event.currentTarget.scrollTop
+                    }))
+                : undefined
+            }
+            style={
+              virtual
+                ? {
+                    position: 'relative',
+                    height: 'min(70vh, 720px)',
+                    overflowY: 'auto'
+                  }
+                : undefined
+            }
+          >
+            <div
+              style={
+                virtual
+                  ? {
+                      position: 'relative',
+                      height: rows.length * ROW_HEIGHT
+                    }
+                  : undefined
+              }
+            >
+              {windowed.rows.map((row, offset) => {
+                const i = windowed.start + offset
+                return (
+                  <div
+                    key={`${row.relPath}::${row.processId ?? i}`}
+                    role="button"
+                    tabIndex={0}
+                    aria-label={t('catalog.openRow.aria', { name: rowLabel(row) })}
+                    onClick={() => onOpen(row.relPath, row.processId)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' || e.key === ' ') {
+                        e.preventDefault()
+                        onOpen(row.relPath, row.processId)
+                      }
+                    }}
+                    style={{
+                      display: 'grid',
+                      gridTemplateColumns: GRID,
+                      gap: 8,
+                      alignItems: 'center',
+                      padding: '0.6rem 0.8rem',
+                      borderTop: i === 0 ? 'none' : '1px solid var(--orbitpm-border)',
+                      cursor: 'pointer',
+                      fontSize: 13,
+                      ...(virtual
+                        ? {
+                            position: 'absolute',
+                            insetInline: 0,
+                            top: i * ROW_HEIGHT,
+                            height: ROW_HEIGHT,
+                            boxSizing: 'border-box' as const
+                          }
+                        : {})
+                    }}
+                    onMouseEnter={(e) =>
+                      (e.currentTarget.style.background = 'var(--orbitpm-hover)')
+                    }
+                    onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
+                  >
+                    <span style={{ display: 'flex', flexDirection: 'column', gap: 2, minWidth: 0 }}>
+                      <span
+                        style={{
+                          fontWeight: 600,
+                          whiteSpace: 'nowrap',
+                          overflow: 'hidden',
+                          textOverflow: 'ellipsis'
+                        }}
+                      >
+                        {rowLabel(row)}
+                      </span>
+                      <span
+                        style={{
+                          fontSize: 11,
+                          color: 'var(--orbitpm-muted)',
+                          whiteSpace: 'nowrap',
+                          overflow: 'hidden',
+                          textOverflow: 'ellipsis'
+                        }}
+                      >
+                        {row.fileName}
+                      </span>
+                    </span>
+                    <span
+                      style={{
+                        color: 'var(--orbitpm-muted)',
+                        whiteSpace: 'nowrap',
+                        overflow: 'hidden',
+                        textOverflow: 'ellipsis'
+                      }}
+                      title={row.folder || rootName}
+                    >
+                      {row.folder ? `📁 ${row.folder}` : `📁 ${rootName}`}
+                    </span>
+                    <span style={{ color: 'var(--orbitpm-muted)', fontSize: 12 }}>
+                      {formatModified(row.lastModified, lang)}
+                    </span>
+                    <span>
+                      {row.unresolvedCount > 0 ? (
+                        <span
+                          title={tPlural('catalog.unresolvedTooltip', row.unresolvedCount)}
+                          style={{
+                            padding: '0.05rem 0.4rem',
+                            borderRadius: 999,
+                            background: 'rgba(217,119,6,0.18)',
+                            color: '#d97706',
+                            fontSize: 11,
+                            fontWeight: 600
+                          }}
+                        >
+                          ⚠ {row.unresolvedCount}
+                        </span>
+                      ) : (
+                        <span style={{ color: 'var(--orbitpm-muted)', fontSize: 12 }}>
+                          {t('catalog.ok')}
+                        </span>
+                      )}
+                    </span>
+                  </div>
+                )
+              })}
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+function HeaderButton({ label, onClick }: { label: string; onClick: () => void }): JSX.Element {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      style={{
+        border: 'none',
+        background: 'transparent',
+        color: 'inherit',
+        font: 'inherit',
+        textTransform: 'inherit',
+        letterSpacing: 'inherit',
+        cursor: 'pointer',
+        textAlign: 'start',
+        padding: 0
+      }}
+    >
+      {label}
+    </button>
+  )
+}
+
+export default CatalogView

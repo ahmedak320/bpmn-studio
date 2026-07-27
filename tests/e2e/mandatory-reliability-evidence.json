@@ -1,0 +1,186 @@
+{
+  "schemaVersion": 2,
+  "bundle": "reliability",
+  "sourceRequirement": "fix_plan.md §5 Mandatory end-to-end scenarios / Reliability",
+  "requiredRequirementIds": [
+    "REL-01",
+    "REL-02",
+    "REL-03",
+    "REL-04",
+    "REL-05",
+    "REL-06",
+    "REL-07",
+    "REL-08",
+    "REL-09",
+    "REL-10",
+    "REL-11"
+  ],
+  "suite": {
+    "path": "tests/e2e/lite-mandatory-reliability.spec.ts",
+    "exactInventory": true,
+    "fixture": "tests/e2e/fixtures/reliability-fsa.ts",
+    "testLevel": "browser-e2e",
+    "artifactUnderTest": "dist/index.html",
+    "executionCommand": "npx playwright test tests/e2e/lite-mandatory-reliability.spec.ts --project=chromium --retries=0",
+    "resultRecordedHere": false,
+    "resultNote": "This file maps requirements to discoverable test titles. It deliberately does not manufacture or cache an execution result; CI or a retained Playwright report is authoritative for a particular commit."
+  },
+  "fixtureSemantics": {
+    "fileSystemAccess": "The application uses its production DirectoryWorkspaceAdapter and document-session stack. The fixture supplies byte-backed picker handles because Playwright cannot operate Chromium's native folder chooser.",
+    "opfs": "The OPFS case uses each engine's real navigator.storage.getDirectory() on a loopback origin and the exact built dist/index.html. Playwright's WPE MiniBrowser disables its shipped StorageAPI, FileSystem, FileSystemWritableStream, and AccessHandle features by default and does not propagate startup feature settings to ordinary ephemeral contexts, so the WebKit path explicitly enables those supported features in an automatically cleaned-up temporary persistent context; no storage shim is installed.",
+    "persistence": "Fixture bytes, permissions, picker behavior, write failures, and write logs persist through localStorage so reload and cross-tab cases share backing state.",
+    "limitations": [
+      "The fixture is not a native operating-system directory picker.",
+      "The suite is listed only for Chromium here; final Firefox and WebKit release evidence remains a separate gate.",
+      "The 100 MiB aggregate history cap is covered below by lower-level automated tests, while this browser suite exercises the default 21-to-20 per-process retention boundary."
+    ]
+  },
+  "requirements": [
+    {
+      "id": "REL-01",
+      "requirement": "Reload recovery for dirty directory, OPFS, and single-file documents.",
+      "status": "browser-e2e-defined",
+      "implementationAreas": ["src/sessions", "src/workspace/adapters", "src/App.tsx"],
+      "implementationCommits": ["d4cfaeb", "cf012b9", "41c9b01", "09a2cc2", "f9c4bb9", "fe0d75f"],
+      "browserTests": [
+        "mandatory recovery: real OPFS restores a dirty draft after reload",
+        "mandatory recovery: single-file upload restores a dirty draft after reload",
+        "mandatory recovery: directory/FSA workspace restores a dirty draft after reload"
+      ],
+      "coverageNote": "Exercises production draft journaling and recovery review for all three storage modes; OPFS is real browser storage."
+    },
+    {
+      "id": "REL-02",
+      "requirement": "Rename/move/delete with dirty child tabs.",
+      "status": "browser-e2e-defined",
+      "implementationAreas": ["src/sessions", "src/workspace", "src/App.tsx"],
+      "implementationCommits": ["cf012b9", "b559c33", "09a2cc2", "f9c4bb9", "fe0d75f"],
+      "browserTests": [
+        "mandatory path transactions: dirty rename, move, and delete honor every gate"
+      ],
+      "coverageNote": "Exercises Cancel, Continue without saving, and Save and continue through production dialogs and verifies persisted paths/bytes."
+    },
+    {
+      "id": "REL-03",
+      "requirement": "Ctrl/Cmd+S with multiple mounted tabs saves only the active file.",
+      "status": "browser-e2e-defined",
+      "implementationAreas": ["src/sessions/commandRouter.ts", "src/App.tsx"],
+      "implementationCommits": ["cf012b9", "b559c33", "4807d7f"],
+      "browserTests": ["mandatory save: Ctrl+S saves only the active dirty tab"],
+      "coverageNote": "Verifies fixture write logs and persisted bytes for active and inactive tabs."
+    },
+    {
+      "id": "REL-04",
+      "requirement": "External edit conflict and all conflict choices.",
+      "status": "browser-e2e-defined",
+      "implementationAreas": [
+        "src/sessions/externalConflict.ts",
+        "src/workspace/adapters",
+        "src/App.tsx"
+      ],
+      "implementationCommits": ["d4cfaeb", "cf012b9", "b559c33"],
+      "browserTests": [
+        "mandatory conflicts: compare, keep, reload, overwrite, and save-as preserve intent"
+      ],
+      "coverageNote": "Exercises Compare, Keep editing, Reload disk version, Overwrite disk version, and Save as a new file."
+    },
+    {
+      "id": "REL-05",
+      "requirement": "Workspace switch during assistant, interview, and generation.",
+      "status": "browser-e2e-defined",
+      "implementationAreas": ["src/ai", "src/assist", "src/generation", "src/App.tsx"],
+      "implementationCommits": ["4b78cce", "199b143", "917a730", "09a2cc2", "f9c4bb9"],
+      "browserTests": [
+        "mandatory workspace switch aborts in-flight generation, assistant, and interview transport and suppresses hostile late results"
+      ],
+      "coverageNote": "Uses distinct directory handles, names, manifest workspace IDs, and mutually exclusive file/content sentinels for every committed switch. Each production POST is held without aborting it in the route harness. The assistant picker-cancellation request is released and must finish successfully before a separate request is started; only that distinct later request may fail with Chromium requestfailed transport-abort evidence after a committed switch. Valid hostile late provider responses are then attempted and their sentinel is proven absent from the newly active workspace."
+    },
+    {
+      "id": "REL-06",
+      "requirement": "Folder-picker cancellation retains reconnection.",
+      "status": "browser-e2e-defined",
+      "implementationAreas": ["src/workspace/adapters", "src/App.tsx"],
+      "implementationCommits": ["d4cfaeb", "09a2cc2", "f9c4bb9"],
+      "browserTests": [
+        "mandatory workspace switch and picker cancellation retain the current dirty workspace"
+      ],
+      "coverageNote": "Injects a standards-shaped AbortError at the picker boundary and verifies the existing workspace remains selected."
+    },
+    {
+      "id": "REL-07",
+      "requirement": "Permission revocation and unreadable-file isolation.",
+      "status": "browser-e2e-defined",
+      "implementationAreas": ["src/workspace/adapters", "src/fs/fsAccess.ts", "src/App.tsx"],
+      "implementationCommits": ["d4cfaeb", "41c9b01", "09a2cc2"],
+      "browserTests": [
+        "mandatory isolation: unreadable entries do not block good files and permission loss retains dirty XML"
+      ],
+      "coverageNote": "Verifies a readable process remains usable beside an unreadable entry and denied write permission retains the dirty editor without changing storage."
+    },
+    {
+      "id": "REL-08",
+      "requirement": "Cross-tab workspace collision.",
+      "status": "browser-e2e-defined",
+      "implementationAreas": [
+        "src/sessions/workspaceChannel.ts",
+        "src/workspace/adapters",
+        "src/App.tsx"
+      ],
+      "implementationCommits": ["cf012b9", "b559c33", "09a2cc2"],
+      "browserTests": [
+        "mandatory coordination: simultaneous cross-tab saves never silently overwrite both drafts"
+      ],
+      "coverageNote": "Runs simultaneous production saves against shared backing bytes and requires one winner plus visible collision evidence and a retained dirty draft."
+    },
+    {
+      "id": "REL-09",
+      "requirement": "History restore and quota cleanup.",
+      "status": "browser-e2e-defined-with-lower-level-cap-coverage",
+      "implementationAreas": [
+        "src/workspace/history",
+        "src/workspace/HistoryDialog.tsx",
+        "src/App.tsx"
+      ],
+      "implementationCommits": ["41c9b01", "09a2cc2", "f9c4bb9"],
+      "browserTests": [
+        "mandatory recovery history restores a revision and quota failure keeps the live draft",
+        "mandatory recovery history retains the newest 20 revisions and prunes the oldest first"
+      ],
+      "lowerLevelTests": ["src/workspace/history/historyManager.test.ts"],
+      "coverageNote": "The browser tests restore through the production dialog, inject a QuotaExceededError while proving the live draft remains dirty, and perform 21 UI saves to verify 20 newest revisions and paired persisted records. The 100 MiB aggregate cap remains a lower-level automated boundary."
+    },
+    {
+      "id": "REL-10",
+      "requirement": "Duplicate process-ID diagnosis and repair.",
+      "status": "browser-e2e-defined",
+      "implementationAreas": ["src/workspace/liveWorkspaceIndex.ts", "src/App.tsx"],
+      "implementationCommits": ["41c9b01", "09a2cc2", "f9c4bb9"],
+      "browserTests": [
+        "mandatory index integrity repairs duplicate IDs and projects unsaved XML into search, catalog, and links"
+      ],
+      "lowerLevelTests": ["src/workspace/liveWorkspaceIndex.test.ts"],
+      "coverageNote": "Opens the duplicate selected by the diagnosis, repairs it through the production action, explicitly saves it, and condition-polls the actual persisted BPMN bytes until the two process IDs differ."
+    },
+    {
+      "id": "REL-11",
+      "requirement": "Live dirty search, catalog, and link updates.",
+      "status": "browser-e2e-defined",
+      "implementationAreas": [
+        "src/workspace/liveWorkspaceIndex.ts",
+        "src/workspace/catalog.ts",
+        "src/links",
+        "src/App.tsx"
+      ],
+      "implementationCommits": ["41c9b01", "09a2cc2", "f9c4bb9", "fe0d75f"],
+      "browserTests": [
+        "mandatory index integrity repairs duplicate IDs and projects unsaved XML into search, catalog, and links"
+      ],
+      "lowerLevelTests": [
+        "src/workspace/liveWorkspaceIndex.test.ts",
+        "src/links/__tests__/linkGraph.test.ts",
+        "src/workspace/__tests__/processHierarchy.test.ts"
+      ],
+      "coverageNote": "The browser case starts with a resolved called-process hierarchy, changes the caller name and calledElement in a dirty production editor, then proves immediate search and catalog projection, resolved-link detachment, unresolved-target UI, and unchanged durable bytes."
+    }
+  ]
+}

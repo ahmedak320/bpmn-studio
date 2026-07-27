@@ -1,0 +1,98 @@
+{
+  "schemaVersion": 2,
+  "bundle": "ai-security",
+  "sourceRequirement": "fix_plan.md §5 Mandatory end-to-end scenarios / AI/security",
+  "requiredRequirementIds": [
+    "AI-01",
+    "AI-02",
+    "AI-03",
+    "AI-04",
+    "AI-05",
+    "AI-06",
+    "AI-07",
+    "AI-08",
+    "AI-09",
+    "AI-10"
+  ],
+  "suite": {
+    "path": "tests/e2e/lite-mandatory-ai-security.spec.ts",
+    "exactInventory": true
+  },
+  "requirements": [
+    {
+      "id": "AI-01",
+      "requirement": "Session-only and encrypted-key behavior.",
+      "browserTests": [
+        "mandatory AI credentials: session-only keys never enter storage and disappear on reload",
+        "mandatory AI credentials: AES-GCM persistence requires the passphrase and Clear removes every credential artifact"
+      ]
+    },
+    {
+      "id": "AI-02",
+      "requirement": "Storage failure reporting.",
+      "browserTests": [
+        "mandatory AI credentials: encrypted-storage failure is reported and never claims success"
+      ]
+    },
+    {
+      "id": "AI-03",
+      "requirement": "Request preview and context opt-out.",
+      "browserTests": [
+        "mandatory AI privacy: preview opt-out, relevance, redaction, adversarial quoting, and OpenRouter privacy flags bind to the sent payload"
+      ]
+    },
+    {
+      "id": "AI-04",
+      "requirement": "OpenRouter privacy flags.",
+      "browserTests": [
+        "mandatory AI privacy: preview opt-out, relevance, redaction, adversarial quoting, and OpenRouter privacy flags bind to the sent payload",
+        "mandatory AI consent: a different payload with the same short fingerprint requires exact fresh consent"
+      ]
+    },
+    {
+      "id": "AI-05",
+      "requirement": "Model capability blocking.",
+      "browserTests": [
+        "mandatory AI capability gate: unreviewed models fail closed for attachments and the explicit model is shared across surfaces"
+      ]
+    },
+    {
+      "id": "AI-06",
+      "requirement": "Permanent errors do not retry and transient errors retry only within the bound.",
+      "browserTests": [
+        "mandatory AI reliability: permanent data-policy failure is attempted once and never retried",
+        "mandatory AI reliability and accounting: transient failures visibly retry twice, then provider usage and small cost refresh every UI surface"
+      ]
+    },
+    {
+      "id": "AI-07",
+      "requirement": "Cancellation of every AI path.",
+      "browserTests": [
+        "mandatory AI cancellation: attachment, generation, assistant, interview, and workspace replacement abort late OpenRouter results",
+        "mandatory AI upload cancellation: replacing an in-flight DOCX parse terminates it and ignores its late result"
+      ]
+    },
+    {
+      "id": "AI-08",
+      "requirement": "Prompt-injection fixtures.",
+      "browserTests": [
+        "mandatory AI privacy: preview opt-out, relevance, redaction, adversarial quoting, and OpenRouter privacy flags bind to the sent payload"
+      ]
+    },
+    {
+      "id": "AI-09",
+      "requirement": "Accurate usage and cost updates.",
+      "browserTests": [
+        "mandatory AI reliability and accounting: transient failures visibly retry twice, then provider usage and small cost refresh every UI surface",
+        "mandatory AI accounting: an unknown model without provider cost is displayed as unknown, never as free"
+      ]
+    },
+    {
+      "id": "AI-10",
+      "requirement": "CSP network allowlist.",
+      "browserTests": [
+        "mandatory AI CSP: the built allowlist is exact, startup has no external traffic, and a forbidden host is blocked at runtime"
+      ]
+    }
+  ]
+}

@@ -1,29 +1,42 @@
 import { defineConfig } from '@playwright/test'
 
-// End-to-end suite for the OrbitPM Process Studio Electron app (D1).
+// Browser tests load the freshly built `dist/index.html` directly over
+// file:// to prove the shipped artifact is self-contained.
 //
-// Each spec launches the *built* app (out/main/index.js) via Playwright's
-// _electron.launch and drives the real renderer UI. The app must be built
-// first (`npm run build`) — see tests/e2e/harness.ts for the launch details.
-//
-// Runs headed under the ambient DISPLAY (:0) — no xvfb in this environment.
-// Serial (workers: 1) because the app takes a single-instance lock and shares
-// one X display. Screenshots + traces on failure land in tests/e2e/artifacts
-// (gitignored); the harness captures them manually since these tests manage
-// the Electron context directly rather than using Playwright's `page` fixture.
+// Headless by design: headed chromium requires a live DISPLAY, which caused a
+// ~4h hang in the CI/agent sandbox (no display => Playwright blocks waiting
+// for a browser window that never appears). bpmn-js renders fully in headless
+// chromium (real Canvas/SVG, no GPU dependency), so headed mode bought no
+// coverage — only risk. Keep headless:true here; do not reintroduce headed
+// mode without a display-detection guard.
 export default defineConfig({
-  // Relative paths are resolved by Playwright against this config's directory.
   testDir: './tests/e2e',
-  outputDir: './tests/e2e/artifacts',
+  outputDir: './test-results',
+  timeout: 60_000,
+  globalTimeout: 600_000,
   fullyParallel: false,
   workers: 1,
-  forbidOnly: !!process.env.CI,
-  retries: 1,
+  forbidOnly: Boolean(process.env.CI),
+  retries: 0,
   reporter: [['list']],
-  timeout: 60_000,
-  expect: { timeout: 15_000 },
   use: {
-    trace: 'retain-on-failure',
-    screenshot: 'only-on-failure'
-  }
+    headless: true,
+    acceptDownloads: true,
+    actionTimeout: 20_000,
+    navigationTimeout: 30_000
+  },
+  projects: [
+    {
+      name: 'chromium',
+      use: { browserName: 'chromium' }
+    },
+    {
+      name: 'firefox',
+      use: { browserName: 'firefox' }
+    },
+    {
+      name: 'webkit',
+      use: { browserName: 'webkit' }
+    }
+  ]
 })

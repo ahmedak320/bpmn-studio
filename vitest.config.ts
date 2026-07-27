@@ -1,15 +1,20 @@
-import { defineConfig, configDefaults } from 'vitest/config'
+import { resolve } from 'node:path'
+import { defineConfig } from 'vitest/config'
 
-// Unit tests run under vitest (`npm test`). The Playwright-Electron e2e specs
-// live in tests/e2e and are driven by `npm run test:e2e` (see playwright.config.ts)
-// — exclude them here so vitest doesn't try to collect them (they call
-// @playwright/test's test() which throws outside the Playwright runner).
+// Unit tests run against the repository-root Lite application.
 export default defineConfig({
+  // Use the automatic JSX runtime (react/jsx-runtime) so presentational
+  // components can be rendered to a string with react-dom/server in a plain
+  // node environment — no React import, no jsdom — matching tsconfig's
+  // "jsx": "react-jsx".
+  esbuild: { jsx: 'automatic' },
+  resolve: {
+    alias: {
+      '@': resolve(__dirname, 'src')
+    }
+  },
   test: {
-    // `lite/**` is the standalone single-file web editor subproject (its own
-    // package.json, deps, vitest + Playwright configs). It is intentionally
-    // isolated from this app's build/test — exclude it so the desktop suite
-    // neither collects its unit tests nor trips over its Playwright specs.
-    exclude: [...configDefaults.exclude, 'tests/e2e/**', 'lite/**']
+    environment: 'node',
+    include: ['src/**/*.test.ts', 'src/**/*.test.tsx']
   }
 })

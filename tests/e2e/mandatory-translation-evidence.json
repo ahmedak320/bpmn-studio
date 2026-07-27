@@ -1,0 +1,100 @@
+{
+  "schemaVersion": 2,
+  "bundle": "translation",
+  "sourceRequirement": "fix_plan.md §5 Mandatory end-to-end scenarios / Translation",
+  "requiredRequirementIds": [
+    "TR-01",
+    "TR-02",
+    "TR-03",
+    "TR-04",
+    "TR-05",
+    "TR-06",
+    "TR-07",
+    "TR-08",
+    "TR-09",
+    "TR-10"
+  ],
+  "suite": {
+    "path": "tests/e2e/lite-mandatory-translation.spec.ts",
+    "exactInventory": true
+  },
+  "requirements": [
+    {
+      "id": "TR-01",
+      "requirement": "Wrong-language target fields imported from XML.",
+      "browserTests": [
+        "TR5: XML import explicitly repairs wrong-language, EN-only and AR-only fields across two planes"
+      ]
+    },
+    {
+      "id": "TR-02",
+      "requirement": "Missing English or Arabic counterparts.",
+      "browserTests": [
+        "TR5: XML import explicitly repairs wrong-language, EN-only and AR-only fields across two planes"
+      ]
+    },
+    {
+      "id": "TR-03",
+      "requirement": "Arabic-first and English-first diagrams.",
+      "browserTests": [
+        "TR5: XML import explicitly repairs wrong-language, EN-only and AR-only fields across two planes",
+        "TR5: AI text, DOCX, PDF, PNG/image and Excel use their real generation/import surfaces with EN/AR output"
+      ]
+    },
+    {
+      "id": "TR-04",
+      "requirement": "Mixed values, neutral terms, branch conditions, annotations, and details.",
+      "browserTests": [
+        "TR4/TR10: mixed and neutral labels, branch conditions, annotations and details survive undo, save and reopen"
+      ]
+    },
+    {
+      "id": "TR-05",
+      "requirement": "XML, ARIS, PDF, PNG, DOCX, AI, Excel, source Apply, and backup inputs.",
+      "browserTests": [
+        "TR5: XML import explicitly repairs wrong-language, EN-only and AR-only fields across two planes",
+        "TR4/TR10: mixed and neutral labels, branch conditions, annotations and details survive undo, save and reopen",
+        "TR5: ARIS imports through production review and backup preserves Arabic output",
+        "TR5: AI text, DOCX, PDF, PNG/image and Excel use their real generation/import surfaces with EN/AR output"
+      ]
+    },
+    {
+      "id": "TR-06",
+      "requirement": "Provider cancellation, 429, partial failure, retry, and manual edit.",
+      "browserTests": [
+        "TR6: cancellation, HTTP 429 per-field retry, partial failure and per-field manual recovery remain truthful",
+        "TR6/TR10: workspace translation-memory recovery and late finalization stay atomic across activation"
+      ]
+    },
+    {
+      "id": "TR-07",
+      "requirement": "No network before explicit consent.",
+      "browserTests": [
+        "TR5: AI text, DOCX, PDF, PNG/image and Excel use their real generation/import surfaces with EN/AR output"
+      ]
+    },
+    {
+      "id": "TR-08",
+      "requirement": "Actual Arabic SVG text after switching.",
+      "browserTests": [
+        "TR4/TR10: mixed and neutral labels, branch conditions, annotations and details survive undo, save and reopen"
+      ]
+    },
+    {
+      "id": "TR-09",
+      "requirement": "No false completion or stale progress message.",
+      "browserTests": [
+        "TR6: cancellation, HTTP 429 per-field retry, partial failure and per-field manual recovery remain truthful",
+        "TR6/TR10: workspace translation-memory recovery and late finalization stay atomic across activation"
+      ]
+    },
+    {
+      "id": "TR-10",
+      "requirement": "Undo and save/reopen round trip.",
+      "browserTests": [
+        "TR4/TR10: mixed and neutral labels, branch conditions, annotations and details survive undo, save and reopen",
+        "TR6/TR10: workspace translation-memory recovery and late finalization stay atomic across activation"
+      ]
+    }
+  ]
+}
