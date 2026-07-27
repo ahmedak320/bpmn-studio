@@ -8,6 +8,7 @@ export const REQUIRED_BROWSER_SUITES = Object.freeze([
   'tests/e2e/lite-csp-runtime.spec.ts',
   'tests/e2e/lite-i18n-rtl.spec.ts',
   'tests/e2e/lite-live-cors.spec.ts',
+  'tests/e2e/lite-mandatory-reliability.spec.ts',
   'tests/e2e/lite-org.spec.ts',
   'tests/e2e/lite-panes-details.spec.ts',
   'tests/e2e/lite-process-outline.spec.ts',
