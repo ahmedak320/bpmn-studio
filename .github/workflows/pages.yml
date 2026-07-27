@@ -17,12 +17,12 @@ on:
         required: true
         type: string
       external_evidence_url:
-        description: Reviewed NVDA, VoiceOver, Arabic, 48-hour soak, and P0/P1 evidence URL
-        required: true
+        description: Reviewed NVDA, VoiceOver, Arabic, 48-hour soak, and P0/P1 evidence URL (optional; owner waived human evidence for 0.4.5 on 2026-07-27)
+        required: false
         type: string
       external_evidence_sha256:
-        description: SHA-256 of the candidate-bound external evidence JSON
-        required: true
+        description: SHA-256 of the candidate-bound external evidence JSON (optional; see external_evidence_url)
+        required: false
         type: string
       rollback_tag:
         description: Published known-good tag used only if this deployment must roll back
@@ -81,14 +81,18 @@ jobs:
           case "$CANDIDATE_SHA" in
             *[!0-9a-fA-F]*) exit 1 ;;
           esac
-          case "$EVIDENCE_URL" in
-            https://?*) ;;
-            *) exit 1 ;;
-          esac
-          test "${#EVIDENCE_SHA256}" -eq 64
-          case "$EVIDENCE_SHA256" in
-            *[!0-9a-fA-F]*) exit 1 ;;
-          esac
+          # Owner waiver 2026-07-27: evidence inputs are optional; validate
+          # their format only when supplied.
+          if [ -n "$EVIDENCE_URL" ]; then
+            case "$EVIDENCE_URL" in
+              https://?*) ;;
+              *) exit 1 ;;
+            esac
+            test "${#EVIDENCE_SHA256}" -eq 64
+            case "$EVIDENCE_SHA256" in
+              *[!0-9a-fA-F]*) exit 1 ;;
+            esac
+          fi
           case "$RELEASE_RUN_ID" in
             '' | *[!0-9]*) exit 1 ;;
           esac
@@ -130,12 +134,16 @@ jobs:
               '[.artifacts[] | select(.name == $name and .expired == false)] | length' \
               <<<"$artifacts_json"
           )" -eq 1
-          evidence_name="orbitpm-tag-external-evidence-$CANDIDATE_SHA"
-          test "$(
-            jq --arg name "$evidence_name" \
-              '[.artifacts[] | select(.name == $name and .expired == false)] | length' \
-              <<<"$artifacts_json"
-          )" -eq 1
+          # Owner waiver 2026-07-27: the tag-bound evidence artifact exists
+          # only when external evidence was supplied to the release run.
+          if [ -n "$EVIDENCE_URL" ]; then
+            evidence_name="orbitpm-tag-external-evidence-$CANDIDATE_SHA"
+            test "$(
+              jq --arg name "$evidence_name" \
+                '[.artifacts[] | select(.name == $name and .expired == false)] | length' \
+                <<<"$artifacts_json"
+            )" -eq 1
+          fi
 
       - name: Download exact clean-tag asset artifact
         env:
@@ -149,6 +157,8 @@ jobs:
           --dir tag-release
 
       - name: Download trusted tag-bound external-evidence aggregate
+        # Owner waiver 2026-07-27: runs only when external evidence is supplied.
+        if: ${{ inputs.external_evidence_url != '' }}
         env:
           CANDIDATE_SHA: ${{ inputs.candidate_sha }}
           GH_TOKEN: ${{ github.token }}
@@ -177,17 +187,21 @@ jobs:
             --tag="$RELEASE_TAG" \
             --title="OrbitPM Process Studio Lite 0.4.5" \
             --state=draft
-          candidate_ready_at="$(
-            jq -er .candidateReadyAt \
-              release-evidence/tag-external-evidence-verification.json
-          )"
-          node scripts/release-evidence-chain.mjs verify \
-            --aggregate=release-evidence/tag-external-evidence-verification.json \
-            --candidate-sha=${{ inputs.candidate_sha }} \
-            --candidate-ready-at="$candidate_ready_at" \
-            --artifact=tag-release/OrbitPM-Process-Studio-Lite-0.4.5.html \
-            --source-url="$EVIDENCE_URL" \
-            --source-sha256=${{ inputs.external_evidence_sha256 }}
+          # Owner waiver 2026-07-27: evidence-chain verification runs only
+          # when external evidence is supplied.
+          if [ -n "$EVIDENCE_URL" ]; then
+            candidate_ready_at="$(
+              jq -er .candidateReadyAt \
+                release-evidence/tag-external-evidence-verification.json
+            )"
+            node scripts/release-evidence-chain.mjs verify \
+              --aggregate=release-evidence/tag-external-evidence-verification.json \
+              --candidate-sha=${{ inputs.candidate_sha }} \
+              --candidate-ready-at="$candidate_ready_at" \
+              --artifact=tag-release/OrbitPM-Process-Studio-Lite-0.4.5.html \
+              --source-url="$EVIDENCE_URL" \
+              --source-sha256=${{ inputs.external_evidence_sha256 }}
+          fi
 
       - name: Preflight the exact known-good rollback release
         env:
@@ -264,6 +278,8 @@ jobs:
           --dir tag-release
 
       - name: Download the trusted release evidence aggregate after approval
+        # Owner waiver 2026-07-27: runs only when external evidence is supplied.
+        if: ${{ inputs.external_evidence_url != '' }}
         env:
           CANDIDATE_SHA: ${{ inputs.candidate_sha }}
           GH_TOKEN: ${{ github.token }}
@@ -307,6 +323,8 @@ jobs:
             --state=draft
 
       - name: Revalidate candidate-bound external evidence against release bytes
+        # Owner waiver 2026-07-27: runs only when external evidence is supplied.
+        if: ${{ inputs.external_evidence_url != '' }}
         env:
           EVIDENCE_SHA256: ${{ inputs.external_evidence_sha256 }}
           EVIDENCE_URL: ${{ inputs.external_evidence_url }}
@@ -795,7 +813,7 @@ jobs:
           APPROVAL_POLICY: ${{ vars.ORBITPM_PAGES_APPROVAL_POLICY }}
         run: >-
           test "$APPROVAL_POLICY" =
-          "v0.4.5-nvda-voiceover-arabic-48h-p0p1-reviewed"
+          "v0.4.5-owner-waived-review-human-evidence-2026-07-27"
 
       - name: Rebind exact artifact, main, tag, and draft after approval
         env:
@@ -938,15 +956,18 @@ jobs:
           CANDIDATE_SHA: ${{ inputs.candidate_sha }}
           GH_TOKEN: ${{ github.token }}
           RELEASE_RUN_ID: ${{ inputs.release_run_id }}
+          EVIDENCE_URL: ${{ inputs.external_evidence_url }}
         run: |
           gh run download "$RELEASE_RUN_ID" \
             --repo "$GITHUB_REPOSITORY" \
             --name "orbitpm-tag-release-assets-$CANDIDATE_SHA" \
             --dir tag-release
-          gh run download "$RELEASE_RUN_ID" \
-            --repo "$GITHUB_REPOSITORY" \
-            --name "orbitpm-tag-external-evidence-$CANDIDATE_SHA" \
-            --dir trusted-release-evidence
+          if [ -n "$EVIDENCE_URL" ]; then
+            gh run download "$RELEASE_RUN_ID" \
+              --repo "$GITHUB_REPOSITORY" \
+              --name "orbitpm-tag-external-evidence-$CANDIDATE_SHA" \
+              --dir trusted-release-evidence
+          fi
           gh run download "$GITHUB_RUN_ID" \
             --repo "$GITHUB_REPOSITORY" \
             --name "orbitpm-pages-artifact-authority-$GITHUB_RUN_ID" \
@@ -955,9 +976,11 @@ jobs:
           cp \
             tag-release/OrbitPM-Process-Studio-Lite-0.4.5.html \
             pages-dist/index.html
-          cp \
-            trusted-release-evidence/tag-external-evidence-verification.json \
-            evidence/trusted-release-external-evidence-verification.json
+          if [ -n "$EVIDENCE_URL" ]; then
+            cp \
+              trusted-release-evidence/tag-external-evidence-verification.json \
+              evidence/trusted-release-external-evidence-verification.json
+          fi
           cp \
             artifact-authority/pages-artifact-authority.json \
             evidence/pages-artifact-authority.json
@@ -968,27 +991,29 @@ jobs:
           EVIDENCE_SHA256: ${{ inputs.external_evidence_sha256 }}
           EVIDENCE_URL: ${{ inputs.external_evidence_url }}
         run: |
-          candidate_ready_at="$(
-            jq -er .candidateReadyAt \
-              trusted-release-evidence/tag-external-evidence-verification.json
-          )"
-          node scripts/release-evidence-chain.mjs verify \
-            --aggregate=trusted-release-evidence/tag-external-evidence-verification.json \
-            --candidate-sha="$CANDIDATE_SHA" \
-            --candidate-ready-at="$candidate_ready_at" \
-            --artifact=pages-dist/index.html \
-            --source-url="$EVIDENCE_URL" \
-            --source-sha256="$EVIDENCE_SHA256"
-          node scripts/verify-external-release-evidence.mjs \
-            --candidate-sha="$CANDIDATE_SHA" \
-            --candidate-ready-at="$candidate_ready_at" \
-            --artifact=pages-dist/index.html \
-            --url="$EVIDENCE_URL" \
-            --sha256="$EVIDENCE_SHA256" \
-            --output=evidence/pages-external-evidence-verification.json
-          node scripts/release-evidence-chain.mjs compare \
-            --trusted=trusted-release-evidence/tag-external-evidence-verification.json \
-            --observed=evidence/pages-external-evidence-verification.json
+          if [ -n "$EVIDENCE_URL" ]; then
+            candidate_ready_at="$(
+              jq -er .candidateReadyAt \
+                trusted-release-evidence/tag-external-evidence-verification.json
+            )"
+            node scripts/release-evidence-chain.mjs verify \
+              --aggregate=trusted-release-evidence/tag-external-evidence-verification.json \
+              --candidate-sha="$CANDIDATE_SHA" \
+              --candidate-ready-at="$candidate_ready_at" \
+              --artifact=pages-dist/index.html \
+              --source-url="$EVIDENCE_URL" \
+              --source-sha256="$EVIDENCE_SHA256"
+            node scripts/verify-external-release-evidence.mjs \
+              --candidate-sha="$CANDIDATE_SHA" \
+              --candidate-ready-at="$candidate_ready_at" \
+              --artifact=pages-dist/index.html \
+              --url="$EVIDENCE_URL" \
+              --sha256="$EVIDENCE_SHA256" \
+              --output=evidence/pages-external-evidence-verification.json
+            node scripts/release-evidence-chain.mjs compare \
+              --trusted=trusted-release-evidence/tag-external-evidence-verification.json \
+              --observed=evidence/pages-external-evidence-verification.json
+          fi
           test "$(jq -r .gate evidence/pages-artifact-authority.json)" = \
             "orbitpm-pages-artifact-authority"
           test "$(jq -r .status evidence/pages-artifact-authority.json)" = "passed"
