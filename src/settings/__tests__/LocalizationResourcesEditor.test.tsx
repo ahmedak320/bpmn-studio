@@ -513,13 +513,14 @@ describe('LocalizationResourcesEditor', () => {
       expectedHash: initial.files.translationMemory.hash
     })
     expect((translationMemorySaveButton as HTMLButtonElement).disabled).toBe(true)
-    expect(
-      (
-        JSON.parse(
-          new TextDecoder().decode((await adapter.read(WORKSPACE_TRANSLATION_MEMORY_PATH)).bytes)
-        ) as { entries: TranslationMemoryEntry[] }
-      ).entries
-    ).toEqual(externalTranslationMemory)
+    // The save commits through the adapter asynchronously; wait for the
+    // written bytes instead of sampling them immediately after the call.
+    await waitFor(async () => {
+      const written = JSON.parse(
+        new TextDecoder().decode((await adapter.read(WORKSPACE_TRANSLATION_MEMORY_PATH)).bytes)
+      ) as { entries: TranslationMemoryEntry[] }
+      expect(written.entries).toEqual(externalTranslationMemory)
+    })
 
     await user.click(
       screen.getByRole('button', {
@@ -577,13 +578,14 @@ describe('LocalizationResourcesEditor', () => {
     expect(saveTranslationMemory).toHaveBeenLastCalledWith([baseTranslationMemory[0]], {
       expectedHash: externalHash
     })
-    expect(
-      (
-        JSON.parse(
-          new TextDecoder().decode((await adapter.read(WORKSPACE_TRANSLATION_MEMORY_PATH)).bytes)
-        ) as { entries: TranslationMemoryEntry[] }
-      ).entries
-    ).toEqual([baseTranslationMemory[0]])
+    // The save commits through the adapter asynchronously; wait for the
+    // written bytes instead of sampling them immediately after the call.
+    await waitFor(async () => {
+      const written = JSON.parse(
+        new TextDecoder().decode((await adapter.read(WORKSPACE_TRANSLATION_MEMORY_PATH)).bytes)
+      ) as { entries: TranslationMemoryEntry[] }
+      expect(written.entries).toEqual([baseTranslationMemory[0]])
+    })
     expect(screen.getAllByDisplayValue('Case code')).toHaveLength(2)
     expect((glossarySaveButton as HTMLButtonElement).disabled).toBe(false)
   })
@@ -719,13 +721,14 @@ describe('LocalizationResourcesEditor', () => {
     expect(saveGlossary).toHaveBeenCalledWith([baseGlossary[0]], {
       expectedHash: advanced.files.glossary.hash
     })
-    expect(
-      (
-        JSON.parse(
-          new TextDecoder().decode((await adapter.read(WORKSPACE_GLOSSARY_PATH)).bytes)
-        ) as { entries: GlossaryEntry[] }
-      ).entries
-    ).toEqual([baseGlossary[0]])
+    // The save commits through the adapter asynchronously; wait for the
+    // written bytes instead of sampling them immediately after the call.
+    await waitFor(async () => {
+      const written = JSON.parse(
+        new TextDecoder().decode((await adapter.read(WORKSPACE_GLOSSARY_PATH)).bytes)
+      ) as { entries: GlossaryEntry[] }
+      expect(written.entries).toEqual([baseGlossary[0]])
+    })
   })
 
   it('keeps retained drafts read-only after failed all-resource reload and unlocks only after recovery', async () => {
