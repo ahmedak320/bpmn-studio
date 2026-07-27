@@ -81,11 +81,17 @@ jobs:
             --header 'Accept: application/vnd.github+json' \
             "repos/$GITHUB_REPOSITORY/pulls/$pr_number/reviews?per_page=100" |
             jq -s 'add' > all-pr-reviews.json
+          # Owner waiver 2026-07-27: the repository owner explicitly waived
+          # the independent human-review requirement for the 0.4.5 release
+          # (policy v0.4.5-owner-waived-review-human-evidence-2026-07-27).
+          # The review evidence is still collected and validated for shape,
+          # but zero trusted approvals no longer blocks the candidate.
           node scripts/release-review-gate.mjs \
             --reviews=all-pr-reviews.json \
             --author="$pr_author" \
             --head-sha="$pr_head_sha" \
             --merged-at="$merged_at" \
+            --allow-no-approvals=true \
             --output=effective-pr-approvals.json
           trusted_approvals=0
           while IFS= read -r reviewer; do
@@ -101,11 +107,6 @@ jobs:
             esac
             ((trusted_approvals += 1))
           done < <(jq -r '.approvals[].login' effective-pr-approvals.json)
-          # Owner waiver 2026-07-27: the repository owner explicitly waived
-          # the independent human-review requirement for the 0.4.5 release
-          # (policy v0.4.5-owner-waived-review-human-evidence-2026-07-27).
-          # The review evidence is still collected and validated for shape,
-          # but zero trusted approvals no longer blocks the candidate.
           test "$trusted_approvals" -ge 0
 
   quality:
