@@ -1372,17 +1372,23 @@ function configureTranslationModel(
   }
 }
 
-function latestTranslationReviewProps(): TranslationReviewDialogProps {
-  const props = mocks.translationReviewProps.mock.calls.at(-1)?.[0] as
-    TranslationReviewDialogProps | undefined
-  if (!props) throw new Error('expected translation review props')
-  return props
+async function latestTranslationReviewProps(): Promise<TranslationReviewDialogProps> {
+  let props: TranslationReviewDialogProps | undefined
+  await waitFor(
+    () => {
+      props = mocks.translationReviewProps.mock.calls.at(-1)?.[0] as
+        TranslationReviewDialogProps | undefined
+      expect(props, 'expected translation review props').toBeTruthy()
+    },
+    { timeout: 10_000, interval: 25 }
+  )
+  return props as TranslationReviewDialogProps
 }
 
 async function acceptTranslationProposal(
   proposal: NonNullable<TranslationReviewDialogProps['proposals']>[number]
 ): Promise<void> {
-  const props = latestTranslationReviewProps()
+  const props = await latestTranslationReviewProps()
   const field = listTranslationRecoveryFields(props.review).find(
     (candidate) =>
       candidate.processId === proposal.processId &&
@@ -1397,7 +1403,7 @@ async function acceptTranslationProposal(
 }
 
 async function applyCompletedTranslationReview(): Promise<void> {
-  const apply = latestTranslationReviewProps().onApplyCompleted
+  const apply = (await latestTranslationReviewProps()).onApplyCompleted
   if (!apply) throw new Error('missing completed translation apply action')
   await act(async () => {
     await apply()
@@ -1872,11 +1878,11 @@ describe('App single-file browser orchestration', () => {
     await openBlankDiagram(user)
     await user.click(screen.getByRole('button', { name: 'mock-editor-ready' }))
     await user.click(screen.getByRole('button', { name: 'editor.langToggle' }))
-    expect(mocks.translationReviewProps.mock.calls.at(-1)?.[0].providerId).toBe('')
+    expect((await latestTranslationReviewProps()).providerId).toBe('')
 
     await user.click(screen.getByRole('button', { name: 'translationReview.postpone' }))
     await user.click(screen.getByRole('button', { name: 'editor.translate' }))
-    expect(mocks.translationReviewProps.mock.calls.at(-1)?.[0].providerId).toBe('selected-ai')
+    expect((await latestTranslationReviewProps()).providerId).toBe('selected-ai')
   })
 
   it('stages a reviewed manual field privately, then applies metadata and projection in one batch', async () => {
@@ -1886,7 +1892,7 @@ describe('App single-file browser orchestration', () => {
     await user.click(screen.getByRole('button', { name: 'mock-editor-ready' }))
     await user.click(screen.getByRole('button', { name: 'editor.translate' }))
 
-    const initial = latestTranslationReviewProps()
+    const initial = await latestTranslationReviewProps()
     const field = listTranslationRecoveryFields(initial.review)[0]
     if (!field || !initial.onManualEdit) throw new Error('missing manual translation recovery')
     await act(async () => {
@@ -1897,7 +1903,7 @@ describe('App single-file browser orchestration', () => {
     expect(model.task.name).toBe('Review request')
     expect((model.process.$attrs as Record<string, unknown>)['orbitpm:activeLang']).toBe('en')
     expect(model.batchExecutions()).toBe(0)
-    const completed = latestTranslationReviewProps()
+    const completed = await latestTranslationReviewProps()
     expect(completed.acceptedValues).toEqual([
       expect.objectContaining({ elementId: 'Task_1', value: 'مراجعة الطلب' })
     ])
@@ -1930,8 +1936,9 @@ describe('App single-file browser orchestration', () => {
     await openBlankDiagram(user)
     await user.click(screen.getByRole('button', { name: 'mock-editor-ready' }))
     await user.click(screen.getByRole('button', { name: 'editor.translate' }))
-    act(() => latestTranslationReviewProps().onProviderChange('free'))
-    const selected = latestTranslationReviewProps()
+    const props = await latestTranslationReviewProps()
+    act(() => props.onProviderChange('free'))
+    const selected = await latestTranslationReviewProps()
     const field = listTranslationRecoveryFields(selected.review)[0]
     if (!field || !selected.onRetryField) throw new Error('missing retryable translation field')
 
@@ -1950,7 +1957,7 @@ describe('App single-file browser orchestration', () => {
     expect(mocks.makeFreeTranslateTexts).toHaveBeenCalledWith({
       onAttempt: expect.any(Function)
     })
-    expect(latestTranslationReviewProps().proposals).toEqual([
+    expect((await latestTranslationReviewProps()).proposals).toEqual([
       expect.objectContaining({ elementId: 'Task_1', value: 'مراجعة الطلب' })
     ])
     expect((model.task.$attrs as Record<string, unknown>)['orbitpm:nameAr']).toBeUndefined()
@@ -1958,7 +1965,7 @@ describe('App single-file browser orchestration', () => {
     expect((model.process.$attrs as Record<string, unknown>)['orbitpm:activeLang']).toBe('en')
     expect(model.batchExecutions()).toBe(0)
 
-    await acceptTranslationProposal(latestTranslationReviewProps().proposals![0]!)
+    await acceptTranslationProposal((await latestTranslationReviewProps()).proposals![0]!)
     expect((model.task.$attrs as Record<string, unknown>)['orbitpm:nameAr']).toBeUndefined()
     expect(model.batchExecutions()).toBe(0)
     await applyCompletedTranslationReview()
@@ -1991,8 +1998,9 @@ describe('App single-file browser orchestration', () => {
     await openBlankDiagram(user)
     await user.click(screen.getByRole('button', { name: 'mock-editor-ready' }))
     await user.click(screen.getByRole('button', { name: 'editor.translate' }))
-    act(() => latestTranslationReviewProps().onProviderChange('free'))
-    const captured = latestTranslationReviewProps()
+    let props = await latestTranslationReviewProps()
+    act(() => props.onProviderChange('free'))
+    const captured = await latestTranslationReviewProps()
     const field = listTranslationRecoveryFields(captured.review)[0]
     if (!field || !captured.onRetryField) throw new Error('missing retryable translation field')
     const confirmation = confirmedFieldRetry(captured, field)
@@ -2011,7 +2019,8 @@ describe('App single-file browser orchestration', () => {
     expect(mocks.makeFreeTranslateTexts).toHaveBeenCalledOnce()
     expect(screen.getByRole('dialog', { name: 'translationReview.title' })).not.toBeNull()
     expect(model.batchExecutions()).toBe(0)
-    act(() => latestTranslationReviewProps().onCancelTranslation())
+    props = await latestTranslationReviewProps()
+    act(() => props.onCancelTranslation())
     await act(async () => {
       await Promise.all([first, second])
     })
@@ -2028,12 +2037,13 @@ describe('App single-file browser orchestration', () => {
     await openBlankDiagram(user)
     await user.click(screen.getByRole('button', { name: 'mock-editor-ready' }))
     await user.click(screen.getByRole('button', { name: 'editor.translate' }))
-    act(() => latestTranslationReviewProps().onProviderChange('free'))
+    const props = await latestTranslationReviewProps()
+    act(() => props.onProviderChange('free'))
     await act(async () => {
-      await latestTranslationReviewProps().onTranslateNow()
+      await (await latestTranslationReviewProps()).onTranslateNow()
     })
 
-    const proposals = [...(latestTranslationReviewProps().proposals ?? [])]
+    const proposals = [...((await latestTranslationReviewProps()).proposals ?? [])]
     expect(proposals).toHaveLength(2)
     expect(model.batchExecutions()).toBe(0)
     expect((model.task.$attrs as Record<string, unknown>)['orbitpm:nameAr']).toBeUndefined()
@@ -2043,7 +2053,7 @@ describe('App single-file browser orchestration', () => {
 
     for (const proposal of proposals) await acceptTranslationProposal(proposal)
     expect(model.batchExecutions()).toBe(0)
-    expect(latestTranslationReviewProps().acceptedValues).toHaveLength(2)
+    expect((await latestTranslationReviewProps()).acceptedValues).toHaveLength(2)
 
     await applyCompletedTranslationReview()
 
@@ -2064,14 +2074,14 @@ describe('App single-file browser orchestration', () => {
     await openBlankDiagram(user)
     await user.click(screen.getByRole('button', { name: 'mock-editor-ready' }))
     await user.click(screen.getByRole('button', { name: 'editor.translate' }))
-    const review = latestTranslationReviewProps()
+    const review = await latestTranslationReviewProps()
     const field = listTranslationRecoveryFields(review.review)[0]
     if (!field || !review.onManualEdit) throw new Error('missing manual translation field')
     await act(async () => {
       await review.onManualEdit?.(field, 'مراجعة الطلب')
     })
 
-    expect(latestTranslationReviewProps().acceptedValues).toHaveLength(1)
+    expect((await latestTranslationReviewProps()).acceptedValues).toHaveLength(1)
     await user.click(screen.getByRole('button', { name: 'translationReview.postpone' }))
 
     expect(screen.queryByRole('dialog', { name: 'translationReview.title' })).toBeNull()
@@ -2120,14 +2130,16 @@ describe('App single-file browser orchestration', () => {
     await openBlankDiagram(user)
     await user.click(screen.getByRole('button', { name: 'mock-editor-ready' }))
     await user.click(screen.getByRole('button', { name: 'editor.translate' }))
-    act(() => latestTranslationReviewProps().onProviderChange('free'))
-    const disclosure = latestTranslationReviewProps().disclosure
+    let props = await latestTranslationReviewProps()
+    act(() => props.onProviderChange('free'))
+    const disclosure = (await latestTranslationReviewProps()).disclosure
     expect(disclosure).not.toBeNull()
     expect(mocks.buildTranslationExternalReview).toHaveBeenCalledTimes(1)
 
     let run: Promise<void> | void
+    props = await latestTranslationReviewProps()
     act(() => {
-      run = latestTranslationReviewProps().onTranslateNow()
+      run = props.onTranslateNow()
     })
     await waitFor(() => expect(onAttempt).toEqual(expect.any(Function)))
     for (let attempt = 1; attempt <= 3; attempt += 1) {
@@ -2143,9 +2155,10 @@ describe('App single-file browser orchestration', () => {
       })
     }
 
-    expect(latestTranslationReviewProps().disclosure).toBe(disclosure)
+    expect((await latestTranslationReviewProps()).disclosure).toBe(disclosure)
     expect(mocks.buildTranslationExternalReview).toHaveBeenCalledTimes(1)
-    act(() => latestTranslationReviewProps().onCancelTranslation())
+    props = await latestTranslationReviewProps()
+    act(() => props.onCancelTranslation())
     await act(async () => {
       await run
     })
@@ -2159,24 +2172,26 @@ describe('App single-file browser orchestration', () => {
     await openBlankDiagram(user)
     await user.click(screen.getByRole('button', { name: 'mock-editor-ready' }))
     await user.click(screen.getByRole('button', { name: 'editor.translate' }))
-    act(() => latestTranslationReviewProps().onProviderChange('free'))
+    let props = await latestTranslationReviewProps()
+    act(() => props.onProviderChange('free'))
     await act(async () => {
-      await latestTranslationReviewProps().onTranslateNow()
+      await (await latestTranslationReviewProps()).onTranslateNow()
     })
-    const captured = latestTranslationReviewProps()
+    const captured = await latestTranslationReviewProps()
     const proposal = captured.proposals?.[0]
     const field = listTranslationRecoveryFields(captured.review)[0]
     if (!proposal || !field || !captured.onAcceptProposal || !captured.onRejectProposal) {
       throw new Error('missing captured provider proposal actions')
     }
 
-    act(() => latestTranslationReviewProps().onProviderChange(''))
+    props = await latestTranslationReviewProps()
+    act(() => props.onProviderChange(''))
     await act(async () => {
       await captured.onAcceptProposal?.(field, proposal)
       await captured.onRejectProposal?.(field, proposal)
     })
 
-    const changed = latestTranslationReviewProps()
+    const changed = await latestTranslationReviewProps()
     expect(changed.proposals).toEqual([])
     expect(changed.acceptedValues).toEqual([])
     expect(changed.disclosure).toBeNull()
@@ -2195,8 +2210,9 @@ describe('App single-file browser orchestration', () => {
     await openBlankDiagram(user)
     await user.click(screen.getByRole('button', { name: 'mock-editor-ready' }))
     await user.click(screen.getByRole('button', { name: 'editor.translate' }))
-    act(() => latestTranslationReviewProps().onProviderChange('free'))
-    const captured = latestTranslationReviewProps()
+    let props = await latestTranslationReviewProps()
+    act(() => props.onProviderChange('free'))
+    const captured = await latestTranslationReviewProps()
     const capturedField = listTranslationRecoveryFields(captured.review)[0]
     if (!capturedField || !captured.onRetryField || !captured.onApplyCompleted) {
       throw new Error('missing captured translation review actions')
@@ -2206,11 +2222,12 @@ describe('App single-file browser orchestration', () => {
     await user.click(screen.getByRole('button', { name: 'translationReview.postpone' }))
     await user.click(screen.getByRole('button', { name: 'editor.translate' }))
     await screen.findByRole('dialog', { name: 'translationReview.title' })
-    act(() => latestTranslationReviewProps().onProviderChange('free'))
-    const replacement = latestTranslationReviewProps()
+    props = await latestTranslationReviewProps()
+    act(() => props.onProviderChange('free'))
+    const replacement = await latestTranslationReviewProps()
 
     act(() => captured.onProviderChange(''))
-    expect(latestTranslationReviewProps().providerId).toBe('free')
+    expect((await latestTranslationReviewProps()).providerId).toBe('free')
     act(() => captured.onPostpone())
     expect(screen.getByRole('dialog', { name: 'translationReview.title' })).not.toBeNull()
     act(() => captured.onPartialPreview())
@@ -2220,7 +2237,7 @@ describe('App single-file browser orchestration', () => {
     })
 
     expect(mocks.makeFreeTranslateTexts).not.toHaveBeenCalled()
-    expect(latestTranslationReviewProps()).toMatchObject({
+    expect(await latestTranslationReviewProps()).toMatchObject({
       providerId: 'free',
       proposals: [],
       acceptedValues: [],
@@ -2240,12 +2257,13 @@ describe('App single-file browser orchestration', () => {
       await captured.onApplyCompleted?.()
     })
 
-    expect(latestTranslationReviewProps().acceptedValues).toHaveLength(1)
+    expect((await latestTranslationReviewProps()).acceptedValues).toHaveLength(1)
     expect(model.batchExecutions()).toBe(0)
     expect((model.task.$attrs as Record<string, unknown>)['orbitpm:nameAr']).toBeUndefined()
     expect(screen.getByRole('dialog', { name: 'translationReview.title' })).not.toBeNull()
 
-    act(() => latestTranslationReviewProps().onPostpone())
+    props = await latestTranslationReviewProps()
+    act(() => props.onPostpone())
     await waitFor(() =>
       expect(screen.queryByRole('dialog', { name: 'translationReview.title' })).toBeNull()
     )
@@ -2267,8 +2285,9 @@ describe('App single-file browser orchestration', () => {
     )
     await user.click(screen.getByRole('button', { name: 'editor.translate' }))
     await screen.findByRole('dialog', { name: 'translationReview.title' })
-    act(() => latestTranslationReviewProps().onProviderChange('free'))
-    const current = latestTranslationReviewProps()
+    props = await latestTranslationReviewProps()
+    act(() => props.onProviderChange('free'))
+    const current = await latestTranslationReviewProps()
     const currentField = listTranslationRecoveryFields(current.review)[0]
     if (!currentField || !current.onRetryField) {
       throw new Error('missing current translation field')
@@ -2281,7 +2300,8 @@ describe('App single-file browser orchestration', () => {
 
     act(() => captured.onCancelTranslation())
     expect(transportSignal?.aborted).toBe(false)
-    act(() => latestTranslationReviewProps().onCancelTranslation())
+    props = await latestTranslationReviewProps()
+    act(() => props.onCancelTranslation())
     await act(async () => {
       await retry
     })
@@ -2300,7 +2320,7 @@ describe('App single-file browser orchestration', () => {
       await openBlankDiagram(user)
       await user.click(screen.getByRole('button', { name: 'mock-editor-ready' }))
       await user.click(screen.getByRole('button', { name: 'editor.translate' }))
-      const captured = latestTranslationReviewProps()
+      const captured = await latestTranslationReviewProps()
       const field = listTranslationRecoveryFields(captured.review)[0]
       if (!field || !captured.onRetryField) throw new Error('missing captured translation retry')
       const oldConfirmation = confirmedFieldRetry(captured, field)
@@ -2315,7 +2335,7 @@ describe('App single-file browser orchestration', () => {
 
       expect(fetch).not.toHaveBeenCalled()
       expect(mocks.makeFreeTranslateTexts).not.toHaveBeenCalled()
-      expect(latestTranslationReviewProps().status).toBeNull()
+      expect((await latestTranslationReviewProps()).status).toBeNull()
       expect(model.batchExecutions()).toBe(0)
       expect((model.task.$attrs as Record<string, unknown>)['orbitpm:nameAr']).toBeUndefined()
     } finally {
@@ -2330,8 +2350,9 @@ describe('App single-file browser orchestration', () => {
     await openBlankDiagram(user)
     await user.click(screen.getByRole('button', { name: 'mock-editor-ready' }))
     await user.click(screen.getByRole('button', { name: 'editor.translate' }))
-    act(() => latestTranslationReviewProps().onProviderChange('free'))
-    const selected = latestTranslationReviewProps()
+    const props = await latestTranslationReviewProps()
+    act(() => props.onProviderChange('free'))
+    const selected = await latestTranslationReviewProps()
     const field = listTranslationRecoveryFields(selected.review)[0]
     if (!field || !selected.onRetryField) throw new Error('missing retryable translation field')
 
@@ -2343,7 +2364,7 @@ describe('App single-file browser orchestration', () => {
     expect(model.task.name).toBe('Review request')
     expect((model.process.$attrs as Record<string, unknown>)['orbitpm:activeLang']).toBe('en')
     expect(model.batchExecutions()).toBe(0)
-    expect(listTranslationRecoveryFields(latestTranslationReviewProps().review)).toEqual([
+    expect(listTranslationRecoveryFields((await latestTranslationReviewProps()).review)).toEqual([
       expect.objectContaining({
         id: field.id,
         failed: true,
@@ -2361,8 +2382,9 @@ describe('App single-file browser orchestration', () => {
     await openBlankDiagram(user)
     await user.click(screen.getByRole('button', { name: 'mock-editor-ready' }))
     await user.click(screen.getByRole('button', { name: 'editor.translate' }))
-    act(() => latestTranslationReviewProps().onProviderChange('free'))
-    const selected = latestTranslationReviewProps()
+    const props = await latestTranslationReviewProps()
+    act(() => props.onProviderChange('free'))
+    const selected = await latestTranslationReviewProps()
     const field = listTranslationRecoveryFields(selected.review)[0]
     if (!field || !selected.onRetryField) throw new Error('missing retryable translation field')
 
@@ -2370,7 +2392,7 @@ describe('App single-file browser orchestration', () => {
       await selected.onRetryField?.(field, confirmedFieldRetry(selected, field))
     })
 
-    const failed = latestTranslationReviewProps()
+    const failed = await latestTranslationReviewProps()
     expect(failed.status).toBe('translate.free.rate')
     expect(listTranslationRecoveryFields(failed.review)).toEqual([
       expect.objectContaining({
@@ -2391,8 +2413,9 @@ describe('App single-file browser orchestration', () => {
     await openBlankDiagram(user)
     await user.click(screen.getByRole('button', { name: 'mock-editor-ready' }))
     await user.click(screen.getByRole('button', { name: 'editor.translate' }))
-    act(() => latestTranslationReviewProps().onProviderChange('free'))
-    const selected = latestTranslationReviewProps()
+    const props = await latestTranslationReviewProps()
+    act(() => props.onProviderChange('free'))
+    const selected = await latestTranslationReviewProps()
     const field = listTranslationRecoveryFields(selected.review)[0]
     if (!field || !selected.onRetryField) throw new Error('missing retryable translation field')
     model.task.name = 'Changed after review'
@@ -2406,7 +2429,7 @@ describe('App single-file browser orchestration', () => {
     })
 
     expect(mocks.makeFreeTranslateTexts).not.toHaveBeenCalled()
-    const refreshed = latestTranslationReviewProps()
+    const refreshed = await latestTranslationReviewProps()
     expect(refreshed.status).toBe('translationReview.stale')
     expect(listTranslationRecoveryFields(refreshed.review)[0]?.sourceValue).toBe(
       'Changed after review'
@@ -2427,15 +2450,16 @@ describe('App single-file browser orchestration', () => {
     await openBlankDiagram(user)
     await user.click(screen.getByRole('button', { name: 'mock-editor-ready' }))
     await user.click(screen.getByRole('button', { name: 'editor.translate' }))
-    act(() => latestTranslationReviewProps().onProviderChange('free'))
-    const initial = latestTranslationReviewProps()
+    const props = await latestTranslationReviewProps()
+    act(() => props.onProviderChange('free'))
+    const initial = await latestTranslationReviewProps()
     const fields = listTranslationRecoveryFields(initial.review)
     const first = fields.find((field) => field.elementId === 'Task_1')
     if (!first || !initial.onManualEdit) throw new Error('missing first staged translation field')
     await act(async () => {
       await initial.onManualEdit?.(first, 'مراجعة الطلب')
     })
-    const staged = latestTranslationReviewProps()
+    const staged = await latestTranslationReviewProps()
     const second = listTranslationRecoveryFields(staged.review).find(
       (field) => field.elementId === 'Task_2'
     )
@@ -2456,7 +2480,7 @@ describe('App single-file browser orchestration', () => {
       await retry
     })
 
-    const refreshed = latestTranslationReviewProps()
+    const refreshed = await latestTranslationReviewProps()
     expect(refreshed.status).toBe('translationReview.stale')
     expect(refreshed.acceptedValues).toEqual([])
     expect(refreshed.proposals).toEqual([])
@@ -2479,11 +2503,12 @@ describe('App single-file browser orchestration', () => {
     await openBlankDiagram(user)
     await user.click(screen.getByRole('button', { name: 'mock-editor-ready' }))
     await user.click(screen.getByRole('button', { name: 'editor.translate' }))
-    act(() => latestTranslationReviewProps().onProviderChange('free'))
+    const props = await latestTranslationReviewProps()
+    act(() => props.onProviderChange('free'))
     await act(async () => {
-      await latestTranslationReviewProps().onTranslateNow()
+      await (await latestTranslationReviewProps()).onTranslateNow()
     })
-    const proposed = latestTranslationReviewProps()
+    const proposed = await latestTranslationReviewProps()
     const proposal = proposed.proposals?.[0]
     const field = listTranslationRecoveryFields(proposed.review)[0]
     if (!proposal || !field || !proposed.onRejectProposal) {
@@ -2499,7 +2524,7 @@ describe('App single-file browser orchestration', () => {
       await proposed.onRejectProposal?.(field, proposal)
     })
 
-    const refreshed = latestTranslationReviewProps()
+    const refreshed = await latestTranslationReviewProps()
     expect(refreshed.status).toBe('translationReview.stale')
     expect(refreshed.proposals).toEqual([])
     expect(refreshed.acceptedValues).toEqual([])
@@ -2528,8 +2553,9 @@ describe('App single-file browser orchestration', () => {
     await user.click(await screen.findByRole('button', { name: 'mock-editor-ready' }))
     await user.click(screen.getByRole('button', { name: 'editor.translate' }))
     await screen.findByRole('dialog', { name: 'translationReview.title' })
-    act(() => latestTranslationReviewProps().onProviderChange('free'))
-    const selected = latestTranslationReviewProps()
+    const props = await latestTranslationReviewProps()
+    act(() => props.onProviderChange('free'))
+    const selected = await latestTranslationReviewProps()
     const field = listTranslationRecoveryFields(selected.review)[0]
     if (!field || !selected.onRetryField) throw new Error('missing retryable translation field')
     let retry: Promise<void> | void
@@ -2570,8 +2596,9 @@ describe('App single-file browser orchestration', () => {
     await openBlankDiagram(user)
     await user.click(screen.getByRole('button', { name: 'mock-editor-ready' }))
     await user.click(screen.getByRole('button', { name: 'editor.translate' }))
-    act(() => latestTranslationReviewProps().onProviderChange('free'))
-    const selected = latestTranslationReviewProps()
+    const props = await latestTranslationReviewProps()
+    act(() => props.onProviderChange('free'))
+    const selected = await latestTranslationReviewProps()
     const field = listTranslationRecoveryFields(selected.review)[0]
     if (!field || !selected.onRetryField) throw new Error('missing retryable translation field')
     let retry: Promise<void> | void
@@ -2722,7 +2749,7 @@ describe('App single-file browser orchestration', () => {
 
     await user.click(screen.getByRole('button', { name: 'translationReview.cancel' }))
     expect(await screen.findByText('translationReview.cancelled')).not.toBeNull()
-    const cancelled = latestTranslationReviewProps()
+    const cancelled = await latestTranslationReviewProps()
     expect(deriveTranslationReviewProgress(cancelled.review)).toEqual({
       total: 1,
       resolved: 0,
@@ -2775,7 +2802,7 @@ describe('App single-file browser orchestration', () => {
     await user.click(screen.getByRole('button', { name: 'translationReview.translateNow' }))
 
     expect(await screen.findByText('translate.free.rate')).not.toBeNull()
-    const review = latestTranslationReviewProps().review
+    const review = (await latestTranslationReviewProps()).review
     const rows = listTranslationRecoveryFields(review)
     expect(rows.find((row) => row.elementId === 'Task_1')).toMatchObject({
       failed: true,
@@ -5260,7 +5287,7 @@ describe('App directory workspace orchestration', () => {
     await user.click(await screen.findByRole('button', { name: 'mock-editor-ready' }))
     await user.click(screen.getByRole('button', { name: 'editor.translate' }))
     await screen.findByRole('dialog', { name: 'translationReview.title' })
-    const review = latestTranslationReviewProps()
+    const review = await latestTranslationReviewProps()
     const field = listTranslationRecoveryFields(review.review)[0]
     if (!field || !review.onManualEdit) throw new Error('missing manual translation field')
 
@@ -5314,7 +5341,7 @@ describe('App directory workspace orchestration', () => {
     await user.click(await screen.findByRole('button', { name: 'mock-editor-ready' }))
     await user.click(screen.getByRole('button', { name: 'editor.translate' }))
     await screen.findByRole('dialog', { name: 'translationReview.title' })
-    const opened = latestTranslationReviewProps()
+    const opened = await latestTranslationReviewProps()
     const field = listTranslationRecoveryFields(opened.review)[0]
     if (!field || !opened.onManualEdit) throw new Error('missing manual translation field')
     await act(async () => {
@@ -5339,7 +5366,7 @@ describe('App directory workspace orchestration', () => {
 
     await applyCompletedTranslationReview()
 
-    const refreshed = latestTranslationReviewProps()
+    const refreshed = await latestTranslationReviewProps()
     expect(refreshed.status).toBe('translationReview.stale')
     expect(refreshed.acceptedValues).toEqual([])
     expect(refreshed.proposals).toEqual([])
@@ -5371,7 +5398,7 @@ describe('App directory workspace orchestration', () => {
     await user.click(await screen.findByRole('button', { name: 'mock-editor-ready' }))
     await user.click(screen.getByRole('button', { name: 'editor.translate' }))
     await screen.findByRole('dialog', { name: 'translationReview.title' })
-    const review = latestTranslationReviewProps()
+    const review = await latestTranslationReviewProps()
     const field = listTranslationRecoveryFields(review.review)[0]
     if (!field || !review.onManualEdit) throw new Error('missing manual-only recovery field')
 
@@ -5416,17 +5443,18 @@ describe('App directory workspace orchestration', () => {
     await user.click(await screen.findByRole('button', { name: 'mock-editor-ready' }))
     await user.click(screen.getByRole('button', { name: 'editor.translate' }))
     await screen.findByRole('dialog', { name: 'translationReview.title' })
-    act(() => latestTranslationReviewProps().onProviderChange('free'))
-    const selected = latestTranslationReviewProps()
+    let props = await latestTranslationReviewProps()
+    act(() => props.onProviderChange('free'))
+    const selected = await latestTranslationReviewProps()
     const field = listTranslationRecoveryFields(selected.review)[0]
     if (!field || !selected.onRetryField) throw new Error('missing retryable field')
     await act(async () => {
       await selected.onRetryField?.(field, confirmedFieldRetry(selected, field))
     })
-    const proposal = latestTranslationReviewProps().proposals?.[0]
+    const proposal = (await latestTranslationReviewProps()).proposals?.[0]
     if (!proposal) throw new Error('missing reviewed provider proposal')
     await acceptTranslationProposal(proposal)
-    const applyAction = latestTranslationReviewProps().onApplyCompleted
+    const applyAction = (await latestTranslationReviewProps()).onApplyCompleted
     if (!applyAction) throw new Error('missing completed translation apply action')
     let firstApply: Promise<void> | void
     let secondApply: Promise<void> | void
@@ -5439,7 +5467,7 @@ describe('App directory workspace orchestration', () => {
     expect(model.batchExecutions()).toBe(1)
     expect(store.acceptTranslationPairs).toHaveBeenCalledOnce()
     expect((model.task.$attrs as Record<string, unknown>)['orbitpm:nameAr']).toBe('مراجعة الطلب')
-    expect(latestTranslationReviewProps()).toMatchObject({
+    expect(await latestTranslationReviewProps()).toMatchObject({
       busy: true,
       cancellable: false,
       status: 'translationReview.memorySaving',
@@ -5448,7 +5476,8 @@ describe('App directory workspace orchestration', () => {
     expect(screen.queryByRole('button', { name: 'translationReview.cancel' })).toBeNull()
     expect(screen.queryByRole('button', { name: 'translationReview.translateNow' })).toBeNull()
     expect(screen.queryByRole('button', { name: 'modal.close.aria' })).toBeNull()
-    act(() => latestTranslationReviewProps().onCancelTranslation())
+    props = await latestTranslationReviewProps()
+    act(() => props.onCancelTranslation())
     expect(transportSignal?.aborted).toBe(false)
 
     releaseSave.resolve()
@@ -5483,19 +5512,21 @@ describe('App directory workspace orchestration', () => {
     await user.click(await screen.findByRole('button', { name: 'mock-editor-ready' }))
     await user.click(screen.getByRole('button', { name: 'editor.translate' }))
     await screen.findByRole('dialog', { name: 'translationReview.title' })
-    act(() => latestTranslationReviewProps().onProviderChange('free'))
-    const selected = latestTranslationReviewProps()
+    let props = await latestTranslationReviewProps()
+    act(() => props.onProviderChange('free'))
+    const selected = await latestTranslationReviewProps()
     const field = listTranslationRecoveryFields(selected.review)[0]
     if (!field || !selected.onRetryField) throw new Error('missing first workspace field')
     await act(async () => {
       await selected.onRetryField?.(field, confirmedFieldRetry(selected, field))
     })
-    const firstProposal = latestTranslationReviewProps().proposals?.[0]
+    const firstProposal = (await latestTranslationReviewProps()).proposals?.[0]
     if (!firstProposal) throw new Error('missing first workspace proposal')
     await acceptTranslationProposal(firstProposal)
     let firstApply: Promise<void> | void
+    props = await latestTranslationReviewProps()
     act(() => {
-      firstApply = latestTranslationReviewProps().onApplyCompleted?.()
+      firstApply = props.onApplyCompleted?.()
     })
     await saveStarted.promise
     expect(firstModel.batchExecutions()).toBe(1)
@@ -5530,8 +5561,9 @@ describe('App directory workspace orchestration', () => {
     await user.click(await screen.findByRole('button', { name: 'mock-editor-ready' }))
     await user.click(screen.getByRole('button', { name: 'editor.translate' }))
     await screen.findByRole('dialog', { name: 'translationReview.title' })
-    act(() => latestTranslationReviewProps().onProviderChange('free'))
-    const secondReview = latestTranslationReviewProps()
+    props = await latestTranslationReviewProps()
+    act(() => props.onProviderChange('free'))
+    const secondReview = await latestTranslationReviewProps()
     const secondField = listTranslationRecoveryFields(secondReview.review)[0]
     if (!secondField || !secondReview.onRetryField) {
       throw new Error('missing second workspace field')
@@ -5540,7 +5572,7 @@ describe('App directory workspace orchestration', () => {
       void secondReview.onRetryField?.(secondField, confirmedFieldRetry(secondReview, secondField))
     })
     await waitFor(() => expect(secondSignal).toEqual(expect.any(AbortSignal)))
-    expect(latestTranslationReviewProps().cancellable).toBe(true)
+    expect((await latestTranslationReviewProps()).cancellable).toBe(true)
     await user.click(screen.getByRole('button', { name: 'translationReview.cancel' }))
     expect(await screen.findByText('translationReview.cancelled')).not.toBeNull()
     expect(secondSignal?.aborted).toBe(true)
@@ -5561,21 +5593,22 @@ describe('App directory workspace orchestration', () => {
     await user.click(screen.getByRole('button', { name: 'mock-tree-open' }))
     await user.click(await screen.findByRole('button', { name: 'mock-editor-ready' }))
     await user.click(screen.getByRole('button', { name: 'editor.translate' }))
-    act(() => latestTranslationReviewProps().onProviderChange('free'))
-    const selected = latestTranslationReviewProps()
+    let props = await latestTranslationReviewProps()
+    act(() => props.onProviderChange('free'))
+    const selected = await latestTranslationReviewProps()
     const field = listTranslationRecoveryFields(selected.review)[0]
     if (!field || !selected.onRetryField) throw new Error('missing retryable field')
 
     await act(async () => {
       await selected.onRetryField?.(field, confirmedFieldRetry(selected, field))
     })
-    const proposal = latestTranslationReviewProps().proposals?.[0]
+    const proposal = (await latestTranslationReviewProps()).proposals?.[0]
     if (!proposal) throw new Error('missing reviewed provider proposal')
     await acceptTranslationProposal(proposal)
     await applyCompletedTranslationReview()
 
     expect(await screen.findByText(/translationReview\.memorySaveFailed/)).not.toBeNull()
-    expect(latestTranslationReviewProps()).toMatchObject({
+    expect(await latestTranslationReviewProps()).toMatchObject({
       status: 'translationReview.memorySaveFailed',
       technicalDetail: 'quota'
     })
@@ -5605,7 +5638,8 @@ describe('App directory workspace orchestration', () => {
     fireEvent.keyDown(document, { key: 'Escape' })
     fireEvent.mouseDown(document.querySelector<HTMLElement>('[role="presentation"]')!)
     expect(screen.getByRole('dialog', { name: 'translationReview.title' })).not.toBeNull()
-    act(() => latestTranslationReviewProps().onProviderChange(''))
+    props = await latestTranslationReviewProps()
+    act(() => props.onProviderChange(''))
     expect(screen.getByRole('dialog', { name: 'translationReview.title' })).not.toBeNull()
 
     await user.click(screen.getByRole('button', { name: 'translationReview.memoryRetry' }))
@@ -5655,7 +5689,7 @@ describe('App directory workspace orchestration', () => {
     await user.click(await screen.findByRole('button', { name: 'mock-editor-ready' }))
     await user.click(screen.getByRole('button', { name: 'editor.translate' }))
     await screen.findByRole('dialog', { name: 'translationReview.title' })
-    const opened = latestTranslationReviewProps()
+    const opened = await latestTranslationReviewProps()
     const field = listTranslationRecoveryFields(opened.review)[0]
     if (!field || !opened.onManualEdit) throw new Error('missing manual translation field')
     await act(async () => {
@@ -5663,8 +5697,8 @@ describe('App directory workspace orchestration', () => {
     })
     await applyCompletedTranslationReview()
     expect(await screen.findByText(/translationReview\.memorySaveFailed/)).not.toBeNull()
-    const retryAction = latestTranslationReviewProps().onRetryMemorySave
-    const continueAction = latestTranslationReviewProps().onContinueWithoutMemorySave
+    const retryAction = (await latestTranslationReviewProps()).onRetryMemorySave
+    const continueAction = (await latestTranslationReviewProps()).onContinueWithoutMemorySave
     if (!retryAction || !continueAction) {
       throw new Error('missing translation-memory recovery actions')
     }
@@ -5712,7 +5746,7 @@ describe('App directory workspace orchestration', () => {
     await user.click(await screen.findByRole('button', { name: 'mock-editor-ready' }))
     await user.click(screen.getByRole('button', { name: 'editor.translate' }))
     await screen.findByRole('dialog', { name: 'translationReview.title' })
-    const review = latestTranslationReviewProps()
+    const review = await latestTranslationReviewProps()
     const field = listTranslationRecoveryFields(review.review)[0]
     if (!field || !review.onManualEdit) throw new Error('missing manual translation field')
     await act(async () => {
@@ -5721,8 +5755,8 @@ describe('App directory workspace orchestration', () => {
     await applyCompletedTranslationReview()
     await user.click(screen.getByRole('button', { name: 'translationReview.memoryRetry' }))
     expect(await screen.findByText(/translationReview\.memorySaveFailed/)).not.toBeNull()
-    const staleRetryMemory = latestTranslationReviewProps().onRetryMemorySave
-    const staleContinue = latestTranslationReviewProps().onContinueWithoutMemorySave
+    const staleRetryMemory = (await latestTranslationReviewProps()).onRetryMemorySave
+    const staleContinue = (await latestTranslationReviewProps()).onContinueWithoutMemorySave
     if (!staleRetryMemory || !staleContinue) {
       throw new Error('missing stale translation-memory recovery actions')
     }
@@ -5739,7 +5773,7 @@ describe('App directory workspace orchestration', () => {
     delete (model.task.$attrs as Record<string, unknown>)['orbitpm:nameEn']
     await user.click(screen.getByRole('button', { name: 'editor.translate' }))
     await screen.findByRole('dialog', { name: 'translationReview.title' })
-    const replacement = latestTranslationReviewProps()
+    const replacement = await latestTranslationReviewProps()
     const replacementField = listTranslationRecoveryFields(replacement.review)[0]
     if (!replacementField || !replacement.onManualEdit) {
       throw new Error('missing replacement memory-failure field')
@@ -5784,10 +5818,10 @@ describe('App directory workspace orchestration', () => {
       'free'
     )
     await user.click(screen.getByRole('button', { name: 'translationReview.translateNow' }))
-    const proposal = latestTranslationReviewProps().proposals?.[0]
+    const proposal = (await latestTranslationReviewProps()).proposals?.[0]
     if (!proposal) throw new Error('missing partial provider proposal')
     await acceptTranslationProposal(proposal)
-    const remaining = latestTranslationReviewProps()
+    const remaining = await latestTranslationReviewProps()
     const remainingField = listTranslationRecoveryFields(remaining.review).find(
       (field) => field.elementId === 'Task_2'
     )
@@ -5859,13 +5893,13 @@ describe('App directory workspace orchestration', () => {
     )
     await user.click(screen.getByRole('button', { name: 'translationReview.translateNow' }))
 
-    await waitFor(() => expect(latestTranslationReviewProps().busy).toBe(false))
-    const proposal = latestTranslationReviewProps().proposals?.[0]
+    await waitFor(async () => expect((await latestTranslationReviewProps()).busy).toBe(false))
+    const proposal = (await latestTranslationReviewProps()).proposals?.[0]
     if (!proposal) throw new Error('missing partial duplicate proposal')
     await acceptTranslationProposal(proposal)
     expect(accept).not.toHaveBeenCalled()
     expect(model.batchExecutions()).toBe(0)
-    const staged = latestTranslationReviewProps()
+    const staged = await latestTranslationReviewProps()
     const remainingField = listTranslationRecoveryFields(staged.review).find(
       (field) => field.elementId === 'Task_2'
     )
@@ -5908,7 +5942,7 @@ describe('App directory workspace orchestration', () => {
       'free'
     )
     await user.click(screen.getByRole('button', { name: 'translationReview.translateNow' }))
-    const proposal = latestTranslationReviewProps().proposals?.[0]
+    const proposal = (await latestTranslationReviewProps()).proposals?.[0]
     if (!proposal) throw new Error('missing neutral provider proposal')
     await acceptTranslationProposal(proposal)
     expect((model.task.$attrs as Record<string, unknown>)['orbitpm:nameAr']).toBeUndefined()
@@ -6268,7 +6302,7 @@ describe('App directory workspace orchestration', () => {
     await user.click(await screen.findByRole('button', { name: 'mock-editor-ready' }))
     await user.click(screen.getByRole('button', { name: 'editor.translate' }))
     await screen.findByRole('dialog', { name: 'translationReview.title' })
-    const safeReview = mocks.translationReviewProps.mock.calls.at(-1)?.[0]
+    const safeReview = (await latestTranslationReviewProps())
       .review as import('./localization/modelerAdapter').DiagramLocalizationReview
     expect(safeReview.localResources).toEqual({
       glossary: repaired,
@@ -6526,7 +6560,7 @@ describe('App directory workspace orchestration', () => {
     await user.click(await screen.findByRole('button', { name: 'mock-editor-ready' }))
     await user.click(screen.getByRole('button', { name: 'editor.translate' }))
 
-    const initialReview = mocks.translationReviewProps.mock.calls.at(-1)?.[0].review as
+    const initialReview = (await latestTranslationReviewProps()).review as
       import('./localization/modelerAdapter').DiagramLocalizationReview | undefined
     if (!initialReview) throw new Error('expected a translation review')
     expect(initialReview.localResources).toEqual({
@@ -6540,8 +6574,7 @@ describe('App directory workspace orchestration', () => {
       await settings.onSaveGlossary(updatedGlossary, settings.snapshot!.files.glossary.hash)
     })
     expect(
-      (mocks.translationReviewProps.mock.calls.at(-1)?.[0].review as typeof initialReview)
-        .localResources
+      ((await latestTranslationReviewProps()).review as typeof initialReview).localResources
     ).toEqual({
       glossary: originalGlossary,
       translationMemory: []
@@ -6549,7 +6582,7 @@ describe('App directory workspace orchestration', () => {
 
     await user.click(screen.getByRole('button', { name: 'translationReview.postpone' }))
     await user.click(screen.getByRole('button', { name: 'editor.translate' }))
-    const nextReview = mocks.translationReviewProps.mock.calls.at(-1)?.[0]
+    const nextReview = (await latestTranslationReviewProps())
       .review as import('./localization/modelerAdapter').DiagramLocalizationReview
     expect(nextReview.localResources).toEqual({
       glossary: updatedGlossary,
