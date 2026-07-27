@@ -69,6 +69,9 @@ test('Details uses a viewport-safe modal drawer at 320, 375, and 768px', async (
     await expect(pane).toBeVisible()
     await expect(pane).toHaveAttribute('role', 'dialog')
     await expect(pane).toHaveAttribute('aria-modal', 'true')
+    await expect(pane).toHaveClass(
+      new RegExp(`\\borbitpm-responsive-drawer--${width < 768 ? 'compact' : 'overlay'}\\b`)
+    )
     await expect(toggle).toHaveAttribute('aria-expanded', 'true')
     await expect(pane.getByRole('heading', { name: 'Details' })).toBeFocused()
     await expect(editor.locator('.orbitpm-responsive-drawer__backdrop')).toBeVisible()
@@ -104,15 +107,24 @@ test('Details uses a viewport-safe modal drawer at 320, 375, and 768px', async (
     expect(geometry.documentWidth).toBeLessThanOrEqual(geometry.viewportWidth)
     expect(geometry.editorWidth).toBeLessThanOrEqual(width)
     expect(geometry.railWidth).toBeGreaterThanOrEqual(32)
-    // Modal drawers are fixed to the viewport, not squeezed into the canvas
-    // body's remaining width. The 44px reserve keeps underlying chrome
-    // reachable even when the editor body itself is narrower.
-    expect(geometry.paneWidth).toBeLessThanOrEqual(geometry.viewportWidth - 44 + 1)
     expect(geometry.paneLeft).toBeGreaterThanOrEqual(-1)
     expect(geometry.paneRight).toBeLessThanOrEqual(geometry.viewportWidth + 1)
     expect(Math.abs(geometry.paneRight - geometry.viewportWidth)).toBeLessThanOrEqual(1)
     expect(Math.abs(geometry.railLeft - geometry.paneLeft)).toBeLessThanOrEqual(1)
     expect(geometry.railRight).toBeLessThanOrEqual(geometry.paneRight + 1)
+
+    if (width < 768) {
+      // The fix-plan compact contract is a true full-width modal surface. It
+      // must not retain the overlay mode's 44px reveal strip.
+      expect(Math.abs(geometry.paneWidth - geometry.viewportWidth)).toBeLessThanOrEqual(1)
+      expect(Math.abs(geometry.paneLeft)).toBeLessThanOrEqual(1)
+    } else {
+      // Exactly 768px is overlay mode: the default 300px Details width plus
+      // its 36px rail, anchored to viewport inline-end.
+      expect(Math.abs(geometry.paneWidth - 336)).toBeLessThanOrEqual(1)
+      expect(Math.abs(geometry.paneLeft - (geometry.viewportWidth - 336))).toBeLessThanOrEqual(1)
+      expect(geometry.paneWidth).toBeLessThan(geometry.bodyWidth)
+    }
 
     if (width === 320) {
       // A full editor dialog launched from the drawer temporarily owns Escape;
@@ -154,7 +166,14 @@ test('the 375px drawer and rail move to logical inline-end in Arabic', async ({ 
   await page.goto(FILE_URL, { waitUntil: 'load' })
   await page.evaluate((key) => localStorage.removeItem(key), OPEN_KEY)
   await newProcess(page, 'Arabic drawer')
-  await page.getByRole('button', { name: /العربية/ }).click()
+  const actionOverflow = page.getByRole('button', {
+    name: 'More application actions',
+    exact: true
+  })
+  await actionOverflow.click()
+  await expect(actionOverflow).toHaveAttribute('aria-expanded', 'true')
+  const actionMenu = page.getByRole('menu', { name: 'More application actions' })
+  await actionMenu.getByRole('menuitem', { name: /Interface: العربية/ }).click()
 
   const editor = page.locator('.orbitpm-editor:visible')
   const body = editor.locator('.orbitpm-editor__body')

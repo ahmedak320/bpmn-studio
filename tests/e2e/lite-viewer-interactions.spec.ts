@@ -159,22 +159,25 @@ async function highlightedEdgeIds(page: Page): Promise<string[]> {
 
 async function clickCanvasBackground(page: Page): Promise<void> {
   const point = await page.locator('.djs-container').evaluate((container) => {
-    const bounds = container.getBoundingClientRect()
-    const candidates = [
-      [0.5, 0.92],
-      [0.75, 0.08],
-      [0.25, 0.92],
-      [0.92, 0.5],
-      [0.08, 0.5]
-    ]
+    const canvasSvg = container.querySelector(':scope > svg')
+    if (!(canvasSvg instanceof SVGSVGElement)) {
+      throw new Error('main bpmn-js SVG not found')
+    }
+    const bounds = canvasSvg.getBoundingClientRect()
+    const candidates: Array<[number, number]> = []
+    for (const yRatio of [0.92, 0.08, 0.8, 0.2, 0.65, 0.35, 0.5]) {
+      for (const xRatio of [0.5, 0.75, 0.25, 0.9, 0.1, 0.65, 0.35]) {
+        candidates.push([xRatio, yRatio])
+      }
+    }
     for (const [xRatio, yRatio] of candidates) {
       const x = bounds.left + bounds.width * xRatio
       const y = bounds.top + bounds.height * yRatio
       const target = document.elementFromPoint(x, y)
       if (
         target instanceof Element &&
-        target.closest('.djs-container') === container &&
-        !target.closest('.djs-element, .djs-palette, .djs-minimap, .orbitpm-shape-legend')
+        target.closest('svg') === canvasSvg &&
+        !target.closest('.djs-element')
       ) {
         return { x, y }
       }

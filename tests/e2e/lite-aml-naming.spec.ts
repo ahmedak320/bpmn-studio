@@ -329,7 +329,7 @@ test('AML import persists contextual standards-based gateway names in EN/AR and 
 }) => {
   await installMockWorkspace(page)
   await page.goto(FILE_URL, { waitUntil: 'load' })
-  await page.getByRole('button', { name: /Open a folder/i }).click()
+  await page.getByRole('button', { name: 'Choose folder workspace', exact: true }).click()
   await expect(page.getByRole('heading', { name: 'Process catalog' })).toBeVisible({
     timeout: 20_000
   })
@@ -342,6 +342,21 @@ test('AML import persists contextual standards-based gateway names in EN/AR and 
     mimeType: 'application/xml',
     buffer: Buffer.from(AML_GATEWAYS, 'utf8')
   })
+  const importReview = page.getByRole('dialog', {
+    name: 'Review workspace import',
+    exact: true
+  })
+  await expect(importReview).toBeVisible({ timeout: 30_000 })
+  await expect(importReview).toContainText('gateway-semantics.xml')
+  await expect(importReview).toContainText('Automatically complete (automatic-complete)')
+  await expect(importReview).toContainText('ARIS conversion reports')
+  const confirmImport = importReview.getByRole('button', {
+    name: 'Confirm import',
+    exact: true
+  })
+  await expect(confirmImport).toBeEnabled()
+  await confirmImport.click()
+  await expect(importReview).toBeHidden({ timeout: 30_000 })
 
   const canonical = page.locator(
     '.orbitpm-tree-row[data-rel-path="gateway-semantics.bpmn"]:not(.orbitpm-tree-reference-row)'

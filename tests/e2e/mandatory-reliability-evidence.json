@@ -1,8 +1,23 @@
 {
-  "schemaVersion": 1,
+  "schemaVersion": 2,
+  "bundle": "reliability",
   "sourceRequirement": "fix_plan.md §5 Mandatory end-to-end scenarios / Reliability",
+  "requiredRequirementIds": [
+    "REL-01",
+    "REL-02",
+    "REL-03",
+    "REL-04",
+    "REL-05",
+    "REL-06",
+    "REL-07",
+    "REL-08",
+    "REL-09",
+    "REL-10",
+    "REL-11"
+  ],
   "suite": {
     "path": "tests/e2e/lite-mandatory-reliability.spec.ts",
+    "exactInventory": true,
     "fixture": "tests/e2e/fixtures/reliability-fsa.ts",
     "testLevel": "browser-e2e",
     "artifactUnderTest": "dist/index.html",
@@ -76,9 +91,9 @@
       "implementationAreas": ["src/ai", "src/assist", "src/generation", "src/App.tsx"],
       "implementationCommits": ["4b78cce", "199b143", "917a730", "09a2cc2", "f9c4bb9"],
       "browserTests": [
-        "mandatory workspace switch aborts in-flight generation, assistant, and interview work"
+        "mandatory workspace switch aborts in-flight generation, assistant, and interview transport and suppresses hostile late results"
       ],
-      "coverageNote": "Holds real production fetch paths, switches workspaces through the UI, releases late requests, and verifies that no stale result crosses the workspace boundary."
+      "coverageNote": "Uses distinct directory handles, names, manifest workspace IDs, and mutually exclusive file/content sentinels for every committed switch. Each production POST is held without aborting it in the route harness. The assistant picker-cancellation request is released and must finish successfully before a separate request is started; only that distinct later request may fail with Chromium requestfailed transport-abort evidence after a committed switch. Valid hostile late provider responses are then attempted and their sentinel is proven absent from the newly active workspace."
     },
     {
       "id": "REL-06",

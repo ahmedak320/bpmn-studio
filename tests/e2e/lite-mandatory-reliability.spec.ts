@@ -1,4 +1,4 @@
-import { expect, test, type Locator, type Page, type Route } from '@playwright/test'
+import { expect, test, type Locator, type Page, type Request } from '@playwright/test'
 import { readFileSync } from 'node:fs'
 import { createServer, type Server } from 'node:http'
 import type { AddressInfo } from 'node:net'
@@ -8,7 +8,9 @@ import { fileURLToPath, pathToFileURL } from 'node:url'
 import {
   installReliabilityWorkspace,
   reliabilityPaths,
+  reliabilityPathsInRoot,
   reliabilityRead,
+  reliabilityReadFromRoot,
   reliabilitySnapshot
 } from './fixtures/reliability-fsa'
 
@@ -153,7 +155,9 @@ async function openDirectoryWorkspace(page: Page): Promise<void> {
   await expect(page.getByRole('heading', { name: 'Process catalog' })).toBeVisible({
     timeout: 25_000
   })
-  await expect(page.getByText('Storage: Folder workspace')).toBeVisible()
+  const storageIndicator = page.locator('.orbitpm-workspace-header__storage')
+  await expect(storageIndicator).toBeVisible()
+  await expect(storageIndicator).toHaveText('Storage: Folder workspace')
 }
 
 async function waitForModeler(page: Page): Promise<void> {
@@ -346,6 +350,44 @@ async function expandAiPanel(page: Page): Promise<Locator> {
   const header = aside.getByRole('button', { name: /Generate with AI/i })
   if ((await header.getAttribute('aria-expanded')) === 'false') await header.click()
   return aside
+}
+
+type AsyncWorkspacePhase = 'generation' | 'assistant-picker-survivor' | 'assistant' | 'interview'
+
+const HOSTILE_LATE_SENTINEL = 'REL05_HOSTILE_LATE_RESULT_FROM_PRIOR_WORKSPACE'
+const PICKER_CANCEL_SURVIVOR = 'REL05_PICKER_CANCEL_REQUEST_COMPLETED'
+const OLD_WORKSPACE_SENTINEL = 'REL05_OLD_WORKSPACE_ONLY'
+const NEW_WORKSPACE_SENTINEL = 'REL05_NEW_WORKSPACE_ONLY'
+
+function openRouterResponseForPhase(phase: AsyncWorkspacePhase): string {
+  const content =
+    phase === 'generation'
+      ? {
+          process: [
+            {
+              type: 'startEvent',
+              id: 'Start_Late',
+              label: HOSTILE_LATE_SENTINEL,
+              labelEn: HOSTILE_LATE_SENTINEL,
+              labelAr: 'نتيجة متأخرة معادية'
+            },
+            {
+              type: 'endEvent',
+              id: 'End_Late',
+              label: 'Late end',
+              labelEn: 'Late end',
+              labelAr: 'نهاية متأخرة'
+            }
+          ]
+        }
+      : phase === 'assistant-picker-survivor'
+        ? { answer: PICKER_CANCEL_SURVIVOR }
+        : phase === 'assistant'
+          ? { answer: HOSTILE_LATE_SENTINEL }
+          : { questions: [HOSTILE_LATE_SENTINEL] }
+  return JSON.stringify({
+    choices: [{ message: { content: JSON.stringify(content) } }]
+  })
 }
 
 test('mandatory recovery: real OPFS restores a dirty draft after reload', async ({ page }) => {
@@ -616,60 +658,190 @@ test('mandatory workspace switch and picker cancellation retain the current dirt
   expect((await reliabilitySnapshot(page)).pickerCalls).toBe(3)
 })
 
-test('mandatory workspace switch aborts in-flight generation, assistant, and interview work', async ({
+test('mandatory workspace switch aborts in-flight generation, assistant, and interview transport and suppresses hostile late results', async ({
   page
 }) => {
-  test.setTimeout(90_000)
+  test.setTimeout(120_000)
   await installReliabilityWorkspace(page, {
-    name: 'AsyncSwitchCancellation',
+    name: 'AsyncSwitchOldRoot',
     seed: {
-      'switch-source.bpmn': bpmn('Process_async_switch', 'Async switch source')
+      'switch-source.bpmn': bpmn('Process_async_switch_old', OLD_WORKSPACE_SENTINEL)
+    },
+    alternateRoot: {
+      name: 'AsyncSwitchNewRoot',
+      seed: {
+        'new-workspace-only.bpmn': bpmn('Process_async_switch_new', NEW_WORKSPACE_SENTINEL)
+      }
     }
   })
 
-  const heldRoutes: Array<{ phase: string; route: Route; release: () => void }> = []
-  let requestPhase = 'setup'
+  interface HeldRequest {
+    phase: AsyncWorkspacePhase
+    request: Request
+    release(): void
+    settled: Promise<void>
+    fulfillAttempted: boolean
+    fulfillOutcome: 'pending' | 'fulfilled' | 'request-already-aborted'
+  }
+
+  const heldRequests: HeldRequest[] = []
+  const transportFailures = new Map<AsyncWorkspacePhase, string[]>()
+  const transportFinishes = new Map<AsyncWorkspacePhase, number>()
+  let requestPhase: AsyncWorkspacePhase | 'setup' = 'setup'
+  page.on('requestfailed', (request) => {
+    const held = heldRequests.find((entry) => entry.request === request)
+    if (!held) return
+    const failures = transportFailures.get(held.phase) ?? []
+    failures.push(request.failure()?.errorText ?? 'requestfailed-without-error-text')
+    transportFailures.set(held.phase, failures)
+  })
+  page.on('requestfinished', (request) => {
+    const held = heldRequests.find((entry) => entry.request === request)
+    if (!held) return
+    transportFinishes.set(held.phase, (transportFinishes.get(held.phase) ?? 0) + 1)
+  })
+
+  const corsHeaders = {
+    'access-control-allow-origin': '*',
+    'access-control-allow-methods': 'GET, POST, OPTIONS',
+    'access-control-allow-headers': 'authorization, content-type, http-referer, x-title'
+  }
   await page.route('https://openrouter.ai/**', async (route) => {
-    if (route.request().url().includes('/credits')) {
+    const request = route.request()
+    if (request.method() === 'OPTIONS') {
+      await route.fulfill({ status: 204, headers: corsHeaders, body: '' })
+      return
+    }
+    if (request.url().includes('/credits')) {
       await route.fulfill({
         status: 200,
+        headers: corsHeaders,
         contentType: 'application/json',
         body: JSON.stringify({ data: { total_credits: 10, total_usage: 0 } })
       })
       return
     }
+    expect(request.method()).toBe('POST')
+    expect(new URL(request.url()).pathname).toBe('/api/v1/chat/completions')
+    expect(requestPhase).not.toBe('setup')
+
     let release!: () => void
-    const held = new Promise<void>((resolveHeld) => {
+    let markSettled!: () => void
+    const gate = new Promise<void>((resolveHeld) => {
       release = resolveHeld
     })
-    heldRoutes.push({ phase: requestPhase, route, release })
-    await held
-    await route.abort('aborted').catch(() => undefined)
+    const entry: HeldRequest = {
+      phase: requestPhase as AsyncWorkspacePhase,
+      request,
+      release,
+      settled: new Promise<void>((resolveSettled) => {
+        markSettled = resolveSettled
+      }),
+      fulfillAttempted: false,
+      fulfillOutcome: 'pending'
+    }
+    heldRequests.push(entry)
+    await gate
+    entry.fulfillAttempted = true
+    try {
+      await route.fulfill({
+        status: 200,
+        headers: corsHeaders,
+        contentType: 'application/json',
+        body: openRouterResponseForPhase(entry.phase)
+      })
+      entry.fulfillOutcome = 'fulfilled'
+    } catch {
+      // A real AbortController cancellation can retire the intercepted request
+      // before this deliberately late hostile response is released.
+      entry.fulfillOutcome = 'request-already-aborted'
+    } finally {
+      markSettled()
+    }
   })
-  const waitForHeldRequest = async (phase: string): Promise<void> => {
+  const waitForHeldRequest = async (phase: AsyncWorkspacePhase): Promise<HeldRequest> => {
     await expect
-      .poll(() => heldRoutes.filter((entry) => entry.phase === phase).length, {
+      .poll(() => heldRequests.filter((entry) => entry.phase === phase).length, {
         timeout: 20_000
       })
-      .toBeGreaterThanOrEqual(1)
+      .toBe(1)
+    return heldRequests.find((entry) => entry.phase === phase)!
   }
-  const release = (phase: string): void => {
-    const held = heldRoutes.find((entry) => entry.phase === phase)
-    if (!held) throw new Error(`Held OpenRouter request for ${phase} was not registered`)
+  const expectTransportAbort = async (phase: AsyncWorkspacePhase): Promise<void> => {
+    await expect
+      .poll(() => transportFailures.get(phase) ?? [], { timeout: 20_000 })
+      .toEqual([expect.stringMatching(/ERR_ABORTED|ABORTED|cancelled/iu)])
+  }
+  const releaseHostileLateResponse = async (held: HeldRequest): Promise<void> => {
     held.release()
+    await held.settled
+    expect(held.fulfillAttempted).toBe(true)
+    expect(['fulfilled', 'request-already-aborted']).toContain(held.fulfillOutcome)
+    await expect(page.getByText(HOSTILE_LATE_SENTINEL, { exact: true })).toHaveCount(0)
   }
-  const switchWorkspace = async (): Promise<void> => {
-    await page.getByRole('button', { name: 'Change folder…' }).click()
+  const releasePickerCancelSurvivor = async (held: HeldRequest): Promise<void> => {
+    held.release()
+    await held.settled
+    expect(held.fulfillOutcome).toBe('fulfilled')
+    await expect.poll(() => transportFinishes.get('assistant-picker-survivor') ?? 0).toBe(1)
+    expect(transportFailures.get('assistant-picker-survivor') ?? []).toEqual([])
+    await expect(page.getByText(PICKER_CANCEL_SURVIVOR, { exact: true })).toBeVisible()
+  }
+  const workspaceManifestId = async (root: 'primary' | 'alternate'): Promise<string> => {
+    const raw = await reliabilityReadFromRoot(page, root, '.orbitpm/manifest.json')
+    expect(raw).not.toBeNull()
+    const parsed = JSON.parse(raw!) as { workspace?: { id?: unknown } }
+    expect(parsed.workspace?.id).toEqual(expect.any(String))
+    return parsed.workspace!.id as string
+  }
+  const waitForCommittedWorkspaceSwitch = async (expected: {
+    root: 'primary' | 'alternate'
+    rootName: string
+    visibleFile: string
+    hiddenFile: string
+    visibleSentinel: string
+    hiddenSentinel: string
+  }): Promise<void> => {
     await expect(page.getByRole('heading', { name: 'Process catalog' })).toBeVisible({
       timeout: 25_000
     })
     await expect(
       page.getByRole('tablist', { name: 'Open process diagrams' }).getByRole('tab')
     ).toHaveCount(0)
+    await expect(page.getByText(`📁 ${expected.rootName}`, { exact: true })).toBeVisible()
+    await expect(physicalRow(page, expected.visibleFile)).toBeVisible()
+    await expect(physicalRow(page, expected.hiddenFile)).toHaveCount(0)
+    await expect(page.getByText(expected.visibleSentinel, { exact: true })).toBeVisible()
+    await expect(page.getByText(expected.hiddenSentinel, { exact: true })).toHaveCount(0)
+    const activeRootPaths = await reliabilityPathsInRoot(page, expected.root)
+    expect(activeRootPaths).toContain(expected.visibleFile)
+    expect(activeRootPaths).not.toContain(expected.hiddenFile)
+    expect(await reliabilityReadFromRoot(page, expected.root, expected.visibleFile)).toContain(
+      expected.visibleSentinel
+    )
+    expect(await reliabilityReadFromRoot(page, expected.root, expected.visibleFile)).not.toContain(
+      expected.hiddenSentinel
+    )
+  }
+  const switchWorkspaceFromChrome = async (
+    expected: Parameters<typeof waitForCommittedWorkspaceSwitch>[0]
+  ): Promise<void> => {
+    await page.getByRole('button', { name: 'Change folder…', exact: true }).click()
+    await waitForCommittedWorkspaceSwitch(expected)
+  }
+  const switchWorkspaceFromAssistant = async (
+    assistant: Locator,
+    expected: Parameters<typeof waitForCommittedWorkspaceSwitch>[0]
+  ): Promise<void> => {
+    await assistant.getByRole('button', { name: 'Change folder…', exact: true }).click()
+    await waitForCommittedWorkspaceSwitch(expected)
   }
 
   await openDirectoryWorkspace(page)
   await configureOpenRouter(page)
+  const primaryManifestId = await workspaceManifestId('primary')
+  expect(await reliabilityPathsInRoot(page, 'primary')).toContain('switch-source.bpmn')
+  expect(await reliabilityPathsInRoot(page, 'alternate')).toContain('new-workspace-only.bpmn')
 
   const generator = await expandAiPanel(page)
   await generator
@@ -681,34 +853,91 @@ test('mandatory workspace switch aborts in-flight generation, assistant, and int
     .check()
   requestPhase = 'generation'
   await generator.getByRole('button', { name: 'Generate', exact: true }).click()
-  await waitForHeldRequest('generation')
+  const heldGeneration = await waitForHeldRequest('generation')
   await expect(generator.getByRole('button', { name: 'Generating…' })).toBeVisible()
-  await switchWorkspace()
-  release('generation')
-  await page.waitForTimeout(250)
-  expect(await reliabilityPaths(page)).not.toContain('generated-switch.bpmn')
+  await page.evaluate(() => window.__ORBITPM_RELIABILITY_FS__.setPickerRoot('alternate'))
+  await switchWorkspaceFromChrome({
+    root: 'alternate',
+    rootName: 'AsyncSwitchNewRoot',
+    visibleFile: 'new-workspace-only.bpmn',
+    hiddenFile: 'switch-source.bpmn',
+    visibleSentinel: NEW_WORKSPACE_SENTINEL,
+    hiddenSentinel: OLD_WORKSPACE_SENTINEL
+  })
+  await expectTransportAbort('generation')
+  await releaseHostileLateResponse(heldGeneration)
+  expect(await reliabilityPathsInRoot(page, 'alternate')).not.toContain('generated-switch.bpmn')
+  expect(await reliabilityPathsInRoot(page, 'primary')).not.toContain('generated-switch.bpmn')
+  const alternateManifestId = await workspaceManifestId('alternate')
+  expect(alternateManifestId).not.toBe(primaryManifestId)
 
-  await openDirectoryFile(page, 'switch-source.bpmn')
+  await openDirectoryFile(page, 'new-workspace-only.bpmn')
   await page.getByRole('button', { name: 'Ask the process assistant' }).click()
-  let assistant = page.getByRole('complementary', { name: 'Process assistant' })
-  await assistant.getByPlaceholder(/Ask what happens next/i).fill('Summarize this process remotely')
+  let assistant = page.getByRole('dialog', { name: 'Process assistant', exact: true })
+  await expect(assistant).toHaveAttribute('aria-modal', 'true')
+  await assistant
+    .getByPlaceholder(/Ask what happens next/i)
+    .fill('Complete this request after I cancel the picker')
   await assistant.getByRole('button', { name: 'Send' }).click()
   let preview = assistant.getByRole('region', { name: 'External request preview' })
   await expect(preview).toBeVisible()
   await preview
     .getByLabel('I reviewed this request and consent to sending the listed data.')
     .check()
+  requestPhase = 'assistant-picker-survivor'
+  await preview.getByRole('button', { name: 'Send' }).click()
+  const heldPickerCancelSurvivor = await waitForHeldRequest('assistant-picker-survivor')
+
+  // A canceled picker gets its own request identity and must actually finish.
+  // This prevents a delayed abort from being misattributed to the later,
+  // committed switch.
+  const pickerCallsBeforeCancellation = (await reliabilitySnapshot(page)).pickerCalls
+  await page.evaluate(() => window.__ORBITPM_RELIABILITY_FS__.setPickerRoot('primary'))
+  await page.evaluate(() => window.__ORBITPM_RELIABILITY_FS__.setPickerBehavior('abort'))
+  await assistant.getByRole('button', { name: 'Change folder…', exact: true }).click()
+  await expect
+    .poll(() => reliabilitySnapshot(page).then((snapshot) => snapshot.pickerCalls))
+    .toBe(pickerCallsBeforeCancellation + 1)
+  await expect(assistant).toBeVisible()
+  await expect(preview).toBeVisible()
+  expect(transportFailures.get('assistant-picker-survivor') ?? []).toEqual([])
+  await releasePickerCancelSurvivor(heldPickerCancelSurvivor)
+
+  await assistant
+    .getByPlaceholder(/Ask what happens next/i)
+    .fill('This distinct request must abort only after a committed switch')
+  await assistant.getByRole('button', { name: 'Send' }).click()
+  preview = assistant.getByRole('region', { name: 'External request preview' })
+  await expect(preview).toBeVisible()
+  await preview
+    .getByLabel('I reviewed this request and consent to sending the listed data.')
+    .check()
   requestPhase = 'assistant'
   await preview.getByRole('button', { name: 'Send' }).click()
-  await waitForHeldRequest('assistant')
-  await switchWorkspace()
-  release('assistant')
+  const heldAssistant = await waitForHeldRequest('assistant')
+  expect(heldAssistant.request).not.toBe(heldPickerCancelSurvivor.request)
+
+  await page.evaluate(() => window.__ORBITPM_RELIABILITY_FS__.setPickerBehavior('resolve'))
+  await switchWorkspaceFromAssistant(assistant, {
+    root: 'primary',
+    rootName: 'AsyncSwitchOldRoot',
+    visibleFile: 'switch-source.bpmn',
+    hiddenFile: 'new-workspace-only.bpmn',
+    visibleSentinel: OLD_WORKSPACE_SENTINEL,
+    hiddenSentinel: NEW_WORKSPACE_SENTINEL
+  })
+  await expectTransportAbort('assistant')
+  await releaseHostileLateResponse(heldAssistant)
   await expect(page.getByRole('button', { name: 'Ask the process assistant' })).toBeVisible()
-  await expect(page.getByText('late response from prior workspace')).toHaveCount(0)
+  expect(await workspaceManifestId('primary')).toBe(primaryManifestId)
+  expect(await reliabilityReadFromRoot(page, 'primary', 'switch-source.bpmn')).not.toContain(
+    HOSTILE_LATE_SENTINEL
+  )
 
   await openDirectoryFile(page, 'switch-source.bpmn')
   await page.getByRole('button', { name: 'Ask the process assistant' }).click()
-  assistant = page.getByRole('complementary', { name: 'Process assistant' })
+  assistant = page.getByRole('dialog', { name: 'Process assistant', exact: true })
+  await expect(assistant).toHaveAttribute('aria-modal', 'true')
   await assistant.getByRole('tab', { name: 'Complete this process' }).click()
   preview = assistant.getByRole('region', { name: 'External request preview' })
   await expect(preview).toBeVisible({ timeout: 20_000 })
@@ -717,13 +946,22 @@ test('mandatory workspace switch aborts in-flight generation, assistant, and int
     .check()
   requestPhase = 'interview'
   await preview.getByRole('button', { name: 'Send' }).click()
-  await waitForHeldRequest('interview')
-  await switchWorkspace()
-  release('interview')
+  const heldInterview = await waitForHeldRequest('interview')
+  await page.evaluate(() => window.__ORBITPM_RELIABILITY_FS__.setPickerRoot('alternate'))
+  await switchWorkspaceFromAssistant(assistant, {
+    root: 'alternate',
+    rootName: 'AsyncSwitchNewRoot',
+    visibleFile: 'new-workspace-only.bpmn',
+    hiddenFile: 'switch-source.bpmn',
+    visibleSentinel: NEW_WORKSPACE_SENTINEL,
+    hiddenSentinel: OLD_WORKSPACE_SENTINEL
+  })
+  await expectTransportAbort('interview')
+  await releaseHostileLateResponse(heldInterview)
   await expect(page.getByRole('button', { name: 'Ask the process assistant' })).toBeVisible()
-  await expect(page.getByText('late response from prior workspace')).toHaveCount(0)
-  expect(await reliabilityRead(page, 'switch-source.bpmn')).not.toContain(
-    'late response from prior workspace'
+  expect(await workspaceManifestId('alternate')).toBe(alternateManifestId)
+  expect(await reliabilityReadFromRoot(page, 'alternate', 'new-workspace-only.bpmn')).not.toContain(
+    HOSTILE_LATE_SENTINEL
   )
 })
 
@@ -745,9 +983,10 @@ test('mandatory isolation: unreadable entries do not block good files and permis
   await page.evaluate(() => window.__ORBITPM_RELIABILITY_FS__.setPermission('denied'))
 
   await page.locator('button[title="Save (Ctrl+S)"]:visible').click()
-  await expect(page.locator('.orbitpm-editor__error')).toContainText(/permission|granted/iu, {
-    timeout: 20_000
-  })
+  await expect(page.locator('.orbitpm-editor__error')).toHaveText(
+    'Save failed: Save could not continue because workspace access was lost. Your local draft was kept.',
+    { timeout: 20_000 }
+  )
   await expect(page.locator('.orbitpm-editor__dirty-flag--dirty:visible')).toBeVisible()
   expect(await reliabilityRead(page, 'good.bpmn')).not.toContain('Permission-loss draft retained')
 })

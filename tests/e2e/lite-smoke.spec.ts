@@ -90,6 +90,139 @@ async function expectBpmnAttributionUnobscured(
   expect(attributionVisibility.unobscured, `${label}: attribution must not be overlapped`).toBe(
     true
   )
+
+  const clip = {
+    x: Math.max(0, attributionBox!.x),
+    y: Math.max(0, attributionBox!.y),
+    width: attributionBox!.width,
+    height: attributionBox!.height
+  }
+  const visiblePixels = await page.screenshot({ clip, animations: 'disabled' })
+  const previousOpacity = await attribution.evaluate((element) => {
+    const htmlElement = element as HTMLElement
+    const previous = {
+      value: htmlElement.style.getPropertyValue('opacity'),
+      priority: htmlElement.style.getPropertyPriority('opacity')
+    }
+    htmlElement.style.setProperty('opacity', '0', 'important')
+    return previous
+  })
+  let pixelsWithoutAttribution: Buffer
+  try {
+    await page.evaluate(
+      () =>
+        new Promise<void>((resolve) => {
+          requestAnimationFrame(() => requestAnimationFrame(() => resolve()))
+        })
+    )
+    pixelsWithoutAttribution = await page.screenshot({ clip, animations: 'disabled' })
+  } finally {
+    await attribution.evaluate((element, previous) => {
+      const htmlElement = element as HTMLElement
+      if (previous.value) {
+        htmlElement.style.setProperty('opacity', previous.value, previous.priority)
+      } else {
+        htmlElement.style.removeProperty('opacity')
+      }
+    }, previousOpacity)
+  }
+
+  const compositingDifference = await page.evaluate(
+    async ({ visibleBase64, hiddenBase64 }) => {
+      const decode = async (base64: string): Promise<ImageData> => {
+        const binary = atob(base64)
+        const bytes = new Uint8Array(binary.length)
+        for (let index = 0; index < binary.length; index += 1) {
+          bytes[index] = binary.charCodeAt(index)
+        }
+        const bitmap = await createImageBitmap(new Blob([bytes], { type: 'image/png' }))
+        const canvas = document.createElement('canvas')
+        canvas.width = bitmap.width
+        canvas.height = bitmap.height
+        const context = canvas.getContext('2d', { willReadFrequently: true })
+        if (!context) throw new Error('2D canvas context unavailable for attribution audit')
+        context.drawImage(bitmap, 0, 0)
+        bitmap.close()
+        return context.getImageData(0, 0, canvas.width, canvas.height)
+      }
+
+      const visible = await decode(visibleBase64)
+      const hidden = await decode(hiddenBase64)
+      if (visible.width !== hidden.width || visible.height !== hidden.height) {
+        return { differentPixels: 0, totalPixels: 0, sameDimensions: false }
+      }
+      let differentPixels = 0
+      for (let index = 0; index < visible.data.length; index += 4) {
+        if (
+          visible.data[index] !== hidden.data[index] ||
+          visible.data[index + 1] !== hidden.data[index + 1] ||
+          visible.data[index + 2] !== hidden.data[index + 2] ||
+          visible.data[index + 3] !== hidden.data[index + 3]
+        ) {
+          differentPixels += 1
+        }
+      }
+      return {
+        differentPixels,
+        totalPixels: visible.width * visible.height,
+        sameDimensions: true
+      }
+    },
+    {
+      visibleBase64: visiblePixels.toString('base64'),
+      hiddenBase64: pixelsWithoutAttribution.toString('base64')
+    }
+  )
+  expect(
+    compositingDifference.sameDimensions,
+    `${label}: browser-composited attribution samples must have matching dimensions`
+  ).toBe(true)
+  expect(
+    compositingDifference.differentPixels,
+    `${label}: hiding the attribution must change browser-composited pixels`
+  ).toBeGreaterThan(16)
+}
+
+async function expectBpmnAttributionRetainedBeneathModal(
+  page: import('@playwright/test').Page,
+  label: string
+): Promise<void> {
+  const attribution = page.locator('a.bjs-powered-by').first()
+  await expect(attribution, `${label}: powered-by link must remain in the DOM`).toBeAttached()
+  await expect(attribution).toHaveAttribute('href', 'http://bpmn.io')
+  const state = await attribution.evaluate((element) => {
+    const rect = element.getBoundingClientRect()
+    const inset = Math.min(2, rect.width / 4, rect.height / 4)
+    const points = [
+      [rect.left + rect.width / 2, rect.top + rect.height / 2],
+      [rect.left + inset, rect.top + inset],
+      [rect.right - inset, rect.top + inset],
+      [rect.left + inset, rect.bottom - inset],
+      [rect.right - inset, rect.bottom - inset]
+    ]
+    return {
+      hasLayoutBox: rect.width > 0 && rect.height > 0,
+      insideViewport:
+        rect.left >= 0 &&
+        rect.top >= 0 &&
+        rect.right <= window.innerWidth &&
+        rect.bottom <= window.innerHeight,
+      coveredByActiveModal: points.every(([x, y]) => {
+        const topmost = document.elementFromPoint(x, y)
+        const backdrop =
+          topmost instanceof HTMLElement ? topmost.closest('[role="presentation"]') : null
+        return Boolean(backdrop?.querySelector('[role="dialog"][aria-modal="true"]'))
+      })
+    }
+  })
+  expect(state.hasLayoutBox, `${label}: attribution must retain its layout box`).toBe(true)
+  expect(state.insideViewport, `${label}: attribution layout must remain in the viewport`).toBe(
+    true
+  )
+  expect(
+    state.coveredByActiveModal,
+    `${label}: the active modal, rather than unrelated UI, must be the covering surface`
+  ).toBe(true)
 }
 
 /** Opening a diagram auto-collapses the left sidebar (which now holds the AI
@@ -132,11 +265,12 @@ test('loads self-contained, renders bpmn-js, and exports SVG (fallback mode)', a
 
   await expectBpmnAttributionUnobscured(page, 'assistant closed')
   await page.getByRole('button', { name: 'Ask the process assistant', exact: true }).click()
-  await expect(
-    page.getByRole('complementary', { name: 'Process assistant', exact: true })
-  ).toBeVisible()
-  await expectBpmnAttributionUnobscured(page, 'assistant open')
+  const assistant = page.getByRole('dialog', { name: 'Process assistant', exact: true })
+  await expect(assistant).toBeVisible()
+  await expect(assistant).toHaveAttribute('aria-modal', 'true')
+  await expectBpmnAttributionRetainedBeneathModal(page, 'assistant open')
   await page.getByRole('button', { name: 'Close assistant', exact: true }).click()
+  await expectBpmnAttributionUnobscured(page, 'assistant closed again')
 
   // The blank template has a start event (rendered as an SVG <circle>) plus its
   // label — at least one diagram shape element must be present.
@@ -160,8 +294,8 @@ test('loads self-contained, renders bpmn-js, and exports SVG (fallback mode)', a
   expect(offending, `unexpected requests after interaction: ${offending.join(', ')}`).toEqual([])
 })
 
-test('keeps bpmn.io attribution visible and unobscured across responsive and RTL states', async ({
-  page
+test('keeps bpmn.io attribution unobscured before and after responsive and RTL modals', async ({
+  browser
 }) => {
   const variants = [
     { name: 'desktop-ltr', language: 'en', viewport: { width: 1280, height: 720 } },
@@ -170,23 +304,36 @@ test('keeps bpmn.io attribution visible and unobscured across responsive and RTL
   ]
 
   for (const variant of variants) {
-    await page.setViewportSize(variant.viewport)
-    await forceFallbackMode(page)
-    await page.goto(FILE_URL, { waitUntil: 'load' })
-    await page.evaluate((language) => {
-      localStorage.setItem('orbitpm.lite.lang', language)
-    }, variant.language)
-    await page.reload({ waitUntil: 'load' })
-    const blankName = variant.language === 'ar' ? 'مخطط فارغ جديد' : 'New blank diagram'
-    await page.getByRole('button', { name: blankName, exact: true }).click()
-    await expect(page.locator('.djs-container > svg').first()).toBeVisible({ timeout: 20_000 })
+    // Each viewport/language variant represents a fresh launch. A separate
+    // context prevents IndexedDB recovery drafts and UI preferences from one
+    // variant leaking into the next.
+    const context = await browser.newContext({ viewport: variant.viewport })
+    const page = await context.newPage()
+    try {
+      await forceFallbackMode(page)
+      await page.addInitScript((language) => {
+        localStorage.setItem('orbitpm.lite.lang', language)
+      }, variant.language)
+      await page.goto(FILE_URL, { waitUntil: 'load' })
+      const blankName = variant.language === 'ar' ? 'مخطط فارغ جديد' : 'New blank diagram'
+      await page.getByRole('button', { name: blankName, exact: true }).click()
+      await expect(page.locator('.djs-container > svg').first()).toBeVisible({ timeout: 20_000 })
 
-    await expectBpmnAttributionUnobscured(page, `${variant.name}/assistant-closed`)
-    const openName = variant.language === 'ar' ? 'اسأل مساعد العمليات' : 'Ask the process assistant'
-    const drawerName = variant.language === 'ar' ? 'مساعد العمليات' : 'Process assistant'
-    await page.getByRole('button', { name: openName, exact: true }).click()
-    await expect(page.getByRole('complementary', { name: drawerName, exact: true })).toBeVisible()
-    await expectBpmnAttributionUnobscured(page, `${variant.name}/assistant-open`)
+      await expectBpmnAttributionUnobscured(page, `${variant.name}/assistant-closed`)
+      const openName =
+        variant.language === 'ar' ? 'اسأل مساعد العمليات' : 'Ask the process assistant'
+      const drawerName = variant.language === 'ar' ? 'مساعد العمليات' : 'Process assistant'
+      await page.getByRole('button', { name: openName, exact: true }).click()
+      const assistant = page.getByRole('dialog', { name: drawerName, exact: true })
+      await expect(assistant).toBeVisible()
+      await expect(assistant).toHaveAttribute('aria-modal', 'true')
+      await expectBpmnAttributionRetainedBeneathModal(page, `${variant.name}/assistant-open`)
+      const closeName = variant.language === 'ar' ? 'إغلاق المساعد' : 'Close assistant'
+      await page.getByRole('button', { name: closeName, exact: true }).click()
+      await expectBpmnAttributionUnobscured(page, `${variant.name}/assistant-closed-again`)
+    } finally {
+      await context.close()
+    }
   }
 })
 

@@ -74,10 +74,11 @@ test('assistant answers "what comes next" locally (no key, fallback mode)', asyn
 
   // Open the assistant via its floating button; the panel appears.
   await page.getByRole('button', { name: 'Ask the process assistant' }).click()
-  const panel = page.getByRole('complementary', { name: 'Process assistant' })
+  const panel = page.getByRole('dialog', { name: 'Process assistant', exact: true })
   await expect(panel).toBeVisible()
+  await expect(panel).toHaveAttribute('aria-modal', 'true')
 
-  // With no provider key, the drawer answers from the process files directly.
+  // With no provider key, the modal assistant answers from the process files directly.
   await expect(panel.getByText('Direct answers from your process files')).toBeVisible()
 
   await panel.getByRole('textbox').fill('what comes after review request')
@@ -87,7 +88,7 @@ test('assistant answers "what comes next" locally (no key, fallback mode)', asyn
   await expect(panel.getByText(/Approve payment/)).toBeVisible({ timeout: 15_000 })
 })
 
-test('assistant drawer opens and closes with Escape', async ({ page }) => {
+test('assistant dialog opens and closes with Escape', async ({ page }) => {
   await forceFallbackMode(page)
   await page.goto(FILE_URL, { waitUntil: 'load' })
   // The floating button only renders in the ready phase, so bring up a diagram.
@@ -96,11 +97,14 @@ test('assistant drawer opens and closes with Escape', async ({ page }) => {
 
   const openBtn = page.getByRole('button', { name: 'Ask the process assistant' })
   await openBtn.click()
-  const panel = page.getByRole('complementary', { name: 'Process assistant' })
+  const panel = page.getByRole('dialog', { name: 'Process assistant', exact: true })
   await expect(panel).toBeVisible()
+  await expect(panel).toHaveAttribute('aria-modal', 'true')
+  await expect(panel.getByRole('button', { name: 'Close assistant' })).toBeFocused()
 
   await page.keyboard.press('Escape')
   await expect(panel).toBeHidden()
-  // The floating button is back once the drawer is closed.
+  // The floating button is back and owns focus once the dialog is closed.
   await expect(openBtn).toBeVisible()
+  await expect(openBtn).toBeFocused()
 })

@@ -74,6 +74,7 @@ const LABELS = {
     blank: 'New blank diagram',
     settings: '⚙ Settings',
     settingsDialog: 'Settings — AI keys',
+    applicationActions: 'More application actions',
     close: 'Close',
     details: 'Details',
     assistantOpen: 'Ask the process assistant',
@@ -83,13 +84,15 @@ const LABELS = {
     ai: '✨ Generate with AI',
     spreadsheetTab: 'Excel / CSV',
     spreadsheetTitle: 'Import Excel or CSV',
-    outline: /Process outline|Outline/i,
+    editorActions: 'More editor actions',
+    outline: 'Process outline',
     outlineClose: 'Close process outline'
   },
   ar: {
     blank: 'مخطط فارغ جديد',
     settings: '⚙ الإعدادات',
     settingsDialog: 'الإعدادات — مفاتيح الذكاء الاصطناعي',
+    applicationActions: 'المزيد من إجراءات التطبيق',
     close: 'إغلاق',
     details: 'التفاصيل',
     assistantOpen: 'اسأل مساعد العمليات',
@@ -99,7 +102,8 @@ const LABELS = {
     ai: '✨ إنشاء بالذكاء الاصطناعي',
     spreadsheetTab: 'Excel / CSV',
     spreadsheetTitle: 'استيراد Excel أو CSV',
-    outline: /مخطط العملية|المخطط التفصيلي|هيكل العملية/,
+    editorActions: 'المزيد من إجراءات المحرر',
+    outline: 'المخطط التفصيلي للعملية',
     outlineClose: 'إغلاق المخطط التفصيلي للعملية'
   }
 }
@@ -401,6 +405,63 @@ async function firstVisible(locator) {
   return null
 }
 
+async function openSettings(page, labels) {
+  const headerActions = page.locator('.orbitpm-workspace-header__actions')
+  let settingsControl = await firstVisible(
+    headerActions.getByRole('button', { name: labels.settings, exact: true })
+  )
+  if (!settingsControl) {
+    const applicationActions = headerActions.getByRole('button', {
+      name: labels.applicationActions,
+      exact: true
+    })
+    await applicationActions.click()
+    settingsControl = await firstVisible(
+      headerActions
+        .getByRole('menu', { name: labels.applicationActions, exact: true })
+        .getByRole('menuitem', { name: labels.settings, exact: true })
+    )
+  }
+  if (!settingsControl) {
+    throw new Error('Settings is not reachable from the application action controls.')
+  }
+  await settingsControl.click()
+}
+
+async function openOutline(page, labels) {
+  const editor = await firstVisible(page.locator('.orbitpm-editor:visible'))
+  if (!editor) throw new Error('No visible editor surface is available for the process outline.')
+
+  let outlineControl = await firstVisible(
+    editor.getByRole('button', { name: labels.outline, exact: true })
+  )
+  if (!outlineControl) {
+    const editorActions = editor.getByRole('button', {
+      name: labels.editorActions,
+      exact: true
+    })
+    await editorActions.click()
+    outlineControl = await firstVisible(
+      editor
+        .getByRole('menu', { name: labels.editorActions, exact: true })
+        .getByRole('menuitem', { name: labels.outline, exact: true })
+    )
+  }
+  if (!outlineControl) {
+    throw new Error('The process outline is not reachable from the editor action controls.')
+  }
+
+  const outlineId = await outlineControl.getAttribute('aria-controls')
+  if (!outlineId) throw new Error('Process outline control has no aria-controls.')
+  const stableOutlineControl = editor.locator(`[aria-controls="${outlineId}"]`)
+  if ((await outlineControl.getAttribute('aria-expanded')) !== 'true') {
+    await outlineControl.click()
+  }
+  const outline = page.locator(`[id="${outlineId}"]`)
+  await outline.waitFor({ state: 'visible', timeout: 10_000 })
+  return { outline, outlineControl: stableOutlineControl }
+}
+
 async function surfaceGeometry(target) {
   return target.evaluate((element) => {
     const rect = element.getBoundingClientRect()
@@ -652,7 +713,7 @@ async function runMatrixCase(browser, matrix, reports) {
 
     let settingsDialog = null
     try {
-      await page.getByRole('button', { name: labels.settings, exact: true }).click()
+      await openSettings(page, labels)
       settingsDialog = page.getByRole('dialog', {
         name: labels.settingsDialog,
         exact: true
@@ -667,7 +728,7 @@ async function runMatrixCase(browser, matrix, reports) {
           required: true,
           diagnostics,
           environment,
-          navigation: 'editor header → Settings dialog'
+          navigation: 'application actions → Settings dialog'
         })
       )
     } catch (error) {
@@ -741,22 +802,15 @@ async function runMatrixCase(browser, matrix, reports) {
     }
 
     let outlineControl = null
+    let outlineSurface = null
     try {
       let outline = await firstVisible(page.locator('.orbitpm-process-outline'))
-      outlineControl = await firstVisible(page.getByRole('button', { name: labels.outline }))
       if (!outline) {
-        if (outlineControl) {
-          await outlineControl.press('Enter', { timeout: 10_000 })
-          const outlineId = await outlineControl.getAttribute('aria-controls')
-          const controlledOutline = outlineId ? page.locator(`[id="${outlineId}"]`) : null
-          if (controlledOutline) {
-            await controlledOutline.waitFor({ state: 'visible', timeout: 10_000 })
-            outline = controlledOutline
-          } else {
-            outline = await firstVisible(page.locator('.orbitpm-process-outline'))
-          }
-        }
+        const opened = await openOutline(page, labels)
+        outline = opened.outline
+        outlineControl = opened.outlineControl
       }
+      outlineSurface = outline
       if (!outline) {
         append(
           unavailableSurface({
@@ -780,7 +834,7 @@ async function runMatrixCase(browser, matrix, reports) {
             required: true,
             diagnostics,
             environment,
-            navigation: 'visible .orbitpm-process-outline or its accessible toggle'
+            navigation: 'editor actions → Process outline control'
           })
         )
       }
@@ -796,9 +850,11 @@ async function runMatrixCase(browser, matrix, reports) {
         })
       )
     } finally {
-      const outlineClose = await firstVisible(
-        page.getByRole('button', { name: labels.outlineClose, exact: true })
-      )
+      const outlineClose = outlineSurface
+        ? await firstVisible(
+            outlineSurface.getByRole('button', { name: labels.outlineClose, exact: true })
+          )
+        : null
       if (outlineClose) {
         await outlineClose.click().catch(() => undefined)
       } else if (
@@ -822,7 +878,10 @@ async function runMatrixCase(browser, matrix, reports) {
           exact: true
         })
         .click()
-      assistant = page.locator(`aside[aria-label="${labels.assistantTitle}"]`)
+      assistant = page.getByRole('dialog', {
+        name: labels.assistantTitle,
+        exact: true
+      })
       await assistant.waitFor({ state: 'visible', timeout: 10_000 })
       append(
         await scanSurface({
@@ -833,7 +892,7 @@ async function runMatrixCase(browser, matrix, reports) {
           required: true,
           diagnostics,
           environment,
-          navigation: 'assistant floating action button → assistant drawer'
+          navigation: 'assistant floating action button → assistant modal dialog'
         })
       )
     } catch (error) {
@@ -864,7 +923,7 @@ async function runMatrixCase(browser, matrix, reports) {
     }
 
     try {
-      const sidebarToggle = page.getByRole('button', {
+      const sidebarToggle = page.locator('.orbitpm-workspace-body').getByRole('button', {
         name: labels.sidebar,
         exact: true
       })

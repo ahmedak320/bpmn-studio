@@ -5,6 +5,10 @@ export interface ReliabilityWorkspaceOptions {
   seed?: Record<string, string>
   unreadable?: string[]
   pickerBehavior?: 'resolve' | 'abort'
+  alternateRoot?: {
+    name: string
+    seed: Record<string, string>
+  }
 }
 
 export interface ReliabilityWorkspaceSnapshot {
@@ -13,6 +17,7 @@ export interface ReliabilityWorkspaceSnapshot {
   permission: PermissionState
   unreadable: string[]
   pickerBehavior: 'resolve' | 'abort'
+  pickerRoot: 'primary' | 'alternate'
   pickerCalls: number
   writes: Array<{ path: string; size: number; modified: number }>
   failNextWrites: Record<string, string>
@@ -30,6 +35,9 @@ declare global {
       setPermission(permission: PermissionState): void
       setUnreadable(paths: string[]): void
       setPickerBehavior(behavior: 'resolve' | 'abort'): void
+      setPickerRoot(root: 'primary' | 'alternate'): void
+      pathsInRoot(root: 'primary' | 'alternate'): string[]
+      readFromRoot(root: 'primary' | 'alternate', path: string): string | null
       failNextWrite(path: string, errorName: string): void
       clearWrites(): void
     }
@@ -50,7 +58,13 @@ export async function installReliabilityWorkspace(
   options: ReliabilityWorkspaceOptions = {}
 ): Promise<void> {
   await page.addInitScript(
-    (configuration: Required<ReliabilityWorkspaceOptions>) => {
+    (configuration: {
+      name: string
+      seed: Record<string, string>
+      unreadable: string[]
+      pickerBehavior: 'resolve' | 'abort'
+      alternateRoot: { name: string; seed: Record<string, string> } | null
+    }) => {
       type StoredFile = { base64: string; modified: number; type: string }
       type StoredState = {
         directories: string[]
@@ -58,6 +72,7 @@ export async function installReliabilityWorkspace(
         permission: PermissionState
         unreadable: string[]
         pickerBehavior: 'resolve' | 'abort'
+        pickerRoot: 'primary' | 'alternate'
         pickerCalls: number
         writes: Array<{ path: string; size: number; modified: number }>
         failNextWrites: Record<string, string>
@@ -109,6 +124,9 @@ export async function installReliabilityWorkspace(
       }
 
       const storageKey = `orbitpm:e2e:reliability-fsa:${configuration.name}`
+      const alternateRootPrefix = configuration.alternateRoot
+        ? '.orbitpm/__orbitpm_e2e_alternate_root__'
+        : null
       const normalize = (value: string): string =>
         value.replace(/\\/gu, '/').split('/').filter(Boolean).join('/')
       const parentOf = (path: string): string => {
@@ -142,21 +160,36 @@ export async function installReliabilityWorkspace(
         new TextDecoder('utf-8', { fatal: true }).decode(base64ToBytes(value))
 
       const initialDirectories = new Set<string>([''])
-      for (const path of Object.keys(configuration.seed)) {
-        const parts = normalize(path).split('/')
-        parts.pop()
-        let current = ''
-        for (const part of parts) {
-          current = join(current, part)
-          initialDirectories.add(current)
+      const addSeedDirectories = (prefix: string, seed: Record<string, string>): void => {
+        for (const rawPath of Object.keys(seed)) {
+          const path = join(prefix, normalize(rawPath))
+          const parts = path.split('/')
+          parts.pop()
+          let current = ''
+          for (const part of parts) {
+            current = join(current, part)
+            initialDirectories.add(current)
+          }
         }
       }
+      addSeedDirectories('', configuration.seed)
+      if (configuration.alternateRoot && alternateRootPrefix) {
+        initialDirectories.add(alternateRootPrefix)
+        addSeedDirectories(alternateRootPrefix, configuration.alternateRoot.seed)
+      }
       const initialClock = Date.now()
+      const seededFiles = [
+        ...Object.entries(configuration.seed).map(
+          ([rawPath, contents]) => [normalize(rawPath), contents] as const
+        ),
+        ...Object.entries(configuration.alternateRoot?.seed ?? {}).map(
+          ([rawPath, contents]) => [join(alternateRootPrefix ?? '', rawPath), contents] as const
+        )
+      ]
       const initial: StoredState = {
         directories: [...initialDirectories].sort(),
         files: Object.fromEntries(
-          Object.entries(configuration.seed).map(([rawPath, contents], index) => {
-            const path = normalize(rawPath)
+          seededFiles.map(([path, contents], index) => {
             return [
               path,
               {
@@ -174,10 +207,11 @@ export async function installReliabilityWorkspace(
         permission: 'granted',
         unreadable: configuration.unreadable.map(normalize),
         pickerBehavior: configuration.pickerBehavior,
+        pickerRoot: 'primary',
         pickerCalls: 0,
         writes: [],
         failNextWrites: {},
-        clock: initialClock + Object.keys(configuration.seed).length
+        clock: initialClock + seededFiles.length
       }
 
       if (localStorage.getItem(storageKey) === null) {
@@ -384,7 +418,12 @@ export async function installReliabilityWorkspace(
         const path = normalize(pathInput)
         return {
           kind: 'directory',
-          name: path ? baseOf(path) : configuration.name,
+          name:
+            path === ''
+              ? configuration.name
+              : path === alternateRootPrefix
+                ? configuration.alternateRoot!.name
+                : baseOf(path),
           async queryPermission() {
             return load().permission
           },
@@ -478,7 +517,26 @@ export async function installReliabilityWorkspace(
         } as TestDirectoryHandle
       }
 
-      const root = directoryHandle('')
+      const primaryRoot = directoryHandle('')
+      const alternateRoot = alternateRootPrefix ? directoryHandle(alternateRootPrefix) : null
+      const rootPrefix = (root: 'primary' | 'alternate'): string => {
+        if (root === 'primary') return ''
+        if (!alternateRootPrefix) {
+          throw new Error('This reliability fixture has no alternate workspace root.')
+        }
+        return alternateRootPrefix
+      }
+      const pathsInRoot = (state: StoredState, root: 'primary' | 'alternate'): string[] => {
+        const prefix = rootPrefix(root)
+        return Object.keys(state.files)
+          .filter((path) =>
+            prefix
+              ? path.startsWith(`${prefix}/`)
+              : !alternateRootPrefix || !path.startsWith(`${alternateRootPrefix}/`)
+          )
+          .map((path) => (prefix ? path.slice(prefix.length + 1) : path))
+          .sort()
+      }
       window.showDirectoryPicker = async () => {
         const state = load()
         state.pickerCalls += 1
@@ -486,7 +544,9 @@ export async function installReliabilityWorkspace(
         if (state.pickerBehavior === 'abort') {
           throw namedError('AbortError', 'The folder picker was cancelled.')
         }
-        return root as unknown as FileSystemDirectoryHandle
+        return (
+          state.pickerRoot === 'alternate' ? alternateRoot : primaryRoot
+        ) as FileSystemDirectoryHandle
       }
 
       window.__ORBITPM_RELIABILITY_FS__ = {
@@ -528,6 +588,18 @@ export async function installReliabilityWorkspace(
           state.pickerBehavior = pickerBehavior
           save(state)
         },
+        setPickerRoot: (pickerRoot) => {
+          rootPrefix(pickerRoot)
+          const state = load()
+          state.pickerRoot = pickerRoot
+          save(state)
+        },
+        pathsInRoot: (root) => pathsInRoot(load(), root),
+        readFromRoot: (root, rawPath) => {
+          const path = join(rootPrefix(root), normalize(rawPath))
+          const stored = load().files[path]
+          return stored ? decode(stored.base64) : null
+        },
         failNextWrite: (rawPath, errorName) => {
           const state = load()
           state.failNextWrites[normalize(rawPath)] = errorName
@@ -544,7 +616,8 @@ export async function installReliabilityWorkspace(
       name: options.name ?? 'ReliabilityWorkspace',
       seed: options.seed ?? {},
       unreadable: options.unreadable ?? [],
-      pickerBehavior: options.pickerBehavior ?? 'resolve'
+      pickerBehavior: options.pickerBehavior ?? 'resolve',
+      alternateRoot: options.alternateRoot ?? null
     }
   )
 }
@@ -555,6 +628,28 @@ export async function reliabilityPaths(page: Page): Promise<string[]> {
 
 export async function reliabilityRead(page: Page, path: string): Promise<string | null> {
   return page.evaluate((target) => window.__ORBITPM_RELIABILITY_FS__.read(target), path)
+}
+
+export async function reliabilityPathsInRoot(
+  page: Page,
+  root: 'primary' | 'alternate'
+): Promise<string[]> {
+  return page.evaluate(
+    (targetRoot) => window.__ORBITPM_RELIABILITY_FS__.pathsInRoot(targetRoot),
+    root
+  )
+}
+
+export async function reliabilityReadFromRoot(
+  page: Page,
+  root: 'primary' | 'alternate',
+  path: string
+): Promise<string | null> {
+  return page.evaluate(
+    ({ targetRoot, targetPath }) =>
+      window.__ORBITPM_RELIABILITY_FS__.readFromRoot(targetRoot, targetPath),
+    { targetRoot: root, targetPath: path }
+  )
 }
 
 export async function reliabilitySnapshot(page: Page): Promise<ReliabilityWorkspaceSnapshot> {

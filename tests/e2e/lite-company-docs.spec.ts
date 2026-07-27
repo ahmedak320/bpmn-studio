@@ -33,13 +33,13 @@ function recordOffendingRequests(page: import('@playwright/test').Page): string[
  *  app's own scripts (addInitScript), so directoryPickerSupported() is true. */
 async function installMockWorkspace(page: import('@playwright/test').Page): Promise<void> {
   await page.addInitScript(() => {
-    const NS = `xmlns:bpmn2="http://www.omg.org/spec/BPMN/20100524/MODEL" xmlns:bpmndi="http://www.omg.org/spec/BPMN/20100524/DI" xmlns:omgdc="http://www.omg.org/spec/DD/20100524/DC" xmlns:omgdi="http://www.omg.org/spec/DD/20100524/DI"`
+    const NS = `xmlns:bpmn2="http://www.omg.org/spec/BPMN/20100524/MODEL" xmlns:bpmndi="http://www.omg.org/spec/BPMN/20100524/DI" xmlns:omgdc="http://www.omg.org/spec/DD/20100524/DC" xmlns:omgdi="http://www.omg.org/spec/DD/20100524/DI" xmlns:orbitpm="http://orbitpm.ae/schema/bpmn/1.0"`
     const orderXml = `<?xml version="1.0" encoding="UTF-8"?>
 <bpmn2:definitions ${NS} id="definitions_1" targetNamespace="http://bpmn.io/schema/bpmn">
-  <bpmn2:process id="Process_order" name="Order Fulfillment" isExecutable="false">
-    <bpmn2:startEvent id="Start_1" name="Order received" />
-    <bpmn2:callActivity id="Call_ship" name="Ship it" calledElement="Process_ship" />
-    <bpmn2:callActivity id="Call_missing" name="Do magic" calledElement="Process_missing" />
+  <bpmn2:process id="Process_order" name="Order Fulfillment" isExecutable="false" orbitpm:activeLang="en" orbitpm:nameEn="Order Fulfillment" orbitpm:nameAr="تنفيذ الطلب">
+    <bpmn2:startEvent id="Start_1" name="Order received" orbitpm:nameEn="Order received" orbitpm:nameAr="استلام الطلب" />
+    <bpmn2:callActivity id="Call_ship" name="Ship it" calledElement="Process_ship" orbitpm:nameEn="Ship it" orbitpm:nameAr="شحن الطلب" />
+    <bpmn2:callActivity id="Call_missing" name="Do magic" calledElement="Process_missing" orbitpm:nameEn="Do magic" orbitpm:nameAr="تنفيذ الإجراء" />
   </bpmn2:process>
   <bpmndi:BPMNDiagram id="D1"><bpmndi:BPMNPlane id="P1" bpmnElement="Process_order">
     <bpmndi:BPMNShape id="Start_1_di" bpmnElement="Start_1"><omgdc:Bounds x="160" y="120" width="36" height="36" /></bpmndi:BPMNShape>
@@ -50,12 +50,14 @@ async function installMockWorkspace(page: import('@playwright/test').Page): Prom
     const simple = (
       pid: string,
       name: string,
-      taskName: string
+      nameAr: string,
+      taskName: string,
+      taskNameAr: string
     ): string => `<?xml version="1.0" encoding="UTF-8"?>
 <bpmn2:definitions ${NS} id="definitions_1" targetNamespace="http://bpmn.io/schema/bpmn">
-  <bpmn2:process id="${pid}" name="${name}" isExecutable="false">
-    <bpmn2:startEvent id="Start_x" name="Start" />
-    <bpmn2:task id="Task_x" name="${taskName}" />
+  <bpmn2:process id="${pid}" name="${name}" isExecutable="false" orbitpm:activeLang="en" orbitpm:nameEn="${name}" orbitpm:nameAr="${nameAr}">
+    <bpmn2:startEvent id="Start_x" name="Start" orbitpm:nameEn="Start" orbitpm:nameAr="بدء" />
+    <bpmn2:task id="Task_x" name="${taskName}" orbitpm:nameEn="${taskName}" orbitpm:nameAr="${taskNameAr}" />
   </bpmn2:process>
   <bpmndi:BPMNDiagram id="D1"><bpmndi:BPMNPlane id="P1" bpmnElement="${pid}">
     <bpmndi:BPMNShape id="Start_x_di" bpmnElement="Start_x"><omgdc:Bounds x="160" y="120" width="36" height="36" /></bpmndi:BPMNShape>
@@ -67,9 +69,17 @@ async function installMockWorkspace(page: import('@playwright/test').Page): Prom
     // carries process-level org ownership. Wide enough that the print band engine
     // slices it into multiple stacked snake-order bands, and its orbitpm:owner /
     // orbitpm:ownerType feed the print header's owner line.
-    const wide = (pid: string, name: string, owner: string, ownerType: string): string => {
+    const wide = (
+      pid: string,
+      name: string,
+      nameAr: string,
+      owner: string,
+      ownerAr: string,
+      ownerType: string
+    ): string => {
       const TASKS = 9
-      let nodes = '<bpmn2:startEvent id="Start_w" name="Begin" />'
+      let nodes =
+        '<bpmn2:startEvent id="Start_w" name="Begin" orbitpm:nameEn="Begin" orbitpm:nameAr="بدء" />'
       let shapes =
         '<bpmndi:BPMNShape id="Start_w_di" bpmnElement="Start_w"><omgdc:Bounds x="100" y="120" width="36" height="36" /></bpmndi:BPMNShape>'
       let edges = ''
@@ -79,15 +89,15 @@ async function installMockWorkspace(page: import('@playwright/test').Page): Prom
         const tid = `Task_${i}`
         const fid = `Flow_${i}`
         const x = 200 + (i - 1) * 300
-        nodes += `<bpmn2:task id="${tid}" name="Step ${i}" /><bpmn2:sequenceFlow id="${fid}" sourceRef="${prev}" targetRef="${tid}" />`
+        nodes += `<bpmn2:task id="${tid}" name="Step ${i}" orbitpm:nameEn="Step ${i}" orbitpm:nameAr="الخطوة ${i}" /><bpmn2:sequenceFlow id="${fid}" sourceRef="${prev}" targetRef="${tid}" />`
         shapes += `<bpmndi:BPMNShape id="${tid}_di" bpmnElement="${tid}"><omgdc:Bounds x="${x}" y="98" width="100" height="80" /></bpmndi:BPMNShape>`
         edges += `<bpmndi:BPMNEdge id="${fid}_di" bpmnElement="${fid}"><omgdi:waypoint x="${prevRight}" y="138" /><omgdi:waypoint x="${x}" y="138" /></bpmndi:BPMNEdge>`
         prev = tid
         prevRight = x + 100
       }
       return `<?xml version="1.0" encoding="UTF-8"?>
-<bpmn2:definitions ${NS} xmlns:orbitpm="http://orbitpm.ae/schema/bpmn/1.0" id="definitions_1" targetNamespace="http://bpmn.io/schema/bpmn">
-  <bpmn2:process id="${pid}" name="${name}" isExecutable="false" orbitpm:owner="${owner}" orbitpm:ownerType="${ownerType}">
+<bpmn2:definitions ${NS} id="definitions_1" targetNamespace="http://bpmn.io/schema/bpmn">
+  <bpmn2:process id="${pid}" name="${name}" isExecutable="false" orbitpm:activeLang="en" orbitpm:nameEn="${name}" orbitpm:nameAr="${nameAr}" orbitpm:owner="${owner}" orbitpm:ownerEn="${owner}" orbitpm:ownerAr="${ownerAr}" orbitpm:ownerType="${ownerType}">
     ${nodes}
   </bpmn2:process>
   <bpmndi:BPMNDiagram id="D1"><bpmndi:BPMNPlane id="P1" bpmnElement="${pid}">
@@ -99,8 +109,16 @@ async function installMockWorkspace(page: import('@playwright/test').Page): Prom
     interface FH {
       kind: 'file'
       name: string
-      getFile(): Promise<{ text(): Promise<string>; lastModified: number; size: number }>
-      createWritable(): Promise<{ write(d: string): Promise<void>; close(): Promise<void> }>
+      getFile(): Promise<{
+        text(): Promise<string>
+        arrayBuffer(): Promise<ArrayBuffer>
+        lastModified: number
+        size: number
+      }>
+      createWritable(): Promise<{
+        write(d: string | Blob | ArrayBuffer): Promise<void>
+        close(): Promise<void>
+      }>
     }
     interface DH {
       kind: 'directory'
@@ -112,6 +130,11 @@ async function installMockWorkspace(page: import('@playwright/test').Page): Prom
       getFileHandle(n: string, o?: { create?: boolean }): Promise<FH>
       removeEntry(n: string, o?: { recursive?: boolean }): Promise<void>
     }
+    const asText = async (value: string | Blob | ArrayBuffer): Promise<string> => {
+      if (typeof value === 'string') return value
+      if (value instanceof Blob) return value.text()
+      return new TextDecoder().decode(value)
+    }
     const fileHandle = (name: string, content: string): FH => {
       let data = content
       let mtime = Date.now()
@@ -119,13 +142,19 @@ async function installMockWorkspace(page: import('@playwright/test').Page): Prom
         kind: 'file',
         name,
         async getFile() {
-          return { text: async () => data, lastModified: mtime, size: data.length }
+          const bytes = new TextEncoder().encode(data)
+          return {
+            text: async () => data,
+            arrayBuffer: async () => bytes.buffer.slice(0),
+            lastModified: mtime,
+            size: bytes.byteLength
+          }
         },
         async createWritable() {
           let buf = ''
           return {
-            write: async (d: string) => {
-              buf += d
+            write: async (d) => {
+              buf += await asText(d)
             },
             close: async () => {
               data = buf
@@ -194,21 +223,37 @@ async function installMockWorkspace(page: import('@playwright/test').Page): Prom
     const root = dirHandle('CompanyProcesses', {
       Sales: dirHandle('Sales', {
         'order.bpmn': fileHandle('order.bpmn', orderXml),
-        'ship.bpmn': fileHandle('ship.bpmn', simple('Process_ship', 'Shipping', 'Pack shipment')),
+        'ship.bpmn': fileHandle(
+          'ship.bpmn',
+          simple('Process_ship', 'Shipping', 'الشحن', 'Pack shipment', 'تعبئة الشحنة')
+        ),
         'operations.bpmn': fileHandle(
           'operations.bpmn',
-          wide('Process_ops', 'Operations Workflow', 'Operations', 'department')
+          wide(
+            'Process_ops',
+            'Operations Workflow',
+            'سير عمل العمليات',
+            'Operations',
+            'العمليات',
+            'department'
+          )
         )
       }),
       HR: dirHandle('HR', {
         'hire.bpmn': fileHandle(
           'hire.bpmn',
-          simple('Process_hire', 'Hiring', 'Interview candidate')
+          simple('Process_hire', 'Hiring', 'التوظيف', 'Interview candidate', 'مقابلة المرشح')
         )
       }),
       'onboarding.bpmn': fileHandle(
         'onboarding.bpmn',
-        simple('Process_onboarding', 'Onboarding', 'Prepare workstation')
+        simple(
+          'Process_onboarding',
+          'Onboarding',
+          'تهيئة الموظف',
+          'Prepare workstation',
+          'تجهيز محطة العمل'
+        )
       )
     })
     ;(window as unknown as { showDirectoryPicker: () => Promise<DH> }).showDirectoryPicker =
@@ -223,7 +268,7 @@ async function installMockWorkspace(page: import('@playwright/test').Page): Prom
 
 async function openWorkspace(page: import('@playwright/test').Page): Promise<void> {
   await page.goto(FILE_URL, { waitUntil: 'load' })
-  await page.getByRole('button', { name: /Open a folder/i }).click()
+  await page.getByRole('button', { name: 'Choose folder workspace', exact: true }).click()
   await expect(page.getByRole('heading', { name: 'Process catalog' })).toBeVisible({
     timeout: 20_000
   })
@@ -298,6 +343,7 @@ test('unresolved-links panel lists dangling links and opens the source', async (
 })
 
 test('back / forward navigate across tab activations', async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 720 })
   await installMockWorkspace(page)
   await openWorkspace(page)
 
@@ -305,8 +351,22 @@ test('back / forward navigate across tab activations', async ({ page }) => {
   await expect(page.locator('.djs-container svg').first()).toBeVisible({ timeout: 20_000 })
   await expect(page.getByRole('navigation', { name: 'Breadcrumb' })).toContainText('Sales')
 
-  // Home → catalog, open a second process.
-  await page.getByRole('button', { name: /Home/i }).click()
+  // Home remains a real pointer target when the docked desktop header wraps
+  // search onto its own row.
+  const home = page.getByRole('button', { name: '🏠 Home', exact: true })
+  await expect(home).toBeVisible()
+  await expect(home).toBeEnabled()
+  const homeHit = await home.evaluate((button) => {
+    const bounds = button.getBoundingClientRect()
+    const target = document.elementFromPoint(
+      bounds.left + bounds.width / 2,
+      bounds.top + bounds.height / 2
+    )
+    return target === button || Boolean(target && button.contains(target))
+  })
+  expect(homeHit, 'Home center must hit-test to the visible Home button').toBe(true)
+  await home.click()
+  await expect(page.getByRole('heading', { name: 'Process catalog' })).toBeVisible()
   await page.getByRole('button', { name: /Open Hiring/i }).click()
   await expect(page.getByRole('navigation', { name: 'Breadcrumb' })).toContainText('HR')
 

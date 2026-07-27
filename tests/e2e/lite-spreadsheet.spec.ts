@@ -376,7 +376,7 @@ test('directory collision policy blocks without modifying the destination', asyn
     seed: { 'process-one.bpmn': EXISTING_BPMN }
   })
   await page.goto(FILE_URL, { waitUntil: 'load' })
-  await page.getByRole('button', { name: /Choose folder workspace/i }).click()
+  await page.getByRole('button', { name: 'Choose folder workspace', exact: true }).click()
   await expect(page.getByRole('heading', { name: 'Process catalog' })).toBeVisible({
     timeout: 20_000
   })
@@ -399,7 +399,7 @@ test('directory collision policy blocks without modifying the destination', asyn
 test('directory write failure reports rollback and leaves no BPMN artifact', async ({ page }) => {
   await installMockWorkspace(page, { failBpmnWrites: true })
   await page.goto(FILE_URL, { waitUntil: 'load' })
-  await page.getByRole('button', { name: /Choose folder workspace/i }).click()
+  await page.getByRole('button', { name: 'Choose folder workspace', exact: true }).click()
   await expect(page.getByRole('heading', { name: 'Process catalog' })).toBeVisible({
     timeout: 20_000
   })

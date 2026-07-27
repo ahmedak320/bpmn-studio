@@ -21,6 +21,30 @@ const FILE_URL = pathToFileURL(DIST).toString()
 const AMBER_RING = '196, 127, 23' // #c47f17 — PALETTE.basisBorder
 const PROPS_OPEN_KEY = 'orbitpm.lite.preferences.v1.details.open'
 const PROPS_WIDTH_KEY = 'orbitpm.lite.preferences.v1.details.width'
+const detailsNoSelectionLocales = [
+  {
+    language: 'en',
+    direction: 'ltr',
+    name: 'English LTR',
+    blankDiagram: 'New blank diagram',
+    toggle: 'Details',
+    paneAria: 'Step details and properties',
+    noSelection: 'No step selected — showing process details.',
+    processScope: 'Process',
+    openDetails: 'Open Details…'
+  },
+  {
+    language: 'ar',
+    direction: 'rtl',
+    name: 'Arabic RTL',
+    blankDiagram: 'مخطط فارغ جديد',
+    toggle: 'التفاصيل',
+    paneAria: 'تفاصيل الخطوة والخصائص',
+    noSelection: 'لم يتم تحديد خطوة — تُعرض تفاصيل العملية.',
+    processScope: 'العملية',
+    openDetails: 'فتح التفاصيل…'
+  }
+] as const
 
 function workspaceDiagram(processId: string, processName: string, taskId: string): string {
   return `<?xml version="1.0" encoding="UTF-8"?>
@@ -381,10 +405,72 @@ test('persistent Details rail opens, collapses, and reopens without losing selec
   expect(await selectedElementIds(page)).toEqual([taskId])
 })
 
+for (const locale of detailsNoSelectionLocales) {
+  test(`Details opens at process scope with no selected element in ${locale.name}`, async ({
+    page
+  }) => {
+    await page.setViewportSize({ width: 1280, height: 720 })
+    await page.addInitScript((language) => {
+      delete window.showDirectoryPicker
+      delete window.showOpenFilePicker
+      localStorage.setItem('orbitpm.lite.lang', language)
+    }, locale.language)
+    await page.goto(FILE_URL, { waitUntil: 'load' })
+    await expect(page.locator('html')).toHaveAttribute('lang', locale.language)
+    await expect(page.locator('html')).toHaveAttribute('dir', locale.direction)
+
+    const blankDiagram = page.getByRole('button', {
+      name: locale.blankDiagram,
+      exact: true
+    })
+    await blankDiagram.focus()
+    await page.keyboard.press('Enter')
+    await expect(page.locator('.djs-container svg:visible').first()).toBeVisible({
+      timeout: 20_000
+    })
+    await page.waitForFunction(() => {
+      const runtime = window as unknown as { __ORBITPM_LITE__?: { modeler?: unknown } }
+      return Boolean(runtime.__ORBITPM_LITE__?.modeler)
+    })
+    await page.evaluate(() => {
+      const modeler = (
+        window as unknown as {
+          __ORBITPM_LITE__: { modeler: { get(name: string): unknown } }
+        }
+      ).__ORBITPM_LITE__.modeler
+      ;(modeler.get('selection') as { select(element: null): void }).select(null)
+    })
+    expect(await selectedElementIds(page)).toEqual([])
+
+    const editor = page.locator('.orbitpm-editor:visible')
+    const sidePane = detailsPane(editor)
+    const panelToggle = editor.getByRole('button', { name: locale.toggle, exact: true })
+    await expect(panelToggle).toHaveAttribute('aria-expanded', 'false')
+    await panelToggle.focus()
+    await page.keyboard.press('Space')
+
+    await expect(sidePane).toBeVisible()
+    await expect(sidePane).toHaveRole('complementary')
+    await expect(sidePane).toHaveAttribute('aria-label', locale.paneAria)
+    await expect(sidePane).toHaveAttribute('dir', locale.direction)
+    await expect(sidePane.getByRole('heading', { name: locale.toggle })).toBeFocused()
+    const card = sidePane.locator('.orbitpm-lite-details-card')
+    await expect(card).toHaveAttribute('dir', locale.direction)
+    await expect(card).toContainText(locale.noSelection)
+    await expect(card).toContainText(locale.processScope)
+    await expect(card.getByRole('button', { name: locale.openDetails, exact: true })).toBeVisible()
+    expect(await selectedElementIds(page)).toEqual([])
+  })
+}
+
 test('pane persists explicit open and closed preferences across reloads', async ({ page }) => {
   await forceFallbackMode(page)
+  await page.addInitScript((key) => {
+    // Seed only the first document boot. Once the UI persists an explicit
+    // closed value, later reloads must leave that value untouched.
+    if (localStorage.getItem(key) === null) localStorage.setItem(key, '1')
+  }, PROPS_OPEN_KEY)
   await page.goto(FILE_URL, { waitUntil: 'load' })
-  await page.evaluate((key) => localStorage.setItem(key, '1'), PROPS_OPEN_KEY)
   await newProcess(page, 'Pane Persistence Open')
 
   const editor = page.locator('.orbitpm-editor:visible')
@@ -460,24 +546,34 @@ test('each mounted tab preserves its selected element when Details is reopened',
   await expect(editor.locator('.orbitpm-lite-details-card')).toContainText('Selected step')
   expect(await selectedElementIds(page)).toEqual([secondTaskId])
 
-  // A responsive Details surface can be modal at this viewport, so dismiss it
-  // through the production control before activating another tab.
+  // Close the shared docked Details preference before activating another tab.
   await toggle.click()
   await expect(detailsPane(editor)).toBeHidden()
   await page.getByRole('tab', { name: /^first-pane\.bpmn/ }).click()
   editor = page.locator('.orbitpm-editor:visible')
   toggle = editor.getByRole('button', { name: 'Details', exact: true })
   expect(await selectedElementIds(page)).toEqual([firstTaskId])
-  await toggle.click()
+  // Details open/closed is shared shell state, so closing it on the second tab
+  // leaves it closed after activating the first tab. The modeler's selected
+  // element remains per-tab and is restored independently of that preference.
+  await expect(toggle).toHaveAttribute('aria-expanded', 'false')
   await expect(detailsPane(editor)).toBeHidden()
+  expect(await page.evaluate((key) => localStorage.getItem(key), PROPS_OPEN_KEY)).toBe('0')
   await toggle.click()
+  await expect(toggle).toHaveAttribute('aria-expanded', 'true')
+  await expect(detailsPane(editor)).toBeVisible()
   await expect(editor.locator('.orbitpm-lite-details-card')).toContainText('Selected step')
   expect(await selectedElementIds(page)).toEqual([firstTaskId])
 
   await toggle.click()
+  await expect(toggle).toHaveAttribute('aria-expanded', 'false')
   await expect(detailsPane(editor)).toBeHidden()
   await page.getByRole('tab', { name: /^second-pane\.bpmn/ }).click()
   expect(await selectedElementIds(page)).toEqual([secondTaskId])
+  editor = page.locator('.orbitpm-editor:visible')
+  toggle = editor.getByRole('button', { name: 'Details', exact: true })
+  await expect(toggle).toHaveAttribute('aria-expanded', 'false')
+  await expect(detailsPane(editor)).toBeHidden()
 })
 
 test('every supported activity type can open and collapse the Details pane', async ({ page }) => {

@@ -20,27 +20,35 @@ const BPMN_NS =
   'xmlns:bpmn2="http://www.omg.org/spec/BPMN/20100524/MODEL" ' +
   'xmlns:bpmndi="http://www.omg.org/spec/BPMN/20100524/DI" ' +
   'xmlns:dc="http://www.omg.org/spec/DD/20100524/DC" ' +
-  'xmlns:di="http://www.omg.org/spec/DD/20100524/DI"'
+  'xmlns:di="http://www.omg.org/spec/DD/20100524/DI" ' +
+  'xmlns:orbitpm="http://orbitpm.ae/schema/bpmn/1.0"'
 
 interface CallSpec {
   id: string
   name: string
+  nameAr: string
   calledElement: string
 }
 
 function oneProcessBpmn(
   processId: string,
   processName: string,
+  processNameAr: string,
   calls: CallSpec[],
-  taskName?: string
+  taskName?: string,
+  taskNameAr?: string
 ): string {
   const nodes = [
-    `<bpmn2:startEvent id="Start_${processId}" name="Start" />`,
+    `<bpmn2:startEvent id="Start_${processId}" name="Start" orbitpm:nameEn="Start" orbitpm:nameAr="بدء" />`,
     ...calls.map(
       (call) =>
-        `<bpmn2:callActivity id="${call.id}" name="${call.name}" calledElement="${call.calledElement}" />`
+        `<bpmn2:callActivity id="${call.id}" name="${call.name}" calledElement="${call.calledElement}" orbitpm:nameEn="${call.name}" orbitpm:nameAr="${call.nameAr}" />`
     ),
-    ...(taskName ? [`<bpmn2:task id="Task_${processId}" name="${taskName}" />`] : [])
+    ...(taskName
+      ? [
+          `<bpmn2:task id="Task_${processId}" name="${taskName}" orbitpm:nameEn="${taskName}" orbitpm:nameAr="${taskNameAr}" />`
+        ]
+      : [])
   ]
   const shapes = [
     `<bpmndi:BPMNShape id="Start_${processId}_di" bpmnElement="Start_${processId}"><dc:Bounds x="100" y="120" width="36" height="36" /></bpmndi:BPMNShape>`,
@@ -56,7 +64,7 @@ function oneProcessBpmn(
   ]
   return `<?xml version="1.0" encoding="UTF-8"?>
 <bpmn2:definitions ${BPMN_NS} id="Definitions_${processId}" targetNamespace="https://orbitpm.test/e2e">
-  <bpmn2:process id="${processId}" name="${processName}" isExecutable="false">
+  <bpmn2:process id="${processId}" name="${processName}" isExecutable="false" orbitpm:activeLang="en" orbitpm:nameEn="${processName}" orbitpm:nameAr="${processNameAr}">
     ${nodes.join('\n    ')}
   </bpmn2:process>
   <bpmndi:BPMNDiagram id="Diagram_${processId}">
@@ -70,11 +78,11 @@ function oneProcessBpmn(
 function searchBundleBpmn(): string {
   return `<?xml version="1.0" encoding="UTF-8"?>
 <bpmn2:definitions ${BPMN_NS} id="Definitions_search_bundle" targetNamespace="https://orbitpm.test/e2e">
-  <bpmn2:process id="Process_search_decoy" name="Bundle Decoy" isExecutable="false">
-    <bpmn2:task id="Task_search_decoy" name="Ordinary work" />
+  <bpmn2:process id="Process_search_decoy" name="Bundle Decoy" isExecutable="false" orbitpm:activeLang="en" orbitpm:nameEn="Bundle Decoy" orbitpm:nameAr="عملية تمويه الحزمة">
+    <bpmn2:task id="Task_search_decoy" name="Ordinary work" orbitpm:nameEn="Ordinary work" orbitpm:nameAr="عمل عادي" />
   </bpmn2:process>
-  <bpmn2:process id="Process_search_target" name="Needle Target" isExecutable="false">
-    <bpmn2:task id="Task_search_target" name="Only this process should open" />
+  <bpmn2:process id="Process_search_target" name="Needle Target" isExecutable="false" orbitpm:activeLang="en" orbitpm:nameEn="Needle Target" orbitpm:nameAr="العملية المستهدفة">
+    <bpmn2:task id="Task_search_target" name="Only this process should open" orbitpm:nameEn="Only this process should open" orbitpm:nameAr="يجب فتح هذه العملية فقط" />
   </bpmn2:process>
   <bpmndi:BPMNDiagram id="Diagram_search_decoy">
     <bpmndi:BPMNPlane id="Plane_search_decoy" bpmnElement="Process_search_decoy">
@@ -90,37 +98,58 @@ function searchBundleBpmn(): string {
 }
 
 const WORKSPACE_FILES: Record<string, string> = {
-  'Parents/parent-a.bpmn': oneProcessBpmn('Process_parent_a', 'Parent Alpha', [
-    {
-      id: 'Call_shared_a1',
-      name: 'Shared review first call',
-      calledElement: 'Process_shared'
-    },
-    {
-      id: 'Call_shared_a2',
-      name: 'Shared review repeated call',
-      calledElement: 'Process_shared'
-    }
-  ]),
-  'Parents/parent-b.bpmn': oneProcessBpmn('Process_parent_b', 'Parent Beta', [
-    {
-      id: 'Call_shared_b1',
-      name: 'Shared review',
-      calledElement: 'Process_shared'
-    }
-  ]),
-  'Shared/shared-child.bpmn': oneProcessBpmn('Process_shared', 'Shared Review', [
-    {
-      id: 'Call_parent_a_back',
-      name: 'Return to parent alpha',
-      calledElement: 'Process_parent_a'
-    }
-  ]),
+  'Parents/parent-a.bpmn': oneProcessBpmn(
+    'Process_parent_a',
+    'Parent Alpha',
+    'العملية الأصلية ألفا',
+    [
+      {
+        id: 'Call_shared_a1',
+        name: 'Shared review first call',
+        nameAr: 'الاستدعاء الأول للمراجعة المشتركة',
+        calledElement: 'Process_shared'
+      },
+      {
+        id: 'Call_shared_a2',
+        name: 'Shared review repeated call',
+        nameAr: 'الاستدعاء المتكرر للمراجعة المشتركة',
+        calledElement: 'Process_shared'
+      }
+    ]
+  ),
+  'Parents/parent-b.bpmn': oneProcessBpmn(
+    'Process_parent_b',
+    'Parent Beta',
+    'العملية الأصلية بيتا',
+    [
+      {
+        id: 'Call_shared_b1',
+        name: 'Shared review',
+        nameAr: 'المراجعة المشتركة',
+        calledElement: 'Process_shared'
+      }
+    ]
+  ),
+  'Shared/shared-child.bpmn': oneProcessBpmn(
+    'Process_shared',
+    'Shared Review',
+    'المراجعة المشتركة',
+    [
+      {
+        id: 'Call_parent_a_back',
+        name: 'Return to parent alpha',
+        nameAr: 'العودة إلى العملية الأصلية ألفا',
+        calledElement: 'Process_parent_a'
+      }
+    ]
+  ),
   'Independent/orphan.bpmn': oneProcessBpmn(
     'Process_orphan',
     'Independent Orphan',
+    'عملية مستقلة',
     [],
-    'Stand-alone work'
+    'Stand-alone work',
+    'عمل مستقل'
   ),
   'Search/bundle.bpmn': searchBundleBpmn()
 }
@@ -286,10 +315,12 @@ async function expandFolder(page: Page, relPath: string): Promise<void> {
 }
 
 async function expandLinkedChildren(row: Locator): Promise<void> {
-  const expander = row.locator('[role="button"][aria-expanded]').first()
-  await expect(expander).toHaveAttribute('aria-expanded', 'false')
-  await expander.click()
-  await expect(expander).toHaveAttribute('aria-expanded', 'true')
+  await expect(row).toHaveAttribute('role', 'treeitem')
+  await expect(row).toHaveAttribute('data-tree-expandable', 'true')
+  await expect(row).toHaveAttribute('aria-expanded', 'false')
+  await row.focus()
+  await row.press('ArrowRight')
+  await expect(row).toHaveAttribute('aria-expanded', 'true')
 }
 
 async function activeRootProcessId(page: Page): Promise<string | null> {
@@ -314,7 +345,7 @@ test('folder tree nests owned subprocesses once and shows reused/cyclic referenc
 }) => {
   await installMockWorkspace(page)
   await page.goto(FILE_URL, { waitUntil: 'load' })
-  await page.getByRole('button', { name: /Open a folder/i }).click()
+  await page.getByRole('button', { name: 'Choose folder workspace', exact: true }).click()
   await expect(page.getByRole('heading', { name: 'Process catalog' })).toBeVisible({
     timeout: 20_000
   })
@@ -421,7 +452,10 @@ test('folder tree nests owned subprocesses once and shows reused/cyclic referenc
   // reveal/focus the single canonical bundle row.
   await page.getByRole('button', { name: 'الواجهة: EN', exact: true }).click()
   await expect(page.locator('html')).toHaveAttribute('lang', 'en')
-  const search = page.getByRole('searchbox', { name: 'Search processes' })
+  const search = page.getByRole('combobox', {
+    name: 'Search processes',
+    exact: true
+  })
   await search.fill('Needle Target')
   const results = page.getByRole('listbox', { name: 'Search results' })
   await expect(results).toBeVisible()

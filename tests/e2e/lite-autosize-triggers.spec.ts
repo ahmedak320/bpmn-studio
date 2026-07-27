@@ -66,6 +66,51 @@ async function boot(page: Page, name: string): Promise<void> {
   await newProcess(page, name)
 }
 
+/**
+ * The language toggle is audit-gated. Seed the named process template
+ * elements (notably the process and start event) with genuine bilingual
+ * counterparts so this autosize test reaches immediate language projection
+ * for the right reason.
+ */
+async function makeNamedTemplateElementsBilingual(page: Page): Promise<void> {
+  await page.evaluate(() => {
+    const modeler = (window as unknown as HookWindow).__ORBITPM_LITE__.modeler
+    type ElementLike = {
+      labelTarget?: unknown
+      businessObject?: {
+        name?: unknown
+        get?: (key: string) => unknown
+      }
+    }
+    const registry = modeler.get('elementRegistry') as { getAll(): ElementLike[] }
+    const canvas = modeler.get('canvas') as { getRootElement(): ElementLike }
+    const modeling = modeler.get('modeling') as {
+      updateProperties(element: unknown, properties: Record<string, unknown>): void
+    }
+    const seen = new Set<unknown>()
+    for (const element of [...registry.getAll(), canvas.getRootElement()]) {
+      const businessObject = element.businessObject
+      if (!businessObject || element.labelTarget != null || seen.has(businessObject)) continue
+      seen.add(businessObject)
+      const viaGet = businessObject.get?.('name')
+      const name =
+        typeof viaGet === 'string'
+          ? viaGet
+          : typeof businessObject.name === 'string'
+            ? businessObject.name
+            : ''
+      if (name.trim() === '') continue
+      modeling.updateProperties(element, {
+        'orbitpm:nameEn': name,
+        'orbitpm:nameAr': 'تسمية عربية'
+      })
+    }
+    modeling.updateProperties(canvas.getRootElement(), {
+      'orbitpm:activeLang': 'en'
+    })
+  })
+}
+
 async function createShape(
   page: Page,
   type: string,
@@ -276,6 +321,7 @@ test('direct editing auto-sizes activities, preserves anchor, and one undo resto
 
 test('Step Details name writes and EN⇄AR toggles re-fit the visible language', async ({ page }) => {
   await boot(page, 'Bilingual Auto-size')
+  await makeNamedTemplateElementsBilingual(page)
   const taskId = await createShape(page, 'bpmn:Task', { x: 420, y: 220 }, { select: true })
 
   await page.getByRole('button', { name: 'Details…', exact: true }).click()
