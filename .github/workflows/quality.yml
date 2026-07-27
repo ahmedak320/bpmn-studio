@@ -423,6 +423,7 @@ jobs:
           --fail-on-flaky-tests
           --update-snapshots=none
           --reporter=line,./scripts/release-reporter.mjs
+          --global-timeout=${{ matrix.browser == 'webkit' && 900000 || 600000 }}
 
       - name: Upload browser evidence
         if: always()
