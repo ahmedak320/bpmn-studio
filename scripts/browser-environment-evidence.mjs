@@ -15,6 +15,7 @@ import { chromium, firefox, webkit } from '@playwright/test'
 
 const MAX_ARTIFACT_BYTES = 64 * 1024 * 1024
 const DEFAULT_FETCH_TIMEOUT_MS = 30_000
+const MAX_FETCH_ATTEMPTS = 240
 
 const playwrightManifest = JSON.parse(
   readFileSync(new URL('../node_modules/@playwright/test/package.json', import.meta.url), 'utf8')
@@ -36,6 +37,12 @@ function option(name, fallback) {
   const prefix = `${name}=`
   const argument = process.argv.find((candidate) => candidate.startsWith(prefix))
   return argument?.slice(prefix.length) ?? fallback
+}
+
+export function assertValidFetchAttempts(fetchAttempts) {
+  if (!Number.isInteger(fetchAttempts) || fetchAttempts < 1 || fetchAttempts > MAX_FETCH_ATTEMPTS) {
+    throw new Error(`--fetch-attempts must be an integer from 1 through ${MAX_FETCH_ATTEMPTS}.`)
+  }
 }
 
 function timeoutError(timeoutMs) {
@@ -555,9 +562,7 @@ async function main() {
   if (new Set(requestedTargets).size !== requestedTargets.length) {
     throw new Error('--browsers must not contain duplicate browser targets.')
   }
-  if (!Number.isInteger(fetchAttempts) || fetchAttempts < 1 || fetchAttempts > 120) {
-    throw new Error('--fetch-attempts must be an integer from 1 through 120.')
-  }
+  assertValidFetchAttempts(fetchAttempts)
   if (!Number.isInteger(fetchDelayMs) || fetchDelayMs < 0 || fetchDelayMs > 60_000) {
     throw new Error('--fetch-delay-ms must be an integer from 0 through 60000.')
   }

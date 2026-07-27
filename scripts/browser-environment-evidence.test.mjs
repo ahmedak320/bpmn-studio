@@ -10,6 +10,7 @@ import { chromium } from '@playwright/test'
 import {
   assertArtifactSnapshotStable,
   assertSafeEvidenceUrl,
+  assertValidFetchAttempts,
   captureArtifactSnapshot,
   downloadExactRemoteDocument,
   navigateUsingExactBytes,
@@ -31,6 +32,12 @@ function responseWithUrl(body, url, init) {
   })
   return response
 }
+
+test('fetch-attempt validation accepts the Pages retry window and enforces its boundary', () => {
+  assert.doesNotThrow(() => assertValidFetchAttempts(150))
+  assert.doesNotThrow(() => assertValidFetchAttempts(240))
+  assert.throws(() => assertValidFetchAttempts(241), /integer from 1 through 240/)
+})
 
 test(
   'file navigation consumes the captured bytes even when the artifact path changes before goto',
