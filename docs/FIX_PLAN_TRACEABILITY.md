@@ -37,20 +37,20 @@ the final SHA and exact artifact, it is not release evidence.
 Short bundle codes keep the per-requirement tables readable while still giving
 exact files and commits.
 
-| Bundle  | Implementation files                                                                                                                                                                 | Commits                                                                                                                                                  |
-| ------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `REP`   | `package.json`, `vite.config.ts`, `.github/workflows/*`, `scripts/verify-*.mjs`, `scripts/assemble-release.mjs`, release/archive documentation, outer-repository `archives/` records | `6f0c2eb`, `9b7fb37`, `70c34bd`, `ae8fa05`, `edb8e05`, `58daf42`, `69f2251`, `39b5e51`, `d25bf34`, `fc06839`                                             |
-| `SES`   | `src/sessions/*`, `src/workspace/adapters/*`, `src/workspace/history/*`, `src/workspace/liveWorkspaceIndex.ts`, `src/workspace/workspaceManifest.ts`, `src/App.tsx`                  | `d4cfaeb`, `cf012b9`, `41c9b01`, `b559c33`, `09a2cc2`, `f9c4bb9`, `fe0d75f`, `4807d7f`, `7b881b0`, `44115f6`                                             |
-| `BPMN`  | `src/validation/*`, `src/generation/*`, `src/library/*`, `src/editor/*`, `src/workspace/importTransaction.ts`, export/print modules                                                  | `ddd10d1`, `7dcf651`, `af78fad`, `d7dd2d6`, `b06c428`, `626600d`, `9a70f15`, `96d340f`, `44115f6`                                                        |
-| `LOC`   | `src/localization/*`, translation review/execution, `src/i18n/*`, bidi rendering, reviewed-ingestion seams                                                                           | `e2498ac`, `296f03a`, `b4f2a13`, `315c457`, `7bea794`, `9eb915b`, `8a332f5`, `94cb681`, `44115f6`                                                        |
-| `XLS`   | `src/spreadsheet/*`, spreadsheet worker, template/mapping/import UI, transaction integration                                                                                         | `27bc812`, `4a38bc7`, `dc4a54d`, `7c4b0da`, `537c7a7`, `d60eafa`, `08f8511`, `e862d9b`…`e257577`, `44115f6`                                              |
-| `UI`    | `src/shell/*`, `src/common/*`, `src/editor/ProcessOutlineEditor*`, `src/workspace/FolderTreeLite*`, `src/App.tsx`, CSS and i18n                                                      | `b77bd2b`, `b354344`, `864c587`, `a98b0bc`, `20da036`, `f6ffffe`, `fb3929f`, `49521ba`, `20faa67`, `c3b5df4`, `8a4481f`, `b906d4e`, `019c2c5`, `44115f6` |
-| `AI`    | `src/ai/*`, `src/assist/*`, settings credential code, CSP/security checks                                                                                                            | `ae5d51d`, `4b78cce`, `4d3000b`, `a4903d4`, `0b17d5a`, `199b143`, `917a730`, `86b5ef9`, `44115f6`                                                        |
-| `REL-B` | `tests/e2e/lite-mandatory-reliability.spec.ts`, `tests/e2e/fixtures/reliability-fsa.ts`, `tests/e2e/mandatory-reliability-evidence.json`                                             | `332ab23`, `83d1116`                                                                                                                                     |
-| `TR-B`  | `tests/e2e/lite-mandatory-translation.spec.ts`, `tests/e2e/fixtures/mandatory-translation-fsa.ts`                                                                                    | `83d1116`                                                                                                                                                |
-| `XLS-B` | `tests/e2e/lite-mandatory-spreadsheet.spec.ts`                                                                                                                                       | `83d1116`                                                                                                                                                |
-| `UI-B`  | `tests/e2e/mandatory-ui-accessibility-evidence.json` and its mapped Details, outline, i18n, assistant, validation, and responsive suites                                             | `83d1116`                                                                                                                                                |
-| `AI-B`  | `tests/e2e/lite-mandatory-ai-security.spec.ts`                                                                                                                                       | `83d1116`                                                                                                                                                |
+| Bundle  | Implementation files                                                                                                                                                                                                        | Commits                                                                                                                                                  |
+| ------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `REP`   | `package.json`, `vite.config.ts`, `.github/workflows/*`, `scripts/verify-*.mjs`, `scripts/browser-performance-gate.ts`, `scripts/assemble-release.mjs`, release/archive documentation, outer-repository `archives/` records | `6f0c2eb`, `9b7fb37`, `70c34bd`, `ae8fa05`, `edb8e05`, `58daf42`, `69f2251`, `39b5e51`, `d25bf34`, `fc06839`, `de3fd75`, `75a31e3`                       |
+| `SES`   | `src/sessions/*`, `src/workspace/adapters/*`, `src/workspace/history/*`, `src/workspace/liveWorkspaceIndex.ts`, `src/workspace/workspaceManifest.ts`, `src/App.tsx`                                                         | `d4cfaeb`, `cf012b9`, `41c9b01`, `b559c33`, `09a2cc2`, `f9c4bb9`, `fe0d75f`, `4807d7f`, `7b881b0`, `44115f6`                                             |
+| `BPMN`  | `src/validation/*`, `src/generation/*`, `src/library/*`, `src/editor/*`, `src/workspace/importTransaction.ts`, export/print modules                                                                                         | `ddd10d1`, `7dcf651`, `af78fad`, `d7dd2d6`, `b06c428`, `626600d`, `9a70f15`, `96d340f`, `44115f6`                                                        |
+| `LOC`   | `src/localization/*`, translation review/execution, `src/i18n/*`, bidi rendering, reviewed-ingestion seams                                                                                                                  | `e2498ac`, `296f03a`, `b4f2a13`, `315c457`, `7bea794`, `9eb915b`, `8a332f5`, `94cb681`, `44115f6`                                                        |
+| `XLS`   | `src/spreadsheet/*`, spreadsheet worker, template/mapping/import UI, transaction integration                                                                                                                                | `27bc812`, `4a38bc7`, `dc4a54d`, `7c4b0da`, `537c7a7`, `d60eafa`, `08f8511`, `e862d9b`…`e257577`, `44115f6`                                              |
+| `UI`    | `src/shell/*`, `src/common/*`, `src/editor/ProcessOutlineEditor*`, `src/workspace/FolderTreeLite*`, `src/App.tsx`, CSS and i18n                                                                                             | `b77bd2b`, `b354344`, `864c587`, `a98b0bc`, `20da036`, `f6ffffe`, `fb3929f`, `49521ba`, `20faa67`, `c3b5df4`, `8a4481f`, `b906d4e`, `019c2c5`, `44115f6` |
+| `AI`    | `src/ai/*`, `src/assist/*`, settings credential code, CSP/security checks                                                                                                                                                   | `ae5d51d`, `4b78cce`, `4d3000b`, `a4903d4`, `0b17d5a`, `199b143`, `917a730`, `86b5ef9`, `44115f6`                                                        |
+| `REL-B` | `tests/e2e/lite-mandatory-reliability.spec.ts`, `tests/e2e/fixtures/reliability-fsa.ts`, `tests/e2e/mandatory-reliability-evidence.json`                                                                                    | `332ab23`, `83d1116`, `2f419a7`                                                                                                                          |
+| `TR-B`  | `tests/e2e/lite-mandatory-translation.spec.ts`, `tests/e2e/fixtures/mandatory-translation-fsa.ts`                                                                                                                           | `83d1116`                                                                                                                                                |
+| `XLS-B` | `tests/e2e/lite-mandatory-spreadsheet.spec.ts`                                                                                                                                                                              | `83d1116`                                                                                                                                                |
+| `UI-B`  | `tests/e2e/mandatory-ui-accessibility-evidence.json` and its mapped Details, outline, i18n, assistant, validation, and responsive suites                                                                                    | `83d1116`                                                                                                                                                |
+| `AI-B`  | `tests/e2e/lite-mandatory-ai-security.spec.ts`                                                                                                                                                                              | `83d1116`                                                                                                                                                |
 
 | Evidence bundle | Exact test/evidence locations                                                                                                                                                                          | Level                                                                                                                                                           |
 | --------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -72,7 +72,8 @@ exact files and commits.
 
 ## Truth snapshot
 
-Snapshot date: 2026-07-27.
+Snapshot date: 2026-07-27, refreshed later the same day after the candidate
+freeze and the exact-final local gate runs recorded below.
 
 - Remote `main` and `v0.4.4` resolve to
   `cd842b6e0b8d7283e2704ae71ec207440b9e54f2`.
@@ -95,50 +96,88 @@ Snapshot date: 2026-07-27.
 - Both Git bundles verify and clone recovery was checked. The bundles are in
   the outer repository's untracked `archives/` directory; independent
   approved/off-host custody evidence is absent.
-- The implementation, mandatory-browser evidence, and release-CI changes are
-  frozen locally in `44115f6`, `83d1116`, and `fc06839`. This documentation
-  snapshot records those checkpoints before the final artifact-bound reruns.
-  The local branch is not yet pushed, so no result is retained remote evidence
-  for the final candidate SHA.
-- The local `dist/index.html` has changed since the last retained browser,
-  accessibility, and performance checkpoints. No current local artifact SHA or
-  size is release evidence; a fresh build and every artifact-bound gate remain
-  required after the source is frozen.
-- The full local Vitest coverage run passed all 2,936 tests in 219 test files
-  with zero skips/retries: overall statements and lines 88.55%, branches
-  84.70%, and functions 89.40%; the required branch profiles passed at session
-  90.36%, translation 90.21%, Excel 91.45%, and import 91.23%. These remain
-  mutable local-worktree results, not immutable exact-final-commit evidence.
-- Latest local Chromium observations passed the mandatory AI/security suite
-  12/12, spreadsheet suite 14/14, translation suite 6/6, and reliability suite
-  13/13 on the current artifact. Focused Chromium observations also passed AML
-  naming 1/1, company docs 5/5, subprocess tree 1/1, responsive Details 2/2,
-  assistant 2/2, smoke 6/6, and panes/Details 10/10. The complete exact-final
-  Chromium/Firefox/WebKit matrix is pending.
-- The local automated accessibility audit passed 12/12 cases across 84/84
-  surfaces with zero axe violations. The current audit implementation also
-  enforces every 320/375/768/1280 width × 100%/200%/400% zoom pair, both color
-  schemes, both motion preferences, and both languages. This does not replace
-  exact-final retained evidence or manual NVDA, VoiceOver, and Arabic
-  assistive-technology review.
-- Dedicated keyboard-only Process Outline create/edit/save cases now exist for
-  English/LTR and Arabic/RTL, with pointer activity required to remain zero.
-  Dedicated real-browser Details/no-selection cases also exist in both
-  languages and directions. Their exact-final three-engine execution remains
-  pending.
-- Performance gate implementations now exercise the production workspace path
-  and real worker/interaction overlap, but retained older measurements do not
-  bind the current tree or artifact. Exact-final reference-profile performance
-  evidence remains pending; no final performance result is claimed here.
-- Current local static gates pass, including lock, format, Actions/workflow
-  policy, typecheck, lint, no-skips, Lite-only, UI-copy, CSP, attribution, and
-  license checks. Validation passed 97/97 and malformed archive/security tests
-  passed 104/104. Both dependency audits and current-tree/full-history Gitleaks
-  scans are clean. These are still mutable candidate checkpoints.
-- The local suite manifest now names all 22 browser specs, including mandatory
-  reliability, translation, spreadsheet, UI/accessibility, and AI/security.
-  The machine-readable mapping covers exactly REL11/TR10/XLS10/UI9/AI10, and
-  `npm run check:no-skips` passes across 542 discovered test/config files.
+- The candidate application source is frozen at app commit
+  `75a31e3896a48751a9544a7c63605529e117488b` (`75a31e3`) on
+  `release/0.4.5-lite-only`; the freeze covers all application, test, and
+  workflow source. Documentation commits may land on top; they do not change
+  application bytes. Three stabilization commits landed on top of `a844f0e`
+  after the previous snapshot:
+  - `2f419a7` test(opfs): replaces the private Playwright `coreBundle`
+    factory with the public `webkit` export. Root cause of the follow-up fix
+    needed: Playwright Test injects its default en-US locale into manually
+    launched contexts, and a localized persistent WebKit context replaces the
+    MiniBrowser startup page — the only page where `--features` engine gates
+    apply — with a protocol-created page lacking them; the test pins
+    `locale: undefined`.
+  - `de3fd75` ci(quality): passes a CLI-only `--global-timeout=900000` for
+    the WebKit matrix leg; the full serial 134-case WebKit suite measured
+    ~10.7 minutes against the 600 s default. Per-test timeouts are unchanged.
+  - `75a31e3` fix(performance): the browser performance gate worker proxy now
+    binds native `postMessage`/`terminate` at construction. Root cause: the
+    lazy `instance.terminate()` lookup recursed through the retained
+    inline-worker terminate wrapper (`f975f13`) into `RangeError`, so no
+    parse worker could start.
+- The local branch is still not pushed, so no local result in this snapshot
+  is retained remote evidence for the final candidate SHA.
+- The exact-final local `dist/index.html` built from `75a31e3` has SHA-256
+  `3299cff36a594cdac536668713e930bfb927285a7fe6e9f271ac0d9ae863ed51`, raw
+  6,271,923 bytes (limit 8,388,608) and release-gate gzip 1,842,107 bytes
+  (limit 2,621,440), built with Vite 6.4.3 on Node v22.22.0 and npm 11.13.0
+  with Playwright 1.61.1 (chromium-1228, firefox-1532, webkit-2311). Three
+  clean-dist rebuilds produced the identical SHA-256. This is a local
+  artifact; retained CI rebuild and reproducibility evidence on the final
+  pushed head remain required.
+- The exact-final local Vitest coverage run passed all 2,940 tests in 220
+  test files with zero skips/retries: overall statements and lines 88.54%,
+  branches 84.68%, and functions 89.42%; the required branch profiles passed
+  at session 90.36%, translation 90.21%, Excel 91.45%, and import 91.13%
+  (thresholds ≥80% overall, ≥90% profiles). The release evidence verifier
+  regression tests passed 17/17 under node:test. These remain local results,
+  not immutable exact-final-commit remote evidence.
+- The exact-final Playwright matrix ran against the artifact above with zero
+  failures, retries, skips, or interruptions: Chromium 134/134 (5.9 min),
+  Firefox 134/134 (8.1 min), and WebKit 134/134 (10.7 min, CLI
+  `--global-timeout=900000`). The mandatory and focused suites are included
+  in those counts. Retained three-engine remote reports on the final pushed
+  head remain pending.
+- The exact-final automated accessibility audit passed 12/12 cases across
+  84/84 surfaces with zero axe violations (Chromium 149.0.7827.55); the gate
+  JSON passed with the artifact SHA bound and `releaseCoverageEligible=true`.
+  This does not replace manual NVDA, VoiceOver, and Arabic
+  assistive-technology review, which remain pending.
+- The dedicated keyboard-only Process Outline create/edit/save cases for
+  English/LTR and Arabic/RTL and the dedicated real-browser
+  Details/no-selection cases in both languages and directions ran as part of
+  the exact-final three-engine local matrix above, with pointer activity
+  required to remain zero. Retained remote execution remains pending.
+- The performance gates passed locally with an exact binding to `75a31e3`:
+  Node 1,000-file initial index 159.106 ms (budget ≤5,000), 1% incremental
+  refresh 190.324 ms (≤1,000), spreadsheet previews 23.876/38.092 ms; browser
+  500-node median 1,070.2 ms (≤3,000), 1,000-node median 1,776.0 ms
+  (≤10,000), heartbeat within limits, with complete trusted interaction
+  receipts. The hardware profile is local-development-unqualified, so these
+  are development-only results, not reference-profile release evidence.
+- Exact-final local static and supply-chain gates all pass: lockfile
+  verification (460 packages), Prettier, strict TypeScript, ESLint,
+  actionlint across 7 workflows, release-workflow static invariants, no-skips
+  across 544 files, Lite-only (648 active files, 43 direct dependencies), UI
+  copy, CSP (10 directives), bpmn.io attribution, license policy (131
+  records, 84 notices), and the size gate. Validation passed 97/97 plus the
+  official XSD/bpmnlint accept/reject fixture gate, and malformed
+  ZIP/DOCX/XLSX/CSV tests passed 104/104. npm audit (full and production)
+  reports zero vulnerabilities, and checksum-verified Gitleaks 8.30.1 reports
+  the current tree and all 230 commits clean. These are still local candidate
+  checkpoints awaiting retained remote execution.
+- The exact seven-asset release allowlist was assembled and verified locally
+  (`release:verify` passed); the release HTML SHA-256 equals the artifact
+  SHA-256 above, `release:file-smoke` passed the English and Arabic offline
+  smoke, the SBOM contains 131 components, and `SHA256SUMS.txt` is
+  consistent. Publication of those assets remains pending.
+- The local suite manifest still names all 22 browser specs, including
+  mandatory reliability, translation, spreadsheet, UI/accessibility, and
+  AI/security. The machine-readable mapping covers exactly
+  REL11/TR10/XLS10/UI9/AI10, and `npm run check:no-skips` passes across 544
+  discovered test/config files.
 
 ## Outcome and completion criteria
 
@@ -555,22 +594,22 @@ merged.
 
 ### Automated quality gates
 
-| ID      | Gate                                                               | Implementation/evidence                           | Current truthful state                                                                                                                                                                                                                                          |
-| ------- | ------------------------------------------------------------------ | ------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `5.Q1`  | Lock verification and reproducible install from fresh checkout.    | workflow/lock checks; `REP/E-REP` `S`.            | Local lock verification passes; exact-final fresh checkout remains `F/E`.                                                                                                                                                                                       |
-| `5.Q2`  | Formatting check without rewrite.                                  | Prettier workflow.                                | Current mutable candidate passes; exact-final clean SHA remains `F`.                                                                                                                                                                                            |
-| `5.Q3`  | TypeScript typecheck.                                              | `tsc --noEmit`; workflow.                         | Passed at audit checkpoint, but exact-final clean SHA `F`.                                                                                                                                                                                                      |
-| `5.Q4`  | ESLint.                                                            | ESLint workflow.                                  | Passed at audit checkpoint, but exact-final clean SHA `F`.                                                                                                                                                                                                      |
-| `5.Q5`  | Unit/integration with ≥80% overall and ≥90% safety-branch targets. | Vitest/coverage scripts; `E-REP`.                 | Local coverage passed 2,936/2,936 in 219 files with zero skips/retries: statements/lines 88.55%, branches 84.70%, functions 89.40%; branch profiles session 90.36%, translation 90.21%, Excel 91.45%, import 91.23%. Exact-final remote evidence remains `E/F`. |
-| `5.Q6`  | Fresh production build before browser tests.                       | workflow dependency graph/build verifier.         | The existing local build is provisional and not bound to the latest source. A fresh exact-final build before all artifact-bound gates remains `E/F`; no final SHA or size is claimed.                                                                           |
-| `5.Q7`  | Playwright Chromium, Firefox, WebKit.                              | workflow matrix and `E-B-CAND`.                   | Candidate mandatory/focused observations and new keyboard/no-selection cross-engine cases pass, but the complete exact-final Chromium/Firefox/WebKit matrix and remote jobs remain pending, `E/F`.                                                              |
-| `5.Q8`  | Axe EN/AR, light/dark, desktop/mobile.                             | axe workflow/suite; `E-A11Y`.                     | Local automated audit passed 12/12 cases, 84/84 surfaces, and zero axe violations. Exact-final retained/remote evidence remains pending, `E/F`.                                                                                                                 |
-| `5.Q9`  | BPMN XSD/lint fixture suite.                                       | validation fixtures; `E-BPMN` `U/S`.              | Current mutable candidate passed 97/97; exact-final `F`.                                                                                                                                                                                                        |
-| `5.Q10` | Malformed ZIP/DOCX/XLSX/decompression-limit suite.                 | security/spreadsheet fixtures; `BPMN/XLS`.        | Current mutable candidate passed 104/104; exact-final `F`.                                                                                                                                                                                                      |
-| `5.Q11` | Secret scan, audit, licenses, SBOM.                                | supply-chain workflow/scripts; `REP`.             | Both dependency audits and checksum-verified Gitleaks current-tree/full-history scans are clean; license and CycloneDX generation pass. Exact-final remote retention remains `E/F`.                                                                             |
-| `5.Q12` | Active-tree proof excludes Desktop/Electron.                       | allowlist verifier; `REP`.                        | Local candidate static gate passes; exact-final remote evidence `F`.                                                                                                                                                                                            |
-| `5.Q13` | Single HTML ≤8 MiB raw and ≤2.5 MiB gzip.                          | size-budget scripts/workflow.                     | Earlier provisional artifacts were within budget, but the current source requires a fresh exact-final build and size report; no final artifact metric is claimed, `F`.                                                                                          |
-| `5.Q14` | No skips/quarantine/retries/known flakes.                          | `scripts/check-no-skips.mjs` plus suite manifest. | Local `npm run check:no-skips` passes across 542 discovered files; coverage passed 2,936/2,936 with zero skips/retries. Whole exact-final browser and remote execution remains `F`.                                                                             |
+| ID      | Gate                                                               | Implementation/evidence                           | Current truthful state                                                                                                                                                                                                                                                            |
+| ------- | ------------------------------------------------------------------ | ------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `5.Q1`  | Lock verification and reproducible install from fresh checkout.    | workflow/lock checks; `REP/E-REP` `S`.            | Local lock verification passes; exact-final fresh checkout remains `F/E`.                                                                                                                                                                                                         |
+| `5.Q2`  | Formatting check without rewrite.                                  | Prettier workflow.                                | Exact-final local check passes at the frozen SHA; retained remote execution remains `F`.                                                                                                                                                                                          |
+| `5.Q3`  | TypeScript typecheck.                                              | `tsc --noEmit`; workflow.                         | Exact-final local typecheck passes at the frozen SHA; retained remote execution remains `F`.                                                                                                                                                                                      |
+| `5.Q4`  | ESLint.                                                            | ESLint workflow.                                  | Exact-final local lint passes at the frozen SHA; retained remote execution remains `F`.                                                                                                                                                                                           |
+| `5.Q5`  | Unit/integration with ≥80% overall and ≥90% safety-branch targets. | Vitest/coverage scripts; `E-REP`.                 | Exact-final local coverage passed 2,940/2,940 in 220 files with zero skips/retries: statements/lines 88.54%, branches 84.68%, functions 89.42%; branch profiles session 90.36%, translation 90.21%, Excel 91.45%, import 91.13%. Exact-final remote evidence remains `E/F`.       |
+| `5.Q6`  | Fresh production build before browser tests.                       | workflow dependency graph/build verifier.         | An exact-final local build (SHA-256 `3299cff3…ed51`, raw 6,271,923 bytes, release-gate gzip 1,842,107 bytes) preceded every artifact-bound gate; retained remote build evidence remains `E/F`.                                                                                    |
+| `5.Q7`  | Playwright Chromium, Firefox, WebKit.                              | workflow matrix and `E-B-CAND`.                   | The exact-final local matrix passed Chromium 134/134, Firefox 134/134, and WebKit 134/134 with zero failures/retries/skips/interruptions; retained remote jobs remain pending, `E/F`.                                                                                             |
+| `5.Q8`  | Axe EN/AR, light/dark, desktop/mobile.                             | axe workflow/suite; `E-A11Y`.                     | The exact-final artifact-bound local audit passed 12/12 cases, 84/84 surfaces, and zero axe violations with `releaseCoverageEligible=true`. Retained/remote evidence remains pending, `E/F`.                                                                                      |
+| `5.Q9`  | BPMN XSD/lint fixture suite.                                       | validation fixtures; `E-BPMN` `U/S`.              | Exact-final local run passed 97/97 plus the official XSD/bpmnlint accept/reject fixture gate; retained remote evidence `F`.                                                                                                                                                       |
+| `5.Q10` | Malformed ZIP/DOCX/XLSX/decompression-limit suite.                 | security/spreadsheet fixtures; `BPMN/XLS`.        | Exact-final local run passed 104/104; retained remote evidence `F`.                                                                                                                                                                                                               |
+| `5.Q11` | Secret scan, audit, licenses, SBOM.                                | supply-chain workflow/scripts; `REP`.             | Both dependency audits report zero vulnerabilities, and checksum-verified Gitleaks 8.30.1 current-tree and full 230-commit history scans are clean; license (131 records, 84 notices) and CycloneDX (131 components) generation pass. Exact-final remote retention remains `E/F`. |
+| `5.Q12` | Active-tree proof excludes Desktop/Electron.                       | allowlist verifier; `REP`.                        | Local candidate static gate passes; exact-final remote evidence `F`.                                                                                                                                                                                                              |
+| `5.Q13` | Single HTML ≤8 MiB raw and ≤2.5 MiB gzip.                          | size-budget scripts/workflow.                     | The exact-final local artifact is within budget: raw 6,271,923 ≤ 8,388,608 bytes and release-gate gzip 1,842,107 ≤ 2,621,440 bytes; retained remote size report remains `F`.                                                                                                      |
+| `5.Q14` | No skips/quarantine/retries/known flakes.                          | `scripts/check-no-skips.mjs` plus suite manifest. | Exact-final local `npm run check:no-skips` passes across 544 discovered files; coverage passed 2,940/2,940 and the three-engine browser matrix ran with zero skips/retries. Retained remote execution remains `F`.                                                                |
 
 ### Mandatory browser scenarios — Reliability
 
@@ -729,23 +768,22 @@ candidate definition, not a statement that the assets have been published.
 
 ## Release-blocking remainder
 
-The local candidate contains substantial implementation and direct mandatory
-browser coverage. Its machine-readable inventory maps exactly
-REL11/TR10/XLS10/UI9/AI10, including dedicated keyboard-only and no-selection
-browser cases. Local coverage passes all required thresholds, current static,
-validation, archive, dependency, license, SBOM, and secret-scan checkpoints are
-green, and the automated accessibility implementation covers the complete
-width×zoom matrix. These are candidate checkpoints, not evidence for an
-immutable final SHA or artifact. This candidate is not releasable yet. At
-minimum, the following remain:
+The local candidate is frozen at app commit `75a31e3`, and every local
+exact-final gate is green against the exact artifact `3299cff3…ed51`: all
+static/policy and supply-chain gates, coverage with all four branch profiles,
+the validation and malformed-input suites, the complete
+Chromium/Firefox/WebKit exact-artifact matrix with zero retries or skips, the
+artifact-bound automated accessibility matrix, the development-only
+performance budgets, and the exact seven-asset assembly with English/Arabic
+offline smoke. The known private-Playwright-API test debt is closed by
+`2f419a7`, which uses the public `webkit` export. These remain local
+candidate results: under this document's own evidence rules no local run is
+retained release evidence for an immutable final SHA or artifact. This
+candidate is not releasable yet. At minimum, the following remain:
 
-- commit this documentation snapshot, push the frozen candidate SHA, and rerun
-  formatting plus every other gate from a fresh checkout;
-- obtain coverage, clean Chromium/Firefox/WebKit, axe, security, size,
-  performance, and artifact results for that exact SHA with zero retries;
-- run all five mandatory evidence bundles in the exact-final three-engine
-  matrix; rerun the already-implemented responsive, width×zoom, and
-  accessibility automation against that exact artifact;
+- commit this documentation snapshot and push the frozen candidate SHA, then
+  rerun the complete quality workflow from a fresh checkout so retained
+  remote CI evidence binds the final pushed head with zero retries;
 - complete the current/previous-major Chrome, Edge, Firefox, and Safari EN/AR
   compatibility matrix;
 - perform NVDA, VoiceOver, Arabic pronunciation, linguistic review, and the

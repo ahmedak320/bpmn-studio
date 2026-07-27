@@ -43,36 +43,49 @@ requirement by themselves.
 ## Current objective evidence
 
 The detailed index is [docs/RELEASE_EVIDENCE.md](docs/RELEASE_EVIDENCE.md).
-The evidence index retains dated, commit-scoped candidate results. More recent
-focused gates report session-safety branch coverage at 91.47% (194 tests),
-translation-validation branch coverage at 90.92% (150 tests), and
-import-transaction branch coverage at 90.05%. Bounded archive extraction and a
-runtime CSP negative-egress scenario also have focused candidate coverage.
-Earlier overall coverage, standards, browser, performance, accessibility, and
-supply-chain snapshots remain historical engineering evidence only.
+The candidate application source is frozen at app commit `75a31e3` on
+`release/0.4.5-lite-only`, and every local exact-final gate passed against the
+exact artifact `dist/index.html` (SHA-256 `3299cff3…ed51`; raw 6,271,923
+bytes; release-gate gzip 1,842,107 bytes; three clean rebuilds
+byte-identical): all static/policy and supply-chain gates, 2,940/2,940 tests
+in 220 files with zero skips/retries, coverage at 88.54% lines/statements,
+84.68% branches, and 89.42% functions with all four branch profiles above
+their ≥90% thresholds, 97/97 validation tests plus the official XSD/bpmnlint
+fixture gate, 104/104 malformed-input tests, the complete
+Chromium/Firefox/WebKit exact-artifact matrix (134/134 each, zero
+failures/retries/skips), the artifact-bound automated accessibility matrix
+(12/12 cases, 84/84 surfaces, zero axe violations), the development-only
+performance budgets, and the exact seven-asset assembly with English/Arabic
+offline smoke.
 
-These are not a substitute for rerunning the complete workflow on the final
-documentation commit and later on the release tag.
+These remain local candidate results. They are not a substitute for retained
+CI on the final pushed head or for the human evidence below.
 
 ## Known release blockers and pending evidence
 
-1. The full format/lint/policy suite, fresh build, exact artifact assembly and
-   reproducibility, complete Chromium/Firefox/WebKit matrix, and final automated
-   accessibility matrix must be rerun from the final candidate commit.
-2. Missing-DI ingestion now renders the sealed, revalidated auto-layout result
-   in a read-only BPMN preview before the user can approve any write. The final
-   candidate still needs the ordinary exact-artifact acceptance rerun for this
-   path.
-3. Exact current browser versions and operating systems must be recorded for
-   the final Pages/file smoke. Previous-major compatibility has not been
+1. The local exact-final gates are green at `75a31e3`, but the candidate
+   branch is not yet pushed. Retained CI must rerun the complete workflow from
+   a fresh checkout on the final pushed head (documentation commits may land
+   on top without changing application bytes). The missing-DI read-only
+   preview acceptance path passed locally with the same exact-final matrix;
+   its retained evidence is part of this rerun.
+2. Manual NVDA/Windows, VoiceOver/macOS, Arabic language/pronunciation and
+   linguistic review, the exact 16-row current/previous-major
+   Chrome/Edge/Firefox/Safari Pages matrix, and the genuine uninterrupted
+   48-hour soak are pending. Previous-major compatibility has not been
    evidenced and is not currently claimed.
-4. Manual NVDA/Windows, VoiceOver/macOS, Arabic language/pronunciation, real
-   Pages browser smoke, and the 48-hour soak are pending.
-5. `main`, `origin/main`, and `v0.4.5^{}` do not yet point to one release commit.
+3. The release PR still requires substantive independent review. The only
+   repository collaborator is the owner; an independent authorized reviewer
+   must be added and configured for PR approval and all five protected
+   human-gated environments before any protected release step can succeed.
+4. `main`, `origin/main`, and `v0.4.5^{}` do not yet point to one release commit.
    No 0.4.5 tag, draft release, published release, or 0.4.5 Pages deployment has
-   been evidenced.
-6. The release PR still requires substantive review and protected-branch
-   evidence. Historical executable assets remain published until the final 0.4.5
+   been evidenced; the protected merge, tag, rebuild, Pages, and publication
+   lifecycle has not run.
+5. Independent approved/off-host archive custody evidence is absent; the
+   verified bundles remain in the outer repository's untracked `archives/`
+   directory.
+6. Historical executable assets remain published until the final 0.4.5
    artifact and deployment pass the release plan, as required by the archival
    sequence.
 
