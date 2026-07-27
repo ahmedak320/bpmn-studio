@@ -1657,7 +1657,10 @@ test('TR6: cancellation, HTTP 429 per-field retry, partial failure and per-field
   releaseCancelledRequests()
   await expect.poll(() => cancelledTransportFailures.length, { timeout: 30_000 }).toBeGreaterThan(0)
   expect(cancelledTransportFailures).toEqual(
-    expect.arrayContaining([expect.stringMatching(/aborted|failed/iu)])
+    // Playwright preserves the engine's transport wording: Chromium reports
+    // ERR_FAILED, Firefox reports an aborted request, and WebKit reports
+    // "Load request cancelled". Every value here comes from requestfailed.
+    expect.arrayContaining([expect.stringMatching(/aborted|cancelled|canceled|failed/iu)])
   )
   await expect.poll(() => hostileLateFulfillmentAttempted).toBe(true)
   await expect.poll(() => hostileLateFulfillmentSettled).toBe(true)
@@ -2225,7 +2228,7 @@ test('TR6/TR10: workspace translation-memory recovery and late finalization stay
   releaseSecondaryTransport()
   await expect.poll(() => secondaryTransportFailures.length, { timeout: 30_000 }).toBeGreaterThan(0)
   expect(secondaryTransportFailures).toEqual(
-    expect.arrayContaining([expect.stringMatching(/aborted|failed/iu)])
+    expect.arrayContaining([expect.stringMatching(/aborted|cancelled|canceled|failed/iu)])
   )
   await expect.poll(() => secondaryLateFulfillmentAttempted).toBe(true)
   await expect.poll(() => secondaryLateFulfillmentSettled).toBe(true)
