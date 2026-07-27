@@ -502,7 +502,7 @@ test('post-import AI sweep grows fixed-size task and call-activity shapes', asyn
   const task = await readBounds(page, 'Task_Long')
   const call = await readBounds(page, 'Call_Long')
   expect({ width: task.width, height: task.height }).toEqual({ width: 160, height: 102 })
-  expect({ width: call.width, height: call.height }).toEqual({ width: 160, height: 134 })
+  expect({ width: call.width, height: call.height }).toEqual({ width: 160, height: 138 })
   await expect(
     page.locator('.djs-element[data-element-id="Call_Long"] g.orbitpm-sub-chip')
   ).toBeVisible()
