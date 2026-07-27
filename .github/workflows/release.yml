@@ -684,10 +684,10 @@ jobs:
 
       - name: Assemble and compare all seven clean tag bytes
         run: |
-          npm run release:assemble -- --html tag-dist/index.html --out tag-release
-          npm run release:verify -- tag-release
+          npm run release:assemble -- --html tag-dist/index.html --out release-tag
+          npm run release:verify -- release-tag
           npm run release:verify -- verified-candidate
-          for candidate in tag-release/*; do
+          for candidate in release-tag/*; do
             name="$(basename "$candidate")"
             cmp "$candidate" "verified-candidate/$name"
           done
@@ -705,7 +705,7 @@ jobs:
           node scripts/release-state.mjs \
             --release-json=draft-release.json \
             --assets=draft-download \
-            --expected-assets=tag-release \
+            --expected-assets=release-tag \
             --notes=docs/RELEASE_NOTES_0.4.5.md \
             --tag=v0.4.5 \
             --title="OrbitPM Process Studio Lite 0.4.5" \
@@ -721,7 +721,7 @@ jobs:
           node scripts/verify-external-release-evidence.mjs
           --candidate-sha=${{ inputs.candidate_sha }}
           --candidate-ready-at=${{ needs.verify-pretag.outputs.candidate_ready_at }}
-          --artifact=tag-release/OrbitPM-Process-Studio-Lite-0.4.5.html
+          --artifact=release-tag/OrbitPM-Process-Studio-Lite-0.4.5.html
           --url="$EVIDENCE_URL"
           --sha256="$EVIDENCE_SHA256"
           --output=release-evidence/tag-external-evidence-verification.json
@@ -737,7 +737,7 @@ jobs:
             --aggregate=release-evidence/tag-external-evidence-verification.json \
             --candidate-sha=${{ inputs.candidate_sha }} \
             --candidate-ready-at=${{ needs.verify-pretag.outputs.candidate_ready_at }} \
-            --artifact=tag-release/OrbitPM-Process-Studio-Lite-0.4.5.html \
+            --artifact=release-tag/OrbitPM-Process-Studio-Lite-0.4.5.html \
             --source-url="$EVIDENCE_URL" \
             --source-sha256="$EVIDENCE_SHA256"
           node scripts/release-evidence-chain.mjs compare \
@@ -760,7 +760,7 @@ jobs:
           node scripts/release-state.mjs \
             --release-json=final-draft-release.json \
             --assets=draft-download \
-            --expected-assets=tag-release \
+            --expected-assets=release-tag \
             --notes=docs/RELEASE_NOTES_0.4.5.md \
             --tag=v0.4.5 \
             --title="OrbitPM Process Studio Lite 0.4.5" \
@@ -770,7 +770,7 @@ jobs:
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: orbitpm-tag-release-assets-${{ inputs.candidate_sha }}
-          path: tag-release/
+          path: release-tag/
           if-no-files-found: error
           retention-days: 90
 
