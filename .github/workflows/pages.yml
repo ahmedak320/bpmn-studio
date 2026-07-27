@@ -221,31 +221,18 @@ jobs:
           echo "$ROLLBACK_ASSET_SHA256  rollback-preflight/$ROLLBACK_ASSET" |
             sha256sum --check -
 
-  deploy:
-    name: Protected deployment of exact draft release bytes
+  prepare:
+    name: Read-only verification and Pages artifact preparation
     needs: identity
     runs-on: ubuntu-24.04
-    timeout-minutes: 50
-    concurrency:
-      group: orbitpm-pages-deployment
-      cancel-in-progress: false
+    timeout-minutes: 35
+    outputs:
+      pages-artifact-id: ${{ steps.upload-pages.outputs.artifact-id }}
     permissions:
       actions: read
       contents: read
-      id-token: write
-      pages: write
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
     steps:
-      - name: Require configured external-evidence approval policy
-        env:
-          APPROVAL_POLICY: ${{ vars.ORBITPM_PAGES_APPROVAL_POLICY }}
-        run: >-
-          test "$APPROVAL_POLICY" =
-          "v0.4.5-nvda-voiceover-arabic-48h-p0p1-reviewed"
-
-      - name: Checkout exact approved tag commit after approval
+      - name: Checkout exact approved tag commit
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
           ref: ${{ inputs.candidate_sha }}
@@ -345,14 +332,6 @@ jobs:
           node scripts/release-evidence-chain.mjs compare \
             --trusted=trusted-release-evidence/tag-external-evidence-verification.json \
             --observed=evidence/pages-external-evidence-verification.json
-          cp \
-            trusted-release-evidence/tag-external-evidence-verification.json \
-            evidence/trusted-release-external-evidence-verification.json
-
-      - name: Install current Chrome/Edge and pinned Playwright engines
-        run: >-
-          ./node_modules/.bin/playwright install --with-deps
-          chromium chrome msedge firefox webkit
 
       - name: Build Pages directory from the verified draft HTML
         run: |
@@ -388,40 +367,533 @@ jobs:
             pages-dist/index.html \
             draft-prepackage/OrbitPM-Process-Studio-Lite-0.4.5.html
 
-      - name: Package candidate Pages artifact
-        uses: actions/upload-pages-artifact@56afc609e74202658d3ffba0e8f6dda462b719fa
+      - name: Create the exact GitHub Pages artifact tar
+        run: >-
+          tar
+          --dereference
+          --hard-dereference
+          --directory pages-dist
+          --create
+          --file "$RUNNER_TEMP/artifact.tar"
+          --exclude=.git
+          --exclude=.github
+          .
+
+      - name: Upload candidate Pages artifact
+        id: upload-pages
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: orbitpm-pages-candidate-${{ github.run_id }}
-          path: pages-dist
+          path: ${{ runner.temp }}/artifact.tar
+          if-no-files-found: error
+          retention-days: 1
 
-      - name: Recheck release identity immediately before deployment
+  artifact-authority:
+    name: Isolated authority for the actual uploaded Pages artifact
+    needs: [identity, prepare]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    outputs:
+      pages-artifact-archive-sha256: ${{ steps.stored-pages.outputs.archive-sha256 }}
+      pages-artifact-id: ${{ steps.stored-pages.outputs.artifact-id }}
+      pages-artifact-size: ${{ steps.stored-pages.outputs.archive-size }}
+      release-projection-sha256: ${{ steps.release-authority.outputs.release-projection-sha256 }}
+    permissions:
+      actions: read
+      contents: read
+    steps:
+      - name: Download clean-tag release authority from the successful release run
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: orbitpm-tag-release-assets-${{ inputs.candidate_sha }}
+          path: tag-release
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: ${{ inputs.release_run_id }}
+
+      - name: Download fixed-data release mutation authority
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: orbitpm-release-mutation-authority-${{ inputs.candidate_sha }}
+          path: release-authority
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: ${{ inputs.release_run_id }}
+
+      - name: Bind and inspect the exact stored Pages artifact
+        id: stored-pages
+        env:
+          ARTIFACT_ID: ${{ needs.prepare.outputs.pages-artifact-id }}
+          ARTIFACT_NAME: orbitpm-pages-candidate-${{ github.run_id }}
+          EXPECTED_RUN_SHA: ${{ github.sha }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          export LC_ALL=C
+          case "$ARTIFACT_ID" in
+            '' | *[!0-9]*) exit 1 ;;
+          esac
+          test "$ARTIFACT_ID" -ge 1
+          case "$GITHUB_RUN_ID" in
+            '' | *[!0-9]*) exit 1 ;;
+          esac
+          test "${#EXPECTED_RUN_SHA}" -eq 40
+          case "$EXPECTED_RUN_SHA" in
+            *[!0-9a-f]*) exit 1 ;;
+          esac
+          EXPECTED_HTML_SHA256="$(
+            jq -er \
+              '.assets[] |
+                select(.name == "OrbitPM-Process-Studio-Lite-0.4.5.html") |
+                .sha256' \
+              release-authority/release-mutation-authority.json
+          )"
+          export EXPECTED_HTML_SHA256
+          test "${#EXPECTED_HTML_SHA256}" -eq 64
+          case "$EXPECTED_HTML_SHA256" in
+            *[!0-9a-f]*) exit 1 ;;
+          esac
+          verify_dir="$RUNNER_TEMP/pages-artifact-$ARTIFACT_ID"
+          mkdir "$verify_dir"
+          api_version=2026-03-10
+          gh api --header "X-GitHub-Api-Version: $api_version" \
+            "repos/$GITHUB_REPOSITORY/actions/artifacts/$ARTIFACT_ID" \
+            > "$verify_dir/metadata.json"
+          gh api --paginate --header "X-GitHub-Api-Version: $api_version" \
+            "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/artifacts?per_page=100" |
+            jq -s '[.[].artifacts[]]' > "$verify_dir/run-artifacts.json"
+          jq -e \
+            --argjson id "$ARTIFACT_ID" \
+            --arg name "$ARTIFACT_NAME" \
+            --argjson run "$GITHUB_RUN_ID" \
+            --arg sha "$EXPECTED_RUN_SHA" \
+            '
+              (.id == $id) and
+              (.name == $name) and
+              (.expired == false) and
+              (.workflow_run.id == $run) and
+              (.workflow_run.head_sha == $sha) and
+              ((.size_in_bytes | type) == "number") and
+              (.size_in_bytes > 0 and .size_in_bytes <= 67108864) and
+              ((.digest | type) == "string") and
+              (.digest | test("^sha256:[0-9a-f]{64}$"))
+            ' "$verify_dir/metadata.json" >/dev/null
+          server_digest="$(jq -er .digest "$verify_dir/metadata.json")"
+          server_size="$(jq -er .size_in_bytes "$verify_dir/metadata.json")"
+          jq -e \
+            --argjson id "$ARTIFACT_ID" \
+            --arg name "$ARTIFACT_NAME" \
+            --arg digest "$server_digest" \
+            '
+              [.[] | select(.name == $name)] as $matches |
+              (($matches | length) == 1) and
+              ($matches[0].id == $id) and
+              ($matches[0].expired == false) and
+              ($matches[0].digest == $digest)
+            ' "$verify_dir/run-artifacts.json" >/dev/null
+          archive="$verify_dir/artifact.zip"
+          curl --fail --silent --show-error --location \
+            --proto '=https' \
+            --proto-redir '=https' \
+            --header 'Accept: application/vnd.github+json' \
+            --header "Authorization: Bearer $GH_TOKEN" \
+            --header "X-GitHub-Api-Version: $api_version" \
+            "${GITHUB_API_URL%/}/repos/$GITHUB_REPOSITORY/actions/artifacts/$ARTIFACT_ID/zip" \
+            --output "$archive"
+          test "$(stat --format=%s "$archive")" -eq "$server_size"
+          actual_archive_digest="sha256:$(sha256sum "$archive" | cut -d' ' -f1)"
+          test "$actual_archive_digest" = "$server_digest"
+          unset GH_TOKEN
+          export ARCHIVE_PATH="$archive"
+          python3 -I - <<'PY'
+          import hashlib
+          import os
+          import tarfile
+          import tempfile
+          import zipfile
+          from pathlib import Path
+
+          archive = Path(os.environ["ARCHIVE_PATH"])
+          expected = os.environ["EXPECTED_HTML_SHA256"]
+          max_tar = 64 * 1024 * 1024
+          max_html = 32 * 1024 * 1024
+          if len(expected) != 64 or any(c not in "0123456789abcdef" for c in expected):
+              raise SystemExit("invalid expected HTML SHA-256")
+          tar_hash = hashlib.sha256()
+          with zipfile.ZipFile(archive, "r") as zf:
+              infos = zf.infolist()
+              if len(infos) != 1 or infos[0].filename != "artifact.tar" or infos[0].is_dir():
+                  raise SystemExit(
+                      f"outer ZIP must contain only artifact.tar; got {[i.filename for i in infos]!r}"
+                  )
+              info = infos[0]
+              if info.flag_bits & 1 or not 0 < info.file_size <= max_tar:
+                  raise SystemExit("invalid or oversized artifact.tar ZIP entry")
+              tar_dir = tempfile.mkdtemp(prefix="pages-tar-", dir=os.environ["RUNNER_TEMP"])
+              tar_path = Path(tar_dir) / "artifact.tar"
+              copied = 0
+              with zf.open(info) as source, tar_path.open("xb") as target:
+                  while chunk := source.read(1024 * 1024):
+                      copied += len(chunk)
+                      if copied > max_tar:
+                          raise SystemExit("artifact.tar exceeded bound")
+                      tar_hash.update(chunk)
+                      target.write(chunk)
+              if copied != info.file_size:
+                  raise SystemExit("artifact.tar size mismatch")
+          with tarfile.open(tar_path, mode="r:") as tf:
+              members = tf.getmembers()
+              if tf.pax_headers or any(member.pax_headers for member in members):
+                  raise SystemExit("PAX headers are not permitted")
+              if len(members) != 2:
+                  raise SystemExit(
+                      f"tar must contain root and index.html only: {[m.name for m in members]!r}"
+                  )
+              root, html = members
+              if root.name != "." or not root.isdir() or root.issym() or root.islnk():
+                  raise SystemExit("first member must be real root directory '.'")
+              if html.name != "./index.html" or not html.isfile() or html.issym() or html.islnk():
+                  raise SystemExit("second member must be regular './index.html'")
+              if (root.offset, html.offset, html.offset_data) != (0, 512, 1024):
+                  raise SystemExit("unexpected hidden tar headers")
+              if not 0 < html.size <= max_html or getattr(html, "sparse", None):
+                  raise SystemExit("invalid or oversized index.html")
+              source = tf.extractfile(html)
+              if source is None:
+                  raise SystemExit("cannot read index.html")
+              html_hash = hashlib.sha256()
+              seen = 0
+              with source:
+                  while chunk := source.read(1024 * 1024):
+                      seen += len(chunk)
+                      if seen > max_html:
+                          raise SystemExit("index.html exceeded bound")
+                      html_hash.update(chunk)
+              if seen != html.size or html_hash.hexdigest() != expected:
+                  raise SystemExit("index.html size or SHA-256 mismatch")
+          tar_size = tar_path.stat().st_size
+          payload_end = html.offset_data + ((html.size + 511) // 512) * 512
+          if tar_size % 512 or payload_end + 1024 > tar_size:
+              raise SystemExit("invalid tar terminator")
+          tail_size = 0
+          with tar_path.open("rb") as source:
+              source.seek(payload_end)
+              while chunk := source.read(1024 * 1024):
+                  tail_size += len(chunk)
+                  if any(chunk):
+                      raise SystemExit("nonzero/concatenated data after index.html")
+          if tail_size < 1024:
+              raise SystemExit("missing tar end markers")
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
+              output.write(f"tar-sha256={tar_hash.hexdigest()}\n")
+              output.write(f"html-sha256={html_hash.hexdigest()}\n")
+              output.write(f"html-size={seen}\n")
+          PY
+          {
+            echo "artifact-id=$ARTIFACT_ID"
+            echo "artifact-name=$ARTIFACT_NAME"
+            echo "archive-size=$server_size"
+            echo "archive-sha256=${server_digest#sha256:}"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Verify the uploaded tar, draft, tag, main, and all seven assets
+        id: release-authority
         env:
           CANDIDATE_SHA: ${{ inputs.candidate_sha }}
           GH_TOKEN: ${{ github.token }}
+          RELEASE_RUN_ID: ${{ inputs.release_run_id }}
           RELEASE_TAG: ${{ inputs.release_tag }}
         run: |
-          git fetch --force origin \
-            refs/heads/main:refs/remotes/origin/main \
-            "+refs/tags/$RELEASE_TAG:refs/tags/$RELEASE_TAG"
-          test "$(git rev-parse origin/main)" = "$CANDIDATE_SHA"
-          node scripts/check-release-tag.mjs "$RELEASE_TAG" --require-origin-main
+          authority=release-authority/release-mutation-authority.json
+          notes=release-authority/release-notes.md
+          test "$RELEASE_TAG" = "v0.4.5"
+          test "${#CANDIDATE_SHA}" -eq 40
+          case "$CANDIDATE_SHA" in
+            *[!0-9a-fA-F]*) exit 1 ;;
+          esac
+          case "$RELEASE_RUN_ID" in
+            '' | *[!0-9]*) exit 1 ;;
+          esac
+          expected_names="$(
+            printf '%s\n' \
+              LICENSE \
+              OrbitPM-Excel-Example-0.4.5.xlsx \
+              OrbitPM-Excel-Template-0.4.5.xlsx \
+              OrbitPM-Process-Studio-Lite-0.4.5.cyclonedx.json \
+              OrbitPM-Process-Studio-Lite-0.4.5.html \
+              SHA256SUMS.txt \
+              THIRD_PARTY_NOTICES.md
+          )"
+          test "$(find tag-release -maxdepth 1 -type f -printf '%f\n' | sort)" = \
+            "$expected_names"
+          jq -e \
+            --arg candidate "$CANDIDATE_SHA" \
+            '
+              .schemaVersion == 1 and
+              .gate == "orbitpm-lite-release-mutation-authority" and
+              .candidateSha == $candidate and
+              .releaseTag == "v0.4.5" and
+              .releaseTitle == "OrbitPM Process Studio Lite 0.4.5" and
+              (.notesSha256 | test("^[a-f0-9]{64}$")) and
+              (.assets | length) == 7 and
+              ([.assets[].name] | sort) == [
+                "LICENSE",
+                "OrbitPM-Excel-Example-0.4.5.xlsx",
+                "OrbitPM-Excel-Template-0.4.5.xlsx",
+                "OrbitPM-Process-Studio-Lite-0.4.5.cyclonedx.json",
+                "OrbitPM-Process-Studio-Lite-0.4.5.html",
+                "SHA256SUMS.txt",
+                "THIRD_PARTY_NOTICES.md"
+              ]
+            ' "$authority" >/dev/null
+          test "$(sha256sum "$notes" | cut -d' ' -f1)" = \
+            "$(jq -r .notesSha256 "$authority")"
+          while IFS=$'\t' read -r name size sha256; do
+            test "$name" = "$(basename "$name")"
+            test "$(stat --format=%s "tag-release/$name")" = "$size"
+            test "$(sha256sum "tag-release/$name" | cut -d' ' -f1)" = "$sha256"
+          done < <(jq -r '.assets[] | [.name, .size, .sha256] | @tsv' "$authority")
+          test "${{ steps.stored-pages.outputs.html-sha256 }}" = "$(
+            sha256sum tag-release/OrbitPM-Process-Studio-Lite-0.4.5.html |
+              cut -d' ' -f1
+          )"
+          main_ref_json="$(gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/main")"
+          test "$(jq -r .object.sha <<<"$main_ref_json")" = "$CANDIDATE_SHA"
+          gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$RELEASE_TAG" \
+            > protected-tag-ref.json
+          tag_object_sha="$(jq -er .object.sha protected-tag-ref.json)"
+          gh api "repos/$GITHUB_REPOSITORY/git/tags/$tag_object_sha" \
+            > protected-tag-object.json
+          test "$(jq -r .tag protected-tag-object.json)" = "$RELEASE_TAG"
+          test "$(jq -r .object.type protected-tag-object.json)" = "commit"
+          test "$(jq -r .object.sha protected-tag-object.json)" = "$CANDIDATE_SHA"
           gh api "repos/$GITHUB_REPOSITORY/releases/tags/$RELEASE_TAG" \
             > draft-at-deploy.json
+          jq -e \
+            --arg candidate "$CANDIDATE_SHA" \
+            --rawfile notes "$notes" \
+            '
+              .tag_name == "v0.4.5" and
+              .target_commitish == $candidate and
+              .name == "OrbitPM Process Studio Lite 0.4.5" and
+              .body == $notes and
+              .draft == true and
+              .prerelease == false and
+              .published_at == null and
+              .immutable != true and
+              (.assets | length) == 7
+            ' draft-at-deploy.json >/dev/null
           mkdir draft-at-deploy
           gh release download "$RELEASE_TAG" --dir draft-at-deploy
-          node scripts/release-state.mjs \
-            --release-json=draft-at-deploy.json \
-            --assets=draft-at-deploy \
-            --expected-assets=tag-release \
-            --notes=docs/RELEASE_NOTES_0.4.5.md \
-            --tag="$RELEASE_TAG" \
-            --title="OrbitPM Process Studio Lite 0.4.5" \
-            --state=draft
-          cmp \
-            pages-dist/index.html \
-            draft-at-deploy/OrbitPM-Process-Studio-Lite-0.4.5.html
+          while IFS=$'\t' read -r name size sha256; do
+            test "$(
+              jq --arg name "$name" \
+                '[.assets[] | select(
+                  .name == $name and
+                  .state == "uploaded"
+                )] | length' \
+                draft-at-deploy.json
+            )" -eq 1
+            test "$(
+              jq -r --arg name "$name" \
+                '.assets[] | select(.name == $name) | .size' \
+                draft-at-deploy.json
+            )" = "$size"
+            test "$(
+              jq -r --arg name "$name" \
+                '.assets[] | select(.name == $name) | .digest' \
+                draft-at-deploy.json
+            )" = "sha256:$sha256"
+            test "$(sha256sum "draft-at-deploy/$name" | cut -d' ' -f1)" = "$sha256"
+          done < <(jq -r '.assets[] | [.name, .size, .sha256] | @tsv' "$authority")
+          mkdir artifact-authority
+          release_projection_sha256="$(
+            jq -S -c \
+              '{
+                id,
+                tag_name,
+                target_commitish,
+                name,
+                body,
+                draft,
+                prerelease,
+                published_at,
+                immutable,
+                assets: (
+                  [.assets[] | {id, name, size, digest, state}] |
+                  sort_by(.name)
+                )
+              }' \
+              draft-at-deploy.json |
+              sha256sum |
+              cut -d' ' -f1
+          )"
+          echo "release-projection-sha256=$release_projection_sha256" >> "$GITHUB_OUTPUT"
+          jq -n \
+            --arg pagesArtifactArchiveSha256 \
+              "${{ steps.stored-pages.outputs.archive-sha256 }}" \
+            --arg pagesArtifactName "${{ steps.stored-pages.outputs.artifact-name }}" \
+            --arg candidateSha "$CANDIDATE_SHA" \
+            --arg pagesArtifactTarSha256 "${{ steps.stored-pages.outputs.tar-sha256 }}" \
+            --arg pagesHtmlSha256 "${{ steps.stored-pages.outputs.html-sha256 }}" \
+            --arg pagesWorkflowHeadSha "$GITHUB_SHA" \
+            --argjson pagesArtifactId "${{ steps.stored-pages.outputs.artifact-id }}" \
+            --argjson pagesArtifactSize "${{ steps.stored-pages.outputs.archive-size }}" \
+            --argjson pagesHtmlSize "${{ steps.stored-pages.outputs.html-size }}" \
+            --argjson pagesWorkflowRunId "$GITHUB_RUN_ID" \
+            --arg releaseId "$(jq -r .id draft-at-deploy.json)" \
+            --arg releaseProjectionSha256 "$release_projection_sha256" \
+            --arg releaseRunId "$RELEASE_RUN_ID" \
+            '{
+              schemaVersion: 1,
+              gate: "orbitpm-pages-artifact-authority",
+              candidateSha: $candidateSha,
+              releaseRunId: $releaseRunId,
+              releaseId: $releaseId,
+              releaseProjectionSha256: $releaseProjectionSha256,
+              pagesArtifact: {
+                id: $pagesArtifactId,
+                name: $pagesArtifactName,
+                size: $pagesArtifactSize,
+                sha256: $pagesArtifactArchiveSha256,
+                tarSha256: $pagesArtifactTarSha256
+              },
+              pagesWorkflowRunId: $pagesWorkflowRunId,
+              pagesWorkflowHeadSha: $pagesWorkflowHeadSha,
+              pagesHtmlSha256: $pagesHtmlSha256,
+              pagesHtmlSize: $pagesHtmlSize,
+              status: "passed"
+            }' > artifact-authority/pages-artifact-authority.json
 
-      - name: Deploy candidate Pages
+      - name: Preserve actual uploaded Pages artifact authority
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: orbitpm-pages-artifact-authority-${{ github.run_id }}
+          path: artifact-authority/pages-artifact-authority.json
+          if-no-files-found: error
+          retention-days: 90
+
+  deploy:
+    name: Protected credential-isolated Pages deployment
+    needs: artifact-authority
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    concurrency:
+      group: orbitpm-pages-deployment
+      cancel-in-progress: false
+    permissions:
+      actions: read
+      contents: read
+      id-token: write
+      pages: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Require configured external-evidence approval policy
+        env:
+          APPROVAL_POLICY: ${{ vars.ORBITPM_PAGES_APPROVAL_POLICY }}
+        run: >-
+          test "$APPROVAL_POLICY" =
+          "v0.4.5-nvda-voiceover-arabic-48h-p0p1-reviewed"
+
+      - name: Rebind exact artifact, main, tag, and draft after approval
+        env:
+          CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+          EXPECTED_ARCHIVE_SHA256: ${{ needs.artifact-authority.outputs.pages-artifact-archive-sha256 }}
+          EXPECTED_ARCHIVE_SIZE: ${{ needs.artifact-authority.outputs.pages-artifact-size }}
+          EXPECTED_ARTIFACT_ID: ${{ needs.artifact-authority.outputs.pages-artifact-id }}
+          EXPECTED_RELEASE_PROJECTION_SHA256: ${{ needs.artifact-authority.outputs.release-projection-sha256 }}
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.release_tag }}
+        run: |
+          set -euo pipefail
+          case "$EXPECTED_ARTIFACT_ID" in
+            '' | *[!0-9]*) exit 1 ;;
+          esac
+          case "$EXPECTED_ARCHIVE_SIZE" in
+            '' | *[!0-9]*) exit 1 ;;
+          esac
+          for digest in "$EXPECTED_ARCHIVE_SHA256" "$EXPECTED_RELEASE_PROJECTION_SHA256"; do
+            test "${#digest}" -eq 64
+            case "$digest" in
+              *[!0-9a-f]*) exit 1 ;;
+            esac
+          done
+          artifact_name="orbitpm-pages-candidate-$GITHUB_RUN_ID"
+          artifact_json="$(
+            gh api "repos/$GITHUB_REPOSITORY/actions/artifacts/$EXPECTED_ARTIFACT_ID"
+          )"
+          artifacts_json="$(
+            gh api --paginate \
+              "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/artifacts?per_page=100" |
+              jq -s '[.[].artifacts[]]'
+          )"
+          jq -e \
+            --arg digest "sha256:$EXPECTED_ARCHIVE_SHA256" \
+            --argjson id "$EXPECTED_ARTIFACT_ID" \
+            --arg name "$artifact_name" \
+            --argjson run "$GITHUB_RUN_ID" \
+            --arg sha "$CANDIDATE_SHA" \
+            --argjson size "$EXPECTED_ARCHIVE_SIZE" \
+            '
+              .id == $id and
+              .name == $name and
+              .expired == false and
+              .workflow_run.id == $run and
+              .workflow_run.head_sha == $sha and
+              .size_in_bytes == $size and
+              .digest == $digest
+            ' <<<"$artifact_json" >/dev/null
+          jq -e \
+            --argjson id "$EXPECTED_ARTIFACT_ID" \
+            --arg name "$artifact_name" \
+            '
+              [.[] | select(.name == $name)] as $matches |
+              ($matches | length) == 1 and
+              $matches[0].id == $id and
+              $matches[0].expired == false
+            ' <<<"$artifacts_json" >/dev/null
+          main_ref="$(gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/main")"
+          test "$(jq -r .object.sha <<<"$main_ref")" = "$CANDIDATE_SHA"
+          tag_ref="$(
+            gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$RELEASE_TAG"
+          )"
+          test "$(jq -r .object.type <<<"$tag_ref")" = "tag"
+          tag_object="$(
+            gh api \
+              "repos/$GITHUB_REPOSITORY/git/tags/$(jq -r .object.sha <<<"$tag_ref")"
+          )"
+          test "$(jq -r .tag <<<"$tag_object")" = "$RELEASE_TAG"
+          test "$(jq -r .object.type <<<"$tag_object")" = "commit"
+          test "$(jq -r .object.sha <<<"$tag_object")" = "$CANDIDATE_SHA"
+          release_json="$(
+            gh api "repos/$GITHUB_REPOSITORY/releases/tags/$RELEASE_TAG"
+          )"
+          release_projection_sha256="$(
+            jq -S -c \
+              '{
+                id,
+                tag_name,
+                target_commitish,
+                name,
+                body,
+                draft,
+                prerelease,
+                published_at,
+                immutable,
+                assets: (
+                  [.assets[] | {id, name, size, digest, state}] |
+                  sort_by(.name)
+                )
+              }' \
+              <<<"$release_json" |
+              sha256sum |
+              cut -d' ' -f1
+          )"
+          test "$release_projection_sha256" = "$EXPECTED_RELEASE_PROJECTION_SHA256"
+
+      - name: Deploy only the authority-verified Pages artifact
         id: deployment
         uses: actions/deploy-pages@d6db90164ac5ed86f2b6aed7e0febac5b3c0c03e
         with:
@@ -431,6 +903,142 @@ jobs:
         env:
           DEPLOYMENT_URL: ${{ steps.deployment.outputs.page_url }}
         run: test "$DEPLOYMENT_URL" = "https://ahmedak320.github.io/bpmn-studio/"
+
+  readback:
+    name: Read-only deployed byte and evidence verification
+    needs: [identity, artifact-authority, deploy]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    permissions:
+      actions: read
+      contents: read
+    steps:
+      - name: Checkout exact approved candidate for read-only evidence
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ inputs.candidate_sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Set up exact Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 22.22.0
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - name: Set up exact npm
+        run: npm install --global npm@11.13.0
+
+      - name: Reproducible install
+        run: npm ci
+
+      - name: Download clean-tag reference assets and retained release evidence
+        env:
+          CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_RUN_ID: ${{ inputs.release_run_id }}
+        run: |
+          gh run download "$RELEASE_RUN_ID" \
+            --repo "$GITHUB_REPOSITORY" \
+            --name "orbitpm-tag-release-assets-$CANDIDATE_SHA" \
+            --dir tag-release
+          gh run download "$RELEASE_RUN_ID" \
+            --repo "$GITHUB_REPOSITORY" \
+            --name "orbitpm-tag-external-evidence-$CANDIDATE_SHA" \
+            --dir trusted-release-evidence
+          gh run download "$GITHUB_RUN_ID" \
+            --repo "$GITHUB_REPOSITORY" \
+            --name "orbitpm-pages-artifact-authority-$GITHUB_RUN_ID" \
+            --dir artifact-authority
+          mkdir pages-dist evidence
+          cp \
+            tag-release/OrbitPM-Process-Studio-Lite-0.4.5.html \
+            pages-dist/index.html
+          cp \
+            trusted-release-evidence/tag-external-evidence-verification.json \
+            evidence/trusted-release-external-evidence-verification.json
+          cp \
+            artifact-authority/pages-artifact-authority.json \
+            evidence/pages-artifact-authority.json
+
+      - name: Reverify the retained evidence chain after deployment
+        env:
+          CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+          EVIDENCE_SHA256: ${{ inputs.external_evidence_sha256 }}
+          EVIDENCE_URL: ${{ inputs.external_evidence_url }}
+        run: |
+          candidate_ready_at="$(
+            jq -er .candidateReadyAt \
+              trusted-release-evidence/tag-external-evidence-verification.json
+          )"
+          node scripts/release-evidence-chain.mjs verify \
+            --aggregate=trusted-release-evidence/tag-external-evidence-verification.json \
+            --candidate-sha="$CANDIDATE_SHA" \
+            --candidate-ready-at="$candidate_ready_at" \
+            --artifact=pages-dist/index.html \
+            --source-url="$EVIDENCE_URL" \
+            --source-sha256="$EVIDENCE_SHA256"
+          node scripts/verify-external-release-evidence.mjs \
+            --candidate-sha="$CANDIDATE_SHA" \
+            --candidate-ready-at="$candidate_ready_at" \
+            --artifact=pages-dist/index.html \
+            --url="$EVIDENCE_URL" \
+            --sha256="$EVIDENCE_SHA256" \
+            --output=evidence/pages-external-evidence-verification.json
+          node scripts/release-evidence-chain.mjs compare \
+            --trusted=trusted-release-evidence/tag-external-evidence-verification.json \
+            --observed=evidence/pages-external-evidence-verification.json
+          test "$(jq -r .gate evidence/pages-artifact-authority.json)" = \
+            "orbitpm-pages-artifact-authority"
+          test "$(jq -r .status evidence/pages-artifact-authority.json)" = "passed"
+          test "$(jq -r .candidateSha evidence/pages-artifact-authority.json)" = \
+            "$CANDIDATE_SHA"
+          test "$(jq -r .pagesWorkflowRunId evidence/pages-artifact-authority.json)" = \
+            "$GITHUB_RUN_ID"
+          test "$(jq -r .pagesWorkflowHeadSha evidence/pages-artifact-authority.json)" = \
+            "$GITHUB_SHA"
+          test "$(jq -r .pagesArtifact.name evidence/pages-artifact-authority.json)" = \
+            "orbitpm-pages-candidate-$GITHUB_RUN_ID"
+          test "$(jq -r .pagesArtifact.id evidence/pages-artifact-authority.json)" -ge 1
+          test "$(jq -r .pagesArtifact.size evidence/pages-artifact-authority.json)" -ge 1
+          for field in sha256 tarSha256; do
+            digest="$(jq -r ".pagesArtifact.$field" \
+              evidence/pages-artifact-authority.json)"
+            test "${#digest}" -eq 64
+            case "$digest" in
+              *[!0-9a-f]*) exit 1 ;;
+            esac
+          done
+          test "$(jq -r .pagesHtmlSha256 evidence/pages-artifact-authority.json)" = \
+            "$(sha256sum pages-dist/index.html | cut -d' ' -f1)"
+
+      - name: Install current Chrome/Edge and pinned Playwright engines
+        run: >-
+          ./node_modules/.bin/playwright install --with-deps
+          chromium chrome msedge firefox webkit
+
+      - name: Require HTTP 200 without redirects at the canonical Pages URL
+        env:
+          PAGES_URL: https://ahmedak320.github.io/bpmn-studio/
+        run: |
+          for attempt in $(seq 1 150); do
+            response="$(
+              curl --fail --silent --show-error \
+                --max-time 30 \
+                --max-redirs 0 \
+                --output pages-live.html \
+                --write-out '%{http_code}\t%{url_effective}' \
+                "$PAGES_URL"
+            )" || true
+            if test "$response" = "$(printf '200\t%s' "$PAGES_URL")" &&
+              cmp pages-dist/index.html pages-live.html
+            then
+              break
+            fi
+            test "$attempt" -lt 150
+            sleep 5
+          done
 
       - name: Record exact Pages browser environment evidence
         env:
@@ -454,7 +1062,7 @@ jobs:
           --fetch-attempts=150
           --fetch-delay-ms=5000
 
-      - name: Read back release bytes and identities immediately after deployment
+      - name: Read back the draft and Git identities after deployment
         env:
           CANDIDATE_SHA: ${{ inputs.candidate_sha }}
           GH_TOKEN: ${{ github.token }}
@@ -492,8 +1100,20 @@ jobs:
 
   rollback:
     name: Restore verified v0.4.4 bytes after a failed deployment attempt
-    needs: [identity, deploy]
-    if: ${{ always() && needs.identity.result == 'success' && needs.deploy.result != 'success' }}
+    needs: [identity, prepare, artifact-authority, deploy, readback]
+    if: >-
+      ${{
+        always() &&
+        needs.identity.result == 'success' &&
+        needs.artifact-authority.result == 'success' &&
+        (
+          needs.deploy.result == 'failure' ||
+          (
+            needs.deploy.result == 'success' &&
+            needs.readback.result != 'success'
+          )
+        )
+      }}
     permissions:
       actions: read
       contents: read

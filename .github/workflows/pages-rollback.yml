@@ -178,52 +178,18 @@ jobs:
           if-no-files-found: error
           retention-days: 90
 
-  deploy:
-    name: Protected rollback deployment with identity read-back
+  prepare:
+    name: Read-only rollback artifact preparation
     needs: verify
     runs-on: ubuntu-24.04
-    timeout-minutes: 30
-    concurrency:
-      group: orbitpm-pages-deployment
-      cancel-in-progress: false
+    timeout-minutes: 15
+    outputs:
+      rollback-artifact-id: ${{ steps.upload-rollback.outputs.artifact-id }}
     permissions:
       actions: read
       contents: read
-      id-token: write
-      pages: write
-    environment:
-      name: >-
-        ${{
-          inputs.automatic_rollback &&
-          'github-pages-rollback-auto-v0.4.5' ||
-          'github-pages-rollback-manual-v0.4.5'
-        }}
-      url: ${{ steps.deployment.outputs.page_url }}
     steps:
-      - name: Bind automatic rollback to the trusted caller or require manual approval
-        env:
-          AUTOMATIC_ROLLBACK: ${{ inputs.automatic_rollback }}
-          AUTO_POLICY: ${{ vars.ORBITPM_PAGES_AUTO_ROLLBACK_POLICY }}
-          APPROVAL_POLICY: ${{ vars.ORBITPM_PAGES_ROLLBACK_POLICY }}
-          CANDIDATE_SHA: ${{ inputs.authority_sha }}
-        run: |
-          expected_called_ref="$GITHUB_REPOSITORY/.github/workflows/pages-rollback.yml@refs/heads/main"
-          if test "$AUTOMATIC_ROLLBACK" = "true"; then
-            test "$GITHUB_SHA" = "$CANDIDATE_SHA"
-            test "$GITHUB_WORKFLOW" = \
-              "Deploy approved tagged Lite artifact to Pages"
-            test "$GITHUB_WORKFLOW_REF" = \
-              "$GITHUB_REPOSITORY/.github/workflows/pages.yml@refs/heads/main"
-            test "$AUTO_POLICY" = \
-              "v0.4.5-main-only-no-reviewer-no-secrets-known-good-auto-rollback"
-          else
-            test "$GITHUB_WORKFLOW" = "Restore verified prior Lite artifact to Pages"
-            test "$GITHUB_WORKFLOW_REF" = "$expected_called_ref"
-            test "$APPROVAL_POLICY" = \
-              "v0.4.5-verified-known-good-pages-rollback"
-          fi
-
-      - name: Checkout exact rollback authority after approval
+      - name: Checkout exact rollback authority for read-only preparation
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
           ref: ${{ inputs.authority_sha }}
@@ -236,7 +202,7 @@ jobs:
           name: orbitpm-verified-pages-rollback-${{ github.run_id }}
           path: verified-rollback
 
-      - name: Re-download and compare known-good bytes after approval
+      - name: Re-download and compare known-good bytes before packaging
         env:
           AUTOMATIC_ROLLBACK: ${{ inputs.automatic_rollback }}
           AUTHORITY_SHA: ${{ inputs.authority_sha }}
@@ -286,13 +252,219 @@ jobs:
             "rollback-redownload/$KNOWN_GOOD_ASSET"
           cp "verified-rollback/$KNOWN_GOOD_ASSET" rollback-dist/index.html
 
-      - name: Package verified rollback artifact
-        uses: actions/upload-pages-artifact@56afc609e74202658d3ffba0e8f6dda462b719fa
+      - name: Create exact rollback Pages artifact tar
+        run: >-
+          tar
+          --dereference
+          --hard-dereference
+          --directory rollback-dist
+          --create
+          --file "$RUNNER_TEMP/artifact.tar"
+          --exclude=.git
+          --exclude=.github
+          .
+
+      - name: Upload rollback Pages artifact
+        id: upload-rollback
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: orbitpm-pages-rollback-${{ github.run_id }}
-          path: rollback-dist
+          path: ${{ runner.temp }}/artifact.tar
+          if-no-files-found: error
+          retention-days: 1
 
-      - name: Recheck identities immediately before rollback deployment
+  artifact-authority:
+    name: Isolated authority for the actual uploaded rollback artifact
+    needs: [verify, prepare]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    outputs:
+      authority-release-projection-sha256: ${{ steps.rollback-authority.outputs.authority-release-projection-sha256 }}
+      known-good-release-projection-sha256: ${{ steps.rollback-authority.outputs.known-good-release-projection-sha256 }}
+      rollback-artifact-archive-sha256: ${{ steps.stored-rollback.outputs.archive-sha256 }}
+      rollback-artifact-id: ${{ steps.stored-rollback.outputs.artifact-id }}
+      rollback-artifact-size: ${{ steps.stored-rollback.outputs.archive-size }}
+    permissions:
+      actions: read
+      contents: read
+    steps:
+      - name: Download previously verified known-good bytes
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: orbitpm-verified-pages-rollback-${{ github.run_id }}
+          path: verified-rollback
+
+      - name: Bind and inspect the exact stored rollback artifact
+        id: stored-rollback
+        env:
+          ARTIFACT_ID: ${{ needs.prepare.outputs.rollback-artifact-id }}
+          ARTIFACT_NAME: orbitpm-pages-rollback-${{ github.run_id }}
+          EXPECTED_HTML_SHA256: ${{ inputs.known_good_asset_sha256 }}
+          EXPECTED_RUN_SHA: ${{ github.sha }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          export LC_ALL=C
+          case "$ARTIFACT_ID" in
+            '' | *[!0-9]*) exit 1 ;;
+          esac
+          test "$ARTIFACT_ID" -ge 1
+          case "$GITHUB_RUN_ID" in
+            '' | *[!0-9]*) exit 1 ;;
+          esac
+          test "${#EXPECTED_RUN_SHA}" -eq 40
+          case "$EXPECTED_RUN_SHA" in
+            *[!0-9a-f]*) exit 1 ;;
+          esac
+          test "${#EXPECTED_HTML_SHA256}" -eq 64
+          case "$EXPECTED_HTML_SHA256" in
+            *[!0-9a-f]*) exit 1 ;;
+          esac
+          verify_dir="$RUNNER_TEMP/rollback-artifact-$ARTIFACT_ID"
+          mkdir "$verify_dir"
+          api_version=2026-03-10
+          gh api --header "X-GitHub-Api-Version: $api_version" \
+            "repos/$GITHUB_REPOSITORY/actions/artifacts/$ARTIFACT_ID" \
+            > "$verify_dir/metadata.json"
+          gh api --paginate --header "X-GitHub-Api-Version: $api_version" \
+            "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/artifacts?per_page=100" |
+            jq -s '[.[].artifacts[]]' > "$verify_dir/run-artifacts.json"
+          jq -e \
+            --argjson id "$ARTIFACT_ID" \
+            --arg name "$ARTIFACT_NAME" \
+            --argjson run "$GITHUB_RUN_ID" \
+            --arg sha "$EXPECTED_RUN_SHA" \
+            '
+              (.id == $id) and
+              (.name == $name) and
+              (.expired == false) and
+              (.workflow_run.id == $run) and
+              (.workflow_run.head_sha == $sha) and
+              ((.size_in_bytes | type) == "number") and
+              (.size_in_bytes > 0 and .size_in_bytes <= 67108864) and
+              ((.digest | type) == "string") and
+              (.digest | test("^sha256:[0-9a-f]{64}$"))
+            ' "$verify_dir/metadata.json" >/dev/null
+          server_digest="$(jq -er .digest "$verify_dir/metadata.json")"
+          server_size="$(jq -er .size_in_bytes "$verify_dir/metadata.json")"
+          jq -e \
+            --argjson id "$ARTIFACT_ID" \
+            --arg name "$ARTIFACT_NAME" \
+            --arg digest "$server_digest" \
+            '
+              [.[] | select(.name == $name)] as $matches |
+              (($matches | length) == 1) and
+              ($matches[0].id == $id) and
+              ($matches[0].expired == false) and
+              ($matches[0].digest == $digest)
+            ' "$verify_dir/run-artifacts.json" >/dev/null
+          archive="$verify_dir/artifact.zip"
+          curl --fail --silent --show-error --location \
+            --proto '=https' \
+            --proto-redir '=https' \
+            --header 'Accept: application/vnd.github+json' \
+            --header "Authorization: Bearer $GH_TOKEN" \
+            --header "X-GitHub-Api-Version: $api_version" \
+            "${GITHUB_API_URL%/}/repos/$GITHUB_REPOSITORY/actions/artifacts/$ARTIFACT_ID/zip" \
+            --output "$archive"
+          test "$(stat --format=%s "$archive")" -eq "$server_size"
+          actual_archive_digest="sha256:$(sha256sum "$archive" | cut -d' ' -f1)"
+          test "$actual_archive_digest" = "$server_digest"
+          unset GH_TOKEN
+          export ARCHIVE_PATH="$archive"
+          python3 -I - <<'PY'
+          import hashlib
+          import os
+          import tarfile
+          import tempfile
+          import zipfile
+          from pathlib import Path
+
+          archive = Path(os.environ["ARCHIVE_PATH"])
+          expected = os.environ["EXPECTED_HTML_SHA256"]
+          max_tar = 64 * 1024 * 1024
+          max_html = 32 * 1024 * 1024
+          if len(expected) != 64 or any(c not in "0123456789abcdef" for c in expected):
+              raise SystemExit("invalid expected HTML SHA-256")
+          tar_hash = hashlib.sha256()
+          with zipfile.ZipFile(archive, "r") as zf:
+              infos = zf.infolist()
+              if len(infos) != 1 or infos[0].filename != "artifact.tar" or infos[0].is_dir():
+                  raise SystemExit(
+                      f"outer ZIP must contain only artifact.tar; got {[i.filename for i in infos]!r}"
+                  )
+              info = infos[0]
+              if info.flag_bits & 1 or not 0 < info.file_size <= max_tar:
+                  raise SystemExit("invalid or oversized artifact.tar ZIP entry")
+              tar_dir = tempfile.mkdtemp(prefix="pages-tar-", dir=os.environ["RUNNER_TEMP"])
+              tar_path = Path(tar_dir) / "artifact.tar"
+              copied = 0
+              with zf.open(info) as source, tar_path.open("xb") as target:
+                  while chunk := source.read(1024 * 1024):
+                      copied += len(chunk)
+                      if copied > max_tar:
+                          raise SystemExit("artifact.tar exceeded bound")
+                      tar_hash.update(chunk)
+                      target.write(chunk)
+              if copied != info.file_size:
+                  raise SystemExit("artifact.tar size mismatch")
+          with tarfile.open(tar_path, mode="r:") as tf:
+              members = tf.getmembers()
+              if tf.pax_headers or any(member.pax_headers for member in members):
+                  raise SystemExit("PAX headers are not permitted")
+              if len(members) != 2:
+                  raise SystemExit(
+                      f"tar must contain root and index.html only: {[m.name for m in members]!r}"
+                  )
+              root, html = members
+              if root.name != "." or not root.isdir() or root.issym() or root.islnk():
+                  raise SystemExit("first member must be real root directory '.'")
+              if html.name != "./index.html" or not html.isfile() or html.issym() or html.islnk():
+                  raise SystemExit("second member must be regular './index.html'")
+              if (root.offset, html.offset, html.offset_data) != (0, 512, 1024):
+                  raise SystemExit("unexpected hidden tar headers")
+              if not 0 < html.size <= max_html or getattr(html, "sparse", None):
+                  raise SystemExit("invalid or oversized index.html")
+              source = tf.extractfile(html)
+              if source is None:
+                  raise SystemExit("cannot read index.html")
+              html_hash = hashlib.sha256()
+              seen = 0
+              with source:
+                  while chunk := source.read(1024 * 1024):
+                      seen += len(chunk)
+                      if seen > max_html:
+                          raise SystemExit("index.html exceeded bound")
+                      html_hash.update(chunk)
+              if seen != html.size or html_hash.hexdigest() != expected:
+                  raise SystemExit("index.html size or SHA-256 mismatch")
+          tar_size = tar_path.stat().st_size
+          payload_end = html.offset_data + ((html.size + 511) // 512) * 512
+          if tar_size % 512 or payload_end + 1024 > tar_size:
+              raise SystemExit("invalid tar terminator")
+          tail_size = 0
+          with tar_path.open("rb") as source:
+              source.seek(payload_end)
+              while chunk := source.read(1024 * 1024):
+                  tail_size += len(chunk)
+                  if any(chunk):
+                      raise SystemExit("nonzero/concatenated data after index.html")
+          if tail_size < 1024:
+              raise SystemExit("missing tar end markers")
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
+              output.write(f"tar-sha256={tar_hash.hexdigest()}\n")
+              output.write(f"html-sha256={html_hash.hexdigest()}\n")
+              output.write(f"html-size={seen}\n")
+          PY
+          {
+            echo "artifact-id=$ARTIFACT_ID"
+            echo "artifact-name=$ARTIFACT_NAME"
+            echo "archive-size=$server_size"
+            echo "archive-sha256=${server_digest#sha256:}"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Verify actual tar bytes and fresh immutable authorities
+        id: rollback-authority
         env:
           AUTOMATIC_ROLLBACK: ${{ inputs.automatic_rollback }}
           AUTHORITY_SHA: ${{ inputs.authority_sha }}
@@ -303,19 +475,60 @@ jobs:
           KNOWN_GOOD_SHA: ${{ inputs.known_good_commit_sha }}
           KNOWN_GOOD_TAG: ${{ inputs.known_good_tag }}
         run: |
-          git fetch --force origin \
-            refs/heads/main:refs/remotes/origin/main \
-            "+refs/tags/$AUTHORITY_TAG:refs/tags/$AUTHORITY_TAG" \
-            "+refs/tags/$KNOWN_GOOD_TAG:refs/tags/$KNOWN_GOOD_TAG"
-          git merge-base --is-ancestor "$AUTHORITY_SHA" origin/main
+          test "$AUTHORITY_TAG" = "v0.4.5"
+          test "$KNOWN_GOOD_TAG" = "v0.4.4"
+          test "$KNOWN_GOOD_SHA" = "cd842b6e0b8d7283e2704ae71ec207440b9e54f2"
+          test "$KNOWN_GOOD_ASSET" = "OrbitPM-Process-Studio-Lite.html"
+          test "$KNOWN_GOOD_ASSET_SHA256" = \
+            "874294dd41beab992a057924b7d23bf992892363023372cf0221cb215e0c931e"
+          test "${{ steps.stored-rollback.outputs.html-sha256 }}" = \
+            "$KNOWN_GOOD_ASSET_SHA256"
+          echo "$KNOWN_GOOD_ASSET_SHA256  verified-rollback/$KNOWN_GOOD_ASSET" |
+            sha256sum --check -
+          main_sha="$(
+            gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/main" --jq .object.sha
+          )"
+          ancestry="$(
+            gh api "repos/$GITHUB_REPOSITORY/compare/$AUTHORITY_SHA...$main_sha"
+          )"
+          test "$(jq -r .merge_base_commit.sha <<<"$ancestry")" = "$AUTHORITY_SHA"
+          case "$(jq -r .status <<<"$ancestry")" in
+            ahead | identical) ;;
+            *) exit 1 ;;
+          esac
           if test "$AUTOMATIC_ROLLBACK" = "true"; then
             test "$GITHUB_SHA" = "$AUTHORITY_SHA"
           else
-            git merge-base --is-ancestor "$AUTHORITY_SHA" "$GITHUB_SHA"
-            git merge-base --is-ancestor "$GITHUB_SHA" origin/main
+            workflow_ancestry="$(
+              gh api "repos/$GITHUB_REPOSITORY/compare/$AUTHORITY_SHA...$GITHUB_SHA"
+            )"
+            test "$(jq -r .merge_base_commit.sha <<<"$workflow_ancestry")" = \
+              "$AUTHORITY_SHA"
+            workflow_to_main="$(
+              gh api "repos/$GITHUB_REPOSITORY/compare/$GITHUB_SHA...$main_sha"
+            )"
+            test "$(jq -r .merge_base_commit.sha <<<"$workflow_to_main")" = "$GITHUB_SHA"
           fi
-          test "$(git rev-parse "refs/tags/$AUTHORITY_TAG^{commit}")" = "$AUTHORITY_SHA"
-          test "$(git rev-parse "refs/tags/$KNOWN_GOOD_TAG^{commit}")" = "$KNOWN_GOOD_SHA"
+          gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$AUTHORITY_TAG" \
+            > authority-tag-ref.json
+          authority_tag_object="$(jq -er .object.sha authority-tag-ref.json)"
+          test "$(jq -r .object.type authority-tag-ref.json)" = "tag"
+          gh api "repos/$GITHUB_REPOSITORY/git/tags/$authority_tag_object" \
+            > authority-tag-object.json
+          test "$(jq -r .object.type authority-tag-object.json)" = "commit"
+          test "$(jq -r .object.sha authority-tag-object.json)" = "$AUTHORITY_SHA"
+          gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$KNOWN_GOOD_TAG" \
+            > known-good-tag-ref.json
+          known_good_object="$(jq -er .object.sha known-good-tag-ref.json)"
+          if test "$(jq -r .object.type known-good-tag-ref.json)" = "tag"; then
+            gh api "repos/$GITHUB_REPOSITORY/git/tags/$known_good_object" \
+              > known-good-tag-object.json
+            test "$(jq -r .object.type known-good-tag-object.json)" = "commit"
+            test "$(jq -r .object.sha known-good-tag-object.json)" = "$KNOWN_GOOD_SHA"
+          else
+            test "$(jq -r .object.type known-good-tag-ref.json)" = "commit"
+            test "$known_good_object" = "$KNOWN_GOOD_SHA"
+          fi
           gh api "repos/$GITHUB_REPOSITORY/releases/tags/$AUTHORITY_TAG" \
             > authority-release-before-deploy.json
           if test "$AUTOMATIC_ROLLBACK" != "true"; then
@@ -331,6 +544,287 @@ jobs:
               known-good-release-before-deploy.json
           )"
           test "$release_digest" = "sha256:$KNOWN_GOOD_ASSET_SHA256"
+          authority_release_projection_sha256="$(
+            jq -S -c \
+              '{
+                id,
+                tag_name,
+                target_commitish,
+                name,
+                body,
+                draft,
+                prerelease,
+                published_at,
+                immutable,
+                assets: (
+                  [.assets[] | {id, name, size, digest, state}] |
+                  sort_by(.name)
+                )
+              }' \
+              authority-release-before-deploy.json |
+              sha256sum |
+              cut -d' ' -f1
+          )"
+          known_good_release_projection_sha256="$(
+            jq -S -c \
+              '{
+                id,
+                tag_name,
+                target_commitish,
+                name,
+                body,
+                draft,
+                prerelease,
+                published_at,
+                immutable,
+                assets: (
+                  [.assets[] | {id, name, size, digest, state}] |
+                  sort_by(.name)
+                )
+              }' \
+              known-good-release-before-deploy.json |
+              sha256sum |
+              cut -d' ' -f1
+          )"
+          {
+            echo "authority-release-projection-sha256=$authority_release_projection_sha256"
+            echo "known-good-release-projection-sha256=$known_good_release_projection_sha256"
+          } >> "$GITHUB_OUTPUT"
+          mkdir rollback-authority
+          jq -n \
+            --arg authorityReleaseProjectionSha256 \
+              "$authority_release_projection_sha256" \
+            --arg authoritySha "$AUTHORITY_SHA" \
+            --arg knownGoodReleaseProjectionSha256 \
+              "$known_good_release_projection_sha256" \
+            --arg knownGoodSha256 "$KNOWN_GOOD_ASSET_SHA256" \
+            --arg pagesArtifactArchiveSha256 \
+              "${{ steps.stored-rollback.outputs.archive-sha256 }}" \
+            --arg pagesArtifactName "${{ steps.stored-rollback.outputs.artifact-name }}" \
+            --arg pagesArtifactTarSha256 "${{ steps.stored-rollback.outputs.tar-sha256 }}" \
+            --arg pagesWorkflowHeadSha "$GITHUB_SHA" \
+            --argjson pagesArtifactId "${{ steps.stored-rollback.outputs.artifact-id }}" \
+            --argjson pagesArtifactSize "${{ steps.stored-rollback.outputs.archive-size }}" \
+            --argjson pagesHtmlSize "${{ steps.stored-rollback.outputs.html-size }}" \
+            --argjson pagesWorkflowRunId "$GITHUB_RUN_ID" \
+            '{
+              schemaVersion: 1,
+              gate: "orbitpm-pages-rollback-artifact-authority",
+              authoritySha: $authoritySha,
+              authorityReleaseProjectionSha256: $authorityReleaseProjectionSha256,
+              knownGoodSha256: $knownGoodSha256,
+              knownGoodReleaseProjectionSha256: $knownGoodReleaseProjectionSha256,
+              pagesArtifact: {
+                id: $pagesArtifactId,
+                name: $pagesArtifactName,
+                size: $pagesArtifactSize,
+                sha256: $pagesArtifactArchiveSha256,
+                tarSha256: $pagesArtifactTarSha256
+              },
+              pagesWorkflowRunId: $pagesWorkflowRunId,
+              pagesWorkflowHeadSha: $pagesWorkflowHeadSha,
+              pagesHtmlSize: $pagesHtmlSize,
+              status: "passed"
+            }' > rollback-authority/rollback-artifact-authority.json
+
+      - name: Preserve rollback artifact authority
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: orbitpm-pages-rollback-authority-${{ github.run_id }}
+          path: rollback-authority/rollback-artifact-authority.json
+          if-no-files-found: error
+          retention-days: 90
+
+  deploy:
+    name: Protected credential-isolated rollback deployment
+    needs: artifact-authority
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    concurrency:
+      group: orbitpm-pages-deployment
+      cancel-in-progress: false
+    permissions:
+      actions: read
+      contents: read
+      id-token: write
+      pages: write
+    environment:
+      name: >-
+        ${{
+          inputs.automatic_rollback &&
+          'github-pages-rollback-auto-v0.4.5' ||
+          'github-pages-rollback-manual-v0.4.5'
+        }}
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Bind automatic rollback to the trusted caller or require manual approval
+        env:
+          AUTOMATIC_ROLLBACK: ${{ inputs.automatic_rollback }}
+          AUTO_POLICY: ${{ vars.ORBITPM_PAGES_AUTO_ROLLBACK_POLICY }}
+          APPROVAL_POLICY: ${{ vars.ORBITPM_PAGES_ROLLBACK_POLICY }}
+          CANDIDATE_SHA: ${{ inputs.authority_sha }}
+        run: |
+          expected_called_ref="$GITHUB_REPOSITORY/.github/workflows/pages-rollback.yml@refs/heads/main"
+          if test "$AUTOMATIC_ROLLBACK" = "true"; then
+            test "$GITHUB_SHA" = "$CANDIDATE_SHA"
+            test "$GITHUB_WORKFLOW" = \
+              "Deploy approved tagged Lite artifact to Pages"
+            test "$GITHUB_WORKFLOW_REF" = \
+              "$GITHUB_REPOSITORY/.github/workflows/pages.yml@refs/heads/main"
+            test "$AUTO_POLICY" = \
+              "v0.4.5-main-only-no-reviewer-no-secrets-known-good-auto-rollback"
+          else
+            test "$GITHUB_WORKFLOW" = "Restore verified prior Lite artifact to Pages"
+            test "$GITHUB_WORKFLOW_REF" = "$expected_called_ref"
+            test "$APPROVAL_POLICY" = \
+              "v0.4.5-verified-known-good-pages-rollback"
+          fi
+
+      - name: Rebind rollback artifact and release authorities after approval
+        env:
+          AUTHORITY_SHA: ${{ inputs.authority_sha }}
+          AUTHORITY_TAG: ${{ inputs.authority_tag }}
+          AUTOMATIC_ROLLBACK: ${{ inputs.automatic_rollback }}
+          EXPECTED_ARCHIVE_SHA256: ${{ needs.artifact-authority.outputs.rollback-artifact-archive-sha256 }}
+          EXPECTED_ARCHIVE_SIZE: ${{ needs.artifact-authority.outputs.rollback-artifact-size }}
+          EXPECTED_ARTIFACT_ID: ${{ needs.artifact-authority.outputs.rollback-artifact-id }}
+          EXPECTED_AUTHORITY_RELEASE_SHA256: ${{ needs.artifact-authority.outputs.authority-release-projection-sha256 }}
+          EXPECTED_KNOWN_GOOD_RELEASE_SHA256: ${{ needs.artifact-authority.outputs.known-good-release-projection-sha256 }}
+          GH_TOKEN: ${{ github.token }}
+          KNOWN_GOOD_SHA: ${{ inputs.known_good_commit_sha }}
+          KNOWN_GOOD_TAG: ${{ inputs.known_good_tag }}
+        run: |
+          set -euo pipefail
+          case "$EXPECTED_ARTIFACT_ID" in
+            '' | *[!0-9]*) exit 1 ;;
+          esac
+          case "$EXPECTED_ARCHIVE_SIZE" in
+            '' | *[!0-9]*) exit 1 ;;
+          esac
+          for digest in \
+            "$EXPECTED_ARCHIVE_SHA256" \
+            "$EXPECTED_AUTHORITY_RELEASE_SHA256" \
+            "$EXPECTED_KNOWN_GOOD_RELEASE_SHA256"
+          do
+            test "${#digest}" -eq 64
+            case "$digest" in
+              *[!0-9a-f]*) exit 1 ;;
+            esac
+          done
+          artifact_name="orbitpm-pages-rollback-$GITHUB_RUN_ID"
+          artifact_json="$(
+            gh api "repos/$GITHUB_REPOSITORY/actions/artifacts/$EXPECTED_ARTIFACT_ID"
+          )"
+          artifacts_json="$(
+            gh api --paginate \
+              "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/artifacts?per_page=100" |
+              jq -s '[.[].artifacts[]]'
+          )"
+          jq -e \
+            --arg digest "sha256:$EXPECTED_ARCHIVE_SHA256" \
+            --argjson id "$EXPECTED_ARTIFACT_ID" \
+            --arg name "$artifact_name" \
+            --argjson run "$GITHUB_RUN_ID" \
+            --arg sha "$GITHUB_SHA" \
+            --argjson size "$EXPECTED_ARCHIVE_SIZE" \
+            '
+              .id == $id and
+              .name == $name and
+              .expired == false and
+              .workflow_run.id == $run and
+              .workflow_run.head_sha == $sha and
+              .size_in_bytes == $size and
+              .digest == $digest
+            ' <<<"$artifact_json" >/dev/null
+          jq -e \
+            --argjson id "$EXPECTED_ARTIFACT_ID" \
+            --arg name "$artifact_name" \
+            '
+              [.[] | select(.name == $name)] as $matches |
+              ($matches | length) == 1 and
+              $matches[0].id == $id and
+              $matches[0].expired == false
+            ' <<<"$artifacts_json" >/dev/null
+          main_sha="$(
+            gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/main" --jq .object.sha
+          )"
+          ancestry="$(
+            gh api "repos/$GITHUB_REPOSITORY/compare/$AUTHORITY_SHA...$main_sha"
+          )"
+          test "$(jq -r .merge_base_commit.sha <<<"$ancestry")" = "$AUTHORITY_SHA"
+          case "$(jq -r .status <<<"$ancestry")" in
+            ahead | identical) ;;
+            *) exit 1 ;;
+          esac
+          if test "$AUTOMATIC_ROLLBACK" = "true"; then
+            test "$GITHUB_SHA" = "$AUTHORITY_SHA"
+          fi
+          for binding in "$AUTHORITY_TAG:$AUTHORITY_SHA" "$KNOWN_GOOD_TAG:$KNOWN_GOOD_SHA"; do
+            tag="${binding%%:*}"
+            expected_sha="${binding#*:}"
+            tag_ref="$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$tag")"
+            object_sha="$(jq -r .object.sha <<<"$tag_ref")"
+            if test "$(jq -r .object.type <<<"$tag_ref")" = "tag"; then
+              tag_object="$(
+                gh api "repos/$GITHUB_REPOSITORY/git/tags/$object_sha"
+              )"
+              test "$(jq -r .object.type <<<"$tag_object")" = "commit"
+              test "$(jq -r .object.sha <<<"$tag_object")" = "$expected_sha"
+            else
+              test "$(jq -r .object.type <<<"$tag_ref")" = "commit"
+              test "$object_sha" = "$expected_sha"
+            fi
+          done
+          authority_release="$(
+            gh api "repos/$GITHUB_REPOSITORY/releases/tags/$AUTHORITY_TAG"
+          )"
+          known_good_release="$(
+            gh api "repos/$GITHUB_REPOSITORY/releases/tags/$KNOWN_GOOD_TAG"
+          )"
+          authority_projection="$(
+            jq -S -c \
+              '{
+                id,
+                tag_name,
+                target_commitish,
+                name,
+                body,
+                draft,
+                prerelease,
+                published_at,
+                immutable,
+                assets: (
+                  [.assets[] | {id, name, size, digest, state}] |
+                  sort_by(.name)
+                )
+              }' \
+              <<<"$authority_release" |
+              sha256sum |
+              cut -d' ' -f1
+          )"
+          known_good_projection="$(
+            jq -S -c \
+              '{
+                id,
+                tag_name,
+                target_commitish,
+                name,
+                body,
+                draft,
+                prerelease,
+                published_at,
+                immutable,
+                assets: (
+                  [.assets[] | {id, name, size, digest, state}] |
+                  sort_by(.name)
+                )
+              }' \
+              <<<"$known_good_release" |
+              sha256sum |
+              cut -d' ' -f1
+          )"
+          test "$authority_projection" = "$EXPECTED_AUTHORITY_RELEASE_SHA256"
+          test "$known_good_projection" = "$EXPECTED_KNOWN_GOOD_RELEASE_SHA256"
 
       - name: Deploy verified rollback artifact
         id: deployment
@@ -343,7 +837,28 @@ jobs:
           DEPLOYMENT_URL: ${{ steps.deployment.outputs.page_url }}
         run: test "$DEPLOYMENT_URL" = "https://ahmedak320.github.io/bpmn-studio/"
 
-      - name: Confirm rollback bytes and identities after deployment
+  readback:
+    name: Read-only rollback live-byte and authority read-back
+    needs: [verify, artifact-authority, deploy]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      actions: read
+      contents: read
+    steps:
+      - name: Download previously verified rollback bytes
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: orbitpm-verified-pages-rollback-${{ github.run_id }}
+          path: rollback-readback
+
+      - name: Download verified rollback artifact authority
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: orbitpm-pages-rollback-authority-${{ github.run_id }}
+          path: rollback-readback
+
+      - name: Confirm HTTP 200 with no redirect, exact bytes, and fresh identities
         env:
           AUTOMATIC_ROLLBACK: ${{ inputs.automatic_rollback }}
           AUTHORITY_SHA: ${{ inputs.authority_sha }}
@@ -356,30 +871,87 @@ jobs:
           PAGES_URL: https://ahmedak320.github.io/bpmn-studio/
         run: |
           for attempt in $(seq 1 150); do
-            if curl --fail --silent --show-error --location \
-              --max-time 30 \
-              "$PAGES_URL" \
-              --output rollback-live.html &&
-              cmp rollback-dist/index.html rollback-live.html
+            response="$(
+              curl --fail --silent --show-error \
+                --max-time 30 \
+                --max-redirs 0 \
+                --output rollback-live.html \
+                --write-out '%{http_code}\t%{url_effective}' \
+                "$PAGES_URL"
+            )" || true
+            if test "$response" = "$(printf '200\t%s' "$PAGES_URL")" &&
+              cmp \
+                "rollback-readback/$KNOWN_GOOD_ASSET" \
+                rollback-live.html
             then
               break
             fi
             test "$attempt" -lt 150
             sleep 5
           done
-          git fetch --force origin \
-            refs/heads/main:refs/remotes/origin/main \
-            "+refs/tags/$AUTHORITY_TAG:refs/tags/$AUTHORITY_TAG" \
-            "+refs/tags/$KNOWN_GOOD_TAG:refs/tags/$KNOWN_GOOD_TAG"
-          git merge-base --is-ancestor "$AUTHORITY_SHA" origin/main
+          test "$(jq -r .gate \
+            rollback-readback/rollback-artifact-authority.json)" = \
+            "orbitpm-pages-rollback-artifact-authority"
+          test "$(jq -r .status \
+            rollback-readback/rollback-artifact-authority.json)" = "passed"
+          test "$(jq -r .authoritySha \
+            rollback-readback/rollback-artifact-authority.json)" = "$AUTHORITY_SHA"
+          test "$(jq -r .pagesWorkflowRunId \
+            rollback-readback/rollback-artifact-authority.json)" = "$GITHUB_RUN_ID"
+          test "$(jq -r .pagesWorkflowHeadSha \
+            rollback-readback/rollback-artifact-authority.json)" = "$GITHUB_SHA"
+          test "$(jq -r .pagesArtifact.name \
+            rollback-readback/rollback-artifact-authority.json)" = \
+            "orbitpm-pages-rollback-$GITHUB_RUN_ID"
+          test "$(jq -r .pagesArtifact.id \
+            rollback-readback/rollback-artifact-authority.json)" -ge 1
+          for field in sha256 tarSha256; do
+            digest="$(jq -r ".pagesArtifact.$field" \
+              rollback-readback/rollback-artifact-authority.json)"
+            test "${#digest}" -eq 64
+            case "$digest" in
+              *[!0-9a-f]*) exit 1 ;;
+            esac
+          done
+          main_sha="$(
+            gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/main" --jq .object.sha
+          )"
+          ancestry="$(
+            gh api "repos/$GITHUB_REPOSITORY/compare/$AUTHORITY_SHA...$main_sha"
+          )"
+          test "$(jq -r .merge_base_commit.sha <<<"$ancestry")" = "$AUTHORITY_SHA"
           if test "$AUTOMATIC_ROLLBACK" = "true"; then
             test "$GITHUB_SHA" = "$AUTHORITY_SHA"
           else
-            git merge-base --is-ancestor "$AUTHORITY_SHA" "$GITHUB_SHA"
-            git merge-base --is-ancestor "$GITHUB_SHA" origin/main
+            workflow_ancestry="$(
+              gh api "repos/$GITHUB_REPOSITORY/compare/$AUTHORITY_SHA...$GITHUB_SHA"
+            )"
+            test "$(jq -r .merge_base_commit.sha <<<"$workflow_ancestry")" = \
+              "$AUTHORITY_SHA"
           fi
-          test "$(git rev-parse "refs/tags/$AUTHORITY_TAG^{commit}")" = "$AUTHORITY_SHA"
-          test "$(git rev-parse "refs/tags/$KNOWN_GOOD_TAG^{commit}")" = "$KNOWN_GOOD_SHA"
+          gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$AUTHORITY_TAG" \
+            > authority-tag-ref-postdeploy.json
+          authority_tag_object="$(
+            jq -er .object.sha authority-tag-ref-postdeploy.json
+          )"
+          test "$(jq -r .object.type authority-tag-ref-postdeploy.json)" = "tag"
+          gh api "repos/$GITHUB_REPOSITORY/git/tags/$authority_tag_object" \
+            > authority-tag-object-postdeploy.json
+          test "$(jq -r .object.sha authority-tag-object-postdeploy.json)" = \
+            "$AUTHORITY_SHA"
+          gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$KNOWN_GOOD_TAG" \
+            > known-good-tag-ref-postdeploy.json
+          known_good_object="$(
+            jq -er .object.sha known-good-tag-ref-postdeploy.json
+          )"
+          if test "$(jq -r .object.type known-good-tag-ref-postdeploy.json)" = "tag"; then
+            gh api "repos/$GITHUB_REPOSITORY/git/tags/$known_good_object" \
+              > known-good-tag-object-postdeploy.json
+            test "$(jq -r .object.sha known-good-tag-object-postdeploy.json)" = \
+              "$KNOWN_GOOD_SHA"
+          else
+            test "$known_good_object" = "$KNOWN_GOOD_SHA"
+          fi
           gh api "repos/$GITHUB_REPOSITORY/releases/tags/$AUTHORITY_TAG" \
             > authority-release-postdeploy.json
           if test "$AUTOMATIC_ROLLBACK" != "true"; then
@@ -387,6 +959,15 @@ jobs:
             test "$(jq -r .prerelease authority-release-postdeploy.json)" = "false"
             test "$(jq -r .immutable authority-release-postdeploy.json)" = "true"
           fi
+          gh api "repos/$GITHUB_REPOSITORY/releases/tags/$KNOWN_GOOD_TAG" \
+            > known-good-release-postdeploy.json
+          test "$(jq -r .draft known-good-release-postdeploy.json)" = "false"
+          test "$(jq -r .prerelease known-good-release-postdeploy.json)" = "false"
+          test "$(
+            jq -r --arg name "$KNOWN_GOOD_ASSET" \
+              '.assets[] | select(.name == $name) | .digest' \
+              known-good-release-postdeploy.json
+          )" = "sha256:$KNOWN_GOOD_ASSET_SHA256"
           mkdir rollback-postdeploy
           gh release download "$KNOWN_GOOD_TAG" \
             --pattern "$KNOWN_GOOD_ASSET" \
@@ -394,5 +975,5 @@ jobs:
           echo "$KNOWN_GOOD_ASSET_SHA256  rollback-postdeploy/$KNOWN_GOOD_ASSET" |
             sha256sum --check -
           cmp \
-            "verified-rollback/$KNOWN_GOOD_ASSET" \
+            "rollback-readback/$KNOWN_GOOD_ASSET" \
             "rollback-postdeploy/$KNOWN_GOOD_ASSET"

@@ -242,17 +242,58 @@ jobs:
           if-no-files-found: error
           retention-days: 90
 
-  tag-and-draft:
-    name: Protected resumable annotated tag and deterministic draft
+      - name: Build immutable fixed-data authority for the isolated draft writer
+        env:
+          CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+        run: |
+          mkdir release-authority
+          cp docs/RELEASE_NOTES_0.4.5.md release-authority/release-notes.md
+          assets="$(
+            for path in release/*; do
+              name="$(basename "$path")"
+              jq -n \
+                --arg name "$name" \
+                --arg sha256 "$(sha256sum "$path" | cut -d' ' -f1)" \
+                --argjson size "$(stat --format=%s "$path")" \
+                '{name: $name, size: $size, sha256: $sha256}'
+            done |
+              jq -s 'sort_by(.name)'
+          )"
+          jq -n \
+            --arg candidateSha "$CANDIDATE_SHA" \
+            --arg notesSha256 "$(
+              sha256sum release-authority/release-notes.md | cut -d' ' -f1
+            )" \
+            --argjson assets "$assets" \
+            '{
+              schemaVersion: 1,
+              gate: "orbitpm-lite-release-mutation-authority",
+              candidateSha: $candidateSha,
+              releaseTag: "v0.4.5",
+              releaseTitle: "OrbitPM Process Studio Lite 0.4.5",
+              notesSha256: $notesSha256,
+              assets: $assets
+            }' > release-authority/release-mutation-authority.json
+
+      - name: Preserve immutable fixed-data mutation authority
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: orbitpm-release-mutation-authority-${{ inputs.candidate_sha }}
+          path: release-authority/
+          if-no-files-found: error
+          retention-days: 90
+
+  protected-tag:
+    name: Protected isolated annotated-tag authority
     needs: verify-pretag
     runs-on: ubuntu-24.04
-    timeout-minutes: 20
+    timeout-minutes: 10
     permissions:
-      contents: write
+      contents: read
     environment:
       name: release-v0.4.5
     steps:
-      - name: Require prerequisites and create the protected tag with isolated admin token
+      - name: Require policy and create or read back the protected tag
         env:
           APPROVAL_POLICY: ${{ vars.ORBITPM_RELEASE_APPROVAL_POLICY }}
           CANDIDATE_SHA: ${{ inputs.candidate_sha }}
@@ -333,46 +374,103 @@ jobs:
           test "$(jq -r .object.type protected-tag-object.json)" = "commit"
           test "$(jq -r .object.sha protected-tag-object.json)" = "$CANDIDATE_SHA"
 
-      - name: Checkout exact candidate
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
-        with:
-          ref: ${{ inputs.candidate_sha }}
-          fetch-depth: 0
-          persist-credentials: false
-
-      - name: Revalidate origin/main and existing tag without moving it
-        env:
-          CANDIDATE_SHA: ${{ inputs.candidate_sha }}
-        run: |
-          git fetch --force origin \
-            refs/heads/main:refs/remotes/origin/main \
-            '+refs/tags/*:refs/tags/*'
-          test "$(git rev-parse HEAD)" = "$CANDIDATE_SHA"
-          test "$(git rev-parse origin/main)" = "$CANDIDATE_SHA"
-          if git show-ref --verify --quiet refs/tags/v0.4.5; then
-            test "$(git cat-file -t refs/tags/v0.4.5)" = "tag"
-            test "$(git rev-parse 'refs/tags/v0.4.5^{commit}')" = "$CANDIDATE_SHA"
-          fi
-
-      - name: Download protected-job candidate
+  draft-release:
+    name: Isolated resumable deterministic draft writer
+    needs: [verify-pretag, protected-tag]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      actions: read
+      contents: write
+    steps:
+      - name: Download previously verified immutable release assets
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
         with:
           name: orbitpm-verified-release-candidate-${{ inputs.candidate_sha }}
           path: release
 
-      - name: Read back the protected annotated tag without moving it
-        env:
-          CANDIDATE_SHA: ${{ inputs.candidate_sha }}
-        run: |
-          git fetch --force origin refs/tags/v0.4.5:refs/tags/v0.4.5
-          test "$(git cat-file -t refs/tags/v0.4.5)" = "tag"
-          test "$(git rev-parse 'refs/tags/v0.4.5^{commit}')" = "$CANDIDATE_SHA"
+      - name: Download immutable fixed-data mutation authority
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: orbitpm-release-mutation-authority-${{ inputs.candidate_sha }}
+          path: release-authority
 
-      - name: Create or validate the deterministic draft metadata
+      - name: Validate immutable authority and write only the bound tag draft
         env:
           CANDIDATE_SHA: ${{ inputs.candidate_sha }}
           GH_TOKEN: ${{ github.token }}
         run: |
+          authority=release-authority/release-mutation-authority.json
+          notes=release-authority/release-notes.md
+          expected_names="$(
+            printf '%s\n' \
+              LICENSE \
+              OrbitPM-Excel-Example-0.4.5.xlsx \
+              OrbitPM-Excel-Template-0.4.5.xlsx \
+              OrbitPM-Process-Studio-Lite-0.4.5.cyclonedx.json \
+              OrbitPM-Process-Studio-Lite-0.4.5.html \
+              SHA256SUMS.txt \
+              THIRD_PARTY_NOTICES.md
+          )"
+          actual_names="$(find release -maxdepth 1 -type f -printf '%f\n' | sort)"
+          test "$actual_names" = "$expected_names"
+          jq -e \
+            --arg candidate "$CANDIDATE_SHA" \
+            '
+              (keys | sort) == [
+                "assets",
+                "candidateSha",
+                "gate",
+                "notesSha256",
+                "releaseTag",
+                "releaseTitle",
+                "schemaVersion"
+              ] and
+              .schemaVersion == 1 and
+              .gate == "orbitpm-lite-release-mutation-authority" and
+              .candidateSha == $candidate and
+              .releaseTag == "v0.4.5" and
+              .releaseTitle == "OrbitPM Process Studio Lite 0.4.5" and
+              (.notesSha256 | test("^[a-f0-9]{64}$")) and
+              (.assets | length) == 7 and
+              ([.assets[].name] | sort) == [
+                "LICENSE",
+                "OrbitPM-Excel-Example-0.4.5.xlsx",
+                "OrbitPM-Excel-Template-0.4.5.xlsx",
+                "OrbitPM-Process-Studio-Lite-0.4.5.cyclonedx.json",
+                "OrbitPM-Process-Studio-Lite-0.4.5.html",
+                "SHA256SUMS.txt",
+                "THIRD_PARTY_NOTICES.md"
+              ] and
+              all(
+                .assets[];
+                (keys | sort) == ["name", "sha256", "size"] and
+                (.size | type) == "number" and
+                .size > 0 and
+                (.sha256 | test("^[a-f0-9]{64}$"))
+              )
+            ' "$authority" >/dev/null
+          test "$(sha256sum "$notes" | cut -d' ' -f1)" = \
+            "$(jq -r .notesSha256 "$authority")"
+          while IFS=$'\t' read -r name size sha256; do
+            test "$name" = "$(basename "$name")"
+            test "$(stat --format=%s "release/$name")" = "$size"
+            test "$(sha256sum "release/$name" | cut -d' ' -f1)" = "$sha256"
+          done < <(jq -r '.assets[] | [.name, .size, .sha256] | @tsv' "$authority")
+          main_ref_json="$(
+            gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/main"
+          )"
+          test "$(jq -r .object.sha <<<"$main_ref_json")" = "$CANDIDATE_SHA"
+          gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/v0.4.5" \
+            > protected-tag-ref.json
+          tag_object_sha="$(jq -er .object.sha protected-tag-ref.json)"
+          gh api "repos/$GITHUB_REPOSITORY/git/tags/$tag_object_sha" \
+            > protected-tag-object.json
+          test "$(jq -r .tag protected-tag-object.json)" = "v0.4.5"
+          test "$(jq -r .message protected-tag-object.json)" = \
+            "OrbitPM Process Studio Lite 0.4.5"
+          test "$(jq -r .object.type protected-tag-object.json)" = "commit"
+          test "$(jq -r .object.sha protected-tag-object.json)" = "$CANDIDATE_SHA"
           if ! gh api "repos/$GITHUB_REPOSITORY/releases/tags/v0.4.5" \
             > draft-release.json 2>/dev/null
           then
@@ -380,7 +478,7 @@ jobs:
               --arg tag v0.4.5 \
               --arg target "$CANDIDATE_SHA" \
               --arg name "OrbitPM Process Studio Lite 0.4.5" \
-              --rawfile body docs/RELEASE_NOTES_0.4.5.md \
+              --rawfile body "$notes" \
               '{
                 tag_name: $tag,
                 target_commitish: $target,
@@ -397,14 +495,16 @@ jobs:
           fi
           jq -e \
             --arg candidate "$CANDIDATE_SHA" \
-            --rawfile notes docs/RELEASE_NOTES_0.4.5.md \
+            --rawfile notes "$notes" \
             '
               .tag_name == "v0.4.5" and
               .target_commitish == $candidate and
               .name == "OrbitPM Process Studio Lite 0.4.5" and
               .body == $notes and
               .draft == true and
-              .prerelease == false
+              .prerelease == false and
+              .published_at == null and
+              .immutable != true
             ' draft-release.json >/dev/null
           release_id="$(jq -er .id draft-release.json)"
           jq -c '.assets[] | select(.state == "starter")' draft-release.json |
@@ -429,59 +529,76 @@ jobs:
             done
           gh api "repos/$GITHUB_REPOSITORY/releases/tags/v0.4.5" \
             > draft-release.json
-          node scripts/release-state.mjs \
-            --release-json=draft-release.json \
-            --assets=release \
-            --notes=docs/RELEASE_NOTES_0.4.5.md \
-            --tag=v0.4.5 \
-            --title="OrbitPM Process Studio Lite 0.4.5" \
-            --state=draft \
-            --allow-missing-assets=true
-
-      - name: Upload only missing manifest assets
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          for candidate in release/*; do
-            name="$(basename "$candidate")"
+          for name in \
+            LICENSE \
+            OrbitPM-Excel-Example-0.4.5.xlsx \
+            OrbitPM-Excel-Template-0.4.5.xlsx \
+            OrbitPM-Process-Studio-Lite-0.4.5.cyclonedx.json \
+            OrbitPM-Process-Studio-Lite-0.4.5.html \
+            SHA256SUMS.txt \
+            THIRD_PARTY_NOTICES.md
+          do
             if ! jq -e --arg name "$name" \
               '.assets[] | select(.name == $name)' \
               draft-release.json >/dev/null
             then
-              gh release upload v0.4.5 "$candidate"
+              gh release upload v0.4.5 "release/$name"
             fi
           done
-
-      - name: Read back and compare exact draft state and bytes
-        env:
-          CANDIDATE_SHA: ${{ inputs.candidate_sha }}
-          GH_TOKEN: ${{ github.token }}
-        run: |
           gh api "repos/$GITHUB_REPOSITORY/releases/tags/v0.4.5" > draft-release.json
-          node scripts/release-state.mjs \
-            --release-json=draft-release.json \
-            --assets=release \
-            --notes=docs/RELEASE_NOTES_0.4.5.md \
-            --tag=v0.4.5 \
-            --title="OrbitPM Process Studio Lite 0.4.5" \
-            --state=draft
+          jq -e \
+            --arg candidate "$CANDIDATE_SHA" \
+            --rawfile notes "$notes" \
+            '
+              .tag_name == "v0.4.5" and
+              .target_commitish == $candidate and
+              .name == "OrbitPM Process Studio Lite 0.4.5" and
+              .body == $notes and
+              .draft == true and
+              .prerelease == false and
+              .published_at == null and
+              .immutable != true and
+              (.assets | length) == 7 and
+              ([.assets[].name] | sort) == [
+                "LICENSE",
+                "OrbitPM-Excel-Example-0.4.5.xlsx",
+                "OrbitPM-Excel-Template-0.4.5.xlsx",
+                "OrbitPM-Process-Studio-Lite-0.4.5.cyclonedx.json",
+                "OrbitPM-Process-Studio-Lite-0.4.5.html",
+                "SHA256SUMS.txt",
+                "THIRD_PARTY_NOTICES.md"
+              ]
+            ' draft-release.json >/dev/null
+          while IFS=$'\t' read -r name size sha256; do
+            test "$(
+              jq --arg name "$name" \
+                '[.assets[] | select(
+                  .name == $name and
+                  .state == "uploaded"
+                )] | length' \
+                draft-release.json
+            )" -eq 1
+            test "$(
+              jq -r --arg name "$name" \
+                '.assets[] | select(.name == $name) | .size' \
+                draft-release.json
+            )" = "$size"
+            test "$(
+              jq -r --arg name "$name" \
+                '.assets[] | select(.name == $name) | .digest' \
+                draft-release.json
+            )" = "sha256:$sha256"
+          done < <(jq -r '.assets[] | [.name, .size, .sha256] | @tsv' "$authority")
           mkdir draft-download
           gh release download v0.4.5 --dir draft-download
           test "$(find draft-download -maxdepth 1 -type f | wc -l)" -eq 7
-          for candidate in release/*; do
-            name="$(basename "$candidate")"
-            cmp "$candidate" "draft-download/$name"
-          done
-          git fetch --force origin \
-            refs/heads/main:refs/remotes/origin/main \
-            refs/tags/v0.4.5:refs/tags/v0.4.5
-          test "$(git rev-parse origin/main)" = "$CANDIDATE_SHA"
-          test "$(git cat-file -t refs/tags/v0.4.5)" = "tag"
-          test "$(git rev-parse 'refs/tags/v0.4.5^{commit}')" = "$CANDIDATE_SHA"
+          while IFS=$'\t' read -r name _size sha256; do
+            test "$(sha256sum "draft-download/$name" | cut -d' ' -f1)" = "$sha256"
+          done < <(jq -r '.assets[] | [.name, .size, .sha256] | @tsv' "$authority")
 
   tag-quality:
     name: Full clean quality rebuild from the actual annotated tag
-    needs: tag-and-draft
+    needs: draft-release
     permissions:
       contents: read
     uses: ./.github/workflows/quality.yml

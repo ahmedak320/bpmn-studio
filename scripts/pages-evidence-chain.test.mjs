@@ -84,7 +84,7 @@ function fixtureEvidence(artifactPath, artifactBytes) {
       runId,
       runAttempt: '2',
       workflow: 'Deploy approved tagged Lite artifact to Pages',
-      job: 'deploy'
+      job: 'readback'
     },
     testEnvironment: {
       headless: true,

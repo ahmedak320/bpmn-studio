@@ -7,7 +7,7 @@ const MAX_ARTIFACT_BYTES = 64 * 1024 * 1024
 const MAX_EVIDENCE_BYTES = 2 * 1024 * 1024
 const MAX_STRING_LENGTH = 16 * 1024
 const EXPECTED_WORKFLOW = 'Deploy approved tagged Lite artifact to Pages'
-const EXPECTED_JOB = 'deploy'
+const EXPECTED_JOB = 'readback'
 const EXPECTED_NAVIGATION_BINDING = 'bounded-download-fulfilled-response-bytes'
 
 const EXPECTED_TARGETS = new Map([

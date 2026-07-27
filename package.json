@@ -25,7 +25,7 @@
     "clean:dist": "node scripts/clean-output.mjs dist",
     "format:check": "prettier --check .",
     "lint": "eslint . --max-warnings 0",
-    "check:actions": "github-actionlint .github/workflows/*.yml",
+    "check:actions": "node scripts/check-actions.mjs",
     "check:lock": "node scripts/check-lockfile.mjs",
     "check:lite-only": "node scripts/check-lite-only.mjs",
     "check:no-skips": "node scripts/check-no-skips.mjs",
