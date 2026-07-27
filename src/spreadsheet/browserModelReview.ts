@@ -1,5 +1,6 @@
 import SpreadsheetModelReviewWorker from './modelReview.worker?worker&inline'
 
+import { createRetainedInlineWorker } from '../workers/inlineWorker'
 import { SpreadsheetError, type SpreadsheetErrorCode } from './errors'
 import type {
   SpreadsheetModelReviewInput,
@@ -88,9 +89,12 @@ function contractError(): SpreadsheetError {
 }
 
 export const createSpreadsheetModelReviewWorker: SpreadsheetModelReviewWorkerFactory = () =>
-  new SpreadsheetModelReviewWorker({
-    name: 'orbitpm-spreadsheet-model-review'
-  })
+  createRetainedInlineWorker(
+    () =>
+      new SpreadsheetModelReviewWorker({
+        name: 'orbitpm-spreadsheet-model-review'
+      })
+  )
 
 /**
  * Runs one isolated review job. Callers should abort the previous invocation

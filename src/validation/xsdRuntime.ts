@@ -1,4 +1,5 @@
 import XmllintWorker from 'xmllint-wasm/xmllint-browser.mjs?worker&inline'
+import { createRetainedInlineWorker } from '../workers/inlineWorker'
 import { BPMN_20_XSD } from './bpmnSchemas'
 import type { XsdDiagnostic } from './adapters'
 
@@ -39,7 +40,7 @@ function parsedDiagnostics(stderr: string): XsdDiagnostic[] {
 }
 
 async function validateInInlineBrowserWorker(xml: string): Promise<readonly XsdDiagnostic[]> {
-  const worker = new XmllintWorker()
+  const worker = createRetainedInlineWorker(() => new XmllintWorker())
   return await new Promise<readonly XsdDiagnostic[]>((resolve, reject) => {
     const timeout = setTimeout(() => {
       worker.terminate()

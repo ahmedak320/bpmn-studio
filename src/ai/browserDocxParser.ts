@@ -1,5 +1,6 @@
 import DocxParserWorker from './docx.worker?worker&inline'
 
+import { createRetainedInlineWorker } from '../workers/inlineWorker'
 import { assertDocxCompressedSize, DocxParseError } from './docx'
 import type { DocxWorkerParseRequest, DocxWorkerResponse } from './docxWorkerProtocol'
 
@@ -21,7 +22,7 @@ interface WorkerLike {
 export type DocxWorkerFactory = () => WorkerLike
 
 export const createDocxWorker: DocxWorkerFactory = () =>
-  new DocxParserWorker({ name: 'orbitpm-docx-parser' })
+  createRetainedInlineWorker(() => new DocxParserWorker({ name: 'orbitpm-docx-parser' }))
 
 export interface BrowserDocxParseOptions {
   readonly signal?: AbortSignal

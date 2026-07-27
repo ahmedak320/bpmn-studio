@@ -1,6 +1,7 @@
 import LibraryZipImportWorker from './zipImport.worker?worker&inline'
 
 import { ArchivePreflightError, type ArchiveErrorCode } from '../security/archivePreflight'
+import { createRetainedInlineWorker } from '../workers/inlineWorker'
 import { assertLibraryZipCompressedSize, type LibraryImportResult } from './zipImport'
 import type {
   LibraryZipWorkerParseRequest,
@@ -25,7 +26,9 @@ interface WorkerLike {
 export type LibraryZipWorkerFactory = () => WorkerLike
 
 export const createLibraryZipWorker: LibraryZipWorkerFactory = () =>
-  new LibraryZipImportWorker({ name: 'orbitpm-library-zip-parser' })
+  createRetainedInlineWorker(
+    () => new LibraryZipImportWorker({ name: 'orbitpm-library-zip-parser' })
+  )
 
 export interface BrowserLibraryZipOptions {
   readonly signal?: AbortSignal

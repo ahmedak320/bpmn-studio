@@ -1,5 +1,6 @@
 import SpreadsheetParserWorker from './spreadsheet.worker?worker&inline'
 
+import { createRetainedInlineWorker } from '../workers/inlineWorker'
 import type {
   CsvParserAdapter,
   ParsedWorkbookData,
@@ -44,9 +45,12 @@ function nextRequestId(): string {
 }
 
 export const createSpreadsheetWorker: SpreadsheetWorkerFactory = () =>
-  new SpreadsheetParserWorker({
-    name: 'orbitpm-spreadsheet-parser'
-  })
+  createRetainedInlineWorker(
+    () =>
+      new SpreadsheetParserWorker({
+        name: 'orbitpm-spreadsheet-parser'
+      })
+  )
 
 async function runWorker(
   request: Omit<SpreadsheetWorkerParseRequest, 'requestId'>,
