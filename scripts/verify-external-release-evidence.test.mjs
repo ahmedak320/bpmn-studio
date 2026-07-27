@@ -15,6 +15,9 @@ const ARTIFACT_SHA256 = digest(ARTIFACT_BYTES)
 const EVIDENCE_COMMIT = 'abcdef1234567890abcdef1234567890abcdef12'
 const BASE_URL = `https://raw.githubusercontent.com/ahmedak320/bpmn-studio/${EVIDENCE_COMMIT}/release-evidence/v0.4.5`
 const AUTOMATED_SOAK_URL = `${BASE_URL}/automated-soak-gate.json`
+const AUTOMATED_SOAK_DIAGNOSTIC_URL = `${BASE_URL}/automated-soak-diagnostic.json`
+const JOURNAL_GENESIS_HASH = '0'.repeat(64)
+const JOURNAL_HASH_DOMAIN = 'orbitpm-lite-soak-journal-v1\n'
 
 const identities = {
   nvda: {
@@ -61,6 +64,57 @@ function clone(value) {
   return structuredClone(value)
 }
 
+function canonicalize(value) {
+  if (value === null || typeof value === 'boolean' || typeof value === 'string') {
+    return JSON.stringify(value)
+  }
+  if (typeof value === 'number') {
+    assert.ok(Number.isSafeInteger(value))
+    return JSON.stringify(Object.is(value, -0) ? 0 : value)
+  }
+  if (Array.isArray(value)) return `[${value.map(canonicalize).join(',')}]`
+  assert.equal(typeof value, 'object')
+  return `{${Object.keys(value)
+    .sort()
+    .map((key) => `${JSON.stringify(key)}:${canonicalize(value[key])}`)
+    .join(',')}}`
+}
+
+function appendJournalEntry(journal, entry) {
+  const unsigned = {
+    sequence: journal.length,
+    previousHash: journal.at(-1)?.entryHash ?? JOURNAL_GENESIS_HASH,
+    ...entry
+  }
+  const completed = {
+    ...unsigned,
+    entryHash: digest(`${JOURNAL_HASH_DOMAIN}${canonicalize(unsigned)}`)
+  }
+  journal.push(completed)
+  return completed
+}
+
+function browserReceipt(locale, scenario) {
+  return {
+    receiptVersion: 1,
+    evidenceSource: 'exact-bound-html-production-ui',
+    contextId: `persistent-${locale}`,
+    locale,
+    scenario,
+    artifactSha256: ARTIFACT_SHA256,
+    artifactSizeBytes: ARTIFACT_BYTES.byteLength,
+    documentUrl: 'file:///release/OrbitPM-Process-Studio-Lite-0.4.5.html',
+    browserLocale: locale === 'ar' ? 'ar-AE' : 'en-US',
+    direction: locale === 'ar' ? 'rtl' : 'ltr',
+    interaction: `production-ui-${scenario}-interaction`,
+    productionSelectors: ['role=button[name="Action"]', '[data-element-id="Task_1"]'],
+    interactionCount: 3,
+    beforeStateSha256: digest(`before:${locale}:${scenario}`),
+    afterStateSha256: digest(`after:${locale}:${scenario}`),
+    assertions: [{ name: 'production-ui-result', passed: true, observed: 1 }]
+  }
+}
+
 function buildHappyFixture() {
   const soakStartedAt = '2026-07-24T06:00:00.000Z'
   const soakCompletedAt = '2026-07-26T06:00:00.000Z'
@@ -81,13 +135,97 @@ function buildHappyFixture() {
     scenario: soakScenarios[Math.floor(index / locales.length) % soakScenarios.length],
     healthy: true,
     sequence: index,
-    completedOperations: index * 3
+    completedOperations: index * 20
   }))
+  const automatedSamples = samples.map((sample, index) => ({
+    ...sample,
+    elapsedMs: index * 60 * 60 * 1000,
+    completedScenarioCycles: index === 0 ? 0 : 1
+  }))
+  const journal = []
+  appendJournalEntry(journal, {
+    kind: 'checkpoint',
+    capturedAt: automatedSamples[0].capturedAt,
+    elapsedMs: 0,
+    locale: null,
+    scenario: null,
+    artifactSha256: ARTIFACT_SHA256,
+    browserReceipt: null,
+    checkpoint: {
+      sampleSequence: 0,
+      completedOperations: 0,
+      completedScenarioCycles: 0,
+      residentMemoryBytes: automatedSamples[0].residentMemoryBytes,
+      storageBytes: automatedSamples[0].storageBytes,
+      healthy: true
+    }
+  })
+  const scenarioSequences = new Map()
+  for (const [offset, { locale, scenario }] of soakScenarios
+    .flatMap((scenario) => locales.map((locale) => ({ locale, scenario })))
+    .entries()) {
+    const elapsedMs = offset + 1
+    const operation = appendJournalEntry(journal, {
+      kind: 'operation',
+      capturedAt: new Date(Date.parse(soakStartedAt) + elapsedMs).toISOString(),
+      elapsedMs,
+      locale,
+      scenario,
+      artifactSha256: ARTIFACT_SHA256,
+      browserReceipt: browserReceipt(locale, scenario),
+      checkpoint: null
+    })
+    scenarioSequences.set(`${locale}:${scenario}`, [operation.sequence])
+  }
+  for (const sample of automatedSamples.slice(1)) {
+    appendJournalEntry(journal, {
+      kind: 'checkpoint',
+      capturedAt: sample.capturedAt,
+      elapsedMs: sample.elapsedMs,
+      locale: null,
+      scenario: null,
+      artifactSha256: ARTIFACT_SHA256,
+      browserReceipt: null,
+      checkpoint: {
+        sampleSequence: sample.sequence,
+        completedOperations: sample.completedOperations,
+        completedScenarioCycles: sample.completedScenarioCycles,
+        residentMemoryBytes: sample.residentMemoryBytes,
+        storageBytes: sample.storageBytes,
+        healthy: sample.healthy
+      }
+    })
+  }
+  const diagnosticRecord = {
+    candidate: {
+      requiredSha: CANDIDATE_SHA,
+      artifactAtStart: {
+        sha256: ARTIFACT_SHA256,
+        sizeBytes: ARTIFACT_BYTES.byteLength
+      }
+    },
+    operationJournal: {
+      schemaVersion: 1,
+      hashAlgorithm: 'sha256-canonical-json-v1',
+      entryCount: journal.length,
+      rootSha256: journal.at(-1).entryHash,
+      entries: journal
+    }
+  }
+  const automatedSoakDiagnosticBytes = jsonBytes(diagnosticRecord)
   const automatedSoakRecord = {
-    schemaVersion: 1,
+    schemaVersion: 2,
     evidenceType: 'orbitpm-lite-soak-automation',
     candidateSha: CANDIDATE_SHA,
     artifactSha256: ARTIFACT_SHA256,
+    diagnosticEvidenceUrl: './automated-soak-diagnostic.json',
+    diagnosticEvidenceSha256: digest(automatedSoakDiagnosticBytes),
+    diagnosticEvidenceSizeBytes: automatedSoakDiagnosticBytes.byteLength,
+    journalSchemaVersion: 1,
+    journalHashAlgorithm: 'sha256-canonical-json-v1',
+    journalEntryCount: journal.length,
+    journalRootSha256: journal.at(-1).entryHash,
+    journal,
     status: 'passed',
     harnessPassed: true,
     passed: true,
@@ -104,48 +242,65 @@ function buildHappyFixture() {
     scenarios: soakScenarios,
     retentionChecks: ['draft-recovery', 'history-retention', 'workspace-state'],
     sampleIntervalMinutes: 60,
-    samples: samples.map((sample, index) => ({
-      ...sample,
-      elapsedMs: index * 60 * 60 * 1000,
-      completedScenarioCycles: index
-    })),
-    maxResidentMemoryGrowthBytes: 5_000_000,
-    maxStorageGrowthBytes: 500_000,
+    samples: automatedSamples,
+    maxResidentMemoryGrowthBytes: 512 * 1024 * 1024,
+    maxStorageGrowthBytes: 576 * 1024 * 2,
     observedResidentMemoryGrowthBytes: 4_800_000,
     observedStorageGrowthBytes: 240_000,
-    scenarioResults: locales.flatMap((locale) =>
-      soakScenarios.map((scenario) => ({
-        locale,
-        scenario,
-        passed: true,
-        completedCycles: 4,
-        findings:
-          locale === 'ar'
-            ? `نفذت أداة التحمل دورة ${scenario} بالعربية أربع مرات دون فشل مسجل.`
-            : `The soak harness completed four ${scenario} cycles in ${locale} without a recorded failure.`
-      }))
+    scenarioResults: soakScenarios.flatMap((scenario) =>
+      locales.map((locale) => {
+        const sequences = scenarioSequences.get(`${locale}:${scenario}`)
+        return {
+          locale,
+          scenario,
+          passed: true,
+          completedCycles: sequences.length,
+          uiReceiptCount: sequences.length,
+          firstJournalSequence: sequences[0],
+          lastJournalSequence: sequences.at(-1),
+          findings:
+            locale === 'ar'
+              ? `نفذت واجهة الإنتاج دورة ${scenario} بالعربية مع إيصال متصفح مرتبط بالمخرجات.`
+              : `The production UI completed one exact-artifact ${scenario} browser receipt.`
+        }
+      })
     ),
     retentionResults: [
       {
         check: 'draft-recovery',
         passed: true,
-        metrics: { reviewsCompleted: 48, recoveriesCommitted: 48 },
+        metrics: {
+          uiRecoveryReceipts: 2,
+          restoredDrafts: 2,
+          pendingDraftsAtCompletion: 0
+        },
         findings:
-          'The automated harness completed every draft recovery review and commit without failure.'
+          'The exact HTML restored both localized drafts and left no pending recovery record.'
       },
       {
         check: 'history-retention',
         passed: true,
-        metrics: { revisionsCreated: 48, retentionPasses: 48 },
-        findings:
-          'The automated harness created and retained every required history revision without failure.'
+        metrics: {
+          uiHistoryReceipts: 2,
+          retentionLimit: 20,
+          maximumVisibleRevisions: 20,
+          retainedBpmnFiles: 40,
+          retainedMetadataFiles: 40,
+          oldestSeedPruned: true
+        },
+        findings: 'The exact HTML retained twenty revisions per locale and pruned the oldest seed.'
       },
       {
         check: 'workspace-state',
         passed: true,
-        metrics: { workspaceSwitches: 48, staleRejections: 48 },
+        metrics: {
+          uiWorkspaceSwitchReceipts: 2,
+          pickerCancellations: 2,
+          workspacePreserved: true,
+          uiImportReceipts: 2
+        },
         findings:
-          'The automated harness preserved workspace isolation and rejected every stale write attempt.'
+          'The exact HTML preserved both workspaces and committed both localized UI imports.'
       }
     ],
     candidateEndpoints: {
@@ -405,7 +560,8 @@ function buildHappyFixture() {
   const bodies = new Map([
     [manifestUrl, manifestBytes],
     ...Object.entries(supportRecords).map(([url, record]) => [url, jsonBytes(record)]),
-    [AUTOMATED_SOAK_URL, automatedSoakBytes]
+    [AUTOMATED_SOAK_URL, automatedSoakBytes],
+    [AUTOMATED_SOAK_DIAGNOSTIC_URL, automatedSoakDiagnosticBytes]
   ])
   return {
     manifest,
@@ -413,6 +569,8 @@ function buildHappyFixture() {
     manifestSha256: digest(manifestBytes),
     supportRecords,
     automatedSoakRecord,
+    automatedSoakDiagnosticRecord: diagnosticRecord,
+    automatedSoakDiagnosticBytes,
     bodies
   }
 }
@@ -528,11 +686,49 @@ function replaceAutomatedSoakRecord(fixture, record) {
   replaceSupportRecord(fixture, soakUrl, soakRecord)
 }
 
+function rehashAutomatedJournal(record) {
+  let previousHash = JOURNAL_GENESIS_HASH
+  for (const [sequence, entry] of record.journal.entries()) {
+    entry.sequence = sequence
+    entry.previousHash = previousHash
+    const unsigned = { ...entry }
+    delete unsigned.entryHash
+    entry.entryHash = digest(`${JOURNAL_HASH_DOMAIN}${canonicalize(unsigned)}`)
+    previousHash = entry.entryHash
+  }
+  record.journalEntryCount = record.journal.length
+  record.journalRootSha256 = record.journal.at(-1).entryHash
+}
+
+function replaceAutomatedSoakDiagnostic(fixture, diagnosticRecord, automatedRecord) {
+  const diagnosticBytes = jsonBytes(diagnosticRecord)
+  fixture.automatedSoakDiagnosticRecord = diagnosticRecord
+  fixture.automatedSoakDiagnosticBytes = diagnosticBytes
+  fixture.bodies.set(AUTOMATED_SOAK_DIAGNOSTIC_URL, diagnosticBytes)
+  const record = clone(automatedRecord ?? fixture.automatedSoakRecord)
+  record.diagnosticEvidenceSha256 = digest(diagnosticBytes)
+  record.diagnosticEvidenceSizeBytes = diagnosticBytes.byteLength
+  replaceAutomatedSoakRecord(fixture, record)
+}
+
+function synchronizeDiagnosticJournal(fixture, record) {
+  const diagnostic = clone(fixture.automatedSoakDiagnosticRecord)
+  diagnostic.operationJournal = {
+    schemaVersion: record.journalSchemaVersion,
+    hashAlgorithm: record.journalHashAlgorithm,
+    entryCount: record.journalEntryCount,
+    rootSha256: record.journalRootSha256,
+    entries: clone(record.journal)
+  }
+  replaceAutomatedSoakDiagnostic(fixture, diagnostic, record)
+}
+
 async function verifyFixture(fixture, overrides = {}) {
   return verifyReleaseEvidence({
     candidateSha: CANDIDATE_SHA,
     candidateReadyAt: CANDIDATE_READY_AT,
     artifactSha256: ARTIFACT_SHA256,
+    artifactSizeBytes: ARTIFACT_BYTES.byteLength,
     sourceUrl: fixture.manifestUrl,
     sourceSha256: fixture.manifestSha256,
     fetchImpl: makeFetch(fixture.bodies),
@@ -548,6 +744,7 @@ test('verifies and aggregates every SHA-pinned supporting evidence record', asyn
     candidateSha: CANDIDATE_SHA,
     candidateReadyAt: CANDIDATE_READY_AT,
     artifactSha256: ARTIFACT_SHA256,
+    artifactSizeBytes: ARTIFACT_BYTES.byteLength,
     sourceUrl: fixture.manifestUrl,
     sourceSha256: fixture.manifestSha256,
     fetchImpl: makeFetch(fixture.bodies, calls),
@@ -567,10 +764,11 @@ test('verifies and aggregates every SHA-pinned supporting evidence record', asyn
       'voiceOverMacos',
       'arabicScreenReader',
       'defectLedger',
-      'automatedSoakGate'
+      'automatedSoakGate',
+      'automatedSoakDiagnostic'
     ]
   )
-  assert.equal(calls.length, 7)
+  assert.equal(calls.length, 8)
   for (const call of calls) {
     assert.equal(call.options.credentials, 'omit')
     assert.equal(call.options.redirect, 'error')
@@ -581,10 +779,19 @@ test('verifies and aggregates every SHA-pinned supporting evidence record', asyn
     fixture.manifestSha256
   )
   for (const support of verification.supportingEvidence) {
-    assert.equal(support.record.candidateSha, CANDIDATE_SHA)
-    assert.equal(support.record.artifactSha256, ARTIFACT_SHA256)
+    if (support.key !== 'automatedSoakDiagnostic') {
+      assert.equal(support.record.candidateSha, CANDIDATE_SHA)
+      assert.equal(support.record.artifactSha256, ARTIFACT_SHA256)
+    }
     assert.equal(digest(Buffer.from(support.bodyBase64, 'base64')), support.sha256)
   }
+  const retainedDiagnostic = verification.supportingEvidence.find(
+    ({ key }) => key === 'automatedSoakDiagnostic'
+  )
+  assert.deepEqual(
+    Buffer.from(retainedDiagnostic.bodyBase64, 'base64'),
+    fixture.automatedSoakDiagnosticBytes
+  )
 })
 
 test('preserves the exact non-canonical manifest bytes in the verified aggregate', async () => {
@@ -623,12 +830,13 @@ test('CLI writes the complete verified aggregate and requires exact artifact byt
     })
     const output = JSON.parse(await readFile(outputPath, 'utf8'))
     assert.equal(output.source.sha256, fixture.manifestSha256)
-    assert.equal(output.supportingEvidence.length, 6)
+    assert.equal(output.supportingEvidence.length, 7)
     assert.equal(output.supportingEvidence[0].record.evidenceType, 'orbitpm-lite-soak')
     assert.equal(
-      output.supportingEvidence.at(-1).record.evidenceType,
+      output.supportingEvidence.at(-2).record.evidenceType,
       'orbitpm-lite-soak-automation'
     )
+    assert.equal(output.supportingEvidence.at(-1).key, 'automatedSoakDiagnostic')
   } finally {
     await rm(directory, { recursive: true, force: true })
   }
@@ -939,6 +1147,173 @@ test('binds the human soak wrapper to exact automated soak-gate output', async (
   })
 })
 
+test('recomputes and retains exact automated diagnostic and UI-journal evidence', async (t) => {
+  await t.test('diagnostic URL traversal and encoded separators are rejected', async () => {
+    for (const diagnosticEvidenceUrl of [
+      './../other.json',
+      './..',
+      './%2e%2e',
+      './nested%2Fdiagnostic.json',
+      './diagnostic.json?token=secret'
+    ]) {
+      const fixture = buildHappyFixture()
+      const record = clone(fixture.automatedSoakRecord)
+      record.diagnosticEvidenceUrl = diagnosticEvidenceUrl
+      replaceAutomatedSoakRecord(fixture, record)
+      await assert.rejects(
+        () => verifyFixture(fixture),
+        /literal \.\/<one-file-name>|safe sibling evidence file/
+      )
+    }
+  })
+
+  await t.test('diagnostic digest mismatch is rejected before JSON validation', async () => {
+    const fixture = buildHappyFixture()
+    fixture.bodies.set(
+      AUTOMATED_SOAK_DIAGNOSTIC_URL,
+      Buffer.concat([fixture.automatedSoakDiagnosticBytes, Buffer.from('\n')])
+    )
+    await assert.rejects(
+      () => verifyFixture(fixture),
+      /Automated soak diagnostic evidence SHA-256 .* does not match/
+    )
+  })
+
+  await t.test('diagnostic declared size mismatch is rejected', async () => {
+    const fixture = buildHappyFixture()
+    const record = clone(fixture.automatedSoakRecord)
+    record.diagnosticEvidenceSizeBytes += 1
+    replaceAutomatedSoakRecord(fixture, record)
+    await assert.rejects(
+      () => verifyFixture(fixture),
+      /diagnostic evidence byte length does not match/
+    )
+  })
+
+  await t.test('diagnostic redirects are rejected and not silently retained', async () => {
+    const fixture = buildHappyFixture()
+    const fallbackFetch = makeFetch(fixture.bodies)
+    const fetchImpl = async (url, options) => {
+      if (url !== AUTOMATED_SOAK_DIAGNOSTIC_URL) return fallbackFetch(url, options)
+      return responseFor(
+        `${BASE_URL}/redirected-automated-soak-diagnostic.json`,
+        fixture.automatedSoakDiagnosticBytes
+      )
+    }
+    await assert.rejects(() => verifyFixture(fixture, { fetchImpl }), /must not redirect/)
+  })
+
+  await t.test('journal entry mutation without a new canonical chain is rejected', async () => {
+    const fixture = buildHappyFixture()
+    const record = clone(fixture.automatedSoakRecord)
+    record.journal[1].browserReceipt.interactionCount += 1
+    replaceAutomatedSoakRecord(fixture, record)
+    await assert.rejects(() => verifyFixture(fixture), /breaks the canonical hash chain/)
+  })
+
+  await t.test('re-hashed diagnostic journal divergence is rejected', async () => {
+    const fixture = buildHappyFixture()
+    const diagnostic = clone(fixture.automatedSoakDiagnosticRecord)
+    diagnostic.operationJournal.entries[1].browserReceipt.interaction =
+      'different diagnostic-only production UI interaction'
+    replaceAutomatedSoakDiagnostic(fixture, diagnostic)
+    await assert.rejects(
+      () => verifyFixture(fixture),
+      /diagnostic candidate, artifact, or operation journal diverges/
+    )
+  })
+
+  await t.test('a re-hashed non-browser receipt source cannot claim UI eligibility', async () => {
+    const fixture = buildHappyFixture()
+    const record = clone(fixture.automatedSoakRecord)
+    record.journal[1].browserReceipt.evidenceSource = 'source-module-memory-adapter'
+    rehashAutomatedJournal(record)
+    synchronizeDiagnosticJournal(fixture, record)
+    await assert.rejects(
+      () => verifyFixture(fixture),
+      /must prove production-UI interaction with the exact artifact/
+    )
+  })
+
+  await t.test('a re-hashed receipt with a false artifact size is rejected', async () => {
+    const fixture = buildHappyFixture()
+    const record = clone(fixture.automatedSoakRecord)
+    record.journal[1].browserReceipt.artifactSizeBytes += 1
+    rehashAutomatedJournal(record)
+    synchronizeDiagnosticJournal(fixture, record)
+    await assert.rejects(
+      () => verifyFixture(fixture),
+      /must prove production-UI interaction with the exact artifact/
+    )
+  })
+
+  await t.test('scenario counts cannot exceed their exact UI journal receipts', async () => {
+    const fixture = buildHappyFixture()
+    const record = clone(fixture.automatedSoakRecord)
+    record.scenarioResults[0].completedCycles += 1
+    record.scenarioResults[0].uiReceiptCount += 1
+    replaceAutomatedSoakRecord(fixture, record)
+    await assert.rejects(
+      () => verifyFixture(fixture),
+      /must equal its exact bound-browser operation-journal receipts/
+    )
+  })
+
+  await t.test('retention metrics cannot contradict exact localized UI receipts', async () => {
+    const fixture = buildHappyFixture()
+    const record = clone(fixture.automatedSoakRecord)
+    record.retentionResults[0].metrics.restoredDrafts = 3
+    replaceAutomatedSoakRecord(fixture, record)
+    await assert.rejects(
+      () => verifyFixture(fixture),
+      /must exactly prove both localized UI draft-recovery outcomes/
+    )
+  })
+
+  await t.test('sample clock drift is rejected even with a matching checkpoint', async () => {
+    const fixture = buildHappyFixture()
+    const record = clone(fixture.automatedSoakRecord)
+    record.samples[20].elapsedMs += 1
+    replaceAutomatedSoakRecord(fixture, record)
+    await assert.rejects(
+      () => verifyFixture(fixture),
+      /canonical startedAt-plus-elapsed timestamps/
+    )
+  })
+
+  await t.test('locale sample coverage must remain canonically balanced', async () => {
+    const fixture = buildHappyFixture()
+    const record = clone(fixture.automatedSoakRecord)
+    for (const sample of record.samples) sample.locale = 'en'
+    for (const [offset, scenario] of [
+      'edits',
+      'recovery',
+      'workspace-switching',
+      'imports',
+      'translation-cancellation',
+      'history-cleanup'
+    ].entries()) {
+      const sample = record.samples.at(-(offset + 1))
+      sample.locale = 'ar'
+      sample.scenario = scenario
+    }
+    replaceAutomatedSoakRecord(fixture, record)
+    await assert.rejects(() => verifyFixture(fixture), /must retain at least 13 ar samples/)
+  })
+
+  await t.test('artifact endpoints must equal the locally hashed artifact size', async () => {
+    const fixture = buildHappyFixture()
+    const record = clone(fixture.automatedSoakRecord)
+    record.artifactEndpoints.sizeBytesAtStart += 1
+    record.artifactEndpoints.sizeBytesAtEnd += 1
+    replaceAutomatedSoakRecord(fixture, record)
+    await assert.rejects(
+      () => verifyFixture(fixture),
+      /must equal the locally verified artifact size/
+    )
+  })
+})
+
 test('requires independent stable human soak observation and attestation', async (t) => {
   await t.test('one stable operator may record both English and Arabic observations', async () => {
     const fixture = buildHappyFixture()
@@ -1031,6 +1406,7 @@ test('enforces the streaming cap before aggregating a nested response', async ()
         candidateSha: CANDIDATE_SHA,
         candidateReadyAt: CANDIDATE_READY_AT,
         artifactSha256: ARTIFACT_SHA256,
+        artifactSizeBytes: ARTIFACT_BYTES.byteLength,
         sourceUrl: fixture.manifestUrl,
         sourceSha256: fixture.manifestSha256,
         fetchImpl,

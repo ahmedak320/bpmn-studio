@@ -6,9 +6,16 @@ import { pathToFileURL } from 'node:url'
 
 const MANIFEST_SCHEMA_VERSION = 2
 const SUPPORT_SCHEMA_VERSION = 1
+const AUTOMATED_SOAK_SCHEMA_VERSION = 2
+const AUTOMATED_SOAK_JOURNAL_SCHEMA_VERSION = 1
+const AUTOMATED_SOAK_JOURNAL_HASH_ALGORITHM = 'sha256-canonical-json-v1'
+const AUTOMATED_SOAK_JOURNAL_HASH_DOMAIN = 'orbitpm-lite-soak-journal-v1\n'
+const AUTOMATED_SOAK_JOURNAL_GENESIS_HASH = '0'.repeat(64)
+const AUTOMATED_SOAK_HISTORY_RETENTION_LIMIT = 20
 const MAX_MANIFEST_BYTES = 1024 * 1024
 const MAX_SUPPORT_BYTES = 256 * 1024
 const MAX_AUTOMATED_SOAK_GATE_BYTES = 16 * 1024 * 1024
+const MAX_AUTOMATED_SOAK_DIAGNOSTIC_BYTES = 16 * 1024 * 1024
 const FETCH_TIMEOUT_MS = 15_000
 const MAX_EVIDENCE_AGE_MS = 30 * 24 * 60 * 60 * 1000
 const MAX_CLOCK_SKEW_MS = 0
@@ -17,6 +24,8 @@ const MAX_SAMPLE_INTERVAL_MINUTES = 60
 const SAMPLE_GRACE_MS = 5 * 60 * 1000
 const MAX_DECLARED_MEMORY_GROWTH_BYTES = 512 * 1024 * 1024
 const MAX_DECLARED_STORAGE_GROWTH_BYTES = 512 * 1024 * 1024
+const CANONICAL_AUTOMATED_MEMORY_GROWTH_BYTES = 512 * 1024 * 1024
+const CANONICAL_AUTOMATED_STORAGE_GROWTH_BYTES = 576 * 1024 * 2
 const IMMUTABLE_EVIDENCE_OWNER = 'ahmedak320'
 const IMMUTABLE_EVIDENCE_REPOSITORY = 'bpmn-studio'
 const IMMUTABLE_EVIDENCE_PATH_PREFIX = ['release-evidence', 'v0.4.5']
@@ -777,11 +786,530 @@ function requiredNonNegativeSafeInteger(value, label, { positive = false } = {})
   return value
 }
 
-function validateAutomatedSoakGate(record, summary, candidateSha, artifactSha256, now) {
+function requireExactKeys(value, keys, label) {
+  requiredObject(value, label)
+  const actual = Object.keys(value).sort()
+  const expected = [...keys].sort()
+  if (actual.length !== expected.length || actual.some((key, index) => key !== expected[index])) {
+    throw new Error(`${label} must contain exactly: ${expected.join(', ')}.`)
+  }
+  return value
+}
+
+export function canonicalizeEvidenceJson(value) {
+  const visit = (candidate, path) => {
+    if (candidate === null || typeof candidate === 'boolean' || typeof candidate === 'string') {
+      return JSON.stringify(candidate)
+    }
+    if (typeof candidate === 'number') {
+      if (!Number.isFinite(candidate) || !Number.isSafeInteger(candidate)) {
+        throw new Error(`Canonical evidence JSON requires a safe integer at ${path}.`)
+      }
+      return JSON.stringify(Object.is(candidate, -0) ? 0 : candidate)
+    }
+    if (Array.isArray(candidate)) {
+      return `[${candidate.map((entry, index) => visit(entry, `${path}[${index}]`)).join(',')}]`
+    }
+    if (typeof candidate === 'object') {
+      const prototype = Object.getPrototypeOf(candidate)
+      if (prototype !== Object.prototype && prototype !== null) {
+        throw new Error(`Canonical evidence JSON requires a plain object at ${path}.`)
+      }
+      return `{${Object.keys(candidate)
+        .sort()
+        .map((key) => `${JSON.stringify(key)}:${visit(candidate[key], `${path}.${key}`)}`)
+        .join(',')}}`
+    }
+    throw new Error(`Canonical evidence JSON cannot encode ${typeof candidate} at ${path}.`)
+  }
+  return visit(value, '$')
+}
+
+export function computeAutomatedSoakJournalEntryHash(entry) {
+  return createHash('sha256')
+    .update(`${AUTOMATED_SOAK_JOURNAL_HASH_DOMAIN}${canonicalizeEvidenceJson(entry)}`, 'utf8')
+    .digest('hex')
+}
+
+function canonicalTimestampMs(value, label, now) {
+  return requiredTimestamp(value, label, now)
+}
+
+function requiredSha256OrThrow(value, label) {
+  return requiredSha256(value, label)
+}
+
+function safeRelativeEvidenceSegment(relativeUrl, label) {
+  if (typeof relativeUrl !== 'string' || !/^\.\/[^/?#]+$/u.test(relativeUrl)) {
+    throw new Error(`${label} must be a literal ./<one-file-name> relative URL.`)
+  }
+  let decoded
+  try {
+    decoded = decodeURIComponent(relativeUrl.slice(2))
+  } catch {
+    throw new Error(`${label} must use valid URL encoding.`)
+  }
+  if (
+    !decoded ||
+    decoded === '.' ||
+    decoded === '..' ||
+    decoded.includes('/') ||
+    decoded.includes('\\') ||
+    decoded.includes('?') ||
+    decoded.includes('#')
+  ) {
+    throw new Error(`${label} must identify one safe sibling evidence file.`)
+  }
+  return decoded
+}
+
+export function resolveAutomatedSoakDiagnosticUrl(relativeUrl, automatedSoakGateUrl) {
+  const label = 'supportingEvidence.automatedSoakGate.diagnosticEvidenceUrl'
+  safeRelativeEvidenceSegment(relativeUrl, label)
+  const baseUrl = requiredImmutableEvidenceUrl(
+    automatedSoakGateUrl,
+    'Automated soak gate evidence URL'
+  )
+  const resolvedUrl = new URL(relativeUrl, baseUrl).toString()
+  const immutableUrl = requiredImmutableEvidenceUrl(
+    resolvedUrl,
+    'Automated soak diagnostic evidence URL'
+  )
+  const base = new URL(baseUrl)
+  const resolved = new URL(immutableUrl)
+  const baseDirectory = base.pathname.slice(0, base.pathname.lastIndexOf('/') + 1)
+  const resolvedDirectory = resolved.pathname.slice(0, resolved.pathname.lastIndexOf('/') + 1)
+  if (
+    resolved.origin !== base.origin ||
+    resolvedDirectory !== baseDirectory ||
+    resolved.pathname === base.pathname
+  ) {
+    throw new Error(
+      `${label} must resolve to a distinct file in the exact automated-evidence commit directory.`
+    )
+  }
+  return immutableUrl
+}
+
+function validateAutomatedSoakJournalBinding(record, diagnosticBytes, artifactSizeBytes, now) {
+  const label = 'supportingEvidence.automatedSoakGate'
+  if (!(diagnosticBytes instanceof Uint8Array) || diagnosticBytes.byteLength === 0) {
+    throw new Error(`${label} requires the exact fetched diagnostic evidence bytes.`)
+  }
+  if (
+    requiredNonNegativeSafeInteger(
+      record.diagnosticEvidenceSizeBytes,
+      `${label}.diagnosticEvidenceSizeBytes`,
+      { positive: true }
+    ) !== diagnosticBytes.byteLength ||
+    requiredSha256OrThrow(record.diagnosticEvidenceSha256, `${label}.diagnosticEvidenceSha256`) !==
+      createHash('sha256').update(diagnosticBytes).digest('hex')
+  ) {
+    throw new Error(`${label} diagnostic byte length or SHA-256 binding is invalid.`)
+  }
+  safeRelativeEvidenceSegment(record.diagnosticEvidenceUrl, `${label}.diagnosticEvidenceUrl`)
+
+  if (
+    record.journalSchemaVersion !== AUTOMATED_SOAK_JOURNAL_SCHEMA_VERSION ||
+    record.journalHashAlgorithm !== AUTOMATED_SOAK_JOURNAL_HASH_ALGORITHM
+  ) {
+    throw new Error(`${label} declares an unsupported operation-journal contract.`)
+  }
+  const journal = requiredArray(record.journal, `${label}.journal`)
+  if (
+    requiredNonNegativeSafeInteger(record.journalEntryCount, `${label}.journalEntryCount`, {
+      positive: true
+    }) !== journal.length
+  ) {
+    throw new Error(`${label}.journalEntryCount must equal the retained journal length.`)
+  }
+  requiredSha256OrThrow(record.journalRootSha256, `${label}.journalRootSha256`)
+
+  const startedAt = canonicalTimestampMs(record.startedAt, `${label}.startedAt`, now)
+  const operationSequences = new Map()
+  const checkpointsBySample = new Map()
+  const documentUrls = new Set()
+  let previousHash = AUTOMATED_SOAK_JOURNAL_GENESIS_HASH
+  let previousElapsedMs = -1
+
+  for (const [index, entry] of journal.entries()) {
+    const entryLabel = `${label}.journal[${index}]`
+    requireExactKeys(
+      entry,
+      [
+        'sequence',
+        'kind',
+        'capturedAt',
+        'elapsedMs',
+        'locale',
+        'scenario',
+        'artifactSha256',
+        'previousHash',
+        'browserReceipt',
+        'checkpoint',
+        'entryHash'
+      ],
+      entryLabel
+    )
+    const elapsedMs = requiredNonNegativeSafeInteger(entry.elapsedMs, `${entryLabel}.elapsedMs`)
+    const capturedAt = canonicalTimestampMs(entry.capturedAt, `${entryLabel}.capturedAt`, now)
+    const { entryHash, ...unsignedEntry } = entry
+    if (
+      entry.sequence !== index ||
+      !['operation', 'checkpoint'].includes(entry.kind) ||
+      elapsedMs < previousElapsedMs ||
+      elapsedMs > record.durationMs ||
+      capturedAt !== startedAt + elapsedMs ||
+      entry.previousHash !== previousHash ||
+      entry.artifactSha256 !== record.artifactSha256 ||
+      requiredSha256OrThrow(entryHash, `${entryLabel}.entryHash`) !==
+        computeAutomatedSoakJournalEntryHash(unsignedEntry)
+    ) {
+      throw new Error(`${entryLabel} breaks the canonical hash chain or chronology.`)
+    }
+
+    if (entry.kind === 'operation') {
+      const receipt = requireExactKeys(
+        entry.browserReceipt,
+        [
+          'receiptVersion',
+          'evidenceSource',
+          'contextId',
+          'locale',
+          'scenario',
+          'artifactSha256',
+          'artifactSizeBytes',
+          'documentUrl',
+          'browserLocale',
+          'direction',
+          'interaction',
+          'productionSelectors',
+          'interactionCount',
+          'beforeStateSha256',
+          'afterStateSha256',
+          'assertions'
+        ],
+        `${entryLabel}.browserReceipt`
+      )
+      if (
+        entry.checkpoint !== null ||
+        !REQUIRED_LOCALES.includes(entry.locale) ||
+        !REQUIRED_SOAK_SCENARIOS.includes(entry.scenario) ||
+        receipt.receiptVersion !== 1 ||
+        receipt.evidenceSource !== 'exact-bound-html-production-ui' ||
+        receipt.contextId !== `persistent-${entry.locale}` ||
+        receipt.locale !== entry.locale ||
+        receipt.scenario !== entry.scenario ||
+        receipt.artifactSha256 !== record.artifactSha256 ||
+        receipt.artifactSizeBytes !== artifactSizeBytes ||
+        typeof receipt.documentUrl !== 'string' ||
+        !receipt.documentUrl.startsWith('file://') ||
+        receipt.browserLocale !== (entry.locale === 'ar' ? 'ar-AE' : 'en-US') ||
+        receipt.direction !== (entry.locale === 'ar' ? 'rtl' : 'ltr') ||
+        typeof receipt.interaction !== 'string' ||
+        receipt.interaction.trim().length < 12 ||
+        !Array.isArray(receipt.productionSelectors) ||
+        receipt.productionSelectors.length < 2 ||
+        receipt.productionSelectors.some(
+          (selector) => typeof selector !== 'string' || selector.trim().length < 5
+        ) ||
+        !Number.isSafeInteger(receipt.interactionCount) ||
+        receipt.interactionCount < 1 ||
+        !/^[a-f0-9]{64}$/.test(receipt.beforeStateSha256) ||
+        !/^[a-f0-9]{64}$/.test(receipt.afterStateSha256) ||
+        !Array.isArray(receipt.assertions) ||
+        receipt.assertions.length < 1
+      ) {
+        throw new Error(
+          `${entryLabel}.browserReceipt must prove production-UI interaction with the exact artifact.`
+        )
+      }
+      for (const [assertionIndex, assertion] of receipt.assertions.entries()) {
+        const assertionLabel = `${entryLabel}.browserReceipt.assertions[${assertionIndex}]`
+        requireExactKeys(assertion, ['name', 'passed', 'observed'], assertionLabel)
+        if (
+          typeof assertion.name !== 'string' ||
+          assertion.name.trim().length < 5 ||
+          assertion.passed !== true ||
+          !['string', 'number', 'boolean'].includes(typeof assertion.observed) ||
+          (typeof assertion.observed === 'number' &&
+            (!Number.isSafeInteger(assertion.observed) || assertion.observed < 0))
+        ) {
+          throw new Error(`${assertionLabel} must contain one objective passed UI assertion.`)
+        }
+      }
+      const coverageKey = `${entry.locale}:${entry.scenario}`
+      const sequences = operationSequences.get(coverageKey) ?? []
+      sequences.push(index)
+      operationSequences.set(coverageKey, sequences)
+      documentUrls.add(receipt.documentUrl)
+    } else {
+      const checkpoint = requireExactKeys(
+        entry.checkpoint,
+        [
+          'sampleSequence',
+          'completedOperations',
+          'completedScenarioCycles',
+          'residentMemoryBytes',
+          'storageBytes',
+          'healthy'
+        ],
+        `${entryLabel}.checkpoint`
+      )
+      if (
+        entry.locale !== null ||
+        entry.scenario !== null ||
+        entry.browserReceipt !== null ||
+        !Number.isSafeInteger(checkpoint.sampleSequence) ||
+        checkpoint.sampleSequence < 0 ||
+        !Number.isSafeInteger(checkpoint.completedOperations) ||
+        checkpoint.completedOperations < 0 ||
+        !Number.isSafeInteger(checkpoint.completedScenarioCycles) ||
+        checkpoint.completedScenarioCycles < 0 ||
+        !Number.isSafeInteger(checkpoint.residentMemoryBytes) ||
+        checkpoint.residentMemoryBytes <= 0 ||
+        !Number.isSafeInteger(checkpoint.storageBytes) ||
+        checkpoint.storageBytes < 0 ||
+        typeof checkpoint.healthy !== 'boolean' ||
+        checkpointsBySample.has(checkpoint.sampleSequence)
+      ) {
+        throw new Error(`${entryLabel}.checkpoint is not an exact unique sample checkpoint.`)
+      }
+      checkpointsBySample.set(checkpoint.sampleSequence, checkpoint)
+    }
+    previousHash = entryHash
+    previousElapsedMs = elapsedMs
+  }
+
+  if (record.journalRootSha256 !== journal.at(-1).entryHash) {
+    throw new Error(`${label}.journalRootSha256 must equal the recomputed terminal entry hash.`)
+  }
+  if (documentUrls.size !== 1) {
+    throw new Error(`${label}.journal must bind every UI receipt to one exact HTML document URL.`)
+  }
+  if (checkpointsBySample.size !== record.samples.length) {
+    throw new Error(`${label}.journal must contain exactly one checkpoint for every sample.`)
+  }
+  for (const [index, sample] of record.samples.entries()) {
+    const checkpoint = checkpointsBySample.get(index)
+    if (
+      !checkpoint ||
+      checkpoint.completedOperations !== sample.completedOperations ||
+      checkpoint.completedScenarioCycles !== sample.completedScenarioCycles ||
+      checkpoint.residentMemoryBytes !== sample.residentMemoryBytes ||
+      checkpoint.storageBytes !== sample.storageBytes ||
+      checkpoint.healthy !== sample.healthy
+    ) {
+      throw new Error(`${label}.samples[${index}] does not match its journal checkpoint.`)
+    }
+  }
+
+  const scenarioResults = requiredArray(record.scenarioResults, `${label}.scenarioResults`, {
+    minLength: REQUIRED_LOCALES.length * REQUIRED_SOAK_SCENARIOS.length
+  })
+  if (scenarioResults.length !== REQUIRED_LOCALES.length * REQUIRED_SOAK_SCENARIOS.length) {
+    throw new Error(`${label}.scenarioResults must contain exactly one result per required tuple.`)
+  }
+  const observedScenarioResults = new Set()
+  for (const [index, result] of scenarioResults.entries()) {
+    const resultLabel = `${label}.scenarioResults[${index}]`
+    requireExactKeys(
+      result,
+      [
+        'locale',
+        'scenario',
+        'passed',
+        'completedCycles',
+        'uiReceiptCount',
+        'firstJournalSequence',
+        'lastJournalSequence',
+        'findings'
+      ],
+      resultLabel
+    )
+    if (
+      !REQUIRED_LOCALES.includes(result.locale) ||
+      !REQUIRED_SOAK_SCENARIOS.includes(result.scenario)
+    ) {
+      throw new Error(`${resultLabel} must identify a required locale/workload tuple.`)
+    }
+    const coverageKey = `${result.locale}:${result.scenario}`
+    if (observedScenarioResults.has(coverageKey)) {
+      throw new Error(`${label}.scenarioResults must not duplicate locale/workload tuples.`)
+    }
+    observedScenarioResults.add(coverageKey)
+    const sequences = operationSequences.get(coverageKey) ?? []
+    const uiReceiptCount = requiredNonNegativeSafeInteger(
+      result.uiReceiptCount,
+      `${resultLabel}.uiReceiptCount`
+    )
+    if (
+      requiredNonNegativeSafeInteger(result.completedCycles, `${resultLabel}.completedCycles`) !==
+        uiReceiptCount ||
+      uiReceiptCount !== sequences.length ||
+      result.firstJournalSequence !== (sequences[0] ?? null) ||
+      result.lastJournalSequence !== (sequences.at(-1) ?? null) ||
+      result.passed !== uiReceiptCount > 0
+    ) {
+      throw new Error(
+        `${resultLabel} must equal its exact bound-browser operation-journal receipts.`
+      )
+    }
+  }
+  for (const locale of REQUIRED_LOCALES) {
+    for (const scenario of REQUIRED_SOAK_SCENARIOS) {
+      if (!observedScenarioResults.has(`${locale}:${scenario}`)) {
+        throw new Error(`${label}.scenarioResults must cover ${locale}:${scenario}.`)
+      }
+    }
+  }
+  for (const [index, sample] of record.samples.entries()) {
+    const result = scenarioResults.find(
+      (candidate) => candidate.locale === sample.locale && candidate.scenario === sample.scenario
+    )
+    if (!result || sample.completedScenarioCycles > result.completedCycles) {
+      throw new Error(
+        `${label}.samples[${index}].completedScenarioCycles exceeds its bound UI receipts.`
+      )
+    }
+  }
+
+  const retentionResults = requiredArray(record.retentionResults, `${label}.retentionResults`, {
+    minLength: REQUIRED_RETENTION_CHECKS.length
+  })
+  if (retentionResults.length !== REQUIRED_RETENTION_CHECKS.length) {
+    throw new Error(`${label}.retentionResults must contain exactly three objective results.`)
+  }
+  const retentionByCheck = new Map()
+  for (const [index, result] of retentionResults.entries()) {
+    const resultLabel = `${label}.retentionResults[${index}]`
+    requireExactKeys(result, ['check', 'passed', 'metrics', 'findings'], resultLabel)
+    if (!REQUIRED_RETENTION_CHECKS.includes(result.check) || retentionByCheck.has(result.check)) {
+      throw new Error(`${resultLabel} must identify one unique required retention check.`)
+    }
+    retentionByCheck.set(result.check, { ...result, label: resultLabel })
+  }
+
+  const operationCount = (scenario) =>
+    REQUIRED_LOCALES.reduce(
+      (total, locale) => total + (operationSequences.get(`${locale}:${scenario}`)?.length ?? 0),
+      0
+    )
+  const draft = retentionByCheck.get('draft-recovery')
+  requireExactKeys(
+    draft?.metrics,
+    ['uiRecoveryReceipts', 'restoredDrafts', 'pendingDraftsAtCompletion'],
+    `${draft?.label ?? label}.metrics`
+  )
+  if (
+    draft.metrics.uiRecoveryReceipts !== operationCount('recovery') ||
+    draft.metrics.uiRecoveryReceipts !== REQUIRED_LOCALES.length ||
+    draft.metrics.restoredDrafts !== REQUIRED_LOCALES.length ||
+    draft.metrics.pendingDraftsAtCompletion !== 0 ||
+    draft.passed !== true
+  ) {
+    throw new Error(
+      `${draft.label}.metrics must exactly prove both localized UI draft-recovery outcomes.`
+    )
+  }
+
+  const history = retentionByCheck.get('history-retention')
+  requireExactKeys(
+    history?.metrics,
+    [
+      'uiHistoryReceipts',
+      'retentionLimit',
+      'maximumVisibleRevisions',
+      'retainedBpmnFiles',
+      'retainedMetadataFiles',
+      'oldestSeedPruned'
+    ],
+    `${history?.label ?? label}.metrics`
+  )
+  if (
+    history.metrics.uiHistoryReceipts !== operationCount('history-cleanup') ||
+    history.metrics.uiHistoryReceipts !== REQUIRED_LOCALES.length ||
+    history.metrics.retentionLimit !== AUTOMATED_SOAK_HISTORY_RETENTION_LIMIT ||
+    history.metrics.maximumVisibleRevisions !== AUTOMATED_SOAK_HISTORY_RETENTION_LIMIT ||
+    history.metrics.retainedBpmnFiles !==
+      AUTOMATED_SOAK_HISTORY_RETENTION_LIMIT * REQUIRED_LOCALES.length ||
+    history.metrics.retainedMetadataFiles !==
+      AUTOMATED_SOAK_HISTORY_RETENTION_LIMIT * REQUIRED_LOCALES.length ||
+    history.metrics.oldestSeedPruned !== true ||
+    history.passed !== true
+  ) {
+    throw new Error(`${history.label}.metrics must exactly prove the localized retention limit.`)
+  }
+
+  const workspace = retentionByCheck.get('workspace-state')
+  requireExactKeys(
+    workspace?.metrics,
+    ['uiWorkspaceSwitchReceipts', 'pickerCancellations', 'workspacePreserved', 'uiImportReceipts'],
+    `${workspace?.label ?? label}.metrics`
+  )
+  if (
+    workspace.metrics.uiWorkspaceSwitchReceipts !== operationCount('workspace-switching') ||
+    workspace.metrics.uiWorkspaceSwitchReceipts !== REQUIRED_LOCALES.length ||
+    workspace.metrics.pickerCancellations !== REQUIRED_LOCALES.length ||
+    workspace.metrics.workspacePreserved !== true ||
+    workspace.metrics.uiImportReceipts !== operationCount('imports') ||
+    workspace.metrics.uiImportReceipts !== REQUIRED_LOCALES.length ||
+    workspace.passed !== true
+  ) {
+    throw new Error(
+      `${workspace.label}.metrics must exactly prove localized workspace and import outcomes.`
+    )
+  }
+
+  let diagnostic
+  try {
+    const json = new TextDecoder('utf-8', { fatal: true }).decode(diagnosticBytes)
+    diagnostic = JSON.parse(json)
+  } catch {
+    throw new Error(`${label} diagnostic evidence must contain valid UTF-8 JSON.`)
+  }
+  const diagnosticCandidate = requiredObject(
+    diagnostic.candidate,
+    'supportingEvidence.automatedSoakDiagnostic.candidate'
+  )
+  const diagnosticArtifact = requiredObject(
+    diagnosticCandidate.artifactAtStart,
+    'supportingEvidence.automatedSoakDiagnostic.candidate.artifactAtStart'
+  )
+  const diagnosticJournal = requireExactKeys(
+    diagnostic.operationJournal,
+    ['schemaVersion', 'hashAlgorithm', 'entryCount', 'rootSha256', 'entries'],
+    'supportingEvidence.automatedSoakDiagnostic.operationJournal'
+  )
+  if (
+    diagnosticCandidate.requiredSha !== record.candidateEndpoints.requiredSha ||
+    diagnosticArtifact.sha256 !== record.artifactSha256 ||
+    diagnosticArtifact.sizeBytes !== artifactSizeBytes ||
+    diagnosticJournal.schemaVersion !== record.journalSchemaVersion ||
+    diagnosticJournal.hashAlgorithm !== record.journalHashAlgorithm ||
+    diagnosticJournal.entryCount !== record.journalEntryCount ||
+    diagnosticJournal.rootSha256 !== record.journalRootSha256 ||
+    canonicalizeEvidenceJson(diagnosticJournal.entries) !== canonicalizeEvidenceJson(journal)
+  ) {
+    throw new Error(
+      `${label} diagnostic candidate, artifact, or operation journal diverges from its support record.`
+    )
+  }
+}
+
+function validateAutomatedSoakGate(
+  record,
+  summary,
+  candidateSha,
+  artifactSha256,
+  artifactSizeBytes,
+  diagnosticBytes,
+  now
+) {
   const label = 'supportingEvidence.automatedSoakGate'
   requiredObject(record, label)
-  if (record.schemaVersion !== SUPPORT_SCHEMA_VERSION) {
-    throw new Error(`${label}.schemaVersion must be ${SUPPORT_SCHEMA_VERSION}.`)
+  if (record.schemaVersion !== AUTOMATED_SOAK_SCHEMA_VERSION) {
+    throw new Error(`${label}.schemaVersion must be ${AUTOMATED_SOAK_SCHEMA_VERSION}.`)
   }
   if (record.evidenceType !== 'orbitpm-lite-soak-automation') {
     throw new Error(`${label}.evidenceType must be orbitpm-lite-soak-automation.`)
@@ -831,6 +1359,7 @@ function validateAutomatedSoakGate(record, summary, candidateSha, artifactSha256
     minLength: Math.ceil(record.durationMs / (record.sampleIntervalMinutes * 60_000)) + 1
   })
   const observedLocales = new Set()
+  const sampleLocaleCounts = new Map(REQUIRED_LOCALES.map((locale) => [locale, 0]))
   const scenarioCoverage = new Set()
   let previousCapturedAt = null
   let previousElapsedMs = -1
@@ -860,9 +1389,14 @@ function validateAutomatedSoakGate(record, summary, candidateSha, artifactSha256
       }
     }
     const elapsedMs = requiredNonNegativeSafeInteger(sample.elapsedMs, `${sampleLabel}.elapsedMs`)
-    if ((index === 0 && elapsedMs !== 0) || elapsedMs <= previousElapsedMs) {
+    if (
+      capturedAt !== startedAt + elapsedMs ||
+      elapsedMs > record.durationMs ||
+      (index === 0 && elapsedMs !== 0) ||
+      elapsedMs <= previousElapsedMs
+    ) {
       throw new Error(
-        `${label}.samples must start at elapsedMs=0 and then strictly increase elapsed time.`
+        `${label}.samples must use canonical startedAt-plus-elapsed timestamps and strictly increase.`
       )
     }
     if (
@@ -899,6 +1433,7 @@ function validateAutomatedSoakGate(record, summary, candidateSha, artifactSha256
       )
     }
     observedLocales.add(sample.locale)
+    sampleLocaleCounts.set(sample.locale, (sampleLocaleCounts.get(sample.locale) ?? 0) + 1)
     scenarioCoverage.add(`${sample.locale}:${sample.scenario}`)
     firstResidentMemoryBytes ??= sample.residentMemoryBytes
     firstStorageBytes ??= sample.storageBytes
@@ -911,14 +1446,20 @@ function validateAutomatedSoakGate(record, summary, candidateSha, artifactSha256
   if (
     samples[0].capturedAt !== record.startedAt ||
     samples.at(-1).capturedAt !== record.completedAt ||
-    samples.at(-1).elapsedMs < MIN_SOAK_DURATION_MS
+    samples.at(-1).elapsedMs !== record.durationMs
   ) {
     throw new Error(
-      `${label}.samples must cover the exact wall-clock interval and at least 48 monotonic hours.`
+      `${label}.samples must cover the exact wall-clock and monotonic 48-hour interval.`
     )
   }
   requireExactSet([...observedLocales], REQUIRED_LOCALES, `${label}.samples locales`)
+  const minimumSamplesPerLocale = Math.ceil(samples.length / 4)
   for (const locale of REQUIRED_LOCALES) {
+    if ((sampleLocaleCounts.get(locale) ?? 0) < minimumSamplesPerLocale) {
+      throw new Error(
+        `${label}.samples must retain at least ${minimumSamplesPerLocale} ${locale} samples.`
+      )
+    }
     for (const scenario of REQUIRED_SOAK_SCENARIOS) {
       if (!scenarioCoverage.has(`${locale}:${scenario}`)) {
         throw new Error(`${label}.samples must exercise ${locale}:${scenario}.`)
@@ -935,8 +1476,8 @@ function validateAutomatedSoakGate(record, summary, candidateSha, artifactSha256
     requiredNonNegativeSafeInteger(value, valueLabel)
   }
   if (
-    record.maxResidentMemoryGrowthBytes > MAX_DECLARED_MEMORY_GROWTH_BYTES ||
-    record.maxStorageGrowthBytes > MAX_DECLARED_STORAGE_GROWTH_BYTES ||
+    record.maxResidentMemoryGrowthBytes !== CANONICAL_AUTOMATED_MEMORY_GROWTH_BYTES ||
+    record.maxStorageGrowthBytes !== CANONICAL_AUTOMATED_STORAGE_GROWTH_BYTES ||
     record.observedResidentMemoryGrowthBytes !==
       Math.max(0, peakResidentMemoryBytes - firstResidentMemoryBytes) ||
     record.observedStorageGrowthBytes !== Math.max(0, peakStorageBytes - firstStorageBytes) ||
@@ -1055,6 +1596,7 @@ function validateAutomatedSoakGate(record, summary, candidateSha, artifactSha256
     { positive: true }
   )
   if (
+    sizeBytesAtStart !== artifactSizeBytes ||
     requiredNonNegativeSafeInteger(
       artifactEndpoints.sizeBytesAtEnd,
       `${label}.artifactEndpoints.sizeBytesAtEnd`,
@@ -1062,7 +1604,9 @@ function validateAutomatedSoakGate(record, summary, candidateSha, artifactSha256
     ) !== sizeBytesAtStart ||
     artifactEndpoints.matchedAtEnd !== true
   ) {
-    throw new Error(`${label}.artifactEndpoints must prove unchanged exact artifact bytes.`)
+    throw new Error(
+      `${label}.artifactEndpoints must equal the locally verified artifact size at both endpoints.`
+    )
   }
   const clock = requiredObject(record.clock, `${label}.clock`)
   if (
@@ -1073,6 +1617,7 @@ function validateAutomatedSoakGate(record, summary, candidateSha, artifactSha256
     throw new Error(`${label}.clock must describe the soak gate's trusted clock derivation.`)
   }
   substantiveString(record.findings, `${label}.findings`, { minLength: 40 })
+  validateAutomatedSoakJournalBinding(record, diagnosticBytes, artifactSizeBytes, now)
 }
 
 function validateAssistiveTechnologySummary(entry, key, candidateReadyAt, now) {
@@ -1390,6 +1935,7 @@ export async function verifyReleaseEvidence({
   candidateSha: candidateShaInput,
   candidateReadyAt: candidateReadyAtInput,
   artifactSha256: artifactSha256Input,
+  artifactSizeBytes: artifactSizeBytesInput,
   sourceUrl,
   sourceSha256,
   fetchImpl = fetch,
@@ -1405,6 +1951,11 @@ export async function verifyReleaseEvidence({
   const candidateSha = requiredCandidateSha(candidateShaInput, '--candidate-sha')
   const candidateReadyAt = requiredTimestamp(candidateReadyAtInput, '--candidate-ready-at', now)
   const artifactSha256 = requiredSha256(artifactSha256Input, 'artifact SHA-256')
+  const artifactSizeBytes = requiredNonNegativeSafeInteger(
+    artifactSizeBytesInput,
+    'artifact sizeBytes',
+    { positive: true }
+  )
   const source = await fetchVerifiedJson({
     url: sourceUrl,
     expectedSha256: sourceSha256,
@@ -1541,11 +2092,43 @@ export async function verifyReleaseEvidence({
       'Automated soak gate evidence must resolve to a distinct final URL from every other record.'
     )
   }
+  const automatedSoakDiagnosticUrl = resolveAutomatedSoakDiagnosticUrl(
+    automatedSoakGate.record?.diagnosticEvidenceUrl,
+    automatedSoakGate.requestedUrl
+  )
+  const occupiedWithAutomatedGate = new Set([
+    ...occupiedEvidenceUrls,
+    automatedSoakGate.requestedUrl,
+    automatedSoakGate.finalUrl
+  ])
+  if (occupiedWithAutomatedGate.has(automatedSoakDiagnosticUrl)) {
+    throw new Error(
+      'Automated soak diagnostic evidence must use a distinct URL from every other evidence record.'
+    )
+  }
+  const automatedSoakDiagnostic = {
+    key: 'automatedSoakDiagnostic',
+    ...(await fetchVerifiedJson({
+      url: automatedSoakDiagnosticUrl,
+      expectedSha256: automatedSoakGate.record?.diagnosticEvidenceSha256,
+      label: 'Automated soak diagnostic evidence',
+      maxBytes: MAX_AUTOMATED_SOAK_DIAGNOSTIC_BYTES,
+      fetchImpl,
+      timeoutMs
+    }))
+  }
+  if (automatedSoakDiagnostic.sizeBytes !== automatedSoakGate.record?.diagnosticEvidenceSizeBytes) {
+    throw new Error(
+      'Automated soak diagnostic evidence byte length does not match its support-record declaration.'
+    )
+  }
   validateAutomatedSoakGate(
     automatedSoakGate.record,
     soakSummary,
     candidateSha,
     artifactSha256,
+    artifactSizeBytes,
+    Buffer.from(automatedSoakDiagnostic.bodyBase64, 'base64'),
     now
   )
   if (defectSummary.signedOffAt <= soakValidation.attestedAt) {
@@ -1600,9 +2183,13 @@ export async function verifyReleaseEvidence({
     candidateSha,
     candidateReadyAt: new Date(candidateReadyAt).toISOString(),
     artifactSha256,
+    artifactSizeBytes,
     policy: {
       manifestSchemaVersion: MANIFEST_SCHEMA_VERSION,
       supportSchemaVersion: SUPPORT_SCHEMA_VERSION,
+      automatedSoakSchemaVersion: AUTOMATED_SOAK_SCHEMA_VERSION,
+      automatedSoakJournalSchemaVersion: AUTOMATED_SOAK_JOURNAL_SCHEMA_VERSION,
+      automatedSoakJournalHashAlgorithm: AUTOMATED_SOAK_JOURNAL_HASH_ALGORITHM,
       maxEvidenceAgeMs: MAX_EVIDENCE_AGE_MS,
       maxClockSkewMs: MAX_CLOCK_SKEW_MS,
       minimumSoakDurationMs: MIN_SOAK_DURATION_MS,
@@ -1611,7 +2198,8 @@ export async function verifyReleaseEvidence({
       fetchTimeoutMs: timeoutMs,
       manifestMaxBytes: MAX_MANIFEST_BYTES,
       supportingRecordMaxBytes: MAX_SUPPORT_BYTES,
-      automatedSoakGateMaxBytes: MAX_AUTOMATED_SOAK_GATE_BYTES
+      automatedSoakGateMaxBytes: MAX_AUTOMATED_SOAK_GATE_BYTES,
+      automatedSoakDiagnosticMaxBytes: MAX_AUTOMATED_SOAK_DIAGNOSTIC_BYTES
     },
     source: {
       url: source.requestedUrl,
@@ -1621,17 +2209,19 @@ export async function verifyReleaseEvidence({
       bodyBase64: source.bodyBase64
     },
     evidence,
-    supportingEvidence: [...fetchedSupportingRecords, automatedSoakGate].map(
-      ({ key, requestedUrl, finalUrl, sha256, sizeBytes, bodyBase64, record }) => ({
-        key,
-        url: requestedUrl,
-        finalUrl,
-        sha256,
-        sizeBytes,
-        bodyBase64,
-        record
-      })
-    )
+    supportingEvidence: [
+      ...fetchedSupportingRecords,
+      automatedSoakGate,
+      automatedSoakDiagnostic
+    ].map(({ key, requestedUrl, finalUrl, sha256, sizeBytes, bodyBase64, record }) => ({
+      key,
+      url: requestedUrl,
+      finalUrl,
+      sha256,
+      sizeBytes,
+      bodyBase64,
+      record
+    }))
   }
 }
 
@@ -1660,6 +2250,7 @@ export async function main({
     candidateSha,
     candidateReadyAt,
     artifactSha256,
+    artifactSizeBytes: artifactBytes.byteLength,
     sourceUrl,
     sourceSha256: expectedSourceSha256,
     fetchImpl,

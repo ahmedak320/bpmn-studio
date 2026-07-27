@@ -84,6 +84,7 @@ run and exact release-artifact result remain pending.
 | Exact seven-asset assembly, checksums, SBOM/notices, and size verification       | pre-tag candidate artifact and release pre-tag verifier     | **PENDING** |
 | Second clean build byte-for-byte reproducibility                                 | pre-tag candidate and release verifier logs                 | **PENDING** |
 | Exact release HTML smoke from `file://` in English and Arabic                    | pre-tag candidate and release verifier logs                 | **PENDING** |
+| Exact HTML production-UI receipts for English/Arabic × six soak workloads        | schema-2 soak support plus bound diagnostic journal         | **PENDING** |
 
 ## Required human and remote checklist
 
@@ -146,10 +147,23 @@ assistive-technology version, browser version, application locale, scenarios,
 and findings. The uninterrupted 48-hour soak must additionally record start/end
 times, restart or interruption declarations, memory/storage samples, history
 retention observations, its SHA-pinned compact
-`soak-gate.ts --support-output` record, independent English/Arabic human
-observations and attestation, and the reviewed P0/P1 defect ledger. All fields
-remain **PENDING**. Before tag creation and Pages deployment, combine those records
-using the candidate-bound
+`soak-gate.ts --support-output` record, that record's exact SHA/size-pinned
+diagnostic JSON sibling, independent English/Arabic human observations and
+attestation, and the reviewed P0/P1 defect ledger. The schema-2 compact record
+must retain a canonical SHA-256 hash chain covering every hourly checkpoint
+and every exact-artifact production-UI receipt for English/Arabic × edits,
+recovery, workspace switching, imports, translation cancellation, and history
+cleanup. The external verifier fetches both immutable same-directory files
+without redirects and retains their exact bytes as `automatedSoakGate` and
+`automatedSoakDiagnostic` entries, including each `bodyBase64`.
+
+Generate both files to new paths in one real directory outside the candidate
+worktree and Git directory, then publish them in the same immutable commit
+directory before producing the human wrapper that pins the automated support
+record. Software logs do not independently establish that 48 physical hours
+elapsed, so the human observations and independent attestation remain
+mandatory. All fields remain **PENDING**. Before tag creation and Pages
+deployment, combine those records using the candidate-bound
 [`external evidence schema`](RELEASE_APPROVAL_EVIDENCE.md) and its
 [`top-level template`](RELEASE_APPROVAL_EVIDENCE.example.json), publish the
 manifest and every SHA-pinned supporting record at public credential-free HTTPS

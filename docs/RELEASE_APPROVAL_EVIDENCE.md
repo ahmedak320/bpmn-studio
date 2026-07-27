@@ -11,8 +11,10 @@ and must not be published as release evidence.
 
 ## Publication and hashing
 
-1. Run `scripts/soak-gate.ts` with `--support-output` and publish its immutable
-   compact automated soak record.
+1. Run `scripts/soak-gate.ts` with explicit `--output` and `--support-output`
+   paths in one real directory outside both the Git worktree and Git directory.
+   Both targets must be new, non-symlink paths. Publish the exact diagnostic
+   record and its compact automated support record together.
 2. Produce the five human-reviewed supporting JSON records described below.
    The human soak wrapper SHA-pins the automated record from step 1.
 3. Commit every record under `release-evidence/v0.4.5/` in
@@ -28,7 +30,8 @@ passes it as `--candidate-ready-at=<canonical UTC timestamp>`. The manifest's
 `candidateReadyAt` must match that value exactly. It is not trusted merely
 because the evidence submitter placed it in the manifest.
 
-Every URL must have exactly this form:
+Every manifest, human-record, and compact automated-record fetch URL must have
+exactly this form:
 
 ```text
 https://raw.githubusercontent.com/ahmedak320/bpmn-studio/<non-zero-lowercase-40-character-commit>/release-evidence/v0.4.5/<record>.json
@@ -39,18 +42,21 @@ strings, fragments, credentials, ports, encoded paths, and redirects are
 rejected. This includes a commit-pinned record owned by an attacker. The exact
 TLS host/repository/path allowlist avoids DNS-check/use races: the verifier
 does not resolve a hostname for a preflight decision and later reconnect by
-name.
+name. The sole relative-URL exception is the compact automated record's
+`diagnosticEvidenceUrl`: it must be one literal safe `./<file>.json` sibling
+that resolves inside the exact same immutable commit directory.
 
 Use staged commits on a dedicated evidence branch or detached evidence history
 without changing protected `main` from the release candidate: publish the
-automated record, then its human wrapper and other supports, then the manifest
-that contains those already-known commit URLs and digests.
+diagnostic and compact automated record together in the first evidence commit,
+then their human wrapper and the other supports, then the manifest that
+contains those already-known commit URLs and digests.
 
 The verifier streams every response with a 15-second timeout. It rejects a
-manifest above 1 MiB, any primary supporting record above 256 KiB, or the
-bounded compact automated soak record above 16 MiB before aggregating the
-response body. It verifies a response's SHA-256 before parsing or trusting its
-JSON.
+manifest above 1 MiB, any primary supporting record above 256 KiB, the compact
+automated soak record above 16 MiB, or its bound diagnostic record above
+16 MiB before aggregating the response body. It verifies a response's SHA-256
+before parsing or trusting its JSON.
 
 ## Common binding
 
@@ -163,7 +169,7 @@ exact identity profile.
 ### Automated soak-gate record
 
 The nested automated record is not a human assertion and contains no operator
-or reviewer identities. It uses `schemaVersion: 1` and
+or reviewer identities. It uses `schemaVersion: 2` and
 `evidenceType: "orbitpm-lite-soak-automation"`. The verifier requires:
 
 - exact candidate and artifact digests at the top level and at clean,
@@ -176,20 +182,43 @@ or reviewer identities. It uses `schemaVersion: 1` and
   sample coverage for at least 48 hours;
 - the exact locale, scenario, retention-check, and sampling declarations from
   the wrapper;
-- healthy chronological samples with truthful zero start operations, strictly
+- healthy chronological samples whose timestamps equal
+  `startedAt + elapsedMs`, with truthful zero start operations, strictly
   increasing cumulative operations, exact objective memory/storage growth,
-  and every locale/scenario pair;
-- all 12 locale/scenario results passed with positive `completedCycles`;
-- all three retention results passed with objective metrics; and
+  balanced locale coverage, and every locale/scenario pair;
+- an exact SHA-256 hash-chain journal containing checkpoints for every sample
+  and production-UI operation receipts for all 12 English/Arabic workload
+  tuples. A receipt names the persistent localized browser context, exact HTML
+  SHA-256 and size, production selectors and interactions, before/after state
+  digests, and objective assertions;
+- all 12 locale/scenario results exactly matching their UI receipt counts and
+  first/last journal sequence numbers. Source-module or in-memory-adapter
+  stress is supplemental and cannot create an eligible UI receipt;
+- exact retention metrics for two localized draft restorations, the 20-entry
+  per-locale history limit and pruning result, workspace-picker cancellation,
+  workspace preservation, and localized UI spreadsheet imports;
+- `diagnosticEvidenceUrl` as one safe `./<file>.json` sibling plus the exact
+  `diagnosticEvidenceSha256` and `diagnosticEvidenceSizeBytes`. The diagnostic
+  candidate/artifact snapshot and full operation journal must be byte-bound
+  and canonically identical to the compact record; and
 - the clock declaration emitted by the harness:
   `UTC`, `performance.now`, and `startedAt-plus-monotonic-elapsed`.
 
-The verifier fetches and retains the exact automated bytes in the verified
-aggregate under `supportingEvidence` key `automatedSoakGate`. The top manifest
-still has exactly five human supporting-record references: its `soak` digest
-binds the human wrapper, and that wrapper binds the automated record. A
-standalone hand-written soak claim, a smoke waiver, a dirty candidate, a
-changed artifact, or a re-hashed short/failed record does not satisfy the gate.
+The verifier fetches and retains the exact automated support bytes under
+`supportingEvidence` key `automatedSoakGate` and the exact diagnostic bytes
+under `automatedSoakDiagnostic`. It independently recomputes the diagnostic
+digest and size, every journal entry hash, the terminal root, checkpoint
+parity, UI scenario counts, retention metrics, and locally hashed artifact
+size. The diagnostic must be a distinct non-redirecting immutable sibling in
+the same commit directory.
+
+The top manifest still has exactly five human supporting-record references:
+its `soak` digest binds the human wrapper, and that wrapper binds the automated
+record. A standalone hand-written soak claim, a smoke waiver, a dirty
+candidate, a changed artifact, or a re-hashed short/failed record does not
+satisfy the gate. Software-generated timestamps and journal entries do not
+independently prove that a physical 48-hour run occurred, so the separate
+stable human observation and independent attestation remain mandatory.
 
 ## Assistive-technology records
 
@@ -314,9 +343,10 @@ Chronology is strict:
 The verifier writes one machine-readable JSON artifact with `status: "passed"`.
 It includes the candidate SHA, trusted `candidateReadyAt`, validated manifest,
 source URL/final URL/digest/size, verifier policy limits, the five parsed
-primary supporting records, and the nested automated soak record. All six
-fetched records include URL/final URL/digest/size. Each source and supporting
-record also includes the exact verified response bytes as `bodyBase64`, so an
-auditor can recompute every retained SHA-256 without relying on JSON
-reserialization. Protected workflows retain that aggregate as their approval
-artifact.
+primary supporting records, the compact automated soak record, and its bound
+diagnostic. All seven supporting records include URL/final URL/digest/size,
+and the aggregate covers eight network records when the manifest is included.
+Each source and supporting record also includes the exact verified response
+bytes as `bodyBase64`, so an auditor can recompute every retained SHA-256
+without relying on JSON reserialization. Protected workflows retain that
+aggregate as their approval artifact.

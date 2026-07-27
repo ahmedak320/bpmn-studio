@@ -1,4 +1,5 @@
 {
+  "$comment": "This manifest references the human soak wrapper only. That wrapper must SHA-pin the generated schema-2 automated soak record, which in turn binds one distinct same-directory diagnostic JSON sibling by exact relative URL, SHA-256, size, and canonical operation-journal root.",
   "schemaVersion": 2,
   "candidateSha": "REPLACE_WITH_EXACT_40_CHARACTER_GIT_COMMIT_SHA",
   "candidateReadyAt": "REPLACE_WITH_TRUSTED_CANDIDATE_READY_UTC_TIMESTAMP",
