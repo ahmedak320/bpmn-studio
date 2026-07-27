@@ -23,7 +23,7 @@
     "sampleIntervalMinutes": 60,
     "memoryGrowth": "bounded",
     "storageGrowth": "bounded",
-    "evidenceUrl": "https://REPLACE_WITH_PUBLIC_EVIDENCE_HOST/v0.4.5/soak.json",
+    "evidenceUrl": "https://raw.githubusercontent.com/ahmedak320/bpmn-studio/REPLACE_WITH_NON_ZERO_40_CHARACTER_COMMIT/release-evidence/v0.4.5/soak.json",
     "evidenceSha256": "REPLACE_WITH_EXACT_64_CHARACTER_SOAK_RECORD_SHA256"
   },
   "assistiveTechnology": {
@@ -42,7 +42,7 @@
       "locale": "en",
       "startedAt": "REPLACE_WITH_CANONICAL_UTC_TIMESTAMP",
       "testedAt": "REPLACE_WITH_CANONICAL_UTC_TIMESTAMP",
-      "evidenceUrl": "https://REPLACE_WITH_PUBLIC_EVIDENCE_HOST/v0.4.5/nvda-windows.json",
+      "evidenceUrl": "https://raw.githubusercontent.com/ahmedak320/bpmn-studio/REPLACE_WITH_NON_ZERO_40_CHARACTER_COMMIT/release-evidence/v0.4.5/nvda-windows.json",
       "evidenceSha256": "REPLACE_WITH_EXACT_64_CHARACTER_NVDA_RECORD_SHA256"
     },
     "voiceOverMacos": {
@@ -60,7 +60,7 @@
       "locale": "en",
       "startedAt": "REPLACE_WITH_CANONICAL_UTC_TIMESTAMP",
       "testedAt": "REPLACE_WITH_CANONICAL_UTC_TIMESTAMP",
-      "evidenceUrl": "https://REPLACE_WITH_PUBLIC_EVIDENCE_HOST/v0.4.5/voiceover-macos.json",
+      "evidenceUrl": "https://raw.githubusercontent.com/ahmedak320/bpmn-studio/REPLACE_WITH_NON_ZERO_40_CHARACTER_COMMIT/release-evidence/v0.4.5/voiceover-macos.json",
       "evidenceSha256": "REPLACE_WITH_EXACT_64_CHARACTER_VOICEOVER_RECORD_SHA256"
     },
     "arabicScreenReader": {
@@ -78,7 +78,7 @@
       "locale": "ar",
       "startedAt": "REPLACE_WITH_CANONICAL_UTC_TIMESTAMP",
       "testedAt": "REPLACE_WITH_CANONICAL_UTC_TIMESTAMP",
-      "evidenceUrl": "https://REPLACE_WITH_PUBLIC_EVIDENCE_HOST/v0.4.5/arabic-screen-reader.json",
+      "evidenceUrl": "https://raw.githubusercontent.com/ahmedak320/bpmn-studio/REPLACE_WITH_NON_ZERO_40_CHARACTER_COMMIT/release-evidence/v0.4.5/arabic-screen-reader.json",
       "evidenceSha256": "REPLACE_WITH_EXACT_64_CHARACTER_ARABIC_RECORD_SHA256"
     }
   },
@@ -92,15 +92,15 @@
       "accountId": "github:REPLACE_WITH_SIGNATORY_USERNAME"
     },
     "signedOffAt": "REPLACE_WITH_CANONICAL_UTC_TIMESTAMP",
-    "evidenceUrl": "https://REPLACE_WITH_PUBLIC_EVIDENCE_HOST/v0.4.5/defect-ledger.json",
+    "evidenceUrl": "https://raw.githubusercontent.com/ahmedak320/bpmn-studio/REPLACE_WITH_NON_ZERO_40_CHARACTER_COMMIT/release-evidence/v0.4.5/defect-ledger.json",
     "evidenceSha256": "REPLACE_WITH_EXACT_64_CHARACTER_DEFECT_LEDGER_SHA256"
   },
   "review": {
     "reviewedBy": {
-      "name": "REPLACE WITH INDEPENDENT REVIEWER FULL NAME",
-      "organization": "REPLACE WITH REVIEWER ORGANIZATION",
-      "role": "Independent release-evidence reviewer",
-      "accountId": "github:REPLACE_WITH_REVIEWER_USERNAME"
+      "name": "REPLACE WITH SIGNATORY FULL NAME",
+      "organization": "REPLACE WITH SIGNATORY ORGANIZATION",
+      "role": "Defect-control signatory",
+      "accountId": "github:REPLACE_WITH_SIGNATORY_USERNAME"
     },
     "reviewedAt": "REPLACE_WITH_CANONICAL_UTC_TIMESTAMP",
     "independentOfEvidenceProduction": true

@@ -1,5 +1,4 @@
 import { createHash } from 'node:crypto'
-import { lookup } from 'node:dns/promises'
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { isIP } from 'node:net'
 import { dirname, resolve } from 'node:path'
@@ -9,6 +8,7 @@ const MANIFEST_SCHEMA_VERSION = 2
 const SUPPORT_SCHEMA_VERSION = 1
 const MAX_MANIFEST_BYTES = 1024 * 1024
 const MAX_SUPPORT_BYTES = 256 * 1024
+const MAX_AUTOMATED_SOAK_GATE_BYTES = 16 * 1024 * 1024
 const FETCH_TIMEOUT_MS = 15_000
 const MAX_EVIDENCE_AGE_MS = 30 * 24 * 60 * 60 * 1000
 const MAX_CLOCK_SKEW_MS = 0
@@ -17,6 +17,9 @@ const MAX_SAMPLE_INTERVAL_MINUTES = 60
 const SAMPLE_GRACE_MS = 5 * 60 * 1000
 const MAX_DECLARED_MEMORY_GROWTH_BYTES = 512 * 1024 * 1024
 const MAX_DECLARED_STORAGE_GROWTH_BYTES = 512 * 1024 * 1024
+const IMMUTABLE_EVIDENCE_OWNER = 'ahmedak320'
+const IMMUTABLE_EVIDENCE_REPOSITORY = 'bpmn-studio'
+const IMMUTABLE_EVIDENCE_PATH_PREFIX = ['release-evidence', 'v0.4.5']
 
 const REQUIRED_LOCALES = ['en', 'ar']
 const REQUIRED_SOAK_SCENARIOS = [
@@ -28,6 +31,18 @@ const REQUIRED_SOAK_SCENARIOS = [
   'history-cleanup'
 ]
 const REQUIRED_RETENTION_CHECKS = ['draft-recovery', 'history-retention', 'workspace-state']
+const REQUIRED_AUTOMATED_SOAK_SAMPLE_FIELDS = [
+  'capturedAt',
+  'elapsedMs',
+  'residentMemoryBytes',
+  'storageBytes',
+  'locale',
+  'scenario',
+  'healthy',
+  'sequence',
+  'completedOperations',
+  'completedScenarioCycles'
+]
 const REQUIRED_LEDGER_RECORDS = ['soak', 'nvdaWindows', 'voiceOverMacos', 'arabicScreenReader']
 const ASSISTIVE_TECHNOLOGY_REQUIREMENTS = {
   nvdaWindows: {
@@ -70,7 +85,7 @@ function option(name, fallback, argv = process.argv.slice(2)) {
   return argument?.slice(prefix.length) ?? fallback
 }
 
-function requiredString(value, label, { minLength = 1, maxLength = 500 } = {}) {
+export function requiredString(value, label, { minLength = 1, maxLength = 500 } = {}) {
   if (
     typeof value !== 'string' ||
     value !== value.trim() ||
@@ -96,14 +111,18 @@ function containsPlaceholder(value, pattern) {
   return pattern.test(normalizedWords(value))
 }
 
-function containsArabicDetail(value) {
+export function containsArabicDetail(value) {
   return (
     (value.match(/\p{Script=Arabic}[\p{M}]*\p{Script=Arabic}[\p{Script=Arabic}\p{M}]*/gu) ?? [])
       .length >= 4
   )
 }
 
-function substantiveString(value, label, { minLength = 20, maxLength = 2_000, minWords = 4 } = {}) {
+export function substantiveString(
+  value,
+  label,
+  { minLength = 20, maxLength = 2_000, minWords = 4 } = {}
+) {
   const result = requiredString(value, label, { minLength, maxLength })
   if (containsPlaceholder(result, PLACEHOLDER_PATTERN)) {
     throw new Error(`${label} must contain substantive, non-placeholder findings.`)
@@ -116,7 +135,7 @@ function substantiveString(value, label, { minLength = 20, maxLength = 2_000, mi
   return result
 }
 
-function requiredSha256(value, label) {
+export function requiredSha256(value, label) {
   const digest = requiredString(value, label, { minLength: 64, maxLength: 64 }).toLowerCase()
   if (!/^[a-f0-9]{64}$/.test(digest)) {
     throw new Error(`${label} must be a 64-character SHA-256 digest.`)
@@ -127,7 +146,7 @@ function requiredSha256(value, label) {
   return digest
 }
 
-function requiredCandidateSha(value, label) {
+export function requiredCandidateSha(value, label) {
   const digest = requiredString(value, label, { minLength: 40, maxLength: 40 }).toLowerCase()
   if (!/^[a-f0-9]{40}$/.test(digest) || /^0{40}$/.test(digest)) {
     throw new Error(`${label} must be an exact, non-zero 40-character Git commit SHA.`)
@@ -135,7 +154,7 @@ function requiredCandidateSha(value, label) {
   return digest
 }
 
-function requiredHttpsUrl(value, label) {
+export function requiredHttpsUrl(value, label) {
   const raw = requiredString(value, label, { maxLength: 2_048 })
   let url
   try {
@@ -184,77 +203,37 @@ function requiredHttpsUrl(value, label) {
   return url.toString()
 }
 
-function isPublicAddress(address, family) {
-  if (family === 4) {
-    const octets = address.split('.').map(Number)
-    return !(
-      octets.length !== 4 ||
-      octets.some((octet) => !Number.isInteger(octet) || octet < 0 || octet > 255) ||
-      octets[0] === 0 ||
-      octets[0] === 10 ||
-      octets[0] === 127 ||
-      (octets[0] === 100 && octets[1] >= 64 && octets[1] <= 127) ||
-      (octets[0] === 169 && octets[1] === 254) ||
-      (octets[0] === 172 && octets[1] >= 16 && octets[1] <= 31) ||
-      (octets[0] === 192 && octets[1] === 0) ||
-      (octets[0] === 192 && octets[1] === 168) ||
-      (octets[0] === 198 && [18, 19].includes(octets[1])) ||
-      (octets[0] === 198 && octets[1] === 51 && octets[2] === 100) ||
-      (octets[0] === 203 && octets[1] === 0 && octets[2] === 113) ||
-      octets[0] >= 224
-    )
+export function requiredImmutableEvidenceUrl(value, label) {
+  const canonicalUrl = requiredHttpsUrl(value, label)
+  if (value !== canonicalUrl) {
+    throw new Error(`${label} must be a canonical immutable evidence URL.`)
   }
-  if (family === 6) {
-    const normalized = address.toLowerCase()
-    return !(
-      normalized === '::' ||
-      normalized === '::1' ||
-      normalized.startsWith('::ffff:') ||
-      normalized.startsWith('fc') ||
-      normalized.startsWith('fd') ||
-      /^fe[89abcdef]/.test(normalized) ||
-      normalized.startsWith('ff') ||
-      normalized.startsWith('2001:db8:')
-    )
-  }
-  return false
-}
-
-async function defaultResolveHostname(hostname) {
-  return lookup(hostname, { all: true, verbatim: true })
-}
-
-async function assertPublicDns(hostname, label, resolveHostname, timeoutMs) {
-  let timer
-  let addresses
-  try {
-    addresses = await Promise.race([
-      resolveHostname(hostname),
-      new Promise((_, reject) => {
-        timer = setTimeout(
-          () => reject(new Error(`${label} DNS resolution exceeded the evidence-fetch timeout.`)),
-          timeoutMs
-        )
-      })
-    ])
-  } catch (error) {
-    if (error instanceof Error && /evidence-fetch timeout/.test(error.message)) throw error
-    throw new Error(`${label} hostname could not be resolved for public-address verification.`, {
-      cause: error
-    })
-  } finally {
-    clearTimeout(timer)
-  }
+  const url = new URL(canonicalUrl)
+  const segments = url.pathname.split('/').slice(1)
+  const [owner, repository, revision, ...recordPath] = segments
   if (
-    !Array.isArray(addresses) ||
-    addresses.length === 0 ||
-    addresses.some(({ address, family }) => !isPublicAddress(address, family))
+    url.hostname !== 'raw.githubusercontent.com' ||
+    url.port ||
+    owner !== IMMUTABLE_EVIDENCE_OWNER ||
+    repository !== IMMUTABLE_EVIDENCE_REPOSITORY ||
+    !/^[a-f0-9]{40}$/.test(revision ?? '') ||
+    /^0{40}$/.test(revision ?? '') ||
+    recordPath.length <= IMMUTABLE_EVIDENCE_PATH_PREFIX.length ||
+    IMMUTABLE_EVIDENCE_PATH_PREFIX.some((segment, index) => recordPath[index] !== segment) ||
+    recordPath.some(
+      (segment) => !/^[A-Za-z0-9._-]+$/.test(segment) || segment === '.' || segment === '..'
+    ) ||
+    !recordPath.at(-1)?.endsWith('.json') ||
+    canonicalUrl.includes('%')
   ) {
-    throw new Error(`${label} hostname must resolve exclusively to public IP addresses.`)
+    throw new Error(
+      `${label} must be a canonical raw.githubusercontent.com/${IMMUTABLE_EVIDENCE_OWNER}/${IMMUTABLE_EVIDENCE_REPOSITORY}/<40-character-commit>/${IMMUTABLE_EVIDENCE_PATH_PREFIX.join('/')}/...json URL.`
+    )
   }
+  return canonicalUrl
 }
 
-function requiredTimestamp(value, label, now) {
+export function requiredTimestamp(value, label, now) {
   const timestamp = requiredString(value, label, { minLength: 1, maxLength: 100 })
   const parsed = Date.parse(timestamp)
   if (!Number.isFinite(parsed) || new Date(parsed).toISOString() !== timestamp) {
@@ -269,14 +248,14 @@ function requiredTimestamp(value, label, now) {
   return parsed
 }
 
-function requiredArray(value, label, { minLength = 1 } = {}) {
+export function requiredArray(value, label, { minLength = 1 } = {}) {
   if (!Array.isArray(value) || value.length < minLength) {
     throw new Error(`${label} must be an array containing at least ${minLength} item(s).`)
   }
   return value
 }
 
-function requireExactSet(values, requiredValues, label) {
+export function requireExactSet(values, requiredValues, label) {
   const array = requiredArray(values, label, { minLength: requiredValues.length })
   if (array.some((value) => typeof value !== 'string')) {
     throw new Error(`${label} must contain only strings.`)
@@ -315,7 +294,7 @@ function requiredAccountId(value, label) {
   return accountId
 }
 
-function requiredHumanIdentity(value, label) {
+export function requiredHumanIdentity(value, label) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
     throw new Error(`${label} must be a structured human identity.`)
   }
@@ -350,7 +329,7 @@ function requiredHumanIdentity(value, label) {
   return { name, organization, role, accountId }
 }
 
-function sameIdentity(left, right) {
+export function sameIdentity(left, right) {
   return (
     normalizedIdentityName(left) === normalizedIdentityName(right) ||
     left.accountId.toLocaleLowerCase('en-US') === right.accountId.toLocaleLowerCase('en-US')
@@ -406,7 +385,7 @@ async function readWithAbort(reader, signal, label) {
   }
 }
 
-async function readBodyWithLimit(response, maxBytes, label, signal) {
+export async function readBodyWithLimit(response, maxBytes, label, signal) {
   const declaredLength = response.headers?.get?.('content-length')
   if (declaredLength !== null && declaredLength !== undefined) {
     const parsedLength = Number(declaredLength)
@@ -444,24 +423,17 @@ async function readBodyWithLimit(response, maxBytes, label, signal) {
   return Buffer.concat(chunks, totalBytes)
 }
 
-async function fetchVerifiedJson({
+export async function fetchVerifiedJson({
   url,
   expectedSha256,
   label,
   maxBytes,
   fetchImpl,
-  resolveHostname,
   timeoutMs
 }) {
-  const requestedUrl = requiredHttpsUrl(url, `${label}.url`)
+  const requestedUrl = requiredImmutableEvidenceUrl(url, `${label}.url`)
   const expectedDigest = requiredSha256(expectedSha256, `${label}.sha256`)
-  const requestStartedAt = Date.now()
-  await assertPublicDns(new URL(requestedUrl).hostname, `${label}.url`, resolveHostname, timeoutMs)
-  const remainingMs = timeoutMs - (Date.now() - requestStartedAt)
-  if (remainingMs <= 0) {
-    throw new Error(`${label} exceeded the evidence-fetch timeout.`)
-  }
-  const signal = AbortSignal.timeout(remainingMs)
+  const signal = AbortSignal.timeout(timeoutMs)
   const response = await fetchImpl(requestedUrl, {
     cache: 'no-store',
     credentials: 'omit',
@@ -472,7 +444,7 @@ async function fetchVerifiedJson({
   if (!response.ok) {
     throw new Error(`${label} returned HTTP ${response.status}.`)
   }
-  const finalUrl = requiredHttpsUrl(response.url, `${label}.finalUrl`)
+  const finalUrl = requiredImmutableEvidenceUrl(response.url, `${label}.finalUrl`)
   if (finalUrl !== requestedUrl) {
     throw new Error(`${label} must not redirect; publish the exact final HTTPS URL.`)
   }
@@ -571,6 +543,7 @@ function validateSoakRecord(record, summary, candidateSha, artifactSha256, now) 
   let firstStorageBytes
   let peakMemoryBytes = 0
   let peakStorageBytes = 0
+  let previousCompletedOperations = -1
   const observedLocales = new Set()
   const localeSampleCounts = new Map(REQUIRED_LOCALES.map((locale) => [locale, 0]))
   const sampleScenarioCoverage = new Set()
@@ -605,12 +578,15 @@ function validateSoakRecord(record, summary, candidateSha, artifactSha256, now) 
       sample.healthy !== true ||
       sample.sequence !== index ||
       !Number.isSafeInteger(sample.completedOperations) ||
-      sample.completedOperations < 1
+      (index === 0
+        ? sample.completedOperations !== 0
+        : sample.completedOperations <= previousCompletedOperations)
     ) {
       throw new Error(
-        `${sampleLabel} must record healthy=true, its exact sequence, and positive completedOperations.`
+        `${sampleLabel} must record healthy=true, its exact sequence, zero start operations, and strictly increasing cumulative completedOperations thereafter.`
       )
     }
+    previousCompletedOperations = sample.completedOperations
     observedLocales.add(sample.locale)
     localeSampleCounts.set(sample.locale, localeSampleCounts.get(sample.locale) + 1)
     sampleScenarioCoverage.add(`${sample.locale}:${sample.scenario}`)
@@ -711,6 +687,391 @@ function validateSoakRecord(record, summary, candidateSha, artifactSha256, now) 
     REQUIRED_RETENTION_CHECKS,
     `${label}.retentionResults checks`
   )
+
+  const operatorEntries = requiredArray(record.operators, `${label}.operators`, {
+    minLength: REQUIRED_LOCALES.length
+  })
+  const operatorsByLocale = new Map()
+  for (const [index, entry] of operatorEntries.entries()) {
+    const operatorLabel = `${label}.operators[${index}]`
+    if (!REQUIRED_LOCALES.includes(entry?.locale)) {
+      throw new Error(`${operatorLabel}.locale must be en or ar.`)
+    }
+    if (operatorsByLocale.has(entry.locale)) {
+      throw new Error(`${label}.operators must not duplicate locale assignments.`)
+    }
+    const operator = requiredHumanIdentity(entry.operator, `${operatorLabel}.operator`)
+    const existingProfile = [...operatorsByLocale.values()].find((identity) =>
+      sameIdentity(identity, operator)
+    )
+    if (
+      existingProfile &&
+      ['name', 'organization', 'role', 'accountId'].some(
+        (field) => existingProfile[field] !== operator[field]
+      )
+    ) {
+      throw new Error(
+        `${label}.operators must use one stable profile when an operator covers both locales.`
+      )
+    }
+    const observedAt = requiredTimestamp(entry.observedAt, `${operatorLabel}.observedAt`, now)
+    if (observedAt < startedAt || observedAt > completedAt) {
+      throw new Error(`${operatorLabel}.observedAt must fall inside the soak interval.`)
+    }
+    substantiveString(entry.findings, `${operatorLabel}.findings`, { minLength: 40 })
+    if (entry.locale === 'ar' && !containsArabicDetail(entry.findings)) {
+      throw new Error(`${operatorLabel}.findings must contain substantive Arabic-script detail.`)
+    }
+    operatorsByLocale.set(entry.locale, operator)
+  }
+  requireExactSet([...operatorsByLocale.keys()], REQUIRED_LOCALES, `${label}.operators locales`)
+  const operators = [...operatorsByLocale.values()]
+
+  if (!record.attestation || record.attestation.independentOfOperators !== true) {
+    throw new Error(`${label}.attestation.independentOfOperators must be true.`)
+  }
+  const attestedBy = requiredHumanIdentity(
+    record.attestation.attestedBy,
+    `${label}.attestation.attestedBy`
+  )
+  if (operators.some((operator) => sameIdentity(attestedBy, operator))) {
+    throw new Error(`${label}.attestation must be signed by a human independent of the operators.`)
+  }
+  const attestedAt = requiredTimestamp(
+    record.attestation.attestedAt,
+    `${label}.attestation.attestedAt`,
+    now
+  )
+  if (attestedAt <= completedAt) {
+    throw new Error(`${label}.attestation.attestedAt must postdate soak completion.`)
+  }
+  substantiveString(record.attestation.findings, `${label}.attestation.findings`, {
+    minLength: 40
+  })
+  substantiveString(record.findings, `${label}.findings`, { minLength: 40 })
+  return {
+    automatedGateEvidenceUrl: requiredHttpsUrl(
+      record.automatedGateEvidenceUrl,
+      `${label}.automatedGateEvidenceUrl`
+    ),
+    automatedGateEvidenceSha256: requiredSha256(
+      record.automatedGateEvidenceSha256,
+      `${label}.automatedGateEvidenceSha256`
+    ),
+    attestedAt,
+    operatorIdentities: operators
+  }
+}
+
+function requiredObject(value, label) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw new Error(`${label} must be a JSON object.`)
+  }
+  return value
+}
+
+function requiredNonNegativeSafeInteger(value, label, { positive = false } = {}) {
+  if (!Number.isSafeInteger(value) || value < (positive ? 1 : 0)) {
+    throw new Error(`${label} must be a ${positive ? 'positive' : 'non-negative'} safe integer.`)
+  }
+  return value
+}
+
+function validateAutomatedSoakGate(record, summary, candidateSha, artifactSha256, now) {
+  const label = 'supportingEvidence.automatedSoakGate'
+  requiredObject(record, label)
+  if (record.schemaVersion !== SUPPORT_SCHEMA_VERSION) {
+    throw new Error(`${label}.schemaVersion must be ${SUPPORT_SCHEMA_VERSION}.`)
+  }
+  if (record.evidenceType !== 'orbitpm-lite-soak-automation') {
+    throw new Error(`${label}.evidenceType must be orbitpm-lite-soak-automation.`)
+  }
+  if (requiredCandidateSha(record.candidateSha, `${label}.candidateSha`) !== candidateSha) {
+    throw new Error(`${label} is not bound to the exact candidate SHA.`)
+  }
+  if (requiredSha256(record.artifactSha256, `${label}.artifactSha256`) !== artifactSha256) {
+    throw new Error(`${label} is not bound to the exact artifact SHA-256.`)
+  }
+  if (
+    record.status !== 'passed' ||
+    record.harnessPassed !== true ||
+    record.passed !== true ||
+    record.releaseEligible !== true ||
+    record.smoke !== false ||
+    record.uninterrupted !== true ||
+    record.restarts !== 0
+  ) {
+    throw new Error(
+      `${label} must record a passed, release-eligible, non-smoke, uninterrupted harness run with zero restarts.`
+    )
+  }
+
+  const startedAt = requiredTimestamp(record.startedAt, `${label}.startedAt`, now)
+  const completedAt = requiredTimestamp(record.completedAt, `${label}.completedAt`, now)
+  if (
+    startedAt !== summary.startedAt ||
+    completedAt !== summary.completedAt ||
+    record.durationMs !== completedAt - startedAt ||
+    record.durationMs < MIN_SOAK_DURATION_MS ||
+    record.durationRequirementMs !== MIN_SOAK_DURATION_MS ||
+    record.durationRequirementSatisfied !== true
+  ) {
+    throw new Error(
+      `${label} must exactly match the human wrapper chronology and satisfy the 48-hour requirement.`
+    )
+  }
+  requireExactSet(record.locales, REQUIRED_LOCALES, `${label}.locales`)
+  requireExactSet(record.scenarios, REQUIRED_SOAK_SCENARIOS, `${label}.scenarios`)
+  requireExactSet(record.retentionChecks, REQUIRED_RETENTION_CHECKS, `${label}.retentionChecks`)
+  if (record.sampleIntervalMinutes !== summary.sampleIntervalMinutes) {
+    throw new Error(`${label}.sampleIntervalMinutes must match the human soak wrapper.`)
+  }
+
+  const samples = requiredArray(record.samples, `${label}.samples`, {
+    minLength: Math.ceil(record.durationMs / (record.sampleIntervalMinutes * 60_000)) + 1
+  })
+  const observedLocales = new Set()
+  const scenarioCoverage = new Set()
+  let previousCapturedAt = null
+  let previousElapsedMs = -1
+  let previousCompletedOperations = -1
+  let firstResidentMemoryBytes
+  let firstStorageBytes
+  let peakResidentMemoryBytes = 0
+  let peakStorageBytes = 0
+  for (const [index, sample] of samples.entries()) {
+    const sampleLabel = `${label}.samples[${index}]`
+    requiredObject(sample, sampleLabel)
+    for (const field of REQUIRED_AUTOMATED_SOAK_SAMPLE_FIELDS) {
+      if (!(field in sample)) {
+        throw new Error(`${sampleLabel}.${field} is required.`)
+      }
+    }
+    const capturedAt = requiredTimestamp(sample.capturedAt, `${sampleLabel}.capturedAt`, now)
+    if (capturedAt < startedAt || capturedAt > completedAt) {
+      throw new Error(`${sampleLabel}.capturedAt must fall inside the automated soak interval.`)
+    }
+    if (previousCapturedAt !== null) {
+      const allowedGapMs = record.sampleIntervalMinutes * 60_000 + SAMPLE_GRACE_MS
+      if (capturedAt <= previousCapturedAt || capturedAt - previousCapturedAt > allowedGapMs) {
+        throw new Error(
+          `${label}.samples must be strictly chronological without a gap larger than the declared interval.`
+        )
+      }
+    }
+    const elapsedMs = requiredNonNegativeSafeInteger(sample.elapsedMs, `${sampleLabel}.elapsedMs`)
+    if ((index === 0 && elapsedMs !== 0) || elapsedMs <= previousElapsedMs) {
+      throw new Error(
+        `${label}.samples must start at elapsedMs=0 and then strictly increase elapsed time.`
+      )
+    }
+    if (
+      !Number.isSafeInteger(sample.residentMemoryBytes) ||
+      sample.residentMemoryBytes <= 0 ||
+      !Number.isSafeInteger(sample.storageBytes) ||
+      sample.storageBytes < 0
+    ) {
+      throw new Error(`${sampleLabel} must contain valid memory and storage byte measurements.`)
+    }
+    if (
+      !REQUIRED_LOCALES.includes(sample.locale) ||
+      !REQUIRED_SOAK_SCENARIOS.includes(sample.scenario)
+    ) {
+      throw new Error(`${sampleLabel} must identify a required locale and scenario.`)
+    }
+    const completedOperations = requiredNonNegativeSafeInteger(
+      sample.completedOperations,
+      `${sampleLabel}.completedOperations`
+    )
+    const completedScenarioCycles = requiredNonNegativeSafeInteger(
+      sample.completedScenarioCycles,
+      `${sampleLabel}.completedScenarioCycles`
+    )
+    if (
+      sample.healthy !== true ||
+      sample.sequence !== index ||
+      (index === 0
+        ? completedOperations !== 0 || completedScenarioCycles !== 0
+        : completedOperations <= previousCompletedOperations)
+    ) {
+      throw new Error(
+        `${sampleLabel} must be healthy, sequential, and contain truthful cumulative operation and scenario-cycle counts.`
+      )
+    }
+    observedLocales.add(sample.locale)
+    scenarioCoverage.add(`${sample.locale}:${sample.scenario}`)
+    firstResidentMemoryBytes ??= sample.residentMemoryBytes
+    firstStorageBytes ??= sample.storageBytes
+    peakResidentMemoryBytes = Math.max(peakResidentMemoryBytes, sample.residentMemoryBytes)
+    peakStorageBytes = Math.max(peakStorageBytes, sample.storageBytes)
+    previousCapturedAt = capturedAt
+    previousElapsedMs = elapsedMs
+    previousCompletedOperations = completedOperations
+  }
+  if (
+    samples[0].capturedAt !== record.startedAt ||
+    samples.at(-1).capturedAt !== record.completedAt ||
+    samples.at(-1).elapsedMs < MIN_SOAK_DURATION_MS
+  ) {
+    throw new Error(
+      `${label}.samples must cover the exact wall-clock interval and at least 48 monotonic hours.`
+    )
+  }
+  requireExactSet([...observedLocales], REQUIRED_LOCALES, `${label}.samples locales`)
+  for (const locale of REQUIRED_LOCALES) {
+    for (const scenario of REQUIRED_SOAK_SCENARIOS) {
+      if (!scenarioCoverage.has(`${locale}:${scenario}`)) {
+        throw new Error(`${label}.samples must exercise ${locale}:${scenario}.`)
+      }
+    }
+  }
+
+  for (const [value, valueLabel] of [
+    [record.maxResidentMemoryGrowthBytes, `${label}.maxResidentMemoryGrowthBytes`],
+    [record.maxStorageGrowthBytes, `${label}.maxStorageGrowthBytes`],
+    [record.observedResidentMemoryGrowthBytes, `${label}.observedResidentMemoryGrowthBytes`],
+    [record.observedStorageGrowthBytes, `${label}.observedStorageGrowthBytes`]
+  ]) {
+    requiredNonNegativeSafeInteger(value, valueLabel)
+  }
+  if (
+    record.maxResidentMemoryGrowthBytes > MAX_DECLARED_MEMORY_GROWTH_BYTES ||
+    record.maxStorageGrowthBytes > MAX_DECLARED_STORAGE_GROWTH_BYTES ||
+    record.observedResidentMemoryGrowthBytes !==
+      Math.max(0, peakResidentMemoryBytes - firstResidentMemoryBytes) ||
+    record.observedStorageGrowthBytes !== Math.max(0, peakStorageBytes - firstStorageBytes) ||
+    record.observedResidentMemoryGrowthBytes > record.maxResidentMemoryGrowthBytes ||
+    record.observedStorageGrowthBytes > record.maxStorageGrowthBytes
+  ) {
+    throw new Error(`${label} automated samples do not satisfy their exact bounded-growth claims.`)
+  }
+
+  const automatedScenarioResults = requiredArray(
+    record.scenarioResults,
+    `${label}.scenarioResults`,
+    { minLength: REQUIRED_LOCALES.length * REQUIRED_SOAK_SCENARIOS.length }
+  )
+  const automatedScenarioCoverage = new Set()
+  for (const [index, result] of automatedScenarioResults.entries()) {
+    const resultLabel = `${label}.scenarioResults[${index}]`
+    if (
+      !REQUIRED_LOCALES.includes(result?.locale) ||
+      !REQUIRED_SOAK_SCENARIOS.includes(result?.scenario) ||
+      result.passed !== true
+    ) {
+      throw new Error(`${resultLabel} must identify a passed required locale/scenario.`)
+    }
+    requiredNonNegativeSafeInteger(result.completedCycles, `${resultLabel}.completedCycles`, {
+      positive: true
+    })
+    substantiveString(result.findings, `${resultLabel}.findings`)
+    if (result.locale === 'ar' && !containsArabicDetail(result.findings)) {
+      throw new Error(`${resultLabel}.findings must contain substantive Arabic-script detail.`)
+    }
+    const coverageKey = `${result.locale}:${result.scenario}`
+    if (automatedScenarioCoverage.has(coverageKey)) {
+      throw new Error(`${label}.scenarioResults must not duplicate locale/scenario pairs.`)
+    }
+    automatedScenarioCoverage.add(coverageKey)
+  }
+  for (const locale of REQUIRED_LOCALES) {
+    for (const scenario of REQUIRED_SOAK_SCENARIOS) {
+      if (!automatedScenarioCoverage.has(`${locale}:${scenario}`)) {
+        throw new Error(`${label}.scenarioResults must cover ${locale}:${scenario}.`)
+      }
+    }
+  }
+
+  const automatedRetentionResults = requiredArray(
+    record.retentionResults,
+    `${label}.retentionResults`,
+    { minLength: REQUIRED_RETENTION_CHECKS.length }
+  )
+  const automatedRetentionCoverage = new Set()
+  for (const [index, result] of automatedRetentionResults.entries()) {
+    const resultLabel = `${label}.retentionResults[${index}]`
+    if (!REQUIRED_RETENTION_CHECKS.includes(result?.check) || result.passed !== true) {
+      throw new Error(`${resultLabel} must identify a passed required retention check.`)
+    }
+    substantiveString(result.findings, `${resultLabel}.findings`)
+    const metrics = requiredObject(result.metrics, `${resultLabel}.metrics`)
+    const metricEntries = Object.entries(metrics)
+    if (
+      metricEntries.length === 0 ||
+      metricEntries.some(
+        ([key, value]) =>
+          !/^[A-Za-z][A-Za-z0-9]*$/.test(key) ||
+          (!Number.isSafeInteger(value) && typeof value !== 'boolean') ||
+          (typeof value === 'number' && value < 0)
+      ) ||
+      !metricEntries.some(([, value]) => value === true || (typeof value === 'number' && value > 0))
+    ) {
+      throw new Error(`${resultLabel}.metrics must contain objective non-negative counters.`)
+    }
+    if (automatedRetentionCoverage.has(result.check)) {
+      throw new Error(`${label}.retentionResults must not duplicate checks.`)
+    }
+    automatedRetentionCoverage.add(result.check)
+  }
+  requireExactSet(
+    [...automatedRetentionCoverage],
+    REQUIRED_RETENTION_CHECKS,
+    `${label}.retentionResults checks`
+  )
+
+  const candidateEndpoints = requiredObject(
+    record.candidateEndpoints,
+    `${label}.candidateEndpoints`
+  )
+  for (const field of ['requiredSha', 'headShaAtStart', 'headShaAtEnd']) {
+    if (
+      requiredCandidateSha(candidateEndpoints[field], `${label}.candidateEndpoints.${field}`) !==
+      candidateSha
+    ) {
+      throw new Error(`${label}.candidateEndpoints.${field} must equal the exact candidate SHA.`)
+    }
+  }
+  if (
+    candidateEndpoints.cleanAtStart !== true ||
+    candidateEndpoints.cleanAtEnd !== true ||
+    candidateEndpoints.matchedAtStart !== true ||
+    candidateEndpoints.matchedAtEnd !== true
+  ) {
+    throw new Error(`${label}.candidateEndpoints must prove a clean, unchanged candidate.`)
+  }
+
+  const artifactEndpoints = requiredObject(record.artifactEndpoints, `${label}.artifactEndpoints`)
+  for (const field of ['sha256AtStart', 'sha256AtEnd']) {
+    if (
+      requiredSha256(artifactEndpoints[field], `${label}.artifactEndpoints.${field}`) !==
+      artifactSha256
+    ) {
+      throw new Error(`${label}.artifactEndpoints.${field} must equal the exact artifact digest.`)
+    }
+  }
+  const sizeBytesAtStart = requiredNonNegativeSafeInteger(
+    artifactEndpoints.sizeBytesAtStart,
+    `${label}.artifactEndpoints.sizeBytesAtStart`,
+    { positive: true }
+  )
+  if (
+    requiredNonNegativeSafeInteger(
+      artifactEndpoints.sizeBytesAtEnd,
+      `${label}.artifactEndpoints.sizeBytesAtEnd`,
+      { positive: true }
+    ) !== sizeBytesAtStart ||
+    artifactEndpoints.matchedAtEnd !== true
+  ) {
+    throw new Error(`${label}.artifactEndpoints must prove unchanged exact artifact bytes.`)
+  }
+  const clock = requiredObject(record.clock, `${label}.clock`)
+  if (
+    clock.wallClock !== 'UTC' ||
+    clock.elapsedClock !== 'performance.now' ||
+    clock.timestampDerivation !== 'startedAt-plus-monotonic-elapsed'
+  ) {
+    throw new Error(`${label}.clock must describe the soak gate's trusted clock derivation.`)
+  }
   substantiveString(record.findings, `${label}.findings`, { minLength: 40 })
 }
 
@@ -974,13 +1335,17 @@ function validateReview(review, defectSummary, assistiveTechnologySummaries, now
     throw new Error('review.independentOfEvidenceProduction must be true.')
   }
   const reviewedBy = requiredHumanIdentity(review.reviewedBy, 'review.reviewedBy')
-  const producerIdentities = [
-    defectSummary.signedOffBy,
-    ...Object.values(assistiveTechnologySummaries).map((summary) => summary.operator)
-  ]
-  if (producerIdentities.some((producer) => sameIdentity(reviewedBy, producer))) {
+  const testOperators = Object.values(assistiveTechnologySummaries).map(
+    (summary) => summary.operator
+  )
+  if (testOperators.some((operator) => sameIdentity(defectSummary.signedOffBy, operator))) {
     throw new Error(
-      'Final evidence reviewer must be independent of the defect signatory and test operators.'
+      'Defect signatory must be independent of every assistive-technology test operator.'
+    )
+  }
+  if (testOperators.some((operator) => sameIdentity(reviewedBy, operator))) {
+    throw new Error(
+      'Final evidence reviewer must be independent of every assistive-technology test operator.'
     )
   }
   return {
@@ -1028,7 +1393,6 @@ export async function verifyReleaseEvidence({
   sourceUrl,
   sourceSha256,
   fetchImpl = fetch,
-  resolveHostname = defaultResolveHostname,
   now = Date.now(),
   timeoutMs = FETCH_TIMEOUT_MS
 }) {
@@ -1047,7 +1411,6 @@ export async function verifyReleaseEvidence({
     label: 'External release evidence manifest',
     maxBytes: MAX_MANIFEST_BYTES,
     fetchImpl,
-    resolveHostname,
     timeoutMs
   })
   const evidence = source.record
@@ -1132,7 +1495,6 @@ export async function verifyReleaseEvidence({
         label: `Supporting evidence ${request.key}`,
         maxBytes: MAX_SUPPORT_BYTES,
         fetchImpl,
-        resolveHostname,
         timeoutMs
       }))
     }))
@@ -1146,7 +1508,63 @@ export async function verifyReleaseEvidence({
   const supportingByKey = Object.fromEntries(
     fetchedSupportingRecords.map((record) => [record.key, record])
   )
-  validateSoakRecord(supportingByKey.soak.record, soakSummary, candidateSha, artifactSha256, now)
+  const soakValidation = validateSoakRecord(
+    supportingByKey.soak.record,
+    soakSummary,
+    candidateSha,
+    artifactSha256,
+    now
+  )
+  const occupiedEvidenceUrls = new Set([
+    source.requestedUrl,
+    source.finalUrl,
+    ...fetchedSupportingRecords.flatMap((record) => [record.requestedUrl, record.finalUrl])
+  ])
+  if (occupiedEvidenceUrls.has(soakValidation.automatedGateEvidenceUrl)) {
+    throw new Error(
+      'Automated soak gate evidence must use a distinct URL from the manifest and human supporting records.'
+    )
+  }
+  const automatedSoakGate = {
+    key: 'automatedSoakGate',
+    ...(await fetchVerifiedJson({
+      url: soakValidation.automatedGateEvidenceUrl,
+      expectedSha256: soakValidation.automatedGateEvidenceSha256,
+      label: 'Automated soak gate evidence',
+      maxBytes: MAX_AUTOMATED_SOAK_GATE_BYTES,
+      fetchImpl,
+      timeoutMs
+    }))
+  }
+  if (occupiedEvidenceUrls.has(automatedSoakGate.finalUrl)) {
+    throw new Error(
+      'Automated soak gate evidence must resolve to a distinct final URL from every other record.'
+    )
+  }
+  validateAutomatedSoakGate(
+    automatedSoakGate.record,
+    soakSummary,
+    candidateSha,
+    artifactSha256,
+    now
+  )
+  if (defectSummary.signedOffAt <= soakValidation.attestedAt) {
+    throw new Error('P0/P1 sign-off must postdate the independent soak attestation.')
+  }
+  if (
+    soakValidation.operatorIdentities.some((identity) =>
+      sameIdentity(defectSummary.signedOffBy, identity)
+    )
+  ) {
+    throw new Error('Defect signatory must be independent of the soak operators.')
+  }
+  if (
+    soakValidation.operatorIdentities.some((identity) =>
+      sameIdentity(reviewSummary.reviewedBy, identity)
+    )
+  ) {
+    throw new Error('Final evidence reviewer must be independent of the soak operators.')
+  }
   for (const [key, summary] of Object.entries(assistiveTechnologySummaries)) {
     validateAssistiveTechnologyRecord(
       supportingByKey[key].record,
@@ -1192,7 +1610,8 @@ export async function verifyReleaseEvidence({
       maximumDeclaredStorageGrowthBytes: MAX_DECLARED_STORAGE_GROWTH_BYTES,
       fetchTimeoutMs: timeoutMs,
       manifestMaxBytes: MAX_MANIFEST_BYTES,
-      supportingRecordMaxBytes: MAX_SUPPORT_BYTES
+      supportingRecordMaxBytes: MAX_SUPPORT_BYTES,
+      automatedSoakGateMaxBytes: MAX_AUTOMATED_SOAK_GATE_BYTES
     },
     source: {
       url: source.requestedUrl,
@@ -1202,7 +1621,7 @@ export async function verifyReleaseEvidence({
       bodyBase64: source.bodyBase64
     },
     evidence,
-    supportingEvidence: fetchedSupportingRecords.map(
+    supportingEvidence: [...fetchedSupportingRecords, automatedSoakGate].map(
       ({ key, requestedUrl, finalUrl, sha256, sizeBytes, bodyBase64, record }) => ({
         key,
         url: requestedUrl,
@@ -1220,7 +1639,6 @@ export async function main({
   argv = process.argv.slice(2),
   env = process.env,
   fetchImpl = fetch,
-  resolveHostname = defaultResolveHostname,
   now = Date.now()
 } = {}) {
   const candidateSha = requiredCandidateSha(
@@ -1245,13 +1663,12 @@ export async function main({
     sourceUrl,
     sourceSha256: expectedSourceSha256,
     fetchImpl,
-    resolveHostname,
     now
   })
   mkdirSync(dirname(outputPath), { recursive: true })
   writeFileSync(outputPath, `${JSON.stringify(verification, null, 2)}\n`, { flag: 'wx' })
   console.log(
-    `Verified candidate-bound 48-hour soak, NVDA, VoiceOver, Arabic, defect-ledger, and independent-review evidence at SHA-256 ${verification.source.sha256}.`
+    `Verified candidate-bound automated and human-attested 48-hour soak, NVDA, VoiceOver, Arabic, defect-ledger, and independent-review evidence at SHA-256 ${verification.source.sha256}.`
   )
   return verification
 }

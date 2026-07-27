@@ -12,8 +12,9 @@ const CANDIDATE_SHA = '1234567890abcdef1234567890abcdef12345678'
 const CANDIDATE_READY_AT = '2026-07-24T05:00:00.000Z'
 const ARTIFACT_BYTES = Buffer.from('<!doctype html><title>OrbitPM Lite 0.4.5</title>')
 const ARTIFACT_SHA256 = digest(ARTIFACT_BYTES)
-const BASE_URL = 'https://release-evidence.orbitpm.app/v0.4.5'
-const resolvePublicHostname = async () => [{ address: '93.184.216.34', family: 4 }]
+const EVIDENCE_COMMIT = 'abcdef1234567890abcdef1234567890abcdef12'
+const BASE_URL = `https://raw.githubusercontent.com/ahmedak320/bpmn-studio/${EVIDENCE_COMMIT}/release-evidence/v0.4.5`
+const AUTOMATED_SOAK_URL = `${BASE_URL}/automated-soak-gate.json`
 
 const identities = {
   nvda: {
@@ -40,11 +41,11 @@ const identities = {
     role: 'Defect-control signatory',
     accountId: 'github:priya-nair'
   },
-  reviewer: {
-    name: 'Thomas Becker',
-    organization: 'Independent Assurance Group',
-    role: 'Independent release-evidence reviewer',
-    accountId: 'github:thomas-becker'
+  soakOperator: {
+    name: 'Elena Morris',
+    organization: 'Release Endurance Review',
+    role: 'Bilingual soak observation operator',
+    accountId: 'github:elena-morris'
   }
 }
 
@@ -80,8 +81,98 @@ function buildHappyFixture() {
     scenario: soakScenarios[Math.floor(index / locales.length) % soakScenarios.length],
     healthy: true,
     sequence: index,
-    completedOperations: 3 + (index % 4)
+    completedOperations: index * 3
   }))
+  const automatedSoakRecord = {
+    schemaVersion: 1,
+    evidenceType: 'orbitpm-lite-soak-automation',
+    candidateSha: CANDIDATE_SHA,
+    artifactSha256: ARTIFACT_SHA256,
+    status: 'passed',
+    harnessPassed: true,
+    passed: true,
+    releaseEligible: true,
+    smoke: false,
+    uninterrupted: true,
+    restarts: 0,
+    startedAt: soakStartedAt,
+    completedAt: soakCompletedAt,
+    durationMs: 172_800_000,
+    durationRequirementMs: 172_800_000,
+    durationRequirementSatisfied: true,
+    locales,
+    scenarios: soakScenarios,
+    retentionChecks: ['draft-recovery', 'history-retention', 'workspace-state'],
+    sampleIntervalMinutes: 60,
+    samples: samples.map((sample, index) => ({
+      ...sample,
+      elapsedMs: index * 60 * 60 * 1000,
+      completedScenarioCycles: index
+    })),
+    maxResidentMemoryGrowthBytes: 5_000_000,
+    maxStorageGrowthBytes: 500_000,
+    observedResidentMemoryGrowthBytes: 4_800_000,
+    observedStorageGrowthBytes: 240_000,
+    scenarioResults: locales.flatMap((locale) =>
+      soakScenarios.map((scenario) => ({
+        locale,
+        scenario,
+        passed: true,
+        completedCycles: 4,
+        findings:
+          locale === 'ar'
+            ? `نفذت أداة التحمل دورة ${scenario} بالعربية أربع مرات دون فشل مسجل.`
+            : `The soak harness completed four ${scenario} cycles in ${locale} without a recorded failure.`
+      }))
+    ),
+    retentionResults: [
+      {
+        check: 'draft-recovery',
+        passed: true,
+        metrics: { reviewsCompleted: 48, recoveriesCommitted: 48 },
+        findings:
+          'The automated harness completed every draft recovery review and commit without failure.'
+      },
+      {
+        check: 'history-retention',
+        passed: true,
+        metrics: { revisionsCreated: 48, retentionPasses: 48 },
+        findings:
+          'The automated harness created and retained every required history revision without failure.'
+      },
+      {
+        check: 'workspace-state',
+        passed: true,
+        metrics: { workspaceSwitches: 48, staleRejections: 48 },
+        findings:
+          'The automated harness preserved workspace isolation and rejected every stale write attempt.'
+      }
+    ],
+    candidateEndpoints: {
+      requiredSha: CANDIDATE_SHA,
+      headShaAtStart: CANDIDATE_SHA,
+      headShaAtEnd: CANDIDATE_SHA,
+      cleanAtStart: true,
+      cleanAtEnd: true,
+      matchedAtStart: true,
+      matchedAtEnd: true
+    },
+    artifactEndpoints: {
+      sha256AtStart: ARTIFACT_SHA256,
+      sha256AtEnd: ARTIFACT_SHA256,
+      sizeBytesAtStart: ARTIFACT_BYTES.byteLength,
+      sizeBytesAtEnd: ARTIFACT_BYTES.byteLength,
+      matchedAtEnd: true
+    },
+    clock: {
+      wallClock: 'UTC',
+      elapsedClock: 'performance.now',
+      timestampDerivation: 'startedAt-plus-monotonic-elapsed'
+    },
+    findings:
+      'The automated release soak completed every required operation, locale, scenario, and retention check.'
+  }
+  const automatedSoakBytes = jsonBytes(automatedSoakRecord)
   const soakRecord = {
     schemaVersion: 1,
     evidenceType: 'orbitpm-lite-soak',
@@ -99,6 +190,8 @@ function buildHappyFixture() {
     samples,
     maxResidentMemoryGrowthBytes: 5_000_000,
     maxStorageGrowthBytes: 500_000,
+    automatedGateEvidenceUrl: AUTOMATED_SOAK_URL,
+    automatedGateEvidenceSha256: digest(automatedSoakBytes),
     scenarioResults: locales.flatMap((locale) =>
       soakScenarios.map((scenario) => ({
         locale,
@@ -127,6 +220,29 @@ function buildHappyFixture() {
         findings: 'Workspace state remained isolated and durable through repeated switching.'
       }
     ],
+    operators: [
+      {
+        locale: 'en',
+        operator: clone(identities.soakOperator),
+        observedAt: '2026-07-26T05:30:00.000Z',
+        findings:
+          'The English observation covered every required endurance scenario and confirmed the recorded healthy state.'
+      },
+      {
+        locale: 'ar',
+        operator: clone(identities.soakOperator),
+        observedAt: '2026-07-26T05:45:00.000Z',
+        findings:
+          'راجع المشغل العربي جميع سيناريوهات التحمل المطلوبة وأكد سلامة الحالة المسجلة دون فقدان العمل.'
+      }
+    ],
+    attestation: {
+      attestedBy: clone(identities.signatory),
+      attestedAt: '2026-07-26T06:15:00.000Z',
+      independentOfOperators: true,
+      findings:
+        'The independent attestor reviewed the complete observation ledger and confirmed its candidate and artifact bindings.'
+    },
     findings:
       'All required English and Arabic scenarios remained usable throughout the uninterrupted 48-hour observation.'
   }
@@ -279,7 +395,7 @@ function buildHappyFixture() {
       evidenceSha256: supportDigests[`${BASE_URL}/defect-ledger.json`]
     },
     review: {
-      reviewedBy: clone(identities.reviewer),
+      reviewedBy: clone(identities.signatory),
       reviewedAt: '2026-07-26T11:00:00.000Z',
       independentOfEvidenceProduction: true
     }
@@ -288,13 +404,15 @@ function buildHappyFixture() {
   const manifestBytes = jsonBytes(manifest)
   const bodies = new Map([
     [manifestUrl, manifestBytes],
-    ...Object.entries(supportRecords).map(([url, record]) => [url, jsonBytes(record)])
+    ...Object.entries(supportRecords).map(([url, record]) => [url, jsonBytes(record)]),
+    [AUTOMATED_SOAK_URL, automatedSoakBytes]
   ])
   return {
     manifest,
     manifestUrl,
     manifestSha256: digest(manifestBytes),
     supportRecords,
+    automatedSoakRecord,
     bodies
   }
 }
@@ -400,6 +518,16 @@ function replaceSupportRecord(fixture, url, record) {
   rebuildManifest(fixture)
 }
 
+function replaceAutomatedSoakRecord(fixture, record) {
+  const recordBytes = jsonBytes(record)
+  fixture.automatedSoakRecord = record
+  fixture.bodies.set(AUTOMATED_SOAK_URL, recordBytes)
+  const soakUrl = `${BASE_URL}/soak.json`
+  const soakRecord = clone(fixture.supportRecords[soakUrl])
+  soakRecord.automatedGateEvidenceSha256 = digest(recordBytes)
+  replaceSupportRecord(fixture, soakUrl, soakRecord)
+}
+
 async function verifyFixture(fixture, overrides = {}) {
   return verifyReleaseEvidence({
     candidateSha: CANDIDATE_SHA,
@@ -408,7 +536,6 @@ async function verifyFixture(fixture, overrides = {}) {
     sourceUrl: fixture.manifestUrl,
     sourceSha256: fixture.manifestSha256,
     fetchImpl: makeFetch(fixture.bodies),
-    resolveHostname: resolvePublicHostname,
     now: NOW,
     ...overrides
   })
@@ -424,7 +551,6 @@ test('verifies and aggregates every SHA-pinned supporting evidence record', asyn
     sourceUrl: fixture.manifestUrl,
     sourceSha256: fixture.manifestSha256,
     fetchImpl: makeFetch(fixture.bodies, calls),
-    resolveHostname: resolvePublicHostname,
     now: NOW
   })
 
@@ -435,9 +561,16 @@ test('verifies and aggregates every SHA-pinned supporting evidence record', asyn
   assert.equal(verification.artifactSha256, ARTIFACT_SHA256)
   assert.deepEqual(
     verification.supportingEvidence.map(({ key }) => key),
-    ['soak', 'nvdaWindows', 'voiceOverMacos', 'arabicScreenReader', 'defectLedger']
+    [
+      'soak',
+      'nvdaWindows',
+      'voiceOverMacos',
+      'arabicScreenReader',
+      'defectLedger',
+      'automatedSoakGate'
+    ]
   )
-  assert.equal(calls.length, 6)
+  assert.equal(calls.length, 7)
   for (const call of calls) {
     assert.equal(call.options.credentials, 'omit')
     assert.equal(call.options.redirect, 'error')
@@ -486,19 +619,22 @@ test('CLI writes the complete verified aggregate and requires exact artifact byt
       ],
       env: {},
       fetchImpl: makeFetch(fixture.bodies),
-      resolveHostname: resolvePublicHostname,
       now: NOW
     })
     const output = JSON.parse(await readFile(outputPath, 'utf8'))
     assert.equal(output.source.sha256, fixture.manifestSha256)
-    assert.equal(output.supportingEvidence.length, 5)
+    assert.equal(output.supportingEvidence.length, 6)
     assert.equal(output.supportingEvidence[0].record.evidenceType, 'orbitpm-lite-soak')
+    assert.equal(
+      output.supportingEvidence.at(-1).record.evidenceType,
+      'orbitpm-lite-soak-automation'
+    )
   } finally {
     await rm(directory, { recursive: true, force: true })
   }
 })
 
-test('rejects the fabricated 2099/example.invalid/zero-hash/same-reviewer evidence case', async (t) => {
+test('rejects fabricated chronology, URL, digest, and operator-independence claims', async (t) => {
   await t.test('future 2099 chronology', async () => {
     const fixture = buildHappyFixture()
     fixture.manifest.assembledAt = '2099-01-01T00:00:00.000Z'
@@ -526,18 +662,18 @@ test('rejects the fabricated 2099/example.invalid/zero-hash/same-reviewer eviden
     )
   })
 
-  await t.test('same defect signatory and final reviewer', async () => {
+  await t.test('final reviewer aliases an assistive-technology operator', async () => {
     const fixture = buildHappyFixture()
     fixture.manifest.review.reviewedBy = {
-      ...clone(identities.signatory),
-      name: 'Priya  Nair',
+      ...clone(identities.nvda),
+      name: 'Amina  Rahman',
       organization: 'Different Claimed Organization',
-      role: 'Independent evidence assessor'
+      role: 'Claimed independent evidence assessor'
     }
     rebuildManifest(fixture)
     await assert.rejects(
       () => verifyFixture(fixture),
-      /reviewer must be independent of the defect signatory and test operators/
+      /reviewer must be independent of every assistive-technology test operator/
     )
   })
 })
@@ -573,26 +709,63 @@ test('rejects secret-bearing or fragment-bearing evidence URLs', async (t) => {
   })
 })
 
-test('rejects private DNS resolution and redirects before accepting evidence', async (t) => {
-  await t.test('private DNS address', async () => {
+test('rejects mutable, lookalike, and redirected evidence URLs', async (t) => {
+  await t.test('public but non-allowlisted host', async () => {
     const fixture = buildHappyFixture()
     await assert.rejects(
       () =>
         verifyFixture(fixture, {
-          resolveHostname: async () => [{ address: '127.0.0.1', family: 4 }]
+          sourceUrl:
+            'https://github.com/ahmedak320/bpmn-studio/raw/abcdef1234567890abcdef1234567890abcdef12/release-evidence/v0.4.5/release-approval.json'
         }),
-      /resolve exclusively to public IP addresses/
+      /canonical raw\.githubusercontent\.com\/ahmedak320\/bpmn-studio/
     )
   })
 
-  await t.test('deprecated site-local IPv6 address', async () => {
+  await t.test('raw GitHub lookalike host', async () => {
     const fixture = buildHappyFixture()
     await assert.rejects(
       () =>
         verifyFixture(fixture, {
-          resolveHostname: async () => [{ address: 'fec0::1', family: 6 }]
+          sourceUrl:
+            'https://raw.githubusercontent.com.attacker.net/ahmedak320/bpmn-studio/abcdef1234567890abcdef1234567890abcdef12/release-evidence/v0.4.5/release-approval.json'
         }),
-      /resolve exclusively to public IP addresses/
+      /canonical raw\.githubusercontent\.com\/ahmedak320\/bpmn-studio/
+    )
+  })
+
+  await t.test('attacker-owned raw GitHub repository', async () => {
+    const fixture = buildHappyFixture()
+    await assert.rejects(
+      () =>
+        verifyFixture(fixture, {
+          sourceUrl:
+            'https://raw.githubusercontent.com/attacker/bpmn-studio/abcdef1234567890abcdef1234567890abcdef12/release-evidence/v0.4.5/release-approval.json'
+        }),
+      /canonical raw\.githubusercontent\.com\/ahmedak320\/bpmn-studio/
+    )
+  })
+
+  await t.test('mutable branch reference', async () => {
+    const fixture = buildHappyFixture()
+    await assert.rejects(
+      () =>
+        verifyFixture(fixture, {
+          sourceUrl:
+            'https://raw.githubusercontent.com/ahmedak320/bpmn-studio/main/release-evidence/v0.4.5/release-approval.json'
+        }),
+      /<40-character-commit>/
+    )
+  })
+
+  await t.test('percent-encoded path segment', async () => {
+    const fixture = buildHappyFixture()
+    await assert.rejects(
+      () =>
+        verifyFixture(fixture, {
+          sourceUrl: `https://raw.githubusercontent.com/ahmedak320/bpmn-studio/${EVIDENCE_COMMIT}/release-evidence/v0.4.5/release%2Dapproval.json`
+        }),
+      /canonical raw\.githubusercontent\.com\/ahmedak320\/bpmn-studio/
     )
   })
 
@@ -682,6 +855,161 @@ test('rejects nested candidate or artifact substitutions even when re-hashed', a
   })
 })
 
+test('binds the human soak wrapper to exact automated soak-gate output', async (t) => {
+  await t.test('published automated bytes no longer match the wrapper digest', async () => {
+    const fixture = buildHappyFixture()
+    const record = clone(fixture.automatedSoakRecord)
+    record.findings =
+      'The altered automated record no longer matches the immutable digest signed by the human wrapper.'
+    fixture.bodies.set(AUTOMATED_SOAK_URL, jsonBytes(record))
+    await assert.rejects(
+      () => verifyFixture(fixture),
+      /Automated soak gate evidence SHA-256 .* does not match/
+    )
+  })
+
+  await t.test('re-hashed automated candidate substitution', async () => {
+    const fixture = buildHappyFixture()
+    const record = clone(fixture.automatedSoakRecord)
+    record.candidateSha = 'abcdef1234567890abcdef1234567890abcdef12'
+    replaceAutomatedSoakRecord(fixture, record)
+    await assert.rejects(
+      () => verifyFixture(fixture),
+      /automatedSoakGate is not bound to the exact candidate SHA/
+    )
+  })
+
+  await t.test('re-hashed automated artifact substitution', async () => {
+    const fixture = buildHappyFixture()
+    const record = clone(fixture.automatedSoakRecord)
+    record.artifactSha256 = digest('substituted automated artifact')
+    replaceAutomatedSoakRecord(fixture, record)
+    await assert.rejects(
+      () => verifyFixture(fixture),
+      /automatedSoakGate is not bound to the exact artifact SHA-256/
+    )
+  })
+
+  await t.test('smoke waiver cannot claim release eligibility', async () => {
+    const fixture = buildHappyFixture()
+    const record = clone(fixture.automatedSoakRecord)
+    record.status = 'smoke-passed'
+    record.smoke = true
+    record.passed = false
+    record.releaseEligible = false
+    replaceAutomatedSoakRecord(fixture, record)
+    await assert.rejects(
+      () => verifyFixture(fixture),
+      /passed, release-eligible, non-smoke, uninterrupted harness run/
+    )
+  })
+
+  await t.test('dirty or changed candidate endpoint cannot pass', async () => {
+    const fixture = buildHappyFixture()
+    const record = clone(fixture.automatedSoakRecord)
+    record.candidateEndpoints.cleanAtEnd = false
+    replaceAutomatedSoakRecord(fixture, record)
+    await assert.rejects(
+      () => verifyFixture(fixture),
+      /candidateEndpoints must prove a clean, unchanged candidate/
+    )
+  })
+
+  await t.test('fabricated cumulative operation progress cannot pass', async () => {
+    const fixture = buildHappyFixture()
+    const record = clone(fixture.automatedSoakRecord)
+    record.samples[20].completedOperations = record.samples[19].completedOperations
+    replaceAutomatedSoakRecord(fixture, record)
+    await assert.rejects(
+      () => verifyFixture(fixture),
+      /truthful cumulative operation and scenario-cycle counts/
+    )
+  })
+
+  await t.test('automated output URL must remain distinct from its human wrapper', async () => {
+    const fixture = buildHappyFixture()
+    const soakUrl = `${BASE_URL}/soak.json`
+    const record = clone(fixture.supportRecords[soakUrl])
+    record.automatedGateEvidenceUrl = soakUrl
+    replaceSupportRecord(fixture, soakUrl, record)
+    await assert.rejects(
+      () => verifyFixture(fixture),
+      /must use a distinct URL from the manifest and human supporting records/
+    )
+  })
+})
+
+test('requires independent stable human soak observation and attestation', async (t) => {
+  await t.test('one stable operator may record both English and Arabic observations', async () => {
+    const fixture = buildHappyFixture()
+    const verification = await verifyFixture(fixture)
+    assert.equal(verification.status, 'passed')
+    assert.equal(verification.evidence.review.reviewedBy.accountId, identities.signatory.accountId)
+    assert.equal(
+      verification.evidence.review.reviewedBy.accountId,
+      verification.evidence.defects.signedOffBy.accountId
+    )
+  })
+
+  await t.test('one reused operator account must keep one stable profile', async () => {
+    const fixture = buildHappyFixture()
+    const soakUrl = `${BASE_URL}/soak.json`
+    const record = clone(fixture.supportRecords[soakUrl])
+    record.operators[1].operator.role = 'Conflicting Arabic observation profile'
+    replaceSupportRecord(fixture, soakUrl, record)
+    await assert.rejects(
+      () => verifyFixture(fixture),
+      /must use one stable profile when an operator covers both locales/
+    )
+  })
+
+  await t.test('attestor cannot alias a soak operator', async () => {
+    const fixture = buildHappyFixture()
+    const soakUrl = `${BASE_URL}/soak.json`
+    const record = clone(fixture.supportRecords[soakUrl])
+    record.attestation.attestedBy = {
+      ...clone(record.operators[0].operator),
+      name: 'Elena  Morris',
+      role: 'Claimed independent soak attestor'
+    }
+    replaceSupportRecord(fixture, soakUrl, record)
+    await assert.rejects(
+      () => verifyFixture(fixture),
+      /attestation must be signed by a human independent of the operators/
+    )
+  })
+
+  await t.test('final reviewer cannot alias a soak operator', async () => {
+    const fixture = buildHappyFixture()
+    fixture.manifest.review.reviewedBy = clone(identities.soakOperator)
+    rebuildManifest(fixture)
+    await assert.rejects(
+      () => verifyFixture(fixture),
+      /Final evidence reviewer must be independent of the soak operators/
+    )
+  })
+
+  await t.test('defect signatory cannot alias an assistive-technology operator', async () => {
+    const fixture = buildHappyFixture()
+    fixture.manifest.defects.signedOffBy = clone(identities.nvda)
+    rebuildManifest(fixture)
+    await assert.rejects(
+      () => verifyFixture(fixture),
+      /Defect signatory must be independent of every assistive-technology test operator/
+    )
+  })
+
+  await t.test('defect signatory cannot alias a soak operator', async () => {
+    const fixture = buildHappyFixture()
+    fixture.manifest.defects.signedOffBy = clone(identities.soakOperator)
+    rebuildManifest(fixture)
+    await assert.rejects(
+      () => verifyFixture(fixture),
+      /Defect signatory must be independent of the soak operators/
+    )
+  })
+})
+
 test('enforces the streaming cap before aggregating a nested response', async () => {
   const fixture = buildHappyFixture()
   const url = `${BASE_URL}/soak.json`
@@ -706,7 +1034,6 @@ test('enforces the streaming cap before aggregating a nested response', async ()
         sourceUrl: fixture.manifestUrl,
         sourceSha256: fixture.manifestSha256,
         fetchImpl,
-        resolveHostname: resolvePublicHostname,
         now: NOW
       }),
     /exceeds the 262144-byte verification limit/

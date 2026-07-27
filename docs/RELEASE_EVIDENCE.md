@@ -87,43 +87,57 @@ run and exact release-artifact result remain pending.
 
 ## Required human and remote checklist
 
-| Requirement                                                                                              | State                 | Evidence to record                                        |
-| -------------------------------------------------------------------------------------------------------- | --------------------- | --------------------------------------------------------- |
-| Reviewed PR merged into protected `main`; required checks belong to merge commit                         | **PENDING**           | PR URL and merge SHA                                      |
-| `main`, `origin/main`, and `v0.4.5^{}` are identical                                                     | **PENDING**           | Three resolved SHAs and tag object                        |
-| Draft release contains exactly seven allowlisted assets and verified checksums                           | **PENDING**           | Draft URL and downloaded verification log                 |
-| Pages serves byte-identical tested HTML                                                                  | **PENDING**           | Deployment URL, SHA, and byte comparison                  |
-| Pages smoke in current Chrome/Edge and Playwright Firefox/WebKit on Linux, English and Arabic            | **NOT PERFORMED**     | URL/hash, commit, OS and exact browser versions           |
-| Pages smoke in current Safari on macOS, English and Arabic                                               | **NOT PERFORMED**     | URL/hash, commit, macOS and exact Safari version          |
-| Previous-major browser compatibility                                                                     | **NOT PERFORMED**     | Exact OS/browser versions or an explicitly narrowed claim |
-| NVDA on Windows keyboard-authoring smoke                                                                 | **NOT PERFORMED**     | Operator, OS/NVDA/browser versions, scenarios, findings   |
-| VoiceOver on macOS keyboard-authoring smoke                                                              | **NOT PERFORMED**     | Operator, OS/VoiceOver/browser versions, scenarios        |
-| Arabic screen-reader language change and mixed-language pronunciation review                             | **NOT PERFORMED**     | Operator, OS/AT/browser versions, locale, findings        |
-| 48-hour edit/recovery/workspace/import/translation/history soak                                          | **NOT PERFORMED**     | Start/end, build SHA, scenario log, memory/storage trend  |
-| Zero unresolved P0/P1 defect sign-off                                                                    | **PENDING**           | Reviewed defect ledger                                    |
-| Publish stable `v0.4.5` release                                                                          | **PENDING**           | Published release URL and state                           |
-| Mark older releases archived and remove historical executable/updater assets only after 0.4.5 validation | **PENDING BY DESIGN** | Release edit log matched to archive manifest              |
+| Requirement                                                                                              | State                 | Evidence to record                                                        |
+| -------------------------------------------------------------------------------------------------------- | --------------------- | ------------------------------------------------------------------------- |
+| Reviewed PR merged into protected `main`; required checks belong to merge commit                         | **PENDING**           | PR URL and merge SHA                                                      |
+| `main`, `origin/main`, and `v0.4.5^{}` are identical                                                     | **PENDING**           | Three resolved SHAs and tag object                                        |
+| Draft release contains exactly seven allowlisted assets and verified checksums                           | **PENDING**           | Draft URL and downloaded verification log                                 |
+| Pages serves byte-identical tested HTML                                                                  | **PENDING**           | Deployment URL, SHA, and byte comparison                                  |
+| Exact 16-row human Pages matrix: Chrome, Edge, Firefox, Safari × current/previous major × English/Arabic | **NOT PERFORMED**     | Post-Pages matrix URL/SHA, exact OS/browser versions, operators, findings |
+| NVDA on Windows keyboard-authoring smoke                                                                 | **NOT PERFORMED**     | Operator, OS/NVDA/browser versions, scenarios, findings                   |
+| VoiceOver on macOS keyboard-authoring smoke                                                              | **NOT PERFORMED**     | Operator, OS/VoiceOver/browser versions, scenarios                        |
+| Arabic screen-reader language change and mixed-language pronunciation review                             | **NOT PERFORMED**     | Operator, OS/AT/browser versions, locale, findings                        |
+| 48-hour edit/recovery/workspace/import/translation/history soak                                          | **NOT PERFORMED**     | Start/end, build SHA, scenario log, memory/storage trend                  |
+| Zero unresolved P0/P1 defect sign-off                                                                    | **PENDING**           | Reviewed defect ledger                                                    |
+| Publish stable `v0.4.5` release                                                                          | **PENDING**           | Published release URL and state                                           |
+| Mark older releases archived and remove historical executable/updater assets only after 0.4.5 validation | **PENDING BY DESIGN** | Release edit log matched to archive manifest                              |
 
 Automated axe results must never be substituted for the NVDA, VoiceOver, or
 Arabic pronunciation rows.
 
 ### Browser evidence record
 
-Do not record only an engine family. Each completed row must identify the exact
-HTML SHA-256 or Pages URL, release commit, operating-system version, browser
-name/version, application locale, and result.
+Browser support is a mandatory, separate post-Pages gate. Do not add it to the
+pre-tag external approval manifest. After the annotated tag and draft release
+exist and the exact draft artifact is deployed to the canonical Pages URL,
+publish and SHA-pin the exact 16-row matrix defined by the
+[`post-Pages browser evidence schema`](BROWSER_COMPATIBILITY_EVIDENCE.md) and
+its intentionally invalid
+[`matrix template`](BROWSER_COMPATIBILITY_EVIDENCE.example.json). Separately
+publish and SHA-pin the candidate/artifact/Pages-bound
+[`vendor-version baseline template`](BROWSER_VERSION_BASELINE.example.json).
+Supply both URL/digest pairs only to release finalization through its required
+`browser_compatibility_evidence_url` and
+`browser_compatibility_evidence_sha256`, `browser_version_baseline_url`, and
+`browser_version_baseline_sha256` dispatch inputs.
 
-| Delivery  | Application locale | OS/version  | Browser/version | Commit and artifact/URL | Result      |
-| --------- | ------------------ | ----------- | --------------- | ----------------------- | ----------- |
-| `file://` | English            | **PENDING** | **PENDING**     | **PENDING**             | **PENDING** |
-| `file://` | Arabic             | **PENDING** | **PENDING**     | **PENDING**             | **PENDING** |
-| Pages     | English            | **PENDING** | **PENDING**     | **PENDING**             | **PENDING** |
-| Pages     | Arabic             | **PENDING** | **PENDING**     | **PENDING**             | **PENDING** |
+Every row identifies the exact candidate, HTML digest, canonical Pages URL,
+operating-system name and dotted numeric version, native browser name,
+identifier and dotted numeric version, application locale, stable human
+operator, completion time, result, and substantive findings. Coverage is
+exactly Chrome, Edge, Firefox, and genuine Safari, each at current and previous
+vendor-classified stable major, each in English and Arabic. Both locales use
+the same exact version pair. The verifier derives current/previous
+classification at each test instant from the SHA/size-pinned official Chrome,
+Edge, Firefox, and Apple responses named by the separate baseline and retains
+their exact bytes. It deliberately does not require numeric adjacency because
+Safari moved from major 18 to major 26.
 
-Add rows until current Chrome, Edge, Firefox, and Safari are each represented;
-record the additional Playwright Chromium/Firefox/WebKit Linux runs separately.
-Playwright WebKit on Linux is not Safari evidence. No current, previous-major,
-or platform-wide support claim follows from an unrecorded browser version.
+Playwright Chromium, Firefox, and WebKit runs remain useful automated
+engineering evidence but do not satisfy these human rows. In particular,
+Playwright WebKit on Linux is not Safari evidence. Finalization also requires a
+matrix-bound zero-P0/P1 browser defect sign-off and a later independent human
+review before stable publication.
 
 ### Manual accessibility and soak record
 
@@ -131,32 +145,77 @@ The final evidence must record operator, date/time zone, release SHA, OS,
 assistive-technology version, browser version, application locale, scenarios,
 and findings. The uninterrupted 48-hour soak must additionally record start/end
 times, restart or interruption declarations, memory/storage samples, history
-retention observations, and the reviewed P0/P1 defect ledger. All fields remain
-**PENDING**. Before tag creation and Pages deployment, combine those records in
-the candidate-bound format shown by
-[`RELEASE_APPROVAL_EVIDENCE.example.json`](RELEASE_APPROVAL_EVIDENCE.example.json),
-publish it at an HTTPS URL, and supply its exact SHA-256 to both protected
-workflows.
+retention observations, its SHA-pinned compact
+`soak-gate.ts --support-output` record, independent English/Arabic human
+observations and attestation, and the reviewed P0/P1 defect ledger. All fields
+remain **PENDING**. Before tag creation and Pages deployment, combine those records
+using the candidate-bound
+[`external evidence schema`](RELEASE_APPROVAL_EVIDENCE.md) and its
+[`top-level template`](RELEASE_APPROVAL_EVIDENCE.example.json), publish the
+manifest and every SHA-pinned supporting record at public credential-free HTTPS
+URLs, and supply the manifest's exact SHA-256 to both protected workflows.
 
 ### Required repository protections
 
-Before dispatching the tag or Pages workflows, configure these remote controls;
-the workflow files cannot create reviewer protections by themselves:
+These are live repository-governance facts as of 2026-07-27, not settings that
+the workflow files can create for themselves:
 
-- `release-v0.4.5`: require an independent reviewer, prevent self-review and
-  administrator bypass, restrict deployments to `main`, and set environment
-  variable `ORBITPM_RELEASE_APPROVAL_POLICY` to
-  `v0.4.5-nvda-voiceover-arabic-48h-p0p1-reviewed`.
-- `github-pages`: apply the same reviewer/bypass restrictions and set
-  `ORBITPM_PAGES_APPROVAL_POLICY` to that same exact value.
-- Protect `v*` tags against direct creation, update, and deletion while
-  permitting the approved release workflow to create the one annotated tag.
-- Require at least one substantive pull-request approval for `main`, retain
-  strict required checks, and enable immutable releases before stable
-  publication.
+- `main` requires one approval of the most recent push in addition to its
+  required checks. Branch protection is strict, so the branch must be current
+  before merge.
+- The required check `Bind every quality job to one immutable source identity`
+  is enabled. All 11 required status-check contexts are bound to the GitHub
+  Actions application (`app_id: 15368`); none uses a null or unbound app ID
+  that another integration could spoof.
+- Immutable releases are enabled.
+- The repository Actions policy is enabled with `allowed_actions=all` and
+  `sha_pinning_required=true`. The repository's static action-pin parser is an
+  additional defense layer, not a substitute for that remote policy.
+- Active `v*` tag ruleset ID `19784615` covers tag creation, update, and
+  deletion. Its sole workflow bypass is actor ID `5`, type `RepositoryRole`
+  (repository administrator), with bypass mode `always`.
+- No deploy keys or repository webhooks are currently listed.
+- Six deployment environments exist. The five approval environments require a
+  reviewer, prevent self-review, and disallow administrator bypass. The
+  automatic rollback environment is deliberately reviewer-free and secret-free
+  because it accepts only the workflow-bound known-good rollback path.
+- `ORBITPM_RELEASE_ADMIN_TOKEN` exists only as an environment secret in
+  `release-v0.4.5` and `release-finalize-v0.4.5`; it must not be copied to a
+  repository secret, Pages, rollback, or cleanup environment.
+- All 10 `ORBITPM_*` policy, ruleset, and sole-writer variables are
+  environment-only on their consuming environments; the repository variable
+  list is empty. In particular, the tag ruleset ID and bypass-actor variables
+  exist only in `release-v0.4.5` and `release-finalize-v0.4.5`, alongside their
+  environment-only admin secrets.
 
-Both protected jobs fail before tag creation or deployment when their required
-environment policy variable is absent or different.
+| Environment                           | Protection and exact environment configuration                                                                                                                                                                                                                                                                                                                                                                                                             |
+| ------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `release-v0.4.5`                      | Protected reviewer gate; `ORBITPM_RELEASE_APPROVAL_POLICY=v0.4.5-nvda-voiceover-arabic-48h-p0p1-reviewed`; `ORBITPM_RELEASE_TAG_RULESET_ID=19784615`; `ORBITPM_RELEASE_TAG_BYPASS_ACTOR_ID=5`; environment secret `ORBITPM_RELEASE_ADMIN_TOKEN`.                                                                                                                                                                                                           |
+| `github-pages`                        | Protected reviewer gate restricted to the approved `main` deployment; `ORBITPM_PAGES_APPROVAL_POLICY=v0.4.5-nvda-voiceover-arabic-48h-p0p1-reviewed`.                                                                                                                                                                                                                                                                                                      |
+| `release-finalize-v0.4.5`             | Protected later reviewer gate after Pages and browser evidence; `ORBITPM_RELEASE_FINALIZE_POLICY=v0.4.5-pages-verified-immutable-stable-publication`; `ORBITPM_RELEASE_TAG_RULESET_ID=19784615`; `ORBITPM_RELEASE_TAG_BYPASS_ACTOR_ID=5`; `ORBITPM_RELEASE_SOLE_WRITER=<repository-owner-login>`; `ORBITPM_RELEASE_WRITER_FREEZE_POLICY=v0.4.5-sole-admin-no-manual-release-writes-during-finalization`; environment secret `ORBITPM_RELEASE_ADMIN_TOKEN`. |
+| `historical-release-cleanup-v0.4.5`   | Protected reviewer gate; `ORBITPM_HISTORICAL_CLEANUP_POLICY=v0.4.5-immutable-stable-pages-verified-manifest-28-assets`.                                                                                                                                                                                                                                                                                                                                    |
+| `github-pages-rollback-manual-v0.4.5` | Protected reviewer gate; `ORBITPM_PAGES_ROLLBACK_POLICY=v0.4.5-verified-known-good-pages-rollback`.                                                                                                                                                                                                                                                                                                                                                        |
+| `github-pages-rollback-auto-v0.4.5`   | No required reviewer and no secrets; `ORBITPM_PAGES_AUTO_ROLLBACK_POLICY=v0.4.5-main-only-no-reviewer-no-secrets-known-good-auto-rollback`.                                                                                                                                                                                                                                                                                                                |
+
+The repository owner is currently configured only as a placeholder reviewer.
+That does not satisfy independent approval, especially because self-review is
+disabled. Before release dispatch, add an independent human account to all five
+protected environments.
+
+The independent reviewer keeps repository `write` permission through the
+substantive pull-request approval and the candidate/pre-tag approval, because
+the pre-tag review gate verifies that the approving account is a repository
+writer. After those approvals and before owner-only finalization, downgrade
+that account to `read` while leaving it configured as an environment reviewer.
+The finalizer's sole-writer check must then observe exactly the repository owner
+with admin/maintain/push capability; the read-only independent account remains
+eligible to approve the finalization and cleanup environments without violating
+the writer freeze.
+
+Each protected job verifies its exact policy variables before mutation. Missing
+independent approval, a copied or missing secret, a different ruleset or bypass
+actor, or an extra collaborator with write capability at finalization is a
+release blocker.
 
 ## Expected release asset allowlist
 
