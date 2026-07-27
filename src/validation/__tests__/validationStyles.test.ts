@@ -22,7 +22,7 @@ describe('validation stylesheet mobile contract', () => {
 
   it('gives standalone generated-layout review a shrinking middle scroll region', () => {
     expect(stylesheet).toMatch(
-      /\.orbitpm-single-file-layout-review__body\s*\{[\s\S]*?flex: 1 1 auto;[\s\S]*?min-block-size: 0;[\s\S]*?max-inline-size: 100%;[\s\S]*?overflow: auto;/
+      /\.orbitpm-source-editor__layout-preview\.orbitpm-single-file-layout-review__body\s*\{[\s\S]*?flex: 1 1 auto;[\s\S]*?min-block-size: 0;[\s\S]*?max-inline-size: 100%;[\s\S]*?overflow: auto;/
     )
   })
 

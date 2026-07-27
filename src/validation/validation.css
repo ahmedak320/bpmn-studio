@@ -271,7 +271,7 @@
   overscroll-behavior: contain;
 }
 
-.orbitpm-single-file-layout-review__body {
+.orbitpm-source-editor__layout-preview.orbitpm-single-file-layout-review__body {
   box-sizing: border-box;
   flex: 1 1 auto;
   inline-size: 100%;
