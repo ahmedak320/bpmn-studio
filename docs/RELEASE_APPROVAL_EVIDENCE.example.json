@@ -1,13 +1,16 @@
 {
-  "schemaVersion": 1,
-  "candidateSha": "0000000000000000000000000000000000000000",
-  "artifactSha256": "0000000000000000000000000000000000000000000000000000000000000000",
+  "schemaVersion": 2,
+  "candidateSha": "REPLACE_WITH_EXACT_40_CHARACTER_GIT_COMMIT_SHA",
+  "candidateReadyAt": "REPLACE_WITH_TRUSTED_CANDIDATE_READY_UTC_TIMESTAMP",
+  "artifactSha256": "REPLACE_WITH_EXACT_64_CHARACTER_HTML_SHA256",
+  "assembledAt": "REPLACE_WITH_CANONICAL_UTC_TIMESTAMP",
   "soak": {
     "passed": true,
     "uninterrupted": true,
-    "startedAt": "2026-01-01T00:00:00.000Z",
-    "completedAt": "2026-01-03T00:00:00.000Z",
+    "startedAt": "REPLACE_WITH_CANONICAL_UTC_TIMESTAMP",
+    "completedAt": "REPLACE_WITH_CANONICAL_UTC_TIMESTAMP",
     "durationMs": 172800000,
+    "locales": ["en", "ar"],
     "scenarios": [
       "edits",
       "recovery",
@@ -16,54 +19,90 @@
       "translation-cancellation",
       "history-cleanup"
     ],
+    "retentionChecks": ["draft-recovery", "history-retention", "workspace-state"],
+    "sampleIntervalMinutes": 60,
     "memoryGrowth": "bounded",
     "storageGrowth": "bounded",
-    "evidenceUrl": "https://example.invalid/soak-results.json",
-    "evidenceSha256": "0000000000000000000000000000000000000000000000000000000000000000"
+    "evidenceUrl": "https://REPLACE_WITH_PUBLIC_EVIDENCE_HOST/v0.4.5/soak.json",
+    "evidenceSha256": "REPLACE_WITH_EXACT_64_CHARACTER_SOAK_RECORD_SHA256"
   },
   "assistiveTechnology": {
     "nvdaWindows": {
       "passed": true,
-      "operator": "REPLACE_WITH_OPERATOR",
-      "operatingSystem": "REPLACE_WITH_WINDOWS_VERSION",
-      "assistiveTechnologyVersion": "REPLACE_WITH_NVDA_VERSION",
-      "browserName": "REPLACE_WITH_BROWSER",
-      "browserVersion": "REPLACE_WITH_BROWSER_VERSION",
-      "testedAt": "2026-01-03T01:00:00.000Z",
-      "evidenceUrl": "https://example.invalid/nvda-evidence.json",
-      "evidenceSha256": "0000000000000000000000000000000000000000000000000000000000000000"
+      "operator": {
+        "name": "REPLACE WITH OPERATOR FULL NAME",
+        "organization": "REPLACE WITH OPERATOR ORGANIZATION",
+        "role": "NVDA test operator",
+        "accountId": "github:REPLACE_WITH_OPERATOR_USERNAME"
+      },
+      "operatingSystem": "REPLACE WITH EXACT WINDOWS VERSION",
+      "assistiveTechnologyVersion": "REPLACE WITH EXACT NVDA VERSION",
+      "browserName": "REPLACE WITH BROWSER NAME",
+      "browserVersion": "REPLACE WITH EXACT BROWSER VERSION",
+      "locale": "en",
+      "startedAt": "REPLACE_WITH_CANONICAL_UTC_TIMESTAMP",
+      "testedAt": "REPLACE_WITH_CANONICAL_UTC_TIMESTAMP",
+      "evidenceUrl": "https://REPLACE_WITH_PUBLIC_EVIDENCE_HOST/v0.4.5/nvda-windows.json",
+      "evidenceSha256": "REPLACE_WITH_EXACT_64_CHARACTER_NVDA_RECORD_SHA256"
     },
     "voiceOverMacos": {
       "passed": true,
-      "operator": "REPLACE_WITH_OPERATOR",
-      "operatingSystem": "REPLACE_WITH_MACOS_VERSION",
-      "assistiveTechnologyVersion": "REPLACE_WITH_VOICEOVER_VERSION",
+      "operator": {
+        "name": "REPLACE WITH OPERATOR FULL NAME",
+        "organization": "REPLACE WITH OPERATOR ORGANIZATION",
+        "role": "VoiceOver test operator",
+        "accountId": "github:REPLACE_WITH_OPERATOR_USERNAME"
+      },
+      "operatingSystem": "REPLACE WITH EXACT MACOS VERSION",
+      "assistiveTechnologyVersion": "REPLACE WITH EXACT VOICEOVER VERSION",
       "browserName": "Safari",
-      "browserVersion": "REPLACE_WITH_SAFARI_VERSION",
-      "testedAt": "2026-01-03T02:00:00.000Z",
-      "evidenceUrl": "https://example.invalid/voiceover-evidence.json",
-      "evidenceSha256": "0000000000000000000000000000000000000000000000000000000000000000"
+      "browserVersion": "REPLACE WITH EXACT SAFARI VERSION",
+      "locale": "en",
+      "startedAt": "REPLACE_WITH_CANONICAL_UTC_TIMESTAMP",
+      "testedAt": "REPLACE_WITH_CANONICAL_UTC_TIMESTAMP",
+      "evidenceUrl": "https://REPLACE_WITH_PUBLIC_EVIDENCE_HOST/v0.4.5/voiceover-macos.json",
+      "evidenceSha256": "REPLACE_WITH_EXACT_64_CHARACTER_VOICEOVER_RECORD_SHA256"
     },
     "arabicScreenReader": {
       "passed": true,
-      "operator": "REPLACE_WITH_OPERATOR",
-      "operatingSystem": "REPLACE_WITH_OS_VERSION",
-      "assistiveTechnologyVersion": "REPLACE_WITH_SCREEN_READER_VERSION",
-      "browserName": "REPLACE_WITH_BROWSER",
-      "browserVersion": "REPLACE_WITH_BROWSER_VERSION",
-      "testedAt": "2026-01-03T03:00:00.000Z",
-      "evidenceUrl": "https://example.invalid/arabic-evidence.json",
-      "evidenceSha256": "0000000000000000000000000000000000000000000000000000000000000000"
+      "operator": {
+        "name": "REPLACE WITH OPERATOR FULL NAME",
+        "organization": "REPLACE WITH OPERATOR ORGANIZATION",
+        "role": "Arabic screen-reader test operator",
+        "accountId": "github:REPLACE_WITH_OPERATOR_USERNAME"
+      },
+      "operatingSystem": "REPLACE WITH EXACT OS VERSION",
+      "assistiveTechnologyVersion": "REPLACE WITH EXACT SCREEN-READER VERSION",
+      "browserName": "REPLACE WITH BROWSER NAME",
+      "browserVersion": "REPLACE WITH EXACT BROWSER VERSION",
+      "locale": "ar",
+      "startedAt": "REPLACE_WITH_CANONICAL_UTC_TIMESTAMP",
+      "testedAt": "REPLACE_WITH_CANONICAL_UTC_TIMESTAMP",
+      "evidenceUrl": "https://REPLACE_WITH_PUBLIC_EVIDENCE_HOST/v0.4.5/arabic-screen-reader.json",
+      "evidenceSha256": "REPLACE_WITH_EXACT_64_CHARACTER_ARABIC_RECORD_SHA256"
     }
   },
   "defects": {
     "unresolvedP0": 0,
     "unresolvedP1": 0,
-    "signedOffBy": "REPLACE_WITH_SIGNATORY",
-    "signedOffAt": "2026-01-03T04:00:00.000Z"
+    "signedOffBy": {
+      "name": "REPLACE WITH SIGNATORY FULL NAME",
+      "organization": "REPLACE WITH SIGNATORY ORGANIZATION",
+      "role": "Defect-control signatory",
+      "accountId": "github:REPLACE_WITH_SIGNATORY_USERNAME"
+    },
+    "signedOffAt": "REPLACE_WITH_CANONICAL_UTC_TIMESTAMP",
+    "evidenceUrl": "https://REPLACE_WITH_PUBLIC_EVIDENCE_HOST/v0.4.5/defect-ledger.json",
+    "evidenceSha256": "REPLACE_WITH_EXACT_64_CHARACTER_DEFECT_LEDGER_SHA256"
   },
   "review": {
-    "reviewedBy": "REPLACE_WITH_REVIEWER",
-    "reviewedAt": "2026-01-03T05:00:00.000Z"
+    "reviewedBy": {
+      "name": "REPLACE WITH INDEPENDENT REVIEWER FULL NAME",
+      "organization": "REPLACE WITH REVIEWER ORGANIZATION",
+      "role": "Independent release-evidence reviewer",
+      "accountId": "github:REPLACE_WITH_REVIEWER_USERNAME"
+    },
+    "reviewedAt": "REPLACE_WITH_CANONICAL_UTC_TIMESTAMP",
+    "independentOfEvidenceProduction": true
   }
 }
