@@ -439,7 +439,7 @@ describe('convertAmlToBpmnFiles — error codes', () => {
 })
 
 describe('emitted BPMN imports cleanly', () => {
-  it('bpmn-moddle parses all three fixture files without warnings', async () => {
+  it('emits an absolute target namespace and parses all three fixture files without warnings', async () => {
     const result = await convertAmlToBpmnFiles(AML_SAMPLE)
     if (!('files' in result)) throw new Error('conversion failed')
     expect(result.files).toHaveLength(3)
@@ -447,6 +447,8 @@ describe('emitted BPMN imports cleanly', () => {
     for (const file of result.files) {
       const { rootElement, warnings } = await moddle.fromXML(file.xml)
       expect(rootElement.$type).toBe('bpmn:Definitions')
+      expect(rootElement.targetNamespace).toBe('https://orbitpm.ae/bpmn/aris')
+      expect(new URL(rootElement.targetNamespace).protocol).toBe('https:')
       expect(warnings).toEqual([])
     }
     // The first EPC's DI plane really carries the shapes + edges.

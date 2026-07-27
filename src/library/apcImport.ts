@@ -104,6 +104,7 @@ const NS_DI = 'http://www.omg.org/spec/DD/20100524/DI'
 // registers this namespace as a moddle extension, so the `orbitpm:*`
 // attributes emitted here round-trip through the editor.
 const NS_ORBITPM = 'http://orbitpm.ae/schema/bpmn/1.0'
+const TARGET_NAMESPACE = 'https://orbitpm.ae/bpmn/aris'
 
 // XML 1.0 forbids these C0 control chars; strip so a stray one in an AML name
 // can't produce invalid BPMN that layoutBpmn/importXML would reject.
@@ -892,7 +893,7 @@ function emitModel(
   out += ` xmlns:dc="${NS_DC}"`
   out += ` xmlns:di="${NS_DI}"`
   out += ` xmlns:orbitpm="${NS_ORBITPM}"`
-  out += ' id="definitions_1">'
+  out += ` id="definitions_1" targetNamespace="${TARGET_NAMESPACE}">`
   out += `<process id="${escapeAttr(plan.processId)}"`
   if (procName) out += ` name="${escapeAttr(procName)}"`
   out += ' isExecutable="false"'
