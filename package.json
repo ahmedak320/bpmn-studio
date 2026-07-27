@@ -51,10 +51,7 @@
     "release:file-smoke": "node scripts/file-smoke.mjs"
   },
   "dependencies": {
-    "@ai-sdk/anthropic": "4.0.18",
-    "@ai-sdk/google": "4.0.21",
     "@bpmn-io/properties-panel": "3.47.0",
-    "ai": "7.0.34",
     "bpmn-auto-layout": "0.4.0",
     "bpmn-js": "18.21.0",
     "bpmn-js-bpmnlint": "0.24.0",

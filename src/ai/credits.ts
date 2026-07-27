@@ -189,6 +189,12 @@ export interface RecordUsageInput {
   inputTokens: number
   outputTokens: number
   reasoningTokens?: number
+  /**
+   * False when the provider accepted a request but omitted usable token
+   * counters. The request is still counted, while its unknown cost prevents a
+   * misleading partial dollar total.
+   */
+  usageKnown?: boolean
   /** Provider-reported request cost, preferred over local estimation. */
   providerCostUsd?: number
   modelId: string
@@ -204,7 +210,10 @@ function combineCostKind(
 }
 
 function addUsage(existing: UsageTotals | null, input: RecordUsageInput, now: number): UsageTotals {
-  const estimated = estimateCostUsd(input.modelId, input.inputTokens, input.outputTokens)
+  const estimated =
+    input.usageKnown === false
+      ? null
+      : estimateCostUsd(input.modelId, input.inputTokens, input.outputTokens)
   const costDelta = typeof input.providerCostUsd === 'number' ? input.providerCostUsd : estimated
   const deltaKind: UsageTotals['costKind'] =
     typeof input.providerCostUsd === 'number'

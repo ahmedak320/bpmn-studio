@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react'
 import { AccessibleDialog } from '../common/AccessibleDialog'
 import { TextInputModal } from '../common/prompt/TextInputModal'
 import { t } from '../i18n'
+import { useLang } from '../i18n/useLang'
 import type { RestoreHistoryRevisionResult } from '../sessions/historyRestore'
 import { normalizeWorkspacePath } from './adapters'
 import {
@@ -72,6 +73,7 @@ export function HistoryDialog({
   onRestore,
   onClose
 }: HistoryDialogProps): JSX.Element {
+  const lang = useLang()
   const [revisions, setRevisions] = useState<HistoryRevision[]>([])
   const [preview, setPreview] = useState<HistoryPreview | null>(null)
   const [diff, setDiff] = useState<HistoryDiff | null>(null)
@@ -250,8 +252,11 @@ export function HistoryDialog({
                   {revision.originalPath}
                 </strong>
                 <small style={{ color: 'var(--orbitpm-muted)' }}>
-                  {new Date(revision.createdAt).toLocaleString()} · {revision.reason} ·{' '}
-                  {Math.round(revision.size / 1024)} KiB
+                  {new Date(revision.createdAt).toLocaleString(lang)} · {revision.reason} ·{' '}
+                  {new Intl.NumberFormat(lang).format(Math.round(revision.size / 1024))}{' '}
+                  <span lang="en" dir="ltr">
+                    KiB
+                  </span>
                 </small>
               </span>
               <span style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>

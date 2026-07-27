@@ -1,5 +1,6 @@
-import { describe, it, expect, vi, afterEach } from 'vitest'
+import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest'
 import { buildTestConnectionReview, testConnection, type ProviderConfig } from '../browserAi'
+import { getUsageSnapshot, resetSessionUsageForTests } from '../credits'
 
 const cfg = (over: Partial<ProviderConfig>): ProviderConfig => ({
   providerId: 'openrouter',
@@ -15,6 +16,10 @@ function mockFetch(impl: (url: string, init: RequestInit) => Promise<Response> |
 function fetchMock(): ReturnType<typeof vi.fn> {
   return globalThis.fetch as unknown as ReturnType<typeof vi.fn>
 }
+
+beforeEach(() => {
+  resetSessionUsageForTests()
+})
 
 afterEach(() => {
   vi.unstubAllGlobals()
@@ -71,6 +76,13 @@ describe('CORS-vs-auth discriminator', () => {
     expect(r.reachable).toBe(true)
     expect(r.status).toBe(200)
     expect(r.message).toMatch(/key works|accepted/i)
+    expect(getUsageSnapshot('openrouter').session).toMatchObject({
+      requests: 1,
+      inputTokens: 0,
+      outputTokens: 0,
+      costUsd: null,
+      costKind: 'unknown'
+    })
   })
 
   it('a 400 ⇒ reachable (CORS OK)', async () => {
@@ -79,6 +91,7 @@ describe('CORS-vs-auth discriminator', () => {
     expect(r.reachable).toBe(true)
     expect(r.blockedOrUnreachable).toBe(false)
     expect(r.message).toMatch(/reachable/i)
+    expect(getUsageSnapshot('gemini').session.requests).toBe(0)
   })
 
   it('probes with a dummy key when none is stored (no key leaked, request still made)', async () => {

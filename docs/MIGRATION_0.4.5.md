@@ -49,11 +49,13 @@ The extension prefix is `orbitpm`. Attributes are plain strings on BPMN
 
 ### Diagram language
 
-| Attribute                       | Meaning                                                     |
-| ------------------------------- | ----------------------------------------------------------- |
-| `nameEn`, `nameAr`              | Stored English and Arabic labels                            |
-| `activeLang`                    | Process-level active projection, `en` or `ar`               |
-| BPMN `name` / annotation `text` | Unsuffixed visible projection used by standard BPMN readers |
+| Attribute                        | Meaning                                                    |
+| -------------------------------- | ---------------------------------------------------------- |
+| `nameEn`, `nameAr`               | Stored English and Arabic labels                           |
+| `descriptionEn`, `descriptionAr` | Stored English and Arabic process/element descriptions     |
+| `activeLang`                     | Process-level active projection, `en` or `ar`              |
+| BPMN `name` / annotation `text`  | Unsuffixed visible label used by standard BPMN readers     |
+| `description`                    | Unsuffixed active description projection for older readers |
 
 ### Paired translatable metadata
 
@@ -74,11 +76,17 @@ counterparts:
 - `respList`
 - `ccList`
 - `decisionBasis`
+- `description`
 - `notes`
 
 Code-like attributes such as `ownerType`, `channel`, and `kind` remain
 unsuffixed. IDs, filenames, links, API/model names, codes, email addresses, and
 URLs are not translation targets.
+
+For descriptions, consumers should read `descriptionEn` and `descriptionAr`
+when they understand the 0.4.5 bilingual contract. The unsuffixed `description`
+continues to carry the active-language projection for compatibility, using the
+same projection rule as the other paired metadata above.
 
 Multi-value organizational fields retain their existing newline-separated
 serialization. Consumers should preserve unknown `orbitpm:*` attributes.

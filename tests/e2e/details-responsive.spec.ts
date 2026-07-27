@@ -1,4 +1,4 @@
-import { expect, test, type Page } from '@playwright/test'
+import { expect, test, type Locator, type Page } from '@playwright/test'
 import { readFileSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
@@ -30,6 +30,10 @@ async function newProcess(page: Page, name: string): Promise<void> {
   await expect(page.locator('.djs-container svg').first()).toBeVisible({ timeout: 20_000 })
 }
 
+function detailsPane(editor: Locator): Locator {
+  return editor.locator('[id^="orbitpm-details-pane-"]')
+}
+
 test('Details uses a viewport-safe modal drawer at 320, 375, and 768px', async ({ page }) => {
   await forceFallbackMode(page)
 
@@ -39,10 +43,12 @@ test('Details uses a viewport-safe modal drawer at 320, 375, and 768px', async (
     await page.evaluate((key) => localStorage.removeItem(key), OPEN_KEY)
     await newProcess(page, `Drawer ${width}`)
 
-    const editor = page.locator('.orbitpm-editor')
-    const pane = editor.locator('.orbitpm-lite-sidepane')
+    const editor = page.locator('.orbitpm-editor:visible')
+    const pane = detailsPane(editor)
     const toggle = editor.getByRole('button', { name: 'Details', exact: true })
 
+    await expect(pane).toBeHidden()
+    await expect(pane).toHaveAttribute('aria-hidden', 'true')
     await expect(toggle).toBeVisible()
     await expect(toggle).toHaveAttribute('aria-expanded', 'false')
 
@@ -65,14 +71,16 @@ test('Details uses a viewport-safe modal drawer at 320, 375, and 768px', async (
     await expect(pane).toHaveAttribute('aria-modal', 'true')
     await expect(toggle).toHaveAttribute('aria-expanded', 'true')
     await expect(pane.getByRole('heading', { name: 'Details' })).toBeFocused()
-    await expect(editor.locator('.orbitpm-details-backdrop')).toBeVisible()
-    await expect(editor.locator('.orbitpm-editor__body > .orbitpm-lite-resizer')).toBeHidden()
+    await expect(editor.locator('.orbitpm-responsive-drawer__backdrop')).toBeVisible()
+    await expect(
+      editor.getByRole('separator', { name: 'Resize the properties panel' })
+    ).toHaveCount(0)
 
-    const geometry = await page.evaluate(() => {
-      const editor = document.querySelector<HTMLElement>('.orbitpm-editor')
-      const body = document.querySelector<HTMLElement>('.orbitpm-editor__body')
-      const pane = document.querySelector<HTMLElement>('.orbitpm-lite-sidepane')
-      const rail = document.querySelector<HTMLElement>('.orbitpm-details-rail')
+    const geometry = await pane.evaluate((paneNode) => {
+      const editor = paneNode.closest<HTMLElement>('.orbitpm-editor')
+      const body = paneNode.closest<HTMLElement>('.orbitpm-editor__body')
+      const rail = paneNode.querySelector<HTMLElement>('.orbitpm-details-rail')
+      const pane = paneNode as HTMLElement
       if (!editor || !body || !pane || !rail) throw new Error('Details drawer geometry unavailable')
       const bodyBox = body.getBoundingClientRect()
       const paneBox = pane.getBoundingClientRect()
@@ -88,6 +96,7 @@ test('Details uses a viewport-safe modal drawer at 320, 375, and 768px', async (
         bodyLeft: bodyBox.left,
         bodyRight: bodyBox.right,
         railWidth: railBox.width,
+        railLeft: railBox.left,
         railRight: railBox.right
       }
     })
@@ -95,17 +104,15 @@ test('Details uses a viewport-safe modal drawer at 320, 375, and 768px', async (
     expect(geometry.documentWidth).toBeLessThanOrEqual(geometry.viewportWidth)
     expect(geometry.editorWidth).toBeLessThanOrEqual(width)
     expect(geometry.railWidth).toBeGreaterThanOrEqual(32)
-    if (width < 768) {
-      expect(geometry.paneWidth).toBeLessThanOrEqual(width - 32)
-      expect(geometry.paneLeft).toBeGreaterThanOrEqual(-1)
-      expect(geometry.paneRight).toBeLessThanOrEqual(width - 32 + 1)
-      expect(geometry.railRight).toBeLessThanOrEqual(width + 1)
-    } else {
-      expect(geometry.paneWidth).toBeLessThanOrEqual(geometry.bodyWidth - 32)
-      expect(geometry.paneLeft).toBeGreaterThanOrEqual(geometry.bodyLeft - 1)
-      expect(geometry.paneRight).toBeLessThanOrEqual(geometry.bodyRight - 32 + 1)
-      expect(geometry.railRight).toBeLessThanOrEqual(geometry.bodyRight + 1)
-    }
+    // Modal drawers are fixed to the viewport, not squeezed into the canvas
+    // body's remaining width. The 44px reserve keeps underlying chrome
+    // reachable even when the editor body itself is narrower.
+    expect(geometry.paneWidth).toBeLessThanOrEqual(geometry.viewportWidth - 44 + 1)
+    expect(geometry.paneLeft).toBeGreaterThanOrEqual(-1)
+    expect(geometry.paneRight).toBeLessThanOrEqual(geometry.viewportWidth + 1)
+    expect(Math.abs(geometry.paneRight - geometry.viewportWidth)).toBeLessThanOrEqual(1)
+    expect(Math.abs(geometry.railLeft - geometry.paneLeft)).toBeLessThanOrEqual(1)
+    expect(geometry.railRight).toBeLessThanOrEqual(geometry.paneRight + 1)
 
     if (width === 320) {
       // A full editor dialog launched from the drawer temporarily owns Escape;
@@ -149,23 +156,24 @@ test('the 375px drawer and rail move to logical inline-end in Arabic', async ({ 
   await newProcess(page, 'Arabic drawer')
   await page.getByRole('button', { name: /العربية/ }).click()
 
-  const editor = page.locator('.orbitpm-editor')
+  const editor = page.locator('.orbitpm-editor:visible')
   const body = editor.locator('.orbitpm-editor__body')
-  const pane = editor.locator('.orbitpm-lite-sidepane')
+  const pane = detailsPane(editor)
   const toggle = editor.getByRole('button', { name: 'التفاصيل', exact: true })
 
   await expect(editor).toHaveAttribute('dir', 'rtl')
   await expect(body).toHaveAttribute('dir', 'rtl')
-  await expect(toggle.locator('.orbitpm-details-toggle__glyph')).not.toHaveCSS('transform', 'none')
+  await expect(toggle.locator('.orbitpm-details-rail__glyph')).not.toHaveCSS('transform', 'none')
   await toggle.click()
   await expect(pane).toBeVisible()
   await expect(pane).toHaveAttribute('role', 'dialog')
   await expect(pane).toHaveAttribute('dir', 'rtl')
 
-  const geometry = await body.evaluate((bodyNode) => {
-    const pane = bodyNode.querySelector<HTMLElement>('.orbitpm-lite-sidepane')
-    const rail = bodyNode.querySelector<HTMLElement>('.orbitpm-details-rail')
-    if (!pane || !rail) throw new Error('RTL drawer geometry unavailable')
+  const geometry = await pane.evaluate((paneNode) => {
+    const pane = paneNode as HTMLElement
+    const bodyNode = pane.closest<HTMLElement>('.orbitpm-editor__body')
+    const rail = pane.querySelector<HTMLElement>('.orbitpm-details-rail')
+    if (!bodyNode || !rail) throw new Error('RTL drawer geometry unavailable')
     const bodyBox = bodyNode.getBoundingClientRect()
     const paneBox = pane.getBoundingClientRect()
     const railBox = rail.getBoundingClientRect()
@@ -182,8 +190,8 @@ test('the 375px drawer and rail move to logical inline-end in Arabic', async ({ 
     }
   })
 
-  expect(geometry.railLeft).toBeLessThanOrEqual(geometry.bodyLeft + 1)
-  expect(Math.abs(geometry.paneLeft - geometry.railRight)).toBeLessThanOrEqual(1)
+  expect(Math.abs(geometry.paneLeft - geometry.bodyLeft)).toBeLessThanOrEqual(1)
+  expect(Math.abs(geometry.railRight - geometry.paneRight)).toBeLessThanOrEqual(1)
   expect(geometry.paneRight).toBeLessThanOrEqual(376)
   expect(geometry.paneBorderLeft).toBe('0px')
   expect(geometry.paneBorderRight).toBe('1px')

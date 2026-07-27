@@ -165,6 +165,32 @@ describe('usage store', () => {
     expect(getUsage('gemini')!.costUsd).toBeNull()
   })
 
+  it('counts an accepted request with missing usage without presenting it as free', () => {
+    recordUsage('openrouter', {
+      inputTokens: 0,
+      outputTokens: 0,
+      usageKnown: false,
+      modelId: 'z-ai/glm-5.2'
+    })
+
+    expect(getUsageSnapshot('openrouter')).toMatchObject({
+      session: {
+        requests: 1,
+        inputTokens: 0,
+        outputTokens: 0,
+        costUsd: null,
+        costKind: 'unknown'
+      },
+      allTime: {
+        requests: 1,
+        inputTokens: 0,
+        outputTokens: 0,
+        costUsd: null,
+        costKind: 'unknown'
+      }
+    })
+  })
+
   it('keeps session and all-time totals separate and prefers provider cost', () => {
     localStorage.setItem(
       'orbitpm.lite.usage.openrouter',

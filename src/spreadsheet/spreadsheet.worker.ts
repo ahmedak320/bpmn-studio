@@ -280,29 +280,76 @@ function parseCsv(
   if (text.charCodeAt(0) === 0xfeff) text = text.slice(1)
 
   // Keep the core's deliberately strict RFC-4180 acceptance rules. Papa Parse
-  // then performs the production row parsing in this worker.
+  // then performs the authoritative production row parsing in this worker.
   const strictRows = parseCsvText(text, { delimiter })
   progress(0, Math.max(1, text.length))
   const parsed = Papa.parse<string[]>(text, {
     delimiter,
     skipEmptyLines: false
   })
-  const serious = parsed.errors.find(
-    (error) => error.type === 'Quotes' || error.code === 'UndetectableDelimiter'
-  )
-  if (serious) {
+  const parserError = parsed.errors[0]
+  if (parserError) {
     throw new SpreadsheetError('malformed-csv', {
-      row: serious.row === undefined ? 1 : serious.row + 1,
-      code: serious.code
+      row: parserError.row === undefined ? 1 : parserError.row + 1,
+      code: parserError.code
     })
   }
   progress(text.length, Math.max(1, text.length))
 
   // Papa intentionally retains a single empty record after a terminal newline;
-  // the strict boundary contract does not. Returning the strict shape also
-  // normalizes CRLF embedded in quoted fields consistently across browsers.
-  void parsed.data
-  return strictRows
+  // the strict boundary contract does not. Remove only that parser artifact,
+  // and normalize embedded CR/CRLF to the contract's canonical LF.
+  const papaRows = parsed.data.map((sourceRow, rowIndex) => {
+    if (!Array.isArray(sourceRow)) {
+      throw new SpreadsheetError('adapter-contract-violation', {
+        contract: 'papa-csv-row',
+        row: rowIndex + 1
+      })
+    }
+    return sourceRow.map((value, columnIndex) => {
+      if (typeof value !== 'string') {
+        throw new SpreadsheetError('adapter-contract-violation', {
+          contract: 'papa-csv-string-cell',
+          row: rowIndex + 1,
+          column: columnIndex + 1
+        })
+      }
+      return value.replace(/\r\n?/g, '\n')
+    })
+  })
+  if (
+    (text.endsWith('\n') || text.endsWith('\r')) &&
+    papaRows.length > 0 &&
+    papaRows.at(-1)?.length === 1 &&
+    papaRows.at(-1)?.[0] === ''
+  ) {
+    papaRows.pop()
+  }
+
+  // The strict parser is an independent acceptance/limit guard. A divergence
+  // between it and Papa is a closed adapter-contract failure, never a reason
+  // to silently discard Papa's production result.
+  if (papaRows.length !== strictRows.length) {
+    throw new SpreadsheetError('adapter-contract-violation', {
+      contract: 'papa-csv-parity',
+      expectedRows: strictRows.length,
+      actualRows: papaRows.length
+    })
+  }
+  for (let rowIndex = 0; rowIndex < papaRows.length; rowIndex += 1) {
+    const papaRow = papaRows[rowIndex]!
+    const strictRow = strictRows[rowIndex]!
+    if (
+      papaRow.length !== strictRow.length ||
+      papaRow.some((value, columnIndex) => value !== strictRow[columnIndex])
+    ) {
+      throw new SpreadsheetError('adapter-contract-violation', {
+        contract: 'papa-csv-parity',
+        row: rowIndex + 1
+      })
+    }
+  }
+  return Object.freeze(papaRows.map((row) => Object.freeze(row.slice())))
 }
 
 function workerError(requestId: string, cause: unknown): SpreadsheetWorkerResponse {

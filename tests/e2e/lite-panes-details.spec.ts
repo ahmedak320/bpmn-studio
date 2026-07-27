@@ -2,6 +2,7 @@ import { test, expect, type Page, type Locator } from '@playwright/test'
 import { pathToFileURL, fileURLToPath } from 'node:url'
 import { dirname, resolve } from 'node:path'
 import { readFileSync } from 'node:fs'
+import { installReliabilityWorkspace } from './fixtures/reliability-fsa'
 
 // Pane / details UX of the feature wave: the badge-click -> Step-details
 // dialog hand-off (missing categories highlighted with the amber ring, rings
@@ -20,6 +21,56 @@ const FILE_URL = pathToFileURL(DIST).toString()
 const AMBER_RING = '196, 127, 23' // #c47f17 — PALETTE.basisBorder
 const PROPS_OPEN_KEY = 'orbitpm.lite.preferences.v1.details.open'
 const PROPS_WIDTH_KEY = 'orbitpm.lite.preferences.v1.details.width'
+
+function workspaceDiagram(processId: string, processName: string, taskId: string): string {
+  return `<?xml version="1.0" encoding="UTF-8"?>
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL"
+  xmlns:bpmndi="http://www.omg.org/spec/BPMN/20100524/DI"
+  xmlns:dc="http://www.omg.org/spec/DD/20100524/DC"
+  xmlns:di="http://www.omg.org/spec/DD/20100524/DI"
+  xmlns:orbitpm="http://orbitpm.ae/schema/bpmn/1.0"
+  id="Definitions_${processId}" targetNamespace="https://orbitpm.ae/e2e/details">
+  <bpmn:process id="${processId}" name="${processName}" isExecutable="false"
+    orbitpm:nameEn="${processName}" orbitpm:nameAr="عملية اختبار" orbitpm:activeLang="en">
+    <bpmn:startEvent id="Start_${processId}" name="Start"
+      orbitpm:nameEn="Start" orbitpm:nameAr="البداية">
+      <bpmn:outgoing>Flow_${processId}_1</bpmn:outgoing>
+    </bpmn:startEvent>
+    <bpmn:task id="${taskId}" name="Selected step"
+      orbitpm:nameEn="Selected step" orbitpm:nameAr="الخطوة المحددة">
+      <bpmn:incoming>Flow_${processId}_1</bpmn:incoming>
+      <bpmn:outgoing>Flow_${processId}_2</bpmn:outgoing>
+    </bpmn:task>
+    <bpmn:endEvent id="End_${processId}" name="End"
+      orbitpm:nameEn="End" orbitpm:nameAr="النهاية">
+      <bpmn:incoming>Flow_${processId}_2</bpmn:incoming>
+    </bpmn:endEvent>
+    <bpmn:sequenceFlow id="Flow_${processId}_1"
+      sourceRef="Start_${processId}" targetRef="${taskId}" />
+    <bpmn:sequenceFlow id="Flow_${processId}_2"
+      sourceRef="${taskId}" targetRef="End_${processId}" />
+  </bpmn:process>
+  <bpmndi:BPMNDiagram id="Diagram_${processId}">
+    <bpmndi:BPMNPlane id="Plane_${processId}" bpmnElement="${processId}">
+      <bpmndi:BPMNShape id="Start_${processId}_di" bpmnElement="Start_${processId}">
+        <dc:Bounds x="150" y="122" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="${taskId}_di" bpmnElement="${taskId}">
+        <dc:Bounds x="240" y="100" width="100" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="End_${processId}_di" bpmnElement="End_${processId}">
+        <dc:Bounds x="395" y="122" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNEdge id="Flow_${processId}_1_di" bpmnElement="Flow_${processId}_1">
+        <di:waypoint x="186" y="140" /><di:waypoint x="240" y="140" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_${processId}_2_di" bpmnElement="Flow_${processId}_2">
+        <di:waypoint x="340" y="140" /><di:waypoint x="395" y="140" />
+      </bpmndi:BPMNEdge>
+    </bpmndi:BPMNPlane>
+  </bpmndi:BPMNDiagram>
+</bpmn:definitions>`
+}
 
 test.beforeAll(() => {
   const html = readFileSync(DIST, 'utf8')
@@ -49,6 +100,10 @@ async function newProcess(page: Page, name: string): Promise<void> {
     const w = window as unknown as { __ORBITPM_LITE__?: { modeler?: unknown } }
     return !!w.__ORBITPM_LITE__?.modeler
   })
+}
+
+function detailsPane(editor: Locator): Locator {
+  return editor.locator('[id^="orbitpm-details-pane-"]')
 }
 
 interface HookWindow {
@@ -223,15 +278,17 @@ test('persistent Details rail opens, collapses, and reopens without losing selec
   await page.goto(FILE_URL, { waitUntil: 'load' })
   await newProcess(page, 'Card Demo')
 
-  const sidePane = page.locator('.orbitpm-lite-sidepane')
-  const panelToggle = page.getByRole('button', { name: 'Details', exact: true })
+  const editor = page.locator('.orbitpm-editor:visible')
+  const sidePane = detailsPane(editor)
+  const panelToggle = editor.getByRole('button', { name: 'Details', exact: true })
   const propsResizer = page.getByRole('separator', { name: 'Resize the properties panel' })
 
   // Missing storage means closed, but the persistent rail always exposes the
-  // reopening control. The mounted pane remains available for bpmn-js.
+  // reopening control. keepMounted uses a hidden, role-free stash until the
+  // same stable id becomes the complementary aside.
   await expect(sidePane).toBeHidden()
-  await expect(sidePane).toHaveAttribute('role', 'complementary')
-  await expect(sidePane).toHaveAttribute('aria-label', /details|properties/i)
+  await expect(sidePane).not.toHaveAttribute('role', 'complementary')
+  await expect(sidePane).toHaveAttribute('aria-hidden', 'true')
   const paneId = await sidePane.getAttribute('id')
   expect(paneId).toBeTruthy()
   await expect(panelToggle).toBeVisible()
@@ -261,6 +318,8 @@ test('persistent Details rail opens, collapses, and reopens without losing selec
   await page.keyboard.press('Space')
   const paneHeading = sidePane.getByRole('heading', { name: 'Details' })
   await expect(sidePane).toBeVisible()
+  await expect(sidePane).toHaveRole('complementary')
+  await expect(sidePane).toHaveAttribute('aria-label', /details|properties/i)
   await expect(paneHeading).toBeFocused()
   await expect(panelToggle).toHaveAttribute('aria-expanded', 'true')
   await expect(propsResizer).toBeVisible()
@@ -328,8 +387,9 @@ test('pane persists explicit open and closed preferences across reloads', async 
   await page.evaluate((key) => localStorage.setItem(key, '1'), PROPS_OPEN_KEY)
   await newProcess(page, 'Pane Persistence Open')
 
-  const sidePane = page.locator('.orbitpm-lite-sidepane')
-  const panelToggle = page.getByRole('button', { name: 'Details', exact: true })
+  const editor = page.locator('.orbitpm-editor:visible')
+  const sidePane = detailsPane(editor)
+  const panelToggle = editor.getByRole('button', { name: 'Details', exact: true })
   const propsResizer = page.getByRole('separator', { name: 'Resize the properties panel' })
 
   await expect(sidePane).toBeVisible()
@@ -357,43 +417,66 @@ test('pane persists explicit open and closed preferences across reloads', async 
 test('each mounted tab preserves its selected element when Details is reopened', async ({
   page
 }) => {
-  await forceFallbackMode(page)
+  const firstTaskId = 'Task_first_details'
+  const secondTaskId = 'Task_second_details'
+  await installReliabilityWorkspace(page, {
+    name: 'DetailsTabs',
+    seed: {
+      'first-pane.bpmn': workspaceDiagram('Process_first_details', 'First pane', firstTaskId),
+      'second-pane.bpmn': workspaceDiagram('Process_second_details', 'Second pane', secondTaskId)
+    }
+  })
+  await page.setViewportSize({ width: 1280, height: 720 })
   await page.goto(FILE_URL, { waitUntil: 'load' })
-  await newProcess(page, 'First Pane')
+  await page.getByRole('button', { name: 'Choose folder workspace' }).click()
+  await expect(page.getByRole('heading', { name: 'Process catalog' })).toBeVisible({
+    timeout: 20_000
+  })
 
+  const openWorkspaceFile = async (relPath: string): Promise<void> => {
+    const row = page.locator(`.orbitpm-tree-row[data-rel-path="${relPath}"][data-canonical="true"]`)
+    await expect(row).toBeVisible({ timeout: 20_000 })
+    await row.click()
+    await expect(page.locator('.djs-container svg:visible').first()).toBeVisible({
+      timeout: 20_000
+    })
+  }
+
+  await openWorkspaceFile('first-pane.bpmn')
   let editor = page.locator('.orbitpm-editor:visible')
   let toggle = editor.getByRole('button', { name: 'Details', exact: true })
-  const firstTaskId = await createShape(page, 'bpmn:Task', { x: 360, y: 220 }, { select: true })
+  await page.locator(`.djs-element[data-element-id="${firstTaskId}"] .djs-hit`).first().click()
   await toggle.click()
   await expect(editor.locator('.orbitpm-lite-details-card')).toContainText('Selected step')
   expect(await selectedElementIds(page)).toEqual([firstTaskId])
 
-  await newProcess(page, 'Second Pane')
+  await openWorkspaceFile('second-pane.bpmn')
   editor = page.locator('.orbitpm-editor:visible')
   toggle = editor.getByRole('button', { name: 'Details', exact: true })
   // The persisted user preference opens a newly-mounted tab, initially at
   // process scope. Selecting its own step updates only that tab.
   await expect(toggle).toHaveAttribute('aria-expanded', 'true')
-  const secondTaskId = await createShape(
-    page,
-    'bpmn:UserTask',
-    { x: 520, y: 220 },
-    { select: true }
-  )
+  await page.locator(`.djs-element[data-element-id="${secondTaskId}"] .djs-hit`).first().click()
   await expect(editor.locator('.orbitpm-lite-details-card')).toContainText('Selected step')
   expect(await selectedElementIds(page)).toEqual([secondTaskId])
 
-  await page.getByText(/first-pane\.bpmn$/).click()
+  // A responsive Details surface can be modal at this viewport, so dismiss it
+  // through the production control before activating another tab.
+  await toggle.click()
+  await expect(detailsPane(editor)).toBeHidden()
+  await page.getByRole('tab', { name: /^first-pane\.bpmn/ }).click()
   editor = page.locator('.orbitpm-editor:visible')
   toggle = editor.getByRole('button', { name: 'Details', exact: true })
   expect(await selectedElementIds(page)).toEqual([firstTaskId])
   await toggle.click()
-  await expect(editor.locator('.orbitpm-lite-sidepane')).toBeHidden()
+  await expect(detailsPane(editor)).toBeHidden()
   await toggle.click()
   await expect(editor.locator('.orbitpm-lite-details-card')).toContainText('Selected step')
   expect(await selectedElementIds(page)).toEqual([firstTaskId])
 
-  await page.getByText(/second-pane\.bpmn$/).click()
+  await toggle.click()
+  await expect(detailsPane(editor)).toBeHidden()
+  await page.getByRole('tab', { name: /^second-pane\.bpmn/ }).click()
   expect(await selectedElementIds(page)).toEqual([secondTaskId])
 })
 
@@ -416,8 +499,9 @@ test('every supported activity type can open and collapse the Details pane', asy
     'bpmn:Transaction',
     'bpmn:AdHocSubProcess'
   ]
-  const sidePane = page.locator('.orbitpm-lite-sidepane')
-  const panelToggle = page.getByRole('button', { name: 'Details', exact: true })
+  const editor = page.locator('.orbitpm-editor:visible')
+  const sidePane = detailsPane(editor)
+  const panelToggle = editor.getByRole('button', { name: 'Details', exact: true })
 
   for (const [index, type] of activityTypes.entries()) {
     const id = await createShape(page, type, {
@@ -442,8 +526,9 @@ test('non-step, unlinked CallActivity, and linked CallActivity double-click rout
   await page.goto(FILE_URL, { waitUntil: 'load' })
   await newProcess(page, 'Double Click Routing Demo')
 
-  const sidePane = page.locator('.orbitpm-lite-sidepane')
-  const panelToggle = page.getByRole('button', { name: 'Details', exact: true })
+  const editor = page.locator('.orbitpm-editor:visible')
+  const sidePane = detailsPane(editor)
+  const panelToggle = editor.getByRole('button', { name: 'Details', exact: true })
   const propsResizer = page.getByRole('separator', { name: 'Resize the properties panel' })
 
   const gatewayId = await createShape(page, 'bpmn:ExclusiveGateway', { x: 300, y: 220 })
@@ -551,7 +636,7 @@ test('props-pane resizer: a11y contract, keyboard resize, bounds, reset, persist
   await expect(resizer).toHaveAttribute('aria-valuemax', '560')
   await expect(resizer).toHaveAttribute('aria-valuenow', '300')
 
-  const sidePane = page.locator('.orbitpm-lite-sidepane')
+  const sidePane = detailsPane(page.locator('.orbitpm-editor:visible'))
   const paneWidth = () => sidePane.evaluate((el) => el.getBoundingClientRect().width)
 
   // Keyboard: the handle sits on the pane's inline-start edge (LTR), so
@@ -569,7 +654,10 @@ test('props-pane resizer: a11y contract, keyboard resize, bounds, reset, persist
   await expect(resizer).toHaveAttribute('aria-valuenow', '240')
   await page.keyboard.press('End')
   await expect(resizer).toHaveAttribute('aria-valuenow', '560')
-  expect(Math.abs((await paneWidth()) - 560)).toBeLessThanOrEqual(2)
+  const viewportWidth = page.viewportSize()?.width
+  if (!viewportWidth) throw new Error('Playwright viewport width unavailable')
+  const renderedMaximum = Math.min(560, viewportWidth * 0.42)
+  expect(Math.abs((await paneWidth()) - renderedMaximum)).toBeLessThanOrEqual(2)
 
   // Double-click resets to the stylesheet default and clears the stored key.
   await resizer.dblclick()

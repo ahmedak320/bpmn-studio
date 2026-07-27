@@ -2,7 +2,7 @@
 
 import { cleanup, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { PortableHistoryManager } from './history'
 import type { HistoryRevision } from './history/types'
 import { HistoryDialog, type HistoryDialogRestoreResult } from './HistoryDialog'
@@ -11,6 +11,16 @@ vi.mock('../i18n', () => ({
   t: (key: string, vars?: Record<string, string | number>): string =>
     vars ? `${key} ${Object.values(vars).join(' ')}` : key
 }))
+
+const language = vi.hoisted(() => ({ current: 'en' as 'en' | 'ar' }))
+
+vi.mock('../i18n/useLang', () => ({
+  useLang: (): 'en' | 'ar' => language.current
+}))
+
+beforeEach(() => {
+  language.current = 'en'
+})
 
 afterEach(() => {
   cleanup()
@@ -82,6 +92,23 @@ function renderHistory(
 }
 
 describe('HistoryDialog restore integration', () => {
+  it('formats revision dates and sizes with the selected application locale', async () => {
+    language.current = 'ar'
+    const localeDate = vi
+      .spyOn(Date.prototype, 'toLocaleString')
+      .mockReturnValue('ARABIC-LOCALE-DATE')
+    const { manager } = managerFixture()
+
+    renderHistory(manager)
+
+    const path = await screen.findByText('process.bpmn')
+    const metadata = path.closest('article')?.querySelector('small')
+    expect(metadata?.textContent).toContain('ARABIC-LOCALE-DATE')
+    expect(metadata?.textContent).toContain(new Intl.NumberFormat('ar').format(0))
+    expect(metadata?.querySelector('[lang="en"][dir="ltr"]')?.textContent).toBe('KiB')
+    expect(localeDate).toHaveBeenCalledWith('ar')
+  })
+
   it('delegates in-place restore to the session-aware callback without calling manager.restore', async () => {
     const user = userEvent.setup()
     const { manager, listRevisions, restore } = managerFixture()

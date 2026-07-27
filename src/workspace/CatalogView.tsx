@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type { CatalogRow, CatalogSortKey, SortDir } from './catalog'
 import { rowLabel } from './catalog'
-import { t, tPlural } from '../i18n'
+import { t, tPlural, type Lang } from '../i18n'
 import { useLang } from '../i18n/useLang'
 
 export interface CatalogViewProps {
@@ -20,7 +20,7 @@ export interface CatalogViewProps {
   onOpenUnresolved: () => void
 }
 
-function formatModified(ms?: number): string {
+function formatModified(ms: number | undefined, lang: Lang): string {
   if (!ms) return '—'
   const d = new Date(ms)
   if (Number.isNaN(d.getTime())) return '—'
@@ -28,9 +28,9 @@ function formatModified(ms?: number): string {
   const diff = now - ms
   const day = 86_400_000
   if (diff >= 0 && diff < day && d.getDate() === new Date(now).getDate()) {
-    return d.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })
+    return d.toLocaleTimeString(lang, { hour: '2-digit', minute: '2-digit' })
   }
-  return d.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' })
+  return d.toLocaleDateString(lang, { year: 'numeric', month: 'short', day: 'numeric' })
 }
 
 const GRID = '1fr 0.9fr 0.6fr 0.5fr'
@@ -58,7 +58,7 @@ export function CatalogView({
   onNewProcess,
   onOpenUnresolved
 }: CatalogViewProps): JSX.Element {
-  useLang()
+  const lang = useLang()
   const arrow = (key: CatalogSortKey): string =>
     sortKey === key ? (sortDir === 'asc' ? ' ▲' : ' ▼') : ''
   const unresolvedTotal = rows.reduce((s, r) => s + (r.unresolvedCount > 0 ? 1 : 0), 0)
@@ -317,7 +317,7 @@ export function CatalogView({
                       {row.folder ? `📁 ${row.folder}` : `📁 ${rootName}`}
                     </span>
                     <span style={{ color: 'var(--orbitpm-muted)', fontSize: 12 }}>
-                      {formatModified(row.lastModified)}
+                      {formatModified(row.lastModified, lang)}
                     </span>
                     <span>
                       {row.unresolvedCount > 0 ? (

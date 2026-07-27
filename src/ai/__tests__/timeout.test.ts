@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, afterEach } from 'vitest'
+import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest'
 import {
   makeBrowserCallLLM,
   GENERATION_TIMEOUT_MS,
@@ -6,9 +6,14 @@ import {
   TransportError,
   type ProviderConfig
 } from '../browserAi'
+import { getUsageSnapshot, resetSessionUsageForTests } from '../credits'
 
 const cfg: ProviderConfig = { providerId: 'anthropic', model: 'claude', apiKey: 'k' }
 const msgs = [{ role: 'user' as const, content: 'hi' }]
+
+beforeEach(() => {
+  resetSessionUsageForTests()
+})
 
 afterEach(() => {
   vi.unstubAllGlobals()
@@ -72,6 +77,13 @@ describe('generation timeout covers the response BODY (ORIG-10)', () => {
     )
     const text = await makeBrowserCallLLM(cfg)(msgs, { maxTokens: 1 })
     expect(text).toBe('HELLO-XML')
+    expect(getUsageSnapshot('anthropic').session).toMatchObject({
+      requests: 1,
+      inputTokens: 0,
+      outputTokens: 0,
+      costUsd: null,
+      costKind: 'unknown'
+    })
   })
 
   it('never retries permanent 4xx and bounds selected 5xx retries', async () => {

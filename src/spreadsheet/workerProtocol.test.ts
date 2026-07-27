@@ -186,4 +186,32 @@ describe('spreadsheet worker XML metadata', () => {
       ]
     })
   })
+
+  it('returns Papa rows with canonical quoted newlines and no terminal phantom record', async () => {
+    const responses: SpreadsheetWorkerResponse[] = []
+    const bytes = new TextEncoder().encode(
+      'Name,Note,Blank\r\n"A ""quoted"" value","line 1\r\nline 2",\r\n'
+    )
+
+    await handleSpreadsheetWorkerRequest(
+      {
+        type: 'parse',
+        requestId: 'csv-papa-authority',
+        format: 'csv',
+        delimiter: ',',
+        bytes: bytes.buffer
+      },
+      (response) => responses.push(response)
+    )
+
+    expect(responses.at(-1)).toEqual({
+      type: 'result',
+      requestId: 'csv-papa-authority',
+      format: 'csv',
+      rows: [
+        ['Name', 'Note', 'Blank'],
+        ['A "quoted" value', 'line 1\nline 2', '']
+      ]
+    })
+  })
 })

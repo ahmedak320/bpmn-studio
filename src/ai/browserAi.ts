@@ -453,6 +453,31 @@ export function extractText(providerId: LiteProviderId, data: unknown): string {
   return ''
 }
 
+/**
+ * Account for every provider-accepted request. Some otherwise successful
+ * responses omit token counters; those calls still increment the request
+ * ledger and make aggregate cost unknown instead of disappearing or looking
+ * free.
+ */
+function recordSuccessfulAiRequest(cfg: ProviderConfig, responseJson?: unknown): void {
+  try {
+    const usage = extractUsage(cfg.providerId, responseJson)
+    recordUsage(
+      cfg.providerId,
+      usage
+        ? { ...usage, modelId: cfg.model }
+        : {
+            inputTokens: 0,
+            outputTokens: 0,
+            usageKnown: false,
+            modelId: cfg.model
+          }
+    )
+  } catch {
+    /* usage accounting is best-effort only */
+  }
+}
+
 // --- the CallLLM adapter ----------------------------------------------------
 
 /**
@@ -496,18 +521,21 @@ export function makeBrowserCallLLM(
               }
               throw new ProviderHttpError(res.status, message, retryAfterMs)
             }
-            const data: unknown = await res.json()
             try {
-              const usage = extractUsage(cfg.providerId, data)
-              if (usage) recordUsage(cfg.providerId, { ...usage, modelId: cfg.model })
-            } catch {
-              /* usage accounting is best-effort only */
+              const data: unknown = await res.json()
+              recordSuccessfulAiRequest(cfg, data)
+              const text = extractText(cfg.providerId, data)
+              if (!text.trim()) {
+                throw new Error(`${cfg.providerId}: empty response from the model`)
+              }
+              return text
+            } catch (error) {
+              // A readable 2xx response may still have an invalid/empty body.
+              // It was provider-accepted and may be billable, so retain the
+              // request even when no usage object can be extracted.
+              if (error instanceof SyntaxError) recordSuccessfulAiRequest(cfg)
+              throw error
             }
-            const text = extractText(cfg.providerId, data)
-            if (!text.trim()) {
-              throw new Error(`${cfg.providerId}: empty response from the model`)
-            }
-            return text
           },
           extra?.signal
         ),
@@ -724,7 +752,7 @@ function interpretProbe(status: number): TestConnectionResult {
  * a key (this is also the e2e's key-free way to prove the providers are live).
  */
 export async function testConnection(cfg: ProviderConfig): Promise<TestConnectionResult> {
-  const { request: req } = buildTestConnectionRequest(cfg)
+  const { cfg: probeCfg, request: req } = buildTestConnectionRequest(cfg)
   let status: number
   try {
     // The probe only needs the status (CORS-open ⇔ any readable response); it
@@ -733,7 +761,13 @@ export async function testConnection(cfg: ProviderConfig): Promise<TestConnectio
       req.url,
       { method: 'POST', headers: req.headers, body: JSON.stringify(req.body) },
       TEST_CONNECTION_TIMEOUT_MS,
-      async (res) => res.status
+      async (res) => {
+        // A 2xx probe was accepted by the provider and can be billable even
+        // though this connectivity check deliberately does not consume the
+        // body. Count it with unknown token/cost detail.
+        if (res.ok) recordSuccessfulAiRequest(probeCfg)
+        return res.status
+      }
     )
   } catch (error) {
     if (error instanceof TransportError && error.code === 'timeout') {
