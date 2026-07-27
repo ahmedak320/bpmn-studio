@@ -49,7 +49,14 @@ async function forceSingleFileMode(page: Page): Promise<void> {
 
 async function openSpreadsheetPanel(page: Page) {
   const blank = page.getByRole('button', { name: /New blank diagram/i })
-  if (await blank.isVisible().catch(() => false)) {
+  // On a slow boot the landing actions may not have rendered yet; probe with a
+  // bounded wait instead of a one-shot isVisible so the editor entry is not
+  // skipped. The catch branch keeps the already-in-editor flow intact.
+  const blankVisible = await blank
+    .waitFor({ state: 'visible', timeout: 10_000 })
+    .then(() => true)
+    .catch(() => false)
+  if (blankVisible) {
     await blank.click()
     await expect(page.locator('.djs-container svg').first()).toBeVisible({
       timeout: 20_000

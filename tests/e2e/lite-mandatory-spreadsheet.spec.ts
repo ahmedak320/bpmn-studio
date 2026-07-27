@@ -1002,7 +1002,14 @@ async function mandatorySpreadsheetForceSingleFile(page: Page): Promise<void> {
 
 async function mandatorySpreadsheetOpenPanel(page: Page): Promise<Locator> {
   const blank = page.getByRole('button', { name: /New blank diagram/i })
-  if (await blank.isVisible().catch(() => false)) {
+  // On a slow boot the landing actions may not have rendered yet; probe with a
+  // bounded wait instead of a one-shot isVisible so the editor entry is not
+  // skipped. The catch branch keeps the already-in-editor flow intact.
+  const blankVisible = await blank
+    .waitFor({ state: 'visible', timeout: 10_000 })
+    .then(() => true)
+    .catch(() => false)
+  if (blankVisible) {
     await blank.click()
     await expect(page.locator('.djs-container svg').first()).toBeVisible({ timeout: 30_000 })
   }
@@ -1794,11 +1801,14 @@ test('mandatory spreadsheet X3/X10: a complex official workbook commits folders,
   await page.getByRole('button', { name: /Open Shared review/i }).click()
   await expect(page.locator('.djs-element[data-element-id="Task_child_review"]')).toBeVisible()
   await page.getByRole('button', { name: /EN⇄AR/ }).click()
+  // The switch audits workspace localization and projects Arabic labels
+  // asynchronously; give the projection the same bound this file uses for its
+  // other worker-backed renders.
   await expect(
     page.locator('.djs-element[data-element-id="Task_child_review"] .djs-label', {
       hasText: 'التحقق من قواعد الجودة'
     })
-  ).toBeVisible()
+  ).toBeVisible({ timeout: 20_000 })
 
   const [reportDownload] = await Promise.all([
     page.waitForEvent('download'),
@@ -2063,11 +2073,14 @@ test('mandatory spreadsheet X6: RFC-4180 quoted multiline Arabic CSV survives wo
   expect(sourceXml).toContain('مراجعة الطلب&#10;بما في ذلك &#34;المرفقات&#34;')
   await sourceDialog.getByRole('button', { name: 'Close', exact: true }).last().click()
   await page.getByRole('button', { name: /EN⇄AR/ }).click()
+  // The switch audits workspace localization and projects Arabic labels
+  // asynchronously; give the projection the same bound this file uses for its
+  // other worker-backed renders.
   await expect(
     page.locator('.djs-element[data-element-id="Task_csv"] .djs-label', {
       hasText: 'مراجعة الطلب'
     })
-  ).toBeVisible()
+  ).toBeVisible({ timeout: 20_000 })
 })
 
 test('mandatory spreadsheet X7: formula cells with and without cached displayed values are distinguished in the browser', async ({
