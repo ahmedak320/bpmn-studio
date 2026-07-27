@@ -2328,6 +2328,9 @@ describe('App single-file browser orchestration', () => {
       await user.click(screen.getByRole('button', { name: 'translationReview.postpone' }))
       expect(setProviderSelection('anthropic', 'claude-opus-4-8').ok).toBe(true)
       await user.click(screen.getByRole('button', { name: 'editor.translate' }))
+      // Wait for the reopened review; the postponed review's props remain
+      // recorded until the replacement renders.
+      await screen.findByRole('dialog', { name: 'translationReview.title' })
 
       await act(async () => {
         await captured.onRetryField?.(field, oldConfirmation)
@@ -6582,12 +6585,20 @@ describe('App directory workspace orchestration', () => {
 
     await user.click(screen.getByRole('button', { name: 'translationReview.postpone' }))
     await user.click(screen.getByRole('button', { name: 'editor.translate' }))
-    const nextReview = (await latestTranslationReviewProps())
-      .review as import('./localization/modelerAdapter').DiagramLocalizationReview
-    expect(nextReview.localResources).toEqual({
-      glossary: updatedGlossary,
-      translationMemory: []
-    })
+    // The previous review's props remain recorded until the reopened review
+    // renders; wait for the fresh render that picked up the saved glossary
+    // instead of sampling the stale one.
+    await waitFor(
+      () => {
+        const nextReview = mocks.translationReviewProps.mock.calls.at(-1)?.[0].review as
+          import('./localization/modelerAdapter').DiagramLocalizationReview | undefined
+        expect(nextReview?.localResources).toEqual({
+          glossary: updatedGlossary,
+          translationMemory: []
+        })
+      },
+      { timeout: 10_000, interval: 25 }
+    )
   })
 
   it('activates, searches, navigates, refreshes, and exports a real directory adapter', async () => {
