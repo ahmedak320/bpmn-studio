@@ -165,7 +165,7 @@ requireText(
 )
 requireText(
   protectedTag,
-  /v0\.4\.5-nvda-voiceover-arabic-48h-p0p1-reviewed[\s\S]*actor_type: "RepositoryRole"[\s\S]*bypass_mode: "always"/u,
+  /v0\.4\.5-owner-waived-review-human-evidence-2026-07-27[\s\S]*actor_type: "RepositoryRole"[\s\S]*bypass_mode: "always"/u,
   'protected tag must require the exact approval and v* ruleset bypass identity'
 )
 requireText(
@@ -278,8 +278,8 @@ const finalPublish = finalizeJobs.get('publish') ?? ''
 const finalReadback = finalizeJobs.get('readback') ?? ''
 requireText(
   workflows.finalize,
-  /browser_version_baseline_url:[\s\S]*required: true[\s\S]*browser_version_baseline_sha256:[\s\S]*required: true/u,
-  'finalization must require immutable browser-version baseline URL and SHA-256'
+  /browser_version_baseline_url:[\s\S]*required: false[\s\S]*browser_version_baseline_sha256:[\s\S]*required: false/u,
+  'finalization must accept optional browser-version baseline URL and SHA-256 (owner waiver 2026-07-27)'
 )
 if (
   count(workflows.finalize, /verify-browser-compatibility-evidence\.mjs/gu) !== 2 ||
