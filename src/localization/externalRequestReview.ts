@@ -35,6 +35,11 @@ export interface ExternalRequestDisclosure {
 
 export interface ExternalRequestConsent {
   fingerprint: string
+  /**
+   * Canonical snapshot of every reviewed disclosure field except the short
+   * display fingerprint. This is the exact consent boundary.
+   */
+  canonicalDisclosure: string
   grantedAt: string
 }
 
@@ -71,6 +76,12 @@ function fingerprint(value: unknown): string {
   return `review-${(hash >>> 0).toString(16).padStart(8, '0')}`
 }
 
+function canonicalDisclosure(disclosure: ExternalRequestDisclosure): string {
+  const content: Record<string, unknown> = { ...disclosure }
+  delete content.fingerprint
+  return stableStringify(content)
+}
+
 export function createExternalRequestDisclosure(
   input: ExternalRequestDisclosureInput
 ): ExternalRequestDisclosure {
@@ -103,12 +114,19 @@ export function grantExternalRequestConsent(
   disclosure: ExternalRequestDisclosure,
   grantedAt = new Date().toISOString()
 ): ExternalRequestConsent {
-  return { fingerprint: disclosure.fingerprint, grantedAt }
+  return {
+    fingerprint: disclosure.fingerprint,
+    canonicalDisclosure: canonicalDisclosure(disclosure),
+    grantedAt
+  }
 }
 
 export function hasExternalRequestConsent(
   disclosure: ExternalRequestDisclosure,
   consent: ExternalRequestConsent | null | undefined
 ): boolean {
-  return consent?.fingerprint === disclosure.fingerprint
+  return (
+    consent?.fingerprint === disclosure.fingerprint &&
+    consent.canonicalDisclosure === canonicalDisclosure(disclosure)
+  )
 }

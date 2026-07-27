@@ -125,8 +125,8 @@ describe('reviewed translation execution', () => {
         review,
         disclosure,
         consent: {
-          fingerprint: 'another-review',
-          grantedAt: '2026-01-01T00:00:00.000Z'
+          ...grantExternalRequestConsent(disclosure, '2026-01-01T00:00:00.000Z'),
+          fingerprint: 'another-review'
         }
       })
     ).rejects.toBeInstanceOf(ExternalRequestConsentRequiredError)
