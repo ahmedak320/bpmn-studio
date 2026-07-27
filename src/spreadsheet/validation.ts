@@ -9,6 +9,7 @@ import {
   type WorkbookNode,
   type WorkbookValidationReport
 } from './contracts'
+import { normalizeHeader } from './aliases'
 import {
   spreadsheetValidationMessageKey,
   type SpreadsheetGuidanceKey,
@@ -310,6 +311,7 @@ function validateNodes(
           elementId: node.id,
           field: 'type',
           rawValue: node.rawType ?? node.type,
+          normalizedValue: normalizeHeader(node.rawType ?? node.type),
           guidanceKey: 'spreadsheet.guidance.map-step-type'
         })
       )

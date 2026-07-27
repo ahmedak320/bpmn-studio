@@ -1,8 +1,8 @@
 import { strFromU8, unzipSync } from 'fflate'
 import { describe, expect, it, vi } from 'vitest'
 
-import { MemoryWorkspaceAdapter } from '../workspace/adapters'
-import { PortableHistoryManager } from '../workspace/history'
+import { MemoryWorkspaceAdapter, workspaceParentPath } from '../workspace/adapters'
+import { HISTORY_ROOT, PortableHistoryManager } from '../workspace/history'
 import {
   BrowserImportDeliveryTransactionFactory,
   WorkspaceImportTransactionFactory,
@@ -228,8 +228,102 @@ describe('spreadsheet destination adapters', () => {
       code: 'not-found'
     })
     expect((await historyManager.listRevisions()).revisions).toEqual([])
-    const files = (await adapter.list()).filter((entry) => entry.kind === 'file')
-    expect(files.map((entry) => entry.path)).toEqual(['first.bpmn'])
+    expect((await adapter.list()).map(({ path }) => path)).toEqual(['first.bpmn'])
+  })
+
+  it('prunes only created empty recovery folders and preserves pre-existing or non-empty folders', async () => {
+    const adapter = new MemoryWorkspaceAdapter({
+      files: {
+        'first.bpmn': '<first-old />',
+        'second.bpmn': '<second-old />'
+      },
+      beforeWrite(path) {
+        if (path === 'third.bpmn') throw new Error('simulated later write failure')
+      }
+    })
+    const preExistingEmpty = `${HISTORY_ROOT}/pre-existing-empty`
+    await adapter.createFolder(preExistingEmpty)
+    const first = await adapter.read('first.bpmn')
+    const second = await adapter.read('second.bpmn')
+    const recoveryFolders = new Map<string, string>()
+    const remove = adapter.remove.bind(adapter)
+    adapter.remove = vi.fn(async (path) => {
+      let originalPath: string | undefined
+      if (path.endsWith('.json')) {
+        originalPath = (
+          JSON.parse(new TextDecoder().decode((await adapter.read(path)).bytes)) as {
+            readonly originalPath?: string
+          }
+        ).originalPath
+      }
+      await remove(path)
+      if (!originalPath) return
+      const folder = workspaceParentPath(path)
+      recoveryFolders.set(originalPath, folder)
+    })
+    const removeEmptyFolder = adapter.removeEmptyFolder.bind(adapter)
+    let concurrentEntryInserted = false
+    adapter.removeEmptyFolder = vi.fn(async (path) => {
+      if (path === recoveryFolders.get('second.bpmn') && !concurrentEntryInserted) {
+        concurrentEntryInserted = true
+        const outcome = await adapter.writeAtomic(
+          `${path}/concurrent-note.txt`,
+          bytes('independent non-history content'),
+          undefined,
+          { expectedMissing: true }
+        )
+        expect(outcome.ok).toBe(true)
+      }
+      return await removeEmptyFolder(path)
+    })
+    const transaction = await new WorkspaceImportTransactionFactory(adapter).begin(
+      'selective-recovery-folder-cleanup'
+    )
+    await transaction.stage({
+      path: 'first.bpmn',
+      bytes: bytes('<first-new />'),
+      expectedHash: first.hash,
+      createRecoveryRevision: true
+    })
+    await transaction.stage({
+      path: 'second.bpmn',
+      bytes: bytes('<second-new />'),
+      expectedHash: second.hash,
+      createRecoveryRevision: true
+    })
+    await transaction.stage({
+      path: 'third.bpmn',
+      bytes: bytes('<third />'),
+      createRecoveryRevision: false
+    })
+
+    await expect(transaction.commit()).rejects.toThrow('simulated later write failure')
+    await expect(transaction.rollback()).resolves.toBeUndefined()
+
+    const firstRecoveryFolder = recoveryFolders.get('first.bpmn')
+    const secondRecoveryFolder = recoveryFolders.get('second.bpmn')
+    expect(firstRecoveryFolder).toBeDefined()
+    expect(secondRecoveryFolder).toBeDefined()
+    if (!firstRecoveryFolder || !secondRecoveryFolder) {
+      throw new Error('Expected both recovery folders to be observed during cleanup')
+    }
+    const entries = await adapter.list()
+    const paths = entries.map(({ path }) => path)
+    expect(paths).toContain(preExistingEmpty)
+    expect(paths).not.toContain(firstRecoveryFolder)
+    expect(paths).toContain(secondRecoveryFolder)
+    expect(paths).toContain(`${secondRecoveryFolder}/concurrent-note.txt`)
+    expect(concurrentEntryInserted).toBe(true)
+    expect(
+      paths.filter(
+        (path) =>
+          path.startsWith(`${HISTORY_ROOT}/`) && (path.endsWith('.bpmn') || path.endsWith('.json'))
+      )
+    ).toEqual([])
+    expect(new TextDecoder().decode((await adapter.read('first.bpmn')).bytes)).toBe('<first-old />')
+    expect(new TextDecoder().decode((await adapter.read('second.bpmn')).bytes)).toBe(
+      '<second-old />'
+    )
   })
 
   it('retries paired-history cleanup without reapplying completed rollback writes', async () => {

@@ -10,6 +10,7 @@ import { SerialQueue } from './serialQueue'
 import type {
   BackupExportOptions,
   FileSnapshot,
+  RemoveEmptyFolderResult,
   SaveOutcome,
   WorkspaceAdapter,
   WorkspaceBackupExporter,
@@ -302,6 +303,31 @@ export abstract class HandleWorkspaceAdapter implements WorkspaceAdapter {
       await this.ensurePermission('remove', normalized, true)
       const entry = await this.resolveEntry(normalized, 'remove')
       await entry.parent.removeEntry(entry.name, { recursive: entry.kind === 'directory' })
+    })
+  }
+
+  async removeEmptyFolder(path: string): Promise<RemoveEmptyFolderResult> {
+    const normalized = normalizeWorkspacePath(path)
+    return await this.queue.run(async () => {
+      await this.ensurePermission('remove', normalized, true)
+      const entry = await this.resolveEntry(normalized, 'remove')
+      if (entry.kind !== 'directory') {
+        throw new WorkspaceOperationError({
+          code: 'not-a-directory',
+          operation: 'remove',
+          path: normalized,
+          message: `Workspace entry "${normalized}" is not a directory.`
+        })
+      }
+      try {
+        // Omitting `recursive` is the File System Access API's atomic
+        // remove-if-empty operation. A concurrent child makes this fail.
+        await entry.parent.removeEntry(entry.name)
+        return 'removed'
+      } catch (error) {
+        if (errorName(error) === 'InvalidModificationError') return 'not-empty'
+        throw asWorkspaceOperationError(error, 'remove', normalized)
+      }
     })
   }
 

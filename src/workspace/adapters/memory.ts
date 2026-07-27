@@ -11,6 +11,7 @@ import type {
   BackupExportOptions,
   FileSnapshot,
   SaveOutcome,
+  RemoveEmptyFolderResult,
   WorkspaceAdapter,
   WorkspaceBackupExporter,
   WorkspaceEntry,
@@ -329,6 +330,32 @@ export class MemoryWorkspaceAdapter implements WorkspaceAdapter {
       }
       this.nodes = next
       this.version += 1
+    })
+  }
+
+  async removeEmptyFolder(path: string): Promise<RemoveEmptyFolderResult> {
+    const normalized = normalizeWorkspacePath(path)
+    return await this.queue.run(async () => {
+      this.ensurePermission('remove', normalized)
+      const node = this.nodes.get(normalized)
+      if (!node) throw notFound('remove', normalized)
+      if (node.kind !== 'directory') {
+        throw new WorkspaceOperationError({
+          code: 'not-a-directory',
+          operation: 'remove',
+          path: normalized,
+          message: `Workspace entry "${normalized}" is not a directory.`
+        })
+      }
+      const prefix = `${normalized}/`
+      if ([...this.nodes.keys()].some((candidate) => candidate.startsWith(prefix))) {
+        return 'not-empty'
+      }
+      const next = new Map(this.nodes)
+      next.delete(normalized)
+      this.nodes = next
+      this.version += 1
+      return 'removed'
     })
   }
 

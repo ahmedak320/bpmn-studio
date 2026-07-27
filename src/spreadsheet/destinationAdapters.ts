@@ -1,8 +1,8 @@
 import { zipSync } from 'fflate'
 
 import type { FileSnapshot, SaveOutcome, WorkspaceAdapter } from '../workspace/adapters'
-import { WorkspaceOperationError } from '../workspace/adapters'
-import { PortableHistoryManager, type HistoryRevision } from '../workspace/history'
+import { normalizeWorkspacePath, sha256Hex, WorkspaceOperationError } from '../workspace/adapters'
+import { HISTORY_ROOT, PortableHistoryManager, type HistoryRevision } from '../workspace/history'
 import type {
   DestinationState,
   ImportDestinationInspector,
@@ -16,6 +16,8 @@ import { throwIfAborted } from './errors'
 function isNotFound(error: unknown): boolean {
   return error instanceof WorkspaceOperationError && error.code === 'not-found'
 }
+
+const RECOVERY_PATH_ENCODER = new TextEncoder()
 
 function saveFailure(outcome: Exclude<SaveOutcome, { ok: true }>): Error {
   if (outcome.status === 'external-conflict') {
@@ -90,6 +92,8 @@ class WorkspaceImportTransaction implements ImportDestinationTransaction {
   private readonly originals = new Map<string, FileSnapshot | undefined>()
   private readonly applied: AppliedWrite[] = []
   private readonly recoveryRevisions: HistoryRevision[] = []
+  private readonly createdRecoveryDirectoryCandidates = new Set<string>()
+  private preexistingRecoveryDirectories: ReadonlySet<string> | undefined
   private state: 'staging' | 'committing' | 'committed' | 'rolling-back' | 'rolled-back' = 'staging'
 
   constructor(
@@ -210,12 +214,29 @@ class WorkspaceImportTransaction implements ImportDestinationTransaction {
   }
 
   private async createRecoveryRevisions(signal?: AbortSignal): Promise<void> {
+    if ([...this.staged.values()].some(({ createRecoveryRevision }) => createRecoveryRevision)) {
+      this.checkpoint(signal)
+      const entries = await this.adapter.list()
+      this.preexistingRecoveryDirectories = new Set(
+        entries.filter(({ kind }) => kind === 'directory').map(({ path }) => path)
+      )
+      this.checkpoint(signal)
+    }
     for (const write of this.staged.values()) {
       if (!write.createRecoveryRevision) continue
       this.checkpoint(signal)
       const original = this.originals.get(write.path)
       if (!original) {
         throw new Error(`Recovery revision source is missing: ${write.path}`)
+      }
+      const originalPath = normalizeWorkspacePath(write.path)
+      const recoveryFolder = `${HISTORY_ROOT}/${await sha256Hex(
+        RECOVERY_PATH_ENCODER.encode(originalPath)
+      )}`
+      for (const path of ['.orbitpm', HISTORY_ROOT, recoveryFolder]) {
+        if (!this.preexistingRecoveryDirectories?.has(path)) {
+          this.createdRecoveryDirectoryCandidates.add(path)
+        }
       }
       const revision = await this.historyManager.createRevision(write.path, {
         reason: 'backup-import',
@@ -226,6 +247,21 @@ class WorkspaceImportTransaction implements ImportDestinationTransaction {
       })
       this.recoveryRevisions.push(revision)
       this.checkpoint(signal)
+    }
+  }
+
+  private async pruneCreatedRecoveryDirectories(failures: unknown[]): Promise<void> {
+    if (!this.adapter.removeEmptyFolder) return
+    const candidates = [...this.createdRecoveryDirectoryCandidates].sort(
+      (left, right) =>
+        right.split('/').length - left.split('/').length || right.localeCompare(left, 'en')
+    )
+    for (const path of candidates) {
+      try {
+        await this.adapter.removeEmptyFolder(path)
+      } catch (error) {
+        if (!isNotFound(error)) failures.push(error)
+      }
     }
   }
 
@@ -300,6 +336,9 @@ class WorkspaceImportTransaction implements ImportDestinationTransaction {
     }
     if (failures.length === 0) {
       await this.removeRecoveryRevisions(failures)
+    }
+    if (failures.length === 0) {
+      await this.pruneCreatedRecoveryDirectories(failures)
     }
     if (failures.length > 0) {
       throw new AggregateError(failures, 'Spreadsheet import rollback failed.')

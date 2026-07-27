@@ -316,6 +316,8 @@ export type WorkspaceBackupExporter = (
   options?: BackupExportOptions
 ) => Promise<Blob>
 
+export type RemoveEmptyFolderResult = 'removed' | 'not-empty'
+
 /**
  * Storage-independent workspace surface. Rename and move both receive complete
  * destination paths; rename is restricted to the same parent, while move may
@@ -338,6 +340,12 @@ export interface WorkspaceAdapter {
   rename(from: string, to: string): Promise<void>
   move(from: string, to: string): Promise<void>
   remove(path: string): Promise<void>
+  /**
+   * Atomically remove `path` only when it is still an empty directory.
+   * Implementations must never recurse. Optional adapters are treated as
+   * unable to prove safe cleanup.
+   */
+  removeEmptyFolder?(path: string): Promise<RemoveEmptyFolderResult>
   createFolder(path: string): Promise<void>
   exportBackup(options?: BackupExportOptions): Promise<Blob>
 }

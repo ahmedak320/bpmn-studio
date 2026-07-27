@@ -15,6 +15,7 @@ import {
   SingleFileWorkspaceAdapter,
   WORKSPACE_BACKUP_MANIFEST_PATH,
   type BackupExportOptions,
+  type RemoveEmptyFolderResult,
   type SaveOutcome,
   type WorkspaceAdapter,
   type WorkspaceEntry,
@@ -97,6 +98,10 @@ class InstrumentedWorkspaceAdapter implements WorkspaceAdapter {
 
   remove(path: string): Promise<void> {
     return this.target.remove(path)
+  }
+
+  removeEmptyFolder(path: string): Promise<RemoveEmptyFolderResult> {
+    return this.target.removeEmptyFolder?.(path) ?? Promise.resolve('not-empty')
   }
 
   createFolder(path: string): Promise<void> {
@@ -296,6 +301,31 @@ describe('public workspace manifest', () => {
     expect(backupManifest.workspace.id).toBe(UUID_A)
   })
 
+  it('forwards atomic empty-folder removal while protecting manifest metadata', async () => {
+    const backing = new MemoryWorkspaceAdapter({
+      id: 'provisional',
+      folders: ['empty', 'occupied'],
+      files: { 'occupied/concurrent-note.txt': 'retain me' }
+    })
+    const { adapter } = await bindWorkspaceToManifest(backing, {
+      createUuid: () => UUID_A,
+      now: () => new Date(CREATED_AT)
+    })
+
+    await expect(adapter.removeEmptyFolder('occupied')).resolves.toBe('not-empty')
+    expect(
+      new TextDecoder().decode((await adapter.read('occupied/concurrent-note.txt')).bytes)
+    ).toBe('retain me')
+    await expect(adapter.removeEmptyFolder('empty')).resolves.toBe('removed')
+    await expect(adapter.list('empty')).rejects.toMatchObject({ code: 'not-found' })
+    await expect(adapter.removeEmptyFolder('.orbitpm')).rejects.toMatchObject({
+      code: 'unsupported'
+    })
+    expect(await adapter.read(WORKSPACE_MANIFEST_PATH)).toMatchObject({
+      path: WORKSPACE_MANIFEST_PATH
+    })
+  })
+
   it('updates ordinary saves and i18n incrementally without listing or reading unrelated files', async () => {
     const backing = new MemoryWorkspaceAdapter({
       id: 'provisional',
@@ -391,8 +421,7 @@ describe('public workspace manifest', () => {
 
   it('uses a bounded full reconciliation only after an exceptional manifest CAS conflict', async () => {
     let conflictingManifestBytes: Uint8Array | undefined
-    let backing!: MemoryWorkspaceAdapter
-    backing = new MemoryWorkspaceAdapter({
+    const backing = new MemoryWorkspaceAdapter({
       id: 'provisional',
       files: {
         'process.bpmn': '<before/>',

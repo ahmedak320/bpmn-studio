@@ -168,6 +168,21 @@ describe('MemoryWorkspaceAdapter', () => {
     expect((await adapter.list()).some((entry) => entry.path.startsWith('archive/sub'))).toBe(false)
   })
 
+  it('removes empty folders atomically without deleting non-empty contents', async () => {
+    const adapter = new MemoryWorkspaceAdapter({
+      folders: ['empty', 'occupied'],
+      files: { 'occupied/concurrent-note.txt': 'retain me' }
+    })
+
+    await expect(adapter.removeEmptyFolder('occupied')).resolves.toBe('not-empty')
+    expect(decode((await adapter.read('occupied/concurrent-note.txt')).bytes)).toBe('retain me')
+    await expect(adapter.removeEmptyFolder('empty')).resolves.toBe('removed')
+    await expect(adapter.list('empty')).rejects.toMatchObject({ code: 'not-found' })
+    await expect(adapter.removeEmptyFolder('occupied/concurrent-note.txt')).rejects.toMatchObject({
+      code: 'not-a-directory'
+    })
+  })
+
   it('exports a complete ZIP with checksums, metadata, history, and empty folders', async () => {
     const adapter = new MemoryWorkspaceAdapter({
       id: 'backup-source',

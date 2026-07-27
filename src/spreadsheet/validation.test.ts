@@ -93,7 +93,12 @@ describe('ProcessWorkbookModel validation', () => {
     expect(report.reviewCount).toBe(2)
     expect(report.blocking).toBe(true)
     expect(report.issues).toContainEqual(
-      expect.objectContaining({ code: 'unknown-step-type', severity: 'review' })
+      expect.objectContaining({
+        code: 'unknown-step-type',
+        severity: 'review',
+        rawValue: 'Email somebody somehow',
+        normalizedValue: 'email somebody somehow'
+      })
     )
     expect(report.issues).toContainEqual(
       expect.objectContaining({ code: 'raci-invalid', severity: 'review' })

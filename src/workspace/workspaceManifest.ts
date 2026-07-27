@@ -8,6 +8,7 @@ import {
   normalizeWorkspacePath,
   type BackupExportOptions,
   type FileSnapshot,
+  type RemoveEmptyFolderResult,
   type SaveOutcome,
   type WorkspaceAdapter,
   type WorkspaceEntry,
@@ -984,6 +985,34 @@ export class ManifestBoundWorkspaceAdapter implements WorkspaceAdapter {
         )
       })
     }
+  }
+
+  async removeEmptyFolder(path: string): Promise<RemoveEmptyFolderResult> {
+    const normalized = normalizeWorkspacePath(path)
+    if (isManifestOrAncestor(normalized)) {
+      throw new WorkspaceOperationError({
+        code: 'unsupported',
+        operation: 'remove',
+        path: normalized,
+        message:
+          'The manifest or its parent metadata folder cannot be removed through this adapter.'
+      })
+    }
+    if (!this.#backing.removeEmptyFolder) return 'not-empty'
+    const result = await this.#backing.removeEmptyFolder(normalized)
+    if (result === 'removed' && !isFullyExcludedChecksumSubtree(normalized)) {
+      await this.#afterCommittedMutation(async () => {
+        await this.#commitIncrementalManifest(
+          this.#manifest.document.checksums.filter(
+            (checksum) => !pathIsSameOrDescendant(checksum.path, normalized)
+          ),
+          this.#manifest.warnings.filter(
+            (warning) => !pathIsSameOrDescendant(warning.path, normalized)
+          )
+        )
+      })
+    }
+    return result
   }
 
   createFolder(path: string): Promise<void> {

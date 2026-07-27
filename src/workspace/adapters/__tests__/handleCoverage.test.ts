@@ -244,6 +244,25 @@ describe('HandleWorkspaceAdapter edge coverage', () => {
     expect(createdRoot.children.has('created.bpmn')).toBe(false)
   })
 
+  it('uses nonrecursive remove-if-empty semantics and retains concurrent children', async () => {
+    const root = fakeRoot()
+    root.addDirectory('empty')
+    const occupied = root.addDirectory('occupied')
+    occupied.addFile('concurrent-note.txt', 'retain me')
+    root.addFile('plain.txt', 'file')
+    const removeEntry = vi.spyOn(root, 'removeEntry')
+    const adapter = directoryAdapter(root)
+
+    await expect(adapter.removeEmptyFolder('occupied')).resolves.toBe('not-empty')
+    expect(occupied.children.has('concurrent-note.txt')).toBe(true)
+    expect(removeEntry).toHaveBeenCalledWith('occupied')
+    await expect(adapter.removeEmptyFolder('empty')).resolves.toBe('removed')
+    expect(root.children.has('empty')).toBe(false)
+    await expect(adapter.removeEmptyFolder('plain.txt')).rejects.toMatchObject({
+      code: 'not-a-directory'
+    })
+  })
+
   it('falls back to confirmed bytes when post-close metadata is temporarily unavailable', async () => {
     const root = fakeRoot()
     const file = root.addFile('process.json', 'old', {
