@@ -1,15 +1,14 @@
 import {
   expect,
   test,
+  webkit,
   type BrowserContext,
-  type BrowserType,
   type Locator,
   type Page,
   type Request
 } from '@playwright/test'
 import { readFileSync } from 'node:fs'
 import { createServer, type Server } from 'node:http'
-import { createRequire } from 'node:module'
 import type { AddressInfo } from 'node:net'
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
@@ -26,7 +25,6 @@ import {
 const HERE = dirname(fileURLToPath(import.meta.url))
 const DIST = resolve(HERE, '../../dist/index.html')
 const FILE_URL = pathToFileURL(DIST).toString()
-const loadNodeModule = createRequire(import.meta.url)
 let loopbackServer: Server
 let HTTP_URL = ''
 
@@ -416,18 +414,16 @@ test('mandatory recovery: real OPFS restores a dirty draft after reload', async 
     // temporary profile; the implementation exercised below remains WebKit's
     // real origin-private file system.
     //
-    // Use a fresh client for this second browser. The test runner's
-    // worker-scoped Playwright singleton has tracing/default instrumentation
-    // attached, and a nested persistent WPE launch from that singleton does
-    // not retain MiniBrowser's feature settings.
-    const coreBundle = loadNodeModule('playwright-core/lib/coreBundle') as {
-      inprocess: {
-        createInProcessPlaywright(): { webkit: BrowserType }
-      }
-    }
-    const opfsPlaywright = coreBundle.inprocess.createInProcessPlaywright()
-    webkitOpfsContext = await opfsPlaywright.webkit.launchPersistentContext('', {
+    // MiniBrowser applies --features only to its startup page; pages created
+    // later through the inspector protocol use default settings. Playwright
+    // replaces that startup page when a persistent WebKit context has an
+    // explicit locale, and the test runner injects its default en-US locale
+    // into manually launched contexts unless the option key is already
+    // present. Pin locale to undefined so the feature-enabled startup page
+    // survives.
+    webkitOpfsContext = await webkit.launchPersistentContext('', {
       headless: true,
+      locale: undefined,
       args: ['--features=StorageAPI,FileSystem,FileSystemWritableStream,AccessHandle']
     })
     opfsPage = webkitOpfsContext.pages()[0] ?? (await webkitOpfsContext.newPage())
