@@ -1,17 +1,228 @@
-import { useMemo, useRef, useState } from 'react'
+import { useId, useMemo, useRef, useState } from 'react'
 import { AccessibleDialog } from '../common/AccessibleDialog'
-import { t, type Lang } from '../i18n'
+import { t, type Key, type Lang } from '../i18n'
 import { useLang } from '../i18n/useLang'
+import type { ValidationSeverity, ValidationSource } from '../validation'
+import { localizeValidationIssue } from '../validation/issueLocalization'
 import { normalizeWorkspacePath } from './adapters/path'
 import type {
   WorkspaceImportArtifact,
   WorkspaceImportCollision,
   WorkspaceImportCollisionDecision,
-  WorkspaceImportPlan
+  WorkspaceImportPlan,
+  WorkspaceImportRepair,
+  WorkspaceImportRepairCode,
+  WorkspaceImportSkippedItem,
+  WorkspaceImportSkipReason
 } from './importTransaction'
 import { isReservedOrbitPmPath } from './processIdentity'
-import { WorkspaceImportAutoLayoutPreview } from './WorkspaceImportAutoLayoutPreview'
+import {
+  boundedWorkspaceImportTechnicalEvidence,
+  WORKSPACE_IMPORT_TECHNICAL_DETAIL_MAX_CODE_POINTS,
+  WorkspaceImportAutoLayoutPreview
+} from './WorkspaceImportAutoLayoutPreview'
 import './WorkspaceImportReviewDialog.css'
+
+/**
+ * A review plan may legally contain thousands of artifacts. Keep each
+ * independently navigable evidence surface bounded so supported input cannot
+ * create an unbounded DOM.
+ */
+export const WORKSPACE_IMPORT_REVIEW_PAGE_SIZE = 12
+export const WORKSPACE_IMPORT_EXACT_EVIDENCE_PAGE_SIZE = 16
+
+interface ImportDiagnosticSpec {
+  message: Key
+  repair: Key
+}
+
+interface ImportSkipDiagnosticSpec extends ImportDiagnosticSpec {
+  label: Key
+}
+
+const WORKSPACE_IMPORT_SKIP_DIAGNOSTICS = Object.freeze({
+  'unsupported-content': {
+    label: 'workspaceImportReview.reason.unsupportedContent',
+    message: 'workspaceImportReview.skip.unsupportedContent',
+    repair: 'workspaceImportReview.guidance.chooseSupportedContent'
+  },
+  'unsafe-path': {
+    label: 'workspaceImportReview.reason.unsafePath',
+    message: 'workspaceImportReview.skip.unsafePath',
+    repair: 'workspaceImportReview.guidance.useSafePath'
+  },
+  'invalid-bpmn': {
+    label: 'workspaceImportReview.reason.invalidBpmn',
+    message: 'workspaceImportReview.skip.invalidBpmn',
+    repair: 'workspaceImportReview.guidance.repairBpmn'
+  },
+  'aml-conversion-failed': {
+    label: 'workspaceImportReview.reason.amlConversionFailed',
+    message: 'workspaceImportReview.skip.amlConversionFailed',
+    repair: 'workspaceImportReview.guidance.reviewArisExport'
+  },
+  'process-id-collision': {
+    label: 'workspaceImportReview.reason.processIdCollision',
+    message: 'workspaceImportReview.skip.processIdCollision',
+    repair: 'workspaceImportReview.guidance.resolveProcessIdentity'
+  },
+  'process-identity-changed': {
+    label: 'workspaceImportReview.reason.processIdentityChanged',
+    message: 'workspaceImportReview.skip.processIdentityChanged',
+    repair: 'workspaceImportReview.guidance.repeatReview'
+  },
+  'localization-review-required': {
+    label: 'workspaceImportReview.reason.localizationReviewRequired',
+    message: 'workspaceImportReview.skip.localizationReviewRequired',
+    repair: 'workspaceImportReview.guidance.completeLocalization'
+  },
+  'localization-review-cancelled': {
+    label: 'workspaceImportReview.reason.localizationReviewCancelled',
+    message: 'workspaceImportReview.skip.localizationReviewCancelled',
+    repair: 'workspaceImportReview.guidance.completeLocalization'
+  },
+  'localization-invalid': {
+    label: 'workspaceImportReview.reason.localizationInvalid',
+    message: 'workspaceImportReview.skip.localizationInvalid',
+    repair: 'workspaceImportReview.guidance.completeLocalization'
+  },
+  'destination-parent-file': {
+    label: 'workspaceImportReview.reason.destinationParentFile',
+    message: 'workspaceImportReview.skip.destinationParentFile',
+    repair: 'workspaceImportReview.guidance.useSafePath'
+  },
+  'library-not-bpmn': {
+    label: 'workspaceImportReview.reason.libraryNotBpmn',
+    message: 'workspaceImportReview.skip.libraryNotBpmn',
+    repair: 'workspaceImportReview.guidance.chooseSupportedContent'
+  },
+  'library-unsafe-path': {
+    label: 'workspaceImportReview.reason.libraryUnsafePath',
+    message: 'workspaceImportReview.skip.libraryUnsafePath',
+    repair: 'workspaceImportReview.guidance.useSafePath'
+  },
+  'library-too-large': {
+    label: 'workspaceImportReview.reason.libraryTooLarge',
+    message: 'workspaceImportReview.skip.libraryTooLarge',
+    repair: 'workspaceImportReview.guidance.reduceLibraryEntry'
+  },
+  'library-decode-failed': {
+    label: 'workspaceImportReview.reason.libraryDecodeFailed',
+    message: 'workspaceImportReview.skip.libraryDecodeFailed',
+    repair: 'workspaceImportReview.guidance.decodeUtf8'
+  }
+} satisfies Record<WorkspaceImportSkipReason, ImportSkipDiagnosticSpec>)
+
+const WORKSPACE_IMPORT_REPAIR_MESSAGE_KEYS = Object.freeze({
+  'aml-converted': 'workspaceImportReview.appliedRepair.amlConverted',
+  'auto-layout': 'workspaceImportReview.appliedRepair.autoLayout',
+  'destination-normalized': 'workspaceImportReview.appliedRepair.destinationNormalized',
+  'destination-deduplicated': 'workspaceImportReview.appliedRepair.destinationDeduplicated',
+  'destination-case-normalized': 'workspaceImportReview.appliedRepair.destinationCaseNormalized'
+} satisfies Record<WorkspaceImportRepairCode, Key>)
+
+const WORKSPACE_IMPORT_WARNING_DIAGNOSTICS = Object.freeze({
+  'aml-downgraded': {
+    message: 'workspaceImportReview.warning.amlDowngraded',
+    repair: 'workspaceImportReview.guidance.reviewArisReport'
+  },
+  'aml-ignored': {
+    message: 'workspaceImportReview.warning.amlIgnored',
+    repair: 'workspaceImportReview.guidance.reviewArisReport'
+  },
+  'aml-ambiguous': {
+    message: 'workspaceImportReview.warning.amlAmbiguous',
+    repair: 'workspaceImportReview.guidance.reviewArisReport'
+  },
+  'aml-unmapped': {
+    message: 'workspaceImportReview.warning.amlUnmapped',
+    repair: 'workspaceImportReview.guidance.reviewArisReport'
+  },
+  'same-path-process-replacement': {
+    message: 'workspaceImportReview.warning.samePathProcessReplacement',
+    repair: 'workspaceImportReview.guidance.reviewReplacement'
+  }
+} satisfies Record<string, ImportDiagnosticSpec>)
+
+const VALIDATION_SEVERITY_KEYS = Object.freeze({
+  error: 'validation.severity.error',
+  warning: 'validation.severity.warning',
+  info: 'validation.severity.info'
+} satisfies Record<ValidationSeverity, Key>)
+
+const VALIDATION_SOURCE_KEYS = Object.freeze({
+  xml: 'validation.stage.xml',
+  moddle: 'validation.stage.moddle',
+  xsd: 'validation.stage.xsd',
+  bpmnlint: 'validation.stage.bpmnlint',
+  structure: 'validation.stage.structure',
+  semantic: 'validation.stage.semantic',
+  di: 'validation.stage.di',
+  orbitpm: 'validation.stage.orbitpm',
+  preservation: 'validation.stage.preservation'
+} satisfies Record<ValidationSource, Key>)
+
+function ownValue<Value>(record: Readonly<Record<string, Value>>, key: string): Value | undefined {
+  if (!Object.prototype.hasOwnProperty.call(record, key)) return undefined
+  return record[key]
+}
+
+function validationSeverityLabel(severity: unknown): string {
+  const key =
+    typeof severity === 'string' ? ownValue<Key>(VALIDATION_SEVERITY_KEYS, severity) : undefined
+  return t(key ?? 'workspaceImportReview.validationSeverityUnknown')
+}
+
+function validationSourceLabel(source: unknown): string {
+  const key = typeof source === 'string' ? ownValue<Key>(VALIDATION_SOURCE_KEYS, source) : undefined
+  return t(key ?? 'workspaceImportReview.validationSourceUnknown')
+}
+
+function workspaceImportSkipCopy(item: WorkspaceImportSkippedItem): {
+  label: string
+  message: string
+  suggestedRepair: string
+} {
+  const spec = ownValue<ImportSkipDiagnosticSpec>(WORKSPACE_IMPORT_SKIP_DIAGNOSTICS, item.reason)
+  return spec
+    ? {
+        label: t(spec.label),
+        message: t(spec.message),
+        suggestedRepair: t(spec.repair)
+      }
+    : {
+        label: t('workspaceImportReview.reason.unknown'),
+        message: t('workspaceImportReview.skip.unknown'),
+        suggestedRepair: t('workspaceImportReview.guidance.unknown')
+      }
+}
+
+function workspaceImportRepairMessage(repair: WorkspaceImportRepair): string {
+  const key = ownValue<Key>(WORKSPACE_IMPORT_REPAIR_MESSAGE_KEYS, repair.code)
+  return t(key ?? 'workspaceImportReview.appliedRepair.unknown')
+}
+
+function workspaceImportWarningCopy(
+  warning: WorkspaceImportPlan['warnings'][number],
+  lang: Lang
+): { message: string; suggestedRepair: string } {
+  if (warning.validationIssue) {
+    return localizeValidationIssue(warning.validationIssue)
+  }
+  const spec = ownValue<ImportDiagnosticSpec>(WORKSPACE_IMPORT_WARNING_DIAGNOSTICS, warning.code)
+  if (!spec) {
+    return {
+      message: t('workspaceImportReview.warning.unknown'),
+      suggestedRepair: t('workspaceImportReview.guidance.unknown')
+    }
+  }
+  return {
+    message: t(spec.message, {
+      count: new Intl.NumberFormat(lang).format(warning.count ?? 0)
+    }),
+    suggestedRepair: t(spec.repair)
+  }
+}
 
 export interface WorkspaceImportReviewDialogProps {
   plan: WorkspaceImportPlan
@@ -54,24 +265,134 @@ function planHasReservedDestination(plan: WorkspaceImportPlan): boolean {
   )
 }
 
-function sourceNameFor(plan: WorkspaceImportPlan, sourceId: string): string | undefined {
+interface PaginationWindow {
+  readonly page: number
+  readonly pageCount: number
+  readonly start: number
+  readonly end: number
+  readonly setPage: (page: number) => void
+}
+
+function usePaginationWindow(total: number, pageSize: number): PaginationWindow {
+  const [requestedPage, setRequestedPage] = useState(0)
+  const pageCount = Math.max(1, Math.ceil(total / pageSize))
+  const page = Math.min(requestedPage, pageCount - 1)
+  const start = page * pageSize
+  const end = Math.min(total, start + pageSize)
+
+  return {
+    page,
+    pageCount,
+    start,
+    end,
+    setPage: (nextPage) => {
+      setRequestedPage(Math.max(0, Math.min(nextPage, pageCount - 1)))
+    }
+  }
+}
+
+function PaginationControls({
+  label,
+  total,
+  window,
+  controls
+}: {
+  label: string
+  total: number
+  window: PaginationWindow
+  controls: string
+}): JSX.Element | null {
+  if (total <= 0 || window.pageCount <= 1) return null
   return (
-    plan.artifacts.find((artifact) => artifact.sourceId === sourceId)?.sourceName ??
-    plan.skipped.find((item) => item.sourceId === sourceId)?.sourceName ??
-    plan.arisReports.find((evidence) => evidence.sourceId === sourceId)?.sourceName
+    <nav
+      className="workspace-import-review__pagination"
+      aria-label={t('workspaceImportReview.pagination.navigation', { section: label })}
+    >
+      <p role="status" aria-live="polite">
+        {t('workspaceImportReview.pagination.status', {
+          start: window.start + 1,
+          end: window.end,
+          total,
+          page: window.page + 1,
+          pages: window.pageCount
+        })}
+      </p>
+      <div>
+        <button
+          type="button"
+          className="orbitpm-lite-chrome-btn"
+          disabled={window.page === 0}
+          aria-controls={controls}
+          aria-label={t('workspaceImportReview.pagination.previousFor', { section: label })}
+          onClick={() => window.setPage(window.page - 1)}
+        >
+          {t('workspaceImportReview.pagination.previous')}
+        </button>
+        <button
+          type="button"
+          className="orbitpm-lite-chrome-btn"
+          disabled={window.page + 1 >= window.pageCount}
+          aria-controls={controls}
+          aria-label={t('workspaceImportReview.pagination.nextFor', { section: label })}
+          onClick={() => window.setPage(window.page + 1)}
+        >
+          {t('workspaceImportReview.pagination.next')}
+        </button>
+      </div>
+    </nav>
   )
 }
 
-function exactList(values: readonly string[]): JSX.Element {
+function ExactList({ values, label }: { values: readonly string[]; label: string }): JSX.Element {
+  const reactId = useId()
+  const listId = `workspace-import-review-exact-list-${reactId}`
+  const window = usePaginationWindow(values.length, WORKSPACE_IMPORT_EXACT_EVIDENCE_PAGE_SIZE)
   if (values.length === 0) return <span>{t('workspaceImportReview.none')}</span>
   return (
-    <ul className="workspace-import-review__exact-list">
-      {values.map((value, index) => (
-        <li key={`${value}-${index}`}>
-          <code dir="ltr">{value}</code>
-        </li>
-      ))}
-    </ul>
+    <div className="workspace-import-review__exact-list-container">
+      <ul id={listId} className="workspace-import-review__exact-list">
+        {values.slice(window.start, window.end).map((value, localIndex) => {
+          const index = window.start + localIndex
+          return (
+            <li key={`${value}-${index}`} aria-posinset={index + 1} aria-setsize={values.length}>
+              <code dir="ltr">{value}</code>
+            </li>
+          )
+        })}
+      </ul>
+      <PaginationControls label={label} total={values.length} window={window} controls={listId} />
+    </div>
+  )
+}
+
+function TechnicalDiagnostic({
+  value,
+  validation = false
+}: {
+  value: unknown
+  validation?: boolean
+}): JSX.Element {
+  const evidence = boundedWorkspaceImportTechnicalEvidence(value)
+  if (!evidence) return <span>{t('workspaceImportReview.none')}</span>
+  return (
+    <span className="workspace-import-review__bounded-technical">
+      <code
+        lang="en"
+        dir="ltr"
+        {...(validation
+          ? { 'data-workspace-import-validation-diagnostic': true }
+          : { 'data-workspace-import-technical-diagnostic': true })}
+      >
+        {evidence.text}
+      </code>
+      {evidence.truncated ? (
+        <span data-workspace-import-technical-truncation>
+          {t('workspaceImportReview.technicalEvidenceTruncated', {
+            limit: WORKSPACE_IMPORT_TECHNICAL_DETAIL_MAX_CODE_POINTS
+          })}
+        </span>
+      ) : null}
+    </span>
   )
 }
 
@@ -201,6 +522,18 @@ function WorkspaceImportReviewDialogBody({
   lang
 }: WorkspaceImportReviewDialogProps & { lang: Lang }): JSX.Element {
   const titleRef = useRef<HTMLHeadingElement>(null)
+  const [autoLayoutAccepted, setAutoLayoutAccepted] = useState(false)
+  const sourceNames = useMemo(() => {
+    const names = new Map<string, string>()
+    for (const artifact of plan.artifacts) names.set(artifact.sourceId, artifact.sourceName)
+    for (const item of plan.skipped) {
+      if (!names.has(item.sourceId)) names.set(item.sourceId, item.sourceName)
+    }
+    for (const evidence of plan.arisReports) {
+      if (!names.has(evidence.sourceId)) names.set(evidence.sourceId, evidence.sourceName)
+    }
+    return names
+  }, [plan.arisReports, plan.artifacts, plan.skipped])
   const [keepBothPaths, setKeepBothPaths] = useState<Readonly<Record<string, string>>>(() =>
     Object.fromEntries(
       plan.collisions.map((collision) => {
@@ -218,6 +551,15 @@ function WorkspaceImportReviewDialogBody({
     () => collisionReviews(plan, decisions, keepBothPaths),
     [decisions, keepBothPaths, plan]
   )
+  const artifactWindow = usePaginationWindow(
+    plan.artifacts.length,
+    WORKSPACE_IMPORT_REVIEW_PAGE_SIZE
+  )
+  const skippedWindow = usePaginationWindow(plan.skipped.length, WORKSPACE_IMPORT_REVIEW_PAGE_SIZE)
+  const warningWindow = usePaginationWindow(plan.warnings.length, WORKSPACE_IMPORT_REVIEW_PAGE_SIZE)
+  const repairWindow = usePaginationWindow(plan.repairs.length, WORKSPACE_IMPORT_REVIEW_PAGE_SIZE)
+  const arisWindow = usePaginationWindow(plan.arisReports.length, WORKSPACE_IMPORT_REVIEW_PAGE_SIZE)
+  const collisionWindow = usePaginationWindow(reviews.length, WORKSPACE_IMPORT_REVIEW_PAGE_SIZE)
   const layoutPreviews = useMemo(() => {
     const autoLayoutIds = new Set(
       plan.repairs.filter(({ code }) => code === 'auto-layout').map(({ artifactId }) => artifactId)
@@ -239,12 +581,14 @@ function WorkspaceImportReviewDialogBody({
   const invalidKeepBoth = reviews.some(
     ({ decision, keepBothError }) => decision?.action === 'keep-both' && keepBothError
   )
+  const autoLayoutAcceptanceRequired = layoutPreviews.length > 0 && !autoLayoutAccepted
   const reservedPlanDestination = planHasReservedDestination(plan)
   const confirmDisabled =
     busy ||
     plan.status === 'blocked' ||
     unresolved > 0 ||
     invalidKeepBoth ||
+    autoLayoutAcceptanceRequired ||
     reservedPlanDestination
   const statusMessage = reservedPlanDestination
     ? t('workspaceImportReview.reservedPlanDestination')
@@ -254,7 +598,10 @@ function WorkspaceImportReviewDialogBody({
         ? t('workspaceImportReview.unresolved', { count: unresolved })
         : invalidKeepBoth
           ? t('workspaceImportReview.invalidDecision')
-          : t('workspaceImportReview.ready')
+          : autoLayoutAcceptanceRequired
+            ? t('workspaceImportReview.autoLayoutAcceptance.required')
+            : t('workspaceImportReview.ready')
+  const applyTechnicalEvidence = boundedWorkspaceImportTechnicalEvidence(error)
 
   const setDecision = (
     review: CollisionReview,
@@ -388,61 +735,89 @@ function WorkspaceImportReviewDialogBody({
           {plan.artifacts.length === 0 ? (
             <EmptyEvidence />
           ) : (
-            <ol className="workspace-import-review__cards">
-              {plan.artifacts.map((artifact, index) => (
-                <li key={artifact.id} className="workspace-import-review__card">
-                  <h4>
-                    {t('workspaceImportReview.artifact', {
-                      index: index + 1,
-                      name: artifact.sourceName
-                    })}
-                  </h4>
-                  <dl className="workspace-import-review__evidence">
-                    <EvidenceRow label={t('workspaceImportReview.artifactId')} code>
-                      {artifact.id}
-                    </EvidenceRow>
-                    <EvidenceRow label={t('workspaceImportReview.sourceName')}>
-                      <span dir="auto">{artifact.sourceName}</span>
-                    </EvidenceRow>
-                    <EvidenceRow label={t('workspaceImportReview.sourceId')} code>
-                      {artifact.sourceId}
-                    </EvidenceRow>
-                    <EvidenceRow label={t('workspaceImportReview.sourceKind')} code>
-                      {artifact.sourceKind}
-                    </EvidenceRow>
-                    <EvidenceRow label={t('workspaceImportReview.sourcePath')} code>
-                      {artifact.sourcePath}
-                    </EvidenceRow>
-                    <EvidenceRow label={t('workspaceImportReview.destinationPath')} code>
-                      {artifact.destinationPath}
-                    </EvidenceRow>
-                    <EvidenceRow label={t('workspaceImportReview.utf8Bytes')}>
-                      <span dir="ltr">{String(artifact.bytes.byteLength)}</span>
-                    </EvidenceRow>
-                    <EvidenceRow label={t('workspaceImportReview.sha256')} code>
-                      {artifact.sha256}
-                    </EvidenceRow>
-                    <EvidenceRow label={t('workspaceImportReview.processIds')}>
-                      {exactList(artifact.processIds)}
-                    </EvidenceRow>
-                    <EvidenceRow label={t('workspaceImportReview.replacesProcessIds')}>
-                      {exactList(artifact.replacesProcessIds)}
-                    </EvidenceRow>
-                    <EvidenceRow label={t('workspaceImportReview.localizationMode')}>
-                      <span>
-                        {artifact.localizationEvidence.reviewMode === 'automatic-complete'
-                          ? t('workspaceImportReview.localizationMode.automatic')
-                          : t('workspaceImportReview.localizationMode.explicit')}{' '}
-                        (<code dir="ltr">{artifact.localizationEvidence.reviewMode}</code>)
-                      </span>
-                    </EvidenceRow>
-                    <EvidenceRow label={t('workspaceImportReview.localizationDigest')} code>
-                      {artifact.localizationReviewDigest}
-                    </EvidenceRow>
-                  </dl>
-                </li>
-              ))}
-            </ol>
+            <>
+              <ol
+                id="workspace-import-review-artifact-list"
+                className="workspace-import-review__cards"
+                start={artifactWindow.start + 1}
+              >
+                {plan.artifacts
+                  .slice(artifactWindow.start, artifactWindow.end)
+                  .map((artifact, localIndex) => {
+                    const index = artifactWindow.start + localIndex
+                    return (
+                      <li
+                        key={artifact.id}
+                        className="workspace-import-review__card"
+                        aria-posinset={index + 1}
+                        aria-setsize={plan.artifacts.length}
+                      >
+                        <h4>
+                          {t('workspaceImportReview.artifact', {
+                            index: index + 1,
+                            name: artifact.sourceName
+                          })}
+                        </h4>
+                        <dl className="workspace-import-review__evidence">
+                          <EvidenceRow label={t('workspaceImportReview.artifactId')} code>
+                            {artifact.id}
+                          </EvidenceRow>
+                          <EvidenceRow label={t('workspaceImportReview.sourceName')}>
+                            <span dir="auto">{artifact.sourceName}</span>
+                          </EvidenceRow>
+                          <EvidenceRow label={t('workspaceImportReview.sourceId')} code>
+                            {artifact.sourceId}
+                          </EvidenceRow>
+                          <EvidenceRow label={t('workspaceImportReview.sourceKind')} code>
+                            {artifact.sourceKind}
+                          </EvidenceRow>
+                          <EvidenceRow label={t('workspaceImportReview.sourcePath')} code>
+                            {artifact.sourcePath}
+                          </EvidenceRow>
+                          <EvidenceRow label={t('workspaceImportReview.destinationPath')} code>
+                            {artifact.destinationPath}
+                          </EvidenceRow>
+                          <EvidenceRow label={t('workspaceImportReview.utf8Bytes')}>
+                            <span dir="ltr">{String(artifact.bytes.byteLength)}</span>
+                          </EvidenceRow>
+                          <EvidenceRow label={t('workspaceImportReview.sha256')} code>
+                            {artifact.sha256}
+                          </EvidenceRow>
+                          <EvidenceRow label={t('workspaceImportReview.processIds')}>
+                            <ExactList
+                              values={artifact.processIds}
+                              label={`${t('workspaceImportReview.processIds')}: ${artifact.id}`}
+                            />
+                          </EvidenceRow>
+                          <EvidenceRow label={t('workspaceImportReview.replacesProcessIds')}>
+                            <ExactList
+                              values={artifact.replacesProcessIds}
+                              label={`${t('workspaceImportReview.replacesProcessIds')}: ${artifact.id}`}
+                            />
+                          </EvidenceRow>
+                          <EvidenceRow label={t('workspaceImportReview.localizationMode')}>
+                            <span>
+                              {artifact.localizationEvidence.reviewMode === 'automatic-complete'
+                                ? t('workspaceImportReview.localizationMode.automatic')
+                                : t('workspaceImportReview.localizationMode.explicit')}{' '}
+                              (<code dir="ltr">{artifact.localizationEvidence.reviewMode}</code>)
+                            </span>
+                          </EvidenceRow>
+                          <EvidenceRow label={t('workspaceImportReview.localizationDigest')} code>
+                            {artifact.localizationReviewDigest}
+                          </EvidenceRow>
+                        </dl>
+                      </li>
+                    )
+                  })}
+              </ol>
+              <PaginationControls
+                label={t('workspaceImportReview.artifacts')}
+                total={plan.artifacts.length}
+                window={artifactWindow}
+                controls="workspace-import-review-artifact-list"
+              />
+            </>
           )}
         </section>
 
@@ -451,35 +826,68 @@ function WorkspaceImportReviewDialogBody({
           {plan.skipped.length === 0 ? (
             <EmptyEvidence />
           ) : (
-            <ol className="workspace-import-review__cards">
-              {plan.skipped.map((item, index) => (
-                <li
-                  key={`${item.sourceId}-${item.path ?? ''}-${item.reason}-${index}`}
-                  className="workspace-import-review__card"
-                >
-                  <h4>{t('workspaceImportReview.skippedItem', { index: index + 1 })}</h4>
-                  <dl className="workspace-import-review__evidence">
-                    <EvidenceRow label={t('workspaceImportReview.sourceName')}>
-                      <span dir="auto">{item.sourceName}</span>
-                    </EvidenceRow>
-                    <EvidenceRow label={t('workspaceImportReview.sourceId')} code>
-                      {item.sourceId}
-                    </EvidenceRow>
-                    {item.path ? (
-                      <EvidenceRow label={t('workspaceImportReview.path')} code>
-                        {item.path}
-                      </EvidenceRow>
-                    ) : null}
-                    <EvidenceRow label={t('workspaceImportReview.reason')} code>
-                      {item.reason}
-                    </EvidenceRow>
-                    <EvidenceRow label={t('workspaceImportReview.message')}>
-                      <span dir="auto">{item.message}</span>
-                    </EvidenceRow>
-                  </dl>
-                </li>
-              ))}
-            </ol>
+            <>
+              <ol
+                id="workspace-import-review-skipped-list"
+                className="workspace-import-review__cards"
+                start={skippedWindow.start + 1}
+              >
+                {plan.skipped
+                  .slice(skippedWindow.start, skippedWindow.end)
+                  .map((item, localIndex) => {
+                    const index = skippedWindow.start + localIndex
+                    const copy = workspaceImportSkipCopy(item)
+                    return (
+                      <li
+                        key={`${item.sourceId}-${item.path ?? ''}-${item.reason}-${index}`}
+                        className="workspace-import-review__card"
+                        aria-posinset={index + 1}
+                        aria-setsize={plan.skipped.length}
+                      >
+                        <h4>{t('workspaceImportReview.skippedItem', { index: index + 1 })}</h4>
+                        <dl className="workspace-import-review__evidence">
+                          <EvidenceRow label={t('workspaceImportReview.sourceName')}>
+                            <span dir="auto">{item.sourceName}</span>
+                          </EvidenceRow>
+                          <EvidenceRow label={t('workspaceImportReview.sourceId')} code>
+                            {item.sourceId}
+                          </EvidenceRow>
+                          {item.path ? (
+                            <EvidenceRow label={t('workspaceImportReview.path')} code>
+                              {item.path}
+                            </EvidenceRow>
+                          ) : null}
+                          <EvidenceRow label={t('workspaceImportReview.reason')}>
+                            <span data-workspace-import-skip-reason-label>{copy.label}</span>
+                          </EvidenceRow>
+                          <EvidenceRow label={t('workspaceImportReview.message')}>
+                            <span data-workspace-import-localized-message>{copy.message}</span>
+                          </EvidenceRow>
+                          <EvidenceRow label={t('workspaceImportReview.suggestedRepair')}>
+                            <span data-workspace-import-localized-repair>
+                              {copy.suggestedRepair}
+                            </span>
+                          </EvidenceRow>
+                          <EvidenceRow label={t('workspaceImportReview.technicalCode')}>
+                            <code lang="en" dir="ltr" data-workspace-import-skip-reason-code>
+                              {item.reason}
+                            </code>
+                          </EvidenceRow>
+                          <EvidenceRow label={t('workspaceImportReview.technicalDiagnostic')}>
+                            <TechnicalDiagnostic value={item.message} />
+                          </EvidenceRow>
+                        </dl>
+                      </li>
+                    )
+                  })}
+              </ol>
+              <PaginationControls
+                label={t('workspaceImportReview.skipped')}
+                total={plan.skipped.length}
+                window={skippedWindow}
+                controls="workspace-import-review-skipped-list"
+              />
+            </>
           )}
         </section>
 
@@ -488,55 +896,111 @@ function WorkspaceImportReviewDialogBody({
           {plan.warnings.length === 0 ? (
             <EmptyEvidence />
           ) : (
-            <ol className="workspace-import-review__cards">
-              {plan.warnings.map((warning, index) => (
-                <li
-                  key={`${warning.sourceId}-${warning.artifactId ?? ''}-${warning.code}-${index}`}
-                  className="workspace-import-review__card"
-                >
-                  <h4>{t('workspaceImportReview.warningItem', { index: index + 1 })}</h4>
-                  <dl className="workspace-import-review__evidence">
-                    {sourceNameFor(plan, warning.sourceId) ? (
-                      <EvidenceRow label={t('workspaceImportReview.sourceName')}>
-                        <span dir="auto">{sourceNameFor(plan, warning.sourceId)}</span>
-                      </EvidenceRow>
-                    ) : null}
-                    <EvidenceRow label={t('workspaceImportReview.sourceId')} code>
-                      {warning.sourceId}
-                    </EvidenceRow>
-                    {warning.artifactId ? (
-                      <EvidenceRow label={t('workspaceImportReview.artifactId')} code>
-                        {warning.artifactId}
-                      </EvidenceRow>
-                    ) : null}
-                    <EvidenceRow label={t('workspaceImportReview.code')} code>
-                      {warning.code}
-                    </EvidenceRow>
-                    {warning.count !== undefined ? (
-                      <EvidenceRow label={t('workspaceImportReview.count')}>
-                        <span dir="ltr">{String(warning.count)}</span>
-                      </EvidenceRow>
-                    ) : null}
-                    <EvidenceRow label={t('workspaceImportReview.message')}>
-                      <span dir="auto">{warning.message}</span>
-                    </EvidenceRow>
-                    {warning.validationIssue ? (
-                      <EvidenceRow label={t('workspaceImportReview.validationIssue')}>
-                        <span dir="auto">
-                          <code dir="ltr">{warning.validationIssue.code}</code>
-                          {' · '}
-                          <code dir="ltr">{warning.validationIssue.severity}</code>
-                          {' · '}
-                          <code dir="ltr">{warning.validationIssue.source}</code>
-                          {' · '}
-                          {warning.validationIssue.message}
-                        </span>
-                      </EvidenceRow>
-                    ) : null}
-                  </dl>
-                </li>
-              ))}
-            </ol>
+            <>
+              <ol
+                id="workspace-import-review-warning-list"
+                className="workspace-import-review__cards"
+                start={warningWindow.start + 1}
+              >
+                {plan.warnings
+                  .slice(warningWindow.start, warningWindow.end)
+                  .map((warning, localIndex) => {
+                    const index = warningWindow.start + localIndex
+                    const copy = workspaceImportWarningCopy(warning, lang)
+                    return (
+                      <li
+                        key={`${warning.sourceId}-${warning.artifactId ?? ''}-${warning.code}-${index}`}
+                        className="workspace-import-review__card"
+                        aria-posinset={index + 1}
+                        aria-setsize={plan.warnings.length}
+                      >
+                        <h4>{t('workspaceImportReview.warningItem', { index: index + 1 })}</h4>
+                        <dl className="workspace-import-review__evidence">
+                          {sourceNames.get(warning.sourceId) ? (
+                            <EvidenceRow label={t('workspaceImportReview.sourceName')}>
+                              <span dir="auto">{sourceNames.get(warning.sourceId)}</span>
+                            </EvidenceRow>
+                          ) : null}
+                          <EvidenceRow label={t('workspaceImportReview.sourceId')} code>
+                            {warning.sourceId}
+                          </EvidenceRow>
+                          {warning.artifactId ? (
+                            <EvidenceRow label={t('workspaceImportReview.artifactId')} code>
+                              {warning.artifactId}
+                            </EvidenceRow>
+                          ) : null}
+                          {warning.count !== undefined ? (
+                            <EvidenceRow label={t('workspaceImportReview.count')}>
+                              <span dir="ltr">
+                                {new Intl.NumberFormat(lang).format(warning.count)}
+                              </span>
+                            </EvidenceRow>
+                          ) : null}
+                          {warning.validationIssue ? (
+                            <>
+                              <EvidenceRow label={t('workspaceImportReview.validationSeverity')}>
+                                <span data-workspace-import-validation-severity>
+                                  {validationSeverityLabel(warning.validationIssue.severity)}
+                                </span>
+                              </EvidenceRow>
+                              <EvidenceRow label={t('workspaceImportReview.validationSource')}>
+                                <span data-workspace-import-validation-source>
+                                  {validationSourceLabel(warning.validationIssue.source)}
+                                </span>
+                              </EvidenceRow>
+                            </>
+                          ) : null}
+                          <EvidenceRow label={t('workspaceImportReview.message')}>
+                            <span data-workspace-import-localized-message>{copy.message}</span>
+                          </EvidenceRow>
+                          <EvidenceRow label={t('workspaceImportReview.suggestedRepair')}>
+                            <span data-workspace-import-localized-repair>
+                              {copy.suggestedRepair}
+                            </span>
+                          </EvidenceRow>
+                          <EvidenceRow label={t('workspaceImportReview.technicalCode')}>
+                            <code lang="en" dir="ltr">
+                              {warning.code}
+                            </code>
+                          </EvidenceRow>
+                          {warning.validationIssue ? (
+                            <EvidenceRow label={t('workspaceImportReview.validationCode')}>
+                              <code lang="en" dir="ltr" data-workspace-import-validation-code>
+                                {warning.validationIssue.code}
+                              </code>
+                            </EvidenceRow>
+                          ) : null}
+                          {warning.validationIssue?.ruleId ? (
+                            <EvidenceRow label={t('workspaceImportReview.validationRuleId')}>
+                              <code lang="en" dir="ltr" data-workspace-import-validation-rule>
+                                {warning.validationIssue.ruleId}
+                              </code>
+                            </EvidenceRow>
+                          ) : null}
+                          <EvidenceRow label={t('workspaceImportReview.technicalDiagnostic')}>
+                            <TechnicalDiagnostic value={warning.message} />
+                          </EvidenceRow>
+                          {warning.validationIssue &&
+                          warning.validationIssue.message !== warning.message ? (
+                            <EvidenceRow label={t('workspaceImportReview.validationDiagnostic')}>
+                              <TechnicalDiagnostic
+                                value={warning.validationIssue.message}
+                                validation
+                              />
+                            </EvidenceRow>
+                          ) : null}
+                        </dl>
+                      </li>
+                    )
+                  })}
+              </ol>
+              <PaginationControls
+                label={t('workspaceImportReview.warnings')}
+                total={plan.warnings.length}
+                window={warningWindow}
+                controls="workspace-import-review-warning-list"
+              />
+            </>
           )}
         </section>
 
@@ -546,47 +1010,91 @@ function WorkspaceImportReviewDialogBody({
             <EmptyEvidence />
           ) : (
             <>
-              <ol className="workspace-import-review__cards">
-                {plan.repairs.map((repair, index) => (
-                  <li
-                    key={`${repair.sourceId}-${repair.artifactId}-${repair.code}-${index}`}
-                    className="workspace-import-review__card"
-                  >
-                    <h4>{t('workspaceImportReview.repairItem', { index: index + 1 })}</h4>
-                    <dl className="workspace-import-review__evidence">
-                      {sourceNameFor(plan, repair.sourceId) ? (
-                        <EvidenceRow label={t('workspaceImportReview.sourceName')}>
-                          <span dir="auto">{sourceNameFor(plan, repair.sourceId)}</span>
-                        </EvidenceRow>
-                      ) : null}
-                      <EvidenceRow label={t('workspaceImportReview.sourceId')} code>
-                        {repair.sourceId}
-                      </EvidenceRow>
-                      <EvidenceRow label={t('workspaceImportReview.artifactId')} code>
-                        {repair.artifactId}
-                      </EvidenceRow>
-                      <EvidenceRow label={t('workspaceImportReview.code')} code>
-                        {repair.code}
-                      </EvidenceRow>
-                      <EvidenceRow label={t('workspaceImportReview.message')}>
-                        <span dir="auto">{repair.message}</span>
-                      </EvidenceRow>
-                      {repair.before !== undefined ? (
-                        <EvidenceRow label={t('workspaceImportReview.before')} code>
-                          {repair.before}
-                        </EvidenceRow>
-                      ) : null}
-                      {repair.after !== undefined ? (
-                        <EvidenceRow label={t('workspaceImportReview.after')} code>
-                          {repair.after}
-                        </EvidenceRow>
-                      ) : null}
-                    </dl>
-                  </li>
-                ))}
+              <ol
+                id="workspace-import-review-repair-list"
+                className="workspace-import-review__cards"
+                start={repairWindow.start + 1}
+              >
+                {plan.repairs
+                  .slice(repairWindow.start, repairWindow.end)
+                  .map((repair, localIndex) => {
+                    const index = repairWindow.start + localIndex
+                    const localizedMessage = workspaceImportRepairMessage(repair)
+                    return (
+                      <li
+                        key={`${repair.sourceId}-${repair.artifactId}-${repair.code}-${index}`}
+                        className="workspace-import-review__card"
+                        aria-posinset={index + 1}
+                        aria-setsize={plan.repairs.length}
+                      >
+                        <h4>{t('workspaceImportReview.repairItem', { index: index + 1 })}</h4>
+                        <dl className="workspace-import-review__evidence">
+                          {sourceNames.get(repair.sourceId) ? (
+                            <EvidenceRow label={t('workspaceImportReview.sourceName')}>
+                              <span dir="auto">{sourceNames.get(repair.sourceId)}</span>
+                            </EvidenceRow>
+                          ) : null}
+                          <EvidenceRow label={t('workspaceImportReview.sourceId')} code>
+                            {repair.sourceId}
+                          </EvidenceRow>
+                          <EvidenceRow label={t('workspaceImportReview.artifactId')} code>
+                            {repair.artifactId}
+                          </EvidenceRow>
+                          <EvidenceRow label={t('workspaceImportReview.message')}>
+                            <span data-workspace-import-localized-message>{localizedMessage}</span>
+                          </EvidenceRow>
+                          <EvidenceRow label={t('workspaceImportReview.technicalCode')}>
+                            <code lang="en" dir="ltr">
+                              {repair.code}
+                            </code>
+                          </EvidenceRow>
+                          <EvidenceRow label={t('workspaceImportReview.technicalDiagnostic')}>
+                            <TechnicalDiagnostic value={repair.message} />
+                          </EvidenceRow>
+                          {repair.before !== undefined ? (
+                            <EvidenceRow label={t('workspaceImportReview.before')} code>
+                              {repair.before}
+                            </EvidenceRow>
+                          ) : null}
+                          {repair.after !== undefined ? (
+                            <EvidenceRow label={t('workspaceImportReview.after')} code>
+                              {repair.after}
+                            </EvidenceRow>
+                          ) : null}
+                        </dl>
+                      </li>
+                    )
+                  })}
               </ol>
+              <PaginationControls
+                label={t('workspaceImportReview.repairs')}
+                total={plan.repairs.length}
+                window={repairWindow}
+                controls="workspace-import-review-repair-list"
+              />
               {layoutPreviews.length > 0 ? (
-                <WorkspaceImportAutoLayoutPreview artifacts={layoutPreviews} />
+                <>
+                  <WorkspaceImportAutoLayoutPreview artifacts={layoutPreviews} />
+                  <div className="workspace-import-review__layout-acceptance">
+                    <label>
+                      <input
+                        type="checkbox"
+                        checked={autoLayoutAccepted}
+                        disabled={busy}
+                        aria-describedby="workspace-import-review-layout-acceptance-hint"
+                        onChange={(event) => setAutoLayoutAccepted(event.target.checked)}
+                      />
+                      <span>
+                        {t('workspaceImportReview.autoLayoutAcceptance.label', {
+                          count: layoutPreviews.length
+                        })}
+                      </span>
+                    </label>
+                    <p id="workspace-import-review-layout-acceptance-hint">
+                      {t('workspaceImportReview.autoLayoutAcceptance.hint')}
+                    </p>
+                  </div>
+                </>
               ) : null}
             </>
           )}
@@ -597,61 +1105,83 @@ function WorkspaceImportReviewDialogBody({
           {plan.arisReports.length === 0 ? (
             <EmptyEvidence />
           ) : (
-            <ol className="workspace-import-review__cards">
-              {plan.arisReports.map((evidence, index) => (
-                <li key={`${evidence.sourceId}-${index}`} className="workspace-import-review__card">
-                  <h4>
-                    {t('workspaceImportReview.arisItem', {
-                      index: index + 1,
-                      name: evidence.sourceName
-                    })}
-                  </h4>
-                  <dl className="workspace-import-review__aris-counts">
-                    <SummaryItem
-                      label={t('workspaceImportReview.aris.converted')}
-                      value={evidence.report.summary.converted}
-                    />
-                    <SummaryItem
-                      label={t('workspaceImportReview.aris.downgraded')}
-                      value={evidence.report.summary.downgraded}
-                    />
-                    <SummaryItem
-                      label={t('workspaceImportReview.aris.ignored')}
-                      value={evidence.report.summary.ignored}
-                    />
-                    <SummaryItem
-                      label={t('workspaceImportReview.aris.ambiguous')}
-                      value={evidence.report.summary.ambiguous}
-                    />
-                    <SummaryItem
-                      label={t('workspaceImportReview.aris.unmapped')}
-                      value={evidence.report.summary.unmapped}
-                    />
-                  </dl>
-                  <dl className="workspace-import-review__evidence">
-                    <EvidenceRow label={t('workspaceImportReview.sourceId')} code>
-                      {evidence.sourceId}
-                    </EvidenceRow>
-                    <EvidenceRow label={t('workspaceImportReview.reportFile')} code>
-                      {evidence.download.fileName}
-                    </EvidenceRow>
-                  </dl>
-                  <button
-                    type="button"
-                    className="orbitpm-lite-chrome-btn"
-                    disabled={!onDownloadArisReport}
-                    title={
-                      onDownloadArisReport
-                        ? undefined
-                        : t('workspaceImportReview.arisDownloadUnavailable')
-                    }
-                    onClick={() => onDownloadArisReport?.(evidence.sourceId)}
-                  >
-                    {t('workspaceImportReview.arisDownload')}
-                  </button>
-                </li>
-              ))}
-            </ol>
+            <>
+              <ol
+                id="workspace-import-review-aris-list"
+                className="workspace-import-review__cards"
+                start={arisWindow.start + 1}
+              >
+                {plan.arisReports
+                  .slice(arisWindow.start, arisWindow.end)
+                  .map((evidence, localIndex) => {
+                    const index = arisWindow.start + localIndex
+                    return (
+                      <li
+                        key={`${evidence.sourceId}-${index}`}
+                        className="workspace-import-review__card"
+                        aria-posinset={index + 1}
+                        aria-setsize={plan.arisReports.length}
+                      >
+                        <h4>
+                          {t('workspaceImportReview.arisItem', {
+                            index: index + 1,
+                            name: evidence.sourceName
+                          })}
+                        </h4>
+                        <dl className="workspace-import-review__aris-counts">
+                          <SummaryItem
+                            label={t('workspaceImportReview.aris.converted')}
+                            value={evidence.report.summary.converted}
+                          />
+                          <SummaryItem
+                            label={t('workspaceImportReview.aris.downgraded')}
+                            value={evidence.report.summary.downgraded}
+                          />
+                          <SummaryItem
+                            label={t('workspaceImportReview.aris.ignored')}
+                            value={evidence.report.summary.ignored}
+                          />
+                          <SummaryItem
+                            label={t('workspaceImportReview.aris.ambiguous')}
+                            value={evidence.report.summary.ambiguous}
+                          />
+                          <SummaryItem
+                            label={t('workspaceImportReview.aris.unmapped')}
+                            value={evidence.report.summary.unmapped}
+                          />
+                        </dl>
+                        <dl className="workspace-import-review__evidence">
+                          <EvidenceRow label={t('workspaceImportReview.sourceId')} code>
+                            {evidence.sourceId}
+                          </EvidenceRow>
+                          <EvidenceRow label={t('workspaceImportReview.reportFile')} code>
+                            {evidence.download.fileName}
+                          </EvidenceRow>
+                        </dl>
+                        <button
+                          type="button"
+                          className="orbitpm-lite-chrome-btn"
+                          disabled={!onDownloadArisReport}
+                          title={
+                            onDownloadArisReport
+                              ? undefined
+                              : t('workspaceImportReview.arisDownloadUnavailable')
+                          }
+                          onClick={() => onDownloadArisReport?.(evidence.sourceId)}
+                        >
+                          {t('workspaceImportReview.arisDownload')}
+                        </button>
+                      </li>
+                    )
+                  })}
+              </ol>
+              <PaginationControls
+                label={t('workspaceImportReview.aris')}
+                total={plan.arisReports.length}
+                window={arisWindow}
+                controls="workspace-import-review-aris-list"
+              />
+            </>
           )}
         </section>
 
@@ -660,134 +1190,174 @@ function WorkspaceImportReviewDialogBody({
           {reviews.length === 0 ? (
             <EmptyEvidence />
           ) : (
-            <ol className="workspace-import-review__cards">
-              {reviews.map((review, index) => {
-                const { collision, artifact, decision } = review
-                const decisionId = `workspace-import-decision-${index}`
-                const pathId = `workspace-import-keep-both-${index}`
-                const pathErrorId = `${pathId}-error`
-                const restrictionId = `${decisionId}-restriction`
-                const selectedAction = collision.identical ? 'skip' : (decision?.action ?? '')
-                return (
-                  <li key={collision.artifactId} className="workspace-import-review__card">
-                    <h4>
-                      {t('workspaceImportReview.collisionItem', {
-                        index: index + 1,
-                        path: collision.path
-                      })}
-                    </h4>
-                    <dl className="workspace-import-review__evidence">
-                      <EvidenceRow label={t('workspaceImportReview.artifactId')} code>
-                        {collision.artifactId}
-                      </EvidenceRow>
-                      {artifact ? (
-                        <EvidenceRow label={t('workspaceImportReview.sourceName')}>
-                          <span dir="auto">{artifact.sourceName}</span>
-                        </EvidenceRow>
-                      ) : null}
-                      <EvidenceRow label={t('workspaceImportReview.destinationPath')} code>
-                        {collision.path}
-                      </EvidenceRow>
-                      <EvidenceRow label={t('workspaceImportReview.incomingHash')} code>
-                        {collision.incomingHash}
-                      </EvidenceRow>
-                      <EvidenceRow label={t('workspaceImportReview.existingHash')} code>
-                        {collision.existingHash}
-                      </EvidenceRow>
-                      <EvidenceRow label={t('workspaceImportReview.suggestedKeepBoth')} code>
-                        {collision.suggestedKeepBothPath}
-                      </EvidenceRow>
-                    </dl>
-                    {collision.identical ? (
-                      <p className="workspace-import-review__identical">
-                        {t('workspaceImportReview.identical')}
-                      </p>
-                    ) : null}
-                    {review.keepBothRestriction ? (
-                      <p
-                        id={restrictionId}
-                        className="workspace-import-review__restriction"
-                        role="note"
+            <>
+              <ol
+                id="workspace-import-review-collision-list"
+                className="workspace-import-review__cards"
+                start={collisionWindow.start + 1}
+              >
+                {reviews
+                  .slice(collisionWindow.start, collisionWindow.end)
+                  .map((review, localIndex) => {
+                    const index = collisionWindow.start + localIndex
+                    const { collision, artifact, decision } = review
+                    const decisionId = `workspace-import-decision-${index}`
+                    const pathId = `workspace-import-keep-both-${index}`
+                    const pathErrorId = `${pathId}-error`
+                    const restrictionId = `${decisionId}-restriction`
+                    const selectedAction = collision.identical ? 'skip' : (decision?.action ?? '')
+                    return (
+                      <li
+                        key={collision.artifactId}
+                        className="workspace-import-review__card"
+                        aria-posinset={index + 1}
+                        aria-setsize={reviews.length}
                       >
-                        {review.keepBothRestriction}
-                      </p>
-                    ) : null}
-                    <div className="workspace-import-review__field">
-                      <label htmlFor={decisionId}>{t('workspaceImportReview.decision')}</label>
-                      <select
-                        id={decisionId}
-                        value={selectedAction}
-                        disabled={busy || collision.identical}
-                        required={!collision.identical}
-                        aria-describedby={review.keepBothRestriction ? restrictionId : undefined}
-                        onChange={(event) =>
-                          setDecision(
-                            review,
-                            event.target.value as '' | WorkspaceImportCollisionDecision['action']
-                          )
-                        }
-                      >
-                        {!collision.identical ? (
-                          <option value="" disabled>
-                            {t('workspaceImportReview.decision.choose')}
-                          </option>
-                        ) : null}
-                        <option value="replace">
-                          {t('workspaceImportReview.decision.replace')}
-                        </option>
-                        <option value="skip">{t('workspaceImportReview.decision.skip')}</option>
-                        <option value="keep-both" disabled={!review.keepBothAllowed}>
-                          {t('workspaceImportReview.decision.keepBoth')}
-                        </option>
-                      </select>
-                    </div>
-                    {decision?.action === 'keep-both' ? (
-                      <div className="workspace-import-review__field">
-                        <label htmlFor={pathId}>
-                          {t('workspaceImportReview.keepBothDestination')}
-                        </label>
-                        <input
-                          id={pathId}
-                          type="text"
-                          dir="ltr"
-                          value={review.keepBothPath}
-                          disabled={busy || !review.keepBothAllowed}
-                          aria-invalid={Boolean(review.keepBothError)}
-                          aria-describedby={review.keepBothError ? pathErrorId : undefined}
-                          onChange={(event) => {
-                            const destinationPath = event.target.value
-                            setKeepBothPaths((previous) => ({
-                              ...previous,
-                              [collision.artifactId]: destinationPath
-                            }))
-                            onDecision(collision.artifactId, {
-                              action: 'keep-both',
-                              destinationPath
-                            })
-                          }}
-                        />
-                        {review.keepBothError ? (
-                          <p
-                            id={pathErrorId}
-                            className="workspace-import-review__field-error"
-                            role="alert"
-                          >
-                            {review.keepBothError}
+                        <h4>
+                          {t('workspaceImportReview.collisionItem', {
+                            index: index + 1,
+                            path: collision.path
+                          })}
+                        </h4>
+                        <dl className="workspace-import-review__evidence">
+                          <EvidenceRow label={t('workspaceImportReview.artifactId')} code>
+                            {collision.artifactId}
+                          </EvidenceRow>
+                          {artifact ? (
+                            <EvidenceRow label={t('workspaceImportReview.sourceName')}>
+                              <span dir="auto">{artifact.sourceName}</span>
+                            </EvidenceRow>
+                          ) : null}
+                          <EvidenceRow label={t('workspaceImportReview.destinationPath')} code>
+                            {collision.path}
+                          </EvidenceRow>
+                          <EvidenceRow label={t('workspaceImportReview.incomingHash')} code>
+                            {collision.incomingHash}
+                          </EvidenceRow>
+                          <EvidenceRow label={t('workspaceImportReview.existingHash')} code>
+                            {collision.existingHash}
+                          </EvidenceRow>
+                          <EvidenceRow label={t('workspaceImportReview.suggestedKeepBoth')} code>
+                            {collision.suggestedKeepBothPath}
+                          </EvidenceRow>
+                        </dl>
+                        {collision.identical ? (
+                          <p className="workspace-import-review__identical">
+                            {t('workspaceImportReview.identical')}
                           </p>
                         ) : null}
-                      </div>
-                    ) : null}
-                  </li>
-                )
-              })}
-            </ol>
+                        {review.keepBothRestriction ? (
+                          <p
+                            id={restrictionId}
+                            className="workspace-import-review__restriction"
+                            role="note"
+                          >
+                            {review.keepBothRestriction}
+                          </p>
+                        ) : null}
+                        <div className="workspace-import-review__field">
+                          <label htmlFor={decisionId}>{t('workspaceImportReview.decision')}</label>
+                          <select
+                            id={decisionId}
+                            value={selectedAction}
+                            disabled={busy || collision.identical}
+                            required={!collision.identical}
+                            aria-describedby={
+                              review.keepBothRestriction ? restrictionId : undefined
+                            }
+                            onChange={(event) =>
+                              setDecision(
+                                review,
+                                event.target.value as
+                                  '' | WorkspaceImportCollisionDecision['action']
+                              )
+                            }
+                          >
+                            {!collision.identical ? (
+                              <option value="" disabled>
+                                {t('workspaceImportReview.decision.choose')}
+                              </option>
+                            ) : null}
+                            <option value="replace">
+                              {t('workspaceImportReview.decision.replace')}
+                            </option>
+                            <option value="skip">{t('workspaceImportReview.decision.skip')}</option>
+                            <option value="keep-both" disabled={!review.keepBothAllowed}>
+                              {t('workspaceImportReview.decision.keepBoth')}
+                            </option>
+                          </select>
+                        </div>
+                        {decision?.action === 'keep-both' ? (
+                          <div className="workspace-import-review__field">
+                            <label htmlFor={pathId}>
+                              {t('workspaceImportReview.keepBothDestination')}
+                            </label>
+                            <input
+                              id={pathId}
+                              type="text"
+                              dir="ltr"
+                              value={review.keepBothPath}
+                              disabled={busy || !review.keepBothAllowed}
+                              aria-invalid={Boolean(review.keepBothError)}
+                              aria-describedby={review.keepBothError ? pathErrorId : undefined}
+                              onChange={(event) => {
+                                const destinationPath = event.target.value
+                                setKeepBothPaths((previous) => ({
+                                  ...previous,
+                                  [collision.artifactId]: destinationPath
+                                }))
+                                onDecision(collision.artifactId, {
+                                  action: 'keep-both',
+                                  destinationPath
+                                })
+                              }}
+                            />
+                            {review.keepBothError ? (
+                              <p
+                                id={pathErrorId}
+                                className="workspace-import-review__field-error"
+                                role="alert"
+                              >
+                                {review.keepBothError}
+                              </p>
+                            ) : null}
+                          </div>
+                        ) : null}
+                      </li>
+                    )
+                  })}
+              </ol>
+              <PaginationControls
+                label={t('workspaceImportReview.collisions')}
+                total={reviews.length}
+                window={collisionWindow}
+                controls="workspace-import-review-collision-list"
+              />
+            </>
           )}
         </section>
 
         {error ? (
-          <div className="workspace-import-review__error" role="alert" aria-live="assertive">
-            <strong>{t('workspaceImportReview.error')}</strong>
-            <span dir="auto">{error}</span>
+          <div className="workspace-import-review__error-container">
+            <div className="workspace-import-review__error" role="alert" aria-live="assertive">
+              <strong>{t('workspaceImportReview.error')}</strong>
+              <span>{t('workspaceImportReview.errorSummary')}</span>
+            </div>
+            {applyTechnicalEvidence ? (
+              <details className="workspace-import-review__technical-evidence">
+                <summary>{t('workspaceImportReview.technicalEvidence')}</summary>
+                {applyTechnicalEvidence.truncated ? (
+                  <p data-workspace-import-technical-truncation>
+                    {t('workspaceImportReview.technicalEvidenceTruncated', {
+                      limit: WORKSPACE_IMPORT_TECHNICAL_DETAIL_MAX_CODE_POINTS
+                    })}
+                  </p>
+                ) : null}
+                <code dir="auto" data-workspace-import-apply-technical-diagnostic>
+                  {applyTechnicalEvidence.text}
+                </code>
+              </details>
+            ) : null}
           </div>
         ) : null}
       </div>

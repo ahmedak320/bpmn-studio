@@ -319,6 +319,86 @@ describe('ProcessOutlineEditor accessibility and authoring', () => {
     expect(fixture.elements.has('Flow_between')).toBe(false)
   })
 
+  it('uses the localized accessible delete dialog and restores deterministic tree focus', async () => {
+    const fixture = createOutlineTestModeler()
+    fixture.addNode('Task_A', 'bpmn:Task', 'Alpha')
+    fixture.addNode('Task_B', 'bpmn:Task', 'Beta')
+    const nativeConfirm = vi.fn()
+    vi.stubGlobal('confirm', nativeConfirm)
+    const user = userEvent.setup()
+
+    render(
+      <ProcessOutlineEditor modeler={fixture.modeler} messages={EN_PROCESS_OUTLINE_MESSAGES} />
+    )
+
+    const alpha = screen.getByRole('treeitem', { name: 'Task: Alpha' })
+    alpha.focus()
+    await user.keyboard('{Delete}')
+    const dialog = screen.getByRole('alertdialog', { name: 'Delete outline item?' })
+    expect(
+      within(dialog).getByText('Delete Alpha? This can be undone from the canvas.')
+    ).not.toBeNull()
+    expect(document.activeElement).toBe(within(dialog).getByRole('button', { name: 'Cancel' }))
+
+    await user.keyboard('{Escape}')
+    expect(screen.queryByRole('alertdialog', { name: 'Delete outline item?' })).toBeNull()
+    expect(document.activeElement).toBe(alpha)
+    expect(fixture.elements.has('Task_A')).toBe(true)
+
+    await user.keyboard('{Delete}')
+    await user.click(
+      within(screen.getByRole('alertdialog', { name: 'Delete outline item?' })).getByRole(
+        'button',
+        { name: 'Delete item' }
+      )
+    )
+    await waitFor(() => expect(fixture.elements.has('Task_A')).toBe(false))
+    expect(document.activeElement?.getAttribute('data-outline-id')).toBe('Task_B')
+    expect(nativeConfirm).not.toHaveBeenCalled()
+    expect(AR_PROCESS_OUTLINE_MESSAGES.deleteDialogTitle).toBe('حذف عنصر المخطط التفصيلي؟')
+    expect(AR_PROCESS_OUTLINE_MESSAGES.deleteConfirm).toBe('حذف العنصر')
+  })
+
+  it('does not apply a late injected delete decision to a replacement modeler', async () => {
+    const original = createOutlineTestModeler()
+    original.addNode('Task_A', 'bpmn:Task', 'Original')
+    let resolveConfirmation: ((confirmed: boolean) => void) | undefined
+    const confirmation = new Promise<boolean>((resolve) => {
+      resolveConfirmation = resolve
+    })
+    const confirmDelete = vi.fn(() => confirmation)
+    const user = userEvent.setup()
+    const { rerender } = render(
+      <ProcessOutlineEditor
+        modeler={original.modeler}
+        messages={EN_PROCESS_OUTLINE_MESSAGES}
+        confirmDelete={confirmDelete}
+      />
+    )
+
+    const originalRow = screen.getByRole('treeitem', { name: 'Task: Original' })
+    originalRow.focus()
+    await user.keyboard('{Delete}')
+    await waitFor(() => expect(confirmDelete).toHaveBeenCalledOnce())
+
+    const replacement = createOutlineTestModeler()
+    replacement.addNode('Task_A', 'bpmn:Task', 'Replacement')
+    rerender(
+      <ProcessOutlineEditor
+        modeler={replacement.modeler}
+        messages={EN_PROCESS_OUTLINE_MESSAGES}
+        confirmDelete={confirmDelete}
+      />
+    )
+    await screen.findByRole('treeitem', { name: 'Task: Replacement' })
+    await act(async () => {
+      resolveConfirmation?.(true)
+      await confirmation
+    })
+
+    expect(replacement.elements.has('Task_A')).toBe(true)
+  })
+
   it('limits non-sequence connections to label editing and restores tree focus', async () => {
     const fixture = createOutlineTestModeler()
     fixture.addNode('Task_A', 'bpmn:Task', 'Sender')
@@ -399,6 +479,82 @@ describe('ProcessOutlineEditor accessibility and authoring', () => {
 
     await user.click(screen.getByRole('button', { name: 'Edit selected item' }))
     expect((screen.getByLabelText('Name (English)') as HTMLInputElement).value).toBe('Beta')
+  })
+
+  it('lets Arabic and mixed natural-language outline content choose its own direction', async () => {
+    const fixture = createOutlineTestModeler()
+    const gateway = fixture.addNode('Gateway_1', 'bpmn:ExclusiveGateway', 'قرار الموافقة')
+    gateway.businessObject.documentation = [{ text: 'راجع الطلب Review the request' }]
+    fixture.addNode('Task_A', 'bpmn:Task', 'اعتماد الطلب')
+    fixture.addFlow('Flow_ar', 'Gateway_1', 'Task_A', {
+      name: 'نعم Yes',
+      condition: 'المبلغ أكبر من ١٠٠'
+    })
+    const user = userEvent.setup()
+
+    render(
+      <ProcessOutlineEditor
+        modeler={fixture.modeler}
+        messages={AR_PROCESS_OUTLINE_MESSAGES}
+        direction="rtl"
+      />
+    )
+
+    const nodeRow = document.querySelector<HTMLElement>('[data-outline-id="Gateway_1"]')
+    const flowRow = document.querySelector<HTMLElement>('[data-outline-id="Flow_ar"]')
+    expect(
+      nodeRow?.querySelector('.orbitpm-process-outline__item-main span')?.getAttribute('dir')
+    ).toBe('auto')
+    expect(flowRow?.querySelector('strong')?.getAttribute('dir')).toBe('auto')
+
+    if (!flowRow) throw new Error('Arabic flow row missing')
+    await user.click(flowRow)
+    const renderedCondition = screen.getByText('المبلغ أكبر من ١٠٠')
+    expect(renderedCondition.getAttribute('dir')).toBe('auto')
+    expect(renderedCondition.getAttribute('lang')).not.toBe('en')
+
+    await user.click(screen.getByRole('button', { name: AR_PROCESS_OUTLINE_MESSAGES.editItem }))
+    const editedFlowName = screen.getByLabelText(AR_PROCESS_OUTLINE_MESSAGES.itemNameLabel)
+    const editedFlowForm = editedFlowName.closest('form')
+    if (!editedFlowForm) throw new Error('Flow edit form missing')
+    expect(editedFlowName.getAttribute('dir')).toBe('auto')
+    expect(
+      within(editedFlowForm)
+        .getByLabelText(AR_PROCESS_OUTLINE_MESSAGES.conditionLabel)
+        .getAttribute('dir')
+    ).toBe('auto')
+    await user.click(screen.getByRole('button', { name: AR_PROCESS_OUTLINE_MESSAGES.cancel }))
+
+    const addForm = screen
+      .getByRole('heading', {
+        name: AR_PROCESS_OUTLINE_MESSAGES.addHeading
+      })
+      .closest('form')
+    const connectForm = screen
+      .getByRole('heading', {
+        name: AR_PROCESS_OUTLINE_MESSAGES.connectHeading
+      })
+      .closest('form')
+    if (!addForm || !connectForm) throw new Error('Outline authoring forms missing')
+    expect(
+      within(addForm).getByLabelText(AR_PROCESS_OUTLINE_MESSAGES.newNodeLabel).getAttribute('dir')
+    ).toBe('auto')
+    expect(
+      within(connectForm).getByLabelText(AR_PROCESS_OUTLINE_MESSAGES.flowLabel).getAttribute('dir')
+    ).toBe('auto')
+    expect(
+      within(connectForm)
+        .getByLabelText(AR_PROCESS_OUTLINE_MESSAGES.conditionLabel)
+        .getAttribute('dir')
+    ).toBe('auto')
+
+    if (!nodeRow) throw new Error('Arabic node row missing')
+    await user.click(nodeRow)
+    expect(screen.getByText('راجع الطلب Review the request').getAttribute('dir')).toBe('auto')
+    await user.click(screen.getByRole('button', { name: AR_PROCESS_OUTLINE_MESSAGES.editItem }))
+    expect(
+      screen.getByLabelText(AR_PROCESS_OUTLINE_MESSAGES.documentationLabel).getAttribute('dir')
+    ).toBe('auto')
   })
 
   it('locale-formats outline counts and keeps checkbox targets at least 24 pixels', () => {

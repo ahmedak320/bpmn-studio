@@ -17,7 +17,7 @@ interface TestDraftRecord {
 }
 
 interface TestWorkspaceChange {
-  kind: 'saved' | 'moved' | 'deleted'
+  kind: 'saved' | 'moved' | 'deleted' | 'invalidated'
   path: string
   previousPath?: string
 }
@@ -94,6 +94,7 @@ const mocks = vi.hoisted(() => ({
   prompt: vi.fn(),
   triggerDownload: vi.fn(),
   setLang: vi.fn(),
+  localizedRuntimeTranslation: vi.fn(),
   installLinkBadges: vi.fn(),
   autoSizeAll: vi.fn(),
   editorProps: vi.fn(),
@@ -106,6 +107,7 @@ const mocks = vi.hoisted(() => ({
   modelerGet: vi.fn(),
   modelerDefinitions: vi.fn(),
   makeFreeTranslateTexts: vi.fn(),
+  buildTranslationExternalReview: vi.fn(),
   saveSvg: vi.fn(),
   saveXml: vi.fn(),
   importXml: vi.fn(),
@@ -115,6 +117,7 @@ const mocks = vi.hoisted(() => ({
   validateBpmn: vi.fn(),
   evaluatePolicy: vi.fn(),
   validatePreservation: vi.fn(),
+  diagramPreviewProps: vi.fn(),
   migrateLegacyCredentialsOnStartup: vi.fn(),
   pickWorkspace: vi.fn(),
   rememberWorkspace: vi.fn(),
@@ -137,6 +140,22 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock('./i18n', () => ({
   t: (key: string, values?: Record<string, unknown>): string => {
+    if (
+      key.startsWith('workspace.import.postCommit') ||
+      key.startsWith('workspace.backup.historyRetention') ||
+      key.startsWith('workspace.backup.postCommit') ||
+      key === 'workspace.sync.committedReloadEditorChanged' ||
+      key.startsWith('workspace.storage.opfsOpen') ||
+      key.startsWith('session.save.preservation') ||
+      key === 'session.save.permissionLoss' ||
+      key === 'session.save.storageFailure' ||
+      key === 'session.save.storageTechnicalEvidence' ||
+      key === 'session.save.retainedEditorCaptureFailed' ||
+      key === 'workspace.history.restoreCancelled' ||
+      key.startsWith('workspace.history.apply')
+    ) {
+      return mocks.localizedRuntimeTranslation(key, values) as string
+    }
     if (key === 'translationReview.retry.attempt') {
       return `${key}:${values?.service}:${values?.item}/${values?.items}:${values?.attempt}/${values?.max}`
     }
@@ -207,6 +226,19 @@ vi.mock('./ai/freeTranslate', async (importOriginal) => {
   return {
     ...actual,
     makeFreeTranslateTexts: mocks.makeFreeTranslateTexts
+  }
+})
+
+vi.mock('./ai/translate', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('./ai/translate')>()
+  return {
+    ...actual,
+    buildTranslationExternalReview: (
+      ...args: Parameters<typeof actual.buildTranslationExternalReview>
+    ) => {
+      mocks.buildTranslationExternalReview(...args)
+      return actual.buildTranslationExternalReview(...args)
+    }
   }
 })
 
@@ -309,7 +341,38 @@ vi.mock('./validation', () => ({
   getRuntimeValidationAdapters: () => ({}),
   validateBpmnXml: mocks.validateBpmn,
   evaluateValidationPolicy: mocks.evaluatePolicy,
-  validateUnknownExtensionPreservation: mocks.validatePreservation
+  validateUnknownExtensionPreservation: mocks.validatePreservation,
+  canCreateGenerated: (summary: { valid: boolean }): boolean => summary.valid,
+  ReadOnlyDiagramPreview: (props: {
+    xml: string
+    title: string
+    ariaLabel?: string
+    onStatusChange?(
+      status: import('./validation/ReadOnlyDiagramPreview').ReadOnlyDiagramPreviewStatus
+    ): void
+  }) => {
+    mocks.diagramPreviewProps(props)
+    return (
+      <section data-testid="mock-read-only-diagram-preview">
+        <h3>{props.title}</h3>
+        <div role="img" aria-label={props.ariaLabel} />
+        <button
+          type="button"
+          onClick={() => props.onStatusChange?.({ status: 'ready', warningCount: 0 })}
+        >
+          mock-layout-preview-ready
+        </button>
+        <button
+          type="button"
+          onClick={() =>
+            props.onStatusChange?.({ status: 'error', message: 'mock viewer import failed' })
+          }
+        >
+          mock-layout-preview-error
+        </button>
+      </section>
+    )
+  }
 }))
 
 vi.mock('./sessions', async (importOriginal) => {
@@ -484,6 +547,7 @@ vi.mock('./ai/AiPanelLite', () => ({
     mocks.aiProps(props)
     return (
       <div data-testid="ai-panel">
+        <input aria-label="mock-ai-draft" defaultValue="" />
         <button type="button" onClick={props.onOpenSettings}>
           mock-ai-settings
         </button>
@@ -571,6 +635,7 @@ vi.mock('./assist/AssistantDrawer', () => ({
     open: boolean
     onOpen(): void
     onClose(): void
+    onChangeWorkspace?(): void
     onApplyXml?(
       tabKey: string,
       xml: string,
@@ -583,6 +648,11 @@ vi.mock('./assist/AssistantDrawer', () => ({
         <button type="button" onClick={props.open ? props.onClose : props.onOpen}>
           {props.open ? 'mock-assistant-close' : 'mock-assistant-open'}
         </button>
+        {props.open && props.onChangeWorkspace && (
+          <button type="button" onClick={props.onChangeWorkspace}>
+            mock-assistant-change-workspace
+          </button>
+        )}
       </div>
     )
   }
@@ -739,7 +809,7 @@ vi.mock('./workspace/MoveDialog', () => ({
   }
 }))
 
-import { MemoryWorkspaceAdapter, WorkspaceOperationError } from './workspace/adapters'
+import { MemoryWorkspaceAdapter, WorkspaceOperationError, sha256Hex } from './workspace/adapters'
 import { MAX_DROPPED_IMPORT_BYTES } from './workspace/importDrop'
 import {
   FakeDirectoryHandle,
@@ -761,6 +831,18 @@ import {
   serializeWorkspaceTranslationMemoryDocument
 } from './localization/workspaceStore'
 import type { LocalizationResourcesEditorProps } from './settings/LocalizationResourcesEditor'
+import { resetProviderSelectionForTests, setProviderSelection } from './ai/providerSelection'
+import { clearKey, setKey } from './ai/keys'
+import { FreeTranslateError } from './ai/freeTranslate'
+import { ar, en } from './i18n/dictionaries'
+import {
+  buildTranslationRecoveryDisclosure,
+  deriveTranslationReviewProgress,
+  listTranslationRecoveryFields,
+  type TranslationRecoveryField
+} from './localization/translationRecovery'
+import { grantExternalRequestConsent } from './localization/externalRequestReview'
+import type { TranslationReviewDialogProps } from './localization/TranslationReviewDialog'
 import App from './App'
 
 function latestSessionController(): import('./sessions').DocumentSessionController {
@@ -861,12 +943,84 @@ function deferred<T = void>(): {
   return { promise, resolve, reject }
 }
 
+function installControllableMatchMedia(initialWidth: number): {
+  setWidth(width: number): void
+} {
+  let width = initialWidth
+  const queries = new Map<
+    string,
+    {
+      readonly media: string
+      readonly matches: boolean
+      onchange: ((event: MediaQueryListEvent) => void) | null
+      addEventListener(type: 'change', listener: (event: MediaQueryListEvent) => void): void
+      removeEventListener(type: 'change', listener: (event: MediaQueryListEvent) => void): void
+      addListener(listener: (event: MediaQueryListEvent) => void): void
+      removeListener(listener: (event: MediaQueryListEvent) => void): void
+      dispatchEvent(event: Event): boolean
+    }
+  >()
+  const listeners = new Map<string, Set<(event: MediaQueryListEvent) => void>>()
+  const matches = (query: string, candidateWidth = width): boolean => {
+    const min = /min-width:\s*(\d+)px/u.exec(query)?.[1]
+    const max = /max-width:\s*(\d+)px/u.exec(query)?.[1]
+    return (
+      (min === undefined || candidateWidth >= Number(min)) &&
+      (max === undefined || candidateWidth <= Number(max))
+    )
+  }
+  const matchMedia = vi.fn((query: string): MediaQueryList => {
+    let media = queries.get(query)
+    if (!media) {
+      const queryListeners = new Set<(event: MediaQueryListEvent) => void>()
+      listeners.set(query, queryListeners)
+      media = {
+        media: query,
+        get matches() {
+          return matches(query)
+        },
+        onchange: null,
+        addEventListener: (_type, listener) => queryListeners.add(listener),
+        removeEventListener: (_type, listener) => queryListeners.delete(listener),
+        addListener: (listener) => queryListeners.add(listener),
+        removeListener: (listener) => queryListeners.delete(listener),
+        dispatchEvent: (event) => {
+          for (const listener of queryListeners) listener(event as MediaQueryListEvent)
+          return true
+        }
+      }
+      queries.set(query, media)
+    }
+    return media as MediaQueryList
+  })
+  vi.stubGlobal('matchMedia', matchMedia)
+  return {
+    setWidth(nextWidth: number): void {
+      const previousWidth = width
+      width = nextWidth
+      for (const [query, media] of queries) {
+        if (matches(query, previousWidth) === matches(query, nextWidth)) continue
+        const event = {
+          matches: media.matches,
+          media: query
+        } as MediaQueryListEvent
+        media.onchange?.(event)
+        for (const listener of listeners.get(query) ?? []) listener(event)
+      }
+    }
+  }
+}
+
 function withProcessId(xml: string, processId: string): string {
   return xml.replaceAll('Process_Test', processId)
 }
 
 function withoutArabicMetadata(xml: string): string {
   return xml.replaceAll(/\s+orbitpm:nameAr="[^"]*"/gu, '')
+}
+
+function withoutDiagramInterchange(xml: string): string {
+  return xml.replace(/<bpmndi:BPMNDiagram\b[\s\S]*?<\/bpmndi:BPMNDiagram>\s*/u, '')
 }
 
 function validationResultForXml(xml: string) {
@@ -888,6 +1042,31 @@ async function parsedValidationResultForXml(xml: string) {
     summary: { valid: true, xmlWellFormed: true, issues: [] },
     definitions: parsed.rootElement
   }
+}
+
+function configureMissingDiValidation(sourceXml: string): void {
+  mocks.validateBpmn.mockImplementation(async (xml: string, options?: { requireDi?: boolean }) => {
+    const parsed = await parsedValidationResultForXml(xml)
+    if (xml === sourceXml && options?.requireDi === false) {
+      return {
+        ...parsed,
+        summary: {
+          valid: true,
+          xmlWellFormed: true,
+          issues: [
+            {
+              source: 'orbitpm',
+              code: 'di.process-missing',
+              severity: 'warning',
+              blocking: false,
+              message: 'BPMN DI is missing.'
+            }
+          ]
+        }
+      }
+    }
+    return parsed
+  })
 }
 
 function missingArabicValidationResult(processId: string) {
@@ -938,6 +1117,8 @@ function seedDraft(workspaceId: string, path: string, xml: string): TestDraftRec
 }
 
 beforeEach(() => {
+  resetProviderSelectionForTests()
+  localStorage.removeItem('orbitpm.lite.cfg.ai-provider-selection.v1')
   vi.stubGlobal('__APP_VERSION__', '0.4.5')
   vi.stubGlobal('BroadcastChannel', class TestBroadcastChannel {})
   sessionHarness.indexedDbAvailable = true
@@ -954,6 +1135,14 @@ beforeEach(() => {
   mocks.prompt.mockReset().mockImplementation(async () => state.promptResult)
   mocks.triggerDownload.mockReset()
   mocks.setLang.mockReset()
+  mocks.localizedRuntimeTranslation
+    .mockReset()
+    .mockImplementation((key: string, values?: Record<string, unknown>) => {
+      const dictionary = state.lang === 'ar' ? ar : en
+      const raw = dictionary[key as keyof typeof en] ?? key
+      if (!values) return raw
+      return raw.replace(/\{(\w+)\}/gu, (_, name: string) => String(values[name] ?? `{${name}}`))
+    })
   mocks.installLinkBadges.mockReset().mockReturnValue(vi.fn())
   mocks.autoSizeAll.mockReset().mockReturnValue(1)
   mocks.editorProps.mockReset()
@@ -965,6 +1154,7 @@ beforeEach(() => {
   mocks.printJobs.mockReset()
   mocks.modelerDefinitions.mockReset().mockReturnValue(undefined)
   mocks.makeFreeTranslateTexts.mockReset().mockReturnValue(async () => [])
+  mocks.buildTranslationExternalReview.mockReset()
   mocks.saveSvg.mockReset().mockResolvedValue({ svg: '<svg />' })
   mocks.saveXml.mockReset().mockResolvedValue({ xml: state.xml })
   mocks.importXml.mockReset().mockResolvedValue({ warnings: [] })
@@ -982,6 +1172,7 @@ beforeEach(() => {
     valid: true,
     issues: []
   })
+  mocks.diagramPreviewProps.mockReset()
   mocks.migrateLegacyCredentialsOnStartup.mockReset().mockReturnValue({
     ok: true,
     value: 0
@@ -1043,6 +1234,8 @@ beforeEach(() => {
 })
 
 afterEach(() => {
+  resetProviderSelectionForTests()
+  localStorage.removeItem('orbitpm.lite.cfg.ai-provider-selection.v1')
   cleanup()
   vi.restoreAllMocks()
   vi.unstubAllGlobals()
@@ -1056,6 +1249,175 @@ async function openBlankDiagram(user: ReturnType<typeof userEvent.setup>): Promi
   await user.click(await screen.findByRole('button', { name: 'picker.fallback.newDiagram' }))
   expect(await screen.findByText('app.title')).not.toBeNull()
   expect(await screen.findByTestId('editor-tab')).not.toBeNull()
+}
+
+function configureTranslationModel(
+  options: {
+    includeMixed?: boolean
+    duplicateSource?: boolean
+    sourceValue?: string
+  } = {}
+): {
+  process: Record<string, unknown>
+  task: Record<string, unknown>
+  duplicateTask: Record<string, unknown> | null
+  batchExecutions(): number
+} {
+  const sourceValue = options.sourceValue ?? 'Review request'
+  const process: Record<string, unknown> = {
+    $type: 'bpmn:Process',
+    id: 'Process_1',
+    $attrs: { 'orbitpm:activeLang': 'en' }
+  }
+  const task: Record<string, unknown> = {
+    $type: 'bpmn:Task',
+    id: 'Task_1',
+    name: sourceValue,
+    $attrs: { 'orbitpm:nameEn': sourceValue },
+    $parent: process
+  }
+  const mixedTask: Record<string, unknown> | null = options.includeMixed
+    ? {
+        $type: 'bpmn:Task',
+        id: 'Task_Mixed',
+        name: 'Review طلب',
+        $attrs: { 'orbitpm:nameEn': 'Review طلب' },
+        $parent: process
+      }
+    : null
+  const duplicateTask: Record<string, unknown> | null = options.duplicateSource
+    ? {
+        $type: 'bpmn:Task',
+        id: 'Task_2',
+        name: sourceValue,
+        $attrs: { 'orbitpm:nameEn': sourceValue },
+        $parent: process
+      }
+    : null
+  process.flowElements = [
+    task,
+    ...(duplicateTask ? [duplicateTask] : []),
+    ...(mixedTask ? [mixedTask] : [])
+  ]
+  const definitions = {
+    $type: 'bpmn:Definitions',
+    id: 'Definitions_1',
+    rootElements: [process]
+  }
+  const root = { id: 'Process_1', businessObject: process }
+  const taskElement = { id: 'Task_1', businessObject: task }
+  const mixedTaskElement = mixedTask ? { id: 'Task_Mixed', businessObject: mixedTask } : null
+  const duplicateTaskElement = duplicateTask
+    ? { id: 'Task_2', businessObject: duplicateTask }
+    : null
+  let batches = 0
+  const applyProperties = (
+    element: unknown,
+    properties: Readonly<Record<string, unknown>>
+  ): void => {
+    const businessObject = (element as { businessObject?: Record<string, unknown> }).businessObject
+    if (!businessObject) return
+    for (const [key, value] of Object.entries(properties)) {
+      if (key.includes(':')) {
+        businessObject.$attrs = {
+          ...((businessObject.$attrs as Record<string, unknown> | undefined) ?? {}),
+          [key]: value
+        }
+      } else {
+        businessObject[key] = value
+      }
+    }
+  }
+
+  mocks.modelerDefinitions.mockReturnValue(definitions)
+  mocks.modelerGet.mockImplementation((name: string) => {
+    if (name === 'eventBus') return { on: vi.fn(), off: vi.fn() }
+    if (name === 'canvas') return { getRootElement: () => root }
+    if (name === 'elementRegistry') {
+      return {
+        getAll: () => [
+          taskElement,
+          ...(duplicateTaskElement ? [duplicateTaskElement] : []),
+          ...(mixedTaskElement ? [mixedTaskElement] : [])
+        ]
+      }
+    }
+    if (name === 'modeling') return { updateProperties: applyProperties }
+    if (name === 'orbitpmModelingBatch') {
+      return {
+        execute: (
+          updates: ReadonlyArray<{
+            kind: 'properties' | 'waypoints'
+            element: unknown
+            properties?: Record<string, unknown>
+          }>
+        ) => {
+          batches += 1
+          for (const update of updates) {
+            if (update.kind === 'properties' && update.properties) {
+              applyProperties(update.element, update.properties)
+            }
+          }
+        }
+      }
+    }
+    if (name === 'commandStack') return { undo: vi.fn() }
+    return {}
+  })
+  return {
+    process,
+    task,
+    duplicateTask,
+    batchExecutions: () => batches
+  }
+}
+
+function latestTranslationReviewProps(): TranslationReviewDialogProps {
+  const props = mocks.translationReviewProps.mock.calls.at(-1)?.[0] as
+    TranslationReviewDialogProps | undefined
+  if (!props) throw new Error('expected translation review props')
+  return props
+}
+
+async function acceptTranslationProposal(
+  proposal: NonNullable<TranslationReviewDialogProps['proposals']>[number]
+): Promise<void> {
+  const props = latestTranslationReviewProps()
+  const field = listTranslationRecoveryFields(props.review).find(
+    (candidate) =>
+      candidate.processId === proposal.processId &&
+      candidate.elementId === proposal.elementId &&
+      candidate.field === proposal.field &&
+      candidate.target === proposal.target
+  )
+  if (!field || !props.onAcceptProposal) throw new Error('missing proposed translation field')
+  await act(async () => {
+    await props.onAcceptProposal?.(field, proposal)
+  })
+}
+
+async function applyCompletedTranslationReview(): Promise<void> {
+  const apply = latestTranslationReviewProps().onApplyCompleted
+  if (!apply) throw new Error('missing completed translation apply action')
+  await act(async () => {
+    await apply()
+  })
+}
+
+function confirmedFieldRetry(
+  props: TranslationReviewDialogProps,
+  field: TranslationRecoveryField
+): Parameters<NonNullable<TranslationReviewDialogProps['onRetryField']>>[1] {
+  const batchDisclosure = props.disclosure
+  if (!batchDisclosure) throw new Error('expected selected provider disclosure')
+  const disclosure = buildTranslationRecoveryDisclosure(field, {
+    providerId: batchDisclosure.providerId,
+    ...(batchDisclosure.modelId === undefined ? {} : { modelId: batchDisclosure.modelId })
+  })
+  return {
+    disclosure,
+    consent: grantExternalRequestConsent(disclosure)
+  }
 }
 
 function installMockEditorXmlTransactionCommands(options?: {
@@ -1179,6 +1541,20 @@ function latestSettingsLocalization(): LocalizationResourcesEditorProps {
   return props.localizationResources
 }
 
+function latestWorkspaceLocalizationStore(): import('./localization/workspaceStore').WorkspaceLocalizationStore {
+  const store = mocks.workspaceLocalizationFactories.mock.calls.at(-1)?.[1] as
+    import('./localization/workspaceStore').WorkspaceLocalizationStore | undefined
+  if (!store) throw new Error('App did not create a workspace localization store')
+  return store
+}
+
+function latestWorkspaceLocalizationAdapter(): import('./workspace/adapters').WorkspaceAdapter {
+  const adapter = mocks.workspaceLocalizationFactories.mock.calls.at(-1)?.[0] as
+    import('./workspace/adapters').WorkspaceAdapter | undefined
+  if (!adapter) throw new Error('App did not bind a workspace localization adapter')
+  return adapter
+}
+
 async function openDirectoryWorkspace(
   user: ReturnType<typeof userEvent.setup>,
   root = populatedDirectory()
@@ -1193,6 +1569,32 @@ async function openDirectoryWorkspace(
 }
 
 describe('App single-file browser orchestration', () => {
+  it('shows a localized Arabic summary when browser-workspace activation fails', async () => {
+    state.lang = 'ar'
+    const nativeFailure = new Error('native OPFS failure sentinel')
+    const testNavigator = Object.create(navigator) as Navigator
+    Object.defineProperty(testNavigator, 'storage', {
+      configurable: true,
+      value: {
+        getDirectory: vi.fn().mockRejectedValue(nativeFailure)
+      }
+    })
+    vi.stubGlobal('navigator', testNavigator)
+    const user = userEvent.setup()
+    render(<App />)
+
+    await user.click(await screen.findByRole('button', { name: 'workspace.storage.openOpfs' }))
+
+    expect((await screen.findByRole('alert')).textContent).toBe(
+      ar['workspace.storage.opfsOpenFailed']
+    )
+    expect(screen.queryByText(nativeFailure.message)).toBeNull()
+    expect(mocks.localizedRuntimeTranslation).toHaveBeenCalledWith(
+      'workspace.storage.opfsOpenFailed',
+      undefined
+    )
+  })
+
   it('runs legacy credential migration once and surfaces startup cleanup failures', async () => {
     const user = userEvent.setup()
     mocks.migrateLegacyCredentialsOnStartup.mockReturnValueOnce({
@@ -1204,9 +1606,8 @@ describe('App single-file browser orchestration', () => {
     await openBlankDiagram(user)
 
     expect(mocks.migrateLegacyCredentialsOnStartup).toHaveBeenCalledOnce()
-    expect(
-      await screen.findByText('settings.title: legacy credential cleanup blocked')
-    ).not.toBeNull()
+    expect(await screen.findByText('settings.storageError.startup')).not.toBeNull()
+    expect(screen.queryByText('legacy credential cleanup blocked')).toBeNull()
   })
 
   it('does not construct or expose public localization persistence in single-file mode', async () => {
@@ -1233,10 +1634,23 @@ describe('App single-file browser orchestration', () => {
     await user.click(rail)
     expect(rail.getAttribute('aria-expanded')).toBe('true')
     expect(screen.getByText('fallback.singleFileNote')).not.toBeNull()
+    expect(screen.getByRole('main', { name: 'app.main.aria' })).not.toBeNull()
+    expect(screen.getByRole('link', { name: 'app.skipToMain' }).getAttribute('href')).toBe(
+      '#orbitpm-process-workspace'
+    )
+    const aiDraft = screen.getByLabelText<HTMLInputElement>('mock-ai-draft')
+    await user.type(aiDraft, 'retained prompt')
+    await user.click(rail)
+    expect(aiDraft.isConnected).toBe(true)
+    expect(aiDraft.value).toBe('retained prompt')
+    await user.click(rail)
+    expect(screen.getByLabelText('mock-ai-draft')).toBe(aiDraft)
     await user.click(screen.getByRole('button', { name: 'ai.header' }))
-    expect(screen.queryByTestId('ai-panel')).toBeNull()
+    expect(screen.getByTestId('ai-panel').closest('[hidden]')).not.toBeNull()
+    expect(aiDraft.value).toBe('retained prompt')
     await user.click(screen.getByRole('button', { name: 'ai.header' }))
-    expect(screen.getByTestId('ai-panel')).not.toBeNull()
+    expect(screen.getByTestId('ai-panel')).toBe(aiDraft.closest('[data-testid="ai-panel"]'))
+    expect(aiDraft.value).toBe('retained prompt')
 
     await user.click(screen.getByRole('button', { name: 'app.settings' }))
     const settings = await screen.findByRole('dialog', { name: 'mock-settings' })
@@ -1250,6 +1664,953 @@ describe('App single-file browser orchestration', () => {
     await user.click(screen.getByRole('button', { name: 'mock-assistant-open' }))
     expect(await screen.findByRole('button', { name: 'mock-assistant-close' })).not.toBeNull()
     await user.click(screen.getByRole('button', { name: 'mock-assistant-close' }))
+  })
+
+  it('uses compact App chrome and a full modal explorer below 768px', async () => {
+    vi.stubGlobal(
+      'matchMedia',
+      vi.fn((query: string) => ({
+        matches: query.includes('max-width: 767px'),
+        media: query,
+        onchange: null,
+        addEventListener: vi.fn(),
+        removeEventListener: vi.fn(),
+        addListener: vi.fn(),
+        removeListener: vi.fn(),
+        dispatchEvent: vi.fn(() => true)
+      }))
+    )
+    const user = userEvent.setup()
+    const { container } = render(<App />)
+    await user.click(await screen.findByRole('button', { name: 'picker.fallback.newDiagram' }))
+    await screen.findByTestId('editor-tab')
+
+    expect(
+      container.querySelector(
+        ".orbitpm-responsive-shell[data-responsive-mode='compact'].orbitpm-workspace-shell"
+      )
+    ).not.toBeNull()
+    expect(screen.getByRole('button', { name: 'app.actions.aria' })).not.toBeNull()
+    const explorerToggle = container.querySelector<HTMLButtonElement>(
+      '.orbitpm-workspace-header__explorer'
+    )
+    if (!explorerToggle) throw new Error('missing compact explorer control')
+    await user.click(explorerToggle)
+
+    const explorer = await screen.findByRole('dialog', { name: 'sidebar.explorer.aria' })
+    expect(explorer.classList.contains('orbitpm-responsive-drawer--compact')).toBe(true)
+    const editorProps = mocks.editorProps.mock.calls.at(-1)?.[0] as
+      | {
+          detailsController: {
+            preferences: { open: boolean }
+            setOpen(open: boolean): void
+          }
+          onDetailsOpenChange(open: boolean): void
+        }
+      | undefined
+    if (!editorProps) throw new Error('missing responsive editor shell props')
+    act(() => {
+      editorProps.detailsController.setOpen(true)
+      editorProps.onDetailsOpenChange(true)
+    })
+    expect(screen.queryByRole('dialog', { name: 'sidebar.explorer.aria' })).toBeNull()
+
+    await user.click(explorerToggle)
+    expect(await screen.findByRole('dialog', { name: 'sidebar.explorer.aria' })).not.toBeNull()
+    const updatedEditorProps = mocks.editorProps.mock.calls.at(-1)?.[0] as typeof editorProps
+    expect(updatedEditorProps?.detailsController.preferences.open).toBe(false)
+
+    await user.click(screen.getByRole('button', { name: 'sidebar.close.aria' }))
+    await waitFor(() => expect(document.activeElement).toBe(explorerToggle))
+    const rail = container.querySelector<HTMLButtonElement>('.orbitpm-lite-rail')
+    if (!rail) throw new Error('missing compact explorer rail control')
+    await user.click(rail)
+    expect(await screen.findByRole('dialog', { name: 'sidebar.explorer.aria' })).not.toBeNull()
+    await user.click(screen.getByRole('button', { name: 'sidebar.close.aria' }))
+    await waitFor(() => expect(document.activeElement).toBe(rail))
+  })
+
+  it('preserves the live workspace and pane state across docked, overlay, and compact changes', async () => {
+    const viewport = installControllableMatchMedia(1440)
+    const user = userEvent.setup()
+    await openDirectoryWorkspace(user)
+    await user.click(screen.getByRole('button', { name: 'mock-tree-open' }))
+    await screen.findByTestId('editor-tab')
+    act(() => {
+      latestAiPanelProps().spreadsheet.onOpenSingle(state.xml, 'responsive-second.bpmn')
+    })
+    await screen.findByText(/responsive-second\.bpmn/)
+    await user.click(screen.getByRole('button', { name: 'mock-editor-dirty' }))
+    const aiDraft = screen.getByLabelText<HTMLInputElement>('mock-ai-draft')
+    await user.type(aiDraft, 'retain this responsive draft')
+
+    const controller = latestSessionController()
+    const localizationAdapter = latestWorkspaceLocalizationAdapter()
+    const activeBefore = controller.store.getActive()
+    const tabCount = controller.store.list().length
+    if (!activeBefore) throw new Error('expected an active responsive test session')
+    const dockedEditor = mocks.editorProps.mock.calls.at(-1)?.[0] as {
+      responsiveMode: 'docked' | 'overlay' | 'compact'
+      outlineOpen?: boolean
+      onOutlineOpenChange?(open: boolean): void
+      detailsController: {
+        preferences: { open: boolean }
+        setOpen(open: boolean): void
+      }
+      onDetailsOpenChange(open: boolean): void
+    }
+    act(() => {
+      dockedEditor.onOutlineOpenChange?.(true)
+      dockedEditor.detailsController.setOpen(true)
+      dockedEditor.onDetailsOpenChange(true)
+    })
+
+    for (const [width, expectedMode] of [
+      [1024, 'overlay'],
+      [640, 'compact'],
+      [1440, 'docked']
+    ] as const) {
+      act(() => viewport.setWidth(width))
+      await waitFor(() =>
+        expect(
+          (
+            mocks.editorProps.mock.calls.at(-1)?.[0] as {
+              responsiveMode?: string
+            }
+          )?.responsiveMode
+        ).toBe(expectedMode)
+      )
+      expect(mocks.pickWorkspace).toHaveBeenCalledOnce()
+      expect(mocks.workspaceLocalizationFactories).toHaveBeenCalledOnce()
+      expect(latestSessionController()).toBe(controller)
+      expect(latestWorkspaceLocalizationAdapter()).toBe(localizationAdapter)
+      expect(controller.store.list()).toHaveLength(tabCount)
+      expect(controller.store.getActive()).toMatchObject({
+        id: activeBefore.id,
+        dirty: true
+      })
+      expect(aiDraft.isConnected).toBe(true)
+      expect(aiDraft.value).toBe('retain this responsive draft')
+      expect(document.querySelectorAll('[aria-modal="true"]').length).toBeLessThanOrEqual(1)
+    }
+  })
+
+  it('hands raw Outline ownership to an inactive editor so it cannot reopen from catalog', async () => {
+    const user = userEvent.setup()
+    await openDirectoryWorkspace(user)
+    await user.click(screen.getByRole('button', { name: 'mock-tree-open' }))
+    await screen.findByTestId('editor-tab')
+    const activeEditor = mocks.editorProps.mock.calls.at(-1)?.[0] as {
+      outlineOpen?: boolean
+      onOutlineOpenChange?(open: boolean): void
+      sidePanesActive?: boolean
+    }
+    act(() => activeEditor.onOutlineOpenChange?.(true))
+    expect(
+      (
+        mocks.editorProps.mock.calls.at(-1)?.[0] as {
+          outlineOpen?: boolean
+        }
+      ).outlineOpen
+    ).toBe(true)
+
+    await user.click(screen.getByRole('button', { name: 'app.home' }))
+    await screen.findByTestId('catalog-view')
+    const inactiveEditor = mocks.editorProps.mock.calls.at(-1)?.[0] as {
+      outlineOpen?: boolean
+      onOutlineOpenChange?(open: boolean): void
+      sidePanesActive?: boolean
+    }
+    expect(inactiveEditor.sidePanesActive).toBe(false)
+    expect(inactiveEditor.outlineOpen).toBe(true)
+    act(() => inactiveEditor.onOutlineOpenChange?.(false))
+
+    await user.click(screen.getByRole('tab', { name: /existing\.bpmn/ }))
+    const reopenedEditor = mocks.editorProps.mock.calls.at(-1)?.[0] as {
+      outlineOpen?: boolean
+      sidePanesActive?: boolean
+    }
+    expect(reopenedEditor.sidePanesActive).toBe(true)
+    expect(reopenedEditor.outlineOpen).toBe(false)
+  })
+
+  it('keeps language switching local while only Translate preselects a repair provider', async () => {
+    const process: Record<string, unknown> = {
+      $type: 'bpmn:Process',
+      id: 'Process_1',
+      $attrs: { 'orbitpm:activeLang': 'en' }
+    }
+    const task: Record<string, unknown> = {
+      $type: 'bpmn:Task',
+      id: 'Task_1',
+      name: 'Review request',
+      $attrs: { 'orbitpm:nameEn': 'Review request' },
+      $parent: process
+    }
+    process.flowElements = [task]
+    mocks.modelerDefinitions.mockReturnValue({
+      $type: 'bpmn:Definitions',
+      rootElements: [process]
+    })
+    mocks.modelerGet.mockImplementation((name: string) => {
+      if (name === 'eventBus') return { on: vi.fn(), off: vi.fn() }
+      if (name === 'canvas') {
+        return {
+          getRootElement: () => ({ id: 'Process_1', businessObject: process })
+        }
+      }
+      if (name === 'elementRegistry') {
+        return {
+          getAll: () => [{ id: 'Task_1', businessObject: task }]
+        }
+      }
+      return {}
+    })
+    expect(setProviderSelection('anthropic', 'claude-sonnet-5').ok).toBe(true)
+
+    const user = userEvent.setup()
+    await openBlankDiagram(user)
+    await user.click(screen.getByRole('button', { name: 'mock-editor-ready' }))
+    await user.click(screen.getByRole('button', { name: 'editor.langToggle' }))
+    expect(mocks.translationReviewProps.mock.calls.at(-1)?.[0].providerId).toBe('')
+
+    await user.click(screen.getByRole('button', { name: 'translationReview.postpone' }))
+    await user.click(screen.getByRole('button', { name: 'editor.translate' }))
+    expect(mocks.translationReviewProps.mock.calls.at(-1)?.[0].providerId).toBe('selected-ai')
+  })
+
+  it('stages a reviewed manual field privately, then applies metadata and projection in one batch', async () => {
+    const model = configureTranslationModel()
+    const user = userEvent.setup()
+    await openBlankDiagram(user)
+    await user.click(screen.getByRole('button', { name: 'mock-editor-ready' }))
+    await user.click(screen.getByRole('button', { name: 'editor.translate' }))
+
+    const initial = latestTranslationReviewProps()
+    const field = listTranslationRecoveryFields(initial.review)[0]
+    if (!field || !initial.onManualEdit) throw new Error('missing manual translation recovery')
+    await act(async () => {
+      await initial.onManualEdit?.(field, 'مراجعة الطلب')
+    })
+
+    expect((model.task.$attrs as Record<string, unknown>)['orbitpm:nameAr']).toBeUndefined()
+    expect(model.task.name).toBe('Review request')
+    expect((model.process.$attrs as Record<string, unknown>)['orbitpm:activeLang']).toBe('en')
+    expect(model.batchExecutions()).toBe(0)
+    const completed = latestTranslationReviewProps()
+    expect(completed.acceptedValues).toEqual([
+      expect.objectContaining({ elementId: 'Task_1', value: 'مراجعة الطلب' })
+    ])
+    expect(completed.onApplyCompleted).toEqual(expect.any(Function))
+
+    await applyCompletedTranslationReview()
+    await waitFor(() =>
+      expect(screen.queryByRole('dialog', { name: 'translationReview.title' })).toBeNull()
+    )
+    expect(model.task.name).toBe('مراجعة الطلب')
+    expect((model.process.$attrs as Record<string, unknown>)['orbitpm:activeLang']).toBe('ar')
+    expect(model.batchExecutions()).toBe(1)
+  })
+
+  it('retries exactly one consented field and requires acceptance before one final model batch', async () => {
+    const model = configureTranslationModel()
+    const calls: Array<{
+      texts: string[]
+      from: 'en' | 'ar'
+      to: 'en' | 'ar'
+      signal?: AbortSignal
+    }> = []
+    mocks.makeFreeTranslateTexts.mockImplementation(() => {
+      return async (texts: string[], from: 'en' | 'ar', to: 'en' | 'ar', signal?: AbortSignal) => {
+        calls.push({ texts, from, to, signal })
+        return ['مراجعة الطلب']
+      }
+    })
+    const user = userEvent.setup()
+    await openBlankDiagram(user)
+    await user.click(screen.getByRole('button', { name: 'mock-editor-ready' }))
+    await user.click(screen.getByRole('button', { name: 'editor.translate' }))
+    act(() => latestTranslationReviewProps().onProviderChange('free'))
+    const selected = latestTranslationReviewProps()
+    const field = listTranslationRecoveryFields(selected.review)[0]
+    if (!field || !selected.onRetryField) throw new Error('missing retryable translation field')
+
+    await act(async () => {
+      await selected.onRetryField?.(field, confirmedFieldRetry(selected, field))
+    })
+
+    expect(calls).toEqual([
+      {
+        texts: ['Review request'],
+        from: 'en',
+        to: 'ar',
+        signal: expect.any(AbortSignal)
+      }
+    ])
+    expect(mocks.makeFreeTranslateTexts).toHaveBeenCalledWith({
+      onAttempt: expect.any(Function)
+    })
+    expect(latestTranslationReviewProps().proposals).toEqual([
+      expect.objectContaining({ elementId: 'Task_1', value: 'مراجعة الطلب' })
+    ])
+    expect((model.task.$attrs as Record<string, unknown>)['orbitpm:nameAr']).toBeUndefined()
+    expect(model.task.name).toBe('Review request')
+    expect((model.process.$attrs as Record<string, unknown>)['orbitpm:activeLang']).toBe('en')
+    expect(model.batchExecutions()).toBe(0)
+
+    await acceptTranslationProposal(latestTranslationReviewProps().proposals![0]!)
+    expect((model.task.$attrs as Record<string, unknown>)['orbitpm:nameAr']).toBeUndefined()
+    expect(model.batchExecutions()).toBe(0)
+    await applyCompletedTranslationReview()
+    expect((model.task.$attrs as Record<string, unknown>)['orbitpm:nameAr']).toBe('مراجعة الطلب')
+    expect(model.task.name).toBe('مراجعة الطلب')
+    expect((model.process.$attrs as Record<string, unknown>)['orbitpm:activeLang']).toBe('ar')
+    expect(model.batchExecutions()).toBe(1)
+  })
+
+  it('single-flights a double field retry and cancellation aborts its only transport', async () => {
+    const model = configureTranslationModel()
+    const transportStarted = deferred()
+    let transportCalls = 0
+    let transportSignal: AbortSignal | undefined
+    mocks.makeFreeTranslateTexts.mockReturnValue(
+      async (_texts: string[], _from: 'en' | 'ar', _to: 'en' | 'ar', signal?: AbortSignal) => {
+        transportCalls += 1
+        transportSignal = signal
+        transportStarted.resolve()
+        return await new Promise<Array<string | undefined>>((_resolve, reject) => {
+          signal?.addEventListener(
+            'abort',
+            () => reject(new DOMException('cancelled', 'AbortError')),
+            { once: true }
+          )
+        })
+      }
+    )
+    const user = userEvent.setup()
+    await openBlankDiagram(user)
+    await user.click(screen.getByRole('button', { name: 'mock-editor-ready' }))
+    await user.click(screen.getByRole('button', { name: 'editor.translate' }))
+    act(() => latestTranslationReviewProps().onProviderChange('free'))
+    const captured = latestTranslationReviewProps()
+    const field = listTranslationRecoveryFields(captured.review)[0]
+    if (!field || !captured.onRetryField) throw new Error('missing retryable translation field')
+    const confirmation = confirmedFieldRetry(captured, field)
+    const partialPreview = captured.onPartialPreview
+    let first: Promise<void> | void
+    let second: Promise<void> | void
+
+    act(() => {
+      first = captured.onRetryField?.(field, confirmation)
+      second = captured.onRetryField?.(field, confirmation)
+      partialPreview()
+    })
+    await transportStarted.promise
+
+    expect(transportCalls).toBe(1)
+    expect(mocks.makeFreeTranslateTexts).toHaveBeenCalledOnce()
+    expect(screen.getByRole('dialog', { name: 'translationReview.title' })).not.toBeNull()
+    expect(model.batchExecutions()).toBe(0)
+    act(() => latestTranslationReviewProps().onCancelTranslation())
+    await act(async () => {
+      await Promise.all([first, second])
+    })
+
+    expect(transportSignal?.aborted).toBe(true)
+    expect(model.batchExecutions()).toBe(0)
+    expect((model.task.$attrs as Record<string, unknown>)['orbitpm:nameAr']).toBeUndefined()
+  })
+
+  it('stages multiple provider approvals without mutation and commits one undoable batch', async () => {
+    const model = configureTranslationModel({ duplicateSource: true })
+    mocks.makeFreeTranslateTexts.mockReturnValue(async () => ['مراجعة الطلب', 'تدقيق الطلب'])
+    const user = userEvent.setup()
+    await openBlankDiagram(user)
+    await user.click(screen.getByRole('button', { name: 'mock-editor-ready' }))
+    await user.click(screen.getByRole('button', { name: 'editor.translate' }))
+    act(() => latestTranslationReviewProps().onProviderChange('free'))
+    await act(async () => {
+      await latestTranslationReviewProps().onTranslateNow()
+    })
+
+    const proposals = [...(latestTranslationReviewProps().proposals ?? [])]
+    expect(proposals).toHaveLength(2)
+    expect(model.batchExecutions()).toBe(0)
+    expect((model.task.$attrs as Record<string, unknown>)['orbitpm:nameAr']).toBeUndefined()
+    expect(
+      (model.duplicateTask?.$attrs as Record<string, unknown>)['orbitpm:nameAr']
+    ).toBeUndefined()
+
+    for (const proposal of proposals) await acceptTranslationProposal(proposal)
+    expect(model.batchExecutions()).toBe(0)
+    expect(latestTranslationReviewProps().acceptedValues).toHaveLength(2)
+
+    await applyCompletedTranslationReview()
+
+    expect(model.batchExecutions()).toBe(1)
+    expect((model.task.$attrs as Record<string, unknown>)['orbitpm:nameAr']).toBe('مراجعة الطلب')
+    expect((model.duplicateTask?.$attrs as Record<string, unknown>)['orbitpm:nameAr']).toBe(
+      'تدقيق الطلب'
+    )
+    expect(model.task.name).toBe('مراجعة الطلب')
+    expect(model.duplicateTask?.name).toBe('تدقيق الطلب')
+    expect((model.process.$attrs as Record<string, unknown>)['orbitpm:activeLang']).toBe('ar')
+    expect(screen.queryByRole('dialog', { name: 'translationReview.title' })).toBeNull()
+  })
+
+  it('discards staged review values on postpone without touching the model', async () => {
+    const model = configureTranslationModel()
+    const user = userEvent.setup()
+    await openBlankDiagram(user)
+    await user.click(screen.getByRole('button', { name: 'mock-editor-ready' }))
+    await user.click(screen.getByRole('button', { name: 'editor.translate' }))
+    const review = latestTranslationReviewProps()
+    const field = listTranslationRecoveryFields(review.review)[0]
+    if (!field || !review.onManualEdit) throw new Error('missing manual translation field')
+    await act(async () => {
+      await review.onManualEdit?.(field, 'مراجعة الطلب')
+    })
+
+    expect(latestTranslationReviewProps().acceptedValues).toHaveLength(1)
+    await user.click(screen.getByRole('button', { name: 'translationReview.postpone' }))
+
+    expect(screen.queryByRole('dialog', { name: 'translationReview.title' })).toBeNull()
+    expect(model.batchExecutions()).toBe(0)
+    expect((model.task.$attrs as Record<string, unknown>)['orbitpm:nameAr']).toBeUndefined()
+    expect(model.task.name).toBe('Review request')
+    expect((model.process.$attrs as Record<string, unknown>)['orbitpm:activeLang']).toBe('en')
+  })
+
+  it('reuses the disclosure across in-flight progress-only renders', async () => {
+    configureTranslationModel()
+    let onAttempt:
+      | ((attempt: {
+          service: 'google' | 'mymemory'
+          item: number
+          itemCount: number
+          attempt: number
+          maxAttempts: number
+          retryInMs?: number
+        }) => void)
+      | undefined
+    mocks.makeFreeTranslateTexts.mockImplementation(
+      (options: {
+        onAttempt?: (attempt: {
+          service: 'google' | 'mymemory'
+          item: number
+          itemCount: number
+          attempt: number
+          maxAttempts: number
+          retryInMs?: number
+        }) => void
+      }) => {
+        onAttempt = options.onAttempt
+        return async (
+          _texts: string[],
+          _from: 'en' | 'ar',
+          _to: 'en' | 'ar',
+          signal?: AbortSignal
+        ) =>
+          new Promise<Array<string | undefined>>((_resolve, reject) => {
+            signal?.addEventListener('abort', () => reject(signal.reason), { once: true })
+          })
+      }
+    )
+    const user = userEvent.setup()
+    await openBlankDiagram(user)
+    await user.click(screen.getByRole('button', { name: 'mock-editor-ready' }))
+    await user.click(screen.getByRole('button', { name: 'editor.translate' }))
+    act(() => latestTranslationReviewProps().onProviderChange('free'))
+    const disclosure = latestTranslationReviewProps().disclosure
+    expect(disclosure).not.toBeNull()
+    expect(mocks.buildTranslationExternalReview).toHaveBeenCalledTimes(1)
+
+    let run: Promise<void> | void
+    act(() => {
+      run = latestTranslationReviewProps().onTranslateNow()
+    })
+    await waitFor(() => expect(onAttempt).toEqual(expect.any(Function)))
+    for (let attempt = 1; attempt <= 3; attempt += 1) {
+      act(() => {
+        onAttempt?.({
+          service: 'google',
+          item: 1,
+          itemCount: 1,
+          attempt,
+          maxAttempts: 3,
+          ...(attempt === 1 ? { retryInMs: 2_000 } : {})
+        })
+      })
+    }
+
+    expect(latestTranslationReviewProps().disclosure).toBe(disclosure)
+    expect(mocks.buildTranslationExternalReview).toHaveBeenCalledTimes(1)
+    act(() => latestTranslationReviewProps().onCancelTranslation())
+    await act(async () => {
+      await run
+    })
+    expect(mocks.buildTranslationExternalReview).toHaveBeenCalledTimes(1)
+  })
+
+  it('invalidates unaccepted proposals and outbound consent state on provider change', async () => {
+    const model = configureTranslationModel()
+    mocks.makeFreeTranslateTexts.mockReturnValue(async () => ['مراجعة الطلب'])
+    const user = userEvent.setup()
+    await openBlankDiagram(user)
+    await user.click(screen.getByRole('button', { name: 'mock-editor-ready' }))
+    await user.click(screen.getByRole('button', { name: 'editor.translate' }))
+    act(() => latestTranslationReviewProps().onProviderChange('free'))
+    await act(async () => {
+      await latestTranslationReviewProps().onTranslateNow()
+    })
+    const captured = latestTranslationReviewProps()
+    const proposal = captured.proposals?.[0]
+    const field = listTranslationRecoveryFields(captured.review)[0]
+    if (!proposal || !field || !captured.onAcceptProposal || !captured.onRejectProposal) {
+      throw new Error('missing captured provider proposal actions')
+    }
+
+    act(() => latestTranslationReviewProps().onProviderChange(''))
+    await act(async () => {
+      await captured.onAcceptProposal?.(field, proposal)
+      await captured.onRejectProposal?.(field, proposal)
+    })
+
+    const changed = latestTranslationReviewProps()
+    expect(changed.proposals).toEqual([])
+    expect(changed.acceptedValues).toEqual([])
+    expect(changed.disclosure).toBeNull()
+    expect(
+      listTranslationRecoveryFields(changed.review).find((candidate) => candidate.id === field.id)
+        ?.failed
+    ).toBe(false)
+    expect(model.batchExecutions()).toBe(0)
+    expect((model.task.$attrs as Record<string, unknown>)['orbitpm:nameAr']).toBeUndefined()
+  })
+
+  it('ignores every stale rendered review action after a replacement review opens', async () => {
+    const model = configureTranslationModel()
+    mocks.makeFreeTranslateTexts.mockReturnValue(async () => ['مراجعة الطلب'])
+    const user = userEvent.setup()
+    await openBlankDiagram(user)
+    await user.click(screen.getByRole('button', { name: 'mock-editor-ready' }))
+    await user.click(screen.getByRole('button', { name: 'editor.translate' }))
+    act(() => latestTranslationReviewProps().onProviderChange('free'))
+    const captured = latestTranslationReviewProps()
+    const capturedField = listTranslationRecoveryFields(captured.review)[0]
+    if (!capturedField || !captured.onRetryField || !captured.onApplyCompleted) {
+      throw new Error('missing captured translation review actions')
+    }
+    const capturedConfirmation = confirmedFieldRetry(captured, capturedField)
+
+    await user.click(screen.getByRole('button', { name: 'translationReview.postpone' }))
+    await user.click(screen.getByRole('button', { name: 'editor.translate' }))
+    await screen.findByRole('dialog', { name: 'translationReview.title' })
+    act(() => latestTranslationReviewProps().onProviderChange('free'))
+    const replacement = latestTranslationReviewProps()
+
+    act(() => captured.onProviderChange(''))
+    expect(latestTranslationReviewProps().providerId).toBe('free')
+    act(() => captured.onPostpone())
+    expect(screen.getByRole('dialog', { name: 'translationReview.title' })).not.toBeNull()
+    act(() => captured.onPartialPreview())
+    await act(async () => {
+      await captured.onTranslateNow()
+      await captured.onRetryField?.(capturedField, capturedConfirmation)
+    })
+
+    expect(mocks.makeFreeTranslateTexts).not.toHaveBeenCalled()
+    expect(latestTranslationReviewProps()).toMatchObject({
+      providerId: 'free',
+      proposals: [],
+      acceptedValues: [],
+      status: null
+    })
+    expect(model.batchExecutions()).toBe(0)
+    expect((model.task.$attrs as Record<string, unknown>)['orbitpm:nameAr']).toBeUndefined()
+
+    const replacementField = listTranslationRecoveryFields(replacement.review)[0]
+    if (!replacementField || !replacement.onManualEdit) {
+      throw new Error('missing replacement translation field')
+    }
+    await act(async () => {
+      await replacement.onManualEdit?.(replacementField, 'مراجعة الطلب')
+    })
+    await act(async () => {
+      await captured.onApplyCompleted?.()
+    })
+
+    expect(latestTranslationReviewProps().acceptedValues).toHaveLength(1)
+    expect(model.batchExecutions()).toBe(0)
+    expect((model.task.$attrs as Record<string, unknown>)['orbitpm:nameAr']).toBeUndefined()
+    expect(screen.getByRole('dialog', { name: 'translationReview.title' })).not.toBeNull()
+
+    act(() => latestTranslationReviewProps().onPostpone())
+    await waitFor(() =>
+      expect(screen.queryByRole('dialog', { name: 'translationReview.title' })).toBeNull()
+    )
+
+    const transportStarted = deferred()
+    let transportSignal: AbortSignal | undefined
+    mocks.makeFreeTranslateTexts.mockReturnValue(
+      async (_texts: string[], _from: 'en' | 'ar', _to: 'en' | 'ar', signal?: AbortSignal) => {
+        transportSignal = signal
+        transportStarted.resolve()
+        return await new Promise<Array<string | undefined>>((_resolve, reject) => {
+          signal?.addEventListener(
+            'abort',
+            () => reject(new DOMException('cancelled', 'AbortError')),
+            { once: true }
+          )
+        })
+      }
+    )
+    await user.click(screen.getByRole('button', { name: 'editor.translate' }))
+    await screen.findByRole('dialog', { name: 'translationReview.title' })
+    act(() => latestTranslationReviewProps().onProviderChange('free'))
+    const current = latestTranslationReviewProps()
+    const currentField = listTranslationRecoveryFields(current.review)[0]
+    if (!currentField || !current.onRetryField) {
+      throw new Error('missing current translation field')
+    }
+    let retry: Promise<void> | void
+    act(() => {
+      retry = current.onRetryField?.(currentField, confirmedFieldRetry(current, currentField))
+    })
+    await transportStarted.promise
+
+    act(() => captured.onCancelTranslation())
+    expect(transportSignal?.aborted).toBe(false)
+    act(() => latestTranslationReviewProps().onCancelTranslation())
+    await act(async () => {
+      await retry
+    })
+    expect(transportSignal?.aborted).toBe(true)
+    expect(model.batchExecutions()).toBe(0)
+  })
+
+  it('re-resolves the latest model and rejects an old captured field consent before transport', async () => {
+    const model = configureTranslationModel()
+    const fetch = vi.fn()
+    vi.stubGlobal('fetch', fetch)
+    expect(setKey('anthropic', 'test-key').ok).toBe(true)
+    expect(setProviderSelection('anthropic', 'claude-sonnet-5').ok).toBe(true)
+    const user = userEvent.setup()
+    try {
+      await openBlankDiagram(user)
+      await user.click(screen.getByRole('button', { name: 'mock-editor-ready' }))
+      await user.click(screen.getByRole('button', { name: 'editor.translate' }))
+      const captured = latestTranslationReviewProps()
+      const field = listTranslationRecoveryFields(captured.review)[0]
+      if (!field || !captured.onRetryField) throw new Error('missing captured translation retry')
+      const oldConfirmation = confirmedFieldRetry(captured, field)
+
+      await user.click(screen.getByRole('button', { name: 'translationReview.postpone' }))
+      expect(setProviderSelection('anthropic', 'claude-opus-4-8').ok).toBe(true)
+      await user.click(screen.getByRole('button', { name: 'editor.translate' }))
+
+      await act(async () => {
+        await captured.onRetryField?.(field, oldConfirmation)
+      })
+
+      expect(fetch).not.toHaveBeenCalled()
+      expect(mocks.makeFreeTranslateTexts).not.toHaveBeenCalled()
+      expect(latestTranslationReviewProps().status).toBeNull()
+      expect(model.batchExecutions()).toBe(0)
+      expect((model.task.$attrs as Record<string, unknown>)['orbitpm:nameAr']).toBeUndefined()
+    } finally {
+      clearKey('anthropic')
+    }
+  })
+
+  it('rejects a non-neutral wrong-script field response before mutation and retains provider failure', async () => {
+    const model = configureTranslationModel()
+    mocks.makeFreeTranslateTexts.mockReturnValue(async () => ['Still English'])
+    const user = userEvent.setup()
+    await openBlankDiagram(user)
+    await user.click(screen.getByRole('button', { name: 'mock-editor-ready' }))
+    await user.click(screen.getByRole('button', { name: 'editor.translate' }))
+    act(() => latestTranslationReviewProps().onProviderChange('free'))
+    const selected = latestTranslationReviewProps()
+    const field = listTranslationRecoveryFields(selected.review)[0]
+    if (!field || !selected.onRetryField) throw new Error('missing retryable translation field')
+
+    await act(async () => {
+      await selected.onRetryField?.(field, confirmedFieldRetry(selected, field))
+    })
+
+    expect((model.task.$attrs as Record<string, unknown>)['orbitpm:nameAr']).toBeUndefined()
+    expect(model.task.name).toBe('Review request')
+    expect((model.process.$attrs as Record<string, unknown>)['orbitpm:activeLang']).toBe('en')
+    expect(model.batchExecutions()).toBe(0)
+    expect(listTranslationRecoveryFields(latestTranslationReviewProps().review)).toEqual([
+      expect.objectContaining({
+        id: field.id,
+        failed: true,
+        retryable: true
+      })
+    ])
+  })
+
+  it('retains a rate-limited field with retry/manual actions and a truthful failure status', async () => {
+    configureTranslationModel()
+    mocks.makeFreeTranslateTexts.mockReturnValue(async () => {
+      throw new FreeTranslateError('rate', 'chain')
+    })
+    const user = userEvent.setup()
+    await openBlankDiagram(user)
+    await user.click(screen.getByRole('button', { name: 'mock-editor-ready' }))
+    await user.click(screen.getByRole('button', { name: 'editor.translate' }))
+    act(() => latestTranslationReviewProps().onProviderChange('free'))
+    const selected = latestTranslationReviewProps()
+    const field = listTranslationRecoveryFields(selected.review)[0]
+    if (!field || !selected.onRetryField) throw new Error('missing retryable translation field')
+
+    await act(async () => {
+      await selected.onRetryField?.(field, confirmedFieldRetry(selected, field))
+    })
+
+    const failed = latestTranslationReviewProps()
+    expect(failed.status).toBe('translate.free.rate')
+    expect(listTranslationRecoveryFields(failed.review)).toEqual([
+      expect.objectContaining({
+        id: field.id,
+        failed: true,
+        retryable: true
+      })
+    ])
+    expect(failed.onRetryField).toEqual(expect.any(Function))
+    expect(failed.onManualEdit).toEqual(expect.any(Function))
+    expect(screen.getByRole('button', { name: 'translationReview.field.retry' })).not.toBeNull()
+    expect(screen.getByRole('button', { name: 'translationReview.field.manual' })).not.toBeNull()
+  })
+
+  it('refuses stale field text before transport and refreshes the recovery review', async () => {
+    const model = configureTranslationModel()
+    const user = userEvent.setup()
+    await openBlankDiagram(user)
+    await user.click(screen.getByRole('button', { name: 'mock-editor-ready' }))
+    await user.click(screen.getByRole('button', { name: 'editor.translate' }))
+    act(() => latestTranslationReviewProps().onProviderChange('free'))
+    const selected = latestTranslationReviewProps()
+    const field = listTranslationRecoveryFields(selected.review)[0]
+    if (!field || !selected.onRetryField) throw new Error('missing retryable translation field')
+    model.task.name = 'Changed after review'
+    model.task.$attrs = {
+      ...(model.task.$attrs as Record<string, unknown>),
+      'orbitpm:nameEn': 'Changed after review'
+    }
+
+    await act(async () => {
+      await selected.onRetryField?.(field, confirmedFieldRetry(selected, field))
+    })
+
+    expect(mocks.makeFreeTranslateTexts).not.toHaveBeenCalled()
+    const refreshed = latestTranslationReviewProps()
+    expect(refreshed.status).toBe('translationReview.stale')
+    expect(listTranslationRecoveryFields(refreshed.review)[0]?.sourceValue).toBe(
+      'Changed after review'
+    )
+    expect(model.batchExecutions()).toBe(0)
+  })
+
+  it('clears staged values when another source changes before an invalid field response returns', async () => {
+    const model = configureTranslationModel({ duplicateSource: true })
+    let resolveTransport: ((value: Array<string | undefined>) => void) | undefined
+    mocks.makeFreeTranslateTexts.mockReturnValue(
+      async () =>
+        await new Promise<Array<string | undefined>>((resolve) => {
+          resolveTransport = resolve
+        })
+    )
+    const user = userEvent.setup()
+    await openBlankDiagram(user)
+    await user.click(screen.getByRole('button', { name: 'mock-editor-ready' }))
+    await user.click(screen.getByRole('button', { name: 'editor.translate' }))
+    act(() => latestTranslationReviewProps().onProviderChange('free'))
+    const initial = latestTranslationReviewProps()
+    const fields = listTranslationRecoveryFields(initial.review)
+    const first = fields.find((field) => field.elementId === 'Task_1')
+    if (!first || !initial.onManualEdit) throw new Error('missing first staged translation field')
+    await act(async () => {
+      await initial.onManualEdit?.(first, 'مراجعة الطلب')
+    })
+    const staged = latestTranslationReviewProps()
+    const second = listTranslationRecoveryFields(staged.review).find(
+      (field) => field.elementId === 'Task_2'
+    )
+    if (!second || !staged.onRetryField) throw new Error('missing second retryable field')
+    let retry: Promise<void> | void
+    act(() => {
+      retry = staged.onRetryField?.(second, confirmedFieldRetry(staged, second))
+    })
+    await waitFor(() => expect(resolveTransport).toEqual(expect.any(Function)))
+
+    model.task.name = 'Changed while retrying'
+    model.task.$attrs = {
+      ...(model.task.$attrs as Record<string, unknown>),
+      'orbitpm:nameEn': 'Changed while retrying'
+    }
+    await act(async () => {
+      resolveTransport?.([undefined])
+      await retry
+    })
+
+    const refreshed = latestTranslationReviewProps()
+    expect(refreshed.status).toBe('translationReview.stale')
+    expect(refreshed.acceptedValues).toEqual([])
+    expect(refreshed.proposals).toEqual([])
+    expect(listTranslationRecoveryFields(refreshed.review)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          elementId: 'Task_1',
+          sourceValue: 'Changed while retrying'
+        })
+      ])
+    )
+    expect(model.batchExecutions()).toBe(0)
+    expect((model.task.$attrs as Record<string, unknown>)['orbitpm:nameAr']).toBeUndefined()
+  })
+
+  it('fails a stale proposal rejection closed and refreshes the reviewed source', async () => {
+    const model = configureTranslationModel()
+    mocks.makeFreeTranslateTexts.mockReturnValue(async () => ['مراجعة الطلب'])
+    const user = userEvent.setup()
+    await openBlankDiagram(user)
+    await user.click(screen.getByRole('button', { name: 'mock-editor-ready' }))
+    await user.click(screen.getByRole('button', { name: 'editor.translate' }))
+    act(() => latestTranslationReviewProps().onProviderChange('free'))
+    await act(async () => {
+      await latestTranslationReviewProps().onTranslateNow()
+    })
+    const proposed = latestTranslationReviewProps()
+    const proposal = proposed.proposals?.[0]
+    const field = listTranslationRecoveryFields(proposed.review)[0]
+    if (!proposal || !field || !proposed.onRejectProposal) {
+      throw new Error('missing provider proposal rejection action')
+    }
+    model.task.name = 'Changed after provider response'
+    model.task.$attrs = {
+      ...(model.task.$attrs as Record<string, unknown>),
+      'orbitpm:nameEn': 'Changed after provider response'
+    }
+
+    await act(async () => {
+      await proposed.onRejectProposal?.(field, proposal)
+    })
+
+    const refreshed = latestTranslationReviewProps()
+    expect(refreshed.status).toBe('translationReview.stale')
+    expect(refreshed.proposals).toEqual([])
+    expect(refreshed.acceptedValues).toEqual([])
+    expect(listTranslationRecoveryFields(refreshed.review)[0]?.sourceValue).toBe(
+      'Changed after provider response'
+    )
+    expect(model.batchExecutions()).toBe(0)
+    expect((model.task.$attrs as Record<string, unknown>)['orbitpm:nameAr']).toBeUndefined()
+  })
+
+  it('aborts and discards a late field retry when the workspace generation changes', async () => {
+    const model = configureTranslationModel()
+    let transportSignal: AbortSignal | undefined
+    let resolveTransport: ((value: Array<string | undefined>) => void) | undefined
+    mocks.makeFreeTranslateTexts.mockReturnValue(
+      async (_texts: string[], _from: 'en' | 'ar', _to: 'en' | 'ar', signal?: AbortSignal) => {
+        transportSignal = signal
+        return await new Promise<Array<string | undefined>>((resolve) => {
+          resolveTransport = resolve
+        })
+      }
+    )
+    const user = userEvent.setup()
+    await openDirectoryWorkspace(user)
+    await user.click(screen.getByRole('button', { name: 'mock-tree-open' }))
+    await user.click(await screen.findByRole('button', { name: 'mock-editor-ready' }))
+    await user.click(screen.getByRole('button', { name: 'editor.translate' }))
+    await screen.findByRole('dialog', { name: 'translationReview.title' })
+    act(() => latestTranslationReviewProps().onProviderChange('free'))
+    const selected = latestTranslationReviewProps()
+    const field = listTranslationRecoveryFields(selected.review)[0]
+    if (!field || !selected.onRetryField) throw new Error('missing retryable translation field')
+    let retry: Promise<void> | void
+    act(() => {
+      retry = selected.onRetryField?.(field, confirmedFieldRetry(selected, field))
+    })
+    await waitFor(() => expect(transportSignal).toEqual(expect.any(AbortSignal)))
+
+    const replacement = new FakeDirectoryHandle('replacement-workspace')
+    replacement.addFile('replacement.bpmn', state.xml)
+    mocks.pickWorkspace.mockResolvedValue(asDirectoryHandle(replacement))
+    await user.click(screen.getByRole('button', { name: 'app.changeFolder' }))
+    await waitFor(() => expect(transportSignal?.aborted).toBe(true))
+    await act(async () => {
+      resolveTransport?.(['مراجعة الطلب'])
+      await retry
+    })
+
+    expect((model.task.$attrs as Record<string, unknown>)['orbitpm:nameAr']).toBeUndefined()
+    expect(model.batchExecutions()).toBe(0)
+    expect(screen.queryByRole('dialog', { name: 'translationReview.title' })).toBeNull()
+    expect(screen.getByTestId('catalog-view')).not.toBeNull()
+  })
+
+  it('aborts a late translation when generated placement activates another tab', async () => {
+    const model = configureTranslationModel()
+    let transportSignal: AbortSignal | undefined
+    let resolveTransport: ((value: Array<string | undefined>) => void) | undefined
+    mocks.makeFreeTranslateTexts.mockReturnValue(
+      async (_texts: string[], _from: 'en' | 'ar', _to: 'en' | 'ar', signal?: AbortSignal) => {
+        transportSignal = signal
+        return await new Promise<Array<string | undefined>>((resolve) => {
+          resolveTransport = resolve
+        })
+      }
+    )
+    const user = userEvent.setup()
+    await openBlankDiagram(user)
+    await user.click(screen.getByRole('button', { name: 'mock-editor-ready' }))
+    await user.click(screen.getByRole('button', { name: 'editor.translate' }))
+    act(() => latestTranslationReviewProps().onProviderChange('free'))
+    const selected = latestTranslationReviewProps()
+    const field = listTranslationRecoveryFields(selected.review)[0]
+    if (!field || !selected.onRetryField) throw new Error('missing retryable translation field')
+    let retry: Promise<void> | void
+    act(() => {
+      retry = selected.onRetryField?.(field, confirmedFieldRetry(selected, field))
+    })
+    await waitFor(() => expect(transportSignal).toEqual(expect.any(AbortSignal)))
+
+    const placement = latestAiPanelProps()
+    await act(async () => {
+      await placement.onPlaceGenerated(state.xml, {
+        name: 'Superseding generated tab',
+        targetFolder: '',
+        gen: placement.getWorkspaceGen?.(),
+        localizationSource: 'ai',
+        signal: new AbortController().signal
+      })
+    })
+    await waitFor(() => expect(transportSignal?.aborted).toBe(true))
+    expect(screen.queryByRole('dialog', { name: 'translationReview.title' })).toBeNull()
+
+    await act(async () => {
+      resolveTransport?.(['مراجعة الطلب'])
+      await retry
+    })
+
+    expect((model.task.$attrs as Record<string, unknown>)['orbitpm:nameAr']).toBeUndefined()
+    expect(model.batchExecutions()).toBe(0)
+    const supersedingTab = screen.getByRole('tab', {
+      name: /superseding-generated-tab\.bpmn/
+    })
+    expect(supersedingTab.getAttribute('aria-selected')).toBe('true')
+    expect(
+      screen
+        .getAllByRole('tab')
+        .filter((tab) => tab !== supersedingTab)
+        .every((tab) => tab.getAttribute('aria-selected') === 'false')
+    ).toBe(true)
+    expect(screen.queryByText('translate.done')).toBeNull()
   })
 
   it('shows per-item retry status and ignores a stale same-tab callback', async () => {
@@ -1361,6 +2722,22 @@ describe('App single-file browser orchestration', () => {
 
     await user.click(screen.getByRole('button', { name: 'translationReview.cancel' }))
     expect(await screen.findByText('translationReview.cancelled')).not.toBeNull()
+    const cancelled = latestTranslationReviewProps()
+    expect(deriveTranslationReviewProgress(cancelled.review)).toEqual({
+      total: 1,
+      resolved: 0,
+      unresolved: 1,
+      failed: 0,
+      complete: false
+    })
+    expect(listTranslationRecoveryFields(cancelled.review)).toEqual([
+      expect.objectContaining({
+        failed: false,
+        retryable: true
+      })
+    ])
+    expect(screen.getByRole('button', { name: 'translationReview.field.retry' })).not.toBeNull()
+    expect(screen.getByRole('button', { name: 'translationReview.field.manual' })).not.toBeNull()
 
     await user.click(screen.getByRole('button', { name: 'translationReview.postpone' }))
     await user.click(screen.getByRole('button', { name: 'editor.translate' }))
@@ -1385,6 +2762,36 @@ describe('App single-file browser orchestration', () => {
     expect(await screen.findByText('translationReview.cancelled')).not.toBeNull()
   })
 
+  it('does not report a provider failure for a manual-only row after a batch transport error', async () => {
+    configureTranslationModel({ includeMixed: true })
+    mocks.makeFreeTranslateTexts.mockReturnValue(async () => {
+      throw new FreeTranslateError('rate', 'chain')
+    })
+    const user = userEvent.setup()
+    await openBlankDiagram(user)
+    await user.click(screen.getByRole('button', { name: 'mock-editor-ready' }))
+    await user.click(screen.getByRole('button', { name: 'editor.translate' }))
+    await user.selectOptions(await screen.findByRole('combobox'), 'free')
+    await user.click(screen.getByRole('button', { name: 'translationReview.translateNow' }))
+
+    expect(await screen.findByText('translate.free.rate')).not.toBeNull()
+    const review = latestTranslationReviewProps().review
+    const rows = listTranslationRecoveryFields(review)
+    expect(rows.find((row) => row.elementId === 'Task_1')).toMatchObject({
+      failed: true,
+      retryable: true
+    })
+    expect(rows.find((row) => row.elementId === 'Task_Mixed')).toMatchObject({
+      failed: false,
+      requiresManualReview: true
+    })
+    expect(deriveTranslationReviewProgress(review)).toMatchObject({
+      unresolved: 2,
+      failed: 1,
+      complete: false
+    })
+  })
+
   it('warns when persistent browser draft recovery is unavailable', async () => {
     sessionHarness.indexedDbAvailable = false
     const user = userEvent.setup()
@@ -1394,7 +2801,6 @@ describe('App single-file browser orchestration', () => {
 
   it('creates a named process, preserves dirty work on cancel, saves, and closes it', async () => {
     const user = userEvent.setup()
-    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(false)
     render(<App />)
 
     await user.click(await screen.findByRole('button', { name: 'picker.fallback.newProcess' }))
@@ -1411,10 +2817,18 @@ describe('App single-file browser orchestration', () => {
     expect(controlledPanel).toBeTruthy()
     expect(screen.getByRole('tabpanel').id).toBe(controlledPanel)
     await user.click(screen.getByTitle('tab.closeTitle'))
-    expect(confirm).toHaveBeenCalledOnce()
+    const discardDialog = screen.getByRole('alertdialog', {
+      name: 'confirm.discardUnsaved.title'
+    })
+    expect(document.activeElement).toBe(
+      within(discardDialog).getByRole('button', { name: 'confirmDialog.cancel' })
+    )
+    expect(window.confirm).not.toHaveBeenCalled()
     expect(screen.getByTestId('editor-tab')).not.toBeNull()
+    await user.keyboard('{Escape}')
+    expect(screen.queryByRole('alertdialog', { name: 'confirm.discardUnsaved.title' })).toBeNull()
+    expect(document.activeElement).toBe(processTab)
 
-    confirm.mockReturnValue(true)
     const session = latestSessionController().store.getActive()
     if (!session) throw new Error('expected the created process session')
     const editor = mocks.editorProps.mock.calls.at(-1)?.[0] as {
@@ -1431,7 +2845,71 @@ describe('App single-file browser orchestration', () => {
     )
     await user.click(screen.getByRole('button', { name: 'mock-editor-clean' }))
     await user.click(screen.getByTitle('tab.closeTitle'))
+    await user.click(
+      within(screen.getByRole('alertdialog', { name: 'confirm.discardUnsaved.title' })).getByRole(
+        'button',
+        { name: 'confirm.discardUnsaved.confirm' }
+      )
+    )
     expect(await screen.findByText('emptyTab.fallback')).not.toBeNull()
+  })
+
+  it('focuses the adjacent tab and then the workspace when confirmed dirty closes complete', async () => {
+    const user = userEvent.setup()
+    await openBlankDiagram(user)
+
+    await user.click(screen.getByRole('button', { name: 'sidebar.toggle.aria' }))
+    await user.click(screen.getByRole('button', { name: 'mock-ai-place' }))
+    const generatedTab = await screen.findByRole('tab', {
+      name: /ai-claims\.bpmn.*tab\.dirty\.aria/
+    })
+    const originalTab = screen.getByRole('tab', {
+      name: /untitled\.bpmn.*tab\.dirty\.aria/
+    })
+
+    generatedTab.focus()
+    await user.keyboard('{Delete}')
+    let discardDialog = screen.getByRole('alertdialog', {
+      name: 'confirm.discardUnsaved.title'
+    })
+    await user.click(
+      within(discardDialog).getByRole('button', { name: 'confirm.discardUnsaved.confirm' })
+    )
+    await waitFor(() => expect(screen.queryByText('ai-claims.bpmn')).toBeNull())
+    await waitFor(() => expect(document.activeElement).toBe(originalTab))
+
+    await user.keyboard('{Delete}')
+    discardDialog = screen.getByRole('alertdialog', {
+      name: 'confirm.discardUnsaved.title'
+    })
+    await user.click(
+      within(discardDialog).getByRole('button', { name: 'confirm.discardUnsaved.confirm' })
+    )
+    expect(await screen.findByText('emptyTab.fallback')).not.toBeNull()
+    await waitFor(() =>
+      expect(document.activeElement).toBe(screen.getByRole('main', { name: 'app.main.aria' }))
+    )
+    expect(window.confirm).not.toHaveBeenCalled()
+  })
+
+  it('clears a dirty-close prompt before a superseding workspace activation decision', async () => {
+    const user = userEvent.setup()
+    await openBlankDiagram(user)
+    const originalTab = screen.getByRole('tab', {
+      name: /untitled\.bpmn.*tab\.dirty\.aria/
+    })
+    originalTab.focus()
+    await user.keyboard('{Delete}')
+    expect(screen.getByRole('alertdialog', { name: 'confirm.discardUnsaved.title' })).not.toBeNull()
+
+    fireEvent.click(screen.getByRole('button', { name: 'app.newProcess' }))
+
+    expect(screen.queryByRole('alertdialog', { name: 'confirm.discardUnsaved.title' })).toBeNull()
+    const switchGuard = await screen.findByRole('dialog', { name: 'confirm.switch.title' })
+    await user.click(within(switchGuard).getByRole('button', { name: 'confirm.switch.cancel' }))
+    expect(screen.getByTestId('editor-tab')).not.toBeNull()
+    expect(screen.getByRole('tab', { name: /untitled\.bpmn/ })).not.toBeNull()
+    expect(window.confirm).not.toHaveBeenCalled()
   })
 
   it('places AI and spreadsheet results as live tabs and starts the interview drawer', async () => {
@@ -1588,6 +3066,40 @@ describe('App single-file browser orchestration', () => {
     expect(secondSave).toHaveBeenCalledOnce()
   })
 
+  it('does not route navigation or save shortcuts behind a modal review', async () => {
+    configureTranslationModel()
+    const user = userEvent.setup()
+    await openBlankDiagram(user)
+    const rail = screen.getByRole('button', { name: 'sidebar.toggle.aria' })
+    if (rail.getAttribute('aria-expanded') === 'false') await user.click(rail)
+    await user.click(screen.getByRole('button', { name: 'mock-ai-place' }))
+    await screen.findByText(/ai-claims\.bpmn/)
+    await user.click(
+      screen.getByRole('tab', {
+        name: /untitled\.bpmn/
+      })
+    )
+    await user.click(screen.getByRole('button', { name: 'mock-editor-commands' }))
+    await user.click(screen.getByRole('button', { name: 'mock-editor-ready' }))
+    await user.click(screen.getByRole('button', { name: 'editor.translate' }))
+    const controller = latestSessionController()
+    const activeBefore = controller.store.getActive()?.id
+
+    fireEvent.keyDown(window, { altKey: true, key: 'ArrowLeft' })
+    fireEvent.keyDown(window, { altKey: true, key: 'ArrowRight' })
+    const save = new KeyboardEvent('keydown', {
+      key: 's',
+      ctrlKey: true,
+      cancelable: true
+    })
+    window.dispatchEvent(save)
+
+    expect(controller.store.getActive()?.id).toBe(activeBefore)
+    expect(screen.getByRole('dialog', { name: 'translationReview.title' })).not.toBeNull()
+    expect(save.defaultPrevented).toBe(true)
+    expect(mocks.commandSave).not.toHaveBeenCalled()
+  })
+
   it('retains a recovery draft and dirty state when a virtual document is downloaded', async () => {
     const user = userEvent.setup()
     await openBlankDiagram(user)
@@ -1701,6 +3213,23 @@ describe('App single-file browser orchestration', () => {
     )
   })
 
+  it('closes step details when a late placement activates another tab', async () => {
+    const user = userEvent.setup()
+    await openBlankDiagram(user)
+    await user.click(screen.getByRole('button', { name: 'mock-editor-ready' }))
+    await user.click(screen.getByRole('button', { name: 'mock-editor-details' }))
+    expect(screen.getByRole('dialog', { name: 'mock-step-details' })).not.toBeNull()
+
+    act(() => {
+      latestAiPanelProps().spreadsheet.onOpenSingle(state.xml, 'details-superseder.bpmn')
+    })
+
+    await screen.findByText(/details-superseder\.bpmn/)
+    await waitFor(() =>
+      expect(screen.queryByRole('dialog', { name: 'mock-step-details' })).toBeNull()
+    )
+  })
+
   it('does not commit a print job after its tab closes during SVG serialization', async () => {
     const user = userEvent.setup()
     await openBlankDiagram(user)
@@ -1717,6 +3246,12 @@ describe('App single-file browser orchestration', () => {
     await waitFor(() => expect(mocks.saveSvg).toHaveBeenCalledOnce())
 
     await user.click(screen.getByTitle('tab.closeTitle'))
+    await user.click(
+      within(screen.getByRole('alertdialog', { name: 'confirm.discardUnsaved.title' })).getByRole(
+        'button',
+        { name: 'confirm.discardUnsaved.confirm' }
+      )
+    )
     expect(await screen.findByText('emptyTab.fallback')).not.toBeNull()
     await act(async () => {
       resolveSvg({ svg: '<svg data-stale="true" />' })
@@ -1967,6 +3502,141 @@ describe('App single-file browser orchestration', () => {
     expect(user).toBeDefined()
   })
 
+  it('renders a missing-DI candidate read-only and keeps acceptance gated until it is ready', async () => {
+    const user = userEvent.setup()
+    const sourceXml = withoutDiagramInterchange(state.xml)
+    configureMissingDiValidation(sourceXml)
+    const { container } = render(<App />)
+    await screen.findByRole('button', { name: 'picker.fallback.openFile' })
+    const input = container.querySelector('input[type="file"]')
+    if (!(input instanceof HTMLInputElement)) throw new Error('missing file input')
+    const file = new File([sourceXml], 'missing-layout.bpmn', {
+      type: 'application/xml'
+    })
+    Object.defineProperty(file, 'arrayBuffer', {
+      configurable: true,
+      value: async () => utf8Buffer(sourceXml)
+    })
+
+    fireEvent.change(input, { target: { files: [file] } })
+
+    const dialog = await screen.findByRole('dialog', {
+      name: 'sourceEditor.layoutReady'
+    })
+    const scrollRegion = dialog.querySelector('[data-single-file-layout-scroll-region]')
+    expect(scrollRegion).not.toBeNull()
+    expect(scrollRegion?.parentElement).toBe(dialog)
+    expect(scrollRegion?.previousElementSibling?.classList).toContain('orbitpm-validation__header')
+    expect(scrollRegion?.nextElementSibling?.classList).toContain('orbitpm-validation__footer')
+    const preview = mocks.diagramPreviewProps.mock.calls.at(-1)?.[0] as
+      | {
+          xml: string
+          onStatusChange?(status: {
+            status: 'loading' | 'ready' | 'error'
+            warningCount?: number
+            message?: string
+          }): void
+        }
+      | undefined
+    if (!preview) throw new Error('missing read-only layout preview')
+    expect(preview.xml).not.toBe(sourceXml)
+    expect(preview.xml).toContain('<bpmndi:BPMNDiagram')
+    expect(screen.getByRole('img', { name: 'sourceEditor.layoutDiagramAria' })).not.toBeNull()
+    const accept = within(dialog).getByRole('button', {
+      name: 'sourceEditor.layoutAccept'
+    }) as HTMLButtonElement
+    expect(accept.disabled).toBe(true)
+    expect(sessionHarness.controllers).toHaveLength(0)
+    expect(window.confirm).not.toHaveBeenCalled()
+
+    await user.click(within(dialog).getByRole('button', { name: 'mock-layout-preview-ready' }))
+    expect(accept.disabled).toBe(false)
+    await user.click(accept)
+
+    expect((await screen.findAllByText('missing-layout.bpmn')).length).toBeGreaterThan(0)
+    const session = latestSessionController().store.get('missing-layout.bpmn')
+    expect(session?.lastSavedXml).toBe(sourceXml)
+    expect(session?.currentXml).toContain('<bpmndi:BPMNDiagram')
+    expect(session?.dirty).toBe(true)
+  })
+
+  it('keeps missing-DI acceptance disabled on viewer error and cancels without mutation', async () => {
+    const user = userEvent.setup()
+    const sourceXml = withoutDiagramInterchange(state.xml)
+    configureMissingDiValidation(sourceXml)
+    const { container } = render(<App />)
+    await screen.findByRole('button', { name: 'picker.fallback.openFile' })
+    const input = container.querySelector('input[type="file"]')
+    if (!(input instanceof HTMLInputElement)) throw new Error('missing file input')
+    const file = new File([sourceXml], 'cancelled-layout.bpmn', {
+      type: 'application/xml'
+    })
+    Object.defineProperty(file, 'arrayBuffer', {
+      configurable: true,
+      value: async () => utf8Buffer(sourceXml)
+    })
+    fireEvent.change(input, { target: { files: [file] } })
+    const dialog = await screen.findByRole('dialog', {
+      name: 'sourceEditor.layoutReady'
+    })
+    const accept = within(dialog).getByRole('button', {
+      name: 'sourceEditor.layoutAccept'
+    }) as HTMLButtonElement
+
+    await user.click(within(dialog).getByRole('button', { name: 'mock-layout-preview-error' }))
+    expect(accept.disabled).toBe(true)
+    await user.click(within(dialog).getByRole('button', { name: 'modal.cancel' }))
+
+    await waitFor(() =>
+      expect(screen.queryByRole('dialog', { name: 'sourceEditor.layoutReady' })).toBeNull()
+    )
+    expect(sessionHarness.controllers).toHaveLength(0)
+    expect(screen.queryByText('cancelled-layout.bpmn')).toBeNull()
+    expect(window.confirm).not.toHaveBeenCalled()
+  })
+
+  it('aborts a stale missing-DI preview when a newer file activation supersedes it', async () => {
+    const sourceXml = withoutDiagramInterchange(state.xml)
+    configureMissingDiValidation(sourceXml)
+    const { container } = render(<App />)
+    await screen.findByRole('button', { name: 'picker.fallback.openFile' })
+    const input = container.querySelector('input[type="file"]')
+    if (!(input instanceof HTMLInputElement)) throw new Error('missing file input')
+    const staleFile = new File([sourceXml], 'stale-layout.bpmn', {
+      type: 'application/xml'
+    })
+    Object.defineProperty(staleFile, 'arrayBuffer', {
+      configurable: true,
+      value: async () => utf8Buffer(sourceXml)
+    })
+    fireEvent.change(input, { target: { files: [staleFile] } })
+    await screen.findByRole('dialog', { name: 'sourceEditor.layoutReady' })
+    const stalePreview = mocks.diagramPreviewProps.mock.calls.at(-1)?.[0] as
+      | {
+          onStatusChange?(status: {
+            status: 'loading' | 'ready' | 'error'
+            warningCount?: number
+          }): void
+        }
+      | undefined
+    if (!stalePreview) throw new Error('missing stale preview callback')
+
+    const replacement = new File([state.xml], 'replacement-upload.bpmn', {
+      type: 'application/xml'
+    })
+    Object.defineProperty(replacement, 'arrayBuffer', {
+      configurable: true,
+      value: async () => utf8Buffer(state.xml)
+    })
+    fireEvent.change(input, { target: { files: [replacement] } })
+
+    expect((await screen.findAllByText('replacement-upload.bpmn')).length).toBeGreaterThan(0)
+    act(() => stalePreview.onStatusChange?.({ status: 'ready', warningCount: 0 }))
+    expect(screen.queryByRole('dialog', { name: 'sourceEditor.layoutReady' })).toBeNull()
+    expect(latestSessionController().store.get('replacement-upload.bpmn')).toBeDefined()
+    expect(latestSessionController().store.get('stale-layout.bpmn')).toBeUndefined()
+  })
+
   it('keeps reviewed single-file localization dirty over the exact uploaded baseline', async () => {
     const user = userEvent.setup()
     const { container } = render(<App />)
@@ -2077,6 +3747,28 @@ describe('App directory workspace orchestration', () => {
     expect(latestSessionController().store.getActive()?.identity.workspace.id).toBe(
       (activeLocalizationAdapter as { id: string }).id
     )
+  })
+
+  it('lets the assistant invoke the picker without closing until a workspace commits', async () => {
+    const user = userEvent.setup()
+    await openDirectoryWorkspace(user)
+    await user.click(screen.getByRole('button', { name: 'mock-assistant-open' }))
+
+    mocks.pickWorkspace.mockClear().mockResolvedValue(null)
+    await user.click(screen.getByRole('button', { name: 'mock-assistant-change-workspace' }))
+    await waitFor(() => expect(mocks.pickWorkspace).toHaveBeenCalledOnce())
+    expect(screen.getByRole('button', { name: 'mock-assistant-close' })).not.toBeNull()
+
+    const replacement = fakeRoot()
+    replacement.addFile('replacement.bpmn', state.xml)
+    mocks.pickWorkspace.mockResolvedValue(asDirectoryHandle(replacement))
+    await user.click(screen.getByRole('button', { name: 'mock-assistant-change-workspace' }))
+
+    await waitFor(() => expect(mocks.workspaceLocalizationFactories).toHaveBeenCalledTimes(2))
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: 'mock-assistant-open' })).not.toBeNull()
+    )
+    expect(screen.queryByRole('button', { name: 'mock-assistant-close' })).toBeNull()
   })
 
   it('lets the newest folder-picker intent win when an older picker resolves later', async () => {
@@ -2226,6 +3918,273 @@ describe('App directory workspace orchestration', () => {
     expect(mocks.restoreHistoryRevision).not.toHaveBeenCalled()
   })
 
+  it('aborts an old history restore-as-copy before it can write during a workspace switch', async () => {
+    const user = userEvent.setup()
+    const first = populatedDirectory()
+    const second = fakeRoot()
+    second.addFile('second.bpmn', state.xml)
+    await openDirectoryWorkspace(user, first)
+    await user.click(screen.getByRole('button', { name: 'workspace.storage.history' }))
+    await screen.findByTestId('history-dialog')
+    const historyProps = latestHistoryDialogProps()
+    const revision = await historyProps.manager.createRevision('Finance/existing.bpmn', {
+      reason: 'manual'
+    })
+    const originalPreview = historyProps.manager.preview.bind(historyProps.manager)
+    const previewStarted = deferred()
+    const releasePreview = deferred()
+    vi.spyOn(historyProps.manager, 'preview').mockImplementationOnce(async (candidate) => {
+      previewStarted.resolve()
+      await releasePreview.promise
+      return originalPreview(candidate)
+    })
+    const dialogController = new AbortController()
+    const pending = historyProps.onRestoreCopy!(
+      revision,
+      'Finance/old-workspace-copy.bpmn',
+      dialogController.signal
+    )
+    await previewStarted.promise
+
+    mocks.pickWorkspace.mockResolvedValue(asDirectoryHandle(second))
+    await user.click(screen.getByRole('button', { name: 'app.changeFolder' }))
+    await waitFor(() => expect(mocks.workspaceLocalizationFactories).toHaveBeenCalledTimes(2))
+    releasePreview.resolve()
+
+    await expect(pending).resolves.toMatchObject({ ok: false, status: 'cancelled' })
+    expect(() => first.file('Finance/old-workspace-copy.bpmn')).toThrow(/Missing fake file/u)
+    expect(() => second.file('Finance/old-workspace-copy.bpmn')).toThrow(/Missing fake/u)
+  })
+
+  it('preserves a committed history copy success across a switch and gates stale reconciliation', async () => {
+    const user = userEvent.setup()
+    const first = populatedDirectory()
+    const second = fakeRoot()
+    second.addFile('second.bpmn', state.xml)
+    await openDirectoryWorkspace(user, first)
+    await user.click(screen.getByRole('button', { name: 'workspace.storage.history' }))
+    await screen.findByTestId('history-dialog')
+    const historyProps = latestHistoryDialogProps()
+    const revision = await historyProps.manager.createRevision('Finance/existing.bpmn', {
+      reason: 'manual'
+    })
+    const adapter = latestWorkspaceLocalizationAdapter()
+    const originalWriteAtomic = adapter.writeAtomic.bind(adapter)
+    const copyCommitted = deferred()
+    const releaseOutcome = deferred()
+    vi.spyOn(adapter, 'writeAtomic').mockImplementation(
+      async (path, bytes, expectedHash, options) => {
+        const outcome = await originalWriteAtomic(path, bytes, expectedHash, options)
+        if (path === 'Finance/committed-history-copy.bpmn' && outcome.status === 'success') {
+          copyCommitted.resolve()
+          await releaseOutcome.promise
+        }
+        return outcome
+      }
+    )
+    const pending = historyProps.onRestoreCopy!(
+      revision,
+      'Finance/committed-history-copy.bpmn',
+      new AbortController().signal
+    )
+    await copyCommitted.promise
+    expect(fakeFileText(first, 'Finance/committed-history-copy.bpmn')).toBe(state.xml)
+
+    mocks.pickWorkspace.mockResolvedValue(asDirectoryHandle(second))
+    await user.click(screen.getByRole('button', { name: 'app.changeFolder' }))
+    await waitFor(() => expect(mocks.workspaceLocalizationFactories).toHaveBeenCalledTimes(2))
+    releaseOutcome.resolve()
+
+    await expect(pending).resolves.toMatchObject({
+      ok: true,
+      status: 'success',
+      snapshot: { path: 'Finance/committed-history-copy.bpmn' }
+    })
+    expect(() => second.file('Finance/committed-history-copy.bpmn')).toThrow(/Missing fake/u)
+
+    const currentAdapter = latestWorkspaceLocalizationAdapter()
+    const currentList = vi.spyOn(currentAdapter, 'list')
+    await expect(historyProps.onChanged()).resolves.toBeUndefined()
+    expect(currentList).not.toHaveBeenCalled()
+  })
+
+  it('leaves the destination missing when an English-only history copy review is cancelled', async () => {
+    const user = userEvent.setup()
+    const root = populatedDirectory()
+    const sourcePath = 'Finance/existing.bpmn'
+    const destinationPath = 'Finance/cancelled-reviewed-history-copy.bpmn'
+    const processId = 'Process_History_Copy_Cancel'
+    const legacyXml = withoutArabicMetadata(withProcessId(state.xml, processId))
+    replaceFakeFile(root, sourcePath, legacyXml)
+    await openDirectoryWorkspace(user, root)
+    mocks.validateBpmn.mockImplementation(parsedValidationResultForXml)
+    await user.click(screen.getByRole('button', { name: 'workspace.storage.history' }))
+    await screen.findByTestId('history-dialog')
+    const historyProps = latestHistoryDialogProps()
+    const revision = await historyProps.manager.createRevision(sourcePath, {
+      reason: 'manual'
+    })
+
+    const pending = historyProps.onRestoreCopy!(
+      revision,
+      destinationPath,
+      new AbortController().signal
+    )
+    const review = await screen.findByRole('dialog', { name: 'reviewedXmlReview.title' })
+    await user.click(
+      within(review).getByRole('button', {
+        name: 'reviewedXmlReview.cancel'
+      })
+    )
+
+    await expect(pending).resolves.toMatchObject({ ok: false, status: 'cancelled' })
+    expect(() => root.file(destinationPath)).toThrow(/Missing fake file/u)
+  })
+
+  it('creation-only CAS-writes and postvalidates the exact reviewed English-only history copy', async () => {
+    const user = userEvent.setup()
+    const root = populatedDirectory()
+    const sourcePath = 'Finance/existing.bpmn'
+    const destinationPath = 'Finance/reviewed-history-copy.bpmn'
+    const processId = 'Process_History_Copy_Accept'
+    const legacyXml = withoutArabicMetadata(withProcessId(state.xml, processId))
+    replaceFakeFile(root, sourcePath, legacyXml)
+    await openDirectoryWorkspace(user, root)
+    mocks.validateBpmn.mockImplementation(parsedValidationResultForXml)
+    await user.click(screen.getByRole('button', { name: 'workspace.storage.history' }))
+    await screen.findByTestId('history-dialog')
+    const historyProps = latestHistoryDialogProps()
+    const revision = await historyProps.manager.createRevision(sourcePath, {
+      reason: 'manual'
+    })
+    const adapter = latestWorkspaceLocalizationAdapter()
+    const writeAtomic = vi.spyOn(adapter, 'writeAtomic')
+
+    const pending = historyProps.onRestoreCopy!(
+      revision,
+      destinationPath,
+      new AbortController().signal
+    )
+    await completeReviewedXmlReview(user, ['عملية نسخة السجل', 'بداية نسخة السجل'])
+    const outcome = await pending
+
+    expect(outcome).toMatchObject({
+      ok: true,
+      status: 'success',
+      created: true,
+      snapshot: { path: destinationPath }
+    })
+    if (outcome.status !== 'success') throw new Error('history copy did not succeed')
+    const destinationWrite = writeAtomic.mock.calls.find(([path]) => path === destinationPath)
+    expect(destinationWrite).toBeDefined()
+    const reviewedBytes = destinationWrite?.[1]
+    expect(reviewedBytes?.byteLength).toBeGreaterThan(0)
+    if (!reviewedBytes) throw new Error('reviewed history bytes were not written')
+    expect(destinationWrite?.[2]).toBeUndefined()
+    expect(destinationWrite?.[3]).toMatchObject({
+      expectedWorkspaceId: adapter.id,
+      expectedMissing: true
+    })
+    expect(outcome.snapshot.hash).toBe(await sha256Hex(reviewedBytes))
+    expect(Array.from(outcome.snapshot.bytes)).toEqual(Array.from(reviewedBytes))
+    expect(fakeFileText(root, destinationPath)).toBe(new TextDecoder().decode(reviewedBytes))
+    expect(fakeFileText(root, destinationPath)).toContain('عملية نسخة السجل')
+    expect(fakeFileText(root, destinationPath)).not.toBe(legacyXml)
+  })
+
+  it('blocks extension-destructive saves with an Arabic summary and labeled evidence', async () => {
+    state.lang = 'ar'
+    const user = userEvent.setup()
+    await openDirectoryWorkspace(user)
+    await user.click(screen.getByRole('button', { name: 'mock-tree-open' }))
+    await screen.findByTestId('editor-tab')
+    const issueCode = 'preservation.extension-element-changed'
+    mocks.validatePreservation.mockResolvedValueOnce({
+      valid: false,
+      issues: [
+        {
+          source: 'preservation',
+          code: issueCode,
+          severity: 'error',
+          blocking: true,
+          message: 'native preservation detail sentinel'
+        }
+      ]
+    })
+    const editor = mocks.editorProps.mock.calls.at(-1)?.[0] as {
+      onRequestSave(xml: string): Promise<void | { durable: boolean }>
+    }
+    const candidateXml = `${state.xml}\n<!-- extension-destructive candidate -->`
+    let result!: { ok: true } | { ok: false; error: unknown }
+    await act(async () => {
+      result = await editor.onRequestSave(candidateXml).then(
+        () => ({ ok: true as const }),
+        (error: unknown) => ({ ok: false as const, error })
+      )
+    })
+
+    expect(result).toMatchObject({
+      ok: false,
+      error: expect.objectContaining({
+        message: ar['session.save.preservationBlocked']
+      })
+    })
+    expect((result as { ok: false; error: Error }).error.message).not.toContain(issueCode)
+    await waitFor(() => {
+      const evidence = screen.getByTitle(new RegExp(issueCode, 'u'))
+      expect(evidence.getAttribute('title')).toContain(
+        ar['session.save.preservationTechnicalEvidence'].split('{codes}')[0]
+      )
+    })
+  })
+
+  it('reports a storage failure in Arabic while retaining backend detail as technical evidence', async () => {
+    state.lang = 'ar'
+    const user = userEvent.setup()
+    await openDirectoryWorkspace(user)
+    await user.click(screen.getByRole('button', { name: 'mock-tree-open' }))
+    await screen.findByTestId('editor-tab')
+    const controller = latestSessionController()
+    const session = controller.store.getActive()
+    if (!session?.identity.path) throw new Error('expected an active persisted session')
+    const backendDetail = 'native quota failure sentinel'
+    vi.spyOn(controller, 'save').mockResolvedValueOnce({
+      status: 'storage-failure',
+      ok: false,
+      sessionId: session.id,
+      failure: {
+        code: 'quota-exceeded',
+        message: backendDetail,
+        retriable: true,
+        cause: new DOMException(backendDetail, 'QuotaExceededError')
+      }
+    })
+    const editor = mocks.editorProps.mock.calls.at(-1)?.[0] as {
+      onRequestSave(xml: string): Promise<void | { durable: boolean }>
+    }
+    let result!: { ok: true } | { ok: false; error: unknown }
+    await act(async () => {
+      result = await editor.onRequestSave(`${state.xml}\n<!-- storage failure candidate -->`).then(
+        () => ({ ok: true as const }),
+        (error: unknown) => ({ ok: false as const, error })
+      )
+    })
+
+    expect(result).toMatchObject({
+      ok: false,
+      error: expect.objectContaining({
+        message: ar['session.save.storageFailure']
+      })
+    })
+    expect((result as { ok: false; error: Error }).error.message).not.toContain(backendDetail)
+    await waitFor(() => {
+      const evidence = screen.getByTitle(new RegExp(backendDetail, 'u'))
+      expect(evidence.getAttribute('title')).toContain(
+        ar['session.save.storageTechnicalEvidence'].split('{code}')[0]
+      )
+    })
+  })
+
   it('clears the matching recovery draft after a fully synchronized history restore', async () => {
     const user = userEvent.setup()
     await openDirectoryWorkspace(user)
@@ -2249,6 +4208,68 @@ describe('App directory workspace orchestration', () => {
 
     await waitFor(() => expect(sessionHarness.drafts.has(draft.id)).toBe(false))
     expect(latestSessionController().store.get(session.id)?.dirty).toBe(false)
+  })
+
+  it('returns an Arabic error when the open editor changes before history XML is applied', async () => {
+    state.lang = 'ar'
+    const user = userEvent.setup()
+    await openDirectoryWorkspace(user)
+    await user.click(screen.getByRole('button', { name: 'mock-tree-open' }))
+    await screen.findByTestId('editor-tab')
+    const controller = latestSessionController()
+    const session = controller.store.getActive()
+    if (!session?.identity.path) throw new Error('expected an active persisted session')
+    const restoredXml = `${state.xml}\n<!-- restored history revision -->`
+    const outcome = successfulWorkspaceSave(session.identity.path, restoredXml)
+    mocks.restoreHistoryRevision.mockImplementationOnce(
+      async (
+        options: import('./sessions').RestoreHistoryRevisionOptions
+      ): Promise<import('./sessions').RestoreHistoryRevisionResult> => {
+        const captured = controller.store.get(session.id)
+        if (!captured) throw new Error('history target disappeared')
+        try {
+          await options.applyXml?.(
+            {
+              ...captured,
+              revision: captured.revision + 1
+            },
+            restoredXml
+          )
+        } catch (error) {
+          return {
+            status: 'storage-restored-session-refresh-failed',
+            sessionId: session.id,
+            outcome,
+            error
+          }
+        }
+        throw new Error('expected the stale history apply guard to reject')
+      }
+    )
+
+    await user.click(screen.getByRole('button', { name: 'workspace.storage.history' }))
+    await screen.findByTestId('history-dialog')
+    let result!: import('./sessions').RestoreHistoryRevisionResult
+    await act(async () => {
+      result = await latestHistoryDialogProps().onRestore!(
+        testHistoryRevision(session.identity.path!)
+      )
+    })
+
+    expect(result).toMatchObject({
+      status: 'storage-restored-session-refresh-failed',
+      sessionId: session.id,
+      error: expect.objectContaining({
+        message: ar['workspace.history.applyEditorChangedBefore']
+      })
+    })
+    expect(ar['workspace.history.applyEditorChangedBefore']).not.toContain(
+      'The open editor changed'
+    )
+    expect(mocks.localizedRuntimeTranslation).toHaveBeenCalledWith(
+      'workspace.history.applyEditorChangedBefore',
+      undefined
+    )
   })
 
   it('keeps a coordinated history restore clean when live serialization reformats the XML', async () => {
@@ -2894,12 +4915,16 @@ describe('App directory workspace orchestration', () => {
   it('creates folders, processes, and AI results without legacy raw-handle write helpers', async () => {
     const user = userEvent.setup()
     const root = await openDirectoryWorkspace(user)
+    const unrelatedRead = vi.spyOn(root.file('Finance/existing.bpmn'), 'getFile')
+    unrelatedRead.mockClear()
     mocks.legacyCreateFolderAt.mockClear()
     mocks.legacyCreateBpmnFileUnique.mockClear()
     mocks.prompt.mockResolvedValueOnce('Archive').mockResolvedValueOnce('New approval')
 
     await user.click(screen.getByRole('button', { name: 'mock-tree-new-folder' }))
     await waitFor(() => expect(root.directory('Archive')).toBeDefined())
+    expect(unrelatedRead).not.toHaveBeenCalled()
+    unrelatedRead.mockRestore()
 
     await user.click(screen.getByRole('button', { name: 'mock-tree-new-process' }))
     await waitFor(() => expect(root.file('Finance/new-approval.bpmn')).toBeDefined())
@@ -3172,7 +5197,10 @@ describe('App directory workspace orchestration', () => {
     const savedGlossary = [glossary[1], glossary[0], { en: 'Case code', ar: 'رمز الحالة' }] as const
     let savedState: Awaited<ReturnType<LocalizationResourcesEditorProps['onSaveGlossary']>>
     await act(async () => {
-      savedState = await initial.onSaveGlossary(savedGlossary)
+      savedState = await initial.onSaveGlossary(
+        savedGlossary,
+        initial.snapshot!.files.glossary.hash
+      )
     })
     await waitFor(() => expect(latestSettingsLocalization().snapshot).toBe(savedState!))
     expect(JSON.parse(fakeFileText(root, WORKSPACE_GLOSSARY_PATH)).entries).toEqual(savedGlossary)
@@ -3180,13 +5208,16 @@ describe('App directory workspace orchestration', () => {
     const beforeRejectedMemory = fakeFileText(root, WORKSPACE_TRANSLATION_MEMORY_PATH)
     const beforeRejectedSnapshot = latestSettingsLocalization().snapshot
     await expect(
-      latestSettingsLocalization().onSaveTranslationMemory([
-        {
-          en: 'Unreviewed result',
-          ar: 'نتيجة غير مراجعة',
-          accepted: false
-        } as never
-      ])
+      latestSettingsLocalization().onSaveTranslationMemory(
+        [
+          {
+            en: 'Unreviewed result',
+            ar: 'نتيجة غير مراجعة',
+            accepted: false
+          } as never
+        ],
+        latestSettingsLocalization().snapshot!.files.translationMemory.hash
+      )
     ).rejects.toBeInstanceOf(WorkspaceLocalizationValidationError)
     expect(fakeFileText(root, WORKSPACE_TRANSLATION_MEMORY_PATH)).toBe(beforeRejectedMemory)
     expect(latestSettingsLocalization().snapshot).toBe(beforeRejectedSnapshot)
@@ -3199,7 +5230,10 @@ describe('App directory workspace orchestration', () => {
     )
     glossaryFile.lastModified += 1
     await expect(
-      stale.onSaveGlossary([{ en: 'Stale term', ar: 'مصطلح قديم' }])
+      stale.onSaveGlossary(
+        [{ en: 'Stale term', ar: 'مصطلح قديم' }],
+        stale.snapshot!.files.glossary.hash
+      )
     ).rejects.toBeInstanceOf(WorkspaceLocalizationConflictError)
     expect(latestSettingsLocalization().snapshot).toBe(stale.snapshot)
 
@@ -3210,6 +5244,684 @@ describe('App directory workspace orchestration', () => {
     await waitFor(() => expect(latestSettingsLocalization().snapshot).toBe(reloaded!))
     expect(reloaded!.resources.glossary).toEqual(externalGlossary)
     expect(reloaded!.resources.translationMemory).toEqual(translationMemory)
+  })
+
+  it('persists a reviewed manual value and rejects a stale Settings replacement', async () => {
+    const model = configureTranslationModel()
+    const user = userEvent.setup()
+    const root = populatedDirectory()
+    seedWorkspaceLocalization(root, [], [])
+    await openDirectoryWorkspace(user, root)
+    const staleSettings = latestSettingsLocalization()
+    const staleMemoryHash = staleSettings.snapshot!.files.translationMemory.hash
+    const store = latestWorkspaceLocalizationStore()
+    const accept = vi.spyOn(store, 'acceptTranslationPairs')
+    await user.click(screen.getByRole('button', { name: 'mock-tree-open' }))
+    await user.click(await screen.findByRole('button', { name: 'mock-editor-ready' }))
+    await user.click(screen.getByRole('button', { name: 'editor.translate' }))
+    await screen.findByRole('dialog', { name: 'translationReview.title' })
+    const review = latestTranslationReviewProps()
+    const field = listTranslationRecoveryFields(review.review)[0]
+    if (!field || !review.onManualEdit) throw new Error('missing manual translation field')
+
+    await act(async () => {
+      await review.onManualEdit?.(field, 'مراجعة الطلب')
+    })
+
+    expect(model.batchExecutions()).toBe(0)
+    expect((model.task.$attrs as Record<string, unknown>)['orbitpm:nameAr']).toBeUndefined()
+    expect(accept).not.toHaveBeenCalled()
+    expect(JSON.parse(fakeFileText(root, WORKSPACE_TRANSLATION_MEMORY_PATH)).entries).toEqual([])
+
+    await applyCompletedTranslationReview()
+
+    expect(model.batchExecutions()).toBe(1)
+    expect((model.task.$attrs as Record<string, unknown>)['orbitpm:nameAr']).toBe('مراجعة الطلب')
+    expect(accept).toHaveBeenCalledOnce()
+    expect(accept).toHaveBeenCalledWith(
+      [{ en: 'Review request', ar: 'مراجعة الطلب' }],
+      expect.objectContaining({ signal: expect.any(AbortSignal) })
+    )
+    expect(JSON.parse(fakeFileText(root, WORKSPACE_TRANSLATION_MEMORY_PATH)).entries).toEqual([
+      expect.objectContaining({
+        en: 'Review request',
+        ar: 'مراجعة الطلب',
+        accepted: true,
+        acceptedAt: expect.any(String)
+      })
+    ])
+    expect(latestWorkspaceLocalizationStore().current?.resources.translationMemory).toEqual([
+      expect.objectContaining({ en: 'Review request', ar: 'مراجعة الطلب', accepted: true })
+    ])
+
+    await expect(staleSettings.onSaveTranslationMemory([], staleMemoryHash)).rejects.toBeInstanceOf(
+      WorkspaceLocalizationConflictError
+    )
+    expect(JSON.parse(fakeFileText(root, WORKSPACE_TRANSLATION_MEMORY_PATH)).entries).toHaveLength(
+      1
+    )
+  })
+
+  it('fails final Apply closed when glossary and memory hashes changed after review', async () => {
+    const model = configureTranslationModel()
+    const user = userEvent.setup()
+    const root = populatedDirectory()
+    seedWorkspaceLocalization(root, [], [])
+    await openDirectoryWorkspace(user, root)
+    const store = latestWorkspaceLocalizationStore()
+    const accept = vi.spyOn(store, 'acceptTranslationPairs')
+    await user.click(screen.getByRole('button', { name: 'mock-tree-open' }))
+    await user.click(await screen.findByRole('button', { name: 'mock-editor-ready' }))
+    await user.click(screen.getByRole('button', { name: 'editor.translate' }))
+    await screen.findByRole('dialog', { name: 'translationReview.title' })
+    const opened = latestTranslationReviewProps()
+    const field = listTranslationRecoveryFields(opened.review)[0]
+    if (!field || !opened.onManualEdit) throw new Error('missing manual translation field')
+    await act(async () => {
+      await opened.onManualEdit?.(field, 'مراجعة الطلب')
+    })
+    replaceFakeFile(
+      root,
+      WORKSPACE_GLOSSARY_PATH,
+      serializeWorkspaceGlossaryDocument(
+        createWorkspaceGlossaryDocument([{ en: 'External term', ar: 'مصطلح خارجي' }])
+      )
+    )
+    replaceFakeFile(
+      root,
+      WORKSPACE_TRANSLATION_MEMORY_PATH,
+      serializeWorkspaceTranslationMemoryDocument(
+        createWorkspaceTranslationMemoryDocument([
+          { en: 'External pair', ar: 'زوج خارجي', accepted: true }
+        ])
+      )
+    )
+
+    await applyCompletedTranslationReview()
+
+    const refreshed = latestTranslationReviewProps()
+    expect(refreshed.status).toBe('translationReview.stale')
+    expect(refreshed.acceptedValues).toEqual([])
+    expect(refreshed.proposals).toEqual([])
+    expect(refreshed.review.localResources.glossary).toEqual([
+      { en: 'External term', ar: 'مصطلح خارجي' }
+    ])
+    expect(refreshed.review.localResources.translationMemory).toEqual([
+      expect.objectContaining({ en: 'External pair', ar: 'زوج خارجي', accepted: true })
+    ])
+    expect(model.batchExecutions()).toBe(0)
+    expect(accept).not.toHaveBeenCalled()
+    expect((model.task.$attrs as Record<string, unknown>)['orbitpm:nameAr']).toBeUndefined()
+    expect(JSON.parse(fakeFileText(root, WORKSPACE_TRANSLATION_MEMORY_PATH)).entries).toHaveLength(
+      1
+    )
+  })
+
+  it.each([
+    ['blank opposite language', ''],
+    ['mixed-script opposite language', 'Review طلب']
+  ])('does not cache a manual recovery with a %s', async (_caseName, sourceValue) => {
+    const model = configureTranslationModel({ sourceValue })
+    const user = userEvent.setup()
+    const root = populatedDirectory()
+    seedWorkspaceLocalization(root, [], [])
+    await openDirectoryWorkspace(user, root)
+    const accept = vi.spyOn(latestWorkspaceLocalizationStore(), 'acceptTranslationPairs')
+    await user.click(screen.getByRole('button', { name: 'mock-tree-open' }))
+    await user.click(await screen.findByRole('button', { name: 'mock-editor-ready' }))
+    await user.click(screen.getByRole('button', { name: 'editor.translate' }))
+    await screen.findByRole('dialog', { name: 'translationReview.title' })
+    const review = latestTranslationReviewProps()
+    const field = listTranslationRecoveryFields(review.review)[0]
+    if (!field || !review.onManualEdit) throw new Error('missing manual-only recovery field')
+
+    await act(async () => {
+      await review.onManualEdit?.(field, 'مراجعة الطلب')
+    })
+
+    expect(model.batchExecutions()).toBe(0)
+    expect((model.task.$attrs as Record<string, unknown>)['orbitpm:nameAr']).toBeUndefined()
+    await applyCompletedTranslationReview()
+    expect(model.batchExecutions()).toBe(1)
+    expect((model.task.$attrs as Record<string, unknown>)['orbitpm:nameAr']).toBe('مراجعة الطلب')
+    expect(accept).not.toHaveBeenCalled()
+    expect(JSON.parse(fakeFileText(root, WORKSPACE_TRANSLATION_MEMORY_PATH)).entries).toEqual([])
+    expect(screen.queryByRole('button', { name: 'translationReview.memoryRetry' })).toBeNull()
+    expect(screen.queryByText(/translationReview\.memorySaveFailed/)).toBeNull()
+  })
+
+  it('single-flights double final Apply while its accepted pair is being saved', async () => {
+    const model = configureTranslationModel()
+    const user = userEvent.setup()
+    const root = populatedDirectory()
+    seedWorkspaceLocalization(root, [], [])
+    let transportSignal: AbortSignal | undefined
+    mocks.makeFreeTranslateTexts.mockReturnValue(
+      async (_texts: string[], _from: 'en' | 'ar', _to: 'en' | 'ar', signal?: AbortSignal) => {
+        transportSignal = signal
+        return ['مراجعة الطلب']
+      }
+    )
+    await openDirectoryWorkspace(user, root)
+    const store = latestWorkspaceLocalizationStore()
+    const originalAccept = store.acceptTranslationPairs.bind(store)
+    const saveStarted = deferred()
+    const releaseSave = deferred()
+    vi.spyOn(store, 'acceptTranslationPairs').mockImplementation(async (pairs, options) => {
+      saveStarted.resolve()
+      await releaseSave.promise
+      return originalAccept(pairs, options)
+    })
+    await user.click(screen.getByRole('button', { name: 'mock-tree-open' }))
+    await user.click(await screen.findByRole('button', { name: 'mock-editor-ready' }))
+    await user.click(screen.getByRole('button', { name: 'editor.translate' }))
+    await screen.findByRole('dialog', { name: 'translationReview.title' })
+    act(() => latestTranslationReviewProps().onProviderChange('free'))
+    const selected = latestTranslationReviewProps()
+    const field = listTranslationRecoveryFields(selected.review)[0]
+    if (!field || !selected.onRetryField) throw new Error('missing retryable field')
+    await act(async () => {
+      await selected.onRetryField?.(field, confirmedFieldRetry(selected, field))
+    })
+    const proposal = latestTranslationReviewProps().proposals?.[0]
+    if (!proposal) throw new Error('missing reviewed provider proposal')
+    await acceptTranslationProposal(proposal)
+    const applyAction = latestTranslationReviewProps().onApplyCompleted
+    if (!applyAction) throw new Error('missing completed translation apply action')
+    let firstApply: Promise<void> | void
+    let secondApply: Promise<void> | void
+    act(() => {
+      firstApply = applyAction()
+      secondApply = applyAction()
+    })
+    await saveStarted.promise
+
+    expect(model.batchExecutions()).toBe(1)
+    expect(store.acceptTranslationPairs).toHaveBeenCalledOnce()
+    expect((model.task.$attrs as Record<string, unknown>)['orbitpm:nameAr']).toBe('مراجعة الطلب')
+    expect(latestTranslationReviewProps()).toMatchObject({
+      busy: true,
+      cancellable: false,
+      status: 'translationReview.memorySaving',
+      technicalDetail: null
+    })
+    expect(screen.queryByRole('button', { name: 'translationReview.cancel' })).toBeNull()
+    expect(screen.queryByRole('button', { name: 'translationReview.translateNow' })).toBeNull()
+    expect(screen.queryByRole('button', { name: 'modal.close.aria' })).toBeNull()
+    act(() => latestTranslationReviewProps().onCancelTranslation())
+    expect(transportSignal?.aborted).toBe(false)
+
+    releaseSave.resolve()
+    await act(async () => {
+      await Promise.all([firstApply, secondApply])
+    })
+    expect(screen.queryByRole('dialog', { name: 'translationReview.title' })).toBeNull()
+    expect(JSON.parse(fakeFileText(root, WORKSPACE_TRANSLATION_MEMORY_PATH)).entries).toHaveLength(
+      1
+    )
+  })
+
+  it('clears finalization on workspace activation and keeps a same-key retry cancellable', async () => {
+    const firstModel = configureTranslationModel()
+    const user = userEvent.setup()
+    const first = populatedDirectory()
+    const second = populatedDirectory()
+    seedWorkspaceLocalization(first, [], [])
+    seedWorkspaceLocalization(second, [], [])
+    mocks.makeFreeTranslateTexts.mockReturnValue(async () => ['مراجعة الطلب'])
+    await openDirectoryWorkspace(user, first)
+    const firstStore = latestWorkspaceLocalizationStore()
+    const originalAccept = firstStore.acceptTranslationPairs.bind(firstStore)
+    const saveStarted = deferred()
+    const releaseSave = deferred()
+    vi.spyOn(firstStore, 'acceptTranslationPairs').mockImplementation(async (pairs, options) => {
+      saveStarted.resolve()
+      await releaseSave.promise
+      return originalAccept(pairs, options)
+    })
+    await user.click(screen.getByRole('button', { name: 'mock-tree-open' }))
+    await user.click(await screen.findByRole('button', { name: 'mock-editor-ready' }))
+    await user.click(screen.getByRole('button', { name: 'editor.translate' }))
+    await screen.findByRole('dialog', { name: 'translationReview.title' })
+    act(() => latestTranslationReviewProps().onProviderChange('free'))
+    const selected = latestTranslationReviewProps()
+    const field = listTranslationRecoveryFields(selected.review)[0]
+    if (!field || !selected.onRetryField) throw new Error('missing first workspace field')
+    await act(async () => {
+      await selected.onRetryField?.(field, confirmedFieldRetry(selected, field))
+    })
+    const firstProposal = latestTranslationReviewProps().proposals?.[0]
+    if (!firstProposal) throw new Error('missing first workspace proposal')
+    await acceptTranslationProposal(firstProposal)
+    let firstApply: Promise<void> | void
+    act(() => {
+      firstApply = latestTranslationReviewProps().onApplyCompleted?.()
+    })
+    await saveStarted.promise
+    expect(firstModel.batchExecutions()).toBe(1)
+
+    mocks.pickWorkspace.mockResolvedValue(asDirectoryHandle(second))
+    fireEvent.click(screen.getByRole('button', { name: 'app.changeFolder' }))
+    await waitFor(() =>
+      expect(screen.queryByRole('dialog', { name: 'translationReview.title' })).toBeNull()
+    )
+    await screen.findByTestId('catalog-view')
+    releaseSave.resolve()
+    await act(async () => {
+      await firstApply
+    })
+    expect(JSON.parse(fakeFileText(second, WORKSPACE_TRANSLATION_MEMORY_PATH)).entries).toEqual([])
+
+    const secondModel = configureTranslationModel()
+    let secondSignal: AbortSignal | undefined
+    mocks.makeFreeTranslateTexts.mockReturnValue(
+      async (_texts: string[], _from: 'en' | 'ar', _to: 'en' | 'ar', signal?: AbortSignal) => {
+        secondSignal = signal
+        return await new Promise<Array<string | undefined>>((_resolve, reject) => {
+          signal?.addEventListener(
+            'abort',
+            () => reject(new DOMException('cancelled', 'AbortError')),
+            { once: true }
+          )
+        })
+      }
+    )
+    await user.click(screen.getByRole('button', { name: 'mock-tree-open' }))
+    await user.click(await screen.findByRole('button', { name: 'mock-editor-ready' }))
+    await user.click(screen.getByRole('button', { name: 'editor.translate' }))
+    await screen.findByRole('dialog', { name: 'translationReview.title' })
+    act(() => latestTranslationReviewProps().onProviderChange('free'))
+    const secondReview = latestTranslationReviewProps()
+    const secondField = listTranslationRecoveryFields(secondReview.review)[0]
+    if (!secondField || !secondReview.onRetryField) {
+      throw new Error('missing second workspace field')
+    }
+    act(() => {
+      void secondReview.onRetryField?.(secondField, confirmedFieldRetry(secondReview, secondField))
+    })
+    await waitFor(() => expect(secondSignal).toEqual(expect.any(AbortSignal)))
+    expect(latestTranslationReviewProps().cancellable).toBe(true)
+    await user.click(screen.getByRole('button', { name: 'translationReview.cancel' }))
+    expect(await screen.findByText('translationReview.cancelled')).not.toBeNull()
+    expect(secondSignal?.aborted).toBe(true)
+    expect(secondModel.batchExecutions()).toBe(0)
+  })
+
+  it('retries the exact accepted batch after storage failure without repeating provider or modeler work', async () => {
+    const model = configureTranslationModel()
+    const user = userEvent.setup()
+    const root = populatedDirectory()
+    seedWorkspaceLocalization(root, [], [])
+    mocks.makeFreeTranslateTexts.mockReturnValue(async () => ['مراجعة الطلب'])
+    await openDirectoryWorkspace(user, root)
+    const adapter = latestWorkspaceLocalizationAdapter()
+    const writeAtomic = vi.spyOn(adapter, 'writeAtomic').mockRejectedValueOnce(new Error('quota'))
+    const store = latestWorkspaceLocalizationStore()
+    const accept = vi.spyOn(store, 'acceptTranslationPairs')
+    await user.click(screen.getByRole('button', { name: 'mock-tree-open' }))
+    await user.click(await screen.findByRole('button', { name: 'mock-editor-ready' }))
+    await user.click(screen.getByRole('button', { name: 'editor.translate' }))
+    act(() => latestTranslationReviewProps().onProviderChange('free'))
+    const selected = latestTranslationReviewProps()
+    const field = listTranslationRecoveryFields(selected.review)[0]
+    if (!field || !selected.onRetryField) throw new Error('missing retryable field')
+
+    await act(async () => {
+      await selected.onRetryField?.(field, confirmedFieldRetry(selected, field))
+    })
+    const proposal = latestTranslationReviewProps().proposals?.[0]
+    if (!proposal) throw new Error('missing reviewed provider proposal')
+    await acceptTranslationProposal(proposal)
+    await applyCompletedTranslationReview()
+
+    expect(await screen.findByText(/translationReview\.memorySaveFailed/)).not.toBeNull()
+    expect(latestTranslationReviewProps()).toMatchObject({
+      status: 'translationReview.memorySaveFailed',
+      technicalDetail: 'quota'
+    })
+    expect(screen.getByLabelText('translationReview.error.technicalDetail').textContent).toContain(
+      'quota'
+    )
+    expect(model.batchExecutions()).toBe(1)
+    expect(mocks.makeFreeTranslateTexts).toHaveBeenCalledOnce()
+    expect(accept).toHaveBeenCalledTimes(1)
+    const memoryFailureDialog = screen.getByRole('dialog', {
+      name: 'translationReview.title'
+    })
+    expect((within(memoryFailureDialog).getByRole('combobox') as HTMLSelectElement).disabled).toBe(
+      true
+    )
+    expect(
+      (
+        screen.getByRole('button', {
+          name: 'translationReview.postpone'
+        }) as HTMLButtonElement
+      ).disabled
+    ).toBe(true)
+    expect(screen.queryByRole('button', { name: 'modal.close.aria' })).toBeNull()
+    expect(document.activeElement).toBe(
+      screen.getByRole('button', { name: 'translationReview.memoryRetry' })
+    )
+    fireEvent.keyDown(document, { key: 'Escape' })
+    fireEvent.mouseDown(document.querySelector<HTMLElement>('[role="presentation"]')!)
+    expect(screen.getByRole('dialog', { name: 'translationReview.title' })).not.toBeNull()
+    act(() => latestTranslationReviewProps().onProviderChange(''))
+    expect(screen.getByRole('dialog', { name: 'translationReview.title' })).not.toBeNull()
+
+    await user.click(screen.getByRole('button', { name: 'translationReview.memoryRetry' }))
+    await waitFor(() =>
+      expect(screen.queryByRole('button', { name: 'translationReview.memoryRetry' })).toBeNull()
+    )
+    expect(screen.queryByRole('dialog', { name: 'translationReview.title' })).toBeNull()
+    expect(accept).toHaveBeenCalledTimes(2)
+    expect(accept.mock.calls[1]?.[0]).toEqual(accept.mock.calls[0]?.[0])
+    expect(writeAtomic).toHaveBeenCalledTimes(2)
+    expect(model.batchExecutions()).toBe(1)
+    expect(mocks.makeFreeTranslateTexts).toHaveBeenCalledOnce()
+    expect(JSON.parse(fakeFileText(root, WORKSPACE_TRANSLATION_MEMORY_PATH)).entries).toEqual([
+      expect.objectContaining({
+        en: 'Review request',
+        ar: 'مراجعة الطلب',
+        accepted: true
+      })
+    ])
+  })
+
+  it('single-flights a double translation-memory retry without reapplying the model', async () => {
+    const model = configureTranslationModel()
+    const user = userEvent.setup()
+    const root = populatedDirectory()
+    seedWorkspaceLocalization(root, [], [])
+    await openDirectoryWorkspace(user, root)
+    vi.spyOn(latestWorkspaceLocalizationAdapter(), 'writeAtomic').mockRejectedValueOnce(
+      new Error('quota')
+    )
+    const store = latestWorkspaceLocalizationStore()
+    const originalAccept = store.acceptTranslationPairs.bind(store)
+    const retryStarted = deferred()
+    const releaseRetry = deferred()
+    let acceptCalls = 0
+    const accept = vi
+      .spyOn(store, 'acceptTranslationPairs')
+      .mockImplementation(async (pairs, options) => {
+        acceptCalls += 1
+        if (acceptCalls === 2) {
+          retryStarted.resolve()
+          await releaseRetry.promise
+        }
+        return originalAccept(pairs, options)
+      })
+    await user.click(screen.getByRole('button', { name: 'mock-tree-open' }))
+    await user.click(await screen.findByRole('button', { name: 'mock-editor-ready' }))
+    await user.click(screen.getByRole('button', { name: 'editor.translate' }))
+    await screen.findByRole('dialog', { name: 'translationReview.title' })
+    const opened = latestTranslationReviewProps()
+    const field = listTranslationRecoveryFields(opened.review)[0]
+    if (!field || !opened.onManualEdit) throw new Error('missing manual translation field')
+    await act(async () => {
+      await opened.onManualEdit?.(field, 'مراجعة الطلب')
+    })
+    await applyCompletedTranslationReview()
+    expect(await screen.findByText(/translationReview\.memorySaveFailed/)).not.toBeNull()
+    const retryAction = latestTranslationReviewProps().onRetryMemorySave
+    const continueAction = latestTranslationReviewProps().onContinueWithoutMemorySave
+    if (!retryAction || !continueAction) {
+      throw new Error('missing translation-memory recovery actions')
+    }
+    let firstRetry: Promise<void> | void
+    let secondRetry: Promise<void> | void
+
+    act(() => {
+      firstRetry = retryAction()
+      secondRetry = retryAction()
+    })
+    await retryStarted.promise
+
+    expect(accept).toHaveBeenCalledTimes(2)
+    expect(model.batchExecutions()).toBe(1)
+    act(() => continueAction())
+    expect(screen.getByRole('dialog', { name: 'translationReview.title' })).not.toBeNull()
+    expect(screen.queryByText('translationReview.memorySkipped')).toBeNull()
+    releaseRetry.resolve()
+    await act(async () => {
+      await Promise.all([firstRetry, secondRetry])
+    })
+
+    expect(accept).toHaveBeenCalledTimes(2)
+    expect(model.batchExecutions()).toBe(1)
+    expect(screen.queryByRole('dialog', { name: 'translationReview.title' })).toBeNull()
+    expect(JSON.parse(fakeFileText(root, WORKSPACE_TRANSLATION_MEMORY_PATH)).entries).toEqual([
+      expect.objectContaining({
+        en: 'Review request',
+        ar: 'مراجعة الطلب',
+        accepted: true
+      })
+    ])
+  })
+
+  it('allows an explicit truthful continuation after repeated translation-memory failure', async () => {
+    const model = configureTranslationModel()
+    const user = userEvent.setup()
+    const root = populatedDirectory()
+    seedWorkspaceLocalization(root, [], [])
+    await openDirectoryWorkspace(user, root)
+    const writeAtomic = vi
+      .spyOn(latestWorkspaceLocalizationAdapter(), 'writeAtomic')
+      .mockRejectedValue(new Error('permission denied'))
+    await user.click(screen.getByRole('button', { name: 'mock-tree-open' }))
+    await user.click(await screen.findByRole('button', { name: 'mock-editor-ready' }))
+    await user.click(screen.getByRole('button', { name: 'editor.translate' }))
+    await screen.findByRole('dialog', { name: 'translationReview.title' })
+    const review = latestTranslationReviewProps()
+    const field = listTranslationRecoveryFields(review.review)[0]
+    if (!field || !review.onManualEdit) throw new Error('missing manual translation field')
+    await act(async () => {
+      await review.onManualEdit?.(field, 'مراجعة الطلب')
+    })
+    await applyCompletedTranslationReview()
+    await user.click(screen.getByRole('button', { name: 'translationReview.memoryRetry' }))
+    expect(await screen.findByText(/translationReview\.memorySaveFailed/)).not.toBeNull()
+    const staleRetryMemory = latestTranslationReviewProps().onRetryMemorySave
+    const staleContinue = latestTranslationReviewProps().onContinueWithoutMemorySave
+    if (!staleRetryMemory || !staleContinue) {
+      throw new Error('missing stale translation-memory recovery actions')
+    }
+
+    await user.click(screen.getByRole('button', { name: 'translationReview.memoryContinue' }))
+
+    expect(await screen.findByText('translationReview.memorySkipped')).not.toBeNull()
+    expect(screen.queryByRole('button', { name: 'translationReview.memoryRetry' })).toBeNull()
+    expect(screen.queryByRole('dialog', { name: 'translationReview.title' })).toBeNull()
+    expect(model.batchExecutions()).toBe(1)
+    expect((model.task.$attrs as Record<string, unknown>)['orbitpm:nameAr']).toBe('مراجعة الطلب')
+    expect(JSON.parse(fakeFileText(root, WORKSPACE_TRANSLATION_MEMORY_PATH)).entries).toEqual([])
+
+    delete (model.task.$attrs as Record<string, unknown>)['orbitpm:nameEn']
+    await user.click(screen.getByRole('button', { name: 'editor.translate' }))
+    await screen.findByRole('dialog', { name: 'translationReview.title' })
+    const replacement = latestTranslationReviewProps()
+    const replacementField = listTranslationRecoveryFields(replacement.review)[0]
+    if (!replacementField || !replacement.onManualEdit) {
+      throw new Error('missing replacement memory-failure field')
+    }
+    await act(async () => {
+      await replacement.onManualEdit?.(replacementField, 'Review request')
+    })
+    await applyCompletedTranslationReview()
+    expect(await screen.findByText(/translationReview\.memorySaveFailed/)).not.toBeNull()
+    const writesBeforeStaleRetry = writeAtomic.mock.calls.length
+
+    await act(async () => {
+      await staleRetryMemory()
+    })
+    expect(writeAtomic).toHaveBeenCalledTimes(writesBeforeStaleRetry)
+    act(() => staleContinue())
+    expect(screen.getByRole('dialog', { name: 'translationReview.title' })).not.toBeNull()
+    expect(screen.getByRole('button', { name: 'translationReview.memoryRetry' })).not.toBeNull()
+    expect(model.batchExecutions()).toBe(2)
+
+    await user.click(screen.getByRole('button', { name: 'translationReview.memoryContinue' }))
+    expect(screen.queryByRole('dialog', { name: 'translationReview.title' })).toBeNull()
+  })
+
+  it('treats an externally durable exact pair as a successful idempotent memory retry', async () => {
+    const model = configureTranslationModel({ duplicateSource: true })
+    const user = userEvent.setup()
+    const root = populatedDirectory()
+    seedWorkspaceLocalization(root, [], [])
+    mocks.makeFreeTranslateTexts.mockReturnValue(async () => ['مراجعة الطلب', undefined])
+    await openDirectoryWorkspace(user, root)
+    const writeAtomic = vi
+      .spyOn(latestWorkspaceLocalizationAdapter(), 'writeAtomic')
+      .mockRejectedValue(new Error('read-only workspace'))
+    await user.click(screen.getByRole('button', { name: 'mock-tree-open' }))
+    await user.click(await screen.findByRole('button', { name: 'mock-editor-ready' }))
+    await user.click(screen.getByRole('button', { name: 'editor.translate' }))
+    await user.selectOptions(
+      within(await screen.findByRole('dialog', { name: 'translationReview.title' })).getByRole(
+        'combobox'
+      ),
+      'free'
+    )
+    await user.click(screen.getByRole('button', { name: 'translationReview.translateNow' }))
+    const proposal = latestTranslationReviewProps().proposals?.[0]
+    if (!proposal) throw new Error('missing partial provider proposal')
+    await acceptTranslationProposal(proposal)
+    const remaining = latestTranslationReviewProps()
+    const remainingField = listTranslationRecoveryFields(remaining.review).find(
+      (field) => field.elementId === 'Task_2'
+    )
+    if (!remainingField || !remaining.onManualEdit) {
+      throw new Error('missing remaining duplicate translation field')
+    }
+    await act(async () => {
+      await remaining.onManualEdit?.(remainingField, 'مراجعة الطلب')
+    })
+    await applyCompletedTranslationReview()
+    expect(await screen.findByText(/translationReview\.memorySaveFailed/)).not.toBeNull()
+    expect(model.batchExecutions()).toBe(1)
+    expect(mocks.makeFreeTranslateTexts).toHaveBeenCalledOnce()
+
+    const externalGlossary = [{ en: 'EXTERNAL', ar: 'EXTERNAL', neutral: true }]
+    replaceFakeFile(
+      root,
+      WORKSPACE_GLOSSARY_PATH,
+      serializeWorkspaceGlossaryDocument(createWorkspaceGlossaryDocument(externalGlossary))
+    )
+    replaceFakeFile(
+      root,
+      WORKSPACE_TRANSLATION_MEMORY_PATH,
+      serializeWorkspaceTranslationMemoryDocument(
+        createWorkspaceTranslationMemoryDocument([
+          { en: 'Review request', ar: 'مراجعة الطلب', accepted: true }
+        ])
+      )
+    )
+
+    await user.click(screen.getByRole('button', { name: 'translationReview.memoryRetry' }))
+    await waitFor(() =>
+      expect(screen.queryByRole('dialog', { name: 'translationReview.title' })).toBeNull()
+    )
+    expect(screen.queryByText(/translationReview\.memorySaveFailed/)).toBeNull()
+    expect(latestWorkspaceLocalizationStore().current?.resources.glossary).toEqual(externalGlossary)
+    expect(latestWorkspaceLocalizationStore().current?.resources.translationMemory).toEqual([
+      expect.objectContaining({
+        en: 'Review request',
+        ar: 'مراجعة الطلب',
+        accepted: true
+      })
+    ])
+
+    expect(mocks.makeFreeTranslateTexts).toHaveBeenCalledOnce()
+    expect(writeAtomic).toHaveBeenCalledOnce()
+    expect((model.duplicateTask?.$attrs as Record<string, unknown>)['orbitpm:nameAr']).toBe(
+      'مراجعة الطلب'
+    )
+    expect(model.batchExecutions()).toBe(1)
+  })
+
+  it('keeps a partial provider result private until every duplicate is reviewed and one final apply commits', async () => {
+    const model = configureTranslationModel({ duplicateSource: true })
+    const user = userEvent.setup()
+    const root = populatedDirectory()
+    seedWorkspaceLocalization(root, [], [])
+    mocks.makeFreeTranslateTexts.mockReturnValue(async () => ['مراجعة الطلب', undefined])
+    await openDirectoryWorkspace(user, root)
+    const accept = vi.spyOn(latestWorkspaceLocalizationStore(), 'acceptTranslationPairs')
+    await user.click(screen.getByRole('button', { name: 'mock-tree-open' }))
+    await user.click(await screen.findByRole('button', { name: 'mock-editor-ready' }))
+    await user.click(screen.getByRole('button', { name: 'editor.translate' }))
+    await user.selectOptions(
+      within(await screen.findByRole('dialog', { name: 'translationReview.title' })).getByRole(
+        'combobox'
+      ),
+      'free'
+    )
+    await user.click(screen.getByRole('button', { name: 'translationReview.translateNow' }))
+
+    await waitFor(() => expect(latestTranslationReviewProps().busy).toBe(false))
+    const proposal = latestTranslationReviewProps().proposals?.[0]
+    if (!proposal) throw new Error('missing partial duplicate proposal')
+    await acceptTranslationProposal(proposal)
+    expect(accept).not.toHaveBeenCalled()
+    expect(model.batchExecutions()).toBe(0)
+    const staged = latestTranslationReviewProps()
+    const remainingField = listTranslationRecoveryFields(staged.review).find(
+      (field) => field.elementId === 'Task_2'
+    )
+    if (!remainingField || !staged.onManualEdit) {
+      throw new Error('missing remaining duplicate field')
+    }
+    await act(async () => {
+      await staged.onManualEdit?.(remainingField, 'مراجعة الطلب')
+    })
+    await applyCompletedTranslationReview()
+
+    expect(accept).toHaveBeenCalledOnce()
+    expect(accept.mock.calls[0]?.[0]).toEqual([{ en: 'Review request', ar: 'مراجعة الطلب' }])
+    expect((model.task.$attrs as Record<string, unknown>)['orbitpm:nameAr']).toBe('مراجعة الطلب')
+    expect((model.duplicateTask?.$attrs as Record<string, unknown>)['orbitpm:nameAr']).toBe(
+      'مراجعة الطلب'
+    )
+    expect(model.batchExecutions()).toBe(1)
+    expect(screen.queryByRole('dialog', { name: 'translationReview.title' })).toBeNull()
+    expect(mocks.makeFreeTranslateTexts).toHaveBeenCalledOnce()
+  })
+
+  it('accepts a workspace-approved neutral provider result without caching an invalid TM pair', async () => {
+    const model = configureTranslationModel({
+      sourceValue: 'Application programming interface'
+    })
+    const user = userEvent.setup()
+    const root = populatedDirectory()
+    seedWorkspaceLocalization(root, [{ en: 'API', ar: 'API', neutral: true }], [])
+    mocks.makeFreeTranslateTexts.mockReturnValue(async () => ['API'])
+    await openDirectoryWorkspace(user, root)
+    const accept = vi.spyOn(latestWorkspaceLocalizationStore(), 'acceptTranslationPairs')
+    await user.click(screen.getByRole('button', { name: 'mock-tree-open' }))
+    await user.click(await screen.findByRole('button', { name: 'mock-editor-ready' }))
+    await user.click(screen.getByRole('button', { name: 'editor.translate' }))
+    await user.selectOptions(
+      within(await screen.findByRole('dialog', { name: 'translationReview.title' })).getByRole(
+        'combobox'
+      ),
+      'free'
+    )
+    await user.click(screen.getByRole('button', { name: 'translationReview.translateNow' }))
+    const proposal = latestTranslationReviewProps().proposals?.[0]
+    if (!proposal) throw new Error('missing neutral provider proposal')
+    await acceptTranslationProposal(proposal)
+    expect((model.task.$attrs as Record<string, unknown>)['orbitpm:nameAr']).toBeUndefined()
+    expect(accept).not.toHaveBeenCalled()
+    await applyCompletedTranslationReview()
+
+    await waitFor(() =>
+      expect(screen.queryByRole('dialog', { name: 'translationReview.title' })).toBeNull()
+    )
+    expect((model.task.$attrs as Record<string, unknown>)['orbitpm:nameAr']).toBe('API')
+    expect(accept).not.toHaveBeenCalled()
+    expect(JSON.parse(fakeFileText(root, WORKSPACE_TRANSLATION_MEMORY_PATH)).entries).toEqual([])
+    expect(screen.queryByText(/translationReview\.memorySaveFailed/)).toBeNull()
   })
 
   it('reloads restored workspace localization resources after a backup commit', async () => {
@@ -3381,12 +6093,116 @@ describe('App directory workspace orchestration', () => {
       mocks.workspaceLocalizationFactories.mock.calls[1]?.[1]
     )
     await expect(
-      firstSettings.onSaveGlossary([{ en: 'Late write', ar: 'كتابة متأخرة' }])
+      firstSettings.onSaveGlossary(
+        [{ en: 'Late write', ar: 'كتابة متأخرة' }],
+        firstSettings.snapshot!.files.glossary.hash
+      )
     ).rejects.toMatchObject({ name: 'AbortError' })
     expect(fakeFileText(first, WORKSPACE_GLOSSARY_PATH)).toBe(firstGlossaryBytes)
     expect(JSON.parse(fakeFileText(second, WORKSPACE_GLOSSARY_PATH)).entries).toEqual([
       { en: 'Second term', ar: 'المصطلح الثاني' }
     ])
+  })
+
+  it('changes the Settings binding key across same-id workspaces with identical localization hashes', async () => {
+    const user = userEvent.setup()
+    const first = populatedDirectory()
+    const second = fakeRoot()
+    second.addFile('second.bpmn', state.xml)
+    seedWorkspaceLocalization(first, [], [])
+    seedWorkspaceLocalization(second, [], [])
+    await openDirectoryWorkspace(user, first)
+
+    const firstSettings = latestSettingsLocalization()
+    const firstBindingKey = firstSettings.workspaceBindingKey
+    mocks.pickWorkspace.mockResolvedValue(asDirectoryHandle(second))
+    await user.click(screen.getByRole('button', { name: 'app.changeFolder' }))
+    await waitFor(() => expect(mocks.workspaceLocalizationFactories).toHaveBeenCalledTimes(2))
+    const secondSettings = latestSettingsLocalization()
+
+    expect(secondSettings.snapshot?.files.glossary.hash).toBe(
+      firstSettings.snapshot?.files.glossary.hash
+    )
+    expect(secondSettings.snapshot?.files.translationMemory.hash).toBe(
+      firstSettings.snapshot?.files.translationMemory.hash
+    )
+    expect(secondSettings.workspaceBindingKey).toBeTruthy()
+    expect(secondSettings.workspaceBindingKey).not.toBe(firstBindingKey)
+  })
+
+  it('does not publish a peer refresh for an unchanged localization reload', async () => {
+    const user = userEvent.setup()
+    const root = populatedDirectory()
+    seedWorkspaceLocalization(root, [], [])
+    await openDirectoryWorkspace(user, root)
+    sessionHarness.publishedChanges.length = 0
+
+    await act(async () => {
+      await latestSettingsLocalization().onReload()
+    })
+
+    expect(sessionHarness.publishedChanges).toEqual([])
+  })
+
+  it('keeps a failed reload unavailable and rejects peer saves until both resources recover', async () => {
+    const user = userEvent.setup()
+    const root = populatedDirectory()
+    const glossary = [{ en: 'Review request', ar: 'مراجعة الطلب' }]
+    seedWorkspaceLocalization(root, glossary, [])
+    await openDirectoryWorkspace(user, root)
+    const initial = latestSettingsLocalization()
+    const glossaryBefore = fakeFileText(root, WORKSPACE_GLOSSARY_PATH)
+    replaceFakeFile(
+      root,
+      WORKSPACE_TRANSLATION_MEMORY_PATH,
+      '{"format":"broken","version":1,"entries":[]}'
+    )
+
+    await act(async () => {
+      await expect(initial.onReload()).rejects.toBeInstanceOf(WorkspaceLocalizationValidationError)
+    })
+    await waitFor(() => expect(latestSettingsLocalization().snapshot).toBeNull())
+    const failed = latestSettingsLocalization()
+    expect(failed.loadError).toContain(WORKSPACE_TRANSLATION_MEMORY_PATH)
+    await expect(
+      failed.onSaveGlossary(
+        [{ en: 'Must not save', ar: 'يجب ألا يحفظ' }],
+        initial.snapshot!.files.glossary.hash
+      )
+    ).rejects.toBeInstanceOf(WorkspaceLocalizationValidationError)
+    expect(fakeFileText(root, WORKSPACE_GLOSSARY_PATH)).toBe(glossaryBefore)
+    expect(latestSettingsLocalization().snapshot).toBeNull()
+    expect(latestSettingsLocalization().loadError).toContain(WORKSPACE_TRANSLATION_MEMORY_PATH)
+
+    replaceFakeFile(
+      root,
+      WORKSPACE_TRANSLATION_MEMORY_PATH,
+      serializeWorkspaceTranslationMemoryDocument(createWorkspaceTranslationMemoryDocument([]))
+    )
+    let recovered!: Awaited<ReturnType<LocalizationResourcesEditorProps['onReload']>>
+    await act(async () => {
+      recovered = await latestSettingsLocalization().onReload()
+    })
+    await waitFor(() => expect(latestSettingsLocalization().snapshot).toBe(recovered))
+    expect(latestSettingsLocalization().loadError).toBeNull()
+    expect(recovered.resources.glossary).toEqual(glossary)
+  })
+
+  it('retains the structured glossary resource-limit code for localized Settings recovery', async () => {
+    const user = userEvent.setup()
+    const root = populatedDirectory()
+    root.addFile(WORKSPACE_GLOSSARY_PATH, `${'['.repeat(9)}0${']'.repeat(9)}`)
+    root.addFile(
+      WORKSPACE_TRANSLATION_MEMORY_PATH,
+      serializeWorkspaceTranslationMemoryDocument(createWorkspaceTranslationMemoryDocument([]))
+    )
+
+    await openDirectoryWorkspace(user, root)
+
+    const failed = latestSettingsLocalization()
+    expect(failed.snapshot).toBeNull()
+    expect(failed.loadErrorCode).toBe('resource-limit')
+    expect(failed.loadError).toContain('Glossary json-depth limit')
   })
 
   it('keeps corrupt localization bytes read-only, shows Settings recovery, and retries explicitly', async () => {
@@ -3413,7 +6229,10 @@ describe('App directory workspace orchestration', () => {
     const settingsDialog = await screen.findByRole('dialog', { name: 'mock-settings' })
     expect(within(settingsDialog).getByRole('alert').textContent).toContain(WORKSPACE_GLOSSARY_PATH)
     await expect(
-      failed.onSaveGlossary([{ en: 'Must not write', ar: 'يجب ألا يكتب' }])
+      failed.onSaveGlossary(
+        [{ en: 'Must not write', ar: 'يجب ألا يكتب' }],
+        'unavailable-caller-view'
+      )
     ).rejects.toBeInstanceOf(WorkspaceLocalizationValidationError)
     expect(fakeFileText(root, WORKSPACE_GLOSSARY_PATH)).toBe(corrupt)
 
@@ -3448,6 +6267,7 @@ describe('App directory workspace orchestration', () => {
     await user.click(screen.getByRole('button', { name: 'mock-tree-open' }))
     await user.click(await screen.findByRole('button', { name: 'mock-editor-ready' }))
     await user.click(screen.getByRole('button', { name: 'editor.translate' }))
+    await screen.findByRole('dialog', { name: 'translationReview.title' })
     const safeReview = mocks.translationReviewProps.mock.calls.at(-1)?.[0]
       .review as import('./localization/modelerAdapter').DiagramLocalizationReview
     expect(safeReview.localResources).toEqual({
@@ -3606,6 +6426,8 @@ describe('App directory workspace orchestration', () => {
     expect(fakeFileText(root, path)).toBe(state.xml)
   })
 
+  // This observes two complete 2 s journal debounce windows; keep production
+  // timing real while allowing React/user-event overhead beyond Vitest's 5 s default.
   it('never overwrites an older recovery draft with reviewed disk localization', async () => {
     const user = userEvent.setup()
     const root = fakeRoot()
@@ -3660,7 +6482,7 @@ describe('App directory workspace orchestration', () => {
     expect(session?.dirty).toBe(true)
     expect(sessionHarness.drafts.get(draft.id)?.xml).toBe(draftXml)
     expect(fakeFileText(root, path)).toBe(diskXml)
-  })
+  }, 10_000)
 
   it('freezes the exact loaded resources for an active review and uses updates only next time', async () => {
     const process: Record<string, unknown> = {
@@ -3714,7 +6536,8 @@ describe('App directory workspace orchestration', () => {
 
     const updatedGlossary = [{ en: 'Updated term', ar: 'مصطلح محدث' }]
     await act(async () => {
-      await latestSettingsLocalization().onSaveGlossary(updatedGlossary)
+      const settings = latestSettingsLocalization()
+      await settings.onSaveGlossary(updatedGlossary, settings.snapshot!.files.glossary.hash)
     })
     expect(
       (mocks.translationReviewProps.mock.calls.at(-1)?.[0].review as typeof initialReview)
@@ -3795,6 +6618,29 @@ describe('App directory workspace orchestration', () => {
 
     expect(await screen.findByText('workspace.coordination.changed')).not.toBeNull()
     expect(controller.store.get(session.id)?.dirty).toBe(true)
+  })
+
+  it('coalesces a burst of remote workspace changes into one refresh', async () => {
+    const user = userEvent.setup()
+    await openDirectoryWorkspace(user)
+    const adapter = latestWorkspaceLocalizationAdapter()
+    const list = vi.spyOn(adapter, 'list')
+    list.mockClear()
+    const coordinator = sessionHarness.coordinators.at(-1)
+    if (!coordinator) throw new Error('expected workspace coordination')
+
+    act(() => {
+      for (let index = 0; index < 1_000; index += 1) {
+        coordinator.emit({
+          kind: 'saved',
+          path: `Finance/peer-${index}.bpmn`
+        })
+      }
+    })
+
+    await waitFor(() => expect(list).toHaveBeenCalledTimes(1))
+    await new Promise((resolve) => setTimeout(resolve, 100))
+    expect(list).toHaveBeenCalledTimes(1)
   })
 
   it('keeps a baseline-identical live capture clean so refresh can expose external XML', async () => {
@@ -4939,9 +7785,11 @@ describe('App directory workspace orchestration', () => {
     const moveDialog = await screen.findByRole('dialog', { name: 'mock-move' })
     await user.click(within(moveDialog).getByRole('button', { name: 'mock-move-confirm' }))
     await waitFor(() => expect(root.file('move-me.bpmn')).toBeDefined())
+    await waitFor(() => expect(screen.getAllByText('toast.moved')).toHaveLength(1))
 
     await user.click(screen.getByRole('button', { name: 'mock-tree-move-drop' }))
     await waitFor(() => expect(root.file('drop-me.bpmn')).toBeDefined())
+    await waitFor(() => expect(screen.getAllByText('toast.moved')).toHaveLength(2))
   })
 
   it('prompts once for dirty work and honors cancel then discard during folder switches', async () => {

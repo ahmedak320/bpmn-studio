@@ -85,6 +85,31 @@ describe('responsive shell stylesheet contract', () => {
     )
     expect(stylesheet).toContain(".orbitpm-details-rail[dir='rtl'] .orbitpm-details-rail__glyph")
     expect(stylesheet).toContain('transform: scaleX(-1)')
+    expect(stylesheet).toMatch(
+      /\.orbitpm-responsive-shell \.orbitpm-lite-rail\s*\{[\s\S]*?inline-size: 32px;[\s\S]*?min-inline-size: 32px;[\s\S]*?min-block-size: 44px;/
+    )
+  })
+
+  it('defines the wired workspace shell, skip link, and compact action/search layout', () => {
+    expect(stylesheet).toMatch(
+      /\.orbitpm-responsive-shell\.orbitpm-workspace-shell > \.orbitpm-responsive-shell__body\s*\{[\s\S]*?display: contents;/
+    )
+    expect(stylesheet).toContain('.orbitpm-workspace-header__actions')
+    expect(stylesheet).toContain('.orbitpm-workspace-header__search')
+    expect(stylesheet).toContain('.orbitpm-workspace-explorer__content')
+    expect(stylesheet).toContain('.orbitpm-skip-link:focus')
+    expect(stylesheet).toMatch(
+      /data-responsive-mode='compact'[\s\S]*?\.orbitpm-workspace-header__search\s*\{[\s\S]*?order: 3;[\s\S]*?flex: 1 0 100%;/
+    )
+  })
+
+  it('moves docked search onto its own row before desktop chrome can overlap navigation', () => {
+    expect(stylesheet).toMatch(
+      /@media \(min-width: 1200px\) and \(max-width: 1599px\)[\s\S]*?data-responsive-mode='docked'[\s\S]*?\.orbitpm-workspace-header\s*\{[\s\S]*?flex-wrap: wrap;/
+    )
+    expect(stylesheet).toMatch(
+      /@media \(min-width: 1200px\) and \(max-width: 1599px\)[\s\S]*?data-responsive-mode='docked'[\s\S]*?\.orbitpm-workspace-header__search\s*\{[\s\S]*?order: 3;[\s\S]*?flex: 1 0 100%;[\s\S]*?min-inline-size: 0;/
+    )
   })
 
   it('disables drawer animation when reduced motion is requested', () => {

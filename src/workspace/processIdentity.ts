@@ -3,9 +3,17 @@ import { equalHash, sha256Hex } from './adapters/hash'
 import { normalizeWorkspacePath } from './adapters/path'
 import type {
   WorkspaceAdapter,
+  WorkspaceEntry,
   WorkspaceProcessIdentityInspector,
   WorkspaceProcessIdentitySnapshotEntry
 } from './adapters/types'
+import {
+  assertWorkspaceListingWithinLimits,
+  readBoundedWorkspaceBpmn,
+  resolveWorkspaceBpmnScanLimits,
+  throwIfWorkspaceScanAborted,
+  type WorkspaceBpmnScanOptions
+} from './boundedBpmnScan'
 
 const encoder = new TextEncoder()
 const decoder = new TextDecoder('utf-8', { fatal: true })
@@ -87,49 +95,64 @@ export async function digestProcessIdentitySnapshot(
 
 export async function scanWorkspaceProcessIdentities(
   adapter: WorkspaceAdapter,
-  options: {
+  options: WorkspaceBpmnScanOptions & {
     readonly inspector?: WorkspaceProcessIdentityInspector
-    readonly signal?: AbortSignal
   } = {}
 ): Promise<readonly WorkspaceProcessIdentitySnapshotEntry[]> {
   const inspector = options.inspector ?? secureWorkspaceProcessIdentityInspector
-  const listed = await adapter.list()
-  const files = listed
-    .filter(
-      (entry) =>
-        entry.kind === 'file' && /\.bpmn$/i.test(entry.path) && !isReservedOrbitPmPath(entry.path)
-    )
-    .sort((left, right) => left.path.localeCompare(right.path, 'en'))
+  throwIfWorkspaceScanAborted(options.signal)
+  const limits = resolveWorkspaceBpmnScanLimits(options.limits)
+  let listed: WorkspaceEntry[]
+  try {
+    listed = await adapter.list('', {
+      maxEntries: limits.maxEntries,
+      maxDepth: limits.maxDepth,
+      signal: options.signal
+    })
+  } catch (error) {
+    throwIfWorkspaceScanAborted(options.signal)
+    throw error
+  }
+  throwIfWorkspaceScanAborted(options.signal)
+  assertWorkspaceListingWithinLimits(listed, limits)
+  const scanned = await readBoundedWorkspaceBpmn(adapter, listed, {
+    ...options,
+    limits,
+    defaultConcurrency: 4,
+    failClosed: true,
+    transform: async (entry, snapshot, signal) => {
+      throwIfWorkspaceScanAborted(signal)
+      if (!equalHash(await sha256Hex(snapshot.bytes), snapshot.hash)) {
+        throw new Error(`Workspace identity file "${entry.path}" failed checksum verification.`)
+      }
+      throwIfWorkspaceScanAborted(signal)
+      let xml: string
+      try {
+        xml = decoder.decode(snapshot.bytes)
+      } catch {
+        throw new Error(`Workspace identity file "${entry.path}" is not valid UTF-8.`)
+      }
+      throwIfWorkspaceScanAborted(signal)
+      const inspected = await inspector(xml, signal)
+      throwIfWorkspaceScanAborted(signal)
+      return Object.freeze({
+        path: normalizeWorkspacePath(entry.path),
+        processIds: Object.freeze([...inspected.processIds])
+      })
+    }
+  })
   const byId = new Map<string, string>()
-  for (const entry of files) {
-    if (!entry.readable) {
-      throw new Error(`Workspace identity file "${entry.path}" is unreadable.`)
-    }
-    if (options.signal?.aborted) {
-      throw options.signal.reason ?? new DOMException('Aborted', 'AbortError')
-    }
-    const snapshot = await adapter.read(entry.path)
-    if (!equalHash(await sha256Hex(snapshot.bytes), snapshot.hash)) {
-      throw new Error(`Workspace identity file "${entry.path}" failed checksum verification.`)
-    }
-    let xml: string
-    try {
-      xml = decoder.decode(snapshot.bytes)
-    } catch {
-      throw new Error(`Workspace identity file "${entry.path}" is not valid UTF-8.`)
-    }
-    const inspected = await inspector(xml, options.signal)
-    const normalizedPath = normalizeWorkspacePath(entry.path)
-    for (const idInput of inspected.processIds) {
+  for (const entry of scanned.values) {
+    for (const idInput of entry.processIds) {
       const processId = idInput.trim()
       if (!processId) throw new Error(`Workspace file "${entry.path}" has an empty process id.`)
       const previous = byId.get(processId)
-      if (previous && previous !== normalizedPath) {
+      if (previous && previous !== entry.path) {
         throw new Error(
-          `Process id "${processId}" is duplicated by "${previous}" and "${normalizedPath}".`
+          `Process id "${processId}" is duplicated by "${previous}" and "${entry.path}".`
         )
       }
-      byId.set(processId, normalizedPath)
+      byId.set(processId, entry.path)
     }
   }
   return normalizeProcessIdentitySnapshot(

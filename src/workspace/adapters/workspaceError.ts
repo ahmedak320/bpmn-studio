@@ -1,4 +1,10 @@
-import type { WorkspaceErrorCode, WorkspaceFailure, WorkspaceOperation } from './types'
+import type {
+  ListWorkspaceOptions,
+  ReadFileOptions,
+  WorkspaceErrorCode,
+  WorkspaceFailure,
+  WorkspaceOperation
+} from './types'
 
 export interface WorkspaceOperationErrorOptions {
   code: WorkspaceErrorCode
@@ -30,6 +36,110 @@ export class WorkspaceOperationError extends Error {
       name: this.name
     }
   }
+}
+
+export class WorkspaceReadLimitError extends WorkspaceOperationError {
+  readonly maxBytes: number
+  readonly actualBytes: number
+
+  constructor(path: string, maxBytes: number, actualBytes: number) {
+    super({
+      code: 'storage-failure',
+      operation: 'read',
+      path,
+      message: `Workspace file "${path}" is ${actualBytes} bytes; the read limit is ${maxBytes} bytes.`
+    })
+    this.name = 'WorkspaceReadLimitError'
+    this.maxBytes = maxBytes
+    this.actualBytes = actualBytes
+  }
+}
+
+export class WorkspaceListLimitError extends WorkspaceOperationError {
+  readonly dimension: 'entries' | 'depth'
+  readonly limit: number
+  readonly actual: number
+
+  constructor(
+    path: string | undefined,
+    dimension: 'entries' | 'depth',
+    limit: number,
+    actual: number
+  ) {
+    super({
+      code: 'storage-failure',
+      operation: 'list',
+      path,
+      message:
+        dimension === 'entries'
+          ? `Workspace listing exceeds the ${limit}-entry scan limit.`
+          : `Workspace entry "${path ?? ''}" has depth ${actual}; the scan depth limit is ${limit}.`
+    })
+    this.name = 'WorkspaceListLimitError'
+    this.dimension = dimension
+    this.limit = limit
+    this.actual = actual
+  }
+}
+
+export const DEFAULT_WORKSPACE_LIST_LIMITS = Object.freeze({
+  maxEntries: 25_000,
+  maxDepth: 128
+})
+
+function boundedListLimit(value: number | undefined, label: string, hardLimit: number): number {
+  if (value === undefined) return hardLimit
+  if (!Number.isSafeInteger(value) || value < 1) {
+    throw new WorkspaceOperationError({
+      code: 'storage-failure',
+      operation: 'list',
+      message: `${label} must be a positive safe integer.`
+    })
+  }
+  if (value > hardLimit) {
+    throw new WorkspaceOperationError({
+      code: 'storage-failure',
+      operation: 'list',
+      message: `${label} cannot exceed the hard limit of ${hardLimit}.`
+    })
+  }
+  return value
+}
+
+export function validatedListLimits(options: ListWorkspaceOptions): {
+  readonly maxEntries: number
+  readonly maxDepth: number
+} {
+  options.signal?.throwIfAborted()
+  return {
+    maxEntries: boundedListLimit(
+      options.maxEntries,
+      'Workspace list maxEntries',
+      DEFAULT_WORKSPACE_LIST_LIMITS.maxEntries
+    ),
+    maxDepth: boundedListLimit(
+      options.maxDepth,
+      'Workspace list maxDepth',
+      DEFAULT_WORKSPACE_LIST_LIMITS.maxDepth
+    )
+  }
+}
+
+export function validatedReadLimit(path: string, options: ReadFileOptions): number | undefined {
+  options.signal?.throwIfAborted()
+  const limit = options.maxBytes
+  if (
+    limit !== undefined &&
+    (!Number.isFinite(limit) || !Number.isSafeInteger(limit) || limit < 0)
+  ) {
+    throw new WorkspaceOperationError({
+      code: 'storage-failure',
+      operation: 'read',
+      path,
+      message: 'Workspace read maxBytes must be a non-negative safe integer.'
+    })
+  }
+  return limit
 }
 
 export function workspaceFailure(

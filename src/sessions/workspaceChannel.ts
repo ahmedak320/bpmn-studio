@@ -34,7 +34,7 @@ export type WorkspaceChannelMessage =
     })
   | (MessageBase & {
       type: 'document-change'
-      change: 'saved' | 'moved' | 'deleted'
+      change: 'saved' | 'moved' | 'deleted' | 'invalidated'
       path: string
       previousPath?: string
       fingerprint?: FileFingerprint
@@ -55,6 +55,18 @@ export interface BroadcastChannelLike {
 
 export type BroadcastChannelFactory = (name: string) => BroadcastChannelLike
 
+export interface WebLockLike {
+  readonly name: string
+}
+
+export interface WebLockManagerLike {
+  request(
+    name: string,
+    options: { readonly mode: 'exclusive'; readonly ifAvailable: true },
+    callback: (lock: WebLockLike | null) => Promise<void>
+  ): Promise<void>
+}
+
 export interface WorkspaceChannelTimer {
   setTimeout(callback: () => void, delayMs: number): unknown
   clearTimeout(handle: unknown): void
@@ -64,6 +76,8 @@ export interface BroadcastWorkspaceCoordinatorOptions {
   workspaceId: string
   instanceId: string
   factory?: BroadcastChannelFactory
+  /** Defaults to navigator.locks when available; null explicitly disables it. */
+  webLocks?: WebLockManagerLike | null
   channelNamePrefix?: string
   now?: () => number
   timer?: WorkspaceChannelTimer
@@ -97,6 +111,23 @@ interface RemoteRequest {
 
 function browserFactory(name: string): BroadcastChannelLike {
   return new BroadcastChannel(name)
+}
+
+function browserWebLocks(): WebLockManagerLike | undefined {
+  if (typeof globalThis.navigator === 'undefined' || !globalThis.navigator.locks) return undefined
+  return {
+    request: (name, options, callback) =>
+      globalThis.navigator.locks.request(name, options, callback).then(() => undefined)
+  }
+}
+
+function silentChannel(): BroadcastChannelLike {
+  return {
+    postMessage: () => undefined,
+    addEventListener: () => undefined,
+    removeEventListener: () => undefined,
+    close: () => undefined
+  }
 }
 
 function browserTimer(): WorkspaceChannelTimer {
@@ -155,7 +186,10 @@ export function isWorkspaceChannelMessage(value: unknown): value is WorkspaceCha
       return typeof value.path === 'string' && typeof value.requestId === 'string'
     case 'document-change':
       return (
-        (value.change === 'saved' || value.change === 'moved' || value.change === 'deleted') &&
+        (value.change === 'saved' ||
+          value.change === 'moved' ||
+          value.change === 'deleted' ||
+          value.change === 'invalidated') &&
         typeof value.path === 'string' &&
         (value.previousPath === undefined || typeof value.previousPath === 'string') &&
         (value.fingerprint === undefined || isFingerprint(value.fingerprint))
@@ -199,10 +233,14 @@ export class BroadcastWorkspaceCoordinator {
   readonly #timer: WorkspaceChannelTimer
   readonly #contentionMs: number
   readonly #leaseMs: number
+  readonly #webLocks?: WebLockManagerLike
+  readonly #webLockNamePrefix: string
   readonly #pending = new Map<string, PendingLock>()
   readonly #localLocks = new Map<string, KnownLock>()
   readonly #remoteLocks = new Map<string, KnownLock>()
   readonly #remoteRequests = new Map<string, RemoteRequest>()
+  readonly #leaseRenewalTimers = new Map<string, unknown>()
+  readonly #webLockLeases = new Set<SessionLockLease>()
   readonly #changeListeners = new Set<(change: WorkspaceDocumentChange) => void>()
   #closed = false
 
@@ -213,10 +251,16 @@ export class BroadcastWorkspaceCoordinator {
     this.#timer = options.timer ?? browserTimer()
     this.#contentionMs = options.contentionMs ?? 75
     this.#leaseMs = options.leaseMs ?? 30_000
-    const factory = options.factory ?? browserFactory
-    this.#channel = factory(
-      `${options.channelNamePrefix ?? 'orbitpm-workspace'}:${encodeURIComponent(options.workspaceId)}`
-    )
+    this.#webLocks = options.webLocks === null ? undefined : (options.webLocks ?? browserWebLocks())
+    const channelName = `${options.channelNamePrefix ?? 'orbitpm-workspace'}:${encodeURIComponent(options.workspaceId)}`
+    this.#webLockNamePrefix = `${channelName}:lock`
+    const factory =
+      options.factory ??
+      (typeof globalThis.BroadcastChannel === 'function' ? browserFactory : undefined)
+    if (!factory && !this.#webLocks) {
+      throw new Error('No cross-tab workspace coordination primitive is available')
+    }
+    this.#channel = factory ? factory(channelName) : silentChannel()
     this.#channel.addEventListener('message', this.#onMessage)
     this.#post({ type: 'hello' })
   }
@@ -245,102 +289,133 @@ export class BroadcastWorkspaceCoordinator {
       }
     }
 
-    const requestedAt = this.#now()
-    const pending: PendingLock = {
-      path,
-      requestId: defaultRequestId(),
-      requestedAt,
-      expiresAt: requestedAt + this.#leaseMs
+    const webLease = await this.#acquireWebLock(path)
+    if (this.#closed) {
+      await webLease?.release()
+      throw new Error('Workspace coordinator is closed')
     }
-    const contender = this.#remoteRequests.get(path)
-    if (
-      contender &&
-      comparePriority(
-        {
-          requestedAt: contender.requestedAt,
-          requestId: contender.requestId,
-          senderId: contender.senderId
-        },
-        {
-          requestedAt: pending.requestedAt,
-          requestId: pending.requestId,
-          senderId: this.#instanceId
-        }
-      ) < 0
-    ) {
-      pending.blockedBy = {
-        holderId: contender.senderId,
-        expiresAt: contender.expiresAt
-      }
-    }
-    this.#pending.set(pending.requestId, pending)
-    this.#post({
-      type: 'lock-request',
-      path,
-      requestId: pending.requestId,
-      requestedAt,
-      expiresAt: pending.expiresAt
-    })
-    await wait(this.#timer, this.#contentionMs)
-    this.#pending.delete(pending.requestId)
-    this.#pruneExpired()
-    const blocking =
-      pending.blockedBy ??
-      (() => {
-        const remote = this.#remoteLocks.get(path)
-        return remote ? { holderId: remote.ownerId, expiresAt: remote.expiresAt } : undefined
-      })()
-    if (blocking) {
+    if (webLease === null) {
       return {
         acquired: false,
-        holderId: blocking.holderId,
-        expiresAt: blocking.expiresAt
+        holderId: 'web-lock'
       }
     }
 
-    const lock: KnownLock = {
-      path,
-      requestId: pending.requestId,
-      ownerId: this.#instanceId,
-      expiresAt: this.#now() + this.#leaseMs
-    }
-    this.#localLocks.set(path, lock)
-    this.#post({
-      type: 'lock-acquired',
-      path,
-      requestId: lock.requestId,
-      expiresAt: lock.expiresAt
-    })
-
-    let released = false
-    const lease: SessionLockLease = {
-      release: () => {
-        if (released) return
-        released = true
-        const current = this.#localLocks.get(path)
-        if (current?.requestId !== lock.requestId) return
-        this.#localLocks.delete(path)
-        this.#post({ type: 'lock-released', path, requestId: lock.requestId })
-      },
-      renew: () => {
-        if (released) return
-        const current = this.#localLocks.get(path)
-        if (current?.requestId !== lock.requestId) return
-        current.expiresAt = this.#now() + this.#leaseMs
-        this.#post({
-          type: 'lock-renewed',
-          path,
-          requestId: lock.requestId,
-          expiresAt: current.expiresAt
-        })
+    try {
+      const requestedAt = this.#now()
+      const pending: PendingLock = {
+        path,
+        requestId: defaultRequestId(),
+        requestedAt,
+        expiresAt: requestedAt + this.#leaseMs
       }
+      const contender = this.#remoteRequests.get(path)
+      if (
+        contender &&
+        comparePriority(
+          {
+            requestedAt: contender.requestedAt,
+            requestId: contender.requestId,
+            senderId: contender.senderId
+          },
+          {
+            requestedAt: pending.requestedAt,
+            requestId: pending.requestId,
+            senderId: this.#instanceId
+          }
+        ) < 0
+      ) {
+        pending.blockedBy = {
+          holderId: contender.senderId,
+          expiresAt: contender.expiresAt
+        }
+      }
+      this.#pending.set(pending.requestId, pending)
+      this.#post({
+        type: 'lock-request',
+        path,
+        requestId: pending.requestId,
+        requestedAt,
+        expiresAt: pending.expiresAt
+      })
+      await wait(this.#timer, this.#contentionMs)
+      this.#pending.delete(pending.requestId)
+      if (this.#closed) throw new Error('Workspace coordinator is closed')
+      this.#pruneExpired()
+      const blocking =
+        pending.blockedBy ??
+        (() => {
+          const remote = this.#remoteLocks.get(path)
+          return remote ? { holderId: remote.ownerId, expiresAt: remote.expiresAt } : undefined
+        })()
+      if (blocking) {
+        await webLease?.release()
+        return {
+          acquired: false,
+          holderId: blocking.holderId,
+          expiresAt: blocking.expiresAt
+        }
+      }
+
+      const lock: KnownLock = {
+        path,
+        requestId: pending.requestId,
+        ownerId: this.#instanceId,
+        expiresAt: this.#now() + this.#leaseMs
+      }
+      this.#localLocks.set(path, lock)
+      this.#post({
+        type: 'lock-acquired',
+        path,
+        requestId: lock.requestId,
+        expiresAt: lock.expiresAt
+      })
+      this.#scheduleLeaseRenewal(lock)
+
+      let released = false
+      const lease: SessionLockLease = {
+        release: async () => {
+          if (released) return
+          released = true
+          this.#stopLeaseRenewal(lock.requestId)
+          const current = this.#localLocks.get(path)
+          if (current?.requestId === lock.requestId) {
+            this.#localLocks.delete(path)
+            this.#post({ type: 'lock-released', path, requestId: lock.requestId })
+          }
+          await webLease?.release()
+        },
+        renew: () => {
+          if (released) return
+          const current = this.#localLocks.get(path)
+          if (current?.requestId !== lock.requestId) return
+          const now = this.#now()
+          if (current.expiresAt <= now) {
+            this.#localLocks.delete(path)
+            this.#stopLeaseRenewal(lock.requestId)
+            this.#post({ type: 'lock-released', path, requestId: lock.requestId })
+            return
+          }
+          current.expiresAt = now + this.#leaseMs
+          this.#post({
+            type: 'lock-renewed',
+            path,
+            requestId: lock.requestId,
+            expiresAt: current.expiresAt
+          })
+          this.#scheduleLeaseRenewal(current)
+        }
+      }
+      return { acquired: true, lease }
+    } catch (error) {
+      await webLease?.release()
+      throw error
     }
-    return { acquired: true, lease }
   }
 
   publishDocumentChange(change: {
     identity: DocumentIdentity
-    kind: 'saved' | 'moved' | 'deleted'
+    kind: 'saved' | 'moved' | 'deleted' | 'invalidated'
     fingerprint?: FileFingerprint
     previousPath?: string
   }): void {
@@ -358,6 +433,15 @@ export class BroadcastWorkspaceCoordinator {
     if (this.#closed) return
     for (const lock of this.#localLocks.values()) {
       this.#post({ type: 'lock-released', path: lock.path, requestId: lock.requestId })
+    }
+    for (const pending of this.#pending.values()) {
+      this.#post({ type: 'lock-released', path: pending.path, requestId: pending.requestId })
+    }
+    for (const requestId of this.#leaseRenewalTimers.keys()) {
+      this.#stopLeaseRenewal(requestId)
+    }
+    for (const lease of [...this.#webLockLeases]) {
+      void Promise.resolve(lease.release()).catch(() => undefined)
     }
     this.#closed = true
     this.#localLocks.clear()
@@ -480,11 +564,93 @@ export class BroadcastWorkspaceCoordinator {
       if (lock.expiresAt <= now) this.#remoteLocks.delete(path)
     }
     for (const [path, lock] of this.#localLocks) {
-      if (lock.expiresAt <= now) this.#localLocks.delete(path)
+      if (lock.expiresAt <= now) {
+        this.#localLocks.delete(path)
+        this.#stopLeaseRenewal(lock.requestId)
+      }
     }
     for (const [path, request] of this.#remoteRequests) {
       if (request.observedUntil <= now) this.#remoteRequests.delete(path)
     }
+  }
+
+  #scheduleLeaseRenewal(lock: KnownLock): void {
+    this.#stopLeaseRenewal(lock.requestId)
+    if (this.#closed) return
+    const delayMs = Math.max(1, Math.floor(this.#leaseMs / 3))
+    const handle = this.#timer.setTimeout(() => {
+      this.#leaseRenewalTimers.delete(lock.requestId)
+      if (this.#closed) return
+      const current = this.#localLocks.get(lock.path)
+      if (current?.requestId !== lock.requestId) return
+      const now = this.#now()
+      if (current.expiresAt <= now) {
+        this.#localLocks.delete(lock.path)
+        this.#post({
+          type: 'lock-released',
+          path: current.path,
+          requestId: current.requestId
+        })
+        return
+      }
+      current.expiresAt = now + this.#leaseMs
+      this.#post({
+        type: 'lock-renewed',
+        path: current.path,
+        requestId: current.requestId,
+        expiresAt: current.expiresAt
+      })
+      this.#scheduleLeaseRenewal(current)
+    }, delayMs)
+    this.#leaseRenewalTimers.set(lock.requestId, handle)
+  }
+
+  #stopLeaseRenewal(requestId: string): void {
+    if (!this.#leaseRenewalTimers.has(requestId)) return
+    const handle = this.#leaseRenewalTimers.get(requestId)
+    this.#leaseRenewalTimers.delete(requestId)
+    this.#timer.clearTimeout(handle)
+  }
+
+  async #acquireWebLock(path: string): Promise<SessionLockLease | null | undefined> {
+    if (!this.#webLocks) return undefined
+
+    let resolveStarted!: (lease: SessionLockLease | null) => void
+    let rejectStarted!: (error: unknown) => void
+    let releaseHeld!: () => void
+    const held = new Promise<void>((resolve) => {
+      releaseHeld = resolve
+    })
+    const started = new Promise<SessionLockLease | null>((resolve, reject) => {
+      resolveStarted = resolve
+      rejectStarted = reject
+    })
+    let request: Promise<void> = Promise.resolve()
+    request = this.#webLocks.request(
+      `${this.#webLockNamePrefix}:${encodeURIComponent(path)}`,
+      { mode: 'exclusive', ifAvailable: true },
+      async (lock) => {
+        if (!lock) {
+          resolveStarted(null)
+          return
+        }
+        let released = false
+        const lease: SessionLockLease = {
+          release: async () => {
+            if (released) return
+            released = true
+            this.#webLockLeases.delete(lease)
+            releaseHeld()
+            await request
+          }
+        }
+        this.#webLockLeases.add(lease)
+        resolveStarted(lease)
+        await held
+      }
+    )
+    void request.catch(rejectStarted)
+    return started
   }
 
   #post(

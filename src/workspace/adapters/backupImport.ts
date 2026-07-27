@@ -33,6 +33,7 @@ import {
   workspacePathName
 } from './path'
 import { WORKSPACE_BACKUP_CONTENT_PREFIX, WORKSPACE_BACKUP_MANIFEST_PATH } from './backup'
+import { removeFileIfHash } from './conditionalRemove'
 import type {
   FileSnapshot,
   WorkspaceAdapter,
@@ -696,14 +697,17 @@ export async function inspectWorkspaceBackup(
     }
   }
 
-  const existingEntries = await adapter.list()
+  const existingEntries = await adapter.list('', { signal: options.signal })
   const existingFiles = new Map(
     existingEntries.filter((entry) => entry.kind === 'file').map((entry) => [entry.path, entry])
   )
   const collisions: WorkspaceBackupCollision[] = []
   for (const file of files) {
     if (!existingFiles.has(file.path)) continue
-    const existing = await adapter.read(file.path)
+    const existing = await adapter.read(file.path, {
+      maxBytes: limits.maxEntryBytes,
+      signal: options.signal
+    })
     collisions.push({
       path: file.path,
       incomingHash: file.sha256,
@@ -937,7 +941,23 @@ async function removeEmptyCreatedFolders(
 ): Promise<void> {
   for (const folder of [...folders].sort((left, right) => right.length - left.length)) {
     try {
-      if ((await adapter.list(folder)).length === 0) await adapter.remove(folder)
+      if (!adapter.removeEmptyFolder) {
+        throw new WorkspaceOperationError({
+          code: 'unsupported',
+          operation: 'remove',
+          path: folder,
+          message: 'The workspace cannot prove non-recursive empty-folder cleanup.'
+        })
+      }
+      const result = await adapter.removeEmptyFolder(folder)
+      if (result === 'not-empty') {
+        throw new WorkspaceOperationError({
+          code: 'integrity-failure',
+          operation: 'remove',
+          path: folder,
+          message: 'A created backup folder received new contents during rollback.'
+        })
+      }
     } catch (error) {
       if (error instanceof WorkspaceOperationError && error.code === 'not-found') continue
       errors.push(workspaceFailure(error, 'remove', folder))
@@ -977,7 +997,7 @@ export async function applyWorkspaceBackupImport(
   }
   await assertLiveProcessIdentities()
   throwIfAborted(options.signal)
-  const beforeEntries = await adapter.list()
+  const beforeEntries = await adapter.list('', { signal: options.signal })
   const { operations, skipped, unresolved } = resolveOperations(
     plan,
     options.decisions ?? {},
@@ -1016,8 +1036,16 @@ export async function applyWorkspaceBackupImport(
     )) {
       throwIfAborted(options.signal)
       if (!existingDirectories.has(directory)) {
-        await adapter.createFolder(directory)
-        createdDirectories.push(directory)
+        if (!adapter.createFolderIfMissing) {
+          throw new WorkspaceOperationError({
+            code: 'unsupported',
+            operation: 'create-folder',
+            path: directory,
+            message: 'The workspace cannot establish rollback ownership for a new backup folder.'
+          })
+        }
+        const creation = await adapter.createFolderIfMissing(directory)
+        if (creation === 'created') createdDirectories.push(directory)
       }
     }
 
@@ -1066,16 +1094,7 @@ export async function applyWorkspaceBackupImport(
             throw outcomeFailure(rollback, item.destinationPath)
           }
         } else {
-          const current = await adapter.read(item.destinationPath)
-          if (!equalHash(current.hash, item.snapshot.hash)) {
-            throw new WorkspaceOperationError({
-              code: 'integrity-failure',
-              operation: 'remove',
-              path: item.destinationPath,
-              message: 'A restored file changed before rollback.'
-            })
-          }
-          await adapter.remove(item.destinationPath)
+          await removeFileIfHash(adapter, item.destinationPath, item.snapshot.hash)
         }
       } catch (rollbackError) {
         rollbackErrors.push(workspaceFailure(rollbackError, 'write', item.destinationPath))

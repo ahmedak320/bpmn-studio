@@ -27,6 +27,7 @@ import {
 import { processOutlineMetadataVisibility } from './processOutlineMetadata'
 import type { ProcessOutlineMessages } from './processOutlineMessages'
 import { TRIGGER_TYPES } from '../org/orgModel'
+import { ConfirmDialog } from '../workspace/ConfirmDialog'
 import './ProcessOutlineEditor.css'
 
 export interface ProcessOutlineEditorProps {
@@ -58,6 +59,11 @@ interface FlowEditState {
 }
 
 type EditState = NodeEditState | FlowEditState
+
+interface DeletePromptState {
+  item: ProcessOutlineItem
+  controller: ProcessOutlineController
+}
 
 type ProcessOutlineNodeMetadata = ProcessOutlineNode['metadata']
 
@@ -424,6 +430,11 @@ export function ProcessOutlineEditor({
   const [editState, setEditState] = useState<EditState | null>(null)
   const [error, setError] = useState<ProcessOutlineError | null>(null)
   const [status, setStatus] = useState('')
+  const [deletePrompt, setDeletePrompt] = useState<DeletePromptState | null>(null)
+  const snapshotRef = useRef(snapshot)
+  snapshotRef.current = snapshot
+  const messagesRef = useRef(messages)
+  messagesRef.current = messages
 
   const [newType, setNewType] = useState<ProcessOutlineNodeType>('bpmn:Task')
   const [newName, setNewName] = useState('')
@@ -436,6 +447,7 @@ export function ProcessOutlineEditor({
   const [connectionDefault, setConnectionDefault] = useState(false)
 
   useEffect(() => {
+    setDeletePrompt(null)
     controllerRef.current?.destroy()
     controllerRef.current = null
     if (!modeler) {
@@ -603,26 +615,40 @@ export function ProcessOutlineEditor({
     [messages, reportError]
   )
 
-  const deleteItem = useCallback(
-    async (item: ProcessOutlineItem) => {
-      const confirmed = confirmDelete
-        ? await confirmDelete(item)
-        : window.confirm(messages.deleteConfirmation(item))
-      if (!confirmed) return
+  const performDelete = useCallback(
+    (itemId: string, expectedController: ProcessOutlineController) => {
+      if (controllerRef.current !== expectedController) return
+      const currentItems = snapshotRef.current.items
+      const currentIndex = currentItems.findIndex((item) => item.id === itemId)
+      if (currentIndex < 0) return
       const nextId =
-        snapshot.items[activeIndex + 1]?.id ?? snapshot.items[activeIndex - 1]?.id ?? null
+        currentItems[currentIndex + 1]?.id ?? currentItems[currentIndex - 1]?.id ?? null
       try {
-        controllerRef.current?.deleteItem(item.id)
+        expectedController.deleteItem(itemId)
         setEditState(null)
         setActiveId(nextId)
-        setStatus(messages.deletedStatus(item.id))
+        setStatus(messagesRef.current.deletedStatus(itemId))
         setError(null)
         if (nextId) restoreItemFocus(nextId)
       } catch (caught) {
         reportError(caught)
       }
     },
-    [activeIndex, confirmDelete, messages, reportError, restoreItemFocus, snapshot.items]
+    [reportError, restoreItemFocus]
+  )
+
+  const deleteItem = useCallback(
+    async (item: ProcessOutlineItem) => {
+      const controller = controllerRef.current
+      if (!controller) return
+      if (!confirmDelete) {
+        setDeletePrompt({ item, controller })
+        return
+      }
+      const confirmed = await confirmDelete(item)
+      if (confirmed) performDelete(item.id, controller)
+    },
+    [confirmDelete, performDelete]
   )
 
   const handleItemKeyDown = useCallback(
@@ -826,12 +852,12 @@ export function ProcessOutlineEditor({
                       {item.kind === 'node' ? messages.nodeKind : messages.flowKind}
                     </span>
                     <span className="orbitpm-process-outline__item-main">
-                      <strong>
+                      <strong dir="auto">
                         {item.kind === 'node' ? messages.nodeType(item.type) : item.name || item.id}
                       </strong>
                       {item.kind === 'node' ? (
                         item.name ? (
-                          <span>{item.name}</span>
+                          <span dir="auto">{item.name}</span>
                         ) : null
                       ) : (
                         <span>
@@ -879,6 +905,7 @@ export function ProcessOutlineEditor({
                     <label>
                       {messages.documentationLabel}
                       <textarea
+                        dir="auto"
                         value={editState.documentation}
                         onChange={(event) =>
                           setEditState({
@@ -909,6 +936,7 @@ export function ProcessOutlineEditor({
                     {messages.itemNameLabel}
                     <input
                       ref={firstEditInputRef}
+                      dir="auto"
                       value={editState.name}
                       onChange={(event) => setEditState({ ...editState, name: event.target.value })}
                     />
@@ -963,6 +991,7 @@ export function ProcessOutlineEditor({
                     <label>
                       {messages.conditionLabel}
                       <input
+                        dir="auto"
                         value={editState.condition}
                         disabled={editState.isDefault || !editCanCondition}
                         aria-describedby={conditionHintId}
@@ -1019,15 +1048,13 @@ export function ProcessOutlineEditor({
                   {activeItem.kind === 'node' && activeItem.documentation ? (
                     <div>
                       <dt>{messages.documentationLabel}</dt>
-                      <dd>{activeItem.documentation}</dd>
+                      <dd dir="auto">{activeItem.documentation}</dd>
                     </div>
                   ) : null}
                   {activeItem.kind === 'flow' && activeItem.editable && activeItem.condition ? (
                     <div>
                       <dt>{messages.conditionLabel}</dt>
-                      <dd>
-                        <code lang="en">{activeItem.condition}</code>
-                      </dd>
+                      <dd dir="auto">{activeItem.condition}</dd>
                     </div>
                   ) : null}
                 </dl>
@@ -1089,7 +1116,11 @@ export function ProcessOutlineEditor({
               </label>
               <label>
                 {messages.newNodeLabel}
-                <input value={newName} onChange={(event) => setNewName(event.target.value)} />
+                <input
+                  dir="auto"
+                  value={newName}
+                  onChange={(event) => setNewName(event.target.value)}
+                />
               </label>
               <label>
                 {messages.connectFromLabel}
@@ -1143,6 +1174,7 @@ export function ProcessOutlineEditor({
               <label>
                 {messages.flowLabel}
                 <input
+                  dir="auto"
                   value={connectionName}
                   onChange={(event) => setConnectionName(event.target.value)}
                 />
@@ -1150,6 +1182,7 @@ export function ProcessOutlineEditor({
               <label>
                 {messages.conditionLabel}
                 <input
+                  dir="auto"
                   value={connectionCondition}
                   disabled={connectionDefault || !connectionCanCondition}
                   aria-describedby={newConditionHintId}
@@ -1216,6 +1249,25 @@ export function ProcessOutlineEditor({
           </section>
         </>
       )}
+      {modeler &&
+      deletePrompt &&
+      controllerRef.current === deletePrompt.controller &&
+      snapshot.items.some((item) => item.id === deletePrompt.item.id) ? (
+        <ConfirmDialog
+          title={messages.deleteDialogTitle}
+          message={messages.deleteConfirmation(deletePrompt.item)}
+          confirmLabel={messages.deleteConfirm}
+          cancelLabel={messages.cancel}
+          danger
+          role="alertdialog"
+          onConfirm={() => {
+            const pending = deletePrompt
+            setDeletePrompt(null)
+            performDelete(pending.item.id, pending.controller)
+          }}
+          onCancel={() => setDeletePrompt(null)}
+        />
+      ) : null}
     </section>
   )
 }

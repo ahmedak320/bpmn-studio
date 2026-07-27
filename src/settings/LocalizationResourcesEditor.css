@@ -61,6 +61,43 @@
   color: #15803d;
 }
 
+.orbitpm-localization-resources__conflict-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-block-start: 0.65rem;
+}
+
+.orbitpm-localization-resources__conflict-comparison {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.65rem;
+  margin-block-start: 0.5rem;
+}
+
+.orbitpm-localization-resources__conflict-comparison section {
+  min-inline-size: 0;
+  padding: 0.5rem;
+  border: 1px solid currentColor;
+  border-radius: 0.4rem;
+}
+
+.orbitpm-localization-resources__conflict-comparison ol {
+  display: grid;
+  gap: 0.35rem;
+  margin-block: 0.4rem 0;
+  padding-inline-start: 1.25rem;
+}
+
+.orbitpm-localization-resources__conflict-comparison li span {
+  display: block;
+  overflow-wrap: anywhere;
+}
+
+.orbitpm-localization-resources__failure code {
+  overflow-wrap: anywhere;
+}
+
 .orbitpm-localization-resources__panel {
   display: grid;
   gap: 0.75rem;
@@ -236,5 +273,9 @@
   .orbitpm-localization-resources__accepted {
     align-items: stretch;
     flex-direction: column;
+  }
+
+  .orbitpm-localization-resources__conflict-comparison {
+    grid-template-columns: 1fr;
   }
 }

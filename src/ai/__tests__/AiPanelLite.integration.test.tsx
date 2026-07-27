@@ -1,13 +1,15 @@
 // @vitest-environment jsdom
 
-import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { GenerateOutput, ProposedLink } from '../browserAi'
 import { LITE_PROVIDERS, type LiteProviderId } from '../providersLite'
+import { ar, en } from '../../i18n/dictionaries'
 
 const state = vi.hoisted(() => ({
+  lang: 'en' as 'en' | 'ar',
   selection: null as { providerId: LiteProviderId; modelId: string } | null,
   keyed: new Set<LiteProviderId>(),
   providerListeners: new Set<
@@ -32,11 +34,39 @@ const mocks = vi.hoisted(() => ({
 }))
 
 vi.mock('../../i18n', () => ({
-  t: (key: string): string => key
+  t: (key: string, values?: Record<string, unknown>): string => {
+    if (key === 'ai.privacy.providerModel') {
+      return `${String(values?.provider ?? '')} / ${String(values?.model ?? '')}`
+    }
+    if (key === 'ai.noKeyForProvider') return String(values?.providerLabel ?? '')
+    const failureTranslations: Record<string, string> =
+      state.lang === 'ar'
+        ? {
+            'ai.error.provider':
+              'أعاد مزوّد الذكاء الاصطناعي خطأً. حاول مرة أخرى أو اختر مزوّدًا آخر.',
+            'ai.error.technicalDetail': 'تفصيل تقني:',
+            'ai.attach.docxError.tooLarge':
+              'يتجاوز الملف {name} حدود أمان أرشيف المستند. استخدم مستندًا أصغر.'
+          }
+        : {
+            'ai.error.provider':
+              'The AI provider returned an error. Try again or choose another provider.',
+            'ai.error.technicalDetail': 'Technical detail:',
+            'ai.attach.docxError.tooLarge':
+              '{name} exceeds the safe document archive limits. Use a smaller document.'
+          }
+    const template = failureTranslations[key]
+    if (template) {
+      return template.replace(/\{(\w+)\}/g, (_match, name: string) =>
+        String(values?.[name] ?? `{${name}}`)
+      )
+    }
+    return key
+  }
 }))
 
 vi.mock('../../i18n/useLang', () => ({
-  useLang: (): 'en' => 'en'
+  useLang: (): 'en' | 'ar' => state.lang
 }))
 
 vi.mock('../keys', () => ({
@@ -118,7 +148,12 @@ vi.mock('../linkReview', async (importOriginal) => {
 vi.mock('../../spreadsheet/SpreadsheetImportPanel', () => ({
   SpreadsheetImportPanel: (props: unknown) => {
     mocks.spreadsheetPanel(props)
-    return <div data-testid="spreadsheet-panel">spreadsheet-panel</div>
+    return (
+      <div data-testid="spreadsheet-panel">
+        spreadsheet-panel
+        <input aria-label="spreadsheet-draft-probe" defaultValue="" />
+      </div>
+    )
   }
 }))
 
@@ -127,6 +162,7 @@ vi.mock('../../editor/exportImage', () => ({
 }))
 
 import { AiPanelLite, type AiPanelLiteProps } from '../AiPanelLite'
+import { DocxParseError } from '../docx'
 import { clearGeneratedRecovery, type GeneratedPlacementOutcome } from '../placementOutcome'
 
 const success: GenerateOutput = {
@@ -184,6 +220,7 @@ function attachArrayBuffer(file: File, bytes = new Uint8Array([1, 2, 3])): File 
 }
 
 beforeEach(() => {
+  state.lang = 'en'
   state.selection = null
   state.keyed.clear()
   state.providerListeners.clear()
@@ -262,7 +299,169 @@ describe('AiPanelLite consented browser workflows', () => {
     expect(onOpenSettings).toHaveBeenCalledOnce()
     await user.click(screen.getByRole('tab', { name: 'spreadsheet.tab' }))
     expect(screen.getByTestId('spreadsheet-panel')).not.toBeNull()
-    expect(mocks.spreadsheetPanel).toHaveBeenCalledOnce()
+    expect(mocks.spreadsheetPanel).toHaveBeenCalled()
+  })
+
+  it('preserves generation and spreadsheet drafts while their tabs are hidden', async () => {
+    const user = userEvent.setup()
+    renderPanel({
+      embedded: true,
+      spreadsheet: {
+        workspaceId: 'workspace',
+        workspaceAdapter: null,
+        onOpenSingle: vi.fn()
+      }
+    })
+
+    fireEvent.change(screen.getByLabelText('ai.description.label'), {
+      target: { value: 'Keep this prompt while browsing' }
+    })
+    fireEvent.change(screen.getByLabelText('ai.name.label'), {
+      target: { value: 'Retained process name' }
+    })
+    fireEvent.change(screen.getByLabelText('ai.targetFolder.label'), {
+      target: { value: 'finance' }
+    })
+
+    await user.click(screen.getByRole('tab', { name: 'spreadsheet.tab' }))
+    fireEvent.change(screen.getByLabelText('spreadsheet-draft-probe'), {
+      target: { value: 'retained mapping draft' }
+    })
+    await user.click(screen.getByRole('tab', { name: 'ai.tab.description' }))
+
+    expect(screen.getByLabelText<HTMLInputElement>('ai.description.label').value).toBe(
+      'Keep this prompt while browsing'
+    )
+    expect(screen.getByLabelText<HTMLInputElement>('ai.name.label').value).toBe(
+      'Retained process name'
+    )
+    expect(screen.getByLabelText<HTMLSelectElement>('ai.targetFolder.label').value).toBe('finance')
+
+    await user.click(screen.getByRole('tab', { name: 'spreadsheet.tab' }))
+    expect(screen.getByLabelText<HTMLInputElement>('spreadsheet-draft-probe').value).toBe(
+      'retained mapping draft'
+    )
+  })
+
+  it('implements an automatically activated roving tab stop with Home/End and RTL arrows', async () => {
+    selectAnthropic()
+    const user = userEvent.setup()
+    renderPanel({
+      embedded: true,
+      spreadsheet: {
+        workspaceId: 'workspace',
+        workspaceAdapter: null,
+        onOpenSingle: vi.fn()
+      }
+    })
+
+    const descriptionTab = screen.getByRole('tab', { name: 'ai.tab.description' })
+    const documentTab = screen.getByRole('tab', { name: 'ai.tab.pdf' })
+    const spreadsheetTab = screen.getByRole('tab', { name: 'spreadsheet.tab' })
+    expect(screen.getByRole('tablist').getAttribute('aria-orientation')).toBe('horizontal')
+    expect(descriptionTab.tabIndex).toBe(0)
+    expect(documentTab.tabIndex).toBe(-1)
+    expect(spreadsheetTab.tabIndex).toBe(-1)
+
+    descriptionTab.focus()
+    await user.keyboard('{ArrowRight}')
+    expect(document.activeElement).toBe(documentTab)
+    expect(documentTab.getAttribute('aria-selected')).toBe('true')
+    expect(documentTab.tabIndex).toBe(0)
+    expect(screen.getByRole('tabpanel').getAttribute('aria-labelledby')).toBe(
+      'orbitpm-ai-document-tab'
+    )
+
+    await user.keyboard('{End}')
+    expect(document.activeElement).toBe(spreadsheetTab)
+    expect(spreadsheetTab.getAttribute('aria-selected')).toBe('true')
+    expect(
+      (screen.getByTestId('spreadsheet-panel').closest('[role="tabpanel"]') as HTMLElement | null)
+        ?.hidden
+    ).toBe(false)
+
+    await user.keyboard('{Home}')
+    expect(document.activeElement).toBe(descriptionTab)
+    expect(descriptionTab.getAttribute('aria-selected')).toBe('true')
+
+    state.lang = 'ar'
+    const rtlPanel = renderPanel({
+      embedded: true,
+      spreadsheet: {
+        workspaceId: 'rtl-workspace',
+        workspaceAdapter: null,
+        onOpenSingle: vi.fn()
+      }
+    })
+    const rtlDescriptionTabs = screen.getAllByRole('tab', { name: 'ai.tab.description' })
+    const rtlDescription = rtlDescriptionTabs[rtlDescriptionTabs.length - 1]!
+    rtlDescription.focus()
+    await user.keyboard('{ArrowRight}')
+    const rtlSpreadsheetTabs = screen.getAllByRole('tab', { name: 'spreadsheet.tab' })
+    expect(document.activeElement).toBe(rtlSpreadsheetTabs[rtlSpreadsheetTabs.length - 1])
+    rtlPanel.unmount()
+  })
+
+  it('formats attachment megabytes with Arabic digits while keeping the unit English LTR', async () => {
+    state.lang = 'ar'
+    selectAnthropic()
+    const user = userEvent.setup()
+    renderPanel()
+    const pdf = new File(['pdf'], 'policy.pdf', { type: 'application/pdf' })
+    Object.defineProperty(pdf, 'size', {
+      configurable: true,
+      value: 1.5 * 1024 * 1024
+    })
+
+    await user.upload(screen.getByLabelText(/ai\.attach\.label/), pdf)
+
+    const formatted = new Intl.NumberFormat('ar', {
+      minimumFractionDigits: 1,
+      maximumFractionDigits: 1
+    }).format(1.5)
+    const size = screen.getByText(formatted)
+    const unit = screen.getByText('MB')
+    expect(size.getAttribute('lang')).toBe('ar')
+    expect(unit.getAttribute('lang')).toBe('en')
+    expect(unit.getAttribute('dir')).toBe('ltr')
+  })
+
+  it('marks selected provider/model controls, options, privacy, and no-key values English LTR', () => {
+    state.lang = 'ar'
+    const anthropic = LITE_PROVIDERS.find(({ id }) => id === 'anthropic')!
+    state.selection = {
+      providerId: anthropic.id,
+      modelId: anthropic.models[0]!.id
+    }
+    renderPanel()
+
+    const providerControl = screen.getByLabelText<HTMLSelectElement>('ai.provider.label')
+    const modelControl = screen.getByLabelText<HTMLSelectElement>('ai.model.label')
+    expect(providerControl.getAttribute('lang')).toBe('en')
+    expect(providerControl.getAttribute('dir')).toBe('ltr')
+    expect(modelControl.getAttribute('lang')).toBe('en')
+    expect(modelControl.getAttribute('dir')).toBe('ltr')
+    for (const option of [...providerControl.options].filter(({ value }) => value !== '')) {
+      expect(option.getAttribute('lang')).toBe('en')
+      expect(option.getAttribute('dir')).toBe('ltr')
+    }
+    for (const option of [...modelControl.options]) {
+      expect(option.getAttribute('lang')).toBe('en')
+      expect(option.getAttribute('dir')).toBe('ltr')
+    }
+
+    const providerSpans = screen
+      .getAllByText(anthropic.label)
+      .filter((node) => node.tagName === 'SPAN')
+    const modelSpans = screen
+      .getAllByText(anthropic.models[0]!.id)
+      .filter((node) => node.tagName === 'SPAN')
+    expect(providerSpans.length).toBeGreaterThanOrEqual(2)
+    expect(modelSpans).toHaveLength(1)
+    for (const node of [...providerSpans, ...modelSpans]) {
+      expect(node.getAttribute('lang')).toBe('en')
+      expect(node.getAttribute('dir')).toBe('ltr')
+    }
   })
 
   it('uses the theme primary contrast pair for the selected spreadsheet tab', async () => {
@@ -413,6 +612,37 @@ describe('AiPanelLite consented browser workflows', () => {
     expect(await screen.findByText('ai.error.cancelled')).not.toBeNull()
   })
 
+  it('renders an Arabic provider summary while isolating bounded English diagnostics', async () => {
+    state.lang = 'ar'
+    selectAnthropic()
+    const user = userEvent.setup()
+    const providerDiagnostic = 'anthropic 503: upstream unavailable'
+    mocks.generateText.mockRejectedValueOnce(new Error('raw provider response'))
+    mocks.classify.mockReturnValueOnce({
+      code: 'provider',
+      message: 'The AI provider returned an error.',
+      offline: false,
+      technicalDetail: providerDiagnostic
+    })
+    renderPanel()
+
+    fireEvent.change(screen.getByLabelText('ai.description.label'), {
+      target: { value: 'عملية موافقات قابلة للاختبار' }
+    })
+    await user.click(screen.getByLabelText('ai.privacy.consent'))
+    await user.click(screen.getByRole('button', { name: 'ai.generate' }))
+
+    expect(await screen.findByText(ar['ai.error.provider'])).not.toBeNull()
+    const detail = document.querySelector<HTMLElement>('[data-ai-technical-detail]')
+    expect(detail).not.toBeNull()
+    expect(within(detail!).getByText(ar['ai.error.technicalDetail'])).not.toBeNull()
+    const code = within(detail!).getByText(providerDiagnostic)
+    expect(code.tagName).toBe('CODE')
+    expect(code.getAttribute('lang')).toBe('en')
+    expect(code.getAttribute('dir')).toBe('ltr')
+    expect(screen.queryByText('raw provider response')).toBeNull()
+  })
+
   it('recovers exact output without opening link review when generation resolves after cancellation', async () => {
     selectAnthropic()
     const user = userEvent.setup()
@@ -452,6 +682,46 @@ describe('AiPanelLite consented browser workflows', () => {
       'process-recovery.bpmn',
       `data:application/xml;charset=utf-8,${encodeURIComponent(xml)}`
     )
+  })
+
+  it('portals a late link review outside a hidden preserved panel without losing its draft', async () => {
+    selectAnthropic()
+    const user = userEvent.setup()
+    let resolveGeneration!: (output: GenerateOutput) => void
+    mocks.generateText.mockReturnValue(
+      new Promise<GenerateOutput>((resolve) => {
+        resolveGeneration = resolve
+      })
+    )
+    const view = renderPanel({ embedded: true })
+    const draft = screen.getByLabelText<HTMLTextAreaElement>('ai.description.label')
+    fireEvent.change(draft, {
+      target: { value: 'Keep this draft after the explorer is hidden' }
+    })
+    await user.click(screen.getByLabelText('ai.privacy.consent'))
+    await user.click(screen.getByRole('button', { name: 'ai.generate' }))
+    await waitFor(() => expect(mocks.generateText).toHaveBeenCalledOnce())
+    const preservedAncestor = view.container.firstElementChild as HTMLElement
+    preservedAncestor.hidden = true
+
+    await act(async () => {
+      resolveGeneration({
+        xml: '<definitions id="late-review" />',
+        links: [
+          {
+            elementId: 'Call_leave',
+            label: 'Late uncertain call',
+            calledProcess: 'leave',
+            confidence: 'low'
+          }
+        ]
+      })
+    })
+
+    const dialog = await screen.findByRole('dialog', { name: 'ai.linkVerify.title' })
+    expect(dialog.closest('[hidden]')).toBeNull()
+    expect(draft.isConnected).toBe(true)
+    expect(draft.value).toBe('Keep this draft after the explorer is hidden')
   })
 
   it('validates document types and generates from an accepted image', async () => {
@@ -521,6 +791,10 @@ describe('AiPanelLite consented browser workflows', () => {
     await user.click(screen.getByLabelText('ai.privacy.consent'))
 
     expect(await screen.findByText('ai.attach.unsupportedProvider')).not.toBeNull()
+    expect(en['ai.attach.unsupportedProvider']).toContain('selected provider and model')
+    expect(ar['ai.attach.unsupportedProvider']).toContain('المزوّد والنموذج المحددين')
+    expect(en['ai.tab.pdf.title.unsupported']).toContain('selected provider and model')
+    expect(ar['ai.tab.pdf.title.unsupported']).toContain('المزوّد والنموذج المحددين')
     expect(
       (screen.getByRole('button', { name: 'ai.generateFromPdf' }) as HTMLButtonElement).disabled
     ).toBe(true)
@@ -584,18 +858,31 @@ describe('AiPanelLite consented browser workflows', () => {
     })
   })
 
-  it('surfaces a worker/parser rejection through the localized read-failure boundary', async () => {
+  it('renders a typed DOCX failure in Arabic and isolates its stable technical code', async () => {
+    state.lang = 'ar'
     const user = userEvent.setup()
     renderPanel()
 
-    mocks.extractDocx.mockRejectedValueOnce(new Error('archive-too-large'))
+    mocks.extractDocx.mockRejectedValueOnce(
+      new DocxParseError('archive-too-large', 'Unsafe archive implementation diagnostic')
+    )
     const rejected = new File([], 'rejected.docx', {
       type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
     })
 
     await user.upload(screen.getByLabelText(/ai\.attach\.label/), rejected)
 
-    expect(await screen.findByText('ai.attach.readFailed')).not.toBeNull()
+    expect(
+      await screen.findByText(ar['ai.attach.docxError.tooLarge'].replace('{name}', 'rejected.docx'))
+    ).not.toBeNull()
+    const detail = document.querySelector<HTMLElement>('[data-ai-technical-detail]')
+    expect(detail).not.toBeNull()
+    expect(within(detail!).getByText(ar['ai.error.technicalDetail'])).not.toBeNull()
+    const code = within(detail!).getByText('archive-too-large')
+    expect(code.tagName).toBe('CODE')
+    expect(code.getAttribute('lang')).toBe('en')
+    expect(code.getAttribute('dir')).toBe('ltr')
+    expect(screen.queryByText('Unsafe archive implementation diagnostic')).toBeNull()
     expect(mocks.extractDocx).toHaveBeenCalledOnce()
   })
 
@@ -705,11 +992,20 @@ describe('AiPanelLite consented browser workflows', () => {
   it('handles provider selection failure, offline changes, and balance refresh errors', async () => {
     const user = userEvent.setup()
     state.keyed.add('openrouter')
-    mocks.setSelection.mockReturnValueOnce({ ok: false, error: 'selection failed' })
+    mocks.setSelection.mockReturnValueOnce({
+      ok: false,
+      code: 'storage-failed',
+      error: 'selection failed'
+    })
     renderPanel()
 
     await user.selectOptions(screen.getByLabelText('ai.provider.label'), 'openrouter')
     expect(await screen.findByText('selection failed')).not.toBeNull()
+    expect(screen.getByText('settings.storageError.providerSelection')).not.toBeNull()
+    const technicalCode = screen.getByText('selection failed')
+    expect(technicalCode.tagName).toBe('CODE')
+    expect(technicalCode.getAttribute('lang')).toBe('en')
+    expect(technicalCode.getAttribute('dir')).toBe('ltr')
     expect(screen.getByText('ai.usage.sessionDetailed')).not.toBeNull()
     expect(screen.getByText('ai.usage.allTimeDetailed')).not.toBeNull()
 

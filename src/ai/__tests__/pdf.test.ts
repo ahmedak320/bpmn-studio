@@ -148,9 +148,9 @@ describe('accepted image types + extension fallback', () => {
 
 describe('provider/model/media capability gate', () => {
   it('rejects undocumented GIF input for direct and OpenRouter Gemini routes', () => {
-    expect(
-      isAttachmentMediaTypeSupported('gemini', 'gemini-flash-latest', 'image', 'image/gif')
-    ).toBe(false)
+    expect(isAttachmentMediaTypeSupported('gemini', 'gemini-3.6-flash', 'image', 'image/gif')).toBe(
+      false
+    )
     expect(
       isAttachmentMediaTypeSupported('openrouter', 'google/gemini-3.6-flash', 'image', 'image/gif')
     ).toBe(false)

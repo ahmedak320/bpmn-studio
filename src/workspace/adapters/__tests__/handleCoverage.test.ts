@@ -49,6 +49,22 @@ function patchCreatedFile(
   })
 }
 
+function corruptAfterSuccessfulClose(file: FakeFileHandle, replacement: string): void {
+  const createWritable = file.createWritable.bind(file)
+  vi.spyOn(file, 'createWritable').mockImplementation(async () => {
+    const writable = await createWritable()
+    const close = writable.close.bind(writable)
+    return {
+      ...writable,
+      close: async () => {
+        await close()
+        file.bytes = text(replacement)
+        file.lastModified += 1
+      }
+    } as FileSystemWritableFileStream
+  })
+}
+
 class DefaultHandleAdapter extends HandleWorkspaceAdapter {
   constructor(root: FakeDirectoryHandle) {
     super('directory', asDirectoryHandle(root), {
@@ -263,6 +279,46 @@ describe('HandleWorkspaceAdapter edge coverage', () => {
     })
   })
 
+  it('conditionally removes a file only while its checked hash still matches', async () => {
+    const root = fakeRoot()
+    root.addFile('exact.txt', 'exact')
+    root.addFile('changed.txt', 'reviewed')
+    const adapter = directoryAdapter(root)
+
+    const exact = await adapter.read('exact.txt')
+    await adapter.removeIfHash('exact.txt', exact.hash)
+    expect(root.children.has('exact.txt')).toBe(false)
+
+    const changed = await adapter.read('changed.txt')
+    root.addFile('changed.txt', 'newer bytes')
+    await expect(adapter.removeIfHash('changed.txt', changed.hash)).rejects.toMatchObject({
+      code: 'integrity-failure',
+      operation: 'remove',
+      path: 'changed.txt'
+    })
+    expect(decode(root.file('changed.txt').bytes)).toBe('newer bytes')
+  })
+
+  it('preserves a replacement swapped in while conditional removal hashes the old handle', async () => {
+    const root = fakeRoot()
+    const original = root.addFile('swapped.txt', 'reviewed')
+    const adapter = directoryAdapter(root)
+    const reviewed = await adapter.read('swapped.txt')
+    const getFile = original.getFile.bind(original)
+    vi.spyOn(original, 'getFile').mockImplementationOnce(async () => {
+      const staleFile = await getFile()
+      root.addFile('swapped.txt', 'newer replacement')
+      return staleFile
+    })
+
+    await expect(adapter.removeIfHash('swapped.txt', reviewed.hash)).rejects.toMatchObject({
+      code: 'integrity-failure',
+      operation: 'remove',
+      path: 'swapped.txt'
+    })
+    expect(decode(root.file('swapped.txt').bytes)).toBe('newer replacement')
+  })
+
   it('falls back to confirmed bytes when post-close metadata is temporarily unavailable', async () => {
     const root = fakeRoot()
     const file = root.addFile('process.json', 'old', {
@@ -436,7 +492,87 @@ describe('HandleWorkspaceAdapter edge coverage', () => {
     expect(root.directory('archive').children.has('source.bpmn')).toBe(false)
   })
 
-  it('detects a source mutation during copy and rolls back the destination', async () => {
+  it('preserves a verified file destination when source deletion commits then rejects', async () => {
+    const root = fakeRoot()
+    root.addFile('source.bpmn', 'sole-copy')
+    root.addDirectory('archive')
+    const removeEntry = root.removeEntry.bind(root)
+    vi.spyOn(root, 'removeEntry').mockImplementation(async (name, options = {}) => {
+      if (name === 'source.bpmn') {
+        await removeEntry(name, options)
+        throw namedError('NoModificationAllowedError', 'delete committed then rejected')
+      }
+      await removeEntry(name, options)
+    })
+
+    await expect(
+      directoryAdapter(root).move('source.bpmn', 'archive/source.bpmn')
+    ).rejects.toMatchObject({ code: 'storage-failure' })
+    expect(root.children.has('source.bpmn')).toBe(false)
+    expect(decode(root.file('archive/source.bpmn').bytes)).toBe('sole-copy')
+  })
+
+  it('preserves a verified directory destination when source deletion commits then rejects', async () => {
+    const root = fakeRoot()
+    root.addFile('source/child.bpmn', 'sole-directory-copy')
+    root.addDirectory('archive')
+    const removeEntry = root.removeEntry.bind(root)
+    vi.spyOn(root, 'removeEntry').mockImplementation(async (name, options = {}) => {
+      if (name === 'source') {
+        await removeEntry(name, options)
+        throw namedError('NoModificationAllowedError', 'delete committed then rejected')
+      }
+      await removeEntry(name, options)
+    })
+
+    await expect(directoryAdapter(root).move('source', 'archive/source')).rejects.toMatchObject({
+      code: 'storage-failure'
+    })
+    expect(root.children.has('source')).toBe(false)
+    expect(decode(root.file('archive/source/child.bpmn').bytes)).toBe('sole-directory-copy')
+  })
+
+  it('does not delete a destination replacement while cleaning a failed relocation', async () => {
+    const root = fakeRoot()
+    root.addFile('source.bpmn', 'original')
+    const archive = root.addDirectory('archive')
+    const removeEntry = root.removeEntry.bind(root)
+    vi.spyOn(root, 'removeEntry').mockImplementation(async (name, options = {}) => {
+      if (name === 'source.bpmn') {
+        archive.addFile('source.bpmn', 'external replacement')
+        throw namedError('NoModificationAllowedError', 'source retained')
+      }
+      await removeEntry(name, options)
+    })
+
+    await expect(
+      directoryAdapter(root).move('source.bpmn', 'archive/source.bpmn')
+    ).rejects.toMatchObject({ code: 'storage-failure' })
+    expect(decode(root.file('source.bpmn').bytes)).toBe('original')
+    expect(decode(root.file('archive/source.bpmn').bytes)).toBe('external replacement')
+  })
+
+  it('rechecks a destination changed during source verification before deleting the source', async () => {
+    const root = fakeRoot()
+    const source = root.addFile('source.bpmn', 'original')
+    const archive = root.addDirectory('archive')
+    const getFile = source.getFile.bind(source)
+    let reads = 0
+    vi.spyOn(source, 'getFile').mockImplementation(async () => {
+      reads += 1
+      const file = await getFile()
+      if (reads === 3) archive.addFile('source.bpmn', 'late destination replacement')
+      return file
+    })
+
+    await expect(
+      directoryAdapter(root).move('source.bpmn', 'archive/source.bpmn')
+    ).rejects.toMatchObject({ code: 'integrity-failure' })
+    expect(decode(root.file('source.bpmn').bytes)).toBe('original')
+    expect(decode(root.file('archive/source.bpmn').bytes)).toBe('late destination replacement')
+  })
+
+  it('preserves the verified destination when the source mutates during copy', async () => {
     const root = fakeRoot()
     const source = root.addFile('source.bpmn', 'original')
     root.addDirectory('archive')
@@ -452,10 +588,10 @@ describe('HandleWorkspaceAdapter edge coverage', () => {
       directoryAdapter(root).move('source.bpmn', 'archive/source.bpmn')
     ).rejects.toMatchObject({ code: 'integrity-failure' })
     expect(decode(root.file('source.bpmn').bytes)).toBe('changed-externally')
-    expect(root.directory('archive').children.has('source.bpmn')).toBe(false)
+    expect(decode(root.file('archive/source.bpmn').bytes)).toBe('original')
   })
 
-  it('rolls back file and directory copy failures without touching the source', async () => {
+  it('preserves ambiguous partial copies when file and directory copying fails', async () => {
     const fileRoot = fakeRoot()
     fileRoot.addFile('source.bpmn', 'safe')
     const archive = fileRoot.addDirectory('archive')
@@ -466,7 +602,7 @@ describe('HandleWorkspaceAdapter edge coverage', () => {
       directoryAdapter(fileRoot).move('source.bpmn', 'archive/source.bpmn')
     ).rejects.toMatchObject({ code: 'quota-exceeded' })
     expect(decode(fileRoot.file('source.bpmn').bytes)).toBe('safe')
-    expect(archive.children.has('source.bpmn')).toBe(false)
+    expect(decode(fileRoot.file('archive/source.bpmn').bytes)).toBe('')
 
     const directoryRoot = fakeRoot()
     const copiedFile = directoryRoot.addFile('source/child.bpmn', 'safe')
@@ -482,7 +618,90 @@ describe('HandleWorkspaceAdapter edge coverage', () => {
       directoryAdapter(directoryRoot).move('source', 'archive/source')
     ).rejects.toMatchObject({ code: 'storage-failure' })
     expect(decode(directoryRoot.file('source/child.bpmn').bytes)).toBe('safe')
-    expect(directoryRoot.directory('archive').children.has('source')).toBe(false)
+    expect(directoryRoot.directory('archive/source').children.size).toBe(0)
+  })
+
+  it('preserves mismatched copy evidence and never deletes relocation sources', async () => {
+    const fileRoot = fakeRoot()
+    fileRoot.addFile('source.bpmn', 'authoritative-file')
+    const fileArchive = fileRoot.addDirectory('archive')
+    patchCreatedFile(fileArchive, 'source.bpmn', (created) => {
+      corruptAfterSuccessfulClose(created, 'silently-corrupted-file')
+    })
+
+    await expect(
+      directoryAdapter(fileRoot).move('source.bpmn', 'archive/source.bpmn')
+    ).rejects.toMatchObject({ code: 'integrity-failure' })
+    expect(decode(fileRoot.file('source.bpmn').bytes)).toBe('authoritative-file')
+    expect(decode(fileRoot.file('archive/source.bpmn').bytes)).toBe('silently-corrupted-file')
+
+    const directoryRoot = fakeRoot()
+    directoryRoot.addFile('source/child.bpmn', 'authoritative-child')
+    const directoryArchive = directoryRoot.addDirectory('archive')
+    const getDirectoryHandle = directoryArchive.getDirectoryHandle.bind(directoryArchive)
+    vi.spyOn(directoryArchive, 'getDirectoryHandle').mockImplementation(
+      async (name, options = {}) => {
+        const handle = await getDirectoryHandle(name, options)
+        if (name === 'source' && options.create) {
+          patchCreatedFile(directoryArchive.directory('source'), 'child.bpmn', (created) => {
+            corruptAfterSuccessfulClose(created, 'silently-corrupted-child')
+          })
+        }
+        return handle
+      }
+    )
+
+    await expect(
+      directoryAdapter(directoryRoot).move('source', 'archive/source')
+    ).rejects.toMatchObject({ code: 'integrity-failure' })
+    expect(decode(directoryRoot.file('source/child.bpmn').bytes)).toBe('authoritative-child')
+    expect(decode(directoryRoot.file('archive/source/child.bpmn').bytes)).toBe(
+      'silently-corrupted-child'
+    )
+  })
+
+  it('does not accept delimiter-filename directory fingerprint collisions', async () => {
+    const root = fakeRoot()
+    root.addFile('source/a/b', 'x')
+    const archive = root.addDirectory('archive')
+    const getDirectoryHandle = archive.getDirectoryHandle.bind(archive)
+    vi.spyOn(archive, 'getDirectoryHandle').mockImplementation(async (name, options = {}) => {
+      const handle = await getDirectoryHandle(name, options)
+      if (name === 'source' && options.create) {
+        const copiedRoot = archive.directory('source')
+        const getNestedDirectory = copiedRoot.getDirectoryHandle.bind(copiedRoot)
+        vi.spyOn(copiedRoot, 'getDirectoryHandle').mockImplementation(
+          async (nestedName, nestedOptions = {}) => {
+            const nested = await getNestedDirectory(nestedName, nestedOptions)
+            if (nestedName === 'a' && nestedOptions.create) {
+              patchCreatedFile(copiedRoot.directory('a'), 'b', (created) => {
+                const createWritable = created.createWritable.bind(created)
+                vi.spyOn(created, 'createWritable').mockImplementation(async () => {
+                  const writable = await createWritable()
+                  const close = writable.close.bind(writable)
+                  return {
+                    ...writable,
+                    close: async () => {
+                      await close()
+                      copiedRoot.children.delete('a')
+                      copiedRoot.addFile('a:d:b', 'x')
+                    }
+                  } as FileSystemWritableFileStream
+                })
+              })
+            }
+            return nested
+          }
+        )
+      }
+      return handle
+    })
+
+    await expect(directoryAdapter(root).move('source', 'archive/source')).rejects.toMatchObject({
+      code: 'integrity-failure'
+    })
+    expect(decode(root.file('source/a/b').bytes)).toBe('x')
+    expect(decode(root.file('archive/source/a:d:b').bytes)).toBe('x')
   })
 
   it('supports fallback identity checks and skips occupied staging names', async () => {
@@ -499,7 +718,23 @@ describe('HandleWorkspaceAdapter edge coverage', () => {
     expect([...root.children.keys()]).toEqual(['Order.bpmn.__orbitpm_relocate__1', 'order.bpmn'])
   })
 
-  it('cleans the staging copy if a case-only source mutates before removal', async () => {
+  it('does not infer same-entry identity from case-folded names on a case-sensitive filesystem', async () => {
+    const root = fakeRoot()
+    const source = root.addFile('Order.bpmn', 'source')
+    root.addFile('order.bpmn', 'existing-destination')
+    Object.defineProperty(source, 'isSameEntry', {
+      configurable: true,
+      value: undefined
+    })
+
+    await expect(directoryAdapter(root).rename('Order.bpmn', 'order.bpmn')).rejects.toMatchObject({
+      code: 'already-exists'
+    })
+    expect(decode(root.file('Order.bpmn').bytes)).toBe('source')
+    expect(decode(root.file('order.bpmn').bytes)).toBe('existing-destination')
+  })
+
+  it('preserves staging evidence if a case-only source mutates before removal', async () => {
     const root = fakeRoot({ caseInsensitive: true })
     const source = root.addFile('Order.bpmn', 'original')
     const getFile = source.getFile.bind(source)
@@ -514,12 +749,58 @@ describe('HandleWorkspaceAdapter edge coverage', () => {
       code: 'integrity-failure'
     })
     expect(decode(root.file('Order.bpmn').bytes)).toBe('changed')
-    expect([...root.children.keys()].some((name) => name.includes('__orbitpm_relocate__'))).toBe(
-      false
+    const stagingName = [...root.children.keys()].find((name) =>
+      name.includes('__orbitpm_relocate__')
     )
+    expect(stagingName).toBeDefined()
+    expect(decode(root.file(stagingName!).bytes)).toBe('original')
   })
 
-  it('restores the original name if the final case-only copy fails', async () => {
+  it('verifies both staging and final copies during case-only relocation', async () => {
+    const stagingRoot = fakeRoot({ caseInsensitive: true })
+    stagingRoot.addFile('Order.bpmn', 'authoritative')
+    const stagingGetFile = stagingRoot.getFileHandle.bind(stagingRoot)
+    vi.spyOn(stagingRoot, 'getFileHandle').mockImplementation(async (name, options = {}) => {
+      const handle = await stagingGetFile(name, options)
+      if (name.includes('__orbitpm_relocate__') && options.create) {
+        corruptAfterSuccessfulClose(stagingRoot.file(name), 'corrupt-staging')
+      }
+      return handle
+    })
+
+    await expect(
+      directoryAdapter(stagingRoot).rename('Order.bpmn', 'order.bpmn')
+    ).rejects.toMatchObject({ code: 'integrity-failure' })
+    expect(decode(stagingRoot.file('Order.bpmn').bytes)).toBe('authoritative')
+    const corruptStagingName = [...stagingRoot.children.keys()].find((name) =>
+      name.includes('__orbitpm_relocate__')
+    )
+    expect(corruptStagingName).toBeDefined()
+    expect(decode(stagingRoot.file(corruptStagingName!).bytes)).toBe('corrupt-staging')
+
+    const finalRoot = fakeRoot({ caseInsensitive: true })
+    finalRoot.addFile('Order.bpmn', 'authoritative')
+    const finalGetFile = finalRoot.getFileHandle.bind(finalRoot)
+    vi.spyOn(finalRoot, 'getFileHandle').mockImplementation(async (name, options = {}) => {
+      const handle = await finalGetFile(name, options)
+      if (name === 'order.bpmn' && options.create) {
+        corruptAfterSuccessfulClose(finalRoot.file(name), 'corrupt-final')
+      }
+      return handle
+    })
+
+    await expect(
+      directoryAdapter(finalRoot).rename('Order.bpmn', 'order.bpmn')
+    ).rejects.toMatchObject({ code: 'integrity-failure' })
+    const finalStagingName = [...finalRoot.children.keys()].find((name) =>
+      name.includes('__orbitpm_relocate__')
+    )
+    expect(finalStagingName).toBeDefined()
+    expect(decode(finalRoot.file(finalStagingName!).bytes)).toBe('authoritative')
+    expect(decode(finalRoot.file('order.bpmn').bytes)).toBe('corrupt-final')
+  })
+
+  it('keeps case-only staging when a failed final copy cannot be cleaned safely', async () => {
     const root = fakeRoot({ caseInsensitive: true })
     root.addFile('Order.bpmn', 'recover-me')
     const getFileHandle = root.getFileHandle.bind(root)
@@ -536,22 +817,64 @@ describe('HandleWorkspaceAdapter edge coverage', () => {
     await expect(directoryAdapter(root).rename('Order.bpmn', 'order.bpmn')).rejects.toMatchObject({
       code: 'quota-exceeded'
     })
-    expect(decode(root.file('Order.bpmn').bytes)).toBe('recover-me')
-    expect([...root.children.keys()]).toEqual(['Order.bpmn'])
+    const stagingName = [...root.children.keys()].find((name) =>
+      name.includes('__orbitpm_relocate__')
+    )
+    expect(stagingName).toBeDefined()
+    expect(decode(root.file(stagingName!).bytes)).toBe('recover-me')
+    expect(decode(root.file('order.bpmn').bytes)).toBe('')
+  })
+
+  it('rechecks a late case-only destination replacement before deleting staging', async () => {
+    const root = fakeRoot({ caseInsensitive: true })
+    root.addFile('Order.bpmn', 'staging-must-survive')
+    const getFileHandle = root.getFileHandle.bind(root)
+    let injected = false
+    vi.spyOn(root, 'getFileHandle').mockImplementation(async (name, options = {}) => {
+      const handle = await getFileHandle(name, options)
+      if (name.includes('__orbitpm_relocate__') && options.create) {
+        const staging = root.file(name)
+        const getStagingFile = staging.getFile.bind(staging)
+        vi.spyOn(staging, 'getFile').mockImplementation(async () => {
+          const file = await getStagingFile()
+          if (!injected && root.children.has('order.bpmn')) {
+            injected = true
+            root.addFile('order.bpmn', 'late destination replacement')
+          }
+          return file
+        })
+      }
+      return handle
+    })
+
+    await expect(directoryAdapter(root).rename('Order.bpmn', 'order.bpmn')).rejects.toMatchObject({
+      code: 'integrity-failure'
+    })
+    const stagingName = [...root.children.keys()].find((name) =>
+      name.includes('__orbitpm_relocate__')
+    )
+    expect(stagingName).toBeDefined()
+    expect(decode(root.file(stagingName!).bytes)).toBe('staging-must-survive')
+    expect(decode(root.file('order.bpmn').bytes)).toBe('late destination replacement')
   })
 
   it('keeps a recovery staging copy when restoration also fails', async () => {
     const root = fakeRoot({ caseInsensitive: true })
     root.addFile('Order.bpmn', 'recover-me')
+    const removeEntry = root.removeEntry.bind(root)
+    let stagingRemovalFailure = false
+    vi.spyOn(root, 'removeEntry').mockImplementation(async (name, options = {}) => {
+      if (name.includes('__orbitpm_relocate__') && !stagingRemovalFailure) {
+        stagingRemovalFailure = true
+        throw namedError('NoModificationAllowedError', 'staging cleanup failed')
+      }
+      await removeEntry(name, options)
+    })
     const getFileHandle = root.getFileHandle.bind(root)
-    let destinationFailure = false
     let restorationFailure = false
     vi.spyOn(root, 'getFileHandle').mockImplementation(async (name, options = {}) => {
       const handle = await getFileHandle(name, options)
-      if (name === 'order.bpmn' && options.create && !destinationFailure) {
-        destinationFailure = true
-        root.file(name).failNextClose = namedError('QuotaExceededError', 'final copy failed')
-      } else if (name === 'Order.bpmn' && options.create && !restorationFailure) {
+      if (name === 'Order.bpmn' && options.create && !restorationFailure) {
         restorationFailure = true
         root.file(name).failNextClose = namedError('QuotaExceededError', 'restoration failed')
       }
@@ -559,13 +882,47 @@ describe('HandleWorkspaceAdapter edge coverage', () => {
     })
 
     await expect(directoryAdapter(root).rename('Order.bpmn', 'order.bpmn')).rejects.toMatchObject({
-      code: 'quota-exceeded'
+      code: 'storage-failure'
     })
     const stagingName = [...root.children.keys()].find((name) =>
       name.includes('__orbitpm_relocate__')
     )
     expect(stagingName).toBeDefined()
     expect(decode(root.file(stagingName!).bytes)).toBe('recover-me')
+  })
+
+  it('keeps the staging recovery copy when restoration closes with corrupt bytes', async () => {
+    const root = fakeRoot({ caseInsensitive: true })
+    root.addFile('Order.bpmn', 'recover-me')
+    const removeEntry = root.removeEntry.bind(root)
+    let stagingRemovalFailure = false
+    vi.spyOn(root, 'removeEntry').mockImplementation(async (name, options = {}) => {
+      if (name.includes('__orbitpm_relocate__') && !stagingRemovalFailure) {
+        stagingRemovalFailure = true
+        throw namedError('NoModificationAllowedError', 'staging cleanup failed')
+      }
+      await removeEntry(name, options)
+    })
+    const getFileHandle = root.getFileHandle.bind(root)
+    let restorationCorruption = false
+    vi.spyOn(root, 'getFileHandle').mockImplementation(async (name, options = {}) => {
+      const handle = await getFileHandle(name, options)
+      if (name === 'Order.bpmn' && options.create && !restorationCorruption) {
+        restorationCorruption = true
+        corruptAfterSuccessfulClose(root.file(name), 'silent-restore-corruption')
+      }
+      return handle
+    })
+
+    await expect(directoryAdapter(root).rename('Order.bpmn', 'order.bpmn')).rejects.toMatchObject({
+      code: 'storage-failure'
+    })
+    const stagingName = [...root.children.keys()].find((name) =>
+      name.includes('__orbitpm_relocate__')
+    )
+    expect(stagingName).toBeDefined()
+    expect(decode(root.file(stagingName!).bytes)).toBe('recover-me')
+    expect(decode(root.file('Order.bpmn').bytes)).toBe('silent-restore-corruption')
   })
 
   it('handles an externally removed staging copy after the source removal', async () => {
@@ -586,6 +943,29 @@ describe('HandleWorkspaceAdapter edge coverage', () => {
       code: 'not-found'
     })
     expect(root.children.size).toBe(0)
+  })
+
+  it('keeps case-only staging when source deletion commits then rejects', async () => {
+    const root = fakeRoot({ caseInsensitive: true })
+    root.addFile('Order.bpmn', 'case-only-recovery')
+    const removeEntry = root.removeEntry.bind(root)
+    vi.spyOn(root, 'removeEntry').mockImplementation(async (name, options = {}) => {
+      if (name === 'Order.bpmn') {
+        await removeEntry(name, options)
+        throw namedError('NoModificationAllowedError', 'delete committed then rejected')
+      }
+      await removeEntry(name, options)
+    })
+
+    await expect(directoryAdapter(root).rename('Order.bpmn', 'order.bpmn')).rejects.toMatchObject({
+      code: 'storage-failure'
+    })
+    expect(root.children.has('Order.bpmn')).toBe(false)
+    const stagingName = [...root.children.keys()].find((name) =>
+      name.includes('__orbitpm_relocate__')
+    )
+    expect(stagingName).toBeDefined()
+    expect(decode(root.file(stagingName!).bytes)).toBe('case-only-recovery')
   })
 
   it('refuses a case-only rename when all recovery staging names are occupied', async () => {
@@ -629,6 +1009,15 @@ describe('HandleWorkspaceAdapter edge coverage', () => {
       asDirectoryHandle(root)
     )
     await adapter.createFolder('existing/another')
+    await expect(adapter.createFolderIfMissing('existing/another')).resolves.toBe('existing')
+    await expect(adapter.createFolderIfMissing('existing/owned')).resolves.toBe('created')
+    await expect(adapter.createFolderIfMissing('missing/child')).rejects.toMatchObject({
+      code: 'not-found',
+      path: 'missing'
+    })
+    await expect(adapter.createFolderIfMissing('blocking.bin')).rejects.toMatchObject({
+      code: 'already-exists'
+    })
     await expect(adapter.createFolder('blocking.bin/child')).rejects.toMatchObject({
       code: 'already-exists'
     })
@@ -847,6 +1236,15 @@ describe('MemoryWorkspaceAdapter edge coverage', () => {
     })
     await adapter.createFolder('existing/nested')
     await adapter.createFolder('existing/nested')
+    await expect(adapter.createFolderIfMissing('existing/nested')).resolves.toBe('existing')
+    await expect(adapter.createFolderIfMissing('existing/owned')).resolves.toBe('created')
+    await expect(adapter.createFolderIfMissing('missing/child')).rejects.toMatchObject({
+      code: 'not-found',
+      path: 'missing'
+    })
+    await expect(adapter.createFolderIfMissing('file.bin')).rejects.toMatchObject({
+      code: 'already-exists'
+    })
     await expect(adapter.createFolder('file.bin/child')).rejects.toMatchObject({
       code: 'already-exists'
     })
@@ -863,6 +1261,9 @@ describe('MemoryWorkspaceAdapter edge coverage', () => {
       code: 'permission-loss'
     })
     await expect(adapter.createFolder('blocked')).rejects.toMatchObject({
+      code: 'permission-loss'
+    })
+    await expect(adapter.createFolderIfMissing('blocked')).rejects.toMatchObject({
       code: 'permission-loss'
     })
   })

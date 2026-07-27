@@ -28,7 +28,6 @@ export function Toaster({
 }): JSX.Element {
   return (
     <div
-      aria-live="polite"
       style={{
         position: 'fixed',
         insetInlineEnd: 16,
@@ -63,9 +62,12 @@ function ToastItem({
   }, [toast.id, onDismiss, autoDismissMs])
 
   const tone = TONE_STYLE[toast.tone]
+  const isError = toast.tone === 'error'
   return (
     <div
-      role="status"
+      role={isError ? 'alert' : 'status'}
+      aria-live={isError ? 'assertive' : 'polite'}
+      aria-atomic="true"
       onClick={() => onDismiss(toast.id)}
       style={{
         pointerEvents: 'auto',

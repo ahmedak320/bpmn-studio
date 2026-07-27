@@ -88,15 +88,20 @@ export function executeModelingBatch(
 ): void {
   if (updates.length === 0) return
 
+  let service: { execute(value: readonly ModelingBatchUpdate[]): void } | undefined
   try {
-    const service = modeler.get('orbitpmModelingBatch') as
-      { execute(value: readonly ModelingBatchUpdate[]): void } | undefined
-    if (service?.execute) {
-      service.execute(updates)
-      return
-    }
+    service = modeler.get('orbitpmModelingBatch') as typeof service
   } catch {
-    /* fall through for structural test doubles */
+    // Structural test doubles and partially constructed modelers may not
+    // expose the registered service at all.
+    service = undefined
+  }
+  if (service?.execute) {
+    // A real service failure may already have partially executed its command
+    // context. Propagate it: replaying sequentially would compound mutation and
+    // destroy the single-undo transaction guarantee.
+    service.execute(updates)
+    return
   }
 
   const modeling = modeler.get('modeling') as ModelingLike

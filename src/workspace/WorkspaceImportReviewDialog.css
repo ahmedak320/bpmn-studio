@@ -151,6 +151,10 @@
   margin: 0;
 }
 
+.workspace-import-review__exact-list-container {
+  min-width: 0;
+}
+
 .workspace-import-review__cards {
   display: grid;
   gap: 10px;
@@ -273,6 +277,95 @@
   line-height: 1.4;
 }
 
+.workspace-import-review__error-container {
+  display: grid;
+  gap: 8px;
+}
+
+.workspace-import-review__technical-evidence {
+  min-width: 0;
+  padding: 8px 10px;
+  border: 1px solid var(--orbitpm-border);
+  border-radius: 8px;
+}
+
+.workspace-import-review__technical-evidence code {
+  display: block;
+  margin-block-start: 8px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.workspace-import-review__technical-evidence p {
+  margin: 6px 0;
+  color: var(--orbitpm-muted);
+  font-size: 0.82rem;
+}
+
+.workspace-import-review__bounded-technical {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.workspace-import-review__bounded-technical > span {
+  color: var(--orbitpm-muted);
+  font-size: 0.78rem;
+}
+
+.workspace-import-review__layout-acceptance {
+  display: grid;
+  gap: 6px;
+  margin-block-start: 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--orbitpm-border);
+  border-radius: 9px;
+  background: var(--orbitpm-bg);
+}
+
+.workspace-import-review__layout-acceptance label {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  font-weight: 650;
+  line-height: 1.4;
+}
+
+.workspace-import-review__layout-acceptance input {
+  flex: none;
+  inline-size: 18px;
+  block-size: 18px;
+  margin-block-start: 1px;
+}
+
+.workspace-import-review__layout-acceptance p {
+  margin: 0;
+  color: var(--orbitpm-muted);
+  font-size: 0.82rem;
+  line-height: 1.4;
+}
+
+.workspace-import-review__pagination {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-block-start: 10px;
+}
+
+.workspace-import-review__pagination p {
+  min-width: 0;
+  margin: 0;
+  color: var(--orbitpm-muted);
+  font-size: 0.82rem;
+}
+
+.workspace-import-review__pagination > div {
+  display: flex;
+  flex: none;
+  gap: 6px;
+}
+
 .workspace-import-review__footer {
   display: flex;
   align-items: center;
@@ -326,6 +419,15 @@
   .workspace-import-review__footer {
     align-items: stretch;
     flex-direction: column;
+  }
+
+  .workspace-import-review__pagination {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .workspace-import-review__pagination > div {
+    justify-content: flex-end;
   }
 
   .workspace-import-review__actions {

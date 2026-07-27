@@ -72,6 +72,55 @@ export interface LocalPairMatch {
   resource: 'glossary' | 'translation-memory'
 }
 
+export interface LocalPairIndex {
+  readonly enToAr: ReadonlyMap<string, LocalPairMatch>
+  readonly arToEn: ReadonlyMap<string, LocalPairMatch>
+}
+
+export function createLocalPairIndex(
+  glossary: readonly GlossaryEntry[],
+  translationMemory: readonly TranslationMemoryEntry[]
+): LocalPairIndex {
+  const enToAr = new Map<string, LocalPairMatch>()
+  const arToEn = new Map<string, LocalPairMatch>()
+  const add = (
+    entries: readonly (GlossaryEntry | TranslationMemoryEntry)[],
+    resource: LocalPairMatch['resource']
+  ): void => {
+    for (const entry of entries) {
+      if (
+        resource === 'translation-memory' &&
+        (!('accepted' in entry) || entry.accepted !== true)
+      ) {
+        continue
+      }
+      const enKey = lookupKey(entry.en)
+      const arKey = lookupKey(entry.ar)
+      const ar = normalizeLocalizationLookup(entry.ar)
+      const en = normalizeLocalizationLookup(entry.en)
+      if (enKey && ar && !enToAr.has(enKey)) enToAr.set(enKey, { value: ar, resource })
+      if (arKey && en && !arToEn.has(arKey)) arToEn.set(arKey, { value: en, resource })
+    }
+  }
+  // First-in-file order is retained within each resource, while adding the
+  // entire glossary first preserves glossary-over-TM precedence.
+  add(glossary, 'glossary')
+  add(translationMemory, 'translation-memory')
+  return Object.freeze({ enToAr, arToEn })
+}
+
+export function findIndexedLocalPair(
+  index: LocalPairIndex,
+  sourceValue: string,
+  source: 'en' | 'ar',
+  target: 'en' | 'ar'
+): LocalPairMatch | undefined {
+  if (source === target) return undefined
+  const sourceKey = lookupKey(sourceValue)
+  if (!sourceKey) return undefined
+  return (source === 'en' ? index.enToAr : index.arToEn).get(sourceKey)
+}
+
 /**
  * Exact whole-value lookup with deterministic precedence:
  * glossary before TM, then first entry in file order. Rejected/unaccepted TM
@@ -85,20 +134,10 @@ export function findLocalPair(
   glossary: readonly GlossaryEntry[],
   translationMemory: readonly TranslationMemoryEntry[]
 ): LocalPairMatch | undefined {
-  if (source === target) return undefined
-  const sourceKey = lookupKey(sourceValue)
-  if (!sourceKey) return undefined
-
-  for (const entry of glossary) {
-    if (lookupKey(entry[source]) !== sourceKey) continue
-    const value = normalizeLocalizationLookup(entry[target])
-    if (value) return { value, resource: 'glossary' }
-  }
-
-  for (const entry of translationMemory) {
-    if (entry.accepted !== true || lookupKey(entry[source]) !== sourceKey) continue
-    const value = normalizeLocalizationLookup(entry[target])
-    if (value) return { value, resource: 'translation-memory' }
-  }
-  return undefined
+  return findIndexedLocalPair(
+    createLocalPairIndex(glossary, translationMemory),
+    sourceValue,
+    source,
+    target
+  )
 }

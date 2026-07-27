@@ -1,5 +1,10 @@
-import { auditFieldTarget, auditLocalizationFields, type LocalizationAuditOptions } from './audit'
-import { SEEDED_GLOSSARY, findLocalPair } from './glossary'
+import {
+  auditFieldTarget,
+  auditLocalizationFields,
+  createLocalizationAuditContext,
+  type LocalizationAuditOptions
+} from './audit'
+import { SEEDED_GLOSSARY, createLocalPairIndex, findIndexedLocalPair } from './glossary'
 import type {
   GlossaryEntry,
   LanguageCode,
@@ -27,15 +32,26 @@ function opposite(language: LanguageCode): LanguageCode {
 }
 
 function stableAuditOptions(options: LocalizationAuditOptions): LocalizationAuditOptions {
-  return {
+  if (options.auditContext) return options
+  const stable: LocalizationAuditOptions = {
     ...options,
     approvedNeutralTerms:
       options.approvedNeutralTerms === undefined ? undefined : [...options.approvedNeutralTerms],
     approvedEnglishBilingualExceptions:
       options.approvedEnglishBilingualExceptions === undefined
         ? undefined
-        : [...options.approvedEnglishBilingualExceptions]
+        : [...options.approvedEnglishBilingualExceptions],
+    approvedFieldExceptions:
+      options.approvedFieldExceptions === undefined
+        ? undefined
+        : options.approvedFieldExceptions.map((approval) => ({ ...approval })),
+    providerFailures:
+      options.providerFailures === undefined
+        ? undefined
+        : options.providerFailures.map((failure) => ({ ...failure }))
   }
+  stable.auditContext = createLocalizationAuditContext(stable)
+  return stable
 }
 
 function fieldIssuesForTarget(
@@ -62,10 +78,17 @@ function patchForStoredTarget(
     field: field.field,
     property: target === 'en' ? field.storage.enProperty : field.storage.arProperty,
     value,
-    ...(previous === undefined ? {} : { expectedValue: previous }),
+    expectedValue: previous ?? null,
     target,
     reason
   }
+}
+
+function fieldTargetKey(
+  value: Pick<LocalizationField | LocalizationIssue, 'processId' | 'elementId' | 'field'>,
+  target: LanguageCode
+): string {
+  return `${value.processId}\u0000${value.elementId}\u0000${value.field}\u0000${target}`
 }
 
 export interface LocalResourcePlanOptions extends LocalizationAuditOptions {
@@ -87,6 +110,7 @@ export function planLocalResourceApplication(
   const translationMemory = options.translationMemory ?? []
   const targets = options.targetLanguages ?? (['en', 'ar'] as const)
   const auditOptions = stableAuditOptions(options)
+  const localPairIndex = createLocalPairIndex(glossary, translationMemory)
   const fields = inputFields.map(cloneField)
   const updates: LocalizationPatch[] = []
   let glossaryMatches = 0
@@ -119,7 +143,7 @@ export function planLocalResourceApplication(
         continue
       }
 
-      const match = findLocalPair(sourceValue, source, target, glossary, translationMemory)
+      const match = findIndexedLocalPair(localPairIndex, sourceValue, source, target)
       if (!match) {
         // Numeric values, identifiers, URLs, e-mail addresses, one-letter
         // codes, and directly-approved neutral values need no translated
@@ -182,22 +206,18 @@ export function planLanguageProjection(
   const auditOptions = stableAuditOptions(options)
   const report = auditLocalizationFields(fields, auditOptions)
   const blockers = report.issues.filter((current) => current.target === language)
+  const blockerKeys = new Set(blockers.map((current) => fieldTargetKey(current, current.target)))
   const updates: LocalizationPatch[] = []
   let projected = 0
   let unchanged = 0
   let fallbackCount = 0
 
   for (const field of fields) {
-    const targetIssues = blockers.filter(
-      (current) =>
-        current.processId === field.processId &&
-        current.elementId === field.elementId &&
-        current.field === field.field
-    )
+    const blocked = blockerKeys.has(fieldTargetKey(field, language))
     let value: string | undefined
     let reason: LocalizationPatch['reason'] = 'projection'
 
-    if (targetIssues.length === 0) {
+    if (!blocked) {
       value = field.value[language]
       projected += 1
     } else if (options.allowPartial) {
@@ -248,17 +268,18 @@ export function buildTranslationQueue(
 ): TranslationQueueItem[] {
   const auditOptions = stableAuditOptions(options)
   const report = auditLocalizationFields(fields, auditOptions)
+  const issuesByTarget = new Map<string, LocalizationIssue[]>()
+  for (const current of report.issues) {
+    const key = fieldTargetKey(current, current.target)
+    const related = issuesByTarget.get(key)
+    if (related) related.push(current)
+    else issuesByTarget.set(key, [current])
+  }
   const output: TranslationQueueItem[] = []
   for (const field of fields) {
     for (const target of ['en', 'ar'] as const) {
       if (requestedTarget && target !== requestedTarget) continue
-      const issues = report.issues.filter(
-        (current) =>
-          current.processId === field.processId &&
-          current.elementId === field.elementId &&
-          current.field === field.field &&
-          current.target === target
-      )
+      const issues = issuesByTarget.get(fieldTargetKey(field, target)) ?? []
       if (issues.length === 0) continue
       const sourceLanguage = opposite(target)
       const sourceValue = field.value[sourceLanguage]

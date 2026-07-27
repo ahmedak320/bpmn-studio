@@ -38,7 +38,12 @@ import {
 import { WorkspacePickerLite } from './workspace/WorkspacePickerLite'
 import { BackupImportDialog } from './workspace/BackupImportDialog'
 import { HistoryDialog } from './workspace/HistoryDialog'
-import { snapshotAdapterWorkspace } from './workspace/adapterSnapshot'
+import {
+  applyCommittedWorkspaceProjectionDelta,
+  snapshotAdapterWorkspace,
+  type AdapterWorkspaceTreeSnapshot,
+  type CommittedWorkspaceProjectionDelta
+} from './workspace/adapterSnapshot'
 import {
   ManifestBoundWorkspaceAdapter,
   bindWorkspaceToManifest,
@@ -54,7 +59,9 @@ import {
   normalizeWorkspacePath,
   opfsSupported,
   sha256Hex,
+  workspaceFailure,
   type FileSnapshot,
+  type SaveOutcome,
   type WorkspaceAdapter,
   type WorkspaceBackupCollisionDecision,
   type WorkspaceBackupImportPlan,
@@ -74,11 +81,12 @@ import {
   createAdapterSessionPersistence,
   executePathTransaction,
   findDraftRecoveryComparison,
-  installApplicationShortcuts,
   installBeforeUnloadDirtyGuard,
   planPathTransaction,
   resolveDirtyPathDecision,
   restoreHistoryRevision,
+  acquireWorkspaceMutationLease,
+  runWorkspaceMutation,
   type DraftRecoveryComparison,
   type DraftJournal,
   type DocumentSession,
@@ -86,8 +94,10 @@ import {
   type ExternalConflictDecision,
   type FileFingerprint,
   type PathTransactionPlan,
+  type PrepareHistoryXmlResult,
   type RestoreHistoryRevisionResult,
   type SessionPersistence,
+  type WorkspaceMutationLease,
   type WorkspaceIdentity
 } from './sessions'
 import { DraftRecoveryDialog, type DraftRecoveryDecision } from './sessions/DraftRecoveryDialog'
@@ -108,29 +118,51 @@ import { makeBrowserCallLLM } from './ai/browserAi'
 import { getProviderSelection, type ProviderSelection } from './ai/providerSelection'
 import { getLiteProvider } from './ai/providersLite'
 import { getKey, hasKey, migrateLegacyCredentialsOnStartup } from './ai/keys'
+import { keyStorageErrorMessage } from './ai/keyStorageErrorMessage'
 import {
   buildTranslationExternalReview,
   translateReviewedDiagram,
+  translateReviewedField,
+  translateReviewedFieldWithTexts,
   translateReviewedDiagramWithTexts,
+  type ReviewedTranslationProposal,
   type TranslateModeler
 } from './ai/translate'
 import { makeFreeTranslateTexts, FreeTranslateError } from './ai/freeTranslate'
 import {
+  boundedTranslationTechnicalDetail,
   TranslationReviewDialog,
+  type TranslationFieldRetryConfirmation,
   type TranslationReviewProviderOption
 } from './localization/TranslationReviewDialog'
 import {
   applyDiagramLocalizationReview,
+  assertLocalizationReviewCurrent,
   inspectDiagramLocalization,
   StaleLocalizationReviewError,
   type DiagramLocalizationReview
 } from './localization/modelerAdapter'
-import { grantExternalRequestConsent } from './localization/externalRequestReview'
+import {
+  grantExternalRequestConsent,
+  hasExternalRequestConsent
+} from './localization/externalRequestReview'
+import {
+  applyStagedTranslationRecoveryValues,
+  buildTranslationRecoveryDisclosure,
+  listTranslationRecoveryFields,
+  translationRecoveryFieldId,
+  validateTranslationRecoveryValue,
+  InvalidTranslationRecoveryValueError,
+  type TranslationRecoveryField,
+  type TranslationRecoveryFieldId
+} from './localization/translationRecovery'
 import {
   LocalizationSource,
   type LocalizationResources,
-  type LocalizationSource as LocalizationSourceType
+  type LocalizationSource as LocalizationSourceType,
+  type ProviderFailure
 } from './localization/types'
+import { auditFieldTarget } from './localization/audit'
 import { SEEDED_GLOSSARY } from './localization/glossary'
 import {
   reviewBpmnXmlLocalization,
@@ -140,12 +172,18 @@ import { ReviewedXmlIngestionDialog } from './localization/ReviewedXmlIngestionD
 import { ReviewedXmlReviewQueue } from './localization/reviewQueue'
 import {
   createWorkspaceLocalizationStore,
+  createWorkspaceTranslationMemoryDocument,
   WORKSPACE_GLOSSARY_PATH,
   WORKSPACE_TRANSLATION_MEMORY_PATH,
+  WorkspaceLocalizationConflictError,
+  WorkspaceLocalizationPartialLoadError,
+  WorkspaceLocalizationResourceLimitError,
+  WorkspaceLocalizationValidationError,
   type WorkspaceLocalizationState,
   type WorkspaceLocalizationStore
 } from './localization/workspaceStore'
 import { SettingsDialogLite, type SettingsDialogLiteProps } from './settings/SettingsDialogLite'
+import type { LocalizationResourcesFailureCode } from './settings/LocalizationResourcesEditor'
 import { ICON_DATA_URI } from './branding/icon'
 // --- W2B: file mgmt / search / catalog / navigation / print ---
 import {
@@ -175,6 +213,13 @@ import { Toaster, type ToastMsg, type ToastTone } from './workspace/Toaster'
 import { ConfirmDialog } from './workspace/ConfirmDialog'
 import { UnsavedSwitchDialog } from './workspace/UnsavedSwitchDialog'
 import { AccessibleDialog } from './common/AccessibleDialog'
+import { ActionMenu } from './common/ActionMenu'
+import {
+  ResponsiveDrawer,
+  ResponsiveShell,
+  useDetailsPreferences,
+  useResponsiveShellMode
+} from './shell'
 import { createMutex } from './workspace/mutex'
 import { partitionDirtyTabs } from './workspace/dirtySave'
 import { canCommitToWorkspace } from './workspace/workspaceSession'
@@ -236,8 +281,10 @@ import { decodeUtf8Strict } from './workspace/utf8'
 import {
   evaluateValidationPolicy,
   getRuntimeValidationAdapters,
+  ReadOnlyDiagramPreview,
   validateBpmnXml,
   validateUnknownExtensionPreservation,
+  type ReadOnlyDiagramPreviewStatus,
   type ValidationAction,
   type ValidationSummary
 } from './validation'
@@ -288,6 +335,14 @@ function fingerprintFromSnapshot(snapshot: FileSnapshot): FileFingerprint {
     size: snapshot.size,
     modifiedAt: snapshot.modifiedAt
   }
+}
+
+function byteArraysEqual(left: Uint8Array, right: Uint8Array): boolean {
+  if (left.byteLength !== right.byteLength) return false
+  for (let index = 0; index < left.byteLength; index += 1) {
+    if (left[index] !== right[index]) return false
+  }
+  return true
 }
 
 function sessionPersistenceWithHistory(
@@ -388,6 +443,14 @@ interface Tab {
   gen: number
 }
 
+interface DirtyTabClosePromptState {
+  key: string
+  title: string
+  generation: number
+  controller: DocumentSessionController | null
+  sessionIncarnation: number | null
+}
+
 interface SessionSaveRequestResult {
   durable: boolean
   acceptedSubmittedXml?: boolean
@@ -442,9 +505,40 @@ interface MoveState {
 interface TranslationReviewState {
   tabKey: string
   review: DiagramLocalizationReview
+  localizationRevision: TranslationLocalizationRevision
   providerId: '' | 'selected-ai' | 'free'
   aiSelection: ProviderSelection | null
   status: string | null
+  technicalDetail: string | null
+  retryingFieldId: TranslationRecoveryFieldId | null
+  proposals: readonly ReviewedTranslationProposal[]
+  acceptedValues: readonly ReviewedTranslationProposal[]
+  memoryRetry?: {
+    binding: WorkspaceLocalizationBinding
+    pairs: readonly AcceptedTranslationPair[]
+  }
+}
+
+interface AcceptedTranslationPair {
+  en: string
+  ar: string
+}
+
+function canonicalAcceptedTranslationPair(pair: AcceptedTranslationPair): AcceptedTranslationPair {
+  const entry = createWorkspaceTranslationMemoryDocument([
+    { en: pair.en, ar: pair.ar, accepted: true }
+  ]).entries[0]!
+  return { en: entry.en, ar: entry.ar }
+}
+
+function acceptedTranslationPairKey(pair: AcceptedTranslationPair): string {
+  return JSON.stringify([pair.en.toLocaleLowerCase('en-US'), pair.ar.toLocaleLowerCase('en-US')])
+}
+
+interface GeneratedLayoutReviewState {
+  id: number
+  xml: string
+  renderStatus: ReadOnlyDiagramPreviewStatus['status']
 }
 
 function baseName(relPath: string): string {
@@ -453,6 +547,156 @@ function baseName(relPath: string): string {
 
 function errMsg(err: unknown): string {
   return err instanceof Error ? err.message : String(err)
+}
+
+function localizationFailureCode(error: unknown): LocalizationResourcesFailureCode {
+  if (error instanceof WorkspaceLocalizationConflictError) return 'conflict'
+  if (error instanceof WorkspaceLocalizationValidationError) return 'validation'
+  if (error instanceof WorkspaceLocalizationResourceLimitError) return 'resource-limit'
+  if (error instanceof WorkspaceLocalizationPartialLoadError) return 'partial-load'
+  if (error instanceof WorkspaceOperationError) return error.code
+  return 'unknown'
+}
+
+function hasOpenModalSurface(): boolean {
+  return (
+    typeof document !== 'undefined' &&
+    document.querySelector(
+      '[role="dialog"][aria-modal="true"], [role="alertdialog"][aria-modal="true"]'
+    ) !== null
+  )
+}
+
+function providerFailuresFromReview(review: DiagramLocalizationReview): ProviderFailure[] {
+  return review.issues
+    .filter((issue) => issue.code === 'provider-failed')
+    .map((issue) => ({
+      processId: issue.processId,
+      elementId: issue.elementId,
+      field: issue.field,
+      target: issue.target,
+      ...(issue.originalValue === undefined ? {} : { originalValue: issue.originalValue })
+    }))
+}
+
+function providerFailuresWithField(
+  review: DiagramLocalizationReview,
+  field: TranslationRecoveryField
+): ProviderFailure[] {
+  const failures = providerFailuresFromReview(review)
+  const alreadyListed = failures.some(
+    (failure) =>
+      failure.processId === field.processId &&
+      failure.elementId === field.elementId &&
+      failure.field === field.field &&
+      failure.target === field.target
+  )
+  if (!alreadyListed) {
+    failures.push({
+      processId: field.processId,
+      elementId: field.elementId,
+      field: field.field,
+      target: field.target,
+      originalValue: field.sourceValue
+    })
+  }
+  return failures
+}
+
+function proposalMatchesField(
+  proposal: ReviewedTranslationProposal,
+  field: Pick<
+    TranslationRecoveryField,
+    'processId' | 'elementId' | 'field' | 'target' | 'sourceLanguage' | 'sourceValue'
+  >
+): boolean {
+  return (
+    proposal.processId === field.processId &&
+    proposal.elementId === field.elementId &&
+    proposal.field === field.field &&
+    proposal.target === field.target &&
+    proposal.sourceLanguage === field.sourceLanguage &&
+    proposal.sourceValue === field.sourceValue
+  )
+}
+
+function proposalsWithoutField(
+  proposals: readonly ReviewedTranslationProposal[],
+  field: Pick<
+    TranslationRecoveryField,
+    'processId' | 'elementId' | 'field' | 'target' | 'sourceLanguage' | 'sourceValue'
+  >
+): ReviewedTranslationProposal[] {
+  return proposals.filter((proposal) => !proposalMatchesField(proposal, field))
+}
+
+function providerFailuresWithoutField(
+  review: DiagramLocalizationReview,
+  field: Pick<TranslationRecoveryField, 'processId' | 'elementId' | 'field' | 'target'>
+): ProviderFailure[] {
+  return providerFailuresFromReview(review).filter(
+    (failure) =>
+      failure.processId !== field.processId ||
+      failure.elementId !== field.elementId ||
+      failure.field !== field.field ||
+      failure.target !== field.target
+  )
+}
+
+function rebaseTranslationReviewAfterMemorySave(
+  modeler: LangToggleModeler,
+  review: DiagramLocalizationReview,
+  snapshot: WorkspaceLocalizationState
+): DiagramLocalizationReview {
+  const local = inspectDiagramLocalization(modeler, review.target, {
+    source: review.source,
+    ...snapshot.resources
+  })
+  const stillUnresolved = new Set(
+    local.queue.map((item) =>
+      JSON.stringify([item.processId, item.elementId, item.field, item.target])
+    )
+  )
+  const retainedFailures = providerFailuresFromReview(review).filter((failure) =>
+    stillUnresolved.has(
+      JSON.stringify([failure.processId, failure.elementId, failure.field, failure.target])
+    )
+  )
+  if (retainedFailures.length === 0) return local
+  return inspectDiagramLocalization(modeler, review.target, {
+    source: review.source,
+    providerFailures: retainedFailures,
+    ...snapshot.resources
+  })
+}
+
+function acceptedPairForReviewedField(
+  review: DiagramLocalizationReview,
+  field: Pick<TranslationRecoveryField, 'processId' | 'elementId' | 'field'>
+): AcceptedTranslationPair | null {
+  const reviewed = review.fields.find(
+    (candidate) =>
+      candidate.processId === field.processId &&
+      candidate.elementId === field.elementId &&
+      candidate.field === field.field
+  )
+  const en = reviewed?.value.en?.trim()
+  const ar = reviewed?.value.ar?.trim()
+  if (!reviewed || !en || !ar) return null
+  const auditOptions = { glossary: review.localResources.glossary }
+  if (
+    auditFieldTarget(reviewed, 'en', auditOptions).length > 0 ||
+    auditFieldTarget(reviewed, 'ar', auditOptions).length > 0
+  ) {
+    return null
+  }
+  try {
+    const validated = createWorkspaceTranslationMemoryDocument([{ en, ar, accepted: true }])
+      .entries[0]!
+    return { en: validated.en, ar: validated.ar }
+  } catch {
+    return null
+  }
 }
 
 async function directBpmnSlugs(
@@ -644,10 +888,6 @@ async function validateReleaseXml(
   return parsed.summary
 }
 
-function confirmGeneratedImportLayout(): boolean {
-  return window.confirm(`${t('sourceEditor.layoutReady')}\n\n${t('sourceEditor.layoutAccept')}?`)
-}
-
 // Structural (never the concrete bpmn-js class) so it stays a local port like the
 // other lite modeler shells: saveSVG for the diagram, plus the two services the
 // print header needs — the element registry (band-cut rects) and the canvas
@@ -687,8 +927,38 @@ interface WorkspaceLocalizationBinding {
   store: WorkspaceLocalizationStore
 }
 
+interface TranslationLocalizationRevision {
+  binding: WorkspaceLocalizationBinding | null
+  glossaryHash: string | null
+  translationMemoryHash: string | null
+}
+
+function translationLocalizationRevision(
+  binding: WorkspaceLocalizationBinding | null,
+  snapshot: WorkspaceLocalizationState | null
+): TranslationLocalizationRevision {
+  return {
+    binding,
+    glossaryHash: snapshot?.files.glossary.hash ?? null,
+    translationMemoryHash: snapshot?.files.translationMemory.hash ?? null
+  }
+}
+
+function translationLocalizationRevisionMatches(
+  revision: TranslationLocalizationRevision,
+  binding: WorkspaceLocalizationBinding | null,
+  snapshot: WorkspaceLocalizationState | null
+): boolean {
+  return (
+    revision.binding === binding &&
+    revision.glossaryHash === (snapshot?.files.glossary.hash ?? null) &&
+    revision.translationMemoryHash === (snapshot?.files.translationMemory.hash ?? null)
+  )
+}
+
 interface WorkspaceOperationBinding {
   adapter: WorkspaceAdapter | null
+  coordination: BroadcastWorkspaceCoordinator | null
   controller: DocumentSessionController | null
   drafts: DraftJournalCoordinator | null
   generation: number
@@ -788,12 +1058,17 @@ function App(): JSX.Element {
   const [workspaceIssues, setWorkspaceIssues] = useState<string[]>([])
   const workspaceRuntimeIssuesRef = useRef<Set<string>>(new Set())
   const [workspaceLocalizationError, setWorkspaceLocalizationError] = useState<string | null>(null)
+  const [workspaceLocalizationErrorCode, setWorkspaceLocalizationErrorCode] =
+    useState<LocalizationResourcesFailureCode | null>(null)
   const liveWorkspaceIndexRef = useRef(new LiveWorkspaceIndex())
   const [liveWorkspaceVersion, setLiveWorkspaceVersion] = useState(0)
 
   const [tabs, setTabs] = useState<Tab[]>([])
   const tabsRef = useRef<readonly Tab[]>([])
   tabsRef.current = tabs
+  const [dirtyTabClosePrompt, setDirtyTabClosePrompt] = useState<DirtyTabClosePromptState | null>(
+    null
+  )
   const [activeKey, setActiveKey] = useState<string | null>(null)
   const activeKeyRef = useRef<string | null>(null)
   activeKeyRef.current = activeKey
@@ -872,6 +1147,7 @@ function App(): JSX.Element {
   const workspaceCoordinatorRef = useRef<BroadcastWorkspaceCoordinator | null>(null)
   const sessionStoreUnsubscribeRef = useRef<(() => void) | null>(null)
   const workspaceChangeUnsubscribeRef = useRef<(() => void) | null>(null)
+  const workspaceChangeRefreshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const pageInstanceIdRef = useRef<string | null>(null)
   pageInstanceIdRef.current ??= createPageInstanceId()
   const requestSaveRef = useRef<
@@ -893,6 +1169,12 @@ function App(): JSX.Element {
   // even before the newer request reaches activateWorkspace.
   const workspaceActivationIntentRef = useRef(0)
   const refreshSequenceRef = useRef(0)
+  const workspaceRefreshAbortRef = useRef<AbortController | null>(null)
+  const workspaceProjectionRef = useRef<{
+    adapter: WorkspaceAdapter
+    generation: number
+    snapshot: AdapterWorkspaceTreeSnapshot
+  } | null>(null)
   const opMutexRef = useRef(createMutex()) // serializes create / import / AI-place writes
   const rememberWorkspaceMutexRef = useRef(createMutex())
   const [switchGuard, setSwitchGuard] = useState<{ count: number } | null>(null)
@@ -919,6 +1201,7 @@ function App(): JSX.Element {
   const captureWorkspaceOperation = useCallback(
     (): WorkspaceOperationBinding => ({
       adapter: workspaceAdapterRef.current,
+      coordination: workspaceCoordinatorRef.current,
       controller: sessionControllerRef.current,
       drafts: draftCoordinatorRef.current,
       generation: workspaceGenRef.current,
@@ -931,6 +1214,7 @@ function App(): JSX.Element {
   const isWorkspaceOperationCurrent = useCallback(
     (binding: WorkspaceOperationBinding): boolean =>
       workspaceAdapterRef.current === binding.adapter &&
+      workspaceCoordinatorRef.current === binding.coordination &&
       sessionControllerRef.current === binding.controller &&
       draftCoordinatorRef.current === binding.drafts &&
       workspaceGenRef.current === binding.generation &&
@@ -938,6 +1222,47 @@ function App(): JSX.Element {
       workspaceIdentityRef.current === binding.identity &&
       liveWorkspaceIndexRef.current === binding.index,
     []
+  )
+  const workspaceMutationReleaseErrorRef = useRef<(error: unknown) => void>(() => undefined)
+
+  const acquireCoordinatedWorkspaceMutation = useCallback(
+    async (
+      binding: WorkspaceOperationBinding,
+      signal?: AbortSignal
+    ): Promise<WorkspaceMutationLease> => {
+      if (!binding.identity) throw new Error(t('workspace.path.unavailable'))
+      return acquireWorkspaceMutationLease({
+        coordination: binding.coordination,
+        workspace: binding.identity,
+        signal,
+        isCurrent: () => isWorkspaceOperationCurrent(binding)
+      })
+    },
+    [isWorkspaceOperationCurrent]
+  )
+
+  const runCoordinatedWorkspaceMutation = useCallback(
+    async <Result,>(
+      binding: WorkspaceOperationBinding,
+      operation: (lease: WorkspaceMutationLease) => Promise<Result>,
+      signal?: AbortSignal
+    ): Promise<Result> => {
+      const workspace = binding.identity
+      if (!workspace) throw new Error(t('workspace.path.unavailable'))
+      return opMutexRef.current.runExclusive(() =>
+        runWorkspaceMutation(
+          {
+            coordination: binding.coordination,
+            workspace,
+            signal,
+            isCurrent: () => isWorkspaceOperationCurrent(binding),
+            onReleaseError: (error) => workspaceMutationReleaseErrorRef.current(error)
+          },
+          operation
+        )
+      )
+    },
+    [isWorkspaceOperationCurrent]
   )
 
   const [settingsOpen, setSettingsOpen] = useState(false)
@@ -949,13 +1274,67 @@ function App(): JSX.Element {
   const [stepDetails, setStepDetails] = useState<{ tabKey: string; highlight?: string[] } | null>(
     null
   )
-  // Left sidebar (file explorer on top, AI generator on the bottom). Open by
-  // default; auto-collapses when a file opens so the canvas takes the full
-  // window — EXCEPT for a single tree-row click, which keeps the explorer
-  // visible (double-click collapses; see openDirectoryFile's `collapse` opt).
-  // The rail restores it. Deliberately NOT persisted — its state follows the
-  // open/close flow, and a manual rail click wins until the next open event.
+  // The application shell owns both side-pane breakpoints. Keeping the
+  // explorer's React subtree mounted is deliberate: collapsing it or opening a
+  // process must not discard an AI attachment, prompt, mapping wizard, or
+  // destination choice.
+  const responsiveMode = useResponsiveShellMode()
+  const responsiveModeRef = useRef(responsiveMode)
+  responsiveModeRef.current = responsiveMode
+  const detailsController = useDetailsPreferences()
+  const detailsOpen = detailsController.preferences.open
+  const setDetailsOpen = detailsController.setOpen
   const [sidebarOpen, setSidebarOpen] = useState(true)
+  const [outlineOpenTabKey, setOutlineOpenTabKey] = useState<string | null>(null)
+  const explorerToggleRef = useRef<HTMLButtonElement | null>(null)
+  const explorerCloseRef = useRef<HTMLButtonElement | null>(null)
+  const explorerReturnFocusRef = useRef<HTMLElement | null>(null)
+  const setExplorerOpen = useCallback(
+    (open: boolean): void => {
+      if (open && responsiveModeRef.current !== 'docked') {
+        setDetailsOpen(false)
+        setOutlineOpenTabKey(null)
+      }
+      setSidebarOpen(open)
+    },
+    [setDetailsOpen]
+  )
+  const handleDetailsOpenChange = useCallback((open: boolean): void => {
+    if (open && responsiveModeRef.current !== 'docked') {
+      setSidebarOpen(false)
+      setOutlineOpenTabKey(null)
+    }
+  }, [])
+  const handleOutlineOpenChange = useCallback(
+    (tabKey: string, open: boolean): void => {
+      setOutlineOpenTabKey((current) => {
+        if (!open) return current === tabKey ? null : current
+        return tabKey
+      })
+      if (open && responsiveModeRef.current !== 'docked') {
+        setSidebarOpen(false)
+        setDetailsOpen(false)
+      }
+    },
+    [setDetailsOpen]
+  )
+
+  useEffect(() => {
+    if (responsiveMode === 'docked') return
+    if (detailsOpen) {
+      // A viewport can cross a breakpoint while several docked panes are open.
+      // Details is the active editor context, so retain it and close both
+      // competing modal drawers.
+      setSidebarOpen(false)
+      setOutlineOpenTabKey(null)
+      return
+    }
+    if (outlineOpenTabKey) {
+      setSidebarOpen(false)
+    }
+  }, [detailsOpen, outlineOpenTabKey, responsiveMode])
+  const explorerOpen =
+    sidebarOpen && (responsiveMode === 'docked' || (!detailsOpen && outlineOpenTabKey === null))
   // User-resized explorer width (persisted); null falls back to the responsive
   // clamp() default. The PaneResizer between the aside and the rail drives it.
   const [sidebarWidth, setSidebarWidth, resetSidebarWidth] = usePaneWidth(
@@ -974,8 +1353,37 @@ function App(): JSX.Element {
   const [keysVersion, setKeysVersion] = useState(0)
   // Tab whose diagram is currently being AI-translated (disables its button).
   const [translatingTab, setTranslatingTab] = useState<string | null>(null)
-  const [translationReview, setTranslationReview] = useState<TranslationReviewState | null>(null)
+  const [translationFinalizingTab, setTranslationFinalizingTab] = useState<string | null>(null)
+  const [translationReview, setTranslationReviewState] = useState<TranslationReviewState | null>(
+    null
+  )
+  const translationReviewRef = useRef<TranslationReviewState | null>(translationReview)
+  const setTranslationReview = useCallback(
+    (
+      update:
+        | TranslationReviewState
+        | null
+        | ((current: TranslationReviewState | null) => TranslationReviewState | null)
+    ): void => {
+      const current = translationReviewRef.current
+      const next = typeof update === 'function' ? update(current) : update
+      translationReviewRef.current = next
+      setTranslationReviewState(next)
+    },
+    []
+  )
   const translationAbortRef = useRef<AbortController | null>(null)
+  const translationOperationNonceRef = useRef(0)
+  const translationFinalizationOperationRef = useRef<{
+    kind: 'apply' | 'memory'
+    nonce: number
+    tabKey: string
+  } | null>(null)
+  const translationReviewOpenOperationRef = useRef<{
+    nonce: number
+    tabKey: string
+    modeler: LangToggleModeler
+  } | null>(null)
   // Provenance survives file placement/opening so the same read-only
   // localization ingestion adapter can audit every reachable boundary.
   const localizationSourceByTabRef = useRef<Map<string, LocalizationSourceType>>(new Map())
@@ -990,6 +1398,23 @@ function App(): JSX.Element {
   } | null>(null)
   const interviewTokenRef = useRef(0)
   const interviewApplyTokenByTabRef = useRef(new Map<string, number>())
+
+  useEffect(() => {
+    if (stepDetails && stepDetails.tabKey !== activeKey) {
+      setStepDetails(null)
+    }
+    if (translationReview && translationReview.tabKey !== activeKey) {
+      translationAbortRef.current?.abort()
+      translationAbortRef.current = null
+      translationFinalizationOperationRef.current = null
+      setTranslatingTab(null)
+      setTranslationFinalizingTab(null)
+      setTranslationReview(null)
+    }
+    if (translationReviewOpenOperationRef.current?.tabKey !== activeKey) {
+      translationReviewOpenOperationRef.current = null
+    }
+  }, [activeKey, setTranslationReview, stepDetails, translationReview])
 
   const translationProviders: TranslationReviewProviderOption[] = (() => {
     if (!translationReview) return []
@@ -1011,23 +1436,30 @@ function App(): JSX.Element {
     return options
   })()
 
+  const translationDisclosureReview = translationReview?.review ?? null
+  const translationDisclosureProviderId = translationReview?.providerId ?? ''
+  const translationDisclosureAiProviderId = translationReview?.aiSelection?.providerId
+  const translationDisclosureAiModelId = translationReview?.aiSelection?.modelId
   const translationDisclosure = useMemo(() => {
-    if (!translationReview || !translationReview.providerId) return null
-    if (translationReview.providerId === 'free') {
-      return buildTranslationExternalReview(translationReview.review, {
+    if (!translationDisclosureReview || !translationDisclosureProviderId) return null
+    if (translationDisclosureProviderId === 'free') {
+      return buildTranslationExternalReview(translationDisclosureReview, {
         providerId: 'google-translate+mymemory',
         kind: 'free'
       })
     }
-    const selection = translationReview.aiSelection
-    if (!selection) return null
-    return buildTranslationExternalReview(translationReview.review, {
-      providerId: selection.providerId,
-      modelId: selection.modelId,
+    if (!translationDisclosureAiProviderId || !translationDisclosureAiModelId) return null
+    return buildTranslationExternalReview(translationDisclosureReview, {
+      providerId: translationDisclosureAiProviderId,
+      modelId: translationDisclosureAiModelId,
       kind: 'ai'
     })
-  }, [translationReview])
-
+  }, [
+    translationDisclosureAiModelId,
+    translationDisclosureAiProviderId,
+    translationDisclosureProviderId,
+    translationDisclosureReview
+  ])
   const commitWorkspaceLocalizationSnapshot = useCallback(
     (
       binding: WorkspaceLocalizationBinding,
@@ -1042,10 +1474,76 @@ function App(): JSX.Element {
         workspaceLocalizationSnapshotRef.current = next
         setWorkspaceLocalizationSnapshot(next)
         setWorkspaceLocalizationError(null)
+        setWorkspaceLocalizationErrorCode(null)
       }
       return next
     },
     []
+  )
+
+  const loadWorkspaceLocalizationCoordinated = useCallback(
+    async (
+      binding: WorkspaceLocalizationBinding,
+      operationBinding: WorkspaceOperationBinding = captureWorkspaceOperation()
+    ): Promise<WorkspaceLocalizationState> => {
+      if (
+        operationBinding.adapter !== binding.adapter ||
+        operationBinding.generation !== binding.generation
+      ) {
+        throw new Error(t('alert.staleWrite'))
+      }
+      return runCoordinatedWorkspaceMutation(
+        operationBinding,
+        async (lease) => {
+          const previous = binding.store.current
+          try {
+            const next = await binding.store.load({ signal: binding.controller.signal })
+            const changes = [
+              ...(previous?.files.glossary.hash !== next.files.glossary.hash
+                ? [
+                    {
+                      kind: 'saved' as const,
+                      path: WORKSPACE_GLOSSARY_PATH,
+                      fingerprint: {
+                        hash: next.files.glossary.hash,
+                        size: next.files.glossary.size,
+                        modifiedAt: next.files.glossary.modifiedAt
+                      }
+                    }
+                  ]
+                : []),
+              ...(previous?.files.translationMemory.hash !== next.files.translationMemory.hash
+                ? [
+                    {
+                      kind: 'saved' as const,
+                      path: WORKSPACE_TRANSLATION_MEMORY_PATH,
+                      fingerprint: {
+                        hash: next.files.translationMemory.hash,
+                        size: next.files.translationMemory.size,
+                        modifiedAt: next.files.translationMemory.modifiedAt
+                      }
+                    }
+                  ]
+                : [])
+            ]
+            lease.publish(changes)
+            return next
+          } catch (error) {
+            if (error instanceof WorkspaceLocalizationPartialLoadError) {
+              lease.publish(
+                error.committedPaths.map((path) => ({
+                  kind: 'invalidated',
+                  path
+                }))
+              )
+            }
+            throw error
+          }
+        },
+        binding.controller.signal
+      )
+    },
+    [captureWorkspaceOperation, runCoordinatedWorkspaceMutation]
   )
 
   const settingsLocalizationResources = useMemo<
@@ -1073,23 +1571,87 @@ function App(): JSX.Element {
       throw binding.controller.signal.reason
     }
     const run = async (
-      operation: (signal: AbortSignal) => Promise<WorkspaceLocalizationState>
+      operation: (signal: AbortSignal) => Promise<WorkspaceLocalizationState>,
+      changed: (
+        next: WorkspaceLocalizationState
+      ) => readonly (typeof WORKSPACE_GLOSSARY_PATH | typeof WORKSPACE_TRANSLATION_MEMORY_PATH)[]
     ): Promise<WorkspaceLocalizationState> => {
       assertCurrent()
-      const next = await operation(binding.controller.signal)
-      assertCurrent()
-      return commitWorkspaceLocalizationSnapshot(binding, next)
+      const operationBinding = captureWorkspaceOperation()
+      if (
+        operationBinding.adapter !== binding.adapter ||
+        operationBinding.generation !== binding.generation
+      ) {
+        throw new Error(t('alert.staleWrite'))
+      }
+      return runCoordinatedWorkspaceMutation(
+        operationBinding,
+        async (lease) => {
+          const previous = binding.store.current
+          let next: WorkspaceLocalizationState
+          try {
+            next = await operation(binding.controller.signal)
+          } catch (error) {
+            if (error instanceof WorkspaceLocalizationPartialLoadError) {
+              lease.publish(
+                error.committedPaths.map((path) => ({
+                  kind: 'invalidated',
+                  path
+                }))
+              )
+            }
+            throw error
+          }
+          assertCurrent()
+          const changedPaths = changed(next).filter((path) => {
+            if (!previous) return true
+            return path === WORKSPACE_GLOSSARY_PATH
+              ? previous.files.glossary.hash !== next.files.glossary.hash
+              : previous.files.translationMemory.hash !== next.files.translationMemory.hash
+          })
+          lease.publish(
+            changedPaths.map((path) => {
+              const file =
+                path === WORKSPACE_GLOSSARY_PATH
+                  ? next.files.glossary
+                  : next.files.translationMemory
+              return {
+                kind: 'saved',
+                path,
+                fingerprint: {
+                  hash: file.hash,
+                  size: file.size,
+                  modifiedAt: file.modifiedAt
+                }
+              }
+            })
+          )
+          return commitWorkspaceLocalizationSnapshot(binding, next)
+        },
+        binding.controller.signal
+      )
     }
     return {
+      workspaceBindingKey: `${binding.adapter.id}:${binding.generation}`,
       snapshot: workspaceLocalizationSnapshot,
       loadError: workspaceLocalizationError,
-      onSaveGlossary: async (entries) =>
-        run((signal) => binding.store.replaceGlossary(entries, { signal })),
-      onSaveTranslationMemory: async (entries) =>
-        run((signal) => binding.store.replaceTranslationMemory(entries, { signal })),
+      loadErrorCode: workspaceLocalizationErrorCode,
+      onSaveGlossary: async (entries, expectedHash) =>
+        run(
+          (signal) => binding.store.replaceGlossary(entries, { signal, expectedHash }),
+          () => [WORKSPACE_GLOSSARY_PATH]
+        ),
+      onSaveTranslationMemory: async (entries, expectedHash) =>
+        run(
+          (signal) => binding.store.replaceTranslationMemory(entries, { signal, expectedHash }),
+          () => [WORKSPACE_TRANSLATION_MEMORY_PATH]
+        ),
       onReload: async () => {
         try {
-          return await run((signal) => binding.store.load({ signal }))
+          return await run(
+            (signal) => binding.store.load({ signal }),
+            () => [WORKSPACE_GLOSSARY_PATH, WORKSPACE_TRANSLATION_MEMORY_PATH]
+          )
         } catch (error) {
           if (
             workspaceLocalizationBindingRef.current === binding &&
@@ -1099,6 +1661,7 @@ function App(): JSX.Element {
             setWorkspaceLocalizationSnapshot(null)
             const message = errMsg(error)
             setWorkspaceLocalizationError(message)
+            setWorkspaceLocalizationErrorCode(localizationFailureCode(error))
           }
           throw error
         }
@@ -1108,8 +1671,11 @@ function App(): JSX.Element {
       }
     }
   }, [
+    captureWorkspaceOperation,
     commitWorkspaceLocalizationSnapshot,
+    runCoordinatedWorkspaceMutation,
     workspaceLocalizationError,
+    workspaceLocalizationErrorCode,
     workspaceLocalizationSnapshot
   ])
 
@@ -1120,6 +1686,134 @@ function App(): JSX.Element {
         ...(workspaceLocalizationSnapshotRef.current?.resources ?? {})
       }),
     []
+  )
+
+  const persistAcceptedTranslationPairs = useCallback(
+    async (
+      binding: WorkspaceLocalizationBinding | null,
+      pairs: readonly AcceptedTranslationPair[],
+      options: { reloadBeforeWrite?: boolean } = {}
+    ): Promise<{
+      status: 'not-needed' | 'saved' | 'stale' | 'failed'
+      error?: unknown
+      snapshot?: WorkspaceLocalizationState
+    }> => {
+      if (!binding || pairs.length === 0) return { status: 'not-needed' }
+      const isCurrent = (): boolean =>
+        workspaceLocalizationBindingRef.current === binding &&
+        workspaceAdapterRef.current === binding.adapter &&
+        workspaceGenRef.current === binding.generation &&
+        !binding.controller.signal.aborted
+      const operationBinding = captureWorkspaceOperation()
+      if (
+        operationBinding.adapter !== binding.adapter ||
+        operationBinding.generation !== binding.generation
+      ) {
+        return { status: 'stale' }
+      }
+      let reloadedSnapshot: WorkspaceLocalizationState | undefined
+      try {
+        return await runCoordinatedWorkspaceMutation(
+          operationBinding,
+          async (lease) => {
+            const changed = new Map<
+              string,
+              Parameters<WorkspaceMutationLease['publish']>[0][number]
+            >()
+            const recordSnapshot = (
+              snapshot: WorkspaceLocalizationState,
+              previous: WorkspaceLocalizationState | undefined,
+              paths: readonly (
+                typeof WORKSPACE_GLOSSARY_PATH | typeof WORKSPACE_TRANSLATION_MEMORY_PATH
+              )[]
+            ): void => {
+              for (const path of paths) {
+                const file =
+                  path === WORKSPACE_GLOSSARY_PATH
+                    ? snapshot.files.glossary
+                    : snapshot.files.translationMemory
+                const previousFile =
+                  path === WORKSPACE_GLOSSARY_PATH
+                    ? previous?.files.glossary
+                    : previous?.files.translationMemory
+                if (previousFile?.hash === file.hash) continue
+                changed.set(path, {
+                  kind: 'saved',
+                  path,
+                  fingerprint: {
+                    hash: file.hash,
+                    size: file.size,
+                    modifiedAt: file.modifiedAt
+                  }
+                })
+              }
+            }
+            try {
+              const unique = new Map<string, AcceptedTranslationPair>()
+              for (const pair of pairs) {
+                const canonical = canonicalAcceptedTranslationPair(pair)
+                unique.set(acceptedTranslationPairKey(canonical), canonical)
+              }
+              let pairsToPersist = [...unique.values()]
+              if (options.reloadBeforeWrite) {
+                const previous = binding.store.current
+                const reloaded = await binding.store.load({ signal: binding.controller.signal })
+                reloadedSnapshot = reloaded
+                recordSnapshot(reloaded, previous, [
+                  WORKSPACE_GLOSSARY_PATH,
+                  WORKSPACE_TRANSLATION_MEMORY_PATH
+                ])
+                if (!isCurrent()) {
+                  lease.publish([...changed.values()])
+                  return { status: 'stale' }
+                }
+                commitWorkspaceLocalizationSnapshot(binding, reloaded)
+                const durablePairs = new Set(
+                  reloaded.resources.translationMemory.map((entry) =>
+                    acceptedTranslationPairKey({ en: entry.en, ar: entry.ar })
+                  )
+                )
+                pairsToPersist = pairsToPersist.filter(
+                  (pair) => !durablePairs.has(acceptedTranslationPairKey(pair))
+                )
+                if (pairsToPersist.length === 0) {
+                  lease.publish([...changed.values()])
+                  return { status: 'saved', snapshot: reloaded }
+                }
+              }
+              if (!isCurrent()) return { status: 'stale' }
+              const previous = binding.store.current
+              const next = await binding.store.acceptTranslationPairs(pairsToPersist, {
+                signal: binding.controller.signal
+              })
+              recordSnapshot(next, previous, [WORKSPACE_TRANSLATION_MEMORY_PATH])
+              lease.publish([...changed.values()])
+              if (!isCurrent()) return { status: 'stale' }
+              commitWorkspaceLocalizationSnapshot(binding, next)
+              return { status: 'saved', snapshot: next }
+            } catch (error) {
+              if (error instanceof WorkspaceLocalizationPartialLoadError) {
+                for (const path of error.committedPaths) {
+                  changed.set(path, { kind: 'invalidated', path })
+                }
+              }
+              lease.publish([...changed.values()])
+              throw error
+            }
+          },
+          binding.controller.signal
+        )
+      } catch (error) {
+        return isCurrent()
+          ? { status: 'failed', error, snapshot: reloadedSnapshot }
+          : { status: 'stale' }
+      }
+    },
+    [
+      captureWorkspaceOperation,
+      commitWorkspaceLocalizationSnapshot,
+      runCoordinatedWorkspaceMutation
+    ]
   )
 
   const toggleAiSection = useCallback(() => {
@@ -1180,6 +1874,17 @@ function App(): JSX.Element {
   const workspaceImportAbortRef = useRef<AbortController | null>(null)
   const singleFileImportAbortRef = useRef<AbortController | null>(null)
   const singleFileRecoveryAbortRef = useRef<AbortController | null>(null)
+  const [generatedLayoutReview, setGeneratedLayoutReview] =
+    useState<GeneratedLayoutReviewState | null>(null)
+  const generatedLayoutReviewRef = useRef<GeneratedLayoutReviewState | null>(null)
+  generatedLayoutReviewRef.current = generatedLayoutReview
+  const generatedLayoutReviewSequenceRef = useRef(0)
+  const generatedLayoutReviewPendingRef = useRef<{
+    id: number
+    signal: AbortSignal
+    onAbort(): void
+    resolve(accepted: boolean): void
+  } | null>(null)
   const directoryOpenAbortRef = useRef<Map<string, AbortController>>(new Map())
   // Memoize the (async) per-workspace digests: rebuilt only when the files
   // identity handed to the assistant changes (see `assistFiles` below), so a
@@ -1193,6 +1898,66 @@ function App(): JSX.Element {
     const id = ++toastIdRef.current
     setToasts((prev) => [...prev, { id, text, tone }])
   }, [])
+  workspaceMutationReleaseErrorRef.current = (error) => {
+    pushToast(t('workspace.coordination.error', { error: errMsg(error) }), 'error')
+  }
+
+  const settleGeneratedLayoutReview = useCallback((id: number, accepted: boolean): void => {
+    const pending = generatedLayoutReviewPendingRef.current
+    if (!pending || pending.id !== id) return
+    if (
+      accepted &&
+      (generatedLayoutReviewRef.current?.id !== id ||
+        generatedLayoutReviewRef.current.renderStatus !== 'ready')
+    ) {
+      return
+    }
+    generatedLayoutReviewPendingRef.current = null
+    pending.signal.removeEventListener('abort', pending.onAbort)
+    setGeneratedLayoutReview((current) => (current?.id === id ? null : current))
+    pending.resolve(accepted)
+  }, [])
+
+  const requestGeneratedLayoutReview = useCallback(
+    (xml: string, signal: AbortSignal): Promise<boolean> => {
+      if (signal.aborted) return Promise.resolve(false)
+      const previous = generatedLayoutReviewPendingRef.current
+      if (previous) {
+        generatedLayoutReviewPendingRef.current = null
+        previous.signal.removeEventListener('abort', previous.onAbort)
+        previous.resolve(false)
+      }
+      const id = ++generatedLayoutReviewSequenceRef.current
+      return new Promise<boolean>((resolve) => {
+        const onAbort = (): void => settleGeneratedLayoutReview(id, false)
+        generatedLayoutReviewPendingRef.current = {
+          id,
+          signal,
+          onAbort,
+          resolve
+        }
+        signal.addEventListener('abort', onAbort, { once: true })
+        if (signal.aborted) {
+          onAbort()
+          return
+        }
+        setGeneratedLayoutReview({ id, xml, renderStatus: 'loading' })
+      })
+    },
+    [settleGeneratedLayoutReview]
+  )
+
+  useEffect(
+    () => () => {
+      const pending = generatedLayoutReviewPendingRef.current
+      if (!pending) return
+      generatedLayoutReviewPendingRef.current = null
+      pending.signal.removeEventListener('abort', pending.onAbort)
+      pending.resolve(false)
+    },
+    []
+  )
+
   const recordWorkspaceIssue = useCallback(
     (issue: string, binding?: WorkspaceOperationBinding): void => {
       if (
@@ -1220,7 +1985,12 @@ function App(): JSX.Element {
   useEffect(() => {
     if (credentialMigration.ok || credentialMigrationToastShownRef.current) return
     credentialMigrationToastShownRef.current = true
-    pushToast(`${t('settings.title')}: ${credentialMigration.error}`, 'error')
+    pushToast(
+      t('settings.storageError.startup', {
+        error: keyStorageErrorMessage(credentialMigration.code)
+      }),
+      'error'
+    )
   }, [credentialMigration, pushToast])
   const dismissToast = useCallback((id: number) => {
     setToasts((prev) => prev.filter((t) => t.id !== id))
@@ -1311,7 +2081,22 @@ function App(): JSX.Element {
     const directoryOpenControllers = directoryOpenAbortRef.current
     const skipDraftTrackingOnce = skipDraftTrackingOnceRef.current
     const persistenceInteractionLocks = persistenceInteractionLocksRef.current
-    const removeShortcuts = installApplicationShortcuts(window, router)
+    const onApplicationShortcut = (event: KeyboardEvent): void => {
+      const saveCombo =
+        (event.ctrlKey || event.metaKey) &&
+        !event.altKey &&
+        !event.shiftKey &&
+        event.key.toLowerCase() === 's'
+      if (persistenceInteractionLockedRef.current || hasOpenModalSurface()) {
+        // Keep the browser's page-save dialog suppressed while an App modal or
+        // persistence transaction owns interaction, but do not route a hidden
+        // editor command behind that surface.
+        if (saveCombo) event.preventDefault()
+        return
+      }
+      router.handleKeyDown(event)
+    }
+    window.addEventListener('keydown', onApplicationShortcut)
     const removeBeforeUnload = installBeforeUnloadDirtyGuard(window, () => {
       const controller = sessionControllerRef.current
       if (!controller) {
@@ -1329,7 +2114,7 @@ function App(): JSX.Element {
       ]
     })
     return () => {
-      removeShortcuts()
+      window.removeEventListener('keydown', onApplicationShortcut)
       removeBeforeUnload()
       const drafts = draftCoordinatorRef.current
       if (drafts) {
@@ -1337,9 +2122,16 @@ function App(): JSX.Element {
       }
       sessionStoreUnsubscribeRef.current?.()
       workspaceChangeUnsubscribeRef.current?.()
+      if (workspaceChangeRefreshTimerRef.current !== null) {
+        clearTimeout(workspaceChangeRefreshTimerRef.current)
+        workspaceChangeRefreshTimerRef.current = null
+      }
       workspaceCoordinatorRef.current?.close()
       workspaceActivationSequenceRef.current += 1
       workspaceActivationIntentRef.current += 1
+      workspaceRefreshAbortRef.current?.abort()
+      workspaceRefreshAbortRef.current = null
+      workspaceProjectionRef.current = null
       workspaceLocalizationBindingRef.current?.controller.abort()
       historyRestoreAbortRef.current?.abort()
       historyRestoreAbortRef.current = null
@@ -1351,6 +2143,10 @@ function App(): JSX.Element {
       singleFileImportAbortRef.current = null
       singleFileRecoveryAbortRef.current?.abort()
       singleFileRecoveryAbortRef.current = null
+      translationAbortRef.current?.abort()
+      translationAbortRef.current = null
+      translationFinalizationOperationRef.current = null
+      translationReviewOpenOperationRef.current = null
       for (const controller of directoryOpenControllers.values()) controller.abort()
       directoryOpenControllers.clear()
       skipDraftTrackingOnce.clear()
@@ -1388,41 +2184,102 @@ function App(): JSX.Element {
     async (_handle?: FileSystemDirectoryHandle, displayName?: string) => {
       const adapter = workspaceAdapterRef.current
       if (!adapter || !adapter.storage.capabilities.multipleFiles) return
+      workspaceRefreshAbortRef.current?.abort()
+      const controller = new AbortController()
+      workspaceRefreshAbortRef.current = controller
+      workspaceProjectionRef.current = null
       const token = ++refreshSequenceRef.current
-      const snapshot = await snapshotAdapterWorkspace(
-        adapter,
-        displayName || rootNameRef.current || (adapter.mode === 'opfs' ? 'OrbitPM' : 'Workspace')
-      )
-      if (token !== refreshSequenceRef.current || workspaceAdapterRef.current !== adapter) {
-        return
+      try {
+        const snapshot = await snapshotAdapterWorkspace(
+          adapter,
+          displayName || rootNameRef.current || (adapter.mode === 'opfs' ? 'OrbitPM' : 'Workspace'),
+          { signal: controller.signal }
+        )
+        if (
+          controller.signal.aborted ||
+          token !== refreshSequenceRef.current ||
+          workspaceAdapterRef.current !== adapter
+        ) {
+          return
+        }
+        liveWorkspaceIndexRef.current.replaceSavedFiles(snapshot.files)
+        setLiveWorkspaceVersion(liveWorkspaceIndexRef.current.version)
+        setTree(snapshot.tree)
+        workspaceProjectionRef.current = {
+          adapter,
+          generation: workspaceGenRef.current,
+          snapshot: { tree: snapshot.tree, issues: snapshot.issues }
+        }
+        setWorkspaceIssues([
+          ...new Set([
+            ...snapshot.issues.map(
+              (issue) => `${issue.path ?? t('breadcrumb.root')}: ${issue.message}`
+            ),
+            ...workspaceRuntimeIssuesRef.current
+          ])
+        ])
+      } catch (error) {
+        if (!controller.signal.aborted) throw error
+      } finally {
+        if (workspaceRefreshAbortRef.current === controller) {
+          workspaceRefreshAbortRef.current = null
+        }
       }
-      liveWorkspaceIndexRef.current.replaceSavedFiles(snapshot.files)
-      setLiveWorkspaceVersion(liveWorkspaceIndexRef.current.version)
-      setTree(snapshot.tree)
+    },
+    []
+  )
+
+  const applyCommittedWorkspaceProjection = useCallback(
+    (binding: WorkspaceOperationBinding, delta: CommittedWorkspaceProjectionDelta): boolean => {
+      const current = workspaceProjectionRef.current
+      if (
+        !binding.adapter ||
+        current?.adapter !== binding.adapter ||
+        current.generation !== binding.generation ||
+        workspaceAdapterRef.current !== binding.adapter ||
+        workspaceGenRef.current !== binding.generation
+      ) {
+        workspaceProjectionRef.current = null
+        return false
+      }
+      const next = applyCommittedWorkspaceProjectionDelta(current.snapshot, delta)
+      if (!next) {
+        workspaceProjectionRef.current = null
+        return false
+      }
+      refreshSequenceRef.current += 1
+      workspaceRefreshAbortRef.current?.abort()
+      workspaceRefreshAbortRef.current = null
+      workspaceProjectionRef.current = { ...current, snapshot: next }
+      setTree(next.tree)
       setWorkspaceIssues([
         ...new Set([
-          ...snapshot.issues.map(
-            (issue) => `${issue.path ?? t('breadcrumb.root')}: ${issue.message}`
-          ),
+          ...next.issues.map((issue) => `${issue.path ?? t('breadcrumb.root')}: ${issue.message}`),
           ...workspaceRuntimeIssuesRef.current
         ])
       ])
+      return true
     },
     []
   )
 
   const retryManifestReconciliation = useCallback(async () => {
     const repair = manifestRepair
+    const binding = captureWorkspaceOperation()
     if (
       !repair ||
-      workspaceAdapterRef.current !== repair.adapter ||
-      workspaceGenRef.current !== repair.generation
+      binding.adapter !== repair.adapter ||
+      binding.generation !== repair.generation ||
+      !isWorkspaceOperationCurrent(binding)
     ) {
       setManifestRepair(null)
       return
     }
     try {
-      await repair.adapter.reconcileManifest()
+      await runCoordinatedWorkspaceMutation(binding, async (lease) => {
+        await repair.adapter.reconcileManifest()
+        lease.publish([{ kind: 'saved', path: '.orbitpm/manifest.json' }])
+      })
       if (
         workspaceAdapterRef.current === repair.adapter &&
         workspaceGenRef.current === repair.generation
@@ -1439,20 +2296,28 @@ function App(): JSX.Element {
         pushToast(t('workspace.manifest.retryFailed', { error: errMsg(error) }), 'error')
       }
     }
-  }, [manifestRepair, pushToast])
+  }, [
+    captureWorkspaceOperation,
+    isWorkspaceOperationCurrent,
+    manifestRepair,
+    pushToast,
+    runCoordinatedWorkspaceMutation
+  ])
 
   const retryPathRecoveryCleanup = useCallback(async () => {
     const recovery = pathRecovery
+    const binding = captureWorkspaceOperation()
     if (
       !recovery ||
-      workspaceAdapterRef.current !== recovery.adapter ||
-      workspaceGenRef.current !== recovery.generation
+      binding.adapter !== recovery.adapter ||
+      binding.generation !== recovery.generation ||
+      !isWorkspaceOperationCurrent(binding)
     ) {
       setPathRecovery(null)
       return
     }
     try {
-      await opMutexRef.current.runExclusive(async () => {
+      await runCoordinatedWorkspaceMutation(binding, async (lease) => {
         if (
           workspaceAdapterRef.current !== recovery.adapter ||
           workspaceGenRef.current !== recovery.generation
@@ -1460,6 +2325,10 @@ function App(): JSX.Element {
           throw new Error(t('workspace.create.stale'))
         }
         await recovery.retry()
+        lease.publish([
+          { kind: 'invalidated', path: recovery.stagingPath },
+          { kind: 'invalidated', path: recovery.payloadPath }
+        ])
       })
       if (
         workspaceAdapterRef.current !== recovery.adapter ||
@@ -1478,10 +2347,18 @@ function App(): JSX.Element {
         pushToast(t('workspace.path.recoveryFailed', { error: errMsg(error) }), 'error')
       }
     }
-  }, [pathRecovery, pushToast])
+  }, [
+    captureWorkspaceOperation,
+    isWorkspaceOperationCurrent,
+    pathRecovery,
+    pushToast,
+    runCoordinatedWorkspaceMutation
+  ])
 
   const beginWorkspaceActivationIntent = useCallback((): number => {
     const intent = ++workspaceActivationIntentRef.current
+    historyRestoreAbortRef.current?.abort()
+    historyRestoreAbortRef.current = null
     singleFileImportAbortRef.current?.abort()
     singleFileImportAbortRef.current = null
     singleFileRecoveryAbortRef.current?.abort()
@@ -1494,10 +2371,15 @@ function App(): JSX.Element {
     directoryOpenAbortRef.current.clear()
     backupImportAbortRef.current?.abort()
     backupImportAbortRef.current = null
+    if (workspaceChangeRefreshTimerRef.current !== null) {
+      clearTimeout(workspaceChangeRefreshTimerRef.current)
+      workspaceChangeRefreshTimerRef.current = null
+    }
     persistenceInteractionLocksRef.current.clear()
     persistenceInteractionLockedRef.current = false
     setWorkspaceImportReview(null)
     setBackupImportState(null)
+    setDirtyTabClosePrompt(null)
     // These dialogs use singleton resolvers. Superseding a workspace request
     // must settle an older decision before the newer request can install one.
     switchResolveRef.current?.('cancel')
@@ -1590,9 +2472,26 @@ function App(): JSX.Element {
         manifestAdapter = bound.adapter
         activeAdapter = bound.adapter
       }
+      let coordination: BroadcastWorkspaceCoordinator | undefined
+      if (activeAdapter.storage.capabilities.multipleFiles) {
+        try {
+          coordination = new BroadcastWorkspaceCoordinator({
+            workspaceId: activeAdapter.id,
+            instanceId: pageInstanceIdRef.current!
+          })
+        } catch (error) {
+          pushToast(t('workspace.coordination.error', { error: errMsg(error) }), 'error')
+        }
+      }
+      const candidateWorkspaceIdentity: WorkspaceIdentity = {
+        id: activeAdapter.id,
+        generation: workspaceGenRef.current + 1,
+        mode: activeAdapter.mode
+      }
       let localizationCandidate: {
         controller: AbortController
         error: string | null
+        errorCode: LocalizationResourcesFailureCode | null
         snapshot: WorkspaceLocalizationState | null
         store: WorkspaceLocalizationStore
       } | null = null
@@ -1602,19 +2501,71 @@ function App(): JSX.Element {
       ) {
         const controller = new AbortController()
         const store = createWorkspaceLocalizationStore(activeAdapter)
-        localizationCandidate = { controller, error: null, snapshot: null, store }
+        localizationCandidate = {
+          controller,
+          error: null,
+          errorCode: null,
+          snapshot: null,
+          store
+        }
         try {
-          localizationCandidate.snapshot = await store.load({ signal: controller.signal })
+          localizationCandidate.snapshot = await runWorkspaceMutation(
+            {
+              coordination,
+              workspace: candidateWorkspaceIdentity,
+              signal: controller.signal,
+              isCurrent: activationIsCurrent
+            },
+            async (lease) => {
+              try {
+                const snapshot = await store.load({ signal: controller.signal })
+                lease.publish([
+                  {
+                    kind: 'saved',
+                    path: WORKSPACE_GLOSSARY_PATH,
+                    fingerprint: {
+                      hash: snapshot.files.glossary.hash,
+                      size: snapshot.files.glossary.size,
+                      modifiedAt: snapshot.files.glossary.modifiedAt
+                    }
+                  },
+                  {
+                    kind: 'saved',
+                    path: WORKSPACE_TRANSLATION_MEMORY_PATH,
+                    fingerprint: {
+                      hash: snapshot.files.translationMemory.hash,
+                      size: snapshot.files.translationMemory.size,
+                      modifiedAt: snapshot.files.translationMemory.modifiedAt
+                    }
+                  }
+                ])
+                return snapshot
+              } catch (error) {
+                if (error instanceof WorkspaceLocalizationPartialLoadError) {
+                  lease.publish(
+                    error.committedPaths.map((path) => ({
+                      kind: 'invalidated',
+                      path
+                    }))
+                  )
+                }
+                throw error
+              }
+            }
+          )
         } catch (error) {
           if (controller.signal.aborted || !activationIsCurrent()) {
             controller.abort()
+            coordination?.close()
             return
           }
           localizationCandidate.error = errMsg(error)
+          localizationCandidate.errorCode = localizationFailureCode(error)
           pushToast(localizationCandidate.error, 'error')
         }
         if (!activationIsCurrent()) {
           localizationCandidate.controller.abort()
+          coordination?.close()
           return
         }
       }
@@ -1627,24 +2578,31 @@ function App(): JSX.Element {
         } catch (error) {
           pushToast(t('draftRecovery.error', { error: errMsg(error) }), 'error')
           localizationCandidate?.controller.abort()
+          coordination?.close()
           throw error
         }
         if (!activationIsCurrent()) {
           localizationCandidate?.controller.abort()
+          coordination?.close()
           return
         }
         previousDrafts.dispose()
       }
       if (!activationIsCurrent()) {
         localizationCandidate?.controller.abort()
+        coordination?.close()
         return
       }
       sessionStoreUnsubscribeRef.current?.()
       sessionStoreUnsubscribeRef.current = null
       workspaceChangeUnsubscribeRef.current?.()
       workspaceChangeUnsubscribeRef.current = null
+      if (workspaceChangeRefreshTimerRef.current !== null) {
+        clearTimeout(workspaceChangeRefreshTimerRef.current)
+        workspaceChangeRefreshTimerRef.current = null
+      }
       workspaceCoordinatorRef.current?.close()
-      workspaceCoordinatorRef.current = null
+      workspaceCoordinatorRef.current = coordination ?? null
       sessionControllerRef.current = null
       draftCoordinatorRef.current = null
 
@@ -1654,11 +2612,15 @@ function App(): JSX.Element {
       const workspaceGeneration = workspaceGenRef.current
       manifestGeneration = workspaceGeneration
       refreshSequenceRef.current += 1
+      workspaceRefreshAbortRef.current?.abort()
+      workspaceRefreshAbortRef.current = null
+      workspaceProjectionRef.current = null
       workspaceLocalizationBindingRef.current?.controller.abort()
       workspaceAdapterRef.current = activeAdapter
       workspaceLocalizationSnapshotRef.current = null
       setWorkspaceLocalizationSnapshot(null)
       setWorkspaceLocalizationError(localizationCandidate?.error ?? null)
+      setWorkspaceLocalizationErrorCode(localizationCandidate?.errorCode ?? null)
       const workspaceLocalizationBinding = localizationCandidate
         ? {
             adapter: activeAdapter,
@@ -1700,22 +2662,10 @@ function App(): JSX.Element {
       drafts.attachLifecycle(window)
       draftCoordinatorRef.current = drafts
 
-      let coordination: BroadcastWorkspaceCoordinator | undefined
-      if (typeof globalThis.BroadcastChannel === 'function') {
-        try {
-          coordination = new BroadcastWorkspaceCoordinator({
-            workspaceId: activeAdapter.id,
-            instanceId: pageInstanceIdRef.current!
-          })
-          workspaceCoordinatorRef.current = coordination
-        } catch (error) {
-          pushToast(t('workspace.coordination.error', { error: errMsg(error) }), 'error')
-        }
-      }
-
       const controller = new DocumentSessionController({
         persistence: sessionPersistenceWithHistory(activeAdapter, workspaceIdentity, history),
         coordination,
+        requireCoordination: activeAdapter.storage.capabilities.multipleFiles,
         isWorkspaceCurrent: (identity) =>
           workspaceIdentityRef.current !== null &&
           identity.workspace.id === workspaceIdentityRef.current.id &&
@@ -1772,13 +2722,31 @@ function App(): JSX.Element {
           if (workspaceAdapterRef.current !== activeAdapter) return
           const openSession = controller.store
             .list()
-            .find((session) => session.identity.path === change.path)
+            .find(
+              (session) =>
+                session.identity.path === change.path ||
+                (change.previousPath !== undefined && session.identity.path === change.previousPath)
+            )
           if (openSession?.dirty) {
             pushToast(t('workspace.coordination.changed', { path: change.path }), 'error')
           }
-          if (activeAdapter.storage.capabilities.multipleFiles) {
-            void refreshWorkspace(handle ?? undefined, displayName)
+          if (
+            !activeAdapter.storage.capabilities.multipleFiles ||
+            workspaceChangeRefreshTimerRef.current !== null
+          ) {
+            return
           }
+          workspaceChangeRefreshTimerRef.current = setTimeout(() => {
+            workspaceChangeRefreshTimerRef.current = null
+            if (
+              workspaceCoordinatorRef.current !== coordination ||
+              workspaceAdapterRef.current !== activeAdapter ||
+              workspaceGenRef.current !== workspaceGeneration
+            ) {
+              return
+            }
+            void refreshWorkspace(handle ?? undefined, displayName)
+          }, 50)
         })
       }
 
@@ -1794,12 +2762,15 @@ function App(): JSX.Element {
       liveXmlUninstallersRef.current = {}
       translationAbortRef.current?.abort()
       translationAbortRef.current = null
+      translationFinalizationOperationRef.current = null
+      translationReviewOpenOperationRef.current = null
       liveWorkspaceIndexRef.current = new LiveWorkspaceIndex()
       setLiveWorkspaceVersion(liveWorkspaceIndexRef.current.version)
       setTree(null)
       workspaceRuntimeIssuesRef.current.clear()
       setWorkspaceIssues([])
       skipDraftTrackingOnceRef.current.clear()
+      setDirtyTabClosePrompt(null)
       setTabs([])
       setActiveKey(null)
       setContents({})
@@ -1823,6 +2794,7 @@ function App(): JSX.Element {
       localizationReviewByTabRef.current.clear()
       setTranslationReview(null)
       setTranslatingTab(null)
+      setTranslationFinalizingTab(null)
       setInterviewRequest(null)
       interviewApplyTokenByTabRef.current.clear()
       setAssistOpen(false)
@@ -1854,7 +2826,7 @@ function App(): JSX.Element {
       setHistory(emptyHistory())
       // A freshly-activated workspace has zero tabs (the catalog is showing), so
       // reveal the sidebar — the auto-collapse fires again the moment a file opens.
-      setSidebarOpen(true)
+      setExplorerOpen(true)
       if (workspaceLocalizationBinding && localizationCandidate?.snapshot) {
         if (
           workspaceLocalizationBindingRef.current !== workspaceLocalizationBinding ||
@@ -1911,12 +2883,18 @@ function App(): JSX.Element {
       isWorkspaceActivationIntentCurrent,
       refreshWorkspace,
       pushToast,
-      resolveSaveConflictPrompt
+      resolveSaveConflictPrompt,
+      setExplorerOpen,
+      setTranslationReview
     ]
   )
 
   // First-load: fallback landing, remembered-folder reconnect, or fresh open.
   useEffect(() => {
+    // Callback identities can legitimately change as responsive shell state
+    // reconciles. Startup is nevertheless a loading-phase operation only:
+    // never re-run it across breakpoints after a live workspace is active.
+    if (phase !== 'loading') return
     let cancelled = false
     ;(async () => {
       if (!support) {
@@ -1959,7 +2937,7 @@ function App(): JSX.Element {
     return () => {
       cancelled = true
     }
-  }, [support, browserWorkspaceAvailable, activateWorkspace])
+  }, [phase, support, browserWorkspaceAvailable, activateWorkspace])
 
   // Manual "Refresh" (tree header): re-scan the folder for changes made outside
   // the app. The refresh guard makes concurrent/stale scans safe (Codex M7/M8).
@@ -1967,10 +2945,11 @@ function App(): JSX.Element {
     const h = rootHandleRef.current
     if (!h) return
     await refreshWorkspace(h)
+    pushToast(t('toast.refreshed'), 'info')
     const binding = workspaceLocalizationBindingRef.current
     if (binding) {
       try {
-        const next = await binding.store.load({ signal: binding.controller.signal })
+        const next = await loadWorkspaceLocalizationCoordinated(binding)
         if (
           workspaceLocalizationBindingRef.current !== binding ||
           workspaceAdapterRef.current !== binding.adapter ||
@@ -1990,12 +2969,17 @@ function App(): JSX.Element {
         setWorkspaceLocalizationSnapshot(null)
         const message = errMsg(error)
         setWorkspaceLocalizationError(message)
+        setWorkspaceLocalizationErrorCode(localizationFailureCode(error))
         pushToast(message, 'error')
         return
       }
     }
-    pushToast(t('toast.refreshed'), 'info')
-  }, [commitWorkspaceLocalizationSnapshot, refreshWorkspace, pushToast])
+  }, [
+    commitWorkspaceLocalizationSnapshot,
+    loadWorkspaceLocalizationCoordinated,
+    refreshWorkspace,
+    pushToast
+  ])
 
   // Auto-refresh on window focus / tab visibility, debounced 2s, so external
   // filesystem changes (files added/edited/deleted outside the app) don't leave
@@ -2227,6 +3211,7 @@ function App(): JSX.Element {
 
   const handleOpenOpfs = useCallback(async () => {
     const intent = beginWorkspaceActivationIntent()
+    const binding = captureWorkspaceOperation()
     setPickBusy(true)
     setPickError(null)
     try {
@@ -2246,18 +3231,28 @@ function App(): JSX.Element {
       )
     } catch (error) {
       if (!isWorkspaceActivationIntentCurrent(intent)) return
-      const message = error instanceof Error ? error.message : String(error)
+      const message = t('workspace.storage.opfsOpenFailed')
       setPickError(message)
-      if (workspaceAdapterRef.current) pushToast(message, 'error')
+      if (workspaceAdapterRef.current) {
+        recordWorkspaceIssue(
+          t('workspace.storage.opfsOpenTechnicalEvidence', {
+            error: errMsg(error)
+          }),
+          binding
+        )
+        pushToast(message, 'error')
+      }
     } finally {
       if (isWorkspaceActivationIntentCurrent(intent)) setPickBusy(false)
     }
   }, [
     activateWorkspace,
     beginWorkspaceActivationIntent,
+    captureWorkspaceOperation,
     guardWorkspaceSwitch,
     isWorkspaceActivationIntentCurrent,
-    pushToast
+    pushToast,
+    recordWorkspaceIssue
   ])
 
   // --- tabs ---------------------------------------------------------------
@@ -2474,7 +3469,7 @@ function App(): JSX.Element {
         // double-click (and every non-tree open path: catalog, search, drill-down,
         // AI placement) takes the full window. A manual rail click after this wins
         // until the next collapsing open event.
-        if (opts?.collapse !== false) setSidebarOpen(false)
+        if (opts?.collapse !== false) setExplorerOpen(false)
         setCatalogOpen(false)
         setTabs((previous) =>
           previous.some((candidate) => candidate.key === key) ? previous : [...previous, tab]
@@ -2588,6 +3583,7 @@ function App(): JSX.Element {
       isWorkspaceOperationCurrent,
       pushToast,
       reviewRecoveryDraft,
+      setExplorerOpen,
       workspaceLocalizationError
     ]
   )
@@ -2611,7 +3607,7 @@ function App(): JSX.Element {
       // Same as openDirectoryFile: an opening tab collapses the sidebar to the
       // rail — EXCEPT when the caller needs the sidebar to survive (AI placement
       // keeps the panel mounted so its success box + fill-gaps CTA can show).
-      if (opts?.collapse !== false) setSidebarOpen(false)
+      if (opts?.collapse !== false) setExplorerOpen(false)
       setCatalogOpen(false)
       const tab: Tab = {
         key,
@@ -2628,7 +3624,7 @@ function App(): JSX.Element {
       setActiveKey(key)
       return key
     },
-    [ensureDocumentSession]
+    [ensureDocumentSession, setExplorerOpen]
   )
 
   const activateSingleFileDocument = useCallback(
@@ -2744,7 +3740,7 @@ function App(): JSX.Element {
         dirtyByKeyRef.current = { [path]: visibleDirty }
         setDirtyByKey({ [path]: visibleDirty })
         setActiveKey(path)
-        setSidebarOpen(false)
+        setExplorerOpen(false)
       } finally {
         options?.signal?.removeEventListener('abort', abortRecovery)
         if (singleFileRecoveryAbortRef.current === recoveryController) {
@@ -2761,23 +3757,20 @@ function App(): JSX.Element {
       isWorkspaceActivationIntentCurrent,
       isWorkspaceOperationCurrent,
       pushToast,
-      reviewRecoveryDraft
+      reviewRecoveryDraft,
+      setExplorerOpen
     ]
   )
 
-  const closeTab = useCallback(
-    (key: string, discardAlreadyConfirmed = false): boolean => {
+  const performTabClose = useCallback(
+    (key: string): boolean => {
+      const currentTabs = tabsRef.current
+      const closingTab = currentTabs.find((tab) => tab.key === key)
+      if (!closingTab) return false
       pendingProcessFocusRef.current.delete(key)
-      const closingTab = tabs.find((tab) => tab.key === key)
       const controller = sessionControllerRef.current
       const closingSession = controller?.store.get(key)
-      const explicitlyDiscarded = Boolean(dirtyByKey[key] || closingSession?.dirty)
-      if (explicitlyDiscarded && !discardAlreadyConfirmed) {
-        const confirmed = window.confirm(
-          t('confirm.discardUnsaved', { title: closingTab?.title ?? 'this file' })
-        )
-        if (!confirmed) return false
-      }
+      const explicitlyDiscarded = Boolean(dirtyByKeyRef.current[key] || closingSession?.dirty)
       forcedUndurableDirtyByKeyRef.current.delete(key)
       if (key in dirtyByKeyRef.current) {
         const nextDirty = { ...dirtyByKeyRef.current }
@@ -2786,10 +3779,10 @@ function App(): JSX.Element {
       }
       // Closing the last tab returns to an empty canvas (or the catalog) — bring
       // the sidebar back so the explorer / AI generator are reachable again.
-      if (tabs.filter((t) => t.key !== key).length === 0) setSidebarOpen(true)
+      if (currentTabs.filter((tab) => tab.key !== key).length === 0) setExplorerOpen(true)
       setActiveKey((prev) => {
         if (prev !== key) return prev
-        const remaining = tabs.filter((t) => t.key !== key)
+        const remaining = currentTabs.filter((tab) => tab.key !== key)
         return remaining.length > 0 ? remaining[remaining.length - 1].key : null
       })
       setTabs((prev) => prev.filter((t) => t.key !== key))
@@ -2842,8 +3835,83 @@ function App(): JSX.Element {
       })
       return true
     },
-    [dirtyByKey, pushToast, tabs]
+    [pushToast, setExplorerOpen]
   )
+
+  const closeTab = useCallback(
+    (key: string): boolean => {
+      const closingTab = tabsRef.current.find((tab) => tab.key === key)
+      if (!closingTab) return false
+      const controller = sessionControllerRef.current
+      const closingSession = controller?.store.get(key)
+      if (dirtyByKeyRef.current[key] || closingSession?.dirty) {
+        setDirtyTabClosePrompt({
+          key,
+          title: closingTab.title,
+          generation: closingTab.gen,
+          controller,
+          sessionIncarnation: closingSession?.incarnation ?? null
+        })
+        // ProcessTabList's synchronous contract treats a pending decision like
+        // a cancelled close. The dialog completes the exact captured close.
+        return false
+      }
+      return performTabClose(key)
+    },
+    [performTabClose]
+  )
+
+  const confirmDirtyTabClose = useCallback(() => {
+    if (!dirtyTabClosePrompt) return
+    const prompt = dirtyTabClosePrompt
+    setDirtyTabClosePrompt(null)
+
+    const currentTabs = tabsRef.current
+    const closingIndex = currentTabs.findIndex((tab) => tab.key === prompt.key)
+    const currentTab = currentTabs[closingIndex]
+    const currentController = sessionControllerRef.current
+    const currentSession = currentController?.store.get(prompt.key)
+    if (
+      !currentTab ||
+      currentTab.gen !== prompt.generation ||
+      currentController !== prompt.controller ||
+      (currentSession?.incarnation ?? null) !== prompt.sessionIncarnation
+    ) {
+      return
+    }
+
+    const remaining = currentTabs.filter((tab) => tab.key !== prompt.key)
+    const focusKey =
+      prompt.key === activeKeyRef.current
+        ? (remaining[Math.min(closingIndex, remaining.length - 1)]?.key ?? null)
+        : (activeKeyRef.current ??
+          remaining[Math.min(closingIndex, remaining.length - 1)]?.key ??
+          null)
+    if (!performTabClose(prompt.key)) return
+    if (focusKey) setActiveKey(focusKey)
+    requestAnimationFrame(() => {
+      if (focusKey) {
+        document.getElementById(processTabId(focusKey))?.focus()
+      } else {
+        editorRegionRef.current?.focus()
+      }
+    })
+  }, [dirtyTabClosePrompt, performTabClose])
+
+  useEffect(() => {
+    if (!dirtyTabClosePrompt) return
+    const currentTab = tabs.find((tab) => tab.key === dirtyTabClosePrompt.key)
+    const currentController = sessionControllerRef.current
+    const currentSession = currentController?.store.get(dirtyTabClosePrompt.key)
+    if (
+      !currentTab ||
+      currentTab.gen !== dirtyTabClosePrompt.generation ||
+      currentController !== dirtyTabClosePrompt.controller ||
+      (currentSession?.incarnation ?? null) !== dirtyTabClosePrompt.sessionIncarnation
+    ) {
+      setDirtyTabClosePrompt(null)
+    }
+  }, [dirtyByKey, dirtyTabClosePrompt, tabs])
 
   const discardAndCloseSessions = useCallback(
     async (
@@ -2904,7 +3972,7 @@ function App(): JSX.Element {
       setActiveKey((current) =>
         current && ids.has(current) ? (remainingTabs.at(-1)?.key ?? null) : current
       )
-      if (remainingTabs.length === 0) setSidebarOpen(true)
+      if (remainingTabs.length === 0) setExplorerOpen(true)
       setContents(dropClosed)
       setDirtyByKey(dropClosed)
       setModelersByKey(dropClosed)
@@ -2915,7 +3983,7 @@ function App(): JSX.Element {
       })
       setLiveWorkspaceVersion(binding.index.version)
     },
-    []
+    [setExplorerOpen]
   )
 
   const handleDirtyChange = useCallback((key: string, dirty: boolean) => {
@@ -3147,9 +4215,13 @@ function App(): JSX.Element {
           throw new Error(t('session.save.newerEdits'))
         }
         if (!preservation.valid) {
-          throw new Error(
-            `Save blocked because opaque BPMN extension data changed: ${preservation.issues.map((issue) => issue.code).join(', ')}`
-          )
+          const evidence = t('session.save.preservationTechnicalEvidence', {
+            codes:
+              preservation.issues.map((issue) => issue.code).join(', ') ||
+              t('workspace.diagnostic.unknown')
+          })
+          recordWorkspaceIssue(`${tab.relPath ?? tab.title}: ${evidence}`, binding)
+          throw new Error(t('session.save.preservationBlocked'))
         }
       }
       await validateReleaseXml(xml, {
@@ -3365,9 +4437,10 @@ function App(): JSX.Element {
                   [tab.key]: true
                 }
                 setDirtyByKey((previous) => ({ ...previous, [tab.key]: true }))
-                const captureDetail = `${errMsg(error)}; live XML capture: ${errMsg(
-                  captured.error
-                )}`
+                const captureDetail = t('session.save.liveXmlCaptureDetail', {
+                  error: errMsg(error),
+                  captureError: errMsg(captured.error)
+                })
                 const recoveryDetail = draftRecoveryError
                   ? `${captureDetail}; ${errMsg(draftRecoveryError)}`
                   : captureDetail
@@ -3430,7 +4503,10 @@ function App(): JSX.Element {
             const recoveryDetail =
               canvasRecoveryError === undefined
                 ? errMsg(error)
-                : `${errMsg(error)}; local canvas recovery: ${errMsg(canvasRecoveryError)}`
+                : t('session.save.localCanvasRecoveryDetail', {
+                    error: errMsg(error),
+                    recoveryError: errMsg(canvasRecoveryError)
+                  })
             recordWorkspaceIssue(`${externalPath}: ${recoveryDetail}`, binding)
             throw new Error(
               t('session.save.reloadEditorFailed', {
@@ -3506,7 +4582,20 @@ function App(): JSX.Element {
             throw new Error(t('alert.staleWrite'))
           }
           if (outcome.status === 'permission-loss' || outcome.status === 'storage-failure') {
-            throw new Error(outcome.failure.message)
+            recordWorkspaceIssue(
+              `${tab.relPath}: ${t('session.save.storageTechnicalEvidence', {
+                code: outcome.failure.code,
+                error: outcome.failure.message
+              })}`,
+              binding
+            )
+            throw new Error(
+              t(
+                outcome.status === 'permission-loss'
+                  ? 'session.save.permissionLoss'
+                  : 'session.save.storageFailure'
+              )
+            )
           }
           throw new Error(t('session.save.failed', { status: outcome.status }))
         }
@@ -3581,8 +4670,14 @@ function App(): JSX.Element {
         dirtyByKeyRef.current = { ...dirtyByKeyRef.current, [tab.key]: false }
         setDirtyByKey((previous) => ({ ...previous, [tab.key]: false }))
         if (outcome.status === 'saved-as') {
-          await refreshWorkspace()
-          if (!isCurrent()) throw new Error(t('alert.staleWrite'))
+          const projected = applyCommittedWorkspaceProjection(binding, {
+            kind: 'upsert-bpmn',
+            path: savedPath
+          })
+          if (!projected) {
+            await refreshWorkspace()
+            if (!isCurrent()) throw new Error(t('alert.staleWrite'))
+          }
         }
         return { durable: true }
       }
@@ -3592,6 +4687,7 @@ function App(): JSX.Element {
       contents,
       captureLiveSession,
       captureWorkspaceOperation,
+      applyCommittedWorkspaceProjection,
       ensureDocumentSession,
       invalidateLiveXmlCapture,
       isWorkspaceOperationCurrent,
@@ -4024,11 +5120,11 @@ function App(): JSX.Element {
    * canonical row. This path is for file-level UI that has no process id. */
   const openFileAndReveal = useCallback(
     (relPath: string) => {
-      setSidebarOpen(true)
+      setExplorerOpen(true)
       requestTreeReveal(undefined, relPath)
       void openDirectoryFile(relPath, { collapse: false })
     },
-    [openDirectoryFile, requestTreeReveal]
+    [openDirectoryFile, requestTreeReveal, setExplorerOpen]
   )
 
   /**
@@ -4053,7 +5149,7 @@ function App(): JSX.Element {
       if (mountedModeler) {
         queueProcessFocus(relPath, mountedModeler, processId)
       }
-      setSidebarOpen(true)
+      setExplorerOpen(true)
       requestTreeReveal(processId, relPath)
       void openDirectoryFile(relPath, { collapse: false })
       return true
@@ -4065,7 +5161,8 @@ function App(): JSX.Element {
       modelersByKey,
       openDirectoryFile,
       requestTreeReveal,
-      queueProcessFocus
+      queueProcessFocus,
+      setExplorerOpen
     ]
   )
   // Owner suggestions for the Step-details picker + the "Export owners (CSV)"
@@ -4162,7 +5259,7 @@ function App(): JSX.Element {
       const isCurrent = (): boolean => isWorkspaceOperationCurrent(binding)
       if (!isCurrent()) return
       try {
-        const relPath = await opMutexRef.current.runExclusive(async () => {
+        const relPath = await runCoordinatedWorkspaceMutation(binding, async (lease) => {
           if (!isCurrent()) throw new Error(t('alert.staleWrite'))
           const taken = await directBpmnSlugs(adapter, '')
           if (!isCurrent()) throw new Error(t('alert.staleWrite'))
@@ -4172,12 +5269,13 @@ function App(): JSX.Element {
           const doc = buildMissingProcessDoc(calledElementId, name, slug)
           const created = await writeUniqueBpmn(adapter, '', doc.fileBaseName, doc.xml)
           if (!isCurrent()) throw new Error(t('alert.staleWrite'))
+          lease.publish([{ kind: 'saved', path: created }])
           return created
         })
         if (!isCurrent()) return
         await refreshWorkspace()
         if (!isCurrent()) return
-        setSidebarOpen(true)
+        setExplorerOpen(true)
         requestTreeReveal(calledElementId, relPath)
         void openDirectoryFile(relPath, { collapse: false })
       } catch (err) {
@@ -4194,7 +5292,9 @@ function App(): JSX.Element {
       refreshWorkspace,
       openDirectoryFile,
       pushToast,
-      requestTreeReveal
+      requestTreeReveal,
+      runCoordinatedWorkspaceMutation,
+      setExplorerOpen
     ]
   )
 
@@ -4238,8 +5338,8 @@ function App(): JSX.Element {
         // Commit the canvas/sidebar intent before the storage write becomes
         // externally observable; this prevents a late post-create collapse
         // from overriding a user's immediate rail toggle.
-        setSidebarOpen(false)
-        const relPath = await opMutexRef.current.runExclusive(async () => {
+        setExplorerOpen(false)
+        const relPath = await runCoordinatedWorkspaceMutation(binding, async (lease) => {
           if (!isCurrent()) throw new Error(t('alert.staleWrite'))
           const taken = await directBpmnSlugs(adapter, folderRel)
           if (!isCurrent()) throw new Error(t('alert.staleWrite'))
@@ -4252,6 +5352,7 @@ function App(): JSX.Element {
           )
           const created = await writeUniqueBpmn(adapter, folderRel, doc.fileBaseName, doc.xml)
           if (!isCurrent()) throw new Error(t('alert.staleWrite'))
+          lease.publish([{ kind: 'saved', path: created }])
           return created
         })
         if (!isCurrent()) return
@@ -4270,7 +5371,9 @@ function App(): JSX.Element {
       promptText,
       refreshWorkspace,
       openDirectoryFile,
-      pushToast
+      pushToast,
+      runCoordinatedWorkspaceMutation,
+      setExplorerOpen
     ]
   )
 
@@ -4325,14 +5428,22 @@ function App(): JSX.Element {
       const isCurrent = (): boolean => isWorkspaceOperationCurrent(binding)
       if (!isCurrent()) return
       try {
-        await opMutexRef.current.runExclusive(async () => {
+        const createdPath = joinRel(folderRel, name.trim())
+        await runCoordinatedWorkspaceMutation(binding, async (lease) => {
           if (!isCurrent()) throw new Error(t('alert.staleWrite'))
-          await adapter.createFolder(joinRel(folderRel, name.trim()))
+          await adapter.createFolder(createdPath)
           if (!isCurrent()) throw new Error(t('alert.staleWrite'))
+          lease.publish([{ kind: 'invalidated', path: createdPath }])
         })
         if (!isCurrent()) return
-        await refreshWorkspace()
-        if (!isCurrent()) return
+        const projected = applyCommittedWorkspaceProjection(binding, {
+          kind: 'create-directory',
+          path: createdPath
+        })
+        if (!projected) {
+          await refreshWorkspace()
+          if (!isCurrent()) return
+        }
       } catch (err) {
         if (isCurrent()) {
           pushToast(t('alert.createFolderFailed', { error: errMsg(err) }), 'error')
@@ -4340,10 +5451,12 @@ function App(): JSX.Element {
       }
     },
     [
+      applyCommittedWorkspaceProjection,
       captureWorkspaceOperation,
       isWorkspaceOperationCurrent,
       promptText,
       refreshWorkspace,
+      runCoordinatedWorkspaceMutation,
       pushToast
     ]
   )
@@ -4530,9 +5643,72 @@ function App(): JSX.Element {
                 }
               },
               mutateStorage: async (readyPlan) => {
-                const mutation = await mutatePath(readyPlan)
-                retryFinalize = mutation.finalize
-                return mutation
+                const lease = await acquireCoordinatedWorkspaceMutation(binding)
+                let leaseReleased = false
+                const releaseLease = async (): Promise<void> => {
+                  if (leaseReleased) return
+                  leaseReleased = true
+                  try {
+                    await lease.release()
+                  } catch (error) {
+                    pushToast(t('workspace.coordination.error', { error: errMsg(error) }), 'error')
+                  }
+                }
+                const changedPaths =
+                  readyPlan.request.kind === 'delete'
+                    ? [
+                        {
+                          kind: 'deleted' as const,
+                          path: readyPlan.request.sourcePath
+                        }
+                      ]
+                    : [
+                        {
+                          kind: 'moved' as const,
+                          path: readyPlan.request.destinationPath!,
+                          previousPath: readyPlan.request.sourcePath
+                        }
+                      ]
+                const invalidatedPaths = [
+                  {
+                    kind: 'invalidated' as const,
+                    path: readyPlan.request.sourcePath
+                  },
+                  ...(readyPlan.request.destinationPath
+                    ? [
+                        {
+                          kind: 'invalidated' as const,
+                          path: readyPlan.request.destinationPath
+                        }
+                      ]
+                    : [])
+                ]
+                try {
+                  const mutation = await mutatePath(readyPlan)
+                  retryFinalize = mutation.finalize
+                  return {
+                    rollback: async () => {
+                      try {
+                        await mutation.rollback()
+                      } finally {
+                        lease.publish(invalidatedPaths)
+                        await releaseLease()
+                      }
+                    },
+                    finalize: async () => {
+                      try {
+                        await mutation.finalize?.()
+                      } finally {
+                        lease.publish(changedPaths)
+                        await releaseLease()
+                      }
+                    }
+                  }
+                } catch (error) {
+                  lease.publish(invalidatedPaths)
+                  await releaseLease()
+                  throw error
+                }
               },
               migrateDrafts: drafts
                 ? (migrations) => drafts.migrateDraftRecords(migrations)
@@ -4571,8 +5747,25 @@ function App(): JSX.Element {
         }
         await updateUiAfterPathCommit(result.plan, binding.index, drafts, isCurrent)
         if (!isCurrent()) return 'failed'
-        await refreshWorkspace()
-        if (!isCurrent()) return 'failed'
+        const projected = applyCommittedWorkspaceProjection(
+          binding,
+          result.plan.request.kind === 'delete'
+            ? {
+                kind: 'remove',
+                path: result.plan.request.sourcePath,
+                entryKind: result.plan.request.entryKind
+              }
+            : {
+                kind: 'relocate',
+                from: result.plan.request.sourcePath,
+                to: result.plan.request.destinationPath!,
+                entryKind: result.plan.request.entryKind
+              }
+        )
+        if (!projected) {
+          await refreshWorkspace()
+          if (!isCurrent()) return 'failed'
+        }
         if (result.finalizeError) {
           const transactionHash = await sha256Hex(new TextEncoder().encode(result.plan.id))
           if (!isCurrent()) return 'failed'
@@ -4603,6 +5796,8 @@ function App(): JSX.Element {
     },
     [
       acquirePersistenceInteractionLock,
+      acquireCoordinatedWorkspaceMutation,
+      applyCommittedWorkspaceProjection,
       captureWorkspaceOperation,
       isWorkspaceOperationCurrent,
       refreshWorkspace,
@@ -4978,9 +6173,7 @@ function App(): JSX.Element {
         !localizationBinding.controller.signal.aborted
       if (!localizationBinding || !isCurrent()) return false
       try {
-        const next = await localizationBinding.store.load({
-          signal: localizationBinding.controller.signal
-        })
+        const next = await loadWorkspaceLocalizationCoordinated(localizationBinding, binding)
         if (!isCurrent()) return false
         commitWorkspaceLocalizationSnapshot(localizationBinding, next)
         return true
@@ -4990,6 +6183,7 @@ function App(): JSX.Element {
         workspaceLocalizationSnapshotRef.current = null
         setWorkspaceLocalizationSnapshot(null)
         setWorkspaceLocalizationError(message)
+        setWorkspaceLocalizationErrorCode(localizationFailureCode(error))
         recordWorkspaceIssue(message, binding)
         pushToast(
           t('settings.localization.loadFailed', {
@@ -5003,6 +6197,7 @@ function App(): JSX.Element {
     [
       commitWorkspaceLocalizationSnapshot,
       isWorkspaceOperationCurrent,
+      loadWorkspaceLocalizationCoordinated,
       pushToast,
       recordWorkspaceIssue
     ]
@@ -5127,7 +6322,10 @@ function App(): JSX.Element {
         // the React `xml` prop or import a fallback over that live canvas.
         updateUi(latest, { forceDirty: true })
         reportRetainedEditor(
-          `${reason} Live XML capture failed, so the canvas was left untouched and marked dirty: ${errMsg(captureError)}`
+          t('session.save.retainedEditorCaptureFailed', {
+            reason,
+            error: errMsg(captureError)
+          })
         )
         return true
       }
@@ -5227,9 +6425,7 @@ function App(): JSX.Element {
         if (!stable) {
           binding.drafts?.track(retained)
           updateUi(retained, { forceDirty: true })
-          reportRetainedEditor(
-            `${reason} The editor kept changing during recovery; its canvas was left untouched and remains dirty.`
-          )
+          reportRetainedEditor(t('session.save.retainedEditorChangedDuringRecovery', { reason }))
           return true
         }
         // Retained XML is already visible in the live modeler. Changing the
@@ -5255,7 +6451,7 @@ function App(): JSX.Element {
           if (captured.status === 'unavailable') {
             return preserveUncapturedEditor(
               openSession.currentXml,
-              'The open editor changed while the reviewed import committed.',
+              t('workspace.sync.reviewedImportEditorChanged'),
               captured.error
             )
           }
@@ -5263,7 +6459,7 @@ function App(): JSX.Element {
         }
         return retainLocalXml(
           openSession.currentXml,
-          'The open editor changed while the reviewed import committed; its local XML was retained as a recovery draft.',
+          t('workspace.sync.reviewedImportLocalRetained'),
           false
         )
       }
@@ -5295,7 +6491,7 @@ function App(): JSX.Element {
           if (captured.status === 'unavailable') {
             return preserveUncapturedEditor(
               previousXml,
-              'The open editor changed while committed XML was being reloaded.',
+              t('workspace.sync.committedReloadEditorChanged'),
               captured.error
             )
           }
@@ -5304,7 +6500,7 @@ function App(): JSX.Element {
         openSession = retained
         return retainLocalXml(
           retained.currentXml,
-          'The open editor changed while committed XML was being reloaded; its newer local XML was retained as a recovery draft.',
+          t('workspace.sync.committedReloadLocalRetained'),
           !immediateEditorDirty
         )
       }
@@ -5328,7 +6524,7 @@ function App(): JSX.Element {
         openSession = finalSession
         return retainLocalXml(
           finalSession.currentXml,
-          'The open editor changed during post-commit cleanup; its newer local XML was retained as a recovery draft.',
+          t('workspace.sync.postCommitCleanupLocalRetained'),
           !dirtyByKeyRef.current[finalSession.id]
         )
       }
@@ -5512,7 +6708,51 @@ function App(): JSX.Element {
         history: binding.history ?? undefined,
         currentProcessIndex: binding.index.processIndex(),
         signal: controller.signal,
-        runExclusive: (operation) => opMutexRef.current.runExclusive(operation)
+        runExclusive: (operation) =>
+          runCoordinatedWorkspaceMutation(
+            binding,
+            async (lease) => {
+              const result = await operation()
+              if (result.status === 'committed') {
+                lease.publish([
+                  ...result.applied.map((item) => ({
+                    kind: 'saved' as const,
+                    path: item.destinationPath,
+                    fingerprint: {
+                      hash: item.snapshot.hash,
+                      size: item.snapshot.size,
+                      modifiedAt: item.snapshot.modifiedAt
+                    }
+                  })),
+                  ...(binding.history
+                    ? [{ kind: 'invalidated' as const, path: '.orbitpm/history' }]
+                    : [])
+                ])
+              } else if (result.status === 'rolled-back') {
+                lease.publish([
+                  ...result.appliedBeforeFailure.map((item) => ({
+                    kind: item.replaced ? ('saved' as const) : ('deleted' as const),
+                    path: item.destinationPath
+                  })),
+                  ...(binding.history
+                    ? [{ kind: 'invalidated' as const, path: '.orbitpm/history' }]
+                    : [])
+                ])
+              } else if (result.status === 'rollback-failed') {
+                lease.publish([
+                  ...result.appliedBeforeFailure.map((item) => ({
+                    kind: 'invalidated' as const,
+                    path: item.destinationPath
+                  })),
+                  ...(binding.history
+                    ? [{ kind: 'invalidated' as const, path: '.orbitpm/history' }]
+                    : [])
+                ])
+              }
+              return result
+            },
+            controller.signal
+          )
       })
       if (outcome.status !== 'committed') {
         if (!bindingIsCurrent()) return
@@ -5520,9 +6760,12 @@ function App(): JSX.Element {
         const rollback = outcome.rollbackErrors
           .map((failure) => `${failure.path ?? '?'}: ${failure.message}`)
           .join('; ')
-        const evidence =
-          `${outcome.error.message}; review: ${outcome.evidence.reviewDigest}; ` +
-          `applied: ${applied || 'none'}; rollback: ${rollback || 'complete'}`
+        const evidence = t('workspace.import.rollbackEvidence', {
+          error: outcome.error.message,
+          review: outcome.evidence.reviewDigest,
+          applied: applied || t('workspace.diagnostic.none'),
+          rollback: rollback || t('workspace.diagnostic.complete')
+        })
         if (outcome.status === 'rollback-failed') {
           try {
             await refreshWorkspace(rootHandleRef.current ?? undefined)
@@ -5543,7 +6786,7 @@ function App(): JSX.Element {
           if (affectedPaths.some(isWorkspaceLocalizationResourcePath)) {
             await reloadWorkspaceLocalizationResources(
               binding,
-              'Workspace import rollback left localization resources uncertain'
+              t('workspace.localization.workspaceImportRollbackUncertain')
             )
           }
           if (!bindingIsCurrent()) return
@@ -5596,8 +6839,13 @@ function App(): JSX.Element {
       }
       if (!bindingIsCurrent()) return
       for (const warning of outcome.postCommitWarnings) {
-        recordWorkspaceIssue(warning, binding)
-        pushToast(warning, 'error')
+        recordWorkspaceIssue(
+          t('workspace.import.postCommitTechnicalEvidence', {
+            error: warning
+          }),
+          binding
+        )
+        pushToast(t('workspace.import.postCommitWarning'), 'error')
       }
       setWorkspaceImportReview(null)
       pushToast(
@@ -5609,10 +6857,12 @@ function App(): JSX.Element {
       )
     } catch (error) {
       if (storageCommitted && bindingIsCurrent()) {
-        const message = `Workspace import storage committed, but post-commit reconciliation failed: ${errMsg(error)}`
+        const evidence = t('workspace.import.postCommitTechnicalEvidence', {
+          error: errMsg(error)
+        })
         setWorkspaceImportReview(null)
-        recordWorkspaceIssue(message, binding)
-        pushToast(t('session.save.reloadEditorFailed', { error: message }), 'error')
+        recordWorkspaceIssue(evidence, binding)
+        pushToast(t('workspace.import.postCommitReconciliationFailed'), 'error')
       } else if (operationIsCurrent()) {
         const message = errMsg(error)
         setWorkspaceImportReview((current) =>
@@ -5641,6 +6891,7 @@ function App(): JSX.Element {
     refreshWorkspace,
     reloadWorkspaceLocalizationResources,
     requestPathDirtyDecision,
+    runCoordinatedWorkspaceMutation,
     synchronizeCommittedBpmnSnapshot,
     workspaceImportReview
   ])
@@ -5705,9 +6956,13 @@ function App(): JSX.Element {
           signal: controller.signal
         })
         if (!isCurrent()) return
-        if (prepared.autoLayouted && !confirmGeneratedImportLayout()) {
+        if (
+          prepared.autoLayouted &&
+          !(await requestGeneratedLayoutReview(prepared.xml, controller.signal))
+        ) {
           return
         }
+        if (!isCurrent()) return
         const reviewed = await reviewBpmnXmlLocalization(prepared.xml, {
           source: LocalizationSource.Xml,
           target: langRef.current,
@@ -5746,7 +7001,8 @@ function App(): JSX.Element {
       beginWorkspaceActivationIntent,
       guardWorkspaceSwitch,
       isWorkspaceActivationIntentCurrent,
-      pushToast
+      pushToast,
+      requestGeneratedLayoutReview
     ]
   )
 
@@ -6003,37 +7259,73 @@ function App(): JSX.Element {
             }
           )
         }
-        const result = await opMutexRef.current.runExclusive(async () => {
-          if (!operationIsCurrent()) throw new Error(t('alert.staleWrite'))
-          return applyWorkspaceBackupImport(adapter, plan, {
-            decisions,
-            reviewedDigest: plan.reviewDigest,
-            currentProcessIndex: binding.index.processIndex(),
-            signal: controller.signal,
-            beforeOverwrite: async (path, existing) => {
-              if (!operationIsCurrent()) throw new Error(t('alert.staleWrite'))
-              const normalized = normalizeWorkspacePath(path)
-              const lower = normalized.toLocaleLowerCase('en-US')
-              if (/\.bpmn$/iu.test(normalized) && !lower.startsWith('.orbitpm/')) {
-                await history?.createRevision(path, {
-                  reason: 'backup-import',
-                  snapshot: existing,
-                  prune: false,
-                  signal: controller.signal
-                })
-                if (history) historyRevisions += 1
+        const result = await runCoordinatedWorkspaceMutation(
+          binding,
+          async (lease) => {
+            if (!operationIsCurrent()) throw new Error(t('alert.staleWrite'))
+            const outcome = await applyWorkspaceBackupImport(adapter, plan, {
+              decisions,
+              reviewedDigest: plan.reviewDigest,
+              currentProcessIndex: binding.index.processIndex(),
+              signal: controller.signal,
+              beforeOverwrite: async (path, existing) => {
                 if (!operationIsCurrent()) throw new Error(t('alert.staleWrite'))
+                const normalized = normalizeWorkspacePath(path)
+                const lower = normalized.toLocaleLowerCase('en-US')
+                if (/\.bpmn$/iu.test(normalized) && !lower.startsWith('.orbitpm/')) {
+                  await history?.createRevision(path, {
+                    reason: 'backup-import',
+                    snapshot: existing,
+                    prune: false,
+                    signal: controller.signal
+                  })
+                  if (history) historyRevisions += 1
+                  if (!operationIsCurrent()) throw new Error(t('alert.staleWrite'))
+                }
               }
+            })
+            if (outcome.status === 'committed') {
+              lease.publish(
+                outcome.applied.map((item) => ({
+                  kind: 'saved',
+                  path: item.destinationPath,
+                  fingerprint: {
+                    hash: item.snapshot.hash,
+                    size: item.snapshot.size,
+                    modifiedAt: item.snapshot.modifiedAt
+                  }
+                }))
+              )
+            } else if (outcome.status === 'rolled-back') {
+              lease.publish(
+                outcome.appliedBeforeFailure.map((item) => ({
+                  kind: item.replaced ? ('saved' as const) : ('deleted' as const),
+                  path: item.destinationPath
+                }))
+              )
+            } else if (outcome.status === 'rollback-failed') {
+              lease.publish(
+                outcome.appliedBeforeFailure.map((item) => ({
+                  kind: 'invalidated',
+                  path: item.destinationPath
+                }))
+              )
             }
-          })
-        })
+            return outcome
+          },
+          controller.signal
+        )
         if (result.status === 'rollback-failed') {
           if (!bindingIsCurrent()) return
           const applied = result.appliedBeforeFailure.map((item) => item.destinationPath).join(', ')
           const rollback = result.rollbackErrors
             .map((failure) => `${failure.path ?? '?'}: ${failure.message}`)
             .join('; ')
-          const evidence = `${result.error.message}; applied: ${applied || 'none'}; rollback: ${rollback || 'unknown'}`
+          const evidence = t('workspace.backup.rollbackEvidence', {
+            error: result.error.message,
+            applied: applied || t('workspace.diagnostic.none'),
+            rollback: rollback || t('workspace.diagnostic.unknown')
+          })
           try {
             await refreshWorkspace(rootHandleRef.current ?? undefined)
           } catch (refreshError) {
@@ -6053,7 +7345,7 @@ function App(): JSX.Element {
           if (affectedPaths.some(isWorkspaceLocalizationResourcePath)) {
             await reloadWorkspaceLocalizationResources(
               binding,
-              'Backup rollback left localization resources uncertain'
+              t('workspace.localization.backupRollbackUncertain')
             )
           }
           if (!bindingIsCurrent()) return
@@ -6078,12 +7370,21 @@ function App(): JSX.Element {
         if (!bindingIsCurrent()) return
         if (historyRevisions > 0) {
           try {
-            await history?.enforceRetention()
+            await runCoordinatedWorkspaceMutation(
+              binding,
+              async (lease) => {
+                await history?.enforceRetention()
+                lease.publish([{ kind: 'invalidated', path: '.orbitpm/history' }])
+              },
+              controller.signal
+            )
           } catch (retentionError) {
             if (!bindingIsCurrent()) return
-            const evidence = `Backup storage committed, but history retention failed: ${errMsg(retentionError)}`
+            const evidence = t('workspace.backup.historyRetentionTechnicalEvidence', {
+              error: errMsg(retentionError)
+            })
             recordWorkspaceIssue(evidence, binding)
-            pushToast(evidence, 'error')
+            pushToast(t('workspace.backup.historyRetentionFailed'), 'error')
           }
         }
         for (const applied of result.applied) {
@@ -6112,7 +7413,7 @@ function App(): JSX.Element {
         ) {
           await reloadWorkspaceLocalizationResources(
             binding,
-            'Backup committed localization resources could not be reloaded'
+            t('workspace.localization.backupCommittedReloadFailed')
           )
           if (!bindingIsCurrent()) return
         }
@@ -6132,10 +7433,12 @@ function App(): JSX.Element {
         )
       } catch (error) {
         if (storageCommitted && bindingIsCurrent()) {
-          const message = `Backup storage committed, but post-commit reconciliation failed: ${errMsg(error)}`
+          const evidence = t('workspace.backup.postCommitTechnicalEvidence', {
+            error: errMsg(error)
+          })
           setBackupImportState(null)
-          recordWorkspaceIssue(message, binding)
-          pushToast(t('session.save.reloadEditorFailed', { error: message }), 'error')
+          recordWorkspaceIssue(evidence, binding)
+          pushToast(t('workspace.backup.postCommitReconciliationFailed'), 'error')
         } else if (operationIsCurrent()) {
           pushToast(t('alert.import.failed', { error: errMsg(error) }), 'error')
         }
@@ -6162,9 +7465,57 @@ function App(): JSX.Element {
       refreshWorkspace,
       reloadWorkspaceLocalizationResources,
       requestPathDirtyDecision,
+      runCoordinatedWorkspaceMutation,
       synchronizeCommittedBpmnSnapshot,
       workspaceLocalizationError
     ]
+  )
+
+  const prepareHistoryXmlForRestore = useCallback(
+    async (
+      verifiedXml: string,
+      options: {
+        binding: WorkspaceOperationBinding
+        resources: LocalizationResources
+        signal: AbortSignal
+        isCurrent: () => boolean
+      }
+    ): Promise<PrepareHistoryXmlResult> => {
+      const { binding, resources, signal, isCurrent } = options
+      if (signal.aborted || !isCurrent()) return { status: 'cancelled' }
+      const inspected = await secureBpmnImportPreparer.inspect(verifiedXml, signal)
+      const prepared = await secureBpmnImportPreparer.prepare(verifiedXml, {
+        knownProcessIds: new Set(binding.index.processIndex().keys()),
+        validationAdapters: getRuntimeValidationAdapters(),
+        signal
+      })
+      if (prepared.autoLayouted) return { status: 'review-required' }
+      const outcome = await reviewBpmnXmlLocalization(prepared.xml, {
+        source: LocalizationSource.Xml,
+        target: langRef.current,
+        defaultActive: langRef.current,
+        resources,
+        validation: {
+          adapters: getRuntimeValidationAdapters(),
+          knownProcessIds:
+            inspected.processIds.length > 0
+              ? inspected.processIds
+              : binding.index.processIndex().keys(),
+          requireDi: true
+        },
+        validationAction: 'commit-import',
+        review: reviewedXmlReviewQueueRef.current!.review,
+        signal,
+        isCurrent: () => !signal.aborted && isCurrent()
+      })
+      if (outcome.status === 'completed' && !signal.aborted && isCurrent()) {
+        return { status: 'completed', xml: outcome.xml }
+      }
+      return {
+        status: outcome.status === 'review-required' ? 'review-required' : 'cancelled'
+      }
+    },
+    []
   )
 
   const handleHistoryRestore = useCallback(
@@ -6382,60 +7733,57 @@ function App(): JSX.Element {
           expectedCurrentHash,
           signal,
           isWorkspaceCurrent: () => isCurrent(),
-          prepareXml: async (verifiedXml, context) => {
-            const reviewSignal = context.signal ?? signal
-            if (reviewSignal.aborted || !isCurrent()) return { status: 'cancelled' }
-            const inspected = await secureBpmnImportPreparer.inspect(verifiedXml, reviewSignal)
-            const prepared = await secureBpmnImportPreparer.prepare(verifiedXml, {
-              knownProcessIds: new Set(binding.index.processIndex().keys()),
-              validationAdapters: getRuntimeValidationAdapters(),
-              signal: reviewSignal
-            })
-            if (prepared.autoLayouted) return { status: 'review-required' }
-            const outcome = await reviewBpmnXmlLocalization(prepared.xml, {
-              source: LocalizationSource.Xml,
-              target: langRef.current,
-              defaultActive: langRef.current,
+          prepareXml: (verifiedXml, context) =>
+            prepareHistoryXmlForRestore(verifiedXml, {
+              binding,
               resources,
-              validation: {
-                adapters: getRuntimeValidationAdapters(),
-                knownProcessIds:
-                  inspected.processIds.length > 0
-                    ? inspected.processIds
-                    : binding.index.processIndex().keys(),
-                requireDi: true
-              },
-              validationAction: 'commit-import',
-              review: reviewedXmlReviewQueueRef.current!.review,
-              signal: reviewSignal,
-              isCurrent: () => !reviewSignal.aborted && isCurrent()
-            })
-            if (outcome.status === 'completed' && !reviewSignal.aborted && isCurrent()) {
-              return { status: 'completed', xml: outcome.xml }
-            }
-            return {
-              status: outcome.status === 'review-required' ? 'review-required' : 'cancelled'
-            }
-          },
+              signal: context.signal ?? signal,
+              isCurrent
+            }),
           writePreparedXml: async (input) => {
             const bytes = new TextEncoder().encode(input.xml)
             if (input.signal?.aborted || !isCurrent()) {
-              throw new DOMException('History restore was cancelled.', 'AbortError')
+              throw new DOMException(t('workspace.history.restoreCancelled'), 'AbortError')
             }
-            if (input.expectedCurrentHash === null) {
-              return {
-                outcome: await adapter.writeAtomic(input.revision.originalPath, bytes, undefined, {
-                  expectedWorkspaceId: adapter.id,
-                  expectedMissing: true,
-                  signal: input.signal
-                })
-              }
-            }
-            return manager.writeWithRevision(
-              input.revision.originalPath,
-              bytes,
-              input.expectedCurrentHash,
-              'restore',
+            return runCoordinatedWorkspaceMutation(
+              binding,
+              async (lease) => {
+                const written =
+                  input.expectedCurrentHash === null
+                    ? {
+                        outcome: await adapter.writeAtomic(
+                          input.revision.originalPath,
+                          bytes,
+                          undefined,
+                          {
+                            expectedWorkspaceId: adapter.id,
+                            expectedMissing: true,
+                            signal: input.signal
+                          }
+                        )
+                      }
+                    : await manager.writeWithRevision(
+                        input.revision.originalPath,
+                        bytes,
+                        input.expectedCurrentHash,
+                        'restore',
+                        input.signal
+                      )
+                if (written.outcome.status === 'success') {
+                  lease.publish([
+                    {
+                      kind: 'saved',
+                      path: written.outcome.snapshot.path,
+                      fingerprint: {
+                        hash: written.outcome.snapshot.hash,
+                        size: written.outcome.snapshot.size,
+                        modifiedAt: written.outcome.snapshot.modifiedAt
+                      }
+                    }
+                  ])
+                }
+                return written
+              },
               input.signal
             )
           },
@@ -6448,7 +7796,7 @@ function App(): JSX.Element {
               beforeImport.revision !== session.revision ||
               beforeImport.currentXml !== session.currentXml
             ) {
-              throw new Error('The open editor changed before history XML was applied.')
+              throw new Error(t('workspace.history.applyEditorChangedBefore'))
             }
             const modeler = (modelersByKeyRef.current[session.id] ?? session.modeler) as {
               importXML?: (xml: string) => Promise<unknown>
@@ -6457,29 +7805,31 @@ function App(): JSX.Element {
             invalidateLiveXmlCapture(session.id)
             if (coordinatedApply) await coordinatedApply(restoredXml)
             else if (modeler?.importXML) {
-              throw new Error('The editor synchronization command is not ready.')
+              throw new Error(t('workspace.history.applyEditorSynchronizationUnavailable'))
             }
             if (signal.aborted || !isCurrent()) throw new Error(t('alert.staleWrite'))
             const afterImport = controller.store.get(session.id)
             if (!afterImport || afterImport.incarnation !== session.incarnation) {
-              throw new Error('The history target session changed while XML was applied.')
+              throw new Error(t('workspace.history.applyTargetSessionChanged'))
             }
             if (dirtyByKeyRef.current[session.id]) {
               const captured = await captureLiveSession(controller, afterImport, true, isCurrent)
               if (captured.status === 'stale') throw new Error(t('alert.staleWrite'))
               if (captured.status === 'unavailable') {
                 throw new Error(
-                  `History XML was applied, but the live editor could not be verified: ${errMsg(captured.error)}`
+                  t('workspace.history.applyLiveEditorUnverified', {
+                    error: errMsg(captured.error)
+                  })
                 )
               }
-              throw new Error('The open editor changed while history XML was applied.')
+              throw new Error(t('workspace.history.applyEditorChangedDuring'))
             }
             if (
               afterImport.revision !== session.revision ||
               afterImport.currentXml !== session.currentXml ||
               dirtyByKeyRef.current[session.id]
             ) {
-              throw new Error('The open editor changed while history XML was applied.')
+              throw new Error(t('workspace.history.applyEditorChangedDuring'))
             }
           }
         })
@@ -6567,15 +7917,10 @@ function App(): JSX.Element {
             const captured = await captureLiveSession(controller, beforeCleanup, true, isCurrent)
             if (captured.status === 'stale') return result
             if (captured.status === 'unavailable') {
-              await retainHistoryEditor(
-                captured.session,
-                'History storage was restored, but the live editor could not be verified.',
-                captured.error
-              )
+              const reason = t('workspace.history.liveEditorUnverifiedAfterRestore')
+              await retainHistoryEditor(captured.session, reason, captured.error)
               setLiveWorkspaceVersion(binding.index.version)
-              return editorRefreshFailure(
-                'History storage was restored, but the live editor could not be verified.'
-              )
+              return editorRefreshFailure(reason)
             }
             beforeCleanup = captured.session
             if (beforeCleanup.currentXml === restoredXml && !beforeCleanup.dirty) {
@@ -6590,14 +7935,10 @@ function App(): JSX.Element {
             beforeCleanup.dirty ||
             dirtyByKeyRef.current[beforeCleanup.id]
           ) {
-            await retainHistoryEditor(
-              beforeCleanup,
-              'A newer editor revision arrived before history cleanup completed.'
-            )
+            const reason = t('workspace.history.newerRevisionBeforeCleanup')
+            await retainHistoryEditor(beforeCleanup, reason)
             setLiveWorkspaceVersion(binding.index.version)
-            return editorRefreshFailure(
-              'A newer editor revision arrived before history cleanup completed.'
-            )
+            return editorRefreshFailure(reason)
           }
           try {
             await binding.drafts?.confirmedSave(
@@ -6619,15 +7960,10 @@ function App(): JSX.Element {
             const captured = await captureLiveSession(controller, afterCleanup, true, isCurrent)
             if (captured.status === 'stale') return result
             if (captured.status === 'unavailable') {
-              await retainHistoryEditor(
-                captured.session,
-                'History cleanup completed, but the live editor could not be verified.',
-                captured.error
-              )
+              const reason = t('workspace.history.liveEditorUnverifiedAfterCleanup')
+              await retainHistoryEditor(captured.session, reason, captured.error)
               setLiveWorkspaceVersion(binding.index.version)
-              return editorRefreshFailure(
-                'History cleanup completed, but the live editor could not be verified.'
-              )
+              return editorRefreshFailure(reason)
             }
             afterCleanup = captured.session
             if (afterCleanup.currentXml === restoredXml && !afterCleanup.dirty) {
@@ -6643,12 +7979,10 @@ function App(): JSX.Element {
             afterCleanup.dirty ||
             dirtyByKeyRef.current[afterCleanup.id]
           ) {
-            await retainHistoryEditor(
-              afterCleanup,
-              'A newer editor revision arrived during history cleanup.'
-            )
+            const reason = t('workspace.history.newerRevisionDuringCleanup')
+            await retainHistoryEditor(afterCleanup, reason)
             setLiveWorkspaceVersion(binding.index.version)
-            return editorRefreshFailure('A newer editor revision arrived during history cleanup.')
+            return editorRefreshFailure(reason)
           }
           setContents((previous) => ({ ...previous, [afterCleanup.id]: restoredXml }))
           dirtyByKeyRef.current = { ...dirtyByKeyRef.current, [afterCleanup.id]: false }
@@ -6660,7 +7994,7 @@ function App(): JSX.Element {
           // as the active editor content.
           await retainHistoryEditor(
             liveSession,
-            'History storage was restored, but the editor refresh did not complete.'
+            t('workspace.history.editorRefreshIncompleteAfterRestore')
           )
         }
         setLiveWorkspaceVersion(binding.index.version)
@@ -6677,9 +8011,203 @@ function App(): JSX.Element {
       discardAndCloseSessions,
       invalidateLiveXmlCapture,
       isWorkspaceOperationCurrent,
+      prepareHistoryXmlForRestore,
       pushToast,
       recordWorkspaceIssue,
       requestPathDirtyDecision,
+      runCoordinatedWorkspaceMutation,
+      workspaceLocalizationError
+    ]
+  )
+
+  const handleHistoryRestoreCopy = useCallback(
+    async (
+      revision: HistoryRevision,
+      destination: string,
+      dialogSignal: AbortSignal,
+      operationBinding?: WorkspaceOperationBinding
+    ): Promise<SaveOutcome> => {
+      const binding = operationBinding ?? captureWorkspaceOperation()
+      const adapter = binding.adapter
+      const manager = binding.history
+      const workspace = binding.identity
+      const resources = workspaceLocalizationSnapshotRef.current?.resources
+      const isCurrent = (): boolean => isWorkspaceOperationCurrent(binding)
+      const staleOutcome = (): SaveOutcome => ({
+        ok: false,
+        status: 'stale-workspace',
+        expectedWorkspaceId: adapter?.id ?? workspace?.id ?? 'unavailable',
+        actualWorkspaceId: workspaceAdapterRef.current?.id ?? 'unavailable'
+      })
+      const cancelledOutcome = (): SaveOutcome => ({
+        ok: false,
+        status: 'cancelled',
+        error: {
+          code: 'cancelled',
+          operation: 'write',
+          path: destination,
+          message: t('workspace.history.restoreCancelled'),
+          name: 'AbortError'
+        }
+      })
+
+      if (!adapter || !manager || !binding.controller || !workspace) {
+        return {
+          ok: false,
+          status: 'storage-failure',
+          error: {
+            code: 'storage-failure',
+            operation: 'write',
+            path: destination,
+            message: t('workspace.history.unavailable')
+          }
+        }
+      }
+      if (!isCurrent()) return staleOutcome()
+      if (dialogSignal.aborted) return cancelledOutcome()
+      if (!resources) {
+        return {
+          ok: false,
+          status: 'storage-failure',
+          error: {
+            code: 'storage-failure',
+            operation: 'write',
+            path: destination,
+            message: t('settings.localization.loadFailed', {
+              error: workspaceLocalizationError ?? t('workspace.history.unknownError')
+            })
+          }
+        }
+      }
+
+      historyRestoreAbortRef.current?.abort()
+      const restoreController = new AbortController()
+      historyRestoreAbortRef.current = restoreController
+      const abortFromDialog = (): void => restoreController.abort(dialogSignal.reason)
+      dialogSignal.addEventListener('abort', abortFromDialog, { once: true })
+      if (dialogSignal.aborted) abortFromDialog()
+
+      const releasePersistenceInteractionLock = acquirePersistenceInteractionLock()
+      try {
+        if (restoreController.signal.aborted) return cancelledOutcome()
+        if (!isCurrent()) return staleOutcome()
+        try {
+          const signal = restoreController.signal
+          const destinationPath = normalizeWorkspacePath(destination)
+          const preview = await manager.preview(revision)
+          if (signal.aborted) return cancelledOutcome()
+          if (!isCurrent()) return staleOutcome()
+
+          const prepared = await prepareHistoryXmlForRestore(preview.xml, {
+            binding,
+            resources,
+            signal,
+            isCurrent
+          })
+          if (prepared.status === 'cancelled') return cancelledOutcome()
+          if (prepared.status === 'review-required') {
+            return {
+              ok: false,
+              status: 'storage-failure',
+              error: {
+                code: 'storage-failure',
+                operation: 'write',
+                path: destinationPath,
+                message: t('workspace.history.restoreReason.reviewRequired')
+              }
+            }
+          }
+          if (signal.aborted) return cancelledOutcome()
+          if (!isCurrent()) return staleOutcome()
+
+          // The historical source is immutable only by convention. Re-read and
+          // checksum-verify it after the asynchronous review so the reviewed
+          // decision can never authorize different revision bytes.
+          const reverified = await manager.preview(revision)
+          if (
+            reverified.revision.id !== preview.revision.id ||
+            !byteArraysEqual(reverified.bytes, preview.bytes)
+          ) {
+            throw new WorkspaceOperationError({
+              code: 'integrity-failure',
+              operation: 'read',
+              path: revision.contentPath,
+              message: 'History revision changed while its copy was being reviewed.'
+            })
+          }
+          if (signal.aborted) return cancelledOutcome()
+          if (!isCurrent()) return staleOutcome()
+
+          const reviewedBytes = new TextEncoder().encode(prepared.xml)
+          const reviewedHash = await sha256Hex(reviewedBytes)
+          if (signal.aborted) return cancelledOutcome()
+          if (!isCurrent()) return staleOutcome()
+          return runCoordinatedWorkspaceMutation(
+            binding,
+            async (lease) => {
+              const outcome = await adapter.writeAtomic(destinationPath, reviewedBytes, undefined, {
+                expectedWorkspaceId: adapter.id,
+                expectedMissing: true,
+                signal
+              })
+              if (outcome.status !== 'success') return outcome
+
+              // writeAtomic's successful snapshot is the post-close storage
+              // evidence. Validate it against the exact reviewed payload before
+              // reporting success. Do not turn a committed success into
+              // cancellation merely because the workspace switches after commit.
+              if (
+                outcome.snapshot.path !== destinationPath ||
+                outcome.snapshot.hash !== reviewedHash ||
+                outcome.snapshot.size !== reviewedBytes.byteLength ||
+                !byteArraysEqual(outcome.snapshot.bytes, reviewedBytes)
+              ) {
+                throw new WorkspaceOperationError({
+                  code: 'integrity-failure',
+                  operation: 'write',
+                  path: destinationPath,
+                  message: 'History copy storage did not persist the reviewed XML exactly.'
+                })
+              }
+              lease.publish([
+                {
+                  kind: 'saved',
+                  path: destinationPath,
+                  fingerprint: {
+                    hash: outcome.snapshot.hash,
+                    size: outcome.snapshot.size,
+                    modifiedAt: outcome.snapshot.modifiedAt
+                  }
+                }
+              ])
+              return outcome
+            },
+            signal
+          )
+        } catch (error) {
+          const failure = workspaceFailure(error, 'write', destination)
+          if (failure.code === 'cancelled') {
+            return { ok: false, status: 'cancelled', error: failure }
+          }
+          if (failure.code === 'permission-loss') {
+            return { ok: false, status: 'permission-loss', error: failure }
+          }
+          return { ok: false, status: 'storage-failure', error: failure }
+        }
+      } finally {
+        dialogSignal.removeEventListener('abort', abortFromDialog)
+        if (historyRestoreAbortRef.current === restoreController) {
+          historyRestoreAbortRef.current = null
+        }
+        releasePersistenceInteractionLock()
+      }
+    },
+    [
+      acquirePersistenceInteractionLock,
+      captureWorkspaceOperation,
+      isWorkspaceOperationCurrent,
+      prepareHistoryXmlForRestore,
+      runCoordinatedWorkspaceMutation,
       workspaceLocalizationError
     ]
   )
@@ -6697,11 +8225,12 @@ function App(): JSX.Element {
         signal: AbortSignal
       }
     ): Promise<GeneratedPlacementOutcome> => {
+      const binding = captureWorkspaceOperation()
       const slug = deriveFileBaseName(opts.name || 'process')
       const expectsMultiFile = isMultiFileMode(mode)
-      const adapter = workspaceAdapterRef.current
+      const adapter = binding.adapter
       const stale = (): boolean =>
-        workspaceAdapterRef.current !== adapter ||
+        !isWorkspaceOperationCurrent(binding) ||
         Boolean(adapter?.storage.capabilities.multipleFiles) !== expectsMultiFile ||
         (opts.gen !== undefined && !canCommitToWorkspace(opts.gen, workspaceGenRef.current))
       const discardReason = (): GeneratedPlacementDiscardReason | null => {
@@ -6748,85 +8277,100 @@ function App(): JSX.Element {
         }
         const folderPath = normalizeWorkspacePath(opts.targetFolder, { allowRoot: true })
         const bytes = new TextEncoder().encode(xml)
-        const result = await opMutexRef.current.runExclusive(async () => {
-          const beforeList = discardReason()
-          if (beforeList) {
-            return { status: 'discarded' as const, reason: beforeList }
-          }
-          let taken: Set<string>
-          try {
-            taken = await directBpmnSlugs(adapter, folderPath)
-          } catch (error) {
-            const reason = discardReason()
-            if (reason) return { status: 'discarded' as const, reason }
-            throw error
-          }
-          const beforeFinalValidation = discardReason()
-          if (beforeFinalValidation) {
-            return { status: 'discarded' as const, reason: beforeFinalValidation }
-          }
-          // Generation can be slow enough for another local operation to add a
-          // process after the first validation. Revalidate against the live
-          // index while holding the same mutation mutex, immediately before
-          // this callback's first write.
-          try {
-            await validateReleaseXml(xml, {
-              action: 'create-generated',
-              knownProcessIds: liveWorkspaceIndexRef.current.processIndex().keys(),
-              requireBilingual: true,
-              requireDi: true
-            })
-          } catch (error) {
-            const reason = discardReason()
-            if (reason) return { status: 'discarded' as const, reason }
-            throw error
-          }
-          for (let attempt = 0; attempt < 1000; attempt += 1) {
-            // This is the final guard before the first mutation. Listing and
-            // collision retries are read-only; writeAtomic receives the same
-            // signal so an abort while writing is also fail-closed.
-            const beforeWrite = discardReason()
-            if (beforeWrite) {
-              return { status: 'discarded' as const, reason: beforeWrite }
+        const result = await runCoordinatedWorkspaceMutation(
+          binding,
+          async (lease) => {
+            const beforeList = discardReason()
+            if (beforeList) {
+              return { status: 'discarded' as const, reason: beforeList }
             }
-            const finalSlug = dedupeSlug(slug, (candidate) =>
-              taken.has(candidate.toLocaleLowerCase('en-US'))
-            )
-            const relPath = joinRel(folderPath, `${finalSlug}.bpmn`)
-            let outcome
+            let taken: Set<string>
             try {
-              outcome = await adapter.writeAtomic(relPath, bytes, undefined, {
-                expectedWorkspaceId: adapter.id,
-                expectedMissing: true,
-                signal: opts.signal
+              taken = await directBpmnSlugs(adapter, folderPath)
+            } catch (error) {
+              const reason = discardReason()
+              if (reason) return { status: 'discarded' as const, reason }
+              throw error
+            }
+            const beforeFinalValidation = discardReason()
+            if (beforeFinalValidation) {
+              return { status: 'discarded' as const, reason: beforeFinalValidation }
+            }
+            // Generation can be slow enough for another local operation to add a
+            // process after the first validation. Revalidate against the live
+            // index while holding the same mutation mutex, immediately before
+            // this callback's first write.
+            try {
+              await validateReleaseXml(xml, {
+                action: 'create-generated',
+                knownProcessIds: liveWorkspaceIndexRef.current.processIndex().keys(),
+                requireBilingual: true,
+                requireDi: true
               })
             } catch (error) {
               const reason = discardReason()
               if (reason) return { status: 'discarded' as const, reason }
               throw error
             }
-            if (outcome.status === 'success') {
-              return { status: 'persisted' as const, label: outcome.snapshot.path }
+            for (let attempt = 0; attempt < 1000; attempt += 1) {
+              // This is the final guard before the first mutation. Listing and
+              // collision retries are read-only; writeAtomic receives the same
+              // signal so an abort while writing is also fail-closed.
+              const beforeWrite = discardReason()
+              if (beforeWrite) {
+                return { status: 'discarded' as const, reason: beforeWrite }
+              }
+              const finalSlug = dedupeSlug(slug, (candidate) =>
+                taken.has(candidate.toLocaleLowerCase('en-US'))
+              )
+              const relPath = joinRel(folderPath, `${finalSlug}.bpmn`)
+              let outcome
+              try {
+                outcome = await adapter.writeAtomic(relPath, bytes, undefined, {
+                  expectedWorkspaceId: adapter.id,
+                  expectedMissing: true,
+                  signal: opts.signal
+                })
+              } catch (error) {
+                const reason = discardReason()
+                if (reason) return { status: 'discarded' as const, reason }
+                throw error
+              }
+              if (outcome.status === 'success') {
+                lease.publish([
+                  {
+                    kind: 'saved',
+                    path: outcome.snapshot.path,
+                    fingerprint: {
+                      hash: outcome.snapshot.hash,
+                      size: outcome.snapshot.size,
+                      modifiedAt: outcome.snapshot.modifiedAt
+                    }
+                  }
+                ])
+                return { status: 'persisted' as const, label: outcome.snapshot.path }
+              }
+              const afterWrite = discardReason()
+              if (afterWrite) {
+                return { status: 'discarded' as const, reason: afterWrite }
+              }
+              if (outcome.status === 'cancelled') {
+                return { status: 'discarded' as const, reason: 'cancelled' as const }
+              }
+              if (outcome.status === 'stale-workspace') {
+                return { status: 'discarded' as const, reason: 'stale-workspace' as const }
+              }
+              if (outcome.status === 'external-conflict' && outcome.reason === 'already-exists') {
+                taken.add(finalSlug.toLocaleLowerCase('en-US'))
+                continue
+              }
+              if ('error' in outcome) throw new Error(outcome.error.message)
+              throw new Error(t('workspace.create.failed', { status: outcome.status }))
             }
-            const afterWrite = discardReason()
-            if (afterWrite) {
-              return { status: 'discarded' as const, reason: afterWrite }
-            }
-            if (outcome.status === 'cancelled') {
-              return { status: 'discarded' as const, reason: 'cancelled' as const }
-            }
-            if (outcome.status === 'stale-workspace') {
-              return { status: 'discarded' as const, reason: 'stale-workspace' as const }
-            }
-            if (outcome.status === 'external-conflict' && outcome.reason === 'already-exists') {
-              taken.add(finalSlug.toLocaleLowerCase('en-US'))
-              continue
-            }
-            if ('error' in outcome) throw new Error(outcome.error.message)
-            throw new Error(t('workspace.create.failed', { status: outcome.status }))
-          }
-          throw new Error(t('workspace.create.noAvailableName'))
-        })
+            throw new Error(t('workspace.create.noAvailableName'))
+          },
+          opts.signal
+        )
         if (result.status === 'discarded') {
           return reportDiscarded(result.reason)
         }
@@ -6862,7 +8406,17 @@ function App(): JSX.Element {
       })
       return { status: 'opened-in-memory', label }
     },
-    [mode, refreshWorkspace, openDirectoryFile, openVirtualTab, pushToast, processIndex]
+    [
+      captureWorkspaceOperation,
+      isWorkspaceOperationCurrent,
+      mode,
+      refreshWorkspace,
+      openDirectoryFile,
+      openVirtualTab,
+      pushToast,
+      processIndex,
+      runCoordinatedWorkspaceMutation
+    ]
   )
 
   // --- navigation (back / forward / Alt+Arrows) ---------------------------
@@ -6922,6 +8476,7 @@ function App(): JSX.Element {
   useEffect(() => {
     const onKey = (e: KeyboardEvent): void => {
       if (!e.altKey) return
+      if (persistenceInteractionLockedRef.current || hasOpenModalSurface()) return
       if (e.key === 'ArrowLeft') {
         e.preventDefault()
         handleBack()
@@ -7397,14 +8952,48 @@ function App(): JSX.Element {
   }, [modelersByKey])
 
   const openTranslationReview = useCallback(
-    (tabKey: string) => {
-      const modeler = modelersByKey[tabKey] as LangToggleModeler | undefined
-      if (!modeler || translatingTab) return
+    async (tabKey: string, intent: 'switch' | 'repair'): Promise<void> => {
+      const modeler = modelersByKeyRef.current[tabKey] as LangToggleModeler | undefined
+      if (
+        !modeler ||
+        activeKeyRef.current !== tabKey ||
+        translationAbortRef.current ||
+        translationFinalizationOperationRef.current ||
+        translationReviewOpenOperationRef.current
+      ) {
+        return
+      }
+      const localizationBinding = workspaceLocalizationBindingRef.current
+      const operation = {
+        nonce: ++translationOperationNonceRef.current,
+        tabKey,
+        modeler
+      }
+      const operationIsCurrent = (): boolean =>
+        translationReviewOpenOperationRef.current === operation &&
+        activeKeyRef.current === tabKey &&
+        modelersByKeyRef.current[tabKey] === modeler &&
+        workspaceLocalizationBindingRef.current === localizationBinding &&
+        (localizationBinding === null ||
+          (workspaceAdapterRef.current === localizationBinding.adapter &&
+            workspaceGenRef.current === localizationBinding.generation &&
+            !localizationBinding.controller.signal.aborted))
+      translationReviewOpenOperationRef.current = operation
       try {
         const currentLang = getDiagramLang(modeler)
         const targetLang = currentLang === 'en' ? 'ar' : 'en'
         const source = localizationSourceByTabRef.current.get(tabKey) ?? LocalizationSource.Editor
-        const review = inspectWithWorkspaceLocalization(modeler, targetLang, source)
+        let localizationSnapshot = workspaceLocalizationSnapshotRef.current
+        if (localizationBinding) {
+          localizationSnapshot = await loadWorkspaceLocalizationCoordinated(localizationBinding)
+          if (!operationIsCurrent()) return
+          commitWorkspaceLocalizationSnapshot(localizationBinding, localizationSnapshot)
+        }
+        if (!operationIsCurrent()) return
+        const review = inspectDiagramLocalization(modeler, targetLang, {
+          source,
+          ...(localizationSnapshot?.resources ?? DEFAULT_LOCALIZATION_RESOURCES)
+        })
         if (review.complete) {
           const projected = applyDiagramLocalizationReview(modeler, review)
           pushToast(
@@ -7421,39 +9010,73 @@ function App(): JSX.Element {
         setTranslationReview({
           tabKey,
           review,
-          providerId: selection ? 'selected-ai' : '',
+          localizationRevision: translationLocalizationRevision(
+            localizationBinding,
+            localizationSnapshot
+          ),
+          // A language switch is local-only: even though the completion review
+          // exposes provider choices, it must not pre-arm an external service.
+          // The explicit repair command may carry the user's configured
+          // provider into that same disclosure/consent gate.
+          providerId: intent === 'repair' && selection ? 'selected-ai' : '',
           aiSelection: selection,
-          status: null
+          status: null,
+          technicalDetail: null,
+          retryingFieldId: null,
+          proposals: [],
+          acceptedValues: []
         })
       } catch (err) {
-        pushToast(errMsg(err), 'error')
+        if (!operationIsCurrent()) return
+        console.error('Translation review could not be opened.', err)
+        pushToast(t('translate.failed'), 'error')
+      } finally {
+        if (translationReviewOpenOperationRef.current === operation) {
+          translationReviewOpenOperationRef.current = null
+        }
       }
     },
-    [inspectWithWorkspaceLocalization, modelersByKey, translatingTab, pushToast]
+    [
+      commitWorkspaceLocalizationSnapshot,
+      loadWorkspaceLocalizationCoordinated,
+      pushToast,
+      setTranslationReview
+    ]
   )
 
-  // Both toolbar actions perform the same audited read first. Only complete,
-  // valid targets project immediately; incomplete/wrong-script targets open
-  // the disclosure review and perform no mutation or network operation.
+  // Switching is a local projection command. Repair is the only command that
+  // preselects a configured translation provider; both still stop at the
+  // explicit disclosure/consent review before any network operation.
   const handleDiagramLangToggle = useCallback(
-    (tabKey: string) => openTranslationReview(tabKey),
+    (tabKey: string) => void openTranslationReview(tabKey, 'switch'),
     [openTranslationReview]
   )
   const handleTranslate = useCallback(
-    (tabKey: string) => openTranslationReview(tabKey),
+    (tabKey: string) => void openTranslationReview(tabKey, 'repair'),
     [openTranslationReview]
   )
 
   const handleTranslationPartialPreview = useCallback(() => {
-    const state = translationReview
-    if (!state || translatingTab) return
-    const modeler = modelersByKey[state.tabKey] as LangToggleModeler | undefined
+    const state = translationReviewRef.current
+    if (
+      !state ||
+      state !== translationReview ||
+      translationAbortRef.current ||
+      translationFinalizationOperationRef.current ||
+      translationReviewOpenOperationRef.current ||
+      state.retryingFieldId ||
+      state.memoryRetry ||
+      state.acceptedValues.length > 0
+    ) {
+      return
+    }
+    const modeler = modelersByKeyRef.current[state.tabKey] as LangToggleModeler | undefined
     if (!modeler) return
     try {
       const result = applyDiagramLocalizationReview(modeler, state.review, {
         allowPartial: true
       })
-      setTranslationReview(null)
+      setTranslationReview((current) => (current === state ? null : current))
       pushToast(
         t('editor.langToggle.partial', {
           switched: result.switched,
@@ -7467,109 +9090,671 @@ function App(): JSX.Element {
           source: state.review.source,
           ...state.review.localResources
         })
-        setTranslationReview({
-          ...state,
-          review: fresh,
-          status: t('translationReview.stale')
-        })
-      } else {
-        pushToast(errMsg(err), 'error')
-      }
-    }
-  }, [translationReview, translatingTab, modelersByKey, pushToast])
-
-  const handleTranslationCancel = useCallback(() => {
-    translationAbortRef.current?.abort()
-  }, [])
-
-  const handleTranslationNow = useCallback(async () => {
-    const state = translationReview
-    const disclosure = translationDisclosure
-    if (!state || !disclosure || !state.providerId || translatingTab) {
-      if (state && !state.providerId) {
-        setTranslationReview({
-          ...state,
-          status: t('translationReview.noProvider')
-        })
-      }
-      return
-    }
-    const modeler = modelersByKey[state.tabKey] as
-      (TranslateModeler & LangToggleModeler) | undefined
-    if (!modeler) return
-    const binding = captureWorkspaceOperation()
-    const controller = new AbortController()
-    const operationIsCurrent = (): boolean =>
-      translationAbortRef.current === controller && isWorkspaceOperationCurrent(binding)
-    translationAbortRef.current = controller
-    setTranslatingTab(state.tabKey)
-    setTranslationReview({
-      ...state,
-      status: t('translationReview.running')
-    })
-    const consent = grantExternalRequestConsent(disclosure)
-    try {
-      const run = {
-        review: state.review,
-        disclosure,
-        consent,
-        signal: controller.signal
-      }
-      const result =
-        state.providerId === 'free'
-          ? await translateReviewedDiagramWithTexts(
-              modeler,
-              makeFreeTranslateTexts({
-                onAttempt: (attempt) => {
-                  if (controller.signal.aborted || !operationIsCurrent()) {
-                    return
-                  }
-                  const service = t(
-                    attempt.service === 'google'
-                      ? 'translationReview.retry.service.google'
-                      : 'translationReview.retry.service.mymemory'
-                  )
-                  const status =
-                    attempt.retryInMs === undefined
-                      ? t('translationReview.retry.attempt', {
-                          service,
-                          item: attempt.item,
-                          items: attempt.itemCount,
-                          attempt: attempt.attempt,
-                          max: attempt.maxAttempts
-                        })
-                      : t('translationReview.retry.waiting', {
-                          service,
-                          item: attempt.item,
-                          items: attempt.itemCount,
-                          attempt: attempt.attempt,
-                          max: attempt.maxAttempts,
-                          seconds: Math.max(1, Math.ceil(attempt.retryInMs / 1000))
-                        })
-                  setTranslationReview((current) =>
-                    !controller.signal.aborted &&
-                    operationIsCurrent() &&
-                    current?.tabKey === state.tabKey &&
-                    current.review === state.review
-                      ? { ...current, status }
-                      : current
-                  )
-                }
-              }),
-              run
-            )
-          : await (() => {
-              const selection = state.aiSelection
-              if (!selection || !hasKey(selection.providerId)) {
-                throw new Error(t('translate.noKey'))
+        setTranslationReview((current) =>
+          current === state
+            ? {
+                ...state,
+                review: fresh,
+                status: t('translationReview.stale'),
+                technicalDetail: null,
+                proposals: [],
+                acceptedValues: []
               }
-              return translateReviewedDiagram(
+            : current
+        )
+      } else {
+        setTranslationReview((current) =>
+          current === state
+            ? {
+                ...state,
+                status: t('translate.failed'),
+                technicalDetail: boundedTranslationTechnicalDetail(err)
+              }
+            : current
+        )
+      }
+    }
+  }, [pushToast, setTranslationReview, translationReview])
+
+  const handleTranslationManualEdit = useCallback(
+    async (requestedField: TranslationRecoveryField, value: string): Promise<void> => {
+      const state = translationReviewRef.current
+      if (
+        !state ||
+        state !== translationReview ||
+        translationAbortRef.current ||
+        translationFinalizationOperationRef.current ||
+        translationReviewOpenOperationRef.current ||
+        state.retryingFieldId ||
+        state.memoryRetry
+      ) {
+        return
+      }
+      const field = listTranslationRecoveryFields(state.review).find(
+        (candidate) =>
+          candidate.id === requestedField.id &&
+          candidate.sourceLanguage === requestedField.sourceLanguage &&
+          candidate.sourceValue === requestedField.sourceValue &&
+          candidate.target === requestedField.target
+      )
+      if (!field) return
+      const modeler = modelersByKeyRef.current[state.tabKey] as LangToggleModeler | undefined
+      if (!modeler) return
+      const binding = captureWorkspaceOperation()
+      if (!isWorkspaceOperationCurrent(binding)) return
+      try {
+        assertLocalizationReviewCurrent(modeler, state.review)
+        const validation = validateTranslationRecoveryValue(state.review, field, value)
+        if (!validation.valid) {
+          throw new InvalidTranslationRecoveryValueError(validation.issues)
+        }
+        const accepted: ReviewedTranslationProposal = {
+          processId: field.processId,
+          elementId: field.elementId,
+          field: field.field,
+          sourceLanguage: field.sourceLanguage,
+          sourceValue: field.sourceValue,
+          target: field.target,
+          value: validation.value
+        }
+        setTranslationReview((current) =>
+          current === state
+            ? (() => {
+                const acceptedValues = [
+                  ...proposalsWithoutField(current.acceptedValues, field),
+                  accepted
+                ]
+                return {
+                  ...current,
+                  acceptedValues,
+                  proposals: proposalsWithoutField(current.proposals, field),
+                  status: t('translationReview.stagedStatus', {
+                    count: acceptedValues.length
+                  }),
+                  technicalDetail: null,
+                  retryingFieldId: null
+                }
+              })()
+            : current
+        )
+      } catch (error) {
+        if (error instanceof StaleLocalizationReviewError) {
+          const fresh = inspectDiagramLocalization(modeler, state.review.target, {
+            source: state.review.source,
+            ...state.review.localResources
+          })
+          if (!isWorkspaceOperationCurrent(binding)) return
+          setTranslationReview((current) =>
+            current === state
+              ? {
+                  ...current,
+                  review: fresh,
+                  status: t('translationReview.stale'),
+                  technicalDetail: null,
+                  retryingFieldId: null,
+                  proposals: [],
+                  acceptedValues: []
+                }
+              : current
+          )
+          return
+        }
+        throw error
+      }
+    },
+    [
+      captureWorkspaceOperation,
+      isWorkspaceOperationCurrent,
+      setTranslationReview,
+      translationReview
+    ]
+  )
+
+  const handleTranslationAcceptProposal = useCallback(
+    async (
+      field: TranslationRecoveryField,
+      proposal: ReviewedTranslationProposal
+    ): Promise<void> => {
+      const state = translationReviewRef.current
+      const stillCurrent =
+        !!state &&
+        state === translationReview &&
+        !translationAbortRef.current &&
+        !translationFinalizationOperationRef.current &&
+        !translationReviewOpenOperationRef.current &&
+        !state.retryingFieldId &&
+        !state.memoryRetry &&
+        state.proposals.some(
+          (candidate) =>
+            proposalMatchesField(candidate, field) && candidate.value === proposal.value
+        )
+      if (!stillCurrent) return
+      await handleTranslationManualEdit(field, proposal.value)
+    },
+    [handleTranslationManualEdit, translationReview]
+  )
+
+  const handleTranslationRejectProposal = useCallback(
+    async (
+      requestedField: TranslationRecoveryField,
+      proposal: ReviewedTranslationProposal
+    ): Promise<void> => {
+      const state = translationReviewRef.current
+      if (
+        !state ||
+        state !== translationReview ||
+        translationAbortRef.current ||
+        translationFinalizationOperationRef.current ||
+        translationReviewOpenOperationRef.current ||
+        state.retryingFieldId ||
+        state.memoryRetry ||
+        !state.proposals.some(
+          (candidate) =>
+            proposalMatchesField(candidate, requestedField) && candidate.value === proposal.value
+        )
+      ) {
+        return
+      }
+      const field = listTranslationRecoveryFields(state.review).find(
+        (candidate) =>
+          candidate.id === requestedField.id &&
+          candidate.sourceLanguage === requestedField.sourceLanguage &&
+          candidate.sourceValue === requestedField.sourceValue &&
+          candidate.target === requestedField.target
+      )
+      if (!field) return
+      const modeler = modelersByKeyRef.current[state.tabKey] as LangToggleModeler | undefined
+      if (!modeler) return
+      try {
+        assertLocalizationReviewCurrent(modeler, state.review)
+      } catch (error) {
+        if (!(error instanceof StaleLocalizationReviewError)) throw error
+        const fresh = inspectDiagramLocalization(modeler, state.review.target, {
+          source: state.review.source,
+          ...state.review.localResources
+        })
+        setTranslationReview((current) =>
+          current === state
+            ? {
+                ...current,
+                review: fresh,
+                proposals: [],
+                acceptedValues: [],
+                status: t('translationReview.stale'),
+                technicalDetail: null,
+                retryingFieldId: null
+              }
+            : current
+        )
+        return
+      }
+      const review = inspectDiagramLocalization(modeler, state.review.target, {
+        source: state.review.source,
+        providerFailures: providerFailuresWithField(state.review, field),
+        ...state.review.localResources
+      })
+      setTranslationReview((current) =>
+        current === state &&
+        current.proposals.some(
+          (candidate) =>
+            proposalMatchesField(candidate, field) && candidate.value === proposal.value
+        )
+          ? {
+              ...current,
+              review,
+              proposals: proposalsWithoutField(current.proposals, field),
+              status:
+                proposalsWithoutField(current.proposals, field).length > 0
+                  ? t('translationReview.proposalStatus', {
+                      count: proposalsWithoutField(current.proposals, field).length
+                    })
+                  : t('translationReview.partialStatus'),
+              technicalDetail: null,
+              retryingFieldId: null
+            }
+          : current
+      )
+    },
+    [setTranslationReview, translationReview]
+  )
+
+  const handleTranslationApplyCompleted = useCallback(
+    async (expectedState: TranslationReviewState): Promise<void> => {
+      const state = translationReviewRef.current
+      if (
+        !state ||
+        state !== expectedState ||
+        translationAbortRef.current ||
+        translationFinalizationOperationRef.current ||
+        state.retryingFieldId ||
+        state.memoryRetry ||
+        state.proposals.length > 0
+      ) {
+        return
+      }
+      const modeler = modelersByKeyRef.current[state.tabKey] as LangToggleModeler | undefined
+      if (!modeler) return
+      const binding = captureWorkspaceOperation()
+      const localizationBinding = workspaceLocalizationBindingRef.current
+      if (!isWorkspaceOperationCurrent(binding)) return
+      const operation = {
+        kind: 'apply' as const,
+        nonce: ++translationOperationNonceRef.current,
+        tabKey: state.tabKey
+      }
+      const operationBelongs = (): boolean =>
+        translationFinalizationOperationRef.current === operation &&
+        isWorkspaceOperationCurrent(binding)
+      translationFinalizationOperationRef.current = operation
+      setTranslatingTab(state.tabKey)
+      setTranslationFinalizingTab(state.tabKey)
+      setTranslationReview((current) =>
+        current?.tabKey === state.tabKey && current.review === state.review
+          ? {
+              ...current,
+              status: t('translationReview.applying'),
+              technicalDetail: null
+            }
+          : current
+      )
+      try {
+        let localizationSnapshot = workspaceLocalizationSnapshotRef.current
+        if (state.localizationRevision.binding !== localizationBinding) {
+          const fresh = inspectDiagramLocalization(modeler, state.review.target, {
+            source: state.review.source,
+            ...(localizationSnapshot?.resources ?? DEFAULT_LOCALIZATION_RESOURCES)
+          })
+          setTranslationReview((current) =>
+            current?.tabKey === state.tabKey && current.review === state.review
+              ? {
+                  ...current,
+                  review: fresh,
+                  localizationRevision: translationLocalizationRevision(
+                    localizationBinding,
+                    localizationSnapshot
+                  ),
+                  status: t('translationReview.stale'),
+                  technicalDetail: null,
+                  retryingFieldId: null,
+                  proposals: [],
+                  acceptedValues: []
+                }
+              : current
+          )
+          return
+        }
+        if (localizationBinding) {
+          localizationSnapshot = await loadWorkspaceLocalizationCoordinated(
+            localizationBinding,
+            binding
+          )
+          if (!operationBelongs()) return
+          commitWorkspaceLocalizationSnapshot(localizationBinding, localizationSnapshot)
+        }
+        if (
+          !translationLocalizationRevisionMatches(
+            state.localizationRevision,
+            localizationBinding,
+            localizationSnapshot
+          )
+        ) {
+          const fresh = inspectDiagramLocalization(modeler, state.review.target, {
+            source: state.review.source,
+            ...(localizationSnapshot?.resources ?? DEFAULT_LOCALIZATION_RESOURCES)
+          })
+          setTranslationReview((current) =>
+            current?.tabKey === state.tabKey && current.review === state.review
+              ? {
+                  ...current,
+                  review: fresh,
+                  localizationRevision: translationLocalizationRevision(
+                    localizationBinding,
+                    localizationSnapshot
+                  ),
+                  status: t('translationReview.stale'),
+                  technicalDetail: null,
+                  retryingFieldId: null,
+                  proposals: [],
+                  acceptedValues: []
+                }
+              : current
+          )
+          return
+        }
+        const latest = translationReviewRef.current
+        if (
+          !operationBelongs() ||
+          latest?.tabKey !== state.tabKey ||
+          latest.review !== state.review ||
+          latest.acceptedValues !== state.acceptedValues ||
+          latest.proposals.length > 0 ||
+          latest.memoryRetry
+        ) {
+          return
+        }
+        const post =
+          state.acceptedValues.length > 0
+            ? applyStagedTranslationRecoveryValues(
                 modeler,
+                state.review,
+                state.acceptedValues.map((accepted) => ({
+                  fieldId: translationRecoveryFieldId(accepted),
+                  value: accepted.value
+                }))
+              )
+            : (() => {
+                const fresh = inspectDiagramLocalization(modeler, state.review.target, {
+                  source: state.review.source,
+                  ...state.review.localResources
+                })
+                if (!fresh.complete) return null
+                const result = applyDiagramLocalizationReview(modeler, fresh)
+                return result.complete ? result.review : null
+              })()
+        if (!post) {
+          setTranslationReview((current) =>
+            current?.tabKey === state.tabKey && current.review === state.review
+              ? {
+                  ...current,
+                  status: t('translationReview.partialStatus'),
+                  technicalDetail: null,
+                  retryingFieldId: null
+                }
+              : current
+          )
+          return
+        }
+        if (!operationBelongs()) return
+        const acceptedPairs = state.acceptedValues
+          .map((accepted) => acceptedPairForReviewedField(post, accepted))
+          .filter((pair): pair is AcceptedTranslationPair => pair !== null)
+        setTranslationReview((current) =>
+          current?.tabKey === state.tabKey && current.review === state.review
+            ? {
+                ...current,
+                review: post,
+                localizationRevision: translationLocalizationRevision(
+                  localizationBinding,
+                  localizationSnapshot
+                ),
+                proposals: [],
+                acceptedValues: [],
+                status: t('translationReview.memorySaving'),
+                technicalDetail: null,
+                retryingFieldId: null
+              }
+            : current
+        )
+        const memory = await persistAcceptedTranslationPairs(localizationBinding, acceptedPairs)
+        if (!operationBelongs() || memory.status === 'stale') return
+        const finalReview =
+          memory.status === 'saved' && memory.snapshot
+            ? rebaseTranslationReviewAfterMemorySave(modeler, post, memory.snapshot)
+            : post
+        if (memory.status === 'failed' && localizationBinding) {
+          setTranslationReview((current) =>
+            current?.tabKey === state.tabKey && current.review === post
+              ? {
+                  ...current,
+                  review: finalReview,
+                  localizationRevision: translationLocalizationRevision(
+                    localizationBinding,
+                    memory.snapshot ?? localizationSnapshot
+                  ),
+                  status: t('translationReview.memorySaveFailed'),
+                  technicalDetail: boundedTranslationTechnicalDetail(memory.error),
+                  memoryRetry: {
+                    binding: localizationBinding,
+                    pairs: acceptedPairs
+                  }
+                }
+              : current
+          )
+          return
+        }
+        setTranslationReview((current) => (current?.tabKey === state.tabKey ? null : current))
+        pushToast(t('translate.nothing.switched'), 'info')
+      } catch (error) {
+        if (!operationBelongs()) return
+        if (error instanceof StaleLocalizationReviewError) {
+          const fresh = inspectDiagramLocalization(modeler, state.review.target, {
+            source: state.review.source,
+            ...state.review.localResources
+          })
+          setTranslationReview((current) =>
+            current?.tabKey === state.tabKey
+              ? {
+                  ...current,
+                  review: fresh,
+                  status: t('translationReview.stale'),
+                  technicalDetail: null,
+                  retryingFieldId: null,
+                  proposals: [],
+                  acceptedValues: []
+                }
+              : current
+          )
+        } else {
+          setTranslationReview((current) =>
+            current?.tabKey === state.tabKey
+              ? {
+                  ...current,
+                  status: t('translate.failed'),
+                  technicalDetail: boundedTranslationTechnicalDetail(error)
+                }
+              : current
+          )
+        }
+      } finally {
+        const owned = translationFinalizationOperationRef.current === operation
+        if (owned) {
+          translationFinalizationOperationRef.current = null
+          setTranslationFinalizingTab((current) => (current === state.tabKey ? null : current))
+          setTranslatingTab((current) => (current === state.tabKey ? null : current))
+        }
+      }
+    },
+    [
+      captureWorkspaceOperation,
+      commitWorkspaceLocalizationSnapshot,
+      isWorkspaceOperationCurrent,
+      loadWorkspaceLocalizationCoordinated,
+      persistAcceptedTranslationPairs,
+      pushToast,
+      setTranslationReview
+    ]
+  )
+
+  const handleTranslationRetryField = useCallback(
+    async (
+      expectedState: TranslationReviewState,
+      requestedField: TranslationRecoveryField,
+      confirmation: TranslationFieldRetryConfirmation
+    ): Promise<void> => {
+      const state = translationReviewRef.current
+      if (
+        !state ||
+        state !== expectedState ||
+        translationAbortRef.current ||
+        translationFinalizationOperationRef.current ||
+        state.retryingFieldId ||
+        state.memoryRetry
+      ) {
+        return
+      }
+      const field = listTranslationRecoveryFields(state.review).find(
+        (candidate) =>
+          candidate.id === requestedField.id &&
+          candidate.sourceLanguage === requestedField.sourceLanguage &&
+          candidate.sourceValue === requestedField.sourceValue &&
+          candidate.target === requestedField.target
+      )
+      if (!field) return
+      if (state.acceptedValues.some((accepted) => proposalMatchesField(accepted, field))) return
+      if (!state.providerId) {
+        setTranslationReview((current) =>
+          current?.tabKey === state.tabKey
+            ? {
+                ...current,
+                status: t('translationReview.noProvider'),
+                technicalDetail: null
+              }
+            : current
+        )
+        return
+      }
+      const modeler = modelersByKeyRef.current[state.tabKey] as
+        (TranslateModeler & LangToggleModeler) | undefined
+      if (!modeler) return
+      try {
+        // Refuse to disclose stale text. The same assertion runs again before a
+        // provider result may be surfaced as an acceptance proposal.
+        assertLocalizationReviewCurrent(modeler, state.review)
+      } catch (error) {
+        if (!(error instanceof StaleLocalizationReviewError)) throw error
+        const fresh = inspectDiagramLocalization(modeler, state.review.target, {
+          source: state.review.source,
+          ...state.review.localResources
+        })
+        setTranslationReview((current) =>
+          current?.tabKey === state.tabKey && current.review === state.review
+            ? {
+                ...current,
+                review: fresh,
+                status: t('translationReview.stale'),
+                technicalDetail: null,
+                retryingFieldId: null,
+                proposals: [],
+                acceptedValues: []
+              }
+            : current
+        )
+        return
+      }
+
+      const provider =
+        state.providerId === 'free'
+          ? { providerId: 'google-translate+mymemory' }
+          : state.aiSelection
+            ? {
+                providerId: state.aiSelection.providerId,
+                modelId: state.aiSelection.modelId
+              }
+            : null
+      if (!provider) {
+        setTranslationReview((current) =>
+          current?.tabKey === state.tabKey
+            ? {
+                ...current,
+                status: t('translationReview.noProvider'),
+                technicalDetail: null
+              }
+            : current
+        )
+        return
+      }
+      if (
+        state.providerId === 'selected-ai' &&
+        (!state.aiSelection || !hasKey(state.aiSelection.providerId))
+      ) {
+        setTranslationReview((current) =>
+          current?.tabKey === state.tabKey
+            ? { ...current, status: t('translate.noKey'), technicalDetail: null }
+            : current
+        )
+        return
+      }
+
+      const disclosure = buildTranslationRecoveryDisclosure(field, provider)
+      if (
+        confirmation.disclosure.fingerprint !== disclosure.fingerprint ||
+        !hasExternalRequestConsent(disclosure, confirmation.consent)
+      ) {
+        setTranslationReview((current) =>
+          current?.tabKey === state.tabKey && current.review === state.review
+            ? {
+                ...current,
+                status: t('translationReview.field.consentRequired'),
+                technicalDetail: null,
+                retryingFieldId: null
+              }
+            : current
+        )
+        return
+      }
+      const consent = confirmation.consent
+      const binding = captureWorkspaceOperation()
+      if (!isWorkspaceOperationCurrent(binding) || translationAbortRef.current) return
+      const controller = new AbortController()
+      const operationBelongs = (): boolean =>
+        translationAbortRef.current === controller && isWorkspaceOperationCurrent(binding)
+      const operationIsCurrent = (): boolean => !controller.signal.aborted && operationBelongs()
+      translationAbortRef.current = controller
+      setTranslatingTab(state.tabKey)
+      setTranslationReview((current) =>
+        current?.tabKey === state.tabKey && current.review === state.review
+          ? {
+              ...current,
+              status: t('translationReview.running'),
+              technicalDetail: null,
+              retryingFieldId: field.id
+            }
+          : current
+      )
+
+      try {
+        const run = {
+          field,
+          disclosure,
+          consent,
+          signal: controller.signal
+        }
+        const value =
+          state.providerId === 'free'
+            ? await translateReviewedFieldWithTexts(
+                makeFreeTranslateTexts({
+                  onAttempt: (attempt) => {
+                    if (controller.signal.aborted || !operationIsCurrent()) return
+                    const service = t(
+                      attempt.service === 'google'
+                        ? 'translationReview.retry.service.google'
+                        : 'translationReview.retry.service.mymemory'
+                    )
+                    const status =
+                      attempt.retryInMs === undefined
+                        ? t('translationReview.retry.attempt', {
+                            service,
+                            item: attempt.item,
+                            items: attempt.itemCount,
+                            attempt: attempt.attempt,
+                            max: attempt.maxAttempts
+                          })
+                        : t('translationReview.retry.waiting', {
+                            service,
+                            item: attempt.item,
+                            items: attempt.itemCount,
+                            attempt: attempt.attempt,
+                            max: attempt.maxAttempts,
+                            seconds: Math.max(1, Math.ceil(attempt.retryInMs / 1000))
+                          })
+                    setTranslationReview((current) =>
+                      !controller.signal.aborted &&
+                      operationIsCurrent() &&
+                      current?.tabKey === state.tabKey &&
+                      current.review === state.review
+                        ? { ...current, status }
+                        : current
+                    )
+                  }
+                }),
+                run
+              )
+            : await translateReviewedField(
                 makeBrowserCallLLM(
                   {
-                    providerId: selection.providerId,
-                    model: selection.modelId,
-                    apiKey: getKey(selection.providerId) ?? '',
+                    providerId: state.aiSelection!.providerId,
+                    model: state.aiSelection!.modelId,
+                    apiKey: getKey(state.aiSelection!.providerId) ?? '',
                     referer: typeof location !== 'undefined' ? location.origin : undefined,
                     title: 'OrbitPM Process Studio Lite'
                   },
@@ -7577,70 +9762,513 @@ function App(): JSX.Element {
                 ),
                 run
               )
-            })()
-      if (!operationIsCurrent()) return
-      if (result.complete) {
-        setTranslationReview(null)
-        pushToast(t('translate.done', { count: result.translated }), 'success')
-      } else {
-        setTranslationReview({
-          ...state,
-          review: result.review,
-          status: t('translationReview.partialStatus')
+        if (!operationIsCurrent()) return
+        const latest = translationReviewRef.current
+        if (
+          latest?.tabKey !== state.tabKey ||
+          latest.review !== state.review ||
+          latest.providerId !== state.providerId ||
+          latest.aiSelection !== state.aiSelection
+        ) {
+          return
+        }
+        assertLocalizationReviewCurrent(modeler, state.review)
+        const validation =
+          value === undefined ? null : validateTranslationRecoveryValue(state.review, field, value)
+        if (!validation?.valid) {
+          const failedReview = inspectDiagramLocalization(modeler, state.review.target, {
+            source: state.review.source,
+            providerFailures: providerFailuresWithField(state.review, field),
+            ...state.review.localResources
+          })
+          setTranslationReview((current) =>
+            current?.tabKey === state.tabKey && current.review === state.review
+              ? {
+                  ...current,
+                  review: failedReview,
+                  status: t('translationReview.partialStatus'),
+                  technicalDetail: null,
+                  retryingFieldId: null
+                }
+              : current
+          )
+          return
+        }
+        // A successful provider response is only a proposal. It remains
+        // unresolved and cannot reach BPMN or translation memory until the user
+        // explicitly accepts it (or edits and saves a corrected value).
+        const proposal: ReviewedTranslationProposal = {
+          processId: field.processId,
+          elementId: field.elementId,
+          field: field.field,
+          sourceLanguage: field.sourceLanguage,
+          sourceValue: field.sourceValue,
+          target: field.target,
+          value: validation.value
+        }
+        const proposals = [...proposalsWithoutField(state.proposals, field), proposal]
+        const review = inspectDiagramLocalization(modeler, state.review.target, {
+          source: state.review.source,
+          providerFailures: providerFailuresWithoutField(state.review, field),
+          ...state.review.localResources
         })
+        if (!operationIsCurrent()) return
+        setTranslationReview((current) =>
+          current?.tabKey === state.tabKey && current.review === state.review
+            ? {
+                ...current,
+                review,
+                proposals,
+                status: t('translationReview.proposalStatus', { count: proposals.length }),
+                technicalDetail: null,
+                retryingFieldId: null
+              }
+            : current
+        )
+      } catch (error) {
+        if (!operationBelongs()) return
+        const cancelled =
+          controller.signal.aborted ||
+          (error instanceof DOMException && error.name === 'AbortError')
+        let stale = error instanceof StaleLocalizationReviewError
+        if (!cancelled && !stale) {
+          try {
+            assertLocalizationReviewCurrent(modeler, state.review)
+          } catch (currentError) {
+            stale = currentError instanceof StaleLocalizationReviewError
+          }
+        }
+        const review = stale
+          ? inspectDiagramLocalization(modeler, state.review.target, {
+              source: state.review.source,
+              ...state.review.localResources
+            })
+          : cancelled
+            ? state.review
+            : inspectDiagramLocalization(modeler, state.review.target, {
+                source: state.review.source,
+                providerFailures: providerFailuresWithField(state.review, field),
+                ...state.review.localResources
+              })
+        const status = cancelled
+          ? t('translationReview.cancelled')
+          : stale
+            ? t('translationReview.stale')
+            : error instanceof FreeTranslateError
+              ? t(
+                  error.code === 'rate'
+                    ? 'translate.free.rate'
+                    : error.code === 'offline'
+                      ? 'translate.free.offline'
+                      : 'translate.free.down'
+                )
+              : t('translate.failed')
+        const technicalDetail =
+          cancelled || stale || error instanceof FreeTranslateError
+            ? null
+            : boundedTranslationTechnicalDetail(error)
+        setTranslationReview((current) =>
+          current?.tabKey === state.tabKey && current.review === state.review
+            ? {
+                ...current,
+                review,
+                status,
+                technicalDetail,
+                retryingFieldId: null,
+                proposals: stale ? [] : current.proposals,
+                acceptedValues: stale ? [] : current.acceptedValues
+              }
+            : current
+        )
+      } finally {
+        if (translationAbortRef.current === controller) {
+          translationAbortRef.current = null
+          if (isWorkspaceOperationCurrent(binding)) {
+            setTranslationReview((current) =>
+              current?.tabKey === state.tabKey && current.retryingFieldId === field.id
+                ? { ...current, retryingFieldId: null }
+                : current
+            )
+            setTranslationFinalizingTab((current) => (current === state.tabKey ? null : current))
+            setTranslatingTab((current) => (current === state.tabKey ? null : current))
+          }
+        }
       }
-    } catch (err) {
-      if (!operationIsCurrent()) return
-      const cancelled =
-        controller.signal.aborted || (err instanceof DOMException && err.name === 'AbortError')
-      const stale = err instanceof StaleLocalizationReviewError
-      const failures = stale
-        ? []
-        : state.review.queue.map((item) => ({
-            processId: item.processId,
-            elementId: item.elementId,
-            field: item.field,
-            target: item.target,
-            originalValue: item.sourceValue
-          }))
-      const failedReview = inspectDiagramLocalization(modeler, state.review.target, {
-        source: state.review.source,
-        providerFailures: failures,
-        ...state.review.localResources
+    },
+    [captureWorkspaceOperation, isWorkspaceOperationCurrent, setTranslationReview]
+  )
+
+  const handleTranslationRetryMemory = useCallback(
+    async (
+      expectedState: TranslationReviewState,
+      expectedPending: NonNullable<TranslationReviewState['memoryRetry']>
+    ): Promise<void> => {
+      const state = translationReviewRef.current
+      const pending = state?.memoryRetry
+      if (
+        !state ||
+        state !== expectedState ||
+        !pending ||
+        pending !== expectedPending ||
+        translationAbortRef.current ||
+        translationFinalizationOperationRef.current
+      ) {
+        return
+      }
+      const modeler = modelersByKeyRef.current[state.tabKey] as LangToggleModeler | undefined
+      if (!modeler) return
+      const binding = captureWorkspaceOperation()
+      if (
+        !isWorkspaceOperationCurrent(binding) ||
+        workspaceLocalizationBindingRef.current !== pending.binding ||
+        pending.binding.controller.signal.aborted
+      ) {
+        return
+      }
+      const operation = {
+        kind: 'memory' as const,
+        nonce: ++translationOperationNonceRef.current,
+        tabKey: state.tabKey
+      }
+      const operationBelongs = (): boolean =>
+        translationFinalizationOperationRef.current === operation &&
+        isWorkspaceOperationCurrent(binding) &&
+        workspaceLocalizationBindingRef.current === pending.binding
+      translationFinalizationOperationRef.current = operation
+
+      setTranslatingTab(state.tabKey)
+      setTranslationFinalizingTab(state.tabKey)
+      setTranslationReview((current) =>
+        current?.tabKey === state.tabKey && current.memoryRetry === pending
+          ? {
+              ...current,
+              status: t('translationReview.memorySaving'),
+              technicalDetail: null
+            }
+          : current
+      )
+      try {
+        const memory = await persistAcceptedTranslationPairs(pending.binding, pending.pairs, {
+          reloadBeforeWrite: true
+        })
+        if (!operationBelongs() || memory.status === 'stale') {
+          return
+        }
+        if (memory.status === 'failed') {
+          const review = memory.snapshot
+            ? rebaseTranslationReviewAfterMemorySave(modeler, state.review, memory.snapshot)
+            : state.review
+          setTranslationReview((current) =>
+            current?.tabKey === state.tabKey && current.memoryRetry === pending
+              ? {
+                  ...current,
+                  review,
+                  localizationRevision: translationLocalizationRevision(
+                    pending.binding,
+                    memory.snapshot ?? workspaceLocalizationSnapshotRef.current
+                  ),
+                  status: t('translationReview.memorySaveFailed'),
+                  technicalDetail: boundedTranslationTechnicalDetail(memory.error)
+                }
+              : current
+          )
+          return
+        }
+        const review =
+          memory.status === 'saved' && memory.snapshot
+            ? rebaseTranslationReviewAfterMemorySave(modeler, state.review, memory.snapshot)
+            : state.review
+        if (!review.complete) {
+          setTranslationReview((current) => {
+            if (current?.tabKey !== state.tabKey || current.memoryRetry !== pending) return current
+            const { memoryRetry: _completed, ...withoutMemoryRetry } = current
+            return {
+              ...withoutMemoryRetry,
+              review,
+              localizationRevision: translationLocalizationRevision(
+                pending.binding,
+                memory.snapshot ?? workspaceLocalizationSnapshotRef.current
+              ),
+              status: t('translationReview.partialStatus'),
+              technicalDetail: null,
+              retryingFieldId: null
+            }
+          })
+          return
+        }
+        setTranslationReview((current) =>
+          current?.tabKey === state.tabKey && current.memoryRetry === pending ? null : current
+        )
+        pushToast(t('translate.nothing.switched'), 'info')
+      } finally {
+        const owned = translationFinalizationOperationRef.current === operation
+        if (owned) {
+          translationFinalizationOperationRef.current = null
+          setTranslationFinalizingTab((current) => (current === state.tabKey ? null : current))
+          setTranslatingTab((current) => (current === state.tabKey ? null : current))
+        }
+      }
+    },
+    [
+      captureWorkspaceOperation,
+      isWorkspaceOperationCurrent,
+      persistAcceptedTranslationPairs,
+      pushToast,
+      setTranslationReview
+    ]
+  )
+
+  const handleTranslationContinueWithoutMemory = useCallback(
+    (
+      expectedState: TranslationReviewState,
+      expectedPending: NonNullable<TranslationReviewState['memoryRetry']>
+    ): void => {
+      const state = translationReviewRef.current
+      const pending = state?.memoryRetry
+      if (
+        !state ||
+        state !== expectedState ||
+        !pending ||
+        pending !== expectedPending ||
+        translationAbortRef.current ||
+        translationFinalizationOperationRef.current
+      ) {
+        return
+      }
+      let skipped = false
+      setTranslationReview((current) => {
+        if (current?.tabKey !== state.tabKey || current.memoryRetry !== pending) return current
+        skipped = true
+        return null
       })
-      const status = cancelled
-        ? t('translationReview.cancelled')
-        : stale
-          ? t('translationReview.stale')
-          : err instanceof FreeTranslateError
-            ? t(
-                err.code === 'rate'
-                  ? 'translate.free.rate'
-                  : err.code === 'offline'
-                    ? 'translate.free.offline'
-                    : 'translate.free.down'
-              )
-            : t('translate.failed', { error: errMsg(err) })
+      if (skipped) {
+        pushToast(t('translationReview.memorySkipped'), 'info')
+      }
+    },
+    [pushToast, setTranslationReview]
+  )
+
+  const handleTranslationCancel = useCallback((expectedState: TranslationReviewState) => {
+    if (
+      translationReviewRef.current !== expectedState ||
+      translationFinalizationOperationRef.current
+    ) {
+      return
+    }
+    translationAbortRef.current?.abort()
+  }, [])
+
+  const handleTranslationNow = useCallback(
+    async (
+      expectedState: TranslationReviewState,
+      expectedDisclosure: typeof translationDisclosure
+    ) => {
+      const state = translationReviewRef.current
+      if (
+        !state ||
+        state !== expectedState ||
+        translationAbortRef.current ||
+        translationFinalizationOperationRef.current ||
+        state.memoryRetry ||
+        state.proposals.length > 0 ||
+        state.acceptedValues.length > 0
+      ) {
+        return
+      }
+      if (!state.providerId) {
+        setTranslationReview((current) =>
+          current === state
+            ? {
+                ...current,
+                status: t('translationReview.noProvider'),
+                technicalDetail: null
+              }
+            : current
+        )
+        return
+      }
+      const disclosure = expectedDisclosure
+      if (!disclosure || translationAbortRef.current) {
+        return
+      }
+      const modeler = modelersByKeyRef.current[state.tabKey] as
+        (TranslateModeler & LangToggleModeler) | undefined
+      if (!modeler) return
+      const binding = captureWorkspaceOperation()
+      if (!isWorkspaceOperationCurrent(binding) || translationAbortRef.current) return
+      const controller = new AbortController()
+      const operationBelongs = (): boolean =>
+        translationAbortRef.current === controller && isWorkspaceOperationCurrent(binding)
+      const operationIsCurrent = (): boolean => !controller.signal.aborted && operationBelongs()
+      translationAbortRef.current = controller
+      setTranslatingTab(state.tabKey)
       setTranslationReview({
         ...state,
-        review: failedReview,
-        status
+        status: t('translationReview.running'),
+        technicalDetail: null
       })
-    } finally {
-      if (translationAbortRef.current === controller) {
-        translationAbortRef.current = null
-        if (isWorkspaceOperationCurrent(binding)) setTranslatingTab(null)
+      const consent = grantExternalRequestConsent(disclosure)
+      try {
+        const run = {
+          review: state.review,
+          disclosure,
+          consent,
+          signal: controller.signal
+        }
+        const result =
+          state.providerId === 'free'
+            ? await translateReviewedDiagramWithTexts(
+                modeler,
+                makeFreeTranslateTexts({
+                  onAttempt: (attempt) => {
+                    if (controller.signal.aborted || !operationIsCurrent()) {
+                      return
+                    }
+                    const service = t(
+                      attempt.service === 'google'
+                        ? 'translationReview.retry.service.google'
+                        : 'translationReview.retry.service.mymemory'
+                    )
+                    const status =
+                      attempt.retryInMs === undefined
+                        ? t('translationReview.retry.attempt', {
+                            service,
+                            item: attempt.item,
+                            items: attempt.itemCount,
+                            attempt: attempt.attempt,
+                            max: attempt.maxAttempts
+                          })
+                        : t('translationReview.retry.waiting', {
+                            service,
+                            item: attempt.item,
+                            items: attempt.itemCount,
+                            attempt: attempt.attempt,
+                            max: attempt.maxAttempts,
+                            seconds: Math.max(1, Math.ceil(attempt.retryInMs / 1000))
+                          })
+                    setTranslationReview((current) =>
+                      !controller.signal.aborted &&
+                      operationIsCurrent() &&
+                      current?.tabKey === state.tabKey &&
+                      current.review === state.review
+                        ? { ...current, status }
+                        : current
+                    )
+                  }
+                }),
+                run
+              )
+            : await (() => {
+                const selection = state.aiSelection
+                if (!selection || !hasKey(selection.providerId)) {
+                  throw new Error(t('translate.noKey'))
+                }
+                return translateReviewedDiagram(
+                  modeler,
+                  makeBrowserCallLLM(
+                    {
+                      providerId: selection.providerId,
+                      model: selection.modelId,
+                      apiKey: getKey(selection.providerId) ?? '',
+                      referer: typeof location !== 'undefined' ? location.origin : undefined,
+                      title: 'OrbitPM Process Studio Lite'
+                    },
+                    { signal: controller.signal }
+                  ),
+                  run
+                )
+              })()
+        if (!operationIsCurrent()) return
+        const latest = translationReviewRef.current
+        if (
+          latest?.tabKey !== state.tabKey ||
+          latest.review !== state.review ||
+          latest.providerId !== state.providerId ||
+          latest.aiSelection !== state.aiSelection
+        ) {
+          return
+        }
+        setTranslationReview((current) =>
+          current?.tabKey === state.tabKey && current.review === state.review
+            ? {
+                ...current,
+                review: result.review,
+                proposals: result.proposals,
+                status:
+                  result.proposals.length > 0
+                    ? t('translationReview.proposalStatus', {
+                        count: result.proposals.length
+                      })
+                    : t('translationReview.partialStatus'),
+                technicalDetail: null,
+                retryingFieldId: null
+              }
+            : current
+        )
+      } catch (err) {
+        if (!operationBelongs()) return
+        const cancelled =
+          controller.signal.aborted || (err instanceof DOMException && err.name === 'AbortError')
+        const stale = err instanceof StaleLocalizationReviewError
+        const failures = stale
+          ? []
+          : state.review.queue
+              .filter((item) => item.requiresSegmentationReview !== true)
+              .map((item) => ({
+                processId: item.processId,
+                elementId: item.elementId,
+                field: item.field,
+                target: item.target,
+                originalValue: item.sourceValue
+              }))
+        const failedReview = cancelled
+          ? state.review
+          : inspectDiagramLocalization(modeler, state.review.target, {
+              source: state.review.source,
+              providerFailures: failures,
+              ...state.review.localResources
+            })
+        const status = cancelled
+          ? t('translationReview.cancelled')
+          : stale
+            ? t('translationReview.stale')
+            : err instanceof FreeTranslateError
+              ? t(
+                  err.code === 'rate'
+                    ? 'translate.free.rate'
+                    : err.code === 'offline'
+                      ? 'translate.free.offline'
+                      : 'translate.free.down'
+                )
+              : t('translate.failed')
+        const technicalDetail =
+          cancelled || stale || err instanceof FreeTranslateError
+            ? null
+            : boundedTranslationTechnicalDetail(err)
+        setTranslationReview((current) =>
+          current?.tabKey === state.tabKey && current.review === state.review
+            ? {
+                ...current,
+                review: failedReview,
+                status,
+                technicalDetail,
+                proposals: stale ? [] : current.proposals,
+                acceptedValues: stale ? [] : current.acceptedValues
+              }
+            : current
+        )
+      } finally {
+        if (translationAbortRef.current === controller) {
+          translationAbortRef.current = null
+          if (isWorkspaceOperationCurrent(binding)) {
+            setTranslationFinalizingTab((current) => (current === state.tabKey ? null : current))
+            setTranslatingTab((current) => (current === state.tabKey ? null : current))
+          }
+        }
       }
-    }
-  }, [
-    captureWorkspaceOperation,
-    isWorkspaceOperationCurrent,
-    modelersByKey,
-    pushToast,
-    translatingTab,
-    translationDisclosure,
-    translationReview
-  ])
+    },
+    [captureWorkspaceOperation, isWorkspaceOperationCurrent, setTranslationReview]
+  )
 
   // Interview apply-path: the assistant regenerated the diagram from the
   // running Q&A — import it into the LIVE modeler of the target tab (bypassing
@@ -7948,9 +10576,75 @@ function App(): JSX.Element {
       }}
     />
   ) : null
+  const generatedLayoutReviewDialog = generatedLayoutReview ? (
+    <AccessibleDialog
+      ariaLabelledby="single-file-layout-review-title"
+      ariaDescribedby="single-file-layout-review-description"
+      onClose={() => settleGeneratedLayoutReview(generatedLayoutReview.id, false)}
+      closeOnEscape
+      closeOnBackdrop={false}
+      backdropClassName="orbitpm-validation__backdrop"
+      dialogClassName="orbitpm-source-editor"
+      dir={lang === 'ar' ? 'rtl' : 'ltr'}
+    >
+      <header className="orbitpm-validation__header">
+        <div>
+          <h2 id="single-file-layout-review-title" tabIndex={-1}>
+            {t('sourceEditor.layoutReady')}
+          </h2>
+          <p id="single-file-layout-review-description">{t('sourceEditor.missingDi')}</p>
+        </div>
+        <button
+          type="button"
+          onClick={() => settleGeneratedLayoutReview(generatedLayoutReview.id, false)}
+          aria-label={t('modal.close.aria')}
+        >
+          ×
+        </button>
+      </header>
+      <div
+        className="orbitpm-source-editor__layout-preview orbitpm-single-file-layout-review__body"
+        data-single-file-layout-scroll-region
+      >
+        <ReadOnlyDiagramPreview
+          xml={generatedLayoutReview.xml}
+          title={t('sourceEditor.layoutDiagramTitle')}
+          ariaLabel={t('sourceEditor.layoutDiagramAria')}
+          onStatusChange={(status) => {
+            setGeneratedLayoutReview((current) =>
+              current?.id === generatedLayoutReview.id
+                ? { ...current, renderStatus: status.status }
+                : current
+            )
+          }}
+        />
+      </div>
+      <footer className="orbitpm-validation__footer">
+        <button
+          type="button"
+          onClick={() => settleGeneratedLayoutReview(generatedLayoutReview.id, false)}
+        >
+          {t('modal.cancel')}
+        </button>
+        <button
+          type="button"
+          className="orbitpm-validation__primary"
+          disabled={generatedLayoutReview.renderStatus !== 'ready'}
+          onClick={() => settleGeneratedLayoutReview(generatedLayoutReview.id, true)}
+        >
+          {t('sourceEditor.layoutAccept')}
+        </button>
+      </footer>
+    </AccessibleDialog>
+  ) : null
 
   if (phase === 'loading') {
-    return <div style={{ padding: '2rem' }}>{t('app.loading')}</div>
+    return (
+      <>
+        <div style={{ padding: '2rem' }}>{t('app.loading')}</div>
+        {generatedLayoutReviewDialog}
+      </>
+    )
   }
 
   if (phase === 'need-open' || phase === 'need-reconnect') {
@@ -7982,6 +10676,7 @@ function App(): JSX.Element {
           onOrgStylingChanged={handleOrgStylingChanged}
         />
         {reviewedXmlDialog}
+        {generatedLayoutReviewDialog}
         <Toaster toasts={toasts} onDismiss={dismissToast} />
       </>
     )
@@ -8014,22 +10709,16 @@ function App(): JSX.Element {
   const renderedWorkspaceBinding = captureWorkspaceOperation()
 
   return (
-    <div style={{ display: 'grid', gridTemplateRows: 'auto 1fr auto', height: '100vh' }}>
+    <ResponsiveShell direction={dir} mode={responsiveMode} className="orbitpm-workspace-shell">
+      <a className="orbitpm-skip-link" href="#orbitpm-process-workspace">
+        {t('app.skipToMain')}
+      </a>
       {hiddenFileInput}
       {hiddenImportInput}
       {hiddenLibraryInput}
       {hiddenBackupInput}
-      <header
-        style={{
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'space-between',
-          padding: '0.35rem 0.8rem',
-          borderBottom: '1px solid var(--orbitpm-border)',
-          gap: 12
-        }}
-      >
-        <span style={{ display: 'flex', alignItems: 'center', gap: 8, flex: '0 0 auto' }}>
+      <header className="orbitpm-workspace-header">
+        <span className="orbitpm-workspace-header__identity">
           <img src={ICON_DATA_URI} width={20} height={20} alt="" style={{ borderRadius: 5 }} />
           <strong style={{ fontSize: 13 }}>{t('app.title')}</strong>
           <span
@@ -8039,6 +10728,7 @@ function App(): JSX.Element {
             v{__APP_VERSION__}
           </span>
           <span
+            className="orbitpm-workspace-header__storage"
             title={storagePersistence}
             style={{
               maxWidth: 190,
@@ -8051,7 +10741,7 @@ function App(): JSX.Element {
           >
             {t('workspace.storage.current', { mode: storageModeLabel })}
           </span>
-          <span style={{ display: 'inline-flex', gap: 2, marginInlineStart: 6 }}>
+          <span className="orbitpm-workspace-header__navigation">
             <button
               className="orbitpm-lite-chrome-btn"
               onClick={handleBack}
@@ -8087,7 +10777,7 @@ function App(): JSX.Element {
         </span>
 
         {isMultiFileMode(mode) && (
-          <div ref={searchBoxRef} style={{ position: 'relative', flex: '1 1 auto', maxWidth: 440 }}>
+          <div ref={searchBoxRef} className="orbitpm-workspace-header__search">
             <input
               type="search"
               role="combobox"
@@ -8142,8 +10832,26 @@ function App(): JSX.Element {
           </div>
         )}
 
-        <div style={{ display: 'flex', gap: 8, flex: '0 0 auto', alignItems: 'center' }}>
+        <div className="orbitpm-workspace-header__actions">
+          {responsiveMode !== 'docked' && (
+            <button
+              ref={explorerToggleRef}
+              type="button"
+              className="orbitpm-lite-chrome-btn orbitpm-workspace-header__explorer"
+              onClick={(event) => {
+                if (!explorerOpen) explorerReturnFocusRef.current = event.currentTarget
+                setExplorerOpen(!explorerOpen)
+              }}
+              aria-label={t('sidebar.toggle.aria')}
+              aria-expanded={explorerOpen}
+              aria-controls="orbitpm-workspace-explorer"
+              title={t(explorerOpen ? 'sidebar.hide.title' : 'sidebar.show.title')}
+            >
+              <span aria-hidden="true">☰</span>
+            </button>
+          )}
           <button
+            type="button"
             className="orbitpm-lite-chrome-btn"
             onClick={handleNewProcessClick}
             title={t('app.newProcess.title')}
@@ -8156,88 +10864,138 @@ function App(): JSX.Element {
           >
             {t('app.newProcess')}
           </button>
-          {isMultiFileMode(mode) && support ? (
-            <button
-              className="orbitpm-lite-chrome-btn"
-              onClick={() => void handleOpenDifferent()}
-              title={t('app.changeFolder.title')}
-            >
-              {t('app.changeFolder')}
-            </button>
-          ) : (
-            <button
-              className="orbitpm-lite-chrome-btn"
-              onClick={openFileFromDisk}
-              title={t('app.openBpmn.title')}
-            >
-              {t('app.openBpmn')}
-            </button>
-          )}
-          {workspaceAdapter?.storage.capabilities.backup && (
-            <button
-              className="orbitpm-lite-chrome-btn"
-              onClick={() => void handleExportWorkspaceBackup()}
-              disabled={backupBusy}
-              title={storagePersistence}
-            >
-              {t('workspace.storage.backupExport')}
-            </button>
-          )}
-          {workspaceAdapter?.storage.capabilities.multipleFiles && (
-            <>
+          <ActionMenu
+            mode={responsiveMode === 'compact' ? 'menu' : 'inline'}
+            label={t('app.actions.aria')}
+            direction={dir}
+            triggerClassName="orbitpm-lite-chrome-btn orbitpm-workspace-header__more"
+          >
+            {responsiveMode === 'compact' && (
+              <>
+                <button
+                  type="button"
+                  className="orbitpm-lite-chrome-btn"
+                  onClick={handleBack}
+                  disabled={!backEnabled}
+                >
+                  {t('nav.back')}
+                </button>
+                <button
+                  type="button"
+                  className="orbitpm-lite-chrome-btn"
+                  onClick={handleForward}
+                  disabled={!forwardEnabled}
+                >
+                  {t('nav.forward')}
+                </button>
+                {isMultiFileMode(mode) && (
+                  <button
+                    type="button"
+                    className="orbitpm-lite-chrome-btn"
+                    onClick={() => setCatalogOpen(true)}
+                  >
+                    {t('app.home')}
+                  </button>
+                )}
+              </>
+            )}
+            {isMultiFileMode(mode) && support ? (
               <button
                 className="orbitpm-lite-chrome-btn"
-                onClick={() => backupInputRef.current?.click()}
-                disabled={backupBusy}
+                onClick={() => void handleOpenDifferent()}
+                title={t('app.changeFolder.title')}
               >
-                {t('workspace.storage.backupImport')}
+                {t('app.changeFolder')}
               </button>
-              <button className="orbitpm-lite-chrome-btn" onClick={() => setHistoryOpen(true)}>
-                {t('workspace.storage.history')}
+            ) : (
+              <button
+                className="orbitpm-lite-chrome-btn"
+                onClick={openFileFromDisk}
+                title={t('app.openBpmn.title')}
+              >
+                {t('app.openBpmn')}
               </button>
-            </>
-          )}
-          <button
-            className="orbitpm-lite-chrome-btn"
-            onClick={() => setSettingsOpen(true)}
-            title={t('app.settings.title')}
-          >
-            {t('app.settings')}
-          </button>
-          <button
-            className="orbitpm-lite-chrome-btn"
-            onClick={() => {
-              setLang(lang === 'en' ? 'ar' : 'en')
-              // Canvas org decorations draw localized titles (Inputs/CC/…) at
-              // paint time — poke every live modeler so they repaint in the
-              // newly-selected UI language.
-              handleOrgStylingChanged()
-            }}
-            title={t('app.lang.toggle.title')}
-          >
-            {t('app.lang.control', {
-              language: lang === 'en' ? t('app.lang.ar') : t('app.lang.en')
-            })}
-          </button>
+            )}
+            {workspaceAdapter?.storage.capabilities.backup && (
+              <button
+                className="orbitpm-lite-chrome-btn"
+                onClick={() => void handleExportWorkspaceBackup()}
+                disabled={backupBusy}
+                title={storagePersistence}
+              >
+                {t('workspace.storage.backupExport')}
+              </button>
+            )}
+            {workspaceAdapter?.storage.capabilities.multipleFiles && (
+              <>
+                <button
+                  className="orbitpm-lite-chrome-btn"
+                  onClick={() => backupInputRef.current?.click()}
+                  disabled={backupBusy}
+                >
+                  {t('workspace.storage.backupImport')}
+                </button>
+                <button className="orbitpm-lite-chrome-btn" onClick={() => setHistoryOpen(true)}>
+                  {t('workspace.storage.history')}
+                </button>
+              </>
+            )}
+            <button
+              className="orbitpm-lite-chrome-btn"
+              onClick={() => setSettingsOpen(true)}
+              title={t('app.settings.title')}
+            >
+              {t('app.settings')}
+            </button>
+            <button
+              className="orbitpm-lite-chrome-btn"
+              onClick={() => {
+                setLang(lang === 'en' ? 'ar' : 'en')
+                // Canvas org decorations draw localized titles (Inputs/CC/…) at
+                // paint time — poke every live modeler so they repaint in the
+                // newly-selected UI language.
+                handleOrgStylingChanged()
+              }}
+              title={t('app.lang.toggle.title')}
+            >
+              {t('app.lang.control', {
+                language: lang === 'en' ? t('app.lang.ar') : t('app.lang.en')
+              })}
+            </button>
+          </ActionMenu>
         </div>
       </header>
 
-      <div
-        style={{ display: 'flex', minHeight: 0 }}
-        onDragOver={handleAppDragOver}
-        onDrop={handleAppDrop}
-      >
-        {sidebarOpen && (
-          <aside
-            style={{
-              width: sidebarWidth ?? 'clamp(240px, 24vw, 320px)',
-              flex: '0 0 auto',
-              borderInlineEnd: '1px solid var(--orbitpm-border)',
-              display: 'flex',
-              flexDirection: 'column',
-              minHeight: 0
-            }}
-          >
+      <div className="orbitpm-workspace-body" onDragOver={handleAppDragOver} onDrop={handleAppDrop}>
+        <ResponsiveDrawer
+          id="orbitpm-workspace-explorer"
+          className="orbitpm-workspace-explorer"
+          open={explorerOpen}
+          mode={responsiveMode}
+          side="inline-start"
+          label={t('sidebar.explorer.aria')}
+          direction={dir}
+          onClose={() => setExplorerOpen(false)}
+          initialFocusRef={explorerCloseRef}
+          returnFocusRef={explorerReturnFocusRef}
+          inlineSize={sidebarWidth ?? 'clamp(240px, 24vw, 320px)'}
+          keepMounted
+          modalChrome={
+            responsiveMode !== 'docked' ? (
+              <button
+                ref={explorerCloseRef}
+                type="button"
+                className="orbitpm-workspace-explorer__close"
+                onClick={() => setExplorerOpen(false)}
+                aria-label={t('sidebar.close.aria')}
+                title={t('sidebar.close.aria')}
+              >
+                <span aria-hidden="true">×</span>
+              </button>
+            ) : undefined
+          }
+        >
+          <div className="orbitpm-workspace-explorer__content">
             {/* TOP: file explorer — the directory tree or the fallback block —
                 fills the sidebar and scrolls independently of the AI section. */}
             <div style={{ flex: '1 1 auto', minHeight: 0, overflowY: 'auto', padding: '0.5rem 0' }}>
@@ -8404,105 +11162,108 @@ function App(): JSX.Element {
               <strong>{t('ai.header')}</strong>
               <span aria-hidden>{aiSectionCollapsed ? (lang === 'ar' ? '◂' : '▸') : '▾'}</span>
             </button>
-            {!aiSectionCollapsed && (
-              <div style={{ flex: '0 1 auto', maxHeight: '55%', overflowY: 'auto' }}>
-                <AiPanelLite
-                  key={`ai:${workspaceAdapter?.id ?? 'none'}:${workspaceGenRef.current}`}
-                  embedded
-                  folders={folders}
-                  onPlaceGenerated={placeGenerated}
-                  getWorkspaceGen={() => workspaceGenRef.current}
-                  onOpenSettings={() => setSettingsOpen(true)}
-                  collapsed={false}
-                  onToggle={() => {}}
-                  keysVersion={keysVersion}
-                  mode={isMultiFileMode(mode) ? 'directory' : 'fallback'}
-                  processCatalog={processCatalog}
-                  isKnownProcess={isKnownProcess}
-                  resolveProcessName={resolveProcessName}
-                  onContinueInChat={handleContinueInChat}
-                  spreadsheet={{
-                    workspaceId:
-                      workspaceAdapter?.id ?? `browser-delivery:${workspaceGenRef.current}`,
-                    workspaceAdapter,
-                    historyManager: renderedWorkspaceBinding.history,
-                    folders,
-                    knownProcessIds: processCatalog.map(({ id }) => id),
-                    getCurrentWorkspaceId: () => workspaceAdapterRef.current?.id,
-                    runWorkspaceExclusive: (operation) =>
-                      opMutexRef.current.runExclusive(operation),
-                    onOpenSingle: (xml, name) => {
-                      openVirtualTab(baseName(name), xml, {
+            <div
+              hidden={aiSectionCollapsed}
+              style={{ flex: '0 1 auto', maxHeight: '55%', overflowY: 'auto' }}
+            >
+              <AiPanelLite
+                key={`ai:${workspaceAdapter?.id ?? 'none'}:${workspaceGenRef.current}`}
+                embedded
+                folders={folders}
+                onPlaceGenerated={placeGenerated}
+                getWorkspaceGen={() => workspaceGenRef.current}
+                onOpenSettings={() => setSettingsOpen(true)}
+                collapsed={false}
+                onToggle={() => {}}
+                keysVersion={keysVersion}
+                mode={isMultiFileMode(mode) ? 'directory' : 'fallback'}
+                processCatalog={processCatalog}
+                isKnownProcess={isKnownProcess}
+                resolveProcessName={resolveProcessName}
+                onContinueInChat={handleContinueInChat}
+                spreadsheet={{
+                  workspaceId:
+                    workspaceAdapter?.id ?? `browser-delivery:${workspaceGenRef.current}`,
+                  workspaceAdapter,
+                  historyManager: renderedWorkspaceBinding.history,
+                  folders,
+                  knownProcessIds: processCatalog.map(({ id }) => id),
+                  getCurrentWorkspaceId: () => workspaceAdapterRef.current?.id,
+                  runWorkspaceExclusive: (operation) =>
+                    runCoordinatedWorkspaceMutation(renderedWorkspaceBinding, async (lease) =>
+                      operation((changes) => lease.publish(changes))
+                    ),
+                  onOpenSingle: (xml, name) => {
+                    openVirtualTab(baseName(name), xml, {
+                      collapse: false,
+                      autoSizeOnImport: true,
+                      localizationSource: LocalizationSource.Excel
+                    })
+                  },
+                  onReviewBilingual: async (request) => {
+                    const binding = renderedWorkspaceBinding
+                    const isCurrent = (): boolean =>
+                      !request.signal.aborted && isWorkspaceOperationCurrent(binding)
+                    try {
+                      const outcome = await reviewBpmnXmlLocalization(request.xml, {
+                        source: LocalizationSource.Excel,
+                        target: lang,
+                        defaultActive: lang,
+                        resources:
+                          workspaceLocalizationSnapshot?.resources ??
+                          DEFAULT_LOCALIZATION_RESOURCES,
+                        validation: {
+                          adapters: getRuntimeValidationAdapters(),
+                          knownProcessIds: processCatalog.map(({ id }) => id),
+                          requireDi: true
+                        },
+                        validationAction: 'create-generated',
+                        review: reviewedXmlReviewQueueRef.current!.review,
+                        signal: request.signal,
+                        isCurrent
+                      })
+                      if (!isCurrent() || outcome.status !== 'completed') {
+                        return { status: 'cancelled' }
+                      }
+                      return {
+                        status: 'completed',
+                        reviewedXml: outcome.xml
+                      }
+                    } catch (error) {
+                      if (request.signal.aborted || !isCurrent()) {
+                        return { status: 'cancelled' }
+                      }
+                      throw error
+                    }
+                  },
+                  onCommitted: async (report) => {
+                    if (
+                      !workspaceAdapter?.storage.capabilities.multipleFiles ||
+                      renderedWorkspaceBinding.adapter !== workspaceAdapter ||
+                      !isWorkspaceOperationCurrent(renderedWorkspaceBinding)
+                    ) {
+                      return
+                    }
+                    await refreshWorkspace(rootHandleRef.current ?? undefined)
+                    if (!isWorkspaceOperationCurrent(renderedWorkspaceBinding)) return
+                    const first = report.artifacts[0]
+                    if (first) {
+                      void openDirectoryFile(first.destinationPath, {
                         collapse: false,
                         autoSizeOnImport: true,
                         localizationSource: LocalizationSource.Excel
                       })
-                    },
-                    onReviewBilingual: async (request) => {
-                      const binding = renderedWorkspaceBinding
-                      const isCurrent = (): boolean =>
-                        !request.signal.aborted && isWorkspaceOperationCurrent(binding)
-                      try {
-                        const outcome = await reviewBpmnXmlLocalization(request.xml, {
-                          source: LocalizationSource.Excel,
-                          target: lang,
-                          defaultActive: lang,
-                          resources:
-                            workspaceLocalizationSnapshot?.resources ??
-                            DEFAULT_LOCALIZATION_RESOURCES,
-                          validation: {
-                            adapters: getRuntimeValidationAdapters(),
-                            knownProcessIds: processCatalog.map(({ id }) => id),
-                            requireDi: true
-                          },
-                          validationAction: 'create-generated',
-                          review: reviewedXmlReviewQueueRef.current!.review,
-                          signal: request.signal,
-                          isCurrent
-                        })
-                        if (!isCurrent() || outcome.status !== 'completed') {
-                          return { status: 'cancelled' }
-                        }
-                        return {
-                          status: 'completed',
-                          reviewedXml: outcome.xml
-                        }
-                      } catch (error) {
-                        if (request.signal.aborted || !isCurrent()) {
-                          return { status: 'cancelled' }
-                        }
-                        throw error
-                      }
-                    },
-                    onCommitted: async (report) => {
-                      if (
-                        !workspaceAdapter?.storage.capabilities.multipleFiles ||
-                        renderedWorkspaceBinding.adapter !== workspaceAdapter ||
-                        !isWorkspaceOperationCurrent(renderedWorkspaceBinding)
-                      ) {
-                        return
-                      }
-                      await refreshWorkspace(rootHandleRef.current ?? undefined)
-                      if (!isWorkspaceOperationCurrent(renderedWorkspaceBinding)) return
-                      const first = report.artifacts[0]
-                      if (first) {
-                        void openDirectoryFile(first.destinationPath, {
-                          collapse: false,
-                          autoSizeOnImport: true,
-                          localizationSource: LocalizationSource.Excel
-                        })
-                      }
                     }
-                  }}
-                />
-              </div>
-            )}
-          </aside>
-        )}
+                  }
+                }}
+              />
+            </div>
+          </div>
+        </ResponsiveDrawer>
 
         {/* Drag handle for the explorer width — sits on the aside's inline-end
             edge, before the rail. dir-aware so RTL drags resize correctly. */}
-        {sidebarOpen && (
+        {explorerOpen && responsiveMode === 'docked' && (
           <PaneResizer
             edge="inline-end"
             dir={dir}
@@ -8521,19 +11282,26 @@ function App(): JSX.Element {
         <button
           type="button"
           className="orbitpm-lite-rail"
-          onClick={() => setSidebarOpen((o) => !o)}
+          onClick={(event) => {
+            if (!explorerOpen) explorerReturnFocusRef.current = event.currentTarget
+            setExplorerOpen(!explorerOpen)
+          }}
           aria-label={t('sidebar.toggle.aria')}
-          aria-expanded={sidebarOpen}
-          title={t(sidebarOpen ? 'sidebar.hide.title' : 'sidebar.show.title')}
+          aria-expanded={explorerOpen}
+          aria-controls="orbitpm-workspace-explorer"
+          title={t(explorerOpen ? 'sidebar.hide.title' : 'sidebar.show.title')}
         >
           <span aria-hidden>
-            {lang === 'ar' ? (sidebarOpen ? '⟩' : '⟨') : sidebarOpen ? '⟨' : '⟩'}
+            {lang === 'ar' ? (explorerOpen ? '⟩' : '⟨') : explorerOpen ? '⟨' : '⟩'}
           </span>
         </button>
 
         <main
+          id="orbitpm-process-workspace"
           ref={editorRegionRef}
           tabIndex={-1}
+          aria-label={t('app.main.aria')}
+          className="orbitpm-workspace-main"
           style={{ display: 'flex', flexDirection: 'column', minWidth: 0, flex: 1 }}
         >
           <ProcessTabList
@@ -8659,6 +11427,12 @@ function App(): JSX.Element {
                           onOpenDetails={() => setStepDetails({ tabKey: tab.key })}
                         />
                       }
+                      detailsController={detailsController}
+                      responsiveMode={responsiveMode}
+                      onDetailsOpenChange={handleDetailsOpenChange}
+                      outlineOpen={outlineOpenTabKey === tab.key}
+                      onOutlineOpenChange={(open) => handleOutlineOpenChange(tab.key, open)}
+                      sidePanesActive={isActive && !showCatalog}
                       exportFileBaseName={tab.title.replace(/\.bpmn$/i, '')}
                       onCommandsReady={(commands) => {
                         commandUnregisterersRef.current[tab.key]?.()
@@ -8888,6 +11662,7 @@ function App(): JSX.Element {
       </div>
 
       <footer
+        className="orbitpm-workspace-footer"
         style={{
           borderTop: '1px solid var(--orbitpm-border)',
           padding: '0.3rem 0.8rem',
@@ -8985,35 +11760,92 @@ function App(): JSX.Element {
       </footer>
 
       {reviewedXmlDialog}
+      {generatedLayoutReviewDialog}
 
       {translationReview && (
         <TranslationReviewDialog
           review={translationReview.review}
+          documentName={
+            tabs.find((candidate) => candidate.key === translationReview.tabKey)?.title ??
+            translationReview.tabKey
+          }
           disclosure={translationDisclosure}
           providers={translationProviders}
           providerId={translationReview.providerId}
           busy={translatingTab === translationReview.tabKey}
+          cancellable={translationFinalizingTab !== translationReview.tabKey}
           status={translationReview.status}
+          technicalDetail={translationReview.technicalDetail}
+          retryingFieldId={translationReview.retryingFieldId}
+          proposals={translationReview.proposals}
+          acceptedValues={translationReview.acceptedValues}
           onProviderChange={(providerId) => {
             if (providerId !== '' && providerId !== 'selected-ai' && providerId !== 'free') {
               return
             }
-            setTranslationReview((current) =>
-              current
-                ? {
-                    ...current,
-                    providerId,
-                    // Provider/model changes invalidate any prior consent. The
-                    // disclosure fingerprint is regenerated from this state.
-                    status: null
-                  }
-                : null
-            )
+            if (
+              translationReviewRef.current !== translationReview ||
+              translationAbortRef.current ||
+              translationFinalizationOperationRef.current
+            ) {
+              return
+            }
+            setTranslationReview((current) => {
+              if (current !== translationReview || current.memoryRetry) return current
+              return {
+                ...current,
+                providerId,
+                // Provider/model changes invalidate any prior consent. The
+                // disclosure fingerprint is regenerated from this state.
+                status: null,
+                technicalDetail: null,
+                proposals: []
+              }
+            })
           }}
-          onTranslateNow={() => void handleTranslationNow()}
+          onTranslateNow={handleTranslationNow.bind(null, translationReview, translationDisclosure)}
           onPartialPreview={handleTranslationPartialPreview}
-          onPostpone={() => setTranslationReview(null)}
-          onCancelTranslation={handleTranslationCancel}
+          onApplyCompleted={handleTranslationApplyCompleted.bind(null, translationReview)}
+          onRetryField={handleTranslationRetryField.bind(null, translationReview)}
+          onManualEdit={handleTranslationManualEdit}
+          onAcceptProposal={handleTranslationAcceptProposal}
+          onRejectProposal={handleTranslationRejectProposal}
+          onRetryMemorySave={
+            translationReview.memoryRetry
+              ? handleTranslationRetryMemory.bind(
+                  null,
+                  translationReview,
+                  translationReview.memoryRetry
+                )
+              : undefined
+          }
+          onContinueWithoutMemorySave={
+            translationReview.memoryRetry
+              ? handleTranslationContinueWithoutMemory.bind(
+                  null,
+                  translationReview,
+                  translationReview.memoryRetry
+                )
+              : undefined
+          }
+          onPostpone={() =>
+            setTranslationReview((current) =>
+              current !== translationReview || current.memoryRetry ? current : null
+            )
+          }
+          onCancelTranslation={handleTranslationCancel.bind(null, translationReview)}
+        />
+      )}
+
+      {dirtyTabClosePrompt && (
+        <ConfirmDialog
+          title={t('confirm.discardUnsaved.title')}
+          message={t('confirm.discardUnsaved', { title: dirtyTabClosePrompt.title })}
+          confirmLabel={t('confirm.discardUnsaved.confirm')}
+          danger
+          role="alertdialog"
+          onConfirm={confirmDirtyTabClose}
+          onCancel={() => setDirtyTabClosePrompt(null)}
         />
       )}
 
@@ -9360,6 +12192,9 @@ function App(): JSX.Element {
           manager={historyManagerRef.current}
           currentXml={(path) => liveFiles.find((file) => file.relPath === path)?.xml}
           onRestore={(revision) => handleHistoryRestore(revision, renderedWorkspaceBinding)}
+          onRestoreCopy={(revision, destination, signal) =>
+            handleHistoryRestoreCopy(revision, destination, signal, renderedWorkspaceBinding)
+          }
           onChanged={() =>
             isWorkspaceOperationCurrent(renderedWorkspaceBinding)
               ? refreshWorkspace(rootHandleRef.current ?? undefined)
@@ -9476,6 +12311,9 @@ function App(): JSX.Element {
         mode={isMultiFileMode(mode) ? 'directory' : 'fallback'}
         keysVersion={keysVersion}
         getDigests={getDigests}
+        onChangeWorkspace={
+          isMultiFileMode(mode) && support ? () => void handleOpenDifferent() : undefined
+        }
         onOpenProcess={(relPath) => {
           setAssistOpen(false)
           void openDirectoryFile(relPath)
@@ -9520,7 +12358,7 @@ function App(): JSX.Element {
         onOrgStylingChanged={handleOrgStylingChanged}
         localizationResources={settingsLocalizationResources}
       />
-    </div>
+    </ResponsiveShell>
   )
 }
 

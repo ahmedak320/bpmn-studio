@@ -349,7 +349,11 @@ function patchFingerprint(patch: LocalizationPatch): unknown {
     patch.field,
     patch.property,
     patch.value,
-    patch.expectedValue ?? null,
+    patch.expectedValue === undefined
+      ? 'unconditional'
+      : patch.expectedValue === null
+        ? 'absent'
+        : ['exact', patch.expectedValue],
     patch.target ?? null,
     patch.reason
   ]
@@ -481,7 +485,7 @@ function applyReviewedEdits(
       field: field.field,
       property: edit.target === 'en' ? field.storage.enProperty : field.storage.arProperty,
       value: edit.value,
-      ...(current === null ? {} : { expectedValue: current }),
+      expectedValue: current,
       target: edit.target,
       reason: 'review'
     })
@@ -705,8 +709,8 @@ function applyPatches(
     }
     const current = textValue(readValue(object, patch.property))
     if (
-      patch.expectedValue !== undefined &&
-      current !== patch.expectedValue &&
+      ((patch.expectedValue === null && current !== undefined) ||
+        (typeof patch.expectedValue === 'string' && current !== patch.expectedValue)) &&
       current !== patch.value
     ) {
       throw new ReviewedXmlIngestionError(

@@ -1,6 +1,6 @@
 import { extractBpmnLocalization } from './extract'
 import { SEEDED_GLOSSARY, approvedNeutralTerms, normalizeLocalizationLookup } from './glossary'
-import { classifyScript, validateTargetScript, type TargetValidationOptions } from './script'
+import { classifyScript, createApprovedScriptValueSet, validateTargetScript } from './script'
 import {
   LocalizationSource,
   type GlossaryEntry,
@@ -29,6 +29,8 @@ export interface LocalizationAuditOptions {
    */
   approvedFieldExceptions?: readonly LocalizationFieldException[]
   providerFailures?: readonly ProviderFailure[]
+  /** Reused internally across one extraction/plan/audit/queue derivation. */
+  auditContext?: LocalizationAuditContext
 }
 
 export interface LocalizationFieldException {
@@ -45,6 +47,13 @@ export interface AuditBpmnLocalizationOptions extends LocalizationAuditOptions {
   defaultActive?: LanguageCode
 }
 
+export interface LocalizationAuditContext {
+  readonly approvedNeutralTermKeys: ReadonlySet<string>
+  readonly approvedEnglishBilingualExceptionKeys: ReadonlySet<string>
+  readonly fieldExceptions: ReadonlySet<string>
+  readonly providerFailures: readonly ProviderFailure[]
+}
+
 function materializeTerms(options: LocalizationAuditOptions): readonly string[] {
   if (options.approvedNeutralTerms !== undefined) {
     return [...options.approvedNeutralTerms].map(String)
@@ -52,43 +61,62 @@ function materializeTerms(options: LocalizationAuditOptions): readonly string[] 
   return approvedNeutralTerms(options.glossary ?? SEEDED_GLOSSARY)
 }
 
+function fieldLookupKey(
+  value: Pick<LocalizationField | ProviderFailure, 'processId' | 'elementId' | 'field'>
+): string {
+  return `${value.processId}\u0000${value.elementId}\u0000${value.field}`
+}
+
+function fieldExceptionKey(
+  value: Pick<
+    LocalizationFieldException,
+    'processId' | 'elementId' | 'field' | 'target' | 'kind' | 'value'
+  >
+): string {
+  return [
+    value.processId,
+    value.elementId,
+    value.field,
+    value.target,
+    value.kind,
+    value.value
+  ].join('\u0000')
+}
+
+export function createLocalizationAuditContext(
+  options: LocalizationAuditOptions = {}
+): LocalizationAuditContext {
+  if (options.auditContext) return options.auditContext
+  return Object.freeze({
+    approvedNeutralTermKeys: createApprovedScriptValueSet(materializeTerms(options)),
+    approvedEnglishBilingualExceptionKeys: createApprovedScriptValueSet(
+      options.approvedEnglishBilingualExceptions ?? []
+    ),
+    fieldExceptions: new Set((options.approvedFieldExceptions ?? []).map(fieldExceptionKey)),
+    providerFailures: Object.freeze(
+      (options.providerFailures ?? []).map((failure) => Object.freeze({ ...failure }))
+    )
+  })
+}
+
 function exactFieldException(
   field: LocalizationField,
   target: LanguageCode,
   value: string | undefined,
   kind: LocalizationFieldException['kind'],
-  options: LocalizationAuditOptions
+  context: LocalizationAuditContext
 ): boolean {
   if (value === undefined) return false
-  return (options.approvedFieldExceptions ?? []).some(
-    (approval) =>
-      approval.processId === field.processId &&
-      approval.elementId === field.elementId &&
-      approval.field === field.field &&
-      approval.target === target &&
-      approval.kind === kind &&
-      approval.value === value
+  return context.fieldExceptions.has(
+    fieldExceptionKey({
+      processId: field.processId,
+      elementId: field.elementId,
+      field: field.field,
+      target,
+      kind,
+      value
+    })
   )
-}
-
-function targetOptions(
-  field: LocalizationField,
-  target: LanguageCode,
-  options: LocalizationAuditOptions
-): TargetValidationOptions {
-  const value = field.value[target]
-  return {
-    approvedNeutralTerms: [
-      ...materializeTerms(options),
-      ...(exactFieldException(field, target, value, 'neutral', options) && value ? [value] : [])
-    ],
-    approvedEnglishBilingualExceptions: [
-      ...(options.approvedEnglishBilingualExceptions ?? []),
-      ...(exactFieldException(field, target, value, 'english-bilingual', options) && value
-        ? [value]
-        : [])
-    ]
-  }
 }
 
 function issue(
@@ -111,14 +139,27 @@ function issue(
 export function auditFieldTarget(
   field: LocalizationField,
   target: LanguageCode,
-  options: LocalizationAuditOptions = {}
+  options: LocalizationAuditOptions = {},
+  context: LocalizationAuditContext = createLocalizationAuditContext(options)
 ): LocalizationIssue[] {
   const value = field.value[target]
   if (value == null || value.trim() === '') {
     return [issue(field, target, 'missing', value)]
   }
 
-  const validation = validateTargetScript(value, target, targetOptions(field, target, options))
+  if (exactFieldException(field, target, value, 'neutral', context)) return []
+  const validation = validateTargetScript(value, target, {
+    approvedNeutralTermKeys: context.approvedNeutralTermKeys,
+    approvedEnglishBilingualExceptionKeys: context.approvedEnglishBilingualExceptionKeys
+  })
+  if (
+    !validation.valid &&
+    target === 'en' &&
+    validation.script === 'mixed' &&
+    exactFieldException(field, target, value, 'english-bilingual', context)
+  ) {
+    return []
+  }
   if (validation.valid) return []
   if (validation.script === 'mixed') {
     return [issue(field, target, 'mixed', value)]
@@ -128,7 +169,7 @@ export function auditFieldTarget(
 
 function duplicateIssue(
   field: LocalizationField,
-  options: LocalizationAuditOptions
+  context: LocalizationAuditContext
 ): LocalizationIssue | undefined {
   const en = field.value.en
   const ar = field.value.ar
@@ -139,17 +180,10 @@ function duplicateIssue(
 
   // Approved complete neutral values are intentionally the same in both
   // languages and must never be reported as duplicated translations.
-  if (
-    classifyScript(normalizedEn, {
-      approvedNeutralTerms: materializeTerms(options)
-    }) === 'neutral'
-  ) {
-    return undefined
-  }
-
   const script = classifyScript(normalizedEn, {
-    approvedNeutralTerms: materializeTerms(options)
+    approvedNeutralTermKeys: context.approvedNeutralTermKeys
   })
+  if (script === 'neutral') return undefined
   const target: LanguageCode =
     script === 'english'
       ? 'ar'
@@ -158,7 +192,7 @@ function duplicateIssue(
         : field.value.active === 'en'
           ? 'ar'
           : 'en'
-  if (exactFieldException(field, target, field.value[target], 'neutral', options)) {
+  if (exactFieldException(field, target, field.value[target], 'neutral', context)) {
     return undefined
   }
   return issue(field, target, 'duplicate-counterpart', field.value[target])
@@ -210,22 +244,10 @@ export function auditLocalizationFields(
   fields: readonly LocalizationField[],
   options: LocalizationAuditOptions = {}
 ): LocalizationAuditReport {
-  // Materialize arbitrary iterables once. Generator-backed user preferences
-  // must behave exactly like arrays across the many field/target checks.
-  const stableOptions: LocalizationAuditOptions = {
-    ...options,
-    approvedNeutralTerms: materializeTerms(options),
-    approvedEnglishBilingualExceptions:
-      options.approvedEnglishBilingualExceptions === undefined
-        ? undefined
-        : [...options.approvedEnglishBilingualExceptions],
-    approvedFieldExceptions:
-      options.approvedFieldExceptions === undefined
-        ? undefined
-        : options.approvedFieldExceptions.map((approval) => ({ ...approval }))
-  }
+  const context = createLocalizationAuditContext(options)
   const issues: LocalizationIssue[] = []
   const seen = new Set<string>()
+  const fieldsByIdentity = new Map<string, LocalizationField>()
   const push = (current: LocalizationIssue): void => {
     const key = issueKey(current)
     if (seen.has(key)) return
@@ -234,20 +256,17 @@ export function auditLocalizationFields(
   }
 
   for (const field of fields) {
+    const identity = fieldLookupKey(field)
+    if (!fieldsByIdentity.has(identity)) fieldsByIdentity.set(identity, field)
     for (const target of ['en', 'ar'] as const) {
-      for (const current of auditFieldTarget(field, target, stableOptions)) push(current)
+      for (const current of auditFieldTarget(field, target, options, context)) push(current)
     }
-    const duplicate = duplicateIssue(field, stableOptions)
+    const duplicate = duplicateIssue(field, context)
     if (duplicate) push(duplicate)
   }
 
-  for (const failure of stableOptions.providerFailures ?? []) {
-    const field = fields.find(
-      (candidate) =>
-        candidate.processId === failure.processId &&
-        candidate.elementId === failure.elementId &&
-        candidate.field === failure.field
-    )
+  for (const failure of context.providerFailures) {
+    const field = fieldsByIdentity.get(fieldLookupKey(failure))
     const current: LocalizationIssue = {
       source: field?.source ?? fields[0]?.source ?? LocalizationSource.Xml,
       processId: failure.processId,

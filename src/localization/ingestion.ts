@@ -1,5 +1,8 @@
-import type { LocalizationAuditOptions } from './audit'
-import { auditLocalizationFields } from './audit'
+import {
+  auditLocalizationFields,
+  createLocalizationAuditContext,
+  type LocalizationAuditOptions
+} from './audit'
 import { extractBpmnLocalization } from './extract'
 import {
   buildTranslationQueue,
@@ -53,18 +56,27 @@ export function prepareLocalizationIngestion(
     glossary: options.glossary,
     approvedNeutralTerms: options.approvedNeutralTerms,
     approvedEnglishBilingualExceptions: options.approvedEnglishBilingualExceptions,
+    approvedFieldExceptions: options.approvedFieldExceptions,
     providerFailures: options.providerFailures
   }
-  const initialAudit = auditLocalizationFields(fields, auditOptions)
-  const localPlan = planLocalResourceApplication(fields, options)
-  const audit = auditLocalizationFields(localPlan.fields, auditOptions)
+  const reviewAuditOptions: LocalizationAuditOptions = {
+    ...auditOptions,
+    auditContext: createLocalizationAuditContext(auditOptions)
+  }
+  const planOptions: LocalResourcePlanOptions = {
+    ...options,
+    auditContext: reviewAuditOptions.auditContext
+  }
+  const initialAudit = auditLocalizationFields(fields, reviewAuditOptions)
+  const localPlan = planLocalResourceApplication(fields, planOptions)
+  const audit = auditLocalizationFields(localPlan.fields, reviewAuditOptions)
   return {
     source,
     target,
     initialAudit,
     localPlan,
     audit,
-    queue: buildTranslationQueue(localPlan.fields, auditOptions, target),
-    projection: planLanguageProjection(localPlan.fields, target, auditOptions)
+    queue: buildTranslationQueue(localPlan.fields, reviewAuditOptions, target),
+    projection: planLanguageProjection(localPlan.fields, target, reviewAuditOptions)
   }
 }

@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { DirectoryWorkspaceAdapter } from '..'
 import { asDirectoryHandle, fakeRoot } from './fakeFileSystem'
 
@@ -32,6 +32,50 @@ describe('DirectoryWorkspaceAdapter', () => {
       issue: { code: 'storage-failure', operation: 'read' }
     })
     expect([...(await adapter.read('good/data.bin')).bytes]).toEqual([0, 255])
+  })
+
+  it('stops recursive traversal at configured entry and depth ceilings', async () => {
+    const root = fakeRoot()
+    root.addFile('one/a.bpmn', 'a')
+    root.addFile('one/two/b.bpmn', 'b')
+    root.addFile('one/two/three/c.bpmn', 'c')
+    const adapter = new DirectoryWorkspaceAdapter(asDirectoryHandle(root), {
+      workspaceId: 'directory:bounded-list'
+    })
+
+    await expect(adapter.list('', { maxEntries: 2 })).rejects.toMatchObject({
+      name: 'WorkspaceListLimitError',
+      operation: 'list',
+      dimension: 'entries',
+      limit: 2
+    })
+    await expect(adapter.list('', { maxDepth: 2 })).rejects.toMatchObject({
+      name: 'WorkspaceListLimitError',
+      operation: 'list',
+      path: 'one/two/b.bpmn',
+      dimension: 'depth',
+      limit: 2
+    })
+  })
+
+  it('stops recursive metadata traversal when its list signal is aborted', async () => {
+    const root = fakeRoot()
+    const first = root.addFile('a.bpmn', 'a')
+    const second = root.addFile('b.bpmn', 'b')
+    const adapter = new DirectoryWorkspaceAdapter(asDirectoryHandle(root), {
+      workspaceId: 'directory:cancelled-list'
+    })
+    const controller = new AbortController()
+    const firstGetFile = first.getFile.bind(first)
+    vi.spyOn(first, 'getFile').mockImplementation(async () => {
+      const file = await firstGetFile()
+      controller.abort('stop listing')
+      return file
+    })
+    const secondGetFile = vi.spyOn(second, 'getFile')
+
+    await expect(adapter.list('', { signal: controller.signal })).rejects.toBe('stop listing')
+    expect(secondGetFile).not.toHaveBeenCalled()
   })
 
   it('enforces expected hashes and maps permission, stale, and cancellation outcomes', async () => {

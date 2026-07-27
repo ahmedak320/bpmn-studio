@@ -34,15 +34,15 @@ describe('shared explicit provider selection', () => {
   })
 
   it('round-trips an explicit provider and model choice', () => {
-    expect(setProviderSelection('gemini', 'gemini-flash-latest')).toEqual({
+    expect(setProviderSelection('gemini', 'gemini-3.6-flash')).toEqual({
       ok: true,
       value: undefined
     })
     expect(getProviderSelection()).toEqual({
       providerId: 'gemini',
-      modelId: 'gemini-flash-latest'
+      modelId: 'gemini-3.6-flash'
     })
-    expect([...values.values()].join(' ')).toContain('gemini-flash-latest')
+    expect([...values.values()].join(' ')).toContain('gemini-3.6-flash')
   })
 
   it('rejects an empty model', () => {

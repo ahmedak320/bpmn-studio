@@ -1,9 +1,12 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { t } from '../i18n'
 import { useLang } from '../i18n/useLang'
 import type { GlossaryEntry, TranslationMemoryEntry } from '../localization/types'
+import { WorkspaceOperationError, type WorkspaceErrorCode } from '../workspace/adapters'
 import {
   WorkspaceLocalizationConflictError,
+  WorkspaceLocalizationPartialLoadError,
+  WorkspaceLocalizationResourceLimitError,
   WorkspaceLocalizationValidationError,
   type WorkspaceLocalizationState
 } from '../localization/workspaceStore'
@@ -13,6 +16,7 @@ import {
   validateTranslationMemoryDraft,
   type LocalizationResourceDraftIssue
 } from './localizationResourceDraft'
+import { boundedValidationTechnicalDetail } from '../validation/technicalEvidence'
 import './LocalizationResourcesEditor.css'
 
 interface DraftRow<Entry> {
@@ -23,20 +27,39 @@ interface DraftRow<Entry> {
 type PendingAction = 'glossary' | 'translation-memory' | 'reload'
 type ResourceScope = Exclude<PendingAction, 'reload'>
 
+export type LocalizationResourcesFailureCode =
+  'conflict' | 'validation' | 'resource-limit' | 'partial-load' | WorkspaceErrorCode | 'unknown'
+
 interface EditorFailure {
   scope: PendingAction
-  conflict: boolean
-  message: string
+  code: LocalizationResourcesFailureCode
+  detail: string | null
 }
 
+interface ResourceBaseline<Entry> {
+  hash: string
+  entries: readonly Entry[]
+}
+
+type ResourceConflict<Entry> =
+  { stage: 'reload-required' } | { stage: 'review'; remote: ResourceBaseline<Entry> }
+
 export interface LocalizationResourcesEditorProps {
+  /** Remount boundary for one adapter generation; prevents cross-workspace drafts. */
+  workspaceBindingKey?: string
   /** Latest compare-and-set snapshot returned by WorkspaceLocalizationStore. */
   snapshot: WorkspaceLocalizationState | null
   /** Exact load failure retained while the public files remain read-only. */
   loadError?: string | null
-  onSaveGlossary: (entries: readonly GlossaryEntry[]) => Promise<WorkspaceLocalizationState>
+  /** Stable failure classification retained separately from technical evidence. */
+  loadErrorCode?: LocalizationResourcesFailureCode | null
+  onSaveGlossary: (
+    entries: readonly GlossaryEntry[],
+    expectedHash: string
+  ) => Promise<WorkspaceLocalizationState>
   onSaveTranslationMemory: (
-    entries: readonly TranslationMemoryEntry[]
+    entries: readonly TranslationMemoryEntry[],
+    expectedHash: string
   ) => Promise<WorkspaceLocalizationState>
   onReload: () => Promise<WorkspaceLocalizationState>
   /** Lets Settings/App retain each callback's new hashes without re-reading. */
@@ -44,9 +67,26 @@ export interface LocalizationResourcesEditorProps {
   disabled?: boolean
 }
 
-function snapshotSignature(snapshot: WorkspaceLocalizationState | null): string {
-  if (!snapshot) return ''
-  return `${snapshot.files.glossary.hash}:${snapshot.files.translationMemory.hash}`
+function glossaryBaselineFrom(
+  snapshot: WorkspaceLocalizationState
+): ResourceBaseline<GlossaryEntry> {
+  return {
+    hash: snapshot.files.glossary.hash,
+    entries: snapshot.resources.glossary
+  }
+}
+
+function translationMemoryBaselineFrom(
+  snapshot: WorkspaceLocalizationState
+): ResourceBaseline<TranslationMemoryEntry> {
+  return {
+    hash: snapshot.files.translationMemory.hash,
+    entries: snapshot.resources.translationMemory
+  }
+}
+
+function entriesEqual<Entry>(left: readonly Entry[], right: readonly Entry[]): boolean {
+  return JSON.stringify(left) === JSON.stringify(right)
 }
 
 function rowsFrom<Entry extends GlossaryEntry | TranslationMemoryEntry>(
@@ -91,42 +131,218 @@ function errorMessage(issue: LocalizationResourceDraftIssue): string {
   }
 }
 
+function technicalErrorDetail(error: unknown): string | null {
+  return boundedValidationTechnicalDetail(error) ?? null
+}
+
 function failureFrom(error: unknown, scope: PendingAction): EditorFailure {
-  if (scope === 'reload') {
-    return {
-      scope,
-      conflict: false,
-      message: t('settings.localization.loadFailed', {
-        error: error instanceof Error ? error.message : String(error)
-      })
-    }
-  }
   if (error instanceof WorkspaceLocalizationConflictError) {
-    return {
-      scope,
-      conflict: true,
-      message: t('settings.localization.conflict')
-    }
+    return { scope, code: 'conflict', detail: null }
   }
   if (error instanceof WorkspaceLocalizationValidationError) {
-    return {
-      scope,
-      conflict: false,
-      message: t('settings.localization.validation.schema')
-    }
+    return { scope, code: 'validation', detail: technicalErrorDetail(error) }
   }
-  return {
-    scope,
-    conflict: false,
-    message: t('settings.localization.saveFailed', {
-      error: error instanceof Error ? error.message : String(error)
-    })
+  if (error instanceof WorkspaceLocalizationResourceLimitError) {
+    return { scope, code: 'resource-limit', detail: technicalErrorDetail(error) }
   }
+  if (error instanceof WorkspaceLocalizationPartialLoadError) {
+    return { scope, code: 'partial-load', detail: technicalErrorDetail(error) }
+  }
+  if (error instanceof WorkspaceOperationError) {
+    return { scope, code: error.code, detail: technicalErrorDetail(error) }
+  }
+  return { scope, code: 'unknown', detail: technicalErrorDetail(error) }
+}
+
+function workspaceFailureReason(code: EditorFailure['code']): string {
+  switch (code) {
+    case 'conflict':
+      return t('settings.localization.conflict')
+    case 'validation':
+      return t('settings.localization.validation.schema')
+    case 'resource-limit':
+      return t('settings.localization.failure.resourceLimit')
+    case 'partial-load':
+      return t('settings.localization.failure.partialLoad')
+    case 'invalid-path':
+      return t('settings.localization.failure.invalidPath')
+    case 'invalid-encoding':
+      return t('settings.localization.failure.invalidEncoding')
+    case 'not-found':
+      return t('settings.localization.failure.notFound')
+    case 'already-exists':
+      return t('settings.localization.failure.alreadyExists')
+    case 'not-a-file':
+    case 'not-a-directory':
+      return t('settings.localization.failure.wrongKind')
+    case 'permission-loss':
+      return t('settings.localization.failure.permission')
+    case 'cancelled':
+      return t('settings.localization.failure.cancelled')
+    case 'stale-workspace':
+      return t('settings.localization.failure.staleWorkspace')
+    case 'unsupported':
+      return t('settings.localization.failure.unsupported')
+    case 'quota-exceeded':
+      return t('settings.localization.failure.quotaExceeded')
+    case 'integrity-failure':
+      return t('settings.localization.failure.integrity')
+    case 'storage-failure':
+      return t('settings.localization.failure.storage')
+    case 'unknown':
+      return t('settings.localization.failure.unknown')
+  }
+}
+
+function editorFailureMessage(failure: EditorFailure): string {
+  if (failure.code === 'conflict') return workspaceFailureReason(failure.code)
+  const reason = workspaceFailureReason(failure.code)
+  return failure.scope === 'reload'
+    ? t('settings.localization.loadFailed', { error: reason })
+    : t('settings.localization.saveFailed', { error: reason })
+}
+
+function FailureAlert({ failure }: { failure: EditorFailure }): JSX.Element {
+  return (
+    <div className="orbitpm-localization-resources__failure" role="alert">
+      <div>{editorFailureMessage(failure)}</div>
+      {failure.detail ? (
+        <details>
+          <summary>{t('settings.localization.technicalDetails')}</summary>
+          <code
+            aria-label={t('settings.localization.technicalDetail')}
+            lang="en"
+            dir="ltr"
+            style={{ overflowWrap: 'anywhere', whiteSpace: 'pre-wrap' }}
+          >
+            {failure.detail}
+          </code>
+        </details>
+      ) : null}
+    </div>
+  )
+}
+
+const CONFLICT_PREVIEW_LIMIT = 10
+
+interface ResourceConflictAlertProps<Entry extends { en: string; ar: string }> {
+  resource: string
+  baseline: ResourceBaseline<Entry>
+  conflict: ResourceConflict<Entry>
+  disabled: boolean
+  onUseWorkspace: () => void
+  onKeepDraft: () => void
+}
+
+function ConflictVersionPreview<Entry extends { en: string; ar: string }>({
+  title,
+  entries
+}: {
+  title: string
+  entries: readonly Entry[]
+}): JSX.Element {
+  const visible = entries.slice(0, CONFLICT_PREVIEW_LIMIT)
+  return (
+    <section aria-label={title}>
+      <strong>{title}</strong>
+      {visible.length === 0 ? (
+        <p>{t('settings.localization.conflictPreviewEmpty')}</p>
+      ) : (
+        <ol>
+          {visible.map((entry, index) => (
+            <li key={`${entry.en}\u0000${entry.ar}\u0000${index}`}>
+              <span lang="en" dir="ltr">
+                {entry.en}
+              </span>
+              <span lang="ar" dir="rtl">
+                {entry.ar}
+              </span>
+            </li>
+          ))}
+        </ol>
+      )}
+      {entries.length > visible.length && (
+        <p>
+          {t('settings.localization.conflictPreviewOmitted', {
+            count: entries.length - visible.length
+          })}
+        </p>
+      )}
+    </section>
+  )
+}
+
+function ResourceConflictAlert<Entry extends { en: string; ar: string }>({
+  resource,
+  baseline,
+  conflict,
+  disabled,
+  onUseWorkspace,
+  onKeepDraft
+}: ResourceConflictAlertProps<Entry>): JSX.Element {
+  return (
+    <section
+      className="orbitpm-localization-resources__failure"
+      aria-label={t('settings.localization.conflictTitle', { resource })}
+      role="alert"
+    >
+      <strong>{t('settings.localization.conflictTitle', { resource })}</strong>
+      {conflict.stage === 'reload-required' ? (
+        <p>{t('settings.localization.conflictReloadRequired')}</p>
+      ) : (
+        <>
+          <p>{t('settings.localization.conflictReview')}</p>
+          <p>
+            {t('settings.localization.conflictVersions')}{' '}
+            <span dir="ltr">
+              <code>{baseline.hash}</code> → <code>{conflict.remote.hash}</code>
+            </span>
+          </p>
+          <details>
+            <summary>{t('settings.localization.conflictCompareVersions')}</summary>
+            <div className="orbitpm-localization-resources__conflict-comparison">
+              <ConflictVersionPreview
+                title={t('settings.localization.conflictDraftBase', {
+                  count: baseline.entries.length
+                })}
+                entries={baseline.entries}
+              />
+              <ConflictVersionPreview
+                title={t('settings.localization.conflictWorkspaceVersion', {
+                  count: conflict.remote.entries.length
+                })}
+                entries={conflict.remote.entries}
+              />
+            </div>
+          </details>
+          <div className="orbitpm-localization-resources__conflict-actions">
+            <button
+              type="button"
+              className="orbitpm-localization-resources__secondary"
+              onClick={onUseWorkspace}
+              disabled={disabled}
+            >
+              {t('settings.localization.useWorkspaceVersion', { resource })}
+            </button>
+            <button
+              type="button"
+              className="orbitpm-localization-resources__primary"
+              onClick={onKeepDraft}
+              disabled={disabled}
+            >
+              {t('settings.localization.keepDraftForReview', { resource })}
+            </button>
+          </div>
+        </>
+      )}
+    </section>
+  )
 }
 
 export function LocalizationResourcesEditor({
   snapshot,
   loadError = null,
+  loadErrorCode = null,
   onSaveGlossary,
   onSaveTranslationMemory,
   onReload,
@@ -135,8 +351,17 @@ export function LocalizationResourcesEditor({
 }: LocalizationResourcesEditorProps): JSX.Element {
   useLang()
   const nextRowId = useRef(0)
-  const lastPropSignature = useRef(snapshotSignature(snapshot))
-  const [baseline, setBaseline] = useState(snapshot)
+  const lastPropHashes = useRef({
+    glossary: snapshot?.files.glossary.hash ?? null,
+    translationMemory: snapshot?.files.translationMemory.hash ?? null
+  })
+  const [glossaryBaseline, setGlossaryBaseline] = useState<ResourceBaseline<GlossaryEntry> | null>(
+    () => (snapshot ? glossaryBaselineFrom(snapshot) : null)
+  )
+  const [translationMemoryBaseline, setTranslationMemoryBaseline] =
+    useState<ResourceBaseline<TranslationMemoryEntry> | null>(() =>
+      snapshot ? translationMemoryBaselineFrom(snapshot) : null
+    )
   const [glossaryRows, setGlossaryRows] = useState(() =>
     rowsFrom(
       snapshot?.resources.glossary ?? [],
@@ -149,100 +374,279 @@ export function LocalizationResourcesEditor({
       `translation-memory-${snapshot?.files.translationMemory.hash ?? 'new'}`
     )
   )
+  const [glossaryConflict, setGlossaryConflict] = useState<ResourceConflict<GlossaryEntry> | null>(
+    null
+  )
+  const [translationMemoryConflict, setTranslationMemoryConflict] =
+    useState<ResourceConflict<TranslationMemoryEntry> | null>(null)
   const [pending, setPending] = useState<PendingAction | null>(null)
   const [failure, setFailure] = useState<EditorFailure | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
-
-  const resetDrafts = useCallback((next: WorkspaceLocalizationState): void => {
-    const signature = snapshotSignature(next)
-    setBaseline(next)
-    setGlossaryRows(rowsFrom(next.resources.glossary, `glossary-${signature}`))
-    setTranslationMemoryRows(
-      rowsFrom(next.resources.translationMemory, `translation-memory-${signature}`)
-    )
-    setFailure(null)
-  }, [])
-
-  useEffect(() => {
-    const signature = snapshotSignature(snapshot)
-    if (signature === lastPropSignature.current) return
-    lastPropSignature.current = signature
-    if (!snapshot) {
-      setBaseline(null)
-      setGlossaryRows([])
-      setTranslationMemoryRows([])
-      setFailure(null)
-      setNotice(null)
-      return
-    }
-    resetDrafts(snapshot)
-    setNotice(null)
-  }, [resetDrafts, snapshot])
 
   const glossary = useMemo(() => glossaryRows.map((row) => row.entry), [glossaryRows])
   const translationMemory = useMemo(
     () => translationMemoryRows.map((row) => row.entry),
     [translationMemoryRows]
   )
+  const glossaryBaselineRef = useRef(glossaryBaseline)
+  const translationMemoryBaselineRef = useRef(translationMemoryBaseline)
+  const glossaryDraftRef = useRef<readonly GlossaryEntry[]>(glossary)
+  const translationMemoryDraftRef = useRef<readonly TranslationMemoryEntry[]>(translationMemory)
+  glossaryBaselineRef.current = glossaryBaseline
+  translationMemoryBaselineRef.current = translationMemoryBaseline
+  glossaryDraftRef.current = glossary
+  translationMemoryDraftRef.current = translationMemory
+
+  useEffect(() => {
+    if (!snapshot) {
+      lastPropHashes.current = { glossary: null, translationMemory: null }
+      return
+    }
+
+    const nextGlossary = glossaryBaselineFrom(snapshot)
+    const nextTranslationMemory = translationMemoryBaselineFrom(snapshot)
+    const glossaryPropChanged = nextGlossary.hash !== lastPropHashes.current.glossary
+    const translationMemoryPropChanged =
+      nextTranslationMemory.hash !== lastPropHashes.current.translationMemory
+    lastPropHashes.current = {
+      glossary: nextGlossary.hash,
+      translationMemory: nextTranslationMemory.hash
+    }
+
+    if (glossaryPropChanged) {
+      const current = glossaryBaselineRef.current
+      if (!current || entriesEqual(glossaryDraftRef.current, current.entries)) {
+        glossaryBaselineRef.current = nextGlossary
+        setGlossaryBaseline(nextGlossary)
+        setGlossaryRows(rowsFrom(nextGlossary.entries, `glossary-${nextGlossary.hash}`))
+        setGlossaryConflict(null)
+      } else if (nextGlossary.hash === current.hash) {
+        setGlossaryConflict(null)
+      } else {
+        setGlossaryConflict({ stage: 'reload-required' })
+      }
+    }
+
+    if (translationMemoryPropChanged) {
+      const current = translationMemoryBaselineRef.current
+      if (!current || entriesEqual(translationMemoryDraftRef.current, current.entries)) {
+        translationMemoryBaselineRef.current = nextTranslationMemory
+        setTranslationMemoryBaseline(nextTranslationMemory)
+        setTranslationMemoryRows(
+          rowsFrom(
+            nextTranslationMemory.entries,
+            `translation-memory-${nextTranslationMemory.hash}`
+          )
+        )
+        setTranslationMemoryConflict(null)
+      } else if (nextTranslationMemory.hash === current.hash) {
+        setTranslationMemoryConflict(null)
+      } else {
+        setTranslationMemoryConflict({ stage: 'reload-required' })
+      }
+    }
+  }, [snapshot])
+
   const glossaryIssues = useMemo(() => validateGlossaryDraft(glossary), [glossary])
   const translationMemoryIssues = useMemo(
     () => validateTranslationMemoryDraft(translationMemory),
     [translationMemory]
   )
   const glossaryDirty =
-    baseline !== null && JSON.stringify(glossary) !== JSON.stringify(baseline.resources.glossary)
+    glossaryBaseline !== null && !entriesEqual(glossary, glossaryBaseline.entries)
   const translationMemoryDirty =
-    baseline !== null &&
-    JSON.stringify(translationMemory) !== JSON.stringify(baseline.resources.translationMemory)
-  const controlsDisabled = disabled || pending !== null
+    translationMemoryBaseline !== null &&
+    !entriesEqual(translationMemory, translationMemoryBaseline.entries)
+  const operationDisabled = disabled || pending !== null
+  const loadBlocked = snapshot === null && loadError !== null
+  const controlsDisabled = operationDisabled || loadBlocked
+  const propLoadFailure: EditorFailure | null = loadError
+    ? {
+        scope: 'reload',
+        code: loadErrorCode ?? 'unknown',
+        detail: technicalErrorDetail(loadError)
+      }
+    : null
 
-  const acceptSnapshot = (next: WorkspaceLocalizationState, message: string): void => {
-    lastPropSignature.current = snapshotSignature(next)
-    resetDrafts(next)
+  const acceptSavedSnapshot = (
+    next: WorkspaceLocalizationState,
+    scope: ResourceScope,
+    message: string
+  ): void => {
+    const nextGlossary = glossaryBaselineFrom(next)
+    const nextTranslationMemory = translationMemoryBaselineFrom(next)
+    if (scope === 'glossary') {
+      glossaryBaselineRef.current = nextGlossary
+      setGlossaryBaseline(nextGlossary)
+      setGlossaryRows(rowsFrom(nextGlossary.entries, `glossary-${nextGlossary.hash}`))
+      setGlossaryConflict(null)
+
+      // The returned aggregate may expose a newer translation-memory file, but
+      // this glossary save is not authorization to rebase its draft.
+      const currentTranslationMemory = translationMemoryBaselineRef.current
+      if (
+        currentTranslationMemory &&
+        nextTranslationMemory.hash !== currentTranslationMemory.hash &&
+        !entriesEqual(translationMemoryDraftRef.current, currentTranslationMemory.entries)
+      ) {
+        setTranslationMemoryConflict((current) =>
+          current?.stage === 'review' && current.remote.hash === nextTranslationMemory.hash
+            ? current
+            : { stage: 'reload-required' }
+        )
+      }
+    } else {
+      translationMemoryBaselineRef.current = nextTranslationMemory
+      setTranslationMemoryBaseline(nextTranslationMemory)
+      setTranslationMemoryRows(
+        rowsFrom(nextTranslationMemory.entries, `translation-memory-${nextTranslationMemory.hash}`)
+      )
+      setTranslationMemoryConflict(null)
+
+      // Symmetrically, a translation-memory save cannot advance the glossary
+      // caller view while a glossary draft is still based on an older hash.
+      const currentGlossary = glossaryBaselineRef.current
+      if (
+        currentGlossary &&
+        nextGlossary.hash !== currentGlossary.hash &&
+        !entriesEqual(glossaryDraftRef.current, currentGlossary.entries)
+      ) {
+        setGlossaryConflict((current) =>
+          current?.stage === 'review' && current.remote.hash === nextGlossary.hash
+            ? current
+            : { stage: 'reload-required' }
+        )
+      }
+    }
+    setFailure(null)
     setNotice(message)
     onSnapshotChange?.(next)
   }
 
   const saveGlossary = async (): Promise<void> => {
-    if (glossaryIssues.length > 0 || !glossaryDirty || controlsDisabled) return
+    if (
+      glossaryIssues.length > 0 ||
+      !glossaryDirty ||
+      !glossaryBaseline ||
+      glossaryConflict ||
+      controlsDisabled
+    ) {
+      return
+    }
     setPending('glossary')
     setFailure(null)
     setNotice(null)
     try {
-      acceptSnapshot(await onSaveGlossary(glossary), t('settings.localization.glossary.saved'))
+      acceptSavedSnapshot(
+        await onSaveGlossary(glossary, glossaryBaseline.hash),
+        'glossary',
+        t('settings.localization.glossary.saved')
+      )
     } catch (error) {
-      setFailure(failureFrom(error, 'glossary'))
+      if (error instanceof WorkspaceLocalizationConflictError) {
+        setGlossaryConflict({ stage: 'reload-required' })
+      } else {
+        setFailure(failureFrom(error, 'glossary'))
+      }
     } finally {
       setPending(null)
     }
   }
 
   const saveTranslationMemory = async (): Promise<void> => {
-    if (translationMemoryIssues.length > 0 || !translationMemoryDirty || controlsDisabled) {
+    if (
+      translationMemoryIssues.length > 0 ||
+      !translationMemoryDirty ||
+      !translationMemoryBaseline ||
+      translationMemoryConflict ||
+      controlsDisabled
+    ) {
       return
     }
     setPending('translation-memory')
     setFailure(null)
     setNotice(null)
     try {
-      acceptSnapshot(
-        await onSaveTranslationMemory(translationMemory),
+      acceptSavedSnapshot(
+        await onSaveTranslationMemory(translationMemory, translationMemoryBaseline.hash),
+        'translation-memory',
         t('settings.localization.translationMemory.saved')
       )
     } catch (error) {
-      setFailure(failureFrom(error, 'translation-memory'))
+      if (error instanceof WorkspaceLocalizationConflictError) {
+        setTranslationMemoryConflict({ stage: 'reload-required' })
+      } else {
+        setFailure(failureFrom(error, 'translation-memory'))
+      }
     } finally {
       setPending(null)
     }
   }
 
   const reload = async (): Promise<void> => {
-    if (controlsDisabled) return
+    if (operationDisabled) return
     setPending('reload')
     setFailure(null)
     setNotice(null)
     try {
-      acceptSnapshot(await onReload(), t('settings.localization.reloaded'))
+      const next = await onReload()
+      const nextGlossary = glossaryBaselineFrom(next)
+      const nextTranslationMemory = translationMemoryBaselineFrom(next)
+      const currentGlossary = glossaryBaselineRef.current
+      const currentTranslationMemory = translationMemoryBaselineRef.current
+      const preserveGlossary =
+        currentGlossary !== null && !entriesEqual(glossaryDraftRef.current, currentGlossary.entries)
+      const preserveTranslationMemory =
+        currentTranslationMemory !== null &&
+        !entriesEqual(translationMemoryDraftRef.current, currentTranslationMemory.entries)
+      let reviewRequired = false
+
+      if (preserveGlossary && currentGlossary) {
+        if (nextGlossary.hash === currentGlossary.hash) {
+          setGlossaryConflict(null)
+        } else {
+          setGlossaryConflict({ stage: 'review', remote: nextGlossary })
+          reviewRequired = true
+        }
+      } else {
+        glossaryBaselineRef.current = nextGlossary
+        setGlossaryBaseline(nextGlossary)
+        setGlossaryRows(rowsFrom(nextGlossary.entries, `glossary-${nextGlossary.hash}`))
+        setGlossaryConflict(null)
+      }
+
+      if (preserveTranslationMemory && currentTranslationMemory) {
+        if (nextTranslationMemory.hash === currentTranslationMemory.hash) {
+          setTranslationMemoryConflict(null)
+        } else {
+          setTranslationMemoryConflict({
+            stage: 'review',
+            remote: nextTranslationMemory
+          })
+          reviewRequired = true
+        }
+      } else {
+        translationMemoryBaselineRef.current = nextTranslationMemory
+        setTranslationMemoryBaseline(nextTranslationMemory)
+        setTranslationMemoryRows(
+          rowsFrom(
+            nextTranslationMemory.entries,
+            `translation-memory-${nextTranslationMemory.hash}`
+          )
+        )
+        setTranslationMemoryConflict(null)
+      }
+
+      lastPropHashes.current = {
+        glossary: nextGlossary.hash,
+        translationMemory: nextTranslationMemory.hash
+      }
+      setNotice(
+        reviewRequired
+          ? t('settings.localization.reloadedDraftsPreserved')
+          : t('settings.localization.reloaded')
+      )
+      onSnapshotChange?.(next)
     } catch (error) {
       setFailure(failureFrom(error, 'reload'))
     } finally {
@@ -255,30 +659,82 @@ export function LocalizationResourcesEditor({
     setFailure((current) => (current?.scope === scope ? null : current))
   }
 
-  if (!baseline) {
-    const visibleLoadError =
-      failure?.scope === 'reload'
-        ? failure.message
-        : loadError
-          ? t('settings.localization.loadFailed', { error: loadError })
-          : null
+  const useWorkspaceGlossary = (): void => {
+    if (glossaryConflict?.stage !== 'review') return
+    const next = glossaryConflict.remote
+    glossaryBaselineRef.current = next
+    setGlossaryBaseline(next)
+    setGlossaryRows(rowsFrom(next.entries, `glossary-${next.hash}`))
+    setGlossaryConflict(null)
+    setFailure(null)
+    setNotice(
+      t('settings.localization.workspaceVersionSelected', {
+        resource: t('settings.localization.glossary.title')
+      })
+    )
+  }
+
+  const keepGlossaryDraftForReview = (): void => {
+    if (glossaryConflict?.stage !== 'review') return
+    const next = glossaryConflict.remote
+    glossaryBaselineRef.current = next
+    setGlossaryBaseline(next)
+    setGlossaryConflict(null)
+    setFailure(null)
+    setNotice(
+      t('settings.localization.draftKeptForReview', {
+        resource: t('settings.localization.glossary.title')
+      })
+    )
+  }
+
+  const useWorkspaceTranslationMemory = (): void => {
+    if (translationMemoryConflict?.stage !== 'review') return
+    const next = translationMemoryConflict.remote
+    translationMemoryBaselineRef.current = next
+    setTranslationMemoryBaseline(next)
+    setTranslationMemoryRows(rowsFrom(next.entries, `translation-memory-${next.hash}`))
+    setTranslationMemoryConflict(null)
+    setFailure(null)
+    setNotice(
+      t('settings.localization.workspaceVersionSelected', {
+        resource: t('settings.localization.translationMemory.title')
+      })
+    )
+  }
+
+  const keepTranslationMemoryDraftForReview = (): void => {
+    if (translationMemoryConflict?.stage !== 'review') return
+    const next = translationMemoryConflict.remote
+    translationMemoryBaselineRef.current = next
+    setTranslationMemoryBaseline(next)
+    setTranslationMemoryConflict(null)
+    setFailure(null)
+    setNotice(
+      t('settings.localization.draftKeptForReview', {
+        resource: t('settings.localization.translationMemory.title')
+      })
+    )
+  }
+
+  if (!glossaryBaseline || !translationMemoryBaseline) {
+    const visibleLoadFailure: EditorFailure | null =
+      failure?.scope === 'reload' ? failure : propLoadFailure
     return (
       <section
         className="orbitpm-localization-resources"
         aria-labelledby="orbitpm-localization-resources-title"
       >
         <h2 id="orbitpm-localization-resources-title">{t('settings.localization.title')}</h2>
-        {visibleLoadError ? (
+        {visibleLoadFailure ? (
           <>
-            <p className="orbitpm-localization-resources__failure" role="alert">
-              {visibleLoadError}
-            </p>
+            <FailureAlert failure={visibleLoadFailure} />
             <p>{t('settings.localization.loadFailedHint')}</p>
             <button
               type="button"
               className="orbitpm-localization-resources__secondary"
               onClick={() => void reload()}
-              disabled={controlsDisabled}
+              disabled={operationDisabled}
             >
               {pending === 'reload'
                 ? t('settings.localization.reloading')
@@ -292,6 +748,9 @@ export function LocalizationResourcesEditor({
     )
   }
 
+  const visibleFailure =
+    loadBlocked && failure?.scope !== 'reload' ? propLoadFailure : (failure ?? propLoadFailure)
+
   return (
     <section
       className="orbitpm-localization-resources"
@@ -302,12 +761,15 @@ export function LocalizationResourcesEditor({
           <h2 id="orbitpm-localization-resources-title">{t('settings.localization.title')}</h2>
           <p>{t('settings.localization.description')}</p>
         </div>
-        {failure?.conflict && (
+        {(loadBlocked ||
+          failure?.code === 'conflict' ||
+          glossaryConflict?.stage === 'reload-required' ||
+          translationMemoryConflict?.stage === 'reload-required') && (
           <button
             type="button"
             className="orbitpm-localization-resources__secondary"
             onClick={() => void reload()}
-            disabled={controlsDisabled}
+            disabled={operationDisabled}
           >
             {pending === 'reload'
               ? t('settings.localization.reloading')
@@ -320,15 +782,32 @@ export function LocalizationResourcesEditor({
         {t('settings.localization.publicNotice')}
       </p>
 
-      {failure && (
-        <p className="orbitpm-localization-resources__failure" role="alert">
-          {failure.message}
-        </p>
-      )}
+      {visibleFailure && <FailureAlert failure={visibleFailure} />}
+      {loadBlocked && <p>{t('settings.localization.loadFailedHint')}</p>}
       {notice && (
         <p className="orbitpm-localization-resources__notice" role="status">
           {notice}
         </p>
+      )}
+      {glossaryConflict && (
+        <ResourceConflictAlert
+          resource={t('settings.localization.glossary.title')}
+          baseline={glossaryBaseline}
+          conflict={glossaryConflict}
+          disabled={controlsDisabled}
+          onUseWorkspace={useWorkspaceGlossary}
+          onKeepDraft={keepGlossaryDraftForReview}
+        />
+      )}
+      {translationMemoryConflict && (
+        <ResourceConflictAlert
+          resource={t('settings.localization.translationMemory.title')}
+          baseline={translationMemoryBaseline}
+          conflict={translationMemoryConflict}
+          disabled={controlsDisabled}
+          onUseWorkspace={useWorkspaceTranslationMemory}
+          onKeepDraft={keepTranslationMemoryDraftForReview}
+        />
       )}
 
       <ResourcePanel
@@ -342,7 +821,9 @@ export function LocalizationResourcesEditor({
             ? t('settings.localization.saving')
             : t('settings.localization.glossary.save')
         }
-        saveDisabled={controlsDisabled || glossaryIssues.length > 0 || !glossaryDirty}
+        saveDisabled={
+          controlsDisabled || glossaryIssues.length > 0 || !glossaryDirty || !!glossaryConflict
+        }
         controlsDisabled={controlsDisabled}
         onAdd={() => {
           clearFeedback('glossary')
@@ -473,7 +954,10 @@ export function LocalizationResourcesEditor({
             : t('settings.localization.translationMemory.save')
         }
         saveDisabled={
-          controlsDisabled || translationMemoryIssues.length > 0 || !translationMemoryDirty
+          controlsDisabled ||
+          translationMemoryIssues.length > 0 ||
+          !translationMemoryDirty ||
+          !!translationMemoryConflict
         }
         controlsDisabled={controlsDisabled}
         onAdd={() => {

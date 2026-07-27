@@ -20,7 +20,7 @@ afterEach(() => {
   vi.useRealTimers()
 })
 
-/** A fetch whose HEADERS resolve immediately but whose BODY (json/text) stalls
+/** A fetch whose HEADERS resolve immediately but whose BODY stream stalls
  *  until the request's AbortSignal fires — the "server sent headers then hung"
  *  case the pre-fix timeout did NOT cover (it cleared the timer after headers). */
 function stalledBodyFetch(): void {
@@ -28,18 +28,14 @@ function stalledBodyFetch(): void {
     'fetch',
     vi.fn((_url: string, init: RequestInit) => {
       const signal = init.signal as AbortSignal
-      const stall = <T>(): Promise<T> =>
-        new Promise<T>((_resolve, reject) => {
-          const abort = (): void => reject(new DOMException('Aborted', 'AbortError'))
+      const body = new ReadableStream<Uint8Array>({
+        start(controller) {
+          const abort = (): void => controller.error(new DOMException('Aborted', 'AbortError'))
           if (signal.aborted) abort()
-          else signal.addEventListener('abort', abort)
-        })
-      return Promise.resolve({
-        ok: true,
-        status: 200,
-        json: () => stall<unknown>(),
-        text: () => stall<string>()
-      } as unknown as Response)
+          else signal.addEventListener('abort', abort, { once: true })
+        }
+      })
+      return Promise.resolve(new Response(body, { status: 200 }))
     })
   )
 }

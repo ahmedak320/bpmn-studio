@@ -2,6 +2,16 @@ import { describe, expect, it } from 'vitest'
 import { LITE_PROVIDERS, getLiteModelCapabilities, type LiteProviderId } from '../providersLite'
 
 describe('Lite model capability registry', () => {
+  it('offers only current stable direct-Gemini ids', () => {
+    const gemini = LITE_PROVIDERS.find((provider) => provider.id === 'gemini')!
+    expect(gemini.models.map(({ id }) => id)).toEqual([
+      'gemini-3.6-flash',
+      'gemini-3.1-pro-preview'
+    ])
+    expect(gemini.models.map(({ id }) => id)).not.toContain('gemini-3-pro-preview')
+    expect(gemini.models.map(({ id }) => id)).not.toContain('gemini-flash-latest')
+  })
+
   it('fails closed for arbitrary custom model ids while retaining text', () => {
     expect(getLiteModelCapabilities('openrouter', 'vendor/unreviewed-model')).toEqual({
       text: true,

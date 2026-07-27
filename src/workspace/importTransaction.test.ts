@@ -19,6 +19,7 @@ import {
   type WorkspaceImportSource
 } from './importTransaction'
 import { ReviewedBpmnBoundaryError, type ReviewedBpmnIngestionPort } from './reviewedBpmn'
+import { DEFAULT_WORKSPACE_BPMN_SCAN_LIMITS } from './adapterSnapshot'
 
 const decoder = new TextDecoder()
 
@@ -1156,6 +1157,44 @@ describe('review confirmation and atomic execution', () => {
       })
     ).rejects.toMatchObject({ code: 'workspace-changed' })
     await expect(adapter.read('incoming.bpmn')).rejects.toMatchObject({ code: 'not-found' })
+    expect(beforeWrite).not.toHaveBeenCalled()
+  })
+
+  it('rejects oversized identity metadata after review without reading or writing', async () => {
+    const beforeWrite = vi.fn()
+    const adapter = new MemoryWorkspaceAdapter({
+      files: { 'existing.bpmn': documentXml('Process_Existing') },
+      beforeWrite
+    })
+    const plan = await planFor(adapter, [
+      doc('incoming', 'incoming.bpmn', documentXml('Process_Incoming'))
+    ])
+    const confirmed = confirmWorkspaceImportPlan(plan, {
+      accepted: true,
+      reviewedDigest: plan.reviewDigest
+    })
+    const list = adapter.list.bind(adapter)
+    vi.spyOn(adapter, 'list').mockImplementation(async (...args) =>
+      (await list(...args)).map((entry) =>
+        entry.path === 'existing.bpmn'
+          ? {
+              ...entry,
+              size: DEFAULT_WORKSPACE_BPMN_SCAN_LIMITS.maxFileBytes + 1
+            }
+          : entry
+      )
+    )
+    const read = vi.spyOn(adapter, 'read')
+
+    await expect(
+      executeConfirmedWorkspaceImport(confirmed, {
+        adapter,
+        processIdentityInspector: fakePreparer.inspect
+      })
+    ).rejects.toThrow(
+      `per-file scan limit is ${DEFAULT_WORKSPACE_BPMN_SCAN_LIMITS.maxFileBytes} bytes`
+    )
+    expect(read).not.toHaveBeenCalled()
     expect(beforeWrite).not.toHaveBeenCalled()
   })
 })

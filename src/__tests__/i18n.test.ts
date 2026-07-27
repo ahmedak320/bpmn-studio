@@ -153,6 +153,187 @@ describe('t() / tPlural() runtime behavior', () => {
   })
 })
 
+describe('workspace operational diagnostics', () => {
+  const diagnosticKeys = [
+    'workspace.import.rollbackEvidence',
+    'workspace.import.postCommitReconciliationFailed',
+    'workspace.import.postCommitWarning',
+    'workspace.import.postCommitTechnicalEvidence',
+    'workspace.backup.rollbackEvidence',
+    'workspace.backup.historyRetentionFailed',
+    'workspace.backup.historyRetentionTechnicalEvidence',
+    'workspace.backup.postCommitReconciliationFailed',
+    'workspace.backup.postCommitTechnicalEvidence',
+    'workspace.localization.workspaceImportRollbackUncertain',
+    'workspace.localization.backupRollbackUncertain',
+    'workspace.localization.backupCommittedReloadFailed',
+    'workspace.sync.reviewedImportEditorChanged',
+    'workspace.sync.reviewedImportLocalRetained',
+    'workspace.sync.committedReloadEditorChanged',
+    'workspace.sync.committedReloadLocalRetained',
+    'workspace.sync.postCommitCleanupLocalRetained',
+    'workspace.history.liveEditorUnverifiedAfterRestore',
+    'workspace.history.newerRevisionBeforeCleanup',
+    'workspace.history.liveEditorUnverifiedAfterCleanup',
+    'workspace.history.newerRevisionDuringCleanup',
+    'workspace.history.editorRefreshIncompleteAfterRestore',
+    'workspace.history.restoreCancelled',
+    'workspace.history.applyEditorChangedBefore',
+    'workspace.history.applyEditorSynchronizationUnavailable',
+    'workspace.history.applyTargetSessionChanged',
+    'workspace.history.applyLiveEditorUnverified',
+    'workspace.history.applyEditorChangedDuring',
+    'workspace.storage.opfsOpenFailed',
+    'workspace.storage.opfsOpenTechnicalEvidence',
+    'session.save.preservationBlocked',
+    'session.save.preservationTechnicalEvidence',
+    'session.save.permissionLoss',
+    'session.save.storageFailure',
+    'session.save.storageTechnicalEvidence',
+    'session.save.liveXmlCaptureDetail',
+    'session.save.localCanvasRecoveryDetail',
+    'session.save.retainedEditorCaptureFailed',
+    'session.save.retainedEditorChangedDuringRecovery'
+  ] as const
+
+  it('keeps every operational diagnostic localized in English and Arabic', () => {
+    for (const key of diagnosticKeys) {
+      expect(en[key].trim()).not.toBe('')
+      expect(ar[key].trim()).not.toBe('')
+      expect(ar[key]).not.toBe(en[key])
+    }
+  })
+
+  it('interpolates rollback evidence without leaking English labels in Arabic', () => {
+    setLang('en')
+    expect(
+      t('workspace.import.rollbackEvidence', {
+        error: 'disk error',
+        review: 'digest-1',
+        applied: t('workspace.diagnostic.none'),
+        rollback: t('workspace.diagnostic.complete')
+      })
+    ).toBe('disk error; review: digest-1; applied: none; rollback: complete')
+
+    setLang('ar')
+    try {
+      const localized = t('workspace.import.rollbackEvidence', {
+        error: 'disk-error',
+        review: 'digest-1',
+        applied: t('workspace.diagnostic.none'),
+        rollback: t('workspace.diagnostic.complete')
+      })
+      expect(localized).toBe('disk-error؛ المراجعة: digest-1؛ المطبّق: لا شيء؛ التراجع: مكتمل')
+      expect(localized).not.toContain('review:')
+      expect(localized).not.toContain('applied:')
+      expect(localized).not.toContain('rollback:')
+    } finally {
+      setLang('en')
+    }
+  })
+})
+
+describe('history issue labels', () => {
+  const issueKeys = [
+    'workspace.history.issue.unreadable',
+    'workspace.history.issue.invalidMetadata',
+    'workspace.history.issue.missingContent',
+    'workspace.history.issue.checksumMismatch',
+    'workspace.history.issue.unknown'
+  ] as const
+
+  it('provides distinct Arabic copy for every history listing issue', () => {
+    for (const key of issueKeys) {
+      expect(ar[key]).toMatch(/[\u0600-\u06ff]/u)
+      expect(ar[key]).not.toBe(en[key])
+    }
+  })
+
+  it('interpolates the exact history path into localized Arabic issue copy', () => {
+    setLang('ar')
+    try {
+      const localized = t('workspace.history.issue.unreadable', {
+        path: '.orbitpm/history/revision.json'
+      })
+      expect(localized).toContain('.orbitpm/history/revision.json')
+      expect(localized).toMatch(/[\u0600-\u06ff]/u)
+      expect(localized).not.toContain('Could not read history metadata')
+    } finally {
+      setLang('en')
+    }
+  })
+})
+
+describe('direct action failure labels', () => {
+  const actionKeys = [
+    'sourceEditor.action.previewFailed',
+    'sourceEditor.action.layoutFailed',
+    'sourceEditor.action.applyFailed',
+    'sourceEditor.action.technicalDetails',
+    'workspace.history.action.previewFailed',
+    'workspace.history.action.diffFailed',
+    'workspace.history.action.restoreFailed',
+    'workspace.history.action.restoreCopyFailed',
+    'workspace.history.action.workspaceRefreshAfterRestoreFailed',
+    'workspace.history.action.sessionRefreshAfterRestoreFailed',
+    'workspace.history.action.technicalDetails'
+  ] as const
+
+  it('provides distinct Arabic summaries and evidence labels for every action context', () => {
+    for (const key of actionKeys) {
+      expect(ar[key]).toMatch(/[\u0600-\u06ff]/u)
+      expect(ar[key]).not.toBe(en[key])
+      expect(ar[key]).not.toContain('{error}')
+    }
+  })
+
+  it('returns Arabic action summaries without interpolating native error text', () => {
+    setLang('ar')
+    try {
+      expect(t('sourceEditor.action.previewFailed')).toBe('تعذّرت معاينة تغييرات المصدر.')
+      expect(t('workspace.history.action.diffFailed')).toBe('تعذّرت مقارنة نسخة السجل هذه.')
+      expect(t('workspace.history.action.technicalDetails')).toBe('التفاصيل التقنية:')
+    } finally {
+      setLang('en')
+    }
+  })
+})
+
+describe('translation failure and pagination labels', () => {
+  it('keeps native failure text out of stable English and Arabic summaries', () => {
+    for (const lang of ['en', 'ar'] as const) {
+      setLang(lang)
+      const translation = t('translate.failed', { error: 'native-provider-secret' })
+      const memory = t('translationReview.memorySaveFailed', {
+        error: 'native-storage-secret'
+      })
+      expect(translation).not.toContain('native-provider-secret')
+      expect(memory).not.toContain('native-storage-secret')
+      expect(translation).not.toContain('{error}')
+      expect(memory).not.toContain('{error}')
+    }
+    setLang('en')
+  })
+
+  it('provides localized accessible paging labels and counts', () => {
+    setLang('ar')
+    try {
+      expect(t('translationReview.fields.paginationLabel')).toMatch(/[\u0600-\u06ff]/u)
+      expect(
+        t('translationReview.pagination.status', {
+          start: 25,
+          end: 48,
+          total: 2_500,
+          page: 2,
+          pages: 105
+        })
+      ).toBe('عرض 25–48 من 2500. الصفحة 2 من 105.')
+    } finally {
+      setLang('en')
+    }
+  })
+})
+
 describe('process hierarchy reference labels', () => {
   const hierarchyKeys = [
     'tree.reference.canonicalPath',

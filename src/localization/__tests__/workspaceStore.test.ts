@@ -7,11 +7,14 @@ import {
 } from '../modelerAdapter'
 import {
   WORKSPACE_GLOSSARY_FORMAT,
+  WORKSPACE_GLOSSARY_LIMITS,
   WORKSPACE_GLOSSARY_PATH,
   WORKSPACE_LOCALIZATION_PUBLIC_CONTRACT,
   WORKSPACE_TRANSLATION_MEMORY_FORMAT,
+  WORKSPACE_TRANSLATION_MEMORY_LIMITS,
   WORKSPACE_TRANSLATION_MEMORY_PATH,
   WorkspaceLocalizationConflictError,
+  WorkspaceLocalizationResourceLimitError,
   WorkspaceLocalizationStore,
   WorkspaceLocalizationValidationError,
   createWorkspaceGlossaryDocument,
@@ -25,9 +28,10 @@ import {
   MemoryWorkspaceAdapter,
   SingleFileWorkspaceAdapter,
   WORKSPACE_BACKUP_MANIFEST_PATH,
+  WorkspaceOperationError,
   type SaveOutcome
 } from '../../workspace/adapters'
-import type { TranslationMemoryEntry } from '../types'
+import type { GlossaryEntry, TranslationMemoryEntry } from '../types'
 
 const decode = (bytes: Uint8Array): string =>
   new TextDecoder('utf-8', { fatal: true }).decode(bytes)
@@ -226,6 +230,7 @@ describe('public workspace localization store', () => {
 
     await expect(new WorkspaceLocalizationStore(adapter).load()).rejects.toMatchObject({
       name: 'WorkspaceLocalizationValidationError',
+      code: 'invalid-resource',
       path: expect.stringContaining(path)
     })
     await expect(new WorkspaceLocalizationStore(adapter).load()).rejects.toThrow(message)
@@ -302,7 +307,11 @@ describe('public workspace localization store', () => {
       stale.editGlossary((draft) => {
         draft.push({ en: 'Stale edit', ar: 'تعديل قديم' })
       })
-    ).rejects.toBeInstanceOf(WorkspaceLocalizationConflictError)
+    ).rejects.toMatchObject({
+      name: 'WorkspaceLocalizationConflictError',
+      code: 'external-conflict',
+      path: WORKSPACE_GLOSSARY_PATH
+    })
 
     expect((await jsonFile(adapter, WORKSPACE_GLOSSARY_PATH)).entries).toEqual(
       expect.arrayContaining([{ en: 'First edit', ar: 'التعديل الأول' }])
@@ -367,6 +376,434 @@ describe('public workspace localization store', () => {
     ])
   })
 
+  it('accepts a reviewed batch with one atomic translation-memory write', async () => {
+    const adapter = new MemoryWorkspaceAdapter({ id: 'workspace:batch-i18n' })
+    const store = new WorkspaceLocalizationStore(adapter)
+    await store.load()
+    const writeAtomic = vi.spyOn(adapter, 'writeAtomic')
+
+    const state = await store.acceptTranslationPairs([
+      {
+        en: 'Review request',
+        ar: 'مراجعة الطلب',
+        acceptedAt: '2026-07-26T01:00:00.000Z'
+      },
+      {
+        en: 'Archive request',
+        ar: 'أرشفة الطلب',
+        acceptedAt: '2026-07-26T02:00:00.000Z'
+      },
+      {
+        en: 'Review request',
+        ar: 'مراجعة الطلب',
+        acceptedAt: '2026-07-26T03:00:00.000Z'
+      }
+    ])
+
+    expect(writeAtomic).toHaveBeenCalledTimes(1)
+    expect(writeAtomic).toHaveBeenCalledWith(
+      WORKSPACE_TRANSLATION_MEMORY_PATH,
+      expect.any(Uint8Array),
+      expect.any(String),
+      expect.objectContaining({ expectedWorkspaceId: adapter.id })
+    )
+    expect(state.resources.translationMemory).toEqual([
+      {
+        en: 'Review request',
+        ar: 'مراجعة الطلب',
+        accepted: true,
+        acceptedAt: '2026-07-26T03:00:00.000Z'
+      },
+      {
+        en: 'Archive request',
+        ar: 'أرشفة الطلب',
+        accepted: true,
+        acceptedAt: '2026-07-26T02:00:00.000Z'
+      }
+    ])
+  })
+
+  it('merges five thousand reviewed pairs within the linear-operation budget', async () => {
+    const adapter = new MemoryWorkspaceAdapter({ id: 'workspace:large-batch-i18n' })
+    const cooperativeYield = vi.fn(async () => Promise.resolve())
+    const store = new WorkspaceLocalizationStore(adapter, { cooperativeYield })
+    await store.load()
+    const writeAtomic = vi.spyOn(adapter, 'writeAtomic')
+    const inputs = Array.from({ length: 5_000 }, (_, index) => ({
+      en: `Review request ${index}`,
+      ar: `مراجعة الطلب ${index}`,
+      acceptedAt: '2026-07-26T03:00:00.000Z'
+    }))
+
+    const startedAt = performance.now()
+    const state = await store.acceptTranslationPairs(inputs)
+    const elapsedMs = performance.now() - startedAt
+
+    expect(elapsedMs).toBeLessThan(1_500)
+    expect(state.resources.translationMemory).toHaveLength(5_000)
+    expect(state.resources.translationMemory[4_999]).toMatchObject(inputs[4_999]!)
+    expect(writeAtomic).toHaveBeenCalledTimes(1)
+    expect(cooperativeYield.mock.calls.length).toBeGreaterThan(75)
+  })
+
+  it('preserves stable duplicate positions while the last normalized batch duplicate wins', async () => {
+    const adapter = new MemoryWorkspaceAdapter({ id: 'workspace:indexed-duplicates-i18n' })
+    const store = new WorkspaceLocalizationStore(adapter, {
+      cooperativeYield: async () => Promise.resolve()
+    })
+    await store.load()
+    await store.replaceTranslationMemory([
+      {
+        en: 'Review request',
+        ar: 'مراجعة الطلب',
+        accepted: true,
+        acceptedAt: '2026-07-26T01:00:00.000Z'
+      },
+      {
+        en: 'Archive request',
+        ar: 'أرشفة الطلب',
+        accepted: true,
+        acceptedAt: '2026-07-26T02:00:00.000Z'
+      },
+      {
+        en: 'Review request',
+        ar: 'مراجعة الطلب',
+        accepted: true,
+        acceptedAt: '2026-07-26T03:00:00.000Z'
+      }
+    ])
+
+    const state = await store.acceptTranslationPairs([
+      {
+        en: ' REVIEW REQUEST ',
+        ar: ' مراجعة الطلب ',
+        acceptedAt: '2026-07-26T04:00:00.000Z'
+      },
+      {
+        en: 'review request',
+        ar: 'مراجعة الطلب',
+        acceptedAt: '2026-07-26T05:00:00.000Z'
+      }
+    ])
+
+    expect(state.resources.translationMemory).toEqual([
+      {
+        en: 'review request',
+        ar: 'مراجعة الطلب',
+        accepted: true,
+        acceptedAt: '2026-07-26T05:00:00.000Z'
+      },
+      {
+        en: 'Archive request',
+        ar: 'أرشفة الطلب',
+        accepted: true,
+        acceptedAt: '2026-07-26T02:00:00.000Z'
+      }
+    ])
+  })
+
+  it('fails visibly at documented resource limits without dropping or writing any pair', async () => {
+    const adapter = new MemoryWorkspaceAdapter({ id: 'workspace:batch-limit-i18n' })
+    const store = new WorkspaceLocalizationStore(adapter)
+    const before = await store.load()
+    const writeAtomic = vi.spyOn(adapter, 'writeAtomic')
+    const overLimit = Array.from(
+      { length: WORKSPACE_TRANSLATION_MEMORY_LIMITS.maxBatchEntries + 1 },
+      () => ({ en: 'Review request', ar: 'مراجعة الطلب' })
+    )
+
+    await expect(store.acceptTranslationPairs(overLimit)).rejects.toMatchObject({
+      name: 'WorkspaceLocalizationResourceLimitError',
+      code: 'resource-limit',
+      resource: 'batch-entries',
+      limit: WORKSPACE_TRANSLATION_MEMORY_LIMITS.maxBatchEntries,
+      actual: overLimit.length
+    })
+    expect(writeAtomic).not.toHaveBeenCalled()
+    expect(store.current).toBe(before)
+    expect((await jsonFile(adapter, WORKSPACE_TRANSLATION_MEMORY_PATH)).entries).toEqual([])
+
+    expect(() =>
+      createWorkspaceTranslationMemoryDocument([
+        {
+          en: 'R'.repeat(WORKSPACE_TRANSLATION_MEMORY_LIMITS.maxEntryTextCodeUnits + 1),
+          ar: 'مراجعة الطلب',
+          accepted: true
+        }
+      ])
+    ).toThrow(WorkspaceLocalizationResourceLimitError)
+  })
+
+  it('rejects an oversized translation-memory file before adapter copy/hash or JSON decode', async () => {
+    const bytes = new Uint8Array(WORKSPACE_TRANSLATION_MEMORY_LIMITS.maxFileBytes + 1)
+    const adapter = new MemoryWorkspaceAdapter({
+      id: 'workspace:oversized-tm',
+      files: [{ path: WORKSPACE_TRANSLATION_MEMORY_PATH, bytes }]
+    })
+    const read = vi.spyOn(adapter, 'read')
+
+    await expect(new WorkspaceLocalizationStore(adapter).load()).rejects.toMatchObject({
+      name: 'WorkspaceLocalizationResourceLimitError',
+      code: 'resource-limit',
+      resource: 'file-bytes',
+      limit: WORKSPACE_TRANSLATION_MEMORY_LIMITS.maxFileBytes,
+      actual: bytes.byteLength
+    })
+    expect(read).toHaveBeenCalledWith(WORKSPACE_TRANSLATION_MEMORY_PATH, {
+      maxBytes: WORKSPACE_TRANSLATION_MEMORY_LIMITS.maxFileBytes,
+      signal: undefined
+    })
+  })
+
+  it('rejects excessive JSON depth and structural work before JSON.parse', () => {
+    const depth = WORKSPACE_TRANSLATION_MEMORY_LIMITS.maxJsonDepth + 1
+    expect(() =>
+      parseWorkspaceTranslationMemoryJson(`${'['.repeat(depth)}0${']'.repeat(depth)}`)
+    ).toThrow(
+      expect.objectContaining({
+        resource: 'json-depth',
+        limit: WORKSPACE_TRANSLATION_MEMORY_LIMITS.maxJsonDepth
+      })
+    )
+
+    const items = WORKSPACE_TRANSLATION_MEMORY_LIMITS.maxJsonStructuralItems + 1
+    expect(() => parseWorkspaceTranslationMemoryJson(`[${'0,'.repeat(items)}0]`)).toThrow(
+      expect.objectContaining({
+        resource: 'json-items',
+        limit: WORKSPACE_TRANSLATION_MEMORY_LIMITS.maxJsonStructuralItems
+      })
+    )
+  })
+
+  it('bounds glossary entries, text, JSON work, and encoded writes like translation memory', async () => {
+    expect(() =>
+      createWorkspaceGlossaryDocument(
+        Array.from({ length: WORKSPACE_GLOSSARY_LIMITS.maxEntries + 1 }, () => ({
+          en: 'API',
+          ar: 'API',
+          neutral: true
+        }))
+      )
+    ).toThrow(
+      expect.objectContaining({
+        name: 'WorkspaceLocalizationResourceLimitError',
+        scope: 'glossary',
+        resource: 'entries',
+        limit: WORKSPACE_GLOSSARY_LIMITS.maxEntries
+      })
+    )
+    expect(() =>
+      createWorkspaceGlossaryDocument([
+        {
+          en: 'A'.repeat(WORKSPACE_GLOSSARY_LIMITS.maxEntryTextCodeUnits + 1),
+          ar: 'API',
+          neutral: true
+        }
+      ])
+    ).toThrow(
+      expect.objectContaining({
+        scope: 'glossary',
+        resource: 'entry-text',
+        limit: WORKSPACE_GLOSSARY_LIMITS.maxEntryTextCodeUnits
+      })
+    )
+
+    const depth = WORKSPACE_GLOSSARY_LIMITS.maxJsonDepth + 1
+    expect(() => parseWorkspaceGlossaryJson(`${'['.repeat(depth)}0${']'.repeat(depth)}`)).toThrow(
+      expect.objectContaining({
+        scope: 'glossary',
+        resource: 'json-depth',
+        limit: WORKSPACE_GLOSSARY_LIMITS.maxJsonDepth
+      })
+    )
+    const items = WORKSPACE_GLOSSARY_LIMITS.maxJsonStructuralItems + 1
+    expect(() => parseWorkspaceGlossaryJson(`[${'0,'.repeat(items)}0]`)).toThrow(
+      expect.objectContaining({
+        scope: 'glossary',
+        resource: 'json-items',
+        limit: WORKSPACE_GLOSSARY_LIMITS.maxJsonStructuralItems
+      })
+    )
+
+    const adapter = new MemoryWorkspaceAdapter({ id: 'workspace:escaped-glossary-limit' })
+    const store = new WorkspaceLocalizationStore(adapter)
+    await store.load()
+    const writeAtomic = vi.spyOn(adapter, 'writeAtomic')
+    const entries: GlossaryEntry[] = []
+    let textCodeUnits = 0
+    while (
+      textCodeUnits + WORKSPACE_GLOSSARY_LIMITS.maxEntryTextCodeUnits * 2 <=
+      WORKSPACE_GLOSSARY_LIMITS.maxDocumentTextCodeUnits
+    ) {
+      const value = '\ud800'.repeat(WORKSPACE_GLOSSARY_LIMITS.maxEntryTextCodeUnits)
+      entries.push({ en: value, ar: value, neutral: true })
+      textCodeUnits += value.length * 2
+    }
+    await expect(store.replaceGlossary(entries)).rejects.toMatchObject({
+      name: 'WorkspaceLocalizationResourceLimitError',
+      scope: 'glossary',
+      resource: 'file-bytes',
+      limit: WORKSPACE_GLOSSARY_LIMITS.maxFileBytes
+    })
+    expect(writeAtomic).not.toHaveBeenCalled()
+  })
+
+  it('rejects an oversized glossary before adapter copy/hash or JSON decode', async () => {
+    const bytes = new Uint8Array(WORKSPACE_GLOSSARY_LIMITS.maxFileBytes + 1)
+    const adapter = new MemoryWorkspaceAdapter({
+      id: 'workspace:oversized-glossary',
+      files: [{ path: WORKSPACE_GLOSSARY_PATH, bytes }]
+    })
+    const read = vi.spyOn(adapter, 'read')
+
+    await expect(new WorkspaceLocalizationStore(adapter).load()).rejects.toMatchObject({
+      name: 'WorkspaceLocalizationResourceLimitError',
+      code: 'resource-limit',
+      scope: 'glossary',
+      resource: 'file-bytes',
+      limit: WORKSPACE_GLOSSARY_LIMITS.maxFileBytes,
+      actual: bytes.byteLength
+    })
+    expect(read).toHaveBeenCalledWith(WORKSPACE_GLOSSARY_PATH, {
+      maxBytes: WORKSPACE_GLOSSARY_LIMITS.maxFileBytes,
+      signal: undefined
+    })
+  })
+
+  it('checks JSON escape expansion against the byte limit before the atomic write', async () => {
+    const adapter = new MemoryWorkspaceAdapter({ id: 'workspace:escaped-tm-limit' })
+    const store = new WorkspaceLocalizationStore(adapter)
+    await store.load()
+    const writeAtomic = vi.spyOn(adapter, 'writeAtomic')
+    const entries: TranslationMemoryEntry[] = []
+    let textCodeUnits = 0
+    for (
+      let index = 0;
+      textCodeUnits + WORKSPACE_TRANSLATION_MEMORY_LIMITS.maxEntryTextCodeUnits + 8 <=
+      WORKSPACE_TRANSLATION_MEMORY_LIMITS.maxDocumentTextCodeUnits;
+      index += 1
+    ) {
+      const prefix = `Review ${index} `
+      const en = `${prefix}${'\ud800'.repeat(
+        WORKSPACE_TRANSLATION_MEMORY_LIMITS.maxEntryTextCodeUnits - prefix.length
+      )}`
+      const ar = `طلب ${index}`
+      entries.push({ en, ar, accepted: true })
+      textCodeUnits += en.length + ar.length
+    }
+
+    await expect(store.replaceTranslationMemory(entries)).rejects.toMatchObject({
+      name: 'WorkspaceLocalizationResourceLimitError',
+      resource: 'file-bytes',
+      limit: WORKSPACE_TRANSLATION_MEMORY_LIMITS.maxFileBytes
+    })
+    expect(writeAtomic).not.toHaveBeenCalled()
+    expect(store.current?.resources.translationMemory).toEqual([])
+  }, 20_000)
+
+  it('yields and honours cancellation before the atomic mutation starts', async () => {
+    const adapter = new MemoryWorkspaceAdapter({ id: 'workspace:cancel-large-batch-i18n' })
+    const controller = new AbortController()
+    let yields = 0
+    const store = new WorkspaceLocalizationStore(adapter, {
+      cooperativeYield: async () => {
+        yields += 1
+        if (yields === 2) controller.abort()
+        await Promise.resolve()
+      }
+    })
+    await store.load()
+    const writeAtomic = vi.spyOn(adapter, 'writeAtomic')
+    const inputs = Array.from({ length: 2_000 }, (_, index) => ({
+      en: `Review request ${index}`,
+      ar: `مراجعة الطلب ${index}`
+    }))
+
+    await expect(
+      store.acceptTranslationPairs(inputs, { signal: controller.signal })
+    ).rejects.toMatchObject({ name: 'AbortError' })
+    expect(yields).toBe(2)
+    expect(writeAtomic).not.toHaveBeenCalled()
+    expect(store.current?.resources.translationMemory).toEqual([])
+    expect((await jsonFile(adapter, WORKSPACE_TRANSLATION_MEMORY_PATH)).entries).toEqual([])
+  })
+
+  it('retains atomic CAS semantics across an explicit reload-and-retry', async () => {
+    const adapter = new MemoryWorkspaceAdapter({ id: 'workspace:batch-cas-retry-i18n' })
+    const winner = new WorkspaceLocalizationStore(adapter, {
+      cooperativeYield: async () => Promise.resolve()
+    })
+    const stale = new WorkspaceLocalizationStore(adapter, {
+      cooperativeYield: async () => Promise.resolve()
+    })
+    await winner.load()
+    await stale.load()
+    await winner.acceptTranslationPair({
+      en: 'Review request',
+      ar: 'مراجعة الطلب'
+    })
+
+    await expect(
+      stale.acceptTranslationPair({
+        en: 'Archive request',
+        ar: 'أرشفة الطلب'
+      })
+    ).rejects.toBeInstanceOf(WorkspaceLocalizationConflictError)
+    expect((await jsonFile(adapter, WORKSPACE_TRANSLATION_MEMORY_PATH)).entries).toHaveLength(1)
+
+    await stale.load()
+    const retried = await stale.acceptTranslationPair({
+      en: 'Archive request',
+      ar: 'أرشفة الطلب'
+    })
+    expect(retried.resources.translationMemory.map((entry) => entry.en)).toEqual([
+      'Review request',
+      'Archive request'
+    ])
+  })
+
+  it('rejects a stale whole-array editor save after an accepted pair advances the hash', async () => {
+    const adapter = new MemoryWorkspaceAdapter({ id: 'workspace:editor-i18n-race' })
+    const store = new WorkspaceLocalizationStore(adapter)
+    const opened = await store.load()
+    const staleHash = opened.files.translationMemory.hash
+    await store.acceptTranslationPairs([
+      {
+        en: 'Review request',
+        ar: 'مراجعة الطلب',
+        acceptedAt: '2026-07-26T03:00:00.000Z'
+      }
+    ])
+
+    await expect(
+      store.replaceTranslationMemory([], { expectedHash: staleHash })
+    ).rejects.toBeInstanceOf(WorkspaceLocalizationConflictError)
+    expect((await jsonFile(adapter, WORKSPACE_TRANSLATION_MEMORY_PATH)).entries).toEqual([
+      {
+        en: 'Review request',
+        ar: 'مراجعة الطلب',
+        accepted: true,
+        acceptedAt: '2026-07-26T03:00:00.000Z'
+      }
+    ])
+  })
+
+  it('rejects a stale caller-view glossary replacement after the store advances', async () => {
+    const adapter = new MemoryWorkspaceAdapter({ id: 'workspace:glossary-editor-race' })
+    const store = new WorkspaceLocalizationStore(adapter)
+    const opened = await store.load()
+    const staleHash = opened.files.glossary.hash
+    const winner = [{ en: 'Winner term', ar: 'المصطلح الفائز' }]
+    await store.replaceGlossary(winner, { expectedHash: staleHash })
+
+    await expect(
+      store.replaceGlossary([{ en: 'Stale term', ar: 'مصطلح قديم' }], {
+        expectedHash: staleHash
+      })
+    ).rejects.toBeInstanceOf(WorkspaceLocalizationConflictError)
+    expect((await jsonFile(adapter, WORKSPACE_GLOSSARY_PATH)).entries).toEqual(winner)
+  })
+
   it('does not clobber an external edit that races a legacy migration', async () => {
     let changed = false
     const external = JSON.stringify([{ en: 'External edit', ar: 'تعديل خارجي' }])
@@ -421,6 +858,187 @@ describe('public workspace localization store', () => {
     expect(recovered.resources.glossary).toEqual(repaired)
     expect(recovered.resources.translationMemory).toEqual([])
     expect(writeAtomic).not.toHaveBeenCalled()
+  })
+
+  it('invalidates a prior aggregate after failed reload and blocks peer saves until all files recover', async () => {
+    const glossary = [{ en: 'Review request', ar: 'مراجعة الطلب' }]
+    const adapter = new MemoryWorkspaceAdapter({
+      id: 'workspace:failed-reload-invalidation',
+      files: {
+        [WORKSPACE_GLOSSARY_PATH]: serializeWorkspaceGlossaryDocument(
+          createWorkspaceGlossaryDocument(glossary)
+        ),
+        [WORKSPACE_TRANSLATION_MEMORY_PATH]: serializeWorkspaceTranslationMemoryDocument(
+          createWorkspaceTranslationMemoryDocument([])
+        )
+      }
+    })
+    const store = new WorkspaceLocalizationStore(adapter)
+    const opened = await store.load()
+    const glossaryBefore = await adapter.read(WORKSPACE_GLOSSARY_PATH)
+    adapter.replaceExternally(
+      WORKSPACE_TRANSLATION_MEMORY_PATH,
+      '{"format":"broken","version":1,"entries":[]}'
+    )
+    const writeAtomic = vi.spyOn(adapter, 'writeAtomic')
+
+    await expect(store.load()).rejects.toBeInstanceOf(WorkspaceLocalizationValidationError)
+    expect(store.current).toBeUndefined()
+    await expect(
+      store.replaceGlossary([{ en: 'Must not save', ar: 'يجب ألا يحفظ' }], {
+        expectedHash: opened.files.glossary.hash
+      })
+    ).rejects.toBeInstanceOf(WorkspaceLocalizationValidationError)
+    expect(writeAtomic).not.toHaveBeenCalled()
+    expect((await adapter.read(WORKSPACE_GLOSSARY_PATH)).hash).toBe(glossaryBefore.hash)
+
+    adapter.replaceExternally(
+      WORKSPACE_TRANSLATION_MEMORY_PATH,
+      serializeWorkspaceTranslationMemoryDocument(createWorkspaceTranslationMemoryDocument([]))
+    )
+    const recovered = await store.replaceGlossary([{ en: 'Recovered save', ar: 'حفظ مستعاد' }], {
+      expectedHash: opened.files.glossary.hash
+    })
+    expect(recovered).toBe(store.current)
+    expect(recovered.resources.glossary).toEqual([{ en: 'Recovered save', ar: 'حفظ مستعاد' }])
+  })
+
+  it('preflights both resources before seeding or migrating either file', async () => {
+    const corruptTranslationMemory = '{"format":"broken","version":1,"entries":[]}'
+    const missingGlossary = new MemoryWorkspaceAdapter({
+      id: 'workspace:two-phase-missing-glossary',
+      files: {
+        [WORKSPACE_TRANSLATION_MEMORY_PATH]: corruptTranslationMemory
+      }
+    })
+    const missingWrite = vi.spyOn(missingGlossary, 'writeAtomic')
+
+    await expect(new WorkspaceLocalizationStore(missingGlossary).load()).rejects.toBeInstanceOf(
+      WorkspaceLocalizationValidationError
+    )
+    expect(missingWrite).not.toHaveBeenCalled()
+    await expect(missingGlossary.read(WORKSPACE_GLOSSARY_PATH)).rejects.toMatchObject({
+      code: 'not-found'
+    })
+
+    const legacyGlossary = JSON.stringify([{ en: 'Legacy term', ar: 'مصطلح قديم' }])
+    const legacyBeforeFailure = new MemoryWorkspaceAdapter({
+      id: 'workspace:two-phase-legacy-glossary',
+      files: {
+        [WORKSPACE_GLOSSARY_PATH]: legacyGlossary,
+        [WORKSPACE_TRANSLATION_MEMORY_PATH]: corruptTranslationMemory
+      }
+    })
+    const legacyWrite = vi.spyOn(legacyBeforeFailure, 'writeAtomic')
+
+    await expect(new WorkspaceLocalizationStore(legacyBeforeFailure).load()).rejects.toBeInstanceOf(
+      WorkspaceLocalizationValidationError
+    )
+    expect(legacyWrite).not.toHaveBeenCalled()
+    expect(decode((await legacyBeforeFailure.read(WORKSPACE_GLOSSARY_PATH)).bytes)).toBe(
+      legacyGlossary
+    )
+  })
+
+  it('keeps a phase-two partial seed unavailable and safely adopts it on explicit retry', async () => {
+    let failTranslationMemorySeed = true
+    const adapter = new MemoryWorkspaceAdapter({
+      id: 'workspace:two-phase-partial-seed',
+      beforeWrite(path) {
+        if (path !== WORKSPACE_TRANSLATION_MEMORY_PATH || !failTranslationMemorySeed) return
+        throw new WorkspaceOperationError({
+          code: 'quota-exceeded',
+          operation: 'write',
+          path,
+          message: 'Translation-memory seed storage is full.'
+        })
+      }
+    })
+    const store = new WorkspaceLocalizationStore(adapter)
+
+    await expect(store.load()).rejects.toMatchObject({
+      name: 'WorkspaceLocalizationPartialLoadError',
+      code: 'partial-load',
+      committedPaths: [WORKSPACE_GLOSSARY_PATH],
+      cause: {
+        name: 'WorkspaceOperationError',
+        code: 'quota-exceeded',
+        path: WORKSPACE_TRANSLATION_MEMORY_PATH
+      }
+    })
+    expect(store.current).toBeUndefined()
+    expect(await jsonFile(adapter, WORKSPACE_GLOSSARY_PATH)).toMatchObject({
+      format: WORKSPACE_GLOSSARY_FORMAT,
+      version: 1
+    })
+    await expect(adapter.read(WORKSPACE_TRANSLATION_MEMORY_PATH)).rejects.toMatchObject({
+      code: 'not-found'
+    })
+
+    failTranslationMemorySeed = false
+    const recovered = await store.load()
+    expect(recovered).toBe(store.current)
+    expect(recovered.resources.translationMemory).toEqual([])
+  })
+
+  it('types a second-file migration CAS race after the first commit and recovers without clobbering', async () => {
+    const legacyGlossary = JSON.stringify([{ en: 'Legacy term', ar: 'مصطلح قديم' }])
+    const legacyTranslationMemory = JSON.stringify([
+      {
+        en: 'Legacy pair',
+        ar: 'زوج قديم',
+        accepted: true
+      }
+    ])
+    const externalTranslationMemory = [
+      {
+        en: 'External pair',
+        ar: 'زوج خارجي',
+        accepted: true as const
+      }
+    ]
+    let raced = false
+    const adapter = new MemoryWorkspaceAdapter({
+      id: 'workspace:two-phase-second-cas',
+      files: {
+        [WORKSPACE_GLOSSARY_PATH]: legacyGlossary,
+        [WORKSPACE_TRANSLATION_MEMORY_PATH]: legacyTranslationMemory
+      },
+      beforeWrite(path) {
+        if (path !== WORKSPACE_TRANSLATION_MEMORY_PATH || raced) return
+        raced = true
+        adapter.replaceExternally(
+          path,
+          serializeWorkspaceTranslationMemoryDocument(
+            createWorkspaceTranslationMemoryDocument(externalTranslationMemory)
+          )
+        )
+      }
+    })
+    const store = new WorkspaceLocalizationStore(adapter)
+
+    await expect(store.load()).rejects.toMatchObject({
+      name: 'WorkspaceLocalizationPartialLoadError',
+      code: 'partial-load',
+      committedPaths: [WORKSPACE_GLOSSARY_PATH],
+      cause: {
+        name: 'WorkspaceLocalizationConflictError',
+        code: 'external-conflict',
+        path: WORKSPACE_TRANSLATION_MEMORY_PATH
+      }
+    })
+    expect(store.current).toBeUndefined()
+    expect(await jsonFile(adapter, WORKSPACE_GLOSSARY_PATH)).toMatchObject({
+      format: WORKSPACE_GLOSSARY_FORMAT,
+      version: 1
+    })
+    expect((await jsonFile(adapter, WORKSPACE_TRANSLATION_MEMORY_PATH)).entries).toEqual(
+      externalTranslationMemory
+    )
+
+    const recovered = await store.load()
+    expect(recovered).toBe(store.current)
+    expect(recovered.resources.translationMemory).toEqual(externalTranslationMemory)
   })
 
   it('adopts external files that win both creation races instead of overwriting them', async () => {

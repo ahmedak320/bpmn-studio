@@ -346,8 +346,10 @@ export interface ExecuteConfirmedWorkspaceImportOptions {
   readonly currentProcessIndex?: ReadonlyMap<string, { readonly relPath: string }>
   readonly currentProcessIds?: ReadonlySet<string>
   readonly processIdentityInspector?: WorkspaceProcessIdentityInspector
-  /** App supplies its operation mutex so apply and rollback share one lane. */
-  readonly runExclusive?: <T>(operation: () => Promise<T>) => Promise<T>
+  /** App supplies its operation mutex so apply, rollback, and retention share one lane. */
+  readonly runExclusive?: (
+    operation: () => Promise<WorkspaceBackupImportOutcome>
+  ) => Promise<WorkspaceBackupImportOutcome>
 }
 
 export interface WorkspaceImportExecutionEvidence {
@@ -1300,7 +1302,7 @@ async function materializeArtifacts(
     )
   }
   throwIfAborted(signal)
-  const entries = await adapter.list()
+  const entries = await adapter.list('', { signal })
   throwIfAborted(signal)
   const byKey = new Map(entries.map((entry) => [pathKey(entry.path), entry]))
   const occupied = new Set(entries.map((entry) => pathKey(entry.path)))
@@ -1433,7 +1435,10 @@ async function materializeArtifacts(
 
     const matchingEntry = byKey.get(pathKey(destinationPath))
     if (matchingEntry?.kind === 'file') {
-      const existing = await adapter.read(matchingEntry.path)
+      const existing = await adapter.read(matchingEntry.path, {
+        maxBytes: limits.maxArtifactBytes,
+        signal
+      })
       throwIfAborted(signal)
       const suggestedKeepBothPath = candidateSiblingPath(
         destinationPath,
@@ -2003,16 +2008,14 @@ export async function executeConfirmedWorkspaceImport(
         historyRevisions += 1
       }
     })
-  const outcome = options.runExclusive ? await options.runExclusive(apply) : await apply()
-  if (outcome.status === 'needs-review') {
-    throw new WorkspaceImportError(
-      'unresolved-collision',
-      'The confirmed import unexpectedly returned to collision review.'
-    )
-  }
-  if (outcome.status === 'committed') {
-    const postCommitWarnings: string[] = []
-    if (historyRevisions > 0 && options.history?.enforceRetention) {
+  const postCommitWarnings: string[] = []
+  const applyAndRetain = async (): Promise<WorkspaceBackupImportOutcome> => {
+    const outcome = await apply()
+    if (
+      outcome.status === 'committed' &&
+      historyRevisions > 0 &&
+      options.history?.enforceRetention
+    ) {
       try {
         await options.history.enforceRetention()
       } catch (error) {
@@ -2023,6 +2026,18 @@ export async function executeConfirmedWorkspaceImport(
         )
       }
     }
+    return outcome
+  }
+  const outcome = options.runExclusive
+    ? await options.runExclusive(applyAndRetain)
+    : await applyAndRetain()
+  if (outcome.status === 'needs-review') {
+    throw new WorkspaceImportError(
+      'unresolved-collision',
+      'The confirmed import unexpectedly returned to collision review.'
+    )
+  }
+  if (outcome.status === 'committed') {
     return Object.freeze({
       status: 'committed',
       planId: confirmed.plan.id,

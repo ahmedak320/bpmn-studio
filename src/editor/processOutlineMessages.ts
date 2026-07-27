@@ -86,6 +86,8 @@ export interface ProcessOutlineMessages {
   moveUp: string
   moveDown: string
   deleteItem: string
+  deleteDialogTitle: string
+  deleteConfirm: string
   deleteConfirmation: (item: ProcessOutlineItem) => string
   validationHeading: string
   validationEmpty: string
@@ -368,6 +370,8 @@ export const EN_PROCESS_OUTLINE_MESSAGES: ProcessOutlineMessages = {
   moveUp: 'Move earlier',
   moveDown: 'Move later',
   deleteItem: 'Delete selected item',
+  deleteDialogTitle: 'Delete outline item?',
+  deleteConfirm: 'Delete item',
   deleteConfirmation: (item) => `Delete ${itemName(item)}? This can be undone from the canvas.`,
   validationHeading: 'Outline validation',
   validationEmpty: 'No outline validation findings.',
@@ -471,6 +475,8 @@ export const AR_PROCESS_OUTLINE_MESSAGES: ProcessOutlineMessages = {
   moveUp: 'نقل إلى موضع أسبق',
   moveDown: 'نقل إلى موضع لاحق',
   deleteItem: 'حذف العنصر المحدد',
+  deleteDialogTitle: 'حذف عنصر المخطط التفصيلي؟',
+  deleteConfirm: 'حذف العنصر',
   deleteConfirmation: (item) => `حذف ${itemName(item)}؟ يمكن التراجع عن ذلك من لوحة الرسم.`,
   validationHeading: 'التحقق من المخطط التفصيلي',
   validationEmpty: 'لا توجد ملاحظات تحقق في المخطط التفصيلي.',

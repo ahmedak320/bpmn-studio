@@ -1,6 +1,5 @@
-import { writeFileSync } from 'node:fs'
-import { cpus, platform, release } from 'node:os'
-import { resolve } from 'node:path'
+import { mkdirSync, renameSync, writeFileSync } from 'node:fs'
+import { dirname, resolve } from 'node:path'
 import { performance } from 'node:perf_hooks'
 
 import { CANONICAL_FIELDS_BY_SHEET } from '../src/spreadsheet/aliases'
@@ -14,8 +13,18 @@ import { applyGraphInferencePlan, createGraphInferencePlan } from '../src/spread
 import { buildProcessWorkbookModel, officialTemplatePreset } from '../src/spreadsheet/modelBuilder'
 import { OFFICIAL_SHEET_NAMES } from '../src/spreadsheet/officialTemplate'
 import { validateProcessWorkbookModel } from '../src/spreadsheet/validation'
-import { LiveWorkspaceIndex, type LiveWorkspaceFile } from '../src/workspace/liveWorkspaceIndex'
-import { searchWorkspace } from '../src/workspace/searchIndex'
+import {
+  collectPerformanceSourceBinding,
+  evaluatePerformanceHardwareProfile,
+  expectedPerformanceCandidateSha,
+  observePerformanceRuntime,
+  performanceArgumentValue,
+  selectedPerformanceHardwareProfile
+} from './performanceEvidence'
+import {
+  measureProductionWorkspacePerformance,
+  type WorkspacePerformanceMeasurement
+} from './workspacePerformance'
 
 const LIMITS_MS = Object.freeze({
   initialWorkspaceFiles1000: 5_000,
@@ -29,42 +38,13 @@ interface Measurement {
   elapsedMs: number
   limitMs: number
   passed: boolean
-  details: Record<string, number>
+  details: Readonly<Record<string, number>>
 }
 
 function measure<T>(operation: () => T): { elapsedMs: number; value: T } {
   const started = performance.now()
   const value = operation()
   return { elapsedMs: performance.now() - started, value }
-}
-
-function ordinaryBpmn(processIndex: number, revision = 0): string {
-  const tasks = Array.from({ length: 8 }, (_, index) => {
-    const id = `Task_${processIndex}_${index + 1}`
-    return `<bpmn:userTask id="${id}" name="Review item ${index + 1}" orbitpm:nameEn="Review item ${index + 1}" orbitpm:nameAr="مراجعة البند ${index + 1}" />`
-  }).join('')
-  return `<?xml version="1.0" encoding="UTF-8"?>
-<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL"
-  xmlns:orbitpm="https://orbitpm.dev/schema/1.0"
-  id="Definitions_${processIndex}">
-  <bpmn:process id="Process_${processIndex}" name="Process ${processIndex} revision ${revision}">
-    <bpmn:startEvent id="Start_${processIndex}" name="Start" orbitpm:nameEn="Start" orbitpm:nameAr="البداية" />
-    ${tasks}
-    <bpmn:endEvent id="End_${processIndex}" name="End" orbitpm:nameEn="End" orbitpm:nameAr="النهاية" />
-  </bpmn:process>
-</bpmn:definitions>`
-}
-
-function workspaceFixture(count: number): LiveWorkspaceFile[] {
-  return Array.from({ length: count }, (_, index) => {
-    const xml = ordinaryBpmn(index)
-    return {
-      relPath: `department-${String(index % 25).padStart(2, '0')}/process-${String(index).padStart(4, '0')}.bpmn`,
-      xml,
-      lastModified: 1_700_000_000_000 + index,
-      size: new TextEncoder().encode(xml).byteLength
-    }
-  })
 }
 
 function cell(value: WorkbookCell['value']): WorkbookCell {
@@ -176,47 +156,35 @@ function result(
   }
 }
 
-// Warm the parser/JIT without polluting the measured fixture sizes.
-new LiveWorkspaceIndex(workspaceFixture(20))
+function workspaceResult(measurement: WorkspacePerformanceMeasurement): Measurement {
+  return result(measurement.name, measurement.elapsedMs, measurement.details)
+}
+
+function writeEvidenceAtomic(path: string, evidence: unknown): void {
+  mkdirSync(dirname(path), { recursive: true })
+  const temporaryPath = `${path}.tmp-${process.pid}`
+  writeFileSync(temporaryPath, `${JSON.stringify(evidence, null, 2)}\n`, {
+    encoding: 'utf8',
+    flag: 'wx'
+  })
+  renameSync(temporaryPath, path)
+}
+
+// Warm spreadsheet parsing/JIT without polluting the measured fixture sizes.
 previewSpreadsheet(20)
 
-const files = workspaceFixture(1_000)
-const initial = measure(() => {
-  const index = new LiveWorkspaceIndex(files)
-  const documents = index.searchDocuments()
-  const matches = searchWorkspace(documents, 'Review item 4')
-  return { index, documents: documents.length, matches: matches.length }
-})
-
-const incremental = measure(() => {
-  for (let index = 0; index < 10; index += 1) {
-    const prior = files[index]!
-    const xml = ordinaryBpmn(index, 1)
-    initial.value.index.updateSaved({
-      ...prior,
-      xml,
-      lastModified: prior.lastModified + 10_000,
-      size: new TextEncoder().encode(xml).byteLength
-    })
-  }
-  const documents = initial.value.index.searchDocuments()
-  const matches = searchWorkspace(documents, 'revision 1')
-  return { documents: documents.length, matches: matches.length }
-})
-
+const source = collectPerformanceSourceBinding(expectedPerformanceCandidateSha())
+const hardwareProfile = evaluatePerformanceHardwareProfile(
+  selectedPerformanceHardwareProfile(),
+  observePerformanceRuntime()
+)
+const workspace = await measureProductionWorkspacePerformance()
 const spreadsheet500 = measure(() => previewSpreadsheet(500))
 const spreadsheet1000 = measure(() => previewSpreadsheet(1_000))
 
 const measurements: Measurement[] = [
-  result('initialWorkspaceFiles1000', initial.elapsedMs, {
-    files: initial.value.documents,
-    searchGroups: initial.value.matches
-  }),
-  result('incrementalWorkspaceOnePercent', incremental.elapsedMs, {
-    changedFiles: 10,
-    files: incremental.value.documents,
-    searchGroups: incremental.value.matches
-  }),
+  workspaceResult(workspace.initial),
+  workspaceResult(workspace.incremental),
   result('spreadsheetPreviewNodes500', spreadsheet500.elapsedMs, {
     ...spreadsheet500.value
   }),
@@ -224,27 +192,28 @@ const measurements: Measurement[] = [
     ...spreadsheet1000.value
   })
 ]
-
+const functionalPassed = measurements.every((measurement) => measurement.passed)
+const measuredPassed = functionalPassed && hardwareProfile.matched
+const releaseEvidenceEligible =
+  measuredPassed && hardwareProfile.referenceEligible && source.releaseEligible
+const releaseEvidenceRequired = process.argv.slice(2).includes('--require-release-evidence')
+const passed = measuredPassed && (!releaseEvidenceRequired || releaseEvidenceEligible)
 const evidence = {
-  schemaVersion: 1,
+  schemaVersion: 2,
+  gate: 'orbitpm-lite-production-performance',
   createdAt: new Date().toISOString(),
-  runtime: {
-    node: process.version,
-    platform: platform(),
-    release: release(),
-    cpuModel: cpus()[0]?.model ?? 'unknown',
-    logicalCpus: cpus().length
-  },
+  source,
+  hardwareProfile,
   limitsMs: LIMITS_MS,
   measurements,
-  passed: measurements.every((measurement) => measurement.passed)
+  functionalPassed,
+  releaseEvidenceRequired,
+  passed,
+  releaseEvidenceEligible
 }
 
-const outputArgument = process.argv.find((argument) => argument.startsWith('--output='))
-if (outputArgument) {
-  const outputPath = resolve(outputArgument.slice('--output='.length))
-  writeFileSync(outputPath, `${JSON.stringify(evidence, null, 2)}\n`)
-}
+const outputArgument = performanceArgumentValue('output')
+if (outputArgument) writeEvidenceAtomic(resolve(outputArgument), evidence)
 
 for (const measurement of measurements) {
   const state = measurement.passed ? 'PASS' : 'FAIL'
@@ -253,10 +222,23 @@ for (const measurement of measurements) {
       `(limit ${measurement.limitMs} ms)`
   )
 }
+console.log(
+  `Hardware profile ${hardwareProfile.id}: ` +
+    `${hardwareProfile.matched ? 'matched' : `mismatch (${hardwareProfile.mismatches.join('; ')})`}; ` +
+    `release-reference=${hardwareProfile.referenceEligible ? 'eligible' : 'ineligible'}`
+)
+console.log(
+  `Candidate ${source.gitHeadSha}: ` +
+    `${source.releaseEligible ? 'clean exact binding' : 'development/non-final binding'}`
+)
 
-if (!evidence.passed) {
+if (!passed) {
   console.error('Performance release gate failed.')
   process.exit(1)
 }
 
-console.log('Performance release gate passed.')
+console.log(
+  `Performance gate passed; release evidence is ${
+    releaseEvidenceEligible ? 'eligible' : 'development-only'
+  }.`
+)

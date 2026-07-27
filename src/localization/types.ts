@@ -149,9 +149,10 @@ export type LocalizationPatchReason =
   | 'partial-fallback'
 
 /**
- * A serializable mutation request. `expectedValue` is advisory optimistic
- * concurrency data for the integration layer; this pure package never applies
- * a patch itself.
+ * A serializable mutation request. `expectedValue` is optimistic concurrency
+ * data for the integration layer: a string requires that exact prior value,
+ * while `null` requires the property to remain absent. Omitted means the patch
+ * has no value precondition.
  */
 export interface LocalizationPatch {
   source: LocalizationSource
@@ -160,7 +161,7 @@ export interface LocalizationPatch {
   field: string
   property: string
   value: string
-  expectedValue?: string
+  expectedValue?: string | null
   target?: LanguageCode
   reason: LocalizationPatchReason
 }

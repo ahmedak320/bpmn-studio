@@ -1,4 +1,4 @@
-import { type ReactNode } from 'react'
+import { type ReactNode, type RefObject } from 'react'
 import { AccessibleDialog } from '../common/AccessibleDialog'
 import { t } from '../i18n'
 import { useLang } from '../i18n/useLang'
@@ -9,8 +9,14 @@ export interface ModalProps {
   children: ReactNode
   footer?: ReactNode
   maxWidth?: number
+  role?: 'dialog' | 'alertdialog'
+  /** Hide dismissal UI and ignore Escape/backdrop while a commit cannot be cancelled safely. */
+  closable?: boolean
   /** Accessible label for the dialog; defaults to `title`. */
   ariaLabel?: string
+  ariaDescribedby?: string
+  initialFocusRef?: RefObject<HTMLElement | null>
+  returnFocusRef?: RefObject<HTMLElement | null>
 }
 
 /**
@@ -25,16 +31,25 @@ export function Modal({
   children,
   footer,
   maxWidth = 460,
-  ariaLabel
+  role = 'dialog',
+  closable = true,
+  ariaLabel,
+  ariaDescribedby,
+  initialFocusRef,
+  returnFocusRef
 }: ModalProps): JSX.Element {
   useLang()
 
   return (
     <AccessibleDialog
+      role={role}
       ariaLabel={ariaLabel ?? title}
+      ariaDescribedby={ariaDescribedby}
       onClose={onClose}
-      closeOnEscape
-      closeOnBackdrop
+      closeOnEscape={closable}
+      closeOnBackdrop={closable}
+      initialFocusRef={initialFocusRef}
+      returnFocusRef={returnFocusRef}
       backdropStyle={{
         position: 'fixed',
         inset: 0,
@@ -69,22 +84,24 @@ export function Modal({
         }}
       >
         <strong style={{ fontSize: 15 }}>{title}</strong>
-        <button
-          type="button"
-          onClick={onClose}
-          aria-label={t('modal.close.aria')}
-          title={t('modal.close.aria')}
-          style={{
-            border: 'none',
-            background: 'transparent',
-            fontSize: 18,
-            cursor: 'pointer',
-            lineHeight: 1,
-            color: 'inherit'
-          }}
-        >
-          ×
-        </button>
+        {closable ? (
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label={t('modal.close.aria')}
+            title={t('modal.close.aria')}
+            style={{
+              border: 'none',
+              background: 'transparent',
+              fontSize: 18,
+              cursor: 'pointer',
+              lineHeight: 1,
+              color: 'inherit'
+            }}
+          >
+            ×
+          </button>
+        ) : null}
       </header>
       <div style={{ padding: '1rem', overflowY: 'auto', minHeight: 0 }}>{children}</div>
       {footer && (

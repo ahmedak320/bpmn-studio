@@ -118,8 +118,8 @@ export const PROVIDERS: Record<ProviderId, ProviderSpec> = {
     allowCustomModel: false,
     isOpenAICompatible: false,
     models: [
-      { id: 'gemini-flash-latest', label: 'Gemini Flash (latest)' },
-      { id: 'gemini-3-pro-preview', label: 'Gemini 3 Pro (preview)' }
+      { id: 'gemini-3.6-flash', label: 'Gemini 3.6 Flash' },
+      { id: 'gemini-3.1-pro-preview', label: 'Gemini 3.1 Pro (preview)' }
     ],
     keyFields: [{ name: 'apiKey', label: 'API key', kind: 'secret', required: true }]
   },

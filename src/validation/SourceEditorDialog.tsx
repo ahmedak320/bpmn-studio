@@ -1,10 +1,18 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { AccessibleDialog } from '../common/AccessibleDialog'
 import { t, type Key } from '../i18n'
+import { useLang } from '../i18n/useLang'
 import { mergeValidationSummaries, type ValidationSummary } from './contracts'
 import { evaluateValidationPolicy } from './policy'
 import { validateUnknownExtensionPreservation } from './extensions'
-import { summarizeXmlLineDiff } from './sourceDiff'
+import {
+  ReadOnlyDiagramPreview,
+  type ReadOnlyDiagramPreviewStatus,
+  type ReadOnlyDiagramPreviewViewerFactory
+} from './ReadOnlyDiagramPreview'
+import { SourceDiffPreview } from './SourceDiffPreview'
+import { diffXmlLines } from './sourceDiff'
+import { boundedValidationTechnicalDetail } from './technicalEvidence'
 import { ValidationIssueList } from './ValidationCenter'
 
 function translate(key: string, variables?: Record<string, string | number>): string {
@@ -18,6 +26,8 @@ export interface SourceEditorDialogProps {
   apply: (xml: string, signal: AbortSignal) => Promise<void | SourceEditorApplyResult>
   autoLayout: (xml: string) => Promise<string>
   onClose: () => void
+  /** Test/embedding seam; production uses the read-only NavigatedViewer. */
+  createDiagramPreviewViewer?: ReadOnlyDiagramPreviewViewerFactory
 }
 
 export type SourceEditorApplyResult =
@@ -28,21 +38,38 @@ interface PreviewResult {
   summary: ValidationSummary
 }
 
+interface SourceEditorVisibleError {
+  summary: string
+  technicalDetail?: string
+}
+
+function caughtActionError(summaryKey: Key, caught: unknown): SourceEditorVisibleError {
+  const technicalDetail = boundedValidationTechnicalDetail(caught)
+  return {
+    summary: t(summaryKey),
+    ...(technicalDetail ? { technicalDetail } : {})
+  }
+}
+
 export function SourceEditorDialog({
   open,
   originalXml,
   validate,
   apply,
   autoLayout,
-  onClose
+  onClose,
+  createDiagramPreviewViewer
 }: SourceEditorDialogProps): JSX.Element | null {
+  const lang = useLang()
   const headingRef = useRef<HTMLHeadingElement | null>(null)
   const applyAbortRef = useRef<AbortController | null>(null)
   const [draft, setDraft] = useState(originalXml)
   const [preview, setPreview] = useState<PreviewResult | null>(null)
   const [busy, setBusy] = useState<'preview' | 'apply' | 'layout' | null>(null)
-  const [error, setError] = useState<string | null>(null)
+  const [error, setError] = useState<SourceEditorVisibleError | null>(null)
   const [layoutCandidate, setLayoutCandidate] = useState<string | null>(null)
+  const [layoutRenderStatus, setLayoutRenderStatus] =
+    useState<ReadOnlyDiagramPreviewStatus['status']>('loading')
 
   useEffect(() => {
     applyAbortRef.current?.abort()
@@ -54,6 +81,7 @@ export function SourceEditorDialog({
     setPreview(null)
     setError(null)
     setLayoutCandidate(null)
+    setLayoutRenderStatus('loading')
   }, [open, originalXml])
 
   useEffect(
@@ -64,9 +92,9 @@ export function SourceEditorDialog({
     []
   )
 
-  const diff = useMemo(() => summarizeXmlLineDiff(originalXml, draft), [draft, originalXml])
+  const diff = useMemo(() => diffXmlLines(originalXml, draft), [draft, originalXml])
   const layoutDiff = useMemo(
-    () => (layoutCandidate ? summarizeXmlLineDiff(draft, layoutCandidate) : null),
+    () => (layoutCandidate ? diffXmlLines(draft, layoutCandidate) : null),
     [draft, layoutCandidate]
   )
 
@@ -92,7 +120,7 @@ export function SourceEditorDialog({
     try {
       setPreview(await previewXml(draft, false))
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : String(caught))
+      setError(caughtActionError('sourceEditor.action.previewFailed', caught))
     } finally {
       setBusy(null)
     }
@@ -116,26 +144,38 @@ export function SourceEditorDialog({
     try {
       const candidate = await autoLayout(draft)
       const checked = await previewXml(candidate, true)
+      setLayoutRenderStatus('loading')
       setLayoutCandidate(candidate)
       setPreview(checked)
     } catch (caught) {
-      setError(
-        translate('sourceEditor.layoutFailed', {
-          error: caught instanceof Error ? caught.message : String(caught)
-        })
-      )
+      setError(caughtActionError('sourceEditor.action.layoutFailed', caught))
     } finally {
       setBusy(null)
     }
   }, [autoLayout, draft, previewXml])
 
   const acceptLayout = useCallback(() => {
-    if (!layoutCandidate) return
+    if (
+      !layoutCandidate ||
+      layoutRenderStatus !== 'ready' ||
+      layoutDiff?.truncated !== false ||
+      layoutDecision?.allowed !== true
+    )
+      return
     setDraft(layoutCandidate)
     setLayoutCandidate(null)
-  }, [layoutCandidate])
+    setLayoutRenderStatus('loading')
+  }, [layoutCandidate, layoutDecision, layoutDiff, layoutRenderStatus])
+
+  const handleLayoutRenderStatus = useCallback((status: ReadOnlyDiagramPreviewStatus) => {
+    setLayoutRenderStatus(status.status)
+  }, [])
 
   const handleApply = useCallback(async () => {
+    if (diff.truncated) {
+      setError({ summary: translate('sourceEditor.diffTruncated') })
+      return
+    }
     setBusy('apply')
     setError(null)
     const controller = new AbortController()
@@ -150,38 +190,39 @@ export function SourceEditorDialog({
           (issue) => issue.code === 'di.process-missing' || issue.code === 'bpmnlint.no-bpmndi'
         )
       ) {
-        setError(translate('sourceEditor.missingDi'))
+        setError({ summary: translate('sourceEditor.missingDi') })
         return
       }
       const decision = evaluateValidationPolicy(checked.summary, 'apply-editor')
       if (!decision.allowed || checked.summary.blockingErrors > 0) {
-        setError(
-          decision.reason === 'unsafe-preservation-loss'
-            ? translate('sourceEditor.preservationBlocked')
-            : translate('sourceEditor.invalidBlocked')
-        )
+        setError({
+          summary:
+            decision.reason === 'unsafe-preservation-loss'
+              ? translate('sourceEditor.preservationBlocked')
+              : translate('sourceEditor.invalidBlocked')
+        })
         return
       }
       const outcome = await apply(draft, controller.signal)
       if (controller.signal.aborted) return
       if (outcome?.status === 'cancelled') return
       if (outcome?.status === 'blocked') {
-        setError(outcome.message ?? translate('sourceEditor.invalidBlocked'))
+        const technicalDetail = boundedValidationTechnicalDetail(outcome.message)
+        setError({
+          summary: translate('sourceEditor.invalidBlocked'),
+          ...(technicalDetail ? { technicalDetail } : {})
+        })
         return
       }
       onClose()
     } catch (caught) {
       if (controller.signal.aborted) return
-      setError(
-        translate('sourceEditor.applyFailed', {
-          error: caught instanceof Error ? caught.message : String(caught)
-        })
-      )
+      setError(caughtActionError('sourceEditor.action.applyFailed', caught))
     } finally {
       if (applyAbortRef.current === controller) applyAbortRef.current = null
       setBusy(null)
     }
-  }, [apply, draft, onClose, previewXml])
+  }, [apply, diff.truncated, draft, onClose, previewXml])
 
   if (!open) return null
 
@@ -190,6 +231,7 @@ export function SourceEditorDialog({
       backdropClassName="orbitpm-validation__backdrop"
       dialogClassName="orbitpm-source-editor"
       ariaLabelledby="orbitpm-source-editor-title"
+      dir={lang === 'ar' ? 'rtl' : 'ltr'}
       onClose={onClose}
       closeOnEscape={busy === null}
       closeOnBackdrop={false}
@@ -221,59 +263,89 @@ export function SourceEditorDialog({
         </button>
       </header>
 
-      <label className="orbitpm-source-editor__label" htmlFor="orbitpm-source-editor-textarea">
-        {translate('sourceEditor.diff')}
-      </label>
-      <textarea
-        id="orbitpm-source-editor-textarea"
-        className="orbitpm-source-editor__textarea"
-        dir="ltr"
-        spellCheck={false}
-        value={draft}
-        onChange={(event) => {
-          setDraft(event.target.value)
-          setPreview(null)
-          setLayoutCandidate(null)
-        }}
-        disabled={busy !== null}
-      />
+      <div className="orbitpm-source-editor__body" data-source-editor-scroll-region>
+        <label className="orbitpm-source-editor__label" htmlFor="orbitpm-source-editor-textarea">
+          {translate('sourceEditor.diff')}
+        </label>
+        <textarea
+          id="orbitpm-source-editor-textarea"
+          className="orbitpm-source-editor__textarea"
+          dir="ltr"
+          spellCheck={false}
+          value={draft}
+          onChange={(event) => {
+            setDraft(event.target.value)
+            setPreview(null)
+            setLayoutCandidate(null)
+            setLayoutRenderStatus('loading')
+          }}
+          disabled={busy !== null}
+        />
 
-      {error ? (
-        <p className="orbitpm-source-editor__error" role="alert">
-          {error}
-        </p>
-      ) : null}
+        {diff.hunks.length > 0 || diff.truncated ? <SourceDiffPreview diff={diff} /> : null}
 
-      {layoutCandidate ? (
-        <div className="orbitpm-source-editor__layout-preview">
-          <div>
-            <p>{translate('sourceEditor.layoutReady')}</p>
-            {layoutDiff ? (
-              <p>
-                {translate('sourceEditor.changedLines', {
-                  changed: layoutDiff.changedLines,
-                  added: layoutDiff.addedLines,
-                  removed: layoutDiff.removedLines,
-                  line: layoutDiff.firstChangedLine ?? 1
-                })}
+        {error ? (
+          <div className="orbitpm-source-editor__error" dir={lang === 'ar' ? 'rtl' : 'ltr'}>
+            <p role="alert" aria-live="assertive" data-source-editor-error-summary>
+              {error.summary}
+            </p>
+            {error.technicalDetail ? (
+              <p data-source-editor-error-technical>
+                <span>{translate('sourceEditor.action.technicalDetails')}</span>{' '}
+                <code lang="en" dir="ltr">
+                  {error.technicalDetail}
+                </code>
               </p>
             ) : null}
           </div>
-          <button
-            type="button"
-            onClick={acceptLayout}
-            disabled={busy !== null || (layoutDecision !== null && !layoutDecision.allowed)}
-          >
-            {translate('sourceEditor.layoutAccept')}
-          </button>
-        </div>
-      ) : null}
+        ) : null}
 
-      {preview && (preview.xml === draft || preview.xml === layoutCandidate) ? (
-        <div className="orbitpm-source-editor__results" aria-live="polite">
-          <ValidationIssueList issues={preview.summary.issues} compact />
-        </div>
-      ) : null}
+        {layoutCandidate ? (
+          <div className="orbitpm-source-editor__layout-preview">
+            <div className="orbitpm-source-editor__layout-summary">
+              <p>{translate('sourceEditor.layoutReady')}</p>
+              {layoutDiff ? (
+                <p>
+                  {translate('sourceEditor.changedLines', {
+                    changed: layoutDiff.changedLines,
+                    added: layoutDiff.addedLines,
+                    removed: layoutDiff.removedLines,
+                    line: layoutDiff.firstChangedLine ?? 1
+                  })}
+                </p>
+              ) : null}
+            </div>
+            {layoutDiff ? (
+              <SourceDiffPreview diff={layoutDiff} title={translate('sourceEditor.layoutDiff')} />
+            ) : null}
+            <ReadOnlyDiagramPreview
+              xml={layoutCandidate}
+              title={translate('sourceEditor.layoutDiagramTitle')}
+              ariaLabel={translate('sourceEditor.layoutDiagramAria')}
+              onStatusChange={handleLayoutRenderStatus}
+              createViewer={createDiagramPreviewViewer}
+            />
+            <button
+              type="button"
+              onClick={acceptLayout}
+              disabled={
+                busy !== null ||
+                layoutRenderStatus !== 'ready' ||
+                layoutDiff?.truncated !== false ||
+                layoutDecision?.allowed !== true
+              }
+            >
+              {translate('sourceEditor.layoutAccept')}
+            </button>
+          </div>
+        ) : null}
+
+        {preview && (preview.xml === draft || preview.xml === layoutCandidate) ? (
+          <div className="orbitpm-source-editor__results" aria-live="polite">
+            <ValidationIssueList issues={preview.summary.issues} compact />
+          </div>
+        ) : null}
+      </div>
 
       <footer className="orbitpm-validation__footer">
         <button type="button" onClick={() => void handlePreview()} disabled={busy !== null}>
@@ -295,6 +367,7 @@ export function SourceEditorDialog({
             setPreview(null)
             setLayoutCandidate(null)
             setError(null)
+            setLayoutRenderStatus('loading')
           }}
           disabled={busy !== null || draft === originalXml}
         >
@@ -306,6 +379,7 @@ export function SourceEditorDialog({
           onClick={() => void handleApply()}
           disabled={
             busy !== null ||
+            diff.truncated ||
             diff.changedLines === 0 ||
             layoutCandidate !== null ||
             missingDi === true ||

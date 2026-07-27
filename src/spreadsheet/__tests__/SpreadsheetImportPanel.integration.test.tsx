@@ -1,9 +1,10 @@
 // @vitest-environment jsdom
 
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
+import { ar, en } from '../../i18n/dictionaries'
 import { CANONICAL_FIELDS_BY_SHEET } from '../aliases'
 import {
   OFFICIAL_TEMPLATE_VERSION,
@@ -16,7 +17,7 @@ import {
   type WorkbookCell
 } from '../contracts'
 import type { BrowserSpreadsheetParseResult } from '../browserParserAdapters'
-import { SpreadsheetError } from '../errors'
+import { SpreadsheetError, type SpreadsheetErrorCode } from '../errors'
 import { computeSpreadsheetModelReview } from '../modelReview'
 import { OFFICIAL_SHEET_NAMES } from '../officialTemplate'
 import { OFFICIAL_TEMPLATE_ASSET_NAMES } from '../template'
@@ -37,17 +38,29 @@ const mocks = vi.hoisted(() => ({
   reviewWorkbook: vi.fn()
 }))
 
-vi.mock('../../i18n', () => ({
-  t: (key: string, values?: Readonly<Record<string, unknown>>): string =>
-    key === 'spreadsheet.repair.synthetic'
-      ? `${key}:${String(values?.count)}`
-      : key === 'spreadsheet.progress'
-        ? `${String(values?.phase)}:${String(values?.percent)}%`
-        : key
-}))
+const language = vi.hoisted(() => ({ current: 'en' as 'en' | 'ar' }))
+
+vi.mock('../../i18n', async () => {
+  const dictionaries =
+    await vi.importActual<typeof import('../../i18n/dictionaries')>('../../i18n/dictionaries')
+  return {
+    t: (key: string, values?: Readonly<Record<string, unknown>>): string => {
+      if (key.startsWith('spreadsheet.error.')) {
+        const dictionary = language.current === 'ar' ? dictionaries.ar : dictionaries.en
+        const raw = dictionary[key as keyof typeof dictionaries.en] ?? key
+        return raw.replace(/\{(\w+)\}/g, (_, name: string) => String(values?.[name] ?? `{${name}}`))
+      }
+      return key === 'spreadsheet.repair.synthetic'
+        ? `${key}:${String(values?.count)}`
+        : key === 'spreadsheet.progress'
+          ? `${String(values?.phase)}:${String(values?.percent)}%`
+          : key
+    }
+  }
+})
 
 vi.mock('../../i18n/useLang', () => ({
-  useLang: (): 'en' => 'en'
+  useLang: (): 'en' | 'ar' => language.current
 }))
 
 vi.mock('../browserParserAdapters', () => ({
@@ -98,6 +111,38 @@ vi.mock('../bilingualReview', async (importOriginal) => {
 })
 
 import { SpreadsheetImportPanel } from '../SpreadsheetImportPanel'
+
+const SPREADSHEET_ERROR_CODES = [
+  'unsupported-format',
+  'legacy-excel-format',
+  'macro-enabled-format',
+  'encrypted-workbook',
+  'malformed-csv',
+  'invalid-utf8',
+  'malformed-zip',
+  'zip64-unsupported',
+  'multi-disk-zip',
+  'unsupported-compression',
+  'unsafe-zip-path',
+  'duplicate-zip-entry',
+  'macro-content',
+  'missing-xlsx-part',
+  'compressed-size-limit',
+  'uncompressed-size-limit',
+  'worksheet-limit',
+  'row-limit',
+  'column-limit',
+  'cell-count-limit',
+  'cell-length-limit',
+  'node-process-limit',
+  'node-transaction-limit',
+  'formula-without-cache',
+  'parse-cancelled',
+  'adapter-contract-violation',
+  'invalid-mapping-preset',
+  'blocking-validation',
+  'transaction-failed'
+] as const satisfies readonly SpreadsheetErrorCode[]
 
 function cells(values: readonly unknown[]): WorkbookCell[] {
   return values.map((value) => ({
@@ -348,7 +393,38 @@ function renderPanel(
   )
 }
 
+async function uploadOfficialFile(
+  user: ReturnType<typeof userEvent.setup>,
+  name = 'official.xlsx'
+): Promise<HTMLElement> {
+  await user.upload(
+    screen.getByLabelText(/spreadsheet\.upload/),
+    new File([new Uint8Array([80, 75, 3, 4])], name, {
+      type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+    })
+  )
+  return await screen.findByRole('button', { name: 'spreadsheet.review' })
+}
+
+async function reachOfficialReview(
+  user: ReturnType<typeof userEvent.setup>,
+  name = 'official.xlsx'
+): Promise<void> {
+  await user.click(await uploadOfficialFile(user, name))
+  await screen.findByRole('button', { name: 'spreadsheet.prepare' })
+}
+
+async function reachOfficialPlan(
+  user: ReturnType<typeof userEvent.setup>,
+  name = 'official.xlsx'
+): Promise<void> {
+  await reachOfficialReview(user, name)
+  await user.click(screen.getByRole('button', { name: 'spreadsheet.prepare' }))
+  await screen.findByRole('button', { name: 'spreadsheet.commit' })
+}
+
 beforeEach(() => {
+  language.current = 'en'
   mocks.parse.mockReset()
   mocks.modelReview.mockReset().mockImplementation(async (input, options) => {
     return computeSpreadsheetModelReview(input, {
@@ -387,6 +463,17 @@ afterEach(() => {
 })
 
 describe('SpreadsheetImportPanel browser workflow', () => {
+  it('keeps every spreadsheet boundary error localized in English and Arabic', () => {
+    for (const code of SPREADSHEET_ERROR_CODES) {
+      const key = `spreadsheet.error.${code}` as const
+      expect(en[key]).toBeTypeOf('string')
+      expect(en[key].trim()).not.toBe('')
+      expect(ar[key]).toBeTypeOf('string')
+      expect(ar[key].trim()).not.toBe('')
+      expect(ar[key]).not.toBe(en[key])
+    }
+  })
+
   it('downloads templates and completes the reviewed single-file transaction', async () => {
     const user = userEvent.setup()
     const onOpenSingle = vi.fn()
@@ -566,6 +653,13 @@ describe('SpreadsheetImportPanel browser workflow', () => {
         sourceIdentity: expect.stringMatching(/^[0-9]+:[0-9]+$/)
       })
     )
+    mocks.draftSave.mockRejectedValueOnce(new Error('browser storage English'))
+    fireEvent.click(screen.getByRole('button', { name: 'spreadsheet.mapping.saveDraft' }))
+    const draftAlert = (await screen.findByText(en['spreadsheet.error.draftSave'])).parentElement!
+    expect(draftAlert.textContent).toContain(en['spreadsheet.error.draftSave'])
+    expect(draftAlert.textContent).not.toContain('browser storage English')
+    expect(within(draftAlert).queryByText(en['spreadsheet.error.technicalEvidence'])).toBeNull()
+
     fireEvent.click(screen.getByRole('button', { name: 'spreadsheet.mapping.exportPreset' }))
     expect(mocks.downloadPreset).toHaveBeenCalledOnce()
 
@@ -578,7 +672,15 @@ describe('SpreadsheetImportPanel browser workflow', () => {
         files: [new File(['{}'], 'preset.json', { type: 'application/json' })]
       }
     })
-    expect(await screen.findByText(/spreadsheet\.error\.review/)).not.toBeNull()
+    expect(await screen.findByText(en['spreadsheet.error.invalid-mapping-preset'])).not.toBeNull()
+    const evidence = screen.getByText(en['spreadsheet.error.technicalEvidence']).closest('details')
+    expect(evidence).not.toBeNull()
+    expect(evidence?.open).toBe(false)
+    const code = within(evidence!).getByText('invalid-mapping-preset')
+    expect(code.tagName).toBe('CODE')
+    expect(code.getAttribute('lang')).toBe('en')
+    expect(code.getAttribute('dir')).toBe('ltr')
+    expect(within(evidence!).getByText('{"location":"test"}').tagName).toBe('CODE')
 
     fireEvent.click(screen.getByRole('button', { name: 'spreadsheet.review' }))
     expect(await screen.findByText('spreadsheet.validation.title')).not.toBeNull()
@@ -671,7 +773,10 @@ describe('SpreadsheetImportPanel browser workflow', () => {
       screen.getByLabelText(/spreadsheet\.upload/),
       new File(['broken'], 'broken.csv', { type: 'text/csv' })
     )
-    expect((await screen.findByRole('alert')).textContent).toContain('spreadsheet.error.parse')
+    const alert = (await screen.findByText(en['spreadsheet.error.parse'])).parentElement!
+    expect(alert.textContent).toContain(en['spreadsheet.error.parse'])
+    expect(alert.textContent).not.toContain('corrupt workbook')
+    expect(within(alert).queryByText(en['spreadsheet.error.technicalEvidence'])).toBeNull()
 
     mocks.parse.mockImplementationOnce(
       async (
@@ -703,6 +808,156 @@ describe('SpreadsheetImportPanel browser workflow', () => {
     await waitFor(() =>
       expect(screen.getByRole('status').textContent).toContain('spreadsheet.cancel')
     )
+  })
+
+  it('localizes structured parser errors and confines exact evidence to an LTR disclosure', async () => {
+    const user = userEvent.setup()
+    mocks.parse.mockRejectedValue(
+      new SpreadsheetError('compressed-size-limit', {
+        actual: 42,
+        limit: 10,
+        path: 'private.xlsx'
+      })
+    )
+    renderPanel()
+
+    await user.upload(
+      screen.getByLabelText(/spreadsheet\.upload/),
+      new File([new Uint8Array([80, 75, 3, 4])], 'large.xlsx', {
+        type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+      })
+    )
+
+    const alert = (await screen.findByText(en['spreadsheet.error.compressed-size-limit']))
+      .parentElement!
+    expect(alert.textContent).toContain(en['spreadsheet.error.compressed-size-limit'])
+    expect(alert.textContent).toContain('Detected 42; safe limit 10.')
+    const evidence = within(alert)
+      .getByText(en['spreadsheet.error.technicalEvidence'])
+      .closest('details')
+    expect(evidence).not.toBeNull()
+    expect(evidence?.open).toBe(false)
+    for (const value of [
+      'compressed-size-limit',
+      '{"actual":42,"limit":10,"path":"private.xlsx"}'
+    ]) {
+      const technicalValue = within(evidence!).getByText(value)
+      expect(technicalValue.tagName).toBe('CODE')
+      expect(technicalValue.getAttribute('lang')).toBe('en')
+      expect(technicalValue.getAttribute('dir')).toBe('ltr')
+    }
+
+    mocks.parse.mockRejectedValueOnce(new SpreadsheetError('malformed-csv', { row: 7 }))
+    await user.upload(
+      screen.getByLabelText(/spreadsheet\.upload/),
+      new File(['malformed'], 'malformed.csv', { type: 'text/csv' })
+    )
+    const rowAlert = (await screen.findByText(en['spreadsheet.error.malformed-csv'])).parentElement!
+    expect(rowAlert.textContent).toContain('The problem was detected near row 7.')
+  })
+
+  it('renders spreadsheet boundary errors and evidence labels in Arabic', async () => {
+    const user = userEvent.setup()
+    language.current = 'ar'
+    mocks.parse.mockRejectedValue(new SpreadsheetError('invalid-utf8'))
+    renderPanel()
+
+    await user.upload(
+      screen.getByLabelText(/spreadsheet\.upload/),
+      new File(['broken'], 'broken.csv', { type: 'text/csv' })
+    )
+
+    const alert = await screen.findByRole('alert')
+    expect(alert.textContent).toContain(ar['spreadsheet.error.invalid-utf8'])
+    expect(alert.textContent).not.toContain(en['spreadsheet.error.invalid-utf8'])
+    expect(within(alert).getByText(ar['spreadsheet.error.technicalEvidence'])).not.toBeNull()
+    const code = within(alert).getByText('invalid-utf8')
+    expect(code.getAttribute('lang')).toBe('en')
+    expect(code.getAttribute('dir')).toBe('ltr')
+  })
+
+  it('localizes model-review and preparation boundary failures', async () => {
+    const user = userEvent.setup()
+    mocks.parse.mockResolvedValue(parseResult(officialWorkbook(), 'xlsx'))
+    mocks.modelReview.mockRejectedValueOnce(
+      new SpreadsheetError('blocking-validation', { reason: 'review-test' })
+    )
+    renderPanel()
+
+    await user.click(await uploadOfficialFile(user, 'review-error.xlsx'))
+    let alert = await screen.findByRole('alert')
+    expect(alert.textContent).toContain(en['spreadsheet.error.blocking-validation'])
+    expect(within(alert).getByText('blocking-validation').getAttribute('lang')).toBe('en')
+
+    mocks.modelReview.mockImplementationOnce(async (input, options) => {
+      return computeSpreadsheetModelReview(input, {
+        onProgress: options?.onProgress,
+        isCancelled: () => options?.signal?.aborted === true
+      })
+    })
+    await user.click(screen.getByRole('button', { name: 'spreadsheet.review' }))
+    await screen.findByRole('button', { name: 'spreadsheet.prepare' })
+    mocks.prepare.mockRejectedValueOnce(
+      new SpreadsheetError('adapter-contract-violation', {
+        contract: 'prepare-test'
+      })
+    )
+    await user.click(screen.getByRole('button', { name: 'spreadsheet.prepare' }))
+
+    alert = await screen.findByRole('alert')
+    expect(alert.textContent).toContain(en['spreadsheet.error.adapter-contract-violation'])
+    expect(within(alert).getByText('adapter-contract-violation').getAttribute('dir')).toBe('ltr')
+  })
+
+  it('uses a safe localized fallback when the bilingual handoff throws an unknown error', async () => {
+    const user = userEvent.setup()
+    mocks.parse.mockResolvedValue(parseResult(officialWorkbook(), 'xlsx'))
+    mocks.prepare.mockResolvedValueOnce(translationBlockedPlan)
+    const onReviewBilingual = vi.fn().mockRejectedValue(new Error('provider English detail'))
+    renderPanel({ onReviewBilingual })
+
+    await reachOfficialReview(user, 'handoff-error.xlsx')
+    await user.click(screen.getByRole('button', { name: 'spreadsheet.prepare' }))
+    await user.click(await screen.findByRole('button', { name: 'spreadsheet.translation.handoff' }))
+
+    const alert = (await screen.findByText(en['spreadsheet.error.bilingualReview'])).parentElement!
+    expect(alert.textContent).toContain(en['spreadsheet.error.bilingualReview'])
+    expect(alert.textContent).not.toContain('provider English detail')
+    expect(within(alert).queryByText(en['spreadsheet.error.technicalEvidence'])).toBeNull()
+  })
+
+  it('localizes transaction failures during commit', async () => {
+    const user = userEvent.setup()
+    mocks.parse.mockResolvedValue(parseResult(officialWorkbook(), 'xlsx'))
+    mocks.execute.mockRejectedValue(
+      new SpreadsheetError('transaction-failed', { stage: 'commit-test' })
+    )
+    renderPanel()
+
+    await reachOfficialPlan(user, 'commit-error.xlsx')
+    await user.click(screen.getByRole('button', { name: 'spreadsheet.commit' }))
+
+    const alert = await screen.findByRole('alert')
+    expect(alert.textContent).toContain(en['spreadsheet.error.transaction-failed'])
+    const code = within(alert).getByText('transaction-failed')
+    expect(code.getAttribute('lang')).toBe('en')
+    expect(code.getAttribute('dir')).toBe('ltr')
+  })
+
+  it('keeps a committed report and hides unknown post-commit exception text', async () => {
+    const user = userEvent.setup()
+    const onCommitted = vi.fn().mockRejectedValue(new Error('workspace callback English detail'))
+    mocks.parse.mockResolvedValue(parseResult(officialWorkbook(), 'xlsx'))
+    renderPanel({ onCommitted })
+
+    await reachOfficialPlan(user, 'post-commit-error.xlsx')
+    await user.click(screen.getByRole('button', { name: 'spreadsheet.commit' }))
+
+    expect(await screen.findByText('spreadsheet.report.committed')).not.toBeNull()
+    const alert = await screen.findByRole('alert')
+    expect(alert.textContent).toContain(en['spreadsheet.error.postCommit'])
+    expect(alert.textContent).not.toContain('workspace callback English detail')
+    expect(within(alert).queryByText(en['spreadsheet.error.technicalEvidence'])).toBeNull()
   })
 
   it('shows generation progress and returns to review after preparation cancellation', async () => {

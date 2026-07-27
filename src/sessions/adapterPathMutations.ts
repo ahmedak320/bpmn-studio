@@ -1,8 +1,10 @@
 import {
   WorkspaceOperationError,
   normalizeWorkspacePath,
+  removeFileIfHash,
   sha256Hex,
   type FileSnapshot,
+  type SaveOutcome,
   type WorkspaceAdapter,
   type WorkspaceEntryKind,
   type WorkspaceOperation
@@ -269,9 +271,88 @@ async function guardedInverseRelocation(input: {
   destination: string
   inventory: CapturedPathInventory
 }): Promise<void> {
+  if (input.inventory.rootKind === 'file' && input.adapter.storage.capabilities.remove) {
+    await guardedInverseFileRelocation(input)
+    return
+  }
   await assertPathMissing(input.adapter, input.source, input.kind)
   await assertInventoryAt(input.adapter, input.destination, input.inventory, input.kind)
   await relocate(input.adapter, input.kind, input.destination, input.source)
+  await assertPathMissing(input.adapter, input.destination, input.kind)
+  await assertInventoryAt(input.adapter, input.source, input.inventory, input.kind)
+}
+
+function failedSaveOutcome(
+  outcome: Exclude<SaveOutcome, { status: 'success' }>,
+  path: string
+): WorkspaceOperationError {
+  return new WorkspaceOperationError({
+    code:
+      outcome.status === 'external-conflict'
+        ? 'integrity-failure'
+        : 'error' in outcome
+          ? outcome.error.code
+          : 'stale-workspace',
+    operation: 'write',
+    path,
+    message:
+      outcome.status === 'external-conflict'
+        ? `Workspace path "${path}" changed before rollback.`
+        : 'error' in outcome
+          ? outcome.error.message
+          : `Workspace rollback failed with ${outcome.status}.`
+  })
+}
+
+async function guardedInverseFileRelocation(input: {
+  adapter: WorkspaceAdapter
+  kind: 'rename' | 'move'
+  source: string
+  destination: string
+  inventory: CapturedPathInventory
+}): Promise<void> {
+  if (!input.adapter.removeIfHash) {
+    throw new WorkspaceOperationError({
+      code: 'unsupported',
+      operation: input.kind,
+      path: input.destination,
+      message: 'The workspace cannot prove a conditional rollback deletion.'
+    })
+  }
+  const snapshot = input.inventory.entries.find(
+    (
+      entry
+    ): entry is CapturedPathInventoryEntry & {
+      readonly snapshot: FileSnapshot
+    } => entry.suffix === '' && entry.kind === 'file' && entry.snapshot !== undefined
+  )?.snapshot
+  if (!snapshot) {
+    throw integrityFailure(
+      input.kind,
+      input.destination,
+      'The captured file rollback inventory is incomplete.'
+    )
+  }
+  await assertPathMissing(input.adapter, input.source, input.kind)
+  await assertInventoryAt(input.adapter, input.destination, input.inventory, input.kind)
+  const restored = await input.adapter.writeAtomic(input.source, snapshot.bytes, undefined, {
+    expectedWorkspaceId: input.adapter.id,
+    expectedMissing: true
+  })
+  if (restored.status !== 'success') throw failedSaveOutcome(restored, input.source)
+  try {
+    await removeFileIfHash(input.adapter, input.destination, snapshot.hash)
+  } catch (error) {
+    try {
+      await removeFileIfHash(input.adapter, input.source, restored.snapshot.hash)
+    } catch (cleanupError) {
+      throw new AdapterPathMutationError(
+        'The rollback destination changed and its temporary source copy could not be removed safely.',
+        { cause: error, rollbackError: cleanupError }
+      )
+    }
+    throw error
+  }
   await assertPathMissing(input.adapter, input.destination, input.kind)
   await assertInventoryAt(input.adapter, input.source, input.inventory, input.kind)
 }
@@ -317,12 +398,42 @@ async function removeEmptyTransactionFolder(
   transactionRoot: string
 ): Promise<void> {
   try {
-    if ((await adapter.list(transactionRoot)).length === 0) {
-      await adapter.remove(transactionRoot)
+    if (!adapter.removeEmptyFolder) {
+      throw new WorkspaceOperationError({
+        code: 'unsupported',
+        operation: 'remove',
+        path: transactionRoot,
+        message: 'The workspace cannot prove non-recursive transaction-folder cleanup.'
+      })
     }
-  } catch {
-    // Empty staging-folder cleanup is advisory; payload safety is authoritative.
+    const result = await adapter.removeEmptyFolder(transactionRoot)
+    if (result === 'not-empty') {
+      throw integrityFailure(
+        'remove',
+        transactionRoot,
+        'Transaction staging received new contents during rollback and was preserved.'
+      )
+    }
+  } catch (error) {
+    if (error instanceof WorkspaceOperationError && error.code === 'not-found') return
+    throw error
   }
+}
+
+async function rethrowAfterTransactionFolderCleanup(
+  adapter: WorkspaceAdapter,
+  transactionRoot: string,
+  cause: unknown
+): Promise<never> {
+  try {
+    await removeEmptyTransactionFolder(adapter, transactionRoot)
+  } catch (rollbackError) {
+    throw new AdapterPathMutationError(
+      'Path transaction setup failed and its staging-folder rollback was incomplete.',
+      { cause, rollbackError }
+    )
+  }
+  throw cause
 }
 
 async function assertTransactionContainsOnlyPayload(
@@ -390,14 +501,12 @@ async function stageDelete(
   try {
     await createDeleteHistory(inventory, options.history)
   } catch (error) {
-    await removeEmptyTransactionFolder(adapter, transactionRoot)
-    throw error
+    return rethrowAfterTransactionFolderCleanup(adapter, transactionRoot, error)
   }
   try {
     await adapter.move(source, payloadPath)
   } catch (error) {
-    await removeEmptyTransactionFolder(adapter, transactionRoot)
-    throw error
+    return rethrowAfterTransactionFolderCleanup(adapter, transactionRoot, error)
   }
 
   let state: 'staged' | 'rolled-back' | 'finalized' = 'staged'

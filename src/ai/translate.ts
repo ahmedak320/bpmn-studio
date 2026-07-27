@@ -32,14 +32,11 @@ import {
 } from '../editor/langToggle'
 import { executeModelingBatch, type ModelingBatchUpdate } from '../editor/modelingBatch'
 import {
-  applyLocalizationPatchesAtomically,
   assertLocalizationReviewCurrent,
   inspectDiagramLocalization,
-  isDiagramLocalizationProjected,
   type DiagramLocalizationReview
 } from '../localization/modelerAdapter'
-import { auditFieldTarget } from '../localization/audit'
-import { planLanguageProjection } from '../localization/plan'
+import { auditFieldTarget, createLocalizationAuditContext } from '../localization/audit'
 import {
   createExternalRequestDisclosure,
   hasExternalRequestConsent,
@@ -48,7 +45,6 @@ import {
 } from '../localization/externalRequestReview'
 import type {
   LocalizationField,
-  LocalizationPatch,
   ProviderFailure,
   TranslationQueueItem
 } from '../localization/types'
@@ -74,10 +70,23 @@ export interface TranslateOutcome {
 }
 
 export interface ReviewedTranslationOutcome extends TranslateOutcome {
+  /** Validated provider values awaiting a distinct user acceptance decision. */
+  proposed: number
+  proposals: readonly ReviewedTranslationProposal[]
   complete: boolean
   active: DiagramLang
   review: DiagramLocalizationReview
   providerFailures: ProviderFailure[]
+}
+
+export interface ReviewedTranslationProposal {
+  processId: string
+  elementId: string
+  field: string
+  sourceLanguage: DiagramLang
+  sourceValue: string
+  target: DiagramLang
+  value: string
 }
 
 export interface TranslationProviderReview {
@@ -501,6 +510,22 @@ export interface ReviewedTranslationRun {
   signal?: AbortSignal
 }
 
+export interface ReviewedTranslationField {
+  processId: string
+  elementId: string
+  field: string
+  sourceLanguage: DiagramLang
+  sourceValue: string
+  target: DiagramLang
+}
+
+export interface ReviewedFieldTranslationRun {
+  field: ReviewedTranslationField
+  disclosure: ExternalRequestDisclosure
+  consent: ExternalRequestConsent
+  signal?: AbortSignal
+}
+
 function assertReviewedRun(modeler: TranslateModeler, run: ReviewedTranslationRun): void {
   if (!hasExternalRequestConsent(run.disclosure, run.consent)) {
     throw new ExternalRequestConsentRequiredError()
@@ -518,6 +543,62 @@ function assertReviewedRun(modeler: TranslateModeler, run: ReviewedTranslationRu
   }
 }
 
+function assertReviewedFieldRun(run: ReviewedFieldTranslationRun): void {
+  const { disclosure, field } = run
+  const expectedContext = `${field.processId} / ${field.elementId} / ${field.field} / ${field.sourceLanguage}→${field.target}`
+  const outbound = disclosure.outbound[0]
+  if (
+    !hasExternalRequestConsent(disclosure, run.consent) ||
+    disclosure.purpose !== 'diagram-localization-field-retry' ||
+    disclosure.outbound.length !== 1 ||
+    outbound?.id !== 'loc_1' ||
+    outbound.text !== field.sourceValue ||
+    outbound.context !== expectedContext
+  ) {
+    throw new ExternalRequestConsentRequiredError()
+  }
+  run.signal?.throwIfAborted()
+}
+
+/**
+ * Execute one explicitly reviewed AI-provider field retry without mutating the
+ * diagram. The caller applies the validated value through the localization
+ * recovery transaction only after re-checking the live workspace/modeler.
+ */
+export async function translateReviewedField(
+  callLLM: CallLLM,
+  run: ReviewedFieldTranslationRun
+): Promise<string | undefined> {
+  assertReviewedFieldRun(run)
+  const entry: TranslateEntry = {
+    id: 'loc_1',
+    text: run.field.sourceValue,
+    target: run.field.target
+  }
+  const response = await requestChunk(callLLM, [entry])
+  run.signal?.throwIfAborted()
+  return reviewedProviderValue(response?.[entry.id])
+}
+
+/**
+ * Free/per-text transport twin of {@link translateReviewedField}. Exactly one
+ * source value is sent, matching the consented one-field disclosure.
+ */
+export async function translateReviewedFieldWithTexts(
+  translateTexts: TranslateTextsFn,
+  run: ReviewedFieldTranslationRun
+): Promise<string | undefined> {
+  assertReviewedFieldRun(run)
+  const results = await translateTexts(
+    [run.field.sourceValue],
+    run.field.sourceLanguage,
+    run.field.target,
+    run.signal
+  )
+  run.signal?.throwIfAborted()
+  return reviewedProviderValue(results[0])
+}
+
 function cloneLocalizationField(field: LocalizationField): LocalizationField {
   return {
     ...field,
@@ -528,73 +609,58 @@ function cloneLocalizationField(field: LocalizationField): LocalizationField {
   }
 }
 
+function localizationFieldKey(
+  item: Pick<TranslationQueueItem | LocalizationField, 'processId' | 'elementId' | 'field'>
+): string {
+  return `${item.processId}\u0000${item.elementId}\u0000${item.field}`
+}
+
 function queueKey(item: TranslationQueueItem): string {
   return `${item.processId}\u0000${item.elementId}\u0000${item.field}\u0000${item.target}`
 }
 
-function providerPatch(
-  field: LocalizationField,
-  item: TranslationQueueItem,
-  value: string
-): LocalizationPatch {
-  const previous = field.value[item.target]
-  return {
-    source: item.source,
-    processId: item.processId,
-    elementId: item.elementId,
-    field: item.field,
-    property: item.target === 'en' ? field.storage.enProperty : field.storage.arProperty,
-    value,
-    ...(previous === undefined ? {} : { expectedValue: previous }),
-    target: item.target,
-    reason: 'provider'
-  }
+const REVIEW_PROPOSAL_CHUNK_SIZE = 128
+
+async function yieldReviewedProposalWork(signal?: AbortSignal): Promise<void> {
+  signal?.throwIfAborted()
+  await new Promise<void>((resolve) => globalThis.setTimeout(resolve, 0))
+  signal?.throwIfAborted()
 }
 
-function activePatches(
-  fields: readonly LocalizationField[],
-  target: DiagramLang
-): LocalizationPatch[] {
-  return [...new Set(fields.map((field) => field.processId))].map((processId) => ({
-    source: fields[0]?.source ?? 'editor',
-    processId,
-    elementId: processId,
-    field: '__activeLang',
-    property: 'orbitpm:activeLang',
-    value: target,
-    target,
-    reason: 'projection'
-  }))
-}
-
-function virtualTranslationResult(
+async function reviewedTranslationProposals(
   review: DiagramLocalizationReview,
-  values: ReadonlyMap<string, string>
-): {
-  fields: LocalizationField[]
-  patches: LocalizationPatch[]
+  values: ReadonlyMap<string, string>,
+  signal?: AbortSignal
+): Promise<{
+  proposals: ReviewedTranslationProposal[]
   failures: ProviderFailure[]
-} {
-  const fields = review.fields.map(cloneLocalizationField)
-  const patches: LocalizationPatch[] = []
+}> {
+  const fieldsByIdentity = new Map<string, LocalizationField>()
+  for (let index = 0; index < review.fields.length; index += 1) {
+    if (index > 0 && index % REVIEW_PROPOSAL_CHUNK_SIZE === 0) {
+      await yieldReviewedProposalWork(signal)
+    }
+    const field = review.fields[index]!
+    const key = localizationFieldKey(field)
+    if (!fieldsByIdentity.has(key)) fieldsByIdentity.set(key, field)
+  }
+  const auditContext = createLocalizationAuditContext({
+    glossary: review.localResources.glossary
+  })
+  const proposals: ReviewedTranslationProposal[] = []
   const failures: ProviderFailure[] = []
-  for (const item of review.queue) {
+  for (let index = 0; index < review.queue.length; index += 1) {
+    if (index > 0 && index % REVIEW_PROPOSAL_CHUNK_SIZE === 0) {
+      await yieldReviewedProposalWork(signal)
+    }
+    const item = review.queue[index]!
     if (item.requiresSegmentationReview) {
-      failures.push({
-        processId: item.processId,
-        elementId: item.elementId,
-        field: item.field,
-        target: item.target,
-        originalValue: item.sourceValue
-      })
+      // This row was deliberately excluded from outbound transport and remains
+      // a manual/segmentation blocker. It must not acquire provider-failure
+      // provenance for work the provider never attempted.
       continue
     }
-    const field = fields.find(
-      (candidate) =>
-        candidate.processId === item.processId &&
-        candidate.elementId === item.elementId &&
-        candidate.field === item.field
-    )
+    const field = fieldsByIdentity.get(localizationFieldKey(item))
     const candidate = values.get(queueKey(item))
     if (!field || candidate === undefined) {
       failures.push({
@@ -610,9 +676,15 @@ function virtualTranslationResult(
     check.value[item.target] = candidate
     check.origins[item.target] = 'paired'
     if (
-      auditFieldTarget(check, item.target, {
-        glossary: review.localResources.glossary
-      }).length > 0
+      auditFieldTarget(
+        check,
+        item.target,
+        {
+          glossary: review.localResources.glossary,
+          auditContext
+        },
+        auditContext
+      ).length > 0
     ) {
       failures.push({
         processId: item.processId,
@@ -623,70 +695,52 @@ function virtualTranslationResult(
       })
       continue
     }
-    patches.push(providerPatch(field, item, candidate))
-    field.value[item.target] = candidate
-    field.origins[item.target] = 'paired'
+    proposals.push({
+      processId: item.processId,
+      elementId: item.elementId,
+      field: item.field,
+      sourceLanguage: item.sourceLanguage,
+      sourceValue: item.sourceValue,
+      target: item.target,
+      value: candidate
+    })
   }
-  return { fields, patches, failures }
+  return { proposals, failures }
 }
 
-function finishReviewedTranslation(
+async function finishReviewedTranslation(
   modeler: TranslateModeler,
   run: ReviewedTranslationRun,
   values: ReadonlyMap<string, string>
-): ReviewedTranslationOutcome {
+): Promise<ReviewedTranslationOutcome> {
   run.signal?.throwIfAborted()
   // Re-check after the potentially slow external round-trip. A user/import
   // supplied target or source edit made while the request was in flight wins;
   // no provider result may overwrite it.
   assertLocalizationReviewCurrent(modeler, run.review)
-  const virtual = virtualTranslationResult(run.review, values)
-  const projection = planLanguageProjection(virtual.fields, run.review.target, {
-    providerFailures: virtual.failures,
-    glossary: run.review.localResources.glossary
-  })
-  const canProject = projection.blockers.length === 0
-  const patches: LocalizationPatch[] = [
-    ...run.review.localUpdates,
-    ...virtual.patches,
-    ...(canProject ? projection.updates : []),
-    ...(canProject ? activePatches(virtual.fields, run.review.target) : [])
-  ]
-  applyLocalizationPatchesAtomically(modeler, patches)
-
-  // Completion is based only on a fresh post-mutation audit. Failed/cancelled
-  // items remain in the returned queue and are never reported as success.
-  let post = inspectDiagramLocalization(modeler, run.review.target, {
+  const proposalResult = await reviewedTranslationProposals(run.review, values, run.signal)
+  run.signal?.throwIfAborted()
+  assertLocalizationReviewCurrent(modeler, run.review)
+  // Re-derive the visible review with failure provenance, but deliberately do
+  // not apply metadata, projection, active-language, or translation-memory
+  // changes. Consent to send text is separate from acceptance of returned text.
+  const post = inspectDiagramLocalization(modeler, run.review.target, {
     source: run.review.source,
-    providerFailures: virtual.failures,
+    providerFailures: proposalResult.failures,
     ...run.review.localResources
   })
-  let complete =
-    canProject &&
-    post.issues.filter((issue) => issue.target === run.review.target).length === 0 &&
-    isDiagramLocalizationProjected(modeler, post)
-  if (canProject && !complete) {
-    try {
-      ;(modeler.get('commandStack') as { undo(): void }).undo()
-      post = inspectDiagramLocalization(modeler, run.review.target, {
-        source: run.review.source,
-        providerFailures: virtual.failures,
-        ...run.review.localResources
-      })
-      complete = false
-    } catch {
-      /* structural test doubles have no undo service */
-    }
-  }
-  const translated = virtual.patches.length
+  run.signal?.throwIfAborted()
+  const proposed = proposalResult.proposals.length
   return {
-    translated,
-    skipped: run.review.queue.length - translated,
+    translated: 0,
+    proposed,
+    proposals: proposalResult.proposals,
+    skipped: run.review.queue.length,
     total: run.review.queue.length,
-    complete,
-    active: complete ? run.review.target : getDiagramLang(modeler),
+    complete: false,
+    active: getDiagramLang(modeler),
     review: post,
-    providerFailures: virtual.failures
+    providerFailures: proposalResult.failures
   }
 }
 
@@ -722,7 +776,7 @@ export async function translateReviewedDiagram(
       const response = await requestChunk(callLLM, chunk)
       if (!response) continue
       for (const entry of chunk) {
-        const valid = validateTranslation(entry, response[entry.id])
+        const valid = reviewedProviderValue(response[entry.id])
         if (valid === undefined) continue
         const index = Number(entry.id.slice('loc_'.length)) - 1
         const item = sendable[index]
@@ -731,6 +785,18 @@ export async function translateReviewedDiagram(
     }
   }
   return finishReviewedTranslation(modeler, run, values)
+}
+
+/**
+ * Reviewed transports only enforce the provider response shape here. Script
+ * and neutral-term policy belongs to the reviewed field/diagram validator,
+ * which has the exact workspace glossary that the user reviewed. The legacy
+ * unreviewed helpers below intentionally retain their stricter heuristic.
+ */
+function reviewedProviderValue(value: unknown): string | undefined {
+  if (typeof value !== 'string') return undefined
+  const text = value.trim()
+  return text === '' ? undefined : text
 }
 
 /**
@@ -883,14 +949,7 @@ export async function translateReviewedDiagramWithTexts(
     )
     for (let index = 0; index < directional.length; index += 1) {
       const item = directional[index]
-      const valid = validateTranslation(
-        {
-          id: reviewedItemId(sendable.indexOf(item)),
-          text: item.sourceValue,
-          target: item.target
-        },
-        results[index]
-      )
+      const valid = reviewedProviderValue(results[index])
       if (valid !== undefined) values.set(queueKey(item), valid)
     }
   }

@@ -20,6 +20,7 @@ import {
   type SessionIncarnation,
   type SessionSaveState
 } from './types'
+import { workspaceMutationIdentity } from './workspaceMutationIdentity'
 
 export interface PersistenceWriteOptions {
   /**
@@ -66,7 +67,7 @@ export interface SessionCoordination {
   acquire(identity: DocumentIdentity): Promise<SessionLockResult>
   publishDocumentChange?(change: {
     identity: DocumentIdentity
-    kind: 'saved' | 'moved' | 'deleted'
+    kind: 'saved' | 'moved' | 'deleted' | 'invalidated'
     fingerprint?: FileFingerprint
     previousPath?: string
   }): void
@@ -93,6 +94,8 @@ export interface DocumentSessionControllerOptions {
   store?: DocumentSessionStore
   persistence: SessionPersistence
   coordination?: SessionCoordination
+  /** Multi-file persistence must fail closed when no cross-tab lease exists. */
+  requireCoordination?: boolean
   isWorkspaceCurrent?: (identity: DocumentIdentity) => boolean
   decideConflict?: SaveConflictResolver
   prepareExternal?: PrepareExternal
@@ -239,6 +242,7 @@ export class DocumentSessionController {
   readonly store: DocumentSessionStore
   readonly #persistence: SessionPersistence
   readonly #coordination?: SessionCoordination
+  readonly #requireCoordination: boolean
   readonly #isWorkspaceCurrent: (identity: DocumentIdentity) => boolean
   readonly #decideConflict?: SaveConflictResolver
   readonly #prepareExternal?: PrepareExternal
@@ -254,6 +258,7 @@ export class DocumentSessionController {
     this.store = options.store ?? new DocumentSessionStore({ now: options.now })
     this.#persistence = options.persistence
     this.#coordination = options.coordination
+    this.#requireCoordination = options.requireCoordination ?? false
     this.#isWorkspaceCurrent = options.isWorkspaceCurrent ?? (() => true)
     this.#decideConflict = options.decideConflict
     this.#prepareExternal = options.prepareExternal
@@ -673,7 +678,9 @@ export class DocumentSessionController {
     try {
       if (this.#coordination && lockIdentity.path !== null) {
         this.#setPhase(id, incarnation, 'acquiring-lock', requestId, savedRevision, startedAt)
-        const lock = await this.#coordination.acquire(lockIdentity)
+        const lock = await this.#coordination.acquire(
+          workspaceMutationIdentity(lockIdentity.workspace)
+        )
         if (lock.acquired) lease = lock.lease
         const guard = this.#postAwaitGuard(id, incarnation, session.identity, options.signal)
         if (guard) return this.#finish(id, incarnation, guard)
@@ -693,6 +700,13 @@ export class DocumentSessionController {
             expiresAt: lock.expiresAt
           })
         }
+      } else if (this.#requireCoordination && lockIdentity.path !== null) {
+        return this.#finish(id, incarnation, {
+          status: 'locked',
+          ok: false,
+          sessionId: id,
+          holderId: 'coordination-unavailable'
+        })
       }
 
       const ready = this.#postAwaitGuard(id, incarnation, session.identity, options.signal)

@@ -87,6 +87,43 @@ function makeModel() {
   }
 }
 
+function makeLargeModel(count: number) {
+  const process: Bo = {
+    $type: 'bpmn:Process',
+    id: 'Process_large',
+    $attrs: { 'orbitpm:activeLang': 'en' }
+  }
+  const tasks = Array.from({ length: count }, (_, index): Bo => {
+    const name = `Review request ${index}`
+    return {
+      $type: 'bpmn:Task',
+      id: `Task_${index}`,
+      name,
+      $attrs: { 'orbitpm:nameEn': name },
+      $parent: process
+    }
+  })
+  process.flowElements = tasks
+  const root = { id: process.id, businessObject: process }
+  const elements = tasks.map((task) => ({ id: task.id, businessObject: task }))
+  const definitions = {
+    $type: 'bpmn:Definitions',
+    rootElements: [process]
+  }
+  const modeler = {
+    getDefinitions: () => definitions,
+    get(name: string): unknown {
+      if (name === 'canvas') return { getRootElement: () => root }
+      if (name === 'elementRegistry') return { getAll: () => elements }
+      if (name === 'modeling' || name === 'orbitpmModelingBatch') {
+        throw new Error('A reviewed provider result must not mutate the diagram.')
+      }
+      throw new Error(name)
+    }
+  }
+  return { modeler, process, tasks }
+}
+
 function reviewed(modeler: ReturnType<typeof makeModel>['modeler']) {
   const review = inspectDiagramLocalization(modeler, 'ar')
   const disclosure = buildTranslationExternalReview(review, {
@@ -153,7 +190,7 @@ describe('reviewed translation execution', () => {
     expect(callLLM).not.toHaveBeenCalled()
   })
 
-  it('applies provider metadata, Arabic SVG projection, and active language in one atomic batch', async () => {
+  it('returns an explicit acceptance proposal without mutating metadata, projection, or language', async () => {
     const fake = makeModel()
     const { review, disclosure } = reviewed(fake.modeler)
     const callLLM = vi.fn(async () => ({ loc_1: 'مراجعة الطلب' }))
@@ -163,17 +200,26 @@ describe('reviewed translation execution', () => {
       consent: grantExternalRequestConsent(disclosure)
     })
     expect(result).toMatchObject({
-      translated: 1,
-      skipped: 0,
+      translated: 0,
+      proposed: 1,
+      skipped: 1,
       total: 1,
-      complete: true,
-      active: 'ar'
+      complete: false,
+      active: 'en'
     })
-    expect(result.review.issues).toEqual([])
-    expect(fake.task.$attrs?.['orbitpm:nameAr']).toBe('مراجعة الطلب')
-    expect(fake.task.name).toBe('مراجعة الطلب')
-    expect(fake.process.$attrs?.['orbitpm:activeLang']).toBe('ar')
-    expect(fake.batches).toBe(1)
+    expect(result.proposals).toEqual([
+      expect.objectContaining({
+        elementId: 'Task_1',
+        sourceValue: 'Review request',
+        target: 'ar',
+        value: 'مراجعة الطلب'
+      })
+    ])
+    expect(result.review.queue).toHaveLength(1)
+    expect(fake.task.$attrs?.['orbitpm:nameAr']).toBeUndefined()
+    expect(fake.task.name).toBe('Review request')
+    expect(fake.process.$attrs?.['orbitpm:activeLang']).toBe('en')
+    expect(fake.batches).toBe(0)
     expect(callLLM).toHaveBeenCalledTimes(1)
   })
 
@@ -197,12 +243,15 @@ describe('reviewed translation execution', () => {
       consent: grantExternalRequestConsent(disclosure)
     })
 
-    expect(result.complete).toBe(true)
+    expect(result.complete).toBe(false)
+    expect(result.proposals).toEqual([
+      expect.objectContaining({ sourceValue: 'REVIEW REQUEST', value: 'API' })
+    ])
     expect(result.providerFailures).toEqual([])
     expect(result.review.localResources.glossary).toEqual(glossary)
-    expect(fake.task.$attrs?.['orbitpm:nameAr']).toBe('API')
-    expect(fake.task.name).toBe('API')
-    expect(fake.process.$attrs?.['orbitpm:activeLang']).toBe('ar')
+    expect(fake.task.$attrs?.['orbitpm:nameAr']).toBeUndefined()
+    expect(fake.task.name).toBe('REVIEW REQUEST')
+    expect(fake.process.$attrs?.['orbitpm:activeLang']).toBe('en')
   })
 
   it('keeps invalid or omitted provider results listed and never false-succeeds', async () => {
@@ -302,7 +351,7 @@ describe('reviewed translation execution', () => {
     expect(fake.task.$attrs?.['orbitpm:nameAr']).toBeUndefined()
   })
 
-  it('uses the reviewed free-text path to complete a diagram', async () => {
+  it('uses the reviewed free-text path to create a proposal without completing a diagram', async () => {
     const fake = makeModel()
     const review = inspectDiagramLocalization(fake.modeler, 'ar')
     const disclosure = buildTranslationExternalReview(review, {
@@ -325,7 +374,92 @@ describe('reviewed translation execution', () => {
         signal: new AbortController().signal
       }
     )
-    expect(result.complete).toBe(true)
-    expect(fake.task.name).toBe('مراجعة الطلب')
+    expect(result.complete).toBe(false)
+    expect(result.proposals).toEqual([
+      expect.objectContaining({ sourceValue: 'Review request', value: 'مراجعة الطلب' })
+    ])
+    expect(fake.task.name).toBe('Review request')
+    expect(fake.batches).toBe(0)
+  })
+
+  it('derives and finalizes eight thousand real BPMN proposal rows within the linear budget', async () => {
+    const count = 8_000
+    const fake = makeLargeModel(count)
+    const deriveStartedAt = performance.now()
+    const review = inspectDiagramLocalization(fake.modeler, 'ar', {
+      glossary: [],
+      translationMemory: []
+    })
+    const deriveElapsedMs = performance.now() - deriveStartedAt
+    expect(review.fields).toHaveLength(count)
+    expect(review.queue).toHaveLength(count)
+    expect(deriveElapsedMs).toBeLessThan(5_000)
+
+    const disclosure = buildTranslationExternalReview(review, {
+      providerId: 'free',
+      kind: 'free'
+    })
+    const translateTexts = vi.fn(async (texts: string[]) =>
+      texts.map((_, index) => `ترجمة ${index}`)
+    )
+    const finalizeStartedAt = performance.now()
+    const result = await translateReviewedDiagramWithTexts(fake.modeler, translateTexts, {
+      review,
+      disclosure,
+      consent: grantExternalRequestConsent(disclosure)
+    })
+    const finalizeElapsedMs = performance.now() - finalizeStartedAt
+
+    expect(finalizeElapsedMs).toBeLessThan(10_000)
+    expect(translateTexts).toHaveBeenCalledTimes(1)
+    expect(result).toMatchObject({
+      translated: 0,
+      proposed: count,
+      skipped: count,
+      total: count,
+      complete: false,
+      active: 'en'
+    })
+    expect(result.proposals).toHaveLength(count)
+    expect(result.proposals[7_999]).toMatchObject({
+      elementId: 'Task_999',
+      value: 'ترجمة 7999'
+    })
+    expect(fake.tasks.every((task) => task.$attrs?.['orbitpm:nameAr'] === undefined)).toBe(true)
+    expect(fake.tasks.every((task, index) => task.name === `Review request ${index}`)).toBe(true)
+    expect(fake.process.$attrs?.['orbitpm:activeLang']).toBe('en')
+  }, 20_000)
+
+  it('cancels cooperative proposal finalization after transport without exposing partial results', async () => {
+    const fake = makeLargeModel(2_048)
+    const review = inspectDiagramLocalization(fake.modeler, 'ar', {
+      glossary: [],
+      translationMemory: []
+    })
+    const disclosure = buildTranslationExternalReview(review, {
+      providerId: 'free',
+      kind: 'free'
+    })
+    const controller = new AbortController()
+    const pending = translateReviewedDiagramWithTexts(
+      fake.modeler,
+      async (texts) => {
+        globalThis.setTimeout(
+          () => controller.abort(new DOMException('cancelled', 'AbortError')),
+          0
+        )
+        return texts.map((_, index) => `ترجمة ${index}`)
+      },
+      {
+        review,
+        disclosure,
+        consent: grantExternalRequestConsent(disclosure),
+        signal: controller.signal
+      }
+    )
+
+    await expect(pending).rejects.toMatchObject({ name: 'AbortError' })
+    expect(fake.tasks.every((task) => task.$attrs?.['orbitpm:nameAr'] === undefined)).toBe(true)
+    expect(fake.process.$attrs?.['orbitpm:activeLang']).toBe('en')
   })
 })

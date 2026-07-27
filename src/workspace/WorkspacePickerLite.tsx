@@ -51,10 +51,15 @@ export function WorkspacePickerLite({
 }: WorkspacePickerLiteProps): JSX.Element {
   const lang = useLang()
   return (
-    <div
+    <main
+      aria-label={t('picker.title')}
+      className="orbitpm-workspace-picker"
       style={{
         position: 'relative',
-        height: '100vh',
+        minHeight: '100vh',
+        height: '100dvh',
+        maxWidth: '100%',
+        overflow: 'auto',
         display: 'flex',
         flexDirection: 'column',
         alignItems: 'center',
@@ -177,7 +182,7 @@ export function WorkspacePickerLite({
           {error}
         </div>
       )}
-    </div>
+    </main>
   )
 }
 

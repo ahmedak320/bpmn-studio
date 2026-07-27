@@ -4,7 +4,10 @@ import { normalizeWorkspacePath, workspaceParentPath, workspacePathName } from '
 import { SerialQueue } from './serialQueue'
 import type {
   BackupExportOptions,
+  CreateFolderIfMissingResult,
   FileSnapshot,
+  ListWorkspaceOptions,
+  ReadFileOptions,
   SaveOutcome,
   WorkspaceAdapter,
   WorkspaceBackupExporter,
@@ -12,7 +15,15 @@ import type {
   WorkspaceStorageInfo,
   WriteAtomicOptions
 } from './types'
-import { WorkspaceOperationError, notFound, unsupported, workspaceFailure } from './workspaceError'
+import {
+  WorkspaceOperationError,
+  WorkspaceReadLimitError,
+  notFound,
+  unsupported,
+  validatedListLimits,
+  validatedReadLimit,
+  workspaceFailure
+} from './workspaceError'
 
 export interface SingleFileDownloadRequest {
   path: string
@@ -130,7 +141,8 @@ export class SingleFileWorkspaceAdapter implements WorkspaceAdapter {
     })
   }
 
-  async list(path = ''): Promise<WorkspaceEntry[]> {
+  async list(path = '', options: ListWorkspaceOptions = {}): Promise<WorkspaceEntry[]> {
+    validatedListLimits(options)
     const normalized = normalizeWorkspacePath(path, { allowRoot: true })
     if (normalized) {
       throw new WorkspaceOperationError({
@@ -140,25 +152,27 @@ export class SingleFileWorkspaceAdapter implements WorkspaceAdapter {
         message: 'Single-file mode has no folders.'
       })
     }
-    const snapshot = await this.currentSnapshot()
+    const file = this.writableHandle ? await this.writableHandle.getFile() : undefined
+    options.signal?.throwIfAborted()
     return [
       {
-        path: snapshot.path,
-        name: workspacePathName(snapshot.path),
+        path: this.record.path,
+        name: workspacePathName(this.record.path),
         parentPath: '',
         kind: 'file',
-        size: snapshot.size,
-        modifiedAt: snapshot.modifiedAt,
-        mimeType: snapshot.mimeType,
+        size: file?.size ?? this.record.bytes.byteLength,
+        modifiedAt: file?.lastModified ?? this.record.modifiedAt,
+        mimeType: file?.type || this.record.mimeType,
         readable: true
       }
     ]
   }
 
-  async read(path: string): Promise<FileSnapshot> {
+  async read(path: string, options: ReadFileOptions = {}): Promise<FileSnapshot> {
     const normalized = normalizeSingleFilePath(path)
+    validatedReadLimit(normalized, options)
     if (normalized !== this.record.path) throw notFound('read', normalized)
-    return this.currentSnapshot()
+    return this.currentSnapshot(options)
   }
 
   async writeAtomic(
@@ -330,19 +344,40 @@ export class SingleFileWorkspaceAdapter implements WorkspaceAdapter {
     )
   }
 
+  async removeIfHash(path: string, _expectedHash: string): Promise<void> {
+    const normalized = normalizeSingleFilePath(path)
+    if (normalized !== this.record.path) throw notFound('remove', normalized)
+    throw unsupported(
+      'remove',
+      normalized,
+      'Single-file mode cannot conditionally delete the source file.'
+    )
+  }
+
   async createFolder(path: string): Promise<void> {
     const normalized = normalizeWorkspacePath(path, { allowRoot: true })
     if (!normalized) return
     throw unsupported('create-folder', normalized, 'Single-file mode does not support folders.')
   }
 
+  async createFolderIfMissing(path: string): Promise<CreateFolderIfMissingResult> {
+    const normalized = normalizeWorkspacePath(path, { allowRoot: true })
+    if (!normalized) return 'existing'
+    throw unsupported(
+      'create-folder',
+      normalized,
+      'Single-file mode does not support rollback-safe folder creation.'
+    )
+  }
+
   exportBackup(options?: BackupExportOptions): Promise<Blob> {
     return this.queue.run(() => this.backupExporter(this, options))
   }
 
-  private async currentSnapshot(): Promise<FileSnapshot> {
+  private async currentSnapshot(options: ReadFileOptions = {}): Promise<FileSnapshot> {
+    const maxBytes = validatedReadLimit(this.record.path, options)
     if (this.writableHandle) {
-      const snapshot = await this.snapshotFromHandle(this.writableHandle)
+      const snapshot = await this.snapshotFromHandle(this.writableHandle, options)
       this.record = {
         path: this.record.path,
         bytes: copyBytes(snapshot.bytes),
@@ -351,24 +386,41 @@ export class SingleFileWorkspaceAdapter implements WorkspaceAdapter {
       }
       return { ...snapshot, path: this.record.path }
     }
+    if (maxBytes !== undefined && this.record.bytes.byteLength > maxBytes) {
+      throw new WorkspaceReadLimitError(this.record.path, maxBytes, this.record.bytes.byteLength)
+    }
+    options.signal?.throwIfAborted()
     const bytes = copyBytes(this.record.bytes)
+    const hash = await sha256Hex(bytes)
+    options.signal?.throwIfAborted()
     return {
       path: this.record.path,
       bytes,
-      hash: await sha256Hex(bytes),
+      hash,
       size: bytes.byteLength,
       modifiedAt: this.record.modifiedAt,
       mimeType: this.record.mimeType
     }
   }
 
-  private async snapshotFromHandle(handle: FileSystemFileHandle): Promise<FileSnapshot> {
+  private async snapshotFromHandle(
+    handle: FileSystemFileHandle,
+    options: ReadFileOptions = {}
+  ): Promise<FileSnapshot> {
+    const maxBytes = validatedReadLimit(this.record.path, options)
     const file = await handle.getFile()
+    if (maxBytes !== undefined && file.size > maxBytes) {
+      throw new WorkspaceReadLimitError(this.record.path, maxBytes, file.size)
+    }
+    options.signal?.throwIfAborted()
     const bytes = copyBytes(new Uint8Array(await file.arrayBuffer()))
+    options.signal?.throwIfAborted()
+    const hash = await sha256Hex(bytes)
+    options.signal?.throwIfAborted()
     return {
       path: this.record.path,
       bytes,
-      hash: await sha256Hex(bytes),
+      hash,
       size: bytes.byteLength,
       modifiedAt: file.lastModified,
       mimeType: file.type || this.record.mimeType

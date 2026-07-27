@@ -53,7 +53,8 @@ const fake = vi.hoisted(() => ({
   importedXml: [] as string[],
   operationLog: [] as string[],
   importGates: new Map<string, Promise<void>>(),
-  importFailures: new Map<string, { error: Error; mutateFirst: boolean }>()
+  importFailures: new Map<string, { error: Error; mutateFirst: boolean }>(),
+  saveXmlGate: null as Promise<void> | null
 }))
 
 const mocks = vi.hoisted(() => ({
@@ -258,6 +259,7 @@ vi.mock('bpmn-js/lib/Modeler', () => ({
     }
 
     async saveXML(): Promise<{ xml?: string }> {
+      await fake.saveXmlGate
       if (fake.saveXmlError) throw fake.saveXmlError
       return fake.saveXmlMissing ? {} : { xml: fake.currentXml }
     }
@@ -579,6 +581,7 @@ beforeEach(() => {
   fake.operationLog = []
   fake.importGates.clear()
   fake.importFailures.clear()
+  fake.saveXmlGate = null
   mocks.zoom.mockReset()
   mocks.scrollToElement.mockReset()
   mocks.selectionSelect.mockReset()
@@ -644,6 +647,59 @@ afterEach(() => {
 })
 
 describe('EditorTab browser integration', () => {
+  it('keeps initial dirty new-diagram guidance until the first modeling command', async () => {
+    fake.elements = [
+      {
+        id: 'StartEvent_1',
+        type: 'bpmn:StartEvent',
+        businessObject: { id: 'StartEvent_1' }
+      }
+    ]
+    const onDirtyChange = vi.fn()
+    renderEditor({ initiallyDirty: true, onDirtyChange })
+
+    expect(await screen.findByText('editor.hint.startDrawing')).not.toBeNull()
+    await waitFor(() => expect(onDirtyChange).toHaveBeenLastCalledWith(true))
+
+    act(() => {
+      fake.stackIndex += 1
+      emit('commandStack.changed')
+    })
+    await waitFor(() => expect(screen.queryByText('editor.hint.startDrawing')).toBeNull())
+
+    // Undo may make the document clean again, but the first-edit guidance is
+    // intentionally one-shot and must stay dismissed.
+    act(() => {
+      fake.stackIndex -= 1
+      emit('commandStack.changed')
+    })
+    expect(screen.queryByText('editor.hint.startDrawing')).toBeNull()
+  })
+
+  it('dismisses new-diagram guidance after an explicit XML replacement', async () => {
+    fake.elements = [
+      {
+        id: 'StartEvent_1',
+        type: 'bpmn:StartEvent',
+        businessObject: { id: 'StartEvent_1' }
+      }
+    ]
+    let commands: EditorTabCommands | null = null
+    renderEditor({
+      onCommandsReady: (next) => {
+        commands = next
+      }
+    })
+
+    expect(await screen.findByText('editor.hint.startDrawing')).not.toBeNull()
+    await waitFor(() => expect(commands).not.toBeNull())
+    await act(async () => {
+      await commands!.applyExternalXml('<definitions id="replacement" />')
+    })
+
+    expect(screen.queryByText('editor.hint.startDrawing')).toBeNull()
+  })
+
   it('serializes prop and coordinated imports, locks interaction, and acknowledges the matching prop once', async () => {
     let releaseInitial!: () => void
     fake.importGates.set(
@@ -1337,6 +1393,283 @@ describe('EditorTab browser integration', () => {
     expect(
       view.container.querySelector<HTMLElement>('.orbitpm-responsive-drawer__stash')?.hidden
     ).toBe(true)
+  })
+
+  it('unmounts Validation Center when its editor becomes inactive and keeps it closed', async () => {
+    const user = userEvent.setup()
+    const view = renderEditor({ responsiveMode: 'overlay', sidePanesActive: true })
+
+    await user.click(screen.getByRole('button', { name: 'validation.open' }))
+    expect(await screen.findByRole('dialog', { name: 'validation-center' })).not.toBeNull()
+
+    view.rerender(editorElement({ responsiveMode: 'overlay', sidePanesActive: false }))
+    expect(screen.queryByRole('dialog', { name: 'validation-center' })).toBeNull()
+
+    view.rerender(editorElement({ responsiveMode: 'overlay', sidePanesActive: true }))
+    expect(screen.queryByRole('dialog', { name: 'validation-center' })).toBeNull()
+  })
+
+  it('unmounts Source Editor when its editor becomes inactive and keeps it closed', async () => {
+    const user = userEvent.setup()
+    const view = renderEditor({ responsiveMode: 'overlay', sidePanesActive: true })
+
+    await user.click(screen.getByRole('button', { name: 'sourceEditor.open' }))
+    expect(await screen.findByRole('dialog', { name: 'source-editor' })).not.toBeNull()
+
+    view.rerender(editorElement({ responsiveMode: 'overlay', sidePanesActive: false }))
+    expect(screen.queryByRole('dialog', { name: 'source-editor' })).toBeNull()
+
+    view.rerender(editorElement({ responsiveMode: 'overlay', sidePanesActive: true }))
+    expect(screen.queryByRole('dialog', { name: 'source-editor' })).toBeNull()
+  })
+
+  it('unmounts Save Draft when its editor becomes inactive and keeps it closed', async () => {
+    fake.validationSummary = semanticSummary
+    const user = userEvent.setup()
+    const view = renderEditor({ responsiveMode: 'overlay', sidePanesActive: true })
+
+    await user.click(screen.getByRole('button', { name: 'editor.save' }))
+    expect(await screen.findByRole('dialog', { name: 'save-draft' })).not.toBeNull()
+
+    view.rerender(editorElement({ responsiveMode: 'overlay', sidePanesActive: false }))
+    expect(screen.queryByRole('dialog', { name: 'save-draft' })).toBeNull()
+
+    view.rerender(editorElement({ responsiveMode: 'overlay', sidePanesActive: true }))
+    expect(screen.queryByRole('dialog', { name: 'save-draft' })).toBeNull()
+  })
+
+  it('closes local Details when its editor becomes inactive and keeps it closed', async () => {
+    const user = userEvent.setup()
+    const onDetailsOpenChange = vi.fn()
+    const view = renderEditor({
+      responsiveMode: 'overlay',
+      sidePanesActive: true,
+      onDetailsOpenChange
+    })
+
+    await user.click(screen.getByRole('button', { name: 'pane.details.toggle' }))
+    expect(await screen.findByRole('dialog', { name: 'pane.details.aria' })).not.toBeNull()
+
+    view.rerender(
+      editorElement({
+        responsiveMode: 'overlay',
+        sidePanesActive: false,
+        onDetailsOpenChange
+      })
+    )
+    expect(screen.queryByRole('dialog', { name: 'pane.details.aria' })).toBeNull()
+    expect(onDetailsOpenChange).toHaveBeenLastCalledWith(false)
+
+    view.rerender(
+      editorElement({
+        responsiveMode: 'overlay',
+        sidePanesActive: true,
+        onDetailsOpenChange
+      })
+    )
+    expect(screen.queryByRole('dialog', { name: 'pane.details.aria' })).toBeNull()
+  })
+
+  it('closes Outline when its editor becomes inactive and reports every local change', async () => {
+    const user = userEvent.setup()
+    const onOutlineOpenChange = vi.fn()
+    const view = renderEditor({
+      responsiveMode: 'overlay',
+      sidePanesActive: true,
+      onOutlineOpenChange
+    })
+
+    await user.click(screen.getByRole('button', { name: 'Process outline' }))
+    expect(await screen.findByRole('dialog', { name: 'Process outline' })).not.toBeNull()
+    expect(onOutlineOpenChange).toHaveBeenLastCalledWith(true)
+
+    view.rerender(
+      editorElement({
+        responsiveMode: 'overlay',
+        sidePanesActive: false,
+        onOutlineOpenChange
+      })
+    )
+    expect(screen.queryByRole('dialog', { name: 'Process outline' })).toBeNull()
+    expect(onOutlineOpenChange).toHaveBeenLastCalledWith(false)
+
+    view.rerender(
+      editorElement({
+        responsiveMode: 'overlay',
+        sidePanesActive: true,
+        onOutlineOpenChange
+      })
+    )
+    expect(screen.queryByRole('dialog', { name: 'Process outline' })).toBeNull()
+    expect(onOutlineOpenChange.mock.calls.map(([open]) => open)).toEqual([true, false])
+  })
+
+  it('reports a controlled Outline close on deactivation so it cannot reopen later', () => {
+    const onOutlineOpenChange = vi.fn()
+    const view = renderEditor({
+      responsiveMode: 'overlay',
+      sidePanesActive: true,
+      outlineOpen: true,
+      onOutlineOpenChange
+    })
+    expect(screen.getByRole('dialog', { name: 'Process outline' })).not.toBeNull()
+
+    view.rerender(
+      editorElement({
+        responsiveMode: 'overlay',
+        sidePanesActive: false,
+        outlineOpen: false,
+        onOutlineOpenChange
+      })
+    )
+    expect(screen.queryByRole('dialog', { name: 'Process outline' })).toBeNull()
+    expect(onOutlineOpenChange).toHaveBeenCalledWith(false)
+
+    view.rerender(
+      editorElement({
+        responsiveMode: 'overlay',
+        sidePanesActive: true,
+        outlineOpen: false,
+        onOutlineOpenChange
+      })
+    )
+    expect(screen.queryByRole('dialog', { name: 'Process outline' })).toBeNull()
+    expect(
+      screen.getByRole('button', { name: 'Process outline' }).getAttribute('aria-expanded')
+    ).toBe('false')
+  })
+
+  it('preserves shared Details state across active editors with one visible dialog', () => {
+    const setOpen = vi.fn()
+    const detailsController: NonNullable<EditorTabProps['detailsController']> = {
+      preferences: { version: 1, open: true, width: 300 },
+      setOpen,
+      setWidth: vi.fn(),
+      resetWidth: vi.fn(),
+      reset: vi.fn()
+    }
+    const editors = (firstActive: boolean): JSX.Element => (
+      <>
+        <EditorTab
+          key="first"
+          xml='<definitions id="first" />'
+          onDirtyChange={vi.fn()}
+          onRequestSave={vi.fn().mockResolvedValue(undefined)}
+          responsiveMode="overlay"
+          detailsController={detailsController}
+          sidePanesActive={firstActive}
+        />
+        <EditorTab
+          key="second"
+          xml='<definitions id="second" />'
+          onDirtyChange={vi.fn()}
+          onRequestSave={vi.fn().mockResolvedValue(undefined)}
+          responsiveMode="overlay"
+          detailsController={detailsController}
+          sidePanesActive={!firstActive}
+        />
+      </>
+    )
+    const view = render(editors(true))
+
+    expect(screen.getAllByRole('dialog', { name: 'pane.details.aria' })).toHaveLength(1)
+    view.rerender(editors(false))
+    expect(screen.getAllByRole('dialog', { name: 'pane.details.aria' })).toHaveLength(1)
+    expect(detailsController.preferences.open).toBe(true)
+    expect(setOpen).not.toHaveBeenCalled()
+  })
+
+  it('ignores stale Source and Save dialog completions across inactive sessions', async () => {
+    const view = renderEditor({ responsiveMode: 'overlay', sidePanesActive: true })
+    await waitFor(() => expect(fake.currentXml).toBe('<definitions id="original" />'))
+
+    let releaseSource!: () => void
+    fake.saveXmlGate = new Promise<void>((resolve) => {
+      releaseSource = resolve
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'sourceEditor.open' }))
+    view.rerender(editorElement({ responsiveMode: 'overlay', sidePanesActive: false }))
+    view.rerender(editorElement({ responsiveMode: 'overlay', sidePanesActive: true }))
+    await act(async () => {
+      releaseSource()
+      await Promise.resolve()
+    })
+    expect(screen.queryByRole('dialog', { name: 'source-editor' })).toBeNull()
+
+    fake.saveXmlGate = null
+    let releaseValidation!: () => void
+    const validationGate = new Promise<void>((resolve) => {
+      releaseValidation = resolve
+    })
+    mocks.validateBpmnXml.mockImplementation(async () => {
+      await validationGate
+      return { summary: semanticSummary }
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'editor.save' }))
+    await waitFor(() => expect(mocks.validateBpmnXml).toHaveBeenCalled())
+    view.rerender(editorElement({ responsiveMode: 'overlay', sidePanesActive: false }))
+    view.rerender(editorElement({ responsiveMode: 'overlay', sidePanesActive: true }))
+    await act(async () => {
+      releaseValidation()
+      await validationGate
+    })
+    await waitFor(() =>
+      expect(
+        (screen.getByRole('button', { name: 'editor.save' }) as HTMLButtonElement).disabled
+      ).toBe(false)
+    )
+    expect(screen.queryByRole('dialog', { name: 'save-draft' })).toBeNull()
+    expect(screen.queryByRole('dialog', { name: 'validation-center' })).toBeNull()
+  })
+
+  it('keeps local Outline and Details immediately mutually exclusive in modal mode', () => {
+    const onDetailsOpenChange = vi.fn()
+    const onOutlineOpenChange = vi.fn()
+    renderEditor({
+      responsiveMode: 'overlay',
+      onDetailsOpenChange,
+      onOutlineOpenChange
+    })
+
+    const outlineToggle = screen.getByRole('button', { name: 'Process outline' })
+    fireEvent.click(outlineToggle)
+    expect(screen.getAllByRole('dialog')).toHaveLength(1)
+    expect(screen.getByRole('dialog', { name: 'Process outline' })).not.toBeNull()
+
+    fireEvent.click(screen.getByRole('button', { name: 'pane.details.toggle' }))
+    expect(screen.getAllByRole('dialog')).toHaveLength(1)
+    expect(screen.getByRole('dialog', { name: 'pane.details.aria' })).not.toBeNull()
+
+    fireEvent.click(outlineToggle)
+    expect(screen.getAllByRole('dialog')).toHaveLength(1)
+    expect(screen.getByRole('dialog', { name: 'Process outline' })).not.toBeNull()
+    expect(onOutlineOpenChange.mock.calls.map(([open]) => open)).toEqual([true, false, true])
+    expect(onDetailsOpenChange.mock.calls.map(([open]) => open)).toEqual([true, false])
+  })
+
+  it('never mounts controlled Outline over an already-open modal Details pane', () => {
+    const onOutlineOpenChange = vi.fn()
+    const detailsController: NonNullable<EditorTabProps['detailsController']> = {
+      preferences: { version: 1, open: true, width: 300 },
+      setOpen: vi.fn(),
+      setWidth: vi.fn(),
+      resetWidth: vi.fn(),
+      reset: vi.fn()
+    }
+    renderEditor({
+      responsiveMode: 'overlay',
+      detailsController,
+      outlineOpen: true,
+      onOutlineOpenChange
+    })
+
+    expect(screen.getAllByRole('dialog')).toHaveLength(1)
+    expect(screen.getByRole('dialog', { name: 'pane.details.aria' })).not.toBeNull()
+    expect(screen.queryByRole('dialog', { name: 'Process outline' })).toBeNull()
+    expect(
+      screen.getByRole('button', { name: 'Process outline' }).getAttribute('aria-expanded')
+    ).toBe('false')
+    expect(onOutlineOpenChange).toHaveBeenCalledWith(false)
   })
 
   it('keeps Save and core zoom visible while exposing secondary actions through a keyboard menu', async () => {

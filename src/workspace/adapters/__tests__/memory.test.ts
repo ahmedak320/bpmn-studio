@@ -183,6 +183,34 @@ describe('MemoryWorkspaceAdapter', () => {
     })
   })
 
+  it('conditionally removes only the exact file incarnation at delete entry', async () => {
+    let injectRace = false
+    const adapter = new MemoryWorkspaceAdapter({
+      files: {
+        'exact.txt': 'exact',
+        'raced.txt': 'reviewed'
+      },
+      beforeRemoveIfHash: (path) => {
+        if (path === 'raced.txt' && injectRace) {
+          adapter.replaceExternally(path, 'newer bytes')
+        }
+      }
+    })
+
+    const exact = await adapter.read('exact.txt')
+    await adapter.removeIfHash('exact.txt', exact.hash)
+    await expect(adapter.read('exact.txt')).rejects.toMatchObject({ code: 'not-found' })
+
+    const raced = await adapter.read('raced.txt')
+    injectRace = true
+    await expect(adapter.removeIfHash('raced.txt', raced.hash)).rejects.toMatchObject({
+      code: 'integrity-failure',
+      operation: 'remove',
+      path: 'raced.txt'
+    })
+    expect(decode((await adapter.read('raced.txt')).bytes)).toBe('newer bytes')
+  })
+
   it('exports a complete ZIP with checksums, metadata, history, and empty folders', async () => {
     const adapter = new MemoryWorkspaceAdapter({
       id: 'backup-source',

@@ -9,7 +9,10 @@ import {
 import { SerialQueue } from './serialQueue'
 import type {
   BackupExportOptions,
+  CreateFolderIfMissingResult,
   FileSnapshot,
+  ListWorkspaceOptions,
+  ReadFileOptions,
   RemoveEmptyFolderResult,
   SaveOutcome,
   WorkspaceAdapter,
@@ -21,11 +24,15 @@ import type {
   WriteAtomicOptions
 } from './types'
 import {
+  WorkspaceListLimitError,
   WorkspaceOperationError,
+  WorkspaceReadLimitError,
   alreadyExists,
   asWorkspaceOperationError,
   errorName,
   notFound,
+  validatedListLimits,
+  validatedReadLimit,
   workspaceFailure
 } from './workspaceError'
 
@@ -54,6 +61,7 @@ type WritableWithAbort = FileSystemWritableFileStream & {
 }
 
 const RELOCATE_TEMP_MARKER = '.__orbitpm_relocate__'
+const fingerprintEncoder = new TextEncoder()
 
 /**
  * Shared FileSystemHandle implementation used by user-selected directories and
@@ -96,17 +104,31 @@ export abstract class HandleWorkspaceAdapter implements WorkspaceAdapter {
     return this.root
   }
 
-  async list(path = ''): Promise<WorkspaceEntry[]> {
+  async list(path = '', options: ListWorkspaceOptions = {}): Promise<WorkspaceEntry[]> {
+    const limits = validatedListLimits(options)
     const normalized = normalizeWorkspacePath(path, { allowRoot: true })
     await this.ensurePermission('list', normalized || undefined, false)
+    options.signal?.throwIfAborted()
     const directory = await this.resolveDirectory(normalized, false, 'list')
+    options.signal?.throwIfAborted()
     const entries: WorkspaceEntry[] = []
-    await this.walkDirectory(directory, normalized, entries, normalized === '')
+    await this.walkDirectory(
+      directory,
+      normalized,
+      entries,
+      normalized === '',
+      options.signal,
+      limits.maxEntries,
+      limits.maxDepth,
+      0
+    )
+    options.signal?.throwIfAborted()
     return entries.sort(compareEntries)
   }
 
-  async read(path: string): Promise<FileSnapshot> {
+  async read(path: string, options: ReadFileOptions = {}): Promise<FileSnapshot> {
     const normalized = normalizeWorkspacePath(path)
+    validatedReadLimit(normalized, options)
     await this.ensurePermission('read', normalized, false)
     const entry = await this.resolveEntry(normalized, 'read')
     if (entry.kind !== 'file') {
@@ -117,7 +139,7 @@ export abstract class HandleWorkspaceAdapter implements WorkspaceAdapter {
         message: `Workspace entry "${normalized}" is not a file.`
       })
     }
-    return this.snapshotFile(normalized, entry.handle as FileSystemFileHandle)
+    return this.snapshotFile(normalized, entry.handle as FileSystemFileHandle, options)
   }
 
   async writeAtomic(
@@ -306,6 +328,71 @@ export abstract class HandleWorkspaceAdapter implements WorkspaceAdapter {
     })
   }
 
+  async removeIfHash(path: string, expectedHashInput: string): Promise<void> {
+    const normalized = normalizeWorkspacePath(path)
+    const expectedHash = validatedConditionalRemoveHash(expectedHashInput)
+    await this.queue.run(async () => {
+      await this.ensurePermission('remove', normalized, true)
+      let entry: ResolvedEntry
+      try {
+        entry = await this.resolveEntry(normalized, 'remove')
+      } catch (error) {
+        if (error instanceof WorkspaceOperationError && error.code === 'not-found') {
+          throw conditionalRemoveConflict(normalized, 'disappeared')
+        }
+        throw error
+      }
+      if (entry.kind !== 'file') {
+        throw new WorkspaceOperationError({
+          code: 'not-a-file',
+          operation: 'remove',
+          path: normalized,
+          message: `Workspace entry "${normalized}" is not a file.`
+        })
+      }
+      const snapshot = await this.snapshotFile(normalized, entry.handle as FileSystemFileHandle)
+      if (!equalHash(snapshot.hash, expectedHash)) {
+        throw conditionalRemoveConflict(normalized, 'changed')
+      }
+      let current: ResolvedEntry
+      try {
+        current = await this.resolveEntry(normalized, 'remove')
+      } catch (error) {
+        if (error instanceof WorkspaceOperationError && error.code === 'not-found') {
+          throw conditionalRemoveConflict(normalized, 'disappeared')
+        }
+        throw error
+      }
+      if (current.kind !== 'file' || !(await handlesReferToSameEntry(entry, current))) {
+        throw conditionalRemoveConflict(normalized, 'changed')
+      }
+      const finalSnapshot = await this.snapshotFile(
+        normalized,
+        current.handle as FileSystemFileHandle
+      )
+      if (!equalHash(finalSnapshot.hash, expectedHash)) {
+        throw conditionalRemoveConflict(normalized, 'changed')
+      }
+      let finalEntry: ResolvedEntry
+      try {
+        finalEntry = await this.resolveEntry(normalized, 'remove')
+      } catch (error) {
+        if (error instanceof WorkspaceOperationError && error.code === 'not-found') {
+          throw conditionalRemoveConflict(normalized, 'disappeared')
+        }
+        throw error
+      }
+      if (finalEntry.kind !== 'file' || !(await handlesReferToSameEntry(current, finalEntry))) {
+        throw conditionalRemoveConflict(normalized, 'changed')
+      }
+      // File System Access exposes no atomic compare-and-delete operation.
+      // These final identity/hash checks are inside the adapter queue used by
+      // cooperating app operations; an arbitrary OS writer can still race the
+      // final removeEntry browser call.
+      await finalEntry.parent.removeEntry(finalEntry.name)
+    })
+  }
+
   async removeEmptyFolder(path: string): Promise<RemoveEmptyFolderResult> {
     const normalized = normalizeWorkspacePath(path)
     return await this.queue.run(async () => {
@@ -339,6 +426,28 @@ export abstract class HandleWorkspaceAdapter implements WorkspaceAdapter {
     })
   }
 
+  async createFolderIfMissing(path: string): Promise<CreateFolderIfMissingResult> {
+    const normalized = normalizeWorkspacePath(path)
+    return await this.queue.run(async () => {
+      await this.ensurePermission('create-folder', normalized, true)
+      const parentPath = workspaceParentPath(normalized)
+      const parent = await this.resolveDirectory(parentPath, false, 'create-folder')
+      const name = workspacePathName(normalized)
+      const existing = await this.probeEntry(parent, name)
+      if (existing?.kind === 'file') throw alreadyExists('create-folder', normalized)
+      if (existing) return 'existing'
+      try {
+        // File System Access has no exclusive mkdir. This final probe/create is
+        // serialized for cooperating app operations, but an arbitrary OS
+        // writer can still race the browser call.
+        await parent.getDirectoryHandle(name, { create: true })
+        return 'created'
+      } catch (error) {
+        throw asWorkspaceOperationError(error, 'create-folder', normalized)
+      }
+    })
+  }
+
   exportBackup(options?: BackupExportOptions): Promise<Blob> {
     return this.queue.run(() => this.backupExporter(this, options))
   }
@@ -347,13 +456,36 @@ export abstract class HandleWorkspaceAdapter implements WorkspaceAdapter {
     directory: FileSystemDirectoryHandle,
     parentPath: string,
     output: WorkspaceEntry[],
-    isRoot: boolean
+    isRoot: boolean,
+    signal: AbortSignal | undefined,
+    maxEntries: number | undefined,
+    maxDepth: number | undefined,
+    parentDepth: number
   ): Promise<void> {
+    signal?.throwIfAborted()
     let children: Array<[string, FileSystemFileHandle | FileSystemDirectoryHandle]>
     try {
       children = []
-      for await (const child of directory.entries()) children.push(child)
+      for await (const child of directory.entries()) {
+        signal?.throwIfAborted()
+        if (maxEntries !== undefined && output.length + children.length >= maxEntries) {
+          throw new WorkspaceListLimitError(
+            parentPath || undefined,
+            'entries',
+            maxEntries,
+            output.length + children.length + 1
+          )
+        }
+        children.push(child)
+      }
     } catch (error) {
+      if (
+        signal?.aborted ||
+        errorName(error) === 'AbortError' ||
+        error instanceof WorkspaceListLimitError
+      ) {
+        throw error
+      }
       if (isRoot) throw asWorkspaceOperationError(error, 'list', parentPath)
       const directoryEntry = output.find((entry) => entry.path === parentPath)
       if (directoryEntry) {
@@ -367,7 +499,15 @@ export abstract class HandleWorkspaceAdapter implements WorkspaceAdapter {
       left.localeCompare(right, undefined, { sensitivity: 'base' })
     )
     for (const [name, handle] of children) {
+      signal?.throwIfAborted()
       const path = parentPath ? `${parentPath}/${name}` : name
+      const depth = parentDepth + 1
+      if (maxDepth !== undefined && depth > maxDepth) {
+        throw new WorkspaceListLimitError(path, 'depth', maxDepth, depth)
+      }
+      if (maxEntries !== undefined && output.length >= maxEntries) {
+        throw new WorkspaceListLimitError(path, 'entries', maxEntries, output.length + 1)
+      }
       if (handle.kind === 'directory') {
         const entry: WorkspaceEntry = {
           path,
@@ -378,8 +518,24 @@ export abstract class HandleWorkspaceAdapter implements WorkspaceAdapter {
         }
         output.push(entry)
         try {
-          await this.walkDirectory(handle as FileSystemDirectoryHandle, path, output, false)
+          await this.walkDirectory(
+            handle as FileSystemDirectoryHandle,
+            path,
+            output,
+            false,
+            signal,
+            maxEntries,
+            maxDepth,
+            depth
+          )
         } catch (error) {
+          if (
+            signal?.aborted ||
+            errorName(error) === 'AbortError' ||
+            error instanceof WorkspaceListLimitError
+          ) {
+            throw error
+          }
           entry.readable = false
           entry.issue = workspaceFailure(error, 'list', path)
         }
@@ -388,6 +544,7 @@ export abstract class HandleWorkspaceAdapter implements WorkspaceAdapter {
 
       try {
         const file = await (handle as FileSystemFileHandle).getFile()
+        signal?.throwIfAborted()
         output.push({
           path,
           name,
@@ -399,6 +556,7 @@ export abstract class HandleWorkspaceAdapter implements WorkspaceAdapter {
           readable: true
         })
       } catch (error) {
+        if (signal?.aborted || errorName(error) === 'AbortError') throw error
         output.push({
           path,
           name,
@@ -432,9 +590,7 @@ export abstract class HandleWorkspaceAdapter implements WorkspaceAdapter {
     const destinationName = workspacePathName(destinationPath)
     const destinationParent = await this.resolveDirectory(destinationParentPath, false, operation)
     const existing = await this.probeEntry(destinationParent, destinationName)
-    const sameEntry = existing
-      ? await handlesReferToSameEntry(source, existing, sourcePath, destinationPath)
-      : false
+    const sameEntry = existing ? await handlesReferToSameEntry(source, existing) : false
     if (existing && !sameEntry) throw alreadyExists(operation, destinationPath)
 
     const beforeFingerprint = await this.fingerprint(source.handle)
@@ -451,9 +607,47 @@ export abstract class HandleWorkspaceAdapter implements WorkspaceAdapter {
       return
     }
 
+    let copiedDestination: ResolvedEntry | undefined
+    let copiedDestinationFingerprint: string | undefined
     try {
-      await this.copyEntry(source.handle, destinationParent, destinationName)
+      const copiedHandle = await this.copyEntry(source.handle, destinationParent, destinationName)
+      const expectedDestination: ResolvedEntry = {
+        name: destinationName,
+        parent: destinationParent,
+        handle: copiedHandle,
+        kind: copiedHandle.kind
+      }
+      const observedDestination = await this.probeEntry(destinationParent, destinationName)
+      if (
+        !observedDestination ||
+        !(await handlesReferToSameEntry(expectedDestination, observedDestination))
+      ) {
+        throw new WorkspaceOperationError({
+          code: 'integrity-failure',
+          operation,
+          path: destinationPath,
+          message: `Workspace relocation destination identity changed for "${destinationPath}".`
+        })
+      }
+      copiedDestination = expectedDestination
+      copiedDestinationFingerprint = await this.fingerprint(observedDestination.handle)
+      if (copiedDestinationFingerprint !== beforeFingerprint) {
+        throw new WorkspaceOperationError({
+          code: 'integrity-failure',
+          operation,
+          path: destinationPath,
+          message: `Workspace relocation verification failed for "${destinationPath}".`
+        })
+      }
       const sourceAfterCopy = await this.resolveEntry(sourcePath, operation)
+      if (!(await handlesReferToSameEntry(source, sourceAfterCopy))) {
+        throw new WorkspaceOperationError({
+          code: 'integrity-failure',
+          operation,
+          path: sourcePath,
+          message: `Workspace entry "${sourcePath}" changed identity while it was being relocated.`
+        })
+      }
       const afterFingerprint = await this.fingerprint(sourceAfterCopy.handle)
       if (beforeFingerprint !== afterFingerprint) {
         throw new WorkspaceOperationError({
@@ -463,11 +657,61 @@ export abstract class HandleWorkspaceAdapter implements WorkspaceAdapter {
           message: `Workspace entry "${sourcePath}" changed while it was being relocated.`
         })
       }
-      await source.parent.removeEntry(source.name, {
+      const finalSource = await this.resolveEntry(sourcePath, operation)
+      if (!(await handlesReferToSameEntry(sourceAfterCopy, finalSource))) {
+        throw new WorkspaceOperationError({
+          code: 'integrity-failure',
+          operation,
+          path: sourcePath,
+          message: `Workspace entry "${sourcePath}" changed before relocation removal.`
+        })
+      }
+      const finalDestination = await this.probeEntry(destinationParent, destinationName)
+      if (
+        !copiedDestination ||
+        !finalDestination ||
+        !(await handlesReferToSameEntry(copiedDestination, finalDestination)) ||
+        (await this.fingerprint(finalDestination.handle)) !== beforeFingerprint
+      ) {
+        throw new WorkspaceOperationError({
+          code: 'integrity-failure',
+          operation,
+          path: destinationPath,
+          message: `Workspace relocation destination changed before source removal for "${destinationPath}".`
+        })
+      }
+      // Both entries have now passed the last checks available to the browser.
+      // File System Access cannot make this cross-entry gate and removeEntry a
+      // single filesystem transaction; an arbitrary OS writer can still race
+      // the final call.
+      await finalSource.parent.removeEntry(finalSource.name, {
         recursive: source.kind === 'directory'
       })
     } catch (error) {
-      await removeEntryQuietly(destinationParent, destinationName, source.kind === 'directory')
+      // Some handle implementations can commit removeEntry and then reject.
+      // Only clean the copied destination when the original source entry is
+      // still present. An absent/unprovable source means the destination may be
+      // the sole verified copy and must be retained as recovery evidence.
+      let sourceStillVerified = false
+      try {
+        const currentSource = await this.probeEntry(source.parent, source.name)
+        sourceStillVerified = Boolean(
+          currentSource &&
+          (await handlesReferToSameEntry(source, currentSource)) &&
+          (await this.fingerprint(currentSource.handle)) === beforeFingerprint
+        )
+      } catch {
+        sourceStillVerified = false
+      }
+      if (sourceStillVerified && copiedDestination) {
+        await this.removeVerifiedEntry(
+          destinationParent,
+          destinationName,
+          copiedDestination,
+          source.kind === 'directory',
+          beforeFingerprint
+        )
+      }
       throw asWorkspaceOperationError(error, operation, sourcePath)
     }
   }
@@ -483,8 +727,37 @@ export abstract class HandleWorkspaceAdapter implements WorkspaceAdapter {
   ): Promise<void> {
     const tempName = await this.uniqueTempName(source.parent, source.name)
     let sourceRemoved = false
+    let stagedCopy: ResolvedEntry | undefined
+    let stagedFingerprint: string | undefined
+    let copiedDestination: ResolvedEntry | undefined
+    let copiedDestinationFingerprint: string | undefined
     try {
-      await this.copyEntry(source.handle, source.parent, tempName)
+      const stagedHandle = await this.copyEntry(source.handle, source.parent, tempName)
+      const expectedStaging: ResolvedEntry = {
+        name: tempName,
+        parent: source.parent,
+        handle: stagedHandle,
+        kind: stagedHandle.kind
+      }
+      const observedStaging = await this.probeEntry(source.parent, tempName)
+      if (!observedStaging || !(await handlesReferToSameEntry(expectedStaging, observedStaging))) {
+        throw new WorkspaceOperationError({
+          code: 'integrity-failure',
+          operation,
+          path: tempName,
+          message: `Workspace relocation staging identity changed for "${sourcePath}".`
+        })
+      }
+      stagedCopy = expectedStaging
+      stagedFingerprint = await this.fingerprint(observedStaging.handle)
+      if (stagedFingerprint !== beforeFingerprint) {
+        throw new WorkspaceOperationError({
+          code: 'integrity-failure',
+          operation,
+          path: tempName,
+          message: `Workspace relocation staging verification failed for "${sourcePath}".`
+        })
+      }
       const afterFingerprint = await this.fingerprint(source.handle)
       if (afterFingerprint !== beforeFingerprint) {
         throw new WorkspaceOperationError({
@@ -494,35 +767,223 @@ export abstract class HandleWorkspaceAdapter implements WorkspaceAdapter {
           message: `Workspace entry "${sourcePath}" changed while it was being renamed.`
         })
       }
-      await source.parent.removeEntry(source.name, {
+      const sourceBeforeRemove = await this.resolveEntry(sourcePath, operation)
+      if (!(await handlesReferToSameEntry(source, sourceBeforeRemove))) {
+        throw new WorkspaceOperationError({
+          code: 'integrity-failure',
+          operation,
+          path: sourcePath,
+          message: `Workspace entry "${sourcePath}" changed before rename removal.`
+        })
+      }
+      await sourceBeforeRemove.parent.removeEntry(sourceBeforeRemove.name, {
         recursive: source.kind === 'directory'
       })
       sourceRemoved = true
       const staged = await this.probeEntry(source.parent, tempName)
       if (!staged) throw notFound(operation, tempName)
-      await this.copyEntry(staged.handle, destinationParent, destinationName)
-      await source.parent.removeEntry(tempName, {
+      if (
+        !stagedCopy ||
+        !(await handlesReferToSameEntry(stagedCopy, staged)) ||
+        (await this.fingerprint(staged.handle)) !== beforeFingerprint
+      ) {
+        throw new WorkspaceOperationError({
+          code: 'integrity-failure',
+          operation,
+          path: tempName,
+          message: `Workspace relocation staging changed before final copy for "${sourcePath}".`
+        })
+      }
+      const destinationHandle = await this.copyEntry(
+        staged.handle,
+        destinationParent,
+        destinationName
+      )
+      const expectedDestination: ResolvedEntry = {
+        name: destinationName,
+        parent: destinationParent,
+        handle: destinationHandle,
+        kind: destinationHandle.kind
+      }
+      const observedDestination = await this.probeEntry(destinationParent, destinationName)
+      if (
+        !observedDestination ||
+        !(await handlesReferToSameEntry(expectedDestination, observedDestination))
+      ) {
+        throw new WorkspaceOperationError({
+          code: 'integrity-failure',
+          operation,
+          path: destinationPath,
+          message: `Workspace relocation destination identity changed for "${destinationPath}".`
+        })
+      }
+      copiedDestination = expectedDestination
+      copiedDestinationFingerprint = await this.fingerprint(observedDestination.handle)
+      if (copiedDestinationFingerprint !== beforeFingerprint) {
+        throw new WorkspaceOperationError({
+          code: 'integrity-failure',
+          operation,
+          path: destinationPath,
+          message: `Workspace relocation verification failed for "${destinationPath}".`
+        })
+      }
+      const finalStaging = await this.probeEntry(source.parent, tempName)
+      if (
+        !stagedCopy ||
+        !finalStaging ||
+        !(await handlesReferToSameEntry(stagedCopy, finalStaging)) ||
+        (await this.fingerprint(finalStaging.handle)) !== beforeFingerprint
+      ) {
+        throw new WorkspaceOperationError({
+          code: 'integrity-failure',
+          operation,
+          path: tempName,
+          message: `Workspace relocation staging changed before final removal for "${sourcePath}".`
+        })
+      }
+      const finalDestination = await this.probeEntry(destinationParent, destinationName)
+      if (
+        !copiedDestination ||
+        !finalDestination ||
+        !(await handlesReferToSameEntry(copiedDestination, finalDestination)) ||
+        (await this.fingerprint(finalDestination.handle)) !== beforeFingerprint
+      ) {
+        throw new WorkspaceOperationError({
+          code: 'integrity-failure',
+          operation,
+          path: destinationPath,
+          message: `Workspace relocation destination changed before staging removal for "${destinationPath}".`
+        })
+      }
+      // The two verified entries cannot be removed conditionally as one native
+      // filesystem transaction. Cooperating operations are queued/leased; an
+      // arbitrary OS writer can still race this final browser call.
+      await finalStaging.parent.removeEntry(finalStaging.name, {
         recursive: source.kind === 'directory'
       })
     } catch (error) {
       if (sourceRemoved) {
-        const staged = await this.probeEntry(source.parent, tempName)
-        if (staged) {
-          await removeEntryQuietly(destinationParent, destinationName, source.kind === 'directory')
-          try {
-            await this.copyEntry(staged.handle, source.parent, source.name)
-            await source.parent.removeEntry(tempName, {
-              recursive: source.kind === 'directory'
-            })
-          } catch {
-            // Keep the distinctive staging entry as the recovery copy when a
-            // backing filesystem fails both the operation and its rollback.
+        let staged: ResolvedEntry | undefined
+        try {
+          staged = await this.probeEntry(source.parent, tempName)
+        } catch {
+          staged = undefined
+        }
+        const stagedIsVerified = Boolean(
+          staged &&
+          stagedCopy &&
+          (await handlesReferToSameEntry(stagedCopy, staged)) &&
+          (await this.fingerprint(staged.handle)) === beforeFingerprint
+        )
+        if (staged && stagedIsVerified) {
+          let destinationAllowsRestore = true
+          if (copiedDestination) {
+            destinationAllowsRestore = await this.removeVerifiedEntry(
+              destinationParent,
+              destinationName,
+              copiedDestination,
+              source.kind === 'directory',
+              beforeFingerprint
+            )
+          } else {
+            try {
+              destinationAllowsRestore = !(await this.probeEntry(
+                destinationParent,
+                destinationName
+              ))
+            } catch {
+              destinationAllowsRestore = false
+            }
           }
+          if (destinationAllowsRestore)
+            try {
+              await this.copyEntry(staged.handle, source.parent, source.name)
+              const restoredSource = await this.probeEntry(source.parent, source.name)
+              if (
+                !restoredSource ||
+                (await this.fingerprint(restoredSource.handle)) !== beforeFingerprint
+              ) {
+                throw new WorkspaceOperationError({
+                  code: 'integrity-failure',
+                  operation,
+                  path: sourcePath,
+                  message: `Workspace relocation recovery verification failed for "${sourcePath}".`
+                })
+              }
+              if (stagedCopy) {
+                await this.removeVerifiedEntry(
+                  source.parent,
+                  tempName,
+                  stagedCopy,
+                  source.kind === 'directory',
+                  beforeFingerprint
+                )
+              }
+            } catch {
+              // Keep the distinctive staging entry as the recovery copy when a
+              // backing filesystem fails both the operation and its rollback.
+            }
         }
       } else {
-        await removeEntryQuietly(source.parent, tempName, source.kind === 'directory')
+        // A source delete can commit and then reject. Only remove the verified
+        // staging copy when the source name is still present; otherwise staging
+        // is the sole recovery copy and must survive.
+        let sourceStillVerified = false
+        try {
+          const currentSource = await this.probeEntry(source.parent, source.name)
+          sourceStillVerified = Boolean(
+            currentSource &&
+            (await handlesReferToSameEntry(source, currentSource)) &&
+            (await this.fingerprint(currentSource.handle)) === beforeFingerprint
+          )
+        } catch {
+          sourceStillVerified = false
+        }
+        if (sourceStillVerified && stagedCopy) {
+          await this.removeVerifiedEntry(
+            source.parent,
+            tempName,
+            stagedCopy,
+            source.kind === 'directory',
+            beforeFingerprint
+          )
+        }
       }
       throw asWorkspaceOperationError(error, operation, destinationPath)
+    }
+  }
+
+  private async removeVerifiedEntry(
+    parent: FileSystemDirectoryHandle,
+    name: string,
+    expected: ResolvedEntry,
+    recursive: boolean,
+    expectedFingerprint?: string
+  ): Promise<boolean> {
+    if (expectedFingerprint === undefined) return false
+    try {
+      const current = await this.probeEntry(parent, name)
+      if (
+        !current ||
+        current.kind !== expected.kind ||
+        !(await handlesReferToSameEntry(expected, current))
+      ) {
+        return false
+      }
+      if (
+        expectedFingerprint !== undefined &&
+        (await this.fingerprint(current.handle)) !== expectedFingerprint
+      ) {
+        return false
+      }
+      // This is the final app-observable identity/content check. File System
+      // Access still cannot make the subsequent removeEntry conditional
+      // against an arbitrary OS writer.
+      await parent.removeEntry(current.name, { recursive })
+      return true
+    } catch {
+      // Cleanup is best-effort and fail-closed: ambiguity preserves the entry.
+      return false
     }
   }
 
@@ -530,7 +991,7 @@ export abstract class HandleWorkspaceAdapter implements WorkspaceAdapter {
     source: FileSystemFileHandle | FileSystemDirectoryHandle,
     destinationParent: FileSystemDirectoryHandle,
     destinationName: string
-  ): Promise<void> {
+  ): Promise<FileSystemFileHandle | FileSystemDirectoryHandle> {
     if (source.kind === 'file') {
       const file = await (source as FileSystemFileHandle).getFile()
       const bytes = copyBytes(new Uint8Array(await file.arrayBuffer()))
@@ -544,10 +1005,20 @@ export abstract class HandleWorkspaceAdapter implements WorkspaceAdapter {
         await writable.close()
       } catch (error) {
         if (writable) await abortWritable(writable)
-        await removeEntryQuietly(destinationParent, destinationName, false)
+        await this.removeVerifiedEntry(
+          destinationParent,
+          destinationName,
+          {
+            name: destinationName,
+            parent: destinationParent,
+            handle: target,
+            kind: 'file'
+          },
+          false
+        )
         throw error
       }
-      return
+      return target
     }
 
     const target = await destinationParent.getDirectoryHandle(destinationName, {
@@ -558,9 +1029,20 @@ export abstract class HandleWorkspaceAdapter implements WorkspaceAdapter {
         await this.copyEntry(child, target, name)
       }
     } catch (error) {
-      await removeEntryQuietly(destinationParent, destinationName, true)
+      await this.removeVerifiedEntry(
+        destinationParent,
+        destinationName,
+        {
+          name: destinationName,
+          parent: destinationParent,
+          handle: target,
+          kind: 'directory'
+        },
+        true
+      )
       throw error
     }
+    return target
   }
 
   private async fingerprint(
@@ -570,27 +1052,47 @@ export abstract class HandleWorkspaceAdapter implements WorkspaceAdapter {
       const file = await (handle as FileSystemFileHandle).getFile()
       const bytes = new Uint8Array(await file.arrayBuffer())
       const hash = await sha256Hex(bytes)
-      return `f:${file.size}:${file.lastModified}:${hash}`
+      // Relocation compares a copied handle with its source. A successful copy
+      // naturally receives a different modification time, so integrity is the
+      // exact byte length/hash rather than mutable filesystem metadata.
+      return `f:${file.size}:${hash}`
     }
-    const parts: string[] = []
+    const parts: Array<readonly [string, string]> = []
     const children: Array<[string, FileSystemFileHandle | FileSystemDirectoryHandle]> = []
     for await (const child of (handle as FileSystemDirectoryHandle).entries()) {
       children.push(child)
     }
-    children.sort(([left], [right]) => left.localeCompare(right))
+    // Exact UTF-16 ordering is a deterministic total order even for
+    // case/diacritic variants that localeCompare may consider equivalent.
+    children.sort(([left], [right]) => (left < right ? -1 : left > right ? 1 : 0))
     for (const [name, child] of children) {
-      parts.push(`${name}:${await this.fingerprint(child)}`)
+      parts.push([name, await this.fingerprint(child)])
     }
-    return `d:${parts.join('|')}`
+    // Hash canonical JSON tuples instead of delimiter-concatenating legal file
+    // names. This prevents names containing ":" or "|" from aliasing a
+    // different directory structure.
+    return `d:${await sha256Hex(fingerprintEncoder.encode(JSON.stringify(parts)))}`
   }
 
-  private async snapshotFile(path: string, handle: FileSystemFileHandle): Promise<FileSnapshot> {
+  private async snapshotFile(
+    path: string,
+    handle: FileSystemFileHandle,
+    options: ReadFileOptions = {}
+  ): Promise<FileSnapshot> {
+    const maxBytes = validatedReadLimit(path, options)
     const file = await handle.getFile()
+    if (maxBytes !== undefined && file.size > maxBytes) {
+      throw new WorkspaceReadLimitError(path, maxBytes, file.size)
+    }
+    options.signal?.throwIfAborted()
     const bytes = copyBytes(new Uint8Array(await file.arrayBuffer()))
+    options.signal?.throwIfAborted()
+    const hash = await sha256Hex(bytes)
+    options.signal?.throwIfAborted()
     return {
       path,
       bytes,
-      hash: await sha256Hex(bytes),
+      hash,
       size: bytes.byteLength,
       modifiedAt: typeof file.lastModified === 'number' ? file.lastModified : 0,
       mimeType: file.type || inferMimeType(path)
@@ -764,11 +1266,28 @@ export abstract class HandleWorkspaceAdapter implements WorkspaceAdapter {
   }
 }
 
+function validatedConditionalRemoveHash(expectedHash: string): string {
+  if (!/^[a-f0-9]{64}$/iu.test(expectedHash)) {
+    throw new TypeError('Conditional removal requires a SHA-256 digest.')
+  }
+  return expectedHash.toLowerCase()
+}
+
+function conditionalRemoveConflict(
+  path: string,
+  state: 'changed' | 'disappeared'
+): WorkspaceOperationError {
+  return new WorkspaceOperationError({
+    code: 'integrity-failure',
+    operation: 'remove',
+    path,
+    message: `Workspace file "${path}" ${state} before conditional removal.`
+  })
+}
+
 async function handlesReferToSameEntry(
   source: ResolvedEntry,
-  destination: ResolvedEntry,
-  sourcePath: string,
-  destinationPath: string
+  destination: ResolvedEntry
 ): Promise<boolean> {
   const isSameEntry = (
     source.handle as FileSystemHandle & {
@@ -778,12 +1297,10 @@ async function handlesReferToSameEntry(
   if (typeof isSameEntry === 'function') {
     return isSameEntry.call(source.handle, destination.handle)
   }
-  return (
-    source.parent === destination.parent &&
-    source.kind === destination.kind &&
-    workspacePathName(sourcePath).toLocaleLowerCase('en-US') ===
-      workspacePathName(destinationPath).toLocaleLowerCase('en-US')
-  )
+  // Case-folded names do not prove identity on a case-sensitive filesystem:
+  // `Order.bpmn` and `order.bpmn` may be distinct files. A shared handle object
+  // is the only safe fallback when the platform omits isSameEntry().
+  return source.handle === destination.handle
 }
 
 async function abortWritable(writable: WritableWithAbort): Promise<void> {

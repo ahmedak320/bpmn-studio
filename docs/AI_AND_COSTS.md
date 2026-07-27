@@ -72,7 +72,11 @@ process.
   uses the bundled fallback prices below.
 - If any request uses an unknown-price model, the aggregate cost is marked
   unknown instead of displaying a misleading partial total.
-- Very small nonzero costs use additional decimal places.
+- If stored totals become incomplete or exceed a safety bound, counts are
+  marked as lower bounds with `≥`, cost becomes unavailable, and the UI states
+  that usage is incomplete.
+- Very small nonzero costs use additional decimal places or scientific notation
+  instead of being displayed as zero.
 - Usage events refresh the visible AI surfaces, but a provider invoice remains
   the source of truth.
 
@@ -82,22 +86,57 @@ does not enforce a budget or stop a provider account from spending.
 
 ## Bundled fallback prices
 
-These estimates were reviewed on **2026-07-26** and are USD per one million
+These estimates were reviewed on **2026-07-27** and are USD per one million
 tokens. Prices can change without an OrbitPM release.
 
-| Model ID                     |  Input | Output |
-| ---------------------------- | -----: | -----: |
-| `z-ai/glm-5.2`               |  $0.60 |  $2.20 |
-| `moonshotai/kimi-k3`         |  $0.60 |  $2.50 |
-| `deepseek/deepseek-v4-pro`   |  $0.55 |  $2.19 |
-| `deepseek/deepseek-v4-flash` |  $0.14 |  $0.28 |
-| `anthropic/claude-opus-4.8`  | $15.00 | $75.00 |
-| `anthropic/claude-sonnet-5`  |  $3.00 | $15.00 |
-| `google/gemini-3.6-flash`    |  $0.30 |  $2.50 |
-| `claude-opus-4-8`            | $15.00 | $75.00 |
-| `claude-sonnet-5`            |  $3.00 | $15.00 |
-| `gemini-flash-latest`        |  $0.30 |  $2.50 |
-| `gemini-3-pro-preview`       |  $1.25 | $10.00 |
+OpenRouter's provider-reported request cost remains authoritative when present.
+The OpenRouter table is only a missing-cost fallback based on OpenRouter's own
+model catalog; it is not inferred from a direct vendor's price.
+
+| OpenRouter model ID          |   Input |  Output |
+| ---------------------------- | ------: | ------: |
+| `z-ai/glm-5.2`               | $0.8106 | $2.5476 |
+| `moonshotai/kimi-k3`         |   $3.00 |  $15.00 |
+| `deepseek/deepseek-v4-pro`   |  $0.435 |   $0.87 |
+| `deepseek/deepseek-v4-flash` |   $0.14 |   $0.28 |
+| `anthropic/claude-opus-4.8`  |   $5.00 |  $25.00 |
+| `anthropic/claude-sonnet-5`  |   $2.00 |  $10.00 |
+| `google/gemini-3.6-flash`    |   $1.50 |   $7.50 |
+
+Direct-provider fallbacks are priced from the direct provider's published
+rates:
+
+| Direct model ID          | Prompt tier | Input | Output |
+| ------------------------ | ----------- | ----: | -----: |
+| `claude-opus-4-8`        | All         | $5.00 | $25.00 |
+| `claude-sonnet-5`        | All         | $2.00 | $10.00 |
+| `gemini-3.6-flash`       | All         | $1.50 |  $7.50 |
+| `gemini-3.1-pro-preview` | <= 200k     | $2.00 | $12.00 |
+| `gemini-3.1-pro-preview` | > 200k      | $4.00 | $18.00 |
+
+Anthropic's direct Sonnet 5 price is temporarily $2/$10 through August 31,
+2026, and that current promotion is modeled in this dated snapshot. Anthropic
+has announced a $3/$15 standard price starting September 1; the bundled direct
+fallback must be reviewed after the promotion expires. OpenRouter's separate
+Sonnet 5 route fallback independently uses its current $2/$10 catalog price.
+
+Direct Gemini output rates include thinking tokens. OrbitPM adds Gemini's
+separately reported candidate and thought counts exactly once when it must
+estimate a request. Anthropic's `output_tokens` is already the inclusive billed
+output total; OrbitPM displays its `thinking_tokens` breakdown but does not add
+that breakdown to the cost again.
+
+Direct Anthropic prices and the Sonnet promotion dates are documented by
+Anthropic's [pricing page](https://platform.claude.com/docs/en/about-claude/pricing).
+The current IDs, shutdown replacement, and direct rates are documented by
+Google's [current-model guide](https://ai.google.dev/gemini-api/docs/latest-model),
+[deprecation schedule](https://ai.google.dev/gemini-api/docs/deprecations), and
+[pricing page](https://ai.google.dev/gemini-api/docs/pricing). All OpenRouter
+fallbacks above were independently checked against OpenRouter's
+[live model catalog](https://openrouter.ai/api/v1/models); the Opus and Gemini
+routes are also visible on their model pages:
+[Claude Opus 4.8](https://openrouter.ai/anthropic/claude-opus-4.8) and
+[Gemini 3.6 Flash](https://openrouter.ai/google/gemini-3.6-flash).
 
 Reasoning-token charges, cached-token discounts, routing premiums, file-parser
 fees, taxes, minimum charges, and provider-specific adjustments may not be

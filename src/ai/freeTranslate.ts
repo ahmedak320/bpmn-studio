@@ -28,6 +28,7 @@
 
 import type { DiagramLang } from '../editor/langToggle'
 import type { TranslateTextsFn } from './translate'
+import { parseBoundedJson, readBoundedResponseBody } from './browserAi'
 import {
   isTransientHttpStatus,
   parseRetryAfter,
@@ -60,6 +61,7 @@ export class FreeTranslateError extends Error {
 
 export const GOOGLE_FREE_URL = 'https://translate.googleapis.com/translate_a/single'
 export const MYMEMORY_URL = 'https://api.mymemory.translated.net/get'
+export const MAX_FREE_TRANSLATION_RESPONSE_BODY_BYTES = 262_144
 
 function googleUrl(text: string, from: DiagramLang, to: DiagramLang): string {
   return `${GOOGLE_FREE_URL}?client=gtx&sl=${from}&tl=${to}&dt=t&q=${encodeURIComponent(text)}`
@@ -270,9 +272,18 @@ async function requestJson(
             )
           }
           try {
-            return await response.json()
+            return parseBoundedJson(
+              await readBoundedResponseBody(
+                response,
+                MAX_FREE_TRANSLATION_RESPONSE_BODY_BYTES,
+                controller.signal
+              )
+            )
           } catch {
             throwIfAborted(callerSignal)
+            if (controller.signal.aborted) {
+              throw new FreeRequestFailure(isOffline() ? 'offline' : 'service', true)
+            }
             // A readable 2xx response with an unusable body is not evidence of
             // a transient transport failure. Let the fallback service try it.
             throw new FreeRequestFailure(isOffline() ? 'offline' : 'service', false)

@@ -10,6 +10,7 @@ import { DraftRecoveryDialog } from '../../sessions/DraftRecoveryDialog'
 import type { DraftRecoveryComparison } from '../../sessions/draftJournal'
 import { BackupImportDialog } from '../../workspace/BackupImportDialog'
 import { HistoryDialog } from '../../workspace/HistoryDialog'
+import { ConfirmDialog } from '../../workspace/ConfirmDialog'
 import { Modal } from '../../workspace/Modal'
 import type { WorkspaceBackupImportPlan } from '../../workspace/adapters'
 import type { PortableHistoryManager } from '../../workspace/history'
@@ -50,6 +51,29 @@ function PromptHarness(): JSX.Element {
   )
 }
 
+function ConfirmHarness(): JSX.Element {
+  const [open, setOpen] = useState(false)
+  return (
+    <>
+      <button type="button" onClick={() => setOpen(true)}>
+        Delete process
+      </button>
+      {open ? (
+        <ConfirmDialog
+          title="Discard changes?"
+          message="The current draft will be discarded."
+          confirmLabel="Discard"
+          cancelLabel="Keep editing"
+          danger
+          role="alertdialog"
+          onConfirm={() => setOpen(false)}
+          onCancel={() => setOpen(false)}
+        />
+      ) : null}
+    </>
+  )
+}
+
 describe('dialog primitive migrations', () => {
   it('keeps TextInputModal autofocus, Escape, and trigger restoration', async () => {
     const user = userEvent.setup()
@@ -86,6 +110,19 @@ describe('dialog primitive migrations', () => {
     expect(close).toHaveBeenCalledOnce()
     fireEvent.keyDown(document, { key: 'Escape' })
     expect(close).toHaveBeenCalledTimes(2)
+  })
+
+  it('opens shared confirmations as alert dialogs with a safe initial action', async () => {
+    const user = userEvent.setup()
+    render(<ConfirmHarness />)
+    const trigger = screen.getByRole('button', { name: 'Delete process' })
+    await user.click(trigger)
+
+    expect(screen.getByRole('alertdialog', { name: 'Discard changes?' })).not.toBeNull()
+    expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Keep editing' }))
+    fireEvent.keyDown(document, { key: 'Escape' })
+    expect(screen.queryByRole('alertdialog', { name: 'Discard changes?' })).toBeNull()
+    expect(document.activeElement).toBe(trigger)
   })
 
   it('keeps busy SaveDraftDialog non-dismissible and preserves alert semantics', () => {

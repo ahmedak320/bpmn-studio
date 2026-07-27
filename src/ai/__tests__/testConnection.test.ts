@@ -70,6 +70,25 @@ describe('CORS-vs-auth discriminator', () => {
     expect(r.message).toMatch(/blocked or unreachable|could not read/i)
   })
 
+  it('contains hostile fetch rejection getters instead of throwing during classification', async () => {
+    const hostile = new Proxy(new Error('hidden'), {
+      get(target, property, receiver) {
+        if (property === 'message') throw new Error('hostile message getter')
+        return Reflect.get(target, property, receiver)
+      },
+      getPrototypeOf() {
+        throw new Error('hostile prototype trap')
+      }
+    })
+    mockFetch(() => Promise.reject(hostile))
+
+    await expect(testConnection(cfg({ providerId: 'gemini' }))).resolves.toMatchObject({
+      reachable: false,
+      blockedOrUnreachable: true,
+      code: 'blocked'
+    })
+  })
+
   it('a 200 ⇒ reachable + "key works"', async () => {
     mockFetch(() => new Response('{}', { status: 200 }))
     const r = await testConnection(cfg({ providerId: 'openrouter', apiKey: 'sk-real' }))
@@ -83,6 +102,29 @@ describe('CORS-vs-auth discriminator', () => {
       costUsd: null,
       costKind: 'unknown'
     })
+  })
+
+  it('cancels the unused response body as soon as the status is readable', async () => {
+    const cancel = vi.fn(() => Promise.resolve())
+    mockFetch(
+      () =>
+        ({
+          ok: true,
+          status: 200,
+          headers: new Headers(),
+          body: { cancel }
+        }) as unknown as Response
+    )
+
+    await expect(
+      testConnection(cfg({ providerId: 'openrouter', apiKey: 'sk-real' }))
+    ).resolves.toMatchObject({
+      reachable: true,
+      status: 200
+    })
+
+    expect(cancel).toHaveBeenCalledTimes(1)
+    expect(getUsageSnapshot('openrouter').session.requests).toBe(1)
   })
 
   it('a 400 ⇒ reachable (CORS OK)', async () => {
@@ -113,5 +155,57 @@ describe('CORS-vs-auth discriminator', () => {
     const [, init] = fetchMock().mock.calls[0] as [string, RequestInit]
     const body = JSON.parse(init.body as string)
     expect(String(body.model).length).toBeGreaterThan(0)
+  })
+
+  it('propagates a caller AbortSignal as a typed cancellation', async () => {
+    let fetchSignal: AbortSignal | undefined
+    mockFetch(
+      (_url, init) =>
+        new Promise<Response>((_resolve, reject) => {
+          fetchSignal = init.signal as AbortSignal
+          const rejectAbort = (): void =>
+            reject(new DOMException('The probe was aborted.', 'AbortError'))
+          if (fetchSignal.aborted) rejectAbort()
+          else fetchSignal.addEventListener('abort', rejectAbort, { once: true })
+        })
+    )
+    const controller = new AbortController()
+    const pending = testConnection(cfg({ providerId: 'anthropic' }), controller.signal)
+
+    await vi.waitFor(() => expect(fetchSignal).toBeDefined())
+    controller.abort()
+
+    await expect(pending).rejects.toMatchObject({
+      name: 'TransportError',
+      code: 'cancelled'
+    })
+    expect(fetchSignal?.aborted).toBe(true)
+    expect(fetchMock()).toHaveBeenCalledTimes(1)
+    expect(getUsageSnapshot('anthropic').session.requests).toBe(0)
+  })
+
+  it('still counts and cancels a 2xx response accepted just before caller cancellation', async () => {
+    const cancel = vi.fn(() => Promise.resolve())
+    const response = {
+      ok: true,
+      status: 200,
+      headers: new Headers(),
+      body: { cancel }
+    } as unknown as Response
+    mockFetch(() => Promise.resolve(response))
+    const controller = new AbortController()
+    const pending = testConnection(
+      cfg({ providerId: 'openrouter', apiKey: 'sk-real' }),
+      controller.signal
+    )
+
+    controller.abort()
+
+    await expect(pending).rejects.toMatchObject({
+      name: 'TransportError',
+      code: 'cancelled'
+    })
+    expect(cancel).toHaveBeenCalledTimes(1)
+    expect(getUsageSnapshot('openrouter').session.requests).toBe(1)
   })
 })

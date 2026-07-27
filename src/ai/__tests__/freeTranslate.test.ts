@@ -2,6 +2,7 @@ import { describe, it, expect, vi, afterEach } from 'vitest'
 import {
   FreeTranslateError,
   GOOGLE_FREE_URL,
+  MAX_FREE_TRANSLATION_RESPONSE_BODY_BYTES,
   MYMEMORY_URL,
   makeFreeTranslateTexts,
   parseGoogleResponse,
@@ -10,17 +11,15 @@ import {
 
 // freeTranslate.ts is DOM-free and fetch-injectable — this suite drives the
 // whole chain in the node vitest environment with hand-rolled fetch fakes
-// (no network). Response objects are minimal structural fakes: the module
-// only reads `ok`, `status` and `json()`.
+// (no network). Real Response bodies exercise the production bounded reader.
 
 // --- fakes -------------------------------------------------------------------
 
 function jsonResponse(data: unknown, status = 200): Response {
-  return {
-    ok: status >= 200 && status < 300,
+  return new Response(JSON.stringify(data), {
     status,
-    json: async () => data
-  } as unknown as Response
+    headers: { 'content-type': 'application/json' }
+  })
 }
 
 function makeFetch(handler: (url: string) => Response | Promise<Response>): {
@@ -375,6 +374,60 @@ describe('makeFreeTranslateTexts', () => {
       baseRetryDelayMs: 0
     })(['a', 'b'], 'en', 'ar')
     expect(results).toEqual([undefined, undefined])
+  })
+
+  it('bounds streamed 2xx bodies before JSON parsing and cancels both oversized hops', async () => {
+    const cancelled = vi.fn()
+    const oversized = (): Response => {
+      let emitted = 0
+      return new Response(
+        new ReadableStream<Uint8Array>({
+          pull(controller) {
+            emitted += 65_536
+            controller.enqueue(new Uint8Array(65_536))
+            if (emitted > MAX_FREE_TRANSLATION_RESPONSE_BODY_BYTES * 2) controller.close()
+          },
+          cancel: cancelled
+        }),
+        { status: 200 }
+      )
+    }
+    const { fetchImpl } = makeFetch(() => oversized())
+
+    await expect(
+      makeFreeTranslateTexts({
+        fetchImpl,
+        minDelayMs: 0,
+        maxAttempts: 1
+      })(['Review request'], 'en', 'ar')
+    ).rejects.toMatchObject({ code: 'service', service: 'chain' })
+    await vi.waitFor(() => expect(cancelled).toHaveBeenCalledTimes(2))
+  })
+
+  it('rejects a declared oversized 2xx body without consuming it and uses the fallback', async () => {
+    let googleReaderRequests = 0
+    const { fetchImpl } = makeFetch((url) => {
+      if (!url.startsWith(GOOGLE_FREE_URL)) return myMemoryOk('مراجعة الطلب')
+      return {
+        ok: true,
+        status: 200,
+        headers: new Headers({
+          'content-length': String(MAX_FREE_TRANSLATION_RESPONSE_BODY_BYTES + 1)
+        }),
+        body: {
+          cancel: async () => undefined,
+          getReader() {
+            googleReaderRequests += 1
+            throw new Error('oversized response must not allocate a reader')
+          }
+        }
+      } as unknown as Response
+    })
+
+    await expect(
+      makeFreeTranslateTexts({ fetchImpl, minDelayMs: 0 })(['Review request'], 'en', 'ar')
+    ).resolves.toEqual(['مراجعة الطلب'])
+    expect(googleReaderRequests).toBe(0)
   })
 
   it('caps in-flight requests at the configured concurrency (default 4)', async () => {

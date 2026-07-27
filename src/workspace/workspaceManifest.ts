@@ -7,7 +7,10 @@ import {
   exportWorkspaceBackup,
   normalizeWorkspacePath,
   type BackupExportOptions,
+  type CreateFolderIfMissingResult,
   type FileSnapshot,
+  type ListWorkspaceOptions,
+  type ReadFileOptions,
   type RemoveEmptyFolderResult,
   type SaveOutcome,
   type WorkspaceAdapter,
@@ -619,7 +622,11 @@ async function collectWorkspaceManifestChecksumState(
   options: CollectWorkspaceManifestChecksumsOptions = {}
 ): Promise<WorkspaceManifestChecksumCollection> {
   throwIfAborted(options.signal)
-  return collectManifestChecksumsFromEntries(adapter, await adapter.list(), options)
+  return collectManifestChecksumsFromEntries(
+    adapter,
+    await adapter.list('', { signal: options.signal }),
+    options
+  )
 }
 
 export async function collectWorkspaceManifestChecksums(
@@ -902,12 +909,12 @@ export class ManifestBoundWorkspaceAdapter implements WorkspaceAdapter {
     return this.#lastManifestError
   }
 
-  list(path?: string): Promise<WorkspaceEntry[]> {
-    return this.#backing.list(path)
+  list(path?: string, options?: ListWorkspaceOptions): Promise<WorkspaceEntry[]> {
+    return this.#backing.list(path, options)
   }
 
-  read(path: string): Promise<FileSnapshot> {
-    return this.#backing.read(path)
+  read(path: string, options?: ReadFileOptions): Promise<FileSnapshot> {
+    return this.#backing.read(path, options)
   }
 
   async writeAtomic(
@@ -987,6 +994,36 @@ export class ManifestBoundWorkspaceAdapter implements WorkspaceAdapter {
     }
   }
 
+  async removeIfHash(path: string, expectedHash: string): Promise<void> {
+    const normalized = normalizeWorkspacePath(path)
+    if (isManifestOrAncestor(normalized)) {
+      throw new WorkspaceOperationError({
+        code: 'unsupported',
+        operation: 'remove',
+        path: normalized,
+        message:
+          'The manifest or its parent metadata folder cannot be removed through this adapter.'
+      })
+    }
+    if (!this.#backing.removeIfHash) {
+      throw new WorkspaceOperationError({
+        code: 'unsupported',
+        operation: 'remove',
+        path: normalized,
+        message: 'The backing workspace cannot prove a hash-conditional file removal.'
+      })
+    }
+    await this.#backing.removeIfHash(normalized, expectedHash)
+    if (!isFullyExcludedChecksumSubtree(normalized)) {
+      await this.#afterCommittedMutation(async () => {
+        await this.#commitIncrementalManifest(
+          this.#manifest.document.checksums.filter((checksum) => checksum.path !== normalized),
+          this.#manifest.warnings.filter((warning) => warning.path !== normalized)
+        )
+      })
+    }
+  }
+
   async removeEmptyFolder(path: string): Promise<RemoveEmptyFolderResult> {
     const normalized = normalizeWorkspacePath(path)
     if (isManifestOrAncestor(normalized)) {
@@ -1017,6 +1054,18 @@ export class ManifestBoundWorkspaceAdapter implements WorkspaceAdapter {
 
   createFolder(path: string): Promise<void> {
     return this.#backing.createFolder(path)
+  }
+
+  createFolderIfMissing(path: string): Promise<CreateFolderIfMissingResult> {
+    if (!this.#backing.createFolderIfMissing) {
+      throw new WorkspaceOperationError({
+        code: 'unsupported',
+        operation: 'create-folder',
+        path,
+        message: 'The workspace cannot establish rollback ownership for a new folder.'
+      })
+    }
+    return this.#backing.createFolderIfMissing(path)
   }
 
   exportBackup(options?: BackupExportOptions): Promise<Blob> {

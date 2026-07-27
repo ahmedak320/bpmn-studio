@@ -107,7 +107,7 @@ describe('Anthropic payload', () => {
 describe('Gemini payload', () => {
   it('targets generateContent with the api-key header and responseMimeType JSON', () => {
     const req = buildGeminiRequest(
-      cfg({ providerId: 'gemini', model: 'gemini-flash-latest' }),
+      cfg({ providerId: 'gemini', model: 'gemini-3.6-flash' }),
       TEXT_MSGS,
       {
         maxTokens: 3000,
@@ -115,7 +115,7 @@ describe('Gemini payload', () => {
       }
     )
     expect(req.url).toBe(
-      'https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent'
+      'https://generativelanguage.googleapis.com/v1beta/models/gemini-3.6-flash:generateContent'
     )
     expect(req.headers['x-goog-api-key']).toBe('sk-test')
     expect(req.headers['content-type']).toBe('application/json')
@@ -250,7 +250,22 @@ describe('Arabic hint / RTL passthrough', () => {
 
 describe('response extraction', () => {
   it('reads Anthropic content text blocks', () => {
-    const data = { content: [{ type: 'text', text: '{"process":[]}' }, { type: 'thinking' }] }
+    const data = {
+      content: [
+        { type: 'text', text: '{"process":' },
+        { type: 'text', text: '[]}' }
+      ]
+    }
+    expect(extractText('anthropic', data)).toBe('{"process":[]}')
+  })
+  it('selects Anthropic text while accepting documented adaptive-thinking blocks', () => {
+    const data = {
+      content: [
+        { type: 'thinking', thinking: '', signature: 'opaque-signature' },
+        { type: 'redacted_thinking', data: 'opaque-redacted-data' },
+        { type: 'text', text: '{"process":[]}' }
+      ]
+    }
     expect(extractText('anthropic', data)).toBe('{"process":[]}')
   })
   it('reads Gemini candidate parts', () => {
@@ -265,8 +280,9 @@ describe('response extraction', () => {
       })
     ).toBe('ab')
   })
-  it('returns empty string on a malformed response (pipeline then repairs)', () => {
-    expect(extractText('gemini', {})).toBe('')
+  it('returns empty text only for structurally valid empty content', () => {
+    expect(extractText('gemini', { candidates: [{ content: { parts: [] } }] })).toBe('')
     expect(extractText('anthropic', { content: [] })).toBe('')
+    expect(extractText('openrouter', { choices: [{ message: { content: [] } }] })).toBe('')
   })
 })

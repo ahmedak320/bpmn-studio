@@ -556,7 +556,7 @@ describe('backup transaction decision and rollback edge cases', () => {
       }
       return originalWrite(...args)
     })
-    vi.spyOn(target, 'remove').mockRejectedValueOnce(new Error('cleanup failed'))
+    vi.spyOn(target, 'removeEmptyFolder').mockRejectedValueOnce(new Error('cleanup failed'))
 
     const result = await applyWorkspaceBackupImport(target, plan)
     expect(result).toMatchObject({

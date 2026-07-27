@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState, type CSSProperties } from 'react'
+import { useCallback, useEffect, useRef, useState, type CSSProperties } from 'react'
 import { LITE_PROVIDERS, type LiteProviderId } from '../ai/providersLite'
 import {
   getKey,
@@ -8,8 +8,11 @@ import {
   hasEncryptedKey,
   persistEncryptedKey,
   unlockEncryptedKey,
-  migrateLegacyCredentialsOnStartup
+  migrateLegacyCredentialsOnStartup,
+  type KeyStorageErrorCode,
+  type KeyStorageResult
 } from '../ai/keys'
+import { keyStorageErrorMessage } from '../ai/keyStorageErrorMessage'
 import { getProviderSelection, setProviderSelection } from '../ai/providerSelection'
 import { defaultLiteModelId, getLiteProvider } from '../ai/providersLite'
 import {
@@ -54,6 +57,75 @@ export interface SettingsDialogLiteProps {
   localizationResources?: LocalizationResourcesEditorProps
 }
 
+type StorageFailureContext = 'startup' | 'key-save' | 'provider-selection' | 'unlock' | 'clear'
+
+interface StorageFailure {
+  code: KeyStorageErrorCode
+  context: StorageFailureContext
+  detail: string | null
+  providerLabel?: string
+}
+
+type CredentialOperationKind = 'save' | 'unlock'
+
+interface ActiveCredentialOperation {
+  id: number
+  kind: CredentialOperationKind
+  controller: AbortController
+}
+
+interface ActiveTestConnectionOperation {
+  id: number
+  providerId: LiteProviderId
+  controller: AbortController
+}
+
+interface ActiveCreditsRefreshOperation {
+  id: number
+  controller: AbortController
+}
+
+function storageFailure(
+  result: Extract<KeyStorageResult<unknown>, { ok: false }>,
+  context: StorageFailureContext,
+  providerLabel?: string
+): StorageFailure {
+  return {
+    code: result.code,
+    context,
+    detail:
+      result.code === 'storage-failed' || result.code === 'storage-unavailable'
+        ? result.error
+        : null,
+    ...(providerLabel ? { providerLabel } : {})
+  }
+}
+
+function storageFailureMessage(failure: StorageFailure): string {
+  const error = keyStorageErrorMessage(failure.code)
+  switch (failure.context) {
+    case 'startup':
+      return t('settings.storageError.startup', { error })
+    case 'provider-selection':
+      return t('settings.storageError.providerSelection', { error })
+    case 'key-save':
+      return t('settings.storageError.keySave', {
+        provider: failure.providerLabel ?? t('settings.storageError.unknownProvider'),
+        error
+      })
+    case 'unlock':
+      return t('settings.storageError.unlock', {
+        provider: failure.providerLabel ?? t('settings.storageError.unknownProvider'),
+        error
+      })
+    case 'clear':
+      return t('settings.storageError.clear', {
+        provider: failure.providerLabel ?? t('settings.storageError.unknownProvider'),
+        error
+      })
+  }
+}
+
 /**
  * Per-provider API-key manager for the three browser-callable providers.
  * Key fields are write-only: an already-stored key shows a "Configured
@@ -75,7 +147,18 @@ export function SettingsDialogLite({
   const [completeness, setCompletenessState] = useState<boolean>(() => isCompletenessOn())
   const [drafts, setDrafts] = useState<Record<string, string>>({})
   const [saved, setSaved] = useState<string | null>(null)
-  const [storageError, setStorageError] = useState<string | null>(null)
+  const [storageFailures, setStorageFailures] = useState<StorageFailure[]>([])
+  const [pendingCredentialOperation, setPendingCredentialOperation] =
+    useState<ActiveCredentialOperation | null>(null)
+  const credentialOperationSequence = useRef(0)
+  const activeCredentialOperation = useRef<ActiveCredentialOperation | null>(null)
+  const testConnectionOperationSequence = useRef(0)
+  const activeTestConnectionOperation = useRef<ActiveTestConnectionOperation | null>(null)
+  const creditsRefreshOperationSequence = useRef(0)
+  const activeCreditsRefreshOperation = useRef<ActiveCreditsRefreshOperation | null>(null)
+  const mounted = useRef(true)
+  const openRef = useRef(open)
+  openRef.current = open
   const [persistEncrypted, setPersistEncrypted] = useState(false)
   const [passphrase, setPassphrase] = useState('')
   const initialSelection = getProviderSelection()
@@ -93,32 +176,126 @@ export function SettingsDialogLite({
   const [creditsError, setCreditsError] = useState<CreditsErrorKind | null>(null)
   const [, bumpUsage] = useState(0)
 
-  const refreshCredits = useCallback(async () => {
+  const cancelCredentialOperation = useCallback((updatePendingState: boolean): void => {
+    activeCredentialOperation.current?.controller.abort()
+    activeCredentialOperation.current = null
+    credentialOperationSequence.current += 1
+    if (updatePendingState && mounted.current) setPendingCredentialOperation(null)
+  }, [])
+
+  const cancelTestConnection = useCallback((updateTestingState: boolean): void => {
+    activeTestConnectionOperation.current?.controller.abort()
+    activeTestConnectionOperation.current = null
+    testConnectionOperationSequence.current += 1
+    if (updateTestingState && mounted.current) setTesting({})
+  }, [])
+
+  const cancelCreditsRefresh = useCallback((updateLoadingState: boolean): void => {
+    activeCreditsRefreshOperation.current?.controller.abort()
+    activeCreditsRefreshOperation.current = null
+    creditsRefreshOperationSequence.current += 1
+    if (updateLoadingState && mounted.current) setCreditsLoading(false)
+  }, [])
+
+  const beginCredentialOperation = useCallback(
+    (kind: CredentialOperationKind): ActiveCredentialOperation => {
+      activeCredentialOperation.current?.controller.abort()
+      const operation: ActiveCredentialOperation = {
+        id: ++credentialOperationSequence.current,
+        kind,
+        controller: new AbortController()
+      }
+      activeCredentialOperation.current = operation
+      setPendingCredentialOperation(operation)
+      setSaved(null)
+      setStorageFailures([])
+      return operation
+    },
+    []
+  )
+
+  const credentialOperationIsCurrent = useCallback(
+    (operation: ActiveCredentialOperation): boolean =>
+      mounted.current &&
+      openRef.current &&
+      !operation.controller.signal.aborted &&
+      activeCredentialOperation.current?.id === operation.id,
+    []
+  )
+
+  const finishCredentialOperation = useCallback((operation: ActiveCredentialOperation): void => {
+    if (activeCredentialOperation.current?.id !== operation.id) return
+    activeCredentialOperation.current = null
+    if (mounted.current) setPendingCredentialOperation(null)
+  }, [])
+
+  const refreshCredits = useCallback(async (): Promise<void> => {
+    activeCreditsRefreshOperation.current?.controller.abort()
     const key = getKey('openrouter')
     if (!key) {
+      activeCreditsRefreshOperation.current = null
+      creditsRefreshOperationSequence.current += 1
       setCredits(null)
       setCreditsError(null)
       setCreditsLoading(false)
       return
     }
+    const operation: ActiveCreditsRefreshOperation = {
+      id: ++creditsRefreshOperationSequence.current,
+      controller: new AbortController()
+    }
+    activeCreditsRefreshOperation.current = operation
+    const operationIsCurrent = (): boolean =>
+      mounted.current &&
+      openRef.current &&
+      !operation.controller.signal.aborted &&
+      activeCreditsRefreshOperation.current?.id === operation.id
+
     setCreditsLoading(true)
     setCreditsError(null)
     try {
-      const c = await fetchOpenRouterCredits(key)
+      const c = await fetchOpenRouterCredits(key, undefined, operation.controller.signal)
+      if (!operationIsCurrent()) return
       setCredits(c)
     } catch (err) {
+      if (!operationIsCurrent()) return
       setCreditsError(err instanceof CreditsError ? err.kind : 'unexpected')
       setCredits(null)
     } finally {
-      setCreditsLoading(false)
+      if (activeCreditsRefreshOperation.current?.id === operation.id) {
+        activeCreditsRefreshOperation.current = null
+        if (mounted.current && openRef.current) setCreditsLoading(false)
+      }
     }
   }, [])
 
   useEffect(() => {
+    mounted.current = true
+    return () => {
+      mounted.current = false
+      activeCredentialOperation.current?.controller.abort()
+      activeCredentialOperation.current = null
+      credentialOperationSequence.current += 1
+      activeTestConnectionOperation.current?.controller.abort()
+      activeTestConnectionOperation.current = null
+      testConnectionOperationSequence.current += 1
+      activeCreditsRefreshOperation.current?.controller.abort()
+      activeCreditsRefreshOperation.current = null
+      creditsRefreshOperationSequence.current += 1
+    }
+  }, [])
+
+  useEffect(() => {
+    cancelCredentialOperation(false)
+    cancelTestConnection(false)
+    cancelCreditsRefresh(false)
+    setPendingCredentialOperation(null)
+    setTesting({})
+    setCreditsLoading(false)
     if (open) {
       setDrafts({})
       setSaved(null)
-      setStorageError(null)
+      setStorageFailures([])
       setPersistEncrypted(false)
       setPassphrase('')
       setResults({})
@@ -131,9 +308,9 @@ export function SettingsDialogLite({
       // Reuse the idempotent startup upgrade rather than maintaining a second
       // Settings-only provider list or cleanup path.
       const migration = migrateLegacyCredentialsOnStartup()
-      if (!migration.ok) setStorageError(migration.error)
+      if (!migration.ok) setStorageFailures([storageFailure(migration, 'startup')])
     }
-  }, [open])
+  }, [cancelCredentialOperation, cancelCreditsRefresh, cancelTestConnection, open])
 
   useEffect(
     () =>
@@ -146,49 +323,99 @@ export function SettingsDialogLite({
   if (!open) return null
 
   const save = async (): Promise<void> => {
-    const failures: string[] = []
+    const operation = beginCredentialOperation('save')
+    const draftSnapshot = { ...drafts }
+    const encryptSnapshot = persistEncrypted
+    const passphraseSnapshot = passphrase
+    const providerSnapshot = selectedProvider
+    const modelSnapshot = selectedModel
+    const failures: StorageFailure[] = []
+    const openRouterDraft = draftSnapshot.openrouter?.trim()
+    if (openRouterDraft) cancelCreditsRefresh(true)
     for (const p of LITE_PROVIDERS) {
-      const draft = drafts[p.id]
+      const draft = draftSnapshot[p.id]
       if (draft !== undefined && draft.trim().length > 0) {
-        const result = persistEncrypted
-          ? await persistEncryptedKey(p.id, draft, passphrase)
+        const result = encryptSnapshot
+          ? await persistEncryptedKey(p.id, draft, passphraseSnapshot, operation.controller.signal)
           : setKey(p.id, draft)
-        if (!result.ok) failures.push(`${p.label}: ${result.error}`)
+        if (!credentialOperationIsCurrent(operation)) return
+        if (!result.ok) failures.push(storageFailure(result, 'key-save', p.label))
+        else if (p.id === 'openrouter') {
+          // A refresh may have started against the old key while an encrypted
+          // save was pending. Invalidate it at commit and discard its cache.
+          cancelCreditsRefresh(true)
+          setCredits(null)
+          setCreditsError(null)
+        }
       }
     }
-    if (selectedProvider) {
-      const selectionResult = setProviderSelection(selectedProvider, selectedModel)
-      if (!selectionResult.ok) failures.push(selectionResult.error)
+    if (!credentialOperationIsCurrent(operation)) return
+    if (providerSnapshot) {
+      const selectionResult = setProviderSelection(providerSnapshot, modelSnapshot)
+      if (!selectionResult.ok) {
+        failures.push(storageFailure(selectionResult, 'provider-selection'))
+      }
     }
-    setDrafts({})
+    if (!credentialOperationIsCurrent(operation)) return
+    setDrafts((current) => {
+      const next = { ...current }
+      for (const provider of LITE_PROVIDERS) {
+        if (
+          draftSnapshot[provider.id] !== undefined &&
+          next[provider.id] === draftSnapshot[provider.id]
+        ) {
+          delete next[provider.id]
+        }
+      }
+      return next
+    })
     if (failures.length > 0) {
       setSaved(null)
-      setStorageError(failures.join(' '))
+      setStorageFailures(failures)
     } else {
-      setStorageError(null)
+      setStorageFailures([])
       setSaved(t('settings.saved'))
     }
+    finishCredentialOperation(operation)
     onKeysChanged()
   }
 
   const unlockStoredKeys = async (): Promise<void> => {
-    const failures: string[] = []
+    const operation = beginCredentialOperation('unlock')
+    const passphraseSnapshot = passphrase
+    const failures: StorageFailure[] = []
     let unlocked = 0
+    if (hasEncryptedKey('openrouter')) cancelCreditsRefresh(true)
     for (const provider of LITE_PROVIDERS) {
       if (!hasEncryptedKey(provider.id)) continue
-      const result = await unlockEncryptedKey(provider.id, passphrase)
-      if (result.ok) unlocked += 1
-      else failures.push(`${provider.label}: ${result.error}`)
+      const result = await unlockEncryptedKey(
+        provider.id,
+        passphraseSnapshot,
+        operation.controller.signal
+      )
+      if (!credentialOperationIsCurrent(operation)) return
+      if (result.ok) {
+        unlocked += 1
+        if (provider.id === 'openrouter') {
+          cancelCreditsRefresh(true)
+          setCredits(null)
+          setCreditsError(null)
+        }
+      } else failures.push(storageFailure(result, 'unlock', provider.label))
     }
+    if (!credentialOperationIsCurrent(operation)) return
     if (failures.length > 0) {
       setSaved(null)
-      setStorageError(failures.join(' '))
+      setStorageFailures(failures)
     } else {
-      setStorageError(null)
+      setStorageFailures([])
       setSaved(t('settings.encryption.unlocked', { count: unlocked }))
       setPassphrase('')
+      finishCredentialOperation(operation)
       onKeysChanged()
+      return
     }
+    finishCredentialOperation(operation)
   }
 
   const testModelFor = (providerId: LiteProviderId): string =>
@@ -197,7 +424,20 @@ export function SettingsDialogLite({
       : defaultLiteModelId(providerId)
 
   const runTest = async (providerId: LiteProviderId): Promise<void> => {
-    setTesting((t) => ({ ...t, [providerId]: true }))
+    activeTestConnectionOperation.current?.controller.abort()
+    const operation: ActiveTestConnectionOperation = {
+      id: ++testConnectionOperationSequence.current,
+      providerId,
+      controller: new AbortController()
+    }
+    activeTestConnectionOperation.current = operation
+    const operationIsCurrent = (): boolean =>
+      mounted.current &&
+      openRef.current &&
+      !operation.controller.signal.aborted &&
+      activeTestConnectionOperation.current?.id === operation.id
+
+    setTesting({ [providerId]: true })
     setResults((r) => {
       const next = { ...r }
       delete next[providerId]
@@ -215,9 +455,11 @@ export function SettingsDialogLite({
       title: t('app.title')
     }
     try {
-      const result = await testConnection(cfg)
+      const result = await testConnection(cfg, operation.controller.signal)
+      if (!operationIsCurrent()) return
       setResults((r) => ({ ...r, [providerId]: result }))
     } catch (err) {
+      if (!operationIsCurrent()) return
       // testConnection resolves for every real outcome; this only trips on an
       // unexpected throw. Surface it as a blocked verdict with the raw message.
       setResults((r) => ({
@@ -230,16 +472,52 @@ export function SettingsDialogLite({
         }
       }))
     } finally {
-      setTesting((t) => ({ ...t, [providerId]: false }))
+      if (activeTestConnectionOperation.current?.id === operation.id) {
+        activeTestConnectionOperation.current = null
+        if (mounted.current) setTesting({})
+      }
     }
   }
 
+  const closeSettings = (): void => {
+    cancelCredentialOperation(true)
+    cancelTestConnection(true)
+    cancelCreditsRefresh(true)
+    onClose()
+  }
+
+  const clearStoredKey = (providerId: LiteProviderId, providerLabel: string): void => {
+    cancelCredentialOperation(true)
+    if (providerId === 'openrouter') {
+      cancelCreditsRefresh(true)
+      setCredits(null)
+      setCreditsError(null)
+    }
+    const result = clearKey(providerId)
+    setDrafts((current) => {
+      const next = { ...current }
+      delete next[providerId]
+      return next
+    })
+    if (result.ok) {
+      setStorageFailures([])
+      setSaved(t('settings.keyCleared'))
+    } else {
+      setSaved(null)
+      setStorageFailures([storageFailure(result, 'clear', providerLabel)])
+    }
+    onKeysChanged()
+  }
+
   const hasStoredCiphertext = LITE_PROVIDERS.some((provider) => hasEncryptedKey(provider.id))
+  const storageTechnicalFailures = storageFailures.filter(
+    (failure): failure is StorageFailure & { detail: string } => failure.detail !== null
+  )
 
   return (
     <AccessibleDialog
       ariaLabel={t('settings.title')}
-      onClose={onClose}
+      onClose={closeSettings}
       closeOnEscape
       closeOnBackdrop
       backdropStyle={overlay}
@@ -249,7 +527,7 @@ export function SettingsDialogLite({
         <strong>{t('settings.title.providers')}</strong>
         <button
           type="button"
-          onClick={onClose}
+          onClick={closeSettings}
           aria-label={t('settings.close.aria')}
           style={closeBtn}
         >
@@ -312,7 +590,12 @@ export function SettingsDialogLite({
           </label>
         </section>
 
-        {localizationResources && <LocalizationResourcesEditor {...localizationResources} />}
+        {localizationResources && (
+          <LocalizationResourcesEditor
+            key={localizationResources.workspaceBindingKey ?? 'workspace-localization'}
+            {...localizationResources}
+          />
+        )}
 
         <div style={warning} role="note">
           ⚠️ {t('settings.keyStorageWarning')}
@@ -394,6 +677,7 @@ export function SettingsDialogLite({
 
         <section
           aria-label={t('settings.encryption.title')}
+          aria-busy={pendingCredentialOperation !== null}
           style={{ display: 'flex', flexDirection: 'column', gap: 8 }}
         >
           <span style={{ fontWeight: 600, fontSize: 14 }}>{t('settings.encryption.title')}</span>
@@ -418,10 +702,18 @@ export function SettingsDialogLite({
             <button
               type="button"
               onClick={() => void unlockStoredKeys()}
-              disabled={!passphrase}
+              disabled={!passphrase || pendingCredentialOperation !== null}
+              aria-busy={pendingCredentialOperation?.kind === 'unlock'}
+              aria-describedby={
+                pendingCredentialOperation?.kind === 'unlock'
+                  ? 'orbitpm-credential-operation-status'
+                  : undefined
+              }
               style={ghostBtn}
             >
-              {t('settings.encryption.unlock')}
+              {pendingCredentialOperation?.kind === 'unlock'
+                ? t('settings.credentials.unlocking')
+                : t('settings.encryption.unlock')}
             </button>
           )}
           <span style={{ fontSize: 11.5, color: 'var(--orbitpm-muted)' }}>
@@ -429,9 +721,38 @@ export function SettingsDialogLite({
           </span>
         </section>
 
-        {storageError && (
+        {storageFailures.length > 0 && (
           <div role="alert" style={errorBox}>
-            {storageError}
+            <ul style={{ margin: 0, paddingInlineStart: 20 }}>
+              {storageFailures.map((failure, index) => (
+                <li
+                  key={`${failure.context}:${failure.providerLabel ?? ''}:${failure.code}:${index}`}
+                >
+                  {storageFailureMessage(failure)}
+                </li>
+              ))}
+            </ul>
+            {storageTechnicalFailures.length > 0 ? (
+              <details style={{ marginTop: 6 }}>
+                <summary>{t('settings.storageError.technicalDetails')}</summary>
+                <ul style={{ marginBlock: 6, paddingInlineStart: 20 }}>
+                  {storageTechnicalFailures.map((failure, index) => (
+                    <li
+                      key={`${failure.context}:${failure.providerLabel ?? ''}:${failure.code}:detail:${index}`}
+                    >
+                      <code
+                        aria-label={t('settings.storageError.technicalDetail')}
+                        lang="en"
+                        dir="ltr"
+                        style={{ overflowWrap: 'anywhere', whiteSpace: 'pre-wrap' }}
+                      >
+                        {failure.detail}
+                      </code>
+                    </li>
+                  ))}
+                </ul>
+              </details>
+            ) : null}
           </div>
         )}
 
@@ -549,32 +870,21 @@ export function SettingsDialogLite({
                 <button
                   type="button"
                   onClick={() => void runTest(p.id)}
-                  disabled={testing[p.id] || !testConsent[p.id]}
+                  disabled={
+                    testing[p.id] || !testConsent[p.id] || pendingCredentialOperation !== null
+                  }
                   style={ghostBtn}
                 >
                   {testing[p.id]
                     ? t('settings.testConnection.testing')
                     : t('settings.testConnection')}
                 </button>
-                {(configured || encryptedStored) && (
+                {(configured ||
+                  encryptedStored ||
+                  (pendingCredentialOperation?.kind === 'save' && value.trim().length > 0)) && (
                   <button
                     type="button"
-                    onClick={() => {
-                      const result = clearKey(p.id)
-                      setDrafts((d) => {
-                        const next = { ...d }
-                        delete next[p.id]
-                        return next
-                      })
-                      if (result.ok) {
-                        setStorageError(null)
-                        setSaved(t('settings.keyCleared'))
-                      } else {
-                        setSaved(null)
-                        setStorageError(result.error)
-                      }
-                      onKeysChanged()
-                    }}
+                    onClick={() => clearStoredKey(p.id, p.label)}
                     style={ghostBtn}
                   >
                     {t('settings.clearKey')}
@@ -617,17 +927,37 @@ export function SettingsDialogLite({
 
       <footer style={footer}>
         {saved && <span style={{ fontSize: 12, color: 'var(--orbitpm-muted)' }}>{saved}</span>}
+        {pendingCredentialOperation && (
+          <span
+            id="orbitpm-credential-operation-status"
+            role="status"
+            aria-live="polite"
+            style={{ fontSize: 12, color: 'var(--orbitpm-muted)' }}
+          >
+            {pendingCredentialOperation.kind === 'save'
+              ? t('settings.credentials.saving')
+              : t('settings.credentials.unlocking')}
+          </span>
+        )}
         <span style={{ flex: 1 }} />
-        <button type="button" onClick={onClose} style={ghostBtn}>
+        <button type="button" onClick={closeSettings} style={ghostBtn}>
           {t('settings.close')}
         </button>
         <button
           type="button"
           onClick={() => void save()}
+          aria-busy={pendingCredentialOperation?.kind === 'save'}
+          aria-describedby={
+            pendingCredentialOperation?.kind === 'save'
+              ? 'orbitpm-credential-operation-status'
+              : undefined
+          }
           className="orbitpm-lite-primary"
           style={{ fontSize: 13 }}
         >
-          {t('settings.saveKeys')}
+          {pendingCredentialOperation?.kind === 'save'
+            ? t('settings.credentials.saving')
+            : t('settings.saveKeys')}
         </button>
       </footer>
     </AccessibleDialog>

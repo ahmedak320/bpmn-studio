@@ -31,7 +31,7 @@ import {
   type CSSProperties,
   type KeyboardEvent as ReactKeyboardEvent
 } from 'react'
-import { t, getLang } from '../i18n'
+import { t, getLang, type Key } from '../i18n'
 import { useLang } from '../i18n/useLang'
 import { AccessibleDialog } from '../common/AccessibleDialog'
 import {
@@ -82,11 +82,14 @@ import {
 } from './requestReview'
 import { ExternalRequestPreview } from './ExternalRequestPreview'
 import { UNTRUSTED_WORKSPACE_SYSTEM_GUARD } from '../ai/untrustedPrompt'
+import { TechnicalErrorDetail } from '../ai/TechnicalErrorDetail'
 
 type Source = AssistantSource
 interface Message {
   role: 'user' | 'assistant'
   text: string
+  /** Bounded provider/internal support evidence, isolated from localized prose. */
+  technicalDetail?: string
   /** 'chat' (default) = a real Q/A turn (enters the LLM history); 'error' and
    *  'status' are display-only bubbles. */
   kind?: 'chat' | 'error' | 'status'
@@ -132,6 +135,11 @@ export interface AssistantDrawerProps {
   getDigests: () => Promise<ProcessDigest[]>
   /** Open a workspace process by its relative path (directory mode). */
   onOpenProcess: (relPath: string) => void
+  /** Open the production workspace picker without closing or cancelling the
+   *  assistant first. A cancelled picker leaves the current reviewed request
+   *  intact; a committed workspace activation unmounts this keyed drawer and
+   *  aborts its transport through the normal cleanup path. */
+  onChangeWorkspace?: () => void
   /** Current interview target — the active tab's generated draft — or null
    *  when no diagram is open. Re-read at every interview step so the scan
    *  always sees the LIVE modeler. Optional: without it the interview tab
@@ -161,21 +169,61 @@ function pickProvider(): ChosenProvider | null {
   }
 }
 
-/** Map a classified browser error onto the ai.error.* dictionary (the unknown
- *  class shows the raw first-line message the classifier already trimmed). */
-const ERROR_KEY: Record<Exclude<ErrorCode, 'unknown'>, Parameters<typeof t>[0]> = {
+interface PresentedError {
+  summary: string
+  technicalDetail?: string
+}
+
+const ERROR_KEY = Object.freeze({
   auth: 'ai.error.auth',
   rate: 'ai.error.rateLimit',
   cors: 'ai.error.cors',
   network: 'ai.error.network',
   timeout: 'ai.error.timeout',
-  cancelled: 'ai.error.cancelled'
+  cancelled: 'ai.error.cancelled',
+  provider: 'ai.error.provider',
+  'invalid-response': 'ai.error.invalidResponse',
+  unknown: 'ai.error.unknown'
+} satisfies Record<ErrorCode, Key>)
+
+type AssistantActionErrorCode = 'redaction' | 'empty-response'
+
+class AssistantActionError extends Error {
+  readonly code: AssistantActionErrorCode
+  readonly technicalDetail?: string
+
+  constructor(code: AssistantActionErrorCode, technicalDetail?: string) {
+    super(code)
+    this.name = 'AssistantActionError'
+    this.code = code
+    this.technicalDetail = technicalDetail
+  }
 }
 
-function errorText(error: unknown): string {
+function errorPresentation(error: unknown): PresentedError {
+  if (error instanceof AssistantActionError) {
+    return {
+      summary: t(
+        error.code === 'redaction' ? 'assist.error.redaction' : 'assist.error.emptyResponse'
+      ),
+      ...(error.technicalDetail ? { technicalDetail: error.technicalDetail } : {})
+    }
+  }
   const classified = classifyBrowserError(error)
-  if (classified.code === 'unknown') return classified.message
-  return t(ERROR_KEY[classified.code])
+  return {
+    summary: t(ERROR_KEY[classified.code]),
+    ...(classified.technicalDetail ? { technicalDetail: classified.technicalDetail } : {})
+  }
+}
+
+function errorMessage(error: unknown): Message {
+  const presented = errorPresentation(error)
+  return {
+    role: 'assistant',
+    text: presented.summary,
+    kind: 'error',
+    ...(presented.technicalDetail ? { technicalDetail: presented.technicalDetail } : {})
+  }
 }
 
 function requestCancelledError(): DOMException {
@@ -245,6 +293,7 @@ export function AssistantDrawer({
   keysVersion,
   getDigests,
   onOpenProcess,
+  onChangeWorkspace,
   getActiveInterviewTarget,
   interviewRequest,
   onApplyXml
@@ -330,13 +379,13 @@ export function AssistantDrawer({
   }
 
   let currentExternalPlan: ExternalActionPlan | undefined
-  let externalPlanError: string | null = null
+  let externalPlanError: PresentedError | null = null
   try {
     currentExternalPlan = pendingExternal?.build(includeWorkspaceContext, redactNames)
   } catch (error) {
     // Redaction and exact-preview validation fail closed without taking down
     // the drawer; the user can cancel and submit a revised request.
-    externalPlanError = errorText(error)
+    externalPlanError = errorPresentation(error)
   }
   const externalConsented = Boolean(
     currentExternalPlan &&
@@ -429,11 +478,7 @@ export function AssistantDrawer({
         externalAbortRef.current === controller &&
         isRequestCurrent(requestToken)
       ) {
-        const failure: Message = {
-          role: 'assistant',
-          text: errorText(error),
-          kind: 'error'
-        }
+        const failure = errorMessage(error)
         if (pending.tab === 'library') setMessages((previous) => [...previous, failure])
         else pushIv(failure)
       }
@@ -623,7 +668,7 @@ export function AssistantDrawer({
           estimatedRequests: { min: 1, max: 3 }
         })
         if (shouldRedactNames && disclosure.containsNames) {
-          throw new Error('Name redaction could not safely prepare this request.')
+          throw new AssistantActionError('redaction')
         }
         return {
           disclosure,
@@ -639,7 +684,7 @@ export function AssistantDrawer({
             assertCurrent()
             const questions = parseInterviewQuestions(reply)
             if (questions === null) {
-              throw new Error(`${chosenProvider.id}: empty response from the model`)
+              throw new AssistantActionError('empty-response', chosenProvider.id)
             }
             assertCurrent()
             const liveSession = sessionRef.current
@@ -668,7 +713,7 @@ export function AssistantDrawer({
       })
     } catch (error) {
       if (isRequestCurrent(requestToken)) {
-        pushIv({ role: 'assistant', text: errorText(error), kind: 'error' })
+        pushIv(errorMessage(error))
       }
     }
   }
@@ -763,7 +808,7 @@ export function AssistantDrawer({
           estimatedRequests: { min: 1, max: 3 }
         })
         if (shouldRedactNames && disclosure.containsNames) {
-          throw new Error('Name redaction could not safely prepare this request.')
+          throw new AssistantActionError('redaction')
         }
         return {
           disclosure,
@@ -820,7 +865,7 @@ export function AssistantDrawer({
       })
     } catch (error) {
       if (isRequestCurrent(requestToken)) {
-        pushIv({ role: 'assistant', text: errorText(error), kind: 'error' })
+        pushIv(errorMessage(error))
       }
     } finally {
       if (isRequestCurrent(requestToken)) setIvBusy(false)
@@ -951,7 +996,15 @@ export function AssistantDrawer({
         )}
         {activeMessages.map((m, i) => (
           <div key={i} style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-            <div style={bubbleStyle(m)}>{m.text}</div>
+            <div
+              style={bubbleStyle(m)}
+              role={m.kind === 'error' ? 'alert' : undefined}
+              aria-live={m.kind === 'error' ? 'assertive' : undefined}
+              aria-atomic={m.kind === 'error' ? 'true' : undefined}
+            >
+              <span>{m.text}</span>
+              <TechnicalErrorDetail detail={m.technicalDetail} />
+            </div>
             {m.sources && m.sources.length > 0 && (
               <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 2 }}>
                 <span style={{ fontSize: 11, color: 'var(--orbitpm-muted)', alignSelf: 'center' }}>
@@ -1009,7 +1062,10 @@ export function AssistantDrawer({
         !currentExternalPlan &&
         externalPlanError && (
           <div role="alert" style={{ ...BUBBLE_ASSISTANT, margin: '0.55rem 0.8rem' }}>
-            <div>{externalPlanError}</div>
+            <div>
+              <span>{externalPlanError.summary}</span>
+              <TechnicalErrorDetail detail={externalPlanError.technicalDetail} />
+            </div>
             <button type="button" onClick={cancelExternal} style={{ ...CHIP_STYLE, marginTop: 8 }}>
               {t('ai.cancel')}
             </button>
@@ -1072,6 +1128,16 @@ export function AssistantDrawer({
       >
         <header style={HEADER_STYLE}>
           <strong style={{ fontSize: 13 }}>{t('assist.title')}</strong>
+          {onChangeWorkspace && (
+            <button
+              type="button"
+              onClick={onChangeWorkspace}
+              title={t('app.changeFolder.title')}
+              style={{ ...CHIP_STYLE, marginInlineStart: 'auto' }}
+            >
+              {t('app.changeFolder')}
+            </button>
+          )}
           <button
             ref={closeButtonRef}
             type="button"

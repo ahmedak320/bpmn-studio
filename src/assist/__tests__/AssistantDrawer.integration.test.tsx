@@ -6,6 +6,7 @@ import { useState } from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { LiteProviderId } from '../../ai/providersLite'
+import { ar } from '../../i18n/dictionaries'
 import type { ProcessDigest } from '../digest'
 
 const state = vi.hoisted(() => ({
@@ -22,7 +23,17 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock('../../i18n', () => ({
   getLang: (): 'en' | 'ar' => state.lang,
-  t: (key: string): string => key
+  t: (key: string): string => {
+    if (key === 'ai.error.provider') {
+      return state.lang === 'ar'
+        ? 'أعاد مزوّد الذكاء الاصطناعي خطأً. حاول مرة أخرى أو اختر مزوّدًا آخر.'
+        : 'The AI provider returned an error. Try again or choose another provider.'
+    }
+    if (key === 'ai.error.technicalDetail') {
+      return state.lang === 'ar' ? 'تفصيل تقني:' : 'Technical detail:'
+    }
+    return key
+  }
 }))
 
 vi.mock('../../i18n/useLang', () => ({
@@ -321,7 +332,10 @@ describe('AssistantDrawer browser consent workflows', () => {
     expect(messages.at(-1)?.content).toContain('Step 1')
     expect(messages.at(-1)?.content).not.toContain('Employee Exit')
     expect(messages.at(-1)?.content).not.toContain('HR Operations')
-    expect(await screen.findByText('Grounded response')).not.toBeNull()
+    const response = await screen.findByText('Grounded response')
+    expect(response.closest('[role="alert"]')).toBeNull()
+    const log = screen.getByRole('log')
+    expect(log.getAttribute('aria-live')).toBe('polite')
 
     await user.click(screen.getByRole('button', { name: 'Employee Exit' }))
     expect(onOpenProcess).toHaveBeenCalledWith('HR/Employee_Exit.bpmn')
@@ -348,7 +362,9 @@ describe('AssistantDrawer browser consent workflows', () => {
   it('shows retry state and aborts an in-flight reviewed request', async () => {
     selectAnthropic()
     const user = userEvent.setup()
+    const onChangeWorkspace = vi.fn()
     let observedSignal: AbortSignal | null = null
+    const currentSignal = (): AbortSignal | null => observedSignal
     mocks.makeCallFactory.mockImplementation(
       (
         _config: unknown,
@@ -375,17 +391,55 @@ describe('AssistantDrawer browser consent workflows', () => {
         )
       }
     )
-    renderDrawer()
+    renderDrawer({ onChangeWorkspace })
 
     const preview = await queueLibraryRequest(user)
     await user.click(within(preview).getByLabelText('ai.privacy.consent'))
     await user.click(within(preview).getByRole('button', { name: 'assist.send' }))
 
     expect(await screen.findByText('ai.retry.waiting')).not.toBeNull()
+    await user.click(screen.getByRole('button', { name: 'app.changeFolder' }))
+    expect(onChangeWorkspace).toHaveBeenCalledOnce()
+    expect(currentSignal()?.aborted).toBe(false)
+    expect(screen.getByRole('dialog', { name: 'assist.title' })).not.toBeNull()
     await user.click(within(preview).getByRole('button', { name: 'ai.cancel' }))
     await waitFor(() => expect(observedSignal?.aborted).toBe(true))
     expect(screen.queryByRole('region', { name: 'ai.privacy.preview.title' })).toBeNull()
     expect(screen.queryByText('ai.error.cancelled')).toBeNull()
+  })
+
+  it('localizes provider failures in Arabic and keeps diagnostics in an English code span', async () => {
+    state.lang = 'ar'
+    selectAnthropic()
+    const user = userEvent.setup()
+    const providerDiagnostic = 'anthropic 503: upstream unavailable'
+    mocks.llmCall.mockRejectedValueOnce(new Error('raw provider response'))
+    mocks.classify.mockReturnValueOnce({
+      code: 'provider',
+      message: 'The AI provider returned an error.',
+      offline: false,
+      technicalDetail: providerDiagnostic
+    })
+    renderDrawer()
+
+    const preview = await queueLibraryRequest(user)
+    await user.click(within(preview).getByLabelText('ai.privacy.consent'))
+    await user.click(within(preview).getByRole('button', { name: 'assist.send' }))
+
+    expect(await screen.findByText(ar['ai.error.provider'])).not.toBeNull()
+    const alert = screen.getByRole('alert')
+    expect(alert.getAttribute('aria-live')).toBe('assertive')
+    expect(alert.getAttribute('aria-atomic')).toBe('true')
+    expect(screen.getByRole('log').getAttribute('aria-live')).toBe('polite')
+    expect(within(alert).getByText(ar['ai.error.provider'])).not.toBeNull()
+    const detail = document.querySelector<HTMLElement>('[data-ai-technical-detail]')
+    expect(detail).not.toBeNull()
+    expect(within(detail!).getByText(ar['ai.error.technicalDetail'])).not.toBeNull()
+    const code = within(detail!).getByText(providerDiagnostic)
+    expect(code.tagName).toBe('CODE')
+    expect(code.getAttribute('lang')).toBe('en')
+    expect(code.getAttribute('dir')).toBe('ltr')
+    expect(screen.queryByText('raw provider response')).toBeNull()
   })
 
   it('handles digest failures, interview-without-modeler, close, and Escape', async () => {

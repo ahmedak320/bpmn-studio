@@ -41,6 +41,60 @@ describe('hard-coded user-facing English gate', () => {
     ])
   })
 
+  it('follows lexical variable-built copy into operational UI messages', () => {
+    const source = `
+      const message = 'This outer diagnostic is not rendered.'
+      export function BadCopy(error: string, row: { id: string }, hasError: boolean) {
+        const unused = 'This internal diagnostic is not rendered.'
+        const message = \`Storage committed, but reconciliation failed: \${error}\`
+        const evidence = 'History retention failed: ' + error
+        const errorId = hasError ? \`\${row.id}-neutral-error\` : undefined
+        recordWorkspaceIssue(message)
+        recordWorkspaceIssue(evidence)
+        void unused
+        return <>{errorId && <span />}</>
+      }
+    `
+
+    expect(
+      scanTsxSource('/repo/src/BadCopy.tsx', source, '/repo').map(({ kind, text }) => ({
+        kind,
+        text
+      }))
+    ).toEqual([
+      {
+        kind: 'user-message-call',
+        text: 'Storage committed, but reconciliation failed: ${…}'
+      },
+      { kind: 'user-message-call', text: 'History retention failed:' }
+    ])
+  })
+
+  it('follows user messages through local wrapper parameters', () => {
+    const source = `
+      function forward(reason: string) {
+        setError(reason)
+      }
+      const forwardFromCallback = useCallback((reason: string, detail: string) => {
+        const message = \`\${reason}: \${detail}\`
+        recordWorkspaceIssue(message)
+      }, [])
+      forward('Direct wrapper copy is visible.')
+      forwardFromCallback('Callback wrapper copy is visible.', 'technical-detail')
+    `
+
+    expect(
+      scanTsxSource('/repo/src/BadCopy.tsx', source, '/repo').map(({ kind, text }) => ({
+        kind,
+        text
+      }))
+    ).toEqual([
+      { kind: 'user-message-call', text: 'Direct wrapper copy is visible.' },
+      { kind: 'user-message-call', text: 'Callback wrapper copy is visible.' },
+      { kind: 'user-message-call', text: 'technical-detail' }
+    ])
+  })
+
   it('keeps production components free of unreviewed hard-coded English', () => {
     expect(productionAudit.violations.map(formatHardcodedUiCopyFinding)).toEqual([])
   })

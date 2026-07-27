@@ -9,7 +9,10 @@ import {
 import { SerialQueue } from './serialQueue'
 import type {
   BackupExportOptions,
+  CreateFolderIfMissingResult,
   FileSnapshot,
+  ListWorkspaceOptions,
+  ReadFileOptions,
   SaveOutcome,
   RemoveEmptyFolderResult,
   WorkspaceAdapter,
@@ -20,8 +23,12 @@ import type {
 } from './types'
 import {
   WorkspaceOperationError,
+  WorkspaceListLimitError,
+  WorkspaceReadLimitError,
   alreadyExists,
   notFound,
+  validatedListLimits,
+  validatedReadLimit,
   workspaceFailure
 } from './workspaceError'
 
@@ -53,6 +60,10 @@ export interface MemoryWorkspaceAdapterOptions {
   now?: () => number
   backupExporter?: WorkspaceBackupExporter
   beforeWrite?: (path: string, bytes: Uint8Array) => void | Promise<void>
+  /** Test hook invoked inside the local queue at conditional-delete entry. */
+  beforeRemoveIfHash?: (path: string, expectedHash: string) => void | Promise<void>
+  /** Test hook invoked inside the local queue at remove-if-empty entry. */
+  beforeRemoveEmptyFolder?: (path: string) => void | Promise<void>
 }
 
 /**
@@ -84,12 +95,16 @@ export class MemoryWorkspaceAdapter implements WorkspaceAdapter {
   private readonly now: () => number
   private readonly backupExporter: WorkspaceBackupExporter
   private readonly beforeWrite?: (path: string, bytes: Uint8Array) => void | Promise<void>
+  private readonly beforeRemoveIfHash?: (path: string, expectedHash: string) => void | Promise<void>
+  private readonly beforeRemoveEmptyFolder?: (path: string) => void | Promise<void>
 
   constructor(options: MemoryWorkspaceAdapterOptions = {}) {
     this.id = options.id ?? 'memory-workspace'
     this.now = options.now ?? (() => Date.now())
     this.backupExporter = options.backupExporter ?? exportWorkspaceBackup
     this.beforeWrite = options.beforeWrite
+    this.beforeRemoveIfHash = options.beforeRemoveIfHash
+    this.beforeRemoveEmptyFolder = options.beforeRemoveEmptyFolder
 
     for (const folder of options.folders ?? []) this.createFolderSync(folder)
     if (Array.isArray(options.files)) {
@@ -135,7 +150,8 @@ export class MemoryWorkspaceAdapter implements WorkspaceAdapter {
     this.version += 1
   }
 
-  async list(path = ''): Promise<WorkspaceEntry[]> {
+  async list(path = '', options: ListWorkspaceOptions = {}): Promise<WorkspaceEntry[]> {
+    const limits = validatedListLimits(options)
     const root = normalizeWorkspacePath(path, { allowRoot: true })
     this.ensurePermission('list', root || undefined)
     if (root) {
@@ -152,9 +168,24 @@ export class MemoryWorkspaceAdapter implements WorkspaceAdapter {
     }
 
     const prefix = root ? `${root}/` : ''
-    return [...this.nodes.entries()]
-      .filter(([entryPath]) => entryPath.startsWith(prefix) && entryPath !== root)
-      .map(([entryPath, node]): WorkspaceEntry => ({
+    const rootDepth = root ? root.split('/').length : 0
+    const entries: WorkspaceEntry[] = []
+    for (const [entryPath, node] of this.nodes) {
+      options.signal?.throwIfAborted()
+      if (!entryPath.startsWith(prefix) || entryPath === root) continue
+      const depth = entryPath.split('/').length - rootDepth
+      if (limits.maxDepth !== undefined && depth > limits.maxDepth) {
+        throw new WorkspaceListLimitError(entryPath, 'depth', limits.maxDepth, depth)
+      }
+      if (limits.maxEntries !== undefined && entries.length >= limits.maxEntries) {
+        throw new WorkspaceListLimitError(
+          entryPath,
+          'entries',
+          limits.maxEntries,
+          entries.length + 1
+        )
+      }
+      entries.push({
         path: entryPath,
         name: workspacePathName(entryPath),
         parentPath: workspaceParentPath(entryPath),
@@ -163,12 +194,16 @@ export class MemoryWorkspaceAdapter implements WorkspaceAdapter {
         modifiedAt: node.modifiedAt,
         mimeType: node.kind === 'file' ? node.mimeType : undefined,
         readable: true
-      }))
-      .sort(compareEntries)
+      })
+    }
+    entries.sort(compareEntries)
+    options.signal?.throwIfAborted()
+    return entries
   }
 
-  async read(path: string): Promise<FileSnapshot> {
+  async read(path: string, options: ReadFileOptions = {}): Promise<FileSnapshot> {
     const normalized = normalizeWorkspacePath(path)
+    const maxBytes = validatedReadLimit(normalized, options)
     this.ensurePermission('read', normalized)
     const node = this.nodes.get(normalized)
     if (!node) throw notFound('read', normalized)
@@ -180,7 +215,13 @@ export class MemoryWorkspaceAdapter implements WorkspaceAdapter {
         message: `Workspace entry "${normalized}" is not a file.`
       })
     }
-    return this.snapshot(normalized, node)
+    if (maxBytes !== undefined && node.bytes.byteLength > maxBytes) {
+      throw new WorkspaceReadLimitError(normalized, maxBytes, node.bytes.byteLength)
+    }
+    options.signal?.throwIfAborted()
+    const snapshot = await this.snapshot(normalized, node)
+    options.signal?.throwIfAborted()
+    return snapshot
   }
 
   async writeAtomic(
@@ -333,10 +374,43 @@ export class MemoryWorkspaceAdapter implements WorkspaceAdapter {
     })
   }
 
+  async removeIfHash(path: string, expectedHashInput: string): Promise<void> {
+    const normalized = normalizeWorkspacePath(path)
+    const expectedHash = validatedExpectedHash(expectedHashInput)
+    await this.queue.run(async () => {
+      this.ensurePermission('remove', normalized)
+      await this.beforeRemoveIfHash?.(normalized, expectedHash)
+      const captured = this.nodes.get(normalized)
+      if (!captured) {
+        throw conditionalRemoveConflict(normalized, 'disappeared')
+      }
+      if (captured.kind !== 'file') {
+        throw new WorkspaceOperationError({
+          code: 'not-a-file',
+          operation: 'remove',
+          path: normalized,
+          message: `Workspace entry "${normalized}" is not a file.`
+        })
+      }
+      const actualHash = await sha256Hex(copyBytes(captured.bytes))
+      // External test/recovery mutations intentionally bypass the local queue.
+      // Object identity closes that asynchronous digest window, including ABA
+      // rewrites with byte-identical content.
+      if (this.nodes.get(normalized) !== captured || !equalHash(actualHash, expectedHash)) {
+        throw conditionalRemoveConflict(normalized, 'changed')
+      }
+      const next = new Map(this.nodes)
+      next.delete(normalized)
+      this.nodes = next
+      this.version += 1
+    })
+  }
+
   async removeEmptyFolder(path: string): Promise<RemoveEmptyFolderResult> {
     const normalized = normalizeWorkspacePath(path)
     return await this.queue.run(async () => {
       this.ensurePermission('remove', normalized)
+      await this.beforeRemoveEmptyFolder?.(normalized)
       const node = this.nodes.get(normalized)
       if (!node) throw notFound('remove', normalized)
       if (node.kind !== 'directory') {
@@ -376,6 +450,35 @@ export class MemoryWorkspaceAdapter implements WorkspaceAdapter {
       }
       this.nodes = next
       this.version += 1
+    })
+  }
+
+  async createFolderIfMissing(path: string): Promise<CreateFolderIfMissingResult> {
+    const normalized = normalizeWorkspacePath(path)
+    return await this.queue.run(async () => {
+      this.ensurePermission('create-folder', normalized)
+      const existing = this.nodes.get(normalized)
+      if (existing?.kind === 'file') throw alreadyExists('create-folder', normalized)
+      if (existing) return 'existing'
+
+      const parent = workspaceParentPath(normalized)
+      if (parent) {
+        const parentNode = this.nodes.get(parent)
+        if (!parentNode) throw notFound('create-folder', parent)
+        if (parentNode.kind !== 'directory') {
+          throw new WorkspaceOperationError({
+            code: 'not-a-directory',
+            operation: 'create-folder',
+            path: parent,
+            message: `Workspace entry "${parent}" is not a directory.`
+          })
+        }
+      }
+      const next = new Map(this.nodes)
+      next.set(normalized, { kind: 'directory', modifiedAt: this.now() })
+      this.nodes = next
+      this.version += 1
+      return 'created'
     })
   }
 
@@ -524,6 +627,25 @@ export class MemoryWorkspaceAdapter implements WorkspaceAdapter {
     const parent = workspaceParentPath(filePath)
     if (parent) this.createFolderSync(parent)
   }
+}
+
+function validatedExpectedHash(expectedHash: string): string {
+  if (!/^[a-f0-9]{64}$/iu.test(expectedHash)) {
+    throw new TypeError('Conditional removal requires a SHA-256 digest.')
+  }
+  return expectedHash.toLowerCase()
+}
+
+function conditionalRemoveConflict(
+  path: string,
+  state: 'changed' | 'disappeared'
+): WorkspaceOperationError {
+  return new WorkspaceOperationError({
+    code: 'integrity-failure',
+    operation: 'remove',
+    path,
+    message: `Workspace file "${path}" ${state} before conditional removal.`
+  })
 }
 
 function inferMimeType(path: string): string {

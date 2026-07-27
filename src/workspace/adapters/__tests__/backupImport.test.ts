@@ -8,7 +8,9 @@ import {
   preflightWorkspaceBackupZip,
   sha256Hex,
   type BackupExportOptions,
+  type CreateFolderIfMissingResult,
   type FileSnapshot,
+  type RemoveEmptyFolderResult,
   type SaveOutcome,
   type WorkspaceAdapter,
   type WorkspaceEntry,
@@ -108,6 +110,9 @@ class DelegatingAdapter implements WorkspaceAdapter {
   readonly mode
   readonly storage: WorkspaceStorageInfo
   writes = 0
+  beforeRemoveIfHash?: (path: string) => void | Promise<void>
+  beforeRemoveEmptyFolder?: (path: string) => void | Promise<void>
+  beforeCreateFolderIfMissing?: (path: string) => void | Promise<void>
 
   constructor(
     readonly target: MemoryWorkspaceAdapter,
@@ -164,8 +169,23 @@ class DelegatingAdapter implements WorkspaceAdapter {
     return this.target.remove(path)
   }
 
+  async removeIfHash(path: string, expectedHash: string): Promise<void> {
+    await this.beforeRemoveIfHash?.(path)
+    await this.target.removeIfHash(path, expectedHash)
+  }
+
+  async removeEmptyFolder(path: string): Promise<RemoveEmptyFolderResult> {
+    await this.beforeRemoveEmptyFolder?.(path)
+    return this.target.removeEmptyFolder(path)
+  }
+
   createFolder(path: string): Promise<void> {
     return this.target.createFolder(path)
+  }
+
+  async createFolderIfMissing(path: string): Promise<CreateFolderIfMissingResult> {
+    await this.beforeCreateFolderIfMissing?.(path)
+    return this.target.createFolderIfMissing(path)
   }
 
   exportBackup(options?: BackupExportOptions): Promise<Blob> {
@@ -516,6 +536,98 @@ describe('transactional workspace backup import', () => {
       rollbackErrors: [expect.objectContaining({ code: 'integrity-failure' })]
     })
     expect(decode((await memory.read('a-replaced.bpmn')).bytes)).toBe('changed during rollback')
+  })
+
+  it('preserves a newly edited created file when it changes at rollback delete entry', async () => {
+    const blob = await backupFrom({
+      'a-created.bpmn': 'created',
+      'z-fail.bpmn': 'failure'
+    })
+    const memory = new MemoryWorkspaceAdapter({ id: 'backup:rollback-delete-race' })
+    const failing = new DelegatingAdapter(memory, 'z-fail.bpmn')
+    let injected = false
+    failing.beforeRemoveIfHash = (path) => {
+      if (path !== 'a-created.bpmn' || injected) return
+      injected = true
+      memory.replaceExternally(path, 'newer external bytes')
+    }
+    const plan = await inspectWorkspaceBackup(failing, blob)
+
+    const result = await applyWorkspaceBackupImport(failing, plan)
+
+    expect(result).toMatchObject({
+      status: 'rollback-failed',
+      rollbackErrors: [
+        expect.objectContaining({
+          code: 'integrity-failure',
+          operation: 'remove',
+          path: 'a-created.bpmn'
+        })
+      ]
+    })
+    expect(decode((await memory.read('a-created.bpmn')).bytes)).toBe('newer external bytes')
+  })
+
+  it('preserves a concurrent child and reports incomplete created-folder rollback', async () => {
+    const blob = await backupFrom({
+      'nested/a-created.bpmn': 'created',
+      'z-fail.bpmn': 'failure'
+    })
+    const memory = new MemoryWorkspaceAdapter({ id: 'backup:rollback-folder-race' })
+    const failing = new DelegatingAdapter(memory, 'z-fail.bpmn')
+    let injected = false
+    failing.beforeRemoveEmptyFolder = (path) => {
+      if (path !== 'nested' || injected) return
+      injected = true
+      memory.replaceExternally('nested/concurrent-note.txt', 'retain me')
+    }
+    const plan = await inspectWorkspaceBackup(failing, blob)
+
+    const result = await applyWorkspaceBackupImport(failing, plan)
+
+    expect(result).toMatchObject({
+      status: 'rollback-failed',
+      rollbackErrors: [
+        expect.objectContaining({
+          code: 'integrity-failure',
+          operation: 'remove',
+          path: 'nested'
+        })
+      ]
+    })
+    expect(decode((await memory.read('nested/concurrent-note.txt')).bytes)).toBe('retain me')
+    await expect(memory.read('nested/a-created.bpmn')).rejects.toMatchObject({
+      code: 'not-found'
+    })
+  })
+
+  it('does not claim or remove a folder a peer creates after backup preflight', async () => {
+    const blob = await backupFrom({
+      'nested/a-created.bpmn': 'created',
+      'z-fail.bpmn': 'failure'
+    })
+    const memory = new MemoryWorkspaceAdapter({ id: 'backup:folder-ownership-race' })
+    const failing = new DelegatingAdapter(memory, 'z-fail.bpmn')
+    let injected = false
+    failing.beforeCreateFolderIfMissing = async (path) => {
+      if (path !== 'nested' || injected) return
+      injected = true
+      await memory.createFolder(path)
+    }
+    const plan = await inspectWorkspaceBackup(failing, blob)
+
+    const result = await applyWorkspaceBackupImport(failing, plan)
+
+    expect(result).toMatchObject({
+      status: 'rolled-back',
+      rollbackErrors: []
+    })
+    expect((await memory.list()).find((entry) => entry.path === 'nested')).toMatchObject({
+      kind: 'directory'
+    })
+    await expect(memory.read('nested/a-created.bpmn')).rejects.toMatchObject({
+      code: 'not-found'
+    })
   })
 
   it('requires the exact plan digest and rejects post-review byte tampering before writes', async () => {

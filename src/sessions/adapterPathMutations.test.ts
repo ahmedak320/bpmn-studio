@@ -22,6 +22,7 @@ import type { DocumentIdentity } from './types'
 
 const workspace = { id: 'workspace-uuid', generation: 1, mode: 'directory' as const }
 const identity = (path: string): DocumentIdentity => ({ workspace, path })
+const decode = (bytes: Uint8Array): string => new TextDecoder().decode(bytes)
 const saveSession = async (sessionId: string) => ({
   sessionId,
   ok: true,
@@ -303,6 +304,78 @@ describe('adapter-backed path transactions', () => {
     expect(new TextDecoder().decode((await adapter.read('archive/a.bpmn')).bytes)).toBe(
       '<external/>'
     )
+  })
+
+  it('preserves a destination changed exactly at conditional rollback deletion', async () => {
+    let injectRace = false
+    const adapter = new MemoryWorkspaceAdapter({
+      id: workspace.id,
+      folders: ['archive'],
+      files: { 'folder/a.bpmn': '<original/>' },
+      beforeRemoveIfHash: (path) => {
+        if (path === 'archive/a.bpmn' && injectRace) {
+          adapter.replaceExternally(path, '<newer/>')
+        }
+      }
+    })
+    const store = new DocumentSessionStore()
+    store.open({
+      identity: identity('folder/a.bpmn'),
+      title: 'a.bpmn',
+      xml: '<original/>'
+    })
+    const mutation = await mutateAdapterPath(
+      adapter,
+      readyMovePlan(store, 'folder/a.bpmn', 'archive/a.bpmn')
+    )
+
+    injectRace = true
+    await expect(mutation.rollback()).rejects.toMatchObject({
+      code: 'integrity-failure',
+      operation: 'remove',
+      path: 'archive/a.bpmn'
+    })
+
+    await expectNotFound(adapter.read('folder/a.bpmn'))
+    expect(decode((await adapter.read('archive/a.bpmn')).bytes)).toBe('<newer/>')
+  })
+
+  it('preserves a concurrent staging child and reports incomplete rollback cleanup', async () => {
+    let injectChild = false
+    const adapter = new MemoryWorkspaceAdapter({
+      id: workspace.id,
+      files: { 'notes.txt': 'notes' },
+      beforeRemoveEmptyFolder: (path) => {
+        if (injectChild && path.startsWith(`${PATH_TRANSACTION_STAGING_ROOT}/tx-`)) {
+          injectChild = false
+          adapter.replaceExternally(`${path}/concurrent-note.txt`, 'retain me')
+        }
+      }
+    })
+    const deletion = confirmPathDelete(
+      planPathTransaction([], {
+        id: 'delete-notes-with-folder-race',
+        kind: 'delete',
+        workspaceId: workspace.id,
+        entryKind: 'file',
+        sourcePath: 'notes.txt'
+      })
+    )
+    const mutation = await mutateAdapterPath(adapter, deletion)
+
+    injectChild = true
+    await expect(mutation.rollback()).rejects.toMatchObject({
+      code: 'integrity-failure',
+      operation: 'remove',
+      path: expect.stringMatching(/^\.orbitpm\/transactions\/tx-/u)
+    })
+
+    expect(decode((await adapter.read('notes.txt')).bytes)).toBe('notes')
+    const concurrent = (await adapter.list()).find((entry) =>
+      entry.path.endsWith('/concurrent-note.txt')
+    )
+    expect(concurrent).toBeDefined()
+    expect(decode((await adapter.read(concurrent!.path)).bytes)).toBe('retain me')
   })
 
   it('rejects reserved metadata paths, stale workspace ids, and BPMN delete without history', async () => {

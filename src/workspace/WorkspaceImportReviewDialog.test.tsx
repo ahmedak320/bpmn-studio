@@ -5,28 +5,44 @@ import userEvent from '@testing-library/user-event'
 import { useState } from 'react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { setLang } from '../i18n'
-import { createValidationSummary, validationIssue } from '../validation'
 import {
+  createValidationSummary,
+  validationIssue,
+  type ValidationSeverity,
+  type ValidationSource
+} from '../validation'
+import {
+  WORKSPACE_IMPORT_EXACT_EVIDENCE_PAGE_SIZE,
+  WORKSPACE_IMPORT_REVIEW_PAGE_SIZE,
   WorkspaceImportReviewDialog,
   type WorkspaceImportReviewDialogProps
 } from './WorkspaceImportReviewDialog'
+import { WORKSPACE_IMPORT_TECHNICAL_DETAIL_MAX_CODE_POINTS } from './WorkspaceImportAutoLayoutPreview'
 import type {
   WorkspaceImportArtifact,
   WorkspaceImportCollision,
   WorkspaceImportCollisionDecision,
-  WorkspaceImportPlan
+  WorkspaceImportPlan,
+  WorkspaceImportRepairCode,
+  WorkspaceImportSkipReason
 } from './importTransaction'
 
 const previewMocks = vi.hoisted(() => ({
   props: vi.fn()
 }))
 
-vi.mock('./WorkspaceImportAutoLayoutPreview', () => ({
-  WorkspaceImportAutoLayoutPreview: (props: { artifacts: readonly unknown[] }) => {
-    previewMocks.props(props)
-    return <div data-testid="auto-layout-preview" />
+vi.mock('./WorkspaceImportAutoLayoutPreview', async () => {
+  const actual = await vi.importActual<typeof import('./WorkspaceImportAutoLayoutPreview')>(
+    './WorkspaceImportAutoLayoutPreview'
+  )
+  return {
+    ...actual,
+    WorkspaceImportAutoLayoutPreview: (props: { artifacts: readonly unknown[] }) => {
+      previewMocks.props(props)
+      return <div data-testid="auto-layout-preview" />
+    }
   }
-}))
+})
 
 afterEach(() => {
   cleanup()
@@ -39,6 +55,13 @@ const HASH_B = 'b'.repeat(64)
 const HASH_C = 'c'.repeat(64)
 const REVIEW_DIGEST = 'd'.repeat(64)
 const LOCALIZATION_DIGEST = 'e'.repeat(64)
+
+// These two cases intentionally drive multiple paged jsdom surfaces. Keep their
+// headroom local so a loaded full-suite run does not require a global timeout increase.
+const PAGED_EVIDENCE_TEST_TIMEOUT_MS = 15_000
+// This path drives 101 controlled collision rows and two page transitions; 20s
+// preserves local headroom under full parallel contention without changing the suite default.
+const PAGED_COLLISION_EDIT_TEST_TIMEOUT_MS = 20_000
 
 function artifact(
   id: string,
@@ -129,6 +152,69 @@ function plan(overrides: Partial<WorkspaceImportPlan> = {}): WorkspaceImportPlan
   }
 }
 
+function evidencePlan(count: number): WorkspaceImportPlan {
+  const artifacts = Array.from({ length: count }, (_, index) =>
+    artifact(`artifact-${index + 1}`, `target/artifact-${index + 1}.bpmn`)
+  )
+  const collisions = artifacts.map((item) => collision(item.id, item.destinationPath))
+  return plan({
+    artifacts,
+    collisions,
+    skipped: artifacts.map((item, index) => ({
+      sourceId: `skipped-source-${index + 1}`,
+      sourceName: `skipped-${index + 1}.bpmn`,
+      reason: 'unsupported-content',
+      message: `skipped-diagnostic-${index + 1}`
+    })),
+    warnings: artifacts.map((item, index) => ({
+      code: 'same-path-process-replacement',
+      sourceId: item.sourceId,
+      artifactId: item.id,
+      message: `warning-diagnostic-${index + 1}`
+    })),
+    repairs: artifacts.map((item, index) => ({
+      code: 'destination-normalized',
+      sourceId: item.sourceId,
+      artifactId: item.id,
+      message: `repair-diagnostic-${index + 1}`,
+      before: `incoming\\artifact-${index + 1}.bpmn`,
+      after: `incoming/artifact-${index + 1}.bpmn`
+    })),
+    arisReports: artifacts.map(
+      (item, index) =>
+        ({
+          sourceId: item.sourceId,
+          sourceName: `ARIS source ${index + 1}.aml`,
+          report: {
+            summary: {
+              converted: index + 1,
+              downgraded: 0,
+              ignored: 0,
+              ambiguous: 0,
+              unmapped: 0
+            }
+          },
+          download: {
+            fileName: `aris-report-${index + 1}.json`,
+            mimeType: 'application/json',
+            text: '{}'
+          }
+        }) as WorkspaceImportPlan['arisReports'][number]
+    ),
+    summary: {
+      sources: count,
+      artifacts: count,
+      collisions: count,
+      skipped: count,
+      repairs: count,
+      warnings: count,
+      arisReports: count,
+      creates: 0,
+      identical: 0
+    }
+  })
+}
+
 function renderDialog(
   reviewPlan: WorkspaceImportPlan,
   props: Partial<WorkspaceImportReviewDialogProps> = {}
@@ -145,18 +231,25 @@ function renderDialog(
   )
 }
 
+function replaceControlledInputValue(input: HTMLInputElement, value: string): void {
+  // One change event models replacing the field while avoiding userEvent's
+  // per-character focus dependency across controlled rerenders.
+  fireEvent.change(input, { target: { value } })
+}
+
 function ControlledReview({
   plan: reviewPlan,
   onDecisionObserved = vi.fn(),
-  onConfirm = vi.fn()
+  onConfirm = vi.fn(),
+  initialDecisions = {}
 }: {
   plan: WorkspaceImportPlan
   onDecisionObserved?: WorkspaceImportReviewDialogProps['onDecision']
   onConfirm?: () => void
+  initialDecisions?: Record<string, WorkspaceImportCollisionDecision | undefined>
 }): JSX.Element {
-  const [decisions, setDecisions] = useState<
-    Record<string, WorkspaceImportCollisionDecision | undefined>
-  >({})
+  const [decisions, setDecisions] =
+    useState<Record<string, WorkspaceImportCollisionDecision | undefined>>(initialDecisions)
   return (
     <WorkspaceImportReviewDialog
       plan={reviewPlan}
@@ -179,6 +272,427 @@ function ControlledReview({
 }
 
 describe('WorkspaceImportReviewDialog', () => {
+  it('keeps every top-level evidence surface bounded at the 2,500-artifact supported limit', () => {
+    const supportedLimit = 2_500
+    renderDialog(evidencePlan(supportedLimit))
+
+    const listIds = [
+      'workspace-import-review-artifact-list',
+      'workspace-import-review-skipped-list',
+      'workspace-import-review-warning-list',
+      'workspace-import-review-repair-list',
+      'workspace-import-review-aris-list',
+      'workspace-import-review-collision-list'
+    ]
+    for (const listId of listIds) {
+      const list = document.getElementById(listId)
+      expect(list).not.toBeNull()
+      expect(list?.children).toHaveLength(WORKSPACE_IMPORT_REVIEW_PAGE_SIZE)
+      expect(list?.children[0]?.getAttribute('aria-setsize')).toBe(String(supportedLimit))
+    }
+    expect(document.querySelectorAll('.workspace-import-review__card')).toHaveLength(
+      WORKSPACE_IMPORT_REVIEW_PAGE_SIZE * listIds.length
+    )
+    expect(
+      (screen.getByRole('button', { name: 'Confirm import' }) as HTMLButtonElement).disabled
+    ).toBe(true)
+    expect(screen.queryByText('artifact-2500')).toBeNull()
+  }, 15_000)
+
+  it(
+    'makes every paged artifact and evidence item, including nested exact IDs, reachable',
+    () => {
+      const count = WORKSPACE_IMPORT_REVIEW_PAGE_SIZE + 3
+      const base = evidencePlan(count)
+      const processIds = Array.from(
+        { length: WORKSPACE_IMPORT_EXACT_EVIDENCE_PAGE_SIZE + 3 },
+        (_, index) => `Process_Reachable_${index + 1}`
+      )
+      const reviewPlan = {
+        ...base,
+        artifacts: [{ ...base.artifacts[0]!, processIds }, ...base.artifacts.slice(1)]
+      }
+      renderDialog(reviewPlan)
+
+      const firstArtifact = document.getElementById('workspace-import-review-artifact-list')
+        ?.children[0] as HTMLElement
+      const reachedProcessIds = new Set<string>()
+      for (;;) {
+        const exactItems = [
+          ...firstArtifact.querySelectorAll('.workspace-import-review__exact-list li')
+        ]
+        expect(exactItems.length).toBeLessThanOrEqual(WORKSPACE_IMPORT_EXACT_EVIDENCE_PAGE_SIZE)
+        for (const item of exactItems) {
+          const value = item.textContent
+          if (value?.startsWith('Process_Reachable_')) reachedProcessIds.add(value)
+        }
+        const next = within(firstArtifact).queryByRole('button', {
+          name: 'Next Process IDs: artifact-1 page'
+        }) as HTMLButtonElement | null
+        if (!next || next.disabled) break
+        fireEvent.click(next)
+      }
+      expect(reachedProcessIds).toEqual(new Set(processIds))
+
+      const pagedLists = [
+        {
+          id: 'workspace-import-review-artifact-list',
+          next: 'Next Prepared artifacts page'
+        },
+        {
+          id: 'workspace-import-review-skipped-list',
+          next: 'Next Skipped inputs page'
+        },
+        {
+          id: 'workspace-import-review-warning-list',
+          next: 'Next Warnings page'
+        },
+        {
+          id: 'workspace-import-review-repair-list',
+          next: 'Next Automatic repairs page'
+        },
+        {
+          id: 'workspace-import-review-aris-list',
+          next: 'Next ARIS conversion reports page'
+        },
+        {
+          id: 'workspace-import-review-collision-list',
+          next: 'Next Destination collisions page'
+        }
+      ]
+      for (const spec of pagedLists) {
+        const list = document.getElementById(spec.id) as HTMLElement
+        const reachedPositions = new Set<number>()
+        for (;;) {
+          expect(list.children.length).toBeLessThanOrEqual(WORKSPACE_IMPORT_REVIEW_PAGE_SIZE)
+          for (const item of [...list.children]) {
+            reachedPositions.add(Number(item.getAttribute('aria-posinset')))
+            expect(item.getAttribute('aria-setsize')).toBe(String(count))
+          }
+          const next = screen.getByRole('button', { name: spec.next }) as HTMLButtonElement
+          expect(next.getAttribute('aria-controls')).toBe(spec.id)
+          if (next.disabled) break
+          fireEvent.click(next)
+        }
+        expect(reachedPositions).toEqual(
+          new Set(Array.from({ length: count }, (_, index) => index + 1))
+        )
+      }
+
+      expect(screen.getByText(`skipped-diagnostic-${count}`)).not.toBeNull()
+      expect(screen.getByText(`warning-diagnostic-${count}`)).not.toBeNull()
+      expect(screen.getByText(`repair-diagnostic-${count}`)).not.toBeNull()
+      expect(screen.getByText(`aris-report-${count}.json`)).not.toBeNull()
+    },
+    PAGED_EVIDENCE_TEST_TIMEOUT_MS
+  )
+
+  it('localizes page navigation in Arabic and reaches the final artifact', async () => {
+    const user = userEvent.setup()
+    const count = WORKSPACE_IMPORT_REVIEW_PAGE_SIZE + 1
+    setLang('ar')
+    renderDialog(evidencePlan(count))
+
+    const navigation = screen.getByRole('navigation', { name: 'صفحات المخرجات المجهزة' })
+    expect(within(navigation).getByRole('status').textContent).toMatch(/[\u0600-\u06ff]/u)
+    await user.click(
+      within(navigation).getByRole('button', { name: 'صفحة المخرجات المجهزة التالية' })
+    )
+    expect(screen.getByText(`artifact-${count}`)).not.toBeNull()
+    expect(within(navigation).getByRole('status').textContent).toContain(`${count}`)
+  })
+
+  it('localizes every skip reason while preserving its exact evidence code and a safe fallback', async () => {
+    const user = userEvent.setup()
+    setLang('ar')
+    const reasons = [
+      'unsupported-content',
+      'unsafe-path',
+      'invalid-bpmn',
+      'aml-conversion-failed',
+      'process-id-collision',
+      'process-identity-changed',
+      'localization-review-required',
+      'localization-review-cancelled',
+      'localization-invalid',
+      'destination-parent-file',
+      'library-not-bpmn',
+      'library-unsafe-path',
+      'library-too-large',
+      'library-decode-failed'
+    ] as const satisfies readonly WorkspaceImportSkipReason[]
+    const futureReason = 'future-skip-reason' as WorkspaceImportSkipReason
+    renderDialog(
+      plan({
+        skipped: [...reasons, futureReason].map((reason, index) => ({
+          sourceId: `skipped-${index}`,
+          sourceName: `skipped-${index}.bpmn`,
+          reason,
+          message: `evidence-${index}`
+        }))
+      })
+    )
+
+    const labels: string[] = []
+    const codes: Array<string | null> = []
+    const messages: string[] = []
+    const repairs: string[] = []
+    const diagnosticValues: Array<string | null> = []
+    const skippedSection = screen
+      .getByRole('heading', { name: 'المدخلات المتخطاة' })
+      .closest('section') as HTMLElement
+
+    for (;;) {
+      labels.push(
+        ...[...skippedSection.querySelectorAll('[data-workspace-import-skip-reason-label]')].map(
+          (element) => element.textContent ?? ''
+        )
+      )
+      codes.push(
+        ...[...skippedSection.querySelectorAll('[data-workspace-import-skip-reason-code]')].map(
+          (element) => element.textContent
+        )
+      )
+      messages.push(
+        ...[...skippedSection.querySelectorAll('[data-workspace-import-localized-message]')].map(
+          (element) => element.textContent ?? ''
+        )
+      )
+      repairs.push(
+        ...[...skippedSection.querySelectorAll('[data-workspace-import-localized-repair]')].map(
+          (element) => element.textContent ?? ''
+        )
+      )
+      const diagnostics = [
+        ...skippedSection.querySelectorAll('[data-workspace-import-technical-diagnostic]')
+      ]
+      diagnosticValues.push(...diagnostics.map((element) => element.textContent))
+      for (const evidence of [
+        ...skippedSection.querySelectorAll('[data-workspace-import-skip-reason-code]'),
+        ...diagnostics
+      ]) {
+        expect(evidence.tagName).toBe('CODE')
+        expect(evidence.getAttribute('lang')).toBe('en')
+        expect(evidence.getAttribute('dir')).toBe('ltr')
+      }
+      const next = within(skippedSection).queryByRole('button', {
+        name: 'صفحة المدخلات المتخطاة التالية'
+      }) as HTMLButtonElement | null
+      if (!next || next.disabled) break
+      await user.click(next)
+    }
+
+    expect(labels).toHaveLength(reasons.length + 1)
+    expect(labels.every((label) => /[\u0600-\u06ff]/u.test(label))).toBe(true)
+    expect(
+      labels
+        .slice(0, reasons.length)
+        .some((label) => (reasons as readonly string[]).includes(label))
+    ).toBe(false)
+    expect(labels.at(-1)).toBe('سبب تخطٍ غير معروف')
+    expect(codes).toEqual([...reasons, futureReason])
+    expect(messages).toHaveLength(reasons.length + 1)
+    expect(messages.every((message) => /[\u0600-\u06ff]/u.test(message))).toBe(true)
+    expect(repairs.every((repair) => /[\u0600-\u06ff]/u.test(repair))).toBe(true)
+    expect(messages.at(-1)).toBe('تم تخطي المدخل لسبب لا يتعرف عليه هذا الإصدار.')
+    expect(repairs.at(-1)).toContain('الدليل التقني')
+    expect(diagnosticValues).toEqual(
+      [...reasons, futureReason].map((_, index) => `evidence-${index}`)
+    )
+  })
+
+  it('localizes every repair and known warning while retaining raw diagnostics as evidence', () => {
+    setLang('ar')
+    const repairCodes = [
+      'aml-converted',
+      'auto-layout',
+      'destination-normalized',
+      'destination-deduplicated',
+      'destination-case-normalized'
+    ] as const satisfies readonly WorkspaceImportRepairCode[]
+    const futureRepair = 'future-repair' as WorkspaceImportRepairCode
+    const warningCodes = [
+      'aml-downgraded',
+      'aml-ignored',
+      'aml-ambiguous',
+      'aml-unmapped',
+      'same-path-process-replacement'
+    ] as const
+    const exactArtifact = artifact('artifact-a', 'target/artifact-a.bpmn')
+    renderDialog(
+      plan({
+        artifacts: [exactArtifact],
+        repairs: [...repairCodes, futureRepair].map((code, index) => ({
+          code,
+          sourceId: exactArtifact.sourceId,
+          artifactId: exactArtifact.id,
+          message: `raw-repair-${index}`
+        })),
+        warnings: [
+          ...warningCodes.map((code, index) => ({
+            code,
+            sourceId: exactArtifact.sourceId,
+            artifactId: exactArtifact.id,
+            message: `raw-warning-${index}`,
+            count: index + 1
+          })),
+          {
+            code: 'future-warning',
+            sourceId: exactArtifact.sourceId,
+            artifactId: exactArtifact.id,
+            message: 'raw-warning-future'
+          },
+          {
+            code: 'bpmnlint.label-required',
+            sourceId: exactArtifact.sourceId,
+            artifactId: exactArtifact.id,
+            message: 'raw-warning-wrapper',
+            validationIssue: validationIssue({
+              code: 'bpmnlint.label-required',
+              severity: 'warning',
+              source: 'bpmnlint',
+              blocking: false,
+              ruleId: 'label-required',
+              message: 'raw-validation-diagnostic'
+            })
+          }
+        ]
+      })
+    )
+
+    const warningSection = screen
+      .getByRole('heading', { name: 'التحذيرات' })
+      .closest('section') as HTMLElement
+    const repairSection = screen
+      .getByRole('heading', { name: 'الإصلاحات التلقائية' })
+      .closest('section') as HTMLElement
+    const warningMessages = [
+      ...warningSection.querySelectorAll('[data-workspace-import-localized-message]')
+    ].map((element) => element.textContent ?? '')
+    const warningRepairs = [
+      ...warningSection.querySelectorAll('[data-workspace-import-localized-repair]')
+    ].map((element) => element.textContent ?? '')
+    const repairMessages = [
+      ...repairSection.querySelectorAll('[data-workspace-import-localized-message]')
+    ].map((element) => element.textContent ?? '')
+
+    expect(warningMessages).toHaveLength(warningCodes.length + 2)
+    expect(warningMessages.every((message) => /[\u0600-\u06ff]/u.test(message))).toBe(true)
+    expect(warningRepairs.every((repair) => /[\u0600-\u06ff]/u.test(repair))).toBe(true)
+    expect(warningMessages[0]).toContain(new Intl.NumberFormat('ar').format(1))
+    expect(warningMessages.at(-2)).toBe('أبلغ مخطط الاستيراد عن تحذير لا يتعرف عليه هذا الإصدار.')
+    expect(repairMessages).toHaveLength(repairCodes.length + 1)
+    expect(repairMessages.every((message) => /[\u0600-\u06ff]/u.test(message))).toBe(true)
+    expect(repairMessages.at(-1)).toBe('طبّق المخطط إصلاحًا تلقائيًا لا يتعرف عليه هذا الإصدار.')
+
+    const rawDiagnostics = [
+      ...document.querySelectorAll('[data-workspace-import-technical-diagnostic]')
+    ]
+    expect(rawDiagnostics).toHaveLength(warningCodes.length + 2 + repairCodes.length + 1)
+    expect(rawDiagnostics.map((element) => element.textContent)).toEqual([
+      ...warningCodes.map((_, index) => `raw-warning-${index}`),
+      'raw-warning-future',
+      'raw-warning-wrapper',
+      ...repairCodes.map((_, index) => `raw-repair-${index}`),
+      `raw-repair-${repairCodes.length}`
+    ])
+    for (const diagnostic of rawDiagnostics) {
+      expect(diagnostic.tagName).toBe('CODE')
+      expect(diagnostic.getAttribute('lang')).toBe('en')
+      expect(diagnostic.getAttribute('dir')).toBe('ltr')
+    }
+    const validationDiagnostic = document.querySelector(
+      '[data-workspace-import-validation-diagnostic]'
+    )
+    expect(validationDiagnostic?.textContent).toBe('raw-validation-diagnostic')
+    expect(validationDiagnostic?.getAttribute('lang')).toBe('en')
+    const ruleId = within(warningSection).getByText('label-required')
+    expect(ruleId.tagName).toBe('CODE')
+    expect(ruleId.getAttribute('lang')).toBe('en')
+  })
+
+  it('localizes every sealed validation severity and source while retaining exact code and rule evidence', () => {
+    setLang('ar')
+    const severities = ['error', 'warning', 'info'] as const satisfies readonly ValidationSeverity[]
+    const sources = [
+      'xml',
+      'moddle',
+      'xsd',
+      'bpmnlint',
+      'structure',
+      'semantic',
+      'di',
+      'orbitpm',
+      'preservation'
+    ] as const satisfies readonly ValidationSource[]
+    const exactArtifact = artifact('validation-evidence', 'target/validation-evidence.bpmn')
+    const warnings = sources.map((source, index) => {
+      const code = `sealed.${source}.${index}`
+      const ruleId = `rule-${source}-${index}`
+      return {
+        code: `warning-wrapper-${index}`,
+        sourceId: exactArtifact.sourceId,
+        artifactId: exactArtifact.id,
+        message: `wrapper-${index}`,
+        validationIssue: validationIssue({
+          code,
+          severity: severities[index % severities.length],
+          source,
+          blocking: false,
+          ruleId,
+          message: `diagnostic-${index}`
+        })
+      }
+    })
+    warnings.push({
+      code: 'warning-wrapper-future',
+      sourceId: exactArtifact.sourceId,
+      artifactId: exactArtifact.id,
+      message: 'wrapper-future',
+      validationIssue: validationIssue({
+        code: 'sealed.future',
+        severity: 'future-severity' as ValidationSeverity,
+        source: 'future-source' as ValidationSource,
+        blocking: false,
+        ruleId: 'rule-future',
+        message: 'diagnostic-future'
+      })
+    })
+
+    renderDialog(plan({ artifacts: [exactArtifact], warnings }))
+
+    const severityLabels = [
+      ...document.querySelectorAll('[data-workspace-import-validation-severity]')
+    ].map((element) => element.textContent ?? '')
+    const sourceLabels = [
+      ...document.querySelectorAll('[data-workspace-import-validation-source]')
+    ].map((element) => element.textContent ?? '')
+    expect(severityLabels).toHaveLength(sources.length + 1)
+    expect(sourceLabels).toHaveLength(sources.length + 1)
+    expect(severityLabels.every((label) => /[\u0600-\u06ff]/u.test(label))).toBe(true)
+    expect(sourceLabels.every((label) => /[\u0600-\u06ff]/u.test(label))).toBe(true)
+    expect(severityLabels).not.toEqual(expect.arrayContaining([...severities]))
+    expect(sourceLabels).not.toEqual(expect.arrayContaining([...sources]))
+    expect(severityLabels.at(-1)).toBe('خطورة تحقق غير معروفة')
+    expect(sourceLabels.at(-1)).toBe('مصدر تحقق غير معروف')
+
+    const exactCodes = [...document.querySelectorAll('[data-workspace-import-validation-code]')]
+    const exactRules = [...document.querySelectorAll('[data-workspace-import-validation-rule]')]
+    expect(exactCodes.map((element) => element.textContent)).toEqual([
+      ...sources.map((source, index) => `sealed.${source}.${index}`),
+      'sealed.future'
+    ])
+    expect(exactRules.map((element) => element.textContent)).toEqual([
+      ...sources.map((source, index) => `rule-${source}-${index}`),
+      'rule-future'
+    ])
+    for (const evidence of [...exactCodes, ...exactRules]) {
+      expect(evidence.tagName).toBe('CODE')
+      expect(evidence.getAttribute('lang')).toBe('en')
+      expect(evidence.getAttribute('dir')).toBe('ltr')
+    }
+  })
+
   it('renders the exact sealed plan, every artifact and all review evidence', async () => {
     const download = vi.fn()
     const exactArtifact = artifact('artifact-exact', 'finance/exact output.bpmn', {
@@ -352,6 +866,112 @@ describe('WorkspaceImportReviewDialog', () => {
     })
   })
 
+  it('requires explicit acceptance of the sealed auto-layout repair set and resets it by review digest', async () => {
+    const user = userEvent.setup()
+    const repaired = artifact('accept-layout', 'target/accept-layout.bpmn')
+    const reviewPlan = plan({
+      reviewDigest: '4'.repeat(64),
+      artifacts: [repaired],
+      repairs: [
+        {
+          code: 'auto-layout',
+          sourceId: repaired.sourceId,
+          artifactId: repaired.id,
+          message: 'Generated missing DI.'
+        }
+      ]
+    })
+    const confirm = vi.fn()
+    const rendered = renderDialog(reviewPlan, { onConfirm: confirm })
+    const acceptance = screen.getByRole('checkbox', {
+      name: 'I accept every listed auto-layout repair (1 total).'
+    }) as HTMLInputElement
+    const confirmButton = screen.getByRole('button', {
+      name: 'Confirm import'
+    }) as HTMLButtonElement
+
+    expect(acceptance.checked).toBe(false)
+    expect(confirmButton.disabled).toBe(true)
+    expect(
+      screen.getByText('Accept all listed auto-layout repairs before confirming this import.')
+    ).not.toBeNull()
+    await user.click(acceptance)
+    expect(acceptance.checked).toBe(true)
+    expect(confirmButton.disabled).toBe(false)
+    expect(screen.getByText(/previews are available on demand/i)).not.toBeNull()
+    await user.click(confirmButton)
+    expect(confirm).toHaveBeenCalledOnce()
+
+    rendered.rerender(
+      <WorkspaceImportReviewDialog
+        plan={reviewPlan}
+        decisions={{}}
+        onDecision={vi.fn()}
+        onConfirm={vi.fn()}
+        onCancel={vi.fn()}
+      />
+    )
+    expect(
+      (
+        screen.getByRole('checkbox', {
+          name: 'I accept every listed auto-layout repair (1 total).'
+        }) as HTMLInputElement
+      ).checked
+    ).toBe(true)
+
+    rendered.rerender(
+      <WorkspaceImportReviewDialog
+        plan={{ ...reviewPlan, reviewDigest: '5'.repeat(64) }}
+        decisions={{}}
+        onDecision={vi.fn()}
+        onConfirm={vi.fn()}
+        onCancel={vi.fn()}
+      />
+    )
+    expect(
+      (
+        screen.getByRole('checkbox', {
+          name: 'I accept every listed auto-layout repair (1 total).'
+        }) as HTMLInputElement
+      ).checked
+    ).toBe(false)
+    expect(
+      (screen.getByRole('button', { name: 'Confirm import' }) as HTMLButtonElement).disabled
+    ).toBe(true)
+  })
+
+  it('localizes the auto-layout acceptance decision in Arabic', async () => {
+    const user = userEvent.setup()
+    setLang('ar')
+    const repaired = artifact('accept-layout-ar', 'target/accept-layout-ar.bpmn')
+    renderDialog(
+      plan({
+        artifacts: [repaired],
+        repairs: [
+          {
+            code: 'auto-layout',
+            sourceId: repaired.sourceId,
+            artifactId: repaired.id,
+            message: 'Generated missing DI.'
+          }
+        ]
+      })
+    )
+
+    const acceptance = screen.getByRole('checkbox', {
+      name: 'أوافق على جميع إصلاحات التخطيط التلقائي المدرجة وعددها 1.'
+    }) as HTMLInputElement
+    expect(acceptance.checked).toBe(false)
+    expect(
+      screen.getByText('وافق على جميع إصلاحات التخطيط التلقائي المدرجة قبل تأكيد هذا الاستيراد.')
+    ).not.toBeNull()
+    await user.click(acceptance)
+    expect(acceptance.checked).toBe(true)
+    expect(
+      (screen.getByRole('button', { name: 'تأكيد الاستيراد' }) as HTMLButtonElement).disabled
+    ).toBe(false)
+  })
+
   it('defaults identical collisions to a disabled skip and blocks unresolved collisions', async () => {
     const user = userEvent.setup()
     const identicalArtifact = artifact('identical', 'target/identical.bpmn')
@@ -396,6 +1016,76 @@ describe('WorkspaceImportReviewDialog', () => {
     expect(confirm).toHaveBeenCalledOnce()
   })
 
+  it('keeps confirmation blocked for an off-page unresolved collision, then enables it when resolved', async () => {
+    const user = userEvent.setup()
+    const count = WORKSPACE_IMPORT_REVIEW_PAGE_SIZE + 1
+    const reviewPlan = evidencePlan(count)
+    const initialDecisions = Object.fromEntries(
+      reviewPlan.collisions
+        .slice(0, -1)
+        .map(({ artifactId }) => [artifactId, { action: 'replace' as const }])
+    )
+    render(<ControlledReview plan={reviewPlan} initialDecisions={initialDecisions} />)
+
+    const confirm = screen.getByRole('button', { name: 'Confirm import' }) as HTMLButtonElement
+    expect(confirm.disabled).toBe(true)
+    expect(screen.getByText(/1 non-identical collision decision/)).not.toBeNull()
+    await user.click(
+      screen.getByRole('button', {
+        name: 'Next Destination collisions page'
+      })
+    )
+    const offPageDecision = screen.getByLabelText('Collision decision') as HTMLSelectElement
+    expect(offPageDecision.value).toBe('')
+    await user.selectOptions(offPageDecision, 'replace')
+    expect(confirm.disabled).toBe(false)
+  })
+
+  it(
+    'preserves keep-both drafts across pages and detects off-page duplicate destinations globally',
+    async () => {
+      const user = userEvent.setup()
+      const count = WORKSPACE_IMPORT_REVIEW_PAGE_SIZE + 1
+      const reviewPlan = evidencePlan(count)
+      const initialDecisions = Object.fromEntries(
+        reviewPlan.collisions.map(({ artifactId }) => [artifactId, { action: 'replace' as const }])
+      )
+      render(<ControlledReview plan={reviewPlan} initialDecisions={initialDecisions} />)
+
+      const confirm = screen.getByRole('button', { name: 'Confirm import' }) as HTMLButtonElement
+      const firstDecision = screen.getAllByLabelText('Collision decision')[0]!
+      await user.selectOptions(firstDecision, 'keep-both')
+      const firstPath = screen.getByLabelText('Keep-both destination') as HTMLInputElement
+      replaceControlledInputValue(firstPath, 'target/persisted-copy.bpmn')
+      expect(confirm.disabled).toBe(false)
+
+      await user.click(
+        screen.getByRole('button', {
+          name: 'Next Destination collisions page'
+        })
+      )
+      const offPageDecision = screen.getByLabelText('Collision decision')
+      await user.selectOptions(offPageDecision, 'keep-both')
+      const offPagePath = screen.getByLabelText('Keep-both destination') as HTMLInputElement
+      replaceControlledInputValue(offPagePath, 'TARGET/PERSISTED-COPY.BPMN')
+      expect(confirm.disabled).toBe(true)
+      expect(screen.getByText(/cannot use the same destination/)).not.toBeNull()
+
+      await user.click(
+        screen.getByRole('button', {
+          name: 'Previous Destination collisions page'
+        })
+      )
+      const restoredFirstPath = screen.getByLabelText('Keep-both destination') as HTMLInputElement
+      expect(restoredFirstPath.value).toBe('target/persisted-copy.bpmn')
+      expect((screen.getAllByLabelText('Collision decision')[0] as HTMLSelectElement).value).toBe(
+        'keep-both'
+      )
+      expect(screen.getByText(/cannot use the same destination/)).not.toBeNull()
+    },
+    PAGED_COLLISION_EDIT_TEST_TIMEOUT_MS
+  )
+
   it('reports replace, skip, and keep-both decisions by artifact ID', async () => {
     const user = userEvent.setup()
     const artifacts = [
@@ -438,8 +1128,7 @@ describe('WorkspaceImportReviewDialog', () => {
       (screen.getByRole('button', { name: 'Confirm import' }) as HTMLButtonElement).disabled
     ).toBe(false)
 
-    await user.clear(destination)
-    await user.type(destination, 'target/reviewed-copy.bpmn')
+    replaceControlledInputValue(destination, 'target/reviewed-copy.bpmn')
     expect(observed).toHaveBeenLastCalledWith('keep-id', {
       action: 'keep-both',
       destinationPath: 'target/reviewed-copy.bpmn'
@@ -498,35 +1187,28 @@ describe('WorkspaceImportReviewDialog', () => {
     const paths = screen.getAllByLabelText('Keep-both destination') as HTMLInputElement[]
     const confirm = screen.getByRole('button', { name: 'Confirm import' }) as HTMLButtonElement
 
-    await user.clear(paths[0]!)
-    await user.type(paths[0]!, '.orbitpm/reviewed.bpmn')
+    replaceControlledInputValue(paths[0]!, '.orbitpm/reviewed.bpmn')
     expect(screen.getByText(/reserved \.orbitpm workspace namespace/)).not.toBeNull()
     expect(confirm.disabled).toBe(true)
 
-    await user.clear(paths[0]!)
-    await user.type(paths[0]!, 'target/two.bpmn')
+    replaceControlledInputValue(paths[0]!, 'target/two.bpmn')
     expect(screen.getByText(/already occupied by an artifact/)).not.toBeNull()
     expect(confirm.disabled).toBe(true)
 
-    await user.clear(paths[0]!)
-    await user.type(paths[0]!, '../invalid.bpmn')
+    replaceControlledInputValue(paths[0]!, '../invalid.bpmn')
     expect(screen.getByText(/valid relative workspace file path/)).not.toBeNull()
     expect(confirm.disabled).toBe(true)
 
-    await user.clear(paths[0]!)
-    await user.type(paths[0]!, 'target/shared-copy.bpmn')
-    await user.clear(paths[1]!)
-    await user.type(paths[1]!, 'TARGET/shared-copy.bpmn')
+    replaceControlledInputValue(paths[0]!, 'target/shared-copy.bpmn')
+    replaceControlledInputValue(paths[1]!, 'TARGET/shared-copy.bpmn')
     expect(screen.getAllByText(/cannot use the same destination/)).toHaveLength(2)
     expect(confirm.disabled).toBe(true)
 
-    await user.clear(paths[1]!)
-    await user.type(paths[1]!, 'target/second-copy.bpmn')
+    replaceControlledInputValue(paths[1]!, 'target/second-copy.bpmn')
     expect(confirm.disabled).toBe(false)
   })
 
-  it('resets editable keep-both state when the sealed review digest changes', async () => {
-    const user = userEvent.setup()
+  it('resets editable keep-both state when the sealed review digest changes', () => {
     const firstArtifact = artifact('same-id', 'target/same.bpmn')
     const firstPlan = plan({
       reviewDigest: '1'.repeat(64),
@@ -541,8 +1223,7 @@ describe('WorkspaceImportReviewDialog', () => {
     const rendered = renderDialog(firstPlan, { decisions })
     const firstInput = screen.getByLabelText('Keep-both destination') as HTMLInputElement
     expect(firstInput.value).toBe('target/first suggestion.bpmn')
-    await user.clear(firstInput)
-    await user.type(firstInput, 'target/edited draft.bpmn')
+    replaceControlledInputValue(firstInput, 'target/edited draft.bpmn')
     expect(firstInput.value).toBe('target/edited draft.bpmn')
 
     rendered.rerender(
@@ -566,6 +1247,111 @@ describe('WorkspaceImportReviewDialog', () => {
     expect((screen.getByLabelText('Keep-both destination') as HTMLInputElement).value).toBe(
       'target/second suggestion.bpmn'
     )
+  })
+
+  it('returns every evidence window to its first page when the sealed review digest changes', async () => {
+    const user = userEvent.setup()
+    const firstPlan = {
+      ...evidencePlan(WORKSPACE_IMPORT_REVIEW_PAGE_SIZE + 1),
+      reviewDigest: '7'.repeat(64)
+    }
+    const rendered = renderDialog(firstPlan)
+    await user.click(
+      screen.getByRole('button', {
+        name: 'Next Prepared artifacts page'
+      })
+    )
+    await user.click(
+      screen.getByRole('button', {
+        name: 'Next Destination collisions page'
+      })
+    )
+    expect(
+      screen.getAllByText(`artifact-${WORKSPACE_IMPORT_REVIEW_PAGE_SIZE + 1}`).length
+    ).toBeGreaterThan(0)
+
+    rendered.rerender(
+      <WorkspaceImportReviewDialog
+        plan={{ ...firstPlan, reviewDigest: '8'.repeat(64) }}
+        decisions={{}}
+        onDecision={vi.fn()}
+        onConfirm={vi.fn()}
+        onCancel={vi.fn()}
+      />
+    )
+    const artifactList = document.getElementById('workspace-import-review-artifact-list')!
+    const collisionList = document.getElementById('workspace-import-review-collision-list')!
+    expect(artifactList.children[0]?.getAttribute('aria-posinset')).toBe('1')
+    expect(collisionList.children[0]?.getAttribute('aria-posinset')).toBe('1')
+    expect(
+      (
+        screen.getByRole('button', {
+          name: 'Previous Prepared artifacts page'
+        }) as HTMLButtonElement
+      ).disabled
+    ).toBe(true)
+    expect(
+      (
+        screen.getByRole('button', {
+          name: 'Previous Destination collisions page'
+        }) as HTMLButtonElement
+      ).disabled
+    ).toBe(true)
+  })
+
+  it('bounds megabyte diagnostics Unicode-safely while preserving exact repair path evidence', () => {
+    const exactArtifact = artifact('bounded-evidence', 'target/bounded-evidence.bpmn')
+    const rawDiagnostic = `secret-provider-detail:${'😀'.repeat(600_000)}`
+    const exactBefore = `incoming/${'x'.repeat(1_024)}.bpmn`
+    const exactAfter = `reviewed/${'y'.repeat(1_024)}.bpmn`
+    renderDialog(
+      plan({
+        artifacts: [exactArtifact],
+        skipped: [
+          {
+            sourceId: 'large-diagnostic-source',
+            sourceName: 'large-diagnostic.bpmn',
+            reason: 'invalid-bpmn',
+            message: rawDiagnostic
+          }
+        ],
+        repairs: [
+          {
+            code: 'destination-normalized',
+            sourceId: exactArtifact.sourceId,
+            artifactId: exactArtifact.id,
+            message: 'Normalized exact path evidence.',
+            before: exactBefore,
+            after: exactAfter
+          }
+        ]
+      }),
+      { error: rawDiagnostic }
+    )
+
+    const skippedSection = screen
+      .getByRole('heading', { name: 'Skipped inputs' })
+      .closest('section') as HTMLElement
+    const itemEvidence = skippedSection.querySelector(
+      '[data-workspace-import-technical-diagnostic]'
+    ) as HTMLElement
+    const applyEvidence = document.querySelector(
+      '[data-workspace-import-apply-technical-diagnostic]'
+    ) as HTMLElement
+    for (const evidence of [itemEvidence, applyEvidence]) {
+      expect(Array.from(evidence.textContent ?? '')).toHaveLength(
+        WORKSPACE_IMPORT_TECHNICAL_DETAIL_MAX_CODE_POINTS
+      )
+      expect(evidence.textContent?.endsWith('…')).toBe(true)
+      expect(evidence.textContent?.includes('\uFFFD')).toBe(false)
+    }
+    expect(document.querySelectorAll('[data-workspace-import-technical-truncation]')).toHaveLength(
+      2
+    )
+    expect(screen.getByRole('alert').textContent).not.toContain('secret-provider-detail')
+    expect(screen.getByText(exactBefore)).not.toBeNull()
+    expect(screen.getByText(exactAfter)).not.toBeNull()
+    expect(document.body.textContent).not.toContain(rawDiagnostic)
   })
 
   it('blocks confirmation and cancellation for busy state', () => {
@@ -605,7 +1391,13 @@ describe('WorkspaceImportReviewDialog', () => {
     ).toBe(true)
     fireEvent.keyDown(document, { key: 'Escape' })
     expect(cancel).not.toHaveBeenCalled()
-    expect(screen.getByRole('alert').textContent).toContain('Exact apply error.')
+    expect(screen.getByRole('alert').textContent).not.toContain('Exact apply error.')
+    const applyEvidence = document.querySelector(
+      '[data-workspace-import-apply-technical-diagnostic]'
+    )
+    expect(applyEvidence?.textContent).toBe('Exact apply error.')
+    expect(applyEvidence?.getAttribute('dir')).toBe('auto')
+    expect(applyEvidence?.hasAttribute('lang')).toBe(false)
   })
 
   it('only confirms explicitly and routes the close button, Cancel, and Escape to cancellation', async () => {

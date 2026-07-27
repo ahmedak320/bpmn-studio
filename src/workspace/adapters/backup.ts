@@ -62,7 +62,7 @@ export async function exportWorkspaceBackup(
   options: BackupExportOptions = {}
 ): Promise<Blob> {
   throwIfAborted(options.signal)
-  const entries = await adapter.list()
+  const entries = await adapter.list('', { signal: options.signal })
   const directories = entries
     .filter((entry) => entry.kind === 'directory')
     .map((entry) => entry.path)
@@ -146,7 +146,7 @@ export async function exportWorkspaceBackup(
   // listing catches external creates, deletes, renames, and ordinary metadata
   // changes that occurred while file snapshots were being collected.
   throwIfAborted(options.signal)
-  const finalEntries = await adapter.list()
+  const finalEntries = await adapter.list('', { signal: options.signal })
   const finalDirectories = finalEntries
     .filter((entry) => entry.kind === 'directory')
     .map((entry) => entry.path)

@@ -1,15 +1,21 @@
-import { describe, it, expect } from 'vitest'
+// @vitest-environment jsdom
+
+import { useEffect, useState } from 'react'
+import { act, cleanup, render, screen } from '@testing-library/react'
+import { afterEach, describe, it, expect } from 'vitest'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { CreditsLine } from '../CreditsLine'
-import type { UsageTotals } from '../credits'
+import { subscribeUsage, type UsageTotals } from '../credits'
 
 const noop = (): void => {}
+afterEach(cleanup)
 const usage = (
   requests: number,
   inputTokens: number,
   outputTokens: number,
   costUsd: number | null,
-  reasoningTokens = 0
+  reasoningTokens = 0,
+  overflowed = false
 ): UsageTotals => ({
   requests,
   inputTokens,
@@ -17,7 +23,8 @@ const usage = (
   reasoningTokens,
   costUsd,
   costKind: costUsd === null ? 'unknown' : 'provider',
-  since: 1
+  since: 1,
+  ...(overflowed ? { overflowed: true } : {})
 })
 
 describe('CreditsLine (static render)', () => {
@@ -95,6 +102,36 @@ describe('CreditsLine (static render)', () => {
     expect(html).not.toContain('$0.00<')
   })
 
+  it('uses a nonzero scientific currency value below fixed-decimal precision', () => {
+    const html = renderToStaticMarkup(
+      <CreditsLine
+        state={{
+          kind: 'usage',
+          session: usage(1, 1, 1, 0.000000000001),
+          allTime: usage(1, 1, 1, 0.000000000001)
+        }}
+      />
+    )
+    expect(html).toContain('$1.00E-12')
+    expect(html).not.toContain('$0.0000')
+  })
+
+  it('renders incomplete totals as localized lower bounds rather than exact counts', () => {
+    const html = renderToStaticMarkup(
+      <CreditsLine
+        state={{
+          kind: 'usage',
+          session: usage(1, 1, 1, 0.01),
+          allTime: usage(2, 3, 4, null, 1, true)
+        }}
+      />
+    )
+    expect(html).toContain('All time: ≥2 requests')
+    expect(html).toContain('≥7 input/output tokens')
+    expect(html).toContain('Usage is incomplete')
+    expect(html).toContain('cost n/a')
+  })
+
   it('usage state shows the no-balance-API note when note is set', () => {
     const html = renderToStaticMarkup(
       <CreditsLine
@@ -108,5 +145,36 @@ describe('CreditsLine (static render)', () => {
       />
     )
     expect(html).toContain('does not expose a balance API')
+  })
+})
+
+describe('mounted usage refresh subscription', () => {
+  function UsageRefreshProbe(): JSX.Element {
+    const [providers, setProviders] = useState<string[]>([])
+    useEffect(
+      () =>
+        subscribeUsage((providerId) => {
+          setProviders((current) => [...current, providerId])
+        }),
+      []
+    )
+    return <span data-testid="providers">{providers.join(',')}</span>
+  }
+
+  it('refreshes for overflow markers and storage-clear events', () => {
+    render(<UsageRefreshProbe />)
+
+    act(() => {
+      window.dispatchEvent(
+        new StorageEvent('storage', {
+          key: 'orbitpm.lite.usage.openrouter.fallback-overflow'
+        })
+      )
+      window.dispatchEvent(new StorageEvent('storage', { key: null }))
+    })
+
+    expect(screen.getByTestId('providers').textContent).toBe(
+      'openrouter,openrouter,anthropic,gemini'
+    )
   })
 })

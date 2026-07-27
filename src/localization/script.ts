@@ -39,20 +39,38 @@ function neutralKey(value: string): string {
   return normalizeLocalizationLookup(value).toLocaleLowerCase('en-US')
 }
 
+export function createApprovedScriptValueSet(values: Iterable<string>): ReadonlySet<string> {
+  const keys = new Set<string>()
+  for (const value of values) {
+    const key = neutralKey(String(value))
+    if (key) keys.add(key)
+  }
+  return keys
+}
+
+const SEEDED_NEUTRAL_KEYS = createApprovedScriptValueSet(approvedNeutralTerms(SEEDED_GLOSSARY))
+
 export interface ScriptClassifierOptions {
   /**
    * Exact approved neutral values. When omitted, the seeded glossary is used;
    * when supplied (even as []), it is the complete editable workspace list.
    */
   approvedNeutralTerms?: Iterable<string>
+  /**
+   * Pre-normalized review-scoped index. Audit/plan callers use this to avoid
+   * rebuilding the same Set for every field classification.
+   */
+  approvedNeutralTermKeys?: ReadonlySet<string>
 }
 
-function neutralSet(options: ScriptClassifierOptions): Set<string> {
+function neutralSet(options: ScriptClassifierOptions): ReadonlySet<string> {
+  if (options.approvedNeutralTermKeys !== undefined) return options.approvedNeutralTermKeys
+  if (options.approvedNeutralTerms === undefined) return SEEDED_NEUTRAL_KEYS
   const terms =
     options.approvedNeutralTerms === undefined
       ? approvedNeutralTerms(SEEDED_GLOSSARY)
-      : [...options.approvedNeutralTerms]
-  return new Set(terms.map((term) => neutralKey(String(term))).filter((term) => term !== ''))
+      : options.approvedNeutralTerms
+  return createApprovedScriptValueSet(terms)
 }
 
 export function classifyScript(
@@ -125,9 +143,15 @@ export function segmentByScript(
 
 export interface TargetValidationOptions extends ScriptClassifierOptions {
   approvedEnglishBilingualExceptions?: Iterable<string>
+  approvedEnglishBilingualExceptionKeys?: ReadonlySet<string>
 }
 
-function exactApproved(value: string, approved: Iterable<string> | undefined): boolean {
+function exactApproved(
+  value: string,
+  approved: Iterable<string> | undefined,
+  approvedKeys?: ReadonlySet<string>
+): boolean {
+  if (approvedKeys) return approvedKeys.has(neutralKey(value))
   if (!approved) return false
   const key = neutralKey(value)
   for (const candidate of approved) {
@@ -153,7 +177,11 @@ export function validateTargetScript(
   if (
     script === 'mixed' &&
     value != null &&
-    exactApproved(value, options.approvedEnglishBilingualExceptions)
+    exactApproved(
+      value,
+      options.approvedEnglishBilingualExceptions,
+      options.approvedEnglishBilingualExceptionKeys
+    )
   ) {
     return { valid: true, script }
   }

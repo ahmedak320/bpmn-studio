@@ -27,6 +27,55 @@ function installMemoryStorage(): Map<string, string> {
   return values
 }
 
+interface Deferred<T> {
+  promise: Promise<T>
+  resolve: (value: T) => void
+}
+
+function deferred<T>(): Deferred<T> {
+  let resolve!: (value: T) => void
+  const promise = new Promise<T>((resolvePromise) => {
+    resolve = resolvePromise
+  })
+  return { promise, resolve }
+}
+
+function installDeferredCrypto(): {
+  derivations: Deferred<CryptoKey>[]
+  encrypt: ReturnType<typeof vi.fn>
+} {
+  const derivations: Deferred<CryptoKey>[] = []
+  const encrypt = vi.fn(async () => new Uint8Array([1, 2, 3, 4]).buffer)
+  let randomCall = 0
+  vi.stubGlobal('crypto', {
+    getRandomValues: <T extends ArrayBufferView>(value: T): T => {
+      randomCall += 1
+      new Uint8Array(value.buffer, value.byteOffset, value.byteLength).fill(randomCall)
+      return value
+    },
+    subtle: {
+      importKey: vi.fn(async () => ({ type: 'secret' }) as CryptoKey),
+      deriveKey: vi.fn(() => {
+        const operation = deferred<CryptoKey>()
+        derivations.push(operation)
+        return operation.promise
+      }),
+      encrypt
+    }
+  } as unknown as Crypto)
+  return { derivations, encrypt }
+}
+
+function encryptedSlotEntries(storage: Map<string, string>): Array<[string, string]> {
+  return [...storage.entries()].filter(([key]) =>
+    key.startsWith('orbitpm.lite.key.encrypted.slot.')
+  )
+}
+
+function operationMetadataEntries(storage: Map<string, string>): Array<[string, string]> {
+  return [...storage.entries()].filter(([key]) => key.startsWith('orbitpm.lite.key.operation.'))
+}
+
 describe('session-only credentials', () => {
   let storage: Map<string, string>
 
@@ -180,7 +229,7 @@ describe('opt-in encrypted persistence', () => {
       'correct horse battery staple'
     )
     expect(result.ok).toBe(true)
-    const raw = storage.get('orbitpm.lite.key.encrypted.openrouter')
+    const raw = encryptedSlotEntries(storage)[0]?.[1]
     expect(raw).toBeTruthy()
     expect(raw).not.toContain('sk-private-value')
     expect(raw).not.toContain('correct horse battery staple')
@@ -212,7 +261,8 @@ describe('opt-in encrypted persistence', () => {
 
   it('detects authenticated-ciphertext tampering', async () => {
     await persistEncryptedKey('gemini', 'secret', 'passphrase')
-    const storageKey = 'orbitpm.lite.key.encrypted.gemini'
+    const storageKey = encryptedSlotEntries(storage)[0]?.[0]
+    if (!storageKey) throw new Error('encrypted slot was not stored')
     const envelope = JSON.parse(storage.get(storageKey) ?? '{}') as {
       ciphertext: string
     }
@@ -243,6 +293,80 @@ describe('opt-in encrypted persistence', () => {
     expect(getKey('openrouter')).toBe('')
   })
 
+  it('does not report a false failure when obsolete ciphertext cleanup is refused post-commit', async () => {
+    expect(await persistEncryptedKey('openrouter', 'older-key', 'older-passphrase')).toEqual({
+      ok: true,
+      value: undefined
+    })
+    const olderSlot = encryptedSlotEntries(storage)[0]?.[0]
+    if (!olderSlot) throw new Error('older encrypted slot was not stored')
+    vi.stubGlobal('localStorage', {
+      get length() {
+        return storage.size
+      },
+      key: (index: number) => [...storage.keys()][index] ?? null,
+      getItem: (key: string) => storage.get(key) ?? null,
+      setItem: (key: string, value: string) => void storage.set(key, String(value)),
+      removeItem: (key: string) => {
+        if (key === olderSlot) throw new Error('obsolete cleanup blocked')
+        storage.delete(key)
+      },
+      clear: () => storage.clear()
+    })
+
+    expect(await persistEncryptedKey('openrouter', 'newer-key', 'newer-passphrase')).toEqual({
+      ok: true,
+      value: undefined
+    })
+    expect(getKey('openrouter')).toBe('newer-key')
+    expect(hasEncryptedKey('openrouter')).toBe(true)
+    expect(encryptedSlotEntries(storage)).toHaveLength(2)
+
+    for (let attempt = 0; attempt < 20; attempt += 1) {
+      await expect(
+        persistEncryptedKey('openrouter', `refused-key-${attempt}`, 'another-passphrase')
+      ).resolves.toMatchObject({
+        ok: false,
+        code: 'storage-failed'
+      })
+      expect(encryptedSlotEntries(storage)).toHaveLength(2)
+      expect(getKey('openrouter')).toBe('newer-key')
+    }
+    expect(operationMetadataEntries(storage)).toHaveLength(1)
+  })
+
+  it('fails legacy plaintext cleanup before creating an encrypted commit', async () => {
+    storage.set('orbitpm.lite.key.openrouter', 'legacy-plaintext')
+    vi.stubGlobal('localStorage', {
+      get length() {
+        return storage.size
+      },
+      key: (index: number) => [...storage.keys()][index] ?? null,
+      getItem: (key: string) => storage.get(key) ?? null,
+      setItem: (key: string, value: string) => void storage.set(key, String(value)),
+      removeItem: (key: string) => {
+        if (key === 'orbitpm.lite.key.openrouter') throw new Error('plaintext cleanup blocked')
+        storage.delete(key)
+      },
+      clear: () => storage.clear()
+    })
+
+    await expect(
+      persistEncryptedKey('openrouter', 'new-key', 'new-passphrase')
+    ).resolves.toMatchObject({
+      ok: false,
+      code: 'storage-failed',
+      error: 'plaintext cleanup blocked'
+    })
+    expect(encryptedSlotEntries(storage)).toEqual([])
+    const failedSaveBarrier = operationMetadataEntries(storage)
+    expect(failedSaveBarrier).toHaveLength(1)
+    expect(JSON.parse(failedSaveBarrier[0]?.[1] ?? '{}')).toMatchObject({
+      kind: 'failed-save'
+    })
+    expect(getKey('openrouter')).toBe('')
+  })
+
   it('clears session, ciphertext, legacy plaintext, and legacy Custom headers', async () => {
     await persistEncryptedKey('openrouter', 'secret', 'passphrase')
     storage.set('orbitpm.lite.key.openrouter', 'old-plaintext')
@@ -253,7 +377,88 @@ describe('opt-in encrypted persistence', () => {
 
     expect(clearKey('openrouter')).toEqual({ ok: true, value: undefined })
     expect(getKey('openrouter')).toBe('')
-    expect([...storage.keys()]).toEqual([])
+    expect(encryptedSlotEntries(storage)).toEqual([])
+    const clearBarrier = operationMetadataEntries(storage)
+    expect(clearBarrier).toHaveLength(1)
+    expect(clearBarrier[0]?.[0]).toMatch(/^orbitpm\.lite\.key\.operation\.openrouter\./)
+    expect(JSON.parse(clearBarrier[0]?.[1] ?? '{}')).toMatchObject({ kind: 'clear' })
+  })
+
+  it('reuses one Clear barrier when repeated cleanup attempts are refused', async () => {
+    expect(await persistEncryptedKey('openrouter', 'stored-key', 'passphrase')).toEqual({
+      ok: true,
+      value: undefined
+    })
+    vi.stubGlobal('localStorage', {
+      get length() {
+        return storage.size
+      },
+      key: (index: number) => [...storage.keys()][index] ?? null,
+      getItem: (key: string) => storage.get(key) ?? null,
+      setItem: (key: string, value: string) => void storage.set(key, String(value)),
+      removeItem: (key: string) => {
+        if (
+          key.startsWith('orbitpm.lite.key.operation.') ||
+          key.startsWith('orbitpm.lite.key.encrypted.slot.')
+        ) {
+          throw new Error('cleanup blocked')
+        }
+        storage.delete(key)
+      },
+      clear: () => storage.clear()
+    })
+
+    for (let attempt = 0; attempt < 40; attempt += 1) {
+      expect(clearKey('openrouter')).toMatchObject({
+        ok: false,
+        code: 'storage-failed'
+      })
+    }
+
+    expect(operationMetadataEntries(storage)).toHaveLength(1)
+    expect(encryptedSlotEntries(storage)).toHaveLength(1)
+    expect(hasEncryptedKey('openrouter')).toBe(false)
+    expect(getKey('openrouter')).toBe('')
+  })
+
+  it('seals at a fixed metadata cap when operation cleanup is repeatedly refused', async () => {
+    expect(await persistEncryptedKey('openrouter', 'initial-key', 'passphrase')).toEqual({
+      ok: true,
+      value: undefined
+    })
+    storage.set('orbitpm.lite.key.openrouter', 'cleanup-refused')
+    vi.stubGlobal('localStorage', {
+      get length() {
+        return storage.size
+      },
+      key: (index: number) => [...storage.keys()][index] ?? null,
+      getItem: (key: string) => storage.get(key) ?? null,
+      setItem: (key: string, value: string) => void storage.set(key, String(value)),
+      removeItem: (key: string) => {
+        if (
+          key.startsWith('orbitpm.lite.key.operation.') ||
+          key === 'orbitpm.lite.key.openrouter'
+        ) {
+          throw new Error('metadata cleanup blocked')
+        }
+        storage.delete(key)
+      },
+      clear: () => storage.clear()
+    })
+
+    const results = []
+    for (let attempt = 0; attempt < 20; attempt += 1) {
+      results.push(await persistEncryptedKey('openrouter', `replacement-${attempt}`, 'passphrase'))
+    }
+    expect(results.some((result) => !result.ok && result.code === 'storage-failed')).toBe(true)
+    expect(operationMetadataEntries(storage)).toHaveLength(9)
+    expect(storage.get('orbitpm.lite.key.operation.seal.openrouter')).toBe('1')
+
+    for (let attempt = 0; attempt < 20; attempt += 1) {
+      clearKey('openrouter')
+    }
+    expect(operationMetadataEntries(storage)).toHaveLength(9)
+    expect(hasEncryptedKey('openrouter')).toBe(false)
   })
 
   it('reports a cleanup failure while still removing the session copy', () => {
@@ -266,5 +471,46 @@ describe('opt-in encrypted persistence', () => {
     const result = clearKey('openrouter')
     expect(result).toMatchObject({ ok: false, code: 'storage-failed' })
     expect(getKey('openrouter')).toBe('')
+  })
+
+  it('prevents a late encrypted save from recreating a credential after Clear', async () => {
+    setKey('openrouter', 'existing-session-key')
+    storage.set('orbitpm.lite.key.encrypted.openrouter', '{"existing":true}')
+    const crypto = installDeferredCrypto()
+
+    const olderSave = persistEncryptedKey('openrouter', 'late-key', 'passphrase')
+    await vi.waitFor(() => expect(crypto.derivations).toHaveLength(1))
+
+    expect(clearKey('openrouter')).toEqual({ ok: true, value: undefined })
+    crypto.derivations[0]!.resolve({ type: 'secret' } as CryptoKey)
+
+    await expect(olderSave).resolves.toMatchObject({
+      ok: false,
+      code: 'operation-cancelled'
+    })
+    expect(crypto.encrypt).not.toHaveBeenCalled()
+    expect(getKey('openrouter')).toBe('')
+    expect(encryptedSlotEntries(storage)).toEqual([])
+  })
+
+  it('commits only the newest encrypted save regardless of crypto completion order', async () => {
+    const crypto = installDeferredCrypto()
+
+    const olderSave = persistEncryptedKey('openrouter', 'older-key', 'old-passphrase')
+    await vi.waitFor(() => expect(crypto.derivations).toHaveLength(1))
+    const newerSave = persistEncryptedKey('openrouter', 'newer-key', 'new-passphrase')
+    await vi.waitFor(() => expect(crypto.derivations).toHaveLength(2))
+
+    crypto.derivations[1]!.resolve({ type: 'secret' } as CryptoKey)
+    await expect(newerSave).resolves.toEqual({ ok: true, value: undefined })
+    crypto.derivations[0]!.resolve({ type: 'secret' } as CryptoKey)
+    await expect(olderSave).resolves.toMatchObject({
+      ok: false,
+      code: 'operation-cancelled'
+    })
+
+    expect(crypto.encrypt).toHaveBeenCalledTimes(1)
+    expect(getKey('openrouter')).toBe('newer-key')
+    expect(encryptedSlotEntries(storage)).toHaveLength(1)
   })
 })

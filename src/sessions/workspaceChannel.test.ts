@@ -6,7 +6,8 @@ import {
   isWorkspaceChannelMessage,
   type BroadcastChannelFactory,
   type BroadcastChannelLike,
-  type BroadcastMessageEventLike
+  type BroadcastMessageEventLike,
+  type WebLockManagerLike
 } from './workspaceChannel'
 import type { DocumentIdentity } from './types'
 
@@ -51,6 +52,35 @@ class MemoryBroadcastChannel implements BroadcastChannelLike {
     this.bus.channels.delete(this)
     this.listeners.clear()
   }
+}
+
+class MemoryWebLocks implements WebLockManagerLike {
+  readonly held = new Set<string>()
+
+  async request(
+    name: string,
+    _options: { readonly mode: 'exclusive'; readonly ifAvailable: true },
+    callback: (lock: { readonly name: string } | null) => Promise<void>
+  ): Promise<void> {
+    if (this.held.has(name)) {
+      await callback(null)
+      return
+    }
+    this.held.add(name)
+    try {
+      await callback({ name })
+    } finally {
+      this.held.delete(name)
+    }
+  }
+}
+
+function deferred(): { promise: Promise<void>; resolve(): void } {
+  let resolve!: () => void
+  const promise = new Promise<void>((done) => {
+    resolve = done
+  })
+  return { promise, resolve }
 }
 
 const workspace = { id: 'ws', generation: 1, mode: 'directory' as const }
@@ -133,6 +163,14 @@ describe('workspace BroadcastChannel protocol', () => {
         change: 'moved',
         path: 'new.bpmn',
         previousPath: 'old.bpmn'
+      })
+    ).toBe(true)
+    expect(
+      isWorkspaceChannelMessage({
+        ...base,
+        type: 'document-change',
+        change: 'invalidated',
+        path: 'uncertain.bpmn'
       })
     ).toBe(true)
 
@@ -247,14 +285,209 @@ describe('workspace BroadcastChannel protocol', () => {
 
   it('allows another tab to acquire after a lost holder lease expires', async () => {
     let now = 0
-    const { a, b } = createPair({ leaseMs: 5, now: () => now })
+    // Keep the automatic renewal timer in the future while simulating a realm
+    // that stopped running before its first heartbeat.
+    const { a, b } = createPair({ leaseMs: 100, now: () => now })
     expect((await a.acquire(identity('a.bpmn'))).acquired).toBe(true)
-    now = 6
+    now = 101
     const afterExpiry = await b.acquire(identity('a.bpmn'))
     expect(afterExpiry.acquired).toBe(true)
     if (afterExpiry.acquired) await afterExpiry.lease.release()
     a.close()
     b.close()
+  })
+
+  it('renews a live lease until release so a slow save cannot be taken over', async () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(1_000)
+    const { a, b } = createPair({ leaseMs: 90, now: Date.now })
+    try {
+      const firstPromise = a.acquire(identity('slow-save.bpmn'))
+      await vi.advanceTimersByTimeAsync(1)
+      const first = await firstPromise
+      expect(first.acquired).toBe(true)
+
+      // Cross several original lease windows. The coordinator-owned heartbeat
+      // must keep the remote view current even though the caller never invokes
+      // lease.renew() itself.
+      await vi.advanceTimersByTimeAsync(300)
+      const contenderPromise = b.acquire(identity('slow-save.bpmn'))
+      await vi.advanceTimersByTimeAsync(1)
+      await expect(contenderPromise).resolves.toMatchObject({
+        acquired: false,
+        holderId: 'a'
+      })
+
+      if (first.acquired) await first.lease.release()
+      const afterReleasePromise = b.acquire(identity('slow-save.bpmn'))
+      await vi.advanceTimersByTimeAsync(1)
+      const afterRelease = await afterReleasePromise
+      expect(afterRelease.acquired).toBe(true)
+      if (afterRelease.acquired) await afterRelease.lease.release()
+    } finally {
+      a.close()
+      b.close()
+      vi.useRealTimers()
+    }
+  })
+
+  it('never resurrects an expired lease after a throttled or manual late renewal', async () => {
+    vi.useFakeTimers()
+    let now = 0
+    const { a, b } = createPair({ leaseMs: 90, now: () => now })
+    try {
+      const automaticPromise = a.acquire(identity('throttled.bpmn'))
+      await vi.advanceTimersByTimeAsync(1)
+      const automatic = await automaticPromise
+      expect(automatic.acquired).toBe(true)
+
+      now = 91
+      await vi.advanceTimersByTimeAsync(30)
+      const afterThrottlingPromise = b.acquire(identity('throttled.bpmn'))
+      await vi.advanceTimersByTimeAsync(1)
+      const afterThrottling = await afterThrottlingPromise
+      expect(afterThrottling.acquired).toBe(true)
+      if (afterThrottling.acquired) await afterThrottling.lease.release()
+
+      now = 100
+      const manualPromise = a.acquire(identity('manual-late.bpmn'))
+      await vi.advanceTimersByTimeAsync(1)
+      const manual = await manualPromise
+      expect(manual.acquired).toBe(true)
+      now = 191
+      if (manual.acquired) await manual.lease.renew?.()
+
+      const afterManualPromise = b.acquire(identity('manual-late.bpmn'))
+      await vi.advanceTimersByTimeAsync(1)
+      const afterManual = await afterManualPromise
+      expect(afterManual.acquired).toBe(true)
+      if (afterManual.acquired) await afterManual.lease.release()
+    } finally {
+      a.close()
+      b.close()
+      vi.useRealTimers()
+    }
+  })
+
+  it('keeps the strong browser Web Lock until explicit release after advisory expiry', async () => {
+    let now = 0
+    const webLocks = new MemoryWebLocks()
+    const isolatedFactory: BroadcastChannelFactory = () => ({
+      postMessage: () => undefined,
+      addEventListener: () => undefined,
+      removeEventListener: () => undefined,
+      close: () => undefined
+    })
+    const common = {
+      workspaceId: 'ws',
+      factory: isolatedFactory,
+      webLocks,
+      contentionMs: 1,
+      leaseMs: 10,
+      now: () => now
+    }
+    const a = new BroadcastWorkspaceCoordinator({ ...common, instanceId: 'a' })
+    const b = new BroadcastWorkspaceCoordinator({ ...common, instanceId: 'b' })
+
+    const first = await a.acquire(identity('global'))
+    expect(first.acquired).toBe(true)
+    expect(webLocks.held.size).toBe(1)
+    await expect(b.acquire(identity('global'))).resolves.toMatchObject({
+      acquired: false,
+      holderId: 'web-lock'
+    })
+
+    now = 11
+    if (first.acquired) await first.lease.renew?.()
+    expect(webLocks.held.size).toBe(1)
+    await expect(b.acquire(identity('global'))).resolves.toMatchObject({
+      acquired: false,
+      holderId: 'web-lock'
+    })
+    if (first.acquired) await first.lease.release()
+    expect(webLocks.held.size).toBe(0)
+    const afterRelease = await b.acquire(identity('global'))
+    expect(afterRelease.acquired).toBe(true)
+    if (afterRelease.acquired) await afterRelease.lease.release()
+    a.close()
+    b.close()
+  })
+
+  it('keeps a Web Lock when an automatic heartbeat runs after advisory expiry', async () => {
+    vi.useFakeTimers()
+    let now = 0
+    const webLocks = new MemoryWebLocks()
+    const isolatedFactory: BroadcastChannelFactory = () => ({
+      postMessage: () => undefined,
+      addEventListener: () => undefined,
+      removeEventListener: () => undefined,
+      close: () => undefined
+    })
+    const common = {
+      workspaceId: 'ws',
+      factory: isolatedFactory,
+      webLocks,
+      contentionMs: 1,
+      leaseMs: 90,
+      now: () => now
+    }
+    const a = new BroadcastWorkspaceCoordinator({ ...common, instanceId: 'a' })
+    const b = new BroadcastWorkspaceCoordinator({ ...common, instanceId: 'b' })
+    try {
+      const firstPromise = a.acquire(identity('automatic-late-heartbeat'))
+      await vi.advanceTimersByTimeAsync(1)
+      const first = await firstPromise
+      expect(first.acquired).toBe(true)
+
+      now = 91
+      await vi.advanceTimersByTimeAsync(30)
+      expect(webLocks.held.size).toBe(1)
+      await expect(b.acquire(identity('automatic-late-heartbeat'))).resolves.toMatchObject({
+        acquired: false,
+        holderId: 'web-lock'
+      })
+
+      if (first.acquired) await first.lease.release()
+      expect(webLocks.held.size).toBe(0)
+      const afterReleasePromise = b.acquire(identity('automatic-late-heartbeat'))
+      await vi.advanceTimersByTimeAsync(1)
+      const afterRelease = await afterReleasePromise
+      expect(afterRelease.acquired).toBe(true)
+      if (afterRelease.acquired) await afterRelease.lease.release()
+    } finally {
+      a.close()
+      b.close()
+      vi.useRealTimers()
+    }
+  })
+
+  it('releases a delayed Web Lock when the coordinator closes during acquisition', async () => {
+    const gate = deferred()
+    const webLocks = new MemoryWebLocks()
+    const delayedLocks: WebLockManagerLike = {
+      request: async (name, options, callback) => {
+        await gate.promise
+        await webLocks.request(name, options, callback)
+      }
+    }
+    const coordinator = new BroadcastWorkspaceCoordinator({
+      workspaceId: 'ws',
+      instanceId: 'closing',
+      factory: () => ({
+        postMessage: () => undefined,
+        addEventListener: () => undefined,
+        removeEventListener: () => undefined,
+        close: () => undefined
+      }),
+      webLocks: delayedLocks,
+      contentionMs: 1
+    })
+
+    const pending = coordinator.acquire(identity('delayed'))
+    coordinator.close()
+    gate.resolve()
+    await expect(pending).rejects.toThrow(/closed/)
+    expect(webLocks.held.size).toBe(0)
   })
 
   it('isolates messages by workspace and ignores self messages', () => {
@@ -311,6 +544,28 @@ describe('workspace BroadcastChannel protocol', () => {
     a.close()
     await expect(a.acquire(identity('a.bpmn'))).rejects.toThrow(/closed/)
     b.close()
+  })
+
+  it('cancels an in-flight acquire when closed without leaving remote contention behind', async () => {
+    vi.useFakeTimers()
+    const { a, b } = createPair()
+    try {
+      const pending = a.acquire(identity('closing.bpmn'))
+      const rejected = expect(pending).rejects.toThrow(/closed/)
+      a.close()
+      await vi.advanceTimersByTimeAsync(1)
+      await rejected
+
+      const next = b.acquire(identity('closing.bpmn'))
+      await vi.advanceTimersByTimeAsync(1)
+      const acquired = await next
+      expect(acquired.acquired).toBe(true)
+      if (acquired.acquired) await acquired.lease.release()
+    } finally {
+      a.close()
+      b.close()
+      vi.useRealTimers()
+    }
   })
 
   it('ignores publication for a different workspace and virtual documents', () => {

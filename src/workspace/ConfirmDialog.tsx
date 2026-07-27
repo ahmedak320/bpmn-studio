@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ReactNode } from 'react'
+import { useId, useRef, useState, type ReactNode } from 'react'
 import { Modal } from './Modal'
 import { t } from '../i18n'
 import { useLang } from '../i18n/useLang'
@@ -9,6 +9,7 @@ export interface ConfirmDialogProps {
   confirmLabel?: string
   cancelLabel?: string
   danger?: boolean
+  role?: 'dialog' | 'alertdialog'
   /** When set, the user must type this exact string to enable the confirm
    *  button — used for deleting a non-empty folder (type its name). */
   requireTyped?: string
@@ -27,6 +28,7 @@ export function ConfirmDialog({
   confirmLabel,
   cancelLabel,
   danger = false,
+  role = 'dialog',
   requireTyped,
   onConfirm,
   onCancel
@@ -36,11 +38,9 @@ export function ConfirmDialog({
   const resolvedCancelLabel = cancelLabel ?? t('confirmDialog.cancel')
   const [typed, setTyped] = useState('')
   const inputRef = useRef<HTMLInputElement | null>(null)
+  const cancelRef = useRef<HTMLButtonElement | null>(null)
+  const messageId = useId()
   const canConfirm = requireTyped === undefined || typed === requireTyped
-
-  useEffect(() => {
-    if (requireTyped !== undefined) inputRef.current?.focus()
-  }, [requireTyped])
 
   const confirmBtn = (
     <button
@@ -66,16 +66,26 @@ export function ConfirmDialog({
       title={title}
       onClose={onCancel}
       maxWidth={440}
+      role={role}
+      ariaDescribedby={messageId}
+      initialFocusRef={requireTyped === undefined ? cancelRef : inputRef}
       footer={
         <>
-          <button type="button" className="orbitpm-lite-chrome-btn" onClick={onCancel}>
+          <button
+            ref={cancelRef}
+            type="button"
+            className="orbitpm-lite-chrome-btn"
+            onClick={onCancel}
+          >
             {resolvedCancelLabel}
           </button>
           {confirmBtn}
         </>
       }
     >
-      <div style={{ fontSize: 13.5, lineHeight: 1.55 }}>{message}</div>
+      <div id={messageId} style={{ fontSize: 13.5, lineHeight: 1.55 }}>
+        {message}
+      </div>
       {requireTyped !== undefined && (
         <label style={{ display: 'block', marginTop: 12, fontSize: 13 }}>
           <span style={{ display: 'block', marginBottom: 4, color: 'var(--orbitpm-muted)' }}>

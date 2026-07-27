@@ -98,6 +98,20 @@ export interface FileSnapshot {
   mimeType?: string
 }
 
+export interface ReadFileOptions {
+  /** Reject from backing metadata before allocating/copying/hashing file bytes. */
+  maxBytes?: number
+  signal?: AbortSignal
+}
+
+export interface ListWorkspaceOptions {
+  /** Reject before returning more than this many recursive descendants. */
+  maxEntries?: number
+  /** Maximum descendant depth relative to the requested listing root. */
+  maxDepth?: number
+  signal?: AbortSignal
+}
+
 export interface WriteAtomicOptions {
   /**
    * Prevent a queued write from landing in a newly selected workspace. The
@@ -317,6 +331,7 @@ export type WorkspaceBackupExporter = (
 ) => Promise<Blob>
 
 export type RemoveEmptyFolderResult = 'removed' | 'not-empty'
+export type CreateFolderIfMissingResult = 'created' | 'existing'
 
 /**
  * Storage-independent workspace surface. Rename and move both receive complete
@@ -328,9 +343,13 @@ export interface WorkspaceAdapter {
   readonly mode: WorkspaceMode
   readonly storage: WorkspaceStorageInfo
 
-  /** Recursively list descendants of `path` (the root when omitted). */
-  list(path?: string): Promise<WorkspaceEntry[]>
-  read(path: string): Promise<FileSnapshot>
+  /**
+   * Recursively list descendants of `path` (the root when omitted).
+   * Built-in adapters always enforce their hard entry/depth ceilings; options
+   * may lower, but never raise, those ceilings.
+   */
+  list(path?: string, options?: ListWorkspaceOptions): Promise<WorkspaceEntry[]>
+  read(path: string, options?: ReadFileOptions): Promise<FileSnapshot>
   writeAtomic(
     path: string,
     bytes: Uint8Array,
@@ -341,11 +360,41 @@ export interface WorkspaceAdapter {
   move(from: string, to: string): Promise<void>
   remove(path: string): Promise<void>
   /**
+   * Remove a file only when its bytes still match `expectedHash`.
+   *
+   * Implementations must serialize the final app-observable hash check and
+   * delete entry, and must fail with an integrity error when the file changed
+   * or disappeared. The File System Access API has no native compare-and-delete
+   * primitive: its implementation is a final check immediately before
+   * `removeEntry`. Cooperating OrbitPM tabs are additionally serialized by the
+   * workspace lock protocol, but an arbitrary OS writer can still race that
+   * final browser call and callers must not describe it as filesystem-atomic.
+   *
+   * Optional third-party adapters are treated as unable to prove safe
+   * rollback/delete and callers must fail closed.
+   */
+  removeIfHash?(path: string, expectedHash: string): Promise<void>
+  /**
    * Atomically remove `path` only when it is still an empty directory.
    * Implementations must never recurse. Optional adapters are treated as
    * unable to prove safe cleanup.
    */
   removeEmptyFolder?(path: string): Promise<RemoveEmptyFolderResult>
   createFolder(path: string): Promise<void>
+  /**
+   * Create exactly the requested directory when it is missing and report
+   * whether this adapter operation created it. The parent must already exist;
+   * implementations must not create unreported ancestor directories.
+   *
+   * Implementations serialize the final app-observable existence check and
+   * creation. File System Access has no exclusive mkdir primitive, so its
+   * final missing probe followed by `getDirectoryHandle({ create: true })`
+   * remains vulnerable to an arbitrary OS writer. Cooperating OrbitPM tabs are
+   * additionally serialized by the workspace lock protocol.
+   *
+   * Optional third-party adapters cannot establish cleanup ownership. Callers
+   * that require rollback-safe folder creation must fail closed.
+   */
+  createFolderIfMissing?(path: string): Promise<CreateFolderIfMissingResult>
   exportBackup(options?: BackupExportOptions): Promise<Blob>
 }

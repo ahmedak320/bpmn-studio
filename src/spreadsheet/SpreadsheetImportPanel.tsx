@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
 
-import { t } from '../i18n'
+import { t, type Lang } from '../i18n'
 import { useLang } from '../i18n/useLang'
 import type { WorkspaceAdapter } from '../workspace/adapters'
 import type { PortableHistoryManager } from '../workspace/history'
@@ -51,7 +51,8 @@ import {
   EmptySpreadsheetDestinationInspector,
   WorkspaceImportTransactionFactory,
   WorkspaceSpreadsheetDestinationInspector,
-  downloadSpreadsheetBlob
+  downloadSpreadsheetBlob,
+  type WorkspaceSpreadsheetExclusiveRunner
 } from './destinationAdapters'
 import { SpreadsheetError } from './errors'
 import {
@@ -90,7 +91,7 @@ export interface SpreadsheetImportPanelProps {
   readonly folders?: readonly SpreadsheetFolderOption[]
   readonly knownProcessIds?: readonly string[]
   readonly getCurrentWorkspaceId?: () => string | undefined
-  readonly runWorkspaceExclusive?: <T>(operation: () => Promise<T>) => Promise<T>
+  readonly runWorkspaceExclusive?: WorkspaceSpreadsheetExclusiveRunner
   /** Reuse the App's bounded portable history for overwrite recovery. */
   readonly historyManager?: PortableHistoryManager | null
   readonly onOpenSingle: (xml: string, name: string) => void | Promise<void>
@@ -131,14 +132,61 @@ type PanelPhase =
 
 const draftStore = new BrowserMappingDraftStore()
 
-function errorText(error: unknown, fallback: string): string {
-  if (error instanceof SpreadsheetError) {
-    const facts = Object.entries(error.details)
-      .map(([key, value]) => `${key}: ${String(value)}`)
-      .join(' · ')
-    return facts ? `${fallback} (${error.code}: ${facts})` : `${fallback} (${error.code})`
+interface SpreadsheetPanelError {
+  readonly summary: string
+  readonly context?: string
+  readonly technical?: {
+    readonly code: string
+    readonly details?: string
   }
-  return error instanceof Error && error.message ? `${fallback} (${error.message})` : fallback
+}
+
+function localizedErrorDetails(
+  details: SpreadsheetError['details'],
+  lang: Lang
+): Record<string, string | number> {
+  const numberFormat = new Intl.NumberFormat(lang)
+  return Object.fromEntries(
+    Object.entries(details).map(([key, value]) => [
+      key,
+      typeof value === 'number' ? numberFormat.format(value) : String(value)
+    ])
+  )
+}
+
+function panelError(error: unknown, fallback: string, lang: Lang): SpreadsheetPanelError {
+  if (!(error instanceof SpreadsheetError)) {
+    return { summary: fallback }
+  }
+
+  const details = localizedErrorDetails(error.details, lang)
+  const actual = error.details.actual
+  const limit = error.details.limit
+  const row = error.details.row
+  let context: string | undefined
+  if (
+    typeof actual === 'number' &&
+    Number.isFinite(actual) &&
+    typeof limit === 'number' &&
+    Number.isFinite(limit)
+  ) {
+    context = t('spreadsheet.error.limitContext', {
+      actual: details.actual!,
+      limit: details.limit!
+    })
+  } else if (error.code === 'malformed-csv' && typeof row === 'number' && Number.isFinite(row)) {
+    context = t('spreadsheet.error.rowContext', { row: details.row! })
+  }
+
+  const hasDetails = Object.keys(error.details).length > 0
+  return {
+    summary: t(error.messageKey, details),
+    context,
+    technical: {
+      code: error.code,
+      details: hasDetails ? JSON.stringify(error.details) : undefined
+    }
+  }
 }
 
 function progressPhase(
@@ -268,7 +316,7 @@ export function SpreadsheetImportPanel({
     total: number
   } | null>(null)
   const [status, setStatus] = useState<string | null>(null)
-  const [error, setError] = useState<string | null>(null)
+  const [error, setError] = useState<SpreadsheetPanelError | null>(null)
   const [handoffBusy, setHandoffBusy] = useState(false)
   const [cancelRequested, setCancelRequested] = useState(false)
   const parserAbortRef = useRef<AbortController | null>(null)
@@ -542,7 +590,7 @@ export function SpreadsheetImportPanel({
         setStatus(t('spreadsheet.cancelled'))
         setPhase('idle')
       } else {
-        setError(errorText(cause, t('spreadsheet.error.parse')))
+        setError(panelError(cause, t('spreadsheet.error.parse'), lang))
         setPhase('idle')
       }
       setProgress(null)
@@ -718,7 +766,7 @@ export function SpreadsheetImportPanel({
       setStatus(t('spreadsheet.mapping.presetLoaded'))
       setError(null)
     } catch (cause) {
-      setError(errorText(cause, t('spreadsheet.error.review')))
+      setError(panelError(cause, t('spreadsheet.error.preset'), lang))
     } finally {
       if (presetInputRef.current) presetInputRef.current.value = ''
     }
@@ -807,7 +855,7 @@ export function SpreadsheetImportPanel({
         setPhase('mapping')
         return
       }
-      setError(errorText(cause, t('spreadsheet.error.review')))
+      setError(panelError(cause, t('spreadsheet.error.review'), lang))
       setReview({
         issues: [],
         additionalIssues: [],
@@ -865,7 +913,7 @@ export function SpreadsheetImportPanel({
         setPhase('review')
         return
       }
-      setError(errorText(cause, t('spreadsheet.error.prepare')))
+      setError(panelError(cause, t('spreadsheet.error.prepare'), lang))
       setPhase('review')
     } finally {
       if (preparationAbortRef.current === controller) {
@@ -987,7 +1035,7 @@ export function SpreadsheetImportPanel({
         setPhase(plan ? 'plan' : 'review')
         return
       }
-      setError(errorText(cause, t('spreadsheet.error.prepare')))
+      setError(panelError(cause, t('spreadsheet.error.bilingualReview'), lang))
       setPhase('plan')
     } finally {
       if (preparationAbortRef.current === controller) {
@@ -1044,7 +1092,7 @@ export function SpreadsheetImportPanel({
           await onCommitted?.(nextReport)
           if (draftKey) await draftStore.remove(draftKey)
         } catch (cause) {
-          setError(errorText(cause, t('spreadsheet.error.prepare')))
+          setError(panelError(cause, t('spreadsheet.error.postCommit'), lang))
         }
       }
     } catch (cause) {
@@ -1054,7 +1102,7 @@ export function SpreadsheetImportPanel({
       if (cause instanceof SpreadsheetError && cause.code === 'parse-cancelled') {
         setStatus(t('spreadsheet.cancelled'))
       } else {
-        setError(errorText(cause, t('spreadsheet.error.prepare')))
+        setError(panelError(cause, t('spreadsheet.error.commit'), lang))
       }
       setPhase('plan')
     } finally {
@@ -1422,7 +1470,9 @@ export function SpreadsheetImportPanel({
                       sourceIdentity: sourceFile ? spreadsheetSourceIdentity(sourceFile) : undefined
                     })
                     .then(() => setStatus(t('spreadsheet.mapping.draftSaved')))
-                    .catch((cause) => setError(errorText(cause, t('spreadsheet.error.review'))))
+                    .catch((cause) =>
+                      setError(panelError(cause, t('spreadsheet.error.draftSave'), lang))
+                    )
                 }}
               >
                 {t('spreadsheet.mapping.saveDraft')}
@@ -1805,7 +1855,31 @@ export function SpreadsheetImportPanel({
       )}
       {error && (
         <div role="alert" style={errorBox}>
-          {error}
+          <div>{error.summary}</div>
+          {error.context && <div>{error.context}</div>}
+          {error.technical && (
+            <details>
+              <summary>{t('spreadsheet.error.technicalEvidence')}</summary>
+              <dl style={technicalEvidenceList}>
+                <dt>{t('spreadsheet.error.technicalCode')}</dt>
+                <dd style={technicalEvidenceValue}>
+                  <code lang="en" dir="ltr">
+                    {error.technical.code}
+                  </code>
+                </dd>
+                {error.technical.details && (
+                  <>
+                    <dt>{t('spreadsheet.error.technicalDetails')}</dt>
+                    <dd style={technicalEvidenceValue}>
+                      <code lang="en" dir="ltr">
+                        {error.technical.details}
+                      </code>
+                    </dd>
+                  </>
+                )}
+              </dl>
+            </details>
+          )}
         </div>
       )}
       {sourceFile && phase !== 'parsing' && phase !== 'preparing' && phase !== 'committing' && (
@@ -1919,6 +1993,19 @@ const errorBox: CSSProperties = {
   ...infoBox,
   borderColor: 'rgba(220,38,38,0.35)',
   background: 'rgba(220,38,38,0.10)'
+}
+
+const technicalEvidenceList: CSSProperties = {
+  display: 'grid',
+  gridTemplateColumns: 'max-content minmax(0, 1fr)',
+  gap: '0.25rem 0.5rem',
+  margin: '0.5rem 0 0'
+}
+
+const technicalEvidenceValue: CSSProperties = {
+  margin: 0,
+  minWidth: 0,
+  overflowWrap: 'anywhere'
 }
 
 const mappingGroup: CSSProperties = {

@@ -24,11 +24,16 @@ export const en = {
   'app.lang.control': 'Interface: {language}',
   'app.lang.en': 'EN',
   'app.lang.ar': 'العربية',
+  'app.skipToMain': 'Skip to process workspace',
+  'app.main.aria': 'Process workspace',
+  'app.actions.aria': 'More application actions',
 
   // --- Sidebar rail toggle ---
   'sidebar.toggle.aria': 'Toggle side panel',
   'sidebar.hide.title': 'Hide the side panel',
   'sidebar.show.title': 'Show the side panel',
+  'sidebar.explorer.aria': 'Workspace explorer and generation tools',
+  'sidebar.close.aria': 'Close workspace explorer',
 
   // --- Sidebar: directory mode ---
   'tree.newProcess': '＋ New process',
@@ -108,7 +113,9 @@ export const en = {
   'alert.deleteFailed': 'Could not delete: {error}',
   'alert.moveFailed': 'Could not move: {error}',
   'alert.importFailed': 'Could not import {name}: {error}',
+  'confirm.discardUnsaved.title': 'Discard unsaved changes?',
   'confirm.discardUnsaved': 'Discard unsaved changes to {title}?',
+  'confirm.discardUnsaved.confirm': 'Discard and close',
   'confirm.deleteNode': 'Delete "{name}"? This cannot be undone.',
   'confirm.deleteFolder.notEmptyBody':
     'is not empty. Deleting it removes the folder and everything inside it. This cannot be undone.',
@@ -173,6 +180,8 @@ export const en = {
   'settings.clearKey': 'Clear stored key',
   'settings.saved': 'Saved.',
   'settings.keyCleared': 'Key cleared.',
+  'settings.credentials.saving': 'Saving credentials…',
+  'settings.credentials.unlocking': 'Unlocking encrypted credentials…',
   'settings.close': 'Close',
   'settings.saveKeys': 'Save keys',
   'settings.title.providers': 'Settings — AI providers',
@@ -191,6 +200,26 @@ export const en = {
   'settings.encryption.hint':
     'AES-256-GCM with a PBKDF2-derived key is used. Losing the passphrase makes the ciphertext unrecoverable.',
   'settings.encryption.unlocked': 'Unlocked {count} encrypted key(s) for this session.',
+  'settings.storageError.invalidInput': 'Review the required credential fields and try again.',
+  'settings.storageError.unavailable': 'Browser storage is unavailable.',
+  'settings.storageError.failed': 'The browser could not store or clean up credential data.',
+  'settings.storageError.cryptoUnavailable':
+    'Encrypted credential storage is unavailable in this browser.',
+  'settings.storageError.invalidCiphertext':
+    'The stored encrypted credential is missing or invalid.',
+  'settings.storageError.unlockFailed':
+    'The encrypted credential could not be unlocked. Check the passphrase and stored data.',
+  'settings.storageError.operationCancelled':
+    'A newer credential action replaced the pending operation.',
+  'settings.storageError.startup': 'Legacy credential cleanup could not be completed. {error}',
+  'settings.storageError.providerSelection':
+    'The AI provider and model selection could not be saved. {error}',
+  'settings.storageError.keySave': 'The key for {provider} could not be saved. {error}',
+  'settings.storageError.unlock': 'The key for {provider} could not be unlocked. {error}',
+  'settings.storageError.clear': 'The stored key for {provider} could not be cleared. {error}',
+  'settings.storageError.unknownProvider': 'the AI provider',
+  'settings.storageError.technicalDetails': 'Technical details',
+  'settings.storageError.technicalDetail': 'Credential storage technical detail',
   'settings.localization.title': 'Bilingual resources',
   'settings.localization.description':
     'Edit the curated glossary and accepted translation memory for this workspace.',
@@ -231,11 +260,54 @@ export const en = {
   'settings.localization.saving': 'Saving…',
   'settings.localization.conflict':
     'These workspace resources changed elsewhere. Reload before saving again.',
+  'settings.localization.conflictTitle': '{resource} changed elsewhere',
+  'settings.localization.conflictReloadRequired':
+    'Your unsaved draft is preserved. Reload the latest workspace version before reconciling it.',
+  'settings.localization.conflictReview':
+    'The workspace version changed after this draft began. Choose the workspace version, or keep the draft against the reloaded version for explicit review before saving.',
+  'settings.localization.conflictVersions': 'Draft base and workspace hashes:',
+  'settings.localization.conflictCompareVersions': 'Compare the draft base and workspace version',
+  'settings.localization.conflictDraftBase': 'Draft base ({count} entries)',
+  'settings.localization.conflictWorkspaceVersion': 'Workspace version ({count} entries)',
+  'settings.localization.conflictPreviewEmpty': 'No entries.',
+  'settings.localization.conflictPreviewOmitted': '{count} more entries are not shown.',
+  'settings.localization.useWorkspaceVersion': 'Use workspace version for {resource}',
+  'settings.localization.keepDraftForReview': 'Keep {resource} draft for review',
+  'settings.localization.reloadedDraftsPreserved':
+    'Workspace resources reloaded. Unsaved drafts were preserved for conflict review.',
+  'settings.localization.workspaceVersionSelected': 'Using the workspace version of {resource}.',
+  'settings.localization.draftKeptForReview':
+    '{resource} draft kept against the reloaded workspace version. Review it before saving.',
   'settings.localization.saveFailed': 'Could not save localization resources: {error}',
   'settings.localization.loadFailed':
     'Workspace localization resources could not be loaded: {error}',
   'settings.localization.loadFailedHint':
-    'The original files were not changed. Fix them externally, then retry. Editing remains disabled until reload succeeds.',
+    'Editing remains disabled until both files reload successfully. Fix the reported file externally, then retry. A completed first-use or legacy-format update may remain if a later storage operation failed.',
+  'settings.localization.failure.invalidPath': 'A localization resource path is invalid.',
+  'settings.localization.failure.invalidEncoding':
+    'A localization resource is not valid UTF-8 text.',
+  'settings.localization.failure.notFound': 'A required localization resource was not found.',
+  'settings.localization.failure.alreadyExists':
+    'A localization resource already exists where a new file was expected.',
+  'settings.localization.failure.wrongKind':
+    'A localization resource path points to the wrong kind of workspace entry.',
+  'settings.localization.failure.permission': 'Workspace file permission was lost.',
+  'settings.localization.failure.cancelled': 'The workspace operation was cancelled.',
+  'settings.localization.failure.staleWorkspace':
+    'The selected workspace changed before the operation completed.',
+  'settings.localization.failure.unsupported':
+    'This workspace cannot store portable localization resources.',
+  'settings.localization.failure.quotaExceeded': 'The workspace has insufficient storage space.',
+  'settings.localization.failure.integrity':
+    'The saved localization resource did not pass its integrity check.',
+  'settings.localization.failure.storage': 'The workspace storage operation failed.',
+  'settings.localization.failure.resourceLimit':
+    'A localization resource exceeds the supported size or complexity limit.',
+  'settings.localization.failure.partialLoad':
+    'One localization file was updated before a later resource operation failed.',
+  'settings.localization.failure.unknown': 'An unexpected workspace storage error occurred.',
+  'settings.localization.technicalDetails': 'Technical details',
+  'settings.localization.technicalDetail': 'Workspace localization technical detail',
   'settings.localization.validation.englishRequired': 'Enter the English value.',
   'settings.localization.validation.arabicRequired': 'Enter the Arabic value.',
   'settings.localization.validation.englishScript':
@@ -290,6 +362,11 @@ export const en = {
     'The provider rejected the request (authentication). Check your API key in Settings.',
   'ai.error.rateLimit':
     'The provider is rate-limiting or overloaded right now. Wait a moment and try again.',
+  'ai.error.provider': 'The AI provider returned an error. Try again or choose another provider.',
+  'ai.error.invalidResponse':
+    'The AI provider returned an unreadable or empty response. Try again.',
+  'ai.error.unknown': 'The AI operation failed unexpectedly.',
+  'ai.error.technicalDetail': 'Technical detail:',
   'ai.error.noApiKey': 'No API key for this provider. Add one in Settings.',
   'ai.error.selectProvider': 'Select a provider and model before generating.',
   'ai.pdf.label': 'Or upload a PDF',
@@ -303,7 +380,8 @@ export const en = {
   'ai.tab.description': 'From description',
   'ai.tab.pdf': 'From PDF / image',
   'ai.tab.pdf.title.supported': 'Generate from a PDF document or an image of a process drawing',
-  'ai.tab.pdf.title.unsupported': 'PDF/image input is not available for this provider',
+  'ai.tab.pdf.title.unsupported':
+    'PDF/image input is not supported by the selected provider and model. Choose a compatible model or provider.',
   'ai.pdfDocument.label': 'PDF document or image',
   'ai.pdfHint.label': 'Which process?',
   'ai.pdfHint.optional': '(optional)',
@@ -325,9 +403,22 @@ export const en = {
   'ai.attach.extracted': '{name} · {chars} characters of text extracted',
   'ai.attach.docxEmpty': 'No readable text found in {name} — is it a scanned document?',
   'ai.attach.readFailed': 'Could not read {name}: {error}',
+  'ai.attach.docxError.notZip': '{name} is not a valid Word (.docx) document.',
+  'ai.attach.docxError.missingDocument': '{name} does not contain the main Word document content.',
+  'ai.attach.docxError.tooLarge':
+    '{name} exceeds the safe document archive limits. Use a smaller document.',
+  'ai.attach.docxError.unsafe':
+    '{name} contains unsafe or conflicting archive paths and was rejected.',
+  'ai.attach.docxError.encrypted':
+    '{name} is encrypted or password protected. Save an unprotected copy and try again.',
+  'ai.attach.docxError.unsupported':
+    '{name} uses an unsupported Word archive format or compression method.',
+  'ai.attach.docxError.malformed': '{name} is damaged or is not a readable Word document.',
+  'ai.attach.docxError.cancelled': 'Reading {name} was cancelled.',
+  'ai.attach.docxError.unknown': 'The Word document {name} could not be read.',
   'ai.attach.remove': 'Remove attachment',
   'ai.attach.unsupportedProvider':
-    'Attachments are not available for this provider. Use OpenRouter, Anthropic, or Gemini, or remove the attachment.',
+    'This attachment type is not supported by the selected provider and model. Choose a compatible model or provider.',
   'ai.image.sizeGate.overLimit':
     'Image is {size} — over the {limit} limit for this provider. Compress or crop it and try again.',
   'ai.image.unsupportedType': 'Unsupported image type. Use PNG, JPEG, WebP, or GIF.',
@@ -375,7 +466,8 @@ export const en = {
     'Translated {count} labels and switched the diagram language. Save to keep the changes.',
   'translate.partial':
     'Translated {done} of {total} eligible labels. Showing {switched} labels in the requested language; {missing} remain unchanged. Save to keep the changes.',
-  'translate.failed': 'Translation failed: {error}',
+  'translate.failed':
+    'Translation failed. Unresolved fields remain available for retry or manual review.',
   'settings.completeness.label': 'Highlight missing step information',
   'settings.completeness.hint':
     'Marks steps that lack a responsible party, inputs, or outputs — and decisions lacking a basis, start events lacking a trigger.',
@@ -402,6 +494,9 @@ export const en = {
   'assist.interview.noModeler': 'Open the generated process first, then start the interview.',
   'assist.interview.editWarning':
     'Answers regenerate the diagram — finish manual canvas edits after the interview.',
+  'assist.error.redaction':
+    'The request could not be prepared safely after name redaction. Review the included context and try again.',
+  'assist.error.emptyResponse': 'The provider returned no usable interview questions. Try again.',
   'assist.model.line': 'Model: {model} ({provider})',
   'ai.continueInChat': '💬 Fill gaps in chat',
   'ai.continueInChat.title':
@@ -470,6 +565,8 @@ export const en = {
     'All time: {requests} requests · {tokens} input/output tokens · {reasoning} reasoning tokens · {cost}',
   'ai.usage.priceAsOf':
     'Local price estimate last reviewed {date}; provider-reported cost is used when available.',
+  'ai.usage.incomplete':
+    'Usage is incomplete; values marked ≥ are lower bounds from the data still available in this browser.',
   'ai.usage.costNa': 'cost n/a',
   'ai.usage.reset': 'Reset',
   'settings.credits.noBalanceApi':
@@ -860,10 +957,17 @@ export const en = {
   'translationReview.title': 'Review translation',
   'translationReview.direction.enAr': 'English → Arabic',
   'translationReview.direction.arEn': 'Arabic → English',
+  'translationReview.document': 'Target document:',
   'translationReview.summary':
     '{fields} bilingual fields checked · {missing} missing · {invalid} wrong-script/mixed · {failed} provider failures',
   'translationReview.fields.title': 'Fields requiring review',
   'translationReview.fields.issue': '{issue}',
+  'translationReview.fields.paginationLabel': 'Fields requiring review pages',
+  'translationReview.issue.missing': 'Missing translation',
+  'translationReview.issue.wrongScript': 'Wrong writing system',
+  'translationReview.issue.duplicateCounterpart': 'Duplicate counterpart',
+  'translationReview.issue.mixed': 'Mixed writing systems',
+  'translationReview.issue.providerFailed': 'Translation provider failed',
   'translationReview.provider': 'Translation provider',
   'translationReview.provider.choose': 'Choose a provider…',
   'translationReview.provider.ai':
@@ -871,22 +975,81 @@ export const en = {
   'translationReview.provider.free':
     'Each exact text will be sent to Google Translate; failed items may be sent to MyMemory.',
   'translationReview.outbound.title': 'Exact text leaving this browser',
+  'translationReview.outbound.paginationLabel': 'Outbound text review pages',
   'translationReview.outbound.disclosure':
-    '{provider} will receive {count} text item(s) in an estimated {min}–{max} external request(s). Nothing is sent until you press Translate now.',
+    '{provider} will receive {count} text item(s) in an estimated {min}–{max} external request(s). Nothing is sent until you press Translate now or explicitly confirm a one-field retry.',
   'translationReview.outbound.chooseProvider':
     'Choose a provider to see the final disclosure and request estimate. Nothing has been sent.',
+  'translationReview.pagination.status':
+    'Showing {start}–{end} of {total}. Page {page} of {pages}.',
+  'translationReview.pagination.previous': 'Previous page',
+  'translationReview.pagination.next': 'Next page',
   'translationReview.sensitive':
     '{count} item(s) are owner/responsibility fields and may contain people’s names.',
   'translationReview.mixedManual':
     'Mixed-script source items remain listed for segmentation or manual review and will not be sent automatically.',
   'translationReview.translateNow': 'Translate now',
   'translationReview.partialPreview': 'Preview translated fields only',
+  'translationReview.applyCompleted': 'Apply completed language view',
   'translationReview.postpone': 'Postpone',
   'translationReview.cancel': 'Cancel translation',
   'translationReview.running': 'Translation is running…',
+  'translationReview.memorySaving':
+    'The translation was applied. Saving accepted pairs to workspace translation memory…',
   'translationReview.cancelled': 'Translation was cancelled. All unresolved fields remain listed.',
   'translationReview.partialStatus':
     'Some fields are still unresolved. They remain listed and the diagram language was not reported as complete.',
+  'translationReview.proposalStatus':
+    '{count} provider translation proposals require your acceptance, edit, or rejection before anything is applied.',
+  'translationReview.stagedStatus':
+    '{count} reviewed value(s) are staged. Nothing changes until final Apply.',
+  'translationReview.applying': 'Applying all reviewed values as one undoable change…',
+  'translationReview.progress.partial':
+    '{resolved} resolved · {unresolved} unresolved · {failed} provider failures. The diagram language is not complete.',
+  'translationReview.progress.ready':
+    'All target fields now pass the bilingual audit. Apply the completed language view to finish.',
+  'translationReview.field.source': 'Source text',
+  'translationReview.field.target': 'Target text',
+  'translationReview.field.proposed': 'Provider proposal',
+  'translationReview.field.staged': 'Accepted for final apply',
+  'translationReview.field.acceptProposal': 'Accept this proposal',
+  'translationReview.field.rejectProposal': 'Reject this proposal',
+  'translationReview.field.unavailable':
+    'This diagnostic no longer has a safe BPMN storage target. Refresh the review after correcting the source field.',
+  'translationReview.field.retry': 'Retry this field',
+  'translationReview.field.retrying': 'Retrying this field…',
+  'translationReview.field.retryDisclosureTitle': 'Confirm this one-field request',
+  'translationReview.field.retryDisclosure':
+    'Only the exact field below will be sent in an estimated {min}–{max} external requests. No other reviewed field is included.',
+  'translationReview.field.retryProvider': 'Provider and model',
+  'translationReview.field.retryContext': 'Field context',
+  'translationReview.field.retryFingerprint': 'Consent fingerprint',
+  'translationReview.field.retrySensitivity.sensitive':
+    'This owner/responsibility field may contain a person’s name.',
+  'translationReview.field.retrySensitivity.standard':
+    'This field is not marked as an owner/responsibility field.',
+  'translationReview.field.retryCancel': 'Cancel one-field retry',
+  'translationReview.field.retryConfirm': 'Confirm and retry this field',
+  'translationReview.field.consentRequired':
+    'Review and confirm the current one-field disclosure before retrying.',
+  'translationReview.memorySaveFailed':
+    'The translation was applied, but accepted translation pairs could not be saved to workspace translation memory.',
+  'translationReview.memoryRecoveryRequired':
+    'Choose Retry saving to preserve the accepted pairs, or Continue without saving. This dialog will remain open until you choose one of these recovery actions.',
+  'translationReview.memoryRetry': 'Retry saving accepted translations',
+  'translationReview.memoryContinue': 'Continue without saving these pairs',
+  'translationReview.memorySkipped':
+    'The translation remains applied. OrbitPM continued without another attempt to save these pairs to workspace translation memory.',
+  'translationReview.field.manual': 'Edit this field manually',
+  'translationReview.field.manualCancel': 'Close manual editor',
+  'translationReview.field.manualSave': 'Save reviewed value',
+  'translationReview.field.manualSaving': 'Saving reviewed value…',
+  'translationReview.field.manualPlaceholder': 'Enter the reviewed translation',
+  'translationReview.field.manualEmpty': 'Enter a non-empty reviewed translation.',
+  'translationReview.field.manualFailed': 'The reviewed value could not be saved.',
+  'translationReview.field.retryFailed': 'This field could not be translated again.',
+  'translationReview.error.technicalDetails': 'Technical details',
+  'translationReview.error.technicalDetail': 'Translation review technical detail',
   'translationReview.stale':
     'The diagram changed after review. Review the current outbound text before translating.',
   'translationReview.noProvider': 'Choose a translation provider first.',
@@ -966,18 +1129,149 @@ export const en = {
   'workspaceImportReview.localizationMode.explicit': 'Explicitly reviewed',
   'workspaceImportReview.localizationDigest': 'Localization review digest',
   'workspaceImportReview.none': 'None',
+  'workspaceImportReview.pagination.navigation': '{section} pages',
+  'workspaceImportReview.pagination.status':
+    'Showing {start}–{end} of {total}. Page {page} of {pages}.',
+  'workspaceImportReview.pagination.previous': 'Previous page',
+  'workspaceImportReview.pagination.next': 'Next page',
+  'workspaceImportReview.pagination.previousFor': 'Previous {section} page',
+  'workspaceImportReview.pagination.nextFor': 'Next {section} page',
+  'workspaceImportReview.technicalEvidence': 'Technical evidence',
+  'workspaceImportReview.technicalEvidenceTruncated':
+    'Technical evidence was truncated to {limit} Unicode characters.',
+  'workspaceImportReview.autoLayoutPreview.title': 'Auto-layout diagram previews',
+  'workspaceImportReview.autoLayoutPreview.intro':
+    'To keep large reviews responsive, diagram rendering starts only when you choose a reviewed artifact. Opening another preview closes the current one.',
+  'workspaceImportReview.autoLayoutPreview.open': 'Preview diagram',
+  'workspaceImportReview.autoLayoutPreview.close': 'Close diagram preview',
+  'workspaceImportReview.autoLayoutPreview.openFor': 'Preview diagram for {path}',
+  'workspaceImportReview.autoLayoutPreview.closeFor': 'Close diagram preview for {path}',
+  'workspaceImportReview.autoLayoutPreview.pagination': 'Auto-layout preview pages',
+  'workspaceImportReview.autoLayoutPreview.failed':
+    'The reviewed diagram preview could not be rendered.',
+  'workspaceImportReview.autoLayoutPreview.ready': 'The reviewed diagram preview is ready.',
+  'workspaceImportReview.autoLayoutPreview.warnings':
+    'The reviewed diagram preview is ready with {count} rendering warning(s).',
+  'workspaceImportReview.autoLayoutAcceptance.label':
+    'I accept every listed auto-layout repair ({count} total).',
+  'workspaceImportReview.autoLayoutAcceptance.hint':
+    'Diagram previews are available on demand above. Confirm import applies the exact sealed repaired XML for every listed artifact.',
+  'workspaceImportReview.autoLayoutAcceptance.required':
+    'Accept all listed auto-layout repairs before confirming this import.',
   'workspaceImportReview.skipped': 'Skipped inputs',
   'workspaceImportReview.skippedItem': 'Skipped input {index}',
   'workspaceImportReview.path': 'Path',
   'workspaceImportReview.reason': 'Reason',
+  'workspaceImportReview.reason.unsupportedContent': 'Unsupported content',
+  'workspaceImportReview.reason.unsafePath': 'Unsafe path',
+  'workspaceImportReview.reason.invalidBpmn': 'Invalid BPMN',
+  'workspaceImportReview.reason.amlConversionFailed': 'ARIS AML conversion failed',
+  'workspaceImportReview.reason.processIdCollision': 'Process ID collision',
+  'workspaceImportReview.reason.processIdentityChanged': 'Process identity changed during review',
+  'workspaceImportReview.reason.localizationReviewRequired': 'Localization review required',
+  'workspaceImportReview.reason.localizationReviewCancelled': 'Localization review cancelled',
+  'workspaceImportReview.reason.localizationInvalid': 'Localization validation failed',
+  'workspaceImportReview.reason.destinationParentFile': 'Destination parent is a file',
+  'workspaceImportReview.reason.libraryNotBpmn': 'ZIP entry is not BPMN',
+  'workspaceImportReview.reason.libraryUnsafePath': 'ZIP entry has an unsafe path',
+  'workspaceImportReview.reason.libraryTooLarge': 'ZIP entry is too large',
+  'workspaceImportReview.reason.libraryDecodeFailed': 'ZIP entry could not be decoded',
+  'workspaceImportReview.reason.unknown': 'Unknown skip reason',
+  'workspaceImportReview.skip.unsupportedContent':
+    'The input was skipped because it is not recognizable BPMN XML or ARIS AML.',
+  'workspaceImportReview.skip.unsafePath':
+    'The input was skipped because its path cannot be contained safely in the workspace.',
+  'workspaceImportReview.skip.invalidBpmn':
+    'The input was skipped because BPMN validation did not complete successfully.',
+  'workspaceImportReview.skip.amlConversionFailed':
+    'The ARIS AML input could not be converted into reviewed BPMN.',
+  'workspaceImportReview.skip.processIdCollision':
+    'The input would create or move a process identity outside its reviewed workspace binding.',
+  'workspaceImportReview.skip.processIdentityChanged':
+    'The process identity changed after review, so the sealed plan can no longer apply it.',
+  'workspaceImportReview.skip.localizationReviewRequired':
+    'The input needs an explicit bilingual review before it can be prepared.',
+  'workspaceImportReview.skip.localizationReviewCancelled':
+    'The input was not prepared because its bilingual review was cancelled.',
+  'workspaceImportReview.skip.localizationInvalid':
+    'The reviewed bilingual content did not pass validation.',
+  'workspaceImportReview.skip.destinationParentFile':
+    'The destination cannot be created because one of its parent paths is a file.',
+  'workspaceImportReview.skip.libraryNotBpmn':
+    'The ZIP entry was skipped because it is not a BPMN file.',
+  'workspaceImportReview.skip.libraryUnsafePath':
+    'The ZIP entry was skipped because its path is unsafe.',
+  'workspaceImportReview.skip.libraryTooLarge':
+    'The ZIP entry was skipped because it exceeds the safe size limit.',
+  'workspaceImportReview.skip.libraryDecodeFailed':
+    'The ZIP entry was skipped because its text could not be decoded safely.',
+  'workspaceImportReview.skip.unknown':
+    'The input was skipped for a reason this version does not recognize.',
+  'workspaceImportReview.guidance.chooseSupportedContent':
+    'Provide BPMN XML or a supported ARIS AML export and review it again.',
+  'workspaceImportReview.guidance.useSafePath':
+    'Choose a safe relative destination whose parent folders are inside the workspace.',
+  'workspaceImportReview.guidance.repairBpmn':
+    'Correct the BPMN validation findings, then rebuild and review the import plan.',
+  'workspaceImportReview.guidance.reviewArisExport':
+    'Check the ARIS export and conversion report, then export or convert the model again.',
+  'workspaceImportReview.guidance.resolveProcessIdentity':
+    'Resolve the process ID and workspace-path conflict, then create a new review plan.',
+  'workspaceImportReview.guidance.repeatReview':
+    'Refresh the workspace and repeat the import review against the current process identities.',
+  'workspaceImportReview.guidance.completeLocalization':
+    'Complete the bilingual review and resolve every localization finding before importing.',
+  'workspaceImportReview.guidance.reduceLibraryEntry':
+    'Reduce or split the BPMN file so the archive entry stays within the safe size limit.',
+  'workspaceImportReview.guidance.decodeUtf8':
+    'Re-encode the BPMN file as valid UTF-8 and rebuild the ZIP library.',
+  'workspaceImportReview.guidance.reviewArisReport':
+    'Review the downloadable ARIS conversion report and verify the converted model.',
+  'workspaceImportReview.guidance.reviewReplacement':
+    'Confirm that each listed process should be replaced only at the reviewed workspace path.',
+  'workspaceImportReview.guidance.unknown':
+    'Review the labeled technical evidence, correct the source, and create a new import plan.',
   'workspaceImportReview.message': 'Message',
+  'workspaceImportReview.suggestedRepair': 'Suggested repair',
+  'workspaceImportReview.technicalCode': 'Technical code',
+  'workspaceImportReview.technicalDiagnostic': 'Technical diagnostic',
+  'workspaceImportReview.validationSeverity': 'Validation severity',
+  'workspaceImportReview.validationSource': 'Validation source',
+  'workspaceImportReview.validationSeverityUnknown': 'Unknown validation severity',
+  'workspaceImportReview.validationSourceUnknown': 'Unknown validation source',
+  'workspaceImportReview.validationCode': 'Validation code',
+  'workspaceImportReview.validationRuleId': 'Validation rule ID',
+  'workspaceImportReview.validationDiagnostic': 'Validation diagnostic',
   'workspaceImportReview.warnings': 'Warnings',
   'workspaceImportReview.warningItem': 'Warning {index}',
+  'workspaceImportReview.warning.amlDowngraded':
+    'ARIS conversion simplified {count} source decision(s).',
+  'workspaceImportReview.warning.amlIgnored': 'ARIS conversion ignored {count} source decision(s).',
+  'workspaceImportReview.warning.amlAmbiguous':
+    'ARIS conversion found {count} ambiguous source decision(s).',
+  'workspaceImportReview.warning.amlUnmapped':
+    'ARIS conversion could not map {count} source decision(s).',
+  'workspaceImportReview.warning.samePathProcessReplacement':
+    '{count} existing process ID(s) will be replaced at the same reviewed workspace path.',
+  'workspaceImportReview.warning.unknown':
+    'The import planner reported a warning this version does not recognize.',
   'workspaceImportReview.code': 'Code',
   'workspaceImportReview.count': 'Count',
   'workspaceImportReview.validationIssue': 'Validation issue',
   'workspaceImportReview.repairs': 'Automatic repairs',
   'workspaceImportReview.repairItem': 'Repair {index}',
+  'workspaceImportReview.appliedRepair.amlConverted':
+    'ARIS AML was converted into reviewed BPMN 2.0 output.',
+  'workspaceImportReview.appliedRepair.autoLayout':
+    'Missing BPMN diagram information was generated and the exact output was revalidated.',
+  'workspaceImportReview.appliedRepair.destinationNormalized':
+    'The destination was normalized to a portable BPMN workspace path.',
+  'workspaceImportReview.appliedRepair.destinationDeduplicated':
+    'The destination was changed to avoid another artifact in this plan.',
+  'workspaceImportReview.appliedRepair.destinationCaseNormalized':
+    'The destination letter case was normalized to the existing workspace path.',
+  'workspaceImportReview.appliedRepair.unknown':
+    'The planner applied an automatic repair this version does not recognize.',
   'workspaceImportReview.before': 'Before',
   'workspaceImportReview.after': 'After',
   'workspaceImportReview.aris': 'ARIS conversion reports',
@@ -1022,6 +1316,8 @@ export const en = {
     'Fix every invalid keep-both destination before confirming.',
   'workspaceImportReview.ready': 'The reviewed plan is ready for explicit confirmation.',
   'workspaceImportReview.error': 'Import error',
+  'workspaceImportReview.errorSummary':
+    'The workspace import could not be completed. Review the technical evidence, then retry or cancel.',
   'workspaceImportReview.busy': 'The workspace import is being applied…',
   'workspaceImportReview.cancel': 'Cancel import',
   'workspaceImportReview.confirm': 'Confirm import',
@@ -1040,6 +1336,10 @@ export const en = {
     'Saving downloads a BPMN file; no workspace is retained.',
   'workspace.storage.chooseDirectory': 'Choose folder workspace',
   'workspace.storage.openOpfs': 'Open browser workspace',
+  'workspace.storage.opfsOpenFailed':
+    'The browser workspace could not be opened. Try again or choose another storage option.',
+  'workspace.storage.opfsOpenTechnicalEvidence':
+    'Technical evidence — browser workspace open: {error}',
   'workspace.storage.openSingleFile': 'Open a single BPMN file',
   'workspace.storage.backupExport': 'Export workspace backup',
   'workspace.storage.backupImport': 'Import workspace backup',
@@ -1092,6 +1392,17 @@ export const en = {
   'workspace.history.restore': 'Restore revision',
   'workspace.history.restoreCopy': 'Restore as a copy',
   'workspace.history.empty': 'No recovery revisions are available for this file.',
+  'workspace.history.pageEmpty': 'No recovery revisions are available on this page.',
+  'workspace.history.pagination.label': 'Recovery history pages',
+  'workspace.history.pagination.status': 'History page {page}. Showing {count} entries.',
+  'workspace.history.pagination.previous': 'Previous page',
+  'workspace.history.pagination.next': 'Next page',
+  'workspace.history.reason.overwrite': 'Before overwrite',
+  'workspace.history.reason.delete': 'Before deletion',
+  'workspace.history.reason.restore': 'Before restore',
+  'workspace.history.reason.manual': 'Manual revision',
+  'workspace.history.reason.backupImport': 'Before backup import',
+  'workspace.history.reason.unknown': 'Unknown revision reason',
   'workspace.history.copyPrompt': 'File name for the restored copy',
   'workspace.history.copyDestinationRequired': 'Enter a destination for the restored copy.',
   'workspace.history.copyDestinationInvalid':
@@ -1099,6 +1410,52 @@ export const en = {
   'workspace.history.copyFailed': 'Restore-as-copy did not complete ({outcome}).',
   'workspace.history.restoreFailed': 'History restore failed: {error}',
   'workspace.history.restoreNotComplete': 'Restore did not complete ({outcome}).',
+  'workspace.history.action.listFailed': 'Could not load recovery history.',
+  'workspace.history.action.previewFailed': 'Could not preview this history revision.',
+  'workspace.history.action.diffFailed': 'Could not compare this history revision.',
+  'workspace.history.action.restoreFailed': 'Could not restore this history revision.',
+  'workspace.history.action.restoreCopyFailed':
+    'Could not restore this history revision as a copy.',
+  'workspace.history.action.workspaceRefreshAfterRestoreFailed':
+    'The revision was restored in storage, but the workspace could not be refreshed.',
+  'workspace.history.action.sessionRefreshAfterRestoreFailed':
+    'The revision was restored in storage, but the open session could not be refreshed.',
+  'workspace.history.action.technicalDetails': 'Technical details:',
+  'workspace.history.restoreCancelled': 'History restore was cancelled.',
+  'workspace.history.applyEditorChangedBefore':
+    'The open editor changed before history XML was applied.',
+  'workspace.history.applyEditorSynchronizationUnavailable':
+    'The editor synchronization command is not ready.',
+  'workspace.history.applyTargetSessionChanged':
+    'The history target session changed while XML was applied.',
+  'workspace.history.applyLiveEditorUnverified':
+    'History XML was applied, but the live editor could not be verified: {error}',
+  'workspace.history.applyEditorChangedDuring':
+    'The open editor changed while history XML was applied.',
+  'workspace.history.restoreReason.cancelled': 'The restore was cancelled',
+  'workspace.history.restoreReason.reviewRequired': 'Additional review is required',
+  'workspace.history.restoreReason.stale': 'The workspace changed before restore',
+  'workspace.history.restoreReason.unknown': 'The restore could not be prepared',
+  'workspace.history.saveOutcome.permissionLoss': 'Workspace permission was lost',
+  'workspace.history.saveOutcome.externalConflict': 'The destination changed ({reason})',
+  'workspace.history.saveOutcome.staleWorkspace': 'The active workspace changed',
+  'workspace.history.saveOutcome.cancelled': 'The storage write was cancelled',
+  'workspace.history.saveOutcome.storageFailure': 'The storage write failed',
+  'workspace.history.saveOutcome.unknown': 'An unknown storage result was returned',
+  'workspace.history.conflictReason.hashMismatch': 'the file contents changed',
+  'workspace.history.conflictReason.missing': 'the file is missing',
+  'workspace.history.conflictReason.alreadyExists': 'the file already exists',
+  'workspace.history.conflictReason.unknown': 'an unknown conflict occurred',
+  'workspace.history.issue.unreadable': 'Could not read history metadata for “{path}”.',
+  'workspace.history.issue.invalidMetadata': 'History metadata for “{path}” is invalid.',
+  'workspace.history.issue.missingContent':
+    'History metadata for “{path}” refers to missing revision content.',
+  'workspace.history.issue.checksumMismatch':
+    'The saved revision for “{path}” failed checksum verification.',
+  'workspace.history.issue.orphanContent': 'Unreferenced recovery content was found at “{path}”.',
+  'workspace.history.issue.retentionLimit':
+    'Recovery history reached its storage limit; newest process revisions were preserved.',
+  'workspace.history.issue.unknown': 'A history entry for “{path}” could not be loaded.',
   'workspace.history.restoreWorkspaceRefreshFailed':
     'The revision was restored in storage, but the workspace could not be refreshed: {error}',
   'workspace.history.restoreSessionRefreshFailed':
@@ -1107,6 +1464,60 @@ export const en = {
   'workspace.history.unavailable':
     'History restore is unavailable because the workspace session is no longer active.',
   'workspace.history.current': 'Current file',
+  'workspace.history.previewTruncated':
+    'This revision preview is limited to the first {shown} characters for safety; {omitted} characters are not displayed. Restore still uses the complete revision.',
+  'workspace.history.diffBounded':
+    'A bounded replacement block is shown because detailed line alignment exceeded the safe work limit.',
+  'workspace.history.diffTruncated':
+    'This comparison preview is incomplete and was limited for safety. Omitted: {rows} rows, {characters} characters, {hunks} hunks, and {operations} alignment operations.',
+  'workspace.history.diffInputTruncated':
+    'Detailed input limits were exceeded by {oldCharacters} revision characters and {newCharacters} current characters, plus {oldLines} revision lines and {newLines} current lines.',
+  'workspace.history.liveEditorUnverifiedAfterRestore':
+    'History storage was restored, but the live editor could not be verified.',
+  'workspace.history.newerRevisionBeforeCleanup':
+    'A newer editor revision arrived before history cleanup completed.',
+  'workspace.history.liveEditorUnverifiedAfterCleanup':
+    'History cleanup completed, but the live editor could not be verified.',
+  'workspace.history.newerRevisionDuringCleanup':
+    'A newer editor revision arrived during history cleanup.',
+  'workspace.history.editorRefreshIncompleteAfterRestore':
+    'History storage was restored, but the editor refresh did not complete.',
+  'workspace.diagnostic.none': 'none',
+  'workspace.diagnostic.complete': 'complete',
+  'workspace.diagnostic.unknown': 'unknown',
+  'workspace.import.rollbackEvidence':
+    '{error}; review: {review}; applied: {applied}; rollback: {rollback}',
+  'workspace.import.postCommitReconciliationFailed':
+    'Workspace import storage committed, but the open workspace could not be reconciled. Review technical evidence before continuing.',
+  'workspace.import.postCommitWarning':
+    'The workspace import completed, but recovery-history cleanup needs attention.',
+  'workspace.import.postCommitTechnicalEvidence':
+    'Technical evidence — post-commit workspace import: {error}',
+  'workspace.backup.rollbackEvidence': '{error}; applied: {applied}; rollback: {rollback}',
+  'workspace.backup.historyRetentionFailed':
+    'The backup import completed, but recovery-history cleanup failed.',
+  'workspace.backup.historyRetentionTechnicalEvidence':
+    'Technical evidence — backup history retention: {error}',
+  'workspace.backup.postCommitReconciliationFailed':
+    'Backup storage committed, but the open workspace could not be reconciled. Review technical evidence before continuing.',
+  'workspace.backup.postCommitTechnicalEvidence':
+    'Technical evidence — post-commit backup import: {error}',
+  'workspace.localization.workspaceImportRollbackUncertain':
+    'Workspace import rollback left localization resources uncertain.',
+  'workspace.localization.backupRollbackUncertain':
+    'Backup rollback left localization resources uncertain.',
+  'workspace.localization.backupCommittedReloadFailed':
+    'Backup committed localization resources could not be reloaded.',
+  'workspace.sync.reviewedImportEditorChanged':
+    'The open editor changed while the reviewed import committed.',
+  'workspace.sync.reviewedImportLocalRetained':
+    'The open editor changed while the reviewed import committed; its local XML was retained as a recovery draft.',
+  'workspace.sync.committedReloadEditorChanged':
+    'The open editor changed while committed XML was being reloaded.',
+  'workspace.sync.committedReloadLocalRetained':
+    'The open editor changed while committed XML was being reloaded; its newer local XML was retained as a recovery draft.',
+  'workspace.sync.postCommitCleanupLocalRetained':
+    'The open editor changed during post-commit cleanup; its newer local XML was retained as a recovery draft.',
   'workspace.manifest.warning': 'Workspace manifest warning at “{path}”: {error}',
   'workspace.manifest.postCommitError':
     'Your change was saved, but the workspace manifest could not be updated: {error}',
@@ -1164,9 +1575,24 @@ export const en = {
     '“{path}” changed outside this tab ({reason}). Saving was stopped and your local draft was kept.',
   'session.save.reloadEditorFailed':
     'The disk version was selected, but the live editor could not be refreshed. The session may still show your prior edits; review it before continuing: {error}',
+  'session.save.liveXmlCaptureDetail': '{error}; live XML capture: {captureError}',
+  'session.save.localCanvasRecoveryDetail': '{error}; local canvas recovery: {recoveryError}',
+  'session.save.retainedEditorCaptureFailed':
+    '{reason} Live XML capture failed, so the canvas was left untouched and marked dirty: {error}',
+  'session.save.retainedEditorChangedDuringRecovery':
+    '{reason} The editor kept changing during recovery; its canvas was left untouched and remains dirty.',
   'session.save.locked':
     'Another OrbitPM tab is saving this file. Wait briefly and try again; your local draft was kept.',
   'session.save.failed': 'Save did not complete ({status}). Your local draft was kept.',
+  'session.save.preservationBlocked':
+    'Save was blocked because protected BPMN extension data changed. Your local draft was kept.',
+  'session.save.preservationTechnicalEvidence':
+    'Technical evidence — preservation issue codes: {codes}',
+  'session.save.permissionLoss':
+    'Save could not continue because workspace access was lost. Your local draft was kept.',
+  'session.save.storageFailure':
+    'Save could not be written to workspace storage. Your local draft was kept.',
+  'session.save.storageTechnicalEvidence': 'Technical evidence — save storage ({code}): {error}',
   'session.save.newerEdits': 'The captured version was saved, but newer edits remain unsaved.',
   'session.download.draftRetained':
     'The BPMN download was prepared. The session remains unsaved and its recovery draft was retained until a durable save or explicit discard.',
@@ -1482,8 +1908,64 @@ export const en = {
   'spreadsheet.report.checksum': 'SHA-256',
   'spreadsheet.report.download': 'Download import report',
   'spreadsheet.error.parse': 'Could not read this spreadsheet.',
+  'spreadsheet.error.preset': 'Could not import this mapping preset.',
+  'spreadsheet.error.draftSave': 'Could not save this mapping draft.',
   'spreadsheet.error.review': 'Could not build the workbook model.',
   'spreadsheet.error.prepare': 'Could not prepare BPMN files.',
+  'spreadsheet.error.bilingualReview': 'Could not complete the bilingual review handoff.',
+  'spreadsheet.error.commit': 'Could not commit the spreadsheet import.',
+  'spreadsheet.error.postCommit':
+    'The import committed, but final workspace follow-up did not complete.',
+  'spreadsheet.error.technicalEvidence': 'Technical evidence',
+  'spreadsheet.error.technicalCode': 'Error code',
+  'spreadsheet.error.technicalDetails': 'Structured details',
+  'spreadsheet.error.limitContext': 'Detected {actual}; safe limit {limit}.',
+  'spreadsheet.error.rowContext': 'The problem was detected near row {row}.',
+  'spreadsheet.error.unsupported-format':
+    'This file format is not supported. Choose an .xlsx or UTF-8 .csv file.',
+  'spreadsheet.error.legacy-excel-format':
+    'Legacy .xls workbooks are not supported. Save a copy as .xlsx or UTF-8 CSV.',
+  'spreadsheet.error.macro-enabled-format':
+    'Macro-enabled Excel files are not accepted. Save a macro-free .xlsx or CSV copy.',
+  'spreadsheet.error.encrypted-workbook':
+    'Encrypted or password-protected workbooks cannot be imported.',
+  'spreadsheet.error.malformed-csv':
+    'The CSV structure is malformed. Check quoting, delimiters, and row boundaries.',
+  'spreadsheet.error.invalid-utf8': 'This CSV is not valid UTF-8. Resave it using UTF-8 encoding.',
+  'spreadsheet.error.malformed-zip': 'The XLSX container is damaged or malformed.',
+  'spreadsheet.error.zip64-unsupported':
+    'ZIP64 workbooks are not supported. Export a standard .xlsx file.',
+  'spreadsheet.error.multi-disk-zip': 'Multi-disk ZIP workbooks are not supported.',
+  'spreadsheet.error.unsupported-compression':
+    'The workbook uses an unsupported ZIP compression method.',
+  'spreadsheet.error.unsafe-zip-path':
+    'The workbook contains an unsafe internal path and was rejected.',
+  'spreadsheet.error.duplicate-zip-entry':
+    'The workbook contains duplicate internal entries and was rejected.',
+  'spreadsheet.error.macro-content':
+    'The workbook contains macro or executable content and was rejected.',
+  'spreadsheet.error.missing-xlsx-part': 'The workbook is missing a required XLSX component.',
+  'spreadsheet.error.compressed-size-limit':
+    'The spreadsheet exceeds the safe compressed-size limit.',
+  'spreadsheet.error.uncompressed-size-limit': 'The workbook exceeds the safe expanded-size limit.',
+  'spreadsheet.error.worksheet-limit': 'The workbook contains too many worksheets.',
+  'spreadsheet.error.row-limit': 'The spreadsheet contains too many rows.',
+  'spreadsheet.error.column-limit': 'A spreadsheet row contains too many columns.',
+  'spreadsheet.error.cell-count-limit': 'The spreadsheet contains too many non-empty cells.',
+  'spreadsheet.error.cell-length-limit': 'A spreadsheet cell exceeds the safe text-length limit.',
+  'spreadsheet.error.node-process-limit': 'A process contains too many BPMN nodes.',
+  'spreadsheet.error.node-transaction-limit': 'This import contains too many BPMN nodes in total.',
+  'spreadsheet.error.formula-without-cache':
+    'A formula has no saved displayed value. Recalculate and save the workbook first.',
+  'spreadsheet.error.parse-cancelled': 'Spreadsheet processing was cancelled.',
+  'spreadsheet.error.adapter-contract-violation':
+    'An internal spreadsheet boundary returned an invalid result. No destination changes were made.',
+  'spreadsheet.error.invalid-mapping-preset':
+    'This mapping preset or saved draft is invalid for the selected spreadsheet.',
+  'spreadsheet.error.blocking-validation':
+    'Workbook validation found blocking issues that must be resolved.',
+  'spreadsheet.error.transaction-failed':
+    'The spreadsheet import transaction failed. Review rollback status before retrying.',
   'spreadsheet.phase.preflight': 'Security preflight',
   'spreadsheet.phase.parse': 'Parsing',
   'spreadsheet.phase.validate': 'Validating',
@@ -1510,6 +1992,12 @@ export const en = {
   'validation.valid': 'The BPMN document is valid.',
   'validation.invalid': 'The BPMN document has validation findings.',
   'validation.empty': 'No validation findings.',
+  'validation.issues': 'Validation findings',
+  'validation.pagination.label': 'Validation finding pages',
+  'validation.pagination.status':
+    'Showing findings {start}–{end} of {total}. Page {page} of {pages}.',
+  'validation.pagination.previous': 'Previous page',
+  'validation.pagination.next': 'Next page',
   'validation.source': 'Source',
   'validation.element': 'Element',
   'validation.location': 'Location',
@@ -1531,6 +2019,172 @@ export const en = {
   'validation.stage.semantic': 'Semantics',
   'validation.stage.di': 'Diagram interchange',
   'validation.stage.orbitpm': 'OrbitPM metadata',
+  'validation.suggestedRepair': 'Suggested repair',
+  'validation.technicalEvidence': 'Technical evidence',
+  'validation.technical.code': 'Code',
+  'validation.technical.ruleId': 'Rule ID',
+  'validation.technical.diagnostic': 'Raw diagnostic',
+  'validation.technical.truncated':
+    'This diagnostic is shortened in the view. Export the report for the complete detail.',
+  'validation.issue.xml.empty': 'The XML document is empty.',
+  'validation.issue.xml.size-limit': 'The XML document exceeds the safe input size limit.',
+  'validation.issue.xml.illegal-character':
+    'The document contains a character that XML 1.0 does not allow.',
+  'validation.issue.xml.unsupported-encoding':
+    'The declared character encoding is not supported after text decoding.',
+  'validation.issue.xml.doctype': 'The document contains a forbidden DOCTYPE declaration.',
+  'validation.issue.xml.entity-declaration':
+    'The document contains a forbidden entity declaration.',
+  'validation.issue.xml.external-include':
+    'The document contains a forbidden external XML include.',
+  'validation.issue.xml.processing-instruction':
+    'The document contains a processing instruction that is not allowed.',
+  'validation.issue.xml.declaration-position':
+    'The XML declaration is not the first item in the document.',
+  'validation.issue.xml.text-limit': 'An XML text or CDATA node exceeds the safe length limit.',
+  'validation.issue.xml.attribute-count-limit':
+    'An XML element has more attributes than the safe limit.',
+  'validation.issue.xml.attribute-value-limit':
+    'An XML attribute value exceeds the safe length limit.',
+  'validation.issue.xml.element-count-limit':
+    'The document contains more XML elements than the safe limit.',
+  'validation.issue.xml.depth-limit': 'The XML nesting depth exceeds the safe limit.',
+  'validation.issue.moddle.unresolved-reference':
+    'The BPMN model contains a reference that could not be resolved.',
+  'validation.issue.moddle.duplicate-id': 'The BPMN parser found a duplicated element identifier.',
+  'validation.issue.moddle.unparsable-content': 'Part of the BPMN document could not be parsed.',
+  'validation.issue.moddle.warning': 'The BPMN parser reported a model warning.',
+  'validation.issue.moddle.parse-error': 'The BPMN XML could not be parsed into a model.',
+  'validation.issue.moddle.root-missing': 'The BPMN parser did not return a document root.',
+  'validation.issue.structure.definitions-root':
+    'The document root is not a BPMN 2.0 definitions element.',
+  'validation.issue.structure.definitions-id':
+    'The BPMN definitions element is missing its required ID.',
+  'validation.issue.structure.target-namespace':
+    'The BPMN definitions element is missing a target namespace.',
+  'validation.issue.structure.target-namespace-uri':
+    'The BPMN target namespace is not a valid absolute URI.',
+  'validation.issue.structure.process-missing': 'The BPMN document does not contain a process.',
+  'validation.issue.structure.duplicate-id':
+    'More than one BPMN or diagram element uses the same ID.',
+  'validation.issue.structure.invalid-id': 'A BPMN or diagram element ID is not a valid XML name.',
+  'validation.issue.structure.sequence-ref-missing':
+    'A sequence flow has an unresolved source or target.',
+  'validation.issue.structure.sequence-ref-container':
+    'A sequence flow crosses a process or subprocess boundary.',
+  'validation.issue.structure.incoming-mismatch':
+    'A node’s incoming references do not match its sequence flows.',
+  'validation.issue.structure.outgoing-mismatch':
+    'A node’s outgoing references do not match its sequence flows.',
+  'validation.issue.structure.lane-node-ref': 'A lane references a flow node outside its process.',
+  'validation.issue.structure.participant-process-ref':
+    'A participant references a process outside this BPMN document.',
+  'validation.issue.structure.message-flow-ref': 'A message flow has an unresolved endpoint.',
+  'validation.issue.structure.process-id': 'A BPMN process is missing its required ID.',
+  'validation.issue.semantic.start-incoming': 'A Start event has an incoming sequence flow.',
+  'validation.issue.semantic.end-outgoing': 'An End event has an outgoing sequence flow.',
+  'validation.issue.semantic.default-source':
+    'This type of BPMN element cannot declare a default flow.',
+  'validation.issue.semantic.default-not-outgoing':
+    'A declared default flow is not an outgoing flow of its source.',
+  'validation.issue.semantic.default-has-condition':
+    'A default sequence flow must not have a condition.',
+  'validation.issue.semantic.branch-condition-missing':
+    'A non-default gateway branch is missing its required condition.',
+  'validation.issue.semantic.condition-source':
+    'A conditional sequence flow starts from an element type that cannot own conditions.',
+  'validation.issue.semantic.boundary-attachment':
+    'A Boundary event is not attached to a valid activity.',
+  'validation.issue.semantic.disconnected-node':
+    'A flow node cannot be reached from the process entry path.',
+  'validation.issue.di.plane-missing': 'A BPMN diagram does not contain a diagram plane.',
+  'validation.issue.di.plane-target':
+    'A BPMN diagram plane does not reference a process or collaboration.',
+  'validation.issue.di.element-ref':
+    'A diagram element does not reference the BPMN element it represents.',
+  'validation.issue.di.element-plane-mismatch':
+    'A diagram element represents an element outside its plane.',
+  'validation.issue.di.shape-bounds': 'A BPMN shape does not have finite, positive bounds.',
+  'validation.issue.di.edge-waypoints': 'A BPMN edge does not have at least two finite waypoints.',
+  'validation.issue.di.process-missing': 'A process has no BPMN diagram plane.',
+  'validation.issue.orbitpm.active-language': 'A process declares an unsupported active language.',
+  'validation.issue.orbitpm.active-projection-mismatch':
+    'Visible BPMN text does not match the process’s active-language value.',
+  'validation.issue.orbitpm.bilingual-missing-en':
+    'A bilingual BPMN field is missing its English value.',
+  'validation.issue.orbitpm.bilingual-missing-ar':
+    'A bilingual BPMN field is missing its Arabic value.',
+  'validation.issue.orbitpm.bilingual-wrong-script-en':
+    'An English BPMN field contains unapproved Arabic-script text.',
+  'validation.issue.orbitpm.bilingual-wrong-script-ar':
+    'An Arabic BPMN field does not contain meaningful Arabic-script text.',
+  'validation.issue.orbitpm.bilingual-duplicate-counterpart':
+    'The English and Arabic values are identical without an approved neutral exception.',
+  'validation.issue.orbitpm.bilingual-mixed-en':
+    'An English BPMN field contains mixed Arabic and Latin scripts.',
+  'validation.issue.orbitpm.bilingual-mixed-ar':
+    'An Arabic BPMN field contains mixed Arabic and Latin scripts.',
+  'validation.issue.orbitpm.bilingual-provider-failed':
+    'A bilingual BPMN value could not be produced by the selected provider.',
+  'validation.issue.orbitpm.call-unlinked': 'A Call activity is not linked to a process.',
+  'validation.issue.orbitpm.call-unresolved':
+    'A Call activity references a process that is not available.',
+  'validation.issue.preservation.snapshot-failed':
+    'Unknown extension data could not be checked for preservation.',
+  'validation.issue.preservation.extension-element-changed':
+    'An unknown extension element was removed, changed, or moved.',
+  'validation.issue.preservation.extension-attribute-changed':
+    'An unknown extension attribute was removed, changed, or moved.',
+  'validation.issue.adapterFailure': 'A required validation engine could not run.',
+  'validation.issue.xsd': 'The BPMN XML does not satisfy the BPMN 2.0 schema.',
+  'validation.issue.bpmnlint': 'A BPMN modeling rule reported a problem.',
+  'validation.issue.fallback':
+    'Validation reported a finding that this version does not recognize.',
+  'validation.repair.xml.provideDocument': 'Provide a non-empty BPMN XML document.',
+  'validation.repair.xml.reduceDocument':
+    'Reduce or split the document so it stays within the safe XML limits.',
+  'validation.repair.xml.removeInvalidContent':
+    'Remove the invalid character or content and validate again.',
+  'validation.repair.xml.convertUtf8': 'Convert the source to valid UTF-8 and validate again.',
+  'validation.repair.xml.removeUnsafeConstruct':
+    'Remove the unsafe XML construct and keep the required BPMN content inline.',
+  'validation.repair.xml.moveDeclaration':
+    'Move the XML declaration to the beginning of the document.',
+  'validation.repair.xml.repairSyntax': 'Correct the XML syntax and validate again.',
+  'validation.repair.references':
+    'Reconnect the referenced BPMN elements within the correct process scope.',
+  'validation.repair.uniqueIds': 'Give every BPMN and diagram element a unique ID.',
+  'validation.repair.reviewModel': 'Review the affected model element and correct its BPMN data.',
+  'validation.repair.restoreRoot': 'Restore a valid BPMN 2.0 definitions document root.',
+  'validation.repair.wrapDefinitions':
+    'Wrap the BPMN content in a valid BPMN 2.0 definitions element.',
+  'validation.repair.addId': 'Add a stable, unique XML-compatible ID.',
+  'validation.repair.targetNamespace': 'Set a stable absolute URI as the BPMN target namespace.',
+  'validation.repair.addProcess': 'Add a BPMN process to the definitions document.',
+  'validation.repair.validId': 'Use a valid XML name beginning with a letter or underscore.',
+  'validation.repair.flowDirection':
+    'Remove the invalid flow and reconnect it in the permitted direction.',
+  'validation.repair.defaultFlow':
+    'Choose a valid outgoing default flow and remove any condition from it.',
+  'validation.repair.conditions':
+    'Add or remove branch conditions so the gateway rules are satisfied.',
+  'validation.repair.boundaryAttachment':
+    'Attach the Boundary event to an activity in the same process scope.',
+  'validation.repair.reconnectFlow': 'Connect the node to a reachable process path.',
+  'validation.repair.regenerateDi':
+    'Repair the diagram information or preview and accept auto-layout.',
+  'validation.repair.localization':
+    'Review the English and Arabic values, scripts, and active-language projection.',
+  'validation.repair.linkProcess': 'Link the Call activity to one unambiguous available process.',
+  'validation.repair.preserveExtensions':
+    'Keep the original XML until the unknown extension data can be preserved exactly.',
+  'validation.repair.restoreValidator': 'Restore the validation engine and run validation again.',
+  'validation.repair.xsd':
+    'Repair the structure identified by the schema diagnostic and validate again.',
+  'validation.repair.bpmnlint':
+    'Review the referenced element against the labeled BPMN rule and correct the model.',
+  'validation.repair.fallback':
+    'Review the labeled technical evidence and correct the source before continuing.',
   'sourceEditor.open': 'Source',
   'sourceEditor.open.title': 'Open the BPMN XML source editor',
   'sourceEditor.title': 'BPMN XML source',
@@ -1541,6 +2195,15 @@ export const en = {
   'sourceEditor.applying': 'Applying…',
   'sourceEditor.rollback': 'Roll back',
   'sourceEditor.diff': 'Change preview',
+  'sourceEditor.diffBounded':
+    'This large source uses bounded alignment. Every changed line is shown in its replacement block.',
+  'sourceEditor.diffTruncated':
+    'This source change exceeds the safe review limit. Some diff content was omitted, so Apply is disabled. Reduce the change and try again.',
+  'sourceEditor.diffHunk':
+    'Change {index} of {total}, original line {original}, candidate line {candidate}',
+  'sourceEditor.diffLine.added': 'Added candidate line {line}',
+  'sourceEditor.diffLine.removed': 'Removed original line {line}',
+  'sourceEditor.diffLine.context': 'Unchanged original line {original}, candidate line {candidate}',
   'sourceEditor.changedLines':
     '{changed} changed · {added} added · {removed} removed · first change at line {line}',
   'sourceEditor.noChanges': 'No source changes.',
@@ -1550,7 +2213,18 @@ export const en = {
   'sourceEditor.layoutPreview': 'Preview generated layout',
   'sourceEditor.layoutAccept': 'Accept generated layout',
   'sourceEditor.layoutReady': 'A generated diagram layout is ready to review.',
+  'sourceEditor.layoutDiff': 'Generated layout source changes',
+  'sourceEditor.layoutDiagramTitle': 'Generated diagram preview',
+  'sourceEditor.layoutDiagramAria': 'Read-only generated BPMN diagram preview',
+  'sourceEditor.diagramPreview.loading': 'Rendering the read-only diagram preview…',
+  'sourceEditor.diagramPreview.ready': 'The read-only diagram preview is ready.',
+  'sourceEditor.diagramPreview.warnings': 'The diagram rendered with {count} viewer warning(s).',
+  'sourceEditor.diagramPreview.failed': 'Could not render the read-only diagram.',
   'sourceEditor.layoutFailed': 'Could not generate diagram layout: {error}',
+  'sourceEditor.action.previewFailed': 'Could not preview the source changes.',
+  'sourceEditor.action.layoutFailed': 'Could not generate the diagram layout.',
+  'sourceEditor.action.applyFailed': 'Could not apply the source changes.',
+  'sourceEditor.action.technicalDetails': 'Technical details:',
   'sourceEditor.missingDi': 'The XML has no usable BPMN diagram layout.',
   'sourceEditor.applyFailed': 'Could not apply source: {error}',
   'sourceEditor.applied': 'Source changes applied.',
@@ -1587,11 +2261,16 @@ export const ar: Record<keyof typeof en, string> = {
   'app.lang.control': 'الواجهة: {language}',
   'app.lang.en': 'EN',
   'app.lang.ar': 'العربية',
+  'app.skipToMain': 'تخطَّ إلى مساحة عمل العمليات',
+  'app.main.aria': 'مساحة عمل العمليات',
+  'app.actions.aria': 'المزيد من إجراءات التطبيق',
 
   // --- Sidebar rail toggle ---
   'sidebar.toggle.aria': 'إظهار/إخفاء اللوحة الجانبية',
   'sidebar.hide.title': 'إخفاء اللوحة الجانبية',
   'sidebar.show.title': 'إظهار اللوحة الجانبية',
+  'sidebar.explorer.aria': 'مستكشف مساحة العمل وأدوات التوليد',
+  'sidebar.close.aria': 'إغلاق مستكشف مساحة العمل',
 
   // --- Sidebar: directory mode ---
   'tree.newProcess': '＋ عملية جديدة',
@@ -1670,7 +2349,9 @@ export const ar: Record<keyof typeof en, string> = {
   'alert.deleteFailed': 'تعذّر الحذف: {error}',
   'alert.moveFailed': 'تعذّر النقل: {error}',
   'alert.importFailed': 'تعذّر استيراد {name}: {error}',
+  'confirm.discardUnsaved.title': 'تجاهل التغييرات غير المحفوظة؟',
   'confirm.discardUnsaved': 'هل تريد تجاهل التغييرات غير المحفوظة في {title}؟',
+  'confirm.discardUnsaved.confirm': 'تجاهل وإغلاق',
   'confirm.deleteNode': 'حذف "{name}"؟ لا يمكن التراجع عن هذا الإجراء.',
   'confirm.deleteFolder.notEmptyBody':
     'غير فارغ. سيؤدي حذفه إلى إزالة المجلد وكل ما بداخله. لا يمكن التراجع عن هذا الإجراء.',
@@ -1734,6 +2415,8 @@ export const ar: Record<keyof typeof en, string> = {
   'settings.clearKey': 'مسح المفتاح المخزّن',
   'settings.saved': 'تم الحفظ.',
   'settings.keyCleared': 'تم مسح المفتاح.',
+  'settings.credentials.saving': 'جارٍ حفظ بيانات الاعتماد…',
+  'settings.credentials.unlocking': 'جارٍ فتح بيانات الاعتماد المشفّرة…',
   'settings.close': 'إغلاق',
   'settings.saveKeys': 'حفظ المفاتيح',
   'settings.title.providers': 'الإعدادات — مزوّدو الذكاء الاصطناعي',
@@ -1752,6 +2435,26 @@ export const ar: Record<keyof typeof en, string> = {
   'settings.encryption.hint':
     'يُستخدم AES-256-GCM مع مفتاح مشتق عبر PBKDF2. لا يمكن استعادة النص المشفّر عند فقدان عبارة المرور.',
   'settings.encryption.unlocked': 'تم فتح {count} من المفاتيح المشفّرة لهذه الجلسة.',
+  'settings.storageError.invalidInput': 'راجع حقول بيانات الاعتماد المطلوبة ثم حاول مجددًا.',
+  'settings.storageError.unavailable': 'مساحة التخزين في المتصفح غير متاحة.',
+  'settings.storageError.failed': 'تعذّر على المتصفح حفظ بيانات الاعتماد أو تنظيفها.',
+  'settings.storageError.cryptoUnavailable':
+    'تخزين بيانات الاعتماد المشفّرة غير متاح في هذا المتصفح.',
+  'settings.storageError.invalidCiphertext':
+    'بيانات الاعتماد المشفّرة المخزّنة مفقودة أو غير صالحة.',
+  'settings.storageError.unlockFailed':
+    'تعذّر فتح بيانات الاعتماد المشفّرة. تحقق من عبارة المرور والبيانات المخزّنة.',
+  'settings.storageError.operationCancelled':
+    'حلّ إجراء أحدث لبيانات الاعتماد محل العملية المعلّقة.',
+  'settings.storageError.startup': 'تعذّر إكمال تنظيف بيانات الاعتماد القديمة. {error}',
+  'settings.storageError.providerSelection':
+    'تعذّر حفظ اختيار مزوّد الذكاء الاصطناعي ونموذجه. {error}',
+  'settings.storageError.keySave': 'تعذّر حفظ مفتاح {provider}. {error}',
+  'settings.storageError.unlock': 'تعذّر فتح مفتاح {provider}. {error}',
+  'settings.storageError.clear': 'تعذّر مسح المفتاح المخزّن لـ {provider}. {error}',
+  'settings.storageError.unknownProvider': 'مزوّد الذكاء الاصطناعي',
+  'settings.storageError.technicalDetails': 'التفاصيل التقنية',
+  'settings.storageError.technicalDetail': 'تفصيل تقني لتخزين بيانات الاعتماد',
   'settings.localization.title': 'الموارد ثنائية اللغة',
   'settings.localization.description':
     'حرّر المسرد المنسّق وذاكرة الترجمة المقبولة لمساحة العمل هذه.',
@@ -1792,10 +2495,51 @@ export const ar: Record<keyof typeof en, string> = {
   'settings.localization.saving': 'جارٍ الحفظ…',
   'settings.localization.conflict':
     'تغيّرت موارد مساحة العمل هذه في مكان آخر. أعد تحميلها قبل الحفظ مجددًا.',
+  'settings.localization.conflictTitle': 'تغيّر مورد {resource} في مكان آخر',
+  'settings.localization.conflictReloadRequired':
+    'تم الاحتفاظ بالمسودة غير المحفوظة. أعد تحميل أحدث إصدار من مساحة العمل قبل تسويتها.',
+  'settings.localization.conflictReview':
+    'تغيّر إصدار مساحة العمل بعد بدء هذه المسودة. اختر إصدار مساحة العمل، أو احتفظ بالمسودة مقابل الإصدار المعاد تحميله لمراجعتها صراحةً قبل الحفظ.',
+  'settings.localization.conflictVersions': 'تجزئتا أساس المسودة ومساحة العمل:',
+  'settings.localization.conflictCompareVersions': 'مقارنة أساس المسودة بإصدار مساحة العمل',
+  'settings.localization.conflictDraftBase': 'أساس المسودة ({count} من الإدخالات)',
+  'settings.localization.conflictWorkspaceVersion': 'إصدار مساحة العمل ({count} من الإدخالات)',
+  'settings.localization.conflictPreviewEmpty': 'لا توجد إدخالات.',
+  'settings.localization.conflictPreviewOmitted': 'لا تظهر {count} من الإدخالات الإضافية.',
+  'settings.localization.useWorkspaceVersion': 'استخدام إصدار مساحة العمل من {resource}',
+  'settings.localization.keepDraftForReview': 'الاحتفاظ بمسودة {resource} للمراجعة',
+  'settings.localization.reloadedDraftsPreserved':
+    'أُعيد تحميل موارد مساحة العمل. تم الاحتفاظ بالمسودات غير المحفوظة لمراجعة التعارض.',
+  'settings.localization.workspaceVersionSelected': 'يُستخدم إصدار مساحة العمل من {resource}.',
+  'settings.localization.draftKeptForReview':
+    'تم الاحتفاظ بمسودة {resource} مقابل إصدار مساحة العمل المعاد تحميله. راجعها قبل الحفظ.',
   'settings.localization.saveFailed': 'تعذر حفظ موارد الترجمة: {error}',
   'settings.localization.loadFailed': 'تعذر تحميل موارد الترجمة لمساحة العمل: {error}',
   'settings.localization.loadFailedHint':
-    'لم تتغير الملفات الأصلية. أصلحها خارجيًا ثم أعد المحاولة. يظل التحرير معطلاً حتى تنجح إعادة التحميل.',
+    'يظل التحرير معطلاً حتى تنجح إعادة تحميل الملفين. أصلح الملف المُبلّغ عنه خارجيًا ثم أعد المحاولة. قد يبقى تحديث مكتمل للتهيئة الأولى أو للتنسيق القديم إذا فشلت عملية تخزين لاحقة.',
+  'settings.localization.failure.invalidPath': 'مسار أحد موارد الترجمة غير صالح.',
+  'settings.localization.failure.invalidEncoding':
+    'أحد موارد الترجمة ليس نصًا صالحًا بترميز UTF-8.',
+  'settings.localization.failure.notFound': 'لم يُعثر على مورد ترجمة مطلوب.',
+  'settings.localization.failure.alreadyExists':
+    'يوجد مورد ترجمة مسبقًا حيث كان متوقعًا إنشاء ملف جديد.',
+  'settings.localization.failure.wrongKind':
+    'يشير مسار مورد الترجمة إلى نوع غير صحيح من عناصر مساحة العمل.',
+  'settings.localization.failure.permission': 'فُقد إذن الوصول إلى ملفات مساحة العمل.',
+  'settings.localization.failure.cancelled': 'أُلغيت عملية مساحة العمل.',
+  'settings.localization.failure.staleWorkspace': 'تغيّرت مساحة العمل المحددة قبل اكتمال العملية.',
+  'settings.localization.failure.unsupported':
+    'لا تستطيع مساحة العمل هذه تخزين موارد ترجمة محمولة.',
+  'settings.localization.failure.quotaExceeded': 'لا تتوفر مساحة تخزين كافية في مساحة العمل.',
+  'settings.localization.failure.integrity': 'لم يجتز مورد الترجمة المحفوظ فحص سلامة البيانات.',
+  'settings.localization.failure.storage': 'فشلت عملية التخزين في مساحة العمل.',
+  'settings.localization.failure.resourceLimit':
+    'يتجاوز أحد موارد الترجمة حد الحجم أو التعقيد المدعوم.',
+  'settings.localization.failure.partialLoad':
+    'تم تحديث أحد ملفات الترجمة قبل فشل عملية لاحقة على مورد آخر.',
+  'settings.localization.failure.unknown': 'حدث خطأ غير متوقع في تخزين مساحة العمل.',
+  'settings.localization.technicalDetails': 'التفاصيل التقنية',
+  'settings.localization.technicalDetail': 'تفصيل تقني لموارد ترجمة مساحة العمل',
   'settings.localization.validation.englishRequired': 'أدخل القيمة الإنجليزية.',
   'settings.localization.validation.arabicRequired': 'أدخل القيمة العربية.',
   'settings.localization.validation.englishScript':
@@ -1847,6 +2591,11 @@ export const ar: Record<keyof typeof en, string> = {
   'ai.error.auth': 'رفض المزوّد الطلب (خطأ في المصادقة). تحقق من مفتاح API في الإعدادات.',
   'ai.error.rateLimit':
     'المزوّد يحدّ من المعدل أو محمّل بشكل زائد الآن. انتظر لحظة وحاول مرة أخرى.',
+  'ai.error.provider': 'أعاد مزوّد الذكاء الاصطناعي خطأً. حاول مرة أخرى أو اختر مزوّدًا آخر.',
+  'ai.error.invalidResponse':
+    'أعاد مزوّد الذكاء الاصطناعي استجابة فارغة أو غير قابلة للقراءة. حاول مرة أخرى.',
+  'ai.error.unknown': 'فشلت عملية الذكاء الاصطناعي على نحو غير متوقع.',
+  'ai.error.technicalDetail': 'تفصيل تقني:',
   'ai.error.noApiKey': 'لا يوجد مفتاح API لهذا المزوّد. أضف واحدًا في الإعدادات.',
   'ai.error.selectProvider': 'اختر المزوّد والنموذج قبل الإنشاء.',
   'ai.pdf.label': 'أو ارفع ملف PDF',
@@ -1860,7 +2609,8 @@ export const ar: Record<keyof typeof en, string> = {
   'ai.tab.description': 'من وصف نصي',
   'ai.tab.pdf': 'من PDF / صورة',
   'ai.tab.pdf.title.supported': 'التوليد من مستند PDF أو صورة لرسم العملية',
-  'ai.tab.pdf.title.unsupported': 'إدخال PDF/الصور غير متاح لهذا المزوّد',
+  'ai.tab.pdf.title.unsupported':
+    'إدخال PDF/الصور غير مدعوم من المزوّد والنموذج المحددين. اختر نموذجًا أو مزوّدًا متوافقًا.',
   'ai.pdfDocument.label': 'مستند PDF أو صورة',
   'ai.pdfHint.label': 'أي عملية؟',
   'ai.pdfHint.optional': '(اختياري)',
@@ -1881,9 +2631,22 @@ export const ar: Record<keyof typeof en, string> = {
   'ai.attach.extracted': '{name} · تم استخراج {chars} حرفًا من النص',
   'ai.attach.docxEmpty': 'لم يتم العثور على نص قابل للقراءة في {name} — هل هو مستند ممسوح ضوئيًا؟',
   'ai.attach.readFailed': 'تعذّرت قراءة {name}: {error}',
+  'ai.attach.docxError.notZip': 'الملف {name} ليس مستند Word ‏(.docx) صالحًا.',
+  'ai.attach.docxError.missingDocument': 'لا يحتوي الملف {name} على محتوى مستند Word الرئيسي.',
+  'ai.attach.docxError.tooLarge':
+    'يتجاوز الملف {name} حدود أمان أرشيف المستند. استخدم مستندًا أصغر.',
+  'ai.attach.docxError.unsafe':
+    'يحتوي الملف {name} على مسارات أرشيف غير آمنة أو متعارضة، لذلك تم رفضه.',
+  'ai.attach.docxError.encrypted':
+    'الملف {name} مشفّر أو محمي بكلمة مرور. احفظ نسخة غير محمية ثم حاول مرة أخرى.',
+  'ai.attach.docxError.unsupported':
+    'يستخدم الملف {name} تنسيق أرشيف Word أو طريقة ضغط غير مدعومة.',
+  'ai.attach.docxError.malformed': 'الملف {name} تالف أو ليس مستند Word قابلًا للقراءة.',
+  'ai.attach.docxError.cancelled': 'تم إلغاء قراءة الملف {name}.',
+  'ai.attach.docxError.unknown': 'تعذّرت قراءة مستند Word ‏{name}.',
   'ai.attach.remove': 'إزالة المرفق',
   'ai.attach.unsupportedProvider':
-    'المرفقات غير متاحة لهذا المزوّد. استخدم OpenRouter أو Anthropic أو Gemini، أو أزل المرفق.',
+    'نوع المرفق هذا غير مدعوم من المزوّد والنموذج المحددين. اختر نموذجًا أو مزوّدًا متوافقًا.',
   'ai.image.sizeGate.overLimit':
     'حجم الصورة {size} — يتجاوز الحد {limit} لهذا المزوّد. اضغط الصورة أو قصّها ثم أعد المحاولة.',
   'ai.image.unsupportedType': 'نوع الصورة غير مدعوم. استخدم PNG أو JPEG أو WebP أو GIF.',
@@ -1928,7 +2691,8 @@ export const ar: Record<keyof typeof en, string> = {
   'translate.done': 'تمت ترجمة {count} تسمية وتبديل لغة المخطط. احفظ الملف للاحتفاظ بالتغييرات.',
   'translate.partial':
     'تمت ترجمة {done} من أصل {total} تسمية مؤهلة. تُعرض {switched} تسمية باللغة المطلوبة وتبقى {missing} بلا تغيير. احفظ الملف للاحتفاظ بالتغييرات.',
-  'translate.failed': 'فشلت الترجمة: {error}',
+  'translate.failed':
+    'فشلت الترجمة. ما زالت الحقول غير المحلولة متاحة لإعادة المحاولة أو المراجعة اليدوية.',
   'settings.completeness.label': 'إبراز المعلومات الناقصة في الخطوات',
   'settings.completeness.hint':
     'يميّز الخطوات التي تفتقد الجهة المسؤولة أو المدخلات أو المخرجات — والقرارات بلا أساس، وأحداث البداية بلا مشغّل.',
@@ -1954,6 +2718,10 @@ export const ar: Record<keyof typeof en, string> = {
   'assist.interview.noModeler': 'افتح العملية المولَّدة أولًا ثم ابدأ المقابلة.',
   'assist.interview.editWarning':
     'الإجابات تعيد توليد المخطط — أكمل تعديلاتك اليدوية على اللوحة بعد المقابلة.',
+  'assist.error.redaction':
+    'تعذّر إعداد الطلب بأمان بعد حجب الأسماء. راجع السياق المضمّن ثم حاول مرة أخرى.',
+  'assist.error.emptyResponse':
+    'لم يُرجع المزوّد أي أسئلة قابلة للاستخدام في المقابلة. حاول مرة أخرى.',
   'assist.model.line': 'النموذج: {model} ({provider})',
   'ai.continueInChat': '💬 أكمل النواقص في المحادثة',
   'ai.continueInChat.title': 'افتح المساعد وأجب عن أسئلته لإكمال معلومات الخطوات الناقصة',
@@ -2021,6 +2789,8 @@ export const ar: Record<keyof typeof en, string> = {
     'الإجمالي: {requests} طلبات · {tokens} رمز إدخال/إخراج · {reasoning} رمز تفكير · {cost}',
   'ai.usage.priceAsOf':
     'آخر مراجعة لتقدير السعر المحلي في {date}؛ وتُستخدم تكلفة المزوّد عند توفرها.',
+  'ai.usage.incomplete':
+    'بيانات الاستخدام غير مكتملة؛ القيم المعلّمة بالرمز ≥ هي حدود دنيا استنادًا إلى البيانات المتبقية في هذا المتصفح.',
   'ai.usage.costNa': 'التكلفة غير متاحة',
   'ai.usage.reset': 'إعادة تعيين',
   'settings.credits.noBalanceApi':
@@ -2406,10 +3176,17 @@ export const ar: Record<keyof typeof en, string> = {
   'translationReview.title': 'مراجعة الترجمة',
   'translationReview.direction.enAr': 'الإنجليزية ← العربية',
   'translationReview.direction.arEn': 'العربية ← الإنجليزية',
+  'translationReview.document': 'المستند الهدف:',
   'translationReview.summary':
     'تم فحص {fields} حقلًا ثنائي اللغة · {missing} ناقص · {invalid} بنص مختلط/غير صحيح · {failed} فشل لدى المزوّد',
   'translationReview.fields.title': 'الحقول التي تتطلب مراجعة',
   'translationReview.fields.issue': '{issue}',
+  'translationReview.fields.paginationLabel': 'صفحات الحقول التي تتطلب مراجعة',
+  'translationReview.issue.missing': 'الترجمة مفقودة',
+  'translationReview.issue.wrongScript': 'نظام الكتابة غير صحيح',
+  'translationReview.issue.duplicateCounterpart': 'القيمة المقابلة مكررة',
+  'translationReview.issue.mixed': 'أنظمة كتابة مختلطة',
+  'translationReview.issue.providerFailed': 'فشل مزوّد الترجمة',
   'translationReview.provider': 'مزوّد الترجمة',
   'translationReview.provider.choose': 'اختر مزوّدًا…',
   'translationReview.provider.ai':
@@ -2417,22 +3194,79 @@ export const ar: Record<keyof typeof en, string> = {
   'translationReview.provider.free':
     'سيُرسل كل نص مطابق إلى Google Translate، وقد تُرسل العناصر الفاشلة إلى MyMemory.',
   'translationReview.outbound.title': 'النص المطابق الذي سيغادر هذا المتصفح',
+  'translationReview.outbound.paginationLabel': 'صفحات مراجعة النص الصادر',
   'translationReview.outbound.disclosure':
-    'سيستلم {provider} عدد {count} من عناصر النص ضمن نحو {min}–{max} طلبات خارجية. لن يُرسل شيء حتى تضغط «ترجم الآن».',
+    'سيستلم {provider} عدد {count} من عناصر النص ضمن نحو {min}–{max} طلبات خارجية. لن يُرسل شيء حتى تضغط «ترجم الآن» أو تؤكد صراحةً إعادة محاولة حقل واحد.',
   'translationReview.outbound.chooseProvider':
     'اختر مزوّدًا لعرض الإفصاح النهائي وتقدير الطلبات. لم يُرسل أي شيء.',
+  'translationReview.pagination.status': 'عرض {start}–{end} من {total}. الصفحة {page} من {pages}.',
+  'translationReview.pagination.previous': 'الصفحة السابقة',
+  'translationReview.pagination.next': 'الصفحة التالية',
   'translationReview.sensitive':
     'هناك {count} عنصرًا من حقول المالك/المسؤولية وقد تتضمن أسماء أشخاص.',
   'translationReview.mixedManual':
     'ستبقى عناصر المصدر مختلطة النص مدرجة للتقسيم أو المراجعة اليدوية ولن تُرسل تلقائيًا.',
   'translationReview.translateNow': 'ترجم الآن',
   'translationReview.partialPreview': 'معاينة الحقول المترجمة فقط',
+  'translationReview.applyCompleted': 'تطبيق عرض اللغة المكتمل',
   'translationReview.postpone': 'تأجيل',
   'translationReview.cancel': 'إلغاء الترجمة',
   'translationReview.running': 'جارٍ تنفيذ الترجمة…',
+  'translationReview.memorySaving':
+    'طُبّقت الترجمة. جارٍ حفظ الأزواج المقبولة في ذاكرة ترجمة مساحة العمل…',
   'translationReview.cancelled': 'أُلغيت الترجمة. ما زالت جميع الحقول غير المحلولة مدرجة.',
   'translationReview.partialStatus':
     'ما زالت بعض الحقول غير محلولة. بقيت مدرجة ولم يُعلن اكتمال لغة المخطط.',
+  'translationReview.proposalStatus':
+    'تتطلب {count} اقتراحات ترجمة من المزوّد قبولك أو تعديلك أو رفضك قبل تطبيق أي شيء.',
+  'translationReview.stagedStatus':
+    'تم تجهيز {count} قيمة مراجَعة. لن يتغير شيء حتى التطبيق النهائي.',
+  'translationReview.applying': 'جارٍ تطبيق جميع القيم المراجَعة كتغيير واحد قابل للتراجع…',
+  'translationReview.progress.partial':
+    '{resolved} محلول · {unresolved} غير محلول · {failed} فشل لدى المزوّد. لم تكتمل لغة المخطط.',
+  'translationReview.progress.ready':
+    'تجتاز جميع الحقول الهدف الآن تدقيق اللغتين. طبّق عرض اللغة المكتمل للإنهاء.',
+  'translationReview.field.source': 'النص المصدر',
+  'translationReview.field.target': 'النص الهدف',
+  'translationReview.field.proposed': 'اقتراح المزوّد',
+  'translationReview.field.staged': 'مقبول للتطبيق النهائي',
+  'translationReview.field.acceptProposal': 'قبول هذا الاقتراح',
+  'translationReview.field.rejectProposal': 'رفض هذا الاقتراح',
+  'translationReview.field.unavailable':
+    'لم يعد لهذا التشخيص هدف تخزين BPMN آمن. حدّث المراجعة بعد تصحيح حقل المصدر.',
+  'translationReview.field.retry': 'إعادة محاولة هذا الحقل',
+  'translationReview.field.retrying': 'جارٍ إعادة محاولة هذا الحقل…',
+  'translationReview.field.retryDisclosureTitle': 'تأكيد طلب هذا الحقل الواحد',
+  'translationReview.field.retryDisclosure':
+    'سيُرسل الحقل المطابق أدناه فقط ضمن نحو {min}–{max} طلبات خارجية. لن يُضمّن أي حقل آخر من الحقول المراجعة.',
+  'translationReview.field.retryProvider': 'المزوّد والنموذج',
+  'translationReview.field.retryContext': 'سياق الحقل',
+  'translationReview.field.retryFingerprint': 'بصمة الموافقة',
+  'translationReview.field.retrySensitivity.sensitive':
+    'قد يحتوي حقل المالك/المسؤولية هذا على اسم شخص.',
+  'translationReview.field.retrySensitivity.standard': 'هذا الحقل غير مصنّف كحقل مالك/مسؤولية.',
+  'translationReview.field.retryCancel': 'إلغاء إعادة محاولة الحقل الواحد',
+  'translationReview.field.retryConfirm': 'تأكيد وإعادة محاولة هذا الحقل',
+  'translationReview.field.consentRequired':
+    'راجع إفصاح الحقل الواحد الحالي وأكّده قبل إعادة المحاولة.',
+  'translationReview.memorySaveFailed':
+    'طُبّقت الترجمة، لكن تعذّر حفظ أزواج الترجمة المقبولة في ذاكرة ترجمة مساحة العمل.',
+  'translationReview.memoryRecoveryRequired':
+    'اختر إعادة محاولة الحفظ للاحتفاظ بالأزواج المقبولة، أو المتابعة دون حفظ. سيبقى مربع الحوار مفتوحًا حتى تختار أحد إجراءَي الاسترداد.',
+  'translationReview.memoryRetry': 'إعادة محاولة حفظ الترجمات المقبولة',
+  'translationReview.memoryContinue': 'المتابعة دون حفظ هذه الأزواج',
+  'translationReview.memorySkipped':
+    'ستبقى الترجمة مطبّقة. تابع OrbitPM دون محاولة أخرى لحفظ هذه الأزواج في ذاكرة ترجمة مساحة العمل.',
+  'translationReview.field.manual': 'تعديل هذا الحقل يدويًا',
+  'translationReview.field.manualCancel': 'إغلاق المحرر اليدوي',
+  'translationReview.field.manualSave': 'حفظ القيمة المراجعة',
+  'translationReview.field.manualSaving': 'جارٍ حفظ القيمة المراجعة…',
+  'translationReview.field.manualPlaceholder': 'أدخل الترجمة المراجعة',
+  'translationReview.field.manualEmpty': 'أدخل ترجمة مراجعة غير فارغة.',
+  'translationReview.field.manualFailed': 'تعذّر حفظ القيمة المراجعة.',
+  'translationReview.field.retryFailed': 'تعذّرت إعادة ترجمة هذا الحقل.',
+  'translationReview.error.technicalDetails': 'التفاصيل التقنية',
+  'translationReview.error.technicalDetail': 'تفصيل تقني لمراجعة الترجمة',
   'translationReview.stale': 'تغيّر المخطط بعد المراجعة. راجع النص الحالي الصادر قبل الترجمة.',
   'translationReview.noProvider': 'اختر مزوّد ترجمة أولًا.',
 
@@ -2510,18 +3344,140 @@ export const ar: Record<keyof typeof en, string> = {
   'workspaceImportReview.localizationMode.explicit': 'مراجعة صريحة',
   'workspaceImportReview.localizationDigest': 'بصمة مراجعة الترجمة',
   'workspaceImportReview.none': 'لا يوجد',
+  'workspaceImportReview.pagination.navigation': 'صفحات {section}',
+  'workspaceImportReview.pagination.status':
+    'عرض {start}–{end} من {total}. الصفحة {page} من {pages}.',
+  'workspaceImportReview.pagination.previous': 'الصفحة السابقة',
+  'workspaceImportReview.pagination.next': 'الصفحة التالية',
+  'workspaceImportReview.pagination.previousFor': 'صفحة {section} السابقة',
+  'workspaceImportReview.pagination.nextFor': 'صفحة {section} التالية',
+  'workspaceImportReview.technicalEvidence': 'الدليل التقني',
+  'workspaceImportReview.technicalEvidenceTruncated':
+    'تم اقتطاع الدليل التقني إلى {limit} حرف Unicode.',
+  'workspaceImportReview.autoLayoutPreview.title': 'معاينات مخططات التخطيط التلقائي',
+  'workspaceImportReview.autoLayoutPreview.intro':
+    'للحفاظ على استجابة المراجعات الكبيرة، لا يبدأ عرض المخطط إلا عند اختيار مخرج مراجع. يؤدي فتح معاينة أخرى إلى إغلاق المعاينة الحالية.',
+  'workspaceImportReview.autoLayoutPreview.open': 'معاينة المخطط',
+  'workspaceImportReview.autoLayoutPreview.close': 'إغلاق معاينة المخطط',
+  'workspaceImportReview.autoLayoutPreview.openFor': 'معاينة مخطط {path}',
+  'workspaceImportReview.autoLayoutPreview.closeFor': 'إغلاق معاينة مخطط {path}',
+  'workspaceImportReview.autoLayoutPreview.pagination': 'صفحات معاينات التخطيط التلقائي',
+  'workspaceImportReview.autoLayoutPreview.failed': 'تعذّر عرض معاينة المخطط المراجع.',
+  'workspaceImportReview.autoLayoutPreview.ready': 'معاينة المخطط المراجع جاهزة.',
+  'workspaceImportReview.autoLayoutPreview.warnings':
+    'معاينة المخطط المراجع جاهزة مع {count} من تحذيرات العرض.',
+  'workspaceImportReview.autoLayoutAcceptance.label':
+    'أوافق على جميع إصلاحات التخطيط التلقائي المدرجة وعددها {count}.',
+  'workspaceImportReview.autoLayoutAcceptance.hint':
+    'تتوفر معاينات المخططات عند الطلب أعلاه. يؤدي تأكيد الاستيراد إلى تطبيق XML المُصلح والمختوم بدقة لكل مخرج مدرج.',
+  'workspaceImportReview.autoLayoutAcceptance.required':
+    'وافق على جميع إصلاحات التخطيط التلقائي المدرجة قبل تأكيد هذا الاستيراد.',
   'workspaceImportReview.skipped': 'المدخلات المتخطاة',
   'workspaceImportReview.skippedItem': 'المدخل المتخطى {index}',
   'workspaceImportReview.path': 'المسار',
   'workspaceImportReview.reason': 'السبب',
+  'workspaceImportReview.reason.unsupportedContent': 'محتوى غير مدعوم',
+  'workspaceImportReview.reason.unsafePath': 'مسار غير آمن',
+  'workspaceImportReview.reason.invalidBpmn': 'ملف BPMN غير صالح',
+  'workspaceImportReview.reason.amlConversionFailed': 'فشل تحويل AML من ARIS',
+  'workspaceImportReview.reason.processIdCollision': 'تعارض في معرّف العملية',
+  'workspaceImportReview.reason.processIdentityChanged': 'تغيّرت هوية العملية أثناء المراجعة',
+  'workspaceImportReview.reason.localizationReviewRequired': 'تلزم مراجعة الترجمة',
+  'workspaceImportReview.reason.localizationReviewCancelled': 'أُلغيت مراجعة الترجمة',
+  'workspaceImportReview.reason.localizationInvalid': 'فشل التحقق من الترجمة',
+  'workspaceImportReview.reason.destinationParentFile': 'المجلد الأصل للوجهة هو ملف',
+  'workspaceImportReview.reason.libraryNotBpmn': 'إدخال ZIP ليس BPMN',
+  'workspaceImportReview.reason.libraryUnsafePath': 'مسار إدخال ZIP غير آمن',
+  'workspaceImportReview.reason.libraryTooLarge': 'إدخال ZIP كبير جدًا',
+  'workspaceImportReview.reason.libraryDecodeFailed': 'تعذّر فك ترميز إدخال ZIP',
+  'workspaceImportReview.reason.unknown': 'سبب تخطٍ غير معروف',
+  'workspaceImportReview.skip.unsupportedContent':
+    'تم تخطي المدخل لأنه ليس ملف BPMN XML معروفًا ولا تصدير ARIS AML.',
+  'workspaceImportReview.skip.unsafePath':
+    'تم تخطي المدخل لأن مساره لا يمكن احتواؤه بأمان داخل مساحة العمل.',
+  'workspaceImportReview.skip.invalidBpmn': 'تم تخطي المدخل لأن التحقق من BPMN لم يكتمل بنجاح.',
+  'workspaceImportReview.skip.amlConversionFailed': 'تعذّر تحويل مدخل ARIS AML إلى ملف BPMN مراجع.',
+  'workspaceImportReview.skip.processIdCollision':
+    'كان المدخل سينشئ هوية عملية أو ينقلها خارج ارتباطها المراجع بمساحة العمل.',
+  'workspaceImportReview.skip.processIdentityChanged':
+    'تغيّرت هوية العملية بعد المراجعة، لذلك لم تعد الخطة المختومة قادرة على تطبيقها.',
+  'workspaceImportReview.skip.localizationReviewRequired':
+    'يحتاج المدخل إلى مراجعة ثنائية اللغة صريحة قبل تجهيزه.',
+  'workspaceImportReview.skip.localizationReviewCancelled':
+    'لم يتم تجهيز المدخل لأن مراجعته ثنائية اللغة أُلغيت.',
+  'workspaceImportReview.skip.localizationInvalid':
+    'لم يجتز المحتوى ثنائي اللغة المراجع عملية التحقق.',
+  'workspaceImportReview.skip.destinationParentFile':
+    'لا يمكن إنشاء الوجهة لأن أحد المسارات الأصلية لها ملف.',
+  'workspaceImportReview.skip.libraryNotBpmn': 'تم تخطي إدخال ZIP لأنه ليس ملف BPMN.',
+  'workspaceImportReview.skip.libraryUnsafePath': 'تم تخطي إدخال ZIP لأن مساره غير آمن.',
+  'workspaceImportReview.skip.libraryTooLarge': 'تم تخطي إدخال ZIP لأنه يتجاوز حد الحجم الآمن.',
+  'workspaceImportReview.skip.libraryDecodeFailed':
+    'تم تخطي إدخال ZIP لأنه تعذّر فك ترميز نصه بأمان.',
+  'workspaceImportReview.skip.unknown': 'تم تخطي المدخل لسبب لا يتعرف عليه هذا الإصدار.',
+  'workspaceImportReview.guidance.chooseSupportedContent':
+    'قدّم ملف BPMN XML أو تصدير ARIS AML مدعومًا ثم راجعه مرة أخرى.',
+  'workspaceImportReview.guidance.useSafePath':
+    'اختر وجهة نسبية آمنة تكون مجلداتها الأصلية داخل مساحة العمل.',
+  'workspaceImportReview.guidance.repairBpmn':
+    'صحح نتائج تحقق BPMN، ثم أنشئ خطة الاستيراد وراجعها من جديد.',
+  'workspaceImportReview.guidance.reviewArisExport':
+    'تحقق من تصدير ARIS وتقرير التحويل، ثم صدّر النموذج أو حوّله مرة أخرى.',
+  'workspaceImportReview.guidance.resolveProcessIdentity':
+    'حل تعارض معرّف العملية ومسار مساحة العمل، ثم أنشئ خطة مراجعة جديدة.',
+  'workspaceImportReview.guidance.repeatReview':
+    'حدّث مساحة العمل وكرر مراجعة الاستيراد وفق هويات العمليات الحالية.',
+  'workspaceImportReview.guidance.completeLocalization':
+    'أكمل المراجعة ثنائية اللغة وعالج كل نتائج الترجمة قبل الاستيراد.',
+  'workspaceImportReview.guidance.reduceLibraryEntry':
+    'قلّل ملف BPMN أو قسّمه ليبقى إدخال الأرشيف ضمن حد الحجم الآمن.',
+  'workspaceImportReview.guidance.decodeUtf8':
+    'أعد ترميز ملف BPMN بصيغة UTF-8 صالحة ثم أعد إنشاء مكتبة ZIP.',
+  'workspaceImportReview.guidance.reviewArisReport':
+    'راجع تقرير تحويل ARIS القابل للتنزيل وتحقق من النموذج المحوّل.',
+  'workspaceImportReview.guidance.reviewReplacement':
+    'تأكد من وجوب استبدال كل عملية مدرجة في مسار مساحة العمل المراجع فقط.',
+  'workspaceImportReview.guidance.unknown':
+    'راجع الدليل التقني المسمّى وصحح المصدر ثم أنشئ خطة استيراد جديدة.',
   'workspaceImportReview.message': 'الرسالة',
+  'workspaceImportReview.suggestedRepair': 'الإصلاح المقترح',
+  'workspaceImportReview.technicalCode': 'الرمز التقني',
+  'workspaceImportReview.technicalDiagnostic': 'التشخيص التقني',
+  'workspaceImportReview.validationSeverity': 'خطورة نتيجة التحقق',
+  'workspaceImportReview.validationSource': 'مصدر التحقق',
+  'workspaceImportReview.validationSeverityUnknown': 'خطورة تحقق غير معروفة',
+  'workspaceImportReview.validationSourceUnknown': 'مصدر تحقق غير معروف',
+  'workspaceImportReview.validationCode': 'رمز التحقق',
+  'workspaceImportReview.validationRuleId': 'معرّف قاعدة التحقق',
+  'workspaceImportReview.validationDiagnostic': 'تشخيص التحقق',
   'workspaceImportReview.warnings': 'التحذيرات',
   'workspaceImportReview.warningItem': 'التحذير {index}',
+  'workspaceImportReview.warning.amlDowngraded': 'بسّط تحويل ARIS عدد {count} من قرارات المصدر.',
+  'workspaceImportReview.warning.amlIgnored': 'تجاهل تحويل ARIS عدد {count} من قرارات المصدر.',
+  'workspaceImportReview.warning.amlAmbiguous':
+    'وجد تحويل ARIS عدد {count} من قرارات المصدر الملتبسة.',
+  'workspaceImportReview.warning.amlUnmapped':
+    'تعذّر على تحويل ARIS تعيين {count} من قرارات المصدر.',
+  'workspaceImportReview.warning.samePathProcessReplacement':
+    'سيتم استبدال {count} من معرّفات العمليات الموجودة في مسار مساحة العمل المراجع نفسه.',
+  'workspaceImportReview.warning.unknown':
+    'أبلغ مخطط الاستيراد عن تحذير لا يتعرف عليه هذا الإصدار.',
   'workspaceImportReview.code': 'الرمز',
   'workspaceImportReview.count': 'العدد',
   'workspaceImportReview.validationIssue': 'مشكلة التحقق',
   'workspaceImportReview.repairs': 'الإصلاحات التلقائية',
   'workspaceImportReview.repairItem': 'الإصلاح {index}',
+  'workspaceImportReview.appliedRepair.amlConverted': 'تم تحويل ARIS AML إلى مخرج BPMN 2.0 مراجع.',
+  'workspaceImportReview.appliedRepair.autoLayout':
+    'تم إنشاء معلومات رسم BPMN الناقصة وإعادة التحقق من المخرج المطابق.',
+  'workspaceImportReview.appliedRepair.destinationNormalized':
+    'تم توحيد الوجهة إلى مسار BPMN قابل للنقل داخل مساحة العمل.',
+  'workspaceImportReview.appliedRepair.destinationDeduplicated':
+    'تم تغيير الوجهة لتجنب مخرج آخر في هذه الخطة.',
+  'workspaceImportReview.appliedRepair.destinationCaseNormalized':
+    'تم توحيد حالة أحرف الوجهة مع مسار مساحة العمل الموجود.',
+  'workspaceImportReview.appliedRepair.unknown':
+    'طبّق المخطط إصلاحًا تلقائيًا لا يتعرف عليه هذا الإصدار.',
   'workspaceImportReview.before': 'قبل',
   'workspaceImportReview.after': 'بعد',
   'workspaceImportReview.aris': 'تقارير تحويل ARIS',
@@ -2564,6 +3520,8 @@ export const ar: Record<keyof typeof en, string> = {
     'أصلح كل وجهات الاحتفاظ بكليهما غير الصالحة قبل التأكيد.',
   'workspaceImportReview.ready': 'الخطة المراجعة جاهزة للتأكيد الصريح.',
   'workspaceImportReview.error': 'خطأ في الاستيراد',
+  'workspaceImportReview.errorSummary':
+    'تعذّر إكمال استيراد مساحة العمل. راجع الدليل التقني، ثم أعد المحاولة أو ألغِ العملية.',
   'workspaceImportReview.busy': 'جارٍ تطبيق استيراد مساحة العمل…',
   'workspaceImportReview.cancel': 'إلغاء الاستيراد',
   'workspaceImportReview.confirm': 'تأكيد الاستيراد',
@@ -2582,6 +3540,9 @@ export const ar: Record<keyof typeof en, string> = {
     'يؤدي الحفظ إلى تنزيل ملف BPMN ولا تُحتفظ بمساحة عمل.',
   'workspace.storage.chooseDirectory': 'اختيار مساحة عمل في مجلد',
   'workspace.storage.openOpfs': 'فتح مساحة عمل المتصفح',
+  'workspace.storage.opfsOpenFailed':
+    'تعذّر فتح مساحة عمل المتصفح. حاول مرة أخرى أو اختر خيار تخزين آخر.',
+  'workspace.storage.opfsOpenTechnicalEvidence': 'دليل تقني — فتح مساحة عمل المتصفح: {error}',
   'workspace.storage.openSingleFile': 'فتح ملف BPMN واحد',
   'workspace.storage.backupExport': 'تصدير نسخة احتياطية لمساحة العمل',
   'workspace.storage.backupImport': 'استيراد نسخة احتياطية لمساحة العمل',
@@ -2633,6 +3594,17 @@ export const ar: Record<keyof typeof en, string> = {
   'workspace.history.restore': 'استعادة النسخة',
   'workspace.history.restoreCopy': 'الاستعادة كنسخة',
   'workspace.history.empty': 'لا توجد نسخ استرداد متاحة لهذا الملف.',
+  'workspace.history.pageEmpty': 'لا توجد نسخ استرداد متاحة في هذه الصفحة.',
+  'workspace.history.pagination.label': 'صفحات سجل الاسترداد',
+  'workspace.history.pagination.status': 'صفحة السجل {page}. يتم عرض {count} إدخالًا.',
+  'workspace.history.pagination.previous': 'الصفحة السابقة',
+  'workspace.history.pagination.next': 'الصفحة التالية',
+  'workspace.history.reason.overwrite': 'قبل الاستبدال',
+  'workspace.history.reason.delete': 'قبل الحذف',
+  'workspace.history.reason.restore': 'قبل الاستعادة',
+  'workspace.history.reason.manual': 'نسخة يدوية',
+  'workspace.history.reason.backupImport': 'قبل استيراد النسخة الاحتياطية',
+  'workspace.history.reason.unknown': 'سبب نسخة غير معروف',
   'workspace.history.copyPrompt': 'اسم ملف النسخة المستعادة',
   'workspace.history.copyDestinationRequired': 'أدخل مسارًا للنسخة المستعادة.',
   'workspace.history.copyDestinationInvalid':
@@ -2640,6 +3612,48 @@ export const ar: Record<keyof typeof en, string> = {
   'workspace.history.copyFailed': 'لم تكتمل الاستعادة كنسخة ({outcome}).',
   'workspace.history.restoreFailed': 'فشلت استعادة السجل: {error}',
   'workspace.history.restoreNotComplete': 'لم تكتمل الاستعادة ({outcome}).',
+  'workspace.history.action.listFailed': 'تعذّر تحميل سجل الاسترداد.',
+  'workspace.history.action.previewFailed': 'تعذّرت معاينة نسخة السجل هذه.',
+  'workspace.history.action.diffFailed': 'تعذّرت مقارنة نسخة السجل هذه.',
+  'workspace.history.action.restoreFailed': 'تعذّرت استعادة نسخة السجل هذه.',
+  'workspace.history.action.restoreCopyFailed': 'تعذّرت استعادة نسخة السجل هذه كنسخة.',
+  'workspace.history.action.workspaceRefreshAfterRestoreFailed':
+    'تمت استعادة النسخة في التخزين، لكن تعذّر تحديث مساحة العمل.',
+  'workspace.history.action.sessionRefreshAfterRestoreFailed':
+    'تمت استعادة النسخة في التخزين، لكن تعذّر تحديث الجلسة المفتوحة.',
+  'workspace.history.action.technicalDetails': 'التفاصيل التقنية:',
+  'workspace.history.restoreCancelled': 'تم إلغاء استعادة السجل.',
+  'workspace.history.applyEditorChangedBefore': 'تغيّر المحرّر المفتوح قبل تطبيق XML من السجل.',
+  'workspace.history.applyEditorSynchronizationUnavailable': 'أمر مزامنة المحرّر غير جاهز.',
+  'workspace.history.applyTargetSessionChanged': 'تغيّرت جلسة السجل المستهدفة أثناء تطبيق XML.',
+  'workspace.history.applyLiveEditorUnverified':
+    'تم تطبيق XML من السجل، لكن تعذّر التحقق من المحرّر المباشر: {error}',
+  'workspace.history.applyEditorChangedDuring': 'تغيّر المحرّر المفتوح أثناء تطبيق XML من السجل.',
+  'workspace.history.restoreReason.cancelled': 'أُلغيت الاستعادة',
+  'workspace.history.restoreReason.reviewRequired': 'تلزم مراجعة إضافية',
+  'workspace.history.restoreReason.stale': 'تغيّرت مساحة العمل قبل الاستعادة',
+  'workspace.history.restoreReason.unknown': 'تعذّر إعداد الاستعادة',
+  'workspace.history.saveOutcome.permissionLoss': 'فُقد إذن الوصول إلى مساحة العمل',
+  'workspace.history.saveOutcome.externalConflict': 'تغيّرت الوجهة ({reason})',
+  'workspace.history.saveOutcome.staleWorkspace': 'تغيّرت مساحة العمل النشطة',
+  'workspace.history.saveOutcome.cancelled': 'أُلغيت الكتابة إلى التخزين',
+  'workspace.history.saveOutcome.storageFailure': 'فشلت الكتابة إلى التخزين',
+  'workspace.history.saveOutcome.unknown': 'أُعيدت نتيجة تخزين غير معروفة',
+  'workspace.history.conflictReason.hashMismatch': 'تغيّر محتوى الملف',
+  'workspace.history.conflictReason.missing': 'الملف غير موجود',
+  'workspace.history.conflictReason.alreadyExists': 'الملف موجود مسبقًا',
+  'workspace.history.conflictReason.unknown': 'حدث تعارض غير معروف',
+  'workspace.history.issue.unreadable': 'تعذّرت قراءة بيانات تعريف السجل للمسار «{path}».',
+  'workspace.history.issue.invalidMetadata': 'بيانات تعريف السجل للمسار «{path}» غير صالحة.',
+  'workspace.history.issue.missingContent':
+    'تشير بيانات تعريف السجل للمسار «{path}» إلى محتوى نسخة مفقود.',
+  'workspace.history.issue.checksumMismatch':
+    'فشل التحقق من المجموع الاختباري للنسخة المحفوظة للمسار «{path}».',
+  'workspace.history.issue.orphanContent':
+    'تم العثور على محتوى استرداد غير مرتبط في المسار «{path}».',
+  'workspace.history.issue.retentionLimit':
+    'بلغ سجل الاسترداد حد التخزين؛ تم الاحتفاظ بأحدث نسخة لكل عملية.',
+  'workspace.history.issue.unknown': 'تعذّر تحميل إدخال السجل للمسار «{path}».',
   'workspace.history.restoreWorkspaceRefreshFailed':
     'تمت استعادة النسخة في التخزين، لكن تعذّر تحديث مساحة العمل: {error}',
   'workspace.history.restoreSessionRefreshFailed':
@@ -2647,6 +3661,59 @@ export const ar: Record<keyof typeof en, string> = {
   'workspace.history.unknownError': 'لم تتوفر تفاصيل إضافية عن الخطأ.',
   'workspace.history.unavailable': 'استعادة السجل غير متاحة لأن جلسة مساحة العمل لم تعد نشطة.',
   'workspace.history.current': 'الملف الحالي',
+  'workspace.history.previewTruncated':
+    'تقتصر معاينة النسخة على أول {shown} حرفًا للسلامة؛ ولا يُعرض {omitted} حرفًا. ما زالت الاستعادة تستخدم النسخة الكاملة.',
+  'workspace.history.diffBounded':
+    'تظهر كتلة استبدال محدودة لأن محاذاة الأسطر التفصيلية تجاوزت حد العمل الآمن.',
+  'workspace.history.diffTruncated':
+    'معاينة المقارنة هذه غير مكتملة وقد تم تقييدها للسلامة. المحتوى غير المعروض: {rows} صفًا و{characters} حرفًا و{hunks} مقاطع فروقات و{operations} عمليات محاذاة.',
+  'workspace.history.diffInputTruncated':
+    'تجاوز الإدخال حد التفاصيل بمقدار {oldCharacters} حرفًا من النسخة و{newCharacters} حرفًا من الملف الحالي، إضافة إلى {oldLines} سطرًا من النسخة و{newLines} سطرًا من الملف الحالي.',
+  'workspace.history.liveEditorUnverifiedAfterRestore':
+    'تمت استعادة التخزين من السجل، لكن تعذّر التحقق من المحرّر المباشر.',
+  'workspace.history.newerRevisionBeforeCleanup':
+    'وصلت نسخة أحدث من المحرّر قبل اكتمال تنظيف السجل.',
+  'workspace.history.liveEditorUnverifiedAfterCleanup':
+    'اكتمل تنظيف السجل، لكن تعذّر التحقق من المحرّر المباشر.',
+  'workspace.history.newerRevisionDuringCleanup': 'وصلت نسخة أحدث من المحرّر أثناء تنظيف السجل.',
+  'workspace.history.editorRefreshIncompleteAfterRestore':
+    'تمت استعادة التخزين من السجل، لكن لم يكتمل تحديث المحرّر.',
+  'workspace.diagnostic.none': 'لا شيء',
+  'workspace.diagnostic.complete': 'مكتمل',
+  'workspace.diagnostic.unknown': 'غير معروف',
+  'workspace.import.rollbackEvidence':
+    '{error}؛ المراجعة: {review}؛ المطبّق: {applied}؛ التراجع: {rollback}',
+  'workspace.import.postCommitReconciliationFailed':
+    'تم تنفيذ تخزين استيراد مساحة العمل، لكن تعذّرت مطابقة مساحة العمل المفتوحة. راجع الدليل التقني قبل المتابعة.',
+  'workspace.import.postCommitWarning':
+    'اكتمل استيراد مساحة العمل، لكن تنظيف سجل الاسترداد يحتاج إلى مراجعة.',
+  'workspace.import.postCommitTechnicalEvidence':
+    'دليل تقني — استيراد مساحة العمل بعد التنفيذ: {error}',
+  'workspace.backup.rollbackEvidence': '{error}؛ المطبّق: {applied}؛ التراجع: {rollback}',
+  'workspace.backup.historyRetentionFailed':
+    'اكتمل استيراد النسخة الاحتياطية، لكن فشل تنظيف سجل الاسترداد.',
+  'workspace.backup.historyRetentionTechnicalEvidence':
+    'دليل تقني — الاحتفاظ بسجل النسخة الاحتياطية: {error}',
+  'workspace.backup.postCommitReconciliationFailed':
+    'تم تنفيذ تخزين النسخة الاحتياطية، لكن تعذّرت مطابقة مساحة العمل المفتوحة. راجع الدليل التقني قبل المتابعة.',
+  'workspace.backup.postCommitTechnicalEvidence':
+    'دليل تقني — استيراد النسخة الاحتياطية بعد التنفيذ: {error}',
+  'workspace.localization.workspaceImportRollbackUncertain':
+    'أدى التراجع عن استيراد مساحة العمل إلى حالة غير مؤكدة لموارد الترجمة.',
+  'workspace.localization.backupRollbackUncertain':
+    'أدى التراجع عن النسخة الاحتياطية إلى حالة غير مؤكدة لموارد الترجمة.',
+  'workspace.localization.backupCommittedReloadFailed':
+    'تعذّر إعادة تحميل موارد الترجمة بعد تنفيذ النسخة الاحتياطية.',
+  'workspace.sync.reviewedImportEditorChanged':
+    'تغيّر المحرّر المفتوح أثناء تنفيذ الاستيراد الذي تمت مراجعته.',
+  'workspace.sync.reviewedImportLocalRetained':
+    'تغيّر المحرّر المفتوح أثناء تنفيذ الاستيراد الذي تمت مراجعته؛ احتُفظ بملف XML المحلي كمسودة استرداد.',
+  'workspace.sync.committedReloadEditorChanged':
+    'تغيّر المحرّر المفتوح أثناء إعادة تحميل XML المنفّذ.',
+  'workspace.sync.committedReloadLocalRetained':
+    'تغيّر المحرّر المفتوح أثناء إعادة تحميل XML المنفّذ؛ احتُفظ بملف XML المحلي الأحدث كمسودة استرداد.',
+  'workspace.sync.postCommitCleanupLocalRetained':
+    'تغيّر المحرّر المفتوح أثناء التنظيف بعد التنفيذ؛ احتُفظ بملف XML المحلي الأحدث كمسودة استرداد.',
   'workspace.manifest.warning': 'تحذير في بيان مساحة العمل عند «{path}»: {error}',
   'workspace.manifest.postCommitError': 'حُفظ التغيير، لكن تعذّر تحديث بيان مساحة العمل: {error}',
   'workspace.manifest.repaired': 'تم إصلاح بيان مساحة العمل.',
@@ -2702,9 +3769,23 @@ export const ar: Record<keyof typeof en, string> = {
     'تغيّر «{path}» خارج علامة التبويب هذه ({reason}). أُوقف الحفظ واحتُفظ بمسودتك المحلية.',
   'session.save.reloadEditorFailed':
     'تم اختيار نسخة القرص، لكن تعذّر تحديث المحرّر المفتوح. قد تظل الجلسة تعرض تعديلاتك السابقة؛ راجعها قبل المتابعة: {error}',
+  'session.save.liveXmlCaptureDetail': '{error}؛ التقاط XML المباشر: {captureError}',
+  'session.save.localCanvasRecoveryDetail': '{error}؛ استرداد لوحة الرسم المحلية: {recoveryError}',
+  'session.save.retainedEditorCaptureFailed':
+    '{reason} فشل التقاط XML المباشر، لذا تُركت لوحة الرسم دون تغيير ووُسمت بأنها معدّلة: {error}',
+  'session.save.retainedEditorChangedDuringRecovery':
+    '{reason} استمر المحرّر في التغيّر أثناء الاسترداد؛ تُركت لوحة الرسم دون تغيير وما زالت معدّلة.',
   'session.save.locked':
     'تحفظ علامة تبويب OrbitPM أخرى هذا الملف. انتظر قليلًا ثم أعد المحاولة؛ احتُفظ بمسودتك المحلية.',
   'session.save.failed': 'لم يكتمل الحفظ ({status}). احتُفظ بمسودتك المحلية.',
+  'session.save.preservationBlocked':
+    'تم حظر الحفظ لأن بيانات امتداد BPMN المحمية قد تغيّرت. احتُفظ بمسودتك المحلية.',
+  'session.save.preservationTechnicalEvidence':
+    'دليل تقني — رموز مشكلات الحفاظ على الامتدادات: {codes}',
+  'session.save.permissionLoss':
+    'تعذّرت متابعة الحفظ بسبب فقدان إذن الوصول إلى مساحة العمل. احتُفظ بمسودتك المحلية.',
+  'session.save.storageFailure': 'تعذّرت كتابة الحفظ في تخزين مساحة العمل. احتُفظ بمسودتك المحلية.',
+  'session.save.storageTechnicalEvidence': 'دليل تقني — تخزين الحفظ ({code}): {error}',
   'session.save.newerEdits': 'حُفظت النسخة الملتقطة، لكن ما زالت هناك تعديلات أحدث غير محفوظة.',
   'session.download.draftRetained':
     'جُهّز تنزيل BPMN. ما زالت الجلسة غير محفوظة واحتُفظ بمسودة الاسترداد حتى حفظ دائم أو تجاهل صريح.',
@@ -2996,8 +4077,58 @@ export const ar: Record<keyof typeof en, string> = {
   'spreadsheet.report.checksum': 'SHA-256',
   'spreadsheet.report.download': 'تنزيل تقرير الاستيراد',
   'spreadsheet.error.parse': 'تعذّرت قراءة هذا الجدول.',
+  'spreadsheet.error.preset': 'تعذّر استيراد إعداد الربط هذا.',
+  'spreadsheet.error.draftSave': 'تعذّر حفظ مسودة الربط هذه.',
   'spreadsheet.error.review': 'تعذّر إنشاء نموذج المصنف.',
   'spreadsheet.error.prepare': 'تعذّر تجهيز ملفات BPMN.',
+  'spreadsheet.error.bilingualReview': 'تعذّر إكمال التسليم إلى المراجعة الثنائية.',
+  'spreadsheet.error.commit': 'تعذّر تنفيذ استيراد الجدول.',
+  'spreadsheet.error.postCommit': 'تم تنفيذ الاستيراد، لكن متابعة مساحة العمل النهائية لم تكتمل.',
+  'spreadsheet.error.technicalEvidence': 'أدلة تقنية',
+  'spreadsheet.error.technicalCode': 'رمز الخطأ',
+  'spreadsheet.error.technicalDetails': 'التفاصيل المنظمة',
+  'spreadsheet.error.limitContext': 'القيمة المكتشفة {actual}؛ الحد الآمن {limit}.',
+  'spreadsheet.error.rowContext': 'اكتُشفت المشكلة قرب الصف {row}.',
+  'spreadsheet.error.unsupported-format':
+    'تنسيق هذا الملف غير مدعوم. اختر ملف .xlsx أو ملف .csv بترميز UTF-8.',
+  'spreadsheet.error.legacy-excel-format':
+    'مصنفات .xls القديمة غير مدعومة. احفظ نسخة بتنسيق .xlsx أو CSV بترميز UTF-8.',
+  'spreadsheet.error.macro-enabled-format':
+    'ملفات Excel الممكّنة بوحدات الماكرو غير مقبولة. احفظ نسخة .xlsx أو CSV خالية من وحدات الماكرو.',
+  'spreadsheet.error.encrypted-workbook':
+    'لا يمكن استيراد المصنفات المشفّرة أو المحمية بكلمة مرور.',
+  'spreadsheet.error.malformed-csv':
+    'بنية ملف CSV غير صالحة. تحقق من علامات الاقتباس والفواصل وحدود الصفوف.',
+  'spreadsheet.error.invalid-utf8': 'ملف CSV هذا ليس بترميز UTF-8 صالح. أعد حفظه بترميز UTF-8.',
+  'spreadsheet.error.malformed-zip': 'حاوية XLSX تالفة أو غير صالحة.',
+  'spreadsheet.error.zip64-unsupported': 'مصنفات ZIP64 غير مدعومة. صدّر ملف .xlsx قياسيًا.',
+  'spreadsheet.error.multi-disk-zip': 'مصنفات ZIP متعددة الأقراص غير مدعومة.',
+  'spreadsheet.error.unsupported-compression': 'يستخدم المصنف طريقة ضغط ZIP غير مدعومة.',
+  'spreadsheet.error.unsafe-zip-path': 'يحتوي المصنف على مسار داخلي غير آمن، ولذلك رُفض.',
+  'spreadsheet.error.duplicate-zip-entry': 'يحتوي المصنف على إدخالات داخلية مكررة، ولذلك رُفض.',
+  'spreadsheet.error.macro-content':
+    'يحتوي المصنف على وحدات ماكرو أو محتوى قابل للتنفيذ، ولذلك رُفض.',
+  'spreadsheet.error.missing-xlsx-part': 'يفتقد المصنف مكوّن XLSX مطلوبًا.',
+  'spreadsheet.error.compressed-size-limit': 'يتجاوز الجدول حد الحجم المضغوط الآمن.',
+  'spreadsheet.error.uncompressed-size-limit': 'يتجاوز المصنف حد الحجم الآمن بعد فك الضغط.',
+  'spreadsheet.error.worksheet-limit': 'يحتوي المصنف على عدد كبير جدًا من أوراق العمل.',
+  'spreadsheet.error.row-limit': 'يحتوي الجدول على عدد كبير جدًا من الصفوف.',
+  'spreadsheet.error.column-limit': 'يحتوي أحد صفوف الجدول على عدد كبير جدًا من الأعمدة.',
+  'spreadsheet.error.cell-count-limit': 'يحتوي الجدول على عدد كبير جدًا من الخلايا غير الفارغة.',
+  'spreadsheet.error.cell-length-limit': 'تتجاوز إحدى خلايا الجدول حد طول النص الآمن.',
+  'spreadsheet.error.node-process-limit': 'تحتوي إحدى العمليات على عدد كبير جدًا من عقد BPMN.',
+  'spreadsheet.error.node-transaction-limit':
+    'يحتوي هذا الاستيراد إجمالًا على عدد كبير جدًا من عقد BPMN.',
+  'spreadsheet.error.formula-without-cache':
+    'لا تحتوي إحدى الصيغ على قيمة عرض محفوظة. أعد حساب المصنف واحفظه أولًا.',
+  'spreadsheet.error.parse-cancelled': 'أُلغيت معالجة الجدول.',
+  'spreadsheet.error.adapter-contract-violation':
+    'أعادت إحدى حدود معالجة الجدول الداخلية نتيجة غير صالحة. لم تُجرَ أي تغييرات على الوجهة.',
+  'spreadsheet.error.invalid-mapping-preset':
+    'إعداد الربط أو المسودة المحفوظة غير صالح للجدول المحدد.',
+  'spreadsheet.error.blocking-validation': 'وجد التحقق من المصنف مشكلات مانعة يجب حلها.',
+  'spreadsheet.error.transaction-failed':
+    'فشلت معاملة استيراد الجدول. راجع حالة التراجع قبل إعادة المحاولة.',
   'spreadsheet.phase.preflight': 'الفحص الأمني المسبق',
   'spreadsheet.phase.parse': 'التحليل',
   'spreadsheet.phase.validate': 'التحقق',
@@ -3024,6 +4155,12 @@ export const ar: Record<keyof typeof en, string> = {
   'validation.valid': 'مستند BPMN صالح.',
   'validation.invalid': 'يحتوي مستند BPMN على نتائج تحقق.',
   'validation.empty': 'لا توجد نتائج تحقق.',
+  'validation.issues': 'نتائج التحقق',
+  'validation.pagination.label': 'صفحات نتائج التحقق',
+  'validation.pagination.status':
+    'عرض نتائج التحقق {start}–{end} من {total}. الصفحة {page} من {pages}.',
+  'validation.pagination.previous': 'الصفحة السابقة',
+  'validation.pagination.next': 'الصفحة التالية',
   'validation.source': 'المصدر',
   'validation.element': 'العنصر',
   'validation.location': 'الموقع',
@@ -3045,6 +4182,132 @@ export const ar: Record<keyof typeof en, string> = {
   'validation.stage.semantic': 'الدلالة',
   'validation.stage.di': 'تبادل الرسم',
   'validation.stage.orbitpm': 'بيانات OrbitPM',
+  'validation.suggestedRepair': 'الإصلاح المقترح',
+  'validation.technicalEvidence': 'الدليل التقني',
+  'validation.technical.code': 'الرمز',
+  'validation.technical.ruleId': 'معرّف القاعدة',
+  'validation.technical.diagnostic': 'التشخيص الخام',
+  'validation.technical.truncated':
+    'تم اختصار هذا التشخيص في العرض. صدّر التقرير للاطلاع على التفاصيل الكاملة.',
+  'validation.issue.xml.empty': 'مستند XML فارغ.',
+  'validation.issue.xml.size-limit': 'يتجاوز مستند XML حد حجم الإدخال الآمن.',
+  'validation.issue.xml.illegal-character': 'يحتوي المستند على محرف لا تسمح به مواصفة XML 1.0.',
+  'validation.issue.xml.unsupported-encoding': 'ترميز المحارف المعلن غير مدعوم بعد فك ترميز النص.',
+  'validation.issue.xml.doctype': 'يحتوي المستند على إعلان DOCTYPE محظور.',
+  'validation.issue.xml.entity-declaration': 'يحتوي المستند على إعلان كيان محظور.',
+  'validation.issue.xml.external-include': 'يحتوي المستند على تضمين XML خارجي محظور.',
+  'validation.issue.xml.processing-instruction': 'يحتوي المستند على تعليمة معالجة غير مسموح بها.',
+  'validation.issue.xml.declaration-position': 'إعلان XML ليس أول عنصر في المستند.',
+  'validation.issue.xml.text-limit': 'تتجاوز عقدة نص أو CDATA حد الطول الآمن.',
+  'validation.issue.xml.attribute-count-limit': 'يحتوي عنصر XML على سمات أكثر من الحد الآمن.',
+  'validation.issue.xml.attribute-value-limit': 'تتجاوز قيمة سمة XML حد الطول الآمن.',
+  'validation.issue.xml.element-count-limit': 'يحتوي المستند على عناصر XML أكثر من الحد الآمن.',
+  'validation.issue.xml.depth-limit': 'يتجاوز عمق تداخل XML الحد الآمن.',
+  'validation.issue.moddle.unresolved-reference': 'يحتوي نموذج BPMN على مرجع تعذّر حله.',
+  'validation.issue.moddle.duplicate-id': 'وجد محلل BPMN معرّف عنصر مكررًا.',
+  'validation.issue.moddle.unparsable-content': 'تعذّر تحليل جزء من مستند BPMN.',
+  'validation.issue.moddle.warning': 'أبلغ محلل BPMN عن تحذير في النموذج.',
+  'validation.issue.moddle.parse-error': 'تعذّر تحليل BPMN XML إلى نموذج.',
+  'validation.issue.moddle.root-missing': 'لم يُرجع محلل BPMN جذر المستند.',
+  'validation.issue.structure.definitions-root': 'جذر المستند ليس عنصر تعريفات BPMN 2.0.',
+  'validation.issue.structure.definitions-id': 'يفتقد عنصر تعريفات BPMN معرّفه المطلوب.',
+  'validation.issue.structure.target-namespace': 'يفتقد عنصر تعريفات BPMN نطاق الاسم الهدف.',
+  'validation.issue.structure.target-namespace-uri':
+    'نطاق اسم BPMN الهدف ليس عنوان URI مطلقًا صالحًا.',
+  'validation.issue.structure.process-missing': 'لا يحتوي مستند BPMN على عملية.',
+  'validation.issue.structure.duplicate-id': 'يستخدم أكثر من عنصر BPMN أو رسم المعرّف نفسه.',
+  'validation.issue.structure.invalid-id': 'معرّف عنصر BPMN أو الرسم ليس اسم XML صالحًا.',
+  'validation.issue.structure.sequence-ref-missing': 'يحتوي تدفق تسلسلي على مصدر أو هدف تعذّر حله.',
+  'validation.issue.structure.sequence-ref-container':
+    'يعبر تدفق تسلسلي حدود عملية أو عملية فرعية.',
+  'validation.issue.structure.incoming-mismatch':
+    'لا تطابق مراجع العقدة الواردة تدفقاتها التسلسلية.',
+  'validation.issue.structure.outgoing-mismatch':
+    'لا تطابق مراجع العقدة الصادرة تدفقاتها التسلسلية.',
+  'validation.issue.structure.lane-node-ref': 'يشير مسار مسؤولية إلى عقدة تدفق خارج عمليته.',
+  'validation.issue.structure.participant-process-ref': 'يشير مشارك إلى عملية خارج مستند BPMN هذا.',
+  'validation.issue.structure.message-flow-ref': 'يحتوي تدفق رسالة على طرف تعذّر حله.',
+  'validation.issue.structure.process-id': 'تفتقد عملية BPMN معرّفها المطلوب.',
+  'validation.issue.semantic.start-incoming': 'يحتوي حدث بداية على تدفق تسلسلي وارد.',
+  'validation.issue.semantic.end-outgoing': 'يحتوي حدث نهاية على تدفق تسلسلي صادر.',
+  'validation.issue.semantic.default-source':
+    'لا يمكن لهذا النوع من عناصر BPMN إعلان تدفق افتراضي.',
+  'validation.issue.semantic.default-not-outgoing':
+    'التدفق الافتراضي المعلن ليس تدفقًا صادرًا من مصدره.',
+  'validation.issue.semantic.default-has-condition':
+    'يجب ألا يحتوي التدفق التسلسلي الافتراضي على شرط.',
+  'validation.issue.semantic.branch-condition-missing': 'يفتقد فرع بوابة غير افتراضي شرطه المطلوب.',
+  'validation.issue.semantic.condition-source':
+    'يبدأ تدفق تسلسلي مشروط من نوع عنصر لا يمكنه امتلاك شروط.',
+  'validation.issue.semantic.boundary-attachment': 'حدث الحدود غير مرتبط بنشاط صالح.',
+  'validation.issue.semantic.disconnected-node':
+    'لا يمكن الوصول إلى عقدة تدفق من مسار دخول العملية.',
+  'validation.issue.di.plane-missing': 'لا يحتوي رسم BPMN على مستوى رسم.',
+  'validation.issue.di.plane-target': 'لا يشير مستوى رسم BPMN إلى عملية أو تعاون.',
+  'validation.issue.di.element-ref': 'لا يشير عنصر الرسم إلى عنصر BPMN الذي يمثله.',
+  'validation.issue.di.element-plane-mismatch': 'يمثل عنصر الرسم عنصرًا خارج مستواه.',
+  'validation.issue.di.shape-bounds': 'لا يملك شكل BPMN حدودًا منتهية وموجبة.',
+  'validation.issue.di.edge-waypoints': 'لا تملك حافة BPMN نقطتي مسار منتهيتين على الأقل.',
+  'validation.issue.di.process-missing': 'لا تملك العملية مستوى رسم BPMN.',
+  'validation.issue.orbitpm.active-language': 'تعلن العملية لغة نشطة غير مدعومة.',
+  'validation.issue.orbitpm.active-projection-mismatch':
+    'لا يطابق نص BPMN الظاهر قيمة اللغة النشطة للعملية.',
+  'validation.issue.orbitpm.bilingual-missing-en': 'يفتقد حقل BPMN ثنائي اللغة قيمته الإنجليزية.',
+  'validation.issue.orbitpm.bilingual-missing-ar': 'يفتقد حقل BPMN ثنائي اللغة قيمته العربية.',
+  'validation.issue.orbitpm.bilingual-wrong-script-en':
+    'يحتوي حقل BPMN إنجليزي على نص عربي غير معتمد.',
+  'validation.issue.orbitpm.bilingual-wrong-script-ar':
+    'لا يحتوي حقل BPMN عربي على نص عربي ذي معنى.',
+  'validation.issue.orbitpm.bilingual-duplicate-counterpart':
+    'القيمتان الإنجليزية والعربية متطابقتان دون استثناء محايد معتمد.',
+  'validation.issue.orbitpm.bilingual-mixed-en':
+    'يخلط حقل BPMN إنجليزي بين النصين العربي واللاتيني.',
+  'validation.issue.orbitpm.bilingual-mixed-ar': 'يخلط حقل BPMN عربي بين النصين العربي واللاتيني.',
+  'validation.issue.orbitpm.bilingual-provider-failed':
+    'تعذّر على المزوّد المحدد إنتاج قيمة BPMN ثنائية اللغة.',
+  'validation.issue.orbitpm.call-unlinked': 'نشاط الاستدعاء غير مرتبط بعملية.',
+  'validation.issue.orbitpm.call-unresolved': 'يشير نشاط الاستدعاء إلى عملية غير متاحة.',
+  'validation.issue.preservation.snapshot-failed':
+    'تعذّر فحص الحفاظ على بيانات الامتدادات غير المعروفة.',
+  'validation.issue.preservation.extension-element-changed':
+    'تمت إزالة عنصر امتداد غير معروف أو تغييره أو نقله.',
+  'validation.issue.preservation.extension-attribute-changed':
+    'تمت إزالة سمة امتداد غير معروفة أو تغييرها أو نقلها.',
+  'validation.issue.adapterFailure': 'تعذّر تشغيل محرك تحقق مطلوب.',
+  'validation.issue.xsd': 'لا يطابق BPMN XML مخطط BPMN 2.0.',
+  'validation.issue.bpmnlint': 'أبلغت قاعدة نمذجة BPMN عن مشكلة.',
+  'validation.issue.fallback': 'أبلغ التحقق عن نتيجة لا يتعرف عليها هذا الإصدار.',
+  'validation.repair.xml.provideDocument': 'قدّم مستند BPMN XML غير فارغ.',
+  'validation.repair.xml.reduceDocument': 'قلّل المستند أو قسّمه ليبقى ضمن حدود XML الآمنة.',
+  'validation.repair.xml.removeInvalidContent': 'أزل المحرف أو المحتوى غير الصالح ثم أعد التحقق.',
+  'validation.repair.xml.convertUtf8': 'حوّل المصدر إلى UTF-8 صالح ثم أعد التحقق.',
+  'validation.repair.xml.removeUnsafeConstruct':
+    'أزل بنية XML غير الآمنة واحتفظ بمحتوى BPMN المطلوب مضمّنًا.',
+  'validation.repair.xml.moveDeclaration': 'انقل إعلان XML إلى بداية المستند.',
+  'validation.repair.xml.repairSyntax': 'صحح صياغة XML ثم أعد التحقق.',
+  'validation.repair.references': 'أعد ربط عناصر BPMN المشار إليها داخل نطاق العملية الصحيح.',
+  'validation.repair.uniqueIds': 'امنح كل عنصر BPMN ورسم معرّفًا فريدًا.',
+  'validation.repair.reviewModel': 'راجع عنصر النموذج المتأثر وصحح بيانات BPMN.',
+  'validation.repair.restoreRoot': 'استعد جذر مستند تعريفات BPMN 2.0 صالحًا.',
+  'validation.repair.wrapDefinitions': 'ضع محتوى BPMN داخل عنصر تعريفات BPMN 2.0 صالح.',
+  'validation.repair.addId': 'أضف معرّفًا ثابتًا وفريدًا ومتوافقًا مع XML.',
+  'validation.repair.targetNamespace': 'عيّن عنوان URI مطلقًا وثابتًا كنطاق اسم BPMN الهدف.',
+  'validation.repair.addProcess': 'أضف عملية BPMN إلى مستند التعريفات.',
+  'validation.repair.validId': 'استخدم اسم XML صالحًا يبدأ بحرف أو شرطة سفلية.',
+  'validation.repair.flowDirection': 'أزل التدفق غير الصالح وأعد ربطه في الاتجاه المسموح.',
+  'validation.repair.defaultFlow': 'اختر تدفقًا افتراضيًا صادرًا صالحًا وأزل أي شرط منه.',
+  'validation.repair.conditions': 'أضف شروط الفروع أو أزلها لتلبية قواعد البوابة.',
+  'validation.repair.boundaryAttachment': 'اربط حدث الحدود بنشاط في نطاق العملية نفسه.',
+  'validation.repair.reconnectFlow': 'اربط العقدة بمسار عملية يمكن الوصول إليه.',
+  'validation.repair.regenerateDi': 'أصلح معلومات الرسم أو عاين التخطيط التلقائي واعتمده.',
+  'validation.repair.localization': 'راجع القيم الإنجليزية والعربية والنصوص وإسقاط اللغة النشطة.',
+  'validation.repair.linkProcess': 'اربط نشاط الاستدعاء بعملية واحدة واضحة ومتاحة.',
+  'validation.repair.preserveExtensions':
+    'احتفظ بملف XML الأصلي حتى يمكن الحفاظ على بيانات الامتداد غير المعروفة بدقة.',
+  'validation.repair.restoreValidator': 'استعد محرك التحقق وشغّل التحقق من جديد.',
+  'validation.repair.xsd': 'أصلح البنية التي حددها تشخيص المخطط ثم أعد التحقق.',
+  'validation.repair.bpmnlint': 'راجع العنصر المشار إليه وفق قاعدة BPMN المسمّاة وصحح النموذج.',
+  'validation.repair.fallback': 'راجع الدليل التقني المسمّى وصحح المصدر قبل المتابعة.',
   'sourceEditor.open': 'المصدر',
   'sourceEditor.open.title': 'فتح محرر مصدر BPMN XML',
   'sourceEditor.title': 'مصدر BPMN XML',
@@ -3055,6 +4318,15 @@ export const ar: Record<keyof typeof en, string> = {
   'sourceEditor.applying': 'جارٍ التطبيق…',
   'sourceEditor.rollback': 'تراجع',
   'sourceEditor.diff': 'معاينة التغييرات',
+  'sourceEditor.diffBounded':
+    'يستخدم هذا المصدر الكبير محاذاة محدودة. تظهر جميع الأسطر المتغيرة ضمن كتلة الاستبدال.',
+  'sourceEditor.diffTruncated':
+    'يتجاوز تغيير المصدر هذا حد المراجعة الآمنة. تم حذف جزء من محتوى الفروقات، لذلك تم تعطيل التطبيق. قلّل حجم التغيير ثم حاول مرة أخرى.',
+  'sourceEditor.diffHunk':
+    'التغيير {index} من {total}، السطر الأصلي {original}، سطر المرشح {candidate}',
+  'sourceEditor.diffLine.added': 'سطر المرشح المضاف {line}',
+  'sourceEditor.diffLine.removed': 'السطر الأصلي المحذوف {line}',
+  'sourceEditor.diffLine.context': 'السطر الأصلي غير المتغير {original}، سطر المرشح {candidate}',
   'sourceEditor.changedLines':
     '{changed} متغير · {added} مضاف · {removed} محذوف · أول تغيير في السطر {line}',
   'sourceEditor.noChanges': 'لا توجد تغييرات في المصدر.',
@@ -3063,7 +4335,18 @@ export const ar: Record<keyof typeof en, string> = {
   'sourceEditor.layoutPreview': 'معاينة التخطيط المُنشأ',
   'sourceEditor.layoutAccept': 'اعتماد التخطيط المُنشأ',
   'sourceEditor.layoutReady': 'يتوفر تخطيط مخطط مُنشأ للمراجعة.',
+  'sourceEditor.layoutDiff': 'تغييرات مصدر التخطيط المُنشأ',
+  'sourceEditor.layoutDiagramTitle': 'معاينة المخطط المُنشأ',
+  'sourceEditor.layoutDiagramAria': 'معاينة للقراءة فقط لمخطط BPMN المُنشأ',
+  'sourceEditor.diagramPreview.loading': 'جارٍ عرض معاينة المخطط للقراءة فقط…',
+  'sourceEditor.diagramPreview.ready': 'معاينة المخطط للقراءة فقط جاهزة.',
+  'sourceEditor.diagramPreview.warnings': 'عُرض المخطط مع {count} من تحذيرات العارض.',
+  'sourceEditor.diagramPreview.failed': 'تعذّر عرض المخطط للقراءة فقط.',
   'sourceEditor.layoutFailed': 'تعذّر إنشاء تخطيط المخطط: {error}',
+  'sourceEditor.action.previewFailed': 'تعذّرت معاينة تغييرات المصدر.',
+  'sourceEditor.action.layoutFailed': 'تعذّر إنشاء تخطيط المخطط.',
+  'sourceEditor.action.applyFailed': 'تعذّر تطبيق تغييرات المصدر.',
+  'sourceEditor.action.technicalDetails': 'التفاصيل التقنية:',
   'sourceEditor.missingDi': 'لا يحتوي XML على تخطيط صالح لمخطط BPMN.',
   'sourceEditor.applyFailed': 'تعذّر تطبيق المصدر: {error}',
   'sourceEditor.applied': 'تم تطبيق تغييرات المصدر.',

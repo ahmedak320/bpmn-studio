@@ -6,8 +6,11 @@ import {
   useState,
   useSyncExternalStore,
   type ChangeEvent,
-  type CSSProperties
+  type CSSProperties,
+  type KeyboardEvent,
+  type ReactNode
 } from 'react'
+import { createPortal } from 'react-dom'
 import {
   LITE_PROVIDERS,
   DESKTOP_ONLY_PROVIDERS,
@@ -30,6 +33,7 @@ import {
   setProviderSelection,
   subscribeProviderSelection
 } from './providerSelection'
+import { keyStorageErrorMessage } from './keyStorageErrorMessage'
 import {
   fetchOpenRouterCredits,
   getUsageSnapshot,
@@ -52,6 +56,8 @@ import {
   type AttachmentSizeCheck
 } from './pdf'
 import { parseDocxFileInWorker } from './browserDocxParser'
+import { DocxParseError, type DocxErrorCode } from './docx'
+import { TechnicalErrorDetail } from './TechnicalErrorDetail'
 import {
   clearGeneratedRecovery,
   generatedBpmnDataUrl,
@@ -67,7 +73,7 @@ import {
   redactProcessNames,
   selectRelevantProcesses
 } from './requestPrivacy'
-import { t } from '../i18n'
+import { t, type Key, type Lang } from '../i18n'
 import { useLang } from '../i18n/useLang'
 import { triggerDownload } from '../editor/exportImage'
 import {
@@ -137,6 +143,11 @@ interface DocSelection {
   mediaType: string
 }
 
+interface PresentedError {
+  summary: string
+  technicalDetail?: string
+}
+
 /** The description tab's optional "Description document" attachment. */
 interface DescAttach {
   file: File
@@ -146,8 +157,8 @@ interface DescAttach {
   text: string | null
   /** Localized success line ("… characters of text extracted"). */
   note: string | null
-  /** Localized inline problem (read failure / empty docx). */
-  error: string | null
+  /** Localized inline problem plus optional isolated support evidence. */
+  error: PresentedError | null
 }
 
 // What the two file inputs accept. The description input takes documents that
@@ -156,6 +167,29 @@ interface DescAttach {
 const DESC_DOC_ACCEPT =
   '.docx,application/vnd.openxmlformats-officedocument.wordprocessingml.document,.pdf,application/pdf'
 const DOC_TAB_ACCEPT = 'application/pdf,.pdf,image/png,image/jpeg,image/webp,image/gif'
+const TECHNICAL_PROVIDER_TOKEN = '\u{fdd0}provider\u{fdd1}'
+const TECHNICAL_MODEL_TOKEN = '\u{fdd0}model\u{fdd1}'
+const TECHNICAL_TOKEN_PATTERN = /(\u{fdd0}(?:provider|model)\u{fdd1})/u
+
+function formatMegabytes(bytes: number, lang: Lang): string {
+  return new Intl.NumberFormat(lang, {
+    minimumFractionDigits: 1,
+    maximumFractionDigits: 1
+  }).format(bytes / (1024 * 1024))
+}
+
+function markTechnicalLabels(text: string, values: Readonly<Record<string, string>>): ReactNode[] {
+  return text.split(TECHNICAL_TOKEN_PATTERN).map((part, index) => {
+    const value = values[part]
+    return value === undefined ? (
+      part
+    ) : (
+      <span key={`${part}-${index}`} lang="en" dir="ltr">
+        {value}
+      </span>
+    )
+  })
+}
 
 /**
  * Classify a document-tab selection as PDF or image and pin down its mime.
@@ -175,24 +209,57 @@ function detectDocMeta(file: File): { kind: AttachmentKind; mediaType: string } 
   return null
 }
 
-/** Localized message for a classified generation error (RTL-safe); the raw
- * English message is used only for the `unknown` bucket. */
-function errorMessageForCode(c: ClassifiedError): string {
-  switch (c.code) {
-    case 'auth':
-      return t('ai.error.auth')
-    case 'rate':
-      return t('ai.error.rateLimit')
-    case 'cors':
-      return t('ai.error.cors')
-    case 'network':
-      return t('ai.error.network')
-    case 'timeout':
-      return t('ai.error.timeout')
-    case 'cancelled':
-      return t('ai.error.cancelled')
-    default:
-      return c.message
+const BROWSER_ERROR_KEYS = Object.freeze({
+  auth: 'ai.error.auth',
+  rate: 'ai.error.rateLimit',
+  cors: 'ai.error.cors',
+  network: 'ai.error.network',
+  timeout: 'ai.error.timeout',
+  cancelled: 'ai.error.cancelled',
+  provider: 'ai.error.provider',
+  'invalid-response': 'ai.error.invalidResponse',
+  unknown: 'ai.error.unknown'
+} satisfies Record<ClassifiedError['code'], Key>)
+
+const DOCX_ERROR_KEYS = Object.freeze({
+  'not-zip': 'ai.attach.docxError.notZip',
+  'no-document-xml': 'ai.attach.docxError.missingDocument',
+  'archive-too-large': 'ai.attach.docxError.tooLarge',
+  'unsafe-archive': 'ai.attach.docxError.unsafe',
+  'encrypted-archive': 'ai.attach.docxError.encrypted',
+  'unsupported-archive': 'ai.attach.docxError.unsupported',
+  'malformed-archive': 'ai.attach.docxError.malformed',
+  aborted: 'ai.attach.docxError.cancelled'
+} satisfies Record<DocxErrorCode, Key>)
+
+class LocalizedPanelError extends Error {
+  readonly summary: string
+
+  constructor(summary: string) {
+    super('localized-panel-error')
+    this.name = 'LocalizedPanelError'
+    this.summary = summary
+  }
+}
+
+function classifiedErrorPresentation(error: ClassifiedError): PresentedError {
+  return {
+    summary: t(BROWSER_ERROR_KEYS[error.code]),
+    ...(error.technicalDetail ? { technicalDetail: error.technicalDetail } : {})
+  }
+}
+
+function docxErrorPresentation(error: unknown, fileName: string): PresentedError {
+  if (error instanceof DocxParseError) {
+    return {
+      summary: t(DOCX_ERROR_KEYS[error.code], { name: fileName }),
+      technicalDetail: error.code
+    }
+  }
+  const classified = classifyBrowserError(error)
+  return {
+    summary: t('ai.attach.docxError.unknown', { name: fileName }),
+    ...(classified.technicalDetail ? { technicalDetail: classified.technicalDetail } : {})
   }
 }
 
@@ -212,7 +279,7 @@ export function AiPanelLite({
   onContinueInChat,
   spreadsheet
 }: AiPanelLiteProps): JSX.Element {
-  useLang()
+  const lang = useLang()
   const initialSelection = useMemo(() => getProviderSelection(), [])
   const [providerId, setProviderId] = useState<LiteProviderId | ''>(
     initialSelection?.providerId ?? ''
@@ -238,7 +305,7 @@ export function AiPanelLite({
   const [includeWorkspaceContext, setIncludeWorkspaceContext] = useState(false)
   const [redactNames, setRedactNames] = useState(true)
   const [requestConsent, setRequestConsent] = useState(false)
-  const [error, setError] = useState<string | null>(null)
+  const [error, setError] = useState<PresentedError | null>(null)
   const [offline, setOffline] = useState(false)
   const [resultLabel, setResultLabel] = useState<string | null>(null)
   const discardedGeneration = useSyncExternalStore(
@@ -271,6 +338,11 @@ export function AiPanelLite({
   )
   const docInputRef = useRef<HTMLInputElement | null>(null)
   const descInputRef = useRef<HTMLInputElement | null>(null)
+  const tabRefs = useRef<Record<GenMode, HTMLButtonElement | null>>({
+    description: null,
+    pdf: null,
+    spreadsheet: null
+  })
   const requestAbortRef = useRef<AbortController | null>(null)
   const attachmentAbortRef = useRef<AbortController | null>(null)
 
@@ -331,6 +403,41 @@ export function AiPanelLite({
   const modelCapabilities = useMemo(
     () => getLiteModelCapabilities(effectiveProviderId, effectiveModel),
     [effectiveModel, effectiveProviderId]
+  )
+  const enabledGenModes = useMemo<GenMode[]>(
+    () => [
+      'description',
+      ...(modelCapabilities.pdf ? (['pdf'] as const) : []),
+      ...(spreadsheet ? (['spreadsheet'] as const) : [])
+    ],
+    [modelCapabilities.pdf, spreadsheet]
+  )
+
+  useEffect(() => {
+    if (!enabledGenModes.includes(genMode)) setGenMode('description')
+  }, [enabledGenModes, genMode])
+
+  const handleTabKeyDown = useCallback(
+    (event: KeyboardEvent<HTMLButtonElement>, currentMode: GenMode): void => {
+      const currentIndex = enabledGenModes.indexOf(currentMode)
+      if (currentIndex < 0) return
+      let nextIndex: number | undefined
+      if (event.key === 'Home') {
+        nextIndex = 0
+      } else if (event.key === 'End') {
+        nextIndex = enabledGenModes.length - 1
+      } else if (event.key === 'ArrowRight' || event.key === 'ArrowLeft') {
+        const visualForward =
+          event.key === 'ArrowRight' ? (lang === 'ar' ? -1 : 1) : lang === 'ar' ? 1 : -1
+        nextIndex = (currentIndex + visualForward + enabledGenModes.length) % enabledGenModes.length
+      }
+      if (nextIndex === undefined) return
+      event.preventDefault()
+      const nextMode = enabledGenModes[nextIndex]
+      setGenMode(nextMode)
+      tabRefs.current[nextMode]?.focus()
+    },
+    [enabledGenModes, lang]
   )
 
   // Size gate for the document tab's selection (recomputed on file/provider
@@ -515,7 +622,7 @@ export function AiPanelLite({
           kind: 'docx',
           text: null,
           note: null,
-          error: t('ai.attach.docxEmpty', { name: file.name })
+          error: { summary: t('ai.attach.docxEmpty', { name: file.name }) }
         })
         return
       }
@@ -528,15 +635,12 @@ export function AiPanelLite({
       })
     } catch (err) {
       if (controller.signal.aborted) return
-      // DocxParseError for non-docx bytes, or a reader failure — either way the
-      // message rides into the localized readFailed line.
-      const msg = err instanceof Error ? err.message : String(err)
       setDescAttach({
         file,
         kind: 'docx',
         text: null,
         note: null,
-        error: t('ai.attach.readFailed', { name: file.name, error: msg })
+        error: docxErrorPresentation(err, file.name)
       })
     } finally {
       if (attachmentAbortRef.current === controller) {
@@ -613,7 +717,7 @@ export function AiPanelLite({
           return
         }
         const classified = classifyBrowserError(err)
-        setError(errorMessageForCode(classified))
+        setError(classifiedErrorPresentation(classified))
         setOffline(classified.offline || (typeof navigator !== 'undefined' && !navigator.onLine))
       }
     },
@@ -639,9 +743,9 @@ export function AiPanelLite({
       descriptionAttachmentKind: descAttach?.kind
     })
     try {
-      if (!providerId) throw new Error(t('ai.error.selectProvider'))
+      if (!providerId) throw new LocalizedPanelError(t('ai.error.selectProvider'))
       const apiKey = getKey(providerId)
-      if (!apiKey) throw new Error(t('ai.error.noApiKey'))
+      if (!apiKey) throw new LocalizedPanelError(t('ai.error.noApiKey'))
       const common = {
         providerId,
         modelId: effectiveModel,
@@ -653,11 +757,11 @@ export function AiPanelLite({
       let res: GenerateOutput
       if (genMode === 'pdf') {
         // Document tab: PDF or image, sent natively with the hint.
-        if (!doc) throw new Error(t('ai.error.chooseNoPdf'))
+        if (!doc) throw new LocalizedPanelError(t('ai.error.chooseNoPdf'))
         const gate = checkAttachmentSize(providerId, doc.kind, doc.file.size)
-        if (!gate.ok) throw new Error(gate.message)
+        if (!gate.ok) throw new LocalizedPanelError(gate.message ?? t('ai.error.unknown'))
         if (!isAttachmentMediaTypeSupported(providerId, effectiveModel, doc.kind, doc.mediaType)) {
-          throw new Error(t('ai.attach.unsupportedProvider'))
+          throw new LocalizedPanelError(t('ai.attach.unsupportedProvider'))
         }
         const base64 = await fileToBase64(doc.file, controller.signal)
         res = await generateDiagramXmlFromDocument({
@@ -677,10 +781,10 @@ export function AiPanelLite({
         // existing attachment mechanism; the TYPED DESCRIPTION acts as the hint
         // (the pdf instruction frames it as "which/what process to model").
         if (!isAttachmentMediaTypeSupported(providerId, effectiveModel, 'pdf', 'application/pdf')) {
-          throw new Error(t('ai.attach.unsupportedProvider'))
+          throw new LocalizedPanelError(t('ai.attach.unsupportedProvider'))
         }
         const gate = checkAttachmentSize(providerId, 'pdf', descAttach.file.size)
-        if (!gate.ok) throw new Error(gate.message)
+        if (!gate.ok) throw new LocalizedPanelError(gate.message ?? t('ai.error.unknown'))
         const base64 = await fileToBase64(descAttach.file, controller.signal)
         res = await generateDiagramXmlFromDocument({
           ...common,
@@ -727,9 +831,13 @@ export function AiPanelLite({
         })
       }
     } catch (err) {
-      const classified = classifyBrowserError(err)
-      setError(errorMessageForCode(classified))
-      setOffline(classified.offline || (typeof navigator !== 'undefined' && !navigator.onLine))
+      if (err instanceof LocalizedPanelError) {
+        setError({ summary: err.summary })
+      } else {
+        const classified = classifyBrowserError(err)
+        setError(classifiedErrorPresentation(classified))
+        setOffline(classified.offline || (typeof navigator !== 'undefined' && !navigator.onLine))
+      }
     } finally {
       if (requestAbortRef.current === controller) requestAbortRef.current = null
       setAttemptStatus(null)
@@ -852,21 +960,40 @@ export function AiPanelLite({
       )}
 
       {/* Generation mode: description vs PDF/image document */}
-      <div role="tablist" aria-label={t('ai.tablist.aria')} style={segmentWrap}>
+      <div
+        role="tablist"
+        aria-label={t('ai.tablist.aria')}
+        aria-orientation="horizontal"
+        style={segmentWrap}
+      >
         <button
+          ref={(node) => {
+            tabRefs.current.description = node
+          }}
+          id="orbitpm-ai-description-tab"
           type="button"
           role="tab"
           aria-selected={genMode === 'description'}
+          aria-controls="orbitpm-ai-generation-panel"
+          tabIndex={genMode === 'description' ? 0 : -1}
           onClick={() => setGenMode('description')}
+          onKeyDown={(event) => handleTabKeyDown(event, 'description')}
           style={segmentBtn(genMode === 'description')}
         >
           {t('ai.tab.description')}
         </button>
         <button
+          ref={(node) => {
+            tabRefs.current.pdf = node
+          }}
+          id="orbitpm-ai-document-tab"
           type="button"
           role="tab"
           aria-selected={genMode === 'pdf'}
+          aria-controls="orbitpm-ai-generation-panel"
+          tabIndex={genMode === 'pdf' ? 0 : -1}
           onClick={() => setGenMode('pdf')}
+          onKeyDown={(event) => handleTabKeyDown(event, 'pdf')}
           disabled={!modelCapabilities.pdf}
           title={
             modelCapabilities.pdf
@@ -879,10 +1006,17 @@ export function AiPanelLite({
         </button>
         {spreadsheet && (
           <button
+            ref={(node) => {
+              tabRefs.current.spreadsheet = node
+            }}
+            id="orbitpm-ai-spreadsheet-tab"
             type="button"
             role="tab"
             aria-selected={genMode === 'spreadsheet'}
+            aria-controls="orbitpm-ai-spreadsheet-panel"
+            tabIndex={genMode === 'spreadsheet' ? 0 : -1}
             onClick={() => setGenMode('spreadsheet')}
+            onKeyDown={(event) => handleTabKeyDown(event, 'spreadsheet')}
             style={segmentBtn(genMode === 'spreadsheet')}
           >
             {t('spreadsheet.tab')}
@@ -890,27 +1024,41 @@ export function AiPanelLite({
         )}
       </div>
 
-      {genMode === 'spreadsheet' && spreadsheet ? (
-        <SpreadsheetImportPanel {...spreadsheet} />
-      ) : (
+      <div
+        id="orbitpm-ai-generation-panel"
+        role="tabpanel"
+        aria-labelledby={
+          genMode === 'pdf' ? 'orbitpm-ai-document-tab' : 'orbitpm-ai-description-tab'
+        }
+        hidden={genMode === 'spreadsheet'}
+      >
         <>
           <label style={labelStyle}>
             <span style={labelText}>{t('ai.provider.label')}</span>
             <select
               value={providerId}
+              lang={providerId ? 'en' : lang}
+              dir={providerId ? 'ltr' : undefined}
               onChange={(e) => {
                 const next = e.target.value as LiteProviderId
                 const nextModel = defaultLiteModelId(next)
                 setProviderId(next)
                 setModelId(nextModel)
                 const result = setProviderSelection(next, nextModel)
-                if (!result.ok) setError(result.error)
+                if (!result.ok) {
+                  setError({
+                    summary: t('settings.storageError.providerSelection', {
+                      error: keyStorageErrorMessage(result.code)
+                    }),
+                    technicalDetail: result.error
+                  })
+                }
               }}
               style={inputStyle}
             >
               <option value="">{t('ai.provider.select')}</option>
               {LITE_PROVIDERS.map((p) => (
-                <option key={p.id} value={p.id}>
+                <option key={p.id} value={p.id} lang="en" dir="ltr">
                   {p.label}
                   {hasKey(p.id) ? ' ✓' : ''}
                 </option>
@@ -935,12 +1083,21 @@ export function AiPanelLite({
                 type="text"
                 list={`models-${providerId}`}
                 value={modelId}
+                lang="en"
+                dir="ltr"
                 onChange={(e) => {
                   const nextModel = e.target.value
                   setModelId(nextModel)
                   if (nextModel.trim()) {
                     const result = setProviderSelection(providerId, nextModel)
-                    if (!result.ok) setError(result.error)
+                    if (!result.ok) {
+                      setError({
+                        summary: t('settings.storageError.providerSelection', {
+                          error: keyStorageErrorMessage(result.code)
+                        }),
+                        technicalDetail: result.error
+                      })
+                    }
                   }
                 }}
                 placeholder={t('ai.model.label')}
@@ -948,7 +1105,7 @@ export function AiPanelLite({
               />
               <datalist id={`models-${providerId}`}>
                 {providerSpec.models.map((m) => (
-                  <option key={m.id} value={m.id}>
+                  <option key={m.id} value={m.id} lang="en" dir="ltr">
                     {m.label}
                   </option>
                 ))}
@@ -959,16 +1116,25 @@ export function AiPanelLite({
               <span style={labelText}>{t('ai.model.label')}</span>
               <select
                 value={modelId}
+                lang="en"
+                dir="ltr"
                 onChange={(e) => {
                   const nextModel = e.target.value
                   setModelId(nextModel)
                   const result = setProviderSelection(providerId, nextModel)
-                  if (!result.ok) setError(result.error)
+                  if (!result.ok) {
+                    setError({
+                      summary: t('settings.storageError.providerSelection', {
+                        error: keyStorageErrorMessage(result.code)
+                      }),
+                      technicalDetail: result.error
+                    })
+                  }
                 }}
                 style={inputStyle}
               >
                 {providerSpec.models.map((m) => (
-                  <option key={m.id} value={m.id}>
+                  <option key={m.id} value={m.id} lang="en" dir="ltr">
                     {m.label}
                   </option>
                 ))}
@@ -1012,7 +1178,11 @@ export function AiPanelLite({
               {descAttach && (
                 <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12 }}>
                   <span style={{ color: 'var(--orbitpm-muted)', overflowWrap: 'anywhere' }}>
-                    {descAttach.file.name} · {(descAttach.file.size / (1024 * 1024)).toFixed(1)} MB
+                    <span dir="auto">{descAttach.file.name}</span> ·{' '}
+                    <span lang={lang}>{formatMegabytes(descAttach.file.size, lang)}</span>{' '}
+                    <span lang="en" dir="ltr">
+                      MB
+                    </span>
                   </span>
                   <button
                     type="button"
@@ -1031,7 +1201,8 @@ export function AiPanelLite({
               )}
               {descAttach?.error && (
                 <div role="alert" style={{ fontSize: 12, color: '#dc2626' }}>
-                  {descAttach.error}
+                  <span>{descAttach.error.summary}</span>
+                  <TechnicalErrorDetail detail={descAttach.error.technicalDetail} />
                 </div>
               )}
               {/* PDF-specific gates: provider must support native PDF, and the
@@ -1076,7 +1247,11 @@ export function AiPanelLite({
                 <div
                   style={{ fontSize: 12, color: sizeGate.ok ? 'var(--orbitpm-muted)' : '#dc2626' }}
                 >
-                  {doc.file.name} · {(doc.file.size / (1024 * 1024)).toFixed(1)} MB
+                  <span dir="auto">{doc.file.name}</span> ·{' '}
+                  <span lang={lang}>{formatMegabytes(doc.file.size, lang)}</span>{' '}
+                  <span lang="en" dir="ltr">
+                    MB
+                  </span>
                   {!sizeGate.ok && sizeGate.message ? ` — ${sizeGate.message}` : ''}
                 </div>
               )}
@@ -1155,10 +1330,16 @@ export function AiPanelLite({
           >
             <strong style={{ fontSize: 13 }}>{t('ai.privacy.preview.title')}</strong>
             <div style={{ fontSize: 12 }}>
-              {t('ai.privacy.providerModel', {
-                provider: providerId ? providerSpec.label : t('ai.provider.select'),
-                model: effectiveModel || '—'
-              })}
+              {markTechnicalLabels(
+                t('ai.privacy.providerModel', {
+                  provider: providerId ? TECHNICAL_PROVIDER_TOKEN : t('ai.provider.select'),
+                  model: effectiveModel ? TECHNICAL_MODEL_TOKEN : '—'
+                }),
+                {
+                  [TECHNICAL_PROVIDER_TOKEN]: providerSpec.label,
+                  [TECHNICAL_MODEL_TOKEN]: effectiveModel
+                }
+              )}
             </div>
             {nativeAttachmentName && (
               <div style={{ fontSize: 12, overflowWrap: 'anywhere' }}>
@@ -1289,7 +1470,12 @@ export function AiPanelLite({
 
           {Boolean(providerId) && !keyPresent && (
             <div style={{ fontSize: 12, color: 'var(--orbitpm-muted)' }}>
-              {t('ai.noKeyForProvider', { providerLabel: providerSpec.label })}{' '}
+              {markTechnicalLabels(
+                t('ai.noKeyForProvider', { providerLabel: TECHNICAL_PROVIDER_TOKEN }),
+                {
+                  [TECHNICAL_PROVIDER_TOKEN]: providerSpec.label
+                }
+              )}{' '}
               <button type="button" onClick={onOpenSettings} style={linkBtn}>
                 {t('ai.addOneInSettings')}
               </button>
@@ -1299,7 +1485,8 @@ export function AiPanelLite({
 
           {error && (
             <div role="alert" style={errorBox}>
-              <span>{error}</span>
+              <span>{error.summary}</span>
+              <TechnicalErrorDetail detail={error.technicalDetail} />
               {offline && <span style={{ opacity: 0.85 }}>{t('ai.errorTip.offline')}</span>}
             </div>
           )}
@@ -1359,21 +1546,35 @@ export function AiPanelLite({
             })}
           </div>
         </>
-      )}
+      </div>
+      {spreadsheet ? (
+        <div
+          id="orbitpm-ai-spreadsheet-panel"
+          role="tabpanel"
+          aria-labelledby="orbitpm-ai-spreadsheet-tab"
+          hidden={genMode !== 'spreadsheet'}
+        >
+          <SpreadsheetImportPanel {...spreadsheet} />
+        </div>
+      ) : null}
     </div>
   )
 
   // The verification modal renders above whichever chrome variant is active, so
   // it is emitted alongside every return.
-  const verifyDialog = pending ? (
-    <LinkVerifyDialog
-      unsure={pending.unsure}
-      unmatched={pending.unmatched}
-      resolveProcessName={resolveProcessName}
-      onConfirm={(accepted) => void handleVerifyConfirm(accepted)}
-      onCancel={() => void handleVerifyCancel()}
-    />
-  ) : null
+  const verifyDialog =
+    pending && typeof document !== 'undefined'
+      ? createPortal(
+          <LinkVerifyDialog
+            unsure={pending.unsure}
+            unmatched={pending.unmatched}
+            resolveProcessName={resolveProcessName}
+            onConfirm={(accepted) => void handleVerifyConfirm(accepted)}
+            onCancel={() => void handleVerifyCancel()}
+          />,
+          document.body
+        )
+      : null
 
   // Embedded: the enclosing sidebar section owns the header + expand/collapse
   // toggle, so drop the fixed-width/bordered wrap, the internal header row and

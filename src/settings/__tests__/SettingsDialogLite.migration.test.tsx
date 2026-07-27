@@ -1,15 +1,21 @@
 // @vitest-environment jsdom
 
-import { cleanup, render, screen, waitFor } from '@testing-library/react'
+import { cleanup, render, screen, waitFor, within } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { setLang, t } from '../../i18n'
 import { getKey, resetSessionKeysForTests } from '../../ai/keys'
+import { resetProviderSelectionForTests } from '../../ai/providerSelection'
 import { SettingsDialogLite } from '../SettingsDialogLite'
 
 vi.mock('../LocalizationResourcesEditor', () => ({
   LocalizationResourcesEditor: () => null
 }))
 
-function installMemoryStorage(removeFailure?: (key: string) => Error | null): Map<string, string> {
+function installMemoryStorage(
+  removeFailure?: (key: string) => Error | null,
+  setFailure?: (key: string) => Error | null
+): Map<string, string> {
   const values = new Map<string, string>()
   vi.stubGlobal('localStorage', {
     get length() {
@@ -17,7 +23,11 @@ function installMemoryStorage(removeFailure?: (key: string) => Error | null): Ma
     },
     key: (index: number) => [...values.keys()][index] ?? null,
     getItem: (key: string) => values.get(key) ?? null,
-    setItem: (key: string, value: string) => void values.set(key, String(value)),
+    setItem: (key: string, value: string) => {
+      const failure = setFailure?.(key)
+      if (failure) throw failure
+      values.set(key, String(value))
+    },
     removeItem: (key: string) => {
       const failure = removeFailure?.(key)
       if (failure) throw failure
@@ -42,11 +52,15 @@ function renderOpenSettings(): void {
 describe('SettingsDialogLite legacy credential upgrade', () => {
   beforeEach(() => {
     resetSessionKeysForTests()
+    resetProviderSelectionForTests()
+    setLang('en')
   })
 
   afterEach(() => {
     cleanup()
     resetSessionKeysForTests()
+    resetProviderSelectionForTests()
+    setLang('en')
     vi.unstubAllGlobals()
   })
 
@@ -78,12 +92,48 @@ describe('SettingsDialogLite legacy credential upgrade', () => {
     storage.set('orbitpm.lite.key.encrypted.custom', '{"ciphertext":"retired"}')
     storage.set('orbitpm.lite.cfg.custom', '{"extraHeaders":{"Authorization":"secret"}}')
 
+    setLang('ar')
     renderOpenSettings()
 
-    expect((await screen.findByRole('alert')).textContent).toContain('custom cleanup blocked')
+    const alert = await screen.findByRole('alert')
+    expect(alert.textContent).toContain(
+      t('settings.storageError.startup', {
+        error: t('settings.storageError.failed')
+      })
+    )
+    const detail = within(alert).getByLabelText(t('settings.storageError.technicalDetail'))
+    expect(detail.tagName).toBe('CODE')
+    expect(detail.getAttribute('lang')).toBe('en')
+    expect(detail.getAttribute('dir')).toBe('ltr')
+    expect(detail.textContent).toContain('custom cleanup blocked')
     expect(getKey('openrouter')).toBe('legacy-openrouter')
     expect(storage.has('orbitpm.lite.key.custom')).toBe(true)
     expect(storage.has('orbitpm.lite.key.encrypted.custom')).toBe(false)
     expect(storage.has('orbitpm.lite.cfg.custom')).toBe(false)
+  })
+
+  it('localizes an Arabic provider-selection storage failure and isolates browser detail', async () => {
+    installMemoryStorage(undefined, (key) =>
+      key === 'orbitpm.lite.cfg.ai-provider-selection.v1'
+        ? new Error('native preference write blocked')
+        : null
+    )
+    setLang('ar')
+    const user = userEvent.setup()
+    renderOpenSettings()
+
+    await user.selectOptions(screen.getByLabelText(t('ai.provider.label')), 'openrouter')
+    await user.click(screen.getByRole('button', { name: t('settings.saveKeys') }))
+
+    const alert = await screen.findByRole('alert')
+    expect(alert.textContent).toContain(
+      t('settings.storageError.providerSelection', {
+        error: t('settings.storageError.failed')
+      })
+    )
+    const detail = within(alert).getByLabelText(t('settings.storageError.technicalDetail'))
+    expect(detail.tagName).toBe('CODE')
+    expect(detail.getAttribute('lang')).toBe('en')
+    expect(detail.textContent).toBe('native preference write blocked')
   })
 })

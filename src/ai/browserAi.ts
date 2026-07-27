@@ -107,11 +107,39 @@ export class ProviderHttpError extends Error {
   readonly transport = true as const
   status: number
   retryAfterMs?: number
-  constructor(status: number, message: string, retryAfterMs?: number) {
+  providerId?: LiteProviderId
+  requestId?: string
+  constructor(
+    status: number,
+    message: string,
+    retryAfterMs?: number,
+    metadata: { providerId?: LiteProviderId; requestId?: string } = {}
+  ) {
     super(message)
     this.name = 'ProviderHttpError'
     this.status = status
     this.retryAfterMs = retryAfterMs
+    this.providerId = metadata.providerId
+    this.requestId = metadata.requestId
+  }
+}
+
+export type ProviderResponseErrorCode = 'invalid-json' | 'invalid-response' | 'empty-response'
+
+/** A readable 2xx provider response that cannot be consumed as model output. */
+export class ProviderResponseError extends Error {
+  readonly code: ProviderResponseErrorCode
+  readonly providerId: LiteProviderId
+
+  constructor(
+    code: ProviderResponseErrorCode,
+    providerId: LiteProviderId,
+    options: { cause?: unknown } = {}
+  ) {
+    super(`${providerId}: ${code}`, options)
+    this.name = 'ProviderResponseError'
+    this.code = code
+    this.providerId = providerId
   }
 }
 
@@ -130,12 +158,22 @@ export class TransportError extends Error {
   code: TransportCode
   status?: number
   retryAfterMs?: number
-  constructor(code: TransportCode, message: string, status?: number, retryAfterMs?: number) {
+  providerId?: LiteProviderId
+  requestId?: string
+  constructor(
+    code: TransportCode,
+    message: string,
+    status?: number,
+    retryAfterMs?: number,
+    metadata: { providerId?: LiteProviderId; requestId?: string } = {}
+  ) {
     super(message)
     this.name = 'TransportError'
     this.code = code
     this.status = status
     this.retryAfterMs = retryAfterMs
+    this.providerId = metadata.providerId
+    this.requestId = metadata.requestId
   }
 }
 
@@ -145,10 +183,187 @@ export class TransportError extends Error {
 export const GENERATION_TIMEOUT_MS = 180_000
 export const TEST_CONNECTION_TIMEOUT_MS = 15_000
 
+/**
+ * Generation currently asks for at most 6,000 output tokens. One decompressed
+ * MiB leaves a very large allowance for JSON syntax and multibyte text while
+ * keeping decode + JSON.parse on the main thread bounded below the multi-MiB
+ * range that would require a worker.
+ */
+export const MAX_PROVIDER_RESPONSE_BODY_BYTES = 1_048_576
+
+/**
+ * A byte limit alone does not bound the bookkeeping cost of a hostile stream:
+ * one MiB can otherwise arrive as a million one-byte chunks, and zero-byte
+ * chunks consume no byte budget at all. Normal fetch implementations use much
+ * larger chunks, so this ceiling remains deliberately generous.
+ */
+export const MAX_PROVIDER_RESPONSE_BODY_CHUNKS = 4_096
+
+export class ResponseBodyLimitError extends Error {
+  constructor() {
+    super('Provider response exceeded the safe body limit.')
+    this.name = 'ResponseBodyLimitError'
+  }
+}
+
+function cancelResponseReader(
+  reader: ReadableStreamDefaultReader<Uint8Array>,
+  reason: unknown
+): void {
+  try {
+    void reader.cancel(reason).catch(() => undefined)
+  } catch {
+    /* cancellation is best-effort; the fetch AbortSignal remains authoritative */
+  }
+}
+
+function cancelUnusedResponseBody(response: Response, reason: unknown): void {
+  try {
+    void response.body?.cancel(reason).catch(() => undefined)
+  } catch {
+    /* cancellation is best-effort; no response bytes are consumed */
+  }
+}
+
+function responseAbortReason(signal: AbortSignal): unknown {
+  return signal.reason ?? new DOMException('The operation was aborted.', 'AbortError')
+}
+
+function declaredBodyLength(response: Response): number | null {
+  const raw = response.headers.get('content-length')
+  if (!raw || !/^\d+$/.test(raw.trim())) return null
+  const parsed = Number(raw)
+  return Number.isSafeInteger(parsed) ? parsed : null
+}
+
+/**
+ * Read the FETCH-DECOMPRESSED response stream under an exact byte budget.
+ * Content-Length is only an early-rejection optimization: it may describe the
+ * compressed transfer, be absent for chunked responses, or simply be false, so
+ * every actual chunk is counted as well. The reader is cancelled immediately
+ * on an exceeded limit or AbortSignal.
+ */
+export async function readBoundedResponseBody(
+  response: Response,
+  maxBytes: number,
+  signal: AbortSignal
+): Promise<Uint8Array> {
+  if (signal.aborted) throw responseAbortReason(signal)
+  const declared = declaredBodyLength(response)
+  if (declared !== null && declared > maxBytes) {
+    const error = new ResponseBodyLimitError()
+    cancelUnusedResponseBody(response, error)
+    throw error
+  }
+  if (!response.body) return new Uint8Array()
+
+  let reader: ReadableStreamDefaultReader<Uint8Array>
+  try {
+    reader = response.body.getReader()
+  } catch {
+    if (signal.aborted) throw responseAbortReason(signal)
+    throw new TransportError('network', 'The response body could not be opened.')
+  }
+  const onAbort = (): void => cancelResponseReader(reader, responseAbortReason(signal))
+  signal.addEventListener('abort', onAbort, { once: true })
+
+  try {
+    if (signal.aborted) {
+      onAbort()
+      throw responseAbortReason(signal)
+    }
+    const chunks: Uint8Array[] = []
+    let total = 0
+    let chunkCount = 0
+    while (true) {
+      let result: ReadableStreamReadResult<Uint8Array>
+      try {
+        result = await reader.read()
+      } catch {
+        if (signal.aborted) throw responseAbortReason(signal)
+        throw new TransportError('network', 'The response body could not be read.')
+      }
+      if (signal.aborted) throw responseAbortReason(signal)
+      const { done, value } = result
+      if (done) break
+      chunkCount += 1
+      if (chunkCount > MAX_PROVIDER_RESPONSE_BODY_CHUNKS) {
+        const error = new ResponseBodyLimitError()
+        cancelResponseReader(reader, error)
+        throw error
+      }
+      if (total + value.byteLength > maxBytes) {
+        const error = new ResponseBodyLimitError()
+        cancelResponseReader(reader, error)
+        throw error
+      }
+      if (value.byteLength === 0) continue
+      total += value.byteLength
+      chunks.push(value)
+    }
+
+    const bytes = new Uint8Array(total)
+    let offset = 0
+    for (const chunk of chunks) {
+      bytes.set(chunk, offset)
+      offset += chunk.byteLength
+    }
+    return bytes
+  } finally {
+    signal.removeEventListener('abort', onAbort)
+    try {
+      reader.releaseLock()
+    } catch {
+      /* a cancelled reader can retain its lock until cancellation settles */
+    }
+  }
+}
+
+export function parseBoundedJson(bytes: Uint8Array): unknown {
+  const text = new TextDecoder('utf-8', { fatal: true }).decode(bytes)
+  return JSON.parse(text) as unknown
+}
+
+const SAFE_REQUEST_ID_HEADERS = ['request-id', 'x-request-id'] as const
+const SAFE_REQUEST_ID_RE = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,95}$/
+
+function safeResponseRequestId(response: Response): string | undefined {
+  for (const header of SAFE_REQUEST_ID_HEADERS) {
+    const value = response.headers.get(header)?.trim()
+    if (value && SAFE_REQUEST_ID_RE.test(value)) return value
+  }
+  return undefined
+}
+
+function safeHttpEvidence(error: {
+  status?: number
+  providerId?: LiteProviderId
+  requestId?: string
+}): string | undefined {
+  if (!Number.isInteger(error.status) || (error.status ?? 0) < 100 || (error.status ?? 0) > 599) {
+    return undefined
+  }
+  const provider = error.providerId ? `${error.providerId}: ` : ''
+  const requestId =
+    error.requestId && SAFE_REQUEST_ID_RE.test(error.requestId)
+      ? `; request-id ${error.requestId}`
+      : ''
+  return `${provider}HTTP ${error.status}${requestId}`
+}
+
 /** Map a raw fetch rejection to a TransportError (already-typed ones pass through). */
 function toTransportError(error: unknown): TransportError {
-  if (error instanceof TransportError) return error
-  const msg = error instanceof Error ? error.message : String(error)
+  try {
+    if (error instanceof TransportError) return error
+  } catch {
+    /* a hostile Proxy can throw while instanceof walks its prototype chain */
+  }
+  const propertyMessage = safeDiagnosticProperty(error, 'message')
+  const rawMessage =
+    typeof propertyMessage === 'string' ? propertyMessage : safeDiagnosticString(error)
+  const msg =
+    boundedDiagnosticText(rawMessage, MAX_AI_ERROR_CLASSIFICATION_CODE_POINTS) ||
+    'The network request failed.'
   return new TransportError('network', msg)
 }
 
@@ -157,7 +372,7 @@ function toTransportError(error: unknown): TransportError {
  * a `consume(res)` that reads the response (status + body); the timer stays armed
  * through it, so a server that sends headers then STALLS THE BODY still aborts
  * (Codex ORIG-10 — the old version cleared the timer once headers arrived, so a
- * hung `res.json()`/`res.text()` could block generation forever). On our timeout
+ * hung full-body read could block generation forever). On our timeout
  * it rejects with TransportError(code:'timeout'); a fetch-level rejection
  * (CORS/offline/DNS) becomes TransportError(code:'network'); errors thrown by
  * `consume` (HTTP status, empty body, JSON parse) keep their own type so the
@@ -167,7 +382,7 @@ async function fetchWithTimeout<T>(
   url: string,
   init: RequestInit,
   timeoutMs: number,
-  consume: (res: Response) => Promise<T>,
+  consume: (res: Response, signal: AbortSignal) => Promise<T>,
   callerSignal?: AbortSignal
 ): Promise<T> {
   const ctrl = new AbortController()
@@ -200,19 +415,15 @@ async function fetchWithTimeout<T>(
   try {
     // Body read runs under the SAME deadline — the timer is cleared only AFTER
     // the body is fully consumed.
-    return await consume(res)
+    return await consume(res, ctrl.signal)
   } catch (error) {
     if (timedOut) throw timeoutError()
+    if (callerAborted) throw new TransportError('cancelled', 'The request was cancelled.')
     throw error
   } finally {
     clearTimeout(timer)
     callerSignal?.removeEventListener('abort', onCallerAbort)
   }
-}
-
-function truncate(s: string, n = 300): string {
-  const line = s.replace(/\s+/g, ' ').trim()
-  return line.length > n ? `${line.slice(0, n - 1)}…` : line
 }
 
 function firstUserIndex(messages: LlmMessage[]): number {
@@ -424,42 +635,174 @@ export function buildRequest(
 
 // --- response text extraction (pure) ---------------------------------------
 
-interface AnthropicResponse {
-  content?: Array<{ type?: string; text?: string }>
+/**
+ * Response extraction is deliberately shallow and budgeted. Provider JSON is
+ * untrusted even after a 2xx: walking or joining an attacker-controlled number
+ * of content blocks can otherwise monopolize the UI thread, while embedding
+ * the rejected payload in an error can expose model/workspace content. These
+ * ceilings are far above a normal JSON-mode generation response.
+ */
+export const MAX_PROVIDER_RESPONSE_ITEMS = 2_048
+export const MAX_PROVIDER_RESPONSE_TEXT_CHARS = 1_000_000
+
+interface ResponseShapeBudget {
+  items: number
+  textChars: number
 }
-interface GeminiResponse {
-  candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }>
+
+function invalidProviderResponse(providerId: LiteProviderId): never {
+  throw new ProviderResponseError('invalid-response', providerId)
 }
-interface OpenAiResponse {
-  choices?: Array<{ message?: { content?: string | Array<{ text?: string }> } }>
+
+function isJsonObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
+function consumeResponseItems(
+  providerId: LiteProviderId,
+  budget: ResponseShapeBudget,
+  count: number
+): void {
+  budget.items += count
+  if (budget.items > MAX_PROVIDER_RESPONSE_ITEMS) invalidProviderResponse(providerId)
+}
+
+function consumeResponseText(
+  providerId: LiteProviderId,
+  budget: ResponseShapeBudget,
+  text: string
+): void {
+  budget.textChars += text.length
+  if (budget.textChars > MAX_PROVIDER_RESPONSE_TEXT_CHARS) invalidProviderResponse(providerId)
+}
+
+function extractAnthropicText(
+  providerId: LiteProviderId,
+  data: Record<string, unknown>,
+  budget: ResponseShapeBudget
+): string {
+  if (!Array.isArray(data.content)) invalidProviderResponse(providerId)
+  consumeResponseItems(providerId, budget, data.content.length)
+
+  const text: string[] = []
+  for (const part of data.content) {
+    if (!isJsonObject(part)) invalidProviderResponse(providerId)
+    if (part.type === 'text') {
+      if (typeof part.text !== 'string') invalidProviderResponse(providerId)
+      consumeResponseText(providerId, budget, part.text)
+      text.push(part.text)
+      continue
+    }
+    if (part.type === 'thinking') {
+      if (typeof part.thinking !== 'string' || typeof part.signature !== 'string') {
+        invalidProviderResponse(providerId)
+      }
+      // Adaptive thinking is a documented non-text response block. Validate
+      // and budget both opaque fields, but select only text as model output.
+      consumeResponseText(providerId, budget, part.thinking)
+      consumeResponseText(providerId, budget, part.signature)
+      continue
+    }
+    if (part.type === 'redacted_thinking') {
+      if (typeof part.data !== 'string') invalidProviderResponse(providerId)
+      consumeResponseText(providerId, budget, part.data)
+      continue
+    }
+    invalidProviderResponse(providerId)
+  }
+  return text.join('')
+}
+
+function extractGeminiText(
+  providerId: LiteProviderId,
+  data: Record<string, unknown>,
+  budget: ResponseShapeBudget
+): string {
+  if (!Array.isArray(data.candidates)) invalidProviderResponse(providerId)
+  consumeResponseItems(providerId, budget, data.candidates.length)
+
+  let selected = ''
+  for (let candidateIndex = 0; candidateIndex < data.candidates.length; candidateIndex += 1) {
+    const candidate = data.candidates[candidateIndex]
+    if (!isJsonObject(candidate) || !isJsonObject(candidate.content)) {
+      invalidProviderResponse(providerId)
+    }
+    const parts = candidate.content.parts
+    if (!Array.isArray(parts)) invalidProviderResponse(providerId)
+    consumeResponseItems(providerId, budget, parts.length)
+
+    const text: string[] = []
+    for (const part of parts) {
+      if (!isJsonObject(part) || typeof part.text !== 'string') {
+        invalidProviderResponse(providerId)
+      }
+      consumeResponseText(providerId, budget, part.text)
+      text.push(part.text)
+    }
+    if (candidateIndex === 0) selected = text.join('')
+  }
+  return selected
+}
+
+function extractOpenRouterContent(
+  providerId: LiteProviderId,
+  content: unknown,
+  budget: ResponseShapeBudget
+): string {
+  if (typeof content === 'string') {
+    consumeResponseText(providerId, budget, content)
+    return content
+  }
+  if (!Array.isArray(content)) invalidProviderResponse(providerId)
+  consumeResponseItems(providerId, budget, content.length)
+
+  const text: string[] = []
+  for (const part of content) {
+    if (!isJsonObject(part) || typeof part.text !== 'string') {
+      invalidProviderResponse(providerId)
+    }
+    consumeResponseText(providerId, budget, part.text)
+    text.push(part.text)
+  }
+  return text.join('')
+}
+
+function extractOpenRouterText(
+  providerId: LiteProviderId,
+  data: Record<string, unknown>,
+  budget: ResponseShapeBudget
+): string {
+  if (!Array.isArray(data.choices)) invalidProviderResponse(providerId)
+  consumeResponseItems(providerId, budget, data.choices.length)
+
+  let selected = ''
+  for (let choiceIndex = 0; choiceIndex < data.choices.length; choiceIndex += 1) {
+    const choice = data.choices[choiceIndex]
+    if (!isJsonObject(choice) || !isJsonObject(choice.message)) {
+      invalidProviderResponse(providerId)
+    }
+    const text = extractOpenRouterContent(providerId, choice.message.content, budget)
+    if (choiceIndex === 0) selected = text
+  }
+  return selected
 }
 
 export function extractText(providerId: LiteProviderId, data: unknown): string {
-  if (providerId === 'anthropic') {
-    const parts = (data as AnthropicResponse).content ?? []
-    return parts
-      .filter((p) => p.type === 'text' && typeof p.text === 'string')
-      .map((p) => p.text as string)
-      .join('')
-  }
-  if (providerId === 'gemini') {
-    const parts = (data as GeminiResponse).candidates?.[0]?.content?.parts ?? []
-    return parts.map((p) => p.text ?? '').join('')
-  }
+  if (!isJsonObject(data)) invalidProviderResponse(providerId)
+  const budget: ResponseShapeBudget = { items: 0, textChars: 0 }
+  if (providerId === 'anthropic') return extractAnthropicText(providerId, data, budget)
+  if (providerId === 'gemini') return extractGeminiText(providerId, data, budget)
   // OpenRouter uses the OpenAI-compatible response shape.
-  const content = (data as OpenAiResponse).choices?.[0]?.message?.content
-  if (typeof content === 'string') return content
-  if (Array.isArray(content)) return content.map((c) => c.text ?? '').join('')
-  return ''
+  return extractOpenRouterText(providerId, data, budget)
 }
 
 /**
- * Account for every provider-accepted request. Some otherwise successful
- * responses omit token counters; those calls still increment the request
- * ledger and make aggregate cost unknown instead of disappearing or looking
- * free.
+ * Account for one physical request after the provider has returned an accepted
+ * 2xx status. A malformed, truncated, cancelled, or otherwise unusable 2xx body
+ * can still be billable, so missing/invalid counters count as an unknown-cost
+ * request instead of making that attempt disappear from the ledger.
  */
-function recordSuccessfulAiRequest(cfg: ProviderConfig, responseJson?: unknown): void {
+function recordAcceptedAiRequest(cfg: ProviderConfig, responseJson?: unknown): void {
   try {
     const usage = extractUsage(cfg.providerId, responseJson)
     recordUsage(
@@ -508,33 +851,55 @@ export function makeBrowserCallLLM(
           req.url,
           { method: 'POST', headers: req.headers, body: JSON.stringify(req.body) },
           GENERATION_TIMEOUT_MS,
-          async (res) => {
+          async (res, signal) => {
             if (!res.ok) {
-              const errText = await res.text().catch(() => '')
-              const message = `${cfg.providerId} ${res.status}: ${truncate(errText)}`
+              const requestId = safeResponseRequestId(res)
+              const metadata = { providerId: cfg.providerId, requestId }
+              const message =
+                safeHttpEvidence({ status: res.status, ...metadata }) ??
+                `${cfg.providerId}: provider request failed`
               const retryAfterMs = parseRetryAfter(res.headers.get('retry-after'))
+              let failure: ProviderHttpError | TransportError
               if (res.status === 401 || res.status === 403) {
-                throw new TransportError('auth', message, res.status)
+                failure = new TransportError('auth', message, res.status, undefined, metadata)
+              } else if (res.status === 429) {
+                failure = new TransportError('rate', message, res.status, retryAfterMs, metadata)
+              } else {
+                failure = new ProviderHttpError(res.status, message, retryAfterMs, metadata)
               }
-              if (res.status === 429) {
-                throw new TransportError('rate', message, res.status, retryAfterMs)
-              }
-              throw new ProviderHttpError(res.status, message, retryAfterMs)
+              // The status is already authoritative. Never wait for a permanent
+              // error body that can echo private data or stall long enough to
+              // turn a known 4xx into a retried timeout.
+              cancelUnusedResponseBody(res, failure)
+              throw failure
             }
+
+            let data: unknown
             try {
-              const data: unknown = await res.json()
-              recordSuccessfulAiRequest(cfg, data)
+              let body: Uint8Array
+              try {
+                body = await readBoundedResponseBody(res, MAX_PROVIDER_RESPONSE_BODY_BYTES, signal)
+              } catch (error) {
+                if (error instanceof ResponseBodyLimitError) {
+                  throw new ProviderResponseError('invalid-response', cfg.providerId, {
+                    cause: error
+                  })
+                }
+                throw error
+              }
+
+              try {
+                data = parseBoundedJson(body)
+              } catch (error) {
+                throw new ProviderResponseError('invalid-json', cfg.providerId, { cause: error })
+              }
               const text = extractText(cfg.providerId, data)
               if (!text.trim()) {
-                throw new Error(`${cfg.providerId}: empty response from the model`)
+                throw new ProviderResponseError('empty-response', cfg.providerId)
               }
               return text
-            } catch (error) {
-              // A readable 2xx response may still have an invalid/empty body.
-              // It was provider-accepted and may be billable, so retain the
-              // request even when no usage object can be extracted.
-              if (error instanceof SyntaxError) recordSuccessfulAiRequest(cfg)
-              throw error
+            } finally {
+              recordAcceptedAiRequest(cfg, data)
             }
           },
           extra?.signal
@@ -751,7 +1116,10 @@ function interpretProbe(status: number): TestConnectionResult {
  * Uses a dummy key when none is stored, so connectivity can be verified without
  * a key (this is also the e2e's key-free way to prove the providers are live).
  */
-export async function testConnection(cfg: ProviderConfig): Promise<TestConnectionResult> {
+export async function testConnection(
+  cfg: ProviderConfig,
+  callerSignal?: AbortSignal
+): Promise<TestConnectionResult> {
   const { cfg: probeCfg, request: req } = buildTestConnectionRequest(cfg)
   let status: number
   try {
@@ -761,15 +1129,25 @@ export async function testConnection(cfg: ProviderConfig): Promise<TestConnectio
       req.url,
       { method: 'POST', headers: req.headers, body: JSON.stringify(req.body) },
       TEST_CONNECTION_TIMEOUT_MS,
-      async (res) => {
+      async (res, signal) => {
+        // The probe needs only the readable status. Cancel the potentially
+        // billable inference body immediately instead of leaving a background
+        // stream alive after this function returns.
+        cancelUnusedResponseBody(
+          res,
+          new DOMException('The connection probe does not consume response content.', 'AbortError')
+        )
         // A 2xx probe was accepted by the provider and can be billable even
         // though this connectivity check deliberately does not consume the
         // body. Count it with unknown token/cost detail.
-        if (res.ok) recordSuccessfulAiRequest(probeCfg)
+        if (res.ok) recordAcceptedAiRequest(probeCfg)
+        if (signal.aborted) throw responseAbortReason(signal)
         return res.status
-      }
+      },
+      callerSignal
     )
   } catch (error) {
+    if (error instanceof TransportError && error.code === 'cancelled') throw error
     if (error instanceof TransportError && error.code === 'timeout') {
       return {
         reachable: false,
@@ -793,29 +1171,121 @@ export async function testConnection(cfg: ProviderConfig): Promise<TestConnectio
 // --- compact error classifier (browser cases) ------------------------------
 
 /** Machine-readable error class so the UI can render an i18n (RTL-safe) message. */
-export type ErrorCode = 'auth' | 'rate' | 'cors' | 'network' | 'timeout' | 'cancelled' | 'unknown'
+export type ErrorCode =
+  | 'auth'
+  | 'rate'
+  | 'cors'
+  | 'network'
+  | 'timeout'
+  | 'cancelled'
+  | 'provider'
+  | 'invalid-response'
+  | 'unknown'
 
 export interface ClassifiedError {
-  /** Stable code for i18n rendering (`unknown` ⇒ show the raw `message`). */
+  /** Stable code for i18n rendering. */
   code: ErrorCode
-  /** English fallback message (used verbatim only for `unknown`). */
+  /** English compatibility fallback. User interfaces must localize from `code`. */
   message: string
   offline: boolean
+  /** Bounded support evidence. Render only as explicitly labelled technical text. */
+  technicalDetail?: string
+}
+
+export const MAX_AI_TECHNICAL_DETAIL_CODE_POINTS = 200
+const MAX_AI_ERROR_CLASSIFICATION_CODE_POINTS = 4_096
+
+function safeDiagnosticProperty(value: unknown, property: string): unknown {
+  if ((typeof value !== 'object' || value === null) && typeof value !== 'function') {
+    return undefined
+  }
+  try {
+    return Reflect.get(value, property)
+  } catch {
+    return undefined
+  }
+}
+
+function safeDiagnosticString(value: unknown): string {
+  if (typeof value === 'string') return value
+  try {
+    return String(value)
+  } catch {
+    return ''
+  }
+}
+
+function unsafeDiagnosticCharacter(character: string): boolean {
+  const codePoint = character.codePointAt(0) ?? 0
+  return (
+    codePoint <= 0x1f ||
+    (codePoint >= 0x7f && codePoint <= 0x9f) ||
+    (codePoint >= 0xd800 && codePoint <= 0xdfff) ||
+    codePoint === 0x061c ||
+    codePoint === 0x200e ||
+    codePoint === 0x200f ||
+    (codePoint >= 0x202a && codePoint <= 0x202e) ||
+    (codePoint >= 0x2066 && codePoint <= 0x2069)
+  )
+}
+
+function boundedDiagnosticText(raw: string, maxCodePoints: number, firstLineOnly = false): string {
+  const characters: string[] = []
+  let truncated = false
+  for (const character of raw) {
+    if (
+      firstLineOnly &&
+      (character === '\n' || character === '\r' || character === '\u2028' || character === '\u2029')
+    ) {
+      break
+    }
+    if (characters.length >= maxCodePoints) {
+      truncated = true
+      break
+    }
+    characters.push(unsafeDiagnosticCharacter(character) ? ' ' : character)
+  }
+
+  const trimmed = characters.join('').trim()
+  if (!truncated || !trimmed) return trimmed
+  const bounded = Array.from(trimmed)
+  if (bounded.length >= maxCodePoints) bounded[maxCodePoints - 1] = '…'
+  else bounded.push('…')
+  return bounded.join('')
 }
 
 function haystack(error: unknown): string {
   const parts: string[] = []
+  let remaining = MAX_AI_ERROR_CLASSIFICATION_CODE_POINTS
+  const appendPart = (value: unknown): void => {
+    if (remaining <= 0) return
+    const separatorLength = parts.length > 0 ? 1 : 0
+    const allowance = remaining - separatorLength
+    if (allowance <= 0) return
+    const part = boundedDiagnosticText(safeDiagnosticString(value), allowance)
+    if (!part) return
+    const partLength = Array.from(part).length
+    parts.push(part)
+    remaining -= separatorLength + partLength
+  }
   let cur: unknown = error
-  for (let d = 0; cur != null && d < 6; d++) {
-    if (cur instanceof Error) {
-      parts.push(cur.name, cur.message)
-      const x = cur as { status?: unknown; statusCode?: unknown; code?: unknown }
-      if (x.status != null) parts.push(String(x.status))
-      if (x.statusCode != null) parts.push(String(x.statusCode))
-      if (x.code != null) parts.push(String(x.code))
-      cur = (cur as { cause?: unknown }).cause
+  for (let d = 0; cur != null && d < 6 && remaining > 0; d++) {
+    let isError = false
+    try {
+      isError = cur instanceof Error
+    } catch {
+      isError = false
+    }
+    if (isError) {
+      appendPart(safeDiagnosticProperty(cur, 'name'))
+      appendPart(safeDiagnosticProperty(cur, 'message'))
+      for (const property of ['status', 'statusCode', 'code'] as const) {
+        const value = safeDiagnosticProperty(cur, property)
+        if (value != null) appendPart(value)
+      }
+      cur = safeDiagnosticProperty(cur, 'cause')
     } else {
-      parts.push(String(cur))
+      appendPart(cur)
       break
     }
   }
@@ -831,7 +1301,15 @@ const AUTH_RE =
   /\b401\b|\b403\b|unauthorized|forbidden|invalid api key|invalid_api_key|api key|permission/
 const RATE_RE = /\b429\b|rate limit|rate_limit|too many requests|quota|overloaded/
 
-export function classifyBrowserError(error: unknown): ClassifiedError {
+function technicalDetail(error: unknown): string | undefined {
+  const message = safeDiagnosticProperty(error, 'message')
+  const raw = typeof message === 'string' ? message : safeDiagnosticString(error)
+  const firstLine = boundedDiagnosticText(raw, MAX_AI_TECHNICAL_DETAIL_CODE_POINTS, true)
+  if (!firstLine) return undefined
+  return firstLine
+}
+
+function classifyBrowserErrorUnchecked(error: unknown): ClassifiedError {
   // A typed TransportError already carries its class — trust it directly so we
   // never mis-read a 'network' code as CORS (or vice-versa).
   if (error instanceof TransportError) {
@@ -843,7 +1321,8 @@ export function classifyBrowserError(error: unknown): ClassifiedError {
         code: 'auth',
         offline: false,
         message:
-          'The provider rejected the request (authentication). Check your API key in Settings.'
+          'The provider rejected the request (authentication). Check your API key in Settings.',
+        technicalDetail: safeHttpEvidence(error)
       }
     }
     if (error.code === 'rate') {
@@ -851,7 +1330,8 @@ export function classifyBrowserError(error: unknown): ClassifiedError {
         code: 'rate',
         offline: false,
         message:
-          'The provider is rate-limiting or overloaded right now. Wait a moment and try again.'
+          'The provider is rate-limiting or overloaded right now. Wait a moment and try again.',
+        technicalDetail: safeHttpEvidence(error)
       }
     }
     if (error.code === 'cancelled') {
@@ -861,6 +1341,43 @@ export function classifyBrowserError(error: unknown): ClassifiedError {
       code: 'network',
       offline: true,
       message: 'Could not reach the AI provider. Check your internet connection, then try again.'
+    }
+  }
+  if (error instanceof ProviderHttpError) {
+    if (error.status === 401 || error.status === 403) {
+      return {
+        code: 'auth',
+        offline: false,
+        message:
+          'The provider rejected the request (authentication). Check your API key in Settings.',
+        technicalDetail: safeHttpEvidence(error)
+      }
+    }
+    if (error.status === 429) {
+      return {
+        code: 'rate',
+        offline: false,
+        message:
+          'The provider is rate-limiting or overloaded right now. Wait a moment and try again.',
+        technicalDetail: safeHttpEvidence(error)
+      }
+    }
+    return {
+      code: 'provider',
+      offline: false,
+      message: 'The AI provider returned an error.',
+      technicalDetail: safeHttpEvidence(error)
+    }
+  }
+  if (error instanceof ProviderResponseError || error instanceof SyntaxError) {
+    return {
+      code: 'invalid-response',
+      offline: false,
+      message: 'The AI provider returned an unreadable or empty response.',
+      technicalDetail:
+        error instanceof ProviderResponseError
+          ? `${error.providerId}: ${error.code}`
+          : technicalDetail(error)
     }
   }
   const hay = haystack(error)
@@ -902,11 +1419,25 @@ export function classifyBrowserError(error: unknown): ClassifiedError {
       message: 'Could not reach the AI provider. Check your internet connection, then try again.'
     }
   }
-  const raw = error instanceof Error ? error.message : String(error)
-  const firstLine = raw.split('\n')[0].trim()
   return {
     code: 'unknown',
     offline: false,
-    message: firstLine.length > 200 ? `${firstLine.slice(0, 197)}…` : firstLine
+    message: 'The AI operation failed unexpectedly.',
+    technicalDetail: technicalDetail(error)
+  }
+}
+
+export function classifyBrowserError(error: unknown): ClassifiedError {
+  try {
+    return classifyBrowserErrorUnchecked(error)
+  } catch {
+    // `error` is an unknown trust-boundary value. Proxies can throw from
+    // instanceof, property access, or string conversion; classification must
+    // never replace the original failure with another unhandled exception.
+    return {
+      code: 'unknown',
+      offline: false,
+      message: 'The AI operation failed unexpectedly.'
+    }
   }
 }

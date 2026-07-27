@@ -1,9 +1,11 @@
-import { useMemo, useRef } from 'react'
+import { useEffect, useId, useMemo, useRef, useState } from 'react'
 import { AccessibleDialog } from '../common/AccessibleDialog'
 import { t, type Key } from '../i18n'
 import { triggerDownload } from '../editor/exportImage'
 import type { ValidationIssue, ValidationSeverity, ValidationSummary } from './contracts'
+import { localizeValidationIssue } from './issueLocalization'
 import { validationReportDataUrl } from './report'
+import { boundedValidationTechnicalDetail } from './technicalEvidence'
 import './validation.css'
 
 type TranslateVariables = Record<string, string | number>
@@ -37,75 +39,190 @@ export interface ValidationIssueListProps {
   compact?: boolean
 }
 
+export const VALIDATION_ISSUE_PAGE_SIZE = 20
+
 export function ValidationIssueList({
   issues,
   onFocus,
   onRepair,
   compact = false
 }: ValidationIssueListProps): JSX.Element {
+  const issueListId = useId()
+  const [pagination, setPagination] = useState<{
+    issues: readonly ValidationIssue[]
+    page: number
+  }>(() => ({ issues, page: 0 }))
+  const pageCount = Math.max(1, Math.ceil(issues.length / VALIDATION_ISSUE_PAGE_SIZE))
+  const requestedPage = pagination.issues === issues ? pagination.page : 0
+  const page = Math.min(requestedPage, pageCount - 1)
+  const pageStart = page * VALIDATION_ISSUE_PAGE_SIZE
+  const pageEnd = Math.min(issues.length, pageStart + VALIDATION_ISSUE_PAGE_SIZE)
+  const visibleIssues = issues.slice(pageStart, pageEnd)
+
+  useEffect(() => {
+    setPagination((current) => {
+      if (current.issues !== issues) return { issues, page: 0 }
+      if (current.page !== page) return { issues, page }
+      return current
+    })
+  }, [issues, page])
+
   if (issues.length === 0) {
     return <p className="orbitpm-validation__empty">{translate('validation.empty')}</p>
   }
 
   return (
-    <ol className="orbitpm-validation__issues">
-      {issues.map((issue, index) => (
-        <li
-          key={issueKey(issue, index)}
-          className={`orbitpm-validation__issue orbitpm-validation__issue--${issue.severity}`}
-        >
-          <div className="orbitpm-validation__issue-heading">
-            <span className="orbitpm-validation__severity">{severityLabel(issue.severity)}</span>
-            <code>{issue.code}</code>
-          </div>
-          <p>{issue.message}</p>
-          {!compact ? (
-            <dl className="orbitpm-validation__metadata">
-              <div>
-                <dt>{translate('validation.source')}</dt>
-                <dd>{sourceLabel(issue.source)}</dd>
+    <div className="orbitpm-validation__issue-list">
+      <ol
+        id={issueListId}
+        className="orbitpm-validation__issues"
+        start={pageStart + 1}
+        aria-label={translate('validation.issues')}
+      >
+        {visibleIssues.map((issue, pageIndex) => {
+          const issueIndex = pageStart + pageIndex
+          const localized = localizeValidationIssue(issue)
+          const technicalDiagnostic = boundedValidationTechnicalDetail(issue.message) ?? ''
+          const technicalDiagnosticTruncated = technicalDiagnostic !== issue.message
+          return (
+            <li
+              key={issueKey(issue, issueIndex)}
+              className={`orbitpm-validation__issue orbitpm-validation__issue--${issue.severity}`}
+              aria-posinset={issueIndex + 1}
+              aria-setsize={issues.length}
+            >
+              <div className="orbitpm-validation__issue-heading">
+                <span className="orbitpm-validation__severity">
+                  {severityLabel(issue.severity)}
+                </span>
               </div>
-              {issue.elementId ? (
+              <p data-validation-localized-message>{localized.message}</p>
+              {!compact ? (
+                <dl className="orbitpm-validation__metadata">
+                  <div>
+                    <dt>{translate('validation.source')}</dt>
+                    <dd>{sourceLabel(issue.source)}</dd>
+                  </div>
+                  {issue.elementId ? (
+                    <div>
+                      <dt>{translate('validation.element')}</dt>
+                      <dd>
+                        <code lang="en" dir="ltr">
+                          {issue.elementId}
+                        </code>
+                      </dd>
+                    </div>
+                  ) : null}
+                  {issue.location ? (
+                    <div>
+                      <dt>{translate('validation.location')}</dt>
+                      <dd>
+                        {translate('validation.lineColumn', {
+                          line: issue.location.line,
+                          column: issue.location.column
+                        })}
+                      </dd>
+                    </div>
+                  ) : null}
+                </dl>
+              ) : null}
+              <p className="orbitpm-validation__repair-copy">
+                <strong>{translate('validation.suggestedRepair')}:</strong>{' '}
+                <span data-validation-localized-repair>{localized.suggestedRepair}</span>
+              </p>
+              <dl
+                className="orbitpm-validation__technical"
+                aria-label={translate('validation.technicalEvidence')}
+              >
                 <div>
-                  <dt>{translate('validation.element')}</dt>
+                  <dt>{translate('validation.technical.code')}</dt>
                   <dd>
-                    <code>{issue.elementId}</code>
+                    <code lang="en" dir="ltr" data-validation-technical-code>
+                      {issue.code}
+                    </code>
                   </dd>
                 </div>
-              ) : null}
-              {issue.location ? (
-                <div>
-                  <dt>{translate('validation.location')}</dt>
+                {issue.ruleId ? (
+                  <div>
+                    <dt>{translate('validation.technical.ruleId')}</dt>
+                    <dd>
+                      <code lang="en" dir="ltr" data-validation-technical-rule>
+                        {issue.ruleId}
+                      </code>
+                    </dd>
+                  </div>
+                ) : null}
+                <div className="orbitpm-validation__technical-diagnostic">
+                  <dt>{translate('validation.technical.diagnostic')}</dt>
                   <dd>
-                    {translate('validation.lineColumn', {
-                      line: issue.location.line,
-                      column: issue.location.column
-                    })}
+                    <code lang="en" dir="ltr" data-validation-technical-diagnostic>
+                      {technicalDiagnostic}
+                    </code>
+                    {technicalDiagnosticTruncated ? (
+                      <span
+                        className="orbitpm-validation__technical-truncated"
+                        data-validation-technical-truncated
+                      >
+                        {translate('validation.technical.truncated')}
+                      </span>
+                    ) : null}
                   </dd>
                 </div>
+              </dl>
+              {onFocus || onRepair ? (
+                <div className="orbitpm-validation__issue-actions">
+                  {onFocus && issue.elementId ? (
+                    <button type="button" onClick={() => onFocus(issue)}>
+                      {translate('validation.focus')}
+                    </button>
+                  ) : null}
+                  {onRepair &&
+                  (issue.suggestedRepair || issue.location || issue.source === 'di') ? (
+                    <button type="button" onClick={() => onRepair(issue)}>
+                      {translate('validation.repair')}
+                    </button>
+                  ) : null}
+                </div>
               ) : null}
-            </dl>
-          ) : null}
-          {issue.suggestedRepair ? (
-            <p className="orbitpm-validation__repair-copy">{issue.suggestedRepair}</p>
-          ) : null}
-          {onFocus || onRepair ? (
-            <div className="orbitpm-validation__issue-actions">
-              {onFocus && issue.elementId ? (
-                <button type="button" onClick={() => onFocus(issue)}>
-                  {translate('validation.focus')}
-                </button>
-              ) : null}
-              {onRepair && (issue.suggestedRepair || issue.location || issue.source === 'di') ? (
-                <button type="button" onClick={() => onRepair(issue)}>
-                  {translate('validation.repair')}
-                </button>
-              ) : null}
-            </div>
-          ) : null}
-        </li>
-      ))}
-    </ol>
+            </li>
+          )
+        })}
+      </ol>
+      {pageCount > 1 ? (
+        <nav
+          className="orbitpm-validation__pagination"
+          aria-label={translate('validation.pagination.label')}
+        >
+          <span role="status" aria-live="polite">
+            {translate('validation.pagination.status', {
+              start: pageStart + 1,
+              end: pageEnd,
+              total: issues.length,
+              page: page + 1,
+              pages: pageCount
+            })}
+          </span>
+          <span className="orbitpm-validation__pagination-actions">
+            <button
+              type="button"
+              aria-controls={issueListId}
+              disabled={page === 0}
+              onClick={() => setPagination({ issues, page: page - 1 })}
+            >
+              {translate('validation.pagination.previous')}
+            </button>
+            <button
+              type="button"
+              aria-controls={issueListId}
+              disabled={page + 1 >= pageCount}
+              onClick={() => setPagination({ issues, page: page + 1 })}
+            >
+              {translate('validation.pagination.next')}
+            </button>
+          </span>
+        </nav>
+      ) : null}
+    </div>
   )
 }
 

@@ -39,6 +39,10 @@ function creditsErrorKey(kind: CreditsErrorKind): Key {
       return 'ai.credits.error.network'
     case 'timeout':
       return 'ai.credits.error.timeout'
+    case 'aborted':
+      // Caller-cancelled refreshes should normally be suppressed by their
+      // owner. Keep a stable fallback if one is ever rendered.
+      return 'ai.credits.error.network'
     default:
       return 'ai.credits.error.unexpected'
   }
@@ -57,6 +61,14 @@ export function CreditsLine({ state, onRefresh, onReset, note }: CreditsLineProp
     const number = new Intl.NumberFormat(lang)
     const formatCost = (value: number | null): string => {
       if (value === null) return t('ai.usage.costNa')
+      if (value !== 0 && Math.abs(value) < 0.00000001) {
+        return new Intl.NumberFormat(lang, {
+          style: 'currency',
+          currency: 'USD',
+          notation: 'scientific',
+          maximumFractionDigits: 4
+        }).format(value)
+      }
       return new Intl.NumberFormat(lang, {
         style: 'currency',
         currency: 'USD',
@@ -66,6 +78,10 @@ export function CreditsLine({ state, onRefresh, onReset, note }: CreditsLineProp
     }
     const sessionTokens = state.session.inputTokens + state.session.outputTokens
     const allTimeTokens = state.allTime.inputTokens + state.allTime.outputTokens
+    const formatCount = (value: number, incomplete: boolean): string =>
+      `${incomplete ? '≥' : ''}${number.format(value)}`
+    const sessionIncomplete = state.session.overflowed === true
+    const allTimeIncomplete = state.allTime.overflowed === true
     const estimated =
       state.session.costKind === 'estimated' ||
       state.session.costKind === 'mixed' ||
@@ -75,20 +91,23 @@ export function CreditsLine({ state, onRefresh, onReset, note }: CreditsLineProp
       <div style={wrap}>
         <span style={textStyle}>
           {t('ai.usage.sessionDetailed', {
-            requests: number.format(state.session.requests),
-            tokens: number.format(sessionTokens),
-            reasoning: number.format(state.session.reasoningTokens),
+            requests: formatCount(state.session.requests, sessionIncomplete),
+            tokens: formatCount(sessionTokens, sessionIncomplete),
+            reasoning: formatCount(state.session.reasoningTokens, sessionIncomplete),
             cost: formatCost(state.session.costUsd)
           })}
         </span>
         <span style={{ ...textStyle, flexBasis: '100%' }}>
           {t('ai.usage.allTimeDetailed', {
-            requests: number.format(state.allTime.requests),
-            tokens: number.format(allTimeTokens),
-            reasoning: number.format(state.allTime.reasoningTokens),
+            requests: formatCount(state.allTime.requests, allTimeIncomplete),
+            tokens: formatCount(allTimeTokens, allTimeIncomplete),
+            reasoning: formatCount(state.allTime.reasoningTokens, allTimeIncomplete),
             cost: formatCost(state.allTime.costUsd)
           })}
         </span>
+        {(sessionIncomplete || allTimeIncomplete) && (
+          <span style={noteStyle}>{t('ai.usage.incomplete')}</span>
+        )}
         {estimated && (
           <span style={noteStyle}>{t('ai.usage.priceAsOf', { date: ESTIMATED_PRICE_AS_OF })}</span>
         )}

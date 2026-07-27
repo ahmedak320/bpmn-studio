@@ -7,7 +7,8 @@ import {
   BrowserImportDeliveryTransactionFactory,
   WorkspaceImportTransactionFactory,
   WorkspaceSpreadsheetDestinationInspector,
-  buildSpreadsheetImportZip
+  buildSpreadsheetImportZip,
+  type WorkspaceSpreadsheetMutationChange
 } from './destinationAdapters'
 
 const bytes = (value: string): Uint8Array => new TextEncoder().encode(value)
@@ -22,12 +23,17 @@ describe('spreadsheet destination adapters', () => {
       now: () => 1_000
     })
     const inspector = new WorkspaceSpreadsheetDestinationInspector(adapter)
+    const published: WorkspaceSpreadsheetMutationChange[] = []
     const [existing, missing] = await inspector.inspect(['existing.bpmn', 'new.bpmn'])
     expect(existing).toMatchObject({ exists: true })
     expect(missing).toEqual({ path: 'new.bpmn', exists: false })
 
     const transaction = await new WorkspaceImportTransactionFactory(adapter, {
-      historyManager
+      historyManager,
+      runExclusive: (operation) =>
+        operation((changes) => {
+          published.push(...changes)
+        })
     }).begin('import-1')
     await transaction.stage({
       path: 'existing.bpmn',
@@ -81,6 +87,11 @@ describe('spreadsheet destination adapters', () => {
     expect(
       (await adapter.list()).some((entry) => entry.path.startsWith('.orbitpm/history/imports/'))
     ).toBe(false)
+    expect(published).toEqual([
+      expect.objectContaining({ kind: 'saved', path: 'existing.bpmn' }),
+      expect.objectContaining({ kind: 'saved', path: 'new.bpmn' }),
+      { kind: 'invalidated', path: HISTORY_ROOT }
+    ])
   })
 
   it('checks cancellation after original reads before creating history or writing', async () => {
@@ -206,8 +217,13 @@ describe('spreadsheet destination adapters', () => {
     })
     const historyManager = new PortableHistoryManager({ adapter })
     const original = await adapter.read('first.bpmn')
+    const published: WorkspaceSpreadsheetMutationChange[] = []
     const transaction = await new WorkspaceImportTransactionFactory(adapter, {
-      historyManager
+      historyManager,
+      runExclusive: (operation) =>
+        operation((changes) => {
+          published.push(...changes)
+        })
     }).begin('import-rollback')
     await transaction.stage({
       path: 'first.bpmn',
@@ -229,6 +245,10 @@ describe('spreadsheet destination adapters', () => {
     })
     expect((await historyManager.listRevisions()).revisions).toEqual([])
     expect((await adapter.list()).map(({ path }) => path)).toEqual(['first.bpmn'])
+    expect(published).toEqual([
+      expect.objectContaining({ kind: 'saved', path: 'first.bpmn' }),
+      { kind: 'invalidated', path: HISTORY_ROOT }
+    ])
   })
 
   it('prunes only created empty recovery folders and preserves pre-existing or non-empty folders', async () => {

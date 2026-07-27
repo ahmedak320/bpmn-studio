@@ -1,5 +1,6 @@
 import { executeModelingBatch, type ModelingBatchUpdate } from '../editor/modelingBatch'
 import { auditLocalizationFields } from './audit'
+import { extractBpmnLocalization } from './extract'
 import { SEEDED_GLOSSARY } from './glossary'
 import { prepareLocalizationIngestion } from './ingestion'
 import { planLanguageProjection, type LocalResourcePlanOptions } from './plan'
@@ -53,6 +54,12 @@ export interface DiagramLocalizationReview {
   unchanged: number
   blockers: LocalizationIssue[]
   complete: boolean
+  /**
+   * Snapshot of the raw translatable BPMN fields before virtual glossary/TM
+   * application. Stale checks can re-extract and compare this directly instead
+   * of repeating the full audit/plan/projection pipeline.
+   */
+  sourceSignature?: string
   /** Exact glossary/TM inputs retained for stale checks and post-audits. */
   localResources: LocalizationResources
 }
@@ -184,18 +191,78 @@ function idOf(object: ModdleLike | undefined): string | undefined {
   return text(read(object, 'id'))?.trim()
 }
 
-function reviewSignature(review: Pick<DiagramLocalizationReview, 'target' | 'queue'>): string {
+function reviewSignature(
+  review: Pick<DiagramLocalizationReview, 'target' | 'fields' | 'queue' | 'localUpdates'>
+): string {
   return JSON.stringify({
     target: review.target,
+    fields: review.fields.map((field) => [
+      field.source,
+      field.processId,
+      field.elementId,
+      field.elementType,
+      field.field,
+      field.kind,
+      field.value.en ?? null,
+      field.value.ar ?? null,
+      field.value.active,
+      field.sourceLanguage ?? null,
+      field.projection ?? null,
+      field.origins.en ?? null,
+      field.origins.ar ?? null,
+      field.storage.enProperty,
+      field.storage.arProperty,
+      field.storage.projectionProperty,
+      [...field.planeIds]
+    ]),
     queue: review.queue.map((item) => [
       item.processId,
       item.elementId,
       item.field,
       item.sourceLanguage,
       item.sourceValue,
-      item.target
+      item.target,
+      item.requiresSegmentationReview === true
+    ]),
+    localUpdates: review.localUpdates.map((patch) => [
+      patch.processId,
+      patch.elementId,
+      patch.field,
+      patch.property,
+      patch.value,
+      patch.expectedValue === undefined
+        ? 'unconditional'
+        : patch.expectedValue === null
+          ? 'absent'
+          : ['exact', patch.expectedValue],
+      patch.target ?? null,
+      patch.reason
     ])
   })
+}
+
+function localizationFieldsSignature(fields: readonly LocalizationField[]): string {
+  return JSON.stringify(
+    fields.map((field) => [
+      field.source,
+      field.processId,
+      field.elementId,
+      field.elementType,
+      field.field,
+      field.kind,
+      field.value.en ?? null,
+      field.value.ar ?? null,
+      field.value.active,
+      field.sourceLanguage ?? null,
+      field.projection ?? null,
+      field.origins.en ?? null,
+      field.origins.ar ?? null,
+      field.storage.enProperty,
+      field.storage.arProperty,
+      field.storage.projectionProperty,
+      field.planeIds
+    ])
+  )
 }
 
 /** Ensure the exact text approved in the review still matches the live model. */
@@ -203,6 +270,15 @@ export function assertLocalizationReviewCurrent(
   modeler: LocalizationModeler,
   review: DiagramLocalizationReview
 ): void {
+  if (review.sourceSignature !== undefined) {
+    const currentFields = extractBpmnLocalization(definitionsOf(modeler), {
+      source: review.source
+    })
+    if (localizationFieldsSignature(currentFields) !== review.sourceSignature) {
+      throw new StaleLocalizationReviewError()
+    }
+    return
+  }
   const current = inspectDiagramLocalization(modeler, review.target, {
     source: review.source,
     ...review.localResources
@@ -242,6 +318,7 @@ export function inspectDiagramLocalization(
     unchanged: ingestion.projection.unchanged,
     blockers: ingestion.projection.blockers,
     complete: ingestion.projection.complete,
+    sourceSignature: localizationFieldsSignature(ingestion.initialAudit.fields),
     localResources
   }
 }
@@ -276,12 +353,50 @@ function resolveObject(
   return candidates[ordinal - 1]
 }
 
-function activeLanguagePatches(
+function processObjectsOf(modeler: LocalizationModeler): ModdleLike[] {
+  const output: ModdleLike[] = []
+  const seenObjects = new Set<ModdleLike>()
+  const seenIds = new Set<string>()
+  const add = (object: ModdleLike | undefined): void => {
+    if (!object || typeOf(object) !== 'bpmn:Process' || seenObjects.has(object)) return
+    const id = idOf(object)
+    if (id && seenIds.has(id)) return
+    seenObjects.add(object)
+    if (id) seenIds.add(id)
+    output.push(object)
+  }
+
+  const root = (modeler.get('canvas') as CanvasLike).getRootElement()
+  const rootObject = root?.businessObject
+  if (typeOf(rootObject ?? {}) === 'bpmn:Process') {
+    add(rootObject)
+  } else if (typeOf(rootObject ?? {}) === 'bpmn:Collaboration') {
+    const participants = read(rootObject, 'participants')
+    if (Array.isArray(participants)) {
+      for (const participant of participants) {
+        add((participant as { processRef?: ModdleLike } | undefined)?.processRef)
+      }
+    }
+  }
+  for (const object of collectObjects(definitionsOf(modeler))) add(object)
+  return output
+}
+
+export function activeLanguagePatches(
+  modeler: LocalizationModeler,
   fields: readonly LocalizationField[],
   target: LanguageCode
 ): LocalizationPatch[] {
-  const processIds = [...new Set(fields.map((field) => field.processId))]
-  return processIds.map((processId) => ({
+  const processIds = new Set(fields.map((field) => field.processId))
+  for (const process of processObjectsOf(modeler)) {
+    const processId = idOf(process)
+    if (processId) processIds.add(processId)
+  }
+  const root = (modeler.get('canvas') as CanvasLike).getRootElement()
+  if (typeOf(root?.businessObject ?? {}) === 'bpmn:Process' && root?.id) {
+    processIds.add(root.id)
+  }
+  return [...processIds].map((processId) => ({
     source: fields[0]?.source ?? LocalizationSource.Editor,
     processId,
     elementId: processId,
@@ -294,16 +409,8 @@ function activeLanguagePatches(
 }
 
 function activeLanguageOf(modeler: LocalizationModeler): LanguageCode {
-  const root = (modeler.get('canvas') as CanvasLike).getRootElement()
-  let object = root?.businessObject
-  if (typeOf(object ?? {}) === 'bpmn:Collaboration') {
-    const participants = read(object, 'participants')
-    const processRef = Array.isArray(participants)
-      ? (participants[0] as { processRef?: ModdleLike } | undefined)?.processRef
-      : undefined
-    if (processRef) object = processRef
-  }
-  return text(read(object, 'orbitpm:activeLang')) === 'ar' ? 'ar' : 'en'
+  const process = processObjectsOf(modeler)[0]
+  return text(read(process, 'orbitpm:activeLang')) === 'ar' ? 'ar' : 'en'
 }
 
 /** Postcondition for a claimed language switch, including legacy/SVG values. */
@@ -311,8 +418,13 @@ export function isDiagramLocalizationProjected(
   modeler: LocalizationModeler,
   review: DiagramLocalizationReview
 ): boolean {
+  const processes = processObjectsOf(modeler)
   return (
-    activeLanguageOf(modeler) === review.target &&
+    processes.length > 0 &&
+    processes.every(
+      (process) =>
+        (text(read(process, 'orbitpm:activeLang')) === 'ar' ? 'ar' : 'en') === review.target
+    ) &&
     review.fields.every(
       (field) =>
         field.value[review.target] !== undefined && field.projection === field.value[review.target]
@@ -327,8 +439,8 @@ export function isDiagramLocalizationProjected(
 export function applyLocalizationPatchesAtomically(
   modeler: LocalizationModeler,
   patches: readonly LocalizationPatch[]
-): void {
-  if (patches.length === 0) return
+): boolean {
+  if (patches.length === 0) return false
   const definitions = definitionsOf(modeler)
   const objects = collectObjects(definitions)
   const directById = new Map<string, ModdleLike>()
@@ -359,8 +471,8 @@ export function applyLocalizationPatchesAtomically(
     if (!object) continue
     const current = text(read(object, patch.property))
     if (
-      patch.expectedValue !== undefined &&
-      current !== patch.expectedValue &&
+      ((patch.expectedValue === null && current !== undefined) ||
+        (typeof patch.expectedValue === 'string' && current !== patch.expectedValue)) &&
       current !== patch.value
     ) {
       throw new StaleLocalizationReviewError()
@@ -379,7 +491,9 @@ export function applyLocalizationPatchesAtomically(
       properties
     })
   }
+  if (updates.length === 0) return false
   executeModelingBatch(modeler, updates)
+  return true
 }
 
 /**
@@ -412,9 +526,9 @@ export function applyDiagramLocalizationReview(
   const patches = [
     ...review.localUpdates,
     ...projection.updates,
-    ...activeLanguagePatches(review.fields, review.target)
+    ...activeLanguagePatches(modeler, review.fields, review.target)
   ]
-  applyLocalizationPatchesAtomically(modeler, patches)
+  const batchExecuted = applyLocalizationPatchesAtomically(modeler, patches)
   let post = inspectDiagramLocalization(modeler, review.target, {
     source: review.source,
     ...review.localResources
@@ -424,7 +538,7 @@ export function applyDiagramLocalizationReview(
   })
   let targetIssues = postAudit.issues.filter((issue) => issue.target === review.target)
   const projectionPersisted = isDiagramLocalizationProjected(modeler, post)
-  if (projection.complete && (targetIssues.length > 0 || !projectionPersisted)) {
+  if (batchExecuted && projection.complete && (targetIssues.length > 0 || !projectionPersisted)) {
     // A real command-stack batch is one undo entry. If a moddle/renderer
     // anomaly defeats the post-audit, roll the whole attempted projection
     // back so an active-language marker can never claim false completion.

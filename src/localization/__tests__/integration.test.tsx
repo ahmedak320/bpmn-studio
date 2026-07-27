@@ -16,6 +16,14 @@ import {
 } from '../modelerAdapter'
 import { prepareLocalizationIngestion } from '../ingestion'
 import { TranslationReviewDialog } from '../TranslationReviewDialog'
+import {
+  applyStagedTranslationRecoveryValues,
+  applyTranslationRecoveryValue,
+  buildTranslationRecoveryDisclosure,
+  deriveTranslationReviewProgress,
+  InvalidTranslationRecoveryValueError,
+  listTranslationRecoveryFields
+} from '../translationRecovery'
 import { LOCALIZATION_SOURCES, LocalizationSource, type LocalizationPatch } from '../types'
 
 interface Bo {
@@ -35,6 +43,7 @@ interface Bo {
 interface FakeModel {
   modeler: LocalizationModeler
   process: Bo
+  secondProcess?: Bo
   task: Bo
   taskElement: { id: string; businessObject: Bo }
   updates: Array<{ element: unknown; properties: Record<string, unknown> }>
@@ -64,6 +73,7 @@ function makeModel(
     documentation?: boolean
     getDefinitions?: boolean
     ignoreProjection?: boolean
+    secondEmptyProcess?: boolean
   } = {}
 ): FakeModel {
   const process: Bo = {
@@ -92,12 +102,37 @@ function makeModel(
     ]
   }
   process.flowElements = [task]
+  const secondProcess: Bo | undefined = options.secondEmptyProcess
+    ? {
+        $type: 'bpmn:Process',
+        id: 'Process_2',
+        $attrs: { 'orbitpm:activeLang': options.active ?? 'en' },
+        flowElements: []
+      }
+    : undefined
+  const collaboration: Bo | undefined = secondProcess
+    ? {
+        $type: 'bpmn:Collaboration',
+        id: 'Collaboration_1',
+        participants: [
+          { $type: 'bpmn:Participant', id: 'Participant_1', processRef: process },
+          { $type: 'bpmn:Participant', id: 'Participant_2', processRef: secondProcess }
+        ]
+      }
+    : undefined
   const definitions: Bo = {
     $type: 'bpmn:Definitions',
     id: 'Definitions_1',
-    rootElements: [process]
+    rootElements: [
+      process,
+      ...(secondProcess ? [secondProcess] : []),
+      ...(collaboration ? [collaboration] : [])
+    ]
   }
-  const root = { id: process.id as string, businessObject: process }
+  const root = {
+    id: (collaboration?.id ?? process.id) as string,
+    businessObject: collaboration ?? process
+  }
   const taskElement = { id: task.id as string, businessObject: task }
   const updates: Array<{
     element: unknown
@@ -149,6 +184,7 @@ function makeModel(
   return {
     modeler,
     process,
+    ...(secondProcess ? { secondProcess } : {}),
     task,
     taskElement,
     updates,
@@ -263,6 +299,70 @@ describe('modeler localization integration', () => {
     expect(fake.batchExecutions).toBe(1)
   })
 
+  it('switches an empty diagram with one active-language batch without undoing prior history', () => {
+    const fake = makeModel({ active: 'en', batch: true })
+    delete fake.task.name
+    fake.task.$attrs = {}
+    const unrelatedProperties = { 'orbitpm:historyMarker': 'preserved' }
+    const modeling = fake.modeler.get('modeling') as {
+      updateProperties(element: unknown, properties: Record<string, unknown>): void
+    }
+    modeling.updateProperties(fake.taskElement, unrelatedProperties)
+    const priorUpdateCount = fake.updates.length
+
+    const review = inspectDiagramLocalization(fake.modeler, 'ar')
+    expect(review.fields).toEqual([])
+    expect(review.complete).toBe(true)
+
+    const result = applyDiagramLocalizationReview(fake.modeler, review)
+
+    expect(result.complete).toBe(true)
+    expect(result.active).toBe('ar')
+    expect(fake.process.$attrs?.['orbitpm:activeLang']).toBe('ar')
+    expect(fake.batchExecutions).toBe(1)
+    expect(fake.updates).toHaveLength(priorUpdateCount + 1)
+    expect(fake.updates.at(-1)).toEqual({
+      element: expect.objectContaining({ businessObject: fake.process }),
+      properties: { 'orbitpm:activeLang': 'ar' }
+    })
+    expect(fake.task.$attrs).toMatchObject(unrelatedProperties)
+    expect(fake.undo).not.toHaveBeenCalled()
+
+    const alreadyProjected = applyDiagramLocalizationReview(fake.modeler, review)
+    expect(alreadyProjected.complete).toBe(true)
+    expect(alreadyProjected.active).toBe('ar')
+    expect(fake.batchExecutions).toBe(1)
+    expect(fake.updates).toHaveLength(priorUpdateCount + 1)
+    expect(fake.undo).not.toHaveBeenCalled()
+  })
+
+  it('switches every empty collaboration process and verifies all active-language markers', () => {
+    const fake = makeModel({ active: 'en', batch: true, secondEmptyProcess: true })
+    delete fake.task.name
+    fake.task.$attrs = {}
+
+    const review = inspectDiagramLocalization(fake.modeler, 'ar')
+    expect(review.fields).toEqual([])
+
+    const result = applyDiagramLocalizationReview(fake.modeler, review)
+
+    expect(result.complete).toBe(true)
+    expect(fake.process.$attrs?.['orbitpm:activeLang']).toBe('ar')
+    expect(fake.secondProcess?.$attrs?.['orbitpm:activeLang']).toBe('ar')
+    expect(fake.batchExecutions).toBe(1)
+    expect(fake.updates).toEqual([
+      {
+        element: expect.objectContaining({ businessObject: fake.process }),
+        properties: { 'orbitpm:activeLang': 'ar' }
+      },
+      {
+        element: expect.objectContaining({ businessObject: fake.secondProcess }),
+        properties: { 'orbitpm:activeLang': 'ar' }
+      }
+    ])
+    expect(fake.undo).not.toHaveBeenCalled()
+  })
+
   it('does nothing for an ordinary incomplete switch and applies only explicit partial preview', () => {
     const fake = makeModel({ en: 'Review request' })
     const review = inspectDiagramLocalization(fake.modeler, 'ar')
@@ -279,6 +379,38 @@ describe('modeler localization integration', () => {
     expect(partial.active).toBe('ar')
     expect(fake.process.$attrs?.['orbitpm:activeLang']).toBe('ar')
     expect(fake.task.$attrs?.['orbitpm:nameEn']).toBe('Review request')
+  })
+
+  it('rejects stale local-resource patches when a valid target is inserted before partial apply', () => {
+    const fake = makeModel({ en: 'Review request' })
+    const review = inspectDiagramLocalization(fake.modeler, 'ar', {
+      translationMemory: [
+        {
+          en: 'Review request',
+          ar: 'مراجعة الطلب',
+          accepted: true
+        }
+      ]
+    })
+    expect(review.queue).toEqual([])
+    expect(review.localUpdates).toEqual([
+      expect.objectContaining({
+        property: 'orbitpm:nameAr',
+        value: 'مراجعة الطلب',
+        expectedValue: null
+      })
+    ])
+
+    fake.task.$attrs = {
+      ...fake.task.$attrs,
+      'orbitpm:nameAr': 'تدقيق الطلب'
+    }
+
+    expect(() =>
+      applyDiagramLocalizationReview(fake.modeler, review, { allowPartial: true })
+    ).toThrow(StaleLocalizationReviewError)
+    expect(fake.task.$attrs?.['orbitpm:nameAr']).toBe('تدقيق الطلب')
+    expect(fake.updates).toEqual([])
   })
 
   it('post-audits visible projection and rolls back the atomic batch on persistence failure', () => {
@@ -320,6 +452,17 @@ describe('modeler localization integration', () => {
     expect(() => applyLocalizationPatchesAtomically(fake.modeler, [patch])).toThrow(
       StaleLocalizationReviewError
     )
+
+    expect(() =>
+      applyLocalizationPatchesAtomically(fake.modeler, [
+        {
+          ...patch,
+          property: 'orbitpm:nameEn',
+          value: 'Replacement',
+          expectedValue: null
+        }
+      ])
+    ).toThrow(StaleLocalizationReviewError)
   })
 
   it('coalesces patches, skips missing/already-current targets, and supports fallback modelers', () => {
@@ -491,6 +634,201 @@ describe('modeler localization integration', () => {
     ])
     expect(orphan.text).toBe('ملاحظة')
   })
+
+  it('keeps failed fields recoverable and applies one validated manual value without false projection', () => {
+    const fake = makeModel({ en: 'Review request' })
+    const initial = inspectDiagramLocalization(fake.modeler, 'ar')
+    const item = initial.queue[0]!
+    const failed = inspectDiagramLocalization(fake.modeler, 'ar', {
+      providerFailures: [
+        {
+          processId: item.processId,
+          elementId: item.elementId,
+          field: item.field,
+          target: item.target,
+          originalValue: item.sourceValue
+        }
+      ]
+    })
+    const fields = listTranslationRecoveryFields(failed)
+    expect(fields).toHaveLength(1)
+    expect(fields[0]).toMatchObject({
+      sourceValue: 'Review request',
+      target: 'ar',
+      failed: true,
+      retryable: true
+    })
+    expect(deriveTranslationReviewProgress(failed)).toMatchObject({
+      resolved: 0,
+      unresolved: 1,
+      failed: 1,
+      complete: false
+    })
+    expect(
+      buildTranslationRecoveryDisclosure(fields[0]!, { providerId: 'provider' })
+    ).toMatchObject({
+      purpose: 'diagram-localization-field-retry',
+      providerId: 'provider',
+      outbound: [{ text: 'Review request' }],
+      estimatedRequests: { min: 1, max: 6 }
+    })
+
+    expect(() =>
+      applyTranslationRecoveryValue(fake.modeler, failed, fields[0]!.id, 'Still English')
+    ).toThrow(InvalidTranslationRecoveryValueError)
+    expect(fake.task.$attrs?.['orbitpm:nameAr']).toBeUndefined()
+
+    const recovered = applyTranslationRecoveryValue(
+      fake.modeler,
+      failed,
+      fields[0]!.id,
+      'مراجعة الطلب'
+    )
+    expect(fake.task.$attrs?.['orbitpm:nameAr']).toBe('مراجعة الطلب')
+    expect(fake.process.$attrs?.['orbitpm:activeLang']).toBe('en')
+    expect(recovered.complete).toBe(true)
+    expect(deriveTranslationReviewProgress(recovered)).toEqual({
+      total: 1,
+      resolved: 1,
+      unresolved: 0,
+      failed: 0,
+      complete: true
+    })
+  })
+
+  it('binds recovery to the reviewed live source and refuses stale per-field edits', () => {
+    const fake = makeModel({ en: 'Review request' })
+    const review = inspectDiagramLocalization(fake.modeler, 'ar')
+    const field = listTranslationRecoveryFields(review)[0]!
+    fake.task.name = 'Changed while review was open'
+    fake.task.$attrs = {
+      ...fake.task.$attrs,
+      'orbitpm:nameEn': 'Changed while review was open'
+    }
+
+    expect(() =>
+      applyTranslationRecoveryValue(fake.modeler, review, field.id, 'مراجعة الطلب')
+    ).toThrow(StaleLocalizationReviewError)
+  })
+
+  it('does not let a provider completion overwrite a valid target inserted during review', () => {
+    const fake = makeModel({ en: 'Review request' })
+    const review = inspectDiagramLocalization(fake.modeler, 'ar')
+    const field = listTranslationRecoveryFields(review)[0]!
+    fake.task.$attrs = {
+      ...fake.task.$attrs,
+      'orbitpm:nameAr': 'تدقيق الطلب'
+    }
+
+    expect(() =>
+      applyTranslationRecoveryValue(fake.modeler, review, field.id, 'مراجعة الطلب', {
+        reason: 'provider'
+      })
+    ).toThrow(StaleLocalizationReviewError)
+    expect(fake.task.$attrs?.['orbitpm:nameAr']).toBe('تدقيق الطلب')
+    expect(fake.updates).toEqual([])
+  })
+
+  it('can recover the final field and project the completed view in one command batch', () => {
+    const fake = makeModel({ en: 'Review request', batch: true })
+    const review = inspectDiagramLocalization(fake.modeler, 'ar')
+    const field = listTranslationRecoveryFields(review)[0]!
+
+    const post = applyTranslationRecoveryValue(fake.modeler, review, field.id, 'مراجعة الطلب', {
+      projectCompletedView: true
+    })
+
+    expect(post.complete).toBe(true)
+    expect(fake.batchExecutions).toBe(1)
+    expect(fake.task.$attrs?.['orbitpm:nameAr']).toBe('مراجعة الطلب')
+    expect(fake.task.name).toBe('مراجعة الطلب')
+    expect(fake.process.$attrs?.['orbitpm:activeLang']).toBe('ar')
+  })
+
+  it('commits multiple staged decisions and their completed projection as one undo entry', () => {
+    const fake = makeModel({
+      en: 'Review request',
+      documentation: true,
+      batch: true
+    })
+    const review = inspectDiagramLocalization(fake.modeler, 'ar')
+    const fields = listTranslationRecoveryFields(review)
+    expect(fields.map((field) => field.field)).toEqual(['name', 'notes'])
+
+    const post = applyStagedTranslationRecoveryValues(
+      fake.modeler,
+      review,
+      fields.map((field) => ({
+        fieldId: field.id,
+        value: field.field === 'name' ? 'مراجعة الطلب' : 'ملاحظة داخلية'
+      }))
+    )
+
+    expect(post.complete).toBe(true)
+    expect(fake.batchExecutions).toBe(1)
+    expect(fake.task.$attrs?.['orbitpm:nameAr']).toBe('مراجعة الطلب')
+    expect(fake.task.documentation?.[0].$attrs?.['orbitpm:nameAr']).toBe('ملاحظة داخلية')
+    expect(fake.task.name).toBe('مراجعة الطلب')
+    expect(fake.task.documentation?.[0].text).toBe('ملاحظة داخلية')
+    expect(fake.process.$attrs?.['orbitpm:activeLang']).toBe('ar')
+  })
+
+  it('joins virtual translation-memory patches to the staged final batch', () => {
+    const fake = makeModel({
+      en: 'Review request',
+      documentation: true,
+      batch: true
+    })
+    const review = inspectDiagramLocalization(fake.modeler, 'ar', {
+      translationMemory: [
+        {
+          en: 'Internal note',
+          ar: 'ملاحظة داخلية',
+          accepted: true
+        }
+      ]
+    })
+    expect(review.localUpdates).toEqual([
+      expect.objectContaining({
+        field: 'notes',
+        reason: 'translation-memory',
+        value: 'ملاحظة داخلية'
+      })
+    ])
+    const field = listTranslationRecoveryFields(review)[0]!
+
+    const post = applyStagedTranslationRecoveryValues(fake.modeler, review, [
+      { fieldId: field.id, value: 'مراجعة الطلب' }
+    ])
+
+    expect(post.complete).toBe(true)
+    expect(fake.batchExecutions).toBe(1)
+    expect(fake.task.$attrs?.['orbitpm:nameAr']).toBe('مراجعة الطلب')
+    expect(fake.task.documentation?.[0].$attrs?.['orbitpm:nameAr']).toBe('ملاحظة داخلية')
+    expect(fake.task.name).toBe('مراجعة الطلب')
+    expect(fake.task.documentation?.[0].text).toBe('ملاحظة داخلية')
+    expect(fake.process.$attrs?.['orbitpm:activeLang']).toBe('ar')
+  })
+
+  it('rejects a stale staged set before the single final batch', () => {
+    const fake = makeModel({ en: 'Review request', batch: true })
+    const review = inspectDiagramLocalization(fake.modeler, 'ar')
+    const field = listTranslationRecoveryFields(review)[0]!
+    fake.task.name = 'Changed after staging'
+    fake.task.$attrs = {
+      ...fake.task.$attrs,
+      'orbitpm:nameEn': 'Changed after staging'
+    }
+
+    expect(() =>
+      applyStagedTranslationRecoveryValues(fake.modeler, review, [
+        { fieldId: field.id, value: 'مراجعة الطلب' }
+      ])
+    ).toThrow(StaleLocalizationReviewError)
+    expect(fake.batchExecutions).toBe(0)
+    expect(fake.task.$attrs?.['orbitpm:nameAr']).toBeUndefined()
+    expect(fake.process.$attrs?.['orbitpm:activeLang']).toBe('en')
+  })
 })
 
 describe('translation review rendering', () => {
@@ -601,7 +939,7 @@ describe('translation review rendering', () => {
       />
     )
     expect(html).toContain('Arabic → English')
-    expect(html).toContain('Unavailable will receive')
+    expect(html).toContain('<b dir="ltr">Unavailable</b> will receive')
     expect(html).toContain('role=\"alert\"')
     expect(html).toContain('Provider failed')
 
@@ -618,6 +956,6 @@ describe('translation review rendering', () => {
         onCancelTranslation={vi.fn()}
       />
     )
-    expect(providerFallbackHtml).toContain('external-id will receive')
+    expect(providerFallbackHtml).toContain('<b dir="ltr">external-id</b> will receive')
   })
 })

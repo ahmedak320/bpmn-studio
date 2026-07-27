@@ -243,6 +243,26 @@ afterEach(() => {
 })
 
 describe('AssistantDrawer interview cancellation', () => {
+  it('uses the localized typed error when a provider returns no interview questions', async () => {
+    const user = userEvent.setup()
+    mocks.llmCall.mockResolvedValueOnce('{}')
+
+    render(<ControlledDrawer onApplyXml={vi.fn()} />)
+    const preview = await screen.findByRole('region', {
+      name: 'ai.privacy.preview.title'
+    })
+    await confirmPreview(user, preview)
+
+    expect(await screen.findByText('assist.error.emptyResponse')).not.toBeNull()
+    const detail = document.querySelector<HTMLElement>('[data-ai-technical-detail]')
+    expect(detail).not.toBeNull()
+    const code = within(detail!).getByText('anthropic')
+    expect(code.tagName).toBe('CODE')
+    expect(code.getAttribute('lang')).toBe('en')
+    expect(code.getAttribute('dir')).toBe('ltr')
+    expect(screen.queryByText(/empty response from model/i)).toBeNull()
+  })
+
   it('does not apply when cancelled after the model response but before generation returns', async () => {
     const user = userEvent.setup()
     const afterModel = deferred<void>()

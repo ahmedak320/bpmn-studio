@@ -95,4 +95,43 @@ describe('ModelingBatch service', () => {
     expect(execute).toHaveBeenCalledWith(updates)
     expect(modeling.updateProperties).not.toHaveBeenCalled()
   })
+
+  it('propagates an atomic service failure without sequentially replaying updates', () => {
+    const partialEffects: unknown[] = []
+    const execute = vi.fn((updates: readonly ModelingBatchUpdate[]) => {
+      partialEffects.push(updates[0])
+      throw new Error('atomic batch failed after its first nested command')
+    })
+    const modeling = {
+      updateProperties: vi.fn(),
+      updateWaypoints: vi.fn()
+    }
+    const modeler = {
+      get(name: string): unknown {
+        if (name === 'orbitpmModelingBatch') return { execute }
+        if (name === 'modeling') return modeling
+        throw new Error(`unexpected service ${name}`)
+      }
+    }
+    const updates: ModelingBatchUpdate[] = [
+      {
+        kind: 'properties',
+        element: { id: 'Task_1' },
+        properties: { name: 'First' }
+      },
+      {
+        kind: 'properties',
+        element: { id: 'Task_2' },
+        properties: { name: 'Second' }
+      }
+    ]
+
+    expect(() => executeModelingBatch(modeler, updates)).toThrow(
+      'atomic batch failed after its first nested command'
+    )
+    expect(execute).toHaveBeenCalledOnce()
+    expect(partialEffects).toEqual([updates[0]])
+    expect(modeling.updateProperties).not.toHaveBeenCalled()
+    expect(modeling.updateWaypoints).not.toHaveBeenCalled()
+  })
 })

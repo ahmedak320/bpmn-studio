@@ -12,6 +12,7 @@ import {
   useCallback,
   useEffect,
   useId,
+  useLayoutEffect,
   useRef,
   useState,
   type KeyboardEvent as ReactKeyboardEvent,
@@ -132,6 +133,15 @@ export interface EditorTabProps {
   responsiveMode?: ResponsiveShellMode
   /** Notifies App so opening Details can close an overlay explorer. */
   onDetailsOpenChange?: (open: boolean) => void
+  /** Optional shell-owned Process Outline state. Omit for local editor ownership. */
+  outlineOpen?: boolean
+  /** Notifies the shell whenever the effective Process Outline state changes. */
+  onOutlineOpenChange?: (open: boolean) => void
+  /**
+   * Mounted background editors keep their modelers alive, but must not mount
+   * modal side panes or participate in shell focus/inert management.
+   */
+  sidePanesActive?: boolean
   /** Exact workspace glossary/TM snapshot for Source Apply. */
   sourceLocalizationResources?: LocalizationResources
   /**
@@ -323,6 +333,9 @@ export function EditorTab(props: EditorTabProps): JSX.Element {
     detailsController: sharedDetailsController,
     responsiveMode,
     onDetailsOpenChange,
+    outlineOpen: controlledOutlineOpen,
+    onOutlineOpenChange,
+    sidePanesActive = true,
     sourceLocalizationResources,
     onReviewSourceBilingual
   } = props
@@ -371,6 +384,8 @@ export function EditorTab(props: EditorTabProps): JSX.Element {
   onOpenCalledProcessRef.current = onOpenCalledProcess
   const onOpenStepDetailsRef = useRef(onOpenStepDetails)
   onOpenStepDetailsRef.current = onOpenStepDetails
+  const sidePanesActiveRef = useRef(sidePanesActive)
+  const sidePaneSessionRef = useRef(0)
 
   const [dirty, setDirty] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -394,25 +409,101 @@ export function EditorTab(props: EditorTabProps): JSX.Element {
   const [hintDismissed, setHintDismissed] = useState(false)
   const localDetailsController = useDetailsPreferences()
   const detailsController = sharedDetailsController ?? localDetailsController
-  const { preferences: detailsPreferences, setWidth: setPropsWidth, resetWidth } = detailsController
-  const propsOpen = detailsPreferences.open
+  const {
+    preferences: detailsPreferences,
+    setOpen: setDetailsPreferenceOpen,
+    setWidth: setPropsWidth,
+    resetWidth
+  } = detailsController
   const propsWidth = detailsPreferences.width
   const focusPaneAfterOpenRef = useRef(false)
   const focusToggleAfterCloseRef = useRef(false)
   const detectedResponsiveMode = useResponsiveShellMode()
   const shellMode = responsiveMode ?? detectedResponsiveMode
   const isSidePaneModal = shellMode !== 'docked'
-  const [outlineOpen, setOutlineOpen] = useState(false)
+  const [localOutlineOpen, setLocalOutlineOpen] = useState(false)
+  const outlineOpen = controlledOutlineOpen ?? localOutlineOpen
+  const propsOpen = sidePanesActive && detailsPreferences.open
+  // Details wins if controlled state briefly presents both panes after a
+  // docked -> modal breakpoint change. The layout reconciliation below then
+  // reports/closes Outline before the browser can paint two modal surfaces.
+  const outlinePaneOpen = sidePanesActive && outlineOpen && (!isSidePaneModal || !propsOpen)
   const [outlineModeler, setOutlineModeler] = useState<ProcessOutlineModeler | null>(null)
   const focusOutlineAfterOpenRef = useRef(false)
   const focusOutlineToggleAfterCloseRef = useRef(false)
+  const outlineOpenRef = useRef(outlineOpen)
+  outlineOpenRef.current = outlineOpen
+  const lastActiveOutlineOpenRef = useRef(sidePanesActive && outlineOpen)
+  const controlledOutlineOpenRef = useRef(controlledOutlineOpen)
+  controlledOutlineOpenRef.current = controlledOutlineOpen
+  const onOutlineOpenChangeRef = useRef(onOutlineOpenChange)
+  onOutlineOpenChangeRef.current = onOutlineOpenChange
+
+  const isSidePaneSessionCurrent = useCallback(
+    (session: number): boolean =>
+      sidePanesActiveRef.current && sidePaneSessionRef.current === session,
+    []
+  )
+
+  const setOutlineOpenState = useCallback((next: boolean): void => {
+    if (next && !sidePanesActiveRef.current) return
+    if (outlineOpenRef.current === next) return
+    outlineOpenRef.current = next
+    lastActiveOutlineOpenRef.current = next
+    if (controlledOutlineOpenRef.current === undefined) {
+      setLocalOutlineOpen(next)
+    }
+    onOutlineOpenChangeRef.current?.(next)
+  }, [])
+
+  useLayoutEffect(() => {
+    if (sidePanesActive) lastActiveOutlineOpenRef.current = outlineOpen
+  }, [outlineOpen, sidePanesActive])
+
   const setPropsPanelOpen = useCallback(
     (next: boolean): void => {
-      detailsController.setOpen(next)
+      if (next && !sidePanesActiveRef.current) return
+      setDetailsPreferenceOpen(next)
       onDetailsOpenChange?.(next)
     },
-    [detailsController, onDetailsOpenChange]
+    [onDetailsOpenChange, setDetailsPreferenceOpen]
   )
+
+  useLayoutEffect(() => {
+    const wasActive = sidePanesActiveRef.current
+    if (wasActive === sidePanesActive) return
+    sidePanesActiveRef.current = sidePanesActive
+    sidePaneSessionRef.current += 1
+    if (sidePanesActive) return
+
+    // Do not request focus restoration into an editor that is becoming
+    // inactive. Conditional rendering below removes the modal surfaces in this
+    // commit; clearing state prevents them from returning on reactivation.
+    focusPaneAfterOpenRef.current = false
+    focusToggleAfterCloseRef.current = false
+    focusOutlineAfterOpenRef.current = false
+    focusOutlineToggleAfterCloseRef.current = false
+    setValidationOpen(false)
+    setSourceOpen(false)
+    setPendingDraft(null)
+    // A controlled shell commonly gates its value with `sidePanesActive`.
+    // Restore the prior active value for transition deduplication so the
+    // forced close is still reported to, and durably cleared by, that shell.
+    if (lastActiveOutlineOpenRef.current) outlineOpenRef.current = true
+    setOutlineOpenState(false)
+    // A shared controller is shell state, not tab state. Preserve its open
+    // preference so the newly active editor can host Details; render gating
+    // above already removes this inactive editor's drawer surface.
+    if (!sharedDetailsController && wasActive && detailsPreferences.open) {
+      setPropsPanelOpen(false)
+    }
+  }, [
+    detailsPreferences.open,
+    sharedDetailsController,
+    setOutlineOpenState,
+    setPropsPanelOpen,
+    sidePanesActive
+  ])
 
   const closePropsPanel = useCallback(() => {
     focusToggleAfterCloseRef.current = true
@@ -425,28 +516,32 @@ export function EditorTab(props: EditorTabProps): JSX.Element {
         closePropsPanel()
         return
       }
-      if (isSidePaneModal && outlineOpen) setOutlineOpen(false)
+      if (!sidePanesActiveRef.current) return
+      if (isSidePaneModal && outlineOpen) setOutlineOpenState(false)
       setPropsPanelOpen(true)
     },
-    [closePropsPanel, isSidePaneModal, outlineOpen, setPropsPanelOpen]
+    [closePropsPanel, isSidePaneModal, outlineOpen, setOutlineOpenState, setPropsPanelOpen]
   )
+  const setDetailsOpenFromRailRef = useRef(setDetailsOpenFromRail)
+  setDetailsOpenFromRailRef.current = setDetailsOpenFromRail
 
   const closeOutline = useCallback(() => {
     focusOutlineToggleAfterCloseRef.current = true
-    setOutlineOpen(false)
-  }, [])
+    setOutlineOpenState(false)
+  }, [setOutlineOpenState])
 
   const toggleOutline = useCallback(
     (keyboardTriggered: boolean): void => {
+      if (!sidePanesActiveRef.current) return
       if (outlineOpen) {
         closeOutline()
         return
       }
       if (isSidePaneModal && propsOpen) setPropsPanelOpen(false)
       focusOutlineAfterOpenRef.current = keyboardTriggered || isSidePaneModal
-      setOutlineOpen(true)
+      setOutlineOpenState(true)
     },
-    [closeOutline, isSidePaneModal, outlineOpen, propsOpen, setPropsPanelOpen]
+    [closeOutline, isSidePaneModal, outlineOpen, propsOpen, setOutlineOpenState, setPropsPanelOpen]
   )
 
   useEffect(() => {
@@ -462,13 +557,13 @@ export function EditorTab(props: EditorTabProps): JSX.Element {
     return () => cancelAnimationFrame(frame)
   }, [propsOpen])
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (!isSidePaneModal || !propsOpen || !outlineOpen) return
-    setOutlineOpen(false)
-  }, [isSidePaneModal, outlineOpen, propsOpen])
+    setOutlineOpenState(false)
+  }, [isSidePaneModal, outlineOpen, propsOpen, setOutlineOpenState])
 
   useEffect(() => {
-    if (outlineOpen) {
+    if (outlinePaneOpen) {
       if (!focusOutlineAfterOpenRef.current) return
       focusOutlineAfterOpenRef.current = false
       const frame = requestAnimationFrame(() => outlineCloseRef.current?.focus())
@@ -480,7 +575,7 @@ export function EditorTab(props: EditorTabProps): JSX.Element {
       (shellMode === 'compact' ? actionMenuTriggerRef.current : outlineToggleRef.current)?.focus()
     )
     return () => cancelAnimationFrame(frame)
-  }, [outlineOpen, shellMode])
+  }, [outlinePaneOpen, shellMode])
 
   const applyDirtyState = useCallback(
     (next: DirtyState) => {
@@ -617,6 +712,11 @@ export function EditorTab(props: EditorTabProps): JSX.Element {
 
     const handleCommandStackChanged = (): void => {
       if (importCommandEventDepthRef.current > 0) return
+      // Initial document creation/import can truthfully start dirty without
+      // being a modeling interaction. Any command event that reaches this
+      // unguarded path is a real edit (or its undo/redo), so it permanently
+      // dismisses the near-empty-diagram guidance.
+      setHintDismissed(true)
       if (sourceRollbackRef.current) {
         if (ignoreNextSourceJournalCommandRef.current) {
           ignoreNextSourceJournalCommandRef.current = false
@@ -640,7 +740,7 @@ export function EditorTab(props: EditorTabProps): JSX.Element {
       }
       if (isStepBlockElement(event.element as Parameters<typeof isStepBlockElement>[0])) {
         modeler.get('selection').select(event.element)
-        setPropsPanelOpen(true)
+        setDetailsOpenFromRailRef.current(true)
         return false
       }
       return undefined
@@ -935,6 +1035,9 @@ export function EditorTab(props: EditorTabProps): JSX.Element {
           sourceRollbackRef.current = null
           setSourceRollbackAvailable(false)
           setValidationSummary(null)
+          // Unlike a prop import, this is an explicit XML replacement. Do not
+          // leave the new-diagram guidance floating over the replacement.
+          setHintDismissed(true)
           const stackIndex = getStackIndex(modeler)
           applyDirtyState(
             options?.dirty
@@ -1004,19 +1107,25 @@ export function EditorTab(props: EditorTabProps): JSX.Element {
   }, [readCurrentXml, validateDocument, validationRunning, validationSummary])
 
   const handleOpenValidation = useCallback(() => {
+    if (!sidePanesActiveRef.current) return
     setValidationOpen(true)
     void handleRunValidation()
   }, [handleRunValidation])
 
   const handleOpenSource = useCallback(async () => {
+    if (!sidePanesActiveRef.current) return
+    const sidePaneSession = sidePaneSessionRef.current
     setError(null)
     try {
-      setSourceXml(await readCurrentXml())
+      const currentXml = await readCurrentXml()
+      if (!isSidePaneSessionCurrent(sidePaneSession)) return
+      setSourceXml(currentXml)
       setSourceOpen(true)
     } catch (err) {
+      if (!isSidePaneSessionCurrent(sidePaneSession)) return
       setError(t('editor.error.loadFailed', { error: errorMessage(err) }))
     }
-  }, [readCurrentXml])
+  }, [isSidePaneSessionCurrent, readCurrentXml])
 
   const setImportedDocumentDirtyState = useCallback(
     (modeler: BpmnModelerLike, shouldBeDirty: boolean): void => {
@@ -1432,6 +1541,7 @@ export function EditorTab(props: EditorTabProps): JSX.Element {
     ) {
       return
     }
+    const sidePaneSession = sidePanesActiveRef.current ? sidePaneSessionRef.current : null
     saveInFlightRef.current = true
     setSaving(true)
     setValidationRunning(true)
@@ -1449,12 +1559,16 @@ export function EditorTab(props: EditorTabProps): JSX.Element {
 
       const draftSave = evaluateValidationPolicy(summary, 'save-draft-with-errors')
       if (draftSave.requiresExplicitDraftConfirmation) {
-        setPendingDraft({ xml: savedXml, summary })
+        if (sidePaneSession !== null && isSidePaneSessionCurrent(sidePaneSession)) {
+          setPendingDraft({ xml: savedXml, summary })
+        }
         return
       }
 
-      setValidationOpen(true)
-      setError(t('save.blocked'))
+      if (sidePaneSession !== null && isSidePaneSessionCurrent(sidePaneSession)) {
+        setValidationOpen(true)
+        setError(t('save.blocked'))
+      }
     } catch (err) {
       setError(t('editor.error.saveFailed', { error: errorMessage(err) }))
     } finally {
@@ -1462,7 +1576,7 @@ export function EditorTab(props: EditorTabProps): JSX.Element {
       setSaving(false)
       saveInFlightRef.current = false
     }
-  }, [persistXml, readCurrentXml, validateDocument, validationRunning])
+  }, [isSidePaneSessionCurrent, persistXml, readCurrentXml, validateDocument, validationRunning])
 
   const handleConfirmDraftSave = useCallback(async () => {
     if (!pendingDraft || saveInFlightRef.current || xmlTransactionCountRef.current > 0) {
@@ -1473,7 +1587,7 @@ export function EditorTab(props: EditorTabProps): JSX.Element {
     })
     if (!decision.allowed) {
       setPendingDraft(null)
-      setValidationOpen(true)
+      if (sidePanesActiveRef.current) setValidationOpen(true)
       return
     }
     saveInFlightRef.current = true
@@ -1489,11 +1603,6 @@ export function EditorTab(props: EditorTabProps): JSX.Element {
       saveInFlightRef.current = false
     }
   }, [pendingDraft, persistXml])
-
-  // Latch the hint dismissed on the first edit; never bring it back.
-  useEffect(() => {
-    if (dirty) setHintDismissed(true)
-  }, [dirty])
 
   const baseName = exportFileBaseName?.trim() || 'diagram'
 
@@ -1726,7 +1835,7 @@ export function EditorTab(props: EditorTabProps): JSX.Element {
                 focusOutlineAfterOpenRef.current = !outlineOpen
               }
             }}
-            aria-expanded={outlineOpen}
+            aria-expanded={outlinePaneOpen}
             aria-controls={outlinePaneId}
             title={outlineMessages.title}
           >
@@ -1767,7 +1876,7 @@ export function EditorTab(props: EditorTabProps): JSX.Element {
         <ResponsiveDrawer
           id={outlinePaneId}
           className="orbitpm-process-outline-pane"
-          open={outlineOpen}
+          open={outlinePaneOpen}
           mode={shellMode}
           side="inline-start"
           label={outlineMessages.title}
@@ -1789,7 +1898,7 @@ export function EditorTab(props: EditorTabProps): JSX.Element {
               <span aria-hidden="true">×</span>
             </button>
           </div>
-          {outlineOpen ? (
+          {outlinePaneOpen ? (
             <ProcessOutlineEditor
               modeler={outlineModeler}
               messages={outlineMessages}
@@ -1914,30 +2023,36 @@ export function EditorTab(props: EditorTabProps): JSX.Element {
           </div>
         </ResponsiveDrawer>
       </div>
-      <ValidationCenter
-        open={validationOpen}
-        summary={validationSummary}
-        running={validationRunning}
-        documentName={exportFileBaseName}
-        onClose={() => setValidationOpen(false)}
-        onRun={() => void handleRunValidation()}
-        onFocus={handleFocusIssue}
-        onRepair={handleRepairIssue}
-      />
-      <SourceEditorDialog
-        open={sourceOpen}
-        originalXml={sourceXml}
-        validate={(candidateXml, requireDi) => validateDocument(candidateXml, requireDi, sourceXml)}
-        apply={handleApplySource}
-        autoLayout={handleAutoLayout}
-        onClose={() => setSourceOpen(false)}
-      />
-      <SaveDraftDialog
-        summary={pendingDraft?.summary ?? null}
-        busy={saving}
-        onConfirm={() => void handleConfirmDraftSave()}
-        onCancel={() => setPendingDraft(null)}
-      />
+      {sidePanesActive ? (
+        <>
+          <ValidationCenter
+            open={validationOpen}
+            summary={validationSummary}
+            running={validationRunning}
+            documentName={exportFileBaseName}
+            onClose={() => setValidationOpen(false)}
+            onRun={() => void handleRunValidation()}
+            onFocus={handleFocusIssue}
+            onRepair={handleRepairIssue}
+          />
+          <SourceEditorDialog
+            open={sourceOpen}
+            originalXml={sourceXml}
+            validate={(candidateXml, requireDi) =>
+              validateDocument(candidateXml, requireDi, sourceXml)
+            }
+            apply={handleApplySource}
+            autoLayout={handleAutoLayout}
+            onClose={() => setSourceOpen(false)}
+          />
+          <SaveDraftDialog
+            summary={pendingDraft?.summary ?? null}
+            busy={saving}
+            onConfirm={() => void handleConfirmDraftSave()}
+            onCancel={() => setPendingDraft(null)}
+          />
+        </>
+      ) : null}
     </div>
   )
 }

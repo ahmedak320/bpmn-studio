@@ -2,14 +2,25 @@ import { describe, it, expect } from 'vitest'
 import type { CallLLM, LlmMessage } from '@/generation'
 import {
   auditArabicCoverage,
+  buildTranslationExternalReview,
   collectMissingTranslations,
+  ExternalRequestConsentRequiredError,
   translateDiagram,
   translateDiagramWithTexts,
+  translateReviewedDiagram,
+  translateReviewedDiagramWithTexts,
+  translateReviewedField,
+  translateReviewedFieldWithTexts,
   TRANSLATE_INSTRUCTION,
   TRANSLATE_MAX_TOKENS,
   type TranslateModeler,
   type TranslateTextsFn
 } from '../translate'
+import {
+  createExternalRequestDisclosure,
+  grantExternalRequestConsent
+} from '../../localization/externalRequestReview'
+import { inspectDiagramLocalization } from '../../localization/modelerAdapter'
 import { UNTRUSTED_WORKSPACE_SYSTEM_GUARD } from '../untrustedPrompt'
 
 // translate.ts is deliberately bpmn-js-free — this suite runs with
@@ -1165,5 +1176,269 @@ describe('translateDiagramWithTexts', () => {
 
     expect(outcome.total).toBe(collected.length)
     expect(outcome.translated + outcome.skipped).toBe(outcome.total)
+  })
+})
+
+describe('single-field reviewed translation', () => {
+  const field = {
+    processId: 'Process_1',
+    elementId: 'Task_1',
+    field: 'name',
+    sourceLanguage: 'en' as const,
+    sourceValue: 'Review request',
+    target: 'ar' as const
+  }
+  const disclosure = createExternalRequestDisclosure({
+    purpose: 'diagram-localization-field-retry',
+    providerId: 'provider',
+    modelId: 'model-v1',
+    outbound: [
+      {
+        id: 'loc_1',
+        text: field.sourceValue,
+        context: 'Process_1 / Task_1 / name / en→ar'
+      }
+    ],
+    estimatedRequests: { min: 1, max: 6 }
+  })
+
+  it('sends only the consented AI field and validates the returned target script', async () => {
+    const { callLLM, calls } = makeCallLLM(['{"loc_1":"مراجعة الطلب"}'])
+    const untouchedRoot = processRoot({ 'orbitpm:activeLang': 'en' })
+    const untouched = makeModeler({
+      root: untouchedRoot,
+      elements: [taskMissingAr('Task_1', field.sourceValue)]
+    })
+
+    await expect(
+      translateReviewedField(callLLM, {
+        field,
+        disclosure,
+        consent: grantExternalRequestConsent(disclosure)
+      })
+    ).resolves.toBe('مراجعة الطلب')
+
+    expect(calls).toHaveLength(1)
+    expect(payloadOf(calls[0])).toEqual({ loc_1: 'Review request' })
+    // This transport helper has no modeler input: completion/projection is a
+    // separate, fresh-audit App action.
+    expect(untouched.rec).toEqual([])
+    expect(untouchedRoot.businessObject?.$attrs?.['orbitpm:activeLang']).toBe('en')
+  })
+
+  it('rejects stale consent before either single-field transport is called', async () => {
+    const callLLM: CallLLM = async () => {
+      throw new Error('must not be called')
+    }
+    const translateTexts: TranslateTextsFn = async () => {
+      throw new Error('must not be called')
+    }
+    const changedDisclosure = createExternalRequestDisclosure({
+      purpose: 'diagram-localization-field-retry',
+      providerId: 'provider',
+      modelId: 'model-v2',
+      outbound: disclosure.outbound,
+      estimatedRequests: disclosure.estimatedRequests
+    })
+    const staleConsent = grantExternalRequestConsent(disclosure)
+
+    await expect(
+      translateReviewedField(callLLM, {
+        field,
+        disclosure: changedDisclosure,
+        consent: staleConsent
+      })
+    ).rejects.toBeInstanceOf(ExternalRequestConsentRequiredError)
+    await expect(
+      translateReviewedFieldWithTexts(translateTexts, {
+        field,
+        disclosure: changedDisclosure,
+        consent: staleConsent
+      })
+    ).rejects.toBeInstanceOf(ExternalRequestConsentRequiredError)
+  })
+
+  it('calls a per-text provider with exactly one source value', async () => {
+    const calls: Array<{ texts: string[]; from: string; to: string }> = []
+    const translateTexts: TranslateTextsFn = async (texts, from, to) => {
+      calls.push({ texts, from, to })
+      return ['مراجعة الطلب']
+    }
+
+    await expect(
+      translateReviewedFieldWithTexts(translateTexts, {
+        field,
+        disclosure,
+        consent: grantExternalRequestConsent(disclosure)
+      })
+    ).resolves.toBe('مراجعة الطلب')
+
+    expect(calls).toEqual([
+      {
+        texts: ['Review request'],
+        from: 'en',
+        to: 'ar'
+      }
+    ])
+  })
+
+  it('honors cancellation and leaves reviewed script validation to the recovery transaction', async () => {
+    const controller = new AbortController()
+    controller.abort()
+    let called = false
+    const callLLM: CallLLM = async () => {
+      called = true
+      return '{"loc_1":"مراجعة الطلب"}'
+    }
+
+    await expect(
+      translateReviewedField(callLLM, {
+        field,
+        disclosure,
+        consent: grantExternalRequestConsent(disclosure),
+        signal: controller.signal
+      })
+    ).rejects.toMatchObject({ name: 'AbortError' })
+    expect(called).toBe(false)
+
+    const invalid = makeCallLLM(['{"loc_1":"Still English"}'])
+    await expect(
+      translateReviewedField(invalid.callLLM, {
+        field,
+        disclosure,
+        consent: grantExternalRequestConsent(disclosure)
+      })
+    ).resolves.toBe('Still English')
+  })
+})
+
+describe('reviewed batch failure provenance', () => {
+  it('proposes an ordinary-source neutral value approved by the reviewed workspace glossary', async () => {
+    const root = processRoot({ 'orbitpm:activeLang': 'en' })
+    const task = taskMissingAr('Task_Neutral', 'Application programming interface')
+    const { modeler } = makeModeler({ root, elements: [task] })
+    const review = inspectDiagramLocalization(modeler, 'ar', {
+      glossary: [{ en: 'API', ar: 'API', neutral: true }]
+    })
+    const disclosure = buildTranslationExternalReview(review, {
+      providerId: 'google-translate+mymemory',
+      kind: 'free'
+    })
+
+    const result = await translateReviewedDiagramWithTexts(modeler, async () => ['API'], {
+      review,
+      disclosure,
+      consent: grantExternalRequestConsent(disclosure)
+    })
+
+    expect(result).toMatchObject({
+      translated: 0,
+      proposed: 1,
+      skipped: 1,
+      total: 1,
+      complete: false,
+      active: 'en',
+      providerFailures: []
+    })
+    expect(result.proposals).toEqual([
+      expect.objectContaining({ sourceValue: 'Application programming interface', value: 'API' })
+    ])
+    expect(task.businessObject?.$attrs?.['orbitpm:nameAr']).toBeUndefined()
+    expect(task.businessObject?.name).toBe('Application programming interface')
+    expect(root.businessObject?.$attrs?.['orbitpm:activeLang']).toBe('en')
+  })
+
+  it('marks a non-neutral wrong-script reviewed value provider-failed without mutation', async () => {
+    const root = processRoot({ 'orbitpm:activeLang': 'en' })
+    const task = taskMissingAr('Task_WrongScript', 'Review request')
+    const { modeler, rec } = makeModeler({ root, elements: [task] })
+    const review = inspectDiagramLocalization(modeler, 'ar', { glossary: [] })
+    const disclosure = buildTranslationExternalReview(review, {
+      providerId: 'provider',
+      modelId: 'model-v1',
+      kind: 'ai'
+    })
+    const { callLLM } = makeCallLLM(['{"loc_1":"Still English"}'])
+
+    const result = await translateReviewedDiagram(modeler, callLLM, {
+      review,
+      disclosure,
+      consent: grantExternalRequestConsent(disclosure)
+    })
+
+    expect(result).toMatchObject({
+      translated: 0,
+      skipped: 1,
+      total: 1,
+      complete: false,
+      active: 'en',
+      providerFailures: [
+        expect.objectContaining({
+          elementId: 'Process_1::Task:1',
+          target: 'ar',
+          originalValue: 'Still English'
+        })
+      ]
+    })
+    expect(result.review.issues).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          elementId: 'Process_1::Task:1',
+          target: 'ar',
+          code: 'provider-failed'
+        })
+      ])
+    )
+    expect(task.businessObject?.$attrs?.['orbitpm:nameAr']).toBeUndefined()
+    expect(task.businessObject?.name).toBe('Review request')
+    expect(root.businessObject?.$attrs?.['orbitpm:activeLang']).toBe('en')
+    expect(rec).toEqual([])
+  })
+
+  it('keeps a never-sent mixed-script row manual without fabricating provider failure', async () => {
+    const root = processRoot({ 'orbitpm:activeLang': 'en' })
+    const task = taskMissingAr('Task_Mixed', 'Review طلب')
+    const { modeler } = makeModeler({ root, elements: [task] })
+    const review = inspectDiagramLocalization(modeler, 'ar')
+    expect(review.queue).toEqual([
+      expect.objectContaining({
+        requiresSegmentationReview: true
+      })
+    ])
+    const disclosure = buildTranslationExternalReview(review, {
+      providerId: 'provider',
+      modelId: 'model-v1',
+      kind: 'ai'
+    })
+    expect(disclosure.outbound).toEqual([])
+    let transportCalls = 0
+
+    const result = await translateReviewedDiagram(
+      modeler,
+      async () => {
+        transportCalls += 1
+        return {}
+      },
+      {
+        review,
+        disclosure,
+        consent: grantExternalRequestConsent(disclosure)
+      }
+    )
+
+    expect(transportCalls).toBe(0)
+    expect(result.providerFailures).toEqual([])
+    expect(result.review.issues.some((issue) => issue.code === 'provider-failed')).toBe(false)
+    expect(result.review.queue).toEqual([
+      expect.objectContaining({
+        requiresSegmentationReview: true
+      })
+    ])
+    expect(result).toMatchObject({
+      translated: 0,
+      skipped: 1,
+      total: 1,
+      complete: false
+    })
   })
 })

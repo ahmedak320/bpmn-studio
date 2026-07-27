@@ -71,7 +71,7 @@ export interface WorkspaceImportTransactionFactoryOptions {
    * The App supplies its operation mutex here, so preflight, all writes, and
    * automatic rollback are one in-app critical section.
    */
-  readonly runExclusive?: <T>(operation: () => Promise<T>) => Promise<T>
+  readonly runExclusive?: WorkspaceSpreadsheetExclusiveRunner
   /** Reject a captured adapter after the user switches workspaces. */
   readonly isCurrent?: () => boolean
   /**
@@ -80,6 +80,24 @@ export interface WorkspaceImportTransactionFactoryOptions {
    */
   readonly historyManager?: PortableHistoryManager
 }
+
+export interface WorkspaceSpreadsheetMutationChange {
+  readonly kind: 'saved' | 'deleted' | 'invalidated'
+  readonly path: string
+  readonly fingerprint?: {
+    readonly hash: string
+    readonly size: number
+    readonly modifiedAt: number
+  }
+}
+
+export type WorkspaceSpreadsheetMutationPublisher = (
+  changes: readonly WorkspaceSpreadsheetMutationChange[]
+) => void
+
+export type WorkspaceSpreadsheetExclusiveRunner = <Result>(
+  operation: (publish: WorkspaceSpreadsheetMutationPublisher) => Promise<Result>
+) => Promise<Result>
 
 interface AppliedWrite {
   readonly write: StagedImportWrite
@@ -124,8 +142,12 @@ class WorkspaceImportTransaction implements ImportDestinationTransaction {
     reportCommitProgress(options, 0, total)
     throwIfAborted(options.signal)
     this.state = 'committing'
-    const run = this.options.runExclusive ?? (async (operation) => await operation())
-    await run(async () => {
+    const run =
+      this.options.runExclusive ??
+      (async <Result>(
+        operation: (publish: WorkspaceSpreadsheetMutationPublisher) => Promise<Result>
+      ): Promise<Result> => operation(() => undefined))
+    await run(async (publish) => {
       try {
         this.checkpoint(options.signal)
         await this.captureAllOriginals(options.signal)
@@ -158,15 +180,58 @@ class WorkspaceImportTransaction implements ImportDestinationTransaction {
         await this.enforceHistoryRetention()
         this.state = 'committed'
         reportCommitProgress(options, total, total)
+        this.publishSettled(
+          publish,
+          this.applied.map(({ write, applied }) => ({
+            kind: 'saved',
+            path: write.path,
+            fingerprint: {
+              hash: applied.hash,
+              size: applied.size,
+              modifiedAt: applied.modifiedAt
+            }
+          })),
+          this.recoveryRevisions.length > 0
+        )
       } catch (cause) {
+        const affected = [...this.applied]
+        const historyChanged = this.recoveryRevisions.length > 0
         try {
           await this.rollbackInternal()
         } catch (rollbackCause) {
+          this.publishSettled(
+            publish,
+            affected.map(({ write }) => ({
+              kind: 'invalidated',
+              path: write.path
+            })),
+            historyChanged
+          )
           throw new AggregateError(
             [cause, rollbackCause],
             'Spreadsheet import failed and automatic rollback was incomplete.'
           )
         }
+        this.publishSettled(
+          publish,
+          affected.map(({ write, original }) =>
+            original
+              ? {
+                  kind: 'saved' as const,
+                  path: write.path,
+                  fingerprint: {
+                    hash: original.hash,
+                    size: original.size,
+                    modifiedAt: original.modifiedAt
+                  }
+                }
+              : {
+                  kind: 'deleted' as const,
+                  path: write.path
+                }
+          ),
+          historyChanged
+        )
         throw cause
       }
     })
@@ -177,8 +242,63 @@ class WorkspaceImportTransaction implements ImportDestinationTransaction {
     if (this.state === 'committed') {
       throw new Error('A committed spreadsheet import cannot be rolled back implicitly.')
     }
-    const run = this.options.runExclusive ?? (async (operation) => await operation())
-    await run(async () => await this.rollbackInternal())
+    const run =
+      this.options.runExclusive ??
+      (async <Result>(
+        operation: (publish: WorkspaceSpreadsheetMutationPublisher) => Promise<Result>
+      ): Promise<Result> => operation(() => undefined))
+    await run(async (publish) => {
+      const affected = [...this.applied]
+      const historyChanged = this.recoveryRevisions.length > 0
+      try {
+        await this.rollbackInternal()
+        this.publishSettled(
+          publish,
+          affected.map(({ write, original }) =>
+            original
+              ? {
+                  kind: 'saved' as const,
+                  path: write.path,
+                  fingerprint: {
+                    hash: original.hash,
+                    size: original.size,
+                    modifiedAt: original.modifiedAt
+                  }
+                }
+              : {
+                  kind: 'deleted' as const,
+                  path: write.path
+                }
+          ),
+          historyChanged
+        )
+      } catch (error) {
+        this.publishSettled(
+          publish,
+          affected.map(({ write }) => ({
+            kind: 'invalidated',
+            path: write.path
+          })),
+          historyChanged
+        )
+        throw error
+      }
+    })
+  }
+
+  private publishSettled(
+    publish: WorkspaceSpreadsheetMutationPublisher,
+    changes: readonly WorkspaceSpreadsheetMutationChange[],
+    historyChanged: boolean
+  ): void {
+    try {
+      publish([
+        ...changes,
+        ...(historyChanged ? [{ kind: 'invalidated' as const, path: HISTORY_ROOT }] : [])
+      ])
+    } catch {
+      // Peer notification is post-mutation cleanup and cannot rewrite durable truth.
+    }
   }
 
   private assertCurrent(): void {
