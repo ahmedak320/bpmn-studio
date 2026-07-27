@@ -797,7 +797,7 @@ jobs:
                 .tag_name == "v0.4.5" and
                 .target_commitish == $authority[0].candidateSha and
                 .name == $authority[0].releaseTitle and
-                .body == $authority[0].notesBody and
+                ((.body | gsub("\\n+$"; "")) == ($authority[0].notesBody | gsub("\\n+$"; ""))) and
                 .draft == false and
                 .prerelease == false and
                 .immutable == true and
@@ -1112,7 +1112,7 @@ jobs:
               .tag_name == "v0.4.5" and
               .target_commitish == $authority[0].candidateSha and
               .name == $authority[0].releaseTitle and
-              .body == $authority[0].notesBody and
+              ((.body | gsub("\\n+$"; "")) == ($authority[0].notesBody | gsub("\\n+$"; ""))) and
               .draft == false and
               .prerelease == false and
               .immutable == true and
