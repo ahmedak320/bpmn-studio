@@ -58,17 +58,25 @@ failures/retries/skips), the artifact-bound automated accessibility matrix
 performance budgets, and the exact seven-asset assembly with English/Arabic
 offline smoke.
 
-These remain local candidate results. They are not a substitute for retained
-CI on the final pushed head or for the human evidence below.
+Retained remote CI now exists: quality workflow run
+`https://github.com/ahmedak320/bpmn-studio/actions/runs/30289755296` on PR #1
+head `f7c18ae` (application bytes unchanged since `75a31e3`; later commits
+are test/CI- or documentation-only) completed with all 11 required checks
+passing, including the zero-retry Chromium/Firefox/WebKit matrix, coverage,
+performance budgets, the fresh single-file build, and the axe matrix, with
+retained artifacts named by run SHA `965c1c39…`. One more documentation
+commit lands on top without changing application bytes, so the final merged
+head's checks must be re-observed. None of this touches the human evidence
+below.
 
 ## Known release blockers and pending evidence
 
-1. The local exact-final gates are green at `75a31e3`, but the candidate
-   branch is not yet pushed. Retained CI must rerun the complete workflow from
-   a fresh checkout on the final pushed head (documentation commits may land
-   on top without changing application bytes). The missing-DI read-only
-   preview acceptance path passed locally with the same exact-final matrix;
-   its retained evidence is part of this rerun.
+1. Retained CI is green at PR #1 head `f7c18ae` (run
+   `https://github.com/ahmedak320/bpmn-studio/actions/runs/30289755296`, all
+   11 required checks). This documentation commit lands on top without
+   changing application bytes, so the complete workflow must be re-observed
+   on the final merged head before its evidence binds the exact release
+   commit.
 2. Manual NVDA/Windows, VoiceOver/macOS, Arabic language/pronunciation and
    linguistic review, the exact 16-row current/previous-major
    Chrome/Edge/Firefox/Safari Pages matrix, and the genuine uninterrupted

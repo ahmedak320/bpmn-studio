@@ -29,24 +29,56 @@ The candidate application source is frozen at app commit
 `release/0.4.5-lite-only`. The exact-final local `dist/index.html` has
 SHA-256 `3299cff36a594cdac536668713e930bfb927285a7fe6e9f271ac0d9ae863ed51`;
 three clean-dist rebuilds produced the identical hash. These results are
-local candidate evidence: the branch is not yet pushed, documentation commits
-may still land on top (they do not change application bytes), and every gate
-must be rerun and retained by remote CI on the final pushed head before any
-row below counts as release evidence.
+local candidate evidence. Retained remote CI now exists at PR #1 head
+`f7c18ae` (next section), but one more documentation commit lands on top
+without changing application bytes, so the final merged head's checks must be
+re-observed before any row counts as final release evidence.
 
-| Area                             | Reported candidate evidence (local, app commit `75a31e3`)                                                                                                                                                                                                                                                                                                                                                                           | Final-release status                                                        |
-| -------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------- |
-| Coverage                         | `npm run test:coverage`: 220 files, 2,940 tests, zero runtime skips/retries; 88.54% lines/statements, 84.68% branches, 89.42% functions; release evidence verifier regression tests 17/17 (node:test)                                                                                                                                                                                                                               | Exact-final local pass; retained CI pending                                 |
-| Critical branch profiles         | Session safety 90.36%; translation validation 90.21%; Excel mapping 91.45%; import transactions 91.13% — all above the ≥90% profile and ≥80% overall thresholds                                                                                                                                                                                                                                                                     | Exact-final local pass; retained CI pending                                 |
-| BPMN standards                   | 97/97 validation tests plus the official OMG BPMN XSD and bpmnlint accept/reject fixture gate                                                                                                                                                                                                                                                                                                                                       | Exact-final local pass; retained CI pending                                 |
-| Malformed input                  | 104/104 malformed ZIP/DOCX/XLSX/CSV archive tests                                                                                                                                                                                                                                                                                                                                                                                   | Exact-final local pass; retained CI pending                                 |
-| Playwright exact-artifact matrix | Chromium 134/134 (5.9 min), Firefox 134/134 (8.1 min), WebKit 134/134 (10.7 min, CLI `--global-timeout=900000`); zero failures/retries/skips/interruptions against the exact artifact; Playwright 1.61.1 (chromium-1228, firefox-1532, webkit-2311)                                                                                                                                                                                 | Exact-final local pass; retained three-engine CI reports pending            |
-| Static and supply chain          | Lockfile (460 packages), Prettier, strict TypeScript, ESLint, actionlint (7 workflows), release-workflow static invariants, no-skips (544 files), Lite-only (648 active files, 43 direct dependencies), UI copy, CSP (10 directives), bpmn.io attribution, license policy (131 records, 84 notices), size gate; npm full and production audit zero; checksum-verified Gitleaks 8.30.1 clean on the current tree and all 230 commits | Exact-final local pass; retained CI pending                                 |
-| Node performance                 | 1,000-file initial index 159.106 ms (≤5,000); 1% incremental refresh 190.324 ms (≤1,000); spreadsheet previews 23.876/38.092 ms; exactly bound to `75a31e3`, hardware profile local-development-unqualified                                                                                                                                                                                                                         | Development-only local pass; retained CI pending                            |
-| Browser performance              | 500-node median preview 1,070.2 ms (≤3,000); 1,000-node median 1,776.0 ms (≤10,000); heartbeat within limits with complete trusted interaction receipts; same development-only binding                                                                                                                                                                                                                                              | Development-only local pass; retained CI pending                            |
-| Automated accessibility          | 12/12 cases, 84/84 surfaces, zero axe violations (Chromium 149.0.7827.55); gate JSON passed with the artifact SHA bound and `releaseCoverageEligible=true`                                                                                                                                                                                                                                                                          | Exact-final local pass; retained CI pending; never substitutes for human AT |
-| Single-file artifact             | `dist/index.html` SHA-256 `3299cff3…ed51`; raw 6,271,923 bytes (limit 8,388,608); release-gate gzip 1,842,107 bytes (limit 2,621,440); Vite 6.4.3, Node v22.22.0, npm 11.13.0                                                                                                                                                                                                                                                       | Local artifact; retained CI rebuild and reproducibility pending             |
-| Release assembly                 | Exact seven-asset allowlist assembled and verified (`release:verify` passed); release HTML SHA-256 equals the artifact SHA-256; `release:file-smoke` passed the English/Arabic offline smoke; SBOM 131 components; `SHA256SUMS.txt` consistent                                                                                                                                                                                      | Local assembly; publication and downloaded-asset verification pending       |
+| Area                             | Reported candidate evidence (local, app commit `75a31e3`)                                                                                                                                                                                                                                                                                                                                                                           | Final-release status                                                                                                                          |
+| -------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
+| Coverage                         | `npm run test:coverage`: 220 files, 2,940 tests, zero runtime skips/retries; 88.54% lines/statements, 84.68% branches, 89.42% functions; release evidence verifier regression tests 17/17 (node:test)                                                                                                                                                                                                                               | Retained CI passed on `f7c18ae` (`orbitpm-coverage-965c1c39…`); re-observe on final merged head                                               |
+| Critical branch profiles         | Session safety 90.36%; translation validation 90.21%; Excel mapping 91.45%; import transactions 91.13% — all above the ≥90% profile and ≥80% overall thresholds                                                                                                                                                                                                                                                                     | Retained CI passed on `f7c18ae` (`orbitpm-coverage-965c1c39…`); re-observe on final merged head                                               |
+| BPMN standards                   | 97/97 validation tests plus the official OMG BPMN XSD and bpmnlint accept/reject fixture gate                                                                                                                                                                                                                                                                                                                                       | Retained CI unit job passed on `f7c18ae`; re-observe on final merged head                                                                     |
+| Malformed input                  | 104/104 malformed ZIP/DOCX/XLSX/CSV archive tests                                                                                                                                                                                                                                                                                                                                                                                   | Retained CI unit job passed on `f7c18ae`; re-observe on final merged head                                                                     |
+| Playwright exact-artifact matrix | Chromium 134/134 (5.9 min), Firefox 134/134 (8.1 min), WebKit 134/134 (10.7 min, CLI `--global-timeout=900000`); zero failures/retries/skips/interruptions against the exact artifact; Playwright 1.61.1 (chromium-1228, firefox-1532, webkit-2311)                                                                                                                                                                                 | Retained three-engine reports passed on `f7c18ae` (`orbitpm-playwright-{chromium,firefox,webkit}-965c1c39…`); re-observe on final merged head |
+| Static and supply chain          | Lockfile (460 packages), Prettier, strict TypeScript, ESLint, actionlint (7 workflows), release-workflow static invariants, no-skips (544 files), Lite-only (648 active files, 43 direct dependencies), UI copy, CSP (10 directives), bpmn.io attribution, license policy (131 records, 84 notices), size gate; npm full and production audit zero; checksum-verified Gitleaks 8.30.1 clean on the current tree and all 230 commits | Retained policy/secrets jobs passed on `f7c18ae` (`orbitpm-compliance-965c1c39…`); re-observe on final merged head                            |
+| Node performance                 | 1,000-file initial index 159.106 ms (≤5,000); 1% incremental refresh 190.324 ms (≤1,000); spreadsheet previews 23.876/38.092 ms; exactly bound to `75a31e3`, hardware profile local-development-unqualified                                                                                                                                                                                                                         | Retained reference-hardware Node gate passed on `f7c18ae` (`orbitpm-performance-965c1c39…`); re-observe on final merged head                  |
+| Browser performance              | 500-node median preview 1,070.2 ms (≤3,000); 1,000-node median 1,776.0 ms (≤10,000); heartbeat within limits with complete trusted interaction receipts; same development-only binding                                                                                                                                                                                                                                              | Retained worker-to-preview budgets passed on `f7c18ae` (`orbitpm-browser-performance-965c1c39…`); re-observe on final merged head             |
+| Automated accessibility          | 12/12 cases, 84/84 surfaces, zero axe violations (Chromium 149.0.7827.55); gate JSON passed with the artifact SHA bound and `releaseCoverageEligible=true`                                                                                                                                                                                                                                                                          | Retained axe job passed on `f7c18ae` (`orbitpm-accessibility-965c1c39…`); re-observe on final merged head; never substitutes for human AT     |
+| Single-file artifact             | `dist/index.html` SHA-256 `3299cff3…ed51`; raw 6,271,923 bytes (limit 8,388,608); release-gate gzip 1,842,107 bytes (limit 2,621,440); Vite 6.4.3, Node v22.22.0, npm 11.13.0                                                                                                                                                                                                                                                       | Retained fresh build passed on `f7c18ae` (`orbitpm-tested-pages-965c1c39…`); merged-head rebuild and reproducibility pending                  |
+| Release assembly                 | Exact seven-asset allowlist assembled and verified (`release:verify` passed); release HTML SHA-256 equals the artifact SHA-256; `release:file-smoke` passed the English/Arabic offline smoke; SBOM 131 components; `SHA256SUMS.txt` consistent                                                                                                                                                                                      | Local assembly; publication and downloaded-asset verification pending                                                                         |
+
+## Retained remote CI evidence from 2026-07-27
+
+Quality workflow run
+`https://github.com/ahmedak320/bpmn-studio/actions/runs/30289755296` on PR #1
+head `f7c18aef97d8bc8ff5da8a1d929eb098c4a97513` (ready for review, base
+`main`) completed with all 11 required checks passing:
+
+- Bind every quality job to one immutable source identity (5s)
+- Current-tree and history secret scan (10s)
+- Policy, types, lint, and supply chain (2m5s), including the 194 verifier
+  regression tests with a real browser
+- Unit, integration, standards, archives, and coverage (3m6s)
+- Performance budgets at release fixture sizes (23s), the reference-hardware
+  Node gate
+- Fresh single-file release build (38s)
+- Playwright (chromium, zero retries) (6m3s)
+- Playwright (firefox, zero retries) (8m15s)
+- Playwright (webkit, zero retries) (10m15s, using the CLI
+  `--global-timeout=900000`)
+- Real XLSX worker-to-preview budgets (55s)
+- Axe EN/AR, light/dark, desktop/mobile (1m40s)
+
+The retained artifacts are named with the run's `github.sha`
+`965c1c396086be9d2891adb627de3656ee50dd9b`: `orbitpm-compliance-`,
+`orbitpm-coverage-`, `orbitpm-performance-`, `orbitpm-tested-pages-`,
+`orbitpm-accessibility-`, `orbitpm-browser-performance-`, and
+`orbitpm-playwright-{chromium,firefox,webkit}-965c1c396086be9d2891adb627de3656ee50dd9b`.
+
+One more documentation commit (this one) lands on top without changing
+application bytes, so the final merged head's checks must be re-observed
+before any identity-table field above can be filled.
 
 ## Later focused integration evidence
 
@@ -69,30 +101,35 @@ run and exact release-artifact result remain pending.
 
 ## Required automated checklist for the final commit
 
-| Requirement                                                                      | Evidence location                                           | State       |
-| -------------------------------------------------------------------------------- | ----------------------------------------------------------- | ----------- |
-| Clean checkout, exact Node/npm, `npm ci`, unchanged manifests, lock verification | `Lite Quality / policy` log                                 | **PENDING** |
-| Formatting, GitHub Actions lint, strict TypeScript, ESLint                       | `Lite Quality / policy` log                                 | **PENDING** |
-| No skipped/only/retried tests and Lite-only active tree                          | `Lite Quality / policy` log                                 | **PENDING** |
-| Exact source and built CSP allowlist                                             | `Lite Quality / policy` and `build` logs                    | **PENDING** |
-| Runtime success for approved CSP requests and rejection of disallowed HTTP hosts | browser security report                                     | **PENDING** |
-| Full and production dependency audit                                             | `Lite Quality / policy` log                                 | **PENDING** |
-| Current-tree and complete-history secret scan                                    | `Lite Quality / secrets` log                                | **PENDING** |
-| Lockfile-derived license inventory and CycloneDX 1.6 SBOM                        | `orbitpm-compliance-<sha>`                                  | **PENDING** |
-| Overall and four critical coverage thresholds                                    | `orbitpm-coverage-<sha>`                                    | **PENDING** |
-| Real XSD/bpmnlint fixtures                                                       | `Lite Quality / unit` log                                   | **PENDING** |
-| Malformed and bounded ZIP/DOCX/XLSX/CSV suite                                    | `Lite Quality / unit` log                                   | **PENDING** |
-| Node performance budgets                                                         | `orbitpm-performance-<sha>`                                 | **PENDING** |
-| Fresh build containing only `dist/index.html`; raw/gzip budgets                  | `Lite Quality / build` log and `orbitpm-tested-pages-<sha>` | **PENDING** |
-| Chromium Playwright, zero retries/flakes/skips                                   | `orbitpm-playwright-chromium-<sha>`                         | **PENDING** |
-| Firefox Playwright, zero retries/flakes/skips                                    | `orbitpm-playwright-firefox-<sha>`                          | **PENDING** |
-| WebKit Playwright, zero retries/flakes/skips                                     | `orbitpm-playwright-webkit-<sha>`                           | **PENDING** |
-| Real XLSX worker-to-preview and UI-heartbeat budgets                             | `orbitpm-browser-performance-<sha>`                         | **PENDING** |
-| Axe English/Arabic × light/dark × desktop/mobile matrix                          | `orbitpm-accessibility-<sha>`                               | **PENDING** |
-| Exact seven-asset assembly, checksums, SBOM/notices, and size verification       | pre-tag candidate artifact and release pre-tag verifier     | **PENDING** |
-| Second clean build byte-for-byte reproducibility                                 | pre-tag candidate and release verifier logs                 | **PENDING** |
-| Exact release HTML smoke from `file://` in English and Arabic                    | pre-tag candidate and release verifier logs                 | **PENDING** |
-| Exact HTML production-UI receipts for English/Arabic × six soak workloads        | schema-2 soak support plus bound diagnostic journal         | **PENDING** |
+Rows marked as passed refer to retained run `30289755296` on PR #1 head
+`f7c18ae` (see the retained-evidence section above). Because one more
+documentation commit lands on top without changing application bytes,
+every passed row must be re-observed on the final merged head.
+
+| Requirement                                                                      | Evidence location                                           | State                                         |
+| -------------------------------------------------------------------------------- | ----------------------------------------------------------- | --------------------------------------------- |
+| Clean checkout, exact Node/npm, `npm ci`, unchanged manifests, lock verification | `Lite Quality / policy` log                                 | Passed at `f7c18ae`; re-observe on final head |
+| Formatting, GitHub Actions lint, strict TypeScript, ESLint                       | `Lite Quality / policy` log                                 | Passed at `f7c18ae`; re-observe on final head |
+| No skipped/only/retried tests and Lite-only active tree                          | `Lite Quality / policy` log                                 | Passed at `f7c18ae`; re-observe on final head |
+| Exact source and built CSP allowlist                                             | `Lite Quality / policy` and `build` logs                    | Passed at `f7c18ae`; re-observe on final head |
+| Runtime success for approved CSP requests and rejection of disallowed HTTP hosts | browser security report                                     | Passed at `f7c18ae`; re-observe on final head |
+| Full and production dependency audit                                             | `Lite Quality / policy` log                                 | Passed at `f7c18ae`; re-observe on final head |
+| Current-tree and complete-history secret scan                                    | `Lite Quality / secrets` log                                | Passed at `f7c18ae`; re-observe on final head |
+| Lockfile-derived license inventory and CycloneDX 1.6 SBOM                        | `orbitpm-compliance-<sha>`                                  | Passed at `f7c18ae`; re-observe on final head |
+| Overall and four critical coverage thresholds                                    | `orbitpm-coverage-<sha>`                                    | Passed at `f7c18ae`; re-observe on final head |
+| Real XSD/bpmnlint fixtures                                                       | `Lite Quality / unit` log                                   | Passed at `f7c18ae`; re-observe on final head |
+| Malformed and bounded ZIP/DOCX/XLSX/CSV suite                                    | `Lite Quality / unit` log                                   | Passed at `f7c18ae`; re-observe on final head |
+| Node performance budgets                                                         | `orbitpm-performance-<sha>`                                 | Passed at `f7c18ae`; re-observe on final head |
+| Fresh build containing only `dist/index.html`; raw/gzip budgets                  | `Lite Quality / build` log and `orbitpm-tested-pages-<sha>` | Passed at `f7c18ae`; re-observe on final head |
+| Chromium Playwright, zero retries/flakes/skips                                   | `orbitpm-playwright-chromium-<sha>`                         | Passed at `f7c18ae`; re-observe on final head |
+| Firefox Playwright, zero retries/flakes/skips                                    | `orbitpm-playwright-firefox-<sha>`                          | Passed at `f7c18ae`; re-observe on final head |
+| WebKit Playwright, zero retries/flakes/skips                                     | `orbitpm-playwright-webkit-<sha>`                           | Passed at `f7c18ae`; re-observe on final head |
+| Real XLSX worker-to-preview and UI-heartbeat budgets                             | `orbitpm-browser-performance-<sha>`                         | Passed at `f7c18ae`; re-observe on final head |
+| Axe English/Arabic × light/dark × desktop/mobile matrix                          | `orbitpm-accessibility-<sha>`                               | Passed at `f7c18ae`; re-observe on final head |
+| Exact seven-asset assembly, checksums, SBOM/notices, and size verification       | pre-tag candidate artifact and release pre-tag verifier     | **PENDING**                                   |
+| Second clean build byte-for-byte reproducibility                                 | pre-tag candidate and release verifier logs                 | **PENDING**                                   |
+| Exact release HTML smoke from `file://` in English and Arabic                    | pre-tag candidate and release verifier logs                 | **PENDING**                                   |
+| Exact HTML production-UI receipts for English/Arabic × six soak workloads        | schema-2 soak support plus bound diagnostic journal         | **PENDING**                                   |
 
 ## Required human and remote checklist
 

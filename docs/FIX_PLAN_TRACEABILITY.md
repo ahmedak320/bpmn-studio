@@ -39,7 +39,7 @@ exact files and commits.
 
 | Bundle  | Implementation files                                                                                                                                                                                                        | Commits                                                                                                                                                  |
 | ------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `REP`   | `package.json`, `vite.config.ts`, `.github/workflows/*`, `scripts/verify-*.mjs`, `scripts/browser-performance-gate.ts`, `scripts/assemble-release.mjs`, release/archive documentation, outer-repository `archives/` records | `6f0c2eb`, `9b7fb37`, `70c34bd`, `ae8fa05`, `edb8e05`, `58daf42`, `69f2251`, `39b5e51`, `d25bf34`, `fc06839`, `de3fd75`, `75a31e3`                       |
+| `REP`   | `package.json`, `vite.config.ts`, `.github/workflows/*`, `scripts/verify-*.mjs`, `scripts/browser-performance-gate.ts`, `scripts/assemble-release.mjs`, release/archive documentation, outer-repository `archives/` records | `6f0c2eb`, `9b7fb37`, `70c34bd`, `ae8fa05`, `edb8e05`, `58daf42`, `69f2251`, `39b5e51`, `d25bf34`, `fc06839`, `de3fd75`, `75a31e3`, `fb54abe`            |
 | `SES`   | `src/sessions/*`, `src/workspace/adapters/*`, `src/workspace/history/*`, `src/workspace/liveWorkspaceIndex.ts`, `src/workspace/workspaceManifest.ts`, `src/App.tsx`                                                         | `d4cfaeb`, `cf012b9`, `41c9b01`, `b559c33`, `09a2cc2`, `f9c4bb9`, `fe0d75f`, `4807d7f`, `7b881b0`, `44115f6`                                             |
 | `BPMN`  | `src/validation/*`, `src/generation/*`, `src/library/*`, `src/editor/*`, `src/workspace/importTransaction.ts`, export/print modules                                                                                         | `ddd10d1`, `7dcf651`, `af78fad`, `d7dd2d6`, `b06c428`, `626600d`, `9a70f15`, `96d340f`, `44115f6`                                                        |
 | `LOC`   | `src/localization/*`, translation review/execution, `src/i18n/*`, bidi rendering, reviewed-ingestion seams                                                                                                                  | `e2498ac`, `296f03a`, `b4f2a13`, `315c457`, `7bea794`, `9eb915b`, `8a332f5`, `94cb681`, `44115f6`                                                        |
@@ -48,42 +48,45 @@ exact files and commits.
 | `AI`    | `src/ai/*`, `src/assist/*`, settings credential code, CSP/security checks                                                                                                                                                   | `ae5d51d`, `4b78cce`, `4d3000b`, `a4903d4`, `0b17d5a`, `199b143`, `917a730`, `86b5ef9`, `44115f6`                                                        |
 | `REL-B` | `tests/e2e/lite-mandatory-reliability.spec.ts`, `tests/e2e/fixtures/reliability-fsa.ts`, `tests/e2e/mandatory-reliability-evidence.json`                                                                                    | `332ab23`, `83d1116`, `2f419a7`                                                                                                                          |
 | `TR-B`  | `tests/e2e/lite-mandatory-translation.spec.ts`, `tests/e2e/fixtures/mandatory-translation-fsa.ts`                                                                                                                           | `83d1116`                                                                                                                                                |
-| `XLS-B` | `tests/e2e/lite-mandatory-spreadsheet.spec.ts`                                                                                                                                                                              | `83d1116`                                                                                                                                                |
+| `XLS-B` | `tests/e2e/lite-mandatory-spreadsheet.spec.ts`                                                                                                                                                                              | `83d1116`, `c4253e0`, `f7c18ae`                                                                                                                          |
 | `UI-B`  | `tests/e2e/mandatory-ui-accessibility-evidence.json` and its mapped Details, outline, i18n, assistant, validation, and responsive suites                                                                                    | `83d1116`                                                                                                                                                |
 | `AI-B`  | `tests/e2e/lite-mandatory-ai-security.spec.ts`                                                                                                                                                                              | `83d1116`                                                                                                                                                |
 
-| Evidence bundle | Exact test/evidence locations                                                                                                                                                                          | Level                                                                                                                                                           |
-| --------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `E-SES`         | `src/sessions/*.test.ts`, `src/workspace/adapters/**/*.test.ts`, `src/workspace/history/historyManager.test.ts`, `src/workspace/liveWorkspaceIndex.test.ts`, `src/App.integration.test.tsx`            | `U/I`                                                                                                                                                           |
-| `E-BPMN`        | `src/validation/**/*.test.ts`, `src/generation/**/*.test.ts`, `src/library/**/*.test.ts`, `src/workspace/importTransaction.test.ts`, editor/export/print tests                                         | `U/I`                                                                                                                                                           |
-| `E-LOC`         | `src/localization/**/*.test.ts`, `src/__tests__/i18n.test.ts`, `labelSync.test.ts`, `arabicIdCollision.test.ts`                                                                                        | `U/I`                                                                                                                                                           |
-| `E-XLS`         | `src/spreadsheet/**/*.test.ts`, `src/spreadsheet/**/*integration.test.tsx`, `src/workspace/importTransaction.test.ts`                                                                                  | `U/I`                                                                                                                                                           |
-| `E-UI`          | shell/common/editor/workspace component tests, `src/App.integration.test.tsx`                                                                                                                          | `U/I`                                                                                                                                                           |
-| `E-AI`          | `src/ai/**/*.test.ts`, `src/assist/**/*.test.tsx`, settings integration tests                                                                                                                          | `U/I`                                                                                                                                                           |
-| `E-B-CAND`      | all `tests/e2e/*.spec.ts`, including the five mandatory evidence bundles listed here                                                                                                                   | `B`, candidate only; not an exact-final three-engine result                                                                                                     |
-| `E-REL-B`       | the 13 test titles in `tests/e2e/mandatory-reliability-evidence.json`                                                                                                                                  | committed candidate `B`; latest provisional Chromium run passed 13/13 with zero skips/retries, but no retained exact-final three-engine report exists           |
-| `E-TR-B`        | the 6 direct scenarios in `tests/e2e/lite-mandatory-translation.spec.ts`                                                                                                                               | committed candidate `B`; latest local Chromium run passed 6/6; no retained exact-final three-engine report                                                      |
-| `E-XLS-B`       | the 14 browser cases produced by `tests/e2e/lite-mandatory-spreadsheet.spec.ts`                                                                                                                        | committed candidate `B`; latest local Chromium run passed 14/14; no retained exact-final three-engine report                                                    |
-| `E-UI-B`        | `tests/e2e/mandatory-ui-accessibility-evidence.json`, mapping the nine mandatory UI/accessibility rows to production-browser tests                                                                     | committed candidate `B`; keyboard-only EN/AR, no-selection EN/AR, breakpoint/touch, and responsive evidence exists; no retained exact-final three-engine report |
-| `E-AI-B`        | the 12 direct scenarios in `tests/e2e/lite-mandatory-ai-security.spec.ts`                                                                                                                              | committed candidate `B`; latest local Chromium run passed 12/12; no retained exact-final three-engine report                                                    |
-| `E-FOCUSED-B`   | `lite-aml-naming.spec.ts`, `lite-company-docs.spec.ts`, `lite-subprocess-tree.spec.ts`, `details-responsive.spec.ts`, `lite-assistant.spec.ts`, `lite-smoke.spec.ts`, and `lite-panes-details.spec.ts` | local Chromium candidate `B`: respectively 1/1, 5/5, 1/1, 2/2, 2/2, 6/6, and 10/10; not a complete or retained exact-final browser matrix                       |
-| `E-A11Y`        | `scripts/accessibility-audit.mjs` across its English/Arabic, light/dark, desktop/mobile cases and audited surfaces                                                                                     | local automated candidate: 12/12 cases and 84/84 surfaces, zero axe violations; not human AT or retained exact-final evidence                                   |
-| `E-REP`         | `.github/workflows/*`, `scripts/verify-*.mjs`, `scripts/soak-gate.ts`, release evidence schemas/docs                                                                                                   | `S`; remote execution state is described below                                                                                                                  |
+| Evidence bundle | Exact test/evidence locations                                                                                                                                                                          | Level                                                                                                                                                                                                     |
+| --------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `E-SES`         | `src/sessions/*.test.ts`, `src/workspace/adapters/**/*.test.ts`, `src/workspace/history/historyManager.test.ts`, `src/workspace/liveWorkspaceIndex.test.ts`, `src/App.integration.test.tsx`            | `U/I`                                                                                                                                                                                                     |
+| `E-BPMN`        | `src/validation/**/*.test.ts`, `src/generation/**/*.test.ts`, `src/library/**/*.test.ts`, `src/workspace/importTransaction.test.ts`, editor/export/print tests                                         | `U/I`                                                                                                                                                                                                     |
+| `E-LOC`         | `src/localization/**/*.test.ts`, `src/__tests__/i18n.test.ts`, `labelSync.test.ts`, `arabicIdCollision.test.ts`                                                                                        | `U/I`                                                                                                                                                                                                     |
+| `E-XLS`         | `src/spreadsheet/**/*.test.ts`, `src/spreadsheet/**/*integration.test.tsx`, `src/workspace/importTransaction.test.ts`                                                                                  | `U/I`                                                                                                                                                                                                     |
+| `E-UI`          | shell/common/editor/workspace component tests, `src/App.integration.test.tsx`                                                                                                                          | `U/I`                                                                                                                                                                                                     |
+| `E-AI`          | `src/ai/**/*.test.ts`, `src/assist/**/*.test.tsx`, settings integration tests                                                                                                                          | `U/I`                                                                                                                                                                                                     |
+| `E-B-CAND`      | all `tests/e2e/*.spec.ts`, including the five mandatory evidence bundles listed here                                                                                                                   | `B`; the retained run passed the complete three-engine matrix on `f7c18ae`; merged-head re-observation pending                                                                                            |
+| `E-REL-B`       | the 13 test titles in `tests/e2e/mandatory-reliability-evidence.json`                                                                                                                                  | committed candidate `B`; retained three-engine reports passed on `f7c18ae` (run 30289755296); merged-head re-observation pending                                                                          |
+| `E-TR-B`        | the 6 direct scenarios in `tests/e2e/lite-mandatory-translation.spec.ts`                                                                                                                               | committed candidate `B`; retained three-engine reports passed on `f7c18ae`; merged-head re-observation pending                                                                                            |
+| `E-XLS-B`       | the 14 browser cases produced by `tests/e2e/lite-mandatory-spreadsheet.spec.ts`                                                                                                                        | committed candidate `B`; retained three-engine reports passed on `f7c18ae`; merged-head re-observation pending                                                                                            |
+| `E-UI-B`        | `tests/e2e/mandatory-ui-accessibility-evidence.json`, mapping the nine mandatory UI/accessibility rows to production-browser tests                                                                     | committed candidate `B`; keyboard-only EN/AR, no-selection EN/AR, breakpoint/touch, and responsive evidence exists; retained three-engine reports passed on `f7c18ae`; merged-head re-observation pending |
+| `E-AI-B`        | the 12 direct scenarios in `tests/e2e/lite-mandatory-ai-security.spec.ts`                                                                                                                              | committed candidate `B`; retained three-engine reports passed on `f7c18ae`; merged-head re-observation pending                                                                                            |
+| `E-FOCUSED-B`   | `lite-aml-naming.spec.ts`, `lite-company-docs.spec.ts`, `lite-subprocess-tree.spec.ts`, `details-responsive.spec.ts`, `lite-assistant.spec.ts`, `lite-smoke.spec.ts`, and `lite-panes-details.spec.ts` | local Chromium candidate `B`: respectively 1/1, 5/5, 1/1, 2/2, 2/2, 6/6, and 10/10; the retained three-engine matrix on `f7c18ae` covers every listed spec; merged-head re-observation pending            |
+| `E-A11Y`        | `scripts/accessibility-audit.mjs` across its English/Arabic, light/dark, desktop/mobile cases and audited surfaces                                                                                     | local automated candidate: 12/12 cases and 84/84 surfaces, zero axe violations; retained axe evidence passed on `f7c18ae`; not human AT evidence                                                          |
+| `E-REP`         | `.github/workflows/*`, `scripts/verify-*.mjs`, `scripts/soak-gate.ts`, release evidence schemas/docs                                                                                                   | `S`; remote execution state is described below                                                                                                                                                            |
 
 ## Truth snapshot
 
-Snapshot date: 2026-07-27, refreshed later the same day after the candidate
-freeze and the exact-final local gate runs recorded below.
+Snapshot date: 2026-07-27, refreshed a third time the same day after the
+retained remote CI run recorded below.
 
 - Remote `main` and `v0.4.4` resolve to
   `cd842b6e0b8d7283e2704ae71ec207440b9e54f2`.
-- Remote `release/0.4.5-lite-only` and PR #1 resolve to
-  `ba598459a8c2d5112eeb4bc43bbd5d8578154cd6`.
+- Remote `release/0.4.5-lite-only` and the PR #1 head resolve to
+  `f7c18aef97d8bc8ff5da8a1d929eb098c4a97513` (`f7c18ae`).
 - Remote archive branch resolves to `cd842b6`; the annotated archive tag object
   is `4fd3fa1` and peels to `cd842b6`.
-- PR #1 is open, still a draft, and `REVIEW_REQUIRED`. Its stale remote Policy
-  and Coverage jobs are failed; the downstream build/browser/axe jobs are
-  skipped. This is not a green PR.
+- PR #1 is open and ready for review against `main`; review is still required
+  and no approval exists. Its retained quality run
+  `https://github.com/ahmedak320/bpmn-studio/actions/runs/30289755296` on head
+  `f7c18ae` completed with all 11 required checks passing. The run's
+  `github.sha` is `965c1c396086be9d2891adb627de3656ee50dd9b`, which names the
+  retained artifacts below.
 - Branch protection requires one approval, last-push approval, and the named
   release checks.
 - The only repository collaborator is owner `ahmedak320`. Every protected
@@ -117,46 +120,105 @@ freeze and the exact-final local gate runs recorded below.
     lazy `instance.terminate()` lookup recursed through the retained
     inline-worker terminate wrapper (`f975f13`) into `RangeError`, so no
     parse worker could start.
-- The local branch is still not pushed, so no local result in this snapshot
-  is retained remote evidence for the final candidate SHA.
+    The documentation commit `64b91a1` recorded that snapshot; five further
+    test/CI-hardening commits then landed, none changing application bytes:
+  - `fb54abe` ci(quality): installs Chromium in the policy job; the release
+    evidence verifier regression tests launch a real browser and failed in CI
+    without it. Pre-existing gap — the stale remote head's policy job failed
+    the same way.
+  - `04e5d3f` test(localization): `latestTranslationReviewProps` in
+    `src/App.integration.test.tsx` now waits (`waitFor`, 10 s/25 ms) for the
+    mocked review props instead of sampling one render — a CI contention
+    flake where the dialog had not rendered yet. Assertions and test count
+    are unchanged.
+  - `387b6bb` test(localization): two review tests now wait for the
+    replacement review after reopen; the postponed review's recorded props
+    could otherwise be sampled instead of the fresh render.
+  - `c4253e0` test(spreadsheet): the spreadsheet panel helpers probe the
+    landing's "New blank diagram" button with a bounded `waitFor` instead of
+    a one-shot `isVisible` — on a slow CI boot the probe ran before the
+    landing rendered, skipped the editor entry, and the suite timed out on a
+    missing side-panel toggle; the Arabic label projection assertions also
+    got an explicit wait bound.
+  - `f7c18ae` test(e2e): three CI-only environment failures fixed without
+    product change — Arabic canvas label assertions now compare text with
+    whitespace collapsed (SVG label lines wrap with the host's font metrics
+    and drop the space from `textContent`; the Arabic projection itself was
+    correct in CI, so the assertion was font-dependent); the source-diff
+    summary count is matched by shape
+    (`/\d+ changed · \d+ added · \d+ removed/`, the convention the sibling
+    layout-preview assertion already used) because the diff input formatting
+    is environment-dependent, while hunk/scroll/footer assertions stay exact;
+    and the highlight-layer test scrolls left-edge shapes into the clear
+    viewport area via the canvas API before clicking (fit-viewport can leave
+    them under the open palette on hosts with different fonts). No forced
+    actions.
+- Retained remote CI evidence now exists. The quality workflow run above on
+  PR #1 head `f7c18ae` passed all 11 required checks: immutable source
+  identity binding (5s), current-tree and history secret scan (10s),
+  policy/types/lint/supply chain (2m5s, including the 194 verifier regression
+  tests with a real browser), unit/integration/standards/archives/coverage
+  (3m6s), performance budgets at release fixture sizes on the
+  reference-hardware Node gate (23s), fresh single-file release build (38s),
+  Playwright Chromium (6m3s), Firefox (8m15s), and WebKit (10m15s, using the
+  CLI `--global-timeout=900000`) each with zero retries, real XLSX
+  worker-to-preview budgets (55s), and the axe EN/AR × light/dark ×
+  desktop/mobile matrix (1m40s). The retained artifacts are
+  `orbitpm-compliance-`, `orbitpm-coverage-`, `orbitpm-performance-`,
+  `orbitpm-tested-pages-`, `orbitpm-accessibility-`,
+  `orbitpm-browser-performance-`, and
+  `orbitpm-playwright-{chromium,firefox,webkit}-965c1c396086be9d2891adb627de3656ee50dd9b`.
+  This documentation commit lands on top without changing application bytes,
+  so the final merged head's checks must still be re-observed; until then the
+  `f7c18ae` run is the current retained evidence for the automated gates.
 - The exact-final local `dist/index.html` built from `75a31e3` has SHA-256
   `3299cff36a594cdac536668713e930bfb927285a7fe6e9f271ac0d9ae863ed51`, raw
   6,271,923 bytes (limit 8,388,608) and release-gate gzip 1,842,107 bytes
   (limit 2,621,440), built with Vite 6.4.3 on Node v22.22.0 and npm 11.13.0
   with Playwright 1.61.1 (chromium-1228, firefox-1532, webkit-2311). Three
   clean-dist rebuilds produced the identical SHA-256. This is a local
-  artifact; retained CI rebuild and reproducibility evidence on the final
-  pushed head remain required.
+  artifact; the retained run above passed the fresh single-file release build
+  on `f7c18ae` (`orbitpm-tested-pages-965c1c39…`), and rebuild plus
+  reproducibility evidence on the final merged head remains required.
 - The exact-final local Vitest coverage run passed all 2,940 tests in 220
   test files with zero skips/retries: overall statements and lines 88.54%,
   branches 84.68%, and functions 89.42%; the required branch profiles passed
   at session 90.36%, translation 90.21%, Excel 91.45%, and import 91.13%
   (thresholds ≥80% overall, ≥90% profiles). The release evidence verifier
-  regression tests passed 17/17 under node:test. These remain local results,
-  not immutable exact-final-commit remote evidence.
+  regression tests passed 17/17 under node:test. Retained
+  unit/integration/standards/archives/coverage evidence now exists for
+  `f7c18ae` (`orbitpm-coverage-965c1c39…`); re-observation on the final
+  merged head remains.
 - The exact-final Playwright matrix ran against the artifact above with zero
   failures, retries, skips, or interruptions: Chromium 134/134 (5.9 min),
   Firefox 134/134 (8.1 min), and WebKit 134/134 (10.7 min, CLI
   `--global-timeout=900000`). The mandatory and focused suites are included
-  in those counts. Retained three-engine remote reports on the final pushed
-  head remain pending.
+  in those counts. Retained three-engine reports now exist for `f7c18ae`
+  (`orbitpm-playwright-{chromium,firefox,webkit}-965c1c39…`);
+  merged-head re-observation remains.
 - The exact-final automated accessibility audit passed 12/12 cases across
   84/84 surfaces with zero axe violations (Chromium 149.0.7827.55); the gate
   JSON passed with the artifact SHA bound and `releaseCoverageEligible=true`.
-  This does not replace manual NVDA, VoiceOver, and Arabic
-  assistive-technology review, which remain pending.
+  Retained axe evidence now exists for `f7c18ae`
+  (`orbitpm-accessibility-965c1c39…`). This does not replace manual NVDA,
+  VoiceOver, and Arabic assistive-technology review, which remain pending.
 - The dedicated keyboard-only Process Outline create/edit/save cases for
   English/LTR and Arabic/RTL and the dedicated real-browser
   Details/no-selection cases in both languages and directions ran as part of
   the exact-final three-engine local matrix above, with pointer activity
-  required to remain zero. Retained remote execution remains pending.
+  required to remain zero. Retained remote execution exists for `f7c18ae` in
+  the three Playwright jobs above; merged-head re-observation remains.
 - The performance gates passed locally with an exact binding to `75a31e3`:
   Node 1,000-file initial index 159.106 ms (budget ≤5,000), 1% incremental
   refresh 190.324 ms (≤1,000), spreadsheet previews 23.876/38.092 ms; browser
   500-node median 1,070.2 ms (≤3,000), 1,000-node median 1,776.0 ms
   (≤10,000), heartbeat within limits, with complete trusted interaction
   receipts. The hardware profile is local-development-unqualified, so these
-  are development-only results, not reference-profile release evidence.
+  are development-only results, not reference-profile release evidence. The
+  retained run's reference-hardware Node gate (23s) and real XLSX
+  worker-to-preview budgets (55s) passed on `f7c18ae`
+  (`orbitpm-performance-965c1c39…`, `orbitpm-browser-performance-965c1c39…`);
+  merged-head re-observation remains.
 - Exact-final local static and supply-chain gates all pass: lockfile
   verification (460 packages), Prettier, strict TypeScript, ESLint,
   actionlint across 7 workflows, release-workflow static invariants, no-skips
@@ -166,8 +228,9 @@ freeze and the exact-final local gate runs recorded below.
   official XSD/bpmnlint accept/reject fixture gate, and malformed
   ZIP/DOCX/XLSX/CSV tests passed 104/104. npm audit (full and production)
   reports zero vulnerabilities, and checksum-verified Gitleaks 8.30.1 reports
-  the current tree and all 230 commits clean. These are still local candidate
-  checkpoints awaiting retained remote execution.
+  the current tree and all 230 commits clean. The retained policy (2m5s) and
+  secret-scan (10s) jobs passed these gates on `f7c18ae`
+  (`orbitpm-compliance-965c1c39…`); merged-head re-observation remains.
 - The exact seven-asset release allowlist was assembled and verified locally
   (`release:verify` passed); the release HTML SHA-256 equals the artifact
   SHA-256 above, `release:file-smoke` passed the English and Arabic offline
@@ -181,23 +244,23 @@ freeze and the exact-final local gate runs recorded below.
 
 ## Outcome and completion criteria
 
-| ID       | Criterion/root cause                                                                                                     | Mapping and evidence                                               | Status                                                                                                                                                |
-| -------- | ------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `OUT-01` | Active repository contains only browser Lite and required shared modules.                                                | `REP`; active-tree verifier `S`.                                   | `I/F`; remote `main` is still 0.4.4 pending merge.                                                                                                    |
-| `OUT-02` | Electron/Desktop, bridge, and legacy variants absent from active code, dependencies, docs, CI, Pages, and active assets. | `REP`; allowlist/static gates.                                     | `I/E`; Pages and release promotion pending.                                                                                                           |
-| `OUT-03` | Historical tags intact and older releases marked `[ARCHIVED]`.                                                           | Archive refs are intact.                                           | `P/E`; release titles are not yet prefixed.                                                                                                           |
-| `OUT-04` | Historical executable assets removed only after verified archive.                                                        | Archive manifest/bundle evidence.                                  | `E`; intentionally deferred until final 0.4.5 validation.                                                                                             |
-| `OUT-05` | `v0.4.5`, `main`, and `origin/main` are the same tested commit.                                                          | `REP/E-REP`.                                                       | `E`; tag absent and PR unmerged.                                                                                                                      |
-| `OUT-06` | Sole active executable asset is the named Lite HTML.                                                                     | Release assembler and allowlist `S`.                               | `I/E`; no published 0.4.5 assets.                                                                                                                     |
-| `OUT-07` | Optional template/checksum/SBOM/docs assets only.                                                                        | `REP`, `XLS`, assembler/verifiers.                                 | `I/E`; the exact seven-asset set is defined locally but not published.                                                                                |
-| `OUT-08` | Full English/Arabic/import/export/generation matrix passes.                                                              | `LOC`, `XLS`, `BPMN`, `E-TR-B`, `E-XLS-B`.                         | `P/F`; mandatory translation passed 6/6 and spreadsheet passed 14/14 in local Chromium, but no complete exact-final multi-engine result exists.       |
-| `OUT-09` | Details pane can always expand/collapse.                                                                                 | `UI`, `E-UI`, `E-FOCUSED-B`.                                       | `I/F`; focused Details 2/2 and panes/Details 10/10 passed local Chromium, but the exact-final breakpoint/touch sweep is pending.                      |
-| `OUT-10` | Arabic switch shows actual Arabic, never false success.                                                                  | `LOC`, `E-LOC`, `lite-i18n-rtl.spec.ts`.                           | `I/F`; exact-final supported-browser matrix pending.                                                                                                  |
-| `OUT-11` | XLSX/CSV deterministically generate complete processes without AI.                                                       | `XLS`, `E-XLS`, `E-XLS-B`.                                         | `I/F`; the 14-case mandatory suite passed once locally on Chromium, but exact-final multi-engine evidence is pending.                                 |
-| `OUT-12` | No confirmed P0/P1 reliability/accessibility/privacy/data-loss/validation/release issue remains.                         | All bundles and gates.                                             | `P/H/E`; local automated accessibility and the clean isolated performance rerun passed, but human AT, soak, remote failures, and final triage remain. |
-| `OUT-13` | All tests pass without retries, then exact artifact works from file and Pages.                                           | `E-REP`; all five mandatory evidence bundles are local candidates. | `F/E`; selected local suites pass, but the complete exact-final three-engine run, exact artifact/file check, and Pages checks are pending.            |
-| `RC-01`  | Details reopen control was conditionally absent.                                                                         | `UI` persistent rail; `E-UI`.                                      | `I`, candidate.                                                                                                                                       |
-| `RC-02`  | Wrong-script nonblank translation was accepted.                                                                          | `LOC` script audit; `E-LOC`.                                       | `I`, candidate.                                                                                                                                       |
+| ID       | Criterion/root cause                                                                                                     | Mapping and evidence                                               | Status                                                                                                                                                         |
+| -------- | ------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `OUT-01` | Active repository contains only browser Lite and required shared modules.                                                | `REP`; active-tree verifier `S`.                                   | `I/F`; remote `main` is still 0.4.4 pending merge.                                                                                                             |
+| `OUT-02` | Electron/Desktop, bridge, and legacy variants absent from active code, dependencies, docs, CI, Pages, and active assets. | `REP`; allowlist/static gates.                                     | `I/E`; Pages and release promotion pending.                                                                                                                    |
+| `OUT-03` | Historical tags intact and older releases marked `[ARCHIVED]`.                                                           | Archive refs are intact.                                           | `P/E`; release titles are not yet prefixed.                                                                                                                    |
+| `OUT-04` | Historical executable assets removed only after verified archive.                                                        | Archive manifest/bundle evidence.                                  | `E`; intentionally deferred until final 0.4.5 validation.                                                                                                      |
+| `OUT-05` | `v0.4.5`, `main`, and `origin/main` are the same tested commit.                                                          | `REP/E-REP`.                                                       | `E`; tag absent and PR unmerged.                                                                                                                               |
+| `OUT-06` | Sole active executable asset is the named Lite HTML.                                                                     | Release assembler and allowlist `S`.                               | `I/E`; no published 0.4.5 assets.                                                                                                                              |
+| `OUT-07` | Optional template/checksum/SBOM/docs assets only.                                                                        | `REP`, `XLS`, assembler/verifiers.                                 | `I/E`; the exact seven-asset set is defined locally but not published.                                                                                         |
+| `OUT-08` | Full English/Arabic/import/export/generation matrix passes.                                                              | `LOC`, `XLS`, `BPMN`, `E-TR-B`, `E-XLS-B`.                         | `P/F`; mandatory translation passed 6/6 and spreadsheet passed 14/14 in local Chromium, but no complete exact-final multi-engine result exists.                |
+| `OUT-09` | Details pane can always expand/collapse.                                                                                 | `UI`, `E-UI`, `E-FOCUSED-B`.                                       | `I/F`; focused Details 2/2 and panes/Details 10/10 passed local Chromium, but the exact-final breakpoint/touch sweep is pending.                               |
+| `OUT-10` | Arabic switch shows actual Arabic, never false success.                                                                  | `LOC`, `E-LOC`, `lite-i18n-rtl.spec.ts`.                           | `I/F`; exact-final supported-browser matrix pending.                                                                                                           |
+| `OUT-11` | XLSX/CSV deterministically generate complete processes without AI.                                                       | `XLS`, `E-XLS`, `E-XLS-B`.                                         | `I/F`; the 14-case mandatory suite passed once locally on Chromium, but exact-final multi-engine evidence is pending.                                          |
+| `OUT-12` | No confirmed P0/P1 reliability/accessibility/privacy/data-loss/validation/release issue remains.                         | All bundles and gates.                                             | `P/H/E`; local automated accessibility and the retained `f7c18ae` quality run passed, but human AT, soak, merged-head re-observation, and final triage remain. |
+| `OUT-13` | All tests pass without retries, then exact artifact works from file and Pages.                                           | `E-REP`; all five mandatory evidence bundles are local candidates. | `F/E`; selected local suites pass, but the complete exact-final three-engine run, exact artifact/file check, and Pages checks are pending.                     |
+| `RC-01`  | Details reopen control was conditionally absent.                                                                         | `UI` persistent rail; `E-UI`.                                      | `I`, candidate.                                                                                                                                                |
+| `RC-02`  | Wrong-script nonblank translation was accepted.                                                                          | `LOC` script audit; `E-LOC`.                                       | `I`, candidate.                                                                                                                                                |
 
 ## §2 Delivery, archival, and consolidation
 
@@ -224,17 +287,17 @@ freeze and the exact-final local gate runs recorded below.
 
 ### §2.3 Promote Lite to active root
 
-| ID      | Requirement                                                                                      | Implementation/commits                                       | Evidence and status                                                   |
-| ------- | ------------------------------------------------------------------------------------------------ | ------------------------------------------------------------ | --------------------------------------------------------------------- |
-| `2.3.1` | Create `release/0.4.5-lite-only` from v0.4.4.                                                    | `REP`, `6f0c2eb`.                                            | Remote branch exists; `AR/I`.                                         |
-| `2.3.2` | Move Lite to repository root preserving history.                                                 | `REP`, `6f0c2eb`.                                            | Git history/tree inspection `S`; `I`.                                 |
-| `2.3.3` | Internalize only used shared modules and remove archived-tree imports.                           | `REP`, plus feature bundles.                                 | Typecheck/allowlist/static imports `S`; `I/F`.                        |
-| `2.3.4` | Remove Electron, packaging, bridge/vendor, desktop tests/docs/assets/workflows from active main. | `REP`.                                                       | Active-tree verifier `S`; `I/E` because remote main is not promoted.  |
-| `2.3.5` | Lite-only root manifest at version 0.4.5.                                                        | `package.json`; `REP`.                                       | Manifest/static verifier `S`; `I`.                                    |
-| `2.3.6` | Lite quality, Pages, and release workflows.                                                      | `.github/workflows/*`; `REP`.                                | Workflow verifier `S`; remote run currently failed/skipped, so `I/E`. |
-| `2.3.7` | Update product/support docs and archived-source link.                                            | README/status/Arabic quickstart/contribution/notices; `REP`. | Doc inspection `S`; `I`, final URLs pending.                          |
-| `2.3.8` | CI allowlist blocks legacy runtime/release artifacts.                                            | active-tree/release verifiers; `REP`.                        | Script tests `S`; `I/F`.                                              |
-| `2.3.9` | Preserve retained-component attribution.                                                         | `THIRD_PARTY_NOTICES.md`, SBOM/license scripts; `REP`.       | Supply-chain scripts `S`; `I/F`.                                      |
+| ID      | Requirement                                                                                      | Implementation/commits                                       | Evidence and status                                                                                                                   |
+| ------- | ------------------------------------------------------------------------------------------------ | ------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------- |
+| `2.3.1` | Create `release/0.4.5-lite-only` from v0.4.4.                                                    | `REP`, `6f0c2eb`.                                            | Remote branch exists; `AR/I`.                                                                                                         |
+| `2.3.2` | Move Lite to repository root preserving history.                                                 | `REP`, `6f0c2eb`.                                            | Git history/tree inspection `S`; `I`.                                                                                                 |
+| `2.3.3` | Internalize only used shared modules and remove archived-tree imports.                           | `REP`, plus feature bundles.                                 | Typecheck/allowlist/static imports `S`; `I/F`.                                                                                        |
+| `2.3.4` | Remove Electron, packaging, bridge/vendor, desktop tests/docs/assets/workflows from active main. | `REP`.                                                       | Active-tree verifier `S`; `I/E` because remote main is not promoted.                                                                  |
+| `2.3.5` | Lite-only root manifest at version 0.4.5.                                                        | `package.json`; `REP`.                                       | Manifest/static verifier `S`; `I`.                                                                                                    |
+| `2.3.6` | Lite quality, Pages, and release workflows.                                                      | `.github/workflows/*`; `REP`.                                | Workflow verifier `S`; the retained quality run passed all 11 checks on `f7c18ae`, with merged-head re-observation pending, so `I/E`. |
+| `2.3.7` | Update product/support docs and archived-source link.                                            | README/status/Arabic quickstart/contribution/notices; `REP`. | Doc inspection `S`; `I`, final URLs pending.                                                                                          |
+| `2.3.8` | CI allowlist blocks legacy runtime/release artifacts.                                            | active-tree/release verifiers; `REP`.                        | Script tests `S`; `I/F`.                                                                                                              |
+| `2.3.9` | Preserve retained-component attribution.                                                         | `THIRD_PARTY_NOTICES.md`, SBOM/license scripts; `REP`.       | Supply-chain scripts `S`; `I/F`.                                                                                                      |
 
 ### §2.4 Implementation coordination and prescribed commits
 
@@ -594,31 +657,32 @@ merged.
 
 ### Automated quality gates
 
-| ID      | Gate                                                               | Implementation/evidence                           | Current truthful state                                                                                                                                                                                                                                                            |
-| ------- | ------------------------------------------------------------------ | ------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `5.Q1`  | Lock verification and reproducible install from fresh checkout.    | workflow/lock checks; `REP/E-REP` `S`.            | Local lock verification passes; exact-final fresh checkout remains `F/E`.                                                                                                                                                                                                         |
-| `5.Q2`  | Formatting check without rewrite.                                  | Prettier workflow.                                | Exact-final local check passes at the frozen SHA; retained remote execution remains `F`.                                                                                                                                                                                          |
-| `5.Q3`  | TypeScript typecheck.                                              | `tsc --noEmit`; workflow.                         | Exact-final local typecheck passes at the frozen SHA; retained remote execution remains `F`.                                                                                                                                                                                      |
-| `5.Q4`  | ESLint.                                                            | ESLint workflow.                                  | Exact-final local lint passes at the frozen SHA; retained remote execution remains `F`.                                                                                                                                                                                           |
-| `5.Q5`  | Unit/integration with ≥80% overall and ≥90% safety-branch targets. | Vitest/coverage scripts; `E-REP`.                 | Exact-final local coverage passed 2,940/2,940 in 220 files with zero skips/retries: statements/lines 88.54%, branches 84.68%, functions 89.42%; branch profiles session 90.36%, translation 90.21%, Excel 91.45%, import 91.13%. Exact-final remote evidence remains `E/F`.       |
-| `5.Q6`  | Fresh production build before browser tests.                       | workflow dependency graph/build verifier.         | An exact-final local build (SHA-256 `3299cff3…ed51`, raw 6,271,923 bytes, release-gate gzip 1,842,107 bytes) preceded every artifact-bound gate; retained remote build evidence remains `E/F`.                                                                                    |
-| `5.Q7`  | Playwright Chromium, Firefox, WebKit.                              | workflow matrix and `E-B-CAND`.                   | The exact-final local matrix passed Chromium 134/134, Firefox 134/134, and WebKit 134/134 with zero failures/retries/skips/interruptions; retained remote jobs remain pending, `E/F`.                                                                                             |
-| `5.Q8`  | Axe EN/AR, light/dark, desktop/mobile.                             | axe workflow/suite; `E-A11Y`.                     | The exact-final artifact-bound local audit passed 12/12 cases, 84/84 surfaces, and zero axe violations with `releaseCoverageEligible=true`. Retained/remote evidence remains pending, `E/F`.                                                                                      |
-| `5.Q9`  | BPMN XSD/lint fixture suite.                                       | validation fixtures; `E-BPMN` `U/S`.              | Exact-final local run passed 97/97 plus the official XSD/bpmnlint accept/reject fixture gate; retained remote evidence `F`.                                                                                                                                                       |
-| `5.Q10` | Malformed ZIP/DOCX/XLSX/decompression-limit suite.                 | security/spreadsheet fixtures; `BPMN/XLS`.        | Exact-final local run passed 104/104; retained remote evidence `F`.                                                                                                                                                                                                               |
-| `5.Q11` | Secret scan, audit, licenses, SBOM.                                | supply-chain workflow/scripts; `REP`.             | Both dependency audits report zero vulnerabilities, and checksum-verified Gitleaks 8.30.1 current-tree and full 230-commit history scans are clean; license (131 records, 84 notices) and CycloneDX (131 components) generation pass. Exact-final remote retention remains `E/F`. |
-| `5.Q12` | Active-tree proof excludes Desktop/Electron.                       | allowlist verifier; `REP`.                        | Local candidate static gate passes; exact-final remote evidence `F`.                                                                                                                                                                                                              |
-| `5.Q13` | Single HTML ≤8 MiB raw and ≤2.5 MiB gzip.                          | size-budget scripts/workflow.                     | The exact-final local artifact is within budget: raw 6,271,923 ≤ 8,388,608 bytes and release-gate gzip 1,842,107 ≤ 2,621,440 bytes; retained remote size report remains `F`.                                                                                                      |
-| `5.Q14` | No skips/quarantine/retries/known flakes.                          | `scripts/check-no-skips.mjs` plus suite manifest. | Exact-final local `npm run check:no-skips` passes across 544 discovered files; coverage passed 2,940/2,940 and the three-engine browser matrix ran with zero skips/retries. Retained remote execution remains `F`.                                                                |
+| ID      | Gate                                                               | Implementation/evidence                           | Current truthful state                                                                                                                                                                                                                                                                                                                                                                 |
+| ------- | ------------------------------------------------------------------ | ------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `5.Q1`  | Lock verification and reproducible install from fresh checkout.    | workflow/lock checks; `REP/E-REP` `S`.            | Retained CI on `f7c18ae` verifies the lock from a fresh checkout in the policy job (run 30289755296); final merged-head re-observation remains `F/E`.                                                                                                                                                                                                                                  |
+| `5.Q2`  | Formatting check without rewrite.                                  | Prettier workflow.                                | Retained CI passed the formatting check on `f7c18ae` (policy job); merged-head re-observation remains `F`.                                                                                                                                                                                                                                                                             |
+| `5.Q3`  | TypeScript typecheck.                                              | `tsc --noEmit`; workflow.                         | Retained CI passed the strict typecheck on `f7c18ae` (policy job); merged-head re-observation remains `F`.                                                                                                                                                                                                                                                                             |
+| `5.Q4`  | ESLint.                                                            | ESLint workflow.                                  | Retained CI passed ESLint on `f7c18ae` (policy job); merged-head re-observation remains `F`.                                                                                                                                                                                                                                                                                           |
+| `5.Q5`  | Unit/integration with ≥80% overall and ≥90% safety-branch targets. | Vitest/coverage scripts; `E-REP`.                 | Local exact-final coverage passed 2,940/2,940 in 220 files with zero skips/retries: statements/lines 88.54%, branches 84.68%, functions 89.42%; branch profiles session 90.36%, translation 90.21%, Excel 91.45%, import 91.13%. The retained unit/integration/standards/archives/coverage job passed on `f7c18ae` (`orbitpm-coverage-965c1c39…`); merged-head evidence remains `E/F`. |
+| `5.Q6`  | Fresh production build before browser tests.                       | workflow dependency graph/build verifier.         | An exact-final local build (SHA-256 `3299cff3…ed51`, raw 6,271,923 bytes, release-gate gzip 1,842,107 bytes) preceded every artifact-bound gate; the retained fresh single-file release build passed on `f7c18ae` (38s; `orbitpm-tested-pages-965c1c39…`); merged-head rebuild remains `E/F`.                                                                                          |
+| `5.Q7`  | Playwright Chromium, Firefox, WebKit.                              | workflow matrix and `E-B-CAND`.                   | The exact-final local matrix passed Chromium 134/134, Firefox 134/134, and WebKit 134/134 with zero failures/retries/skips/interruptions; the retained three-engine jobs passed on `f7c18ae` with zero retries (6m3s/8m15s/10m15s, WebKit on CLI `--global-timeout=900000`; `orbitpm-playwright-{chromium,firefox,webkit}-965c1c39…`); merged-head jobs remain `E/F`.                  |
+| `5.Q8`  | Axe EN/AR, light/dark, desktop/mobile.                             | axe workflow/suite; `E-A11Y`.                     | The exact-final artifact-bound local audit passed 12/12 cases, 84/84 surfaces, and zero axe violations with `releaseCoverageEligible=true`; the retained axe job passed on `f7c18ae` (1m40s; `orbitpm-accessibility-965c1c39…`); merged-head evidence remains `E/F`.                                                                                                                   |
+| `5.Q9`  | BPMN XSD/lint fixture suite.                                       | validation fixtures; `E-BPMN` `U/S`.              | Exact-final local run passed 97/97 plus the official XSD/bpmnlint accept/reject fixture gate; the retained unit job passed on `f7c18ae`; merged-head `F`.                                                                                                                                                                                                                              |
+| `5.Q10` | Malformed ZIP/DOCX/XLSX/decompression-limit suite.                 | security/spreadsheet fixtures; `BPMN/XLS`.        | Exact-final local run passed 104/104; the retained unit job passed on `f7c18ae`; merged-head `F`.                                                                                                                                                                                                                                                                                      |
+| `5.Q11` | Secret scan, audit, licenses, SBOM.                                | supply-chain workflow/scripts; `REP`.             | Both dependency audits report zero vulnerabilities, and checksum-verified Gitleaks 8.30.1 current-tree and full 230-commit history scans are clean; license (131 records, 84 notices) and CycloneDX (131 components) generation pass. The retained policy and secret-scan jobs passed on `f7c18ae` (`orbitpm-compliance-965c1c39…`); merged-head retention remains `E/F`.              |
+| `5.Q12` | Active-tree proof excludes Desktop/Electron.                       | allowlist verifier; `REP`.                        | The retained policy job passed the active-tree gate on `f7c18ae`; merged-head `F`.                                                                                                                                                                                                                                                                                                     |
+| `5.Q13` | Single HTML ≤8 MiB raw and ≤2.5 MiB gzip.                          | size-budget scripts/workflow.                     | The exact-final local artifact is within budget: raw 6,271,923 ≤ 8,388,608 bytes and release-gate gzip 1,842,107 ≤ 2,621,440 bytes; the retained build enforced the budgets on `f7c18ae`; merged-head `F`.                                                                                                                                                                             |
+| `5.Q14` | No skips/quarantine/retries/known flakes.                          | `scripts/check-no-skips.mjs` plus suite manifest. | Exact-final local `npm run check:no-skips` passes across 544 discovered files; coverage passed 2,940/2,940 and the three-engine browser matrix ran with zero skips/retries. The retained run executed all jobs with zero retries on `f7c18ae`; merged-head `F`.                                                                                                                        |
 
 ### Mandatory browser scenarios — Reliability
 
 The machine-readable mapping is
 `tests/e2e/mandatory-reliability-evidence.json`. All rows below have a
 production-browser path in committed bundle `REL-B`. The latest current-artifact
-Chromium run passed 13/13 with zero skips/retries. It is still a local
-single-engine observation, so these are not final three-engine release
-evidence.
+Chromium run passed 13/13 with zero skips/retries, and the retained quality
+run passed the complete three-engine matrix on `f7c18ae`. Merged-head
+re-observation is still required, so these are not final merged-head
+three-engine release evidence.
 
 | ID        | Mandatory scenario                                      | Exact browser evidence                                                                                                                                                                                  | Status                                            |
 | --------- | ------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------- |
@@ -637,8 +701,9 @@ evidence.
 ### Mandatory browser scenarios — Translation
 
 Bundle `TR-B` contains six production-UI browser tests that collectively map
-all ten rows. Its latest local Chromium run passed 6/6. The exact-final
-three-engine browser matrix and retained report remain required.
+all ten rows. Its latest local Chromium run passed 6/6, and the retained
+three-engine matrix passed on `f7c18ae`. Re-observation of the retained
+report on the final merged head remains required.
 
 | ID       | Mandatory scenario                             | Strongest evidence                                                                             | Status/gap                                             |
 | -------- | ---------------------------------------------- | ---------------------------------------------------------------------------------------------- | ------------------------------------------------------ |
@@ -657,8 +722,8 @@ three-engine browser matrix and retained report remain required.
 
 Bundle `XLS-B` expands to 14 browser cases (three parameterized template cases
 plus eleven named cases). One local Chromium run passed 14/14 with one worker
-and retries disabled; the suite is committed, but it has no retained
-exact-final-SHA report.
+and retries disabled; the suite is committed, and the retained three-engine
+matrix passed on `f7c18ae`, with merged-head re-observation pending.
 
 | ID      | Mandatory scenario                                                     | Strongest evidence                                                         | Status/gap                                  |
 | ------- | ---------------------------------------------------------------------- | -------------------------------------------------------------------------- | ------------------------------------------- |
@@ -678,9 +743,9 @@ exact-final-SHA report.
 Focused local Chromium runs passed AML naming 1/1, company docs 5/5,
 subprocess tree 1/1, responsive Details 2/2, assistant 2/2, smoke 6/6, and
 panes/Details 10/10. The automated accessibility audit also passed 12/12 cases
-and 84/84 surfaces with zero axe violations. These remain local candidate
-observations, not the exact-final engine matrix or human assistive-technology
-evidence.
+and 84/84 surfaces with zero axe violations. The retained three-engine matrix
+and axe job passed on `f7c18ae`; merged-head re-observation and human
+assistive-technology evidence remain pending.
 
 | ID      | Mandatory scenario                                     | Strongest evidence                              | Status/gap                                                                                                        |
 | ------- | ------------------------------------------------------ | ----------------------------------------------- | ----------------------------------------------------------------------------------------------------------------- |
@@ -697,8 +762,8 @@ evidence.
 ### Mandatory browser scenarios — AI/security
 
 Bundle `AI-B` contains 12 direct browser scenarios. Its latest local Chromium
-run passed 12/12. The suite is committed but lacks a retained exact-final
-three-engine report, so all rows remain candidate-only.
+run passed 12/12. The suite is committed, and the retained three-engine
+matrix passed on `f7c18ae`; merged-head re-observation remains pending.
 
 | ID       | Mandatory scenario                          | Strongest evidence                                                                                                                           | Status/gap                                             |
 | -------- | ------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------ |
@@ -734,22 +799,22 @@ The local release allowlist is exactly:
 `THIRD_PARTY_NOTICES.md`, `LICENSE`, and `SHA256SUMS.txt`. This is a
 candidate definition, not a statement that the assets have been published.
 
-| ID      | Requirement                                                                                           | Implementation/evidence                     | Current state                                                                                                       |
-| ------- | ----------------------------------------------------------------------------------------------------- | ------------------------------------------- | ------------------------------------------------------------------------------------------------------------------- |
-| `5.R1`  | Merge reviewed PR into protected main.                                                                | PR #1/workflows.                            | `E`: open draft, review required, remote checks stale/failed; no independent authorized collaborator is configured. |
-| `5.R2`  | Clean worktree and checks bound to merge commit.                                                      | release evidence verifiers.                 | `E/F`: worktree dirty; no merge commit.                                                                             |
-| `5.R3`  | All version displays/manifests 0.4.5.                                                                 | manifest/version code; `REP`.               | Candidate `I`; exact final `F`.                                                                                     |
-| `5.R4`  | Build exactly: Lite HTML, Excel template, Excel example, CycloneDX SBOM, notices, license, checksums. | assembler/template/SBOM scripts; `REP/XLS`. | Candidate exact seven-asset implementation; no published assets, `E/F`.                                             |
-| `5.R5`  | Test exact CI-downloaded HTML over `file://`.                                                         | external-release evidence workflow/schema.  | Not performed, `E/F`.                                                                                               |
-| `5.R6`  | Annotated `v0.4.5` at merge commit.                                                                   | release workflow.                           | Tag absent, `E`.                                                                                                    |
-| `5.R7`  | Tag CI clean rebuild/reproducibility/draft/checksums.                                                 | release workflow/verifiers.                 | No tag run, `E`.                                                                                                    |
-| `5.R8`  | Pages from same commit.                                                                               | Pages workflow/verifier.                    | Pages remains remote main/v0.4.4, `E`.                                                                              |
-| `5.R9`  | Pages smoke current Chrome/Edge/Firefox/Safari in EN/AR.                                              | browser compatibility evidence schema.      | Not performed on 0.4.5, `E/H`.                                                                                      |
-| `5.R10` | Publish v0.4.5 latest stable.                                                                         | release workflow.                           | No release, `E`.                                                                                                    |
-| `5.R11` | Verify SHA equality, release flags/assets/no desktop/offline/version.                                 | external release verifier.                  | Cannot run until release; `E`.                                                                                      |
-| `5.R12` | Only then archive older titles/notices/remove executable assets/retain Lite HTML/tags/verify bundles. | archival completion scripts/docs.           | Deliberately pending final release validation; `E`.                                                                 |
-| `5.R13` | Record URLs, SHA, Pages, checksums, archive refs, report links.                                       | release evidence docs/schema.               | Local templates exist; final values absent, `E`.                                                                    |
-| `5.R14` | Failure policy: do not publish/move tag; rollback Pages and patch, never retag.                       | workflow/docs policy.                       | Policy implemented `S`; no release event yet, `I/E`.                                                                |
+| ID      | Requirement                                                                                           | Implementation/evidence                     | Current state                                                                                                                                                 |
+| ------- | ----------------------------------------------------------------------------------------------------- | ------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `5.R1`  | Merge reviewed PR into protected main.                                                                | PR #1/workflows.                            | `E`: open and ready for review with retained checks green at `f7c18ae`; approval and merge pending, and no independent authorized collaborator is configured. |
+| `5.R2`  | Clean worktree and checks bound to merge commit.                                                      | release evidence verifiers.                 | `E/F`: worktree dirty; no merge commit.                                                                                                                       |
+| `5.R3`  | All version displays/manifests 0.4.5.                                                                 | manifest/version code; `REP`.               | Candidate `I`; exact final `F`.                                                                                                                               |
+| `5.R4`  | Build exactly: Lite HTML, Excel template, Excel example, CycloneDX SBOM, notices, license, checksums. | assembler/template/SBOM scripts; `REP/XLS`. | Candidate exact seven-asset implementation; no published assets, `E/F`.                                                                                       |
+| `5.R5`  | Test exact CI-downloaded HTML over `file://`.                                                         | external-release evidence workflow/schema.  | Not performed, `E/F`.                                                                                                                                         |
+| `5.R6`  | Annotated `v0.4.5` at merge commit.                                                                   | release workflow.                           | Tag absent, `E`.                                                                                                                                              |
+| `5.R7`  | Tag CI clean rebuild/reproducibility/draft/checksums.                                                 | release workflow/verifiers.                 | No tag run, `E`.                                                                                                                                              |
+| `5.R8`  | Pages from same commit.                                                                               | Pages workflow/verifier.                    | Pages remains remote main/v0.4.4, `E`.                                                                                                                        |
+| `5.R9`  | Pages smoke current Chrome/Edge/Firefox/Safari in EN/AR.                                              | browser compatibility evidence schema.      | Not performed on 0.4.5, `E/H`.                                                                                                                                |
+| `5.R10` | Publish v0.4.5 latest stable.                                                                         | release workflow.                           | No release, `E`.                                                                                                                                              |
+| `5.R11` | Verify SHA equality, release flags/assets/no desktop/offline/version.                                 | external release verifier.                  | Cannot run until release; `E`.                                                                                                                                |
+| `5.R12` | Only then archive older titles/notices/remove executable assets/retain Lite HTML/tags/verify bundles. | archival completion scripts/docs.           | Deliberately pending final release validation; `E`.                                                                                                           |
+| `5.R13` | Record URLs, SHA, Pages, checksums, archive refs, report links.                                       | release evidence docs/schema.               | Local templates exist; final values absent, `E`.                                                                                                              |
+| `5.R14` | Failure policy: do not publish/move tag; rollback Pages and patch, never retag.                       | workflow/docs policy.                       | Policy implemented `S`; no release event yet, `I/E`.                                                                                                          |
 
 ### Explicit assumptions/defaults
 
@@ -776,14 +841,15 @@ Chromium/Firefox/WebKit exact-artifact matrix with zero retries or skips, the
 artifact-bound automated accessibility matrix, the development-only
 performance budgets, and the exact seven-asset assembly with English/Arabic
 offline smoke. The known private-Playwright-API test debt is closed by
-`2f419a7`, which uses the public `webkit` export. These remain local
-candidate results: under this document's own evidence rules no local run is
-retained release evidence for an immutable final SHA or artifact. This
+`2f419a7`, which uses the public `webkit` export. Retained remote CI evidence
+now backs the automated gates at `f7c18ae` (run 30289755296, all 11 required
+checks green), but that run predates this documentation commit and the
+protected merge, so it is not evidence for the final merged head. This
 candidate is not releasable yet. At minimum, the following remain:
 
-- commit this documentation snapshot and push the frozen candidate SHA, then
-  rerun the complete quality workflow from a fresh checkout so retained
-  remote CI evidence binds the final pushed head with zero retries;
+- push this documentation commit and re-observe the complete quality workflow
+  on the final merged head so retained remote CI evidence binds the exact
+  release commit with zero retries;
 - complete the current/previous-major Chrome, Edge, Firefox, and Safari EN/AR
   compatibility matrix;
 - perform NVDA, VoiceOver, Arabic pronunciation, linguistic review, and the
