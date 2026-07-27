@@ -554,7 +554,7 @@ jobs:
               '.assets[] | select(.name == $name)' \
               draft-release.json >/dev/null
             then
-              gh release upload v0.4.5 "release/$name"
+              gh release upload v0.4.5 "release/$name" --repo "$GITHUB_REPOSITORY"
             fi
           done
           gh api "repos/$GITHUB_REPOSITORY/releases/$release_id" > draft-release.json
@@ -603,7 +603,7 @@ jobs:
             )" = "sha256:$sha256"
           done < <(jq -r '.assets[] | [.name, .size, .sha256] | @tsv' "$authority")
           mkdir draft-download
-          gh release download v0.4.5 --dir draft-download
+          gh release download v0.4.5 --dir draft-download --repo "$GITHUB_REPOSITORY"
           test "$(find draft-download -maxdepth 1 -type f | wc -l)" -eq 7
           while IFS=$'\t' read -r name _size sha256; do
             test "$(sha256sum "draft-download/$name" | cut -d' ' -f1)" = "$sha256"
