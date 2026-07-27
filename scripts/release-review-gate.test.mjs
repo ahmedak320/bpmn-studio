@@ -63,6 +63,24 @@ test('dismissal, author review, and post-merge approval cannot satisfy the gate'
   )
 })
 
+test('explicit allow-no-approvals returns an empty list without weakening the default', () => {
+  const noEffectiveApprovals = [
+    review(1, 'reviewer', 'APPROVED', '2026-07-20T10:00:00Z'),
+    review(2, 'reviewer', 'DISMISSED', '2026-07-20T11:00:00Z'),
+    review(3, 'pull-author', 'APPROVED', '2026-07-20T11:30:00Z')
+  ]
+  assert.throws(() => select(noEffectiveApprovals), /No independent effective approval/)
+  assert.deepEqual(
+    selectEffectiveApprovals(noEffectiveApprovals, {
+      author: 'pull-author',
+      headSha,
+      mergedAt,
+      allowNoApprovals: true
+    }),
+    []
+  )
+})
+
 test('requires exact head binding and collaborator association', () => {
   assert.throws(
     () =>

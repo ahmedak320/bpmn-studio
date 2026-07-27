@@ -26,7 +26,10 @@ function validLogin(value) {
   )
 }
 
-export function selectEffectiveApprovals(reviews, { author, headSha, mergedAt }) {
+export function selectEffectiveApprovals(
+  reviews,
+  { author, headSha, mergedAt, allowNoApprovals = false }
+) {
   if (!Array.isArray(reviews)) fail('The reviews input must be a JSON array.')
   if (!validLogin(author)) fail('--author must be a valid GitHub login.')
   if (!/^[a-f0-9]{40}$/u.test(headSha)) {
@@ -87,14 +90,15 @@ export function selectEffectiveApprovals(reviews, { author, headSha, mergedAt })
     })
     .sort((left, right) => left.login.localeCompare(right.login))
 
-  if (approvals.length === 0) {
+  if (approvals.length === 0 && !allowNoApprovals) {
     fail('No independent effective approval remains at the PR merge time.')
   }
   return approvals
 }
 
 function parseCli(arguments_) {
-  const allowed = new Set(['reviews', 'author', 'head-sha', 'merged-at', 'output'])
+  const required = new Set(['reviews', 'author', 'head-sha', 'merged-at', 'output'])
+  const allowed = new Set([...required, 'allow-no-approvals'])
   const options = new Map()
   for (const argument of arguments_) {
     const separator = argument.indexOf('=')
@@ -108,8 +112,11 @@ function parseCli(arguments_) {
     }
     options.set(name, value)
   }
-  for (const name of allowed) {
+  for (const name of required) {
     if (!options.has(name)) fail(`--${name} is required.`)
+  }
+  if (options.has('allow-no-approvals') && options.get('allow-no-approvals') !== 'true') {
+    fail('--allow-no-approvals only accepts the explicit value true.')
   }
   return options
 }
@@ -132,7 +139,8 @@ function main() {
   const approvals = selectEffectiveApprovals(readReviews(options.get('reviews')), {
     author: options.get('author'),
     headSha: options.get('head-sha'),
-    mergedAt: options.get('merged-at')
+    mergedAt: options.get('merged-at'),
+    allowNoApprovals: options.get('allow-no-approvals') === 'true'
   })
   writeFileSync(
     resolve(options.get('output')),
