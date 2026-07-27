@@ -28,10 +28,7 @@ export type ExternalConflictDecision =
   | { kind: 'save-as'; path: string }
   | { kind: 'cancel' }
 
-export function sameContentFingerprint(
-  a: FileFingerprint,
-  b: FileFingerprint
-): boolean {
+export function sameContentFingerprint(a: FileFingerprint, b: FileFingerprint): boolean {
   return a.hash.trim().toLowerCase() === b.hash.trim().toLowerCase()
 }
 

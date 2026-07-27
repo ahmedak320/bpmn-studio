@@ -110,8 +110,7 @@ export function computeBandPlan(opts: {
   // scale — i.e. only pay for an extra band when it meaningfully enlarges steps.
   const globalMax = candidates.reduce((m, c) => Math.max(m, c.scale), 0)
   const threshold = (1 - MIN_GAIN) * globalMax
-  const chosen =
-    candidates.find((c) => c.scale >= threshold) ?? candidates[0]
+  const chosen = candidates.find((c) => c.scale >= threshold) ?? candidates[0]
   const N = chosen.n
 
   if (N === 1) {

@@ -17,12 +17,7 @@ interface Element {
   }
 }
 
-function task(
-  id: string,
-  x: number,
-  y: number,
-  attrs: Record<string, unknown> = {}
-): Element {
+function task(id: string, x: number, y: number, attrs: Record<string, unknown> = {}): Element {
   return {
     id,
     type: 'bpmn:Task',
@@ -76,8 +71,7 @@ describe('planAutomaticConnectionRepairs', () => {
       kind: 'waypoints',
       connection
     })
-    const points =
-      updates[0].kind === 'waypoints' ? updates[0].waypoints : []
+    const points = updates[0].kind === 'waypoints' ? updates[0].waypoints : []
     expect(points[0]).toEqual({ x: 100, y: 40 })
     expect(points.at(-1)).toEqual({ x: 300, y: 40 })
     expect(points.some((point) => point.y <= -7 || point.y >= 87)).toBe(true)
@@ -102,16 +96,16 @@ describe('planAutomaticConnectionRepairs', () => {
       directionSource
     )
 
-    expect(updates.map((update) =>
-      update.kind === 'waypoints'
-        ? (update.connection as Element).id
-        : ''
-    )).toContain('Flow_Detour')
-    expect(updates.map((update) =>
-      update.kind === 'waypoints'
-        ? (update.connection as Element).id
-        : ''
-    )).not.toContain('Flow_Direct')
+    expect(
+      updates.map((update) =>
+        update.kind === 'waypoints' ? (update.connection as Element).id : ''
+      )
+    ).toContain('Flow_Detour')
+    expect(
+      updates.map((update) =>
+        update.kind === 'waypoints' ? (update.connection as Element).id : ''
+      )
+    ).not.toContain('Flow_Direct')
   })
 
   it('treats an external output block as an obstacle', () => {
@@ -146,8 +140,6 @@ describe('planAutomaticConnectionRepairs', () => {
       { x: 150, y: 100 }
     ])
 
-    expect(
-      planAutomaticConnectionRepairs([source, selfLoop], directionSource)
-    ).toEqual([])
+    expect(planAutomaticConnectionRepairs([source, selfLoop], directionSource)).toEqual([])
   })
 })

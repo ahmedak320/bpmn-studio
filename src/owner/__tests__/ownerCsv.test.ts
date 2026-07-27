@@ -19,11 +19,7 @@ describe('ownersToCsv', () => {
       { name: 'Sales', count: 1 }
     ]
     const csv = ownersToCsv(entries)
-    const expected =
-      '﻿' +
-      'name,type,usage_count\r\n' +
-      'Alice,individual,3\r\n' +
-      'Sales,,1\r\n'
+    const expected = '﻿' + 'name,type,usage_count\r\n' + 'Alice,individual,3\r\n' + 'Sales,,1\r\n'
     expect(csv).toBe(expected)
   })
 

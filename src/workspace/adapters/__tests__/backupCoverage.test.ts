@@ -17,9 +17,7 @@ import type { ReviewedBpmnIngestionPort } from '../../reviewedBpmn'
 const encode = (value: string): Uint8Array => new TextEncoder().encode(value)
 
 const fakeProcessIdentityInspector = async (xml: string) => ({
-  processIds: [...xml.matchAll(/<(?:\w+:)?process\s+id="([^"]+)"/g)].map(
-    (match) => match[1]
-  )
+  processIds: [...xml.matchAll(/<(?:\w+:)?process\s+id="([^"]+)"/g)].map((match) => match[1])
 })
 
 const fakeReviewedBpmnIngestion: ReviewedBpmnIngestionPort = async (xml) => {
@@ -34,9 +32,7 @@ const fakeReviewedBpmnIngestion: ReviewedBpmnIngestionPort = async (xml) => {
   }
 }
 
-async function inspectWorkspaceBackup(
-  ...args: Parameters<typeof inspectWorkspaceBackupCore>
-) {
+async function inspectWorkspaceBackup(...args: Parameters<typeof inspectWorkspaceBackupCore>) {
   const [adapter, backup, options = {}] = args
   return inspectWorkspaceBackupCore(adapter, backup, {
     ...options,

@@ -11,7 +11,10 @@ export interface AssistantSource {
   relPath: string
 }
 
-export function formatLocalAnswer(answer: LocalAnswer): { text: string; sources: AssistantSource[] } {
+export function formatLocalAnswer(answer: LocalAnswer): {
+  text: string
+  sources: AssistantSource[]
+} {
   if (answer.kind === 'next') {
     const step = answer.step?.name ?? ''
     const process = answer.process?.processName ?? ''

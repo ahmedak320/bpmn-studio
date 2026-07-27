@@ -1,10 +1,7 @@
 import { ar, en } from '../i18n/dictionaries'
 import { getLang, type Key, type Lang } from '../i18n'
 import { PALETTE, type PaletteKey } from './palette'
-import {
-  SEMANTIC_NAMING,
-  type SemanticGatewayType
-} from './semanticNaming'
+import { SEMANTIC_NAMING, type SemanticGatewayType } from './semanticNaming'
 
 /**
  * Stable semantic identifiers shared by the canvas tooltip resolver, renderer
@@ -65,8 +62,7 @@ export interface I18nSemanticText {
   readonly explanationKey: Key
 }
 
-export type SemanticGatewayNaming =
-  (typeof SEMANTIC_NAMING)[SemanticGatewayType]
+export type SemanticGatewayNaming = (typeof SEMANTIC_NAMING)[SemanticGatewayType]
 
 export interface GatewaySemanticText {
   readonly source: 'semanticNaming'
@@ -142,9 +138,7 @@ function gatewayDescriptor(
       naming: SEMANTIC_NAMING[gatewayType]
     }),
     icon: `${gatewayType.slice(5, -7).toLowerCase()}-diamond` as
-      | 'exclusive-diamond'
-      | 'inclusive-diamond'
-      | 'parallel-diamond',
+      'exclusive-diamond' | 'inclusive-diamond' | 'parallel-diamond',
     swatch: swatch('basisFill', 'basisBorder')
   })
 }
@@ -155,170 +149,159 @@ function gatewayDescriptor(
  * Gateway display names, explanations, and ARIS aliases retain direct
  * identity with SEMANTIC_NAMING.
  */
-export const SHAPE_SEMANTICS: Readonly<
-  Record<ShapeSemanticKind, ShapeSemanticDescriptor>
-> = Object.freeze({
-  'event-start': i18nDescriptor(
-    'event-start',
-    'legend.event.start',
-    'semantic.event.start.tooltip',
-    'start-circle',
-    'startFill',
-    'startBorder'
-  ),
-  'event-intermediate': i18nDescriptor(
-    'event-intermediate',
-    'legend.event.intermediate',
-    'semantic.event.intermediate.tooltip',
-    'intermediate-circle',
-    'startFill',
-    'basisBorder'
-  ),
-  'event-end': i18nDescriptor(
-    'event-end',
-    'legend.event.end',
-    'semantic.event.end.tooltip',
-    'end-circle',
-    'endFill',
-    'endBorder'
-  ),
-  step: i18nDescriptor(
-    'step',
-    'legend.step',
-    'semantic.step.tooltip',
-    'rounded-rect',
-    'startFill',
-    'stepGreenBorder'
-  ),
-  subprocess: i18nDescriptor(
-    'subprocess',
-    'legend.subprocess',
-    'semantic.subprocess.tooltip',
-    'double-rounded-rect',
-    'subChipFill',
-    'subChipBorder'
-  ),
-  'gateway-exclusive': gatewayDescriptor(
-    'gateway-exclusive',
-    'bpmn:ExclusiveGateway'
-  ),
-  'gateway-inclusive': gatewayDescriptor(
-    'gateway-inclusive',
-    'bpmn:InclusiveGateway'
-  ),
-  'gateway-parallel': gatewayDescriptor(
-    'gateway-parallel',
-    'bpmn:ParallelGateway'
-  ),
-  'gateway-event-based': i18nDescriptor(
-    'gateway-event-based',
-    'legend.gateway.eventBased',
-    'semantic.gateway.eventBased.tooltip',
-    'event-based-diamond',
-    'basisFill',
-    'basisBorder'
-  ),
-  'gateway-complex': i18nDescriptor(
-    'gateway-complex',
-    'legend.gateway.complex',
-    'semantic.gateway.complex.tooltip',
-    'complex-diamond',
-    'basisFill',
-    'basisBorder'
-  ),
-  participant: i18nDescriptor(
-    'participant',
-    'legend.participant',
-    'semantic.participant.tooltip',
-    'participant',
-    'startFill',
-    'stepGreenBorder'
-  ),
-  lane: i18nDescriptor(
-    'lane',
-    'legend.lane',
-    'semantic.lane.tooltip',
-    'lane',
-    'startFill',
-    'stepGreenBorder'
-  ),
-  annotation: i18nDescriptor(
-    'annotation',
-    'legend.annotation',
-    'semantic.annotation.tooltip',
-    'annotation',
-    'noteFill',
-    'noteBorder'
-  ),
-  'data-object': i18nDescriptor(
-    'data-object',
-    'legend.dataObject',
-    'semantic.dataObject.tooltip',
-    'data-object',
-    'inputFill',
-    'inputBorder'
-  ),
-  'data-store': i18nDescriptor(
-    'data-store',
-    'legend.dataStore',
-    'semantic.dataStore.tooltip',
-    'data-store',
-    'inputFill',
-    'inputBorder'
-  ),
-  owner: i18nDescriptor(
-    'owner',
-    'legend.owner',
-    'semantic.owner.tooltip',
-    'chip',
-    'ownerFill',
-    'ownerBorder'
-  ),
-  input: i18nDescriptor(
-    'input',
-    'legend.input',
-    'semantic.input.tooltip',
-    'rounded-rect',
-    'inputFill',
-    'inputBorder'
-  ),
-  output: i18nDescriptor(
-    'output',
-    'legend.output',
-    'semantic.output.tooltip',
-    'rounded-rect',
-    'outputFill',
-    'outputBorder'
-  ),
-  cc: i18nDescriptor(
-    'cc',
-    'legend.cc',
-    'semantic.cc.tooltip',
-    'rounded-rect',
-    'ccFill',
-    'ccBorder'
-  ),
-  basis: i18nDescriptor(
-    'basis',
-    'legend.basis',
-    'semantic.basis.tooltip',
-    'chip',
-    'basisFill',
-    'basisBorder'
-  ),
-  'subprocess-chip': i18nDescriptor(
-    'subprocess-chip',
-    'legend.subprocessChip',
-    'semantic.subprocessChip.tooltip',
-    'chip',
-    'subChipFill',
-    'subChipBorder'
-  )
-})
+export const SHAPE_SEMANTICS: Readonly<Record<ShapeSemanticKind, ShapeSemanticDescriptor>> =
+  Object.freeze({
+    'event-start': i18nDescriptor(
+      'event-start',
+      'legend.event.start',
+      'semantic.event.start.tooltip',
+      'start-circle',
+      'startFill',
+      'startBorder'
+    ),
+    'event-intermediate': i18nDescriptor(
+      'event-intermediate',
+      'legend.event.intermediate',
+      'semantic.event.intermediate.tooltip',
+      'intermediate-circle',
+      'startFill',
+      'basisBorder'
+    ),
+    'event-end': i18nDescriptor(
+      'event-end',
+      'legend.event.end',
+      'semantic.event.end.tooltip',
+      'end-circle',
+      'endFill',
+      'endBorder'
+    ),
+    step: i18nDescriptor(
+      'step',
+      'legend.step',
+      'semantic.step.tooltip',
+      'rounded-rect',
+      'startFill',
+      'stepGreenBorder'
+    ),
+    subprocess: i18nDescriptor(
+      'subprocess',
+      'legend.subprocess',
+      'semantic.subprocess.tooltip',
+      'double-rounded-rect',
+      'subChipFill',
+      'subChipBorder'
+    ),
+    'gateway-exclusive': gatewayDescriptor('gateway-exclusive', 'bpmn:ExclusiveGateway'),
+    'gateway-inclusive': gatewayDescriptor('gateway-inclusive', 'bpmn:InclusiveGateway'),
+    'gateway-parallel': gatewayDescriptor('gateway-parallel', 'bpmn:ParallelGateway'),
+    'gateway-event-based': i18nDescriptor(
+      'gateway-event-based',
+      'legend.gateway.eventBased',
+      'semantic.gateway.eventBased.tooltip',
+      'event-based-diamond',
+      'basisFill',
+      'basisBorder'
+    ),
+    'gateway-complex': i18nDescriptor(
+      'gateway-complex',
+      'legend.gateway.complex',
+      'semantic.gateway.complex.tooltip',
+      'complex-diamond',
+      'basisFill',
+      'basisBorder'
+    ),
+    participant: i18nDescriptor(
+      'participant',
+      'legend.participant',
+      'semantic.participant.tooltip',
+      'participant',
+      'startFill',
+      'stepGreenBorder'
+    ),
+    lane: i18nDescriptor(
+      'lane',
+      'legend.lane',
+      'semantic.lane.tooltip',
+      'lane',
+      'startFill',
+      'stepGreenBorder'
+    ),
+    annotation: i18nDescriptor(
+      'annotation',
+      'legend.annotation',
+      'semantic.annotation.tooltip',
+      'annotation',
+      'noteFill',
+      'noteBorder'
+    ),
+    'data-object': i18nDescriptor(
+      'data-object',
+      'legend.dataObject',
+      'semantic.dataObject.tooltip',
+      'data-object',
+      'inputFill',
+      'inputBorder'
+    ),
+    'data-store': i18nDescriptor(
+      'data-store',
+      'legend.dataStore',
+      'semantic.dataStore.tooltip',
+      'data-store',
+      'inputFill',
+      'inputBorder'
+    ),
+    owner: i18nDescriptor(
+      'owner',
+      'legend.owner',
+      'semantic.owner.tooltip',
+      'chip',
+      'ownerFill',
+      'ownerBorder'
+    ),
+    input: i18nDescriptor(
+      'input',
+      'legend.input',
+      'semantic.input.tooltip',
+      'rounded-rect',
+      'inputFill',
+      'inputBorder'
+    ),
+    output: i18nDescriptor(
+      'output',
+      'legend.output',
+      'semantic.output.tooltip',
+      'rounded-rect',
+      'outputFill',
+      'outputBorder'
+    ),
+    cc: i18nDescriptor(
+      'cc',
+      'legend.cc',
+      'semantic.cc.tooltip',
+      'rounded-rect',
+      'ccFill',
+      'ccBorder'
+    ),
+    basis: i18nDescriptor(
+      'basis',
+      'legend.basis',
+      'semantic.basis.tooltip',
+      'chip',
+      'basisFill',
+      'basisBorder'
+    ),
+    'subprocess-chip': i18nDescriptor(
+      'subprocess-chip',
+      'legend.subprocessChip',
+      'semantic.subprocessChip.tooltip',
+      'chip',
+      'subChipFill',
+      'subChipBorder'
+    )
+  })
 
 /** Default display order for the legend. */
-export const SHAPE_LEGEND_KINDS: readonly ShapeSemanticKind[] =
-  SHAPE_SEMANTIC_KINDS
+export const SHAPE_LEGEND_KINDS: readonly ShapeSemanticKind[] = SHAPE_SEMANTIC_KINDS
 
 const DICTIONARIES: Record<Lang, Record<Key, string>> = { en, ar }
 
@@ -371,9 +354,7 @@ const STEP_TYPES: ReadonlySet<string> = new Set([
   'bpmn:ScriptTask'
 ])
 
-const GATEWAY_KINDS: Readonly<
-  Partial<Record<string, ShapeSemanticKind>>
-> = Object.freeze({
+const GATEWAY_KINDS: Readonly<Partial<Record<string, ShapeSemanticKind>>> = Object.freeze({
   'bpmn:ExclusiveGateway': 'gateway-exclusive',
   'bpmn:InclusiveGateway': 'gateway-inclusive',
   'bpmn:ParallelGateway': 'gateway-parallel',
@@ -392,10 +373,7 @@ export function shapeSemanticKindForElement(
     return null
   }
 
-  const type =
-    typeof element.type === 'string'
-      ? element.type
-      : element.businessObject?.$type
+  const type = typeof element.type === 'string' ? element.type : element.businessObject?.$type
   if (typeof type !== 'string' || !type.startsWith('bpmn:')) return null
 
   const gatewayKind = GATEWAY_KINDS[type]
@@ -427,9 +405,7 @@ export function shapeSemanticForElement(
   return kind ? resolveShapeSemantic(kind, lang) : null
 }
 
-const DECORATION_KINDS: Readonly<
-  Record<string, ShapeSemanticKind>
-> = Object.freeze({
+const DECORATION_KINDS: Readonly<Record<string, ShapeSemanticKind>> = Object.freeze({
   owner: 'owner',
   responsible: 'owner',
   'responsible-owner': 'owner',

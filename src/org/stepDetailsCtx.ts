@@ -80,11 +80,7 @@ function readVisibleName(bo: Record<string, unknown> | undefined): string {
 
 /** Seed the ACTIVE language's EMPTY name field from the visible name (see the
  *  module doc for why only the active side, and why stored values win). */
-function seedActiveName(
-  initial: StepDetailsValues,
-  diagLang: 'en' | 'ar',
-  visible: string
-): void {
+function seedActiveName(initial: StepDetailsValues, diagLang: 'en' | 'ar', visible: string): void {
   if (!visible.trim()) return
   if (diagLang === 'en' && initial.nameEn === '') initial.nameEn = visible
   if (diagLang === 'ar' && initial.nameAr === '') initial.nameAr = visible

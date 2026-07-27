@@ -49,7 +49,10 @@ function makeWorld(elements: FakeElement[] = []) {
     },
     off(event: string, callback: (event: unknown) => void): void {
       offCalls.push({ event, callback })
-      handlers.set(event, (handlers.get(event) ?? []).filter((item) => item !== callback))
+      handlers.set(
+        event,
+        (handlers.get(event) ?? []).filter((item) => item !== callback)
+      )
     }
   }
   const modeling = {
@@ -159,8 +162,7 @@ describe('fitInteriorBox', () => {
   })
 
   it('does not balloon the audited realistic call-activity sentence', () => {
-    const name =
-      'Review the complete delegated case and all supporting evidence before continuing'
+    const name = 'Review the complete delegated case and all supporting evidence before continuing'
     expect(fitInteriorBox(name, { reserveSubChip: true })).toEqual({ w: 160, h: 90 })
   })
 

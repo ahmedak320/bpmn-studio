@@ -160,7 +160,9 @@ export function DetailsCard({ modeler, onOpenDetails }: DetailsCardProps): JSX.E
   }
 
   const header = (
-    <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 8 }}>
+    <div
+      style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 8 }}
+    >
       <strong style={{ fontSize: 12.5 }}>{t('details.card.title')}</strong>
       {ctx && (
         <span style={{ fontSize: 11, opacity: 0.65, flex: '0 0 auto' }}>
@@ -200,7 +202,8 @@ export function DetailsCard({ modeler, onOpenDetails }: DetailsCardProps): JSX.E
 
   // Completeness block — only for types the canvas badge can ever apply to.
   const elementType = typeof ctx.element?.type === 'string' ? ctx.element.type : ''
-  const eligible = ctx.mode === 'element' && elementType !== '' && isMissingBadgeEligibleType(elementType)
+  const eligible =
+    ctx.mode === 'element' && elementType !== '' && isMissingBadgeEligibleType(elementType)
   let missing: MissingCategory[] = []
   if (eligible && ctx.element) {
     try {

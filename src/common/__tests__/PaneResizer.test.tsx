@@ -110,7 +110,9 @@ describe('PaneResizer (static render)', () => {
   })
 
   it('renders when visible is true or omitted', () => {
-    expect(renderToStaticMarkup(<PaneResizer {...baseProps} visible />)).toContain('role="separator"')
+    expect(renderToStaticMarkup(<PaneResizer {...baseProps} visible />)).toContain(
+      'role="separator"'
+    )
     expect(renderToStaticMarkup(<PaneResizer {...baseProps} />)).toContain('role="separator"')
   })
 })

@@ -4,10 +4,7 @@
 // on the shared per-file linter so the definition of "unresolved" is identical
 // to the editor's inline badge. No React/DOM: unit-tested in plain node.
 
-import {
-  parseProcessesFromXml,
-  listUnresolvedCalledElements
-} from '@/core/processIndex'
+import { parseProcessesFromXml, listUnresolvedCalledElements } from '@/core/processIndex'
 import type { ProcessIndex } from '@/core/processIndex'
 import { baseOf } from '../fs/fsAccess'
 

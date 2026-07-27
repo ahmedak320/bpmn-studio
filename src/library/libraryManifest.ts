@@ -62,9 +62,7 @@ export function buildLibraryManifest(
       })
     }
   }
-  hierarchy.sort(
-    (a, b) => compare(a.parentFile, b.parentFile) || compare(a.childFile, b.childFile)
-  )
+  hierarchy.sort((a, b) => compare(a.parentFile, b.parentFile) || compare(a.childFile, b.childFile))
 
   return {
     version: 1,

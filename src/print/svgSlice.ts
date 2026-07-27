@@ -47,7 +47,10 @@ function findRootSvgOpen(svg: string): RootTag | null {
 function parseViewBox(attrs: string): Rect | null {
   const match = /viewBox\s*=\s*(["'])([^"']*)\1/i.exec(attrs)
   if (!match) return null
-  const parts = match[2].trim().split(/[\s,]+/).map(Number)
+  const parts = match[2]
+    .trim()
+    .split(/[\s,]+/)
+    .map(Number)
   if (parts.length !== 4 || parts.some((n) => Number.isNaN(n))) return null
   return { x: parts[0], y: parts[1], width: parts[2], height: parts[3] }
 }
@@ -62,8 +65,7 @@ export function splitSvg(svg: string): { inner: string; viewBox: Rect | null } {
   if (!root) return { inner: svg, viewBox: null }
 
   const lastClose = svg.toLowerCase().lastIndexOf('</svg>')
-  const inner =
-    lastClose >= root.end ? svg.slice(root.end, lastClose) : svg.slice(root.end)
+  const inner = lastClose >= root.end ? svg.slice(root.end, lastClose) : svg.slice(root.end)
 
   return { inner, viewBox: parseViewBox(root.attrs) }
 }

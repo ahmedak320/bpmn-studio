@@ -51,10 +51,7 @@ class MockFileHandle {
     return {
       text: async () => new TextDecoder().decode(bytes),
       arrayBuffer: async () =>
-        bytes.buffer.slice(
-          bytes.byteOffset,
-          bytes.byteOffset + bytes.byteLength
-        ) as ArrayBuffer
+        bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer
     }
   }
   async createWritable(): Promise<{
@@ -104,10 +101,7 @@ class MockDirectoryHandle {
     return dir
   }
 
-  async getFileHandle(
-    name: string,
-    options: { create?: boolean } = {}
-  ): Promise<MockFileHandle> {
+  async getFileHandle(name: string, options: { create?: boolean } = {}): Promise<MockFileHandle> {
     const existing = this.entriesMap.get(name)
     if (existing) {
       if (existing.kind !== 'file') throw new Error(`${name} is a directory`)
@@ -303,7 +297,12 @@ describe('buildTree', () => {
 
     const names = (tree.children ?? []).map((c) => `${c.type}:${c.name}`)
     // Folders (Archive, Sub) sort before files (alpha, zeta); .txt excluded.
-    expect(names).toEqual(['directory:Archive', 'directory:Sub', 'file:alpha.bpmn', 'file:zeta.bpmn'])
+    expect(names).toEqual([
+      'directory:Archive',
+      'directory:Sub',
+      'file:alpha.bpmn',
+      'file:zeta.bpmn'
+    ])
 
     const sub = findChild(tree, 'Sub')
     expect(sub?.children?.map((c) => c.relPath)).toEqual(['Sub/child.bpmn'])

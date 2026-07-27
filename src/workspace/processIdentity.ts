@@ -38,19 +38,21 @@ function processIdsFromDefinitions(definitions: unknown): readonly string[] {
   )
 }
 
-export const secureWorkspaceProcessIdentityInspector: WorkspaceProcessIdentityInspector =
-  async (xml, signal) => {
-    if (signal?.aborted) throw signal.reason ?? new DOMException('Aborted', 'AbortError')
-    const parsed = await validateBpmnXml(xml, {
-      requireBilingual: false,
-      requireDi: false
-    })
-    if (signal?.aborted) throw signal.reason ?? new DOMException('Aborted', 'AbortError')
-    if (!parsed.summary.xmlWellFormed || !parsed.definitions) {
-      throw new Error('A workspace BPMN file could not be securely parsed for process identity.')
-    }
-    return Object.freeze({ processIds: processIdsFromDefinitions(parsed.definitions) })
+export const secureWorkspaceProcessIdentityInspector: WorkspaceProcessIdentityInspector = async (
+  xml,
+  signal
+) => {
+  if (signal?.aborted) throw signal.reason ?? new DOMException('Aborted', 'AbortError')
+  const parsed = await validateBpmnXml(xml, {
+    requireBilingual: false,
+    requireDi: false
+  })
+  if (signal?.aborted) throw signal.reason ?? new DOMException('Aborted', 'AbortError')
+  if (!parsed.summary.xmlWellFormed || !parsed.definitions) {
+    throw new Error('A workspace BPMN file could not be securely parsed for process identity.')
   }
+  return Object.freeze({ processIds: processIdsFromDefinitions(parsed.definitions) })
+}
 
 export function normalizeProcessIdentitySnapshot(
   processIndex: ReadonlyMap<string, { readonly relPath: string }> | undefined,
@@ -95,9 +97,7 @@ export async function scanWorkspaceProcessIdentities(
   const files = listed
     .filter(
       (entry) =>
-        entry.kind === 'file' &&
-        /\.bpmn$/i.test(entry.path) &&
-        !isReservedOrbitPmPath(entry.path)
+        entry.kind === 'file' && /\.bpmn$/i.test(entry.path) && !isReservedOrbitPmPath(entry.path)
     )
     .sort((left, right) => left.path.localeCompare(right.path, 'en'))
   const byId = new Map<string, string>()

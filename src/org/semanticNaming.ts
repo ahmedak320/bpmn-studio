@@ -32,7 +32,8 @@ export const SEMANTIC_NAMING = Object.freeze({
   'bpmn:ParallelGateway': Object.freeze({
     en: Object.freeze({
       display: 'Parallel gateway',
-      tooltip: 'Starts concurrent paths, or waits for all incoming paths without evaluating conditions.'
+      tooltip:
+        'Starts concurrent paths, or waits for all incoming paths without evaluating conditions.'
     }),
     ar: Object.freeze({
       display: 'بوابة متوازية',
@@ -69,10 +70,7 @@ export interface GatewayNamingContext {
  * Matching is deliberately conservative: trim the whole value and case-fold
  * it, but never normalize spacing or remove an alias from a larger label.
  */
-export function matchesGenericSemanticAlias(
-  value: string | undefined,
-  alias: string
-): boolean {
+export function matchesGenericSemanticAlias(value: string | undefined, alias: string): boolean {
   return value !== undefined && value.trim().toLowerCase() === alias.trim().toLowerCase()
 }
 
@@ -118,10 +116,7 @@ function joinedChoices(values: readonly string[], lang: SemanticLang): string {
   return `${head}${lang === 'ar' ? ' أم ' : ' or '}${last}`
 }
 
-function contextualNameForLocale(
-  context: GatewayNamingContext,
-  lang: SemanticLang
-): string {
+function contextualNameForLocale(context: GatewayNamingContext, lang: SemanticLang): string {
   const genuine = meaningful(context.name?.[lang])
   if (genuine) return genuine
 

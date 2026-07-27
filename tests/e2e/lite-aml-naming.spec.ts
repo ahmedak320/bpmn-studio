@@ -219,8 +219,9 @@ async function installMockWorkspace(page: Page): Promise<void> {
     }
 
     const root = directoryHandle('SemanticWorkspace')
-    ;(window as unknown as { showDirectoryPicker: () => Promise<MockDirectory> })
-      .showDirectoryPicker = async () => root
+    ;(
+      window as unknown as { showDirectoryPicker: () => Promise<MockDirectory> }
+    ).showDirectoryPicker = async () => root
   })
 }
 
@@ -299,10 +300,7 @@ async function renderedElementText(page: Page, elementId: string): Promise<strin
   }, elementId)
 }
 
-async function compactRenderedElementText(
-  page: Page,
-  elementId: string
-): Promise<string> {
+async function compactRenderedElementText(page: Page, elementId: string): Promise<string> {
   return (await renderedElementText(page, elementId)).replace(/\s+/g, '')
 }
 
@@ -352,9 +350,7 @@ test('AML import persists contextual standards-based gateway names in EN/AR and 
   await canonical.click()
   await expect(page.locator('.djs-container svg').first()).toBeVisible({ timeout: 20_000 })
   await page.waitForFunction(() => {
-    const app = (
-      window as unknown as { __ORBITPM_LITE__?: { modeler?: unknown } }
-    ).__ORBITPM_LITE__
+    const app = (window as unknown as { __ORBITPM_LITE__?: { modeler?: unknown } }).__ORBITPM_LITE__
     return Boolean(app?.modeler)
   })
 
@@ -362,19 +358,13 @@ test('AML import persists contextual standards-based gateway names in EN/AR and 
   expect(english).toHaveLength(4)
   const question = english.find((gateway) => gateway.nameEn === 'Approved?')
   const exclusiveDefault = english.find(
-    (gateway) =>
-      gateway.type === 'bpmn:ExclusiveGateway' &&
-      gateway.nameEn === 'Exclusive gateway'
+    (gateway) => gateway.type === 'bpmn:ExclusiveGateway' && gateway.nameEn === 'Exclusive gateway'
   )
   const inclusiveDefault = english.find(
-    (gateway) =>
-      gateway.type === 'bpmn:InclusiveGateway' &&
-      gateway.nameEn === 'Inclusive gateway'
+    (gateway) => gateway.type === 'bpmn:InclusiveGateway' && gateway.nameEn === 'Inclusive gateway'
   )
   const parallelDefault = english.find(
-    (gateway) =>
-      gateway.type === 'bpmn:ParallelGateway' &&
-      gateway.nameEn === 'Parallel gateway'
+    (gateway) => gateway.type === 'bpmn:ParallelGateway' && gateway.nameEn === 'Parallel gateway'
   )
   expect(question, 'the genuine bilingual question should survive import').toBeTruthy()
   expect(exclusiveDefault, 'generic XOR alias should become a useful name').toBeTruthy()

@@ -77,7 +77,13 @@ describe('collectProposedLinks', () => {
   it('collects a top-level callActivity with a non-empty calledProcess', () => {
     const ir: BpmnElement[] = [
       { type: 'startEvent', id: 'S' },
-      { type: 'callActivity', id: 'CA_1', label: 'Sub A', calledProcess: 'Process_a', confidence: 'high' },
+      {
+        type: 'callActivity',
+        id: 'CA_1',
+        label: 'Sub A',
+        calledProcess: 'Process_a',
+        confidence: 'high'
+      },
       { type: 'endEvent', id: 'E' }
     ]
     expect(collectProposedLinks(ir)).toEqual([
@@ -112,7 +118,13 @@ describe('collectProposedLinks', () => {
           {
             condition: 'yes',
             path: [
-              { type: 'callActivity', id: 'CA_yes', label: 'Fulfil', calledProcess: 'Process_fulfil', confidence: 'high' }
+              {
+                type: 'callActivity',
+                id: 'CA_yes',
+                label: 'Fulfil',
+                calledProcess: 'Process_fulfil',
+                confidence: 'high'
+              }
             ]
           },
           {
@@ -127,7 +139,12 @@ describe('collectProposedLinks', () => {
                   {
                     condition: 'a',
                     path: [
-                      { type: 'callActivity', id: 'CA_deep', label: 'Notify', calledProcess: 'Process_notify' }
+                      {
+                        type: 'callActivity',
+                        id: 'CA_deep',
+                        label: 'Notify',
+                        calledProcess: 'Process_notify'
+                      }
                     ]
                   }
                 ]
@@ -150,7 +167,13 @@ describe('collectProposedLinks', () => {
           [{ type: 'callActivity', id: 'CA_p1', label: 'Left', calledProcess: 'Process_l' }],
           [
             { type: 'task', id: 'T', label: 'plain' },
-            { type: 'callActivity', id: 'CA_p2', label: 'Right', calledProcess: 'Process_r', confidence: 'high' }
+            {
+              type: 'callActivity',
+              id: 'CA_p2',
+              label: 'Right',
+              calledProcess: 'Process_r',
+              confidence: 'high'
+            }
           ]
         ]
       }

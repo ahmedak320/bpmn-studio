@@ -82,11 +82,9 @@ describe('planMissingInfo', () => {
   })
 
   it('whitespace-only list values still count as missing (matches render emptiness)', () => {
-    expect(planMissingInfo({ respList: '  \n  ', inputs: ' \n', outputs: '\n' }, 'bpmn:Task')).toEqual([
-      'owner',
-      'inputs',
-      'outputs'
-    ])
+    expect(
+      planMissingInfo({ respList: '  \n  ', inputs: ' \n', outputs: '\n' }, 'bpmn:Task')
+    ).toEqual(['owner', 'inputs', 'outputs'])
   })
 
   it('a fully complete activity yields []', () => {
@@ -213,7 +211,10 @@ function extentOf(d: Decoration): [number, number, number, number] | null {
   }
 }
 
-function overlaps(a: [number, number, number, number], b: [number, number, number, number]): boolean {
+function overlaps(
+  a: [number, number, number, number],
+  b: [number, number, number, number]
+): boolean {
   return a[0] < b[2] && b[0] < a[2] && a[1] < b[3] && b[1] < a[3]
 }
 
@@ -458,7 +459,12 @@ describe('canRenderOrg with the completeness flag', () => {
   })
 
   it('flag ON claims bare badge-eligible types: activities, gateways, start events', () => {
-    for (const type of [...PLAIN_ACTIVITIES, ...GATEWAYS, 'bpmn:BusinessRuleTask', 'bpmn:StartEvent']) {
+    for (const type of [
+      ...PLAIN_ACTIVITIES,
+      ...GATEWAYS,
+      'bpmn:BusinessRuleTask',
+      'bpmn:StartEvent'
+    ]) {
       expect(canRenderOrg(bare(type), true, true), type).toBe(true)
     }
   })
@@ -509,7 +515,10 @@ describe('OrgRenderer.canRender consults the completeness flag live', () => {
 
   it('default-ON: a bare task is claimed; toggling the stored flag releases it', () => {
     const store = installMemoryStorage()
-    const renderer = new OrgRenderer({ on: vi.fn() }, { drawShape: vi.fn(), drawConnection: vi.fn() })
+    const renderer = new OrgRenderer(
+      { on: vi.fn() },
+      { drawShape: vi.fn(), drawConnection: vi.fn() }
+    )
 
     // unset storage -> completeness defaults ON -> bare task claimed
     expect(renderer.canRender(bareTask)).toBe(true)

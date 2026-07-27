@@ -245,7 +245,10 @@ export function OwnerPicker({
                     fontSize: 13
                   }}
                 >
-                  <span dir="auto" style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                  <span
+                    dir="auto"
+                    style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
+                  >
                     {entry.name}
                   </span>
                   <span
@@ -263,7 +266,8 @@ export function OwnerPicker({
                       style={{
                         padding: '0.05rem 0.4rem',
                         borderRadius: 999,
-                        background: i === activeIndex ? 'rgba(255,255,255,0.25)' : 'rgba(127,127,127,0.25)'
+                        background:
+                          i === activeIndex ? 'rgba(255,255,255,0.25)' : 'rgba(127,127,127,0.25)'
                       }}
                     >
                       {entry.count}

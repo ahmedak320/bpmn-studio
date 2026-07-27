@@ -111,9 +111,11 @@ describe('connectedEdgesForSelection', () => {
     const incomingB = edge('Flow_In_B')
     const outgoing = edge('Flow_Out')
 
-    expect(
-      connectedEdgesForSelection([activity([incomingA, incomingB], [outgoing])])
-    ).toEqual([incomingA, incomingB, outgoing])
+    expect(connectedEdgesForSelection([activity([incomingA, incomingB], [outgoing])])).toEqual([
+      incomingA,
+      incomingB,
+      outgoing
+    ])
   })
 
   it('deduplicates a self-loop by object identity and by edge ID', () => {
@@ -122,9 +124,7 @@ describe('connectedEdgesForSelection', () => {
     const anonymous = edge()
 
     expect(
-      connectedEdgesForSelection([
-        activity([loop, anonymous], [loop, duplicateWrapper, anonymous])
-      ])
+      connectedEdgesForSelection([activity([loop, anonymous], [loop, duplicateWrapper, anonymous])])
     ).toEqual([loop, anonymous])
   })
 
@@ -167,12 +167,7 @@ describe('connectedEdgesForSelection', () => {
 describe('ConnectedEdgeHighlight DI service', () => {
   it('exports a structural bpmn-js module and subscribes to every repaint/clear event', () => {
     const world = makeWorld()
-    new ConnectedEdgeHighlight(
-      world.eventBus,
-      world.canvas,
-      world.graphicsFactory,
-      world.selection
-    )
+    new ConnectedEdgeHighlight(world.eventBus, world.canvas, world.graphicsFactory, world.selection)
 
     expect(ConnectedEdgeHighlight.$inject).toEqual([
       'eventBus',
@@ -196,12 +191,7 @@ describe('ConnectedEdgeHighlight DI service', () => {
     const incoming = edge('Flow_In')
     const outgoing = edge('Flow_Out')
     const world = makeWorld()
-    new ConnectedEdgeHighlight(
-      world.eventBus,
-      world.canvas,
-      world.graphicsFactory,
-      world.selection
-    )
+    new ConnectedEdgeHighlight(world.eventBus, world.canvas, world.graphicsFactory, world.selection)
 
     world.fire('selection.changed', {
       newSelection: [activity([incoming], [outgoing])]
@@ -226,22 +216,14 @@ describe('ConnectedEdgeHighlight DI service', () => {
       expect(wrapper.getAttribute('pointer-events')).toBe('none')
       expect(wrapper.getAttribute('aria-hidden')).toBe('true')
       const route = wrapper.children[0]
-      expect(route.getAttribute('stroke-width')).toBe(
-        String(CONNECTED_EDGE_HIGHLIGHT_WIDTH)
-      )
+      expect(route.getAttribute('stroke-width')).toBe(String(CONNECTED_EDGE_HIGHLIGHT_WIDTH))
       expect(route.getAttribute('data-org-highlight-route')).toBe('true')
-      expect(route.getAttribute('marker-end')).toMatch(
-        /^url\(#orbitpm-highlight-arrow-/
-      )
+      expect(route.getAttribute('marker-end')).toMatch(/^url\(#orbitpm-highlight-arrow-/)
       const defs = wrapper.children[1]
       expect(defs.tagName).toBe('defs')
       const arrow = defs.children[0].children[0]
-      expect(arrow.getAttribute('fill')).toBe(
-        wrapper.getAttribute('data-highlight-color')
-      )
-      expect(arrow.getAttribute('stroke')).toBe(
-        wrapper.getAttribute('data-highlight-color')
-      )
+      expect(arrow.getAttribute('fill')).toBe(wrapper.getAttribute('data-highlight-color'))
+      expect(arrow.getAttribute('stroke')).toBe(wrapper.getAttribute('data-highlight-color'))
     }
 
     expect(world.drawConnection).toHaveBeenNthCalledWith(1, expect.anything(), incoming, {
@@ -258,12 +240,7 @@ describe('ConnectedEdgeHighlight DI service', () => {
 
   it('clears on empty/multi/non-activity selection without creating a layer', () => {
     const world = makeWorld()
-    new ConnectedEdgeHighlight(
-      world.eventBus,
-      world.canvas,
-      world.graphicsFactory,
-      world.selection
-    )
+    new ConnectedEdgeHighlight(world.eventBus, world.canvas, world.graphicsFactory, world.selection)
 
     world.fire('selection.changed', { newSelection: [activity([], [edge('Flow')])] })
     expect(world.layer.children).toHaveLength(1)
@@ -283,12 +260,7 @@ describe('ConnectedEdgeHighlight DI service', () => {
     const oldEdge = edge('Flow_Old')
     const newEdge = edge('Flow_New')
     const world = makeWorld([activity([], [oldEdge])])
-    new ConnectedEdgeHighlight(
-      world.eventBus,
-      world.canvas,
-      world.graphicsFactory,
-      world.selection
-    )
+    new ConnectedEdgeHighlight(world.eventBus, world.canvas, world.graphicsFactory, world.selection)
 
     world.fire('import.done')
     const oldWrapper = world.layer.children[0]
@@ -315,12 +287,7 @@ describe('ConnectedEdgeHighlight DI service', () => {
       ;(parent as unknown as FakeSvgElement).appendChild(path)
       return path as unknown as SVGElement
     })
-    new ConnectedEdgeHighlight(
-      world.eventBus,
-      world.canvas,
-      world.graphicsFactory,
-      world.selection
-    )
+    new ConnectedEdgeHighlight(world.eventBus, world.canvas, world.graphicsFactory, world.selection)
 
     expect(() => world.fire('import.done')).not.toThrow()
     expect(world.layer.children).toHaveLength(1)

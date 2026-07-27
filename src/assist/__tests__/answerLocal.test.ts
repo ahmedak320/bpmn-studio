@@ -9,7 +9,12 @@ const exitDigest: ProcessDigest = {
   processName: 'Employee Exit',
   trigger: { type: 'dmthub', service: 'Exit Service' },
   steps: [
-    { id: 'Start_1', name: 'Request received', type: 'StartEvent', nexts: [{ targetId: 'Task_A' }] },
+    {
+      id: 'Start_1',
+      name: 'Request received',
+      type: 'StartEvent',
+      nexts: [{ targetId: 'Task_A' }]
+    },
     {
       id: 'Task_A',
       name: 'Conduct exit interview',
@@ -28,7 +33,15 @@ const exitDigest: ProcessDigest = {
         { targetId: 'Call_1', condition: 'No' }
       ]
     },
-    { id: 'Task_B', name: 'Notify finance', type: 'Task', kind: 'cc', ccTo: 'Finance', owner: 'AP Clerk', nexts: [{ targetId: 'End_1' }] },
+    {
+      id: 'Task_B',
+      name: 'Notify finance',
+      type: 'Task',
+      kind: 'cc',
+      ccTo: 'Finance',
+      owner: 'AP Clerk',
+      nexts: [{ targetId: 'End_1' }]
+    },
     {
       id: 'Call_1',
       name: 'Return assets',
@@ -49,7 +62,13 @@ const procurementDigest: ProcessDigest = {
   processName: 'Procurement Request',
   steps: [
     { id: 's', name: 'Start', type: 'StartEvent', nexts: [{ targetId: 't1' }] },
-    { id: 't1', name: 'Raise purchase order', type: 'Task', owner: 'Buyer', nexts: [{ targetId: 'e' }] },
+    {
+      id: 't1',
+      name: 'Raise purchase order',
+      type: 'Task',
+      owner: 'Buyer',
+      nexts: [{ targetId: 'e' }]
+    },
     { id: 'e', name: 'End', type: 'EndEvent', nexts: [] }
   ],
   notes: [],
@@ -106,7 +125,13 @@ describe('answerLocally — ambiguity across processes', () => {
     processName: 'Offboarding',
     steps: [
       { id: 's', name: 'Start', type: 'StartEvent', nexts: [{ targetId: 't' }] },
-      { id: 't', name: 'Order badge return', type: 'Task', owner: 'Security', nexts: [{ targetId: 'e' }] },
+      {
+        id: 't',
+        name: 'Order badge return',
+        type: 'Task',
+        owner: 'Security',
+        nexts: [{ targetId: 'e' }]
+      },
       { id: 'e', name: 'End', type: 'EndEvent', nexts: [] }
     ],
     notes: [],

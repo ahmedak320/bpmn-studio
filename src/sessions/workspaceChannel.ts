@@ -40,10 +40,7 @@ export type WorkspaceChannelMessage =
       fingerprint?: FileFingerprint
     })
 
-export type WorkspaceDocumentChange = Extract<
-  WorkspaceChannelMessage,
-  { type: 'document-change' }
->
+export type WorkspaceDocumentChange = Extract<WorkspaceChannelMessage, { type: 'document-change' }>
 
 export interface BroadcastMessageEventLike {
   data: unknown
@@ -51,14 +48,8 @@ export interface BroadcastMessageEventLike {
 
 export interface BroadcastChannelLike {
   postMessage(message: unknown): void
-  addEventListener(
-    type: 'message',
-    listener: (event: BroadcastMessageEventLike) => void
-  ): void
-  removeEventListener(
-    type: 'message',
-    listener: (event: BroadcastMessageEventLike) => void
-  ): void
+  addEventListener(type: 'message', listener: (event: BroadcastMessageEventLike) => void): void
+  removeEventListener(type: 'message', listener: (event: BroadcastMessageEventLike) => void): void
   close(): void
 }
 
@@ -293,10 +284,12 @@ export class BroadcastWorkspaceCoordinator {
     await wait(this.#timer, this.#contentionMs)
     this.#pending.delete(pending.requestId)
     this.#pruneExpired()
-    const blocking = pending.blockedBy ?? (() => {
-      const remote = this.#remoteLocks.get(path)
-      return remote ? { holderId: remote.ownerId, expiresAt: remote.expiresAt } : undefined
-    })()
+    const blocking =
+      pending.blockedBy ??
+      (() => {
+        const remote = this.#remoteLocks.get(path)
+        return remote ? { holderId: remote.ownerId, expiresAt: remote.expiresAt } : undefined
+      })()
     if (blocking) {
       return {
         acquired: false,
@@ -408,13 +401,7 @@ export class BroadcastWorkspaceCoordinator {
           expiresAt: message.expiresAt,
           observedUntil: this.#now() + Math.max(5, this.#contentionMs * 2)
         }
-        if (
-          !existingRequest ||
-          comparePriority(
-            incoming,
-            existingRequest
-          ) < 0
-        ) {
+        if (!existingRequest || comparePriority(incoming, existingRequest) < 0) {
           this.#remoteRequests.set(message.path, incoming)
         }
         const held = this.#localLocks.get(message.path)
@@ -472,17 +459,11 @@ export class BroadcastWorkspaceCoordinator {
       }
       case 'lock-released': {
         const request = this.#remoteRequests.get(message.path)
-        if (
-          request?.senderId === message.senderId &&
-          request.requestId === message.requestId
-        ) {
+        if (request?.senderId === message.senderId && request.requestId === message.requestId) {
           this.#remoteRequests.delete(message.path)
         }
         const known = this.#remoteLocks.get(message.path)
-        if (
-          known?.ownerId === message.senderId &&
-          known.requestId === message.requestId
-        ) {
+        if (known?.ownerId === message.senderId && known.requestId === message.requestId) {
           this.#remoteLocks.delete(message.path)
         }
         break

@@ -1,14 +1,8 @@
 import { describe, expect, it } from 'vitest'
 import { validateBpmnXml } from '../../validation'
 import { transform } from '../transform'
-import {
-  deriveGenerationIdentity,
-  generateBpmnXml
-} from '../xml'
-import {
-  BpmnLayoutValidationError,
-  layoutBpmnValidated
-} from '../layout'
+import { deriveGenerationIdentity, generateBpmnXml } from '../xml'
+import { BpmnLayoutValidationError, layoutBpmnValidated } from '../layout'
 import { bilingualGatewayIr, bilingualLinearIr } from './fixtures'
 
 describe('safe BPMN XML generation', () => {
@@ -19,9 +13,7 @@ describe('safe BPMN XML generation', () => {
     expect(first).toEqual(second)
     expect(first.processId).toMatch(/^Process_[a-f0-9]{16}$/)
     expect(first.definitionsId).toMatch(/^Definitions_[a-f0-9]{16}$/)
-    expect(first.targetNamespace).toBe(
-      `https://orbitpm.ae/bpmn/${first.processId}`
-    )
+    expect(first.targetNamespace).toBe(`https://orbitpm.ae/bpmn/${first.processId}`)
     expect(first.processId).not.toBe('Process_1')
     expect(first.definitionsId).not.toBe('definitions_1')
   })
@@ -54,9 +46,7 @@ describe('safe BPMN XML generation', () => {
     expect(xml).toContain('<process id="Process_order_review"')
     expect(xml).toContain('targetNamespace="urn:orbitpm:order-review"')
 
-    expect(() => generateBpmnXml(ir, { processId: 'Start' })).toThrow(
-      'identity collides'
-    )
+    expect(() => generateBpmnXml(ir, { processId: 'Start' })).toThrow('identity collides')
   })
 
   it('allocates globally unique synthetic join, flow and event-definition IDs', () => {
@@ -105,7 +95,9 @@ describe('safe BPMN XML generation', () => {
     const xml = generateBpmnXml(bilingualGatewayIr(), {
       identitySeed: 'gateway-fixture'
     })
-    expect(xml).toContain('<conditionExpression xsi:type="tFormalExpression">Approved</conditionExpression>')
+    expect(xml).toContain(
+      '<conditionExpression xsi:type="tFormalExpression">Approved</conditionExpression>'
+    )
     const defaultId = /<exclusiveGateway[^>]+default="([^"]+)"/.exec(xml)?.[1]
     expect(defaultId).toBeTruthy()
     const defaultTag = new RegExp(
@@ -141,9 +133,7 @@ describe('safe BPMN XML generation', () => {
     expect(xml).toContain('orbitpm:ownerEn="Procurement Section"')
     expect(xml).toContain('orbitpm:ownerAr="قسم المشتريات"')
     expect(xml).toContain('orbitpm:inputsAr="طلب الشراء"')
-    expect((await validateBpmnXml(xml, { requireBilingual: true })).summary.valid).toBe(
-      true
-    )
+    expect((await validateBpmnXml(xml, { requireBilingual: true })).summary.valid).toBe(true)
   })
 
   it('validates both sides of auto-layout and requires DI after layout', async () => {

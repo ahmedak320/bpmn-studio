@@ -304,19 +304,14 @@ function commonSourceJunction(a: PolylineEdge, b: PolylineEdge): Point | null {
   }
 
   if (sharedSegments === 0) return null
-  const bothComplete =
-    index === a.waypoints.length - 1 && index === b.waypoints.length - 1
+  const bothComplete = index === a.waypoints.length - 1 && index === b.waypoints.length - 1
   return bothComplete ? null : copyPoint(a.waypoints[index])
 }
 
 function commonTargetJunction(a: PolylineEdge, b: PolylineEdge): Point | null {
   const aLast = a.waypoints.length - 1
   const bLast = b.waypoints.length - 1
-  if (
-    aLast < 1 ||
-    bLast < 1 ||
-    !samePoint(a.waypoints[aLast], b.waypoints[bLast])
-  ) {
+  if (aLast < 1 || bLast < 1 || !samePoint(a.waypoints[aLast], b.waypoints[bLast])) {
     return null
   }
 
@@ -343,10 +338,7 @@ function findJunctionCandidates(edges: readonly PolylineEdge[]): JunctionCandida
   const sorted = [...edges].sort(
     (a, b) =>
       compareStrings(a.id, b.id) ||
-      compareStrings(
-        a.waypoints.map(pointKey).join(';'),
-        b.waypoints.map(pointKey).join(';')
-      )
+      compareStrings(a.waypoints.map(pointKey).join(';'), b.waypoints.map(pointKey).join(';'))
   )
   const candidates: JunctionCandidate[] = []
 
@@ -359,10 +351,10 @@ function findJunctionCandidates(edges: readonly PolylineEdge[]): JunctionCandida
       const topologyAwareSource = a.sourceId != null && b.sourceId != null
       const source =
         topologyAwareSource && a.sourceId === b.sourceId
-          ? commonSourceJunction(a, b) ??
+          ? (commonSourceJunction(a, b) ??
             (a.waypoints[0] && b.waypoints[0] && samePoint(a.waypoints[0], b.waypoints[0])
               ? copyPoint(a.waypoints[0])
-              : null)
+              : null))
           : topologyAwareSource
             ? null
             : commonSourceJunction(a, b)
@@ -375,8 +367,8 @@ function findJunctionCandidates(edges: readonly PolylineEdge[]): JunctionCandida
       const bLast = b.waypoints[b.waypoints.length - 1]
       const target =
         topologyAwareTarget && a.targetId === b.targetId
-          ? commonTargetJunction(a, b) ??
-            (aLast && bLast && samePoint(aLast, bLast) ? copyPoint(aLast) : null)
+          ? (commonTargetJunction(a, b) ??
+            (aLast && bLast && samePoint(aLast, bLast) ? copyPoint(aLast) : null))
           : topologyAwareTarget
             ? null
             : commonTargetJunction(a, b)
@@ -390,10 +382,7 @@ function findJunctionCandidates(edges: readonly PolylineEdge[]): JunctionCandida
 }
 
 function collapseJunctionCandidates(candidates: readonly JunctionCandidate[]): Junction[] {
-  const grouped = new Map<
-    string,
-    { point: Point; kind: Junction['kind']; edgeIds: Set<string> }
-  >()
+  const grouped = new Map<string, { point: Point; kind: Junction['kind']; edgeIds: Set<string> }>()
 
   for (const candidate of candidates) {
     const key = `${pointKey(candidate.point)}\u0000${candidate.kind}`
@@ -457,8 +446,9 @@ function strictInteriorIntersection(a: Segment, b: Segment): Point | null {
 }
 
 function isHorizontal(segment: Segment): boolean {
-  return Math.abs(segment.b.x - segment.a.x) > EPSILON &&
-    Math.abs(segment.b.y - segment.a.y) <= EPSILON
+  return (
+    Math.abs(segment.b.x - segment.a.x) > EPSILON && Math.abs(segment.b.y - segment.a.y) <= EPSILON
+  )
 }
 
 function crossingForSegments(a: Segment, b: Segment, point: Point): Crossing {
@@ -509,9 +499,7 @@ function findCrossingsPrepared(
 
       const point = strictInteriorIntersection(a, b)
       if (!point) continue
-      const junctionAtPoint = junctions.some((junction) =>
-        samePoint(junction.point, point)
-      )
+      const junctionAtPoint = junctions.some((junction) => samePoint(junction.point, point))
       const topologyJoin = junctions.some(
         (junction) =>
           samePoint(junction.point, point) &&

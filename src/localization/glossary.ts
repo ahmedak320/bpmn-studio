@@ -42,9 +42,7 @@ export function mergeGlossary(
   return [
     ...seeds
       .filter(
-        (entry) =>
-          !overridden.has(lookupKey(entry.en)) &&
-          !overridden.has(lookupKey(entry.ar))
+        (entry) => !overridden.has(lookupKey(entry.en)) && !overridden.has(lookupKey(entry.ar))
       )
       .map((entry) => ({ ...entry })),
     ...workspaceEntries.map((entry) => ({ ...entry }))
@@ -104,4 +102,3 @@ export function findLocalPair(
   }
   return undefined
 }
-

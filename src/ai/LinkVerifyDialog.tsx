@@ -29,9 +29,7 @@ export function LinkVerifyDialog({
   onCancel
 }: LinkVerifyDialogProps): JSX.Element {
   useLang()
-  const [checked, setChecked] = useState<Set<string>>(
-    () => new Set(unsure.map((l) => l.elementId))
-  )
+  const [checked, setChecked] = useState<Set<string>>(() => new Set(unsure.map((l) => l.elementId)))
 
   const toggle = (id: string): void => {
     setChecked((prev) => {

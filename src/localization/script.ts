@@ -1,8 +1,4 @@
-import {
-  SEEDED_GLOSSARY,
-  approvedNeutralTerms,
-  normalizeLocalizationLookup
-} from './glossary'
+import { SEEDED_GLOSSARY, approvedNeutralTerms, normalizeLocalizationLookup } from './glossary'
 import type { GlossaryEntry, LanguageCode, ScriptClass } from './types'
 
 const ARABIC_SCRIPT = /\p{Script=Arabic}/u
@@ -10,8 +6,7 @@ const LATIN_SCRIPT = /\p{Script=Latin}/u
 const LETTER = /\p{Letter}/u
 const NUMBER = /\p{Number}/u
 
-const URL_VALUE =
-  /^(?:(?:https?|ftp):\/\/|(?:mailto|tel):|www\.)[^\s]+$/iu
+const URL_VALUE = /^(?:(?:https?|ftp):\/\/|(?:mailto|tel):|www\.)[^\s]+$/iu
 const EMAIL_VALUE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/u
 
 /**
@@ -57,11 +52,7 @@ function neutralSet(options: ScriptClassifierOptions): Set<string> {
     options.approvedNeutralTerms === undefined
       ? approvedNeutralTerms(SEEDED_GLOSSARY)
       : [...options.approvedNeutralTerms]
-  return new Set(
-    terms
-      .map((term) => neutralKey(String(term)))
-      .filter((term) => term !== '')
-  )
+  return new Set(terms.map((term) => neutralKey(String(term))).filter((term) => term !== ''))
 }
 
 export function classifyScript(
@@ -136,10 +127,7 @@ export interface TargetValidationOptions extends ScriptClassifierOptions {
   approvedEnglishBilingualExceptions?: Iterable<string>
 }
 
-function exactApproved(
-  value: string,
-  approved: Iterable<string> | undefined
-): boolean {
+function exactApproved(value: string, approved: Iterable<string> | undefined): boolean {
   if (!approved) return false
   const key = neutralKey(value)
   for (const candidate of approved) {
@@ -177,4 +165,3 @@ export function classifierOptionsFromGlossary(
 ): ScriptClassifierOptions {
   return { approvedNeutralTerms: approvedNeutralTerms(glossary) }
 }
-

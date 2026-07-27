@@ -17,10 +17,13 @@ export interface LibraryZipExtra {
 }
 
 /** Build a zip archive (as raw bytes) from workspace files plus optional extras. */
-export function buildLibraryZip(files: LibraryZipFile[], extras: LibraryZipExtra[] = []): Uint8Array {
+export function buildLibraryZip(
+  files: LibraryZipFile[],
+  extras: LibraryZipExtra[] = []
+): Uint8Array {
   const entries: Array<{ path: string; content: string }> = [
     ...files.map((f) => ({ path: f.relPath, content: f.xml })),
-    ...extras.map((e) => ({ path: e.relPath, content: e.content })),
+    ...extras.map((e) => ({ path: e.relPath, content: e.content }))
   ]
 
   entries.sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0))
@@ -37,9 +40,7 @@ export function buildLibraryZip(files: LibraryZipFile[], extras: LibraryZipExtra
 function slug(rootName: string): string {
   const trimmed = rootName.trim()
   if (!trimmed) return 'workspace'
-  const replaced = trimmed
-    .replace(/\s+/g, '-')
-    .replace(/[^\p{L}\p{N}._-]/gu, '')
+  const replaced = trimmed.replace(/\s+/g, '-').replace(/[^\p{L}\p{N}._-]/gu, '')
   return replaced || 'workspace'
 }
 

@@ -69,7 +69,10 @@ export async function resolveFile(
 }
 
 /** Read a file's text by relPath. */
-export async function readFileAt(root: FileSystemDirectoryHandle, relPath: string): Promise<string> {
+export async function readFileAt(
+  root: FileSystemDirectoryHandle,
+  relPath: string
+): Promise<string> {
   const handle = await resolveFile(root, relPath)
   const file = await handle.getFile()
   return file.text()
@@ -632,9 +635,7 @@ export async function snapshotWorkspace(
  * are all derived from its result in memory, so a tree change re-reads every
  * `.bpmn` exactly once (mirroring the desktop app's on-refresh scan).
  */
-export async function scanWorkspaceFiles(
-  root: FileSystemDirectoryHandle
-): Promise<FileMeta[]> {
+export async function scanWorkspaceFiles(root: FileSystemDirectoryHandle): Promise<FileMeta[]> {
   const out: FileMeta[] = []
   async function walk(dir: FileSystemDirectoryHandle, relPath: string): Promise<void> {
     for await (const [childName, handle] of dir.entries()) {

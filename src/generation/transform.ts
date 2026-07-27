@@ -228,8 +228,7 @@ export function transform(
 
     for (let index = 0; index < level.length; index += 1) {
       const element = level[index]
-      const nextElementId =
-        index < level.length - 1 ? level[index + 1].id : nextAfterLevel
+      const nextElementId = index < level.length - 1 ? level[index + 1].id : nextAfterLevel
       const transformed: WorkingElement = {
         id: element.id,
         type: element.type,
@@ -250,10 +249,7 @@ export function transform(
       context.elementById.set(transformed.id, transformed)
 
       if (element.type === 'exclusiveGateway' || element.type === 'inclusiveGateway') {
-        const joinId =
-          element.has_join === true
-            ? context.ids.allocate(`${element.id}-join`)
-            : null
+        const joinId = element.has_join === true ? context.ids.allocate(`${element.id}-join`) : null
         if (joinId) {
           const join: WorkingElement = {
             id: joinId,
@@ -275,9 +271,7 @@ export function transform(
           if (target) {
             const flow = addFlow(element.id, target, {
               preferredId:
-                element.type === 'inclusiveGateway'
-                  ? `${element.id}-${target}`
-                  : undefined,
+                element.type === 'inclusiveGateway' ? `${element.id}-${target}` : undefined,
               condition: isDefault ? null : branch.condition,
               isDefault,
               orbitpm: isDefault ? undefined : branchFlowOrbitpmAttrs(branch)

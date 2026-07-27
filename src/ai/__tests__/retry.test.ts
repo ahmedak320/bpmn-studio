@@ -1,9 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import {
-  isTransientHttpStatus,
-  parseRetryAfter,
-  withBoundedRetry
-} from '../retry'
+import { isTransientHttpStatus, parseRetryAfter, withBoundedRetry } from '../retry'
 
 describe('bounded retry policy', () => {
   it('retries transient failures with bounded exponential delays', async () => {

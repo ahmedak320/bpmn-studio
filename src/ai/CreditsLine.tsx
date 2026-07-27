@@ -90,9 +90,7 @@ export function CreditsLine({ state, onRefresh, onReset, note }: CreditsLineProp
           })}
         </span>
         {estimated && (
-          <span style={noteStyle}>
-            {t('ai.usage.priceAsOf', { date: ESTIMATED_PRICE_AS_OF })}
-          </span>
+          <span style={noteStyle}>{t('ai.usage.priceAsOf', { date: ESTIMATED_PRICE_AS_OF })}</span>
         )}
         {onReset && (
           <button type="button" onClick={onReset} style={linkBtn}>
@@ -107,12 +105,15 @@ export function CreditsLine({ state, onRefresh, onReset, note }: CreditsLineProp
   let text: string
   if (state.kind === 'idle') text = t('ai.credits.refreshHint')
   else if (state.kind === 'loading') text = t('ai.credits.loading')
-  else if (state.kind === 'credits') text = t('ai.credits.remaining', { amount: state.remaining.toFixed(2) })
+  else if (state.kind === 'credits')
+    text = t('ai.credits.remaining', { amount: state.remaining.toFixed(2) })
   else text = t(creditsErrorKey(state.errorKind))
 
   return (
     <div style={wrap}>
-      <span style={{ ...textStyle, color: state.kind === 'error' ? '#dc2626' : 'var(--orbitpm-muted)' }}>
+      <span
+        style={{ ...textStyle, color: state.kind === 'error' ? '#dc2626' : 'var(--orbitpm-muted)' }}
+      >
         {text}
       </span>
       {onRefresh && (

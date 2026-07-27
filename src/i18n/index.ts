@@ -60,7 +60,11 @@ export function t(key: Key, vars?: Record<string, string | number>): string {
 }
 
 /** Picks the .one/.other plural variant and interpolates {count}. */
-export function tPlural(base: string, count: number, vars?: Record<string, string | number>): string {
+export function tPlural(
+  base: string,
+  count: number,
+  vars?: Record<string, string | number>
+): string {
   const key = (count === 1 ? `${base}.one` : `${base}.other`) as Key
   return t(key, { count, ...vars })
 }

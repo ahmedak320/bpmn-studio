@@ -40,9 +40,7 @@ export function buildCatalog(files: CatalogFileInput[], index: ProcessIndex): Ca
     const fileName = baseOf(file.relPath)
     const folder = dirOf(file.relPath)
     const lastModified =
-      typeof file.lastModified === 'number' && file.lastModified > 0
-        ? file.lastModified
-        : undefined
+      typeof file.lastModified === 'number' && file.lastModified > 0 ? file.lastModified : undefined
     const unresolvedCount = listUnresolvedCalledElements(file.xml, index).length
     const processes = parseProcessesFromXml(file.xml, file.relPath)
     if (processes.length === 0) {

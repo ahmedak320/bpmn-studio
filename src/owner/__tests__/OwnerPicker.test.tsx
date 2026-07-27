@@ -1,6 +1,11 @@
 import { describe, it, expect } from 'vitest'
 import { renderToStaticMarkup } from 'react-dom/server'
-import { OwnerPicker, DEFAULT_OWNER_PICKER_LABELS, browseOwners, ownerSuggestions } from '../OwnerPicker'
+import {
+  OwnerPicker,
+  DEFAULT_OWNER_PICKER_LABELS,
+  browseOwners,
+  ownerSuggestions
+} from '../OwnerPicker'
 import type { OwnerEntry } from '../ownersIndex'
 
 const noop = (): void => {}

@@ -127,7 +127,14 @@ describe('OrgConnectionRenderer DI and lifecycle', () => {
       { x: 100, y: 10 }
     ]
     const world = makeWorld([
-      { id: 'z-note', type: 'bpmn:Association', waypoints: [{ x: 0, y: 0 }, { x: 1, y: 1 }] },
+      {
+        id: 'z-note',
+        type: 'bpmn:Association',
+        waypoints: [
+          { x: 0, y: 0 },
+          { x: 1, y: 1 }
+        ]
+      },
       {
         id: 'b-flow',
         type: 'bpmn:SequenceFlow',

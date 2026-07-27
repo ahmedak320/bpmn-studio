@@ -64,7 +64,9 @@ describe('collectOwners', () => {
   })
 
   it('supports single-quoted attributes', () => {
-    const files = [{ relPath: 'a.bpmn', xml: `<task orbitpm:owner='Dana' orbitpm:ownerType='individual'/>` }]
+    const files = [
+      { relPath: 'a.bpmn', xml: `<task orbitpm:owner='Dana' orbitpm:ownerType='individual'/>` }
+    ]
     const entries = collectOwners(files)
     expect(entries[0]).toEqual({ name: 'Dana', type: 'individual', count: 1 })
   })
@@ -81,7 +83,9 @@ describe('collectOwners', () => {
   })
 
   it('ignores unknown ownerType values', () => {
-    const files = [{ relPath: 'a.bpmn', xml: `<task orbitpm:owner="Frank" orbitpm:ownerType="bogus"/>` }]
+    const files = [
+      { relPath: 'a.bpmn', xml: `<task orbitpm:owner="Frank" orbitpm:ownerType="bogus"/>` }
+    ]
     const entries = collectOwners(files)
     expect(entries[0].type).toBeUndefined()
   })
@@ -279,9 +283,9 @@ describe('ownerAdditionsFromValues', () => {
   })
 
   it('skips a blank owner field', () => {
-    expect(ownerAdditionsFromValues({ owner: '   ', ownerType: 'individual', respList: '' })).toEqual(
-      []
-    )
+    expect(
+      ownerAdditionsFromValues({ owner: '   ', ownerType: 'individual', respList: '' })
+    ).toEqual([])
   })
 
   it('extracts each respList person as an individual, splitting "Name — Role" lines', () => {

@@ -102,9 +102,7 @@ export interface HierarchyDepthCapRow {
   omittedReferenceCount: number
 }
 
-export type HierarchyReferenceChild =
-  | HierarchyReferenceRow
-  | HierarchyDepthCapRow
+export type HierarchyReferenceChild = HierarchyReferenceRow | HierarchyDepthCapRow
 export type HierarchyPhysicalRow = HierarchyDirectoryRow | HierarchyFileRow
 
 export interface ProcessHierarchy {
@@ -143,27 +141,18 @@ function compareText(a: string, b: string): number {
 function comparePhysicalNodes(a: LiteTreeNode, b: LiteTreeNode): number {
   if (a.type !== b.type) return a.type === 'directory' ? -1 : 1
   return (
-    compareText(
-      a.name.toLocaleLowerCase('en-US'),
-      b.name.toLocaleLowerCase('en-US')
-    ) ||
+    compareText(a.name.toLocaleLowerCase('en-US'), b.name.toLocaleLowerCase('en-US')) ||
     compareText(a.name, b.name) ||
     compareText(a.relPath, b.relPath)
   )
 }
 
-function compareLinks(
-  a: ProcessHierarchyLink,
-  b: ProcessHierarchyLink
-): number {
+function compareLinks(a: ProcessHierarchyLink, b: ProcessHierarchyLink): number {
   return (
     compareText(a.parentProcessId, b.parentProcessId) ||
     compareText(a.childProcessId, b.childProcessId) ||
     compareText(a.key, b.key) ||
-    compareText(
-      a.callActivityIds.join('\u0000'),
-      b.callActivityIds.join('\u0000')
-    )
+    compareText(a.callActivityIds.join('\u0000'), b.callActivityIds.join('\u0000'))
   )
 }
 
@@ -174,19 +163,13 @@ function normalizeMaxDepth(value: number | undefined): number {
   return Math.max(1, Math.floor(value))
 }
 
-function semanticFileKey(
-  processIds: readonly string[],
-  relPath: string
-): string {
+function semanticFileKey(processIds: readonly string[], relPath: string): string {
   return processIds.length > 0
     ? `file:${JSON.stringify(processIds)}`
     : `file-path:${JSON.stringify(relPath)}`
 }
 
-function referenceKey(
-  parentProcessId: string,
-  childProcessId: string
-): string {
+function referenceKey(parentProcessId: string, childProcessId: string): string {
   return `reference:${JSON.stringify([parentProcessId, childProcessId])}`
 }
 
@@ -258,10 +241,7 @@ export function buildProcessHierarchy(
     const outgoing = linksByParent.get(link.parentProcessId) ?? []
     outgoing.push(link)
     linksByParent.set(link.parentProcessId, outgoing)
-    linkByPair.set(
-      `${link.parentProcessId}\u0000${link.childProcessId}`,
-      link
-    )
+    linkByPair.set(`${link.parentProcessId}\u0000${link.childProcessId}`, link)
     if (link.parentProcessId === link.childProcessId) continue
     const parents = parentIdsByChild.get(link.childProcessId) ?? new Set<string>()
     parents.add(link.parentProcessId)
@@ -285,17 +265,13 @@ export function buildProcessHierarchy(
   const canonicalByRelPath = new Map<string, MutableFileRow>()
   const seenFilePaths = new Set<string>()
 
-  const projectPhysical = (
-    node: LiteTreeNode
-  ): MutableDirectoryRow | MutableFileRow | null => {
+  const projectPhysical = (node: LiteTreeNode): MutableDirectoryRow | MutableFileRow | null => {
     if (node.type === 'file') {
       if (seenFilePaths.has(node.relPath)) return null
       seenFilePaths.add(node.relPath)
       const processIds = [...(processIdsByPath.get(node.relPath) ?? [])]
       const sharedIds = processIds.filter((id) => sharedProcessIds.has(id))
-      const distinctCounts = processIds.map(
-        (id) => parentIdsByChild.get(id)?.size ?? 0
-      )
+      const distinctCounts = processIds.map((id) => parentIdsByChild.get(id)?.size ?? 0)
       const row: MutableFileRow = {
         kind: 'file',
         key: semanticFileKey(processIds, node.relPath),
@@ -326,11 +302,7 @@ export function buildProcessHierarchy(
     const children = [...(node.children ?? [])]
       .sort(comparePhysicalNodes)
       .map(projectPhysical)
-      .filter(
-        (
-          child
-        ): child is MutableDirectoryRow | MutableFileRow => child !== null
-      )
+      .filter((child): child is MutableDirectoryRow | MutableFileRow => child !== null)
     return {
       kind: 'directory',
       key: `directory:${node.relPath}`,
@@ -376,19 +348,14 @@ export function buildProcessHierarchy(
     if (row.processIds.length === 0) continue
     const owners = row.processIds.map((id) => ownerByChild.get(id))
     if (
-      owners.every(
-        (owner): owner is string =>
-          typeof owner === 'string' && owner === owners[0]
-      )
+      owners.every((owner): owner is string => typeof owner === 'string' && owner === owners[0])
     ) {
       const owner = owners[0] as string
       if (canonicalByProcessId.get(owner) !== row) ownerByFile.set(row, owner)
     }
   }
 
-  const removeOwnedFiles = (
-    row: MutableDirectoryRow | MutableFileRow
-  ): void => {
+  const removeOwnedFiles = (row: MutableDirectoryRow | MutableFileRow): void => {
     if (row.kind === 'file') return
     row.children = row.children.filter((child) => {
       if (child.kind === 'file' && ownerByFile.has(child)) return false
@@ -403,9 +370,7 @@ export function buildProcessHierarchy(
   )) {
     const ownerRow = canonicalByProcessId.get(ownerId)
     if (!ownerRow || ownerRow === childRow) continue
-    const ownedIds = childRow.processIds.filter(
-      (id) => ownerByChild.get(id) === ownerId
-    )
+    const ownedIds = childRow.processIds.filter((id) => ownerByChild.get(id) === ownerId)
     const links = ownedIds
       .map((id) => linkByPair.get(`${ownerId}\u0000${id}`))
       .filter((link): link is ProcessHierarchyLink => Boolean(link))
@@ -414,10 +379,7 @@ export function buildProcessHierarchy(
     childRow.ownerCallActivityIds = [
       ...new Set(links.flatMap((link) => link.callActivityIds))
     ].sort(compareText)
-    childRow.ownerCallCount = links.reduce(
-      (total, link) => total + link.count,
-      0
-    )
+    childRow.ownerCallCount = links.reduce((total, link) => total + link.count, 0)
     ownerRow.ownedChildren.push(childRow)
   }
   for (const row of canonicalByRelPath.values()) {
@@ -432,10 +394,7 @@ export function buildProcessHierarchy(
     ownerRowKeys: readonly string[]
   ): void => {
     if (row.kind === 'directory') {
-      const nextDirectories =
-        row.relPath === ''
-          ? ['']
-          : [...directoryPaths, row.relPath]
+      const nextDirectories = row.relPath === '' ? [''] : [...directoryPaths, row.relPath]
       for (const child of row.children) {
         assignVisibleAncestry(child, nextDirectories, ownerRowKeys)
       }
@@ -444,19 +403,12 @@ export function buildProcessHierarchy(
     row.ancestorDirectoryPaths = [...directoryPaths]
     row.ancestorRowKeys = [...ownerRowKeys]
     for (const child of row.ownedChildren) {
-      assignVisibleAncestry(
-        child,
-        directoryPaths,
-        [...ownerRowKeys, row.key]
-      )
+      assignVisibleAncestry(child, directoryPaths, [...ownerRowKeys, row.key])
     }
   }
   if (projectedRoot) assignVisibleAncestry(projectedRoot, [], [])
 
-  const isOwnerAncestor = (
-    parentProcessId: string,
-    childProcessId: string
-  ): boolean => {
+  const isOwnerAncestor = (parentProcessId: string, childProcessId: string): boolean => {
     let current: string | undefined = parentProcessId
     const seen = new Set<string>()
     while (current && !seen.has(current)) {
@@ -486,14 +438,11 @@ export function buildProcessHierarchy(
             : isOwnerAncestor(parentProcessId, link.childProcessId)
               ? 'back'
               : null
-        const distinctParentCount =
-          parentIdsByChild.get(link.childProcessId)?.size ?? 0
+        const distinctParentCount = parentIdsByChild.get(link.childProcessId)?.size ?? 0
         references.push({
           kind: 'reference',
           key: referenceKey(parentProcessId, link.childProcessId),
-          label:
-            processIndex.get(link.childProcessId)?.processName ||
-            link.childProcessId,
+          label: processIndex.get(link.childProcessId)?.processName || link.childProcessId,
           processId: link.childProcessId,
           sourceParentProcessId: parentProcessId,
           canonicalPath: childRow.canonicalPath,
@@ -507,9 +456,7 @@ export function buildProcessHierarchy(
           actionable: false,
           readOnly: true,
           canonical: false,
-          callActivityIds: [
-            ...new Set(link.callActivityIds)
-          ].sort(compareText),
+          callActivityIds: [...new Set(link.callActivityIds)].sort(compareText),
           count: link.count,
           shared: distinctParentCount > 1,
           distinctParentCount,

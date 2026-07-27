@@ -25,7 +25,10 @@ class MockFileHandle {
   async getFile(): Promise<{ text: () => Promise<string> }> {
     return { text: async () => this.content }
   }
-  async createWritable(): Promise<{ write: (d: string) => Promise<void>; close: () => Promise<void> }> {
+  async createWritable(): Promise<{
+    write: (d: string) => Promise<void>
+    close: () => Promise<void>
+  }> {
     let buf = ''
     return {
       write: async (data: string) => {
@@ -41,7 +44,10 @@ class MockDirectoryHandle {
   kind = 'directory' as const
   entriesMap = new Map<string, MockDirectoryHandle | MockFileHandle>()
   constructor(public name: string) {}
-  async getDirectoryHandle(name: string, options: { create?: boolean } = {}): Promise<MockDirectoryHandle> {
+  async getDirectoryHandle(
+    name: string,
+    options: { create?: boolean } = {}
+  ): Promise<MockDirectoryHandle> {
     const existing = this.entriesMap.get(name)
     if (existing) {
       if (existing.kind !== 'directory') throw new Error(`${name} is a file`)

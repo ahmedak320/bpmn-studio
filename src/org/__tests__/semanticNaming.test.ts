@@ -23,7 +23,8 @@ describe('SEMANTIC_NAMING', () => {
       'bpmn:InclusiveGateway': {
         en: {
           display: 'Inclusive gateway',
-          tooltip: 'Selects one or more matching paths, or synchronizes the paths that were activated.'
+          tooltip:
+            'Selects one or more matching paths, or synchronizes the paths that were activated.'
         },
         ar: {
           display: 'بوابة شاملة',
@@ -34,7 +35,8 @@ describe('SEMANTIC_NAMING', () => {
       'bpmn:ParallelGateway': {
         en: {
           display: 'Parallel gateway',
-          tooltip: 'Starts concurrent paths, or waits for all incoming paths without evaluating conditions.'
+          tooltip:
+            'Starts concurrent paths, or waits for all incoming paths without evaluating conditions.'
         },
         ar: {
           display: 'بوابة متوازية',

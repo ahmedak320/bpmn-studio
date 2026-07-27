@@ -47,7 +47,11 @@ async function installMockWorkspace(page: import('@playwright/test').Page): Prom
     <bpmndi:BPMNShape id="Call_missing_di" bpmnElement="Call_missing"><omgdc:Bounds x="420" y="98" width="100" height="80" /></bpmndi:BPMNShape>
   </bpmndi:BPMNPlane></bpmndi:BPMNDiagram>
 </bpmn2:definitions>`
-    const simple = (pid: string, name: string, taskName: string): string => `<?xml version="1.0" encoding="UTF-8"?>
+    const simple = (
+      pid: string,
+      name: string,
+      taskName: string
+    ): string => `<?xml version="1.0" encoding="UTF-8"?>
 <bpmn2:definitions ${NS} id="definitions_1" targetNamespace="http://bpmn.io/schema/bpmn">
   <bpmn2:process id="${pid}" name="${name}" isExecutable="false">
     <bpmn2:startEvent id="Start_x" name="Start" />
@@ -197,7 +201,10 @@ async function installMockWorkspace(page: import('@playwright/test').Page): Prom
         )
       }),
       HR: dirHandle('HR', {
-        'hire.bpmn': fileHandle('hire.bpmn', simple('Process_hire', 'Hiring', 'Interview candidate'))
+        'hire.bpmn': fileHandle(
+          'hire.bpmn',
+          simple('Process_hire', 'Hiring', 'Interview candidate')
+        )
       }),
       'onboarding.bpmn': fileHandle(
         'onboarding.bpmn',
@@ -217,7 +224,9 @@ async function installMockWorkspace(page: import('@playwright/test').Page): Prom
 async function openWorkspace(page: import('@playwright/test').Page): Promise<void> {
   await page.goto(FILE_URL, { waitUntil: 'load' })
   await page.getByRole('button', { name: /Open a folder/i }).click()
-  await expect(page.getByRole('heading', { name: 'Process catalog' })).toBeVisible({ timeout: 20_000 })
+  await expect(page.getByRole('heading', { name: 'Process catalog' })).toBeVisible({
+    timeout: 20_000
+  })
 }
 
 test('catalog lists every process and opens one, with a breadcrumb (directory mode)', async ({
@@ -339,7 +348,9 @@ test('print view wraps a wide diagram into snake-order bands with a title + owne
   // document.title was swapped to the process name (PDF filename default).
   await expect.poll(() => page.evaluate(() => document.title)).toBe('Operations Workflow')
   // window.print() was invoked (stubbed).
-  expect(await page.evaluate(() => (window as unknown as { __printed: number }).__printed)).toBeGreaterThan(0)
+  expect(
+    await page.evaluate(() => (window as unknown as { __printed: number }).__printed)
+  ).toBeGreaterThan(0)
 
   // After afterprint, the document title is restored.
   await page.evaluate(() => window.dispatchEvent(new Event('afterprint')))

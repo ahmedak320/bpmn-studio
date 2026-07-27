@@ -47,10 +47,7 @@ export class MockFileHandle {
     return {
       text: async () => new TextDecoder().decode(bytes),
       arrayBuffer: async () =>
-        bytes.buffer.slice(
-          bytes.byteOffset,
-          bytes.byteOffset + bytes.byteLength
-        ) as ArrayBuffer,
+        bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer,
       lastModified: this.lastModified,
       size: bytes.length
     }
@@ -180,5 +177,7 @@ export function newRoot(name = 'workspace'): FileSystemDirectoryHandle {
  *  and `a.bpmn` resolve to the same entry. Used to prove the case-only
  *  rename/move no longer deletes the file (Codex NEW-C1). */
 export function newRootCI(name = 'workspace'): FileSystemDirectoryHandle {
-  return new MockDirectoryHandle(name, { caseInsensitive: true }) as unknown as FileSystemDirectoryHandle
+  return new MockDirectoryHandle(name, {
+    caseInsensitive: true
+  }) as unknown as FileSystemDirectoryHandle
 }

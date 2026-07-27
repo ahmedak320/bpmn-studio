@@ -4,13 +4,7 @@
 
 /** Stable ids for the seven wired providers. */
 export type ProviderId =
-  | 'openai'
-  | 'anthropic'
-  | 'moonshot'
-  | 'deepseek'
-  | 'gemini'
-  | 'azure'
-  | 'glm'
+  'openai' | 'anthropic' | 'moonshot' | 'deepseek' | 'gemini' | 'azure' | 'glm'
 
 /** A single selectable model within a provider. */
 export interface ModelSpec {
@@ -64,9 +58,7 @@ export const PROVIDERS: Record<ProviderId, ProviderSpec> = {
       { id: 'gpt-5.6-sol', label: 'GPT-5.6 Sol' },
       { id: 'gpt-5.6-luna', label: 'GPT-5.6 Luna' }
     ],
-    keyFields: [
-      { name: 'apiKey', label: 'API key', kind: 'secret', required: true }
-    ]
+    keyFields: [{ name: 'apiKey', label: 'API key', kind: 'secret', required: true }]
   },
   anthropic: {
     id: 'anthropic',
@@ -79,9 +71,7 @@ export const PROVIDERS: Record<ProviderId, ProviderSpec> = {
       { id: 'claude-opus-4-8', label: 'Claude Opus 4.8' },
       { id: 'claude-sonnet-5', label: 'Claude Sonnet 5' }
     ],
-    keyFields: [
-      { name: 'apiKey', label: 'API key', kind: 'secret', required: true }
-    ]
+    keyFields: [{ name: 'apiKey', label: 'API key', kind: 'secret', required: true }]
   },
   moonshot: {
     id: 'moonshot',
@@ -118,9 +108,7 @@ export const PROVIDERS: Record<ProviderId, ProviderSpec> = {
       { id: 'deepseek-chat', label: 'DeepSeek Chat' },
       { id: 'deepseek-reasoner', label: 'DeepSeek Reasoner' }
     ],
-    keyFields: [
-      { name: 'apiKey', label: 'API key', kind: 'secret', required: true }
-    ]
+    keyFields: [{ name: 'apiKey', label: 'API key', kind: 'secret', required: true }]
   },
   gemini: {
     id: 'gemini',
@@ -133,9 +121,7 @@ export const PROVIDERS: Record<ProviderId, ProviderSpec> = {
       { id: 'gemini-flash-latest', label: 'Gemini Flash (latest)' },
       { id: 'gemini-3-pro-preview', label: 'Gemini 3 Pro (preview)' }
     ],
-    keyFields: [
-      { name: 'apiKey', label: 'API key', kind: 'secret', required: true }
-    ]
+    keyFields: [{ name: 'apiKey', label: 'API key', kind: 'secret', required: true }]
   },
   azure: {
     id: 'azure',

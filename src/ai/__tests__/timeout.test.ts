@@ -103,9 +103,7 @@ describe('generation timeout covers the response BODY (ORIG-10)', () => {
   it('an empty-text response stays a plain (retriable) error, not a transport error', async () => {
     vi.stubGlobal(
       'fetch',
-      vi.fn(() =>
-        Promise.resolve(new Response(JSON.stringify({ content: [] }), { status: 200 }))
-      )
+      vi.fn(() => Promise.resolve(new Response(JSON.stringify({ content: [] }), { status: 200 })))
     )
     const err = await makeBrowserCallLLM(cfg)(msgs, { maxTokens: 1 }).catch((e: unknown) => e)
     expect(err).toBeInstanceOf(Error)

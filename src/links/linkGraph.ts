@@ -115,10 +115,8 @@ const CALL_ACTIVITY_TAG_RE = /<(?:[a-zA-Z_][\w.-]*:)?callActivity\b([^>]*?)\/?>/
 // `^|\s` is deliberate: XML namespace/data prefixes must not be mistaken for
 // the standard unprefixed BPMN attributes (for example ext:id or data-id).
 const ID_ATTR_RE = /(?:^|\s)id\s*=\s*(?:"([^"]*)"|'([^']*)')/
-const CALLED_ELEMENT_ATTR_RE =
-  /(?:^|\s)calledElement\s*=\s*(?:"([^"]*)"|'([^']*)')/
-const XML_COMMENT_OR_CDATA_RE =
-  /<!--[\s\S]*?(?:-->|$)|<!\[CDATA\[[\s\S]*?(?:\]\]>|$)/g
+const CALLED_ELEMENT_ATTR_RE = /(?:^|\s)calledElement\s*=\s*(?:"([^"]*)"|'([^']*)')/
+const XML_COMMENT_OR_CDATA_RE = /<!--[\s\S]*?(?:-->|$)|<!\[CDATA\[[\s\S]*?(?:\]\]>|$)/g
 
 function decodeXmlEntities(value: string): string {
   return value
@@ -171,7 +169,7 @@ function scanProcessDeclarations(xml: string, relPath: string): ProcessDeclarati
 
     const attrs = match[2] ?? ''
     const idMatch = ID_ATTR_RE.exec(attrs)
-    const rawId = idMatch ? idMatch[1] ?? idMatch[2] ?? '' : ''
+    const rawId = idMatch ? (idMatch[1] ?? idMatch[2] ?? '') : ''
     const processId = rawId ? decodeXmlEntities(rawId) : undefined
     const declaration: ProcessDeclaration = {
       processId,
@@ -218,7 +216,7 @@ function scanCalls(
     if (!calledElement) continue
 
     const idMatch = ID_ATTR_RE.exec(attrs)
-    const rawId = idMatch ? idMatch[1] ?? idMatch[2] ?? '' : ''
+    const rawId = idMatch ? (idMatch[1] ?? idMatch[2] ?? '') : ''
     const callActivityId = rawId ? decodeXmlEntities(rawId) : undefined
     calls.push({
       parentRelPath: relPath,
@@ -243,10 +241,7 @@ function issueFor(
   }
 }
 
-function groupBy<T>(
-  items: readonly T[],
-  keyOf: (item: T) => string
-): Map<string, T[]> {
+function groupBy<T>(items: readonly T[], keyOf: (item: T) => string): Map<string, T[]> {
   const grouped = new Map<string, T[]>()
   for (const item of items) {
     const key = keyOf(item)
@@ -364,8 +359,7 @@ export function buildLinkGraph(
 
   const sortedAggregates = Array.from(aggregates.values()).sort(
     (a, b) =>
-      compare(a.parentProcessId, b.parentProcessId) ||
-      compare(a.childProcessId, b.childProcessId)
+      compare(a.parentProcessId, b.parentProcessId) || compare(a.childProcessId, b.childProcessId)
   )
   const parentIdsByChild = new Map<string, Set<string>>()
   for (const aggregate of sortedAggregates) {

@@ -89,29 +89,25 @@ export function validateBpmn(process: readonly IRElement[], isTopLevel = true): 
       if (element.type === 'exclusiveGateway' || element.type === 'inclusiveGateway') {
         let defaultCount = 0
         const hasImplicitContinuation =
-          element.has_join === true ||
-          index < level.length - 1 ||
-          parentContinuation
+          element.has_join === true || index < level.length - 1 || parentContinuation
         for (const branch of element.branches) {
           const isDefault = branch.is_default === true
-          const condition =
-            typeof branch.condition === 'string' ? branch.condition.trim() : ''
+          const condition = typeof branch.condition === 'string' ? branch.condition.trim() : ''
           if (isDefault) {
             defaultCount += 1
             if (condition.length > 0) {
-              throw new Error(
-                `Default branch in gateway '${element.id}' must not have a condition`
-              )
+              throw new Error(`Default branch in gateway '${element.id}' must not have a condition`)
             }
-            if (coercedBranchTranslation(branch.conditionEn) || coercedBranchTranslation(branch.conditionAr)) {
+            if (
+              coercedBranchTranslation(branch.conditionEn) ||
+              coercedBranchTranslation(branch.conditionAr)
+            ) {
               throw new Error(
                 `Default branch in gateway '${element.id}' must not have translated conditions`
               )
             }
           } else if (condition.length === 0) {
-            throw new Error(
-              `Non-default branch in gateway '${element.id}' must have a condition`
-            )
+            throw new Error(`Non-default branch in gateway '${element.id}' must have a condition`)
           }
           if (typeof branch.next === 'string' && branch.next.length > 0) {
             referencedNextIds.push({ gatewayId: element.id, next: branch.next })
@@ -121,15 +117,9 @@ export function validateBpmn(process: readonly IRElement[], isTopLevel = true): 
             !(typeof branch.next === 'string' && branch.next.length > 0) &&
             !hasImplicitContinuation
           ) {
-            throw new Error(
-              `Empty branch in gateway '${element.id}' has no continuation target`
-            )
+            throw new Error(`Empty branch in gateway '${element.id}' has no continuation target`)
           }
-          walk(
-            branch.path,
-            false,
-            Boolean(branch.next) || hasImplicitContinuation
-          )
+          walk(branch.path, false, Boolean(branch.next) || hasImplicitContinuation)
         }
         if (defaultCount > 1) {
           throw new Error(`Gateway '${element.id}' may have at most one default branch`)

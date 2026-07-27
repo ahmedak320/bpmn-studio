@@ -182,12 +182,7 @@ function countWrappedLineByWidth(sourceLine: string, maxWidth: number): number {
 
     for (;;) {
       const width = estimatedWidth(fitLine)
-      if (
-        fitLine === ' ' ||
-        fitLine === '' ||
-        width < limit ||
-        fitLine.length < 2
-      ) {
+      if (fitLine === ' ' || fitLine === '' || width < limit || fitLine.length < 2) {
         if (fitLine.length < originalLine.length) {
           pending.unshift(originalLine.slice(fitLine.length).trim())
         }
@@ -211,9 +206,7 @@ function pixelWrapCount(name: string, maxWidth: number): number {
   let total = 0
 
   for (const sourceLine of sourceLines) {
-    total += sourceLine.trim()
-      ? countWrappedLineByWidth(sourceLine, maxWidth)
-      : 1
+    total += sourceLine.trim() ? countWrappedLineByWidth(sourceLine, maxWidth) : 1
   }
 
   return total
@@ -245,10 +238,7 @@ function safeWrapCount(name: string, availableWidth: number): number {
   // Keep the original average-width estimate as a floor, so ordinary labels
   // never shrink as a side effect of this safety fix. The glyph-aware estimate
   // adds the missing lines for uppercase and W/M-heavy runs.
-  return Math.max(
-    wrapCount(name, maxChars),
-    pixelWrapCount(name, availableWidth)
-  )
+  return Math.max(wrapCount(name, maxChars), pixelWrapCount(name, availableWidth))
 }
 
 /**
@@ -277,11 +267,7 @@ export function fitInteriorBox(
   return { w: MAX_W, h }
 }
 
-const SUB_PROCESS_FAMILY = new Set([
-  'bpmn:SubProcess',
-  'bpmn:Transaction',
-  'bpmn:AdHocSubProcess'
-])
+const SUB_PROCESS_FAMILY = new Set(['bpmn:SubProcess', 'bpmn:Transaction', 'bpmn:AdHocSubProcess'])
 
 /**
  * Return the desired activity bounds, or null for shapes whose labels are not
@@ -291,11 +277,8 @@ const SUB_PROCESS_FAMILY = new Set([
  */
 export function targetFor(element: AutoSizeElementLike): { w: number; h: number } | null {
   const bo = element.businessObject
-  const type = typeof element.type === 'string'
-    ? element.type
-    : typeof bo?.$type === 'string'
-      ? bo.$type
-      : ''
+  const type =
+    typeof element.type === 'string' ? element.type : typeof bo?.$type === 'string' ? bo.$type : ''
   if (!isActivityType(type)) return null
 
   const subProcessFamily = SUB_PROCESS_FAMILY.has(type)

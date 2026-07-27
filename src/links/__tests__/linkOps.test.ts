@@ -20,9 +20,9 @@ describe('isLinkableActivity', () => {
   })
 
   it('is false for connections (waypoints set)', () => {
-    expect(
-      isLinkableActivity({ type: 'bpmn:SequenceFlow', waypoints: [{ x: 0, y: 0 }] })
-    ).toBe(false)
+    expect(isLinkableActivity({ type: 'bpmn:SequenceFlow', waypoints: [{ x: 0, y: 0 }] })).toBe(
+      false
+    )
   })
 
   it('is false when type is missing', () => {
@@ -118,19 +118,13 @@ describe('ensureCallActivityAndLink', () => {
     }
 
     const modeling = {
-      updateProperties: (
-        element: { id: string },
-        properties: Record<string, unknown>
-      ): void => {
+      updateProperties: (element: { id: string }, properties: Record<string, unknown>): void => {
         updateCalls.push({ elementId: element.id, properties })
       }
     }
 
     const bpmnReplace = {
-      replaceElement: (
-        element: unknown,
-        target: { type: string }
-      ): ReplacedElementLike => {
+      replaceElement: (element: unknown, target: { type: string }): ReplacedElementLike => {
         const id = (element as { id: string }).id
         replaceCalls.push({ elementId: id, target })
         const newEl: ReplacedElementLike & ElementForLinkingLike = {

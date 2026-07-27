@@ -183,16 +183,13 @@ describe('shapeSemanticForElement', () => {
   })
 
   it('falls back to businessObject.$type when a diagram type is absent', () => {
-    expect(
-      shapeSemanticForElement(
-        { businessObject: { $type: 'bpmn:Task' } },
-        'ar'
-      )
-    ).toMatchObject({
-      kind: 'step',
-      label: ar['legend.step'],
-      explanation: ar['semantic.step.tooltip']
-    })
+    expect(shapeSemanticForElement({ businessObject: { $type: 'bpmn:Task' } }, 'ar')).toMatchObject(
+      {
+        kind: 'step',
+        label: ar['legend.step'],
+        explanation: ar['semantic.step.tooltip']
+      }
+    )
   })
 
   it.each([

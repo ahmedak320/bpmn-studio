@@ -62,7 +62,10 @@ export function PrintView({ job }: { job: PrintJob | null }): JSX.Element | null
               dangerouslySetInnerHTML={{ __html: inner }}
             />
             {i < last && (
-              <div className="orbitpm-print-band-marker orbitpm-print-band-marker--end" aria-hidden="true">
+              <div
+                className="orbitpm-print-band-marker orbitpm-print-band-marker--end"
+                aria-hidden="true"
+              >
                 ⮕
               </div>
             )}

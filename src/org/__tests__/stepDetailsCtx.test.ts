@@ -185,8 +185,7 @@ describe('deriveStepDetailsCtx modes', () => {
     const el = task('S1', {
       type: 'bpmn:StartEvent',
       attrs: {
-        'orbitpm:triggers':
-          'dmthub — ClaimsHub — new claim\nemail —  — sender allow-list',
+        'orbitpm:triggers': 'dmthub — ClaimsHub — new claim\nemail —  — sender allow-list',
         'orbitpm:trigger': 'manual'
       }
     })

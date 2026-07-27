@@ -36,10 +36,7 @@ export interface KeyboardEventTargetLike {
  */
 export class ActiveSessionCommandRouter {
   readonly #getActiveSessionId: () => SessionId | null
-  readonly #commands = new Map<
-    SessionId,
-    { registration: symbol; commands: SessionCommands }
-  >()
+  readonly #commands = new Map<SessionId, { registration: symbol; commands: SessionCommands }>()
 
   constructor(getActiveSessionId: () => SessionId | null) {
     this.#getActiveSessionId = getActiveSessionId
@@ -104,4 +101,3 @@ export function installApplicationShortcuts(
   target.addEventListener('keydown', listener)
   return () => target.removeEventListener('keydown', listener)
 }
-

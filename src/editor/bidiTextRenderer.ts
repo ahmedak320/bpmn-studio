@@ -1,6 +1,4 @@
-import TextRenderer, {
-  type TextRendererConfig
-} from 'bpmn-js/lib/draw/TextRenderer'
+import TextRenderer, { type TextRendererConfig } from 'bpmn-js/lib/draw/TextRenderer'
 
 const ARABIC_SCRIPT = /\p{Script=Arabic}/u
 const XML_NAMESPACE = 'http://www.w3.org/XML/1998/namespace'
@@ -35,8 +33,7 @@ export class BidiTextRenderer extends TextRenderer {
 
     const stockCreateText = this.createText
 
-    this.createText = (text, options) =>
-      decorateArabicText(stockCreateText(text, options), text)
+    this.createText = (text, options) => decorateArabicText(stockCreateText(text, options), text)
   }
 }
 

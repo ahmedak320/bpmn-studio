@@ -53,10 +53,7 @@ export function defaultLocalizationResources(): LocalizationResources {
   }
 }
 
-export const secureReviewedBpmnIngestion: ReviewedBpmnIngestionPort = async (
-  xml,
-  options
-) => {
+export const secureReviewedBpmnIngestion: ReviewedBpmnIngestionPort = async (xml, options) => {
   const outcome = await reviewBpmnXmlLocalization(xml, {
     source: options.source,
     target: options.target,

@@ -82,8 +82,7 @@ export async function fetchOpenRouterCredits(
   }
 
   const data = (json as { data?: unknown } | null)?.data as
-    | { total_credits?: unknown; total_usage?: unknown }
-    | undefined
+    { total_credits?: unknown; total_usage?: unknown } | undefined
   const totalCredits = data?.total_credits
   const totalUsage = data?.total_usage
   if (typeof totalCredits !== 'number' || typeof totalUsage !== 'number') {
@@ -146,8 +145,7 @@ export function getUsage(providerId: LiteProviderId): UsageTotals | null {
       return null
     }
     const legacyCost =
-      typeof (parsed as Partial<UsageTotals> & { estCostUsd?: unknown }).estCostUsd ===
-      'number'
+      typeof (parsed as Partial<UsageTotals> & { estCostUsd?: unknown }).estCostUsd === 'number'
         ? (parsed as Partial<UsageTotals> & { estCostUsd: number }).estCostUsd
         : null
     const costUsd =
@@ -169,8 +167,7 @@ export function getUsage(providerId: LiteProviderId): UsageTotals | null {
       requests: parsed.requests,
       inputTokens: parsed.inputTokens,
       outputTokens: parsed.outputTokens,
-      reasoningTokens:
-        typeof parsed.reasoningTokens === 'number' ? parsed.reasoningTokens : 0,
+      reasoningTokens: typeof parsed.reasoningTokens === 'number' ? parsed.reasoningTokens : 0,
       costUsd,
       costKind,
       since: parsed.since
@@ -206,14 +203,9 @@ function combineCostKind(
   return 'mixed'
 }
 
-function addUsage(
-  existing: UsageTotals | null,
-  input: RecordUsageInput,
-  now: number
-): UsageTotals {
+function addUsage(existing: UsageTotals | null, input: RecordUsageInput, now: number): UsageTotals {
   const estimated = estimateCostUsd(input.modelId, input.inputTokens, input.outputTokens)
-  const costDelta =
-    typeof input.providerCostUsd === 'number' ? input.providerCostUsd : estimated
+  const costDelta = typeof input.providerCostUsd === 'number' ? input.providerCostUsd : estimated
   const deltaKind: UsageTotals['costKind'] =
     typeof input.providerCostUsd === 'number'
       ? 'provider'
@@ -272,8 +264,7 @@ export function resetUsage(providerId: LiteProviderId): void {
 
 export function subscribeUsage(listener: (providerId: LiteProviderId) => void): () => void {
   if (typeof window === 'undefined') return () => undefined
-  const onUsage = (event: Event): void =>
-    listener((event as CustomEvent<LiteProviderId>).detail)
+  const onUsage = (event: Event): void => listener((event as CustomEvent<LiteProviderId>).detail)
   window.addEventListener(USAGE_EVENT, onUsage)
   return () => window.removeEventListener(USAGE_EVENT, onUsage)
 }
@@ -354,13 +345,9 @@ export function extractUsage(
       const inputTokens = usage?.input_tokens
       const outputTokens = usage?.output_tokens
       if (typeof inputTokens !== 'number' || typeof outputTokens !== 'number') return null
-      const outputDetails = usage?.output_tokens_details as
-        | Record<string, unknown>
-        | undefined
+      const outputDetails = usage?.output_tokens_details as Record<string, unknown> | undefined
       const reasoningTokens =
-        typeof outputDetails?.reasoning_tokens === 'number'
-          ? outputDetails.reasoning_tokens
-          : 0
+        typeof outputDetails?.reasoning_tokens === 'number' ? outputDetails.reasoning_tokens : 0
       return { inputTokens, outputTokens, reasoningTokens }
     }
 
@@ -382,9 +369,7 @@ export function extractUsage(
     const inputTokens = usage?.prompt_tokens
     const outputTokens = usage?.completion_tokens
     if (typeof inputTokens !== 'number' || typeof outputTokens !== 'number') return null
-    const details = usage?.completion_tokens_details as
-      | Record<string, unknown>
-      | undefined
+    const details = usage?.completion_tokens_details as Record<string, unknown> | undefined
     const reasoning = details?.reasoning_tokens
     const providerCost = usage?.cost
     return {

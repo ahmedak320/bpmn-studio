@@ -262,7 +262,10 @@ function* scanBlocks(text: string, tag: string): Generator<TagBlock> {
 function stripBlocks(text: string, tags: string[]): string {
   let out = text
   for (const tag of tags) {
-    out = out.replace(new RegExp('<' + tag + '\\b' + TAG_ATTRS + '(?:/>|>[\\s\\S]*?</' + tag + '>)', 'g'), '')
+    out = out.replace(
+      new RegExp('<' + tag + '\\b' + TAG_ATTRS + '(?:/>|>[\\s\\S]*?</' + tag + '>)', 'g'),
+      ''
+    )
   }
   return out
 }
@@ -308,7 +311,11 @@ function attrValueText(body: string, entities: Record<string, string>): string |
  * element body, returning one value per locale. `body` must already be
  * scoped to the owning element (nested Lane/ObjOcc/CxnDef blocks stripped).
  */
-function extractLocalizedAttr(body: string, attrType: string, entities: Record<string, string>): LocalizedText {
+function extractLocalizedAttr(
+  body: string,
+  attrType: string,
+  entities: Record<string, string>
+): LocalizedText {
   const result: LocalizedText = { others: [] }
   for (const def of scanBlocks(body, 'AttrDef')) {
     const type = readTagAttrAny(def.attrs, ['AttrDef.Type', 'TypeNum'])
@@ -343,7 +350,11 @@ function parseNumber(v: string | undefined): number | undefined {
 }
 
 /** Parse an `<ObjDef>` body into names + connections. */
-function parseObjDef(attrs: string, body: string, entities: Record<string, string>): AmlObj | undefined {
+function parseObjDef(
+  attrs: string,
+  body: string,
+  entities: Record<string, string>
+): AmlObj | undefined {
   const id = readTagAttr(attrs, 'ObjDef.ID')
   if (!id) return undefined
   const cxns: AmlCxn[] = []
@@ -413,7 +424,11 @@ function parseObjOcc(
 }
 
 /** Parse a `<Model>` body into its name, proc code, occurrences and edges. */
-function parseModel(attrs: string, body: string, entities: Record<string, string>): AmlModel | undefined {
+function parseModel(
+  attrs: string,
+  body: string,
+  entities: Record<string, string>
+): AmlModel | undefined {
   const id = readTagAttr(attrs, 'Model.ID')
   if (!id) return undefined
   const occs: AmlOcc[] = []

@@ -20,9 +20,7 @@ function csvField(value: string): string {
 export function ownersToCsv(entries: OwnerEntry[]): string {
   const lines: string[] = ['name,type,usage_count']
   for (const entry of entries) {
-    lines.push(
-      [csvField(entry.name), csvField(entry.type ?? ''), String(entry.count)].join(',')
-    )
+    lines.push([csvField(entry.name), csvField(entry.type ?? ''), String(entry.count)].join(','))
   }
   return BOM + lines.join(CRLF) + CRLF
 }

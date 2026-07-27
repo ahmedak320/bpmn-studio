@@ -29,9 +29,7 @@ describe('end-to-end generation validation', () => {
     const result = await generateFromDescription(call, 'Review a request')
     expect(call).toHaveBeenCalledTimes(2)
     const secondMessages = call.mock.calls[1][0] as Array<{ role: string; content: string }>
-    expect(secondMessages.at(-1)?.content).toContain(
-      'orbitpm.bilingual-wrong-script-ar'
-    )
+    expect(secondMessages.at(-1)?.content).toContain('orbitpm.bilingual-wrong-script-ar')
     expect(result.postLayoutValidation.valid).toBe(true)
   })
 

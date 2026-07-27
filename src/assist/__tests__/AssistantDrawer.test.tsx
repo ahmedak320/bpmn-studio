@@ -3,10 +3,7 @@ import { renderToStaticMarkup } from 'react-dom/server'
 import { AssistantDrawer, type AssistantDrawerProps } from '../AssistantDrawer'
 import { t } from '../../i18n'
 import { resetSessionKeysForTests, setKey } from '../../ai/keys'
-import {
-  resetProviderSelectionForTests,
-  setProviderSelection
-} from '../../ai/providerSelection'
+import { resetProviderSelectionForTests, setProviderSelection } from '../../ai/providerSelection'
 
 const noop = (): void => {}
 const base: AssistantDrawerProps = {

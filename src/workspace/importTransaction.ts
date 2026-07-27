@@ -1521,7 +1521,8 @@ export async function prepareWorkspaceImportPlan(
   }
   const language = options.language ?? 'en'
   const preparer = options.bpmnPreparer ?? secureBpmnImportPreparer
-  const processIdentityInspector = options.processIdentityInspector ?? preparer.inspect.bind(preparer)
+  const processIdentityInspector =
+    options.processIdentityInspector ?? preparer.inspect.bind(preparer)
   const validationAdapters = options.validationAdapters ?? getRuntimeValidationAdapters()
   const scannedSnapshot =
     options.existingProcessIndex === undefined
@@ -1597,10 +1598,7 @@ export async function prepareWorkspaceImportPlan(
       signal: options.signal
     })
     const currentDigest = await digestProcessIdentitySnapshot(currentSnapshot)
-    if (
-      scannedSnapshotDigest === undefined ||
-      !equalHash(currentDigest, scannedSnapshotDigest)
-    ) {
+    if (scannedSnapshotDigest === undefined || !equalHash(currentDigest, scannedSnapshotDigest)) {
       throw new WorkspaceImportError(
         'workspace-changed',
         'Workspace process identities changed while the import plan was being prepared.'
@@ -1858,32 +1856,32 @@ async function backupPlanFor(plan: WorkspaceImportPlan): Promise<WorkspaceBackup
   }))
   return sealWorkspaceBackupImportPlan(
     {
-    manifest: backupManifestFor(plan, directories),
-    directories,
-    files: plan.artifacts.map((artifact) => ({
-      path: artifact.destinationPath,
-      bytes: copyBytes(artifact.bytes),
-      archiveSha256: artifact.sha256,
-      sha256: artifact.sha256,
-      mimeType: 'application/xml',
-      reviewedBpmn: {
-        reviewDigest: artifact.localizationReviewDigest,
-        outputDigest: artifact.sha256,
-        processIds: artifact.processIds,
-        replacesProcessIds: artifact.replacesProcessIds,
-        evidence: artifact.localizationEvidence
-      }
-    })),
-    collisions,
-    compressedBytes: 0,
-    declaredUncompressedBytes: plan.artifacts.reduce(
-      (total, artifact) => total + artifact.bytes.byteLength,
-      0
-    ),
-    workspaceId: plan.workspaceId,
-    workspaceMultipleFiles: plan.workspaceMultipleFiles,
-    processIdentitySnapshot: plan.processIdentitySnapshot,
-    processIdentityDigest: plan.processIdentityDigest
+      manifest: backupManifestFor(plan, directories),
+      directories,
+      files: plan.artifacts.map((artifact) => ({
+        path: artifact.destinationPath,
+        bytes: copyBytes(artifact.bytes),
+        archiveSha256: artifact.sha256,
+        sha256: artifact.sha256,
+        mimeType: 'application/xml',
+        reviewedBpmn: {
+          reviewDigest: artifact.localizationReviewDigest,
+          outputDigest: artifact.sha256,
+          processIds: artifact.processIds,
+          replacesProcessIds: artifact.replacesProcessIds,
+          evidence: artifact.localizationEvidence
+        }
+      })),
+      collisions,
+      compressedBytes: 0,
+      declaredUncompressedBytes: plan.artifacts.reduce(
+        (total, artifact) => total + artifact.bytes.byteLength,
+        0
+      ),
+      workspaceId: plan.workspaceId,
+      workspaceMultipleFiles: plan.workspaceMultipleFiles,
+      processIdentitySnapshot: plan.processIdentitySnapshot,
+      processIdentityDigest: plan.processIdentityDigest
     },
     plan.reviewDigest
   )
@@ -1943,10 +1941,8 @@ export async function executeConfirmedWorkspaceImport(
   await verifyConfirmedPlan(confirmed)
   throwIfAborted(options.signal)
   if (
-    options.adapter.storage.capabilities.multipleFiles !==
-      confirmed.plan.workspaceMultipleFiles ||
-    (!options.adapter.storage.capabilities.multipleFiles &&
-      confirmed.plan.artifacts.length > 1)
+    options.adapter.storage.capabilities.multipleFiles !== confirmed.plan.workspaceMultipleFiles ||
+    (!options.adapter.storage.capabilities.multipleFiles && confirmed.plan.artifacts.length > 1)
   ) {
     throw new WorkspaceImportError(
       'workspace-changed',
@@ -1955,10 +1951,7 @@ export async function executeConfirmedWorkspaceImport(
   }
   if (options.currentProcessIndex !== undefined || options.currentProcessIds !== undefined) {
     const suppliedIdentityDigest = await digestProcessIdentitySnapshot(
-      normalizeProcessIdentitySnapshot(
-        options.currentProcessIndex,
-        options.currentProcessIds
-      )
+      normalizeProcessIdentitySnapshot(options.currentProcessIndex, options.currentProcessIds)
     )
     if (!equalHash(suppliedIdentityDigest, confirmed.plan.processIdentityDigest)) {
       throw new WorkspaceImportError(

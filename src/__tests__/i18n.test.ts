@@ -53,7 +53,8 @@ describe('i18n dictionary completeness', () => {
     for (const key of usedKeys) {
       // tPlural('base', n) looks up '<base>.one' / '<base>.other' at runtime,
       // not '<base>' itself — resolve to the concrete plural-branch keys.
-      const candidates = `${key}.one` in en || `${key}.other` in en ? [`${key}.one`, `${key}.other`] : [key]
+      const candidates =
+        `${key}.one` in en || `${key}.other` in en ? [`${key}.one`, `${key}.other`] : [key]
       for (const c of candidates) {
         if (!(c in en)) missing.push(c)
       }
@@ -64,7 +65,8 @@ describe('i18n dictionary completeness', () => {
   it('every key used in source exists in the Arabic dictionary', () => {
     const missing: string[] = []
     for (const key of usedKeys) {
-      const candidates = `${key}.one` in en || `${key}.other` in en ? [`${key}.one`, `${key}.other`] : [key]
+      const candidates =
+        `${key}.one` in en || `${key}.other` in en ? [`${key}.one`, `${key}.other`] : [key]
       for (const c of candidates) {
         if (!(c in ar)) missing.push(c)
       }
@@ -180,9 +182,7 @@ describe('process hierarchy reference labels', () => {
       expect(t('tree.reference.canonicalPath', { path: 'Operations/Review.bpmn' })).toBe(
         'الملف الأساسي: Operations/Review.bpmn'
       )
-      expect(t('tree.shared.title', { count: 2 })).toBe(
-        'تتم الإشارة إليها من 2 عمليات أصلية'
-      )
+      expect(t('tree.shared.title', { count: 2 })).toBe('تتم الإشارة إليها من 2 عمليات أصلية')
     } finally {
       setLang('en')
     }

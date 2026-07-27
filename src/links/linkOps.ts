@@ -4,11 +4,7 @@
 // instantiation so it can be unit-tested in the node vitest environment —
 // only structural interfaces are used for the modeler.
 
-import {
-  setCalledElement,
-  type ModelingLike,
-  type ElementRegistryLike
-} from './modelerOps'
+import { setCalledElement, type ModelingLike, type ElementRegistryLike } from './modelerOps'
 
 /** bpmn:Activity subtypes (+ CallActivity itself) that can be morphed into a CallActivity and linked. */
 export const LINKABLE_TYPES: readonly string[] = [
@@ -36,9 +32,7 @@ export interface LinkableElementLike {
  * True iff the element is a "real" shape (not a label, not a connection)
  * whose type is one of the linkable activity types.
  */
-export function isLinkableActivity(
-  element: LinkableElementLike | null | undefined
-): boolean {
+export function isLinkableActivity(element: LinkableElementLike | null | undefined): boolean {
   if (!element) return false
   if (element.labelTarget) return false
   if (element.waypoints) return false
@@ -53,10 +47,7 @@ export interface ReplacedElementLike {
 }
 
 export interface BpmnReplaceLike {
-  replaceElement(
-    element: unknown,
-    target: { type: string }
-  ): ReplacedElementLike
+  replaceElement(element: unknown, target: { type: string }): ReplacedElementLike
 }
 
 export interface SelectionForLinkingLike {
@@ -152,7 +143,7 @@ export function stripCalledElement(xml: string, elementId: string): string {
   while ((match = CALL_ACTIVITY_TAG_RE.exec(xml)) !== null) {
     const tag = match[0]
     const idMatch = ID_ATTR_RE.exec(tag)
-    const rawId = idMatch ? idMatch[1] ?? idMatch[2] ?? '' : ''
+    const rawId = idMatch ? (idMatch[1] ?? idMatch[2] ?? '') : ''
     const tagId = decodeXmlEntities(rawId)
 
     if (tagId === elementId) {

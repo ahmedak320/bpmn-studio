@@ -1,10 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { buildProcessIndex } from '@/core/processIndex'
-import {
-  buildLinkGraph,
-  processLinkKey,
-  type LinkGraph
-} from '../linkGraph'
+import { buildLinkGraph, processLinkKey, type LinkGraph } from '../linkGraph'
 
 interface TestFile {
   relPath: string
@@ -14,8 +10,9 @@ interface TestFile {
 /** A minimal BPMN-ish file with one process and callActivities in order. */
 function file(relPath: string, processId: string, calls: string[] = []): TestFile {
   const activities = calls
-    .map((calledElement, index) =>
-      `<bpmn:callActivity id="ca_${index}" calledElement="${calledElement}" />`
+    .map(
+      (calledElement, index) =>
+        `<bpmn:callActivity id="ca_${index}" calledElement="${calledElement}" />`
     )
     .join('')
   return {
@@ -82,7 +79,10 @@ describe('buildLinkGraph — stable process-pair aggregation', () => {
   })
 
   it('keeps pair identity stable when either physical file is renamed', () => {
-    const before = graphOf([file('old-parent.bpmn', 'Parent', ['Child']), file('old-child.bpmn', 'Child')])
+    const before = graphOf([
+      file('old-parent.bpmn', 'Parent', ['Child']),
+      file('old-child.bpmn', 'Child')
+    ])
     const after = graphOf([
       file('moved/new-parent.bpmn', 'Parent', ['Child']),
       file('renamed/new-child.bpmn', 'Child')
@@ -127,9 +127,9 @@ describe('buildLinkGraph — distinct parents and process-scoped sources', () =>
     expect(graph.parentsByProcess.get('Child')?.map((link) => link.count)).toEqual([2, 1, 1])
     // The self-reference is retained but is not a distinct external parent.
     expect(graph.distinctParentCountByProcess.get('Child')).toBe(2)
-    expect(
-      graph.parentsByProcess.get('Child')?.map((link) => link.distinctParentCount)
-    ).toEqual([2, 2, 2])
+    expect(graph.parentsByProcess.get('Child')?.map((link) => link.distinctParentCount)).toEqual([
+      2, 2, 2
+    ])
   })
 
   it('attributes calls to the containing process when one file declares several processes', () => {
@@ -180,10 +180,7 @@ describe('buildLinkGraph — distinct parents and process-scoped sources', () =>
       ['Z', 'B'],
       ['Z', 'C']
     ])
-    expect(graph.parentsByProcess.get('C')?.map((link) => link.parentProcessId)).toEqual([
-      'A',
-      'Z'
-    ])
+    expect(graph.parentsByProcess.get('C')?.map((link) => link.parentProcessId)).toEqual(['A', 'Z'])
   })
 })
 
@@ -268,13 +265,15 @@ describe('buildLinkGraph — ambiguity and unresolved attribution', () => {
 
     expect(graph.unresolvedByFile.get('parent.bpmn')).toEqual(['Ghost', 'Phantom'])
     expect(graph.unresolvedByProcess.get('Parent')).toHaveLength(3)
+    expect(graph.unresolvedByProcess.get('Parent')?.map((issue) => issue.callActivityId)).toEqual([
+      'ca_0',
+      'ca_2',
+      'ca_3'
+    ])
     expect(
-      graph.unresolvedByProcess.get('Parent')?.map((issue) => issue.callActivityId)
-    ).toEqual(['ca_0', 'ca_2', 'ca_3'])
-    expect(
-      graph.unresolvedByProcess.get('Parent')?.every(
-        (issue) => issue.reason === 'missing-child-process' && !issue.ambiguous
-      )
+      graph.unresolvedByProcess
+        .get('Parent')
+        ?.every((issue) => issue.reason === 'missing-child-process' && !issue.ambiguous)
     ).toBe(true)
     expect(graph.childrenByProcess.get('Parent')?.map((link) => link.childProcessId)).toEqual([
       'Known'

@@ -146,19 +146,15 @@ function makeHighlightWrapper(edge: ConnectedEdgeLike): SVGElement {
   return wrapper
 }
 
-function routePointAt(
-  edge: ConnectedEdgeLike,
-  fraction: number
-): { x: number; y: number } | null {
+function routePointAt(edge: ConnectedEdgeLike, fraction: number): { x: number; y: number } | null {
   if (!Array.isArray(edge.waypoints)) return null
-  const points = edge.waypoints.filter(
-    (value): value is { x: number; y: number } =>
-      Boolean(
-        value &&
-          typeof value === 'object' &&
-          Number.isFinite((value as { x?: number }).x) &&
-          Number.isFinite((value as { y?: number }).y)
-      )
+  const points = edge.waypoints.filter((value): value is { x: number; y: number } =>
+    Boolean(
+      value &&
+      typeof value === 'object' &&
+      Number.isFinite((value as { x?: number }).x) &&
+      Number.isFinite((value as { y?: number }).y)
+    )
   )
   if (points.length < 2) return null
   const lengths: number[] = []
@@ -214,11 +210,7 @@ function appendArrowMarker(
   color: string
 ): string {
   const rawId = typeof edge.id === 'string' ? edge.id : `edge-${index}`
-  const markerId =
-    `orbitpm-highlight-arrow-${rawId}-${index}`.replace(
-      /[^A-Za-z0-9_.:-]/g,
-      '_'
-    )
+  const markerId = `orbitpm-highlight-arrow-${rawId}-${index}`.replace(/[^A-Za-z0-9_.:-]/g, '_')
   const defs = document.createElementNS(SVG_NS, 'defs')
   const marker = document.createElementNS(SVG_NS, 'marker')
   marker.setAttribute('id', markerId)
@@ -293,12 +285,8 @@ export class ConnectedEdgeHighlight {
     for (let index = 0; index < edges.length; index += 1) {
       const edge = edges[index]
       const wrapper = makeHighlightWrapper(edge)
-      const color =
-        CONNECTED_EDGE_HIGHLIGHT_COLORS[
-          index % CONNECTED_EDGE_HIGHLIGHT_COLORS.length
-        ]
-      const dash =
-        OVERLAP_DASH_PATTERNS[index % OVERLAP_DASH_PATTERNS.length]
+      const color = CONNECTED_EDGE_HIGHLIGHT_COLORS[index % CONNECTED_EDGE_HIGHLIGHT_COLORS.length]
+      const dash = OVERLAP_DASH_PATTERNS[index % OVERLAP_DASH_PATTERNS.length]
       wrapper.setAttribute('data-highlight-color', color)
       wrapper.setAttribute('data-highlight-pattern', dash || 'solid')
       try {
@@ -320,14 +308,9 @@ export class ConnectedEdgeHighlight {
             'style',
             `${existing};stroke:${color} !important;` +
               `stroke-width:${CONNECTED_EDGE_HIGHLIGHT_WIDTH}px !important;` +
-              (dash
-                ? `stroke-dasharray:${dash} !important;stroke-dashoffset:${index * 2}px;`
-                : '')
+              (dash ? `stroke-dasharray:${dash} !important;stroke-dashoffset:${index * 2}px;` : '')
           )
-          path.setAttribute(
-            'stroke-width',
-            String(CONNECTED_EDGE_HIGHLIGHT_WIDTH)
-          )
+          path.setAttribute('stroke-width', String(CONNECTED_EDGE_HIGHLIGHT_WIDTH))
         }
         appendIdentityBead(wrapper, edge, index, color)
         this.wrappers.push(wrapper)

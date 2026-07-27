@@ -26,10 +26,7 @@ import {
   SEMANTIC_NAMING,
   type SemanticGatewayType
 } from './semanticNaming'
-import {
-  shapeSemanticForDecoration,
-  shapeSemanticForElement
-} from './shapeSemantics'
+import { shapeSemanticForDecoration, shapeSemanticForElement } from './shapeSemantics'
 import {
   computeDecorLayout,
   planBadgeBox,
@@ -119,7 +116,15 @@ export type Decoration =
       textColor: string
       personGlyph: boolean
     }
-  | { kind: 'raci'; x: number; y: number; size: number; letter: string; fill: string; stroke: string }
+  | {
+      kind: 'raci'
+      x: number
+      y: number
+      size: number
+      letter: string
+      fill: string
+      stroke: string
+    }
   | { kind: 'ccStyle'; fill: string; stroke: string }
   | { kind: 'noteStyle'; fill: string; stroke: string }
   | {
@@ -239,9 +244,19 @@ export function planDecorations(
 
   // Start/end events get their base circle restyled (green go / red stop).
   if (elementType === 'bpmn:StartEvent') {
-    out.push({ kind: 'eventStyle', fill: PALETTE.startFill, stroke: PALETTE.startBorder, strokeWidth: 3 })
+    out.push({
+      kind: 'eventStyle',
+      fill: PALETTE.startFill,
+      stroke: PALETTE.startBorder,
+      strokeWidth: 3
+    })
   } else if (elementType === 'bpmn:EndEvent') {
-    out.push({ kind: 'eventStyle', fill: PALETTE.endFill, stroke: PALETTE.endBorder, strokeWidth: 4 })
+    out.push({
+      kind: 'eventStyle',
+      fill: PALETTE.endFill,
+      stroke: PALETTE.endBorder,
+      strokeWidth: 4
+    })
   }
 
   // CC styling recolours the base shape.
@@ -286,16 +301,12 @@ export function planDecorations(
       y: layout.triggerTag.y,
       w: layout.triggerTag.w,
       h: layout.triggerTag.h,
-      label:
-        triggerLabel(first.type) +
-        (triggers.length > 1 ? ` +${triggers.length - 1}` : ''),
+      label: triggerLabel(first.type) + (triggers.length > 1 ? ` +${triggers.length - 1}` : ''),
       // A multi-row tag is deliberately compact (`DMT HUB +N`); every row's
       // service/detail remains available in the styled tooltip. Appending the
       // first service here overflowed the start-event-width tag.
       detail:
-        triggers.length === 1 && first.type === 'dmthub'
-          ? truncate(first.service, 18)
-          : undefined,
+        triggers.length === 1 && first.type === 'dmthub' ? truncate(first.service, 18) : undefined,
       tooltip: triggers
         .map(
           (entry) =>
@@ -647,17 +658,12 @@ function readBusinessValue(
 }
 
 function isSemanticGatewayType(type: string | undefined): type is SemanticGatewayType {
-  return typeof type === 'string' &&
-    Object.prototype.hasOwnProperty.call(SEMANTIC_NAMING, type)
+  return typeof type === 'string' && Object.prototype.hasOwnProperty.call(SEMANTIC_NAMING, type)
 }
 
 function hasVisibleBusinessName(element: OrgElementLike): boolean {
   const value = readBusinessValue(element.businessObject, 'name')
-  return (
-    typeof value === 'string' &&
-    value.trim() !== '' &&
-    !isGenericGatewayLabel(value)
-  )
+  return typeof value === 'string' && value.trim() !== '' && !isGenericGatewayLabel(value)
 }
 
 function localizedElementName(
@@ -715,10 +721,7 @@ export interface GatewayPresentation {
   lang: DiagramLang
 }
 
-const GATEWAY_SEMANTIC_IDS: Record<
-  SemanticGatewayType,
-  GatewayPresentation['semantic']
-> = {
+const GATEWAY_SEMANTIC_IDS: Record<SemanticGatewayType, GatewayPresentation['semantic']> = {
   'bpmn:ExclusiveGateway': 'gateway-exclusive',
   'bpmn:InclusiveGateway': 'gateway-inclusive',
   'bpmn:ParallelGateway': 'gateway-parallel'
@@ -768,7 +771,12 @@ function firstShapeChild(parentGfx: SVGElement): SVGElement | null {
   return visual.querySelector?.('rect, polygon, path, circle') ?? null
 }
 
-function makeText(x: number, y: number, content: string, extra: Record<string, string | number>): SVGElement {
+function makeText(
+  x: number,
+  y: number,
+  content: string,
+  extra: Record<string, string | number>
+): SVGElement {
   const text = svgCreate('text', { x, y, 'font-family': FONT_FAMILY, ...extra })
   text.textContent = content
   return text
@@ -812,9 +820,7 @@ function applyGatewayPresentation(
   svgAppend(parentGfx, group)
 }
 
-function semanticDecorationAttributes(
-  token: string
-): Record<string, string> {
+function semanticDecorationAttributes(token: string): Record<string, string> {
   const semantic = shapeSemanticForDecoration(token)
   return semantic
     ? {
@@ -919,10 +925,7 @@ export function applyDecorations(parentGfx: SVGElement, decorations: Decoration[
           })
           svgAppend(group, rect)
           const label = d.detail ? d.label + ': ' + d.detail : d.label
-          svgAppend(
-            group,
-            makeText(d.x + 5, d.y + 13, label, { fill: d.stroke, 'font-size': 9 })
-          )
+          svgAppend(group, makeText(d.x + 5, d.y + 13, label, { fill: d.stroke, 'font-size': 9 }))
           svgAppend(parentGfx, group)
           break
         }
@@ -1133,9 +1136,7 @@ interface RendererGraphicsFactoryLike {
   update(type: 'shape', element: OrgElementLike, gfx: SVGElement): void
 }
 
-function processBusinessObject(
-  canvas: CanvasLike | undefined
-): OrgElementLike['businessObject'] {
+function processBusinessObject(canvas: CanvasLike | undefined): OrgElementLike['businessObject'] {
   let root: OrgElementLike | undefined
   try {
     root = canvas?.getRootElement()
@@ -1146,8 +1147,7 @@ function processBusinessObject(
   if (!rootBo || rootBo.$type === 'bpmn:Process') return rootBo
   const participants = readBusinessValue(rootBo, 'participants')
   if (Array.isArray(participants) && participants.length > 0) {
-    const processRef = (participants[0] as { processRef?: unknown } | undefined)
-      ?.processRef
+    const processRef = (participants[0] as { processRef?: unknown } | undefined)?.processRef
     if (processRef && typeof processRef === 'object') {
       return processRef as NonNullable<OrgElementLike['businessObject']>
     }
@@ -1289,11 +1289,7 @@ export class OrgRenderer extends BaseRenderer {
         }
         applyDecorations(parentGfx, decorations)
       }
-      applyGatewayPresentation(
-        parentGfx,
-        element,
-        diagramLanguageForElement(element, this.canvas)
-      )
+      applyGatewayPresentation(parentGfx, element, diagramLanguageForElement(element, this.canvas))
     } catch {
       /* decoration failures must never break base rendering */
     }
@@ -1322,11 +1318,7 @@ export class OrgRenderer extends BaseRenderer {
         continue
       }
       try {
-        this.graphicsFactory.update(
-          'shape',
-          element,
-          this.elementRegistry.getGraphics(element)
-        )
+        this.graphicsFactory.update('shape', element, this.elementRegistry.getGraphics(element))
       } catch {
         /* stale registry graphics during import/teardown — skip this shape */
       }

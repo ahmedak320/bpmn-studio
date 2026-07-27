@@ -106,10 +106,14 @@ describe('Anthropic payload', () => {
 
 describe('Gemini payload', () => {
   it('targets generateContent with the api-key header and responseMimeType JSON', () => {
-    const req = buildGeminiRequest(cfg({ providerId: 'gemini', model: 'gemini-flash-latest' }), TEXT_MSGS, {
-      maxTokens: 3000,
-      jsonMode: true
-    })
+    const req = buildGeminiRequest(
+      cfg({ providerId: 'gemini', model: 'gemini-flash-latest' }),
+      TEXT_MSGS,
+      {
+        maxTokens: 3000,
+        jsonMode: true
+      }
+    )
     expect(req.url).toBe(
       'https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent'
     )
@@ -140,7 +144,10 @@ describe('Gemini payload', () => {
       ],
       { maxTokens: 10, jsonMode: true, attachment: PDF }
     )
-    const contents = req.body.contents as Array<{ role: string; parts: Array<Record<string, unknown>> }>
+    const contents = req.body.contents as Array<{
+      role: string
+      parts: Array<Record<string, unknown>>
+    }>
     expect(contents[1].role).toBe('model')
     // PDF attached to the FIRST user turn.
     expect(contents[0].parts[0]).toEqual({ text: 'first' })

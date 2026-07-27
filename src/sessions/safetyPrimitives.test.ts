@@ -171,9 +171,7 @@ describe('path transaction planning and execution', () => {
       'archive/folder/nested/b.bpmn'
     ])
     expect(pathIsAffected('folderish/a.bpmn', 'folder', 'directory')).toBe(false)
-    expect(migratePath('folder/x/a.bpmn', 'folder', 'new', 'directory')).toBe(
-      'new/x/a.bpmn'
-    )
+    expect(migratePath('folder/x/a.bpmn', 'folder', 'new', 'directory')).toBe('new/x/a.bpmn')
   })
 
   it('requires both typed/UI delete confirmation and a dirty-work decision', () => {
@@ -250,18 +248,9 @@ describe('path transaction planning and execution', () => {
     expect(store.getSnapshot().activeSessionId).toBe(a.id)
     // State phases may publish, but no observer can ever see a half-migrated
     // pair (one old path and one new path).
-    expect(publishedPaths).not.toContainEqual([
-      'renamed/a.bpmn',
-      'folder/nested/b.bpmn'
-    ])
-    expect(publishedPaths).not.toContainEqual([
-      'folder/a.bpmn',
-      'renamed/nested/b.bpmn'
-    ])
-    expect(publishedPaths.at(-1)).toEqual([
-      'renamed/a.bpmn',
-      'renamed/nested/b.bpmn'
-    ])
+    expect(publishedPaths).not.toContainEqual(['renamed/a.bpmn', 'folder/nested/b.bpmn'])
+    expect(publishedPaths).not.toContainEqual(['folder/a.bpmn', 'renamed/nested/b.bpmn'])
+    expect(publishedPaths.at(-1)).toEqual(['renamed/a.bpmn', 'renamed/nested/b.bpmn'])
   })
 
   it('rolls storage back and leaves session identities untouched if draft migration fails', async () => {

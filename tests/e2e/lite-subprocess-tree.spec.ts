@@ -40,9 +40,7 @@ function oneProcessBpmn(
       (call) =>
         `<bpmn2:callActivity id="${call.id}" name="${call.name}" calledElement="${call.calledElement}" />`
     ),
-    ...(taskName
-      ? [`<bpmn2:task id="Task_${processId}" name="${taskName}" />`]
-      : [])
+    ...(taskName ? [`<bpmn2:task id="Task_${processId}" name="${taskName}" />`] : [])
   ]
   const shapes = [
     `<bpmndi:BPMNShape id="Start_${processId}_di" bpmnElement="Start_${processId}"><dc:Bounds x="100" y="120" width="36" height="36" /></bpmndi:BPMNShape>`,
@@ -256,8 +254,9 @@ async function installMockWorkspace(page: Page): Promise<void> {
       }
       directory.children.set(fileName, fileHandle(fileName, xml))
     }
-    ;(window as unknown as { showDirectoryPicker: () => Promise<MockDirectory> })
-      .showDirectoryPicker = async () => root
+    ;(
+      window as unknown as { showDirectoryPicker: () => Promise<MockDirectory> }
+    ).showDirectoryPicker = async () => root
   }, WORKSPACE_FILES)
 }
 
@@ -267,16 +266,9 @@ function physicalRow(page: Page, relPath: string): Locator {
   )
 }
 
-function referenceRow(
-  page: Page,
-  processId: string,
-  referenceCount?: number
-): Locator {
-  const count =
-    referenceCount === undefined ? '' : `[data-reference-count="${referenceCount}"]`
-  return page.locator(
-    `.orbitpm-tree-reference-row[data-process-id="${processId}"]${count}`
-  )
+function referenceRow(page: Page, processId: string, referenceCount?: number): Locator {
+  const count = referenceCount === undefined ? '' : `[data-reference-count="${referenceCount}"]`
+  return page.locator(`.orbitpm-tree-reference-row[data-process-id="${processId}"]${count}`)
 }
 
 async function expandFolder(page: Page, relPath: string): Promise<void> {
@@ -356,19 +348,13 @@ test('folder tree nests owned subprocesses once and shows reused/cyclic referenc
   ).toHaveCount(1)
   await expect(canonicalShared).toHaveAttribute('draggable', 'true')
   await expect(canonicalShared).toHaveAttribute('data-owned-subprocess', 'true')
-  await expect(canonicalShared).toHaveAttribute(
-    'data-owner-process-id',
-    'Process_parent_a'
-  )
+  await expect(canonicalShared).toHaveAttribute('data-owner-process-id', 'Process_parent_a')
   await expect(canonicalShared.locator('.orbitpm-tree-actions button')).toHaveCount(3)
   await expect(canonicalShared.locator('.orbitpm-tree-owned-pill')).toHaveText('Owned')
   await expect(canonicalShared.locator('[data-call-count="2"]')).toHaveText('×2')
   const canonicalSharedPill = canonicalShared.locator('.orbitpm-tree-shared-pill')
   await expect(canonicalSharedPill).toHaveText('Shared')
-  await expect(canonicalSharedPill).toHaveAttribute(
-    'title',
-    'Referenced by 2 parent processes'
-  )
+  await expect(canonicalSharedPill).toHaveAttribute('title', 'Referenced by 2 parent processes')
 
   await expandLinkedChildren(parentB)
   const singleRef = referenceRow(page, 'Process_shared', 1)
@@ -419,14 +405,9 @@ test('folder tree nests owned subprocesses once and shows reused/cyclic referenc
   await expect(page.locator('html')).toHaveAttribute('lang', 'ar')
   await expect(page.locator('html')).toHaveAttribute('dir', 'rtl')
   await expect(canonicalSharedPill).toHaveText('مشتركة')
-  await expect(canonicalSharedPill).toHaveAttribute(
-    'title',
-    'تتم الإشارة إليها من 2 عمليات أصلية'
-  )
+  await expect(canonicalSharedPill).toHaveAttribute('title', 'تتم الإشارة إليها من 2 عمليات أصلية')
   await expect(canonicalShared.locator('.orbitpm-tree-owned-pill')).toHaveText('مملوكة')
-  await expect(singleRef.locator('.orbitpm-tree-reused-pill')).toHaveText(
-    'معاد استخدامها'
-  )
+  await expect(singleRef.locator('.orbitpm-tree-reused-pill')).toHaveText('معاد استخدامها')
   await expect(singleRef.locator('.orbitpm-tree-reference-path')).toHaveText(
     'الملف الأساسي: Shared/shared-child.bpmn'
   )
@@ -448,9 +429,9 @@ test('folder tree nests owned subprocesses once and shows reused/cyclic referenc
   await expect(results.getByRole('option')).toContainText('Needle Target')
   await results.getByRole('option').click()
 
-  await expect.poll(() => activeRootProcessId(page), { timeout: 20_000 }).toBe(
-    'Process_search_target'
-  )
+  await expect
+    .poll(() => activeRootProcessId(page), { timeout: 20_000 })
+    .toBe('Process_search_target')
   const bundleCanonical = physicalRow(page, 'Search/bundle.bpmn')
   await expect(bundleCanonical).toBeVisible()
   await expect(bundleCanonical).toBeFocused()

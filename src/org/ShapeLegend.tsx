@@ -2,11 +2,7 @@ import { useId, useRef, useState } from 'react'
 import { t } from '../i18n'
 import { useLang } from '../i18n/useLang'
 import { PALETTE, type PaletteKey } from './palette'
-import {
-  SHAPE_LEGEND_KINDS,
-  resolveShapeSemantic,
-  type ShapeSemanticKind
-} from './shapeSemantics'
+import { SHAPE_LEGEND_KINDS, resolveShapeSemantic, type ShapeSemanticKind } from './shapeSemantics'
 
 export interface ShapeLegendProps {
   /** Optional initial disclosure state; omitted keeps the overlay closed. */
@@ -90,8 +86,22 @@ function IconShape({
     return (
       <g>
         <rect x="2.5" y="3.5" width="19" height="17" rx="3.5" {...common} />
-        <rect x="4.2" y="5.2" width="15.6" height="13.6" rx="2.5" fill="none" stroke={strokeColor} strokeWidth="1" />
-        <path d="M 9 16 L 15 16 M 12 13 L 12 19" fill="none" stroke={strokeColor} strokeWidth="1.3" />
+        <rect
+          x="4.2"
+          y="5.2"
+          width="15.6"
+          height="13.6"
+          rx="2.5"
+          fill="none"
+          stroke={strokeColor}
+          strokeWidth="1"
+        />
+        <path
+          d="M 9 16 L 15 16 M 12 13 L 12 19"
+          fill="none"
+          stroke={strokeColor}
+          strokeWidth="1.3"
+        />
       </g>
     )
   }
@@ -99,7 +109,14 @@ function IconShape({
   if (icon === 'participant' || icon === 'lane') {
     return (
       <g>
-        <rect x="1.5" y="4" width="21" height="16" rx={icon === 'participant' ? 1.5 : 0} {...common} />
+        <rect
+          x="1.5"
+          y="4"
+          width="21"
+          height="16"
+          rx={icon === 'participant' ? 1.5 : 0}
+          {...common}
+        />
         <path
           d={icon === 'participant' ? 'M 6 4 L 6 20' : 'M 1.5 9 L 22.5 9'}
           fill="none"
@@ -115,7 +132,12 @@ function IconShape({
       <g>
         <rect x="2" y="3" width="20" height="18" rx="1" fill={fillColor} stroke="none" />
         <path d="M 6 4 L 3 4 L 3 20 L 6 20" fill="none" stroke={strokeColor} strokeWidth="2" />
-        <path d="M 7 8 L 20 8 M 7 12 L 18 12 M 7 16 L 15 16" fill="none" stroke={strokeColor} strokeWidth="1.2" />
+        <path
+          d="M 7 8 L 20 8 M 7 12 L 18 12 M 7 16 L 15 16"
+          fill="none"
+          stroke={strokeColor}
+          strokeWidth="1.2"
+        />
       </g>
     )
   }
@@ -133,7 +155,12 @@ function IconShape({
     return (
       <g>
         <path d="M 4 6 C 4 2.5 20 2.5 20 6 L 20 18 C 20 21.5 4 21.5 4 18 Z" {...common} />
-        <path d="M 4 6 C 4 9.5 20 9.5 20 6 M 4 10 C 4 13.5 20 13.5 20 10" fill="none" stroke={strokeColor} strokeWidth="1.1" />
+        <path
+          d="M 4 6 C 4 9.5 20 9.5 20 6 M 4 10 C 4 13.5 20 13.5 20 10"
+          fill="none"
+          stroke={strokeColor}
+          strokeWidth="1.1"
+        />
       </g>
     )
   }
@@ -151,13 +178,7 @@ function LegendIcon({ kind, icon, fill, stroke }: LegendIconProps): JSX.Element 
       data-swatch-stroke={stroke}
       aria-hidden="true"
     >
-      <svg
-        viewBox="0 0 24 24"
-        width="24"
-        height="24"
-        focusable="false"
-        aria-hidden="true"
-      >
+      <svg viewBox="0 0 24 24" width="24" height="24" focusable="false" aria-hidden="true">
         <IconShape icon={icon} fill={fill} stroke={stroke} />
       </svg>
     </span>
@@ -229,11 +250,7 @@ export function ShapeLegend({ defaultOpen = false }: ShapeLegendProps): JSX.Elem
             {SHAPE_LEGEND_KINDS.map((kind) => {
               const descriptor = resolveShapeSemantic(kind, lang)
               return (
-                <li
-                  key={kind}
-                  className="orbitpm-shape-legend__item"
-                  data-legend-kind={kind}
-                >
+                <li key={kind} className="orbitpm-shape-legend__item" data-legend-kind={kind}>
                   <LegendIcon
                     kind={kind}
                     icon={descriptor.icon}

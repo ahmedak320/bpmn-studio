@@ -296,12 +296,15 @@ function clearTopBoxFromLabel(box: Box, labelBox?: Box | null): Box {
  *  { x: width+2, y: -20, w: 16, h: 16 } by default. An optional manually
  *  moved external label pushes it farther above without changing its x slot. */
 export function planBadgeBox(width: number, labelBox?: Box | null): Box {
-  return clearTopBoxFromLabel({
-    x: width + MISSING_BADGE_GAP_X,
-    y: -(MISSING_BADGE_SIZE + MISSING_BADGE_GAP_Y),
-    w: MISSING_BADGE_SIZE,
-    h: MISSING_BADGE_SIZE
-  }, labelBox)
+  return clearTopBoxFromLabel(
+    {
+      x: width + MISSING_BADGE_GAP_X,
+      y: -(MISSING_BADGE_SIZE + MISSING_BADGE_GAP_Y),
+      w: MISSING_BADGE_SIZE,
+      h: MISSING_BADGE_SIZE
+    },
+    labelBox
+  )
 }
 
 /** Sub-process chip geometry: a 34x14 pill at the shape's bottom edge, INSIDE
@@ -502,15 +505,7 @@ const LAYOUT_BOX_KEYS = [
 
 /** Semantic names consumed by obstacle construction and geometry tests. */
 export type DecorBoxKind =
-  | 'channel'
-  | 'trigger'
-  | 'inputs'
-  | 'outputs'
-  | 'cc'
-  | 'owner'
-  | 'responsible'
-  | 'basis'
-  | 'badge'
+  'channel' | 'trigger' | 'inputs' | 'outputs' | 'cc' | 'owner' | 'responsible' | 'basis' | 'badge'
 
 export interface DecorBox {
   kind: DecorBoxKind
@@ -613,8 +608,7 @@ export function computeDecorLayout(input: DecorLayoutInput): DecorLayout {
   const triggers = elementType === 'bpmn:StartEvent' ? parseTriggers(props) : []
   if (triggers.length > 0 && elementType === 'bpmn:StartEvent') {
     const label =
-      triggerLabel(triggers[0].type) +
-      (triggers.length > 1 ? ` +${triggers.length - 1}` : '')
+      triggerLabel(triggers[0].type) + (triggers.length > 1 ? ` +${triggers.length - 1}` : '')
     const detail =
       triggers.length === 1 && triggers[0].type === 'dmthub'
         ? truncate(triggers[0].service, 18)
@@ -662,8 +656,7 @@ export function computeDecorLayout(input: DecorLayoutInput): DecorLayout {
     }
     return boundary
   }
-  const bottomBase = (): number =>
-    labelBox ? Math.max(height, labelBox.y + labelBox.h) : height
+  const bottomBase = (): number => (labelBox ? Math.max(height, labelBox.y + labelBox.h) : height)
   const rightBoundary = (): number => {
     let boundary = width + LIST_GAP_X
     if (labelBox && labelBox.x + labelBox.w > width) {

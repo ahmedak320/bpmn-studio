@@ -32,10 +32,7 @@ export function throwIfAborted(signal?: AbortSignal): void {
   if (signal?.aborted) throw abortError()
 }
 
-export function waitWithSignal(
-  delayMs: number,
-  signal?: AbortSignal
-): Promise<void> {
+export function waitWithSignal(delayMs: number, signal?: AbortSignal): Promise<void> {
   throwIfAborted(signal)
   return new Promise<void>((resolve, reject) => {
     const timer = setTimeout(() => {
@@ -89,10 +86,7 @@ export async function withBoundedRetry<T>(
   throw new Error('Retry executor reached an invalid state.')
 }
 
-export function parseRetryAfter(
-  value: string | null,
-  nowMs = Date.now()
-): number | undefined {
+export function parseRetryAfter(value: string | null, nowMs = Date.now()): number | undefined {
   if (!value) return undefined
   const seconds = Number(value.trim())
   if (Number.isFinite(seconds) && seconds >= 0) return seconds * 1_000
@@ -101,16 +95,7 @@ export function parseRetryAfter(
   return Math.max(0, dateMs - nowMs)
 }
 
-export const TRANSIENT_HTTP_STATUSES = new Set([
-  408,
-  429,
-  500,
-  502,
-  503,
-  504,
-  522,
-  524
-])
+export const TRANSIENT_HTTP_STATUSES = new Set([408, 429, 500, 502, 503, 504, 522, 524])
 
 export function isTransientHttpStatus(status: number): boolean {
   return TRANSIENT_HTTP_STATUSES.has(status)

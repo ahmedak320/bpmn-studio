@@ -18,7 +18,12 @@ const exitDigest: ProcessDigest = {
   processName: 'Employee Exit',
   trigger: { type: 'dmthub', service: 'Exit Service' },
   steps: [
-    { id: 'Start_1', name: 'Request received', type: 'StartEvent', nexts: [{ targetId: 'Task_A' }] },
+    {
+      id: 'Start_1',
+      name: 'Request received',
+      type: 'StartEvent',
+      nexts: [{ targetId: 'Task_A' }]
+    },
     {
       id: 'Task_A',
       name: 'Conduct exit interview',
@@ -37,7 +42,14 @@ const exitDigest: ProcessDigest = {
         { targetId: 'Call_1', condition: 'No' }
       ]
     },
-    { id: 'Task_B', name: 'Notify finance', type: 'Task', kind: 'cc', ccTo: 'Finance', nexts: [{ targetId: 'End_1' }] },
+    {
+      id: 'Task_B',
+      name: 'Notify finance',
+      type: 'Task',
+      kind: 'cc',
+      ccTo: 'Finance',
+      nexts: [{ targetId: 'End_1' }]
+    },
     {
       id: 'Call_1',
       name: 'Return assets',
@@ -59,8 +71,20 @@ const procurementDigest: ProcessDigest = {
   trigger: { type: 'email', service: 'Vendor Desk' },
   steps: [
     { id: 's', name: 'Start', type: 'StartEvent', nexts: [{ targetId: 't1' }] },
-    { id: 't1', name: 'Raise purchase order', type: 'Task', owner: 'Buyer', nexts: [{ targetId: 't2' }] },
-    { id: 't2', name: 'Approve budget', type: 'Task', owner: 'Finance Lead', nexts: [{ targetId: 'e' }] },
+    {
+      id: 't1',
+      name: 'Raise purchase order',
+      type: 'Task',
+      owner: 'Buyer',
+      nexts: [{ targetId: 't2' }]
+    },
+    {
+      id: 't2',
+      name: 'Approve budget',
+      type: 'Task',
+      owner: 'Finance Lead',
+      nexts: [{ targetId: 'e' }]
+    },
     { id: 'e', name: 'End', type: 'EndEvent', nexts: [] }
   ],
   notes: ['Orders above 50k need CFO sign-off'],
@@ -74,8 +98,20 @@ const leaveDigest: ProcessDigest = {
   processName: 'Leave Request',
   steps: [
     { id: 's', name: 'Start', type: 'StartEvent', nexts: [{ targetId: 't1' }] },
-    { id: 't1', name: 'Submit leave form', type: 'UserTask', owner: 'Employee', nexts: [{ targetId: 't2' }] },
-    { id: 't2', name: 'Manager approval', type: 'UserTask', owner: 'Manager', nexts: [{ targetId: 'e' }] },
+    {
+      id: 't1',
+      name: 'Submit leave form',
+      type: 'UserTask',
+      owner: 'Employee',
+      nexts: [{ targetId: 't2' }]
+    },
+    {
+      id: 't2',
+      name: 'Manager approval',
+      type: 'UserTask',
+      owner: 'Manager',
+      nexts: [{ targetId: 'e' }]
+    },
     { id: 'e', name: 'End', type: 'EndEvent', nexts: [] }
   ],
   notes: [],
@@ -127,9 +163,7 @@ describe('rankDigests', () => {
       folder: 'HR',
       processId: 'p_ar',
       processName: 'اعتماد الطلبات',
-      steps: [
-        { id: 't', name: 'موافقة المدير', type: 'UserTask', nexts: [] }
-      ],
+      steps: [{ id: 't', name: 'موافقة المدير', type: 'UserTask', nexts: [] }],
       notes: [],
       callsTo: []
     }

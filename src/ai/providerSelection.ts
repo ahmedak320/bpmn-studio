@@ -1,8 +1,4 @@
-import {
-  LITE_PROVIDERS,
-  getLiteProvider,
-  type LiteProviderId
-} from './providersLite'
+import { LITE_PROVIDERS, getLiteProvider, type LiteProviderId } from './providersLite'
 import { getPref, setPref, type KeyStorageResult } from './keys'
 
 export interface ProviderSelection {
@@ -31,9 +27,7 @@ function validateSelection(value: unknown): ProviderSelection | null {
 
 function dispatchSelection(selection: ProviderSelection | null): void {
   if (typeof window === 'undefined') return
-  window.dispatchEvent(
-    new CustomEvent<ProviderSelection | null>(EVENT_NAME, { detail: selection })
-  )
+  window.dispatchEvent(new CustomEvent<ProviderSelection | null>(EVENT_NAME, { detail: selection }))
 }
 
 /**

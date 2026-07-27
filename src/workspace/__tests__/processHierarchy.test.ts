@@ -9,11 +9,7 @@ import {
   type ProcessHierarchyLink
 } from '../processHierarchy'
 
-function directory(
-  name: string,
-  relPath: string,
-  children: LiteTreeNode[] = []
-): LiteTreeNode {
+function directory(name: string, relPath: string, children: LiteTreeNode[] = []): LiteTreeNode {
   return { name, relPath, type: 'directory', children }
 }
 
@@ -51,8 +47,7 @@ function link(
     childProcessId,
     parentRelPath: `${parentProcessId}.bpmn`,
     childRelPath: `${childProcessId}.bpmn`,
-    callActivityIds:
-      options.callActivityIds ?? [`call_${parentProcessId}_${childProcessId}`],
+    callActivityIds: options.callActivityIds ?? [`call_${parentProcessId}_${childProcessId}`],
     count: options.count ?? 1
   }
 }
@@ -64,9 +59,7 @@ function graph(
   return { links, ambiguousProcessIds: new Set(ambiguousProcessIds) }
 }
 
-function rootDirectory(
-  result: ReturnType<typeof buildProcessHierarchy>
-): HierarchyDirectoryRow {
+function rootDirectory(result: ReturnType<typeof buildProcessHierarchy>): HierarchyDirectoryRow {
   expect(result.root?.kind).toBe('directory')
   return result.root as HierarchyDirectoryRow
 }
@@ -109,17 +102,12 @@ describe('buildProcessHierarchy — owned and reused subprocesses', () => {
     const z = rootDirectory(result).children[0] as HierarchyDirectoryRow
     expect(z.kind).toBe('directory')
     expect(z.children).toEqual([])
-    expect(
-      rootDirectory(result).children.filter((row) => row.kind === 'file')
-    ).toEqual([parent])
+    expect(rootDirectory(result).children.filter((row) => row.kind === 'file')).toEqual([parent])
   })
 
   it('keeps unlinked files in their physical folders', () => {
     const result = buildProcessHierarchy(
-      rootWith(
-        directory('misc', 'misc', [file('misc/orphan.bpmn')]),
-        file('root.bpmn')
-      ),
+      rootWith(directory('misc', 'misc', [file('misc/orphan.bpmn')]), file('root.bpmn')),
       indexOf([
         ['O', 'misc/orphan.bpmn'],
         ['R', 'root.bpmn']
@@ -132,10 +120,7 @@ describe('buildProcessHierarchy — owned and reused subprocesses', () => {
       ancestorDirectoryPaths: ['', 'misc'],
       ancestorRowKeys: []
     })
-    expect(rootDirectory(result).children.map((row) => row.name)).toEqual([
-      'misc',
-      'root.bpmn'
-    ])
+    expect(rootDirectory(result).children.map((row) => row.name)).toEqual(['misc', 'root.bpmn'])
   })
 
   it('uses one deterministic owner and a clear read-only reference for reuse', () => {
@@ -180,24 +165,14 @@ describe('buildProcessHierarchy — owned and reused subprocesses', () => {
 
   it('keeps owner-tree descendants canonical and exposes a reused DAG link only at the other parent', () => {
     const result = buildProcessHierarchy(
-      rootWith(
-        file('a.bpmn'),
-        file('b.bpmn'),
-        file('c.bpmn'),
-        file('d.bpmn')
-      ),
+      rootWith(file('a.bpmn'), file('b.bpmn'), file('c.bpmn'), file('d.bpmn')),
       indexOf([
         ['A', 'a.bpmn'],
         ['B', 'b.bpmn'],
         ['C', 'c.bpmn'],
         ['D', 'd.bpmn', 'Shared D']
       ]),
-      graph([
-        link('A', 'B'),
-        link('A', 'C'),
-        link('B', 'D'),
-        link('C', 'D')
-      ])
+      graph([link('A', 'B'), link('A', 'C'), link('B', 'D'), link('C', 'D')])
     )
 
     const a = canonical(result, 'A')
@@ -245,12 +220,7 @@ describe('buildProcessHierarchy — cycles, identity, and safety', () => {
 
   it('keeps semantic row keys stable across file renames and updates reveal locators', () => {
     const before = buildProcessHierarchy(
-      rootWith(
-        directory('old', 'old', [
-          file('old/a.bpmn'),
-          file('old/b.bpmn')
-        ])
-      ),
+      rootWith(directory('old', 'old', [file('old/a.bpmn'), file('old/b.bpmn')])),
       indexOf([
         ['A', 'old/a.bpmn'],
         ['B', 'old/b.bpmn']
@@ -258,12 +228,7 @@ describe('buildProcessHierarchy — cycles, identity, and safety', () => {
       graph([link('A', 'B')])
     )
     const after = buildProcessHierarchy(
-      rootWith(
-        directory('new', 'new', [
-          file('new/renamed-a.bpmn'),
-          file('new/renamed-b.bpmn')
-        ])
-      ),
+      rootWith(directory('new', 'new', [file('new/renamed-a.bpmn'), file('new/renamed-b.bpmn')])),
       indexOf([
         ['A', 'new/renamed-a.bpmn'],
         ['B', 'new/renamed-b.bpmn']
@@ -290,18 +255,12 @@ describe('buildProcessHierarchy — cycles, identity, and safety', () => {
     expect(result.ambiguousProcessIds).toEqual(new Set(['DUP']))
     expect(result.canonicalByProcessId.has('DUP')).toBe(false)
     expect(result.canonicalPathByProcessId.has('DUP')).toBe(false)
-    expect(result.canonicalByRelPath.get('two.bpmn')?.key).toBe(
-      'file-path:"two.bpmn"'
-    )
+    expect(result.canonicalByRelPath.get('two.bpmn')?.key).toBe('file-path:"two.bpmn"')
   })
 
   it('leaves a multi-process file physical when its processes disagree on ownership', () => {
     const result = buildProcessHierarchy(
-      rootWith(
-        file('a.bpmn'),
-        file('b.bpmn'),
-        file('multi.bpmn')
-      ),
+      rootWith(file('a.bpmn'), file('b.bpmn'), file('multi.bpmn')),
       indexOf([
         ['A', 'a.bpmn'],
         ['B', 'b.bpmn'],
@@ -315,8 +274,6 @@ describe('buildProcessHierarchy — cycles, identity, and safety', () => {
       owned: false,
       ownerParentProcessId: null
     })
-    expect(rootDirectory(result).children.map((row) => row.name)).toContain(
-      'multi.bpmn'
-    )
+    expect(rootDirectory(result).children.map((row) => row.name)).toContain('multi.bpmn')
   })
 })

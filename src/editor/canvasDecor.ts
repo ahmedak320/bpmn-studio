@@ -10,10 +10,7 @@
 // suite runs in node without a DOM).
 
 import { getLang } from '../i18n'
-import {
-  shapeSemanticForElement,
-  type ShapeSemanticElementLike
-} from '../org/shapeSemantics'
+import { shapeSemanticForElement, type ShapeSemanticElementLike } from '../org/shapeSemantics'
 
 export const TOOLTIP_ATTR = 'data-org-tooltip'
 export const MISSING_ATTR = 'data-org-missing'
@@ -88,9 +85,7 @@ export function installCanvasDecor(
     el.style.top = top + 'px'
   }
 
-  const tooltipOf = (
-    target: EventTarget | null
-  ): { anchor: Element; text: string } | null => {
+  const tooltipOf = (target: EventTarget | null): { anchor: Element; text: string } | null => {
     const el = target as Element | null
     if (!el || typeof el.closest !== 'function') return null
     const explicit = el.closest('[' + TOOLTIP_ATTR + ']')
@@ -141,8 +136,7 @@ export function installCanvasDecor(
   }
 
   const onPointerMove = (e: PointerEvent): void => {
-    const tooltip =
-      explicitTooltipAtPoint(e.clientX, e.clientY) ?? tooltipOf(e.target)
+    const tooltip = explicitTooltipAtPoint(e.clientX, e.clientY) ?? tooltipOf(e.target)
     if (!tooltip) {
       hide()
       return

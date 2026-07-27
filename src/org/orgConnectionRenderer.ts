@@ -205,9 +205,7 @@ function maskPath(point: Point, unit: Point): string {
   const reach = CONNECTION_HOP_RADIUS + 1
   const start = offsetPoint(point, unit, -reach)
   const end = offsetPoint(point, unit, reach)
-  return `M ${svgNumber(start.x)} ${svgNumber(start.y)} L ${svgNumber(
-    end.x
-  )} ${svgNumber(end.y)}`
+  return `M ${svgNumber(start.x)} ${svgNumber(start.y)} L ${svgNumber(end.x)} ${svgNumber(end.y)}`
 }
 
 /** A quadratic bridge aligned with the actual over-edge segment. */
@@ -322,10 +320,8 @@ export class OrgConnectionRenderer {
       if (waypoints.length < 2) continue
       byId.set(element.id, {
         id: element.id,
-        sourceId:
-          typeof element.source?.id === 'string' ? element.source.id : undefined,
-        targetId:
-          typeof element.target?.id === 'string' ? element.target.id : undefined,
+        sourceId: typeof element.source?.id === 'string' ? element.source.id : undefined,
+        targetId: typeof element.target?.id === 'string' ? element.target.id : undefined,
         waypoints
       })
     }

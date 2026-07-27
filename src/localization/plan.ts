@@ -1,12 +1,5 @@
-import {
-  auditFieldTarget,
-  auditLocalizationFields,
-  type LocalizationAuditOptions
-} from './audit'
-import {
-  SEEDED_GLOSSARY,
-  findLocalPair
-} from './glossary'
+import { auditFieldTarget, auditLocalizationFields, type LocalizationAuditOptions } from './audit'
+import { SEEDED_GLOSSARY, findLocalPair } from './glossary'
 import type {
   GlossaryEntry,
   LanguageCode,
@@ -33,15 +26,11 @@ function opposite(language: LanguageCode): LanguageCode {
   return language === 'en' ? 'ar' : 'en'
 }
 
-function stableAuditOptions(
-  options: LocalizationAuditOptions
-): LocalizationAuditOptions {
+function stableAuditOptions(options: LocalizationAuditOptions): LocalizationAuditOptions {
   return {
     ...options,
     approvedNeutralTerms:
-      options.approvedNeutralTerms === undefined
-        ? undefined
-        : [...options.approvedNeutralTerms],
+      options.approvedNeutralTerms === undefined ? undefined : [...options.approvedNeutralTerms],
     approvedEnglishBilingualExceptions:
       options.approvedEnglishBilingualExceptions === undefined
         ? undefined
@@ -65,15 +54,13 @@ function patchForStoredTarget(
   value: string,
   reason: LocalizationPatch['reason']
 ): LocalizationPatch {
-  const previous =
-    field.origins[target] === 'paired' ? field.value[target] : undefined
+  const previous = field.origins[target] === 'paired' ? field.value[target] : undefined
   return {
     source: field.source,
     processId: field.processId,
     elementId: field.elementId,
     field: field.field,
-    property:
-      target === 'en' ? field.storage.enProperty : field.storage.arProperty,
+    property: target === 'en' ? field.storage.enProperty : field.storage.arProperty,
     value,
     ...(previous === undefined ? {} : { expectedValue: previous }),
     target,
@@ -119,12 +106,7 @@ export function planLocalResourceApplication(
         continue
       }
       updates.push(
-        patchForStoredTarget(
-          field,
-          language,
-          field.value[language] as string,
-          'source-seed'
-        )
+        patchForStoredTarget(field, language, field.value[language] as string, 'source-seed')
       )
       field.origins[language] = 'paired'
     }
@@ -133,20 +115,11 @@ export function planLocalResourceApplication(
       if (fieldIssuesForTarget(field, target, auditOptions).length === 0) continue
       const source = opposite(target)
       const sourceValue = field.value[source]
-      if (
-        sourceValue == null ||
-        auditFieldTarget(field, source, auditOptions).length > 0
-      ) {
+      if (sourceValue == null || auditFieldTarget(field, source, auditOptions).length > 0) {
         continue
       }
 
-      const match = findLocalPair(
-        sourceValue,
-        source,
-        target,
-        glossary,
-        translationMemory
-      )
+      const match = findLocalPair(sourceValue, source, target, glossary, translationMemory)
       if (!match) {
         // Numeric values, identifiers, URLs, e-mail addresses, one-letter
         // codes, and directly-approved neutral values need no translated
@@ -155,12 +128,8 @@ export function planLocalResourceApplication(
         const neutralCandidate = cloneField(field)
         neutralCandidate.value[target] = sourceValue
         neutralCandidate.origins[target] = 'paired'
-        if (
-          fieldIssuesForTarget(neutralCandidate, target, auditOptions).length === 0
-        ) {
-          updates.push(
-            patchForStoredTarget(field, target, sourceValue, 'neutral')
-          )
+        if (fieldIssuesForTarget(neutralCandidate, target, auditOptions).length === 0) {
+          updates.push(patchForStoredTarget(field, target, sourceValue, 'neutral'))
           field.value[target] = sourceValue
           field.origins[target] = 'paired'
           neutralMatches += 1
@@ -173,14 +142,7 @@ export function planLocalResourceApplication(
       candidate.origins[target] = 'paired'
       if (fieldIssuesForTarget(candidate, target, auditOptions).length > 0) continue
 
-      updates.push(
-        patchForStoredTarget(
-          field,
-          target,
-          match.value,
-          match.resource
-        )
-      )
+      updates.push(patchForStoredTarget(field, target, match.value, match.resource))
       field.value[target] = match.value
       field.origins[target] = 'paired'
       if (match.resource === 'glossary') glossaryMatches += 1
@@ -219,9 +181,7 @@ export function planLanguageProjection(
 ): ProjectionPlan {
   const auditOptions = stableAuditOptions(options)
   const report = auditLocalizationFields(fields, auditOptions)
-  const blockers = report.issues.filter(
-    (current) => current.target === language
-  )
+  const blockers = report.issues.filter((current) => current.target === language)
   const updates: LocalizationPatch[] = []
   let projected = 0
   let unchanged = 0
@@ -260,9 +220,7 @@ export function planLanguageProjection(
       field: field.field,
       property: field.storage.projectionProperty,
       value,
-      ...(field.projection === undefined
-        ? {}
-        : { expectedValue: field.projection }),
+      ...(field.projection === undefined ? {} : { expectedValue: field.projection }),
       target: language,
       reason
     })
@@ -305,11 +263,7 @@ export function buildTranslationQueue(
       const sourceLanguage = opposite(target)
       const sourceValue = field.value[sourceLanguage]
       if (sourceValue == null) continue
-      const sourceIssues = auditFieldTarget(
-        field,
-        sourceLanguage,
-        auditOptions
-      )
+      const sourceIssues = auditFieldTarget(field, sourceLanguage, auditOptions)
       if (sourceIssues.length > 0) {
         if (sourceIssues.every((current) => current.code === 'mixed')) {
           output.push({

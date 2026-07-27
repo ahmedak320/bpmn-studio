@@ -95,9 +95,7 @@ export function arabicRatio(text: string): number {
   return letters === 0 ? 0 : arabic / letters
 }
 
-export function detectActiveLang(
-  labels: ReadonlyArray<string | null | undefined>
-): 'en' | 'ar' {
+export function detectActiveLang(labels: ReadonlyArray<string | null | undefined>): 'en' | 'ar' {
   const joined = labels
     .filter((label): label is string => typeof label === 'string' && label.length > 0)
     .join(' ')
@@ -142,17 +140,13 @@ function fingerprint(value: string): string {
 
 function assertNcName(value: string, label: string): void {
   if (!NCNAME.test(value)) {
-    throw new BpmnGenerationIdentityError(
-      `${label} '${value}' is not a valid XML NCName`
-    )
+    throw new BpmnGenerationIdentityError(`${label} '${value}' is not a valid XML NCName`)
   }
 }
 
 function assertNamespace(value: string): void {
   if (/\s/.test(value) || !/^[A-Za-z][A-Za-z0-9+.-]*:[^\s]+$/.test(value)) {
-    throw new BpmnGenerationIdentityError(
-      `targetNamespace '${value}' must be an absolute URI`
-    )
+    throw new BpmnGenerationIdentityError(`targetNamespace '${value}' must be an absolute URI`)
   }
 }
 
@@ -263,15 +257,10 @@ export function generateBpmnXml(
     }
     if (element.eventDefinition) {
       children.push(
-        `<${element.eventDefinition} id="${escapeAttr(
-          element.event_definition_id as string
-        )}" />`
+        `<${element.eventDefinition} id="${escapeAttr(element.event_definition_id as string)}" />`
       )
     }
-    out +=
-      children.length === 0
-        ? `${open} />`
-        : `${open}>${children.join('')}</${element.type}>`
+    out += children.length === 0 ? `${open} />` : `${open}>${children.join('')}</${element.type}>`
   }
 
   for (const flow of flows) {

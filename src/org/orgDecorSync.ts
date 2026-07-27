@@ -22,11 +22,7 @@ import {
 } from './decorExtents'
 import { getOrgProps, type OrgElementLike } from './orgModel'
 import { isCompletenessOn } from './orgSettings'
-import {
-  refreshAllShapes,
-  type ElementRegistryLike,
-  type GraphicsFactoryLike
-} from './orgSettings'
+import { refreshAllShapes, type ElementRegistryLike, type GraphicsFactoryLike } from './orgSettings'
 
 interface DecorSyncElementLike {
   id?: string
@@ -214,58 +210,35 @@ export class OrgDecorSync {
       if (a.x === b.x) {
         const lo = Math.min(a.y, b.y)
         const hi = Math.max(a.y, b.y)
-        return (
-          a.x > rect.x &&
-          a.x < rect.x + rect.w &&
-          lo < rect.y + rect.h &&
-          hi > rect.y
-        )
+        return a.x > rect.x && a.x < rect.x + rect.w && lo < rect.y + rect.h && hi > rect.y
       }
       if (a.y === b.y) {
         const lo = Math.min(a.x, b.x)
         const hi = Math.max(a.x, b.x)
-        return (
-          a.y > rect.y &&
-          a.y < rect.y + rect.h &&
-          lo < rect.x + rect.w &&
-          hi > rect.x
-        )
+        return a.y > rect.y && a.y < rect.y + rect.h && lo < rect.x + rect.w && hi > rect.x
       }
       return false
     }
 
     const baseObstacles = elements
-      .filter(
-        (element) =>
-          !element.waypoints &&
-          !element.labelTarget &&
-          !isContainer(element.type)
-      )
+      .filter((element) => !element.waypoints && !element.labelTarget && !isContainer(element.type))
       .map((element) => ({ element, rect: finiteRect(element) }))
-      .filter(
-        (item): item is { element: DecorSyncElementLike; rect: Rect } =>
-          item.rect !== null
-      )
-    const connectionSegments: Array<
-      readonly [{ x: number; y: number }, { x: number; y: number }]
-    > = []
+      .filter((item): item is { element: DecorSyncElementLike; rect: Rect } => item.rect !== null)
+    const connectionSegments: Array<readonly [{ x: number; y: number }, { x: number; y: number }]> =
+      []
     for (const connection of elements) {
-      if (
-        connection.type !== 'bpmn:SequenceFlow' ||
-        !Array.isArray(connection.waypoints)
-      ) {
+      if (connection.type !== 'bpmn:SequenceFlow' || !Array.isArray(connection.waypoints)) {
         continue
       }
-      const points = connection.waypoints.filter(
-        (value): value is { x: number; y: number } =>
-          Boolean(
-            value &&
-              typeof value === 'object' &&
-              typeof (value as { x?: unknown }).x === 'number' &&
-              Number.isFinite((value as { x: number }).x) &&
-              typeof (value as { y?: unknown }).y === 'number' &&
-              Number.isFinite((value as { y: number }).y)
-          )
+      const points = connection.waypoints.filter((value): value is { x: number; y: number } =>
+        Boolean(
+          value &&
+          typeof value === 'object' &&
+          typeof (value as { x?: unknown }).x === 'number' &&
+          Number.isFinite((value as { x: number }).x) &&
+          typeof (value as { y?: unknown }).y === 'number' &&
+          Number.isFinite((value as { y: number }).y)
+        )
       )
       for (let index = 1; index < points.length; index += 1) {
         connectionSegments.push([points[index - 1], points[index]])
@@ -282,8 +255,7 @@ export class OrgDecorSync {
         continue
       }
       const direction =
-        directions.get(element.id) ??
-        (orientation === 'vertical' ? 'down' : 'right')
+        directions.get(element.id) ?? (orientation === 'vertical' ? 'down' : 'right')
       const score = (flipCrossAxis: boolean): number => {
         let total = 0
         const layout = computeDecorLayout({

@@ -142,7 +142,8 @@ function wrapLabel(label: string): string[] {
   let line = ''
   for (const word of label.split(/\s+/).filter(Boolean)) {
     const chunks: string[] = []
-    for (let i = 0; i < word.length; i += LABEL_WRAP_CHARS) chunks.push(word.slice(i, i + LABEL_WRAP_CHARS))
+    for (let i = 0; i < word.length; i += LABEL_WRAP_CHARS)
+      chunks.push(word.slice(i, i + LABEL_WRAP_CHARS))
     for (const chunk of chunks) {
       if (!line) line = chunk
       else if (line.length + 1 + chunk.length <= LABEL_WRAP_CHARS) line += ' ' + chunk
@@ -166,7 +167,10 @@ export function estimateLabelSize(label: string): { w: number; h: number } {
 }
 
 /** External-label box in shape-local FINAL-space coords (null when none). */
-function labelLocalBox(node: { tag: string; label?: string }, orientation: Orientation): Box | null {
+function labelLocalBox(
+  node: { tag: string; label?: string },
+  orientation: Orientation
+): Box | null {
   if (!hasExternalLabel(node)) return null
   const { w, h } = nodeBaseSize(node.tag, node.label)
   const size = estimateLabelSize(node.label as string)
@@ -286,7 +290,8 @@ function normalizeWaypoints(points: RoutePoint[]): RoutePoint[] {
       const a = out[out.length - 3]
       const b = out[out.length - 2]
       const c = out[out.length - 1]
-      if ((a.x === b.x && b.x === c.x) || (a.y === b.y && b.y === c.y)) out.splice(out.length - 2, 1)
+      if ((a.x === b.x && b.x === c.x) || (a.y === b.y && b.y === c.y))
+        out.splice(out.length - 2, 1)
       else break
     }
   }
@@ -432,10 +437,7 @@ export function routeOrthogonal(
     // Soft connector-clearance rectangles may contain another connection's
     // terminal. Terminals must remain in the graph; visibility still prevents
     // an invalid path through the rectangle interior.
-    if (
-      !terminal &&
-      obstacles.some((rect) => pointStrictlyInside(point, rect))
-    ) {
+    if (!terminal && obstacles.some((rect) => pointStrictlyInside(point, rect))) {
       return
     }
     points.set(pointKey(point), point)
@@ -521,7 +523,13 @@ export function routeOrthogonal(
     {
       node: startIndex,
       direction: initialDirection,
-      score: { collisions: 0, bends: 0, length: 0, outside: 0, signature: `${pointKey(start)}|${edgeId}` },
+      score: {
+        collisions: 0,
+        bends: 0,
+        length: 0,
+        outside: 0,
+        signature: `${pointKey(start)}|${edgeId}`
+      },
       path: [startIndex]
     }
   ]
@@ -532,13 +540,24 @@ export function routeOrthogonal(
     const current = queue.shift() as SearchState
     const bestHere = best.get(`${current.node}:${current.direction}`)
     if (!bestHere || compareRouteScore(current.score, bestHere) !== 0) continue
-    if (current.node === endIndex) return normalizeWaypoints(current.path.map((index) => pointList[index]))
+    if (current.node === endIndex)
+      return normalizeWaypoints(current.path.map((index) => pointList[index]))
     const from = pointList[current.node]
     for (const nextNode of neighbours[current.node]) {
       const to = pointList[nextNode]
       const direction: RouteDirection = from.y === to.y ? 1 : 2
-      if (current.path.length === 1 && requiredFirstDirection !== 0 && direction !== requiredFirstDirection) continue
-      if (nextNode === endIndex && requiredLastDirection !== 0 && direction !== requiredLastDirection) continue
+      if (
+        current.path.length === 1 &&
+        requiredFirstDirection !== 0 &&
+        direction !== requiredFirstDirection
+      )
+        continue
+      if (
+        nextNode === endIndex &&
+        requiredLastDirection !== 0 &&
+        direction !== requiredLastDirection
+      )
+        continue
       const distance = Math.abs(to.x - from.x) + Math.abs(to.y - from.y)
       const score: RouteScore = {
         collisions: 0,
@@ -568,7 +587,10 @@ export function routeOrthogonal(
     [start, { x: start.x, y: outer.y1 }, { x: end.x, y: outer.y1 }, end]
   ].map(normalizeWaypoints)
   fallbacks.sort((a, b) =>
-    compareRouteScore(scoreWaypoints(a, obstacles, grid, edgeId), scoreWaypoints(b, obstacles, grid, edgeId))
+    compareRouteScore(
+      scoreWaypoints(a, obstacles, grid, edgeId),
+      scoreWaypoints(b, obstacles, grid, edgeId)
+    )
   )
   return fallbacks[0]
 }
@@ -641,7 +663,9 @@ export function layoutEpc(
   // 2. Weakly-connected components, ordered by their minimal sort key.
   const compOf = new Map<string, number>()
   const comps: string[][] = []
-  const allIdsByKey = [...states.values()].sort((a, b) => compareKey(a.key, b.key)).map((s) => s.node.id)
+  const allIdsByKey = [...states.values()]
+    .sort((a, b) => compareKey(a.key, b.key))
+    .map((s) => s.node.id)
   for (const seed of allIdsByKey) {
     if (compOf.has(seed)) continue
     const compIdx = comps.length
@@ -764,7 +788,9 @@ export function layoutEpc(
         layerNodes.forEach((s, i) => desired.set(s, 2 * i - (k - 1)))
       } else {
         for (const s of layerNodes) {
-          const preds = (fwdIn.get(s.node.id) as LayoutEdge[]).map((e) => states.get(e.source) as NodeState)
+          const preds = (fwdIn.get(s.node.id) as LayoutEdge[]).map(
+            (e) => states.get(e.source) as NodeState
+          )
           if (preds.length === 1) {
             const p = preds[0]
             const siblings = (fwdOut.get(p.node.id) as LayoutEdge[]).map(
@@ -788,14 +814,12 @@ export function layoutEpc(
       }
       // Collision resolution: left→right by desired slot, minimum one
       // half-slot apart (distinct columns after compaction).
-      const ordered = layerNodes
-        .slice()
-        .sort((a, b) => {
-          const da = desired.get(a) as number
-          const db = desired.get(b) as number
-          if (da !== db) return da - db
-          return compareKey(a.key, b.key)
-        })
+      const ordered = layerNodes.slice().sort((a, b) => {
+        const da = desired.get(a) as number
+        const db = desired.get(b) as number
+        if (da !== db) return da - db
+        return compareKey(a.key, b.key)
+      })
       let prev = -Infinity
       for (const s of ordered) {
         s.slot = Math.max(Math.round(desired.get(s) as number), prev + 1)
@@ -872,12 +896,16 @@ export function layoutEpc(
     for (const e of compEdges) {
       const s = states.get(e.source) as NodeState
       const t = states.get(e.target) as NodeState
-      if ((outEdges.get(s.node.id) as LayoutEdge[]).length > 1 || backEdgeIds.has(e.id)) registerPort(s.layer, s)
-      if ((inEdges.get(t.node.id) as LayoutEdge[]).length > 1 || backEdgeIds.has(e.id)) registerPort(t.layer - 1, t)
+      if ((outEdges.get(s.node.id) as LayoutEdge[]).length > 1 || backEdgeIds.has(e.id))
+        registerPort(s.layer, s)
+      if ((inEdges.get(t.node.id) as LayoutEdge[]).length > 1 || backEdgeIds.has(e.id))
+        registerPort(t.layer - 1, t)
     }
     const gapY = new Map<number, Map<string, number>>()
     for (const [gap, ports] of gapPorts) {
-      const ordered = [...ports.entries()].sort((a, b) => (a[1] !== b[1] ? a[1] - b[1] : compareIds(a[0], b[0])))
+      const ordered = [...ports.entries()].sort((a, b) =>
+        a[1] !== b[1] ? a[1] - b[1] : compareIds(a[0], b[0])
+      )
       const m = ordered.length
       const step = m > 1 ? Math.min(CHAN_STEP_MAX, (V_GAP - 2 * CHAN_KEEPOUT) / (m - 1)) : 0
       const centre = chanCenter(gap)
@@ -927,7 +955,8 @@ export function layoutEpc(
       const s = states.get(e.source) as NodeState
       const t = states.get(e.target) as NodeState
       const isBack = backEdgeIds.has(e.id)
-      if ((outEdges.get(s.node.id) as LayoutEdge[]).length > 1 || isBack) sharedSource.add(s.node.id)
+      if ((outEdges.get(s.node.id) as LayoutEdge[]).length > 1 || isBack)
+        sharedSource.add(s.node.id)
       if ((inEdges.get(t.node.id) as LayoutEdge[]).length > 1 || isBack) sharedTarget.add(t.node.id)
     }
 
@@ -989,8 +1018,7 @@ export function layoutEpc(
       targetX: number,
       routeObstacles: RouteRect[] = obstacles
     ): RouteChoice => {
-      const cacheKey =
-        routeObstacles === obstacles ? `${e.id}|${sourceX}|${targetX}` : undefined
+      const cacheKey = routeObstacles === obstacles ? `${e.id}|${sourceX}|${targetX}` : undefined
       const cached = cacheKey ? routeCache.get(cacheKey) : undefined
       if (cached) return cached
       const s = states.get(e.source) as NodeState
@@ -1018,7 +1046,13 @@ export function layoutEpc(
         sourceMustTurn,
         targetMustTurn
       )
-      const waypoints = normalizeWaypoints([sourcePort, sourceAnchor, ...middle, targetAnchor, targetPort])
+      const waypoints = normalizeWaypoints([
+        sourcePort,
+        sourceAnchor,
+        ...middle,
+        targetAnchor,
+        targetPort
+      ])
       const choice = {
         waypoints,
         score: scoreWaypoints(waypoints, routeObstacles, gridBounds, e.id)
@@ -1026,7 +1060,11 @@ export function layoutEpc(
       if (cacheKey) routeCache.set(cacheKey, choice)
       return choice
     }
-    const bestEdgeChoice = (e: LayoutEdge, sourceOptions: number[], targetOptions: number[]): RouteChoice => {
+    const bestEdgeChoice = (
+      e: LayoutEdge,
+      sourceOptions: number[],
+      targetOptions: number[]
+    ): RouteChoice => {
       let best: RouteChoice | undefined
       for (const sourceX of sourceOptions) {
         for (const targetX of targetOptions) {
@@ -1081,14 +1119,18 @@ export function layoutEpc(
           const scores: RouteScore[] = []
           for (const e of incident) {
             const sourceOptions = sharedSource.has(e.source)
-              ? [group.kind === 'source' && e.source === group.id
-                  ? candidateX
-                  : (selectedSource.get(e.source) as number)]
+              ? [
+                  group.kind === 'source' && e.source === group.id
+                    ? candidateX
+                    : (selectedSource.get(e.source) as number)
+                ]
               : (sourcePortXs.get(e.source) as number[])
             const targetOptions = sharedTarget.has(e.target)
-              ? [group.kind === 'target' && e.target === group.id
-                  ? candidateX
-                  : (selectedTarget.get(e.target) as number)]
+              ? [
+                  group.kind === 'target' && e.target === group.id
+                    ? candidateX
+                    : (selectedTarget.get(e.target) as number)
+                ]
               : (targetPortXs.get(e.target) as number[])
             scores.push(bestEdgeChoice(e, sourceOptions, targetOptions).score)
           }
@@ -1148,10 +1190,11 @@ export function layoutEpc(
     }
     for (const e of compEdges) {
       const r = routed.get(e.id)
-      if (r) for (const wp of r.waypoints) {
-        wp.x += dx
-        wp.y += dy
-      }
+      if (r)
+        for (const wp of r.waypoints) {
+          wp.x += dx
+          wp.y += dy
+        }
     }
     stackCursor += maxY - minY + COMPONENT_GAP
     globalMaxX = Math.max(globalMaxX, maxX - minX)
@@ -1160,7 +1203,9 @@ export function layoutEpc(
   // 10. Finalize: shift by the outer margin, transpose for 'horizontal',
   //     round, attach label boxes, measure the drawing.
   const finalize = (x: number, y: number): { x: number; y: number } =>
-    vertical ? { x: Math.round(x + MARGIN), y: Math.round(y + MARGIN) } : { x: Math.round(y + MARGIN), y: Math.round(x + MARGIN) }
+    vertical
+      ? { x: Math.round(x + MARGIN), y: Math.round(y + MARGIN) }
+      : { x: Math.round(y + MARGIN), y: Math.round(x + MARGIN) }
 
   let sizeW = 0
   let sizeH = 0
@@ -1182,14 +1227,22 @@ export function layoutEpc(
       measure(shape.label.x + shape.label.w, shape.label.y + shape.label.h)
     }
     shapes.set(s.node.id, shape)
-    measure(shape.x + shape.w + (vertical ? s.fr : s.fb), shape.y + shape.h + (vertical ? s.fb : s.fr))
+    measure(
+      shape.x + shape.w + (vertical ? s.fr : s.fb),
+      shape.y + shape.h + (vertical ? s.fb : s.fr)
+    )
   }
   for (const r of routed.values()) {
     r.waypoints = normalizeWaypoints(r.waypoints.map((wp) => finalize(wp.x, wp.y)))
     for (const wp of r.waypoints) measure(wp.x, wp.y)
   }
 
-  return { shapes, edges: routed, size: { w: sizeW + MARGIN, h: sizeH + MARGIN }, usedEntryFallback }
+  return {
+    shapes,
+    edges: routed,
+    size: { w: sizeW + MARGIN, h: sizeH + MARGIN },
+    usedEntryFallback
+  }
 }
 
 // --- DI emission -------------------------------------------------------------

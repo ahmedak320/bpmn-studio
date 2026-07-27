@@ -159,10 +159,7 @@ export class AdapterSessionPersistence implements SessionPersistence {
     }
   }
 
-  #writeResult(
-    identity: DocumentIdentity,
-    outcome: AdapterSaveOutcome
-  ): PersistenceWriteResult {
+  #writeResult(identity: DocumentIdentity, outcome: AdapterSaveOutcome): PersistenceWriteResult {
     if (outcome.status === 'success') {
       return { status: 'written', fingerprint: fingerprint(outcome.snapshot) }
     }

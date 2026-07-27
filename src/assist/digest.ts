@@ -137,10 +137,7 @@ function humanizeType(type: string): string {
 function humanizeFileName(relPath: string): string {
   const base = relPath.split('/').pop() ?? relPath
   const noExt = base.replace(/\.bpmn$/i, '')
-  return noExt
-    .replace(/[_-]+/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim()
+  return noExt.replace(/[_-]+/g, ' ').replace(/\s+/g, ' ').trim()
 }
 
 /** Enclosing folder of a workspace-relative path (`''` at the root). */
@@ -187,7 +184,9 @@ function isStepElement(el: ModdleElement): boolean {
 export async function buildDigest(relPath: string, xml: string): Promise<ProcessDigest | null> {
   try {
     const moddle = new BpmnModdle()
-    const { rootElement } = (await moddle.fromXML(xml)) as { rootElement: ModdleElement & { rootElements?: ModdleElement[] } }
+    const { rootElement } = (await moddle.fromXML(xml)) as {
+      rootElement: ModdleElement & { rootElements?: ModdleElement[] }
+    }
     const roots = rootElement?.rootElements ?? []
     const process = roots.find((e) => e.$type === 'bpmn:Process')
     if (!process) return null

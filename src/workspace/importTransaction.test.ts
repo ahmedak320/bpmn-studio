@@ -18,10 +18,7 @@ import {
   type WorkspaceImportHistory,
   type WorkspaceImportSource
 } from './importTransaction'
-import {
-  ReviewedBpmnBoundaryError,
-  type ReviewedBpmnIngestionPort
-} from './reviewedBpmn'
+import { ReviewedBpmnBoundaryError, type ReviewedBpmnIngestionPort } from './reviewedBpmn'
 
 const decoder = new TextDecoder()
 
@@ -560,12 +557,7 @@ describe('general workspace import planning', () => {
     ).rejects.toMatchObject({ code: 'invalid-input' })
     await expect(
       planFor(adapter, [
-        doc(
-          'source',
-          'source.bpmn',
-          documentXml('Source'),
-          '.orbitpm/incoming/source.bpmn'
-        )
+        doc('source', 'source.bpmn', documentXml('Source'), '.orbitpm/incoming/source.bpmn')
       ])
     ).rejects.toMatchObject({ code: 'invalid-input' })
 
@@ -600,9 +592,7 @@ describe('general workspace import planning', () => {
     expect(beforeWrite).not.toHaveBeenCalled()
 
     const changing = new MemoryWorkspaceAdapter({ beforeWrite })
-    const plan = await planFor(changing, [
-      doc('one', 'one.bpmn', documentXml('One'))
-    ])
+    const plan = await planFor(changing, [doc('one', 'one.bpmn', documentXml('One'))])
     const confirmed = confirmWorkspaceImportPlan(plan, {
       accepted: true,
       reviewedDigest: plan.reviewDigest

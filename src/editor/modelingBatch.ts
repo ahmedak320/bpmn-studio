@@ -25,10 +25,7 @@ export type ModelingBatchUpdate =
 
 interface ModelingLike {
   updateProperties(element: unknown, properties: Record<string, unknown>): void
-  updateWaypoints?(
-    connection: unknown,
-    waypoints: Array<{ x: number; y: number }>
-  ): void
+  updateWaypoints?(connection: unknown, waypoints: Array<{ x: number; y: number }>): void
 }
 
 interface CommandStackLike {
@@ -67,10 +64,7 @@ export class ModelingBatch {
 
   constructor(commandStack: CommandStackLike) {
     this.commandStack = commandStack
-    commandStack.registerHandler(
-      ORBITPM_MODELING_BATCH_COMMAND,
-      ModelingBatchHandler
-    )
+    commandStack.registerHandler(ORBITPM_MODELING_BATCH_COMMAND, ModelingBatchHandler)
   }
 
   execute(updates: readonly ModelingBatchUpdate[]): void {
@@ -96,8 +90,7 @@ export function executeModelingBatch(
 
   try {
     const service = modeler.get('orbitpmModelingBatch') as
-      | { execute(value: readonly ModelingBatchUpdate[]): void }
-      | undefined
+      { execute(value: readonly ModelingBatchUpdate[]): void } | undefined
     if (service?.execute) {
       service.execute(updates)
       return

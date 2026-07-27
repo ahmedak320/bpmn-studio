@@ -1,9 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-import {
-  BidiTextRenderer,
-  BidiTextRendererModule
-} from '../bidiTextRenderer'
+import { BidiTextRenderer, BidiTextRendererModule } from '../bidiTextRenderer'
 
 interface FakeCanvasContext {
   font: string
@@ -84,7 +81,7 @@ function installFakeDocument(): void {
 
   const fakeDocument: FakeDocument = {
     createElement: () => ({
-      getContext: (type) => type === '2d' ? canvasContext : null
+      getContext: (type) => (type === '2d' ? canvasContext : null)
     }),
     createElementNS: (_namespace, name) => new FakeSvgNode(fakeDocument, name),
     importNode: (node) => node

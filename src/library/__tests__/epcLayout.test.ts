@@ -33,7 +33,12 @@ function inflatedBox(node: LayoutNode, result: EpcLayoutResult, orientation: Ori
   const s = result.shapes.get(node.id)
   if (!s) throw new Error(`no shape for ${node.id}`)
   const ext = reservedExtents(node, orientation)
-  return { x0: s.x - ext.left, y0: s.y - ext.top, x1: s.x + s.w + ext.right, y1: s.y + s.h + ext.bottom }
+  return {
+    x0: s.x - ext.left,
+    y0: s.y - ext.top,
+    x1: s.x + s.w + ext.right,
+    y1: s.y + s.h + ext.bottom
+  }
 }
 
 function axisOf(result: EpcLayoutResult, id: string): number {
@@ -90,7 +95,11 @@ function bendCount(points: Array<{ x: number; y: number }>): number {
 }
 
 /** No two margins-inflated node boxes overlap (positive-area intersection). */
-function assertNoOverlap(nodes: LayoutNode[], result: EpcLayoutResult, orientation: Orientation): void {
+function assertNoOverlap(
+  nodes: LayoutNode[],
+  result: EpcLayoutResult,
+  orientation: Orientation
+): void {
   const boxes = nodes.map((n) => ({ id: n.id, box: inflatedBox(n, result, orientation) }))
   for (let i = 0; i < boxes.length; i++) {
     for (let j = i + 1; j < boxes.length; j++) {
@@ -103,7 +112,11 @@ function assertNoOverlap(nodes: LayoutNode[], result: EpcLayoutResult, orientati
 }
 
 /** Does an axis-aligned segment pass through the rect's interior? */
-function segmentThroughRect(a: { x: number; y: number }, b: { x: number; y: number }, r: Rect): boolean {
+function segmentThroughRect(
+  a: { x: number; y: number },
+  b: { x: number; y: number },
+  r: Rect
+): boolean {
   if (a.x === b.x) {
     const y0 = Math.min(a.y, b.y)
     const y1 = Math.max(a.y, b.y)
@@ -142,7 +155,12 @@ function exactObstacleBoxes(
     direction: orientation === 'vertical' ? 'down' : 'right',
     completenessOn: true,
     labelBox: shape.label
-      ? { x: shape.label.x - shape.x, y: shape.label.y - shape.y, w: shape.label.w, h: shape.label.h }
+      ? {
+          x: shape.label.x - shape.x,
+          y: shape.label.y - shape.y,
+          w: shape.label.w,
+          h: shape.label.h
+        }
       : null
   })
   for (const { box } of decorationBoxes(layout)) {
@@ -172,7 +190,11 @@ function assertNoEdgeThroughNode(
     for (const [id, nodeBoxes] of boxes) {
       for (const rect of nodeBoxes) {
         for (let i = 1; i < routedEdge.waypoints.length; i++) {
-          const through = segmentThroughRect(routedEdge.waypoints[i - 1], routedEdge.waypoints[i], rect)
+          const through = segmentThroughRect(
+            routedEdge.waypoints[i - 1],
+            routedEdge.waypoints[i],
+            rect
+          )
           expect(through, `${edge.id} segment ${i} through ${id}`).toBe(false)
         }
       }
@@ -357,7 +379,10 @@ describe('layoutEpc — back edges, skip edges, cycles', () => {
       { id: 't2', tag: 'task', label: 'Check' },
       { id: 'e', tag: 'endEvent', label: 'End' }
     ]
-    const edges: LayoutEdge[] = [...chain(['s', 't1', 't2', 'e']), { id: 'loop', source: 't2', target: 't1' }]
+    const edges: LayoutEdge[] = [
+      ...chain(['s', 't1', 't2', 'e']),
+      { id: 'loop', source: 't2', target: 't1' }
+    ]
     const result = layoutEpc(nodes, edges)
     const loop = result.edges.get('loop')
     expect(loop?.isBackEdge).toBe(true)
@@ -380,7 +405,10 @@ describe('layoutEpc — back edges, skip edges, cycles', () => {
       { id: 't2', tag: 'task', label: 'Two' },
       { id: 'e', tag: 'endEvent', label: 'End' }
     ]
-    const edges: LayoutEdge[] = [...chain(['s', 't1', 't2', 'e']), { id: 'skip', source: 's', target: 'e' }]
+    const edges: LayoutEdge[] = [
+      ...chain(['s', 't1', 't2', 'e']),
+      { id: 'skip', source: 's', target: 'e' }
+    ]
     const result = layoutEpc(nodes, edges)
     const skip = result.edges.get('skip')
     expect(skip?.isBackEdge).toBe(false)
@@ -532,7 +560,9 @@ describe('layoutEpc — obstacle-aware minimum-bend routing', () => {
   it('chooses the same stable side of a symmetric blocker after input shuffling', () => {
     const fixture = multiLayerFixture(true)
     const a = layoutEpc(fixture.nodes, fixture.edges).edges.get('long')?.waypoints
-    const b = layoutEpc(fixture.nodes.slice().reverse(), fixture.edges.slice().reverse()).edges.get('long')?.waypoints
+    const b = layoutEpc(fixture.nodes.slice().reverse(), fixture.edges.slice().reverse()).edges.get(
+      'long'
+    )?.waypoints
     expect(b).toEqual(a)
     expect(a?.length).toBeGreaterThan(2)
   })
@@ -672,7 +702,13 @@ describe('layoutEpc — determinism', () => {
     const di = emitLayoutDi('P1', nodes, edges, layoutEpc(nodes, edges), (s) => s)
     const shuffledNodes = [nodes[4], nodes[1], nodes[5], nodes[0], nodes[3], nodes[2]]
     const shuffledEdges = [edges[3], edges[0], edges[4], edges[2], edges[1]]
-    const di2 = emitLayoutDi('P1', shuffledNodes, shuffledEdges, layoutEpc(shuffledNodes, shuffledEdges), (s) => s)
+    const di2 = emitLayoutDi(
+      'P1',
+      shuffledNodes,
+      shuffledEdges,
+      layoutEpc(shuffledNodes, shuffledEdges),
+      (s) => s
+    )
     expect(di2).toBe(di)
   })
 
@@ -722,7 +758,8 @@ describe('emitLayoutDi', () => {
 
   function fullXml(): string {
     const result = layoutEpc(nodes, edges)
-    const esc = (s: string): string => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/"/g, '&quot;')
+    const esc = (s: string): string =>
+      s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/"/g, '&quot;')
     let xml = '<definitions xmlns="http://www.omg.org/spec/BPMN/20100524/MODEL"'
     xml += ' xmlns:bpmndi="http://www.omg.org/spec/BPMN/20100524/DI"'
     xml += ' xmlns:dc="http://www.omg.org/spec/DD/20100524/DC"'

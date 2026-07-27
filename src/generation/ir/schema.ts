@@ -101,10 +101,7 @@ export function coerceOrgStringArray(value: unknown): string[] | undefined {
 const LooseOrgString = z.preprocess(coerceOrgString, z.string().optional())
 
 /** Lenient string-array field (same contract as {@link LooseOrgString}). */
-const LooseOrgStringArray = z.preprocess(
-  coerceOrgStringArray,
-  z.array(z.string()).optional()
-)
+const LooseOrgStringArray = z.preprocess(coerceOrgStringArray, z.array(z.string()).optional())
 
 // ---------------------------------------------------------------------------
 // TS types (declared up-front so the recursive schema can be annotated).
@@ -265,12 +262,7 @@ export interface ParallelGateway {
 }
 
 export type BpmnElement =
-  | BpmnTask
-  | BpmnCallActivity
-  | BpmnEvent
-  | ExclusiveGateway
-  | InclusiveGateway
-  | ParallelGateway
+  BpmnTask | BpmnCallActivity | BpmnEvent | ExclusiveGateway | InclusiveGateway | ParallelGateway
 
 export interface ProcessModel {
   process: BpmnElement[]

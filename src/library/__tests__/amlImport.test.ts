@@ -26,11 +26,15 @@ describe('looksLikeAml', () => {
     expect(looksLikeAml(AML_SAMPLE)).toBe(true)
     expect(looksLikeAml('<AML>')).toBe(true)
     expect(looksLikeAml('<AML\r\n>')).toBe(true)
-    expect(looksLikeAml('<?xml version="1.0"?>\n<!DOCTYPE AML SYSTEM "ARIS-Export.dtd" [\n]>\n<AML/>')).toBe(true)
+    expect(
+      looksLikeAml('<?xml version="1.0"?>\n<!DOCTYPE AML SYSTEM "ARIS-Export.dtd" [\n]>\n<AML/>')
+    ).toBe(true)
   })
 
   it('rejects BPMN and random XML', () => {
-    expect(looksLikeAml('<definitions xmlns="http://www.omg.org/spec/BPMN/20100524/MODEL"/>')).toBe(false)
+    expect(looksLikeAml('<definitions xmlns="http://www.omg.org/spec/BPMN/20100524/MODEL"/>')).toBe(
+      false
+    )
     expect(looksLikeAml('<foo><bar/></foo>')).toBe(false)
     expect(looksLikeAml('<AMLX>')).toBe(false)
     expect(looksLikeAml('')).toBe(false)
@@ -186,12 +190,27 @@ describe('convertAmlToBpmnFiles — flow vs metadata partition', () => {
   it('never materializes satellite objects as flow nodes', async () => {
     const xml = await convertFirst()
     // Their AML ids never appear (no node, no shape)…
-    for (const id of ['ObjDef_P1', 'ObjDef_PT1', 'ObjDef_S1', 'ObjDef_ENT1', 'ObjDef_DOC1', 'ObjDef_BR1', 'ObjDef_POL1']) {
+    for (const id of [
+      'ObjDef_P1',
+      'ObjDef_PT1',
+      'ObjDef_S1',
+      'ObjDef_ENT1',
+      'ObjDef_DOC1',
+      'ObjDef_BR1',
+      'ObjDef_POL1'
+    ]) {
       expect(xml).not.toContain(id)
     }
     // …and no task/callActivity carries a satellite name as its label.
     const names = flowActivityNames(xml)
-    for (const forbidden of ['Ahmed', 'TAMM', 'Owner record', 'Registration Officer', 'Eligibility policy', 'Animal welfare policy']) {
+    for (const forbidden of [
+      'Ahmed',
+      'TAMM',
+      'Owner record',
+      'Registration Officer',
+      'Eligibility policy',
+      'Animal welfare policy'
+    ]) {
       expect(names).not.toContain(forbidden)
     }
   })
@@ -215,7 +234,8 @@ describe('convertAmlToBpmnFiles — layout', () => {
     edges: Array<Array<{ x: number; y: number }>>
   } {
     const shapes: Array<{ id: string; x: number; y: number; w: number; h: number }> = []
-    const shapeRe = /<bpmndi:BPMNShape[^>]*bpmnElement="([^"]*)"[^>]*><dc:Bounds x="(-?\d+)" y="(-?\d+)" width="(\d+)" height="(\d+)"/g
+    const shapeRe =
+      /<bpmndi:BPMNShape[^>]*bpmnElement="([^"]*)"[^>]*><dc:Bounds x="(-?\d+)" y="(-?\d+)" width="(\d+)" height="(\d+)"/g
     let m: RegExpExecArray | null
     while ((m = shapeRe.exec(xml))) {
       shapes.push({ id: m[1], x: Number(m[2]), y: Number(m[3]), w: Number(m[4]), h: Number(m[5]) })
@@ -465,19 +485,24 @@ describe('request-to-register owner routing regression', () => {
 
     const { rootElement, warnings } = await new BpmnModdle().fromXML(ownerProfile?.xml as string)
     expect(warnings).toEqual([])
-    const process = rootElement.rootElements.find((element: { $type: string }) => element.$type === 'bpmn:Process')
+    const process = rootElement.rootElements.find(
+      (element: { $type: string }) => element.$type === 'bpmn:Process'
+    )
     const leaseEvent = process.flowElements.find(
       (element: { name?: string }) => element.name === 'Lease contract uploaded'
     )
     expect(leaseEvent, 'Lease contract uploaded event').toBeTruthy()
-    const mergeFlow = leaseEvent.outgoing.find((flow: {
-      targetRef: {
-        $type: string
-        incoming: Array<{ sourceRef: { name?: string } }>
-      }
-    }) =>
-      flow.targetRef.$type === 'bpmn:ExclusiveGateway' &&
-      flow.targetRef.incoming.some((incoming) => incoming.sourceRef.name === 'Application data inserted')
+    const mergeFlow = leaseEvent.outgoing.find(
+      (flow: {
+        targetRef: {
+          $type: string
+          incoming: Array<{ sourceRef: { name?: string } }>
+        }
+      }) =>
+        flow.targetRef.$type === 'bpmn:ExclusiveGateway' &&
+        flow.targetRef.incoming.some(
+          (incoming) => incoming.sourceRef.name === 'Application data inserted'
+        )
     )
     expect(mergeFlow, 'semantic event → shared XOR merge flow').toBeTruthy()
 
@@ -521,8 +546,10 @@ describe('request-to-register owner routing regression', () => {
     expect(targetShape).toBeTruthy()
     const sourceCenterX = sourceShape.bounds.x + sourceShape.bounds.width / 2
     const targetCenterX = targetShape.bounds.x + targetShape.bounds.width / 2
-    expect(Math.max(...route.map((point) => point.x)), 'route never enters a far-right lane')
-      .toBeLessThanOrEqual(Math.max(sourceCenterX, targetCenterX))
+    expect(
+      Math.max(...route.map((point) => point.x)),
+      'route never enters a far-right lane'
+    ).toBeLessThanOrEqual(Math.max(sourceCenterX, targetCenterX))
 
     const crossesInterior = (
       a: Point,
@@ -542,8 +569,8 @@ describe('request-to-register owner routing regression', () => {
       return true
     }
     for (const shape of shapes) {
-      const isEndpoint = shape.bpmnElement.id === leaseEvent.id ||
-        shape.bpmnElement.id === mergeFlow.targetRef.id
+      const isEndpoint =
+        shape.bpmnElement.id === leaseEvent.id || shape.bpmnElement.id === mergeFlow.targetRef.id
       if (!isEndpoint) {
         for (let i = 1; i < route.length; i++) {
           expect(
@@ -614,15 +641,9 @@ describe('convertAmlToBpmnFiles — semantic gateway naming', () => {
       expect(xorAlias.startsWith('<exclusiveGateway')).toBe(true)
       expect(orAlias.startsWith('<inclusiveGateway')).toBe(true)
       expect(andAlias.startsWith('<parallelGateway')).toBe(true)
-      expect(xorAlias).toContain(
-        `name="${lang === 'en' ? 'Exclusive gateway' : 'بوابة حصرية'}"`
-      )
-      expect(orAlias).toContain(
-        `name="${lang === 'en' ? 'Inclusive gateway' : 'بوابة شاملة'}"`
-      )
-      expect(andAlias).toContain(
-        `name="${lang === 'en' ? 'Parallel gateway' : 'بوابة متوازية'}"`
-      )
+      expect(xorAlias).toContain(`name="${lang === 'en' ? 'Exclusive gateway' : 'بوابة حصرية'}"`)
+      expect(orAlias).toContain(`name="${lang === 'en' ? 'Inclusive gateway' : 'بوابة شاملة'}"`)
+      expect(andAlias).toContain(`name="${lang === 'en' ? 'Parallel gateway' : 'بوابة متوازية'}"`)
       for (const aliasTag of [xorAlias, orAlias, andAlias]) {
         expect(aliasTag).toContain('orbitpm:nameEn')
         expect(aliasTag).toContain('orbitpm:nameAr')
@@ -633,12 +654,8 @@ describe('convertAmlToBpmnFiles — semantic gateway naming', () => {
       expect(xml).not.toContain('orbitpm:semanticType')
     }
 
-    expect(startTagOf(english.files[0].xml, 'ObjDef_Question')).toContain(
-      'name="Approved?"'
-    )
-    expect(startTagOf(arabic.files[0].xml, 'ObjDef_Question')).toContain(
-      'name="هل تمت الموافقة؟"'
-    )
+    expect(startTagOf(english.files[0].xml, 'ObjDef_Question')).toContain('name="Approved?"')
+    expect(startTagOf(arabic.files[0].xml, 'ObjDef_Question')).toContain('name="هل تمت الموافقة؟"')
     for (const xml of [english.files[0].xml, arabic.files[0].xml]) {
       const question = startTagOf(xml, 'ObjDef_Question')
       expect(question).toContain('orbitpm:nameEn="Approved?"')
@@ -665,9 +682,7 @@ describe('convertAmlToBpmnFiles — semantic gateway naming', () => {
         <ObjOcc ObjOcc.ID="Occ.Override" ObjDef.IdRef="ObjDef.Override" SymbolNum="ST_OPR_AND_1"/>
       </Model>
     </AML>`
-    expect(parseAml(aml).objectById.get('ObjDef.Fallback')?.symbolNum).toBe(
-      'ST_OPR_OR_1'
-    )
+    expect(parseAml(aml).objectById.get('ObjDef.Fallback')?.symbolNum).toBe('ST_OPR_OR_1')
 
     const english = await convertAmlToBpmnFiles(aml, { lang: 'en' })
     const arabic = await convertAmlToBpmnFiles(aml, { lang: 'ar' })
@@ -676,12 +691,8 @@ describe('convertAmlToBpmnFiles — semantic gateway naming', () => {
     }
     for (const xml of [english.files[0].xml, arabic.files[0].xml]) {
       expect(xml).toContain('<process id="Model_Stable_Semantics"')
-      expect(startTagOf(xml, 'ObjDef_Fallback').startsWith('<inclusiveGateway')).toBe(
-        true
-      )
-      expect(startTagOf(xml, 'ObjDef_Override').startsWith('<parallelGateway')).toBe(
-        true
-      )
+      expect(startTagOf(xml, 'ObjDef_Fallback').startsWith('<inclusiveGateway')).toBe(true)
+      expect(startTagOf(xml, 'ObjDef_Override').startsWith('<parallelGateway')).toBe(true)
       expect(xml).not.toContain('orbitpm:semanticType')
     }
     expect(english.files[0].processId).toBe(arabic.files[0].processId)

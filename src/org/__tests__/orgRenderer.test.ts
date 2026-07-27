@@ -158,8 +158,7 @@ describe('planDecorations', () => {
   it('start-event trigger rows yield a compact suffixed tag and full tooltip', () => {
     const d = planDecorations(
       {
-        triggers:
-          'dmthub — GrievanceIntake — new cases\nemail — Mailroom — fallback'
+        triggers: 'dmthub — GrievanceIntake — new cases\nemail — Mailroom — fallback'
       },
       'bpmn:StartEvent',
       36,
@@ -171,9 +170,7 @@ describe('planDecorations', () => {
     if (tag.kind !== 'tag') throw new Error('expected tag')
     expect(tag.label).toBe('DMT HUB +1')
     expect(tag.detail).toBeUndefined()
-    expect(tag.tooltip).toBe(
-      'DMT HUB — GrievanceIntake — new cases\nEMAIL — Mailroom — fallback'
-    )
+    expect(tag.tooltip).toBe('DMT HUB — GrievanceIntake — new cases\nEMAIL — Mailroom — fallback')
     expect(tag.y).toBe(-26)
   })
 
@@ -335,9 +332,7 @@ describe('applyDecorations DOM contracts', () => {
 
       applyDecorations(parent as unknown as SVGElement, decorations)
 
-      const semanticGroups = parent.children.filter(
-        (child) => child.attrs['data-org-semantic']
-      )
+      const semanticGroups = parent.children.filter((child) => child.attrs['data-org-semantic'])
       expect(
         semanticGroups.map((child) => [
           child.attrs['data-org-decoration'],
@@ -399,12 +394,7 @@ describe('applyDecorations DOM contracts', () => {
     const fakeDocument = installFakeSvgDocument()
     try {
       const parent = fakeDocument.createElementNS('', 'g')
-      const cc = planDecorations(
-        { kind: 'cc', ccTo: 'Legal' },
-        'bpmn:Task',
-        100,
-        80
-      ).filter(
+      const cc = planDecorations({ kind: 'cc', ccTo: 'Legal' }, 'bpmn:Task', 100, 80).filter(
         (decoration): decoration is Extract<Decoration, { kind: 'subLabel' }> =>
           decoration.kind === 'subLabel'
       )
@@ -418,9 +408,7 @@ describe('applyDecorations DOM contracts', () => {
         'data-org-tooltip': t('semantic.cc.tooltip')
       })
       expect(parent.children[0].style['pointer-events']).toBe('all')
-      expect(parent.children[0].children.map((child) => child.tagName)).toEqual([
-        'text'
-      ])
+      expect(parent.children[0].children.map((child) => child.tagName)).toEqual(['text'])
     } finally {
       vi.unstubAllGlobals()
       setLang('en')
@@ -454,11 +442,7 @@ describe('applyDecorations DOM contracts', () => {
         'data-org-tooltip': t('semantic.subprocessChip.tooltip')
       })
       expect(group.style['pointer-events']).toBe('all')
-      expect(group.children.map((child) => child.tagName)).toEqual([
-        'rect',
-        'text',
-        'text'
-      ])
+      expect(group.children.map((child) => child.tagName)).toEqual(['rect', 'text', 'text'])
       expect(flattenFakeSvg(parent).some((node) => node.tagName === 'title')).toBe(false)
     } finally {
       vi.unstubAllGlobals()
@@ -495,7 +479,12 @@ describe('planDecorations — eventStyle', () => {
     const d = planDecorations({ triggers: 'manual' }, 'bpmn:StartEvent', 36, 36)
     expect(d[0].kind).toBe('eventStyle')
     expect(byKind(d, 'tag')).toHaveLength(1)
-    for (const type of ['bpmn:Task', 'bpmn:ExclusiveGateway', 'bpmn:IntermediateThrowEvent', 'bpmn:TextAnnotation']) {
+    for (const type of [
+      'bpmn:Task',
+      'bpmn:ExclusiveGateway',
+      'bpmn:IntermediateThrowEvent',
+      'bpmn:TextAnnotation'
+    ]) {
       expect(byKind(planDecorations({}, type, 100, 80), 'eventStyle'), type).toHaveLength(0)
     }
   })
@@ -557,9 +546,11 @@ function stackIntervals(
   ccRows = 0
 ): Array<[number, number]> {
   const intervals: Array<[number, number]> = []
-  if (layout.ccSubLabelY !== undefined) intervals.push([layout.ccSubLabelY - 9, layout.ccSubLabelY + 4])
+  if (layout.ccSubLabelY !== undefined)
+    intervals.push([layout.ccSubLabelY - 9, layout.ccSubLabelY + 4])
   if (layout.ownerY !== undefined) intervals.push([layout.ownerY, layout.ownerY + 20])
-  if (layout.respY !== undefined) intervals.push([layout.respY, layout.respY + listBoxHeight(respRows)])
+  if (layout.respY !== undefined)
+    intervals.push([layout.respY, layout.respY + listBoxHeight(respRows)])
   if (layout.ccY !== undefined) intervals.push([layout.ccY, layout.ccY + listBoxHeight(ccRows)])
   if (layout.basisY !== undefined) intervals.push([layout.basisY, layout.basisY + 18])
   return intervals
@@ -568,15 +559,30 @@ function stackIntervals(
 describe('stackBelow', () => {
   it('pins the stack offsets (12px gaps)', () => {
     // owner only -> chip at height+12
-    expect(stackBelow({ height: 80, ccSubLabel: false, owner: true, respRows: 0, basis: false }).ownerY).toBe(92)
+    expect(
+      stackBelow({ height: 80, ccSubLabel: false, owner: true, respRows: 0, basis: false }).ownerY
+    ).toBe(92)
     // cc sub-label + owner -> label baseline at height+12, chip at height+28
-    const both = stackBelow({ height: 80, ccSubLabel: true, owner: true, respRows: 0, basis: false })
+    const both = stackBelow({
+      height: 80,
+      ccSubLabel: true,
+      owner: true,
+      respRows: 0,
+      basis: false
+    })
     expect(both.ccSubLabelY).toBe(92)
     expect(both.ownerY).toBe(108)
   })
 
   it('stacks resp list under the owner chip, then the cc list, and the basis tag last', () => {
-    const layout = stackBelow({ height: 80, ccSubLabel: false, owner: true, respRows: 3, ccRows: 2, basis: true })
+    const layout = stackBelow({
+      height: 80,
+      ccSubLabel: false,
+      owner: true,
+      respRows: 3,
+      ccRows: 2,
+      basis: true
+    })
     expect(layout.ownerY).toBe(92)
     expect(layout.respY).toBe(92 + 20 + 12) // chip bottom + gap
     expect(layout.ccY).toBe(124 + listBoxHeight(3) + 12)
@@ -615,7 +621,13 @@ describe('stackBelow', () => {
   })
 
   it('legacy 4-block calls (no ccRows) still type-check and stack identically', () => {
-    const layout = stackBelow({ height: 80, ccSubLabel: false, owner: true, respRows: 2, basis: true })
+    const layout = stackBelow({
+      height: 80,
+      ccSubLabel: false,
+      owner: true,
+      respRows: 2,
+      basis: true
+    })
     expect(layout.ccY).toBeUndefined()
     expect(layout.respY).toBe(124)
     expect(layout.basisY).toBe(124 + listBoxHeight(2) + 12)
@@ -666,8 +678,12 @@ describe('planDecorations — inputs list (teal)', () => {
   })
 
   it('is ignored on non-activities', () => {
-    expect(listBoxes(planDecorations({ inputs: 'Form A' }, 'bpmn:ExclusiveGateway', 50, 50))).toHaveLength(0)
-    expect(listBoxes(planDecorations({ inputs: 'Form A' }, 'bpmn:StartEvent', 36, 36))).toHaveLength(0)
+    expect(
+      listBoxes(planDecorations({ inputs: 'Form A' }, 'bpmn:ExclusiveGateway', 50, 50))
+    ).toHaveLength(0)
+    expect(
+      listBoxes(planDecorations({ inputs: 'Form A' }, 'bpmn:StartEvent', 36, 36))
+    ).toHaveLength(0)
   })
 })
 
@@ -707,9 +723,7 @@ describe('planDecorations — outputs list', () => {
     }
 
     for (const { direction, inputSide, outputSide } of cases) {
-      const boxes = listBoxes(
-        planDecorations(props, 'bpmn:Task', 100, 80, { direction })
-      )
+      const boxes = listBoxes(planDecorations(props, 'bpmn:Task', 100, 80, { direction }))
       const input = boxes.find((box) => box.semantic === 'inputs')
       const output = boxes.find((box) => box.semantic === 'outputs')
       if (!input || !output) throw new Error(`expected input/output for ${direction}`)
@@ -758,9 +772,7 @@ describe('planDecorations — outputs list', () => {
     expect(output.rows).toEqual(['a', 'b', 'c', 'd', 'e', '+2'])
     expect(output.h).toBe(listBoxHeight(6))
     expect(
-      listBoxes(
-        planDecorations({ outputs: 'Approval memo' }, 'bpmn:ExclusiveGateway', 50, 50)
-      )
+      listBoxes(planDecorations({ outputs: 'Approval memo' }, 'bpmn:ExclusiveGateway', 50, 50))
     ).toHaveLength(0)
   })
 })
@@ -809,7 +821,12 @@ describe('planDecorations — CC list (pink)', () => {
   })
 
   it('with kind==="cc" keeps the recolour but SUPPRESSES the legacy sub-label', () => {
-    const d = planDecorations({ kind: 'cc', ccTo: 'Legal', ccList: 'Legal\nFinance' }, 'bpmn:Task', 100, 80)
+    const d = planDecorations(
+      { kind: 'cc', ccTo: 'Legal', ccList: 'Legal\nFinance' },
+      'bpmn:Task',
+      100,
+      80
+    )
     expect(byKind(d, 'ccStyle')).toHaveLength(1)
     expect(byKind(d, 'subLabel')).toHaveLength(0)
     expect(listBoxes(d)).toHaveLength(1)
@@ -952,7 +969,9 @@ describe('planDecorations — everything at once stays overlap-free', () => {
     // owner chip, resp list, cc list, basis tag
     const owner = byKind(d, 'ownerBox')[0]
     if (owner.kind !== 'ownerBox') throw new Error('expected ownerBox')
-    const basisTag = byKind(d, 'tag').find((tag) => tag.kind === 'tag' && tag.fill === PALETTE.basisFill)
+    const basisTag = byKind(d, 'tag').find(
+      (tag) => tag.kind === 'tag' && tag.fill === PALETTE.basisFill
+    )
     if (!basisTag || basisTag.kind !== 'tag') throw new Error('expected basis tag')
     const blocks: Array<[number, number]> = [
       [owner.y, owner.y + owner.h],
@@ -975,7 +994,9 @@ describe('planDecorations — everything at once stays overlap-free', () => {
     expect(raci.y + raci.size).toBeLessThanOrEqual(owner.y + owner.h)
 
     // the channel tag stays ABOVE the shape, clear of the below stack
-    const channelTag = byKind(d, 'tag').find((tag) => tag.kind === 'tag' && tag.fill === PALETTE.tagDmthubFill)
+    const channelTag = byKind(d, 'tag').find(
+      (tag) => tag.kind === 'tag' && tag.fill === PALETTE.tagDmthubFill
+    )
     if (!channelTag || channelTag.kind !== 'tag') throw new Error('expected channel tag')
     expect(channelTag.y).toBeLessThan(0)
   })
@@ -993,7 +1014,9 @@ describe('planDecorations — everything at once stays overlap-free', () => {
 
     const owner = byKind(d, 'ownerBox')[0]
     if (owner.kind !== 'ownerBox') throw new Error('expected ownerBox')
-    const basisTag = byKind(d, 'tag').find((tag) => tag.kind === 'tag' && tag.fill === PALETTE.basisFill)
+    const basisTag = byKind(d, 'tag').find(
+      (tag) => tag.kind === 'tag' && tag.fill === PALETTE.basisFill
+    )
     if (!basisTag || basisTag.kind !== 'tag') throw new Error('expected basis tag')
     // all side blocks share x = width + 12 and stack downward from y = 0
     for (const block of [owner, respBox, ccBox, basisTag]) expect(block.x).toBe(112)
@@ -1301,12 +1324,9 @@ describe('semantic gateway presentation', () => {
           $attrs: { 'orbitpm:activeLang': 'ar' }
         }
       }
-      const renderer = new OrgRenderer(
-        { on: vi.fn() },
-        bpmnRenderer,
-        undefined,
-        { getRootElement: () => root }
-      )
+      const renderer = new OrgRenderer({ on: vi.fn() }, bpmnRenderer, undefined, {
+        getRootElement: () => root
+      })
       const unnamed: OrgElementLike = {
         id: 'Gateway_1',
         type: 'bpmn:ExclusiveGateway',
@@ -1323,9 +1343,7 @@ describe('semantic gateway presentation', () => {
       const parent = fakeDocument.createElementNS('', 'g')
 
       expect(renderer.canRender(unnamed)).toBe(true)
-      expect(
-        renderer.drawShape(parent as unknown as SVGElement, unnamed)
-      ).toBe(sentinel)
+      expect(renderer.drawShape(parent as unknown as SVGElement, unnamed)).toBe(sentinel)
       expect(parent.children).toHaveLength(1)
       const group = parent.children[0]
       expect(group.attrs).toMatchObject({
@@ -1337,9 +1355,7 @@ describe('semantic gateway presentation', () => {
       })
       expect(group.style['pointer-events']).toBe('all')
       expect(group.children.map((child) => child.tagName)).toEqual(['text'])
-      expect(group.children[0].textContent).toBe(
-        'قرار: Delegation matrix'
-      )
+      expect(group.children[0].textContent).toBe('قرار: Delegation matrix')
       expect(group.children[0].attrs.lang).toBe('ar')
       expect(group.children[0].style).toMatchObject({
         direction: 'rtl',
@@ -1416,18 +1432,8 @@ describe('semantic gateway presentation', () => {
     expect(registry.getGraphics).toHaveBeenNthCalledWith(1, unnamed)
     expect(registry.getGraphics).toHaveBeenNthCalledWith(2, unnamed)
     expect(graphicsFactory.update).toHaveBeenCalledTimes(2)
-    expect(graphicsFactory.update).toHaveBeenNthCalledWith(
-      1,
-      'shape',
-      unnamed,
-      gfx
-    )
-    expect(graphicsFactory.update).toHaveBeenNthCalledWith(
-      2,
-      'shape',
-      unnamed,
-      gfx
-    )
+    expect(graphicsFactory.update).toHaveBeenNthCalledWith(1, 'shape', unnamed, gfx)
+    expect(graphicsFactory.update).toHaveBeenNthCalledWith(2, 'shape', unnamed, gfx)
   })
 })
 
@@ -1469,7 +1475,10 @@ describe('OrgRenderer.canRender wires the settings flag', () => {
     // A prop-free task -> planDecorations returns [] -> applyDecorations is a
     // no-op, so no SVG DOM is touched in this node environment.
     const parentGfx = {} as unknown as SVGElement
-    const element: OrgElementLike = { type: 'bpmn:Task', businessObject: { $type: 'bpmn:Task', $attrs: {} } }
+    const element: OrgElementLike = {
+      type: 'bpmn:Task',
+      businessObject: { $type: 'bpmn:Task', $attrs: {} }
+    }
     const result = renderer.drawShape(parentGfx, element)
     expect(bpmnRenderer.drawShape).toHaveBeenCalledWith(parentGfx, element)
     expect(result).toBe(sentinel)
@@ -1507,11 +1516,10 @@ describe('OrgRenderModule', () => {
     const sentinel = { tagName: 'g' } as unknown as SVGElement
     const bpmnRenderer = { drawShape: vi.fn(() => sentinel), drawConnection: vi.fn() }
     const getDirectionFor = vi.fn(() => 'up' as const)
-    const renderer = new OrgRenderer(
-      { on: vi.fn() },
-      bpmnRenderer,
-      { getDirectionFor, getOrientation: () => 'horizontal' }
-    )
+    const renderer = new OrgRenderer({ on: vi.fn() }, bpmnRenderer, {
+      getDirectionFor,
+      getOrientation: () => 'horizontal'
+    })
     const element: OrgElementLike = {
       type: 'bpmn:Task',
       width: 100,

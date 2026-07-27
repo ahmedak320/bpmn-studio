@@ -70,7 +70,12 @@ export function MoveDialog({ node, folders, onMove, onCancel }: MoveDialogProps)
   )
 
   return (
-    <Modal title={t('dialog.moveTo.title', { name: node.name })} onClose={onCancel} maxWidth={420} footer={footer}>
+    <Modal
+      title={t('dialog.moveTo.title', { name: node.name })}
+      onClose={onCancel}
+      maxWidth={420}
+      footer={footer}
+    >
       {options.length === 0 ? (
         <p style={{ margin: 0, fontSize: 13, color: 'var(--orbitpm-muted)' }}>
           {t('dialog.moveTo.noFolders')}

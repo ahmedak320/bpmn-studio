@@ -104,12 +104,7 @@ describe('strict-interior crossings', () => {
   it('deduplicates the same edge-pair crossing produced by retraced segments', () => {
     expect(
       findCrossings([
-        edge(
-          'horizontal',
-          { x: 0, y: 50 },
-          { x: 100, y: 50 },
-          { x: 0, y: 50 }
-        ),
+        edge('horizontal', { x: 0, y: 50 }, { x: 100, y: 50 }, { x: 0, y: 50 }),
         edge('vertical', { x: 50, y: 0 }, { x: 50, y: 100 })
       ])
     ).toHaveLength(1)
@@ -262,20 +257,8 @@ describe('combined edge visual classification', () => {
         { x: 50, y: 50 },
         { x: 50, y: 90 }
       ),
-      topologicalEdge(
-        'cross-horizontal',
-        'Left',
-        'Right',
-        { x: -20, y: 50 },
-        { x: 120, y: 50 }
-      ),
-      topologicalEdge(
-        'cross-vertical',
-        'Top',
-        'Bottom',
-        { x: 50, y: 0 },
-        { x: 50, y: 100 }
-      )
+      topologicalEdge('cross-horizontal', 'Left', 'Right', { x: -20, y: 50 }, { x: 120, y: 50 }),
+      topologicalEdge('cross-vertical', 'Top', 'Bottom', { x: 50, y: 0 }, { x: 50, y: 100 })
     ])
 
     expect(analysis.junctions).toContainEqual({

@@ -24,7 +24,12 @@ describe('toLlmHistory', () => {
   })
 
   it('excludes error/status bubbles entirely', () => {
-    const out = toLlmHistory([u('q1'), a('rate limited', 'error'), a('applying…', 'status'), a('a1')])
+    const out = toLlmHistory([
+      u('q1'),
+      a('rate limited', 'error'),
+      a('applying…', 'status'),
+      a('a1')
+    ])
     expect(out).toEqual([
       { role: 'user', content: 'q1' },
       { role: 'assistant', content: 'a1' }

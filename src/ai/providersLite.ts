@@ -143,8 +143,7 @@ export function getLiteModelCapabilities(
   // OpenRouter's PDF parser can provide reviewed text models with document
   // content. Native image parts are enabled only for the reviewed Claude and
   // Gemini routes; the remaining curated routes are text-only in Lite.
-  const images =
-    normalizedModel.startsWith('anthropic/') || normalizedModel.startsWith('google/')
+  const images = normalizedModel.startsWith('anthropic/') || normalizedModel.startsWith('google/')
   return { text: true, pdf: true, images, verified: true }
 }
 

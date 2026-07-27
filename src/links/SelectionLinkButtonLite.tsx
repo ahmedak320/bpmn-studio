@@ -7,16 +7,9 @@
 
 import { useEffect, useState } from 'react'
 import type { ProcessIndex } from '@/core/processIndex'
-import {
-  inspectCallActivityElement,
-  type CallActivityLikeElement
-} from '@/editor/callActivity'
+import { inspectCallActivityElement, type CallActivityLikeElement } from '@/editor/callActivity'
 import { LinkPicker } from './LinkPicker'
-import {
-  setCalledElement,
-  type ModelingLike,
-  type ElementRegistryLike
-} from './modelerOps'
+import { setCalledElement, type ModelingLike, type ElementRegistryLike } from './modelerOps'
 import {
   isLinkableActivity,
   ensureCallActivityAndLink,

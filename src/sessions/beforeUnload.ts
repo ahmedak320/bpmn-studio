@@ -38,4 +38,3 @@ export function installBeforeUnloadDirtyGuard(
   target.addEventListener('beforeunload', listener)
   return () => target.removeEventListener('beforeunload', listener)
 }
-

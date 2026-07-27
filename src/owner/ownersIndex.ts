@@ -118,7 +118,10 @@ export interface SessionOwner {
 }
 
 /** The comparator every owner list ships in: count desc, then name asc. */
-function byCountThenName(a: { name: string; count: number }, b: { name: string; count: number }): number {
+function byCountThenName(
+  a: { name: string; count: number },
+  b: { name: string; count: number }
+): number {
   if (b.count !== a.count) return b.count - a.count
   return a.name.localeCompare(b.name)
 }

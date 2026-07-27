@@ -20,10 +20,7 @@ import {
   type FlowOrientation
 } from './decorExtents'
 import { getOrgProps, type OrgElementLike } from './orgModel'
-import {
-  isCompletenessOn,
-  isOrgStylingOn
-} from './orgSettings'
+import { isCompletenessOn, isOrgStylingOn } from './orgSettings'
 
 const FLOW_TYPE = 'bpmn:SequenceFlow'
 const SHAPE_CLEARANCE = 7
@@ -86,11 +83,11 @@ interface ConnectionScore {
 function finitePoint(value: unknown): value is RoutePoint {
   return Boolean(
     value &&
-      typeof value === 'object' &&
-      typeof (value as { x?: unknown }).x === 'number' &&
-      Number.isFinite((value as { x: number }).x) &&
-      typeof (value as { y?: unknown }).y === 'number' &&
-      Number.isFinite((value as { y: number }).y)
+    typeof value === 'object' &&
+    typeof (value as { x?: unknown }).x === 'number' &&
+    Number.isFinite((value as { x: number }).x) &&
+    typeof (value as { y?: unknown }).y === 'number' &&
+    Number.isFinite((value as { y: number }).y)
   )
 }
 
@@ -157,22 +154,12 @@ function segmentHitsRect(a: RoutePoint, b: RoutePoint, rect: RouteRect): boolean
   if (Math.abs(a.x - b.x) <= EPSILON) {
     const lo = Math.min(a.y, b.y)
     const hi = Math.max(a.y, b.y)
-    return (
-      a.x > rect.x0 &&
-      a.x < rect.x1 &&
-      lo < rect.y1 &&
-      hi > rect.y0
-    )
+    return a.x > rect.x0 && a.x < rect.x1 && lo < rect.y1 && hi > rect.y0
   }
   if (Math.abs(a.y - b.y) <= EPSILON) {
     const lo = Math.min(a.x, b.x)
     const hi = Math.max(a.x, b.x)
-    return (
-      a.y > rect.y0 &&
-      a.y < rect.y1 &&
-      lo < rect.x1 &&
-      hi > rect.x0
-    )
+    return a.y > rect.y0 && a.y < rect.y1 && lo < rect.x1 && hi > rect.x0
   }
   // Non-orthogonal hand-edited routes are considered unsafe; the replacement
   // route will always be rectilinear.
@@ -190,10 +177,7 @@ function routeLength(points: readonly RoutePoint[]): number {
   return total
 }
 
-function edgeOf(
-  connection: RoutingElement,
-  waypoints: readonly RoutePoint[]
-): PolylineEdge {
+function edgeOf(connection: RoutingElement, waypoints: readonly RoutePoint[]): PolylineEdge {
   return {
     id: connection.id as string,
     sourceId: connection.source?.id,
@@ -219,8 +203,7 @@ function routeScore(
   }
   const edge = edgeOf(connection, normalized)
   const crossings = analyzeEdgeVisuals([...otherEdges, edge]).crossings.filter(
-    (crossing) =>
-      crossing.overEdgeId === edge.id || crossing.underEdgeId === edge.id
+    (crossing) => crossing.overEdgeId === edge.id || crossing.underEdgeId === edge.id
   ).length
   return {
     collisions,
@@ -241,18 +224,14 @@ function shouldReplace(current: ConnectionScore, candidate: ConnectionScore): bo
   return candidate.length + MATERIAL_LENGTH_IMPROVEMENT < current.length
 }
 
-function sameRoute(
-  left: readonly RoutePoint[],
-  right: readonly RoutePoint[]
-): boolean {
+function sameRoute(left: readonly RoutePoint[], right: readonly RoutePoint[]): boolean {
   const a = normalizePolyline(left)
   const b = normalizePolyline(right)
   return (
     a.length === b.length &&
     a.every(
       (point, index) =>
-        Math.abs(point.x - b[index].x) <= EPSILON &&
-        Math.abs(point.y - b[index].y) <= EPSILON
+        Math.abs(point.x - b[index].x) <= EPSILON && Math.abs(point.y - b[index].y) <= EPSILON
     )
   )
 }
@@ -305,10 +284,7 @@ function decorationObstacles(
   return result
 }
 
-function edgeRectangles(
-  edges: readonly PolylineEdge[],
-  connection: RoutingElement
-): RouteRect[] {
+function edgeRectangles(edges: readonly PolylineEdge[], connection: RoutingElement): RouteRect[] {
   const result: RouteRect[] = []
   for (const edge of edges) {
     if (
@@ -339,8 +315,7 @@ export function planAutomaticConnectionRepairs(
   elements: readonly RoutingElement[],
   directionSource?: RoutingDirectionSource
 ): ModelingBatchUpdate[] {
-  const orientation =
-    directionSource?.getOrientation?.() ?? detectOrientation(elements)
+  const orientation = directionSource?.getOrientation?.() ?? detectOrientation(elements)
   const decorations = decorationObstacles(elements, orientation, directionSource)
   const baseShapes = elements.filter(
     (element) =>
@@ -399,19 +374,13 @@ export function planAutomaticConnectionRepairs(
     // shapes are intentionally omitted from the ordinary obstacle set, the
     // generic shortest-path planner could otherwise "simplify" a valid loop
     // into a bend through the activity itself.
-    if (
-      connection.source?.id != null &&
-      connection.source.id === connection.target?.id
-    ) {
+    if (connection.source?.id != null && connection.source.id === connection.target?.id) {
       continue
     }
     const current = (connection.waypoints ?? []).filter(finitePoint)
     const start = current[0]
     const end = current[current.length - 1]
-    const endpointIds = new Set([
-      connection.source?.id,
-      connection.target?.id
-    ])
+    const endpointIds = new Set([connection.source?.id, connection.target?.id])
     const obstacles: RouteRect[] = [
       ...baseShapes
         .filter((shape) => !endpointIds.has(shape.id))
@@ -426,33 +395,20 @@ export function planAutomaticConnectionRepairs(
         .filter((shape) => endpointIds.has(shape.id))
         .flatMap((shape) => decorations.get(shape.id as string) ?? [])
     ]
-    const otherEdges = [...projected.values()].filter(
-      (edge) => edge.id !== connection.id
-    )
-    const routeObstacles = [
-      ...obstacles,
-      ...edgeRectangles(otherEdges, connection)
-    ]
+    const otherEdges = [...projected.values()].filter((edge) => edge.id !== connection.id)
+    const routeObstacles = [...obstacles, ...edgeRectangles(otherEdges, connection)]
     const candidate = normalizePolyline(
       routeOrthogonal(start, end, routeObstacles, grid, connection.id as string)
     )
     const currentScore = routeScore(connection, current, obstacles, otherEdges)
-    const candidateScore = routeScore(
-      connection,
-      candidate,
-      obstacles,
-      otherEdges
-    )
+    const candidateScore = routeScore(connection, candidate, obstacles, otherEdges)
     if (!sameRoute(current, candidate) && shouldReplace(currentScore, candidateScore)) {
       updates.push({
         kind: 'waypoints',
         connection,
         waypoints: candidate.map((point) => ({ ...point }))
       })
-      projected.set(
-        connection.id as string,
-        edgeOf(connection, candidate)
-      )
+      projected.set(connection.id as string, edgeOf(connection, candidate))
     }
   }
   return updates
@@ -463,9 +419,7 @@ export function planAutomaticConnectionRepairs(
  * command are nested during `postExecuted`, matching label mirroring and
  * auto-size, so one Undo always reverts the user action and its routing.
  */
-export function installAutomaticConnectionRouting(
-  modeler: AutomaticRoutingModeler
-): () => void {
+export function installAutomaticConnectionRouting(modeler: AutomaticRoutingModeler): () => void {
   const eventBus = modeler.get('eventBus') as RoutingEventBus
   const registry = modeler.get('elementRegistry') as RoutingRegistry
   let directionSource: RoutingDirectionSource | undefined

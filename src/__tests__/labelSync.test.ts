@@ -109,9 +109,7 @@ describe('installLabelBilingualSync', () => {
       businessObject: { $type: 'bpmn:Task', name: 'مراجعة الطلب', $attrs: {} }
     }
     world.fire(EVENT, { context: { element: task } })
-    expect(world.rec).toEqual([
-      { element: task, properties: { 'orbitpm:nameAr': 'مراجعة الطلب' } }
-    ])
+    expect(world.rec).toEqual([{ element: task, properties: { 'orbitpm:nameAr': 'مراجعة الطلب' } }])
   })
 
   it('resolves a LABEL shape to its labelTarget and writes onto the target', () => {

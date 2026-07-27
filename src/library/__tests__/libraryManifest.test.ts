@@ -9,7 +9,11 @@ import {
   type LibraryManifest
 } from '../libraryManifest'
 
-function file(relPath: string, processId: string, calls: string[] = []): { relPath: string; xml: string } {
+function file(
+  relPath: string,
+  processId: string,
+  calls: string[] = []
+): { relPath: string; xml: string } {
   const activities = calls
     .map((c, i) => `<bpmn:callActivity id="ca_${i}" calledElement="${c}" />`)
     .join('')

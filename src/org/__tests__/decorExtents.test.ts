@@ -24,7 +24,13 @@ import type { OrgProps } from '../orgModel'
 // --- detectOrientation -------------------------------------------------------
 
 function flow(x1: number, y1: number, x2: number, y2: number, type = 'bpmn:SequenceFlow') {
-  return { type, waypoints: [{ x: x1, y: y1 }, { x: x2, y: y2 }] }
+  return {
+    type,
+    waypoints: [
+      { x: x1, y: y1 },
+      { x: x2, y: y2 }
+    ]
+  }
 }
 
 describe('detectOrientation', () => {
@@ -69,8 +75,20 @@ describe('detectOrientation', () => {
   it('ignores non-SequenceFlow connections entirely', () => {
     expect(
       detectOrientation([
-        { type: 'bpmn:Association', waypoints: [{ x: 0, y: 0 }, { x: 0, y: 900 }] },
-        { type: 'bpmn:MessageFlow', waypoints: [{ x: 0, y: 0 }, { x: 0, y: 900 }] },
+        {
+          type: 'bpmn:Association',
+          waypoints: [
+            { x: 0, y: 0 },
+            { x: 0, y: 900 }
+          ]
+        },
+        {
+          type: 'bpmn:MessageFlow',
+          waypoints: [
+            { x: 0, y: 0 },
+            { x: 0, y: 900 }
+          ]
+        },
         flow(0, 0, 50, 0)
       ])
     ).toBe('horizontal')
@@ -98,14 +116,38 @@ function sequence(waypoints: Array<{ x: number; y: number }>, type = 'bpmn:Seque
 
 describe('detectElementFlowDirection', () => {
   it.each([
-    ['right', [{ x: 0, y: 0 }, { x: 60, y: 0 }]],
-    ['down', [{ x: 0, y: 0 }, { x: 0, y: 60 }]],
-    ['left', [{ x: 60, y: 0 }, { x: 0, y: 0 }]],
-    ['up', [{ x: 0, y: 60 }, { x: 0, y: 0 }]]
+    [
+      'right',
+      [
+        { x: 0, y: 0 },
+        { x: 60, y: 0 }
+      ]
+    ],
+    [
+      'down',
+      [
+        { x: 0, y: 0 },
+        { x: 0, y: 60 }
+      ]
+    ],
+    [
+      'left',
+      [
+        { x: 60, y: 0 },
+        { x: 0, y: 0 }
+      ]
+    ],
+    [
+      'up',
+      [
+        { x: 0, y: 60 },
+        { x: 0, y: 0 }
+      ]
+    ]
   ] as const)('detects %s from an outgoing source stub', (expected, waypoints) => {
-    expect(
-      detectElementFlowDirection({ outgoing: [sequence([...waypoints])] }, 'horizontal')
-    ).toBe(expected)
+    expect(detectElementFlowDirection({ outgoing: [sequence([...waypoints])] }, 'horizontal')).toBe(
+      expected
+    )
   })
 
   it('uses the first non-zero outgoing segment and ignores later bends', () => {
@@ -145,8 +187,14 @@ describe('detectElementFlowDirection', () => {
   })
 
   it('combines incoming and outgoing stubs, including their signs', () => {
-    const incoming = sequence([{ x: 100, y: 0 }, { x: 50, y: 0 }])
-    const outgoing = sequence([{ x: 50, y: 0 }, { x: 0, y: 0 }])
+    const incoming = sequence([
+      { x: 100, y: 0 },
+      { x: 50, y: 0 }
+    ])
+    const outgoing = sequence([
+      { x: 50, y: 0 },
+      { x: 0, y: 0 }
+    ])
     expect(
       detectElementFlowDirection({ incoming: [incoming], outgoing: [outgoing] }, 'vertical')
     ).toBe('left')
@@ -159,8 +207,14 @@ describe('detectElementFlowDirection', () => {
       detectElementFlowDirection(
         {
           outgoing: [
-            sequence([{ x: 0, y: 0 }, { x: 40, y: 0 }]),
-            sequence([{ x: 0, y: 0 }, { x: -40, y: 0 }])
+            sequence([
+              { x: 0, y: 0 },
+              { x: 40, y: 0 }
+            ]),
+            sequence([
+              { x: 0, y: 0 },
+              { x: -40, y: 0 }
+            ])
           ]
         },
         'vertical'
@@ -168,7 +222,14 @@ describe('detectElementFlowDirection', () => {
     ).toBe('down')
     expect(
       detectElementFlowDirection(
-        { outgoing: [sequence([{ x: 0, y: 0 }, { x: 40, y: -40 }])] },
+        {
+          outgoing: [
+            sequence([
+              { x: 0, y: 0 },
+              { x: 40, y: -40 }
+            ])
+          ]
+        },
         'horizontal'
       )
     ).toBe('right')
@@ -179,8 +240,17 @@ describe('detectElementFlowDirection', () => {
       detectElementFlowDirection(
         {
           outgoing: [
-            sequence([{ x: 0, y: 0 }, { x: 0, y: 100 }], 'bpmn:Association'),
-            sequence([{ x: 5, y: 5 }, { x: 5, y: 5 }]),
+            sequence(
+              [
+                { x: 0, y: 0 },
+                { x: 0, y: 100 }
+              ],
+              'bpmn:Association'
+            ),
+            sequence([
+              { x: 5, y: 5 },
+              { x: 5, y: 5 }
+            ]),
             { type: 'bpmn:SequenceFlow', waypoints: [{ x: 0 }, { y: 20 }] }
           ]
         },
@@ -545,7 +615,10 @@ describe('computeDecorLayout margins', () => {
         })
       )
       const boxes = decorationBoxes(layout)
-      expect(boxes.some(({ kind }) => kind === 'outputs'), direction).toBe(true)
+      expect(
+        boxes.some(({ kind }) => kind === 'outputs'),
+        direction
+      ).toBe(true)
       for (let i = 0; i < boxes.length; i++) {
         expect(boxesOverlap(boxes[i].box, shape), `${direction} ${boxes[i].kind} vs shape`).toBe(
           false
@@ -694,14 +767,21 @@ describe('computeDecorLayout margins', () => {
   })
 
   it('reserves the subChip slot exactly for sub-process-capable types', () => {
-    for (const type of ['bpmn:SubProcess', 'bpmn:CallActivity', 'bpmn:Transaction', 'bpmn:AdHocSubProcess']) {
+    for (const type of [
+      'bpmn:SubProcess',
+      'bpmn:CallActivity',
+      'bpmn:Transaction',
+      'bpmn:AdHocSubProcess'
+    ]) {
       const layout = computeDecorLayout(layoutInput({ props: {}, elementType: type }))
       expect(layout.subChip, type).toEqual(planSubChipBox(100, 80))
       // inside the shape -> zero margin contribution
       expect(layout.margins).toEqual({ left: 0, right: 0, top: 0, bottom: 0 })
     }
     for (const type of ['bpmn:Task', 'bpmn:StartEvent', 'bpmn:ExclusiveGateway']) {
-      expect(computeDecorLayout(layoutInput({ props: {}, elementType: type })).subChip).toBeUndefined()
+      expect(
+        computeDecorLayout(layoutInput({ props: {}, elementType: type })).subChip
+      ).toBeUndefined()
     }
   })
 
@@ -791,16 +871,25 @@ describe('planDecorations <-> computeDecorLayout parity', () => {
             const lists = decorations.filter((d): d is ListDecoration => d.kind === 'listBox')
 
             // channel tag (activities; identified by the dmthub palette pair)
-            const channelTag = tags.find((d) => d.fill === PALETTE.tagDmthubFill && type !== 'bpmn:StartEvent')
-            expect(Boolean(channelTag), label + ' channelTag presence').toBe(Boolean(layout.channelTag))
+            const channelTag = tags.find(
+              (d) => d.fill === PALETTE.tagDmthubFill && type !== 'bpmn:StartEvent'
+            )
+            expect(Boolean(channelTag), label + ' channelTag presence').toBe(
+              Boolean(layout.channelTag)
+            )
             if (channelTag && layout.channelTag) {
               expect(boxOfTag(channelTag), label).toEqual(layout.channelTag)
               checkedBoxes++
             }
 
             // trigger tag (start events only)
-            const triggerTag = type === 'bpmn:StartEvent' ? tags.find((d) => d.fill === PALETTE.tagDmthubFill) : undefined
-            expect(Boolean(triggerTag), label + ' triggerTag presence').toBe(Boolean(layout.triggerTag))
+            const triggerTag =
+              type === 'bpmn:StartEvent'
+                ? tags.find((d) => d.fill === PALETTE.tagDmthubFill)
+                : undefined
+            expect(Boolean(triggerTag), label + ' triggerTag presence').toBe(
+              Boolean(layout.triggerTag)
+            )
             if (triggerTag && layout.triggerTag) {
               expect(boxOfTag(triggerTag), label).toEqual(layout.triggerTag)
               checkedBoxes++
@@ -816,7 +905,9 @@ describe('planDecorations <-> computeDecorLayout parity', () => {
 
             // inputs / outputs / cc / responsible list boxes
             const inputsBox = lists.find((d) => d.fill === PALETTE.inputFill)
-            expect(Boolean(inputsBox), label + ' inputsBox presence').toBe(Boolean(layout.inputsBox))
+            expect(Boolean(inputsBox), label + ' inputsBox presence').toBe(
+              Boolean(layout.inputsBox)
+            )
             if (inputsBox && layout.inputsBox) {
               expect(boxOfList(inputsBox), label).toEqual(layout.inputsBox)
               checkedBoxes++
@@ -877,7 +968,9 @@ describe('planDecorations <-> computeDecorLayout parity', () => {
             }).badge
             expect(Boolean(badge), label + ' badge presence').toBe(Boolean(badgeBox))
             if (badge && badge.kind === 'missingBadge' && badgeBox) {
-              expect({ x: badge.x, y: badge.y, w: badge.size, h: badge.size }, label).toEqual(badgeBox)
+              expect({ x: badge.x, y: badge.y, w: badge.size, h: badge.size }, label).toEqual(
+                badgeBox
+              )
               expect(badge.missing).toEqual(planMissingInfo(props, type))
               checkedBoxes++
             }
@@ -902,8 +995,7 @@ describe('repeatable trigger layout', () => {
       completenessOn: false
     })
     const tag = planDecorations(props, 'bpmn:StartEvent', 100, 36).find(
-      (decoration): decoration is Extract<Decoration, { kind: 'tag' }> =>
-        decoration.kind === 'tag'
+      (decoration): decoration is Extract<Decoration, { kind: 'tag' }> => decoration.kind === 'tag'
     )
     expect(tag?.label).toBe('DMT HUB +2')
     expect(layout.triggerTag).toEqual({

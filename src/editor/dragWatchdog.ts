@@ -116,8 +116,16 @@ type ListenerLike = (ev: Event) => void
 /** The slice of `Document` the watchdog touches — injectable so the node-env
  *  tests can hand in a hand-rolled fake (same pattern as mockFs). */
 export interface DocLike {
-  addEventListener(type: string, listener: ListenerLike, options?: boolean | AddEventListenerOptions): void
-  removeEventListener(type: string, listener: ListenerLike, options?: boolean | EventListenerOptions): void
+  addEventListener(
+    type: string,
+    listener: ListenerLike,
+    options?: boolean | AddEventListenerOptions
+  ): void
+  removeEventListener(
+    type: string,
+    listener: ListenerLike,
+    options?: boolean | EventListenerOptions
+  ): void
   dispatchEvent(ev: Event): boolean
   readonly visibilityState?: string
 }
@@ -127,8 +135,16 @@ export interface DocLike {
  *  (b) so the synthetic event is constructed in the same realm as the
  *  document it is dispatched on. */
 export interface WinLike {
-  addEventListener(type: string, listener: ListenerLike, options?: boolean | AddEventListenerOptions): void
-  removeEventListener(type: string, listener: ListenerLike, options?: boolean | EventListenerOptions): void
+  addEventListener(
+    type: string,
+    listener: ListenerLike,
+    options?: boolean | AddEventListenerOptions
+  ): void
+  removeEventListener(
+    type: string,
+    listener: ListenerLike,
+    options?: boolean | EventListenerOptions
+  ): void
   MouseEvent: typeof MouseEvent
 }
 
