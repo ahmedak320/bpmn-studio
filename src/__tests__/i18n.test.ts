@@ -4,6 +4,16 @@ import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { en, ar } from '../i18n/dictionaries'
 import { t, tPlural, getLang, setLang, getDir } from '../i18n'
+import { ARIS_EXCEL_MESSAGE_KEYS } from '../aris/excel/issues'
+import { ARIS_LAYOUT_REJECTION_CODES, arisLayoutRejectionMessageKey } from '../aris/layout/rejection'
+import { ARIS_CHAT_OWN_MESSAGE_KEYS, ARIS_CHAT_REUSED_EPC_MESSAGE_KEYS } from '../aris/chat/messageKeys'
+import { ARIS_RENDER_FIDELITY_KINDS } from '../aris/renderer/types'
+import { METADATA_CATEGORY_LABEL_KEYS } from '../aris/details/metadata'
+import { ARIS_DETAILS_TAB_LABEL_KEYS } from '../aris/details/tabs'
+import {
+  ARIS_EXPERIMENTAL_EXPORT_LABEL_KEY,
+  ARIS_EXPERIMENTAL_EXPORT_NOTICE_KEY
+} from '../aris/writer/compatibility'
 
 const HERE = dirname(fileURLToPath(import.meta.url))
 const SRC_ROOT = join(HERE, '..')
@@ -98,6 +108,94 @@ describe('i18n dictionary completeness', () => {
       }
     }
     expect(mismatches).toEqual([])
+  })
+})
+
+describe('ARIS module key-inventory coverage', () => {
+  // Regression guard for the whole class of bug this suite exists to catch: several
+  // `src/aris/**` module lanes were built without write access to this dictionary, so they
+  // emit i18n message keys as plain string literals (in `EpcFinding.messageKey`,
+  // `ArisChatGap.messageKey`, `ArisExcelIssue.messageKey`, etc.) that never flow through a
+  // `t('...')`/`tPlural('...')` call site inside `src/aris/**` itself — the UI layer that
+  // eventually calls `t(finding.messageKey)` lives elsewhere. That means the
+  // "every key used in source exists in the dictionary" checks above, which only scan for
+  // `t()`/`tPlural()` call sites, cannot see these keys at all: a lane could add a new
+  // finding kind with a brand-new key and this file would stay green while the UI silently
+  // rendered the raw key to users.
+  //
+  // Each check below is driven by a module's own exported key-inventory constant (never a
+  // hand-copied list here), so a future lane that adds a key without a matching dictionary
+  // entry — or renames/removes one the dictionary still carries — fails this suite
+  // immediately, regardless of whether anything in `src/aris/**` ever calls `t()` directly.
+  //
+  // Not every emitting module exports such a constant yet — `src/aris/epc` and
+  // `src/aris/symbols` do not (see the epc note below and the report for `symbols`) — so
+  // those are cross-checked in a follow-up describe block below.
+
+  function expectKeysRegistered(keys: readonly string[]) {
+    const missingEn = keys.filter((key) => !(key in en))
+    const missingAr = keys.filter((key) => !(key in ar))
+    expect(missingEn).toEqual([])
+    expect(missingAr).toEqual([])
+  }
+
+  it('registers every key in ARIS_EXCEL_MESSAGE_KEYS (src/aris/excel/issues.ts)', () => {
+    expect(ARIS_EXCEL_MESSAGE_KEYS.length).toBeGreaterThan(0)
+    expectKeysRegistered(ARIS_EXCEL_MESSAGE_KEYS)
+  })
+
+  it('registers every key derived from ARIS_LAYOUT_REJECTION_CODES (src/aris/layout/rejection.ts)', () => {
+    const keys = ARIS_LAYOUT_REJECTION_CODES.map((code) => arisLayoutRejectionMessageKey(code))
+    expect(keys.length).toBeGreaterThan(0)
+    expectKeysRegistered(keys)
+  })
+
+  it('registers every key in ARIS_CHAT_OWN_MESSAGE_KEYS (src/aris/chat/messageKeys.ts)', () => {
+    expect(ARIS_CHAT_OWN_MESSAGE_KEYS.length).toBeGreaterThan(0)
+    expectKeysRegistered(ARIS_CHAT_OWN_MESSAGE_KEYS)
+  })
+
+  it('registers every key ARIS_CHAT_REUSED_EPC_MESSAGE_KEYS points at — this is also the ' +
+    'authoritative epc.finding key list, since src/aris/epc itself exports no inventory constant',
+  () => {
+    expect(ARIS_CHAT_REUSED_EPC_MESSAGE_KEYS.length).toBeGreaterThan(0)
+    expectKeysRegistered(ARIS_CHAT_REUSED_EPC_MESSAGE_KEYS)
+  })
+
+  it('registers every key derived from ARIS_RENDER_FIDELITY_KINDS (src/aris/renderer/types.ts)', () => {
+    // The renderer has no exported messageKey inventory, only the finding *kind* list — every
+    // builder (fidelity.ts, font.ts, color.ts, textWrap.ts) derives its literal messageKey as
+    // `aris.fidelity.<camelCase(kind)>` by convention. Deriving the same way here means this
+    // test tracks the kind list even though it can't import the literal keys directly.
+    const toCamel = (kind: string) => kind.replace(/-([a-z])/g, (_, c: string) => c.toUpperCase())
+    const keys = ARIS_RENDER_FIDELITY_KINDS.map((kind) => `aris.fidelity.${toCamel(kind)}`)
+    expect(keys.length).toBeGreaterThan(0)
+    expectKeysRegistered(keys)
+    // Cross-check the derivation itself against the two keys the symbol registry (a
+    // different module) already owns, so a change to the naming convention can't slip past
+    // both this test and the one above without either failing.
+    expect(keys).toContain('aris.fidelity.unknownCustomSymbol')
+    expect(keys).toContain('aris.fidelity.substitutedVisualResource')
+  })
+
+  it('registers every key in METADATA_CATEGORY_LABEL_KEYS (src/aris/details/metadata.ts)', () => {
+    const keys = Object.values(METADATA_CATEGORY_LABEL_KEYS)
+    expect(keys.length).toBeGreaterThan(0)
+    expectKeysRegistered(keys)
+  })
+
+  it('registers every key in ARIS_DETAILS_TAB_LABEL_KEYS (src/aris/details/tabs.ts)', () => {
+    const keys = Object.values(ARIS_DETAILS_TAB_LABEL_KEYS)
+    expect(keys.length).toBeGreaterThan(0)
+    expectKeysRegistered(keys)
+  })
+
+  it('registers the ARIS derived-export compatibility keys (src/aris/writer/compatibility.ts)', () => {
+    expectKeysRegistered([ARIS_EXPERIMENTAL_EXPORT_LABEL_KEY, ARIS_EXPERIMENTAL_EXPORT_NOTICE_KEY])
+  })
+
+  it('fixes the experimental export label to the plan §9.5 wording exactly', () => {
+    expect(en[ARIS_EXPERIMENTAL_EXPORT_LABEL_KEY as keyof typeof en]).toBe('Experimental ARIS AML export')
   })
 })
 

@@ -2499,7 +2499,136 @@ export const en = {
   'aris.excel.guidance.control-flow-object-warning':
     'Consider splitting the model before it reaches the safe control-flow object limit.',
   'aris.excel.guidance.object-transaction-limit':
-    'Split the workbook into smaller batches that stay within the safe single-import limit.'
+    'Split the workbook into smaller batches that stay within the safe single-import limit.',
+
+  // --- ARIS EPC semantic validation findings (src/aris/epc/index.ts, validate.ts) ---
+  'aris.epc.finding.alternationViolation':
+    'Two directly connected occurrences share the type {objectType}; events and functions must alternate, with a rule between them.',
+  'aris.epc.finding.missingStartEvent': 'This model has no start event.',
+  'aris.epc.finding.missingEndEvent': 'This model has no end event.',
+  'aris.epc.finding.ruleSplitMergeConflict':
+    'This rule both merges multiple incoming branches and splits into multiple outgoing branches; split and merge must be modeled as separate rules.',
+  'aris.epc.finding.eventPrecedesDecisionSplit':
+    'An event is directly followed by a splitting {ruleKind} rule; only a rule may make a decision, never an event.',
+  'aris.epc.finding.orphanNode': "This object is disconnected from the model's main control flow.",
+  'aris.epc.finding.unrecognizedRuleSymbol':
+    'This rule uses the unrecognized connector symbol “{symbolType}”; only AND, OR, and XOR are supported.',
+  'aris.epc.finding.missingConnectionType': 'This connection has no connection type.',
+  'aris.epc.finding.danglingLinkedModel':
+    'This object links to model “{modelId}”, which does not exist in this document.',
+
+  // --- ARIS chat gap-scanner findings (src/aris/chat/messageKeys.ts, gapScanner.ts;
+  // ARIS_CHAT_OWN_MESSAGE_KEYS is the authoritative emitted-key list — the module also
+  // reuses the aris.epc.finding.* keys above verbatim rather than minting duplicates) ---
+  'aris.chat.gap.missingEnglishName': 'No English name is recorded.',
+  'aris.chat.gap.missingArabicName': 'No Arabic name is recorded.',
+  'aris.chat.gap.missingProcessCode': 'No process code is recorded for this function.',
+  'aris.chat.gap.missingOwner': 'No owner or responsible party is recorded for this function.',
+  'aris.chat.gap.missingInputsOutputsSystems':
+    'No inputs, outputs, or supporting systems are recorded for this function.',
+  'aris.chat.gap.missingDecisionBasis': 'No decision basis is recorded for this splitting rule.',
+  'aris.chat.gap.missingXorOutcomes':
+    "This decision rule's outgoing branches are missing labels or share a duplicate label.",
+  'aris.chat.gap.missingReturnTarget': 'No return target was found for this loop-back branch.',
+  'aris.chat.gap.missingReturnTarget.ambiguous':
+    'More than one possible return target was found for this loop-back branch; a manual selection is required.',
+  'aris.chat.gap.dangling.occurrenceDefinition':
+    'This occurrence references an object definition that does not exist.',
+  'aris.chat.gap.dangling.connectionEndpoint':
+    'This connection references a definition or endpoint that does not exist.',
+  'aris.chat.gap.missingLinkedModel': 'This process interface has no linked model assigned.',
+  'aris.chat.gap.missingAttachment': 'No attachment is recorded for this object.',
+  'aris.chat.gap.unusedDefinition': 'This definition is not used by any occurrence in the document.',
+  'aris.chat.gap.unaccountedSourceContent':
+    'Some content from the original source could not be accounted for in this document.',
+
+  // --- ARIS source-faithful renderer fidelity findings (src/aris/renderer/fidelity.ts,
+  // font.ts, color.ts, textWrap.ts — see ARIS_RENDER_FIDELITY_KINDS in types.ts; the
+  // missing-template/unknown-custom-symbol/substituted-visual-resource kinds are owned by
+  // the symbol registry above) ---
+  'aris.fidelity.missingFont':
+    'The requested font “{faceName}” is not in the safe font list; a fallback font was substituted.',
+  'aris.fidelity.unsupportedOleRendering':
+    'The embedded OLE object “{attachmentId}” is rendered as a placeholder icon only; its content is not decoded or previewed.',
+  'aris.fidelity.missingReferenceExport':
+    'The attachment “{attachmentId}” has no exported content; nothing can be rendered for it.',
+  'aris.fidelity.unsupportedPenEffect':
+    'The line style “{style}” is not supported; a solid line was substituted.',
+  'aris.fidelity.unsupportedBrushEffect':
+    'The fill style “{brushType}” is not supported; a solid fill was substituted.',
+  'aris.fidelity.textWrapDifference':
+    'This text required line wrapping; its on-screen layout may differ from the original ARIS rendering.',
+
+  // --- ARIS derived-export compatibility status (src/aris/writer/compatibility.ts,
+  // plan section 9.5 — the English label below is fixed verbatim by the plan) ---
+  'aris.export.experimentalLabel': 'Experimental ARIS AML export',
+  'aris.export.experimentalNotice':
+    'This exported file has not been verified by importing it into ARIS; treat it as experimental until a real ARIS import and re-export succeeds without repair.',
+
+  // --- ARIS details side panel (src/aris/details/metadata.ts, tabs.ts) ---
+  'aris.details.tab.general': 'General',
+  'aris.details.tab.names': 'Names',
+  'aris.details.tab.attributes': 'Attributes',
+  'aris.details.tab.ids': 'IDs',
+  'aris.details.tab.relations': 'Relations',
+  'aris.details.tab.assignments': 'Assignments',
+  'aris.details.tab.attachments': 'Attachments',
+  'aris.details.tab.accounting': 'Accounting',
+  'aris.details.tab.fidelity': 'Fidelity',
+  'aris.details.tab.history': 'History',
+  'aris.details.category.owner': 'Owner',
+  'aris.details.category.responsible': 'Responsible',
+  'aris.details.category.consulted': 'Consulted',
+  'aris.details.category.informed': 'Informed',
+  'aris.details.category.input': 'Input',
+  'aris.details.category.output': 'Output',
+  'aris.details.category.system': 'System',
+  'aris.details.category.businessRule': 'Business rule',
+  'aris.details.category.policy': 'Policy',
+  'aris.details.category.requirement': 'Requirement',
+  'aris.details.category.processCode': 'Process code',
+  'aris.details.category.arisId': 'ARIS ID',
+  'aris.details.category.modelAssignment': 'Model assignment',
+  'aris.details.category.other': 'Other',
+  'aris.details.general.type': 'Type',
+  'aris.details.general.defaultSymbol': 'Default symbol',
+  'aris.details.general.linkedModels': 'Linked models',
+  'aris.details.general.symbol': 'Symbol',
+  'aris.details.general.position': 'Position',
+  'aris.details.general.size': 'Size',
+  'aris.details.general.modelType': 'Model type',
+  'aris.details.general.occurrences': 'Occurrences',
+  'aris.details.general.connections': 'Connections',
+  'aris.details.general.satellites': 'Satellites',
+  'aris.details.general.displayName': 'Display name',
+  'aris.details.general.blobs': 'Blobs',
+  'aris.details.names.definition': 'Definition name',
+  'aris.details.names.inherited': 'Inherited name',
+  'aris.details.names.model': 'Model name',
+  'aris.details.attributes.attr': 'Attribute',
+  'aris.details.attributes.occurrence': 'Attribute occurrence',
+  'aris.details.ids.definitionId': 'Definition ID',
+  'aris.details.ids.occurrenceId': 'Occurrence ID',
+  'aris.details.ids.modelId': 'Model ID',
+  'aris.details.ids.oleDefinitionId': 'OLE definition ID',
+  'aris.details.ids.oleOccurrenceId': 'OLE occurrence ID',
+  'aris.details.relations.category': 'Relation category',
+  'aris.details.relations.connectionType': 'Connection type',
+  'aris.details.relations.owner': 'Owning occurrence',
+  'aris.details.assignments.model': 'Assigned model',
+  'aris.details.assignments.none': 'No assigned model',
+  'aris.details.attachments.item': 'Attachment',
+  'aris.details.attachments.none': 'No attachments',
+  'aris.details.attachments.blobs': 'Blob count',
+  'aris.details.accounting.occurrences': 'Occurrences',
+  'aris.details.accounting.connections': 'Connections',
+  'aris.details.accounting.satellites': 'Satellites',
+  'aris.details.accounting.attachments': 'Attachments',
+  'aris.details.accounting.unsupported': 'Unsupported content',
+  'aris.details.fidelity.symbolFallbacks': 'Symbol fallbacks',
+  'aris.details.fidelity.oleUnsupported': 'Unsupported OLE objects',
+  'aris.details.history.revision': 'Revision',
+  'aris.details.history.definitionId': 'Definition ID'
 } as const
 
 export const ar: Record<keyof typeof en, string> = {
@@ -4874,5 +5003,133 @@ export const ar: Record<keyof typeof en, string> = {
   'aris.excel.guidance.control-flow-object-warning':
     'ضع في اعتبارك تقسيم النموذج قبل أن يبلغ الحد الآمن لعدد كائنات تدفق التحكم.',
   'aris.excel.guidance.object-transaction-limit':
-    'قسّم المصنف إلى دفعات أصغر تبقى ضمن الحد الآمن لعملية استيراد واحدة.'
+    'قسّم المصنف إلى دفعات أصغر تبقى ضمن الحد الآمن لعملية استيراد واحدة.',
+
+  // --- نتائج التحقق الدلالي لمخططات EPC في ARIS (src/aris/epc/index.ts, validate.ts) ---
+  'aris.epc.finding.alternationViolation':
+    'يشترك ظهوران متصلان مباشرة في النوع {objectType}؛ يجب أن تتناوب الأحداث والوظائف، مع وجود قاعدة بينهما.',
+  'aris.epc.finding.missingStartEvent': 'لا يحتوي هذا النموذج على حدث بداية.',
+  'aris.epc.finding.missingEndEvent': 'لا يحتوي هذا النموذج على حدث نهاية.',
+  'aris.epc.finding.ruleSplitMergeConflict':
+    'تجمع هذه القاعدة بين عدة فروع واردة وتتفرّع في الوقت نفسه إلى عدة فروع صادرة؛ يجب تمثيل التجميع والتفريع بقاعدتين منفصلتين.',
+  'aris.epc.finding.eventPrecedesDecisionSplit':
+    'يعقب الحدث مباشرة قاعدة {ruleKind} متفرّعة؛ اتخاذ القرار من اختصاص القاعدة وليس الحدث.',
+  'aris.epc.finding.orphanNode': 'هذا الكائن منفصل عن مسار التحكم الرئيسي للنموذج.',
+  'aris.epc.finding.unrecognizedRuleSymbol':
+    'تستخدم هذه القاعدة رمز موصل غير معروف هو «{symbolType}»؛ المدعوم فقط AND وOR وXOR.',
+  'aris.epc.finding.missingConnectionType': 'لا تحمل هذه العلاقة نوعًا محددًا.',
+  'aris.epc.finding.danglingLinkedModel':
+    'يرتبط هذا الكائن بالنموذج «{modelId}»، وهو غير موجود في هذا المستند.',
+
+  // --- نتائج ماسح الثغرات في محادثة ARIS (src/aris/chat/messageKeys.ts, gapScanner.ts؛
+  // ARIS_CHAT_OWN_MESSAGE_KEYS هي قائمة المفاتيح الصادرة الرسمية — تعيد هذه الوحدة أيضًا
+  // استخدام مفاتيح aris.epc.finding.* أعلاه كما هي دون تكرار) ---
+  'aris.chat.gap.missingEnglishName': 'لا يوجد اسم إنجليزي مسجَّل.',
+  'aris.chat.gap.missingArabicName': 'لا يوجد اسم عربي مسجَّل.',
+  'aris.chat.gap.missingProcessCode': 'لا يوجد رمز عملية مسجَّل لهذه الوظيفة.',
+  'aris.chat.gap.missingOwner': 'لا يوجد مالك أو جهة مسؤولة مسجَّلة لهذه الوظيفة.',
+  'aris.chat.gap.missingInputsOutputsSystems':
+    'لا توجد مدخلات أو مخرجات أو أنظمة داعمة مسجَّلة لهذه الوظيفة.',
+  'aris.chat.gap.missingDecisionBasis': 'لا يوجد أساس قرار مسجَّل لهذه القاعدة المتفرّعة.',
+  'aris.chat.gap.missingXorOutcomes':
+    'تفتقد الفروع الصادرة من قاعدة القرار هذه إلى تسميات، أو تتشارك تسمية مكررة.',
+  'aris.chat.gap.missingReturnTarget': 'لم يُعثر على وجهة عودة لفرع الرجوع هذا.',
+  'aris.chat.gap.missingReturnTarget.ambiguous':
+    'تم العثور على أكثر من وجهة عودة محتملة لفرع الرجوع هذا؛ يلزم اختيار يدوي.',
+  'aris.chat.gap.dangling.occurrenceDefinition':
+    'يشير هذا الظهور إلى تعريف كائن غير موجود.',
+  'aris.chat.gap.dangling.connectionEndpoint':
+    'تشير هذه العلاقة إلى تعريف أو طرف غير موجود.',
+  'aris.chat.gap.missingLinkedModel': 'لا يوجد نموذج مرتبط مُسنَد لواجهة العملية هذه.',
+  'aris.chat.gap.missingAttachment': 'لا يوجد مرفق مسجَّل لهذا الكائن.',
+  'aris.chat.gap.unusedDefinition': 'لا يستخدم أي ظهور في المستند هذا التعريف.',
+  'aris.chat.gap.unaccountedSourceContent':
+    'تعذّر حصر بعض محتوى المصدر الأصلي في هذا المستند.',
+
+  // --- نتائج دقة محرك رسم ARIS المطابق للمصدر (src/aris/renderer/fidelity.ts, font.ts,
+  // color.ts, textWrap.ts — راجع ARIS_RENDER_FIDELITY_KINDS في types.ts؛ أنواع القالب
+  // المفقود والرمز المخصص غير المعروف والمورد البصري المستبدل مملوكة لسجل الرموز أعلاه) ---
+  'aris.fidelity.missingFont':
+    'الخط المطلوب «{faceName}» غير مدرَج في قائمة الخطوط الآمنة؛ تم استبداله بخط بديل.',
+  'aris.fidelity.unsupportedOleRendering':
+    'يُعرض كائن OLE المضمّن «{attachmentId}» كأيقونة نائبة فقط؛ لا يُفكّ محتواه ولا تتم معاينته.',
+  'aris.fidelity.missingReferenceExport':
+    'لا يحتوي المرفق «{attachmentId}» على محتوى مُصدَّر؛ لذا يتعذّر عرض أي شيء له.',
+  'aris.fidelity.unsupportedPenEffect':
+    'نمط الخط «{style}» غير مدعوم؛ تم استبداله بخط متصل.',
+  'aris.fidelity.unsupportedBrushEffect':
+    'نمط التعبئة «{brushType}» غير مدعوم؛ تم استبداله بتعبئة صلبة.',
+  'aris.fidelity.textWrapDifference':
+    'احتاج هذا النص إلى التفاف الأسطر؛ قد يختلف تخطيطه المعروض عن رسم ARIS الأصلي.',
+
+  // --- حالة توافق التصدير المشتق في ARIS (src/aris/writer/compatibility.ts،
+  // القسم 9.5 من الخطة — النص الإنجليزي أدناه ثابت حرفيًا بموجب الخطة) ---
+  'aris.export.experimentalLabel': 'تصدير ARIS AML تجريبي',
+  'aris.export.experimentalNotice':
+    'لم يُتحقق من هذا الملف المُصدَّر باستيراده إلى ARIS؛ يُعامل بوصفه تجريبيًا إلى أن ينجح استيراد وإعادة تصدير فعليان في ARIS دون أي إصلاح.',
+
+  // --- لوحة تفاصيل ARIS الجانبية (src/aris/details/metadata.ts, tabs.ts) ---
+  'aris.details.tab.general': 'عام',
+  'aris.details.tab.names': 'الأسماء',
+  'aris.details.tab.attributes': 'السمات',
+  'aris.details.tab.ids': 'المعرّفات',
+  'aris.details.tab.relations': 'العلاقات',
+  'aris.details.tab.assignments': 'الإسنادات',
+  'aris.details.tab.attachments': 'المرفقات',
+  'aris.details.tab.accounting': 'المحاسبة',
+  'aris.details.tab.fidelity': 'الدقة',
+  'aris.details.tab.history': 'السجل',
+  'aris.details.category.owner': 'المالك',
+  'aris.details.category.responsible': 'المسؤول',
+  'aris.details.category.consulted': 'مُستشار',
+  'aris.details.category.informed': 'مُطّلِع',
+  'aris.details.category.input': 'المدخل',
+  'aris.details.category.output': 'المخرج',
+  'aris.details.category.system': 'النظام',
+  'aris.details.category.businessRule': 'قاعدة عمل',
+  'aris.details.category.policy': 'سياسة',
+  'aris.details.category.requirement': 'متطلب',
+  'aris.details.category.processCode': 'رمز العملية',
+  'aris.details.category.arisId': 'معرّف ARIS',
+  'aris.details.category.modelAssignment': 'إسناد النموذج',
+  'aris.details.category.other': 'أخرى',
+  'aris.details.general.type': 'النوع',
+  'aris.details.general.defaultSymbol': 'الرمز الافتراضي',
+  'aris.details.general.linkedModels': 'النماذج المرتبطة',
+  'aris.details.general.symbol': 'الرمز',
+  'aris.details.general.position': 'الموضع',
+  'aris.details.general.size': 'الحجم',
+  'aris.details.general.modelType': 'نوع النموذج',
+  'aris.details.general.occurrences': 'الظهورات',
+  'aris.details.general.connections': 'العلاقات',
+  'aris.details.general.satellites': 'الكائنات التابعة',
+  'aris.details.general.displayName': 'اسم العرض',
+  'aris.details.general.blobs': 'عناصر Blob',
+  'aris.details.names.definition': 'اسم التعريف',
+  'aris.details.names.inherited': 'الاسم الموروث',
+  'aris.details.names.model': 'اسم النموذج',
+  'aris.details.attributes.attr': 'السمة',
+  'aris.details.attributes.occurrence': 'ظهور السمة',
+  'aris.details.ids.definitionId': 'معرّف التعريف',
+  'aris.details.ids.occurrenceId': 'معرّف الظهور',
+  'aris.details.ids.modelId': 'معرّف النموذج',
+  'aris.details.ids.oleDefinitionId': 'معرّف تعريف OLE',
+  'aris.details.ids.oleOccurrenceId': 'معرّف ظهور OLE',
+  'aris.details.relations.category': 'فئة العلاقة',
+  'aris.details.relations.connectionType': 'نوع العلاقة',
+  'aris.details.relations.owner': 'الظهور المالك',
+  'aris.details.assignments.model': 'النموذج المُسنَد',
+  'aris.details.assignments.none': 'لا يوجد نموذج مُسنَد',
+  'aris.details.attachments.item': 'مرفق',
+  'aris.details.attachments.none': 'لا توجد مرفقات',
+  'aris.details.attachments.blobs': 'عدد عناصر Blob',
+  'aris.details.accounting.occurrences': 'الظهورات',
+  'aris.details.accounting.connections': 'العلاقات',
+  'aris.details.accounting.satellites': 'الكائنات التابعة',
+  'aris.details.accounting.attachments': 'المرفقات',
+  'aris.details.accounting.unsupported': 'محتوى غير مدعوم',
+  'aris.details.fidelity.symbolFallbacks': 'بدائل الرموز',
+  'aris.details.fidelity.oleUnsupported': 'كائنات OLE غير مدعومة',
+  'aris.details.history.revision': 'النسخة',
+  'aris.details.history.definitionId': 'معرّف التعريف'
 }
