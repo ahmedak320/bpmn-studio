@@ -1028,7 +1028,8 @@ jobs:
           mkdir rollback-postdeploy
           gh release download "$KNOWN_GOOD_TAG" \
             --pattern "$KNOWN_GOOD_ASSET" \
-            --dir rollback-postdeploy
+            --dir rollback-postdeploy \
+            --repo "$GITHUB_REPOSITORY"
           echo "$KNOWN_GOOD_ASSET_SHA256  rollback-postdeploy/$KNOWN_GOOD_ASSET" |
             sha256sum --check -
           cmp \

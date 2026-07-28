@@ -706,7 +706,7 @@ jobs:
               (.assets | length) == 7
             ' draft-at-deploy.json >/dev/null
           mkdir draft-at-deploy
-          gh release download "$RELEASE_TAG" --dir draft-at-deploy
+          gh release download "$RELEASE_TAG" --dir draft-at-deploy --repo "$GITHUB_REPOSITORY"
           while IFS=$'\t' read -r name size sha256; do
             test "$(
               jq --arg name "$name" \
