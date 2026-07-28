@@ -64,7 +64,12 @@ export default tseslint.config(
     }
   },
   {
-    files: ['scripts/accessibility-audit.mjs', 'scripts/file-smoke.mjs', 'scripts/pages-smoke.mjs'],
+    files: [
+      'scripts/accessibility-audit.mjs',
+      'scripts/aris-file-smoke.mjs',
+      'scripts/file-smoke.mjs',
+      'scripts/pages-smoke.mjs'
+    ],
     languageOptions: {
       globals: {
         ...globals.node,

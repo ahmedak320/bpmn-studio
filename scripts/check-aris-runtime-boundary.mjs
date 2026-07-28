@@ -1,5 +1,5 @@
 import { readFileSync } from 'node:fs'
-import { dirname, extname, resolve } from 'node:path'
+import { dirname, resolve } from 'node:path'
 import ts from 'typescript'
 
 const ROOT = resolve(new URL('..', import.meta.url).pathname)
