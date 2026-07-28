@@ -59,7 +59,7 @@ function readJsonBounded(path, label, maxBytes = MAX_JSON_BYTES) {
   let descriptor
   try {
     descriptor = openSync(resolve(path), 'r')
-  } catch (error) {
+  } catch {
     fail(`${label} must exist and be readable.`)
   }
   try {
@@ -77,7 +77,7 @@ function sha256File(path, label, maxBytes = MAX_ARTIFACT_BYTES) {
   let descriptor
   try {
     descriptor = openSync(resolve(path), 'r')
-  } catch (error) {
+  } catch {
     fail(`${label} must exist and be readable.`)
   }
   try {
