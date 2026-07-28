@@ -4,7 +4,22 @@ function occurrences(source, value) {
   return source.split(value).length - 1
 }
 
+function workflowInputRequiresTrueString(source, inputName) {
+  const lines = source.split('\n')
+  const start = lines.findIndex((line) => line.trim() === `${inputName}:`)
+  if (start < 0) return false
+  const body = []
+  for (let index = start + 1; index < lines.length; index += 1) {
+    const line = lines[index]
+    if (/^\s{6}[A-Za-z0-9_-]+:\s*$/u.test(line)) break
+    body.push(line)
+  }
+  const normalized = body.map((line) => line.trim())
+  return normalized.includes('required: true') && normalized.includes('type: string')
+}
+
 export function findCriticalReleaseWorkflowFailures({
+  candidate,
   release,
   pages,
   rollback,
@@ -36,6 +51,66 @@ export function findCriticalReleaseWorkflowFailures({
     )
   }
   if (
+    candidate.includes('allow-no-approvals') ||
+    candidate.includes('owner-waived-review-human-evidence') ||
+    candidate.includes('trusted_approvals" -ge 0') ||
+    candidate.includes('trusted_approvals" -ge 0')
+  ) {
+    failures.push(
+      'critical/review-gate: candidate workflow must require at least one trusted independent approval without waiver switches'
+    )
+  }
+  for (const [name, source] of [
+    ['release', release],
+    ['pages', pages]
+  ]) {
+    if (
+      !workflowInputRequiresTrueString(source, 'external_evidence_url') ||
+      !workflowInputRequiresTrueString(source, 'external_evidence_sha256')
+    ) {
+      failures.push(
+        `critical/external-evidence-inputs: ${name} must require exact external evidence URL and SHA-256 inputs`
+      )
+    }
+  }
+  if (
+    !workflowInputRequiresTrueString(finalize, 'browser_compatibility_evidence_url') ||
+    !workflowInputRequiresTrueString(finalize, 'browser_compatibility_evidence_sha256') ||
+    !workflowInputRequiresTrueString(finalize, 'browser_version_baseline_url') ||
+    !workflowInputRequiresTrueString(finalize, 'browser_version_baseline_sha256') ||
+    !workflowInputRequiresTrueString(finalize, 'external_evidence_url') ||
+    !workflowInputRequiresTrueString(finalize, 'external_evidence_sha256')
+  ) {
+    failures.push(
+      'critical/finalization-inputs: finalization must require browser compatibility, vendor baseline, and external evidence inputs'
+    )
+  }
+  if (
+    finalize.includes('owner-waived-review-human-evidence') ||
+    finalize.includes('if [ -n "$BROWSER_EVIDENCE_URL" ]') ||
+    finalize.includes('if [ -n "$EVIDENCE_URL" ]') ||
+    finalize.includes('(.browserCompatibilityEvidence.url == "")') ||
+    finalize.includes('(.browserVersionBaseline.url == "")') ||
+    finalize.includes('(.externalEvidence.url == "")')
+  ) {
+    failures.push(
+      'critical/finalization-evidence: finalization must fail closed on missing external and browser evidence'
+    )
+  }
+  if (!finalize.includes('node scripts/finalization-evidence-chain.mjs verify')) {
+    failures.push(
+      'critical/finalization-chain-verification: finalization must self-verify the retained finalization chain before upload'
+    )
+  }
+  if (
+    !finalize.includes('node scripts/verify-finalization-artifact-layout.mjs') ||
+    !cleanup.includes('node scripts/verify-finalization-artifact-layout.mjs')
+  ) {
+    failures.push(
+      'critical/finalization-artifact-layout: finalization and cleanup must verify the exact immutable finalization artifact file layout'
+    )
+  }
+  if (
     occurrences(rollback, '.published_at == null') < 5 ||
     occurrences(rollback, '.immutable != true') < 5
   ) {
@@ -50,6 +125,7 @@ export function findCriticalReleaseWorkflowFailures({
     }
   }
   for (const marker of [
+    'node scripts/finalization-evidence-chain.mjs verify',
     'node scripts/verify-archive-recovery-evidence.mjs',
     'archive-recovery-verification.json',
     'bpmn-studio-full-product-v0.4.4.bundle',

@@ -12,12 +12,12 @@ on:
         required: true
         type: string
       external_evidence_url:
-        description: Reviewed NVDA, VoiceOver, Arabic, 48-hour soak, and P0/P1 evidence URL (optional; owner waived human evidence for 0.4.5 on 2026-07-27)
-        required: false
+        description: Reviewed NVDA, VoiceOver, Arabic, 48-hour soak, and P0/P1 evidence URL
+        required: true
         type: string
       external_evidence_sha256:
-        description: SHA-256 of the candidate-bound external evidence JSON (optional; see external_evidence_url)
-        required: false
+        description: SHA-256 of the candidate-bound external evidence JSON
+        required: true
         type: string
 
 permissions:
@@ -65,24 +65,20 @@ jobs:
               exit 1
               ;;
           esac
-          # Owner waiver 2026-07-27: evidence inputs are optional; validate
-          # their format only when supplied.
-          if [ -n "$EVIDENCE_URL" ]; then
-            case "$EVIDENCE_URL" in
-              https://?*) ;;
-              *)
-                echo "external_evidence_url must be an HTTPS evidence location" >&2
-                exit 1
-                ;;
-            esac
-            test "${#EVIDENCE_SHA256}" -eq 64
-            case "$EVIDENCE_SHA256" in
-              *[!0-9a-fA-F]*)
-                echo "external_evidence_sha256 must contain 64 hexadecimal characters" >&2
-                exit 1
-                ;;
-            esac
-          fi
+          case "$EVIDENCE_URL" in
+            https://?*) ;;
+            *)
+              echo "external_evidence_url must be an HTTPS evidence location" >&2
+              exit 1
+              ;;
+          esac
+          test "${#EVIDENCE_SHA256}" -eq 64
+          case "$EVIDENCE_SHA256" in
+            *[!0-9a-fA-F]*)
+              echo "external_evidence_sha256 must contain 64 hexadecimal characters" >&2
+              exit 1
+              ;;
+          esac
           test "$GITHUB_REF" = "refs/heads/main"
           test "$GITHUB_SHA" = "$CANDIDATE_SHA"
           test "$(git rev-parse HEAD)" = "$CANDIDATE_SHA"
@@ -199,8 +195,6 @@ jobs:
           done
 
       - name: Verify candidate-bound external human and soak evidence
-        # Owner waiver 2026-07-27: runs only when external evidence is supplied.
-        if: ${{ inputs.external_evidence_url != '' }}
         env:
           EVIDENCE_SHA256: ${{ inputs.external_evidence_sha256 }}
           EVIDENCE_URL: ${{ inputs.external_evidence_url }}
@@ -214,8 +208,6 @@ jobs:
           --output=release-evidence/external-evidence-verification.json
 
       - name: Verify retained aggregate binds the trusted candidate-ready instant
-        # Owner waiver 2026-07-27: runs only when external evidence is supplied.
-        if: ${{ inputs.external_evidence_url != '' }}
         env:
           EVIDENCE_SHA256: ${{ inputs.external_evidence_sha256 }}
           EVIDENCE_URL: ${{ inputs.external_evidence_url }}
@@ -243,8 +235,6 @@ jobs:
           retention-days: 90
 
       - name: Preserve verified external evidence
-        # Owner waiver 2026-07-27: runs only when external evidence is supplied.
-        if: ${{ inputs.external_evidence_url != '' }}
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: orbitpm-verified-external-evidence-${{ inputs.candidate_sha }}
@@ -312,7 +302,7 @@ jobs:
           RULESET_ID: ${{ vars.ORBITPM_RELEASE_TAG_RULESET_ID }}
         run: |
           test "$APPROVAL_POLICY" = \
-            "v0.4.5-owner-waived-review-human-evidence-2026-07-27"
+            "v0.4.5-nvda-voiceover-arabic-48h-p0p1-reviewed"
           test -n "$GH_ADMIN_TOKEN"
           for numeric in "$RULESET_ID" "$RULESET_BYPASS_ACTOR_ID"; do
             case "$numeric" in
@@ -675,8 +665,6 @@ jobs:
           path: verified-candidate
 
       - name: Download the initial trusted external-evidence aggregate
-        # Owner waiver 2026-07-27: runs only when external evidence is supplied.
-        if: ${{ inputs.external_evidence_url != '' }}
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
         with:
           name: orbitpm-verified-external-evidence-${{ inputs.candidate_sha }}
@@ -712,8 +700,6 @@ jobs:
             --state=draft
 
       - name: Reverify external evidence against clean tag bytes
-        # Owner waiver 2026-07-27: runs only when external evidence is supplied.
-        if: ${{ inputs.external_evidence_url != '' }}
         env:
           EVIDENCE_SHA256: ${{ inputs.external_evidence_sha256 }}
           EVIDENCE_URL: ${{ inputs.external_evidence_url }}
@@ -727,8 +713,6 @@ jobs:
           --output=release-evidence/tag-external-evidence-verification.json
 
       - name: Compare tag verification with the retained pre-tag aggregate
-        # Owner waiver 2026-07-27: runs only when external evidence is supplied.
-        if: ${{ inputs.external_evidence_url != '' }}
         env:
           EVIDENCE_SHA256: ${{ inputs.external_evidence_sha256 }}
           EVIDENCE_URL: ${{ inputs.external_evidence_url }}
@@ -775,8 +759,6 @@ jobs:
           retention-days: 90
 
       - name: Preserve tag-bound external evidence
-        # Owner waiver 2026-07-27: runs only when external evidence is supplied.
-        if: ${{ inputs.external_evidence_url != '' }}
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: orbitpm-tag-external-evidence-${{ inputs.candidate_sha }}
