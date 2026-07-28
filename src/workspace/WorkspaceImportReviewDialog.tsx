@@ -46,6 +46,11 @@ const WORKSPACE_IMPORT_SKIP_DIAGNOSTICS = Object.freeze({
     message: 'workspaceImportReview.skip.unsupportedContent',
     repair: 'workspaceImportReview.guidance.chooseSupportedContent'
   },
+  'bpmn-not-supported': {
+    label: 'workspaceImportReview.reason.bpmnNotSupported',
+    message: 'workspaceImportReview.skip.bpmnNotSupported',
+    repair: 'workspaceImportReview.guidance.chooseArisOnlyContent'
+  },
   'unsafe-path': {
     label: 'workspaceImportReview.reason.unsafePath',
     message: 'workspaceImportReview.skip.unsafePath',

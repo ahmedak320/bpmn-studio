@@ -1,6 +1,8 @@
 import { describe, it, expect, vi } from 'vitest'
 import {
+  classifyImportBoundarySource,
   isBpmnName,
+  isAmlName,
   isApcName,
   isXmlName,
   isImportableName,
@@ -20,15 +22,22 @@ describe('isBpmnName', () => {
   })
 })
 
-describe('isApcName / isImportableName', () => {
+describe('isAmlName / isApcName / isImportableName', () => {
+  it('matches .aml case-insensitively', () => {
+    expect(isAmlName('model.aml')).toBe(true)
+    expect(isAmlName('MODEL.AML')).toBe(true)
+    expect(isAmlName('model.xml')).toBe(false)
+  })
+
   it('matches .apc case-insensitively', () => {
     expect(isApcName('model.apc')).toBe(true)
     expect(isApcName('MODEL.APC')).toBe(true)
     expect(isApcName('model.bpmn')).toBe(false)
   })
 
-  it('accepts bpmn, apc, and xml as importable', () => {
+  it('accepts bpmn, aml, apc, and xml as importable candidates', () => {
     expect(isImportableName('a.bpmn')).toBe(true)
+    expect(isImportableName('a.aml')).toBe(true)
     expect(isImportableName('b.apc')).toBe(true)
     expect(isImportableName('c.txt')).toBe(false)
     expect(isImportableName('d.xml')).toBe(true)
@@ -134,6 +143,29 @@ describe('looksLikeBpmnXml', () => {
   })
 })
 
+describe('classifyImportBoundarySource', () => {
+  it('rejects .bpmn extensions immediately at the ARIS-only boundary', () => {
+    expect(classifyImportBoundarySource('legacy.bpmn', '<not-even-bpmn/>')).toBe('reject-bpmn')
+  })
+
+  it('rejects BPMN XML carried under a plain .xml extension', () => {
+    expect(
+      classifyImportBoundarySource(
+        'legacy.xml',
+        '<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" />'
+      )
+    ).toBe('reject-bpmn')
+  })
+
+  it('keeps ARIS AML candidates flowing to the planner', () => {
+    expect(classifyImportBoundarySource('landscape.aml', '<AML/>')).toBe('candidate')
+  })
+
+  it('leaves non-BPMN .xml content to the planner for later unsupported-content handling', () => {
+    expect(classifyImportBoundarySource('notes.xml', '<notes/>')).toBe('candidate')
+  })
+})
+
 describe('isInternalDrag', () => {
   it('detects our internal move mime among the drag types', () => {
     expect(isInternalDrag({ types: [INTERNAL_DND_MIME, 'text/plain'] })).toBe(true)
@@ -163,13 +195,18 @@ function fakeByteFile(
 }
 
 describe('collectDroppedBpmn — flat files fallback', () => {
-  it('keeps only .bpmn files from DataTransfer.files', async () => {
+  it('keeps only importable candidate files from DataTransfer.files', async () => {
     const dt = {
       items: [],
-      files: [fakeFile('a.bpmn', 'A'), fakeFile('b.txt', 'B'), fakeFile('c.BPMN', 'C')]
+      files: [
+        fakeFile('a.bpmn', 'A'),
+        fakeFile('b.txt', 'B'),
+        fakeFile('c.BPMN', 'C'),
+        fakeFile('d.aml', 'D')
+      ]
     }
     const out = await collectDroppedBpmn(dt)
-    expect(out.map((d) => d.name).sort()).toEqual(['a.bpmn', 'c.BPMN'])
+    expect(out.map((d) => d.name).sort()).toEqual(['a.bpmn', 'c.BPMN', 'd.aml'])
     expect(await out[0].getText()).toBe('A')
   })
 
@@ -180,13 +217,18 @@ describe('collectDroppedBpmn — flat files fallback', () => {
     expect(out[0].relPath).toBe('x.bpmn')
   })
 
-  it('also collects .apc files (experimental ARIS import)', async () => {
+  it('also collects .aml and .apc files for ARIS import', async () => {
     const dt = {
       items: [],
-      files: [fakeFile('a.bpmn', 'A'), fakeFile('m.apc', 'M'), fakeFile('n.txt', 'N')]
+      files: [
+        fakeFile('a.bpmn', 'A'),
+        fakeFile('m.apc', 'M'),
+        fakeFile('l.aml', 'L'),
+        fakeFile('n.txt', 'N')
+      ]
     }
     const out = await collectDroppedBpmn(dt)
-    expect(out.map((d) => d.name).sort()).toEqual(['a.bpmn', 'm.apc'])
+    expect(out.map((d) => d.name).sort()).toEqual(['a.bpmn', 'l.aml', 'm.apc'])
   })
 
   it('also collects .xml files by name, leaving content-sniffing to the caller', async () => {
@@ -209,18 +251,19 @@ describe('collectDroppedBpmn — flat files fallback', () => {
     expect(out.map((d) => d.name).sort()).toEqual(['PROCESS2.XML', 'a.bpmn', 'process.xml'])
   })
 
-  it('mixes .bpmn, .apc and .xml in one drop without disturbing one another', async () => {
+  it('mixes .bpmn, .aml, .apc and .xml in one drop without disturbing one another', async () => {
     const dt = {
       items: [],
       files: [
         fakeFile('a.bpmn', 'A'),
+        fakeFile('b.aml', 'B'),
         fakeFile('b.apc', 'B'),
         fakeFile('c.xml', 'C'),
         fakeFile('d.txt', 'D')
       ]
     }
     const out = await collectDroppedBpmn(dt)
-    expect(out.map((d) => d.name).sort()).toEqual(['a.bpmn', 'b.apc', 'c.xml'])
+    expect(out.map((d) => d.name).sort()).toEqual(['a.bpmn', 'b.aml', 'b.apc', 'c.xml'])
   })
 
   it('rejects malformed UTF-8 with a stable error code instead of replacement characters', async () => {

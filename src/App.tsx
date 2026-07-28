@@ -227,6 +227,7 @@ import { MoveDialog } from './workspace/MoveDialog'
 import { PrintButton } from './workspace/PrintButton'
 import { PrintView, type PrintJob } from './workspace/PrintView'
 import {
+  classifyImportBoundarySource,
   collectDroppedBpmn,
   isInternalDrag,
   MAX_DROPPED_IMPORT_BYTES,
@@ -5938,7 +5939,7 @@ function App(): JSX.Element {
     [performMove]
   )
 
-  // --- import (.bpmn from Explorer) ---------------------------------------
+  // --- import (ARIS AML/XML and explicit BPMN rejection) -------------------
 
   const beginWorkspaceImportOperation = useCallback((): AbortController => {
     workspaceImportAbortRef.current?.abort()
@@ -6006,7 +6007,16 @@ function App(): JSX.Element {
         if (isCurrent()) pushToast(t('toast.import.openFolderFirst'), 'info')
         return false
       }
-      if (sources.length === 0) {
+      const acceptedSources = sources.filter((source) => {
+        if (source.kind !== 'document') return true
+        return classifyImportBoundarySource(source.name, source.text) === 'candidate'
+      })
+      const rejectedBpmnCount = sources.length - acceptedSources.length
+      if (rejectedBpmnCount > 0 && isCurrent()) {
+        pushToast(t('toast.import.arisOnly'), 'info')
+      }
+      if (acceptedSources.length === 0) {
+        if (rejectedBpmnCount > 0) return false
         if (isCurrent()) pushToast(t('toast.import.noBpmnFound'), 'info')
         return false
       }
@@ -6025,7 +6035,7 @@ function App(): JSX.Element {
       try {
         const plan = await prepareWorkspaceImportPlan({
           adapter,
-          sources,
+          sources: acceptedSources,
           targetFolder,
           language: langRef.current,
           existingProcessIndex: binding.index.processIndex(),
@@ -6105,7 +6115,7 @@ function App(): JSX.Element {
       const controller = beginWorkspaceImportOperation()
       try {
         const entries: DroppedBpmn[] = files
-          .filter((f) => /\.(bpmn|apc|xml)$/i.test(f.name))
+          .filter((f) => /\.(bpmn|aml|apc|xml)$/i.test(f.name))
           .map((f) => ({
             relPath: f.name,
             name: f.name,
@@ -10535,7 +10545,7 @@ function App(): JSX.Element {
     <input
       ref={fileInputRef}
       type="file"
-      accept=".bpmn,application/xml,text/xml"
+      accept=".bpmn,.aml,.apc,.xml,application/xml,text/xml"
       style={{ display: 'none' }}
       onChange={(e) => void onFileInputChange(e)}
     />
@@ -10544,7 +10554,7 @@ function App(): JSX.Element {
     <input
       ref={importInputRef}
       type="file"
-      accept=".bpmn,.apc,.xml,application/xml,text/xml"
+      accept=".bpmn,.aml,.apc,.xml,application/xml,text/xml"
       multiple
       style={{ display: 'none' }}
       onChange={(e) => void onImportInputChange(e)}

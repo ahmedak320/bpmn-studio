@@ -4,6 +4,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testi
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { EditorTabCommands, EditorXmlTransaction } from './editor/EditorTabLite'
+import { createArisConversionReport } from './library/arisConversionReport'
 
 interface TestDraftRecord {
   id: string
@@ -134,6 +135,7 @@ const mocks = vi.hoisted(() => ({
   beforeDraftDelete: vi.fn(),
   manifestBindings: [] as unknown[],
   readLibraryZipFileInWorker: vi.fn(),
+  convertAmlToBpmnFiles: vi.fn(),
   legacyCreateFolderAt: vi.fn(),
   legacyCreateBpmnFileUnique: vi.fn()
 }))
@@ -220,6 +222,18 @@ vi.mock('./editor/exportImage', () => ({
 vi.mock('./library/browserZipImport', () => ({
   readLibraryZipFileInWorker: mocks.readLibraryZipFileInWorker
 }))
+
+vi.mock('./library/apcImport', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('./library/apcImport')>()
+  return {
+    ...actual,
+    convertAmlToBpmnFiles: (...args: Parameters<typeof actual.convertAmlToBpmnFiles>) => {
+      return mocks.convertAmlToBpmnFiles.getMockImplementation()
+        ? mocks.convertAmlToBpmnFiles(...args)
+        : actual.convertAmlToBpmnFiles(...args)
+    }
+  }
+})
 
 vi.mock('./ai/freeTranslate', async (importOriginal) => {
   const actual = await importOriginal<typeof import('./ai/freeTranslate')>()
@@ -1199,6 +1213,7 @@ beforeEach(() => {
     entries: [],
     skipped: []
   })
+  mocks.convertAmlToBpmnFiles.mockReset()
   mocks.legacyCreateFolderAt.mockReset()
   mocks.legacyCreateBpmnFileUnique.mockReset()
   mocks.modelerGet.mockReset().mockImplementation((name: string) => {
@@ -6964,14 +6979,40 @@ describe('App directory workspace orchestration', () => {
   it('reviews all picker files before a digest-bound workspace import commit', async () => {
     const user = userEvent.setup()
     const root = fakeRoot()
-    root.addFile('Finance/existing.bpmn', state.xml)
+    root.addFile('Finance/existing.bpmn', state.xml.replaceAll('Process_Test', 'Process_Existing'))
+    mocks.convertAmlToBpmnFiles.mockResolvedValue({
+      files: [
+        {
+          name: 'Imported review',
+          nameEn: 'Imported review',
+          nameAr: 'مراجعة الاستيراد',
+          xml: state.xml,
+          processId: 'Process_Test',
+          kind: 'epc'
+        }
+      ],
+      folderName: 'Imported review',
+      report: createArisConversionReport({
+        databaseName: 'DMT',
+        objectDefinitions: 1,
+        models: 1,
+        outputFiles: 1,
+        entries: {
+          converted: [{ sourceObjectId: 'ObjDef.F1', reason: 'mapped-flow-node' }],
+          downgraded: [],
+          ignored: [],
+          ambiguous: [],
+          unmapped: []
+        }
+      })
+    })
     await openDirectoryWorkspace(user, root)
     const input = document.querySelector<HTMLInputElement>(
-      'input[accept=".bpmn,.apc,.xml,application/xml,text/xml"]'
+      'input[accept=".bpmn,.aml,.apc,.xml,application/xml,text/xml"][multiple]'
     )
     if (!input) throw new Error('missing workspace import input')
-    const xml = withProcessId(state.xml, 'Process_Imported')
-    const file = new File([xml], 'incoming.bpmn', { type: 'application/xml' })
+    const xml = '<AML><Header-Info DatabaseName="DMT" /></AML>'
+    const file = new File([xml], 'incoming.aml', { type: 'application/xml' })
     Object.defineProperty(file, 'arrayBuffer', {
       configurable: true,
       value: async () => utf8Buffer(xml)
@@ -6986,6 +7027,7 @@ describe('App directory workspace orchestration', () => {
     expect(review.plan.status).toBe('ready')
     expect(review.plan.reviewDigest).toMatch(/^[0-9a-f]{64}$/u)
     expect(review.plan.artifacts).toHaveLength(1)
+    expect(mocks.convertAmlToBpmnFiles).toHaveBeenCalledWith(xml, { lang: 'en' })
     expect(() => root.file(review.plan.artifacts[0]!.destinationPath)).toThrow(/Missing fake file/)
 
     await act(async () => {
@@ -6997,6 +7039,32 @@ describe('App directory workspace orchestration', () => {
       review.plan.artifacts[0]!.xml
     )
     expect(screen.queryByRole('dialog', { name: 'mock-workspace-import-review' })).toBeNull()
+  })
+
+  it('rejects BPMN picker files at the ARIS-only import boundary without opening review', async () => {
+    await openDirectoryWorkspace(userEvent.setup())
+    const reviewCallsBefore = mocks.workspaceImportReviewProps.mock.calls.length
+    const input = document.querySelector<HTMLInputElement>(
+      'input[accept=".bpmn,.aml,.apc,.xml,application/xml,text/xml"][multiple]'
+    )
+    if (!input) throw new Error('missing workspace import input')
+    const xml =
+      '<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL">' +
+      '<bpmn:process id="Legacy_Process" />' +
+      '</bpmn:definitions>'
+    const file = new File([xml], 'legacy.bpmn', { type: 'application/xml' })
+    Object.defineProperty(file, 'arrayBuffer', {
+      configurable: true,
+      value: async () => utf8Buffer(xml)
+    })
+
+    fireEvent.change(input, { target: { files: [file] } })
+
+    expect(await screen.findByText('toast.import.arisOnly')).not.toBeNull()
+    await waitFor(() =>
+      expect(screen.queryByRole('dialog', { name: 'mock-workspace-import-review' })).toBeNull()
+    )
+    expect(mocks.workspaceImportReviewProps.mock.calls.length).toBe(reviewCallsBefore)
   })
 
   it('ignores cancellation after workspace import storage has committed', async () => {
@@ -7013,7 +7081,7 @@ describe('App directory workspace orchestration', () => {
       value: async () => utf8Buffer(incomingXml)
     })
     const input = document.querySelector<HTMLInputElement>(
-      'input[accept=".bpmn,.apc,.xml,application/xml,text/xml"]'
+      'input[accept=".bpmn,.aml,.apc,.xml,application/xml,text/xml"][multiple]'
     )
     if (!input) throw new Error('missing workspace import input')
     const originalWriteAtomic = ManifestBoundWorkspaceAdapter.prototype.writeAtomic
@@ -7097,7 +7165,7 @@ describe('App directory workspace orchestration', () => {
       value: async () => utf8Buffer(incomingXml)
     })
     const input = document.querySelector<HTMLInputElement>(
-      'input[accept=".bpmn,.apc,.xml,application/xml,text/xml"]'
+      'input[accept=".bpmn,.aml,.apc,.xml,application/xml,text/xml"][multiple]'
     )
     if (!input) throw new Error('missing workspace import input')
     fireEvent.change(input, { target: { files: [file] } })
@@ -7164,7 +7232,7 @@ describe('App directory workspace orchestration', () => {
       value: async () => utf8Buffer(incomingXml)
     })
     const input = document.querySelector<HTMLInputElement>(
-      'input[accept=".bpmn,.apc,.xml,application/xml,text/xml"]'
+      'input[accept=".bpmn,.aml,.apc,.xml,application/xml,text/xml"][multiple]'
     )
     if (!input) throw new Error('missing workspace import input')
     fireEvent.change(input, { target: { files: [file] } })
@@ -7230,7 +7298,7 @@ describe('App directory workspace orchestration', () => {
       value: async () => utf8Buffer(incomingXml)
     })
     const input = document.querySelector<HTMLInputElement>(
-      'input[accept=".bpmn,.apc,.xml,application/xml,text/xml"]'
+      'input[accept=".bpmn,.aml,.apc,.xml,application/xml,text/xml"][multiple]'
     )
     if (!input) throw new Error('missing workspace import input')
     fireEvent.change(input, { target: { files: [file] } })
@@ -7311,7 +7379,7 @@ describe('App directory workspace orchestration', () => {
       value: async () => utf8Buffer(incomingXml)
     })
     const input = document.querySelector<HTMLInputElement>(
-      'input[accept=".bpmn,.apc,.xml,application/xml,text/xml"]'
+      'input[accept=".bpmn,.aml,.apc,.xml,application/xml,text/xml"][multiple]'
     )
     if (!input) throw new Error('missing workspace import input')
     fireEvent.change(input, { target: { files: [file] } })
@@ -7418,7 +7486,7 @@ describe('App directory workspace orchestration', () => {
       value: async () => utf8Buffer(incomingXml)
     })
     const input = document.querySelector<HTMLInputElement>(
-      'input[accept=".bpmn,.apc,.xml,application/xml,text/xml"]'
+      'input[accept=".bpmn,.aml,.apc,.xml,application/xml,text/xml"][multiple]'
     )
     if (!input) throw new Error('missing workspace import input')
     fireEvent.change(input, { target: { files: [file] } })
@@ -7482,7 +7550,7 @@ describe('App directory workspace orchestration', () => {
       value: async () => utf8Buffer(incomingXml)
     })
     const input = document.querySelector<HTMLInputElement>(
-      'input[accept=".bpmn,.apc,.xml,application/xml,text/xml"]'
+      'input[accept=".bpmn,.aml,.apc,.xml,application/xml,text/xml"][multiple]'
     )
     if (!input) throw new Error('missing workspace import input')
 
@@ -7550,7 +7618,7 @@ describe('App directory workspace orchestration', () => {
       value: async () => utf8Buffer(incomingXml)
     })
     const input = document.querySelector<HTMLInputElement>(
-      'input[accept=".bpmn,.apc,.xml,application/xml,text/xml"]'
+      'input[accept=".bpmn,.aml,.apc,.xml,application/xml,text/xml"][multiple]'
     )
     if (!input) throw new Error('missing workspace import input')
     fireEvent.change(input, { target: { files: [file] } })
@@ -7626,7 +7694,7 @@ describe('App directory workspace orchestration', () => {
       value: async () => utf8Buffer(incomingXml)
     })
     const input = document.querySelector<HTMLInputElement>(
-      'input[accept=".bpmn,.apc,.xml,application/xml,text/xml"]'
+      'input[accept=".bpmn,.aml,.apc,.xml,application/xml,text/xml"][multiple]'
     )
     if (!input) throw new Error('missing workspace import input')
     fireEvent.change(input, { target: { files: [file] } })
@@ -7712,7 +7780,7 @@ describe('App directory workspace orchestration', () => {
       value: async () => utf8Buffer(incomingXml)
     })
     const input = document.querySelector<HTMLInputElement>(
-      'input[accept=".bpmn,.apc,.xml,application/xml,text/xml"]'
+      'input[accept=".bpmn,.aml,.apc,.xml,application/xml,text/xml"][multiple]'
     )
     if (!input) throw new Error('missing workspace import input')
     fireEvent.change(input, { target: { files: [file] } })
@@ -7749,7 +7817,7 @@ describe('App directory workspace orchestration', () => {
   it('rejects an oversized multi-file picker item before allocating its bytes', async () => {
     await openDirectoryWorkspace(userEvent.setup())
     const input = document.querySelector<HTMLInputElement>(
-      'input[accept=".bpmn,.apc,.xml,application/xml,text/xml"]'
+      'input[accept=".bpmn,.aml,.apc,.xml,application/xml,text/xml"]'
     )
     if (!input) throw new Error('missing workspace import input')
     const file = new File(['small'], 'oversized.bpmn', { type: 'application/xml' })

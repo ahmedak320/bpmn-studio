@@ -646,7 +646,7 @@ export const en = {
   'breadcrumb.aria': 'Breadcrumb',
 
   // --- Import ---
-  'import.dropHint': 'Drop .bpmn files or folders here to import',
+  'import.dropHint': 'Drop ARIS AML/XML files or folders here to import',
   'import.toast.imported': 'Imported {name}',
   'import.toast.renamed': 'Imported as {name} (name already existed)',
 
@@ -674,7 +674,9 @@ export const en = {
   'toast.imported.count': 'Imported {count} file{plural}',
   'toast.imported.renamed': ' ({renamed} renamed to avoid a name clash)',
   'toast.import.openFolderFirst': 'Open a folder first to import files into your workspace.',
-  'toast.import.noBpmnFound': 'No importable .bpmn or .xml files found in what you dropped.',
+  'toast.import.arisOnly': 'This ARIS-only build accepts ARIS AML/XML exports.',
+  'toast.import.noBpmnFound':
+    'No importable ARIS AML/XML sources (.aml, .apc, or .xml) were found in what you dropped.',
   'toast.print.loading': 'The diagram is still loading — try Print again in a moment.',
   'toast.print.failed': 'Print failed: {error}',
 
@@ -1163,6 +1165,7 @@ export const en = {
   'workspaceImportReview.path': 'Path',
   'workspaceImportReview.reason': 'Reason',
   'workspaceImportReview.reason.unsupportedContent': 'Unsupported content',
+  'workspaceImportReview.reason.bpmnNotSupported': 'BPMN input is not supported in this build',
   'workspaceImportReview.reason.unsafePath': 'Unsafe path',
   'workspaceImportReview.reason.invalidBpmn': 'Invalid BPMN',
   'workspaceImportReview.reason.amlConversionFailed': 'ARIS AML conversion failed',
@@ -1178,7 +1181,9 @@ export const en = {
   'workspaceImportReview.reason.libraryDecodeFailed': 'ZIP entry could not be decoded',
   'workspaceImportReview.reason.unknown': 'Unknown skip reason',
   'workspaceImportReview.skip.unsupportedContent':
-    'The input was skipped because it is not recognizable BPMN XML or ARIS AML.',
+    'The input was skipped because it is not recognizable ARIS AML/XML.',
+  'workspaceImportReview.skip.bpmnNotSupported':
+    'The input was skipped because this ARIS-only build accepts ARIS AML/XML exports only.',
   'workspaceImportReview.skip.unsafePath':
     'The input was skipped because its path cannot be contained safely in the workspace.',
   'workspaceImportReview.skip.invalidBpmn':
@@ -1208,7 +1213,9 @@ export const en = {
   'workspaceImportReview.skip.unknown':
     'The input was skipped for a reason this version does not recognize.',
   'workspaceImportReview.guidance.chooseSupportedContent':
-    'Provide BPMN XML or a supported ARIS AML export and review it again.',
+    'Provide recognizable ARIS AML/XML content and review it again.',
+  'workspaceImportReview.guidance.chooseArisOnlyContent':
+    'Export ARIS AML/XML from the source system, then review that import again.',
   'workspaceImportReview.guidance.useSafePath':
     'Choose a safe relative destination whose parent folders are inside the workspace.',
   'workspaceImportReview.guidance.repairBpmn':
@@ -2870,7 +2877,7 @@ export const ar: Record<keyof typeof en, string> = {
   'breadcrumb.aria': 'مسار التنقل',
 
   // --- Import ---
-  'import.dropHint': 'أفلت ملفات أو مجلدات .bpmn هنا للاستيراد',
+  'import.dropHint': 'أفلت ملفات أو مجلدات ARIS AML/XML هنا للاستيراد',
   'import.toast.imported': 'تم استيراد {name}',
   'import.toast.renamed': 'تم الاستيراد باسم {name} (الاسم موجود مسبقًا)',
 
@@ -2898,8 +2905,9 @@ export const ar: Record<keyof typeof en, string> = {
   'toast.imported.count': 'تم استيراد {count} ملف{plural}',
   'toast.imported.renamed': ' (تمت إعادة تسمية {renamed} لتجنب تعارض الأسماء)',
   'toast.import.openFolderFirst': 'افتح مجلدًا أولًا لاستيراد الملفات إلى مساحة عملك.',
+  'toast.import.arisOnly': 'هذا الإصدار المقتصر على ARIS يقبل فقط صادرات ARIS AML/XML.',
   'toast.import.noBpmnFound':
-    'لم يتم العثور على ملفات .bpmn أو .xml قابلة للاستيراد فيما تم إفلاته.',
+    'لم يتم العثور على مصادر ARIS AML/XML قابلة للاستيراد (.aml أو .apc أو .xml) فيما تم إفلاته.',
   'toast.print.loading': 'المخطط لا يزال قيد التحميل — حاول الطباعة مرة أخرى بعد لحظة.',
   'toast.print.failed': 'فشلت الطباعة: {error}',
 
@@ -3377,6 +3385,7 @@ export const ar: Record<keyof typeof en, string> = {
   'workspaceImportReview.path': 'المسار',
   'workspaceImportReview.reason': 'السبب',
   'workspaceImportReview.reason.unsupportedContent': 'محتوى غير مدعوم',
+  'workspaceImportReview.reason.bpmnNotSupported': 'إدخال BPMN غير مدعوم في هذا الإصدار',
   'workspaceImportReview.reason.unsafePath': 'مسار غير آمن',
   'workspaceImportReview.reason.invalidBpmn': 'ملف BPMN غير صالح',
   'workspaceImportReview.reason.amlConversionFailed': 'فشل تحويل AML من ARIS',
@@ -3392,7 +3401,9 @@ export const ar: Record<keyof typeof en, string> = {
   'workspaceImportReview.reason.libraryDecodeFailed': 'تعذّر فك ترميز إدخال ZIP',
   'workspaceImportReview.reason.unknown': 'سبب تخطٍ غير معروف',
   'workspaceImportReview.skip.unsupportedContent':
-    'تم تخطي المدخل لأنه ليس ملف BPMN XML معروفًا ولا تصدير ARIS AML.',
+    'تم تخطي المدخل لأنه ليس محتوى ARIS AML/XML معروفًا.',
+  'workspaceImportReview.skip.bpmnNotSupported':
+    'تم تخطي المدخل لأن هذا الإصدار المقتصر على ARIS يقبل فقط صادرات ARIS AML/XML.',
   'workspaceImportReview.skip.unsafePath':
     'تم تخطي المدخل لأن مساره لا يمكن احتواؤه بأمان داخل مساحة العمل.',
   'workspaceImportReview.skip.invalidBpmn': 'تم تخطي المدخل لأن التحقق من BPMN لم يكتمل بنجاح.',
@@ -3416,7 +3427,9 @@ export const ar: Record<keyof typeof en, string> = {
     'تم تخطي إدخال ZIP لأنه تعذّر فك ترميز نصه بأمان.',
   'workspaceImportReview.skip.unknown': 'تم تخطي المدخل لسبب لا يتعرف عليه هذا الإصدار.',
   'workspaceImportReview.guidance.chooseSupportedContent':
-    'قدّم ملف BPMN XML أو تصدير ARIS AML مدعومًا ثم راجعه مرة أخرى.',
+    'قدّم محتوى ARIS AML/XML معروفًا ثم راجعه مرة أخرى.',
+  'workspaceImportReview.guidance.chooseArisOnlyContent':
+    'صدّر ARIS AML/XML من النظام المصدر ثم أعد مراجعة هذا الاستيراد.',
   'workspaceImportReview.guidance.useSafePath':
     'اختر وجهة نسبية آمنة تكون مجلداتها الأصلية داخل مساحة العمل.',
   'workspaceImportReview.guidance.repairBpmn':

@@ -1,14 +1,13 @@
-// Parse an HTML5 drag-and-drop DataTransfer into the .bpmn (plus .apc and
-// .xml) files it carries, for the "drag .bpmn files (and folders) from
-// Explorer onto the app" import. A bare `.xml` file is accepted by name here
-// (many BPMN tools export BPMN 2.0 XML with a plain .xml extension); the
-// caller is expected to content-sniff it with `looksLikeBpmnXml` before
-// treating it as a real diagram, since only the caller can surface a
-// per-file "skipped" toast. Prefers the Chromium File System Access handle
-// API (so a dropped FOLDER can be walked recursively, preserving its
-// subtree), and falls back to the flat `DataTransfer.files` list on browsers
-// that lack it. Kept free of React/DOM state so the parsing is
-// unit-testable with fake DataTransfer-like objects.
+// Parse an HTML5 drag-and-drop DataTransfer into the importable ARIS/BPMN-ish
+// files it carries. During the Phase 2 shell transition the app still needs to
+// SEE dropped `.bpmn` files so it can reject them explicitly with the ARIS-only
+// message required by aris_transformation.md. `.aml`, `.apc`, and bare `.xml`
+// entries are accepted by name here; the caller performs the content sniffing
+// that distinguishes ARIS AML/XML from rejected BPMN XML and unrelated XML.
+// Prefers the Chromium File System Access handle API (so a dropped FOLDER can
+// be walked recursively, preserving its subtree), and falls back to the flat
+// `DataTransfer.files` list on browsers that lack it. Kept free of React/DOM
+// state so the parsing is unit-testable with fake DataTransfer-like objects.
 
 import { DEFAULT_XML_PREFLIGHT_LIMITS } from '../validation/preflight'
 import { WorkspaceOperationError } from './adapters/workspaceError'
@@ -30,16 +29,22 @@ export interface DroppedBpmn {
   getText: () => Promise<string>
 }
 
+export type ImportBoundaryDecision = 'candidate' | 'reject-bpmn'
+
 const BPMN_RE = /\.bpmn$/i
+const AML_RE = /\.aml$/i
 const APC_RE = /\.apc$/i
 const XML_RE = /\.xml$/i
+
+export function isAmlName(name: string): boolean {
+  return AML_RE.test(name)
+}
 
 export function isBpmnName(name: string): boolean {
   return BPMN_RE.test(name)
 }
 
-/** True for an ARIS (.apc) export — accepted for the experimental AML → BPMN
- *  import; the actual conversion happens later in the App import flow. */
+/** True for an ARIS `.apc` legacy alias export. */
 export function isApcName(name: string): boolean {
   return APC_RE.test(name)
 }
@@ -52,10 +57,21 @@ export function isXmlName(name: string): boolean {
   return XML_RE.test(name)
 }
 
-/** An importable BPMN file (.bpmn), a bare .xml export that still needs a
- *  `looksLikeBpmnXml` content check downstream, or an ARIS (.apc) export. */
+/** An importable candidate source for the Phase 2 ARIS-only shell transition.
+ *  `.bpmn` is still included so the caller can reject it explicitly after
+ *  sniffing rather than silently ignoring the drop. */
 export function isImportableName(name: string): boolean {
-  return isBpmnName(name) || isApcName(name) || isXmlName(name)
+  return isBpmnName(name) || isAmlName(name) || isApcName(name) || isXmlName(name)
+}
+
+/** Phase 2 ARIS-only boundary classifier for user-supplied import sources.
+ *  `.bpmn` files are rejected immediately, and BPMN XML under `.xml` is
+ *  rejected after sniffing. Everything else still flows to the planner, which
+ *  decides whether it is valid ARIS AML/XML or some other unsupported input. */
+export function classifyImportBoundarySource(name: string, text: string): ImportBoundaryDecision {
+  if (isBpmnName(name)) return 'reject-bpmn'
+  if (looksLikeBpmnXml(text)) return 'reject-bpmn'
+  return 'candidate'
 }
 
 // The BPMN 2.0 "MODEL" namespace every conformant <definitions> root is
