@@ -1,0 +1,426 @@
+/**
+ * Headless side-panel tab model.
+ *
+ * Each tab is a pure function from a selected element to structured,
+ * localizable content. The UI layer renders the returned rows by looking up
+ * `labelKey`/`valueKey` in the i18n dictionary and interpolating `vars`.
+ *
+ * Bilingual names are first-class: English and Arabic are returned side by side,
+ * and a missing translation is explicitly marked rather than silently falling
+ * back.
+ */
+
+import type {
+  ArisConnectionOccurrence,
+  ArisObjectDefinition,
+  ArisObjectOccurrence,
+} from '../model/types'
+import type {
+  ArisDetailsAttachment,
+  ArisDetailsDocument,
+  ArisDetailsElement,
+  ArisDetailsModel,
+  ArisMetadataSatellite,
+} from './seam'
+
+export type ArisDetailsTabId =
+  | 'general'
+  | 'names'
+  | 'attributes'
+  | 'ids'
+  | 'relations'
+  | 'assignments'
+  | 'attachments'
+  | 'accounting'
+  | 'fidelity'
+  | 'history'
+
+export const ARIS_DETAILS_TAB_ORDER: readonly ArisDetailsTabId[] = [
+  'general',
+  'names',
+  'attributes',
+  'ids',
+  'relations',
+  'assignments',
+  'attachments',
+  'accounting',
+  'fidelity',
+  'history',
+]
+
+export const ARIS_DETAILS_TAB_LABEL_KEYS: Readonly<Record<ArisDetailsTabId, string>> = {
+  general: 'aris.details.tab.general',
+  names: 'aris.details.tab.names',
+  attributes: 'aris.details.tab.attributes',
+  ids: 'aris.details.tab.ids',
+  relations: 'aris.details.tab.relations',
+  assignments: 'aris.details.tab.assignments',
+  attachments: 'aris.details.tab.attachments',
+  accounting: 'aris.details.tab.accounting',
+  fidelity: 'aris.details.tab.fidelity',
+  history: 'aris.details.tab.history',
+}
+
+export interface ArisDetailRow {
+  readonly labelKey: string
+  readonly value?: string | number | boolean | null
+  readonly valueKey?: string
+  readonly vars?: Readonly<Record<string, string | number>>
+  /** If true the value is missing and should be rendered as a placeholder. */
+  readonly missing?: boolean
+  /** Bilingual variant for name-like rows. */
+  readonly bilingual?: ArisBilingualValue
+}
+
+export interface ArisBilingualValue {
+  readonly en: string | null
+  readonly ar: string | null
+  readonly enMissing: boolean
+  readonly arMissing: boolean
+}
+
+export type ArisTabBuilder = (element: ArisDetailsElement, doc: ArisDetailsDocument) => readonly ArisDetailRow[]
+
+const ENGLISH_LOCALES = new Set(['en', 'en-US', 'en-GB', 'en-us', 'en-gb', 'LocaleId.USen'])
+const ARABIC_LOCALES = new Set(['ar', 'ar-SA', 'ar-SA', 'ar-AE', 'ar-ae', 'LocaleId.AEar'])
+
+function extractBilingual(values: Readonly<Record<string, string>>): ArisBilingualValue {
+  let en: string | null = null
+  let ar: string | null = null
+  for (const [locale, text] of Object.entries(values)) {
+    if (ENGLISH_LOCALES.has(locale)) en = text
+    if (ARABIC_LOCALES.has(locale)) ar = text
+  }
+  return {
+    en,
+    ar,
+    enMissing: en === null,
+    arMissing: ar === null,
+  }
+}
+
+function objectDefinitionById(doc: ArisDetailsDocument, id: string): ArisObjectDefinition | undefined {
+  return doc.objectDefinitions.get(id)
+}
+
+function objectOccurrenceById(doc: ArisDetailsDocument, id: string): ArisObjectOccurrence | undefined {
+  return doc.occurrences.get(id)
+}
+
+function connectionOccurrenceById(doc: ArisDetailsDocument, id: string): ArisConnectionOccurrence | undefined {
+  return doc.connectionOccurrences.get(id)
+}
+
+function modelDetailsById(doc: ArisDetailsDocument, id: string): ArisDetailsModel | undefined {
+  return doc.models.get(id)
+}
+
+function attachmentById(doc: ArisDetailsDocument, id: string): ArisDetailsAttachment | undefined {
+  return doc.attachments.get(id)
+}
+
+function findSatellite(doc: ArisDetailsDocument, occurrenceId: string): ArisMetadataSatellite | undefined {
+  for (const model of doc.models.values()) {
+    const satellite = model.satellites.get(occurrenceId)
+    if (satellite) return satellite
+  }
+  return undefined
+}
+
+export const buildGeneralTab: ArisTabBuilder = (element, doc) => {
+  const rows: ArisDetailRow[] = []
+
+  if (element.kind === 'objectDefinition') {
+    const def = objectDefinitionById(doc, element.id)
+    if (def) {
+      rows.push({
+        labelKey: 'aris.details.general.type',
+        value: def.type,
+      })
+      rows.push({
+        labelKey: 'aris.details.general.defaultSymbol',
+        value: def.defaultSymbol,
+      })
+      rows.push({
+        labelKey: 'aris.details.general.linkedModels',
+        value: def.linkedModelIds.length,
+      })
+    }
+  } else if (element.kind === 'objectOccurrence') {
+    const occ = objectOccurrenceById(doc, element.id)
+    const def = occ ? objectDefinitionById(doc, occ.definitionId) : undefined
+    if (occ && def) {
+      rows.push({ labelKey: 'aris.details.general.type', value: def.type })
+      rows.push({ labelKey: 'aris.details.general.symbol', value: occ.symbol })
+      rows.push({
+        labelKey: 'aris.details.general.position',
+        value: `${occ.bounds.x},${occ.bounds.y}`,
+      })
+      rows.push({
+        labelKey: 'aris.details.general.size',
+        value: `${occ.bounds.width}x${occ.bounds.height}`,
+      })
+    }
+  } else if (element.kind === 'model') {
+    const details = modelDetailsById(doc, element.id)
+    if (details) {
+      rows.push({ labelKey: 'aris.details.general.modelType', value: details.model.type })
+      rows.push({ labelKey: 'aris.details.general.occurrences', value: details.model.occurrences.length })
+      rows.push({
+        labelKey: 'aris.details.general.connections',
+        value: details.model.connectionOccurrences.length,
+      })
+      rows.push({ labelKey: 'aris.details.general.satellites', value: details.satellites.size })
+    }
+  } else if (element.kind === 'attachment') {
+    const att = attachmentById(doc, element.id)
+    if (att) {
+      rows.push({ labelKey: 'aris.details.general.displayName', value: att.displayName })
+      rows.push({ labelKey: 'aris.details.general.blobs', value: att.blobs.length })
+    }
+  }
+
+  return rows
+}
+
+export const buildNamesTab: ArisTabBuilder = (element, doc) => {
+  const rows: ArisDetailRow[] = []
+
+  if (element.kind === 'objectDefinition') {
+    const def = objectDefinitionById(doc, element.id)
+    if (def) {
+      rows.push({
+        labelKey: 'aris.details.names.definition',
+        bilingual: extractBilingual(def.names.values),
+      })
+    }
+  } else if (element.kind === 'objectOccurrence') {
+    const occ = objectOccurrenceById(doc, element.id)
+    const def = occ ? objectDefinitionById(doc, occ.definitionId) : undefined
+    if (def) {
+      rows.push({
+        labelKey: 'aris.details.names.inherited',
+        bilingual: extractBilingual(def.names.values),
+      })
+    }
+  } else if (element.kind === 'model') {
+    const details = modelDetailsById(doc, element.id)
+    if (details) {
+      rows.push({
+        labelKey: 'aris.details.names.model',
+        bilingual: extractBilingual(details.model.names.values),
+      })
+    }
+  }
+
+  return rows
+}
+
+export const buildAttributesTab: ArisTabBuilder = (element, doc) => {
+  const rows: ArisDetailRow[] = []
+
+  if (element.kind === 'objectDefinition') {
+    const def = objectDefinitionById(doc, element.id)
+    if (def) {
+      for (const attr of def.attributes) {
+        const en = attr.values.find((v) => ENGLISH_LOCALES.has(v.localeId ?? '_'))?.text
+        const ar = attr.values.find((v) => ARABIC_LOCALES.has(v.localeId ?? '_'))?.text
+        rows.push({
+          labelKey: 'aris.details.attributes.attr',
+          value: attr.type,
+          bilingual: { en: en ?? null, ar: ar ?? null, enMissing: en === undefined, arMissing: ar === undefined },
+        })
+      }
+    }
+  } else if (element.kind === 'objectOccurrence') {
+    const occ = objectOccurrenceById(doc, element.id)
+    if (occ) {
+      for (const attrOcc of occ.attributeOccurrences) {
+        rows.push({
+          labelKey: 'aris.details.attributes.occurrence',
+          value: attrOcc.attributeType,
+        })
+      }
+    }
+  }
+
+  return rows
+}
+
+export const buildIdsTab: ArisTabBuilder = (element, doc) => {
+  const rows: ArisDetailRow[] = []
+
+  if (element.kind === 'objectDefinition') {
+    rows.push({ labelKey: 'aris.details.ids.definitionId', value: element.id })
+  } else if (element.kind === 'objectOccurrence') {
+    const occ = objectOccurrenceById(doc, element.id)
+    if (occ) {
+      rows.push({ labelKey: 'aris.details.ids.occurrenceId', value: occ.id })
+      rows.push({ labelKey: 'aris.details.ids.definitionId', value: occ.definitionId })
+      rows.push({ labelKey: 'aris.details.ids.modelId', value: occ.modelId })
+    }
+  } else if (element.kind === 'connectionOccurrence') {
+    const cxn = connectionOccurrenceById(doc, element.id)
+    if (cxn) {
+      rows.push({ labelKey: 'aris.details.ids.occurrenceId', value: cxn.id })
+      rows.push({ labelKey: 'aris.details.ids.definitionId', value: cxn.definitionId })
+      rows.push({ labelKey: 'aris.details.ids.modelId', value: cxn.modelId })
+    }
+  } else if (element.kind === 'model') {
+    rows.push({ labelKey: 'aris.details.ids.modelId', value: element.id })
+  } else if (element.kind === 'attachment') {
+    const att = attachmentById(doc, element.id)
+    if (att) {
+      rows.push({ labelKey: 'aris.details.ids.oleDefinitionId', value: att.oleDefinitionId })
+      rows.push({ labelKey: 'aris.details.ids.oleOccurrenceId', value: att.oleOccurrenceId })
+    }
+  }
+
+  return rows
+}
+
+export const buildRelationsTab: ArisTabBuilder = (element, doc) => {
+  const rows: ArisDetailRow[] = []
+
+  if (element.kind === 'objectOccurrence') {
+    const satellite = findSatellite(doc, element.id)
+    if (satellite) {
+      rows.push({
+        labelKey: 'aris.details.relations.category',
+        value: satellite.relation.category,
+      })
+      rows.push({
+        labelKey: 'aris.details.relations.connectionType',
+        value: satellite.relation.connectionType,
+      })
+      rows.push({
+        labelKey: 'aris.details.relations.owner',
+        value: satellite.relation.sourceOccurrenceId,
+      })
+    }
+  }
+
+  return rows
+}
+
+export const buildAssignmentsTab: ArisTabBuilder = (element, doc) => {
+  const rows: ArisDetailRow[] = []
+
+  if (element.kind === 'objectDefinition') {
+    const def = objectDefinitionById(doc, element.id)
+    if (def) {
+      for (const modelId of def.linkedModelIds) {
+        rows.push({ labelKey: 'aris.details.assignments.model', value: modelId })
+      }
+      if (def.linkedModelIds.length === 0) {
+        rows.push({ labelKey: 'aris.details.assignments.none', value: '', missing: true })
+      }
+    }
+  }
+
+  return rows
+}
+
+export const buildAttachmentsTab: ArisTabBuilder = (element, doc) => {
+  const rows: ArisDetailRow[] = []
+
+  if (element.kind === 'model') {
+    const details = modelDetailsById(doc, element.id)
+    if (details) {
+      for (const att of details.attachments.values()) {
+        rows.push({ labelKey: 'aris.details.attachments.item', value: att.displayName })
+      }
+      if (details.attachments.size === 0) {
+        rows.push({ labelKey: 'aris.details.attachments.none', missing: true })
+      }
+    }
+  } else if (element.kind === 'attachment') {
+    const att = attachmentById(doc, element.id)
+    if (att) {
+      rows.push({ labelKey: 'aris.details.attachments.item', value: att.displayName })
+      rows.push({ labelKey: 'aris.details.attachments.blobs', value: att.blobs.length })
+    }
+  }
+
+  return rows
+}
+
+export const buildAccountingTab: ArisTabBuilder = (element, doc) => {
+  const rows: ArisDetailRow[] = []
+
+  if (element.kind === 'model') {
+    const details = modelDetailsById(doc, element.id)
+    if (details) {
+      rows.push({ labelKey: 'aris.details.accounting.occurrences', value: details.model.occurrences.length })
+      rows.push({ labelKey: 'aris.details.accounting.connections', value: details.model.connectionOccurrences.length })
+      rows.push({ labelKey: 'aris.details.accounting.satellites', value: details.satellites.size })
+      rows.push({ labelKey: 'aris.details.accounting.attachments', value: details.attachments.size })
+      rows.push({ labelKey: 'aris.details.accounting.unsupported', value: details.model.unsupported ? 1 : 0 })
+    }
+  }
+
+  return rows
+}
+
+export const buildFidelityTab: ArisTabBuilder = (element, doc) => {
+  const rows: ArisDetailRow[] = []
+
+  if (element.kind === 'model') {
+    const details = modelDetailsById(doc, element.id)
+    if (details) {
+      rows.push({
+        labelKey: 'aris.details.fidelity.symbolFallbacks',
+        value: details.model.unsupported ? 1 : 0,
+      })
+      rows.push({
+        labelKey: 'aris.details.fidelity.oleUnsupported',
+        value: details.attachments.size,
+      })
+    }
+  }
+
+  return rows
+}
+
+export const buildHistoryTab: ArisTabBuilder = (element, doc) => {
+  const rows: ArisDetailRow[] = []
+
+  rows.push({
+    labelKey: 'aris.details.history.revision',
+    value: doc.revision,
+  })
+
+  if (element.kind === 'objectDefinition') {
+    const def = objectDefinitionById(doc, element.id)
+    if (def) {
+      rows.push({ labelKey: 'aris.details.history.definitionId', value: def.id })
+    }
+  }
+
+  return rows
+}
+
+export const ARIS_DETAILS_TAB_BUILDERS: Readonly<Record<ArisDetailsTabId, ArisTabBuilder>> = {
+  general: buildGeneralTab,
+  names: buildNamesTab,
+  attributes: buildAttributesTab,
+  ids: buildIdsTab,
+  relations: buildRelationsTab,
+  assignments: buildAssignmentsTab,
+  attachments: buildAttachmentsTab,
+  accounting: buildAccountingTab,
+  fidelity: buildFidelityTab,
+  history: buildHistoryTab,
+}
+
+/** Builds every tab for the selected element. */
+export function buildAllTabs(
+  element: ArisDetailsElement,
+  doc: ArisDetailsDocument
+): Readonly<Record<ArisDetailsTabId, readonly ArisDetailRow[]>> {
+  const out: Partial<Record<ArisDetailsTabId, readonly ArisDetailRow[]>> = {}
+  for (const tabId of ARIS_DETAILS_TAB_ORDER) {
+    out[tabId] = ARIS_DETAILS_TAB_BUILDERS[tabId](element, doc)
+  }
+  return out as Readonly<Record<ArisDetailsTabId, readonly ArisDetailRow[]>>
+}
