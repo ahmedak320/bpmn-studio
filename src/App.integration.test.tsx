@@ -6163,8 +6163,13 @@ describe('App directory workspace orchestration', () => {
     expect(secondSettings.snapshot?.files.translationMemory.hash).toBe(
       firstSettings.snapshot?.files.translationMemory.hash
     )
-    expect(secondSettings.workspaceBindingKey).toBeTruthy()
-    expect(secondSettings.workspaceBindingKey).not.toBe(firstBindingKey)
+    // The replacement binding key is assigned after the second factory call;
+    // wait for it instead of sampling the still-stale one.
+    await waitFor(() => {
+      const key = latestSettingsLocalization().workspaceBindingKey
+      expect(key).toBeTruthy()
+      expect(key).not.toBe(firstBindingKey)
+    })
   })
 
   it('does not publish a peer refresh for an unchanged localization reload', async () => {
