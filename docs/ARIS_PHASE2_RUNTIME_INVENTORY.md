@@ -68,10 +68,10 @@ no longer live in `package.json` production `dependencies`:
 
 Shipped-artifact evidence after the ARIS shell surface swap:
 
-- `npm run build:aris` now transforms `371` modules instead of the earlier `461`
+- `npm run build:aris` now transforms `375` modules instead of the earlier `461`
 - [release/OrbitPM-ARIS-Studio-Lite.html](/home/ahmed/Desktop/bpmn_tool/desktop/release/OrbitPM-ARIS-Studio-Lite.html)
-  shrank to `638,473` bytes with SHA-256
-  `00c691534b3448819f6998530253062991688319e70f7e995e0016e1a5fdf605`
+  is currently `657,947` bytes with SHA-256
+  `97c8f359d960ed10567667dee52ba7eaa16eea6e220a3015cd642bd848bfaad5`
 - the shipped artifact no longer contains these BPMN runtime entrypoints:
   - `bpmn-moddle`
   - `layoutProcess`
@@ -109,14 +109,28 @@ code, not a shipped-artifact dependency leak in the ARIS production path.
 - Moved BPMN/editor packages from `dependencies` to `devDependencies` so `package.json` matches the shipped ARIS runtime boundary
 - Added `scripts/check-aris-runtime-boundary.mjs` plus `npm run check:aris-runtime-boundary` to fail when the ARIS production entry reaches banned BPMN packages or legacy BPMN-only modules
 - Extended `App.integration.test.tsx` so the legacy workspace import picker rejects BPMN XML disguised as `.xml` without opening the reviewed import dialog
+- Extended `App.integration.test.tsx` again so the legacy workspace drag/drop import path also rejects BPMN XML disguised as `.xml` without opening the reviewed import dialog
 - Narrowed the ARIS production graph by:
   - removing broad `workspace/adapters` barrel imports from the ARIS shell and localization settings path
   - converting the ARIS settings connection-test path in `browserAi.ts` to a true type-only generation dependency plus lazy generation loading
 - Rebuilt the rolling artifact and re-ran the exact `file://` smoke against `reference/AnimalWF/ARISAMLExport.xml`
 
+## Phase 2 exit-gate result
+
+As of Tuesday, July 28, 2026, the Phase 2 exit gate is satisfied:
+
+- the ARIS shell is the production mount path;
+- BPMN input is rejected non-destructively across picker, drag/drop, and
+  remembered-workspace shell paths;
+- the rolling artifact opens through `file://`;
+- settings, assistant, AI panel, workspace picker, language, and theme still
+  work;
+- the production dependency graph is guarded against BPMN runtime reachability.
+
 ## Next implementation slice
 
-Finish Phase 2 cleanup around the new shell:
+Move forward into Phase 3:
 
-- finish the remaining BPMN rejection coverage in review-driven import surfaces still routed through the legacy `App` import stack
-- start deleting the legacy `App`/editor-only BPMN shell now that the production artifact boundary has been cut
+- extend the worker-backed XML tokenizer into a lossless concrete-syntax tree;
+- preserve immutable AML/XML source packages for later revisions;
+- build the semantic ARIS source index on top of the preserved tokenized source.

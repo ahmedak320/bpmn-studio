@@ -7093,6 +7093,33 @@ describe('App directory workspace orchestration', () => {
     expect(mocks.workspaceImportReviewProps.mock.calls.length).toBe(reviewCallsBefore)
   })
 
+  it('rejects dropped BPMN XML disguised as .xml at the ARIS-only import boundary without opening review', async () => {
+    await openDirectoryWorkspace(userEvent.setup())
+    const reviewCallsBefore = mocks.workspaceImportReviewProps.mock.calls.length
+    const tree = mocks.folderTreeProps.mock.calls.at(-1)?.[0] as {
+      onImportDrop(dataTransfer: DataTransfer, targetFolder: string): void
+    }
+    const xml =
+      '<definitions xmlns="http://www.omg.org/spec/BPMN/20100524/MODEL">' +
+      '<process id="Legacy_Process" />' +
+      '</definitions>'
+    const file = new File([xml], 'legacy.xml', { type: 'application/xml' })
+    Object.defineProperty(file, 'arrayBuffer', {
+      configurable: true,
+      value: async () => utf8Buffer(xml)
+    })
+
+    act(() => {
+      tree.onImportDrop({ files: [file], items: [] } as unknown as DataTransfer, '')
+    })
+
+    expect(await screen.findByText('toast.import.arisOnly')).not.toBeNull()
+    await waitFor(() =>
+      expect(screen.queryByRole('dialog', { name: 'mock-workspace-import-review' })).toBeNull()
+    )
+    expect(mocks.workspaceImportReviewProps.mock.calls.length).toBe(reviewCallsBefore)
+  })
+
   it('ignores cancellation after workspace import storage has committed', async () => {
     const user = userEvent.setup()
     const root = fakeRoot()

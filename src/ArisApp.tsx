@@ -30,7 +30,7 @@ import { sha256Hex } from './workspace/adapters/hash'
 import { OpfsWorkspaceAdapter, opfsSupported } from './workspace/adapters/opfs'
 import { SingleFileWorkspaceAdapter } from './workspace/adapters/singleFile'
 import { classifyImportBoundarySource } from './workspace/importDrop'
-import { decodeUtf8Strict } from './workspace/utf8'
+import { createArisXmlSourcePackage } from './aris/source/sourcePackage'
 
 type Phase = 'loading' | 'need-open' | 'need-reconnect' | 'ready'
 
@@ -45,6 +45,8 @@ interface ArisTab {
   bytes: Uint8Array
   sha256: string
   mimeType?: string
+  rootElementName?: string | null
+  xmlTokenCount?: number
 }
 
 function pushSortedSources(entries: readonly WorkspaceEntry[]): WorkspaceEntry[] {
@@ -101,7 +103,9 @@ function snapshotToTab(snapshot: FileSnapshot, text: string): ArisTab {
     content: text,
     bytes: snapshot.bytes,
     sha256: snapshot.hash,
-    mimeType: snapshot.mimeType
+    mimeType: snapshot.mimeType,
+    rootElementName: null,
+    xmlTokenCount: undefined
   }
 }
 
@@ -446,37 +450,45 @@ export default function ArisApp(): JSX.Element {
 
   const openImportedBytes = useCallback(
     async (name: string, relPath: string | null, bytes: Uint8Array, mimeType?: string) => {
-      const text = decodeUtf8Strict(bytes, {
-        operation: 'read',
-        ...(relPath ? { path: relPath } : {})
+      const sourcePackage = await createArisXmlSourcePackage({
+        name,
+        relPath,
+        bytes,
+        mimeType
       })
+      const text = sourcePackage.text
       if (classifyImportBoundarySource(name, text) === 'reject-bpmn') {
         pushToast(t('toast.import.arisOnly'))
         return false
       }
-      const hash = await sha256Hex(bytes)
       openTab(
         relPath
-          ? snapshotToTab(
-              {
-                path: relPath,
-                bytes,
-                hash,
-                size: bytes.byteLength,
-                modifiedAt: 0,
-                mimeType
-              },
-              text
-            )
+          ? {
+              ...snapshotToTab(
+                {
+                  path: relPath,
+                  bytes,
+                  hash: sourcePackage.sha256,
+                  size: bytes.byteLength,
+                  modifiedAt: 0,
+                  mimeType
+                },
+                text
+              ),
+              rootElementName: sourcePackage.document.rootElementName,
+              xmlTokenCount: sourcePackage.document.tokens.length
+            }
           : {
-              key: `source:${name}:${hash}`,
+              key: `source:${name}:${sourcePackage.sha256}`,
               title: name,
               relPath: null,
               sourceKind: inferSourceKind(name),
               content: text,
               bytes,
-              sha256: hash,
-              mimeType
+              sha256: sourcePackage.sha256,
+              mimeType,
+              rootElementName: sourcePackage.document.rootElementName,
+              xmlTokenCount: sourcePackage.document.tokens.length
             }
       )
       return true

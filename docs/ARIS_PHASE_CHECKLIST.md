@@ -6,8 +6,9 @@ Status as of 2026-07-28 on `feat/aris-only-studio`:
 
 - Phase 0 — complete
 - Phase 1 — complete
-- Phase 2 — in progress
-- Phases 3–18 — pending
+- Phase 2 — complete
+- Phase 3 — in progress
+- Phases 4–18 — pending
 - Stable definition of done — pending
 
 ## Phase status
@@ -16,8 +17,8 @@ Status as of 2026-07-28 on `feat/aris-only-studio`:
 | --- | --- | --- |
 | 0. Establish branch and immutable baselines | Complete | [ARIS_PHASE0_BASELINE_2026-07-28.md](/home/ahmed/Desktop/bpmn_tool/desktop/docs/ARIS_PHASE0_BASELINE_2026-07-28.md) |
 | 1. Freeze retained infrastructure before removing BPMN | Complete | [ARIS_PHASE1_CHARACTERIZATION.md](/home/ahmed/Desktop/bpmn_tool/desktop/docs/ARIS_PHASE1_CHARACTERIZATION.md), `npm run test:aris:phase1` |
-| 2. Replace product shell and remove BPMN runtime | In progress | [ARIS_PHASE2_RUNTIME_INVENTORY.md](/home/ahmed/Desktop/bpmn_tool/desktop/docs/ARIS_PHASE2_RUNTIME_INVENTORY.md) |
-| 3. Secure lossless AML input layer | Pending | Not started |
+| 2. Replace product shell and remove BPMN runtime | Complete | [ARIS_PHASE2_RUNTIME_INVENTORY.md](/home/ahmed/Desktop/bpmn_tool/desktop/docs/ARIS_PHASE2_RUNTIME_INVENTORY.md), `npm run check:aris-runtime-boundary`, `npm run test:aris:file-smoke` |
+| 3. Secure lossless AML input layer | In progress | [ARIS_PHASE3_INPUT_LAYER.md](/home/ahmed/Desktop/bpmn_tool/desktop/docs/ARIS_PHASE3_INPUT_LAYER.md), `src/aris/source/xmlTokenizer.test.ts` |
 | 4. Immutable source packages and workspace revisions | Pending | Not started |
 | 5. Native ARIS working model and command system | Pending | Not started |
 | 6. Author ARIS canvas and object rendering | Pending | Not started |
@@ -40,13 +41,13 @@ Status as of 2026-07-28 on `feat/aris-only-studio`:
 - [x] Production entry now mounts an ARIS-specific shell instead of the BPMN `App` composition root.
 - [x] ARIS shell loads through `file://` from the rolling artifact at `release/OrbitPM-ARIS-Studio-Lite.html`.
 - [x] Settings, AI tabs, assistant, workspace picker, language, and theme still work under the new ARIS shell.
-- [ ] BPMN input is rejected non-destructively across all remaining import paths.
+- [x] BPMN input is rejected non-destructively across all remaining import paths.
 - [x] Production dependency graph contains no BPMN runtime, enforced by `npm run check:aris-runtime-boundary`.
 
-## Current blocker profile
+## Current Phase 3 focus
 
-No external blocker yet for the active implementation phase. The remaining work is internal:
+No external blocker yet. The active work has moved to the AML input layer:
 
-- remove the BPMN editor shell without regressing retained infrastructure;
-- finish the remaining BPMN rejection coverage in review-driven import paths still owned by the legacy `App` shell;
-- continue deleting legacy BPMN shell code now that the shipped ARIS artifact no longer depends on it.
+- extend the token stream into a lossless XML concrete-syntax tree;
+- separate immutable raw-source packages from later editable working revisions;
+- start the semantic ARIS source index that later phases can map into the native modeler.
