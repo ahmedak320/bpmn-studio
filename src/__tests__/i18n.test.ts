@@ -105,7 +105,7 @@ describe('t() / tPlural() runtime behavior', () => {
   it('defaults to English and ltr', () => {
     expect(getLang()).toBe('en')
     expect(getDir()).toBe('ltr')
-    expect(t('app.title')).toBe('OrbitPM Process Studio Lite')
+    expect(t('app.title')).toBe('OrbitPM ARIS Studio Lite')
   })
 
   it('interpolates {placeholder} tokens', () => {
@@ -134,7 +134,7 @@ describe('t() / tPlural() runtime behavior', () => {
     try {
       expect(getLang()).toBe('ar')
       expect(getDir()).toBe('rtl')
-      expect(t('app.newProcess')).toBe('＋ عملية جديدة')
+      expect(t('app.newProcess')).toBe('＋ نموذج جديد')
     } finally {
       setLang('en')
     }

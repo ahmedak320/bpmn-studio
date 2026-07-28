@@ -3,14 +3,14 @@
 
 export const en = {
   // --- App chrome (App.tsx) ---
-  'app.title': 'OrbitPM Process Studio Lite',
+  'app.title': 'OrbitPM ARIS Studio Lite',
   'app.version.aria': 'Version {version}',
-  'app.newProcess': '＋ New process',
-  'app.newProcess.title': 'Create a new BPMN process',
+  'app.newProcess': '＋ New model',
+  'app.newProcess.title': 'Create a new ARIS model placeholder',
   'app.changeFolder': 'Change folder…',
   'app.changeFolder.title': 'Open a different workspace folder',
-  'app.openBpmn': 'Open .bpmn…',
-  'app.openBpmn.title': 'Open an existing .bpmn file from disk',
+  'app.openBpmn': 'Open ARIS file…',
+  'app.openBpmn.title': 'Open an existing ARIS AML/XML file from disk',
   'app.showAi': '✨ AI',
   'app.showAi.title': 'Show the AI generation panel',
   'app.settings': '⚙ Settings',
@@ -18,7 +18,7 @@ export const en = {
   'app.loading': 'Loading…',
   'app.home.title': 'Go to the process catalog',
   'app.home': '🏠 Home',
-  'app.import.title': 'Import .bpmn, .xml, or .apc files or folders',
+  'app.import.title': 'Import ARIS AML/XML files or folders',
   'app.import': 'Import',
   'app.lang.toggle.title': 'Switch the interface language to Arabic; diagram labels stay unchanged',
   'app.lang.control': 'Interface: {language}',
@@ -45,18 +45,19 @@ export const en = {
 
   // --- Sidebar: fallback mode ---
   'fallback.singleFileNote':
-    'Single-file mode — no folder is open. Saving downloads the .bpmn file.',
-  'fallback.newProcess': '＋ New process',
-  'fallback.newProcess.title': 'Create a new named process (Save downloads the file)',
-  'fallback.openBpmnFile': 'Open a .bpmn file…',
-  'fallback.openBpmnFile.title': 'Open an existing .bpmn file from disk',
-  'fallback.newBlank': 'New blank diagram',
-  'fallback.newBlank.title': 'Start an unnamed blank diagram',
+    'Single-file mode — no folder is open. Open an ARIS AML/XML source or use the AI create panel.',
+  'fallback.newProcess': '＋ New model',
+  'fallback.newProcess.title': 'Create a new ARIS model placeholder',
+  'fallback.openBpmnFile': 'Open an ARIS file…',
+  'fallback.openBpmnFile.title': 'Open an existing ARIS AML/XML file from disk',
+  'fallback.newBlank': 'New placeholder canvas',
+  'fallback.newBlank.title': 'Start an empty ARIS placeholder canvas',
 
   // --- Empty-tab placeholder ---
   'emptyTab.directory':
     'Select a .bpmn file from the tree to open it, or press ＋ New process (top-right or in the sidebar) to start one. You can also generate a draft with AI.',
-  'emptyTab.fallback': 'Press ＋ New process to start drawing, or open an existing .bpmn file.',
+  'emptyTab.fallback':
+    'Open an ARIS AML/XML source, or use Create with AI while the native ARIS canvas is being built.',
   'editor.loadingDiagram': 'Loading diagram…',
 
   // --- Tab strip ---
@@ -73,7 +74,7 @@ export const en = {
     'Click to create the missing linked process "{calledElement}"',
   'footer.unresolvedLinks.title.fallback':
     'Call activities linked to a process id not found in this workspace',
-  'footer.tagline': 'Zero-install · runs in your browser',
+  'footer.tagline': 'Zero-install · ARIS-focused · runs in your browser',
 
   // --- Dialogs (promptText call sites) ---
   'dialog.createMissingProcess.title': 'Create linked process',
@@ -124,20 +125,20 @@ export const en = {
   'alert.permissionNotGranted.reconnect':
     'Permission was not granted. Try opening the folder again.',
   'alert.picker.security':
-    'The browser blocked folder access for security reasons. Try a folder inside your user profile (for example, Documents), or use a browser workspace or single BPMN file.',
+    'The browser blocked folder access for security reasons. Try a folder inside your user profile (for example, Documents), or use a browser workspace or a single ARIS AML/XML file.',
   'alert.picker.notAllowed':
-    'The browser did not allow folder access. Check this site’s file-system permission in your browser settings, then retry or use a browser workspace or single BPMN file.',
+    'The browser did not allow folder access. Check this site’s file-system permission in your browser settings, then retry or use a browser workspace or a single ARIS AML/XML file.',
   'alert.picker.unknown':
-    'Could not open the folder. Try again, or use a browser workspace or open a single BPMN file.',
+    'Could not open the folder. Try again, or use a browser workspace or open a single ARIS AML/XML file.',
 
   // --- WorkspacePickerLite ---
-  'picker.title': 'OrbitPM Process Studio Lite',
+  'picker.title': 'OrbitPM ARIS Studio Lite',
   'picker.subtitle':
-    'Draw BPMN 2.0 diagrams, organize them in folders, link processes, and generate from a description with AI — all in your browser, nothing to install.',
+    'Open ARIS AML/XML exports, review exact source evidence, and prepare ARIS-native workspace flows — all in your browser, nothing to install.',
   'picker.open.button': 'Open a folder…',
   'picker.open.button.busy': 'Opening…',
   'picker.open.hint':
-    'Choose a folder on your computer (e.g. a OneDrive folder) to hold your .bpmn files. The browser asks permission the first time and remembers the folder for next time.',
+    'Choose a folder on your computer to browse ARIS AML/XML sources. The browser asks permission the first time and remembers the folder for next time.',
   'picker.reconnect.button': 'Reconnect to "{rememberedName}"',
   'picker.reconnect.button.busy': 'Reconnecting…',
   'picker.reconnect.button.fallbackName': 'your folder',
@@ -145,17 +146,59 @@ export const en = {
   'picker.reconnect.hint':
     'Your browser needs you to re-grant read/write access to this folder for this session.',
   'picker.fallback.banner':
-    "This browser doesn't allow opening a folder (the File System Access API is unavailable or disabled by policy). Use a browser workspace for local multi-file storage, or open a single .bpmn file. Microsoft Edge or Google Chrome can provide direct folder access.",
-  'picker.fallback.newProcess': '＋ New process',
-  'picker.fallback.openFile': 'Open a .bpmn file…',
-  'picker.fallback.newDiagram': 'New blank diagram',
+    "This browser doesn't allow opening a folder (the File System Access API is unavailable or disabled by policy). Use a browser workspace for local multi-file storage, or open a single ARIS AML/XML file. Microsoft Edge or Google Chrome can provide direct folder access.",
+  'picker.fallback.newProcess': '＋ New model',
+  'picker.fallback.openFile': 'Open an ARIS file…',
+  'picker.fallback.newDiagram': 'New placeholder canvas',
 
   // --- EmptyWorkspaceCard ---
-  'emptyWorkspace.heading': 'No processes yet',
-  'emptyWorkspace.createFirst': '＋ Create your first process',
+  'emptyWorkspace.heading': 'No ARIS sources yet',
+  'emptyWorkspace.createFirst': '＋ Open your first source',
   'emptyWorkspace.explain':
-    'Each process is one .bpmn file saved in {folderName}. Make folders to group related processes; right-click the tree for more.',
+    'Open ARIS AML/XML sources from {folderName}. Exact source preservation is active while the native ARIS canvas is under construction.',
   'emptyWorkspace.explain.fallbackFolderName': 'this folder',
+  'aris.header.assistant': 'Assistant',
+  'aris.header.openFile': 'Open file…',
+  'aris.emptyMain':
+    'Open an ARIS AML/XML source from the explorer, or create a reviewed placeholder tab through the AI panel.',
+  'aris.main.aria': 'ARIS workspace',
+  'aris.tab.list.aria': 'Open ARIS source tabs',
+  'aris.tab.closeTitle': 'Close source tab',
+  'aris.explorer.aria': 'ARIS workspace explorer and generation tools',
+  'aris.pane.resize.sidebar.aria': 'Resize the ARIS explorer panel',
+  'aris.explorer.empty':
+    'No visible ARIS AML/XML sources were found in this workspace yet. Use Import or Open file to load one.',
+  'aris.explorer.unsupportedBpmn': 'Unsupported BPMN',
+  'aris.generated.fallbackName': 'Generated draft',
+  'aris.source.virtual': 'In-memory tab',
+  'aris.sourceKind.aml': 'ARIS AML',
+  'aris.sourceKind.apc': 'Legacy .apc alias',
+  'aris.sourceKind.xml': 'ARIS XML',
+  'aris.sourceKind.generated': 'Generated draft',
+  'aris.placeholder.heading': 'ARIS placeholder canvas',
+  'aris.placeholder.body':
+    'This Phase 2 shell preserves exact source content and keeps the workspace, AI, settings, and assistant surfaces available while the native ARIS modeler is being built.',
+  'aris.placeholder.readOnly':
+    'The current tab is read-only. Original source bytes remain available for download and later lossless ingestion.',
+  'aris.placeholder.zoom': 'Zoom 100%',
+  'aris.placeholder.layout': 'Layout pending native ARIS canvas',
+  'aris.placeholder.downloadSource': 'Download exact source',
+  'aris.placeholder.openAssistant': 'Open assistant',
+  'aris.placeholder.detailsHeading': 'Source details',
+  'aris.placeholder.accountingHeading': 'Accounting and validation',
+  'aris.placeholder.accountingBody':
+    'Source-accounting, fidelity, and semantic validation remain pending Phase 3 and later ARIS-native layers. No source bytes are rewritten here.',
+  'aris.placeholder.sourceHeading': 'Exact source preview',
+  'aris.placeholder.sourceKind': 'Source kind',
+  'aris.placeholder.sourcePath': 'Source path',
+  'aris.placeholder.sourceBytes': 'Bytes',
+  'aris.placeholder.sourceDigest': 'SHA-256',
+  'aris.placeholder.mainAria': 'ARIS workspace tab for {name}',
+  'aris.placeholder.newDiagramUnavailable':
+    'The ARIS placeholder shell does not create blank native canvases yet. Open an ARIS AML/XML source or use Create with AI.',
+  'aris.placeholder.newProcessUnavailable':
+    'The ARIS placeholder shell does not create native ARIS models yet. Open an ARIS AML/XML source or use Create with AI.',
+  'aris.footer.summary': '{files} workspace sources · {tabs} open tabs',
 
   // --- FolderTreeLite context menu ---
   'contextMenu.newProcess': 'New process',
@@ -1347,7 +1390,7 @@ export const en = {
     'The browser workspace could not be opened. Try again or choose another storage option.',
   'workspace.storage.opfsOpenTechnicalEvidence':
     'Technical evidence — browser workspace open: {error}',
-  'workspace.storage.openSingleFile': 'Open a single BPMN file',
+  'workspace.storage.openSingleFile': 'Open a single ARIS AML/XML file',
   'workspace.storage.backupExport': 'Export workspace backup',
   'workspace.storage.backupImport': 'Import workspace backup',
   'workspace.storage.collisionReview': 'Review backup file collisions',
@@ -2247,14 +2290,14 @@ export const en = {
 
 export const ar: Record<keyof typeof en, string> = {
   // --- App chrome ---
-  'app.title': 'OrbitPM Process Studio Lite',
+  'app.title': 'OrbitPM ARIS Studio Lite',
   'app.version.aria': 'الإصدار {version}',
-  'app.newProcess': '＋ عملية جديدة',
-  'app.newProcess.title': 'إنشاء عملية BPMN جديدة',
+  'app.newProcess': '＋ نموذج جديد',
+  'app.newProcess.title': 'إنشاء عنصر نائب لنموذج ARIS',
   'app.changeFolder': 'تغيير المجلد…',
   'app.changeFolder.title': 'فتح مجلد مساحة عمل مختلف',
-  'app.openBpmn': 'فتح ملف .bpmn…',
-  'app.openBpmn.title': 'فتح ملف .bpmn موجود من القرص',
+  'app.openBpmn': 'فتح ملف ARIS…',
+  'app.openBpmn.title': 'فتح ملف ARIS AML/XML موجود من القرص',
   'app.showAi': '✨ الذكاء الاصطناعي',
   'app.showAi.title': 'إظهار لوحة التوليد بالذكاء الاصطناعي',
   'app.settings': '⚙ الإعدادات',
@@ -2262,7 +2305,7 @@ export const ar: Record<keyof typeof en, string> = {
   'app.loading': 'جارٍ التحميل…',
   'app.home.title': 'الانتقال إلى فهرس العمليات',
   'app.home': '🏠 الرئيسية',
-  'app.import.title': 'استيراد ملفات أو مجلدات .bpmn أو .xml أو .apc',
+  'app.import.title': 'استيراد ملفات أو مجلدات ARIS AML/XML',
   'app.import': 'استيراد',
   'app.lang.toggle.title': 'تبديل لغة الواجهة إلى الإنجليزية؛ تبقى تسميات المخطط دون تغيير',
   'app.lang.control': 'الواجهة: {language}',
@@ -2288,18 +2331,20 @@ export const ar: Record<keyof typeof en, string> = {
   'tree.search.aria': 'ابحث عن عمليات',
 
   // --- Sidebar: fallback mode ---
-  'fallback.singleFileNote': 'وضع الملف الواحد — لا يوجد مجلد مفتوح. الحفظ يقوم بتنزيل ملف .bpmn.',
-  'fallback.newProcess': '＋ عملية جديدة',
-  'fallback.newProcess.title': 'إنشاء عملية مسمّاة جديدة (الحفظ يقوم بتنزيل الملف)',
-  'fallback.openBpmnFile': 'فتح ملف .bpmn…',
-  'fallback.openBpmnFile.title': 'فتح ملف .bpmn موجود من القرص',
-  'fallback.newBlank': 'مخطط فارغ جديد',
-  'fallback.newBlank.title': 'بدء مخطط فارغ بلا اسم',
+  'fallback.singleFileNote':
+    'وضع الملف الواحد — لا يوجد مجلد مفتوح. افتح مصدر ARIS AML/XML أو استخدم لوحة الإنشاء بالذكاء الاصطناعي.',
+  'fallback.newProcess': '＋ نموذج جديد',
+  'fallback.newProcess.title': 'إنشاء عنصر نائب لنموذج ARIS',
+  'fallback.openBpmnFile': 'فتح ملف ARIS…',
+  'fallback.openBpmnFile.title': 'فتح ملف ARIS AML/XML موجود من القرص',
+  'fallback.newBlank': 'لوحة عنصر نائب جديدة',
+  'fallback.newBlank.title': 'بدء لوحة ARIS فارغة كعنصر نائب',
 
   // --- Empty-tab placeholder ---
   'emptyTab.directory':
     'اختر ملف .bpmn من الشجرة لفتحه، أو اضغط ＋ عملية جديدة (أعلى اليمين أو في الشريط الجانبي) لبدء عملية. يمكنك أيضًا توليد مسودة بالذكاء الاصطناعي.',
-  'emptyTab.fallback': 'اضغط ＋ عملية جديدة لبدء الرسم، أو افتح ملف .bpmn موجود.',
+  'emptyTab.fallback':
+    'افتح مصدر ARIS AML/XML، أو استخدم الإنشاء بالذكاء الاصطناعي بينما يجري بناء لوحة ARIS الأصلية.',
   'editor.loadingDiagram': 'جارٍ تحميل المخطط…',
 
   // --- Tab strip ---
@@ -2316,7 +2361,7 @@ export const ar: Record<keyof typeof en, string> = {
     'انقر لإنشاء العملية المرتبطة المفقودة "{calledElement}"',
   'footer.unresolvedLinks.title.fallback':
     'أنشطة استدعاء مرتبطة بمعرّف عملية غير موجود في مساحة العمل هذه',
-  'footer.tagline': 'بلا تثبيت · يعمل في متصفحك',
+  'footer.tagline': 'بلا تثبيت · موجّه إلى ARIS · يعمل في متصفحك',
 
   // --- Dialogs ---
   'dialog.createMissingProcess.title': 'إنشاء عملية مرتبطة',
@@ -2366,20 +2411,20 @@ export const ar: Record<keyof typeof en, string> = {
   'alert.permissionNotGranted.open': 'لم يتم منح إذن القراءة/الكتابة للمجلد.',
   'alert.permissionNotGranted.reconnect': 'لم يُمنح الإذن. حاول فتح المجلد مرة أخرى.',
   'alert.picker.security':
-    'منع المتصفح الوصول إلى المجلد لأسباب أمنية. جرّب مجلدًا داخل ملف تعريف المستخدم (مثل Documents)، أو استخدم مساحة عمل المتصفح أو ملف BPMN واحدًا.',
+    'منع المتصفح الوصول إلى المجلد لأسباب أمنية. جرّب مجلدًا داخل ملف تعريف المستخدم (مثل Documents)، أو استخدم مساحة عمل المتصفح أو ملف ARIS AML/XML واحدًا.',
   'alert.picker.notAllowed':
-    'لم يسمح المتصفح بالوصول إلى المجلد. تحقّق من إذن نظام الملفات لهذا الموقع في إعدادات المتصفح، ثم أعد المحاولة أو استخدم مساحة عمل المتصفح أو ملف BPMN واحدًا.',
+    'لم يسمح المتصفح بالوصول إلى المجلد. تحقّق من إذن نظام الملفات لهذا الموقع في إعدادات المتصفح، ثم أعد المحاولة أو استخدم مساحة عمل المتصفح أو ملف ARIS AML/XML واحدًا.',
   'alert.picker.unknown':
-    'تعذّر فتح المجلد. حاول مرة أخرى، أو استخدم مساحة عمل المتصفح أو افتح ملف BPMN واحدًا.',
+    'تعذّر فتح المجلد. حاول مرة أخرى، أو استخدم مساحة عمل المتصفح أو افتح ملف ARIS AML/XML واحدًا.',
 
   // --- WorkspacePickerLite ---
-  'picker.title': 'OrbitPM Process Studio Lite',
+  'picker.title': 'OrbitPM ARIS Studio Lite',
   'picker.subtitle':
-    'ارسم مخططات BPMN 2.0، ونظّمها في مجلدات، واربط العمليات، وولّد مخططات من وصف نصي بالذكاء الاصطناعي — كل ذلك في متصفحك، دون أي تثبيت.',
+    'افتح صادرات ARIS AML/XML، وراجع أدلة المصدر الدقيقة، وجهّز تدفقات عمل ARIS الأصلية — كل ذلك في متصفحك، دون أي تثبيت.',
   'picker.open.button': 'فتح مجلد…',
   'picker.open.button.busy': 'جارٍ الفتح…',
   'picker.open.hint':
-    'اختر مجلدًا على جهازك (مثل مجلد OneDrive) لحفظ ملفات .bpmn فيه. سيطلب المتصفح الإذن أول مرة ويتذكّر المجلد لاحقًا.',
+    'اختر مجلدًا على جهازك لاستعراض مصادر ARIS AML/XML. سيطلب المتصفح الإذن أول مرة ويتذكّر المجلد لاحقًا.',
   'picker.reconnect.button': 'إعادة الاتصال بـ "{rememberedName}"',
   'picker.reconnect.button.busy': 'جارٍ إعادة الاتصال…',
   'picker.reconnect.button.fallbackName': 'مجلدك',
@@ -2387,17 +2432,59 @@ export const ar: Record<keyof typeof en, string> = {
   'picker.reconnect.hint':
     'يحتاج متصفحك إلى إعادة منح إذن القراءة/الكتابة لهذا المجلد لهذه الجلسة.',
   'picker.fallback.banner':
-    'هذا المتصفح لا يسمح بفتح مجلد (واجهة File System Access غير متاحة أو معطّلة بسياسة إدارية). استخدم مساحة عمل المتصفح للتخزين المحلي متعدد الملفات، أو افتح ملف .bpmn واحدًا. يوفّر Microsoft Edge أو Google Chrome وصولًا مباشرًا إلى المجلدات.',
-  'picker.fallback.newProcess': '＋ عملية جديدة',
-  'picker.fallback.openFile': 'فتح ملف .bpmn…',
-  'picker.fallback.newDiagram': 'مخطط فارغ جديد',
+    'هذا المتصفح لا يسمح بفتح مجلد (واجهة File System Access غير متاحة أو معطّلة بسياسة إدارية). استخدم مساحة عمل المتصفح للتخزين المحلي متعدد الملفات، أو افتح ملف ARIS AML/XML واحدًا. يوفّر Microsoft Edge أو Google Chrome وصولًا مباشرًا إلى المجلدات.',
+  'picker.fallback.newProcess': '＋ نموذج جديد',
+  'picker.fallback.openFile': 'فتح ملف ARIS…',
+  'picker.fallback.newDiagram': 'لوحة عنصر نائب جديدة',
 
   // --- EmptyWorkspaceCard ---
-  'emptyWorkspace.heading': 'لا توجد عمليات بعد',
-  'emptyWorkspace.createFirst': '＋ أنشئ عمليتك الأولى',
+  'emptyWorkspace.heading': 'لا توجد مصادر ARIS بعد',
+  'emptyWorkspace.createFirst': '＋ افتح مصدرك الأول',
   'emptyWorkspace.explain':
-    'كل عملية هي ملف .bpmn واحد محفوظ في {folderName}. أنشئ مجلدات لتجميع العمليات المرتبطة؛ انقر بزر الفأرة الأيمن على الشجرة لمزيد من الخيارات.',
+    'افتح مصادر ARIS AML/XML من {folderName}. يجري الآن الحفاظ على المصدر الدقيق بينما تُبنى لوحة ARIS الأصلية.',
   'emptyWorkspace.explain.fallbackFolderName': 'هذا المجلد',
+  'aris.header.assistant': 'المساعد',
+  'aris.header.openFile': 'فتح ملف…',
+  'aris.emptyMain':
+    'افتح مصدر ARIS AML/XML من المستكشف، أو أنشئ لسان عنصر نائب مُراجَع عبر لوحة الذكاء الاصطناعي.',
+  'aris.main.aria': 'مساحة عمل ARIS',
+  'aris.tab.list.aria': 'ألسنة مصادر ARIS المفتوحة',
+  'aris.tab.closeTitle': 'إغلاق لسان المصدر',
+  'aris.explorer.aria': 'مستكشف مساحة عمل ARIS وأدوات التوليد',
+  'aris.pane.resize.sidebar.aria': 'تغيير عرض لوحة مستكشف ARIS',
+  'aris.explorer.empty':
+    'لم يُعثر بعد على مصادر ARIS AML/XML مرئية في مساحة العمل هذه. استخدم الاستيراد أو فتح ملف لتحميل أحدها.',
+  'aris.explorer.unsupportedBpmn': 'BPMN غير مدعوم',
+  'aris.generated.fallbackName': 'مسودة مولدة',
+  'aris.source.virtual': 'لسان داخل الذاكرة',
+  'aris.sourceKind.aml': 'ARIS AML',
+  'aris.sourceKind.apc': 'الاسم المستعار القديم ‎.apc',
+  'aris.sourceKind.xml': 'ARIS XML',
+  'aris.sourceKind.generated': 'مسودة مولدة',
+  'aris.placeholder.heading': 'لوحة عنصر نائب لـ ARIS',
+  'aris.placeholder.body':
+    'يحافظ غلاف المرحلة الثانية هذا على محتوى المصدر الدقيق ويُبقي أسطح مساحة العمل والذكاء الاصطناعي والإعدادات والمساعد متاحة بينما يجري بناء نموذج ARIS الأصلي.',
+  'aris.placeholder.readOnly':
+    'اللسان الحالي للقراءة فقط. تبقى بايتات المصدر الأصلية متاحة للتنزيل وللاستيعاب غير الفاقد لاحقًا.',
+  'aris.placeholder.zoom': 'التكبير 100٪',
+  'aris.placeholder.layout': 'التخطيط بانتظار لوحة ARIS الأصلية',
+  'aris.placeholder.downloadSource': 'تنزيل المصدر الدقيق',
+  'aris.placeholder.openAssistant': 'فتح المساعد',
+  'aris.placeholder.detailsHeading': 'تفاصيل المصدر',
+  'aris.placeholder.accountingHeading': 'المحاسبة والتحقق',
+  'aris.placeholder.accountingBody':
+    'لا تزال محاسبة المصدر والدقة والتحقق الدلالي معلّقة إلى المرحلة الثالثة والطبقات الأصلية اللاحقة لـ ARIS. لا تُعاد كتابة أي بايتات مصدر هنا.',
+  'aris.placeholder.sourceHeading': 'معاينة المصدر الدقيقة',
+  'aris.placeholder.sourceKind': 'نوع المصدر',
+  'aris.placeholder.sourcePath': 'مسار المصدر',
+  'aris.placeholder.sourceBytes': 'البايتات',
+  'aris.placeholder.sourceDigest': 'SHA-256',
+  'aris.placeholder.mainAria': 'لسان مساحة عمل ARIS لـ {name}',
+  'aris.placeholder.newDiagramUnavailable':
+    'غلاف العنصر النائب لـ ARIS لا ينشئ بعد لوحات أصلية فارغة. افتح مصدر ARIS AML/XML أو استخدم الإنشاء بالذكاء الاصطناعي.',
+  'aris.placeholder.newProcessUnavailable':
+    'غلاف العنصر النائب لـ ARIS لا ينشئ بعد نماذج ARIS أصلية. افتح مصدر ARIS AML/XML أو استخدم الإنشاء بالذكاء الاصطناعي.',
+  'aris.footer.summary': '{files} من مصادر مساحة العمل · {tabs} من الألسنة المفتوحة',
 
   // --- FolderTreeLite context menu ---
   'contextMenu.newProcess': 'عملية جديدة',
@@ -3556,7 +3643,7 @@ export const ar: Record<keyof typeof en, string> = {
   'workspace.storage.opfsOpenFailed':
     'تعذّر فتح مساحة عمل المتصفح. حاول مرة أخرى أو اختر خيار تخزين آخر.',
   'workspace.storage.opfsOpenTechnicalEvidence': 'دليل تقني — فتح مساحة عمل المتصفح: {error}',
-  'workspace.storage.openSingleFile': 'فتح ملف BPMN واحد',
+  'workspace.storage.openSingleFile': 'فتح ملف ARIS AML/XML واحد',
   'workspace.storage.backupExport': 'تصدير نسخة احتياطية لمساحة العمل',
   'workspace.storage.backupImport': 'استيراد نسخة احتياطية لمساحة العمل',
   'workspace.storage.collisionReview': 'مراجعة تعارضات ملفات النسخة الاحتياطية',

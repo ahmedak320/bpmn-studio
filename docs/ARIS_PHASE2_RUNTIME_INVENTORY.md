@@ -7,10 +7,13 @@ This inventory records the current BPMN runtime surface that Phase 2 must replac
 ## Primary production entry points
 
 - [src/main.tsx](/home/ahmed/Desktop/bpmn_tool/desktop/src/main.tsx)
-  - mounts the app directly through `App`
+  - now mounts `ArisApp`
 - [src/App.tsx](/home/ahmed/Desktop/bpmn_tool/desktop/src/App.tsx)
-  - central composition root
-  - still imports the BPMN-backed editor shell and BPMN-centric workspace/import flows
+  - legacy BPMN composition root
+  - still imports the BPMN-backed editor shell and BPMN-centric workspace/import flows, but is no longer the production mount path
+- [src/ArisApp.tsx](/home/ahmed/Desktop/bpmn_tool/desktop/src/ArisApp.tsx)
+  - new ARIS-only production shell
+  - preserves workspace picker, settings, AI surfaces, assistant drawer, and language controls without mounting `EditorTabLite`
 
 ## BPMN runtime and editor shell currently active
 
@@ -69,20 +72,16 @@ These cannot be removed until the ARIS shell path replaces the BPMN editor/runti
 - Updated the import boundary to:
   - accept `.aml` alongside `.apc` and `.xml`
   - reject detected BPMN input non-destructively with the ARIS-only message
+- Switched the production renderer from `App` to `ArisApp`
+- Added a placeholder ARIS source shell that:
+  - opens `.aml`, `.apc`, and generic `.xml` sources without converting them into BPMN runtime state
+  - keeps settings, assistant, workspace picker, folder switching, and embedded AI reachable from the new shell
+  - surfaces exact source bytes, hash, and content while the native ARIS modeler is still pending
 
 ## Next implementation slice
 
-Replace the current `App` composition path with an ARIS-specific shell that keeps:
+Finish Phase 2 cleanup around the new shell:
 
-- workspace picker and folder navigation
-- settings/provider dialog
-- assistant drawer and retained AI surfaces
-- language/theme controls
-- print/export shell infrastructure
-
-while removing:
-
-- the BPMN `EditorTabLite` mount path
-- BPMN palette/context-pad/properties-panel rendering
-- BPMN-first empty/create flows
-- BPMN-specific validation center assumptions from the top-level shell
+- remove or rename the remaining BPMN-first user-visible labels still reused by shared retained UI
+- verify the ARIS shell behavior through the remaining import/open paths, including `file://`
+- delete BPMN production dependencies only after `App`/editor-only imports are fully outside the production graph

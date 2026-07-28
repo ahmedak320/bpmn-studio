@@ -37,6 +37,7 @@ Status as of 2026-07-28 on `feat/aris-only-studio`:
 ## Current Phase 2 exit-gate progress
 
 - [x] ARIS-only input boundary started: `.aml` is accepted; detected BPMN input is rejected non-destructively.
+- [x] Production entry now mounts an ARIS-specific shell instead of the BPMN `App` composition root.
 - [ ] ARIS shell loads through `file://`.
 - [ ] Settings, AI tabs, assistant, workspace picker, language, and theme still work under the new ARIS shell.
 - [ ] BPMN input is rejected non-destructively across all remaining import paths.
@@ -47,5 +48,5 @@ Status as of 2026-07-28 on `feat/aris-only-studio`:
 No external blocker yet for the active implementation phase. The remaining work is internal:
 
 - remove the BPMN editor shell without regressing retained infrastructure;
-- replace BPMN-specific entry points with the ARIS placeholder shell;
+- finish scrubbing remaining BPMN-first labels and fallback actions exposed through retained shared UI;
 - remove BPMN runtime dependencies only after the ARIS shell path is active.

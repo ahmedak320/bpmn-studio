@@ -4,7 +4,7 @@ import ReactDOM from 'react-dom/client'
 // a usable window.prompt under some conditions; this is the same component the
 // desktop tree CRUD uses).
 import { PromptProvider } from '@/common/prompt'
-import App from './App'
+import ArisApp from './ArisApp'
 import { applyFavicon } from './branding/icon'
 import './app.css'
 
@@ -13,7 +13,7 @@ applyFavicon()
 ReactDOM.createRoot(document.getElementById('root') as HTMLElement).render(
   <React.StrictMode>
     <PromptProvider>
-      <App />
+      <ArisApp />
     </PromptProvider>
   </React.StrictMode>
 )
