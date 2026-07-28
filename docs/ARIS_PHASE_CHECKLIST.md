@@ -41,7 +41,7 @@ Status as of 2026-07-28 on `feat/aris-only-studio`:
 - [x] ARIS shell loads through `file://` from the rolling artifact at `release/OrbitPM-ARIS-Studio-Lite.html`.
 - [x] Settings, AI tabs, assistant, workspace picker, language, and theme still work under the new ARIS shell.
 - [ ] BPMN input is rejected non-destructively across all remaining import paths.
-- [x] Production dependency graph contains no BPMN runtime.
+- [x] Production dependency graph contains no BPMN runtime, enforced by `npm run check:aris-runtime-boundary`.
 
 ## Current blocker profile
 

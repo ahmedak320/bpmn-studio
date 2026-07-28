@@ -2,7 +2,8 @@ import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { t } from '../i18n'
 import { useLang } from '../i18n/useLang'
 import type { GlossaryEntry, TranslationMemoryEntry } from '../localization/types'
-import { WorkspaceOperationError, type WorkspaceErrorCode } from '../workspace/adapters'
+import type { WorkspaceErrorCode } from '../workspace/adapters/types'
+import { WorkspaceOperationError } from '../workspace/adapters/workspaceError'
 import {
   WorkspaceLocalizationConflictError,
   WorkspaceLocalizationPartialLoadError,

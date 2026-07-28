@@ -68,10 +68,10 @@ no longer live in `package.json` production `dependencies`:
 
 Shipped-artifact evidence after the ARIS shell surface swap:
 
-- `npm run build:aris` now transforms `392` modules instead of the earlier `461`
+- `npm run build:aris` now transforms `371` modules instead of the earlier `461`
 - [release/OrbitPM-ARIS-Studio-Lite.html](/home/ahmed/Desktop/bpmn_tool/desktop/release/OrbitPM-ARIS-Studio-Lite.html)
-  shrank to `2,040,183` bytes with SHA-256
-  `cc5d5584ac4f319e90d044212af945cf26d70ab70867ff4c4127088d9477ac13`
+  shrank to `638,473` bytes with SHA-256
+  `00c691534b3448819f6998530253062991688319e70f7e995e0016e1a5fdf605`
 - the shipped artifact no longer contains these BPMN runtime entrypoints:
   - `bpmn-moddle`
   - `layoutProcess`
@@ -107,6 +107,12 @@ code, not a shipped-artifact dependency leak in the ARIS production path.
   - mixed import batches still accept ARIS AML peers after rejecting BPMN files
 - Replaced the ARIS shell's BPMN-backed AI/assistant imports with ARIS-only placeholder surfaces so the shipped artifact no longer pulls in the BPMN generation, digest, and viewer stack
 - Moved BPMN/editor packages from `dependencies` to `devDependencies` so `package.json` matches the shipped ARIS runtime boundary
+- Added `scripts/check-aris-runtime-boundary.mjs` plus `npm run check:aris-runtime-boundary` to fail when the ARIS production entry reaches banned BPMN packages or legacy BPMN-only modules
+- Extended `App.integration.test.tsx` so the legacy workspace import picker rejects BPMN XML disguised as `.xml` without opening the reviewed import dialog
+- Narrowed the ARIS production graph by:
+  - removing broad `workspace/adapters` barrel imports from the ARIS shell and localization settings path
+  - converting the ARIS settings connection-test path in `browserAi.ts` to a true type-only generation dependency plus lazy generation loading
+- Rebuilt the rolling artifact and re-ran the exact `file://` smoke against `reference/AnimalWF/ARISAMLExport.xml`
 
 ## Next implementation slice
 

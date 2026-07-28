@@ -28,22 +28,27 @@ vi.mock('./fs/workspaceHandle', () => ({
   rememberWorkspace: async () => undefined
 }))
 
-vi.mock('./workspace/adapters', async () => {
-  const actual = await vi.importActual<typeof import('./workspace/adapters')>('./workspace/adapters')
+vi.mock('./workspace/adapters/directory', () => ({
+  DirectoryWorkspaceAdapter: vi.fn(function DirectoryWorkspaceAdapter() {
+    if (!mockState.directoryAdapter) {
+      throw new Error('mock directory adapter not configured')
+    }
+    return mockState.directoryAdapter
+  })
+}))
+
+vi.mock('./workspace/adapters/opfs', async () => {
+  const actual = await vi.importActual<typeof import('./workspace/adapters/opfs')>(
+    './workspace/adapters/opfs'
+  )
   return {
     ...actual,
-    DirectoryWorkspaceAdapter: vi.fn(function DirectoryWorkspaceAdapter() {
-      if (!mockState.directoryAdapter) {
-        throw new Error('mock directory adapter not configured')
-      }
-      return mockState.directoryAdapter
-    }),
     opfsSupported: () => false
   }
 })
 
 import ArisApp from './ArisApp'
-import type { FileSnapshot, WorkspaceAdapter, WorkspaceEntry } from './workspace/adapters'
+import type { FileSnapshot, WorkspaceAdapter, WorkspaceEntry } from './workspace/adapters/types'
 
 function fileSnapshot(path: string, text: string, mimeType = 'application/xml'): FileSnapshot {
   const bytes = new TextEncoder().encode(text)

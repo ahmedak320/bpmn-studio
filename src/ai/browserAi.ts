@@ -15,12 +15,7 @@
 // The payload builders + response extractors are exported as pure functions and
 // unit-tested (payloadBuilders.test.ts) — no network, no SDK.
 
-import {
-  generateFromDescription,
-  type BpmnElement,
-  type CallLLM,
-  type LlmMessage
-} from '@/generation'
+import type { BpmnElement, CallLLM, LlmMessage } from '@/generation'
 import { defaultLiteModelId, type LiteProviderId } from './providersLite'
 import { buildImageInstruction, buildPdfInstruction, type GenAttachment } from './pdf'
 import { extractUsage, recordUsage } from './credits'
@@ -942,6 +937,12 @@ export interface GenerateOutput {
   links: ProposedLink[]
 }
 
+async function loadGenerateFromDescription(): Promise<
+  typeof import('@/generation')['generateFromDescription']
+> {
+  return (await import('@/generation')).generateFromDescription
+}
+
 function toConfig(args: GenerateArgs): ProviderConfig {
   return {
     providerId: args.providerId,
@@ -958,6 +959,7 @@ export async function generateDiagramXml(args: GenerateArgs): Promise<GenerateOu
     signal: args.signal,
     onAttempt: args.onAttempt
   })
+  const generateFromDescription = await loadGenerateFromDescription()
   const result = await generateFromDescription(call, args.description, undefined, {
     processCatalog: args.processCatalog
   })
@@ -991,6 +993,7 @@ export async function generateDiagramXmlFromDocument(
     signal: args.signal,
     onAttempt: args.onAttempt
   })
+  const generateFromDescription = await loadGenerateFromDescription()
   const result = await generateFromDescription(call, instruction, undefined, {
     processCatalog: args.processCatalog
   })

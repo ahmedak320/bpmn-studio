@@ -20,16 +20,15 @@ import { ResponsiveDrawer, ResponsiveShell, useResponsiveShellMode } from './she
 import { Toaster, type ToastMsg, type ToastTone } from './workspace/Toaster'
 import { WorkspacePickerLite, type PickerMode } from './workspace/WorkspacePickerLite'
 import {
-  DirectoryWorkspaceAdapter,
-  OpfsWorkspaceAdapter,
-  SingleFileWorkspaceAdapter,
-  opfsSupported,
-  sha256Hex,
   type FileSnapshot,
   type WorkspaceAdapter,
   type WorkspaceEntry,
   type WorkspaceMode
-} from './workspace/adapters'
+} from './workspace/adapters/types'
+import { DirectoryWorkspaceAdapter } from './workspace/adapters/directory'
+import { sha256Hex } from './workspace/adapters/hash'
+import { OpfsWorkspaceAdapter, opfsSupported } from './workspace/adapters/opfs'
+import { SingleFileWorkspaceAdapter } from './workspace/adapters/singleFile'
 import { classifyImportBoundarySource } from './workspace/importDrop'
 import { decodeUtf8Strict } from './workspace/utf8'
 
