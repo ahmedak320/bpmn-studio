@@ -677,7 +677,7 @@ jobs:
               ((.browserVersionBaseline.url == "") or
                 (.browserVersionBaseline.sha256 | test("^[0-9a-f]{64}$"))) and
               ((.externalEvidence.url == "") or
-                (.externalEvidence.sha256 | test("^[0-9a-f]{64}$"))
+                (.externalEvidence.sha256 | test("^[0-9a-f]{64}$")))
             ' publication-authority.json >/dev/null
           test "$(jq -j .notesBody publication-authority.json | sha256sum | cut -d' ' -f1)" = \
             "770697128d0a06b4dd4b9cf7bcbf7f63dfa286e0b929260ae4546b36893a9c1d"
