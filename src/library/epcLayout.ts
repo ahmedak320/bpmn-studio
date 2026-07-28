@@ -31,7 +31,7 @@ import {
   type Box
 } from '../org/decorExtents'
 import type { OrgProps } from '../org/orgModel'
-import { fitInteriorBox } from '../editor/autoSize'
+import { fitInteriorBox } from '../diagram/autoSize'
 
 export type Orientation = 'vertical' | 'horizontal'
 

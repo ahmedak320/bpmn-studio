@@ -157,7 +157,7 @@ vi.mock('../../spreadsheet/SpreadsheetImportPanel', () => ({
   }
 }))
 
-vi.mock('../../editor/exportImage', () => ({
+vi.mock('../../common/exportImage', () => ({
   triggerDownload: mocks.triggerDownload
 }))
 

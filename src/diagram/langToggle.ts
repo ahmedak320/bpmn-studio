@@ -67,7 +67,7 @@ export interface LangToggleModeler {
 // --- structural service/element shapes --------------------------------------
 
 /** Structural business-object surface this module reads/writes. Exported so
- *  editor/labelSync.ts (and tests) can type against the same shape. */
+ *  the removed editor label sync (and tests) can type against the same shape. */
 export interface LangBusinessObjectLike {
   $type?: string
   $attrs?: Record<string, unknown>

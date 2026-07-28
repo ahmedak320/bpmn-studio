@@ -7,7 +7,7 @@ import {
   buildMissingProcessDoc,
   deriveFileBaseName,
   sanitizeFolderName
-} from '../editor/newProcessDoc'
+} from '../core/newProcessDoc'
 import {
   buildProcessIndex,
   listUnresolvedCalledElements,

@@ -1,12 +1,13 @@
+// The BPMN-editor browser suites (canvas UX, autosize triggers, viewer
+// interactions, process outline, i18n/RTL canvas) were removed with the BPMN UI
+// in plan §5.3 — they drove a `.djs-container` canvas the ARIS shell no longer
+// mounts. ARIS replacements land with the native modeler.
 export const REQUIRED_BROWSER_SUITES = Object.freeze([
   'tests/e2e/details-responsive.spec.ts',
   'tests/e2e/lite-aml-naming.spec.ts',
   'tests/e2e/lite-assistant.spec.ts',
-  'tests/e2e/lite-autosize-triggers.spec.ts',
-  'tests/e2e/lite-canvas-ux.spec.ts',
   'tests/e2e/lite-company-docs.spec.ts',
   'tests/e2e/lite-csp-runtime.spec.ts',
-  'tests/e2e/lite-i18n-rtl.spec.ts',
   'tests/e2e/lite-live-cors.spec.ts',
   'tests/e2e/lite-mandatory-ai-security.spec.ts',
   'tests/e2e/lite-mandatory-reliability.spec.ts',
@@ -14,13 +15,11 @@ export const REQUIRED_BROWSER_SUITES = Object.freeze([
   'tests/e2e/lite-mandatory-translation.spec.ts',
   'tests/e2e/lite-org.spec.ts',
   'tests/e2e/lite-panes-details.spec.ts',
-  'tests/e2e/lite-process-outline.spec.ts',
   'tests/e2e/lite-providers.spec.ts',
   'tests/e2e/lite-smoke.spec.ts',
   'tests/e2e/lite-spreadsheet.spec.ts',
   'tests/e2e/lite-subprocess-tree.spec.ts',
-  'tests/e2e/lite-validation.spec.ts',
-  'tests/e2e/lite-viewer-interactions.spec.ts'
+  'tests/e2e/lite-validation.spec.ts'
 ])
 
 function requirementIds(prefix, count) {

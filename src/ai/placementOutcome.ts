@@ -1,4 +1,4 @@
-import { deriveFileBaseName } from '../editor/newProcessDoc'
+import { deriveFileBaseName } from '../core/newProcessDoc'
 
 export type GeneratedPlacementDiscardReason = 'stale-workspace' | 'cancelled'
 

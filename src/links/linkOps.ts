@@ -65,7 +65,7 @@ export interface ElementRegistryForLinkingLike {
 
 // All `get` overloads declared together (not via `extends`) so this stays a
 // single, self-consistent structural type — same pattern as
-// SelectionLinkButtonLite's SelectionLinkModeler.
+// the removed SelectionLinkButtonLite's SelectionLinkModeler.
 export interface LinkMorphModeler {
   get(name: 'elementRegistry'): ElementRegistryForLinkingLike & ElementRegistryLike
   get(name: 'modeling'): ModelingLike

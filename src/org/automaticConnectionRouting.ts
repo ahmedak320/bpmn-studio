@@ -8,7 +8,7 @@
  * when the candidate removes an obstacle/crossing or is materially simpler.
  */
 
-import { executeModelingBatch, type ModelingBatchUpdate } from '../editor/modelingBatch'
+import { executeModelingBatch, type ModelingBatchUpdate } from '../diagram/modelingBatch'
 import { routeOrthogonal, type RoutePoint, type RouteRect } from '../library/epcLayout'
 import { analyzeEdgeVisuals, normalizePolyline, type PolylineEdge } from './edgeVisuals'
 import {

@@ -17,6 +17,9 @@ const bannedPackages = new Set([
   'bpmnlint'
 ])
 
+// Modules whose only purpose is the removed BPMN editor UI (plan §5.3/§5.4).
+// `src/App.tsx` and `src/editor/**` no longer exist — the patterns stay so a
+// re-introduction of either path is caught the moment it enters the graph.
 const bannedGraphPaths = [
   /^src\/App\.tsx$/u,
   /^src\/editor\//u,

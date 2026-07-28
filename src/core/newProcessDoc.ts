@@ -5,7 +5,7 @@
 // directory-mode (real file) and fallback-mode (in-memory/download) paths, so
 // the two can never drift.
 
-import { slugify, FALLBACK_SLUG } from '@/core/slug'
+import { slugify, FALLBACK_SLUG } from './slug'
 import { createNamedDiagramXml } from './newDiagram'
 
 /**

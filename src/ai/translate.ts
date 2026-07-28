@@ -3,7 +3,7 @@
 // authoritative and are never overwritten. A plain visible label is adopted
 // as English or Arabic from its script, then translated in the other direction.
 // Projection into the visible BPMN `name`/TextAnnotation `text` property and
-// ownership of `orbitpm:activeLang` belong to editor/langToggle.ts and App.tsx.
+// ownership of `orbitpm:activeLang` belongs to diagram/langToggle.ts.
 //
 // External labels are skipped because they share a business object with their
 // target. Connections and the participant-aware process root are included,
@@ -29,8 +29,8 @@ import {
   readVisibleLabel,
   visibleLabelProperty,
   type DiagramLang
-} from '../editor/langToggle'
-import { executeModelingBatch, type ModelingBatchUpdate } from '../editor/modelingBatch'
+} from '../diagram/langToggle'
+import { executeModelingBatch, type ModelingBatchUpdate } from '../diagram/modelingBatch'
 import {
   assertLocalizationReviewCurrent,
   inspectDiagramLocalization,

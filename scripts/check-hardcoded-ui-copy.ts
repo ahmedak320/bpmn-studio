@@ -72,10 +72,6 @@ export const HARDCODED_UI_COPY_ALLOWLIST: readonly HardcodedUiCopyAllowlistEntry
     reason: 'Invariant file-size unit symbol, not English prose.'
   },
   {
-    signature: 'src/editor/ProcessOutlineEditor.tsx|jsx-text|ID',
-    reason: 'Invariant technical identifier token; the rendered term is marked lang="en".'
-  },
-  {
     signature: 'src/workspace/BackupImportDialog.tsx|jsx-text|KiB',
     reason: 'Invariant IEC file-size unit symbol, not English prose.'
   },

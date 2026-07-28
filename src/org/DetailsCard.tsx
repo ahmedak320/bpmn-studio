@@ -15,7 +15,7 @@
 import { useEffect, useState, type CSSProperties } from 'react'
 import { t, type Key } from '../i18n'
 import { useLang } from '../i18n/useLang'
-import { getDiagramLang, type LangToggleModeler } from '../editor/langToggle'
+import { getDiagramLang, type LangToggleModeler } from '../diagram/langToggle'
 import { getOrgProps, splitList } from './orgModel'
 import { isMissingBadgeEligibleType, planMissingInfo, type MissingCategory } from './orgRenderer'
 import {

@@ -632,8 +632,8 @@ function hasCalledElement(element: OrgElementLike): boolean {
 
 const FONT_FAMILY = 'inherit'
 
-/** Class + data-attribute contract shared with editor/canvasDecor.ts (kept as
- *  literals on both sides so org/ never imports from editor/). */
+/** Class + data-attribute contract formerly shared with the removed BPMN
+ *  canvas decorator (kept as literals so org/ owns no editor import). */
 const BADGE_CLASS = 'orbitpm-missing-badge'
 const TOOLTIP_ATTR = 'data-org-tooltip'
 const MISSING_ATTR = 'data-org-missing'
@@ -1042,7 +1042,7 @@ export function applyDecorations(parentGfx: SVGElement, decorations: Decoration[
         }
         case 'missingBadge': {
           // One <g> per badge so the custom canvas tooltip + click handling
-          // (editor/canvasDecor.ts) cover the whole chip. No native <title> —
+          // (legacy BPMN canvas decorator) cover the whole chip. No native <title> —
           // the delegated tooltip replaces it (never both).
           const group = svgCreate('g', {
             class: BADGE_CLASS,

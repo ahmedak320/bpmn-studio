@@ -1,4 +1,4 @@
-import { executeModelingBatch, type ModelingBatchUpdate } from '../editor/modelingBatch'
+import { executeModelingBatch, type ModelingBatchUpdate } from '../diagram/modelingBatch'
 import { auditLocalizationFields } from './audit'
 import { extractBpmnLocalization } from './extract'
 import { SEEDED_GLOSSARY } from './glossary'

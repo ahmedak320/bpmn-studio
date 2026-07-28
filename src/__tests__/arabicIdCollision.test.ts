@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { deriveProcessId, buildNewProcessDoc, deriveFileBaseName } from '../editor/newProcessDoc'
+import { deriveProcessId, buildNewProcessDoc, deriveFileBaseName } from '../core/newProcessDoc'
 
 // Codex ORIG-6: two problems with non-Latin process ids.
 //  (a) A MIXED name (Arabic + a tiny ASCII residue) — "طلب A" vs "موافقة A" —

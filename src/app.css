@@ -238,7 +238,7 @@ button {
   font-size: 12.5px;
 }
 
-/* Floating canvas tooltip (editor/canvasDecor.ts). Position-critical styles
+/* Floating canvas tooltip (legacy BPMN canvasDecor, removed). Position-critical styles
    (fixed/pointer-events/white-space) are ALSO set inline by the installer —
    this class is the cosmetic layer. Root-level variables, not editor-scoped
    ones: the tooltip host is the editor root but position:fixed renders in

@@ -2,7 +2,7 @@
 // Placeholder-bearing values use `{name}` tokens — see i18n/index.ts `t()`.
 
 export const en = {
-  // --- App chrome (App.tsx) ---
+  // --- App chrome ---
   'app.title': 'OrbitPM ARIS Studio Lite',
   'app.version.aria': 'Version {version}',
   'app.newProcess': '＋ New model',
@@ -499,13 +499,8 @@ export const en = {
     'Image is {size} — over the {limit} limit for this provider. Compress or crop it and try again.',
   'ai.image.unsupportedType': 'Unsupported image type. Use PNG, JPEG, WebP, or GIF.',
   'import.notBpmnXml': '{name} is XML but not a BPMN diagram — skipped.',
-  'palette.grip.title': 'Drag to move the tools · double-click to reset',
-  'editor.langToggle': '🌐 Diagram: EN⇄AR',
-  'editor.langToggle.title': 'Switch the diagram labels between English and Arabic',
   'editor.langToggle.missing':
     'No labels can be shown in the requested diagram language, so the diagram language was not changed.',
-  'editor.langToggle.partial':
-    'Showing {switched} labels in the requested diagram language; {missing} remain in the previous language.',
   'canvas.inputs': 'Inputs',
   'canvas.cc': 'CC',
   'canvas.responsible': 'Responsible',
@@ -525,9 +520,6 @@ export const en = {
   'org.system.label': 'Supporting system',
   'apc.convertedMany': 'Converted {count} process models from {name}.',
   'apc.reason.noModels': 'No process models found in the ARIS export.',
-  'editor.translate': '✨ Translate',
-  'editor.translate.title':
-    'Fill every missing English or Arabic label, then show the other language',
   'translate.noKey': 'No AI key configured — add one in Settings to translate.',
   'translate.nothing':
     'No named label has enough source text to create a missing English or Arabic counterpart.',
@@ -578,33 +570,14 @@ export const en = {
   'ai.continueInChat.title':
     'Open the assistant and answer its questions to complete the missing step information',
 
-  // --- EditorTabLite toolbar ---
-  'editor.save': 'Save',
-  'editor.save.saving': 'Saving…',
-  'editor.save.title': 'Save (Ctrl+S)',
-  'editor.actions.more': 'More',
-  'editor.actions.menu': 'More editor actions',
-  'editor.exportSvg': 'Export SVG',
-  'editor.exportSvg.title': 'Download the diagram as an SVG vector image',
-  'editor.exportPng': 'Export PNG',
-  'editor.exportPng.title': 'Download the diagram as a PNG image',
+  // --- Diagram toolbar (legacy BPMN editor removed; keys retained where still used) ---
   'editor.zoomOut.title': 'Zoom out',
   'editor.zoomIn.title': 'Zoom in',
   'editor.zoomFit': 'Zoom Fit',
-  'editor.zoomFit.title': 'Zoom to fit the whole diagram (or Ctrl + mouse-wheel to zoom)',
   'editor.propsToggle': 'Panel',
   'editor.propsToggle.title': 'Show/hide the properties panel',
   'editor.dirtyFlag.dirty': '● Unsaved changes',
   'editor.dirtyFlag.dirty.title': 'This diagram has changes you have not saved yet',
-  'editor.dirtyFlag.saved': 'Saved',
-  'editor.dirtyFlag.saved.title': 'All changes saved',
-  'editor.error.loadFailed': 'Failed to load diagram: {error}',
-  'editor.error.saveFailed': 'Save failed: {error}',
-  'editor.error.exportSvgFailed': 'SVG export failed: {error}',
-  'editor.error.exportPngFailed': 'PNG export failed: {error}',
-  'editor.hint.startDrawing': 'Start drawing',
-  'editor.hint.startDrawing.body':
-    'Drag a shape from the palette on the left (or click one) to add it. Double-click any element to rename it.',
   'editor.print.title':
     'Print or Save as PDF — opens the print dialog with a full-page, landscape view of this diagram',
   'editor.print': 'Print / PDF',
@@ -825,8 +798,6 @@ export const en = {
     'This PDF is {size} — large files may be slow or brush provider limits. Split it if generation fails.',
 
   // --- Org pack: step-details dialog + owner picker + styling (B4) ---
-  'editor.stepDetails': 'Details…',
-  'editor.stepDetails.title': 'Edit owner, note, channel and trigger details',
   'org.dialog.title.element': 'Step details',
   'org.dialog.title.process': 'Process details',
   'org.apply': 'Apply',
@@ -2268,8 +2239,6 @@ export const en = {
     'Review the referenced element against the labeled BPMN rule and correct the model.',
   'validation.repair.fallback':
     'Review the labeled technical evidence and correct the source before continuing.',
-  'sourceEditor.open': 'Source',
-  'sourceEditor.open.title': 'Open the BPMN XML source editor',
   'sourceEditor.title': 'BPMN XML source',
   'sourceEditor.close': 'Close',
   'sourceEditor.preview': 'Preview changes',
@@ -2309,16 +2278,12 @@ export const en = {
   'sourceEditor.action.applyFailed': 'Could not apply the source changes.',
   'sourceEditor.action.technicalDetails': 'Technical details:',
   'sourceEditor.missingDi': 'The XML has no usable BPMN diagram layout.',
-  'sourceEditor.applyFailed': 'Could not apply source: {error}',
   'sourceEditor.applied': 'Source changes applied.',
   'save.validationRunning': 'Wait for validation to finish before saving.',
   'save.blocked': 'Save is blocked by validation errors.',
   'save.draftPrompt': 'This document has validation errors. Save it explicitly as a draft?',
   'save.draftAction': 'Save draft with errors',
   'save.cancel': 'Cancel',
-  'editor.exportPdf': 'Export PDF',
-  'editor.exportPdf.title': 'Download the diagram as a PDF document',
-  'editor.error.exportPdfFailed': 'Could not export PDF: {error}',
 
   // --- ARIS symbol registry labels (src/aris/symbols) ---
   'aris.symbol.and': 'AND',
@@ -3121,13 +3086,8 @@ export const ar: Record<keyof typeof en, string> = {
     'حجم الصورة {size} — يتجاوز الحد {limit} لهذا المزوّد. اضغط الصورة أو قصّها ثم أعد المحاولة.',
   'ai.image.unsupportedType': 'نوع الصورة غير مدعوم. استخدم PNG أو JPEG أو WebP أو GIF.',
   'import.notBpmnXml': '{name} ملف XML لكنه ليس مخطط BPMN — تم تخطيه.',
-  'palette.grip.title': 'اسحب لتحريك لوحة الأدوات · انقر نقرًا مزدوجًا لإعادة الوضع',
-  'editor.langToggle': '🌐 المخطط: EN⇄AR',
-  'editor.langToggle.title': 'تبديل تسميات المخطط بين الإنجليزية والعربية',
   'editor.langToggle.missing':
     'لا يمكن عرض أي تسمية بلغة المخطط المطلوبة، لذلك لم تتغير لغة المخطط.',
-  'editor.langToggle.partial':
-    'تُعرض {switched} تسمية بلغة المخطط المطلوبة، وتبقى {missing} تسمية باللغة السابقة.',
   'canvas.inputs': 'المدخلات',
   'canvas.cc': 'نسخة إلى',
   'canvas.responsible': 'المسؤولون',
@@ -3148,8 +3108,6 @@ export const ar: Record<keyof typeof en, string> = {
   'org.system.label': 'النظام الداعم',
   'apc.convertedMany': 'تم تحويل {count} نموذج عمليات من {name}.',
   'apc.reason.noModels': 'لم يتم العثور على نماذج عمليات في ملف ARIS المُصدَّر.',
-  'editor.translate': '✨ ترجمة',
-  'editor.translate.title': 'إكمال كل تسمية إنجليزية أو عربية ناقصة ثم عرض اللغة الأخرى',
   'translate.noKey': 'لا يوجد مفتاح ذكاء اصطناعي — أضف واحدًا في الإعدادات للترجمة.',
   'translate.nothing': 'لا توجد تسمية ذات نص مصدر كافٍ لإنشاء المقابل الإنجليزي أو العربي الناقص.',
   'translate.nothing.switched': 'لا حاجة إلى ترجمة — يعرض المخطط الآن اللغة الأخرى.',
@@ -3196,33 +3154,14 @@ export const ar: Record<keyof typeof en, string> = {
   'ai.continueInChat': '💬 أكمل النواقص في المحادثة',
   'ai.continueInChat.title': 'افتح المساعد وأجب عن أسئلته لإكمال معلومات الخطوات الناقصة',
 
-  // --- EditorTabLite toolbar ---
-  'editor.save': 'حفظ',
-  'editor.save.saving': 'جارٍ الحفظ…',
-  'editor.save.title': 'حفظ (Ctrl+S)',
-  'editor.actions.more': 'المزيد',
-  'editor.actions.menu': 'المزيد من إجراءات المحرر',
-  'editor.exportSvg': 'تصدير SVG',
-  'editor.exportSvg.title': 'تنزيل المخطط كصورة متجهية SVG',
-  'editor.exportPng': 'تصدير PNG',
-  'editor.exportPng.title': 'تنزيل المخطط كصورة PNG',
+  // --- Diagram toolbar (legacy BPMN editor removed; keys retained where still used) ---
   'editor.zoomOut.title': 'تصغير',
   'editor.zoomIn.title': 'تكبير',
   'editor.zoomFit': 'ملاءمة التكبير',
-  'editor.zoomFit.title': 'ملاءمة عرض المخطط بالكامل (أو Ctrl + عجلة الفأرة للتكبير)',
   'editor.propsToggle': 'اللوحة',
   'editor.propsToggle.title': 'إظهار/إخفاء لوحة الخصائص',
   'editor.dirtyFlag.dirty': '● تغييرات غير محفوظة',
   'editor.dirtyFlag.dirty.title': 'يحتوي هذا المخطط على تغييرات لم تُحفظ بعد',
-  'editor.dirtyFlag.saved': 'تم الحفظ',
-  'editor.dirtyFlag.saved.title': 'جميع التغييرات محفوظة',
-  'editor.error.loadFailed': 'فشل تحميل المخطط: {error}',
-  'editor.error.saveFailed': 'فشل الحفظ: {error}',
-  'editor.error.exportSvgFailed': 'فشل تصدير SVG: {error}',
-  'editor.error.exportPngFailed': 'فشل تصدير PNG: {error}',
-  'editor.hint.startDrawing': 'ابدأ الرسم',
-  'editor.hint.startDrawing.body':
-    'اسحب شكلًا من لوحة العناصر على اليسار (أو انقر عليه) لإضافته. انقر نقرًا مزدوجًا على أي عنصر لإعادة تسميته.',
   'editor.print.title':
     'طباعة أو حفظ كـ PDF — يفتح مربع حوار الطباعة بعرض كامل الصفحة أفقي لهذا المخطط',
   'editor.print': 'طباعة / PDF',
@@ -3440,8 +3379,6 @@ export const ar: Record<keyof typeof en, string> = {
     'حجم هذا الملف {size} — قد تكون الملفات الكبيرة بطيئة أو تقترب من حدود المزوّد. قسّمه إذا فشل التوليد.',
 
   // --- حزمة التنظيم: نافذة تفاصيل الخطوة + مُنتقي المالك + التنسيق (B4) ---
-  'editor.stepDetails': 'تفاصيل…',
-  'editor.stepDetails.title': 'تحرير المالك والملاحظة وتفاصيل القناة والمُشغِّل',
   'org.dialog.title.element': 'تفاصيل الخطوة',
   'org.dialog.title.process': 'تفاصيل العملية',
   'org.apply': 'تطبيق',
@@ -4784,8 +4721,6 @@ export const ar: Record<keyof typeof en, string> = {
   'validation.repair.xsd': 'أصلح البنية التي حددها تشخيص المخطط ثم أعد التحقق.',
   'validation.repair.bpmnlint': 'راجع العنصر المشار إليه وفق قاعدة BPMN المسمّاة وصحح النموذج.',
   'validation.repair.fallback': 'راجع الدليل التقني المسمّى وصحح المصدر قبل المتابعة.',
-  'sourceEditor.open': 'المصدر',
-  'sourceEditor.open.title': 'فتح محرر مصدر BPMN XML',
   'sourceEditor.title': 'مصدر BPMN XML',
   'sourceEditor.close': 'إغلاق',
   'sourceEditor.preview': 'معاينة التغييرات',
@@ -4824,16 +4759,12 @@ export const ar: Record<keyof typeof en, string> = {
   'sourceEditor.action.applyFailed': 'تعذّر تطبيق تغييرات المصدر.',
   'sourceEditor.action.technicalDetails': 'التفاصيل التقنية:',
   'sourceEditor.missingDi': 'لا يحتوي XML على تخطيط صالح لمخطط BPMN.',
-  'sourceEditor.applyFailed': 'تعذّر تطبيق المصدر: {error}',
   'sourceEditor.applied': 'تم تطبيق تغييرات المصدر.',
   'save.validationRunning': 'انتظر انتهاء التحقق قبل الحفظ.',
   'save.blocked': 'الحفظ محظور بسبب أخطاء التحقق.',
   'save.draftPrompt': 'يحتوي هذا المستند على أخطاء تحقق. هل تريد حفظه صراحةً كمسودة؟',
   'save.draftAction': 'حفظ مسودة مع الأخطاء',
   'save.cancel': 'إلغاء',
-  'editor.exportPdf': 'تصدير PDF',
-  'editor.exportPdf.title': 'تنزيل المخطط كمستند PDF',
-  'editor.error.exportPdfFailed': 'تعذّر تصدير PDF: {error}',
 
   // --- تسميات سجل رموز ARIS (src/aris/symbols) ---
   'aris.symbol.and': 'و',

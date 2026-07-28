@@ -7,7 +7,7 @@ import {
   resolveElementNames,
   resolveLabelMirror,
   type LangToggleModeler
-} from '../editor/langToggle'
+} from '../diagram/langToggle'
 import { translateDiagram } from '../ai/translate'
 import { UNTRUSTED_WORKSPACE_SYSTEM_GUARD } from '../ai/untrustedPrompt'
 import type { LlmMessage } from '../generation'

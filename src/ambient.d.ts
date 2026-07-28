@@ -10,10 +10,9 @@ declare const __APP_VERSION__: string
 //     (directory async-iterators, the WICG permission methods, the window
 //     pickers). lib.dom already ships the handle types + getFileHandle /
 //     getDirectoryHandle / removeEntry / createWritable, so only these merge in.
-//  2. Provide `declare module` shims for the bpmn.io packages that ship no
-//     TypeScript types (the reused desktop editor imports them). The desktop
-//     app never hit this because its renderer typecheck is effectively a no-op
-//     (root tsconfig has files:[] + project references, run without --build).
+//  2. Provide `declare module` shims for the remaining bpmn.io/diagram.io
+//     packages that ship no TypeScript types and are still imported by retained
+//     infrastructure (generation layout, workspace indexing, validation).
 
 // --- File System Access API (gaps) ---------------------------------------
 
@@ -54,25 +53,14 @@ interface Window {
 declare module 'bpmn-auto-layout' {
   export function layoutProcess(xml: string): Promise<string>
 }
-// bpmn-js additionalModules take opaque DI "module descriptors"; typed as `any`
-// (matching how the desktop app consumes them without type stubs) so they slot
-// into bpmn-js's ModuleDeclaration[] without a per-call cast.
+// The shims for `bpmn-js-properties-panel`, `bpmn-js-create-append-anything`
+// and `bpmn-js-bpmnlint` were removed with the BPMN editor (plan §5.3) — the
+// deleted `src/editor/EditorTabLite.tsx` was their only importer. The packages
+// themselves are still listed as devDependencies; see the §5.4 note there.
 /* eslint-disable @typescript-eslint/no-explicit-any -- third-party module descriptors are intentionally opaque */
-declare module 'bpmn-js-properties-panel' {
-  export const BpmnPropertiesPanelModule: any
-  export const BpmnPropertiesProviderModule: any
-}
-declare module 'bpmn-js-create-append-anything' {
-  export const CreateAppendAnythingModule: any
-  export const CreateAppendElementTemplatesModule: any
-}
 declare module 'diagram-js-minimap' {
   const minimapModule: any
   export default minimapModule
-}
-declare module 'bpmn-js-bpmnlint' {
-  const bpmnLintModule: any
-  export default bpmnLintModule
 }
 /* eslint-enable @typescript-eslint/no-explicit-any */
 

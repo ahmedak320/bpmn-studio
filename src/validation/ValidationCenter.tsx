@@ -1,7 +1,7 @@
 import { useEffect, useId, useMemo, useRef, useState } from 'react'
 import { AccessibleDialog } from '../common/AccessibleDialog'
 import { t, type Key } from '../i18n'
-import { triggerDownload } from '../editor/exportImage'
+import { triggerDownload } from '../common/exportImage'
 import type { ValidationIssue, ValidationSeverity, ValidationSummary } from './contracts'
 import { localizeValidationIssue } from './issueLocalization'
 import { validationReportDataUrl } from './report'

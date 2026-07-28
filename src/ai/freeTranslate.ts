@@ -26,7 +26,7 @@
 //    suite drives the whole chain with fakes — see
 //    src/ai/__tests__/freeTranslate.test.ts.
 
-import type { DiagramLang } from '../editor/langToggle'
+import type { DiagramLang } from '../diagram/langToggle'
 import type { TranslateTextsFn } from './translate'
 import { parseBoundedJson, readBoundedResponseBody } from './browserAi'
 import {

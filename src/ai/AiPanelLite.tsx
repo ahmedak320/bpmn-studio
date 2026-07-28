@@ -75,7 +75,7 @@ import {
 } from './requestPrivacy'
 import { t, type Key, type Lang } from '../i18n'
 import { useLang } from '../i18n/useLang'
-import { triggerDownload } from '../editor/exportImage'
+import { triggerDownload } from '../common/exportImage'
 import {
   SpreadsheetImportPanel,
   type SpreadsheetImportPanelProps

@@ -13,7 +13,7 @@ import type {
   ReviewedXmlIngestionEvidence,
   ReviewedXmlIngestionReviewer
 } from '../localization'
-import { deriveFileBaseName, sanitizeFolderName } from '../editor/newProcessDoc'
+import { deriveFileBaseName, sanitizeFolderName } from '../core/newProcessDoc'
 import {
   evaluateValidationPolicy,
   getRuntimeValidationAdapters,

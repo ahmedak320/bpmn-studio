@@ -13,7 +13,7 @@ import {
   type LayoutNode,
   type Orientation
 } from '../epcLayout'
-import { fitInteriorBox } from '../../editor/autoSize'
+import { fitInteriorBox } from '../../diagram/autoSize'
 import { computeDecorLayout, decorationBoxes } from '../../org/decorExtents'
 
 // ---------------------------------------------------------------------------

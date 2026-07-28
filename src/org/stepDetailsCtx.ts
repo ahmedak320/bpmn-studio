@@ -19,7 +19,7 @@ import {
   getDiagramLang,
   pickRootBusinessObject,
   type LangToggleModeler
-} from '../editor/langToggle'
+} from '../diagram/langToggle'
 import {
   getLinkedNote,
   getOrgProps,

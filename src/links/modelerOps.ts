@@ -1,5 +1,5 @@
 // Minimal structural bpmn-js typings for the one operation this module
-// needs — kept narrow (like editor/EditorTab.tsx's own BpmnModelerLike)
+// needs — kept narrow (like the removed EditorTab's own BpmnModelerLike)
 // rather than importing bpmn-js's loose `any`-heavy types, and easy to
 // mock in tests without constructing a real diagram-js instance.
 
