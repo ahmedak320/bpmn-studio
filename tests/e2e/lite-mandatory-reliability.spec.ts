@@ -311,9 +311,45 @@ async function saveActive(page: Page): Promise<void> {
   })
 }
 
-async function waitForDraftFlush(page: Page): Promise<void> {
-  // Production draft persistence is deliberately debounced by 2 seconds.
-  await page.waitForTimeout(2_300)
+async function waitForDraftFlush(page: Page, expectedText: string): Promise<void> {
+  // The production draft journal is debounced by two seconds; a fixed sleep
+  // races timer starvation on slow hosts. Wait until the journal record
+  // actually contains the edited text. Only open the database when it is
+  // already listed: opening a missing one would create an empty shell the
+  // app's own upgrade can never repair.
+  await expect
+    .poll(
+      async () =>
+        page.evaluate(async (needle) => {
+          if (!('databases' in indexedDB)) return -1
+          const listed = await indexedDB.databases()
+          if (!listed.some((database) => database.name === 'orbitpm-lite-document-sessions')) {
+            return 0
+          }
+          const open = indexedDB.open('orbitpm-lite-document-sessions')
+          const db = await new Promise<IDBDatabase | null>((resolveOpen) => {
+            open.onsuccess = () => resolveOpen(open.result)
+            open.onerror = () => resolveOpen(null)
+            open.onblocked = () => resolveOpen(null)
+          })
+          if (!db || !db.objectStoreNames.contains('drafts')) {
+            db?.close()
+            return 0
+          }
+          try {
+            const request = db.transaction('drafts', 'readonly').objectStore('drafts').getAll()
+            const records = await new Promise<unknown[]>((resolveAll) => {
+              request.onsuccess = () => resolveAll(request.result as unknown[])
+              request.onerror = () => resolveAll([])
+            })
+            return records.filter((record) => JSON.stringify(record).includes(needle)).length
+          } finally {
+            db.close()
+          }
+        }, expectedText),
+      { timeout: 30_000 }
+    )
+    .not.toBe(0)
 }
 
 async function reloadToLanding(page: Page): Promise<void> {
@@ -455,7 +491,7 @@ test('mandatory recovery: real OPFS restores a dirty draft after reload', async 
     })
     await openDirectoryFile(opfsPage, 'opfs-recovery.bpmn')
     await dirtyActiveTask(opfsPage, 'Recovered from real OPFS')
-    await waitForDraftFlush(opfsPage)
+    await waitForDraftFlush(opfsPage, 'Recovered from real OPFS')
 
     await reloadToLanding(opfsPage)
     await opfsPage.getByRole('button', { name: 'Open browser workspace' }).click()
@@ -485,7 +521,7 @@ test('mandatory recovery: single-file upload restores a dirty draft after reload
   await page.locator('input[type="file"][accept^=".bpmn"]').setInputFiles(upload)
   await waitForModeler(page)
   await dirtyActiveTask(page, 'Recovered from single file')
-  await waitForDraftFlush(page)
+  await waitForDraftFlush(page, 'Recovered from single file')
 
   await reloadToLanding(page)
   await page.locator('input[type="file"][accept^=".bpmn"]').setInputFiles(upload)
@@ -504,7 +540,7 @@ test('mandatory recovery: directory/FSA workspace restores a dirty draft after r
   await openDirectoryWorkspace(page)
   await openDirectoryFile(page, 'directory-recovery.bpmn')
   await dirtyActiveTask(page, 'Recovered from directory FSA')
-  await waitForDraftFlush(page)
+  await waitForDraftFlush(page, 'Recovered from directory FSA')
 
   await reloadToLanding(page)
   await page.getByRole('button', { name: 'Choose folder workspace' }).click()
