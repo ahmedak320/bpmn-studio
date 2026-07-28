@@ -16,10 +16,18 @@ describe('tokenizeXmlDocument', () => {
 </AML>`)
 
     expect(document.rootElementName).toBe('AML')
+    expect(document.nodeCount).toBeGreaterThan(4)
     expect(document.declaration?.encoding).toBe('UTF-8')
     expect(document.doctype?.name).toBe('AML')
     expect(document.doctype?.entityDeclarations).toHaveLength(1)
     expect(document.doctype?.entityDeclarations[0]?.name).toBe('Company')
+    const root = document.children.find(
+      (node): node is Extract<(typeof document.children)[number], { kind: 'element' }> =>
+        node.kind === 'element'
+    )
+    if (!root || root.kind !== 'element') throw new Error('expected AML root element')
+    expect(document.children.some((child) => child.kind === 'comment')).toBe(true)
+    expect(root.children.some((child) => child.kind === 'processing-instruction')).toBe(true)
     expect(document.tokens.map((token) => token.kind)).toEqual(
       expect.arrayContaining([
         'xml-declaration',
@@ -48,6 +56,7 @@ describe('tokenizeXmlDocument', () => {
     const document = tokenizeXmlDocument('<!DOCTYPE AML SYSTEM "ARIS-Export.dtd"><AML />')
     expect(document.doctype?.externalIdKind).toBe('system')
     expect(document.doctype?.externalIdLiteral).toBe('ARIS-Export.dtd')
+    expect(document.children[0]).toMatchObject({ kind: 'element', name: 'AML' })
   })
 
   it('rejects malformed nesting', () => {

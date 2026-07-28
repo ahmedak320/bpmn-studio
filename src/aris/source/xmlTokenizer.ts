@@ -68,6 +68,21 @@ export interface XmlTextToken {
   readonly target?: string
 }
 
+export interface XmlElementNode {
+  readonly kind: 'element'
+  readonly name: string
+  readonly startTag: XmlStartTagToken
+  readonly endTag: XmlEndTagToken | null
+  readonly children: readonly XmlNode[]
+}
+
+export interface XmlLeafNode {
+  readonly kind: 'text' | 'comment' | 'cdata' | 'processing-instruction'
+  readonly token: XmlTextToken
+}
+
+export type XmlNode = XmlElementNode | XmlLeafNode
+
 export type XmlToken =
   | XmlDeclarationToken
   | XmlDoctypeToken
@@ -77,10 +92,12 @@ export type XmlToken =
 
 export interface TokenizedXmlDocument {
   readonly tokens: readonly XmlToken[]
+  readonly children: readonly XmlNode[]
   readonly declaration: XmlDeclarationToken | null
   readonly doctype: XmlDoctypeToken | null
   readonly rootElementName: string | null
   readonly maxDepth: number
+  readonly nodeCount: number
 }
 
 export interface XmlTokenizerLimits {
@@ -123,6 +140,14 @@ interface Cursor {
   byteOffset: number
   line: number
   column: number
+}
+
+interface MutableXmlElementNode {
+  kind: 'element'
+  name: string
+  startTag: XmlStartTagToken
+  endTag: XmlEndTagToken | null
+  children: XmlNode[]
 }
 
 function isNameStartChar(char: string): boolean {
@@ -559,10 +584,13 @@ export function tokenizeXmlDocument(
   const cursor: Cursor = { index: 0, byteOffset: 0, line: 1, column: 1 }
   const tokens: XmlToken[] = []
   const openElements: string[] = []
+  const openElementNodes: MutableXmlElementNode[] = []
+  const documentChildren: XmlNode[] = []
   let declaration: XmlDeclarationToken | null = null
   let doctype: XmlDoctypeToken | null = null
   let rootElementName: string | null = null
   let maxDepth = 0
+  let nodeCount = 0
 
   if (text.startsWith('\uFEFF')) advanceTo(text, cursor, 1)
 
@@ -575,6 +603,23 @@ export function tokenizeXmlDocument(
       )
     }
     tokens.push(token)
+  }
+
+  const appendNode = (node: XmlNode): void => {
+    nodeCount += 1
+    const parent = openElementNodes[openElementNodes.length - 1]
+    if (parent) parent.children.push(node)
+    else documentChildren.push(node)
+  }
+
+  const freezeNode = (node: XmlNode): XmlNode => {
+    if (node.kind === 'element') {
+      return Object.freeze({
+        ...node,
+        children: Object.freeze(node.children.map((child) => freezeNode(child)))
+      })
+    }
+    return Object.freeze(node)
   }
 
   while (cursor.index < text.length) {
@@ -592,15 +637,21 @@ export function tokenizeXmlDocument(
       continue
     }
     if (remaining.startsWith('<!--')) {
-      pushToken(parseComment(text, cursor))
+      const token = parseComment(text, cursor)
+      pushToken(token)
+      appendNode({ kind: 'comment', token })
       continue
     }
     if (remaining.startsWith('<![CDATA[')) {
-      pushToken(parseCdata(text, cursor))
+      const token = parseCdata(text, cursor)
+      pushToken(token)
+      appendNode({ kind: 'cdata', token })
       continue
     }
     if (remaining.startsWith('<?')) {
-      pushToken(parseProcessingInstruction(text, cursor))
+      const token = parseProcessingInstruction(text, cursor)
+      pushToken(token)
+      appendNode({ kind: 'processing-instruction', token })
       continue
     }
     if (remaining.startsWith('<!DOCTYPE')) {
@@ -614,6 +665,7 @@ export function tokenizeXmlDocument(
     if (remaining.startsWith('</')) {
       const token = parseEndTag(text, cursor)
       const expected = openElements.pop()
+      const currentNode = openElementNodes.pop()
       if (expected !== token.name) {
         throw new XmlTokenizerError(
           'malformed-nesting',
@@ -621,6 +673,14 @@ export function tokenizeXmlDocument(
           token.span.start.offset
         )
       }
+      if (!currentNode || currentNode.name !== token.name) {
+        throw new XmlTokenizerError(
+          'malformed-nesting',
+          `Closing tag </${token.name}> does not match the current open element node.`,
+          token.span.start.offset
+        )
+      }
+      currentNode.endTag = token
       pushToken(token)
       continue
     }
@@ -638,14 +698,32 @@ export function tokenizeXmlDocument(
       }
       if (token.kind === 'start-tag') {
         openElements.push(token.name)
+        const node: MutableXmlElementNode = {
+          kind: 'element',
+          name: token.name,
+          startTag: token,
+          endTag: null,
+          children: []
+        }
+        appendNode(node as unknown as XmlNode)
+        openElementNodes.push(node)
         maxDepth = Math.max(maxDepth, openElements.length)
       } else {
+        appendNode({
+          kind: 'element',
+          name: token.name,
+          startTag: token,
+          endTag: null,
+          children: []
+        })
         maxDepth = Math.max(maxDepth, openElements.length + 1)
       }
       pushToken(token)
       continue
     }
-    pushToken(parseText(text, cursor))
+    const token = parseText(text, cursor)
+    pushToken(token)
+    appendNode({ kind: 'text', token })
   }
 
   if (openElements.length > 0) {
@@ -658,9 +736,11 @@ export function tokenizeXmlDocument(
 
   return Object.freeze({
     tokens: Object.freeze(tokens),
+    children: Object.freeze(documentChildren.map((node) => freezeNode(node))),
     declaration,
     doctype,
     rootElementName,
-    maxDepth
+    maxDepth,
+    nodeCount
   })
 }

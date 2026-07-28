@@ -47,6 +47,8 @@ interface ArisTab {
   mimeType?: string
   rootElementName?: string | null
   xmlTokenCount?: number
+  xmlNodeCount?: number
+  doctypeExternalId?: string | null
 }
 
 function pushSortedSources(entries: readonly WorkspaceEntry[]): WorkspaceEntry[] {
@@ -105,7 +107,9 @@ function snapshotToTab(snapshot: FileSnapshot, text: string): ArisTab {
     sha256: snapshot.hash,
     mimeType: snapshot.mimeType,
     rootElementName: null,
-    xmlTokenCount: undefined
+    xmlTokenCount: undefined,
+    xmlNodeCount: undefined,
+    doctypeExternalId: null
   }
 }
 
@@ -317,6 +321,16 @@ function ArisPlaceholderTab({
             <dd style={{ margin: 0, overflowWrap: 'anywhere' }}>{tab.relPath ?? t('aris.source.virtual')}</dd>
             <dt style={{ color: 'var(--orbitpm-muted)' }}>{t('aris.placeholder.sourceBytes')}</dt>
             <dd style={{ margin: 0 }}>{tab.bytes.byteLength}</dd>
+            <dt style={{ color: 'var(--orbitpm-muted)' }}>{t('aris.placeholder.rootElement')}</dt>
+            <dd style={{ margin: 0 }}>{tab.rootElementName ?? t('aris.assistant.none')}</dd>
+            <dt style={{ color: 'var(--orbitpm-muted)' }}>{t('aris.placeholder.sourceTokens')}</dt>
+            <dd style={{ margin: 0 }}>{tab.xmlTokenCount ?? t('aris.assistant.none')}</dd>
+            <dt style={{ color: 'var(--orbitpm-muted)' }}>{t('aris.placeholder.sourceNodes')}</dt>
+            <dd style={{ margin: 0 }}>{tab.xmlNodeCount ?? t('aris.assistant.none')}</dd>
+            <dt style={{ color: 'var(--orbitpm-muted)' }}>{t('aris.placeholder.sourceDoctype')}</dt>
+            <dd style={{ margin: 0, overflowWrap: 'anywhere' }}>
+              {tab.doctypeExternalId ?? t('aris.assistant.none')}
+            </dd>
             <dt style={{ color: 'var(--orbitpm-muted)' }}>{t('aris.placeholder.sourceDigest')}</dt>
             <dd style={{ margin: 0, overflowWrap: 'anywhere', fontFamily: 'monospace' }}>
               {tab.sha256}
@@ -476,7 +490,9 @@ export default function ArisApp(): JSX.Element {
                 text
               ),
               rootElementName: sourcePackage.document.rootElementName,
-              xmlTokenCount: sourcePackage.document.tokens.length
+              xmlTokenCount: sourcePackage.document.tokens.length,
+              xmlNodeCount: sourcePackage.document.nodeCount,
+              doctypeExternalId: sourcePackage.document.doctype?.externalIdLiteral ?? null
             }
           : {
               key: `source:${name}:${sourcePackage.sha256}`,
@@ -488,7 +504,9 @@ export default function ArisApp(): JSX.Element {
               sha256: sourcePackage.sha256,
               mimeType,
               rootElementName: sourcePackage.document.rootElementName,
-              xmlTokenCount: sourcePackage.document.tokens.length
+              xmlTokenCount: sourcePackage.document.tokens.length,
+              xmlNodeCount: sourcePackage.document.nodeCount,
+              doctypeExternalId: sourcePackage.document.doctype?.externalIdLiteral ?? null
             }
       )
       return true

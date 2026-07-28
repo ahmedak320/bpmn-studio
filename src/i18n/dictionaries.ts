@@ -192,6 +192,10 @@ export const en = {
   'aris.placeholder.sourceKind': 'Source kind',
   'aris.placeholder.sourcePath': 'Source path',
   'aris.placeholder.sourceBytes': 'Bytes',
+  'aris.placeholder.rootElement': 'Root element',
+  'aris.placeholder.sourceTokens': 'XML tokens',
+  'aris.placeholder.sourceNodes': 'Syntax nodes',
+  'aris.placeholder.sourceDoctype': 'DOCTYPE system/public id',
   'aris.placeholder.sourceDigest': 'SHA-256',
   'aris.placeholder.mainAria': 'ARIS workspace tab for {name}',
   'aris.placeholder.newDiagramUnavailable':
@@ -2499,6 +2503,10 @@ export const ar: Record<keyof typeof en, string> = {
   'aris.placeholder.sourceKind': 'نوع المصدر',
   'aris.placeholder.sourcePath': 'مسار المصدر',
   'aris.placeholder.sourceBytes': 'البايتات',
+  'aris.placeholder.rootElement': 'العنصر الجذر',
+  'aris.placeholder.sourceTokens': 'رموز XML',
+  'aris.placeholder.sourceNodes': 'عُقد البنية',
+  'aris.placeholder.sourceDoctype': 'معرّف DOCTYPE العام/النظامي',
   'aris.placeholder.sourceDigest': 'SHA-256',
   'aris.placeholder.mainAria': 'لسان مساحة عمل ARIS لـ {name}',
   'aris.placeholder.newDiagramUnavailable':

@@ -70,8 +70,8 @@ Shipped-artifact evidence after the ARIS shell surface swap:
 
 - `npm run build:aris` now transforms `375` modules instead of the earlier `461`
 - [release/OrbitPM-ARIS-Studio-Lite.html](/home/ahmed/Desktop/bpmn_tool/desktop/release/OrbitPM-ARIS-Studio-Lite.html)
-  is currently `657,947` bytes with SHA-256
-  `97c8f359d960ed10567667dee52ba7eaa16eea6e220a3015cd642bd848bfaad5`
+  is currently `660,839` bytes with SHA-256
+  `f7cad76ce2e779acc9e00e36fbf94bf89d77508cf9fe2c06852a60d3cba2a902`
 - the shipped artifact no longer contains these BPMN runtime entrypoints:
   - `bpmn-moddle`
   - `layoutProcess`
