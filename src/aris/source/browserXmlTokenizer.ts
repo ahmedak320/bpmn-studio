@@ -12,7 +12,7 @@ import type {
   XmlTokenizerWorkerResponse
 } from './xmlTokenizerWorkerProtocol'
 
-interface WorkerLike {
+export interface WorkerLike {
   postMessage(message: unknown, transfer?: Transferable[]): void
   terminate(): void
   addEventListener(
@@ -53,12 +53,24 @@ function throwIfAborted(signal?: AbortSignal): void {
   if (signal?.aborted) throw aborted()
 }
 
-function fallbackTokenize(
+// Deliberately `async`: every throw below (including the synchronous
+// `throwIfAborted` and any thrown `XmlTokenizerError` from the tokenizer
+// itself) is converted into a promise rejection instead of escaping this
+// function synchronously. Callers rely on `tokenizeXmlInBrowser` always
+// returning a promise that settles, never throwing directly.
+async function fallbackTokenize(
   text: string,
   options: BrowserXmlTokenizerOptions
 ): Promise<TokenizedXmlDocument> {
   throwIfAborted(options.signal)
-  return Promise.resolve(tokenizeXmlDocument(text, options.limits))
+  try {
+    return tokenizeXmlDocument(text, options.limits, options.signal)
+  } catch (cause) {
+    if (cause instanceof XmlTokenizerError && cause.code === 'cancelled') {
+      throw aborted()
+    }
+    throw cause
+  }
 }
 
 export function tokenizeXmlInBrowser(
@@ -72,7 +84,12 @@ export function tokenizeXmlInBrowser(
   } catch {
     return fallbackTokenize(text, options)
   }
-  throwIfAborted(options.signal)
+  if (options.signal?.aborted) {
+    // Never leave a constructed worker thread dangling: an already-aborted
+    // signal must terminate it immediately instead of posting any work.
+    worker.terminate()
+    return Promise.reject(aborted())
+  }
   const requestId = nextRequestId()
   return new Promise<TokenizedXmlDocument>((resolve, reject) => {
     let settled = false

