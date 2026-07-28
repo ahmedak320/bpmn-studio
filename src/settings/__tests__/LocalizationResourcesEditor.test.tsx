@@ -240,7 +240,8 @@ describe('LocalizationResourcesEditor', () => {
       [...baseGlossary, { en: 'Case code', ar: 'Case code', neutral: true }],
       initial.files.glossary.hash
     )
-    expect(screen.getByRole('status').textContent).toContain(
+    // The success status renders after the save resolves; wait for it.
+    expect((await screen.findByRole('status')).textContent).toContain(
       t('settings.localization.glossary.saved')
     )
   })
@@ -419,7 +420,8 @@ describe('LocalizationResourcesEditor', () => {
     expect(saveGlossary).toHaveBeenLastCalledWith([baseGlossary[0]], {
       expectedHash: initial.files.glossary.hash
     })
-    expect(screen.getByRole('status').textContent).toContain(
+    // The success status renders after the save resolves; wait for it.
+    expect((await screen.findByRole('status')).textContent).toContain(
       t('settings.localization.glossary.saved')
     )
     expect(screen.queryByRole('alert')).toBeNull()
