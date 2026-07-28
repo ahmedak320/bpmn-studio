@@ -38,8 +38,8 @@ Status as of 2026-07-28 on `feat/aris-only-studio`:
 
 - [x] ARIS-only input boundary started: `.aml` is accepted; detected BPMN input is rejected non-destructively.
 - [x] Production entry now mounts an ARIS-specific shell instead of the BPMN `App` composition root.
-- [ ] ARIS shell loads through `file://`.
-- [ ] Settings, AI tabs, assistant, workspace picker, language, and theme still work under the new ARIS shell.
+- [x] ARIS shell loads through `file://` from the rolling artifact at `release/OrbitPM-ARIS-Studio-Lite.html`.
+- [x] Settings, AI tabs, assistant, workspace picker, language, and theme still work under the new ARIS shell.
 - [ ] BPMN input is rejected non-destructively across all remaining import paths.
 - [ ] Production dependency graph contains no BPMN runtime.
 
@@ -48,5 +48,5 @@ Status as of 2026-07-28 on `feat/aris-only-studio`:
 No external blocker yet for the active implementation phase. The remaining work is internal:
 
 - remove the BPMN editor shell without regressing retained infrastructure;
-- finish scrubbing remaining BPMN-first labels and fallback actions exposed through retained shared UI;
+- finish the remaining BPMN rejection coverage in directory/workspace and review-driven import paths;
 - remove BPMN runtime dependencies only after the ARIS shell path is active.

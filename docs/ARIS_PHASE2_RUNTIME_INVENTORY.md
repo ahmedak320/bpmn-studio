@@ -77,11 +77,17 @@ These cannot be removed until the ARIS shell path replaces the BPMN editor/runti
   - opens `.aml`, `.apc`, and generic `.xml` sources without converting them into BPMN runtime state
   - keeps settings, assistant, workspace picker, folder switching, and embedded AI reachable from the new shell
   - surfaces exact source bytes, hash, and content while the native ARIS modeler is still pending
+- Added the rolling ARIS artifact writer for:
+  - `release/OrbitPM-ARIS-Studio-Lite.html`
+- Added an exact `file://` smoke for the ARIS shell that verifies:
+  - the rolling artifact opens directly from disk
+  - the workspace picker, language toggle, theme response, settings dialog, assistant drawer, and embedded AI panel all remain usable
+  - the real AnimalWF reference source at `reference/AnimalWF/ARISAMLExport.xml` opens in the placeholder shell
+  - BPMN rejection still holds on the top-level open-file and import-file shell paths
 
 ## Next implementation slice
 
 Finish Phase 2 cleanup around the new shell:
 
-- remove or rename the remaining BPMN-first user-visible labels still reused by shared retained UI
-- verify the ARIS shell behavior through the remaining import/open paths, including `file://`
+- finish the remaining BPMN rejection coverage in directory-backed workspace browsing and review-driven import surfaces
 - delete BPMN production dependencies only after `App`/editor-only imports are fully outside the production graph

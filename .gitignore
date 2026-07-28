@@ -9,7 +9,8 @@ npm-debug.log*
 test-results/
 playwright-report/
 /coverage/
-/release/
+/release/*
+!/release/OrbitPM-ARIS-Studio-Lite.html
 /release-*/
 /compliance/
 /tested-dist/

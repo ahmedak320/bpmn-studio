@@ -21,6 +21,7 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
+    "build:aris": "vite build && node scripts/update-rolling-artifact.mjs dist/index.html",
     "preview": "vite preview",
     "clean:dist": "node scripts/clean-output.mjs dist",
     "format:check": "prettier --check .",
@@ -45,6 +46,7 @@
     "test:performance": "vite-node scripts/performance-gate.ts",
     "test:performance:browser": "vite-node scripts/browser-performance-gate.ts",
     "test:soak": "vite-node scripts/soak-gate.ts",
+    "test:aris:file-smoke": "node scripts/aris-file-smoke.mjs release/OrbitPM-ARIS-Studio-Lite.html",
     "test:e2e:built": "playwright test",
     "test:e2e": "npm run clean:dist && npm run build && npm run test:e2e:built",
     "test:a11y": "node scripts/accessibility-audit.mjs",
