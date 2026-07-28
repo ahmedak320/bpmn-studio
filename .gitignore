@@ -14,6 +14,7 @@ playwright-report/
 /compliance/
 /tested-dist/
 /draft-download/
+/local-evidence/
 /accessibility-results*.json
 /performance-results.json
 /performance-browser-results.json

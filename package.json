@@ -36,6 +36,8 @@
     "license:check": "node scripts/license-policy.mjs",
     "sbom": "node scripts/generate-sbom.mjs",
     "typecheck": "tsc --noEmit -p tsconfig.json",
+    "baseline:aris:phase0": "vite-node scripts/aris-phase0-baseline.ts",
+    "test:aris:phase1": "node scripts/aris-phase1-characterization.mjs",
     "test": "vitest run --maxWorkers=4 --retry=0 --reporter=default --reporter=./scripts/vitest-release-reporter.mjs",
     "test:coverage": "node scripts/run-coverage.mjs",
     "test:validation": "vitest run --maxWorkers=4 --retry=0 --reporter=default --reporter=./scripts/vitest-release-reporter.mjs src/validation/__tests__ src/generation/__tests__/generation-safety.test.ts src/generation/__tests__/ir-validation.test.ts && node scripts/bpmn-fixture-gate.mjs",
