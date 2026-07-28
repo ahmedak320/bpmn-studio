@@ -1319,7 +1319,9 @@ test('TR5: AI text, DOCX, PDF, PNG/image and Excel use their real generation/imp
     await page.getByRole('textbox', { name: 'Name', exact: true }).fill(name)
     const before = requests.length
     await page.getByLabel('I reviewed this request and consent to sending the listed data.').check()
-    await page.getByRole('button', { name: 'Generate from document' }).click()
+    // The button enables only after the document parse finishes in its
+    // worker; give it the same bound this file uses for worker-backed steps.
+    await page.getByRole('button', { name: 'Generate from document' }).click({ timeout: 30_000 })
     await expect.poll(() => requests.length, { timeout: 30_000 }).toBe(before + 2)
     expect(JSON.stringify(requests[before + 1])).toContain('orbitpm.bilingual-wrong-script-ar')
     await assertActiveGeneratedBilingual(page)
