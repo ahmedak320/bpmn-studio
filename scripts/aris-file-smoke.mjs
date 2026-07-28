@@ -130,9 +130,9 @@ try {
 
     await page.getByText('ARISAMLExport.xml', { exact: true }).first().waitFor({ state: 'visible' })
     await page.getByText(scenario.placeholderHeading, { exact: true }).waitFor({ state: 'visible' })
-    await page.getByText(scenario.aiPanelHeading, { exact: true }).waitFor({ state: 'visible' })
+    await page.getByLabel(scenario.aiPanelHeading, { exact: true }).waitFor({ state: 'visible' })
 
-    await page.getByRole('button', { name: scenario.settingsButton, exact: true }).click()
+    await page.getByRole('banner').getByRole('button', { name: scenario.settingsButton, exact: true }).click()
     const settingsDialog = page.getByRole('dialog', { name: scenario.settingsTitle, exact: true })
     await settingsDialog.waitFor({ state: 'visible' })
     await settingsDialog.getByLabel(scenario.closeSettings, { exact: true }).click()
@@ -141,7 +141,7 @@ try {
     await page.getByRole('button', { name: scenario.assistantButton, exact: true }).click()
     const assistantDialog = page.getByRole('dialog', { name: scenario.assistantTitle, exact: true })
     await assistantDialog.waitFor({ state: 'visible' })
-    await assistantDialog.getByRole('button', { name: scenario.closeAssistant, exact: true }).click()
+    await assistantDialog.getByLabel(scenario.closeAssistant, { exact: true }).click()
     await assistantDialog.waitFor({ state: 'hidden' })
 
     const openInput = page.locator('input[type="file"]').nth(0)

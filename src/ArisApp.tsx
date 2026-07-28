@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
-import { AiPanelLite } from './ai/AiPanelLite'
-import type { GeneratedPlacementOutcome } from './ai/placementOutcome'
+import { ArisAssistantDrawer } from './ArisAssistantDrawer'
+import { ArisGenerationPanel } from './ArisGenerationPanel'
 import { ICON_DATA_URI } from './branding/icon'
 import { ProcessTabList, processTabId, processTabPanelId } from './common/ProcessTabList'
 import { PaneResizer, usePaneWidth } from './common/PaneResizer'
@@ -16,7 +16,6 @@ import {
 import { t } from './i18n'
 import { setLang, useLang } from './i18n/useLang'
 import { SettingsDialogLite } from './settings/SettingsDialogLite'
-import { AssistantDrawer } from './assist/AssistantDrawer'
 import { ResponsiveDrawer, ResponsiveShell, useResponsiveShellMode } from './shell'
 import { Toaster, type ToastMsg, type ToastTone } from './workspace/Toaster'
 import { WorkspacePickerLite, type PickerMode } from './workspace/WorkspacePickerLite'
@@ -128,8 +127,28 @@ function upsertTab(current: readonly ArisTab[], next: ArisTab): ArisTab[] {
   return copy
 }
 
-function modeToAssistant(mode: WorkspaceMode): 'directory' | 'fallback' {
-  return mode === 'directory' || mode === 'opfs' ? 'directory' : 'fallback'
+function escapeXmlText(value: string): string {
+  return value
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;')
+    .replaceAll('"', '&quot;')
+    .replaceAll("'", '&apos;')
+}
+
+function buildGeneratedArisPlaceholderXml(name: string, description: string, lang: 'en' | 'ar'): string {
+  const safeName = escapeXmlText(name.trim() || t('aris.generated.fallbackName'))
+  const safeDescription = escapeXmlText(description.trim())
+  return [
+    '<?xml version="1.0" encoding="UTF-8"?>',
+    '<AML>',
+    '  <Header-Info DatabaseName="OrbitPM" UserName="local-user" ArisExeVersion="100" />',
+    `  <OrbitPM-Placeholder Type="GeneratedDraft" Lang="${lang}">`,
+    `    <ModelName>${safeName}</ModelName>`,
+    `    <Description>${safeDescription}</Description>`,
+    '  </OrbitPM-Placeholder>',
+    '</AML>'
+  ].join('\n')
 }
 
 function pickerErrorMessage(code: ReturnType<typeof classifyPickerError>): string {
@@ -580,30 +599,15 @@ export default function ArisApp(): JSX.Element {
     [openImportedBytes]
   )
 
-  const handlePlaceGenerated = useCallback(
-    async (
-      xml: string,
-      options: {
-        name: string
-        targetFolder: string
-        gen?: number
-        localizationSource?: string
-        signal: AbortSignal
-      }
-    ): Promise<GeneratedPlacementOutcome> => {
-      if (options.signal.aborted) {
-        return { status: 'discarded', reason: 'cancelled' }
-      }
+  const handleCreateGeneratedPlaceholder = useCallback(
+    async ({ name, description }: { name: string; description: string }) => {
+      const xml = buildGeneratedArisPlaceholderXml(name, description, lang)
       const bytes = new TextEncoder().encode(xml)
       const hash = await sha256Hex(bytes)
-      openTab(generatedToTab(options.name, xml, bytes, hash))
+      openTab(generatedToTab(name, xml, bytes, hash))
       setAssistantOpen(true)
-      return {
-        status: 'opened-in-memory',
-        label: options.name.trim() || t('aris.generated.fallbackName')
-      }
     },
-    [openTab]
+    [lang, openTab]
   )
 
   useEffect(() => {
@@ -668,15 +672,15 @@ export default function ArisApp(): JSX.Element {
           onClose={() => setSettingsOpen(false)}
           onKeysChanged={() => setKeysVersion((current) => current + 1)}
         />
-        <AssistantDrawer
+        <ArisAssistantDrawer
           open={assistantOpen}
-          onOpen={() => setAssistantOpen(true)}
           onClose={() => setAssistantOpen(false)}
-          printing={false}
-          mode="fallback"
-          keysVersion={keysVersion}
-          getDigests={async () => []}
-          onOpenProcess={() => undefined}
+          onOpenSettings={() => setSettingsOpen(true)}
+          workspaceLabel={rememberedName ?? rootLabel(mode, workspaceAdapter)}
+          sourceCount={workspaceSources.length}
+          openTabCount={tabs.length}
+          activeTabTitle={activeTab?.title ?? null}
+          activeSourceKindLabel={activeTab ? sourceKindLabel(activeTab.sourceKind) : null}
         />
         <Toaster toasts={toasts} onDismiss={dismissToast} />
       </>
@@ -883,20 +887,11 @@ export default function ArisApp(): JSX.Element {
                 <span aria-hidden>{assistantOpen ? '▾' : dir === 'rtl' ? '◂' : '▸'}</span>
               </button>
               <div style={{ flex: '0 1 auto', maxHeight: '55%', overflowY: 'auto' }}>
-                <AiPanelLite
+                <ArisGenerationPanel
                   embedded
-                  folders={[]}
-                  onPlaceGenerated={handlePlaceGenerated}
-                  getWorkspaceGen={() => 0}
+                  onCreatePlaceholder={handleCreateGeneratedPlaceholder}
+                  onOpenAssistant={() => setAssistantOpen(true)}
                   onOpenSettings={() => setSettingsOpen(true)}
-                  collapsed={false}
-                  onToggle={() => undefined}
-                  keysVersion={keysVersion}
-                  mode={mode === 'directory' || mode === 'opfs' ? 'directory' : 'fallback'}
-                  processCatalog={[]}
-                  isKnownProcess={() => false}
-                  resolveProcessName={(id) => id}
-                  onContinueInChat={() => setAssistantOpen(true)}
                 />
               </div>
             </div>
@@ -1035,16 +1030,16 @@ export default function ArisApp(): JSX.Element {
         onClose={() => setSettingsOpen(false)}
         onKeysChanged={() => setKeysVersion((current) => current + 1)}
       />
-      <AssistantDrawer
+      <ArisAssistantDrawer
         open={assistantOpen}
-        onOpen={() => setAssistantOpen(true)}
         onClose={() => setAssistantOpen(false)}
-        printing={false}
-        mode={modeToAssistant(mode)}
-        keysVersion={keysVersion}
-        getDigests={async () => []}
-        onOpenProcess={() => undefined}
+        onOpenSettings={() => setSettingsOpen(true)}
         onChangeWorkspace={directoryAvailable ? () => void handleOpenDifferent() : undefined}
+        workspaceLabel={rootLabel(mode, workspaceAdapter)}
+        sourceCount={workspaceSources.length}
+        openTabCount={tabs.length}
+        activeTabTitle={activeTab?.title ?? null}
+        activeSourceKindLabel={activeTab ? sourceKindLabel(activeTab.sourceKind) : null}
       />
       <Toaster toasts={toasts} onDismiss={dismissToast} />
     </>

@@ -199,6 +199,27 @@ export const en = {
   'aris.placeholder.newProcessUnavailable':
     'The ARIS placeholder shell does not create native ARIS models yet. Open an ARIS AML/XML source or use Create with AI.',
   'aris.footer.summary': '{files} workspace sources · {tabs} open tabs',
+  'aris.ai.body':
+    'Create a reviewed ARIS placeholder source from a description while the ARIS-native generation pipeline is being rebuilt.',
+  'aris.ai.name': 'Draft name',
+  'aris.ai.namePlaceholder': 'Generated draft',
+  'aris.ai.description': 'Process description',
+  'aris.ai.descriptionPlaceholder':
+    'Describe the process, scope, actors, and key decisions. The ARIS shell will capture it as an exact placeholder source.',
+  'aris.ai.create': 'Create placeholder source',
+  'aris.ai.creating': 'Creating placeholder…',
+  'aris.assistant.body':
+    'The ARIS assistant surface stays available in Phase 2 while BPMN-specific retrieval and interview flows are removed from the shipped artifact.',
+  'aris.assistant.workspace': 'Current workspace context',
+  'aris.assistant.root': 'Workspace root',
+  'aris.assistant.sources': 'Visible sources',
+  'aris.assistant.tabs': 'Open tabs',
+  'aris.assistant.activeTab': 'Active tab',
+  'aris.assistant.activeKind': 'Active source kind',
+  'aris.assistant.none': 'None',
+  'aris.assistant.nextHeading': 'Next ARIS-native assistant work',
+  'aris.assistant.nextBody':
+    'Later phases will replace the retained BPMN-centric assistant logic with ARIS-native retrieval, missing-information completion, and safe reviewed edits.',
 
   // --- FolderTreeLite context menu ---
   'contextMenu.newProcess': 'New process',
@@ -2485,6 +2506,27 @@ export const ar: Record<keyof typeof en, string> = {
   'aris.placeholder.newProcessUnavailable':
     'غلاف العنصر النائب لـ ARIS لا ينشئ بعد نماذج ARIS أصلية. افتح مصدر ARIS AML/XML أو استخدم الإنشاء بالذكاء الاصطناعي.',
   'aris.footer.summary': '{files} من مصادر مساحة العمل · {tabs} من الألسنة المفتوحة',
+  'aris.ai.body':
+    'أنشئ مصدر عنصر نائب مُراجَع لـ ARIS من وصف نصي بينما يُعاد بناء مسار الإنشاء الأصلي لـ ARIS.',
+  'aris.ai.name': 'اسم المسودة',
+  'aris.ai.namePlaceholder': 'مسودة مولدة',
+  'aris.ai.description': 'وصف العملية',
+  'aris.ai.descriptionPlaceholder':
+    'صِف العملية والنطاق والأطراف الفاعلة والقرارات الرئيسية. سيسجل غلاف ARIS ذلك كمصدر عنصر نائب مطابق.',
+  'aris.ai.create': 'إنشاء مصدر عنصر نائب',
+  'aris.ai.creating': 'جارٍ إنشاء عنصر نائب…',
+  'aris.assistant.body':
+    'يبقى سطح مساعد ARIS متاحًا في المرحلة الثانية بينما تُزال من الملف المشحون مسارات الاسترجاع والمقابلة الخاصة بـ BPMN.',
+  'aris.assistant.workspace': 'سياق مساحة العمل الحالية',
+  'aris.assistant.root': 'جذر مساحة العمل',
+  'aris.assistant.sources': 'المصادر المرئية',
+  'aris.assistant.tabs': 'الألسنة المفتوحة',
+  'aris.assistant.activeTab': 'اللسان النشط',
+  'aris.assistant.activeKind': 'نوع المصدر النشط',
+  'aris.assistant.none': 'لا يوجد',
+  'aris.assistant.nextHeading': 'العمل التالي للمساعد الأصلي لـ ARIS',
+  'aris.assistant.nextBody':
+    'ستستبدل المراحل اللاحقة منطق المساعد المحتفظ به والمتمحور حول BPMN باسترجاع أصلي لـ ARIS، واستكمال المعلومات الناقصة، وتعديلات مراجعة آمنة.',
 
   // --- FolderTreeLite context menu ---
   'contextMenu.newProcess': 'عملية جديدة',

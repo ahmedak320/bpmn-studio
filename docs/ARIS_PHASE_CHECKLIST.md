@@ -41,7 +41,7 @@ Status as of 2026-07-28 on `feat/aris-only-studio`:
 - [x] ARIS shell loads through `file://` from the rolling artifact at `release/OrbitPM-ARIS-Studio-Lite.html`.
 - [x] Settings, AI tabs, assistant, workspace picker, language, and theme still work under the new ARIS shell.
 - [ ] BPMN input is rejected non-destructively across all remaining import paths.
-- [ ] Production dependency graph contains no BPMN runtime.
+- [x] Production dependency graph contains no BPMN runtime.
 
 ## Current blocker profile
 
@@ -49,4 +49,4 @@ No external blocker yet for the active implementation phase. The remaining work 
 
 - remove the BPMN editor shell without regressing retained infrastructure;
 - finish the remaining BPMN rejection coverage in review-driven import paths still owned by the legacy `App` shell;
-- remove BPMN runtime dependencies only after the ARIS shell path is active.
+- continue deleting legacy BPMN shell code now that the shipped ARIS artifact no longer depends on it.

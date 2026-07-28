@@ -53,7 +53,9 @@ This inventory records the current BPMN runtime surface that Phase 2 must replac
 
 ## Production dependencies to remove later in Phase 2
 
-Current `package.json` production dependencies still include:
+Current repository dependencies still include the BPMN/editor stack for
+legacy/test-only code paths, but as of Tuesday, July 28, 2026 these packages
+no longer live in `package.json` production `dependencies`:
 
 - `@bpmn-io/properties-panel`
 - `bpmn-auto-layout`
@@ -64,7 +66,23 @@ Current `package.json` production dependencies still include:
 - `bpmn-moddle`
 - `bpmnlint`
 
-These cannot be removed until the ARIS shell path replaces the BPMN editor/runtime imports.
+Shipped-artifact evidence after the ARIS shell surface swap:
+
+- `npm run build:aris` now transforms `392` modules instead of the earlier `461`
+- [release/OrbitPM-ARIS-Studio-Lite.html](/home/ahmed/Desktop/bpmn_tool/desktop/release/OrbitPM-ARIS-Studio-Lite.html)
+  shrank to `2,040,183` bytes with SHA-256
+  `cc5d5584ac4f319e90d044212af945cf26d70ab70867ff4c4127088d9477ac13`
+- the shipped artifact no longer contains these BPMN runtime entrypoints:
+  - `bpmn-moddle`
+  - `layoutProcess`
+  - `generateFromDescription`
+  - `composeCreateBpmn`
+  - `bpmn-js/lib/Modeler`
+  - `BpmnNavigatedViewer`
+  - `EditorTabLite`
+
+The remaining Phase 2 cleanup is repository-level deletion of legacy BPMN shell
+code, not a shipped-artifact dependency leak in the ARIS production path.
 
 ## Immediate Phase 2 work already completed
 
@@ -87,10 +105,12 @@ These cannot be removed until the ARIS shell path replaces the BPMN editor/runti
 - Added focused `ArisApp` tests that verify:
   - remembered directory workspaces surface `.bpmn` entries as unsupported and reject BPMN XML disguised as `.xml`
   - mixed import batches still accept ARIS AML peers after rejecting BPMN files
+- Replaced the ARIS shell's BPMN-backed AI/assistant imports with ARIS-only placeholder surfaces so the shipped artifact no longer pulls in the BPMN generation, digest, and viewer stack
+- Moved BPMN/editor packages from `dependencies` to `devDependencies` so `package.json` matches the shipped ARIS runtime boundary
 
 ## Next implementation slice
 
 Finish Phase 2 cleanup around the new shell:
 
 - finish the remaining BPMN rejection coverage in review-driven import surfaces still routed through the legacy `App` import stack
-- delete BPMN production dependencies only after `App`/editor-only imports are fully outside the production graph
+- start deleting the legacy `App`/editor-only BPMN shell now that the production artifact boundary has been cut

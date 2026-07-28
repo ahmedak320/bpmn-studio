@@ -19,11 +19,6 @@ vi.mock('./settings/SettingsDialogLite', () => ({
     open ? <div role="dialog">mock-settings-dialog</div> : null
 }))
 
-vi.mock('./assist/AssistantDrawer', () => ({
-  AssistantDrawer: ({ open }: { open: boolean }) =>
-    open ? <div role="dialog">mock-assistant-drawer</div> : null
-}))
-
 vi.mock('./fs/workspaceHandle', () => ({
   classifyPickerError: () => 'unknown' as const,
   directoryPickerSupported: () => mockState.directoryPickerSupported,
@@ -181,13 +176,19 @@ describe('ArisApp production shell', () => {
     expect(await screen.findByText('ARIS placeholder canvas')).not.toBeNull()
     expect(screen.getByRole('tab', { name: 'source.aml' })).not.toBeNull()
     expect(screen.getAllByText('ARIS AML').length).toBeGreaterThan(0)
-    expect(screen.getByTestId('mock-ai-panel')).not.toBeNull()
+    expect(screen.getByText('Create a reviewed ARIS placeholder source from a description while the ARIS-native generation pipeline is being rebuilt.')).not.toBeNull()
 
-    fireEvent.click(screen.getByRole('button', { name: /Settings/ }))
+    fireEvent.click(screen.getAllByRole('button', { name: /Settings/ })[0]!)
     expect(await screen.findByText('mock-settings-dialog')).not.toBeNull()
 
     fireEvent.click(screen.getByRole('button', { name: 'Assistant' }))
-    await waitFor(() => expect(screen.getByText('mock-assistant-drawer')).not.toBeNull())
+    await waitFor(() =>
+      expect(
+        screen.getByText(
+          'The ARIS assistant surface stays available in Phase 2 while BPMN-specific retrieval and interview flows are removed from the shipped artifact.'
+        )
+      ).not.toBeNull()
+    )
   })
 
   it('rejects BPMN entries surfaced through remembered directory workspace browsing while still opening AML peers', async () => {
