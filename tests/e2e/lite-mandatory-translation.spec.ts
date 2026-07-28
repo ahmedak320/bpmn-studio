@@ -1318,6 +1318,11 @@ test('TR5: AI text, DOCX, PDF, PNG/image and Excel use their real generation/imp
     await page.getByRole('textbox', { name: /Which process?/ }).fill(hint)
     await page.getByRole('textbox', { name: 'Name', exact: true }).fill(name)
     const before = requests.length
+    // The app resets consent whenever a preview dependency changes (parse
+    // completion, catalog load). Wait for the final preview before checking.
+    await expect(
+      page.getByText(/Workspace context: \d+ included, \d+ relevant, \d+ total\./)
+    ).toBeVisible({ timeout: 30_000 })
     await page.getByLabel('I reviewed this request and consent to sending the listed data.').check()
     // The button enables only after the document parse finishes in its
     // worker; give it the same bound this file uses for worker-backed steps.
