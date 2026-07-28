@@ -1426,4 +1426,54 @@ describe('WorkspaceImportReviewDialog', () => {
     expect(dialog.getAttribute('dir')).toBe('rtl')
     expect(within(dialog).getByText(REVIEW_DIGEST).closest('code')?.getAttribute('dir')).toBe('ltr')
   })
+
+  // `WorkspaceImportSkipReason` (owned by ./importTransaction) does not yet
+  // carry the 'bpmn-not-supported' literal, so this reason can only be
+  // constructed here via a cast — the same idiom the "future-skip-reason"
+  // case above uses for a reason this build's copy doesn't recognize at all.
+  // Unlike that case, this dialog's own skip-diagnostic map *does* already
+  // carry dedicated ARIS-only copy for 'bpmn-not-supported' (Phase 2
+  // exit-gate, plan §5.2); this proves that copy actually resolves — in both
+  // languages — once a caller starts producing the reason.
+  it('resolves dedicated ARIS-only copy for the bpmn-not-supported skip reason in English and Arabic', () => {
+    const reason = 'bpmn-not-supported' as WorkspaceImportSkipReason
+    const skipped = [
+      {
+        sourceId: 'skipped-bpmn',
+        sourceName: 'legacy.bpmn',
+        reason,
+        message: 'evidence-bpmn-not-supported'
+      }
+    ]
+
+    setLang('en');
+    {
+      const { unmount } = renderDialog(plan({ skipped }))
+      const skippedSection = screen.getByRole('heading', { name: 'Skipped inputs' }).closest('section') as HTMLElement
+      expect(
+        within(skippedSection).getByText('BPMN input is not supported in this build')
+      ).not.toBeNull()
+      expect(
+        within(skippedSection).getByText(
+          'The input was skipped because this ARIS-only build accepts ARIS AML/XML exports only.'
+        )
+      ).not.toBeNull()
+      unmount()
+    }
+
+    setLang('ar')
+    {
+      const { unmount } = renderDialog(plan({ skipped }))
+      const skippedSection = screen.getByRole('heading', { name: 'المدخلات المتخطاة' }).closest('section') as HTMLElement
+      expect(
+        within(skippedSection).getByText('إدخال BPMN غير مدعوم في هذا الإصدار')
+      ).not.toBeNull()
+      expect(
+        within(skippedSection).getByText(
+          'تم تخطي المدخل لأن هذا الإصدار المقتصر على ARIS يقبل فقط صادرات ARIS AML/XML.'
+        )
+      ).not.toBeNull()
+      unmount()
+    }
+  })
 })

@@ -49,6 +49,14 @@ interface ArisTab {
   xmlTokenCount?: number
   xmlNodeCount?: number
   doctypeExternalId?: string | null
+  modelCount?: number
+  objectDefinitionCount?: number
+  objectOccurrenceCount?: number
+  connectionDefinitionCount?: number
+  connectionOccurrenceCount?: number
+  attributeCount?: number
+  diagnosticCount?: number
+  unknownRecordCount?: number
 }
 
 function pushSortedSources(entries: readonly WorkspaceEntry[]): WorkspaceEntry[] {
@@ -80,8 +88,15 @@ function rootLabel(mode: WorkspaceMode, adapter: WorkspaceAdapter | null): strin
   return t('workspace.storage.mode.singleFile')
 }
 
-function downloadBytes(fileName: string, bytes: Uint8Array, mimeType = 'application/xml'): void {
-  const blob = new Blob([bytes], { type: mimeType })
+export function downloadBytes(fileName: string, bytes: Uint8Array, mimeType = 'application/xml'): void {
+  // `bytes` is typed `Uint8Array` without a pinned buffer type parameter, so
+  // TS 5.7's stricter `BlobPart` (which requires an `ArrayBuffer`-backed
+  // view, not the wider `ArrayBufferLike` that also covers
+  // `SharedArrayBuffer`) rejects it directly. `.slice()` with no arguments
+  // copies the full byte range into a fresh, always-`ArrayBuffer`-backed
+  // `Uint8Array` — same bytes, same length, and a type Blob accepts without
+  // a cast.
+  const blob = new Blob([bytes.slice()], { type: mimeType })
   const url = URL.createObjectURL(blob)
   try {
     const anchor = document.createElement('a')
@@ -109,7 +124,15 @@ function snapshotToTab(snapshot: FileSnapshot, text: string): ArisTab {
     rootElementName: null,
     xmlTokenCount: undefined,
     xmlNodeCount: undefined,
-    doctypeExternalId: null
+    doctypeExternalId: null,
+    modelCount: undefined,
+    objectDefinitionCount: undefined,
+    objectOccurrenceCount: undefined,
+    connectionDefinitionCount: undefined,
+    connectionOccurrenceCount: undefined,
+    attributeCount: undefined,
+    diagnosticCount: undefined,
+    unknownRecordCount: undefined
   }
 }
 
@@ -331,6 +354,40 @@ function ArisPlaceholderTab({
             <dd style={{ margin: 0, overflowWrap: 'anywhere' }}>
               {tab.doctypeExternalId ?? t('aris.assistant.none')}
             </dd>
+            <dt style={{ color: 'var(--orbitpm-muted)' }}>{t('aris.placeholder.modelCount')}</dt>
+            <dd style={{ margin: 0 }}>{tab.modelCount ?? t('aris.assistant.none')}</dd>
+            <dt style={{ color: 'var(--orbitpm-muted)' }}>
+              {t('aris.placeholder.objectDefinitionCount')}
+            </dt>
+            <dd style={{ margin: 0 }}>{tab.objectDefinitionCount ?? t('aris.assistant.none')}</dd>
+            <dt style={{ color: 'var(--orbitpm-muted)' }}>
+              {t('aris.placeholder.objectOccurrenceCount')}
+            </dt>
+            <dd style={{ margin: 0 }}>{tab.objectOccurrenceCount ?? t('aris.assistant.none')}</dd>
+            <dt style={{ color: 'var(--orbitpm-muted)' }}>
+              {t('aris.placeholder.connectionDefinitionCount')}
+            </dt>
+            <dd style={{ margin: 0 }}>
+              {tab.connectionDefinitionCount ?? t('aris.assistant.none')}
+            </dd>
+            <dt style={{ color: 'var(--orbitpm-muted)' }}>
+              {t('aris.placeholder.connectionOccurrenceCount')}
+            </dt>
+            <dd style={{ margin: 0 }}>
+              {tab.connectionOccurrenceCount ?? t('aris.assistant.none')}
+            </dd>
+            <dt style={{ color: 'var(--orbitpm-muted)' }}>
+              {t('aris.placeholder.attributeCount')}
+            </dt>
+            <dd style={{ margin: 0 }}>{tab.attributeCount ?? t('aris.assistant.none')}</dd>
+            <dt style={{ color: 'var(--orbitpm-muted)' }}>
+              {t('aris.placeholder.semanticDiagnostics')}
+            </dt>
+            <dd style={{ margin: 0 }}>{tab.diagnosticCount ?? t('aris.assistant.none')}</dd>
+            <dt style={{ color: 'var(--orbitpm-muted)' }}>
+              {t('aris.placeholder.unknownRecordCount')}
+            </dt>
+            <dd style={{ margin: 0 }}>{tab.unknownRecordCount ?? t('aris.assistant.none')}</dd>
             <dt style={{ color: 'var(--orbitpm-muted)' }}>{t('aris.placeholder.sourceDigest')}</dt>
             <dd style={{ margin: 0, overflowWrap: 'anywhere', fontFamily: 'monospace' }}>
               {tab.sha256}
@@ -390,11 +447,7 @@ export default function ArisApp(): JSX.Element {
   const responsiveMode = useResponsiveShellMode()
   const [sidebarWidth, setSidebarWidth, resetSidebarWidth] = usePaneWidth(
     'orbitpm-aris-shell.sidebar-width',
-    {
-      defaultWidth: 320,
-      minWidth: 240,
-      maxWidth: 520
-    }
+    { min: 240, max: 520 }
   )
   const [phase, setPhase] = useState<Phase>('loading')
   const [mode, setMode] = useState<WorkspaceMode>('single-file')
@@ -403,13 +456,20 @@ export default function ArisApp(): JSX.Element {
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [assistantOpen, setAssistantOpen] = useState(false)
   const [explorerOpen, setExplorerOpen] = useState(true)
-  const [keysVersion, setKeysVersion] = useState(0)
+  // Neither ARIS-shell AI surface (ArisGenerationPanel, ArisAssistantDrawer)
+  // takes a `keysVersion` prop yet — unlike their legacy App.tsx counterparts
+  // (AiPanelLite, AssistantDrawer), which remount on it to re-check provider
+  // credentials after Settings changes. The setter is still wired below so
+  // that behavior is a one-line prop addition once those Phase-2 placeholder
+  // surfaces grow real provider-dependent rendering; the read side has no
+  // consumer today, hence the leading underscore.
+  const [_keysVersion, setKeysVersion] = useState(0)
   const [workspaceAdapter, setWorkspaceAdapter] = useState<WorkspaceAdapter | null>(null)
   const [workspaceSources, setWorkspaceSources] = useState<WorkspaceEntry[]>([])
   const [tabs, setTabs] = useState<ArisTab[]>([])
   const [activeKey, setActiveKey] = useState<string | null>(null)
   const [rememberedName, setRememberedName] = useState<string | undefined>(undefined)
-  const [toasts, setToasts] = useState<ToastMsg[]>([])
+  const [toasts, setToasts] = useState<ToastMsg<string>[]>([])
   const openFileInputRef = useRef<HTMLInputElement | null>(null)
   const importInputRef = useRef<HTMLInputElement | null>(null)
   const rememberedHandleRef = useRef<FileSystemDirectoryHandle | null>(null)
@@ -492,7 +552,15 @@ export default function ArisApp(): JSX.Element {
               rootElementName: sourcePackage.document.rootElementName,
               xmlTokenCount: sourcePackage.document.tokens.length,
               xmlNodeCount: sourcePackage.document.nodeCount,
-              doctypeExternalId: sourcePackage.document.doctype?.externalIdLiteral ?? null
+              doctypeExternalId: sourcePackage.document.doctype?.externalIdLiteral ?? null,
+              modelCount: sourcePackage.index.models.size,
+              objectDefinitionCount: sourcePackage.index.objectDefinitions.size,
+              objectOccurrenceCount: sourcePackage.index.objectOccurrences.size,
+              connectionDefinitionCount: sourcePackage.index.connectionDefinitions.size,
+              connectionOccurrenceCount: sourcePackage.index.connectionOccurrences.size,
+              attributeCount: sourcePackage.index.attributes.length,
+              diagnosticCount: sourcePackage.diagnostics.length,
+              unknownRecordCount: sourcePackage.index.unknownRecords.length
             }
           : {
               key: `source:${name}:${sourcePackage.sha256}`,
@@ -506,7 +574,15 @@ export default function ArisApp(): JSX.Element {
               rootElementName: sourcePackage.document.rootElementName,
               xmlTokenCount: sourcePackage.document.tokens.length,
               xmlNodeCount: sourcePackage.document.nodeCount,
-              doctypeExternalId: sourcePackage.document.doctype?.externalIdLiteral ?? null
+              doctypeExternalId: sourcePackage.document.doctype?.externalIdLiteral ?? null,
+              modelCount: sourcePackage.index.models.size,
+              objectDefinitionCount: sourcePackage.index.objectDefinitions.size,
+              objectOccurrenceCount: sourcePackage.index.objectOccurrences.size,
+              connectionDefinitionCount: sourcePackage.index.connectionDefinitions.size,
+              connectionOccurrenceCount: sourcePackage.index.connectionOccurrences.size,
+              attributeCount: sourcePackage.index.attributes.length,
+              diagnosticCount: sourcePackage.diagnostics.length,
+              unknownRecordCount: sourcePackage.index.unknownRecords.length
             }
       )
       return true

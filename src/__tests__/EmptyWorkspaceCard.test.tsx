@@ -8,22 +8,22 @@ import { EmptyWorkspaceCard } from '../workspace/EmptyWorkspaceCard'
 // countBpmnFiles(tree) === 0 (covered in fsAccess.test.ts).
 
 describe('EmptyWorkspaceCard', () => {
-  it('renders the "no processes yet" state with a create-first button and folder hint', () => {
+  it('renders the "no ARIS sources yet" state with a create-first button and folder hint', () => {
     const html = renderToStaticMarkup(
       <EmptyWorkspaceCard folderName="OneDrive-Processes" onCreateFirst={() => {}} />
     )
-    expect(html).toContain('No processes yet')
-    expect(html).toContain('Create your first process')
+    expect(html).toContain('No ARIS sources yet')
+    expect(html).toContain('Open your first source')
     // Explains the folder → files relationship, naming the opened folder.
     expect(html).toContain('OneDrive-Processes')
-    expect(html).toContain('.bpmn')
+    expect(html).toContain('ARIS AML/XML')
     // The create action is a real button element.
-    expect(html).toMatch(/<button[^>]*>[^<]*Create your first process/)
+    expect(html).toMatch(/<button[^>]*>[^<]*Open your first source/)
   })
 
   it('falls back to a generic folder label when no folder name is provided', () => {
     const html = renderToStaticMarkup(<EmptyWorkspaceCard onCreateFirst={() => {}} />)
     expect(html).toContain('this folder')
-    expect(html).toContain('Create your first process')
+    expect(html).toContain('Open your first source')
   })
 })

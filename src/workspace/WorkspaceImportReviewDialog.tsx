@@ -40,6 +40,19 @@ interface ImportSkipDiagnosticSpec extends ImportDiagnosticSpec {
   label: Key
 }
 
+/**
+ * `WorkspaceImportSkipReason` (owned by `./importTransaction`) does not yet
+ * include `'bpmn-not-supported'` — this dialog is written ahead of that
+ * pipeline change so its ARIS-only copy (Phase 2 exit-gate, plan §5.2) is
+ * ready the moment a caller starts producing that reason. Widening the key
+ * locally — rather than importing a wider union from `importTransaction` —
+ * keeps this file self-contained and forward-compatible: once
+ * `WorkspaceImportSkipReason` adds the literal, `WorkspaceImportSkipReason |
+ * 'bpmn-not-supported'` collapses back to plain `WorkspaceImportSkipReason`
+ * with no further edit needed here.
+ */
+type WorkspaceImportSkipDiagnosticReason = WorkspaceImportSkipReason | 'bpmn-not-supported'
+
 const WORKSPACE_IMPORT_SKIP_DIAGNOSTICS = Object.freeze({
   'unsupported-content': {
     label: 'workspaceImportReview.reason.unsupportedContent',
@@ -116,7 +129,7 @@ const WORKSPACE_IMPORT_SKIP_DIAGNOSTICS = Object.freeze({
     message: 'workspaceImportReview.skip.libraryDecodeFailed',
     repair: 'workspaceImportReview.guidance.decodeUtf8'
   }
-} satisfies Record<WorkspaceImportSkipReason, ImportSkipDiagnosticSpec>)
+} satisfies Record<WorkspaceImportSkipDiagnosticReason, ImportSkipDiagnosticSpec>)
 
 const WORKSPACE_IMPORT_REPAIR_MESSAGE_KEYS = Object.freeze({
   'aml-converted': 'workspaceImportReview.appliedRepair.amlConverted',

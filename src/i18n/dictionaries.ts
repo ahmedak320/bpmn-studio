@@ -196,6 +196,14 @@ export const en = {
   'aris.placeholder.sourceTokens': 'XML tokens',
   'aris.placeholder.sourceNodes': 'Syntax nodes',
   'aris.placeholder.sourceDoctype': 'DOCTYPE system/public id',
+  'aris.placeholder.modelCount': 'Models',
+  'aris.placeholder.objectDefinitionCount': 'Object definitions',
+  'aris.placeholder.objectOccurrenceCount': 'Object occurrences',
+  'aris.placeholder.connectionDefinitionCount': 'Connection definitions',
+  'aris.placeholder.connectionOccurrenceCount': 'Connection occurrences',
+  'aris.placeholder.attributeCount': 'Attribute definitions',
+  'aris.placeholder.semanticDiagnostics': 'Semantic diagnostics',
+  'aris.placeholder.unknownRecordCount': 'Unknown records',
   'aris.placeholder.sourceDigest': 'SHA-256',
   'aris.placeholder.mainAria': 'ARIS workspace tab for {name}',
   'aris.placeholder.newDiagramUnavailable':
@@ -2310,7 +2318,188 @@ export const en = {
   'save.cancel': 'Cancel',
   'editor.exportPdf': 'Export PDF',
   'editor.exportPdf.title': 'Download the diagram as a PDF document',
-  'editor.error.exportPdfFailed': 'Could not export PDF: {error}'
+  'editor.error.exportPdfFailed': 'Could not export PDF: {error}',
+
+  // --- ARIS symbol registry labels (src/aris/symbols) ---
+  'aris.symbol.and': 'AND',
+  'aris.symbol.applicationSystem': 'Application system',
+  'aris.symbol.businessRule': 'Business rule',
+  'aris.symbol.document': 'Document',
+  'aris.symbol.eDocument': 'Electronic document',
+  'aris.symbol.email': 'Email',
+  'aris.symbol.entityType': 'Entity type',
+  'aris.symbol.event': 'Event',
+  'aris.symbol.externalPerson': 'External person',
+  'aris.symbol.function': 'Function',
+  'aris.symbol.mobile': 'Mobile device',
+  'aris.symbol.or': 'OR',
+  'aris.symbol.performance': 'Performance indicator',
+  'aris.symbol.person': 'Person',
+  'aris.symbol.personType': 'Person type',
+  'aris.symbol.policy': 'Policy',
+  'aris.symbol.processInterface': 'Process interface',
+  'aris.symbol.requirement': 'Requirement',
+  'aris.symbol.systemFunction': 'System function',
+  'aris.symbol.unknown': 'Unknown symbol',
+  'aris.symbol.valueAddedChain': 'Value-added chain',
+  'aris.symbol.xor': 'XOR',
+
+  // --- ARIS symbol fidelity findings (src/aris/symbols/fidelity.ts, registry.ts) ---
+  'aris.fidelity.substitutedVisualResource':
+    'The requested ARIS symbol was not found; a related symbol from the same object type was substituted.',
+  'aris.fidelity.unknownCustomSymbol':
+    'The requested ARIS symbol is a custom symbol this build cannot render; a generic placeholder was substituted.',
+  'aris.fidelity.missingTemplate':
+    'The requested ARIS symbol has no drawing template registered; a generic placeholder was substituted.',
+
+  // --- ARIS clean-layout engine rejection findings (src/aris/layout/types.ts) ---
+  'aris.layout.rejection.shape-overlap': 'Two shapes in the layout overlap.',
+  'aris.layout.rejection.label-satellite-overlap':
+    'A reserved caption box or satellite shape overlaps another element in the layout.',
+  'aris.layout.rejection.edge-through-unrelated-shape':
+    "A connection's route passes through a shape it is not connected to.",
+  'aris.layout.rejection.detached-endpoint':
+    "A connection's endpoint is not attached to its shape's boundary.",
+  'aris.layout.rejection.missing-edge':
+    'A connection between two related nodes is missing from the produced layout.',
+  'aris.layout.rejection.duplicate-edge':
+    'The produced layout has more than one identical connection between the same two nodes.',
+  'aris.layout.rejection.zero-length-edge':
+    'A connection in the produced layout has zero length.',
+  'aris.layout.rejection.extreme-whitespace':
+    'The produced layout has an excessively large empty band, well beyond the canvas balance tolerance.',
+
+  // --- ARIS Excel workbook pipeline issues (src/aris/excel/issues.ts,
+  // ARIS_EXCEL_MESSAGE_KEYS is the authoritative emitted-key list) ---
+  'aris.excel.issue.unsupported-file-extension':
+    'The file was rejected because its extension is not a supported ARIS workbook format.',
+  'aris.excel.issue.unsupported-mime-type':
+    'The file was rejected because its MIME type does not match a supported ARIS workbook format.',
+  'aris.excel.issue.compressed-size-limit':
+    'The workbook was rejected because its compressed size exceeds the safe upload limit.',
+  'aris.excel.issue.uncompressed-size-limit':
+    'The workbook was rejected because its uncompressed size exceeds the safe processing limit.',
+  'aris.excel.issue.zip-entry-limit':
+    'The workbook was rejected because it contains more ZIP entries than the safe processing limit allows.',
+  'aris.excel.issue.sheet-limit':
+    'The workbook was rejected because it contains more sheets than the safe processing limit allows.',
+  'aris.excel.issue.malformed-zip':
+    'The workbook was rejected because its ZIP container is malformed and cannot be parsed.',
+  'aris.excel.issue.zip64-unsupported':
+    'The workbook was rejected because it uses the ZIP64 format, which this build does not support.',
+  'aris.excel.issue.multi-disk-zip':
+    'The workbook was rejected because it is a multi-disk ZIP archive, which this build does not support.',
+  'aris.excel.issue.unsupported-compression':
+    'The workbook was rejected because one of its ZIP entries uses an unsupported compression method.',
+  'aris.excel.issue.unsafe-zip-path':
+    'The workbook was rejected because one of its ZIP entries has an unsafe path.',
+  'aris.excel.issue.duplicate-zip-entry':
+    'The workbook was rejected because its ZIP container has more than one entry with the same path.',
+  'aris.excel.issue.encrypted-workbook':
+    'The workbook was rejected because it is password-protected or encrypted.',
+  'aris.excel.issue.macro-content':
+    'The workbook was rejected because it contains macro content, which this build does not accept.',
+  'aris.excel.issue.executable-content':
+    'The workbook was rejected because it contains embedded executable content.',
+  'aris.excel.issue.missing-xlsx-part':
+    'The workbook was rejected because a required XLSX part is missing.',
+  'aris.excel.issue.expanded-size-mismatch':
+    "The workbook was rejected because an entry's expanded size does not match the size declared in its ZIP header.",
+  'aris.excel.issue.external-links-ignored':
+    'The workbook contains external workbook links; they were ignored during import.',
+  'aris.excel.issue.data-connections-ignored':
+    'The workbook contains external data connections; they were ignored during import.',
+  'aris.excel.issue.template-version-missing':
+    'The workbook was rejected because it does not declare an ARIS workbook template version.',
+  'aris.excel.issue.template-version-unsupported':
+    'The workbook was rejected because its declared template version is not supported by this build.',
+  'aris.excel.issue.legacy-bpmn-workbook':
+    'The workbook was rejected because it is a legacy BPMN workbook, which this ARIS-only build does not accept.',
+  'aris.excel.issue.sheet-missing': 'The workbook was rejected because a required sheet is missing.',
+  'aris.excel.issue.sheet-unknown':
+    'The workbook contains a sheet that is not part of the official ARIS workbook template.',
+  'aris.excel.issue.column-missing':
+    'The workbook was rejected because a required column is missing from a sheet.',
+  'aris.excel.issue.column-unknown':
+    'The workbook contains a column that is not part of the official ARIS workbook template.',
+  'aris.excel.issue.header-row-missing':
+    'The workbook was rejected because a sheet is missing its header row.',
+  'aris.excel.issue.row-limit':
+    'The workbook was rejected because a sheet contains more rows than the safe processing limit allows.',
+  'aris.excel.issue.column-limit':
+    'The workbook was rejected because a sheet contains more columns than the safe processing limit allows.',
+  'aris.excel.issue.cell-count-limit':
+    'The workbook was rejected because a sheet contains more cells than the safe processing limit allows.',
+  'aris.excel.issue.cell-length-limit':
+    "The workbook was rejected because a cell's text exceeds the safe length limit.",
+  'aris.excel.issue.formula-without-cached-value':
+    'The workbook was rejected because a formula cell has no cached value to read.',
+  'aris.excel.issue.cached-formula-value':
+    'A formula cell was read using its cached value instead of evaluating the formula.',
+  'aris.excel.issue.value-required': 'The workbook was rejected because a required cell value is empty.',
+  'aris.excel.issue.value-not-a-number':
+    'The workbook was rejected because a cell that must contain a number does not.',
+  'aris.excel.issue.value-not-an-integer':
+    'The workbook was rejected because a cell that must contain a whole number does not.',
+  'aris.excel.issue.value-not-a-boolean':
+    'The workbook was rejected because a cell that must contain a boolean value does not.',
+  'aris.excel.issue.value-not-allowed':
+    "The workbook was rejected because a cell's value is not one of the allowed values for its column.",
+  'aris.excel.issue.unknown-object-type':
+    'The workbook was rejected because a row references an object type this build does not recognize.',
+  'aris.excel.issue.unknown-symbol-type':
+    'The workbook was rejected because a row references a symbol type this build does not recognize.',
+  'aris.excel.issue.invalid-symbol-type':
+    "The workbook was rejected because a row's symbol type does not match its object type.",
+  'aris.excel.issue.invalid-connection-type':
+    'The workbook was rejected because a row references a connection type this build does not recognize.',
+  'aris.excel.issue.invalid-attribute-type':
+    'The workbook was rejected because a row references an attribute type this build does not recognize.',
+  'aris.excel.issue.invalid-color':
+    "The workbook was rejected because a cell's color value is not a valid color.",
+  'aris.excel.issue.invalid-route-points':
+    "The workbook was rejected because a connection's route points are not valid coordinates.",
+  'aris.excel.issue.duplicate-id':
+    'The workbook was rejected because more than one row declares the same identifier.',
+  'aris.excel.issue.missing-reference':
+    'The workbook was rejected because a row references an identifier that does not exist in the workbook.',
+  'aris.excel.issue.object-definition-conflict':
+    'The workbook was rejected because two rows define the same object with conflicting data.',
+  'aris.excel.issue.connection-endpoint-cycle':
+    "The workbook was rejected because a connection's endpoints form an unsupported self-referencing cycle.",
+  'aris.excel.issue.control-flow-object-limit':
+    'The workbook was rejected because a model contains more control-flow objects than the safe processing limit allows.',
+  'aris.excel.issue.control-flow-object-warning':
+    'A model is approaching the safe limit for control-flow objects.',
+  'aris.excel.issue.object-transaction-limit':
+    'The workbook was rejected because it contains more objects than the safe single-import limit allows.',
+  'aris.excel.issue.empty-workbook':
+    'The workbook was rejected because it contains no importable content.',
+  'aris.excel.issue.internal-error':
+    'The workbook could not be processed because of an unexpected internal error.',
+  'aris.excel.guidance.legacy-bpmn-workbook':
+    'Export the process from ARIS as an ARIS workbook, not a legacy BPMN workbook, then import it again.',
+  'aris.excel.guidance.template-version-missing':
+    'Regenerate the workbook from the official ARIS workbook template and import it again.',
+  'aris.excel.guidance.template-version-unsupported':
+    'Upgrade the workbook to a template version this build supports, then import it again.',
+  'aris.excel.guidance.formula-without-cached-value':
+    'Open the workbook in a spreadsheet application, let it recalculate, save it, then import it again.',
+  'aris.excel.guidance.cached-formula-value':
+    'Verify the cached formula values are correct before relying on the imported data.',
+  'aris.excel.guidance.missing-reference':
+    'Add the missing referenced row to the workbook, or remove the reference, then import it again.',
+  'aris.excel.guidance.duplicate-id': 'Make every identifier in the workbook unique, then import it again.',
+  'aris.excel.guidance.unknown-object-type':
+    'Correct the object type to a value from the official ARIS workbook template, then import it again.',
+  'aris.excel.guidance.invalid-route-points':
+    "Correct the connection's route points to valid coordinates, then import it again.",
+  'aris.excel.guidance.control-flow-object-limit':
+    'Split the model into smaller models that stay within the safe control-flow object limit.',
+  'aris.excel.guidance.control-flow-object-warning':
+    'Consider splitting the model before it reaches the safe control-flow object limit.',
+  'aris.excel.guidance.object-transaction-limit':
+    'Split the workbook into smaller batches that stay within the safe single-import limit.'
 } as const
 
 export const ar: Record<keyof typeof en, string> = {
@@ -2507,6 +2696,14 @@ export const ar: Record<keyof typeof en, string> = {
   'aris.placeholder.sourceTokens': 'رموز XML',
   'aris.placeholder.sourceNodes': 'عُقد البنية',
   'aris.placeholder.sourceDoctype': 'معرّف DOCTYPE العام/النظامي',
+  'aris.placeholder.modelCount': 'النماذج',
+  'aris.placeholder.objectDefinitionCount': 'تعريفات الكائنات',
+  'aris.placeholder.objectOccurrenceCount': 'ظهورات الكائنات',
+  'aris.placeholder.connectionDefinitionCount': 'تعريفات العلاقات',
+  'aris.placeholder.connectionOccurrenceCount': 'ظهورات العلاقات',
+  'aris.placeholder.attributeCount': 'تعريفات السمات',
+  'aris.placeholder.semanticDiagnostics': 'تشخيصات دلالية',
+  'aris.placeholder.unknownRecordCount': 'السجلات غير المعروفة',
   'aris.placeholder.sourceDigest': 'SHA-256',
   'aris.placeholder.mainAria': 'لسان مساحة عمل ARIS لـ {name}',
   'aris.placeholder.newDiagramUnavailable':
@@ -4507,5 +4704,175 @@ export const ar: Record<keyof typeof en, string> = {
   'save.cancel': 'إلغاء',
   'editor.exportPdf': 'تصدير PDF',
   'editor.exportPdf.title': 'تنزيل المخطط كمستند PDF',
-  'editor.error.exportPdfFailed': 'تعذّر تصدير PDF: {error}'
+  'editor.error.exportPdfFailed': 'تعذّر تصدير PDF: {error}',
+
+  // --- تسميات سجل رموز ARIS (src/aris/symbols) ---
+  'aris.symbol.and': 'و',
+  'aris.symbol.applicationSystem': 'نظام تطبيقي',
+  'aris.symbol.businessRule': 'قاعدة عمل',
+  'aris.symbol.document': 'مستند',
+  'aris.symbol.eDocument': 'مستند إلكتروني',
+  'aris.symbol.email': 'بريد إلكتروني',
+  'aris.symbol.entityType': 'نوع الكيان',
+  'aris.symbol.event': 'حدث',
+  'aris.symbol.externalPerson': 'شخص خارجي',
+  'aris.symbol.function': 'وظيفة',
+  'aris.symbol.mobile': 'جهاز محمول',
+  'aris.symbol.or': 'أو',
+  'aris.symbol.performance': 'مؤشر أداء',
+  'aris.symbol.person': 'شخص',
+  'aris.symbol.personType': 'نوع الشخص',
+  'aris.symbol.policy': 'سياسة',
+  'aris.symbol.processInterface': 'واجهة عملية',
+  'aris.symbol.requirement': 'متطلب',
+  'aris.symbol.systemFunction': 'وظيفة نظام',
+  'aris.symbol.unknown': 'رمز غير معروف',
+  'aris.symbol.valueAddedChain': 'سلسلة القيمة المضافة',
+  'aris.symbol.xor': 'أو حصري',
+
+  // --- نتائج مطابقة رموز ARIS (src/aris/symbols/fidelity.ts, registry.ts) ---
+  'aris.fidelity.substitutedVisualResource':
+    'لم يُعثر على رمز ARIS المطلوب؛ تم استبداله برمز آخر من نوع الكائن نفسه.',
+  'aris.fidelity.unknownCustomSymbol':
+    'الرمز المطلوب رمز مخصص لا يدعم هذا الإصدار رسمه؛ تم استبداله بعنصر نائب عام.',
+  'aris.fidelity.missingTemplate':
+    'لا يوجد قالب رسم مسجَّل للرمز المطلوب؛ تم استبداله بعنصر نائب عام.',
+
+  // --- نتائج رفض محرك التخطيط النظيف لـ ARIS (src/aris/layout/types.ts) ---
+  'aris.layout.rejection.shape-overlap': 'يتداخل شكلان في المخطط.',
+  'aris.layout.rejection.label-satellite-overlap':
+    'يتداخل مربع تسمية محجوز أو عنصر تابع مع عنصر آخر في المخطط.',
+  'aris.layout.rejection.edge-through-unrelated-shape':
+    'يمر مسار أحد الروابط عبر شكل غير متصل به.',
+  'aris.layout.rejection.detached-endpoint':
+    'لا تلتصق نهاية أحد الروابط بحدود الشكل الذي تتصل به.',
+  'aris.layout.rejection.missing-edge':
+    'يفتقد المخطط الناتج رابطًا بين عقدتين مرتبطتين.',
+  'aris.layout.rejection.duplicate-edge':
+    'يحتوي المخطط الناتج على أكثر من رابط متطابق بين العقدتين نفسيهما.',
+  'aris.layout.rejection.zero-length-edge':
+    'طول أحد الروابط في المخطط الناتج يساوي صفرًا.',
+  'aris.layout.rejection.extreme-whitespace':
+    'يحتوي المخطط الناتج على نطاق فارغ كبير جدًا يتجاوز حد توازن اللوحة.',
+
+  // --- مشكلات خط معالجة مصنفات إكسل لـ ARIS (src/aris/excel/issues.ts) ---
+  'aris.excel.issue.unsupported-file-extension':
+    'رُفض الملف لأن امتداده ليس من صيغ مصنفات ARIS المدعومة.',
+  'aris.excel.issue.unsupported-mime-type':
+    'رُفض الملف لأن نوع MIME الخاص به لا يطابق صيغة مصنف ARIS مدعومة.',
+  'aris.excel.issue.compressed-size-limit':
+    'رُفض المصنف لأن حجمه المضغوط يتجاوز الحد الآمن للرفع.',
+  'aris.excel.issue.uncompressed-size-limit':
+    'رُفض المصنف لأن حجمه غير المضغوط يتجاوز الحد الآمن للمعالجة.',
+  'aris.excel.issue.zip-entry-limit':
+    'رُفض المصنف لأنه يحتوي على عناصر ZIP أكثر من الحد الآمن للمعالجة.',
+  'aris.excel.issue.sheet-limit':
+    'رُفض المصنف لأنه يحتوي على أوراق أكثر من الحد الآمن للمعالجة.',
+  'aris.excel.issue.malformed-zip':
+    'رُفض المصنف لأن حاوية ZIP الخاصة به تالفة ولا يمكن تحليلها.',
+  'aris.excel.issue.zip64-unsupported':
+    'رُفض المصنف لأنه يستخدم صيغة ZIP64 التي لا يدعمها هذا الإصدار.',
+  'aris.excel.issue.multi-disk-zip':
+    'رُفض المصنف لأنه أرشيف ZIP متعدد الأقراص، وهو غير مدعوم في هذا الإصدار.',
+  'aris.excel.issue.unsupported-compression':
+    'رُفض المصنف لأن أحد عناصر ZIP يستخدم طريقة ضغط غير مدعومة.',
+  'aris.excel.issue.unsafe-zip-path': 'رُفض المصنف لأن مسار أحد عناصر ZIP غير آمن.',
+  'aris.excel.issue.duplicate-zip-entry':
+    'رُفض المصنف لأن حاوية ZIP تحتوي على أكثر من عنصر بالمسار نفسه.',
+  'aris.excel.issue.encrypted-workbook': 'رُفض المصنف لأنه محمي بكلمة مرور أو مشفّر.',
+  'aris.excel.issue.macro-content':
+    'رُفض المصنف لأنه يحتوي على محتوى وحدات ماكرو، وهو غير مقبول في هذا الإصدار.',
+  'aris.excel.issue.executable-content': 'رُفض المصنف لأنه يحتوي على محتوى تنفيذي مضمّن.',
+  'aris.excel.issue.missing-xlsx-part': 'رُفض المصنف لأن جزءًا مطلوبًا من بنية XLSX مفقود.',
+  'aris.excel.issue.expanded-size-mismatch':
+    'رُفض المصنف لأن الحجم الموسّع لأحد العناصر لا يطابق الحجم المعلن في ترويسة ZIP.',
+  'aris.excel.issue.external-links-ignored':
+    'يحتوي المصنف على روابط لمصنفات خارجية؛ تم تجاهلها أثناء الاستيراد.',
+  'aris.excel.issue.data-connections-ignored':
+    'يحتوي المصنف على اتصالات بيانات خارجية؛ تم تجاهلها أثناء الاستيراد.',
+  'aris.excel.issue.template-version-missing':
+    'رُفض المصنف لأنه لا يعلن إصدار قالب مصنف ARIS.',
+  'aris.excel.issue.template-version-unsupported':
+    'رُفض المصنف لأن إصدار القالب المعلن غير مدعوم في هذا الإصدار.',
+  'aris.excel.issue.legacy-bpmn-workbook':
+    'رُفض المصنف لأنه مصنف BPMN قديم، وهذا الإصدار المقتصر على ARIS لا يقبله.',
+  'aris.excel.issue.sheet-missing': 'رُفض المصنف لأن ورقة مطلوبة مفقودة.',
+  'aris.excel.issue.sheet-unknown':
+    'يحتوي المصنف على ورقة ليست جزءًا من قالب مصنف ARIS الرسمي.',
+  'aris.excel.issue.column-missing': 'رُفض المصنف لأن عمودًا مطلوبًا مفقود من إحدى الأوراق.',
+  'aris.excel.issue.column-unknown':
+    'يحتوي المصنف على عمود ليس جزءًا من قالب مصنف ARIS الرسمي.',
+  'aris.excel.issue.header-row-missing': 'رُفض المصنف لأن إحدى الأوراق تفتقد صف العناوين.',
+  'aris.excel.issue.row-limit':
+    'رُفض المصنف لأن إحدى الأوراق تحتوي على صفوف أكثر من الحد الآمن للمعالجة.',
+  'aris.excel.issue.column-limit':
+    'رُفض المصنف لأن إحدى الأوراق تحتوي على أعمدة أكثر من الحد الآمن للمعالجة.',
+  'aris.excel.issue.cell-count-limit':
+    'رُفض المصنف لأن إحدى الأوراق تحتوي على خلايا أكثر من الحد الآمن للمعالجة.',
+  'aris.excel.issue.cell-length-limit':
+    'رُفض المصنف لأن نص إحدى الخلايا يتجاوز الحد الآمن للطول.',
+  'aris.excel.issue.formula-without-cached-value':
+    'رُفض المصنف لأن خلية معادلة لا تحتوي على قيمة مخزنة مؤقتًا يمكن قراءتها.',
+  'aris.excel.issue.cached-formula-value':
+    'تمت قراءة خلية معادلة باستخدام قيمتها المخزنة مؤقتًا بدلًا من حساب المعادلة.',
+  'aris.excel.issue.value-required': 'رُفض المصنف لأن قيمة خلية مطلوبة فارغة.',
+  'aris.excel.issue.value-not-a-number':
+    'رُفض المصنف لأن خلية يجب أن تحتوي على رقم لا تحتوي عليه.',
+  'aris.excel.issue.value-not-an-integer':
+    'رُفض المصنف لأن خلية يجب أن تحتوي على عدد صحيح لا تحتوي عليه.',
+  'aris.excel.issue.value-not-a-boolean':
+    'رُفض المصنف لأن خلية يجب أن تحتوي على قيمة منطقية لا تحتوي عليها.',
+  'aris.excel.issue.value-not-allowed':
+    'رُفض المصنف لأن قيمة إحدى الخلايا ليست من القيم المسموح بها لعمودها.',
+  'aris.excel.issue.unknown-object-type':
+    'رُفض المصنف لأن أحد الصفوف يشير إلى نوع كائن لا يتعرف عليه هذا الإصدار.',
+  'aris.excel.issue.unknown-symbol-type':
+    'رُفض المصنف لأن أحد الصفوف يشير إلى نوع رمز لا يتعرف عليه هذا الإصدار.',
+  'aris.excel.issue.invalid-symbol-type':
+    'رُفض المصنف لأن نوع الرمز في أحد الصفوف لا يطابق نوع الكائن الخاص به.',
+  'aris.excel.issue.invalid-connection-type':
+    'رُفض المصنف لأن أحد الصفوف يشير إلى نوع رابط لا يتعرف عليه هذا الإصدار.',
+  'aris.excel.issue.invalid-attribute-type':
+    'رُفض المصنف لأن أحد الصفوف يشير إلى نوع سمة لا يتعرف عليه هذا الإصدار.',
+  'aris.excel.issue.invalid-color': 'رُفض المصنف لأن قيمة اللون في إحدى الخلايا ليست لونًا صالحًا.',
+  'aris.excel.issue.invalid-route-points':
+    'رُفض المصنف لأن نقاط مسار أحد الروابط ليست إحداثيات صالحة.',
+  'aris.excel.issue.duplicate-id': 'رُفض المصنف لأن أكثر من صف يعلن المعرّف نفسه.',
+  'aris.excel.issue.missing-reference':
+    'رُفض المصنف لأن أحد الصفوف يشير إلى معرّف غير موجود في المصنف.',
+  'aris.excel.issue.object-definition-conflict':
+    'رُفض المصنف لأن صفين يعرّفان الكائن نفسه ببيانات متعارضة.',
+  'aris.excel.issue.connection-endpoint-cycle':
+    'رُفض المصنف لأن طرفي أحد الروابط يشكلان حلقة ذاتية غير مدعومة.',
+  'aris.excel.issue.control-flow-object-limit':
+    'رُفض المصنف لأن أحد النماذج يحتوي على كائنات تدفق تحكم أكثر من الحد الآمن للمعالجة.',
+  'aris.excel.issue.control-flow-object-warning':
+    'يقترب أحد النماذج من الحد الآمن لعدد كائنات تدفق التحكم.',
+  'aris.excel.issue.object-transaction-limit':
+    'رُفض المصنف لأنه يحتوي على كائنات أكثر من الحد الآمن لعملية استيراد واحدة.',
+  'aris.excel.issue.empty-workbook': 'رُفض المصنف لأنه لا يحتوي على محتوى قابل للاستيراد.',
+  'aris.excel.issue.internal-error': 'تعذّرت معالجة المصنف بسبب خطأ داخلي غير متوقع.',
+  'aris.excel.guidance.legacy-bpmn-workbook':
+    'صدّر العملية من ARIS كمصنف ARIS وليس كمصنف BPMN قديم، ثم استورده مرة أخرى.',
+  'aris.excel.guidance.template-version-missing':
+    'أعد إنشاء المصنف من قالب مصنف ARIS الرسمي ثم استورده مرة أخرى.',
+  'aris.excel.guidance.template-version-unsupported':
+    'رقِّ المصنف إلى إصدار قالب يدعمه هذا الإصدار، ثم استورده مرة أخرى.',
+  'aris.excel.guidance.formula-without-cached-value':
+    'افتح المصنف في برنامج جداول بيانات، واسمح له بإعادة الحساب، ثم احفظه واستورده مرة أخرى.',
+  'aris.excel.guidance.cached-formula-value':
+    'تحقق من صحة القيم المخزنة مؤقتًا للمعادلات قبل الاعتماد على البيانات المستوردة.',
+  'aris.excel.guidance.missing-reference':
+    'أضف الصف المرجعي المفقود إلى المصنف، أو احذف الإشارة إليه، ثم استورده مرة أخرى.',
+  'aris.excel.guidance.duplicate-id': 'اجعل كل معرّف في المصنف فريدًا، ثم استورده مرة أخرى.',
+  'aris.excel.guidance.unknown-object-type':
+    'صحّح نوع الكائن إلى قيمة من قالب مصنف ARIS الرسمي، ثم استورده مرة أخرى.',
+  'aris.excel.guidance.invalid-route-points':
+    'صحّح نقاط مسار الرابط إلى إحداثيات صالحة، ثم استورده مرة أخرى.',
+  'aris.excel.guidance.control-flow-object-limit':
+    'قسّم النموذج إلى نماذج أصغر تبقى ضمن الحد الآمن لعدد كائنات تدفق التحكم.',
+  'aris.excel.guidance.control-flow-object-warning':
+    'ضع في اعتبارك تقسيم النموذج قبل أن يبلغ الحد الآمن لعدد كائنات تدفق التحكم.',
+  'aris.excel.guidance.object-transaction-limit':
+    'قسّم المصنف إلى دفعات أصغر تبقى ضمن الحد الآمن لعملية استيراد واحدة.'
 }

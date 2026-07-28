@@ -2,8 +2,18 @@ import { useEffect } from 'react'
 
 export type ToastTone = 'info' | 'success' | 'error'
 
-export interface ToastMsg {
-  id: number
+/**
+ * `Id` is generic because toast identity conventions differ by caller: the
+ * legacy `App.tsx` shell mints numeric ids from an incrementing ref, while
+ * `ArisApp.tsx` mints string ids via `crypto.randomUUID()`. Both are valid —
+ * the only real contract this component needs is "whatever `id` a toast
+ * carries, `onDismiss` is called with that same value." Defaulting `Id` to
+ * `number` keeps every existing `ToastMsg`/`Toaster` reference (no explicit
+ * type argument) compiling exactly as before; callers that want string ids
+ * simply write `ToastMsg<string>` / infer it from the props they pass in.
+ */
+export interface ToastMsg<Id extends string | number = number> {
+  id: Id
   text: string
   tone: ToastTone
 }
@@ -17,13 +27,13 @@ const TONE_STYLE: Record<ToastTone, { bg: string; border: string }> = {
 /** Fixed bottom-right toast stack. Each toast auto-dismisses; clicking one
  *  dismisses it immediately. Used for import results, collision renames, and
  *  other non-blocking feedback. */
-export function Toaster({
+export function Toaster<Id extends string | number = number>({
   toasts,
   onDismiss,
   autoDismissMs = 4500
 }: {
-  toasts: ToastMsg[]
-  onDismiss: (id: number) => void
+  toasts: ToastMsg<Id>[]
+  onDismiss: (id: Id) => void
   autoDismissMs?: number
 }): JSX.Element {
   return (
@@ -47,13 +57,13 @@ export function Toaster({
   )
 }
 
-function ToastItem({
+function ToastItem<Id extends string | number>({
   toast,
   onDismiss,
   autoDismissMs
 }: {
-  toast: ToastMsg
-  onDismiss: (id: number) => void
+  toast: ToastMsg<Id>
+  onDismiss: (id: Id) => void
   autoDismissMs: number
 }): JSX.Element {
   useEffect(() => {

@@ -4,9 +4,9 @@ import { promises as fs } from 'node:fs'
 import { basename, dirname, relative, resolve } from 'node:path'
 import { promisify } from 'node:util'
 import { fileURLToPath, pathToFileURL } from 'node:url'
-import { chromium } from '@playwright/test'
-import { convertAmlToBpmnFiles } from '../src/library/apcImport.ts'
-import { parseAml } from '../src/library/amlParse.ts'
+import { chromium, type Page } from '@playwright/test'
+import { convertAmlToBpmnFiles } from '../src/library/apcImport'
+import { parseAml } from '../src/library/amlParse'
 
 const execFile = promisify(execFileCallback)
 const HERE = dirname(fileURLToPath(import.meta.url))
@@ -177,7 +177,7 @@ async function captureStartupNetworkLog(artifactPath: string, version: string) {
   }
 }
 
-async function installMockWorkspace(page: Awaited<ReturnType<ReturnType<typeof chromium.launch>['newPage']>>) {
+async function installMockWorkspace(page: Page) {
   await page.addInitScript(() => {
     const missing = (): Error => {
       const error = new Error('Not found')

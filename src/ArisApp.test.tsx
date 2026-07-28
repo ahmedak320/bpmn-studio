@@ -47,7 +47,7 @@ vi.mock('./workspace/adapters/opfs', async () => {
   }
 })
 
-import ArisApp from './ArisApp'
+import ArisApp, { downloadBytes } from './ArisApp'
 import type { FileSnapshot, WorkspaceAdapter, WorkspaceEntry } from './workspace/adapters/types'
 
 function fileSnapshot(path: string, text: string, mimeType = 'application/xml'): FileSnapshot {
@@ -63,10 +63,13 @@ function fileSnapshot(path: string, text: string, mimeType = 'application/xml'):
 }
 
 function workspaceFile(path: string): WorkspaceEntry {
+  const lastSlash = path.lastIndexOf('/')
   return {
     kind: 'file',
     name: path.split('/').pop() ?? path,
-    path
+    path,
+    parentPath: lastSlash === -1 ? '' : path.slice(0, lastSlash),
+    readable: true
   }
 }
 
@@ -169,7 +172,15 @@ describe('ArisApp production shell', () => {
     )
     if (!input) throw new Error('missing ARIS shell file input')
 
-    const xml = '<AML><Header-Info DatabaseName="DMT" /></AML>'
+    const xml = `<AML>
+      <Header-Info DatabaseName="DMT" />
+      <Group Group.ID="Group.Root">
+        <Model Model.ID="Model.1" Model.Type="MT_EEPC">
+          <ObjDef ObjDef.ID="ObjDef.1" TypeNum="OT_FUNC" />
+          <ObjOcc ObjOcc.ID="ObjOcc.1" ObjDef.IdRef="ObjDef.1" />
+        </Model>
+      </Group>
+    </AML>`
     const file = new File([xml], 'source.aml', { type: 'application/xml' })
     Object.defineProperty(file, 'arrayBuffer', {
       configurable: true,
@@ -181,6 +192,10 @@ describe('ArisApp production shell', () => {
     expect(await screen.findByText('ARIS placeholder canvas')).not.toBeNull()
     expect(screen.getByRole('tab', { name: 'source.aml' })).not.toBeNull()
     expect(screen.getAllByText('ARIS AML').length).toBeGreaterThan(0)
+    expect(screen.getByText('Models')).not.toBeNull()
+    expect(screen.getByText('Object definitions')).not.toBeNull()
+    expect(screen.getByText('Object occurrences')).not.toBeNull()
+    expect(screen.getByText('Semantic diagnostics')).not.toBeNull()
     expect(screen.getByText('Create a reviewed ARIS placeholder source from a description while the ARIS-native generation pipeline is being rebuilt.')).not.toBeNull()
 
     fireEvent.click(screen.getAllByRole('button', { name: /Settings/ })[0]!)
@@ -274,5 +289,89 @@ describe('ArisApp production shell', () => {
     expect(await screen.findByText('This ARIS-only build accepts ARIS AML/XML exports.')).not.toBeNull()
     expect(await screen.findByRole('tab', { name: 'accepted.aml' })).not.toBeNull()
     expect(screen.queryByRole('tab', { name: 'legacy.bpmn' })).toBeNull()
+  })
+
+  it('dismisses a toast by clicking it, proving the toast id round-trips through onDismiss', async () => {
+    render(<ArisApp />)
+
+    const input = document.querySelector<HTMLInputElement>(
+      'input[accept=".bpmn,.aml,.apc,.xml,application/xml,text/xml"]'
+    )
+    if (!input) throw new Error('missing ARIS shell file input')
+
+    // ArisApp mints toast ids with crypto.randomUUID() (a string), so this
+    // exercises the exact `Toaster<string>` / `dismissToast: (id: string) =>
+    // void` pairing the ToastMsg.id type contract fix depends on: if the
+    // dismiss handler ever mismatched the id type again, the click below
+    // would silently fail to remove the toast (`!==` between a string and a
+    // number is always true) and this test would time out.
+    const xml =
+      '<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL">' +
+      '<bpmn:process id="Legacy_Process" />' +
+      '</bpmn:definitions>'
+    const file = new File([xml], 'legacy.bpmn', { type: 'application/xml' })
+    Object.defineProperty(file, 'arrayBuffer', {
+      configurable: true,
+      value: async () => new TextEncoder().encode(xml).buffer
+    })
+
+    fireEvent.change(input, { target: { files: [file] } })
+
+    const toastText = await screen.findByText('This ARIS-only build accepts ARIS AML/XML exports.')
+    const toast = toastText.closest('[role="status"], [role="alert"]')
+    if (!toast) throw new Error('missing rendered toast container')
+
+    fireEvent.click(toast)
+
+    await waitFor(() =>
+      expect(
+        screen.queryByText('This ARIS-only build accepts ARIS AML/XML exports.')
+      ).toBeNull()
+    )
+  })
+})
+
+describe('downloadBytes', () => {
+  afterEach(() => {
+    cleanup()
+  })
+
+  it('produces a Blob with the exact byte length of the source bytes, including SharedArrayBuffer-backed input', () => {
+    // The source `bytes` parameter is typed plain `Uint8Array` (no pinned
+    // `ArrayBuffer` type argument), so a caller could in principle hand it a
+    // SharedArrayBuffer-backed view — exactly the case TS 5.7's stricter
+    // `BlobPart` type rejects at compile time. Constructing one directly here
+    // proves the runtime fix (`bytes.slice()`) produces a correct,
+    // exact-length Blob regardless of the backing buffer type.
+    const bytes = new Uint8Array(new SharedArrayBuffer(5))
+    bytes.set([1, 2, 3, 4, 5])
+
+    // A plain `let` mutated only from inside the `createObjectURL` callback
+    // below defeats TypeScript's narrowing (it never observes the closure's
+    // assignment in this function's direct control flow, so it treats the
+    // variable as permanently `null`); capturing it as an object property
+    // sidesteps that and keeps the type honestly `Blob | null` at the read.
+    const captured: { blob: Blob | null } = { blob: null }
+    Object.defineProperty(globalThis.URL, 'createObjectURL', {
+      configurable: true,
+      value: (blob: Blob) => {
+        captured.blob = blob
+        return 'blob:orbitpm-test'
+      }
+    })
+    Object.defineProperty(globalThis.URL, 'revokeObjectURL', {
+      configurable: true,
+      value: () => undefined
+    })
+    const clickSpy = vi
+      .spyOn(HTMLAnchorElement.prototype, 'click')
+      .mockImplementation(() => undefined)
+
+    downloadBytes('source.xml', bytes)
+
+    expect(captured.blob).not.toBeNull()
+    expect(captured.blob?.size).toBe(bytes.byteLength)
+
+    clickSpy.mockRestore()
   })
 })
