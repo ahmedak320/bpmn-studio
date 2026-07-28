@@ -97,6 +97,17 @@ rejectText(
   /actions\/upload-pages-artifact@/u,
   'Pages must not use upload-pages-artifact because it nests a floating upload action'
 )
+for (const [pattern, description] of [
+  [/owner-waived-review-human-evidence/u, 'owner-waived release policy strings'],
+  [/owner waiver 2026-07-27/iu, 'owner-waiver comments'],
+  [/allow-no-approvals/iu, 'review-approval bypass switches'],
+  [
+    /optional; owner waived human evidence|runs only when external evidence is supplied|runs only when browser evidence is supplied/iu,
+    'optional human or browser evidence paths'
+  ]
+]) {
+  rejectText(allWorkflowText, pattern, `workflows contain prohibited ${description}`)
+}
 
 requireJobs('release', [
   'verify-pretag',
@@ -141,8 +152,8 @@ requireText(
 )
 requireText(
   workflows.quality,
-  /release-workflow-critical-invariants\.test\.mjs[\s\S]*verify-archive-recovery-evidence\.test\.mjs[\s\S]*verify-browser-compatibility-evidence\.test\.mjs[\s\S]*verify-external-release-evidence\.test\.mjs[\s\S]*workflow-action-pins\.test\.mjs/u,
-  'quality must execute workflow, archive, browser, external-evidence, and action-pin regressions'
+  /finalization-evidence-chain\.test\.mjs[\s\S]*historical-release-cleanup\.test\.mjs[\s\S]*pages-evidence-chain\.test\.mjs[\s\S]*release-evidence-chain\.test\.mjs[\s\S]*release-workflow-critical-invariants\.test\.mjs[\s\S]*verify-finalization-artifact-layout\.test\.mjs[\s\S]*verify-archive-recovery-evidence\.test\.mjs[\s\S]*verify-browser-compatibility-evidence\.test\.mjs[\s\S]*verify-external-release-evidence\.test\.mjs[\s\S]*workflow-action-pins\.test\.mjs/u,
+  'quality must execute finalization, retained-artifact, workflow, archive, browser, external-evidence, and action-pin regressions'
 )
 requireText(
   workflows.candidate,
@@ -165,7 +176,7 @@ requireText(
 )
 requireText(
   protectedTag,
-  /v0\.4\.5-owner-waived-review-human-evidence-2026-07-27[\s\S]*actor_type: "RepositoryRole"[\s\S]*bypass_mode: "always"/u,
+  /v0\.4\.5-nvda-voiceover-arabic-48h-p0p1-reviewed[\s\S]*actor_type: "RepositoryRole"[\s\S]*bypass_mode: "always"/u,
   'protected tag must require the exact approval and v* ruleset bypass identity'
 )
 requireText(
@@ -278,8 +289,8 @@ const finalPublish = finalizeJobs.get('publish') ?? ''
 const finalReadback = finalizeJobs.get('readback') ?? ''
 requireText(
   workflows.finalize,
-  /browser_version_baseline_url:[\s\S]*required: false[\s\S]*browser_version_baseline_sha256:[\s\S]*required: false/u,
-  'finalization must accept optional browser-version baseline URL and SHA-256 (owner waiver 2026-07-27)'
+  /browser_version_baseline_url:[\s\S]*required: true[\s\S]*browser_version_baseline_sha256:[\s\S]*required: true/u,
+  'finalization must require browser-version baseline URL and SHA-256'
 )
 if (
   count(workflows.finalize, /verify-browser-compatibility-evidence\.mjs/gu) !== 2 ||
@@ -300,6 +311,11 @@ requireText(
 )
 requireText(
   finalPublish,
+  /v0\.4\.5-pages-verified-immutable-stable-publication/u,
+  'finalization publish policy must require the exact pages-verified immutable stable publication approval'
+)
+requireText(
+  finalPublish,
   /collaborators\?affiliation=all&per_page=100[\s\S]*for status in queued in_progress[\s\S]*actions\/runs\?status=\$status&per_page=100/u,
   'publisher must enforce sole-writer and concurrent-workflow freeze'
 )
@@ -307,6 +323,21 @@ requireText(
   finalReadback,
   /schemaVersion: 2[\s\S]*publicationAuthoritySha256[\s\S]*browserCompatibilityEvidence:[\s\S]*browserVersionBaseline:[\s\S]*sourceSha256/u,
   'stable readback must retain schema-2 browser and baseline chain identities'
+)
+requireText(
+  finalReadback,
+  /cp[\s\S]*verified-finalization-evidence\/trusted-release-external-evidence-verification\.json[\s\S]*\$chain_dir\/trusted-release-external-evidence-verification\.json[\s\S]*cp[\s\S]*verified-finalization-evidence\/browser-compatibility-evidence-verification\.json[\s\S]*\$chain_dir\/browser-compatibility-evidence-verification\.json[\s\S]*cp[\s\S]*verified-finalization-evidence\/pages\/pages-browser-environment\.json[\s\S]*\$chain_dir\/pages\/pages-browser-environment\.json[\s\S]*cp[\s\S]*verified-finalization-evidence\/pages\/trusted-release-external-evidence-verification\.json[\s\S]*\$chain_dir\/pages\/trusted-release-external-evidence-verification\.json/u,
+  'stable readback must copy the retained release, browser, and Pages evidence files into the immutable finalization artifact'
+)
+requireText(
+  finalReadback,
+  /node scripts\/finalization-evidence-chain\.mjs verify[\s\S]*--chain="\$chain_dir\/finalization-chain\.json"[\s\S]*--publication-authority="\$authority"[\s\S]*--browser-evidence="\$browser_evidence"/u,
+  'stable readback must self-verify the retained finalization chain before uploading immutable evidence'
+)
+requireText(
+  finalReadback,
+  /artifact_root=immutable-stable-publication-artifact[\s\S]*node scripts\/verify-finalization-artifact-layout\.mjs[\s\S]*--root="\$artifact_root"[\s\S]*path:\s*immutable-stable-publication-artifact\//u,
+  'stable readback must stage and verify one exact immutable finalization artifact directory before upload'
 )
 requireText(
   finalReadback,
@@ -322,6 +353,11 @@ requireText(
   cleanupPlan,
   /--mode=preflight[\s\S]*484fa611b1bdd4494ef48e2e77ef1d672c1a1a7f769e8ff431a8f911513407d8[\s\S]*orbitpm-historical-cleanup-authority/u,
   'cleanup plan must bind the exact manifest and preserve immutable authority'
+)
+requireText(
+  cleanupPlan,
+  /node scripts\/verify-finalization-artifact-layout\.mjs[\s\S]*--root=finalization-evidence[\s\S]*test -f "\$browser_evidence"[\s\S]*test -f "\$release_evidence"[\s\S]*test -f "\$pages_release_evidence"[\s\S]*node scripts\/finalization-evidence-chain\.mjs verify/u,
+  'cleanup plan must verify the retained finalization artifact layout and finalization chain against exact external and browser evidence files'
 )
 requireText(
   cleanupWriter,
@@ -340,8 +376,13 @@ requireText(
 )
 requireText(
   cleanupReadback,
-  /--mode=verify[\s\S]*remainingDeletionCount[\s\S]*"0"[\s\S]*retainedAssetCount[\s\S]*"7"[\s\S]*--state=stable/u,
-  'cleanup readback must prove 28 deletions, seven retained assets, and stable release state'
+  /node scripts\/finalization-evidence-chain\.mjs verify[\s\S]*--release-tag=v0\.4\.5[\s\S]*--publication-authority="\$publication_authority"/u,
+  'cleanup readback must reverify the retained finalization chain from retained cleanup authority files'
+)
+requireText(
+  cleanupReadback,
+  /--mode=verify[\s\S]*remainingDeletionCount[\s\S]*"0"[\s\S]*retainedAssetCount[\s\S]*"7"/u,
+  'cleanup readback must prove 28 deletions and seven retained assets'
 )
 for (const source of [cleanupWriter, cleanupReadback]) {
   requireText(

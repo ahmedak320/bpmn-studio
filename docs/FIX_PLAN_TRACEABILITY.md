@@ -5,6 +5,12 @@ unnumbered completion criteria and mandatory scenario rows, to implementation,
 commits, and the strongest evidence that is actually present. It is a
 traceability inventory, not a release certificate.
 
+For the audited live GitHub publication state observed on Tuesday, July 28,
+2026, see
+[RELEASE_COMPLIANCE_AUDIT_2026-07-28.md](RELEASE_COMPLIANCE_AUDIT_2026-07-28.md).
+That record supersedes candidate-era assumptions about unpublished state and
+documents the remaining evidence-chain gaps in the retained finalization run.
+
 ## Reading the status
 
 | Code | Meaning                                                                  |

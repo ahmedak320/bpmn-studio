@@ -21,28 +21,28 @@ on:
         required: true
         type: string
       browser_compatibility_evidence_url:
-        description: Reviewed post-Pages current/previous browser matrix URL (optional; owner waived human evidence for 0.4.5 on 2026-07-27)
-        required: false
+        description: Reviewed post-Pages current/previous browser matrix URL
+        required: true
         type: string
       browser_compatibility_evidence_sha256:
-        description: SHA-256 of the post-Pages browser compatibility matrix JSON (optional; see browser_compatibility_evidence_url)
-        required: false
+        description: SHA-256 of the post-Pages browser compatibility matrix JSON
+        required: true
         type: string
       browser_version_baseline_url:
-        description: Immutable vendor-version baseline JSON URL bound by the matrix (optional; see browser_compatibility_evidence_url)
-        required: false
+        description: Immutable vendor-version baseline JSON URL bound by the matrix
+        required: true
         type: string
       browser_version_baseline_sha256:
-        description: SHA-256 of the immutable vendor-version baseline JSON (optional; see browser_compatibility_evidence_url)
-        required: false
+        description: SHA-256 of the immutable vendor-version baseline JSON
+        required: true
         type: string
       external_evidence_url:
-        description: Reviewed candidate-bound external evidence URL (optional; owner waived human evidence for 0.4.5 on 2026-07-27)
-        required: false
+        description: Reviewed candidate-bound external evidence URL
+        required: true
         type: string
       external_evidence_sha256:
-        description: SHA-256 of the candidate-bound external evidence JSON (optional; see external_evidence_url)
-        required: false
+        description: SHA-256 of the candidate-bound external evidence JSON
+        required: true
         type: string
 
 permissions:
@@ -97,38 +97,26 @@ jobs:
               '' | *[!0-9]*) exit 1 ;;
             esac
           done
-          # Owner waiver 2026-07-27: evidence inputs are optional; validate
-          # their format only when supplied.
-          if [ -n "$BROWSER_EVIDENCE_URL" ]; then
-            for url in \
-              "$BROWSER_EVIDENCE_URL" \
-              "$VERSION_BASELINE_URL"
-            do
-              case "$url" in
-                https://*) ;;
-                *) exit 1 ;;
-              esac
-            done
-            for digest in \
-              "$BROWSER_EVIDENCE_SHA256" \
-              "$VERSION_BASELINE_SHA256"
-            do
-              test "${#digest}" -eq 64
-              case "$digest" in
-                *[!0-9a-f]*) exit 1 ;;
-              esac
-            done
-          fi
-          if [ -n "$EVIDENCE_URL" ]; then
-            case "$EVIDENCE_URL" in
+          for url in \
+            "$BROWSER_EVIDENCE_URL" \
+            "$VERSION_BASELINE_URL" \
+            "$EVIDENCE_URL"
+          do
+            case "$url" in
               https://*) ;;
               *) exit 1 ;;
             esac
-            test "${#EVIDENCE_SHA256}" -eq 64
-            case "$EVIDENCE_SHA256" in
+          done
+          for digest in \
+            "$BROWSER_EVIDENCE_SHA256" \
+            "$VERSION_BASELINE_SHA256" \
+            "$EVIDENCE_SHA256"
+          do
+            test "${#digest}" -eq 64
+            case "$digest" in
               *[!0-9a-f]*) exit 1 ;;
             esac
-          fi
+          done
           test "$GITHUB_REF" = "refs/heads/main"
           test "$GITHUB_SHA" = "$CANDIDATE_SHA"
           git fetch --force origin \
@@ -197,12 +185,10 @@ jobs:
             --repo "$GITHUB_REPOSITORY" \
             --name "orbitpm-tag-release-assets-$CANDIDATE_SHA" \
             --dir tag-release
-          if [ -n "$EVIDENCE_URL" ]; then
-            gh run download "$RELEASE_RUN_ID" \
-              --repo "$GITHUB_REPOSITORY" \
-              --name "orbitpm-tag-external-evidence-$CANDIDATE_SHA" \
-              --dir release-evidence
-          fi
+          gh run download "$RELEASE_RUN_ID" \
+            --repo "$GITHUB_REPOSITORY" \
+            --name "orbitpm-tag-external-evidence-$CANDIDATE_SHA" \
+            --dir release-evidence
           gh run download "$PAGES_RUN_ID" \
             --repo "$GITHUB_REPOSITORY" \
             --name "orbitpm-pages-evidence-$CANDIDATE_SHA" \
@@ -259,24 +245,20 @@ jobs:
             test "$attempt" -lt 150
             sleep 5
           done
-          # Owner waiver 2026-07-27: evidence-chain verification runs only
-          # when external evidence is supplied.
-          if [ -n "$EVIDENCE_URL" ]; then
-            candidate_ready_at="$(
-              jq -er .candidateReadyAt \
-                release-evidence/tag-external-evidence-verification.json
-            )"
-            node scripts/release-evidence-chain.mjs verify \
-              --aggregate=release-evidence/tag-external-evidence-verification.json \
-              --candidate-sha="$CANDIDATE_SHA" \
-              --candidate-ready-at="$candidate_ready_at" \
-              --artifact=release-before-finalize/OrbitPM-Process-Studio-Lite-0.4.5.html \
-              --source-url="$EVIDENCE_URL" \
-              --source-sha256="$EVIDENCE_SHA256"
-            node scripts/release-evidence-chain.mjs compare \
-              --trusted=release-evidence/tag-external-evidence-verification.json \
-              --observed=pages-evidence/trusted-release-external-evidence-verification.json
-          fi
+          candidate_ready_at="$(
+            jq -er .candidateReadyAt \
+              release-evidence/tag-external-evidence-verification.json
+          )"
+          node scripts/release-evidence-chain.mjs verify \
+            --aggregate=release-evidence/tag-external-evidence-verification.json \
+            --candidate-sha="$CANDIDATE_SHA" \
+            --candidate-ready-at="$candidate_ready_at" \
+            --artifact=release-before-finalize/OrbitPM-Process-Studio-Lite-0.4.5.html \
+            --source-url="$EVIDENCE_URL" \
+            --source-sha256="$EVIDENCE_SHA256"
+          node scripts/release-evidence-chain.mjs compare \
+            --trusted=release-evidence/tag-external-evidence-verification.json \
+            --observed=pages-evidence/trusted-release-external-evidence-verification.json
           node scripts/pages-evidence-chain.mjs verify \
             --evidence=pages-evidence/pages-browser-environment.json \
             --candidate-sha="$CANDIDATE_SHA" \
@@ -284,22 +266,18 @@ jobs:
             --url="$PAGES_URL" \
             --run-id="$PAGES_RUN_ID" \
             --repository="$GITHUB_REPOSITORY"
-          # Owner waiver 2026-07-27: browser-compatibility evidence
-          # verification runs only when browser evidence is supplied.
-          if [ -n "$BROWSER_EVIDENCE_URL" ]; then
-            mkdir -p identity-evidence
-            node scripts/verify-browser-compatibility-evidence.mjs \
-              --candidate-sha="$CANDIDATE_SHA" \
-              --candidate-ready-at="$candidate_ready_at" \
-              --artifact=release-before-finalize/OrbitPM-Process-Studio-Lite-0.4.5.html \
-              --pages-url="$PAGES_URL" \
-              --pages-deployment-evidence=pages-evidence/pages-browser-environment.json \
-              --url="$BROWSER_EVIDENCE_URL" \
-              --sha256="$BROWSER_EVIDENCE_SHA256" \
-              --version-baseline-url="$VERSION_BASELINE_URL" \
-              --version-baseline-sha256="$VERSION_BASELINE_SHA256" \
-              --output=identity-evidence/browser-compatibility-evidence-verification.json
-          fi
+          mkdir -p identity-evidence
+          node scripts/verify-browser-compatibility-evidence.mjs \
+            --candidate-sha="$CANDIDATE_SHA" \
+            --candidate-ready-at="$candidate_ready_at" \
+            --artifact=release-before-finalize/OrbitPM-Process-Studio-Lite-0.4.5.html \
+            --pages-url="$PAGES_URL" \
+            --pages-deployment-evidence=pages-evidence/pages-browser-environment.json \
+            --url="$BROWSER_EVIDENCE_URL" \
+            --sha256="$BROWSER_EVIDENCE_SHA256" \
+            --version-baseline-url="$VERSION_BASELINE_URL" \
+            --version-baseline-sha256="$VERSION_BASELINE_SHA256" \
+            --output=identity-evidence/browser-compatibility-evidence-verification.json
 
   publication-authority:
     name: Protected read-only post-approval publication authority
@@ -320,7 +298,7 @@ jobs:
           APPROVAL_POLICY: ${{ vars.ORBITPM_RELEASE_FINALIZE_POLICY }}
         run: >-
           test "$APPROVAL_POLICY" =
-          "v0.4.5-owner-waived-review-human-evidence-2026-07-27"
+          "v0.4.5-pages-verified-immutable-stable-publication"
 
       - name: Checkout exact candidate after approval
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
@@ -346,12 +324,10 @@ jobs:
             --repo "$GITHUB_REPOSITORY" \
             --name "orbitpm-tag-release-assets-$CANDIDATE_SHA" \
             --dir tag-release
-          if [ -n "$EVIDENCE_URL" ]; then
-            gh run download "$RELEASE_RUN_ID" \
-              --repo "$GITHUB_REPOSITORY" \
-              --name "orbitpm-tag-external-evidence-$CANDIDATE_SHA" \
-              --dir trusted-release-evidence
-          fi
+          gh run download "$RELEASE_RUN_ID" \
+            --repo "$GITHUB_REPOSITORY" \
+            --name "orbitpm-tag-external-evidence-$CANDIDATE_SHA" \
+            --dir trusted-release-evidence
           gh run download "$PAGES_RUN_ID" \
             --repo "$GITHUB_REPOSITORY" \
             --name "orbitpm-pages-evidence-$CANDIDATE_SHA" \
@@ -408,24 +384,20 @@ jobs:
           cmp \
             release-at-authority/OrbitPM-Process-Studio-Lite-0.4.5.html \
             pages-at-authority.html
-          # Owner waiver 2026-07-27: evidence-chain verification runs only
-          # when external evidence is supplied.
-          if [ -n "$EVIDENCE_URL" ]; then
-            candidate_ready_at="$(
-              jq -er .candidateReadyAt \
-                trusted-release-evidence/tag-external-evidence-verification.json
-            )"
-            node scripts/release-evidence-chain.mjs verify \
-              --aggregate=trusted-release-evidence/tag-external-evidence-verification.json \
-              --candidate-sha="$CANDIDATE_SHA" \
-              --candidate-ready-at="$candidate_ready_at" \
-              --artifact=release-at-authority/OrbitPM-Process-Studio-Lite-0.4.5.html \
-              --source-url="$EVIDENCE_URL" \
-              --source-sha256="$EVIDENCE_SHA256"
-            node scripts/release-evidence-chain.mjs compare \
-              --trusted=trusted-release-evidence/tag-external-evidence-verification.json \
-              --observed=trusted-pages-evidence/trusted-release-external-evidence-verification.json
-          fi
+          candidate_ready_at="$(
+            jq -er .candidateReadyAt \
+              trusted-release-evidence/tag-external-evidence-verification.json
+          )"
+          node scripts/release-evidence-chain.mjs verify \
+            --aggregate=trusted-release-evidence/tag-external-evidence-verification.json \
+            --candidate-sha="$CANDIDATE_SHA" \
+            --candidate-ready-at="$candidate_ready_at" \
+            --artifact=release-at-authority/OrbitPM-Process-Studio-Lite-0.4.5.html \
+            --source-url="$EVIDENCE_URL" \
+            --source-sha256="$EVIDENCE_SHA256"
+          node scripts/release-evidence-chain.mjs compare \
+            --trusted=trusted-release-evidence/tag-external-evidence-verification.json \
+            --observed=trusted-pages-evidence/trusted-release-external-evidence-verification.json
           node scripts/pages-evidence-chain.mjs verify \
             --evidence=trusted-pages-evidence/pages-browser-environment.json \
             --candidate-sha="$CANDIDATE_SHA" \
@@ -434,44 +406,36 @@ jobs:
             --run-id="$PAGES_RUN_ID" \
             --repository="$GITHUB_REPOSITORY"
           mkdir -p verified-finalization-evidence/pages
-          # Owner waiver 2026-07-27: browser-compatibility evidence
-          # verification runs only when browser evidence is supplied.
-          if [ -n "$BROWSER_EVIDENCE_URL" ]; then
-            node scripts/verify-browser-compatibility-evidence.mjs \
-              --candidate-sha="$CANDIDATE_SHA" \
-              --candidate-ready-at="$candidate_ready_at" \
-              --artifact=release-at-authority/OrbitPM-Process-Studio-Lite-0.4.5.html \
-              --pages-url="$PAGES_URL" \
-              --pages-deployment-evidence=trusted-pages-evidence/pages-browser-environment.json \
-              --url="$BROWSER_EVIDENCE_URL" \
-              --sha256="$BROWSER_EVIDENCE_SHA256" \
-              --version-baseline-url="$VERSION_BASELINE_URL" \
-              --version-baseline-sha256="$VERSION_BASELINE_SHA256" \
-              --output=verified-finalization-evidence/browser-compatibility-evidence-verification.json
-            browser_evidence=verified-finalization-evidence/browser-compatibility-evidence-verification.json
-            test "$(jq -r .source.url "$browser_evidence")" = "$BROWSER_EVIDENCE_URL"
-            test "$(jq -r .source.finalUrl "$browser_evidence")" = "$BROWSER_EVIDENCE_URL"
-            test "$(jq -r .source.sha256 "$browser_evidence")" = "$BROWSER_EVIDENCE_SHA256"
-            test "$(jq -r .versionBaseline.source.url "$browser_evidence")" = \
-              "$VERSION_BASELINE_URL"
-            test "$(jq -r .versionBaseline.source.finalUrl "$browser_evidence")" = \
-              "$VERSION_BASELINE_URL"
-            test "$(jq -r .versionBaseline.source.sha256 "$browser_evidence")" = \
-              "$VERSION_BASELINE_SHA256"
-          fi
-          if [ -n "$EVIDENCE_URL" ]; then
-            cp \
-              trusted-release-evidence/tag-external-evidence-verification.json \
-              verified-finalization-evidence/trusted-release-external-evidence-verification.json
-          fi
+          node scripts/verify-browser-compatibility-evidence.mjs \
+            --candidate-sha="$CANDIDATE_SHA" \
+            --candidate-ready-at="$candidate_ready_at" \
+            --artifact=release-at-authority/OrbitPM-Process-Studio-Lite-0.4.5.html \
+            --pages-url="$PAGES_URL" \
+            --pages-deployment-evidence=trusted-pages-evidence/pages-browser-environment.json \
+            --url="$BROWSER_EVIDENCE_URL" \
+            --sha256="$BROWSER_EVIDENCE_SHA256" \
+            --version-baseline-url="$VERSION_BASELINE_URL" \
+            --version-baseline-sha256="$VERSION_BASELINE_SHA256" \
+            --output=verified-finalization-evidence/browser-compatibility-evidence-verification.json
+          browser_evidence=verified-finalization-evidence/browser-compatibility-evidence-verification.json
+          test "$(jq -r .source.url "$browser_evidence")" = "$BROWSER_EVIDENCE_URL"
+          test "$(jq -r .source.finalUrl "$browser_evidence")" = "$BROWSER_EVIDENCE_URL"
+          test "$(jq -r .source.sha256 "$browser_evidence")" = "$BROWSER_EVIDENCE_SHA256"
+          test "$(jq -r .versionBaseline.source.url "$browser_evidence")" = \
+            "$VERSION_BASELINE_URL"
+          test "$(jq -r .versionBaseline.source.finalUrl "$browser_evidence")" = \
+            "$VERSION_BASELINE_URL"
+          test "$(jq -r .versionBaseline.source.sha256 "$browser_evidence")" = \
+            "$VERSION_BASELINE_SHA256"
+          cp \
+            trusted-release-evidence/tag-external-evidence-verification.json \
+            verified-finalization-evidence/trusted-release-external-evidence-verification.json
           cp \
             trusted-pages-evidence/pages-browser-environment.json \
             verified-finalization-evidence/pages/pages-browser-environment.json
-          if [ -n "$EVIDENCE_URL" ]; then
-            cp \
-              trusted-pages-evidence/trusted-release-external-evidence-verification.json \
-              verified-finalization-evidence/pages/trusted-release-external-evidence-verification.json
-          fi
+          cp \
+            trusted-pages-evidence/trusted-release-external-evidence-verification.json \
+            verified-finalization-evidence/pages/trusted-release-external-evidence-verification.json
           mkdir publication-authority
           assets="$(
             jq -n '[]'
@@ -672,12 +636,12 @@ jobs:
                   .size > 0 and
                   (.sha256 | test("^[0-9a-f]{64}$"))
                 )] | length) == 7 and
-              ((.browserCompatibilityEvidence.url == "") or
-                (.browserCompatibilityEvidence.sha256 | test("^[0-9a-f]{64}$"))) and
-              ((.browserVersionBaseline.url == "") or
-                (.browserVersionBaseline.sha256 | test("^[0-9a-f]{64}$"))) and
-              ((.externalEvidence.url == "") or
-                (.externalEvidence.sha256 | test("^[0-9a-f]{64}$")))
+              (.browserCompatibilityEvidence.url | startswith("https://")) and
+              (.browserCompatibilityEvidence.sha256 | test("^[0-9a-f]{64}$")) and
+              (.browserVersionBaseline.url | startswith("https://")) and
+              (.browserVersionBaseline.sha256 | test("^[0-9a-f]{64}$")) and
+              (.externalEvidence.url | startswith("https://")) and
+              (.externalEvidence.sha256 | test("^[0-9a-f]{64}$"))
             ' publication-authority.json >/dev/null
           test "$(jq -j .notesBody publication-authority.json | sha256sum | cut -d' ' -f1)" = \
             "770697128d0a06b4dd4b9cf7bcbf7f63dfa286e0b929260ae4546b36893a9c1d"
@@ -694,7 +658,7 @@ jobs:
         run: |
           set -euo pipefail
           test "$APPROVAL_POLICY" = \
-            "v0.4.5-owner-waived-review-human-evidence-2026-07-27"
+            "v0.4.5-pages-verified-immutable-stable-publication"
           test "$WRITER_FREEZE_POLICY" = \
             "v0.4.5-sole-admin-no-manual-release-writes-during-finalization"
           test -n "$GH_ADMIN_TOKEN"
@@ -951,7 +915,11 @@ jobs:
           VERSION_BASELINE_SHA256: ${{ inputs.browser_version_baseline_sha256 }}
           VERSION_BASELINE_URL: ${{ inputs.browser_version_baseline_url }}
         run: |
-          authority=publication-authority/publication-authority.json
+          artifact_root=immutable-stable-publication-artifact
+          chain_dir="$artifact_root/finalize-evidence"
+          authority="$artifact_root/publication-authority/publication-authority.json"
+          mkdir -p "$chain_dir/pages" "$artifact_root/publication-authority"
+          cp publication-authority/publication-authority.json "$authority"
           git fetch --force origin \
             refs/heads/main:refs/remotes/origin/main \
             "+refs/tags/$RELEASE_TAG:refs/tags/$RELEASE_TAG"
@@ -959,25 +927,26 @@ jobs:
           node scripts/check-release-tag.mjs "$RELEASE_TAG" --require-origin-main
           for attempt in $(seq 1 12); do
             gh api "repos/$GITHUB_REPOSITORY/releases?per_page=100" |
-              jq --arg tag "$RELEASE_TAG" '[.[] | select(.tag_name == $tag)] | .[0]' > stable-release.json
-            test "$(jq -r .tag_name stable-release.json)" = "$RELEASE_TAG"
-            gh api "repos/$GITHUB_REPOSITORY/releases/latest" > latest-release.json
-            if test "$(jq -r .draft stable-release.json)" = "false" &&
-              test "$(jq -r .prerelease stable-release.json)" = "false" &&
-              test "$(jq -r .immutable stable-release.json)" = "true" &&
-              test "$(jq -r .id stable-release.json)" = \
-                "$(jq -r .id latest-release.json)"
+              jq --arg tag "$RELEASE_TAG" '[.[] | select(.tag_name == $tag)] | .[0]' > "$artifact_root/stable-release.json"
+            test "$(jq -r .tag_name "$artifact_root/stable-release.json")" = "$RELEASE_TAG"
+            gh api "repos/$GITHUB_REPOSITORY/releases/latest" > "$artifact_root/latest-release.json"
+            if test "$(jq -r .draft "$artifact_root/stable-release.json")" = "false" &&
+              test "$(jq -r .prerelease "$artifact_root/stable-release.json")" = "false" &&
+              test "$(jq -r .immutable "$artifact_root/stable-release.json")" = "true" &&
+              test "$(jq -r .id "$artifact_root/stable-release.json")" = \
+                "$(jq -r .id "$artifact_root/latest-release.json")"
             then
               break
             fi
             test "$attempt" -lt 12
             sleep 5
           done
-          test "$(jq -r .id stable-release.json)" = "$(jq -r .releaseId "$authority")"
+          test "$(jq -r .id "$artifact_root/stable-release.json")" = \
+            "$(jq -r .releaseId "$authority")"
           mkdir stable-release
           gh release download "$RELEASE_TAG" --dir stable-release
           node scripts/release-state.mjs \
-            --release-json=stable-release.json \
+            --release-json="$artifact_root/stable-release.json" \
             --assets=stable-release \
             --expected-assets=tag-release \
             --notes=docs/RELEASE_NOTES_0.4.5.md \
@@ -1008,51 +977,39 @@ jobs:
             test "$attempt" -lt 150
             sleep 5
           done
-          chain_dir=finalize-evidence
-          mkdir -p "$chain_dir/pages"
-          if [ -n "$EVIDENCE_URL" ]; then
-            cp \
-              verified-finalization-evidence/trusted-release-external-evidence-verification.json \
-              "$chain_dir/trusted-release-external-evidence-verification.json"
-          fi
-          if [ -n "$BROWSER_EVIDENCE_URL" ]; then
-            cp \
-              verified-finalization-evidence/browser-compatibility-evidence-verification.json \
-              "$chain_dir/browser-compatibility-evidence-verification.json"
-          fi
+          cp \
+            verified-finalization-evidence/trusted-release-external-evidence-verification.json \
+            "$chain_dir/trusted-release-external-evidence-verification.json"
+          cp \
+            verified-finalization-evidence/browser-compatibility-evidence-verification.json \
+            "$chain_dir/browser-compatibility-evidence-verification.json"
           cp \
             verified-finalization-evidence/pages/pages-browser-environment.json \
             "$chain_dir/pages/pages-browser-environment.json"
-          if [ -n "$EVIDENCE_URL" ]; then
-            cp \
-              verified-finalization-evidence/pages/trusted-release-external-evidence-verification.json \
-              "$chain_dir/pages/trusted-release-external-evidence-verification.json"
-          fi
+          cp \
+            verified-finalization-evidence/pages/trusted-release-external-evidence-verification.json \
+            "$chain_dir/pages/trusted-release-external-evidence-verification.json"
           pages_evidence="$chain_dir/pages/pages-browser-environment.json"
           browser_evidence_sha256=""
           candidate_ready_at=""
           release_evidence_sha256=""
           version_baseline_source_sha256=""
-          # Owner waiver 2026-07-27: evidence-chain verification runs only
-          # when external evidence is supplied.
-          if [ -n "$EVIDENCE_URL" ]; then
-            release_evidence="$chain_dir/trusted-release-external-evidence-verification.json"
-            pages_release_evidence="$chain_dir/pages/trusted-release-external-evidence-verification.json"
-            candidate_ready_at="$(jq -er .candidateReadyAt "$release_evidence")"
-            node scripts/release-evidence-chain.mjs verify \
-              --aggregate="$release_evidence" \
-              --candidate-sha="$CANDIDATE_SHA" \
-              --candidate-ready-at="$candidate_ready_at" \
-              --artifact=stable-release/OrbitPM-Process-Studio-Lite-0.4.5.html \
-              --source-url="$EVIDENCE_URL" \
-              --source-sha256="$EVIDENCE_SHA256"
-            node scripts/release-evidence-chain.mjs compare \
-              --trusted="$release_evidence" \
-              --observed="$pages_release_evidence"
-            release_evidence_sha256="$(
-              sha256sum "$release_evidence" | cut -d' ' -f1
-            )"
-          fi
+          release_evidence="$chain_dir/trusted-release-external-evidence-verification.json"
+          pages_release_evidence="$chain_dir/pages/trusted-release-external-evidence-verification.json"
+          candidate_ready_at="$(jq -er .candidateReadyAt "$release_evidence")"
+          node scripts/release-evidence-chain.mjs verify \
+            --aggregate="$release_evidence" \
+            --candidate-sha="$CANDIDATE_SHA" \
+            --candidate-ready-at="$candidate_ready_at" \
+            --artifact=stable-release/OrbitPM-Process-Studio-Lite-0.4.5.html \
+            --source-url="$EVIDENCE_URL" \
+            --source-sha256="$EVIDENCE_SHA256"
+          node scripts/release-evidence-chain.mjs compare \
+            --trusted="$release_evidence" \
+            --observed="$pages_release_evidence"
+          release_evidence_sha256="$(
+            sha256sum "$release_evidence" | cut -d' ' -f1
+          )"
           node scripts/pages-evidence-chain.mjs verify \
             --evidence="$pages_evidence" \
             --candidate-sha="$CANDIDATE_SHA" \
@@ -1064,36 +1021,32 @@ jobs:
             sha256sum stable-release/OrbitPM-Process-Studio-Lite-0.4.5.html |
               cut -d' ' -f1
           )"
-          # Owner waiver 2026-07-27: browser-compatibility evidence
-          # assertions run only when browser evidence is supplied.
-          if [ -n "$BROWSER_EVIDENCE_URL" ]; then
-            browser_evidence="$chain_dir/browser-compatibility-evidence-verification.json"
-            test "$(jq -r .gate "$browser_evidence")" = \
-              "orbitpm-lite-browser-compatibility-evidence"
-            test "$(jq -r .status "$browser_evidence")" = "passed"
-            test "$(jq -r .candidateSha "$browser_evidence")" = "$CANDIDATE_SHA"
-            test "$(jq -r .candidateReadyAt "$browser_evidence")" = "$candidate_ready_at"
-            test "$(jq -r .artifactSha256 "$browser_evidence")" = "$artifact_sha256"
-            test "$(jq -r .pagesUrl "$browser_evidence")" = "$PAGES_URL"
-            test "$(jq -r .source.url "$browser_evidence")" = "$BROWSER_EVIDENCE_URL"
-            test "$(jq -r .source.finalUrl "$browser_evidence")" = "$BROWSER_EVIDENCE_URL"
-            test "$(jq -r .source.sha256 "$browser_evidence")" = \
-              "$BROWSER_EVIDENCE_SHA256"
-            test "$(jq -r .versionBaseline.source.url "$browser_evidence")" = \
-              "$VERSION_BASELINE_URL"
-            test "$(jq -r .versionBaseline.source.finalUrl "$browser_evidence")" = \
-              "$VERSION_BASELINE_URL"
-            test "$(jq -r .versionBaseline.source.sha256 "$browser_evidence")" = \
-              "$VERSION_BASELINE_SHA256"
-            test "$(jq -r .pagesDeploymentEvidence.sha256 "$browser_evidence")" = \
-              "$(sha256sum "$pages_evidence" | cut -d' ' -f1)"
-            browser_evidence_sha256="$(
-              sha256sum "$browser_evidence" | cut -d' ' -f1
-            )"
-            version_baseline_source_sha256="$(
-              jq -r .versionBaseline.source.sha256 "$browser_evidence"
-            )"
-          fi
+          browser_evidence="$chain_dir/browser-compatibility-evidence-verification.json"
+          test "$(jq -r .gate "$browser_evidence")" = \
+            "orbitpm-lite-browser-compatibility-evidence"
+          test "$(jq -r .status "$browser_evidence")" = "passed"
+          test "$(jq -r .candidateSha "$browser_evidence")" = "$CANDIDATE_SHA"
+          test "$(jq -r .candidateReadyAt "$browser_evidence")" = "$candidate_ready_at"
+          test "$(jq -r .artifactSha256 "$browser_evidence")" = "$artifact_sha256"
+          test "$(jq -r .pagesUrl "$browser_evidence")" = "$PAGES_URL"
+          test "$(jq -r .source.url "$browser_evidence")" = "$BROWSER_EVIDENCE_URL"
+          test "$(jq -r .source.finalUrl "$browser_evidence")" = "$BROWSER_EVIDENCE_URL"
+          test "$(jq -r .source.sha256 "$browser_evidence")" = \
+            "$BROWSER_EVIDENCE_SHA256"
+          test "$(jq -r .versionBaseline.source.url "$browser_evidence")" = \
+            "$VERSION_BASELINE_URL"
+          test "$(jq -r .versionBaseline.source.finalUrl "$browser_evidence")" = \
+            "$VERSION_BASELINE_URL"
+          test "$(jq -r .versionBaseline.source.sha256 "$browser_evidence")" = \
+            "$VERSION_BASELINE_SHA256"
+          test "$(jq -r .pagesDeploymentEvidence.sha256 "$browser_evidence")" = \
+            "$(sha256sum "$pages_evidence" | cut -d' ' -f1)"
+          browser_evidence_sha256="$(
+            sha256sum "$browser_evidence" | cut -d' ' -f1
+          )"
+          version_baseline_source_sha256="$(
+            jq -r .versionBaseline.source.sha256 "$browser_evidence"
+          )"
           jq -n \
             --arg artifactSha256 "$artifact_sha256" \
             --arg browserEvidenceSha256 "$browser_evidence_sha256" \
@@ -1144,15 +1097,24 @@ jobs:
                 sha256: $externalEvidenceSha256
               }
             }' > "$chain_dir/finalization-chain.json"
+          node scripts/finalization-evidence-chain.mjs verify \
+            --chain="$chain_dir/finalization-chain.json" \
+            --candidate-sha="$CANDIDATE_SHA" \
+            --release-tag="$RELEASE_TAG" \
+            --finalization-run-id="$GITHUB_RUN_ID" \
+            --pages-url="$PAGES_URL" \
+            --artifact=stable-release/OrbitPM-Process-Studio-Lite-0.4.5.html \
+            --release-evidence="$release_evidence" \
+            --pages-evidence="$pages_evidence" \
+            --publication-authority="$authority" \
+            --browser-evidence="$browser_evidence"
+          node scripts/verify-finalization-artifact-layout.mjs \
+            --root="$artifact_root"
 
       - name: Preserve immutable stable publication evidence
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: orbitpm-immutable-stable-release-${{ inputs.candidate_sha }}
-          path: |
-            finalize-evidence/
-            publication-authority/publication-authority.json
-            stable-release.json
-            latest-release.json
+          path: immutable-stable-publication-artifact/
           if-no-files-found: error
           retention-days: 90

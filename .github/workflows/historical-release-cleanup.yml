@@ -157,39 +157,28 @@ jobs:
           PAGES_URL: https://ahmedak320.github.io/bpmn-studio/
           RELEASE_TAG: ${{ inputs.release_tag }}
         run: |
+          node scripts/verify-finalization-artifact-layout.mjs \
+            --root=finalization-evidence
           chain=finalization-evidence/finalize-evidence/finalization-chain.json
           browser_evidence=finalization-evidence/finalize-evidence/browser-compatibility-evidence-verification.json
           release_evidence=finalization-evidence/finalize-evidence/trusted-release-external-evidence-verification.json
           pages_evidence=finalization-evidence/finalize-evidence/pages/pages-browser-environment.json
           pages_release_evidence=finalization-evidence/finalize-evidence/pages/trusted-release-external-evidence-verification.json
           publication_authority=finalization-evidence/publication-authority/publication-authority.json
-          test "$(jq -r .schemaVersion "$chain")" = "2"
-          test "$(jq -r .gate "$chain")" = "orbitpm-lite-finalization-chain"
-          test "$(jq -r .status "$chain")" = "passed"
-          test "$(jq -r .candidateSha "$chain")" = "$CANDIDATE_SHA"
-          test "$(jq -r .releaseTag "$chain")" = "$RELEASE_TAG"
-          test "$(jq -r .finalizationRunId "$chain")" = "$FINALIZATION_RUN_ID"
-          test "$(jq -r .pagesUrl "$chain")" = "$PAGES_URL"
-          test "$(jq -r .releaseEvidenceSha256 "$chain")" = \
-            "$(sha256sum "$release_evidence" | cut -d' ' -f1)"
-          test "$(jq -r .pagesEvidenceSha256 "$chain")" = \
-            "$(sha256sum "$pages_evidence" | cut -d' ' -f1)"
-          test "$(jq -r .publicationAuthoritySha256 "$chain")" = \
-            "$(sha256sum "$publication_authority" | cut -d' ' -f1)"
-          test "$(jq -r .browserCompatibilityEvidence.aggregateSha256 "$chain")" = \
-            "$(sha256sum "$browser_evidence" | cut -d' ' -f1)"
-          test "$(jq -r .browserCompatibilityEvidence.url "$chain")" = \
-            "$(jq -r .source.url "$browser_evidence")"
-          test "$(jq -r .browserCompatibilityEvidence.sourceSha256 "$chain")" = \
-            "$(jq -r .source.sha256 "$browser_evidence")"
-          test "$(jq -r .browserVersionBaseline.url "$chain")" = \
-            "$(jq -r .versionBaseline.source.url "$browser_evidence")"
-          test "$(jq -r .browserVersionBaseline.sha256 "$chain")" = \
-            "$(jq -r .versionBaseline.source.sha256 "$browser_evidence")"
-          test "$(jq -r .browserVersionBaseline.sourceSha256 "$chain")" = \
-            "$(jq -r .versionBaseline.source.sha256 "$browser_evidence")"
-          test "$(jq -r .versionBaseline.source.url "$browser_evidence")" = \
-            "$(jq -r .versionBaseline.source.finalUrl "$browser_evidence")"
+          test -f "$browser_evidence"
+          test -f "$release_evidence"
+          test -f "$pages_release_evidence"
+          node scripts/finalization-evidence-chain.mjs verify \
+            --chain="$chain" \
+            --candidate-sha="$CANDIDATE_SHA" \
+            --release-tag="$RELEASE_TAG" \
+            --finalization-run-id="$FINALIZATION_RUN_ID" \
+            --pages-url="$PAGES_URL" \
+            --artifact=stable-release/OrbitPM-Process-Studio-Lite-0.4.5.html \
+            --release-evidence="$release_evidence" \
+            --pages-evidence="$pages_evidence" \
+            --publication-authority="$publication_authority" \
+            --browser-evidence="$browser_evidence"
           gh api "repos/$GITHUB_REPOSITORY/releases/tags/$RELEASE_TAG" \
             > stable-release.json
           gh api "repos/$GITHUB_REPOSITORY/releases/latest" > latest-release.json
@@ -1307,23 +1296,17 @@ jobs:
           pages_release_evidence=cleanup-authority/trusted-pages-release-external-evidence-verification.json
           publication_authority=cleanup-authority/publication-authority.json
           artifact=stable-after-cleanup/OrbitPM-Process-Studio-Lite-0.4.5.html
-          test "$(jq -r .schemaVersion "$chain")" = "2"
-          test "$(jq -r .candidateSha "$chain")" = "$CANDIDATE_SHA"
-          test "$(jq -r .finalizationRunId "$chain")" = "$FINALIZATION_RUN_ID"
-          test "$(jq -r .artifactSha256 "$chain")" = \
-            "$(sha256sum "$artifact" | cut -d' ' -f1)"
-          test "$(jq -r .publicationAuthoritySha256 "$chain")" = \
-            "$(sha256sum "$publication_authority" | cut -d' ' -f1)"
-          test "$(jq -r .browserCompatibilityEvidence.aggregateSha256 "$chain")" = \
-            "$(sha256sum "$browser_evidence" | cut -d' ' -f1)"
-          test "$(jq -r .browserVersionBaseline.url "$chain")" = \
-            "$(jq -r .versionBaseline.source.url "$browser_evidence")"
-          test "$(jq -r .browserVersionBaseline.sha256 "$chain")" = \
-            "$(jq -r .versionBaseline.source.sha256 "$browser_evidence")"
-          test "$(jq -r .browserVersionBaseline.sourceSha256 "$chain")" = \
-            "$(jq -r .versionBaseline.source.sha256 "$browser_evidence")"
-          test "$(jq -r .versionBaseline.source.url "$browser_evidence")" = \
-            "$(jq -r .versionBaseline.source.finalUrl "$browser_evidence")"
+          node scripts/finalization-evidence-chain.mjs verify \
+            --chain="$chain" \
+            --candidate-sha="$CANDIDATE_SHA" \
+            --release-tag=v0.4.5 \
+            --finalization-run-id="$FINALIZATION_RUN_ID" \
+            --pages-url="$PAGES_URL" \
+            --artifact="$artifact" \
+            --release-evidence="$release_evidence" \
+            --pages-evidence="$pages_evidence" \
+            --publication-authority="$publication_authority" \
+            --browser-evidence="$browser_evidence"
           verify_embedded_record() {
             record="$1"
             output="$2"

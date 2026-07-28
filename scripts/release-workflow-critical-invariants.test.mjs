@@ -8,6 +8,7 @@ import { findCriticalReleaseWorkflowFailures } from './release-workflow-critical
 const root = resolve(new URL('..', import.meta.url).pathname)
 const sources = Object.fromEntries(
   Object.entries({
+    candidate: 'release-candidate.yml',
     release: 'release.yml',
     pages: 'pages.yml',
     rollback: 'pages-rollback.yml',
@@ -26,6 +27,58 @@ test('current release workflows satisfy all critical fail-closed invariants', ()
 })
 
 for (const scenario of [
+  {
+    name: 'review waiver switch',
+    sources: () =>
+      mutated('candidate', 'test "$trusted_approvals" -ge 1', 'test "$trusted_approvals" -ge 0'),
+    failure: /critical\/review-gate/
+  },
+  {
+    name: 'optional release external evidence input',
+    sources: () =>
+      mutated(
+        'release',
+        'external_evidence_url:\n        description: Reviewed NVDA, VoiceOver, Arabic, 48-hour soak, and P0/P1 evidence URL\n        required: true',
+        'external_evidence_url:\n        description: Reviewed NVDA, VoiceOver, Arabic, 48-hour soak, and P0/P1 evidence URL\n        required: false'
+      ),
+    failure: /critical\/external-evidence-inputs/
+  },
+  {
+    name: 'optional finalization browser baseline input',
+    sources: () => mutated('finalize', 'browser_version_baseline_sha256:', 'removed_baseline_sha:'),
+    failure: /critical\/finalization-inputs/
+  },
+  {
+    name: 'finalization missing-evidence bypass',
+    sources: () =>
+      mutated(
+        'finalize',
+        '(.browserCompatibilityEvidence.url | startswith("https://")) and',
+        '((.browserCompatibilityEvidence.url == "") or'
+      ),
+    failure: /critical\/finalization-evidence/
+  },
+  {
+    name: 'missing finalization chain self-verification',
+    sources: () =>
+      mutated(
+        'finalize',
+        'node scripts/finalization-evidence-chain.mjs verify',
+        'node scripts/untrusted-placeholder.mjs verify'
+      ),
+    failure: /critical\/finalization-chain-verification/
+  },
+  {
+    name: 'missing finalization artifact layout verifier',
+    sources: () => ({
+      ...sources,
+      finalize: sources.finalize.replace(
+        'node scripts/verify-finalization-artifact-layout.mjs',
+        'node scripts/untrusted-placeholder.mjs'
+      )
+    }),
+    failure: /critical\/finalization-artifact-layout/
+  },
   {
     name: 'split lifecycle concurrency',
     sources: () =>
@@ -70,6 +123,17 @@ for (const scenario of [
         'node scripts/verify-archive-recovery-evidence.mjs',
         'node scripts/untrusted-placeholder.mjs'
       ),
+    failure: /critical\/archive-authority/
+  },
+  {
+    name: 'missing finalization chain verifier',
+    sources: () => ({
+      ...sources,
+      cleanup: sources.cleanup.replaceAll(
+        'node scripts/finalization-evidence-chain.mjs verify',
+        'node scripts/untrusted-placeholder.mjs verify'
+      )
+    }),
     failure: /critical\/archive-authority/
   },
   {
