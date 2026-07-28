@@ -57,6 +57,8 @@
     "release:file-smoke": "node scripts/file-smoke.mjs"
   },
   "dependencies": {
+    "diagram-js": "15.22.0",
+    "diagram-js-minimap": "5.4.0",
     "fflate": "0.8.3",
     "jspdf": "4.2.1",
     "papaparse": "5.5.4",
@@ -67,8 +69,8 @@
     "zod": "4.4.3"
   },
   "devDependencies": {
-    "@bpmn-io/properties-panel": "3.47.0",
     "@axe-core/playwright": "4.12.1",
+    "@bpmn-io/properties-panel": "3.47.0",
     "@eslint/js": "10.0.1",
     "@playwright/test": "1.61.1",
     "@testing-library/dom": "10.4.1",
@@ -87,8 +89,6 @@
     "bpmn-js-properties-panel": "5.61.0",
     "bpmn-moddle": "9.0.4",
     "bpmnlint": "11.12.1",
-    "diagram-js": "15.22.0",
-    "diagram-js-minimap": "5.4.0",
     "eslint": "10.0.1",
     "eslint-plugin-react-hooks": "7.1.1",
     "github-actionlint": "1.7.12",
