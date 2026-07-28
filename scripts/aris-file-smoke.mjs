@@ -40,7 +40,6 @@ const scenarios = [
     closeAssistant: 'Close assistant',
     closeSettings: 'Close',
     aiPanelHeading: '✨ Generate with AI',
-    placeholderHeading: 'ARIS placeholder canvas',
     languageButtonPattern: /^Interface:/,
     rejectedToast: 'This ARIS-only build accepts ARIS AML/XML exports.'
   },
@@ -57,7 +56,6 @@ const scenarios = [
     closeAssistant: 'إغلاق المساعد',
     closeSettings: 'إغلاق',
     aiPanelHeading: '✨ إنشاء بالذكاء الاصطناعي',
-    placeholderHeading: 'لوحة عنصر نائب لـ ARIS',
     languageButtonPattern: /^الواجهة:/,
     rejectedToast: 'هذا الإصدار المقتصر على ARIS يقبل فقط صادرات ARIS AML/XML.'
   }
@@ -129,7 +127,48 @@ try {
     await pickerInput.setInputFiles(referencePath)
 
     await page.getByText('ARISAMLExport.xml', { exact: true }).first().waitFor({ state: 'visible' })
-    await page.getByText(scenario.placeholderHeading, { exact: true }).waitFor({ state: 'visible' })
+
+    // The real ARIS canvas must mount and draw the imported export. These
+    // selectors are locale-neutral on purpose: the assertion is about the
+    // rendered ARIS graph, not about translated chrome.
+    await page.locator('[data-orbitpm-aris-canvas]').first().waitFor({ state: 'visible' })
+    await page
+      .locator('[data-orbitpm-aris-canvas] [data-element-id^="ObjOcc."]')
+      .first()
+      .waitFor({ state: 'attached' })
+    const renderedOccurrences = await page
+      .locator('[data-orbitpm-aris-canvas] [data-element-id^="ObjOcc."]')
+      .count()
+    if (renderedOccurrences < 10) {
+      recordFailure(label, `expected the imported model to render, found ${renderedOccurrences} occurrences`)
+    }
+
+    // All eight models of the reference export are offered by the explorer.
+    const modelButtons = await page.locator('[data-orbitpm-aris-model]').count()
+    if (modelButtons !== 8) {
+      recordFailure(label, `expected 8 models in the explorer, found ${modelButtons}`)
+    }
+
+    // Switching models rebuilds the canvas from the other model's records.
+    const firstOccurrenceId = await page
+      .locator('[data-orbitpm-aris-canvas] [data-element-id^="ObjOcc."]')
+      .first()
+      .getAttribute('data-element-id')
+    await page.locator('[data-orbitpm-aris-model]:not([disabled])').nth(1).click()
+    await page.waitForFunction(
+      (previous) =>
+        document.querySelector(`[data-orbitpm-aris-canvas] [data-element-id="${previous}"]`) === null,
+      firstOccurrenceId
+    )
+    await page
+      .locator('[data-orbitpm-aris-canvas] [data-element-id^="ObjOcc."]')
+      .first()
+      .waitFor({ state: 'attached' })
+
+    // The accounting/fidelity rail is wired, not stubbed.
+    await page.locator('[data-orbitpm-aris-accounting]').first().waitFor({ state: 'visible' })
+    await page.locator('[data-orbitpm-aris-fidelity]').first().waitFor({ state: 'visible' })
+
     await page.getByLabel(scenario.aiPanelHeading, { exact: true }).waitFor({ state: 'visible' })
 
     await page.getByRole('banner').getByRole('button', { name: scenario.settingsButton, exact: true }).click()

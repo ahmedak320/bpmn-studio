@@ -1,0 +1,141 @@
+/*
+ * Presentation for the mounted ARIS shell.
+ *
+ * Two responsibilities only:
+ *  1. give the diagram-js container a real box inside the React layout, and
+ *  2. make the Section 11.5 selection-highlight markers visible.
+ *
+ * `ArisSelectionHighlight` adds `aris-highlight`, `aris-highlight-owner`,
+ * `aris-highlight-color-N` and `aris-highlight-dashed` as diagram-js markers,
+ * which land as classes on the element's `.djs-element` group. Without the
+ * rules below the plan is computed and correct but invisible, so these
+ * selectors are the whole of "highlighting is visible".
+ *
+ * No @font-face, no url(), no @import: the single-file contract (plan §2.5)
+ * forbids anything that would produce a startup request.
+ */
+
+.orbitpm-aris-canvas {
+  position: relative;
+  min-width: 0;
+  min-height: 0;
+  height: 100%;
+  width: 100%;
+  overflow: hidden;
+  border: 1px solid var(--orbitpm-border);
+  border-radius: 14px;
+  background: var(--orbitpm-panel-bg, var(--orbitpm-bg));
+}
+
+.orbitpm-aris-canvas .djs-container,
+.orbitpm-aris-canvas .djs-parent {
+  width: 100%;
+  height: 100%;
+}
+
+/* diagram-js positions the palette/minimap with `direction: ltr` maths. */
+.orbitpm-aris-canvas .djs-palette,
+.orbitpm-aris-canvas .djs-minimap {
+  direction: ltr;
+}
+
+.orbitpm-aris-canvas-empty {
+  display: grid;
+  place-items: center;
+  padding: 1.25rem;
+  text-align: center;
+  color: var(--orbitpm-muted);
+  line-height: 1.55;
+}
+
+/* --- Section 11.5 selection highlighting ------------------------------- */
+
+.orbitpm-aris-canvas .djs-element.aris-highlight-owner .djs-visual > :is(rect, circle, ellipse, polygon, polyline, path) {
+  stroke: var(--orbitpm-aris-highlight-owner, #b45309);
+  stroke-width: 3px;
+}
+
+.orbitpm-aris-canvas .djs-element.aris-highlight .djs-visual > :is(rect, circle, ellipse, polygon, polyline, path, line) {
+  stroke-width: 2.5px;
+}
+
+.orbitpm-aris-canvas .djs-element.aris-highlight .djs-visual > :is(rect, circle, ellipse, polygon, polyline, path, line) {
+  stroke: var(--orbitpm-aris-highlight, #2563eb);
+}
+
+/* Distinct colour slots keep overlapping routes apart (Section 11.5). */
+.orbitpm-aris-canvas .djs-element.aris-highlight-color-0 .djs-visual > * { stroke: #2563eb; }
+.orbitpm-aris-canvas .djs-element.aris-highlight-color-1 .djs-visual > * { stroke: #b91c1c; }
+.orbitpm-aris-canvas .djs-element.aris-highlight-color-2 .djs-visual > * { stroke: #047857; }
+.orbitpm-aris-canvas .djs-element.aris-highlight-color-3 .djs-visual > * { stroke: #7c3aed; }
+.orbitpm-aris-canvas .djs-element.aris-highlight-color-4 .djs-visual > * { stroke: #c2410c; }
+.orbitpm-aris-canvas .djs-element.aris-highlight-color-5 .djs-visual > * { stroke: #0e7490; }
+
+.orbitpm-aris-canvas .djs-element.aris-highlight-dashed .djs-visual > * {
+  stroke-dasharray: 6 4;
+}
+
+/* --- rails -------------------------------------------------------------- */
+
+.orbitpm-aris-rail {
+  min-width: 0;
+  min-height: 0;
+  overflow: auto;
+  display: grid;
+  gap: 12px;
+  align-content: start;
+}
+
+.orbitpm-aris-rail__section {
+  border: 1px solid var(--orbitpm-border);
+  border-radius: 12px;
+  padding: 0.9rem 1rem;
+  background: var(--orbitpm-panel-bg, var(--orbitpm-bg));
+}
+
+.orbitpm-aris-rail__heading {
+  margin: 0 0 10px;
+  font-size: 15;
+}
+
+.orbitpm-aris-defs {
+  display: grid;
+  grid-template-columns: minmax(110px, 0.7fr) minmax(0, 1fr);
+  gap: 6px 10px;
+  margin: 0;
+  font-size: 13px;
+}
+
+.orbitpm-aris-defs dt {
+  color: var(--orbitpm-muted);
+}
+
+.orbitpm-aris-defs dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.orbitpm-aris-report {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+
+.orbitpm-aris-report th,
+.orbitpm-aris-report td {
+  text-align: start;
+  padding: 3px 6px;
+  border-bottom: 1px solid var(--orbitpm-border);
+  overflow-wrap: anywhere;
+}
+
+.orbitpm-aris-report tbody tr[data-selectable='true'] {
+  cursor: pointer;
+}
+
+.orbitpm-aris-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}

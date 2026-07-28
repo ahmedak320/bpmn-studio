@@ -30,7 +30,19 @@ import { sha256Hex } from './workspace/adapters/hash'
 import { OpfsWorkspaceAdapter, opfsSupported } from './workspace/adapters/opfs'
 import { SingleFileWorkspaceAdapter } from './workspace/adapters/singleFile'
 import { classifyImportBoundarySource } from './workspace/importDrop'
-import { createArisXmlSourcePackage } from './aris/source/sourcePackage'
+import { createArisXmlSourcePackage, type ArisXmlSourcePackage } from './aris/source/sourcePackage'
+import {
+  ArisImportReviewDialog,
+  ArisModelExplorer,
+  ArisStudioTab,
+  buildArisStudioDocument,
+  commitArisWorkspaceImport,
+  prepareArisWorkspaceImport,
+  tk,
+  type ArisPreparedImport,
+  type ArisSourceFact,
+  type ArisStudioDocument
+} from './aris/shell'
 
 type Phase = 'loading' | 'need-open' | 'need-reconnect' | 'ready'
 
@@ -57,6 +69,19 @@ interface ArisTab {
   attributeCount?: number
   diagnosticCount?: number
   unknownRecordCount?: number
+  /**
+   * The lossless source package this tab was opened from. Kept so an import
+   * into the workspace package store re-uses the exact imported bytes and the
+   * exact semantic index that produced the on-canvas document — §7.3 refuses to
+   * stage a source that was not parsed and indexed.
+   */
+  pkg?: ArisXmlSourcePackage
+  /**
+   * Everything the mounted shell renders: working document, render/fidelity
+   * report, details projection and complete source accounting. `undefined` for
+   * a source with no ARIS records (an empty AML shell or a generated draft).
+   */
+  studio?: ArisStudioDocument
 }
 
 function pushSortedSources(entries: readonly WorkspaceEntry[]): WorkspaceEntry[] {
@@ -192,253 +217,37 @@ function pickerErrorMessage(code: ReturnType<typeof classifyPickerError>): strin
   }
 }
 
-function ArisPlaceholderTab({
-  tab,
-  onDownloadSource,
-  onOpenAssistant
-}: {
-  tab: ArisTab
-  onDownloadSource: () => void
-  onOpenAssistant: () => void
-}): JSX.Element {
-  return (
-    <section
-      aria-label={t('aris.placeholder.mainAria', { name: tab.title })}
-      style={{
-        display: 'grid',
-        gridTemplateColumns: 'minmax(0, 1fr) minmax(280px, 340px)',
-        gap: 16,
-        padding: '1rem',
-        minHeight: 0,
-        height: '100%'
-      }}
-    >
-      <div
-        style={{
-          minWidth: 0,
-          minHeight: 0,
-          display: 'grid',
-          gridTemplateRows: 'auto minmax(0, 1fr) auto',
-          gap: 12
-        }}
-      >
-        <header
-          style={{
-            display: 'flex',
-            flexWrap: 'wrap',
-            alignItems: 'center',
-            gap: 8
-          }}
-        >
-          <strong style={{ fontSize: 16 }}>{tab.title}</strong>
-          <span
-            style={{
-              padding: '0.2rem 0.55rem',
-              borderRadius: 999,
-              border: '1px solid var(--orbitpm-border)',
-              fontSize: 12,
-              color: 'var(--orbitpm-muted)'
-            }}
-          >
-            {sourceKindLabel(tab.sourceKind)}
-          </span>
-          <span
-            style={{
-              padding: '0.2rem 0.55rem',
-              borderRadius: 999,
-              border: '1px solid var(--orbitpm-border)',
-              fontSize: 12,
-              color: 'var(--orbitpm-muted)'
-            }}
-          >
-            {t('aris.placeholder.zoom')}
-          </span>
-          <span
-            style={{
-              padding: '0.2rem 0.55rem',
-              borderRadius: 999,
-              border: '1px solid var(--orbitpm-border)',
-              fontSize: 12,
-              color: 'var(--orbitpm-muted)'
-            }}
-          >
-            {t('aris.placeholder.layout')}
-          </span>
-        </header>
-
-        <div
-          style={{
-            minHeight: 0,
-            border: '1px solid var(--orbitpm-border)',
-            borderRadius: 14,
-            background: 'var(--orbitpm-panel-bg, var(--orbitpm-bg))',
-            display: 'grid',
-            placeItems: 'center',
-            padding: '1.25rem',
-            textAlign: 'center'
-          }}
-        >
-          <div style={{ maxWidth: 720 }}>
-            <div style={{ fontSize: 42, lineHeight: 1, marginBottom: 10 }} aria-hidden>
-              🧭
-            </div>
-            <h2 style={{ margin: '0 0 10px', fontSize: 20 }}>{t('aris.placeholder.heading')}</h2>
-            <p style={{ margin: '0 0 10px', color: 'var(--orbitpm-muted)', lineHeight: 1.55 }}>
-              {t('aris.placeholder.body')}
-            </p>
-            <p style={{ margin: 0, color: 'var(--orbitpm-muted)', fontSize: 13, lineHeight: 1.5 }}>
-              {t('aris.placeholder.readOnly')}
-            </p>
-          </div>
-        </div>
-
-        <div
-          style={{
-            display: 'flex',
-            gap: 8,
-            flexWrap: 'wrap'
-          }}
-        >
-          <button type="button" className="orbitpm-lite-chrome-btn" onClick={onDownloadSource}>
-            {t('aris.placeholder.downloadSource')}
-          </button>
-          <button type="button" className="orbitpm-lite-chrome-btn" onClick={onOpenAssistant}>
-            {t('aris.placeholder.openAssistant')}
-          </button>
-        </div>
-      </div>
-
-      <aside
-        style={{
-          minWidth: 0,
-          minHeight: 0,
-          overflow: 'auto',
-          display: 'grid',
-          gap: 12,
-          alignContent: 'start'
-        }}
-      >
-        <section
-          style={{
-            border: '1px solid var(--orbitpm-border)',
-            borderRadius: 12,
-            padding: '0.9rem 1rem',
-            background: 'var(--orbitpm-panel-bg, var(--orbitpm-bg))'
-          }}
-        >
-          <h3 style={{ margin: '0 0 10px', fontSize: 15 }}>
-            {t('aris.placeholder.detailsHeading')}
-          </h3>
-          <dl
-            style={{
-              display: 'grid',
-              gridTemplateColumns: 'minmax(110px, 0.7fr) minmax(0, 1fr)',
-              gap: '6px 10px',
-              margin: 0,
-              fontSize: 13
-            }}
-          >
-            <dt style={{ color: 'var(--orbitpm-muted)' }}>{t('aris.placeholder.sourceKind')}</dt>
-            <dd style={{ margin: 0 }}>{sourceKindLabel(tab.sourceKind)}</dd>
-            <dt style={{ color: 'var(--orbitpm-muted)' }}>{t('aris.placeholder.sourcePath')}</dt>
-            <dd style={{ margin: 0, overflowWrap: 'anywhere' }}>{tab.relPath ?? t('aris.source.virtual')}</dd>
-            <dt style={{ color: 'var(--orbitpm-muted)' }}>{t('aris.placeholder.sourceBytes')}</dt>
-            <dd style={{ margin: 0 }}>{tab.bytes.byteLength}</dd>
-            <dt style={{ color: 'var(--orbitpm-muted)' }}>{t('aris.placeholder.rootElement')}</dt>
-            <dd style={{ margin: 0 }}>{tab.rootElementName ?? t('aris.assistant.none')}</dd>
-            <dt style={{ color: 'var(--orbitpm-muted)' }}>{t('aris.placeholder.sourceTokens')}</dt>
-            <dd style={{ margin: 0 }}>{tab.xmlTokenCount ?? t('aris.assistant.none')}</dd>
-            <dt style={{ color: 'var(--orbitpm-muted)' }}>{t('aris.placeholder.sourceNodes')}</dt>
-            <dd style={{ margin: 0 }}>{tab.xmlNodeCount ?? t('aris.assistant.none')}</dd>
-            <dt style={{ color: 'var(--orbitpm-muted)' }}>{t('aris.placeholder.sourceDoctype')}</dt>
-            <dd style={{ margin: 0, overflowWrap: 'anywhere' }}>
-              {tab.doctypeExternalId ?? t('aris.assistant.none')}
-            </dd>
-            <dt style={{ color: 'var(--orbitpm-muted)' }}>{t('aris.placeholder.modelCount')}</dt>
-            <dd style={{ margin: 0 }}>{tab.modelCount ?? t('aris.assistant.none')}</dd>
-            <dt style={{ color: 'var(--orbitpm-muted)' }}>
-              {t('aris.placeholder.objectDefinitionCount')}
-            </dt>
-            <dd style={{ margin: 0 }}>{tab.objectDefinitionCount ?? t('aris.assistant.none')}</dd>
-            <dt style={{ color: 'var(--orbitpm-muted)' }}>
-              {t('aris.placeholder.objectOccurrenceCount')}
-            </dt>
-            <dd style={{ margin: 0 }}>{tab.objectOccurrenceCount ?? t('aris.assistant.none')}</dd>
-            <dt style={{ color: 'var(--orbitpm-muted)' }}>
-              {t('aris.placeholder.connectionDefinitionCount')}
-            </dt>
-            <dd style={{ margin: 0 }}>
-              {tab.connectionDefinitionCount ?? t('aris.assistant.none')}
-            </dd>
-            <dt style={{ color: 'var(--orbitpm-muted)' }}>
-              {t('aris.placeholder.connectionOccurrenceCount')}
-            </dt>
-            <dd style={{ margin: 0 }}>
-              {tab.connectionOccurrenceCount ?? t('aris.assistant.none')}
-            </dd>
-            <dt style={{ color: 'var(--orbitpm-muted)' }}>
-              {t('aris.placeholder.attributeCount')}
-            </dt>
-            <dd style={{ margin: 0 }}>{tab.attributeCount ?? t('aris.assistant.none')}</dd>
-            <dt style={{ color: 'var(--orbitpm-muted)' }}>
-              {t('aris.placeholder.semanticDiagnostics')}
-            </dt>
-            <dd style={{ margin: 0 }}>{tab.diagnosticCount ?? t('aris.assistant.none')}</dd>
-            <dt style={{ color: 'var(--orbitpm-muted)' }}>
-              {t('aris.placeholder.unknownRecordCount')}
-            </dt>
-            <dd style={{ margin: 0 }}>{tab.unknownRecordCount ?? t('aris.assistant.none')}</dd>
-            <dt style={{ color: 'var(--orbitpm-muted)' }}>{t('aris.placeholder.sourceDigest')}</dt>
-            <dd style={{ margin: 0, overflowWrap: 'anywhere', fontFamily: 'monospace' }}>
-              {tab.sha256}
-            </dd>
-          </dl>
-        </section>
-
-        <section
-          style={{
-            border: '1px solid var(--orbitpm-border)',
-            borderRadius: 12,
-            padding: '0.9rem 1rem',
-            background: 'var(--orbitpm-panel-bg, var(--orbitpm-bg))'
-          }}
-        >
-          <h3 style={{ margin: '0 0 10px', fontSize: 15 }}>
-            {t('aris.placeholder.accountingHeading')}
-          </h3>
-          <p style={{ margin: 0, color: 'var(--orbitpm-muted)', fontSize: 13, lineHeight: 1.5 }}>
-            {t('aris.placeholder.accountingBody')}
-          </p>
-        </section>
-
-        <section
-          style={{
-            border: '1px solid var(--orbitpm-border)',
-            borderRadius: 12,
-            padding: '0.9rem 1rem',
-            background: 'var(--orbitpm-panel-bg, var(--orbitpm-bg))'
-          }}
-        >
-          <h3 style={{ margin: '0 0 10px', fontSize: 15 }}>
-            {t('aris.placeholder.sourceHeading')}
-          </h3>
-          <pre
-            style={{
-              margin: 0,
-              whiteSpace: 'pre-wrap',
-              overflowWrap: 'anywhere',
-              fontSize: 12,
-              lineHeight: 1.5,
-              maxHeight: 320,
-              overflow: 'auto'
-            }}
-          >
-            {tab.content}
-          </pre>
-        </section>
-      </aside>
-    </section>
-  )
+/**
+ * The imported-source facts the details rail shows above the accounting rail.
+ * These are the counts the Phase 2 shell already surfaced; they stay because
+ * they describe the *source*, which the canvas deliberately does not.
+ */
+function sourceFactsFor(tab: ArisTab): readonly ArisSourceFact[] {
+  const unknown = t('aris.assistant.none')
+  return [
+    { labelKey: 'aris.placeholder.sourceKind', value: sourceKindLabel(tab.sourceKind) },
+    { labelKey: 'aris.placeholder.sourcePath', value: tab.relPath ?? t('aris.source.virtual') },
+    { labelKey: 'aris.placeholder.sourceBytes', value: tab.bytes.byteLength },
+    { labelKey: 'aris.placeholder.rootElement', value: tab.rootElementName ?? unknown },
+    { labelKey: 'aris.placeholder.sourceTokens', value: tab.xmlTokenCount ?? unknown },
+    { labelKey: 'aris.placeholder.sourceNodes', value: tab.xmlNodeCount ?? unknown },
+    { labelKey: 'aris.placeholder.sourceDoctype', value: tab.doctypeExternalId ?? unknown },
+    { labelKey: 'aris.placeholder.modelCount', value: tab.modelCount ?? unknown },
+    { labelKey: 'aris.placeholder.objectDefinitionCount', value: tab.objectDefinitionCount ?? unknown },
+    { labelKey: 'aris.placeholder.objectOccurrenceCount', value: tab.objectOccurrenceCount ?? unknown },
+    {
+      labelKey: 'aris.placeholder.connectionDefinitionCount',
+      value: tab.connectionDefinitionCount ?? unknown
+    },
+    {
+      labelKey: 'aris.placeholder.connectionOccurrenceCount',
+      value: tab.connectionOccurrenceCount ?? unknown
+    },
+    { labelKey: 'aris.placeholder.attributeCount', value: tab.attributeCount ?? unknown },
+    { labelKey: 'aris.placeholder.semanticDiagnostics', value: tab.diagnosticCount ?? unknown },
+    { labelKey: 'aris.placeholder.unknownRecordCount', value: tab.unknownRecordCount ?? unknown },
+    { labelKey: 'aris.placeholder.sourceDigest', value: tab.sha256 }
+  ]
 }
 
 export default function ArisApp(): JSX.Element {
@@ -470,6 +279,10 @@ export default function ArisApp(): JSX.Element {
   const [activeKey, setActiveKey] = useState<string | null>(null)
   const [rememberedName, setRememberedName] = useState<string | undefined>(undefined)
   const [toasts, setToasts] = useState<ToastMsg<string>[]>([])
+  /** Which model each open source is showing. Keyed by tab key. */
+  const [activeModelByTab, setActiveModelByTab] = useState<Record<string, string>>({})
+  const [preparedImport, setPreparedImport] = useState<ArisPreparedImport | null>(null)
+  const [importBusy, setImportBusy] = useState(false)
   const openFileInputRef = useRef<HTMLInputElement | null>(null)
   const importInputRef = useRef<HTMLInputElement | null>(null)
   const rememberedHandleRef = useRef<FileSystemDirectoryHandle | null>(null)
@@ -482,6 +295,23 @@ export default function ArisApp(): JSX.Element {
   const activeTab = useMemo(
     () => tabs.find((candidate) => candidate.key === activeKey) ?? null,
     [activeKey, tabs]
+  )
+
+  /**
+   * The model a tab shows: the user's explicit pick when it is still valid,
+   * otherwise the first model the canvas can actually render.
+   */
+  const activeModelIdForTab = useCallback(
+    (tab: ArisTab): string | null => {
+      const chosen = activeModelByTab[tab.key]
+      if (chosen && tab.studio?.models.some((model) => model.id === chosen)) return chosen
+      return (
+        tab.studio?.models.find((model) => model.renderable)?.id ??
+        tab.studio?.models[0]?.id ??
+        null
+      )
+    },
+    [activeModelByTab]
   )
 
   const pushToast = useCallback((message: string, tone: ToastTone = 'info') => {
@@ -535,9 +365,15 @@ export default function ArisApp(): JSX.Element {
         pushToast(t('toast.import.arisOnly'))
         return false
       }
+      // Only past the BPMN boundary do we build the working document, render
+      // model, details projection and accounting report: a rejected file must
+      // cost the workspace nothing at all.
+      const studio = buildArisStudioDocument(sourcePackage)
+      const shellFields = { pkg: sourcePackage, studio }
       openTab(
         relPath
           ? {
+              ...shellFields,
               ...snapshotToTab(
                 {
                   path: relPath,
@@ -563,6 +399,7 @@ export default function ArisApp(): JSX.Element {
               unknownRecordCount: sourcePackage.index.unknownRecords.length
             }
           : {
+              ...shellFields,
               key: `source:${name}:${sourcePackage.sha256}`,
               title: name,
               relPath: null,
@@ -709,11 +546,111 @@ export default function ArisApp(): JSX.Element {
       const xml = buildGeneratedArisPlaceholderXml(name, description, lang)
       const bytes = new TextEncoder().encode(xml)
       const hash = await sha256Hex(bytes)
-      openTab(generatedToTab(name, xml, bytes, hash))
+      // A generated draft goes through the same lossless pipeline as an
+      // imported file, so its tab gets the same rails and the same accounting.
+      const sourcePackage = await createArisXmlSourcePackage({
+        name: `${name || 'draft'}.xml`,
+        relPath: null,
+        bytes
+      })
+      openTab({
+        ...generatedToTab(name, xml, bytes, hash),
+        pkg: sourcePackage,
+        studio: buildArisStudioDocument(sourcePackage)
+      })
       setAssistantOpen(true)
     },
     [lang, openTab]
   )
+
+  const handleSelectModel = useCallback((tabKey: string, modelId: string) => {
+    setActiveModelByTab((current) =>
+      current[tabKey] === modelId ? current : { ...current, [tabKey]: modelId }
+    )
+  }, [])
+
+  /** §7.3 phase one: stage every write in memory and open the review gate. */
+  const handlePrepareImport = useCallback(
+    async (tab: ArisTab) => {
+      const adapter = workspaceAdapter
+      if (!adapter || !tab.pkg || !tab.studio) return
+      setImportBusy(true)
+      try {
+        setPreparedImport(await prepareArisWorkspaceImport(adapter, tab.pkg, tab.studio))
+      } catch (importError) {
+        pushToast(
+          tk('aris.import.failed', 'The import could not be prepared: {error}', {
+            error: importError instanceof Error ? importError.message : String(importError)
+          }),
+          'error'
+        )
+      } finally {
+        setImportBusy(false)
+      }
+    },
+    [pushToast, workspaceAdapter]
+  )
+
+  /** §7.3 phase two: echo the reviewed digest, commit atomically, then flush. */
+  const handleConfirmImport = useCallback(async () => {
+    const prepared = preparedImport
+    if (!prepared) return
+    setImportBusy(true)
+    try {
+      const { outcome, flush } = await commitArisWorkspaceImport(prepared)
+      if (outcome.status === 'rolled-back' || outcome.status === 'rollback-failed') {
+        pushToast(
+          tk('aris.import.rolledBack', 'The import failed and was rolled back: {error}', {
+            error: outcome.error.message
+          }),
+          'error'
+        )
+        return
+      }
+      // A committed package that could not be flushed is NOT a successful
+      // import: in portable mode the container file still holds its old bytes.
+      if (flush.status === 'failed') {
+        pushToast(
+          tk(
+            'aris.import.flushFailed',
+            'The workspace package was written but the file save failed: {error}',
+            { error: flush.message }
+          ),
+          'error'
+        )
+        return
+      }
+      const sourceName = prepared.plan.review.sourceName
+      pushToast(
+        outcome.status === 'deduplicated'
+          ? tk(
+              'aris.import.deduplicated',
+              'That exact source is already stored; nothing was written.'
+            )
+          : flush.status === 'flushed' && flush.disposition === 'download'
+            ? tk(
+                'aris.import.downloaded',
+                'Imported {name}; the portable workspace container was downloaded rather than written in place.',
+                { name: sourceName }
+              )
+            : tk('aris.import.committed', 'Imported {name} into the workspace package store.', {
+                name: sourceName
+              }),
+        'success'
+      )
+      if (workspaceAdapter) await refreshWorkspaceSources(workspaceAdapter)
+    } catch (commitError) {
+      pushToast(
+        tk('aris.import.failed', 'The import could not be prepared: {error}', {
+          error: commitError instanceof Error ? commitError.message : String(commitError)
+        }),
+        'error'
+      )
+    } finally {
+      setImportBusy(false)
+      setPreparedImport(null)
+    }
+  }, [preparedImport, pushToast, refreshWorkspaceSources, workspaceAdapter])
 
   useEffect(() => {
     let active = true
@@ -917,6 +854,16 @@ export default function ArisApp(): JSX.Element {
                   )}
                 </div>
 
+                {activeTab?.studio && (
+                  <ArisModelExplorer
+                    sourceTitle={activeTab.title}
+                    models={activeTab.studio.models}
+                    activeModelId={activeModelIdForTab(activeTab)}
+                    lang={lang}
+                    onSelect={(modelId) => handleSelectModel(activeTab.key, modelId)}
+                  />
+                )}
+
                 {workspaceSources.length === 0 ? (
                   <div
                     style={{
@@ -1092,13 +1039,35 @@ export default function ArisApp(): JSX.Element {
                         minHeight: 0
                       }}
                     >
-                      <ArisPlaceholderTab
-                        tab={tab}
-                        onDownloadSource={() =>
-                          downloadBytes(tab.relPath?.split('/').pop() ?? `${tab.title}.xml`, tab.bytes)
-                        }
-                        onOpenAssistant={() => setAssistantOpen(true)}
-                      />
+                      {tab.studio ? (
+                        <ArisStudioTab
+                          title={tab.title}
+                          studio={tab.studio}
+                          modelId={activeModelIdForTab(tab)}
+                          active={isActive}
+                          lang={lang}
+                          sourceFacts={sourceFactsFor(tab)}
+                          sourceText={tab.content}
+                          canImport={workspaceAdapter !== null && tab.pkg !== undefined}
+                          onModelChange={(modelId) => handleSelectModel(tab.key, modelId)}
+                          onDownloadSource={() =>
+                            downloadBytes(
+                              tab.relPath?.split('/').pop() ?? `${tab.title}.xml`,
+                              tab.bytes
+                            )
+                          }
+                          onDownloadAttachment={(filename, bytes, mimeType) =>
+                            downloadBytes(filename, bytes, mimeType)
+                          }
+                          onOpenAssistant={() => setAssistantOpen(true)}
+                          onImportPackage={() => void handlePrepareImport(tab)}
+                          onToast={(message, tone) => pushToast(message, tone ?? 'info')}
+                        />
+                      ) : (
+                        <div style={{ padding: '1.5rem', opacity: 0.7, lineHeight: 1.6 }}>
+                          {t('aris.emptyMain')}
+                        </div>
+                      )}
                     </div>
                   )
                 })
@@ -1145,6 +1114,14 @@ export default function ArisApp(): JSX.Element {
         openTabCount={tabs.length}
         activeTabTitle={activeTab?.title ?? null}
         activeSourceKindLabel={activeTab ? sourceKindLabel(activeTab.sourceKind) : null}
+      />
+      <ArisImportReviewDialog
+        open={preparedImport !== null}
+        plan={preparedImport?.plan ?? null}
+        busy={importBusy}
+        dir={dir}
+        onConfirm={() => void handleConfirmImport()}
+        onCancel={() => setPreparedImport(null)}
       />
       <Toaster toasts={toasts} onDismiss={dismissToast} />
     </>
