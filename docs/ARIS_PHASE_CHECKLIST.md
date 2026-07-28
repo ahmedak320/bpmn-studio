@@ -48,5 +48,5 @@ Status as of 2026-07-28 on `feat/aris-only-studio`:
 No external blocker yet for the active implementation phase. The remaining work is internal:
 
 - remove the BPMN editor shell without regressing retained infrastructure;
-- finish the remaining BPMN rejection coverage in directory/workspace and review-driven import paths;
+- finish the remaining BPMN rejection coverage in review-driven import paths still owned by the legacy `App` shell;
 - remove BPMN runtime dependencies only after the ARIS shell path is active.

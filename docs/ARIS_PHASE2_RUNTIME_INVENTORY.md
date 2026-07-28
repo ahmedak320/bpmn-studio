@@ -84,10 +84,13 @@ These cannot be removed until the ARIS shell path replaces the BPMN editor/runti
   - the workspace picker, language toggle, theme response, settings dialog, assistant drawer, and embedded AI panel all remain usable
   - the real AnimalWF reference source at `reference/AnimalWF/ARISAMLExport.xml` opens in the placeholder shell
   - BPMN rejection still holds on the top-level open-file and import-file shell paths
+- Added focused `ArisApp` tests that verify:
+  - remembered directory workspaces surface `.bpmn` entries as unsupported and reject BPMN XML disguised as `.xml`
+  - mixed import batches still accept ARIS AML peers after rejecting BPMN files
 
 ## Next implementation slice
 
 Finish Phase 2 cleanup around the new shell:
 
-- finish the remaining BPMN rejection coverage in directory-backed workspace browsing and review-driven import surfaces
+- finish the remaining BPMN rejection coverage in review-driven import surfaces still routed through the legacy `App` import stack
 - delete BPMN production dependencies only after `App`/editor-only imports are fully outside the production graph
