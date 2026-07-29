@@ -50,6 +50,15 @@ const SHARED_OCCURRENCE_COUNT = 13
 const OCCURRENCE_A = 'ObjOcc.3i-a2j4HRS3-u-L-2RrG0o5obHn-x-L-33-c'
 const OCCURRENCE_B = 'ObjOcc.3i-a2j4HRS3-u-L--oQd_Yb3pM-x-L-33-c'
 
+/**
+ * Verified against the source XML: both `OCCURRENCE_A` and `OCCURRENCE_B`
+ * carry their own `<Brush Color="d7c49d" .../>` child (neither `ObjOcc`
+ * carries a raw `FillColor` attribute that would override it), so the canvas
+ * — which reads source brush colours from imported AML — shows this colour
+ * for both occurrences' fill until a rail edit overrides it.
+ */
+const OCCURRENCE_SOURCE_FILL_COLOR = 'd7c49d'
+
 test.beforeAll(() => {
   expect(readFileSync(DIST, 'utf8').length).toBeGreaterThan(500_000)
   expect(statSync(REFERENCE_AML).isFile(), `reference fixture missing at ${REFERENCE_AML}`).toBe(
@@ -219,7 +228,7 @@ test('an occurrence-scoped edit changes only that shape and undoes in one step',
   await expect(styleEditor.locator('[data-orbitpm-aris-scope-badge="occurrence"]')).toBeVisible()
 
   const fill = page.locator('[data-orbitpm-aris-style-input="fillColor"]')
-  await expect(fill).toHaveValue('')
+  await expect(fill).toHaveValue(OCCURRENCE_SOURCE_FILL_COLOR)
   await editField(page, '[data-orbitpm-aris-style-input="fillColor"]', '#123456')
   await expect(fill).toHaveValue('#123456')
 
@@ -230,7 +239,9 @@ test('an occurrence-scoped edit changes only that shape and undoes in one step',
     'data-orbitpm-aris-details-definition',
     SHARED_DEFINITION_ID
   )
-  await expect(page.locator('[data-orbitpm-aris-style-input="fillColor"]')).toHaveValue('')
+  await expect(page.locator('[data-orbitpm-aris-style-input="fillColor"]')).toHaveValue(
+    OCCURRENCE_SOURCE_FILL_COLOR
+  )
 
   // …while the edited occurrence kept its own value.
   await selectOccurrence(page, OCCURRENCE_A)
@@ -238,7 +249,9 @@ test('an occurrence-scoped edit changes only that shape and undoes in one step',
   await expect(page.locator('[data-orbitpm-aris-style-input="fillColor"]')).toHaveValue('#123456')
 
   await page.locator('[data-orbitpm-aris-undo]').click()
-  await expect(page.locator('[data-orbitpm-aris-style-input="fillColor"]')).toHaveValue('')
+  await expect(page.locator('[data-orbitpm-aris-style-input="fillColor"]')).toHaveValue(
+    OCCURRENCE_SOURCE_FILL_COLOR
+  )
   await expect(page.locator('[data-orbitpm-aris-undo]')).toBeDisabled()
 })
 
