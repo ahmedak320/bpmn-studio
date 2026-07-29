@@ -1,11 +1,18 @@
 /**
- * Minimal XML scan for Phase 10 acceptance tests.
+ * Minimal XML scan for Phase 10 acceptance tests and §13.4 attachment
+ * extraction.
  *
- * This is intentionally small and dependency-free. It reads AnimalWF-sized AML
- * exports and extracts just enough to build attachment records and count
- * OLE/attachment facts. It does NOT replace the lossless parser in
- * `src/aris/source`; it is only for test helpers that must not couple to the
- * in-flight semantic index.
+ * This is intentionally small, dependency-free, and **browser-safe**: it is
+ * re-exported from the `src/aris/details` barrel, so anything imported here
+ * ships to the browser bundle. It reads AnimalWF-sized AML exports (as text
+ * already in memory) and extracts just enough to build attachment records and
+ * count OLE/attachment facts. It does NOT replace the lossless parser in
+ * `src/aris/source`; it is only for test helpers and the §13.4 attachment scan
+ * that must not couple to the in-flight semantic index.
+ *
+ * Node-only file loading (`node:fs`) intentionally does NOT live in this
+ * module — see `xmlScanLoader.ts`, which is test-only and not part of the
+ * `details` barrel, so a Node builtin never reaches a production build.
  */
 
 import type { ArisDetailsAttachment, ArisDetailsAttachmentBlob } from './seam'
@@ -40,13 +47,29 @@ function extractNumberAttribute(tag: string, name: string): number | null {
   return Number.isFinite(parsed) ? parsed : null
 }
 
-function decodeXmlEntities(text: string): string {
-  return text.replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&').replace(/&quot;/g, '"').replace(/&#(\d+);/g, (_, code) => String.fromCharCode(Number(code)))
+export function decodeXmlEntities(text: string): string {
+  return text
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&amp;/g, '&')
+    .replace(/&quot;/g, '"')
+    .replace(/&#(\d+);/g, (_, code) => String.fromCharCode(Number(code)))
 }
 
 export function scanAmlForOle(xmlText: string): ArisXmlScanResult {
   const oleDefinitions = new Map<string, ArisDetailsAttachment>()
-  const oleOccurrences = new Map<string, { oleOccurrenceId: string; oleDefinitionId: string; modelId: string; x: number; y: number; dx: number; dy: number }>()
+  const oleOccurrences = new Map<
+    string,
+    {
+      oleOccurrenceId: string
+      oleDefinitionId: string
+      modelId: string
+      x: number
+      y: number
+      dx: number
+      dy: number
+    }
+  >()
 
   const oleDefRegex = /<OLEDef\s+OLEDef\.ID="([^"]*)"[\s\S]*?<\/OLEDef>/g
   let match: RegExpExecArray | null
@@ -70,7 +93,7 @@ export function scanAmlForOle(xmlText: string): ArisXmlScanResult {
         position: null,
         size: null,
         displayName: `OLE-${oleDefId}`,
-        blobs,
+        blobs
       })
     }
   }
@@ -79,7 +102,8 @@ export function scanAmlForOle(xmlText: string): ArisXmlScanResult {
   while ((match = modelRegex.exec(xmlText)) !== null) {
     const modelBlock = match[0]
     const modelId = match[1]
-    const oleOccRegex = /<OLEOcc\s+OLEOcc\.ID="([^"]*)"\s+OLEDef\.IdRef="([^"]*)"[\s\S]*?<\/OLEOcc>/g
+    const oleOccRegex =
+      /<OLEOcc\s+OLEOcc\.ID="([^"]*)"\s+OLEDef\.IdRef="([^"]*)"[\s\S]*?<\/OLEOcc>/g
     let oleOccMatch: RegExpExecArray | null
     while ((oleOccMatch = oleOccRegex.exec(modelBlock)) !== null) {
       const occBlock = oleOccMatch[0]
@@ -89,7 +113,15 @@ export function scanAmlForOle(xmlText: string): ArisXmlScanResult {
       const y = extractNumberAttribute(occBlock, 'Pos\\.Y') ?? 0
       const dx = extractNumberAttribute(occBlock, 'Size\\.dX') ?? 0
       const dy = extractNumberAttribute(occBlock, 'Size\\.dY') ?? 0
-      oleOccurrences.set(occId, { oleOccurrenceId: occId, oleDefinitionId: defId, modelId, x, y, dx, dy })
+      oleOccurrences.set(occId, {
+        oleOccurrenceId: occId,
+        oleDefinitionId: defId,
+        modelId,
+        x,
+        y,
+        dx,
+        dy
+      })
 
       const def = oleDefinitions.get(defId)
       if (def) {
@@ -99,7 +131,7 @@ export function scanAmlForOle(xmlText: string): ArisXmlScanResult {
           modelId,
           position: { x, y },
           size: { dx, dy },
-          displayName: sanitizeOleDisplayName(modelId, defId),
+          displayName: sanitizeOleDisplayName(modelId, defId)
         })
       }
     }
@@ -108,7 +140,7 @@ export function scanAmlForOle(xmlText: string): ArisXmlScanResult {
   return {
     oleDefinitions,
     oleOccurrences,
-    attachmentCount: oleDefinitions.size,
+    attachmentCount: oleDefinitions.size
   }
 }
 
@@ -116,14 +148,4 @@ function sanitizeOleDisplayName(modelId: string, oleDefId: string): string {
   const safeModel = modelId.replace(/[\\/:*?"<>|]/g, '_')
   const safeOle = oleDefId.replace(/[\\/:*?"<>|]/g, '_')
   return `${safeModel}_${safeOle}.ole`
-}
-
-export function loadXmlScan(filePath: string): Promise<ArisXmlScanResult> {
-  if (typeof process !== 'undefined') {
-    return import('node:fs').then((fs) => {
-      const text = fs.readFileSync(filePath, 'utf-8')
-      return scanAmlForOle(decodeXmlEntities(text))
-    })
-  }
-  throw new Error('loadXmlScan is only available in Node.js')
 }

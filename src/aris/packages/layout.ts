@@ -142,9 +142,7 @@ export function sanitizeArisMemberName(input: string): string {
   const fingerprint = memberNameFingerprint(input)
   const segments = input.normalize('NFC').split(/[\\/]/u)
   const base = segments[segments.length - 1] ?? ''
-  let cleaned = base
-    .replace(CONTROL_CHARACTERS_GLOBAL, '')
-    .replace(ILLEGAL_CHARACTERS_GLOBAL, '_')
+  let cleaned = base.replace(CONTROL_CHARACTERS_GLOBAL, '').replace(ILLEGAL_CHARACTERS_GLOBAL, '_')
   cleaned = trimEdges(cleaned)
   if (cleaned.length === 0) cleaned = `unnamed-${fingerprint}`
   if (RESERVED_DEVICE_NAME.test(cleaned)) cleaned = `_${cleaned}`
@@ -162,7 +160,10 @@ export function sanitizeArisMemberName(input: string): string {
 /** Strict membership rule. Sanitized names must satisfy it; raw names may not. */
 export function assertArisMemberName(name: string): string {
   if (typeof name !== 'string' || name.length === 0) {
-    throw new ArisPackagePathError('invalid-name', 'A package member name must be a non-empty string.')
+    throw new ArisPackagePathError(
+      'invalid-name',
+      'A package member name must be a non-empty string.'
+    )
   }
   if (name.includes('/') || name.includes('\\')) {
     throw new ArisPackagePathError(

@@ -139,10 +139,18 @@ describe('buildAccountingEntries', () => {
 
     // Records
     expect(entries.some((e) => e.kind === 'model' && e.sourceId === 'Model.1')).toBe(true)
-    expect(entries.some((e) => e.kind === 'object-definition' && e.sourceId === 'ObjDef.1')).toBe(true)
-    expect(entries.some((e) => e.kind === 'object-occurrence' && e.sourceId === 'ObjOcc.1')).toBe(true)
-    expect(entries.some((e) => e.kind === 'connection-definition' && e.sourceId === 'CxnDef.1')).toBe(true)
-    expect(entries.some((e) => e.kind === 'connection-occurrence' && e.sourceId === 'CxnOcc.1')).toBe(true)
+    expect(entries.some((e) => e.kind === 'object-definition' && e.sourceId === 'ObjDef.1')).toBe(
+      true
+    )
+    expect(entries.some((e) => e.kind === 'object-occurrence' && e.sourceId === 'ObjOcc.1')).toBe(
+      true
+    )
+    expect(
+      entries.some((e) => e.kind === 'connection-definition' && e.sourceId === 'CxnDef.1')
+    ).toBe(true)
+    expect(
+      entries.some((e) => e.kind === 'connection-occurrence' && e.sourceId === 'CxnOcc.1')
+    ).toBe(true)
 
     // Absorbed / raw elements
     expect(entries.some((e) => e.kind === 'language-name')).toBe(true)
@@ -159,7 +167,9 @@ describe('buildAccountingEntries', () => {
     expect(entries.some((e) => e.kind === 'doctype')).toBe(true)
 
     // Assignment derived from LinkedModels.IdRefs
-    expect(entries.some((e) => e.kind === 'assignment' && e.targetIds.includes('Model.1'))).toBe(true)
+    expect(entries.some((e) => e.kind === 'assignment' && e.targetIds.includes('Model.1'))).toBe(
+      true
+    )
 
     // Route points are Position elements under CxnOcc
     const routePoints = entries.filter((e) => e.kind === 'route-point')

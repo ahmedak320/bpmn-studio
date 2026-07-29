@@ -80,6 +80,7 @@ export type ArisPortableErrorCode =
   | 'limit-exceeded'
   | 'not-found'
   | 'write-failed'
+  | 'unsafe-default-target'
 
 export class ArisPortableError extends Error {
   readonly code: ArisPortableErrorCode
@@ -116,7 +117,8 @@ export function bytesToBase64(bytes: Uint8Array): string {
     const third = bytes[index + 2]
     out += BASE64_ALPHABET[first >> 2]
     out += BASE64_ALPHABET[((first & 0x03) << 4) | ((second ?? 0) >> 4)]
-    out += second === undefined ? '=' : BASE64_ALPHABET[((second & 0x0f) << 2) | ((third ?? 0) >> 6)]
+    out +=
+      second === undefined ? '=' : BASE64_ALPHABET[((second & 0x0f) << 2) | ((third ?? 0) >> 6)]
     out += third === undefined ? '=' : BASE64_ALPHABET[third & 0x3f]
   }
   return out
@@ -212,9 +214,7 @@ export function arisPackageArchiveToPortable(
   })
 }
 
-export function arisPortableToPackageArchive(
-  entry: ArisPortablePackageEntry
-): ArisPackageArchive {
+export function arisPortableToPackageArchive(entry: ArisPortablePackageEntry): ArisPackageArchive {
   const members: ArisPackageArchiveMember[] = entry.members.map((member) => {
     const bytes = base64ToBytes(member.base64)
     if (bytes.byteLength !== member.byteLength) {
@@ -471,11 +471,27 @@ export type ArisPortableFlushResult =
   | { readonly status: 'failed'; readonly message: string }
 
 export interface OpenArisPortableWorkspaceOptions {
-  /** Container file path. Defaults to the workspace's only file. */
+  /**
+   * Container file path. Defaults to the workspace's only file — but see the
+   * `initialize` warning below: that default is only safe when the file
+   * already *is* a portable container.
+   */
   readonly path?: string
   /**
    * Treat a non-container file at `path` as an empty container instead of
    * failing. The caller must have decided that the file may be replaced.
+   *
+   * **A non-empty file at an auto-selected `path` is refused.** Without an
+   * explicit `path`, the only candidate is the workspace's single file — in
+   * this application that is typically the AML the user just opened.
+   * Combining `initialize: true` with the auto-selected path would silently
+   * repurpose that file as an empty container, and a later `flush()` would
+   * overwrite the user's source export with a JSON container (§1.2, §7.4). An
+   * auto-selected path is only accepted for `initialize` when its file is
+   * already empty (a target the caller purpose-built for a new container, not
+   * existing content). To open a new portable container for a workspace whose
+   * only file has real content, pass an explicit sibling `path` — see
+   * `arisPortableFileName()`.
    */
   readonly initialize?: boolean
   readonly limits?: ArisPortableLimits
@@ -523,6 +539,11 @@ export class ArisPortableWorkspaceSession {
   ): Promise<ArisPortableWorkspaceSession> {
     const limits = options.limits ?? {}
     let path = options.path
+    // The path is only "auto-selected" when the caller did not name one
+    // explicitly. Auto-selection picks the workspace's one file, which in this
+    // application is typically the AML the user just opened — see the
+    // `unsafe-default-target` guard below.
+    const autoSelected = !path
     if (!path) {
       const entries = await adapter.list('')
       const file = entries.find((entry) => entry.kind === 'file')
@@ -546,6 +567,22 @@ export class ArisPortableWorkspaceSession {
         throw new ArisPortableError(
           'not-a-container',
           `"${path}" is not an OrbitPM portable ARIS package container.`
+        )
+      } else if (autoSelected && snapshot.bytes.byteLength > 0) {
+        // Refuse the dangerous default: `initialize` on an auto-selected path
+        // with real content would repurpose the workspace's only file — which
+        // in this application is typically the AML the user just opened — as
+        // an empty container, and a later `flush()` would silently overwrite
+        // it. An auto-selected *empty* file is fine: it has no source content
+        // to lose, and is exactly the shape a caller gets from purpose-building
+        // a fresh single-file adapter for a new container. Anything else must
+        // name its target explicitly.
+        throw new ArisPortableError(
+          'unsafe-default-target',
+          `Refusing to initialize a portable container at the auto-selected path "${path}". ` +
+            "That path is the workspace's only file, has existing content, and may be the " +
+            'source the user opened; initializing it here would let a later flush() silently ' +
+            'overwrite it. Pass an explicit `path` (see `arisPortableFileName()`) to open a new container.'
         )
       }
     } catch (error) {
@@ -655,8 +692,7 @@ export async function openArisWorkspace(
       kind,
       workspace: adapter,
       store,
-      flush: async () =>
-        Object.freeze({ status: 'unchanged' as const, sha256: '' })
+      flush: async () => Object.freeze({ status: 'unchanged' as const, sha256: '' })
     })
   }
   if (kind === 'portable-single-file') {
@@ -675,10 +711,7 @@ export async function importArisPortableContainer(
 ): Promise<readonly string[]> {
   const restored: string[] = []
   for (const entry of container.packages) {
-    const outcome = await restoreArisPackageArchive(
-      adapter,
-      arisPortableToPackageArchive(entry)
-    )
+    const outcome = await restoreArisPackageArchive(adapter, arisPortableToPackageArchive(entry))
     if (outcome.status !== 'restored') {
       throw new ArisPackageError(
         'integrity-failure',

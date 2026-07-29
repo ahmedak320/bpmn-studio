@@ -366,10 +366,7 @@ export class ArisPackageStore {
    */
   private async applyRevision(
     digest: string,
-    build: (
-      sourceSha256: string,
-      current: ArisCurrentRevisionV1
-    ) => Promise<ArisRevisionPatchV1>,
+    build: (sourceSha256: string, current: ArisCurrentRevisionV1) => Promise<ArisRevisionPatchV1>,
     transformModels: (
       models: readonly ArisSourcePackageManifestV1['models'][number][]
     ) => readonly ArisSourcePackageManifestV1['models'][number][] = (models) => models

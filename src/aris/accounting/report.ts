@@ -34,7 +34,8 @@ export function buildAccountingReport(
 
   const issueFor = (entry: ArisAccountingEntry): string | undefined => {
     if (entry.disposition === 'unsupported') return 'Unsupported source construct'
-    if (entry.kind === 'unknown') return entry.reason ?? 'Unrecognized element preserved as raw source'
+    if (entry.kind === 'unknown')
+      return entry.reason ?? 'Unrecognized element preserved as raw source'
     return undefined
   }
 

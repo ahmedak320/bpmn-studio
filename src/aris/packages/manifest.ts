@@ -209,8 +209,12 @@ const referenceEntrySchema = z.strictObject({
 })
 
 const generationSchema = z.strictObject({
-  provider: CREDENTIAL_FREE.min(1).max(120).regex(/^[A-Za-z0-9][A-Za-z0-9 ._:-]*$/u),
-  model: CREDENTIAL_FREE.min(1).max(160).regex(/^[A-Za-z0-9][A-Za-z0-9 ._:/-]*$/u),
+  provider: CREDENTIAL_FREE.min(1)
+    .max(120)
+    .regex(/^[A-Za-z0-9][A-Za-z0-9 ._:-]*$/u),
+  model: CREDENTIAL_FREE.min(1)
+    .max(160)
+    .regex(/^[A-Za-z0-9][A-Za-z0-9 ._:/-]*$/u),
   requestSha256: SHA256,
   retainedSourcePath: SAFE_TEXT.min(1).max(2048).nullable()
 })

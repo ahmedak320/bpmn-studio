@@ -121,10 +121,7 @@ export async function writeArisPackageMembersAtomically(
   })
 }
 
-async function readIfPresent(
-  adapter: WorkspaceAdapter,
-  path: string
-): Promise<string | undefined> {
+async function readIfPresent(adapter: WorkspaceAdapter, path: string): Promise<string | undefined> {
   try {
     return (await adapter.read(path)).hash
   } catch {

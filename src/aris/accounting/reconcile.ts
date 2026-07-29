@@ -189,9 +189,11 @@ export function reconcile(
     }
   }
 
-  // Derived records (assignments) are not separate source constructs, so they
-  // are excluded from the source-record total.
-  const derivedEntries = entries.filter((entry) => entry.kind === 'assignment')
+  // Derived records (currently only `assignment`) are not separate source
+  // constructs, so they are excluded from the source-record total. This uses
+  // the explicit `derived` flag rather than sniffing `kind`, matching the
+  // contract documented on `ArisAccountingEntry.derived` in `./types.ts`.
+  const derivedEntries = entries.filter((entry) => entry.derived === true)
   const totalAccountedSourceConstructs = entries.length - derivedEntries.length
   const unaccountedCount = census.totalSourceRecords - totalAccountedSourceConstructs
 
@@ -223,9 +225,12 @@ export function requireReconciled(result: ArisReconciliationResult): ArisReconci
       `Total accounted: ${result.totalAccounted}`,
       `Unaccounted: ${result.unaccountedCount}`,
       ...result.perConstruct.map(
-        (div) => `  ${div.construct}: census=${div.census} accounted=${div.accounted} diff=${div.diff}`
+        (div) =>
+          `  ${div.construct}: census=${div.census} accounted=${div.accounted} diff=${div.diff}`
       ),
-      ...result.issues.map((issue) => `  issue: ${issue.severity} ${issue.construct} ${issue.sourcePath}`)
+      ...result.issues.map(
+        (issue) => `  issue: ${issue.severity} ${issue.construct} ${issue.sourcePath}`
+      )
     ]
     throw new Error(lines.join('\n'))
   }

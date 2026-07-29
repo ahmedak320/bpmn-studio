@@ -210,14 +210,13 @@ describe('immutability (plan §7.4)', () => {
     const { adapter, store, digest } = await importedPackage()
     expect((await store.verifyIntegrity(digest)).problems).toEqual([])
 
-    adapter.replaceExternally(
-      arisPackagePaths(digest).originalSource,
-      '<AML>tampered</AML>'
-    )
+    adapter.replaceExternally(arisPackagePaths(digest).originalSource, '<AML>tampered</AML>')
     await expect(store.readOriginalSource(digest)).rejects.toThrow(
       expect.objectContaining({ code: 'integrity-failure' })
     )
     const report = await store.verifyIntegrity(digest)
-    expect(report.problems).toContain('The original source bytes no longer match the package digest.')
+    expect(report.problems).toContain(
+      'The original source bytes no longer match the package digest.'
+    )
   })
 })

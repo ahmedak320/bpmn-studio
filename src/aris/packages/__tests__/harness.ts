@@ -61,15 +61,14 @@ export async function snapshotWorkspace(adapter: WorkspaceAdapter): Promise<Work
     }
     files[entry.path] = (await adapter.read(entry.path)).hash
   }
-  return Object.freeze({ directories: Object.freeze(directories.sort()), files: Object.freeze(files) })
+  return Object.freeze({
+    directories: Object.freeze(directories.sort()),
+    files: Object.freeze(files)
+  })
 }
 
 export type FaultOperation =
-  | 'write'
-  | 'createFolderIfMissing'
-  | 'read'
-  | 'removeIfHash'
-  | 'removeEmptyFolder'
+  'write' | 'createFolderIfMissing' | 'read' | 'removeIfHash' | 'removeEmptyFolder'
 
 export interface FaultPlan {
   readonly operation: FaultOperation

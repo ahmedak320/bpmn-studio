@@ -148,9 +148,9 @@ describe('ARIS working revisions', () => {
       ...(patches[1] as ArisRevisionPatchV1),
       commands: [{ type: 'aris.test.evil', payload: {} }]
     }
-    await expect(
-      replayArisRevisions([patches[0] as ArisRevisionPatchV1, forged])
-    ).rejects.toThrow(expect.objectContaining({ code: 'digest-mismatch' }))
+    await expect(replayArisRevisions([patches[0] as ArisRevisionPatchV1, forged])).rejects.toThrow(
+      expect.objectContaining({ code: 'digest-mismatch' })
+    )
   })
 
   it('restores an earlier revision by appending, never by rewriting', async () => {
@@ -168,9 +168,9 @@ describe('ARIS working revisions', () => {
     const replay = await replayArisRevisions([...patches, restore])
     expect(replay.commands.map((command) => command.type)).toEqual(['aris.test.rename'])
 
-    await expect(createArisRestoreRevision(current, 'r000009-0123456789abcdef01234567')).rejects.toThrow(
-      expect.objectContaining({ code: 'unknown-revision' })
-    )
+    await expect(
+      createArisRestoreRevision(current, 'r000009-0123456789abcdef01234567')
+    ).rejects.toThrow(expect.objectContaining({ code: 'unknown-revision' }))
   })
 
   it('serializes deterministically and round-trips', async () => {

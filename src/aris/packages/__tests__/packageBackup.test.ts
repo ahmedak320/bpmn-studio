@@ -1,5 +1,8 @@
 import { describe, expect, it } from 'vitest'
-import { applyWorkspaceBackupImport, inspectWorkspaceBackup } from '../../../workspace/adapters/backupImport'
+import {
+  applyWorkspaceBackupImport,
+  inspectWorkspaceBackup
+} from '../../../workspace/adapters/backupImport'
 import { sha256Hex } from '../../../workspace/adapters/hash'
 import type { MemoryWorkspaceAdapter } from '../../../workspace/adapters/memory'
 import { arisPackagePaths } from '../layout'
@@ -87,9 +90,7 @@ describe('package backup and restore (plan §7.4)', () => {
     const comparison = await compareArisPackageArchives(archive, roundTrip)
     expect(comparison.differences).toEqual([])
     expect(comparison.identical).toBe(true)
-    expect(await arisPackageArchiveDigest(roundTrip)).toBe(
-      await arisPackageArchiveDigest(archive)
-    )
+    expect(await arisPackageArchiveDigest(roundTrip)).toBe(await arisPackageArchiveDigest(archive))
 
     const store = new ArisPackageStore(restored)
     const original = await store.readOriginalSource(digest)

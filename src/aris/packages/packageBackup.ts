@@ -20,10 +20,7 @@
 
 import { copyBytes, equalHash, sha256Hex } from '../../workspace/adapters/hash'
 import type { WorkspaceAdapter } from '../../workspace/adapters/types'
-import {
-  writeArisPackageMembersAtomically,
-  type AtomicPackageWriteResult
-} from './atomicWrite'
+import { writeArisPackageMembersAtomically, type AtomicPackageWriteResult } from './atomicWrite'
 import { canonicalJsonBytes } from './canonicalJson'
 import {
   arisPackageDirectories,
@@ -120,7 +117,11 @@ export function arisPackageArchiveDigest(archive: ArisPackageArchive): Promise<s
 }
 
 export type ArisPackageRestoreOutcome =
-  | { readonly status: 'restored'; readonly sourceSha256: string; readonly writtenPaths: readonly string[] }
+  | {
+      readonly status: 'restored'
+      readonly sourceSha256: string
+      readonly writtenPaths: readonly string[]
+    }
   | (Extract<AtomicPackageWriteResult, { status: 'rolled-back' | 'rollback-failed' }> & {
       readonly sourceSha256: string
     })
@@ -140,7 +141,10 @@ export async function restoreArisPackageArchive(
   for (const member of archive.members) {
     const segments = member.path.split('/')
     if (segments.length === 0 || segments.some((segment) => segment.length === 0)) {
-      throw new ArisPackageError('integrity-failure', `Archive member "${member.path}" is malformed.`)
+      throw new ArisPackageError(
+        'integrity-failure',
+        `Archive member "${member.path}" is malformed.`
+      )
     }
     for (const segment of segments) assertArisMemberName(segment)
     const recomputed = await sha256Hex(member.bytes)
@@ -162,10 +166,7 @@ export async function restoreArisPackageArchive(
     }
   }
   const directories = [
-    ...new Set([
-      ...arisPackageDirectories(sourceSha256),
-      ...[...memberDirectories].sort()
-    ])
+    ...new Set([...arisPackageDirectories(sourceSha256), ...[...memberDirectories].sort()])
   ]
 
   const result = await writeArisPackageMembersAtomically(adapter, {

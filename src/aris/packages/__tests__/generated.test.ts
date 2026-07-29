@@ -163,11 +163,11 @@ describe('generated processes (plan §7.5)', () => {
       const manifest = await store.readManifest(plan.sourceSha256)
       expect(manifest.origin.kind).toBe(originKind)
       expect(
-        manifest.origin.kind === 'imported-aml' ? null : manifest.origin.generation?.retainedSourcePath
+        manifest.origin.kind === 'imported-aml'
+          ? null
+          : manifest.origin.generation?.retainedSourcePath
       ).toBeNull()
-      expect(manifest.source.sha256).toBe(
-        await sha256Hex(new TextEncoder().encode(BASELINE_AML))
-      )
+      expect(manifest.source.sha256).toBe(await sha256Hex(new TextEncoder().encode(BASELINE_AML)))
       expect((await store.verifyIntegrity(plan.sourceSha256)).problems).toEqual([])
     }
   })

@@ -61,7 +61,13 @@ describe('ARIS package layout', () => {
   })
 
   it('rejects invalid revision ids in revision paths', () => {
-    for (const bad of ['', 'r1-abc', 'r000001-XYZ', '../escape', 'r0000001-0123456789abcdef01234567']) {
+    for (const bad of [
+      '',
+      'r1-abc',
+      'r000001-XYZ',
+      '../escape',
+      'r0000001-0123456789abcdef01234567'
+    ]) {
       expect(() => arisRevisionPath(DIGEST, bad)).toThrow(ArisPackagePathError)
     }
   })
@@ -158,9 +164,9 @@ describe('member name sanitization', () => {
     expect(safeFirst).not.toBe(safeSecond)
     expect(sanitizeArisMemberName(first)).toBe(safeFirst)
     const multibyte = `${'\u0645'.repeat(300)}.xml`
-    expect(new TextEncoder().encode(sanitizeArisMemberName(multibyte)).byteLength).toBeLessThanOrEqual(
-      ARIS_MEMBER_NAME_MAX_BYTES
-    )
+    expect(
+      new TextEncoder().encode(sanitizeArisMemberName(multibyte)).byteLength
+    ).toBeLessThanOrEqual(ARIS_MEMBER_NAME_MAX_BYTES)
   })
 
   it('produces a deterministic fallback when nothing usable remains', () => {

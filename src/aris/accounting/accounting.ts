@@ -142,7 +142,10 @@ function makeEntry(
     kind,
     disposition: dispositionForKind(kind),
     targetIds: Object.freeze([...targetIds]),
-    reason
+    reason,
+    // `assignment` is the only derived (non-literal) entity kind this walk
+    // produces today — see the `derived` field doc in `./types.ts`.
+    derived: kind === 'assignment' ? true : undefined
   })
 }
 
@@ -206,7 +209,9 @@ export function buildAccountingEntries(
     const path = buildElementPath(parentPath, node.name, index)
 
     const record = recordByPath.get(path)
-    const kind = record ? entityKindForRecord(record) : (ABSORBED_ELEMENT_KIND[node.name] ?? 'unknown')
+    const kind = record
+      ? entityKindForRecord(record)
+      : (ABSORBED_ELEMENT_KIND[node.name] ?? 'unknown')
     const sourceId = record?.sourceId ?? undefined
     const isModel = kind === 'model'
 
@@ -305,7 +310,9 @@ export function buildAccountingEntries(
     const targetIds: string[] = []
     if (assignment.objectDefinitionId) targetIds.push(assignment.objectDefinitionId)
     targetIds.push(assignment.modelId)
-    entries.push(makeEntry(path, 'assignment', targetIds, assignment.objectDefinitionId ?? undefined))
+    entries.push(
+      makeEntry(path, 'assignment', targetIds, assignment.objectDefinitionId ?? undefined)
+    )
   }
 
   return Object.freeze(entries)

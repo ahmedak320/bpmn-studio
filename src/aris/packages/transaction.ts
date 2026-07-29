@@ -233,7 +233,10 @@ export type ArisPackageCommitOutcome =
 
 function throwIfAborted(signal?: AbortSignal): void {
   if (signal?.aborted) {
-    throw new ArisTransactionError('cancelled', 'The ARIS source-package transaction was cancelled.')
+    throw new ArisTransactionError(
+      'cancelled',
+      'The ARIS source-package transaction was cancelled.'
+    )
   }
 }
 
@@ -466,7 +469,11 @@ interface BuildPlanInput {
     readonly sha256: string
     readonly arisVersion?: string
   }
-  readonly originalWrite?: { readonly role: ArisPlannedWriteRole; readonly path: string; readonly bytes: Uint8Array }
+  readonly originalWrite?: {
+    readonly role: ArisPlannedWriteRole
+    readonly path: string
+    readonly bytes: Uint8Array
+  }
   readonly accounting: ArisAccountingDocumentV2
   readonly models: readonly ArisModelManifestEntry[]
   readonly attachments: readonly ArisPendingAttachment[]
@@ -521,7 +528,11 @@ async function buildPlan(input: BuildPlanInput): Promise<ArisSourcePackagePlan> 
   const writes: ArisPlannedWrite[] = []
   if (input.originalWrite) {
     writes.push(
-      await plannedWrite(input.originalWrite.role, input.originalWrite.path, input.originalWrite.bytes)
+      await plannedWrite(
+        input.originalWrite.role,
+        input.originalWrite.path,
+        input.originalWrite.bytes
+      )
     )
   }
   for (const attachment of staged) {
@@ -530,7 +541,9 @@ async function buildPlan(input: BuildPlanInput): Promise<ArisSourcePackagePlan> 
   for (const reference of stagedReferences) {
     writes.push(await plannedWrite('reference', reference.path, reference.bytes))
   }
-  writes.push(await plannedWrite('accounting', paths.accounting, serializeArisAccounting(accounting)))
+  writes.push(
+    await plannedWrite('accounting', paths.accounting, serializeArisAccounting(accounting))
+  )
   writes.push(
     await plannedWrite(
       'revision',
@@ -539,7 +552,11 @@ async function buildPlan(input: BuildPlanInput): Promise<ArisSourcePackagePlan> 
     )
   )
   writes.push(
-    await plannedWrite('current-revision', paths.currentRevision, serializeArisCurrentRevision(current))
+    await plannedWrite(
+      'current-revision',
+      paths.currentRevision,
+      serializeArisCurrentRevision(current)
+    )
   )
   writes.push(await plannedWrite('manifest', paths.manifest, serializeArisManifest(manifest)))
 
@@ -560,7 +577,8 @@ async function buildPlan(input: BuildPlanInput): Promise<ArisSourcePackagePlan> 
   const uniqueDirectories = Object.freeze([...new Set(directories)])
 
   const existingManifest = await readExistingManifest(adapter, digest)
-  const duplicate = existingManifest !== undefined && equalHash(existingManifest.source.sha256, digest)
+  const duplicate =
+    existingManifest !== undefined && equalHash(existingManifest.source.sha256, digest)
 
   const draft: Omit<ArisSourcePackagePlan, 'reviewDigest' | 'review'> = {
     version: 1,
@@ -602,7 +620,10 @@ export async function planArisImportedPackage(
   const limits = resolvedLimits(options.limits)
   const source = options.source
   if (!(source?.bytes instanceof Uint8Array) || source.bytes.byteLength === 0) {
-    throw new ArisTransactionError('invalid-input', 'An imported source must carry its exact bytes.')
+    throw new ArisTransactionError(
+      'invalid-input',
+      'An imported source must carry its exact bytes.'
+    )
   }
   if (source.bytes.byteLength > limits.maxSourceBytes) {
     throw new ArisTransactionError('limit-exceeded', 'The imported source exceeds the byte limit.')
@@ -740,7 +761,13 @@ export async function planArisGeneratedPackage(
       sha256: digest
     },
     ...(retainedPath && retainedBytes
-      ? { originalWrite: { role: 'generation-source' as const, path: retainedPath, bytes: retainedBytes } }
+      ? {
+          originalWrite: {
+            role: 'generation-source' as const,
+            path: retainedPath,
+            bytes: retainedBytes
+          }
+        }
       : {}),
     accounting: options.accounting,
     models: options.models ?? [],

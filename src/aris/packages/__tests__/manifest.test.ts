@@ -173,13 +173,22 @@ describe('ARIS source-package manifest', () => {
       ['bad revision id', { ...manifest, currentRevisionId: 'rev-1' }],
       ['unknown origin', { ...manifest, origin: { kind: 'telepathy' } }],
       ['origin extra key', { ...manifest, origin: { kind: 'imported-aml', model: 'x' } }],
-      ['negative count', { ...manifest, source: { ...(manifest.source as object), byteLength: -1 } }],
+      [
+        'negative count',
+        { ...manifest, source: { ...(manifest.source as object), byteLength: -1 } }
+      ],
       [
         'fractional count',
         { ...manifest, source: { ...(manifest.source as object), byteLength: 1.5 } }
       ],
-      ['traversal source name', { ...manifest, source: { ...(manifest.source as object), name: '../x' } }],
-      ['bad media type', { ...manifest, source: { ...(manifest.source as object), mediaType: 'xml' } }],
+      [
+        'traversal source name',
+        { ...manifest, source: { ...(manifest.source as object), name: '../x' } }
+      ],
+      [
+        'bad media type',
+        { ...manifest, source: { ...(manifest.source as object), mediaType: 'xml' } }
+      ],
       ['missing fidelity', { ...manifest, fidelity: undefined }],
       [
         'inconsistent fidelity totals',

@@ -63,9 +63,7 @@ export function findSecretLikeMatches(text: string): readonly SecretFinding[] {
     const pattern = new RegExp(rule.pattern.source, rule.pattern.flags)
     let match = pattern.exec(text)
     while (match !== null) {
-      findings.push(
-        Object.freeze({ code: rule.code, index: match.index, length: match[0].length })
-      )
+      findings.push(Object.freeze({ code: rule.code, index: match.index, length: match[0].length }))
       if (match[0].length === 0) pattern.lastIndex += 1
       match = pattern.exec(text)
     }

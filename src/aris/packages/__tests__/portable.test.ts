@@ -103,9 +103,7 @@ function portableFile(
   return { adapter, downloads, bytes: () => latest }
 }
 
-async function importInto(session: {
-  workspace: WorkspaceAdapter
-}): Promise<{ digest: string }> {
+async function importInto(session: { workspace: WorkspaceAdapter }): Promise<{ digest: string }> {
   const source = await importedSource()
   const plan = await planArisImportedPackage({
     adapter: session.workspace,
@@ -284,9 +282,7 @@ describe('portable single-file workspace (plan §2.5, §17.2)', () => {
     expect((await session.flush()).status).toBe('flushed')
 
     // Reopen the written container exactly as a returning user would.
-    const reopened = await ArisPortableWorkspaceSession.open(
-      portableFile(file.bytes()).adapter
-    )
+    const reopened = await ArisPortableWorkspaceSession.open(portableFile(file.bytes()).adapter)
     const original = await reopened.store.readOriginalSource(digest)
     expect(Array.from(original.bytes)).toEqual(Array.from(amlBytes()))
     expect(original.hash).toBe(digest)
@@ -422,8 +418,66 @@ describe('portable single-file workspace (plan §2.5, §17.2)', () => {
     await expect(ArisPortableWorkspaceSession.open(foreign)).rejects.toThrow(
       expect.objectContaining({ code: 'not-a-container' })
     )
-    const initialized = await ArisPortableWorkspaceSession.open(foreign, { initialize: true })
-    expect(await initialized.store.listPackages()).toEqual([])
+    // `initialize: true` alone does not make this safe: without an explicit
+    // `path`, the only candidate is `foreign`'s one file, which has real
+    // content (the opened AML). See the dedicated footgun test below for the
+    // full "would have destroyed the source" proof.
+    await expect(ArisPortableWorkspaceSession.open(foreign, { initialize: true })).rejects.toThrow(
+      expect.objectContaining({ code: 'unsafe-default-target' })
+    )
+  })
+
+  it('never lets a forgotten `path` destroy the workspace file it auto-selects', async () => {
+    // Regression test for the portable-path footgun: with no `path` option,
+    // portable mode used to default the container path to the workspace's
+    // only file. In this application that file is the AML the user just
+    // opened, so `initialize: true` plus a later `flush()` would have
+    // silently replaced the user's source export with a JSON container,
+    // violating the §1.2 original-source rule and §7.4 immutability.
+    const originalBytes = amlBytes()
+    const source = new SingleFileWorkspaceAdapter({
+      path: 'AnimalWF.xml',
+      bytes: originalBytes,
+      download: () => {
+        throw new Error('must never write: the caller forgot to pass an explicit path')
+      }
+    })
+
+    // The previously-dangerous call: no `path`, just `initialize: true`.
+    await expect(openArisWorkspace(source, { initialize: true })).rejects.toThrow(
+      expect.objectContaining({ code: 'unsafe-default-target' })
+    )
+
+    // The source file was never touched: not read-and-replaced, not flushed.
+    const after = await source.read('AnimalWF.xml')
+    expect(Array.from(after.bytes)).toEqual(Array.from(originalBytes))
+    expect(after.hash).toBe(await sha256Hex(originalBytes))
+
+    // The safe alternative — an explicit sibling target — works exactly as
+    // before and never touches the source file either.
+    const target = new SingleFileWorkspaceAdapter({
+      path: arisPortableFileName('AnimalWF.xml'),
+      bytes: new Uint8Array(),
+      download: () => undefined
+    })
+    const session = await openArisWorkspace(target, {
+      path: arisPortableFileName('AnimalWF.xml'),
+      initialize: true
+    })
+    expect(await session.store.listPackages()).toEqual([])
+    const untouched = await source.read('AnimalWF.xml')
+    expect(Array.from(untouched.bytes)).toEqual(Array.from(originalBytes))
+
+    // An auto-selected path is still accepted when the file is genuinely
+    // empty — the shape a caller gets from purpose-building a fresh
+    // single-file adapter as the intended new-container target.
+    const freshTarget = new SingleFileWorkspaceAdapter({
+      path: arisPortableFileName('AnimalWF.xml'),
+      bytes: new Uint8Array(),
+      download: () => undefined
+    })
+    const freshSession = await openArisWorkspace(freshTarget, { initialize: true })
+    expect(await freshSession.store.listPackages()).toEqual([])
   })
 })
 
@@ -442,9 +496,7 @@ describe('portable round-trip with directory mode', () => {
     const original = await store.readOriginalSource(digest)
     expect(Array.from(original.bytes)).toEqual(Array.from(amlBytes()))
     expect(original.hash).toBe(digest)
-    expect(Array.from(readArisPortableOriginal(reparsed, digest))).toEqual(
-      Array.from(amlBytes())
-    )
+    expect(Array.from(readArisPortableOriginal(reparsed, digest))).toEqual(Array.from(amlBytes()))
     expect((await store.verifyIntegrity(digest)).problems).toEqual([])
 
     const after = await collectArisPackageArchive(session.workspace, digest)
@@ -488,9 +540,7 @@ describe('portable round-trip with directory mode', () => {
 
     const restored = createWorkspace('cycle-restored')
     await importArisPortableContainer(restored, await parseArisPortableContainer(firstBytes))
-    const secondBytes = serializeArisPortableContainer(
-      await collectArisPortableContainer(restored)
-    )
+    const secondBytes = serializeArisPortableContainer(await collectArisPortableContainer(restored))
 
     expect(Array.from(secondBytes)).toEqual(Array.from(firstBytes))
     expect(Array.from(readArisPortableOriginal(firstContainer, digest))).toEqual(

@@ -71,7 +71,8 @@ export type ArisEntityKind =
 /**
  * A single accounting entry proving that one source construct has been examined
  * and given a disposition. The shape matches the plan Section 10.1 contract
- * exactly.
+ * exactly, plus one explicit addition (`derived`) that documents the
+ * Phase 4/Phase 7 census contract — see the note below.
  */
 export interface ArisAccountingEntry {
   sourcePath: string
@@ -80,6 +81,26 @@ export interface ArisAccountingEntry {
   disposition: ArisAccountingDisposition
   targetIds: readonly string[]
   reason?: string
+  /**
+   * `true` for a synthetic/derived record that does not correspond to a
+   * literal construct in the raw XML — currently only `kind: 'assignment'`
+   * (a linked-model assignment reconstructed from `LinkedModels.IdRefs`).
+   *
+   * The independent lexical census (`buildLexicalCensus`) walks the raw
+   * tokenizer output and, by design, has no way to count a record that isn't
+   * literally in the XML. Derived entries are therefore excluded from the
+   * census total on purpose (§10.3 "no record may silently disappear" still
+   * holds: they are fully present in `entries`, reported, and disposition-
+   * tagged — they are just not double-counted against a census that cannot
+   * see them).
+   *
+   * Downstream, `createArisAccountingDocument` (`src/aris/packages/accounting.ts`)
+   * validates that only *non-derived* entries are bounded by `censusRecords`.
+   * Callers should pass the full, unfiltered entry list — including derived
+   * rows — straight through; filtering them out before construction is
+   * unnecessary and loses their provenance from the persisted document.
+   */
+  derived?: boolean
 }
 
 /**

@@ -67,11 +67,13 @@ describe('phase 4 exit gate (plan §7.6)', () => {
       models: SAMPLE_MODELS
     })
     expect(
-      (await commitArisSourcePackage({
-        adapter: workspace,
-        plan,
-        reviewedDigest: plan.reviewDigest
-      })).status
+      (
+        await commitArisSourcePackage({
+          adapter: workspace,
+          plan,
+          reviewedDigest: plan.reviewDigest
+        })
+      ).status
     ).toBe('committed')
 
     const store = new ArisPackageStore(workspace)
@@ -158,11 +160,13 @@ describe('phase 4 exit gate (plan §7.6)', () => {
       accounting: createArisAccountingDocument({ sourceSha256: digest })
     })
     expect(
-      (await commitArisSourcePackage({
-        adapter: workspace,
-        plan,
-        reviewedDigest: plan.reviewDigest
-      })).status
+      (
+        await commitArisSourcePackage({
+          adapter: workspace,
+          plan,
+          reviewedDigest: plan.reviewDigest
+        })
+      ).status
     ).toBe('committed')
 
     const blob = await workspace.exportBackup({ generatedAt: new Date(0) })

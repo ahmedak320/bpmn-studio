@@ -241,9 +241,7 @@ export async function computeArisRevisionId(input: ArisRevisionIdentityInput): P
       restoredFromRevisionId: input.restoredFromRevisionId ?? null
     })
   )
-  return assertArisRevisionId(
-    `r${String(input.ordinal).padStart(6, '0')}-${digest.slice(0, 24)}`
-  )
+  return assertArisRevisionId(`r${String(input.ordinal).padStart(6, '0')}-${digest.slice(0, 24)}`)
 }
 
 export interface CreateArisRevisionInput {

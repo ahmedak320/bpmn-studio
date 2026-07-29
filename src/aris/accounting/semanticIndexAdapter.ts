@@ -18,7 +18,10 @@ import type { ArisAccountingAssignment, ArisAccountingRecord, ArisAccountingSour
 
 function pushRecord(
   sink: ArisAccountingRecord[],
-  record: ArisSourceRecordBase<Record<string, unknown>> | ArisDocumentRootRecord | ArisGuidReferenceRecord,
+  record:
+    | ArisSourceRecordBase<Record<string, unknown>>
+    | ArisDocumentRootRecord
+    | ArisGuidReferenceRecord,
   recordKind: string,
   elementNameOverride?: string
 ): void {
@@ -34,7 +37,7 @@ function pushRecord(
     elementName: elementNameOverride ?? ('elementName' in record ? record.elementName : ''),
     parsedOwnerElementName:
       parsed && typeof parsed.ownerElementName === 'string' ? parsed.ownerElementName : null,
-    parentElementName: 'parent' in record ? record.parent?.elementName ?? null : null
+    parentElementName: 'parent' in record ? (record.parent?.elementName ?? null) : null
   })
 }
 
@@ -52,7 +55,9 @@ function collectArrayRecords(
   sink: ArisAccountingRecord[],
   records: readonly ArisSourceRecordBase<Record<string, unknown>>[],
   recordKind: string,
-  elementNameOverride?: (record: ArisSourceRecordBase<Record<string, unknown>>) => string | undefined
+  elementNameOverride?: (
+    record: ArisSourceRecordBase<Record<string, unknown>>
+  ) => string | undefined
 ): void {
   for (const record of records) {
     pushRecord(sink, record, recordKind, elementNameOverride?.(record))

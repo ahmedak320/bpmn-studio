@@ -22,7 +22,10 @@ describe('credential detection', () => {
     ]
     for (const [code, text] of cases) {
       const findings = findSecretLikeMatches(text)
-      expect(findings.map((finding) => finding.code), text).toContain(code)
+      expect(
+        findings.map((finding) => finding.code),
+        text
+      ).toContain(code)
       expect(containsSecretLikeText(text)).toBe(true)
     }
   })
