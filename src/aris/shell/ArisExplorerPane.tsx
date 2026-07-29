@@ -35,6 +35,8 @@ export interface ArisExplorerPaneProps {
   readonly onOpenWorkspaceFile: (path: string) => void
   readonly onRejectUnsupported: () => void
   readonly onOpenAssistant: () => void
+  /** Opens the chat drawer's completion interview for the active model. */
+  readonly onContinueInChat: () => void
   readonly workspaceId: string | null
   readonly onCreateModel: React.ComponentProps<typeof ArisGenerationPanel>['onCreateModel']
   readonly onDownloadFile: (fileName: string, bytes: Uint8Array, mimeType?: string) => void
@@ -83,6 +85,7 @@ export function ArisExplorerPane(props: ArisExplorerPaneProps): JSX.Element {
     onOpenWorkspaceFile,
     onRejectUnsupported,
     onOpenAssistant,
+    onContinueInChat,
     workspaceId,
     onCreateModel,
     onDownloadFile,
@@ -304,6 +307,7 @@ export function ArisExplorerPane(props: ArisExplorerPaneProps): JSX.Element {
           }
           onOpenAssistant={onOpenAssistant}
           onOpenSettings={onOpenSettings}
+          onContinueInChat={onContinueInChat}
         />
       </div>
       {actions.dialogs}

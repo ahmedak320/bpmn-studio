@@ -12,7 +12,12 @@ export {
   type ArisExplorerActiveTab,
   type ArisExplorerPaneProps
 } from './ArisExplorerPane'
-export { ArisAssistantPanel, type ArisAssistantPanelProps } from './ArisAssistantPanel'
+export { ArisChatDrawer, type ArisChatDrawerProps } from './ArisChatDrawer'
+export {
+  type ArisChatDrawerTarget,
+  type ArisChatInterviewRequest,
+  type ArisTabChatHost
+} from './arisChatDrawerTypes'
 export { ArisEpcRail, type ArisEpcRailProps } from './ArisEpcRail'
 export {
   ArisCanvasView,

@@ -557,6 +557,8 @@ describe('ArisApp production shell', () => {
     render(<ArisApp />)
     await openAml()
 
+    // NOTE: the `aris.ai.body` dictionary VALUE and this assertion are updated
+    // together in Lane X1 (wave 7); both stay on the current string until then.
     expect(
       screen.getByText(
         'Generate a native ARIS model — an EPC or a value-added chain diagram — from a plain-language description. Review the exact outbound request and give consent before anything is sent to the provider.'
@@ -566,14 +568,11 @@ describe('ArisApp production shell', () => {
     fireEvent.click(screen.getAllByRole('button', { name: /Settings/ })[0]!)
     expect(await screen.findByText('mock-settings-dialog')).not.toBeNull()
 
+    // The header Assistant button opens the process-assistant chat drawer, whose
+    // library tab is present on open.
     fireEvent.click(screen.getByRole('button', { name: 'Assistant' }))
-    await waitFor(() =>
-      expect(
-        screen.getByText(
-          'The ARIS assistant surface stays available in Phase 2 while BPMN-specific retrieval and interview flows are removed from the shipped artifact.'
-        )
-      ).not.toBeNull()
-    )
+    const drawer = await screen.findByRole('dialog', { name: 'Process assistant' })
+    expect(within(drawer).getByRole('tab', { name: 'Ask the library' })).not.toBeNull()
   })
 
   it('rejects BPMN entries surfaced through remembered directory workspace browsing while still opening AML peers', async () => {
@@ -915,7 +914,16 @@ describe('ArisApp production shell', () => {
     render(<ArisApp />)
     await openAml()
 
-    const rail = document.querySelector<HTMLElement>('[data-orbitpm-aris-chat]')!
+    // The interview now lives in the chat drawer: open the assistant and switch
+    // to the 'Complete this process' tab so the interview surface is mounted.
+    fireEvent.click(screen.getByRole('button', { name: 'Assistant' }))
+    fireEvent.click(await screen.findByRole('tab', { name: 'Complete this process' }))
+
+    const rail = await waitFor(() => {
+      const node = document.querySelector<HTMLElement>('[data-orbitpm-aris-chat]')
+      if (!node) throw new Error('no chat drawer interview surface')
+      return node
+    })
     // Plan 18.1: the deterministic gap scanner runs on the live document.
     await waitFor(() =>
       expect(rail.querySelectorAll('[data-orbitpm-aris-chat-gaps] li').length).toBeGreaterThan(0)

@@ -1,8 +1,8 @@
 /**
  * §17.5 AI-grounded assistant answers — the UI half.
  *
- * Mounted ONLY by `ArisAssistantPanel` when (a) a provider + API key is
- * configured and (b) `questionRouter.routeQuestion` returned `kind: 'none'`
+ * Mounted ONLY by `ArisChatDrawer` (library tab) when (a) a provider + API key
+ * is configured and (b) `questionRouter.routeQuestion` returned `kind: 'none'`
  * for the asked question — see that file for the gating. Because of that
  * gating, nothing in this file ever renders, runs an effect, or does any
  * work on the no-key path: nothing here can add a network call, a consent

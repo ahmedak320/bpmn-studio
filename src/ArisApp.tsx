@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
-import { ArisAssistantDrawer } from './ArisAssistantDrawer'
 import { ICON_DATA_URI } from './branding/icon'
 import { ProcessTabList, processTabId, processTabPanelId } from './common/ProcessTabList'
 import { PaneResizer, usePaneWidth } from './common/PaneResizer'
@@ -39,6 +38,7 @@ import { buildProcessHierarchy } from './workspace/processHierarchy'
 import type { ArisExplorerTabsController } from './aris/shell/arisExplorerActions'
 import { createArisXmlSourcePackage, type ArisXmlSourcePackage } from './aris/source/sourcePackage'
 import {
+  ArisChatDrawer,
   ArisExplorerPane,
   ArisImportReviewDialog,
   ArisStudioTab,
@@ -48,10 +48,13 @@ import {
   commitArisWorkspaceImport,
   prepareArisWorkspaceImport,
   tk,
+  type ArisChatDrawerTarget,
+  type ArisChatInterviewRequest,
   type ArisPreparedImport,
   type ArisSelectionRequest,
   type ArisSourceFact,
-  type ArisStudioDocument
+  type ArisStudioDocument,
+  type ArisTabChatHost
 } from './aris/shell'
 import type { ArisAnswerChip } from './aris/assistant/answer'
 
@@ -262,14 +265,10 @@ export default function ArisApp(): JSX.Element {
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [assistantOpen, setAssistantOpen] = useState(false)
   const [explorerOpen, setExplorerOpen] = useState(true)
-  // Neither ARIS-shell AI surface (ArisGenerationPanel, ArisAssistantDrawer)
-  // takes a `keysVersion` prop yet — unlike their legacy App.tsx counterparts
-  // (AiPanelLite, AssistantDrawer), which remount on it to re-check provider
-  // credentials after Settings changes. The setter is still wired below so
-  // that behavior is a one-line prop addition once those Phase-2 placeholder
-  // surfaces grow real provider-dependent rendering; the read side has no
-  // consumer today, hence the leading underscore.
-  const [_keysVersion, setKeysVersion] = useState(0)
+  // Bumped whenever Settings closes after a key change; passed to the chat
+  // drawer so its provider/key read (which gates the §17.5 AI offer) re-runs
+  // after credentials change.
+  const [keysVersion, setKeysVersion] = useState(0)
   const [workspaceAdapter, setWorkspaceAdapter] = useState<WorkspaceAdapter | null>(null)
   const [workspaceSources, setWorkspaceSources] = useState<WorkspaceEntry[]>([])
   /**
@@ -304,6 +303,38 @@ export default function ArisApp(): JSX.Element {
     () => tabs.find((candidate) => candidate.key === activeKey) ?? null,
     [activeKey, tabs]
   )
+
+  // Each mounted ArisStudioTab registers its live chat host here (keyed by tab
+  // key); the drawer reads the ACTIVE tab's host to run its interview against
+  // the on-canvas document.
+  const chatHostsRef = useRef(new Map<string, ArisTabChatHost>())
+  const registerChatHost = useCallback((key: string, host: ArisTabChatHost | null) => {
+    if (host) chatHostsRef.current.set(key, host)
+    else chatHostsRef.current.delete(key)
+  }, [])
+  // Render-time mirrors so the stable callbacks below read the latest active tab
+  // and tab list without being re-created (and re-subscribing the drawer) on
+  // every keystroke.
+  const activeKeyRef = useRef(activeKey)
+  activeKeyRef.current = activeKey
+  const tabsRef = useRef(tabs)
+  tabsRef.current = tabs
+  const interviewTokenRef = useRef(0)
+  const [interviewRequest, setInterviewRequest] = useState<ArisChatInterviewRequest | null>(null)
+  const getActiveChatTarget = useCallback((): ArisChatDrawerTarget | null => {
+    const key = activeKeyRef.current
+    if (!key) return null
+    const host = chatHostsRef.current.get(key)
+    const tab = tabsRef.current.find((candidate) => candidate.key === key)
+    return host && tab ? { tabKey: key, title: tab.title, host } : null
+  }, [])
+  const handleContinueInChat = useCallback(() => {
+    const tabKey = activeKeyRef.current
+    if (!tabKey) return
+    interviewTokenRef.current += 1
+    setInterviewRequest({ token: interviewTokenRef.current, tabKey })
+    setAssistantOpen(true)
+  }, [])
 
   /**
    * The model a tab shows: the user's explicit pick when it is still valid,
@@ -884,18 +915,6 @@ export default function ArisApp(): JSX.Element {
           onClose={() => setSettingsOpen(false)}
           onKeysChanged={() => setKeysVersion((current) => current + 1)}
         />
-        <ArisAssistantDrawer
-          open={assistantOpen}
-          onClose={() => setAssistantOpen(false)}
-          onOpenSettings={() => setSettingsOpen(true)}
-          workspaceLabel={rememberedName ?? rootLabel(mode, workspaceAdapter)}
-          sourceCount={workspaceSources.length}
-          openTabCount={tabs.length}
-          activeTabTitle={activeTab?.title ?? null}
-          activeSourceKindLabel={activeTab ? sourceKindLabel(activeTab.sourceKind) : null}
-          digests={assistantDigests}
-          onOpenChip={handleOpenChip}
-        />
         <Toaster toasts={toasts} onDismiss={dismissToast} />
       </>
     )
@@ -1010,6 +1029,7 @@ export default function ArisApp(): JSX.Element {
               onOpenWorkspaceFile={handleOpenWorkspaceFile}
               onRejectUnsupported={() => pushToast(t('toast.import.arisOnly'))}
               onOpenAssistant={() => setAssistantOpen(true)}
+              onContinueInChat={handleContinueInChat}
               workspaceId={workspaceAdapter?.id ?? null}
               onCreateModel={handleCreateModel}
               onDownloadFile={downloadBytes}
@@ -1124,6 +1144,8 @@ export default function ArisApp(): JSX.Element {
                           studio={tab.studio}
                           modelId={activeModelIdForTab(tab)}
                           active={isActive}
+                          chatHostKey={tab.key}
+                          onChatHostChange={registerChatHost}
                           lang={lang}
                           sourceFacts={sourceFactsFor(tab)}
                           sourceText={tab.content}
@@ -1189,18 +1211,17 @@ export default function ArisApp(): JSX.Element {
         onClose={() => setSettingsOpen(false)}
         onKeysChanged={() => setKeysVersion((current) => current + 1)}
       />
-      <ArisAssistantDrawer
+      <ArisChatDrawer
         open={assistantOpen}
+        onOpen={() => setAssistantOpen(true)}
         onClose={() => setAssistantOpen(false)}
-        onOpenSettings={() => setSettingsOpen(true)}
-        onChangeWorkspace={directoryAvailable ? () => void handleOpenDifferent() : undefined}
-        workspaceLabel={rootLabel(mode, workspaceAdapter)}
-        sourceCount={workspaceSources.length}
-        openTabCount={tabs.length}
-        activeTabTitle={activeTab?.title ?? null}
-        activeSourceKindLabel={activeTab ? sourceKindLabel(activeTab.sourceKind) : null}
+        keysVersion={keysVersion}
         digests={assistantDigests}
         onOpenChip={handleOpenChip}
+        onOpenSettings={() => setSettingsOpen(true)}
+        onChangeWorkspace={directoryAvailable ? () => void handleOpenDifferent() : undefined}
+        getActiveChatTarget={getActiveChatTarget}
+        interviewRequest={interviewRequest}
       />
       <ArisImportReviewDialog
         open={preparedImport !== null}

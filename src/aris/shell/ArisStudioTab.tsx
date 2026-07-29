@@ -140,6 +140,7 @@ export function ArisStudioTab({
   const [selection, setSelection] = useState<ArisCanvasSelectionState>(EMPTY_SELECTION)
   const [history, setHistory] = useState<ArisCanvasHistoryState>(EMPTY_HISTORY)
   const [layoutMode, setLayoutMode] = useState<ArisLayoutModeState>('source')
+  const [dismissedHint, setDismissedHint] = useState(false)
 
   const renderableModelId = useMemo(() => {
     if (modelId && studio.models.some((model) => model.id === modelId && model.renderable)) {
@@ -171,6 +172,10 @@ export function ArisStudioTab({
     const summary = studio.models.find((model) => model.id === renderableModelId)
     return summary ? (arisText(summary.names, lang) ?? summary.id) : title
   }, [lang, renderableModelId, studio.models, title])
+
+  const activeModelIsEmpty =
+    ((history.document ?? studio.source).models.get(renderableModelId ?? '')?.occurrences.length ??
+      -1) === 0
 
   const runLayout = useCallback(
     (engine: ArisCleanLayoutEngine, nextMode: ArisLayoutModeState, successMessage: string) => {
@@ -570,25 +575,61 @@ export function ArisStudioTab({
         </header>
 
         {renderableModelId ? (
-          <ArisCanvasView
-            document={studio.source}
-            modelId={renderableModelId}
-            active={active}
-            ariaLabel={tk('aris.canvas.aria', 'ARIS canvas for {model}', { model: modelName })}
-            onReady={(canvas) => {
-              canvasRef.current = canvas
+          <div
+            style={{
+              position: 'relative',
+              minWidth: 0,
+              minHeight: 0,
+              pointerEvents: 'none'
             }}
-            onSelectionChange={setSelection}
-            onHistoryChange={setHistory}
-            onError={(error) =>
-              onToast(
-                tk('aris.canvas.bootFailed', 'The ARIS canvas could not be opened: {error}', {
-                  error: error instanceof Error ? error.message : String(error)
-                }),
-                'error'
-              )
-            }
-          />
+          >
+            <ArisCanvasView
+              document={studio.source}
+              modelId={renderableModelId}
+              active={active}
+              ariaLabel={tk('aris.canvas.aria', 'ARIS canvas for {model}', { model: modelName })}
+              onReady={(canvas) => {
+                canvasRef.current = canvas
+              }}
+              onSelectionChange={setSelection}
+              onHistoryChange={setHistory}
+              onError={(error) =>
+                onToast(
+                  tk('aris.canvas.bootFailed', 'The ARIS canvas could not be opened: {error}', {
+                    error: error instanceof Error ? error.message : String(error)
+                  }),
+                  'error'
+                )
+              }
+            />
+            {activeModelIsEmpty && !dismissedHint && (
+              <div
+                data-orbitpm-aris-empty-hint=""
+                style={{
+                  position: 'absolute',
+                  insetInlineStart: 76,
+                  top: 16,
+                  maxWidth: 340,
+                  padding: '0.75rem 1rem',
+                  background: 'var(--orbitpm-panel-bg)',
+                  border: '1px solid var(--orbitpm-border)',
+                  borderRadius: 8,
+                  boxShadow: '0 4px 16px rgba(0, 0, 0, 0.12)',
+                  pointerEvents: 'auto',
+                  zIndex: 10
+                }}
+              >
+                <p style={{ margin: '0 0 0.5rem' }}>{t('aris.canvas.emptyModelHint')}</p>
+                <button
+                  type="button"
+                  className="orbitpm-lite-chrome-btn"
+                  onClick={() => setDismissedHint(true)}
+                >
+                  {t('aris.canvas.emptyModelHint.dismiss')}
+                </button>
+              </div>
+            )}
+          </div>
         ) : (
           <div
             className="orbitpm-aris-canvas orbitpm-aris-canvas-empty"
