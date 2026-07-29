@@ -85,9 +85,9 @@ The user explicitly requested these; updating tests that assert the OLD behavior
 
 ## Wave 0 — Baseline (orchestrator)
 
-- [ ] Commit `implementation_plan.md` + `goal.md` to the branch.
-- [ ] Run the full gate suite at HEAD: `npm run format:check && npm run lint && npm run typecheck && npm run check:aris-runtime-boundary && npm run check:ui-copy && npm run check:no-skips && npm run check:lite-only && npm test`. Record the SHA and every pre-existing failure verbatim at the bottom of this file under "Baseline record".
-- [ ] If gates are red at HEAD, dispatch a fix lane (default workers) BEFORE wave 1 and re-record.
+- [x] Commit `implementation_plan.md` + `goal.md` to the branch. (commit `e7b077d`)
+- [x] Run the full gate suite at HEAD: `npm run format:check && npm run lint && npm run typecheck && npm run check:aris-runtime-boundary && npm run check:ui-copy && npm run check:no-skips && npm run check:lite-only && npm test`. Record the SHA and every pre-existing failure verbatim at the bottom of this file under "Baseline record".
+- [x] If gates are red at HEAD, dispatch a fix lane (default workers) BEFORE wave 1 and re-record. **N/A — baseline is fully green; no fix lane needed.**
 
 ---
 
@@ -1168,8 +1168,17 @@ npx playwright test tests/e2e/aris-explorer-tree.spec.ts tests/e2e/aris-new-mode
 
 ## Baseline record (Wave 0 fills this in)
 
-- Baseline SHA: _(pending)_
-- Gate results at baseline: _(pending)_
+- Baseline SHA: `e7b077d83b31b8f2fc99d03cb6493fb3c1d4315f` (plan-docs commit; product code identical to `1b89ce7`, the prior HEAD).
+- Gate results at baseline (all run at HEAD, exit codes verbatim):
+  - `npm run format:check` → EXIT 0 (All matched files use Prettier code style)
+  - `npm run lint` → EXIT 0
+  - `npm run typecheck` → EXIT 0
+  - `npm run check:aris-runtime-boundary` → EXIT 0
+  - `npm run check:ui-copy` → EXIT 0
+  - `npm run check:no-skips` → EXIT 0
+  - `npm run check:lite-only` → EXIT 0
+  - `npm test` → EXIT 0 (314 test files passed; 4003 tests passed; zero runtime skips/todos/expected-failures/retries; duration ~98s)
+  - **No pre-existing failures. Baseline is fully green — Wave 1 may proceed.**
 
 ## Resolution evidence (Wave 9 fills this in)
 
