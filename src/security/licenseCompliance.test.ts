@@ -46,43 +46,54 @@ afterAll(() => {
 })
 
 describe('release dependency compliance evidence', () => {
-  it('preserves exact shipped colors and bpmn-js license texts', () => {
+  it('preserves exact shipped license texts and correctly excludes bpmn-js', () => {
     const notices = readFileSync(noticesPath, 'utf8')
-    expect(notices).toContain('| bpmn-js | 18.21.0 | LicenseRef-bpmn-io |')
-    expect(notices).toContain('Sources: node_modules/bpmn-js/LICENSE')
-    expect(notices).toContain(indentedFile(resolve(repositoryRoot, 'node_modules/bpmn-js/LICENSE')))
 
-    expect(notices).toContain('Sources: node_modules/colors/MIT-LICENSE.txt')
+    // diagram-js is a real, currently-shipped `dependencies` entry (the native ARIS canvas is
+    // built directly on diagram-js) — its verbatim LICENSE text must survive byte-for-byte.
+    expect(notices).toContain('| diagram-js | 15.22.0 | MIT |')
+    expect(notices).toContain('Sources: node_modules/diagram-js/LICENSE')
     expect(notices).toContain(
-      indentedFile(resolve(repositoryRoot, 'node_modules/colors/MIT-LICENSE.txt'))
+      indentedFile(resolve(repositoryRoot, 'node_modules/diagram-js/LICENSE'))
     )
-    expect(notices).toContain(
-      'Additional Functionality\n     - Copyright (c) Sindre Sorhus <sindresorhus@gmail.com>'
-    )
+
+    // bpmn-js, bpmn-moddle, bpmnlint and bpmn-auto-layout are devDependencies only: the ARIS-only
+    // Lite runtime graph reachable from src/main.tsx never imports them (enforced by
+    // check:aris-runtime-boundary, which bans bpmn-js et al. from that graph outright), and the
+    // built release artifact does not bundle them. license-policy.mjs walks only non-dev lock
+    // entries, so none of them — nor colors, a transitive dependency of bpmnlint's cli-table via
+    // devDependencies only — are shipped, and none should appear in the production notices table.
+    expect(notices).not.toContain('| bpmn-js |')
+    expect(notices).not.toContain('| bpmnlint |')
+    expect(notices).not.toContain('| colors |')
   })
 
-  it('embeds the reviewed bpmn-js LicenseRef and full text in CycloneDX', () => {
+  it('excludes bpmn-js from the CycloneDX SBOM since it is not part of the shipped ARIS runtime', () => {
     const sbom = JSON.parse(readFileSync(sbomPath, 'utf8')) as {
       components: Array<{
         name: string
         version: string
-        licenses?: Array<{
-          license?: { name?: string; text?: { content?: string; contentType?: string } }
-        }>
+        licenses?: Array<
+          | { expression: string }
+          | { license: { name?: string; text?: { content?: string; contentType?: string } } }
+        >
       }>
     }
-    const component = sbom.components.find(
-      ({ name, version }) => name === 'bpmn-js' && version === '18.21.0'
+
+    // Mirrors the notices assertion above: bpmn-js is a devDependency excluded from the ARIS
+    // production runtime graph, so generate-sbom.mjs (which walks only non-dev lock entries)
+    // correctly omits it. Its reviewed LicenseRef-bpmn-io classification and full watermark
+    // license text (see scripts/license-policy-data.mjs's BPMN_JS_LICENSE) stay dormant in the
+    // generator, ready to be enforced again the moment bpmn-js is ever promoted back to a real
+    // `dependencies` entry — see the conditional check in scripts/generate-sbom.mjs.
+    const bpmnComponent = sbom.components.find(({ name }) => name === 'bpmn-js')
+    expect(bpmnComponent).toBeUndefined()
+
+    // A real shipped component is still correctly present and license-tagged.
+    const diagramJs = sbom.components.find(
+      ({ name, version }) => name === 'diagram-js' && version === '15.22.0'
     )
-    expect(component?.licenses?.[0]?.license).toEqual({
-      name: 'LicenseRef-bpmn-io',
-      text: {
-        contentType: 'text/plain',
-        content: normalize(
-          readFileSync(resolve(repositoryRoot, 'node_modules/bpmn-js/LICENSE'), 'utf8')
-        )
-      }
-    })
+    expect(diagramJs?.licenses?.[0]).toEqual({ expression: 'MIT' })
   })
 
   it('rejects a built artifact that statically hides the required attribution', () => {

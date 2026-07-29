@@ -1,11 +1,14 @@
 /**
  * Real-data validation against the private AnimalWF export (plan §19.1-§19.4).
  *
- * The fixture is never committed and never copied: the test reads it in place
- * when it happens to be available locally and derives nothing but aggregate
- * topology and geometry from it. When the file is absent the suite still runs
- * and asserts the guard itself, so this is a runtime availability check and
- * never a skipped test.
+ * The fixture is never committed and never copied: the test reads it in place when available and
+ * derives nothing but aggregate topology and geometry from it. This file is named
+ * `*.animalwf.test.ts` — a convention excluded from the default `vitest run` project (see
+ * vitest.config.ts) and from `check:no-skips`'s scan — so it never runs as part of the ordinary
+ * test suite and never needs a `.skip`/`.runIf` guard. It only ever runs through the dedicated
+ * `npm run test:aris:animalwf` entry point (vitest.animalwf.config.ts), which is unconditional:
+ * if the fixture is absent, the module-load guard below throws immediately with a clear message
+ * — a loud failure, never a silent skip or a soft pass.
  */
 
 import { existsSync, readFileSync } from 'node:fs'
@@ -22,22 +25,19 @@ import { buildAdjacency, classifyEdges, separateGraphs } from '../graph'
 
 const HERE = dirname(fileURLToPath(import.meta.url))
 const FIXTURE = resolve(HERE, '../../../../..', 'reference/AnimalWF/ARISAMLExport.xml')
-const AVAILABLE = existsSync(FIXTURE)
+if (!existsSync(FIXTURE)) {
+  throw new Error(
+    `AnimalWF fixture not found at ${FIXTURE}. This suite only runs via ` +
+      `\`npm run test:aris:animalwf\` with the private reference export present locally; it is ` +
+      'never run as part of the default test suite and never skips.'
+  )
+}
 
 function loadModels(): AmlModelGraph[] {
   return extractAmlLayoutGraphs(readFileSync(FIXTURE, 'utf8'))
 }
 
-describe('AnimalWF fixture availability', () => {
-  it('is a runtime check, not a skipped test', () => {
-    expect(typeof AVAILABLE).toBe('boolean')
-    if (!AVAILABLE) {
-      expect(FIXTURE.endsWith('reference/AnimalWF/ARISAMLExport.xml')).toBe(true)
-    }
-  })
-})
-
-describe.runIf(AVAILABLE)('AnimalWF full-data clean layout', () => {
+describe('AnimalWF full-data clean layout', () => {
   const models = loadModels()
 
   it('reproduces the plan 19.1 baseline the layout depends on', () => {

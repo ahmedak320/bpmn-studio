@@ -121,6 +121,7 @@ jobs:
         run: >-
           node --test
           scripts/browser-environment-evidence.test.mjs
+          scripts/check-no-skips.test.mjs
           scripts/finalization-evidence-chain.test.mjs
           scripts/historical-release-cleanup.test.mjs
           scripts/pages-evidence-chain.test.mjs

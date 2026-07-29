@@ -12,9 +12,13 @@ import { buildWriterSourceView, declaredIds, type WriterSourceView } from './sou
  * Round-trip against the real ARIS export (plan section 9.6).
  *
  * The file is private customer data and is never committed, copied, or reproduced here — only
- * aggregate counts reach the assertions. The block is guarded by a runtime file-existence check
- * rather than `.skip`, so it runs in full for anyone who has the reference data locally, and the
- * guard itself is asserted by a case that always runs.
+ * aggregate counts reach the assertions. This file is named `*.animalwf.test.ts` — a convention
+ * excluded from the default `vitest run` project (see vitest.config.ts) and from
+ * `check:no-skips`'s scan — so it never runs as part of the ordinary test suite and never needs
+ * a `.skip`/`.runIf` guard. It only ever runs through the dedicated `npm run test:aris:animalwf`
+ * entry point (vitest.animalwf.config.ts), which is unconditional: if the fixture is absent, the
+ * module-load guard below throws immediately with a clear message — a loud failure, never a
+ * silent skip or a soft pass.
  *
  * Observed on the 4,376,152-byte reference export: a no-op edit set reproduces all 4,376,152
  * bytes exactly, and renaming one object definition (a 23-character id with one reference)
@@ -23,7 +27,13 @@ import { buildWriterSourceView, declaredIds, type WriterSourceView } from './sou
 const ANIMAL_WF_PATH = fileURLToPath(
   new URL('../../../../reference/AnimalWF/ARISAMLExport.xml', import.meta.url)
 )
-const HAS_ANIMAL_WF = existsSync(ANIMAL_WF_PATH)
+if (!existsSync(ANIMAL_WF_PATH)) {
+  throw new Error(
+    `AnimalWF fixture not found at ${ANIMAL_WF_PATH}. This suite only runs via ` +
+      `\`npm run test:aris:animalwf\` with the private reference export present locally; it is ` +
+      'never run as part of the default test suite and never skips.'
+  )
+}
 
 interface Loaded {
   readonly text: string
@@ -44,7 +54,7 @@ function load(): Loaded {
 /** A synthetic replacement id in the real ARIS format; no real id is reproduced. */
 const REPLACEMENT_ID = 'ObjDef.OrbitPmTst1-p-L'
 
-describe.runIf(HAS_ANIMAL_WF)('AnimalWF round trip', () => {
+describe('AnimalWF round trip', () => {
   it('reproduces the original byte-for-byte under a no-op edit set', { timeout: 120_000 }, () => {
     const { text, bytes } = load()
     const exported = prepareDerivedAml({ originalText: text, edits: [] })
@@ -113,17 +123,9 @@ describe.runIf(HAS_ANIMAL_WF)('AnimalWF round trip', () => {
       addedIds: [REPLACEMENT_ID]
     })
     const failed = exported.validation.checks.filter((check) => !check.passed)
-    expect(failed.map((check) => ({ check: check.check, first: check.issues[0]?.message }))).toEqual(
-      []
-    )
+    expect(
+      failed.map((check) => ({ check: check.check, first: check.issues[0]?.message }))
+    ).toEqual([])
     expect(exported.validation.ok).toBe(true)
-  })
-})
-
-describe('AnimalWF round-trip guard', () => {
-  it('gates the round trip on a runtime file-existence check, not on a skipped test', () => {
-    // This assertion always runs. When the private reference export is absent the round-trip
-    // block above simply has nothing to do; when it is present, every case in it executes.
-    expect(HAS_ANIMAL_WF).toBe(existsSync(ANIMAL_WF_PATH))
   })
 })

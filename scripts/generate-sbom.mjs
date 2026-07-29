@@ -193,15 +193,23 @@ if (!components.length) failures.push('SBOM contains no production components')
 if (new Set(components.map((component) => component['bom-ref'])).size !== components.length) {
   failures.push('SBOM component bom-ref values are not unique')
 }
+// bpmn-js is a devDependency, excluded from the ARIS-only production runtime graph (enforced by
+// check:aris-runtime-boundary) and so is correctly absent from `productionEntries`/`components`
+// above. This invariant only has something to enforce if bpmn-js is ever promoted back to a
+// production dependency — in that case its reviewed LicenseRef classification and full watermark
+// license text must still be preserved verbatim in the SBOM. Requiring its mere presence
+// unconditionally would fail the generator for a package this artifact no longer ships.
 const bpmnComponent = components.find(
   ({ name, version }) => `${name}@${version}` === BPMN_JS_LICENSE.packageKey
 )
-const bpmnComponentLicense = bpmnComponent?.licenses?.[0]?.license
-if (
-  bpmnComponentLicense?.name !== BPMN_JS_LICENSE.classification ||
-  bpmnComponentLicense?.text?.content !== bpmnLicenseText
-) {
-  failures.push('SBOM does not preserve the reviewed bpmn-js license classification and text')
+if (bpmnComponent) {
+  const bpmnComponentLicense = bpmnComponent.licenses?.[0]?.license
+  if (
+    bpmnComponentLicense?.name !== BPMN_JS_LICENSE.classification ||
+    bpmnComponentLicense?.text?.content !== bpmnLicenseText
+  ) {
+    failures.push('SBOM does not preserve the reviewed bpmn-js license classification and text')
+  }
 }
 const knownRefs = new Set([rootRef, ...components.map((component) => component['bom-ref'])])
 for (const dependency of dependencies) {

@@ -6,9 +6,8 @@ open-source components under their respective licenses.
 Principal retained runtime components include:
 
 - React and React DOM
-- bpmn-js, bpmn-moddle, diagram-js, bpmnlint,
-  bpmn-js-bpmnlint, bpmn-js-properties-panel, and related bpmn.io packages
-- bpmn-auto-layout
+- diagram-js and diagram-js-minimap (the native ARIS canvas is built directly
+  on diagram-js, not on bpmn-js)
 - Vite and vite-plugin-singlefile
 - fflate
 - jsPDF

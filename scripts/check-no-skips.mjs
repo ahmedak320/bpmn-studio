@@ -1,6 +1,7 @@
 import { execFileSync } from 'node:child_process'
 import { existsSync, readFileSync } from 'node:fs'
 import { REQUIRED_BROWSER_SUITES } from './release-suite-manifest.mjs'
+import { lineNumberAt, matches, nodeTestProhibited, prohibited } from './check-no-skips-rules.mjs'
 
 const tracked = execFileSync(
   'git',
@@ -11,63 +12,20 @@ const tracked = execFileSync(
   .filter(Boolean)
   .filter((path) => existsSync(path))
 
-const testFiles = tracked.filter(
-  (path) =>
-    /^(?:src|tests)\/.*\.(?:[cm]?[jt]sx?)$/.test(path) ||
-    /^scripts\/.*\.test\.mjs$/.test(path) ||
-    /^(?:playwright|vitest)\.config\.ts$/.test(path)
-)
+const testFiles = tracked
+  .filter(
+    (path) =>
+      /^(?:src|tests)\/.*\.(?:[cm]?[jt]sx?)$/.test(path) ||
+      /^scripts\/.*\.test\.mjs$/.test(path) ||
+      /^(?:playwright|vitest)\.config\.ts$/.test(path)
+  )
+  // `*.animalwf.test.ts` suites depend on the private, uncommitted AnimalWF reference export and
+  // run only through the dedicated, unconditional `npm run test:aris:animalwf` entry point (see
+  // vitest.animalwf.config.ts) — never through the default project this scan otherwise mirrors.
+  // They contain no conditional execution by design, but are excluded here too so that
+  // convention stays authoritative in exactly one place.
+  .filter((path) => !/\.animalwf\.test\.ts$/.test(path))
 const nodeReleaseTests = tracked.filter((path) => /^scripts\/.*\.test\.mjs$/.test(path)).sort()
-
-const prohibited = [
-  {
-    label: 'skipped suite/test',
-    pattern:
-      /\b(?:test|it|describe|suite|specify)(?:\s*\.\s*[A-Za-z]+)*\s*\.\s*(?:skip|skipIf|todo|fixme|fail|fails)(?:\s*\.\s*[A-Za-z]+)*\s*(?:\(|<)/
-  },
-  {
-    label: 'focused-only suite/test',
-    pattern:
-      /\b(?:test|it|describe|suite|specify)(?:\s*\.\s*[A-Za-z]+)*\s*\.\s*only(?:\s*\.\s*[A-Za-z]+)*\s*(?:\(|<)/
-  },
-  {
-    label: 'conditional test execution',
-    pattern:
-      /\b(?:test|it|describe|suite|specify)(?:\s*\.\s*[A-Za-z]+)*\s*\.\s*runIf(?:\s*\.\s*[A-Za-z]+)*\s*(?:\(|<)/
-  },
-  {
-    label: 'disabled or focused alias',
-    pattern: /\b(?:xit|xtest|xdescribe|fit|fdescribe)\s*\(/
-  },
-  {
-    label: 'runtime test skip/fixme annotation',
-    pattern: /\btestInfo\s*\.\s*(?:skip|fixme|fail)\s*\(/
-  },
-  {
-    label: 'retry override',
-    pattern: /\b(?:retries|retry)\s*:\s*[1-9]\d*\b|--retries(?:=|\s+)[1-9]\d*/
-  }
-]
-
-const nodeTestProhibited = [
-  {
-    label: 'node:test skipped/todo/focused method',
-    pattern: /\.\s*(?:skip|todo|only)\s*(?:\(|<)/
-  },
-  {
-    label: 'node:test skipped/todo/focused option',
-    pattern: /\b(?:skip|todo|only)\s*:/
-  }
-]
-
-function lineNumberAt(source, index) {
-  return source.slice(0, index).split('\n').length
-}
-
-function matches(source, pattern) {
-  const flags = pattern.flags.includes('g') ? pattern.flags : `${pattern.flags}g`
-  return source.matchAll(new RegExp(pattern.source, flags))
-}
 
 const failures = []
 const qualityWorkflow = readFileSync('.github/workflows/quality.yml', 'utf8')

@@ -1,0 +1,24 @@
+{
+  "note": "Fixture strings for scripts/check-no-skips.test.mjs. These deliberately contain the literal substrings the release-test integrity checker looks for (fit(, describe.skip(, describe.runIf(, ...). They live in a .json file — outside check-no-skips.mjs's own scan globs (src/tests/**/*.{js,ts,...} and scripts/**/*.test.mjs) — so the fixtures themselves are never mistaken for real skipped/focused test code.",
+  "focusedAliasGenuine": [
+    "fit('does the thing', () => {})",
+    "  xit(\"skips this\", () => {})",
+    "fdescribe('focused suite', () => {})",
+    "xdescribe(`focused suite`, () => {})",
+    "  fit ('spaced paren', () => {})",
+    "xtest('marks a focused/disabled test', () => {})"
+  ],
+  "focusedAliasFalsePositives": [
+    "  fit(): number {\n    return this.canvas.zoom('fit-viewport')\n  }",
+    "expect(canvas.fit()).toBeGreaterThan(0)",
+    "this.canvas.fit()",
+    "const result = zoomTarget.fit(level)",
+    "function fit() { return 1 }"
+  ],
+  "skippedSuiteGenuine": [
+    "describe.skip('x', () => {})",
+    "describe.skipIf(cond)('x', () => {})",
+    "it.todo('x')"
+  ],
+  "runIfGenuine": ["describe.runIf(available)('x', () => {})"]
+}

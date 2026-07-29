@@ -55,8 +55,10 @@ declare module 'bpmn-auto-layout' {
 }
 // The shims for `bpmn-js-properties-panel`, `bpmn-js-create-append-anything`
 // and `bpmn-js-bpmnlint` were removed with the BPMN editor (plan §5.3) — the
-// deleted `src/editor/EditorTabLite.tsx` was their only importer. The packages
-// themselves are still listed as devDependencies; see the §5.4 note there.
+// deleted `src/editor/EditorTabLite.tsx` was their only importer. Those three
+// packages (plus the unused `@bpmn-io/properties-panel`) had zero remaining
+// imports, type shims or config references, so they were dropped from
+// devDependencies entirely rather than kept around unused.
 /* eslint-disable @typescript-eslint/no-explicit-any -- third-party module descriptors are intentionally opaque */
 declare module 'diagram-js-minimap' {
   const minimapModule: any
