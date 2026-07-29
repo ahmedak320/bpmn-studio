@@ -48,10 +48,8 @@ const lockedDependencyViolations = Object.keys(lock.packages ?? {})
   .filter(isProhibitedDependency)
 
 const manifestViolations = []
-if (manifest.name !== 'orbitpm-process-studio-lite') {
-  manifestViolations.push(
-    `active package must be orbitpm-process-studio-lite, found ${manifest.name}`
-  )
+if (manifest.name !== 'orbitpm-aris-studio-lite') {
+  manifestViolations.push(`active package must be orbitpm-aris-studio-lite, found ${manifest.name}`)
 }
 const scriptText = JSON.stringify(manifest.scripts ?? {})
 if (/\b(?:electron|electron-builder|nsis|app-builder|portable-exe|docker)\b/i.test(scriptText)) {
