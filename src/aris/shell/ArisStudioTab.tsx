@@ -44,6 +44,12 @@ import {
 import { ArisDetailsRail } from './ArisDetailsRail'
 import type { ArisDetailsEditingApi } from './arisDetailsEditing'
 import { arisText, buildArisDetailsDocument, type ArisStudioDocument } from './arisStudioDocument'
+import {
+  ArisTranslateController,
+  type ArisTranslateControllerHandle
+} from './ArisTranslateController'
+import { countArisMissingTranslations } from '../localization'
+import type { LocalizationResources } from '../../localization/types'
 import { tk } from './shellI18n'
 
 export type ArisLayoutModeState = 'source' | 'clean'
@@ -85,6 +91,16 @@ export interface ArisStudioTabProps {
   readonly chatHostKey?: string
   /** Register/unregister the tab's chat host with the shell. */
   readonly onChatHostChange?: (key: string, host: ArisTabChatHost | null) => void
+  /**
+   * The opened source's kind; `'generated'` enables the silent auto-translate.
+   * Optional so pre-existing render tests can mount the tab without it (absent ⇒
+   * never auto-translates); `src/ArisApp.tsx` always supplies it.
+   */
+  readonly sourceKind?: string
+  /** Workspace glossary/TM for the translation review; `null` ⇒ built-in defaults. */
+  readonly localizationResources?: LocalizationResources | null
+  /** Persist an accepted bilingual pair to the workspace translation memory. */
+  readonly onAcceptedTranslationPair?: (pair: { en: string; ar: string }) => void
 }
 
 const EMPTY_HISTORY: ArisCanvasHistoryState = Object.freeze({
@@ -134,13 +150,24 @@ export function ArisStudioTab({
   selectionRequest,
   onSelectionResolved,
   chatHostKey,
-  onChatHostChange
+  onChatHostChange,
+  sourceKind,
+  localizationResources = null,
+  onAcceptedTranslationPair
 }: ArisStudioTabProps): JSX.Element {
   const canvasRef = useRef<ArisCanvas | null>(null)
   const [selection, setSelection] = useState<ArisCanvasSelectionState>(EMPTY_SELECTION)
   const [history, setHistory] = useState<ArisCanvasHistoryState>(EMPTY_HISTORY)
   const [layoutMode, setLayoutMode] = useState<ArisLayoutModeState>('source')
   const [dismissedHint, setDismissedHint] = useState(false)
+  // The diagram-label language. It follows the app language until the toolbar
+  // toggle overrides it (view-only projection; §L5a's canvas seam).
+  const [contentLangOverride, setContentLangOverride] = useState<'en' | 'ar' | null>(null)
+  const contentLang = contentLangOverride ?? lang
+  // Bumped when the canvas becomes ready, so the content-language effect and the
+  // translate controller re-run against the live canvas.
+  const [canvasTick, setCanvasTick] = useState(0)
+  const translateRef = useRef<ArisTranslateControllerHandle | null>(null)
 
   const renderableModelId = useMemo(() => {
     if (modelId && studio.models.some((model) => model.id === modelId && model.renderable)) {
@@ -167,6 +194,28 @@ export function ArisStudioTab({
     () => buildArisDetailsDocument(liveDocument, studio.attachments),
     [liveDocument, studio.attachments]
   )
+
+  // A stable canvas accessor whose identity changes only when the canvas is
+  // (re)ready, so the translate controller's one-shot auto-run effect re-fires
+  // once the live canvas exists.
+  const getCanvas = useCallback((): ArisCanvas | null => {
+    void canvasTick
+    return canvasRef.current
+  }, [canvasTick])
+
+  // Labels missing the OTHER language — the target a Translate run would fill.
+  const missingTranslations = useMemo(
+    () => countArisMissingTranslations(liveDocument),
+    [liveDocument]
+  )
+  const missingTranslationCount =
+    contentLang === 'en' ? missingTranslations.ar : missingTranslations.en
+
+  // Project the canvas captions into the chosen content language (view only,
+  // off the undo stack). Re-runs on a language change and on canvas (re)ready.
+  useEffect(() => {
+    canvasRef.current?.setContentLanguage(contentLang)
+  }, [contentLang, canvasTick])
 
   const modelName = useMemo(() => {
     const summary = studio.models.find((model) => model.id === renderableModelId)
@@ -531,6 +580,44 @@ export function ArisStudioTab({
           >
             {tk('aris.toolbar.resetLayout', 'Reset to Source Layout')}
           </button>
+          <button
+            type="button"
+            className="orbitpm-lite-chrome-btn"
+            data-orbitpm-aris-content-lang={contentLang}
+            title={tk(
+              'aris.toolbar.contentLang.title',
+              'Switch the diagram labels between English and Arabic (view only, no edit)'
+            )}
+            onClick={() => setContentLangOverride(contentLang === 'en' ? 'ar' : 'en')}
+          >
+            {tk('aris.toolbar.contentLang', 'Labels: {language}', {
+              language: t(contentLang === 'en' ? 'app.lang.en' : 'app.lang.ar')
+            })}
+          </button>
+          <button
+            type="button"
+            className="orbitpm-lite-chrome-btn"
+            data-orbitpm-aris-translate=""
+            onClick={() => translateRef.current?.openReview()}
+          >
+            {tk('aris.toolbar.translate', 'Translate…')}
+          </button>
+          {missingTranslationCount > 0 && (
+            <span
+              data-orbitpm-aris-translate-missing={missingTranslationCount}
+              style={{
+                padding: '0.2rem 0.55rem',
+                borderRadius: 999,
+                border: '1px solid var(--orbitpm-border)',
+                fontSize: 12,
+                color: 'var(--orbitpm-muted)'
+              }}
+            >
+              {tk('aris.toolbar.translate.missing', '{count} untranslated', {
+                count: missingTranslationCount
+              })}
+            </span>
+          )}
           <span
             data-orbitpm-aris-layout-mode={layoutMode}
             style={{
@@ -590,6 +677,7 @@ export function ArisStudioTab({
               ariaLabel={tk('aris.canvas.aria', 'ARIS canvas for {model}', { model: modelName })}
               onReady={(canvas) => {
                 canvasRef.current = canvas
+                setCanvasTick((tick) => tick + 1)
               }}
               onSelectionChange={setSelection}
               onHistoryChange={setHistory}
@@ -703,6 +791,18 @@ export function ArisStudioTab({
           </pre>
         </section>
       </aside>
+
+      <ArisTranslateController
+        ref={translateRef}
+        getCanvas={getCanvas}
+        liveDocument={liveDocument}
+        contentLang={contentLang}
+        documentName={title}
+        autoTranslateEligible={sourceKind === 'generated'}
+        resources={localizationResources}
+        onAcceptedPair={onAcceptedTranslationPair}
+        onToast={onToast}
+      />
     </section>
   )
 }

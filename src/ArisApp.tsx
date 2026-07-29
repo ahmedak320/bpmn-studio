@@ -30,6 +30,11 @@ import { OpfsWorkspaceAdapter, opfsSupported } from './workspace/adapters/opfs'
 import { SingleFileWorkspaceAdapter } from './workspace/adapters/singleFile'
 import { classifyImportBoundarySource } from './workspace/importDrop'
 import {
+  createWorkspaceLocalizationStore,
+  type WorkspaceLocalizationStore
+} from './localization/workspaceStore'
+import type { LocalizationResources } from './localization/types'
+import {
   buildLiteTreeFromEntries,
   EMPTY_PROCESS_GRAPH,
   EMPTY_PROCESS_INDEX
@@ -284,6 +289,15 @@ export default function ArisApp(): JSX.Element {
   /** Which model each open source is showing. Keyed by tab key. */
   const [activeModelByTab, setActiveModelByTab] = useState<Record<string, string>>({})
   const [preparedImport, setPreparedImport] = useState<ArisPreparedImport | null>(null)
+  /**
+   * The public workspace glossary + translation memory, loaded once per bound
+   * multi-file adapter. `null` in single-file mode (and until a load lands),
+   * which the translation review reads as "built-in glossary + empty memory".
+   */
+  const [localizationResources, setLocalizationResources] = useState<LocalizationResources | null>(
+    null
+  )
+  const localizationStoreRef = useRef<WorkspaceLocalizationStore | null>(null)
   /** The §17.6 chip request the active tab must honour, if any. */
   const [selectionRequest, setSelectionRequest] = useState<ArisSelectionRequest | null>(null)
   const selectionTokenRef = useRef(0)
@@ -364,6 +378,36 @@ export default function ArisApp(): JSX.Element {
   const dismissToast = useCallback((id: string) => {
     setToasts((current) => current.filter((toast) => toast.id !== id))
   }, [])
+
+  /**
+   * Persist an accepted bilingual pair to the workspace translation memory
+   * (fire-and-forget). A missing store (single-file) is a no-op; a write
+   * failure is surfaced as a toast only — the applied translation still stands.
+   */
+  const handleAcceptedTranslationPair = useCallback(
+    (pair: { en: string; ar: string }) => {
+      const store = localizationStoreRef.current
+      if (!store) return
+      void (async () => {
+        try {
+          const state = await store.acceptTranslationPair(pair)
+          if (localizationStoreRef.current === store) setLocalizationResources(state.resources)
+        } catch (error) {
+          pushToast(
+            tk(
+              'aris.translate.memoryFailed',
+              'The translation could not be saved to memory: {error}',
+              {
+                error: error instanceof Error ? error.message : String(error)
+              }
+            ),
+            'error'
+          )
+        }
+      })()
+    },
+    [pushToast]
+  )
 
   const multiFile = workspaceAdapter?.storage.capabilities.multipleFiles === true
 
@@ -886,6 +930,43 @@ export default function ArisApp(): JSX.Element {
     }
   }, [activateAdapter, directoryAvailable])
 
+  // Bind the public localization store to the current multi-file adapter and
+  // load its glossary + translation memory. Single-file workspaces (and any
+  // load failure/absence) leave the resources null → built-in defaults.
+  useEffect(() => {
+    const adapter = workspaceAdapter
+    localizationStoreRef.current = null
+    setLocalizationResources(null)
+    if (
+      !adapter ||
+      !adapter.storage.capabilities.multipleFiles ||
+      !adapter.storage.capabilities.directories
+    ) {
+      return
+    }
+    let store: WorkspaceLocalizationStore
+    try {
+      store = createWorkspaceLocalizationStore(adapter)
+    } catch {
+      return
+    }
+    localizationStoreRef.current = store
+    let cancelled = false
+    void (async () => {
+      try {
+        const state = await store.load()
+        if (!cancelled && localizationStoreRef.current === store) {
+          setLocalizationResources(state.resources)
+        }
+      } catch {
+        if (!cancelled && localizationStoreRef.current === store) setLocalizationResources(null)
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [workspaceAdapter])
+
   if (phase !== 'ready') {
     return (
       <>
@@ -1146,6 +1227,9 @@ export default function ArisApp(): JSX.Element {
                           active={isActive}
                           chatHostKey={tab.key}
                           onChatHostChange={registerChatHost}
+                          sourceKind={tab.sourceKind}
+                          localizationResources={localizationResources}
+                          onAcceptedTranslationPair={handleAcceptedTranslationPair}
                           lang={lang}
                           sourceFacts={sourceFactsFor(tab)}
                           sourceText={tab.content}
