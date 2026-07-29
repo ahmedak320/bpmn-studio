@@ -221,9 +221,7 @@ export function ArisAccountingRail({
               const sample = firstFindingByKind.get(kind)
               return (
                 <div key={kind} style={{ display: 'contents' }}>
-                  <dt>
-                    {sample ? t(sample.messageKey as Key, sample.params) : kind}
-                  </dt>
+                  <dt>{sample ? t(sample.messageKey as Key, sample.params) : kind}</dt>
                   <dd>{count}</dd>
                 </div>
               )

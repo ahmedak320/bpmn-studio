@@ -35,14 +35,18 @@ import {
   ArisImportReviewDialog,
   ArisModelExplorer,
   ArisStudioTab,
+  AssistantIndexCache,
+  buildArisAssistantDigests,
   buildArisStudioDocument,
   commitArisWorkspaceImport,
   prepareArisWorkspaceImport,
   tk,
   type ArisPreparedImport,
+  type ArisSelectionRequest,
   type ArisSourceFact,
   type ArisStudioDocument
 } from './aris/shell'
+import type { ArisAnswerChip } from './aris/assistant/answer'
 
 type Phase = 'loading' | 'need-open' | 'need-reconnect' | 'ready'
 
@@ -113,7 +117,11 @@ function rootLabel(mode: WorkspaceMode, adapter: WorkspaceAdapter | null): strin
   return t('workspace.storage.mode.singleFile')
 }
 
-export function downloadBytes(fileName: string, bytes: Uint8Array, mimeType = 'application/xml'): void {
+export function downloadBytes(
+  fileName: string,
+  bytes: Uint8Array,
+  mimeType = 'application/xml'
+): void {
   // `bytes` is typed `Uint8Array` without a pinned buffer type parameter, so
   // TS 5.7's stricter `BlobPart` (which requires an `ArrayBuffer`-backed
   // view, not the wider `ArrayBufferLike` that also covers
@@ -182,30 +190,6 @@ function upsertTab(current: readonly ArisTab[], next: ArisTab): ArisTab[] {
   return copy
 }
 
-function escapeXmlText(value: string): string {
-  return value
-    .replaceAll('&', '&amp;')
-    .replaceAll('<', '&lt;')
-    .replaceAll('>', '&gt;')
-    .replaceAll('"', '&quot;')
-    .replaceAll("'", '&apos;')
-}
-
-function buildGeneratedArisPlaceholderXml(name: string, description: string, lang: 'en' | 'ar'): string {
-  const safeName = escapeXmlText(name.trim() || t('aris.generated.fallbackName'))
-  const safeDescription = escapeXmlText(description.trim())
-  return [
-    '<?xml version="1.0" encoding="UTF-8"?>',
-    '<AML>',
-    '  <Header-Info DatabaseName="OrbitPM" UserName="local-user" ArisExeVersion="100" />',
-    `  <OrbitPM-Placeholder Type="GeneratedDraft" Lang="${lang}">`,
-    `    <ModelName>${safeName}</ModelName>`,
-    `    <Description>${safeDescription}</Description>`,
-    '  </OrbitPM-Placeholder>',
-    '</AML>'
-  ].join('\n')
-}
-
 function pickerErrorMessage(code: ReturnType<typeof classifyPickerError>): string {
   switch (code) {
     case 'security':
@@ -233,8 +217,14 @@ function sourceFactsFor(tab: ArisTab): readonly ArisSourceFact[] {
     { labelKey: 'aris.placeholder.sourceNodes', value: tab.xmlNodeCount ?? unknown },
     { labelKey: 'aris.placeholder.sourceDoctype', value: tab.doctypeExternalId ?? unknown },
     { labelKey: 'aris.placeholder.modelCount', value: tab.modelCount ?? unknown },
-    { labelKey: 'aris.placeholder.objectDefinitionCount', value: tab.objectDefinitionCount ?? unknown },
-    { labelKey: 'aris.placeholder.objectOccurrenceCount', value: tab.objectOccurrenceCount ?? unknown },
+    {
+      labelKey: 'aris.placeholder.objectDefinitionCount',
+      value: tab.objectDefinitionCount ?? unknown
+    },
+    {
+      labelKey: 'aris.placeholder.objectOccurrenceCount',
+      value: tab.objectOccurrenceCount ?? unknown
+    },
     {
       labelKey: 'aris.placeholder.connectionDefinitionCount',
       value: tab.connectionDefinitionCount ?? unknown
@@ -282,6 +272,11 @@ export default function ArisApp(): JSX.Element {
   /** Which model each open source is showing. Keyed by tab key. */
   const [activeModelByTab, setActiveModelByTab] = useState<Record<string, string>>({})
   const [preparedImport, setPreparedImport] = useState<ArisPreparedImport | null>(null)
+  /** The §17.6 chip request the active tab must honour, if any. */
+  const [selectionRequest, setSelectionRequest] = useState<ArisSelectionRequest | null>(null)
+  const selectionTokenRef = useRef(0)
+  // §17.2: one cache for the session, so an unchanged model keeps its digest.
+  const assistantIndexRef = useRef(new AssistantIndexCache())
   const [importBusy, setImportBusy] = useState(false)
   const openFileInputRef = useRef<HTMLInputElement | null>(null)
   const importInputRef = useRef<HTMLInputElement | null>(null)
@@ -433,7 +428,12 @@ export default function ArisApp(): JSX.Element {
       if (!adapter) return
       try {
         const snapshot = await adapter.read(path)
-        await openImportedBytes(path.split('/').pop() ?? path, path, snapshot.bytes, snapshot.mimeType)
+        await openImportedBytes(
+          path.split('/').pop() ?? path,
+          path,
+          snapshot.bytes,
+          snapshot.mimeType
+        )
       } catch (openError) {
         pushToast(String(openError), 'error')
       }
@@ -493,12 +493,15 @@ export default function ArisApp(): JSX.Element {
     }
   }, [activateAdapter])
 
-  const handleOpenPickedFile = useCallback(async (file: File) => {
-    const adapter = await SingleFileWorkspaceAdapter.fromFile(file)
-    await activateAdapter(adapter)
-    const bytes = new Uint8Array(await file.arrayBuffer())
-    await openImportedBytes(file.name, file.name, bytes, file.type || undefined)
-  }, [activateAdapter, openImportedBytes])
+  const handleOpenPickedFile = useCallback(
+    async (file: File) => {
+      const adapter = await SingleFileWorkspaceAdapter.fromFile(file)
+      await activateAdapter(adapter)
+      const bytes = new Uint8Array(await file.arrayBuffer())
+      await openImportedBytes(file.name, file.name, bytes, file.type || undefined)
+    },
+    [activateAdapter, openImportedBytes]
+  )
 
   const handleOpenFileInput = useCallback(
     async (event: React.ChangeEvent<HTMLInputElement>) => {
@@ -541,15 +544,20 @@ export default function ArisApp(): JSX.Element {
     [openImportedBytes]
   )
 
-  const handleCreateGeneratedPlaceholder = useCallback(
-    async ({ name, description }: { name: string; description: string }) => {
-      const xml = buildGeneratedArisPlaceholderXml(name, description, lang)
+  /**
+   * Open a generated AML document (AI draft or workbook) as a real source tab.
+   *
+   * The bytes go through the SAME lossless pipeline an imported file does, so a
+   * created model gets the same canvas, the same details rail and the same
+   * complete source accounting — there is no second, weaker path for generated
+   * content.
+   */
+  const handleCreateModel = useCallback(
+    async ({ name, xml }: { name: string; xml: string }) => {
       const bytes = new TextEncoder().encode(xml)
       const hash = await sha256Hex(bytes)
-      // A generated draft goes through the same lossless pipeline as an
-      // imported file, so its tab gets the same rails and the same accounting.
       const sourcePackage = await createArisXmlSourcePackage({
-        name: `${name || 'draft'}.xml`,
+        name: `${name || 'draft'}.aml`,
         relPath: null,
         bytes
       })
@@ -558,9 +566,8 @@ export default function ArisApp(): JSX.Element {
         pkg: sourcePackage,
         studio: buildArisStudioDocument(sourcePackage)
       })
-      setAssistantOpen(true)
     },
-    [lang, openTab]
+    [openTab]
   )
 
   const handleSelectModel = useCallback((tabKey: string, modelId: string) => {
@@ -568,6 +575,56 @@ export default function ArisApp(): JSX.Element {
       current[tabKey] === modelId ? current : { ...current, [tabKey]: modelId }
     )
   }, [])
+
+  /**
+   * The §17.2 assistant index over every open source.
+   *
+   * Only opened sources are indexed: a workspace listing gives a path, not the
+   * parsed models a digest needs, and re-reading every file on every render is
+   * not something a folder assistant may do silently. Opening a source adds it.
+   */
+  const assistantDigests = useMemo(
+    () =>
+      buildArisAssistantDigests(
+        tabs
+          .filter(
+            (tab): tab is ArisTab & { studio: ArisStudioDocument } => tab.studio !== undefined
+          )
+          .map((tab) => ({
+            // A source with no workspace path still needs an indexable name:
+            // directory mode filters on the AML/XML extension.
+            relPath: tab.relPath ?? `${tab.title}.aml`,
+            document: tab.studio.source,
+            sourceDigest: tab.sha256
+          })),
+        assistantIndexRef.current,
+        mode === 'directory' ? 'directory' : mode === 'opfs' ? 'portable' : 'single-file'
+      ),
+    [mode, tabs]
+  )
+
+  /** §17.6: a chip selects the exact ARIS element it names. */
+  const handleOpenChip = useCallback(
+    (chip: ArisAnswerChip): boolean => {
+      const owner = tabs.find(
+        (tab) => (tab.relPath ?? `${tab.title}.aml`) === chip.relPath && tab.studio?.models.length
+      )
+      if (!owner) return false
+      setActiveKey(owner.key)
+      if (chip.modelId) handleSelectModel(owner.key, chip.modelId)
+      const elementId = chip.occurrenceId ?? chip.modelId
+      if (!elementId) return false
+      selectionTokenRef.current += 1
+      setSelectionRequest({
+        token: selectionTokenRef.current,
+        modelId: chip.modelId,
+        elementId
+      })
+      setAssistantOpen(false)
+      return true
+    },
+    [handleSelectModel, tabs]
+  )
 
   /** §7.3 phase one: stage every write in memory and open the review gate. */
   const handlePrepareImport = useCallback(
@@ -723,6 +780,8 @@ export default function ArisApp(): JSX.Element {
           openTabCount={tabs.length}
           activeTabTitle={activeTab?.title ?? null}
           activeSourceKindLabel={activeTab ? sourceKindLabel(activeTab.sourceKind) : null}
+          digests={assistantDigests}
+          onOpenChip={handleOpenChip}
         />
         <Toaster toasts={toasts} onDismiss={dismissToast} />
       </>
@@ -941,7 +1000,10 @@ export default function ArisApp(): JSX.Element {
               <div style={{ flex: '0 1 auto', maxHeight: '55%', overflowY: 'auto' }}>
                 <ArisGenerationPanel
                   embedded
-                  onCreatePlaceholder={handleCreateGeneratedPlaceholder}
+                  onCreateModel={handleCreateModel}
+                  onDownloadFile={(fileName, bytes, mimeType) =>
+                    downloadBytes(fileName, bytes, mimeType)
+                  }
                   onOpenAssistant={() => setAssistantOpen(true)}
                   onOpenSettings={() => setSettingsOpen(true)}
                 />
@@ -1062,6 +1124,12 @@ export default function ArisApp(): JSX.Element {
                           onOpenAssistant={() => setAssistantOpen(true)}
                           onImportPackage={() => void handlePrepareImport(tab)}
                           onToast={(message, tone) => pushToast(message, tone ?? 'info')}
+                          sourceFileName={tab.relPath?.split('/').pop() ?? `${tab.title}.aml`}
+                          selectionRequest={isActive ? selectionRequest : null}
+                          onSelectionResolved={(_token, revealed) => {
+                            if (!revealed) pushToast(t('aris.assistant.none'))
+                            setSelectionRequest(null)
+                          }}
                         />
                       ) : (
                         <div style={{ padding: '1.5rem', opacity: 0.7, lineHeight: 1.6 }}>
@@ -1114,6 +1182,8 @@ export default function ArisApp(): JSX.Element {
         openTabCount={tabs.length}
         activeTabTitle={activeTab?.title ?? null}
         activeSourceKindLabel={activeTab ? sourceKindLabel(activeTab.sourceKind) : null}
+        digests={assistantDigests}
+        onOpenChip={handleOpenChip}
       />
       <ArisImportReviewDialog
         open={preparedImport !== null}

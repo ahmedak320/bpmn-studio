@@ -206,5 +206,13 @@ export function ArisCanvasView({
     canvas.canvas.resized()
   }, [active, bootGeneration, modelId])
 
-  return <div ref={containerRef} className="orbitpm-aris-canvas" role="application" aria-label={ariaLabel} data-orbitpm-aris-canvas="" />
+  return (
+    <div
+      ref={containerRef}
+      className="orbitpm-aris-canvas"
+      role="application"
+      aria-label={ariaLabel}
+      data-orbitpm-aris-canvas=""
+    />
+  )
 }

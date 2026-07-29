@@ -13,28 +13,36 @@
  * the clean layout exactly.
  */
 
-import { useCallback, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
 import { t } from '../../i18n'
 import type { ArisCanvas } from '../canvas/ArisCanvas'
 import type { ArisBusinessObject } from '../canvas/elements'
 import type { ArisCleanLayoutEngine } from '../canvas/layoutSeam'
 import type { ArisAccountingReportRow } from '../accounting/types'
+import type { ArisChatCommand } from '../chat/patchSchema'
 import { cleanLayout } from '../layout/cleanLayout'
 import { arisLayoutRejectionMessageKey } from '../layout/rejection'
+import type { ArisWorkingDocument } from '../model/types'
+import { ARIS_EXPERIMENTAL_EXPORT_LABEL_KEY } from '../writer'
 import type { Key } from '../../i18n'
 import { ArisAccountingRail } from './ArisAccountingRail'
+import { ArisChatImproveRail } from './ArisChatImproveRail'
+import { ArisEpcRail } from './ArisEpcRail'
+import { toArisEditCommand } from './arisChatHost'
+import { derivedAmlFileName, exportArisDerivedAml } from './arisDerivedExport'
+import {
+  buildArisEpcFindings,
+  arisEpcFindingTargetId,
+  type ArisEpcModelFinding
+} from './arisEpcFindings'
 import {
   ArisCanvasView,
   type ArisCanvasHistoryState,
   type ArisCanvasSelectionState
 } from './ArisCanvasView'
 import { ArisDetailsRail } from './ArisDetailsRail'
-import {
-  arisText,
-  buildArisDetailsDocument,
-  type ArisStudioDocument
-} from './arisStudioDocument'
+import { arisText, buildArisDetailsDocument, type ArisStudioDocument } from './arisStudioDocument'
 import { tk } from './shellI18n'
 
 export type ArisLayoutModeState = 'source' | 'clean'
@@ -42,6 +50,14 @@ export type ArisLayoutModeState = 'source' | 'clean'
 export interface ArisSourceFact {
   readonly labelKey: string
   readonly value: string | number
+}
+
+/** A request from outside the tab to reveal one element (assistant chip, §17.6). */
+export interface ArisSelectionRequest {
+  /** Changes on every request, so the same element can be re-selected. */
+  readonly token: number
+  readonly modelId: string | null
+  readonly elementId: string
 }
 
 export interface ArisStudioTabProps {
@@ -59,6 +75,11 @@ export interface ArisStudioTabProps {
   readonly onOpenAssistant: () => void
   readonly onImportPackage: () => void
   readonly onToast: (message: string, tone?: 'info' | 'error' | 'success') => void
+  /** File name of the imported source, used to name the derived export. */
+  readonly sourceFileName?: string
+  readonly selectionRequest?: ArisSelectionRequest | null
+  /** Report whether a selection request could be honoured. */
+  readonly onSelectionResolved?: (token: number, revealed: boolean) => void
 }
 
 const EMPTY_HISTORY: ArisCanvasHistoryState = Object.freeze({
@@ -102,7 +123,10 @@ export function ArisStudioTab({
   onDownloadAttachment,
   onOpenAssistant,
   onImportPackage,
-  onToast
+  onToast,
+  sourceFileName,
+  selectionRequest,
+  onSelectionResolved
 }: ArisStudioTabProps): JSX.Element {
   const canvasRef = useRef<ArisCanvas | null>(null)
   const [selection, setSelection] = useState<ArisCanvasSelectionState>(EMPTY_SELECTION)
@@ -207,41 +231,139 @@ export function ArisStudioTab({
     )
   }, [renderableModelId, runLayout, studio.source])
 
-  const handleSelectRecord = useCallback(
-    (row: ArisAccountingReportRow): boolean => {
+  /**
+   * Reveal one element on the canvas, switching models when it lives on another.
+   * Shared by every rail: accounting rows, EPC findings and assistant chips all
+   * mean the same gesture.
+   */
+  const revealElement = useCallback(
+    (elementId: string): boolean => {
       const canvas = canvasRef.current
       if (!canvas) return false
-
-      const candidates = [row.sourceId, ...row.targetIds].filter(
-        (value): value is string => typeof value === 'string' && value !== ''
-      )
-
-      for (const candidate of candidates) {
-        if (studio.source.models.has(candidate)) continue
-        const ownerModelId = modelIdByElementId.get(candidate)
-        if (!ownerModelId) continue
-        if (canvas.activeModelId !== ownerModelId) {
-          if (!canvas.document.models.has(ownerModelId)) continue
-          canvas.setActiveModel(ownerModelId)
-          onModelChange(ownerModelId)
-        }
-        if (!canvas.elementRegistry.get(candidate)) continue
-        canvas.select(candidate)
+      if (studio.source.models.has(elementId)) {
+        const summary = studio.models.find((model) => model.id === elementId)
+        if (!summary?.renderable) return false
+        onModelChange(elementId)
         return true
       }
-
-      // A model row has no shape; revealing it means switching to that model.
-      for (const candidate of candidates) {
-        if (!studio.source.models.has(candidate)) continue
-        const summary = studio.models.find((model) => model.id === candidate)
-        if (!summary?.renderable) continue
-        onModelChange(candidate)
-        return true
+      const ownerModelId = modelIdByElementId.get(elementId)
+      if (!ownerModelId) return false
+      if (canvas.activeModelId !== ownerModelId) {
+        if (!canvas.document.models.has(ownerModelId)) return false
+        canvas.setActiveModel(ownerModelId)
+        onModelChange(ownerModelId)
       }
-      return false
+      if (!canvas.elementRegistry.get(elementId)) return false
+      canvas.select(elementId)
+      return true
     },
     [modelIdByElementId, onModelChange, studio.models, studio.source]
   )
+
+  const handleSelectRecord = useCallback(
+    (row: ArisAccountingReportRow): boolean => {
+      const candidates = [row.sourceId, ...row.targetIds].filter(
+        (value): value is string => typeof value === 'string' && value !== ''
+      )
+      // Shapes first, then the model rows, so a row that names both reveals the
+      // element rather than merely switching models.
+      const shapes = candidates.filter((candidate) => !studio.source.models.has(candidate))
+      const models = candidates.filter((candidate) => studio.source.models.has(candidate))
+      return [...shapes, ...models].some((candidate) => revealElement(candidate))
+    },
+    [revealElement, studio.source]
+  )
+
+  // --- plan §14.1: EPC findings for the live document ---------------------------
+  const epcFindings = useMemo(() => buildArisEpcFindings(liveDocument), [liveDocument])
+
+  const handleSelectFinding = useCallback(
+    (finding: ArisEpcModelFinding): boolean => {
+      const targetId = arisEpcFindingTargetId(finding)
+      if (targetId === null) return revealElement(finding.modelId)
+      return revealElement(targetId) || revealElement(finding.modelId)
+    },
+    [revealElement]
+  )
+
+  // --- plan §9: derived AML export ---------------------------------------------
+  const handleExportDerivedAml = useCallback(() => {
+    try {
+      const exported = exportArisDerivedAml({
+        originalText: sourceText,
+        original: studio.source,
+        live: liveDocument
+      })
+      onDownloadAttachment(
+        derivedAmlFileName(sourceFileName ?? `${title}.aml`),
+        exported.result.bytes,
+        'application/xml'
+      )
+      if (exported.unmapped.length > 0) {
+        onToast(
+          tk(
+            'aris.export.unmapped',
+            '{count} edits could not be addressed against the original bytes and were left out.',
+            { count: exported.unmapped.length }
+          )
+        )
+        return
+      }
+      onToast(
+        tk('aris.export.done', 'Derived AML exported: {edits} edits, {bytes} bytes.', {
+          edits: exported.editCount,
+          bytes: exported.result.derivedByteLength
+        }),
+        'success'
+      )
+    } catch (error) {
+      onToast(
+        tk('aris.export.refused', 'The derived export was refused: {error}', {
+          error: error instanceof Error ? error.message : String(error)
+        }),
+        'error'
+      )
+    }
+  }, [
+    liveDocument,
+    onDownloadAttachment,
+    onToast,
+    sourceFileName,
+    sourceText,
+    studio.source,
+    title
+  ])
+
+  // --- plan §18: commit chat-applied commands as ONE undoable gesture -----------
+  const handleApplyChatCommands = useCallback(
+    (commands: readonly ArisChatCommand[], label: string): ArisWorkingDocument | null => {
+      const canvas = canvasRef.current
+      if (!canvas) return null
+      try {
+        canvas.bridge.execute(
+          label,
+          commands.map(
+            (command) => (document: ArisWorkingDocument) =>
+              toArisEditCommand(document, command, 'ai-auto')
+          )
+        )
+        return canvas.document
+      } catch {
+        return null
+      }
+    },
+    []
+  )
+
+  // An assistant chip asks for an element that may live on another model.
+  useEffect(() => {
+    if (!selectionRequest) return
+    const revealed = revealElement(selectionRequest.elementId)
+    onSelectionResolved?.(selectionRequest.token, revealed)
+    // `revealElement` is stable for a given document; re-running on every
+    // identity change would re-select on unrelated renders.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectionRequest?.token])
 
   const selectionLabel =
     businessObjectLabel(selection.businessObject) ?? selection.detailsElement?.id ?? null
@@ -294,7 +416,9 @@ export function ArisStudioTab({
             type="button"
             className="orbitpm-lite-chrome-btn"
             title={t('editor.zoomOut.title')}
-            onClick={() => canvasRef.current?.zoom(Math.max(0.2, (canvasRef.current?.canvas.zoom() ?? 1) - 0.2))}
+            onClick={() =>
+              canvasRef.current?.zoom(Math.max(0.2, (canvasRef.current?.canvas.zoom() ?? 1) - 0.2))
+            }
           >
             −
           </button>
@@ -302,7 +426,9 @@ export function ArisStudioTab({
             type="button"
             className="orbitpm-lite-chrome-btn"
             title={t('editor.zoomIn.title')}
-            onClick={() => canvasRef.current?.zoom(Math.min(4, (canvasRef.current?.canvas.zoom() ?? 1) + 0.2))}
+            onClick={() =>
+              canvasRef.current?.zoom(Math.min(4, (canvasRef.current?.canvas.zoom() ?? 1) + 0.2))
+            }
           >
             +
           </button>
@@ -350,6 +476,17 @@ export function ArisStudioTab({
           <button type="button" className="orbitpm-lite-chrome-btn" onClick={onDownloadSource}>
             {t('aris.placeholder.downloadSource')}
           </button>
+          <button
+            type="button"
+            className="orbitpm-lite-chrome-btn"
+            data-orbitpm-aris-export-derived=""
+            // §9.5 fixes this wording; it stays until a live ARIS import/re-export
+            // test passes, which only the operator can run.
+            title={t(ARIS_EXPERIMENTAL_EXPORT_LABEL_KEY as Key)}
+            onClick={handleExportDerivedAml}
+          >
+            {t(ARIS_EXPERIMENTAL_EXPORT_LABEL_KEY as Key)}
+          </button>
           {canImport && (
             <button
               type="button"
@@ -386,7 +523,10 @@ export function ArisStudioTab({
             }
           />
         ) : (
-          <div className="orbitpm-aris-canvas orbitpm-aris-canvas-empty" data-orbitpm-aris-canvas-empty="">
+          <div
+            className="orbitpm-aris-canvas orbitpm-aris-canvas-empty"
+            data-orbitpm-aris-canvas-empty=""
+          >
             <p style={{ margin: 0, maxWidth: 620 }}>
               {tk(
                 'aris.canvas.noModels',
@@ -397,7 +537,10 @@ export function ArisStudioTab({
         )}
       </div>
 
-      <aside className="orbitpm-aris-rail" aria-label={tk('aris.rail.aria', 'ARIS details and accounting rails')}>
+      <aside
+        className="orbitpm-aris-rail"
+        aria-label={tk('aris.rail.aria', 'ARIS details and accounting rails')}
+      >
         <ArisDetailsRail
           details={detailsDocument}
           element={selection.detailsElement}
@@ -411,6 +554,15 @@ export function ArisStudioTab({
           fidelity={studio.fidelity}
           fidelityByKind={studio.fidelityByKind}
           onSelectRecord={handleSelectRecord}
+        />
+
+        <ArisEpcRail findings={epcFindings} onSelectFinding={handleSelectFinding} />
+
+        <ArisChatImproveRail
+          document={liveDocument}
+          onApplyCommands={handleApplyChatCommands}
+          onUndo={() => canvasRef.current?.undo()}
+          canUndo={history.canUndo}
         />
 
         <section className="orbitpm-aris-rail__section">

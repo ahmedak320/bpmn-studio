@@ -170,10 +170,7 @@ export function ArisDetailsRail({
   onDownloadAttachment
 }: ArisDetailsRailProps): JSX.Element {
   const [activeTab, setActiveTab] = useState<ArisDetailsTabId>('general')
-  const tabs = useMemo(
-    () => (element ? buildAllTabs(element, details) : null),
-    [details, element]
-  )
+  const tabs = useMemo(() => (element ? buildAllTabs(element, details) : null), [details, element])
 
   if (!tabs || !element) {
     return (
@@ -226,11 +223,7 @@ export function ArisDetailsRail({
       </div>
       <DetailRows rows={tabs[activeTab]} />
       {activeTab === 'attachments' && (
-        <AttachmentActions
-          details={details}
-          element={element}
-          onDownload={onDownloadAttachment}
-        />
+        <AttachmentActions details={details} element={element} onDownload={onDownloadAttachment} />
       )}
       <MetadataLayers details={details} modelId={modelId} />
     </section>

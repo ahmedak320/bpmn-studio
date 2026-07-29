@@ -131,6 +131,10 @@ export async function prepareArisWorkspaceImport(
       kind: entry.kind,
       disposition: entry.disposition,
       targetIds: entry.targetIds,
+      // `derived` is what tells the accounting document which rows the lexical
+      // census deliberately does not count. Dropping it here would make the
+      // census bound reject the very rows it was designed to exclude.
+      ...(entry.derived === undefined ? {} : { derived: entry.derived }),
       ...(entry.reason ? { reason: entry.reason } : {})
     }))
   })

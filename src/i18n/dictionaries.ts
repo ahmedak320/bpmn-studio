@@ -212,14 +212,14 @@ export const en = {
     'The ARIS placeholder shell does not create native ARIS models yet. Open an ARIS AML/XML source or use Create with AI.',
   'aris.footer.summary': '{files} workspace sources · {tabs} open tabs',
   'aris.ai.body':
-    'Create a reviewed ARIS placeholder source from a description while the ARIS-native generation pipeline is being rebuilt.',
+    'Generate a native ARIS model — an EPC or a value-added chain diagram — from a plain-language description. Review the exact outbound request and give consent before anything is sent to the provider.',
   'aris.ai.name': 'Draft name',
   'aris.ai.namePlaceholder': 'Generated draft',
   'aris.ai.description': 'Process description',
   'aris.ai.descriptionPlaceholder':
-    'Describe the process, scope, actors, and key decisions. The ARIS shell will capture it as an exact placeholder source.',
-  'aris.ai.create': 'Create placeholder source',
-  'aris.ai.creating': 'Creating placeholder…',
+    'Describe the process, scope, actors, and key decisions. The selected AI provider drafts a native ARIS model from this description for your review before anything is created.',
+  'aris.ai.create': 'Generate ARIS model',
+  'aris.ai.creating': 'Generating…',
   'aris.assistant.body':
     'The ARIS assistant surface stays available in Phase 2 while BPMN-specific retrieval and interview flows are removed from the shipped artifact.',
   'aris.assistant.workspace': 'Current workspace context',
@@ -229,9 +229,6 @@ export const en = {
   'aris.assistant.activeTab': 'Active tab',
   'aris.assistant.activeKind': 'Active source kind',
   'aris.assistant.none': 'None',
-  'aris.assistant.nextHeading': 'Next ARIS-native assistant work',
-  'aris.assistant.nextBody':
-    'Later phases will replace the retained BPMN-centric assistant logic with ARIS-native retrieval, missing-information completion, and safe reviewed edits.',
 
   // --- FolderTreeLite context menu ---
   'contextMenu.newProcess': 'New process',
@@ -2329,8 +2326,7 @@ export const en = {
     'A connection between two related nodes is missing from the produced layout.',
   'aris.layout.rejection.duplicate-edge':
     'The produced layout has more than one identical connection between the same two nodes.',
-  'aris.layout.rejection.zero-length-edge':
-    'A connection in the produced layout has zero length.',
+  'aris.layout.rejection.zero-length-edge': 'A connection in the produced layout has zero length.',
   'aris.layout.rejection.extreme-whitespace':
     'The produced layout has an excessively large empty band, well beyond the canvas balance tolerance.',
 
@@ -2380,7 +2376,8 @@ export const en = {
     'The workbook was rejected because its declared template version is not supported by this build.',
   'aris.excel.issue.legacy-bpmn-workbook':
     'The workbook was rejected because it is a legacy BPMN workbook, which this ARIS-only build does not accept.',
-  'aris.excel.issue.sheet-missing': 'The workbook was rejected because a required sheet is missing.',
+  'aris.excel.issue.sheet-missing':
+    'The workbook was rejected because a required sheet is missing.',
   'aris.excel.issue.sheet-unknown':
     'The workbook contains a sheet that is not part of the official ARIS workbook template.',
   'aris.excel.issue.column-missing':
@@ -2401,7 +2398,8 @@ export const en = {
     'The workbook was rejected because a formula cell has no cached value to read.',
   'aris.excel.issue.cached-formula-value':
     'A formula cell was read using its cached value instead of evaluating the formula.',
-  'aris.excel.issue.value-required': 'The workbook was rejected because a required cell value is empty.',
+  'aris.excel.issue.value-required':
+    'The workbook was rejected because a required cell value is empty.',
   'aris.excel.issue.value-not-a-number':
     'The workbook was rejected because a cell that must contain a number does not.',
   'aris.excel.issue.value-not-an-integer':
@@ -2454,7 +2452,8 @@ export const en = {
     'Verify the cached formula values are correct before relying on the imported data.',
   'aris.excel.guidance.missing-reference':
     'Add the missing referenced row to the workbook, or remove the reference, then import it again.',
-  'aris.excel.guidance.duplicate-id': 'Make every identifier in the workbook unique, then import it again.',
+  'aris.excel.guidance.duplicate-id':
+    'Make every identifier in the workbook unique, then import it again.',
   'aris.excel.guidance.unknown-object-type':
     'Correct the object type to a value from the official ARIS workbook template, then import it again.',
   'aris.excel.guidance.invalid-route-points':
@@ -2503,7 +2502,8 @@ export const en = {
     'This connection references a definition or endpoint that does not exist.',
   'aris.chat.gap.missingLinkedModel': 'This process interface has no linked model assigned.',
   'aris.chat.gap.missingAttachment': 'No attachment is recorded for this object.',
-  'aris.chat.gap.unusedDefinition': 'This definition is not used by any occurrence in the document.',
+  'aris.chat.gap.unusedDefinition':
+    'This definition is not used by any occurrence in the document.',
   'aris.chat.gap.unaccountedSourceContent':
     'Some content from the original source could not be accounted for in this document.',
 
@@ -2806,14 +2806,14 @@ export const ar: Record<keyof typeof en, string> = {
     'غلاف العنصر النائب لـ ARIS لا ينشئ بعد نماذج ARIS أصلية. افتح مصدر ARIS AML/XML أو استخدم الإنشاء بالذكاء الاصطناعي.',
   'aris.footer.summary': '{files} من مصادر مساحة العمل · {tabs} من الألسنة المفتوحة',
   'aris.ai.body':
-    'أنشئ مصدر عنصر نائب مُراجَع لـ ARIS من وصف نصي بينما يُعاد بناء مسار الإنشاء الأصلي لـ ARIS.',
+    'وَلِّد نموذج ARIS أصليًا — مخطط EPC أو مخطط سلسلة القيمة المضافة — من وصف نصي بلغة طبيعية. راجع الطلب الصادر الدقيق وامنح الموافقة قبل إرسال أي شيء إلى المزوّد.',
   'aris.ai.name': 'اسم المسودة',
   'aris.ai.namePlaceholder': 'مسودة مولدة',
   'aris.ai.description': 'وصف العملية',
   'aris.ai.descriptionPlaceholder':
-    'صِف العملية والنطاق والأطراف الفاعلة والقرارات الرئيسية. سيسجل غلاف ARIS ذلك كمصدر عنصر نائب مطابق.',
-  'aris.ai.create': 'إنشاء مصدر عنصر نائب',
-  'aris.ai.creating': 'جارٍ إنشاء عنصر نائب…',
+    'صِف العملية والنطاق والأطراف الفاعلة والقرارات الرئيسية. يصوغ مزوّد الذكاء الاصطناعي المحدد نموذج ARIS أصليًا من هذا الوصف لمراجعتك قبل إنشاء أي شيء.',
+  'aris.ai.create': 'توليد نموذج ARIS',
+  'aris.ai.creating': 'جارٍ التوليد…',
   'aris.assistant.body':
     'يبقى سطح مساعد ARIS متاحًا في المرحلة الثانية بينما تُزال من الملف المشحون مسارات الاسترجاع والمقابلة الخاصة بـ BPMN.',
   'aris.assistant.workspace': 'سياق مساحة العمل الحالية',
@@ -2823,9 +2823,6 @@ export const ar: Record<keyof typeof en, string> = {
   'aris.assistant.activeTab': 'اللسان النشط',
   'aris.assistant.activeKind': 'نوع المصدر النشط',
   'aris.assistant.none': 'لا يوجد',
-  'aris.assistant.nextHeading': 'العمل التالي للمساعد الأصلي لـ ARIS',
-  'aris.assistant.nextBody':
-    'ستستبدل المراحل اللاحقة منطق المساعد المحتفظ به والمتمحور حول BPMN باسترجاع أصلي لـ ARIS، واستكمال المعلومات الناقصة، وتعديلات مراجعة آمنة.',
 
   // --- FolderTreeLite context menu ---
   'contextMenu.newProcess': 'عملية جديدة',
@@ -4802,16 +4799,12 @@ export const ar: Record<keyof typeof en, string> = {
   'aris.layout.rejection.shape-overlap': 'يتداخل شكلان في المخطط.',
   'aris.layout.rejection.label-satellite-overlap':
     'يتداخل مربع تسمية محجوز أو عنصر تابع مع عنصر آخر في المخطط.',
-  'aris.layout.rejection.edge-through-unrelated-shape':
-    'يمر مسار أحد الروابط عبر شكل غير متصل به.',
-  'aris.layout.rejection.detached-endpoint':
-    'لا تلتصق نهاية أحد الروابط بحدود الشكل الذي تتصل به.',
-  'aris.layout.rejection.missing-edge':
-    'يفتقد المخطط الناتج رابطًا بين عقدتين مرتبطتين.',
+  'aris.layout.rejection.edge-through-unrelated-shape': 'يمر مسار أحد الروابط عبر شكل غير متصل به.',
+  'aris.layout.rejection.detached-endpoint': 'لا تلتصق نهاية أحد الروابط بحدود الشكل الذي تتصل به.',
+  'aris.layout.rejection.missing-edge': 'يفتقد المخطط الناتج رابطًا بين عقدتين مرتبطتين.',
   'aris.layout.rejection.duplicate-edge':
     'يحتوي المخطط الناتج على أكثر من رابط متطابق بين العقدتين نفسيهما.',
-  'aris.layout.rejection.zero-length-edge':
-    'طول أحد الروابط في المخطط الناتج يساوي صفرًا.',
+  'aris.layout.rejection.zero-length-edge': 'طول أحد الروابط في المخطط الناتج يساوي صفرًا.',
   'aris.layout.rejection.extreme-whitespace':
     'يحتوي المخطط الناتج على نطاق فارغ كبير جدًا يتجاوز حد توازن اللوحة.',
 
@@ -4820,16 +4813,13 @@ export const ar: Record<keyof typeof en, string> = {
     'رُفض الملف لأن امتداده ليس من صيغ مصنفات ARIS المدعومة.',
   'aris.excel.issue.unsupported-mime-type':
     'رُفض الملف لأن نوع MIME الخاص به لا يطابق صيغة مصنف ARIS مدعومة.',
-  'aris.excel.issue.compressed-size-limit':
-    'رُفض المصنف لأن حجمه المضغوط يتجاوز الحد الآمن للرفع.',
+  'aris.excel.issue.compressed-size-limit': 'رُفض المصنف لأن حجمه المضغوط يتجاوز الحد الآمن للرفع.',
   'aris.excel.issue.uncompressed-size-limit':
     'رُفض المصنف لأن حجمه غير المضغوط يتجاوز الحد الآمن للمعالجة.',
   'aris.excel.issue.zip-entry-limit':
     'رُفض المصنف لأنه يحتوي على عناصر ZIP أكثر من الحد الآمن للمعالجة.',
-  'aris.excel.issue.sheet-limit':
-    'رُفض المصنف لأنه يحتوي على أوراق أكثر من الحد الآمن للمعالجة.',
-  'aris.excel.issue.malformed-zip':
-    'رُفض المصنف لأن حاوية ZIP الخاصة به تالفة ولا يمكن تحليلها.',
+  'aris.excel.issue.sheet-limit': 'رُفض المصنف لأنه يحتوي على أوراق أكثر من الحد الآمن للمعالجة.',
+  'aris.excel.issue.malformed-zip': 'رُفض المصنف لأن حاوية ZIP الخاصة به تالفة ولا يمكن تحليلها.',
   'aris.excel.issue.zip64-unsupported':
     'رُفض المصنف لأنه يستخدم صيغة ZIP64 التي لا يدعمها هذا الإصدار.',
   'aris.excel.issue.multi-disk-zip':
@@ -4850,18 +4840,15 @@ export const ar: Record<keyof typeof en, string> = {
     'يحتوي المصنف على روابط لمصنفات خارجية؛ تم تجاهلها أثناء الاستيراد.',
   'aris.excel.issue.data-connections-ignored':
     'يحتوي المصنف على اتصالات بيانات خارجية؛ تم تجاهلها أثناء الاستيراد.',
-  'aris.excel.issue.template-version-missing':
-    'رُفض المصنف لأنه لا يعلن إصدار قالب مصنف ARIS.',
+  'aris.excel.issue.template-version-missing': 'رُفض المصنف لأنه لا يعلن إصدار قالب مصنف ARIS.',
   'aris.excel.issue.template-version-unsupported':
     'رُفض المصنف لأن إصدار القالب المعلن غير مدعوم في هذا الإصدار.',
   'aris.excel.issue.legacy-bpmn-workbook':
     'رُفض المصنف لأنه مصنف BPMN قديم، وهذا الإصدار المقتصر على ARIS لا يقبله.',
   'aris.excel.issue.sheet-missing': 'رُفض المصنف لأن ورقة مطلوبة مفقودة.',
-  'aris.excel.issue.sheet-unknown':
-    'يحتوي المصنف على ورقة ليست جزءًا من قالب مصنف ARIS الرسمي.',
+  'aris.excel.issue.sheet-unknown': 'يحتوي المصنف على ورقة ليست جزءًا من قالب مصنف ARIS الرسمي.',
   'aris.excel.issue.column-missing': 'رُفض المصنف لأن عمودًا مطلوبًا مفقود من إحدى الأوراق.',
-  'aris.excel.issue.column-unknown':
-    'يحتوي المصنف على عمود ليس جزءًا من قالب مصنف ARIS الرسمي.',
+  'aris.excel.issue.column-unknown': 'يحتوي المصنف على عمود ليس جزءًا من قالب مصنف ARIS الرسمي.',
   'aris.excel.issue.header-row-missing': 'رُفض المصنف لأن إحدى الأوراق تفتقد صف العناوين.',
   'aris.excel.issue.row-limit':
     'رُفض المصنف لأن إحدى الأوراق تحتوي على صفوف أكثر من الحد الآمن للمعالجة.',
@@ -4869,15 +4856,13 @@ export const ar: Record<keyof typeof en, string> = {
     'رُفض المصنف لأن إحدى الأوراق تحتوي على أعمدة أكثر من الحد الآمن للمعالجة.',
   'aris.excel.issue.cell-count-limit':
     'رُفض المصنف لأن إحدى الأوراق تحتوي على خلايا أكثر من الحد الآمن للمعالجة.',
-  'aris.excel.issue.cell-length-limit':
-    'رُفض المصنف لأن نص إحدى الخلايا يتجاوز الحد الآمن للطول.',
+  'aris.excel.issue.cell-length-limit': 'رُفض المصنف لأن نص إحدى الخلايا يتجاوز الحد الآمن للطول.',
   'aris.excel.issue.formula-without-cached-value':
     'رُفض المصنف لأن خلية معادلة لا تحتوي على قيمة مخزنة مؤقتًا يمكن قراءتها.',
   'aris.excel.issue.cached-formula-value':
     'تمت قراءة خلية معادلة باستخدام قيمتها المخزنة مؤقتًا بدلًا من حساب المعادلة.',
   'aris.excel.issue.value-required': 'رُفض المصنف لأن قيمة خلية مطلوبة فارغة.',
-  'aris.excel.issue.value-not-a-number':
-    'رُفض المصنف لأن خلية يجب أن تحتوي على رقم لا تحتوي عليه.',
+  'aris.excel.issue.value-not-a-number': 'رُفض المصنف لأن خلية يجب أن تحتوي على رقم لا تحتوي عليه.',
   'aris.excel.issue.value-not-an-integer':
     'رُفض المصنف لأن خلية يجب أن تحتوي على عدد صحيح لا تحتوي عليه.',
   'aris.excel.issue.value-not-a-boolean':
@@ -4967,15 +4952,12 @@ export const ar: Record<keyof typeof en, string> = {
   'aris.chat.gap.missingReturnTarget': 'لم يُعثر على وجهة عودة لفرع الرجوع هذا.',
   'aris.chat.gap.missingReturnTarget.ambiguous':
     'تم العثور على أكثر من وجهة عودة محتملة لفرع الرجوع هذا؛ يلزم اختيار يدوي.',
-  'aris.chat.gap.dangling.occurrenceDefinition':
-    'يشير هذا الظهور إلى تعريف كائن غير موجود.',
-  'aris.chat.gap.dangling.connectionEndpoint':
-    'تشير هذه العلاقة إلى تعريف أو طرف غير موجود.',
+  'aris.chat.gap.dangling.occurrenceDefinition': 'يشير هذا الظهور إلى تعريف كائن غير موجود.',
+  'aris.chat.gap.dangling.connectionEndpoint': 'تشير هذه العلاقة إلى تعريف أو طرف غير موجود.',
   'aris.chat.gap.missingLinkedModel': 'لا يوجد نموذج مرتبط مُسنَد لواجهة العملية هذه.',
   'aris.chat.gap.missingAttachment': 'لا يوجد مرفق مسجَّل لهذا الكائن.',
   'aris.chat.gap.unusedDefinition': 'لا يستخدم أي ظهور في المستند هذا التعريف.',
-  'aris.chat.gap.unaccountedSourceContent':
-    'تعذّر حصر بعض محتوى المصدر الأصلي في هذا المستند.',
+  'aris.chat.gap.unaccountedSourceContent': 'تعذّر حصر بعض محتوى المصدر الأصلي في هذا المستند.',
 
   // --- نتائج دقة محرك رسم ARIS المطابق للمصدر (src/aris/renderer/fidelity.ts, font.ts,
   // color.ts, textWrap.ts — راجع ARIS_RENDER_FIDELITY_KINDS في types.ts؛ أنواع القالب
@@ -4986,8 +4968,7 @@ export const ar: Record<keyof typeof en, string> = {
     'يُعرض كائن OLE المضمّن «{attachmentId}» كأيقونة نائبة فقط؛ لا يُفكّ محتواه ولا تتم معاينته.',
   'aris.fidelity.missingReferenceExport':
     'لا يحتوي المرفق «{attachmentId}» على محتوى مُصدَّر؛ لذا يتعذّر عرض أي شيء له.',
-  'aris.fidelity.unsupportedPenEffect':
-    'نمط الخط «{style}» غير مدعوم؛ تم استبداله بخط متصل.',
+  'aris.fidelity.unsupportedPenEffect': 'نمط الخط «{style}» غير مدعوم؛ تم استبداله بخط متصل.',
   'aris.fidelity.unsupportedBrushEffect':
     'نمط التعبئة «{brushType}» غير مدعوم؛ تم استبداله بتعبئة صلبة.',
   'aris.fidelity.textWrapDifference':

@@ -50,26 +50,47 @@
 
 /* --- Section 11.5 selection highlighting ------------------------------- */
 
-.orbitpm-aris-canvas .djs-element.aris-highlight-owner .djs-visual > :is(rect, circle, ellipse, polygon, polyline, path) {
+.orbitpm-aris-canvas
+  .djs-element.aris-highlight-owner
+  .djs-visual
+  > :is(rect, circle, ellipse, polygon, polyline, path) {
   stroke: var(--orbitpm-aris-highlight-owner, #b45309);
   stroke-width: 3px;
 }
 
-.orbitpm-aris-canvas .djs-element.aris-highlight .djs-visual > :is(rect, circle, ellipse, polygon, polyline, path, line) {
+.orbitpm-aris-canvas
+  .djs-element.aris-highlight
+  .djs-visual
+  > :is(rect, circle, ellipse, polygon, polyline, path, line) {
   stroke-width: 2.5px;
 }
 
-.orbitpm-aris-canvas .djs-element.aris-highlight .djs-visual > :is(rect, circle, ellipse, polygon, polyline, path, line) {
+.orbitpm-aris-canvas
+  .djs-element.aris-highlight
+  .djs-visual
+  > :is(rect, circle, ellipse, polygon, polyline, path, line) {
   stroke: var(--orbitpm-aris-highlight, #2563eb);
 }
 
 /* Distinct colour slots keep overlapping routes apart (Section 11.5). */
-.orbitpm-aris-canvas .djs-element.aris-highlight-color-0 .djs-visual > * { stroke: #2563eb; }
-.orbitpm-aris-canvas .djs-element.aris-highlight-color-1 .djs-visual > * { stroke: #b91c1c; }
-.orbitpm-aris-canvas .djs-element.aris-highlight-color-2 .djs-visual > * { stroke: #047857; }
-.orbitpm-aris-canvas .djs-element.aris-highlight-color-3 .djs-visual > * { stroke: #7c3aed; }
-.orbitpm-aris-canvas .djs-element.aris-highlight-color-4 .djs-visual > * { stroke: #c2410c; }
-.orbitpm-aris-canvas .djs-element.aris-highlight-color-5 .djs-visual > * { stroke: #0e7490; }
+.orbitpm-aris-canvas .djs-element.aris-highlight-color-0 .djs-visual > * {
+  stroke: #2563eb;
+}
+.orbitpm-aris-canvas .djs-element.aris-highlight-color-1 .djs-visual > * {
+  stroke: #b91c1c;
+}
+.orbitpm-aris-canvas .djs-element.aris-highlight-color-2 .djs-visual > * {
+  stroke: #047857;
+}
+.orbitpm-aris-canvas .djs-element.aris-highlight-color-3 .djs-visual > * {
+  stroke: #7c3aed;
+}
+.orbitpm-aris-canvas .djs-element.aris-highlight-color-4 .djs-visual > * {
+  stroke: #c2410c;
+}
+.orbitpm-aris-canvas .djs-element.aris-highlight-color-5 .djs-visual > * {
+  stroke: #0e7490;
+}
 
 .orbitpm-aris-canvas .djs-element.aris-highlight-dashed .djs-visual > * {
   stroke-dasharray: 6 4;

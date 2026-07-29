@@ -50,6 +50,9 @@ vi.mock('./workspace/adapters/opfs', async () => {
 })
 
 import ArisApp, { downloadBytes } from './ArisApp'
+import { ArisGenerationPanel } from './ArisGenerationPanel'
+import { buildMinimalValidDraft } from './aris/ai/testFixtures'
+import { buildLegacyBpmnWorkbook, buildValidFixtureWorkbook } from './aris/excel/testFixtures'
 import type { FileSnapshot, WorkspaceAdapter, WorkspaceEntry } from './workspace/adapters/types'
 
 /**
@@ -116,6 +119,54 @@ const TWO_MODEL_AML = `<?xml version="1.0" encoding="UTF-8"?>
       <ObjOcc ObjOcc.ID="ObjOcc.Review" ObjDef.IdRef="ObjDef.Review" SymbolNum="ST_FUNC" Zorder="1">
         <Position Pos.X="640" Pos.Y="120"/>
         <Size Size.dX="200" Size.dY="90"/>
+      </ObjOcc>
+    </Model>
+  </Group>
+</AML>
+`
+
+/**
+ * The same shape, with each `CxnDef` nested inside its SOURCE `ObjDef` — which is
+ * how ARIS itself expresses a connection's source endpoint. `TWO_MODEL_AML` keeps
+ * them as group-level siblings on purpose, so both the accepting and the refusing
+ * side of the section 9.3 `connection-endpoints-exist` check are exercised.
+ */
+const NESTED_CXNDEF_AML = `<?xml version="1.0" encoding="UTF-8"?>
+<AML>
+  <Header-Info DatabaseName="AnimalWF" UserName="tester" ArisExeVersion="10"/>
+  <Group Group.ID="Group.Root">
+    <ObjDef ObjDef.ID="ObjDef.Start" TypeNum="OT_EVT" SymbolNum="ST_EV">
+      <AttrDef AttrDef.Type="AT_NAME"><AttrValue LocaleId="1033">Request received</AttrValue></AttrDef>
+      <CxnDef CxnDef.ID="CxnDef.1" CxnDef.Type="CT_ACTIV_1" ToObjDef.IdRef="ObjDef.Check"/>
+    </ObjDef>
+    <ObjDef ObjDef.ID="ObjDef.Check" TypeNum="OT_FUNC" SymbolNum="ST_FUNC">
+      <AttrDef AttrDef.Type="AT_NAME"><AttrValue LocaleId="1033">Check request</AttrValue></AttrDef>
+      <CxnDef CxnDef.ID="CxnDef.2" CxnDef.Type="CT_CRT_1" ToObjDef.IdRef="ObjDef.Done"/>
+    </ObjDef>
+    <ObjDef ObjDef.ID="ObjDef.Done" TypeNum="OT_EVT" SymbolNum="ST_EV">
+      <AttrDef AttrDef.Type="AT_NAME"><AttrValue LocaleId="1033">Request checked</AttrValue></AttrDef>
+    </ObjDef>
+    <Model Model.ID="Model.Nested" Model.Type="MT_EEPC">
+      <AttrDef AttrDef.Type="AT_NAME"><AttrValue LocaleId="1033">Nested process</AttrValue></AttrDef>
+      <ObjOcc ObjOcc.ID="ObjOcc.Start" ObjDef.IdRef="ObjDef.Start" SymbolNum="ST_EV" Zorder="1">
+        <Position Pos.X="200" Pos.Y="100"/>
+        <Size Size.dX="180" Size.dY="60"/>
+        <CxnOcc CxnOcc.ID="CxnOcc.1" CxnDef.IdRef="CxnDef.1" ToObjOcc.IdRef="ObjOcc.Check" Zorder="5">
+          <Position Pos.X="290" Pos.Y="160"/>
+          <Position Pos.X="290" Pos.Y="260"/>
+        </CxnOcc>
+      </ObjOcc>
+      <ObjOcc ObjOcc.ID="ObjOcc.Check" ObjDef.IdRef="ObjDef.Check" SymbolNum="ST_FUNC" Zorder="2">
+        <Position Pos.X="200" Pos.Y="260"/>
+        <Size Size.dX="180" Size.dY="80"/>
+        <CxnOcc CxnOcc.ID="CxnOcc.2" CxnDef.IdRef="CxnDef.2" ToObjOcc.IdRef="ObjOcc.Done" Zorder="6">
+          <Position Pos.X="290" Pos.Y="340"/>
+          <Position Pos.X="290" Pos.Y="440"/>
+        </CxnOcc>
+      </ObjOcc>
+      <ObjOcc ObjOcc.ID="ObjOcc.Done" ObjDef.IdRef="ObjDef.Done" SymbolNum="ST_EV" Zorder="3">
+        <Position Pos.X="200" Pos.Y="440"/>
+        <Size Size.dX="180" Size.dY="60"/>
       </ObjOcc>
     </Model>
   </Group>
@@ -342,7 +393,9 @@ describe('ArisApp production shell', () => {
 
     fireEvent.change(openFileInput(), { target: { files: [xmlFile('legacy.bpmn', BPMN_XML)] } })
 
-    expect(await screen.findByText('This ARIS-only build accepts ARIS AML/XML exports.')).not.toBeNull()
+    expect(
+      await screen.findByText('This ARIS-only build accepts ARIS AML/XML exports.')
+    ).not.toBeNull()
     // Non-destructive: no canvas was mounted, no tab was opened, and the
     // workspace picker is still the surface on screen.
     expect(document.querySelector('[data-orbitpm-aris-canvas]')).toBeNull()
@@ -437,9 +490,7 @@ describe('ArisApp production shell', () => {
     expect(cleanRevision).toBeGreaterThan(sourceRevision)
     const cleanPosition = canvasTranslation('ObjOcc.Check')
     expect(cleanPosition).not.toEqual(sourcePosition)
-    expect(
-      document.querySelector('[data-orbitpm-aris-layout-mode="clean"]')
-    ).not.toBeNull()
+    expect(document.querySelector('[data-orbitpm-aris-layout-mode="clean"]')).not.toBeNull()
 
     fireEvent.click(undoButton)
 
@@ -504,7 +555,7 @@ describe('ArisApp production shell', () => {
 
     expect(
       screen.getByText(
-        'Create a reviewed ARIS placeholder source from a description while the ARIS-native generation pipeline is being rebuilt.'
+        'Generate a native ARIS model — an EPC or a value-added chain diagram — from a plain-language description. Review the exact outbound request and give consent before anything is sent to the provider.'
       )
     ).not.toBeNull()
 
@@ -541,7 +592,9 @@ describe('ArisApp production shell', () => {
     render(<ArisApp />)
 
     fireEvent.click(await screen.findByRole('button', { name: /legacy\/process\.bpmn/i }))
-    expect(await screen.findByText('This ARIS-only build accepts ARIS AML/XML exports.')).not.toBeNull()
+    expect(
+      await screen.findByText('This ARIS-only build accepts ARIS AML/XML exports.')
+    ).not.toBeNull()
     expect(screen.queryByRole('tab', { name: 'process.bpmn' })).toBeNull()
     expect(document.querySelector('[data-orbitpm-aris-canvas]')).toBeNull()
 
@@ -578,7 +631,9 @@ describe('ArisApp production shell', () => {
       }
     })
 
-    expect(await screen.findByText('This ARIS-only build accepts ARIS AML/XML exports.')).not.toBeNull()
+    expect(
+      await screen.findByText('This ARIS-only build accepts ARIS AML/XML exports.')
+    ).not.toBeNull()
     expect(await screen.findByRole('tab', { name: 'accepted.aml' })).not.toBeNull()
     expect(screen.queryByRole('tab', { name: 'legacy.bpmn' })).toBeNull()
     await waitFor(() => expect(canvasElement('ObjOcc.Start')).not.toBeNull())
@@ -602,7 +657,9 @@ describe('ArisApp production shell', () => {
     render(<ArisApp />)
     await openAml()
 
-    fireEvent.click(document.querySelector<HTMLButtonElement>('[data-orbitpm-aris-import-package]')!)
+    fireEvent.click(
+      document.querySelector<HTMLButtonElement>('[data-orbitpm-aris-import-package]')!
+    )
 
     const dialog = await screen.findByRole('dialog', { name: 'Review this import' })
     // The review carries the exact digests, member list and fidelity summary the
@@ -614,7 +671,9 @@ describe('ArisApp production shell', () => {
     expect(within(dialog).getByText(/0 unaccounted/u)).not.toBeNull()
 
     fireEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }))
-    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Review this import' })).toBeNull())
+    await waitFor(() =>
+      expect(screen.queryByRole('dialog', { name: 'Review this import' })).toBeNull()
+    )
     expect(downloads).toHaveLength(0)
   })
 
@@ -622,7 +681,9 @@ describe('ArisApp production shell', () => {
     render(<ArisApp />)
     await openAml()
 
-    fireEvent.click(document.querySelector<HTMLButtonElement>('[data-orbitpm-aris-import-package]')!)
+    fireEvent.click(
+      document.querySelector<HTMLButtonElement>('[data-orbitpm-aris-import-package]')!
+    )
     const dialog = await screen.findByRole('dialog', { name: 'Review this import' })
     fireEvent.click(within(dialog).getByRole('button', { name: 'Commit import' }))
 
@@ -664,10 +725,196 @@ describe('ArisApp production shell', () => {
     fireEvent.click(toast)
 
     await waitFor(() =>
-      expect(
-        screen.queryByText('This ARIS-only build accepts ARIS AML/XML exports.')
-      ).toBeNull()
+      expect(screen.queryByText('This ARIS-only build accepts ARIS AML/XML exports.')).toBeNull()
     )
+  })
+
+  // --- integration wave 2 -------------------------------------------------
+
+  it('exports a derived AML that is byte-identical to the untouched original, then carries the clean layout', async () => {
+    render(<ArisApp />)
+    await openAml('nested.aml', NESTED_CXNDEF_AML)
+
+    const exportButton = document.querySelector<HTMLButtonElement>(
+      '[data-orbitpm-aris-export-derived]'
+    )!
+    // Plan 9.5 fixes this wording until a live ARIS test passes.
+    expect(exportButton.textContent).toBe('Experimental ARIS AML export')
+
+    fireEvent.click(exportButton)
+    await waitFor(() =>
+      expect(downloads.some((file) => file.name.endsWith('.derived.aml'))).toBe(true)
+    )
+
+    const first = downloads.find((file) => file.name.endsWith('.derived.aml'))!
+    expect(first.name).toBe('nested.derived.aml')
+    // An export with an empty edit set copies every byte verbatim: the original
+    // is read, never written (plan 9.6 "original source is unchanged").
+    expect(new TextDecoder().decode(first.bytes)).toBe(NESTED_CXNDEF_AML)
+
+    // Clean Layout moves occurrences, so the derived document must now differ —
+    // and only in geometry, since nothing else was addressed.
+    fireEvent.click(document.querySelector<HTMLButtonElement>('[data-orbitpm-aris-clean-layout]')!)
+    await waitFor(() => expect(canvasTranslation('ObjOcc.Check')).not.toEqual({ x: 200, y: 260 }))
+
+    downloads.length = 0
+    fireEvent.click(exportButton)
+    await waitFor(() =>
+      expect(downloads.some((file) => file.name.endsWith('.derived.aml'))).toBe(true)
+    )
+    const derivedText = new TextDecoder().decode(
+      downloads.find((file) => file.name.endsWith('.derived.aml'))!.bytes
+    )
+    expect(derivedText).not.toBe(NESTED_CXNDEF_AML)
+    // Every byte nobody addressed survived: the header, the ids and the
+    // attribute order are all still exactly as imported.
+    expect(derivedText).toContain(
+      '<Header-Info DatabaseName="AnimalWF" UserName="tester" ArisExeVersion="10"/>'
+    )
+    expect(derivedText).toContain('ObjDef.ID="ObjDef.Start"')
+    expect(derivedText).toContain('CxnDef.ID="CxnDef.1" CxnDef.Type="CT_ACTIV_1"')
+
+    // Downloading the source still yields the original bytes, unchanged.
+    downloads.length = 0
+    fireEvent.click(screen.getByRole('button', { name: 'Download exact source' }))
+    await waitFor(() => expect(downloads.length).toBe(1))
+    expect(new TextDecoder().decode(downloads[0]!.bytes)).toBe(NESTED_CXNDEF_AML)
+  })
+
+  it('refuses the derived export when a section 9.3 check fails, and downloads nothing', async () => {
+    render(<ArisApp />)
+    await openAml()
+
+    // This fixture keeps its connection definitions as group-level siblings, so
+    // none of them has a source endpoint — `connection-endpoints-exist` fails and
+    // `exportDerivedAml` must refuse rather than hand the user unusable bytes.
+    fireEvent.click(
+      document.querySelector<HTMLButtonElement>('[data-orbitpm-aris-export-derived]')!
+    )
+
+    const toast = await screen.findByText(/The derived export was refused/u)
+    expect(toast.textContent).toContain('connection-endpoints-exist')
+    expect(downloads.some((file) => file.name.endsWith('.derived.aml'))).toBe(false)
+  })
+
+  it('lists EPC validation findings and selects the offending model, switching models when needed', async () => {
+    render(<ArisApp />)
+    await openAml()
+
+    const rail = document.querySelector<HTMLElement>('[data-orbitpm-aris-epc]')!
+    // Model.Review holds one unconnected function, so it has neither a start
+    // event nor an end event (plan 14.1, `checkStartEndCompleteness`).
+    await waitFor(() =>
+      expect(rail.querySelectorAll('[data-orbitpm-aris-epc-finding]').length).toBeGreaterThan(0)
+    )
+    const missingStart = rail.querySelector<HTMLButtonElement>(
+      '[data-orbitpm-aris-epc-finding="epc.startEnd.missingStart"]'
+    )
+    expect(missingStart).not.toBeNull()
+    // The finding is rendered from its i18n key, never from prose in the module.
+    expect(missingStart!.textContent).toContain('This model has no start event.')
+    // A model-scoped finding names no shape, so it reveals its model.
+    expect(missingStart!.getAttribute('aria-label')).toBe('Select Model.Review on the canvas')
+
+    // Model.Intake is a valid event/function/event chain, so it contributes none.
+    expect(rail.querySelectorAll('[data-orbitpm-aris-epc-finding="epc.alternation"]').length).toBe(
+      0
+    )
+
+    fireEvent.click(missingStart!)
+
+    // Revealing it switched the canvas to the other model.
+    await waitFor(() => expect(canvasElement('ObjOcc.Review')).not.toBeNull())
+    expect(canvasElement('ObjOcc.Start')).toBeNull()
+  })
+
+  it('answers a folder question with no provider and no key, and its chip selects the model', async () => {
+    render(<ArisApp />)
+    await openAml()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Assistant' }))
+    const panel = await screen.findByRole('button', { name: 'Which processes are available?' })
+    fireEvent.click(panel)
+
+    const answer = await waitFor(() => {
+      const node = document.querySelector<HTMLElement>('[data-orbitpm-aris-assistant-answer]')
+      if (!node) throw new Error('no answer rendered')
+      return node
+    })
+    // Section 17.4 answer data, resolved by the assistant lane's own dictionary.
+    expect(answer.textContent).toContain('Available processes:')
+
+    const chip = answer.querySelector<HTMLButtonElement>('[data-orbitpm-aris-assistant-chip]')
+    expect(chip).not.toBeNull()
+    fireEvent.click(chip!)
+
+    // Section 17.6: the chip selected a real ARIS element on the canvas.
+    await waitFor(() =>
+      expect(document.querySelector('[data-orbitpm-aris-assistant-answer]')).toBeNull()
+    )
+    expect(document.querySelector('[data-orbitpm-aris-canvas]')).not.toBeNull()
+  })
+
+  it('downloads the deterministic ARIS Excel templates from the single HTML', async () => {
+    render(<ArisApp />)
+    await openAml()
+
+    fireEvent.click(
+      document.querySelector<HTMLButtonElement>('[data-orbitpm-aris-create-excel-tab]')!
+    )
+    fireEvent.click(
+      document.querySelector<HTMLButtonElement>('[data-orbitpm-aris-template-blank]')!
+    )
+    await waitFor(() => expect(downloads.some((file) => file.name.endsWith('.xlsx'))).toBe(true))
+
+    const blank = downloads.find((file) => file.name.endsWith('.xlsx'))!
+    // A real ZIP container, not a stub.
+    expect(Array.from(blank.bytes.slice(0, 2))).toEqual([0x50, 0x4b])
+
+    downloads.length = 0
+    fireEvent.click(
+      document.querySelector<HTMLButtonElement>('[data-orbitpm-aris-template-example]')!
+    )
+    await waitFor(() => expect(downloads.length).toBe(1))
+    expect(downloads[0]!.name).not.toBe(blank.name)
+  })
+
+  it('completes a missing field through the chat interview, atomically and undoably', async () => {
+    render(<ArisApp />)
+    await openAml()
+
+    const rail = document.querySelector<HTMLElement>('[data-orbitpm-aris-chat]')!
+    // Plan 18.1: the deterministic gap scanner runs on the live document.
+    await waitFor(() =>
+      expect(rail.querySelectorAll('[data-orbitpm-aris-chat-gaps] li').length).toBeGreaterThan(0)
+    )
+
+    fireEvent.click(rail.querySelector<HTMLButtonElement>('[data-orbitpm-aris-chat-start]')!)
+    const questions = await waitFor(() => {
+      const found = rail.querySelectorAll<HTMLElement>('[data-orbitpm-aris-chat-question]')
+      if (found.length === 0) throw new Error('no interview questions')
+      return found
+    })
+    expect(questions.length).toBeLessThanOrEqual(3)
+
+    let answered = 0
+    questions.forEach((question) => {
+      const input = question.querySelector<HTMLInputElement>('input:not([type="checkbox"])')
+      if (!input) return
+      answered += 1
+      fireEvent.change(input, { target: { value: `Reviewed value ${answered}` } })
+    })
+    expect(answered).toBeGreaterThan(0)
+
+    fireEvent.click(rail.querySelector<HTMLButtonElement>('[data-orbitpm-aris-chat-submit]')!)
+
+    // Plan 18.5: the safe batch applied atomically and produced a receipt.
+    await waitFor(() =>
+      expect(rail.querySelectorAll('[data-orbitpm-aris-chat-receipts] li').length).toBe(answered)
+    )
+    // Plan 18.5 step 7 / 18.8: one Undo restores the prior revision.
+    const undoButton = document.querySelector<HTMLButtonElement>('[data-orbitpm-aris-undo]')!
+    expect(undoButton.disabled).toBe(false)
   })
 })
 
@@ -713,5 +960,174 @@ describe('downloadBytes', () => {
     expect(captured.blob?.size).toBe(bytes.byteLength)
 
     clickSpy.mockRestore()
+  })
+})
+
+describe('ArisGenerationPanel — create with AI (plan section 16)', () => {
+  afterEach(() => {
+    cleanup()
+    vi.restoreAllMocks()
+  })
+
+  function renderPanel(
+    reply: string,
+    created: { name: string; xml: string }[]
+  ): { calls: { system: string; user: string }[] } {
+    const calls: { system: string; user: string }[] = []
+    render(
+      <ArisGenerationPanel
+        onCreateModel={(input) => {
+          created.push(input)
+        }}
+        onDownloadFile={() => undefined}
+        onOpenAssistant={() => undefined}
+        onOpenSettings={() => undefined}
+        callProvider={(prompt) => {
+          calls.push(prompt)
+          return Promise.resolve(reply)
+        }}
+      />
+    )
+    return { calls }
+  }
+
+  function fillAndSubmit(): void {
+    const description = document.querySelector<HTMLTextAreaElement>(
+      '[data-orbitpm-aris-create] textarea'
+    )!
+    fireEvent.change(description, {
+      target: { value: 'A request is received, an officer checks it, the request is checked.' }
+    })
+    fireEvent.click(document.querySelector<HTMLInputElement>('[data-orbitpm-aris-create-consent]')!)
+    fireEvent.click(document.querySelector<HTMLButtonElement>('[data-orbitpm-aris-create-submit]')!)
+  }
+
+  it('turns a valid ArisAiDraftV1 into canonical AML, never asking the model for AML', async () => {
+    const created: { name: string; xml: string }[] = []
+    const { calls } = renderPanel(JSON.stringify(buildMinimalValidDraft()), created)
+
+    fillAndSubmit()
+
+    await waitFor(() => expect(created.length).toBe(1))
+    // Section 16.5: the prompt forbids AML/XML/ids/coordinates outright, and the
+    // request that actually went out is the one the user could review.
+    expect(calls.length).toBe(1)
+    expect(calls[0]!.system).toContain('Use logical ids only.')
+    expect(calls[0]!.system).toContain('strict JSON only')
+    // The only mention of AML is the instruction never to emit it.
+    expect(calls[0]!.system).toContain(
+      'Never emit a real ARIS source id, raw AML, raw XML, coordinates'
+    )
+
+    // The AML is built locally, from the draft's logical ids.
+    const xml = created[0]!.xml
+    expect(xml).toContain('Model.Type="MT_EEPC"')
+    expect(xml).toContain('ObjDef.ID="ObjDef.evt-start"')
+    expect(xml).toContain('ObjOcc.ID="ObjOcc.evt-start"')
+    // Coordinates never came from the model — they are shell-generated.
+    expect(xml).toContain('<Position Pos.X="240"')
+  })
+
+  it("surfaces the validator's rejections verbatim and creates nothing", async () => {
+    const created: { name: string; xml: string }[] = []
+    const draft = buildMinimalValidDraft()
+    const poisoned = {
+      ...draft,
+      objects: draft.objects.map((object, index) =>
+        index === 0
+          ? { ...object, names: { en: '<AML><ObjDef ObjDef.ID="ObjDef.real"/></AML>' } }
+          : object
+      )
+    }
+    renderPanel(JSON.stringify(poisoned), created)
+
+    fillAndSubmit()
+
+    const rejections = await waitFor(() => {
+      const node = document.querySelector<HTMLElement>('[data-orbitpm-aris-create-rejections]')
+      if (!node) throw new Error('no rejections rendered')
+      return node
+    })
+    expect(rejections.querySelectorAll('li').length).toBeGreaterThan(0)
+    expect(rejections.textContent).toContain('forbidden')
+    expect(created.length).toBe(0)
+    expect(screen.getByText('The draft was rejected and nothing was created.')).not.toBeNull()
+  })
+})
+
+describe('ArisGenerationPanel — create from the ARIS workbook (plan section 15)', () => {
+  afterEach(() => {
+    cleanup()
+    vi.restoreAllMocks()
+  })
+
+  function xlsxFile(name: string, bytes: Uint8Array): File {
+    const file = new File([bytes.slice()], name, {
+      type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+    })
+    Object.defineProperty(file, 'arrayBuffer', {
+      configurable: true,
+      value: async () => bytes.slice().buffer
+    })
+    return file
+  }
+
+  function renderExcelTab(created: { name: string; xml: string }[]): HTMLInputElement {
+    render(
+      <ArisGenerationPanel
+        onCreateModel={(input) => {
+          created.push(input)
+        }}
+        onDownloadFile={() => undefined}
+        onOpenAssistant={() => undefined}
+        onOpenSettings={() => undefined}
+      />
+    )
+    fireEvent.click(
+      document.querySelector<HTMLButtonElement>('[data-orbitpm-aris-create-excel-tab]')!
+    )
+    return document.querySelector<HTMLInputElement>('input[accept=".xlsx"]')!
+  }
+
+  it('creates native AML from a filled-in ARIS workbook with no AI at all', async () => {
+    const created: { name: string; xml: string }[] = []
+    const input = renderExcelTab(created)
+
+    fireEvent.change(input, {
+      target: { files: [xlsxFile('process.xlsx', buildValidFixtureWorkbook())] }
+    })
+
+    await waitFor(() => expect(created.length).toBe(1))
+    expect(created[0]!.name).toBe('process')
+    const xml = created[0]!.xml
+    expect(xml).toContain('<AML>')
+    expect(xml).toContain('Model.Type="MT_EEPC"')
+    // Section 15.6: object DEFINITIONS are shared, occurrences are per-model.
+    expect(xml).toContain('ObjDef.ID="ObjDef.')
+    expect(xml).toContain('ObjOcc.ID="ObjOcc.')
+  })
+
+  it('rejects the retired BPMN 0.4.5 workbook with migration guidance instead of treating it as ARIS', async () => {
+    const created: { name: string; xml: string }[] = []
+    const input = renderExcelTab(created)
+
+    fireEvent.change(input, {
+      target: { files: [xlsxFile('legacy.xlsx', buildLegacyBpmnWorkbook())] }
+    })
+
+    const issues = await waitFor(() => {
+      const node = document.querySelector<HTMLElement>('[data-orbitpm-aris-excel-issues]')
+      if (!node) throw new Error('no issues rendered')
+      return node
+    })
+    expect(created.length).toBe(0)
+    expect(
+      screen.getByText(
+        'That is the retired BPMN 0.4.5 workbook. Download the ARIS template below and re-enter the process there.'
+      )
+    ).not.toBeNull()
+    expect(issues.textContent).toContain(
+      'The workbook was rejected because it is a legacy BPMN workbook, which this ARIS-only build does not accept.'
+    )
   })
 })

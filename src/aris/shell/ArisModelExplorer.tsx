@@ -71,10 +71,14 @@ export function ArisModelExplorer({
               >
                 <span style={{ display: 'block', overflowWrap: 'anywhere' }}>{label}</span>
                 <span style={{ display: 'block', fontSize: 11, color: 'var(--orbitpm-muted)' }}>
-                  {tk('aris.explorer.modelSummary', '{objects} objects · {connections} connections', {
-                    objects: model.objectCount,
-                    connections: model.connectionCount
-                  })}
+                  {tk(
+                    'aris.explorer.modelSummary',
+                    '{objects} objects · {connections} connections',
+                    {
+                      objects: model.objectCount,
+                      connections: model.connectionCount
+                    }
+                  )}
                 </span>
                 {!model.renderable && (
                   <span style={{ display: 'block', fontSize: 11, color: 'var(--orbitpm-muted)' }}>

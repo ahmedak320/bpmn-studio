@@ -1,3 +1,6 @@
+import type { ArisAnswerChip } from './aris/assistant/answer'
+import type { ArisProcessDigest } from './aris/assistant/types'
+import { ArisAssistantPanel } from './aris/shell/ArisAssistantPanel'
 import { AccessibleDialog } from './common/AccessibleDialog'
 import { t } from './i18n'
 import { useLang } from './i18n/useLang'
@@ -12,6 +15,13 @@ export interface ArisAssistantDrawerProps {
   workspaceLabel: string
   sourceCount: number
   openTabCount: number
+  /**
+   * Section 17.1 digests for every indexed source. Empty is valid — the panel
+   * then answers "no processes are indexed yet" rather than pretending.
+   */
+  digests?: readonly ArisProcessDigest[]
+  /** Reveal a chip's element on the canvas (§17.6). */
+  onOpenChip?: (chip: ArisAnswerChip) => boolean
 }
 
 export function ArisAssistantDrawer({
@@ -23,7 +33,9 @@ export function ArisAssistantDrawer({
   activeSourceKindLabel,
   workspaceLabel,
   sourceCount,
-  openTabCount
+  openTabCount,
+  digests = [],
+  onOpenChip
 }: ArisAssistantDrawerProps): JSX.Element | null {
   const lang = useLang()
   const dir: 'ltr' | 'rtl' = lang === 'ar' ? 'rtl' : 'ltr'
@@ -114,19 +126,11 @@ export function ArisAssistantDrawer({
           </dl>
         </section>
 
-        <section
-          style={{
-            border: '1px solid var(--orbitpm-border)',
-            borderRadius: 12,
-            padding: '0.9rem 1rem',
-            background: 'var(--orbitpm-panel-bg, var(--orbitpm-bg))'
-          }}
-        >
-          <h3 style={{ margin: '0 0 10px', fontSize: 14 }}>{t('aris.assistant.nextHeading')}</h3>
-          <p style={{ margin: 0, fontSize: 13, color: 'var(--orbitpm-muted)', lineHeight: 1.6 }}>
-            {t('aris.assistant.nextBody')}
-          </p>
-        </section>
+        <ArisAssistantPanel
+          digests={digests}
+          lang={lang}
+          onOpenChip={(chip) => onOpenChip?.(chip) ?? false}
+        />
 
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
           <button type="button" className="orbitpm-lite-chrome-btn" onClick={onOpenSettings}>

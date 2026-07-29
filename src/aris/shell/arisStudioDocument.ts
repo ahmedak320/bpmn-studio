@@ -36,17 +36,25 @@ import type {
 } from '../renderer/types'
 import type { ArisXmlSourcePackage } from '../source/sourcePackage'
 import { isSupportedModelType } from '../canvas/vocabulary'
+import { localeLang } from '../../library/amlParse'
 
-const ENGLISH_LOCALE_IDS = ['1033', 'en', 'en-US', 'en-GB', 'LocaleId.USen']
-const ARABIC_LOCALE_IDS = ['1025', 'ar', 'ar-AE', 'ar-SA', 'LocaleId.AEar']
-
-/** Best available display text for a localized ARIS value in the active language. */
+/**
+ * Best available display text for a localized ARIS value in the active language.
+ *
+ * The locale id keying `value.values` is whatever the source layer stored it
+ * as. For real imported AML this is the RAW, unexpanded internal-DTD entity
+ * reference (`"&LocaleId.AEar;"` / `"&LocaleId.USen;"`) — `expandXmlEntities`
+ * / `decodeAmlEntities` only expand entities inside element text, never
+ * attribute values, so an exact-match allow-list of numeric LCIDs/BCP-47 tags
+ * can never match a real export. `localeLang` (shared with the details/tabs
+ * classifier) resolves numeric LCIDs by primary-language bits and falls back
+ * to a case-insensitive `ar`/`en` suffix match, which handles the raw entity
+ * reference, the bare entity name, and BCP-47 tags alike.
+ */
 export function arisText(value: ArisLocalizedValue | undefined, lang: 'en' | 'ar'): string | null {
   if (!value) return null
-  const preferred = lang === 'ar' ? ARABIC_LOCALE_IDS : ENGLISH_LOCALE_IDS
-  for (const localeId of preferred) {
-    const text = value.values[localeId]
-    if (typeof text === 'string' && text.trim() !== '') return text
+  for (const [localeId, text] of Object.entries(value.values)) {
+    if (typeof text === 'string' && text.trim() !== '' && localeLang(localeId) === lang) return text
   }
   if (typeof value.fallback === 'string' && value.fallback.trim() !== '') return value.fallback
   for (const text of Object.values(value.values)) {
@@ -79,9 +87,13 @@ export interface ArisStudioDocument {
   readonly accounting: ArisAccountingReport
   readonly census: ArisLexicalCensus
   /**
-   * Source-construct accounting entries with derived rows removed, so the count
-   * matches `census.totalSourceRecords` exactly. This is the set the Phase 4
-   * package accounting document accepts (see `arisPackageImport.ts`).
+   * The COMPLETE accounting entry list, derived rows included.
+   *
+   * The accounting lane marks derived rows (`entry.derived`) and its own
+   * document builder partitions on that flag: the census bound applies to the
+   * non-derived rows only, while totals and entries still cover everything.
+   * Filtering here would drop assignment provenance from `accounting.v2.json`
+   * for no gain — exactly the quiet data loss plan §10 exists to prevent.
    */
   readonly sourceAccountingEntries: readonly ArisSourceAccountingEntry[]
   /** OLE/attachment records extracted from the source (plan §13.4). */
@@ -123,10 +135,7 @@ export function buildArisStudioDocument(pkg: ArisXmlSourcePackage): ArisStudioDo
     fidelityByKind: render.fidelityByKind,
     accounting,
     census,
-    // `assignment` rows are derived semantic records, not source constructs, and
-    // the lexical census deliberately excludes them. Keeping them here would
-    // make the package accounting document's `total` exceed its `censusRecords`.
-    sourceAccountingEntries: Object.freeze(entries.filter((entry) => entry.kind !== 'assignment')),
+    sourceAccountingEntries: Object.freeze([...entries]),
     attachments
   })
 }

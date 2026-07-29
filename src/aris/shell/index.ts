@@ -7,6 +7,9 @@
  */
 
 export { ArisAccountingRail, type ArisAccountingRailProps } from './ArisAccountingRail'
+export { ArisAssistantPanel, type ArisAssistantPanelProps } from './ArisAssistantPanel'
+export { ArisChatImproveRail, type ArisChatImproveRailProps } from './ArisChatImproveRail'
+export { ArisEpcRail, type ArisEpcRailProps } from './ArisEpcRail'
 export {
   ArisCanvasView,
   detailsElementFor,
@@ -20,9 +23,54 @@ export { ArisModelExplorer, type ArisModelExplorerProps } from './ArisModelExplo
 export {
   ArisStudioTab,
   type ArisLayoutModeState,
+  type ArisSelectionRequest,
   type ArisSourceFact,
   type ArisStudioTabProps
 } from './ArisStudioTab'
+export {
+  AssistantIndexCache,
+  buildArisAssistantDigests,
+  type ArisAssistantIndexMode,
+  type ArisAssistantSourceInput
+} from './arisAssistantDigests'
+export {
+  createArisChatApplyHost,
+  createArisChatInterviewHost,
+  scanArisGaps,
+  toArisEditCommand,
+  ArisChatUnsupportedCommandError,
+  ARIS_CHAT_SUPPORTED_COMMAND_KINDS
+} from './arisChatHost'
+export {
+  buildLocalArisPatchProposal,
+  resolveOwnerKind,
+  ARIS_CHAT_REMOVE_ANSWER,
+  type ArisLocalProposalInput
+} from './arisChatProposal'
+export {
+  buildArisGeometryEdits,
+  derivedAmlFileName,
+  exportArisDerivedAml,
+  prepareArisDerivedExport,
+  type ArisDerivedEditSet,
+  type ArisDerivedExportInput,
+  type ArisDerivedExportPreview,
+  type ArisUnmappedEdit
+} from './arisDerivedExport'
+export {
+  arisEpcFindingTargetId,
+  buildArisEpcFindings,
+  countArisEpcFindings,
+  type ArisEpcModelFinding
+} from './arisEpcFindings'
+export {
+  arisIdForWorkbookId,
+  arisExcelIssueAddress,
+  buildAmlFromArisWorkbook,
+  isLegacyBpmnWorkbook,
+  type ArisWorkbookAmlResult
+} from './arisExcelCreate'
+export { arisIdForLogicalId, buildAmlFromArisAiDraft, type ArisAiAmlResult } from './arisAiCreate'
 export {
   arisText,
   buildArisDetailsDocument,
