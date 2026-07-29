@@ -169,6 +169,10 @@ export const en = {
   'aris.explorer.empty':
     'No visible ARIS AML/XML sources were found in this workspace yet. Use Import or Open file to load one.',
   'aris.explorer.unsupportedBpmn': 'Unsupported BPMN',
+  'aris.explorer.newModel': '＋ New model',
+  'aris.explorer.newModel.title':
+    'Create a blank ARIS model (EPC or value-added chain) in this workspace',
+  'aris.explorer.imported': 'Imported {count} file(s) into the workspace.',
   'aris.generated.fallbackName': 'Generated draft',
   'aris.source.virtual': 'In-memory tab',
   'aris.sourceKind.aml': 'ARIS AML',
@@ -3074,6 +3078,10 @@ export const ar: Record<keyof typeof en, string> = {
   'aris.explorer.empty':
     'لم يُعثر بعد على مصادر ARIS AML/XML مرئية في مساحة العمل هذه. استخدم الاستيراد أو فتح ملف لتحميل أحدها.',
   'aris.explorer.unsupportedBpmn': 'BPMN غير مدعوم',
+  'aris.explorer.newModel': '＋ نموذج جديد',
+  'aris.explorer.newModel.title':
+    'إنشاء نموذج ARIS فارغ (EPC أو سلسلة قيمة مضافة) في مساحة العمل هذه',
+  'aris.explorer.imported': 'تم استيراد {count} ملف/ملفات إلى مساحة العمل.',
   'aris.generated.fallbackName': 'مسودة مولدة',
   'aris.source.virtual': 'لسان داخل الذاكرة',
   'aris.sourceKind.aml': 'ARIS AML',

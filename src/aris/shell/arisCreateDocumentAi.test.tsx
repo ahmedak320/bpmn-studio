@@ -23,6 +23,8 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { ArisGenerationPanel } from '../../ArisGenerationPanel'
 import { buildMinimalValidDraft } from '../ai/testFixtures'
+import { resetSessionKeysForTests } from '../../ai/keys'
+import { resetProviderSelectionForTests } from '../../ai/providerSelection'
 import type { GenAttachment } from '../../ai/pdf'
 import type { ArisAiGenerationRequest } from './arisAiGeneration'
 
@@ -99,8 +101,7 @@ function chooseFile(selector: string, file: File): void {
   fireEvent.change(input, { target: { files: [file] } })
 }
 
-function consentAndSubmit(): void {
-  fireEvent.click(panel().querySelector<HTMLInputElement>('[data-orbitpm-aris-create-consent]')!)
+function submit(): void {
   fireEvent.click(panel().querySelector<HTMLButtonElement>('[data-orbitpm-aris-create-submit]')!)
 }
 
@@ -128,6 +129,9 @@ const DOCUMENT_FILE_INPUT = 'input[accept*="image/png"]'
 afterEach(() => {
   cleanup()
   vi.restoreAllMocks()
+  resetSessionKeysForTests()
+  resetProviderSelectionForTests()
+  localStorage.clear()
 })
 
 describe('§16.3/§16.6 — a PDF attached through the PDF/Picture tab drives a full generation', () => {
@@ -151,7 +155,7 @@ describe('§16.3/§16.6 — a PDF attached through the PDF/Picture tab drives a 
       }
     )
 
-    consentAndSubmit()
+    submit()
     await waitFor(() => expect(harness.created.length).toBe(1))
 
     // Two physical requests: the invalid first reply forced one repair turn,
@@ -199,7 +203,7 @@ describe('§16.2 — the Description tab PDF picker refuses a non-PDF file', () 
     fireEvent.change(panel().querySelector<HTMLTextAreaElement>('textarea')!, {
       target: { value: 'A permit request is received and reviewed.' }
     })
-    consentAndSubmit()
+    submit()
     await waitFor(() => expect(harness.created.length).toBe(1))
     expect(harness.requests[0]!.attachment).toBeUndefined()
     expect(harness.encoded).toEqual([])
@@ -215,7 +219,7 @@ describe('§4.3/§16.7 — cancellation on the PDF/Picture tab', () => {
     const harness = renderPanel({ hold: () => gate })
     click('[data-orbitpm-aris-create-document-tab]')
     chooseFile(DOCUMENT_FILE_INPUT, pdfFile())
-    consentAndSubmit()
+    submit()
 
     const cancelButton = await waitFor(() => {
       const node = panel().querySelector<HTMLButtonElement>('[data-orbitpm-aris-create-cancel]')
@@ -231,16 +235,18 @@ describe('§4.3/§16.7 — cancellation on the PDF/Picture tab', () => {
   })
 })
 
-describe('privacy — nothing is sent before consent, even with a document attached', () => {
-  it('does not call the provider while the PDF/Picture tab has a file attached and consent has not been granted', () => {
+describe('privacy — attaching a document sends nothing until the user submits', () => {
+  it('does not call the provider merely because a file is attached on the PDF/Picture tab', () => {
     const harness = renderPanel()
     click('[data-orbitpm-aris-create-document-tab]')
     chooseFile(DOCUMENT_FILE_INPUT, pdfFile())
 
-    const submit = panel().querySelector<HTMLButtonElement>('[data-orbitpm-aris-create-submit]')!
-    expect(submit.disabled).toBe(true)
-    fireEvent.click(submit)
-
+    // No consent gate: with a file attached, submit is enabled — but no request
+    // is made until the user actually presses it.
+    const submitButton = panel().querySelector<HTMLButtonElement>(
+      '[data-orbitpm-aris-create-submit]'
+    )!
+    expect(submitButton.disabled).toBe(false)
     expect(harness.requests).toEqual([])
     expect(harness.created).toEqual([])
   })

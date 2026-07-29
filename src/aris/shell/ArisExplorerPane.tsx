@@ -1,9 +1,17 @@
 import { useState } from 'react'
 
 import { ArisGenerationPanel } from '../../ArisGenerationPanel'
+import { usePromptText } from '../../common/prompt'
+import type { LiteTreeNode } from '../../fs/fsAccess'
 import { t } from '../../i18n'
-import type { WorkspaceEntry } from '../../workspace/adapters/types'
+import type { ToastTone } from '../../workspace/Toaster'
+import type { WorkspaceAdapter, WorkspaceEntry } from '../../workspace/adapters/types'
+import { EmptyWorkspaceCard } from '../../workspace/EmptyWorkspaceCard'
+import { FolderTreeLite } from '../../workspace/FolderTreeLite'
+import { countTreeFiles } from '../../workspace/liteTreeFromEntries'
+import type { ProcessHierarchy } from '../../workspace/processHierarchy'
 import { ArisModelExplorer } from './ArisModelExplorer'
+import { useArisExplorerActions, type ArisExplorerTabsController } from './arisExplorerActions'
 import type { ArisStudioModelSummary } from './arisStudioDocument'
 
 export interface ArisExplorerActiveTab {
@@ -28,10 +36,22 @@ export interface ArisExplorerPaneProps {
   readonly onRejectUnsupported: () => void
   readonly onOpenAssistant: () => void
   readonly workspaceId: string | null
-  readonly digests: React.ComponentProps<typeof ArisGenerationPanel>['digests']
   readonly onCreateModel: React.ComponentProps<typeof ArisGenerationPanel>['onCreateModel']
   readonly onDownloadFile: (fileName: string, bytes: Uint8Array, mimeType?: string) => void
   readonly onOpenSettings: () => void
+  /** True in directory/OPFS workspaces, where the folder tree replaces the flat list. */
+  readonly multiFile: boolean
+  readonly adapter: WorkspaceAdapter | null
+  readonly tree: LiteTreeNode | null
+  readonly hierarchy: ProcessHierarchy | null
+  readonly activePath: string | null
+  readonly rootName: string
+  readonly tabsController: ArisExplorerTabsController
+  readonly onRefreshWorkspace: () => Promise<void>
+  readonly onOpenFileFocus: (relPath: string) => void
+  /** Blank-model stub; Lane L2d replaces only its body. `folderRel` is '' for root. */
+  readonly onNewModel: (folderRel: string) => void
+  readonly onToast: (message: string, tone?: ToastTone) => void
 }
 
 type ArisSourceKind = 'aml' | 'apc' | 'xml' | 'generated'
@@ -64,11 +84,32 @@ export function ArisExplorerPane(props: ArisExplorerPaneProps): JSX.Element {
     onRejectUnsupported,
     onOpenAssistant,
     workspaceId,
-    digests,
     onCreateModel,
     onDownloadFile,
-    onOpenSettings
+    onOpenSettings,
+    multiFile,
+    adapter,
+    tree,
+    hierarchy,
+    activePath,
+    rootName,
+    tabsController,
+    onRefreshWorkspace,
+    onOpenFileFocus,
+    onNewModel,
+    onToast
   } = props
+
+  const promptText = usePromptText()
+  const actions = useArisExplorerActions({
+    adapter,
+    tree,
+    rootName,
+    promptText,
+    refresh: onRefreshWorkspace,
+    toast: onToast,
+    tabs: tabsController
+  })
 
   const [aiCollapsed, setAiCollapsed] = useState<boolean>(() => {
     try {
@@ -103,6 +144,36 @@ export function ArisExplorerPane(props: ArisExplorerPaneProps): JSX.Element {
             flexWrap: 'wrap'
           }}
         >
+          {multiFile && (
+            <>
+              <button
+                type="button"
+                className="orbitpm-lite-primary"
+                title={t('aris.explorer.newModel.title')}
+                onClick={() => onNewModel('')}
+              >
+                {t('aris.explorer.newModel')}
+              </button>
+              <button
+                type="button"
+                className="orbitpm-lite-chrome-btn"
+                aria-label={t('tree.newFolder.aria')}
+                title={t('tree.newFolder.title')}
+                onClick={() => actions.onNewFolder('')}
+              >
+                📁＋
+              </button>
+              <button
+                type="button"
+                className="orbitpm-lite-chrome-btn"
+                aria-label={t('tree.refresh.aria')}
+                title={t('tree.refresh.title')}
+                onClick={() => void onRefreshWorkspace()}
+              >
+                ↻
+              </button>
+            </>
+          )}
           <button type="button" className="orbitpm-lite-chrome-btn" onClick={onImportClick}>
             {t('app.import')}
           </button>
@@ -126,7 +197,29 @@ export function ArisExplorerPane(props: ArisExplorerPaneProps): JSX.Element {
           />
         )}
 
-        {workspaceSources.length === 0 ? (
+        {multiFile && tree && hierarchy ? (
+          countTreeFiles(tree) === 0 ? (
+            <EmptyWorkspaceCard folderName={rootName} onCreateFirst={() => onNewModel('')} />
+          ) : (
+            <FolderTreeLite
+              hierarchy={hierarchy}
+              activePath={activePath}
+              onOpenFile={(rel) => {
+                if (/\.bpmn$/iu.test(rel)) onRejectUnsupported()
+                else onOpenWorkspaceFile(rel)
+              }}
+              onOpenFileFocus={onOpenFileFocus}
+              onOpenProcess={() => undefined}
+              onNewProcess={onNewModel}
+              onNewFolder={actions.onNewFolder}
+              onRename={actions.onRename}
+              onDelete={actions.onDelete}
+              onMove={actions.onMove}
+              onMoveDrop={actions.onMoveDrop}
+              onImportDrop={actions.onImportDrop}
+            />
+          )
+        ) : workspaceSources.length === 0 ? (
           <div
             style={{
               padding: '0.8rem',
@@ -205,7 +298,6 @@ export function ArisExplorerPane(props: ArisExplorerPaneProps): JSX.Element {
         <ArisGenerationPanel
           embedded
           workspaceId={workspaceId}
-          digests={digests}
           onCreateModel={onCreateModel}
           onDownloadFile={(fileName, bytes, mimeType) =>
             onDownloadFile(fileName, bytes, mimeType ?? 'application/xml')
@@ -214,6 +306,7 @@ export function ArisExplorerPane(props: ArisExplorerPaneProps): JSX.Element {
           onOpenSettings={onOpenSettings}
         />
       </div>
+      {actions.dialogs}
     </div>
   )
 }

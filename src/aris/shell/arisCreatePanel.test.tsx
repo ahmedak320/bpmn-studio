@@ -14,6 +14,8 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { ArisGenerationPanel } from '../../ArisGenerationPanel'
 import { buildMinimalValidDraft } from '../ai/testFixtures'
+import { resetSessionKeysForTests, setKey } from '../../ai/keys'
+import { resetProviderSelectionForTests } from '../../ai/providerSelection'
 import type { GenAttachment } from '../../ai/pdf'
 import type { ArisAiGenerationRequest } from './arisAiGeneration'
 
@@ -43,6 +45,7 @@ function renderPanel(
     replies?: readonly string[]
     workspaceId?: string | null
     onSend?: (request: ArisAiGenerationRequest) => void
+    onContinueInChat?: () => void
     /** Awaited inside the injected provider call, to hold a request in flight. */
     hold?: () => Promise<void>
   } = {}
@@ -62,6 +65,7 @@ function renderPanel(
       }}
       onOpenAssistant={() => undefined}
       onOpenSettings={() => undefined}
+      {...(options.onContinueInChat ? { onContinueInChat: options.onContinueInChat } : {})}
       parseDocx={async () => 'Extracted DOCX body text.'}
       encodeAttachment={async (file, accepted): Promise<GenAttachment> => {
         harness.encoded.push(file)
@@ -99,8 +103,7 @@ function click(selector: string): void {
   fireEvent.click(panel().querySelector<HTMLElement>(selector)!)
 }
 
-function consentAndSubmit(): void {
-  fireEvent.click(panel().querySelector<HTMLInputElement>('[data-orbitpm-aris-create-consent]')!)
+function submit(): void {
   fireEvent.click(panel().querySelector<HTMLButtonElement>('[data-orbitpm-aris-create-submit]')!)
 }
 
@@ -122,6 +125,9 @@ function statusText(): string {
 afterEach(() => {
   cleanup()
   vi.restoreAllMocks()
+  resetSessionKeysForTests()
+  resetProviderSelectionForTests()
+  localStorage.clear()
 })
 
 describe('§16.1 — three Create tabs', () => {
@@ -157,7 +163,7 @@ describe('§16.2 — DOCX is extracted locally and never uploaded', () => {
       ).toContain('extracted on this device')
     )
 
-    consentAndSubmit()
+    submit()
     await waitFor(() => expect(harness.created.length).toBe(1))
 
     expect(harness.encoded).toEqual([])
@@ -171,16 +177,10 @@ describe('§16.2 — DOCX is extracted locally and never uploaded', () => {
 describe('§16.2/§16.3 — the PDF capability gate', () => {
   it('refuses a PDF on a route whose model is not verified for documents', () => {
     renderPanel()
-    // Anthropic is verified for PDFs; force an unverified route by picking a
-    // provider/model pair the registry does not review for attachments.
-    const modelSelect = panel().querySelector<HTMLSelectElement>(
-      '[data-orbitpm-aris-create-model]'
-    )!
-    // Injecting an unreviewed id the way a drifted registry entry would.
-    const option = document.createElement('option')
-    option.value = 'someone/unreviewed-model'
-    modelSelect.append(option)
-    fireEvent.change(modelSelect, { target: { value: 'someone/unreviewed-model' } })
+    // The default OpenRouter route exposes a free-text model id (allowCustomModel),
+    // so an unreviewed id is typed directly the way a drifted registry entry would.
+    const modelInput = panel().querySelector<HTMLInputElement>('[data-orbitpm-aris-create-model]')!
+    fireEvent.change(modelInput, { target: { value: 'someone/unreviewed-model' } })
 
     chooseFile('input[accept="application/pdf,.pdf"]', pdfFile())
 
@@ -229,7 +229,7 @@ describe('§16.6 — description + PDF produces a native ARIS model', () => {
       panel().querySelector('[data-orbitpm-aris-create-attachment-notice]')?.textContent
     ).toContain('process.pdf')
 
-    consentAndSubmit()
+    submit()
     await waitFor(() => expect(harness.created.length).toBe(1))
 
     // Two physical requests: the first carried the PDF, the repair turn did not.
@@ -264,7 +264,7 @@ describe('§16.6 — description + PDF produces a native ARIS model', () => {
       target: { value: 'الرسم يُقرأ من اليمين إلى اليسار' }
     })
 
-    consentAndSubmit()
+    submit()
     await waitFor(() => expect(harness.created.length).toBe(1))
 
     const request = harness.requests[0]!
@@ -283,7 +283,7 @@ describe('§4.3 — a transport failure is reported without burning a repair tur
       }
     })
     typeDescription('A permit request is received and reviewed.')
-    consentAndSubmit()
+    submit()
 
     await waitFor(() => expect(statusText()).toContain('no repair attempt was used'))
     expect(harness.requests).toHaveLength(1)
@@ -302,7 +302,7 @@ describe('§16.7 — placement and recovery', () => {
       hold: () => gate
     })
     typeDescription('A permit request is received and reviewed.')
-    consentAndSubmit()
+    submit()
 
     // The request is now in flight; the user switches workspace before it lands.
     harness.rerenderWorkspace('directory:Other')
@@ -326,7 +326,7 @@ describe('§16.7 — placement and recovery', () => {
     })
     const harness = renderPanel({ hold: () => gate })
     typeDescription('A permit request is received and reviewed.')
-    consentAndSubmit()
+    submit()
 
     // Cancel while the provider call is in flight, then let it resolve: the
     // reply arrives, and is thrown away rather than placed.
@@ -343,20 +343,63 @@ describe('§16.7 — placement and recovery', () => {
   })
 })
 
-describe('§4.3 — consent covers exactly the reviewed request', () => {
-  it('clears consent when the outbound request changes', () => {
+describe('authorized product change #1 — the create path has no consent gate', () => {
+  it('enables submit with a description present and renders no consent control', () => {
     renderPanel()
-    typeDescription('A permit request is received.')
-    const consent = panel().querySelector<HTMLInputElement>('[data-orbitpm-aris-create-consent]')!
-    fireEvent.click(consent)
-    expect(consent.checked).toBe(true)
+    // The consent checkbox, exact-outbound preview, and include-context/redact
+    // toggles are removed from this create path.
+    expect(panel().querySelector('[data-orbitpm-aris-create-consent]')).toBeNull()
+    expect(panel().querySelector('[data-orbitpm-aris-create-preview]')).toBeNull()
+    expect(panel().querySelector('[data-orbitpm-aris-create-include-context]')).toBeNull()
 
-    typeDescription('A permit request is received and then reviewed by an officer.')
-    expect(
-      panel().querySelector<HTMLInputElement>('[data-orbitpm-aris-create-consent]')!.checked
-    ).toBe(false)
+    typeDescription('A permit request is received and reviewed.')
     expect(
       panel().querySelector<HTMLButtonElement>('[data-orbitpm-aris-create-submit]')!.disabled
-    ).toBe(true)
+    ).toBe(false)
+  })
+})
+
+describe('authorized product change #2 — generation always uses auto-detect', () => {
+  it('sends the auto-detect model type and no workspace context in the prompt', async () => {
+    const harness = renderPanel()
+    typeDescription('A permit request is received and reviewed.')
+    submit()
+    await waitFor(() => expect(harness.created.length).toBe(1))
+
+    const request = harness.requests[0]!
+    expect(request.user).toContain('auto-detect the most fitting supported model type')
+    expect(request.user).not.toContain('Workspace context')
+  })
+})
+
+describe('§16 — provider picker marks configured providers', () => {
+  it("suffixes a provider option with ' ✓' when a key is stored", () => {
+    resetSessionKeysForTests()
+    setKey('openrouter', 'sk-test-key')
+    renderPanel()
+    const option = panel().querySelector<HTMLOptionElement>(
+      '[data-orbitpm-aris-create-provider] option[value="openrouter"]'
+    )!
+    expect(option.textContent?.endsWith(' ✓')).toBe(true)
+  })
+})
+
+describe('§16 — continue in chat after a successful generation', () => {
+  it('invokes onContinueInChat from the success box CTA', async () => {
+    let continued = 0
+    const harness = renderPanel({ onContinueInChat: () => (continued += 1) })
+    typeDescription('A permit request is received and reviewed.')
+    submit()
+    await waitFor(() => expect(harness.created.length).toBe(1))
+
+    const cta = await waitFor(() => {
+      const node = panel().querySelector<HTMLButtonElement>(
+        '[data-orbitpm-aris-create-continue-chat]'
+      )
+      if (!node) throw new Error('continue-in-chat CTA not rendered')
+      return node
+    })
+    fireEvent.click(cta)
+    expect(continued).toBe(1)
   })
 })

@@ -27,7 +27,7 @@ import type { ArisWorkingDocument } from '../model/types'
 import { ARIS_EXPERIMENTAL_EXPORT_LABEL_KEY } from '../writer'
 import type { Key } from '../../i18n'
 import { ArisAccountingRail } from './ArisAccountingRail'
-import { ArisChatImproveRail } from './ArisChatImproveRail'
+import type { ArisTabChatHost } from './arisChatDrawerTypes'
 import { ArisEpcRail } from './ArisEpcRail'
 import { applyArisChatCommandsAsGesture } from './arisChatHost'
 import { derivedAmlFileName, exportArisDerivedAml } from './arisDerivedExport'
@@ -81,6 +81,10 @@ export interface ArisStudioTabProps {
   readonly selectionRequest?: ArisSelectionRequest | null
   /** Report whether a selection request could be honoured. */
   readonly onSelectionResolved?: (token: number, revealed: boolean) => void
+  /** Stable key used to register this tab as a chat-drawer host. */
+  readonly chatHostKey?: string
+  /** Register/unregister the tab's chat host with the shell. */
+  readonly onChatHostChange?: (key: string, host: ArisTabChatHost | null) => void
 }
 
 const EMPTY_HISTORY: ArisCanvasHistoryState = Object.freeze({
@@ -128,7 +132,9 @@ export function ArisStudioTab({
   onToast,
   sourceFileName,
   selectionRequest,
-  onSelectionResolved
+  onSelectionResolved,
+  chatHostKey,
+  onChatHostChange
 }: ArisStudioTabProps): JSX.Element {
   const canvasRef = useRef<ArisCanvas | null>(null)
   const [selection, setSelection] = useState<ArisCanvasSelectionState>(EMPTY_SELECTION)
@@ -348,6 +354,22 @@ export function ArisStudioTab({
     },
     []
   )
+
+  // --- plan §18.2: chat drawer host surface ------------------------------------
+  const chatHost = useMemo<ArisTabChatHost>(
+    () => ({
+      getDocument: () => canvasRef.current?.document ?? null,
+      applyCommands: handleApplyChatCommands,
+      undo: () => canvasRef.current?.undo(),
+      getCanUndo: () => canvasRef.current?.canUndo ?? false
+    }),
+    [handleApplyChatCommands]
+  )
+  useEffect(() => {
+    if (!chatHostKey || !onChatHostChange) return
+    onChatHostChange(chatHostKey, chatHost)
+    return () => onChatHostChange(chatHostKey, null)
+  }, [chatHost, chatHostKey, onChatHostChange])
 
   // An assistant chip asks for an element that may live on another model.
   useEffect(() => {
@@ -606,13 +628,6 @@ export function ArisStudioTab({
         />
 
         <ArisEpcRail findings={epcFindings} onSelectFinding={handleSelectFinding} />
-
-        <ArisChatImproveRail
-          document={liveDocument}
-          onApplyCommands={handleApplyChatCommands}
-          onUndo={() => canvasRef.current?.undo()}
-          canUndo={history.canUndo}
-        />
 
         <section className="orbitpm-aris-rail__section">
           <h3 className="orbitpm-aris-rail__heading" style={{ fontSize: 15 }}>

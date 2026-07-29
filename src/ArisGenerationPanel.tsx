@@ -18,28 +18,28 @@
  * rejections verbatim rather than swallowing them — a silent fallback would
  * defeat the entire point of the contract.
  *
- * The §16.6 ordering is deliberately NOT inlined here. This component owns
- * steps 1–4 (capability → type/size → reviewed request → consent) and steps
- * 11–17 (local AML, preview, confirm, commit); steps 5–10 — attachment on the
- * first attempt only, bounded parse, draft/type/EPC validation, up to three
- * semantic repair turns, and the transport-vs-semantic distinction — live in
+ * The chrome is transcribed from AiPanelLite's visual system (segmented
+ * tablist, provider/model controls, warn/info/error/ok boxes) and simplified
+ * to Name + per-tab source + AI provider/model. Generation always uses the
+ * `'auto-detect'` model type. The §16.6 ordering is deliberately NOT inlined
+ * here: this component owns steps 1–4 (capability → type/size → request) and
+ * steps 11–17 (local AML, confirm, commit); steps 5–10 live in
  * `aris/shell/arisAiGeneration.ts`, and placement/recovery (§16.7) lives in
  * `aris/shell/arisAiPlacement.ts`, so each is unit-testable without a DOM.
  */
 
-import { useCallback, useMemo, useRef, useState } from 'react'
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type CSSProperties,
+  type KeyboardEvent
+} from 'react'
 
 import type { ArisAiValidationFinding } from './aris/ai'
-import { buildArisAiPrompt, type ArisAiPromptModelType } from './aris/ai/promptBuilder'
-import type { ArisProcessDigest } from './aris/assistant/types'
-import {
-  buildArisCreateDescriptionContext,
-  buildArisCreateDescriptionDisclosure,
-  buildArisCreateDescriptionSensitivity,
-  grantArisCreateDescriptionConsent,
-  hasArisCreateDescriptionConsent,
-  type ArisCreateDescriptionConsent
-} from './aris/shell/arisCreateDescriptionAi'
+import { buildArisAiPrompt } from './aris/ai/promptBuilder'
 import {
   createArisTemplateWorkbooks,
   parseArisWorkbookInBrowser,
@@ -74,15 +74,21 @@ import {
 import { tk } from './aris/shell/shellI18n'
 import { makeBrowserCallLLM } from './ai/browserAi'
 import { getKey, hasKey } from './ai/keys'
+import { keyStorageErrorMessage } from './ai/keyStorageErrorMessage'
 import { buildImageInstruction, buildPdfInstruction, type GenAttachment } from './ai/pdf'
+import {
+  getProviderSelection,
+  setProviderSelection,
+  subscribeProviderSelection
+} from './ai/providerSelection'
 import {
   LITE_PROVIDERS,
   defaultLiteModelId,
   getLiteProvider,
   type LiteProviderId
 } from './ai/providersLite'
-import { estimateGenerationRequestCount } from './ai/requestPrivacy'
 import { t, type Key } from './i18n'
+import { useLang } from './i18n/useLang'
 
 export interface ArisGenerationPanelProps {
   /** Open a generated AML document as a new source tab. */
@@ -91,6 +97,8 @@ export interface ArisGenerationPanelProps {
   onDownloadFile: (fileName: string, bytes: Uint8Array, mimeType: string) => void
   onOpenAssistant: () => void
   onOpenSettings: () => void
+  /** Offered after a successful AI generation: continue filling gaps in chat. */
+  onContinueInChat?: () => void
   embedded?: boolean
   /**
    * Identity of the workspace a generated model would be written into. §16.7:
@@ -99,11 +107,6 @@ export interface ArisGenerationPanelProps {
    * recoverable download instead.
    */
   workspaceId?: string | null
-  /**
-   * Process digests for optional workspace context ranking (§16.2). Passing no
-   * digests leaves the context control with nothing to rank.
-   */
-  digests?: readonly ArisProcessDigest[]
   /** Injected in tests to exercise the whole sequence without a network. */
   callProvider?: (request: ArisAiGenerationRequest, signal: AbortSignal) => Promise<string>
   /** Injected in tests: local DOCX text extraction (default: inline worker). */
@@ -118,24 +121,126 @@ export interface ArisGenerationPanelProps {
 
 type CreateTab = 'description' | 'document' | 'excel'
 
-const MODEL_TYPES: readonly ArisAiPromptModelType[] = [
-  'MT_EEPC',
-  'MT_VAL_ADD_CHN_DGM',
-  'auto-detect'
-]
+const TAB_ORDER: readonly CreateTab[] = ['description', 'document', 'excel']
+
 const MAX_TOKENS = 8_000
 
-const inputStyle: React.CSSProperties = {
-  width: '100%',
+// --- chrome transcribed from AiPanelLite's visual system -------------------
+
+function Spinner(): JSX.Element {
+  return (
+    <span
+      aria-hidden
+      style={{
+        width: 14,
+        height: 14,
+        border: '2px solid rgba(255,255,255,0.5)',
+        borderTopColor: '#fff',
+        borderRadius: '50%',
+        display: 'inline-block',
+        animation: 'orbitpm-spin 0.7s linear infinite'
+      }}
+    />
+  )
+}
+
+const segmentWrap: CSSProperties = {
+  display: 'flex',
+  gap: 4,
+  padding: 3,
   borderRadius: 8,
-  border: '1px solid var(--orbitpm-border)',
+  border: '1px solid rgba(127,127,127,0.3)'
+}
+function segmentBtn(active: boolean): CSSProperties {
+  return {
+    flex: 1,
+    padding: '0.35rem 0.4rem',
+    borderRadius: 6,
+    border: 'none',
+    fontSize: 12.5,
+    cursor: 'pointer',
+    background: active ? 'var(--orbitpm-primary-bg)' : 'transparent',
+    color: active ? 'var(--orbitpm-primary-fg)' : 'inherit',
+    font: 'inherit'
+  }
+}
+const labelStyle: CSSProperties = { display: 'flex', flexDirection: 'column', gap: 4 }
+const labelText: CSSProperties = { fontSize: 12, opacity: 0.8 }
+const inputStyle: CSSProperties = {
+  padding: '0.4rem 0.5rem',
+  borderRadius: 6,
+  border: '1px solid rgba(127,127,127,0.4)',
   background: 'transparent',
   color: 'inherit',
   font: 'inherit',
-  padding: '0.45rem 0.55rem'
+  fontSize: 13
 }
-
-const listStyle: React.CSSProperties = {
+const ghostBtn: CSSProperties = {
+  padding: '0.5rem 0.7rem',
+  borderRadius: 6,
+  border: '1px solid rgba(127,127,127,0.35)',
+  background: 'transparent',
+  font: 'inherit',
+  fontSize: 13,
+  cursor: 'pointer',
+  color: 'inherit'
+}
+const linkBtn: CSSProperties = {
+  border: 'none',
+  background: 'transparent',
+  color: 'var(--orbitpm-accent)',
+  textDecoration: 'underline',
+  cursor: 'pointer',
+  font: 'inherit',
+  padding: 0
+}
+const removeBtn: CSSProperties = {
+  border: '1px solid rgba(127,127,127,0.35)',
+  background: 'transparent',
+  color: 'inherit',
+  borderRadius: 6,
+  padding: '0.15rem 0.5rem',
+  fontSize: 11.5,
+  cursor: 'pointer',
+  flexShrink: 0
+}
+const warnBox: CSSProperties = {
+  fontSize: 12,
+  padding: '0.5rem 0.6rem',
+  borderRadius: 6,
+  background: 'rgba(234,179,8,0.15)',
+  border: '1px solid rgba(234,179,8,0.4)'
+}
+const infoBox: CSSProperties = {
+  fontSize: 12.5,
+  lineHeight: 1.5,
+  padding: '0.5rem 0.6rem',
+  borderRadius: 6,
+  background: 'rgba(59,130,246,0.12)',
+  border: '1px solid rgba(59,130,246,0.35)'
+}
+const errorBox: CSSProperties = {
+  fontSize: 12,
+  padding: '0.5rem 0.6rem',
+  borderRadius: 6,
+  background: 'rgba(239,68,68,0.12)',
+  border: '1px solid rgba(239,68,68,0.4)',
+  display: 'flex',
+  flexDirection: 'column',
+  gap: 6
+}
+const okBox: CSSProperties = {
+  fontSize: 13,
+  padding: '0.5rem 0.6rem',
+  borderRadius: 6,
+  background: 'rgba(34,197,94,0.12)',
+  border: '1px solid rgba(34,197,94,0.4)',
+  wordBreak: 'break-word',
+  display: 'flex',
+  flexDirection: 'column',
+  gap: 4
+}
+const listStyle: CSSProperties = {
   margin: 0,
   paddingInlineStart: '1.1rem',
   fontSize: 12,
@@ -178,29 +283,35 @@ export function ArisGenerationPanel({
   onDownloadFile,
   onOpenAssistant,
   onOpenSettings,
+  onContinueInChat,
   embedded = false,
   workspaceId,
-  digests = [],
   callProvider,
   parseDocx,
   encodeAttachment
 }: ArisGenerationPanelProps): JSX.Element {
+  const lang = useLang()
   const [tab, setTab] = useState<CreateTab>('description')
   const [name, setName] = useState('')
   const [description, setDescription] = useState('')
   const [hint, setHint] = useState('')
-  const [modelType, setModelType] = useState<ArisAiPromptModelType>('MT_EEPC')
-  const [providerId, setProviderId] = useState<LiteProviderId>(LITE_PROVIDERS[0].id)
-  const [modelId, setModelId] = useState<string>(defaultLiteModelId(LITE_PROVIDERS[0].id))
+  const [providerId, setProviderId] = useState<LiteProviderId>(
+    () => getProviderSelection()?.providerId ?? LITE_PROVIDERS[0].id
+  )
+  const [modelId, setModelId] = useState<string>(
+    () => getProviderSelection()?.modelId ?? defaultLiteModelId(LITE_PROVIDERS[0].id)
+  )
   const [docx, setDocx] = useState<PickedDocx | null>(null)
   const [descriptionPdf, setDescriptionPdf] = useState<PickedAttachment | null>(null)
   const [documentFile, setDocumentFile] = useState<PickedAttachment | null>(null)
   const [attachmentNotice, setAttachmentNotice] = useState<string | null>(null)
-  const [includeContext, setIncludeContext] = useState(false)
-  const [redactNames, setRedactNames] = useState(true)
-  const [consent, setConsent] = useState<ArisCreateDescriptionConsent | null>(null)
+  const [selectionError, setSelectionError] = useState<string | null>(null)
+  const [online, setOnline] = useState(() =>
+    typeof navigator === 'undefined' ? true : navigator.onLine
+  )
   const [busy, setBusy] = useState(false)
   const [status, setStatus] = useState<string | null>(null)
+  const [aiCreated, setAiCreated] = useState(false)
   const [rejections, setRejections] = useState<readonly string[]>([])
   const [warnings, setWarnings] = useState<readonly string[]>([])
   const [excelIssues, setExcelIssues] = useState<readonly string[]>([])
@@ -210,6 +321,11 @@ export function ArisGenerationPanel({
   const docxInputRef = useRef<HTMLInputElement | null>(null)
   const descriptionPdfInputRef = useRef<HTMLInputElement | null>(null)
   const documentInputRef = useRef<HTMLInputElement | null>(null)
+  const tabRefs = useRef<Record<CreateTab, HTMLButtonElement | null>>({
+    description: null,
+    document: null,
+    excel: null
+  })
 
   // §16.7 reads this at PLACEMENT time, not at send time, so a workspace swap
   // mid-request is visible to the decision.
@@ -222,6 +338,30 @@ export function ArisGenerationPanel({
 
   const provider = getLiteProvider(providerId)
   const providerReady = hasKey(providerId)
+  const noKeysAtAll = LITE_PROVIDERS.every((entry) => !hasKey(entry.id))
+
+  // Keep every AI surface on the one explicit provider/model selection. There
+  // is deliberately no provider-order or "first key" fallback.
+  useEffect(
+    () =>
+      subscribeProviderSelection((selection) => {
+        if (!selection) return
+        setProviderId(selection.providerId)
+        setModelId(selection.modelId)
+      }),
+    []
+  )
+
+  useEffect(() => {
+    const goOnline = (): void => setOnline(true)
+    const goOffline = (): void => setOnline(false)
+    window.addEventListener('online', goOnline)
+    window.addEventListener('offline', goOffline)
+    return () => {
+      window.removeEventListener('online', goOnline)
+      window.removeEventListener('offline', goOffline)
+    }
+  }, [])
 
   /**
    * The operator request that actually goes out. On the PDF/Picture tab the
@@ -237,88 +377,80 @@ export function ArisGenerationPanel({
       : buildPdfInstruction(trimmedHint)
   }, [documentFile, tab, trimmedDescription, trimmedHint])
 
-  const context = useMemo(
-    () => buildArisCreateDescriptionContext(digests, trimmedDescription, redactNames),
-    [digests, trimmedDescription, redactNames]
-  )
-
   const prompt = useMemo(
     () =>
       buildArisAiPrompt({
         modelName: name.trim() === '' ? t('aris.generated.fallbackName') : name.trim(),
-        modelType,
+        modelType: 'auto-detect',
         description: operatorRequest,
-        ...(tab === 'description' && docx ? { attachmentText: docx.text } : {}),
-        ...(tab === 'description' && includeContext
-          ? { workspaceContext: context.contextText }
-          : {})
+        ...(tab === 'description' && docx ? { attachmentText: docx.text } : {})
       }),
-    [docx, modelType, name, operatorRequest, tab, includeContext, context]
+    [docx, name, operatorRequest, tab]
   )
-
-  const sensitivity = useMemo(
-    () =>
-      buildArisCreateDescriptionSensitivity(
-        operatorRequest,
-        tab === 'description' && includeContext
-          ? context
-          : { includedModelIds: [], chips: [], contextText: '' }
-      ),
-    [operatorRequest, tab, includeContext, context]
-  )
-  const requestEstimate = useMemo(
-    () => estimateGenerationRequestCount(attachment !== null),
-    [attachment]
-  )
-
-  // §4.3: "No request before exact outbound review and consent." Any change to
-  // what would be sent invalidates the review the consent was given for.
-  const disclosure = useMemo(
-    () =>
-      buildArisCreateDescriptionDisclosure({
-        tab,
-        providerId,
-        modelId,
-        modelName: name.trim(),
-        modelType,
-        includeContext,
-        redactNames,
-        context,
-        attachmentName: attachment?.accepted.fileName ?? '',
-        attachmentSizeBytes: attachment?.accepted.sizeBytes ?? 0,
-        outboundSystem: prompt.system,
-        outboundUser: prompt.user
-      }),
-    [
-      tab,
-      providerId,
-      modelId,
-      name,
-      modelType,
-      includeContext,
-      redactNames,
-      context,
-      attachment,
-      prompt.system,
-      prompt.user
-    ]
-  )
-  const consentValid = hasArisCreateDescriptionConsent(disclosure, consent)
 
   const cancel = useCallback(() => {
     abortRef.current?.abort()
     abortRef.current = null
     setBusy(false)
+    setAiCreated(false)
     setStatus(tk('aris.ai.cancelled', 'The request was cancelled; nothing was created.'))
   }, [])
 
   const selectProvider = useCallback((next: LiteProviderId) => {
+    const nextModel = defaultLiteModelId(next)
     setProviderId(next)
-    setModelId(defaultLiteModelId(next))
+    setModelId(nextModel)
     // A provider/model swap can invalidate an already-picked attachment, so
     // the capability gate is re-run at pick time AND at send time.
     setAttachmentNotice(null)
+    const result = setProviderSelection(next, nextModel)
+    setSelectionError(
+      result.ok
+        ? null
+        : t('settings.storageError.providerSelection', {
+            error: keyStorageErrorMessage(result.code)
+          })
+    )
   }, [])
+
+  const selectModel = useCallback(
+    (nextModel: string) => {
+      setModelId(nextModel)
+      if (!nextModel.trim()) return
+      const result = setProviderSelection(providerId, nextModel)
+      setSelectionError(
+        result.ok
+          ? null
+          : t('settings.storageError.providerSelection', {
+              error: keyStorageErrorMessage(result.code)
+            })
+      )
+    },
+    [providerId]
+  )
+
+  const handleTabKeyDown = useCallback(
+    (event: KeyboardEvent<HTMLButtonElement>, current: CreateTab): void => {
+      const currentIndex = TAB_ORDER.indexOf(current)
+      if (currentIndex < 0) return
+      let nextIndex: number | undefined
+      if (event.key === 'Home') {
+        nextIndex = 0
+      } else if (event.key === 'End') {
+        nextIndex = TAB_ORDER.length - 1
+      } else if (event.key === 'ArrowRight' || event.key === 'ArrowLeft') {
+        const visualForward =
+          event.key === 'ArrowRight' ? (lang === 'ar' ? -1 : 1) : lang === 'ar' ? 1 : -1
+        nextIndex = (currentIndex + visualForward + TAB_ORDER.length) % TAB_ORDER.length
+      }
+      if (nextIndex === undefined) return
+      event.preventDefault()
+      const next = TAB_ORDER[nextIndex]
+      setTab(next)
+      tabRefs.current[next]?.focus()
+    },
+    [lang]
+  )
 
   // --- attachment pickers (§16.6 steps 1-2 run before any byte is read) -----
 
@@ -425,12 +557,13 @@ export function ArisGenerationPanel({
   )
 
   const createWithAi = useCallback(async () => {
-    if (busy || !consentValid) return
+    if (busy) return
     if (tab === 'document' ? !documentFile : trimmedDescription === '') return
     setRejections([])
     setWarnings([])
     setRecovery(null)
     setStatus(null)
+    setAiCreated(false)
     setBusy(true)
     const controller = new AbortController()
     abortRef.current = controller
@@ -532,6 +665,7 @@ export function ArisGenerationPanel({
 
       // One call, one document: a multi-model draft is never placed in pieces.
       await onCreateModel({ name: name.trim(), xml: aml.xml })
+      setAiCreated(true)
       setStatus(
         tk(
           'aris.ai.created',
@@ -555,7 +689,6 @@ export function ArisGenerationPanel({
     attachment,
     busy,
     buildSend,
-    consentValid,
     documentFile,
     encodeAttachment,
     modelId,
@@ -585,6 +718,7 @@ export function ArisGenerationPanel({
     async (file: File) => {
       setExcelIssues([])
       setStatus(null)
+      setAiCreated(false)
       setBusy(true)
       try {
         const bytes = new Uint8Array(await file.arrayBuffer())
@@ -644,16 +778,13 @@ export function ArisGenerationPanel({
 
   const submitDisabled =
     busy ||
-    !consentValid ||
     (!providerReady && !callProvider) ||
     (tab === 'document' ? documentFile === null : trimmedDescription === '')
 
   const providerControls = (
     <>
-      <label style={{ display: 'grid', gap: 4 }}>
-        <span style={{ fontSize: 12, color: 'var(--orbitpm-muted)' }}>
-          {tk('aris.create.provider', 'Provider')}
-        </span>
+      <label style={labelStyle}>
+        <span style={labelText}>{tk('aris.create.provider', 'Provider')}</span>
         <select
           value={providerId}
           data-orbitpm-aris-create-provider=""
@@ -661,97 +792,68 @@ export function ArisGenerationPanel({
           style={inputStyle}
         >
           {LITE_PROVIDERS.map((entry) => (
-            <option key={entry.id} value={entry.id}>
+            <option key={entry.id} value={entry.id} lang="en" dir="ltr">
               {entry.label}
+              {hasKey(entry.id) ? ' ✓' : ''}
             </option>
           ))}
         </select>
       </label>
 
-      <label style={{ display: 'grid', gap: 4 }}>
-        <span style={{ fontSize: 12, color: 'var(--orbitpm-muted)' }}>
-          {tk('aris.create.model', 'Model')}
-        </span>
-        <select
-          value={modelId}
-          data-orbitpm-aris-create-model=""
-          onChange={(event) => setModelId(event.target.value)}
-          style={inputStyle}
-        >
-          {provider.models.map((entry) => (
-            <option key={entry.id} value={entry.id}>
-              {entry.label}
-            </option>
-          ))}
-        </select>
-      </label>
+      {provider.allowCustomModel ? (
+        <label style={labelStyle}>
+          <span style={labelText}>{tk('aris.create.model', 'Model')}</span>
+          <input
+            type="text"
+            list={`aris-create-models-${providerId}`}
+            value={modelId}
+            data-orbitpm-aris-create-model=""
+            lang="en"
+            dir="ltr"
+            onChange={(event) => selectModel(event.target.value)}
+            placeholder={tk('aris.create.model', 'Model')}
+            style={inputStyle}
+          />
+          <datalist id={`aris-create-models-${providerId}`}>
+            {provider.models.map((entry) => (
+              <option key={entry.id} value={entry.id} lang="en" dir="ltr">
+                {entry.label}
+              </option>
+            ))}
+          </datalist>
+        </label>
+      ) : (
+        <label style={labelStyle}>
+          <span style={labelText}>{tk('aris.create.model', 'Model')}</span>
+          <select
+            value={modelId}
+            data-orbitpm-aris-create-model=""
+            onChange={(event) => selectModel(event.target.value)}
+            style={inputStyle}
+          >
+            {provider.models.map((entry) => (
+              <option key={entry.id} value={entry.id} lang="en" dir="ltr">
+                {entry.label}
+              </option>
+            ))}
+          </select>
+        </label>
+      )}
     </>
   )
 
-  const reviewAndSubmit = (
+  const submitControls = (
     <>
-      <details data-orbitpm-aris-create-preview="">
-        <summary style={{ fontSize: 12.5, cursor: 'pointer' }}>
-          {tk('aris.create.preview', 'Exact outbound request')}
-        </summary>
-        <p style={{ margin: '6px 0', fontSize: 12, color: 'var(--orbitpm-muted)' }}>
-          {tk('aris.create.sensitivity', 'Names detected: {names} · Sensitive metadata: {meta}', {
-            names: String(sensitivity.containsNames),
-            meta: String(sensitivity.containsSensitiveMetadata)
-          })}
-          {' · '}
-          {tk('aris.create.requestEstimate', 'Up to {count} requests', {
-            count: requestEstimate
-          })}
-        </p>
-        {attachment && (
-          <p style={{ margin: '6px 0', fontSize: 12 }} data-orbitpm-aris-create-attachment-line="">
-            {tk(
-              'aris.create.attachment.outbound',
-              'Attached with the first request only: {name} ({size}, {type}). Repair turns are text-only.',
-              {
-                name: attachment.accepted.fileName,
-                size: formatBytes(attachment.accepted.sizeBytes),
-                type: attachment.accepted.mediaType
-              }
-            )}
-          </p>
-        )}
-        <pre
-          style={{
-            margin: 0,
-            whiteSpace: 'pre-wrap',
-            overflowWrap: 'anywhere',
-            fontSize: 11,
-            maxHeight: 200,
-            overflow: 'auto'
-          }}
-        >
-          {`${prompt.system}\n\n${prompt.user}`}
-        </pre>
-      </details>
-
-      <label style={{ display: 'flex', gap: 6, alignItems: 'center', fontSize: 12.5 }}>
-        <input
-          type="checkbox"
-          checked={consentValid}
-          data-orbitpm-aris-create-consent=""
-          onChange={(event) =>
-            setConsent(event.target.checked ? grantArisCreateDescriptionConsent(disclosure) : null)
-          }
-        />
-        <span>
-          {tk('aris.create.consent', 'I reviewed the request above and consent to sending it')}
-        </span>
-      </label>
-
-      {!providerReady && !callProvider && (
-        <p style={{ margin: 0, fontSize: 12 }}>
+      {!providerReady && !callProvider && !noKeysAtAll && (
+        <div style={infoBox}>
           {tk(
             'aris.create.noKey',
             'No API key is stored for this provider. Open Settings to add one.'
-          )}
-        </p>
+          )}{' '}
+          <button type="button" onClick={onOpenSettings} style={linkBtn}>
+            {t('app.settings')}
+          </button>
+        </div>
       )}
 
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
@@ -761,7 +863,9 @@ export function ArisGenerationPanel({
           data-orbitpm-aris-create-submit=""
           onClick={() => void createWithAi()}
           disabled={submitDisabled}
+          style={{ display: 'flex', alignItems: 'center', gap: 8 }}
         >
+          {busy && <Spinner />}
           {busy
             ? t('aris.ai.creating')
             : tab === 'document'
@@ -771,17 +875,17 @@ export function ArisGenerationPanel({
         {busy && (
           <button
             type="button"
-            className="orbitpm-lite-chrome-btn"
             data-orbitpm-aris-create-cancel=""
             onClick={cancel}
+            style={ghostBtn}
           >
             {tk('aris.import.review.cancel', 'Cancel')}
           </button>
         )}
-        <button type="button" className="orbitpm-lite-chrome-btn" onClick={onOpenAssistant}>
+        <button type="button" onClick={onOpenAssistant} style={ghostBtn}>
           {t('aris.placeholder.openAssistant')}
         </button>
-        <button type="button" className="orbitpm-lite-chrome-btn" onClick={onOpenSettings}>
+        <button type="button" onClick={onOpenSettings} style={ghostBtn}>
           {t('app.settings')}
         </button>
       </div>
@@ -793,137 +897,222 @@ export function ArisGenerationPanel({
       aria-label={t('ai.header')}
       data-orbitpm-aris-create=""
       style={{
-        display: 'grid',
-        gap: 10,
-        padding: embedded ? '0.75rem 0.8rem 0.9rem' : '1rem',
         border: embedded ? 'none' : '1px solid var(--orbitpm-border)',
         borderRadius: embedded ? 0 : 12,
         background: embedded ? 'transparent' : 'var(--orbitpm-panel-bg, var(--orbitpm-bg))'
       }}
     >
-      <div style={{ display: 'grid', gap: 4 }}>
-        <strong style={{ fontSize: 14 }}>{t('ai.header')}</strong>
-        <p style={{ margin: 0, fontSize: 12.5, color: 'var(--orbitpm-muted)', lineHeight: 1.5 }}>
-          {t('aris.ai.body')}
-        </p>
-      </div>
+      <div style={{ padding: '0.8rem', display: 'flex', flexDirection: 'column', gap: 12 }}>
+        <div style={{ display: 'grid', gap: 4 }}>
+          <strong style={{ fontSize: 14 }}>{t('ai.header')}</strong>
+          <p style={{ margin: 0, fontSize: 12.5, color: 'var(--orbitpm-muted)', lineHeight: 1.5 }}>
+            {t('aris.ai.body')}
+          </p>
+        </div>
 
-      <div
-        role="tablist"
-        aria-label={tk('aris.create.tabsAria', 'Create input source')}
-        style={{ display: 'flex', gap: 6 }}
-      >
-        <button
-          type="button"
-          role="tab"
-          aria-selected={tab === 'description'}
-          className="orbitpm-lite-chrome-btn"
-          data-orbitpm-aris-create-description-tab=""
-          onClick={() => setTab('description')}
+        <div
+          role="tablist"
+          aria-label={tk('aris.create.tabsAria', 'Create input source')}
+          aria-orientation="horizontal"
+          style={segmentWrap}
         >
-          {tk('aris.create.tab.description', 'Description')}
-        </button>
-        <button
-          type="button"
-          role="tab"
-          aria-selected={tab === 'document'}
-          className="orbitpm-lite-chrome-btn"
-          data-orbitpm-aris-create-document-tab=""
-          onClick={() => setTab('document')}
-        >
-          {tk('aris.create.tab.document', 'PDF / Picture')}
-        </button>
-        <button
-          type="button"
-          role="tab"
-          aria-selected={tab === 'excel'}
-          className="orbitpm-lite-chrome-btn"
-          data-orbitpm-aris-create-excel-tab=""
-          onClick={() => setTab('excel')}
-        >
-          {tk('aris.create.tab.excel', 'Excel')}
-        </button>
-      </div>
+          <button
+            ref={(node) => {
+              tabRefs.current.description = node
+            }}
+            type="button"
+            role="tab"
+            aria-selected={tab === 'description'}
+            tabIndex={tab === 'description' ? 0 : -1}
+            data-orbitpm-aris-create-description-tab=""
+            onClick={() => setTab('description')}
+            onKeyDown={(event) => handleTabKeyDown(event, 'description')}
+            style={segmentBtn(tab === 'description')}
+          >
+            {tk('aris.create.tab.description', 'Description')}
+          </button>
+          <button
+            ref={(node) => {
+              tabRefs.current.document = node
+            }}
+            type="button"
+            role="tab"
+            aria-selected={tab === 'document'}
+            tabIndex={tab === 'document' ? 0 : -1}
+            data-orbitpm-aris-create-document-tab=""
+            onClick={() => setTab('document')}
+            onKeyDown={(event) => handleTabKeyDown(event, 'document')}
+            style={segmentBtn(tab === 'document')}
+          >
+            {tk('aris.create.tab.document', 'PDF / Picture')}
+          </button>
+          <button
+            ref={(node) => {
+              tabRefs.current.excel = node
+            }}
+            type="button"
+            role="tab"
+            aria-selected={tab === 'excel'}
+            tabIndex={tab === 'excel' ? 0 : -1}
+            data-orbitpm-aris-create-excel-tab=""
+            onClick={() => setTab('excel')}
+            onKeyDown={(event) => handleTabKeyDown(event, 'excel')}
+            style={segmentBtn(tab === 'excel')}
+          >
+            {tk('aris.create.tab.excel', 'Excel')}
+          </button>
+        </div>
 
-      {tab === 'description' && (
-        <>
-          <label style={{ display: 'grid', gap: 4 }}>
-            <span style={{ fontSize: 12, color: 'var(--orbitpm-muted)' }}>{t('aris.ai.name')}</span>
-            <input
-              value={name}
-              onChange={(event) => setName(event.target.value)}
-              placeholder={t('aris.ai.namePlaceholder')}
-              style={inputStyle}
-            />
-          </label>
+        {tab !== 'excel' && !online && (
+          <div role="status" style={warnBox}>
+            {t('ai.offlineWarning')}
+          </div>
+        )}
 
-          <label style={{ display: 'grid', gap: 4 }}>
-            <span style={{ fontSize: 12, color: 'var(--orbitpm-muted)' }}>
-              {tk('aris.create.modelType', 'Model type')}
-            </span>
-            <select
-              value={modelType}
-              onChange={(event) => setModelType(event.target.value as ArisAiPromptModelType)}
-              style={inputStyle}
-            >
-              {MODEL_TYPES.map((value) => (
-                <option key={value} value={value}>
-                  {value}
-                </option>
-              ))}
-            </select>
-          </label>
+        {tab !== 'excel' && noKeysAtAll && (
+          <div style={infoBox}>
+            {t('ai.noKeysAtAll.note').split('{link}')[0]}
+            <button type="button" onClick={onOpenSettings} style={linkBtn}>
+              {t('ai.noKeysAtAll.link')}
+            </button>
+            {t('ai.noKeysAtAll.note').split('{link}')[1]}
+          </div>
+        )}
 
-          {providerControls}
+        {tab === 'description' && (
+          <>
+            <label style={labelStyle}>
+              <span style={labelText}>{t('aris.ai.name')}</span>
+              <input
+                value={name}
+                onChange={(event) => setName(event.target.value)}
+                placeholder={t('aris.ai.namePlaceholder')}
+                style={inputStyle}
+              />
+            </label>
 
-          <label style={{ display: 'grid', gap: 4 }}>
-            <span style={{ fontSize: 12, color: 'var(--orbitpm-muted)' }}>
-              {t('aris.ai.description')}
-            </span>
-            <textarea
-              value={description}
-              onChange={(event) => setDescription(event.target.value)}
-              placeholder={t('aris.ai.descriptionPlaceholder')}
-              rows={6}
-              style={{ ...inputStyle, minHeight: 120, resize: 'vertical' }}
-            />
-          </label>
+            {providerControls}
 
-          <div style={{ display: 'grid', gap: 6 }}>
-            <span style={{ fontSize: 12, color: 'var(--orbitpm-muted)' }}>
+            <label style={labelStyle}>
+              <span style={labelText}>{t('aris.ai.description')}</span>
+              <textarea
+                value={description}
+                onChange={(event) => setDescription(event.target.value)}
+                placeholder={t('aris.ai.descriptionPlaceholder')}
+                rows={6}
+                style={{ ...inputStyle, minHeight: 120, resize: 'vertical' }}
+              />
+            </label>
+
+            <div style={{ display: 'grid', gap: 6 }}>
+              <span style={labelText}>
+                {tk(
+                  'aris.create.attachments.label',
+                  'Optional attachment — a DOCX is read on this device, a PDF is sent to the provider'
+                )}
+              </span>
+              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                <button
+                  type="button"
+                  style={ghostBtn}
+                  data-orbitpm-aris-create-docx=""
+                  disabled={busy}
+                  onClick={() => docxInputRef.current?.click()}
+                >
+                  {tk('aris.create.docx.choose', 'Attach DOCX…')}
+                </button>
+                <button
+                  type="button"
+                  style={ghostBtn}
+                  data-orbitpm-aris-create-pdf=""
+                  disabled={busy}
+                  onClick={() => descriptionPdfInputRef.current?.click()}
+                >
+                  {tk('aris.create.pdf.choose', 'Attach PDF…')}
+                </button>
+                {(docx !== null || descriptionPdf !== null) && (
+                  <button
+                    type="button"
+                    style={removeBtn}
+                    data-orbitpm-aris-create-attachment-clear=""
+                    disabled={busy}
+                    onClick={() => {
+                      setDocx(null)
+                      setDescriptionPdf(null)
+                      setAttachmentNotice(null)
+                    }}
+                  >
+                    {tk('aris.create.attachment.remove', 'Remove attachment')}
+                  </button>
+                )}
+              </div>
+              <input
+                ref={docxInputRef}
+                type="file"
+                hidden
+                accept=".docx,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                onChange={(event) => {
+                  const [file] = Array.from(event.target.files ?? [])
+                  event.target.value = ''
+                  if (file) void pickDocx(file)
+                }}
+              />
+              <input
+                ref={descriptionPdfInputRef}
+                type="file"
+                hidden
+                accept="application/pdf,.pdf"
+                onChange={(event) => {
+                  const [file] = Array.from(event.target.files ?? [])
+                  event.target.value = ''
+                  if (file) pickAttachment(file, 'description-pdf')
+                }}
+              />
+            </div>
+
+            {submitControls}
+          </>
+        )}
+
+        {tab === 'document' && (
+          <>
+            <p style={{ margin: 0, fontSize: 12.5, lineHeight: 1.5 }}>
               {tk(
-                'aris.create.attachments.label',
-                'Optional attachment — a DOCX is read on this device, a PDF is sent to the provider'
+                'aris.create.document.body',
+                'Attach a PDF or a picture of a process drawing (PNG, JPEG, WebP; GIF only on verified routes). The file is sent to the selected provider only after you review the request and consent.'
               )}
-            </span>
+            </p>
+
+            <label style={labelStyle}>
+              <span style={labelText}>{t('aris.ai.name')}</span>
+              <input
+                value={name}
+                onChange={(event) => setName(event.target.value)}
+                placeholder={t('aris.ai.namePlaceholder')}
+                style={inputStyle}
+              />
+            </label>
+
+            {providerControls}
+
             <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
               <button
                 type="button"
-                className="orbitpm-lite-chrome-btn"
-                data-orbitpm-aris-create-docx=""
+                style={ghostBtn}
+                data-orbitpm-aris-create-document-open=""
                 disabled={busy}
-                onClick={() => docxInputRef.current?.click()}
+                onClick={() => documentInputRef.current?.click()}
               >
-                {tk('aris.create.docx.choose', 'Attach DOCX…')}
+                {tk('aris.create.document.choose', 'Choose PDF or picture…')}
               </button>
-              <button
-                type="button"
-                className="orbitpm-lite-chrome-btn"
-                data-orbitpm-aris-create-pdf=""
-                disabled={busy}
-                onClick={() => descriptionPdfInputRef.current?.click()}
-              >
-                {tk('aris.create.pdf.choose', 'Attach PDF…')}
-              </button>
-              {(docx !== null || descriptionPdf !== null) && (
+              {documentFile && (
                 <button
                   type="button"
-                  className="orbitpm-lite-chrome-btn"
-                  data-orbitpm-aris-create-attachment-clear=""
+                  style={removeBtn}
+                  data-orbitpm-aris-create-document-clear=""
                   disabled={busy}
                   onClick={() => {
-                    setDocx(null)
-                    setDescriptionPdf(null)
+                    setDocumentFile(null)
                     setAttachmentNotice(null)
                   }}
                 >
@@ -932,304 +1121,178 @@ export function ArisGenerationPanel({
               )}
             </div>
             <input
-              ref={docxInputRef}
+              ref={documentInputRef}
               type="file"
               hidden
-              accept=".docx,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+              accept="application/pdf,image/png,image/jpeg,image/webp,image/gif,.pdf,.png,.jpg,.jpeg,.webp,.gif"
               onChange={(event) => {
                 const [file] = Array.from(event.target.files ?? [])
                 event.target.value = ''
-                if (file) void pickDocx(file)
+                if (file) pickAttachment(file, 'document')
               }}
             />
-            <input
-              ref={descriptionPdfInputRef}
-              type="file"
-              hidden
-              accept="application/pdf,.pdf"
-              onChange={(event) => {
-                const [file] = Array.from(event.target.files ?? [])
-                event.target.value = ''
-                if (file) pickAttachment(file, 'description-pdf')
-              }}
-            />
-          </div>
-
-          <label style={{ display: 'flex', gap: 6, alignItems: 'flex-start', fontSize: 12.5 }}>
-            <input
-              type="checkbox"
-              data-orbitpm-aris-create-include-context=""
-              checked={includeContext}
-              onChange={(event) => setIncludeContext(event.target.checked)}
-            />
-            <span>{tk('aris.create.includeContext', 'Include relevant workspace context')}</span>
-          </label>
-
-          <label
-            style={{
-              display: 'flex',
-              gap: 6,
-              alignItems: 'flex-start',
-              fontSize: 12.5,
-              opacity: includeContext ? 1 : 0.6
-            }}
-          >
-            <input
-              type="checkbox"
-              data-orbitpm-aris-create-redact-names=""
-              checked={redactNames}
-              disabled={!includeContext}
-              onChange={(event) => setRedactNames(event.target.checked)}
-            />
-            <span>{tk('aris.create.redactNames', 'Redact names in workspace context')}</span>
-          </label>
-
-          {includeContext && (
-            <p style={{ margin: 0, fontSize: 11.5 }} data-orbitpm-aris-create-context-status="">
-              {context.includedModelIds.length > 0
-                ? tk(
-                    'aris.create.contextCount',
-                    '{count} relevant process(es) matched and will be included',
-                    { count: context.includedModelIds.length }
-                  )
-                : tk(
-                    'aris.create.contextNone',
-                    'No relevant process matched this description, so no workspace content will be sent.'
-                  )}
-            </p>
-          )}
-
-          {includeContext && context.chips.length > 0 && (
-            <div
-              data-orbitpm-aris-create-context-chips=""
-              style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}
-            >
-              {context.chips.map((chip) => (
-                <span
-                  key={chip.modelId}
-                  className="orbitpm-lite-chrome-btn"
-                  style={{ fontSize: 11 }}
-                >
-                  {chip.modelName}
-                </span>
-              ))}
-            </div>
-          )}
-
-          {reviewAndSubmit}
-        </>
-      )}
-
-      {tab === 'document' && (
-        <>
-          <p style={{ margin: 0, fontSize: 12.5, lineHeight: 1.5 }}>
-            {tk(
-              'aris.create.document.body',
-              'Attach a PDF or a picture of a process drawing (PNG, JPEG, WebP; GIF only on verified routes). The file is sent to the selected provider only after you review the request and consent.'
+            {documentFile === null && (
+              <p style={{ margin: 0, fontSize: 12, color: 'var(--orbitpm-muted)' }}>
+                {tk('aris.create.document.none', 'No document is attached yet.')}
+              </p>
             )}
-          </p>
 
-          <label style={{ display: 'grid', gap: 4 }}>
-            <span style={{ fontSize: 12, color: 'var(--orbitpm-muted)' }}>{t('aris.ai.name')}</span>
-            <input
-              value={name}
-              onChange={(event) => setName(event.target.value)}
-              placeholder={t('aris.ai.namePlaceholder')}
-              style={inputStyle}
-            />
-          </label>
+            <label style={labelStyle}>
+              <span style={labelText}>
+                {tk(
+                  'aris.create.document.hint',
+                  'Optional hint — model name, orientation, boundaries, or unclear symbols'
+                )}
+              </span>
+              <textarea
+                value={hint}
+                data-orbitpm-aris-create-hint=""
+                onChange={(event) => setHint(event.target.value)}
+                placeholder={tk(
+                  'aris.create.document.hintPlaceholder',
+                  'e.g. model the permit renewal flow; the diagram reads right to left; the dashed box is a note, not a step.'
+                )}
+                rows={3}
+                style={{ ...inputStyle, minHeight: 70, resize: 'vertical' }}
+              />
+            </label>
 
-          <label style={{ display: 'grid', gap: 4 }}>
-            <span style={{ fontSize: 12, color: 'var(--orbitpm-muted)' }}>
-              {tk('aris.create.modelType', 'Model type')}
-            </span>
-            <select
-              value={modelType}
-              onChange={(event) => setModelType(event.target.value as ArisAiPromptModelType)}
-              style={inputStyle}
-            >
-              {MODEL_TYPES.map((value) => (
-                <option key={value} value={value}>
-                  {value}
-                </option>
-              ))}
-            </select>
-          </label>
+            {submitControls}
+          </>
+        )}
 
-          {providerControls}
-
-          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-            <button
-              type="button"
-              className="orbitpm-lite-chrome-btn"
-              data-orbitpm-aris-create-document-open=""
-              disabled={busy}
-              onClick={() => documentInputRef.current?.click()}
-            >
-              {tk('aris.create.document.choose', 'Choose PDF or picture…')}
-            </button>
-            {documentFile && (
+        {tab === 'excel' && (
+          <>
+            <p style={{ margin: 0, fontSize: 12.5, lineHeight: 1.5 }}>
+              {tk(
+                'aris.excel.body',
+                'Fill in the official ARIS template and create native models with no AI at all.'
+              )}
+            </p>
+            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
               <button
                 type="button"
-                className="orbitpm-lite-chrome-btn"
-                data-orbitpm-aris-create-document-clear=""
-                disabled={busy}
-                onClick={() => {
-                  setDocumentFile(null)
-                  setAttachmentNotice(null)
-                }}
+                style={ghostBtn}
+                data-orbitpm-aris-template-blank=""
+                onClick={() => downloadTemplate('blank')}
               >
-                {tk('aris.create.attachment.remove', 'Remove attachment')}
+                {tk('aris.excel.downloadBlank', 'Download blank template')}
               </button>
-            )}
-          </div>
-          <input
-            ref={documentInputRef}
-            type="file"
-            hidden
-            accept="application/pdf,image/png,image/jpeg,image/webp,image/gif,.pdf,.png,.jpg,.jpeg,.webp,.gif"
-            onChange={(event) => {
-              const [file] = Array.from(event.target.files ?? [])
-              event.target.value = ''
-              if (file) pickAttachment(file, 'document')
-            }}
-          />
-          {documentFile === null && (
-            <p style={{ margin: 0, fontSize: 12, color: 'var(--orbitpm-muted)' }}>
-              {tk('aris.create.document.none', 'No document is attached yet.')}
-            </p>
-          )}
-
-          <label style={{ display: 'grid', gap: 4 }}>
-            <span style={{ fontSize: 12, color: 'var(--orbitpm-muted)' }}>
-              {tk(
-                'aris.create.document.hint',
-                'Optional hint — model name, orientation, boundaries, or unclear symbols'
-              )}
-            </span>
-            <textarea
-              value={hint}
-              data-orbitpm-aris-create-hint=""
-              onChange={(event) => setHint(event.target.value)}
-              placeholder={tk(
-                'aris.create.document.hintPlaceholder',
-                'e.g. model the permit renewal flow; the diagram reads right to left; the dashed box is a note, not a step.'
-              )}
-              rows={3}
-              style={{ ...inputStyle, minHeight: 70, resize: 'vertical' }}
+              <button
+                type="button"
+                style={ghostBtn}
+                data-orbitpm-aris-template-example=""
+                onClick={() => downloadTemplate('example')}
+              >
+                {tk('aris.excel.downloadExample', 'Download example template')}
+              </button>
+              <button
+                type="button"
+                className="orbitpm-lite-primary"
+                data-orbitpm-aris-workbook-open=""
+                disabled={busy}
+                onClick={() => workbookInputRef.current?.click()}
+              >
+                {tk('aris.excel.create', 'Create from workbook…')}
+              </button>
+            </div>
+            <input
+              ref={workbookInputRef}
+              type="file"
+              hidden
+              accept=".xlsx"
+              onChange={(event) => {
+                const [file] = Array.from(event.target.files ?? [])
+                event.target.value = ''
+                if (file) void handleWorkbook(file)
+              }}
             />
-          </label>
-
-          {reviewAndSubmit}
-        </>
-      )}
-
-      {tab === 'excel' && (
-        <>
-          <p style={{ margin: 0, fontSize: 12.5, lineHeight: 1.5 }}>
-            {tk(
-              'aris.excel.body',
-              'Fill in the official ARIS template and create native models with no AI at all.'
+            {excelIssues.length > 0 && (
+              <ul data-orbitpm-aris-excel-issues="" style={listStyle}>
+                {excelIssues.slice(0, 50).map((line, index) => (
+                  <li key={`${index}:${line}`}>{line}</li>
+                ))}
+              </ul>
             )}
+          </>
+        )}
+
+        {attachmentNotice !== null && tab !== 'excel' && (
+          <p style={{ margin: 0, fontSize: 12 }} data-orbitpm-aris-create-attachment-notice="">
+            {attachmentNotice}
           </p>
-          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-            <button
-              type="button"
-              className="orbitpm-lite-chrome-btn"
-              data-orbitpm-aris-template-blank=""
-              onClick={() => downloadTemplate('blank')}
-            >
-              {tk('aris.excel.downloadBlank', 'Download blank template')}
-            </button>
-            <button
-              type="button"
-              className="orbitpm-lite-chrome-btn"
-              data-orbitpm-aris-template-example=""
-              onClick={() => downloadTemplate('example')}
-            >
-              {tk('aris.excel.downloadExample', 'Download example template')}
-            </button>
-            <button
-              type="button"
-              className="orbitpm-lite-primary"
-              data-orbitpm-aris-workbook-open=""
-              disabled={busy}
-              onClick={() => workbookInputRef.current?.click()}
-            >
-              {tk('aris.excel.create', 'Create from workbook…')}
-            </button>
+        )}
+
+        {selectionError !== null && (
+          <div role="alert" style={errorBox} data-orbitpm-aris-create-selection-error="">
+            <span>{selectionError}</span>
           </div>
-          <input
-            ref={workbookInputRef}
-            type="file"
-            hidden
-            accept=".xlsx"
-            onChange={(event) => {
-              const [file] = Array.from(event.target.files ?? [])
-              event.target.value = ''
-              if (file) void handleWorkbook(file)
-            }}
-          />
-          {excelIssues.length > 0 && (
-            <ul data-orbitpm-aris-excel-issues="" style={listStyle}>
-              {excelIssues.slice(0, 50).map((line, index) => (
+        )}
+
+        {rejections.length > 0 && (
+          <div role="alert" style={errorBox}>
+            <ul data-orbitpm-aris-create-rejections="" style={listStyle}>
+              {rejections.map((line, index) => (
                 <li key={`${index}:${line}`}>{line}</li>
               ))}
             </ul>
-          )}
-        </>
-      )}
+          </div>
+        )}
 
-      {attachmentNotice !== null && tab !== 'excel' && (
-        <p style={{ margin: 0, fontSize: 12 }} data-orbitpm-aris-create-attachment-notice="">
-          {attachmentNotice}
-        </p>
-      )}
+        {warnings.length > 0 && (
+          <div style={warnBox}>
+            <ul data-orbitpm-aris-create-warnings="" style={listStyle}>
+              {warnings.map((line, index) => (
+                <li key={`${index}:${line}`}>{line}</li>
+              ))}
+            </ul>
+          </div>
+        )}
 
-      {rejections.length > 0 && (
-        <ul data-orbitpm-aris-create-rejections="" style={listStyle}>
-          {rejections.map((line, index) => (
-            <li key={`${index}:${line}`}>{line}</li>
+        {recovery !== null && (
+          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+            <button
+              type="button"
+              style={ghostBtn}
+              data-orbitpm-aris-create-recovery=""
+              onClick={() => onDownloadFile(recovery.fileName, recovery.bytes, recovery.mimeType)}
+            >
+              {tk('aris.create.recovery.download', 'Download the generated AML ({name})', {
+                name: recovery.fileName
+              })}
+            </button>
+            <button
+              type="button"
+              style={ghostBtn}
+              data-orbitpm-aris-create-recovery-discard=""
+              onClick={() => setRecovery(null)}
+            >
+              {tk('aris.create.recovery.discard', 'Discard the generated AML')}
+            </button>
+          </div>
+        )}
+
+        {status &&
+          (aiCreated ? (
+            <div role="status" style={okBox}>
+              <span>{status}</span>
+              {onContinueInChat && (
+                <button
+                  type="button"
+                  data-orbitpm-aris-create-continue-chat=""
+                  onClick={onContinueInChat}
+                  style={{ ...ghostBtn, alignSelf: 'flex-start' }}
+                >
+                  {t('ai.continueInChat')}
+                </button>
+              )}
+            </div>
+          ) : (
+            <p role="status" style={{ margin: 0, fontSize: 12 }}>
+              {status}
+            </p>
           ))}
-        </ul>
-      )}
-
-      {warnings.length > 0 && (
-        <ul data-orbitpm-aris-create-warnings="" style={listStyle}>
-          {warnings.map((line, index) => (
-            <li key={`${index}:${line}`}>{line}</li>
-          ))}
-        </ul>
-      )}
-
-      {recovery !== null && (
-        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-          <button
-            type="button"
-            className="orbitpm-lite-chrome-btn"
-            data-orbitpm-aris-create-recovery=""
-            onClick={() => onDownloadFile(recovery.fileName, recovery.bytes, recovery.mimeType)}
-          >
-            {tk('aris.create.recovery.download', 'Download the generated AML ({name})', {
-              name: recovery.fileName
-            })}
-          </button>
-          <button
-            type="button"
-            className="orbitpm-lite-chrome-btn"
-            data-orbitpm-aris-create-recovery-discard=""
-            onClick={() => setRecovery(null)}
-          >
-            {tk('aris.create.recovery.discard', 'Discard the generated AML')}
-          </button>
-        </div>
-      )}
-
-      {status && (
-        <p role="status" style={{ margin: 0, fontSize: 12 }}>
-          {status}
-        </p>
-      )}
+      </div>
     </section>
   )
 }

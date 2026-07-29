@@ -212,6 +212,10 @@ function makeDirectoryAdapter(
       label: 'AnimalWF',
       capabilities: {
         multipleFiles: true,
+        directories: true,
+        rename: true,
+        move: true,
+        remove: true,
         directoryHandle: true,
         writable: false,
         durable: true,
@@ -572,35 +576,6 @@ describe('ArisApp production shell', () => {
     )
   })
 
-  it('feeds the open sources’ digests to the Create panel’s §16.2 workspace context', async () => {
-    // The Description tab ranks `digests` to offer relevant workspace context. The shell computes
-    // them for the assistant; if it does not also hand them to the Create panel the control
-    // renders but can never match anything, so the feature is inert. Ranking a real opened source
-    // is the only assertion that can tell the two apart.
-    render(<ArisApp />)
-    await openAml()
-
-    const panel = document.querySelector<HTMLElement>('[data-orbitpm-aris-create]')!
-    fireEvent.click(
-      panel.querySelector<HTMLInputElement>('[data-orbitpm-aris-create-include-context]')!
-    )
-    fireEvent.change(panel.querySelector<HTMLTextAreaElement>('textarea')!, {
-      target: { value: 'How does the intake process handle a request?' }
-    })
-
-    await waitFor(() =>
-      expect(
-        panel.querySelector('[data-orbitpm-aris-create-context-status]')?.textContent
-      ).toContain('2 relevant process')
-    )
-    // Both models of the opened export are ranked in, named from their own AT_NAME.
-    const chips = panel.querySelectorAll('[data-orbitpm-aris-create-context-chips] span')
-    expect([...chips].map((chip) => chip.textContent).sort()).toEqual([
-      'Intake process',
-      'Review process'
-    ])
-  })
-
   it('rejects BPMN entries surfaced through remembered directory workspace browsing while still opening AML peers', async () => {
     const disguisedBpmnXml =
       '<definitions xmlns="http://www.omg.org/spec/BPMN/20100524/MODEL"><process id="P" /></definitions>'
@@ -620,20 +595,48 @@ describe('ArisApp production shell', () => {
 
     render(<ArisApp />)
 
-    fireEvent.click(await screen.findByRole('button', { name: /legacy\/process\.bpmn/i }))
+    // The flat pills are gone: the three files live under a synthesized `legacy`
+    // folder in the tree, which must be expanded before its files are clickable.
+    fireEvent.click(await screen.findByRole('treeitem', { name: 'legacy' }))
+
+    fireEvent.click(await screen.findByRole('treeitem', { name: 'process.bpmn' }))
     expect(
       await screen.findByText('This ARIS-only build accepts ARIS AML/XML exports.')
     ).not.toBeNull()
     expect(screen.queryByRole('tab', { name: 'process.bpmn' })).toBeNull()
     expect(document.querySelector('[data-orbitpm-aris-canvas]')).toBeNull()
 
-    fireEvent.click(screen.getByRole('button', { name: /legacy\/camouflaged\.xml/i }))
+    fireEvent.click(screen.getByRole('treeitem', { name: 'camouflaged.xml' }))
     expect(screen.queryByRole('tab', { name: 'camouflaged.xml' })).toBeNull()
     expect(document.querySelector('[data-orbitpm-aris-canvas]')).toBeNull()
 
-    fireEvent.click(screen.getByRole('button', { name: /legacy\/process\.aml/i }))
+    fireEvent.click(screen.getByRole('treeitem', { name: 'process.aml' }))
     expect(await screen.findByRole('tab', { name: 'process.aml' })).not.toBeNull()
     await waitFor(() => expect(canvasElement('ObjOcc.Start')).not.toBeNull())
+  })
+
+  it('renders the workspace as a folder tree with folders before files and .orbitpm hidden', async () => {
+    mockState.directoryPickerSupported = true
+    mockState.rememberedHandle = { name: 'AnimalWF' } as FileSystemDirectoryHandle
+    mockState.directoryAdapter = makeDirectoryAdapter(
+      [
+        workspaceFile('zulu.aml'),
+        workspaceFile('alpha/first.aml'),
+        workspaceFile('.orbitpm/aris/x/manifest.json')
+      ],
+      {}
+    )
+
+    render(<ArisApp />)
+
+    // The reserved .orbitpm subtree is never surfaced as a tree row.
+    await waitFor(() => expect(screen.queryByRole('treeitem', { name: 'alpha' })).not.toBeNull())
+    expect(screen.queryByRole('treeitem', { name: 'manifest.json' })).toBeNull()
+    expect(screen.queryByRole('treeitem', { name: 'aris' })).toBeNull()
+
+    // Folders sort ahead of files at the workspace root.
+    const rootRows = screen.getAllByRole('treeitem').map((row) => row.getAttribute('aria-label'))
+    expect(rootRows.indexOf('alpha')).toBeLessThan(rootRows.indexOf('zulu.aml'))
   })
 
   it('keeps accepting AML files during mixed import batches after rejecting BPMN files', async () => {
@@ -1027,7 +1030,8 @@ describe('ArisGenerationPanel — create with AI (plan section 16)', () => {
     fireEvent.change(description, {
       target: { value: 'A request is received, an officer checks it, the request is checked.' }
     })
-    fireEvent.click(document.querySelector<HTMLInputElement>('[data-orbitpm-aris-create-consent]')!)
+    // The consent checkbox was removed from the Generate-with-AI create path
+    // (authorized product change); description + submit is the whole flow now.
     fireEvent.click(document.querySelector<HTMLButtonElement>('[data-orbitpm-aris-create-submit]')!)
   }
 

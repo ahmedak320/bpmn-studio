@@ -4,6 +4,7 @@ import { ArisAssistantDrawer } from './ArisAssistantDrawer'
 import { ICON_DATA_URI } from './branding/icon'
 import { ProcessTabList, processTabId, processTabPanelId } from './common/ProcessTabList'
 import { PaneResizer, usePaneWidth } from './common/PaneResizer'
+import { PromptProvider } from './common/prompt'
 import {
   classifyPickerError,
   directoryPickerSupported,
@@ -29,6 +30,13 @@ import { sha256Hex } from './workspace/adapters/hash'
 import { OpfsWorkspaceAdapter, opfsSupported } from './workspace/adapters/opfs'
 import { SingleFileWorkspaceAdapter } from './workspace/adapters/singleFile'
 import { classifyImportBoundarySource } from './workspace/importDrop'
+import {
+  buildLiteTreeFromEntries,
+  EMPTY_PROCESS_GRAPH,
+  EMPTY_PROCESS_INDEX
+} from './workspace/liteTreeFromEntries'
+import { buildProcessHierarchy } from './workspace/processHierarchy'
+import type { ArisExplorerTabsController } from './aris/shell/arisExplorerActions'
 import { createArisXmlSourcePackage, type ArisXmlSourcePackage } from './aris/source/sourcePackage'
 import {
   ArisExplorerPane,
@@ -264,6 +272,12 @@ export default function ArisApp(): JSX.Element {
   const [_keysVersion, setKeysVersion] = useState(0)
   const [workspaceAdapter, setWorkspaceAdapter] = useState<WorkspaceAdapter | null>(null)
   const [workspaceSources, setWorkspaceSources] = useState<WorkspaceEntry[]>([])
+  /**
+   * The unfiltered `adapter.list()` result (directory entries included). The
+   * folder tree is built from this; `workspaceSources` stays filtered to the
+   * visible ARIS/BPMN files the flat single-file block and footer count show.
+   */
+  const [workspaceEntries, setWorkspaceEntries] = useState<WorkspaceEntry[]>([])
   const [tabs, setTabs] = useState<ArisTab[]>([])
   const [activeKey, setActiveKey] = useState<string | null>(null)
   const [rememberedName, setRememberedName] = useState<string | undefined>(undefined)
@@ -320,12 +334,84 @@ export default function ArisApp(): JSX.Element {
     setToasts((current) => current.filter((toast) => toast.id !== id))
   }, [])
 
+  const multiFile = workspaceAdapter?.storage.capabilities.multipleFiles === true
+
+  // The physical folder tree for directory/OPFS workspaces. `buildProcessHierarchy`
+  // over an empty index/graph collapses to a pure physical tree — models are only
+  // known for OPENED sources, so no eager parse of every file is forced here.
+  const explorerTree = useMemo(
+    () =>
+      multiFile
+        ? buildLiteTreeFromEntries(workspaceEntries, rootLabel(mode, workspaceAdapter))
+        : null,
+    [multiFile, mode, workspaceAdapter, workspaceEntries]
+  )
+  const explorerHierarchy = useMemo(
+    () =>
+      explorerTree
+        ? buildProcessHierarchy(explorerTree, EMPTY_PROCESS_INDEX, EMPTY_PROCESS_GRAPH)
+        : null,
+    [explorerTree]
+  )
+
+  // Rename/move keep an open tab pointing at the new path WITHOUT changing
+  // `tab.key` (a key change remounts the canvas and destroys undo history);
+  // delete closes any tab at or under the removed node and repairs activeKey the
+  // way ProcessTabList's onClose does.
+  const closeTabsUnder = useCallback((path: string, kind: 'file' | 'directory') => {
+    const matches = (relPath: string | null): boolean =>
+      relPath !== null &&
+      (kind === 'directory' ? relPath === path || relPath.startsWith(`${path}/`) : relPath === path)
+    let closedKeys = new Set<string>()
+    let neighborKey: string | null = null
+    setTabs((current) => {
+      const firstIndex = current.findIndex((tab) => matches(tab.relPath))
+      if (firstIndex === -1) return current
+      const remaining = current.filter((tab) => !matches(tab.relPath))
+      closedKeys = new Set(current.filter((tab) => matches(tab.relPath)).map((tab) => tab.key))
+      neighborKey =
+        remaining.length === 0
+          ? null
+          : (remaining[Math.min(firstIndex, remaining.length - 1)]?.key ??
+            remaining[0]?.key ??
+            null)
+      return remaining
+    })
+    setActiveKey((current) => (current !== null && closedKeys.has(current) ? neighborKey : current))
+  }, [])
+
+  const remapTabs = useCallback((from: string, to: string, kind: 'file' | 'directory') => {
+    setTabs((current) => {
+      let changed = false
+      const next = current.map((tab) => {
+        if (tab.relPath === null) return tab
+        let nextRel: string | null = null
+        if (tab.relPath === from) nextRel = to
+        else if (kind === 'directory' && tab.relPath.startsWith(`${from}/`)) {
+          nextRel = to + tab.relPath.slice(from.length)
+        }
+        if (nextRel === null) return tab
+        changed = true
+        return { ...tab, relPath: nextRel, title: nextRel.split('/').pop() ?? tab.title }
+      })
+      return changed ? next : current
+    })
+  }, [])
+
+  const explorerTabsController = useMemo<ArisExplorerTabsController>(
+    () => ({ closeUnder: closeTabsUnder, remap: remapTabs }),
+    [closeTabsUnder, remapTabs]
+  )
+
   const refreshWorkspaceSources = useCallback(async (adapter: WorkspaceAdapter) => {
     if (!adapter.storage.capabilities.multipleFiles) {
-      setWorkspaceSources(await adapter.list())
+      const listed = await adapter.list()
+      setWorkspaceEntries(listed)
+      setWorkspaceSources(listed)
       return
     }
     const listed = await adapter.list('', { maxEntries: 2_500, maxDepth: 32 })
+    setWorkspaceEntries(listed)
     setWorkspaceSources(pushSortedSources(listed.filter(isVisibleWorkspaceSource)))
   }, [])
 
@@ -425,6 +511,13 @@ export default function ArisApp(): JSX.Element {
     async (path: string) => {
       const adapter = workspaceAdapter
       if (!adapter) return
+      // A source is identified by its workspace relPath: reopening one that is
+      // already open re-activates that tab (its key never changed on rename).
+      const existing = tabs.find((tab) => tab.relPath === path)
+      if (existing) {
+        setActiveKey(existing.key)
+        return
+      }
       try {
         const snapshot = await adapter.read(path)
         await openImportedBytes(
@@ -437,7 +530,28 @@ export default function ArisApp(): JSX.Element {
         pushToast(String(openError), 'error')
       }
     },
-    [openImportedBytes, pushToast, workspaceAdapter]
+    [openImportedBytes, pushToast, tabs, workspaceAdapter]
+  )
+
+  const handleRefreshWorkspace = useCallback(async () => {
+    if (workspaceAdapter) await refreshWorkspaceSources(workspaceAdapter)
+  }, [refreshWorkspaceSources, workspaceAdapter])
+
+  const handleOpenFileFocus = useCallback(
+    (relPath: string) => {
+      void handleOpenWorkspaceFile(relPath)
+      if (responsiveMode !== 'docked') setExplorerOpen(false)
+    },
+    [handleOpenWorkspaceFile, responsiveMode]
+  )
+
+  // Blank-model creation stub; Lane L2d replaces only this body. `_folderRel` is
+  // '' for the workspace root.
+  const handleNewModel = useCallback(
+    (_folderRel: string) => {
+      pushToast(t('aris.placeholder.newProcessUnavailable'))
+    },
+    [pushToast]
   )
 
   const handleOpenFolder = useCallback(async () => {
@@ -796,7 +910,7 @@ export default function ArisApp(): JSX.Element {
   )
 
   return (
-    <>
+    <PromptProvider>
       <input
         ref={openFileInputRef}
         type="file"
@@ -897,10 +1011,20 @@ export default function ArisApp(): JSX.Element {
               onRejectUnsupported={() => pushToast(t('toast.import.arisOnly'))}
               onOpenAssistant={() => setAssistantOpen(true)}
               workspaceId={workspaceAdapter?.id ?? null}
-              digests={assistantDigests}
               onCreateModel={handleCreateModel}
               onDownloadFile={downloadBytes}
               onOpenSettings={() => setSettingsOpen(true)}
+              multiFile={multiFile}
+              adapter={workspaceAdapter}
+              tree={explorerTree}
+              hierarchy={explorerHierarchy}
+              activePath={activeTab?.relPath ?? null}
+              rootName={rootLabel(mode, workspaceAdapter)}
+              tabsController={explorerTabsController}
+              onRefreshWorkspace={handleRefreshWorkspace}
+              onOpenFileFocus={handleOpenFileFocus}
+              onNewModel={handleNewModel}
+              onToast={pushToast}
             />
           </ResponsiveDrawer>
 
@@ -1087,6 +1211,6 @@ export default function ArisApp(): JSX.Element {
         onCancel={() => setPreparedImport(null)}
       />
       <Toaster toasts={toasts} onDismiss={dismissToast} />
-    </>
+    </PromptProvider>
   )
 }
