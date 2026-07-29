@@ -22,7 +22,7 @@ import type {
   ArisObjectDefinition,
   ArisObjectOccurrence,
   ArisPoint,
-  ArisWorkingDocument,
+  ArisWorkingDocument
 } from '../model/types'
 
 /** Every selectable thing the details layer can reason about. */
@@ -128,11 +128,7 @@ export interface ArisDetailsAdapterOptions {
   readonly attachments?: ReadonlyMap<string, ArisDetailsAttachment>
 }
 
-const CONTROL_FLOW_TYPES = new Set([
-  'OT_FUNC',
-  'OT_EVT',
-  'OT_RULE',
-])
+const CONTROL_FLOW_TYPES = new Set(['OT_FUNC', 'OT_EVT', 'OT_RULE'])
 
 function isControlFlowObjectType(type: string): boolean {
   return CONTROL_FLOW_TYPES.has(type)
@@ -156,7 +152,7 @@ function buildModelDetails(
         definitionId: def.id,
         type: def.type,
         symbol: occ.symbol,
-        bounds: occ.bounds,
+        bounds: occ.bounds
       })
     }
   }
@@ -190,7 +186,7 @@ function buildModelDetails(
       sourceOccurrenceId: cxn.sourceOccurrenceId,
       targetOccurrenceId: cxn.targetOccurrenceId,
       satelliteDefinitionId: satelliteDef.id,
-      satelliteOccurrenceId: satelliteOcc.id,
+      satelliteOccurrenceId: satelliteOcc.id
     }
 
     satellites.set(satelliteOcc.id, {
@@ -203,7 +199,7 @@ function buildModelDetails(
       symbol: satelliteOcc.symbol,
       names: satelliteDef.names.values,
       bounds: satelliteOcc.bounds,
-      attributes: attributeMap(satelliteDef.attributes),
+      attributes: attributeMap(satelliteDef.attributes)
     })
   }
 
@@ -217,11 +213,13 @@ function buildModelDetails(
     model,
     controlFlowNodes,
     satellites,
-    attachments: modelAttachments,
+    attachments: modelAttachments
   }
 }
 
-function attributeMap(attrs: readonly ArisAttribute[]): Readonly<Record<string, Readonly<Record<string, string>>>> {
+function attributeMap(
+  attrs: readonly ArisAttribute[]
+): Readonly<Record<string, Readonly<Record<string, string>>>> {
   const out: Record<string, Record<string, string>> = {}
   for (const attr of attrs) {
     const localeMap: Record<string, string> = {}
@@ -233,7 +231,11 @@ function attributeMap(attrs: readonly ArisAttribute[]): Readonly<Record<string, 
   return out
 }
 
-function classifyRelation(sourceType: string, targetType: string, connectionType: string): ArisMetadataCategory {
+function classifyRelation(
+  sourceType: string,
+  targetType: string,
+  connectionType: string
+): ArisMetadataCategory {
   const [a, b] = [sourceType, targetType]
 
   if (a === 'OT_FUNC' && b === 'OT_APPL_SYS') return 'system'
@@ -249,10 +251,14 @@ function classifyRelation(sourceType: string, targetType: string, connectionType
   if (a === 'OT_REQUIREMENT' && b === 'OT_FUNC') return 'requirement'
 
   if (a === 'OT_FUNC' && (b === 'OT_INFO_CARR' || b === 'OT_ENT_TYPE')) {
-    return connectionType === 'CT_HAS_OUT' || connectionType === 'CT_CRT_OUT_TO' ? 'output' : 'input'
+    return connectionType === 'CT_HAS_OUT' || connectionType === 'CT_CRT_OUT_TO'
+      ? 'output'
+      : 'input'
   }
   if ((a === 'OT_INFO_CARR' || a === 'OT_ENT_TYPE') && b === 'OT_FUNC') {
-    return connectionType === 'CT_HAS_OUT' || connectionType === 'CT_CRT_OUT_TO' ? 'output' : 'input'
+    return connectionType === 'CT_HAS_OUT' || connectionType === 'CT_CRT_OUT_TO'
+      ? 'output'
+      : 'input'
   }
 
   if ((a === 'OT_PERS' || a === 'OT_PERS_TYPE') && b === 'OT_FUNC') {
@@ -295,7 +301,7 @@ export function adaptWorkingDocument(
     occurrences,
     connectionOccurrences: new Map(allConnections),
     revision: document.revision,
-    attachments,
+    attachments
   }
 }
 

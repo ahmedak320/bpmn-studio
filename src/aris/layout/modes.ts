@@ -39,14 +39,18 @@ function rectOf(node: ArisLayoutNodeInput): ArisLayoutRect {
  * rectangle. Used only to attach a connector when the imported record carried
  * no route points at all.
  */
-export function boundaryPointTowards(rect: ArisLayoutRect, towards: ArisLayoutPoint): ArisLayoutPoint {
+export function boundaryPointTowards(
+  rect: ArisLayoutRect,
+  towards: ArisLayoutPoint
+): ArisLayoutPoint {
   const center = rectCenter(rect)
   const dx = towards.x - center.x
   const dy = towards.y - center.y
   if (Math.abs(dx) < LAYOUT_EPSILON && Math.abs(dy) < LAYOUT_EPSILON) {
     return { x: center.x, y: rect.y }
   }
-  const scaleX = Math.abs(dx) < LAYOUT_EPSILON ? Number.POSITIVE_INFINITY : rect.width / 2 / Math.abs(dx)
+  const scaleX =
+    Math.abs(dx) < LAYOUT_EPSILON ? Number.POSITIVE_INFINITY : rect.width / 2 / Math.abs(dx)
   const scaleY =
     Math.abs(dy) < LAYOUT_EPSILON ? Number.POSITIVE_INFINITY : rect.height / 2 / Math.abs(dy)
   const scale = Math.min(scaleX, scaleY)

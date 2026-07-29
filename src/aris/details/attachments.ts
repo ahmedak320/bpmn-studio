@@ -135,10 +135,7 @@ function textHead(bytes: Uint8Array, max: number): string {
  * - Falls back to a safe default if the result is empty.
  */
 export function sanitizeDisplayName(raw: string): string {
-  const withoutPath = raw
-    .replace(/\\/g, '/')
-    .split('/')
-    .pop() ?? raw
+  const withoutPath = raw.replace(/\\/g, '/').split('/').pop() ?? raw
   const withoutControl = withoutPath.replace(/[\x00-\x1f\x7f]/g, '')
   const collapsed = withoutControl.replace(/\s+/g, ' ').trim()
   const safe = collapsed.replace(/[\.]{2,}/g, '.')
@@ -202,7 +199,9 @@ function concatBlobs(blobs: readonly ArisDetailsAttachmentBlob[]): Uint8Array {
  * Never executes OLE content. The returned `sha256` is computed over the exact
  * concatenated bytes.
  */
-export async function scanAttachment(attachment: ArisDetailsAttachment): Promise<ArisAttachmentScanResult> {
+export async function scanAttachment(
+  attachment: ArisDetailsAttachment
+): Promise<ArisAttachmentScanResult> {
   const bytes = concatBlobs(attachment.blobs)
   const detectedMime = detectMimeFromContent(bytes)
   const isOle = isOleCompoundDocument(bytes)
@@ -214,7 +213,7 @@ export async function scanAttachment(attachment: ArisDetailsAttachment): Promise
     size: bytes.length,
     safeToPreview: isSafeToPreview(bytes, detectedMime),
     isOle,
-    sha256: await sha256(bytes),
+    sha256: await sha256(bytes)
   }
 }
 
@@ -243,7 +242,7 @@ export function prepareAttachmentDownload(
   return {
     filename: sanitizeDisplayName(attachment.displayName),
     mimeType: scan.detectedMime,
-    bytes,
+    bytes
   }
 }
 

@@ -17,7 +17,9 @@ describe('Section 12.4 layout modes', () => {
       expect(geometry.elements.get(element.id)?.bounds).toEqual(element.sourceBounds)
     }
     for (const connection of doc.connections) {
-      expect(geometry.connections.get(connection.id)?.routePoints).toEqual(connection.sourceRoutePoints)
+      expect(geometry.connections.get(connection.id)?.routePoints).toEqual(
+        connection.sourceRoutePoints
+      )
     }
   })
 

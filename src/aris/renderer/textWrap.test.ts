@@ -19,7 +19,11 @@ describe('wrapText', () => {
   })
 
   it('treats a null max width as unconstrained (one line per hard break)', () => {
-    const { lines, wrapped } = wrapText('A very long line that would otherwise wrap many times over', null, 13)
+    const { lines, wrapped } = wrapText(
+      'A very long line that would otherwise wrap many times over',
+      null,
+      13
+    )
     expect(lines).toHaveLength(1)
     expect(wrapped).toBe(false)
   })

@@ -63,7 +63,15 @@ describe('command system', () => {
         sourceOccurrenceId: 'occ1',
         targetOccurrenceId: 'does-not-exist',
         route: [],
-        style: { color: null, width: null, lineStyle: null, srcArrow: null, tgtArrow: null, fontStyleSheetId: null, zOrder: null },
+        style: {
+          color: null,
+          width: null,
+          lineStyle: null,
+          srcArrow: null,
+          tgtArrow: null,
+          fontStyleSheetId: null,
+          zOrder: null
+        },
         rawAttributes: {}
       } satisfies ArisConnectionOccurrence,
       origin: 'user'
@@ -105,8 +113,18 @@ describe('command system', () => {
       baseRevision: 0,
       kind: 'setLocalizedName',
       affectedSourceIds: ['od1'],
-      before: { ownerKind: 'objectDefinition', ownerId: 'od1', localeId: 'de-DE', value: 'Genehmigen' },
-      after: { ownerKind: 'objectDefinition', ownerId: 'od1', localeId: 'de-DE', value: 'Freigeben' },
+      before: {
+        ownerKind: 'objectDefinition',
+        ownerId: 'od1',
+        localeId: 'de-DE',
+        value: 'Genehmigen'
+      },
+      after: {
+        ownerKind: 'objectDefinition',
+        ownerId: 'od1',
+        localeId: 'de-DE',
+        value: 'Freigeben'
+      },
       origin: 'user'
     }
     const next = stack.apply(command)
@@ -151,12 +169,24 @@ describe('command system', () => {
     expect(afterApply.undoStack).toHaveLength(1)
 
     const m1 = afterApply.document.models.get('m1')!
-    expect(m1.occurrences.find((o) => o.id === 'occ1')!.bounds).toEqual({ x: 1, y: 2, width: 100, height: 50 })
-    expect(m1.occurrences.find((o) => o.id === 'occ2')!.bounds).toEqual({ x: 3, y: 4, width: 100, height: 50 })
+    expect(m1.occurrences.find((o) => o.id === 'occ1')!.bounds).toEqual({
+      x: 1,
+      y: 2,
+      width: 100,
+      height: 50
+    })
+    expect(m1.occurrences.find((o) => o.id === 'occ2')!.bounds).toEqual({
+      x: 3,
+      y: 4,
+      width: 100,
+      height: 50
+    })
 
     const afterUndo = afterApply.undo()
     expect(afterUndo.document.revision).toBe(0)
-    expect(afterUndo.document.models.get('m1')!.occurrences.find((o) => o.id === 'occ1')!.bounds.x).toBe(10)
+    expect(
+      afterUndo.document.models.get('m1')!.occurrences.find((o) => o.id === 'occ1')!.bounds.x
+    ).toBe(10)
   })
 })
 
@@ -181,8 +211,18 @@ describe('command persistence and replay', () => {
       baseRevision: 1,
       kind: 'setLocalizedName',
       affectedSourceIds: ['od1'],
-      before: { ownerKind: 'objectDefinition', ownerId: 'od1', localeId: 'de-DE', value: 'Genehmigen' },
-      after: { ownerKind: 'objectDefinition', ownerId: 'od1', localeId: 'de-DE', value: 'Freigegeben' },
+      before: {
+        ownerKind: 'objectDefinition',
+        ownerId: 'od1',
+        localeId: 'de-DE',
+        value: 'Genehmigen'
+      },
+      after: {
+        ownerKind: 'objectDefinition',
+        ownerId: 'od1',
+        localeId: 'de-DE',
+        value: 'Freigegeben'
+      },
       origin: 'user'
     })
 
@@ -201,7 +241,11 @@ describe('command persistence and replay', () => {
 describe('undo/redo preserves original bytes', () => {
   it('leaves imported source bytes and sha256 unchanged', async () => {
     const bytes = new TextEncoder().encode(SYNTHETIC_AML)
-    const sourcePackage = await createArisXmlSourcePackage({ name: 'synthetic.aml', relPath: null, bytes })
+    const sourcePackage = await createArisXmlSourcePackage({
+      name: 'synthetic.aml',
+      relPath: null,
+      bytes
+    })
     const document = buildFromSource(sourcePackage.index)
     const idGenerator = createCommandIdGenerator('bytes')
     let stack = createCommandStack(document, { idGenerator })
@@ -284,7 +328,11 @@ describe('property: arbitrary apply/undo/redo sequences', () => {
           baseRevision: i,
           kind: 'resizeOccurrence',
           affectedSourceIds: [occurrenceId],
-          before: { occurrenceId, width: occurrence.bounds.width, height: occurrence.bounds.height },
+          before: {
+            occurrenceId,
+            width: occurrence.bounds.width,
+            height: occurrence.bounds.height
+          },
           after: {
             occurrenceId,
             width: Math.floor(rand() * 200),
@@ -340,4 +388,3 @@ describe('property: arbitrary apply/undo/redo sequences', () => {
     expect(stack.document).toEqual(postApply)
   })
 })
-

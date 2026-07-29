@@ -96,10 +96,16 @@ function componentSeparators(
     if (node.kind !== 'control-flow') continue
     const min = orientation === 'top-to-bottom' ? node.rect.x : node.rect.y
     const max =
-      orientation === 'top-to-bottom' ? node.rect.x + node.rect.width : node.rect.y + node.rect.height
+      orientation === 'top-to-bottom'
+        ? node.rect.x + node.rect.width
+        : node.rect.y + node.rect.height
     const current = spans.get(node.componentIndex)
     if (!current) spans.set(node.componentIndex, { min, max })
-    else spans.set(node.componentIndex, { min: Math.min(current.min, min), max: Math.max(current.max, max) })
+    else
+      spans.set(node.componentIndex, {
+        min: Math.min(current.min, min),
+        max: Math.max(current.max, max)
+      })
   }
   const ordered = [...spans.entries()]
     .sort((left, right) => left[0] - right[0])
@@ -160,8 +166,11 @@ function buildDraft(
   const slots = new GapSlotAllocator(placement.gapStart, placement.gapEnd)
   const fallbackChannelCross = channels.maxSideCross + spacing.channelGap
   const parallelCounter = new Map<string, number>()
-  const controlRoutes: { edge: ArisLayoutEdgeInput; points: FlowPoint[]; kind: ArisLayoutEdgeClass }[] =
-    []
+  const controlRoutes: {
+    edge: ArisLayoutEdgeInput
+    points: FlowPoint[]
+    kind: ArisLayoutEdgeClass
+  }[] = []
   separated.controlEdges.forEach((edge, edgeIndex) => {
     const source = adjacency.indexOf.get(edge.source)
     const target = adjacency.indexOf.get(edge.target)
@@ -425,7 +434,11 @@ export function cleanLayout(
     const spacing = iteration === 0 ? baseSpacing : scaleSpacing(baseSpacing, 1 + 0.35 * iteration)
     const draft = buildDraft(graph, spacing, orientation)
     const analysis = analyzeDraft(draft)
-    const acceptance = evaluateLayoutAcceptance(analysis.metrics, analysis.defects, acceptanceOptions)
+    const acceptance = evaluateLayoutAcceptance(
+      analysis.metrics,
+      analysis.defects,
+      acceptanceOptions
+    )
     const score =
       analysis.metrics.shapeOverlaps * 1000 +
       analysis.metrics.labelSatelliteOverlaps * 1000 +

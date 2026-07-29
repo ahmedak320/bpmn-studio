@@ -11,7 +11,13 @@
  */
 
 import { resolveBrush, resolvePen } from './color'
-import { buildMissingTemplateFinding, buildMissingReferenceExportFinding, buildUnsupportedOleRenderingFinding, countFidelityByKind, mergeFidelityFindings } from './fidelity'
+import {
+  buildMissingTemplateFinding,
+  buildMissingReferenceExportFinding,
+  buildUnsupportedOleRenderingFinding,
+  countFidelityByKind,
+  mergeFidelityFindings
+} from './fidelity'
 import { resolveFont } from './font'
 import type {
   ArisRenderSourceInput,
@@ -47,7 +53,11 @@ interface Identity {
   readonly sourceId: string | null
 }
 
-function anchorOf(sourceId: string | null, path: string, modelId: string | null): RenderSourceAnchor {
+function anchorOf(
+  sourceId: string | null,
+  path: string,
+  modelId: string | null
+): RenderSourceAnchor {
   return { sourceId, path, modelId }
 }
 
@@ -73,7 +83,9 @@ function indexByOwner<T extends { readonly parsed: { readonly ownerSourceId: str
   return map
 }
 
-function indexAttributesByOwnerAndType(attributes: readonly RenderSourceAttribute[]): Map<string, RenderSourceAttribute> {
+function indexAttributesByOwnerAndType(
+  attributes: readonly RenderSourceAttribute[]
+): Map<string, RenderSourceAttribute> {
   const map = new Map<string, RenderSourceAttribute>()
   for (const attr of attributes) {
     const owner = attr.parsed.ownerSourceId
@@ -108,9 +120,14 @@ function buildTextBlock(
   identity: Identity,
   findings: ArisRenderFidelityFinding[]
 ): RenderTextBlock {
-  const candidates = fontStyleSheetId ? fontsByStyleSheet.get(fontStyleSheetId) ?? [] : []
-  const fontRecord = candidates.find((f) => f.parsed.locale === value.locale) ?? candidates[0] ?? null
-  const { font, findings: fontFindings } = resolveFont(fontRecord?.parsed ?? null, value.text, identity)
+  const candidates = fontStyleSheetId ? (fontsByStyleSheet.get(fontStyleSheetId) ?? []) : []
+  const fontRecord =
+    candidates.find((f) => f.parsed.locale === value.locale) ?? candidates[0] ?? null
+  const { font, findings: fontFindings } = resolveFont(
+    fontRecord?.parsed ?? null,
+    value.text,
+    identity
+  )
   findings.push(...fontFindings)
 
   const { lines, wrapped } = wrapText(value.text, maxWidthPx, font.sizePx)
@@ -165,7 +182,8 @@ export function buildArisRenderModel(input: ArisRenderSourceInput): ArisRenderMo
     }
 
     const background: RenderModelBackground =
-      modelRecord.parsed.backColor === null || modelRecord.parsed.backColor.trim() === NO_COLOR_SENTINEL
+      modelRecord.parsed.backColor === null ||
+      modelRecord.parsed.backColor.trim() === NO_COLOR_SENTINEL
         ? { color: undefined, isDefault: true }
         : { color: cssColorOrUndefined(modelRecord.parsed.backColor), isDefault: false }
 
@@ -173,8 +191,11 @@ export function buildArisRenderModel(input: ArisRenderSourceInput): ArisRenderMo
     const elements: RenderElement[] = []
     for (const occ of input.objectOccurrences.values()) {
       if (occ.parsed.modelId !== modelId) continue
-      const elementId = occ.sourceId ?? occ.parsed.objectOccurrenceId ?? `element:${elements.length}`
-      const objDef = occ.parsed.objectDefinitionId ? input.objectDefinitions.get(occ.parsed.objectDefinitionId) : undefined
+      const elementId =
+        occ.sourceId ?? occ.parsed.objectOccurrenceId ?? `element:${elements.length}`
+      const objDef = occ.parsed.objectDefinitionId
+        ? input.objectDefinitions.get(occ.parsed.objectDefinitionId)
+        : undefined
       const objectType = objDef?.parsed.typeNum ?? 'OT_UNKNOWN'
       const symbolNum = occ.parsed.symbolNum ?? objDef?.parsed.symbolNum ?? ''
       const identity: Identity = { modelId, elementId, sourceId: occ.sourceId }
@@ -186,7 +207,12 @@ export function buildArisRenderModel(input: ArisRenderSourceInput): ArisRenderMo
           symbolNum,
           source: {
             symbolGuid: occ.parsed.symbolGuid ?? undefined,
-            geometry: { x: occ.parsed.x ?? undefined, y: occ.parsed.y ?? undefined, dx: occ.parsed.dx ?? undefined, dy: occ.parsed.dy ?? undefined },
+            geometry: {
+              x: occ.parsed.x ?? undefined,
+              y: occ.parsed.y ?? undefined,
+              dx: occ.parsed.dx ?? undefined,
+              dy: occ.parsed.dy ?? undefined
+            },
             zOrder: occ.parsed.zorder ?? undefined
           }
         },
@@ -216,9 +242,19 @@ export function buildArisRenderModel(input: ArisRenderSourceInput): ArisRenderMo
         const nameAttr = attributesByOwnerType.get(`${objDef.sourceId}::AT_NAME`)
         const primary = nameAttr ? pickPrimaryAttributeValue(nameAttr.parsed.values) : null
         if (primary && primary.text.trim() !== '') {
-          const nameOcc = (attrOccByOwner.get(elementId) ?? []).find((a) => a.parsed.attributeType === 'AT_NAME')
-          const maxWidthPx = sourceBounds.width > 0 ? Math.max(1, sourceBounds.width - TEXT_PADDING_PX) : null
-          name = buildTextBlock(primary, fontsByStyleSheet, nameOcc?.parsed.fontStyleSheetId ?? null, maxWidthPx, identity, findings)
+          const nameOcc = (attrOccByOwner.get(elementId) ?? []).find(
+            (a) => a.parsed.attributeType === 'AT_NAME'
+          )
+          const maxWidthPx =
+            sourceBounds.width > 0 ? Math.max(1, sourceBounds.width - TEXT_PADDING_PX) : null
+          name = buildTextBlock(
+            primary,
+            fontsByStyleSheet,
+            nameOcc?.parsed.fontStyleSheetId ?? null,
+            maxWidthPx,
+            identity,
+            findings
+          )
         }
       }
 
@@ -230,7 +266,10 @@ export function buildArisRenderModel(input: ArisRenderSourceInput): ArisRenderMo
         offsetX: a.parsed.offsetX,
         offsetY: a.parsed.offsetY,
         rotation: a.parsed.rotation,
-        bounds: a.parsed.dx !== null || a.parsed.dy !== null ? { width: a.parsed.dx ?? 0, height: a.parsed.dy ?? 0 } : null,
+        bounds:
+          a.parsed.dx !== null || a.parsed.dy !== null
+            ? { width: a.parsed.dx ?? 0, height: a.parsed.dy ?? 0 }
+            : null,
         fontStyleSheetId: a.parsed.fontStyleSheetId,
         text: null
       }))
@@ -256,9 +295,12 @@ export function buildArisRenderModel(input: ArisRenderSourceInput): ArisRenderMo
     const connections: RenderConnection[] = []
     for (const occ of input.connectionOccurrences.values()) {
       if (occ.parsed.modelId !== modelId) continue
-      const connectionId = occ.sourceId ?? occ.parsed.connectionOccurrenceId ?? `connection:${connections.length}`
+      const connectionId =
+        occ.sourceId ?? occ.parsed.connectionOccurrenceId ?? `connection:${connections.length}`
       const identity: Identity = { modelId, elementId: connectionId, sourceId: occ.sourceId }
-      const cxnDef = occ.parsed.connectionDefinitionId ? input.connectionDefinitions.get(occ.parsed.connectionDefinitionId) : undefined
+      const cxnDef = occ.parsed.connectionDefinitionId
+        ? input.connectionDefinitions.get(occ.parsed.connectionDefinitionId)
+        : undefined
 
       const routePoints = (routePointsByConnection.get(occ.sourceId ?? '') ?? [])
         .slice()
@@ -300,7 +342,9 @@ export function buildArisRenderModel(input: ArisRenderSourceInput): ArisRenderMo
       findings.push(...brushFindings)
 
       let name: RenderTextBlock | null = null
-      const nameAttr = lane.sourceId ? attributesByOwnerType.get(`${lane.sourceId}::AT_NAME`) : undefined
+      const nameAttr = lane.sourceId
+        ? attributesByOwnerType.get(`${lane.sourceId}::AT_NAME`)
+        : undefined
       const primary = nameAttr ? pickPrimaryAttributeValue(nameAttr.parsed.values) : null
       if (primary && primary.text.trim() !== '') {
         name = buildTextBlock(primary, fontsByStyleSheet, null, null, identity, findings)
@@ -325,7 +369,14 @@ export function buildArisRenderModel(input: ArisRenderSourceInput): ArisRenderMo
       if (occ.parsed.modelId !== modelId) continue
       const freeTextId = occ.sourceId ?? `freetext:${freeText.length}`
       const identity: Identity = { modelId, elementId: freeTextId, sourceId: occ.sourceId }
-      const sourceBounds = boundsFrom(occ.parsed.x, occ.parsed.y, occ.parsed.dx, occ.parsed.dy, 100, 30)
+      const sourceBounds = boundsFrom(
+        occ.parsed.x,
+        occ.parsed.y,
+        occ.parsed.dx,
+        occ.parsed.dy,
+        100,
+        30
+      )
 
       let text: RenderTextBlock | null = null
       const nameAttr = occ.parsed.freeTextDefinitionId
@@ -333,8 +384,16 @@ export function buildArisRenderModel(input: ArisRenderSourceInput): ArisRenderMo
         : undefined
       const primary = nameAttr ? pickPrimaryAttributeValue(nameAttr.parsed.values) : null
       if (primary && primary.text.trim() !== '') {
-        const maxWidthPx = sourceBounds.width > 0 ? Math.max(1, sourceBounds.width - TEXT_PADDING_PX) : null
-        text = buildTextBlock(primary, fontsByStyleSheet, occ.parsed.fontStyleSheetId, maxWidthPx, identity, findings)
+        const maxWidthPx =
+          sourceBounds.width > 0 ? Math.max(1, sourceBounds.width - TEXT_PADDING_PX) : null
+        text = buildTextBlock(
+          primary,
+          fontsByStyleSheet,
+          occ.parsed.fontStyleSheetId,
+          maxWidthPx,
+          identity,
+          findings
+        )
       }
 
       freeText.push({
@@ -351,13 +410,26 @@ export function buildArisRenderModel(input: ArisRenderSourceInput): ArisRenderMo
     for (const occ of input.attachmentOccurrences) {
       if (occ.parsed.modelId !== modelId) continue
       const attachmentOccId = occ.sourceId ?? `attachment:${attachments.length}`
-      const sourceBounds = boundsFrom(occ.parsed.x, occ.parsed.y, occ.parsed.dx, occ.parsed.dy, 100, 100)
-      const attachmentDef = occ.parsed.attachmentId ? input.attachments.get(occ.parsed.attachmentId) : undefined
+      const sourceBounds = boundsFrom(
+        occ.parsed.x,
+        occ.parsed.y,
+        occ.parsed.dx,
+        occ.parsed.dy,
+        100,
+        100
+      )
+      const attachmentDef = occ.parsed.attachmentId
+        ? input.attachments.get(occ.parsed.attachmentId)
+        : undefined
       const blobCount = attachmentDef?.parsed.blobCount ?? 0
 
-      findings.push(buildUnsupportedOleRenderingFinding(modelId, occ.sourceId, occ.parsed.attachmentId))
+      findings.push(
+        buildUnsupportedOleRenderingFinding(modelId, occ.sourceId, occ.parsed.attachmentId)
+      )
       if (blobCount === 0) {
-        findings.push(buildMissingReferenceExportFinding(modelId, occ.sourceId, occ.parsed.attachmentId))
+        findings.push(
+          buildMissingReferenceExportFinding(modelId, occ.sourceId, occ.parsed.attachmentId)
+        )
       }
 
       attachments.push({

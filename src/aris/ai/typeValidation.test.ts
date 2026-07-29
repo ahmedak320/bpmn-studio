@@ -36,7 +36,9 @@ describe('validateArisAiTypes', () => {
     const withBadType = {
       ...draft,
       relations: draft.relations.map((relation) =>
-        relation.logicalId === 'rel-start-to-approve' ? { ...relation, connectionType: 'CT_MADE_UP' } : relation
+        relation.logicalId === 'rel-start-to-approve'
+          ? { ...relation, connectionType: 'CT_MADE_UP' }
+          : relation
       )
     }
     const findings = validateArisAiTypes(withBadType)

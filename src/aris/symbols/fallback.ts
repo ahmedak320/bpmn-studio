@@ -35,7 +35,18 @@ export const UNKNOWN_SYMBOL_DESCRIPTOR: ArisSymbolDescriptor = freezeDescriptor(
   drawing: {
     viewBox: { minX: 0, minY: 0, width: 100, height: 80 },
     elements: [
-      { kind: 'rect', x: 5, y: 5, width: 90, height: 70, rx: 8, ry: 8, fill: '#f3f4f6', stroke: '#dc2626', strokeWidth: 2 },
+      {
+        kind: 'rect',
+        x: 5,
+        y: 5,
+        width: 90,
+        height: 70,
+        rx: 8,
+        ry: 8,
+        fill: '#f3f4f6',
+        stroke: '#dc2626',
+        strokeWidth: 2
+      },
       { kind: 'line', x1: 15, y1: 15, x2: 85, y2: 65, stroke: '#fca5a5', strokeWidth: 2 },
       { kind: 'line', x1: 85, y1: 15, x2: 15, y2: 65, stroke: '#fca5a5', strokeWidth: 2 },
       {

@@ -84,11 +84,7 @@ export interface XmlLeafNode {
 export type XmlNode = XmlElementNode | XmlLeafNode
 
 export type XmlToken =
-  | XmlDeclarationToken
-  | XmlDoctypeToken
-  | XmlStartTagToken
-  | XmlEndTagToken
-  | XmlTextToken
+  XmlDeclarationToken | XmlDoctypeToken | XmlStartTagToken | XmlEndTagToken | XmlTextToken
 
 export interface TokenizedXmlDocument {
   readonly tokens: readonly XmlToken[]
@@ -186,11 +182,7 @@ function span(start: XmlPoint, cursor: Cursor): XmlSpan {
   }
 }
 
-function throwTokenizerError(
-  code: XmlTokenizerErrorCode,
-  message: string,
-  cursor: Cursor
-): never {
+function throwTokenizerError(code: XmlTokenizerErrorCode, message: string, cursor: Cursor): never {
   throw new XmlTokenizerError(code, message, cursor.index)
 }
 
@@ -264,10 +256,7 @@ function readQuotedValue(
   return { value, quote, valueSpan }
 }
 
-function parseXmlDeclaration(
-  text: string,
-  cursor: Cursor
-): XmlDeclarationToken {
+function parseXmlDeclaration(text: string, cursor: Cursor): XmlDeclarationToken {
   const start = clonePoint(cursor)
   advanceTo(text, cursor, cursor.index + 5)
   const attributes = new Map<string, string>()
@@ -387,7 +376,8 @@ function parseInternalEntities(
   let index = 0
 
   const skipWhitespace = (): void => {
-    while (index < internalSubset.length && isInternalSubsetWhitespace(internalSubset[index])) index += 1
+    while (index < internalSubset.length && isInternalSubsetWhitespace(internalSubset[index]))
+      index += 1
   }
 
   while (index < internalSubset.length) {
@@ -421,9 +411,11 @@ function parseInternalEntities(
     skipWhitespace()
 
     const looksLikeSystem =
-      internalSubset.startsWith('SYSTEM', index) && isInternalSubsetWhitespace(internalSubset[index + 'SYSTEM'.length])
+      internalSubset.startsWith('SYSTEM', index) &&
+      isInternalSubsetWhitespace(internalSubset[index + 'SYSTEM'.length])
     const looksLikePublic =
-      internalSubset.startsWith('PUBLIC', index) && isInternalSubsetWhitespace(internalSubset[index + 'PUBLIC'.length])
+      internalSubset.startsWith('PUBLIC', index) &&
+      isInternalSubsetWhitespace(internalSubset[index + 'PUBLIC'.length])
     if (looksLikeSystem || looksLikePublic) {
       throw new XmlTokenizerError(
         'external-entity',
@@ -503,11 +495,7 @@ function parseInternalEntities(
   return Object.freeze(declarations)
 }
 
-function parseDoctype(
-  text: string,
-  cursor: Cursor,
-  limits: XmlTokenizerLimits
-): XmlDoctypeToken {
+function parseDoctype(text: string, cursor: Cursor, limits: XmlTokenizerLimits): XmlDoctypeToken {
   const start = clonePoint(cursor)
   advanceTo(text, cursor, cursor.index + '<!DOCTYPE'.length)
   skipWhitespace(text, cursor)
@@ -558,7 +546,11 @@ function parseDoctype(
     span: { start, end: clonePoint(cursor) },
     name,
     externalIdKind: publicMatch ? 'public' : systemMatch ? 'system' : null,
-    externalIdLiteral: publicMatch ? publicMatch[4] ?? null : systemMatch ? systemMatch[2] ?? null : null,
+    externalIdLiteral: publicMatch
+      ? (publicMatch[4] ?? null)
+      : systemMatch
+        ? (systemMatch[2] ?? null)
+        : null,
     internalSubset,
     entityDeclarations: parseInternalEntities(internalSubset, limits, start)
   }
@@ -678,7 +670,9 @@ export function expandXmlEntities(
   raw: string,
   entityDeclarations: readonly XmlEntityDeclaration[] = []
 ): string {
-  const custom = new Map(entityDeclarations.map((declaration) => [declaration.name, declaration.value]))
+  const custom = new Map(
+    entityDeclarations.map((declaration) => [declaration.name, declaration.value])
+  )
   return raw.replace(ENTITY_REFERENCE_RE, (match, reference: string) => {
     if (reference.startsWith('#x') || reference.startsWith('#X')) {
       const codePoint = Number.parseInt(reference.slice(2), 16)
@@ -765,7 +759,10 @@ export function tokenizeXmlDocument(
     checkCancellation()
     const remaining = text.slice(cursor.index)
     if (remaining.startsWith('<?xml')) {
-      if (declaration !== null || tokens.some((token) => token.kind !== 'text' || token.content.trim())) {
+      if (
+        declaration !== null ||
+        tokens.some((token) => token.kind !== 'text' || token.content.trim())
+      ) {
         throwTokenizerError(
           'malformed-xml',
           'XML declaration must appear only once at the start of the document.',

@@ -69,16 +69,24 @@ export const ARIS_AI_SUPPORTED_CONNECTION_TYPES = [
   'CT_SUPP_3'
 ] as const
 
-const SUPPORTED_CONNECTION_TYPE_SET: ReadonlySet<string> = new Set(ARIS_AI_SUPPORTED_CONNECTION_TYPES)
+const SUPPORTED_CONNECTION_TYPE_SET: ReadonlySet<string> = new Set(
+  ARIS_AI_SUPPORTED_CONNECTION_TYPES
+)
 
 /**
  * Section 16.5: "Use native AND/OR/XOR rules." Native ARIS rule symbols for
  * `OT_RULE` objects. Closed-vocabulary type check only (no split/merge
  * pairing logic here — see the scope note above).
  */
-export const ARIS_AI_SUPPORTED_RULE_SYMBOL_TYPES = ['ST_OPR_AND_1', 'ST_OPR_OR_1', 'ST_OPR_XOR_1'] as const
+export const ARIS_AI_SUPPORTED_RULE_SYMBOL_TYPES = [
+  'ST_OPR_AND_1',
+  'ST_OPR_OR_1',
+  'ST_OPR_XOR_1'
+] as const
 
-const SUPPORTED_RULE_SYMBOL_TYPE_SET: ReadonlySet<string> = new Set(ARIS_AI_SUPPORTED_RULE_SYMBOL_TYPES)
+const SUPPORTED_RULE_SYMBOL_TYPE_SET: ReadonlySet<string> = new Set(
+  ARIS_AI_SUPPORTED_RULE_SYMBOL_TYPES
+)
 
 export function validateArisAiTypes(draft: ArisAiDraftV1): ArisAiValidationFinding[] {
   const findings: ArisAiValidationFinding[] = []

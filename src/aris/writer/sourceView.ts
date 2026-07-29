@@ -173,7 +173,12 @@ export function buildWriterSourceView(
   const byId = new Map<string, WriterElement>()
   const localeIds: string[] = []
 
-  const visit = (node: XmlElementNode, parentPath: string | null, depth: number, path: string): void => {
+  const visit = (
+    node: XmlElementNode,
+    parentPath: string | null,
+    depth: number,
+    path: string
+  ): void => {
     const startTagSpan = toWriterSpan(node.startTag.span)
     const endTagSpan = node.endTag === null ? null : toWriterSpan(node.endTag.span)
     const selfClosing = node.startTag.kind === 'empty-tag'
@@ -217,7 +222,8 @@ export function buildWriterSourceView(
 
     elements.push(element)
     byPath.set(path, element)
-    if (element.sourceId !== null && !byId.has(element.sourceId)) byId.set(element.sourceId, element)
+    if (element.sourceId !== null && !byId.has(element.sourceId))
+      byId.set(element.sourceId, element)
     if (element.name === 'Language') {
       const localeId = element.attributeByName.get('LocaleId')?.value
       if (localeId !== undefined) localeIds.push(localeId)
@@ -282,11 +288,17 @@ export function readWriterSourceView(
   return buildWriterSourceView(text, tokenizeXmlDocument(text, limits))
 }
 
-export function childrenOf(view: WriterSourceView, element: WriterElement): readonly WriterElement[] {
+export function childrenOf(
+  view: WriterSourceView,
+  element: WriterElement
+): readonly WriterElement[] {
   return element.childPaths.map((path) => {
     const child = view.byPath.get(path)
     if (!child) {
-      throw new ArisWriterError('unknown-record', `Child element "${path}" is missing from the view.`)
+      throw new ArisWriterError(
+        'unknown-record',
+        `Child element "${path}" is missing from the view.`
+      )
     }
     return child
   })
@@ -296,7 +308,10 @@ export function parentOf(view: WriterSourceView, element: WriterElement): Writer
   return element.parentPath === null ? null : (view.byPath.get(element.parentPath) ?? null)
 }
 
-export function ancestorsOf(view: WriterSourceView, element: WriterElement): readonly WriterElement[] {
+export function ancestorsOf(
+  view: WriterSourceView,
+  element: WriterElement
+): readonly WriterElement[] {
   const chain: WriterElement[] = []
   let current = parentOf(view, element)
   while (current !== null) {

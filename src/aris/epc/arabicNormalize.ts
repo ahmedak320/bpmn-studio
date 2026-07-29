@@ -52,6 +52,8 @@ export function normalizeArabic(input: string): string {
   for (const ch of stripped) {
     folded += CHAR_MAP.get(ch) ?? ch
   }
-  const words = folded.split(/(\s+)/).map((token) => (/\s/.test(token) ? token : stripLeadingDefiniteArticle(token)))
+  const words = folded
+    .split(/(\s+)/)
+    .map((token) => (/\s/.test(token) ? token : stripLeadingDefiniteArticle(token)))
   return words.join('').toLowerCase().trim()
 }

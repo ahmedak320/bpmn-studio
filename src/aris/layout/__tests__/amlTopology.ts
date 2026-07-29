@@ -206,7 +206,8 @@ export function extractAmlLayoutGraphs(xml: string): AmlModelGraph[] {
       if (!known.has(raw.target)) continue
       const sourceRole = nodeRole.get(raw.source)
       const targetRole = nodeRole.get(raw.target)
-      const isControl = core.has(sourceRole as ArisLayoutNodeRole) && core.has(targetRole as ArisLayoutNodeRole)
+      const isControl =
+        core.has(sourceRole as ArisLayoutNodeRole) && core.has(targetRole as ArisLayoutNodeRole)
       edges.push({
         id: raw.id,
         source: raw.source,

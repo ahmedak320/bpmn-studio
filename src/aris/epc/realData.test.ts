@@ -4,7 +4,13 @@ import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
 import { detectReturnPathOutcomes } from './returnPath'
 import { validateEpcGraph } from './validate'
-import { buildGraphForModel, scanEntities, scanModels, scanObjectDefinitions, type ScannedObjectDefinition } from './realDataScan'
+import {
+  buildGraphForModel,
+  scanEntities,
+  scanModels,
+  scanObjectDefinitions,
+  type ScannedObjectDefinition
+} from './realDataScan'
 
 /**
  * Plan section 19.3 / 14.3 real-data verification.
@@ -18,7 +24,10 @@ import { buildGraphForModel, scanEntities, scanModels, scanObjectDefinitions, ty
  * does not depend on `src/aris/source`'s semantic index (mid-rewrite elsewhere).
  */
 
-const FIXTURE_PATH = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../../../reference/AnimalWF/ARISAMLExport.xml')
+const FIXTURE_PATH = path.resolve(
+  path.dirname(fileURLToPath(import.meta.url)),
+  '../../../../reference/AnimalWF/ARISAMLExport.xml'
+)
 const FIXTURE_PRESENT = fs.existsSync(FIXTURE_PATH)
 
 describe('AnimalWF real-data return-path verification (plan 19.3)', () => {
@@ -48,7 +57,9 @@ describe('AnimalWF real-data return-path verification (plan 19.3)', () => {
     return null
   }
 
-  function findModelIdByLinkedNamePredicate(predicate: (englishName: string) => boolean): readonly string[] {
+  function findModelIdByLinkedNamePredicate(
+    predicate: (englishName: string) => boolean
+  ): readonly string[] {
     const modelIds = new Set<string>()
     for (const definition of objectDefinitions.values()) {
       for (const modelId of definition.linkedModelIds) {
@@ -60,9 +71,15 @@ describe('AnimalWF real-data return-path verification (plan 19.3)', () => {
   }
 
   it('locates the four named processes from plan 19.3 by their linking process-interface name', () => {
-    const operatorRegistration = findModelIdByLinkedNamePredicate((n) => /operator registration/i.test(n))
-    const animalProfileClosure = findModelIdByLinkedNamePredicate((n) => /animal profile closure/i.test(n))
-    const animalRegistration = findModelIdByLinkedNamePredicate((n) => /animal/i.test(n) && /regist/i.test(n) && !/operator/i.test(n) && !/owner/i.test(n))
+    const operatorRegistration = findModelIdByLinkedNamePredicate((n) =>
+      /operator registration/i.test(n)
+    )
+    const animalProfileClosure = findModelIdByLinkedNamePredicate((n) =>
+      /animal profile closure/i.test(n)
+    )
+    const animalRegistration = findModelIdByLinkedNamePredicate(
+      (n) => /animal/i.test(n) && /regist/i.test(n) && !/operator/i.test(n) && !/owner/i.test(n)
+    )
     expect(operatorRegistration).toHaveLength(1)
     expect(animalProfileClosure).toHaveLength(1)
     expect(animalRegistration).toHaveLength(1)
@@ -80,15 +97,32 @@ describe('AnimalWF real-data return-path verification (plan 19.3)', () => {
   // the other four/five have a named return/rework/reject outcome node with no outgoing (or
   // no cycle-forming) flow edge — a genuine gap in the source model, not a scanner bug.
   const cases: readonly ProcessCase[] = [
-    { label: 'Operator Registration', modelIdPredicate: (n) => /operator registration/i.test(n), expectedStatus: 'missing' },
-    { label: 'Animal Profile Closure', modelIdPredicate: (n) => /animal profile closure/i.test(n), expectedStatus: 'missing' },
     {
-      label: 'Animal registration',
-      modelIdPredicate: (n) => /animal/i.test(n) && /regist/i.test(n) && !/operator/i.test(n) && !/owner/i.test(n),
+      label: 'Operator Registration',
+      modelIdPredicate: (n) => /operator registration/i.test(n),
       expectedStatus: 'missing'
     },
-    { label: 'Renewal — Animal profile', modelIdPredicate: (n) => /^renew an animal/i.test(n), expectedStatus: 'missing' },
-    { label: 'Renewal — Owner profile (Register Animal Owner Profile)', modelIdPredicate: (n) => /register animal owner profile/i.test(n), expectedStatus: 'explicit' }
+    {
+      label: 'Animal Profile Closure',
+      modelIdPredicate: (n) => /animal profile closure/i.test(n),
+      expectedStatus: 'missing'
+    },
+    {
+      label: 'Animal registration',
+      modelIdPredicate: (n) =>
+        /animal/i.test(n) && /regist/i.test(n) && !/operator/i.test(n) && !/owner/i.test(n),
+      expectedStatus: 'missing'
+    },
+    {
+      label: 'Renewal — Animal profile',
+      modelIdPredicate: (n) => /^renew an animal/i.test(n),
+      expectedStatus: 'missing'
+    },
+    {
+      label: 'Renewal — Owner profile (Register Animal Owner Profile)',
+      modelIdPredicate: (n) => /register animal owner profile/i.test(n),
+      expectedStatus: 'explicit'
+    }
   ]
 
   for (const testCase of cases) {
@@ -99,7 +133,10 @@ describe('AnimalWF real-data return-path verification (plan 19.3)', () => {
       expect(model).toBeDefined()
       if (!model) return
 
-      const graph = buildGraphForModel(model, objectDefinitions as ReadonlyMap<string, ScannedObjectDefinition>)
+      const graph = buildGraphForModel(
+        model,
+        objectDefinitions as ReadonlyMap<string, ScannedObjectDefinition>
+      )
       expect(graph.nodes.length).toBeGreaterThan(0)
 
       // The scanner/adapter never mutates the graph — validate + detect are safe to run

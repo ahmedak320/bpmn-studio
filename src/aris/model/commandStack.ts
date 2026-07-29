@@ -1,4 +1,11 @@
-import { applyChange, applyCommand, invertCommand, normalizeCommand, type ArisEditCommand, ArisCommandError } from './commands'
+import {
+  applyChange,
+  applyCommand,
+  invertCommand,
+  normalizeCommand,
+  type ArisEditCommand,
+  ArisCommandError
+} from './commands'
 import type { ArisWorkingDocument } from './types'
 
 export type ArisCommandIdGenerator = () => string
@@ -44,7 +51,10 @@ function applyWithRollback(
   }
 }
 
-function changeWithRollback(document: ArisWorkingDocument, command: ArisEditCommand): ArisWorkingDocument {
+function changeWithRollback(
+  document: ArisWorkingDocument,
+  command: ArisEditCommand
+): ArisWorkingDocument {
   try {
     return applyChange(document, command)
   } catch (error) {

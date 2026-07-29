@@ -84,7 +84,9 @@ describe('createArisIdAllocator', () => {
     const parsed = parseArisId(objectId)
     expect(parsed).toMatchObject({ kind: 'ObjDef', scope: 'definition' })
     expect(parsed!.key).toHaveLength(ARIS_ID_KEY_LENGTH)
-    expect([...parsed!.key].every((character) => ARIS_ID_KEY_ALPHABET.includes(character))).toBe(true)
+    expect([...parsed!.key].every((character) => ARIS_ID_KEY_ALPHABET.includes(character))).toBe(
+      true
+    )
   })
 
   it('allocates occurrence ids scoped to their model', () => {

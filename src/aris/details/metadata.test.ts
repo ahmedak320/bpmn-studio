@@ -7,7 +7,7 @@ import {
   extractModelAssignments,
   extractProcessCodes,
   summarizeMetadata,
-  toggleLayerVisibility,
+  toggleLayerVisibility
 } from './metadata'
 import { buildSatelliteDocument } from './testHelpers'
 

@@ -58,7 +58,9 @@ export function classifyRule(index: FlowGraphIndex, nodeId: string): RuleClassif
 /** Classifies every `OT_RULE` node in the graph, preserving input order. */
 export function classifyRules(graph: EpcGraph): readonly RuleClassification[] {
   const index = buildFlowGraphIndex(graph)
-  return graph.nodes.filter((node) => node.objectType === OT_RULE).map((node) => classifyRule(index, node.id))
+  return graph.nodes
+    .filter((node) => node.objectType === OT_RULE)
+    .map((node) => classifyRule(index, node.id))
 }
 
 export function isXorRule(classification: RuleClassification): boolean {

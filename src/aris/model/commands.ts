@@ -102,7 +102,11 @@ export function deleteMap<K, V>(map: ReadonlyMap<K, V>, key: K): ReadonlyMap<K, 
 function updateModel(
   document: ArisWorkingDocument,
   modelId: string,
-  updater: (model: NonNullable<ArisWorkingDocument['models'] extends ReadonlyMap<string, infer M> ? M : never>) => NonNullable<ArisWorkingDocument['models'] extends ReadonlyMap<string, infer M> ? M : never>
+  updater: (
+    model: NonNullable<
+      ArisWorkingDocument['models'] extends ReadonlyMap<string, infer M> ? M : never
+    >
+  ) => NonNullable<ArisWorkingDocument['models'] extends ReadonlyMap<string, infer M> ? M : never>
 ): ArisWorkingDocument {
   const model = document.models.get(modelId)
   if (!model) return document
@@ -134,20 +138,28 @@ function updateConnectionOccurrence(
   updater: (occurrence: ArisConnectionOccurrence) => ArisConnectionOccurrence
 ): ArisWorkingDocument {
   for (const [modelId, model] of document.models) {
-    const index = model.connectionOccurrences.findIndex((occurrence) => occurrence.id === occurrenceId)
+    const index = model.connectionOccurrences.findIndex(
+      (occurrence) => occurrence.id === occurrenceId
+    )
     if (index >= 0) {
       const next = model.connectionOccurrences.slice()
       next[index] = updater(model.connectionOccurrences[index])
       return {
         ...document,
-        models: replaceMap(document.models, modelId, { ...model, connectionOccurrences: Object.freeze(next) })
+        models: replaceMap(document.models, modelId, {
+          ...model,
+          connectionOccurrences: Object.freeze(next)
+        })
       }
     }
   }
   return document
 }
 
-function findOccurrence(document: ArisWorkingDocument, occurrenceId: string): ArisObjectOccurrence | undefined {
+function findOccurrence(
+  document: ArisWorkingDocument,
+  occurrenceId: string
+): ArisObjectOccurrence | undefined {
   for (const model of document.models.values()) {
     const occurrence = model.occurrences.find((candidate) => candidate.id === occurrenceId)
     if (occurrence) return occurrence
@@ -155,15 +167,23 @@ function findOccurrence(document: ArisWorkingDocument, occurrenceId: string): Ar
   return undefined
 }
 
-function findConnectionOccurrence(document: ArisWorkingDocument, occurrenceId: string): ArisConnectionOccurrence | undefined {
+function findConnectionOccurrence(
+  document: ArisWorkingDocument,
+  occurrenceId: string
+): ArisConnectionOccurrence | undefined {
   for (const model of document.models.values()) {
-    const occurrence = model.connectionOccurrences.find((candidate) => candidate.id === occurrenceId)
+    const occurrence = model.connectionOccurrences.find(
+      (candidate) => candidate.id === occurrenceId
+    )
     if (occurrence) return occurrence
   }
   return undefined
 }
 
-function findLane(document: ArisWorkingDocument, laneId: string): { readonly modelId: string; readonly lane: ArisLane } | undefined {
+function findLane(
+  document: ArisWorkingDocument,
+  laneId: string
+): { readonly modelId: string; readonly lane: ArisLane } | undefined {
   for (const [modelId, model] of document.models) {
     const lane = model.lanes.find((candidate) => candidate.id === laneId)
     if (lane) return { modelId, lane }
@@ -171,7 +191,10 @@ function findLane(document: ArisWorkingDocument, laneId: string): { readonly mod
   return undefined
 }
 
-function findFreeText(document: ArisWorkingDocument, freeTextId: string): { readonly modelId: string; readonly freeText: ArisFreeText } | undefined {
+function findFreeText(
+  document: ArisWorkingDocument,
+  freeTextId: string
+): { readonly modelId: string; readonly freeText: ArisFreeText } | undefined {
   for (const [modelId, model] of document.models) {
     const item = model.freeText.find((candidate) => candidate.id === freeTextId)
     if (item) return { modelId, freeText: item }
@@ -237,7 +260,10 @@ function nextNames(
   })
 }
 
-function applySetLocalizedName(document: ArisWorkingDocument, command: ArisEditCommand): ArisWorkingDocument {
+function applySetLocalizedName(
+  document: ArisWorkingDocument,
+  command: ArisEditCommand
+): ArisWorkingDocument {
   const payload = command.after as {
     readonly ownerKind: 'model' | 'objectDefinition' | 'connectionDefinition'
     readonly ownerId: string
@@ -247,28 +273,86 @@ function applySetLocalizedName(document: ArisWorkingDocument, command: ArisEditC
 
   if (payload.ownerKind === 'model') {
     const model = assertDefined(document.models.get(payload.ownerId), 'model', command)
-    return { ...document, models: replaceMap(document.models, payload.ownerId, { ...model, names: nextNames(model.names, payload.localeId, payload.value) }) }
+    return {
+      ...document,
+      models: replaceMap(document.models, payload.ownerId, {
+        ...model,
+        names: nextNames(model.names, payload.localeId, payload.value)
+      })
+    }
   }
   if (payload.ownerKind === 'objectDefinition') {
-    const definition = assertDefined(document.objectDefinitions.get(payload.ownerId), 'object definition', command)
-    return { ...document, objectDefinitions: replaceMap(document.objectDefinitions, payload.ownerId, { ...definition, names: nextNames(definition.names, payload.localeId, payload.value) }) }
+    const definition = assertDefined(
+      document.objectDefinitions.get(payload.ownerId),
+      'object definition',
+      command
+    )
+    return {
+      ...document,
+      objectDefinitions: replaceMap(document.objectDefinitions, payload.ownerId, {
+        ...definition,
+        names: nextNames(definition.names, payload.localeId, payload.value)
+      })
+    }
   }
-  const definition = assertDefined(document.connectionDefinitions.get(payload.ownerId), 'connection definition', command)
-  return { ...document, connectionDefinitions: replaceMap(document.connectionDefinitions, payload.ownerId, { ...definition, names: nextNames(definition.names, payload.localeId, payload.value) }) }
+  const definition = assertDefined(
+    document.connectionDefinitions.get(payload.ownerId),
+    'connection definition',
+    command
+  )
+  return {
+    ...document,
+    connectionDefinitions: replaceMap(document.connectionDefinitions, payload.ownerId, {
+      ...definition,
+      names: nextNames(definition.names, payload.localeId, payload.value)
+    })
+  }
 }
 
 type AttributeOwnerKind = 'model' | 'objectDefinition' | 'connectionDefinition'
 
-function readOwnerAttributes(document: ArisWorkingDocument, ownerKind: AttributeOwnerKind, ownerId: string): readonly ArisAttribute[] {
+function readOwnerAttributes(
+  document: ArisWorkingDocument,
+  ownerKind: AttributeOwnerKind,
+  ownerId: string
+): readonly ArisAttribute[] {
   if (ownerKind === 'model') {
-    const model = assertDefined(document.models.get(ownerId), 'model', { commandId: '', baseRevision: 0, kind: 'setAttribute', affectedSourceIds: [], before: null, after: null, origin: 'user' })
+    const model = assertDefined(document.models.get(ownerId), 'model', {
+      commandId: '',
+      baseRevision: 0,
+      kind: 'setAttribute',
+      affectedSourceIds: [],
+      before: null,
+      after: null,
+      origin: 'user'
+    })
     return model.attributes
   }
   if (ownerKind === 'objectDefinition') {
-    const definition = assertDefined(document.objectDefinitions.get(ownerId), 'object definition', { commandId: '', baseRevision: 0, kind: 'setAttribute', affectedSourceIds: [], before: null, after: null, origin: 'user' })
+    const definition = assertDefined(document.objectDefinitions.get(ownerId), 'object definition', {
+      commandId: '',
+      baseRevision: 0,
+      kind: 'setAttribute',
+      affectedSourceIds: [],
+      before: null,
+      after: null,
+      origin: 'user'
+    })
     return definition.attributes
   }
-  const definition = assertDefined(document.connectionDefinitions.get(ownerId), 'connection definition', { commandId: '', baseRevision: 0, kind: 'setAttribute', affectedSourceIds: [], before: null, after: null, origin: 'user' })
+  const definition = assertDefined(
+    document.connectionDefinitions.get(ownerId),
+    'connection definition',
+    {
+      commandId: '',
+      baseRevision: 0,
+      kind: 'setAttribute',
+      affectedSourceIds: [],
+      before: null,
+      after: null,
+      origin: 'user'
+    }
+  )
   return definition.attributes
 }
 
@@ -279,15 +363,55 @@ function writeOwnerAttributes(
   attributes: readonly ArisAttribute[]
 ): ArisWorkingDocument {
   if (ownerKind === 'model') {
-    const model = assertDefined(document.models.get(ownerId), 'model', { commandId: '', baseRevision: 0, kind: 'setAttribute', affectedSourceIds: [], before: null, after: null, origin: 'user' })
+    const model = assertDefined(document.models.get(ownerId), 'model', {
+      commandId: '',
+      baseRevision: 0,
+      kind: 'setAttribute',
+      affectedSourceIds: [],
+      before: null,
+      after: null,
+      origin: 'user'
+    })
     return { ...document, models: replaceMap(document.models, ownerId, { ...model, attributes }) }
   }
   if (ownerKind === 'objectDefinition') {
-    const definition = assertDefined(document.objectDefinitions.get(ownerId), 'object definition', { commandId: '', baseRevision: 0, kind: 'setAttribute', affectedSourceIds: [], before: null, after: null, origin: 'user' })
-    return { ...document, objectDefinitions: replaceMap(document.objectDefinitions, ownerId, { ...definition, attributes }) }
+    const definition = assertDefined(document.objectDefinitions.get(ownerId), 'object definition', {
+      commandId: '',
+      baseRevision: 0,
+      kind: 'setAttribute',
+      affectedSourceIds: [],
+      before: null,
+      after: null,
+      origin: 'user'
+    })
+    return {
+      ...document,
+      objectDefinitions: replaceMap(document.objectDefinitions, ownerId, {
+        ...definition,
+        attributes
+      })
+    }
   }
-  const definition = assertDefined(document.connectionDefinitions.get(ownerId), 'connection definition', { commandId: '', baseRevision: 0, kind: 'setAttribute', affectedSourceIds: [], before: null, after: null, origin: 'user' })
-  return { ...document, connectionDefinitions: replaceMap(document.connectionDefinitions, ownerId, { ...definition, attributes }) }
+  const definition = assertDefined(
+    document.connectionDefinitions.get(ownerId),
+    'connection definition',
+    {
+      commandId: '',
+      baseRevision: 0,
+      kind: 'setAttribute',
+      affectedSourceIds: [],
+      before: null,
+      after: null,
+      origin: 'user'
+    }
+  )
+  return {
+    ...document,
+    connectionDefinitions: replaceMap(document.connectionDefinitions, ownerId, {
+      ...definition,
+      attributes
+    })
+  }
 }
 
 function updateAttributes(
@@ -303,7 +427,10 @@ function updateAttributes(
   return Object.freeze(next)
 }
 
-function applySetAttribute(document: ArisWorkingDocument, command: ArisEditCommand): ArisWorkingDocument {
+function applySetAttribute(
+  document: ArisWorkingDocument,
+  command: ArisEditCommand
+): ArisWorkingDocument {
   const payload = command.after as {
     readonly ownerKind: AttributeOwnerKind
     readonly ownerId: string
@@ -311,10 +438,18 @@ function applySetAttribute(document: ArisWorkingDocument, command: ArisEditComma
     readonly values: readonly { readonly localeId: string | null; readonly text: string }[]
   }
   const attributes = readOwnerAttributes(document, payload.ownerKind, payload.ownerId)
-  return writeOwnerAttributes(document, payload.ownerKind, payload.ownerId, updateAttributes(attributes, payload.attributeType, payload.values))
+  return writeOwnerAttributes(
+    document,
+    payload.ownerKind,
+    payload.ownerId,
+    updateAttributes(attributes, payload.attributeType, payload.values)
+  )
 }
 
-function applyAddAttributeValue(document: ArisWorkingDocument, command: ArisEditCommand): ArisWorkingDocument {
+function applyAddAttributeValue(
+  document: ArisWorkingDocument,
+  command: ArisEditCommand
+): ArisWorkingDocument {
   const payload = command.after as {
     readonly ownerKind: AttributeOwnerKind
     readonly ownerId: string
@@ -339,11 +474,17 @@ function applyAddAttributeValue(document: ArisWorkingDocument, command: ArisEdit
     return writeOwnerAttributes(document, payload.ownerKind, payload.ownerId, Object.freeze(next))
   }
 
-  const next: ArisAttribute[] = [...attributes, { type: payload.attributeType, values: Object.freeze([payload.value]) }]
+  const next: ArisAttribute[] = [
+    ...attributes,
+    { type: payload.attributeType, values: Object.freeze([payload.value]) }
+  ]
   return writeOwnerAttributes(document, payload.ownerKind, payload.ownerId, Object.freeze(next))
 }
 
-function applyRemoveAttributeValue(document: ArisWorkingDocument, command: ArisEditCommand): ArisWorkingDocument {
+function applyRemoveAttributeValue(
+  document: ArisWorkingDocument,
+  command: ArisEditCommand
+): ArisWorkingDocument {
   const payload = command.after as {
     readonly ownerKind: AttributeOwnerKind
     readonly ownerId: string
@@ -371,43 +512,88 @@ function applyRemoveAttributeValue(document: ArisWorkingDocument, command: ArisE
   return writeOwnerAttributes(document, payload.ownerKind, payload.ownerId, Object.freeze(next))
 }
 
-function applyMoveOccurrence(document: ArisWorkingDocument, command: ArisEditCommand): ArisWorkingDocument {
-  const payload = command.after as { readonly occurrenceId: string; readonly x: number; readonly y: number }
+function applyMoveOccurrence(
+  document: ArisWorkingDocument,
+  command: ArisEditCommand
+): ArisWorkingDocument {
+  const payload = command.after as {
+    readonly occurrenceId: string
+    readonly x: number
+    readonly y: number
+  }
   assertDefined(findOccurrence(document, payload.occurrenceId), 'occurrence', command)
   return updateOccurrence(document, payload.occurrenceId, (occurrence) =>
-    Object.freeze({ ...occurrence, bounds: Object.freeze({ ...occurrence.bounds, x: payload.x, y: payload.y }) })
+    Object.freeze({
+      ...occurrence,
+      bounds: Object.freeze({ ...occurrence.bounds, x: payload.x, y: payload.y })
+    })
   )
 }
 
-function applyResizeOccurrence(document: ArisWorkingDocument, command: ArisEditCommand): ArisWorkingDocument {
-  const payload = command.after as { readonly occurrenceId: string; readonly width: number; readonly height: number }
+function applyResizeOccurrence(
+  document: ArisWorkingDocument,
+  command: ArisEditCommand
+): ArisWorkingDocument {
+  const payload = command.after as {
+    readonly occurrenceId: string
+    readonly width: number
+    readonly height: number
+  }
   assertDefined(findOccurrence(document, payload.occurrenceId), 'occurrence', command)
   return updateOccurrence(document, payload.occurrenceId, (occurrence) =>
-    Object.freeze({ ...occurrence, bounds: Object.freeze({ ...occurrence.bounds, width: payload.width, height: payload.height }) })
+    Object.freeze({
+      ...occurrence,
+      bounds: Object.freeze({ ...occurrence.bounds, width: payload.width, height: payload.height })
+    })
   )
 }
 
-function applyRestyleOccurrence(document: ArisWorkingDocument, command: ArisEditCommand): ArisWorkingDocument {
-  const payload = command.after as { readonly occurrenceId: string; readonly style: Partial<ArisOccurrenceStyle> }
+function applyRestyleOccurrence(
+  document: ArisWorkingDocument,
+  command: ArisEditCommand
+): ArisWorkingDocument {
+  const payload = command.after as {
+    readonly occurrenceId: string
+    readonly style: Partial<ArisOccurrenceStyle>
+  }
   assertDefined(findOccurrence(document, payload.occurrenceId), 'occurrence', command)
   return updateOccurrence(document, payload.occurrenceId, (occurrence) =>
-    Object.freeze({ ...occurrence, style: Object.freeze({ ...occurrence.style, ...payload.style }) })
+    Object.freeze({
+      ...occurrence,
+      style: Object.freeze({ ...occurrence.style, ...payload.style })
+    })
   )
 }
 
-function applySetOccurrenceSymbol(document: ArisWorkingDocument, command: ArisEditCommand): ArisWorkingDocument {
+function applySetOccurrenceSymbol(
+  document: ArisWorkingDocument,
+  command: ArisEditCommand
+): ArisWorkingDocument {
   const payload = command.after as { readonly occurrenceId: string; readonly symbol: string }
   assertDefined(findOccurrence(document, payload.occurrenceId), 'occurrence', command)
   return updateOccurrence(document, payload.occurrenceId, (occurrence) =>
-    Object.freeze({ ...occurrence, symbol: payload.symbol, style: Object.freeze({ ...occurrence.style, symbol: payload.symbol }) })
+    Object.freeze({
+      ...occurrence,
+      symbol: payload.symbol,
+      style: Object.freeze({ ...occurrence.style, symbol: payload.symbol })
+    })
   )
 }
 
-function applySetAttributeOccurrencePlacement(document: ArisWorkingDocument, command: ArisEditCommand): ArisWorkingDocument {
-  const payload = command.after as { readonly occurrenceId: string; readonly attributeType: string; readonly placement: ArisAttributeOccurrence }
+function applySetAttributeOccurrencePlacement(
+  document: ArisWorkingDocument,
+  command: ArisEditCommand
+): ArisWorkingDocument {
+  const payload = command.after as {
+    readonly occurrenceId: string
+    readonly attributeType: string
+    readonly placement: ArisAttributeOccurrence
+  }
   assertDefined(findOccurrence(document, payload.occurrenceId), 'occurrence', command)
   return updateOccurrence(document, payload.occurrenceId, (occurrence) => {
-    const index = occurrence.attributeOccurrences.findIndex((attribute) => attribute.attributeType === payload.attributeType)
+    const index = occurrence.attributeOccurrences.findIndex(
+      (attribute) => attribute.attributeType === payload.attributeType
+    )
     const next = occurrence.attributeOccurrences.slice()
     if (index >= 0) {
       next[index] = payload.placement
@@ -418,21 +604,38 @@ function applySetAttributeOccurrencePlacement(document: ArisWorkingDocument, com
   })
 }
 
-function applySetConnectionRoute(document: ArisWorkingDocument, command: ArisEditCommand): ArisWorkingDocument {
-  const payload = command.after as { readonly connectionOccurrenceId: string; readonly route: readonly ArisPoint[] }
-  assertDefined(findConnectionOccurrence(document, payload.connectionOccurrenceId), 'connection occurrence', command)
+function applySetConnectionRoute(
+  document: ArisWorkingDocument,
+  command: ArisEditCommand
+): ArisWorkingDocument {
+  const payload = command.after as {
+    readonly connectionOccurrenceId: string
+    readonly route: readonly ArisPoint[]
+  }
+  assertDefined(
+    findConnectionOccurrence(document, payload.connectionOccurrenceId),
+    'connection occurrence',
+    command
+  )
   return updateConnectionOccurrence(document, payload.connectionOccurrenceId, (occurrence) =>
     Object.freeze({ ...occurrence, route: Object.freeze([...payload.route]) })
   )
 }
 
-function applyReconnectConnection(document: ArisWorkingDocument, command: ArisEditCommand): ArisWorkingDocument {
+function applyReconnectConnection(
+  document: ArisWorkingDocument,
+  command: ArisEditCommand
+): ArisWorkingDocument {
   const payload = command.after as {
     readonly connectionOccurrenceId: string
     readonly sourceOccurrenceId?: string
     readonly targetOccurrenceId?: string
   }
-  assertDefined(findConnectionOccurrence(document, payload.connectionOccurrenceId), 'connection occurrence', command)
+  assertDefined(
+    findConnectionOccurrence(document, payload.connectionOccurrenceId),
+    'connection occurrence',
+    command
+  )
   return updateConnectionOccurrence(document, payload.connectionOccurrenceId, (occurrence) =>
     Object.freeze({
       ...occurrence,
@@ -442,15 +645,28 @@ function applyReconnectConnection(document: ArisWorkingDocument, command: ArisEd
   )
 }
 
-function applyCreateDefinition(document: ArisWorkingDocument, command: ArisEditCommand): ArisWorkingDocument {
+function applyCreateDefinition(
+  document: ArisWorkingDocument,
+  command: ArisEditCommand
+): ArisWorkingDocument {
   const payload = command.after as ArisObjectDefinition
   if (document.objectDefinitions.has(payload.id)) {
-    throw new ArisCommandError('duplicate-id', `Object definition ${payload.id} already exists.`, command.commandId)
+    throw new ArisCommandError(
+      'duplicate-id',
+      `Object definition ${payload.id} already exists.`,
+      command.commandId
+    )
   }
-  return { ...document, objectDefinitions: replaceMap(document.objectDefinitions, payload.id, payload) }
+  return {
+    ...document,
+    objectDefinitions: replaceMap(document.objectDefinitions, payload.id, payload)
+  }
 }
 
-function applyCreateOccurrence(document: ArisWorkingDocument, command: ArisEditCommand): ArisWorkingDocument {
+function applyCreateOccurrence(
+  document: ArisWorkingDocument,
+  command: ArisEditCommand
+): ArisWorkingDocument {
   const payload = command.after as ArisObjectOccurrence
   assertDefined(document.models.get(payload.modelId), 'model', command)
   assertDefined(document.objectDefinitions.get(payload.definitionId), 'object definition', command)
@@ -459,29 +675,54 @@ function applyCreateOccurrence(document: ArisWorkingDocument, command: ArisEditC
   )
 }
 
-function applyCreateConnectionDefinition(document: ArisWorkingDocument, command: ArisEditCommand): ArisWorkingDocument {
+function applyCreateConnectionDefinition(
+  document: ArisWorkingDocument,
+  command: ArisEditCommand
+): ArisWorkingDocument {
   const payload = command.after as ArisConnectionDefinition
   if (document.connectionDefinitions.has(payload.id)) {
-    throw new ArisCommandError('duplicate-id', `Connection definition ${payload.id} already exists.`, command.commandId)
+    throw new ArisCommandError(
+      'duplicate-id',
+      `Connection definition ${payload.id} already exists.`,
+      command.commandId
+    )
   }
-  return { ...document, connectionDefinitions: replaceMap(document.connectionDefinitions, payload.id, payload) }
+  return {
+    ...document,
+    connectionDefinitions: replaceMap(document.connectionDefinitions, payload.id, payload)
+  }
 }
 
-function applyCreateConnectionOccurrence(document: ArisWorkingDocument, command: ArisEditCommand): ArisWorkingDocument {
+function applyCreateConnectionOccurrence(
+  document: ArisWorkingDocument,
+  command: ArisEditCommand
+): ArisWorkingDocument {
   const payload = command.after as ArisConnectionOccurrence
   assertDefined(document.models.get(payload.modelId), 'model', command)
-  assertDefined(document.connectionDefinitions.get(payload.definitionId), 'connection definition', command)
+  assertDefined(
+    document.connectionDefinitions.get(payload.definitionId),
+    'connection definition',
+    command
+  )
   assertDefined(findOccurrence(document, payload.sourceOccurrenceId), 'source occurrence', command)
   assertDefined(findOccurrence(document, payload.targetOccurrenceId), 'target occurrence', command)
   return updateModel(document, payload.modelId, (model) =>
-    Object.freeze({ ...model, connectionOccurrences: Object.freeze([...model.connectionOccurrences, payload]) })
+    Object.freeze({
+      ...model,
+      connectionOccurrences: Object.freeze([...model.connectionOccurrences, payload])
+    })
   )
 }
 
-function applyDeleteOccurrence(document: ArisWorkingDocument, command: ArisEditCommand): ArisWorkingDocument {
+function applyDeleteOccurrence(
+  document: ArisWorkingDocument,
+  command: ArisEditCommand
+): ArisWorkingDocument {
   const payload = command.after as { readonly occurrenceId: string }
   for (const [modelId, model] of document.models) {
-    const index = model.occurrences.findIndex((occurrence) => occurrence.id === payload.occurrenceId)
+    const index = model.occurrences.findIndex(
+      (occurrence) => occurrence.id === payload.occurrenceId
+    )
     if (index >= 0) {
       const next = model.occurrences.slice()
       next.splice(index, 1)
@@ -491,44 +732,80 @@ function applyDeleteOccurrence(document: ArisWorkingDocument, command: ArisEditC
       }
     }
   }
-  throw new ArisCommandError('missing-occurrence', `Occurrence ${payload.occurrenceId} not found.`, command.commandId)
+  throw new ArisCommandError(
+    'missing-occurrence',
+    `Occurrence ${payload.occurrenceId} not found.`,
+    command.commandId
+  )
 }
 
-function applyDeleteDefinition(document: ArisWorkingDocument, command: ArisEditCommand): ArisWorkingDocument {
+function applyDeleteDefinition(
+  document: ArisWorkingDocument,
+  command: ArisEditCommand
+): ArisWorkingDocument {
   const payload = command.after as { readonly definitionId: string } | ArisObjectDefinition
   const definitionId = 'definitionId' in payload ? payload.definitionId : payload.id
   if (!document.objectDefinitions.has(definitionId)) {
-    throw new ArisCommandError('missing-definition', `Object definition ${definitionId} not found.`, command.commandId)
+    throw new ArisCommandError(
+      'missing-definition',
+      `Object definition ${definitionId} not found.`,
+      command.commandId
+    )
   }
   return { ...document, objectDefinitions: deleteMap(document.objectDefinitions, definitionId) }
 }
 
-function applyDeleteConnection(document: ArisWorkingDocument, command: ArisEditCommand): ArisWorkingDocument {
+function applyDeleteConnection(
+  document: ArisWorkingDocument,
+  command: ArisEditCommand
+): ArisWorkingDocument {
   const payload = command.after as { readonly connectionOccurrenceId: string }
   for (const [modelId, model] of document.models) {
-    const index = model.connectionOccurrences.findIndex((occurrence) => occurrence.id === payload.connectionOccurrenceId)
+    const index = model.connectionOccurrences.findIndex(
+      (occurrence) => occurrence.id === payload.connectionOccurrenceId
+    )
     if (index >= 0) {
       const next = model.connectionOccurrences.slice()
       next.splice(index, 1)
       return {
         ...document,
-        models: replaceMap(document.models, modelId, { ...model, connectionOccurrences: Object.freeze(next) })
+        models: replaceMap(document.models, modelId, {
+          ...model,
+          connectionOccurrences: Object.freeze(next)
+        })
       }
     }
   }
-  throw new ArisCommandError('missing-connection', `Connection occurrence ${payload.connectionOccurrenceId} not found.`, command.commandId)
+  throw new ArisCommandError(
+    'missing-connection',
+    `Connection occurrence ${payload.connectionOccurrenceId} not found.`,
+    command.commandId
+  )
 }
 
-function applyDeleteConnectionDefinition(document: ArisWorkingDocument, command: ArisEditCommand): ArisWorkingDocument {
+function applyDeleteConnectionDefinition(
+  document: ArisWorkingDocument,
+  command: ArisEditCommand
+): ArisWorkingDocument {
   const payload = command.after as { readonly definitionId: string } | ArisConnectionDefinition
   const definitionId = 'definitionId' in payload ? payload.definitionId : payload.id
   if (!document.connectionDefinitions.has(definitionId)) {
-    throw new ArisCommandError('missing-connection-definition', `Connection definition ${definitionId} not found.`, command.commandId)
+    throw new ArisCommandError(
+      'missing-connection-definition',
+      `Connection definition ${definitionId} not found.`,
+      command.commandId
+    )
   }
-  return { ...document, connectionDefinitions: deleteMap(document.connectionDefinitions, definitionId) }
+  return {
+    ...document,
+    connectionDefinitions: deleteMap(document.connectionDefinitions, definitionId)
+  }
 }
 
-function applyAddLane(document: ArisWorkingDocument, command: ArisEditCommand): ArisWorkingDocument {
+function applyAddLane(
+  document: ArisWorkingDocument,
+  command: ArisEditCommand
+): ArisWorkingDocument {
   const payload = command.after as ArisLane
   assertDefined(document.models.get(payload.modelId), 'model', command)
   return updateModel(document, payload.modelId, (model) =>
@@ -536,11 +813,18 @@ function applyAddLane(document: ArisWorkingDocument, command: ArisEditCommand): 
   )
 }
 
-function applyEditLane(document: ArisWorkingDocument, command: ArisEditCommand): ArisWorkingDocument {
+function applyEditLane(
+  document: ArisWorkingDocument,
+  command: ArisEditCommand
+): ArisWorkingDocument {
   const payload = command.after as ArisLane
   const found = assertDefined(findLane(document, payload.id), 'lane', command)
   if (found.modelId !== payload.modelId) {
-    throw new ArisCommandError('lane-model-mismatch', `Lane ${payload.id} cannot move between models.`, command.commandId)
+    throw new ArisCommandError(
+      'lane-model-mismatch',
+      `Lane ${payload.id} cannot move between models.`,
+      command.commandId
+    )
   }
   return updateModel(document, payload.modelId, (model) => {
     const next = model.lanes.map((lane) => (lane.id === payload.id ? payload : lane))
@@ -548,7 +832,10 @@ function applyEditLane(document: ArisWorkingDocument, command: ArisEditCommand):
   })
 }
 
-function applyDeleteLane(document: ArisWorkingDocument, command: ArisEditCommand): ArisWorkingDocument {
+function applyDeleteLane(
+  document: ArisWorkingDocument,
+  command: ArisEditCommand
+): ArisWorkingDocument {
   const payload = command.after as { readonly laneId: string }
   const found = assertDefined(findLane(document, payload.laneId), 'lane', command)
   return updateModel(document, found.modelId, (model) => {
@@ -557,7 +844,10 @@ function applyDeleteLane(document: ArisWorkingDocument, command: ArisEditCommand
   })
 }
 
-function applyAddFreeText(document: ArisWorkingDocument, command: ArisEditCommand): ArisWorkingDocument {
+function applyAddFreeText(
+  document: ArisWorkingDocument,
+  command: ArisEditCommand
+): ArisWorkingDocument {
   const payload = command.after as ArisFreeText
   assertDefined(document.models.get(payload.modelId), 'model', command)
   return updateModel(document, payload.modelId, (model) =>
@@ -565,11 +855,18 @@ function applyAddFreeText(document: ArisWorkingDocument, command: ArisEditComman
   )
 }
 
-function applyEditFreeText(document: ArisWorkingDocument, command: ArisEditCommand): ArisWorkingDocument {
+function applyEditFreeText(
+  document: ArisWorkingDocument,
+  command: ArisEditCommand
+): ArisWorkingDocument {
   const payload = command.after as ArisFreeText
   const found = assertDefined(findFreeText(document, payload.id), 'free text', command)
   if (found.modelId !== payload.modelId) {
-    throw new ArisCommandError('free-text-model-mismatch', `Free text ${payload.id} cannot move between models.`, command.commandId)
+    throw new ArisCommandError(
+      'free-text-model-mismatch',
+      `Free text ${payload.id} cannot move between models.`,
+      command.commandId
+    )
   }
   return updateModel(document, payload.modelId, (model) => {
     const next = model.freeText.map((item) => (item.id === payload.id ? payload : item))
@@ -577,7 +874,10 @@ function applyEditFreeText(document: ArisWorkingDocument, command: ArisEditComma
   })
 }
 
-function applyDeleteFreeText(document: ArisWorkingDocument, command: ArisEditCommand): ArisWorkingDocument {
+function applyDeleteFreeText(
+  document: ArisWorkingDocument,
+  command: ArisEditCommand
+): ArisWorkingDocument {
   const payload = command.after as { readonly freeTextId: string }
   const found = assertDefined(findFreeText(document, payload.freeTextId), 'free text', command)
   return updateModel(document, found.modelId, (model) => {
@@ -586,13 +886,20 @@ function applyDeleteFreeText(document: ArisWorkingDocument, command: ArisEditCom
   })
 }
 
-function applySetModelAssignment(document: ArisWorkingDocument, command: ArisEditCommand): ArisWorkingDocument {
+function applySetModelAssignment(
+  document: ArisWorkingDocument,
+  command: ArisEditCommand
+): ArisWorkingDocument {
   const payload = command.after as {
     readonly objectDefinitionId: string
     readonly modelId: string
     readonly action: 'add' | 'remove'
   }
-  const definition = assertDefined(document.objectDefinitions.get(payload.objectDefinitionId), 'object definition', command)
+  const definition = assertDefined(
+    document.objectDefinitions.get(payload.objectDefinitionId),
+    'object definition',
+    command
+  )
   const linked = new Set(definition.linkedModelIds)
   if (payload.action === 'add') linked.add(payload.modelId)
   else linked.delete(payload.modelId)
@@ -605,7 +912,10 @@ function applySetModelAssignment(document: ArisWorkingDocument, command: ArisEdi
   }
 }
 
-function applyTransaction(document: ArisWorkingDocument, command: ArisEditCommand): ArisWorkingDocument {
+function applyTransaction(
+  document: ArisWorkingDocument,
+  command: ArisEditCommand
+): ArisWorkingDocument {
   const normalized = normalizeCommand(command, command.baseRevision)
   const payload = normalized.after as { readonly commands: readonly ArisEditCommand[] }
   let current = document
@@ -615,36 +925,40 @@ function applyTransaction(document: ArisWorkingDocument, command: ArisEditComman
   return current
 }
 
-const APPLIERS: Readonly<Record<ArisCommandKind, (document: ArisWorkingDocument, command: ArisEditCommand) => ArisWorkingDocument>> =
-  Object.freeze({
-    setLocalizedName: applySetLocalizedName,
-    setAttribute: applySetAttribute,
-    addAttributeValue: applyAddAttributeValue,
-    removeAttributeValue: applyRemoveAttributeValue,
-    moveOccurrence: applyMoveOccurrence,
-    resizeOccurrence: applyResizeOccurrence,
-    restyleOccurrence: applyRestyleOccurrence,
-    setOccurrenceSymbol: applySetOccurrenceSymbol,
-    setAttributeOccurrencePlacement: applySetAttributeOccurrencePlacement,
-    createDefinition: applyCreateDefinition,
-    createOccurrence: applyCreateOccurrence,
-    createConnectionDefinition: applyCreateConnectionDefinition,
-    createConnectionOccurrence: applyCreateConnectionOccurrence,
-    setConnectionRoute: applySetConnectionRoute,
-    reconnectConnection: applyReconnectConnection,
-    deleteOccurrence: applyDeleteOccurrence,
-    deleteDefinition: applyDeleteDefinition,
-    deleteConnection: applyDeleteConnection,
-    deleteConnectionDefinition: applyDeleteConnectionDefinition,
-    addLane: applyAddLane,
-    editLane: applyEditLane,
-    deleteLane: applyDeleteLane,
-    addFreeText: applyAddFreeText,
-    editFreeText: applyEditFreeText,
-    deleteFreeText: applyDeleteFreeText,
-    setModelAssignment: applySetModelAssignment,
-    transaction: applyTransaction
-  })
+const APPLIERS: Readonly<
+  Record<
+    ArisCommandKind,
+    (document: ArisWorkingDocument, command: ArisEditCommand) => ArisWorkingDocument
+  >
+> = Object.freeze({
+  setLocalizedName: applySetLocalizedName,
+  setAttribute: applySetAttribute,
+  addAttributeValue: applyAddAttributeValue,
+  removeAttributeValue: applyRemoveAttributeValue,
+  moveOccurrence: applyMoveOccurrence,
+  resizeOccurrence: applyResizeOccurrence,
+  restyleOccurrence: applyRestyleOccurrence,
+  setOccurrenceSymbol: applySetOccurrenceSymbol,
+  setAttributeOccurrencePlacement: applySetAttributeOccurrencePlacement,
+  createDefinition: applyCreateDefinition,
+  createOccurrence: applyCreateOccurrence,
+  createConnectionDefinition: applyCreateConnectionDefinition,
+  createConnectionOccurrence: applyCreateConnectionOccurrence,
+  setConnectionRoute: applySetConnectionRoute,
+  reconnectConnection: applyReconnectConnection,
+  deleteOccurrence: applyDeleteOccurrence,
+  deleteDefinition: applyDeleteDefinition,
+  deleteConnection: applyDeleteConnection,
+  deleteConnectionDefinition: applyDeleteConnectionDefinition,
+  addLane: applyAddLane,
+  editLane: applyEditLane,
+  deleteLane: applyDeleteLane,
+  addFreeText: applyAddFreeText,
+  editFreeText: applyEditFreeText,
+  deleteFreeText: applyDeleteFreeText,
+  setModelAssignment: applySetModelAssignment,
+  transaction: applyTransaction
+})
 
 function validatePreconditions(command: ArisEditCommand, document: ArisWorkingDocument): void {
   assertRevision(command, document)
@@ -661,7 +975,11 @@ function validatePreconditions(command: ArisEditCommand, document: ArisWorkingDo
     case 'setConnectionRoute':
     case 'reconnectConnection': {
       const payload = command.after as { readonly connectionOccurrenceId: string }
-      assertDefined(findConnectionOccurrence(document, payload.connectionOccurrenceId), 'connection occurrence', command)
+      assertDefined(
+        findConnectionOccurrence(document, payload.connectionOccurrenceId),
+        'connection occurrence',
+        command
+      )
       break
     }
     case 'setLocalizedName':
@@ -669,11 +987,16 @@ function validatePreconditions(command: ArisEditCommand, document: ArisWorkingDo
     case 'addAttributeValue':
     case 'removeAttributeValue': {
       const payload = command.after as { readonly ownerKind: string; readonly ownerId: string }
-      if (payload.ownerKind === 'model') assertDefined(document.models.get(payload.ownerId), 'model', command)
+      if (payload.ownerKind === 'model')
+        assertDefined(document.models.get(payload.ownerId), 'model', command)
       else if (payload.ownerKind === 'objectDefinition')
         assertDefined(document.objectDefinitions.get(payload.ownerId), 'object definition', command)
       else if (payload.ownerKind === 'connectionDefinition')
-        assertDefined(document.connectionDefinitions.get(payload.ownerId), 'connection definition', command)
+        assertDefined(
+          document.connectionDefinitions.get(payload.ownerId),
+          'connection definition',
+          command
+        )
       break
     }
     case 'createOccurrence':
@@ -700,14 +1023,30 @@ function validatePreconditions(command: ArisEditCommand, document: ArisWorkingDo
     case 'createConnectionOccurrence': {
       const payload = command.after as ArisConnectionOccurrence
       assertDefined(document.models.get(payload.modelId), 'model', command)
-      assertDefined(document.connectionDefinitions.get(payload.definitionId), 'connection definition', command)
-      assertDefined(findOccurrence(document, payload.sourceOccurrenceId), 'source occurrence', command)
-      assertDefined(findOccurrence(document, payload.targetOccurrenceId), 'target occurrence', command)
+      assertDefined(
+        document.connectionDefinitions.get(payload.definitionId),
+        'connection definition',
+        command
+      )
+      assertDefined(
+        findOccurrence(document, payload.sourceOccurrenceId),
+        'source occurrence',
+        command
+      )
+      assertDefined(
+        findOccurrence(document, payload.targetOccurrenceId),
+        'target occurrence',
+        command
+      )
       break
     }
     case 'setModelAssignment': {
       const payload = command.after as { readonly objectDefinitionId: string }
-      assertDefined(document.objectDefinitions.get(payload.objectDefinitionId), 'object definition', command)
+      assertDefined(
+        document.objectDefinitions.get(payload.objectDefinitionId),
+        'object definition',
+        command
+      )
       break
     }
     case 'transaction': {
@@ -731,7 +1070,10 @@ function validatePostconditions(document: ArisWorkingDocument, command: ArisEdit
  * Apply a command without bumping the revision. Used internally by the
  * command stack so multi-object transactions and undo/redo stay atomic.
  */
-export function applyChange(document: ArisWorkingDocument, command: ArisEditCommand): ArisWorkingDocument {
+export function applyChange(
+  document: ArisWorkingDocument,
+  command: ArisEditCommand
+): ArisWorkingDocument {
   validatePreconditions(command, document)
   const next = APPLIERS[command.kind](document, command)
   validatePostconditions(next, command)
@@ -741,7 +1083,10 @@ export function applyChange(document: ArisWorkingDocument, command: ArisEditComm
 /**
  * Apply a command and bump the revision by one.
  */
-export function applyCommand(document: ArisWorkingDocument, command: ArisEditCommand): ArisWorkingDocument {
+export function applyCommand(
+  document: ArisWorkingDocument,
+  command: ArisEditCommand
+): ArisWorkingDocument {
   return Object.freeze({ ...applyChange(document, command), revision: document.revision + 1 })
 }
 
@@ -884,13 +1229,18 @@ export function invertCommand(command: ArisEditCommand): ArisEditCommand {
           ownerKind: original.ownerKind,
           ownerId: original.ownerId,
           attributeType: original.attributeType,
-          values: command.before as readonly { readonly localeId: string | null; readonly text: string }[]
+          values: command.before as readonly {
+            readonly localeId: string | null
+            readonly text: string
+          }[]
         }
       }
     }
     case 'transaction': {
       const payload = command.after as { readonly commands: readonly ArisEditCommand[] }
-      const inverted = [...payload.commands].reverse().map((subcommand) => invertCommand(subcommand))
+      const inverted = [...payload.commands]
+        .reverse()
+        .map((subcommand) => invertCommand(subcommand))
       return { ...command, after: { commands: Object.freeze(inverted) } }
     }
     default:
@@ -920,7 +1270,9 @@ export function normalizeCommand(command: ArisEditCommand, revision: number): Ar
     ...command,
     baseRevision: revision,
     after: {
-      commands: Object.freeze(payload.commands.map((subcommand) => normalizeCommand(subcommand, revision)))
+      commands: Object.freeze(
+        payload.commands.map((subcommand) => normalizeCommand(subcommand, revision))
+      )
     }
   }
 }

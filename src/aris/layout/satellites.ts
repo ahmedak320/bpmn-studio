@@ -174,7 +174,7 @@ export function placeSatellites(
       const used = counterKey.get(control) ?? 0
       counterKey.set(control, used + 1)
       const width = geometry.shapeCross[control] as number
-      const spread = width * (0.05 + 0.4 * (used % 5) / 5)
+      const spread = width * (0.05 + (0.4 * (used % 5)) / 5)
       const exitCross = (geometry.nodeCross[control] as number) + spread
       const gapAlong = slots.next((placement.rankOf[control] as number) + 1)
       return {
@@ -228,9 +228,13 @@ export function placeSatellites(
     (shapeCrossOf[index] as number) / 2
 
   const routes: FlowPoint[][] = satelliteEdges.map((edge, edgeIndex) => {
-    const anchor = anchors[edgeIndex] as { source: EndpointAnchor | null; target: EndpointAnchor | null }
+    const anchor = anchors[edgeIndex] as {
+      source: EndpointAnchor | null
+      target: EndpointAnchor | null
+    }
     if (!anchor.source || !anchor.target) return []
-    const corridorCross = corridorBase + ((corridorOf[edgeIndex] as number) + 1) * spacing.corridorGap
+    const corridorCross =
+      corridorBase + ((corridorOf[edgeIndex] as number) + 1) * spacing.corridorGap
     const resolve = (
       endpointId: string,
       value: EndpointAnchor

@@ -2,7 +2,12 @@ import { describe, expect, it } from 'vitest'
 import { validateEpcGraph } from './validate'
 import { classifyRules } from './xor'
 import { detectReturnPathOutcomes, buildReturnPathApplyPayload, rankCandidates } from './returnPath'
-import { buildFlowGraphIndex, connectedComponents, stronglyConnectedComponents, upstreamDistances } from './flowGraph'
+import {
+  buildFlowGraphIndex,
+  connectedComponents,
+  stronglyConnectedComponents,
+  upstreamDistances
+} from './flowGraph'
 import { toEpcGraph } from './adapter'
 import { edge, graph, names, node } from './testFixtures'
 
@@ -23,7 +28,9 @@ describe('immutability guarantee: no function in src/aris/epc mutates its input'
         node('S2', 'OT_EVT'),
         node('Rmerge', 'OT_RULE', { symbolType: 'ST_OPR_XOR_1' }),
         node('Review', 'OT_FUNC', { linkedModelIds: ['Model.child'] }),
-        node('Returned', 'OT_EVT', { names: names('Application Returned for modification', 'إرجاع الطلب') }),
+        node('Returned', 'OT_EVT', {
+          names: names('Application Returned for modification', 'إرجاع الطلب')
+        }),
         node('End', 'OT_EVT')
       ],
       [
@@ -86,9 +93,14 @@ describe('immutability guarantee: no function in src/aris/epc mutates its input'
     const index = buildFlowGraphIndex(g)
     const candidates = rankCandidates(index, 'Returned')
     // Use a graph with a genuinely missing route so we have a real candidate to freeze.
-    const missingGraph = graph('M2', [node('FnA', 'OT_FUNC'), node('Returned', 'OT_EVT', { names: names('Returned for modification') })], [
-      edge('e1', 'FnA', 'Returned', 'CT_CRT_1')
-    ])
+    const missingGraph = graph(
+      'M2',
+      [
+        node('FnA', 'OT_FUNC'),
+        node('Returned', 'OT_EVT', { names: names('Returned for modification') })
+      ],
+      [edge('e1', 'FnA', 'Returned', 'CT_CRT_1')]
+    )
     const [result] = detectReturnPathOutcomes(missingGraph)
     if (result.status !== 'missing') throw new Error('expected missing route in fixture')
     const candidate = result.candidates[0]
@@ -113,8 +125,19 @@ describe('immutability guarantee: no function in src/aris/epc mutates its input'
 
   it('toEpcGraph (the adapter seam) does not mutate its structural input', () => {
     const objectDefinitionById = new Map([
-      ['Def.evt1', { id: 'Def.evt1', type: 'OT_EVT', names: { values: Object.freeze({ en: 'Start' }) } }],
-      ['Def.func1', { id: 'Def.func1', type: 'OT_FUNC', names: { values: Object.freeze({ en: 'Do work' }) }, linkedModelIds: Object.freeze(['Model.x']) }]
+      [
+        'Def.evt1',
+        { id: 'Def.evt1', type: 'OT_EVT', names: { values: Object.freeze({ en: 'Start' }) } }
+      ],
+      [
+        'Def.func1',
+        {
+          id: 'Def.func1',
+          type: 'OT_FUNC',
+          names: { values: Object.freeze({ en: 'Do work' }) },
+          linkedModelIds: Object.freeze(['Model.x'])
+        }
+      ]
     ])
     const connectionDefinitionById = new Map([['CxnDef.1', { id: 'CxnDef.1', type: 'CT_ACTIV_1' }]])
     const input = Object.freeze({
@@ -124,7 +147,14 @@ describe('immutability guarantee: no function in src/aris/epc mutates its input'
         Object.freeze({ id: 'Occ.func1', definitionId: 'Def.func1', symbol: 'ST_FUNC' })
       ]),
       objectDefinitionById,
-      connectionOccurrences: Object.freeze([Object.freeze({ id: 'Occ.cxn1', definitionId: 'CxnDef.1', sourceOccurrenceId: 'Occ.evt1', targetOccurrenceId: 'Occ.func1' })]),
+      connectionOccurrences: Object.freeze([
+        Object.freeze({
+          id: 'Occ.cxn1',
+          definitionId: 'CxnDef.1',
+          sourceOccurrenceId: 'Occ.evt1',
+          targetOccurrenceId: 'Occ.func1'
+        })
+      ]),
       connectionDefinitionById
     })
     const before = JSON.stringify({

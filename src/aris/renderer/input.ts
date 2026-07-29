@@ -117,7 +117,8 @@ export interface RenderSourceConnectionDefinitionParsed {
   readonly connectionDefinitionId: string | null
   readonly connectionType: string | null
 }
-export type RenderSourceConnectionDefinition = RenderSourceRecord<RenderSourceConnectionDefinitionParsed>
+export type RenderSourceConnectionDefinition =
+  RenderSourceRecord<RenderSourceConnectionDefinitionParsed>
 
 export interface RenderSourceConnectionOccurrenceParsed {
   readonly connectionOccurrenceId: string | null
@@ -130,7 +131,8 @@ export interface RenderSourceConnectionOccurrenceParsed {
   readonly tgtArrow: string | null
   readonly visible: string | null
 }
-export type RenderSourceConnectionOccurrence = RenderSourceRecord<RenderSourceConnectionOccurrenceParsed>
+export type RenderSourceConnectionOccurrence =
+  RenderSourceRecord<RenderSourceConnectionOccurrenceParsed>
 
 export interface RenderSourceRoutePoint {
   readonly connectionOccurrenceId: string | null
@@ -169,7 +171,8 @@ export interface RenderSourceAttributeOccurrenceParsed {
   readonly dx: number | null
   readonly dy: number | null
 }
-export type RenderSourceAttributeOccurrence = RenderSourceRecord<RenderSourceAttributeOccurrenceParsed>
+export type RenderSourceAttributeOccurrence =
+  RenderSourceRecord<RenderSourceAttributeOccurrenceParsed>
 
 // ---------------------------------------------------------------------------------------------
 // Lanes
@@ -199,7 +202,8 @@ export interface RenderSourceFreeTextOccurrenceParsed {
   readonly dx: number | null
   readonly dy: number | null
 }
-export type RenderSourceFreeTextOccurrence = RenderSourceRecord<RenderSourceFreeTextOccurrenceParsed>
+export type RenderSourceFreeTextOccurrence =
+  RenderSourceRecord<RenderSourceFreeTextOccurrenceParsed>
 
 // ---------------------------------------------------------------------------------------------
 // OLE / attachments / blobs
@@ -221,7 +225,8 @@ export interface RenderSourceAttachmentOccurrenceParsed {
   readonly dx: number | null
   readonly dy: number | null
 }
-export type RenderSourceAttachmentOccurrence = RenderSourceRecord<RenderSourceAttachmentOccurrenceParsed>
+export type RenderSourceAttachmentOccurrence =
+  RenderSourceRecord<RenderSourceAttachmentOccurrenceParsed>
 
 // ---------------------------------------------------------------------------------------------
 // Cross-package reference GUIDs (Section 12.3 "missing reference export")

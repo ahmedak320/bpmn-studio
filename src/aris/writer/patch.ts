@@ -186,7 +186,8 @@ export function applyAmlEdits(original: string, edits: readonly AmlEdit[]): AmlP
  */
 export function pruneNoOpEdits(original: string, edits: readonly AmlEdit[]): readonly AmlEdit[] {
   return edits.filter(
-    (edit) => !(isInsertionPoint(edit.span) && edit.replacement === '') &&
+    (edit) =>
+      !(isInsertionPoint(edit.span) && edit.replacement === '') &&
       sliceSpan(original, edit.span) !== edit.replacement
   )
 }
@@ -305,7 +306,10 @@ export function assertOnlySpanChanged(
 ): TextDifference | null {
   const difference = diffTexts(original, derived)
   if (difference === null) return null
-  if (difference.originalSpan.start < expected.start || difference.originalSpan.end > expected.end) {
+  if (
+    difference.originalSpan.start < expected.start ||
+    difference.originalSpan.end > expected.end
+  ) {
     throw new ArisWriterError(
       'invalid-span',
       `Derived document changed [${difference.originalSpan.start}, ${difference.originalSpan.end}) ` +

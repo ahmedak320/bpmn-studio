@@ -15,7 +15,7 @@ import type {
   ArisObjectOccurrence,
   ArisOccurrenceStyle,
   ArisStyleCatalog,
-  ArisWorkingDocument,
+  ArisWorkingDocument
 } from '../model/types'
 
 function bounds(x: number, y: number, width: number, height: number): ArisBounds {
@@ -30,7 +30,7 @@ function emptyStyle(): ArisOccurrenceStyle {
     strokeWidth: null,
     lineStyle: null,
     fontStyleSheetId: null,
-    zOrder: null,
+    zOrder: null
   }
 }
 
@@ -44,7 +44,7 @@ export function buildSatelliteDocument(): ArisWorkingDocument {
     createDate: '2026-07-28',
     createTime: '21:45:00',
     userName: 'tester',
-    arisExeVersion: '0.1.0',
+    arisExeVersion: '0.1.0'
   }
 
   const funcDef: ArisObjectDefinition = {
@@ -54,7 +54,7 @@ export function buildSatelliteDocument(): ArisWorkingDocument {
     names: localized({ 'en-US': 'Approve' }),
     attributes: [],
     linkedModelIds: [],
-    rawAttributes: {},
+    rawAttributes: {}
   }
 
   const ownerDef: ArisObjectDefinition = {
@@ -67,12 +67,12 @@ export function buildSatelliteDocument(): ArisWorkingDocument {
         type: 'AT_DESC',
         values: [
           { localeId: 'en-US', text: 'Responsible party' },
-          { localeId: 'ar-SA', text: 'الجهة المسؤولة' },
-        ],
-      },
+          { localeId: 'ar-SA', text: 'الجهة المسؤولة' }
+        ]
+      }
     ],
     linkedModelIds: [],
-    rawAttributes: {},
+    rawAttributes: {}
   }
 
   const inputDef: ArisObjectDefinition = {
@@ -82,13 +82,13 @@ export function buildSatelliteDocument(): ArisWorkingDocument {
     names: localized({ 'en-US': 'Application form' }),
     attributes: [],
     linkedModelIds: [],
-    rawAttributes: {},
+    rawAttributes: {}
   }
 
   const objectDefinitions = new Map<string, ArisObjectDefinition>([
     [funcDef.id, funcDef],
     [ownerDef.id, ownerDef],
-    [inputDef.id, inputDef],
+    [inputDef.id, inputDef]
   ])
 
   const funcOcc: ArisObjectOccurrence = {
@@ -99,7 +99,7 @@ export function buildSatelliteDocument(): ArisWorkingDocument {
     bounds: bounds(100, 100, 120, 60),
     style: emptyStyle(),
     attributeOccurrences: [],
-    rawAttributes: {},
+    rawAttributes: {}
   }
 
   const ownerOcc: ArisObjectOccurrence = {
@@ -110,7 +110,7 @@ export function buildSatelliteDocument(): ArisWorkingDocument {
     bounds: bounds(300, 100, 100, 50),
     style: emptyStyle(),
     attributeOccurrences: [],
-    rawAttributes: {},
+    rawAttributes: {}
   }
 
   const inputOcc: ArisObjectOccurrence = {
@@ -121,7 +121,7 @@ export function buildSatelliteDocument(): ArisWorkingDocument {
     bounds: bounds(100, 300, 100, 50),
     style: emptyStyle(),
     attributeOccurrences: [],
-    rawAttributes: {},
+    rawAttributes: {}
   }
 
   const ownerCxnDef: ArisConnectionDefinition = {
@@ -130,7 +130,7 @@ export function buildSatelliteDocument(): ArisWorkingDocument {
     fromObjectDefinitionId: funcDef.id,
     toObjectDefinitionId: ownerDef.id,
     names: localized({}),
-    attributes: [],
+    attributes: []
   }
 
   const inputCxnDef: ArisConnectionDefinition = {
@@ -139,12 +139,12 @@ export function buildSatelliteDocument(): ArisWorkingDocument {
     fromObjectDefinitionId: inputDef.id,
     toObjectDefinitionId: funcDef.id,
     names: localized({}),
-    attributes: [],
+    attributes: []
   }
 
   const connectionDefinitions = new Map<string, ArisConnectionDefinition>([
     [ownerCxnDef.id, ownerCxnDef],
-    [inputCxnDef.id, inputCxnDef],
+    [inputCxnDef.id, inputCxnDef]
   ])
 
   const ownerCxn: ArisConnectionOccurrence = {
@@ -161,9 +161,9 @@ export function buildSatelliteDocument(): ArisWorkingDocument {
       srcArrow: null,
       tgtArrow: null,
       fontStyleSheetId: null,
-      zOrder: null,
+      zOrder: null
     },
-    rawAttributes: {},
+    rawAttributes: {}
   }
 
   const inputCxn: ArisConnectionOccurrence = {
@@ -180,9 +180,9 @@ export function buildSatelliteDocument(): ArisWorkingDocument {
       srcArrow: null,
       tgtArrow: null,
       fontStyleSheetId: null,
-      zOrder: null,
+      zOrder: null
     },
-    rawAttributes: {},
+    rawAttributes: {}
   }
 
   const model: ArisModel = {
@@ -200,10 +200,10 @@ export function buildSatelliteDocument(): ArisWorkingDocument {
       backColor: null,
       printScale: null,
       curveRadius: null,
-      arcRadius: null,
+      arcRadius: null
     },
     unsupported: false,
-    rawSourceRecord: null,
+    rawSourceRecord: null
   }
 
   const styleCatalog: ArisStyleCatalog = { styles: new Map() }
@@ -228,8 +228,8 @@ export function buildSatelliteDocument(): ArisWorkingDocument {
       freeTextOccurrences: [],
       styles: { fontStyleSheets: new Map() },
       unknownRecords: [],
-      routePoints: [],
+      routePoints: []
     },
-    revision: 1,
+    revision: 1
   }
 }

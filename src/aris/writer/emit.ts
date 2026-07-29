@@ -91,9 +91,10 @@ export function renderAttributes(attributes: readonly EmittedAttribute[]): strin
   return attributes
     .map((attribute) => {
       assertXmlName(attribute.name, 'Attribute name')
-      const value = attribute.raw === true
-        ? attribute.value
-        : escapeXmlAttributeValue(attribute.value, `Attribute "${attribute.name}"`)
+      const value =
+        attribute.raw === true
+          ? attribute.value
+          : escapeXmlAttributeValue(attribute.value, `Attribute "${attribute.name}"`)
       return ` ${attribute.name}="${value}"`
     })
     .join('')
@@ -139,9 +140,7 @@ export function renderElementSpec(spec: ElementSpec, context: EmitContext): stri
     indentUnit: context.indentUnit,
     newline: context.newline
   }
-  const body = children
-    .map((child) => renderElementSpec(child, childContext))
-    .join(context.newline)
+  const body = children.map((child) => renderElementSpec(child, childContext)).join(context.newline)
   return (
     `${context.indent}<${spec.name}${attributes}>${context.newline}` +
     `${body}${context.newline}${context.indent}</${spec.name}>`
@@ -407,6 +406,9 @@ export function connectionOccurrenceSpec(occurrence: ConnectionOccurrenceSpec): 
 }
 
 /** Render any record spec to XML at the given indentation. */
-export function renderRecord(spec: ElementSpec, context: EmitContext = DEFAULT_EMIT_CONTEXT): string {
+export function renderRecord(
+  spec: ElementSpec,
+  context: EmitContext = DEFAULT_EMIT_CONTEXT
+): string {
   return renderElementSpec(spec, context)
 }

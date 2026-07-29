@@ -56,12 +56,19 @@ const resolveImport = (fromFile, specifier) => {
   return null
 }
 
-const relativePath = (file) => file.replaceAll('\\', '/').replace(`${ROOT.replaceAll('\\', '/')}/`, '')
+const relativePath = (file) =>
+  file.replaceAll('\\', '/').replace(`${ROOT.replaceAll('\\', '/')}/`, '')
 
 const parseSpecifiers = (file) => {
   if (!/\.[cm]?[jt]sx?$/u.test(file)) return []
   const sourceText = readFileSync(file, 'utf8')
-  const source = ts.createSourceFile(file, sourceText, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX)
+  const source = ts.createSourceFile(
+    file,
+    sourceText,
+    ts.ScriptTarget.Latest,
+    true,
+    ts.ScriptKind.TSX
+  )
   const specifiers = []
   source.forEachChild((node) => {
     if (
@@ -117,10 +124,16 @@ while (queue.length > 0) {
 }
 
 const violations = [
-  ...dependencyViolations.map((name) => `package.json dependencies still include banned BPMN runtime: ${name}`),
-  ...packageSpecifierViolations.map((entry) => `ARIS production graph imports banned BPMN package: ${entry}`),
+  ...dependencyViolations.map(
+    (name) => `package.json dependencies still include banned BPMN runtime: ${name}`
+  ),
+  ...packageSpecifierViolations.map(
+    (entry) => `ARIS production graph imports banned BPMN package: ${entry}`
+  ),
   ...graphPathViolations.map((path) => `ARIS production graph reaches banned BPMN module: ${path}`),
-  ...unresolvedLocalImports.map((entry) => `ARIS production graph has an unresolved local import: ${entry}`)
+  ...unresolvedLocalImports.map(
+    (entry) => `ARIS production graph has an unresolved local import: ${entry}`
+  )
 ]
 
 if (violations.length > 0) {

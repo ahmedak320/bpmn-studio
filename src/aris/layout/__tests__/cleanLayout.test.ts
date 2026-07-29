@@ -74,9 +74,9 @@ describe('a simple chain', () => {
     for (const edge of result.edges) {
       const source = nodeById(result, edge.source)
       const target = nodeById(result, edge.target)
-      expect(pointOnRectBoundary(edge.points[0] as { x: number; y: number }, source.rect, 1e-6)).toBe(
-        true
-      )
+      expect(
+        pointOnRectBoundary(edge.points[0] as { x: number; y: number }, source.rect, 1e-6)
+      ).toBe(true)
       expect(
         pointOnRectBoundary(
           edge.points[edge.points.length - 1] as { x: number; y: number },
@@ -129,8 +129,9 @@ describe('steps 7 and 8 — symmetric XOR branches around the spine', () => {
       })
 
       it('keeps all branches on the same rank', () => {
-        const ranks = Array.from({ length: branchCount }, (_value, index) =>
-          nodeById(result, `F.${index}`).rank
+        const ranks = Array.from(
+          { length: branchCount },
+          (_value, index) => nodeById(result, `F.${index}`).rank
         )
         expect(new Set(ranks).size).toBe(1)
       })

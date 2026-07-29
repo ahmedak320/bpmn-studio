@@ -27,7 +27,11 @@ import type {
   RenderSourceRoutePoint
 } from './input'
 
-export function rec<T>(sourceId: string | null, path: string, parsed: T): { sourceId: string | null; path: string; parsed: T } {
+export function rec<T>(
+  sourceId: string | null,
+  path: string,
+  parsed: T
+): { sourceId: string | null; path: string; parsed: T } {
   return { sourceId, path, parsed }
 }
 
@@ -52,15 +56,27 @@ export function buildHappyPathInput(): ArisRenderSourceInput {
   const objectDefinitions = new Map<string, RenderSourceObjectDefinition>([
     [
       'ObjDef.1',
-      rec('ObjDef.1', 'AML[1]/Group[1]/ObjDef[1]', { objectDefinitionId: 'ObjDef.1', typeNum: 'OT_FUNC', symbolNum: 'ST_FUNC' })
+      rec('ObjDef.1', 'AML[1]/Group[1]/ObjDef[1]', {
+        objectDefinitionId: 'ObjDef.1',
+        typeNum: 'OT_FUNC',
+        symbolNum: 'ST_FUNC'
+      })
     ],
     [
       'ObjDef.2',
-      rec('ObjDef.2', 'AML[1]/Group[1]/ObjDef[2]', { objectDefinitionId: 'ObjDef.2', typeNum: 'OT_EVT', symbolNum: 'ST_EV' })
+      rec('ObjDef.2', 'AML[1]/Group[1]/ObjDef[2]', {
+        objectDefinitionId: 'ObjDef.2',
+        typeNum: 'OT_EVT',
+        symbolNum: 'ST_EV'
+      })
     ],
     [
       'ObjDef.3',
-      rec('ObjDef.3', 'AML[1]/Group[1]/ObjDef[3]', { objectDefinitionId: 'ObjDef.3', typeNum: 'OT_FUNC', symbolNum: 'ST_FUNC' })
+      rec('ObjDef.3', 'AML[1]/Group[1]/ObjDef[3]', {
+        objectDefinitionId: 'ObjDef.3',
+        typeNum: 'OT_FUNC',
+        symbolNum: 'ST_FUNC'
+      })
     ]
   ])
 
@@ -113,7 +129,13 @@ export function buildHappyPathInput(): ArisRenderSourceInput {
   ])
 
   const connectionDefinitions = new Map<string, RenderSourceConnectionDefinition>([
-    ['CxnDef.1', rec('CxnDef.1', 'AML[1]/Group[1]/ObjDef[1]/CxnDef[1]', { connectionDefinitionId: 'CxnDef.1', connectionType: 'CT_EXEC_1' })]
+    [
+      'CxnDef.1',
+      rec('CxnDef.1', 'AML[1]/Group[1]/ObjDef[1]/CxnDef[1]', {
+        connectionDefinitionId: 'CxnDef.1',
+        connectionType: 'CT_EXEC_1'
+      })
+    ]
   ])
 
   const connectionOccurrences = new Map<string, RenderSourceConnectionOccurrence>([
@@ -229,7 +251,10 @@ export function buildHappyPathInput(): ArisRenderSourceInput {
   ]
 
   const attachments = new Map<string, RenderSourceAttachment>([
-    ['OLEDef.1', rec('OLEDef.1', 'AML[1]/Group[1]/OLEDef[1]', { attachmentId: 'OLEDef.1', blobCount: 2 })]
+    [
+      'OLEDef.1',
+      rec('OLEDef.1', 'AML[1]/Group[1]/OLEDef[1]', { attachmentId: 'OLEDef.1', blobCount: 2 })
+    ]
   ])
 
   const attachmentOccurrences: RenderSourceAttachmentOccurrence[] = [
@@ -270,7 +295,10 @@ export function buildHappyPathInput(): ArisRenderSourceInput {
   ]
 
   const fontStyleSheets = new Map<string, RenderSourceFontStyleSheet>([
-    ['FontSS.1', rec('FontSS.1', 'AML[1]/Group[1]/FontStyleSheet[1]', { fontStyleSheetId: 'FontSS.1' })]
+    [
+      'FontSS.1',
+      rec('FontSS.1', 'AML[1]/Group[1]/FontStyleSheet[1]', { fontStyleSheetId: 'FontSS.1' })
+    ]
   ])
 
   const fonts: RenderSourceFont[] = [
@@ -321,11 +349,13 @@ export function buildHappyPathInput(): ArisRenderSourceInput {
 }
 
 /** An otherwise-empty single-model input, useful as a base for fidelity-finding fixtures. */
-export function buildEmptyModelInput(modelOverrides?: Partial<{
-  readonly modelType: string | null
-  readonly templateGuid: string | null
-  readonly backColor: string | null
-}>): ArisRenderSourceInput {
+export function buildEmptyModelInput(
+  modelOverrides?: Partial<{
+    readonly modelType: string | null
+    readonly templateGuid: string | null
+    readonly backColor: string | null
+  }>
+): ArisRenderSourceInput {
   const models = new Map<string, RenderSourceModel>([
     [
       'Model.1',

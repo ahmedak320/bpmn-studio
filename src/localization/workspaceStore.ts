@@ -3,7 +3,10 @@ import {
   type SaveOutcome,
   type WorkspaceAdapter
 } from '../workspace/adapters/types'
-import { WorkspaceOperationError, WorkspaceReadLimitError } from '../workspace/adapters/workspaceError'
+import {
+  WorkspaceOperationError,
+  WorkspaceReadLimitError
+} from '../workspace/adapters/workspaceError'
 import { createSeededGlossary, normalizeLocalizationLookup } from './glossary'
 import { validateTargetScript } from './script'
 import type { GlossaryEntry, LocalizationResources, TranslationMemoryEntry } from './types'

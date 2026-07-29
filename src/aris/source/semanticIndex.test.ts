@@ -518,13 +518,13 @@ describe('buildSemanticArisDocument', () => {
     const semantic = buildSemanticArisDocument(tokenizeXmlDocument(xml))
 
     expect(semantic.index.connectionOccurrences.get('CxnOcc.1')?.parsed.routePointCount).toBe(3)
-    expect(
-      semantic.index.routePoints.map((point) => [point.pointIndex, point.x, point.y])
-    ).toEqual([
-      [0, 10, 20],
-      [1, 30, 40],
-      [2, 50, 60]
-    ])
+    expect(semantic.index.routePoints.map((point) => [point.pointIndex, point.x, point.y])).toEqual(
+      [
+        [0, 10, 20],
+        [1, 30, 40],
+        [2, 50, 60]
+      ]
+    )
     semantic.index.routePoints.forEach((point) => {
       expect(point.connectionOccurrenceId).toBe('CxnOcc.1')
       expect(point.modelId).toBe('Model.1')

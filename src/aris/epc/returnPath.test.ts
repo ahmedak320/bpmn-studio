@@ -66,7 +66,9 @@ describe('detectReturnPathOutcomes — explicit route preserved (14.3 step 1)', 
     expect(results[0].status).toBe('explicit')
     expect(results[0].outcomeNodeId).toBe('Returned')
     if (results[0].status === 'explicit') {
-      expect(results[0].cycleNodeIds).toEqual(expect.arrayContaining(['Returned', 'Rmerge', 'Review']))
+      expect(results[0].cycleNodeIds).toEqual(
+        expect.arrayContaining(['Returned', 'Rmerge', 'Review'])
+      )
     }
   })
 })
@@ -141,7 +143,11 @@ describe('detectReturnPathOutcomes — missing route candidate ranking (14.3 ste
     // genuine tie.
     const tieGraph = graph(
       'M2',
-      [node('FnA', 'OT_FUNC'), node('FnB', 'OT_FUNC'), node('Returned', 'OT_EVT', { names: names('Returned for modification') })],
+      [
+        node('FnA', 'OT_FUNC'),
+        node('FnB', 'OT_FUNC'),
+        node('Returned', 'OT_EVT', { names: names('Returned for modification') })
+      ],
       [edge('e1', 'FnA', 'Returned', 'CT_CRT_1'), edge('e2', 'FnB', 'Returned', 'CT_CRT_1')]
     )
     const results = detectReturnPathOutcomes(tieGraph)
@@ -161,7 +167,10 @@ describe('buildReturnPathApplyPayload (14.3 step 4)', () => {
   it('assembles a definition + occurrence + route + audit entry as one payload, always dashed', () => {
     const tieGraph = graph(
       'M2',
-      [node('FnA', 'OT_FUNC'), node('Returned', 'OT_EVT', { names: names('Returned for modification') })],
+      [
+        node('FnA', 'OT_FUNC'),
+        node('Returned', 'OT_EVT', { names: names('Returned for modification') })
+      ],
       [edge('e1', 'FnA', 'Returned', 'CT_CRT_1')]
     )
     const [result] = detectReturnPathOutcomes(tieGraph)

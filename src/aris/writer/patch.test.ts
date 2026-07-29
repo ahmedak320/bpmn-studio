@@ -112,9 +112,9 @@ describe('applyAmlEdits — overlap validation', () => {
   })
 
   it('rejects an inverted span', () => {
-    expect(() => applyAmlEdits(DOCUMENT, [replaceEdit(makeSpan(5, 2), 'X', 'inverted')])).toThrowError(
-      ArisWriterError
-    )
+    expect(() =>
+      applyAmlEdits(DOCUMENT, [replaceEdit(makeSpan(5, 2), 'X', 'inverted')])
+    ).toThrowError(ArisWriterError)
   })
 })
 

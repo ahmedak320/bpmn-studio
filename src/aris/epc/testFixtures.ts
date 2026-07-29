@@ -2,7 +2,11 @@ import type { EpcEdge, EpcGraph, EpcLocalizedNames, EpcNode } from './types'
 
 /** Deep-freezes a plain object/array tree in place, for use in immutability tests. */
 export function deepFreeze<T>(value: T): T {
-  if (value !== null && (typeof value === 'object' || typeof value === 'function') && !Object.isFrozen(value)) {
+  if (
+    value !== null &&
+    (typeof value === 'object' || typeof value === 'function') &&
+    !Object.isFrozen(value)
+  ) {
     Object.freeze(value)
     for (const key of Object.getOwnPropertyNames(value)) {
       deepFreeze((value as Record<string, unknown>)[key])
@@ -18,7 +22,11 @@ export function names(en: string | undefined, ar?: string): EpcLocalizedNames {
   return Object.freeze(out)
 }
 
-export function node(id: string, objectType: string, opts: Partial<Omit<EpcNode, 'id' | 'objectType'>> = {}): EpcNode {
+export function node(
+  id: string,
+  objectType: string,
+  opts: Partial<Omit<EpcNode, 'id' | 'objectType'>> = {}
+): EpcNode {
   return deepFreeze({
     id,
     objectType,
@@ -39,6 +47,10 @@ export function edge(
   return deepFreeze({ id, source, target, connectionType, names: opts.names })
 }
 
-export function graph(modelId: string, nodes: readonly EpcNode[], edges: readonly EpcEdge[]): EpcGraph {
+export function graph(
+  modelId: string,
+  nodes: readonly EpcNode[],
+  edges: readonly EpcEdge[]
+): EpcGraph {
   return deepFreeze({ modelId, nodes: [...nodes], edges: [...edges] })
 }

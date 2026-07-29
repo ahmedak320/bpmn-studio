@@ -69,7 +69,13 @@ function polygon(
   points: readonly { x: number; y: number }[],
   options: { fill?: string; stroke?: string; strokeWidth?: number } = {}
 ): ArisDrawingElement {
-  return { kind: 'polygon', points, fill: options.fill ?? DEFAULT_FILL, stroke: options.stroke ?? DEFAULT_STROKE, strokeWidth: options.strokeWidth ?? 2 }
+  return {
+    kind: 'polygon',
+    points,
+    fill: options.fill ?? DEFAULT_FILL,
+    stroke: options.stroke ?? DEFAULT_STROKE,
+    strokeWidth: options.strokeWidth ?? 2
+  }
 }
 
 function line(
@@ -79,7 +85,15 @@ function line(
   y2: number,
   options: { stroke?: string; strokeWidth?: number } = {}
 ): ArisDrawingElement {
-  return { kind: 'line', x1, y1, x2, y2, stroke: options.stroke ?? DEFAULT_STROKE, strokeWidth: options.strokeWidth ?? 2 }
+  return {
+    kind: 'line',
+    x1,
+    y1,
+    x2,
+    y2,
+    stroke: options.stroke ?? DEFAULT_STROKE,
+    strokeWidth: options.strokeWidth ?? 2
+  }
 }
 
 /** Cardinal and intercardinal attachment ports for rectangular/circular symbols. */
@@ -121,7 +135,9 @@ function describe(
 // Core EPC symbols — original geometry, no proprietary artwork.
 // ---------------------------------------------------------------------------
 
-function functionShape(variant: 'plain' | 'interface' | 'system' | 'value-chain'): ArisSymbolDescriptor {
+function functionShape(
+  variant: 'plain' | 'interface' | 'system' | 'value-chain'
+): ArisSymbolDescriptor {
   const baseKey =
     variant === 'interface'
       ? 'ST_PRCS_IF'
@@ -178,7 +194,14 @@ function functionShape(variant: 'plain' | 'interface' | 'system' | 'value-chain'
     elements.push(circle(cx, cy, 4, { fill: '#9ca3af' }))
   }
 
-  return describe(key, objectType, baseKey, labelKey, { width: 100, height: 70 }, { viewBox: viewBox(100, 70), elements })
+  return describe(
+    key,
+    objectType,
+    baseKey,
+    labelKey,
+    { width: 100, height: 70 },
+    { viewBox: viewBox(100, 70), elements }
+  )
 }
 
 function eventShape(): ArisSymbolDescriptor {
@@ -195,12 +218,25 @@ function eventShape(): ArisSymbolDescriptor {
       { fill: '#fff7ed' }
     )
   ]
-  return describe('MT_EEPC:OT_EVT:ST_EV', 'OT_EVT', 'ST_EV', 'aris.symbol.event', { width: 100, height: 100 }, { viewBox: viewBox(100, 100), elements })
+  return describe(
+    'MT_EEPC:OT_EVT:ST_EV',
+    'OT_EVT',
+    'ST_EV',
+    'aris.symbol.event',
+    { width: 100, height: 100 },
+    { viewBox: viewBox(100, 100), elements }
+  )
 }
 
 function ruleShape(operator: 'and' | 'or' | 'xor'): ArisSymbolDescriptor {
-  const symbolNum = operator === 'and' ? 'ST_OPR_AND_1' : operator === 'or' ? 'ST_OPR_OR_1' : 'ST_OPR_XOR_1'
-  const labelKey = operator === 'and' ? 'aris.symbol.and' : operator === 'or' ? 'aris.symbol.or' : 'aris.symbol.xor'
+  const symbolNum =
+    operator === 'and' ? 'ST_OPR_AND_1' : operator === 'or' ? 'ST_OPR_OR_1' : 'ST_OPR_XOR_1'
+  const labelKey =
+    operator === 'and'
+      ? 'aris.symbol.and'
+      : operator === 'or'
+        ? 'aris.symbol.or'
+        : 'aris.symbol.xor'
   const elements: ArisDrawingElement[] = [circle(50, 50, 40, { fill: '#eef2ff' })]
 
   if (operator === 'and') {
@@ -250,7 +286,13 @@ function entityTypeShape(): ArisSymbolDescriptor {
 
 function infoCarrierShape(variant: 'document' | 'email' | 'edoc' | 'handy'): ArisSymbolDescriptor {
   const symbolNum =
-    variant === 'email' ? 'ST_EMAIL_1' : variant === 'edoc' ? 'ST_INFO_CARR_EDOC' : variant === 'handy' ? 'ST_INFO_CARR_HANDY' : 'ST_DOC'
+    variant === 'email'
+      ? 'ST_EMAIL_1'
+      : variant === 'edoc'
+        ? 'ST_INFO_CARR_EDOC'
+        : variant === 'handy'
+          ? 'ST_INFO_CARR_HANDY'
+          : 'ST_DOC'
   const labelKey =
     variant === 'email'
       ? 'aris.symbol.email'
@@ -271,14 +313,21 @@ function infoCarrierShape(variant: 'document' | 'email' | 'edoc' | 'handy'): Ari
   } else {
     // Document with folded corner.
     elements.push(rect(5, 5, 90, 75, { rx: 4, ry: 4, fill: '#eff6ff' }))
-    elements.push(polygon([
-      { x: 75, y: 5 },
-      { x: 95, y: 25 },
-      { x: 75, y: 25 }
-    ]))
+    elements.push(
+      polygon([
+        { x: 75, y: 5 },
+        { x: 95, y: 25 },
+        { x: 75, y: 25 }
+      ])
+    )
     if (variant === 'edoc') {
       elements.push(circle(32, 45, 6, { fill: '#93c5fd' }))
-      elements.push(path('M 46 38 L 46 52 M 52 38 L 52 52 M 58 38 L 58 52', { strokeWidth: 3, stroke: '#3b82f6' }))
+      elements.push(
+        path('M 46 38 L 46 52 M 52 38 L 52 52 M 58 38 L 58 52', {
+          strokeWidth: 3,
+          stroke: '#3b82f6'
+        })
+      )
     }
   }
 
@@ -405,7 +454,9 @@ function policyShape(): ArisSymbolDescriptor {
     {
       viewBox: viewBox(100, 90),
       elements: [
-        path('M 50 10 L 80 22 L 80 45 C 80 68, 50 85, 50 85 C 50 85, 20 68, 20 45 L 20 22 Z', { fill: '#fff7ed' }),
+        path('M 50 10 L 80 22 L 80 45 C 80 68, 50 85, 50 85 C 50 85, 20 68, 20 45 L 20 22 Z', {
+          fill: '#fff7ed'
+        }),
         line(35, 38, 48, 52, { strokeWidth: 4, stroke: '#16a34a' }),
         line(45, 52, 68, 32, { strokeWidth: 4, stroke: '#16a34a' })
       ]
@@ -416,7 +467,10 @@ function policyShape(): ArisSymbolDescriptor {
 function personTypeShape(): ArisSymbolDescriptor {
   const person = (cx: number): ArisDrawingElement[] => [
     circle(cx, 28, 8, { fill: '#fecdd3' }),
-    path(`M ${cx - 12} 52 C ${cx - 12} 43, ${cx + 12} 43, ${cx + 12} 52`, { fill: 'none', strokeWidth: 2 })
+    path(`M ${cx - 12} 52 C ${cx - 12} 43, ${cx + 12} 43, ${cx + 12} 52`, {
+      fill: 'none',
+      strokeWidth: 2
+    })
   ]
   return describe(
     'MT_EEPC:OT_PERS_TYPE:ST_EMPL_TYPE',

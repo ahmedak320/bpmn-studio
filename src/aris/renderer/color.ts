@@ -72,11 +72,22 @@ export interface PenResolution {
  */
 export function resolvePen(
   source: RenderSourcePenParsed | null,
-  identity: { readonly modelId: string | null; readonly elementId: string | null; readonly sourceId: string | null }
+  identity: {
+    readonly modelId: string | null
+    readonly elementId: string | null
+    readonly sourceId: string | null
+  }
 ): PenResolution {
   if (!source) {
     return {
-      pen: { color: undefined, style: 'solid', width: 1, dasharray: null, visible: true, source: null },
+      pen: {
+        color: undefined,
+        style: 'solid',
+        width: 1,
+        dasharray: null,
+        visible: true,
+        source: null
+      },
       findings: []
     }
   }
@@ -119,7 +130,11 @@ export interface BrushResolution {
 /** Resolves an ARIS `Brush` record. Unknown `BrushType` values (hatch/pattern) fall back to solid. */
 export function resolveBrush(
   source: RenderSourceBrushParsed | null,
-  identity: { readonly modelId: string | null; readonly elementId: string | null; readonly sourceId: string | null }
+  identity: {
+    readonly modelId: string | null
+    readonly elementId: string | null
+    readonly sourceId: string | null
+  }
 ): BrushResolution {
   if (!source) {
     return {

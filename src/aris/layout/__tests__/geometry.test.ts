@@ -22,43 +22,46 @@ import {
 describe('rectangle primitives', () => {
   it('computes an intersection area that can be checked by hand', () => {
     // 10x10 at the origin against 10x10 at (5,5) share the 5x5 square (5,5)-(10,10).
-    expect(rectIntersectionArea(
-      { x: 0, y: 0, width: 10, height: 10 },
-      { x: 5, y: 5, width: 10, height: 10 }
-    )).toBe(25)
+    expect(
+      rectIntersectionArea(
+        { x: 0, y: 0, width: 10, height: 10 },
+        { x: 5, y: 5, width: 10, height: 10 }
+      )
+    ).toBe(25)
   })
 
   it('reports zero area for rectangles that only touch', () => {
-    expect(rectIntersectionArea(
-      { x: 0, y: 0, width: 10, height: 10 },
-      { x: 10, y: 0, width: 10, height: 10 }
-    )).toBe(0)
-    expect(rectsOverlap(
-      { x: 0, y: 0, width: 10, height: 10 },
-      { x: 10, y: 0, width: 10, height: 10 }
-    )).toBe(false)
+    expect(
+      rectIntersectionArea(
+        { x: 0, y: 0, width: 10, height: 10 },
+        { x: 10, y: 0, width: 10, height: 10 }
+      )
+    ).toBe(0)
+    expect(
+      rectsOverlap({ x: 0, y: 0, width: 10, height: 10 }, { x: 10, y: 0, width: 10, height: 10 })
+    ).toBe(false)
   })
 
   it('reports an overlap for rectangles that share area', () => {
-    expect(rectsOverlap(
-      { x: 0, y: 0, width: 10, height: 10 },
-      { x: 9.5, y: 0, width: 10, height: 10 }
-    )).toBe(true)
+    expect(
+      rectsOverlap({ x: 0, y: 0, width: 10, height: 10 }, { x: 9.5, y: 0, width: 10, height: 10 })
+    ).toBe(true)
   })
 
   it('unions two rectangles into their bounding box', () => {
-    expect(unionRect(
-      { x: 0, y: 0, width: 10, height: 4 },
-      { x: 20, y: -6, width: 5, height: 5 }
-    )).toEqual({ x: 0, y: -6, width: 25, height: 10 })
+    expect(
+      unionRect({ x: 0, y: 0, width: 10, height: 4 }, { x: 20, y: -6, width: 5, height: 5 })
+    ).toEqual({ x: 0, y: -6, width: 25, height: 10 })
   })
 
   it('bounds a point set', () => {
-    expect(boundsOfPoints([
-      { x: 3, y: 7 },
-      { x: -2, y: 11 },
-      { x: 5, y: 1 }
-    ])).toEqual({ x: -2, y: 1, width: 7, height: 10 })
+    expect(
+      boundsOfPoints([
+        { x: 3, y: 7 },
+        { x: -2, y: 11 },
+        { x: 5, y: 1 }
+      ])
+    ).toEqual({ x: -2, y: 1, width: 7, height: 10 })
     expect(boundsOfPoints([])).toBeNull()
   })
 })
@@ -92,12 +95,14 @@ describe('segment length', () => {
 
   it('sums a polyline', () => {
     // (0,0)->(0,10)->(10,10)->(10,0) is 10 + 10 + 10.
-    expect(polylineLength([
-      { x: 0, y: 0 },
-      { x: 0, y: 10 },
-      { x: 10, y: 10 },
-      { x: 10, y: 0 }
-    ])).toBe(30)
+    expect(
+      polylineLength([
+        { x: 0, y: 0 },
+        { x: 0, y: 10 },
+        { x: 10, y: 10 },
+        { x: 10, y: 0 }
+      ])
+    ).toBe(30)
   })
 })
 
@@ -139,67 +144,51 @@ describe('segment against rectangle', () => {
 
 describe('segment against segment', () => {
   it('detects a proper crossing', () => {
-    expect(segmentsProperlyCross(
-      { x: 0, y: 0 },
-      { x: 10, y: 0 },
-      { x: 5, y: -5 },
-      { x: 5, y: 5 }
-    )).toBe(true)
+    expect(
+      segmentsProperlyCross({ x: 0, y: 0 }, { x: 10, y: 0 }, { x: 5, y: -5 }, { x: 5, y: 5 })
+    ).toBe(true)
   })
 
   it('does not count a T junction', () => {
-    expect(segmentsProperlyCross(
-      { x: 0, y: 0 },
-      { x: 10, y: 0 },
-      { x: 5, y: 0 },
-      { x: 5, y: 5 }
-    )).toBe(false)
+    expect(
+      segmentsProperlyCross({ x: 0, y: 0 }, { x: 10, y: 0 }, { x: 5, y: 0 }, { x: 5, y: 5 })
+    ).toBe(false)
   })
 
   it('does not count a shared endpoint', () => {
-    expect(segmentsProperlyCross(
-      { x: 0, y: 0 },
-      { x: 10, y: 0 },
-      { x: 0, y: 0 },
-      { x: 0, y: 10 }
-    )).toBe(false)
+    expect(
+      segmentsProperlyCross({ x: 0, y: 0 }, { x: 10, y: 0 }, { x: 0, y: 0 }, { x: 0, y: 10 })
+    ).toBe(false)
   })
 
   it('does not count a collinear overlap', () => {
-    expect(segmentsProperlyCross(
-      { x: 0, y: 0 },
-      { x: 10, y: 0 },
-      { x: 5, y: 0 },
-      { x: 15, y: 0 }
-    )).toBe(false)
+    expect(
+      segmentsProperlyCross({ x: 0, y: 0 }, { x: 10, y: 0 }, { x: 5, y: 0 }, { x: 15, y: 0 })
+    ).toBe(false)
   })
 
   it('does not count segments that miss each other', () => {
-    expect(segmentsProperlyCross(
-      { x: 0, y: 0 },
-      { x: 10, y: 0 },
-      { x: 20, y: -5 },
-      { x: 20, y: 5 }
-    )).toBe(false)
+    expect(
+      segmentsProperlyCross({ x: 0, y: 0 }, { x: 10, y: 0 }, { x: 20, y: -5 }, { x: 20, y: 5 })
+    ).toBe(false)
   })
 
   it('detects a crossing of two diagonals', () => {
-    expect(segmentsProperlyCross(
-      { x: 0, y: 0 },
-      { x: 10, y: 10 },
-      { x: 0, y: 10 },
-      { x: 10, y: 0 }
-    )).toBe(true)
+    expect(
+      segmentsProperlyCross({ x: 0, y: 0 }, { x: 10, y: 10 }, { x: 0, y: 10 }, { x: 10, y: 0 })
+    ).toBe(true)
   })
 })
 
 describe('interval algebra', () => {
   it('computes the complement of overlapping blocked ranges', () => {
-    expect(freeIntervals({ min: 0, max: 100 }, [
-      { min: 10, max: 20 },
-      { min: 15, max: 30 },
-      { min: 50, max: 60 }
-    ])).toEqual([
+    expect(
+      freeIntervals({ min: 0, max: 100 }, [
+        { min: 10, max: 20 },
+        { min: 15, max: 30 },
+        { min: 50, max: 60 }
+      ])
+    ).toEqual([
       { min: 0, max: 10 },
       { min: 30, max: 50 },
       { min: 60, max: 100 }
@@ -207,16 +196,18 @@ describe('interval algebra', () => {
   })
 
   it('intersects two interval lists', () => {
-    expect(intersectIntervals(
-      [
-        { min: 0, max: 10 },
-        { min: 20, max: 40 }
-      ],
-      [
-        { min: 5, max: 25 },
-        { min: 30, max: 50 }
-      ]
-    )).toEqual([
+    expect(
+      intersectIntervals(
+        [
+          { min: 0, max: 10 },
+          { min: 20, max: 40 }
+        ],
+        [
+          { min: 5, max: 25 },
+          { min: 30, max: 50 }
+        ]
+      )
+    ).toEqual([
       { min: 5, max: 10 },
       { min: 20, max: 25 },
       { min: 30, max: 40 }
@@ -224,9 +215,33 @@ describe('interval algebra', () => {
   })
 
   it('picks the value nearest to the preferred one', () => {
-    expect(nearestValueInIntervals([{ min: 0, max: 10 }, { min: 90, max: 100 }], 8)).toBe(8)
-    expect(nearestValueInIntervals([{ min: 0, max: 10 }, { min: 90, max: 100 }], 40)).toBe(10)
-    expect(nearestValueInIntervals([{ min: 0, max: 10 }, { min: 90, max: 100 }], 80)).toBe(90)
+    expect(
+      nearestValueInIntervals(
+        [
+          { min: 0, max: 10 },
+          { min: 90, max: 100 }
+        ],
+        8
+      )
+    ).toBe(8)
+    expect(
+      nearestValueInIntervals(
+        [
+          { min: 0, max: 10 },
+          { min: 90, max: 100 }
+        ],
+        40
+      )
+    ).toBe(10)
+    expect(
+      nearestValueInIntervals(
+        [
+          { min: 0, max: 10 },
+          { min: 90, max: 100 }
+        ],
+        80
+      )
+    ).toBe(90)
     expect(nearestValueInIntervals([], 5)).toBeNull()
   })
 
@@ -236,11 +251,13 @@ describe('interval algebra', () => {
 
   it('measures the largest interior gap and ignores the outer margins', () => {
     // Covered 0-10, 40-50, 90-100 leaves interior gaps of 30 and 40.
-    expect(largestInteriorGap({ min: 0, max: 100 }, [
-      { min: 0, max: 10 },
-      { min: 40, max: 50 },
-      { min: 90, max: 100 }
-    ])).toBe(40)
+    expect(
+      largestInteriorGap({ min: 0, max: 100 }, [
+        { min: 0, max: 10 },
+        { min: 40, max: 50 },
+        { min: 90, max: 100 }
+      ])
+    ).toBe(40)
   })
 
   it('ignores a gap that touches the bounds', () => {

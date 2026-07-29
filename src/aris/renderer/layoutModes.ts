@@ -40,7 +40,9 @@ export function extractSourceGeometry(doc: RenderModelDocument): ArisLayoutGeome
   }
   const connections = new Map<string, LayoutConnectionGeometry>()
   for (const connection of doc.connections) {
-    connections.set(connection.id, { routePoints: connection.sourceRoutePoints.map((p) => ({ ...p })) })
+    connections.set(connection.id, {
+      routePoints: connection.sourceRoutePoints.map((p) => ({ ...p }))
+    })
   }
   return Object.freeze({ elements: freezeMap(elements), connections: freezeMap(connections) })
 }
@@ -94,10 +96,10 @@ export const DEFAULT_CLEAN_LAYOUT_ALGORITHM: ArisCleanLayoutAlgorithm = (doc) =>
     const to = connection.toElementId ? elements.get(connection.toElementId) : undefined
     const start = from
       ? { x: from.bounds.x + from.bounds.width / 2, y: from.bounds.y + from.bounds.height / 2 }
-      : connection.sourceRoutePoints[0] ?? { x: 0, y: 0 }
+      : (connection.sourceRoutePoints[0] ?? { x: 0, y: 0 })
     const end = to
       ? { x: to.bounds.x + to.bounds.width / 2, y: to.bounds.y + to.bounds.height / 2 }
-      : connection.sourceRoutePoints[connection.sourceRoutePoints.length - 1] ?? { x: 0, y: 0 }
+      : (connection.sourceRoutePoints[connection.sourceRoutePoints.length - 1] ?? { x: 0, y: 0 })
     connections.set(connection.id, { routePoints: [start, end] })
   }
 
@@ -121,7 +123,10 @@ export class ArisLayoutController {
   private history: LayoutRevision[]
   private cursor: number
 
-  constructor(doc: RenderModelDocument, options?: { readonly cleanLayoutAlgorithm?: ArisCleanLayoutAlgorithm }) {
+  constructor(
+    doc: RenderModelDocument,
+    options?: { readonly cleanLayoutAlgorithm?: ArisCleanLayoutAlgorithm }
+  ) {
     this.doc = doc
     this.sourceGeometry = extractSourceGeometry(doc)
     this.cleanLayoutAlgorithm = options?.cleanLayoutAlgorithm ?? DEFAULT_CLEAN_LAYOUT_ALGORITHM

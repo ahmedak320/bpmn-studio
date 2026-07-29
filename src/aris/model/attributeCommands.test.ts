@@ -12,13 +12,19 @@ function attributeValues(
   document: {
     readonly objectDefinitions: ReadonlyMap<
       string,
-      { readonly attributes: readonly { readonly type: string; readonly values: readonly { readonly localeId: string | null; readonly text: string }[] }[] }
+      {
+        readonly attributes: readonly {
+          readonly type: string
+          readonly values: readonly { readonly localeId: string | null; readonly text: string }[]
+        }[]
+      }
     >
   },
   definitionId: string,
   type: string
 ) {
-  return document.objectDefinitions.get(definitionId)?.attributes.find((a) => a.type === type)?.values
+  return document.objectDefinitions.get(definitionId)?.attributes.find((a) => a.type === type)
+    ?.values
 }
 
 describe('addAttributeValue', () => {
@@ -196,7 +202,9 @@ describe('setAttributeOccurrencePlacement', () => {
     let stack = createCommandStack(document, { idGenerator })
 
     const beforeOcc1 = stack.document.models.get('m1')!.occurrences.find((o) => o.id === 'occ1')!
-    const beforePlacement = beforeOcc1.attributeOccurrences.find((a) => a.attributeType === 'AT_NAME')!
+    const beforePlacement = beforeOcc1.attributeOccurrences.find(
+      (a) => a.attributeType === 'AT_NAME'
+    )!
 
     const afterPlacement: ArisAttributeOccurrence = {
       ...beforePlacement,
@@ -230,6 +238,8 @@ describe('setAttributeOccurrencePlacement', () => {
 
     stack = stack.undo()
     const restored = stack.document.models.get('m1')!.occurrences.find((o) => o.id === 'occ1')!
-    expect(restored.attributeOccurrences.find((a) => a.attributeType === 'AT_NAME')!).toEqual(beforePlacement)
+    expect(restored.attributeOccurrences.find((a) => a.attributeType === 'AT_NAME')!).toEqual(
+      beforePlacement
+    )
   })
 })

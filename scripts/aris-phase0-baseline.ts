@@ -79,7 +79,10 @@ function countCases(source: string): number {
 }
 
 function isVitestIntegrationFile(path: string): boolean {
-  return /(?:^|\/)integration\.test\.[cm]?[jt]sx?$/.test(path) || /\.integration\.test\.[cm]?[jt]sx?$/.test(path)
+  return (
+    /(?:^|\/)integration\.test\.[cm]?[jt]sx?$/.test(path) ||
+    /\.integration\.test\.[cm]?[jt]sx?$/.test(path)
+  )
 }
 
 async function summarizeTests() {
@@ -155,7 +158,9 @@ async function captureStartupNetworkLog(artifactPath: string, version: string) {
       })
     })
     await page.goto(fileUrl, { waitUntil: 'load' })
-    await page.getByRole('heading', { name: 'OrbitPM Process Studio Lite' }).waitFor({ state: 'visible' })
+    await page
+      .getByRole('heading', { name: 'OrbitPM Process Studio Lite' })
+      .waitFor({ state: 'visible' })
     await page.locator(`html[data-orbitpm-app-version="${version}"]`).waitFor({ state: 'attached' })
     await page.waitForTimeout(500)
     await context.close()
@@ -221,10 +226,7 @@ async function installMockWorkspace(page: Page) {
       }
     }
 
-    const directoryHandle = (
-      name: string,
-      initial: Record<string, unknown> = {}
-    ) => {
+    const directoryHandle = (name: string, initial: Record<string, unknown> = {}) => {
       const children = new Map(Object.entries(initial))
       return {
         kind: 'directory',
@@ -278,7 +280,11 @@ async function installMockWorkspace(page: Page) {
   })
 }
 
-async function captureAnimalWfImportEvidence(artifactPath: string, version: string, amlPath: string) {
+async function captureAnimalWfImportEvidence(
+  artifactPath: string,
+  version: string,
+  amlPath: string
+) {
   const fileUrl = pathToFileURL(artifactPath).toString()
   const screenshotsDir = resolve(LOCAL_EVIDENCE_ROOT, 'animalwf-screenshots')
   await fs.mkdir(screenshotsDir, { recursive: true })
@@ -301,7 +307,9 @@ async function captureAnimalWfImportEvidence(artifactPath: string, version: stri
     }, version)
     await page.goto(fileUrl, { waitUntil: 'load' })
     await page.getByRole('button', { name: 'Choose folder workspace', exact: true }).click()
-    await page.getByRole('heading', { name: 'Process catalog' }).waitFor({ state: 'visible', timeout: 20_000 })
+    await page
+      .getByRole('heading', { name: 'Process catalog' })
+      .waitFor({ state: 'visible', timeout: 20_000 })
 
     const importInput = page.locator('input[type="file"][accept*=".apc"][multiple]')
     await importInput.setInputFiles(amlPath)
@@ -335,7 +343,12 @@ async function captureAnimalWfImportEvidence(artifactPath: string, version: stri
       reviewBlocked = true
       blockedStatusText =
         (await page.locator('#workspace-import-review-state').textContent())?.trim() ??
-        (await importReview.getByRole('alert').textContent().catch(() => ''))?.trim() ??
+        (
+          await importReview
+            .getByRole('alert')
+            .textContent()
+            .catch(() => '')
+        )?.trim() ??
         ''
       blockedDialogTextPath = resolve(LOCAL_EVIDENCE_ROOT, 'animalwf-review-blocked.txt')
       blockedDialogScreenshotPath = resolve(LOCAL_EVIDENCE_ROOT, 'animalwf-review-blocked.png')
@@ -358,18 +371,24 @@ async function captureAnimalWfImportEvidence(artifactPath: string, version: stri
         { timeout: 30_000 }
       )
 
-      const relPaths = await page.locator(canonicalSelector).evaluateAll((nodes) =>
-        nodes
-          .map((node) => node.getAttribute('data-rel-path') ?? '')
-          .filter((value) => value.length > 0)
-      )
+      const relPaths = await page
+        .locator(canonicalSelector)
+        .evaluateAll((nodes) =>
+          nodes
+            .map((node) => node.getAttribute('data-rel-path') ?? '')
+            .filter((value) => value.length > 0)
+        )
 
       for (let index = 0; index < relPaths.length; index += 1) {
         const row = page.locator(canonicalSelector).nth(index)
         await row.click()
-        await page.locator('.djs-container svg').first().waitFor({ state: 'visible', timeout: 30_000 })
+        await page
+          .locator('.djs-container svg')
+          .first()
+          .waitFor({ state: 'visible', timeout: 30_000 })
         await page.waitForFunction(() => {
-          const app = (window as unknown as { __ORBITPM_LITE__?: { modeler?: unknown } }).__ORBITPM_LITE__
+          const app = (window as unknown as { __ORBITPM_LITE__?: { modeler?: unknown } })
+            .__ORBITPM_LITE__
           return Boolean(app?.modeler)
         })
         await page.waitForTimeout(250)
@@ -444,13 +463,22 @@ async function main() {
   const branch = await git('branch', '--show-current')
   const branchHead = await git('rev-parse', 'HEAD')
   const sourceMainSha = await git('rev-parse', 'origin/main')
-  const artifactPath = resolve(REPO_ROOT, `release/OrbitPM-Process-Studio-Lite-${manifest.version}.html`)
+  const artifactPath = resolve(
+    REPO_ROOT,
+    `release/OrbitPM-Process-Studio-Lite-${manifest.version}.html`
+  )
   const artifactStat = await fs.stat(artifactPath)
   const artifactSha = await sha256File(artifactPath)
 
-  const dependencyEntries = Object.entries(manifest.dependencies ?? {}).sort(([a], [b]) => a.localeCompare(b))
-  const devDependencyEntries = Object.entries(manifest.devDependencies ?? {}).sort(([a], [b]) => a.localeCompare(b))
-  const overrideEntries = Object.entries(manifest.overrides ?? {}).sort(([a], [b]) => a.localeCompare(b))
+  const dependencyEntries = Object.entries(manifest.dependencies ?? {}).sort(([a], [b]) =>
+    a.localeCompare(b)
+  )
+  const devDependencyEntries = Object.entries(manifest.devDependencies ?? {}).sort(([a], [b]) =>
+    a.localeCompare(b)
+  )
+  const overrideEntries = Object.entries(manifest.overrides ?? {}).sort(([a], [b]) =>
+    a.localeCompare(b)
+  )
   const tests = await summarizeTests()
   const startupLog = await captureStartupNetworkLog(artifactPath, manifest.version)
 
@@ -486,7 +514,9 @@ async function main() {
     uiImportReviewBlocked: importEvidence.reviewBlocked,
     conversionReportSummary: conversion.report.summary,
     privateImportManifest: importEvidence.manifestPath,
-    ...(importEvidence.blockedStatusText ? { blockedStatusText: importEvidence.blockedStatusText } : {})
+    ...(importEvidence.blockedStatusText
+      ? { blockedStatusText: importEvidence.blockedStatusText }
+      : {})
   }
   await fs.writeFile(privateSummaryPath, `${JSON.stringify(privateSummary, null, 2)}\n`, 'utf8')
 

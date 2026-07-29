@@ -26,7 +26,10 @@ export interface ValidateEpcOptions {
  * | epc.connection.missingType            | checkTypedConnections                  |
  * | epc.linkedModel.danglingReference     | checkLinkedModelAssignments            |
  */
-export function validateEpcGraph(graph: EpcGraph, options: ValidateEpcOptions = {}): readonly EpcFinding[] {
+export function validateEpcGraph(
+  graph: EpcGraph,
+  options: ValidateEpcOptions = {}
+): readonly EpcFinding[] {
   const index = buildFlowGraphIndex(graph)
   return [
     ...checkAlternation(index),
@@ -50,7 +53,10 @@ export function checkAlternation(index: FlowGraphIndex): readonly EpcFinding[] {
     const source = index.nodeById.get(edge.source)
     const target = index.nodeById.get(edge.target)
     if (!source || !target) continue
-    if (source.objectType === target.objectType && (source.objectType === OT_FUNC || source.objectType === OT_EVT)) {
+    if (
+      source.objectType === target.objectType &&
+      (source.objectType === OT_FUNC || source.objectType === OT_EVT)
+    ) {
       findings.push({
         ruleId: 'epc.alternation',
         severity: 'error',
@@ -68,8 +74,12 @@ export function checkAlternation(index: FlowGraphIndex): readonly EpcFinding[] {
 export function checkStartEndCompleteness(index: FlowGraphIndex): readonly EpcFinding[] {
   const findings: EpcFinding[] = []
   const events = index.graph.nodes.filter((node) => node.objectType === OT_EVT)
-  const startEvents = events.filter((event) => (index.flowEdgesByTarget.get(event.id)?.length ?? 0) === 0)
-  const endEvents = events.filter((event) => (index.flowEdgesBySource.get(event.id)?.length ?? 0) === 0)
+  const startEvents = events.filter(
+    (event) => (index.flowEdgesByTarget.get(event.id)?.length ?? 0) === 0
+  )
+  const endEvents = events.filter(
+    (event) => (index.flowEdgesBySource.get(event.id)?.length ?? 0) === 0
+  )
 
   if (startEvents.length === 0) {
     findings.push({
@@ -157,7 +167,9 @@ export function checkEventPrecedesDecisionSplit(index: FlowGraphIndex): readonly
  * ...) are out of scope for this check — they are not expected to sit on the flow graph.
  */
 export function checkConnectedComponentIntegrity(index: FlowGraphIndex): readonly EpcFinding[] {
-  const flowNodeIds = new Set(index.graph.nodes.filter((node) => FLOW_NODE_TYPES.has(node.objectType)).map((node) => node.id))
+  const flowNodeIds = new Set(
+    index.graph.nodes.filter((node) => FLOW_NODE_TYPES.has(node.objectType)).map((node) => node.id)
+  )
   if (flowNodeIds.size <= 1) return []
 
   const components = connectedComponents(index, flowNodeIds)
@@ -227,7 +239,10 @@ export function checkTypedConnections(index: FlowGraphIndex): readonly EpcFindin
  * child model) must reference models that actually exist. Only checked when the caller
  * supplies `knownModelIds` — without it there is nothing to validate against.
  */
-export function checkLinkedModelAssignments(index: FlowGraphIndex, knownModelIds: ReadonlySet<string> | undefined): readonly EpcFinding[] {
+export function checkLinkedModelAssignments(
+  index: FlowGraphIndex,
+  knownModelIds: ReadonlySet<string> | undefined
+): readonly EpcFinding[] {
   if (!knownModelIds) return []
   const findings: EpcFinding[] = []
   for (const node of index.graph.nodes) {

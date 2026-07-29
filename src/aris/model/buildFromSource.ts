@@ -45,7 +45,11 @@ function buildLocalizedValue(
   let fallback: string | null = null
   for (const attribute of attributes) {
     if (attribute.parsed.ownerSourceId !== ownerId) continue
-    if (!attribute.parsed.attributeType || !NAME_ATTRIBUTE_TYPES.has(attribute.parsed.attributeType)) continue
+    if (
+      !attribute.parsed.attributeType ||
+      !NAME_ATTRIBUTE_TYPES.has(attribute.parsed.attributeType)
+    )
+      continue
     for (const value of attribute.parsed.values) {
       const text = value.text.trim()
       if (!text) continue
@@ -65,7 +69,8 @@ function buildAttributes(
   const result: ArisAttribute[] = []
   for (const attribute of attributes) {
     if (attribute.parsed.ownerSourceId !== ownerId) continue
-    if (!attribute.parsed.attributeType || NAME_ATTRIBUTE_TYPES.has(attribute.parsed.attributeType)) continue
+    if (!attribute.parsed.attributeType || NAME_ATTRIBUTE_TYPES.has(attribute.parsed.attributeType))
+      continue
     const values = attribute.parsed.values.map((value) =>
       Object.freeze({ localeId: value.localeId, text: value.text })
     )
@@ -155,7 +160,10 @@ function buildConnectionStyle(
   })
 }
 
-function buildRoute(connectionOccurrenceId: string | null, routePoints: ArisSourceIndexLike['routePoints']): readonly ArisPoint[] {
+function buildRoute(
+  connectionOccurrenceId: string | null,
+  routePoints: ArisSourceIndexLike['routePoints']
+): readonly ArisPoint[] {
   if (!connectionOccurrenceId) return Object.freeze([])
   const points = routePoints
     .filter((point) => point.connectionOccurrenceId === connectionOccurrenceId)
@@ -208,7 +216,10 @@ function asUnsupportedType(rawType: string): ArisModelType {
   return rawType as ArisModelType
 }
 
-function buildModel(source: ArisSourceModelRecordLike, attributes: ArisSourceIndexLike['attributes']): ArisModel {
+function buildModel(
+  source: ArisSourceModelRecordLike,
+  attributes: ArisSourceIndexLike['attributes']
+): ArisModel {
   const rawType = source.parsed.modelType ?? ''
   const supported = SUPPORTED_MODEL_TYPES.has(rawType as ArisModelType)
   const modelId = source.parsed.modelId ?? ''
@@ -325,15 +336,18 @@ function buildFreeText(
 ): ArisFreeText {
   const definitionId = occurrence.parsed.freeTextDefinitionId ?? null
   const id = occurrence.rawAttributes['FFTextOcc.ID'] ?? occurrence.sourceId ?? ''
-  const text = definitionId
-    ? buildLocalizedValue(definitionId, attributes)
-    : emptyLocalizedValue()
+  const text = definitionId ? buildLocalizedValue(definitionId, attributes) : emptyLocalizedValue()
   return Object.freeze({
     id,
     modelId: occurrence.parsed.modelId ?? '',
     definitionId,
     text,
-    bounds: buildBounds(occurrence.parsed.x, occurrence.parsed.y, occurrence.parsed.dx, occurrence.parsed.dy),
+    bounds: buildBounds(
+      occurrence.parsed.x,
+      occurrence.parsed.y,
+      occurrence.parsed.dx,
+      occurrence.parsed.dy
+    ),
     style: Object.freeze({
       symbol: null,
       fillColor: null,

@@ -59,9 +59,10 @@ function makeFidelityFinding(
   })
 }
 
-function resolveDescriptor(
-  request: ArisSymbolResolutionRequest
-): { readonly descriptor: ArisSymbolDescriptor; readonly findings: readonly ArisSymbolFidelityFinding[] } {
+function resolveDescriptor(request: ArisSymbolResolutionRequest): {
+  readonly descriptor: ArisSymbolDescriptor
+  readonly findings: readonly ArisSymbolFidelityFinding[]
+} {
   const requestedKey = `${request.modelType}:${request.objectType}:${request.symbolNum}`
 
   // 1. Exact triple match.
@@ -90,8 +91,11 @@ function resolveDescriptor(
   // 3. Object type default symbol.
   const defaultSymbolNum = ARIS_OBJECT_TYPE_DEFAULT_SYMBOL[request.objectType]
   if (defaultSymbolNum) {
-    const defaultExact = INDEXES.exact.get(`${request.modelType}:${request.objectType}:${defaultSymbolNum}`)
-    const defaultDescriptor = defaultExact ?? INDEXES.byObjectSymbol.get(`${request.objectType}:${defaultSymbolNum}`)
+    const defaultExact = INDEXES.exact.get(
+      `${request.modelType}:${request.objectType}:${defaultSymbolNum}`
+    )
+    const defaultDescriptor =
+      defaultExact ?? INDEXES.byObjectSymbol.get(`${request.objectType}:${defaultSymbolNum}`)
     if (defaultDescriptor) {
       return {
         descriptor: defaultDescriptor,
@@ -177,7 +181,9 @@ function passthroughSource(
  *
  * Source geometry, style, and reference material are passed through unchanged.
  */
-export function resolveArisSymbol(request: ArisSymbolResolutionRequest): ArisSymbolResolutionResult {
+export function resolveArisSymbol(
+  request: ArisSymbolResolutionRequest
+): ArisSymbolResolutionResult {
   const { descriptor, findings } = resolveDescriptor(request)
   return Object.freeze({
     descriptor,

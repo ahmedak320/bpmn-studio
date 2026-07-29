@@ -10,18 +10,20 @@ describe('the semantic-index seam', () => {
     const semantic = buildSemanticArisDocument(tokenizeXmlDocument(SAMPLE_AML))
     const facts = adaptSourceDocument(semantic)
 
-    expect(facts.declaredIds).toEqual(expect.arrayContaining([
-      FIXTURE_IDS.group,
-      FIXTURE_IDS.model,
-      FIXTURE_IDS.startEvent,
-      FIXTURE_IDS.activity,
-      FIXTURE_IDS.connectionDefinition,
-      FIXTURE_IDS.startOccurrence,
-      FIXTURE_IDS.connectionOccurrence,
-      FIXTURE_IDS.lane,
-      FIXTURE_IDS.freeText,
-      FIXTURE_IDS.attachment
-    ]))
+    expect(facts.declaredIds).toEqual(
+      expect.arrayContaining([
+        FIXTURE_IDS.group,
+        FIXTURE_IDS.model,
+        FIXTURE_IDS.startEvent,
+        FIXTURE_IDS.activity,
+        FIXTURE_IDS.connectionDefinition,
+        FIXTURE_IDS.startOccurrence,
+        FIXTURE_IDS.connectionOccurrence,
+        FIXTURE_IDS.lane,
+        FIXTURE_IDS.freeText,
+        FIXTURE_IDS.attachment
+      ])
+    )
     expect(facts.localeIds).toEqual([FIXTURE_LOCALE_AR, FIXTURE_LOCALE_EN])
     expect(facts.spansById.get(FIXTURE_IDS.model)?.start).toBeGreaterThan(0)
   })

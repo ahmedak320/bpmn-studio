@@ -21,9 +21,11 @@ describe('buildArisRenderModel — Section 12.1 source visual inputs', () => {
     const evt = model.elements.find((e) => e.id === 'ObjOcc.2')!
     expect(evt.symbol.key).toBe('MT_EEPC:OT_EVT:ST_EV')
     // Known triples never produce a symbol fidelity finding.
-    expect(result.fidelity.some((f) => f.kind === 'unknown-custom-symbol' || f.kind === 'substituted-visual-resource')).toBe(
-      false
-    )
+    expect(
+      result.fidelity.some(
+        (f) => f.kind === 'unknown-custom-symbol' || f.kind === 'substituted-visual-resource'
+      )
+    ).toBe(false)
   })
 
   it('respects z-order in the emitted draw order across elements, connections, free text, and attachments', () => {
@@ -127,9 +129,11 @@ describe('buildArisRenderModel — Section 12.1 source visual inputs', () => {
       )
     ).toBe(true)
     // Content is present (blobCount 2), so no missing-reference-export finding for this one.
-    expect(result.fidelity.some((f) => f.kind === 'missing-reference-export' && f.elementId === 'OLEOcc.1')).toBe(
-      false
-    )
+    expect(
+      result.fidelity.some(
+        (f) => f.kind === 'missing-reference-export' && f.elementId === 'OLEOcc.1'
+      )
+    ).toBe(false)
   })
 
   it('resolves Arabic-only text to RTL direction and reports the missing proprietary font honestly', () => {
@@ -140,7 +144,10 @@ describe('buildArisRenderModel — Section 12.1 source visual inputs', () => {
     expect(arabicFunc.name?.font.faceAvailable).toBe(false)
     expect(
       result.fidelity.some(
-        (f) => f.kind === 'missing-font' && f.params.faceName === 'Simplified Arabic' && f.elementId === 'ObjOcc.3'
+        (f) =>
+          f.kind === 'missing-font' &&
+          f.params.faceName === 'Simplified Arabic' &&
+          f.elementId === 'ObjOcc.3'
       )
     ).toBe(true)
   })

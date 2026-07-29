@@ -29,7 +29,7 @@ export const DEFAULT_METADATA_LAYERS: readonly ArisMetadataCategory[] = [
   'requirement',
   'processCode',
   'arisId',
-  'modelAssignment',
+  'modelAssignment'
 ]
 
 export const METADATA_CATEGORY_LABEL_KEYS: Readonly<Record<ArisMetadataCategory, string>> = {
@@ -46,7 +46,7 @@ export const METADATA_CATEGORY_LABEL_KEYS: Readonly<Record<ArisMetadataCategory,
   processCode: 'aris.details.category.processCode',
   arisId: 'aris.details.category.arisId',
   modelAssignment: 'aris.details.category.modelAssignment',
-  other: 'aris.details.category.other',
+  other: 'aris.details.category.other'
 }
 
 export interface ArisMetadataLayer {
@@ -57,7 +57,10 @@ export interface ArisMetadataLayer {
 
 export interface ArisMetadataSummary {
   readonly layers: readonly ArisMetadataLayer[]
-  readonly satellitesByCategory: ReadonlyMap<ArisMetadataCategory, ReadonlyArray<ArisMetadataSatellite>>
+  readonly satellitesByCategory: ReadonlyMap<
+    ArisMetadataCategory,
+    ReadonlyArray<ArisMetadataSatellite>
+  >
 }
 
 /** Builds a summary of all metadata layers for a single model. */
@@ -75,12 +78,12 @@ export function summarizeMetadata(
   const layers: ArisMetadataLayer[] = DEFAULT_METADATA_LAYERS.map((category) => ({
     category,
     enabled: visibility[category] ?? true,
-    count: byCategory.get(category)?.length ?? 0,
+    count: byCategory.get(category)?.length ?? 0
   }))
 
   return {
     layers,
-    satellitesByCategory: byCategory,
+    satellitesByCategory: byCategory
   }
 }
 
@@ -102,14 +105,17 @@ export function toggleLayerVisibility(
 }
 
 /** Extracts a process code (AT_ID) and ARIS ID from a function definition. */
-export function extractProcessCodes(def: ArisObjectDefinition): { readonly processCode: string | null; readonly arisId: string | null } {
+export function extractProcessCodes(def: ArisObjectDefinition): {
+  readonly processCode: string | null
+  readonly arisId: string | null
+} {
   const idAttr = def.attributes.find((a) => a.type === 'AT_ID')
   const rawId = def.rawAttributes['AT_ID'] ?? null
   const text = idAttr?.values[0]?.text ?? rawId
   const processCode = text ? text.trim() : null
   return {
     processCode,
-    arisId: def.id,
+    arisId: def.id
   }
 }
 

@@ -90,7 +90,9 @@ describe('step 3 — strongly connected components', () => {
 
   it('handles a 500-node chain without recursing', () => {
     const nodes = Array.from({ length: 500 }, (_value, index) => fn(`N.${index}`))
-    const edges = Array.from({ length: 499 }, (_value, index) => flow(`N.${index}`, `N.${index + 1}`))
+    const edges = Array.from({ length: 499 }, (_value, index) =>
+      flow(`N.${index}`, `N.${index + 1}`)
+    )
     const adjacency = buildAdjacency(nodes, edges)
     expect(findStronglyConnectedComponents(adjacency).components).toHaveLength(500)
   })
@@ -164,9 +166,9 @@ describe('step 5 — preserve the source orientation', () => {
       { id: 'C', role: 'function' as const, size: sized, sourcePosition: { x: 800, y: 0 } },
       { id: 'D', role: 'function' as const, size: sized, sourcePosition: { x: 800, y: 400 } }
     ]
-    expect(
-      detectSourceOrientation(nodes, [flow('A', 'B'), flow('B', 'C'), flow('C', 'D')])
-    ).toBe('left-to-right')
+    expect(detectSourceOrientation(nodes, [flow('A', 'B'), flow('B', 'C'), flow('C', 'D')])).toBe(
+      'left-to-right'
+    )
   })
 
   it('falls back to top-to-bottom without any source geometry', () => {

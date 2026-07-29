@@ -32,7 +32,10 @@ export function hasMixedBidiScripts(text: string): boolean {
  * Resolves the text direction for a run of text. `locale` (from the owning `Font`/`FontNode`'s
  * `LocaleId`) wins when known; otherwise the text is scanned for Arabic script.
  */
-export function resolveTextDirection(text: string, locale: 'en' | 'ar' | undefined): RenderTextDirection {
+export function resolveTextDirection(
+  text: string,
+  locale: 'en' | 'ar' | undefined
+): RenderTextDirection {
   if (locale === 'ar') return 'rtl'
   if (locale === 'en') return 'ltr'
   return containsArabicScript(text) ? 'rtl' : 'ltr'

@@ -24,16 +24,7 @@ export interface ArisViewBox {
   readonly height: number
 }
 
-export type ArisPortName =
-  | 'N'
-  | 'NE'
-  | 'E'
-  | 'SE'
-  | 'S'
-  | 'SW'
-  | 'W'
-  | 'NW'
-  | 'CENTER'
+export type ArisPortName = 'N' | 'NE' | 'E' | 'SE' | 'S' | 'SW' | 'W' | 'NW' | 'CENTER'
 
 export interface ArisPort {
   readonly name: ArisPortName
@@ -149,9 +140,7 @@ export interface ArisSymbolResolutionRequest {
 }
 
 export type ArisSymbolFidelityKind =
-  | 'unknown-custom-symbol'
-  | 'substituted-visual-resource'
-  | 'missing-template'
+  'unknown-custom-symbol' | 'substituted-visual-resource' | 'missing-template'
 
 export interface ArisSymbolFidelityFinding {
   readonly kind: ArisSymbolFidelityKind

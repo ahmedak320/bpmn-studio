@@ -28,7 +28,10 @@ export function rule(
   return { id, role: 'rule', operator, size: RULE_SIZE, ...extra }
 }
 
-export function satellite(id: string, extra: Partial<ArisLayoutNodeInput> = {}): ArisLayoutNodeInput {
+export function satellite(
+  id: string,
+  extra: Partial<ArisLayoutNodeInput> = {}
+): ArisLayoutNodeInput {
   return { id, role: 'satellite', size: SATELLITE_SIZE, ...extra }
 }
 

@@ -11,7 +11,9 @@ import {
 const ORIGINAL_IDS = declaredIds(readWriterSourceView(SAMPLE_AML))
 const ORIGINAL_DOCTYPE = readWriterSourceView(SAMPLE_AML).doctypeExternalId
 
-function options(overrides: Partial<ArisExportValidationOptions> = {}): ArisExportValidationOptions {
+function options(
+  overrides: Partial<ArisExportValidationOptions> = {}
+): ArisExportValidationOptions {
   return {
     accounting: { originalIds: ORIGINAL_IDS, removedIds: [], addedIds: [] },
     originalDoctypeExternalId: ORIGINAL_DOCTYPE,
@@ -232,13 +234,19 @@ describe('9.3 — no unsafe external entity or executable content was introduced
 
   it('fails when an attribute carries an executable URL scheme', () => {
     expectOnlyFailure(
-      SAMPLE_AML.replace('Creator="fixture"\n>\n\t\t\t<GUID>', 'Creator="javascript:alert(1)"\n>\n\t\t\t<GUID>'),
+      SAMPLE_AML.replace(
+        'Creator="fixture"\n>\n\t\t\t<GUID>',
+        'Creator="javascript:alert(1)"\n>\n\t\t\t<GUID>'
+      ),
       'no-unsafe-content'
     )
   })
 
   it('fails when an event-handler attribute is introduced', () => {
-    expectOnlyFailure(SAMPLE_AML.replace('<Flag/>', '<Flag onload="alert(1)"/>'), 'no-unsafe-content')
+    expectOnlyFailure(
+      SAMPLE_AML.replace('<Flag/>', '<Flag onload="alert(1)"/>'),
+      'no-unsafe-content'
+    )
   })
 
   it('accepts the original DOCTYPE that the source itself declared', () => {

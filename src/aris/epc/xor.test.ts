@@ -1,5 +1,13 @@
 import { describe, expect, it } from 'vitest'
-import { classifyRule, classifyRules, isAndRule, isMerge, isOrRule, isSplit, isXorRule } from './xor'
+import {
+  classifyRule,
+  classifyRules,
+  isAndRule,
+  isMerge,
+  isOrRule,
+  isSplit,
+  isXorRule
+} from './xor'
 import { validateEpcGraph } from './validate'
 import { buildFlowGraphIndex } from './flowGraph'
 import { edge, graph, node } from './testFixtures'
@@ -28,8 +36,17 @@ describe('XOR / AND rule classification (section 14.2)', () => {
   it('preserves split vs merge as distinct roles', () => {
     const g = graph(
       'M1',
-      [node('F1', 'OT_FUNC'), node('Rsplit', 'OT_RULE', { symbolType: 'ST_OPR_XOR_1' }), node('E1', 'OT_EVT'), node('E2', 'OT_EVT')],
-      [edge('e1', 'F1', 'Rsplit', 'CT_LEADS_TO_1'), edge('e2', 'Rsplit', 'E1', 'CT_LEADS_TO_2'), edge('e3', 'Rsplit', 'E2', 'CT_LEADS_TO_2')]
+      [
+        node('F1', 'OT_FUNC'),
+        node('Rsplit', 'OT_RULE', { symbolType: 'ST_OPR_XOR_1' }),
+        node('E1', 'OT_EVT'),
+        node('E2', 'OT_EVT')
+      ],
+      [
+        edge('e1', 'F1', 'Rsplit', 'CT_LEADS_TO_1'),
+        edge('e2', 'Rsplit', 'E1', 'CT_LEADS_TO_2'),
+        edge('e3', 'Rsplit', 'E2', 'CT_LEADS_TO_2')
+      ]
     )
     const index = buildFlowGraphIndex(g)
     const split = classifyRule(index, 'Rsplit')
@@ -40,8 +57,17 @@ describe('XOR / AND rule classification (section 14.2)', () => {
 
     const merge = graph(
       'M1',
-      [node('E1', 'OT_EVT'), node('E2', 'OT_EVT'), node('Rmerge', 'OT_RULE', { symbolType: 'ST_OPR_XOR_1' }), node('F1', 'OT_FUNC')],
-      [edge('e1', 'E1', 'Rmerge', 'CT_IS_EVAL_BY_1'), edge('e2', 'E2', 'Rmerge', 'CT_IS_EVAL_BY_1'), edge('e3', 'Rmerge', 'F1', 'CT_ACTIV_1')]
+      [
+        node('E1', 'OT_EVT'),
+        node('E2', 'OT_EVT'),
+        node('Rmerge', 'OT_RULE', { symbolType: 'ST_OPR_XOR_1' }),
+        node('F1', 'OT_FUNC')
+      ],
+      [
+        edge('e1', 'E1', 'Rmerge', 'CT_IS_EVAL_BY_1'),
+        edge('e2', 'E2', 'Rmerge', 'CT_IS_EVAL_BY_1'),
+        edge('e3', 'Rmerge', 'F1', 'CT_ACTIV_1')
+      ]
     )
     const mergeIndex = buildFlowGraphIndex(merge)
     const mergeClassification = classifyRule(mergeIndex, 'Rmerge')
@@ -54,7 +80,11 @@ describe('XOR / AND rule classification (section 14.2)', () => {
   it('never dedupes parallel edges or a self-loop when classifying a rule', () => {
     const g = graph(
       'M1',
-      [node('F1', 'OT_FUNC'), node('R1', 'OT_RULE', { symbolType: 'ST_OPR_XOR_1' }), node('E1', 'OT_EVT')],
+      [
+        node('F1', 'OT_FUNC'),
+        node('R1', 'OT_RULE', { symbolType: 'ST_OPR_XOR_1' }),
+        node('E1', 'OT_EVT')
+      ],
       [
         edge('e1', 'F1', 'R1', 'CT_LEADS_TO_1'),
         edge('e2', 'F1', 'R1', 'CT_LEADS_TO_1'), // explicit parallel edge, must not collapse

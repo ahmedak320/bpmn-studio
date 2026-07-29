@@ -28,8 +28,7 @@ export interface SourceRecordLike {
  * both means the writer does not care which member of the index is a map and which is a list.
  */
 export type SourceRecordCollection =
-  | ReadonlyMap<string, SourceRecordLike>
-  | readonly SourceRecordLike[]
+  ReadonlyMap<string, SourceRecordLike> | readonly SourceRecordLike[]
 
 export interface SourceIndexLike {
   readonly models?: SourceRecordCollection
@@ -60,7 +59,9 @@ export interface WriterSourceFacts {
 
 function toRecords(collection: SourceRecordCollection | undefined): readonly SourceRecordLike[] {
   if (!collection) return []
-  return collection instanceof Map ? [...collection.values()] : (collection as readonly SourceRecordLike[])
+  return collection instanceof Map
+    ? [...collection.values()]
+    : (collection as readonly SourceRecordLike[])
 }
 
 const RECORD_MEMBERS: readonly (keyof SourceIndexLike)[] = Object.freeze([

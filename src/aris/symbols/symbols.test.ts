@@ -4,7 +4,11 @@ import { UNKNOWN_SYMBOL_DESCRIPTOR } from './fallback'
 import { buildSymbolFidelityFindings } from './fidelity'
 import { resolveArisSymbol } from './registry'
 import { ARIS_OBJECT_TYPE_DEFAULT_SYMBOL, ARIS_SYMBOL_DESCRIPTORS } from './shapes'
-import type { ArisSymbolDescriptor, ArisSymbolFidelityFinding, ArisSymbolResolutionRequest } from './types'
+import type {
+  ArisSymbolDescriptor,
+  ArisSymbolFidelityFinding,
+  ArisSymbolResolutionRequest
+} from './types'
 
 const SECTION_11_3_OBJECT_TYPES = [
   'OT_FUNC',
@@ -42,7 +46,10 @@ describe('ARIS symbol registry', () => {
   it('covers every Section 11.3 object type with a non-fallback default symbol', () => {
     for (const objectType of SECTION_11_3_OBJECT_TYPES) {
       const defaultSymbolNum = ARIS_OBJECT_TYPE_DEFAULT_SYMBOL[objectType]
-      expect(defaultSymbolNum, `object type ${objectType} has a default symbol mapping`).toBeDefined()
+      expect(
+        defaultSymbolNum,
+        `object type ${objectType} has a default symbol mapping`
+      ).toBeDefined()
       const result = resolveArisSymbol({
         modelType: 'MT_EEPC',
         objectType,
@@ -56,9 +63,21 @@ describe('ARIS symbol registry', () => {
   })
 
   it('resolves AND, OR, and XOR rules to three visually different descriptors', () => {
-    const andResult = resolveArisSymbol({ modelType: 'MT_EEPC', objectType: 'OT_RULE', symbolNum: 'ST_OPR_AND_1' })
-    const orResult = resolveArisSymbol({ modelType: 'MT_EEPC', objectType: 'OT_RULE', symbolNum: 'ST_OPR_OR_1' })
-    const xorResult = resolveArisSymbol({ modelType: 'MT_EEPC', objectType: 'OT_RULE', symbolNum: 'ST_OPR_XOR_1' })
+    const andResult = resolveArisSymbol({
+      modelType: 'MT_EEPC',
+      objectType: 'OT_RULE',
+      symbolNum: 'ST_OPR_AND_1'
+    })
+    const orResult = resolveArisSymbol({
+      modelType: 'MT_EEPC',
+      objectType: 'OT_RULE',
+      symbolNum: 'ST_OPR_OR_1'
+    })
+    const xorResult = resolveArisSymbol({
+      modelType: 'MT_EEPC',
+      objectType: 'OT_RULE',
+      symbolNum: 'ST_OPR_XOR_1'
+    })
 
     expect(andResult.descriptor.key).not.toBe(orResult.descriptor.key)
     expect(orResult.descriptor.key).not.toBe(xorResult.descriptor.key)
@@ -201,13 +220,29 @@ describe('ARIS symbol registry', () => {
 
   it('produces a deduplicated fidelity report across many resolved symbols', () => {
     const resolved = [
-      resolveArisSymbol({ modelType: 'MT_EEPC', objectType: 'OT_UNKNOWN_TYPE', symbolNum: 'ST_UNKNOWN_1' }),
-      resolveArisSymbol({ modelType: 'MT_EEPC', objectType: 'OT_UNKNOWN_TYPE', symbolNum: 'ST_UNKNOWN_1' }),
-      resolveArisSymbol({ modelType: 'MT_EEPC', objectType: 'OT_FUNC', symbolNum: 'ST_UNKNOWN_FUNC' })
+      resolveArisSymbol({
+        modelType: 'MT_EEPC',
+        objectType: 'OT_UNKNOWN_TYPE',
+        symbolNum: 'ST_UNKNOWN_1'
+      }),
+      resolveArisSymbol({
+        modelType: 'MT_EEPC',
+        objectType: 'OT_UNKNOWN_TYPE',
+        symbolNum: 'ST_UNKNOWN_1'
+      }),
+      resolveArisSymbol({
+        modelType: 'MT_EEPC',
+        objectType: 'OT_FUNC',
+        symbolNum: 'ST_UNKNOWN_FUNC'
+      })
     ]
     const findings = buildSymbolFidelityFindings(resolved)
     expect(findings).toHaveLength(2)
-    expect(findings.filter((f: ArisSymbolFidelityFinding) => f.kind === 'unknown-custom-symbol')).toHaveLength(1)
-    expect(findings.filter((f: ArisSymbolFidelityFinding) => f.kind === 'substituted-visual-resource')).toHaveLength(1)
+    expect(
+      findings.filter((f: ArisSymbolFidelityFinding) => f.kind === 'unknown-custom-symbol')
+    ).toHaveLength(1)
+    expect(
+      findings.filter((f: ArisSymbolFidelityFinding) => f.kind === 'substituted-visual-resource')
+    ).toHaveLength(1)
   })
 })

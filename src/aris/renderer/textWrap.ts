@@ -112,7 +112,10 @@ export function wrapText(text: string, maxWidthPx: number | null, sizePx: number
     wrappedLines.push(...pieces)
   }
   return {
-    lines: wrappedLines.map((lineText) => ({ text: lineText, width: measureTextWidth(lineText, sizePx) })),
+    lines: wrappedLines.map((lineText) => ({
+      text: lineText,
+      width: measureTextWidth(lineText, sizePx)
+    })),
     wrapped: anyWrapped
   }
 }
@@ -120,7 +123,11 @@ export function wrapText(text: string, maxWidthPx: number | null, sizePx: number
 /** Builds the `text-wrap-difference` finding for text whose layout required a wrap decision. */
 export function buildTextWrapFinding(
   wrapped: boolean,
-  identity: { readonly modelId: string | null; readonly elementId: string | null; readonly sourceId: string | null }
+  identity: {
+    readonly modelId: string | null
+    readonly elementId: string | null
+    readonly sourceId: string | null
+  }
 ): ArisRenderFidelityFinding | null {
   if (!wrapped) return null
   return {

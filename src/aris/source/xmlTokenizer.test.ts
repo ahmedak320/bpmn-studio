@@ -10,10 +10,16 @@ import {
   type XmlNode
 } from './xmlTokenizer'
 import { handleXmlTokenizerWorkerRequest } from './xmlTokenizer.worker'
-import type { XmlTokenizerWorkerRequest, XmlTokenizerWorkerResponse } from './xmlTokenizerWorkerProtocol'
+import type {
+  XmlTokenizerWorkerRequest,
+  XmlTokenizerWorkerResponse
+} from './xmlTokenizerWorkerProtocol'
 
 /** The raw span recorded for a token must slice back to exactly its `raw` text. */
-function expectRawSpanMatches(source: string, token: { raw: string; span: { start: { offset: number }; end: { offset: number } } }): void {
+function expectRawSpanMatches(
+  source: string,
+  token: { raw: string; span: { start: { offset: number }; end: { offset: number } } }
+): void {
   expect(source.slice(token.span.start.offset, token.span.end.offset)).toBe(token.raw)
 }
 
@@ -36,7 +42,11 @@ describe('tokenizeXmlDocument — minimal AML', () => {
     expect(document.rootElementName).toBe('AML')
     expect(document.nodeCount).toBe(2)
     expect(document.maxDepth).toBe(2)
-    expect(document.tokens.map((token) => token.kind)).toEqual(['start-tag', 'empty-tag', 'end-tag'])
+    expect(document.tokens.map((token) => token.kind)).toEqual([
+      'start-tag',
+      'empty-tag',
+      'end-tag'
+    ])
 
     const root = document.children[0]
     if (!root || root.kind !== 'element') throw new Error('expected AML root element')
@@ -46,7 +56,11 @@ describe('tokenizeXmlDocument — minimal AML', () => {
     if (!model || model.kind !== 'element') throw new Error('expected Model element')
     expect(model.startTag.kind).toBe('empty-tag')
     expect(model.startTag.attributes).toHaveLength(1)
-    expect(model.startTag.attributes[0]).toMatchObject({ name: 'Model.ID', value: 'M1', quote: '"' })
+    expect(model.startTag.attributes[0]).toMatchObject({
+      name: 'Model.ID',
+      value: 'M1',
+      quote: '"'
+    })
     expectRawSpanMatches(xml, root.startTag)
     expectRawSpanMatches(xml, model.startTag)
   })
@@ -69,7 +83,9 @@ describe('tokenizeXmlDocument — internal entities', () => {
 
     const root = document.children.find((node): node is XmlElementNode => node.kind === 'element')
     if (!root) throw new Error('expected root element')
-    const vendorAttribute = root.startTag.attributes.find((attribute) => attribute.name === 'Vendor')
+    const vendorAttribute = root.startTag.attributes.find(
+      (attribute) => attribute.name === 'Vendor'
+    )
     expect(vendorAttribute?.value).toBe('&Company; Global') // raw, unexpanded — lossless
     expect(expandXmlEntities(vendorAttribute!.value, document.doctype!.entityDeclarations)).toBe(
       'OrbitPM Inc. Global'
@@ -106,9 +122,9 @@ describe('tokenizeXmlDocument — custom entity names', () => {
     if (!label) throw new Error('expected Label element')
     const textNode = label.children.find((child) => child.kind === 'text')
     if (!textNode || textNode.kind !== 'text') throw new Error('expected text node')
-    expect(
-      expandXmlEntities(textNode.token.content, document.doctype!.entityDeclarations)
-    ).toBe('Configurable Widget')
+    expect(expandXmlEntities(textNode.token.content, document.doctype!.entityDeclarations)).toBe(
+      'Configurable Widget'
+    )
   })
 })
 
@@ -184,7 +200,8 @@ describe('tokenizeXmlDocument — comments and processing instructions', () => {
     const document = tokenizeXmlDocument(xml)
 
     const commentToken = document.tokens.find((token) => token.kind === 'comment')
-    if (!commentToken || commentToken.kind !== 'comment') throw new Error('expected a comment token')
+    if (!commentToken || commentToken.kind !== 'comment')
+      throw new Error('expected a comment token')
     expect(commentToken.raw).toBe('<!-- top level comment -->')
     expect(commentToken.content).toBe(' top level comment ')
     expectRawSpanMatches(xml, commentToken)
@@ -367,7 +384,9 @@ describe('tokenizeXmlDocument — XXE / external DTD attempts', () => {
     } catch (error) {
       expect(error).toBeInstanceOf(XmlTokenizerError)
       expect((error as XmlTokenizerError).code).toBe('external-entity')
-      expect((error as XmlTokenizerError).message).toMatch(/Parameter XML entities are not allowed/u)
+      expect((error as XmlTokenizerError).message).toMatch(
+        /Parameter XML entities are not allowed/u
+      )
     }
   })
 })
@@ -413,19 +432,35 @@ describe('tokenizeXmlDocument — entity expansion attack bounds', () => {
       '<AML/>'
     ].join('\n')
     try {
-      tokenizeXmlDocument(xml, { maxEntityDeclarations: 100, maxEntityValueLength: 1000, maxTotalEntityValueLength: 10000 })
+      tokenizeXmlDocument(xml, {
+        maxEntityDeclarations: 100,
+        maxEntityValueLength: 1000,
+        maxTotalEntityValueLength: 10000
+      })
       throw new Error('expected tokenizeXmlDocument to throw')
     } catch (error) {
       expect(error).toBeInstanceOf(XmlTokenizerError)
       expect((error as XmlTokenizerError).code).toBe('entity-limit')
-      expect((error as XmlTokenizerError).message).toMatch(/Nested XML entity expansion is not allowed/u)
+      expect((error as XmlTokenizerError).message).toMatch(
+        /Nested XML entity expansion is not allowed/u
+      )
     }
   })
 
   it('bounds the total expanded entity content across all declarations', () => {
-    const xml = ['<!DOCTYPE AML [', '<!ENTITY a "12345678">', '<!ENTITY b "12345678">', ']>', '<AML/>'].join('\n')
+    const xml = [
+      '<!DOCTYPE AML [',
+      '<!ENTITY a "12345678">',
+      '<!ENTITY b "12345678">',
+      ']>',
+      '<AML/>'
+    ].join('\n')
     try {
-      tokenizeXmlDocument(xml, { maxEntityDeclarations: 10, maxEntityValueLength: 50, maxTotalEntityValueLength: 15 })
+      tokenizeXmlDocument(xml, {
+        maxEntityDeclarations: 10,
+        maxEntityValueLength: 50,
+        maxTotalEntityValueLength: 15
+      })
       throw new Error('expected tokenizeXmlDocument to throw')
     } catch (error) {
       expect(error).toBeInstanceOf(XmlTokenizerError)
@@ -498,7 +533,9 @@ describe('tokenizeXmlDocument — cancellation (sync path)', () => {
 class MockWorker implements WorkerLike {
   terminated = false
   posted: unknown[] = []
-  private readonly messageListeners: Array<(event: MessageEvent<XmlTokenizerWorkerResponse>) => void> = []
+  private readonly messageListeners: Array<
+    (event: MessageEvent<XmlTokenizerWorkerResponse>) => void
+  > = []
   private readonly errorListeners: Array<(event: ErrorEvent) => void> = []
 
   postMessage(message: unknown): void {
@@ -510,7 +547,10 @@ class MockWorker implements WorkerLike {
   }
 
   addEventListener(type: 'message' | 'error', listener: (event: never) => void): void {
-    if (type === 'message') this.messageListeners.push(listener as (event: MessageEvent<XmlTokenizerWorkerResponse>) => void)
+    if (type === 'message')
+      this.messageListeners.push(
+        listener as (event: MessageEvent<XmlTokenizerWorkerResponse>) => void
+      )
     else this.errorListeners.push(listener as (event: ErrorEvent) => void)
   }
 
@@ -521,7 +561,8 @@ class MockWorker implements WorkerLike {
   }
 
   emitMessage(data: XmlTokenizerWorkerResponse): void {
-    for (const listener of [...this.messageListeners]) listener({ data } as MessageEvent<XmlTokenizerWorkerResponse>)
+    for (const listener of [...this.messageListeners])
+      listener({ data } as MessageEvent<XmlTokenizerWorkerResponse>)
   }
 }
 
@@ -534,7 +575,9 @@ describe('tokenizeXmlInBrowser — cancellation', () => {
     expect(typeof (globalThis as { Worker?: unknown }).Worker).toBe('undefined')
     const controller = new AbortController()
     controller.abort()
-    await expect(tokenizeXmlInBrowser('<AML/>', { signal: controller.signal })).rejects.toMatchObject({
+    await expect(
+      tokenizeXmlInBrowser('<AML/>', { signal: controller.signal })
+    ).rejects.toMatchObject({
       name: 'AbortError'
     })
   })
@@ -555,7 +598,10 @@ describe('tokenizeXmlInBrowser — cancellation', () => {
     ;(globalThis as { Worker?: unknown }).Worker = class {} as unknown
     const mock = new MockWorker()
     const controller = new AbortController()
-    const promise = tokenizeXmlInBrowser('<AML/>', { signal: controller.signal, workerFactory: () => mock })
+    const promise = tokenizeXmlInBrowser('<AML/>', {
+      signal: controller.signal,
+      workerFactory: () => mock
+    })
     expect(mock.posted).toHaveLength(1)
     controller.abort()
     await expect(promise).rejects.toMatchObject({ name: 'AbortError' })
@@ -563,9 +609,11 @@ describe('tokenizeXmlInBrowser — cancellation', () => {
 
     // A late, straggling result must never resolve the already-settled promise.
     let resolvedAfterAbort = false
-    promise.then(() => {
-      resolvedAfterAbort = true
-    }).catch(() => {})
+    promise
+      .then(() => {
+        resolvedAfterAbort = true
+      })
+      .catch(() => {})
     mock.emitMessage({
       type: 'result',
       requestId: (mock.posted[0] as { requestId: string }).requestId,
@@ -606,7 +654,8 @@ describe('handleXmlTokenizerWorkerRequest', () => {
 
 describe('tokenizeXmlDocument — AnimalWF-size input', () => {
   it('tokenizes a ~4 MiB synthetic document within a generous time bound and produces correct counts', () => {
-    const HEADER = '<?xml version="1.0" encoding="UTF-8"?><AML><Group Group.ID="ROOT"><Model Model.ID="M0" Model.Type="EPC">'
+    const HEADER =
+      '<?xml version="1.0" encoding="UTF-8"?><AML><Group Group.ID="ROOT"><Model Model.ID="M0" Model.Type="EPC">'
     const FOOTER = '</Model></Group></AML>'
     const OBJECT_COUNT = 17_343 // sized to land at ~4 MiB total, verified below
 

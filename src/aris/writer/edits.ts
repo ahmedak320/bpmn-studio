@@ -97,9 +97,7 @@ export function setAttributeEdits(
     return [replaceEdit(existing.valueSpan, escaped, label)]
   }
   const last = element.attributes[element.attributes.length - 1]
-  const anchor = last
-    ? last.span.end
-    : element.startTagSpan.start + 1 + element.name.length
+  const anchor = last ? last.span.end : element.startTagSpan.start + 1 + element.name.length
   const escaped = escapeXmlAttributeValue(value, `Attribute "${name}"`)
   return [insertEdit(anchor, ` ${name}="${escaped}"`, label)]
 }
@@ -154,9 +152,13 @@ export function renameSourceIdEdits(
     throw new ArisWriterError('unknown-record', `Element "${element.path}" declares no id.`)
   }
   if (from !== to && view.byId.has(to)) {
-    throw new ArisWriterError('invalid-id', `Cannot rename "${from}" to "${to}": id already taken.`, {
-      detail: { from, to }
-    })
+    throw new ArisWriterError(
+      'invalid-id',
+      `Cannot rename "${from}" to "${to}": id already taken.`,
+      {
+        detail: { from, to }
+      }
+    )
   }
   const declaration = requireAttribute(element, element.sourceIdAttribute)
   const escaped = escapeXmlAttributeValue(to, element.sourceIdAttribute)
@@ -164,9 +166,7 @@ export function renameSourceIdEdits(
     replaceEdit(declaration.valueSpan, escaped, `rename declaration ${from} -> ${to}`)
   ]
   ;(view.referencesByTarget.get(from) ?? []).forEach((reference, index) => {
-    edits.push(
-      replaceEdit(reference.span, escaped, `rename reference ${index} ${from} -> ${to}`)
-    )
+    edits.push(replaceEdit(reference.span, escaped, `rename reference ${index} ${from} -> ${to}`))
   })
   return edits
 }
@@ -526,10 +526,7 @@ export function deleteRecordsCascade(
 }
 
 /** The id of `element` or, failing that, of its closest ancestor that declares one. */
-function nearestIdentifiedAncestor(
-  view: WriterSourceView,
-  element: WriterElement
-): string | null {
+function nearestIdentifiedAncestor(view: WriterSourceView, element: WriterElement): string | null {
   let current: WriterElement | null = element
   while (current !== null) {
     if (current.sourceId !== null) return current.sourceId
@@ -590,7 +587,12 @@ export function createConnectionDefinitionEdits(
     )
   }
   return [
-    ...insertChildEdits(view, source, connectionDefinitionSpec(definition), `create ${definition.id}`),
+    ...insertChildEdits(
+      view,
+      source,
+      connectionDefinitionSpec(definition),
+      `create ${definition.id}`
+    ),
     ...appendIdRefEdits(view, source, 'ToCxnDefs.IdRefs', definition.id)
   ]
 }

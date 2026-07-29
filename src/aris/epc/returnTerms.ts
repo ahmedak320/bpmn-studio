@@ -90,14 +90,26 @@ export function findReturnOutcomeMatches(names: EpcLocalizedNames): readonly Ret
     if (!text) continue
     for (const rule of ENGLISH_TERMS) {
       if (rule.pattern.test(text)) {
-        matches.push({ language: 'en', localeId, matchedTerm: rule.term, concept: rule.concept, text })
+        matches.push({
+          language: 'en',
+          localeId,
+          matchedTerm: rule.term,
+          concept: rule.concept,
+          text
+        })
       }
     }
     const normalized = normalizeArabic(text)
     if (normalized) {
       for (const rule of ARABIC_TERMS) {
         if (rule.normalized && normalized.includes(rule.normalized)) {
-          matches.push({ language: 'ar', localeId, matchedTerm: rule.term, concept: rule.concept, text })
+          matches.push({
+            language: 'ar',
+            localeId,
+            matchedTerm: rule.term,
+            concept: rule.concept,
+            text
+          })
         }
       }
     }

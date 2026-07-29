@@ -39,7 +39,10 @@ export interface OccupiedBox {
   readonly labelCross: number
 }
 
-export function labelFitsInside(size: { width: number; height: number }, label?: ArisLayoutLabelBox): boolean {
+export function labelFitsInside(
+  size: { width: number; height: number },
+  label?: ArisLayoutLabelBox
+): boolean {
   if (!label) return true
   return label.width <= size.width + LAYOUT_EPSILON && label.height <= size.height + LAYOUT_EPSILON
 }

@@ -38,7 +38,9 @@ describe('buildWriterSourceView', () => {
 
   it('uses the same element-path convention as the semantic index', () => {
     expect(view.rootPath).toBe('AML[1]')
-    expect(requireElementById(view, FIXTURE_IDS.model).path).toBe('AML[1]/Group[1]/Group[1]/Model[1]')
+    expect(requireElementById(view, FIXTURE_IDS.model).path).toBe(
+      'AML[1]/Group[1]/Group[1]/Model[1]'
+    )
     expect(requireElementById(view, FIXTURE_IDS.activityOccurrence).path).toBe(
       'AML[1]/Group[1]/Group[1]/Model[1]/ObjOcc[2]'
     )
@@ -117,8 +119,7 @@ describe('buildWriterSourceView', () => {
     )
     const reference = view.references.find(
       (candidate) =>
-        candidate.elementPath === occurrence.path &&
-        candidate.attributeName === 'ToCxnOccs.IdRefs'
+        candidate.elementPath === occurrence.path && candidate.attributeName === 'ToCxnOccs.IdRefs'
     )
     expect(reference?.targetId).toBe(FIXTURE_IDS.connectionOccurrence)
     expect(sliceSpan(SAMPLE_AML, reference!.span)).toBe(FIXTURE_IDS.connectionOccurrence)
@@ -134,8 +135,8 @@ describe('buildWriterSourceView', () => {
 
   it('fails loudly for an unknown id or attribute', () => {
     expect(() => requireElementById(view, 'ObjDef.nope-p-L')).toThrowError(/No source record/)
-    expect(() => requireAttribute(requireElementById(view, FIXTURE_IDS.model), 'nope')).toThrowError(
-      /has no attribute/
-    )
+    expect(() =>
+      requireAttribute(requireElementById(view, FIXTURE_IDS.model), 'nope')
+    ).toThrowError(/has no attribute/)
   })
 })

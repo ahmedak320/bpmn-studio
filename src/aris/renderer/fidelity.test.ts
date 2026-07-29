@@ -17,7 +17,14 @@ describe('Section 12.3 fidelity findings — one fixture per kind', () => {
   it('reports unknown-custom-symbol for a symbol triple absent from the registry, with a visible fallback', () => {
     const input = buildEmptyModelInput()
     const objectDefinitions = new Map<string, RenderSourceObjectDefinition>([
-      ['ObjDef.1', rec('ObjDef.1', 'p', { objectDefinitionId: 'ObjDef.1', typeNum: 'OT_TOTALLY_UNKNOWN', symbolNum: 'ST_NOPE' })]
+      [
+        'ObjDef.1',
+        rec('ObjDef.1', 'p', {
+          objectDefinitionId: 'ObjDef.1',
+          typeNum: 'OT_TOTALLY_UNKNOWN',
+          symbolNum: 'ST_NOPE'
+        })
+      ]
     ])
     const objectOccurrences = new Map<string, RenderSourceObjectOccurrence>([
       [
@@ -50,7 +57,14 @@ describe('Section 12.3 fidelity findings — one fixture per kind', () => {
   it('reports substituted-visual-resource when a symbol is only known under a different model type', () => {
     const input = buildEmptyModelInput({ modelType: 'MT_VAL_ADD_CHN_DGM' })
     const objectDefinitions = new Map<string, RenderSourceObjectDefinition>([
-      ['ObjDef.1', rec('ObjDef.1', 'p', { objectDefinitionId: 'ObjDef.1', typeNum: 'OT_FUNC', symbolNum: 'ST_FUNC' })]
+      [
+        'ObjDef.1',
+        rec('ObjDef.1', 'p', {
+          objectDefinitionId: 'ObjDef.1',
+          typeNum: 'OT_FUNC',
+          symbolNum: 'ST_FUNC'
+        })
+      ]
     ])
     const objectOccurrences = new Map<string, RenderSourceObjectOccurrence>([
       [
@@ -71,7 +85,9 @@ describe('Section 12.3 fidelity findings — one fixture per kind', () => {
     ])
     const result = buildArisRenderModel({ ...input, objectDefinitions, objectOccurrences })
     expect(
-      result.fidelity.some((f) => f.kind === 'substituted-visual-resource' && f.elementId === 'ObjOcc.1')
+      result.fidelity.some(
+        (f) => f.kind === 'substituted-visual-resource' && f.elementId === 'ObjOcc.1'
+      )
     ).toBe(true)
   })
 
@@ -107,10 +123,21 @@ describe('Section 12.3 fidelity findings — one fixture per kind', () => {
         })
       ]
     ])
-    const pens: RenderSourcePen[] = [rec('Pen.1', 'p', { ownerSourceId: 'ObjOcc.1', color: '0', style: '9', width: 1 })]
-    const result = buildArisRenderModel({ ...input, objectOccurrences, styles: { ...input.styles, pens } })
+    const pens: RenderSourcePen[] = [
+      rec('Pen.1', 'p', { ownerSourceId: 'ObjOcc.1', color: '0', style: '9', width: 1 })
+    ]
+    const result = buildArisRenderModel({
+      ...input,
+      objectOccurrences,
+      styles: { ...input.styles, pens }
+    })
     expect(
-      result.fidelity.some((f) => f.kind === 'unsupported-pen-effect' && f.elementId === 'ObjOcc.1' && f.params.style === '9')
+      result.fidelity.some(
+        (f) =>
+          f.kind === 'unsupported-pen-effect' &&
+          f.elementId === 'ObjOcc.1' &&
+          f.params.style === '9'
+      )
     ).toBe(true)
   })
 
@@ -134,12 +161,24 @@ describe('Section 12.3 fidelity findings — one fixture per kind', () => {
       ]
     ])
     const brushes: RenderSourceBrush[] = [
-      rec('Brush.1', 'p', { ownerSourceId: 'ObjOcc.1', color: '996600', color2: '0', brushType: 'DIAGCROSS' })
+      rec('Brush.1', 'p', {
+        ownerSourceId: 'ObjOcc.1',
+        color: '996600',
+        color2: '0',
+        brushType: 'DIAGCROSS'
+      })
     ]
-    const result = buildArisRenderModel({ ...input, objectOccurrences, styles: { ...input.styles, brushes } })
+    const result = buildArisRenderModel({
+      ...input,
+      objectOccurrences,
+      styles: { ...input.styles, brushes }
+    })
     expect(
       result.fidelity.some(
-        (f) => f.kind === 'unsupported-brush-effect' && f.elementId === 'ObjOcc.1' && f.params.brushType === 'DIAGCROSS'
+        (f) =>
+          f.kind === 'unsupported-brush-effect' &&
+          f.elementId === 'ObjOcc.1' &&
+          f.params.brushType === 'DIAGCROSS'
       )
     ).toBe(true)
   })
@@ -150,10 +189,23 @@ describe('Section 12.3 fidelity findings — one fixture per kind', () => {
       ['OLEDef.1', rec('OLEDef.1', 'p', { attachmentId: 'OLEDef.1', blobCount: 2 })]
     ])
     const attachmentOccurrences: RenderSourceAttachmentOccurrence[] = [
-      rec('OLEOcc.1', 'p', { modelId: 'Model.1', attachmentOccurrenceId: 'OLEOcc.1', attachmentId: 'OLEDef.1', zorder: 0, x: 0, y: 0, dx: 40, dy: 40 })
+      rec('OLEOcc.1', 'p', {
+        modelId: 'Model.1',
+        attachmentOccurrenceId: 'OLEOcc.1',
+        attachmentId: 'OLEDef.1',
+        zorder: 0,
+        x: 0,
+        y: 0,
+        dx: 40,
+        dy: 40
+      })
     ]
     const result = buildArisRenderModel({ ...input, attachments, attachmentOccurrences })
-    expect(result.fidelity.some((f) => f.kind === 'unsupported-ole-rendering' && f.elementId === 'OLEOcc.1')).toBe(true)
+    expect(
+      result.fidelity.some(
+        (f) => f.kind === 'unsupported-ole-rendering' && f.elementId === 'OLEOcc.1'
+      )
+    ).toBe(true)
   })
 
   it('reports missing-reference-export when an attachment definition exported zero blobs', () => {
@@ -162,18 +214,36 @@ describe('Section 12.3 fidelity findings — one fixture per kind', () => {
       ['OLEDef.1', rec('OLEDef.1', 'p', { attachmentId: 'OLEDef.1', blobCount: 0 })]
     ])
     const attachmentOccurrences: RenderSourceAttachmentOccurrence[] = [
-      rec('OLEOcc.1', 'p', { modelId: 'Model.1', attachmentOccurrenceId: 'OLEOcc.1', attachmentId: 'OLEDef.1', zorder: 0, x: 0, y: 0, dx: 40, dy: 40 })
+      rec('OLEOcc.1', 'p', {
+        modelId: 'Model.1',
+        attachmentOccurrenceId: 'OLEOcc.1',
+        attachmentId: 'OLEDef.1',
+        zorder: 0,
+        x: 0,
+        y: 0,
+        dx: 40,
+        dy: 40
+      })
     ]
     const result = buildArisRenderModel({ ...input, attachments, attachmentOccurrences })
     expect(
-      result.fidelity.some((f) => f.kind === 'missing-reference-export' && f.elementId === 'OLEOcc.1')
+      result.fidelity.some(
+        (f) => f.kind === 'missing-reference-export' && f.elementId === 'OLEOcc.1'
+      )
     ).toBe(true)
   })
 
   it('reports missing-font for a face name outside the OrbitPM safe-font allowlist', () => {
     const input = buildEmptyModelInput()
     const objectDefinitions = new Map<string, RenderSourceObjectDefinition>([
-      ['ObjDef.1', rec('ObjDef.1', 'p', { objectDefinitionId: 'ObjDef.1', typeNum: 'OT_FUNC', symbolNum: 'ST_FUNC' })]
+      [
+        'ObjDef.1',
+        rec('ObjDef.1', 'p', {
+          objectDefinitionId: 'ObjDef.1',
+          typeNum: 'OT_FUNC',
+          symbolNum: 'ST_FUNC'
+        })
+      ]
     ])
     const objectOccurrences = new Map<string, RenderSourceObjectOccurrence>([
       [
@@ -193,7 +263,11 @@ describe('Section 12.3 fidelity findings — one fixture per kind', () => {
       ]
     ])
     const attributes: RenderSourceAttribute[] = [
-      rec('AttrDef.1', 'p', { ownerSourceId: 'ObjDef.1', attributeType: 'AT_NAME', values: [{ locale: 'en', text: 'Legacy Step' }] })
+      rec('AttrDef.1', 'p', {
+        ownerSourceId: 'ObjDef.1',
+        attributeType: 'AT_NAME',
+        values: [{ locale: 'en', text: 'Legacy Step' }]
+      })
     ]
     const fontStyleSheets = new Map(input.styles.fontStyleSheets)
     fontStyleSheets.set('FontSS.1', rec('FontSS.1', 'p', { fontStyleSheetId: 'FontSS.1' }))
@@ -236,7 +310,10 @@ describe('Section 12.3 fidelity findings — one fixture per kind', () => {
     })
     expect(
       result.fidelity.some(
-        (f) => f.kind === 'missing-font' && f.params.faceName === 'Wingding-Proprietary-Face' && f.elementId === 'ObjOcc.1'
+        (f) =>
+          f.kind === 'missing-font' &&
+          f.params.faceName === 'Wingding-Proprietary-Face' &&
+          f.elementId === 'ObjOcc.1'
       )
     ).toBe(true)
   })
@@ -244,7 +321,14 @@ describe('Section 12.3 fidelity findings — one fixture per kind', () => {
   it('reports text-wrap-difference when computed layout requires more than one line', () => {
     const input = buildEmptyModelInput()
     const objectDefinitions = new Map<string, RenderSourceObjectDefinition>([
-      ['ObjDef.1', rec('ObjDef.1', 'p', { objectDefinitionId: 'ObjDef.1', typeNum: 'OT_FUNC', symbolNum: 'ST_FUNC' })]
+      [
+        'ObjDef.1',
+        rec('ObjDef.1', 'p', {
+          objectDefinitionId: 'ObjDef.1',
+          typeNum: 'OT_FUNC',
+          symbolNum: 'ST_FUNC'
+        })
+      ]
     ])
     const objectOccurrences = new Map<string, RenderSourceObjectOccurrence>([
       [
@@ -270,11 +354,18 @@ describe('Section 12.3 fidelity findings — one fixture per kind', () => {
         values: [{ locale: 'en', text: 'Register and validate the animal owner application form' }]
       })
     ]
-    const result = buildArisRenderModel({ ...input, objectDefinitions, objectOccurrences, attributes })
+    const result = buildArisRenderModel({
+      ...input,
+      objectDefinitions,
+      objectOccurrences,
+      attributes
+    })
     const element = result.models[0].elements[0]
     expect(element.name?.wrapped).toBe(true)
     expect(element.name?.lines.length).toBeGreaterThan(1)
-    expect(result.fidelity.some((f) => f.kind === 'text-wrap-difference' && f.elementId === 'ObjOcc.1')).toBe(true)
+    expect(
+      result.fidelity.some((f) => f.kind === 'text-wrap-difference' && f.elementId === 'ObjOcc.1')
+    ).toBe(true)
   })
 
   it('lists every Section 12.3 finding kind in ARIS_RENDER_FIDELITY_KINDS', () => {

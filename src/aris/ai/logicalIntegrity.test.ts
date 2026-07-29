@@ -13,7 +13,9 @@ describe('validateLogicalIdIntegrity', () => {
     const broken: ArisAiDraftV1 = {
       ...draft,
       objects: draft.objects.map((object) =>
-        object.logicalId === 'evt-start' ? { ...object, modelLogicalId: 'model-does-not-exist' } : object
+        object.logicalId === 'evt-start'
+          ? { ...object, modelLogicalId: 'model-does-not-exist' }
+          : object
       )
     }
     const findings = validateLogicalIdIntegrity(broken)
@@ -46,7 +48,9 @@ describe('validateLogicalIdIntegrity', () => {
     }
     const findings = validateLogicalIdIntegrity(broken)
     expect(
-      findings.some((f) => f.code === 'dangling-object-reference' && f.path.includes('sourceLogicalId'))
+      findings.some(
+        (f) => f.code === 'dangling-object-reference' && f.path.includes('sourceLogicalId')
+      )
     ).toBe(true)
   })
 
@@ -62,7 +66,9 @@ describe('validateLogicalIdIntegrity', () => {
     }
     const findings = validateLogicalIdIntegrity(broken)
     expect(
-      findings.some((f) => f.code === 'dangling-object-reference' && f.path.includes('targetLogicalId'))
+      findings.some(
+        (f) => f.code === 'dangling-object-reference' && f.path.includes('targetLogicalId')
+      )
     ).toBe(true)
   })
 
@@ -137,7 +143,10 @@ describe('validateLogicalIdIntegrity', () => {
       ...draft,
       objects: draft.objects.map((object) =>
         object.logicalId === 'func-approve'
-          ? { ...object, attributes: object.attributes.map((a) => ({ ...a, ownerLogicalId: 'evt-start' })) }
+          ? {
+              ...object,
+              attributes: object.attributes.map((a) => ({ ...a, ownerLogicalId: 'evt-start' }))
+            }
           : object
       )
     }
@@ -163,7 +172,10 @@ describe('validateLogicalIdIntegrity', () => {
     const draft = buildMinimalValidDraft()
     const broken: ArisAiDraftV1 = {
       ...draft,
-      assignments: draft.assignments.map((assignment) => ({ ...assignment, objectLogicalId: 'obj-does-not-exist' }))
+      assignments: draft.assignments.map((assignment) => ({
+        ...assignment,
+        objectLogicalId: 'obj-does-not-exist'
+      }))
     }
     const findings = validateLogicalIdIntegrity(broken)
     expect(

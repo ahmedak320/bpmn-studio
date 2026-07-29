@@ -37,7 +37,9 @@ describe('validateArisAiDraft', () => {
       ...draft,
       unexpectedField: true, // would also be a schema error
       objects: draft.objects.map((object) =>
-        object.logicalId === 'func-approve' ? { ...object, evidence: '<script>alert(1)</script>' } : object
+        object.logicalId === 'func-approve'
+          ? { ...object, evidence: '<script>alert(1)</script>' }
+          : object
       )
     }
     const result = validateArisAiDraft(attacked)
@@ -55,7 +57,9 @@ describe('validateArisAiDraft', () => {
         object.logicalId === 'func-approve' ? { ...object, objectType: 'OT_NOT_REAL' } : object
       ),
       relations: draft.relations.map((relation) =>
-        relation.logicalId === 'rel-start-to-approve' ? { ...relation, targetLogicalId: 'missing-object' } : relation
+        relation.logicalId === 'rel-start-to-approve'
+          ? { ...relation, targetLogicalId: 'missing-object' }
+          : relation
       )
     }
     const result = validateArisAiDraft(broken)

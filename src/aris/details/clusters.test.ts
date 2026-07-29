@@ -8,7 +8,7 @@ import {
   detectClusterCollisions,
   setClusterCollapsed,
   setLayoutMode,
-  type ArisSatelliteCluster,
+  type ArisSatelliteCluster
 } from './clusters'
 
 describe('collision-aware clusters', () => {
@@ -16,7 +16,11 @@ describe('collision-aware clusters', () => {
     const document = buildSatelliteDocument()
     const details = adaptWorkingDocument(document)
     const model = [...details.models.values()][0]
-    const layout = buildClusterLayout(model.satellites, model.controlFlowNodes, defaultClusterPreferences())
+    const layout = buildClusterLayout(
+      model.satellites,
+      model.controlFlowNodes,
+      defaultClusterPreferences()
+    )
     expect(layout.clusters.size).toBe(1)
     const cluster = [...layout.clusters.values()][0]
     expect(cluster.ownerOccurrenceId).toBe('occ-func-1')
@@ -33,12 +37,16 @@ describe('collision-aware clusters', () => {
     // Simulate a view with all satellites hidden.
     const prefsNoSatellites = {
       ...defaultClusterPreferences(),
-      categoryVisibility: { ...defaultClusterPreferences().categoryVisibility },
+      categoryVisibility: { ...defaultClusterPreferences().categoryVisibility }
     }
     for (const key of Object.keys(prefsNoSatellites.categoryVisibility)) {
       ;(prefsNoSatellites.categoryVisibility as Record<string, boolean>)[key] = false
     }
-    const layoutNoSatellites = buildClusterLayout(model.satellites, model.controlFlowNodes, prefsNoSatellites)
+    const layoutNoSatellites = buildClusterLayout(
+      model.satellites,
+      model.controlFlowNodes,
+      prefsNoSatellites
+    )
     expect(layoutNoSatellites.visibleSatellites.length).toBe(0)
 
     // The control-flow spine must be identical regardless of satellite visibility.
@@ -49,7 +57,11 @@ describe('collision-aware clusters', () => {
     const document = buildSatelliteDocument()
     const details = adaptWorkingDocument(document)
     const model = [...details.models.values()][0]
-    const layout = buildClusterLayout(model.satellites, model.controlFlowNodes, defaultClusterPreferences())
+    const layout = buildClusterLayout(
+      model.satellites,
+      model.controlFlowNodes,
+      defaultClusterPreferences()
+    )
     for (const cluster of layout.clusters.values()) {
       const ids = cluster.satellites.map((s) => s.occurrenceId)
       expect(new Set(ids).size).toBe(ids.length)
@@ -79,18 +91,18 @@ describe('collision-aware clusters', () => {
       ownerBounds: { x: 0, y: 0, width: 100, height: 50 },
       satellites: [],
       bounds: { x: 120, y: 0, width: 100, height: 100 },
-      collapsed: false,
+      collapsed: false
     }
     const clusterB = {
       ...clusterA,
       ownerOccurrenceId: 'b',
       ownerDefinitionId: 'db',
-      bounds: { x: 150, y: 10, width: 100, height: 100 },
+      bounds: { x: 150, y: 10, width: 100, height: 100 }
     }
     const collisions = detectClusterCollisions(
       new Map([
         ['a', clusterA],
-        ['b', clusterB],
+        ['b', clusterB]
       ])
     )
     expect(collisions.length).toBe(1)

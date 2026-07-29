@@ -71,7 +71,11 @@ describe('advanceArisAiRepairState', () => {
 
 describe('buildArisAiRepairMessage', () => {
   const findings: readonly ArisAiValidationFinding[] = [
-    { code: 'unsupported-object-type', path: '$.objects[0].objectType', message: 'Unknown type "OT_X".' }
+    {
+      code: 'unsupported-object-type',
+      path: '$.objects[0].objectType',
+      message: 'Unknown type "OT_X".'
+    }
   ]
 
   it('is deterministic', () => {
@@ -80,14 +84,22 @@ describe('buildArisAiRepairMessage', () => {
   })
 
   it('states the message is text-only and that no attachment is included', () => {
-    const message = buildArisAiRepairMessage({ previousResponseText: '{}', findings, attemptNumber: 1 })
+    const message = buildArisAiRepairMessage({
+      previousResponseText: '{}',
+      findings,
+      attemptNumber: 1
+    })
     expect(message).toMatch(/text-only repair turn/i)
     expect(message).toMatch(/no attachment is included/i)
   })
 
   it('lists every structured finding', () => {
     const twoFindings: readonly ArisAiValidationFinding[] = [
-      { code: 'dangling-model-reference', path: '$.objects[0].modelLogicalId', message: 'Missing model.' },
+      {
+        code: 'dangling-model-reference',
+        path: '$.objects[0].modelLogicalId',
+        message: 'Missing model.'
+      },
       { code: 'duplicate-logical-id', path: '$.objects[1].logicalId', message: 'Duplicate id.' }
     ]
     const message = buildArisAiRepairMessage({

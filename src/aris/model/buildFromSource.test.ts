@@ -2,7 +2,12 @@ import { describe, expect, it } from 'vitest'
 import { buildTestDocument } from './testFixture'
 
 function occurrenceName(
-  document: { readonly objectDefinitions: ReadonlyMap<string, { readonly names: { readonly values: Readonly<Record<string, string>> } }> },
+  document: {
+    readonly objectDefinitions: ReadonlyMap<
+      string,
+      { readonly names: { readonly values: Readonly<Record<string, string>> } }
+    >
+  },
   occurrence: { readonly definitionId: string }
 ): string | undefined {
   return document.objectDefinitions.get(occurrence.definitionId)?.names.values['de-DE']
@@ -109,14 +114,20 @@ describe('definition / occurrence distinction', () => {
     const [first, second] = m1.occurrences
 
     const moved = { ...first, bounds: { ...first.bounds, x: 999 } }
-    const nextOccurrences = m1.occurrences.map((occurrence) => (occurrence.id === first.id ? moved : occurrence))
+    const nextOccurrences = m1.occurrences.map((occurrence) =>
+      occurrence.id === first.id ? moved : occurrence
+    )
     const nextDocument = {
       ...document,
-      models: Object.freeze(new Map(document.models).set('m1', { ...m1, occurrences: Object.freeze(nextOccurrences) }))
+      models: Object.freeze(
+        new Map(document.models).set('m1', { ...m1, occurrences: Object.freeze(nextOccurrences) })
+      )
     }
 
     const movedFirst = nextDocument.models.get('m1')!.occurrences.find((o) => o.id === first.id)!
-    const untouchedSecond = nextDocument.models.get('m1')!.occurrences.find((o) => o.id === second.id)!
+    const untouchedSecond = nextDocument.models
+      .get('m1')!
+      .occurrences.find((o) => o.id === second.id)!
 
     expect(movedFirst.bounds.x).toBe(999)
     expect(untouchedSecond.bounds.x).toBe(second.bounds.x)

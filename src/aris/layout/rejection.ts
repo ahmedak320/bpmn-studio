@@ -80,10 +80,7 @@ export function evaluateLayoutAcceptance(
 
   if (defects.shapeOverlaps.length > 0) {
     const subjects = defects.shapeOverlaps.flatMap((pair) => [pair.a, pair.b])
-    const worst = defects.shapeOverlaps.reduce(
-      (highest, pair) => Math.max(highest, pair.area),
-      0
-    )
+    const worst = defects.shapeOverlaps.reduce((highest, pair) => Math.max(highest, pair.area), 0)
     findings.push(
       finding('shape-overlap', subjects, {
         pairs: defects.shapeOverlaps.length,
@@ -128,7 +125,9 @@ export function evaluateLayoutAcceptance(
 
   if (defects.duplicateEdgeIds.length > 0) {
     findings.push(
-      finding('duplicate-edge', defects.duplicateEdgeIds, { edges: defects.duplicateEdgeIds.length })
+      finding('duplicate-edge', defects.duplicateEdgeIds, {
+        edges: defects.duplicateEdgeIds.length
+      })
     )
   }
 
@@ -151,8 +150,10 @@ export function evaluateLayoutAcceptance(
     )
   }
 
-  findings.sort((left, right) =>
-    ARIS_LAYOUT_REJECTION_CODES.indexOf(left.code) - ARIS_LAYOUT_REJECTION_CODES.indexOf(right.code)
+  findings.sort(
+    (left, right) =>
+      ARIS_LAYOUT_REJECTION_CODES.indexOf(left.code) -
+      ARIS_LAYOUT_REJECTION_CODES.indexOf(right.code)
   )
   return { accepted: findings.length === 0, findings }
 }

@@ -341,19 +341,21 @@ describe('creating records (plan section 9.2 / 9.4)', () => {
 
     const reparsed = readWriterSourceView(exported.text)
     // Definitions land in the group; occurrences land in their model.
-    expect(reparsed.byPath.get(requireElementById(reparsed, definitionId).parentPath!)?.sourceId).toBe(
-      FIXTURE_IDS.group
-    )
-    expect(reparsed.byPath.get(requireElementById(reparsed, occurrenceId).parentPath!)?.sourceId).toBe(
-      FIXTURE_IDS.model
-    )
+    expect(
+      reparsed.byPath.get(requireElementById(reparsed, definitionId).parentPath!)?.sourceId
+    ).toBe(FIXTURE_IDS.group)
+    expect(
+      reparsed.byPath.get(requireElementById(reparsed, occurrenceId).parentPath!)?.sourceId
+    ).toBe(FIXTURE_IDS.model)
     // Connection definitions nest under their SOURCE definition, occurrences under their SOURCE
     // occurrence — that nesting is how AML expresses the source endpoint.
     expect(
-      reparsed.byPath.get(requireElementById(reparsed, connectionDefinitionId).parentPath!)?.sourceId
+      reparsed.byPath.get(requireElementById(reparsed, connectionDefinitionId).parentPath!)
+        ?.sourceId
     ).toBe(FIXTURE_IDS.activity)
     expect(
-      reparsed.byPath.get(requireElementById(reparsed, connectionOccurrenceId).parentPath!)?.sourceId
+      reparsed.byPath.get(requireElementById(reparsed, connectionOccurrenceId).parentPath!)
+        ?.sourceId
     ).toBe(FIXTURE_IDS.activityOccurrence)
     // ...and are registered in the source record's reference list.
     expect(
@@ -430,7 +432,12 @@ describe('deleting records (plan section 9.4)', () => {
         'ToCxnOccs.IdRefs'
       )?.value
     ).toBe('')
-    expectUnrelatedContentPreserved(exported.text.replace(/ToCxnOccs\.IdRefs=""/, `ToCxnOccs.IdRefs="${FIXTURE_IDS.connectionOccurrence}  "`))
+    expectUnrelatedContentPreserved(
+      exported.text.replace(
+        /ToCxnOccs\.IdRefs=""/,
+        `ToCxnOccs.IdRefs="${FIXTURE_IDS.connectionOccurrence}  "`
+      )
+    )
   })
 
   it('cascades from a connection definition to the occurrence that referenced it', () => {
@@ -499,7 +506,9 @@ describe('deleting records (plan section 9.4)', () => {
     expect(derived).not.toContain('<Lane ')
     expect(derived).toContain('<Flag/>')
     expect(derived).toContain('<AttrDef AttrDef.Type="AT_NAME">')
-    expect(derived).not.toMatch(/\n\t*\n\t*<AttrDef AttrDef\.Type="AT_NAME">\n\t*<AttrValue LocaleId="&LocaleId\.USen;">\n\t*<StyledElement>\n\t*<Paragraph Alignment="UNDEFINED" Indent="0"\/>\n\t*<StyledElement>\n\t*<PlainText TextValue="Animal registration"/)
+    expect(derived).not.toMatch(
+      /\n\t*\n\t*<AttrDef AttrDef\.Type="AT_NAME">\n\t*<AttrValue LocaleId="&LocaleId\.USen;">\n\t*<StyledElement>\n\t*<Paragraph Alignment="UNDEFINED" Indent="0"\/>\n\t*<StyledElement>\n\t*<PlainText TextValue="Animal registration"/
+    )
   })
 })
 

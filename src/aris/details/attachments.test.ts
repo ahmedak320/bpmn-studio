@@ -5,7 +5,7 @@ import {
   removeAttachment,
   sanitizeDisplayName,
   scanAttachment,
-  type DetectedMimeType,
+  type DetectedMimeType
 } from './attachments'
 import type { ArisDetailsAttachment } from './seam'
 
@@ -18,7 +18,7 @@ function makeAttachment(name: string, bytes: Uint8Array): ArisDetailsAttachment 
     position: null,
     size: null,
     displayName: name,
-    blobs: [{ index: 0, base64: Buffer.from(bytes).toString('base64') }],
+    blobs: [{ index: 0, base64: Buffer.from(bytes).toString('base64') }]
   }
 }
 
@@ -86,13 +86,15 @@ describe('attachment security', () => {
       size: bytes.length,
       safeToPreview: false,
       isOle: false,
-      sha256: 'deadbeef',
+      sha256: 'deadbeef'
     })
     expect(download.bytes).toEqual(bytes)
   })
 
   it('requires confirmation before removal', () => {
-    const attachments = new Map<string, ArisDetailsAttachment>([['a', makeAttachment('a.txt', new Uint8Array([1]))]])
+    const attachments = new Map<string, ArisDetailsAttachment>([
+      ['a', makeAttachment('a.txt', new Uint8Array([1]))]
+    ])
     const doc = { attachments }
     const withoutConfirmation = removeAttachment(doc, 'a', false)
     expect(withoutConfirmation.removed).toBe(false)

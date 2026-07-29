@@ -1,4 +1,8 @@
-import type { TokenizedXmlDocument, XmlTokenizerLimits, XmlTokenizerErrorCode } from './xmlTokenizer'
+import type {
+  TokenizedXmlDocument,
+  XmlTokenizerLimits,
+  XmlTokenizerErrorCode
+} from './xmlTokenizer'
 
 export interface XmlTokenizerWorkerRequest {
   readonly type: 'tokenize'

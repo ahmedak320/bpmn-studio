@@ -113,7 +113,9 @@ export function validateLogicalIdIntegrity(draft: ArisAiDraftV1): ArisAiValidati
     }
   })
 
-  const duplicateAttributeIds = collectDuplicates(allAttributes.map((entry) => entry.attribute.logicalId))
+  const duplicateAttributeIds = collectDuplicates(
+    allAttributes.map((entry) => entry.attribute.logicalId)
+  )
   allAttributes.forEach(({ attribute, path }) => {
     if (duplicateAttributeIds.has(attribute.logicalId)) {
       findings.push(
@@ -141,7 +143,9 @@ export function validateLogicalIdIntegrity(draft: ArisAiDraftV1): ArisAiValidati
 
   // --- object -> model ---------------------------------------------------
 
-  const objectModelById = new Map(draft.objects.map((object) => [object.logicalId, object.modelLogicalId]))
+  const objectModelById = new Map(
+    draft.objects.map((object) => [object.logicalId, object.modelLogicalId])
+  )
 
   draft.objects.forEach((object, index) => {
     if (!modelIds.has(object.modelLogicalId)) {

@@ -938,7 +938,7 @@ export interface GenerateOutput {
 }
 
 async function loadGenerateFromDescription(): Promise<
-  typeof import('@/generation')['generateFromDescription']
+  (typeof import('@/generation'))['generateFromDescription']
 > {
   return (await import('@/generation')).generateFromDescription
 }

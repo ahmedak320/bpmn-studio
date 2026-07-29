@@ -62,7 +62,9 @@ export type ArisAiRepairAdvanceResult =
  * `'exhausted'` once more than `MAX_SEMANTIC_REPAIR_ATTEMPTS` semantic
  * repair turns have been issued.
  */
-export function advanceArisAiRepairState(input: ArisAiRepairAdvanceInput): ArisAiRepairAdvanceResult {
+export function advanceArisAiRepairState(
+  input: ArisAiRepairAdvanceInput
+): ArisAiRepairAdvanceResult {
   if (input.failureClass === 'transport') {
     return { outcome: 'retry', state: input.state }
   }

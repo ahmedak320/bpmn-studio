@@ -30,13 +30,7 @@ import { ArisWriterError } from './errors'
  */
 
 export type ArisDefinitionIdKind =
-  | 'Group'
-  | 'FontSS'
-  | 'ObjDef'
-  | 'CxnDef'
-  | 'OLEDef'
-  | 'FFTextDef'
-  | 'Model'
+  'Group' | 'FontSS' | 'ObjDef' | 'CxnDef' | 'OLEDef' | 'FFTextDef' | 'Model'
 
 export type ArisOccurrenceIdKind = 'ObjOcc' | 'CxnOcc' | 'OLEOcc' | 'Lane'
 

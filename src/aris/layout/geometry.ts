@@ -40,7 +40,11 @@ export function rectIntersectionArea(a: ArisLayoutRect, b: ArisLayoutRect): numb
  * True when two rectangles share positive area. `tolerance` shrinks both
  * rectangles first, so shapes that merely touch are never reported.
  */
-export function rectsOverlap(a: ArisLayoutRect, b: ArisLayoutRect, tolerance = LAYOUT_EPSILON): boolean {
+export function rectsOverlap(
+  a: ArisLayoutRect,
+  b: ArisLayoutRect,
+  tolerance = LAYOUT_EPSILON
+): boolean {
   const width = Math.min(rectRight(a), rectRight(b)) - Math.max(a.x, b.x)
   const height = Math.min(rectBottom(a), rectBottom(b)) - Math.max(a.y, b.y)
   return width > tolerance && height > tolerance
@@ -169,11 +173,7 @@ export function segmentIntersectsRectInterior(
   return segmentInsideRectLength(a, b, rect, tolerance) > tolerance
 }
 
-function cross(
-  origin: ArisLayoutPoint,
-  first: ArisLayoutPoint,
-  second: ArisLayoutPoint
-): number {
+function cross(origin: ArisLayoutPoint, first: ArisLayoutPoint, second: ArisLayoutPoint): number {
   return (first.x - origin.x) * (second.y - origin.y) - (first.y - origin.y) * (second.x - origin.x)
 }
 
@@ -210,10 +210,7 @@ export interface Interval {
 }
 
 /** Complement of `blocked` inside `[min, max]`, sorted, non-overlapping. */
-export function freeIntervals(
-  bounds: Interval,
-  blocked: readonly Interval[]
-): readonly Interval[] {
+export function freeIntervals(bounds: Interval, blocked: readonly Interval[]): readonly Interval[] {
   const sorted = [...blocked]
     .filter((interval) => interval.max > interval.min)
     .sort((left, right) => left.min - right.min || left.max - right.max)

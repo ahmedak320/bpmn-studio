@@ -151,7 +151,12 @@ describe('edge through an unrelated shape', () => {
   it('counts a route that ploughs through the middle shape', () => {
     const analysis = analyzeLayout({
       nodes,
-      edges: [edge('e', 'A', 'C', [{ x: 40, y: 20 }, { x: 200, y: 20 }])],
+      edges: [
+        edge('e', 'A', 'C', [
+          { x: 40, y: 20 },
+          { x: 200, y: 20 }
+        ])
+      ],
       canvas: CANVAS,
       expectedEdgeIds: ['e']
     })
@@ -179,7 +184,12 @@ describe('edge through an unrelated shape', () => {
   it('never counts a route against its own endpoints', () => {
     const analysis = analyzeLayout({
       nodes,
-      edges: [edge('e', 'A', 'B', [{ x: 20, y: 20 }, { x: 120, y: 20 }])],
+      edges: [
+        edge('e', 'A', 'B', [
+          { x: 20, y: 20 },
+          { x: 120, y: 20 }
+        ])
+      ],
       canvas: CANVAS,
       expectedEdgeIds: ['e']
     })
@@ -192,8 +202,14 @@ describe('edge / edge crossings', () => {
     const analysis = analyzeLayout({
       nodes: [],
       edges: [
-        edge('h', 'A', 'B', [{ x: 0, y: 50 }, { x: 100, y: 50 }]),
-        edge('v', 'C', 'D', [{ x: 50, y: 0 }, { x: 50, y: 100 }])
+        edge('h', 'A', 'B', [
+          { x: 0, y: 50 },
+          { x: 100, y: 50 }
+        ]),
+        edge('v', 'C', 'D', [
+          { x: 50, y: 0 },
+          { x: 50, y: 100 }
+        ])
       ],
       canvas: CANVAS,
       expectedEdgeIds: ['h', 'v']
@@ -205,8 +221,14 @@ describe('edge / edge crossings', () => {
     const analysis = analyzeLayout({
       nodes: [],
       edges: [
-        edge('a', 'A', 'B', [{ x: 0, y: 0 }, { x: 100, y: 0 }]),
-        edge('b', 'A', 'C', [{ x: 0, y: 0 }, { x: 0, y: 100 }])
+        edge('a', 'A', 'B', [
+          { x: 0, y: 0 },
+          { x: 100, y: 0 }
+        ]),
+        edge('b', 'A', 'C', [
+          { x: 0, y: 0 },
+          { x: 0, y: 100 }
+        ])
       ],
       canvas: CANVAS,
       expectedEdgeIds: ['a', 'b']
@@ -225,7 +247,10 @@ describe('edge / edge crossings', () => {
           { x: 100, y: 100 },
           { x: 0, y: 100 }
         ]),
-        edge('v', 'C', 'D', [{ x: 50, y: -50 }, { x: 50, y: 150 }])
+        edge('v', 'C', 'D', [
+          { x: 50, y: -50 },
+          { x: 50, y: 150 }
+        ])
       ],
       canvas: CANVAS,
       expectedEdgeIds: ['zig', 'v']
@@ -239,7 +264,10 @@ describe('bends, lengths and canvas', () => {
     const analysis = analyzeLayout({
       nodes: [],
       edges: [
-        edge('straight', 'A', 'B', [{ x: 0, y: 0 }, { x: 10, y: 0 }]),
+        edge('straight', 'A', 'B', [
+          { x: 0, y: 0 },
+          { x: 10, y: 0 }
+        ]),
         edge('zig', 'C', 'D', [
           { x: 0, y: 0 },
           { x: 0, y: 10 },
@@ -280,7 +308,12 @@ describe('endpoint attachment and edge degeneracy', () => {
   it('accepts endpoints that sit on the outline', () => {
     const analysis = analyzeLayout({
       nodes: shapes,
-      edges: [edge('e', 'A', 'B', [{ x: 50, y: 40 }, { x: 50, y: 200 }])],
+      edges: [
+        edge('e', 'A', 'B', [
+          { x: 50, y: 40 },
+          { x: 50, y: 200 }
+        ])
+      ],
       canvas: CANVAS,
       expectedEdgeIds: ['e']
     })
@@ -290,7 +323,12 @@ describe('endpoint attachment and edge degeneracy', () => {
   it('flags an endpoint that floats away from its shape', () => {
     const analysis = analyzeLayout({
       nodes: shapes,
-      edges: [edge('e', 'A', 'B', [{ x: 50, y: 60 }, { x: 50, y: 200 }])],
+      edges: [
+        edge('e', 'A', 'B', [
+          { x: 50, y: 60 },
+          { x: 50, y: 200 }
+        ])
+      ],
       canvas: CANVAS,
       expectedEdgeIds: ['e']
     })
@@ -303,7 +341,12 @@ describe('endpoint attachment and edge degeneracy', () => {
   it('flags a zero-length route', () => {
     const analysis = analyzeLayout({
       nodes: shapes,
-      edges: [edge('e', 'A', 'B', [{ x: 50, y: 40 }, { x: 50, y: 40 }])],
+      edges: [
+        edge('e', 'A', 'B', [
+          { x: 50, y: 40 },
+          { x: 50, y: 40 }
+        ])
+      ],
       canvas: CANVAS,
       expectedEdgeIds: ['e']
     })
@@ -322,7 +365,10 @@ describe('endpoint attachment and edge degeneracy', () => {
   })
 
   it('flags two routes with identical endpoints and identical geometry', () => {
-    const points = [{ x: 50, y: 40 }, { x: 50, y: 200 }]
+    const points = [
+      { x: 50, y: 40 },
+      { x: 50, y: 200 }
+    ]
     const analysis = analyzeLayout({
       nodes: shapes,
       edges: [edge('e1', 'A', 'B', points), edge('e2', 'A', 'B', points)],
@@ -337,8 +383,14 @@ describe('endpoint attachment and edge degeneracy', () => {
     const analysis = analyzeLayout({
       nodes: shapes,
       edges: [
-        edge('e1', 'A', 'B', [{ x: 40, y: 40 }, { x: 40, y: 200 }]),
-        edge('e2', 'A', 'B', [{ x: 60, y: 40 }, { x: 60, y: 200 }])
+        edge('e1', 'A', 'B', [
+          { x: 40, y: 40 },
+          { x: 40, y: 200 }
+        ]),
+        edge('e2', 'A', 'B', [
+          { x: 60, y: 40 },
+          { x: 60, y: 200 }
+        ])
       ],
       canvas: CANVAS,
       expectedEdgeIds: ['e1', 'e2']
@@ -370,7 +422,12 @@ describe('whitespace scan', () => {
         node('A', { x: 0, y: 0, width: 100, height: 400 }),
         node('B', { x: 300, y: 0, width: 100, height: 400 })
       ],
-      edges: [edge('e', 'A', 'B', [{ x: 100, y: 200 }, { x: 300, y: 200 }])],
+      edges: [
+        edge('e', 'A', 'B', [
+          { x: 100, y: 200 },
+          { x: 300, y: 200 }
+        ])
+      ],
       canvas: { x: 0, y: 0, width: 400, height: 400 },
       expectedEdgeIds: ['e']
     })

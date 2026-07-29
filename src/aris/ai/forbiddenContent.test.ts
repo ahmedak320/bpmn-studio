@@ -83,7 +83,9 @@ describe('scanForForbiddenContent', () => {
   // --- real ARIS ids ---------------------------------------------------------
 
   it('rejects a value shaped like a real ARIS object-definition id', () => {
-    const attacked = withObjectPatch({ evidence: 'Derived from ObjDef.-10mm1DorpTb-p-L in the export.' })
+    const attacked = withObjectPatch({
+      evidence: 'Derived from ObjDef.-10mm1DorpTb-p-L in the export.'
+    })
     const result = validateArisAiDraft(attacked)
     expect(result.ok).toBe(false)
     if (!result.ok) {
@@ -146,7 +148,9 @@ describe('scanForForbiddenContent', () => {
 
   it('rejects a geometry field nested arbitrarily deep in the draft', () => {
     const findings = scanForForbiddenContent({
-      objects: [{ names: { en: 'ok' }, attributes: [{ values: { en: 'ok' }, bounds: { x: 10, y: 20 } } ] }]
+      objects: [
+        { names: { en: 'ok' }, attributes: [{ values: { en: 'ok' }, bounds: { x: 10, y: 20 } }] }
+      ]
     })
     expect(findings.some((f) => f.code === 'forbidden-geometry-field')).toBe(true)
   })

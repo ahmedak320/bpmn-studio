@@ -14,9 +14,20 @@ import type {
   ArisLayoutPoint,
   ArisLayoutRect
 } from '../types'
-import { chainWithSatellites, cycleGraph, flow, fn, twoComponentGraph, xorDiamond } from './fixtures'
+import {
+  chainWithSatellites,
+  cycleGraph,
+  flow,
+  fn,
+  twoComponentGraph,
+  xorDiamond
+} from './fixtures'
 
-function node(id: string, rect: ArisLayoutRect, labelRect: ArisLayoutRect | null = null): ArisLayoutNodePlacement {
+function node(
+  id: string,
+  rect: ArisLayoutRect,
+  labelRect: ArisLayoutRect | null = null
+): ArisLayoutNodePlacement {
   return {
     id,
     kind: 'control-flow',
@@ -117,12 +128,15 @@ describe('the gate rejects every forbidden condition', () => {
         node('B', { x: 100, y: 0, width: 40, height: 40 }),
         node('C', { x: 200, y: 0, width: 40, height: 40 })
       ],
-      [edge('e', 'A', 'C', [{ x: 40, y: 20 }, { x: 200, y: 20 }])]
+      [
+        edge('e', 'A', 'C', [
+          { x: 40, y: 20 },
+          { x: 200, y: 20 }
+        ])
+      ]
     )
     expect(acceptance.accepted).toBe(false)
-    expect(acceptance.findings.map((entry) => entry.code)).toEqual([
-      'edge-through-unrelated-shape'
-    ])
+    expect(acceptance.findings.map((entry) => entry.code)).toEqual(['edge-through-unrelated-shape'])
   })
 
   it('rejects a detached endpoint', () => {
@@ -131,7 +145,12 @@ describe('the gate rejects every forbidden condition', () => {
         node('A', { x: 0, y: 0, width: 40, height: 40 }),
         node('B', { x: 0, y: 200, width: 40, height: 40 })
       ],
-      [edge('e', 'A', 'B', [{ x: 20, y: 100 }, { x: 20, y: 200 }])]
+      [
+        edge('e', 'A', 'B', [
+          { x: 20, y: 100 },
+          { x: 20, y: 200 }
+        ])
+      ]
     )
     expect(acceptance.accepted).toBe(false)
     expect(acceptance.findings.map((entry) => entry.code)).toEqual(['detached-endpoint'])
@@ -145,7 +164,10 @@ describe('the gate rejects every forbidden condition', () => {
   })
 
   it('rejects a duplicate edge', () => {
-    const points = [{ x: 20, y: 40 }, { x: 20, y: 200 }]
+    const points = [
+      { x: 20, y: 40 },
+      { x: 20, y: 200 }
+    ]
     const acceptance = gateFor(
       [
         node('A', { x: 0, y: 0, width: 40, height: 40 }),
@@ -160,7 +182,12 @@ describe('the gate rejects every forbidden condition', () => {
   it('rejects a zero-length edge', () => {
     const acceptance = gateFor(
       [node('A', { x: 0, y: 0, width: 40, height: 40 })],
-      [edge('e', 'A', 'A', [{ x: 20, y: 40 }, { x: 20, y: 40 }])]
+      [
+        edge('e', 'A', 'A', [
+          { x: 20, y: 40 },
+          { x: 20, y: 40 }
+        ])
+      ]
     )
     expect(acceptance.accepted).toBe(false)
     expect(acceptance.findings.map((entry) => entry.code)).toEqual(['zero-length-edge'])
@@ -184,7 +211,12 @@ describe('the gate rejects every forbidden condition', () => {
         node('A', { x: 0, y: 0, width: 200, height: 200 }),
         node('B', { x: 0, y: 300, width: 200, height: 200 })
       ],
-      [edge('e', 'A', 'B', [{ x: 100, y: 200 }, { x: 100, y: 300 }])],
+      [
+        edge('e', 'A', 'B', [
+          { x: 100, y: 200 },
+          { x: 100, y: 300 }
+        ])
+      ],
       ['e'],
       { x: 0, y: 0, width: 200, height: 500 }
     )
@@ -223,7 +255,9 @@ describe('the gate rejects every forbidden condition', () => {
       zeroLengthEdgeIds: []
     }
     expect(evaluateLayoutAcceptance(metrics, empty).accepted).toBe(true)
-    expect(evaluateLayoutAcceptance(metrics, empty, { maxEmptyBandRatio: 0.1 }).accepted).toBe(false)
+    expect(evaluateLayoutAcceptance(metrics, empty, { maxEmptyBandRatio: 0.1 }).accepted).toBe(
+      false
+    )
   })
 })
 

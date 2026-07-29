@@ -1446,10 +1446,12 @@ describe('WorkspaceImportReviewDialog', () => {
       }
     ]
 
-    setLang('en');
+    setLang('en')
     {
       const { unmount } = renderDialog(plan({ skipped }))
-      const skippedSection = screen.getByRole('heading', { name: 'Skipped inputs' }).closest('section') as HTMLElement
+      const skippedSection = screen
+        .getByRole('heading', { name: 'Skipped inputs' })
+        .closest('section') as HTMLElement
       expect(
         within(skippedSection).getByText('BPMN input is not supported in this build')
       ).not.toBeNull()
@@ -1464,10 +1466,10 @@ describe('WorkspaceImportReviewDialog', () => {
     setLang('ar')
     {
       const { unmount } = renderDialog(plan({ skipped }))
-      const skippedSection = screen.getByRole('heading', { name: 'المدخلات المتخطاة' }).closest('section') as HTMLElement
-      expect(
-        within(skippedSection).getByText('إدخال BPMN غير مدعوم في هذا الإصدار')
-      ).not.toBeNull()
+      const skippedSection = screen
+        .getByRole('heading', { name: 'المدخلات المتخطاة' })
+        .closest('section') as HTMLElement
+      expect(within(skippedSection).getByText('إدخال BPMN غير مدعوم في هذا الإصدار')).not.toBeNull()
       expect(
         within(skippedSection).getByText(
           'تم تخطي المدخل لأن هذا الإصدار المقتصر على ARIS يقبل فقط صادرات ARIS AML/XML.'

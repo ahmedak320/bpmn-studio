@@ -45,7 +45,12 @@ describe('lane commands', () => {
     let stack = createCommandStack(document, { idGenerator })
 
     const before = stack.document.models.get('m1')!.lanes.find((l) => l.id === 'l1')!
-    const after: ArisLane = { ...before, startBorder: 10, endBorder: 300, names: { values: { 'en-US': 'Updated' }, fallback: 'Updated' } }
+    const after: ArisLane = {
+      ...before,
+      startBorder: 10,
+      endBorder: 300,
+      names: { values: { 'en-US': 'Updated' }, fallback: 'Updated' }
+    }
 
     stack = stack.apply({
       commandId: idGenerator(),
@@ -102,7 +107,15 @@ describe('free text commands', () => {
       definitionId: null,
       text: { values: { 'en-US': 'Note', 'ar-SA': 'ملاحظة' }, fallback: 'Note' },
       bounds: { x: 5, y: 5, width: 120, height: 30 },
-      style: { symbol: null, fillColor: null, strokeColor: null, strokeWidth: null, lineStyle: null, fontStyleSheetId: null, zOrder: 1 }
+      style: {
+        symbol: null,
+        fillColor: null,
+        strokeColor: null,
+        strokeWidth: null,
+        lineStyle: null,
+        fontStyleSheetId: null,
+        zOrder: 1
+      }
     }
 
     stack = stack.apply({
@@ -130,7 +143,11 @@ describe('free text commands', () => {
     let stack = createCommandStack(document, { idGenerator })
 
     const before = stack.document.models.get('m1')!.freeText.find((f) => f.id === 'fto1')!
-    const after: ArisFreeText = { ...before, text: { values: { 'en-US': 'Updated note' }, fallback: 'Updated note' }, bounds: { ...before.bounds, x: 99 } }
+    const after: ArisFreeText = {
+      ...before,
+      text: { values: { 'en-US': 'Updated note' }, fallback: 'Updated note' },
+      bounds: { ...before.bounds, x: 99 }
+    }
 
     stack = stack.apply({
       commandId: idGenerator(),

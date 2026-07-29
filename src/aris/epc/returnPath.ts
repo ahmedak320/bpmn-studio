@@ -1,6 +1,12 @@
 import type { EpcGraph, EpcPoint } from './types'
 import { OT_FUNC, OT_RULE } from './constants'
-import { type FlowGraphIndex, buildFlowGraphIndex, isOnCycle, sccMembership, upstreamDistances } from './flowGraph'
+import {
+  type FlowGraphIndex,
+  buildFlowGraphIndex,
+  isOnCycle,
+  sccMembership,
+  upstreamDistances
+} from './flowGraph'
 import { classifyRule } from './xor'
 import { findReturnOutcomeMatches, type ReturnTermMatch } from './returnTerms'
 
@@ -99,7 +105,10 @@ export function detectReturnPathOutcomes(graph: EpcGraph): readonly ReturnRouteR
  * 'existingMergeRule'`) — reusing established re-entry infrastructure is preferred over
  * introducing a fresh dashed edge straight into the function body.
  */
-export function rankCandidates(index: FlowGraphIndex, outcomeNodeId: string): readonly ReturnPathCandidate[] {
+export function rankCandidates(
+  index: FlowGraphIndex,
+  outcomeNodeId: string
+): readonly ReturnPathCandidate[] {
   const distances = upstreamDistances(index, outcomeNodeId)
   const byTarget = new Map<string, ReturnPathCandidate>()
 
@@ -229,7 +238,9 @@ export interface BuildReturnPathApplyPayloadParams {
  * Callers MUST have obtained explicit confirmation (plan 14.3 step 3 / 18.4) before calling
  * this; nothing in this module calls it automatically.
  */
-export function buildReturnPathApplyPayload(params: BuildReturnPathApplyPayloadParams): ReturnPathApplyPayload {
+export function buildReturnPathApplyPayload(
+  params: BuildReturnPathApplyPayloadParams
+): ReturnPathApplyPayload {
   return {
     kind: 'returnPathApply',
     outcomeNodeId: params.outcomeNodeId,

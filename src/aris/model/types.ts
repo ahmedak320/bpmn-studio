@@ -235,7 +235,10 @@ export interface ArisSourceIndexLike {
   readonly freeText: ReadonlyMap<string, ArisSourceFreeTextRecordLike>
   readonly freeTextOccurrences: readonly ArisSourceFreeTextOccurrenceRecordLike[]
   readonly styles: {
-    readonly fontStyleSheets: ReadonlyMap<string, { readonly parsed: { readonly fontStyleSheetId: string | null } }>
+    readonly fontStyleSheets: ReadonlyMap<
+      string,
+      { readonly parsed: { readonly fontStyleSheetId: string | null } }
+    >
   }
   readonly unknownRecords: readonly unknown[]
   readonly routePoints: readonly ArisSourceRoutePointRecordLike[]

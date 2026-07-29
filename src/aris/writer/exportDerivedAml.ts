@@ -1,7 +1,4 @@
-import {
-  describeArisExportCompatibility,
-  type ArisExportCompatibility
-} from './compatibility'
+import { describeArisExportCompatibility, type ArisExportCompatibility } from './compatibility'
 import { ArisWriterError } from './errors'
 import { applyAmlEdits, pruneNoOpEdits, type AmlEdit, type AmlPatchResult } from './patch'
 import { byteLength } from './spans'

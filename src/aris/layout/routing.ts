@@ -131,7 +131,10 @@ export function planReturnChannels(
     const target = indexOf.get(edge.target)
     if (source === undefined || target === undefined) return
     const low = Math.min(geometry.nodeCross[source] as number, geometry.nodeCross[target] as number)
-    const high = Math.max(geometry.nodeCross[source] as number, geometry.nodeCross[target] as number)
+    const high = Math.max(
+      geometry.nodeCross[source] as number,
+      geometry.nodeCross[target] as number
+    )
     const distanceToMin = low - placement.crossMin
     const distanceToMax = placement.crossMax - high
     const side: 'min' | 'max' = distanceToMax <= distanceToMin ? 'max' : 'min'
@@ -150,8 +153,7 @@ export function planReturnChannels(
       .sort((left, right) => right.span - left.span || left.edgeIndex - right.edgeIndex)
     members.forEach((member, position) => {
       const offset = (position + 1) * placement.spacing.channelGap
-      const cross =
-        side === 'min' ? placement.crossMin - offset : placement.crossMax + offset
+      const cross = side === 'min' ? placement.crossMin - offset : placement.crossMax + offset
       channelOf.set(member.edgeIndex, cross)
       if (side === 'min') minSideCross = Math.min(minSideCross, cross)
       else maxSideCross = Math.max(maxSideCross, cross)
@@ -218,8 +220,14 @@ export function freeCorridorCross(
   let available: readonly Interval[] = [bounds]
   for (let rank = low + 1; rank < high; rank += 1) {
     const blocked = (placement.rankNodes[rank] as readonly number[]).map((member) => ({
-      min: (placement.crossOf[member] as number) - (placement.boxes[member] as OccupiedBox).cross / 2 - clearance,
-      max: (placement.crossOf[member] as number) + (placement.boxes[member] as OccupiedBox).cross / 2 + clearance
+      min:
+        (placement.crossOf[member] as number) -
+        (placement.boxes[member] as OccupiedBox).cross / 2 -
+        clearance,
+      max:
+        (placement.crossOf[member] as number) +
+        (placement.boxes[member] as OccupiedBox).cross / 2 +
+        clearance
     }))
     available = intersectIntervals(available, freeIntervals(bounds, blocked))
     if (available.length === 0) return null
@@ -255,9 +263,7 @@ export function routeForwardEdge(
     geometry.shapeCross[target] as number
   )
   const rawStep =
-    ordinal === 0
-      ? 0
-      : (ordinal % 2 === 1 ? 1 : -1) * Math.ceil(ordinal / 2) * narrowest * 0.15
+    ordinal === 0 ? 0 : (ordinal % 2 === 1 ? 1 : -1) * Math.ceil(ordinal / 2) * narrowest * 0.15
   // Never leave the shape outline: the stub must stay attached (§14.4).
   const limit = narrowest * 0.45
   const parallelStep = Math.min(Math.max(rawStep, -limit), limit)
@@ -318,9 +324,11 @@ export function routeReturnEdge(
   const targetRank = placement.rankOf[target] as number
   const sign = channelCross >= (geometry.nodeCross[source] as number) ? 1 : -1
   const exitCross =
-    (geometry.nodeCross[source] as number) + (sign * (geometry.shapeCross[source] as number)) / 2 * 0.6
+    (geometry.nodeCross[source] as number) +
+    ((sign * (geometry.shapeCross[source] as number)) / 2) * 0.6
   const entryCross =
-    (geometry.nodeCross[target] as number) + (sign * (geometry.shapeCross[target] as number)) / 2 * 0.6
+    (geometry.nodeCross[target] as number) +
+    ((sign * (geometry.shapeCross[target] as number)) / 2) * 0.6
   const exitAlong = shapeAlongMax(geometry, source)
   const entryAlong = shapeAlongMin(geometry, target)
   const outGap = slots.next(sourceRank + 1)

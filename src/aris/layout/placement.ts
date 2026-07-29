@@ -242,8 +242,7 @@ class ComponentCrossLayout {
         if (value !== undefined) neighbours.push(value)
       }
       neighbours.sort((left, right) => left - right)
-      const anchor =
-        neighbours.length === 0 ? 0 : (neighbours[neighbours.length >> 1] as number)
+      const anchor = neighbours.length === 0 ? 0 : (neighbours[neighbours.length >> 1] as number)
       result.set(member, anchor)
       this.claimed[member] = true
     }
@@ -318,7 +317,7 @@ class ComponentCrossLayout {
   private recordPair(split: number, merge: number | null, successors: readonly number[]): void {
     const splitNode = this.nodes[split] as ArisLayoutNodeInput
     const operator: ArisLayoutRuleOperator | null =
-      splitNode.role === 'rule' ? splitNode.operator ?? null : null
+      splitNode.role === 'rule' ? (splitNode.operator ?? null) : null
     this.pairs.push({
       splitId: splitNode.id,
       mergeId: merge === null ? null : (this.nodes[merge] as ArisLayoutNodeInput).id,

@@ -1,6 +1,10 @@
 import { sha256Hex } from '../../workspace/adapters/hash'
 import { decodeUtf8Strict } from '../../workspace/utf8'
-import { buildSemanticArisDocument, type AmlDiagnostic, type ArisSourceIndex } from './semanticIndex'
+import {
+  buildSemanticArisDocument,
+  type AmlDiagnostic,
+  type ArisSourceIndex
+} from './semanticIndex'
 import { tokenizeXmlInBrowser } from './browserXmlTokenizer'
 import type { AmlSyntaxTree } from './types'
 

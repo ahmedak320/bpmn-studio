@@ -33,8 +33,16 @@ export interface ScannedConnectionDefinition {
 export interface ScannedModel {
   readonly id: string
   readonly type: string
-  readonly objectOccurrences: readonly { readonly id: string; readonly objectDefinitionId: string }[]
-  readonly connectionOccurrences: readonly { readonly id: string; readonly connectionDefinitionId: string; readonly fromOccurrenceId: string; readonly toOccurrenceId: string }[]
+  readonly objectOccurrences: readonly {
+    readonly id: string
+    readonly objectDefinitionId: string
+  }[]
+  readonly connectionOccurrences: readonly {
+    readonly id: string
+    readonly connectionDefinitionId: string
+    readonly fromOccurrenceId: string
+    readonly toOccurrenceId: string
+  }[]
 }
 
 function unescapeXml(text: string): string {
@@ -68,7 +76,10 @@ function attr(attrsText: string, name: string): string | null {
   return match ? match[1] : null
 }
 
-export function scanObjectDefinitions(xml: string, entities: ReadonlyMap<string, string>): ReadonlyMap<string, ScannedObjectDefinition> {
+export function scanObjectDefinitions(
+  xml: string,
+  entities: ReadonlyMap<string, string>
+): ReadonlyMap<string, ScannedObjectDefinition> {
   const result = new Map<string, ScannedObjectDefinition>()
   const objDefRe = /<ObjDef\b([^>]*)>([\s\S]*?)<\/ObjDef>/g
   let match: RegExpExecArray | null
@@ -89,7 +100,9 @@ export function scanObjectDefinitions(xml: string, entities: ReadonlyMap<string,
       let avMatch: RegExpExecArray | null
       while ((avMatch = attrValueRe.exec(attrDefMatch[1]))) {
         const localeId = resolveEntities(avMatch[1], entities)
-        const plainTexts = [...avMatch[2].matchAll(/<PlainText TextValue="([^"]*)"/g)].map((m) => unescapeXml(m[1]))
+        const plainTexts = [...avMatch[2].matchAll(/<PlainText TextValue="([^"]*)"/g)].map((m) =>
+          unescapeXml(m[1])
+        )
         names[localeId] = plainTexts.join('')
       }
     }
@@ -102,7 +115,12 @@ export function scanObjectDefinitions(xml: string, entities: ReadonlyMap<string,
       const connectionType = attr(cxnMatch[1], 'CxnDef.Type')
       const toId = attr(cxnMatch[1], 'ToObjDef.IdRef')
       if (cxnId && connectionType && toId) {
-        outgoing.push({ id: cxnId, connectionType, fromObjectDefinitionId: id, toObjectDefinitionId: toId })
+        outgoing.push({
+          id: cxnId,
+          connectionType,
+          fromObjectDefinitionId: id,
+          toObjectDefinitionId: toId
+        })
       }
     }
 
@@ -122,7 +140,12 @@ export function scanModels(xml: string): readonly ScannedModel[] {
     if (!id || !type) continue
 
     const objectOccurrences: { id: string; objectDefinitionId: string }[] = []
-    const connectionOccurrences: { id: string; connectionDefinitionId: string; fromOccurrenceId: string; toOccurrenceId: string }[] = []
+    const connectionOccurrences: {
+      id: string
+      connectionDefinitionId: string
+      fromOccurrenceId: string
+      toOccurrenceId: string
+    }[] = []
 
     const objOccRe = /<ObjOcc\b([^>]*)>([\s\S]*?)<\/ObjOcc>/g
     let objOccMatch: RegExpExecArray | null
@@ -141,7 +164,12 @@ export function scanModels(xml: string): readonly ScannedModel[] {
         const cxnDefId = attr(cxnAttrs, 'CxnDef.IdRef')
         const toOccId = attr(cxnAttrs, 'ToObjOcc.IdRef')
         if (cxnOccId && cxnDefId && toOccId) {
-          connectionOccurrences.push({ id: cxnOccId, connectionDefinitionId: cxnDefId, fromOccurrenceId: occId, toOccurrenceId: toOccId })
+          connectionOccurrences.push({
+            id: cxnOccId,
+            connectionDefinitionId: cxnDefId,
+            fromOccurrenceId: occId,
+            toOccurrenceId: toOccId
+          })
         }
       }
     }
@@ -162,7 +190,10 @@ export function scanModels(xml: string): readonly ScannedModel[] {
  * but works directly off `ScannedModel`/`ScannedObjectDefinition` rather than the
  * `src/aris/model` shapes, keeping this test helper fully decoupled.
  */
-export function buildGraphForModel(model: ScannedModel, objectDefinitions: ReadonlyMap<string, ScannedObjectDefinition>): EpcGraph {
+export function buildGraphForModel(
+  model: ScannedModel,
+  objectDefinitions: ReadonlyMap<string, ScannedObjectDefinition>
+): EpcGraph {
   const nodes: EpcNode[] = []
   for (const occurrence of model.objectOccurrences) {
     const definition = objectDefinitions.get(occurrence.objectDefinitionId)
@@ -188,8 +219,19 @@ export function buildGraphForModel(model: ScannedModel, objectDefinitions: Reado
   const edges: EpcEdge[] = []
   for (const cxnOcc of model.connectionOccurrences) {
     const connectionType = connectionDefIndex.get(cxnOcc.connectionDefinitionId) ?? ''
-    edges.push(Object.freeze({ id: cxnOcc.id, source: cxnOcc.fromOccurrenceId, target: cxnOcc.toOccurrenceId, connectionType }))
+    edges.push(
+      Object.freeze({
+        id: cxnOcc.id,
+        source: cxnOcc.fromOccurrenceId,
+        target: cxnOcc.toOccurrenceId,
+        connectionType
+      })
+    )
   }
 
-  return Object.freeze({ modelId: model.id, nodes: Object.freeze(nodes), edges: Object.freeze(edges) })
+  return Object.freeze({
+    modelId: model.id,
+    nodes: Object.freeze(nodes),
+    edges: Object.freeze(edges)
+  })
 }

@@ -199,7 +199,8 @@ export function validateDerivedAml(
     view = buildWriterSourceView(derivedText, tokenizeXmlDocument(derivedText))
   } catch (error) {
     const tokenizerError = error instanceof XmlTokenizerError ? error : null
-    const unsafe = tokenizerError?.code === 'external-entity' || tokenizerError?.code === 'entity-limit'
+    const unsafe =
+      tokenizerError?.code === 'external-entity' || tokenizerError?.code === 'entity-limit'
     const check: ArisExportCheck = unsafe ? 'no-unsafe-content' : 'xml-well-formed'
     const message = error instanceof Error ? error.message : String(error)
     const failed = issue(check, `The derived document could not be parsed: ${message}`)

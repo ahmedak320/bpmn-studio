@@ -7,7 +7,18 @@ const IDENTITY = { modelId: 'Model.1', elementId: 'ObjOcc.1', sourceId: 'ObjOcc.
 describe('resolveFont', () => {
   it('maps a safe Latin face to a CSS stack with no fidelity finding', () => {
     const { font, findings } = resolveFont(
-      { ownerSourceId: 'x', localeId: '1033', locale: 'en', faceName: 'Arial', height: -13, weight: 400, italic: 'NO', underline: 'NO', strikeOut: 'NO', color: '0' },
+      {
+        ownerSourceId: 'x',
+        localeId: '1033',
+        locale: 'en',
+        faceName: 'Arial',
+        height: -13,
+        weight: 400,
+        italic: 'NO',
+        underline: 'NO',
+        strikeOut: 'NO',
+        color: '0'
+      },
       'Register Owner',
       IDENTITY
     )
@@ -21,7 +32,18 @@ describe('resolveFont', () => {
 
   it('reports missing-font for a proprietary face outside the allowlist (e.g. "Simplified Arabic")', () => {
     const { font, findings } = resolveFont(
-      { ownerSourceId: 'x', localeId: '14337', locale: 'ar', faceName: 'Simplified Arabic', height: -13, weight: 400, italic: 'NO', underline: 'NO', strikeOut: 'NO', color: '0' },
+      {
+        ownerSourceId: 'x',
+        localeId: '14337',
+        locale: 'ar',
+        faceName: 'Simplified Arabic',
+        height: -13,
+        weight: 400,
+        italic: 'NO',
+        underline: 'NO',
+        strikeOut: 'NO',
+        color: '0'
+      },
       'تسجيل المالك',
       IDENTITY
     )
@@ -35,7 +57,18 @@ describe('resolveFont', () => {
 
   it('converts negative LOGFONT height to a positive pixel size', () => {
     const { font } = resolveFont(
-      { ownerSourceId: 'x', localeId: null, locale: undefined, faceName: 'Arial', height: -16, weight: 700, italic: 'YES', underline: 'YES', strikeOut: 'NO', color: '0' },
+      {
+        ownerSourceId: 'x',
+        localeId: null,
+        locale: undefined,
+        faceName: 'Arial',
+        height: -16,
+        weight: 700,
+        italic: 'YES',
+        underline: 'YES',
+        strikeOut: 'NO',
+        color: '0'
+      },
       'x',
       IDENTITY
     )

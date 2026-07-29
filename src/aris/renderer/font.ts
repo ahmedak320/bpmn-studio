@@ -70,7 +70,11 @@ export interface FontResolution {
 export function resolveFont(
   source: RenderSourceFontParsed | null,
   sampleText: string,
-  identity: { readonly modelId: string | null; readonly elementId: string | null; readonly sourceId: string | null }
+  identity: {
+    readonly modelId: string | null
+    readonly elementId: string | null
+    readonly sourceId: string | null
+  }
 ): FontResolution {
   const locale = source?.locale
   const isArabicScript = containsArabicScript(sampleText) || locale === 'ar'

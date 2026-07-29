@@ -49,7 +49,10 @@ function unionBounds(a: ArisBounds, b: ArisBounds): ArisBounds {
   return { x: minX, y: minY, width: maxX - minX, height: maxY - minY }
 }
 
-function satelliteVisible(satellite: ArisMetadataSatellite, prefs: ArisClusterViewPreferences): boolean {
+function satelliteVisible(
+  satellite: ArisMetadataSatellite,
+  prefs: ArisClusterViewPreferences
+): boolean {
   return prefs.categoryVisibility[satellite.category] ?? false
 }
 
@@ -77,13 +80,16 @@ export function groupSatellitesByOwner(
   return groups
 }
 
-function clusterBounds(ownerBounds: ArisBounds, satellites: readonly ArisMetadataSatellite[]): ArisBounds {
+function clusterBounds(
+  ownerBounds: ArisBounds,
+  satellites: readonly ArisMetadataSatellite[]
+): ArisBounds {
   if (satellites.length === 0) return emptyBounds()
   let bounds = {
     x: ownerBounds.x + ownerBounds.width + CLUSTER_MARGIN,
     y: ownerBounds.y,
     width: COLUMN_WIDTH,
-    height: satellites.length * (satellites[0]?.bounds.height ?? 24 + SATELLITE_GAP),
+    height: satellites.length * (satellites[0]?.bounds.height ?? 24 + SATELLITE_GAP)
   }
   for (const satellite of satellites) {
     bounds = unionBounds(bounds, satellite.bounds)
@@ -127,10 +133,10 @@ export function buildClusterLayout(
             x: owner.bounds.x + owner.bounds.width + CLUSTER_MARGIN,
             y: owner.bounds.y,
             width: COLUMN_WIDTH,
-            height: 24,
+            height: 24
           }
         : clusterBounds(owner.bounds, visibleGroup),
-      collapsed,
+      collapsed
     })
 
     if (!collapsed) {
@@ -141,7 +147,7 @@ export function buildClusterLayout(
   return {
     mode: preferences.mode,
     clusters,
-    visibleSatellites: visible,
+    visibleSatellites: visible
   }
 }
 
@@ -152,7 +158,7 @@ export function setClusterCollapsed(
 ): ArisClusterViewPreferences {
   return {
     ...preferences,
-    collapsedClusters: { ...preferences.collapsedClusters, [ownerId]: collapsed },
+    collapsedClusters: { ...preferences.collapsedClusters, [ownerId]: collapsed }
   }
 }
 
@@ -175,7 +181,7 @@ export function defaultClusterPreferences(): ArisClusterViewPreferences {
     'system',
     'businessRule',
     'policy',
-    'requirement',
+    'requirement'
   ]
   for (const category of categories) {
     visibility[category] = true
@@ -183,7 +189,7 @@ export function defaultClusterPreferences(): ArisClusterViewPreferences {
   return {
     mode: 'source',
     categoryVisibility: visibility,
-    collapsedClusters: {},
+    collapsedClusters: {}
   }
 }
 
@@ -191,7 +197,7 @@ export function defaultClusterPreferences(): ArisClusterViewPreferences {
 export function clusterCentroid(cluster: ArisSatelliteCluster): ArisPoint {
   return {
     x: cluster.bounds.x + cluster.bounds.width / 2,
-    y: cluster.bounds.y + cluster.bounds.height / 2,
+    y: cluster.bounds.y + cluster.bounds.height / 2
   }
 }
 

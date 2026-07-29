@@ -128,11 +128,15 @@ export function findConnectedComponents(adjacency: DirectedAdjacency): Connected
       members.push(current)
       const neighbours: number[] = []
       for (const edgeIndex of adjacency.out[current] as readonly number[]) {
-        const other = adjacency.indexOf.get((adjacency.edges[edgeIndex] as ArisLayoutEdgeInput).target)
+        const other = adjacency.indexOf.get(
+          (adjacency.edges[edgeIndex] as ArisLayoutEdgeInput).target
+        )
         if (other !== undefined) neighbours.push(other)
       }
       for (const edgeIndex of adjacency.in[current] as readonly number[]) {
-        const other = adjacency.indexOf.get((adjacency.edges[edgeIndex] as ArisLayoutEdgeInput).source)
+        const other = adjacency.indexOf.get(
+          (adjacency.edges[edgeIndex] as ArisLayoutEdgeInput).source
+        )
         if (other !== undefined) neighbours.push(other)
       }
       for (const neighbour of neighbours) {
@@ -325,7 +329,9 @@ export function detectSourceOrientation(
     const target = nodeById.get(edge.target)
     if (!source?.sourcePosition || !target?.sourcePosition) continue
     const dx = Math.abs(
-      target.sourcePosition.x + target.size.width / 2 - (source.sourcePosition.x + source.size.width / 2)
+      target.sourcePosition.x +
+        target.size.width / 2 -
+        (source.sourcePosition.x + source.size.width / 2)
     )
     const dy = Math.abs(
       target.sourcePosition.y +

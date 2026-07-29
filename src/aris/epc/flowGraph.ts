@@ -121,7 +121,11 @@ export function sccMembership(index: FlowGraphIndex): ReadonlyMap<string, Readon
 }
 
 /** True if `nodeId` participates in a cycle (its SCC has more than one member). */
-export function isOnCycle(index: FlowGraphIndex, nodeId: string, membership: ReadonlyMap<string, ReadonlySet<string>>): boolean {
+export function isOnCycle(
+  index: FlowGraphIndex,
+  nodeId: string,
+  membership: ReadonlyMap<string, ReadonlySet<string>>
+): boolean {
   const set = membership.get(nodeId)
   return !!set && set.size > 1
 }
@@ -133,7 +137,10 @@ export function isOnCycle(index: FlowGraphIndex, nodeId: string, membership: Rea
  * only the control-flow-typed nodes, so satellite objects with no flow edges of their own
  * don't get reported as "orphans" of a graph they were never part of).
  */
-export function connectedComponents(index: FlowGraphIndex, restrictTo?: ReadonlySet<string>): readonly (readonly string[])[] {
+export function connectedComponents(
+  index: FlowGraphIndex,
+  restrictTo?: ReadonlySet<string>
+): readonly (readonly string[])[] {
   const scope = restrictTo ?? new Set(index.graph.nodes.map((node) => node.id))
   const undirected = new Map<string, Set<string>>()
   const ensure = (id: string): Set<string> => {
@@ -177,7 +184,10 @@ export function connectedComponents(index: FlowGraphIndex, restrictTo?: Readonly
  * Reverse-BFS over flow edges from `startId`, returning each reachable ancestor's id and
  * hop distance (1 = direct predecessor). `startId` itself is excluded.
  */
-export function upstreamDistances(index: FlowGraphIndex, startId: string): ReadonlyMap<string, number> {
+export function upstreamDistances(
+  index: FlowGraphIndex,
+  startId: string
+): ReadonlyMap<string, number> {
   const distances = new Map<string, number>()
   const queue: string[] = [startId]
   const seen = new Set<string>([startId])

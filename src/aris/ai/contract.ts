@@ -236,11 +236,7 @@ export const ArisAiAssignmentSchema = z
 // ---------------------------------------------------------------------------
 
 export type ArisAiUncertaintyKind =
-  | 'missing-field'
-  | 'missing-translation'
-  | 'ambiguous-mapping'
-  | 'unclear-symbol'
-  | 'other'
+  'missing-field' | 'missing-translation' | 'ambiguous-mapping' | 'unclear-symbol' | 'other'
 
 export const ARIS_AI_UNCERTAINTY_KINDS = [
   'missing-field',

@@ -600,7 +600,10 @@ function unknownAttributes(
   )
 }
 
-function unknownChildren(node: XmlElementNode, knownChildren: readonly string[]): readonly string[] {
+function unknownChildren(
+  node: XmlElementNode,
+  knownChildren: readonly string[]
+): readonly string[] {
   const allowed = new Set(knownChildren)
   return Object.freeze(
     childElements(node)
@@ -609,7 +612,10 @@ function unknownChildren(node: XmlElementNode, knownChildren: readonly string[])
   )
 }
 
-function nearestAncestor(context: ElementContext | null, tagNames: readonly string[]): ElementContext | null {
+function nearestAncestor(
+  context: ElementContext | null,
+  tagNames: readonly string[]
+): ElementContext | null {
   const allowed = new Set(tagNames)
   let current = context?.parent ?? null
   while (current) {
@@ -657,12 +663,7 @@ function readSizePair(context: ElementContext): { dx: number | null; dy: number 
 }
 
 function splitRefs(raw: string | null | undefined): readonly string[] {
-  return Object.freeze(
-    raw
-      ?.trim()
-      .split(/\s+/u)
-      .filter(Boolean) ?? []
-  )
+  return Object.freeze(raw?.trim().split(/\s+/u).filter(Boolean) ?? [])
 }
 
 function recordBase<TParsed extends Record<string, unknown>>(
@@ -1080,7 +1081,14 @@ export function buildSemanticArisDocument(document: TokenizedXmlDocument): Seman
             knownChildren: ['GUID', 'MasterGUID', 'SymbolGUID', 'AttrDef', 'CxnDef']
           }
         )
-        registerById(objectDefinitions, context, 'object definition', record, diagnostics, supersededRecords)
+        registerById(
+          objectDefinitions,
+          context,
+          'object definition',
+          record,
+          diagnostics,
+          supersededRecords
+        )
         splitRefs(context.attributes['LinkedModels.IdRefs']).forEach((modelId, assignmentIndex) => {
           linkedModelAssignments.push(
             Object.freeze({
@@ -1140,7 +1148,14 @@ export function buildSemanticArisDocument(document: TokenizedXmlDocument): Seman
             ]
           }
         )
-        registerById(objectOccurrences, context, 'object occurrence', record, diagnostics, supersededRecords)
+        registerById(
+          objectOccurrences,
+          context,
+          'object occurrence',
+          record,
+          diagnostics,
+          supersededRecords
+        )
         break
       }
       case 'CxnDef': {
@@ -1177,7 +1192,14 @@ export function buildSemanticArisDocument(document: TokenizedXmlDocument): Seman
             knownChildren: ['GUID']
           }
         )
-        registerById(connectionDefinitions, context, 'connection definition', record, diagnostics, supersededRecords)
+        registerById(
+          connectionDefinitions,
+          context,
+          'connection definition',
+          record,
+          diagnostics,
+          supersededRecords
+        )
         break
       }
       case 'CxnOcc': {
@@ -1215,7 +1237,14 @@ export function buildSemanticArisDocument(document: TokenizedXmlDocument): Seman
             knownChildren: ['Pen', 'Position', 'AttrOcc']
           }
         )
-        registerById(connectionOccurrences, context, 'connection occurrence', record, diagnostics, supersededRecords)
+        registerById(
+          connectionOccurrences,
+          context,
+          'connection occurrence',
+          record,
+          diagnostics,
+          supersededRecords
+        )
         directChildren(context, 'Position').forEach((positionNode, index) => {
           const positionAttrs = attrsOf(positionNode)
           routePoints.push(
@@ -1353,7 +1382,14 @@ export function buildSemanticArisDocument(document: TokenizedXmlDocument): Seman
             knownChildren: ['GUID', 'AttrDef']
           }
         )
-        registerById(freeText, context, 'free text definition', record, diagnostics, supersededRecords)
+        registerById(
+          freeText,
+          context,
+          'free text definition',
+          record,
+          diagnostics,
+          supersededRecords
+        )
         break
       }
       case 'FFTextOcc': {
@@ -1479,7 +1515,14 @@ export function buildSemanticArisDocument(document: TokenizedXmlDocument): Seman
             knownChildren: ['GUID', 'AttrDef', 'FontNode']
           }
         )
-        registerById(fontStyleSheets, context, 'font style sheet', record, diagnostics, supersededRecords)
+        registerById(
+          fontStyleSheets,
+          context,
+          'font style sheet',
+          record,
+          diagnostics,
+          supersededRecords
+        )
         break
       }
       case 'Font':

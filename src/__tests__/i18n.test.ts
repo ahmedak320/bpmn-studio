@@ -5,8 +5,14 @@ import { fileURLToPath } from 'node:url'
 import { en, ar } from '../i18n/dictionaries'
 import { t, tPlural, getLang, setLang, getDir } from '../i18n'
 import { ARIS_EXCEL_MESSAGE_KEYS } from '../aris/excel/issues'
-import { ARIS_LAYOUT_REJECTION_CODES, arisLayoutRejectionMessageKey } from '../aris/layout/rejection'
-import { ARIS_CHAT_OWN_MESSAGE_KEYS, ARIS_CHAT_REUSED_EPC_MESSAGE_KEYS } from '../aris/chat/messageKeys'
+import {
+  ARIS_LAYOUT_REJECTION_CODES,
+  arisLayoutRejectionMessageKey
+} from '../aris/layout/rejection'
+import {
+  ARIS_CHAT_OWN_MESSAGE_KEYS,
+  ARIS_CHAT_REUSED_EPC_MESSAGE_KEYS
+} from '../aris/chat/messageKeys'
 import { ARIS_RENDER_FIDELITY_KINDS } from '../aris/renderer/types'
 import { METADATA_CATEGORY_LABEL_KEYS } from '../aris/details/metadata'
 import { ARIS_DETAILS_TAB_LABEL_KEYS } from '../aris/details/tabs'
@@ -155,12 +161,14 @@ describe('ARIS module key-inventory coverage', () => {
     expectKeysRegistered(ARIS_CHAT_OWN_MESSAGE_KEYS)
   })
 
-  it('registers every key ARIS_CHAT_REUSED_EPC_MESSAGE_KEYS points at — this is also the ' +
-    'authoritative epc.finding key list, since src/aris/epc itself exports no inventory constant',
-  () => {
-    expect(ARIS_CHAT_REUSED_EPC_MESSAGE_KEYS.length).toBeGreaterThan(0)
-    expectKeysRegistered(ARIS_CHAT_REUSED_EPC_MESSAGE_KEYS)
-  })
+  it(
+    'registers every key ARIS_CHAT_REUSED_EPC_MESSAGE_KEYS points at — this is also the ' +
+      'authoritative epc.finding key list, since src/aris/epc itself exports no inventory constant',
+    () => {
+      expect(ARIS_CHAT_REUSED_EPC_MESSAGE_KEYS.length).toBeGreaterThan(0)
+      expectKeysRegistered(ARIS_CHAT_REUSED_EPC_MESSAGE_KEYS)
+    }
+  )
 
   it('registers every key derived from ARIS_RENDER_FIDELITY_KINDS (src/aris/renderer/types.ts)', () => {
     // The renderer has no exported messageKey inventory, only the finding *kind* list — every
@@ -195,7 +203,9 @@ describe('ARIS module key-inventory coverage', () => {
   })
 
   it('fixes the experimental export label to the plan §9.5 wording exactly', () => {
-    expect(en[ARIS_EXPERIMENTAL_EXPORT_LABEL_KEY as keyof typeof en]).toBe('Experimental ARIS AML export')
+    expect(en[ARIS_EXPERIMENTAL_EXPORT_LABEL_KEY as keyof typeof en]).toBe(
+      'Experimental ARIS AML export'
+    )
   })
 })
 

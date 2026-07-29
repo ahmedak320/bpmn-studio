@@ -149,7 +149,10 @@ describe('record emission', () => {
 
   it('refuses an invented locale id', () => {
     expect(() =>
-      renderRecord(attrDefSpec({ type: 'AT_NAME', values: [{ localeId: 'ar-AE', text: 'x' }] }), CONTEXT)
+      renderRecord(
+        attrDefSpec({ type: 'AT_NAME', values: [{ localeId: 'ar-AE', text: 'x' }] }),
+        CONTEXT
+      )
     ).toThrowError(/copied verbatim from the source/)
   })
 
@@ -188,11 +191,14 @@ describe('record emission', () => {
   })
 
   it('indents nested records with the context indent unit', () => {
-    const xml = renderRecord(attrDefSpec({ type: 'AT_NAME', values: [{ localeId: '1033', text: 'x' }] }), {
-      indent: '\t\t',
-      indentUnit: '\t',
-      newline: '\n'
-    })
+    const xml = renderRecord(
+      attrDefSpec({ type: 'AT_NAME', values: [{ localeId: '1033', text: 'x' }] }),
+      {
+        indent: '\t\t',
+        indentUnit: '\t',
+        newline: '\n'
+      }
+    )
     expect(xml.startsWith('\t\t<AttrDef')).toBe(true)
     expect(xml).toContain('\n\t\t\t<AttrValue LocaleId="1033">')
     expect(xml.endsWith('\n\t\t</AttrDef>')).toBe(true)

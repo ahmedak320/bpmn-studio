@@ -25,7 +25,10 @@ describe('arisColorToCss — real AnimalWF hex encodings', () => {
 
 describe('resolvePen', () => {
   it('maps Style="0" to solid with no dash pattern', () => {
-    const { pen, findings } = resolvePen({ ownerSourceId: 'x', color: '996600', style: '0', width: 1 }, NOWHERE)
+    const { pen, findings } = resolvePen(
+      { ownerSourceId: 'x', color: '996600', style: '0', width: 1 },
+      NOWHERE
+    )
     expect(pen.color).toBe('#996600')
     expect(pen.style).toBe('solid')
     expect(pen.dasharray).toBeNull()
@@ -34,14 +37,25 @@ describe('resolvePen', () => {
   })
 
   it('maps the documented PS_* style codes 1-5 to dash/dot/invisible', () => {
-    expect(resolvePen({ ownerSourceId: 'x', color: '0', style: '1', width: 1 }, NOWHERE).pen.style).toBe('dash')
-    expect(resolvePen({ ownerSourceId: 'x', color: '0', style: '2', width: 1 }, NOWHERE).pen.style).toBe('dot')
-    expect(resolvePen({ ownerSourceId: 'x', color: '0', style: '5', width: 1 }, NOWHERE).pen.style).toBe('invisible')
-    expect(resolvePen({ ownerSourceId: 'x', color: '0', style: '5', width: 1 }, NOWHERE).pen.visible).toBe(false)
+    expect(
+      resolvePen({ ownerSourceId: 'x', color: '0', style: '1', width: 1 }, NOWHERE).pen.style
+    ).toBe('dash')
+    expect(
+      resolvePen({ ownerSourceId: 'x', color: '0', style: '2', width: 1 }, NOWHERE).pen.style
+    ).toBe('dot')
+    expect(
+      resolvePen({ ownerSourceId: 'x', color: '0', style: '5', width: 1 }, NOWHERE).pen.style
+    ).toBe('invisible')
+    expect(
+      resolvePen({ ownerSourceId: 'x', color: '0', style: '5', width: 1 }, NOWHERE).pen.visible
+    ).toBe(false)
   })
 
   it('reports unsupported-pen-effect and falls back to solid for codes outside 0-5', () => {
-    const { pen, findings } = resolvePen({ ownerSourceId: 'x', color: '0', style: '42', width: 1 }, NOWHERE)
+    const { pen, findings } = resolvePen(
+      { ownerSourceId: 'x', color: '0', style: '42', width: 1 },
+      NOWHERE
+    )
     expect(pen.style).toBe('solid')
     expect(findings).toHaveLength(1)
     expect(findings[0].kind).toBe('unsupported-pen-effect')
@@ -58,20 +72,29 @@ describe('resolvePen', () => {
 
 describe('resolveBrush', () => {
   it('renders TRANSPARENT as no fill regardless of the numeric color', () => {
-    const { brush, findings } = resolveBrush({ ownerSourceId: 'x', color: '0', color2: '0', brushType: 'TRANSPARENT' }, NOWHERE)
+    const { brush, findings } = resolveBrush(
+      { ownerSourceId: 'x', color: '0', color2: '0', brushType: 'TRANSPARENT' },
+      NOWHERE
+    )
     expect(brush.fill).toBe('none')
     expect(brush.kind).toBe('transparent')
     expect(findings).toHaveLength(0)
   })
 
   it('renders SOLID with the mapped color', () => {
-    const { brush } = resolveBrush({ ownerSourceId: 'x', color: 'b6dce9', color2: '0', brushType: 'SOLID' }, NOWHERE)
+    const { brush } = resolveBrush(
+      { ownerSourceId: 'x', color: 'b6dce9', color2: '0', brushType: 'SOLID' },
+      NOWHERE
+    )
     expect(brush.fill).toBe('#b6dce9')
     expect(brush.kind).toBe('solid')
   })
 
   it('reports unsupported-brush-effect for hatch/pattern brush types and falls back to solid', () => {
-    const { brush, findings } = resolveBrush({ ownerSourceId: 'x', color: '996600', color2: '0', brushType: 'BDIAGONAL' }, NOWHERE)
+    const { brush, findings } = resolveBrush(
+      { ownerSourceId: 'x', color: '996600', color2: '0', brushType: 'BDIAGONAL' },
+      NOWHERE
+    )
     expect(brush.kind).toBe('unsupported-pattern')
     expect(brush.fill).toBe('#996600')
     expect(findings).toHaveLength(1)

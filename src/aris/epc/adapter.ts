@@ -73,7 +73,9 @@ export function toEpcGraph(input: EpcAdapterModel): EpcGraph {
         objectType: definition.type,
         symbolType: occurrence.symbol ?? null,
         names: toLocalizedNames(definition.names),
-        linkedModelIds: definition.linkedModelIds ? Object.freeze([...definition.linkedModelIds]) : undefined
+        linkedModelIds: definition.linkedModelIds
+          ? Object.freeze([...definition.linkedModelIds])
+          : undefined
       })
     )
   }
@@ -93,5 +95,9 @@ export function toEpcGraph(input: EpcAdapterModel): EpcGraph {
     )
   }
 
-  return Object.freeze({ modelId: input.modelId, nodes: Object.freeze(nodes), edges: Object.freeze(edges) })
+  return Object.freeze({
+    modelId: input.modelId,
+    nodes: Object.freeze(nodes),
+    edges: Object.freeze(edges)
+  })
 }
