@@ -20,6 +20,7 @@ import {
   ARIS_EXPERIMENTAL_EXPORT_LABEL_KEY,
   ARIS_EXPERIMENTAL_EXPORT_NOTICE_KEY
 } from '../aris/writer/compatibility'
+import { ARIS_SHELL_MESSAGE_KEYS } from '../aris/shell/shellI18n'
 
 const HERE = dirname(fileURLToPath(import.meta.url))
 const SRC_ROOT = join(HERE, '..')
@@ -206,6 +207,17 @@ describe('ARIS module key-inventory coverage', () => {
     expect(en[ARIS_EXPERIMENTAL_EXPORT_LABEL_KEY as keyof typeof en]).toBe(
       'Experimental ARIS AML export'
     )
+  })
+
+  it('registers every key in ARIS_SHELL_MESSAGE_KEYS (src/aris/shell/shellI18n.ts)', () => {
+    // tk() calls t(key as Key, ...) with `key` typed as a plain `string`, so an unregistered
+    // key never fails the TypeScript build and its call site is not `t('...')`/`tPlural('...')`
+    // — it's `tk('...')`, which the used-keys scan above does not match either. Without this
+    // check, a key could be added to ARIS_SHELL_MESSAGE_KEYS and silently render tk()'s English
+    // fallback text in both languages forever.
+    const keys = Object.keys(ARIS_SHELL_MESSAGE_KEYS)
+    expect(keys.length).toBeGreaterThan(0)
+    expectKeysRegistered(keys)
   })
 })
 

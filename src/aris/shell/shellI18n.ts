@@ -80,6 +80,8 @@ export const ARIS_SHELL_MESSAGE_KEYS: Readonly<Record<string, string>> = Object.
   'aris.details.missing': 'Not set',
   'aris.accounting.summary':
     '{accounted} of {total} source records accounted for; {unaccounted} unaccounted.',
+  'aris.accounting.summary.derived':
+    'Plus {derived} derived entries recorded separately (not part of the source-record total).',
   'aris.accounting.filter': 'Filter accounting rows',
   'aris.accounting.showing': 'Showing {shown} of {matched} matching rows.',
   'aris.accounting.showMore': 'Show more rows',
@@ -176,6 +178,22 @@ export const ARIS_SHELL_MESSAGE_KEYS: Readonly<Record<string, string>> = Object.
   'aris.export.refused': 'The derived export was refused: {error}',
   'aris.export.unmapped':
     '{count} edits could not be addressed against the original bytes and were left out.',
+  'aris.export.unmapped.newModel':
+    'Model {id} was created after import. A derived export rewrites the imported document; whole new models belong to a new export, not to a patch of this one.',
+  'aris.export.unmapped.removedModel':
+    'Model {id} is missing from the working document. Removing a whole model from a derived export is out of scope; no canvas gesture produces it.',
+  'aris.export.unmapped.defaultLocale':
+    'Record {id} carries a value with no locale id, so there is no source `LocaleId` token to address it by.',
+  'aris.export.unmapped.clearedAttribute':
+    'Record {id} cleared "{attribute}". The working model reads a missing attribute and an empty one alike, so clearing cannot be distinguished from never having had a value.',
+  'aris.export.unmapped.missingAnchor':
+    'Record {id} has no anchor in the imported document: {anchor} is not a record this source declares.',
+  'aris.export.unmapped.movedConnectionSource':
+    'Connection {id} was re-attached to a different source occurrence. AML nests a connection under its source, so moving it would mean re-emitting the record and discarding the pen and label children the original carried.',
+  'aris.export.unmapped.linkedModelsOnNewDefinition':
+    'New definition {id} carries model assignments. Assignments on a record that does not exist yet in the source have no attribute to patch.',
+  'aris.export.unmapped.unknownRecord':
+    'Record {id} is in the working document but no imported record declares that id.',
   'aris.rail.epc': 'EPC validation',
   'aris.rail.improve': 'Improve this process'
 })

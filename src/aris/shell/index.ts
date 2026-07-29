@@ -48,10 +48,12 @@ export {
   type ArisLocalProposalInput
 } from './arisChatProposal'
 export {
-  buildArisGeometryEdits,
+  buildArisDerivedEdits,
   derivedAmlFileName,
   exportArisDerivedAml,
   prepareArisDerivedExport,
+  ARIS_DERIVED_UNMAPPED_KINDS,
+  type ArisDerivedEditOptions,
   type ArisDerivedEditSet,
   type ArisDerivedExportInput,
   type ArisDerivedExportPreview,

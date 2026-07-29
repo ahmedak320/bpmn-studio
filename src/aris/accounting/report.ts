@@ -77,6 +77,7 @@ export function buildAccountingReport(
     version: 1,
     totalSourceRecords: reconciliation.totalSourceRecords,
     totalAccounted: reconciliation.totalAccounted,
+    totalDerived: reconciliation.totalDerived,
     unaccountedCount: reconciliation.unaccountedCount,
     summary: Object.freeze({
       byKind: Object.freeze(byKind),
@@ -100,6 +101,7 @@ export function serializeAccountingReport(report: ArisAccountingReport): string 
     version: report.version,
     totalSourceRecords: report.totalSourceRecords,
     totalAccounted: report.totalAccounted,
+    totalDerived: report.totalDerived,
     unaccountedCount: report.unaccountedCount,
     summary: report.summary,
     issues: report.issues,

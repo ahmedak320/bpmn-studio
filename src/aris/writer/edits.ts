@@ -399,6 +399,32 @@ function deletionSpan(view: WriterSourceView, element: WriterElement): WriterSpa
   return makeSpan(start, element.span.end)
 }
 
+/**
+ * Delete elements addressed directly rather than by id.
+ *
+ * `deleteRecordEdits` covers everything that declares a `<Kind>.ID`. Some AML records deliberately
+ * declare none — `<AttrValue>`, `<AttrDef>`, `<AttrOcc>` — and are addressed by their position
+ * among their parent's children instead. Nested targets are collapsed into their outermost
+ * ancestor so two overlapping deletions can never be emitted.
+ */
+export function deleteElementEdits(
+  view: WriterSourceView,
+  elements: readonly WriterElement[],
+  label: string
+): readonly AmlEdit[] {
+  const outermost = elements.filter(
+    (candidate) =>
+      !elements.some(
+        (other) =>
+          other !== candidate &&
+          other.span.start <= candidate.span.start &&
+          other.span.end >= candidate.span.end
+      )
+  )
+  const unique = [...new Map(outermost.map((element) => [element.path, element])).values()]
+  return unique.map((element) => deleteEdit(deletionSpan(view, element), label))
+}
+
 export interface DeleteRecordResult {
   readonly edits: readonly AmlEdit[]
   /** Every id removed, including ids of descendants of the deleted elements. */

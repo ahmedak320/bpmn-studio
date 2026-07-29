@@ -1,5 +1,36 @@
 import { describe, expect, it } from 'vitest'
+import { buildSemanticArisDocument } from '../source/semanticIndex'
+import { tokenizeXmlDocument } from '../source/xmlTokenizer'
+import { buildFromSource } from './buildFromSource'
 import { buildTestDocument } from './testFixture'
+
+// A record kind that legitimately has no source id attribute at all: a real ARIS
+// `<FFTextOcc>` never carries `FFTextOcc.ID` (unlike `ObjOcc.ID`, `CxnOcc.ID`, `Lane.ID`, all of
+// which are always present) — it is addressed only by its `FFTextDef.IdRef` plus its position
+// in the document. Without a synthesized id, `buildFreeText` produces `id: ''` and
+// `buildFromSource`'s `if (!item.id || !item.modelId) continue` guard silently drops every one
+// of them (the AnimalWF defect this regression test guards against: 69 of 69 free-text
+// occurrences reached zero working-model entities).
+const NO_ID_FREE_TEXT_AML = `<?xml version="1.0" encoding="UTF-8"?>
+<AML>
+  <Group Group.ID="Group.Root">
+    <Model Model.ID="Model.1" Model.Type="MT_EEPC">
+      <FFTextOcc FFTextDef.IdRef="FFTextDef.1" SymbolFlag="TEXT" Alignment="CENTER" Zorder="4">
+        <Position Pos.X="50" Pos.Y="40" />
+      </FFTextOcc>
+    </Model>
+  </Group>
+  <FFTextDef FFTextDef.ID="FFTextDef.1" IsModelAttr="TEXT">
+    <AttrDef AttrDef.Type="AT_NAME">
+      <AttrValue LocaleId="1033">Free-standing note</AttrValue>
+    </AttrDef>
+  </FFTextDef>
+</AML>`
+
+function buildDocumentFromXml(xml: string) {
+  const semantic = buildSemanticArisDocument(tokenizeXmlDocument(xml))
+  return buildFromSource(semantic.index)
+}
 
 function occurrenceName(
   document: {
@@ -144,5 +175,46 @@ describe('definition / occurrence distinction', () => {
     expect(connection.route).toHaveLength(2)
     expect(connection.route[0]).toEqual({ x: 110, y: 45 })
     expect(connection.style.tgtArrow).toBe('1')
+  })
+})
+
+describe('records with no source id attribute', () => {
+  it('a free-text occurrence with no source id still becomes an addressable working-model entity with a stable id across two independent builds', () => {
+    // Two entirely independent parses of the same bytes — no shared state, no counters carried
+    // over — to prove the synthesized id is derived from the source itself (deterministic),
+    // not from build-order (which a counter-based scheme could not guarantee across imports,
+    // undo/redo, or revisions).
+    const first = buildDocumentFromXml(NO_ID_FREE_TEXT_AML)
+    const second = buildDocumentFromXml(NO_ID_FREE_TEXT_AML)
+
+    const firstText = first.models.get('Model.1')?.freeText ?? []
+    const secondText = second.models.get('Model.1')?.freeText ?? []
+
+    // Addressable: the record reached the working model at all (the AnimalWF defect dropped it
+    // via the `!item.id` guard because id was '').
+    expect(firstText).toHaveLength(1)
+    expect(secondText).toHaveLength(1)
+    expect(firstText[0].id).not.toBe('')
+    expect(firstText[0].modelId).toBe('Model.1')
+    expect(firstText[0].definitionId).toBe('FFTextDef.1')
+
+    // Stable: the exact same id across two independent builds of identical source bytes.
+    expect(firstText[0].id).toBe(secondText[0].id)
+
+    // Collision-free by construction: distinct document positions produce distinct ids. Two
+    // sibling FFTextOcc records (differing only by position in the document) must not collapse
+    // onto the same synthesized id.
+    const twoOccurrencesXml = NO_ID_FREE_TEXT_AML.replace(
+      '</FFTextOcc>\n    </Model>',
+      `</FFTextOcc>
+      <FFTextOcc FFTextDef.IdRef="FFTextDef.1" SymbolFlag="TEXT" Alignment="CENTER" Zorder="5">
+        <Position Pos.X="90" Pos.Y="70" />
+      </FFTextOcc>
+    </Model>`
+    )
+    const withTwo = buildDocumentFromXml(twoOccurrencesXml)
+    const twoEntries = withTwo.models.get('Model.1')?.freeText ?? []
+    expect(twoEntries).toHaveLength(2)
+    expect(twoEntries[0].id).not.toBe(twoEntries[1].id)
   })
 })

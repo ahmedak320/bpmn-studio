@@ -421,7 +421,14 @@ export interface ArisSourceIndex {
   readonly sizes: readonly ArisSizeRecord[]
   readonly routePoints: readonly ArisRoutePointRecord[]
   readonly unknownAttributes: readonly ArisUnknownAttributeRecord[]
-  /** Records dropped from an id-keyed map because their source ID was already taken. */
+  /**
+   * Records dropped from an id-keyed map: either because their source ID was already taken
+   * (a duplicate) or because the element had no source ID attribute to key on at all. Either
+   * way the record is retained here verbatim — see `registerById` in `semanticIndex.ts` — so a
+   * record can never vanish silently just because it could not be registered by ID. The
+   * diagnostic pushed alongside each case (`duplicate-id` or `missing-source-id`) says which
+   * one applies.
+   */
   readonly supersededRecords: readonly ArisAnyRecord[]
   readonly elementAccounting: ReadonlyMap<string, ArisElementAccountingEntry>
 }
@@ -452,6 +459,34 @@ const SOURCE_ID_ATTRIBUTES = [
   'OLEOcc.ID',
   'FontSS.ID'
 ] as const
+
+/**
+ * Elements whose AML representation legitimately carries no id attribute at all — unlike
+ * `ObjOcc`, `CxnOcc`, `Lane`, etc. (all of which always carry one of `SOURCE_ID_ATTRIBUTES` in
+ * real exports) — but whose record must still become an addressable working-model entity.
+ * `FFTextOcc` is the confirmed case: ARIS never emits an id for a free-text occurrence (it is
+ * referenced only by `FFTextDef.IdRef` plus its position in the document), so without this list
+ * every one of them falls through `sourceId === null` and is silently dropped by the `!item.id`
+ * guards in `buildFromSource.ts`.
+ *
+ * A record whose element is in this set gets a synthesized id (see {@link synthesizeSourceId})
+ * whenever it has no real one, instead of being left with `sourceId: null`.
+ */
+const SYNTHETIC_SOURCE_ID_ELEMENTS: ReadonlySet<string> = new Set(['FFTextOcc'])
+
+/**
+ * Deterministically synthesize an id for a record that has no source id attribute to begin
+ * with. Derived from the element's document path — itself already unique and stable for a
+ * given source document, since it is built from the element name plus its 1-based index among
+ * same-named siblings, recursively from the document root (see `visit` below) — rather than
+ * from an incrementing counter, so the same import always produces the same id (revisions and
+ * undo stay stable across independent builds of the same source). The `synthetic:` prefix
+ * guarantees it can never collide with a genuine ARIS id, which always starts with the element
+ * type name followed by a `.` (e.g. `FFTextDef.xxxxx`).
+ */
+function synthesizeSourceId(elementName: string, path: string): string {
+  return `synthetic:${elementName}:${path}`
+}
 
 /**
  * Elements that produce their own record in the semantic index, mapped to the `recordKind`
@@ -706,6 +741,31 @@ function duplicateIdDiagnostic(
   })
 }
 
+/**
+ * A record that was supposed to key an id-keyed map (`ObjDef`, `ObjOcc`, `CxnDef`, `CxnOcc`,
+ * `Group`, `Model`, `FFTextDef`, `OLEDef`, `FontStyleSheet`, `Lane`) has no source ID at all.
+ *
+ * This is a warning, not an error: the pipeline does not reject the record, it degrades
+ * gracefully — the raw content is preserved verbatim in `supersededRecords` exactly like a
+ * duplicate ID (see `duplicateIdDiagnostic`), and the rest of the import proceeds. It is
+ * surfaced as a diagnostic (rather than, say, being silently synthesized an id) because unlike
+ * `FFTextOcc` — which legitimately never carries an id in ARIS exports, see
+ * `SYNTHETIC_SOURCE_ID_ELEMENTS` — every one of these kinds always carries an id attribute in a
+ * well-formed export. Its absence here means either malformed/hand-written input or an ARIS
+ * variant this parser has not seen, and that is exactly the situation the plan (§6.4/§10.3)
+ * wants reported rather than quietly papered over with an invented identity.
+ */
+function missingIdDiagnostic(kind: string, context: ElementContext): AmlDiagnostic {
+  return Object.freeze({
+    severity: 'warning',
+    code: 'missing-source-id',
+    message: `A ${kind} element at "${context.path}" has no source ID attribute, so it cannot become an addressable ${kind} record. Its raw content was retained (see supersededRecords) but nothing else in the source can reference it by ID.`,
+    path: context.path,
+    sourceId: null,
+    span: context.node.startTag.span
+  })
+}
+
 function registerById<T extends ArisAnyRecord>(
   storage: Map<string, T>,
   context: ElementContext,
@@ -714,7 +774,14 @@ function registerById<T extends ArisAnyRecord>(
   diagnostics: AmlDiagnostic[],
   superseded: ArisAnyRecord[]
 ): void {
-  if (!record.sourceId) return
+  if (!record.sourceId) {
+    diagnostics.push(missingIdDiagnostic(kind, context))
+    // Retained verbatim — never dropped — exactly like a duplicate-id loser below. This is the
+    // guard against the FFTextOcc failure mode: a record that cannot be registered by ID must
+    // still show up somewhere, loudly, instead of silently disappearing from every typed map.
+    superseded.push(record)
+    return
+  }
   if (storage.has(record.sourceId)) {
     diagnostics.push(duplicateIdDiagnostic(kind, context, record.sourceId))
     // The losing record is still retained verbatim so that a duplicate ID never causes
@@ -879,12 +946,16 @@ export function buildSemanticArisDocument(document: TokenizedXmlDocument): Seman
     path: string,
     owner: { readonly kind: string; readonly path: string } | null
   ): void => {
+    const nodeAttributes = attrsOf(node)
+    const declaredSourceId = deriveSourceId(nodeAttributes)
     const context: ElementContext = Object.freeze({
       node,
       path,
       parent,
-      attributes: attrsOf(node),
-      sourceId: deriveSourceId(attrsOf(node))
+      attributes: nodeAttributes,
+      sourceId:
+        declaredSourceId ??
+        (SYNTHETIC_SOURCE_ID_ELEMENTS.has(node.name) ? synthesizeSourceId(node.name, path) : null)
     })
 
     const declaredRecordKind = RECORD_KIND_BY_ELEMENT[node.name]

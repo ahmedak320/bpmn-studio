@@ -335,6 +335,12 @@ function buildFreeText(
   attributes: ArisSourceIndexLike['attributes']
 ): ArisFreeText {
   const definitionId = occurrence.parsed.freeTextDefinitionId ?? null
+  // A real `<FFTextOcc>` never carries an `FFTextOcc.ID` attribute (ARIS free-text occurrences
+  // are referenced only by position, not by id), so `rawAttributes['FFTextOcc.ID']` is always
+  // absent in practice and `occurrence.sourceId` — the deterministic id synthesized by
+  // `semanticIndex.ts` from the record's document path when no source id attribute exists — is
+  // what actually supplies `id` here. Both are kept so a future export dialect that *does* emit
+  // the attribute is honored over the synthesized fallback.
   const id = occurrence.rawAttributes['FFTextOcc.ID'] ?? occurrence.sourceId ?? ''
   const text = definitionId ? buildLocalizedValue(definitionId, attributes) : emptyLocalizedValue()
   return Object.freeze({

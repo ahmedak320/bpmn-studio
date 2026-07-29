@@ -174,12 +174,19 @@ function pickRecommendation(candidates: readonly ReturnPathCandidate[]): {
  *
  * SEAM: this module never imports `src/aris/model`. This shape is intentionally parallel to
  * (but structurally independent of) `ArisEditCommand` in `src/aris/model/commands.ts`: the
- * command system is expected to wrap `connectionDefinition` and `connectionOccurrence` into
- * a `transaction` command of one `createConnectionDefinition` + one `createConnectionOccurrence`
- * sub-command, record `audit` in revision history, and derive the undo record via
- * `invertCommand` — all of which belongs to the command system, not here. Every field this
- * module needs to hand off is present below; nothing about ID generation, revision numbers,
- * or persistence is decided here, since those are the command system's responsibility.
+ * command system turns `connectionDefinition` and `connectionOccurrence` below into one
+ * `createConnectionDefinition` command followed by one `createConnectionOccurrence` command,
+ * records `audit` in revision history, and derives the undo record via `invertCommand` — all of
+ * which belongs to the command system, not here. The two commands cannot be wrapped in a single
+ * `transaction`: `validatePreconditions`'s `case 'transaction'` in `src/aris/model/commands.ts`
+ * checks every subcommand against the document as it stood before the transaction, so
+ * `createConnectionOccurrence`'s precondition can never see the `createConnectionDefinition`
+ * from earlier in the same transaction — they must instead be applied as an ordered pair of
+ * top-level commands (see `src/aris/chat/modelCommandMapping.ts`, `src/aris/shell/
+ * arisChatHost.ts` and `src/aris/canvas/commandBridge.ts`, which all hit and document the same
+ * constraint). Every field this module needs to hand off is present below; nothing about ID
+ * generation, revision numbers, or persistence is decided here, since those are the command
+ * system's responsibility.
  */
 export interface ReturnPathConnectionDefinitionPayload {
   readonly id: string

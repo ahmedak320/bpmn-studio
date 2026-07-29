@@ -11,14 +11,31 @@
  * `src/aris/model` at all.
  *
  * Two mappings need more than a 1:1 rename:
- *   - `addMetadataConnection`, `addCoreObject`, `addCoreConnection` each produce TWO model
- *     commands (a `create*Definition` + a `create*Occurrence`), which the real command system
- *     wraps in one `transaction` command (see `applyTransaction` / `ArisCommandKind.transaction`
- *     in `src/aris/model/commands.ts`) so they commit atomically.
- *   - `removeAttachment` has NO corresponding `ArisCommandKind` — attachments are not part of
- *     `ArisWorkingDocument` today (they live in `ArisPendingAttachment` /
- *     `src/aris/packages/accounting.ts`, outside the model layer). Applying it is therefore the
- *     integration seam's job entirely; this lane only classifies and schema-validates it.
+ *   - `addMetadataConnection`, `addCoreObject` and `addCoreConnection` each produce TWO model
+ *     commands (a `create*Definition` + a `create*Occurrence`). Only `addCoreObject` actually
+ *     gets wrapped in one `transaction` command (see `applyTransaction` /
+ *     `ArisCommandKind.transaction` in `src/aris/model/commands.ts`) — that works because
+ *     `createOccurrence`'s precondition only checks that `modelId` resolves, not `definitionId`,
+ *     so it does not matter that the definition is only folded into the document by the first
+ *     subcommand inside the same transaction.
+ *     `addMetadataConnection`/`addCoreConnection` do NOT get the same treatment:
+ *     `createConnectionOccurrence`'s precondition also demands `definitionId` resolve, and
+ *     `transaction`'s precondition check (`validatePreconditions`'s `case 'transaction'` in
+ *     `src/aris/model/commands.ts`) validates every subcommand against the document as it stood
+ *     BEFORE the transaction, never one folded forward by an earlier subcommand in the same
+ *     transaction — so wrapping `createConnectionDefinition` + `createConnectionOccurrence` in
+ *     one `transaction` always fails. Both `src/aris/shell/arisChatHost.ts` and
+ *     `src/aris/canvas/commandBridge.ts` independently hit this wall and both apply the pair as
+ *     an ORDERED PAIR of top-level commands instead (see those files' module docs). Below,
+ *     `requiresTransactionWrapper` is `true` for all three because all three pairs must be
+ *     applied together as one coupled unit — it does not mean the integration seam necessarily
+ *     uses a literal `transaction` command to do it; for the two connection kinds it cannot.
+ *   - `removeAttachment` DOES map to a real `ArisCommandKind`: attachments are stored as one
+ *     value of the `AT_ORBITPM_ATTACHMENT` object-definition attribute
+ *     (`src/aris/canvas/attachments.ts`), not as a dedicated model record, so removing one is a
+ *     plain `setAttribute` command built by that module's own `removeAttachmentCommand`. This
+ *     lane still only classifies and schema-validates the chat command; the integration seam
+ *     (`src/aris/shell/arisChatHost.ts`) performs the actual translation.
  */
 
 import type { ArisChatCommandKind } from './patchSchema'
@@ -57,7 +74,16 @@ export interface ModelCommandMappingEntry {
   readonly chatCommandKind: ArisChatCommandKind
   /** The real model command kind(s) this patch command becomes. Empty means "no equivalent". */
   readonly modelCommandKinds: readonly ModelCommandKindName[]
-  /** True when the model commands above must be wrapped in one `transaction` to be atomic. */
+  /**
+   * True when the model commands above must be applied together as one coupled unit. For
+   * `addCoreObject` that unit is literally one `transaction` `ArisEditCommand`. For
+   * `addMetadataConnection`/`addCoreConnection` a literal `transaction` cannot express the pair
+   * — `createConnectionOccurrence`'s precondition can never see a `createConnectionDefinition`
+   * from earlier in the same transaction (see the module doc above) — so the integration seam
+   * applies them as an ordered pair of top-level commands instead. This field is still `true`
+   * for both because the two commands remain coupled; it does not promise a literal
+   * `transaction` wrapper.
+   */
   readonly requiresTransactionWrapper: boolean
   readonly note?: string
 }
@@ -92,7 +118,12 @@ export const PATCH_TO_MODEL_COMMAND_MAPPING: readonly ModelCommandMappingEntry[]
   {
     chatCommandKind: 'addMetadataConnection',
     modelCommandKinds: ['createConnectionDefinition', 'createConnectionOccurrence'],
-    requiresTransactionWrapper: true
+    requiresTransactionWrapper: true,
+    note:
+      'Applied as an ordered pair of top-level commands, not a literal `transaction` — ' +
+      "createConnectionOccurrence's precondition needs definitionId to resolve, which a " +
+      'transaction cannot guarantee for a subcommand created earlier in the same transaction ' +
+      '(see module doc).'
   },
   {
     chatCommandKind: 'addCoreObject',
@@ -104,7 +135,10 @@ export const PATCH_TO_MODEL_COMMAND_MAPPING: readonly ModelCommandMappingEntry[]
     chatCommandKind: 'addCoreConnection',
     modelCommandKinds: ['createConnectionDefinition', 'createConnectionOccurrence'],
     requiresTransactionWrapper: true,
-    note: 'Also covers the "return back-edge" case (payload.isReturnBackEdge); same model commands, same classification.'
+    note:
+      'Also covers the "return back-edge" case (payload.isReturnBackEdge); same model commands, ' +
+      'same classification. Applied as an ordered pair of top-level commands, not a literal ' +
+      '`transaction` — same precondition constraint as addMetadataConnection (see module doc).'
   },
   {
     chatCommandKind: 'setAssignment',
@@ -138,9 +172,12 @@ export const PATCH_TO_MODEL_COMMAND_MAPPING: readonly ModelCommandMappingEntry[]
   },
   {
     chatCommandKind: 'removeAttachment',
-    modelCommandKinds: [],
+    modelCommandKinds: ['setAttribute'],
     requiresTransactionWrapper: false,
-    note: 'No corresponding ArisCommandKind — attachments live outside src/aris/model today (see module doc).'
+    note:
+      'Attachments are one value of the AT_ORBITPM_ATTACHMENT object-definition attribute, not ' +
+      'a dedicated ArisCommandKind, so removal is a setAttribute command built by ' +
+      'removeAttachmentCommand in src/aris/canvas/attachments.ts (see module doc).'
   }
 ])
 

@@ -176,6 +176,10 @@ export interface AttributeOccurrenceSpec {
   readonly fontStyleSheetId?: string
   readonly port?: string
   readonly alignment?: string
+  readonly orderNum?: number
+  readonly offsetX?: number
+  readonly offsetY?: number
+  readonly rotation?: number
   readonly size?: SizeSpec
 }
 
@@ -227,14 +231,32 @@ export function attrDefSpec(definition: AttributeDefinitionSpec): ElementSpec {
   }
 }
 
-function attrOccSpec(occurrence: AttributeOccurrenceSpec): ElementSpec {
+/**
+ * `<AttrOcc>` — the placement record for one rendered attribute of an occurrence.
+ *
+ * Exported because an occurrence that gains a rendered attribute needs the same record shape
+ * whether it is emitted as part of a brand-new `<ObjOcc>` or inserted into an existing one.
+ */
+export function attrOccSpec(occurrence: AttributeOccurrenceSpec): ElementSpec {
   const attributes: EmittedAttribute[] = [{ name: 'AttrTypeNum', value: occurrence.typeNum }]
   if (occurrence.port !== undefined) attributes.push({ name: 'Port', value: occurrence.port })
+  if (occurrence.orderNum !== undefined) {
+    attributes.push(integerAttribute('OrderNum', occurrence.orderNum))
+  }
   if (occurrence.alignment !== undefined) {
     attributes.push({ name: 'Alignment', value: occurrence.alignment })
   }
   if (occurrence.fontStyleSheetId !== undefined) {
     attributes.push({ name: 'FontSS.IdRef', value: occurrence.fontStyleSheetId })
+  }
+  if (occurrence.offsetX !== undefined) {
+    attributes.push(integerAttribute('OffsetX', occurrence.offsetX))
+  }
+  if (occurrence.offsetY !== undefined) {
+    attributes.push(integerAttribute('OffsetY', occurrence.offsetY))
+  }
+  if (occurrence.rotation !== undefined) {
+    attributes.push(integerAttribute('Rotation', occurrence.rotation))
   }
   const children: ElementSpec[] = []
   if (occurrence.size) {

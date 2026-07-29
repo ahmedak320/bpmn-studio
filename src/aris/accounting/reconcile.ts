@@ -206,7 +206,17 @@ export function reconcile(
   return Object.freeze({
     ok,
     totalSourceRecords: census.totalSourceRecords,
-    totalAccounted: entries.length,
+    // `totalAccounted` is deliberately the raw-source (non-derived) count, i.e. bounded by
+    // `totalSourceRecords` — it answers "how many of the source records are accounted for",
+    // not "how many accounting entries exist". Derived entries (currently only `assignment`)
+    // are real, reported, disposition-tagged rows, but they do not correspond to a literal
+    // source construct, so counting them here would let `totalAccounted` exceed
+    // `totalSourceRecords` and make the reconciliation sentence arithmetically false (e.g.
+    // "68043 of 68036 records accounted for"). Their count is reported separately as
+    // `totalDerived` so nothing about them is hidden — see `ArisAccountingEntry.derived` in
+    // `./types.ts`.
+    totalAccounted: totalAccountedSourceConstructs,
+    totalDerived: derivedEntries.length,
     unaccountedCount,
     perConstruct: Object.freeze(divergences),
     issues: Object.freeze(issues)
@@ -223,6 +233,7 @@ export function requireReconciled(result: ArisReconciliationResult): ArisReconci
       `Accounting reconciliation failed with ${result.perConstruct.length} divergence(s).`,
       `Total source records: ${result.totalSourceRecords}`,
       `Total accounted: ${result.totalAccounted}`,
+      `Derived entries: ${result.totalDerived}`,
       `Unaccounted: ${result.unaccountedCount}`,
       ...result.perConstruct.map(
         (div) =>

@@ -9,16 +9,15 @@ describe('PATCH_TO_MODEL_COMMAND_MAPPING', () => {
     expect(new Set(kinds).size).toBe(15)
   })
 
-  it('flags removeAttachment as having no model-layer equivalent today', () => {
+  it('maps removeAttachment to setAttribute (AT_ORBITPM_ATTACHMENT is attribute-backed, not a dedicated ArisCommandKind)', () => {
     const entry = PATCH_TO_MODEL_COMMAND_MAPPING.find(
       (e) => e.chatCommandKind === 'removeAttachment'
     )
-    expect(entry?.modelCommandKinds).toEqual([])
+    expect(entry?.modelCommandKinds).toEqual(['setAttribute'])
   })
 
-  it('every other command maps to at least one real model command kind', () => {
+  it('every command maps to at least one real model command kind', () => {
     for (const entry of PATCH_TO_MODEL_COMMAND_MAPPING) {
-      if (entry.chatCommandKind === 'removeAttachment') continue
       expect(entry.modelCommandKinds.length).toBeGreaterThan(0)
     }
   })

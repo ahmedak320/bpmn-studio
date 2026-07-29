@@ -170,7 +170,16 @@ export interface ArisAccountingIssue {
 export interface ArisReconciliationResult {
   readonly ok: boolean
   readonly totalSourceRecords: number
+  /**
+   * Count of accounting entries that correspond to a literal source construct (`derived` is
+   * falsy), bounded by `totalSourceRecords` by construction. See `totalDerived` for the rest.
+   */
   readonly totalAccounted: number
+  /** Count of accounting entries with `derived: true` — real, reported rows that do not
+   *  correspond to a literal source construct (see `ArisAccountingEntry.derived`). Not part of
+   *  `totalAccounted` or `totalSourceRecords`, so `totalAccounted + totalDerived` is the total
+   *  number of accounting entries. */
+  readonly totalDerived: number
   readonly unaccountedCount: number
   readonly perConstruct: readonly ArisReconciliationDivergence[]
   readonly issues: readonly ArisAccountingIssue[]
@@ -186,6 +195,7 @@ export interface ArisAccountingReport {
   readonly version: 1
   readonly totalSourceRecords: number
   readonly totalAccounted: number
+  readonly totalDerived: number
   readonly unaccountedCount: number
   readonly summary: {
     readonly byKind: Readonly<Record<string, number>>

@@ -82,17 +82,30 @@ export function ArisAccountingRail({
         <h3 className="orbitpm-aris-rail__heading" style={{ fontSize: 15 }}>
           {tk('aris.rail.accounting', 'Accounting')}
         </h3>
-        <p style={{ margin: '0 0 8px', fontSize: 13, lineHeight: 1.5 }}>
+        <p style={{ margin: '0 0 4px', fontSize: 13, lineHeight: 1.5 }}>
           {tk(
             'aris.accounting.summary',
             '{accounted} of {total} source records accounted for; {unaccounted} unaccounted.',
             {
+              // Deliberately the raw-source (non-derived) count, bounded by `total` by
+              // construction — see `ArisReconciliationResult.totalAccounted` in
+              // `../accounting/types.ts`. Counting derived rows here would let this number
+              // exceed `total` and make the sentence arithmetically false.
               accounted: report.totalAccounted,
               total: report.totalSourceRecords,
               unaccounted: report.unaccountedCount
             }
           )}
         </p>
+        {report.totalDerived > 0 && (
+          <p style={{ margin: '0 0 8px', fontSize: 13, lineHeight: 1.5 }}>
+            {tk(
+              'aris.accounting.summary.derived',
+              'Plus {derived} derived entries recorded separately (not part of the source-record total).',
+              { derived: report.totalDerived }
+            )}
+          </p>
+        )}
 
         <label style={{ display: 'block', fontSize: 12, marginBottom: 6 }}>
           <span style={{ color: 'var(--orbitpm-muted)' }}>

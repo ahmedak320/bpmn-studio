@@ -195,6 +195,27 @@ describe('reconcile', () => {
     expect(result.perConstruct).toHaveLength(0)
     expect(requireReconciled(result).ok).toBe(true)
   })
+
+  it('never lets totalAccounted exceed totalSourceRecords, even though a derived assignment entry exists', () => {
+    // Regression test for the false "68043 of 68036 source records accounted for" sentence:
+    // `totalAccounted` must be the raw-source (non-derived) count, bounded by
+    // `totalSourceRecords`, with derived rows reported separately as `totalDerived`. The
+    // compact fixture's `LinkedModels.IdRefs=" Model.1 "` on ObjDef.1 produces exactly one
+    // derived `assignment` entry, so this exercises the exact arithmetic the bug broke.
+    const document = tokenizeXmlDocument(COMPACT_AML)
+    const semantic = buildSemanticArisDocument(document)
+    const source = adaptSemanticIndex(semantic.index)
+    const census = buildLexicalCensus(document)
+    const entries = buildAccountingEntries(document, source)
+    const result = reconcile(census, entries)
+
+    const derivedEntries = entries.filter((entry) => entry.derived === true)
+    expect(derivedEntries.length).toBeGreaterThan(0)
+    expect(result.totalDerived).toBe(derivedEntries.length)
+    expect(result.totalAccounted).toBeLessThanOrEqual(result.totalSourceRecords)
+    expect(result.totalAccounted).toBe(result.totalSourceRecords)
+    expect(result.totalAccounted + result.totalDerived).toBe(entries.length)
+  })
 })
 
 describe('accounting report', () => {
@@ -314,7 +335,12 @@ describe('AnimalWF integration', () => {
 
     // Expose the numbers in the test output for the final report.
     expect(result.totalSourceRecords).toBeGreaterThan(0)
-    expect(result.totalAccounted).toBeGreaterThanOrEqual(result.totalSourceRecords)
+    // `totalAccounted` counts only raw-source (non-derived) entries, so on a source with zero
+    // unaccounted records it is exactly `totalSourceRecords` — never more. Regression guard for
+    // the false "68043 of 68036 source records accounted for" sentence (totalAccounted used to
+    // include derived rows and could exceed the source-record total).
+    expect(result.totalAccounted).toBe(result.totalSourceRecords)
+    expect(result.totalDerived).toBeGreaterThanOrEqual(0)
     expect(result.unaccountedCount).toBe(0)
   })
 })

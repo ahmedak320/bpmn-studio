@@ -53,7 +53,7 @@ type OwnerKind = 'model' | 'objectDefinition' | 'connectionDefinition'
  * joins a numeric `'1033'`/`'1025'` key that does not match the document's
  * own convention. `localeLang` recognizes all three shapes.
  */
-function detectLocaleIds(document: ArisWorkingDocument): {
+export function detectLocaleIds(document: ArisWorkingDocument): {
   readonly en: string
   readonly ar: string
 } {

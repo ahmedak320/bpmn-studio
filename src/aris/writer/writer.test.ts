@@ -6,6 +6,7 @@ import {
   createConnectionOccurrenceEdits,
   createObjectDefinitionEdits,
   createObjectOccurrenceEdits,
+  deleteElementEdits,
   deleteRecordEdits,
   deleteRecordsCascade,
   moveOccurrenceEdits,
@@ -509,6 +510,36 @@ describe('deleting records (plan section 9.4)', () => {
     expect(derived).not.toMatch(
       /\n\t*\n\t*<AttrDef AttrDef\.Type="AT_NAME">\n\t*<AttrValue LocaleId="&LocaleId\.USen;">\n\t*<StyledElement>\n\t*<Paragraph Alignment="UNDEFINED" Indent="0"\/>\n\t*<StyledElement>\n\t*<PlainText TextValue="Animal registration"/
     )
+  })
+
+  it('deletes an element that declares no id, addressed directly', () => {
+    const source = view()
+    const activity = requireElementById(source, FIXTURE_IDS.activity)
+    const attrDef = childrenNamed(source, activity, 'AttrDef')[0]!
+    const arabic = childrenNamed(source, attrDef, 'AttrValue')[0]!
+    const derived = applyAmlEdits(
+      SAMPLE_AML,
+      deleteElementEdits(source, [arabic], 'drop the Arabic value')
+    ).text
+
+    expect(derived).not.toContain('TextValue="&#1578;&#1587;&#1580;&#1610;&#1604;"')
+    // The English sibling and the AttrDef around it are untouched.
+    expect(derived).toContain('TextValue="Register animal"')
+    expect(derived).toContain('<AttrDef AttrDef.Type="AT_NAME">')
+    expect(readWriterSourceView(derived).byId.has(FIXTURE_IDS.activity)).toBe(true)
+  })
+
+  it('collapses nested targets so two deletions can never overlap', () => {
+    const source = view()
+    const activity = requireElementById(source, FIXTURE_IDS.activity)
+    const attrDef = childrenNamed(source, activity, 'AttrDef')[0]!
+    const child = childrenNamed(source, attrDef, 'AttrValue')[0]!
+    const edits = deleteElementEdits(source, [child, attrDef], 'drop both')
+
+    expect(edits).toHaveLength(1)
+    const derived = applyAmlEdits(SAMPLE_AML, edits).text
+    expect(derived).not.toContain('TextValue="Register animal"')
+    expect(derived).toContain('TextValue="Request received"')
   })
 })
 

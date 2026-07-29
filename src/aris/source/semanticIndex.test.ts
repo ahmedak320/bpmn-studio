@@ -436,6 +436,53 @@ describe('buildSemanticArisDocument', () => {
     expectEveryElementAccountedFor(xml)
   })
 
+  it('emits missing-source-id diagnostics and retains the record instead of dropping it silently', () => {
+    // A hand-written or partial AML where a Lane has no Lane.ID — unlike FFTextOcc (which
+    // legitimately never carries an id in a real ARIS export), a Lane always does, so this
+    // simulates malformed/partial input. Before this fix, `registerById` returned early with no
+    // diagnostic and no `supersededRecords` entry: the record was still accounted for (the
+    // accounting pass runs unconditionally) yet absent from every typed map, so it silently
+    // never became a working-model entity — exactly the FFTextOcc failure mode. This proves that
+    // failure mode is now impossible to reach silently for any kind that goes through
+    // `registerById`.
+    const xml = `<AML>
+      <Group Group.ID="Group.Root">
+        <Model Model.ID="Model.1" Model.Type="MT_EEPC">
+          <Lane Lane.Type="LT_DEFAULT" Orientation="VERTICAL" StartBorder="0" EndBorder="50000" />
+        </Model>
+      </Group>
+    </AML>`
+
+    const semantic = buildSemanticArisDocument(tokenizeXmlDocument(xml))
+
+    // Not silently dropped from the typed map...
+    expect(semantic.index.lanes.size).toBe(0)
+
+    // ...it is loud instead: a diagnostic names the element, its path, and why it was dropped.
+    expect(semantic.diagnostics).toHaveLength(1)
+    expect(semantic.diagnostics[0]).toMatchObject({
+      severity: 'warning',
+      code: 'missing-source-id',
+      path: 'AML[1]/Group[1]/Model[1]/Lane[1]',
+      sourceId: null
+    })
+    expect(semantic.diagnostics[0]?.message).toContain('lane')
+
+    // ...and the record itself is retained verbatim rather than vanishing.
+    expect(semantic.index.supersededRecords).toHaveLength(1)
+    expect(semantic.index.supersededRecords[0]?.path).toBe('AML[1]/Group[1]/Model[1]/Lane[1]')
+    expect(semantic.index.supersededRecords[0]?.recordKind).toBe('lane')
+    expect(semantic.index.supersededRecords[0]?.parsed).toMatchObject({
+      laneType: 'LT_DEFAULT',
+      orientation: 'VERTICAL'
+    })
+
+    // The independent element-accounting pass proves nothing about the concrete syntax tree
+    // was lost — every element still maps to exactly one record (this one, via
+    // supersededRecords).
+    expectEveryElementAccountedFor(xml)
+  })
+
   it('indexes linked-model assignments alongside the owning object definition', () => {
     const xml = `<AML>
       <Group Group.ID="Group.Root">
