@@ -1000,6 +1000,10 @@ export default function ArisApp(): JSX.Element {
               <div style={{ flex: '0 1 auto', maxHeight: '55%', overflowY: 'auto' }}>
                 <ArisGenerationPanel
                   embedded
+                  // §16.7: the destination a generated model would land in.
+                  // If this changes while a request is in flight, the panel
+                  // refuses the stale placement and offers the AML instead.
+                  workspaceId={workspaceAdapter?.id ?? null}
                   onCreateModel={handleCreateModel}
                   onDownloadFile={(fileName, bytes, mimeType) =>
                     downloadBytes(fileName, bytes, mimeType)

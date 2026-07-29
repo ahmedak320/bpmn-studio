@@ -59,6 +59,9 @@ export {
 
 export { validateLogicalIdIntegrity } from './logicalIntegrity'
 
+export type { ArisAiEpcSemanticsResult } from './epcSemantics'
+export { validateArisAiDraftEpcSemantics } from './epcSemantics'
+
 export type { ArisAiValidationResult } from './validateDraft'
 export { validateArisAiDraft } from './validateDraft'
 

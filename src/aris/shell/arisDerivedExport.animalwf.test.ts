@@ -4,10 +4,12 @@ import { describe, expect, it } from 'vitest'
 import { buildFromSource } from '../model/buildFromSource'
 import { applyCommand, type ArisCommandKind, type ArisEditCommand } from '../model/commands'
 import type {
+  ArisFreeText,
   ArisObjectDefinition,
   ArisObjectOccurrence,
   ArisWorkingDocument
 } from '../model/types'
+import { editFreeTextCommand } from '../canvas/commandFactory'
 import { createArisXmlSourcePackage } from '../source/sourcePackage'
 import { tokenizeXmlDocument } from '../source/xmlTokenizer'
 import {
@@ -279,4 +281,76 @@ describe('AnimalWF derived export round trip', () => {
       expect(exported.result.derivedByteLength).toBe(bytes.length + delta)
     }
   )
+
+  /**
+   * Clean Layout moves free-text notes (plan §14.4 step 10), and a moved note
+   * must never be dropped in silence.
+   *
+   * Every one of this export's 69 `<FFTextOcc>` records is written **without an
+   * id attribute**, so `buildFromSource` synthesizes a working id from the
+   * record's path. No byte in the source carries that id, which means the
+   * writer has nothing to address the note's `<Position>` by. The honest answer
+   * is `unmapped` — and the source bytes stay untouched, which is also why
+   * moving a note can never corrupt an export.
+   *
+   * The move itself is a position-only edit by construction: `<FFTextOcc>` has
+   * no `<Size>` child at all, so writing a size would mean inserting an element
+   * the source never declared.
+   */
+  it('reports a moved free-text note it cannot address', { timeout: 240_000 }, async () => {
+    const { text, view, document } = await load()
+
+    let target: { readonly modelId: string; readonly note: ArisFreeText } | null = null
+    let notes = 0
+    let addressable = 0
+    for (const [modelId, model] of document.models) {
+      for (const note of model.freeText) {
+        notes += 1
+        if (view.byId.has(note.id)) addressable += 1
+      }
+      const note = model.freeText[0]
+      if (note && target === null) target = { modelId, note }
+    }
+    expect(notes).toBe(69)
+    // Not one of them declares an id, so not one of them is addressable.
+    expect(addressable).toBe(0)
+    expect(target).not.toBeNull()
+    const note = target!.note
+    // Real notes in this export carry a Position and no Size at all.
+    expect(note.bounds.width).toBe(0)
+    expect(note.bounds.height).toBe(0)
+
+    const context = { commandId: 'animalwf.freetext', baseRevision: document.revision }
+    const command = editFreeTextCommand(context, document, note.id, {
+      position: { x: note.bounds.x + 4321, y: note.bounds.y + 1234 }
+    })
+    const live = applyCommand(document, command)
+    const moved = live.models.get(target!.modelId)?.freeText.find((entry) => entry.id === note.id)
+    // The stored extent is untouched: a note with no `<Size>` still has none.
+    expect(moved?.bounds).toEqual({
+      x: note.bounds.x + 4321,
+      y: note.bounds.y + 1234,
+      width: 0,
+      height: 0
+    })
+
+    const set = buildArisDerivedEdits(view, document, live)
+    expect(set.unmapped.map((entry) => entry.sourceId)).toEqual([note.id])
+    expect(set.edits).toEqual([])
+    expect(set.addedIds).toEqual([])
+    expect(set.removedIds).toEqual([])
+
+    // Nothing is written, so the derived document is the original byte for byte.
+    const patched = applyAmlEdits(text, set.edits)
+    expect(patched.text).toBe(text)
+    const derived = buildWriterSourceView(patched.text, tokenizeXmlDocument(patched.text))
+    expect(declaredIds(derived)).toHaveLength(declaredIds(view).length)
+
+    const exported = exportArisDerivedAml({ originalText: text, original: document, live })
+    expect(exported.result.validation.checks.map((check) => check.passed)).toEqual(
+      new Array(9).fill(true)
+    )
+    expect(exported.result.validation.issues).toEqual([])
+    expect(exported.unmapped.map((entry) => entry.sourceId)).toEqual([note.id])
+  })
 })

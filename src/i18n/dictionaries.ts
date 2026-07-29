@@ -2604,6 +2604,25 @@ export const en = {
   'aris.ai.failed': 'The request failed: {error}',
   'aris.ai.notJson': 'The provider did not return strict JSON: {error}',
   'aris.ai.rejected': 'The draft was rejected and nothing was created.',
+  'aris.assistant.ai.answeredBy': 'Answered by {provider} · {model}',
+  'aris.assistant.ai.asking': 'Asking…',
+  'aris.assistant.ai.body':
+    'Sends your question to the configured AI provider, grounded only in the process content shown below. Nothing is sent until you review the exact request and consent.',
+  'aris.assistant.ai.cancel': 'Cancel',
+  'aris.assistant.ai.cancelled': 'The AI request was cancelled.',
+  'aris.assistant.ai.consent': 'I reviewed the exact request above and consent to sending it',
+  'aris.assistant.ai.contextCount': '{count} relevant process(es) matched and will be included',
+  'aris.assistant.ai.contextNone':
+    'No relevant process matched this question, so no workspace content will be sent.',
+  'aris.assistant.ai.fallback':
+    'The AI request failed, so the local answer above is shown instead.',
+  'aris.assistant.ai.heading': 'Ask AI (grounded in these processes)',
+  'aris.assistant.ai.includeContext': 'Include relevant process context',
+  'aris.assistant.ai.preview': 'Exact outbound request',
+  'aris.assistant.ai.previewSystem': 'System instructions',
+  'aris.assistant.ai.previewUser': 'User message',
+  'aris.assistant.ai.redactNames': 'Redact names in process context',
+  'aris.assistant.ai.submit': 'Ask AI',
   'aris.assistant.ask.body':
     'Answered locally from the indexed models. No provider and no API key are used.',
   'aris.assistant.ask.heading': 'Ask the process library',
@@ -2630,17 +2649,66 @@ export const en = {
   'aris.chat.round': 'Round {round} of 5 · {status}',
   'aris.chat.start': 'Start completion interview',
   'aris.chat.undo': 'Undo last applied change',
+  'aris.create.attachment.blocked': 'Nothing was sent: {reason}',
+  'aris.create.attachment.gifUnsupported':
+    'GIF is accepted only on verified provider and model routes. {model} on {provider} is not one of them; convert the picture to PNG, JPEG, or WebP.',
+  'aris.create.attachment.imageUnsupported':
+    '{model} on {provider} cannot accept a picture. Choose a vision-capable model.',
+  'aris.create.attachment.modelUnverified':
+    '{model} is not a reviewed model for attachments on {provider}. Choose a reviewed model before attaching a file.',
+  'aris.create.attachment.outbound':
+    'Attached with the first request only: {name} ({size}, {type}). Repair turns are text-only.',
+  'aris.create.attachment.pdfUnsupported':
+    '{model} on {provider} cannot accept a PDF. Choose a model that reads documents, or describe the process in text instead.',
+  'aris.create.attachment.remove': 'Remove attachment',
+  'aris.create.attachment.selected': 'Attached {name} ({size}, {type}).',
+  'aris.create.attachment.tooLarge': '{name} is too large to attach for {provider}.',
+  'aris.create.attachment.unsupportedType':
+    'Only PDF, PNG, JPEG, WebP, and GIF files can be attached.',
+  'aris.create.attachments.label':
+    'Optional attachment — a DOCX is read on this device, a PDF is sent to the provider',
   'aris.create.consent': 'I reviewed the request above and consent to sending it',
+  'aris.create.document.body':
+    'Attach a PDF or a picture of a process drawing (PNG, JPEG, WebP; GIF only on verified routes). The file is sent to the selected provider only after you review the request and consent.',
+  'aris.create.document.choose': 'Choose PDF or picture…',
+  'aris.create.document.create': 'Generate from document',
+  'aris.create.document.hint':
+    'Optional hint — model name, orientation, boundaries, or unclear symbols',
+  'aris.create.document.hintPlaceholder':
+    'e.g. model the permit renewal flow; the diagram reads right to left; the dashed box is a note, not a step.',
+  'aris.create.document.none': 'No document is attached yet.',
+  'aris.create.docx.attached':
+    'Attached {name}: {chars} characters were extracted on this device. The file itself is never uploaded.',
+  'aris.create.docx.choose': 'Attach DOCX…',
+  'aris.create.docx.failed': 'The DOCX could not be read: {error}',
+  'aris.create.docx.notDocx': 'That is not a .docx file; nothing was attached.',
+  'aris.create.model': 'Model',
   'aris.create.modelType': 'Model type',
   'aris.create.noKey': 'No API key is stored for this provider. Open Settings to add one.',
+  'aris.create.pdf.choose': 'Attach PDF…',
+  'aris.create.pdf.onlyPdf':
+    'The description tab accepts a PDF attachment. Use the PDF/Picture tab for a drawing.',
+  'aris.create.placement.cancelled':
+    'The request was cancelled before placement; nothing was written. The generated AML can still be downloaded below.',
+  'aris.create.placement.stale':
+    'The workspace changed while the model was being generated, so nothing was written to it. Download the generated AML below to keep it.',
   'aris.create.preview': 'Exact outbound request',
   'aris.create.provider': 'Provider',
+  'aris.create.recovery.discard': 'Discard the generated AML',
+  'aris.create.recovery.download': 'Download the generated AML ({name})',
   'aris.create.redactNames': 'Redact names in workspace context',
+  'aris.create.repairing':
+    'The draft was invalid; sending text-only repair turn {attempt} of {max}. The attachment is not sent again.',
   'aris.create.requestEstimate': 'Up to {count} requests',
+  'aris.create.semanticExhausted':
+    'The provider still returned an invalid draft after {attempts} repair turns; nothing was created.',
   'aris.create.sensitivity': 'Names detected: {names} · Sensitive metadata: {meta}',
   'aris.create.tab.description': 'Description',
+  'aris.create.tab.document': 'PDF / Picture',
   'aris.create.tab.excel': 'Excel',
   'aris.create.tabsAria': 'Create input source',
+  'aris.create.transportFailed':
+    'The provider request failed before any draft came back, so no repair attempt was used: {error}',
   'aris.epc.findingAria': 'Select {id} on the canvas',
   'aris.epc.none': 'No EPC rule violations were found in this source.',
   'aris.epc.notOnCanvas': 'That finding has no element on a renderable model.',
@@ -5204,6 +5272,25 @@ export const ar: Record<keyof typeof en, string> = {
   'aris.ai.failed': 'فشل الطلب: {error}',
   'aris.ai.notJson': 'لم يُرجع المزوّد JSON صارمًا: {error}',
   'aris.ai.rejected': 'رُفضت المسودة ولم يُنشأ أي شيء.',
+  'aris.assistant.ai.answeredBy': 'أجاب {provider} · {model}',
+  'aris.assistant.ai.asking': 'جارٍ السؤال…',
+  'aris.assistant.ai.body':
+    'يرسل سؤالك إلى مزوّد الذكاء الاصطناعي المُهيأ، بالاستناد فقط إلى محتوى العمليات الموضح أدناه. لا يُرسل شيء حتى تراجع الطلب الدقيق وتوافق عليه.',
+  'aris.assistant.ai.cancel': 'إلغاء',
+  'aris.assistant.ai.cancelled': 'تم إلغاء طلب الذكاء الاصطناعي.',
+  'aris.assistant.ai.consent': 'راجعتُ الطلب الدقيق أعلاه وأوافق على إرساله',
+  'aris.assistant.ai.contextCount': 'تطابقت {count} عملية ذات صلة وستُضمّن',
+  'aris.assistant.ai.contextNone':
+    'لم تُطابق أي عملية هذا السؤال، لذا لن يُرسل أي محتوى من مساحة العمل.',
+  'aris.assistant.ai.fallback':
+    'فشل طلب الذكاء الاصطناعي، لذا يُعرض بدلاً منه الإجابة المحلية أعلاه.',
+  'aris.assistant.ai.heading': 'اسأل الذكاء الاصطناعي (بالاستناد إلى هذه العمليات)',
+  'aris.assistant.ai.includeContext': 'تضمين سياق العمليات ذات الصلة',
+  'aris.assistant.ai.preview': 'الطلب الصادر بالضبط',
+  'aris.assistant.ai.previewSystem': 'تعليمات النظام',
+  'aris.assistant.ai.previewUser': 'رسالة المستخدم',
+  'aris.assistant.ai.redactNames': 'إخفاء الأسماء في سياق العمليات',
+  'aris.assistant.ai.submit': 'اسأل الذكاء الاصطناعي',
   'aris.assistant.ask.body':
     'تُجاب الأسئلة محليًا من النماذج المفهرَسة. لا يُستخدم أي مزوّد ولا أي مفتاح API.',
   'aris.assistant.ask.heading': 'اسأل مكتبة العمليات',
@@ -5229,17 +5316,65 @@ export const ar: Record<keyof typeof en, string> = {
   'aris.chat.round': 'الجولة {round} من 5 · {status}',
   'aris.chat.start': 'بدء مقابلة الإكمال',
   'aris.chat.undo': 'تراجع عن آخر تغيير مُطبَّق',
+  'aris.create.attachment.blocked': 'لم يُرسَل شيء: {reason}',
+  'aris.create.attachment.gifUnsupported':
+    'صيغة GIF مقبولة فقط على مسارات المزوّد والنموذج المتحقَّق منها. و{model} على {provider} ليس منها؛ حوِّل الصورة إلى PNG أو JPEG أو WebP.',
+  'aris.create.attachment.imageUnsupported':
+    'لا يستطيع {model} على {provider} قبول الصور. اختر نموذجًا قادرًا على قراءة الصور.',
+  'aris.create.attachment.modelUnverified':
+    '{model} ليس نموذجًا مراجَعًا للمرفقات على {provider}. اختر نموذجًا مراجَعًا قبل إرفاق أي ملف.',
+  'aris.create.attachment.outbound':
+    'يُرفَق مع الطلب الأول فقط: {name} ({size}، {type}). وجولات الإصلاح نصّية فقط.',
+  'aris.create.attachment.pdfUnsupported':
+    'لا يستطيع {model} على {provider} قبول ملف PDF. اختر نموذجًا يقرأ المستندات، أو صِف العملية نصًّا بدلًا من ذلك.',
+  'aris.create.attachment.remove': 'إزالة المرفق',
+  'aris.create.attachment.selected': 'أُرفِق {name} ({size}، {type}).',
+  'aris.create.attachment.tooLarge': 'حجم {name} أكبر من أن يُرفَق لدى {provider}.',
+  'aris.create.attachment.unsupportedType': 'يمكن إرفاق ملفات PDF وPNG وJPEG وWebP وGIF فقط.',
+  'aris.create.attachments.label':
+    'مرفق اختياري — يُقرأ ملف DOCX على هذا الجهاز، ويُرسَل ملف PDF إلى المزوّد',
   'aris.create.consent': 'راجعتُ الطلب أعلاه وأوافق على إرساله',
+  'aris.create.document.body':
+    'أرفِق ملف PDF أو صورة لرسم عملية (PNG أو JPEG أو WebP؛ وGIF على المسارات المتحقَّق منها فقط). ولا يُرسَل الملف إلى المزوّد المحدَّد إلا بعد مراجعتك للطلب وموافقتك عليه.',
+  'aris.create.document.choose': 'اختر ملف PDF أو صورة…',
+  'aris.create.document.create': 'إنشاء من المستند',
+  'aris.create.document.hint':
+    'تلميح اختياري — اسم النموذج أو الاتجاه أو الحدود أو الرموز غير الواضحة',
+  'aris.create.document.hintPlaceholder':
+    'مثال: انمذج مسار تجديد التصريح؛ الرسم يُقرأ من اليمين إلى اليسار؛ المربع المتقطّع ملاحظة وليس خطوة.',
+  'aris.create.document.none': 'لم يُرفَق أي مستند بعد.',
+  'aris.create.docx.attached':
+    'أُرفِق {name}: استُخرج {chars} حرفًا على هذا الجهاز. ولا يُرفَع الملف نفسه إطلاقًا.',
+  'aris.create.docx.choose': 'إرفاق ملف DOCX…',
+  'aris.create.docx.failed': 'تعذّرت قراءة ملف DOCX: {error}',
+  'aris.create.docx.notDocx': 'هذا ليس ملف ‎.docx؛ لم يُرفَق شيء.',
+  'aris.create.model': 'النموذج',
   'aris.create.modelType': 'نوع النموذج',
   'aris.create.noKey': 'لا يوجد مفتاح API مخزَّن لهذا المزوّد. افتح الإعدادات لإضافة واحد.',
+  'aris.create.pdf.choose': 'إرفاق ملف PDF…',
+  'aris.create.pdf.onlyPdf':
+    'تقبل تبويبة الوصف مرفق PDF فقط. استخدم تبويبة PDF/الصورة لرسوم العمليات.',
+  'aris.create.placement.cancelled':
+    'أُلغي الطلب قبل الإيداع، فلم يُكتب شيء. وما يزال بالإمكان تنزيل ملف AML المولَّد أدناه.',
+  'aris.create.placement.stale':
+    'تغيّرت مساحة العمل أثناء توليد النموذج، فلم يُكتب فيها شيء. نزِّل ملف AML المولَّد أدناه للاحتفاظ به.',
   'aris.create.preview': 'الطلب الصادر الدقيق',
   'aris.create.provider': 'المزوّد',
+  'aris.create.recovery.discard': 'تجاهل ملف AML المولَّد',
+  'aris.create.recovery.download': 'تنزيل ملف AML المولَّد ({name})',
   'aris.create.redactNames': 'إخفاء الأسماء في سياق مساحة العمل',
+  'aris.create.repairing':
+    'كانت المسوّدة غير صالحة؛ يجري إرسال جولة إصلاح نصّية {attempt} من {max}. ولا يُعاد إرسال المرفق.',
   'aris.create.requestEstimate': 'حتى {count} طلبات',
+  'aris.create.semanticExhausted':
+    'ما زال المزوّد يُعيد مسوّدة غير صالحة بعد {attempts} من جولات الإصلاح؛ لم يُنشأ شيء.',
   'aris.create.sensitivity': 'الأسماء المكتشَفة: {names} · البيانات الوصفية الحساسة: {meta}',
   'aris.create.tab.description': 'الوصف',
+  'aris.create.tab.document': 'PDF/صورة',
   'aris.create.tab.excel': 'Excel',
   'aris.create.tabsAria': 'مصدر إدخال الإنشاء',
+  'aris.create.transportFailed':
+    'فشل طلب المزوّد قبل عودة أي مسوّدة، فلم تُستهلك أي محاولة إصلاح: {error}',
   'aris.epc.findingAria': 'اختيار {id} على لوحة الرسم',
   'aris.epc.none': 'لم تُوجد أي مخالفات لقواعد EPC في هذا المصدر.',
   'aris.epc.notOnCanvas': 'لا تملك هذه النتيجة عنصرًا في نموذج قابل للعرض.',

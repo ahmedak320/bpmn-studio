@@ -1039,7 +1039,7 @@ describe('ArisGenerationPanel — create with AI (plan section 16)', () => {
           : object
       )
     }
-    renderPanel(JSON.stringify(poisoned), created)
+    const { calls } = renderPanel(JSON.stringify(poisoned), created)
 
     fillAndSubmit()
 
@@ -1051,7 +1051,16 @@ describe('ArisGenerationPanel — create with AI (plan section 16)', () => {
     expect(rejections.querySelectorAll('li').length).toBeGreaterThan(0)
     expect(rejections.textContent).toContain('forbidden')
     expect(created.length).toBe(0)
-    expect(screen.getByText('The draft was rejected and nothing was created.')).not.toBeNull()
+    // Section 16.6 step 10: an invalid draft earns up to three semantic repair
+    // turns (first attempt + three repairs = four requests) before the run is
+    // abandoned. A provider that keeps returning the same forbidden content
+    // exhausts them and still creates nothing.
+    expect(calls.length).toBe(4)
+    expect(
+      screen.getByText(
+        'The provider still returned an invalid draft after 3 repair turns; nothing was created.'
+      )
+    ).not.toBeNull()
   })
 })
 

@@ -1,23 +1,40 @@
 /**
- * The deterministic, no-key half of the ARIS process assistant (plan §17.4).
+ * The deterministic, no-key half of the ARIS process assistant (plan §17.4),
+ * plus the §17.5 AI-grounded offer once that deterministic path comes up
+ * empty.
  *
- * Every answer this panel shows is produced with NO provider and NO API key:
- * `routeQuestion` picks one of the eleven §17.4 answerers, each of which returns
- * structured DATA (message key + vars + chips), and `formatAnswer` resolves that
- * data into the active language. The panel never writes prose of its own and
- * never falls back to a guess — an unmatched question renders the lane's own
- * `assistant.none` line, which is the honest answer.
+ * Every §17.4 answer this panel shows is produced with NO provider and NO API
+ * key: `routeQuestion` picks one of the eleven §17.4 answerers, each of which
+ * returns structured DATA (message key + vars + chips), and `formatAnswer`
+ * resolves that data into the active language. The panel never writes prose
+ * of its own and never falls back to a guess — an unmatched question renders
+ * the lane's own `assistant.none` line, which is the honest answer.
  *
  * Chips carry `relPath` + `modelId` + `occurrenceId`, which is exactly what
  * §17.6 requires: activating one selects that element on the canvas.
+ *
+ * §17.5 wiring: `routeQuestion` returning `kind: 'none'` is the documented
+ * signal that no local answerer found a confident match. ONLY THEN — and
+ * only when a provider + API key is already configured — does this panel
+ * mount `ArisAssistantAiSection`. That gate means a user with no key sees
+ * exactly today's behavior: no extra DOM, no extra effect, no network call,
+ * no consent prompt, ever (see `ArisAssistantPanel.aiGate.test.tsx`).
  */
 
-import { useCallback, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 
+import { hasKey } from '../../ai/keys'
+import {
+  getProviderSelection,
+  subscribeProviderSelection,
+  type ProviderSelection
+} from '../../ai/providerSelection'
 import type { ArisAnswerChip } from '../assistant/answer'
 import { formatAnswer, type ArisFormattedAnswer } from '../assistant/formatAnswer'
 import { routeQuestion } from '../assistant/questionRouter'
 import type { ArisProcessDigest } from '../assistant/types'
+import { ArisAssistantAiSection } from './ArisAssistantAiSection'
+import type { ArisAssistantAiTurn } from './arisAssistantAi'
 import { tk } from './shellI18n'
 
 export interface ArisAssistantPanelProps {
@@ -44,17 +61,40 @@ export function ArisAssistantPanel({
   const [question, setQuestion] = useState('')
   const [asked, setAsked] = useState<string | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
+  // §17.5.7: bounded AI-turn history for this drawer session only (never
+  // persisted); read-only synchronous provider/key lookups below decide
+  // whether the AI offer can even be shown — no network involved.
+  const [aiHistory, setAiHistory] = useState<readonly ArisAssistantAiTurn[]>([])
+  const [selection, setSelection] = useState<ProviderSelection | null>(() => getProviderSelection())
+
+  useEffect(() => subscribeProviderSelection(setSelection), [])
+
+  const routed = useMemo(() => {
+    if (asked === null || asked.trim() === '') return null
+    return routeQuestion(digests, asked, lang)
+  }, [asked, digests, lang])
 
   const answer: ArisFormattedAnswer | null = useMemo(() => {
-    if (asked === null || asked.trim() === '') return null
-    return formatAnswer(lang, routeQuestion(digests, asked, lang))
-  }, [asked, digests, lang])
+    if (!routed) return null
+    return formatAnswer(lang, routed)
+  }, [routed, lang])
 
   const ask = useCallback((text: string) => {
     setNotice(null)
     setQuestion(text)
     setAsked(text)
   }, [])
+
+  // §17.5: only offered once the deterministic path is confirmed empty
+  // (`routed.kind === 'none'`) AND a provider + key is already configured —
+  // `hasKey` is a synchronous in-memory read, never a network call.
+  const offerAi =
+    routed !== null &&
+    routed.kind === 'none' &&
+    asked !== null &&
+    asked.trim() !== '' &&
+    selection !== null &&
+    hasKey(selection.providerId)
 
   return (
     <section
@@ -165,6 +205,21 @@ export function ArisAssistantPanel({
             )
           })}
         </div>
+      )}
+
+      {offerAi && selection && asked && (
+        <ArisAssistantAiSection
+          // A fresh question always gets a fresh AI section instance — no
+          // stale busy/consent/result state can leak across questions.
+          key={asked}
+          digests={digests}
+          question={asked}
+          providerId={selection.providerId}
+          modelId={selection.modelId}
+          history={aiHistory}
+          onOpenChip={onOpenChip}
+          onAnswered={(turn) => setAiHistory((prev) => [...prev, turn])}
+        />
       )}
 
       {notice && (
