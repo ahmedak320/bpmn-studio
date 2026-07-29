@@ -127,6 +127,41 @@ describe('supported object types (Section 11.3)', () => {
     expect(new Set(ruleSymbols)).toEqual(new Set(Object.values(ARIS_RULE_SYMBOLS)))
   })
 
+  it('keeps every palette entry id/className stable and labels each entry', () => {
+    harness = bootCanvas()
+    const entries = harness.canvas.palette.getPaletteEntries()
+
+    // The full, stable id -> className map. `data-action` selectors and CSS
+    // hooks are derived from these, so any drift here breaks e2e + styling.
+    const expected: Record<string, string> = {
+      'hand-tool': 'aris-palette-hand-tool',
+      'lasso-tool': 'aris-palette-lasso-tool',
+      'create.free-text': 'aris-palette-free-text',
+      'create.ot_func': 'aris-palette-ot_func',
+      'create.ot_evt': 'aris-palette-ot_evt',
+      'create.rule-and': 'aris-palette-ot_rule',
+      'create.rule-or': 'aris-palette-ot_rule',
+      'create.rule-xor': 'aris-palette-ot_rule',
+      'create.ot_ent_type': 'aris-palette-ot_ent_type',
+      'create.ot_info_carr': 'aris-palette-ot_info_carr',
+      'create.ot_business_rule': 'aris-palette-ot_business_rule',
+      'create.ot_perf': 'aris-palette-ot_perf',
+      'create.ot_appl_sys': 'aris-palette-ot_appl_sys',
+      'create.ot_pers': 'aris-palette-ot_pers',
+      'create.ot_requirement': 'aris-palette-ot_requirement',
+      'create.ot_policy': 'aris-palette-ot_policy',
+      'create.ot_pers_type': 'aris-palette-ot_pers_type'
+    }
+
+    expect(new Set(Object.keys(entries))).toEqual(new Set(Object.keys(expected)))
+    for (const [id, className] of Object.entries(expected)) {
+      expect(entries[id]?.className, `className for ${id}`).toBe(className)
+      // Every entry ships a labeled, single-root affordance.
+      expect(entries[id]?.html, `html for ${id}`).toContain('aris-palette-entry__label')
+      expect(entries[id]?.title, `title for ${id}`).toBeTruthy()
+    }
+  })
+
   it('types EPC control-flow connections from the AnimalWF triples', () => {
     expect(resolveConnectionType('MT_EEPC', 'OT_EVT', 'OT_FUNC')).toEqual({
       connectionType: 'CT_ACTIV_1',

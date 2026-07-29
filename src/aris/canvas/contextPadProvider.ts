@@ -10,6 +10,7 @@ import type Connect from 'diagram-js/lib/features/connect/Connect'
 import type ContextPad from 'diagram-js/lib/features/context-pad/ContextPad'
 import type { Element } from 'diagram-js/lib/model/Types'
 
+import { t } from '../../i18n'
 import type { ArisModeling } from './arisModeling'
 import { arisBusinessObject } from './elements'
 import type { ArisPaletteProvider } from './paletteProvider'
@@ -51,7 +52,7 @@ export class ArisContextPadProvider {
       entries['connect'] = {
         group: 'connect',
         className: 'aris-context-pad-connect',
-        title: 'Connect',
+        title: t('aris.contextPad.connect'),
         action: {
           click: (event, target) => this.connect.start(event as unknown as MouseEvent, target),
           dragstart: (event, target) => this.connect.start(event as unknown as MouseEvent, target)
@@ -60,7 +61,7 @@ export class ArisContextPadProvider {
       entries['append.function'] = {
         group: 'append',
         className: 'aris-context-pad-append-function',
-        title: 'Append function',
+        title: t('aris.contextPad.appendFunction'),
         action: {
           click: (_event, target) => {
             this.modeling.appendShape(
@@ -74,7 +75,7 @@ export class ArisContextPadProvider {
       entries['append.event'] = {
         group: 'append',
         className: 'aris-context-pad-append-event',
-        title: 'Append event',
+        title: t('aris.contextPad.appendEvent'),
         action: {
           click: (_event, target) => {
             this.modeling.appendShape(
@@ -98,7 +99,7 @@ export class ArisContextPadProvider {
       entries['delete'] = {
         group: 'edit',
         className: 'aris-context-pad-delete',
-        title: 'Delete occurrence',
+        title: t('aris.contextPad.delete'),
         action: {
           click: (_event, target) => this.modeling.removeElements([target])
         }

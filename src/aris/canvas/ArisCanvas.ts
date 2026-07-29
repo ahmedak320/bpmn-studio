@@ -43,6 +43,7 @@ import {
   type DiagramModuleDeclaration
 } from './modules'
 import { createEmptyArisCanvasDocument } from './emptyDocument'
+import { ARIS_CONTENT_LOCALE_IDS, type ArisContentLanguage } from './localization'
 import { isSupportedModelType } from './vocabulary'
 
 export interface ArisCanvasOptions {
@@ -177,6 +178,18 @@ export class ArisCanvas {
 
   get activeModelType(): ArisSupportedModelType | string {
     return this.document.models.get(this.activeModelId)?.type ?? 'MT_EEPC'
+  }
+
+  /** Switch the language every caption renders in, without touching the undo stack. */
+  setContentLanguage(language: ArisContentLanguage): void {
+    this.sync.setDisplayLocale(ARIS_CONTENT_LOCALE_IDS[language])
+    this.bridge.refresh('content-language')
+  }
+
+  get contentLanguage(): ArisContentLanguage {
+    const localeId =
+      this.sync.modelId === null ? ARIS_CONTENT_LOCALE_IDS.en : this.sync.displayLocaleId
+    return localeId === ARIS_CONTENT_LOCALE_IDS.ar ? 'ar' : 'en'
   }
 
   /** Every ARIS command recorded so far, oldest first (Section 11.6 export). */

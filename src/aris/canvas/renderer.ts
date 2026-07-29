@@ -235,6 +235,14 @@ function drawPrimitive(
   }
 }
 
+function isArabicText(text: string): boolean {
+  return /\p{Script=Arabic}/u.test(text)
+}
+
+function rtlTextAttrs(text: string): Readonly<Record<string, string>> {
+  return isArabicText(text) ? { direction: 'rtl', 'unicode-bidi': 'plaintext' } : {}
+}
+
 function drawCaption(text: string, width: number, height: number): SVGElement {
   const node = svgElement('text', {
     x: round(width / 2),
@@ -243,7 +251,8 @@ function drawCaption(text: string, width: number, height: number): SVGElement {
     'dominant-baseline': 'middle',
     'font-size': CAPTION_FONT_SIZE,
     fill: CAPTION_FILL,
-    'data-aris-caption': 'true'
+    'data-aris-caption': 'true',
+    ...rtlTextAttrs(text)
   })
   node.textContent = text
   return node
@@ -297,7 +306,8 @@ function drawLabelText(
     ...(font?.fontFamily ? { 'font-family': font.fontFamily } : {}),
     ...(font?.fontWeight ? { 'font-weight': font.fontWeight } : {}),
     fill: font?.textColor ?? CAPTION_FILL,
-    'data-aris-caption': 'true'
+    'data-aris-caption': 'true',
+    ...rtlTextAttrs(text)
   })
   node.textContent = text
   return node

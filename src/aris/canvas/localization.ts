@@ -29,6 +29,11 @@ import { localeLang } from '../../library/amlParse'
 import type { ArisLocalizedValue } from '../model/types'
 import { DEFAULT_LOCALE_ID } from './emptyDocument'
 
+export type ArisContentLanguage = 'en' | 'ar'
+export const ARIS_CONTENT_LOCALE_IDS: Readonly<Record<ArisContentLanguage, string>> = Object.freeze(
+  { en: DEFAULT_LOCALE_ID /* 'en-US' */, ar: 'ar-AE' }
+)
+
 export function readLocalized(
   value: ArisLocalizedValue | null | undefined,
   localeId = DEFAULT_LOCALE_ID

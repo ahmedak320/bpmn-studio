@@ -160,3 +160,33 @@
   align-items: center;
   gap: 8px;
 }
+
+/* --- palette: labeled, iconed affordances ------------------------------- */
+
+.orbitpm-aris-canvas .djs-palette {
+  background: var(--orbitpm-panel-bg, var(--orbitpm-bg));
+  border: 1px solid var(--orbitpm-border);
+  border-radius: 10px;
+}
+.orbitpm-aris-canvas .djs-palette .entry {
+  width: 46px;
+  height: 46px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+}
+.orbitpm-aris-canvas .djs-palette .entry svg {
+  width: 20px;
+  height: 20px;
+  display: block;
+}
+.orbitpm-aris-canvas .aris-palette-entry__label {
+  font-size: 8.5px;
+  line-height: 1.1;
+  max-width: 44px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}

@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
 import { ArisAssistantDrawer } from './ArisAssistantDrawer'
-import { ArisGenerationPanel } from './ArisGenerationPanel'
 import { ICON_DATA_URI } from './branding/icon'
 import { ProcessTabList, processTabId, processTabPanelId } from './common/ProcessTabList'
 import { PaneResizer, usePaneWidth } from './common/PaneResizer'
@@ -32,8 +31,8 @@ import { SingleFileWorkspaceAdapter } from './workspace/adapters/singleFile'
 import { classifyImportBoundarySource } from './workspace/importDrop'
 import { createArisXmlSourcePackage, type ArisXmlSourcePackage } from './aris/source/sourcePackage'
 import {
+  ArisExplorerPane,
   ArisImportReviewDialog,
-  ArisModelExplorer,
   ArisStudioTab,
   AssistantIndexCache,
   buildArisAssistantDigests,
@@ -874,149 +873,35 @@ export default function ArisApp(): JSX.Element {
             inlineSize={sidebarWidth ?? 'clamp(240px, 24vw, 320px)'}
             keepMounted
           >
-            <div className="orbitpm-workspace-explorer__content">
-              <div
-                style={{ flex: '1 1 auto', minHeight: 0, overflowY: 'auto', padding: '0.5rem 0' }}
-              >
-                <div
-                  style={{
-                    display: 'flex',
-                    gap: 6,
-                    padding: '0 0.6rem 0.5rem',
-                    marginBottom: 6,
-                    borderBottom: '1px solid var(--orbitpm-border)',
-                    flexWrap: 'wrap'
-                  }}
-                >
-                  <button
-                    type="button"
-                    className="orbitpm-lite-chrome-btn"
-                    onClick={() => importInputRef.current?.click()}
-                  >
-                    {t('app.import')}
-                  </button>
-                  <button
-                    type="button"
-                    className="orbitpm-lite-chrome-btn"
-                    onClick={() => openFileInputRef.current?.click()}
-                  >
-                    {t('aris.header.openFile')}
-                  </button>
-                  {directoryAvailable && (
-                    <button
-                      type="button"
-                      className="orbitpm-lite-chrome-btn"
-                      onClick={() => void handleOpenDifferent()}
-                    >
-                      {t('app.changeFolder')}
-                    </button>
-                  )}
-                </div>
-
-                {activeTab?.studio && (
-                  <ArisModelExplorer
-                    sourceTitle={activeTab.title}
-                    models={activeTab.studio.models}
-                    activeModelId={activeModelIdForTab(activeTab)}
-                    lang={lang}
-                    onSelect={(modelId) => handleSelectModel(activeTab.key, modelId)}
-                  />
-                )}
-
-                {workspaceSources.length === 0 ? (
-                  <div
-                    style={{
-                      padding: '0.8rem',
-                      color: 'var(--orbitpm-muted)',
-                      fontSize: 13,
-                      lineHeight: 1.5
-                    }}
-                  >
-                    {t('aris.explorer.empty')}
-                  </div>
-                ) : (
-                  <ul style={{ listStyle: 'none', margin: 0, padding: '0 0.4rem 0.8rem' }}>
-                    {workspaceSources.map((entry) => {
-                      const unsupported = /\.bpmn$/iu.test(entry.name)
-                      const isActive = tabs.some((tab) => tab.relPath === entry.path)
-                      return (
-                        <li key={entry.path}>
-                          <button
-                            type="button"
-                            className="orbitpm-lite-chrome-btn"
-                            style={{
-                              width: '100%',
-                              justifyContent: 'space-between',
-                              textAlign: 'start',
-                              marginBottom: 6,
-                              opacity: unsupported ? 0.7 : 1,
-                              borderColor: isActive
-                                ? 'var(--orbitpm-primary-bg)'
-                                : 'var(--orbitpm-border)'
-                            }}
-                            onClick={() =>
-                              unsupported
-                                ? pushToast(t('toast.import.arisOnly'))
-                                : void handleOpenWorkspaceFile(entry.path)
-                            }
-                          >
-                            <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                              {entry.path}
-                            </span>
-                            <span style={{ fontSize: 11, color: 'var(--orbitpm-muted)' }}>
-                              {unsupported
-                                ? t('aris.explorer.unsupportedBpmn')
-                                : sourceKindLabel(inferSourceKind(entry.name))}
-                            </span>
-                          </button>
-                        </li>
-                      )
-                    })}
-                  </ul>
-                )}
-              </div>
-
-              <button
-                type="button"
-                onClick={() => setAssistantOpen(true)}
-                aria-expanded={assistantOpen}
-                title={t('ai.header')}
-                style={{
-                  width: '100%',
-                  padding: '0.5rem 0.8rem',
-                  borderTop: '1px solid var(--orbitpm-border)',
-                  display: 'flex',
-                  justifyContent: 'space-between',
-                  alignItems: 'center',
-                  background: 'transparent',
-                  color: 'inherit',
-                  font: 'inherit',
-                  cursor: 'pointer'
-                }}
-              >
-                <strong>{t('ai.header')}</strong>
-                <span aria-hidden>{assistantOpen ? '▾' : dir === 'rtl' ? '◂' : '▸'}</span>
-              </button>
-              <div style={{ flex: '0 1 auto', maxHeight: '55%', overflowY: 'auto' }}>
-                <ArisGenerationPanel
-                  embedded
-                  // §16.7: the destination a generated model would land in.
-                  // If this changes while a request is in flight, the panel
-                  // refuses the stale placement and offers the AML instead.
-                  workspaceId={workspaceAdapter?.id ?? null}
-                  // §16.2 "optional relevant workspace context": the Description
-                  // tab ranks these digests. Without them the control has
-                  // nothing to offer and the feature is inert.
-                  digests={assistantDigests}
-                  onCreateModel={handleCreateModel}
-                  onDownloadFile={(fileName, bytes, mimeType) =>
-                    downloadBytes(fileName, bytes, mimeType)
-                  }
-                  onOpenAssistant={() => setAssistantOpen(true)}
-                  onOpenSettings={() => setSettingsOpen(true)}
-                />
-              </div>
-            </div>
+            <ArisExplorerPane
+              lang={lang}
+              dir={dir}
+              directoryAvailable={directoryAvailable}
+              onImportClick={() => importInputRef.current?.click()}
+              onOpenFileClick={() => openFileInputRef.current?.click()}
+              onChangeFolder={() => void handleOpenDifferent()}
+              activeTab={
+                activeTab?.studio
+                  ? { key: activeTab.key, title: activeTab.title, models: activeTab.studio.models }
+                  : null
+              }
+              activeModelId={activeTab ? activeModelIdForTab(activeTab) : null}
+              onSelectModel={handleSelectModel}
+              workspaceSources={workspaceSources}
+              openPaths={
+                new Set(
+                  tabs.map((tab) => tab.relPath).filter((path): path is string => path !== null)
+                )
+              }
+              onOpenWorkspaceFile={handleOpenWorkspaceFile}
+              onRejectUnsupported={() => pushToast(t('toast.import.arisOnly'))}
+              onOpenAssistant={() => setAssistantOpen(true)}
+              workspaceId={workspaceAdapter?.id ?? null}
+              digests={assistantDigests}
+              onCreateModel={handleCreateModel}
+              onDownloadFile={downloadBytes}
+              onOpenSettings={() => setSettingsOpen(true)}
+            />
           </ResponsiveDrawer>
 
           {explorerOpen && responsiveMode === 'docked' && (

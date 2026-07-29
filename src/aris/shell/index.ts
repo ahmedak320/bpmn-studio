@@ -7,6 +7,11 @@
  */
 
 export { ArisAccountingRail, type ArisAccountingRailProps } from './ArisAccountingRail'
+export {
+  ArisExplorerPane,
+  type ArisExplorerActiveTab,
+  type ArisExplorerPaneProps
+} from './ArisExplorerPane'
 export { ArisAssistantPanel, type ArisAssistantPanelProps } from './ArisAssistantPanel'
 export { ArisChatImproveRail, type ArisChatImproveRailProps } from './ArisChatImproveRail'
 export { ArisEpcRail, type ArisEpcRailProps } from './ArisEpcRail'

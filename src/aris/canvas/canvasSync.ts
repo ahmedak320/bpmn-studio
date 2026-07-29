@@ -27,6 +27,7 @@ import type {
   ArisStyleCatalog
 } from '../model/types'
 import { ArisDocumentStore } from './documentStore'
+import { DEFAULT_LOCALE_ID } from './emptyDocument'
 import {
   arisBusinessObject,
   connectionLabelElementId,
@@ -225,6 +226,7 @@ export class ArisCanvasSync {
   static $inject = ['canvas', 'elementFactory', 'elementRegistry', 'eventBus', 'arisDocumentStore']
 
   private renderedModelId: string | null = null
+  private currentDisplayLocaleId = DEFAULT_LOCALE_ID
 
   constructor(
     private readonly canvas: Canvas,
@@ -234,9 +236,19 @@ export class ArisCanvasSync {
     private readonly store: ArisDocumentStore
   ) {}
 
+  /** Set the locale used for all captions on the next sync. */
+  setDisplayLocale(localeId: string): void {
+    this.currentDisplayLocaleId = localeId
+  }
+
   /** The model id currently projected onto the canvas. */
   get modelId(): string | null {
     return this.renderedModelId
+  }
+
+  /** The locale currently used for caption rendering. */
+  get displayLocaleId(): string {
+    return this.currentDisplayLocaleId
   }
 
   /**
@@ -314,7 +326,7 @@ export class ArisCanvasSync {
       kind: 'model',
       modelId: model.id,
       modelType: model.type,
-      name: readLocalized(model.names)
+      name: readLocalized(model.names, this.displayLocaleId)
     })
   }
 
@@ -343,7 +355,7 @@ export class ArisCanvasSync {
         modelId: model.id,
         laneId: lane.id,
         orientation: laneOrientation(lane.orientation),
-        name: readLocalized(lane.names)
+        name: readLocalized(lane.names, this.displayLocaleId)
       })
       this.upsertShape(id, bounds, businessObject, dirty, { isFrame: true })
     })
@@ -362,7 +374,7 @@ export class ArisCanvasSync {
         definitionId: occurrence.definitionId,
         objectType: definition?.type ?? 'OT_UNKNOWN',
         symbolNum: occurrence.symbol,
-        name: readLocalized(definition?.names),
+        name: readLocalized(definition?.names, this.displayLocaleId),
         // §12.2: the occurrence's own pen/brush overrides the symbol's authored
         // appearance. The renderer cannot reach the working document, so a
         // style that is not carried here is a style that never draws.
@@ -385,7 +397,7 @@ export class ArisCanvasSync {
         kind: 'freeText',
         modelId: model.id,
         freeTextId: text.id,
-        text: readLocalized(text.text)
+        text: readLocalized(text.text, this.displayLocaleId)
       })
       // Real exports write `<FFTextOcc>` with a `Position` and no `Size` at
       // all — ARIS sizes the note to its text. Rendering that literally draws
@@ -412,7 +424,7 @@ export class ArisCanvasSync {
         modelId: model.id,
         ownerOccurrenceId: occurrence.id,
         attributeType: AT_NAME,
-        text: readLocalized(definition?.names)
+        text: readLocalized(definition?.names, this.displayLocaleId)
       })
       const bounds = externalNameRect(placement, occurrence.bounds)
       const owner = this.elementRegistry.get(occurrence.id) as Shape | undefined
@@ -439,7 +451,7 @@ export class ArisCanvasSync {
         connectionType: definition?.type ?? 'CT_UNKNOWN',
         sourceOccurrenceId: connection.sourceOccurrenceId,
         targetOccurrenceId: connection.targetOccurrenceId,
-        name: readLocalized(definition?.names)
+        name: readLocalized(definition?.names, this.displayLocaleId)
       })
       const waypoints = connectionWaypoints(source.bounds, target.bounds, connection.route, {
         selfLoop: source.id === target.id
@@ -516,7 +528,7 @@ export class ArisCanvasSync {
           rotation: placement.rotation,
           fontStyleSheetId: placement.fontStyleSheetId,
           font: resolveLabelFont(catalog, placement.fontStyleSheetId),
-          text: connectionLabelText(placement, definition)
+          text: connectionLabelText(placement, definition, this.displayLocaleId)
         })
         const bounds = connectionLabelRect(placement, midpoint, {
           symbolFlag: businessObject.symbolFlag,
@@ -779,7 +791,8 @@ export function attributeSymbolFlag(value: string | null | undefined): ArisAttri
  */
 export function connectionLabelText(
   placement: Pick<ArisAttributeOccurrence, 'attributeType'>,
-  definition: ArisConnectionDefinition | undefined
+  definition: ArisConnectionDefinition | undefined,
+  localeId = DEFAULT_LOCALE_ID
 ): string {
   if (!definition) return ''
   const attribute: ArisAttribute | undefined = definition.attributes.find(
@@ -794,11 +807,12 @@ export function connectionLabelText(
           )
         ),
         fallback: attribute.values[0]?.text ?? null
-      })
+      }),
+      localeId
     )
     if (localized.length > 0) return localized
   }
-  return placement.attributeType === AT_NAME ? readLocalized(definition.names) : ''
+  return placement.attributeType === AT_NAME ? readLocalized(definition.names, localeId) : ''
 }
 
 /** The font a placement's `FontSS.IdRef` names, as far as the working style catalog knows it. */
