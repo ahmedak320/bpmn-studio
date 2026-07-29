@@ -1,4 +1,3 @@
-import { createHash } from 'node:crypto'
 import { readdirSync, readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { findActionPinFailures } from './workflow-action-pins.mjs'
@@ -11,14 +10,11 @@ const workflowFiles = {
   candidate: 'release-candidate.yml',
   release: 'release.yml',
   pages: 'pages.yml',
-  rollback: 'pages-rollback.yml',
-  finalize: 'release-finalize.yml',
-  cleanup: 'historical-release-cleanup.yml'
+  rollback: 'pages-rollback.yml'
 }
 const workflows = Object.fromEntries(
   Object.entries(workflowFiles).map(([name, file]) => [name, read(`.github/workflows/${file}`)])
 )
-const archiveRecord = read('docs/archive/0.4.4.md')
 const failures = []
 
 function requireText(source, pattern, message) {
@@ -125,8 +121,6 @@ requireJobs('pages', [
   'rollback'
 ])
 requireJobs('rollback', ['verify', 'prepare', 'artifact-authority', 'deploy', 'readback'])
-requireJobs('finalize', ['identity', 'publication-authority', 'publish', 'readback'])
-requireJobs('cleanup', ['plan', 'cleanup', 'readback'])
 
 requireText(
   workflows.quality,
@@ -152,8 +146,8 @@ requireText(
 )
 requireText(
   workflows.quality,
-  /finalization-evidence-chain\.test\.mjs[\s\S]*historical-release-cleanup\.test\.mjs[\s\S]*pages-evidence-chain\.test\.mjs[\s\S]*release-evidence-chain\.test\.mjs[\s\S]*release-workflow-critical-invariants\.test\.mjs[\s\S]*verify-finalization-artifact-layout\.test\.mjs[\s\S]*verify-archive-recovery-evidence\.test\.mjs[\s\S]*verify-browser-compatibility-evidence\.test\.mjs[\s\S]*verify-external-release-evidence\.test\.mjs[\s\S]*workflow-action-pins\.test\.mjs/u,
-  'quality must execute finalization, retained-artifact, workflow, archive, browser, external-evidence, and action-pin regressions'
+  /browser-environment-evidence\.test\.mjs[\s\S]*check-no-skips\.test\.mjs[\s\S]*pages-evidence-chain\.test\.mjs[\s\S]*release-evidence-chain\.test\.mjs[\s\S]*release-reporter\.test\.mjs[\s\S]*release-review-gate\.test\.mjs[\s\S]*release-workflow-critical-invariants\.test\.mjs[\s\S]*verify-browser-compatibility-evidence\.test\.mjs[\s\S]*verify-external-release-evidence\.test\.mjs[\s\S]*workflow-action-pins\.test\.mjs/u,
+  'quality must execute browser-environment, skip-integrity, evidence-chain, reporter, review-gate, workflow, browser, external-evidence, and action-pin regressions'
 )
 requireText(
   workflows.candidate,
@@ -283,120 +277,6 @@ requireText(
   'rollback must retain distinct exact automatic and manual policies'
 )
 
-const finalizeJobs = jobBlocks(workflows.finalize)
-const finalAuthority = finalizeJobs.get('publication-authority') ?? ''
-const finalPublish = finalizeJobs.get('publish') ?? ''
-const finalReadback = finalizeJobs.get('readback') ?? ''
-requireText(
-  workflows.finalize,
-  /browser_version_baseline_url:[\s\S]*required: true[\s\S]*browser_version_baseline_sha256:[\s\S]*required: true/u,
-  'finalization must require browser-version baseline URL and SHA-256'
-)
-if (
-  count(workflows.finalize, /verify-browser-compatibility-evidence\.mjs/gu) !== 2 ||
-  count(workflows.finalize, /--version-baseline-url="\$VERSION_BASELINE_URL"/gu) !== 2 ||
-  count(workflows.finalize, /--version-baseline-sha256="\$VERSION_BASELINE_SHA256"/gu) !== 2
-) {
-  failures.push('finalization must perform exactly two baseline-bound browser verifications')
-}
-requireText(
-  finalAuthority,
-  /environment:[\s\S]*name: release-finalize-authority-v0\.4\.5[\s\S]*contents: write[^\n]*# drafts require push-level visibility to read[\s\S]*Checkout exact candidate after approval[\s\S]*orbitpm-finalization-publication-authority/u,
-  'post-approval repo-code authority must use the separate zero-secret protected environment'
-)
-requireText(
-  finalPublish,
-  /environment:[\s\S]*name: release-finalize-v0\.4\.5[\s\S]*contents: read[\s\S]*Fetch and bind the exact immutable publication authority[\s\S]*GH_ADMIN_TOKEN:[\s\S]*protection_check[\s\S]*--method PATCH[\s\S]*protection_check[\s\S]*releases\/latest[\s\S]*immutable == true/u,
-  'isolated publisher must bind immutable authority and bracket publication with policy checks'
-)
-requireText(
-  finalPublish,
-  /v0\.4\.5-pages-verified-immutable-stable-publication/u,
-  'finalization publish policy must require the exact pages-verified immutable stable publication approval'
-)
-requireText(
-  finalPublish,
-  /collaborators\?affiliation=all&per_page=100[\s\S]*for status in queued in_progress[\s\S]*actions\/runs\?status=\$status&per_page=100/u,
-  'publisher must enforce sole-writer and concurrent-workflow freeze'
-)
-requireText(
-  finalReadback,
-  /schemaVersion: 2[\s\S]*publicationAuthoritySha256[\s\S]*browserCompatibilityEvidence:[\s\S]*browserVersionBaseline:[\s\S]*sourceSha256/u,
-  'stable readback must retain schema-2 browser and baseline chain identities'
-)
-requireText(
-  finalReadback,
-  /cp[\s\S]*verified-finalization-evidence\/trusted-release-external-evidence-verification\.json[\s\S]*\$chain_dir\/trusted-release-external-evidence-verification\.json[\s\S]*cp[\s\S]*verified-finalization-evidence\/browser-compatibility-evidence-verification\.json[\s\S]*\$chain_dir\/browser-compatibility-evidence-verification\.json[\s\S]*cp[\s\S]*verified-finalization-evidence\/pages\/pages-browser-environment\.json[\s\S]*\$chain_dir\/pages\/pages-browser-environment\.json[\s\S]*cp[\s\S]*verified-finalization-evidence\/pages\/trusted-release-external-evidence-verification\.json[\s\S]*\$chain_dir\/pages\/trusted-release-external-evidence-verification\.json/u,
-  'stable readback must copy the retained release, browser, and Pages evidence files into the immutable finalization artifact'
-)
-requireText(
-  finalReadback,
-  /node scripts\/finalization-evidence-chain\.mjs verify[\s\S]*--chain="\$chain_dir\/finalization-chain\.json"[\s\S]*--publication-authority="\$authority"[\s\S]*--browser-evidence="\$browser_evidence"/u,
-  'stable readback must self-verify the retained finalization chain before uploading immutable evidence'
-)
-requireText(
-  finalReadback,
-  /artifact_root=immutable-stable-publication-artifact[\s\S]*node scripts\/verify-finalization-artifact-layout\.mjs[\s\S]*--root="\$artifact_root"[\s\S]*path:\s*immutable-stable-publication-artifact\//u,
-  'stable readback must stage and verify one exact immutable finalization artifact directory before upload'
-)
-requireText(
-  finalReadback,
-  /releases\/latest[\s\S]*--state=stable[\s\S]*orbitpm-immutable-stable-release-/u,
-  'finalization readback must preserve exact latest immutable stable evidence'
-)
-
-const cleanupJobs = jobBlocks(workflows.cleanup)
-const cleanupPlan = cleanupJobs.get('plan') ?? ''
-const cleanupWriter = cleanupJobs.get('cleanup') ?? ''
-const cleanupReadback = cleanupJobs.get('readback') ?? ''
-requireText(
-  cleanupPlan,
-  /--mode=preflight[\s\S]*484fa611b1bdd4494ef48e2e77ef1d672c1a1a7f769e8ff431a8f911513407d8[\s\S]*orbitpm-historical-cleanup-authority/u,
-  'cleanup plan must bind the exact manifest and preserve immutable authority'
-)
-requireText(
-  cleanupPlan,
-  /node scripts\/verify-finalization-artifact-layout\.mjs[\s\S]*--root=finalization-evidence[\s\S]*test -f "\$browser_evidence"[\s\S]*test -f "\$release_evidence"[\s\S]*test -f "\$pages_release_evidence"[\s\S]*node scripts\/finalization-evidence-chain\.mjs verify/u,
-  'cleanup plan must verify the retained finalization artifact layout and finalization chain against exact external and browser evidence files'
-)
-requireText(
-  cleanupWriter,
-  /contents: write[\s\S]*historical-release-cleanup-v0\.4\.5[\s\S]*Fetch and bind the exact immutable cleanup authority[\s\S]*workflow_run\.head_sha == \$sha/u,
-  'cleanup writer must bind only the current-run immutable plan after protected approval'
-)
-requireText(
-  cleanupWriter,
-  /asset-immediately-before-delete\.json[\s\S]*\.name asset-immediately-before-delete\.json[\s\S]*\.size asset-immediately-before-delete\.json[\s\S]*\.digest asset-immediately-before-delete\.json[\s\S]*--method DELETE/u,
-  'cleanup writer must freshly bind each asset ID, name, size, and digest before deletion'
-)
-requireText(
-  cleanupWriter,
-  /originalBodySha256[\s\S]*--method PATCH[\s\S]*release_after[\s\S]*recovered-body\.txt/u,
-  'cleanup writer must patch and immediately read back only manifest-derived archived metadata'
-)
-requireText(
-  cleanupReadback,
-  /node scripts\/finalization-evidence-chain\.mjs verify[\s\S]*--release-tag=v0\.4\.5[\s\S]*--publication-authority="\$publication_authority"/u,
-  'cleanup readback must reverify the retained finalization chain from retained cleanup authority files'
-)
-requireText(
-  cleanupReadback,
-  /--mode=verify[\s\S]*remainingDeletionCount[\s\S]*"0"[\s\S]*retainedAssetCount[\s\S]*"7"/u,
-  'cleanup readback must prove 28 deletions and seven retained assets'
-)
-for (const source of [cleanupWriter, cleanupReadback]) {
-  requireText(
-    source,
-    /bodyBase64[\s\S]*base64 --decode[\s\S]*sizeBytes[\s\S]*sha256[\s\S]*officialSources \| length[\s\S]*-eq 4[\s\S]*chrome-stable[\s\S]*edge-stable[\s\S]*firefox-stable[\s\S]*safari-stable/u,
-    'cleanup authority and readback must hash retained matrix, baseline, Pages, and four vendor-source bytes'
-  )
-}
-rejectText(
-  workflows.cleanup,
-  /verify-browser-compatibility-evidence\.mjs/u,
-  'cleanup must inherit retained browser evidence without vendor refetch'
-)
-
 const privilegedExecution = [
   /uses:\s*actions\/checkout@/u,
   /uses:\s*actions\/setup-node@/u,
@@ -410,9 +290,7 @@ for (const [workflowName, source] of Object.entries(workflows)) {
       /runs-on:/u.test(block) &&
       (/\n\s{6}(?:contents|pages|id-token): write\s*$/mu.test(block) ||
         block.includes('GH_ADMIN_TOKEN:') ||
-        /name:\s*(?:release-v0\.4\.5|release-finalize-v0\.4\.5|historical-release-cleanup-v0\.4\.5|github-pages(?:-rollback-[^\s]+)?)/u.test(
-          block
-        ))
+        /name:\s*(?:release-v0\.4\.5|github-pages(?:-rollback-[^\s]+)?)/u.test(block))
     if (!privilegedRunner) continue
     for (const pattern of privilegedExecution) {
       if (pattern.test(block)) {
@@ -447,20 +325,16 @@ for (const [workflowName, source] of Object.entries(workflows)) {
     }
   }
 }
-if (count(allWorkflowText, /ORBITPM_RELEASE_ADMIN_TOKEN/gu) !== 2) {
-  failures.push(
-    'only protected tag creation and isolated stable publication may receive the admin PAT'
-  )
+if (count(allWorkflowText, /ORBITPM_RELEASE_ADMIN_TOKEN/gu) !== 1) {
+  failures.push('only protected tag creation may receive the admin PAT')
 }
-if (count(allWorkflowText, /^\s+contents: write\s*$/gmu) !== 2) {
-  failures.push('only isolated draft creation and historical cleanup may request contents: write')
+if (count(allWorkflowText, /^\s+contents: write\s*$/gmu) !== 1) {
+  failures.push('only isolated draft creation may request contents: write')
 }
 
 const canonicalStepExpectations = {
   pages: 1,
-  rollback: 1,
-  finalize: 4,
-  cleanup: 4
+  rollback: 1
 }
 for (const [workflowName, expectedCount] of Object.entries(canonicalStepExpectations)) {
   const canonicalSteps = stepBlocks(workflows[workflowName]).filter(
@@ -488,14 +362,12 @@ for (const [workflowName, expectedCount] of Object.entries(canonicalStepExpectat
 
 for (const [workflowName, source] of [
   ['Pages', workflows.pages],
-  ['rollback', workflows.rollback],
-  ['finalization', workflows.finalize],
-  ['historical cleanup', workflows.cleanup]
+  ['rollback', workflows.rollback]
 ]) {
   requireText(
     source,
     /group:\s*orbitpm-pages-deployment/u,
-    `${workflowName} must share the serialized Pages deployment/finalization lock`
+    `${workflowName} must share the serialized Pages deployment lock`
   )
 }
 requireText(
@@ -504,68 +376,10 @@ requireText(
   'Pages may use the deployment output only to assert the canonical URL'
 )
 rejectText(
-  [workflows.pages, workflows.finalize, workflows.cleanup].join('\n'),
+  workflows.pages,
   /\n\s+pages_url:/u,
   'release lifecycle must not accept a caller-controlled Pages URL'
 )
-
-const manifest = JSON.parse(read('scripts/historical-release-cleanup-manifest.json'))
-const manifestBytes = read('scripts/historical-release-cleanup-manifest.json')
-const manifestSha256 = createHash('sha256').update(manifestBytes).digest('hex')
-const assets = manifest.releases.flatMap((release) =>
-  release.assets.map((asset) => ({ ...asset, tag: release.tag }))
-)
-const deletions = assets.filter(({ action }) => action === 'delete')
-const retained = assets.filter(({ action }) => action === 'retain')
-if (
-  manifestSha256 !== '484fa611b1bdd4494ef48e2e77ef1d672c1a1a7f769e8ff431a8f911513407d8' ||
-  manifest.schemaVersion !== 1 ||
-  manifest.stableReleaseTag !== 'v0.4.5' ||
-  manifest.releases.length !== 9 ||
-  manifest.expectedDeletionCount !== 28 ||
-  deletions.length !== 28 ||
-  retained.length !== 7
-) {
-  failures.push(
-    'historical manifest must remain the exact nine-release, 28-delete, seven-retain authority'
-  )
-}
-if (
-  new Set(manifest.releases.map(({ releaseId }) => releaseId)).size !== manifest.releases.length ||
-  new Set(manifest.releases.map(({ tag }) => tag)).size !== manifest.releases.length ||
-  new Set(assets.map(({ id }) => id)).size !== assets.length
-) {
-  failures.push('historical manifest release, tag, and asset IDs must be globally unique')
-}
-if (
-  deletions.some(({ name }) => {
-    const normalized = name.toLowerCase()
-    return (
-      normalized !== 'latest.yml' &&
-      !normalized.endsWith('.exe') &&
-      !normalized.endsWith('.exe.blockmap')
-    )
-  }) ||
-  retained.some(({ name }) => name !== 'OrbitPM-Process-Studio-Lite.html')
-) {
-  failures.push('historical manifest delete/retain actions exceed the executable/updater policy')
-}
-if (!archiveRecord.includes(manifestSha256)) {
-  failures.push('archive record must retain the exact cleanup-manifest SHA-256')
-}
-for (const handoff of [
-  'ORBITPM_RELEASE_TAG_RULESET_ID',
-  'ORBITPM_RELEASE_TAG_BYPASS_ACTOR_ID',
-  'RepositoryRole',
-  'release-finalize-v0.4.5',
-  'historical-release-cleanup-v0.4.5',
-  'github-pages-rollback-auto-v0.4.5',
-  'github-pages-rollback-manual-v0.4.5',
-  'ORBITPM_RELEASE_ADMIN_TOKEN',
-  'v0.4.5-sole-admin-no-manual-release-writes-during-finalization'
-]) {
-  if (!archiveRecord.includes(handoff)) failures.push(`archive handoff must record ${handoff}`)
-}
 
 if (failures.length) {
   console.error('Release workflow static checks failed:')
@@ -574,5 +388,5 @@ if (failures.length) {
 }
 
 console.log(
-  'Release workflow static checks passed (credential isolation, exact Pages artifacts, no-redirect readback, immutable finalization, retained browser baseline, and manifest-bound cleanup).'
+  'Release workflow static checks passed (credential isolation, exact Pages artifacts, no-redirect readback, and pinned action authority).'
 )

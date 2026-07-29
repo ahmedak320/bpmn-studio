@@ -1,5 +1,5 @@
 import { spawn, spawnSync } from 'node:child_process'
-import { existsSync, readFileSync, readdirSync } from 'node:fs'
+import { existsSync, readdirSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { resolve } from 'node:path'
 
@@ -7,12 +7,10 @@ const root = resolve(new URL('..', import.meta.url).pathname)
 const require = createRequire(import.meta.url)
 const workflowsDirectory = resolve(root, '.github/workflows')
 const expectedWorkflows = [
-  'historical-release-cleanup.yml',
   'pages-rollback.yml',
   'pages.yml',
   'quality.yml',
   'release-candidate.yml',
-  'release-finalize.yml',
   'release.yml'
 ]
 const actualWorkflows = readdirSync(workflowsDirectory)
@@ -46,48 +44,11 @@ if (shellcheckLookup.status !== 0 || !shellcheckExecutable || !existsSync(shellc
   throw new Error('ShellCheck executable is missing.')
 }
 
-function workflowShellScripts(path) {
-  const lines = readFileSync(path, 'utf8').split(/\r?\n/u)
-  const scripts = []
-  for (let index = 0; index < lines.length; index += 1) {
-    const match = /^(\s*)run:\s*(\||>-?)\s*$/u.exec(lines[index])
-    if (!match) continue
-    const runIndent = match[1].length
-    const body = []
-    let cursor = index + 1
-    while (cursor < lines.length) {
-      const line = lines[cursor]
-      const indentation = /^\s*/u.exec(line)[0].length
-      if (line.trim() && indentation <= runIndent) break
-      body.push(line)
-      cursor += 1
-    }
-    const bodyIndent = Math.min(
-      ...body.filter((line) => line.trim()).map((line) => /^\s*/u.exec(line)[0].length)
-    )
-    const normalized = body.map((line) => line.slice(bodyIndent))
-    const script = (match[2].startsWith('>') ? normalized.join(' ') : normalized.join('\n'))
-      .replace(/\$\{\{[\s\S]*?\}\}/gu, '__GITHUB_ACTION_EXPRESSION__')
-      .trim()
-    const name =
-      lines
-        .slice(0, index)
-        .reverse()
-        .find((line) => /^\s+- name:/u.test(line))
-        ?.replace(/^\s+- name:\s*/u, '') ?? `run block at line ${index + 1}`
-    scripts.push({ name, script })
-    index = cursor - 1
-  }
-  return scripts
-}
-
 let failed = false
 for (const workflow of expectedWorkflows) {
   const workflowPath = resolve(workflowsDirectory, workflow)
-  const separatelyCheckShell = workflow === 'historical-release-cleanup.yml'
-  const shellcheckCommand = separatelyCheckShell ? '' : shellcheckWrapper
   const result = await new Promise((resolveResult) => {
-    const child = spawn(actionlint, [`-shellcheck=${shellcheckCommand}`, workflowPath], {
+    const child = spawn(actionlint, [`-shellcheck=${shellcheckWrapper}`, workflowPath], {
       cwd: root,
       stdio: 'inherit'
     })
@@ -119,33 +80,6 @@ for (const workflow of expectedWorkflows) {
     console.error(`actionlint failed for ${workflow} with exit code ${result.status}`)
     failed = true
     continue
-  }
-  if (separatelyCheckShell) {
-    const scripts = workflowShellScripts(workflowPath)
-    if (scripts.length === 0) {
-      console.error(`${workflow} did not expose any shell blocks for independent ShellCheck`)
-      failed = true
-      continue
-    }
-    for (const { name, script } of scripts) {
-      const shellcheck = spawnSync(
-        shellcheckExecutable,
-        ['--shell=bash', '--severity=warning', '--format=gcc', '-'],
-        {
-          cwd: root,
-          encoding: 'utf8',
-          input: `${script}\n`,
-          maxBuffer: 4 * 1024 * 1024,
-          timeout: 30_000
-        }
-      )
-      if (shellcheck.error || shellcheck.status !== 0) {
-        console.error(
-          `${workflow} ShellCheck failed for ${name}: ${shellcheck.error?.message ?? shellcheck.stderr ?? shellcheck.stdout}`
-        )
-        failed = true
-      }
-    }
   }
 }
 
