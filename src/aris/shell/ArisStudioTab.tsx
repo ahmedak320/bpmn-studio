@@ -224,7 +224,10 @@ export function ArisStudioTab({
         edges: original.connectionOccurrences.map((connection) => ({
           id: connection.id,
           points: connection.route
-        }))
+        })),
+        // §12.4: a reset restores *every* imported coordinate, and Clean Layout
+        // moves free-text notes too, so the notes come back with the rest.
+        annotations: original.freeText.map((text) => ({ id: text.id, rect: text.bounds }))
       }),
       'source',
       tk('aris.layout.resetApplied', 'Reset to the imported source layout.')

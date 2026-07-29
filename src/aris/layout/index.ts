@@ -39,6 +39,8 @@
 
 export type {
   ArisLayoutAcceptance,
+  ArisLayoutAnnotationInput,
+  ArisLayoutAnnotationPlacement,
   ArisLayoutEdgeClass,
   ArisLayoutEdgeInput,
   ArisLayoutEdgeKind,
@@ -68,6 +70,8 @@ export type {
 } from './types'
 
 export { cleanLayout, measureLayoutResult } from './cleanLayout'
+export { placeAnnotations } from './annotations'
+export type { ArisLayoutAnnotationInputSet } from './annotations'
 export { cleanLayoutRevision, resetToSourceLayout, sourceLayoutRevision } from './modes'
 export {
   ARIS_LAYOUT_REJECTION_CODES,

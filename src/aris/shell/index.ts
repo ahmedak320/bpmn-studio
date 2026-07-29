@@ -74,6 +74,46 @@ export {
 } from './arisExcelCreate'
 export { arisIdForLogicalId, buildAmlFromArisAiDraft, type ArisAiAmlResult } from './arisAiCreate'
 export {
+  checkArisAiAttachment,
+  classifyArisAiAttachmentFile,
+  encodeArisAiAttachment,
+  extractArisAiDocxText,
+  isArisAiDocxFile,
+  ARIS_AI_PDF_MEDIA_TYPE,
+  type ArisAiAttachmentAccepted,
+  type ArisAiAttachmentCheck,
+  type ArisAiAttachmentFileInfo,
+  type ArisAiAttachmentKind,
+  type ArisAiAttachmentRejected,
+  type ArisAiAttachmentRejectionCode,
+  type ArisAiDocxExtraction,
+  type ArisAiDocxParser
+} from './arisAiAttachments'
+export {
+  isArisAiCancellation,
+  isArisAiTransportFailure,
+  parseArisAiResponseJson,
+  runArisAiGeneration,
+  MAX_ARIS_AI_REPAIR_ECHO_CHARS,
+  MAX_ARIS_AI_RESPONSE_CHARS,
+  type ArisAiGenerationFailure,
+  type ArisAiGenerationInput,
+  type ArisAiGenerationMessage,
+  type ArisAiGenerationRequest,
+  type ArisAiGenerationResult,
+  type ArisAiGenerationSuccess,
+  type ArisAiSend
+} from './arisAiGeneration'
+export {
+  arisAiRecoveryArtifact,
+  arisAiRecoveryFileName,
+  resolveArisAiPlacement,
+  type ArisAiPlacementDecision,
+  type ArisAiPlacementDiscardReason,
+  type ArisAiPlacementInput,
+  type ArisAiRecoveryArtifact
+} from './arisAiPlacement'
+export {
   arisText,
   buildArisDetailsDocument,
   buildArisStudioDocument,

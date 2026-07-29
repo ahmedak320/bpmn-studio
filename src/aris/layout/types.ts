@@ -79,7 +79,41 @@ export interface ArisLayoutNodeInput {
    */
   readonly sourcePosition?: ArisLayoutPoint
   readonly label?: ArisLayoutLabelBox
+  /**
+   * A caption the renderer draws at a *fixed offset from this node*, rather
+   * than inside it (ARIS writes one as an `AT_NAME` attribute occurrence with
+   * an explicit offset). It is used as a keep-out rectangle when free-text
+   * annotations are placed and for nothing else: it never reserves space in
+   * the rank grid, so adding one cannot move a single control-flow node.
+   */
+  readonly externalCaption?: {
+    readonly offsetX: number
+    readonly offsetY: number
+    readonly width: number
+    readonly height: number
+  }
   readonly laneId?: string
+}
+
+/**
+ * A free-text note (`<FFTextOcc>`). It is deliberately *not* an
+ * {@link ArisLayoutNodeInput}: it has no connections, no role in the EPC, and
+ * must never take part in ranking, components or corridor allocation (§13.2).
+ */
+export interface ArisLayoutAnnotationInput {
+  readonly id: string
+  /**
+   * The rectangle the renderer draws for this note in the source layout.
+   * The engine reads the size and never changes it — a source that carries no
+   * `<Size>` is still sized by the renderer, not by the layout.
+   */
+  readonly rect: ArisLayoutRect
+}
+
+/** Where the clean layout put a free-text note. `rect.width`/`rect.height` are the input's. */
+export interface ArisLayoutAnnotationPlacement {
+  readonly id: string
+  readonly rect: ArisLayoutRect
 }
 
 export interface ArisLayoutEdgeInput {
@@ -104,6 +138,8 @@ export interface ArisLayoutGraphInput {
   readonly nodes: readonly ArisLayoutNodeInput[]
   readonly edges: readonly ArisLayoutEdgeInput[]
   readonly lanes?: readonly ArisLayoutLaneInput[]
+  /** Free-text notes to re-place after the core flow (§14.4 step 10). */
+  readonly annotations?: readonly ArisLayoutAnnotationInput[]
 }
 
 /** Spacing knobs. Every field is optional; defaults are derived from sizes. */
@@ -248,6 +284,8 @@ export interface ArisLayoutResult {
   readonly nodes: readonly ArisLayoutNodePlacement[]
   readonly edges: readonly ArisLayoutEdgeRoute[]
   readonly lanes: readonly ArisLayoutLaneBand[]
+  /** Free-text notes, in the input's order. Empty when the graph had none. */
+  readonly annotations: readonly ArisLayoutAnnotationPlacement[]
   readonly canvas: ArisLayoutRect
   readonly splitMergePairs: readonly ArisLayoutSplitMergePair[]
   readonly metrics: ArisLayoutMetrics
@@ -272,5 +310,11 @@ export interface ArisLayoutRevision {
   readonly nodes: readonly ArisLayoutNodePlacement[]
   readonly edges: readonly ArisLayoutEdgeRoute[]
   readonly lanes: readonly ArisLayoutLaneBand[]
+  /**
+   * Free-text notes. The `source` revision carries the imported rectangles
+   * verbatim, which is what makes "Reset to Source Layout" exact for notes as
+   * well as for occurrences.
+   */
+  readonly annotations: readonly ArisLayoutAnnotationPlacement[]
   readonly canvas: ArisLayoutRect
 }

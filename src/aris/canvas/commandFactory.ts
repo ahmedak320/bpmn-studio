@@ -685,13 +685,32 @@ export function editFreeTextCommand(
       readonly width: number
       readonly height: number
     }
+    /**
+     * Move the note without touching its size. This is not a convenience: a
+     * real `<FFTextOcc>` carries no `<Size>` at all, so its stored extent is
+     * `0x0` and ARIS sizes the note to its text. Routing a move through
+     * `bounds` would push that `0` through `toCanonicalBounds`, which clamps
+     * to a strictly positive minimum, and the derived AML export would then
+     * emit a `<Size>` element the source never had. `position` keeps the
+     * stored extent byte-identical.
+     */
+    readonly position?: { readonly x: number; readonly y: number }
     readonly style?: Partial<ArisOccurrenceStyle>
   }
 ): ArisEditCommand {
   const freeText = findFreeText(document, freeTextId)
   if (!freeText) throw new Error(`Unknown free text ${freeTextId}.`)
   const bounds: ArisBounds =
-    changes.bounds === undefined ? freeText.bounds : toCanonicalBounds(changes.bounds)
+    changes.bounds !== undefined
+      ? toCanonicalBounds(changes.bounds)
+      : changes.position !== undefined
+        ? Object.freeze({
+            x: toCanonicalNumber(changes.position.x, 'x'),
+            y: toCanonicalNumber(changes.position.y, 'y'),
+            width: freeText.bounds.width,
+            height: freeText.bounds.height
+          })
+        : freeText.bounds
   const next: ArisFreeText = Object.freeze({
     ...freeText,
     text:

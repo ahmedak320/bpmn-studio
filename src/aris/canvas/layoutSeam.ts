@@ -19,14 +19,31 @@
  */
 
 import type { ArisModel, ArisWorkingDocument } from '../model/types'
+import {
+  externalNamePlacement,
+  externalNameRect,
+  freeTextBounds,
+  laneOrientation
+} from './canvasSync'
 import { ArisCanvasCommandError, ArisCommandBridge } from './commandBridge'
 import { ArisDocumentStore, type ArisCommandThunk } from './documentStore'
-import { moveOccurrenceCommand, setConnectionRouteCommand } from './commandFactory'
+import {
+  editFreeTextCommand,
+  moveOccurrenceCommand,
+  setConnectionRouteCommand
+} from './commandFactory'
 import { isSatelliteObjectType, ruleOperatorOfSymbol } from './vocabulary'
 
 export interface ArisLayoutSeamPoint {
   readonly x: number
   readonly y: number
+}
+
+export interface ArisLayoutSeamRect {
+  readonly x: number
+  readonly y: number
+  readonly width: number
+  readonly height: number
 }
 
 export interface ArisLayoutSeamNode {
@@ -35,7 +52,25 @@ export interface ArisLayoutSeamNode {
   readonly operator?: 'and' | 'or' | 'xor'
   readonly size: { readonly width: number; readonly height: number }
   readonly sourcePosition?: ArisLayoutSeamPoint
+  /** Caption drawn at a fixed offset from the shape, when the source places one. */
+  readonly externalCaption?: {
+    readonly offsetX: number
+    readonly offsetY: number
+    readonly width: number
+    readonly height: number
+  }
   readonly laneId?: string
+}
+
+/**
+ * A free-text note. It is passed separately from the nodes because it is not a
+ * graph object: it has no connections and must never influence where the
+ * control flow goes (plan §13.2). `rect` is the rectangle the canvas *draws* —
+ * position from the source, size defaulted when the source declared none.
+ */
+export interface ArisLayoutSeamAnnotation {
+  readonly id: string
+  readonly rect: ArisLayoutSeamRect
 }
 
 export interface ArisLayoutSeamEdge {
@@ -54,22 +89,24 @@ export interface ArisLayoutSeamGraph {
     readonly id: string
     readonly orientation: 'horizontal' | 'vertical'
   }[]
+  readonly annotations?: readonly ArisLayoutSeamAnnotation[]
 }
 
 export interface ArisLayoutSeamResult {
   readonly nodes: readonly {
     readonly id: string
-    readonly rect: {
-      readonly x: number
-      readonly y: number
-      readonly width: number
-      readonly height: number
-    }
+    readonly rect: ArisLayoutSeamRect
   }[]
   readonly edges: readonly {
     readonly id: string
     readonly points: readonly ArisLayoutSeamPoint[]
   }[]
+  /**
+   * Where each free-text note ended up. Only `rect.x`/`rect.y` are applied —
+   * a note's size stays whatever the source said, so a source that declared
+   * none still declares none after a clean layout.
+   */
+  readonly annotations?: readonly ArisLayoutSeamAnnotation[]
 }
 
 export type ArisCleanLayoutEngine = (graph: ArisLayoutSeamGraph) => ArisLayoutSeamResult
@@ -96,6 +133,10 @@ export function buildLayoutGraph(
             : isSatelliteObjectType(objectType)
               ? 'satellite'
               : 'other'
+    // A caption placed outside the symbol tracks its owner rigidly, so the
+    // layout only needs the offset and the extent to keep it clear of notes.
+    const caption = externalNamePlacement(occurrence)
+    const captionRect = caption ? externalNameRect(caption, occurrence.bounds) : null
     return Object.freeze({
       id: occurrence.id,
       role,
@@ -103,7 +144,17 @@ export function buildLayoutGraph(
         ? { operator: operator.toLowerCase() as 'and' | 'or' | 'xor' }
         : {}),
       size: { width: occurrence.bounds.width, height: occurrence.bounds.height },
-      sourcePosition: { x: occurrence.bounds.x, y: occurrence.bounds.y }
+      sourcePosition: { x: occurrence.bounds.x, y: occurrence.bounds.y },
+      ...(captionRect
+        ? {
+            externalCaption: {
+              offsetX: captionRect.x - occurrence.bounds.x,
+              offsetY: captionRect.y - occurrence.bounds.y,
+              width: captionRect.width,
+              height: captionRect.height
+            }
+          }
+        : {})
     })
   })
 
@@ -133,11 +184,19 @@ export function buildLayoutGraph(
     id: model.id,
     nodes: Object.freeze(nodes),
     edges: Object.freeze(edges),
+    // The *drawn* rectangle: a real `<FFTextOcc>` carries no `<Size>` at all,
+    // so the layout has to be told the box the canvas actually paints.
+    annotations: Object.freeze(
+      model.freeText.map((text) =>
+        Object.freeze({ id: text.id, rect: freeTextBounds(text.bounds) })
+      )
+    ),
     lanes: Object.freeze(
       model.lanes.map((lane) => ({
+        // AML writes `HORIZONTAL`/`VERTICAL`; authored lanes write the
+        // lower-case spelling. `laneOrientation` reads both.
         id: lane.id,
-        orientation: (lane.orientation === 'vertical' ? 'vertical' : 'horizontal') as
-          'horizontal' | 'vertical'
+        orientation: laneOrientation(lane.orientation)
       }))
     )
   })
@@ -146,9 +205,17 @@ export function buildLayoutGraph(
 /**
  * Apply a clean layout as one undoable gesture.
  *
- * Only the working layout revision changes: positions become `moveOccurrence`
- * commands and routes become `setConnectionRoute` commands. The imported source
- * snapshot is untouched, and undo restores the previous layout exactly.
+ * Only the working layout revision changes: occurrence positions become
+ * `moveOccurrence` commands, routes become `setConnectionRoute` commands and
+ * free-text notes become `editFreeText` commands that carry a **position
+ * only**. The imported source snapshot is untouched, and undo restores the
+ * previous layout exactly.
+ *
+ * A note's size is deliberately never written. `<FFTextOcc>` in a real export
+ * has no `<Size>` child — ARIS sizes the note to its text — so writing one
+ * would make the derived AML export insert an element the source never had.
+ * The canvas supplies the drawn box at render time instead, and the layout is
+ * told what that box is rather than storing it.
  */
 export function applyCleanLayout(
   bridge: ArisCommandBridge,
@@ -172,6 +239,13 @@ export function applyCleanLayout(
     const connectionId = edge.id
     const points = edge.points
     thunks.push((doc, context) => setConnectionRouteCommand(context, doc, connectionId, points))
+  }
+  const known = new Set(model.freeText.map((text) => text.id))
+  for (const annotation of result.annotations ?? []) {
+    if (!known.has(annotation.id)) continue
+    const freeTextId = annotation.id
+    const position = { x: annotation.rect.x, y: annotation.rect.y }
+    thunks.push((doc, context) => editFreeTextCommand(context, doc, freeTextId, { position }))
   }
   if (thunks.length === 0) return
   bridge.execute('clean-layout', thunks)

@@ -173,6 +173,154 @@ class StubTransformList {
   }
 }
 
+interface BoxLike {
+  x: number
+  y: number
+  width: number
+  height: number
+}
+
+function numbersIn(value: string | null): number[] {
+  if (!value) return []
+  const found = value.match(/-?\d+(?:\.\d+)?(?:[eE][-+]?\d+)?/g)
+  return found ? found.map(Number) : []
+}
+
+function boxOfPoints(points: readonly { x: number; y: number }[]): BoxLike | null {
+  if (points.length === 0) return null
+  let minX = Number.POSITIVE_INFINITY
+  let minY = Number.POSITIVE_INFINITY
+  let maxX = Number.NEGATIVE_INFINITY
+  let maxY = Number.NEGATIVE_INFINITY
+  for (const point of points) {
+    if (!Number.isFinite(point.x) || !Number.isFinite(point.y)) continue
+    minX = Math.min(minX, point.x)
+    minY = Math.min(minY, point.y)
+    maxX = Math.max(maxX, point.x)
+    maxY = Math.max(maxY, point.y)
+  }
+  if (!Number.isFinite(minX)) return null
+  return { x: minX, y: minY, width: maxX - minX, height: maxY - minY }
+}
+
+function pairsIn(value: string | null): { x: number; y: number }[] {
+  const flat = numbersIn(value)
+  const points: { x: number; y: number }[] = []
+  for (let index = 0; index + 1 < flat.length; index += 2) {
+    points.push({ x: flat[index] as number, y: flat[index + 1] as number })
+  }
+  return points
+}
+
+/** The node's own drawn extent, ignoring its children and its own transform. */
+function ownBox(node: Element): BoxLike | null {
+  const attr = (name: string): number => Number(node.getAttribute(name) ?? Number.NaN)
+  switch (node.tagName.toLowerCase()) {
+    case 'rect':
+    case 'image':
+    case 'foreignobject': {
+      const width = attr('width')
+      const height = attr('height')
+      if (!Number.isFinite(width) || !Number.isFinite(height)) return null
+      const x = Number.isFinite(attr('x')) ? attr('x') : 0
+      const y = Number.isFinite(attr('y')) ? attr('y') : 0
+      return { x, y, width, height }
+    }
+    case 'circle': {
+      const r = attr('r')
+      if (!Number.isFinite(r)) return null
+      return { x: attr('cx') - r, y: attr('cy') - r, width: 2 * r, height: 2 * r }
+    }
+    case 'ellipse': {
+      const rx = attr('rx')
+      const ry = attr('ry')
+      if (!Number.isFinite(rx) || !Number.isFinite(ry)) return null
+      return { x: attr('cx') - rx, y: attr('cy') - ry, width: 2 * rx, height: 2 * ry }
+    }
+    case 'line':
+      return boxOfPoints([
+        { x: attr('x1'), y: attr('y1') },
+        { x: attr('x2'), y: attr('y2') }
+      ])
+    case 'polyline':
+    case 'polygon':
+      return boxOfPoints(pairsIn(node.getAttribute('points')))
+    case 'path':
+      // Good enough for the polyline-ish paths diagram-js draws: every
+      // coordinate pair in `d` is treated as a point on the outline.
+      return boxOfPoints(pairsIn(node.getAttribute('d')))
+    default:
+      // `text` has no measurable metrics without layout, so it contributes
+      // nothing rather than a made-up rectangle.
+      return null
+  }
+}
+
+function unionBox(left: BoxLike | null, right: BoxLike | null): BoxLike | null {
+  if (!left) return right
+  if (!right) return left
+  const x = Math.min(left.x, right.x)
+  const y = Math.min(left.y, right.y)
+  const maxX = Math.max(left.x + left.width, right.x + right.width)
+  const maxY = Math.max(left.y + left.height, right.y + right.height)
+  return { x, y, width: maxX - x, height: maxY - y }
+}
+
+function applyMatrix(matrix: MatrixLike, box: BoxLike): BoxLike {
+  const corners = [
+    { x: box.x, y: box.y },
+    { x: box.x + box.width, y: box.y },
+    { x: box.x, y: box.y + box.height },
+    { x: box.x + box.width, y: box.y + box.height }
+  ].map((corner) => ({
+    x: matrix.a * corner.x + matrix.c * corner.y + matrix.e,
+    y: matrix.b * corner.x + matrix.d * corner.y + matrix.f
+  }))
+  return boxOfPoints(corners) as BoxLike
+}
+
+/**
+ * A real bounding box, in the node's own user space.
+ *
+ * jsdom does no layout, so this walks the tree and unions the geometry the
+ * attributes actually declare. Returning a constant here — which this shim used
+ * to do — silently makes every `canvas.zoom('fit-viewport')` assertion vacuous,
+ * which is precisely how a product that fitted the viewport to a 50000-unit
+ * lane frame kept a green unit suite.
+ */
+function measureBBox(node: Element): BoxLike | null {
+  let box = ownBox(node)
+  for (const child of Array.from(node.children)) {
+    const childBox = measureBBox(child)
+    if (!childBox) continue
+    const transform = parseTransformAttribute(child.getAttribute('transform'))
+    box = unionBox(box, transform ? applyMatrix(transform, childBox) : childBox)
+  }
+  return box
+}
+
+/**
+ * Test containers with a declared size, so the elements diagram-js creates
+ * *inside* them can inherit one.
+ *
+ * jsdom reports `clientWidth`/`clientHeight` as 0 for everything, and
+ * `Canvas.getSize()` measures diagram-js's own inner container rather than the
+ * node the test created. Stubbing only the outer node therefore left the canvas
+ * believing its viewport was 0x0 — which silently turns every
+ * "is this readable at 1600x1000?" assertion into a no-op.
+ */
+const containerSizes = new WeakMap<Element, { width: number; height: number }>()
+
+function inheritedSize(node: Element | null): { width: number; height: number } | null {
+  let current: Element | null = node
+  while (current) {
+    const size = containerSizes.get(current)
+    if (size) return size
+    current = current.parentElement
+  }
+  return null
+}
+
 let installed = false
 
 /**
@@ -185,6 +333,17 @@ export function installJsdomSvgSupport(): void {
   const scope = globalThis as unknown as Record<string, unknown>
   scope.SVGMatrix = StubMatrix
   scope.SVGTransform = StubTransform
+
+  for (const property of ['clientWidth', 'clientHeight'] as const) {
+    Object.defineProperty(HTMLElement.prototype, property, {
+      configurable: true,
+      get(this: HTMLElement) {
+        const size = inheritedSize(this)
+        if (!size) return 0
+        return property === 'clientWidth' ? size.width : size.height
+      }
+    })
+  }
 
   // jsdom has no `CSS` object; diagram-js's palette escapes entry ids with it.
   const css = scope.CSS as { escape?: (value: string) => string } | undefined
@@ -219,13 +378,8 @@ export function installJsdomSvgSupport(): void {
     }
   })
 
-  svgElementProto.getBBox = function getBBox(): {
-    x: number
-    y: number
-    width: number
-    height: number
-  } {
-    return { x: 0, y: 0, width: 1000, height: 1000 }
+  svgElementProto.getBBox = function getBBox(this: Element): BoxLike {
+    return measureBBox(this) ?? { x: 0, y: 0, width: 0, height: 0 }
   }
 
   svgElementProto.getCTM = function getCTM(this: Element): StubMatrix {
@@ -271,7 +425,9 @@ export function installJsdomSvgSupport(): void {
  * divide by zero. Stubbing `getBoundingClientRect` gives the canvas a viewport.
  */
 export function createCanvasContainer(width = 1200, height = 800): HTMLElement {
+  installJsdomSvgSupport()
   const container = document.createElement('div')
+  containerSizes.set(container, { width, height })
   container.getBoundingClientRect = () =>
     ({
       width,
@@ -284,8 +440,6 @@ export function createCanvasContainer(width = 1200, height = 800): HTMLElement {
       y: 0,
       toJSON: () => ({})
     }) as DOMRect
-  Object.defineProperty(container, 'clientWidth', { value: width, configurable: true })
-  Object.defineProperty(container, 'clientHeight', { value: height, configurable: true })
   document.body.appendChild(container)
   return container
 }

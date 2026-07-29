@@ -30,6 +30,7 @@ import { ArisCanvasSync } from './canvasSync'
 import { ArisClipboard } from './clipboard'
 import { ArisCommandBridge } from './commandBridge'
 import { ArisDocumentStore } from './documentStore'
+import { fitCanvasToContent } from './fitView'
 import { ArisModeling } from './arisModeling'
 import { ArisPaletteProvider } from './paletteProvider'
 import { ArisSearchProvider } from './searchProvider'
@@ -214,12 +215,20 @@ export class ArisCanvas {
 
   // -- view ------------------------------------------------------------------
 
+  /**
+   * `'fit-viewport'` fits the model's *content*, not the whole rendered layer.
+   *
+   * diagram-js measures its own fit from the active layer's bounding box, so a
+   * decorative lane band reaching past the diagram would shrink every symbol
+   * until it was unreadable. See `fitView.ts`.
+   */
   zoom(level: number | 'fit-viewport'): number {
+    if (level === 'fit-viewport') return this.fit()
     return this.canvas.zoom(level)
   }
 
   fit(): number {
-    return this.canvas.zoom('fit-viewport')
+    return fitCanvasToContent(this.canvas, this.elementRegistry)
   }
 
   scroll(delta: { readonly dx: number; readonly dy: number }): void {

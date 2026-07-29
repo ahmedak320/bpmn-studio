@@ -139,7 +139,28 @@ export function sourceLayoutRevision(graph: ArisLayoutGraphInput): ArisLayoutRev
     })
   }
 
-  return { mode: 'source', graphId: graph.id, orientation, nodes, edges, lanes, canvas: bounds }
+  // Notes keep their imported rectangle verbatim — this is what a reset
+  // restores, so it has to be a copy of the input and nothing else.
+  const annotations = (graph.annotations ?? []).map((annotation) => ({
+    id: annotation.id,
+    rect: {
+      x: annotation.rect.x,
+      y: annotation.rect.y,
+      width: annotation.rect.width,
+      height: annotation.rect.height
+    }
+  }))
+
+  return {
+    mode: 'source',
+    graphId: graph.id,
+    orientation,
+    nodes,
+    edges,
+    lanes,
+    annotations,
+    canvas: bounds
+  }
 }
 
 /**
@@ -159,6 +180,7 @@ export function cleanLayoutRevision(
     nodes: result.nodes,
     edges: result.edges,
     lanes: result.lanes,
+    annotations: result.annotations,
     canvas: result.canvas
   }
 }

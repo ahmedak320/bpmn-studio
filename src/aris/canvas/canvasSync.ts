@@ -15,7 +15,7 @@ import type ElementRegistry from 'diagram-js/lib/core/ElementRegistry'
 import type EventBus from 'diagram-js/lib/core/EventBus'
 import type { Connection, Element, Label, Root, Shape } from 'diagram-js/lib/model/Types'
 
-import type { ArisModel, ArisObjectOccurrence } from '../model/types'
+import type { ArisBounds, ArisLane, ArisModel, ArisObjectOccurrence } from '../model/types'
 import { ArisDocumentStore } from './documentStore'
 import {
   arisBusinessObject,
@@ -34,14 +34,166 @@ import { readLocalized } from './localization'
 import { connectionWaypoints } from './waypoints'
 import { AT_NAME } from './vocabulary'
 
-/** Default geometry for a lane band when the model gives no explicit extent. */
-const LANE_DEFAULT_THICKNESS = 240
-const LANE_DEFAULT_LENGTH = 1200
+/** Thickness of a lane band whose model gives no usable explicit extent. */
+export const LANE_DEFAULT_THICKNESS = 240
+/**
+ * Extent of the notional canvas a lane band is measured against when the model
+ * places no content at all. A model with occurrences derives its band extent
+ * from those occurrences instead — see `laneBandBounds`.
+ */
+export const LANE_FALLBACK_LENGTH = 1200
 const EXTERNAL_LABEL_DEFAULT_WIDTH = 120
 const EXTERNAL_LABEL_DEFAULT_HEIGHT = 24
+/** Box drawn for a free-text note whose source record carries no `Size`. */
+export const FREE_TEXT_DEFAULT_WIDTH = 160
+export const FREE_TEXT_DEFAULT_HEIGHT = 32
 
 function sameNumber(a: number | undefined, b: number): boolean {
   return typeof a === 'number' && a === b
+}
+
+/**
+ * A size the source left unset.
+ *
+ * AML writes `Size.dX="0" Size.dY="0"` for "no explicit size", so `??` is the
+ * wrong operator here: it only replaces `null`/`undefined` and happily lets a
+ * literal `0` through, which renders an invisible 0×0 box. Any non-positive or
+ * non-finite value therefore falls back to the default.
+ */
+function positiveOr(value: number | null | undefined, fallback: number): number {
+  return typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : fallback
+}
+
+export type ArisLaneOrientation = 'horizontal' | 'vertical'
+
+/**
+ * Read a lane's orientation, whatever case it was written in.
+ *
+ * AML writes `Orientation="HORIZONTAL"` / `"VERTICAL"`; the canvas's own
+ * authoring commands write the lower-case spelling. Comparing case-sensitively
+ * against `'vertical'` silently classified every imported lane as horizontal,
+ * which collapsed each model's horizontal/vertical pair into two identical
+ * bands.
+ */
+export function laneOrientation(value: string | null | undefined): ArisLaneOrientation {
+  return typeof value === 'string' && value.trim().toLowerCase() === 'vertical'
+    ? 'vertical'
+    : 'horizontal'
+}
+
+export interface ArisRect {
+  readonly x: number
+  readonly y: number
+  readonly width: number
+  readonly height: number
+}
+
+/**
+ * A free-text note's drawn rectangle. Position is always the source's; a
+ * missing or non-positive size becomes a default box rather than nothing.
+ */
+export function freeTextBounds(bounds: ArisBounds): ArisRect {
+  return Object.freeze({
+    x: bounds.x,
+    y: bounds.y,
+    width: positiveOr(bounds.width, FREE_TEXT_DEFAULT_WIDTH),
+    height: positiveOr(bounds.height, FREE_TEXT_DEFAULT_HEIGHT)
+  })
+}
+
+function isUsableBounds(bounds: ArisBounds): boolean {
+  return (
+    Number.isFinite(bounds.x) &&
+    Number.isFinite(bounds.y) &&
+    Number.isFinite(bounds.width) &&
+    Number.isFinite(bounds.height)
+  )
+}
+
+/**
+ * The rectangle the model's own content occupies — every occurrence and every
+ * free-text box. Lane bands are decoration derived *from* this rectangle, so
+ * they are deliberately not part of it.
+ *
+ * `null` when the model places nothing.
+ */
+export function modelContentBounds(model: ArisModel): ArisRect | null {
+  let minX = Number.POSITIVE_INFINITY
+  let minY = Number.POSITIVE_INFINITY
+  let maxX = Number.NEGATIVE_INFINITY
+  let maxY = Number.NEGATIVE_INFINITY
+  const grow = (bounds: ArisBounds): void => {
+    if (!isUsableBounds(bounds)) return
+    minX = Math.min(minX, bounds.x)
+    minY = Math.min(minY, bounds.y)
+    maxX = Math.max(maxX, bounds.x + bounds.width)
+    maxY = Math.max(maxY, bounds.y + bounds.height)
+  }
+  for (const occurrence of model.occurrences) grow(occurrence.bounds)
+  // The *drawn* box, so a note the source left unsized still counts.
+  for (const text of model.freeText) grow(freeTextBounds(text.bounds))
+  if (!Number.isFinite(minX) || !Number.isFinite(minY)) return null
+  return Object.freeze({ x: minX, y: minY, width: maxX - minX, height: maxY - minY })
+}
+
+/**
+ * The band a lane draws, derived from the model's content.
+ *
+ * AML describes a lane as an orientation plus a `StartBorder`/`EndBorder` pair
+ * measured *across* the lane. It says nothing at all about how far the lane
+ * runs, so the band runs exactly as far as the model's own content does — a
+ * constant length would either crop the content or, as before this fix,
+ * dwarf it.
+ *
+ * A span that already covers the content end to end locates nothing, so it is
+ * treated as no explicit extent. That is what AnimalWF's
+ * `StartBorder=0 EndBorder=50000` is: ARIS's "spans the whole canvas"
+ * sentinel. Taken literally it produced a 50000-unit frame around roughly 6000
+ * units of content, which is what made every model unreadable.
+ */
+export function laneBandBounds(
+  lane: Pick<ArisLane, 'orientation' | 'startBorder' | 'endBorder'>,
+  index: number,
+  content: ArisRect | null
+): ArisRect {
+  const area = content ?? {
+    x: 0,
+    y: 0,
+    width: LANE_FALLBACK_LENGTH,
+    height: LANE_FALLBACK_LENGTH
+  }
+  const horizontal = laneOrientation(lane.orientation) === 'horizontal'
+  const crossMin = horizontal ? area.y : area.x
+  const crossMax = horizontal ? area.y + area.height : area.x + area.width
+  const span = explicitLaneSpan(lane, crossMin, crossMax)
+  const offset = span ? span.start : crossMin + index * LANE_DEFAULT_THICKNESS
+  const thickness = span ? span.end - span.start : LANE_DEFAULT_THICKNESS
+  return Object.freeze(
+    horizontal
+      ? { x: area.x, y: offset, width: area.width, height: thickness }
+      : { x: offset, y: area.y, width: thickness, height: area.height }
+  )
+}
+
+/**
+ * The lane's `StartBorder`/`EndBorder` span, clipped to the content, or `null`
+ * when the pair carries no usable information: absent, empty, entirely outside
+ * the content, or covering all of it (the full-canvas sentinel).
+ */
+function explicitLaneSpan(
+  lane: Pick<ArisLane, 'startBorder' | 'endBorder'>,
+  crossMin: number,
+  crossMax: number
+): { readonly start: number; readonly end: number } | null {
+  const start = lane.startBorder
+  const end = lane.endBorder
+  if (typeof start !== 'number' || typeof end !== 'number') return null
+  if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start) return null
+  const clippedStart = Math.max(start, crossMin)
+  const clippedEnd = Math.min(end, crossMax)
+  if (clippedEnd <= clippedStart) return null
+  if (clippedStart <= crossMin && clippedEnd >= crossMax) return null
+  return { start: clippedStart, end: clippedEnd }
 }
 
 export class ArisCanvasSync {
@@ -153,22 +305,16 @@ export class ArisCanvasSync {
   }
 
   private syncLanes(model: ArisModel, desired: Set<string>, dirty: Element[]): void {
+    const content = modelContentBounds(model)
     model.lanes.forEach((lane, index) => {
       const id = laneElementId(lane.id)
       desired.add(id)
-      const horizontal = (lane.orientation ?? 'horizontal') !== 'vertical'
-      const start = lane.startBorder ?? 0
-      const end = lane.endBorder ?? 0
-      const thickness = end > start ? end - start : LANE_DEFAULT_THICKNESS
-      const offset = end > start ? start : index * LANE_DEFAULT_THICKNESS
-      const bounds = horizontal
-        ? { x: 0, y: offset, width: LANE_DEFAULT_LENGTH, height: thickness }
-        : { x: offset, y: 0, width: thickness, height: LANE_DEFAULT_LENGTH }
+      const bounds = laneBandBounds(lane, index, content)
       const businessObject: ArisLaneBusinessObject = Object.freeze({
         kind: 'lane',
         modelId: model.id,
         laneId: lane.id,
-        orientation: horizontal ? 'horizontal' : 'vertical',
+        orientation: laneOrientation(lane.orientation),
         name: readLocalized(lane.names)
       })
       this.upsertShape(id, bounds, businessObject, dirty, { isFrame: true })
@@ -204,7 +350,10 @@ export class ArisCanvasSync {
         freeTextId: text.id,
         text: readLocalized(text.text)
       })
-      this.upsertShape(id, text.bounds, businessObject, dirty)
+      // Real exports write `<FFTextOcc>` with a `Position` and no `Size` at
+      // all — ARIS sizes the note to its text. Rendering that literally draws
+      // a 0x0 box, i.e. nothing at all, so an unset size takes a default.
+      this.upsertShape(id, freeTextBounds(text.bounds), businessObject, dirty)
     }
   }
 
@@ -228,12 +377,7 @@ export class ArisCanvasSync {
         attributeType: AT_NAME,
         text: readLocalized(definition?.names)
       })
-      const bounds = {
-        x: occurrence.bounds.x + (placement.offsetX ?? 0),
-        y: occurrence.bounds.y + (placement.offsetY ?? 0),
-        width: placement.width ?? EXTERNAL_LABEL_DEFAULT_WIDTH,
-        height: placement.height ?? EXTERNAL_LABEL_DEFAULT_HEIGHT
-      }
+      const bounds = externalNameRect(placement, occurrence.bounds)
       const owner = this.elementRegistry.get(occurrence.id) as Shape | undefined
       this.upsertShape(id, bounds, businessObject, dirty, { label: true, labelTarget: owner })
     }
@@ -387,6 +531,10 @@ export interface ExternalNamePlacement {
 /**
  * The `AT_NAME` attribute occurrence, when it places the caption outside the
  * symbol. A zero/absent offset means the caption renders inside the shape.
+ *
+ * A non-positive `width`/`height` is normalized to `null`: real exports carry
+ * `<Size Size.dX="0" Size.dY="0">` for captions they never sized, and a caller
+ * defaulting with `??` would otherwise render a 0×0 label.
  */
 export function externalNamePlacement(
   occurrence: ArisObjectOccurrence
@@ -399,7 +547,25 @@ export function externalNamePlacement(
   return Object.freeze({
     offsetX,
     offsetY,
-    width: placement.width,
-    height: placement.height
+    width: positiveOrNull(placement.width),
+    height: positiveOrNull(placement.height)
+  })
+}
+
+function positiveOrNull(value: number | null | undefined): number | null {
+  return typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : null
+}
+
+/**
+ * The rectangle an external caption occupies for an owner drawn at `owner`.
+ * The caption tracks its owner rigidly, so this is the one place that knows
+ * how to derive it — the renderer and the clean layout both read it here.
+ */
+export function externalNameRect(placement: ExternalNamePlacement, owner: ArisRect): ArisRect {
+  return Object.freeze({
+    x: owner.x + (placement.offsetX ?? 0),
+    y: owner.y + (placement.offsetY ?? 0),
+    width: placement.width ?? EXTERNAL_LABEL_DEFAULT_WIDTH,
+    height: placement.height ?? EXTERNAL_LABEL_DEFAULT_HEIGHT
   })
 }

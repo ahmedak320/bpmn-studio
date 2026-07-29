@@ -718,6 +718,31 @@ describe('derived AML export mapping', () => {
     expect(preview.result.text).toContain('TextValue="Draft — do not circulate"')
   })
 
+  /**
+   * Clean Layout moves free-text notes. The fixture's `<FFTextOcc>` is written
+   * the way real exports write one — a `<Position>`, no `<Size>` and no id
+   * attribute — so the working model has to synthesize an id, and the writer
+   * has no byte in the source to address the note's geometry by. The mapping
+   * must say so rather than drop the move in silence.
+   */
+  it('reports a moved free-text note whose source record declares no id', async () => {
+    const { document, view } = await fixture()
+    const note = document.models.get(FIXTURE_IDS.model)!.freeText[0]!
+    expect(view.byId.has(note.id)).toBe(false)
+    // No `<Size>` in the source means a zero extent in the working model.
+    expect(note.bounds).toMatchObject({ width: 0, height: 0 })
+
+    const live = run(document, 'editFreeText', {
+      ...note,
+      bounds: { ...note.bounds, x: note.bounds.x + 500, y: note.bounds.y + 500 }
+    } satisfies ArisFreeText)
+
+    const preview = derive(document, live)
+    expect(preview.unmapped.map((entry) => entry.sourceId)).toEqual([note.id])
+    expect(preview.editCount).toBe(0)
+    expect(preview.result.text).toBe(SAMPLE_AML)
+  })
+
   it('leaves the original text and a no-op export byte-identical', async () => {
     const { document } = await fixture()
     const before = SAMPLE_AML

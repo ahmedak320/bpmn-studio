@@ -12,7 +12,7 @@
  * | 7    | AND/OR/XOR branches symmetric                  | `placeControlFlow` -> `layoutParallel` |
  * | 8    | Pair split and merge rules                     | `placeControlFlow` -> `findMerge` |
  * | 9    | Returns in the nearest outside channel         | `planReturnChannels` + `routeReturnEdge` |
- * | 10   | Satellites after the core flow                 | `placeSatellites` |
+ * | 10   | Satellites after the core flow                 | `placeSatellites`, `placeAnnotations` |
  * | 11   | Reserve labels minimally                       | `occupiedBoxOf` |
  * | 12   | Resolve collisions iteratively                 | `separateRanks` + the repair loop below |
  * | 13   | Remain deterministic                           | no clock, no RNG, every traversal ordered |
@@ -25,6 +25,7 @@
  */
 
 import type {
+  ArisLayoutAnnotationPlacement,
   ArisLayoutEdgeClass,
   ArisLayoutEdgeInput,
   ArisLayoutEdgeRoute,
@@ -56,6 +57,7 @@ import {
   type FlowPoint
 } from './routing'
 import { placeSatellites } from './satellites'
+import { placeAnnotations } from './annotations'
 import { analyzeLayout, type LayoutAnalysis } from './metrics'
 import { DEFAULT_MAX_EMPTY_BAND_RATIO, evaluateLayoutAcceptance } from './rejection'
 import { boundsOfPoints, unionRect } from './geometry'
@@ -72,6 +74,7 @@ interface LayoutDraft {
   readonly nodes: readonly ArisLayoutNodePlacement[]
   readonly edges: readonly ArisLayoutEdgeRoute[]
   readonly lanes: readonly ArisLayoutLaneBand[]
+  readonly annotations: readonly ArisLayoutAnnotationPlacement[]
   readonly canvas: ArisLayoutRect
   readonly splitMergePairs: readonly ArisLayoutSplitMergePair[]
   readonly orientation: ArisLayoutOrientation
@@ -324,11 +327,60 @@ function buildDraft(
     ...edge,
     points: edge.points.map((point) => ({ x: point.x + shiftX, y: point.y + shiftY }))
   }))
+  // --- step 10 (free-text notes) + step 12 ---------------------------------
+  // Notes are placed against the *finished* layout, so they cannot influence
+  // it. They are not in `graph.nodes`, so §13.2 holds structurally: the spine
+  // is identical whether the model carries 0 notes or 50.
+  const sourceRects = new Map<string, ArisLayoutRect>()
+  const captionObstacles: ArisLayoutRect[] = []
+  const translatedById = new Map(translatedNodes.map((node) => [node.id, node.rect]))
+  for (const node of graph.nodes) {
+    if (!sourceRects.has(node.id) && node.sourcePosition) {
+      sourceRects.set(node.id, {
+        x: node.sourcePosition.x,
+        y: node.sourcePosition.y,
+        width: node.size.width,
+        height: node.size.height
+      })
+    }
+    const caption = node.externalCaption
+    const placedRect = translatedById.get(node.id)
+    if (caption && placedRect) {
+      captionObstacles.push({
+        x: placedRect.x + caption.offsetX,
+        y: placedRect.y + caption.offsetY,
+        width: caption.width,
+        height: caption.height
+      })
+    }
+  }
+  const annotations = placeAnnotations({
+    annotations: graph.annotations ?? [],
+    sourceRects,
+    placed: translatedNodes,
+    obstacles: captionObstacles,
+    edges: translatedEdges,
+    gap: spacing.labelGap * 2,
+    step: spacing.crossGap
+  })
+
+  let annotationBounds: ArisLayoutRect | null = null
+  for (const annotation of annotations) {
+    annotationBounds = annotationBounds
+      ? unionRect(annotationBounds, annotation.rect)
+      : annotation.rect
+  }
   const finalCanvas: ArisLayoutRect = {
     x: 0,
     y: 0,
-    width: base.width + spacing.margin * 2,
-    height: base.height + spacing.margin * 2
+    width: Math.max(
+      base.width + spacing.margin * 2,
+      annotationBounds ? annotationBounds.x + annotationBounds.width + spacing.margin : 0
+    ),
+    height: Math.max(
+      base.height + spacing.margin * 2,
+      annotationBounds ? annotationBounds.y + annotationBounds.height + spacing.margin : 0
+    )
   }
 
   const separators = componentSeparators(translatedNodes, orientation)
@@ -336,6 +388,7 @@ function buildDraft(
     nodes: translatedNodes,
     edges: translatedEdges,
     lanes: buildLaneBands(graph.lanes ?? [], translatedNodes, finalCanvas),
+    annotations,
     canvas: finalCanvas,
     splitMergePairs: placement.splitMergePairs,
     orientation,
@@ -384,9 +437,29 @@ function buildLaneBands(
   return bands
 }
 
+/**
+ * Free-text notes are measured exactly like any other drawn rectangle: they
+ * are handed to the metric suite as satellite nodes so the §14.4 gate sees
+ * them, even though they are not part of the graph. That is what makes "no
+ * shape overlap" mean *nothing drawn overlaps anything drawn*.
+ */
+function annotationNodes(draft: LayoutDraft): ArisLayoutNodePlacement[] {
+  return draft.annotations.map((annotation) => ({
+    id: annotation.id,
+    kind: 'satellite' as const,
+    role: 'satellite' as const,
+    rect: annotation.rect,
+    labelRect: null,
+    componentIndex: -1,
+    stronglyConnectedIndex: -1,
+    rank: -1,
+    laneId: null
+  }))
+}
+
 function analyzeDraft(draft: LayoutDraft): LayoutAnalysis {
   return analyzeLayout({
-    nodes: draft.nodes,
+    nodes: [...draft.nodes, ...annotationNodes(draft)],
     edges: draft.edges,
     canvas: draft.canvas,
     expectedEdgeIds: draft.expectedEdgeIds,
@@ -469,6 +542,7 @@ export function cleanLayout(
     nodes: resolved.draft.nodes,
     edges: resolved.draft.edges,
     lanes: resolved.draft.lanes,
+    annotations: resolved.draft.annotations,
     canvas: resolved.draft.canvas,
     splitMergePairs: resolved.draft.splitMergePairs,
     metrics: resolved.analysis.metrics,

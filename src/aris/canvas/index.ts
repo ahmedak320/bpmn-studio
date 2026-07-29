@@ -15,7 +15,31 @@ export {
   type CreateObjectResult,
   type DeleteDefinitionRequest
 } from './authoring'
-export { ArisCanvasSync, externalNamePlacement } from './canvasSync'
+export {
+  ArisCanvasSync,
+  externalNamePlacement,
+  externalNameRect,
+  freeTextBounds,
+  FREE_TEXT_DEFAULT_HEIGHT,
+  FREE_TEXT_DEFAULT_WIDTH,
+  LANE_DEFAULT_THICKNESS,
+  LANE_FALLBACK_LENGTH,
+  laneBandBounds,
+  laneOrientation,
+  modelContentBounds,
+  type ArisLaneOrientation,
+  type ArisRect
+} from './canvasSync'
+export {
+  ARIS_FIT_PADDING_RATIO,
+  ARIS_MAX_FIT_SCALE,
+  arisContentBounds,
+  arisFitViewbox,
+  fitCanvasToContent,
+  isArisContentElement,
+  type ArisFitRect,
+  type ArisFitSize
+} from './fitView'
 export {
   ArisClipboard,
   type ArisClipboardContent,

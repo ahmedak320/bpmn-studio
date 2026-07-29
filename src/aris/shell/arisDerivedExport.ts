@@ -1098,15 +1098,26 @@ function diffFreeText(context: DiffContext, before: ArisFreeText, live: ArisFree
       live.text
     )
   }
-  const element = context.view.byId.get(id)
-  if (!element) return
   const bounds = live.bounds
-  if (bounds.x !== before.bounds.x || bounds.y !== before.bounds.y) {
+  const moved = bounds.x !== before.bounds.x || bounds.y !== before.bounds.y
+  const resized = bounds.width !== before.bounds.width || bounds.height !== before.bounds.height
+  if (!moved && !resized) return
+  const element = context.view.byId.get(id)
+  if (!element) {
+    // A real `<FFTextOcc>` frequently carries no id attribute at all, so the
+    // working model synthesizes one from the record's path. No byte in the
+    // source carries that id, which means there is nothing to address the
+    // geometry by. Report it — a moved note that silently failed to move would
+    // be worse than a note the export admits it could not write.
+    report(context, id, 'aris.export.unmapped.unknownRecord', { id })
+    return
+  }
+  if (moved) {
     collect(context, id, () =>
       moveOccurrenceEdits(context.view, id, { x: Math.round(bounds.x), y: Math.round(bounds.y) })
     )
   }
-  if (bounds.width !== before.bounds.width || bounds.height !== before.bounds.height) {
+  if (resized) {
     collect(context, id, () =>
       resizeOccurrenceEdits(context.view, id, {
         dx: Math.round(bounds.width),
