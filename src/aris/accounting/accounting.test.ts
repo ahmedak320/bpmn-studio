@@ -1,4 +1,3 @@
-import { existsSync, readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 
 import { buildSemanticArisDocument } from '../source/semanticIndex'
@@ -99,12 +98,6 @@ const COMPACT_AML = `<?xml version="1.0" encoding="UTF-8"?>
     <FontNode LocaleId="1033" FaceName="Arial" Height="-13" Width="0" Weight="400" Italic="NO" Underline="NO" StrikeOut="NO" Color="0" />
   </FontStyleSheet>
 </AML>`
-
-function readAnimalWfExport(): string | null {
-  const url = new URL('../../../../reference/AnimalWF/ARISAMLExport.xml', import.meta.url)
-  if (!existsSync(url)) return null
-  return readFileSync(url, 'utf8')
-}
 
 describe('buildLexicalCensus', () => {
   it('counts every source construct in the compact AML independently of the semantic index', () => {
@@ -281,66 +274,7 @@ describe('elementNameFromEntryPath', () => {
   })
 })
 
-describe('AnimalWF integration', () => {
-  const fixture = readAnimalWfExport()
-  const itIfFixture = fixture ? it : it.skip
-
-  itIfFixture('accounts for every AnimalWF source construct with zero unaccounted records', () => {
-    const xml = fixture!
-    const document = tokenizeXmlDocument(xml)
-    const semantic = buildSemanticArisDocument(document)
-    const source = adaptSemanticIndex(semantic.index)
-    const census = buildLexicalCensus(document)
-    const entries = buildAccountingEntries(document, source)
-    const result = reconcile(census, entries)
-
-    expect(result.ok).toBe(true)
-    expect(result.unaccountedCount).toBe(0)
-    expect(entries.filter((e) => !e.disposition)).toHaveLength(0)
-
-    // Known-good aggregate counts from the transformation plan.
-    const byKind = (kind: string) => entries.filter((e) => e.kind === kind).length
-    expect(byKind('model')).toBe(8)
-    expect(byKind('object-definition')).toBe(279)
-    expect(byKind('object-occurrence')).toBe(494)
-    expect(byKind('connection-definition')).toBe(465)
-    expect(byKind('connection-occurrence')).toBe(465)
-    expect(byKind('model-attribute') + byKind('attribute-definition')).toBe(516)
-    expect(byKind('attribute-occurrence')).toBe(774)
-    expect(byKind('lane')).toBe(16)
-    expect(byKind('free-text')).toBe(69)
-    expect(byKind('free-text-occurrence')).toBe(69)
-    expect(byKind('ole-definition')).toBe(14)
-    expect(byKind('ole-occurrence')).toBe(14)
-    expect(byKind('blob')).toBe(28)
-    expect(byKind('font-style-sheet')).toBe(6)
-    expect(byKind('route-point')).toBe(1339)
-    expect(byKind('language')).toBe(2)
-    expect(byKind('group')).toBe(2)
-
-    // Report determinism and SHA-256 on real data.
-    const report = buildAccountingReport(entries, result)
-    const serialized = serializeAccountingReport(report)
-    expect(serializeAccountingReport(buildAccountingReport(entries, result))).toBe(serialized)
-  })
-
-  itIfFixture('reports exact total source records and total accounted', () => {
-    const xml = fixture!
-    const document = tokenizeXmlDocument(xml)
-    const semantic = buildSemanticArisDocument(document)
-    const source = adaptSemanticIndex(semantic.index)
-    const census = buildLexicalCensus(document)
-    const entries = buildAccountingEntries(document, source)
-    const result = reconcile(census, entries)
-
-    // Expose the numbers in the test output for the final report.
-    expect(result.totalSourceRecords).toBeGreaterThan(0)
-    // `totalAccounted` counts only raw-source (non-derived) entries, so on a source with zero
-    // unaccounted records it is exactly `totalSourceRecords` — never more. Regression guard for
-    // the false "68043 of 68036 source records accounted for" sentence (totalAccounted used to
-    // include derived rows and could exceed the source-record total).
-    expect(result.totalAccounted).toBe(result.totalSourceRecords)
-    expect(result.totalDerived).toBeGreaterThanOrEqual(0)
-    expect(result.unaccountedCount).toBe(0)
-  })
-})
+// The AnimalWF-fixture-dependent "AnimalWF integration" suite lives in
+// ./accounting.animalwf.test.ts — see that file for the real-data reconciliation and count
+// assertions. It is excluded from this default project and runs only via
+// `npm run test:aris:animalwf`.

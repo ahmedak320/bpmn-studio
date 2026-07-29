@@ -2,6 +2,7 @@
   "schemaVersion": 2,
   "bundle": "translation",
   "sourceRequirement": "fix_plan.md §5 Mandatory end-to-end scenarios / Translation",
+  "note": "Phase 18 (BPMN e2e retirement, plan §5.3/§21.3) retargeted tests/e2e/lite-mandatory-translation.spec.ts from the deleted bpmn-js Lite shell to the ARIS shell; all 6 tests were rewritten (none of the old mechanisms survived — they were 100% BPMN-shell-specific) but all 10 requirement ids retain at least partial genuine coverage on real, currently-reachable ARIS surfaces (AML import via the details rail's bilingual editor, the derived-AML export/reimport round trip, the AI generation panel, and the chat gap-completion batch). Two mechanisms found dead by reading source (grep confirmed neither is imported anywhere reachable from ArisApp.tsx or src/aris/**) and reflected as narrowed coverage below rather than silently dropped: (1) the old per-field machine-translation review dialog (src/localization/TranslationReviewDialog.tsx and the rest of src/localization/**, plus the workspace translation-memory JSON persistence) — TR-06's 'manual edit' clause and TR-05's 'source Apply'/'backup' clauses have no ARIS equivalent; (2) free-text annotation bilingual editing — ArisDetailsElement's kind union (src/aris/details/seam.ts) has no 'freeText' case, so TR-04's 'annotations' clause is satisfied instead via a rule object's bilingual name/attribute, a real but narrower analogue.",
   "requiredRequirementIds": [
     "TR-01",
     "TR-02",
@@ -23,77 +24,80 @@
       "id": "TR-01",
       "requirement": "Wrong-language target fields imported from XML.",
       "browserTests": [
-        "TR5: XML import explicitly repairs wrong-language, EN-only and AR-only fields across two planes"
+        "TR1/TR2/TR3: AML import surfaces wrong-language and missing bilingual fields, explicitly repaired through the details rail"
       ]
     },
     {
       "id": "TR-02",
       "requirement": "Missing English or Arabic counterparts.",
       "browserTests": [
-        "TR5: XML import explicitly repairs wrong-language, EN-only and AR-only fields across two planes"
+        "TR1/TR2/TR3: AML import surfaces wrong-language and missing bilingual fields, explicitly repaired through the details rail",
+        "TR6/TR9/TR10: the chat gap-completion batch fills missing English/Arabic names atomically and reverts as one undo"
       ]
     },
     {
       "id": "TR-03",
       "requirement": "Arabic-first and English-first diagrams.",
       "browserTests": [
-        "TR5: XML import explicitly repairs wrong-language, EN-only and AR-only fields across two planes",
-        "TR5: AI text, DOCX, PDF, PNG/image and Excel use their real generation/import surfaces with EN/AR output"
+        "TR1/TR2/TR3: AML import surfaces wrong-language and missing bilingual fields, explicitly repaired through the details rail"
       ]
     },
     {
       "id": "TR-04",
       "requirement": "Mixed values, neutral terms, branch conditions, annotations, and details.",
+      "note": "Narrowed: free-text annotation bilingual editing has no ARIS surface (ArisDetailsElement has no 'freeText' kind). Satisfied instead via a rule object's bilingual name/attribute — a real but narrower analogue of 'annotations'.",
       "browserTests": [
-        "TR4/TR10: mixed and neutral labels, branch conditions, annotations and details survive undo, save and reopen"
+        "TR4/TR8/TR10: mixed values, neutral terms, branch labels and attribute details survive undo and a save/reopen round trip"
       ]
     },
     {
       "id": "TR-05",
       "requirement": "XML, ARIS, PDF, PNG, DOCX, AI, Excel, source Apply, and backup inputs.",
+      "note": "Narrowed: 'source Apply' (the BPMN XML source dialog) and 'backup' (folder-workspace backup zip export/import) are GAPs — both deleted with the BPMN UI, no ARIS equivalent (confirmed by exhaustive grep of ArisApp.tsx's imports). The derived-AML export/reimport is the closest surviving portability mechanism and is what satisfies the ARIS/XML/PDF/DOCX/AI/Excel clauses below.",
       "browserTests": [
-        "TR5: XML import explicitly repairs wrong-language, EN-only and AR-only fields across two planes",
-        "TR4/TR10: mixed and neutral labels, branch conditions, annotations and details survive undo, save and reopen",
-        "TR5: ARIS imports through production review and backup preserves Arabic output",
-        "TR5: AI text, DOCX, PDF, PNG/image and Excel use their real generation/import surfaces with EN/AR output"
+        "TR1/TR2/TR3: AML import surfaces wrong-language and missing bilingual fields, explicitly repaired through the details rail",
+        "TR4/TR8/TR10: mixed values, neutral terms, branch labels and attribute details survive undo and a save/reopen round trip",
+        "TR5: native ARIS import preserves an explicit Arabic repair through derived export and reimport",
+        "TR5/TR7: AI text, DOCX, PDF, PNG and Excel use their real generation/import surfaces with EN/AR output and consent-gated network"
       ]
     },
     {
       "id": "TR-06",
       "requirement": "Provider cancellation, 429, partial failure, retry, and manual edit.",
+      "note": "Narrowed: the old per-field 'manual edit' recovery UI (TranslationReviewDialog and src/localization/**) is dead code, unreachable from ArisApp.tsx. Cancellation/429/retry/partial-failure are satisfied instead through the AI generation provider's real transport-resilience surface, which is truthful about failure but is a different (whole-generation, not per-field) recovery model.",
       "browserTests": [
-        "TR6: cancellation, HTTP 429 per-field retry, partial failure and per-field manual recovery remain truthful",
-        "TR6/TR10: workspace translation-memory recovery and late finalization stay atomic across activation"
+        "TR6/TR9: AI provider 429 retry, transport exhaustion, cancellation and manual recovery remain truthful"
       ]
     },
     {
       "id": "TR-07",
       "requirement": "No network before explicit consent.",
       "browserTests": [
-        "TR5: AI text, DOCX, PDF, PNG/image and Excel use their real generation/import surfaces with EN/AR output"
+        "TR5/TR7: AI text, DOCX, PDF, PNG and Excel use their real generation/import surfaces with EN/AR output and consent-gated network"
       ]
     },
     {
       "id": "TR-08",
       "requirement": "Actual Arabic SVG text after switching.",
       "browserTests": [
-        "TR4/TR10: mixed and neutral labels, branch conditions, annotations and details survive undo, save and reopen"
+        "TR1/TR2/TR3: AML import surfaces wrong-language and missing bilingual fields, explicitly repaired through the details rail"
       ]
     },
     {
       "id": "TR-09",
       "requirement": "No false completion or stale progress message.",
       "browserTests": [
-        "TR6: cancellation, HTTP 429 per-field retry, partial failure and per-field manual recovery remain truthful",
-        "TR6/TR10: workspace translation-memory recovery and late finalization stay atomic across activation"
+        "TR6/TR9: AI provider 429 retry, transport exhaustion, cancellation and manual recovery remain truthful",
+        "TR6/TR9/TR10: the chat gap-completion batch fills missing English/Arabic names atomically and reverts as one undo"
       ]
     },
     {
       "id": "TR-10",
       "requirement": "Undo and save/reopen round trip.",
       "browserTests": [
-        "TR4/TR10: mixed and neutral labels, branch conditions, annotations and details survive undo, save and reopen",
-        "TR6/TR10: workspace translation-memory recovery and late finalization stay atomic across activation"
+        "TR4/TR8/TR10: mixed values, neutral terms, branch labels and attribute details survive undo and a save/reopen round trip",
+        "TR5: native ARIS import preserves an explicit Arabic repair through derived export and reimport",
+        "TR6/TR9/TR10: the chat gap-completion batch fills missing English/Arabic names atomically and reverts as one undo"
       ]
     }
   ]

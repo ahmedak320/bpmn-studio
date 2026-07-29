@@ -866,7 +866,9 @@ function setAttributeOccurrencePlacementCommand(
     offsetY: existing?.offsetY ?? 0,
     width: existing?.width ?? null,
     height: existing?.height ?? null,
-    rotation: existing?.rotation ?? null
+    rotation: existing?.rotation ?? null,
+    symbolFlag: existing?.symbolFlag ?? null,
+    fontStyleSheetId: existing?.fontStyleSheetId ?? null
   })
   const placement: ArisAttributeOccurrence = Object.freeze({
     ...previous,

@@ -1004,6 +1004,10 @@ export default function ArisApp(): JSX.Element {
                   // If this changes while a request is in flight, the panel
                   // refuses the stale placement and offers the AML instead.
                   workspaceId={workspaceAdapter?.id ?? null}
+                  // §16.2 "optional relevant workspace context": the Description
+                  // tab ranks these digests. Without them the control has
+                  // nothing to offer and the feature is inert.
+                  digests={assistantDigests}
                   onCreateModel={handleCreateModel}
                   onDownloadFile={(fileName, bytes, mimeType) =>
                     downloadBytes(fileName, bytes, mimeType)

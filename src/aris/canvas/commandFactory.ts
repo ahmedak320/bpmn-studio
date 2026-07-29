@@ -490,6 +490,7 @@ export function createConnectionOccurrenceCommand(
     targetOccurrenceId: input.targetOccurrenceId,
     route: toCanonicalRoute(input.route ?? []),
     style: Object.freeze({ ...DEFAULT_CONNECTION_STYLE, ...input.style }),
+    attributeOccurrences: Object.freeze([]),
     rawAttributes: Object.freeze({})
   })
   return build(
@@ -666,6 +667,7 @@ export function addFreeTextCommand(
     modelId: input.modelId,
     definitionId: null,
     text: localizedValue(input.text, input.localeId),
+    attributes: Object.freeze([]),
     bounds: toCanonicalBounds(input.bounds),
     style: Object.freeze({ ...DEFAULT_OCCURRENCE_STYLE, ...input.style })
   })

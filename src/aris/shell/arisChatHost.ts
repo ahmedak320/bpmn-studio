@@ -8,7 +8,7 @@
  * `ArisEditCommand` — `modelCommandMapping.ts` documents the mapping; this file
  * performs it, for all fifteen plan §18.3 commands.
  *
- * Two rules are load-bearing:
+ * Three rules are load-bearing:
  *
  *  - A command kind this seam cannot express THROWS. `applySafeCommandsAtomically`
  *    treats any throw as "this command could not be applied" and aborts the whole
@@ -17,6 +17,11 @@
  *  - Every `ArisEditCommand` is built against the document it will actually be
  *    applied to, so `baseRevision` always matches and a stale proposal is rejected
  *    by the model layer rather than by a hopeful check here.
+ *  - Every `ArisEditCommand` carries its `before` pre-image, because that is what
+ *    `invertCommand` in `src/aris/model/commands.ts` undoes with. A command
+ *    translated with `before: null` applies and then cannot be reverted, which is
+ *    how a chat-applied batch used to end up outside the undo history in practice
+ *    even though it sat on it (`buildDirect` below, plan §18.5 step 7 / §18.8).
  *
  * ## Creation commands: id allocation and canonical placement
  *
@@ -82,8 +87,19 @@ import {
   createConnectionDefinitionCommand,
   createConnectionOccurrenceCommand,
   createOccurrenceCommand,
+  deleteConnectionCommand,
+  deleteDefinitionCommand,
+  deleteOccurrenceCommand,
+  readAttributeValues,
+  reconnectConnectionCommand,
+  requireConnectionOccurrence,
+  setAttributeCommand,
+  setLocalizedNameCommand,
+  setModelAssignmentCommand,
   transactionCommand
 } from '../canvas/commandFactory'
+import type { ArisCommandContext } from '../canvas/commandFactory'
+import type { ArisCommandThunk } from '../canvas/documentStore'
 import { removeAttachmentCommand } from '../canvas/attachments'
 import { resolveArisSymbol, resolveDefaultSymbol } from '../symbols'
 import {
@@ -356,46 +372,130 @@ export function applyOrderedModelCommands(
   return current
 }
 
-const DIRECT_MODEL_KIND: Readonly<Record<string, ArisEditCommand['kind']>> = Object.freeze({
-  setLocalizedName: 'setLocalizedName',
-  setAttribute: 'setAttribute',
-  addAttributeValue: 'addAttributeValue',
-  setAssignment: 'setModelAssignment',
-  setRoute: 'setConnectionRoute',
-  reconnect: 'reconnectConnection',
-  deleteConnection: 'deleteConnection',
-  deleteOccurrence: 'deleteOccurrence',
-  deleteDefinition: 'deleteDefinition'
-})
+/** The nine patch kinds whose model command is a single, already-shaped edit. */
+type ArisChatDirectCommand = Extract<
+  ArisChatCommand,
+  {
+    kind:
+      | 'setLocalizedName'
+      | 'setAttribute'
+      | 'addAttributeValue'
+      | 'setAssignment'
+      | 'setRoute'
+      | 'reconnect'
+      | 'deleteConnection'
+      | 'deleteOccurrence'
+      | 'deleteDefinition'
+  }
+>
+
+/**
+ * Build the model command for one of the nine direct kinds, WITH its `before` pre-image.
+ *
+ * `before` is not decoration. `invertCommand` in `src/aris/model/commands.ts` computes an undo by
+ * swapping `before` and `after` (or, for the delete kinds, by re-creating the record it finds in
+ * `before`), so a command translated with `before: null` applies perfectly and then throws on the
+ * first revert — which is exactly how a chat-applied batch used to become un-undoable while
+ * diagram-js still showed Undo as available. Every builder below is therefore the *document-aware*
+ * one from `src/aris/canvas/commandFactory.ts`, the same builder a canvas gesture uses, so a
+ * chat-applied edit and a hand-drawn edit are byte-identical entries on one history.
+ *
+ * `setRoute` is built by hand rather than through `setConnectionRouteCommand` only so its `after`
+ * route keeps the exact points the patch proposed (the factory rounds them to the canvas grid);
+ * its `before` is read from the document the same way.
+ */
+function buildDirect(
+  document: ArisWorkingDocument,
+  command: ArisChatDirectCommand,
+  context: ArisCommandContext
+): ArisEditCommand {
+  switch (command.kind) {
+    case 'setLocalizedName': {
+      const { ownerKind, ownerId, localeId, value } = command.payload
+      return setLocalizedNameCommand(context, document, ownerKind, ownerId, localeId, value)
+    }
+    case 'setAttribute': {
+      const { ownerKind, ownerId, attributeType, values } = command.payload
+      return setAttributeCommand(context, document, ownerKind, ownerId, attributeType, values)
+    }
+    case 'addAttributeValue': {
+      const { ownerKind, ownerId, attributeType } = command.payload
+      // `invertCommand` turns this into a `setAttribute` back to `before`, so `before` must be the
+      // owner's complete prior value list for this attribute type, not just the added value.
+      return {
+        commandId: context.commandId,
+        baseRevision: context.baseRevision,
+        kind: 'addAttributeValue',
+        affectedSourceIds: [ownerId],
+        before: Object.freeze([
+          ...readAttributeValues(document, ownerKind, ownerId, attributeType)
+        ]),
+        after: command.payload,
+        origin: context.origin ?? 'user'
+      }
+    }
+    case 'setAssignment': {
+      const { objectDefinitionId, modelId, action } = command.payload
+      return setModelAssignmentCommand(context, objectDefinitionId, modelId, action)
+    }
+    case 'setRoute': {
+      const { connectionOccurrenceId, route } = command.payload
+      const connection = requireConnectionOccurrence(document, connectionOccurrenceId)
+      return {
+        commandId: context.commandId,
+        baseRevision: context.baseRevision,
+        kind: 'setConnectionRoute',
+        affectedSourceIds: [connectionOccurrenceId],
+        before: Object.freeze({
+          connectionOccurrenceId,
+          route: Object.freeze([...connection.route])
+        }),
+        after: Object.freeze({
+          connectionOccurrenceId,
+          route: Object.freeze(route.map((point): ArisPoint => ({ x: point.x, y: point.y })))
+        }),
+        origin: context.origin ?? 'user'
+      }
+    }
+    case 'reconnect': {
+      const { connectionOccurrenceId, sourceOccurrenceId, targetOccurrenceId } = command.payload
+      return reconnectConnectionCommand(context, document, connectionOccurrenceId, {
+        ...(sourceOccurrenceId === undefined ? {} : { sourceOccurrenceId }),
+        ...(targetOccurrenceId === undefined ? {} : { targetOccurrenceId })
+      })
+    }
+    case 'deleteConnection':
+      return deleteConnectionCommand(context, document, command.payload.connectionOccurrenceId)
+    case 'deleteOccurrence':
+      return deleteOccurrenceCommand(context, document, command.payload.occurrenceId)
+    case 'deleteDefinition':
+      return deleteDefinitionCommand(context, document, command.payload.definitionId)
+    default: {
+      const exhaustive: never = command
+      throw new ArisChatUnsupportedCommandError((exhaustive as ArisChatCommand).kind)
+    }
+  }
+}
 
 /**
  * The nine patch commands whose payload shape is already identical to the model command's (see
  * `modelCommandMapping.ts`), so the payload is carried across unchanged — the one exception being
  * `setRoute`, whose points are narrowed to `ArisPoint`.
+ *
+ * The patch command's own `targetIds` stay the command's `affectedSourceIds`, because that is what
+ * the derived AML export addresses records by; only `before` comes from the factory.
  */
 function translateDirect(
   document: ArisWorkingDocument,
-  command: ArisChatCommand,
+  command: ArisChatDirectCommand,
   origin: ArisEditCommand['origin']
 ): ArisEditCommand {
-  const kind = DIRECT_MODEL_KIND[command.kind]
-  if (!kind) throw new ArisChatUnsupportedCommandError(command.kind)
-  const after =
-    command.kind === 'setRoute'
-      ? {
-          connectionOccurrenceId: command.payload.connectionOccurrenceId,
-          route: command.payload.route.map((point): ArisPoint => ({ x: point.x, y: point.y }))
-        }
-      : command.payload
-  return {
+  const built = buildDirect(document, command, {
     commandId: command.commandId,
     baseRevision: document.revision,
-    kind,
-    affectedSourceIds: command.targetIds,
-    before: null,
-    after,
     origin
-  }
+  })
+  return Object.freeze({ ...built, affectedSourceIds: command.targetIds })
 }
 
 function translateAddMetadataDefinition(
@@ -613,6 +713,76 @@ export function createArisChatApplyHost(
       return applyOrderedModelCommands(document, edits)
     },
     ...(options.saveDraftRevision ? { saveDraftRevision: options.saveDraftRevision } : {})
+  }
+}
+
+/**
+ * The part of `ArisCanvas` committing a chat batch needs: the live document and the command
+ * bridge. Structural on purpose — the shell test can drive the real bridge without a React tree.
+ */
+export interface ArisChatGestureCanvas {
+  readonly document: ArisWorkingDocument
+  readonly bridge: {
+    execute(label: string, thunks: readonly ArisCommandThunk[]): readonly ArisEditCommand[]
+  }
+}
+
+/**
+ * Commit a validated chat batch as ONE undoable canvas gesture (plan §18.5 step 7, §18.8).
+ *
+ * Everything goes through `ArisCommandBridge.execute`, which records the whole batch as a single
+ * `aris.gesture` entry on diagram-js's command stack. That is what makes the rail's Undo and the
+ * toolbar's Undo the same button: both end up in `ArisGestureHandler.revert`, which undoes exactly
+ * as many ARIS commands as the gesture applied.
+ *
+ * The batch is translated eagerly against a scratch fold of the canvas document rather than one
+ * chat command at a time, for two reasons:
+ *
+ *  - `addMetadataConnection`/`addCoreConnection` become TWO model commands, so a one-command-per-
+ *    patch-command translation cannot express them at all (`toArisEditCommand` throws for them);
+ *  - one `idMap` spans the whole batch, so a command that references a record an earlier command
+ *    in the same batch created resolves to the id that record actually got.
+ *
+ * @returns the canvas document after the gesture, or `null` when nothing was applied — the bridge
+ *   plans before it executes, so a rejection leaves both stacks untouched.
+ */
+export function applyArisChatCommandsAsGesture(
+  canvas: ArisChatGestureCanvas,
+  commands: readonly ArisChatCommand[],
+  label: string,
+  options: ArisChatHostOptions = {}
+): ArisWorkingDocument | null {
+  const origin = options.origin ?? 'ai-auto'
+  const idMap = new Map<string, string>()
+  try {
+    const planned: ArisEditCommand[] = []
+    let scratch = canvas.document
+    for (const command of commands) {
+      const idContext: ArisChatIdAllocationContext = {
+        allocator: createArisIdAllocator({
+          existingIds: collectExistingIds(scratch),
+          ...(options.randomIdSource ? { random: options.randomIdSource } : {})
+        }),
+        idMap
+      }
+      for (const edit of toArisEditCommands(scratch, command, origin, idContext)) {
+        const normalized = normalizeCommand(edit, scratch.revision)
+        scratch = applyModelCommand(scratch, normalized)
+        planned.push(normalized)
+      }
+    }
+    if (planned.length === 0) return canvas.document
+    canvas.bridge.execute(
+      label,
+      planned.map(
+        (edit): ArisCommandThunk =>
+          (document) =>
+            normalizeCommand(edit, document.revision)
+      )
+    )
+    return canvas.document
+  } catch {
+    return null
   }
 }
 

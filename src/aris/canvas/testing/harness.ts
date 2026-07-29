@@ -208,7 +208,9 @@ export function importedLikeDocument(options: ImportedModelOptions = {}): {
                 offsetY: external.offsetY,
                 width: external.width,
                 height: external.height,
-                rotation: null
+                rotation: null,
+                symbolFlag: null,
+                fontStyleSheetId: null
               })
             ])
           : Object.freeze([]),
@@ -235,6 +237,7 @@ export function importedLikeDocument(options: ImportedModelOptions = {}): {
       modelId,
       definitionId: `FFTextDef.${index}`,
       text: localizedValue(`Note ${index}`),
+      attributes: Object.freeze([]),
       bounds: Object.freeze({ ...note }),
       style: OCCURRENCE_STYLE
     })

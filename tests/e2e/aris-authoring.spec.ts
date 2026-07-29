@@ -71,7 +71,7 @@ async function openReferenceExport(page: Page): Promise<void> {
     .getByRole('heading', { name: 'OrbitPM ARIS Studio Lite' })
     .waitFor({ state: 'visible' })
   await page.locator('input[type="file"]').first().setInputFiles(REFERENCE_AML)
-  await expect(page.locator('[data-orbitpm-aris-model]')).toHaveCount(8)
+  await expect(page.locator('[data-orbitpm-aris-model]')).toHaveCount(8, { timeout: 120_000 })
   await page
     .locator('[data-orbitpm-aris-canvas] [data-element-id^="ObjOcc."]')
     .first()

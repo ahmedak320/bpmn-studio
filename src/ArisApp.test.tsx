@@ -572,6 +572,35 @@ describe('ArisApp production shell', () => {
     )
   })
 
+  it('feeds the open sources’ digests to the Create panel’s §16.2 workspace context', async () => {
+    // The Description tab ranks `digests` to offer relevant workspace context. The shell computes
+    // them for the assistant; if it does not also hand them to the Create panel the control
+    // renders but can never match anything, so the feature is inert. Ranking a real opened source
+    // is the only assertion that can tell the two apart.
+    render(<ArisApp />)
+    await openAml()
+
+    const panel = document.querySelector<HTMLElement>('[data-orbitpm-aris-create]')!
+    fireEvent.click(
+      panel.querySelector<HTMLInputElement>('[data-orbitpm-aris-create-include-context]')!
+    )
+    fireEvent.change(panel.querySelector<HTMLTextAreaElement>('textarea')!, {
+      target: { value: 'How does the intake process handle a request?' }
+    })
+
+    await waitFor(() =>
+      expect(
+        panel.querySelector('[data-orbitpm-aris-create-context-status]')?.textContent
+      ).toContain('2 relevant process')
+    )
+    // Both models of the opened export are ranked in, named from their own AT_NAME.
+    const chips = panel.querySelectorAll('[data-orbitpm-aris-create-context-chips] span')
+    expect([...chips].map((chip) => chip.textContent).sort()).toEqual([
+      'Intake process',
+      'Review process'
+    ])
+  })
+
   it('rejects BPMN entries surfaced through remembered directory workspace browsing while still opening AML peers', async () => {
     const disguisedBpmnXml =
       '<definitions xmlns="http://www.omg.org/spec/BPMN/20100524/MODEL"><process id="P" /></definitions>'

@@ -166,6 +166,8 @@ export interface RenderAttributeOccurrence {
   readonly offsetY: number | null
   readonly rotation: number | null
   readonly bounds: { readonly width: number; readonly height: number } | null
+  /** `TEXT` draws the attribute's text at this placement; `SYMBOL` draws its symbol instead. */
+  readonly symbolFlag: string | null
   readonly fontStyleSheetId: string | null
   readonly text: RenderTextBlock | null
 }
@@ -202,6 +204,12 @@ export interface RenderConnection {
   readonly srcArrow: string | null
   readonly tgtArrow: string | null
   readonly visible: boolean
+  /**
+   * Label placements owned by this connection occurrence (`<AttrOcc>` children of `<CxnOcc>`).
+   * AnimalWF carries 123 of them; they position a connection's label relative to its route and
+   * are listed by plan §12.1 among the source visual inputs the renderer must read.
+   */
+  readonly attributeOccurrences: readonly RenderAttributeOccurrence[]
 }
 
 export interface RenderLane {
@@ -216,12 +224,30 @@ export interface RenderLane {
   readonly name: RenderTextBlock | null
 }
 
+/**
+ * A free-text note that displays one of its model's attributes rather than static text.
+ *
+ * ARIS expresses this with `AT_MODEL_AT` (the attribute type to display) plus `AT_MODEL_AT_GUID`
+ * (`<guid>;<typeNumber>`) on the `<FFTextDef>`, and no `AT_NAME` at all. 21 of AnimalWF's 69 notes
+ * are of this kind, so a renderer that only reads `AT_NAME` draws them blank.
+ */
+export interface RenderFreeTextModelAttributeBinding {
+  readonly attributeType: string
+  readonly guid: string | null
+  readonly typeNumber: number | null
+}
+
 export interface RenderFreeText {
   readonly id: string
   readonly anchor: RenderSourceAnchor
   readonly sourceBounds: RenderBounds
   readonly zOrder: number
   readonly text: RenderTextBlock | null
+  /**
+   * Set when the note is a model-attribute placeholder. `text` is then resolved from the owning
+   * model's attribute of that type, so the note renders its live value instead of nothing.
+   */
+  readonly modelAttributeBinding: RenderFreeTextModelAttributeBinding | null
 }
 
 export type RenderAttachmentKind = 'ole'

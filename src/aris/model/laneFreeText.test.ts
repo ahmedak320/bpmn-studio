@@ -106,6 +106,7 @@ describe('free text commands', () => {
       modelId: 'm1',
       definitionId: null,
       text: { values: { 'en-US': 'Note', 'ar-SA': 'ملاحظة' }, fallback: 'Note' },
+      attributes: [],
       bounds: { x: 5, y: 5, width: 120, height: 30 },
       style: {
         symbol: null,

@@ -164,6 +164,8 @@ export interface RenderSourceAttributeOccurrenceParsed {
   readonly port: string | null
   readonly orderNum: number | null
   readonly alignment: string | null
+  /** `TEXT` or `SYMBOL` — whether this placement draws the attribute's text or its symbol. */
+  readonly symbolFlag: string | null
   readonly fontStyleSheetId: string | null
   readonly offsetX: number | null
   readonly offsetY: number | null

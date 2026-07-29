@@ -66,6 +66,11 @@ interface ElementGeometry {
  * Occurrences, free text, external captions and connections do. The model root
  * and lane bands do not: a band is derived decoration, and letting it drive the
  * fit is exactly the defect this module exists to prevent.
+ *
+ * Connection labels do not either, for the same reason: they are placed
+ * relative to their connection's own route midpoint, which already drives the
+ * fit, so letting a caption box overhang widen the fitted extent would shrink
+ * every symbol for no content gain.
  */
 export function isArisContentElement(element: Element): boolean {
   if ((element as { isFrame?: boolean }).isFrame === true) return false

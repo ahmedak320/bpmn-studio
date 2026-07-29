@@ -292,6 +292,7 @@ describe('Section 12.3 fidelity findings — one fixture per kind', () => {
         port: null,
         orderNum: 0,
         alignment: 'CENTER',
+        symbolFlag: null,
         fontStyleSheetId: 'FontSS.1',
         offsetX: 0,
         offsetY: 0,

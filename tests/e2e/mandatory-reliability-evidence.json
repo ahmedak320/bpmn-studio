@@ -2,6 +2,7 @@
   "schemaVersion": 2,
   "bundle": "reliability",
   "sourceRequirement": "fix_plan.md §5 Mandatory end-to-end scenarios / Reliability",
+  "note": "Phase 18 (BPMN e2e retirement, plan §5.3/§21.3) retargeted tests/e2e/lite-mandatory-reliability.spec.ts from the deleted bpmn-js Lite shell to the ARIS shell and found, by reading source and by driving the built app live, that the reliability subsystem this bundle was written against (src/App.tsx, src/sessions/*, src/workspace/dirtySave.ts, HistoryDialog.tsx, liveWorkspaceIndex.ts) is now entirely DEAD CODE: src/main.tsx renders only ArisApp.tsx, which has no dirty tracking (ProcessTabList is fed a hard-coded empty dirtyKeys set), no save affordance or Ctrl/Cmd+S handler, no reload-recovery journal, no external-edit-conflict dialog, no rename/move/delete UI, no revision-history dialog, no duplicate-process-ID repair, and no search/catalog screen. A second, independent tooling blocker (the shared reliability-fsa.ts fixture's fake directory handle throws DataCloneError inside ArisApp.tsx's rememberWorkspace, which predates the ARIS rewrite) additionally makes every directory-workspace path unreachable regardless of dirty-tracking. Of the original 13 tests / 11 requirement ids, only REL-06 (folder-picker cancellation) has both a real, reachable ARIS mechanism and a real assertion surface, and was retargeted. REL-01 through REL-05 and REL-07 through REL-11 are deliberately left unbound below (like UI-02/UI-03/UI-07 in mandatory-ui-accessibility-evidence.json): their browserTests entries intentionally still name the pre-retarget test titles, which no longer exist in the file, so the release-reporter gate fails honestly on each rather than silently passing or being rebound to an unrelated test. implementationAreas/implementationCommits/coverageNote on the unbound requirements below describe the deleted pre-ARIS architecture and are retained only as a historical record of what this bundle used to verify.",
   "requiredRequirementIds": [
     "REL-01",
     "REL-02",
@@ -32,114 +33,135 @@
     "limitations": [
       "The fixture is not a native operating-system directory picker.",
       "The suite is listed only for Chromium here; final Firefox and WebKit release evidence remains a separate gate.",
-      "The 100 MiB aggregate history cap is covered below by lower-level automated tests, while this browser suite exercises the default 21-to-20 per-process retention boundary."
+      "REL-01 through REL-05 and REL-07 through REL-11 are unbound as of the ARIS retarget (see top-level note): the reliability subsystem they verified is dead code in the ARIS shell.",
+      "The 100 MiB aggregate history cap note below describes deleted pre-ARIS architecture and no longer applies."
     ]
   },
   "requirements": [
     {
       "id": "REL-01",
       "requirement": "Reload recovery for dirty directory, OPFS, and single-file documents.",
-      "status": "browser-e2e-defined",
-      "implementationAreas": ["src/sessions", "src/workspace/adapters", "src/App.tsx"],
+      "status": "unbound-dead-architecture",
+      "implementationAreas": [
+        "src/sessions (deleted architecture)",
+        "src/workspace/adapters (deleted architecture)",
+        "src/App.tsx (deleted)"
+      ],
       "implementationCommits": ["d4cfaeb", "cf012b9", "41c9b01", "09a2cc2", "f9c4bb9", "fe0d75f"],
       "browserTests": [
         "mandatory recovery: real OPFS restores a dirty draft after reload",
         "mandatory recovery: single-file upload restores a dirty draft after reload",
         "mandatory recovery: directory/FSA workspace restores a dirty draft after reload"
       ],
-      "coverageNote": "Exercises production draft journaling and recovery review for all three storage modes; OPFS is real browser storage."
+      "coverageNote": "GAP as of the ARIS retarget: no dirty tracking or recovery journal exists in any storage mode in the ARIS shell. These titles no longer exist in the file; kept here to fail the release-reporter gate honestly rather than silently pass."
     },
     {
       "id": "REL-02",
       "requirement": "Rename/move/delete with dirty child tabs.",
-      "status": "browser-e2e-defined",
-      "implementationAreas": ["src/sessions", "src/workspace", "src/App.tsx"],
+      "status": "unbound-dead-architecture",
+      "implementationAreas": [
+        "src/sessions (deleted architecture)",
+        "src/workspace (deleted architecture)",
+        "src/App.tsx (deleted)"
+      ],
       "implementationCommits": ["cf012b9", "b559c33", "09a2cc2", "f9c4bb9", "fe0d75f"],
       "browserTests": [
         "mandatory path transactions: dirty rename, move, and delete honor every gate"
       ],
-      "coverageNote": "Exercises Cancel, Continue without saving, and Save and continue through production dialogs and verifies persisted paths/bytes."
+      "coverageNote": "GAP as of the ARIS retarget: no rename/move/delete UI exists in the ARIS explorer, and directory-workspace success is separately fixture-blocked. This title no longer exists in the file; kept here to fail the release-reporter gate honestly rather than silently pass."
     },
     {
       "id": "REL-03",
       "requirement": "Ctrl/Cmd+S with multiple mounted tabs saves only the active file.",
-      "status": "browser-e2e-defined",
-      "implementationAreas": ["src/sessions/commandRouter.ts", "src/App.tsx"],
+      "status": "unbound-dead-architecture",
+      "implementationAreas": [
+        "src/sessions/commandRouter.ts (deleted architecture)",
+        "src/App.tsx (deleted)"
+      ],
       "implementationCommits": ["cf012b9", "b559c33", "4807d7f"],
       "browserTests": ["mandatory save: Ctrl+S saves only the active dirty tab"],
-      "coverageNote": "Verifies fixture write logs and persisted bytes for active and inactive tabs."
+      "coverageNote": "GAP as of the ARIS retarget: no save affordance or Ctrl/Cmd+S keydown handler exists anywhere in the ARIS shell. This title no longer exists in the file; kept here to fail the release-reporter gate honestly rather than silently pass."
     },
     {
       "id": "REL-04",
       "requirement": "External edit conflict and all conflict choices.",
-      "status": "browser-e2e-defined",
+      "status": "unbound-dead-architecture",
       "implementationAreas": [
-        "src/sessions/externalConflict.ts",
-        "src/workspace/adapters",
-        "src/App.tsx"
+        "src/sessions/externalConflict.ts (deleted architecture)",
+        "src/workspace/adapters (deleted architecture)",
+        "src/App.tsx (deleted)"
       ],
       "implementationCommits": ["d4cfaeb", "cf012b9", "b559c33"],
       "browserTests": [
         "mandatory conflicts: compare, keep, reload, overwrite, and save-as preserve intent"
       ],
-      "coverageNote": "Exercises Compare, Keep editing, Reload disk version, Overwrite disk version, and Save as a new file."
+      "coverageNote": "GAP as of the ARIS retarget: no save path exists, so no on-save external-edit conflict dialog exists. This title no longer exists in the file; kept here to fail the release-reporter gate honestly rather than silently pass."
     },
     {
       "id": "REL-05",
       "requirement": "Workspace switch during assistant, interview, and generation.",
-      "status": "browser-e2e-defined",
-      "implementationAreas": ["src/ai", "src/assist", "src/generation", "src/App.tsx"],
+      "status": "unbound-tooling-blocked",
+      "implementationAreas": [
+        "src/ai (partially retained)",
+        "src/assist (deleted architecture)",
+        "src/generation (deleted architecture)",
+        "src/App.tsx (deleted)"
+      ],
       "implementationCommits": ["4b78cce", "199b143", "917a730", "09a2cc2", "f9c4bb9"],
       "browserTests": [
         "mandatory workspace switch aborts in-flight generation, assistant, and interview transport and suppresses hostile late results"
       ],
-      "coverageNote": "Uses distinct directory handles, names, manifest workspace IDs, and mutually exclusive file/content sentinels for every committed switch. Each production POST is held without aborting it in the route harness. The assistant picker-cancellation request is released and must finish successfully before a separate request is started; only that distinct later request may fail with Chromium requestfailed transport-abort evidence after a committed switch. Valid hostile late provider responses are then attempted and their sentinel is proven absent from the newly active workspace."
+      "coverageNote": "GAP as of the ARIS retarget: ArisGenerationPanel does carry real cancellation/staleness machinery (AbortController, resolveArisAiPlacement), but no DOM path can produce a second, distinct, successfully-opened workspace to switch into — directory-workspace success is fixture-blocked (DataCloneError in rememberWorkspace) and OPFS/single-file have no 'switch to a different one' affordance. This title no longer exists in the file; kept here to fail the release-reporter gate honestly rather than silently pass."
     },
     {
       "id": "REL-06",
       "requirement": "Folder-picker cancellation retains reconnection.",
       "status": "browser-e2e-defined",
-      "implementationAreas": ["src/workspace/adapters", "src/App.tsx"],
-      "implementationCommits": ["d4cfaeb", "09a2cc2", "f9c4bb9"],
+      "implementationAreas": ["src/fs/workspaceHandle.ts", "src/ArisApp.tsx"],
+      "implementationCommits": ["ab4c9fb"],
       "browserTests": [
-        "mandatory workspace switch and picker cancellation retain the current dirty workspace"
+        "mandatory workspace: folder-picker cancellation retains the current browser workspace and its open tab"
       ],
-      "coverageNote": "Injects a standards-shaped AbortError at the picker boundary and verifies the existing workspace remains selected."
+      "coverageNote": "Retargeted to the ARIS shell: establishes a real OPFS ('Browser workspace') connection with a real open tab and canvas, injects a standards-shaped AbortError at the directory-picker boundary via the shared reliability-fsa.ts fixture (pickerBehavior: 'abort'), and verifies the existing workspace, open tab, and canvas are unchanged with no error toast."
     },
     {
       "id": "REL-07",
       "requirement": "Permission revocation and unreadable-file isolation.",
-      "status": "browser-e2e-defined",
-      "implementationAreas": ["src/workspace/adapters", "src/fs/fsAccess.ts", "src/App.tsx"],
+      "status": "unbound-tooling-blocked",
+      "implementationAreas": [
+        "src/workspace/adapters (deleted architecture)",
+        "src/fs/fsAccess.ts (deleted architecture)",
+        "src/App.tsx (deleted)"
+      ],
       "implementationCommits": ["d4cfaeb", "41c9b01", "09a2cc2"],
       "browserTests": [
         "mandatory isolation: unreadable entries do not block good files and permission loss retains dirty XML"
       ],
-      "coverageNote": "Verifies a readable process remains usable beside an unreadable entry and denied write permission retains the dirty editor without changing storage."
+      "coverageNote": "GAP as of the ARIS retarget: both halves require a successfully opened directory workspace, which is fixture-blocked; the dirty-XML-retention half additionally requires a save path that no longer exists. This title no longer exists in the file; kept here to fail the release-reporter gate honestly rather than silently pass."
     },
     {
       "id": "REL-08",
       "requirement": "Cross-tab workspace collision.",
-      "status": "browser-e2e-defined",
+      "status": "unbound-dead-architecture",
       "implementationAreas": [
-        "src/sessions/workspaceChannel.ts",
-        "src/workspace/adapters",
-        "src/App.tsx"
+        "src/sessions/workspaceChannel.ts (deleted architecture)",
+        "src/workspace/adapters (deleted architecture)",
+        "src/App.tsx (deleted)"
       ],
       "implementationCommits": ["cf012b9", "b559c33", "09a2cc2"],
       "browserTests": [
         "mandatory coordination: simultaneous cross-tab saves never silently overwrite both drafts"
       ],
-      "coverageNote": "Runs simultaneous production saves against shared backing bytes and requires one winner plus visible collision evidence and a retained dirty draft."
+      "coverageNote": "GAP as of the ARIS retarget: no save path exists on either tab, so no concurrent-save collision is reachable. This title no longer exists in the file; kept here to fail the release-reporter gate honestly rather than silently pass."
     },
     {
       "id": "REL-09",
       "requirement": "History restore and quota cleanup.",
-      "status": "browser-e2e-defined-with-lower-level-cap-coverage",
+      "status": "unbound-dead-architecture",
       "implementationAreas": [
-        "src/workspace/history",
-        "src/workspace/HistoryDialog.tsx",
-        "src/App.tsx"
+        "src/workspace/history (deleted architecture)",
+        "src/workspace/HistoryDialog.tsx (dead code, unreferenced)",
+        "src/App.tsx (deleted)"
       ],
       "implementationCommits": ["41c9b01", "09a2cc2", "f9c4bb9"],
       "browserTests": [
@@ -147,29 +169,32 @@
         "mandatory recovery history retains the newest 20 revisions and prunes the oldest first"
       ],
       "lowerLevelTests": ["src/workspace/history/historyManager.test.ts"],
-      "coverageNote": "The browser tests restore through the production dialog, inject a QuotaExceededError while proving the live draft remains dirty, and perform 21 UI saves to verify 20 newest revisions and paired persisted records. The 100 MiB aggregate cap remains a lower-level automated boundary."
+      "coverageNote": "GAP as of the ARIS retarget: no 'Recovery history' dialog exists anywhere in the ARIS shell; HistoryDialog.tsx is dead code, unreferenced by ArisApp. These titles no longer exist in the file; kept here to fail the release-reporter gate honestly rather than silently pass."
     },
     {
       "id": "REL-10",
       "requirement": "Duplicate process-ID diagnosis and repair.",
-      "status": "browser-e2e-defined",
-      "implementationAreas": ["src/workspace/liveWorkspaceIndex.ts", "src/App.tsx"],
+      "status": "unbound-dead-architecture",
+      "implementationAreas": [
+        "src/workspace/liveWorkspaceIndex.ts (deleted architecture)",
+        "src/App.tsx (deleted)"
+      ],
       "implementationCommits": ["41c9b01", "09a2cc2", "f9c4bb9"],
       "browserTests": [
         "mandatory index integrity repairs duplicate IDs and projects unsaved XML into search, catalog, and links"
       ],
       "lowerLevelTests": ["src/workspace/liveWorkspaceIndex.test.ts"],
-      "coverageNote": "Opens the duplicate selected by the diagnosis, repairs it through the production action, explicitly saves it, and condition-polls the actual persisted BPMN bytes until the two process IDs differ."
+      "coverageNote": "GAP as of the ARIS retarget: no duplicate-process-ID repair affordance exists in the ARIS explorer or rails. This title no longer exists in the file; kept here to fail the release-reporter gate honestly rather than silently pass."
     },
     {
       "id": "REL-11",
       "requirement": "Live dirty search, catalog, and link updates.",
-      "status": "browser-e2e-defined",
+      "status": "unbound-dead-architecture",
       "implementationAreas": [
-        "src/workspace/liveWorkspaceIndex.ts",
-        "src/workspace/catalog.ts",
-        "src/links",
-        "src/App.tsx"
+        "src/workspace/liveWorkspaceIndex.ts (deleted architecture)",
+        "src/workspace/catalog.ts (deleted architecture)",
+        "src/links (deleted architecture)",
+        "src/App.tsx (deleted)"
       ],
       "implementationCommits": ["41c9b01", "09a2cc2", "f9c4bb9", "fe0d75f"],
       "browserTests": [
@@ -180,7 +205,7 @@
         "src/links/__tests__/linkGraph.test.ts",
         "src/workspace/__tests__/processHierarchy.test.ts"
       ],
-      "coverageNote": "The browser case starts with a resolved called-process hierarchy, changes the caller name and calledElement in a dirty production editor, then proves immediate search and catalog projection, resolved-link detachment, unresolved-target UI, and unchanged durable bytes."
+      "coverageNote": "GAP as of the ARIS retarget: no search box, catalog 'Home' screen, or unresolved-link badge exists anywhere in the ARIS shell. This title no longer exists in the file; kept here to fail the release-reporter gate honestly rather than silently pass."
     }
   ]
 }

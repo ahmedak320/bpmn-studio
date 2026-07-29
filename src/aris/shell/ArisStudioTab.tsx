@@ -29,7 +29,7 @@ import type { Key } from '../../i18n'
 import { ArisAccountingRail } from './ArisAccountingRail'
 import { ArisChatImproveRail } from './ArisChatImproveRail'
 import { ArisEpcRail } from './ArisEpcRail'
-import { toArisEditCommand } from './arisChatHost'
+import { applyArisChatCommandsAsGesture } from './arisChatHost'
 import { derivedAmlFileName, exportArisDerivedAml } from './arisDerivedExport'
 import {
   buildArisEpcFindings,
@@ -42,6 +42,7 @@ import {
   type ArisCanvasSelectionState
 } from './ArisCanvasView'
 import { ArisDetailsRail } from './ArisDetailsRail'
+import type { ArisDetailsEditingApi } from './arisDetailsEditing'
 import { arisText, buildArisDetailsDocument, type ArisStudioDocument } from './arisStudioDocument'
 import { tk } from './shellI18n'
 
@@ -96,6 +97,7 @@ function businessObjectLabel(businessObject: ArisBusinessObject | null): string 
   switch (businessObject.kind) {
     case 'freeText':
     case 'label':
+    case 'connectionLabel':
       return businessObject.text
     default:
       return businessObject.name
@@ -342,18 +344,7 @@ export function ArisStudioTab({
     (commands: readonly ArisChatCommand[], label: string): ArisWorkingDocument | null => {
       const canvas = canvasRef.current
       if (!canvas) return null
-      try {
-        canvas.bridge.execute(
-          label,
-          commands.map(
-            (command) => (document: ArisWorkingDocument) =>
-              toArisEditCommand(document, command, 'ai-auto')
-          )
-        )
-        return canvas.document
-      } catch {
-        return null
-      }
+      return applyArisChatCommandsAsGesture(canvas, commands, label)
     },
     []
   )
@@ -370,6 +361,57 @@ export function ArisStudioTab({
 
   const selectionLabel =
     businessObjectLabel(selection.businessObject) ?? selection.detailsElement?.id ?? null
+
+  // --- plan §11.4/§13.3: the details rail's write half --------------------------
+  // Every method is one `ArisAuthoring` call, i.e. one `bridge.execute`, i.e.
+  // one undo step on the same stack the canvas gestures use. A refusal from the
+  // ARIS command system is surfaced as a toast and changes nothing.
+  const handleEditError = useCallback(
+    (error: unknown) => {
+      onToast(
+        tk('aris.details.edit.failed', 'The change was refused: {error}', {
+          error: error instanceof Error ? error.message : String(error)
+        }),
+        'error'
+      )
+    },
+    [onToast]
+  )
+
+  const detailsEditing = useMemo<ArisDetailsEditingApi>(() => {
+    const run = (operation: (authoring: ArisCanvas['authoring']) => void): void => {
+      const canvas = canvasRef.current
+      if (!canvas) return
+      try {
+        operation(canvas.authoring)
+      } catch (error) {
+        handleEditError(error)
+      }
+    }
+    return {
+      renameDefinition: (definitionId, localeId, name) =>
+        run((authoring) => authoring.renameDefinition(definitionId, name, localeId)),
+      renameModel: (id, localeId, name) =>
+        run((authoring) => authoring.renameModel(id, name, localeId)),
+      setDefinitionAttribute: (definitionId, attributeType, values) =>
+        run((authoring) => authoring.setDefinitionAttribute(definitionId, attributeType, values)),
+      restyleOccurrence: (occurrenceId, style) =>
+        run((authoring) => authoring.restyleOccurrence(occurrenceId, style)),
+      addModelAssignment: (definitionId, linkedModelId) =>
+        run((authoring) => authoring.addModelAssignment(definitionId, linkedModelId)),
+      removeModelAssignment: (definitionId, linkedModelId) =>
+        run((authoring) => authoring.removeModelAssignment(definitionId, linkedModelId)),
+      addAttachment: (definitionId, attachment) =>
+        run((authoring) => authoring.addAttachment(definitionId, attachment)),
+      removeAttachment: (definitionId, attachmentId) =>
+        run((authoring) => authoring.removeAttachment(definitionId, attachmentId)),
+      downloadAttachment: (definitionId, attachmentId) =>
+        run((authoring) => {
+          const file = authoring.downloadAttachment(definitionId, attachmentId)
+          onDownloadAttachment(file.fileName, file.bytes, file.mimeType)
+        })
+    }
+  }, [handleEditError, onDownloadAttachment])
 
   return (
     <section
@@ -550,6 +592,10 @@ export function ArisStudioTab({
           elementLabel={selectionLabel}
           modelId={renderableModelId}
           onDownloadAttachment={onDownloadAttachment}
+          document={liveDocument}
+          lang={lang}
+          editing={detailsEditing}
+          onEditError={(message) => onToast(message, 'error')}
         />
 
         <ArisAccountingRail

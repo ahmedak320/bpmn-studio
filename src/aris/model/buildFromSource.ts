@@ -1,4 +1,5 @@
 import type {
+  ArisAttachment,
   ArisAttribute,
   ArisAttributeOccurrence,
   ArisBounds,
@@ -13,6 +14,8 @@ import type {
   ArisObjectDefinition,
   ArisObjectOccurrence,
   ArisPoint,
+  ArisSourceAttachmentOccurrenceRecordLike,
+  ArisSourceAttachmentRecordLike,
   ArisSourceAttributeOccurrenceRecordLike,
   ArisSourceAttributeRecordLike,
   ArisSourceConnectionDefinitionRecordLike,
@@ -102,7 +105,9 @@ function buildAttributeOccurrences(
         offsetY: attribute.parsed.offsetY ?? null,
         width: attribute.parsed.dx ?? null,
         height: attribute.parsed.dy ?? null,
-        rotation: attribute.parsed.rotation ?? null
+        rotation: attribute.parsed.rotation ?? null,
+        symbolFlag: attribute.parsed.symbolFlag ?? null,
+        fontStyleSheetId: attribute.parsed.fontStyleSheetId ?? null
       })
     )
   }
@@ -127,17 +132,68 @@ function buildBounds(
   })
 }
 
+/**
+ * The occurrence's own source colours, from the `<Brush>` and `<Pen>` children AML hangs off it.
+ *
+ * `BrushType="TRANSPARENT"` is "no fill", not a colour: its `Color` is always `0`, so reading the
+ * colour would paint every transparent shape black.
+ *
+ * Only the two *colours* are lifted. A `<Pen>`'s `Width` is in AML logical units while the symbol
+ * registry's stroke widths are in its own view-box units, and nothing in the source says how the
+ * two relate — inventing a scale factor would draw a confidently wrong outline, so a source pen
+ * width stays unmapped (`null`, "no override") and the symbol keeps its authored outline. Pen
+ * `Style` is likewise left alone: every `<Pen>` in the reference export is `Style="0"` (solid),
+ * which is already what "no override" draws.
+ */
+export interface SourceOccurrencePaint {
+  readonly fillColor: string | null
+  readonly strokeColor: string | null
+}
+
+const TRANSPARENT_FILL = 'none'
+
+function paintByOwner(index: ArisSourceIndexLike): ReadonlyMap<string, SourceOccurrencePaint> {
+  const byOwner = new Map<string, { fillColor: string | null; strokeColor: string | null }>()
+  const entryFor = (
+    ownerSourceId: string | null
+  ): { fillColor: string | null; strokeColor: string | null } | null => {
+    if (!ownerSourceId) return null
+    const existing = byOwner.get(ownerSourceId)
+    if (existing) return existing
+    const created = { fillColor: null, strokeColor: null }
+    byOwner.set(ownerSourceId, created)
+    return created
+  }
+  for (const brush of index.styles.brushes ?? []) {
+    const entry = entryFor(brush.parsed.ownerSourceId)
+    if (!entry) continue
+    entry.fillColor =
+      (brush.parsed.brushType ?? '').trim().toUpperCase() === 'TRANSPARENT'
+        ? TRANSPARENT_FILL
+        : (brush.parsed.color ?? null)
+  }
+  for (const pen of index.styles.pens ?? []) {
+    const entry = entryFor(pen.parsed.ownerSourceId)
+    if (!entry) continue
+    entry.strokeColor = pen.parsed.color ?? null
+  }
+  const frozen = new Map<string, SourceOccurrencePaint>()
+  for (const [ownerSourceId, entry] of byOwner) frozen.set(ownerSourceId, Object.freeze(entry))
+  return frozen
+}
+
 function buildOccurrenceStyle(
   source: ArisSourceObjectOccurrenceRecordLike,
-  symbolFallback: string | null
+  symbolFallback: string | null,
+  paint: SourceOccurrencePaint | undefined
 ): { symbol: string; style: ArisObjectOccurrence['style'] } {
   const symbol = source.parsed.symbolNum ?? symbolFallback ?? ''
   return {
     symbol,
     style: Object.freeze({
       symbol,
-      fillColor: source.rawAttributes['FillColor'] ?? null,
-      strokeColor: source.rawAttributes['Color'] ?? null,
+      fillColor: source.rawAttributes['FillColor'] ?? paint?.fillColor ?? null,
+      strokeColor: source.rawAttributes['Color'] ?? paint?.strokeColor ?? null,
       strokeWidth: null,
       lineStyle: null,
       fontStyleSheetId: source.rawAttributes['FontSS.IdRef'] ?? null,
@@ -232,6 +288,7 @@ function buildModel(
     connectionOccurrences: Object.freeze([]),
     lanes: Object.freeze([]),
     freeText: Object.freeze([]),
+    attachments: Object.freeze([]),
     layout: Object.freeze({
       scale: source.parsed.scale ?? null,
       gridSize: source.parsed.gridSize ?? null,
@@ -264,10 +321,15 @@ function buildObjectDefinition(
 function buildObjectOccurrence(
   source: ArisSourceObjectOccurrenceRecordLike,
   definitions: ReadonlyMap<string, ArisObjectDefinition>,
-  attributeOccurrences: ArisSourceIndexLike['attributeOccurrences']
+  attributeOccurrences: ArisSourceIndexLike['attributeOccurrences'],
+  paintByOwnerSourceId: ReadonlyMap<string, SourceOccurrencePaint>
 ): ArisObjectOccurrence {
   const definition = definitions.get(source.parsed.objectDefinitionId ?? '')
-  const { symbol, style } = buildOccurrenceStyle(source, definition?.defaultSymbol ?? null)
+  const { symbol, style } = buildOccurrenceStyle(
+    source,
+    definition?.defaultSymbol ?? null,
+    source.sourceId === null ? undefined : paintByOwnerSourceId.get(source.sourceId)
+  )
   const id = source.parsed.objectOccurrenceId ?? ''
   return Object.freeze({
     id,
@@ -298,7 +360,8 @@ function buildConnectionDefinition(
 
 function buildConnectionOccurrence(
   source: ArisSourceConnectionOccurrenceRecordLike,
-  routePoints: ArisSourceIndexLike['routePoints']
+  routePoints: ArisSourceIndexLike['routePoints'],
+  attributeOccurrences: ArisSourceIndexLike['attributeOccurrences']
 ): ArisConnectionOccurrence {
   const id = source.parsed.connectionOccurrenceId ?? ''
   return Object.freeze({
@@ -309,6 +372,10 @@ function buildConnectionOccurrence(
     targetOccurrenceId: source.parsed.toObjectOccurrenceId ?? '',
     route: buildRoute(id, routePoints),
     style: buildConnectionStyle(source),
+    // `<AttrOcc>` children of a `<CxnOcc>` are the connection's own label placements. They are
+    // occurrence-local (plan §8.2): they are keyed off this occurrence's id alone, so they never
+    // leak onto the connection definition or onto a sibling occurrence of that definition.
+    attributeOccurrences: buildAttributeOccurrences(id, attributeOccurrences),
     rawAttributes: Object.freeze({ ...source.rawAttributes })
   })
 }
@@ -343,11 +410,18 @@ function buildFreeText(
   // the attribute is honored over the synthesized fallback.
   const id = occurrence.rawAttributes['FFTextOcc.ID'] ?? occurrence.sourceId ?? ''
   const text = definitionId ? buildLocalizedValue(definitionId, attributes) : emptyLocalizedValue()
+  // Everything on the `<FFTextDef>` that is not the static `AT_NAME` text. A note whose only
+  // attributes are `AT_MODEL_AT`/`AT_MODEL_AT_GUID` is a live model-attribute placeholder and has
+  // no `AT_NAME` at all, so dropping these leaves it permanently blank (plan §6.4, §12.1).
+  const definitionAttributes = definitionId
+    ? buildAttributes(definitionId, attributes)
+    : Object.freeze([])
   return Object.freeze({
     id,
     modelId: occurrence.parsed.modelId ?? '',
     definitionId,
     text,
+    attributes: definitionAttributes,
     bounds: buildBounds(
       occurrence.parsed.x,
       occurrence.parsed.y,
@@ -363,6 +437,75 @@ function buildFreeText(
       fontStyleSheetId: occurrence.rawAttributes['FontSS.IdRef'] ?? null,
       zOrder: occurrence.parsed.zorder ?? null
     })
+  })
+}
+
+function buildAttachment(
+  occurrence: ArisSourceAttachmentOccurrenceRecordLike,
+  definitions: ReadonlyMap<string, ArisSourceAttachmentRecordLike>
+): ArisAttachment {
+  const definitionId = occurrence.parsed.attachmentId ?? null
+  const definition = definitionId ? definitions.get(definitionId) : undefined
+  return Object.freeze({
+    id: occurrence.parsed.attachmentOccurrenceId ?? occurrence.sourceId ?? '',
+    modelId: occurrence.parsed.modelId ?? '',
+    definitionId,
+    bounds: buildBounds(
+      occurrence.parsed.x,
+      occurrence.parsed.y,
+      occurrence.parsed.dx,
+      occurrence.parsed.dy
+    ),
+    zOrder: occurrence.parsed.zorder ?? null,
+    blobCount: definition?.parsed.blobCount ?? 0,
+    rawAttributes: Object.freeze({ ...occurrence.rawAttributes })
+  })
+}
+
+const FREE_TEXT_MODEL_ATTRIBUTE_TYPE = 'AT_MODEL_AT'
+const FREE_TEXT_MODEL_ATTRIBUTE_GUID = 'AT_MODEL_AT_GUID'
+
+/** A free-text note that renders one of its model's attributes instead of static text. */
+export interface ArisFreeTextModelAttributeBinding {
+  /** The model attribute type the note displays, e.g. `AT_NAME`, `AT_ID`, `AT_PERS_RESP`. */
+  readonly attributeType: string
+  /** The ARIS GUID half of `AT_MODEL_AT_GUID` (`<guid>;<typeNumber>`), when present. */
+  readonly guid: string | null
+  /** The numeric attribute-type half of `AT_MODEL_AT_GUID`, when present. */
+  readonly typeNumber: number | null
+}
+
+/**
+ * Resolve a free-text note's model-attribute binding, or `null` if it is static text.
+ *
+ * ARIS lets a note act as a placeholder: instead of `AT_NAME` text it carries `AT_MODEL_AT` (the
+ * attribute type to display) and `AT_MODEL_AT_GUID` (`<guid>;<typeNumber>` identifying it). The
+ * renderer resolves the binding against the owning `ArisModel`'s `names`/`attributes` at draw
+ * time, which is why the raw binding — not a snapshot of the resolved text — is what the working
+ * model stores (plan §12.1).
+ */
+export function resolveFreeTextModelAttributeBinding(
+  freeText: ArisFreeText
+): ArisFreeTextModelAttributeBinding | null {
+  const attributes = freeText.attributes ?? []
+  const typeAttribute = attributes.find(
+    (attribute) => attribute.type === FREE_TEXT_MODEL_ATTRIBUTE_TYPE
+  )
+  const attributeType = typeAttribute?.values.find((value) => value.text.trim())?.text.trim()
+  if (!attributeType) return null
+
+  const guidAttribute = attributes.find(
+    (attribute) => attribute.type === FREE_TEXT_MODEL_ATTRIBUTE_GUID
+  )
+  const rawGuid = guidAttribute?.values.find((value) => value.text.trim())?.text.trim() ?? null
+  const separator = rawGuid?.lastIndexOf(';') ?? -1
+  const guid = rawGuid === null ? null : separator >= 0 ? rawGuid.slice(0, separator) : rawGuid
+  const parsedTypeNumber = separator >= 0 ? Number(rawGuid?.slice(separator + 1)) : Number.NaN
+
+  return Object.freeze({
+    attributeType,
+    guid,
+    typeNumber: Number.isFinite(parsedTypeNumber) ? parsedTypeNumber : null
   })
 }
 
@@ -386,9 +529,18 @@ export function buildFromSource(index: ArisSourceIndexLike): ArisWorkingDocument
     if (definition.id) connectionDefinitions.set(definition.id, definition)
   }
 
+  // §12.1/§12.2: an occurrence's own pen and brush live in child elements, so they are indexed by
+  // the element they hang off before any occurrence is built.
+  const occurrencePaint = paintByOwner(index)
+
   const occurrencesByModel = new Map<string, ArisObjectOccurrence[]>()
   for (const [, source] of index.objectOccurrences) {
-    const occurrence = buildObjectOccurrence(source, objectDefinitions, index.attributeOccurrences)
+    const occurrence = buildObjectOccurrence(
+      source,
+      objectDefinitions,
+      index.attributeOccurrences,
+      occurrencePaint
+    )
     if (!occurrence.id || !occurrence.modelId) continue
     const list = occurrencesByModel.get(occurrence.modelId) ?? []
     list.push(occurrence)
@@ -397,7 +549,11 @@ export function buildFromSource(index: ArisSourceIndexLike): ArisWorkingDocument
 
   const connectionsByModel = new Map<string, ArisConnectionOccurrence[]>()
   for (const [, source] of index.connectionOccurrences) {
-    const occurrence = buildConnectionOccurrence(source, index.routePoints)
+    const occurrence = buildConnectionOccurrence(
+      source,
+      index.routePoints,
+      index.attributeOccurrences
+    )
     if (!occurrence.id || !occurrence.modelId) continue
     const list = connectionsByModel.get(occurrence.modelId) ?? []
     list.push(occurrence)
@@ -427,6 +583,17 @@ export function buildFromSource(index: ArisSourceIndexLike): ArisWorkingDocument
     freeTextByModel.set(item.modelId, list)
   }
 
+  const attachmentDefinitions =
+    index.attachments ?? new Map<string, ArisSourceAttachmentRecordLike>()
+  const attachmentsByModel = new Map<string, ArisAttachment[]>()
+  for (const occurrence of index.attachmentOccurrences ?? []) {
+    const attachment = buildAttachment(occurrence, attachmentDefinitions)
+    if (!attachment.id || !attachment.modelId) continue
+    const list = attachmentsByModel.get(attachment.modelId) ?? []
+    list.push(attachment)
+    attachmentsByModel.set(attachment.modelId, list)
+  }
+
   const models = new Map<string, ArisModel>()
   for (const [, source] of index.models) {
     const model = buildModel(source, index.attributes)
@@ -436,9 +603,10 @@ export function buildFromSource(index: ArisSourceIndexLike): ArisWorkingDocument
     const connectionOccurrences = Object.freeze(connectionsByModel.get(modelId) ?? [])
     const lanes = Object.freeze(lanesByModel.get(modelId) ?? [])
     const freeText = Object.freeze(freeTextByModel.get(modelId) ?? [])
+    const attachments = Object.freeze(attachmentsByModel.get(modelId) ?? [])
     models.set(
       modelId,
-      Object.freeze({ ...model, occurrences, connectionOccurrences, lanes, freeText })
+      Object.freeze({ ...model, occurrences, connectionOccurrences, lanes, freeText, attachments })
     )
   }
 

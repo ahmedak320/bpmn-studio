@@ -351,6 +351,7 @@ describe('derived AML export mapping', () => {
         fontStyleSheetId: null,
         zOrder: null
       },
+      attributeOccurrences: [],
       rawAttributes: {}
     }
     let live = run(document, 'createConnectionDefinition', connectionDefinition)
@@ -437,6 +438,7 @@ describe('derived AML export mapping', () => {
         fontStyleSheetId: null,
         zOrder: null
       },
+      attributeOccurrences: [],
       rawAttributes: {}
     } satisfies ArisConnectionOccurrence)
 
@@ -694,6 +696,7 @@ describe('derived AML export mapping', () => {
       modelId: FIXTURE_IDS.model,
       definitionId: null,
       text: { values: { [FIXTURE_LOCALE_EN]: 'Draft — do not circulate' }, fallback: 'Draft' },
+      attributes: [],
       bounds: { x: 400, y: 400, width: 300, height: 60 },
       style: {
         symbol: null,

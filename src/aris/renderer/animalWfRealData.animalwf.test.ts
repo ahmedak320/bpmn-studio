@@ -1,4 +1,5 @@
 import { existsSync, readFileSync } from 'node:fs'
+import { fileURLToPath } from 'node:url'
 
 import { describe, expect, it } from 'vitest'
 
@@ -9,22 +10,32 @@ import type { ArisRenderSourceInput } from './input'
 import { ARIS_RENDER_FIDELITY_KINDS } from './types'
 
 /**
- * Guarded by a runtime file-existence check, not `.skip`: the private AnimalWF export lives
- * outside the repo tree the transformation is allowed to touch (`../../../../reference/`, never
- * committed or copied — see this lane's brief). When the file is present the test runs for
- * real; when it is absent (a clean checkout without the private fixture) the test body exits
- * early instead of being statically marked skipped.
+ * Real-data render model acceptance against the private AnimalWF export (Section 12.5 exit
+ * gate).
+ *
+ * The fixture is private customer data and is never committed, copied, or reproduced here — only
+ * aggregate counts reach the assertions. This file is named `*.animalwf.test.ts` — a convention
+ * excluded from the default `vitest run` project (see vitest.config.ts) and from
+ * `check:no-skips`'s scan — so it never runs as part of the ordinary test suite and never needs a
+ * `.skip`/`.runIf` guard. It only ever runs through the dedicated `npm run test:aris:animalwf`
+ * entry point (vitest.animalwf.config.ts), which is unconditional: if the fixture is absent, the
+ * module-load guard below throws immediately with a clear message — a loud failure, never a
+ * silent skip or a soft pass.
  */
-function readAnimalWfExport(): string | null {
-  const url = new URL('../../../../reference/AnimalWF/ARISAMLExport.xml', import.meta.url)
-  if (!existsSync(url)) return null
-  return readFileSync(url, 'utf8')
+const ANIMAL_WF_PATH = fileURLToPath(
+  new URL('../../../../reference/AnimalWF/ARISAMLExport.xml', import.meta.url)
+)
+if (!existsSync(ANIMAL_WF_PATH)) {
+  throw new Error(
+    `AnimalWF fixture not found at ${ANIMAL_WF_PATH}. This suite only runs via ` +
+      `\`npm run test:aris:animalwf\` with the private reference export present locally; it is ` +
+      'never run as part of the default test suite and never skips.'
+  )
 }
 
 describe('AnimalWF real-data render model (Section 12.5 exit gate)', () => {
   it('builds a render model for all 8 AnimalWF models and reports per-model counts plus the full fidelity tally', () => {
-    const xml = readAnimalWfExport()
-    if (!xml) return
+    const xml = readFileSync(ANIMAL_WF_PATH, 'utf8')
 
     const document = tokenizeXmlDocument(xml)
     const semantic = buildSemanticArisDocument(document)

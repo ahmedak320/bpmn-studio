@@ -87,7 +87,14 @@ export class ArisContextPadProvider {
       }
     }
 
-    if (businessObject.kind !== 'label' && businessObject.kind !== 'model') {
+    // Captions are not independently deletable: an external caption is deleted
+    // by deleting its occurrence, and a connection label by deleting its
+    // connection.
+    if (
+      businessObject.kind !== 'label' &&
+      businessObject.kind !== 'connectionLabel' &&
+      businessObject.kind !== 'model'
+    ) {
       entries['delete'] = {
         group: 'edit',
         className: 'aris-context-pad-delete',

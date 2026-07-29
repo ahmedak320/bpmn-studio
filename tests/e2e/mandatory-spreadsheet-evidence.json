@@ -2,6 +2,7 @@
   "schemaVersion": 2,
   "bundle": "spreadsheet",
   "sourceRequirement": "fix_plan.md §5 Mandatory end-to-end scenarios / Excel/CSV",
+  "note": "Phase 18 (BPMN e2e retirement, plan §5.3/§21.3) retargeted tests/e2e/lite-mandatory-spreadsheet.spec.ts from the deleted BPMN spreadsheet-to-BPMN pipeline (src/spreadsheet/**) to ARIS's Phase 12 Excel layer (src/aris/excel/**), which by reading source was found to be a completely separate, from-scratch implementation that reuses only the low-level secure ZIP preflight (xlsxPreflight.ts/archivePreflight.ts, documented in xlsxReader.ts as 'REUSED, never reimplemented'). It is official-template-only (no free-form mapping wizard), .xlsx-only (no CSV path at all), produces one atomic in-memory AML document per import (no folder/file writes, hence no destination collision/rollback/report/mapping-preset concepts), and has no wired-up cancel affordance despite the underlying worker supporting AbortSignal. buildAmlFromArisWorkbook additionally reads only workbook.models/.objects/.connections/.attributes: Lanes, FreeText, Styles, Glossary, and cross-model Assignment ('call') links are parsed and validated but silently dropped when generating AML — a real, disclosed product gap, not a test gap. Of the original 14 tests / 10 requirement ids, 9 tests survive (reduced/consolidated) and 5 ids (XLS-02, XLS-04, XLS-06, XLS-09, XLS-10) are deliberately left unbound below (like UI-02/UI-03/UI-07 in mandatory-ui-accessibility-evidence.json): their browserTests entries intentionally still name the pre-retarget titles, which no longer exist in the file, so the release-reporter gate fails honestly on each rather than silently passing or being rebound to an unrelated test.",
   "requiredRequirementIds": [
     "XLS-01",
     "XLS-02",
@@ -23,14 +24,17 @@
       "id": "XLS-01",
       "requirement": "Official English, Arabic, and bilingual templates.",
       "browserTests": [
-        "mandatory spreadsheet X1: official English template follows the production worker and language audit",
-        "mandatory spreadsheet X1: official Arabic template follows the production worker and language audit",
-        "mandatory spreadsheet X1: official bilingual template follows the production worker and language audit"
+        "mandatory spreadsheet X1: official English-only workbook imports through the real ARIS Excel worker and carries the expected AttrValue locales",
+        "mandatory spreadsheet X1: official Arabic-primary workbook imports through the real ARIS Excel worker and carries the expected AttrValue locales",
+        "mandatory spreadsheet X1: official bilingual workbook imports through the real ARIS Excel worker and carries the expected AttrValue locales",
+        "mandatory spreadsheet: an ARIS workbook is recognized by its custom template property or its visible banner cell, and is rejected outright with no identity evidence at all"
       ]
     },
     {
       "id": "XLS-02",
       "requirement": "Ordinary single-sheet mapping.",
+      "status": "unbound-no-aris-equivalent",
+      "coverageNote": "GAP: ARIS's Excel layer is official-template-only; there is no free-form mapping wizard for an ordinary noncanonical workbook. This title no longer exists in the file; kept here to fail the release-reporter gate honestly rather than silently pass.",
       "browserTests": [
         "mandatory spreadsheet X1/X5/X10: an ordinary noncanonical workbook exercises mapping review, deterministic inference, synthetic boundaries, and provenance reporting"
       ]
@@ -38,13 +42,16 @@
     {
       "id": "XLS-03",
       "requirement": "Multiple processes, folders, participants, lanes, gateways, default flows, and calls.",
+      "note": "Narrowed: satisfied for multiple models and an EPC rule object (ARIS's gateway analogue). No ARIS analogue exists for 'folders' or 'default-flow' flags; Lanes and cross-model 'call' Assignment links are parsed/validated by the real worker but silently dropped when generating AML (a real product gap, asserted directly by the test) rather than committed.",
       "browserTests": [
-        "mandatory spreadsheet X3/X10: a complex official workbook commits folders, pools, lanes, gateway defaults, and linked calls through every runtime validation surface"
+        "mandatory spreadsheet X3/X10: the official example workbook commits every model and its EPC rule object, while lane/style/glossary/assignment data is parsed but not yet reflected in the generated document"
       ]
     },
     {
       "id": "XLS-04",
       "requirement": "Sequential inference and synthetic boundary review.",
+      "status": "unbound-no-aris-equivalent",
+      "coverageNote": "GAP: no sequential-inference or synthetic-boundary-review feature exists in ARIS's official-template-only Excel layer. This title no longer exists in the file; kept here to fail the release-reporter gate honestly rather than silently pass.",
       "browserTests": [
         "mandatory spreadsheet X1/X5/X10: an ordinary noncanonical workbook exercises mapping review, deterministic inference, synthetic boundaries, and provenance reporting"
       ]
@@ -52,14 +59,16 @@
     {
       "id": "XLS-05",
       "requirement": "Missing and duplicate IDs, broken references, unknown types, circular lanes, and invalid defaults.",
+      "note": "Narrowed: satisfied for missing values, duplicate ids, broken references, and unknown/invalid types. 'Circular lanes' has no ARIS analogue (Lanes have no hierarchy column) and is substituted with an invalid-symbol-type case; 'invalid defaults' (BPMN default-flow flag) has no ARIS analogue and is substituted with an invalid-connection-type case.",
       "browserTests": [
-        "mandatory spreadsheet X1/X5/X10: an ordinary noncanonical workbook exercises mapping review, deterministic inference, synthetic boundaries, and provenance reporting",
-        "mandatory spreadsheet X5: row-level repair and error matrix preserves worksheet, cell, and raw-value evidence"
+        "mandatory spreadsheet X5: row-level errors preserve worksheet and cell evidence for missing values, duplicate ids, broken references, and unknown/invalid types"
       ]
     },
     {
       "id": "XLS-06",
       "requirement": "Quoted multiline CSV and Arabic Unicode.",
+      "status": "unbound-no-aris-equivalent",
+      "coverageNote": "GAP: ARIS's Excel layer is .xlsx-only; there is no CSV input path anywhere in the pipeline. This title no longer exists in the file; kept here to fail the release-reporter gate honestly rather than silently pass.",
       "browserTests": [
         "mandatory spreadsheet X6: RFC-4180 quoted multiline Arabic CSV survives worker parsing, XML generation, and visible language projection"
       ]
@@ -68,21 +77,22 @@
       "id": "XLS-07",
       "requirement": "Formulas with and without cached results.",
       "browserTests": [
-        "mandatory spreadsheet X7: formula cells with and without cached displayed values are distinguished in the browser",
-        "mandatory spreadsheet X7/X8: external links and data connections are inert, ignored, and reported without network or script execution"
+        "mandatory spreadsheet X7: formula cells with and without cached displayed values are distinguished by the real worker"
       ]
     },
     {
       "id": "XLS-08",
       "requirement": "Oversize, encrypted, macro-enabled, malformed, and decompression-bomb inputs.",
       "browserTests": [
-        "mandatory spreadsheet X7/X8: external links and data connections are inert, ignored, and reported without network or script execution",
-        "mandatory spreadsheet X8: oversize, encrypted, macro-enabled, embedded-macro, malformed, and decompression-bomb files are rejected before mapping"
+        "mandatory spreadsheet X7/X8: external links and data connections are inert, ignored, and reported without network activity",
+        "mandatory spreadsheet X8: oversize, encrypted, macro-enabled, malformed, and decompression-bomb workbooks are rejected before any sheet is read"
       ]
     },
     {
       "id": "XLS-09",
       "requirement": "Cancellation, destination collisions, rollback, reports, and mapping-preset reuse.",
+      "status": "unbound-no-aris-equivalent",
+      "coverageNote": "GAP for all five clauses: ArisGenerationPanel.handleWorkbook never wires an AbortController/signal and the Excel tab renders no Cancel button (no cancellation); Excel-created models are content-hash-keyed in-memory tabs with no destination path (no collision, no rollback, no report); there is no mapping step at all (no preset to reuse). These titles no longer exist in the file; kept here to fail the release-reporter gate honestly rather than silently pass.",
       "browserTests": [
         "mandatory spreadsheet X9: cancellation aborts the real worker operation without stale completion",
         "mandatory spreadsheet X9: collision policy blocks before writes and preserves the destination bytes",
@@ -93,6 +103,8 @@
     {
       "id": "XLS-10",
       "requirement": "Generated XML passes import, XSD, lint, link, language, and visual-layout checks.",
+      "status": "unbound-not-dedicated-check",
+      "coverageNote": "GAP as literally stated: there is no XSD/lint stage for generated AML. The two bound tests below incidentally download and inspect the generated AML and render the model on the real canvas, but this was not built out as a dedicated import/XSD/lint/link/language/visual-layout check, so it is not claimed as a genuine producer.",
       "browserTests": [
         "mandatory spreadsheet X1/X5/X10: an ordinary noncanonical workbook exercises mapping review, deterministic inference, synthetic boundaries, and provenance reporting",
         "mandatory spreadsheet X3/X10: a complex official workbook commits folders, pools, lanes, gateway defaults, and linked calls through every runtime validation surface"

@@ -15,10 +15,14 @@ import {
 /**
  * Plan section 19.3 / 14.3 real-data verification.
  *
- * Guarded by a runtime `fs.existsSync` check (never `.skip`): when the private AnimalWF
- * fixture isn't present on disk (it is gitignored and must never be committed — see
- * `../reference/AnimalWF/ARISAMLExport.xml` under the repo root), this file still defines a
- * real, passing test that says so explicitly, rather than silently skipping.
+ * The fixture is private customer data and is never committed, copied, or reproduced here — only
+ * aggregate counts and named-process labels reach the assertions. This file is named
+ * `*.animalwf.test.ts` — a convention excluded from the default `vitest run` project (see
+ * vitest.config.ts) and from `check:no-skips`'s scan — so it never runs as part of the ordinary
+ * test suite and never needs a `.skip`/`.runIf` guard. It only ever runs through the dedicated
+ * `npm run test:aris:animalwf` entry point (vitest.animalwf.config.ts), which is unconditional:
+ * if the fixture is absent, the module-load guard below throws immediately with a clear message —
+ * a loud failure, never a silent skip or a soft pass.
  *
  * Topology is extracted with `realDataScan.ts`, a scanner private to this test file — it
  * does not depend on `src/aris/source`'s semantic index (mid-rewrite elsewhere).
@@ -28,16 +32,15 @@ const FIXTURE_PATH = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
   '../../../../reference/AnimalWF/ARISAMLExport.xml'
 )
-const FIXTURE_PRESENT = fs.existsSync(FIXTURE_PATH)
+if (!fs.existsSync(FIXTURE_PATH)) {
+  throw new Error(
+    `AnimalWF fixture not found at ${FIXTURE_PATH}. This suite only runs via ` +
+      `\`npm run test:aris:animalwf\` with the private reference export present locally; it is ` +
+      'never run as part of the default test suite and never skips.'
+  )
+}
 
 describe('AnimalWF real-data return-path verification (plan 19.3)', () => {
-  if (!FIXTURE_PRESENT) {
-    it('is skipped in this environment: the private AnimalWF fixture is not present on disk', () => {
-      expect(FIXTURE_PRESENT).toBe(false)
-    })
-    return
-  }
-
   const xml = fs.readFileSync(FIXTURE_PATH, 'utf-8')
   const entities = scanEntities(xml)
   const USEN = entities.get('LocaleId.USen') ?? '1033'

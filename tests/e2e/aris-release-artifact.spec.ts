@@ -31,6 +31,38 @@ function sha256(path: string): string {
   return createHash('sha256').update(readFileSync(path)).digest('hex')
 }
 
+interface RecordedViolation {
+  readonly blockedURI: string
+  readonly effectiveDirective: string
+  readonly violatedDirective: string
+  readonly lineNumber: number
+}
+
+declare global {
+  interface Window {
+    __orbitpmCspViolations?: RecordedViolation[]
+  }
+}
+
+/**
+ * Start collecting the page's own CSP violation reports. Must be installed
+ * before `page.goto`, because the first report can arrive during load.
+ */
+async function recordCspViolations(page: Page): Promise<() => Promise<RecordedViolation[]>> {
+  await page.addInitScript(() => {
+    window.__orbitpmCspViolations = []
+    document.addEventListener('securitypolicyviolation', (event) => {
+      window.__orbitpmCspViolations?.push({
+        blockedURI: event.blockedURI,
+        effectiveDirective: event.effectiveDirective,
+        violatedDirective: event.violatedDirective,
+        lineNumber: event.lineNumber
+      })
+    })
+  })
+  return async () => await page.evaluate(() => window.__orbitpmCspViolations ?? [])
+}
+
 /**
  * Requests a self-contained file:// page is allowed to make at rest. Everything
  * else — including a single font, a single analytics beacon or a source map —
@@ -140,3 +172,110 @@ for (const scenario of [
     expect(observed.consoleErrors).toEqual([])
   })
 }
+
+// --- §2.5: the CSP the file ships with, as the engines actually enforce it ------
+//
+// The artifact used to report one violation on every load, on every engine: zod 4
+// probes for its JIT compiler with `new Function('')`, and `script-src 'self'
+// 'unsafe-inline' 'wasm-unsafe-eval'` correctly refuses it. zod caught the throw
+// and used its interpreter, so no behaviour changed — but Firefox surfaced the
+// report as `blocked a JavaScript eval … (Missing 'unsafe-eval')`, which reads
+// exactly like a blocked WebAssembly compilation and is not one (Firefox words
+// that case differently, and has honoured `'wasm-unsafe-eval'` since Firefox 102).
+// `src/security/zodJitless.ts` removes the probe instead of widening the policy.
+
+test('the release artifact raises no CSP violation while loading and importing', async ({
+  page
+}) => {
+  const violations = await recordCspViolations(page)
+  const observed = await openRelease(page, 'en')
+
+  // The zod-heavy paths — patch schema, provider config, workspace records — all
+  // run behind a real import, so a probe would certainly have fired by here.
+  await page.locator('input[type="file"]').first().setInputFiles(REFERENCE_AML)
+  await expect(page.locator('[data-orbitpm-aris-model]')).toHaveCount(8, { timeout: 120_000 })
+  await page
+    .locator('[data-orbitpm-aris-canvas] [data-element-id^="ObjOcc."]')
+    .first()
+    .waitFor({ state: 'attached', timeout: 120_000 })
+
+  expect(await violations()).toEqual([])
+  expect(observed.consoleErrors).toEqual([])
+})
+
+test('WebAssembly compiles under the shipped policy, in the document and in an inline blob worker', async ({
+  page
+}) => {
+  const violations = await recordCspViolations(page)
+  await openRelease(page, 'en')
+
+  const outcome = await page.evaluate(async () => {
+    // The eight-byte empty module: a valid WebAssembly binary, and the smallest
+    // thing that still goes through the host's compile hook.
+    const bytes = new Uint8Array([0, 0x61, 0x73, 0x6d, 1, 0, 0, 0])
+    const report: Record<string, string> = {}
+    try {
+      await WebAssembly.compile(bytes)
+      report.document = 'ok'
+    } catch (error) {
+      report.document = String(error)
+    }
+
+    const source = [
+      'self.onmessage = async () => {',
+      '  const bytes = new Uint8Array([0, 0x61, 0x73, 0x6d, 1, 0, 0, 0])',
+      '  try { await WebAssembly.compile(bytes); self.postMessage("ok") }',
+      '  catch (error) { self.postMessage(String(error)) }',
+      '}'
+    ].join('\n')
+    const objectUrl = URL.createObjectURL(
+      new Blob([source], { type: 'text/javascript;charset=utf-8' })
+    )
+    try {
+      // Classic, exactly as Vite's `?worker&inline` constructs the xmllint worker.
+      const worker = new Worker(objectUrl)
+      report.worker = await new Promise<string>((resolveWorker) => {
+        const timer = window.setTimeout(() => resolveWorker('timed out'), 15_000)
+        worker.onmessage = (event: MessageEvent<string>) => {
+          window.clearTimeout(timer)
+          worker.terminate()
+          resolveWorker(event.data)
+        }
+        worker.onerror = (event) => {
+          window.clearTimeout(timer)
+          worker.terminate()
+          resolveWorker(`worker error: ${event.message}`)
+        }
+        worker.postMessage('go')
+      })
+    } catch (error) {
+      report.worker = `construction failed: ${String(error)}`
+    } finally {
+      URL.revokeObjectURL(objectUrl)
+    }
+    return report
+  })
+
+  // `src/validation/xsdRuntime.ts` runs xmllint in exactly this shape — an inline
+  // blob worker compiling WASM. If either half stopped compiling, XSD validation
+  // would vanish on that engine, and §2.5 forbids that happening silently.
+  expect(outcome).toEqual({ document: 'ok', worker: 'ok' })
+  expect(await violations()).toEqual([])
+})
+
+test('the shipped policy permits WebAssembly without permitting eval', () => {
+  const html = readFileSync(RELEASE, 'utf8')
+  // The content attribute is full of single quotes, so the delimiter has to be
+  // captured and back-referenced rather than guessed.
+  const csp =
+    /<meta\b[^>]*http-equiv=(["'])Content-Security-Policy\1[^>]*content=(["'])([\s\S]*?)\2/iu.exec(
+      html
+    )?.[3]
+  expect(csp, 'the shipped file must carry exactly one CSP meta tag').toBeDefined()
+  const scriptSrc = (csp as string)
+    .split(';')
+    .map((directive) => directive.trim())
+    .find((directive) => directive.startsWith('script-src'))
+  expect(scriptSrc).toBe("script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval'")
+  expect(scriptSrc).not.toContain("'unsafe-eval'")
+})

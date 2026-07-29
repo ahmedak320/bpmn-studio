@@ -2,6 +2,7 @@
   "schemaVersion": 2,
   "bundle": "ui-accessibility",
   "sourceRequirement": "fix_plan.md §5 Mandatory end-to-end scenarios / UI/accessibility",
+  "note": "details-responsive.spec.ts (no 'lite-' prefix, so it escaped the Phase 18 inventory that scanned tests/e2e/lite-*.spec.ts) was found during this same retirement pass to be equally dead: both its tests booted through the deleted BPMN Lite 'New process' dialog into a .djs-container canvas and read a orbitpm.lite.preferences.v1.details.open localStorage key — the same removed pane lite-panes-details.spec.ts drove. It was retired for the same reason (no ARIS open/close/resize/persist mechanic exists to retarget against), which additionally emptied UI-05 and UI-06 of their sole producer. See UI-02/UI-03/UI-05/UI-06/UI-07 below for the resulting, deliberately-unbound evidence gaps.",
   "requiredRequirementIds": [
     "UI-01",
     "UI-02",
@@ -14,35 +15,15 @@
     "UI-09"
   ],
   "suite": {
-    "paths": [
-      "tests/e2e/aris-accessibility.spec.ts",
-      "tests/e2e/aris-i18n-rtl.spec.ts",
-      "tests/e2e/details-responsive.spec.ts",
-      "tests/e2e/lite-assistant.spec.ts",
-      "tests/e2e/lite-company-docs.spec.ts",
-      "tests/e2e/lite-panes-details.spec.ts",
-      "tests/e2e/lite-smoke.spec.ts",
-      "tests/e2e/lite-validation.spec.ts"
-    ],
+    "paths": ["tests/e2e/aris-accessibility.spec.ts", "tests/e2e/aris-i18n-rtl.spec.ts"],
     "exactInventory": false
   },
   "requirements": [
     {
       "id": "UI-01",
       "requirement": "Details rail open, close, and reopen in LTR and RTL at every breakpoint.",
+      "note": "Narrowed: the LTR/RTL mirroring half survives via aris-i18n-rtl.spec.ts. The viewport-breakpoint (320/375/768px) half lost its sole producer when details-responsive.spec.ts was retired (see bundle note) and is not otherwise covered.",
       "browserTests": [
-        {
-          "path": "tests/e2e/details-responsive.spec.ts",
-          "title": "Details uses a viewport-safe modal drawer at 320, 375, and 768px"
-        },
-        {
-          "path": "tests/e2e/details-responsive.spec.ts",
-          "title": "the 375px drawer and rail move to logical inline-end in Arabic"
-        },
-        {
-          "path": "tests/e2e/lite-panes-details.spec.ts",
-          "title": "persistent Details rail opens, collapses, and reopens without losing selection"
-        },
         {
           "path": "tests/e2e/aris-i18n-rtl.spec.ts",
           "title": "Arabic mirrors the explorer to the trailing edge while the ARIS canvas geometry stays unmirrored"
@@ -52,6 +33,7 @@
     {
       "id": "UI-02",
       "requirement": "Pane state, resize, focus, touch, and no-selection behavior.",
+      "note": "Deliberately unbound (like UI-03): its sole source, lite-panes-details.spec.ts, drove the deleted BPMN Lite 'Step details' badge/amber-ring pane bound to window.__ORBITPM_LITE__'s bpmn-js modeler and was retired (plan §5.3) rather than retargeted, because the ARIS details rail has no open/close/resize/persist mechanic today to test against. These bindings intentionally still point at the now-deleted file so the release-reporter gate fails honestly on UI-02 rather than silently passing.",
       "browserTests": [
         {
           "path": "tests/e2e/lite-panes-details.spec.ts",
@@ -102,68 +84,32 @@
       "requirement": "Semantic tabs, tree, search, menus, dialogs, and assistant.",
       "browserTests": [
         {
-          "path": "tests/e2e/lite-panes-details.spec.ts",
-          "title": "badge click selects the element and opens Step details with missing categories highlighted"
-        },
-        {
-          "path": "tests/e2e/lite-panes-details.spec.ts",
-          "title": "each mounted tab preserves its selected element when Details is reopened"
-        },
-        {
           "path": "tests/e2e/aris-accessibility.spec.ts",
           "title": "the model explorer is a keyboard-operable list that synchronizes canvas selection without a pointer"
-        },
-        {
-          "path": "tests/e2e/lite-company-docs.spec.ts",
-          "title": "search filters across names / ids / content and opens a hit"
-        },
-        {
-          "path": "tests/e2e/lite-assistant.spec.ts",
-          "title": "assistant dialog opens and closes with Escape"
-        },
-        {
-          "path": "tests/e2e/lite-smoke.spec.ts",
-          "title": "Escape closes the New-process modal"
-        },
-        {
-          "path": "tests/e2e/lite-validation.spec.ts",
-          "title": "keeps a one-line diff reachable above the separate action footer"
         }
       ]
     },
     {
       "id": "UI-05",
       "requirement": "320, 375, 768, and 1280 widths plus 200% and 400% zoom.",
+      "status": "unbound-producer-retired",
+      "note": "Deliberately unbound: its sole source, details-responsive.spec.ts, was retired in this same pass as dead BPMN Lite code (see bundle note) — it is no longer in suite.paths/REQUIRED_BROWSER_SUITES. This binding intentionally still points at the now-deleted file so the release-reporter gate fails honestly on UI-05 rather than silently passing.",
       "browserTests": [
         {
           "path": "tests/e2e/details-responsive.spec.ts",
           "title": "Details uses a viewport-safe modal drawer at 320, 375, and 768px"
-        },
-        {
-          "path": "tests/e2e/lite-validation.spec.ts",
-          "title": "standalone generated layout keeps both decisions reachable at 640x360"
-        },
-        {
-          "path": "tests/e2e/lite-validation.spec.ts",
-          "title": "standalone generated layout keeps both decisions reachable at 320x568"
-        },
-        {
-          "path": "tests/e2e/lite-validation.spec.ts",
-          "title": "standalone generated layout keeps both decisions reachable at 1280x720 at 400%-zoom equivalent"
         }
       ]
     },
     {
       "id": "UI-06",
       "requirement": "No application-chrome overflow.",
+      "status": "unbound-producer-retired",
+      "note": "Deliberately unbound: its sole source, details-responsive.spec.ts, was retired in this same pass as dead BPMN Lite code (see bundle note) — it is no longer in suite.paths/REQUIRED_BROWSER_SUITES. This binding intentionally still points at the now-deleted file so the release-reporter gate fails honestly on UI-06 rather than silently passing.",
       "browserTests": [
         {
           "path": "tests/e2e/details-responsive.spec.ts",
           "title": "Details uses a viewport-safe modal drawer at 320, 375, and 768px"
-        },
-        {
-          "path": "tests/e2e/lite-validation.spec.ts",
-          "title": "keeps a one-line diff reachable above the separate action footer"
         }
       ]
     },
@@ -171,6 +117,7 @@
       "id": "UI-07",
       "requirement": "Light and dark contrast plus reduced motion.",
       "supplementalGate": "quality.yml accessibility job runs the exact EN/AR light/dark desktop/mobile axe matrix; reduced-motion component checks run in unit coverage.",
+      "note": "Deliberately unbound (like UI-03): its sole source, lite-smoke.spec.ts's bpmn.io-attribution test, tested BPMN.io branding the ARIS shell (which no longer uses bpmn-js) does not render, and was retired rather than retargeted. This binding intentionally still points at the now-deleted file so the release-reporter gate fails honestly on UI-07's browser evidence rather than silently passing; the supplementalGate axe matrix remains the only current coverage.",
       "browserTests": [
         {
           "path": "tests/e2e/lite-smoke.spec.ts",

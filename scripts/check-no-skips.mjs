@@ -1,7 +1,13 @@
 import { execFileSync } from 'node:child_process'
 import { existsSync, readFileSync } from 'node:fs'
 import { REQUIRED_BROWSER_SUITES } from './release-suite-manifest.mjs'
-import { lineNumberAt, matches, nodeTestProhibited, prohibited } from './check-no-skips-rules.mjs'
+import {
+  fixtureGuardViolations,
+  lineNumberAt,
+  matches,
+  nodeTestProhibited,
+  prohibited
+} from './check-no-skips-rules.mjs'
 
 const tracked = execFileSync(
   'git',
@@ -114,6 +120,14 @@ for (const path of testFiles) {
     for (const match of matches(source, rule.pattern)) {
       failures.push(`${path}:${lineNumberAt(source, match.index)}: ${rule.label}`)
     }
+  }
+  for (const index of fixtureGuardViolations(path, source)) {
+    failures.push(
+      `${path}:${lineNumberAt(source, index)}: checks for a private reference/... fixture ` +
+        '(existsSync) but is not named *.animalwf.test.ts — fixture-dependent suites must use ' +
+        'the *.animalwf.test.ts convention (see vitest.animalwf.config.ts) so they throw at ' +
+        'module load instead of silently skipping or no-oping when the fixture is absent'
+    )
   }
 }
 

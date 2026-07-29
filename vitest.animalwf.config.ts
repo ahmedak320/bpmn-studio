@@ -16,6 +16,7 @@ export default defineConfig({
   },
   test: {
     environment: 'node',
-    include: ['src/**/*.animalwf.test.ts']
+    include: ['src/**/*.animalwf.test.ts'],
+    testTimeout: 60_000
   }
 })

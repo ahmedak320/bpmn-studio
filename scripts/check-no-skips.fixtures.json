@@ -20,5 +20,12 @@
     "describe.skipIf(cond)('x', () => {})",
     "it.todo('x')"
   ],
-  "runIfGenuine": ["describe.runIf(available)('x', () => {})"]
+  "runIfGenuine": ["describe.runIf(available)('x', () => {})"],
+  "fixtureGuardEvasions": {
+    "variableHeldSkip": "import { existsSync } from 'node:fs'\nconst fixture = existsSync('../../../../reference/AnimalWF/ARISAMLExport.xml') ? readFixture() : null\nconst itIfFixture = fixture ? it : it.skip\nitIfFixture('uses the fixture', () => {})",
+    "noOpAlias": "import { existsSync, readFileSync } from 'node:fs'\nconst ANIMAL_WF_PATH = '/abs/reference/AnimalWF/ARISAMLExport.xml'\nconst animalWfFixture = existsSync(ANIMAL_WF_PATH) ? readFileSync(ANIMAL_WF_PATH, 'utf8') : null\nconst itIfAnimalWf = animalWfFixture ? it : (_name, _fn) => undefined\nitIfAnimalWf('uses the fixture', () => {})",
+    "describeEarlyReturn": "import fs from 'node:fs'\nconst FIXTURE_PATH = resolve(dirname, '../../../../reference/AnimalWF/ARISAMLExport.xml')\nconst FIXTURE_PRESENT = fs.existsSync(FIXTURE_PATH)\ndescribe('real data', () => {\n  if (!FIXTURE_PRESENT) {\n    it('is skipped', () => { expect(FIXTURE_PRESENT).toBe(false) })\n    return\n  }\n  it('uses the fixture', () => {})\n})",
+    "tautologicalAbsenceAssertion": "import { existsSync } from 'node:fs'\nconst FIXTURE_PATH = resolve(here, '../../../../../reference/AnimalWF/ARISAMLExport.xml')\ndescribe('smoke test', () => {\n  it('builds digests', () => {\n    if (!existsSync(FIXTURE_PATH)) {\n      expect(existsSync(FIXTURE_PATH)).toBe(false)\n      return\n    }\n    doRealWork()\n  })\n})"
+  },
+  "fixtureGuardCorrectlyNamed": "import { existsSync } from 'node:fs'\nconst ANIMAL_WF_PATH = resolve('../../../../reference/AnimalWF/ARISAMLExport.xml')\nif (!existsSync(ANIMAL_WF_PATH)) {\n  throw new Error('AnimalWF fixture not found')\n}\ndescribe('AnimalWF', () => {\n  it('uses the fixture', () => {})\n})"
 }

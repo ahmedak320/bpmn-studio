@@ -3,12 +3,25 @@
  *
  * ## Seam: `src/aris/symbols/`
  *
- * All shape geometry comes from `resolveArisSymbol({ modelType, objectType,
- * symbolNum })`. This module authors *no* geometry of its own; it only maps the
- * descriptor's `viewBox` onto the occurrence's bounds and emits the primitives
- * verbatim. The only shapes drawn here without a descriptor are the non-object
- * canvas furniture the registry does not model: lane bands, free text, external
- * captions, and the connection polyline.
+ * All shape *geometry* comes from `resolveArisSymbol({ modelType, objectType,
+ * symbolNum })`. This module authors no geometry of its own; it only maps the
+ * descriptor's `viewBox` onto the occurrence's bounds and emits the primitives.
+ * The only shapes drawn here without a descriptor are the non-object canvas
+ * furniture the registry does not model: lane bands, free text, external
+ * captions, connection labels, and the connection polyline.
+ *
+ * ## Occurrence style (plan §12.2)
+ *
+ * Geometry and paint are separate concerns. The registry decides *what shape*;
+ * the occurrence's own pen and brush decide *how it is painted* — "use source
+ * symbol/style data when present". `ArisOccurrenceStyleView` therefore overrides
+ * the descriptor's authored colours whenever the occurrence carries one, which
+ * is what makes `restyleOccurrence` a visible edit rather than a stored one.
+ *
+ * The brush colours the symbol's *body* — its first filled primitive — and never
+ * its accents: flooding every filled primitive would erase the detail that
+ * distinguishes one symbol from another (an information-carrier's inner band, a
+ * person's head), turning restyle into vandalism.
  *
  * Any fidelity finding the registry reports is attached to the rendered group
  * as `data-aris-fidelity` so the Phase 9 fidelity report can collect it without
@@ -22,7 +35,13 @@ import { createLine, updateLine } from 'diagram-js/lib/util/RenderUtil'
 
 import { resolveArisSymbol } from '../symbols'
 import type { ArisDrawingElement, ArisSymbolDescriptor } from '../symbols/types'
-import { arisBusinessObject, type ArisBusinessObject } from './elements'
+import {
+  arisBusinessObject,
+  type ArisBusinessObject,
+  type ArisConnectionLabelBusinessObject,
+  type ArisLabelFont,
+  type ArisOccurrenceStyleView
+} from './elements'
 import { svgAppend, svgElement } from './svg'
 
 const DEFAULT_STROKE = '#334155'
@@ -30,6 +49,11 @@ const DEFAULT_FILL = '#ffffff'
 const LANE_STROKE = '#94a3b8'
 const FREE_TEXT_STROKE = '#cbd5e1'
 const CONNECTION_STROKE = '#475569'
+const CAPTION_FILL = '#0f172a'
+const CAPTION_FONT_SIZE = 12
+/** Fill of the marker a `SymbolFlag="SYMBOL"` placement draws in place of text. */
+const ATTRIBUTE_SYMBOL_FILL = '#e2e8f0'
+const ATTRIBUTE_SYMBOL_STROKE = '#475569'
 
 /** Render priority above diagram-js's `DefaultRenderer` (1000). */
 export const ARIS_RENDER_PRIORITY = 1500
@@ -64,15 +88,93 @@ function round(value: number): number {
 }
 
 /**
+ * An ARIS colour (`cccccc`, `99`, `339900` — an unsigned `0xRRGGBB` integer
+ * serialized without padding) or an already-CSS colour, as CSS.
+ *
+ * Both spellings reach the canvas: an imported occurrence carries the AML
+ * spelling verbatim, while the details rail writes what the user typed, which is
+ * `#rrggbb`. Anything already carrying a `#`, or naming a CSS keyword, is passed
+ * through untouched; a bare hex string is padded to six digits.
+ */
+export function occurrenceColorToCss(raw: string | null | undefined): string | undefined {
+  if (raw === null || raw === undefined) return undefined
+  const trimmed = raw.trim()
+  if (trimmed === '' || trimmed === '-1') return undefined
+  if (trimmed.startsWith('#')) return trimmed
+  if (!/^[0-9a-fA-F]{1,8}$/.test(trimmed)) return trimmed
+  const value = Number.parseInt(trimmed, 16)
+  if (!Number.isFinite(value) || Number.isNaN(value) || value < 0) return undefined
+  return `#${Math.min(value, 0xffffff).toString(16).padStart(6, '0')}`
+}
+
+const DASHARRAY_BY_LINE_STYLE: Readonly<Record<string, string | null>> = Object.freeze({
+  solid: null,
+  dashed: '6 4',
+  dotted: '2 3'
+})
+
+/** The occurrence style, resolved to CSS once per shape rather than per primitive. */
+interface ResolvedOccurrencePaint {
+  readonly fill: string | undefined
+  readonly stroke: string | undefined
+  readonly strokeWidth: number | undefined
+  readonly dasharray: string | null | undefined
+}
+
+/** "The occurrence overrides nothing" — every primitive keeps the registry's paint. */
+const EMPTY_PAINT: ResolvedOccurrencePaint = Object.freeze({
+  fill: undefined,
+  stroke: undefined,
+  strokeWidth: undefined,
+  dasharray: undefined
+})
+
+function resolvePaint(style: ArisOccurrenceStyleView | undefined): ResolvedOccurrencePaint {
+  const lineStyle = style?.lineStyle?.trim().toLowerCase()
+  return {
+    fill: occurrenceColorToCss(style?.fillColor),
+    stroke: occurrenceColorToCss(style?.strokeColor),
+    strokeWidth:
+      typeof style?.strokeWidth === 'number' && Number.isFinite(style.strokeWidth)
+        ? style.strokeWidth
+        : undefined,
+    dasharray:
+      lineStyle === undefined || lineStyle === ''
+        ? undefined
+        : (DASHARRAY_BY_LINE_STYLE[lineStyle] ?? null)
+  }
+}
+
+/** A primitive that encloses an area, i.e. one the brush can colour. */
+function isFilledPrimitive(primitive: ArisDrawingElement): boolean {
+  if (primitive.kind === 'line') return false
+  return primitive.fill !== 'none'
+}
+
+/**
  * Re-emit one authored primitive at the occurrence's size.
  *
  * Path data is the single case the registry expresses in its own coordinate
  * space that cannot be scaled attribute-by-attribute, so the group carries the
  * scale transform and paths are emitted untouched inside it.
+ *
+ * `paint` is the occurrence's own style. `body` marks the one primitive the
+ * brush colour applies to; the pen colour, width and dash apply to all of them.
  */
-function drawPrimitive(primitive: ArisDrawingElement, scale: Scale): SVGElement | null {
-  const stroke = primitive.stroke ?? DEFAULT_STROKE
-  const strokeWidth = primitive.strokeWidth ?? 1.5
+function drawPrimitive(
+  primitive: ArisDrawingElement,
+  scale: Scale,
+  paint: ResolvedOccurrencePaint = EMPTY_PAINT,
+  body = false
+): SVGElement | null {
+  const stroke = paint.stroke ?? primitive.stroke ?? DEFAULT_STROKE
+  const strokeWidth = paint.strokeWidth ?? primitive.strokeWidth ?? 1.5
+  const dash = paint.dasharray
+  const dashAttrs: Readonly<Record<string, string>> =
+    dash === undefined || dash === null ? {} : { 'stroke-dasharray': dash }
+  const own = 'fill' in primitive ? primitive.fill : undefined
+  const fillOf = (fallback: string): string =>
+    body && paint.fill !== undefined ? paint.fill : (own ?? fallback)
   switch (primitive.kind) {
     case 'rect':
       return svgElement('rect', {
@@ -82,9 +184,10 @@ function drawPrimitive(primitive: ArisDrawingElement, scale: Scale): SVGElement 
         height: round(primitive.height * scale.sy),
         ...(primitive.rx === undefined ? {} : { rx: round(primitive.rx * scale.sx) }),
         ...(primitive.ry === undefined ? {} : { ry: round(primitive.ry * scale.sy) }),
-        fill: primitive.fill ?? DEFAULT_FILL,
+        fill: fillOf(DEFAULT_FILL),
         stroke,
-        'stroke-width': strokeWidth
+        'stroke-width': strokeWidth,
+        ...dashAttrs
       })
     case 'circle': {
       const radius = round(primitive.r * Math.min(scale.sx, scale.sy))
@@ -92,9 +195,10 @@ function drawPrimitive(primitive: ArisDrawingElement, scale: Scale): SVGElement 
         cx: round(mapX(scale, primitive.cx)),
         cy: round(mapY(scale, primitive.cy)),
         r: radius,
-        fill: primitive.fill ?? DEFAULT_FILL,
+        fill: fillOf(DEFAULT_FILL),
         stroke,
-        'stroke-width': strokeWidth
+        'stroke-width': strokeWidth,
+        ...dashAttrs
       })
     }
     case 'polygon':
@@ -102,9 +206,10 @@ function drawPrimitive(primitive: ArisDrawingElement, scale: Scale): SVGElement 
         points: primitive.points
           .map((point) => `${round(mapX(scale, point.x))},${round(mapY(scale, point.y))}`)
           .join(' '),
-        fill: primitive.fill ?? DEFAULT_FILL,
+        fill: fillOf(DEFAULT_FILL),
         stroke,
-        'stroke-width': strokeWidth
+        'stroke-width': strokeWidth,
+        ...dashAttrs
       })
     case 'line':
       return svgElement('line', {
@@ -113,15 +218,17 @@ function drawPrimitive(primitive: ArisDrawingElement, scale: Scale): SVGElement 
         x2: round(mapX(scale, primitive.x2)),
         y2: round(mapY(scale, primitive.y2)),
         stroke,
-        'stroke-width': strokeWidth
+        'stroke-width': strokeWidth,
+        ...dashAttrs
       })
     case 'path':
       return svgElement('path', {
         d: primitive.d,
         transform: `translate(${round(scale.tx * scale.sx)},${round(scale.ty * scale.sy)}) scale(${round(scale.sx)},${round(scale.sy)})`,
-        fill: primitive.fill ?? 'none',
+        fill: fillOf('none'),
         stroke,
-        'stroke-width': strokeWidth
+        'stroke-width': strokeWidth,
+        ...dashAttrs
       })
     default:
       return null
@@ -134,12 +241,130 @@ function drawCaption(text: string, width: number, height: number): SVGElement {
     y: round(height / 2),
     'text-anchor': 'middle',
     'dominant-baseline': 'middle',
-    'font-size': 12,
-    fill: '#0f172a',
+    'font-size': CAPTION_FONT_SIZE,
+    fill: CAPTION_FILL,
     'data-aris-caption': 'true'
   })
   node.textContent = text
   return node
+}
+
+/**
+ * `Alignment` as an SVG `text-anchor` plus the x it anchors at.
+ *
+ * ARIS writes `LEFT` / `CENTER` / `RIGHT`; every one of AnimalWF's 123
+ * connection placements is `CENTER`, but the other two are ordinary ARIS
+ * settings and a renderer that ignored them would silently centre a
+ * left-aligned label.
+ */
+function alignmentAnchor(
+  alignment: string | null,
+  width: number
+): { readonly anchor: string; readonly x: number } {
+  switch ((alignment ?? '').trim().toUpperCase()) {
+    case 'LEFT':
+      return { anchor: 'start', x: 0 }
+    case 'RIGHT':
+      return { anchor: 'end', x: round(width) }
+    default:
+      return { anchor: 'middle', x: round(width / 2) }
+  }
+}
+
+/**
+ * The text a connection label draws, honouring its `Alignment` and the font its
+ * `FontSS.IdRef` resolved to.
+ *
+ * The font style sheet supplies only what the working style catalog knows about
+ * it; an unresolved sheet keeps the canvas's own caption font rather than
+ * guessing a face that was never named (§12.3 would rather report a missing
+ * font than invent one).
+ */
+function drawLabelText(
+  text: string,
+  width: number,
+  height: number,
+  alignment: string | null,
+  font: ArisLabelFont | null
+): SVGElement {
+  const { anchor, x } = alignmentAnchor(alignment, width)
+  const node = svgElement('text', {
+    x,
+    y: round(height / 2),
+    'text-anchor': anchor,
+    'dominant-baseline': 'middle',
+    'font-size': font?.fontSize ?? CAPTION_FONT_SIZE,
+    ...(font?.fontFamily ? { 'font-family': font.fontFamily } : {}),
+    ...(font?.fontWeight ? { 'font-weight': font.fontWeight } : {}),
+    fill: font?.textColor ?? CAPTION_FILL,
+    'data-aris-caption': 'true'
+  })
+  node.textContent = text
+  return node
+}
+
+/**
+ * The marker a `SymbolFlag="SYMBOL"` placement draws *instead of* its text.
+ *
+ * ARIS renders such a placement as the attribute's own glyph — a boolean
+ * attribute's tick, for instance — rather than as its value. The registry keys
+ * symbols by object type + `SymbolNum` and models no attribute glyphs at all, so
+ * this is canvas furniture: an OrbitPM-authored neutral marker, never traced
+ * from ARIS artwork (§12.2). It carries the attribute type so the placement
+ * stays identifiable, and it deliberately emits no `<text>` — that difference is
+ * the whole point of the flag.
+ */
+function drawAttributeSymbol(attributeType: string, width: number, height: number): SVGElement {
+  const size = Math.max(2, Math.min(width, height))
+  const cx = width / 2
+  const cy = height / 2
+  const group = svgElement('g', { 'data-aris-attribute-symbol': attributeType })
+  svgAppend(
+    group,
+    svgElement('rect', {
+      x: round(cx - size / 2),
+      y: round(cy - size / 2),
+      width: round(size),
+      height: round(size),
+      rx: round(size / 5),
+      ry: round(size / 5),
+      fill: ATTRIBUTE_SYMBOL_FILL,
+      stroke: ATTRIBUTE_SYMBOL_STROKE,
+      'stroke-width': 1
+    })
+  )
+  svgAppend(
+    group,
+    svgElement('path', {
+      d: `M${round(cx - size / 4)},${round(cy)}L${round(cx - size / 12)},${round(cy + size / 5)}L${round(cx + size / 4)},${round(cy - size / 5)}`,
+      fill: 'none',
+      stroke: ATTRIBUTE_SYMBOL_STROKE,
+      'stroke-width': Math.max(1, round(size / 10))
+    })
+  )
+  return group
+}
+
+/** Draw one connection label placement — text or symbol, per `SymbolFlag`. */
+function drawConnectionLabel(
+  businessObject: ArisConnectionLabelBusinessObject,
+  group: SVGElement,
+  width: number,
+  height: number
+): void {
+  group.setAttribute('data-aris-attribute-type', businessObject.attributeType)
+  group.setAttribute('data-aris-symbol-flag', businessObject.symbolFlag)
+  if (businessObject.fontStyleSheetId !== null) {
+    group.setAttribute('data-aris-font-ss', businessObject.fontStyleSheetId)
+  }
+  if (businessObject.symbolFlag === 'SYMBOL') {
+    svgAppend(group, drawAttributeSymbol(businessObject.attributeType, width, height))
+    return
+  }
+  svgAppend(
+    group,
+    drawLabelText(businessObject.text, width, height, businessObject.alignment, businessObject.font)
+  )
 }
 
 export class ArisRenderer extends BaseRenderer {
@@ -171,10 +396,14 @@ export class ArisRenderer extends BaseRenderer {
         )
       }
       const scale = scaleFor(resolution.descriptor, shape.width, shape.height)
-      for (const primitive of resolution.descriptor.drawing.elements) {
-        const node = drawPrimitive(primitive, scale)
+      const paint = resolvePaint(businessObject.style)
+      // The brush colours the body only — the first primitive that encloses an
+      // area — so a restyle repaints the symbol without erasing its detail.
+      const bodyIndex = resolution.descriptor.drawing.elements.findIndex(isFilledPrimitive)
+      resolution.descriptor.drawing.elements.forEach((primitive, index) => {
+        const node = drawPrimitive(primitive, scale, paint, index === bodyIndex)
         if (node) svgAppend(group, node)
-      }
+      })
       if (businessObject.name) {
         svgAppend(group, drawCaption(businessObject.name, shape.width, shape.height))
       }
@@ -221,6 +450,21 @@ export class ArisRenderer extends BaseRenderer {
 
     if (businessObject.kind === 'label') {
       svgAppend(group, drawCaption(businessObject.text, shape.width, shape.height))
+      svgAppend(parentGfx, group)
+      return group
+    }
+
+    if (businessObject.kind === 'connectionLabel') {
+      // `Rotation` is degrees about the placement's own centre. AnimalWF writes
+      // 0 for all 123, but ARIS exposes the setting and an ignored rotation
+      // would draw a deliberately angled label flat.
+      if (businessObject.rotation !== null && businessObject.rotation % 360 !== 0) {
+        group.setAttribute(
+          'transform',
+          `rotate(${round(businessObject.rotation)} ${round(shape.width / 2)} ${round(shape.height / 2)})`
+        )
+      }
+      drawConnectionLabel(businessObject, group, shape.width, shape.height)
       svgAppend(parentGfx, group)
       return group
     }

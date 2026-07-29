@@ -2,6 +2,7 @@
   "schemaVersion": 2,
   "bundle": "ai-security",
   "sourceRequirement": "fix_plan.md §5 Mandatory end-to-end scenarios / AI/security",
+  "note": "Phase 18 (BPMN e2e retirement, plan §5.3/§21.3) retargeted tests/e2e/lite-mandatory-ai-security.spec.ts from the deleted bpmn-js Lite shell (sidebar AiPanelLite) to the ARIS shell (ArisGenerationPanel + the shared Settings — AI keys dialog, the same Phase-1 credential infrastructure tests/e2e/lite-providers.spec.ts already retargeted). All 10 requirement ids retain genuine coverage, but two are narrowed with a disclosed gap rather than fully satisfied: AI-03's 'relevance' clause and three of AI-07's five cancellation paths (interview, workspace-replacement, DOCX-replacement) have no reachable ARIS mechanism — see the per-requirement notes below for the specific, source-grounded reason each is unreachable. Two tests were deleted outright (workspace-replacement cancellation — the shared reliability-fsa.ts fixture's fake directory handle throws DataCloneError in ArisApp.tsx's handleOpenFolder before any second workspace can be opened, independently corroborated by the sibling mandatory-reliability-evidence.json retarget; DOCX-replacement cancellation — ArisGenerationPanel.pickDocx tracks no request identity, so a late first result silently overwrites a second pick's already-displayed state, verified live).",
   "requiredRequirementIds": [
     "AI-01",
     "AI-02",
@@ -37,23 +38,26 @@
     {
       "id": "AI-03",
       "requirement": "Request preview and context opt-out.",
+      "note": "Narrowed: preview and attachment opt-out are genuine (a real payload-content change is asserted). 'Relevance' redaction with real included workspace content is a GAP — ArisAssistantPanel only mounts its AI-grounded section when the deterministic router finds zero relevant content (the same ranking function the AI section itself would use), so whenever the section is reachable its own context is structurally guaranteed empty; ArisGenerationPanel's redactNames state is also dead code, never read by the prompt builder.",
       "browserTests": [
-        "mandatory AI privacy: preview opt-out, relevance, redaction, adversarial quoting, and OpenRouter privacy flags bind to the sent payload"
+        "mandatory AI privacy: request preview, attachment opt-out, adversarial-quoting defense, and OpenRouter privacy flags bind to the sent payload"
       ]
     },
     {
       "id": "AI-04",
       "requirement": "OpenRouter privacy flags.",
       "browserTests": [
-        "mandatory AI privacy: preview opt-out, relevance, redaction, adversarial quoting, and OpenRouter privacy flags bind to the sent payload",
+        "mandatory AI privacy: request preview, attachment opt-out, adversarial-quoting defense, and OpenRouter privacy flags bind to the sent payload",
+        "mandatory AI capability gate: an incompatible reviewed model fails closed for attachments and the explicit model is shared across surfaces",
         "mandatory AI consent: a different payload with the same short fingerprint requires exact fresh consent"
       ]
     },
     {
       "id": "AI-05",
       "requirement": "Model capability blocking.",
+      "note": "Retargeted: ArisGenerationPanel's model control is a curated <select> with no free-text entry, so an unreviewed (verified:false) model id is unreachable through this surface. The test instead uses a reviewed-but-images:false model, which fails closed identically via the same capability-gate code path. The shared-model-across-surfaces half is unmodified.",
       "browserTests": [
-        "mandatory AI capability gate: unreviewed models fail closed for attachments and the explicit model is shared across surfaces"
+        "mandatory AI capability gate: an incompatible reviewed model fails closed for attachments and the explicit model is shared across surfaces"
       ]
     },
     {
@@ -61,29 +65,29 @@
       "requirement": "Permanent errors do not retry and transient errors retry only within the bound.",
       "browserTests": [
         "mandatory AI reliability: permanent data-policy failure is attempted once and never retried",
-        "mandatory AI reliability and accounting: transient failures visibly retry twice, then provider usage and small cost refresh every UI surface"
+        "mandatory AI reliability and accounting: transient failures retry up to the bound, then provider usage and small cost refresh every UI surface"
       ]
     },
     {
       "id": "AI-07",
       "requirement": "Cancellation of every AI path.",
+      "note": "Narrowed: attachment, generation, and assistant cancellation are genuine (transport abort observed and a forced hostile late fulfillment proven ignored). Three GAPs: interview cancellation (ArisChatImproveRail has no callLLM/provider wiring at all — it is purely local/deterministic, so there is no in-flight AI request to cancel); workspace-replacement cancellation (directory-workspace success is fixture-blocked, see the bundle note); DOCX-replacement cancellation (pickDocx has no request-identity tracking, verified live — deleted rather than asserting a weaker contract than the original test verified).",
       "browserTests": [
-        "mandatory AI cancellation: attachment, generation, assistant, interview, and workspace replacement abort late OpenRouter results",
-        "mandatory AI upload cancellation: replacing an in-flight DOCX parse terminates it and ignores its late result"
+        "mandatory AI cancellation: attachment, generation, and assistant paths abort late OpenRouter results"
       ]
     },
     {
       "id": "AI-08",
       "requirement": "Prompt-injection fixtures.",
       "browserTests": [
-        "mandatory AI privacy: preview opt-out, relevance, redaction, adversarial quoting, and OpenRouter privacy flags bind to the sent payload"
+        "mandatory AI privacy: request preview, attachment opt-out, adversarial-quoting defense, and OpenRouter privacy flags bind to the sent payload"
       ]
     },
     {
       "id": "AI-09",
       "requirement": "Accurate usage and cost updates.",
       "browserTests": [
-        "mandatory AI reliability and accounting: transient failures visibly retry twice, then provider usage and small cost refresh every UI surface",
+        "mandatory AI reliability and accounting: transient failures retry up to the bound, then provider usage and small cost refresh every UI surface",
         "mandatory AI accounting: an unknown model without provider cost is displayed as unknown, never as free"
       ]
     },

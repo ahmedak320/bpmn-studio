@@ -15,21 +15,36 @@ import type ElementRegistry from 'diagram-js/lib/core/ElementRegistry'
 import type EventBus from 'diagram-js/lib/core/EventBus'
 import type { Connection, Element, Label, Root, Shape } from 'diagram-js/lib/model/Types'
 
-import type { ArisBounds, ArisLane, ArisModel, ArisObjectOccurrence } from '../model/types'
+import type {
+  ArisAttribute,
+  ArisAttributeOccurrence,
+  ArisBounds,
+  ArisConnectionDefinition,
+  ArisLane,
+  ArisModel,
+  ArisObjectOccurrence,
+  ArisPoint,
+  ArisStyleCatalog
+} from '../model/types'
 import { ArisDocumentStore } from './documentStore'
 import {
   arisBusinessObject,
+  connectionLabelElementId,
   freeTextElementId,
   labelElementId,
   laneElementId,
   rootElementId,
+  type ArisAttributeSymbolFlag,
   type ArisConnectionBusinessObject,
+  type ArisConnectionLabelBusinessObject,
   type ArisFreeTextBusinessObject,
   type ArisLabelBusinessObject,
+  type ArisLabelFont,
   type ArisLaneBusinessObject,
   type ArisModelBusinessObject,
   type ArisOccurrenceBusinessObject
 } from './elements'
+import { measureTextWidth } from '../renderer/textWrap'
 import { readLocalized } from './localization'
 import { connectionWaypoints } from './waypoints'
 import { AT_NAME } from './vocabulary'
@@ -44,6 +59,16 @@ export const LANE_DEFAULT_THICKNESS = 240
 export const LANE_FALLBACK_LENGTH = 1200
 const EXTERNAL_LABEL_DEFAULT_WIDTH = 120
 const EXTERNAL_LABEL_DEFAULT_HEIGHT = 24
+/**
+ * Extent of the marker a `SymbolFlag="SYMBOL"` placement draws, when its
+ * `<AttrOcc>` carries no usable `<Size>` — which is every one of AnimalWF's
+ * 123 connection placements (`Size.dX="0" Size.dY="0"`).
+ */
+export const CONNECTION_LABEL_SYMBOL_SIZE = 14
+/** Height of one line of connection-label text at the canvas caption size. */
+export const CONNECTION_LABEL_LINE_HEIGHT = 16
+/** Caption size the canvas draws labels at; see `renderer.ts`. */
+const CONNECTION_LABEL_FONT_SIZE = 12
 /** Box drawn for a free-text note whose source record carries no `Size`. */
 export const FREE_TEXT_DEFAULT_WIDTH = 160
 export const FREE_TEXT_DEFAULT_HEIGHT = 32
@@ -239,6 +264,9 @@ export class ArisCanvasSync {
     this.syncFreeText(model, desiredShapeIds, dirty)
     this.syncLabels(model, desiredShapeIds, dirty)
     this.syncConnections(model, desiredConnectionIds, dirty)
+    // After the connections: a connection label's `labelTarget` is its
+    // connection element, which only exists once `syncConnections` has run.
+    this.syncConnectionLabels(model, desiredShapeIds, dirty)
     this.removeStale(desiredShapeIds, desiredConnectionIds)
 
     return dirty
@@ -334,7 +362,16 @@ export class ArisCanvasSync {
         definitionId: occurrence.definitionId,
         objectType: definition?.type ?? 'OT_UNKNOWN',
         symbolNum: occurrence.symbol,
-        name: readLocalized(definition?.names)
+        name: readLocalized(definition?.names),
+        // §12.2: the occurrence's own pen/brush overrides the symbol's authored
+        // appearance. The renderer cannot reach the working document, so a
+        // style that is not carried here is a style that never draws.
+        style: Object.freeze({
+          fillColor: occurrence.style.fillColor,
+          strokeColor: occurrence.style.strokeColor,
+          strokeWidth: occurrence.style.strokeWidth,
+          lineStyle: occurrence.style.lineStyle
+        })
       })
       this.upsertShape(occurrence.id, occurrence.bounds, businessObject, dirty)
     }
@@ -433,6 +470,66 @@ export class ArisCanvasSync {
     }
   }
 
+  /**
+   * Create a label element for every `<AttrOcc>` child of every `<CxnOcc>`.
+   *
+   * This is the connection-side twin of `syncLabels`: same projection (one
+   * `ArisAttributeOccurrence` becomes one diagram-js label), same `upsertShape`
+   * path, same renderer. Only the anchor differs — an external caption is
+   * placed relative to its occurrence's box, a connection label relative to its
+   * route's midpoint (plan §12.1, "attribute occurrence placement").
+   *
+   * Unlike `syncLabels` there is no zero-offset short circuit: a connection has
+   * no interior to fall back into, so `OffsetX="0" OffsetY="0"` means "sit on
+   * the midpoint", which is exactly where 95 of AnimalWF's 123 placements sit.
+   */
+  private syncConnectionLabels(model: ArisModel, desired: Set<string>, dirty: Element[]): void {
+    const definitions = this.store.document.connectionDefinitions
+    const catalog = this.store.document.styleCatalog
+    const occurrenceById = new Map(
+      model.occurrences.map((occurrence) => [occurrence.id, occurrence])
+    )
+    for (const connection of model.connectionOccurrences) {
+      if (connection.attributeOccurrences.length === 0) continue
+      const source = occurrenceById.get(connection.sourceOccurrenceId)
+      const target = occurrenceById.get(connection.targetOccurrenceId)
+      if (!source || !target) continue
+      const waypoints = connectionWaypoints(source.bounds, target.bounds, connection.route, {
+        selfLoop: source.id === target.id
+      })
+      const midpoint = routeMidpoint(waypoints)
+      if (!midpoint) continue
+      const definition = definitions.get(connection.definitionId)
+      const owner = this.elementRegistry.get(connection.id) as Connection | undefined
+      connection.attributeOccurrences.forEach((placement, index) => {
+        const id = connectionLabelElementId(connection.id, index, placement.attributeType)
+        desired.add(id)
+        const businessObject: ArisConnectionLabelBusinessObject = Object.freeze({
+          kind: 'connectionLabel',
+          modelId: model.id,
+          ownerConnectionOccurrenceId: connection.id,
+          attributeType: placement.attributeType,
+          symbolFlag: attributeSymbolFlag(placement.symbolFlag),
+          alignment: placement.alignment,
+          port: placement.port,
+          orderNum: placement.orderNum,
+          rotation: placement.rotation,
+          fontStyleSheetId: placement.fontStyleSheetId,
+          font: resolveLabelFont(catalog, placement.fontStyleSheetId),
+          text: connectionLabelText(placement, definition)
+        })
+        const bounds = connectionLabelRect(placement, midpoint, {
+          symbolFlag: businessObject.symbolFlag,
+          text: businessObject.text
+        })
+        this.upsertShape(id, bounds, businessObject, dirty, {
+          label: true,
+          labelTarget: owner
+        })
+      })
+    }
+  }
+
   private upsertShape(
     id: string,
     bounds: {
@@ -446,7 +543,7 @@ export class ArisCanvasSync {
     options: {
       readonly isFrame?: boolean
       readonly label?: boolean
-      readonly labelTarget?: Shape
+      readonly labelTarget?: Shape | Connection
     } = {}
   ): void {
     const existing = this.elementRegistry.get(id) as Shape | undefined
@@ -567,5 +664,155 @@ export function externalNameRect(placement: ExternalNamePlacement, owner: ArisRe
     y: owner.y + (placement.offsetY ?? 0),
     width: placement.width ?? EXTERNAL_LABEL_DEFAULT_WIDTH,
     height: placement.height ?? EXTERNAL_LABEL_DEFAULT_HEIGHT
+  })
+}
+
+/**
+ * The point halfway *along* a route, not the middle entry of its waypoint list.
+ *
+ * ARIS anchors a connection's labels to the middle of the drawn line, so a
+ * route whose segments differ in length must measure by arc length: taking
+ * `waypoints[Math.floor(n / 2)]` would drift toward whichever end carries the
+ * most bends, which is precisely the L-shaped and Z-shaped routes AnimalWF is
+ * full of.
+ *
+ * `null` when the route has no drawable extent at all.
+ */
+export function routeMidpoint(waypoints: readonly ArisPoint[]): ArisPoint | null {
+  if (waypoints.length === 0) return null
+  const first = waypoints[0] as ArisPoint
+  if (waypoints.length === 1) return Object.freeze({ x: first.x, y: first.y })
+
+  let total = 0
+  for (let index = 1; index < waypoints.length; index += 1) {
+    total += segmentLength(waypoints[index - 1] as ArisPoint, waypoints[index] as ArisPoint)
+  }
+  if (!Number.isFinite(total)) return null
+  if (total === 0) return Object.freeze({ x: first.x, y: first.y })
+
+  let remaining = total / 2
+  for (let index = 1; index < waypoints.length; index += 1) {
+    const from = waypoints[index - 1] as ArisPoint
+    const to = waypoints[index] as ArisPoint
+    const length = segmentLength(from, to)
+    if (length >= remaining) {
+      const ratio = length === 0 ? 0 : remaining / length
+      return Object.freeze({
+        x: from.x + (to.x - from.x) * ratio,
+        y: from.y + (to.y - from.y) * ratio
+      })
+    }
+    remaining -= length
+  }
+  const last = waypoints[waypoints.length - 1] as ArisPoint
+  return Object.freeze({ x: last.x, y: last.y })
+}
+
+function segmentLength(from: ArisPoint, to: ArisPoint): number {
+  const dx = to.x - from.x
+  const dy = to.y - from.y
+  const length = Math.sqrt(dx * dx + dy * dy)
+  return Number.isFinite(length) ? length : 0
+}
+
+/**
+ * The rectangle one connection label occupies.
+ *
+ * `OffsetX`/`OffsetY` are measured from the route midpoint, and the box is
+ * *centred* on the offset point — a connection label straddles the line rather
+ * than hanging off its top-left corner, which is what makes `Alignment="CENTER"`
+ * (every one of AnimalWF's 123 placements) mean what it says.
+ *
+ * The extent is the source's when the `<AttrOcc>` sized it, and otherwise the
+ * extent of what is actually drawn: a symbol marker is a fixed square, a text
+ * placement is as wide as its text, and a placement whose attribute has no
+ * stored value occupies nothing at all. That last case matters — 95 of the 123
+ * AnimalWF placements name attributes the export never gave a value, and ARIS
+ * draws nothing for them. Giving each of those a nominal box instead would put
+ * dozens of invisible rectangles on the canvas and count them as overlaps in
+ * every layout metric that measures labels.
+ */
+export function connectionLabelRect(
+  placement: Pick<ArisAttributeOccurrence, 'offsetX' | 'offsetY' | 'width' | 'height'>,
+  midpoint: ArisPoint,
+  content: { readonly symbolFlag: ArisAttributeSymbolFlag; readonly text: string } = {
+    symbolFlag: 'TEXT',
+    text: ''
+  }
+): ArisRect {
+  const drawn =
+    content.symbolFlag === 'SYMBOL'
+      ? { width: CONNECTION_LABEL_SYMBOL_SIZE, height: CONNECTION_LABEL_SYMBOL_SIZE }
+      : content.text.length === 0
+        ? { width: 0, height: 0 }
+        : {
+            width: measureTextWidth(content.text, CONNECTION_LABEL_FONT_SIZE),
+            height: CONNECTION_LABEL_LINE_HEIGHT
+          }
+  const width = positiveOrNull(placement.width) ?? drawn.width
+  const height = positiveOrNull(placement.height) ?? drawn.height
+  return Object.freeze({
+    x: midpoint.x + (placement.offsetX ?? 0) - width / 2,
+    y: midpoint.y + (placement.offsetY ?? 0) - height / 2,
+    width,
+    height
+  })
+}
+
+/**
+ * `SymbolFlag`, normalized. Anything other than an explicit `SYMBOL` draws text:
+ * the AML default when the attribute is absent is the textual placement, and an
+ * unrecognized value must not silently blank a label.
+ */
+export function attributeSymbolFlag(value: string | null | undefined): ArisAttributeSymbolFlag {
+  return typeof value === 'string' && value.trim().toUpperCase() === 'SYMBOL' ? 'SYMBOL' : 'TEXT'
+}
+
+/**
+ * The text a `TEXT` placement draws: the value the connection *definition*
+ * stores for that attribute type, with `AT_NAME` falling back to the
+ * definition's name.
+ *
+ * An attribute the source never gave a value renders empty, exactly as ARIS
+ * renders it. The placement element still exists — it is a real, positioned
+ * source record (§6.4) and the canvas must not invent content for it.
+ */
+export function connectionLabelText(
+  placement: Pick<ArisAttributeOccurrence, 'attributeType'>,
+  definition: ArisConnectionDefinition | undefined
+): string {
+  if (!definition) return ''
+  const attribute: ArisAttribute | undefined = definition.attributes.find(
+    (entry) => entry.type === placement.attributeType
+  )
+  if (attribute) {
+    const localized = readLocalized(
+      Object.freeze({
+        values: Object.freeze(
+          Object.fromEntries(
+            attribute.values.map((value) => [value.localeId ?? '', value.text] as const)
+          )
+        ),
+        fallback: attribute.values[0]?.text ?? null
+      })
+    )
+    if (localized.length > 0) return localized
+  }
+  return placement.attributeType === AT_NAME ? readLocalized(definition.names) : ''
+}
+
+/** The font a placement's `FontSS.IdRef` names, as far as the working style catalog knows it. */
+export function resolveLabelFont(
+  catalog: ArisStyleCatalog,
+  fontStyleSheetId: string | null
+): ArisLabelFont | null {
+  if (!fontStyleSheetId) return null
+  const style = catalog.styles.get(fontStyleSheetId)
+  if (!style) return null
+  return Object.freeze({
+    fontFamily: style.fontFamily,
+    fontSize: style.fontSize,
+    fontWeight: style.fontWeight,
+    textColor: style.textColor
   })
 }

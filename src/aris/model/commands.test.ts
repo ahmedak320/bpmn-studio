@@ -72,6 +72,7 @@ describe('command system', () => {
           fontStyleSheetId: null,
           zOrder: null
         },
+        attributeOccurrences: [],
         rawAttributes: {}
       } satisfies ArisConnectionOccurrence,
       origin: 'user'

@@ -263,5 +263,72 @@ export const ARIS_SHELL_MESSAGE_KEYS: Readonly<Record<string, string>> = Object.
   'aris.export.unmapped.unknownRecord':
     'Record {id} is in the working document but no imported record declares that id.',
   'aris.rail.epc': 'EPC validation',
-  'aris.rail.improve': 'Improve this process'
+  'aris.rail.improve': 'Improve this process',
+
+  // --- editable details rail (src/aris/shell/ArisDetailsRail.tsx,
+  // ArisDetailsEditors.tsx — plan §13.3 side-panel tabs, §11.4 authoring
+  // operations, §8.2 definition vs occurrence) ---
+  'aris.details.edit.name': 'Bilingual name',
+  'aris.details.edit.nameEn': 'Name (English locale)',
+  'aris.details.edit.nameAr': 'Name (Arabic locale)',
+  'aris.details.edit.scope.definition':
+    'Definition — this value belongs to the ARIS object itself, so the change reaches all {count} occurrences of it across {models} model(s).',
+  'aris.details.edit.scope.occurrence':
+    'Occurrence — this value belongs to this shape alone. The other occurrences of the same ARIS object ({count} in total) are left untouched.',
+  'aris.details.edit.scope.model': 'Model — this value belongs to the model record itself.',
+  'aris.details.edit.badge.definition': 'Definition',
+  'aris.details.edit.badge.occurrence': 'This shape only',
+  'aris.details.edit.badge.model': 'Model',
+  'aris.details.edit.localeStored': 'Stored under locale id {locale}.',
+  'aris.details.edit.localeNew': 'Not set yet; will be stored under locale id {locale}.',
+  'aris.details.edit.scriptMismatch':
+    'The stored text is written in {script} even though the locale id says {tag}. The locale id is kept exactly as the source filed it.',
+  'aris.details.edit.lang.en': 'English',
+  'aris.details.edit.lang.ar': 'Arabic',
+  'aris.details.edit.attributes': 'ARIS attributes',
+  'aris.details.edit.attributes.none':
+    'This object definition carries no ARIS attributes, so there is no value to edit.',
+  'aris.details.edit.valueEn': 'Value (English locale)',
+  'aris.details.edit.valueAr': 'Value (Arabic locale)',
+  'aris.details.edit.valueOther': 'Value (locale {locale})',
+  'aris.details.edit.noLocale': 'no locale id',
+  'aris.details.edit.addLocale': 'Add a value in another locale',
+  'aris.details.edit.addLocale.id': 'Locale id for the new value',
+  'aris.details.edit.addLocale.text': 'Value for the new locale',
+  'aris.details.edit.addLocale.submit': 'Add value',
+  'aris.details.edit.cancel': 'Cancel',
+  'aris.details.edit.remove': 'Remove',
+  'aris.details.edit.download': 'Download',
+  'aris.details.edit.failed': 'The change was refused: {error}',
+  'aris.details.edit.assignments': 'Linked models',
+  'aris.details.edit.assignments.none': 'No model is linked to this object yet.',
+  'aris.details.edit.assignments.remove': 'Unlink {model}',
+  'aris.details.edit.assignments.exhausted':
+    'Every model in this source is already linked to this object.',
+  'aris.details.edit.assignments.choose': 'Model to link',
+  'aris.details.edit.assignments.add': 'Link this model',
+  'aris.details.edit.attachments': 'Attachments on this object',
+  'aris.details.edit.attachments.none': 'No file is attached to this object.',
+  'aris.details.edit.attachments.meta': '{size} bytes · {type}',
+  'aris.details.edit.attachments.download': 'Download {name}',
+  'aris.details.edit.attachments.remove': 'Remove {name}',
+  'aris.details.edit.attachments.confirmAria': 'Confirm removing {name}',
+  'aris.details.edit.attachments.confirmBody':
+    'Remove {name} from this object? Undo restores it in one step.',
+  'aris.details.edit.attachments.confirm': 'Remove the attachment',
+  'aris.details.edit.attachments.keep': 'Keep it',
+  'aris.details.edit.attachments.add': 'Attach a file to this object',
+  'aris.details.edit.attachments.tooLarge':
+    '{name} is {size} bytes; an attachment stored inside the model may be at most {limit} bytes.',
+  'aris.details.edit.style': 'Occurrence style',
+  'aris.details.edit.style.fillColor': 'Fill colour',
+  'aris.details.edit.style.strokeColor': 'Outline colour',
+  'aris.details.edit.style.strokeWidth': 'Outline width',
+  'aris.details.edit.style.lineStyle': 'Outline line style',
+  'aris.details.edit.style.solid': 'Solid',
+  'aris.details.edit.style.dashed': 'Dashed',
+  'aris.details.edit.style.dotted': 'Dotted',
+  'aris.details.edit.style.inherit': 'From the ARIS symbol',
+  'aris.details.edit.style.appliesToCanvas':
+    'The style is drawn on the canvas and travels with the export. The ARIS symbol still supplies the shape.'
 })

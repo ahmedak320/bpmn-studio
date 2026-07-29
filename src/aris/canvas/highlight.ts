@@ -142,6 +142,11 @@ export function computeHighlightPlan(
   } else if (businessObject.kind === 'label') {
     ownerOccurrenceId = businessObject.ownerOccurrenceId
     resolvedFromLabel = true
+  } else if (businessObject.kind === 'connectionLabel') {
+    // §11.5's "resolve selected label to its owner", connection side: picking a
+    // connection's label highlights the connection it labels.
+    selectedConnectionId = businessObject.ownerConnectionOccurrenceId
+    resolvedFromLabel = true
   } else {
     selectedConnectionId = businessObject.connectionOccurrenceId
   }

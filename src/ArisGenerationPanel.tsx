@@ -27,10 +27,19 @@
  * `aris/shell/arisAiPlacement.ts`, so each is unit-testable without a DOM.
  */
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useMemo, useRef, useState } from 'react'
 
 import type { ArisAiValidationFinding } from './aris/ai'
 import { buildArisAiPrompt, type ArisAiPromptModelType } from './aris/ai/promptBuilder'
+import type { ArisProcessDigest } from './aris/assistant/types'
+import {
+  buildArisCreateDescriptionContext,
+  buildArisCreateDescriptionDisclosure,
+  buildArisCreateDescriptionSensitivity,
+  grantArisCreateDescriptionConsent,
+  hasArisCreateDescriptionConsent,
+  type ArisCreateDescriptionConsent
+} from './aris/shell/arisCreateDescriptionAi'
 import {
   createArisTemplateWorkbooks,
   parseArisWorkbookInBrowser,
@@ -72,7 +81,7 @@ import {
   getLiteProvider,
   type LiteProviderId
 } from './ai/providersLite'
-import { estimateGenerationRequestCount, inspectContextSensitivity } from './ai/requestPrivacy'
+import { estimateGenerationRequestCount } from './ai/requestPrivacy'
 import { t, type Key } from './i18n'
 
 export interface ArisGenerationPanelProps {
@@ -90,6 +99,11 @@ export interface ArisGenerationPanelProps {
    * recoverable download instead.
    */
   workspaceId?: string | null
+  /**
+   * Process digests for optional workspace context ranking (§16.2). Passing no
+   * digests leaves the context control with nothing to rank.
+   */
+  digests?: readonly ArisProcessDigest[]
   /** Injected in tests to exercise the whole sequence without a network. */
   callProvider?: (request: ArisAiGenerationRequest, signal: AbortSignal) => Promise<string>
   /** Injected in tests: local DOCX text extraction (default: inline worker). */
@@ -166,6 +180,7 @@ export function ArisGenerationPanel({
   onOpenSettings,
   embedded = false,
   workspaceId,
+  digests = [],
   callProvider,
   parseDocx,
   encodeAttachment
@@ -181,8 +196,9 @@ export function ArisGenerationPanel({
   const [descriptionPdf, setDescriptionPdf] = useState<PickedAttachment | null>(null)
   const [documentFile, setDocumentFile] = useState<PickedAttachment | null>(null)
   const [attachmentNotice, setAttachmentNotice] = useState<string | null>(null)
+  const [includeContext, setIncludeContext] = useState(false)
   const [redactNames, setRedactNames] = useState(true)
-  const [consent, setConsent] = useState(false)
+  const [consent, setConsent] = useState<ArisCreateDescriptionConsent | null>(null)
   const [busy, setBusy] = useState(false)
   const [status, setStatus] = useState<string | null>(null)
   const [rejections, setRejections] = useState<readonly string[]>([])
@@ -221,20 +237,34 @@ export function ArisGenerationPanel({
       : buildPdfInstruction(trimmedHint)
   }, [documentFile, tab, trimmedDescription, trimmedHint])
 
+  const context = useMemo(
+    () => buildArisCreateDescriptionContext(digests, trimmedDescription, redactNames),
+    [digests, trimmedDescription, redactNames]
+  )
+
   const prompt = useMemo(
     () =>
       buildArisAiPrompt({
         modelName: name.trim() === '' ? t('aris.generated.fallbackName') : name.trim(),
         modelType,
         description: operatorRequest,
-        ...(tab === 'description' && docx ? { attachmentText: docx.text } : {})
+        ...(tab === 'description' && docx ? { attachmentText: docx.text } : {}),
+        ...(tab === 'description' && includeContext
+          ? { workspaceContext: context.contextText }
+          : {})
       }),
-    [docx, modelType, name, operatorRequest, tab]
+    [docx, modelType, name, operatorRequest, tab, includeContext, context]
   )
 
   const sensitivity = useMemo(
-    () => inspectContextSensitivity(operatorRequest, []),
-    [operatorRequest]
+    () =>
+      buildArisCreateDescriptionSensitivity(
+        operatorRequest,
+        tab === 'description' && includeContext
+          ? context
+          : { includedModelIds: [], chips: [], contextText: '' }
+      ),
+    [operatorRequest, tab, includeContext, context]
   )
   const requestEstimate = useMemo(
     () => estimateGenerationRequestCount(attachment !== null),
@@ -243,12 +273,37 @@ export function ArisGenerationPanel({
 
   // §4.3: "No request before exact outbound review and consent." Any change to
   // what would be sent invalidates the review the consent was given for.
-  const requestFingerprint = `${tab}|${providerId}|${modelId}|${
-    attachment?.accepted.fileName ?? ''
-  }|${attachment?.accepted.sizeBytes ?? 0}|${prompt.system}|${prompt.user}`
-  useEffect(() => {
-    setConsent(false)
-  }, [requestFingerprint])
+  const disclosure = useMemo(
+    () =>
+      buildArisCreateDescriptionDisclosure({
+        tab,
+        providerId,
+        modelId,
+        modelName: name.trim(),
+        modelType,
+        includeContext,
+        redactNames,
+        context,
+        attachmentName: attachment?.accepted.fileName ?? '',
+        attachmentSizeBytes: attachment?.accepted.sizeBytes ?? 0,
+        outboundSystem: prompt.system,
+        outboundUser: prompt.user
+      }),
+    [
+      tab,
+      providerId,
+      modelId,
+      name,
+      modelType,
+      includeContext,
+      redactNames,
+      context,
+      attachment,
+      prompt.system,
+      prompt.user
+    ]
+  )
+  const consentValid = hasArisCreateDescriptionConsent(disclosure, consent)
 
   const cancel = useCallback(() => {
     abortRef.current?.abort()
@@ -370,7 +425,7 @@ export function ArisGenerationPanel({
   )
 
   const createWithAi = useCallback(async () => {
-    if (busy || !consent) return
+    if (busy || !consentValid) return
     if (tab === 'document' ? !documentFile : trimmedDescription === '') return
     setRejections([])
     setWarnings([])
@@ -500,7 +555,7 @@ export function ArisGenerationPanel({
     attachment,
     busy,
     buildSend,
-    consent,
+    consentValid,
     documentFile,
     encodeAttachment,
     modelId,
@@ -589,7 +644,7 @@ export function ArisGenerationPanel({
 
   const submitDisabled =
     busy ||
-    !consent ||
+    !consentValid ||
     (!providerReady && !callProvider) ||
     (tab === 'document' ? documentFile === null : trimmedDescription === '')
 
@@ -679,9 +734,11 @@ export function ArisGenerationPanel({
       <label style={{ display: 'flex', gap: 6, alignItems: 'center', fontSize: 12.5 }}>
         <input
           type="checkbox"
-          checked={consent}
+          checked={consentValid}
           data-orbitpm-aris-create-consent=""
-          onChange={(event) => setConsent(event.target.checked)}
+          onChange={(event) =>
+            setConsent(event.target.checked ? grantArisCreateDescriptionConsent(disclosure) : null)
+          }
         />
         <span>
           {tk('aris.create.consent', 'I reviewed the request above and consent to sending it')}
@@ -898,14 +955,66 @@ export function ArisGenerationPanel({
             />
           </div>
 
-          <label style={{ display: 'flex', gap: 6, alignItems: 'center', fontSize: 12.5 }}>
+          <label style={{ display: 'flex', gap: 6, alignItems: 'flex-start', fontSize: 12.5 }}>
             <input
               type="checkbox"
+              data-orbitpm-aris-create-include-context=""
+              checked={includeContext}
+              onChange={(event) => setIncludeContext(event.target.checked)}
+            />
+            <span>{tk('aris.create.includeContext', 'Include relevant workspace context')}</span>
+          </label>
+
+          <label
+            style={{
+              display: 'flex',
+              gap: 6,
+              alignItems: 'flex-start',
+              fontSize: 12.5,
+              opacity: includeContext ? 1 : 0.6
+            }}
+          >
+            <input
+              type="checkbox"
+              data-orbitpm-aris-create-redact-names=""
               checked={redactNames}
+              disabled={!includeContext}
               onChange={(event) => setRedactNames(event.target.checked)}
             />
             <span>{tk('aris.create.redactNames', 'Redact names in workspace context')}</span>
           </label>
+
+          {includeContext && (
+            <p style={{ margin: 0, fontSize: 11.5 }} data-orbitpm-aris-create-context-status="">
+              {context.includedModelIds.length > 0
+                ? tk(
+                    'aris.create.contextCount',
+                    '{count} relevant process(es) matched and will be included',
+                    { count: context.includedModelIds.length }
+                  )
+                : tk(
+                    'aris.create.contextNone',
+                    'No relevant process matched this description, so no workspace content will be sent.'
+                  )}
+            </p>
+          )}
+
+          {includeContext && context.chips.length > 0 && (
+            <div
+              data-orbitpm-aris-create-context-chips=""
+              style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}
+            >
+              {context.chips.map((chip) => (
+                <span
+                  key={chip.modelId}
+                  className="orbitpm-lite-chrome-btn"
+                  style={{ fontSize: 11 }}
+                >
+                  {chip.modelName}
+                </span>
+              ))}
+            </div>
+          )}
 
           {reviewAndSubmit}
         </>

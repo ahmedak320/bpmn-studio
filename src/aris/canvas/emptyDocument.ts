@@ -100,6 +100,7 @@ export function createEmptyArisModel(options: CreateArisModelOptions): ArisModel
     connectionOccurrences: Object.freeze([]),
     lanes: Object.freeze([]),
     freeText: Object.freeze([]),
+    attachments: Object.freeze([]),
     layout: DEFAULT_LAYOUT_STATE,
     unsupported: false,
     rawSourceRecord: null

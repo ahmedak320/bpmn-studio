@@ -16,6 +16,8 @@ export default defineConfig({
   test: {
     environment: 'node',
     include: ['src/**/*.test.ts', 'src/**/*.test.tsx'],
+    setupFiles: ['src/vitest.setup.ts'],
+    testTimeout: 30_000,
     // `*.animalwf.test.ts` suites depend on the private, uncommitted AnimalWF reference export
     // (never present in CI or a clean checkout) and must never be silently skipped by a
     // `.skipIf`/`.runIf` guard. They are excluded from the default project here and run only

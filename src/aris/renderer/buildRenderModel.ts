@@ -22,6 +22,7 @@ import { resolveFont } from './font'
 import type {
   ArisRenderSourceInput,
   RenderSourceAttribute,
+  RenderSourceAttributeOccurrence,
   RenderSourceAttributeValue,
   RenderSourceFont,
   RenderSourceRoutePoint
@@ -32,11 +33,13 @@ import type {
   ArisRenderFidelityFinding,
   ArisRenderModelResult,
   RenderAttachment,
+  RenderAttributeOccurrence,
   RenderBounds,
   RenderConnection,
   RenderDrawOrderEntry,
   RenderElement,
   RenderFreeText,
+  RenderFreeTextModelAttributeBinding,
   RenderLane,
   RenderModelBackground,
   RenderModelDocument,
@@ -95,6 +98,67 @@ function indexAttributesByOwnerAndType(
     if (!map.has(key)) map.set(key, attr)
   }
   return map
+}
+
+/**
+ * Map `<AttrOcc>` source records owned by `ownerId` into render placements.
+ *
+ * Shared by elements and connections: in AML an `<AttrOcc>` is a child of either `<ObjOcc>` or
+ * `<CxnOcc>`, so both occurrence kinds resolve their placements through exactly the same path
+ * rather than connections being a special case that silently has none.
+ */
+function placementsFor(
+  attrOccByOwner: ReadonlyMap<string, RenderSourceAttributeOccurrence[]>,
+  ownerId: string
+): RenderAttributeOccurrence[] {
+  return (attrOccByOwner.get(ownerId) ?? []).map((a) => ({
+    attributeType: a.parsed.attributeType,
+    port: a.parsed.port,
+    orderNum: a.parsed.orderNum,
+    alignment: a.parsed.alignment,
+    offsetX: a.parsed.offsetX,
+    offsetY: a.parsed.offsetY,
+    rotation: a.parsed.rotation,
+    bounds:
+      a.parsed.dx !== null || a.parsed.dy !== null
+        ? { width: a.parsed.dx ?? 0, height: a.parsed.dy ?? 0 }
+        : null,
+    symbolFlag: a.parsed.symbolFlag,
+    fontStyleSheetId: a.parsed.fontStyleSheetId,
+    text: null
+  }))
+}
+
+/**
+ * Read a free-text definition's model-attribute placeholder binding, if it has one.
+ *
+ * `AT_MODEL_AT` holds the model attribute type to display; `AT_MODEL_AT_GUID` holds
+ * `<guid>;<typeNumber>` identifying it. Notes carrying these have no `AT_NAME`.
+ */
+function resolveModelAttributeBinding(
+  attributesByOwnerType: ReadonlyMap<string, RenderSourceAttribute>,
+  freeTextDefinitionId: string | null
+): RenderFreeTextModelAttributeBinding | null {
+  if (!freeTextDefinitionId) return null
+  const typeAttr = attributesByOwnerType.get(`${freeTextDefinitionId}::AT_MODEL_AT`)
+  const attributeType = typeAttr
+    ? (pickPrimaryAttributeValue(typeAttr.parsed.values)?.text.trim() ?? '')
+    : ''
+  if (!attributeType) return null
+
+  const guidAttr = attributesByOwnerType.get(`${freeTextDefinitionId}::AT_MODEL_AT_GUID`)
+  const rawGuid = guidAttr
+    ? (pickPrimaryAttributeValue(guidAttr.parsed.values)?.text.trim() ?? null)
+    : null
+  const separator = rawGuid === null ? -1 : rawGuid.lastIndexOf(';')
+  const guid = rawGuid === null ? null : separator >= 0 ? rawGuid.slice(0, separator) : rawGuid
+  const parsedTypeNumber = separator >= 0 ? Number(rawGuid?.slice(separator + 1)) : Number.NaN
+
+  return {
+    attributeType,
+    guid,
+    typeNumber: Number.isFinite(parsedTypeNumber) ? parsedTypeNumber : null
+  }
 }
 
 function indexRoutePointsByConnection(
@@ -258,21 +322,7 @@ export function buildArisRenderModel(input: ArisRenderSourceInput): ArisRenderMo
         }
       }
 
-      const attributeOccurrences = (attrOccByOwner.get(elementId) ?? []).map((a) => ({
-        attributeType: a.parsed.attributeType,
-        port: a.parsed.port,
-        orderNum: a.parsed.orderNum,
-        alignment: a.parsed.alignment,
-        offsetX: a.parsed.offsetX,
-        offsetY: a.parsed.offsetY,
-        rotation: a.parsed.rotation,
-        bounds:
-          a.parsed.dx !== null || a.parsed.dy !== null
-            ? { width: a.parsed.dx ?? 0, height: a.parsed.dy ?? 0 }
-            : null,
-        fontStyleSheetId: a.parsed.fontStyleSheetId,
-        text: null
-      }))
+      const attributeOccurrences = placementsFor(attrOccByOwner, elementId)
 
       elements.push({
         id: elementId,
@@ -323,7 +373,9 @@ export function buildArisRenderModel(input: ArisRenderSourceInput): ArisRenderMo
         pen,
         srcArrow: occ.parsed.srcArrow,
         tgtArrow: occ.parsed.tgtArrow,
-        visible: occ.parsed.visible !== 'NO'
+        visible: occ.parsed.visible !== 'NO',
+        // `<AttrOcc>` children of a `<CxnOcc>` — the connection's own label placements (§12.1).
+        attributeOccurrences: placementsFor(attrOccByOwner, occ.sourceId ?? connectionId)
       })
     }
 
@@ -379,10 +431,23 @@ export function buildArisRenderModel(input: ArisRenderSourceInput): ArisRenderMo
       )
 
       let text: RenderTextBlock | null = null
-      const nameAttr = occ.parsed.freeTextDefinitionId
-        ? attributesByOwnerType.get(`${occ.parsed.freeTextDefinitionId}::AT_NAME`)
+      const definitionId = occ.parsed.freeTextDefinitionId
+      const nameAttr = definitionId
+        ? attributesByOwnerType.get(`${definitionId}::AT_NAME`)
         : undefined
-      const primary = nameAttr ? pickPrimaryAttributeValue(nameAttr.parsed.values) : null
+      // A note with no `AT_NAME` may still have content: `AT_MODEL_AT` makes it a live placeholder
+      // for one of the *model's* attributes. Resolve the binding and render that value, otherwise
+      // 21 of AnimalWF's 69 notes draw as empty boxes (plan §6.4, §12.1).
+      const modelAttributeBinding = resolveModelAttributeBinding(
+        attributesByOwnerType,
+        definitionId
+      )
+      const boundAttr =
+        !nameAttr && modelAttributeBinding
+          ? attributesByOwnerType.get(`${modelId}::${modelAttributeBinding.attributeType}`)
+          : undefined
+      const sourceAttr = nameAttr ?? boundAttr
+      const primary = sourceAttr ? pickPrimaryAttributeValue(sourceAttr.parsed.values) : null
       if (primary && primary.text.trim() !== '') {
         const maxWidthPx =
           sourceBounds.width > 0 ? Math.max(1, sourceBounds.width - TEXT_PADDING_PX) : null
@@ -401,7 +466,8 @@ export function buildArisRenderModel(input: ArisRenderSourceInput): ArisRenderMo
         anchor: anchorOf(occ.sourceId, occ.path, modelId),
         sourceBounds,
         zOrder: occ.parsed.zorder ?? 0,
-        text
+        text,
+        modelAttributeBinding
       })
     }
 

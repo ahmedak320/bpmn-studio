@@ -33,7 +33,21 @@ export interface ArisAttributeValue {
   readonly text: string
 }
 
-/** A rendered attribute occurrence attached to an object or connection occurrence. */
+/**
+ * A rendered attribute occurrence attached to an object **or a connection** occurrence.
+ *
+ * In real AML an `<AttrOcc>` is a child of either `<ObjOcc>` or `<CxnOcc>` — the AnimalWF export
+ * carries 651 of the former and 123 of the latter — so this record is shared by both occurrence
+ * kinds. It is purely occurrence-local placement (plan §8.2): changing it must never touch the
+ * owning definition or any sibling occurrence of that definition.
+ *
+ * `symbolFlag` and `fontStyleSheetId` are parsed by the semantic index and are required to render
+ * placement faithfully (plan §12.1): `symbolFlag` selects whether the placement draws the
+ * attribute's text (`TEXT`) or its symbol (`SYMBOL`), and `fontStyleSheetId` is the `FontSS.IdRef`
+ * that supplies the placement's own font. Both are mandatory — `null` is how "the source named
+ * none" is expressed — so no construction site can quietly produce a placement the canvas cannot
+ * paint.
+ */
 export interface ArisAttributeOccurrence {
   readonly attributeType: string
   readonly port: string | null
@@ -44,6 +58,8 @@ export interface ArisAttributeOccurrence {
   readonly width: number | null
   readonly height: number | null
   readonly rotation: number | null
+  readonly symbolFlag: string | null
+  readonly fontStyleSheetId: string | null
 }
 
 /** Supported model types for the first stable scope. */
@@ -75,14 +91,49 @@ export interface ArisLane {
   readonly endBorder: number | null
 }
 
-/** Free text occurrence placed on a model canvas. */
+/**
+ * Free text occurrence placed on a model canvas.
+ *
+ * `text` holds the note's static `AT_NAME` content. `attributes` holds every *other* `<AttrDef>`
+ * the owning `<FFTextDef>` carries. That is not decoration: in the AnimalWF export 21 of the 69
+ * notes carry no `AT_NAME` at all and instead carry `AT_MODEL_AT` + `AT_MODEL_AT_GUID`, which make
+ * the note a live placeholder that renders one of the *model's* attributes (`AT_NAME`, `AT_ID`,
+ * `AT_PERS_RESP`). Without `attributes` those 21 notes have no content whatsoever in the working
+ * model. Plan §6.4 requires retaining them; §12.1 requires being able to render them.
+ *
+ * Mandatory: an empty array is how "this note carries nothing but its name" is expressed.
+ */
 export interface ArisFreeText {
   readonly id: string
   readonly modelId: string
   readonly definitionId: string | null
   readonly text: ArisLocalizedValue
+  readonly attributes: readonly ArisAttribute[]
   readonly bounds: ArisBounds
   readonly style: ArisOccurrenceStyle
+}
+
+/**
+ * An embedded OLE attachment placed on a model canvas (`<OLEOcc>` referencing an `<OLEDef>`).
+ *
+ * Found by the same reconciliation sweep as the connection placements and free-text bindings: the
+ * AnimalWF export carries 14 `<OLEDef>`, 14 `<OLEOcc>` and 28 `<Blob>` records which the semantic
+ * index parses in full, but which had no working-model representation at all. Plan §6.4 lists
+ * "OLE definitions and occurrences" and "Blobs" among the records that must be retained, and
+ * §12.1 lists "OLE/blob placement" among the visual inputs the renderer must read.
+ *
+ * The binary payload deliberately stays in the source index (`index.blobs`) rather than being
+ * copied into the working model; `blobCount` records how many the definition owns so a consumer
+ * can tell an attachment with content from an empty one without materializing megabytes.
+ */
+export interface ArisAttachment {
+  readonly id: string
+  readonly modelId: string
+  readonly definitionId: string | null
+  readonly bounds: ArisBounds
+  readonly zOrder: number | null
+  readonly blobCount: number
+  readonly rawAttributes: Readonly<Record<string, string>>
 }
 
 /** Model-level layout state such as scale, grid, and background. */
@@ -170,7 +221,20 @@ export interface ArisObjectOccurrence {
   readonly rawAttributes: Readonly<Record<string, string>>
 }
 
-/** Connection occurrence — references a definition and adds route/style endpoints. */
+/**
+ * Connection occurrence — references a definition and adds route/style endpoints.
+ *
+ * `attributeOccurrences` mirrors `ArisObjectOccurrence.attributeOccurrences`: a `<CxnOcc>` may
+ * carry `<AttrOcc>` children exactly as an `<ObjOcc>` does (AnimalWF carries 123 of them), and
+ * they are what positions a connection's label relative to its route. The plan's §8.1 interface
+ * sketch omitted the field, but §6.4 ("retain everything"), §9.1 (preserve on edit) and §12.1
+ * ("attribute occurrence placement") all require it, and the real export is the specification.
+ *
+ * It is mandatory (an empty array when the source carries none), and every command that edits a
+ * connection occurrence spreads the existing record, so a placement survives route, endpoint and
+ * style edits (§9.1). The canvas paints these placements, so a construction site that omitted
+ * them would silently draw a connection with no label.
+ */
 export interface ArisConnectionOccurrence {
   readonly id: string
   readonly definitionId: string
@@ -179,6 +243,7 @@ export interface ArisConnectionOccurrence {
   readonly targetOccurrenceId: string
   readonly route: readonly ArisPoint[]
   readonly style: ArisConnectionStyle
+  readonly attributeOccurrences: readonly ArisAttributeOccurrence[]
   readonly rawAttributes: Readonly<Record<string, string>>
 }
 
@@ -198,6 +263,11 @@ export interface ArisModel {
   readonly connectionOccurrences: readonly ArisConnectionOccurrence[]
   readonly lanes: readonly ArisLane[]
   readonly freeText: readonly ArisFreeText[]
+  /**
+   * Embedded OLE attachments placed on this model. Mandatory: an empty array is how "this model
+   * places none" is expressed.
+   */
+  readonly attachments: readonly ArisAttachment[]
   readonly layout: ArisLayoutState
   readonly unsupported: boolean
   readonly rawSourceRecord: unknown
@@ -234,14 +304,44 @@ export interface ArisSourceIndexLike {
   readonly lanes: ReadonlyMap<string, ArisSourceLaneRecordLike>
   readonly freeText: ReadonlyMap<string, ArisSourceFreeTextRecordLike>
   readonly freeTextOccurrences: readonly ArisSourceFreeTextOccurrenceRecordLike[]
+  readonly attachments?: ReadonlyMap<string, ArisSourceAttachmentRecordLike>
+  readonly attachmentOccurrences?: readonly ArisSourceAttachmentOccurrenceRecordLike[]
   readonly styles: {
     readonly fontStyleSheets: ReadonlyMap<
       string,
       { readonly parsed: { readonly fontStyleSheetId: string | null } }
     >
+    /**
+     * `<Pen>` and `<Brush>` records, each naming the element it hangs off.
+     *
+     * AML puts an occurrence's colours in child elements, not in attributes on the occurrence
+     * itself, so an occurrence's own source style is only reachable through these. Plan §12.1
+     * lists "pen and brush" among the visual inputs the renderer must read, and §12.2 says source
+     * style data wins when present — neither is possible without them.
+     *
+     * Optional so that a source index built for a narrower purpose (an authored document, a test
+     * double) stays assignable; an index that omits them simply carries no source colours.
+     */
+    readonly pens?: readonly ArisSourceStyleRecordLike<{
+      readonly ownerSourceId: string | null
+      readonly color: string | null
+      readonly style: string | null
+      readonly width: number | null
+    }>[]
+    readonly brushes?: readonly ArisSourceStyleRecordLike<{
+      readonly ownerSourceId: string | null
+      readonly color: string | null
+      readonly color2: string | null
+      readonly brushType: string | null
+    }>[]
   }
   readonly unknownRecords: readonly unknown[]
   readonly routePoints: readonly ArisSourceRoutePointRecordLike[]
+}
+
+/** The narrow view of a `<Pen>`/`<Brush>` record the working model reads. */
+export interface ArisSourceStyleRecordLike<TParsed> {
+  readonly parsed: TParsed
 }
 
 export interface ArisSourceRecordBaseLike<TParsed extends Record<string, unknown>> {
@@ -316,6 +416,8 @@ export type ArisSourceAttributeOccurrenceRecordLike = ArisSourceRecordBaseLike<{
   readonly rotation: number | null
   readonly dx: number | null
   readonly dy: number | null
+  readonly symbolFlag: string | null
+  readonly fontStyleSheetId: string | null
 }>
 
 export type ArisSourceLaneRecordLike = ArisSourceRecordBaseLike<{
@@ -329,6 +431,22 @@ export type ArisSourceLaneRecordLike = ArisSourceRecordBaseLike<{
 
 export type ArisSourceFreeTextRecordLike = ArisSourceRecordBaseLike<{
   readonly freeTextDefinitionId: string | null
+}>
+
+export type ArisSourceAttachmentRecordLike = ArisSourceRecordBaseLike<{
+  readonly attachmentId: string | null
+  readonly blobCount: number
+}>
+
+export type ArisSourceAttachmentOccurrenceRecordLike = ArisSourceRecordBaseLike<{
+  readonly modelId: string | null
+  readonly attachmentOccurrenceId: string | null
+  readonly attachmentId: string | null
+  readonly zorder: number | null
+  readonly x: number | null
+  readonly y: number | null
+  readonly dx: number | null
+  readonly dy: number | null
 }>
 
 export type ArisSourceFreeTextOccurrenceRecordLike = ArisSourceRecordBaseLike<{

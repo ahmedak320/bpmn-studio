@@ -163,6 +163,7 @@ export function buildSatelliteDocument(): ArisWorkingDocument {
       fontStyleSheetId: null,
       zOrder: null
     },
+    attributeOccurrences: [],
     rawAttributes: {}
   }
 
@@ -182,6 +183,7 @@ export function buildSatelliteDocument(): ArisWorkingDocument {
       fontStyleSheetId: null,
       zOrder: null
     },
+    attributeOccurrences: [],
     rawAttributes: {}
   }
 
@@ -194,6 +196,7 @@ export function buildSatelliteDocument(): ArisWorkingDocument {
     connectionOccurrences: [ownerCxn, inputCxn],
     lanes: [],
     freeText: [],
+    attachments: [],
     layout: {
       scale: null,
       gridSize: null,
