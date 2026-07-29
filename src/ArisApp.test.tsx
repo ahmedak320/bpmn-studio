@@ -205,6 +205,11 @@ function makeDirectoryAdapter(
   entries: readonly WorkspaceEntry[],
   snapshots: Record<string, FileSnapshot>
 ): WorkspaceAdapter {
+  // A minimal in-memory multi-file store so the New-model create path can write
+  // a real source (writeAtomic), have it appear in the tree (list) and be
+  // reopened on the canvas (read) — the same round trip a real adapter makes.
+  const entryList: WorkspaceEntry[] = [...entries]
+  const snapshotStore: Record<string, FileSnapshot> = { ...snapshots }
   return {
     id: 'directory:AnimalWF',
     mode: 'directory',
@@ -225,18 +230,46 @@ function makeDirectoryAdapter(
         backup: false
       }
     },
-    list: vi.fn(async () => [...entries]),
+    list: vi.fn(async () => [...entryList]),
     read: vi.fn(async (path: string) => {
-      const snapshot = snapshots[path]
+      const snapshot = snapshotStore[path]
       if (!snapshot) throw new Error(`missing snapshot for ${path}`)
       return snapshot
     }),
     write: vi.fn(async () => {
       throw new Error('not implemented in test')
     }),
-    writeAtomic: vi.fn(async () => {
-      throw new Error('not implemented in test')
-    }),
+    writeAtomic: vi.fn(
+      async (
+        path: string,
+        bytes: Uint8Array,
+        _expectedHash?: string,
+        options?: { expectedMissing?: boolean }
+      ) => {
+        const exists = entryList.some((entry) => entry.path === path)
+        if (options?.expectedMissing && exists) {
+          return { ok: false, status: 'external-conflict', reason: 'already-exists' }
+        }
+        const stored = new Uint8Array(bytes)
+        const snapshot: FileSnapshot = {
+          path,
+          bytes: stored,
+          hash: `hash:${path}`,
+          size: stored.byteLength,
+          modifiedAt: 0,
+          mimeType: 'application/xml'
+        }
+        snapshotStore[path] = snapshot
+        if (!exists) entryList.push(workspaceFile(path))
+        return {
+          ok: true,
+          status: 'success',
+          snapshot,
+          created: !exists,
+          disposition: 'workspace'
+        }
+      }
+    ),
     delete: vi.fn(async () => undefined),
     move: vi.fn(async () => undefined),
     copy: vi.fn(async () => undefined),
@@ -244,6 +277,23 @@ function makeDirectoryAdapter(
     stat: vi.fn(async () => null),
     exists: vi.fn(async () => false)
   } as unknown as WorkspaceAdapter
+}
+
+/**
+ * The paths handed to a directory adapter's `writeAtomic` as creation-only
+ * writes (bytes + `{ expectedMissing: true }`, no expected hash). Asserting on
+ * the recorded call avoids `expect.any(Uint8Array)` realm quirks under jsdom.
+ */
+function creationWritePaths(adapter: WorkspaceAdapter): string[] {
+  const spy = adapter.writeAtomic as unknown as { mock: { calls: unknown[][] } }
+  return spy.mock.calls
+    .filter(
+      (call) =>
+        ArrayBuffer.isView(call[1]) &&
+        call[2] === undefined &&
+        JSON.stringify(call[3]) === '{"expectedMissing":true}'
+    )
+    .map((call) => call[0] as string)
 }
 
 function xmlFile(name: string, xml: string): File {
@@ -955,6 +1005,73 @@ describe('ArisApp production shell', () => {
     // Plan 18.5 step 7 / 18.8: one Undo restores the prior revision.
     const undoButton = document.querySelector<HTMLButtonElement>('[data-orbitpm-aris-undo]')!
     expect(undoButton.disabled).toBe(false)
+  })
+
+  // --- New model (Lane L2d) --------------------------------------------------
+
+  it('writes a blank model into the directory workspace, opens it on the canvas and shows the empty hint', async () => {
+    const adapter = makeDirectoryAdapter([], {})
+    mockState.directoryPickerSupported = true
+    mockState.rememberedHandle = { name: 'AnimalWF' } as FileSystemDirectoryHandle
+    mockState.directoryAdapter = adapter
+
+    render(<ArisApp />)
+
+    // Wait for the directory workspace to bind (the ready shell's header button)
+    // so the explorer chrome — not the picker's own New-model action — is clicked.
+    await screen.findByRole('button', { name: 'Assistant' })
+    fireEvent.click(await screen.findByRole('button', { name: '＋ New model' }))
+    const dialog = await screen.findByRole('dialog', { name: 'New ARIS model' })
+    fireEvent.change(within(dialog).getByRole('textbox'), { target: { value: 'Intake' } })
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Create model' }))
+
+    // §L2d: a real .aml source is created with a creation-only atomic write.
+    await waitFor(() => expect(creationWritePaths(adapter)).toContain('intake.aml'))
+
+    // The tree gains the new source, a tab opens, the canvas mounts and the
+    // empty-model hint invites the first shape.
+    expect(await screen.findByRole('treeitem', { name: 'intake.aml' })).not.toBeNull()
+    expect(await screen.findByRole('tab', { name: 'intake.aml' })).not.toBeNull()
+    await waitFor(() => expect(document.querySelector('[data-orbitpm-aris-canvas]')).not.toBeNull())
+    await waitFor(() =>
+      expect(document.querySelector('[data-orbitpm-aris-empty-hint]')).not.toBeNull()
+    )
+  })
+
+  it('opens a blank model as an in-memory tab in the picker phase (no workspace bound)', async () => {
+    render(<ArisApp />)
+
+    // Default mock state: no directory picker, so the fallback picker offers the
+    // named New-model action.
+    fireEvent.click(await screen.findByRole('button', { name: '＋ New model' }))
+    const dialog = await screen.findByRole('dialog', { name: 'New ARIS model' })
+    fireEvent.change(within(dialog).getByRole('textbox'), { target: { value: 'Intake' } })
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Create model' }))
+
+    expect(await screen.findByRole('tab', { name: 'intake.aml' })).not.toBeNull()
+    await waitFor(() => expect(document.querySelector('[data-orbitpm-aris-canvas]')).not.toBeNull())
+  })
+
+  it('suffixes a colliding file name so a second blank model never overwrites the first', async () => {
+    const adapter = makeDirectoryAdapter([workspaceFile('intake.aml')], {})
+    mockState.directoryPickerSupported = true
+    mockState.rememberedHandle = { name: 'AnimalWF' } as FileSystemDirectoryHandle
+    mockState.directoryAdapter = adapter
+
+    render(<ArisApp />)
+
+    // Wait for the seeded source to reach the tree before creating.
+    expect(await screen.findByRole('treeitem', { name: 'intake.aml' })).not.toBeNull()
+
+    fireEvent.click(await screen.findByRole('button', { name: '＋ New model' }))
+    const dialog = await screen.findByRole('dialog', { name: 'New ARIS model' })
+    fireEvent.change(within(dialog).getByRole('textbox'), { target: { value: 'Intake' } })
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Create model' }))
+
+    // The slug already exists, so the create suffixes rather than overwrites.
+    await waitFor(() => expect(creationWritePaths(adapter)).toContain('intake-2.aml'))
+    expect(creationWritePaths(adapter)).not.toContain('intake.aml')
+    expect(await screen.findByRole('treeitem', { name: 'intake-2.aml' })).not.toBeNull()
   })
 })
 

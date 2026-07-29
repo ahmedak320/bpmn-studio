@@ -36,11 +36,15 @@ import {
 import type { LocalizationResources } from './localization/types'
 import {
   buildLiteTreeFromEntries,
+  uniquePathIn,
   EMPTY_PROCESS_GRAPH,
   EMPTY_PROCESS_INDEX
 } from './workspace/liteTreeFromEntries'
 import { buildProcessHierarchy } from './workspace/processHierarchy'
 import type { ArisExplorerTabsController } from './aris/shell/arisExplorerActions'
+import { ArisNewModelDialog } from './aris/shell/ArisNewModelDialog'
+import { buildBlankArisAml, deriveArisSourceFileName } from './aris/shell/arisBlankModel'
+import type { ArisBlankModelType } from './aris/shell/arisBlankModel'
 import { createArisXmlSourcePackage, type ArisXmlSourcePackage } from './aris/source/sourcePackage'
 import {
   ArisChatDrawer,
@@ -289,6 +293,12 @@ export default function ArisApp(): JSX.Element {
   /** Which model each open source is showing. Keyed by tab key. */
   const [activeModelByTab, setActiveModelByTab] = useState<Record<string, string>>({})
   const [preparedImport, setPreparedImport] = useState<ArisPreparedImport | null>(null)
+  /**
+   * The open "New model" request. `folderRel` is the multi-file folder target,
+   * or `null` when there is no writable multi-file destination (single-file /
+   * picker phase) — the dialog only reads it to pick its hint copy.
+   */
+  const [newModelRequest, setNewModelRequest] = useState<{ folderRel: string | null } | null>(null)
   /**
    * The public workspace glossary + translation memory, loaded once per bound
    * multi-file adapter. `null` in single-file mode (and until a load lands),
@@ -620,13 +630,14 @@ export default function ArisApp(): JSX.Element {
     [handleOpenWorkspaceFile, responsiveMode]
   )
 
-  // Blank-model creation stub; Lane L2d replaces only this body. `_folderRel` is
-  // '' for the workspace root.
+  // Open the "New model" dialog. `folderRel` is '' for the workspace root; it is
+  // only meaningful in a multi-file workspace, so single-file/picker sessions
+  // carry `null` and fall back to an in-memory tab.
   const handleNewModel = useCallback(
-    (_folderRel: string) => {
-      pushToast(t('aris.placeholder.newProcessUnavailable'))
+    (folderRel: string) => {
+      setNewModelRequest({ folderRel: multiFile ? folderRel : null })
     },
-    [pushToast]
+    [multiFile]
   )
 
   const handleOpenFolder = useCallback(async () => {
@@ -756,6 +767,76 @@ export default function ArisApp(): JSX.Element {
       })
     },
     [openTab]
+  )
+
+  /**
+   * Create a blank ARIS model from the New-model dialog. Three destinations:
+   *  - a multi-file folder target writes a real `.aml` source, refreshes the
+   *    tree and opens it for drawing immediately;
+   *  - a bound single-file workspace opens an in-memory generated tab (persisted
+   *    later through "Import into workspace…");
+   *  - the picker phase (no workspace) binds a single-file adapter around the
+   *    new source and opens it.
+   */
+  const handleCreateBlankModel = useCallback(
+    async ({ name, modelType }: { name: string; modelType: ArisBlankModelType }) => {
+      const request = newModelRequest
+      if (!request) return
+      setNewModelRequest(null)
+      const { xml } = buildBlankArisAml({ names: { [lang]: name }, modelType })
+      const bytes = new TextEncoder().encode(xml)
+      const { folderRel } = request
+
+      if (folderRel !== null) {
+        const adapter = workspaceAdapter
+        if (!adapter) return
+        const path = uniquePathIn(
+          new Set(workspaceEntries.map((entry) => entry.path)),
+          folderRel,
+          deriveArisSourceFileName(name)
+        )
+        const outcome = await adapter.writeAtomic(path, bytes, undefined, { expectedMissing: true })
+        if (!outcome.ok) {
+          pushToast(
+            t('aris.newModel.failed', {
+              error: 'error' in outcome ? outcome.error.message : outcome.status
+            }),
+            'error'
+          )
+          return
+        }
+        await refreshWorkspaceSources(adapter)
+        await handleOpenWorkspaceFile(path)
+        pushToast(t('aris.newModel.created', { name: path }), 'success')
+        return
+      }
+
+      if (workspaceAdapter) {
+        await handleCreateModel({ name, xml })
+        return
+      }
+
+      const fileName = deriveArisSourceFileName(name)
+      const adapter = new SingleFileWorkspaceAdapter({
+        path: fileName,
+        bytes,
+        workspaceId: `aris-new:${fileName}`
+      })
+      await activateAdapter(adapter)
+      await openImportedBytes(fileName, fileName, bytes)
+    },
+    [
+      activateAdapter,
+      handleCreateModel,
+      handleOpenWorkspaceFile,
+      lang,
+      newModelRequest,
+      openImportedBytes,
+      pushToast,
+      refreshWorkspaceSources,
+      workspaceAdapter,
+      workspaceEntries
+    ]
   )
 
   const handleSelectModel = useCallback((tabKey: string, modelId: string) => {
@@ -988,13 +1069,20 @@ export default function ArisApp(): JSX.Element {
           onOpenDifferent={() => void handleOpenDifferent()}
           onOpenOpfs={() => void handleOpenOpfs()}
           onOpenFile={() => openFileInputRef.current?.click()}
-          onNewDiagram={() => pushToast(t('aris.placeholder.newDiagramUnavailable'))}
-          onNewProcess={() => pushToast(t('aris.placeholder.newProcessUnavailable'))}
+          onNewDiagram={() => setNewModelRequest({ folderRel: null })}
+          onNewProcess={() => setNewModelRequest({ folderRel: null })}
         />
         <SettingsDialogLite
           open={settingsOpen}
           onClose={() => setSettingsOpen(false)}
           onKeysChanged={() => setKeysVersion((current) => current + 1)}
+        />
+        <ArisNewModelDialog
+          open={newModelRequest !== null}
+          folderRel={newModelRequest?.folderRel ?? null}
+          lang={lang}
+          onCreate={(spec) => void handleCreateBlankModel(spec)}
+          onCancel={() => setNewModelRequest(null)}
         />
         <Toaster toasts={toasts} onDismiss={dismissToast} />
       </>
@@ -1294,6 +1382,13 @@ export default function ArisApp(): JSX.Element {
         open={settingsOpen}
         onClose={() => setSettingsOpen(false)}
         onKeysChanged={() => setKeysVersion((current) => current + 1)}
+      />
+      <ArisNewModelDialog
+        open={newModelRequest !== null}
+        folderRel={newModelRequest?.folderRel ?? null}
+        lang={lang}
+        onCreate={(spec) => void handleCreateBlankModel(spec)}
+        onCancel={() => setNewModelRequest(null)}
       />
       <ArisChatDrawer
         open={assistantOpen}

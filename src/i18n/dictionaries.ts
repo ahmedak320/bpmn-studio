@@ -152,11 +152,26 @@ export const en = {
   'picker.fallback.newDiagram': 'New placeholder canvas',
 
   // --- EmptyWorkspaceCard ---
-  'emptyWorkspace.heading': 'No ARIS sources yet',
-  'emptyWorkspace.createFirst': '＋ Open your first source',
+  'emptyWorkspace.heading': 'No models yet',
+  'emptyWorkspace.createFirst': '＋ Create your first model',
   'emptyWorkspace.explain':
-    'Open ARIS AML/XML sources from {folderName}. Exact source preservation is active while the native ARIS canvas is under construction.',
+    'Create a blank EPC or value-added chain model in {folderName}, or import ARIS AML/XML exports.',
   'emptyWorkspace.explain.fallbackFolderName': 'this folder',
+
+  // --- New-model dialog (Lane L2d) ---
+  'aris.newModel.title': 'New ARIS model',
+  'aris.newModel.nameLabel': 'Model name',
+  'aris.newModel.nameInitial': 'New model',
+  'aris.newModel.create': 'Create model',
+  'aris.newModel.type': 'Model type',
+  'aris.newModel.type.epc': 'EPC (event-driven process chain)',
+  'aris.newModel.type.vacd': 'Value-added chain diagram',
+  'aris.newModel.hint.directory':
+    'A new .aml source file is created in the selected folder and opened for drawing immediately.',
+  'aris.newModel.hint.fallback':
+    'The model opens as an in-memory tab; use "Import into workspace…" to store it in a workspace.',
+  'aris.newModel.created': 'Created {name}.',
+  'aris.newModel.failed': 'Could not create the model: {error}',
   'aris.header.assistant': 'Assistant',
   'aris.header.openFile': 'Open file…',
   'aris.emptyMain':
@@ -3061,11 +3076,25 @@ export const ar: Record<keyof typeof en, string> = {
   'picker.fallback.newDiagram': 'لوحة عنصر نائب جديدة',
 
   // --- EmptyWorkspaceCard ---
-  'emptyWorkspace.heading': 'لا توجد مصادر ARIS بعد',
-  'emptyWorkspace.createFirst': '＋ افتح مصدرك الأول',
+  'emptyWorkspace.heading': 'لا توجد نماذج بعد',
+  'emptyWorkspace.createFirst': '＋ أنشئ نموذجك الأول',
   'emptyWorkspace.explain':
-    'افتح مصادر ARIS AML/XML من {folderName}. يجري الآن الحفاظ على المصدر الدقيق بينما تُبنى لوحة ARIS الأصلية.',
+    'أنشئ نموذج EPC أو سلسلة قيمة مضافة فارغًا في {folderName}، أو استورد ملفات ARIS AML/XML.',
   'emptyWorkspace.explain.fallbackFolderName': 'هذا المجلد',
+
+  // --- New-model dialog (Lane L2d) ---
+  'aris.newModel.title': 'نموذج ARIS جديد',
+  'aris.newModel.nameLabel': 'اسم النموذج',
+  'aris.newModel.nameInitial': 'نموذج جديد',
+  'aris.newModel.create': 'إنشاء النموذج',
+  'aris.newModel.type': 'نوع النموذج',
+  'aris.newModel.type.epc': 'سلسلة عمليات مقادة بالأحداث (EPC)',
+  'aris.newModel.type.vacd': 'مخطط سلسلة القيمة المضافة',
+  'aris.newModel.hint.directory': 'يُنشأ ملف مصدر ‎.aml جديد في المجلد المحدد ويُفتح للرسم فورًا.',
+  'aris.newModel.hint.fallback':
+    'يُفتح النموذج كتبويب في الذاكرة؛ استخدم "استيراد إلى مساحة العمل…" لحفظه.',
+  'aris.newModel.created': 'تم إنشاء {name}.',
+  'aris.newModel.failed': 'تعذّر إنشاء النموذج: {error}',
   'aris.header.assistant': 'المساعد',
   'aris.header.openFile': 'فتح ملف…',
   'aris.emptyMain':
