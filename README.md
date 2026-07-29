@@ -89,7 +89,7 @@ soak have not been completed. No final browser-support or WCAG conformance claim
 is made for this candidate.
 
 See [docs/SUPPORT_AND_LIMITATIONS.md](docs/SUPPORT_AND_LIMITATIONS.md) for the
-full support boundary and [STATUS.md](STATUS.md) for release readiness.
+full support boundary.
 
 ## Development
 
