@@ -74,7 +74,10 @@ export function createArisIdFactory(namespace = ''): ArisIdFactory {
 }
 
 /** Seed a factory with every id already present in a working document. */
-export function seedIdFactory(factory: ArisIdFactory, document: ArisWorkingDocument): ArisIdFactory {
+export function seedIdFactory(
+  factory: ArisIdFactory,
+  document: ArisWorkingDocument
+): ArisIdFactory {
   for (const id of document.objectDefinitions.keys()) factory.reserve(id)
   for (const id of document.connectionDefinitions.keys()) factory.reserve(id)
   for (const [modelId, model] of document.models) {

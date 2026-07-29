@@ -61,7 +61,10 @@ export interface ArisAssistantAnswer {
   readonly chips: readonly ArisAnswerChip[]
 }
 
-function chipForStep(digest: ArisProcessDigest, step: { occurrenceId: string; definitionId: string }): ArisAnswerChip {
+function chipForStep(
+  digest: ArisProcessDigest,
+  step: { occurrenceId: string; definitionId: string }
+): ArisAnswerChip {
   return {
     relPath: digest.relPath,
     modelId: digest.modelId,
@@ -84,7 +87,10 @@ function scoreToConfidence(score: number): number {
 }
 
 /** Confident, unique digest-level match (no tie with the runner-up), or `null`. */
-export function bestDigestMatch(digests: readonly ArisProcessDigest[], query: string): { digest: ArisProcessDigest; score: number } | null {
+export function bestDigestMatch(
+  digests: readonly ArisProcessDigest[],
+  query: string
+): { digest: ArisProcessDigest; score: number } | null {
   const ranked = rankDigests(digests, query, 2)
   if (ranked.length === 0) return null
   if (ranked.length > 1 && ranked[0].score === ranked[1].score) return null
@@ -103,7 +109,9 @@ function stepNameTokens(step: ArisDigestStep): string[] {
   return bilingualTokens(step.name, step.nameEn, step.nameAr)
 }
 
-function allStepCandidates(digests: readonly ArisProcessDigest[]): MatchCandidate<ArisDigestStep>[] {
+function allStepCandidates(
+  digests: readonly ArisProcessDigest[]
+): MatchCandidate<ArisDigestStep>[] {
   const out: MatchCandidate<ArisDigestStep>[] = []
   for (const digest of digests) {
     for (const step of digest.steps) out.push({ digest, tokens: stepNameTokens(step), value: step })
@@ -113,7 +121,10 @@ function allStepCandidates(digests: readonly ArisProcessDigest[]): MatchCandidat
 
 // --- 1. What comes next? -----------------------------------------------------
 
-export function answerNext(digests: readonly ArisProcessDigest[], query: string): ArisAssistantAnswer {
+export function answerNext(
+  digests: readonly ArisProcessDigest[],
+  query: string
+): ArisAssistantAnswer {
   const match = bestTokenMatch(allStepCandidates(digests), query)
   if (!match) return noneAnswer()
   const { digest, value: step, score } = match
@@ -145,7 +156,10 @@ export function answerNext(digests: readonly ArisProcessDigest[], query: string)
 
 // --- 2. What comes before? ---------------------------------------------------
 
-export function answerBefore(digests: readonly ArisProcessDigest[], query: string): ArisAssistantAnswer {
+export function answerBefore(
+  digests: readonly ArisProcessDigest[],
+  query: string
+): ArisAssistantAnswer {
   const match = bestTokenMatch(allStepCandidates(digests), query)
   if (!match) return noneAnswer()
   const { digest, value: step, score } = match
@@ -179,7 +193,10 @@ export function answerBefore(digests: readonly ArisProcessDigest[], query: strin
 
 // --- 3. Who owns / is responsible? ------------------------------------------
 
-export function answerResponsible(digests: readonly ArisProcessDigest[], query: string): ArisAssistantAnswer {
+export function answerResponsible(
+  digests: readonly ArisProcessDigest[],
+  query: string
+): ArisAssistantAnswer {
   const stepMatch = bestTokenMatch(allStepCandidates(digests), query)
   if (stepMatch) {
     const { digest, value: step, score } = stepMatch
@@ -216,14 +233,19 @@ export function answerResponsible(digests: readonly ArisProcessDigest[], query: 
   return {
     kind: 'responsible',
     confidence: scoreToConfidence(score),
-    parts: [{ messageKey: 'assistant.responsible.forProcess', vars: { process: digest.modelName }, items }],
+    parts: [
+      { messageKey: 'assistant.responsible.forProcess', vars: { process: digest.modelName }, items }
+    ],
     chips: [chip]
   }
 }
 
 // --- 4. What inputs/outputs apply? ------------------------------------------
 
-export function answerIo(digests: readonly ArisProcessDigest[], query: string): ArisAssistantAnswer {
+export function answerIo(
+  digests: readonly ArisProcessDigest[],
+  query: string
+): ArisAssistantAnswer {
   const match = bestTokenMatch(allStepCandidates(digests), query)
   if (!match) return noneAnswer()
   const { digest, value: step, score } = match
@@ -250,7 +272,10 @@ export function answerIo(digests: readonly ArisProcessDigest[], query: string): 
 
 // --- 5. Which system is used? ------------------------------------------------
 
-export function answerSystem(digests: readonly ArisProcessDigest[], query: string): ArisAssistantAnswer {
+export function answerSystem(
+  digests: readonly ArisProcessDigest[],
+  query: string
+): ArisAssistantAnswer {
   const match = bestTokenMatch(allStepCandidates(digests), query)
   if (!match) return noneAnswer()
   const { digest, value: step, score } = match
@@ -274,17 +299,26 @@ export function answerSystem(digests: readonly ArisProcessDigest[], query: strin
 
 // --- 6. What XOR outcomes exist? ---------------------------------------------
 
-function allDecisionCandidates(digests: readonly ArisProcessDigest[]): MatchCandidate<ArisDigestDecision>[] {
+function allDecisionCandidates(
+  digests: readonly ArisProcessDigest[]
+): MatchCandidate<ArisDigestDecision>[] {
   const out: MatchCandidate<ArisDigestDecision>[] = []
   for (const digest of digests) {
     for (const decision of digest.decisions) {
-      out.push({ digest, tokens: bilingualTokens(decision.name, decision.nameEn, decision.nameAr), value: decision })
+      out.push({
+        digest,
+        tokens: bilingualTokens(decision.name, decision.nameEn, decision.nameAr),
+        value: decision
+      })
     }
   }
   return out
 }
 
-export function answerXorOutcomes(digests: readonly ArisProcessDigest[], query: string): ArisAssistantAnswer {
+export function answerXorOutcomes(
+  digests: readonly ArisProcessDigest[],
+  query: string
+): ArisAssistantAnswer {
   const match = bestTokenMatch(allDecisionCandidates(digests), query)
   if (!match) return noneAnswer()
   const { digest, value: decision, score } = match
@@ -300,7 +334,11 @@ export function answerXorOutcomes(digests: readonly ArisProcessDigest[], query: 
   }
   const items: ArisAnswerListItem[] = decision.outcomes.map((o) => {
     const target = nameById.get(o.targetOccurrenceId)
-    return { text: o.outcome, detail: o.targetName, chip: target ? chipForStep(digest, target) : chip }
+    return {
+      text: o.outcome,
+      detail: o.targetName,
+      chip: target ? chipForStep(digest, target) : chip
+    }
   })
   return {
     kind: 'xorOutcomes',
@@ -312,7 +350,10 @@ export function answerXorOutcomes(digests: readonly ArisProcessDigest[], query: 
 
 // --- 7. Where does a return branch go? ---------------------------------------
 
-export function answerReturnBranch(digests: readonly ArisProcessDigest[], query: string): ArisAssistantAnswer {
+export function answerReturnBranch(
+  digests: readonly ArisProcessDigest[],
+  query: string
+): ArisAssistantAnswer {
   const stepMatch = bestTokenMatch(allStepCandidates(digests), query)
   if (stepMatch) {
     const { digest, value: step, score } = stepMatch
@@ -368,7 +409,9 @@ export function answerReturnBranch(digests: readonly ArisProcessDigest[], query:
   return {
     kind: 'returnBranch',
     confidence: scoreToConfidence(score),
-    parts: [{ messageKey: 'assistant.return.found', vars: { step: digest.modelName, target: '' }, items }],
+    parts: [
+      { messageKey: 'assistant.return.found', vars: { step: digest.modelName, target: '' }, items }
+    ],
     chips: [chip, ...items.map((i) => i.chip).filter((c): c is ArisAnswerChip => !!c)]
   }
 }
@@ -384,14 +427,19 @@ interface AssignmentGroup {
   readonly linkedModelIds: readonly string[]
 }
 
-function allAssignmentCandidates(digests: readonly ArisProcessDigest[]): MatchCandidate<AssignmentGroup>[] {
+function allAssignmentCandidates(
+  digests: readonly ArisProcessDigest[]
+): MatchCandidate<AssignmentGroup>[] {
   const out: MatchCandidate<AssignmentGroup>[] = []
   for (const digest of digests) {
     const byOccurrence = new Map<string, AssignmentGroup>()
     for (const a of digest.assignments) {
       const existing = byOccurrence.get(a.occurrenceId)
       if (existing) {
-        byOccurrence.set(a.occurrenceId, { ...existing, linkedModelIds: [...existing.linkedModelIds, a.linkedModelId] })
+        byOccurrence.set(a.occurrenceId, {
+          ...existing,
+          linkedModelIds: [...existing.linkedModelIds, a.linkedModelId]
+        })
       } else {
         byOccurrence.set(a.occurrenceId, {
           occurrenceId: a.occurrenceId,
@@ -404,18 +452,28 @@ function allAssignmentCandidates(digests: readonly ArisProcessDigest[]): MatchCa
       }
     }
     for (const group of byOccurrence.values()) {
-      out.push({ digest, tokens: bilingualTokens(group.name, group.nameEn, group.nameAr), value: group })
+      out.push({
+        digest,
+        tokens: bilingualTokens(group.name, group.nameEn, group.nameAr),
+        value: group
+      })
     }
   }
   return out
 }
 
-export function answerAssignment(digests: readonly ArisProcessDigest[], query: string): ArisAssistantAnswer {
+export function answerAssignment(
+  digests: readonly ArisProcessDigest[],
+  query: string
+): ArisAssistantAnswer {
   const match = bestTokenMatch(allAssignmentCandidates(digests), query)
   if (!match) return noneAnswer()
   const { digest, value: group, score } = match
   const chip = chipForStep(digest, group)
-  const items: ArisAnswerListItem[] = group.linkedModelIds.map((modelId) => ({ text: modelId, chip }))
+  const items: ArisAnswerListItem[] = group.linkedModelIds.map((modelId) => ({
+    text: modelId,
+    chip
+  }))
   return {
     kind: 'assignment',
     confidence: scoreToConfidence(score),
@@ -426,7 +484,10 @@ export function answerAssignment(digests: readonly ArisProcessDigest[], query: s
 
 // --- 9. Which information is missing? ----------------------------------------
 
-export function answerMissingInfo(digests: readonly ArisProcessDigest[], query: string): ArisAssistantAnswer {
+export function answerMissingInfo(
+  digests: readonly ArisProcessDigest[],
+  query: string
+): ArisAssistantAnswer {
   const digestMatch = bestDigestMatch(digests, query)
   if (!digestMatch) return noneAnswer()
   const { digest, score } = digestMatch
@@ -455,13 +516,19 @@ export function answerMissingInfo(digests: readonly ArisProcessDigest[], query: 
     messageKey: gapKeyByKind[gap.kind],
     vars: { step: gap.stepName ?? '', detail: gap.detail ?? '' },
     chip: gap.occurrenceId
-      ? { ...chip, occurrenceId: gap.occurrenceId, ...(gap.definitionId ? { definitionId: gap.definitionId } : {}) }
+      ? {
+          ...chip,
+          occurrenceId: gap.occurrenceId,
+          ...(gap.definitionId ? { definitionId: gap.definitionId } : {})
+        }
       : chip
   }))
   return {
     kind: 'missingInfo',
     confidence: scoreToConfidence(score),
-    parts: [{ messageKey: 'assistant.missing.forProcess', vars: { process: digest.modelName }, items }],
+    parts: [
+      { messageKey: 'assistant.missing.forProcess', vars: { process: digest.modelName }, items }
+    ],
     chips: [chip]
   }
 }
@@ -477,7 +544,10 @@ export function answerProcessList(digests: readonly ArisProcessDigest[]): ArisAs
       chips: []
     }
   }
-  const items: ArisAnswerListItem[] = digests.map((d) => ({ text: d.modelName, chip: chipForDigest(d) }))
+  const items: ArisAnswerListItem[] = digests.map((d) => ({
+    text: d.modelName,
+    chip: chipForDigest(d)
+  }))
   return {
     kind: 'processList',
     confidence: 1,
@@ -488,10 +558,16 @@ export function answerProcessList(digests: readonly ArisProcessDigest[]): ArisAs
 
 // --- 11. Which process matches a topic? --------------------------------------
 
-export function answerTopicMatch(digests: readonly ArisProcessDigest[], query: string): ArisAssistantAnswer {
+export function answerTopicMatch(
+  digests: readonly ArisProcessDigest[],
+  query: string
+): ArisAssistantAnswer {
   const ranked = rankDigests(digests, query, 5)
   if (ranked.length === 0) return noneAnswer()
-  const items: ArisAnswerListItem[] = ranked.map((r) => ({ text: r.digest.modelName, chip: chipForDigest(r.digest) }))
+  const items: ArisAnswerListItem[] = ranked.map((r) => ({
+    text: r.digest.modelName,
+    chip: chipForDigest(r.digest)
+  }))
   return {
     kind: 'topicMatch',
     confidence: scoreToConfidence(ranked[0].score),

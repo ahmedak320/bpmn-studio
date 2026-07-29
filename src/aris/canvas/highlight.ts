@@ -47,10 +47,7 @@ export const ARIS_HIGHLIGHT_COLOR_SLOTS = 6
 export type ArisHighlightRole = 'selected' | 'incoming' | 'outgoing' | 'self-loop'
 
 export type ArisHighlightInactiveReason =
-  | 'empty-selection'
-  | 'multiple-selection'
-  | 'root-selected'
-  | 'unsupported-selection'
+  'empty-selection' | 'multiple-selection' | 'root-selected' | 'unsupported-selection'
 
 export interface ArisHighlightRelation {
   readonly connectionOccurrenceId: string
@@ -183,7 +180,8 @@ export function computeHighlightPlan(
         ? connection.targetOccurrenceId
         : connection.sourceOccurrenceId
 
-    const satellite = neighbourOccurrenceId !== null && isSatelliteObjectType(objectTypeOf(neighbourOccurrenceId))
+    const satellite =
+      neighbourOccurrenceId !== null && isSatelliteObjectType(objectTypeOf(neighbourOccurrenceId))
 
     relations.push(
       Object.freeze({

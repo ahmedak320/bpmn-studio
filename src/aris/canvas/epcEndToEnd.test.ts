@@ -42,17 +42,53 @@ describe('authoring a complete EPC through canvas operations (Section 11.6)', ()
     const { canvas } = harness
     const authoring = canvas.authoring
 
-    const start = authoring.createObject({ objectType: 'OT_EVT', name: 'Application received', position: { x: 0, y: 0 } })
-    const review = authoring.createObject({ objectType: 'OT_FUNC', name: 'Review application', position: { x: 0, y: 200 } })
+    const start = authoring.createObject({
+      objectType: 'OT_EVT',
+      name: 'Application received',
+      position: { x: 0, y: 0 }
+    })
+    const review = authoring.createObject({
+      objectType: 'OT_FUNC',
+      name: 'Review application',
+      position: { x: 0, y: 200 }
+    })
     const split = authoring.createRule('XOR', { x: 0, y: 400 }, 'Decision')
-    const approvedEvent = authoring.createObject({ objectType: 'OT_EVT', name: 'Approved', position: { x: -250, y: 560 } })
-    const rejectedEvent = authoring.createObject({ objectType: 'OT_EVT', name: 'Rejected', position: { x: 250, y: 560 } })
-    const issue = authoring.createObject({ objectType: 'OT_FUNC', name: 'Issue licence', position: { x: -250, y: 740 } })
-    const notify = authoring.createObject({ objectType: 'OT_FUNC', name: 'Notify applicant', position: { x: 250, y: 740 } })
-    const issued = authoring.createObject({ objectType: 'OT_EVT', name: 'Licence issued', position: { x: -250, y: 920 } })
-    const notified = authoring.createObject({ objectType: 'OT_EVT', name: 'Applicant notified', position: { x: 250, y: 920 } })
+    const approvedEvent = authoring.createObject({
+      objectType: 'OT_EVT',
+      name: 'Approved',
+      position: { x: -250, y: 560 }
+    })
+    const rejectedEvent = authoring.createObject({
+      objectType: 'OT_EVT',
+      name: 'Rejected',
+      position: { x: 250, y: 560 }
+    })
+    const issue = authoring.createObject({
+      objectType: 'OT_FUNC',
+      name: 'Issue licence',
+      position: { x: -250, y: 740 }
+    })
+    const notify = authoring.createObject({
+      objectType: 'OT_FUNC',
+      name: 'Notify applicant',
+      position: { x: 250, y: 740 }
+    })
+    const issued = authoring.createObject({
+      objectType: 'OT_EVT',
+      name: 'Licence issued',
+      position: { x: -250, y: 920 }
+    })
+    const notified = authoring.createObject({
+      objectType: 'OT_EVT',
+      name: 'Applicant notified',
+      position: { x: 250, y: 920 }
+    })
     const merge = authoring.createRule('XOR', { x: 0, y: 1100 }, 'Merge')
-    const end = authoring.createObject({ objectType: 'OT_EVT', name: 'Case closed', position: { x: 0, y: 1280 } })
+    const end = authoring.createObject({
+      objectType: 'OT_EVT',
+      name: 'Case closed',
+      position: { x: 0, y: 1280 }
+    })
 
     // Every edge is drawn through the canvas connect operation.
     const edges = [
@@ -90,7 +126,10 @@ describe('authoring a complete EPC through canvas operations (Section 11.6)', ()
 
     // Both XOR rules carry the native XOR symbol.
     const ruleSymbols = model?.occurrences
-      .filter((occurrence) => canvas.document.objectDefinitions.get(occurrence.definitionId)?.type === 'OT_RULE')
+      .filter(
+        (occurrence) =>
+          canvas.document.objectDefinitions.get(occurrence.definitionId)?.type === 'OT_RULE'
+      )
       .map((occurrence) => occurrence.symbol)
     expect(ruleSymbols).toEqual(['ST_OPR_XOR_1', 'ST_OPR_XOR_1'])
 
@@ -105,9 +144,21 @@ describe('authoring a complete EPC through canvas operations (Section 11.6)', ()
     harness = bootCanvas()
     const { canvas } = harness
     const authoring = canvas.authoring
-    const start = authoring.createObject({ objectType: 'OT_EVT', name: 'Start', position: { x: 0, y: 0 } })
-    const work = authoring.createObject({ objectType: 'OT_FUNC', name: 'Work', position: { x: 0, y: 200 } })
-    const end = authoring.createObject({ objectType: 'OT_EVT', name: 'End', position: { x: 0, y: 400 } })
+    const start = authoring.createObject({
+      objectType: 'OT_EVT',
+      name: 'Start',
+      position: { x: 0, y: 0 }
+    })
+    const work = authoring.createObject({
+      objectType: 'OT_FUNC',
+      name: 'Work',
+      position: { x: 0, y: 200 }
+    })
+    const end = authoring.createObject({
+      objectType: 'OT_EVT',
+      name: 'End',
+      position: { x: 0, y: 400 }
+    })
     authoring.connect(start.occurrenceId, work.occurrenceId)
     authoring.connect(work.occurrenceId, end.occurrenceId)
 
@@ -121,7 +172,9 @@ describe('authoring a complete EPC through canvas operations (Section 11.6)', ()
     expect(canvas.document.revision).toBe(0)
     expect(canvas.document.models.get(canvas.activeModelId)?.occurrences).toHaveLength(0)
     expect(canvas.document.objectDefinitions.size).toBe(0)
-    expect(canvas.elementRegistry.getAll().filter((element) => element.id !== 'model:Model.1')).toHaveLength(0)
+    expect(
+      canvas.elementRegistry.getAll().filter((element) => element.id !== 'model:Model.1')
+    ).toHaveLength(0)
 
     while (canvas.canRedo) canvas.redo()
     expect(canvas.document.revision).toBe(finalRevision)
@@ -132,8 +185,16 @@ describe('authoring a complete EPC through canvas operations (Section 11.6)', ()
   it('every recorded command is individually invertible', () => {
     harness = bootCanvas()
     const { canvas } = harness
-    const a = canvas.authoring.createObject({ objectType: 'OT_EVT', name: 'A', position: { x: 0, y: 0 } })
-    const b = canvas.authoring.createObject({ objectType: 'OT_FUNC', name: 'B', position: { x: 0, y: 200 } })
+    const a = canvas.authoring.createObject({
+      objectType: 'OT_EVT',
+      name: 'A',
+      position: { x: 0, y: 0 }
+    })
+    const b = canvas.authoring.createObject({
+      objectType: 'OT_FUNC',
+      name: 'B',
+      position: { x: 0, y: 200 }
+    })
     canvas.authoring.connect(a.occurrenceId, b.occurrenceId)
     canvas.authoring.moveOccurrence(b.occurrenceId, { x: 40, y: 240 })
 

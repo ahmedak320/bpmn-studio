@@ -35,10 +35,26 @@ interface Fixture {
 function buildFixture(): Fixture {
   harness = bootCanvas()
   const { canvas } = harness
-  const startEvent = canvas.authoring.createObject({ objectType: 'OT_EVT', name: 'Start', position: { x: 0, y: 0 } })
-  const func = canvas.authoring.createObject({ objectType: 'OT_FUNC', name: 'Work', position: { x: 0, y: 300 } })
-  const endEvent = canvas.authoring.createObject({ objectType: 'OT_EVT', name: 'End', position: { x: 0, y: 600 } })
-  const person = canvas.authoring.createObject({ objectType: 'OT_PERS', name: 'Clerk', position: { x: 400, y: 300 } })
+  const startEvent = canvas.authoring.createObject({
+    objectType: 'OT_EVT',
+    name: 'Start',
+    position: { x: 0, y: 0 }
+  })
+  const func = canvas.authoring.createObject({
+    objectType: 'OT_FUNC',
+    name: 'Work',
+    position: { x: 0, y: 300 }
+  })
+  const endEvent = canvas.authoring.createObject({
+    objectType: 'OT_EVT',
+    name: 'End',
+    position: { x: 0, y: 600 }
+  })
+  const person = canvas.authoring.createObject({
+    objectType: 'OT_PERS',
+    name: 'Clerk',
+    position: { x: 400, y: 300 }
+  })
 
   const incomingId = canvas.authoring.connect(startEvent.occurrenceId, func.occurrenceId)
   const outgoingId = canvas.authoring.connect(func.occurrenceId, endEvent.occurrenceId)
@@ -57,15 +73,30 @@ describe('selection highlighting (Section 11.5)', () => {
     expect(plan.ownerOccurrenceId).toBe(fixture.func.occurrenceId)
     expect(plan.relations).toHaveLength(3)
 
-    const byId = new Map(plan.relations.map((relation) => [relation.connectionOccurrenceId, relation]))
-    expect(byId.get(fixture.incomingId)).toMatchObject({ role: 'incoming', connectionType: 'CT_ACTIV_1' })
-    expect(byId.get(fixture.outgoingId)).toMatchObject({ role: 'outgoing', connectionType: 'CT_CRT_1' })
-    expect(byId.get(fixture.satelliteId)).toMatchObject({ role: 'incoming', connectionType: 'CT_EXEC_1' })
+    const byId = new Map(
+      plan.relations.map((relation) => [relation.connectionOccurrenceId, relation])
+    )
+    expect(byId.get(fixture.incomingId)).toMatchObject({
+      role: 'incoming',
+      connectionType: 'CT_ACTIV_1'
+    })
+    expect(byId.get(fixture.outgoingId)).toMatchObject({
+      role: 'outgoing',
+      connectionType: 'CT_CRT_1'
+    })
+    expect(byId.get(fixture.satelliteId)).toMatchObject({
+      role: 'incoming',
+      connectionType: 'CT_EXEC_1'
+    })
 
     // Markers reached the canvas.
-    expect(fixture.canvas.canvas.hasMarker(fixture.func.occurrenceId, ARIS_HIGHLIGHT_OWNER_MARKER)).toBe(true)
+    expect(
+      fixture.canvas.canvas.hasMarker(fixture.func.occurrenceId, ARIS_HIGHLIGHT_OWNER_MARKER)
+    ).toBe(true)
     expect(fixture.canvas.canvas.hasMarker(fixture.incomingId, ARIS_HIGHLIGHT_MARKER)).toBe(true)
-    expect(fixture.canvas.canvas.hasMarker(fixture.startEvent.occurrenceId, ARIS_HIGHLIGHT_MARKER)).toBe(true)
+    expect(
+      fixture.canvas.canvas.hasMarker(fixture.startEvent.occurrenceId, ARIS_HIGHLIGHT_MARKER)
+    ).toBe(true)
   })
 
   it('highlights the selected connection itself', () => {
@@ -76,7 +107,10 @@ describe('selection highlighting (Section 11.5)', () => {
     expect(plan.active).toBe(true)
     expect(plan.selectedConnectionId).toBe(fixture.incomingId)
     expect(plan.relations).toHaveLength(1)
-    expect(plan.relations[0]).toMatchObject({ connectionOccurrenceId: fixture.incomingId, role: 'selected' })
+    expect(plan.relations[0]).toMatchObject({
+      connectionOccurrenceId: fixture.incomingId,
+      role: 'selected'
+    })
     // Both endpoints are highlighted with it.
     expect(plan.neighbourOccurrenceIds).toEqual(
       expect.arrayContaining([fixture.startEvent.occurrenceId, fixture.func.occurrenceId])
@@ -148,7 +182,9 @@ describe('selection highlighting (Section 11.5)', () => {
     fixture.canvas.select(fixture.func.occurrenceId)
     const plan = fixture.canvas.currentHighlight()
 
-    const satellite = plan.relations.find((relation) => relation.connectionOccurrenceId === fixture.satelliteId)
+    const satellite = plan.relations.find(
+      (relation) => relation.connectionOccurrenceId === fixture.satelliteId
+    )
     expect(satellite?.satellite).toBe(true)
     expect(plan.satelliteOccurrenceIds).toEqual([fixture.person.occurrenceId])
 
@@ -162,7 +198,11 @@ describe('selection highlighting (Section 11.5)', () => {
   it('deduplicates self-loops into a single relation', () => {
     harness = bootCanvas()
     const { canvas } = harness
-    const func = canvas.authoring.createObject({ objectType: 'OT_FUNC', name: 'Retry', position: { x: 0, y: 0 } })
+    const func = canvas.authoring.createObject({
+      objectType: 'OT_FUNC',
+      name: 'Retry',
+      position: { x: 0, y: 0 }
+    })
     const selfLoopId = canvas.authoring.connect(func.occurrenceId, func.occurrenceId)
 
     canvas.select(func.occurrenceId)
@@ -181,8 +221,16 @@ describe('selection highlighting (Section 11.5)', () => {
   it('separates overlapping routes with distinct colours and dashes', () => {
     harness = bootCanvas()
     const { canvas } = harness
-    const a = canvas.authoring.createObject({ objectType: 'OT_EVT', name: 'A', position: { x: 0, y: 0 } })
-    const b = canvas.authoring.createObject({ objectType: 'OT_FUNC', name: 'B', position: { x: 0, y: 300 } })
+    const a = canvas.authoring.createObject({
+      objectType: 'OT_EVT',
+      name: 'A',
+      position: { x: 0, y: 0 }
+    })
+    const b = canvas.authoring.createObject({
+      objectType: 'OT_FUNC',
+      name: 'B',
+      position: { x: 0, y: 300 }
+    })
     const first = canvas.authoring.connect(a.occurrenceId, b.occurrenceId)
     const second = canvas.authoring.connect(a.occurrenceId, b.occurrenceId)
     const third = canvas.authoring.connect(b.occurrenceId, a.occurrenceId)
@@ -191,7 +239,9 @@ describe('selection highlighting (Section 11.5)', () => {
     const plan = canvas.currentHighlight()
 
     expect(plan.relations).toHaveLength(3)
-    const byId = new Map(plan.relations.map((relation) => [relation.connectionOccurrenceId, relation]))
+    const byId = new Map(
+      plan.relations.map((relation) => [relation.connectionOccurrenceId, relation])
+    )
     // Same unordered endpoint pair ⇒ distinct colour slots, dashes after the first.
     expect(byId.get(first)).toMatchObject({ colorIndex: 0, dashed: false })
     expect(byId.get(second)).toMatchObject({ colorIndex: 1, dashed: true })
@@ -248,12 +298,18 @@ describe('selection highlighting (Section 11.5)', () => {
     canvas.select(fixture.func.occurrenceId)
     expect(canvas.currentHighlight().relations).toHaveLength(3)
 
-    const extra = canvas.authoring.createObject({ objectType: 'OT_APPL_SYS', name: 'System', position: { x: -400, y: 300 } })
+    const extra = canvas.authoring.createObject({
+      objectType: 'OT_APPL_SYS',
+      name: 'System',
+      position: { x: -400, y: 300 }
+    })
     const extraConnection = canvas.authoring.connect(extra.occurrenceId, fixture.func.occurrenceId)
 
     const plan = canvas.currentHighlight()
     expect(plan.relations).toHaveLength(4)
-    expect(plan.relations.map((relation) => relation.connectionOccurrenceId)).toContain(extraConnection)
+    expect(plan.relations.map((relation) => relation.connectionOccurrenceId)).toContain(
+      extraConnection
+    )
     expect(plan.satelliteOccurrenceIds).toEqual(
       expect.arrayContaining([fixture.person.occurrenceId, extra.occurrenceId])
     )
@@ -295,8 +351,16 @@ describe('selection highlighting (Section 11.5)', () => {
     const { document, first, second } = twoModelDocument()
     harness = bootCanvas({ document, modelId: first })
     const { canvas } = harness
-    const a = canvas.authoring.createObject({ objectType: 'OT_EVT', name: 'A', position: { x: 0, y: 0 } })
-    const b = canvas.authoring.createObject({ objectType: 'OT_FUNC', name: 'B', position: { x: 0, y: 300 } })
+    const a = canvas.authoring.createObject({
+      objectType: 'OT_EVT',
+      name: 'A',
+      position: { x: 0, y: 0 }
+    })
+    const b = canvas.authoring.createObject({
+      objectType: 'OT_FUNC',
+      name: 'B',
+      position: { x: 0, y: 300 }
+    })
     canvas.authoring.connect(a.occurrenceId, b.occurrenceId)
 
     canvas.select(a.occurrenceId)

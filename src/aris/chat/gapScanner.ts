@@ -41,7 +41,12 @@ import { detectReturnPathOutcomes } from '../epc/returnPath'
 import type { EpcGraph } from '../epc/types'
 import { validateEpcGraph } from '../epc/validate'
 import { classifyRule } from '../epc/xor'
-import { DEFAULT_ARABIC_LOCALE_IDS, DEFAULT_ENGLISH_LOCALE_IDS, hasArabicName, hasEnglishName } from './locale'
+import {
+  DEFAULT_ARABIC_LOCALE_IDS,
+  DEFAULT_ENGLISH_LOCALE_IDS,
+  hasArabicName,
+  hasEnglishName
+} from './locale'
 import type { ArisChatSeverity, ArisChatWorkingDocument } from './types'
 
 export type ArisChatGapKind =
@@ -114,7 +119,9 @@ export const DEFAULT_GAP_SCAN_CONFIG: ArisGapScanConfig = Object.freeze({
   processCodeAttributeType: 'AT_PROC_CODE',
   ownerAttributeType: 'AT_PERS_RESP',
   decisionBasisAttributeType: 'AT_DESC',
-  ioConnectionTypes: Object.freeze(new Set(['CT_IS_INP_FOR', 'CT_HAS_OUT', 'CT_SUPP_3', 'CT_CRT_OUT_TO'])),
+  ioConnectionTypes: Object.freeze(
+    new Set(['CT_IS_INP_FOR', 'CT_HAS_OUT', 'CT_SUPP_3', 'CT_CRT_OUT_TO'])
+  ),
   decisionBasisConnectionTypes: Object.freeze(new Set(['CT_IS_EVAL_BY_1', 'CT_REFS_TO_2'])),
   processInterfaceObjectTypes: Object.freeze(new Set<string>()),
   requiredAttachmentObjectTypes: Object.freeze(new Set<string>())
@@ -130,7 +137,13 @@ function sortedGaps(gaps: readonly ArisChatGap[]): readonly ArisChatGap[] {
   return [...gaps].sort((a, b) => compareIds(a.targetIds, b.targetIds))
 }
 
-function hasAttributeText(attributes: readonly { readonly type: string; readonly values: readonly { readonly text: string }[] }[], attributeType: string): boolean {
+function hasAttributeText(
+  attributes: readonly {
+    readonly type: string
+    readonly values: readonly { readonly text: string }[]
+  }[],
+  attributeType: string
+): boolean {
   const attribute = attributes.find((candidate) => candidate.type === attributeType)
   if (!attribute) return false
   return attribute.values.some((value) => value.text.trim().length > 0)
@@ -167,7 +180,10 @@ function checkMissingNames(
 ): readonly ArisChatGap[] {
   const check = kind === 'missingEnglishName' ? hasEnglishName : hasArabicName
   const localeIds = kind === 'missingEnglishName' ? config.englishLocaleIds : config.arabicLocaleIds
-  const messageKey = kind === 'missingEnglishName' ? 'aris.chat.gap.missingEnglishName' : 'aris.chat.gap.missingArabicName'
+  const messageKey =
+    kind === 'missingEnglishName'
+      ? 'aris.chat.gap.missingEnglishName'
+      : 'aris.chat.gap.missingArabicName'
   const gaps: ArisChatGap[] = []
 
   for (const model of document.models.values()) {
@@ -186,7 +202,10 @@ function checkMissingNames(
 
 // --- 3: missing process code -------------------------------------------------------------
 
-function checkMissingProcessCode(document: ArisChatWorkingDocument, config: ArisGapScanConfig): readonly ArisChatGap[] {
+function checkMissingProcessCode(
+  document: ArisChatWorkingDocument,
+  config: ArisGapScanConfig
+): readonly ArisChatGap[] {
   const gaps: ArisChatGap[] = []
   for (const definition of document.objectDefinitions.values()) {
     if (definition.type !== OT_FUNC) continue
@@ -204,7 +223,10 @@ function checkMissingProcessCode(document: ArisChatWorkingDocument, config: Aris
 
 // --- 4: missing owner/responsibility ------------------------------------------------------
 
-function checkMissingOwner(document: ArisChatWorkingDocument, config: ArisGapScanConfig): readonly ArisChatGap[] {
+function checkMissingOwner(
+  document: ArisChatWorkingDocument,
+  config: ArisGapScanConfig
+): readonly ArisChatGap[] {
   const gaps: ArisChatGap[] = []
   for (const definition of document.objectDefinitions.values()) {
     if (definition.type !== OT_FUNC) continue
@@ -222,7 +244,10 @@ function checkMissingOwner(document: ArisChatWorkingDocument, config: ArisGapSca
 
 // --- 5: missing inputs/outputs/systems -----------------------------------------------------
 
-function checkMissingInputsOutputsSystems(document: ArisChatWorkingDocument, config: ArisGapScanConfig): readonly ArisChatGap[] {
+function checkMissingInputsOutputsSystems(
+  document: ArisChatWorkingDocument,
+  config: ArisGapScanConfig
+): readonly ArisChatGap[] {
   const gaps: ArisChatGap[] = []
   for (const model of document.models.values()) {
     const functionOccurrences = model.occurrences.filter((occurrence) => {
@@ -256,7 +281,10 @@ function checkMissingInputsOutputsSystems(document: ArisChatWorkingDocument, con
 
 // --- 6: missing decision basis -------------------------------------------------------------
 
-function checkMissingDecisionBasis(document: ArisChatWorkingDocument, config: ArisGapScanConfig): readonly ArisChatGap[] {
+function checkMissingDecisionBasis(
+  document: ArisChatWorkingDocument,
+  config: ArisGapScanConfig
+): readonly ArisChatGap[] {
   const gaps: ArisChatGap[] = []
   for (const [modelId, model] of document.models) {
     const graph = toChatEpcGraph(document, modelId)
@@ -267,13 +295,21 @@ function checkMissingDecisionBasis(document: ArisChatWorkingDocument, config: Ar
       if (classification.role !== 'split' && classification.role !== 'both') continue
 
       const occurrence = model.occurrences.find((candidate) => candidate.id === node.id)
-      const definition = occurrence ? document.objectDefinitions.get(occurrence.definitionId) : undefined
-      const hasAttributeBasis = definition ? hasAttributeText(definition.attributes, config.decisionBasisAttributeType) : false
+      const definition = occurrence
+        ? document.objectDefinitions.get(occurrence.definitionId)
+        : undefined
+      const hasAttributeBasis = definition
+        ? hasAttributeText(definition.attributes, config.decisionBasisAttributeType)
+        : false
 
       const hasConnectionBasis = model.connectionOccurrences.some((connection) => {
-        if (connection.sourceOccurrenceId !== node.id && connection.targetOccurrenceId !== node.id) return false
+        if (connection.sourceOccurrenceId !== node.id && connection.targetOccurrenceId !== node.id)
+          return false
         const connectionDefinition = document.connectionDefinitions.get(connection.definitionId)
-        return !!connectionDefinition && config.decisionBasisConnectionTypes.has(connectionDefinition.type)
+        return (
+          !!connectionDefinition &&
+          config.decisionBasisConnectionTypes.has(connectionDefinition.type)
+        )
       })
 
       if (!hasAttributeBasis && !hasConnectionBasis) {
@@ -302,10 +338,16 @@ function checkMissingXorOutcomes(document: ArisChatWorkingDocument): readonly Ar
       if (classification.role !== 'split' && classification.role !== 'both') continue
       if (classification.outgoingEdgeIds.length < 2) continue
 
-      const outgoingEdges = graph.edges.filter((edge) => classification.outgoingEdgeIds.includes(edge.id))
-      const labels = outgoingEdges.map((edge) => (edge.names ? Object.values(edge.names).find((text) => text.trim().length > 0) ?? '' : ''))
+      const outgoingEdges = graph.edges.filter((edge) =>
+        classification.outgoingEdgeIds.includes(edge.id)
+      )
+      const labels = outgoingEdges.map((edge) =>
+        edge.names ? (Object.values(edge.names).find((text) => text.trim().length > 0) ?? '') : ''
+      )
       const hasUnlabeled = labels.some((label) => label.trim().length === 0)
-      const hasDuplicate = new Set(labels.filter((label) => label.trim().length > 0)).size < labels.filter((label) => label.trim().length > 0).length
+      const hasDuplicate =
+        new Set(labels.filter((label) => label.trim().length > 0)).size <
+        labels.filter((label) => label.trim().length > 0).length
 
       if (hasUnlabeled || hasDuplicate) {
         gaps.push({
@@ -351,9 +393,17 @@ const INVALID_SEQUENCE_RULE_IDS = new Set([
   'epc.event.decisionViolation',
   'epc.rule.unrecognizedSymbol'
 ])
-const DANGLING_RULE_IDS = new Set(['epc.connectivity.orphanNode', 'epc.connection.missingType', 'epc.linkedModel.danglingReference'])
+const DANGLING_RULE_IDS = new Set([
+  'epc.connectivity.orphanNode',
+  'epc.connection.missingType',
+  'epc.linkedModel.danglingReference'
+])
 
-function checkEpcFindings(document: ArisChatWorkingDocument, kind: ArisChatGapKind, ruleIds: ReadonlySet<string>): readonly ArisChatGap[] {
+function checkEpcFindings(
+  document: ArisChatWorkingDocument,
+  kind: ArisChatGapKind,
+  ruleIds: ReadonlySet<string>
+): readonly ArisChatGap[] {
   const gaps: ArisChatGap[] = []
   const knownModelIds = new Set(document.models.keys())
   for (const modelId of document.models.keys()) {
@@ -390,8 +440,12 @@ function checkLocalDanglingReferences(document: ArisChatWorkingDocument): readon
     }
     for (const connection of model.connectionOccurrences) {
       const missingDefinition = !document.connectionDefinitions.has(connection.definitionId)
-      const missingSource = !model.occurrences.some((occurrence) => occurrence.id === connection.sourceOccurrenceId)
-      const missingTarget = !model.occurrences.some((occurrence) => occurrence.id === connection.targetOccurrenceId)
+      const missingSource = !model.occurrences.some(
+        (occurrence) => occurrence.id === connection.sourceOccurrenceId
+      )
+      const missingTarget = !model.occurrences.some(
+        (occurrence) => occurrence.id === connection.targetOccurrenceId
+      )
       if (missingDefinition || missingSource || missingTarget) {
         gaps.push({
           kind: 'danglingObjectOrConnection',
@@ -407,7 +461,10 @@ function checkLocalDanglingReferences(document: ArisChatWorkingDocument): readon
 
 // --- 12: missing linked model (expected but absent) ----------------------------------------
 
-function checkMissingLinkedModel(document: ArisChatWorkingDocument, config: ArisGapScanConfig): readonly ArisChatGap[] {
+function checkMissingLinkedModel(
+  document: ArisChatWorkingDocument,
+  config: ArisGapScanConfig
+): readonly ArisChatGap[] {
   if (config.processInterfaceObjectTypes.size === 0) return []
   const gaps: ArisChatGap[] = []
   for (const definition of document.objectDefinitions.values()) {
@@ -426,12 +483,18 @@ function checkMissingLinkedModel(document: ArisChatWorkingDocument, config: Aris
 
 // --- 13: missing attachment ------------------------------------------------------------------
 
-function checkMissingAttachment(document: ArisChatWorkingDocument, config: ArisGapScanConfig): readonly ArisChatGap[] {
+function checkMissingAttachment(
+  document: ArisChatWorkingDocument,
+  config: ArisGapScanConfig
+): readonly ArisChatGap[] {
   if (config.requiredAttachmentObjectTypes.size === 0) return []
   const gaps: ArisChatGap[] = []
   const attachmentsByOwner = new Map<string, number>()
   for (const attachment of document.attachments?.values() ?? []) {
-    attachmentsByOwner.set(attachment.ownerId, (attachmentsByOwner.get(attachment.ownerId) ?? 0) + 1)
+    attachmentsByOwner.set(
+      attachment.ownerId,
+      (attachmentsByOwner.get(attachment.ownerId) ?? 0) + 1
+    )
   }
   for (const definition of document.objectDefinitions.values()) {
     if (!config.requiredAttachmentObjectTypes.has(definition.type)) continue
@@ -454,7 +517,8 @@ function checkUnusedDefinition(document: ArisChatWorkingDocument): readonly Aris
   const usedConnectionDefinitionIds = new Set<string>()
   for (const model of document.models.values()) {
     for (const occurrence of model.occurrences) usedObjectDefinitionIds.add(occurrence.definitionId)
-    for (const connection of model.connectionOccurrences) usedConnectionDefinitionIds.add(connection.definitionId)
+    for (const connection of model.connectionOccurrences)
+      usedConnectionDefinitionIds.add(connection.definitionId)
   }
 
   const gaps: ArisChatGap[] = []
@@ -515,7 +579,10 @@ export function scanArisChatGaps(
     ...checkMissingReturnTarget(document),
     ...checkEpcFindings(document, 'missingStartOrEndEvent', START_END_RULE_IDS),
     ...checkEpcFindings(document, 'invalidSequence', INVALID_SEQUENCE_RULE_IDS),
-    ...sortedGaps([...checkEpcFindings(document, 'danglingObjectOrConnection', DANGLING_RULE_IDS), ...checkLocalDanglingReferences(document)]),
+    ...sortedGaps([
+      ...checkEpcFindings(document, 'danglingObjectOrConnection', DANGLING_RULE_IDS),
+      ...checkLocalDanglingReferences(document)
+    ]),
     ...checkMissingLinkedModel(document, config),
     ...checkMissingAttachment(document, config),
     ...checkUnusedDefinition(document),

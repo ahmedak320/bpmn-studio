@@ -165,7 +165,10 @@ export class ArisRenderer extends BaseRenderer {
       })
       group.setAttribute('data-aris-symbol', resolution.descriptor.key)
       if (resolution.fidelity.length > 0) {
-        group.setAttribute('data-aris-fidelity', resolution.fidelity.map((finding) => finding.kind).join(' '))
+        group.setAttribute(
+          'data-aris-fidelity',
+          resolution.fidelity.map((finding) => finding.kind).join(' ')
+        )
       }
       const scale = scaleFor(resolution.descriptor, shape.width, shape.height)
       for (const primitive of resolution.descriptor.drawing.elements) {

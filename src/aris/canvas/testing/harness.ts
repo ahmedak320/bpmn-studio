@@ -5,7 +5,11 @@
 import type { Element, Shape } from 'diagram-js/lib/model/Types'
 
 import { ArisCanvas } from '../ArisCanvas'
-import { createEmptyArisCanvasDocument, createEmptyArisModel, withAdditionalModel } from '../emptyDocument'
+import {
+  createEmptyArisCanvasDocument,
+  createEmptyArisModel,
+  withAdditionalModel
+} from '../emptyDocument'
 import type { ArisSupportedModelType, ArisWorkingDocument } from '../../model/types'
 import { createCanvasContainer, installJsdomSvgSupport } from './jsdomSvg'
 
@@ -48,7 +52,11 @@ export function bootCanvas(options: HarnessOptions = {}): Harness {
 }
 
 /** A two-model document, for model-switch tests. */
-export function twoModelDocument(): { readonly document: ArisWorkingDocument; readonly first: string; readonly second: string } {
+export function twoModelDocument(): {
+  readonly document: ArisWorkingDocument
+  readonly first: string
+  readonly second: string
+} {
   const first = createEmptyArisCanvasDocument({ modelId: 'Model.A', modelName: 'A' })
   const document = withAdditionalModel(
     first.document,
@@ -81,7 +89,9 @@ export function dragShape(canvas: ArisCanvas, id: string, delta: { x: number; y:
     move: (event: unknown) => void
     end: () => void
   }>('dragging')
-  const move = canvas.get<{ start: (event: unknown, element: Element, activate?: boolean) => void }>('move')
+  const move = canvas.get<{
+    start: (event: unknown, element: Element, activate?: boolean) => void
+  }>('move')
 
   dragging.setOptions({ manual: true })
   const target = shape(canvas, id)

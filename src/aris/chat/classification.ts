@@ -64,7 +64,12 @@ export const AUTOMATIC_COMMAND_KINDS: ReadonlySet<ArisChatCommandKind> = Object.
 
 /** Commands that remove something. Never automatic — see the module-level invariant. */
 export const DESTRUCTIVE_COMMAND_KINDS: ReadonlySet<ArisChatCommandKind> = Object.freeze(
-  new Set<ArisChatCommandKind>(['deleteConnection', 'deleteOccurrence', 'deleteDefinition', 'removeAttachment'])
+  new Set<ArisChatCommandKind>([
+    'deleteConnection',
+    'deleteOccurrence',
+    'deleteDefinition',
+    'removeAttachment'
+  ])
 )
 
 /** Commands that change control-flow topology or model assignment. Never automatic. */
@@ -88,7 +93,10 @@ export function classifyCommandKind(kind: ArisChatCommandKind): ArisChatClassifi
  * Classifies a full command, honoring the "ID change" / "ambiguous target" overrides from plan
  * 18.4. Either override forces `confirm` even for a kind that is normally automatic.
  */
-export function classifyPatchCommand(command: ArisChatCommand, context: ArisChatClassificationContext = {}): ArisChatClassification {
+export function classifyPatchCommand(
+  command: ArisChatCommand,
+  context: ArisChatClassificationContext = {}
+): ArisChatClassification {
   if (context.ambiguousTarget || context.impliesIdChange) return 'confirm'
   return classifyCommandKind(command.kind)
 }
@@ -105,7 +113,10 @@ export function isTopologyCommandKind(kind: ArisChatCommandKind): boolean {
 export function partitionCommandsByClassification(
   commands: readonly ArisChatCommand[],
   contextFor: (command: ArisChatCommand) => ArisChatClassificationContext = () => ({})
-): { readonly automatic: readonly ArisChatCommand[]; readonly confirm: readonly ArisChatCommand[] } {
+): {
+  readonly automatic: readonly ArisChatCommand[]
+  readonly confirm: readonly ArisChatCommand[]
+} {
   const automatic: ArisChatCommand[] = []
   const confirm: ArisChatCommand[] = []
   for (const command of commands) {

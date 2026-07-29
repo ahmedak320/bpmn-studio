@@ -31,7 +31,9 @@ export interface WorkerLike {
 export type IndexBuilderWorkerFactory = () => WorkerLike
 
 export const createIndexBuilderWorker: IndexBuilderWorkerFactory = () =>
-  createRetainedInlineWorker(() => new IndexBuilderWorker({ name: 'orbitpm-assistant-index-builder' }))
+  createRetainedInlineWorker(
+    () => new IndexBuilderWorker({ name: 'orbitpm-assistant-index-builder' })
+  )
 
 export interface BuildDigestsInBrowserOptions {
   readonly signal?: AbortSignal
@@ -99,7 +101,8 @@ export function buildDigestsInBrowser(
       }
       finish(() => resolve([...response.digests]))
     }
-    const onError = (): void => finish(() => reject(new Error('Assistant index builder worker failed.')))
+    const onError = (): void =>
+      finish(() => reject(new Error('Assistant index builder worker failed.')))
 
     options.signal?.addEventListener('abort', onAbort, { once: true })
     worker.addEventListener('message', onMessage)

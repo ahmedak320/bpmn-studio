@@ -42,12 +42,17 @@ describe('supported object types (Section 11.3)', () => {
 
       // move
       canvas.authoring.moveOccurrence(created.occurrenceId, { x: 260, y: 180 })
-      expect(findOccurrence(canvas.document, created.occurrenceId)?.bounds).toMatchObject({ x: 260, y: 180 })
+      expect(findOccurrence(canvas.document, created.occurrenceId)?.bounds).toMatchObject({
+        x: 260,
+        y: 180
+      })
       expect(shape(canvas, created.occurrenceId).x).toBe(260)
 
       // edit (rename + attribute + resize + restyle)
       canvas.authoring.renameDefinition(created.definitionId, 'Renamed')
-      expect(canvas.document.objectDefinitions.get(created.definitionId)?.names.values['en-US']).toBe('Renamed')
+      expect(
+        canvas.document.objectDefinitions.get(created.definitionId)?.names.values['en-US']
+      ).toBe('Renamed')
       canvas.authoring.setDefinitionAttribute(created.definitionId, 'AT_DESC', [
         { localeId: 'en-US', text: 'description' }
       ])
@@ -62,7 +67,10 @@ describe('supported object types (Section 11.3)', () => {
       expect(findOccurrence(canvas.document, created.occurrenceId)?.style.fillColor).toBe('#ff0000')
 
       // connect (to a function, which every type has a defined relation with)
-      const partner = canvas.authoring.createObject({ objectType: 'OT_FUNC', position: { x: 600, y: 180 } })
+      const partner = canvas.authoring.createObject({
+        objectType: 'OT_FUNC',
+        position: { x: 600, y: 180 }
+      })
       const connectionId = canvas.authoring.connect(created.occurrenceId, partner.occurrenceId)
       const connection = canvas.elementRegistry.get(connectionId)
       expect(connection).toBeTruthy()
@@ -95,7 +103,9 @@ describe('supported object types (Section 11.3)', () => {
       // The renderer resolved a real registry symbol, not the unknown fallback.
       const gfx = canvas.elementRegistry.getGraphics(created.occurrenceId)
       const group = gfx.querySelector('[data-aris-symbol]')
-      expect(group?.getAttribute('data-aris-symbol')).toBe(`MT_EEPC:OT_RULE:${ARIS_RULE_SYMBOLS[operator]}`)
+      expect(group?.getAttribute('data-aris-symbol')).toBe(
+        `MT_EEPC:OT_RULE:${ARIS_RULE_SYMBOLS[operator]}`
+      )
       expect(group?.getAttribute('data-aris-fidelity')).toBeNull()
     }
   )
@@ -148,11 +158,22 @@ describe('supported object types (Section 11.3)', () => {
   it('authors in a value-added chain diagram too (Section 11.2)', () => {
     harness = bootCanvas({ modelType: 'MT_VAL_ADD_CHN_DGM', modelName: 'VACD' })
     const { canvas } = harness
-    const a = canvas.authoring.createObject({ objectType: 'OT_FUNC', name: 'Step 1', position: { x: 0, y: 0 } })
-    const b = canvas.authoring.createObject({ objectType: 'OT_FUNC', name: 'Step 2', position: { x: 300, y: 0 } })
+    const a = canvas.authoring.createObject({
+      objectType: 'OT_FUNC',
+      name: 'Step 1',
+      position: { x: 0, y: 0 }
+    })
+    const b = canvas.authoring.createObject({
+      objectType: 'OT_FUNC',
+      name: 'Step 2',
+      position: { x: 300, y: 0 }
+    })
     const connectionId = canvas.authoring.connect(a.occurrenceId, b.occurrenceId)
-    const definitionId = canvas.document.models.get(canvas.activeModelId)?.connectionOccurrences[0].definitionId
-    expect(canvas.document.connectionDefinitions.get(definitionId ?? '')?.type).toBe('CT_IS_PREDEC_OF_1')
+    const definitionId = canvas.document.models.get(canvas.activeModelId)?.connectionOccurrences[0]
+      .definitionId
+    expect(canvas.document.connectionDefinitions.get(definitionId ?? '')?.type).toBe(
+      'CT_IS_PREDEC_OF_1'
+    )
     expect(canvas.elementRegistry.get(connectionId)).toBeTruthy()
   })
 })

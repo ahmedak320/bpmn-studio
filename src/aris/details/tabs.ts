@@ -10,17 +10,18 @@
  * back.
  */
 
+import { localeLang } from '../../library/amlParse'
 import type {
   ArisConnectionOccurrence,
   ArisObjectDefinition,
-  ArisObjectOccurrence,
+  ArisObjectOccurrence
 } from '../model/types'
 import type {
   ArisDetailsAttachment,
   ArisDetailsDocument,
   ArisDetailsElement,
   ArisDetailsModel,
-  ArisMetadataSatellite,
+  ArisMetadataSatellite
 } from './seam'
 
 export type ArisDetailsTabId =
@@ -45,7 +46,7 @@ export const ARIS_DETAILS_TAB_ORDER: readonly ArisDetailsTabId[] = [
   'attachments',
   'accounting',
   'fidelity',
-  'history',
+  'history'
 ]
 
 export const ARIS_DETAILS_TAB_LABEL_KEYS: Readonly<Record<ArisDetailsTabId, string>> = {
@@ -58,7 +59,7 @@ export const ARIS_DETAILS_TAB_LABEL_KEYS: Readonly<Record<ArisDetailsTabId, stri
   attachments: 'aris.details.tab.attachments',
   accounting: 'aris.details.tab.accounting',
   fidelity: 'aris.details.tab.fidelity',
-  history: 'aris.details.tab.history',
+  history: 'aris.details.tab.history'
 }
 
 export interface ArisDetailRow {
@@ -79,35 +80,83 @@ export interface ArisBilingualValue {
   readonly arMissing: boolean
 }
 
-export type ArisTabBuilder = (element: ArisDetailsElement, doc: ArisDetailsDocument) => readonly ArisDetailRow[]
+export type ArisTabBuilder = (
+  element: ArisDetailsElement,
+  doc: ArisDetailsDocument
+) => readonly ArisDetailRow[]
 
-const ENGLISH_LOCALES = new Set(['en', 'en-US', 'en-GB', 'en-us', 'en-gb', 'LocaleId.USen'])
-const ARABIC_LOCALES = new Set(['ar', 'ar-SA', 'ar-SA', 'ar-AE', 'ar-ae', 'LocaleId.AEar'])
+/**
+ * Classify a raw AML locale identifier as English or Arabic.
+ *
+ * ARIS AML declares locale ids as internal DTD entities:
+ *
+ *   <!ENTITY LocaleId.AEar "14337">
+ *   <!ENTITY LocaleId.USen "1033">
+ *
+ * and attribute values reference them, e.g. `LocaleId="&LocaleId.AEar;"`.
+ * The tokenizer/semantic-index layers only expand entity references inside
+ * *element text* (`expandXmlEntities` / `decodeAmlEntities`), never inside
+ * attribute values, so the `localeId` that actually reaches this layer is
+ * the RAW, unexpanded reference string `"&LocaleId.AEar;"` /
+ * `"&LocaleId.USen;"` — never the bare entity name `"LocaleId.AEar"` some
+ * earlier version of this file assumed, and never the resolved numeric id
+ * on its own either (confirmed against `reference/AnimalWF/ARISAMLExport.xml`,
+ * the only real ARIS export available). An allow-list of exact strings can
+ * therefore never match a real ARIS export.
+ *
+ * A hand-written or differently-exported AML could plausibly present any of
+ * several shapes though: a raw numeric LCID (`LocaleId="1033"`), a bare
+ * entity name without its `&…;` sigils, an unexpanded entity reference, or a
+ * normalized BCP-47 tag (`"en-US"`, `"ar-AE"`). Handle all of them by
+ * delegating to `localeLang`, the same classifier the semantic-index layer
+ * already uses for its own (correctly resolved) `locale` field:
+ *
+ *  - numeric Windows LCID: classify by the low-10-bit primary language id
+ *    (9 = English, 1 = Arabic), which covers every regional English/Arabic
+ *    LCID (1033 en-US, 2057 en-GB, 14337 ar-AE, 1025 ar-SA, …) rather than
+ *    hardcoding just the two ids this one reference export happens to use.
+ *  - anything else: a case-insensitive "ar"/"en" word-boundary suffix match,
+ *    which correctly classifies "&LocaleId.AEar;", "LocaleId.AEar", "ar-AE"
+ *    and "en-US" alike.
+ */
+function classifyLocale(rawLocale: string | null | undefined): 'en' | 'ar' | undefined {
+  return localeLang(rawLocale ?? undefined)
+}
 
 function extractBilingual(values: Readonly<Record<string, string>>): ArisBilingualValue {
   let en: string | null = null
   let ar: string | null = null
   for (const [locale, text] of Object.entries(values)) {
-    if (ENGLISH_LOCALES.has(locale)) en = text
-    if (ARABIC_LOCALES.has(locale)) ar = text
+    const lang = classifyLocale(locale)
+    if (lang === 'en' && en === null) en = text
+    if (lang === 'ar' && ar === null) ar = text
   }
   return {
     en,
     ar,
     enMissing: en === null,
-    arMissing: ar === null,
+    arMissing: ar === null
   }
 }
 
-function objectDefinitionById(doc: ArisDetailsDocument, id: string): ArisObjectDefinition | undefined {
+function objectDefinitionById(
+  doc: ArisDetailsDocument,
+  id: string
+): ArisObjectDefinition | undefined {
   return doc.objectDefinitions.get(id)
 }
 
-function objectOccurrenceById(doc: ArisDetailsDocument, id: string): ArisObjectOccurrence | undefined {
+function objectOccurrenceById(
+  doc: ArisDetailsDocument,
+  id: string
+): ArisObjectOccurrence | undefined {
   return doc.occurrences.get(id)
 }
 
-function connectionOccurrenceById(doc: ArisDetailsDocument, id: string): ArisConnectionOccurrence | undefined {
+function connectionOccurrenceById(
+  doc: ArisDetailsDocument,
+  id: string
+): ArisConnectionOccurrence | undefined {
   return doc.connectionOccurrences.get(id)
 }
 
@@ -119,7 +168,10 @@ function attachmentById(doc: ArisDetailsDocument, id: string): ArisDetailsAttach
   return doc.attachments.get(id)
 }
 
-function findSatellite(doc: ArisDetailsDocument, occurrenceId: string): ArisMetadataSatellite | undefined {
+function findSatellite(
+  doc: ArisDetailsDocument,
+  occurrenceId: string
+): ArisMetadataSatellite | undefined {
   for (const model of doc.models.values()) {
     const satellite = model.satellites.get(occurrenceId)
     if (satellite) return satellite
@@ -135,15 +187,15 @@ export const buildGeneralTab: ArisTabBuilder = (element, doc) => {
     if (def) {
       rows.push({
         labelKey: 'aris.details.general.type',
-        value: def.type,
+        value: def.type
       })
       rows.push({
         labelKey: 'aris.details.general.defaultSymbol',
-        value: def.defaultSymbol,
+        value: def.defaultSymbol
       })
       rows.push({
         labelKey: 'aris.details.general.linkedModels',
-        value: def.linkedModelIds.length,
+        value: def.linkedModelIds.length
       })
     }
   } else if (element.kind === 'objectOccurrence') {
@@ -154,21 +206,24 @@ export const buildGeneralTab: ArisTabBuilder = (element, doc) => {
       rows.push({ labelKey: 'aris.details.general.symbol', value: occ.symbol })
       rows.push({
         labelKey: 'aris.details.general.position',
-        value: `${occ.bounds.x},${occ.bounds.y}`,
+        value: `${occ.bounds.x},${occ.bounds.y}`
       })
       rows.push({
         labelKey: 'aris.details.general.size',
-        value: `${occ.bounds.width}x${occ.bounds.height}`,
+        value: `${occ.bounds.width}x${occ.bounds.height}`
       })
     }
   } else if (element.kind === 'model') {
     const details = modelDetailsById(doc, element.id)
     if (details) {
       rows.push({ labelKey: 'aris.details.general.modelType', value: details.model.type })
-      rows.push({ labelKey: 'aris.details.general.occurrences', value: details.model.occurrences.length })
+      rows.push({
+        labelKey: 'aris.details.general.occurrences',
+        value: details.model.occurrences.length
+      })
       rows.push({
         labelKey: 'aris.details.general.connections',
-        value: details.model.connectionOccurrences.length,
+        value: details.model.connectionOccurrences.length
       })
       rows.push({ labelKey: 'aris.details.general.satellites', value: details.satellites.size })
     }
@@ -191,7 +246,7 @@ export const buildNamesTab: ArisTabBuilder = (element, doc) => {
     if (def) {
       rows.push({
         labelKey: 'aris.details.names.definition',
-        bilingual: extractBilingual(def.names.values),
+        bilingual: extractBilingual(def.names.values)
       })
     }
   } else if (element.kind === 'objectOccurrence') {
@@ -200,7 +255,7 @@ export const buildNamesTab: ArisTabBuilder = (element, doc) => {
     if (def) {
       rows.push({
         labelKey: 'aris.details.names.inherited',
-        bilingual: extractBilingual(def.names.values),
+        bilingual: extractBilingual(def.names.values)
       })
     }
   } else if (element.kind === 'model') {
@@ -208,7 +263,7 @@ export const buildNamesTab: ArisTabBuilder = (element, doc) => {
     if (details) {
       rows.push({
         labelKey: 'aris.details.names.model',
-        bilingual: extractBilingual(details.model.names.values),
+        bilingual: extractBilingual(details.model.names.values)
       })
     }
   }
@@ -223,12 +278,17 @@ export const buildAttributesTab: ArisTabBuilder = (element, doc) => {
     const def = objectDefinitionById(doc, element.id)
     if (def) {
       for (const attr of def.attributes) {
-        const en = attr.values.find((v) => ENGLISH_LOCALES.has(v.localeId ?? '_'))?.text
-        const ar = attr.values.find((v) => ARABIC_LOCALES.has(v.localeId ?? '_'))?.text
+        const en = attr.values.find((v) => classifyLocale(v.localeId) === 'en')?.text
+        const ar = attr.values.find((v) => classifyLocale(v.localeId) === 'ar')?.text
         rows.push({
           labelKey: 'aris.details.attributes.attr',
           value: attr.type,
-          bilingual: { en: en ?? null, ar: ar ?? null, enMissing: en === undefined, arMissing: ar === undefined },
+          bilingual: {
+            en: en ?? null,
+            ar: ar ?? null,
+            enMissing: en === undefined,
+            arMissing: ar === undefined
+          }
         })
       }
     }
@@ -238,7 +298,7 @@ export const buildAttributesTab: ArisTabBuilder = (element, doc) => {
       for (const attrOcc of occ.attributeOccurrences) {
         rows.push({
           labelKey: 'aris.details.attributes.occurrence',
-          value: attrOcc.attributeType,
+          value: attrOcc.attributeType
         })
       }
     }
@@ -287,15 +347,15 @@ export const buildRelationsTab: ArisTabBuilder = (element, doc) => {
     if (satellite) {
       rows.push({
         labelKey: 'aris.details.relations.category',
-        value: satellite.relation.category,
+        value: satellite.relation.category
       })
       rows.push({
         labelKey: 'aris.details.relations.connectionType',
-        value: satellite.relation.connectionType,
+        value: satellite.relation.connectionType
       })
       rows.push({
         labelKey: 'aris.details.relations.owner',
-        value: satellite.relation.sourceOccurrenceId,
+        value: satellite.relation.sourceOccurrenceId
       })
     }
   }
@@ -351,11 +411,23 @@ export const buildAccountingTab: ArisTabBuilder = (element, doc) => {
   if (element.kind === 'model') {
     const details = modelDetailsById(doc, element.id)
     if (details) {
-      rows.push({ labelKey: 'aris.details.accounting.occurrences', value: details.model.occurrences.length })
-      rows.push({ labelKey: 'aris.details.accounting.connections', value: details.model.connectionOccurrences.length })
+      rows.push({
+        labelKey: 'aris.details.accounting.occurrences',
+        value: details.model.occurrences.length
+      })
+      rows.push({
+        labelKey: 'aris.details.accounting.connections',
+        value: details.model.connectionOccurrences.length
+      })
       rows.push({ labelKey: 'aris.details.accounting.satellites', value: details.satellites.size })
-      rows.push({ labelKey: 'aris.details.accounting.attachments', value: details.attachments.size })
-      rows.push({ labelKey: 'aris.details.accounting.unsupported', value: details.model.unsupported ? 1 : 0 })
+      rows.push({
+        labelKey: 'aris.details.accounting.attachments',
+        value: details.attachments.size
+      })
+      rows.push({
+        labelKey: 'aris.details.accounting.unsupported',
+        value: details.model.unsupported ? 1 : 0
+      })
     }
   }
 
@@ -370,11 +442,11 @@ export const buildFidelityTab: ArisTabBuilder = (element, doc) => {
     if (details) {
       rows.push({
         labelKey: 'aris.details.fidelity.symbolFallbacks',
-        value: details.model.unsupported ? 1 : 0,
+        value: details.model.unsupported ? 1 : 0
       })
       rows.push({
         labelKey: 'aris.details.fidelity.oleUnsupported',
-        value: details.attachments.size,
+        value: details.attachments.size
       })
     }
   }
@@ -387,7 +459,7 @@ export const buildHistoryTab: ArisTabBuilder = (element, doc) => {
 
   rows.push({
     labelKey: 'aris.details.history.revision',
-    value: doc.revision,
+    value: doc.revision
   })
 
   if (element.kind === 'objectDefinition') {
@@ -410,7 +482,7 @@ export const ARIS_DETAILS_TAB_BUILDERS: Readonly<Record<ArisDetailsTabId, ArisTa
   attachments: buildAttachmentsTab,
   accounting: buildAccountingTab,
   fidelity: buildFidelityTab,
-  history: buildHistoryTab,
+  history: buildHistoryTab
 }
 
 /** Builds every tab for the selected element. */

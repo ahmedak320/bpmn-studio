@@ -50,7 +50,12 @@ export interface ArisClipboardOccurrence {
   readonly nameFallback: string | null
   readonly localeValues: Readonly<Record<string, string>>
   readonly attributes: readonly ArisAttribute[]
-  readonly bounds: { readonly x: number; readonly y: number; readonly width: number; readonly height: number }
+  readonly bounds: {
+    readonly x: number
+    readonly y: number
+    readonly width: number
+    readonly height: number
+  }
 }
 
 export interface ArisClipboardConnection {
@@ -76,7 +81,13 @@ export interface ArisPasteResult {
 }
 
 export class ArisClipboard {
-  static $inject = ['clipboard', 'elementRegistry', 'arisCommandBridge', 'arisDocumentStore', 'modeling']
+  static $inject = [
+    'clipboard',
+    'elementRegistry',
+    'arisCommandBridge',
+    'arisDocumentStore',
+    'modeling'
+  ]
 
   constructor(
     private readonly clipboard: Clipboard,
@@ -118,13 +129,15 @@ export class ArisClipboard {
     const connections = model.connectionOccurrences
       .filter(
         (connection) =>
-          selectedIds.has(connection.sourceOccurrenceId) && selectedIds.has(connection.targetOccurrenceId)
+          selectedIds.has(connection.sourceOccurrenceId) &&
+          selectedIds.has(connection.targetOccurrenceId)
       )
       .map((connection) =>
         Object.freeze({
           connectionOccurrenceId: connection.id,
           definitionId: connection.definitionId,
-          connectionType: document.connectionDefinitions.get(connection.definitionId)?.type ?? 'CT_UNKNOWN',
+          connectionType:
+            document.connectionDefinitions.get(connection.definitionId)?.type ?? 'CT_UNKNOWN',
           sourceOccurrenceId: connection.sourceOccurrenceId,
           targetOccurrenceId: connection.targetOccurrenceId
         })
@@ -205,7 +218,8 @@ export class ArisClipboard {
       }
 
       const alreadyCloned = definitionIdMap.has(source.definitionId)
-      const definitionId = definitionIdMap.get(source.definitionId) ?? this.store.nextId('objectDefinition')
+      const definitionId =
+        definitionIdMap.get(source.definitionId) ?? this.store.nextId('objectDefinition')
       definitionIdMap.set(source.definitionId, definitionId)
       usedDefinitionIds.push(definitionId)
 
@@ -270,7 +284,9 @@ export class ArisClipboard {
       const fromDefinitionId = definitionIdMap.get(
         definitionOfOccurrence.get(connection.sourceOccurrenceId) ?? ''
       )
-      const toDefinitionId = definitionIdMap.get(definitionOfOccurrence.get(connection.targetOccurrenceId) ?? '')
+      const toDefinitionId = definitionIdMap.get(
+        definitionOfOccurrence.get(connection.targetOccurrenceId) ?? ''
+      )
       if (!fromDefinitionId || !toDefinitionId) continue
 
       const key = `${fromDefinitionId}|${toDefinitionId}|${connection.connectionType}`

@@ -111,7 +111,8 @@ class StubTransform {
   }
 }
 
-const MATRIX_PATTERN = /matrix\(\s*([-\d.eE+]+)[,\s]+([-\d.eE+]+)[,\s]+([-\d.eE+]+)[,\s]+([-\d.eE+]+)[,\s]+([-\d.eE+]+)[,\s]+([-\d.eE+]+)\s*\)/u
+const MATRIX_PATTERN =
+  /matrix\(\s*([-\d.eE+]+)[,\s]+([-\d.eE+]+)[,\s]+([-\d.eE+]+)[,\s]+([-\d.eE+]+)[,\s]+([-\d.eE+]+)[,\s]+([-\d.eE+]+)\s*\)/u
 
 function parseTransformAttribute(value: string | null): StubMatrix | null {
   if (!value) return null
@@ -218,7 +219,12 @@ export function installJsdomSvgSupport(): void {
     }
   })
 
-  svgElementProto.getBBox = function getBBox(): { x: number; y: number; width: number; height: number } {
+  svgElementProto.getBBox = function getBBox(): {
+    x: number
+    y: number
+    width: number
+    height: number
+  } {
     return { x: 0, y: 0, width: 1000, height: 1000 }
   }
 

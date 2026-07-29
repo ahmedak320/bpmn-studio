@@ -3,7 +3,11 @@
 import { afterEach, describe, expect, it } from 'vitest'
 
 import { ArisCanvas } from './ArisCanvas'
-import { createEmptyArisCanvasDocument, createEmptyArisModel, withAdditionalModel } from './emptyDocument'
+import {
+  createEmptyArisCanvasDocument,
+  createEmptyArisModel,
+  withAdditionalModel
+} from './emptyDocument'
 import { rootElementId } from './elements'
 import { bootCanvas, twoModelDocument, type Harness } from './testing/harness'
 import { createCanvasContainer, installJsdomSvgSupport } from './testing/jsdomSvg'
@@ -25,7 +29,9 @@ describe('ArisCanvas boot (Section 11.1)', () => {
     expect(canvas.document.models.get('Model.1')?.occurrences).toHaveLength(0)
     expect(canvas.canvas.getRootElement().id).toBe(rootElementId('Model.1'))
     // Only the root exists on a blank canvas.
-    expect(canvas.elementRegistry.getAll().filter((element) => element.id !== rootElementId('Model.1'))).toHaveLength(0)
+    expect(
+      canvas.elementRegistry.getAll().filter((element) => element.id !== rootElementId('Model.1'))
+    ).toHaveLength(0)
     expect(canvas.commandLog).toHaveLength(0)
     expect(canvas.canUndo).toBe(false)
   })
@@ -110,11 +116,15 @@ describe('ArisCanvas boot (Section 11.1)', () => {
     const base = createEmptyArisCanvasDocument()
     const document = withAdditionalModel(
       base.document,
-      createEmptyArisModel({ id: 'Model.X', type: 'MT_ORG_CHRT' as unknown as 'MT_EEPC', name: 'Org' })
+      createEmptyArisModel({
+        id: 'Model.X',
+        type: 'MT_ORG_CHRT' as unknown as 'MT_EEPC',
+        name: 'Org'
+      })
     )
-    expect(() => ArisCanvas.create({ container, document, modelId: 'Model.X', minimap: false })).toThrow(
-      /outside the Section 11.2 scope/u
-    )
+    expect(() =>
+      ArisCanvas.create({ container, document, modelId: 'Model.X', minimap: false })
+    ).toThrow(/outside the Section 11.2 scope/u)
     container.remove()
   })
 

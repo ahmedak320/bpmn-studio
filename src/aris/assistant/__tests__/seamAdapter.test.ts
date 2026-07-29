@@ -19,7 +19,10 @@ function buildFakeWorkingDocument(): ArisWorkingDocumentLike {
         {
           id: 'od1',
           type: 'OT_FUNC',
-          names: { values: { '1033': 'Approve', 'ar-AE': 'موافقة' } as Record<string, string>, fallback: null },
+          names: {
+            values: { '1033': 'Approve', 'ar-AE': 'موافقة' } as Record<string, string>,
+            fallback: null
+          },
           attributes: [],
           linkedModelIds: ['linked-model-1']
         }
@@ -51,14 +54,22 @@ function buildFakeWorkingDocument(): ArisWorkingDocumentLike {
         {
           id: 'm1',
           type: 'MT_EEPC',
-          names: { values: { '1033': 'Approval Process', 'ar-AE': 'عملية الموافقة' }, fallback: null },
+          names: {
+            values: { '1033': 'Approval Process', 'ar-AE': 'عملية الموافقة' },
+            fallback: null
+          },
           attributes: [{ type: 'AT_PROC_CODE', values: [{ localeId: null, text: 'APR-1' }] }],
           occurrences: [
             { id: 'occ1', definitionId: 'od1', symbol: 'ST_FUNC' },
             { id: 'occ2', definitionId: 'od2', symbol: 'ST_EV' }
           ],
           connectionOccurrences: [
-            { id: 'cxn1', definitionId: 'cd1', sourceOccurrenceId: 'occ1', targetOccurrenceId: 'occ2' }
+            {
+              id: 'cxn1',
+              definitionId: 'cd1',
+              sourceOccurrenceId: 'occ1',
+              targetOccurrenceId: 'occ2'
+            }
           ]
         }
       ]
@@ -111,6 +122,8 @@ describe('adaptArisWorkingDocument — the one seam', () => {
     expect(digest.modelName).toBe('Approval Process')
     expect(digest.processCode).toBe('APR-1')
     expect(digest.steps.map((s) => s.occurrenceId)).toEqual(['occ1', 'occ2'])
-    expect(digest.steps[0]?.next).toEqual([{ targetOccurrenceId: 'occ2', relationType: 'CT_ACTIV_1' }])
+    expect(digest.steps[0]?.next).toEqual([
+      { targetOccurrenceId: 'occ2', relationType: 'CT_ACTIV_1' }
+    ])
   })
 })

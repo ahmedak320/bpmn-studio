@@ -103,7 +103,12 @@ export class ArisCanvasSync {
     }
     for (const element of this.elementRegistry.getAll().slice()) {
       const businessObject = arisBusinessObject(element)
-      if (!businessObject || businessObject.kind === 'model' || businessObject.kind === 'connection') continue
+      if (
+        !businessObject ||
+        businessObject.kind === 'model' ||
+        businessObject.kind === 'connection'
+      )
+        continue
       this.canvas.removeShape(element as Shape)
     }
 
@@ -236,7 +241,9 @@ export class ArisCanvasSync {
 
   private syncConnections(model: ArisModel, desired: Set<string>, dirty: Element[]): void {
     const definitions = this.store.document.connectionDefinitions
-    const occurrenceById = new Map(model.occurrences.map((occurrence) => [occurrence.id, occurrence]))
+    const occurrenceById = new Map(
+      model.occurrences.map((occurrence) => [occurrence.id, occurrence])
+    )
     for (const connection of model.connectionOccurrences) {
       const source = occurrenceById.get(connection.sourceOccurrenceId)
       const target = occurrenceById.get(connection.targetOccurrenceId)
@@ -256,8 +263,10 @@ export class ArisCanvasSync {
       const waypoints = connectionWaypoints(source.bounds, target.bounds, connection.route, {
         selfLoop: source.id === target.id
       })
-      const sourceElement = this.elementRegistry.get(connection.sourceOccurrenceId) as Shape | undefined
-      const targetElement = this.elementRegistry.get(connection.targetOccurrenceId) as Shape | undefined
+      const sourceElement = this.elementRegistry.get(connection.sourceOccurrenceId) as
+        Shape | undefined
+      const targetElement = this.elementRegistry.get(connection.targetOccurrenceId) as
+        Shape | undefined
       if (!sourceElement || !targetElement) continue
 
       const existing = this.elementRegistry.get(connection.id) as Connection | undefined
@@ -282,10 +291,19 @@ export class ArisCanvasSync {
 
   private upsertShape(
     id: string,
-    bounds: { readonly x: number; readonly y: number; readonly width: number; readonly height: number },
+    bounds: {
+      readonly x: number
+      readonly y: number
+      readonly width: number
+      readonly height: number
+    },
     businessObject: unknown,
     dirty: Element[],
-    options: { readonly isFrame?: boolean; readonly label?: boolean; readonly labelTarget?: Shape } = {}
+    options: {
+      readonly isFrame?: boolean
+      readonly label?: boolean
+      readonly labelTarget?: Shape
+    } = {}
   ): void {
     const existing = this.elementRegistry.get(id) as Shape | undefined
     if (!existing) {
@@ -322,7 +340,10 @@ export class ArisCanvasSync {
     if (changed) dirty.push(existing)
   }
 
-  private removeStale(desiredShapeIds: ReadonlySet<string>, desiredConnectionIds: ReadonlySet<string>): void {
+  private removeStale(
+    desiredShapeIds: ReadonlySet<string>,
+    desiredConnectionIds: ReadonlySet<string>
+  ): void {
     for (const element of this.elementRegistry.getAll().slice()) {
       const businessObject = arisBusinessObject(element)
       if (!businessObject || businessObject.kind !== 'connection') continue
@@ -334,7 +355,12 @@ export class ArisCanvasSync {
     for (const pass of ['label', 'other'] as const) {
       for (const element of this.elementRegistry.getAll().slice()) {
         const businessObject = arisBusinessObject(element)
-        if (!businessObject || businessObject.kind === 'model' || businessObject.kind === 'connection') continue
+        if (
+          !businessObject ||
+          businessObject.kind === 'model' ||
+          businessObject.kind === 'connection'
+        )
+          continue
         const isLabel = businessObject.kind === 'label'
         if (pass === 'label' ? !isLabel : isLabel) continue
         if (!desiredShapeIds.has(element.id)) {
@@ -362,7 +388,9 @@ export interface ExternalNamePlacement {
  * The `AT_NAME` attribute occurrence, when it places the caption outside the
  * symbol. A zero/absent offset means the caption renders inside the shape.
  */
-export function externalNamePlacement(occurrence: ArisObjectOccurrence): ExternalNamePlacement | null {
+export function externalNamePlacement(
+  occurrence: ArisObjectOccurrence
+): ExternalNamePlacement | null {
   const placement = occurrence.attributeOccurrences.find((entry) => entry.attributeType === AT_NAME)
   if (!placement) return null
   const offsetX = placement.offsetX ?? 0

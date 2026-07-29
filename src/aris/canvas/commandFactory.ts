@@ -100,7 +100,9 @@ export function findConnectionOccurrence(
   connectionOccurrenceId: string
 ): ArisConnectionOccurrence | undefined {
   for (const model of document.models.values()) {
-    const found = model.connectionOccurrences.find((connection) => connection.id === connectionOccurrenceId)
+    const found = model.connectionOccurrences.find(
+      (connection) => connection.id === connectionOccurrenceId
+    )
     if (found) return found
   }
   return undefined
@@ -114,7 +116,10 @@ export function findLane(document: ArisWorkingDocument, laneId: string): ArisLan
   return undefined
 }
 
-export function findFreeText(document: ArisWorkingDocument, freeTextId: string): ArisFreeText | undefined {
+export function findFreeText(
+  document: ArisWorkingDocument,
+  freeTextId: string
+): ArisFreeText | undefined {
   for (const model of document.models.values()) {
     const found = model.freeText.find((text) => text.id === freeTextId)
     if (found) return found
@@ -122,7 +127,10 @@ export function findFreeText(document: ArisWorkingDocument, freeTextId: string):
   return undefined
 }
 
-export function requireOccurrence(document: ArisWorkingDocument, occurrenceId: string): ArisObjectOccurrence {
+export function requireOccurrence(
+  document: ArisWorkingDocument,
+  occurrenceId: string
+): ArisObjectOccurrence {
   const occurrence = findOccurrence(document, occurrenceId)
   if (!occurrence) throw new Error(`Unknown object occurrence ${occurrenceId}.`)
   return occurrence
@@ -147,7 +155,10 @@ export function requireObjectDefinition(
 }
 
 /** Count how many occurrences reference a definition, across every model. */
-export function countOccurrencesOfDefinition(document: ArisWorkingDocument, definitionId: string): number {
+export function countOccurrencesOfDefinition(
+  document: ArisWorkingDocument,
+  definitionId: string
+): number {
   let count = 0
   for (const model of document.models.values()) {
     for (const occurrence of model.occurrences) {
@@ -192,7 +203,8 @@ export function createDefinitionCommand(
     id: input.definitionId,
     type: input.objectType,
     defaultSymbol: input.symbolNum,
-    names: input.name === undefined ? EMPTY_LOCALIZED_VALUE : localizedValue(input.name, input.localeId),
+    names:
+      input.name === undefined ? EMPTY_LOCALIZED_VALUE : localizedValue(input.name, input.localeId),
     attributes: Object.freeze([...(input.attributes ?? [])]),
     linkedModelIds: Object.freeze([]),
     rawAttributes: Object.freeze({})
@@ -205,7 +217,12 @@ export interface CreateOccurrenceInput {
   readonly definitionId: string
   readonly modelId: string
   readonly symbolNum: string
-  readonly bounds: { readonly x: number; readonly y: number; readonly width: number; readonly height: number }
+  readonly bounds: {
+    readonly x: number
+    readonly y: number
+    readonly width: number
+    readonly height: number
+  }
   readonly style?: Partial<ArisOccurrenceStyle>
 }
 
@@ -258,7 +275,11 @@ export function resizeOccurrenceCommand(
     context,
     'resizeOccurrence',
     [occurrenceId],
-    Object.freeze({ occurrenceId, width: occurrence.bounds.width, height: occurrence.bounds.height }),
+    Object.freeze({
+      occurrenceId,
+      width: occurrence.bounds.width,
+      height: occurrence.bounds.height
+    }),
     Object.freeze({ occurrenceId, width: canonical.width, height: canonical.height })
   )
 }
@@ -306,7 +327,13 @@ export function deleteOccurrenceCommand(
   occurrenceId: string
 ): ArisEditCommand {
   const occurrence = requireOccurrence(document, occurrenceId)
-  return build(context, 'deleteOccurrence', [occurrenceId], occurrence, Object.freeze({ occurrenceId }))
+  return build(
+    context,
+    'deleteOccurrence',
+    [occurrenceId],
+    occurrence,
+    Object.freeze({ occurrenceId })
+  )
 }
 
 export function deleteDefinitionCommand(
@@ -315,7 +342,13 @@ export function deleteDefinitionCommand(
   definitionId: string
 ): ArisEditCommand {
   const definition = requireObjectDefinition(document, definitionId)
-  return build(context, 'deleteDefinition', [definitionId], definition, Object.freeze({ definitionId }))
+  return build(
+    context,
+    'deleteDefinition',
+    [definitionId],
+    definition,
+    Object.freeze({ definitionId })
+  )
 }
 
 // ---------------------------------------------------------------------------
@@ -459,7 +492,13 @@ export function createConnectionOccurrenceCommand(
     style: Object.freeze({ ...DEFAULT_CONNECTION_STYLE, ...input.style }),
     rawAttributes: Object.freeze({})
   })
-  return build(context, 'createConnectionOccurrence', [input.connectionOccurrenceId], null, occurrence)
+  return build(
+    context,
+    'createConnectionOccurrence',
+    [input.connectionOccurrenceId],
+    null,
+    occurrence
+  )
 }
 
 export function setConnectionRouteCommand(
@@ -552,7 +591,8 @@ export function addLaneCommand(context: ArisCommandContext, input: AddLaneInput)
   const lane: ArisLane = Object.freeze({
     id: input.laneId,
     modelId: input.modelId,
-    names: input.name === undefined ? EMPTY_LOCALIZED_VALUE : localizedValue(input.name, input.localeId),
+    names:
+      input.name === undefined ? EMPTY_LOCALIZED_VALUE : localizedValue(input.name, input.localeId),
     laneType: input.laneType ?? null,
     orientation: input.orientation ?? 'horizontal',
     startBorder: toCanonicalNumber(input.startBorder ?? 0, 'startBorder'),
@@ -582,8 +622,13 @@ export function editLaneCommand(
     laneType: changes.laneType === undefined ? lane.laneType : changes.laneType,
     orientation: changes.orientation ?? lane.orientation,
     startBorder:
-      changes.startBorder === undefined ? lane.startBorder : toCanonicalNumber(changes.startBorder, 'startBorder'),
-    endBorder: changes.endBorder === undefined ? lane.endBorder : toCanonicalNumber(changes.endBorder, 'endBorder')
+      changes.startBorder === undefined
+        ? lane.startBorder
+        : toCanonicalNumber(changes.startBorder, 'startBorder'),
+    endBorder:
+      changes.endBorder === undefined
+        ? lane.endBorder
+        : toCanonicalNumber(changes.endBorder, 'endBorder')
   })
   return build(context, 'editLane', [laneId], lane, next)
 }
@@ -603,11 +648,19 @@ export interface AddFreeTextInput {
   readonly modelId: string
   readonly text: string
   readonly localeId?: string
-  readonly bounds: { readonly x: number; readonly y: number; readonly width: number; readonly height: number }
+  readonly bounds: {
+    readonly x: number
+    readonly y: number
+    readonly width: number
+    readonly height: number
+  }
   readonly style?: Partial<ArisOccurrenceStyle>
 }
 
-export function addFreeTextCommand(context: ArisCommandContext, input: AddFreeTextInput): ArisEditCommand {
+export function addFreeTextCommand(
+  context: ArisCommandContext,
+  input: AddFreeTextInput
+): ArisEditCommand {
   const freeText: ArisFreeText = Object.freeze({
     id: input.freeTextId,
     modelId: input.modelId,
@@ -626,18 +679,28 @@ export function editFreeTextCommand(
   changes: {
     readonly text?: string
     readonly localeId?: string
-    readonly bounds?: { readonly x: number; readonly y: number; readonly width: number; readonly height: number }
+    readonly bounds?: {
+      readonly x: number
+      readonly y: number
+      readonly width: number
+      readonly height: number
+    }
     readonly style?: Partial<ArisOccurrenceStyle>
   }
 ): ArisEditCommand {
   const freeText = findFreeText(document, freeTextId)
   if (!freeText) throw new Error(`Unknown free text ${freeTextId}.`)
-  const bounds: ArisBounds = changes.bounds === undefined ? freeText.bounds : toCanonicalBounds(changes.bounds)
+  const bounds: ArisBounds =
+    changes.bounds === undefined ? freeText.bounds : toCanonicalBounds(changes.bounds)
   const next: ArisFreeText = Object.freeze({
     ...freeText,
-    text: changes.text === undefined ? freeText.text : localizedValue(changes.text, changes.localeId),
+    text:
+      changes.text === undefined ? freeText.text : localizedValue(changes.text, changes.localeId),
     bounds,
-    style: changes.style === undefined ? freeText.style : Object.freeze({ ...freeText.style, ...changes.style })
+    style:
+      changes.style === undefined
+        ? freeText.style
+        : Object.freeze({ ...freeText.style, ...changes.style })
   })
   return build(context, 'editFreeText', [freeTextId], freeText, next)
 }
@@ -684,8 +747,15 @@ export function transactionCommand(
   affectedSourceIds?: readonly string[]
 ): ArisEditCommand {
   const affected =
-    affectedSourceIds ?? Object.freeze([...new Set(commands.flatMap((command) => command.affectedSourceIds))])
-  return build(context, 'transaction', affected, null, Object.freeze({ commands: Object.freeze([...commands]) }))
+    affectedSourceIds ??
+    Object.freeze([...new Set(commands.flatMap((command) => command.affectedSourceIds))])
+  return build(
+    context,
+    'transaction',
+    affected,
+    null,
+    Object.freeze({ commands: Object.freeze([...commands]) })
+  )
 }
 
 export type { ArisPoint }

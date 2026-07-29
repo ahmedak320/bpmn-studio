@@ -12,7 +12,12 @@ describe('ArisChatSessionTranscript', () => {
   it('stays session-local: getAll returns exactly what was appended, in order', () => {
     const transcript = new ArisChatSessionTranscript()
     transcript.append({ id: 'm1', role: 'user', text: 'hello', createdAt: '2026-01-01T00:00:00Z' })
-    transcript.append({ id: 'm2', role: 'assistant', text: 'hi', createdAt: '2026-01-01T00:00:01Z' })
+    transcript.append({
+      id: 'm2',
+      role: 'assistant',
+      text: 'hi',
+      createdAt: '2026-01-01T00:00:01Z'
+    })
     expect(transcript.getAll().map((m) => m.id)).toEqual(['m1', 'm2'])
   })
 
@@ -54,20 +59,40 @@ describe('credential-shaped content is rejected before it can leave the session'
     'api_key: 1234567890abcdefghij'
   ]
 
-  it.each(CREDENTIAL_SAMPLES)('exportTranscript throws ArisChatCredentialMaterialError for %s', (secretLike) => {
-    const transcript = new ArisChatSessionTranscript()
-    transcript.append({ id: 'm1', role: 'user', text: `Here is my key: ${secretLike}`, createdAt: '2026-01-01T00:00:00Z' })
-    expect(() => exportTranscript(transcript)).toThrow(ArisChatCredentialMaterialError)
-  })
+  it.each(CREDENTIAL_SAMPLES)(
+    'exportTranscript throws ArisChatCredentialMaterialError for %s',
+    (secretLike) => {
+      const transcript = new ArisChatSessionTranscript()
+      transcript.append({
+        id: 'm1',
+        role: 'user',
+        text: `Here is my key: ${secretLike}`,
+        createdAt: '2026-01-01T00:00:00Z'
+      })
+      expect(() => exportTranscript(transcript)).toThrow(ArisChatCredentialMaterialError)
+    }
+  )
 
   it('exportTranscript succeeds and returns messages when nothing credential-shaped is present', () => {
     const transcript = new ArisChatSessionTranscript()
-    transcript.append({ id: 'm1', role: 'user', text: 'The process owner is Jane Doe.', createdAt: '2026-01-01T00:00:00Z' })
+    transcript.append({
+      id: 'm1',
+      role: 'user',
+      text: 'The process owner is Jane Doe.',
+      createdAt: '2026-01-01T00:00:00Z'
+    })
     expect(exportTranscript(transcript)).toHaveLength(1)
   })
 
   it('assertTranscriptSafeToExport scans every message and reports the finding without leaking the matched text', () => {
-    const messages = [{ id: 'm1', role: 'user' as const, text: 'token: ghp_abcdefghijklmnopqrstuvwxyzABCDEFGHIJ', createdAt: '2026-01-01T00:00:00Z' }]
+    const messages = [
+      {
+        id: 'm1',
+        role: 'user' as const,
+        text: 'token: ghp_abcdefghijklmnopqrstuvwxyzABCDEFGHIJ',
+        createdAt: '2026-01-01T00:00:00Z'
+      }
+    ]
     try {
       assertTranscriptSafeToExport(messages)
       expect.unreachable('expected assertTranscriptSafeToExport to throw')
@@ -80,12 +105,29 @@ describe('credential-shaped content is rejected before it can leave the session'
   })
 
   it('assertProvenanceSafeToStore rejects a revision-history payload carrying credential-shaped material', () => {
-    const entries = [buildProvenanceEntry({ commandId: 'sk-ant-api03-abcdefghijklmnopqrstuvwxyzABCDEFGH', kind: 'setAttribute', targetIds: ['D1'], origin: 'ai-auto' }, [], '2026-01-01T00:00:00Z')]
+    const entries = [
+      buildProvenanceEntry(
+        {
+          commandId: 'sk-ant-api03-abcdefghijklmnopqrstuvwxyzABCDEFGH',
+          kind: 'setAttribute',
+          targetIds: ['D1'],
+          origin: 'ai-auto'
+        },
+        [],
+        '2026-01-01T00:00:00Z'
+      )
+    ]
     expect(() => assertProvenanceSafeToStore(entries)).toThrow(ArisChatCredentialMaterialError)
   })
 
   it('assertProvenanceSafeToStore accepts an ordinary provenance payload', () => {
-    const entries = [buildProvenanceEntry({ commandId: 'c1', kind: 'setAttribute', targetIds: ['D1'], origin: 'ai-auto' }, ['missingOwner'], '2026-01-01T00:00:00Z')]
+    const entries = [
+      buildProvenanceEntry(
+        { commandId: 'c1', kind: 'setAttribute', targetIds: ['D1'], origin: 'ai-auto' },
+        ['missingOwner'],
+        '2026-01-01T00:00:00Z'
+      )
+    ]
     expect(() => assertProvenanceSafeToStore(entries)).not.toThrow()
   })
 })

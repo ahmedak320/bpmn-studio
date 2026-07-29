@@ -9,14 +9,34 @@ import { buildCleanEepcDocument, createTestApplyHost } from './testFixtures'
 import { parseArisChatCommand, type ArisChatCommand } from './patchSchema'
 
 function cmd(kind: string, targetIds: readonly string[], payload: unknown): ArisChatCommand {
-  return parseArisChatCommand({ commandId: `${kind}-${targetIds.join(',')}`, kind, targetIds, payload })
+  return parseArisChatCommand({
+    commandId: `${kind}-${targetIds.join(',')}`,
+    kind,
+    targetIds,
+    payload
+  })
 }
 
 function fourAutomaticCommands(): readonly ArisChatCommand[] {
   return [
-    cmd('setLocalizedName', ['OD_START'], { ownerKind: 'objectDefinition', ownerId: 'OD_START', localeId: 'ar', value: 'محدث' }),
-    cmd('setAttribute', ['OD_FUNC'], { ownerKind: 'objectDefinition', ownerId: 'OD_FUNC', attributeType: 'AT_DESC', values: [{ localeId: 'en', text: 'desc' }] }),
-    cmd('addAttributeValue', ['OD_FUNC'], { ownerKind: 'objectDefinition', ownerId: 'OD_FUNC', attributeType: 'AT_DESC', value: { localeId: 'ar', text: 'وصف' } }),
+    cmd('setLocalizedName', ['OD_START'], {
+      ownerKind: 'objectDefinition',
+      ownerId: 'OD_START',
+      localeId: 'ar',
+      value: 'محدث'
+    }),
+    cmd('setAttribute', ['OD_FUNC'], {
+      ownerKind: 'objectDefinition',
+      ownerId: 'OD_FUNC',
+      attributeType: 'AT_DESC',
+      values: [{ localeId: 'en', text: 'desc' }]
+    }),
+    cmd('addAttributeValue', ['OD_FUNC'], {
+      ownerKind: 'objectDefinition',
+      ownerId: 'OD_FUNC',
+      attributeType: 'AT_DESC',
+      value: { localeId: 'ar', text: 'وصف' }
+    }),
     cmd('addMetadataDefinition', ['OD_NEW'], {
       definitionId: 'OD_NEW',
       objectType: 'OT_APPL_SYS',
@@ -29,7 +49,12 @@ describe('applySafeCommandsAtomically — happy path', () => {
   it('applies every automatic command and returns a receipt', () => {
     const document = buildCleanEepcDocument()
     const host = createTestApplyHost()
-    const result = applySafeCommandsAtomically(document, document.revision, fourAutomaticCommands(), host)
+    const result = applySafeCommandsAtomically(
+      document,
+      document.revision,
+      fourAutomaticCommands(),
+      host
+    )
     expect(result.ok).toBe(true)
     if (!result.ok) return
     expect(result.document.objectDefinitions.has('OD_NEW')).toBe(true)
@@ -52,7 +77,12 @@ describe('applySafeCommandsAtomically — happy path', () => {
   it('produces an undo descriptor targeting the pre-application revision', () => {
     const document = buildCleanEepcDocument()
     const host = createTestApplyHost()
-    const result = applySafeCommandsAtomically(document, document.revision, fourAutomaticCommands(), host)
+    const result = applySafeCommandsAtomically(
+      document,
+      document.revision,
+      fourAutomaticCommands(),
+      host
+    )
     expect(result.ok).toBe(true)
     if (!result.ok) return
     const undo = buildUndoDescriptor(result.receipt)
@@ -65,7 +95,12 @@ describe('applySafeCommandsAtomically — abort conditions never leave a partial
   it('aborts on a stale base revision without touching the document', () => {
     const document = buildCleanEepcDocument()
     const host = createTestApplyHost()
-    const result = applySafeCommandsAtomically(document, document.revision + 1, fourAutomaticCommands(), host)
+    const result = applySafeCommandsAtomically(
+      document,
+      document.revision + 1,
+      fourAutomaticCommands(),
+      host
+    )
     expect(result.ok).toBe(false)
     if (result.ok) return
     expect(result.reason).toBe('stale-revision')
@@ -76,7 +111,12 @@ describe('applySafeCommandsAtomically — abort conditions never leave a partial
     const document = buildCleanEepcDocument()
     const host = createTestApplyHost()
     const notAutomatic = cmd('deleteOccurrence', ['OC_START'], { occurrenceId: 'OC_START' })
-    const result = applySafeCommandsAtomically(document, document.revision, [...fourAutomaticCommands(), notAutomatic], host)
+    const result = applySafeCommandsAtomically(
+      document,
+      document.revision,
+      [...fourAutomaticCommands(), notAutomatic],
+      host
+    )
     expect(result.ok).toBe(false)
     if (result.ok) return
     expect(result.reason).toBe('non-automatic-command')
@@ -85,8 +125,15 @@ describe('applySafeCommandsAtomically — abort conditions never leave a partial
 
   it('aborts and rolls back when semantic validation fails after every command applied', () => {
     const document = buildCleanEepcDocument()
-    const host = createTestApplyHost({ validateSemantic: () => [{ code: 'bad-semantics', message: 'nope' }] })
-    const result = applySafeCommandsAtomically(document, document.revision, fourAutomaticCommands(), host)
+    const host = createTestApplyHost({
+      validateSemantic: () => [{ code: 'bad-semantics', message: 'nope' }]
+    })
+    const result = applySafeCommandsAtomically(
+      document,
+      document.revision,
+      fourAutomaticCommands(),
+      host
+    )
     expect(result.ok).toBe(false)
     if (result.ok) return
     expect(result.reason).toBe('semantic-validation-failed')
@@ -96,8 +143,15 @@ describe('applySafeCommandsAtomically — abort conditions never leave a partial
 
   it('aborts and rolls back when reference validation fails', () => {
     const document = buildCleanEepcDocument()
-    const host = createTestApplyHost({ validateReference: () => [{ code: 'bad-reference', message: 'nope' }] })
-    const result = applySafeCommandsAtomically(document, document.revision, fourAutomaticCommands(), host)
+    const host = createTestApplyHost({
+      validateReference: () => [{ code: 'bad-reference', message: 'nope' }]
+    })
+    const result = applySafeCommandsAtomically(
+      document,
+      document.revision,
+      fourAutomaticCommands(),
+      host
+    )
     expect(result.ok).toBe(false)
     if (result.ok) return
     expect(result.reason).toBe('reference-validation-failed')
@@ -106,8 +160,15 @@ describe('applySafeCommandsAtomically — abort conditions never leave a partial
 
   it('aborts and rolls back when accounting validation fails', () => {
     const document = buildCleanEepcDocument()
-    const host = createTestApplyHost({ validateAccounting: () => [{ code: 'bad-accounting', message: 'nope' }] })
-    const result = applySafeCommandsAtomically(document, document.revision, fourAutomaticCommands(), host)
+    const host = createTestApplyHost({
+      validateAccounting: () => [{ code: 'bad-accounting', message: 'nope' }]
+    })
+    const result = applySafeCommandsAtomically(
+      document,
+      document.revision,
+      fourAutomaticCommands(),
+      host
+    )
     expect(result.ok).toBe(false)
     if (result.ok) return
     expect(result.reason).toBe('accounting-validation-failed')
@@ -137,7 +198,12 @@ describe('applySafeCommandsAtomically — abort conditions never leave a partial
         return 'draft-42'
       }
     })
-    const result = applySafeCommandsAtomically(document, document.revision, fourAutomaticCommands(), host)
+    const result = applySafeCommandsAtomically(
+      document,
+      document.revision,
+      fourAutomaticCommands(),
+      host
+    )
     expect(saveCalls).toBe(1)
     expect(result.ok).toBe(true)
     if (!result.ok) return
@@ -148,24 +214,27 @@ describe('applySafeCommandsAtomically — abort conditions never leave a partial
 describe('rollback proof — injected command-application failure at every index 1..N', () => {
   const commands = fourAutomaticCommands()
 
-  it.each([1, 2, 3, 4])('failure at command #%i leaves the document deep-equal to its pre-application state', (failAtIndex) => {
-    const document = buildCleanEepcDocument()
-    const host = createTestApplyHost({
-      beforeApply: (_doc, _command, callIndex) => {
-        if (callIndex === failAtIndex) throw new Error(`injected failure at call ${callIndex}`)
-      }
-    })
+  it.each([1, 2, 3, 4])(
+    'failure at command #%i leaves the document deep-equal to its pre-application state',
+    (failAtIndex) => {
+      const document = buildCleanEepcDocument()
+      const host = createTestApplyHost({
+        beforeApply: (_doc, _command, callIndex) => {
+          if (callIndex === failAtIndex) throw new Error(`injected failure at call ${callIndex}`)
+        }
+      })
 
-    const result = applySafeCommandsAtomically(document, document.revision, commands, host)
+      const result = applySafeCommandsAtomically(document, document.revision, commands, host)
 
-    expect(result.ok).toBe(false)
-    if (result.ok) return
-    expect(result.reason).toBe('command-application-failed')
-    // Same reference — the strongest possible rollback guarantee.
-    expect(result.document).toBe(document)
-    // And, independently, structurally identical to a fresh, untouched document.
-    expect(result.document).toEqual(buildCleanEepcDocument())
-  })
+      expect(result.ok).toBe(false)
+      if (result.ok) return
+      expect(result.reason).toBe('command-application-failed')
+      // Same reference — the strongest possible rollback guarantee.
+      expect(result.document).toBe(document)
+      // And, independently, structurally identical to a fresh, untouched document.
+      expect(result.document).toEqual(buildCleanEepcDocument())
+    }
+  )
 })
 
 // --- 18.6 confirmation-gated application ----------------------------------------------------
@@ -176,12 +245,22 @@ describe('buildConfirmationPreview', () => {
     const host = createTestApplyHost()
     const deleteCommand = cmd('deleteOccurrence', ['OC_END_A'], { occurrenceId: 'OC_END_A' })
 
-    const outcome = buildConfirmationPreview(document, [deleteCommand], host, (doc, ids) => ids.map((id) => doc.objectDefinitions.has(id) || doc.models.get('M1')?.occurrences.some((o) => o.id === id)))
+    const outcome = buildConfirmationPreview(document, [deleteCommand], host, (doc, ids) =>
+      ids.map(
+        (id) =>
+          doc.objectDefinitions.has(id) ||
+          doc.models.get('M1')?.occurrences.some((o) => o.id === id)
+      )
+    )
 
     expect(outcome.ok).toBe(true)
     if (!outcome.ok) return
     expect(outcome.preview.affectedIds).toEqual(['OC_END_A'])
-    expect(outcome.preview.simulatedDocument.models.get('M1')?.occurrences.some((o) => o.id === 'OC_END_A')).toBe(false)
+    expect(
+      outcome.preview.simulatedDocument.models
+        .get('M1')
+        ?.occurrences.some((o) => o.id === 'OC_END_A')
+    ).toBe(false)
     // The real document is untouched.
     expect(document.models.get('M1')?.occurrences.some((o) => o.id === 'OC_END_A')).toBe(true)
   })
@@ -208,7 +287,13 @@ describe('applySelectedConfirmedCommands', () => {
     const host = createTestApplyHost()
     const [first, second] = twoConfirmCommands()
 
-    const result = applySelectedConfirmedCommands(document, document.revision, [first, second], new Set([first.commandId]), host)
+    const result = applySelectedConfirmedCommands(
+      document,
+      document.revision,
+      [first, second],
+      new Set([first.commandId]),
+      host
+    )
 
     expect(result.outcome.ok).toBe(true)
     if (!result.outcome.ok) return
@@ -222,7 +307,13 @@ describe('applySelectedConfirmedCommands', () => {
     const document = buildCleanEepcDocument()
     const host = createTestApplyHost()
     const commands = twoConfirmCommands()
-    const result = applySelectedConfirmedCommands(document, document.revision, commands, new Set(), host)
+    const result = applySelectedConfirmedCommands(
+      document,
+      document.revision,
+      commands,
+      new Set(),
+      host
+    )
     expect(result.outcome.ok).toBe(false)
     if (result.outcome.ok) return
     expect(result.outcome.reason).toBe('no-commands-selected')
@@ -234,7 +325,13 @@ describe('applySelectedConfirmedCommands', () => {
     const document = buildCleanEepcDocument()
     const host = createTestApplyHost()
     const commands = twoConfirmCommands()
-    const result = applySelectedConfirmedCommands(document, document.revision + 1, commands, new Set([commands[0].commandId]), host)
+    const result = applySelectedConfirmedCommands(
+      document,
+      document.revision + 1,
+      commands,
+      new Set([commands[0].commandId]),
+      host
+    )
     expect(result.outcome.ok).toBe(false)
     if (result.outcome.ok) return
     expect(result.outcome.reason).toBe('stale-revision')
@@ -247,7 +344,13 @@ describe('applySelectedConfirmedCommands', () => {
     const host = createTestApplyHost()
     const bad = cmd('deleteOccurrence', ['NOPE'], { occurrenceId: 'NOPE' })
     const commands = [twoConfirmCommands()[0], bad]
-    const result = applySelectedConfirmedCommands(document, document.revision, commands, new Set(commands.map((c) => c.commandId)), host)
+    const result = applySelectedConfirmedCommands(
+      document,
+      document.revision,
+      commands,
+      new Set(commands.map((c) => c.commandId)),
+      host
+    )
     expect(result.outcome.ok).toBe(false)
     if (result.outcome.ok) return
     expect(result.outcome.document).toBe(document)

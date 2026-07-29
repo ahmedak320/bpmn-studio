@@ -47,12 +47,16 @@ export class ArisRules extends RuleProvider {
 
     // Self-loops are explicitly allowed: Section 11.5 requires the highlight
     // overlay to deduplicate them, which presupposes they can be authored.
-    this.addRule('connection.create', (context: { source?: Element; target?: Element }) =>
-      isOccurrence(context.source) && isOccurrence(context.target)
+    this.addRule(
+      'connection.create',
+      (context: { source?: Element; target?: Element }) =>
+        isOccurrence(context.source) && isOccurrence(context.target)
     )
 
-    this.addRule('connection.reconnect', (context: { source?: Element; target?: Element }) =>
-      isOccurrence(context.source) && isOccurrence(context.target)
+    this.addRule(
+      'connection.reconnect',
+      (context: { source?: Element; target?: Element }) =>
+        isOccurrence(context.source) && isOccurrence(context.target)
     )
 
     this.addRule('connection.updateWaypoints', () => true)
@@ -61,7 +65,9 @@ export class ArisRules extends RuleProvider {
       (context.elements ?? []).filter((element) => {
         const kind = arisBusinessObject(element)?.kind
         // Labels are projections of an attribute placement, never deletable.
-        return kind === 'occurrence' || kind === 'connection' || kind === 'freeText' || kind === 'lane'
+        return (
+          kind === 'occurrence' || kind === 'connection' || kind === 'freeText' || kind === 'lane'
+        )
       })
     )
 
@@ -73,6 +79,10 @@ export class ArisRules extends RuleProvider {
       (context.elements ?? []).filter((element) => isOccurrence(element))
     )
 
-    this.addRule('shape.create', (context: { shape?: Element }) => arisBusinessObject(context.shape) === null || isOccurrence(context.shape))
+    this.addRule(
+      'shape.create',
+      (context: { shape?: Element }) =>
+        arisBusinessObject(context.shape) === null || isOccurrence(context.shape)
+    )
   }
 }

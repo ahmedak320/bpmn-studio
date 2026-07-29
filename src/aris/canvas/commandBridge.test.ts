@@ -2,7 +2,11 @@
 
 import { afterEach, describe, expect, it } from 'vitest'
 
-import { ARIS_DOCUMENT_CHANGED, ARIS_GESTURE_COMMAND, ArisCanvasCommandError } from './commandBridge'
+import {
+  ARIS_DOCUMENT_CHANGED,
+  ARIS_GESTURE_COMMAND,
+  ArisCanvasCommandError
+} from './commandBridge'
 import { findOccurrence } from './commandFactory'
 import { bootCanvas, dragShape, shape, type Harness } from './testing/harness'
 
@@ -36,13 +40,19 @@ describe('command-stack bridge (Section 11.1 / 11.6)', () => {
     expect(move.after).toEqual({ occurrenceId: created.occurrenceId, x: 160, y: 75 })
 
     // The document and the canvas agree.
-    expect(findOccurrence(canvas.document, created.occurrenceId)?.bounds).toMatchObject({ x: 160, y: 75 })
+    expect(findOccurrence(canvas.document, created.occurrenceId)?.bounds).toMatchObject({
+      x: 160,
+      y: 75
+    })
     expect(shape(canvas, created.occurrenceId).x).toBe(160)
     expect(shape(canvas, created.occurrenceId).y).toBe(75)
 
     canvas.undo()
 
-    expect(findOccurrence(canvas.document, created.occurrenceId)?.bounds).toMatchObject({ x: 100, y: 100 })
+    expect(findOccurrence(canvas.document, created.occurrenceId)?.bounds).toMatchObject({
+      x: 100,
+      y: 100
+    })
     expect(shape(canvas, created.occurrenceId).x).toBe(100)
     expect(shape(canvas, created.occurrenceId).y).toBe(100)
     expect(canvas.commandLog).toHaveLength(commandsBeforeDrag)
@@ -51,7 +61,10 @@ describe('command-stack bridge (Section 11.1 / 11.6)', () => {
   it('redoes a drag back to the moved position', () => {
     harness = bootCanvas()
     const { canvas } = harness
-    const created = canvas.authoring.createObject({ objectType: 'OT_FUNC', position: { x: 0, y: 0 } })
+    const created = canvas.authoring.createObject({
+      objectType: 'OT_FUNC',
+      position: { x: 0, y: 0 }
+    })
 
     // `grid-snapping` snaps the dragged shape's midpoint to the 10-unit grid,
     // so the delta is chosen to land on it exactly.
@@ -60,7 +73,10 @@ describe('command-stack bridge (Section 11.1 / 11.6)', () => {
     expect(shape(canvas, created.occurrenceId).x).toBe(0)
 
     canvas.redo()
-    expect(findOccurrence(canvas.document, created.occurrenceId)?.bounds).toMatchObject({ x: 30, y: 45 })
+    expect(findOccurrence(canvas.document, created.occurrenceId)?.bounds).toMatchObject({
+      x: 30,
+      y: 45
+    })
     expect(shape(canvas, created.occurrenceId).x).toBe(30)
     expect(canvas.commandLog[canvas.commandLog.length - 1].kind).toBe('moveOccurrence')
   })
@@ -68,7 +84,10 @@ describe('command-stack bridge (Section 11.1 / 11.6)', () => {
   it('produces identical results from every undo entry point', () => {
     harness = bootCanvas()
     const { canvas } = harness
-    const created = canvas.authoring.createObject({ objectType: 'OT_FUNC', position: { x: 10, y: 10 } })
+    const created = canvas.authoring.createObject({
+      objectType: 'OT_FUNC',
+      position: { x: 10, y: 10 }
+    })
 
     // 1. ArisCanvas.undo()
     canvas.authoring.moveOccurrence(created.occurrenceId, { x: 200, y: 200 })
@@ -95,7 +114,10 @@ describe('command-stack bridge (Section 11.1 / 11.6)', () => {
   it('keeps the two command stacks in lockstep, one history entry per gesture', () => {
     harness = bootCanvas()
     const { canvas } = harness
-    const created = canvas.authoring.createObject({ objectType: 'OT_EVT', position: { x: 0, y: 0 } })
+    const created = canvas.authoring.createObject({
+      objectType: 'OT_EVT',
+      position: { x: 0, y: 0 }
+    })
     canvas.authoring.moveOccurrence(created.occurrenceId, { x: 50, y: 0 })
     canvas.authoring.resizeOccurrence(created.occurrenceId, { width: 120, height: 120 })
 
@@ -188,17 +210,29 @@ describe('command-stack bridge (Section 11.1 / 11.6)', () => {
     canvas.eventBus.on(ARIS_DOCUMENT_CHANGED, (event: { reason: string }) => {
       reasons.push(event.reason)
     })
-    const created = canvas.authoring.createObject({ objectType: 'OT_FUNC', position: { x: 0, y: 0 } })
+    const created = canvas.authoring.createObject({
+      objectType: 'OT_FUNC',
+      position: { x: 0, y: 0 }
+    })
     canvas.authoring.moveOccurrence(created.occurrenceId, { x: 5, y: 5 })
     canvas.undo()
     canvas.redo()
-    expect(reasons).toEqual(['create-object', 'move-occurrence', 'move-occurrence', 'move-occurrence'])
+    expect(reasons).toEqual([
+      'create-object',
+      'move-occurrence',
+      'move-occurrence',
+      'move-occurrence'
+    ])
   })
 
   it('exports the command log as plain JSON (Section 11.6)', () => {
     harness = bootCanvas()
     const { canvas } = harness
-    const created = canvas.authoring.createObject({ objectType: 'OT_FUNC', name: 'Approve', position: { x: 4, y: 8 } })
+    const created = canvas.authoring.createObject({
+      objectType: 'OT_FUNC',
+      name: 'Approve',
+      position: { x: 4, y: 8 }
+    })
     canvas.authoring.moveOccurrence(created.occurrenceId, { x: 40, y: 80 })
 
     const serialized = canvas.serialize()

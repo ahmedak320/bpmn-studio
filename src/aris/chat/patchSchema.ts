@@ -24,9 +24,11 @@ const attributeValueSchema = z
 
 const localizedValuesSchema = z
   .object({
-    values: z.record(z.string().min(1), z.string()).refine((values) => Object.keys(values).length > 0, {
-      message: 'names must carry at least one locale value'
-    }),
+    values: z
+      .record(z.string().min(1), z.string())
+      .refine((values) => Object.keys(values).length > 0, {
+        message: 'names must carry at least one locale value'
+      }),
     fallback: z.string().nullable()
   })
   .strict()
@@ -68,9 +70,13 @@ const addAttributeValuePayloadSchema = z
 const addMetadataDefinitionPayloadSchema = z
   .object({
     definitionId: z.string().min(1),
-    objectType: z.string().min(1).refine((type) => !(CORE_CONTROL_FLOW_OBJECT_TYPES as readonly string[]).includes(type), {
-      message: 'addMetadataDefinition cannot target a core control-flow object type; use addCoreObject'
-    }),
+    objectType: z
+      .string()
+      .min(1)
+      .refine((type) => !(CORE_CONTROL_FLOW_OBJECT_TYPES as readonly string[]).includes(type), {
+        message:
+          'addMetadataDefinition cannot target a core control-flow object type; use addCoreObject'
+      }),
     names: localizedValuesSchema
   })
   .strict()
@@ -145,18 +151,29 @@ const reconnectPayloadSchema = z
     targetOccurrenceId: z.string().min(1).optional()
   })
   .strict()
-  .refine((payload) => payload.sourceOccurrenceId !== undefined || payload.targetOccurrenceId !== undefined, {
-    message: 'reconnect must change at least one endpoint'
-  })
+  .refine(
+    (payload) =>
+      payload.sourceOccurrenceId !== undefined || payload.targetOccurrenceId !== undefined,
+    {
+      message: 'reconnect must change at least one endpoint'
+    }
+  )
 
-const deleteConnectionPayloadSchema = z.object({ connectionOccurrenceId: z.string().min(1) }).strict()
+const deleteConnectionPayloadSchema = z
+  .object({ connectionOccurrenceId: z.string().min(1) })
+  .strict()
 const deleteOccurrencePayloadSchema = z.object({ occurrenceId: z.string().min(1) }).strict()
 const deleteDefinitionPayloadSchema = z.object({ definitionId: z.string().min(1) }).strict()
-const removeAttachmentPayloadSchema = z.object({ attachmentId: z.string().min(1), ownerId: z.string().min(1) }).strict()
+const removeAttachmentPayloadSchema = z
+  .object({ attachmentId: z.string().min(1), ownerId: z.string().min(1) })
+  .strict()
 
 // --- command envelope ----------------------------------------------------------------------
 
-function commandSchema<TKind extends string, TPayload extends z.ZodTypeAny>(kind: TKind, payload: TPayload) {
+function commandSchema<TKind extends string, TPayload extends z.ZodTypeAny>(
+  kind: TKind,
+  payload: TPayload
+) {
   return z
     .object({
       commandId: z.string().min(1),
@@ -226,8 +243,12 @@ export interface ArisPatchIssue {
   readonly message: string
 }
 
-function toArisPatchIssues(issues: { readonly path: readonly PropertyKey[]; readonly message: string }[]): readonly ArisPatchIssue[] {
-  return issues.map((issue) => Object.freeze({ path: issue.path.map((segment) => String(segment)), message: issue.message }))
+function toArisPatchIssues(
+  issues: { readonly path: readonly PropertyKey[]; readonly message: string }[]
+): readonly ArisPatchIssue[] {
+  return issues.map((issue) =>
+    Object.freeze({ path: issue.path.map((segment) => String(segment)), message: issue.message })
+  )
 }
 
 export class ArisPatchSchemaError extends Error {
@@ -244,7 +265,10 @@ export class ArisPatchSchemaError extends Error {
 export function parseArisPatchProposal(value: unknown): ArisPatchProposalV1 {
   const result = arisPatchProposalSchema.safeParse(value)
   if (!result.success) {
-    throw new ArisPatchSchemaError('Invalid ARIS patch proposal.', toArisPatchIssues(result.error.issues))
+    throw new ArisPatchSchemaError(
+      'Invalid ARIS patch proposal.',
+      toArisPatchIssues(result.error.issues)
+    )
   }
   return result.data
 }
@@ -253,7 +277,10 @@ export function parseArisPatchProposal(value: unknown): ArisPatchProposalV1 {
 export function parseArisChatCommand(value: unknown): ArisChatCommand {
   const result = arisPatchCommandSchema.safeParse(value)
   if (!result.success) {
-    throw new ArisPatchSchemaError('Invalid ARIS patch command.', toArisPatchIssues(result.error.issues))
+    throw new ArisPatchSchemaError(
+      'Invalid ARIS patch command.',
+      toArisPatchIssues(result.error.issues)
+    )
   }
   return result.data
 }

@@ -107,7 +107,12 @@ export class ArisModeling {
   // Move
   // -------------------------------------------------------------------------
 
-  moveElements(elements: readonly Element[], delta: Point, _target?: Element, _hints?: unknown): void {
+  moveElements(
+    elements: readonly Element[],
+    delta: Point,
+    _target?: Element,
+    _hints?: unknown
+  ): void {
     const thunks = this.moveThunks(elements, delta)
     if (thunks.length === 0) return
     this.bridge.execute('move', thunks)
@@ -141,7 +146,11 @@ export class ArisModeling {
         const occurrenceId = businessObject.occurrenceId
         thunks.push((document, context) => {
           const occurrence = findOccurrence(document, occurrenceId)
-          if (!occurrence) throw new ArisCanvasCommandError('missing-occurrence', `Unknown occurrence ${occurrenceId}.`)
+          if (!occurrence)
+            throw new ArisCanvasCommandError(
+              'missing-occurrence',
+              `Unknown occurrence ${occurrenceId}.`
+            )
           return moveOccurrenceCommand(context, document, occurrenceId, {
             x: occurrence.bounds.x + dx,
             y: occurrence.bounds.y + dy
@@ -166,7 +175,11 @@ export class ArisModeling {
         const freeTextId = businessObject.freeTextId
         thunks.push((document, context) => {
           const text = findFreeText(document, freeTextId)
-          if (!text) throw new ArisCanvasCommandError('missing-free-text', `Unknown free text ${freeTextId}.`)
+          if (!text)
+            throw new ArisCanvasCommandError(
+              'missing-free-text',
+              `Unknown free text ${freeTextId}.`
+            )
           return editFreeTextCommand(context, document, freeTextId, {
             bounds: { ...text.bounds, x: text.bounds.x + dx, y: text.bounds.y + dy }
           })
@@ -195,7 +208,10 @@ export class ArisModeling {
   // Resize
   // -------------------------------------------------------------------------
 
-  resizeShape(shape: Shape, newBounds: { x: number; y: number; width: number; height: number }): void {
+  resizeShape(
+    shape: Shape,
+    newBounds: { x: number; y: number; width: number; height: number }
+  ): void {
     const businessObject = businessObjectOf(shape)
     if (businessObject?.kind === 'freeText') {
       const freeTextId = businessObject.freeTextId
@@ -227,12 +243,16 @@ export class ArisModeling {
     const sourceBo = businessObjectOf(source)
     const targetBo = businessObjectOf(target)
     if (sourceBo?.kind !== 'occurrence' || targetBo?.kind !== 'occurrence') {
-      throw new ArisCanvasCommandError('invalid-endpoints', 'Connections must join two object occurrences.')
+      throw new ArisCanvasCommandError(
+        'invalid-endpoints',
+        'Connections must join two object occurrences.'
+      )
     }
     const modelId = sourceBo.modelId
     const resolved =
       attrs?.connectionType ??
-      resolveConnectionType(sourceBo.modelType, sourceBo.objectType, targetBo.objectType).connectionType
+      resolveConnectionType(sourceBo.modelType, sourceBo.objectType, targetBo.objectType)
+        .connectionType
 
     const connectionOccurrenceId = this.store.nextId('connectionOccurrence')
     const existingDefinitionId = findConnectionDefinitionId(
@@ -266,7 +286,11 @@ export class ArisModeling {
 
     this.bridge.execute('connect', thunks)
     const created = this.elementRegistry.get(connectionOccurrenceId) as Connection | undefined
-    if (!created) throw new ArisCanvasCommandError('connection-not-rendered', 'The connection was not rendered.')
+    if (!created)
+      throw new ArisCanvasCommandError(
+        'connection-not-rendered',
+        'The connection was not rendered.'
+      )
     return created
   }
 
@@ -301,8 +325,15 @@ export class ArisModeling {
     const connectionBo = businessObjectOf(connection)
     const sourceBo = businessObjectOf(source)
     const targetBo = businessObjectOf(target)
-    if (connectionBo?.kind !== 'connection' || sourceBo?.kind !== 'occurrence' || targetBo?.kind !== 'occurrence') {
-      throw new ArisCanvasCommandError('invalid-endpoints', 'Reconnect requires a connection and two occurrences.')
+    if (
+      connectionBo?.kind !== 'connection' ||
+      sourceBo?.kind !== 'occurrence' ||
+      targetBo?.kind !== 'occurrence'
+    ) {
+      throw new ArisCanvasCommandError(
+        'invalid-endpoints',
+        'Reconnect requires a connection and two occurrences.'
+      )
     }
 
     const document = this.store.document
@@ -328,7 +359,10 @@ export class ArisModeling {
     // definition and occurrence consistent, inside a single undo unit.
     const oldId = connectionBo.connectionOccurrenceId
     const newId = this.store.nextId('connectionOccurrence')
-    const connectionType = definition?.type ?? resolveConnectionType(sourceBo.modelType, sourceBo.objectType, targetBo.objectType).connectionType
+    const connectionType =
+      definition?.type ??
+      resolveConnectionType(sourceBo.modelType, sourceBo.objectType, targetBo.objectType)
+        .connectionType
     const existingDefinitionId = findConnectionDefinitionId(
       document,
       sourceBo.definitionId,
@@ -337,7 +371,9 @@ export class ArisModeling {
     )
     const definitionId = existingDefinitionId ?? this.store.nextId('connectionDefinition')
 
-    const thunks: ArisCommandThunk[] = [(doc, context) => deleteConnectionCommand(context, doc, oldId)]
+    const thunks: ArisCommandThunk[] = [
+      (doc, context) => deleteConnectionCommand(context, doc, oldId)
+    ]
     if (!existingDefinitionId) {
       thunks.push((_doc, context) =>
         createConnectionDefinitionCommand(context, {
@@ -360,13 +396,23 @@ export class ArisModeling {
     this.bridge.execute('reconnect', thunks)
   }
 
-  reconnectStart(connection: Connection, newSource: Element, docking?: Point | Point[], hints?: unknown): void {
+  reconnectStart(
+    connection: Connection,
+    newSource: Element,
+    docking?: Point | Point[],
+    hints?: unknown
+  ): void {
     const target = connection.target
     if (!target) throw new ArisCanvasCommandError('invalid-endpoints', 'Connection has no target.')
     this.reconnect(connection, newSource, target, docking, hints)
   }
 
-  reconnectEnd(connection: Connection, newTarget: Element, docking?: Point | Point[], hints?: unknown): void {
+  reconnectEnd(
+    connection: Connection,
+    newTarget: Element,
+    docking?: Point | Point[],
+    hints?: unknown
+  ): void {
     const source = connection.source
     if (!source) throw new ArisCanvasCommandError('invalid-endpoints', 'Connection has no source.')
     this.reconnect(connection, source, newTarget, docking, hints)
@@ -391,7 +437,8 @@ export class ArisModeling {
     const thunks = this.createOccurrenceThunks(attrs, occurrenceId, position, shape)
     this.bridge.execute('create', thunks)
     const created = this.elementRegistry.get(occurrenceId) as Shape | undefined
-    if (!created) throw new ArisCanvasCommandError('shape-not-rendered', 'The shape was not rendered.')
+    if (!created)
+      throw new ArisCanvasCommandError('shape-not-rendered', 'The shape was not rendered.')
     return created
   }
 
@@ -413,18 +460,26 @@ export class ArisModeling {
   ): Shape {
     const sourceBo = businessObjectOf(source)
     if (sourceBo?.kind !== 'occurrence') {
-      throw new ArisCanvasCommandError('invalid-endpoints', 'Append requires an object occurrence as source.')
+      throw new ArisCanvasCommandError(
+        'invalid-endpoints',
+        'Append requires an object occurrence as source.'
+      )
     }
     const attrs = readCreateAttrs(shape)
     const occurrenceId = this.store.nextId('objectOccurrence')
     const connectionOccurrenceId = this.store.nextId('connectionOccurrence')
     const connectionDefinitionId = this.store.nextId('connectionDefinition')
-    const connectionType = resolveConnectionType(sourceBo.modelType, sourceBo.objectType, attrs.objectType).connectionType
+    const connectionType = resolveConnectionType(
+      sourceBo.modelType,
+      sourceBo.objectType,
+      attrs.objectType
+    ).connectionType
 
     const thunks = this.createOccurrenceThunks(attrs, occurrenceId, position, shape)
     thunks.push((document, context) => {
       const created = findOccurrence(document, occurrenceId)
-      if (!created) throw new ArisCanvasCommandError('missing-occurrence', 'Appended occurrence missing.')
+      if (!created)
+        throw new ArisCanvasCommandError('missing-occurrence', 'Appended occurrence missing.')
       return createConnectionDefinitionCommand(context, {
         definitionId: connectionDefinitionId,
         connectionType,
@@ -443,7 +498,8 @@ export class ArisModeling {
     )
     this.bridge.execute('append', thunks)
     const created = this.elementRegistry.get(occurrenceId) as Shape | undefined
-    if (!created) throw new ArisCanvasCommandError('shape-not-rendered', 'The appended shape was not rendered.')
+    if (!created)
+      throw new ArisCanvasCommandError('shape-not-rendered', 'The appended shape was not rendered.')
     return created
   }
 
@@ -534,7 +590,8 @@ export class ArisModeling {
       const businessObject = businessObjectOf(element)
       if (!businessObject) continue
       if (businessObject.kind === 'occurrence') occurrenceIds.add(businessObject.occurrenceId)
-      else if (businessObject.kind === 'connection') connectionIds.add(businessObject.connectionOccurrenceId)
+      else if (businessObject.kind === 'connection')
+        connectionIds.add(businessObject.connectionOccurrenceId)
       else if (businessObject.kind === 'freeText') freeTextIds.add(businessObject.freeTextId)
       else if (businessObject.kind === 'lane') laneIds.add(businessObject.laneId)
       // Labels are projections of their owner's attribute placement and cannot
@@ -590,7 +647,9 @@ export class ArisModeling {
       else if (alignment.middle !== undefined) y = alignment.middle - Math.round(element.height / 2)
       if (x === element.x && y === element.y) continue
       const occurrenceId = businessObject.occurrenceId
-      thunks.push((document, context) => moveOccurrenceCommand(context, document, occurrenceId, { x, y }))
+      thunks.push((document, context) =>
+        moveOccurrenceCommand(context, document, occurrenceId, { x, y })
+      )
     }
     if (thunks.length === 0) return
     this.bridge.execute('align', thunks)
@@ -602,7 +661,11 @@ export class ArisModeling {
    * Ported from diagram-js's `DistributeElementsHandler`, with the per-element
    * `moveElements` calls replaced by delta accumulation on local boxes.
    */
-  distributeElements(groups: readonly ArisDistributeGroup[], axis: 'x' | 'y', dimension: 'width' | 'height'): void {
+  distributeElements(
+    groups: readonly ArisDistributeGroup[],
+    axis: 'x' | 'y',
+    dimension: 'width' | 'height'
+  ): void {
     if (groups.length < 3) return
     const boxes = new Map<string, MutableBox>()
     const groupBoxes = groups.map((group) =>
@@ -678,7 +741,9 @@ export class ArisModeling {
       const occurrenceId = businessObject.occurrenceId
       const x = box.x
       const y = box.y
-      thunks.push((document, context) => moveOccurrenceCommand(context, document, occurrenceId, { x, y }))
+      thunks.push((document, context) =>
+        moveOccurrenceCommand(context, document, occurrenceId, { x, y })
+      )
     }
     if (thunks.length === 0) return
     this.bridge.execute('distribute', thunks)
@@ -728,22 +793,34 @@ export class ArisModeling {
   }
 }
 
-function readCreateAttrs(shape: { arisAttrs?: ArisCreateShapeAttrs; businessObject?: unknown }): ArisCreateShapeAttrs {
+function readCreateAttrs(shape: {
+  arisAttrs?: ArisCreateShapeAttrs
+  businessObject?: unknown
+}): ArisCreateShapeAttrs {
   const direct = shape.arisAttrs
   if (direct) return direct
   const businessObject = shape.businessObject
   if (businessObject && typeof businessObject === 'object') {
-    const candidate = businessObject as { objectType?: unknown; symbolNum?: unknown; definitionId?: unknown; name?: unknown }
+    const candidate = businessObject as {
+      objectType?: unknown
+      symbolNum?: unknown
+      definitionId?: unknown
+      name?: unknown
+    }
     if (typeof candidate.objectType === 'string' && typeof candidate.symbolNum === 'string') {
       return {
         objectType: candidate.objectType,
         symbolNum: candidate.symbolNum,
-        definitionId: typeof candidate.definitionId === 'string' ? candidate.definitionId : undefined,
+        definitionId:
+          typeof candidate.definitionId === 'string' ? candidate.definitionId : undefined,
         name: typeof candidate.name === 'string' ? candidate.name : undefined
       }
     }
   }
-  throw new ArisCanvasCommandError('missing-create-attrs', 'Shape has no ARIS object type/symbol to create.')
+  throw new ArisCanvasCommandError(
+    'missing-create-attrs',
+    'Shape has no ARIS object type/symbol to create.'
+  )
 }
 
 /** Reuse an existing `CxnDef` for the same (from, to, type) triple. */
@@ -774,7 +851,8 @@ function setAttributeOccurrencePlacementCommand(
   dy: number
 ): ArisEditCommand {
   const occurrence = findOccurrence(document, occurrenceId)
-  if (!occurrence) throw new ArisCanvasCommandError('missing-occurrence', `Unknown occurrence ${occurrenceId}.`)
+  if (!occurrence)
+    throw new ArisCanvasCommandError('missing-occurrence', `Unknown occurrence ${occurrenceId}.`)
   const existing = occurrence.attributeOccurrences.find((entry) => entry.attributeType === AT_NAME)
   // `invertCommand` inverts this kind by swapping `before`/`after`, so `before`
   // must be a *complete* placement rather than `null`: a zero offset is how the

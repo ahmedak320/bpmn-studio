@@ -1,7 +1,14 @@
 import { describe, expect, it } from 'vitest'
 
 import { buildDigest } from '../digest'
-import { digestToContext, expandToken, normalizeToken, rankDigests, selectContextDigests, tokenize } from '../retrieval'
+import {
+  digestToContext,
+  expandToken,
+  normalizeToken,
+  rankDigests,
+  selectContextDigests,
+  tokenize
+} from '../retrieval'
 import { buildSecondSyntheticModel, buildSyntheticModel } from './fixtures'
 
 describe('tokenize', () => {

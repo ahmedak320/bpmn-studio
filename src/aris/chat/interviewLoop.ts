@@ -29,11 +29,21 @@
  * failures — because the document is never touched at all). This is exit-gate item 4.
  */
 
-import { applySafeCommandsAtomically, applySelectedConfirmedCommands, type ArisChatApplyHost, type ArisChatApplyReceipt } from './applyEngine'
+import {
+  applySafeCommandsAtomically,
+  applySelectedConfirmedCommands,
+  type ArisChatApplyHost,
+  type ArisChatApplyReceipt
+} from './applyEngine'
 import type { ArisChatClassificationContext } from './classification'
 import { partitionCommandsByClassification } from './classification'
 import type { ArisChatGap } from './gapScanner'
-import { ArisPatchSchemaError, parseArisPatchProposal, type ArisChatCommand, type ArisPatchProposalV1 } from './patchSchema'
+import {
+  ArisPatchSchemaError,
+  parseArisPatchProposal,
+  type ArisChatCommand,
+  type ArisPatchProposalV1
+} from './patchSchema'
 
 export const MAX_ROUNDS_PER_INTERVIEW = 5
 export const MAX_QUESTIONS_PER_ROUND = 3
@@ -55,9 +65,15 @@ export interface ArisChatInterviewHost<TDocument> extends ArisChatApplyHost<TDoc
    * target ids still resolve. `'target-removed'` means an entity the interview was about was
    * deleted out from under the session (plan 18.2 step 13's "target removed" exit).
    */
-  readonly verifyProposalTargets: (document: TDocument, proposal: ArisPatchProposalV1) => ArisChatProposalTargetVerification
+  readonly verifyProposalTargets: (
+    document: TDocument,
+    proposal: ArisPatchProposalV1
+  ) => ArisChatProposalTargetVerification
   /** Optional per-command classification context (ambiguous target / id change overrides). */
-  readonly classifyCommand?: (command: ArisChatCommand, document: TDocument) => ArisChatClassificationContext
+  readonly classifyCommand?: (
+    command: ArisChatCommand,
+    document: TDocument
+  ) => ArisChatClassificationContext
 }
 
 export class ArisChatInterviewError extends Error {
@@ -78,7 +94,10 @@ interface ArisChatInterviewStateBase<TDocument> {
 }
 
 export type ArisChatInterviewState<TDocument> =
-  | (ArisChatInterviewStateBase<TDocument> & { readonly status: 'awaitingAnswers'; readonly questions: readonly ArisChatQuestion[] })
+  | (ArisChatInterviewStateBase<TDocument> & {
+      readonly status: 'awaitingAnswers'
+      readonly questions: readonly ArisChatQuestion[]
+    })
   | (ArisChatInterviewStateBase<TDocument> & {
       readonly status: 'awaitingProposal'
       readonly questions: readonly ArisChatQuestion[]
@@ -93,13 +112,23 @@ export type ArisChatInterviewState<TDocument> =
   | (ArisChatInterviewStateBase<TDocument> & { readonly status: 'clean' })
   | (ArisChatInterviewStateBase<TDocument> & { readonly status: 'finished' })
   | (ArisChatInterviewStateBase<TDocument> & { readonly status: 'canceled' })
-  | (ArisChatInterviewStateBase<TDocument> & { readonly status: 'aborted'; readonly reason: 'targetRemoved' })
+  | (ArisChatInterviewStateBase<TDocument> & {
+      readonly status: 'aborted'
+      readonly reason: 'targetRemoved'
+    })
   | (ArisChatInterviewStateBase<TDocument> & { readonly status: 'roundLimitReached' })
 
-export type ArisChatInterviewTerminalStatus = 'clean' | 'finished' | 'canceled' | 'aborted' | 'roundLimitReached'
+export type ArisChatInterviewTerminalStatus =
+  'clean' | 'finished' | 'canceled' | 'aborted' | 'roundLimitReached'
 
 export const TERMINAL_INTERVIEW_STATUSES: ReadonlySet<string> = Object.freeze(
-  new Set<ArisChatInterviewTerminalStatus>(['clean', 'finished', 'canceled', 'aborted', 'roundLimitReached'])
+  new Set<ArisChatInterviewTerminalStatus>([
+    'clean',
+    'finished',
+    'canceled',
+    'aborted',
+    'roundLimitReached'
+  ])
 )
 
 export type ArisChatInterviewEvent =
@@ -150,7 +179,15 @@ export function startArisChatInterview<TDocument>(
 ): ArisChatInterviewState<TDocument> {
   const gaps = host.scanGaps(document)
   if (gaps.length === 0) {
-    return { status: 'clean', document, round: 0, answers: {}, suggestions: [], receipts: [], gaps: [] }
+    return {
+      status: 'clean',
+      document,
+      round: 0,
+      answers: {},
+      suggestions: [],
+      receipts: [],
+      gaps: []
+    }
   }
   return beginRound(document, 1, {}, [], [], gaps)
 }
@@ -207,12 +244,21 @@ function handleProposalReceived<TDocument>(
     host.classifyCommand ? host.classifyCommand(command, state.document) : {}
   )
 
-  const applied = applySafeCommandsAtomically(state.document, proposal.baseRevision, automatic, host)
+  const applied = applySafeCommandsAtomically(
+    state.document,
+    proposal.baseRevision,
+    automatic,
+    host
+  )
   if (!applied.ok) {
-    return { ...state, lastError: `${applied.reason}${applied.detail ? `: ${applied.detail}` : ''}` }
+    return {
+      ...state,
+      lastError: `${applied.reason}${applied.detail ? `: ${applied.detail}` : ''}`
+    }
   }
 
-  const receipts = applied.receipt.entries.length > 0 ? [...state.receipts, applied.receipt] : state.receipts
+  const receipts =
+    applied.receipt.entries.length > 0 ? [...state.receipts, applied.receipt] : state.receipts
 
   if (confirm.length > 0) {
     return {
@@ -228,7 +274,14 @@ function handleProposalReceived<TDocument>(
     }
   }
 
-  return completeRound(applied.document, state.round, state.answers, state.suggestions, receipts, host)
+  return completeRound(
+    applied.document,
+    state.round,
+    state.answers,
+    state.suggestions,
+    receipts,
+    host
+  )
 }
 
 function handleConfirmationDecision<TDocument>(
@@ -245,12 +298,22 @@ function handleConfirmationDecision<TDocument>(
   )
 
   if (!result.outcome.ok) {
-    return { ...state, lastError: `${result.outcome.reason}${result.outcome.detail ? `: ${result.outcome.detail}` : ''}` }
+    return {
+      ...state,
+      lastError: `${result.outcome.reason}${result.outcome.detail ? `: ${result.outcome.detail}` : ''}`
+    }
   }
 
   const suggestions = [...state.suggestions, ...result.remainingSuggestions]
   const receipts = [...state.receipts, result.outcome.receipt]
-  return completeRound(result.outcome.document, state.round, state.answers, suggestions, receipts, host)
+  return completeRound(
+    result.outcome.document,
+    state.round,
+    state.answers,
+    suggestions,
+    receipts,
+    host
+  )
 }
 
 /** Advances the interview by exactly one event. Pure — no I/O, no AI request. */
@@ -264,10 +327,26 @@ export function advanceArisChatInterview<TDocument>(
   }
 
   if (event.type === 'cancel') {
-    return { status: 'canceled', document: state.document, round: state.round, answers: state.answers, suggestions: state.suggestions, receipts: state.receipts, gaps: state.gaps }
+    return {
+      status: 'canceled',
+      document: state.document,
+      round: state.round,
+      answers: state.answers,
+      suggestions: state.suggestions,
+      receipts: state.receipts,
+      gaps: state.gaps
+    }
   }
   if (event.type === 'finish') {
-    return { status: 'finished', document: state.document, round: state.round, answers: state.answers, suggestions: state.suggestions, receipts: state.receipts, gaps: state.gaps }
+    return {
+      status: 'finished',
+      document: state.document,
+      round: state.round,
+      answers: state.answers,
+      suggestions: state.suggestions,
+      receipts: state.receipts,
+      gaps: state.gaps
+    }
   }
 
   if (state.status === 'awaitingAnswers' && event.type === 'answersSubmitted') {

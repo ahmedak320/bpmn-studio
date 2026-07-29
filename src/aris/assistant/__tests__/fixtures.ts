@@ -8,7 +8,11 @@
 // translations chosen to exercise diacritics-free normal Arabic script,
 // definite-article clitics, and taa marbuta endings.
 
-import type { ArisAssistantAttribute, ArisAssistantLocalizedText, ArisAssistantModelInput } from '../types'
+import type {
+  ArisAssistantAttribute,
+  ArisAssistantLocalizedText,
+  ArisAssistantModelInput
+} from '../types'
 
 export function lt(en: string | null, ar: string | null): ArisAssistantLocalizedText {
   return { en, ar, fallback: en ?? ar }

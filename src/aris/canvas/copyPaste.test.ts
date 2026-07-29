@@ -17,8 +17,16 @@ function buildPair(canvas: Harness['canvas']): {
   b: { definitionId: string; occurrenceId: string }
   connectionId: string
 } {
-  const a = canvas.authoring.createObject({ objectType: 'OT_EVT', name: 'Received', position: { x: 0, y: 0 } })
-  const b = canvas.authoring.createObject({ objectType: 'OT_FUNC', name: 'Review', position: { x: 0, y: 300 } })
+  const a = canvas.authoring.createObject({
+    objectType: 'OT_EVT',
+    name: 'Received',
+    position: { x: 0, y: 0 }
+  })
+  const b = canvas.authoring.createObject({
+    objectType: 'OT_FUNC',
+    name: 'Review',
+    position: { x: 0, y: 300 }
+  })
   const connectionId = canvas.authoring.connect(a.occurrenceId, b.occurrenceId)
   return { a, b, connectionId }
 }
@@ -38,15 +46,24 @@ describe('copy/paste identity modes (Section 11.4)', () => {
     // No new definitions: identity is shared.
     expect(canvas.document.objectDefinitions.size).toBe(definitionsBefore)
     expect(result.definitionIds).toEqual([a.definitionId, b.definitionId])
-    expect(findOccurrence(canvas.document, result.occurrenceIds[0])?.definitionId).toBe(a.definitionId)
+    expect(findOccurrence(canvas.document, result.occurrenceIds[0])?.definitionId).toBe(
+      a.definitionId
+    )
 
     // Renaming the original renames the pasted shape too.
     canvas.authoring.renameDefinition(a.definitionId, 'Renamed')
-    expect(canvas.document.objectDefinitions.get(a.definitionId)?.names.values['en-US']).toBe('Renamed')
-    expect(findOccurrence(canvas.document, result.occurrenceIds[0])?.definitionId).toBe(a.definitionId)
+    expect(canvas.document.objectDefinitions.get(a.definitionId)?.names.values['en-US']).toBe(
+      'Renamed'
+    )
+    expect(findOccurrence(canvas.document, result.occurrenceIds[0])?.definitionId).toBe(
+      a.definitionId
+    )
 
     // Geometry moved by the delta.
-    expect(findOccurrence(canvas.document, result.occurrenceIds[0])?.bounds).toMatchObject({ x: 500, y: 0 })
+    expect(findOccurrence(canvas.document, result.occurrenceIds[0])?.bounds).toMatchObject({
+      x: 500,
+      y: 0
+    })
   })
 
   it("'shared-definition' paste reuses the existing connection definition", () => {
@@ -73,7 +90,9 @@ describe('copy/paste identity modes (Section 11.4)', () => {
     harness = bootCanvas()
     const { canvas } = harness
     const { a, b } = buildPair(canvas)
-    canvas.authoring.setDefinitionAttribute(a.definitionId, 'AT_DESC', [{ localeId: 'en-US', text: 'original' }])
+    canvas.authoring.setDefinitionAttribute(a.definitionId, 'AT_DESC', [
+      { localeId: 'en-US', text: 'original' }
+    ])
     const definitionsBefore = canvas.document.objectDefinitions.size
 
     canvas.clipboard.copy([shape(canvas, a.occurrenceId), shape(canvas, b.occurrenceId)])
@@ -88,12 +107,18 @@ describe('copy/paste identity modes (Section 11.4)', () => {
     const cloned = canvas.document.objectDefinitions.get(clonedDefinitionId)
     expect(cloned?.type).toBe('OT_EVT')
     expect(cloned?.names.values['en-US']).toBe('Received')
-    expect(cloned?.attributes.find((entry) => entry.type === 'AT_DESC')?.values[0].text).toBe('original')
+    expect(cloned?.attributes.find((entry) => entry.type === 'AT_DESC')?.values[0].text).toBe(
+      'original'
+    )
 
     // The clone is independent: renaming the original leaves it alone.
     canvas.authoring.renameDefinition(a.definitionId, 'Renamed original')
-    expect(canvas.document.objectDefinitions.get(clonedDefinitionId)?.names.values['en-US']).toBe('Received')
-    expect(canvas.document.objectDefinitions.get(a.definitionId)?.names.values['en-US']).toBe('Renamed original')
+    expect(canvas.document.objectDefinitions.get(clonedDefinitionId)?.names.values['en-US']).toBe(
+      'Received'
+    )
+    expect(canvas.document.objectDefinitions.get(a.definitionId)?.names.values['en-US']).toBe(
+      'Renamed original'
+    )
   })
 
   it("'new-definition' paste mints a connection definition between the clones", () => {
@@ -122,12 +147,17 @@ describe('copy/paste identity modes (Section 11.4)', () => {
     canvas.clipboard.copy([shape(canvas, a.occurrenceId), shape(canvas, b.occurrenceId)])
 
     for (const mode of ['shared-definition', 'new-definition'] as const) {
-      const occurrencesBefore = canvas.document.models.get(canvas.activeModelId)?.occurrences.length ?? 0
+      const occurrencesBefore =
+        canvas.document.models.get(canvas.activeModelId)?.occurrences.length ?? 0
       const definitionsBefore = canvas.document.objectDefinitions.size
       canvas.clipboard.paste({ mode })
-      expect(canvas.document.models.get(canvas.activeModelId)?.occurrences.length).toBe(occurrencesBefore + 2)
+      expect(canvas.document.models.get(canvas.activeModelId)?.occurrences.length).toBe(
+        occurrencesBefore + 2
+      )
       canvas.undo()
-      expect(canvas.document.models.get(canvas.activeModelId)?.occurrences.length).toBe(occurrencesBefore)
+      expect(canvas.document.models.get(canvas.activeModelId)?.occurrences.length).toBe(
+        occurrencesBefore
+      )
       expect(canvas.document.objectDefinitions.size).toBe(definitionsBefore)
     }
   })

@@ -48,7 +48,15 @@ function defaultSymbolFor(modelType: string, objectType: string): string {
 }
 
 export class ArisPaletteProvider {
-  static $inject = ['palette', 'create', 'elementFactory', 'arisDocumentStore', 'modeling', 'handTool', 'lassoTool']
+  static $inject = [
+    'palette',
+    'create',
+    'elementFactory',
+    'arisDocumentStore',
+    'modeling',
+    'handTool',
+    'lassoTool'
+  ]
 
   constructor(
     palette: Palette,
@@ -98,13 +106,17 @@ export class ArisPaletteProvider {
         group: 'tools',
         className: 'aris-palette-hand-tool',
         title: 'Activate hand tool',
-        action: { click: (event: Event) => this.handTool.activateHand(event as unknown as MouseEvent) }
+        action: {
+          click: (event: Event) => this.handTool.activateHand(event as unknown as MouseEvent)
+        }
       },
       'lasso-tool': {
         group: 'tools',
         className: 'aris-palette-lasso-tool',
         title: 'Activate lasso tool',
-        action: { click: (event: Event) => this.lassoTool.activateSelection(event as unknown as MouseEvent) }
+        action: {
+          click: (event: Event) => this.lassoTool.activateSelection(event as unknown as MouseEvent)
+        }
       },
       'create.free-text': {
         group: 'annotation',

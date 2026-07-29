@@ -52,7 +52,11 @@ describe('routeQuestion — the eleven Section 17.4 question types, EN + AR', ()
   })
 
   it('4. what inputs/outputs apply (EN)', () => {
-    const answer = routeQuestion(digests, 'What are the inputs and outputs for Register owner profile?', 'en')
+    const answer = routeQuestion(
+      digests,
+      'What are the inputs and outputs for Register owner profile?',
+      'en'
+    )
     expect(answer.kind).toBe('io')
     const texts = answer.parts[0]?.items?.map((i) => i.text) ?? []
     expect(texts).toEqual(expect.arrayContaining(['Owner ID Document', 'Registration Certificate']))
@@ -116,7 +120,11 @@ describe('routeQuestion — the eleven Section 17.4 question types, EN + AR', ()
   })
 
   it('9. which information is missing (EN)', () => {
-    const answer = routeQuestion(digests, 'What information is missing in Owner Registration?', 'en')
+    const answer = routeQuestion(
+      digests,
+      'What information is missing in Owner Registration?',
+      'en'
+    )
     expect(answer.kind).toBe('missingInfo')
     expect(answer.parts[0]?.items?.length).toBeGreaterThan(0)
   })

@@ -9,7 +9,12 @@
  */
 
 export { ArisCanvas, type ArisCanvasOptions } from './ArisCanvas'
-export { ArisAuthoring, type CreateObjectOptions, type CreateObjectResult, type DeleteDefinitionRequest } from './authoring'
+export {
+  ArisAuthoring,
+  type CreateObjectOptions,
+  type CreateObjectResult,
+  type DeleteDefinitionRequest
+} from './authoring'
 export { ArisCanvasSync, externalNamePlacement } from './canvasSync'
 export {
   ArisClipboard,
@@ -24,7 +29,11 @@ export {
   ArisCommandBridge
 } from './commandBridge'
 export { ArisDocumentStore, type ArisCommandThunk, type ArisPlannedGesture } from './documentStore'
-export { ArisModeling, ArisUnsupportedOperationError, findConnectionDefinitionId } from './arisModeling'
+export {
+  ArisModeling,
+  ArisUnsupportedOperationError,
+  findConnectionDefinitionId
+} from './arisModeling'
 export { ArisRenderer } from './renderer'
 export { ArisRules } from './arisRules'
 export { ArisPaletteProvider } from './paletteProvider'

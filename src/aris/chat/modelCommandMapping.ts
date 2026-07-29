@@ -63,16 +63,32 @@ export interface ModelCommandMappingEntry {
 }
 
 export const PATCH_TO_MODEL_COMMAND_MAPPING: readonly ModelCommandMappingEntry[] = Object.freeze([
-  { chatCommandKind: 'setLocalizedName', modelCommandKinds: ['setLocalizedName'], requiresTransactionWrapper: false },
-  { chatCommandKind: 'setAttribute', modelCommandKinds: ['setAttribute'], requiresTransactionWrapper: false },
-  { chatCommandKind: 'addAttributeValue', modelCommandKinds: ['addAttributeValue'], requiresTransactionWrapper: false },
+  {
+    chatCommandKind: 'setLocalizedName',
+    modelCommandKinds: ['setLocalizedName'],
+    requiresTransactionWrapper: false
+  },
+  {
+    chatCommandKind: 'setAttribute',
+    modelCommandKinds: ['setAttribute'],
+    requiresTransactionWrapper: false
+  },
+  {
+    chatCommandKind: 'addAttributeValue',
+    modelCommandKinds: ['addAttributeValue'],
+    requiresTransactionWrapper: false
+  },
   {
     chatCommandKind: 'addMetadataDefinition',
     modelCommandKinds: ['createDefinition'],
     requiresTransactionWrapper: false,
     note: 'Object-definition satellite (non-core-control-flow type, enforced by the schema refine).'
   },
-  { chatCommandKind: 'addMetadataOccurrence', modelCommandKinds: ['createOccurrence'], requiresTransactionWrapper: false },
+  {
+    chatCommandKind: 'addMetadataOccurrence',
+    modelCommandKinds: ['createOccurrence'],
+    requiresTransactionWrapper: false
+  },
   {
     chatCommandKind: 'addMetadataConnection',
     modelCommandKinds: ['createConnectionDefinition', 'createConnectionOccurrence'],
@@ -90,12 +106,36 @@ export const PATCH_TO_MODEL_COMMAND_MAPPING: readonly ModelCommandMappingEntry[]
     requiresTransactionWrapper: true,
     note: 'Also covers the "return back-edge" case (payload.isReturnBackEdge); same model commands, same classification.'
   },
-  { chatCommandKind: 'setAssignment', modelCommandKinds: ['setModelAssignment'], requiresTransactionWrapper: false },
-  { chatCommandKind: 'setRoute', modelCommandKinds: ['setConnectionRoute'], requiresTransactionWrapper: false },
-  { chatCommandKind: 'reconnect', modelCommandKinds: ['reconnectConnection'], requiresTransactionWrapper: false },
-  { chatCommandKind: 'deleteConnection', modelCommandKinds: ['deleteConnection'], requiresTransactionWrapper: false },
-  { chatCommandKind: 'deleteOccurrence', modelCommandKinds: ['deleteOccurrence'], requiresTransactionWrapper: false },
-  { chatCommandKind: 'deleteDefinition', modelCommandKinds: ['deleteDefinition'], requiresTransactionWrapper: false },
+  {
+    chatCommandKind: 'setAssignment',
+    modelCommandKinds: ['setModelAssignment'],
+    requiresTransactionWrapper: false
+  },
+  {
+    chatCommandKind: 'setRoute',
+    modelCommandKinds: ['setConnectionRoute'],
+    requiresTransactionWrapper: false
+  },
+  {
+    chatCommandKind: 'reconnect',
+    modelCommandKinds: ['reconnectConnection'],
+    requiresTransactionWrapper: false
+  },
+  {
+    chatCommandKind: 'deleteConnection',
+    modelCommandKinds: ['deleteConnection'],
+    requiresTransactionWrapper: false
+  },
+  {
+    chatCommandKind: 'deleteOccurrence',
+    modelCommandKinds: ['deleteOccurrence'],
+    requiresTransactionWrapper: false
+  },
+  {
+    chatCommandKind: 'deleteDefinition',
+    modelCommandKinds: ['deleteDefinition'],
+    requiresTransactionWrapper: false
+  },
   {
     chatCommandKind: 'removeAttachment',
     modelCommandKinds: [],
@@ -105,19 +145,20 @@ export const PATCH_TO_MODEL_COMMAND_MAPPING: readonly ModelCommandMappingEntry[]
 ])
 
 /** `src/aris/model` `ArisCommandKind` values with no chat-patch-command counterpart today. */
-export const MODEL_COMMAND_KINDS_WITHOUT_CHAT_COMMAND: readonly ModelCommandKindName[] = Object.freeze([
-  'removeAttributeValue',
-  'moveOccurrence',
-  'resizeOccurrence',
-  'restyleOccurrence',
-  'setOccurrenceSymbol',
-  'setAttributeOccurrencePlacement',
-  'deleteConnectionDefinition',
-  'addLane',
-  'editLane',
-  'deleteLane',
-  'addFreeText',
-  'editFreeText',
-  'deleteFreeText',
-  'transaction'
-])
+export const MODEL_COMMAND_KINDS_WITHOUT_CHAT_COMMAND: readonly ModelCommandKindName[] =
+  Object.freeze([
+    'removeAttributeValue',
+    'moveOccurrence',
+    'resizeOccurrence',
+    'restyleOccurrence',
+    'setOccurrenceSymbol',
+    'setAttributeOccurrencePlacement',
+    'deleteConnectionDefinition',
+    'addLane',
+    'editLane',
+    'deleteLane',
+    'addFreeText',
+    'editFreeText',
+    'deleteFreeText',
+    'transaction'
+  ])

@@ -59,7 +59,14 @@ const INTENT_RULES: readonly IntentRule[] = [
   },
   {
     answer: answerAssignment,
-    phrases: ['assigned model', 'linked model', 'sub process', 'نموذج مرتبط', 'مرتبط بنموذج', 'نموذج فرعي']
+    phrases: [
+      'assigned model',
+      'linked model',
+      'sub process',
+      'نموذج مرتبط',
+      'مرتبط بنموذج',
+      'نموذج فرعي'
+    ]
   },
   {
     answer: answerReturnBranch,
@@ -67,7 +74,16 @@ const INTENT_RULES: readonly IntentRule[] = [
   },
   {
     answer: answerXorOutcomes,
-    phrases: ['xor', 'outcome', 'branch', 'decision options', 'بديل', 'بدائل', 'خيارات القرار', 'نتائج القرار']
+    phrases: [
+      'xor',
+      'outcome',
+      'branch',
+      'decision options',
+      'بديل',
+      'بدائل',
+      'خيارات القرار',
+      'نتائج القرار'
+    ]
   },
   {
     answer: answerSystem,

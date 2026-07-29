@@ -84,8 +84,16 @@ function decode(text: string): ArisAttachment | null {
 }
 
 /** Every attachment currently stored on a definition. */
-export function listAttachments(document: ArisWorkingDocument, definitionId: string): readonly ArisAttachment[] {
-  const values = readAttributeValues(document, 'objectDefinition', definitionId, AT_ORBITPM_ATTACHMENT)
+export function listAttachments(
+  document: ArisWorkingDocument,
+  definitionId: string
+): readonly ArisAttachment[] {
+  const values = readAttributeValues(
+    document,
+    'objectDefinition',
+    definitionId,
+    AT_ORBITPM_ATTACHMENT
+  )
   const attachments: ArisAttachment[] = []
   for (const value of values) {
     const attachment = decode(value.text)
@@ -96,7 +104,9 @@ export function listAttachments(document: ArisWorkingDocument, definitionId: str
 
 function toValues(attachments: readonly ArisAttachment[]): readonly ArisAttributeValue[] {
   return Object.freeze(
-    attachments.map((attachment) => Object.freeze({ localeId: attachment.id, text: encode(attachment) }))
+    attachments.map((attachment) =>
+      Object.freeze({ localeId: attachment.id, text: encode(attachment) })
+    )
   )
 }
 
@@ -110,7 +120,9 @@ export function addAttachmentCommand(
   if (!Number.isSafeInteger(attachment.size) || attachment.size < 0) {
     throw new ArisAttachmentError('invalid-size', 'Attachment size must be a non-negative integer.')
   }
-  const existing = listAttachments(document, definitionId).filter((entry) => entry.id !== attachment.id)
+  const existing = listAttachments(document, definitionId).filter(
+    (entry) => entry.id !== attachment.id
+  )
   return setAttributeCommand(
     context,
     document,
@@ -130,7 +142,10 @@ export function removeAttachmentCommand(
 ): ArisEditCommand {
   const existing = listAttachments(document, definitionId)
   if (!existing.some((entry) => entry.id === attachmentId)) {
-    throw new ArisAttachmentError('unknown-attachment', `No attachment ${attachmentId} on ${definitionId}.`)
+    throw new ArisAttachmentError(
+      'unknown-attachment',
+      `No attachment ${attachmentId} on ${definitionId}.`
+    )
   }
   return setAttributeCommand(
     context,
@@ -160,9 +175,14 @@ export function downloadAttachment(
   definitionId: string,
   attachmentId: string
 ): ArisAttachmentDownload {
-  const attachment = listAttachments(document, definitionId).find((entry) => entry.id === attachmentId)
+  const attachment = listAttachments(document, definitionId).find(
+    (entry) => entry.id === attachmentId
+  )
   if (!attachment) {
-    throw new ArisAttachmentError('unknown-attachment', `No attachment ${attachmentId} on ${definitionId}.`)
+    throw new ArisAttachmentError(
+      'unknown-attachment',
+      `No attachment ${attachmentId} on ${definitionId}.`
+    )
   }
   return Object.freeze({
     fileName: attachment.fileName,

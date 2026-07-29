@@ -73,7 +73,12 @@ export type ArisChatApplyFailureReason =
 
 export type ArisChatApplyOutcome<TDocument> =
   | { readonly ok: true; readonly document: TDocument; readonly receipt: ArisChatApplyReceipt }
-  | { readonly ok: false; readonly document: TDocument; readonly reason: ArisChatApplyFailureReason; readonly detail?: string }
+  | {
+      readonly ok: false
+      readonly document: TDocument
+      readonly reason: ArisChatApplyFailureReason
+      readonly detail?: string
+    }
 
 /** One-click undo descriptor (plan 18.5 step 7) — restoring is the revision store's job. */
 export interface ArisChatUndoDescriptor {
@@ -92,7 +97,9 @@ function applySequentially<TDocument>(
   document: TDocument,
   commands: readonly ArisChatCommand[],
   host: ArisChatApplyHost<TDocument>
-): { readonly ok: true; readonly document: TDocument } | { readonly ok: false; readonly detail: string } {
+):
+  | { readonly ok: true; readonly document: TDocument }
+  | { readonly ok: false; readonly detail: string } {
   let current = document
   try {
     for (const command of commands) {
@@ -109,18 +116,34 @@ function runPostApplyValidations<TDocument>(
   host: ArisChatApplyHost<TDocument>
 ):
   | { readonly ok: true }
-  | { readonly ok: false; readonly reason: Extract<ArisChatApplyFailureReason, `${string}-validation-failed`>; readonly detail: string } {
+  | {
+      readonly ok: false
+      readonly reason: Extract<ArisChatApplyFailureReason, `${string}-validation-failed`>
+      readonly detail: string
+    } {
   const semantic = host.validateSemantic?.(document) ?? []
   if (semantic.length > 0) {
-    return { ok: false, reason: 'semantic-validation-failed', detail: semantic.map((issue) => issue.code).join(', ') }
+    return {
+      ok: false,
+      reason: 'semantic-validation-failed',
+      detail: semantic.map((issue) => issue.code).join(', ')
+    }
   }
   const reference = host.validateReference?.(document) ?? []
   if (reference.length > 0) {
-    return { ok: false, reason: 'reference-validation-failed', detail: reference.map((issue) => issue.code).join(', ') }
+    return {
+      ok: false,
+      reason: 'reference-validation-failed',
+      detail: reference.map((issue) => issue.code).join(', ')
+    }
   }
   const accounting = host.validateAccounting?.(document) ?? []
   if (accounting.length > 0) {
-    return { ok: false, reason: 'accounting-validation-failed', detail: accounting.map((issue) => issue.code).join(', ') }
+    return {
+      ok: false,
+      reason: 'accounting-validation-failed',
+      detail: accounting.map((issue) => issue.code).join(', ')
+    }
   }
   return { ok: true }
 }
@@ -133,7 +156,12 @@ function buildReceipt<TDocument>(
   host: ArisChatApplyHost<TDocument>
 ): ArisChatApplyReceipt {
   const entries = commands.map((command) =>
-    Object.freeze({ commandId: command.commandId, kind: command.kind, targetIds: command.targetIds, origin })
+    Object.freeze({
+      commandId: command.commandId,
+      kind: command.kind,
+      targetIds: command.targetIds,
+      origin
+    })
   )
   const draft: ArisChatApplyReceipt = {
     revisionBefore,
@@ -196,11 +224,20 @@ export function applySafeCommandsAtomically<TDocument>(
   return { ok: true, document: applied.document, receipt }
 }
 
-function buildEmptySuccess<TDocument>(document: TDocument, revisionBefore: number, host: ArisChatApplyHost<TDocument>): ArisChatApplyOutcome<TDocument> {
+function buildEmptySuccess<TDocument>(
+  document: TDocument,
+  revisionBefore: number,
+  host: ArisChatApplyHost<TDocument>
+): ArisChatApplyOutcome<TDocument> {
   return {
     ok: true,
     document,
-    receipt: { revisionBefore, revisionAfter: host.getRevision(document), entries: [], draftRevisionId: null }
+    receipt: {
+      revisionBefore,
+      revisionAfter: host.getRevision(document),
+      entries: [],
+      draftRevisionId: null
+    }
   }
 }
 
@@ -226,7 +263,9 @@ export function buildConfirmationPreview<TDocument>(
   host: ArisChatApplyHost<TDocument>,
   describeTargets?: (document: TDocument, targetIds: readonly string[]) => unknown
 ): ArisChatPreviewOutcome<TDocument> {
-  const affectedIds = Object.freeze([...new Set(commands.flatMap((command) => command.targetIds))].sort())
+  const affectedIds = Object.freeze(
+    [...new Set(commands.flatMap((command) => command.targetIds))].sort()
+  )
   const applied = applySequentially(document, commands, host)
   if (!applied.ok) {
     return { ok: false, reason: 'command-application-failed', detail: applied.detail }
@@ -264,12 +303,21 @@ export function applySelectedConfirmedCommands<TDocument>(
   selectedCommandIds: ReadonlySet<string>,
   host: ArisChatApplyHost<TDocument>
 ): ArisChatSelectiveApplyResult<TDocument> {
-  const selected = allProposedCommands.filter((command) => selectedCommandIds.has(command.commandId))
-  const unselected = allProposedCommands.filter((command) => !selectedCommandIds.has(command.commandId))
+  const selected = allProposedCommands.filter((command) =>
+    selectedCommandIds.has(command.commandId)
+  )
+  const unselected = allProposedCommands.filter(
+    (command) => !selectedCommandIds.has(command.commandId)
+  )
 
   if (selected.length === 0) {
     return {
-      outcome: { ok: false, document, reason: 'no-commands-selected', detail: 'No commands were selected.' },
+      outcome: {
+        ok: false,
+        document,
+        reason: 'no-commands-selected',
+        detail: 'No commands were selected.'
+      },
       remainingSuggestions: allProposedCommands
     }
   }
@@ -290,7 +338,12 @@ export function applySelectedConfirmedCommands<TDocument>(
   const applied = applySequentially(document, selected, host)
   if (!applied.ok) {
     return {
-      outcome: { ok: false, document, reason: 'command-application-failed', detail: applied.detail },
+      outcome: {
+        ok: false,
+        document,
+        reason: 'command-application-failed',
+        detail: applied.detail
+      },
       remainingSuggestions: allProposedCommands
     }
   }
@@ -304,5 +357,8 @@ export function applySelectedConfirmedCommands<TDocument>(
   }
 
   const receipt = buildReceipt(revisionBefore, applied.document, selected, 'ai-confirmed', host)
-  return { outcome: { ok: true, document: applied.document, receipt }, remainingSuggestions: unselected }
+  return {
+    outcome: { ok: true, document: applied.document, receipt },
+    remainingSuggestions: unselected
+  }
 }

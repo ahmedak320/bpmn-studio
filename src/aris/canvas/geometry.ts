@@ -45,7 +45,9 @@ export function toCanonicalNumber(value: number, label = 'coordinate'): number {
   const rounded = Math.round(value)
   // `Math.round` of a huge float can still land outside the safe range.
   if (!Number.isSafeInteger(rounded)) {
-    throw new ArisGeometryError(`Canvas ${label} ${String(value)} is outside the safe integer range.`)
+    throw new ArisGeometryError(
+      `Canvas ${label} ${String(value)} is outside the safe integer range.`
+    )
   }
   // Normalize `-0` to `0`: canonical JSON encodes them identically, but the
   // in-memory `before`/`after` snapshots must compare equal too.
@@ -53,7 +55,11 @@ export function toCanonicalNumber(value: number, label = 'coordinate'): number {
 }
 
 /** Round a width/height pair, clamping to a strictly positive minimum. */
-export function toCanonicalSize(width: number, height: number, minimum = 1): { readonly width: number; readonly height: number } {
+export function toCanonicalSize(
+  width: number,
+  height: number,
+  minimum = 1
+): { readonly width: number; readonly height: number } {
   return Object.freeze({
     width: Math.max(minimum, toCanonicalNumber(width, 'width')),
     height: Math.max(minimum, toCanonicalNumber(height, 'height'))
@@ -85,7 +91,9 @@ export function toCanonicalPoint(point: { readonly x: number; readonly y: number
 }
 
 /** Round a whole connection route. */
-export function toCanonicalRoute(points: readonly { readonly x: number; readonly y: number }[]): readonly ArisPoint[] {
+export function toCanonicalRoute(
+  points: readonly { readonly x: number; readonly y: number }[]
+): readonly ArisPoint[] {
   return Object.freeze(points.map((point) => toCanonicalPoint(point)))
 }
 

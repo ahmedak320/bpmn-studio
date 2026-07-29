@@ -101,7 +101,12 @@ describe('AssistantIndexCache — invalidate only changed models', () => {
     const m2 = buildSecondSyntheticModel()
     cache.update([m1, m2])
     cache.update([m1])
-    expect(cache.snapshot().map((d) => d.modelId).sort()).toEqual(['m1'])
+    expect(
+      cache
+        .snapshot()
+        .map((d) => d.modelId)
+        .sort()
+    ).toEqual(['m1'])
   })
 
   it('updateAssistantIndex applies mode filtering before caching', () => {

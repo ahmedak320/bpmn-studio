@@ -50,21 +50,35 @@ export interface ArisLayoutSeamGraph {
   readonly id: string
   readonly nodes: readonly ArisLayoutSeamNode[]
   readonly edges: readonly ArisLayoutSeamEdge[]
-  readonly lanes?: readonly { readonly id: string; readonly orientation: 'horizontal' | 'vertical' }[]
+  readonly lanes?: readonly {
+    readonly id: string
+    readonly orientation: 'horizontal' | 'vertical'
+  }[]
 }
 
 export interface ArisLayoutSeamResult {
   readonly nodes: readonly {
     readonly id: string
-    readonly rect: { readonly x: number; readonly y: number; readonly width: number; readonly height: number }
+    readonly rect: {
+      readonly x: number
+      readonly y: number
+      readonly width: number
+      readonly height: number
+    }
   }[]
-  readonly edges: readonly { readonly id: string; readonly points: readonly ArisLayoutSeamPoint[] }[]
+  readonly edges: readonly {
+    readonly id: string
+    readonly points: readonly ArisLayoutSeamPoint[]
+  }[]
 }
 
 export type ArisCleanLayoutEngine = (graph: ArisLayoutSeamGraph) => ArisLayoutSeamResult
 
 /** Project the active model into the layout lane's graph shape. */
-export function buildLayoutGraph(document: ArisWorkingDocument, model: ArisModel): ArisLayoutSeamGraph {
+export function buildLayoutGraph(
+  document: ArisWorkingDocument,
+  model: ArisModel
+): ArisLayoutSeamGraph {
   const definitions = document.objectDefinitions
   const connectionDefinitions = document.connectionDefinitions
 
@@ -122,7 +136,8 @@ export function buildLayoutGraph(document: ArisWorkingDocument, model: ArisModel
     lanes: Object.freeze(
       model.lanes.map((lane) => ({
         id: lane.id,
-        orientation: (lane.orientation === 'vertical' ? 'vertical' : 'horizontal') as 'horizontal' | 'vertical'
+        orientation: (lane.orientation === 'vertical' ? 'vertical' : 'horizontal') as
+          'horizontal' | 'vertical'
       }))
     )
   })

@@ -225,7 +225,8 @@ export function digestToContext(d: ArisProcessDigest, maxChars?: number): string
     lines.push(`Decision (${decision.gatewayType}): ${decision.name} -> ${outcomes}`)
   }
   for (const a of d.assignments) lines.push(`Assigned model: ${a.name} -> ${a.linkedModelId}`)
-  if (d.missingInformation.length) lines.push(`Missing information: ${d.missingInformation.length} issue(s)`)
+  if (d.missingInformation.length)
+    lines.push(`Missing information: ${d.missingInformation.length} issue(s)`)
 
   if (maxChars === undefined) return lines.join('\n')
 

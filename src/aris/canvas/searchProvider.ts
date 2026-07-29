@@ -50,7 +50,11 @@ export class ArisSearchProvider {
       if (businessObject.kind === 'occurrence') {
         items.push({ id: element.id, name: businessObject.name, type: businessObject.objectType })
       } else if (businessObject.kind === 'connection') {
-        items.push({ id: element.id, name: businessObject.name, type: businessObject.connectionType })
+        items.push({
+          id: element.id,
+          name: businessObject.name,
+          type: businessObject.connectionType
+        })
       } else if (businessObject.kind === 'freeText') {
         items.push({ id: element.id, name: businessObject.text, type: 'FREE_TEXT' })
       } else if (businessObject.kind === 'lane') {

@@ -117,7 +117,9 @@ export interface CreateArisDocumentOptions {
  * `createDate`/`createTime`/`userName` are deliberately `null`: canonical
  * revision payloads must contain no timestamp or machine identity.
  */
-export function createEmptyArisDocument(options: CreateArisDocumentOptions = {}): ArisWorkingDocument {
+export function createEmptyArisDocument(
+  options: CreateArisDocumentOptions = {}
+): ArisWorkingDocument {
   const database: ArisDatabase = Object.freeze({
     databaseName: options.databaseName ?? null,
     createDate: null,
@@ -141,12 +143,14 @@ export function createEmptyArisDocument(options: CreateArisDocumentOptions = {})
 /**
  * Convenience: a document holding exactly one empty model, ready to author.
  */
-export function createEmptyArisCanvasDocument(options: {
-  readonly modelId?: string
-  readonly modelType?: ArisSupportedModelType
-  readonly modelName?: string
-  readonly databaseName?: string | null
-} = {}): { readonly document: ArisWorkingDocument; readonly modelId: string } {
+export function createEmptyArisCanvasDocument(
+  options: {
+    readonly modelId?: string
+    readonly modelType?: ArisSupportedModelType
+    readonly modelName?: string
+    readonly databaseName?: string | null
+  } = {}
+): { readonly document: ArisWorkingDocument; readonly modelId: string } {
   const modelId = options.modelId ?? 'Model.1'
   const model = createEmptyArisModel({
     id: modelId,
@@ -154,7 +158,10 @@ export function createEmptyArisCanvasDocument(options: {
     name: options.modelName
   })
   return Object.freeze({
-    document: createEmptyArisDocument({ models: [model], databaseName: options.databaseName ?? null }),
+    document: createEmptyArisDocument({
+      models: [model],
+      databaseName: options.databaseName ?? null
+    }),
     modelId
   })
 }
@@ -165,7 +172,10 @@ export function createEmptyArisCanvasDocument(options: {
  * Document construction, not an edit — see the module header. Callers must do
  * this before the canvas takes ownership of the document.
  */
-export function withAdditionalModel(document: ArisWorkingDocument, model: ArisModel): ArisWorkingDocument {
+export function withAdditionalModel(
+  document: ArisWorkingDocument,
+  model: ArisModel
+): ArisWorkingDocument {
   const models = new Map(document.models)
   models.set(model.id, model)
   return Object.freeze({ ...document, models: Object.freeze(models) })

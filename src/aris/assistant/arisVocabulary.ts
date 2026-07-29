@@ -6,11 +6,19 @@
 // workspace can legitimately contain object types this table doesn't know
 // about yet.
 
+import { localeLang } from '../../library/amlParse'
+
 /** Control-flow node types: these become `ArisDigestStep` entries. */
 const STEP_OBJECT_TYPES = new Set(['OT_FUNC', 'OT_EVT', 'OT_RULE'])
 
 /** Person / role / org-unit types: these become `responsible` entries. */
-const PERSON_OBJECT_TYPES = new Set(['OT_PERS', 'OT_PERS_TYPE', 'OT_POS', 'OT_ORG_UNIT', 'OT_GROUP'])
+const PERSON_OBJECT_TYPES = new Set([
+  'OT_PERS',
+  'OT_PERS_TYPE',
+  'OT_POS',
+  'OT_ORG_UNIT',
+  'OT_GROUP'
+])
 
 /** Application/IT system types: these become `systems` entries. */
 const APPLICATION_SYSTEM_TYPES = new Set(['OT_APPL_SYS', 'OT_IT_SYSTEM_TYPE', 'OT_ITSYS_TYPE'])
@@ -59,24 +67,23 @@ export function gatewayTypeFromSymbol(symbol: string | null): 'XOR' | 'AND' | 'O
 }
 
 /**
- * Map a locale identifier to a supported UI language. Accepts both the raw
- * Windows LCID strings ARIS AML exports use (`"1033"` = English (US),
- * `"14337"` = Arabic (UAE), plus a few common regional variants) and
- * BCP-47-ish tags (`"en-US"`, `"ar-AE"`, …) some source layers normalize to.
- * Unrecognized identifiers resolve to `undefined` — the caller falls back to
- * `fallback` text rather than guessing a language.
+ * Map a locale identifier to a supported UI language. Accepts the raw Windows
+ * LCID strings ARIS AML exports use (`"1033"` = English (US), `"14337"` =
+ * Arabic (UAE), plus every regional variant), BCP-47-ish tags (`"en-US"`,
+ * `"ar-AE"`, …) some source layers normalize to, AND the RAW, unexpanded
+ * internal-DTD entity reference a real ARIS export actually puts in
+ * `LocaleId="…"` (`"&LocaleId.AEar;"` / `"&LocaleId.USen;"`) — the
+ * tokenizer/semantic-index layers only expand entities inside element text,
+ * never attribute values, so that sigil-wrapped reference (not the bare
+ * entity name and not the resolved numeric id) is what actually reaches this
+ * layer for imported content. Unrecognized identifiers resolve to
+ * `undefined` — the caller falls back to `fallback` text rather than
+ * guessing a language.
+ *
+ * Delegates to `localeLang` (`src/library/amlParse.ts`), the one shared
+ * classifier every locale-aware layer in this codebase should use, rather
+ * than maintaining a parallel implementation here.
  */
-const ARABIC_LCIDS = new Set(['1025', '2049', '3073', '4097', '5121', '6145', '14337', '15361'])
-const ENGLISH_LCIDS = new Set(['1033', '2057', '3081', '4105', '5129', '6153', '9225'])
-
 export function localeKeyToLang(localeId: string | null | undefined): 'en' | 'ar' | undefined {
-  if (!localeId) return undefined
-  const key = localeId.trim()
-  if (!key) return undefined
-  const lower = key.toLowerCase()
-  if (lower.startsWith('ar')) return 'ar'
-  if (lower.startsWith('en')) return 'en'
-  if (ARABIC_LCIDS.has(key)) return 'ar'
-  if (ENGLISH_LCIDS.has(key)) return 'en'
-  return undefined
+  return localeLang(localeId ?? undefined)
 }

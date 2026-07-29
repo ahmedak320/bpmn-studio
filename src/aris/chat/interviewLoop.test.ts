@@ -10,7 +10,12 @@ import type { ArisChatGap } from './gapScanner'
 import type { ArisChatWorkingDocument } from './types'
 
 const FIXED_GAPS: readonly ArisChatGap[] = Object.freeze([
-  { kind: 'missingOwner', severity: 'error', targetIds: ['X'], messageKey: 'aris.chat.gap.missingOwner' }
+  {
+    kind: 'missingOwner',
+    severity: 'error',
+    targetIds: ['X'],
+    messageKey: 'aris.chat.gap.missingOwner'
+  }
 ])
 
 /** A host whose gap list never resolves, so round-limit behavior is exercised deterministically. */
@@ -28,7 +33,12 @@ function noopProposal(round: number, baseRevision: number) {
         commandId: `noop-${round}`,
         kind: 'setLocalizedName',
         targetIds: ['OD_START'],
-        payload: { ownerKind: 'objectDefinition', ownerId: 'OD_START', localeId: 'en', value: `Request received v${round}` }
+        payload: {
+          ownerKind: 'objectDefinition',
+          ownerId: 'OD_START',
+          localeId: 'en',
+          value: `Request received v${round}`
+        }
       }
     ]
   }
@@ -45,10 +55,18 @@ describe('interview round limit (plan 18.2 step 13 / MAX_ROUNDS_PER_INTERVIEW)',
 
     for (let round = 1; round <= MAX_ROUNDS_PER_INTERVIEW; round += 1) {
       expect(state.status).toBe('awaitingAnswers')
-      state = advanceArisChatInterview(state, { type: 'answersSubmitted', answers: { [`q${round}`]: 'answer' } }, host)
+      state = advanceArisChatInterview(
+        state,
+        { type: 'answersSubmitted', answers: { [`q${round}`]: 'answer' } },
+        host
+      )
       expect(state.status).toBe('awaitingProposal')
 
-      state = advanceArisChatInterview(state, { type: 'proposalReceived', raw: noopProposal(round, state.document.revision) }, host)
+      state = advanceArisChatInterview(
+        state,
+        { type: 'proposalReceived', raw: noopProposal(round, state.document.revision) },
+        host
+      )
 
       if (round < MAX_ROUNDS_PER_INTERVIEW) {
         expect(state.status).toBe('awaitingAnswers')
@@ -76,7 +94,11 @@ describe('interview round limit (plan 18.2 step 13 / MAX_ROUNDS_PER_INTERVIEW)',
     expect(state.status).toBe('awaitingAnswers')
     state = advanceArisChatInterview(state, { type: 'answersSubmitted', answers: {} }, host)
     resolved = true
-    state = advanceArisChatInterview(state, { type: 'proposalReceived', raw: noopProposal(1, state.document.revision) }, host)
+    state = advanceArisChatInterview(
+      state,
+      { type: 'proposalReceived', raw: noopProposal(1, state.document.revision) },
+      host
+    )
 
     expect(state.status).toBe('clean')
     expect(state.round).toBe(1)
@@ -95,7 +117,11 @@ describe('target removed mid-session aborts cleanly (plan 18.2 step 13)', () => 
 
     let state = startArisChatInterview(document, host)
     state = advanceArisChatInterview(state, { type: 'answersSubmitted', answers: {} }, host)
-    state = advanceArisChatInterview(state, { type: 'proposalReceived', raw: noopProposal(1, state.document.revision) }, host)
+    state = advanceArisChatInterview(
+      state,
+      { type: 'proposalReceived', raw: noopProposal(1, state.document.revision) },
+      host
+    )
 
     expect(state.status).toBe('aborted')
     if (state.status !== 'aborted') return
@@ -130,7 +156,12 @@ describe('cancellation mid-round leaves no partial changes (plan 18.2)', () => {
           commandId: 'auto-1',
           kind: 'setLocalizedName',
           targetIds: ['OD_START'],
-          payload: { ownerKind: 'objectDefinition', ownerId: 'OD_START', localeId: 'en', value: 'Updated' }
+          payload: {
+            ownerKind: 'objectDefinition',
+            ownerId: 'OD_START',
+            localeId: 'en',
+            value: 'Updated'
+          }
         },
         {
           commandId: 'confirm-1',
@@ -177,7 +208,14 @@ describe('invalid AI patches make no changes (exit gate item 4, at the interview
     state = advanceArisChatInterview(state, { type: 'answersSubmitted', answers: {} }, host)
     const before = state.document
 
-    state = advanceArisChatInterview(state, { type: 'proposalReceived', raw: { version: 1, baseRevision: 0, commands: [{ kind: 'notARealCommand' }] } }, host)
+    state = advanceArisChatInterview(
+      state,
+      {
+        type: 'proposalReceived',
+        raw: { version: 1, baseRevision: 0, commands: [{ kind: 'notARealCommand' }] }
+      },
+      host
+    )
 
     expect(state.status).toBe('awaitingProposal')
     if (state.status !== 'awaitingProposal') return

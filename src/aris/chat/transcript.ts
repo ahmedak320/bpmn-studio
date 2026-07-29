@@ -47,7 +47,11 @@ export interface ArisChatReceiptEntryLike {
   readonly origin: 'ai-auto' | 'ai-confirmed'
 }
 
-export function buildProvenanceEntry(entry: ArisChatReceiptEntryLike, gapKinds: readonly string[], appliedAt: string): ArisChatProvenanceEntry {
+export function buildProvenanceEntry(
+  entry: ArisChatReceiptEntryLike,
+  gapKinds: readonly string[],
+  appliedAt: string
+): ArisChatProvenanceEntry {
   return Object.freeze({
     commandId: entry.commandId,
     kind: entry.kind,
@@ -80,7 +84,9 @@ export class ArisChatCredentialMaterialError extends Error {
   readonly location: string
 
   constructor(location: string, findings: readonly SecretFinding[]) {
-    super(`Credential-shaped content was rejected in "${location}" before it could leave the session.`)
+    super(
+      `Credential-shaped content was rejected in "${location}" before it could leave the session.`
+    )
     this.name = 'ArisChatCredentialMaterialError'
     this.location = location
     this.findings = Object.freeze([...findings])
@@ -97,7 +103,9 @@ function assertNoCredentialMaterial(location: string, text: string): void {
  * the user explicitly exports them"). Scans every message for credential-shaped content first
  * and throws rather than exporting if any is found.
  */
-export function exportTranscript(transcript: ArisChatSessionTranscript): readonly ArisChatTranscriptMessage[] {
+export function exportTranscript(
+  transcript: ArisChatSessionTranscript
+): readonly ArisChatTranscriptMessage[] {
   const messages = transcript.getAll()
   for (const message of messages) {
     assertNoCredentialMaterial(`transcript message ${message.id}`, message.text)

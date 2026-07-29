@@ -106,7 +106,12 @@ const CONNECTION_RULES: readonly ConnectionRule[] = Object.freeze([
   { modelType: 'MT_EEPC', from: 'OT_EVT', to: 'OT_RULE', connectionType: 'CT_IS_EVAL_BY_1' },
 
   // --- Value-added chain -------------------------------------------------
-  { modelType: 'MT_VAL_ADD_CHN_DGM', from: 'OT_FUNC', to: 'OT_FUNC', connectionType: 'CT_IS_PREDEC_OF_1' },
+  {
+    modelType: 'MT_VAL_ADD_CHN_DGM',
+    from: 'OT_FUNC',
+    to: 'OT_FUNC',
+    connectionType: 'CT_IS_PREDEC_OF_1'
+  },
 
   // --- Satellite assignments (model-type independent) --------------------
   { modelType: null, from: 'OT_PERS', to: 'OT_FUNC', connectionType: 'CT_EXEC_1' },
@@ -143,7 +148,8 @@ export function resolveConnectionType(
   toObjectType: string
 ): ResolvedConnectionType {
   const exact = CONNECTION_RULES.find(
-    (rule) => rule.modelType === modelType && rule.from === fromObjectType && rule.to === toObjectType
+    (rule) =>
+      rule.modelType === modelType && rule.from === fromObjectType && rule.to === toObjectType
   )
   if (exact) return Object.freeze({ connectionType: exact.connectionType, fallback: false })
 

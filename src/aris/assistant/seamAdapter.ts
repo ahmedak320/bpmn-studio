@@ -142,8 +142,8 @@ export function adaptArisWorkingDocument(
       }
     })
 
-    const connectionOccurrences: ArisAssistantConnectionOccurrenceInput[] = model.connectionOccurrences.map(
-      (c) => {
+    const connectionOccurrences: ArisAssistantConnectionOccurrenceInput[] =
+      model.connectionOccurrences.map((c) => {
         const def = doc.connectionDefinitions.get(c.definitionId)
         return {
           occurrenceId: c.id,
@@ -153,8 +153,7 @@ export function adaptArisWorkingDocument(
           targetOccurrenceId: c.targetOccurrenceId,
           names: resolveLocalized(def?.names)
         }
-      }
-    )
+      })
 
     out.push({
       relPath: relPathByModelId.get(model.id) ?? model.id,

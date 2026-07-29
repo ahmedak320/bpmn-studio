@@ -112,7 +112,10 @@ export class ArisAuthoring {
   /** Create a definition and its first occurrence in one undo step. */
   createObject(options: CreateObjectOptions): CreateObjectResult {
     if (!isSupportedObjectType(options.objectType)) {
-      throw new ArisCanvasCommandError('unsupported-object-type', `${options.objectType} is not authorable.`)
+      throw new ArisCanvasCommandError(
+        'unsupported-object-type',
+        `${options.objectType} is not authorable.`
+      )
     }
     const model = this.store.document.models.get(this.store.activeModelId)
     const modelType = model?.type ?? 'MT_EEPC'
@@ -141,7 +144,12 @@ export class ArisAuthoring {
           definitionId,
           modelId,
           symbolNum,
-          bounds: { x: options.position.x, y: options.position.y, width: size.width, height: size.height }
+          bounds: {
+            x: options.position.x,
+            y: options.position.y,
+            width: size.width,
+            height: size.height
+          }
         })
       ])
     )
@@ -149,7 +157,11 @@ export class ArisAuthoring {
   }
 
   /** Create an AND/OR/XOR rule with its native symbol. */
-  createRule(operator: ArisRuleOperator, position: { readonly x: number; readonly y: number }, name?: string): CreateObjectResult {
+  createRule(
+    operator: ArisRuleOperator,
+    position: { readonly x: number; readonly y: number },
+    name?: string
+  ): CreateObjectResult {
     return this.createObject({
       objectType: 'OT_RULE',
       symbolNum: ARIS_RULE_SYMBOLS[operator],
@@ -188,7 +200,12 @@ export class ArisAuthoring {
         definitionId,
         modelId,
         symbolNum: effectiveSymbol,
-        bounds: { x: options.position.x, y: options.position.y, width: size.width, height: size.height }
+        bounds: {
+          x: options.position.x,
+          y: options.position.y,
+          width: size.width,
+          height: size.height
+        }
       })
     )
     return occurrenceId
@@ -214,7 +231,14 @@ export class ArisAuthoring {
     values: readonly ArisAttributeValue[]
   ): void {
     this.bridge.execute('set-attribute', (document, context) =>
-      setAttributeCommand(context, document, 'objectDefinition', definitionId, attributeType, values)
+      setAttributeCommand(
+        context,
+        document,
+        'objectDefinition',
+        definitionId,
+        attributeType,
+        values
+      )
     )
   }
 
@@ -224,7 +248,10 @@ export class ArisAuthoring {
     )
   }
 
-  resizeOccurrence(occurrenceId: string, size: { readonly width: number; readonly height: number }): void {
+  resizeOccurrence(
+    occurrenceId: string,
+    size: { readonly width: number; readonly height: number }
+  ): void {
     this.bridge.execute('resize-occurrence', (document, context) =>
       resizeOccurrenceCommand(context, document, occurrenceId, size)
     )
@@ -265,24 +292,33 @@ export class ArisAuthoring {
     )
   }
 
-  reconnect(connectionOccurrenceId: string, sourceOccurrenceId: string, targetOccurrenceId: string): void {
+  reconnect(
+    connectionOccurrenceId: string,
+    sourceOccurrenceId: string,
+    targetOccurrenceId: string
+  ): void {
     const connection = this.elementRegistry.get(connectionOccurrenceId) as Connection | undefined
     const source = this.elementRegistry.get(sourceOccurrenceId) as Shape | undefined
     const target = this.elementRegistry.get(targetOccurrenceId) as Shape | undefined
     if (!connection || !source || !target) {
-      throw new ArisCanvasCommandError('missing-endpoint', 'Connection and both endpoints must be on the canvas.')
+      throw new ArisCanvasCommandError(
+        'missing-endpoint',
+        'Connection and both endpoints must be on the canvas.'
+      )
     }
     this.modeling.reconnect(connection, source, target)
   }
 
   // -- lanes and free text ---------------------------------------------------
 
-  addLane(options: {
-    readonly name?: string
-    readonly orientation?: 'horizontal' | 'vertical'
-    readonly startBorder?: number
-    readonly endBorder?: number
-  } = {}): string {
+  addLane(
+    options: {
+      readonly name?: string
+      readonly orientation?: 'horizontal' | 'vertical'
+      readonly startBorder?: number
+      readonly endBorder?: number
+    } = {}
+  ): string {
     const laneId = this.store.nextId('lane')
     const modelId = this.store.activeModelId
     this.bridge.execute('add-lane', (_document, context) =>
@@ -307,12 +343,19 @@ export class ArisAuthoring {
       readonly endBorder?: number
     }
   ): void {
-    this.bridge.execute('edit-lane', (document, context) => editLaneCommand(context, document, laneId, changes))
+    this.bridge.execute('edit-lane', (document, context) =>
+      editLaneCommand(context, document, laneId, changes)
+    )
   }
 
   addFreeText(options: {
     readonly text: string
-    readonly bounds: { readonly x: number; readonly y: number; readonly width: number; readonly height: number }
+    readonly bounds: {
+      readonly x: number
+      readonly y: number
+      readonly width: number
+      readonly height: number
+    }
     readonly localeId?: string
   }): string {
     const freeTextId = this.store.nextId('freeText')
@@ -333,7 +376,12 @@ export class ArisAuthoring {
     freeTextId: string,
     changes: {
       readonly text?: string
-      readonly bounds?: { readonly x: number; readonly y: number; readonly width: number; readonly height: number }
+      readonly bounds?: {
+        readonly x: number
+        readonly y: number
+        readonly width: number
+        readonly height: number
+      }
     }
   ): void {
     this.bridge.execute('edit-free-text', (document, context) =>
@@ -433,7 +481,10 @@ export class ArisAuthoring {
    */
   confirmDeleteDefinition(definitionId: string, options: { readonly confirmed: boolean }): void {
     if (!options.confirmed) {
-      throw new ArisCanvasCommandError('not-confirmed', 'Deleting a definition requires explicit confirmation.')
+      throw new ArisCanvasCommandError(
+        'not-confirmed',
+        'Deleting a definition requires explicit confirmation.'
+      )
     }
     const request = this.requestDeleteDefinition(definitionId)
     if (!request.deletable) {

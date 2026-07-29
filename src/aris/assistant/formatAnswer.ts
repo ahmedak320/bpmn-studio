@@ -24,7 +24,10 @@ function formatItem(lang: ArisAssistantLang, item: ArisAnswerListItem): ArisForm
   return item.chip ? { text, chip: item.chip } : { text }
 }
 
-export function formatAnswer(lang: ArisAssistantLang, answer: ArisAssistantAnswer): ArisFormattedAnswer {
+export function formatAnswer(
+  lang: ArisAssistantLang,
+  answer: ArisAssistantAnswer
+): ArisFormattedAnswer {
   const lines: ArisFormattedAnswerLine[] = []
   for (const part of answer.parts) {
     lines.push({ text: tAssistant(lang, part.messageKey, part.vars) })

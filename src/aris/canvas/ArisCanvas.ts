@@ -35,7 +35,12 @@ import { ArisPaletteProvider } from './paletteProvider'
 import { ArisSearchProvider } from './searchProvider'
 import { ArisSelectionHighlight, type ArisHighlightPlan } from './highlight'
 import { applyCleanLayout, type ArisCleanLayoutEngine } from './layoutSeam'
-import { ARIS_DIAGRAM_JS_MODULES, ArisCanvasModule, ArisMinimapModule, type DiagramModuleDeclaration } from './modules'
+import {
+  ARIS_DIAGRAM_JS_MODULES,
+  ArisCanvasModule,
+  ArisMinimapModule,
+  type DiagramModuleDeclaration
+} from './modules'
 import { createEmptyArisCanvasDocument } from './emptyDocument'
 import { isSupportedModelType } from './vocabulary'
 
@@ -227,7 +232,9 @@ export class ArisCanvas {
       return
     }
     const element =
-      typeof elementOrId === 'string' ? (this.elementRegistry.get(elementOrId) as Element | undefined) : elementOrId
+      typeof elementOrId === 'string'
+        ? (this.elementRegistry.get(elementOrId) as Element | undefined)
+        : elementOrId
     this.selection.select(element ?? [])
   }
 

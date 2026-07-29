@@ -1,16 +1,36 @@
 import { describe, expect, it } from 'vitest'
-import { ARIS_CHAT_COMMAND_KINDS, ArisPatchSchemaError, arisPatchCommandSchema, parseArisChatCommand, parseArisPatchProposal } from './patchSchema'
+import {
+  ARIS_CHAT_COMMAND_KINDS,
+  ArisPatchSchemaError,
+  arisPatchCommandSchema,
+  parseArisChatCommand,
+  parseArisPatchProposal
+} from './patchSchema'
 
 function validPayloadFor(kind: (typeof ARIS_CHAT_COMMAND_KINDS)[number]): unknown {
   switch (kind) {
     case 'setLocalizedName':
       return { ownerKind: 'objectDefinition', ownerId: 'D1', localeId: 'en', value: 'Name' }
     case 'setAttribute':
-      return { ownerKind: 'objectDefinition', ownerId: 'D1', attributeType: 'AT_DESC', values: [{ localeId: 'en', text: 'note' }] }
+      return {
+        ownerKind: 'objectDefinition',
+        ownerId: 'D1',
+        attributeType: 'AT_DESC',
+        values: [{ localeId: 'en', text: 'note' }]
+      }
     case 'addAttributeValue':
-      return { ownerKind: 'objectDefinition', ownerId: 'D1', attributeType: 'AT_DESC', value: { localeId: 'en', text: 'note' } }
+      return {
+        ownerKind: 'objectDefinition',
+        ownerId: 'D1',
+        attributeType: 'AT_DESC',
+        value: { localeId: 'en', text: 'note' }
+      }
     case 'addMetadataDefinition':
-      return { definitionId: 'D2', objectType: 'OT_APPL_SYS', names: { values: { en: 'System' }, fallback: 'System' } }
+      return {
+        definitionId: 'D2',
+        objectType: 'OT_APPL_SYS',
+        names: { values: { en: 'System' }, fallback: 'System' }
+      }
     case 'addMetadataOccurrence':
       return { occurrenceId: 'O2', definitionId: 'D2', modelId: 'M1', symbol: 'ST_APPL_SYS' }
     case 'addMetadataConnection':
@@ -47,7 +67,13 @@ function validPayloadFor(kind: (typeof ARIS_CHAT_COMMAND_KINDS)[number]): unknow
     case 'setAssignment':
       return { objectDefinitionId: 'D1', modelId: 'M2', action: 'add' }
     case 'setRoute':
-      return { connectionOccurrenceId: 'C1', route: [{ x: 0, y: 0 }, { x: 10, y: 10 }] }
+      return {
+        connectionOccurrenceId: 'C1',
+        route: [
+          { x: 0, y: 0 },
+          { x: 10, y: 10 }
+        ]
+      }
     case 'reconnect':
       return { connectionOccurrenceId: 'C1', targetOccurrenceId: 'O3' }
     case 'deleteConnection':
@@ -103,7 +129,11 @@ describe('arisPatchCommandSchema', () => {
       commandId: 'x',
       kind: 'addMetadataDefinition',
       targetIds: ['D1'],
-      payload: { definitionId: 'D9', objectType: 'OT_FUNC', names: { values: { en: 'Nope' }, fallback: 'Nope' } }
+      payload: {
+        definitionId: 'D9',
+        objectType: 'OT_FUNC',
+        names: { values: { en: 'Nope' }, fallback: 'Nope' }
+      }
     })
     expect(result.success).toBe(false)
   })
@@ -126,7 +156,9 @@ describe('arisPatchCommandSchema', () => {
   })
 
   it('parseArisChatCommand throws ArisPatchSchemaError with structured issues on failure', () => {
-    expect(() => parseArisChatCommand({ commandId: 'x', kind: 'notAThing', targetIds: [], payload: {} })).toThrow(ArisPatchSchemaError)
+    expect(() =>
+      parseArisChatCommand({ commandId: 'x', kind: 'notAThing', targetIds: [], payload: {} })
+    ).toThrow(ArisPatchSchemaError)
     try {
       parseArisChatCommand({ commandId: 'x', kind: 'notAThing', targetIds: [], payload: {} })
     } catch (error) {
@@ -147,15 +179,21 @@ describe('arisPatchProposalSchema / parseArisPatchProposal', () => {
   })
 
   it('rejects a proposal with zero commands', () => {
-    expect(() => parseArisPatchProposal({ version: 1, baseRevision: 0, commands: [] })).toThrow(ArisPatchSchemaError)
+    expect(() => parseArisPatchProposal({ version: 1, baseRevision: 0, commands: [] })).toThrow(
+      ArisPatchSchemaError
+    )
   })
 
   it('rejects a proposal with a negative baseRevision', () => {
-    expect(() => parseArisPatchProposal({ version: 1, baseRevision: -1, commands: [validCommand('setRoute')] })).toThrow(ArisPatchSchemaError)
+    expect(() =>
+      parseArisPatchProposal({ version: 1, baseRevision: -1, commands: [validCommand('setRoute')] })
+    ).toThrow(ArisPatchSchemaError)
   })
 
   it('rejects a proposal with the wrong version literal', () => {
-    expect(() => parseArisPatchProposal({ version: 2, baseRevision: 0, commands: [validCommand('setRoute')] })).toThrow(ArisPatchSchemaError)
+    expect(() =>
+      parseArisPatchProposal({ version: 2, baseRevision: 0, commands: [validCommand('setRoute')] })
+    ).toThrow(ArisPatchSchemaError)
   })
 
   it('rejects a completely malformed value (not even an object)', () => {
@@ -168,7 +206,10 @@ describe('arisPatchProposalSchema / parseArisPatchProposal', () => {
     const proposal = {
       version: 1,
       baseRevision: 0,
-      commands: [validCommand('setRoute'), { commandId: 'bad', kind: 'notACommand', targetIds: ['x'], payload: {} }]
+      commands: [
+        validCommand('setRoute'),
+        { commandId: 'bad', kind: 'notACommand', targetIds: ['x'], payload: {} }
+      ]
     }
     expect(() => parseArisPatchProposal(proposal)).toThrow(ArisPatchSchemaError)
   })

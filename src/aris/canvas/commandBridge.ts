@@ -119,8 +119,13 @@ export class ArisCommandBridge {
    *   document state each command will actually see.
    * @returns the concrete commands that were recorded.
    */
-  execute(label: string, thunks: ArisCommandThunk | readonly ArisCommandThunk[]): readonly ArisEditCommand[] {
-    const list = Array.isArray(thunks) ? (thunks as readonly ArisCommandThunk[]) : [thunks as ArisCommandThunk]
+  execute(
+    label: string,
+    thunks: ArisCommandThunk | readonly ArisCommandThunk[]
+  ): readonly ArisEditCommand[] {
+    const list = Array.isArray(thunks)
+      ? (thunks as readonly ArisCommandThunk[])
+      : [thunks as ArisCommandThunk]
     const planned = this.plan(label, list)
     if (planned.commands.length === 0) return planned.commands
     const context: ArisGestureContext = { label: planned.label, commands: planned.commands }
@@ -134,7 +139,11 @@ export class ArisCommandBridge {
       return this.store.plan(label, thunks)
     } catch (error) {
       if (error instanceof ArisCommandError) {
-        throw new ArisCanvasCommandError(error.code, `Gesture "${label}" rejected: ${error.message}`, error)
+        throw new ArisCanvasCommandError(
+          error.code,
+          `Gesture "${label}" rejected: ${error.message}`,
+          error
+        )
       }
       throw new ArisCanvasCommandError(
         'gesture-rejected',

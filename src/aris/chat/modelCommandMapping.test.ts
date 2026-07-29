@@ -10,7 +10,9 @@ describe('PATCH_TO_MODEL_COMMAND_MAPPING', () => {
   })
 
   it('flags removeAttachment as having no model-layer equivalent today', () => {
-    const entry = PATCH_TO_MODEL_COMMAND_MAPPING.find((e) => e.chatCommandKind === 'removeAttachment')
+    const entry = PATCH_TO_MODEL_COMMAND_MAPPING.find(
+      (e) => e.chatCommandKind === 'removeAttachment'
+    )
     expect(entry?.modelCommandKinds).toEqual([])
   })
 

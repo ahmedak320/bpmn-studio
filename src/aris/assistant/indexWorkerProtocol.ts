@@ -7,5 +7,9 @@ export interface IndexBuilderWorkerRequest {
 }
 
 export type IndexBuilderWorkerResponse =
-  | { readonly type: 'result'; readonly requestId: string; readonly digests: readonly ArisProcessDigest[] }
+  | {
+      readonly type: 'result'
+      readonly requestId: string
+      readonly digests: readonly ArisProcessDigest[]
+    }
   | { readonly type: 'error'; readonly requestId: string; readonly message: string }

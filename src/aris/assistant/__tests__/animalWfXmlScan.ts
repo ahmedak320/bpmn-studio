@@ -10,7 +10,11 @@
 
 import { readFileSync } from 'node:fs'
 
-import type { ArisAssistantAttribute, ArisAssistantLocalizedText, ArisAssistantModelInput } from '../types'
+import type {
+  ArisAssistantAttribute,
+  ArisAssistantLocalizedText,
+  ArisAssistantModelInput
+} from '../types'
 
 interface ScannedObjectDefinition {
   readonly typeNum: string
@@ -45,7 +49,9 @@ function textFromAttrValueBody(body: string): string {
 
 /** Resolve the first `<AttrDef AttrDef.Type="…">…</AttrDef>` of `attrType` inside `body` to bilingual text. */
 function resolveAttrDefText(body: string, attrType: string): ArisAssistantLocalizedText {
-  const blockMatch = new RegExp(`<AttrDef AttrDef\\.Type="${attrType}">([\\s\\S]*?)<\\/AttrDef>`).exec(body)
+  const blockMatch = new RegExp(
+    `<AttrDef AttrDef\\.Type="${attrType}">([\\s\\S]*?)<\\/AttrDef>`
+  ).exec(body)
   const out: { en: string | null; ar: string | null } = { en: null, ar: null }
   if (blockMatch) {
     const valueRe = /<AttrValue LocaleId="([^"]*)">([\s\S]*?)<\/AttrValue>/g
@@ -139,7 +145,8 @@ export function scanAnimalWfModels(filePath: string): ArisAssistantModelInput[] 
         linkedModelIds: []
       })
 
-      const cxnOccRe = /<CxnOcc CxnOcc\.ID="([^"]+)"\s+CxnDef\.IdRef="([^"]+)"\s+ToObjOcc\.IdRef="([^"]+)"/g
+      const cxnOccRe =
+        /<CxnOcc CxnOcc\.ID="([^"]+)"\s+CxnDef\.IdRef="([^"]+)"\s+ToObjOcc\.IdRef="([^"]+)"/g
       let cxnMatch: RegExpExecArray | null
       while ((cxnMatch = cxnOccRe.exec(occBody))) {
         const [, cxnOccId, cxnDefId, targetOccId] = cxnMatch

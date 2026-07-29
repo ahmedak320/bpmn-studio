@@ -65,7 +65,11 @@ describe('buildDigest — synthetic bilingual ARIS model', () => {
 
     const rule1 = digest.steps.find((s) => s.occurrenceId === 'occ-rule1')
     expect(rule1?.next).toEqual([
-      { targetOccurrenceId: 'occ-evt-approved', relationType: 'CT_LEADS_TO_1', outcome: 'Approved' },
+      {
+        targetOccurrenceId: 'occ-evt-approved',
+        relationType: 'CT_LEADS_TO_1',
+        outcome: 'Approved'
+      },
       { targetOccurrenceId: 'occ-evt-rejected', relationType: 'CT_LEADS_TO_2', outcome: 'Rejected' }
     ])
   })
@@ -114,14 +118,18 @@ describe('buildDigest — synthetic bilingual ARIS model', () => {
       expect.objectContaining({ kind: 'missingNameEn', occurrenceId: 'occ-fn-return' })
     )
     // fn1 is fully described (responsible/inputs/outputs/systems all present).
-    expect(
-      digest.missingInformation.some((g) => g.occurrenceId === 'occ-fn1')
-    ).toBe(false)
+    expect(digest.missingInformation.some((g) => g.occurrenceId === 'occ-fn1')).toBe(false)
     // fn2/fn-return/escalate each have no recorded inputs/outputs/systems.
     for (const occurrenceId of ['occ-fn2', 'occ-fn-return', 'occ-escalate']) {
-      expect(digest.missingInformation).toContainEqual(expect.objectContaining({ kind: 'missingInputs', occurrenceId }))
-      expect(digest.missingInformation).toContainEqual(expect.objectContaining({ kind: 'missingOutputs', occurrenceId }))
-      expect(digest.missingInformation).toContainEqual(expect.objectContaining({ kind: 'missingSystem', occurrenceId }))
+      expect(digest.missingInformation).toContainEqual(
+        expect.objectContaining({ kind: 'missingInputs', occurrenceId })
+      )
+      expect(digest.missingInformation).toContainEqual(
+        expect.objectContaining({ kind: 'missingOutputs', occurrenceId })
+      )
+      expect(digest.missingInformation).toContainEqual(
+        expect.objectContaining({ kind: 'missingSystem', occurrenceId })
+      )
     }
     // The XOR gateway has an explicit basis and explicitly labeled outcomes — no gap.
     expect(kinds).not.toContain('missingDecisionBasis')

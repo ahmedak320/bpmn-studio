@@ -35,7 +35,10 @@ export class ArisContextPadProvider {
   ) {
     // `ContextPad`'s provider type is generic over the element type; our
     // provider accepts every ARIS element, which the declaration cannot express.
-    contextPad.registerProvider(1000, this as unknown as Parameters<ContextPad['registerProvider']>[1])
+    contextPad.registerProvider(
+      1000,
+      this as unknown as Parameters<ContextPad['registerProvider']>[1]
+    )
   }
 
   getContextPadEntries(element: Element): Record<string, ArisContextPadEntry> {
