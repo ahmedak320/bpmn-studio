@@ -45,8 +45,8 @@ quarantine, or known flake.
   translation request containing process content.
 - Do not persist plaintext API keys or add an external host without updating
   the exact CSP and its negative tests.
-- Keep release assets to the seven-file allowlist in
-  [docs/RELEASE_EVIDENCE.md](docs/RELEASE_EVIDENCE.md).
+- Keep release assets minimal; the canonical artifact is the single portable
+  `release/OrbitPM-ARIS-Studio-Lite.html`.
 
 ## Evidence and documentation
 

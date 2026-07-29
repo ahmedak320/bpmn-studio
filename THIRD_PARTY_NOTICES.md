@@ -26,4 +26,4 @@ Release assembly also creates
 `OrbitPM-Process-Studio-Lite-0.4.5.cyclonedx.json` in CycloneDX 1.6 format and
 records every release-asset digest in `SHA256SUMS.txt`. Those files are
 authoritative only after they are generated and verified from the exact tagged
-commit. See [docs/RELEASE_EVIDENCE.md](docs/RELEASE_EVIDENCE.md).
+commit.

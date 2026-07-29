@@ -83,5 +83,5 @@ an independent backup.
 
 Security claims for a release come from the exact tagged commit, not from this
 document. The required scans, audits, CSP checks, malformed-input tests,
-license report, SBOM, checksums, and pending human checks are indexed in
-[docs/RELEASE_EVIDENCE.md](docs/RELEASE_EVIDENCE.md).
+license report, SBOM, checksums, and pending human checks are produced by the
+release workflows and recorded against that commit.

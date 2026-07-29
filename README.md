@@ -1,144 +1,137 @@
-# OrbitPM Process Studio Lite
+# OrbitPM ARIS Studio Lite
 
-OrbitPM Process Studio Lite is a bilingual, browser-based BPMN 2.0 editor. It
-runs from one self-contained HTML file, works offline for ordinary authoring,
-and stores processes as portable `.bpmn` XML.
+OrbitPM ARIS Studio Lite is a bilingual (English/Arabic), browser-based studio
+for ARIS process models. It imports ARIS AML exports (`.aml`, `.apc`, `.xml`),
+keeps the imported bytes immutable, edits through working revisions on a native
+ARIS canvas, and runs from a single self-contained HTML file — including from
+`file://`, with no server, backend, or installer.
 
-Version 0.4.5 is currently a release candidate. It is not the published stable
-release until the final commit, tag, release assets, and GitHub Pages deployment
-have passed the checklist in [docs/RELEASE_EVIDENCE.md](docs/RELEASE_EVIDENCE.md).
-The hosted application remains at
-[ahmedak320.github.io/bpmn-studio](https://ahmedak320.github.io/bpmn-studio/);
-check its visible version before using it as 0.4.5.
+This branch (`feat/aris-only-studio`) is an in-flight transformation of the
+earlier BPMN product into an ARIS-native one. It is **not** a finished release.
+Read the status section before relying on it.
 
-## What 0.4.5 Lite provides
+## What it does
 
-- English and Arabic application chrome, BPMN labels, metadata, and exports.
-- Script-aware bilingual auditing with separate commands for switching stored
-  diagram language and filling missing or invalid translations.
-- Directory workspaces through the File System Access API, browser-private OPFS
-  workspaces where supported, and an explicit single-file open/download mode.
-- Portable workspace ZIP backups and bounded history for directory and OPFS
-  workspaces.
-- Application-owned document sessions with active-tab-only saving, dirty-exit
-  protection, local recovery drafts, reviewed external-change choices, and
-  transactional rename, move, and delete operations.
-- Versioned public workspace manifests plus editable glossary and accepted
-  translation-memory files in directory and OPFS workspaces.
-- Layered BPMN validation, a validation center, safe source preview/apply, and
-  deterministic PNG, SVG, and PDF export.
-- Deterministic, offline `.xlsx` and UTF-8 `.csv` process generation, including
-  official templates and a mapping workflow for ordinary spreadsheets.
-- A keyboard-oriented process outline alongside the graphical BPMN canvas.
-- Optional browser-direct AI through OpenRouter, Anthropic, or Google Gemini.
-  Process-content requests require a review and explicit consent.
+- **Lossless AML input.** Imported source is preserved byte-for-byte and is
+  never overwritten by editing. Edits are applied as working revisions, and
+  export produces a separate derived document (`name.derived.aml`).
+- **Source accounting.** Every record in an import is accounted for: mapped,
+  preserved-but-unmapped, or reported. Unknown content is retained and
+  surfaced in a fidelity report rather than silently dropped.
+- **Native ARIS canvas.** Rendering and authoring are built directly on
+  `diagram-js`. There is no BPMN canvas, BPMN conversion, or BPMN projection on
+  this branch; `npm run check:aris-runtime-boundary` enforces that boundary in
+  CI and locally.
+- **EPC semantics.** Events, functions, connectors/rules, lanes, return paths,
+  and a clean-layout mode that can be toggled against the source geometry.
+- **Details, accounting, and EPC rails** for object metadata, attachments, and
+  model findings.
+- **Create from an ARIS-native Excel template**, offline and deterministic.
+- **Optional browser-direct AI (bring your own key).** Creation from a typed
+  description or a reviewed document, a folder-aware process assistant with a
+  deterministic no-key path, and chat-based improvement/completion. Every
+  request that contains process content requires an explicit reviewed consent.
+- **English and Arabic** interface, including RTL layout.
+- **Storage modes**: directory workspace (File System Access API), browser
+  workspace (OPFS) where available, and an explicit single-file open/download
+  mode.
 
-AI is not required for editing, validation, workspace management, or
-spreadsheet generation.
+### ARIS AML export is Experimental
 
-## Start using it
+The derived AML export is labelled **Experimental ARIS AML export** in the UI
+and stays that way until a real ARIS installation has imported and re-exported
+a produced file. No claim of stable ARIS compatibility is made until that gate
+passes. Treat every export as unverified against ARIS.
 
-1. Open the hosted application, or after 0.4.5 is published download
-   `OrbitPM-Process-Studio-Lite-0.4.5.html`.
-2. Choose a storage mode:
-   - **Folder workspace** in browsers that expose the File System Access API,
-     principally Chrome and Edge.
-   - **Browser workspace** when OPFS is available. Export backups regularly
-     because browser storage durability depends on browser and device policy.
-   - **Single file** for a minimal open, edit, and download workflow.
-3. Create or open a `.bpmn` process.
-4. Save from the header or with Ctrl/Cmd+S.
-5. Use the diagram language command to project an already valid English or
-   Arabic value. If a counterpart is incomplete, review it before choosing any
-   external translation service.
+## Status
 
-For an Arabic quick start, see
+The authoritative plan is [aris_transformation.md](aris_transformation.md); the
+audited, per-phase state is
+[docs/ARIS_PHASE_CHECKLIST.md](docs/ARIS_PHASE_CHECKLIST.md). Summarised, as of
+that checklist:
+
+- Most phases are either **Exit gate met** or **Module complete,
+  unit-verified** (module tests pass and the code is wired into the shell, but
+  at least one exit-gate bullet is not yet demonstrated end to end).
+- **Phase 17** (live ARIS import/re-export, golden visual pair) is **blocked on
+  user-supplied artifacts** — this is what keeps the export Experimental.
+- **Phase 18** (release-quality browser matrix, performance gates,
+  publication) has **not started**.
+- The plan's "stable definition of done" is **not met**.
+- Known drift: `package.json` still carries version `0.4.5` from the previous
+  product, while the plan targets `0.1.0-alpha.1`.
+
+Supporting evidence documents:
+[Phase 0 baseline](docs/ARIS_PHASE0_BASELINE_2026-07-28.md),
+[Phase 1 characterization](docs/ARIS_PHASE1_CHARACTERIZATION.md),
+[Phase 2 runtime inventory](docs/ARIS_PHASE2_RUNTIME_INVENTORY.md),
+[Phase 3 input layer](docs/ARIS_PHASE3_INPUT_LAYER.md),
+[Phases 4–15 modules](docs/ARIS_PHASE4_TO_15_MODULES.md).
+
+The previous product, OrbitPM Process Studio Lite (a BPMN 2.0 editor, v0.4.5),
+is preserved on the `main` branch. The GitHub Pages workflow publishes only
+approved, tagged Lite releases; this branch is not deployed anywhere.
+
+## Run it
+
+Build the canonical artifact and open it directly:
+
+```bash
+npm ci
+npm run build:aris     # vite build + refresh release/OrbitPM-ARIS-Studio-Lite.html
+```
+
+Then open `release/OrbitPM-ARIS-Studio-Lite.html` in a modern browser — double
+clicking it (`file://`) is a supported path. For a live dev server, use
+`npm run dev`.
+
+Import a `.aml`, `.apc`, or `.xml` ARIS export, review the import summary, then
+edit. Save writes to the selected workspace; the imported original is left
+untouched. An Arabic quick start is in
 [docs/QUICKSTART.ar.md](docs/QUICKSTART.ar.md).
 
 ## Privacy in one minute
 
-- Ordinary BPMN editing and Excel/CSV generation are local.
-- No telemetry is included.
-- API keys remain in memory by default. Optional persistence encrypts a key
-  with AES-GCM using a passphrase that the application does not store.
-- Workspace context is excluded from AI requests by default. A request review
-  shows the provider/model, included text or attachment, relevant workspace
-  context, sensitivity indicators, and estimated requests before consent.
-- Free translation uses Google Translate or MyMemory only after the translation
-  review and consent flow. Their terms and data practices apply.
-- Browser-private credentials and preferences are not included in workspace
-  backups. Public workspace history is included.
+- Import, editing, accounting, export, and Excel creation are local.
+- There is no telemetry, account system, or application backend.
+- API keys stay in page memory by default; optional persistence encrypts them
+  with a passphrase the application does not store.
+- External AI and translation calls happen only after a review screen shows the
+  provider, model, and payload, and the user consents.
 
 Read [docs/PRIVACY.md](docs/PRIVACY.md) and
-[docs/AI_AND_COSTS.md](docs/AI_AND_COSTS.md) before enabling an external
-provider.
-
-## Important limitations
-
-Recovery drafts are browser-private and are not a substitute for saving or
-exporting a backup. They normally use IndexedDB; if durable browser storage is
-unavailable, the App warns that its in-memory fallback will not survive a
-reload. Cross-tab leases are advisory, with expected-hash writes as the final
-conflict guard.
-
-Single-file mode is intentionally minimal; multi-file backup, portable history,
-workspace manifests, and workspace glossary/TM editing are for directory and
-OPFS workspaces. The final browser/version matrix, manual NVDA and VoiceOver
-verification, Arabic screen-reader review, and required uninterrupted 48-hour
-soak have not been completed. No final browser-support or WCAG conformance claim
-is made for this candidate.
-
-See [docs/SUPPORT_AND_LIMITATIONS.md](docs/SUPPORT_AND_LIMITATIONS.md) for the
-full support boundary.
+[docs/AI_AND_COSTS.md](docs/AI_AND_COSTS.md) before enabling any provider.
 
 ## Development
 
-Use Node.js 22 and npm 11. The complete automated candidate checks are defined
-in `.github/workflows/quality.yml`; common local checks are:
+Use Node.js 22 and npm 11. `package.json` is the authoritative command list;
+the commonly used ones are:
 
 ```bash
-npm ci
-npm run format:check
-npm run check:actions
-npm run check:lock
-npm run check:lite-only
-npm run check:no-skips
-npm run check:csp
 npm run typecheck
 npm run lint
+npm run format:check
+npm run check:aris-runtime-boundary   # no BPMN in the production graph
+npm run check:ui-copy                 # no hardcoded UI strings
+npm run check:no-skips                # no skipped/quarantined tests
+npm run test                          # vitest, full unit/integration suite
 npm run test:coverage
-npm run test:validation
-npm run test:archives
-npm run test:performance
-npm run clean:dist
-npm run build
-npm run check:size
-npm run test:e2e:built
+npm run build:aris
+npm run check:aris-studio-artifact    # tracked artifact matches the build
 ```
 
-The production build must contain exactly `dist/index.html`. Release assembly
-renames that byte-identical file to
-`OrbitPM-Process-Studio-Lite-0.4.5.html` and adds only the allowlisted templates,
-checksums, SBOM, license, and generated third-party notices.
+ARIS-specific suites: `test:aris:phase1`, `test:aris:phase2`,
+`test:aris:animalwf`, `test:aris:golden`, `test:aris:file-smoke`. Additional
+repository gates (`check:actions`, `check:lock`, `check:csp`, `check:size`,
+`license:check`, `sbom`) are unchanged from the previous product.
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) for contribution requirements and
-[CHANGELOG.md](CHANGELOG.md) for the 0.4.5 release notes.
+Regenerate `release/OrbitPM-ARIS-Studio-Lite.html` with `npm run build:aris`
+for every product-code change; the tracked copy must match the build.
 
-## Lite-only product policy and migration
-
-The active repository, CI, Pages site, documentation, and 0.4.5 release are for
-the browser application only. Native shells, installers, updaters, servers, and
-bridges are not supported 0.4.5 products.
-
-The immutable 0.4.4 full-product source remains available on the
-[`archive/full-product-v0.4.4`](https://github.com/ahmedak320/bpmn-studio/tree/archive/full-product-v0.4.4)
-branch and the annotated `archive-full-product-v0.4.4` tag. See
-[docs/MIGRATION_0.4.5.md](docs/MIGRATION_0.4.5.md) and
-[docs/archive/0.4.4.md](docs/archive/0.4.4.md).
+See [CONTRIBUTING.md](CONTRIBUTING.md) for contribution rules and
+[SECURITY.md](SECURITY.md) for the security policy and reporting process.
 
 ## License
 
-OrbitPM Process Studio Lite is released under the [MIT License](LICENSE).
-Retained component attribution is summarized in
-[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md); the exact release asset
-contains the lockfile-derived dependency inventory and license texts.
+MIT — see [LICENSE](LICENSE). Component attribution is summarised in
+[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
