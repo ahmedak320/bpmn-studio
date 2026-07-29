@@ -109,9 +109,12 @@ function statusText(): string {
 }
 
 function selectProvider(id: string): void {
-  fireEvent.change(panel().querySelector<HTMLSelectElement>('[data-orbitpm-aris-create-provider]')!, {
-    target: { value: id }
-  })
+  fireEvent.change(
+    panel().querySelector<HTMLSelectElement>('[data-orbitpm-aris-create-provider]')!,
+    {
+      target: { value: id }
+    }
+  )
 }
 
 /**
@@ -141,9 +144,12 @@ describe('§16.3/§16.6 — a PDF attached through the PDF/Picture tab drives a 
       panel().querySelector('[data-orbitpm-aris-create-attachment-notice]')?.textContent
     ).toContain('renewal-spec.pdf')
 
-    fireEvent.change(panel().querySelector<HTMLTextAreaElement>('[data-orbitpm-aris-create-hint]')!, {
-      target: { value: 'Model only the renewal sub-process, ignore the appendix on page 9.' }
-    })
+    fireEvent.change(
+      panel().querySelector<HTMLTextAreaElement>('[data-orbitpm-aris-create-hint]')!,
+      {
+        target: { value: 'Model only the renewal sub-process, ignore the appendix on page 9.' }
+      }
+    )
 
     consentAndSubmit()
     await waitFor(() => expect(harness.created.length).toBe(1))

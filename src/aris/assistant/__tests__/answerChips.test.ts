@@ -22,7 +22,13 @@ if (!m1 || !m2) throw new Error('fixture digests missing')
 
 function expectChip(
   chip: unknown,
-  expected: { relPath: string; modelId: string; modelName: string; occurrenceId?: string; definitionId?: string }
+  expected: {
+    relPath: string
+    modelId: string
+    modelName: string
+    occurrenceId?: string
+    definitionId?: string
+  }
 ): void {
   expect(chip).toMatchObject(expected)
 }
