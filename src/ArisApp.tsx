@@ -1318,6 +1318,7 @@ export default function ArisApp(): JSX.Element {
                           sourceKind={tab.sourceKind}
                           localizationResources={localizationResources}
                           onAcceptedTranslationPair={handleAcceptedTranslationPair}
+                          onOpenInterview={handleContinueInChat}
                           lang={lang}
                           sourceFacts={sourceFactsFor(tab)}
                           sourceText={tab.content}

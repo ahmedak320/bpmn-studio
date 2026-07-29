@@ -29,7 +29,15 @@ import type { Key } from '../../i18n'
 import { ArisAccountingRail } from './ArisAccountingRail'
 import type { ArisTabChatHost } from './arisChatDrawerTypes'
 import { ArisEpcRail } from './ArisEpcRail'
-import { applyArisChatCommandsAsGesture } from './arisChatHost'
+import {
+  applyArisChatCommandsAsGesture,
+  createArisChatApplyHost,
+  scanArisGaps
+} from './arisChatHost'
+import { buildConfirmationPreview } from '../chat/applyEngine'
+import { buildDeterministicFixPlan, type ArisFixConfirmProposal } from '../chat/deterministicFixes'
+import { detectLocaleIds } from './arisChatProposal'
+import { ArisFixMissingDialog, type ArisFixPreviewRows } from './ArisFixMissingDialog'
 import { derivedAmlFileName, exportArisDerivedAml } from './arisDerivedExport'
 import {
   buildArisEpcFindings,
@@ -101,6 +109,8 @@ export interface ArisStudioTabProps {
   readonly localizationResources?: LocalizationResources | null
   /** Persist an accepted bilingual pair to the workspace translation memory. */
   readonly onAcceptedTranslationPair?: (pair: { en: string; ar: string }) => void
+  /** Route the fix dialog's Tier-C gaps into the chat drawer's interview tab (plan §18). */
+  readonly onOpenInterview?: () => void
 }
 
 const EMPTY_HISTORY: ArisCanvasHistoryState = Object.freeze({
@@ -153,7 +163,8 @@ export function ArisStudioTab({
   onChatHostChange,
   sourceKind,
   localizationResources = null,
-  onAcceptedTranslationPair
+  onAcceptedTranslationPair,
+  onOpenInterview
 }: ArisStudioTabProps): JSX.Element {
   const canvasRef = useRef<ArisCanvas | null>(null)
   const [selection, setSelection] = useState<ArisCanvasSelectionState>(EMPTY_SELECTION)
@@ -168,6 +179,7 @@ export function ArisStudioTab({
   // translate controller re-run against the live canvas.
   const [canvasTick, setCanvasTick] = useState(0)
   const translateRef = useRef<ArisTranslateControllerHandle | null>(null)
+  const [fixDialogOpen, setFixDialogOpen] = useState(false)
 
   const renderableModelId = useMemo(() => {
     if (modelId && studio.models.some((model) => model.id === modelId && model.renderable)) {
@@ -409,6 +421,82 @@ export function ArisStudioTab({
     []
   )
 
+  // --- plan §18: "N issues — Fix…" badge + three-tier deterministic fix plan ----
+  const gaps = useMemo(() => scanArisGaps(liveDocument), [liveDocument])
+  const fixLocales = useMemo(() => detectLocaleIds(liveDocument), [liveDocument])
+  const fixPlan = useMemo(
+    () => buildDeterministicFixPlan(liveDocument, gaps, fixLocales),
+    [liveDocument, gaps, fixLocales]
+  )
+
+  const handleFixAutoFix = useCallback(() => {
+    // Tier A hands the counterpart-language fills to the translate controller's review/fill path,
+    // which is itself the outbound-consent surface for any provider run.
+    setFixDialogOpen(false)
+    translateRef.current?.openReview()
+  }, [])
+
+  const handleFixApplySelected = useCallback(
+    (commands: readonly ArisChatCommand[]) => {
+      const canvas = canvasRef.current
+      if (!canvas || commands.length === 0) return
+      const applied = applyArisChatCommandsAsGesture(
+        canvas,
+        commands,
+        tk('aris.fix.gestureLabel', 'Fix missing components')
+      )
+      if (!applied) {
+        onToast(
+          tk('aris.chat.commitFailed', 'The canvas rejected the change; nothing was applied.'),
+          'error'
+        )
+        return
+      }
+      onToast(
+        tk('aris.fix.applied', 'Applied {count} fixes as one undoable step.', {
+          count: commands.length
+        }),
+        'success'
+      )
+      // The rescan is automatic: the gesture updates the live document, which re-derives `gaps`.
+    },
+    [onToast]
+  )
+
+  const handleFixOpenInterview = useCallback(() => {
+    setFixDialogOpen(false)
+    onOpenInterview?.()
+  }, [onOpenInterview])
+
+  const buildFixPreview = useCallback(
+    (proposal: ArisFixConfirmProposal): ArisFixPreviewRows | null => {
+      try {
+        const host = createArisChatApplyHost()
+        const outcome = buildConfirmationPreview(
+          liveDocument,
+          proposal.commands,
+          host,
+          (previewDocument, ids) =>
+            ids.map((id) => {
+              const model = previewDocument.models.get(id)
+              if (model) return `${id} · ${model.names.fallback ?? id}`
+              const definition = previewDocument.objectDefinitions.get(id)
+              if (definition) return `${id} · ${definition.names.fallback ?? definition.type}`
+              return id
+            })
+        )
+        if (!outcome.ok) return null
+        return {
+          before: (outcome.preview.before as string[] | null) ?? [],
+          after: (outcome.preview.after as string[] | null) ?? []
+        }
+      } catch {
+        return null
+      }
+    },
+    [liveDocument]
+  )
+
   // --- plan §18.2: chat drawer host surface ------------------------------------
   const chatHost = useMemo<ArisTabChatHost>(
     () => ({
@@ -618,6 +706,16 @@ export function ArisStudioTab({
               })}
             </span>
           )}
+          {gaps.length > 0 && (
+            <button
+              type="button"
+              className="orbitpm-lite-chrome-btn"
+              data-orbitpm-aris-fix-issues={gaps.length}
+              onClick={() => setFixDialogOpen(true)}
+            >
+              {tk('aris.fix.badge', '{count} issues — Fix…', { count: gaps.length })}
+            </button>
+          )}
           <span
             data-orbitpm-aris-layout-mode={layoutMode}
             style={{
@@ -802,6 +900,18 @@ export function ArisStudioTab({
         resources={localizationResources}
         onAcceptedPair={onAcceptedTranslationPair}
         onToast={onToast}
+      />
+
+      <ArisFixMissingDialog
+        open={fixDialogOpen}
+        document={liveDocument}
+        plan={fixPlan}
+        busy={false}
+        onAutoFix={handleFixAutoFix}
+        onApplySelected={handleFixApplySelected}
+        onOpenInterview={handleFixOpenInterview}
+        onClose={() => setFixDialogOpen(false)}
+        buildPreview={buildFixPreview}
       />
     </section>
   )
