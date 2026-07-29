@@ -71,9 +71,23 @@ const steps = [
     ]
   },
   {
-    label: 'single-file file:// smoke',
+    // `scripts/file-smoke.mjs` is the pre-ARIS smoke test: it waits for the heading
+    // "OrbitPM Process Studio Lite", drives the bpmn-js "New blank diagram" flow, and asserts
+    // the bpmn.io "powered by" attribution required by that library's license. None of that
+    // exists in this ARIS-only build (plan §1.1/§5.4: no BPMN canvas, no BPMN dependency, so no
+    // bpmn.io attribution obligation either) — that script is superseded, for this product, by
+    // `scripts/aris-file-smoke.mjs`, which drives the real ARIS shell (heading "OrbitPM ARIS
+    // Studio Lite", imports the AnimalWF reference AML, asserts the canvas/model
+    // explorer/accounting rail render, and asserts BPMN input is rejected non-destructively).
+    // `scripts/file-smoke.mjs` itself is left in place rather than deleted: `package.json`'s
+    // `release:file-smoke` script and `.github/workflows/release-candidate.yml`/`release.yml`
+    // still invoke it against the pinned historical `release/OrbitPM-Process-Studio-Lite-0.4.5.html`
+    // evidence artifact, which is a separate, still-valid release-evidence pipeline for the
+    // archived 0.4.5 BPMN product (plan §2.2 explicitly preserves that archive/tag), not this
+    // branch's product.
+    label: 'single-file file:// smoke (ARIS shell)',
     cmd: 'node',
-    args: ['scripts/file-smoke.mjs', 'dist/index.html']
+    args: ['scripts/aris-file-smoke.mjs', 'dist/index.html']
   }
 ]
 
@@ -93,7 +107,9 @@ function runStep(step) {
         resolveStep()
         return
       }
-      reject(new Error(`${step.label} failed with ${signal ? `signal ${signal}` : `exit code ${code}`}`))
+      reject(
+        new Error(`${step.label} failed with ${signal ? `signal ${signal}` : `exit code ${code}`}`)
+      )
     })
     child.on('error', reject)
   })

@@ -1,8 +1,14 @@
 // The BPMN-editor browser suites (canvas UX, autosize triggers, viewer
 // interactions, process outline, i18n/RTL canvas) were removed with the BPMN UI
 // in plan §5.3 — they drove a `.djs-container` canvas the ARIS shell no longer
-// mounts. ARIS replacements land with the native modeler.
+// mounts. `aris-i18n-rtl.spec.ts` and `aris-accessibility.spec.ts` are the ARIS
+// shell's own English/Arabic and keyboard/focus-management characterizations;
+// the remaining BPMN-era suites (canvas UX, autosize triggers, viewer
+// interactions, process outline) still await ARIS replacements as the native
+// modeler lands.
 export const REQUIRED_BROWSER_SUITES = Object.freeze([
+  'tests/e2e/aris-accessibility.spec.ts',
+  'tests/e2e/aris-i18n-rtl.spec.ts',
   'tests/e2e/details-responsive.spec.ts',
   'tests/e2e/lite-aml-naming.spec.ts',
   'tests/e2e/lite-assistant.spec.ts',

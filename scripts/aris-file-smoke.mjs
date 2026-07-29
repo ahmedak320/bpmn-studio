@@ -106,7 +106,9 @@ try {
     }, scenario.lang)
 
     await page.goto(artifactUrl, { waitUntil: 'load' })
-    await page.getByRole('heading', { name: 'OrbitPM ARIS Studio Lite' }).waitFor({ state: 'visible' })
+    await page
+      .getByRole('heading', { name: 'OrbitPM ARIS Studio Lite' })
+      .waitFor({ state: 'visible' })
 
     const renderedDir = await page.locator('html').getAttribute('dir')
     if (renderedDir !== scenario.dir) {
@@ -140,7 +142,10 @@ try {
       .locator('[data-orbitpm-aris-canvas] [data-element-id^="ObjOcc."]')
       .count()
     if (renderedOccurrences < 10) {
-      recordFailure(label, `expected the imported model to render, found ${renderedOccurrences} occurrences`)
+      recordFailure(
+        label,
+        `expected the imported model to render, found ${renderedOccurrences} occurrences`
+      )
     }
 
     // All eight models of the reference export are offered by the explorer.
@@ -157,7 +162,8 @@ try {
     await page.locator('[data-orbitpm-aris-model]:not([disabled])').nth(1).click()
     await page.waitForFunction(
       (previous) =>
-        document.querySelector(`[data-orbitpm-aris-canvas] [data-element-id="${previous}"]`) === null,
+        document.querySelector(`[data-orbitpm-aris-canvas] [data-element-id="${previous}"]`) ===
+        null,
       firstOccurrenceId
     )
     await page
@@ -171,7 +177,10 @@ try {
 
     await page.getByLabel(scenario.aiPanelHeading, { exact: true }).waitFor({ state: 'visible' })
 
-    await page.getByRole('banner').getByRole('button', { name: scenario.settingsButton, exact: true }).click()
+    await page
+      .getByRole('banner')
+      .getByRole('button', { name: scenario.settingsButton, exact: true })
+      .click()
     const settingsDialog = page.getByRole('dialog', { name: scenario.settingsTitle, exact: true })
     await settingsDialog.waitFor({ state: 'visible' })
     await settingsDialog.getByLabel(scenario.closeSettings, { exact: true }).click()
