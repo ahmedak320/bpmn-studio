@@ -22,6 +22,7 @@ import {
 } from '../transaction'
 import {
   FaultInjectingWorkspaceAdapter,
+  SAMPLE_AML,
   SAMPLE_ANALYSIS,
   SAMPLE_MODELS,
   amlBytes,
@@ -193,5 +194,87 @@ describe('phase 4 exit gate (plan §7.6)', () => {
     expect(retained.hash).toBe(digest)
     expect((await store.verifyIntegrity(digest)).problems).toEqual([])
     expect(await store.scanForSecrets(digest)).toEqual([])
+  })
+
+  it('keeps two distinct source packages isolated through edits, backup, restore and deletion', async () => {
+    // Every other exit-gate test imports exactly one package, so the shared
+    // ancestor directories under `.orbitpm/aris/` (created idempotently via
+    // `createFolderIfMissing`) and the digest-keyed isolation between packages
+    // had never actually been exercised with two. This proves a second,
+    // unrelated import neither corrupts nor rolls back the first, that edits
+    // to one never touch the other's original bytes, that a whole-workspace
+    // backup carries both unchanged, and that deleting one leaves the other
+    // completely intact.
+    const originalA = amlBytes()
+    const originalB = amlBytes(SAMPLE_AML.replace('Intake', 'Discharge'))
+    const digestA = await sha256Hex(originalA)
+    const digestB = await sha256Hex(originalB)
+    expect(digestA).not.toBe(digestB)
+
+    const workspace = createWorkspace('exit-gate-multi')
+    async function importPackage(bytes: Uint8Array, digest: string): Promise<void> {
+      const prepared = await planArisImportedPackage({
+        adapter: workspace,
+        source: await importedSource(bytes),
+        analysis: SAMPLE_ANALYSIS,
+        accounting: sampleAccounting(digest),
+        models: SAMPLE_MODELS
+      })
+      const outcome = await commitArisSourcePackage({
+        adapter: workspace,
+        plan: prepared,
+        reviewedDigest: prepared.reviewDigest
+      })
+      expect(outcome.status).toBe('committed')
+    }
+    await importPackage(originalA, digestA)
+    await importPackage(originalB, digestB)
+
+    const store = new ArisPackageStore(workspace)
+    expect(await store.listPackages()).toEqual([digestA, digestB].sort())
+
+    // Editing each package's working revisions never touches the other's bytes.
+    await store.saveRevision(digestA, [{ type: 'aris.object.rename', payload: { id: 'ObjOcc.1' } }])
+    await store.saveRevision(digestB, [{ type: 'aris.object.move', payload: { x: 1, y: 2 } }])
+    const readbackA = await store.readOriginalSource(digestA)
+    const readbackB = await store.readOriginalSource(digestB)
+    expect(Array.from(readbackA.bytes)).toEqual(Array.from(originalA))
+    expect(Array.from(readbackB.bytes)).toEqual(Array.from(originalB))
+    expect(readbackA.hash).toBe(digestA)
+    expect(readbackB.hash).toBe(digestB)
+
+    // Both packages survive a whole-workspace backup/restore byte-for-byte.
+    const beforeA = await collectArisPackageArchive(workspace, digestA)
+    const beforeB = await collectArisPackageArchive(workspace, digestB)
+    const blob = await workspace.exportBackup({ generatedAt: new Date(0) })
+    const restored = createWorkspace('exit-gate-multi-restored')
+    const importPlan = await inspectWorkspaceBackup(restored, blob)
+    expect(
+      (
+        await applyWorkspaceBackupImport(restored, importPlan, {
+          reviewedDigest: importPlan.reviewDigest
+        })
+      ).status
+    ).toBe('committed')
+
+    const restoredStore = new ArisPackageStore(restored)
+    expect(await restoredStore.listPackages()).toEqual([digestA, digestB].sort())
+    const afterA = await collectArisPackageArchive(restored, digestA)
+    const afterB = await collectArisPackageArchive(restored, digestB)
+    expect((await compareArisPackageArchives(beforeA, afterA)).differences).toEqual([])
+    expect((await compareArisPackageArchives(beforeB, afterB)).differences).toEqual([])
+    expect((await restoredStore.replayRevisions(digestA)).commands).toHaveLength(1)
+    expect((await restoredStore.replayRevisions(digestB)).commands).toHaveLength(1)
+
+    // Deleting one package on the restored copy leaves the other fully intact.
+    await restoredStore.deleteSourcePackage(digestB, {
+      confirmed: true,
+      confirmedSourceSha256: digestB
+    })
+    expect(await restoredStore.listPackages()).toEqual([digestA])
+    const survivingA = await restoredStore.readOriginalSource(digestA)
+    expect(Array.from(survivingA.bytes)).toEqual(Array.from(originalA))
+    expect(survivingA.hash).toBe(digestA)
+    expect((await restoredStore.verifyIntegrity(digestA)).problems).toEqual([])
   })
 })

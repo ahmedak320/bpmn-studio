@@ -77,6 +77,13 @@ export interface FaultPlan {
   readonly message?: string
   /** Fail every call at or after `atCall` instead of only that one call. */
   readonly sticky?: boolean
+  /**
+   * Restrict the fault to calls against this exact path. When set, `atCall`
+   * counts only calls whose path matches, so the fault survives refactors that
+   * change how many *other* calls happen first (dedup pre-checks, manifest
+   * reads, and so on).
+   */
+  readonly path?: string
 }
 
 /**
@@ -105,12 +112,12 @@ export class FaultInjectingWorkspaceAdapter implements WorkspaceAdapter {
     return this.inner.storage
   }
 
-  private trip(operation: FaultOperation): void {
+  private trip(operation: FaultOperation, path?: string): void {
+    if (this.plan.operation !== operation) return
+    if (this.plan.path !== undefined && this.plan.path !== path) return
     const next = (this.counts.get(operation) ?? 0) + 1
     this.counts.set(operation, next)
-    const hit = this.plan.sticky
-      ? this.plan.operation === operation && next >= this.plan.atCall
-      : this.plan.operation === operation && next === this.plan.atCall
+    const hit = this.plan.sticky ? next >= this.plan.atCall : next === this.plan.atCall
     if (hit) {
       throw new Error(this.plan.message ?? `Injected ${operation} failure at call ${next}.`)
     }
@@ -121,7 +128,7 @@ export class FaultInjectingWorkspaceAdapter implements WorkspaceAdapter {
   }
 
   read(path: string, options?: ReadFileOptions): Promise<FileSnapshot> {
-    this.trip('read')
+    this.trip('read', path)
     return this.inner.read(path, options)
   }
 
@@ -131,7 +138,7 @@ export class FaultInjectingWorkspaceAdapter implements WorkspaceAdapter {
     expectedHash?: string,
     options?: WriteAtomicOptions
   ): Promise<SaveOutcome> {
-    this.trip('write')
+    this.trip('write', path)
     return this.inner.writeAtomic(path, bytes, expectedHash, options)
   }
 
@@ -148,12 +155,12 @@ export class FaultInjectingWorkspaceAdapter implements WorkspaceAdapter {
   }
 
   removeIfHash(path: string, expectedHash: string): Promise<void> {
-    this.trip('removeIfHash')
+    this.trip('removeIfHash', path)
     return this.inner.removeIfHash!(path, expectedHash)
   }
 
   removeEmptyFolder(path: string): Promise<RemoveEmptyFolderResult> {
-    this.trip('removeEmptyFolder')
+    this.trip('removeEmptyFolder', path)
     return this.inner.removeEmptyFolder!(path)
   }
 
@@ -162,7 +169,7 @@ export class FaultInjectingWorkspaceAdapter implements WorkspaceAdapter {
   }
 
   createFolderIfMissing(path: string): Promise<CreateFolderIfMissingResult> {
-    this.trip('createFolderIfMissing')
+    this.trip('createFolderIfMissing', path)
     return this.inner.createFolderIfMissing!(path)
   }
 

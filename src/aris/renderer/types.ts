@@ -1,13 +1,18 @@
 /**
  * Source-faithful visual renderer — Plan Section 12 (Phase 9).
  *
- * These are the headless, testable render-model types the canvas lane (`src/aris/canvas/`)
- * and the layout lane (`src/aris/layout/`) consume. Nothing here touches the DOM, SVG, or
- * diagram-js: it is pure data plus pure functions that turn ARIS source records into it.
+ * These are the headless, testable render-model types `buildRenderModel.ts` produces. Nothing
+ * here touches the DOM, SVG, or diagram-js: it is pure data plus pure functions that turn ARIS
+ * source records into it.
  *
  * Every type here preserves the ARIS source reference (id, path, geometry, style) alongside
  * whatever OrbitPM computed from it, per Section 12.2's "preserve source symbol reference, id,
  * geometry, and style" rule.
+ *
+ * See `buildRenderModel.ts` for exactly what is and is not wired into the live canvas today:
+ * in short, the shell consumes this module's fidelity findings (Section 12.3) for the fidelity
+ * rail; the canvas and layout lanes derive on-screen geometry independently and share only
+ * `textWrap.ts`'s `measureTextWidth`.
  */
 
 import type {

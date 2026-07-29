@@ -326,9 +326,12 @@ export function ArisDetailsRail({
       />
     ) : null
 
-  const rowsSuperseded =
-    (activeTab === 'names' && nameEditor !== null) ||
-    (activeTab === 'assignments' && assignmentsEditable)
+  // The Assignments tab is fully superseded by its editor (same values, now
+  // writable). The Names tab is NOT superseded: the read-only bilingual rows
+  // carry `lang` attributes (`<span lang="en">`, `<span lang="ar">`) that
+  // screen readers and the i18n characterization tests rely on, so they stay
+  // visible above the editing controls.
+  const rowsSuperseded = activeTab === 'assignments' && assignmentsEditable
 
   return (
     <section
@@ -381,9 +384,9 @@ export function ArisDetailsRail({
         tabIndex={0}
         data-orbitpm-aris-details-panel={activeTab}
       >
-        {/* The Names and Assignments tabs are fully superseded by their editors
-            (same values, now writable); every other tab keeps its read-only rows
-            and gains controls underneath. */}
+        {/* The Assignments tab is fully superseded by its editor (same
+            values, now writable). Every other tab — including Names — keeps
+            its read-only rows and gains editing controls underneath. */}
         {rowsSuperseded ? null : <DetailRows rows={tabs[activeTab]} />}
 
         {activeTab === 'names' ? nameEditor : null}
@@ -426,7 +429,12 @@ export function ArisDetailsRail({
         ) : null}
 
         {activeTab === 'general' && editing && occurrence ? (
-          <ArisStyleEditor occurrence={occurrence} target={target} editing={editing} />
+          <ArisStyleEditor
+            key={occurrence.id}
+            occurrence={occurrence}
+            target={target}
+            editing={editing}
+          />
         ) : null}
       </div>
       <MetadataLayers details={details} modelId={modelId} />

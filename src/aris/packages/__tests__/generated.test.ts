@@ -148,6 +148,35 @@ describe('generated processes (plan §7.5)', () => {
     ])
   })
 
+  it('deduplicates an identical generated source without mutating the package', async () => {
+    // Dedup (§7.3 step 11) is implemented once in `buildPlan` and shared by both
+    // `planArisImportedPackage` and `planArisGeneratedPackage`; this proves it
+    // actually holds for the generated-origin path too, not just imports.
+    const adapter = createWorkspace()
+    const first = await generatedPackage({ adapter, originKind: 'description', retain: true })
+    const firstOutcome = await commitArisSourcePackage({
+      adapter,
+      plan: first,
+      reviewedDigest: first.reviewDigest
+    })
+    expect(firstOutcome.status).toBe('committed')
+    const afterFirst = await snapshotWorkspace(adapter)
+
+    const second = await generatedPackage({ adapter, originKind: 'description', retain: true })
+    expect(second.sourceSha256).toBe(first.sourceSha256)
+    expect(second.status).toBe('duplicate')
+    expect(second.writes).toEqual([])
+
+    const secondOutcome = await commitArisSourcePackage({
+      adapter,
+      plan: second,
+      reviewedDigest: second.reviewDigest
+    })
+    expect(secondOutcome.status).toBe('deduplicated')
+    expect(await snapshotWorkspace(adapter)).toEqual(afterFirst)
+    expect(await new ArisPackageStore(adapter).listPackages()).toEqual([first.sourceSha256])
+  })
+
   it('supports every generated origin kind, including without a retained source', async () => {
     for (const originKind of ['description', 'spreadsheet', 'pdf', 'image'] as const) {
       const adapter = createWorkspace(`workspace-${originKind}`)

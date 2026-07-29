@@ -1,13 +1,28 @@
 /**
  * Builds the headless, source-faithful render model — Plan Section 12 (Phase 9).
  *
- * This is the single entry point the canvas lane (`src/aris/canvas/`) and the layout lane
- * (`src/aris/layout/`) consume. It reads every Section 12.1 visual input from the narrow
- * `ArisRenderSourceInput` seam (`input.ts`), resolves symbols through the symbol registry seam
- * (`symbolAdapter.ts`), maps pens/brushes/fonts/text (`color.ts`/`font.ts`/`textWrap.ts`), and
- * reports every fallback as a structured, i18n-keyed fidelity finding (`fidelity.ts`). The
- * source geometry on every element, connection, lane, free-text, and attachment is copied
- * through unmodified — Source Layout mode (`layoutModes.ts`) depends on that being exact.
+ * It reads every Section 12.1 visual input from the narrow `ArisRenderSourceInput` seam
+ * (`input.ts`), resolves symbols through the symbol registry seam (`symbolAdapter.ts`), maps
+ * pens/brushes/fonts/text (`color.ts`/`font.ts`/`textWrap.ts`), and reports every fallback as a
+ * structured, i18n-keyed fidelity finding (`fidelity.ts`). The source geometry on every element,
+ * connection, lane, free-text, and attachment is copied through unmodified — Source Layout mode
+ * (`layoutModes.ts`) depends on that being exact.
+ *
+ * ## Current production wiring
+ *
+ * `src/aris/shell/arisStudioDocument.ts` is the one production caller: it consumes only this
+ * function's merged `fidelity`/`fidelityByKind` output, to drive the Section 12.3 fidelity rail
+ * (`ArisAccountingRail`). The live canvas (`src/aris/canvas/`) does not read this module's
+ * `RenderModelDocument`/`models` output — it derives on-screen geometry directly from the
+ * working document (`src/aris/model/`) and paints symbols via `src/aris/symbols/` in its own
+ * `ArisRenderer` (`src/aris/canvas/renderer.ts`), and the layout lane (`src/aris/layout/`)
+ * likewise builds its own graph from the working document (`src/aris/canvas/layoutSeam.ts`).
+ * The only piece of this module shared with the canvas/layout lanes today is
+ * `textWrap.ts`'s `measureTextWidth`, used for caption sizing. The per-model `RenderModelDocument`
+ * this function returns remains a complete, independently-tested Section 12.1 projection — every
+ * assertion below and in `buildRenderModel.test.ts`/`animalWfRealData.animalwf.test.ts` holds
+ * against it — available to a future consumer that wants the fully-resolved geometry/symbol/
+ * font/color projection rather than re-deriving it.
  */
 
 import { resolveBrush, resolvePen } from './color'

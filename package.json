@@ -1,7 +1,7 @@
 {
-  "name": "orbitpm-process-studio-lite",
+  "name": "orbitpm-aris-studio-lite",
   "version": "0.4.5",
-  "description": "OrbitPM Process Studio Lite — a self-contained, bilingual BPMN 2.0 editor that runs in the browser.",
+  "description": "OrbitPM ARIS Studio Lite — native ARIS AML process modelling",
   "license": "MIT",
   "homepage": "https://ahmedak320.github.io/bpmn-studio/",
   "repository": {

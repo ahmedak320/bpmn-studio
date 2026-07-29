@@ -283,6 +283,37 @@ describe('imported-source transaction (plan §7.3)', () => {
     }
   })
 
+  it('rolls back completely when the post-write integrity verification fails', async () => {
+    // Every write can individually succeed and the commit can still be forced
+    // to roll back by the final readback check in `commitArisSourcePackage`
+    // (the `verify` callback passed to `writeArisPackageMembersAtomically`).
+    // This targets that one read call by path rather than by position, so it
+    // stays precise regardless of how many other reads (the dedup pre-check,
+    // for instance) happen first.
+    const inner = createWorkspace()
+    const before = await snapshotWorkspace(inner)
+    const source = await importedSource()
+    const originalSourcePath = arisPackagePaths(source.sha256).originalSource
+    const adapter = new FaultInjectingWorkspaceAdapter(inner, {
+      operation: 'read',
+      path: originalSourcePath,
+      atCall: 1,
+      message: 'injected verification read failure'
+    })
+    const prepared = await plan(adapter)
+    const outcome = await commitArisSourcePackage({
+      adapter,
+      plan: prepared,
+      reviewedDigest: prepared.reviewDigest
+    })
+    expect(outcome.status).toBe('rolled-back')
+    if (outcome.status === 'rolled-back' || outcome.status === 'rollback-failed') {
+      expect(outcome.rollbackErrors).toEqual([])
+      expect(outcome.error.message).toContain('injected verification read failure')
+    }
+    expect(await snapshotWorkspace(inner)).toEqual(before)
+  })
+
   it('deduplicates an identical source digest without mutating the package (step 11)', async () => {
     const adapter = createWorkspace()
     const source = await importedSource()

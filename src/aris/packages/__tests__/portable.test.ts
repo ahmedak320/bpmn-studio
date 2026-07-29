@@ -3,6 +3,7 @@ import { sha256Hex } from '../../../workspace/adapters/hash'
 import { SingleFileWorkspaceAdapter } from '../../../workspace/adapters/singleFile'
 import type { MemoryWorkspaceAdapter } from '../../../workspace/adapters/memory'
 import type { WorkspaceAdapter } from '../../../workspace/adapters/types'
+import { createArisAccountingDocument } from '../accounting'
 import { ArisPackagePathError, arisPackagePaths } from '../layout'
 import { collectArisPackageArchive, compareArisPackageArchives } from '../packageBackup'
 import {
@@ -25,7 +26,11 @@ import {
   type ArisPortableContainerV1
 } from '../portable'
 import { ArisPackageStore } from '../store'
-import { commitArisSourcePackage, planArisImportedPackage } from '../transaction'
+import {
+  commitArisSourcePackage,
+  planArisGeneratedPackage,
+  planArisImportedPackage
+} from '../transaction'
 import {
   SAMPLE_ANALYSIS,
   SAMPLE_MODELS,
@@ -38,6 +43,43 @@ import {
 const encoder = new TextEncoder()
 const decoder = new TextDecoder()
 const PORTABLE_PATH = 'animals.orbitpm-aris.json'
+
+const GENERATED_BASELINE_AML = `<?xml version="1.0" encoding="UTF-8"?>
+<AML><Group Group.ID="Group.1"><Model Model.ID="Model.1" Model.Type="MT_EEPC"/></Group></AML>
+`
+const GENERATED_DESCRIPTION = 'Animals arrive, are triaged, then discharged.'
+
+/** A generated (no imported original) package plan, retaining its brief. */
+async function generatedPlan(adapter: WorkspaceAdapter) {
+  const retainedBytes = encoder.encode(GENERATED_DESCRIPTION)
+  const digest = await sha256Hex(retainedBytes)
+  return planArisGeneratedPackage({
+    adapter,
+    originKind: 'description',
+    baselineAml: { text: GENERATED_BASELINE_AML, name: 'generated.xml' },
+    generationSource: {
+      bytes: retainedBytes,
+      name: 'intake-brief.md',
+      mediaType: 'text/markdown'
+    },
+    generation: {
+      provider: 'anthropic',
+      model: 'claude-opus-5',
+      requestSha256: 'b'.repeat(64)
+    },
+    accounting: createArisAccountingDocument({ sourceSha256: digest })
+  })
+}
+
+const EXPECTED_GENERATED_ORIGIN = Object.freeze({
+  kind: 'description',
+  generation: {
+    provider: 'anthropic',
+    model: 'claude-opus-5',
+    requestSha256: 'b'.repeat(64),
+    retainedSourcePath: 'original/intake-brief.md'
+  }
+})
 
 /** Build a package in a package-directory workspace. */
 async function directoryPackage(id = 'directory-workspace'): Promise<{
@@ -295,6 +337,45 @@ describe('portable single-file workspace (plan §2.5, §17.2)', () => {
     expect(await reopened.store.scanForSecrets(digest)).toEqual([])
   })
 
+  it('preserves generated-process provenance and its retained source across flush and reopen', async () => {
+    // Generated packages (plan §7.5) have no imported AML original — the
+    // retained generation source and the `origin.generation` provenance block
+    // are the artifacts that must survive. This exercises them through the
+    // portable single-file container specifically: base64 encode/decode on
+    // flush, container-schema validation (including the credential guard) on
+    // reopen, and the same digest-verified reads directory mode gets.
+    const file = portableFile()
+    const session = await openArisWorkspace(file.adapter)
+    const plan = await generatedPlan(session.workspace)
+    const outcome = await commitArisSourcePackage({
+      adapter: session.workspace,
+      plan,
+      reviewedDigest: plan.reviewDigest
+    })
+    expect(outcome.status).toBe('committed')
+    expect((await session.flush()).status).toBe('flushed')
+
+    const reopened = await ArisPortableWorkspaceSession.open(portableFile(file.bytes()).adapter)
+    const manifest = await reopened.store.readManifest(plan.sourceSha256)
+    expect(manifest.origin).toEqual(EXPECTED_GENERATED_ORIGIN)
+    expect(manifest.source).toMatchObject({
+      name: 'intake-brief.md',
+      mediaType: 'text/markdown',
+      sha256: plan.sourceSha256
+    })
+
+    const paths = arisPackagePaths(plan.sourceSha256)
+    const retained = await reopened.store.readMember(`${paths.originalDirectory}/intake-brief.md`)
+    expect(decoder.decode(retained.bytes)).toBe(GENERATED_DESCRIPTION)
+    expect(retained.hash).toBe(plan.sourceSha256)
+    expect(await reopened.store.hasMember(paths.originalSource)).toBe(false)
+    expect((await reopened.store.verifyIntegrity(plan.sourceSha256)).problems).toEqual([])
+    expect(await reopened.store.scanForSecrets(plan.sourceSha256)).toEqual([])
+
+    const replay = await reopened.store.replayRevisions(plan.sourceSha256)
+    expect(replay.commands[0]?.type).toBe('aris.baseline.aml')
+  })
+
   it('keeps the original write-once inside a portable session', async () => {
     const file = portableFile()
     const session = await openArisWorkspace(file.adapter)
@@ -531,6 +612,33 @@ describe('portable round-trip with directory mode', () => {
     await store.saveRevision(digest, [{ type: 'aris.b', payload: {} }])
     expect((await store.replayRevisions(digest)).commands).toHaveLength(2)
     expect((await store.readOriginalSource(digest)).hash).toBe(digest)
+  })
+
+  it('carries generated-process provenance through a directory -> portable -> directory round trip', async () => {
+    const adapter = createWorkspace('generated-directory')
+    const plan = await generatedPlan(adapter)
+    const outcome = await commitArisSourcePackage({
+      adapter,
+      plan,
+      reviewedDigest: plan.reviewDigest
+    })
+    expect(outcome.status).toBe('committed')
+    const originalManifest = await new ArisPackageStore(adapter).readManifest(plan.sourceSha256)
+
+    const container = await collectArisPortableContainer(adapter)
+    const restored = createWorkspace('generated-directory-restored')
+    expect(await importArisPortableContainer(restored, container)).toEqual([plan.sourceSha256])
+
+    const store = new ArisPackageStore(restored)
+    const manifest = await store.readManifest(plan.sourceSha256)
+    expect(manifest.origin).toEqual(originalManifest.origin)
+    expect(manifest.origin).toEqual(EXPECTED_GENERATED_ORIGIN)
+
+    const paths = arisPackagePaths(plan.sourceSha256)
+    const retained = await store.readMember(`${paths.originalDirectory}/intake-brief.md`)
+    expect(decoder.decode(retained.bytes)).toBe(GENERATED_DESCRIPTION)
+    expect(retained.hash).toBe(plan.sourceSha256)
+    expect((await store.verifyIntegrity(plan.sourceSha256)).problems).toEqual([])
   })
 
   it('survives a directory -> portable -> directory -> portable cycle', async () => {
