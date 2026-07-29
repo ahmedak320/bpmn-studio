@@ -6,9 +6,19 @@
 // the remaining BPMN-era suites (canvas UX, autosize triggers, viewer
 // interactions, process outline) still await ARIS replacements as the native
 // modeler lands.
+//
+// `aris-authoring.spec.ts` and `aris-release-artifact.spec.ts` are the Phase 18
+// (plan §21.3/§21.5) additions: the first covers the browser-matrix bullets that
+// had no real-browser coverage at all (palette/context-pad authoring, the chat
+// improvement loop, the local assistant, the derived export, the Excel template
+// round trip); the second runs the EXACT release artifact over file:// under all
+// three Playwright engines, which `scripts/aris-file-smoke.mjs` cannot do
+// because it launches Chromium directly.
 export const REQUIRED_BROWSER_SUITES = Object.freeze([
   'tests/e2e/aris-accessibility.spec.ts',
+  'tests/e2e/aris-authoring.spec.ts',
   'tests/e2e/aris-i18n-rtl.spec.ts',
+  'tests/e2e/aris-release-artifact.spec.ts',
   'tests/e2e/details-responsive.spec.ts',
   'tests/e2e/lite-aml-naming.spec.ts',
   'tests/e2e/lite-assistant.spec.ts',
