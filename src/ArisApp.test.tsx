@@ -607,11 +607,9 @@ describe('ArisApp production shell', () => {
     render(<ArisApp />)
     await openAml()
 
-    // NOTE: the `aris.ai.body` dictionary VALUE and this assertion are updated
-    // together in Lane X1 (wave 7); both stay on the current string until then.
     expect(
       screen.getByText(
-        'Generate a native ARIS model — an EPC or a value-added chain diagram — from a plain-language description. Review the exact outbound request and give consent before anything is sent to the provider.'
+        'Generate a native ARIS model — an EPC or a value-added chain diagram — from a plain-language description, a document, or the Excel template.'
       )
     ).not.toBeNull()
 

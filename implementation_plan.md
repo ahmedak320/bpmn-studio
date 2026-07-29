@@ -1050,7 +1050,7 @@ npm run typecheck && npm run lint && npm run check:ui-copy && npm run check:aris
 
 **Steps:**
 
-- [ ] Sweep for every `tk()` key in the new/changed files:
+- [x] Sweep for every `tk()` key in the new/changed files:
 
   ```bash
   grep -rhoP "tk\('\K[^']+" src/aris/shell/ArisChatDrawer.tsx src/ArisGenerationPanel.tsx \
@@ -1058,7 +1058,7 @@ npm run typecheck && npm run lint && npm run check:ui-copy && npm run check:aris
     src/aris/shell/ArisStudioTab.tsx src/aris/shell/arisChatDrawerSession.ts | sort -u
   ```
 
-- [ ] Register EVERY key found in `ARIS_SHELL_MESSAGE_KEYS` (`src/aris/shell/shellI18n.ts`, frozen map — insert alphabetically near the `aris.chat.*` block) with its English source text, AND add entries to BOTH `en`/`ar` maps of `src/i18n/dictionaries.ts`. The expected set (verify against the sweep; the English values are the `tk()` fallbacks already in code — Arabic values as follows, proper MSA):
+- [x] Register EVERY key found in `ARIS_SHELL_MESSAGE_KEYS` (`src/aris/shell/shellI18n.ts`, frozen map — insert alphabetically near the `aris.chat.*` block) with its English source text, AND add entries to BOTH `en`/`ar` maps of `src/i18n/dictionaries.ts`. The expected set (verify against the sweep; the English values are the `tk()` fallbacks already in code — Arabic values as follows, proper MSA):
   - `aris.chatDrawer.interview.intro` → ar: `فحصت {name} ووجدت {count} فجوة. أجب عن ثلاثة أسئلة كحدّ أقصى في كل جولة؛ وتُطبَّق التغييرات الآمنة كخطوة واحدة قابلة للتراجع.`
   - `aris.chatDrawer.interview.noTarget` → ar: `افتح نموذج ARIS أولًا، ثم ابدأ مقابلة الإكمال.`
   - `aris.chatDrawer.interview.clean` → ar: `لا توجد فجوات — يبدو هذا النموذج مكتملًا.`
@@ -1070,8 +1070,8 @@ npm run typecheck && npm run lint && npm run check:ui-copy && npm run check:aris
   - `aris.translate.nothingMissing` → ar: `كل التسميات تحمل اللغتين بالفعل.` · `aris.translate.applied` → ar: `تم تطبيق {count} ترجمة كخطوة واحدة قابلة للتراجع.` · `aris.translate.autoDone` → ar: `تمت ترجمة {count} تسمية تلقائيًا — تراجع واحد يستعيدها، ويمكن المراجعة من شريط الأدوات.` · `aris.translate.autoOff` → ar: `الترجمة التلقائية للنماذج الجديدة` · `aris.translate.stale` → ar: `تغيّر النموذج أثناء المراجعة — تم تحديث القائمة.` · `aris.translate.gestureLabel` → ar: `ترجمة التسميات`
   - `aris.fix.badge` → ar: `{count} ملاحظة — إصلاح…` · `aris.fix.title` → ar: `إصلاح المكوّنات الناقصة` · `aris.fix.autoSection` → ar: `تعبئة تلقائية (آمنة)` · `aris.fix.confirmSection` → ar: `تغييرات مقترحة تتطلب تأكيدًا` · `aris.fix.interviewSection` → ar: `تتطلب إجاباتك` · `aris.fix.openInterview` → ar: `الإجابة عن الأسئلة…` · `aris.fix.applied` → ar: `تم تطبيق {count} إصلاحًا كخطوة واحدة قابلة للتراجع.` · `aris.fix.gestureLabel` → ar: `إصلاح المكوّنات الناقصة` · `aris.fix.startEvent.name` → ar: `بدأت العملية` · `aris.fix.endEvent.name` → ar: `اكتملت العملية` · `aris.fix.cleanLayoutHint` → ar: `تُوضع العناصر الجديدة تلقائيًا — شغّل التخطيط النظيف بعد ذلك.`
   - Any additional keys the sweep surfaces: register them with the English fallback found in code + a faithful MSA Arabic translation.
-- [ ] Update **`aris.ai.body`** in both maps: EN `Generate a native ARIS model — an EPC or a value-added chain diagram — from a plain-language description, a document, or the Excel template.` AR `أنشئ نموذج ARIS أصليًا — مخطط EPC أو مخطط سلسلة القيمة المضافة — من وصف بلغة عادية أو من مستند أو من قالب Excel.` (L3d's updated test asserts the new EN string.)
-- [ ] Run prettier on both files.
+- [x] Update **`aris.ai.body`** in both maps: EN `Generate a native ARIS model — an EPC or a value-added chain diagram — from a plain-language description, a document, or the Excel template.` AR `أنشئ نموذج ARIS أصليًا — مخطط EPC أو مخطط سلسلة القيمة المضافة — من وصف بلغة عادية أو من مستند أو من قالب Excel.` (L3d's updated test asserts the new EN string.)
+- [x] Run prettier on both files.
 
 **Verify:**
 
