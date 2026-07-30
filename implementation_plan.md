@@ -1,14 +1,14 @@
-# ARIS Studio Lite — UI & Feature Fixes Implementation Plan
+# ARIS Studio Lite — Folder Tree & Nested Processes, Direct Editing & Symbols, Convention Alignment, Import Fidelity — Implementation Plan
 
 > **For the orchestrator:** dispatch rules, model policy, worker routing, and the commit protocol live in `desktop/goal.md`. This file is the work ledger — its checkboxes are the single source of progress truth. Tick them in the same commit as the lane's code.
 >
-> **For workers:** you own ONLY the files your lane lists under "Files owned". If completing your lane seems to require touching any other file, STOP and report back — do not touch it. Every step uses checkbox (`- [ ]`) syntax. Never run mutating git commands (commit, push, stash, checkout, reset, branch, rebase). Run every verification command listed for your lane and report each exit code verbatim. Your final message is machine-consumed: return raw findings, file lists, and command results — no pleasantries.
+> **For workers:** you own ONLY the files your lane lists under "Files owned". If completing your lane seems to require touching any other file, STOP and report back — do not touch it. Every step uses checkbox (`- [ ]`) syntax. Never run mutating git commands (commit, push, stash, checkout, reset, branch, rebase). Run every verification command listed for your lane and report each exit code verbatim. Your final message is machine-consumed: return raw findings, file lists, and command results — no pleasantries. Everything you need is in THIS file — you do not need the source PDFs or any prior conversation.
 
-**Goal:** Fix five product issues on `feat/aris-only-studio`: (1) intuitive folder-tree explorer, (2) exposed drawing/editing with a New-model flow, (3) a proper chatbot drawer replacing the assistant modal, (4) a simplified redesigned Generate-with-AI panel, (5) Arabic⇄English content translation with auto-translate on creation plus a fix-missing-components feature.
+**Goal:** Fix four product issues on `feat/aris-only-studio`: (1) a main-branch-exact folder tree with real files-in-folders on import/create and full nested-subprocess handling (marker, double-click drill-down, multi-level nesting, create-missing, rename/move link preservation); (2) immediate inline label editing on placement plus predetermined convention symbols with quick-pick variants; (3) alignment with the DMT ARIS Convention Manual (symbols, colors, connections, RACI, attributes, validation); (4) high-fidelity AML import validated against 4 reference process PDFs.
 
-**Architecture:** Re-wire surviving main-branch components (`FolderTreeLite`, the localization core, `TranslationReviewDialog`, `AiPanelLite` visuals, `AssistantDrawer` UX) onto the ARIS-native backends that already exist (`src/aris/canvas`, `src/aris/assistant`, `src/aris/chat`, `src/aris/localization` [new]). Nothing bpmn-flavored enters the runtime graph.
+**Architecture:** Reuse the surviving main-branch machinery unchanged — `buildProcessHierarchy` + `FolderTreeLite` for the tree, `LinkPicker` for linking — feeding them new ARIS-native inputs (a model/assignment scanner + a span-slice AML splitter). Add an ARIS assignment marker + drill-down on the diagram-js canvas, an inline label editor via `diagram-js-direct-editing`, and a pure `src/aris/conventions/` catalog as the single source of truth for symbols/colors/connections/attributes. Nothing bpmn-flavored enters the runtime graph.
 
-**Tech stack:** React 18.3, Vite 6, TypeScript 5.9, diagram-js 15.22 (generic), vitest 3.2, Playwright 1.61. Browser SPA, single-file build. NOT Electron.
+**Tech stack:** React 18.3, Vite 6, TypeScript 5.9, diagram-js 15.22 (generic), `diagram-js-direct-editing` 3.5.1 (added in Wave 1), vitest 3.2, Playwright 1.61. Browser SPA, single-file build. NOT Electron.
 
 ---
 
@@ -17,1175 +17,1153 @@
 Every task's requirements implicitly include this section.
 
 - Repo: `/home/ahmed/Desktop/bpmn_tool/desktop` (this directory IS the git root). Branch: `feat/aris-only-studio`. Remote: `https://github.com/ahmedak320/bpmn-studio.git`. Canonical artifact: `release/OrbitPM-ARIS-Studio-Lite.html`, rebuilt via `npm run build:aris` in every product commit (orchestrator's job).
+- **Private reference assets live OUTSIDE the repo** under `/home/ahmed/Desktop/bpmn_tool/reference/` (reachable as `../reference/`), and are NEVER committed: `../reference/AnimalWF/ARISAMLExport.xml` (the AML fixture), `../reference/AnimalWF/pdf/*.pdf` (the 4 process printouts), `../reference/conventions/ARIS_Convention_Manual_DMT_v02.pdf` (the manual), `../reference/AnimalWF/expected/*.expected.json` (fidelity expectations authored in Wave 1). `.gitignore` already excludes `AnimalWF/`; nothing under `../reference/` is inside the worktree.
 - **Gate commands** every lane runs before reporting done (plus lane-specific extras listed per lane):
 
   ```bash
-  npm run typecheck && npm run lint && npm run check:aris-runtime-boundary && npm run check:ui-copy
+  npm run typecheck && npm run lint && npm run check:aris-runtime-boundary && npm run check:ui-copy && npm run check:no-skips
   npx vitest run <lane's test paths>
   npx prettier --write <every file the lane touched>   # format:check is a CI gate
   ```
 
-- **Runtime-boundary rules** (`scripts/check-aris-runtime-boundary.mjs` walks runtime imports from `src/main.tsx`; **type-only imports are exempt**): never runtime-import `src/assist/digest.ts`, `src/assist/prompt.ts`, `src/assist/requestReview.ts`, `src/assist/interview.ts`, the `@/generation` barrel, `src/editor/**` (deleted AND banned — port old code via `git show main:<path>`), `src/core/newProcessDoc.ts`, the `src/localization/index.ts` barrel (import specific modules instead), `src/App.tsx`, or any `bpmn-*` package.
-- **i18n rules:** every user-visible string goes through `t()` with keys added to BOTH the `en` and `ar` maps in `src/i18n/dictionaries.ts` (identical key sets enforced by `src/__tests__/i18n.test.ts`), or through `tk(key, 'English fallback')` from `src/aris/shell/shellI18n.ts`. Unregistered `tk()` keys render their fallback and pass all gates; their registration in `ARIS_SHELL_MESSAGE_KEYS` + both dictionaries happens ONLY in Lane X1. Never hardcode English in JSX text/attributes (`title`, `aria-label`, `placeholder`) or in `pushToast`/`setStatus` calls — `check:ui-copy` blocks it.
-- **Lint:** `--max-warnings 0`; `react-hooks/exhaustive-deps` is an ERROR. The only sanctioned `eslint-disable-next-line react-hooks/exhaustive-deps` uses are the two named in the Risk Appendix.
-- **No test games:** no `.skip`, `.only`, retries, quarantines, or inflated timeouts — `npm run check:no-skips` must stay green. Never name a helper matching a focused-test alias (e.g. anything reading as `fit(` — see the precedent comment at `src/aris/shell/ArisStudioTab.tsx:483`).
+- **Runtime-boundary rules** (`scripts/check-aris-runtime-boundary.mjs` walks runtime imports from `src/main.tsx`; **type-only imports are exempt**; the ban list is `bpmn-*` packages **by name** plus specific graph paths): never runtime-import `src/App.tsx`, `src/editor/**` (deleted AND banned — port old concepts, never the code; read old code via `git show main:<path>`), `src/org/orbitpmModdle.ts`, `src/validation/ReadOnlyDiagramPreview.tsx`, or any `bpmn-*` package. `diagram-js-direct-editing` is NOT banned and is adopted as a real dependency in Lane C3.
+- **i18n rules:** every user-visible string goes through `t()` with keys added to BOTH the `en` and `ar` maps in `src/i18n/dictionaries.ts` (identical key sets enforced by `src/__tests__/i18n.test.ts`; `ar` is typed `Record<keyof typeof en, string>` so parity is compile-enforced), or through `tk(key, 'English fallback')` from `src/aris/shell/shellI18n.ts` (shell only). All keys needed by Waves 1–3 are pre-registered by Lanes T4 (issue-1 + direct-edit) and C4 (issues 2/3), so downstream lanes never touch `dictionaries.ts`. Never hardcode English in JSX text/attributes (`title`, `aria-label`, `placeholder`) or in `pushToast`/`setStatus` calls — `check:ui-copy` blocks it.
+- **Lint:** `--max-warnings 0`; `react-hooks/exhaustive-deps` is an ERROR — list every dependency.
+- **No test games:** no `.skip`, `.only`, retries, quarantines, or inflated timeouts — `npm run check:no-skips` must stay green. Private-fixture suites use the `*.animalwf.test.ts` (or `*.holdout.animalwf.test.ts`) filename pattern with a throw-at-module-load guard (never a skip), run only via their dedicated npm scripts; `check-no-skips.mjs` exempts that filename pattern. Never name a helper matching a focused-test alias (e.g. anything reading as `fit(`).
+- **Dblclick priority contract (binding across lanes):** the assignment-navigation handler (Lane T6) registers `element.dblclick` at **priority 2000** and returns `false` ONLY when it navigates; the direct-editing handler (Lane C3) registers at **priority 1500**. They must never collide.
 
 ### Authorized product changes
 
 The user explicitly requested these; updating tests that assert the OLD behavior is **required work, not assertion-weakening**. Workers must NOT "fix" the product to satisfy old tests:
 
-1. The consent checkbox, "Exact outbound request" preview, and include-context/redact toggles are REMOVED from the Generate-with-AI create path. (The chat drawer's consent gate is KEPT.)
-2. The model-type select is REMOVED from the create panel; generation always uses `'auto-detect'`.
-3. The flat explorer file list is REPLACED by the folder tree in multi-file (directory/OPFS) workspaces.
-4. `ArisChatImproveRail` is REMOVED; its interview lives in the chat drawer.
-5. The `ArisAssistantDrawer` modal + `ArisAssistantPanel` are REPLACED by the chat drawer.
+1. In multi-file (directory/OPFS) workspaces, importing an AML/XML **writes one `.aml` per model into folders** mirroring the AML `Group` hierarchy (behind a review dialog), instead of opening a single in-memory tab. (Single-file mode and the §7.3 package-store import path are UNCHANGED.)
+2. `ArisModelExplorer` (the flat model list) renders **only when the active tab has more than one model**, instead of always stacking above the tree.
+3. `buildBlankArisAml` mints a **unique `Model.ID` + `<GUID>`** per blank model instead of the fixed `Model.New`.
+4. The palette is rebuilt from the conventions catalog: default-symbol entries keep their `create.ot_*` ids; new variant entries use `create.<objectType>.<symbolNum>`. Entry-count/action-id assertions are updated accordingly.
+5. Canvas gains inline label editing, an assignment marker + double-click drill-down, and a "Link model…" toolbar action.
+
+Tests that must stay green UNMODIFIED (single-file/package-store/reject paths): `ArisApp.test.tsx` cases 'rejects BPMN files at the top-level ARIS shell boundary', 'keeps accepting AML files during mixed import batches…', 'shows the §7.3 review before committing an import…', 'opens a blank model as an in-memory tab in the picker phase', and 'switches between the models of one export through the model explorer' (still valid for a >1-model tab).
+
+---
+
+## Embedded reference (workers use this instead of the PDFs)
+
+### R1 — Convention symbol / color catalog (DMT ARIS Convention Manual + fixture)
+
+Colors marked **[fixture]** are the exact `<Brush Color=…>` values observed in `ARISAMLExport.xml` (unpadded lowercase hex → prefix `#`, left-pad to 6). Others are **[manual]** (inferred from the manual's print palette) or **[unverified]** (must sit in the `VERIFY-AGAINST-REAL-ARIS-EXPORT` region). "Fixture symbol" = the exact `ST_*` seen on occurrences in the fixture.
+
+| Object (EN label)             | objectType         | Default symbolNum                 | Fill      | Provenance          | Placeable     |
+| ----------------------------- | ------------------ | --------------------------------- | --------- | ------------------- | ------------- |
+| Function                      | `OT_FUNC`          | `ST_FUNC`                         | `#339900` | [fixture]           | yes (default) |
+| System function               | `OT_FUNC`          | `ST_SYS_FUNC_ACT`                 | `#339900` | [fixture]           | variant       |
+| Process interface             | `OT_FUNC`          | `ST_PRCS_IF`                      | `#c0c0c0` | [fixture symbol]    | variant       |
+| Value-added chain             | `OT_FUNC`          | `ST_VAL_ADD_CHN_SML_1`            | `#339900` | [fixture]           | VACD only     |
+| Event                         | `OT_EVT`           | `ST_EV`                           | `#dcbbed` | [fixture]           | yes           |
+| AND rule                      | `OT_RULE`          | `ST_OPR_AND_1`                    | `#d5d5f7` | [fixture]           | yes           |
+| OR rule                       | `OT_RULE`          | `ST_OPR_OR_1`                     | `#d5d5f7` | [manual]            | yes           |
+| XOR rule                      | `OT_RULE`          | `ST_OPR_XOR_1`                    | `#d5d5f7` | [fixture]           | yes           |
+| Entity type                   | `OT_ENT_TYPE`      | `ST_ENT_TYPE`                     | `#b6dce9` | [fixture]           | yes           |
+| Information carrier (general) | `OT_INFO_CARR`     | `ST_INFO_CARR_1`                  | `#cccccc` | [manual]            | yes           |
+| Info carrier: Document        | `OT_INFO_CARR`     | `ST_DOC`                          | `#cccccc` | [fixture]           | variant       |
+| Info carrier: E-mail          | `OT_INFO_CARR`     | `ST_EMAIL_1`                      | `#cccccc` | [fixture]           | variant       |
+| Info carrier: SMS             | `OT_INFO_CARR`     | `ST_INFO_CARR_HANDY`              | `#cccccc` | [fixture]           | variant       |
+| Info carrier: Letter          | `OT_INFO_CARR`     | `ST_LETTER`                       | `#cccccc` | [unverified]        | variant       |
+| Info carrier: Log             | `OT_INFO_CARR`     | `ST_LOG`                          | `#cccccc` | [unverified]        | variant       |
+| Info carrier: e-file          | `OT_INFO_CARR`     | `ST_INFO_CARR_EDOC`               | `#cccccc` | [fixture]           | variant       |
+| Business rule                 | `OT_BUSINESS_RULE` | `ST_BUSINESS_RULE`                | `#fde047` | [fixture symbol]    | yes           |
+| Business policy               | `OT_POLICY`        | `ST_BUSINESS_POLICY`              | `#fb923c` | [fixture symbol]    | yes           |
+| KPI / Measure                 | `OT_PERF`          | `ST_PERFORM`                      | `#2563eb` | [fixture symbol]    | yes           |
+| Application system            | `OT_APPL_SYS`      | `ST_APPL_SYS`                     | `#000099` | [fixture]           | yes           |
+| Data entity                   | `OT_ENT_TYPE`      | `ST_ENT_TYPE`                     | `#7f2020` | see note            | yes           |
+| Requirement                   | `OT_REQUIREMENT`   | `ST_REQUIREMENT`                  | `#f7fee7` | [fixture symbol]    | yes           |
+| External person/entity        | `OT_PERS`          | `ST_PERS_EXT`                     | `#d7c49d` | [fixture]           | yes           |
+| Internal person               | `OT_PERS`          | `ST_PERS`                         | `#e6cf7a` | [manual]            | yes           |
+| Role                          | `OT_PERS_TYPE`     | `ST_EMPL_TYPE`                    | `#d7c49d` | [fixture]           | yes           |
+| Organizational unit           | `OT_ORG_UNIT`      | `ST_ORG_UNIT_1`                   | `#f59e0b` | [manual/unverified] | yes           |
+| Position                      | `OT_POS`           | `ST_POS`                          | `#facc15` | [manual/unverified] | yes           |
+| Group (org)                   | `OT_GRP`           | `ST_GRP_1`                        | `#a16207` | [manual/unverified] | yes           |
+| Related entity                | `OT_PERS`          | `ST_PERS_EXT` (RE label)          | `#9ca3af` | [unverified]        | yes           |
+| SLA                           | `OT_POLICY`        | `ST_BUSINESS_POLICY` (SLA label)  | `#dc2626` | [unverified]        | yes           |
+| Law / Regulation              | `OT_POLICY`        | `ST_BUSINESS_POLICY` (Law label)  | `#dc2626` | [unverified]        | yes           |
+| Risk                          | `OT_RISK`          | `ST_RISK_1`                       | `#dc2626` | [manual/unverified] | yes           |
+| Product / Service             | `OT_SERVICE`       | `ST_SERVICE`                      | `#8b7355` | [unverified]        | yes           |
+| Committee / Team              | `OT_ORG_UNIT`      | `ST_ORG_UNIT_1` (committee label) | `#f59e0b` | [unverified]        | yes           |
+| Value-added chain (Start)     | `OT_FUNC`          | `ST_VAL_ADD_CHN_SML_1` (start)    | `#2f7d31` | [manual]            | VACD only     |
+
+Data-entity note: the fixture encodes data entities as `OT_ENT_TYPE` occurrences colored dark red by authored brush; the catalog exposes a distinct "Data entity" palette entry mapped to `OT_ENT_TYPE`/`ST_ENT_TYPE` with default fill `#7f2020` and a distinct label key. C5 keeps the plain "Entity type" entry separately (`#b6dce9`).
+
+`DEFAULT_STROKE = '#1a1a1a'` unless the manual specifies otherwise. Rules render as circles with the operator glyph (∧/∨/✕). All non-[fixture] rows are grouped under ONE `// VERIFY-AGAINST-REAL-ARIS-EXPORT` banner in `catalog.ts`.
+
+### R2 — Connection types, canonical labels, RACI (manual)
+
+| From → To                          | connectionType                    | Canonical label              | RACI               |
+| ---------------------------------- | --------------------------------- | ---------------------------- | ------------------ |
+| Function/Process-interface → Event | `CT_CRT_1`                        | creates/triggers             | —                  |
+| Event → Function/Process-interface | `CT_ACTIV_1`                      | activates/triggers           | —                  |
+| Event → Rule                       | `CT_IS_EVAL_BY_1`                 | is evaluated by              | —                  |
+| Rule → Event                       | `CT_LEADS_TO_1` / `CT_LEADS_TO_2` | leads to/triggers            | —                  |
+| Executor → Function                | `CT_EXEC_1`                       | (executes)                   | **R** [fixture]    |
+| Executor → Function (2nd form)     | `CT_EXEC_2`                       | (executes)                   | **R** [fixture]    |
+| Executor → Function                | `CT_DECID_ON`                     | decides on                   | **A** [unverified] |
+| Executor → Function                | `CT_MUST_BE_CONSLT_ABT_1`         | must be consulted about      | **C** [unverified] |
+| Executor → Function                | `CT_MUST_BE_INFO_ABT_1`           | must be informed about       | **I** [fixture]    |
+| Application system → Function      | `CT_SUPP_3`                       | supports                     | —                  |
+| Law/SLA → Function                 | `CT_MUST_BE_INFO_ABT_1`-family    | Regulate                     | —                  |
+| Business policy → Function         | `CT_AFFECTS`                      | affects                      | —                  |
+| Function → Product/Service         | `CT_HAS_OUT`                      | produces                     | —                  |
+| Function → Data entity             | `CT_CRT_OUT_TO`                   | creates output to            | —                  |
+| Data entity → Function             | `CT_IS_INP_FOR`                   | provides input for / INPUT   | —                  |
+| VACD chain → chain                 | `CT_IS_PREDEC_OF_1`               | is predecessor of            | —                  |
+| VACD chain → sub-chain             | `CT_IS_PRCS_ORNT_SUPER`           | is process-oriented superior | —                  |
+| Org unit → sub-org unit            | (org)                             | is composed of               | —                  |
+| Position → Org unit                | (org)                             | is organization manager for  | —                  |
+| Position → Position                | (org)                             | is technical superior to     | —                  |
+| Position → Internal person         | (org)                             | occupies                     | —                  |
+| Position → Role                    | (org)                             | performs                     | —                  |
+| Service → sub-service              | (svc)                             | encompasses                  | —                  |
+
+Executor object types (a Function's R comes from one of these via `CT_EXEC_*`): `OT_ORG_UNIT`, `OT_POS`, `OT_GRP`, `OT_PERS_TYPE` (Role), `OT_PERS` (External/Internal). The existing `CONNECTION_RULES` triples in `src/aris/canvas/vocabulary.ts` are a subset and must be reproduced verbatim (existing tests depend on them).
+
+### R3 — Attribute schema (manual)
+
+- **Element (Function/VACD element):** `AT_ID` Identifier (Mandatory) e.g. `AWF.01.01`; `AT_DESC` Description/Definition (Optional); `AT_TIME_AVG_PRCS` Average Processing Time (Optional, "2.0 Day(s)"). Fixture also carries `AT_PROC_CODE` on occurrences (rendered under the box).
+- **EPC model:** Process Objective, Process Scope, Entity, Authorized by, Relevant Organization Structure, Person Responsible (`AT_PERS_RESP` [fixture]), Version (`AT_VERSION`), Identifier (`AT_ID`), Process Area, Organization Name. Non-fixture rows are `unverified`.
+- **Service tree L3:** + Service Fees ("AED 150" / "Free Service").
+- Function naming is short/keyword-based; detail goes in Description.
+
+### R4 — Per-model fidelity expectation summaries (from the 4 PDFs)
+
+Fixture Model.IDs: Renew an Animal's profile = `Model.-1rUudxIp-wP-u-L` (AWF.01.01, 46 occ); Request to Register Animal Owner Profile = `Model.3xqe8yXO9Z7-u-L` (AWF.01.01, 94 occ); Animal Ownership Transfer between Citizens = `Model.3i-a2j4HRS3-u-L` (AWF.01.04, 78 occ); Animal Ownership Transfer between Citizens and Companies = `Model.-778f33baj6c-u-L` (AWF.01.04, 63 occ); VACD parent = `Model.-64xG-AFMIgg-u-L` (`MT_VAL_ADD_CHN_DGM`, 23 occ, 7 assignment chevrons).
+
+Common layout law (all EPCs): vertical spine top→bottom; each Function carries its number in a small box on its bottom edge (`AT_PROC_CODE`/`AT_ID` occurrence label); Application-system (blue) / Data-entity (dark-red) / Info-carrier (gray) satellites stacked LEFT of the function with short horizontal connectors; executors (person/role) RIGHT with the connection captioned by its RACI letter (R/I seen); events between functions on the spine; XOR/AND circles at branch/join; parallel branches in side-by-side columns; loop-backs routed orthogonally around the right; yellow free-text notes; pink "Requirements" notes. The header band, Reference box, bottom legend, and RACI legend are PRINT-FRAME elements — the canvas reproduces diagram CONTENT only, not the print frame.
+
+1. **Renew an Animal's profile** — 8 functions (01 Login to TAMM…, 02 Enter Owner Registration number, 03 Update Animal details profile…, 04 Review and submit the application, 05 Receive and approve the application [Pet Owner R], 06 Fill in required modifications, 07 Notify the Veterinary about the modification [System function, I], 08 Update the Animal registration application details); events: start "Animal profile renewal Service triggered", "Application submitted", "Application returned for amendments", "Registration details updated", end "Animal profile has been renewed"; 2 XOR gates; amendment loop back to 05; TAMM+Smart Hub app systems on most functions; data entities Owner Registration Number, Animal Profile Details, Animal Medical Record Details, Animal profile renewal application (×2), Comments on the application; info carrier "Email: Modification Request"; Requirements note "Pet Owner has been already registered"; Veterinary (R) on 01–04, 06, 08.
+2. **Request to Register Animal Owner Profile** — 14 functions incl. 6+ System functions ("System check the eligibility…", "System verify residence details with Tawtheeq system", "System checks if the business is a registered entity" [DED System satellite], "System checks … activated the … service", "System terminate the service request…" ×2, "Auto approve the request…"); top XOR "Pet Owner is Business Entity" vs "Pet Owner is individual"; nested XOR trees on both branches; rejoin before 10 "Enter registration application details…"; tail XOR → approved/rejected/returned-for-modification with loop back to 10; UAE Pass/TAMM/Smart Hub/DED System app systems; SMS + E-mail info carriers on approval/rejection; yellow note "The owner registration number is valid for one month…"; Requirements note (age >18, Emirates ID…); Pet Owner (R/I) + Respective Municipality Registration Officer (org unit, R on 12).
+3. **Animal Ownership Transfer between Citizens** (HOLDOUT — strict) — 11 numbered functions on a long spine (01 Login, 02 Fill the registration number…, 03 System notifies the owner… [SysFunc], 04 Authorise the Veterinary…, 05 Select the animal…, 06 Upload animal's medical report, 07 Enter the new owner registration number, 08 Retrieve the new owner details [SysFunc], Review and submit, Review and approve [New Pet Owner R]) → XOR → accepted (Accept the terms & conditions) / rejected (Notify Animal owner about the rejection [SysFunc] → "Request has been terminated") → **AND join** → 3 parallel ends (Generate ownership transfer number [SysFunc], Update Animal registration certificate, Notify Animal owner about the transfer completion [SysFunc]); yellow note top-left "Animal moved outside Abu Dhabi / Animal Deceased"; executors Veterinary/Pet Owner/New Pet Owner.
+4. **Animal Ownership Transfer between Citizens and Companies** (HOLDOUT — own AML geometry; PDF 4 "Transfer of Pet Ownership" 2025 is a later redesign NOT in the export, directional reference only) — 63 occurrences; gate on the `<Model>` block topology + verbatim geometry, not on PDF 4.
+
+### R5 — AML mechanics cheat-sheet (for the scanner & splitter)
+
+- Document skeleton: `<AML>` → `Header-Info` → 2×`Language` → 6×`FontStyleSheet` → 69×`FFTextDef` → 14×`OLEDef` → `Group Group.ID="Group.Root"` → nested `Group` (`Animal Welfare`) containing 276 `ObjDef` + 8 `Model`; 3 `ObjDef` (e.g. "TAMM") sit at `Group.Root` outside the named group. Prolog carries an internal DTD with `LocaleId` entity declarations; attribute values reference them UNEXPANDED (`&LocaleId.AEar;`, `&LocaleId.USen;`).
+- `Group` nesting is by XML containment (no parent attribute); the parent is the nearest `<Group>` ancestor. Group `AT_NAME` uses numeric charrefs for Arabic (`&#1573;…`).
+- `Model` start tag: `Model.ID`, `Model.Type` (`MT_EEPC` / `MT_VAL_ADD_CHN_DGM`), geometry attrs; children `<Flag>`, `<GUID>`, `<MasterGUID>`, `<TemplateGUID>`, `<Lane>`, then `ObjOcc`/`CxnOcc`(nested)/`FFTextOcc`/`OLEOcc`. Model display name = first `AttrDef AT_NAME` after the open tag and before the first `<ObjOcc`.
+- Assignment (nested process) = attribute `LinkedModels.IdRefs` on an `<ObjDef>` start tag (whitespace-padded, space-separated ids). Fixture: exactly 7, all on `OT_FUNC`/`ST_VAL_ADD_CHN_SML_1` defs of the VACD, → the 7 EPC Model.IDs. An assignment counts as a tree EDGE only when that def has ObjOcc(s) inside the parent model.
+- `<CxnDef>` lives INSIDE the source `<ObjDef>`, names its target via `ToObjDef.IdRef`, type on the def. `<CxnOcc>` is a child of the source `<ObjOcc>`; target = `ToObjOcc.IdRef`; waypoints = ordered `<Position>` children.
+- Colors: `<Brush Color=… BrushType="SOLID|TRANSPARENT">` / `<Pen Color=… Style=… Width=…>` are children of occurrences; unpadded lowercase hex, no `#`; `-1`/`BackColor="-1"` = no override. Function brush `339900`, event `dcbbed`, person/role `d7c49d`, app-system `99`(=0x000099), lanes `7f7f7f`.
+- `FFTextOcc` has NO id of its own (referenced by `FFTextDef.IdRef` + position). `OLEDef` holds a base64 `<Blob>`.
+- Accounting oracle (pinned in tests): 8 models · 279 ObjDef · 494 ObjOcc · 465 CxnDef/CxnOcc · 1339 route points · 16 lanes · 69 FFText · 14 OLE · 2 groups · 0 unaccounted. Split per-model occ counts match the model inventory above.
 
 ---
 
 ## Wave / lane schedule
 
-19 lanes across 9 waves. Lanes within a wave run in parallel and are file-disjoint. Waves are strictly sequential.
+23 lanes across 6 waves (0–5). Lanes within a wave run in parallel and are file-disjoint. Waves are strictly sequential.
 
-| Wave | Lane | Worker                    | Goal                                                                                      |
-| ---- | ---- | ------------------------- | ----------------------------------------------------------------------------------------- |
-| 0    | —    | orchestrator              | Commit plan docs; verify all gates at HEAD; record baseline SHA + pre-existing failures   |
-| 1    | L1a  | **kimi-k2.7**             | Tree-data helpers (`WorkspaceEntry[] → LiteTreeNode`, empty hierarchy inputs, path utils) |
-| 1    | L2a  | **kimi-k2.7**             | Blank-model AML builder (minimal valid EPC/VACD source)                                   |
-| 1    | L2b  | opus-4.8-1M               | Palette + context pad: icons, labels, localized titles, CSS                               |
-| 1    | L1b  | **kimi-k2.7**             | Extract `ArisExplorerPane` from ArisApp; real AI-section collapse toggle (caret-bug fix)  |
-| 1    | L3a  | **kimi-k2.7**             | Pure chat interview session core (port of ArisChatImproveRail logic)                      |
-| 1    | L5a  | **kimi-k2.7**             | Canvas content-language projection (zero-undo view switch) + RTL captions                 |
-| 1    | L5b  | opus-4.8-1M               | ARIS localization adapter (extract → review → run → apply)                                |
-| 2    | L1c  | opus-4.8-1M               | FolderTreeLite + full CRUD wired into the pane                                            |
-| 2    | L3b  | opus-4.8-1M               | `ArisChatDrawer` UI (FAB + panel + 2 tabs + bubbles)                                      |
-| 2    | L3c  | **kimi-k2.7**             | StudioTab publishes `ArisTabChatHost`; delete the improve rail                            |
-| 2    | L4a  | opus-4.8-1M               | `ArisGenerationPanel` rebuild to AiPanelLite visuals, simplified                          |
-| 3    | L3d  | opus-4.8-1M               | Mount drawer in ArisApp; fix all three openers; delete old modal; update app tests        |
-| 3    | L2c  | **kimi-k2.7**             | Movable palette (port of main's paletteDrag) + empty-model hint                           |
-| 4    | L5c  | opus-4.8-1M               | Translate controller + toolbar buttons + silent auto-translate                            |
-| 5    | L2d  | opus-4.8-1M               | "New model" dialog + all entry points                                                     |
-| 6    | L5d  | opus-4.8-1M               | Fix-missing: deterministic planner + three-tier dialog + badge                            |
-| 7    | X1   | **sonnet-med**            | Register every `tk()` key; `aris.ai.body` copy update                                     |
-| 8    | X2   | opus-4.8-1M               | Update existing e2e suites                                                                |
-| 8    | X3   | **kimi-k2.7**             | New e2e: tree CRUD, new-model + draw + undo, translation/fix flows                        |
-| 9    | —    | orchestrator + sonnet-med | Full gate suite, `build:aris`, artifact check, evidence, final report                     |
+| Wave | Lane | Worker        | Goal                                                                                                |
+| ---- | ---- | ------------- | --------------------------------------------------------------------------------------------------- |
+| 0    | —    | orchestrator  | Commit docs; confirm 5 PDFs under `../reference/`; full gate baseline; record SHA + failures        |
+| 1    | T1   | **kimi-k2.7** | ARIS model/assignment scanner → `ProcessIndex` + `ProcessHierarchyGraph` (+ cache, live-doc derive) |
+| 1    | T2   | opus-4.8-1M   | AML span-slice splitter `buildArisSplitPlan`                                                        |
+| 1    | T3   | **kimi-k2.7** | Blank-model unique `Model.ID` + `<GUID>` + injectable id                                            |
+| 1    | T4   | sonnet-med    | Issue-1 + direct-edit i18n keys (en+ar)                                                             |
+| 1    | C1   | **kimi-k2.7** | Conventions catalog core (catalog/connectionRules/attributes/index)                                 |
+| 1    | C2   | **kimi-k2.7** | Fidelity comparator core (types/compare/loadExpectation)                                            |
+| 1    | C3   | opus-4.8-1M   | Direct editing: dep + provider + module registration + CSS                                          |
+| 1    | F1   | sonnet-med    | Expectation JSONs (outside repo) + 4 fidelity suites + holdout vitest config                        |
+| 1    | F2   | **kimi-k2.7** | `scripts/aris-fidelity-report.ts`                                                                   |
+| 2    | T5   | opus-4.8-1M   | App hierarchy integration + live overlay + reveal + model-explorer `>1` gating                      |
+| 2    | T6   | opus-4.8-1M   | Canvas assignment UX (marker + dblclick@2000 + Link-model + rail Open)                              |
+| 2    | T7   | **kimi-k2.7** | Split-import staging + review dialog                                                                |
+| 2    | C4   | opus-4.8-1M   | Palette catalog sections + quick-pick + `replaceNewObject` + wave-2/3 dict keys                     |
+| 2    | C5   | sonnet-med    | Symbol descriptors + DMT fills + vocabulary extension/delegation                                    |
+| 3    | T8   | opus-4.8-1M   | App capstone: import→split flow, `handleOpenAssignedModel`, create-missing, lifecycle               |
+| 3    | T9   | **kimi-k2.7** | animalwf node integration (VACD owns 7 EPCs; move-safe; 3-level)                                    |
+| 3    | C6   | sonnet-med    | Details-rail schema editors                                                                         |
+| 3    | C7   | sonnet-med    | Convention validation rules                                                                         |
+| 3    | C8   | opus-4.8-1M   | Measured fidelity fix loop on 2 iterate models                                                      |
+| 4    | E1   | sonnet-med    | e2e: nested processes                                                                               |
+| 4    | E2   | **kimi-k2.7** | e2e: import split                                                                                   |
+| 4    | E3   | sonnet-med    | e2e: fidelity screenshots + interaction + npm scripts                                               |
+| 4    | X1   | sonnet-med    | i18n final sweep                                                                                    |
+| 5    | —    | orchestrator  | Holdout run + full gates + build + artifact + evidence + push                                       |
 
 ### Contended-file ownership chains (binding — one owner per wave)
 
-- `src/ArisApp.tsx`: L1b(w1) → L1c(w2) → L3d(w3) → L5c(w4) → L2d(w5) → L5d(w6, one line)
-- `src/aris/shell/ArisStudioTab.tsx`: L3c(w2) → L2c(w3) → L5c(w4) → L5d(w6)
-- `src/i18n/dictionaries.ts`: L2b(w1) → L1c(w2) → L2d(w5) → X1(w7)
-- `src/ArisApp.test.tsx`: L1c(w2) → L3d(w3) → L2d(w5)
-- `src/aris/shell/index.ts`: L1b(w1) → L3c(w2) → L3d(w3)
-- `src/aris/shell/ArisExplorerPane.tsx` (new in w1): L1b(w1) → L1c(w2) → L3d(w3)
-- `src/aris/shell/shellI18n.ts`: X1(w7) only
-- `tests/e2e/lite-mandatory-translation.spec.ts`: X3(w8) only. All other existing e2e specs: X2(w8) only.
+- `src/ArisApp.tsx` + `src/ArisApp.test.tsx`: T5(w2) → T8(w3)
+- `src/aris/shell/ArisExplorerPane.tsx`: T5(w2) → T8(w3, single `onStageImport` prop)
+- `src/aris/shell/ArisStudioTab.tsx`: T6(w2) → C7(w3, one-line append)
+- `src/aris/shell/ArisDetailsEditors.tsx` + `ArisDetailsRail.tsx`: T6(w2) → C6(w3)
+- `src/i18n/dictionaries.ts`: T4(w1) → C4(w2) → X1(w4)
+- `src/aris/canvas/modules.ts`: C3(w1) → C4(w2)
+- `src/aris/shell/shell.css`: C3(w1) → T6(w2)
+- `package.json` (+lock): C3(w1) → E3(w4)
+- `src/aris/canvas/authoring.ts` (+ `authoring.test.ts`): C4(w2) only
+- `src/aris/symbols/shapes.ts` + `src/aris/canvas/vocabulary.ts`: C5(w2) only
+- `src/aris/canvas/canvasSync.ts` + canvas `renderer.ts` + `elements.ts` + `src/aris/model/buildFromSource.ts` + `svg.ts`: C8(w3) only
+- `src/aris/shell/arisExplorerActions.tsx` (+ test): T8(w3) only
+- `vitest.animalwf.config.ts`: F1(w1) only
+- Never touched (consumed only): `src/workspace/FolderTreeLite.tsx`, `src/workspace/processHierarchy.ts`, `src/core/processIndex.ts`, `src/links/**`, `src/aris/writer/**`, §7.3 package-import files (`ArisImportReviewDialog.tsx`, `arisPackageImport.ts`).
 
 ---
 
 ## Wave 0 — Baseline (orchestrator)
 
-- [x] Commit `implementation_plan.md` + `goal.md` to the branch. (commit `e7b077d`)
-- [x] Run the full gate suite at HEAD: `npm run format:check && npm run lint && npm run typecheck && npm run check:aris-runtime-boundary && npm run check:ui-copy && npm run check:no-skips && npm run check:lite-only && npm test`. Record the SHA and every pre-existing failure verbatim at the bottom of this file under "Baseline record".
-- [x] If gates are red at HEAD, dispatch a fix lane (default workers) BEFORE wave 1 and re-record. **N/A — baseline is fully green; no fix lane needed.**
+- [x] Commit `implementation_plan.md` + `goal.md` to the branch.
+- [x] Confirm the 5 PDFs are present under `../reference/conventions/` and `../reference/AnimalWF/pdf/` (re-copy from `/home/ahmed/.claude/uploads/e861b876-83f9-425f-b812-da5ebbacb110/` if missing). — Confirmed: 4 process PDFs under `../reference/AnimalWF/pdf/` + `../reference/conventions/ARIS_Convention_Manual_DMT_v02.pdf`; AML fixture (4.18 MB) present at `../reference/AnimalWF/ARISAMLExport.xml`.
+- [x] Run the full gate suite at HEAD: `npm run format:check && npm run lint && npm run typecheck && npm run check:aris-runtime-boundary && npm run check:ui-copy && npm run check:no-skips && npm run check:lite-only && npm test`. Record the SHA and every pre-existing failure verbatim under "Baseline record".
+- [x] If gates are red at HEAD, dispatch a fix lane (default workers) BEFORE Wave 1 and re-record. — N/A: no source gate is red at HEAD. The only `format:check` failure was the uncommitted `implementation_plan.md` itself, formatted in this Wave-0 commit; no fix lane required.
 
 ---
 
-## Lane L1a — Tree-data helpers
+## Lane T1 — ARIS model/assignment scanner
 
 **Wave:** 1 · **Worker:** kimi-k2.7 · **Depends on:** nothing
-**Files owned:** `src/workspace/liteTreeFromEntries.ts` (create), `src/workspace/__tests__/liteTreeFromEntries.test.ts` (create)
+**Files owned (create):** `src/aris/links/arisModelScan.ts`, `src/aris/links/arisWorkspaceLinks.ts`, `src/aris/links/arisModelScan.test.ts`, `src/aris/links/arisWorkspaceLinks.test.ts`, `src/aris/links/arisModelScan.animalwf.test.ts`
 
-**Goal:** pure, unit-tested conversion from the workspace adapter's flat listing to the inputs `FolderTreeLite` needs.
+**Goal:** pure, node-safe scanners that turn AML text and the workspace listing into the exact `ProcessIndex` + `ProcessHierarchyGraph` inputs `buildProcessHierarchy` already consumes — modeled byte-for-byte on `src/links/linkGraph.ts`.
 
-**Interface (implement exactly; all imports type-only):**
+**Read first:** `src/links/linkGraph.ts` (mask-comments, span stack-scan, ambiguity fail-closed patterns — copy them), `src/core/processIndex.ts` (`ProcessEntry`, `ProcessIndex`), `src/workspace/processHierarchy.ts:1-40` (`ProcessHierarchyLink`, `ProcessHierarchyGraph`, `processLinkKey`), `src/library/amlParse.ts` (`localeLang`, `decodeAmlEntities` — import these), `src/workspace/adapters/types.ts` (`WorkspaceEntry`, `FileSnapshot`), `src/aris/model/types.ts` (`ArisWorkingDocument`, `ArisObjectDefinition.linkedModelIds`), R5 above.
+
+**Interface (implement exactly; all cross-module imports type-only):**
 
 ```ts
-import type { WorkspaceEntry } from './adapters/types'
-import type { LiteTreeNode } from '../fs/fsAccess'
-import type { ProcessHierarchyGraph } from './processHierarchy'
-import type { ProcessIndex } from '@/core/processIndex'
-import type { MoveFolderOption } from './MoveDialog'
-
-export interface LiteTreeFromEntriesOptions {
-  /** Top-level directory subtrees hidden from the tree. Default ['.orbitpm']. */
-  readonly hiddenRootDirs?: readonly string[]
-  /** File filter. Default: /\.(?:aml|apc|xml|bpmn)$/i test on entry.name. */
-  readonly includeFile?: (entry: WorkspaceEntry) => boolean
+// arisModelScan.ts
+export interface ArisScannedModel {
+  readonly modelId: string
+  readonly name: string | null
+  readonly modelType: string | null
 }
-export function buildLiteTreeFromEntries(
+export interface ArisScannedAssignment {
+  readonly parentModelId: string
+  readonly childModelId: string
+  readonly occurrenceIds: readonly string[]
+  readonly count: number
+}
+export interface ArisModelScanResult {
+  readonly models: readonly ArisScannedModel[]
+  readonly assignments: readonly ArisScannedAssignment[]
+}
+export function scanArisModelSource(xml: string): ArisModelScanResult
+
+// arisWorkspaceLinks.ts
+export interface ArisWorkspaceLinkState {
+  readonly index: ProcessIndex
+  readonly graph: ProcessHierarchyGraph
+  readonly scannedFileCount: number
+}
+export const EMPTY_ARIS_LINK_STATE: ArisWorkspaceLinkState
+export interface ArisLinkScanCacheEntry {
+  readonly size: number | undefined
+  readonly modifiedAt: number | undefined
+  readonly hash: string
+  readonly result: ArisModelScanResult
+}
+export interface ArisLinkScanCache {
+  readonly byPath: Map<string, ArisLinkScanCacheEntry>
+}
+export function createArisLinkScanCache(): ArisLinkScanCache
+export function isArisLinkScanCandidate(entry: WorkspaceEntry): boolean
+export async function scanArisWorkspaceLinks(
+  adapter: Pick<WorkspaceAdapter, 'read'>,
   entries: readonly WorkspaceEntry[],
-  rootName: string,
-  options?: LiteTreeFromEntriesOptions
-): LiteTreeNode
-export function collectFolderOptions(root: LiteTreeNode, rootLabel: string): MoveFolderOption[]
-export function countTreeFiles(root: LiteTreeNode | null): number
-/** Suffix fileName with -2, -3… until the joined path is not in takenPaths (case-insensitive). */
-export function uniquePathIn(
-  takenPaths: ReadonlySet<string>,
-  dirRel: string,
-  fileName: string
-): string
-export const EMPTY_PROCESS_INDEX: ProcessIndex // = new Map()
-export const EMPTY_PROCESS_GRAPH: ProcessHierarchyGraph // = Object.freeze({ links: [], ambiguousProcessIds: new Set() })
+  cache: ArisLinkScanCache
+): Promise<ArisWorkspaceLinkState>
+export function deriveArisLinksFromDocument(document: ArisWorkingDocument): ArisModelScanResult
+export function mergeArisLinkState(
+  base: ArisWorkspaceLinkState,
+  overlays: ReadonlyMap<string, ArisModelScanResult>
+): ArisWorkspaceLinkState
 ```
 
 **Steps:**
 
-- [x] **Read first:** `src/workspace/adapters/types.ts` (the `WorkspaceEntry` shape — note directory entries have `kind: 'directory'`), `src/fs/fsAccess.ts` around line 510 (the `sortNodes` comparator), `src/workspace/processHierarchy.ts` (the `ProcessHierarchyGraph` + `LiteTreeNode` consumption), `src/workspace/MoveDialog.tsx` (the `MoveFolderOption` shape).
-- [x] Implement `buildLiteTreeFromEntries`: root node is `{ name: rootName, relPath: '', type: 'directory', children: [] }`. For each entry: skip when its first `/`-segment is in `hiddenRootDirs`; skip files failing `includeFile`. Insert by walking `/`-segments from the root, **synthesizing missing intermediate directory nodes** (the jsdom mock adapter in `ArisApp.test.tsx` lists files only — parents may not exist as entries). Directory entries become directory nodes. File node: `{ name, relPath: entry.path, type: 'file' }`. Keep `.bpmn` files included (the tree shows them; the open handler rejects them — Lane L1c).
-- [x] Sort every `children` array with the exact comparator semantics of `src/fs/fsAccess.ts` `sortNodes` (directories first, then `localeCompare(..., undefined, { sensitivity: 'base' })`, reimplemented locally — do not runtime-import fsAccess).
-- [x] Implement `collectFolderOptions`: DFS, root first — `[{relPath: '', label: rootLabel}, {relPath: 'a', label: 'a'}, {relPath: 'a/b', label: 'a/b'}, …]`.
-- [x] Implement `countTreeFiles` (recursive file count, null-safe) and `uniquePathIn` (join dir + name with a local 3-line join helper; compare lowercased full paths; on collision insert `-2`, `-3`… before the extension).
-- [x] Write `src/workspace/__tests__/liteTreeFromEntries.test.ts` asserting: nested build + sort order (folders before files, case-insensitive); `.orbitpm/**` entries dropped entirely; empty directory entries preserved as expandable folders; parents synthesized when only file entries exist; `countTreeFiles` counts; `uniquePathIn` collision loop incl. case-insensitivity; **integration pin** — `import { buildProcessHierarchy } from '../processHierarchy'` and assert a 2-file tree with `EMPTY_PROCESS_INDEX` + `EMPTY_PROCESS_GRAPH` yields 2 canonical file rows and zero reference rows.
-- [x] Run prettier on both files.
+- [ ] `scanArisModelSource`: mask comments/CDATA (copy `linkGraph.ts`), stack-scan `<Model>…</Model>` spans (capture `Model.ID`, `Model.Type`), stack-scan `<ObjDef>` spans (capture `ObjDef.ID`, `LinkedModels.IdRefs` split on `/\s+/u` and entity-decoded), single-pass `<ObjOcc` tags (capture `ObjOcc.ID`, `ObjDef.IdRef`, attribute the offset to its containing model span). Model name = first `AttrDef AT_NAME` `AttrValue` after the model open tag and before its first `<ObjOcc`, locale via `localeLang`, decoded via `decodeAmlEntities`, EN-preferred then AR then `null`. An assignment edge exists only when the linking def has ≥1 ObjOcc in the parent model; `occurrenceIds` = those ObjOcc.IDs (sorted); `count` = total linking occurrences. Merge defs that link the same (parent, child): concat+sort ids, sum counts. Deterministic sort: models by `modelId`, assignments by `(parent, child)`.
+- [ ] `isArisLinkScanCandidate`: `kind === 'file'` && `/\.(?:aml|xml)$/iu.test(name)` && `!path.startsWith('.orbitpm/')`.
+- [ ] `scanArisWorkspaceLinks`: for each candidate, reuse cache when `size`+`modifiedAt` both present and match; else `adapter.read` and reuse when the content hash matches; else decode (`new TextDecoder('utf-8')`) + `scanArisModelSource`. Swallow per-file read/decode failures (contribute nothing — the jsdom mock adapters throw on unknown paths). Assemble: any modelId declared >1× across files (or twice in one file) → `graph.ambiguousProcessIds`, dropped from `index`; links emitted only when parent AND child resolve unambiguously; `ProcessHierarchyLink.key = processLinkKey(parent, child)` (`JSON.stringify([parent, child])`); `ProcessEntry.relPath` = the file's path; `processName` = scanned name.
+- [ ] `deriveArisLinksFromDocument`: produce the same `ArisModelScanResult` from an in-memory `ArisWorkingDocument` (models + object definitions with `linkedModelIds` + occurrences), so open tabs can overlay live edits.
+- [ ] `mergeArisLinkState(base, overlays)`: rebuild index+graph replacing each overlaid relPath's contribution with the overlay's scan result.
+- [ ] Prettier both new modules and tests.
+
+**Tests assert:** two-model AML with `LinkedModels.IdRefs=" Model.B "` (padded) on a def occurring twice in Model.A ⇒ one edge A→B, `count===2`, both ObjOcc.IDs sorted; def with linkedModelIds but zero occurrences in a model ⇒ no edge; same Model.ID in two files ⇒ absent from index, present in `ambiguousProcessIds`, no edges touching it; missing child ⇒ no edge; commented-out `<Model` ignored; AR-only name ⇒ AR; no AT_NAME ⇒ `null`; cache: unchanged size+mtime ⇒ `adapter.read` NOT called (spy); changed hash ⇒ rescan; moved path/same content ⇒ hash-reuse, links unchanged except relPaths; per-file read error skipped without rejecting; `deriveArisLinksFromDocument` matches the text scan of the equivalent AML; `merge` replaces one file's contribution. **animalwf suite** (throw-if-missing header copied from an existing `*.animalwf.test.ts`): monolith scan finds 8 models with the R4 names, exactly 7 assignments VACD→each EPC (`count===1` each); feeding `buildProcessHierarchy` with a synthetic 8-file tree (one path per model) yields the VACD row owning 7 children.
 
 **Verify (report exit codes):**
 
 ```bash
-npx vitest run src/workspace/__tests__/liteTreeFromEntries.test.ts
-npm run typecheck && npm run lint && npm run check:aris-runtime-boundary
+npx vitest run src/aris/links && npm run test:aris:animalwf
+npm run typecheck && npm run lint && npm run check:aris-runtime-boundary && npm run check:no-skips
 ```
 
 ---
 
-## Lane L2a — Blank-model AML builder
+## Lane T2 — AML span-slice splitter
 
-**Wave:** 1 · **Worker:** kimi-k2.7 · **Depends on:** nothing
-**Files owned:** `src/aris/shell/arisBlankModel.ts` (create), `src/aris/shell/arisBlankModel.test.ts` (create)
+**Wave:** 1 · **Worker:** opus-4.8-1M · **Depends on:** nothing
+**Files owned (create):** `src/aris/source/amlSplit.ts`, `src/aris/source/amlSplit.test.ts`, `src/aris/source/amlSplit.animalwf.test.ts`
 
-**Goal:** a deterministic, minimal AML document that round-trips the full studio pipeline into one renderable, empty, named model — the substrate of the New-model flow.
+**Goal:** pure function turning a parsed `ArisXmlSourcePackage` into one standalone AML document per model, via verbatim byte slices, preserving all cross-file identity and rendering fidelity.
 
-**Interface (implement exactly):**
+**Read first:** `src/aris/source/semanticIndex.ts:1-435` (record shapes, `span.start/end.offset`, `parent`/`ownerSourceId`, `groups`, `models`, `objectDefinitions`, `objectOccurrences`, `connectionDefinitions`/`connectionOccurrences`, `freeTextOccurrences`, `attachmentOccurrences`), `src/aris/source/sourcePackage.ts` (`ArisXmlSourcePackage.text`/`.index`), `src/aris/source/xmlTokenizer.ts` (`XmlSpan`, use `.offset`; DTD entity decls), `src/aris/writer/emit.ts` (`renderAttributes`, `CANONICAL_CHILD_ORDER` for Group order), `src/aris/writer/escapeXml.ts`, `src/core/slug.ts`, R5 above.
+
+**Interface:**
 
 ```ts
-import { attrDefSpec, renderRecord } from '../writer'
-import { slugify, FALLBACK_SLUG } from '@/core/slug' // runtime-safe pure string module
-
-export type ArisBlankModelType = 'MT_EEPC' | 'MT_VAL_ADD_CHN_DGM'
-export interface ArisBlankModelSpec {
-  readonly names: { readonly en?: string; readonly ar?: string } // at least one non-empty
-  readonly modelType: ArisBlankModelType
-}
-export interface ArisBlankModelResult {
-  readonly xml: string
+export interface ArisSplitFile {
   readonly modelId: string
+  readonly modelName: string | null
+  readonly fileName: string
+  readonly folderSegments: readonly string[]
+  readonly text: string
 }
-export function buildBlankArisAml(spec: ArisBlankModelSpec): ArisBlankModelResult
-/** Windows-safe '<slug>.aml' file name from a human model name. */
-export function deriveArisSourceFileName(name: string): string
+export interface ArisSplitPlan {
+  readonly files: readonly ArisSplitFile[]
+  readonly skippedModelIds: readonly string[]
+}
+export function buildArisSplitPlan(pkg: ArisXmlSourcePackage): ArisSplitPlan
+export function sanitizeArisPathSegment(name: string): string
+export function deriveSplitFileName(modelName: string | null, modelId: string): string
 ```
 
 **Steps:**
 
-- [x] **Read first:** `src/aris/shell/arisAiCreate.ts` lines 220–260 (how the AI path emits AML through `renderRecord`/`attrDefSpec` — mirror it exactly, including locale-id constants `'1033'` en / `'1025'` ar around lines 32–33), `src/aris/writer/` exports, `src/core/slug.ts`.
-- [x] Implement `buildBlankArisAml`: emit `<?xml version="1.0" encoding="UTF-8"?>` + `renderRecord({ name: 'AML', children: [ Header-Info record (DatabaseName 'OrbitPM', UserName 'local-user', ArisExeVersion '10'), Group record (Group.ID 'Group.Root', children: [ Model record ]) ] })`. Model record: attributes `Model.ID = 'Model.New'`, `Model.Type = spec.modelType`; one child `attrDefSpec({ type: 'AT_NAME', values: [ ...(spec.names.en ? [{localeId: '1033', text: spec.names.en}] : []), ...(spec.names.ar ? [{localeId: '1025', text: spec.names.ar}] : []) ] })`. Return `{ xml, modelId: 'Model.New' }`.
-- [x] Implement `deriveArisSourceFileName`: `slugify(name) || FALLBACK_SLUG`; for non-ASCII names copy the ~10-line branch from `src/core/newProcessDoc.ts:92` (strip `[<>:"/\\|?*\x00-\x1F]`, collapse whitespace to dashes, trim dashes) — **copy the lines, never import that module** (it drags the BPMN template into the runtime graph); append `'.aml'`.
-- [x] Write `src/aris/shell/arisBlankModel.test.ts`:
-  1. `buildBlankArisAml({names:{en:'Order intake'}, modelType:'MT_EEPC'})` → xml contains `Model.Type="MT_EEPC"` and the AT_NAME AttrValue with 'Order intake'.
-  2. Pipeline round-trip: `const pkg = await createArisXmlSourcePackage({ name:'x.aml', relPath:null, bytes:new TextEncoder().encode(xml) })` (from `../source/sourcePackage` — verify the exact import path/signature by reading the module first) → `buildArisStudioDocument(pkg)` → exactly one model, `renderable === true`, zero occurrences, accounting reports 0 unaccounted, `arisText(models[0].names,'en') === 'Order intake'`.
-  3. (`// @vitest-environment jsdom` block) canvas boot: `installJsdomSvgSupport()` from `../canvas/testing/jsdomSvg` + the geometry shim pattern from `src/ArisApp.test.tsx:268-291`; `ArisCanvas.create({ container, document: studio.source, modelId })` does not throw; `destroy()` cleans up.
-- [x] Run prettier on both files.
+- [ ] First write a throwaway assertion in the unit test: a record's span slices `pkg.text` to a string starting `<ObjDef` and ending `</ObjDef>` or `/>` — to pin span semantics before building on them. If spans exclude the closing tag, switch to the element's own end-boundary consistently.
+- [ ] `sanitizeArisPathSegment`: NFC + trim → strip `<>:"/\|?*` + control chars → collapse whitespace to single space → strip leading dots and trailing dots/spaces → empty ⇒ sanitized id ⇒ `'group'`. `deriveSplitFileName`: EN-preferred name → AR → id, then `deriveArisSourceFileName` dash rules, `.aml` extension.
+- [ ] Per model, assemble a complete AML document from verbatim slices: prolog (`text.slice(0, root.span.start.offset)` — XML decl + DOCTYPE with the LocaleId entity decls, MANDATORY); reconstructed root open tag from `index.root` rawAttributes via `renderAttributes`; `Header-Info`; all `Language`s; all `FontStyleSheet`s (source order); the model's Group chain (walk `groups` by `parentGroupId`, exclude `Group.Root`) as reconstructed open tags + verbatim slices of each group's own `AT_NAME` AttrDef; referenced ObjDefs (defs of the model's occurrences, `parsed.modelId === model`), each sliced with non-kept child `CxnDef` spans EXCISED (kept = connectionDefinitionIds referenced by the model's connectionOccurrences; children via `record.parent.sourceId`); referenced `FFTextDef`s (via freeTextOccurrences) and `OLEDef`s (via attachmentOccurrences); the whole `Model` span verbatim; close the group chain; `</AML>`. Keep `LinkedModels.IdRefs` verbatim (that IS the cross-file link). Folder segments = sanitized group-chain names (EN-preferred), outermost first, `Group.Root` excluded.
+- [ ] In tests, re-parse EVERY produced text with the node tokenizer + `buildSemanticArisDocument` — that is the correctness oracle.
+- [ ] Prettier all three files.
+
+**Tests assert (synthetic 2-group/3-model AML with bilingual names, shared defs, cross-model CxnDefs, FFText, a DTD entity in an attribute):** each split re-parses with 0 error diagnostics; contains exactly its model; per-model occ/def/cxn counts match the monolith slice; excised CxnDefs absent, kept ones present; `LinkedModels.IdRefs` preserved verbatim; DOCTYPE entity block present and `&LocaleId…;` attr values survive; AR-only group ⇒ `folderSegments: ['<arabic>']`; a `Group.Root`-level def referenced by the model is pulled into the model's chain; two same-named models ⇒ same `fileName` (collision handled later by `uniquePathIn`). **animalwf suite:** 8 files; per-file accounting vs the R5 oracle (renew = 46 occ, etc.); each file's model renderable via `buildFromSource` + `isSupportedModelType`; the VACD file keeps all 7 `LinkedModels.IdRefs` substrings; every EPC file under the `Animal Welfare` folder.
 
 **Verify:**
 
 ```bash
-npx vitest run src/aris/shell/arisBlankModel.test.ts
-npm run typecheck && npm run lint && npm run check:aris-runtime-boundary
+npx vitest run src/aris/source/amlSplit.test.ts && npm run test:aris:animalwf
+npm run typecheck && npm run lint && npm run check:aris-runtime-boundary && npm run check:no-skips
 ```
 
 ---
 
-## Lane L2b — Palette & context-pad visibility + localization
+## Lane T3 — Blank-model unique IDs + GUID
 
-**Wave:** 1 · **Worker:** opus-4.8-1M · **Depends on:** nothing · **Wave-1 owner of `src/i18n/dictionaries.ts`**
-**Files owned:** `src/aris/canvas/paletteProvider.ts`, `src/aris/canvas/contextPadProvider.ts`, `src/aris/shell/shell.css`, `src/i18n/dictionaries.ts`, affected canvas tests
+**Wave:** 1 · **Worker:** kimi-k2.7 · **Depends on:** nothing
+**Files owned:** `src/aris/shell/arisBlankModel.ts` (modify), `src/aris/shell/arisBlankModel.test.ts` (modify)
 
-**Goal:** turn the blank-box palette into labeled, iconed, localized entries; localize the context pad; add the wave-1 i18n keys (including grip/hint keys consumed later by L2c).
+**Goal:** stop emitting the fixed `Model.ID="Model.New"`; mint a unique id + `<GUID>`, injectable so the create-missing flow can force a specific id.
+
+**Read first:** `src/aris/shell/arisBlankModel.ts` (whole), `src/aris/writer/ids.ts` (`createArisIdAllocator`, `ArisDefinitionIdKind` includes `'Model'` → `Model.<11-char-key>-u-L`), `src/aris/writer/emit.ts` (`ElementSpec.text`).
 
 **Steps:**
 
-- [x] **Read first:** `src/aris/canvas/paletteProvider.ts` (18 entries: `hand-tool`, `lasso-tool`, `create.free-text`, 12 `create.ot_*`, `create.rule-and|or|xor`), `src/aris/canvas/contextPadProvider.ts` (four hardcoded English titles), `tests/e2e/aris-authoring.spec.ts` lines 37–52 + 184–204 + 247–270 (the `data-action` selectors that MUST keep working), and `git show main:src/editor/embeddedDiagramControls.ts` (the `escapeAttribute` helper pattern only — do not port the module).
-- [x] Modify `paletteProvider.ts`: import `{ t } from '../../i18n'` (React-free, boundary-safe). Keep UNCHANGED: entry ids, `group`, `className`, `arisObjectType`/`arisSymbolNum`, `action` handlers, `targets()`. Replace every hardcoded `title` with `t(...)` per the key table below (`title` for create entries = `t('aris.palette.createTitle', { name: t('aris.palette.func') })` etc.).
-- [x] Add `html` per entry via a local helper `paletteEntryHtml(svgInner: string, label: string): string` returning a single-root `<div class="entry" draggable="true" role="img" aria-label="<escaped label>"><svg viewBox="0 0 24 24" aria-hidden="true">…</svg><span class="aris-palette-entry__label"><escaped label></span></div>`, with a local 5-replace attribute escaper (`&`, `<`, `>`, `"`, `'`). diagram-js `Palette._addEntry` stamps `data-action`, `title`, and the `aris-palette-*` class onto this custom root — verified — so all e2e `[data-action=…]` selectors keep working.
-- [x] Inline SVG glyphs (simple line art, `stroke="currentColor" fill="none" stroke-width="1.5"`): FUNC = rounded rect; EVT = hexagon; AND/OR/XOR = circle containing `∧`/`∨`/`×` text glyph; ENT_TYPE = plain rect; INFO_CARR = rect with folded corner; BUSINESS_RULE = rect + inner horizontal line; PERF = 3-bar mini chart; APPL_SYS = rect with doubled side borders; PERS = head + shoulders arcs; PERS_TYPE = two overlapped persons; REQUIREMENT = document with check; POLICY = shield; hand = open-hand path; lasso = dashed rect; free text = "T" glyph. These are affordances, not the renderer's official symbols — fidelity is not gated.
-- [x] Add a code comment: titles/labels resolve when `getPaletteEntries()` runs (canvas boot); a mid-session UI-language switch updates on the next canvas boot (accepted — the canvas deliberately never re-boots).
-- [x] Modify `contextPadProvider.ts`: the four titles → `t('aris.contextPad.connect')`, `t('aris.contextPad.appendFunction')`, `t('aris.contextPad.appendEvent')`, `t('aris.contextPad.delete')`. **`data-action` ids unchanged** (`connect`, `append.function`, `append.event`, `delete`).
-- [x] Append to `src/aris/shell/shell.css` (no `url()`, no fonts — single-file CSP contract):
+- [ ] Extend `ArisBlankModelSpec` with `modelId?: string`, `guid?: string`, `random?: RandomSource`. Default `modelId` via `createArisIdAllocator({ existingIds: [] }).allocateDefinitionId('Model')`; default `guid` via `crypto.randomUUID()`. Add a `<GUID>` child to the Model element. Return the actual `modelId`. Keep `deriveArisSourceFileName` and the existing name/locale behavior untouched; output stays frozen.
+- [ ] Update tests: two default builds mint different ids matching `/^Model\.[-0-9A-Za-z_]{11}-u-L$/`; injected `random` is deterministic; explicit `modelId: 'Model.3xqe8yXO9Z7-u-L'` is used verbatim and returned; xml contains `<GUID>` with the supplied guid; output still parses via the node tokenizer with the model present. (Authorized change: any `Model.New` literal expectation is replaced.)
+- [ ] Prettier both files.
 
-  ```css
-  .orbitpm-aris-canvas .djs-palette {
-    background: var(--orbitpm-panel-bg, var(--orbitpm-bg));
-    border: 1px solid var(--orbitpm-border);
-    border-radius: 10px;
+**Verify:**
+
+```bash
+npx vitest run src/aris/shell/arisBlankModel.test.ts && npm run typecheck && npm run lint && npm run check:no-skips
+```
+
+---
+
+## Lane T4 — Issue-1 + direct-edit i18n keys
+
+**Wave:** 1 · **Worker:** sonnet-med · **Depends on:** nothing
+**Files owned:** `src/i18n/dictionaries.ts` (modify)
+
+**Read first:** `src/i18n/dictionaries.ts` (`en` head + `ar` section start), `src/__tests__/i18n.test.ts` (parity + placeholder rules).
+
+**Steps:**
+
+- [ ] Add to BOTH `en` and `ar` (real Arabic translations, identical `{placeholders}`): `aris.import.split.title` "Import into the workspace"; `aris.import.split.body` "Each ARIS model becomes its own .aml file, in folders mirroring the ARIS group tree. Existing files are never overwritten."; `aris.import.split.listAria` "Files to be created"; `aris.import.split.skipExisting` "Skipped — model {id} already exists in this workspace"; `aris.import.split.confirm` "Import {count} file(s)"; `aris.import.split.cancel` "Cancel"; `aris.import.split.done` "Imported {written} model file(s); {skipped} skipped."; `aris.import.split.failed` "The import could not be written: {error}"; `aris.import.split.nothing` "No ARIS models were found in {name}."; `aris.assign.marker.aria` "Open the model assigned to {name}"; `aris.assign.open` "Open"; `aris.assign.open.aria` "Open the assigned model {model}"; `aris.assign.ambiguous` "Model id {id} exists in more than one workspace file; resolve the duplicate before navigating."; `aris.assign.missing` "No model with id {id} exists in this workspace."; `aris.assign.link` "Link model…"; `aris.assign.link.title` "Assign a workspace model to the selected function"; `aris.assign.linked` "Linked {model} to {name}."; `aris.assign.created` "Created {path}; the assignment on {name} now resolves."; `aris.newModel.linkedHint` "The model will be created with id {id} so the assignment on {name} resolves immediately."; `aris.directEdit.placeholder` "Type a label"; `aris.directEdit.aria` "Edit label".
+- [ ] Prettier.
+
+**Verify:**
+
+```bash
+npx vitest run src/__tests__/i18n.test.ts && npm run typecheck && npm run check:ui-copy && npm run lint
+```
+
+---
+
+## Lane C1 — Conventions catalog core
+
+**Wave:** 1 · **Worker:** kimi-k2.7 · **Depends on:** nothing
+**Files owned (create):** `src/aris/conventions/catalog.ts`, `src/aris/conventions/connectionRules.ts`, `src/aris/conventions/attributes.ts`, `src/aris/conventions/index.ts`, `src/aris/conventions/catalog.test.ts`, `src/aris/conventions/connectionRules.test.ts`, `src/aris/conventions/attributes.test.ts`
+
+**Goal:** THE pure source of truth for symbols, colors, connection legality + labels + RACI, and attribute schema — seeded from R1/R2/R3.
+
+**Read first:** R1/R2/R3 above; `src/aris/canvas/vocabulary.ts` (existing `CONNECTION_RULES` triples — reproduce verbatim); `src/aris/epc/constants.ts` (fixture CT census if present).
+
+**Interface:**
+
+```ts
+// catalog.ts
+export type ArisSymbolVerification = 'fixture' | 'aris-doc' | 'unverified'
+export type ArisSymbolFamilyId =
+  'function' | 'infoCarrier' | 'orgPeople' | 'governance' | 'rule' | 'valueChain'
+export interface ArisConventionSymbol {
+  readonly objectType: string
+  readonly symbolNum: string
+  readonly labelKey: string
+  readonly family: ArisSymbolFamilyId | null
+  readonly defaultFill: string
+  readonly defaultStroke: string
+  readonly paletteGroup: 'flow' | 'rule' | 'org' | 'data' | 'system' | 'governance'
+  readonly paletteOrder: number
+  readonly modelTypes: readonly string[]
+  readonly verification: ArisSymbolVerification
+}
+export const ARIS_CONVENTION_SYMBOLS: readonly ArisConventionSymbol[]
+export function getPaletteSymbols(modelType: string): readonly ArisConventionSymbol[]
+export function conventionSymbol(objectType: string, symbolNum: string): ArisConventionSymbol | null
+export function conventionDefaultFill(objectType: string, symbolNum: string): string | null
+export function getVariantFamily(
+  objectType: string,
+  symbolNum: string
+): readonly ArisConventionSymbol[]
+
+// connectionRules.ts
+export type RaciLetter = 'R' | 'A' | 'C' | 'I'
+export interface ArisConnectionRule {
+  readonly modelType: string | null
+  readonly from: string
+  readonly to: string
+  readonly connectionType: string
+  readonly labelKey: string
+  readonly raci: RaciLetter | null
+  readonly verification: ArisSymbolVerification
+}
+export const ARIS_CONNECTION_RULES: readonly ArisConnectionRule[]
+export const RACI_BY_CONNECTION_TYPE: Readonly<Record<string, RaciLetter>>
+export interface ResolvedConventionConnection {
+  readonly connectionType: string
+  readonly fallback: boolean
+  readonly rule: ArisConnectionRule | null
+}
+export function resolveConventionConnection(
+  modelType: string,
+  fromObjectType: string,
+  toObjectType: string
+): ResolvedConventionConnection
+export function isLegalConnection(
+  modelType: string,
+  fromObjectType: string,
+  toObjectType: string,
+  connectionType: string
+): boolean
+
+// attributes.ts
+export interface ArisAttributeSchemaEntry {
+  readonly attributeType: string
+  readonly labelKey: string
+  readonly mandatory: boolean
+  readonly appliesTo: 'objectType' | 'model'
+  readonly objectTypes?: readonly string[]
+  readonly modelTypes?: readonly string[]
+  readonly verification: ArisSymbolVerification
+}
+export const ARIS_ELEMENT_ATTRIBUTE_SCHEMA: readonly ArisAttributeSchemaEntry[]
+export const ARIS_EPC_MODEL_ATTRIBUTE_SCHEMA: readonly ArisAttributeSchemaEntry[]
+export function schemaForObjectType(objectType: string): readonly ArisAttributeSchemaEntry[]
+export function schemaForModelType(modelType: string): readonly ArisAttributeSchemaEntry[]
+```
+
+**Steps:**
+
+- [ ] Types, then the symbol table from R1 (each row provenance-commented; ALL non-`fixture` rows in ONE contiguous region under `// VERIFY-AGAINST-REAL-ARIS-EXPORT`). `labelKey`s use the `aris.symbol.*` namespace (registered by C4). `getVariantFamily` groups by `family` for the quick-pick.
+- [ ] Connection rules = every existing `vocabulary.ts` triple verbatim + R2 additions; `RACI_BY_CONNECTION_TYPE` per R2 (CT_EXEC_1/2→R, CT_MUST_BE_INFO_ABT_1→I, CT_DECID_ON→A, CT_MUST_BE_CONSLT_ABT_1→C). `resolveConventionConnection` returns `{connectionType, fallback:false, rule}` on a match, else `{connectionType: 'CT_REFS_TO_2', fallback:true, rule:null}`.
+- [ ] Attribute schemas from R3. Map-index everything, freeze outputs.
+- [ ] Prettier + tests.
+
+**Tests assert:** every existing `vocabulary.ts` triple resolves identically via `resolveConventionConnection`; RACI letters correct; every catalog symbol has a 6-digit `#` fill; `getPaletteSymbols('MT_EEPC')` excludes VACD-only symbols and includes Function/Event/rules; `getVariantFamily('OT_FUNC','ST_FUNC')` includes System function + Process interface; mandatory `AT_ID` present for `OT_FUNC`.
+
+**Verify:**
+
+```bash
+npx vitest run src/aris/conventions && npm run typecheck && npm run lint && npm run check:no-skips
+```
+
+---
+
+## Lane C2 — Fidelity comparator core
+
+**Wave:** 1 · **Worker:** kimi-k2.7 · **Depends on:** nothing
+**Files owned (create):** `src/aris/fidelity/expectationTypes.ts`, `src/aris/fidelity/compare.ts`, `src/aris/fidelity/loadExpectation.ts`, `src/aris/fidelity/compare.test.ts`
+
+**Goal:** pure comparator producing a structured diff between an `ArisWorkingDocument` model and a hand-authored expectation.
+
+**Read first:** `src/aris/model/types.ts` (`ArisWorkingDocument`, `ArisModel`, occurrences, connections), `src/aris/canvas/renderer.ts` (`occurrenceColorToCss` — import for color normalization), `src/aris/epc/flowGraph.ts` (control-flow classification to reuse for the spine walk), R4.
+
+**Interface:**
+
+```ts
+export interface FidelityExpectationDoc {
+  readonly modelKey: string
+  readonly modelIdHint: string | null
+  readonly nameEn: string
+  readonly spine: readonly SpineStep[]
+  readonly satellites: Readonly<Record<string, readonly SatelliteExpectation[]>>
+  readonly gates: readonly GateExpectation[]
+  readonly notes: readonly NoteExpectation[]
+  readonly counts: {
+    readonly functions: number
+    readonly events: number
+    readonly rules: number
+    readonly connections: number
   }
-  .orbitpm-aris-canvas .djs-palette .entry {
-    width: 46px;
-    height: 46px;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    gap: 2px;
-  }
-  .orbitpm-aris-canvas .djs-palette .entry svg {
-    width: 20px;
-    height: 20px;
-    display: block;
-  }
-  .orbitpm-aris-canvas .aris-palette-entry__label {
-    font-size: 8.5px;
-    line-height: 1.1;
-    max-width: 44px;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-  ```
+}
+export interface SpineStep {
+  readonly kind: 'function' | 'event' | 'rule'
+  readonly nameEn: string
+  readonly numbering: string | null
+  readonly symbolNum: string | null
+  readonly fill: string | null
+}
+export interface SatelliteExpectation {
+  readonly nameEn: string
+  readonly objectType: string
+  readonly side: 'left' | 'right'
+  readonly connectionType: string
+  readonly raci: 'R' | 'A' | 'C' | 'I' | null
+  readonly symbolNum: string | null
+  readonly fill: string | null
+}
+export interface GateExpectation {
+  readonly operator: 'AND' | 'OR' | 'XOR'
+  readonly afterNameEn: string
+  readonly branchFirstNamesEn: readonly string[]
+}
+export interface NoteExpectation {
+  readonly contains: string
+}
+export interface FidelityDiffRow {
+  readonly category:
+    'spine' | 'numbering' | 'satellite' | 'symbol' | 'color' | 'gate' | 'note' | 'count'
+  readonly status: 'missing' | 'extra' | 'mismatched'
+  readonly expected: string | null
+  readonly actual: string | null
+  readonly where: string
+}
+export interface FidelityDiffReport {
+  readonly rows: readonly FidelityDiffRow[]
+  readonly byCategory: Readonly<Record<string, number>>
+  readonly pass: boolean
+}
+export function compareModelToExpectation(
+  document: ArisWorkingDocument,
+  modelId: string,
+  expected: FidelityExpectationDoc
+): FidelityDiffReport
+export function loadExpectation(modelKey: string): FidelityExpectationDoc
+```
 
-- [x] Add ALL of these keys to BOTH `en` and `ar` maps in `src/i18n/dictionaries.ts` (the i18n test enforces identical key sets):
+**Steps:**
 
-  | Key                                  | en                                                                                                                         | ar                                                                                                                |
-  | ------------------------------------ | -------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------- |
-  | `aris.palette.hand`                  | Hand tool (pan)                                                                                                            | أداة اليد (تحريك)                                                                                                 |
-  | `aris.palette.lasso`                 | Lasso select                                                                                                               | تحديد بالحبل                                                                                                      |
-  | `aris.palette.freeText`              | Free text note                                                                                                             | ملاحظة نصية حرة                                                                                                   |
-  | `aris.palette.func`                  | Function                                                                                                                   | وظيفة                                                                                                             |
-  | `aris.palette.evt`                   | Event                                                                                                                      | حدث                                                                                                               |
-  | `aris.palette.rule.and`              | AND rule                                                                                                                   | قاعدة "و"                                                                                                         |
-  | `aris.palette.rule.or`               | OR rule                                                                                                                    | قاعدة "أو"                                                                                                        |
-  | `aris.palette.rule.xor`              | XOR rule                                                                                                                   | قاعدة "أو الحصرية"                                                                                                |
-  | `aris.palette.entType`               | Entity type                                                                                                                | نوع كيان                                                                                                          |
-  | `aris.palette.infoCarr`              | Information carrier                                                                                                        | حامل معلومات                                                                                                      |
-  | `aris.palette.businessRule`          | Business rule                                                                                                              | قاعدة عمل                                                                                                         |
-  | `aris.palette.perf`                  | KPI                                                                                                                        | مؤشر أداء                                                                                                         |
-  | `aris.palette.applSys`               | Application system                                                                                                         | نظام تطبيقي                                                                                                       |
-  | `aris.palette.pers`                  | Person                                                                                                                     | شخص                                                                                                               |
-  | `aris.palette.requirement`           | Requirement                                                                                                                | متطلب                                                                                                             |
-  | `aris.palette.policy`                | Policy                                                                                                                     | سياسة                                                                                                             |
-  | `aris.palette.persType`              | Role (person type)                                                                                                         | دور (نوع شخص)                                                                                                     |
-  | `aris.palette.createTitle`           | Create {name}                                                                                                              | إنشاء {name}                                                                                                      |
-  | `aris.palette.grip.title`            | Drag to move the palette. Double-click to reset its position.                                                              | اسحب لتحريك لوحة الأدوات. انقر نقرًا مزدوجًا لإعادة موضعها.                                                       |
-  | `aris.canvas.emptyModelHint`         | This model is empty — drag a shape from the palette, or click a palette entry and then click the canvas, to start drawing. | هذا النموذج فارغ — اسحب شكلًا من لوحة الأدوات، أو انقر على عنصر في اللوحة ثم انقر على اللوحة القماشية لبدء الرسم. |
-  | `aris.canvas.emptyModelHint.dismiss` | Got it                                                                                                                     | حسنًا                                                                                                             |
-  | `aris.contextPad.connect`            | Connect from here                                                                                                          | وصّل من هنا                                                                                                       |
-  | `aris.contextPad.appendFunction`     | Append function                                                                                                            | إلحاق وظيفة                                                                                                       |
-  | `aris.contextPad.appendEvent`        | Append event                                                                                                               | إلحاق حدث                                                                                                         |
-  | `aris.contextPad.delete`             | Delete from this model                                                                                                     | حذف من هذا النموذج                                                                                                |
+- [ ] Spine walk: start events → control-flow successors; branch order by occurrence center-x. Satellite side: center-x < function center-x ⇒ `left`. Color normalization via `occurrenceColorToCss`. Category set-diff → rows; `pass = rows.length === 0`.
+- [ ] `loadExpectation(modelKey)` reads `resolve(process.cwd(), '../reference/AnimalWF/expected/<modelKey>.expected.json')`; throw if absent.
+- [ ] Prettier + tests on synthetic docs.
 
-  (The grip + hint keys are consumed by Lane L2c — this lane only registers them.)
+**Tests assert:** a doc matching a small expectation passes; each mutation class (renamed function, missing satellite, wrong RACI/connection type, wrong fill, swapped gate operator, reordered spine, wrong count) produces exactly one diff row of the right category/status.
 
-- [x] Update title assertions in existing canvas tests: run `grep -rn "Create OT_\|Activate hand\|getPaletteEntries" src/aris --include=*.test.ts` and fix every hit. Add (in one canvas test file) assertions that all 18 entry ids/classNames are unchanged and every entry's `html` contains `aris-palette-entry__label`.
-- [x] Run prettier on touched files.
+**Verify:**
+
+```bash
+npx vitest run src/aris/fidelity/compare.test.ts && npm run typecheck && npm run lint && npm run check:no-skips
+```
+
+---
+
+## Lane C3 — Direct editing
+
+**Wave:** 1 · **Worker:** opus-4.8-1M · **Depends on:** nothing (uses T4's keys only if a string is rendered; the placeholder/aria keys are registered by T4 but C3 may land after T4 in the same wave — if a key is missing at C3's test time, use `tk()`-free literal-free code by reading the key through `t()` and let X1/T4 own registration; do NOT add keys to dictionaries here)
+**Files owned:** `src/aris/canvas/directEdit.ts` (create), `src/aris/canvas/directEdit.test.ts` (create), `src/aris/canvas/modules.ts` (modify), `package.json` + `package-lock.json` (modify), `src/aris/shell/shell.css` (modify)
+
+**Goal:** immediate inline label editor on placement, double-click, and F2; commit via the existing undoable rename under the ACTIVE content locale; RTL- and zoom-safe.
+
+**Read first:** `node_modules/diagram-js-direct-editing/lib/DirectEditing.js` (`activate(element) → {bounds, text, style?, options?}`, `update`, Enter/Escape/focusout built in) + `lib/TextBox.js` (`create` accepts `style` but not `direction`); `node_modules/diagram-js/lib/features/create/Create.js` (`create.end` carries the committed shape); `node_modules/diagram-js/lib/core/Canvas.js` (`getAbsoluteBBox`); `src/aris/canvas/authoring.ts` (`renameDefinition(definitionId, name, localeId)`), `ArisCanvas.ts` (`contentLanguage`, `ARIS_CONTENT_LOCALE_IDS`), `canvasSync.ts`, `elements.ts`, `modules.ts`, `testing/harness.ts` (`bootCanvas`, `shape`). If TS can't resolve the library types, write a minimal `.d.ts` shim beside `directEdit.ts` (pattern: the existing diagram-js-minimap shim).
+
+**Interface:**
+
+```ts
+export class ArisDirectEditingProvider {
+  static $inject: readonly string[] // ['directEditing','eventBus','canvas','selection','arisAuthoring','arisCanvasSync','elementRegistry','arisCommandBridge']
+  activate(element: unknown):
+    | {
+        bounds: unknown
+        text: string
+        style?: Record<string, string>
+        options?: Record<string, unknown>
+      }
+    | undefined
+  update(element: unknown, newText: string): void
+}
+export const ArisDirectEditModule: unknown // bundles DirectEditingModule + registers 'arisDirectEditingProvider'
+```
+
+**Steps:**
+
+- [ ] `npm install diagram-js-direct-editing@3.5.1 --save-exact`; immediately run `npm run check:aris-runtime-boundary` and `npm run check:lock` and report exit codes.
+- [ ] Provider: `activate` for occurrences → `{ bounds: canvas.getAbsoluteBBox(element), text: bo.name, style: { fontSize: \`${12 * canvas.zoom()}px\`, textAlign: 'center' }, options: { autoResize: true } }`; free text → `text: bo.text`; external caption label → retarget to the owner occurrence; connection/lane/model → `undefined`. Capture the `definitionId`/`freeTextId`STRING at activate time (frozen bos are replaced on re-render).`update`for occurrences →`authoring.renameDefinition(capturedDefinitionId, newText, sync.displayLocaleId)`(the active content locale, NOT the default); free text →`authoring.editFreeText(capturedFreeTextId, { text: newText })`.
+- [ ] Wire in the module constructor (all eventBus): `element.dblclick` @ **1500** → `directEditing.activate(target)`, `return false`; `create.end` @ **250** → if `context.canExecute !== false` and the shape's bo is editable, `setTimeout(() => directEditing.activate(shape), 0)` and set a `justCreated` flag; `keyboard keydown` F2 with a single editable selection → activate, return true; `directEditing.activate` → set `.djs-direct-editing-content` `dir="auto"` + `unicodeBidi:'plaintext'`. On `directEditing.cancel` with `justCreated` && free text && empty → `bridge.undo()` (remove the junk note); occurrence cancel leaves the unnamed shape.
+- [ ] `modules.ts`: import + append the library `DirectEditingModule` to `ARIS_DIAGRAM_JS_MODULES`; register `arisDirectEditingProvider` in `ArisCanvasModule.__init__`.
+- [ ] CSS for `.djs-direct-editing-parent`/`.djs-direct-editing-content` theming. Prettier.
+
+**Tests (jsdom, `bootCanvas`) assert:** activate on an occurrence shows a contenteditable with the current name; typed text + Enter → `store.document.objectDefinitions.get(defId).names` updated under the display locale, single undo reverts; Escape → unchanged; focusout → committed; `element.dblclick` → active; F2 with selection → active; `create.end` with a created shape → active on it; Arabic string commits under `ar-AE` when `setContentLanguage('ar')`; content element has `dir="auto"`; free-text create→activate→Escape leaves no free text (undo fired); an edit survives an unrelated `element.changed` (captured-id commit).
+
+**Verify:**
+
+```bash
+npx vitest run src/aris/canvas/directEdit.test.ts src/aris/canvas/boot.test.ts
+npm run typecheck && npm run lint && npm run check:aris-runtime-boundary && npm run check:lock && npm run check:no-skips
+```
+
+**Do NOT touch:** `paletteProvider.ts`, `arisModeling.ts`, `contextPadProvider.ts`, `ArisApp.tsx`, `ArisStudioTab.tsx`, `dictionaries.ts`.
+
+---
+
+## Lane F1 — Expectation JSONs + fidelity suites + holdout config
+
+**Wave:** 1 · **Worker:** sonnet-med · **Depends on:** C2 interfaces (frozen above — not merged code)
+**Files owned (create):** `/home/ahmed/Desktop/bpmn_tool/reference/AnimalWF/expected/{renew-profile,register-owner,transfer-citizens,transfer-citizens-companies}.expected.json` (OUTSIDE repo), `src/aris/fidelity/renewProfile.animalwf.test.ts`, `src/aris/fidelity/registerOwner.animalwf.test.ts`, `src/aris/fidelity/transferCitizens.holdout.animalwf.test.ts`, `src/aris/fidelity/transferCitizensCompanies.holdout.animalwf.test.ts`, `vitest.animalwf.holdout.config.ts` (create); `vitest.animalwf.config.ts` (modify — exclude holdouts)
+
+**Read first:** R4 (per-model tables + Model.IDs), `src/aris/canvas/connectionLabels.animalwf.test.ts` (throw-if-missing + `process.cwd()` path pattern), C2's frozen interfaces.
+
+**Steps:**
+
+- [ ] Author the 4 expectation JSONs from R4 (iterate = renew-profile + register-owner in full detail; holdouts = transfer-citizens strict + transfer-citizens-companies topology from the model block, refined against AML only in Wave 5 — never tuned). Set `modelIdHint` to the R4 Model.IDs.
+- [ ] Iterate suites: module-load fixture guard → build the doc via the primary pipeline (`createArisXmlSourcePackage` → `buildArisStudioDocument` → working doc) → locate model by `modelIdHint` → `compareModelToExpectation` → `expect(report.pass, formatRows(report)).toBe(true)`. Since Wave-1 rendering has known gaps, encode a `BASELINE` const of allowed per-category diff counts so the suite is GREEN at merge and C8 ratchets it to 0 (thresholds, NOT skips).
+- [ ] Holdout suites: identical structure with the `.holdout.animalwf.test.ts` suffix. `vitest.animalwf.holdout.config.ts` includes only `src/**/*.holdout.animalwf.test.ts` (same env/alias/timeout as the animalwf config). Add `exclude: ['src/**/*.holdout.animalwf.test.ts']` to `vitest.animalwf.config.ts`.
+- [ ] Prettier the TS files (NOT the JSONs outside the repo).
+
+**Tests/Verify:**
+
+```bash
+npm run test:aris:animalwf                                   # iterate suites green at BASELINE
+npx vitest run --config vitest.animalwf.holdout.config.ts    # RUN ONCE to confirm load, then do not run again until Wave 5
+npm test                                                     # default project untouched (holdouts + iterate excluded)
+npm run check:no-skips && npm run typecheck && npm run lint
+```
+
+---
+
+## Lane F2 — Fidelity measurement script
+
+**Wave:** 1 · **Worker:** kimi-k2.7 · **Depends on:** C2 interfaces
+**Files owned (create):** `scripts/aris-fidelity-report.ts`
+
+**Read first:** `scripts/aris-golden-compare.ts` (vite-node load + fixture path pattern), C2 interfaces.
+
+**Steps:**
+
+- [ ] For each iterate model: tokenizer → semanticIndex → buildFromSource → `compareModelToExpectation` → print a per-category table and write a JSON artifact to `/home/ahmed/Desktop/bpmn_tool/reference/AnimalWF/fidelity-report/<key>.json` (outside repo; `mkdir -p` first; do NOT use a timestamp — `Date.now()` is fine in a plain script but keep the filename stable per model). Prettier.
+
+**Verify:**
+
+```bash
+npx vite-node scripts/aris-fidelity-report.ts   # prints per-category counts for both iterate models
+npm run typecheck && npm run lint
+```
+
+---
+
+## Lane T5 — App hierarchy integration + explorer
+
+**Wave:** 2 · **Worker:** opus-4.8-1M · **Depends on:** T1, T4
+**Files owned:** `src/ArisApp.tsx` (modify), `src/aris/shell/ArisExplorerPane.tsx` (modify), `src/ArisApp.test.tsx` (additive tests only this wave)
+
+**Goal:** the tree becomes semantic (owned nesting, reference rows, pills) with a live-tab overlay; reveal + reference-row navigation; model-explorer gated to `>1`.
+
+**Read first:** `src/ArisApp.tsx:373-600` (the `explorerTree`/`explorerHierarchy`/`EMPTY_*` site), `src/workspace/FolderTreeLite.tsx:15-40,132-187` (`TreeRevealRequest`, reveal effect), `src/workspace/processHierarchy.ts:25-32,108-116` (`HierarchyNavigation`, `canonicalPathByProcessId`), `src/aris/links/arisWorkspaceLinks.ts` (T1), `src/ArisApp.test.tsx:181-320` (the mock adapter — `read` throws for unlisted paths, so scan tolerance is load-bearing).
+
+**Steps:**
+
+- [ ] Add: a scan cache ref (`createArisLinkScanCache`), a scan-state state, a scan effect keyed `[multiFile, workspaceAdapter, workspaceEntries]` (cancel via a flag), a live-overlay state `Map<relPath, ArisModelScanResult>` with setter `handleLiveScanChange(relPath, result|null)` that early-bails on an unchanged JSON signature (no churn on move/resize), a `mergedLinks` memo (`mergeArisLinkState(scanState, overlays)`). Feed `explorerHierarchy` `mergedLinks.index`/`mergedLinks.graph` instead of `EMPTY_*`. (The overlay PRODUCER is wired in Wave 3 — this wave only state + merge.)
+- [ ] Add `treeReveal` state + `requestTreeReveal(processId?, relPath?)` (`setTreeReveal({ token: ++ref, processId, relPath })`), `openCanonicalProcess(processId)` (look up `canonicalPathByProcessId`; `setExplorerOpen(true)`; bump reveal; `void handleOpenWorkspaceFile(path)`; `handleSelectModel('source:'+path, processId)`), and `handleOpenProcess(navigation)` = `openCanonicalProcess(navigation.processId)`.
+- [ ] `ArisExplorerPane`: gate `ArisModelExplorer` on `activeTab.models.length > 1`; add + forward `revealRequest` and `onOpenProcess` to `FolderTreeLite` (replacing `onOpenProcess={() => undefined}`).
+- [ ] Prettier.
+
+**Tests (new `describe` in `ArisApp.test.tsx`):** a directory workspace with `parent.aml` (Model.P, def linked to Model.C with one occurrence) + `child.aml` (Model.C) as snapshots ⇒ tree nests `child.aml` UNDER `parent.aml` (owned row, not at root); a third file duplicating Model.C ⇒ child returns to its physical location (ambiguous fail-closed); clicking the owned/reference child row opens `child.aml`; `.orbitpm` and `.bpmn` never scanned (adapter.read spy); files whose read throws still render as plain rows (existing tree-render test keeps passing).
+
+**Verify:**
+
+```bash
+npx vitest run src/ArisApp.test.tsx src/aris/shell
+npm run typecheck && npm run lint && npm run check:ui-copy && npm run check:aris-runtime-boundary && npm run check:no-skips
+```
+
+**Do NOT touch:** `ArisStudioTab.tsx`, `ArisDetailsRail*`, `arisExplorerActions.tsx`, split modules.
+
+---
+
+## Lane T6 — Canvas assignment UX
+
+**Wave:** 2 · **Worker:** opus-4.8-1M · **Depends on:** T4
+**Files owned:** `src/aris/shell/arisAssignmentUx.ts` (create), `src/aris/shell/arisAssignmentUx.test.tsx` (create), `src/aris/shell/ArisStudioTab.tsx` (modify), `src/aris/shell/arisEpcFindings.ts` (modify), `src/aris/shell/ArisDetailsRail.tsx` (modify), `src/aris/shell/ArisDetailsEditors.tsx` (modify), `src/aris/shell/ArisDetailsRail.editing.test.tsx` (modify), `src/aris/shell/shell.css` (modify)
+
+**Goal:** ⊞ assignment marker + double-click drill-down (@2000), in-document-first resolution, "Link model…" toolbar via `LinkPicker`, `onLiveDocumentChange` emission, dangling-assignment suppression, rail Open buttons.
+
+**Read first:** `src/aris/shell/arisValidationOverlays.ts` (copy its structure: `OverlaysLike` view, `applied` map, try/catch, `uninstall`), `ArisStudioTab.tsx:144-260,398-530,680-870` (canvas boot, findings assembly, toolbar), `src/aris/canvas/elements.ts` (`ArisOccurrenceBusinessObject`), `src/aris/canvas/ArisCanvas.ts` (public getters, `eventBus`, `setActiveModel`, `authoring`, `document`), `src/links/LinkPicker.tsx`, `ArisDetailsEditors.tsx:543-600` (`ArisAssignmentsEditor`), `arisEpcFindings.ts`.
+
+**Interface:**
+
+```ts
+export const ARIS_ASSIGNMENT_OVERLAY_TYPE = 'aris-assignment'
+export interface ArisAssignmentActivation {
+  readonly occurrenceId: string
+  readonly definitionId: string
+  readonly definitionName: string
+  readonly linkedModelIds: readonly string[]
+}
+export interface ArisAssignmentUxController {
+  resync(): void
+  uninstall(): void
+}
+export function installArisAssignmentUx(
+  canvas: ArisCanvas,
+  onActivate: (activation: ArisAssignmentActivation) => void
+): ArisAssignmentUxController
+// arisEpcFindings.ts
+export function buildArisEpcFindings(
+  document: ArisWorkingDocument,
+  modelIds?: ReadonlySet<string>,
+  externallyKnownModelIds?: ReadonlySet<string>
+): readonly ArisEpcModelFinding[]
+```
+
+**Steps:**
+
+- [ ] `arisAssignmentUx.ts`: marker = a `<button>` `⊞`, class `orbitpm-aris-assignment-marker`, `data-orbitpm-aris-assignment=<occId>`, `aria-label = t('aris.assign.marker.aria', {name})`, overlay position `{ bottom: -8, left: -8 }`, click → `onActivate`. Eligible = bo `kind==='occurrence'` && `canvas.document.objectDefinitions.get(bo.definitionId)?.linkedModelIds.length > 0`. Dblclick: `canvas.eventBus.on('element.dblclick', 2000, handler)`; eligible ⇒ `onActivate` + `return false`; NOT eligible ⇒ return undefined (lets direct-edit @1500 run). Resync on `ARIS_DOCUMENT_CHANGED` + explicit `resync()`.
+- [ ] `ArisStudioTab.tsx`: install effect mirroring the validation-overlay install (deps: canvas readiness); resync on `[renderableModelId, history.revision]`. `openAssignedModelId(modelId)`: in-doc ⇒ `canvas.setActiveModel(modelId)` + `onModelChange(modelId)`; else `onOpenAssignedModel?.({ linkedModelIds:[modelId], definitionId, definitionName })`. Activation handler iterates `linkedModelIds`, first in-doc wins, else delegates the whole list. Toolbar `Link model…` button (`t('aris.assign.link')`, `data-orbitpm-aris-link-model`) enabled when the single selection is an `OT_FUNC` occurrence; opens `LinkPicker` with `index = workspaceModelIndex ?? indexFromDocumentModels(liveDocument)` (local helper building `ProcessEntry`s with `relPath: sourceFileName ?? title`); pick ⇒ `canvas.authoring.addModelAssignment(definitionId, modelId)` + toast `aris.assign.linked`. Fire `onLiveDocumentChange(history.document)` from the history-publish path. Findings: pass `new Set(workspaceModelIndex?.keys() ?? [])` as `externallyKnownModelIds`.
+- [ ] `arisEpcFindings.ts`: third param unions into `knownModelIds` so cross-file assignments aren't flagged `epc.linkedModel.danglingReference`.
+- [ ] Rail: thread optional `onOpenAssignedModel?: (modelId: string) => void` to `ArisAssignmentsEditor`; each row gains an Open button (`t('aris.assign.open')`, aria `aris.assign.open.aria`).
+- [ ] Add new props to `ArisStudioTab` as OPTIONAL (`workspaceModelIndex?`, `onOpenAssignedModel?`, `onLiveDocumentChange?`) — only T8 supplies them. CSS clone of the warning-marker block, neutral color. Prettier.
+
+**Tests assert:** opening a two-model fixture with a `LinkedModels.IdRefs` def shows `[data-orbitpm-aris-assignment]` on its occurrence and none elsewhere; marker click for an in-document target switches the canvas (target occ appears) + calls `onModelChange`; `fireEvent.dblClick` on the shape gfx does the same; removing the assignment via the rail removes the marker; a foreign id calls `onOpenAssignedModel` with the exact id list; Link button disabled for an event, enabled for a function; picking in `LinkPicker` adds the assignment (def `linkedModelIds` contains it; undo removes; marker toggles); a dangling in-doc assignment no longer produces `epc.linkedModel.danglingReference` when the id is in `externallyKnownModelIds`; rail Open calls the callback.
+
+**Verify:**
+
+```bash
+npx vitest run src/aris/shell
+npm run typecheck && npm run lint && npm run check:ui-copy && npm run check:aris-runtime-boundary && npm run check:no-skips
+```
+
+**Do NOT touch:** `ArisApp.tsx`/`ArisExplorerPane.tsx` (T5), split modules (T7).
+
+---
+
+## Lane T7 — Split-import staging + review dialog
+
+**Wave:** 2 · **Worker:** kimi-k2.7 · **Depends on:** T2, T4
+**Files owned (create):** `src/aris/shell/arisSplitImport.ts`, `src/aris/shell/ArisSplitImportDialog.tsx`, `src/aris/shell/arisSplitImport.test.tsx`
+
+**Read first:** `src/aris/source/amlSplit.ts` (T2), `src/workspace/liteTreeFromEntries.ts:145-171` (`uniquePathIn`), `src/aris/shell/arisExplorerActions.tsx:292-346` (the already-exists retry loop), `src/aris/shell/ArisImportReviewDialog.tsx` (dialog skeleton — DO NOT edit it, mirror it), `src/common/AccessibleDialog.tsx`, `src/workspace/adapters/memory.ts` (test adapter).
+
+**Interface:**
+
+```ts
+export interface ArisSplitImportTarget {
+  readonly modelId: string
+  readonly modelName: string | null
+  readonly relPath: string
+  readonly bytes: Uint8Array
+  readonly status: 'write' | 'skip-existing-model'
+}
+export interface ArisSplitImportPlan {
+  readonly sourceName: string
+  readonly targets: readonly ArisSplitImportTarget[]
+  readonly writeCount: number
+  readonly skipCount: number
+}
+export function prepareArisSplitImport(options: {
+  readonly pkg: ArisXmlSourcePackage
+  readonly baseFolderRel: string
+  readonly takenPaths: ReadonlySet<string>
+  readonly existingModelIds: ReadonlySet<string>
+}): ArisSplitImportPlan
+export interface ArisSplitImportOutcome {
+  readonly written: readonly string[]
+  readonly skipped: readonly string[]
+  readonly failed: readonly { readonly relPath: string; readonly message: string }[]
+}
+export async function executeArisSplitImport(
+  adapter: WorkspaceAdapter,
+  plan: ArisSplitImportPlan
+): Promise<ArisSplitImportOutcome>
+export interface ArisSplitImportDialogProps {
+  readonly open: boolean
+  readonly plan: ArisSplitImportPlan | null
+  readonly busy: boolean
+  readonly dir: 'ltr' | 'rtl'
+  readonly onConfirm: () => void
+  readonly onCancel: () => void
+}
+export function ArisSplitImportDialog(props: ArisSplitImportDialogProps): JSX.Element | null
+```
+
+**Steps:**
+
+- [ ] `prepare`: `buildArisSplitPlan(pkg)` → per file: existing model id ⇒ `skip-existing-model`; else `relPath = uniquePathIn(taken, join(baseFolderRel, folderSegments), fileName)`, add to `taken`, encode `bytes` (UTF-8). `execute`: sequential `writeAtomic(path, bytes, undefined, { expectedMissing: true })` with the retry loop (≤50) re-suffixing on `already-exists`; collect failures, don't throw. Dialog: `AccessibleDialog`, list rows (skip rows labeled `aris.import.split.skipExisting`), confirm/cancel, `busy` disables confirm; all copy via `t()`.
+- [ ] Prettier + tests.
+
+**Tests assert:** plan places files at `baseFolderRel + folderSegments`; collision ⇒ `-2` suffix; existing model id ⇒ `skip-existing-model` and excluded from `writeCount`; execute against the memory adapter writes exactly `writeCount` files; `expectedMissing` conflict retries with a new suffix; failures collected not thrown; dialog renders rows and fires confirm/cancel; busy disables confirm.
+
+**Verify:**
+
+```bash
+npx vitest run src/aris/shell/arisSplitImport.test.tsx
+npm run typecheck && npm run lint && npm run check:ui-copy && npm run check:no-skips
+```
+
+---
+
+## Lane C4 — Palette sections + quick-pick + replace + dictionary keys
+
+**Wave:** 2 · **Worker:** opus-4.8-1M · **Depends on:** C1; C3 (modules.ts)
+**Files owned:** `src/aris/canvas/paletteProvider.ts` (modify), `src/aris/canvas/contextPadProvider.ts` (modify), `src/aris/canvas/quickPick.ts` (create), `src/aris/canvas/quickPick.test.ts` (create), `src/aris/canvas/paletteCatalog.test.ts` (create), `src/aris/canvas/authoring.ts` (modify), `src/aris/canvas/authoring.test.ts` (modify), `src/aris/canvas/modules.ts` (modify), `src/aris/canvas/arisQuickPick.css` (create), `src/i18n/dictionaries.ts` (modify — ALL wave-2/3 keys)
+
+**Goal:** palette rebuilt from the catalog; post-placement quick-pick popover (same-type swap + guarded cross-type replace); context-pad "swap symbol"; `replaceNewObject` + `setModelAttribute`; register every wave-2/3 dictionary key (own + C6/C7's).
+
+**Read first:** `paletteProvider.ts` (whole), `contextPadProvider.ts`, `authoring.ts:159-212,266-270`, `commandFactory.ts:308-330` (`setOccurrenceSymbolCommand`; the delete/create factories for `replaceNewObject`), `src/aris/conventions/*` (C1), `arisValidationOverlays.ts` (overlays usage), `modules.ts`, R1.
+
+**Interface:**
+
+```ts
+// quickPick.ts
+export interface ArisQuickPickMember { readonly objectType: string; readonly symbolNum: string; readonly labelKey: string; readonly enabled: boolean; readonly active: boolean }
+export class ArisQuickPick { static $inject: readonly string[]; open(elementId: string): void; close(): void; membersFor(elementId: string): readonly ArisQuickPickMember[] }
+export const ArisQuickPickModule: unknown
+// authoring.ts additions
+replaceNewObject(occurrenceId: string, target: { objectType: string; symbolNum: string }): CreateObjectResult
+setModelAttribute(modelId: string, attributeType: string, values: Record<string, string>): void
+```
+
+**Steps:**
+
+- [ ] `authoring.replaceNewObject`: guard (definition has exactly 1 occurrence and 0 touching connection definitions, else throw `ArisCanvasCommandError('replace-not-safe')`); one `bridge.execute('replace-object', …)` `transactionCommand` of existing factories (delete occurrence + delete definition + create definition with the preserved name + create occurrence at the same bounds). `setModelAttribute` mirrors `setDefinitionAttribute` with kind `'model'`. Unit-test both (undo/redo both directions).
+- [ ] `paletteProvider.targets()` rebuilt from `getPaletteSymbols(modelType)`; groups flow/rule/org/data/system/governance + tools/annotation; default-symbol entries keep `create.ot_*` ids, variants `create.<ot>.<st>`; glyph table extended for new symbols; free-text entry creates `''` (direct-edit supplies text). Keep `arisObjectType`/`arisSymbolNum` on `ArisPaletteEntry`.
+- [ ] `quickPick.ts`: overlay popover (`{ position: { right: -8, top: 0 }, show: { minZoom: 0.4 } }`, `.aris-quick-pick[role=menu]`, buttons `[role=menuitemradio][aria-checked]` with the palette glyph + `t(labelKey)`; buttons handle `pointerdown` + `preventDefault()` so the direct-editing textbox keeps focus). `create.end` @ **260** → `open(shape.id)` when the placed symbol has a family. Same-objectType member → `authoring.setOccurrenceSymbol`; cross-objectType → `authoring.replaceNewObject` (member `enabled:false` + tooltip when the guard fails). Dismiss on outside click / selection change / Escape / re-open. Context-pad `swap-symbol` entry re-opens it for existing shapes.
+- [ ] `modules.ts`: register `arisQuickPick`. `arisQuickPick.css` + palette group separators (own CSS file — do NOT touch `shell.css`, owned by T6 this wave).
+- [ ] `dictionaries.ts`: register en+ar for ALL wave-2/3 keys: `aris.palette.*` (new symbols), `aris.symbol.*` (every catalog label), `aris.quickPick.*`, `aris.contextPad.swapSymbol`, `aris.conv.finding.*` (5 rules: illegalConnection, missingIdentifier, noExecutor, missingAttribute, namingHint — title + body each), `aris.connection.label.*` (canonical labels), and the details-schema labels `aris.attr.*` used by C6. Keep this list authoritative; C6/C7 consume via `t()` only.
+- [ ] Prettier + tests.
+
+**Tests assert:** palette has one entry per `getPaletteSymbols('MT_EEPC')` with correct `arisSymbolNum`; placing `ST_FUNC` then picking "System function" → occurrence symbol `ST_SYS_FUNC_ACT`, single undo, definition intact; info-carrier variant swap; cross-type swap Role→Org-unit on a fresh shape → new definition `OT_ORG_UNIT`, old gone, bounds+name preserved, single undo restores both; cross-type entry disabled once the shape is connected; popover buttons don't steal focus (activeElement stays `.djs-direct-editing-content` while editing); i18n parity green.
 
 **Verify:**
 
 ```bash
 npx vitest run src/aris/canvas src/__tests__/i18n.test.ts
-npm run typecheck && npm run lint && npm run check:ui-copy && npm run check:aris-runtime-boundary
+npm run typecheck && npm run lint && npm run check:ui-copy && npm run check:aris-runtime-boundary && npm run check:no-skips
+```
+
+**Do NOT touch:** `shapes.ts`, `vocabulary.ts`, `directEdit.ts`, `shell.css`, `ArisStudioTab.tsx`.
+
+---
+
+## Lane C5 — Symbol descriptors + vocabulary alignment
+
+**Wave:** 2 · **Worker:** sonnet-med · **Depends on:** C1
+**Files owned:** `src/aris/symbols/shapes.ts` (modify), `src/aris/canvas/vocabulary.ts` (modify), `src/aris/symbols/symbols.test.ts` (modify), `src/aris/canvas/objectTypes.test.ts` (modify), `src/aris/canvas/occurrenceStyle.test.ts` (modify)
+
+**Goal:** a descriptor for every catalog symbol; DMT default fills from conventions; vocabulary extended and its connection resolver delegated.
+
+**Read first:** `shapes.ts` (whole), `registry.ts` (fallback order — leave unchanged), `src/aris/conventions/catalog.ts` (C1), `vocabulary.ts` (whole), grep for hardcoded pastel hexes in the three tests, R1.
+
+**Steps:**
+
+- [ ] Add `describe`-style descriptor builders (original line-art geometry) for every catalog symbol missing today: org unit (ellipse-in-bar), position (star), group (people), internal person, info-carrier variants (envelope/phone/letter/log/folder/general), risk (warning triangle), SLA/law (shield variants), service/product (box), VACD start chevron, process interface, data entity (dark-red box). Swap all fills to `conventionDefaultFill(...)` from C1. Extend `ARIS_OBJECT_TYPE_DEFAULT_SYMBOL` for new OT_*.
+- [ ] `vocabulary.ts`: extend `ARIS_CANVAS_OBJECT_TYPES` (+`OT_ORG_UNIT`,`OT_POS`,`OT_GRP`, plus catalog additions) and `ARIS_SATELLITE_OBJECT_TYPES`; replace `CONNECTION_RULES`/`resolveConnectionType` INTERNALS with delegation to `conventions/connectionRules.resolveConventionConnection` returning the identical `{connectionType, fallback}` shape (public signature unchanged so existing callers/tests hold).
+- [ ] Update the three tests for the new fills (Function descriptor body fill === `#339900`) and new resolvable types; keep all existing resolution assertions.
+- [ ] Prettier.
+
+**Tests assert:** every `ARIS_CONVENTION_SYMBOLS` row resolves via `resolveArisSymbol` with ZERO fidelity findings; Function descriptor fill `#339900`; `resolveConnectionType('MT_EEPC','OT_EVT','OT_FUNC')` still `CT_ACTIV_1`; new executor triples resolve to `CT_EXEC_*`.
+
+**Verify:**
+
+```bash
+npx vitest run src/aris/symbols src/aris/canvas/objectTypes.test.ts src/aris/canvas/occurrenceStyle.test.ts && npm run test:aris:animalwf
+npm run typecheck && npm run lint && npm run check:no-skips
+```
+
+`npm run test:aris:animalwf` MUST stay green — imported occurrences carry authored brushes; if any imported color changed, the descriptor default leaked past the authored-brush precedence — fix that, do not weaken the test.
+
+**Do NOT touch:** `paletteProvider.ts`, `renderer.ts`, `registry.ts` resolution order.
+
+---
+
+## Lane T8 — App capstone: import flow, cross-file navigation, create-missing
+
+**Wave:** 3 · **Worker:** opus-4.8-1M · **Depends on:** T5, T6, T7, T3
+**Files owned:** `src/ArisApp.tsx` (modify), `src/aris/shell/arisExplorerActions.tsx` (modify), `src/aris/shell/__tests__/arisExplorerActions.test.tsx` (modify), `src/aris/shell/ArisNewModelDialog.tsx` (modify), `src/ArisApp.test.tsx` (modify — includes authorized updates), `src/aris/shell/ArisExplorerPane.tsx` (single `onStageImport` prop)
+
+**Read first:** T5's ArisApp state, T6's StudioTab optional props, T7's contracts, `src/ArisApp.tsx:684-800` (`handleImportInput`, `handleCreateBlankModel`), the main-flow blueprint (Design A in the plan file: `openCanonicalProcess`/`handleCreateMissingProcess` semantics).
+
+**Steps:**
+
+- [ ] `handleImportInput` multi-file branch: per file → BPMN-reject toast as today; `createArisXmlSourcePackage`; `index.models.size === 0` ⇒ toast `aris.import.split.nothing` (no tab); else accumulate ONE combined `ArisSplitImportPlan` (thread `takenPaths` across the batch; `existingModelIds` = `mergedLinks.index` keys ∪ `graph.ambiguousProcessIds`); open `ArisSplitImportDialog`; confirm ⇒ `executeArisSplitImport` ⇒ `refreshWorkspaceSources` ⇒ toast `aris.import.split.done` ⇒ `requestTreeReveal(undefined, firstWritten)`. Single-file branch UNCHANGED.
+- [ ] Tree-drop: add `onStageImport` to `UseArisExplorerActionsOptions` and pass it from `ArisExplorerPane` (the single prop addition this wave); AML-with-models drops route to the same staged dialog with `baseFolderRel = toFolderRel`; other files keep the legacy verbatim write.
+- [ ] `handleOpenAssignedModel(request)`: first id with `mergedLinks.index.has(id)` ⇒ `openCanonicalProcess(id)`; else first id in `graph.ambiguousProcessIds` ⇒ toast `aris.assign.ambiguous`; else multi-file ⇒ `setNewModelRequest({ folderRel: parentFolderOf(activeTabRelPath ?? ''), forcedModelId: ids[0], presetName: humanize(ids[0]), linkContext: request.definitionName })`; single-file ⇒ toast `aris.assign.missing`. `humanize` strips the `Model.` prefix.
+- [ ] `handleCreateBlankModel` passes `modelId: forcedModelId` (from T3's spec); on success with a `forcedModelId`: toast `aris.assign.created` + reveal + open (the assignment resolves because the child's Model.ID matches the dangling id — no parent edit).
+- [ ] `ArisNewModelDialog`: optional `preset?: { name; modelId; linkContext } | null` — prefill name, lock type to the EPC default, show `aris.newModel.linkedHint`.
+- [ ] Wire `workspaceModelIndex={mergedLinks.index}`, `onOpenAssignedModel`, and `onLiveDocumentChange={(doc) => tab.relPath && handleLiveScanChange(tab.relPath, doc ? deriveArisLinksFromDocument(doc) : null)}` into `ArisStudioTab`; clear overlay entries on tab close and remap keys on rename/move.
+- [ ] Prettier.
+
+**Tests (ArisApp.test.tsx — new + AUTHORIZED updates):** multi-file import splits to FILES not tabs (dialog rows; confirm ⇒ written paths under the group folder; no new tab; tree gains rows); second identical import ⇒ all rows skipped, zero writes; cancel writes nothing; create-missing (dangling assignment → marker/dblclick → prefilled dialog → create ⇒ file in the parent's folder with Model.ID = the dangling id ⇒ tree nests it); cross-file open (marker click with resolvable child ⇒ child tab opens + model active); live overlay (Link in tab A to model of file B ⇒ tree nests B under A with NO disk write; undo ⇒ un-nests). Single-file/§7.3/BPMN-reject tests stay green unmodified.
+
+**Verify:**
+
+```bash
+npx vitest run src/ArisApp.test.tsx src/aris/shell
+npm run typecheck && npm run lint && npm run check:ui-copy && npm run check:aris-runtime-boundary && npm run check:no-skips
 ```
 
 ---
 
-## Lane L1b — Extract `ArisExplorerPane` + real AI-section collapse
+## Lane T9 — animalwf node integration
 
-**Wave:** 1 · **Worker:** kimi-k2.7 · **Depends on:** nothing · **Wave-1 owner of `src/ArisApp.tsx` and `src/aris/shell/index.ts`**
-**Files owned:** `src/aris/shell/ArisExplorerPane.tsx` (create), `src/ArisApp.tsx`, `src/aris/shell/index.ts`
+**Wave:** 3 · **Worker:** kimi-k2.7 · **Depends on:** T1, T2, T7
+**Files owned (create):** `src/aris/shell/arisNestedProcesses.animalwf.test.ts`
 
-**Goal:** move the explorer drawer body (`src/ArisApp.tsx` lines ~877–1019) into a dedicated component so later lanes own separate files; fix the "✨ Generate with AI" caret-opens-modal bug by making it a real collapse toggle.
+**Read first:** `src/workspace/adapters/memory.ts`, T1/T2/T7 exports, `vitest.animalwf.config.ts`, an existing `*.animalwf.test.ts` header.
+
+**Steps/assertions:** load the monolith → `buildArisSplitPlan` → `executeArisSplitImport` into a memory adapter → `scanArisWorkspaceLinks` over the listing → `buildLiteTreeFromEntries` + `buildProcessHierarchy` ⇒ root has ONE folder (`Animal Welfare`), the VACD file row owns exactly 7 EPC rows, `ownerCallCount === 1` each, an owned child's `ancestorRowKeys` contains the VACD row key; simulate `adapter.move` of one EPC into a new folder → rescan → still owned by the VACD with identical row `key` (rename-safe links); a synthetic 3-level chain (add a `LinkedModels.IdRefs` VACD→EPC→EPC) nests 3 deep. Prettier.
+
+**Verify:**
+
+```bash
+npm run test:aris:animalwf && npm run typecheck && npm run lint && npm run check:no-skips
+```
+
+---
+
+## Lane C6 — Details-rail schema editors
+
+**Wave:** 3 · **Worker:** sonnet-med · **Depends on:** C1, C4 (`setModelAttribute` + `aris.attr.*` keys)
+**Files owned:** `src/aris/details/tabs.ts` (modify), `src/aris/shell/ArisDetailsEditors.tsx` (modify), `src/aris/shell/arisDetailsEditing.ts` (modify), `src/aris/details/tabs.test.ts` (modify), `src/aris/shell/ArisDetailsRail.editing.test.tsx` (modify)
+
+> Note: `ArisDetailsEditors.tsx` and `ArisDetailsRail.editing.test.tsx` are also touched by T6 in Wave 2 — C6 runs AFTER T6 merges (different wave). Confirm T6 is merged before starting.
+
+**Read first:** `tabs.ts:274-310` (`buildAttributesTab`), `ArisDetailsEditors.tsx:380-430`, `arisDetailsEditing.ts` (the editing seam), `src/aris/conventions/attributes.ts` (C1), `arisValidationFindings.ts:181-218` (railTarget contract — schema rows keep `attribute` targets addressable).
+
+**Steps:**
+
+- [ ] `buildAttributesTab` merges schema rows: attributes from `schemaForObjectType`/`schemaForModelType` with no stored value → a row flagged missing (`bilingual: { enMissing: true, arMissing: true }`) so the existing missing-value highlight + editors light up; mandatory badge from the schema. Editor accepts a schema-declared attribute that does not exist yet (create-on-first-save via `setDefinitionAttribute` / C4's `setModelAttribute` through the `arisDetailsEditing` seam). Every string via `t()` using C4's `aris.attr.*` keys.
+- [ ] Prettier + tests.
+
+**Tests assert:** an `OT_FUNC` definition without `AT_ID` shows an `AT_ID` row flagged missing; saving writes the attribute (undoable); an EPC model shows the 10 model-schema rows; `check:ui-copy` passes.
+
+**Verify:**
+
+```bash
+npx vitest run src/aris/details src/aris/shell/ArisDetailsRail.editing.test.tsx
+npm run typecheck && npm run lint && npm run check:ui-copy && npm run check:no-skips
+```
+
+**Do NOT touch:** `dictionaries.ts`, `authoring.ts`.
+
+---
+
+## Lane C7 — Convention validation rules
+
+**Wave:** 3 · **Worker:** sonnet-med · **Depends on:** C1, C4 (`aris.conv.finding.*` keys)
+**Files owned:** `src/aris/conventions/validate.ts` (create), `src/aris/conventions/validate.test.ts` (create), `src/aris/shell/ArisStudioTab.tsx` (one-line append), `src/aris/shell/arisValidationFindings.test.ts` (modify)
+
+> Note: `ArisStudioTab.tsx` is owned by T6 in Wave 2 — C7 runs AFTER T6 merges and makes a SINGLE append to the findings-assembly array.
+
+**Read first:** `arisEpcFindings.ts` (finding shape + `EpcFinding` import), `arisValidationFindings.ts` (unknown `ruleId` → kind `'invalidSequence'` fallback; model-scoped `fallbackModelId`; markers via `nodeIds` — all verified present), `epc/validate.ts` (rule style), `src/aris/conventions/{connectionRules,attributes}.ts`, `ArisStudioTab.tsx` findings assembly (grep `buildArisEpcFindings`).
 
 **Interface:**
 
 ```ts
-export interface ArisExplorerActiveTab {
-  readonly key: string
-  readonly title: string
-  readonly models: readonly ArisStudioModelSummary[]
-}
-export interface ArisExplorerPaneProps {
-  readonly lang: 'en' | 'ar'
-  readonly dir: 'ltr' | 'rtl'
-  readonly directoryAvailable: boolean
-  readonly onImportClick: () => void
-  readonly onOpenFileClick: () => void
-  readonly onChangeFolder: () => void
-  readonly activeTab: ArisExplorerActiveTab | null
-  readonly activeModelId: string | null
-  readonly onSelectModel: (tabKey: string, modelId: string) => void
-  readonly workspaceSources: readonly WorkspaceEntry[]
-  readonly openPaths: ReadonlySet<string>
-  readonly onOpenWorkspaceFile: (path: string) => void
-  readonly onRejectUnsupported: () => void
-  readonly onOpenAssistant: () => void
-  // ArisGenerationPanel passthrough — type via React.ComponentProps<typeof ArisGenerationPanel>
-  readonly workspaceId: string | null
-  readonly digests: React.ComponentProps<typeof ArisGenerationPanel>['digests']
-  readonly onCreateModel: React.ComponentProps<typeof ArisGenerationPanel>['onCreateModel']
-  readonly onDownloadFile: (fileName: string, bytes: Uint8Array, mimeType?: string) => void
-  readonly onOpenSettings: () => void
-}
-export function ArisExplorerPane(props: ArisExplorerPaneProps): JSX.Element
-```
-
-**Steps:**
-
-- [x] **Read first:** `src/ArisApp.tsx` lines 860–1050 (the block being moved), `src/ArisApp.test.tsx` line 254 area (the `input[type="file"]` DOM-order dependence).
-- [x] Create `src/aris/shell/ArisExplorerPane.tsx` and move the JSX **verbatim**: the chrome button row (Import / Open file… / Change folder), the `ArisModelExplorer` block fed from `activeTab.models`, the flat `workspaceSources` `<ul>`, the AI section header button, and the embedded `ArisGenerationPanel`. The hidden `<input type="file">` elements **STAY in `ArisApp.tsx`** — their DOM order is load-bearing for unit + e2e tests.
-- [x] Caret-bug fix inside the pane: `const [aiCollapsed, setAiCollapsed] = useState<boolean>(() => { try { return localStorage.getItem('orbitpm.lite.sidebarAiCollapsed') === '1' } catch { return false } })`. The section header button now toggles + persists (`localStorage.setItem(...)` in the click handler, try/catch-wrapped), gets `aria-expanded={!aiCollapsed}` and `aria-controls="orbitpm-aris-create-section"`, caret `▾` when open / (`dir === 'rtl' ? '◂' : '▸'`) when collapsed. The panel wrapper becomes `<div id="orbitpm-aris-create-section" hidden={aiCollapsed} style={{ flex: '0 1 auto', maxHeight: '55%', overflowY: 'auto' }}>` — **`hidden` attribute, never conditional unmount** (an in-flight generation must survive collapse). The `onOpenAssistant` prop remains wired to the generation panel's own "Open assistant" button only.
-- [x] In `src/ArisApp.tsx`: render `<ArisExplorerPane …/>` inside the `ResponsiveDrawer`, passing `activeTab={activeTab?.studio ? { key: activeTab.key, title: activeTab.title, models: activeTab.studio.models } : null}` and the other props; delete the moved JSX (~140 lines).
-- [x] Add `export { ArisExplorerPane } from './ArisExplorerPane'` (+ prop types) to `src/aris/shell/index.ts`.
-- [x] Acceptance bar: **every existing `src/ArisApp.test.tsx` test passes unchanged.** (Verify with `grep -n "▸\|▾\|aria-expanded" src/ArisApp.test.tsx` that none assert the old caret behavior — currently none do.)
-- [x] Run prettier on touched files.
-
-**Verify:**
-
-```bash
-npx vitest run src/ArisApp.test.tsx
-npm run typecheck && npm run lint && npm run check:ui-copy && npm run check:aris-runtime-boundary
-```
-
----
-
-## Lane L3a — Chat interview session core
-
-**Wave:** 1 · **Worker:** kimi-k2.7 · **Depends on:** nothing
-**Files owned:** `src/aris/shell/arisChatDrawerTypes.ts` (create), `src/aris/shell/arisChatDrawerSession.ts` (create), `src/aris/shell/arisChatDrawerSession.test.ts` (create)
-
-**Goal:** port `ArisChatImproveRail`'s reducer-driving logic into a pure, UI-free session module returning message-key events — the functional core of the chat drawer's interview tab.
-
-**Interface:**
-
-```ts
-// arisChatDrawerTypes.ts (types only)
-import type { ArisWorkingDocument } from '../model/types'
-import type { ArisChatCommand } from '../chat/patchSchema'
-
-export interface ArisTabChatHost {
-  readonly getDocument: () => ArisWorkingDocument | null
-  readonly applyCommands: (
-    commands: readonly ArisChatCommand[],
-    label: string
-  ) => ArisWorkingDocument | null
-  readonly undo: () => void
-  readonly getCanUndo: () => boolean
-}
-export interface ArisChatDrawerTarget {
-  readonly tabKey: string
-  readonly title: string
-  readonly host: ArisTabChatHost
-}
-export interface ArisChatInterviewRequest {
-  readonly token: number
-  readonly tabKey: string
-}
-```
-
-```ts
-// arisChatDrawerSession.ts
-export type ArisChatDrawerEvent =
-  | {
-      readonly kind: 'status'
-      readonly messageKey: string
-      readonly params?: Record<string, string | number>
-    }
-  | { readonly kind: 'applied'; readonly count: number }
-  | { readonly kind: 'rejected'; readonly error: string }
-  | { readonly kind: 'terminal'; readonly status: string }
-export interface ArisChatDrawerInterview {
-  readonly state: ArisChatInterviewState<ArisWorkingDocument> | null
-  readonly appliedCount: number
-  readonly provenance: readonly ArisChatProvenanceEntry[]
-}
-export function createDrawerInterviewHost(): ArisChatInterviewHost<ArisWorkingDocument> // = createArisChatInterviewHost({ origin: 'ai-auto' })
-export function beginDrawerInterview(
-  host,
-  document
-): { interview: ArisChatDrawerInterview; events: readonly ArisChatDrawerEvent[] }
-export function submitDrawerAnswers(
-  host,
-  interview,
-  target: ArisTabChatHost,
-  answers: Readonly<Record<string, string>>
-): { interview; events }
-export function confirmDrawerSelection(
-  host,
-  interview,
-  target: ArisTabChatHost,
-  selectedCommandIds: ReadonlySet<string>
-): { interview; events }
-export function drawerConfirmationPreview(
-  host,
-  interview,
-  describeTargets
-): ArisChatConfirmationPreview | null
-export function describeCommandTargets(
+export const CONVENTION_RULE_IDS: readonly string[] // 5 ids
+export function buildConventionFindings(
   document: ArisWorkingDocument,
-  ids: readonly string[]
-): string[] // exported helper
+  modelIds?: ReadonlySet<string>
+): readonly ArisEpcModelFinding[]
 ```
 
 **Steps:**
 
-- [x] **Read first (transcription sources):** `src/aris/shell/ArisChatImproveRail.tsx` in full; `src/aris/chat/interviewLoop.ts` (`startArisChatInterview`, `advanceArisChatInterview`, `TERMINAL_INTERVIEW_STATUSES`), `src/aris/chat/transcript.ts` (`buildProvenanceEntry`, `assertProvenanceSafeToStore`), `src/aris/shell/arisChatHost.ts` (`createArisChatInterviewHost`, `scanArisGaps`), `src/aris/shell/arisChatProposal.ts` (`buildLocalArisPatchProposal`, `ARIS_CHAT_REMOVE_ANSWER`), `src/aris/chat/patchSchema.ts` (`parseArisPatchProposal`), `src/aris/chat/applyEngine.ts` (`buildConfirmationPreview`).
-- [x] Transcribe into pure functions: `submitDrawerAnswers` = rail lines 161–209 (`submitAnswers`): advance `answersSubmitted` → `buildLocalArisPatchProposal` (null → status event `aris.chat.noProposal`, stay awaiting) → `parseArisPatchProposal` (throw → `rejected` event) → advance `proposalReceived` → `lastError` → `rejected`; else run the commit.
-- [x] Commit path = rail lines 114–158 semantics with `onApplyCommands` replaced by `target.applyCommands(applied, 'aris.chat.improve')`: `null` return → status `aris.chat.commitFailed` + restart the interview from `target.getDocument()`; success → `{kind:'applied', count}` + provenance entries via `buildProvenanceEntry` guarded by `assertProvenanceSafeToStore` (failure → status `aris.chat.provenanceRejected`), then pin `state.document` to the document `applyCommands` returned (mirrors rail line 156).
-- [x] `confirmDrawerSelection` = rail lines 211–237; empty selection → status `aris.chat.nothingSelected`. `beginDrawerInterview` = `startArisChatInterview`; a `clean` result → status `aris.chatDrawer.interview.clean`. Terminal statuses → `{kind:'terminal', status}`. Export `describeCommandTargets` = rail lines 68–78.
-- [x] Write `arisChatDrawerSession.test.ts` (node env; documents from `src/aris/chat/testFixtures.ts`, same pattern as `interviewLoop.test.ts`): gap scan yields ≤3 questions; answering a `missingEnglishName` question applies exactly one command through a stub `ArisTabChatHost` whose `applyCommands` replays via `createArisChatApplyHost` and returns the folded doc; `applyCommands` returning `null` restarts from the live doc + emits `aris.chat.commitFailed`; unmappable answers emit `aris.chat.noProposal` with the document untouched; confirm-classified commands never reach `applyCommands` before `confirmDrawerSelection`; one provenance entry per receipt; terminal statuses surface.
-- [x] Run prettier.
+- [ ] Five rules emitting `ArisEpcModelFinding`-shaped rows (warning): `conv.connection.illegal` (nodeIds=[cxnOccId]; params from/to/type; via `isLegalConnection`), `conv.function.missingIdentifier` (nodeIds = the definition's occurrence ids; no `AT_ID`), `conv.function.noExecutor` (function with no incoming `CT` whose `raci==='R'` from an executor object type), `conv.model.missingAttribute` (model-scoped: empty nodeIds + modelId → fallback reveal; mandatory schema attribute absent), `conv.naming.hint` (name >60 chars or trailing period). Messages via C4's `aris.conv.finding.*` keys.
+- [ ] `ArisStudioTab.tsx`: append `buildConventionFindings(document)` to the `epcFindings` array before `buildArisValidationFindings` (one statement).
+- [ ] Prettier + tests.
+
+**Tests assert:** synthetic docs trigger each rule exactly once; a legal DMT wiring triggers none; `buildArisValidationFindings` maps a conv row to kind `invalidSequence`, keeps `ruleId`, and lands markers on the connection element. `arisValidationFindings.test.ts` gains a conv-pass-through case.
 
 **Verify:**
 
 ```bash
-npx vitest run src/aris/shell/arisChatDrawerSession.test.ts
-npm run typecheck && npm run check:aris-runtime-boundary
+npx vitest run src/aris/conventions/validate.test.ts src/aris/shell/arisValidationFindings.test.ts && npm run test:aris:animalwf
+npm run typecheck && npm run lint && npm run check:ui-copy && npm run check:no-skips
+```
+
+**Do NOT touch:** `gapScanner.ts`, `deterministicFixes.ts`, `arisValidationFindings.ts`, `ArisFixMissingDialog.tsx`.
+
+---
+
+## Lane C8 — Measured fidelity fix loop
+
+**Wave:** 3 · **Worker:** opus-4.8-1M · **Depends on:** C2, F1, F2, C5
+**Files owned:** `src/aris/canvas/canvasSync.ts`, `src/aris/canvas/renderer.ts`, `src/aris/canvas/elements.ts`, `src/aris/model/buildFromSource.ts`, `src/aris/canvas/svg.ts` (marker helper), NEW `src/aris/canvas/attributeLabels.test.ts` + `src/aris/canvas/attributeLabels.animalwf.test.ts`, updates to `src/aris/canvas/freeTextLayout.test.ts`/`connectionLabels.test.ts` siblings and the two ITERATE fidelity suites' `BASELINE` consts (F1's files — F1 finished in Wave 1, free now)
+
+**Goal:** close the measured gaps on the 2 iterate models to the completion bar; ratchet the iterate baselines to exact.
+
+**Read first:** `canvasSync.ts:409-560,641-830` (`syncLabels` projects only AT_NAME today; `syncConnectionLabels` is the mirror pattern to copy for all occurrence AttrOccs), canvas `renderer.ts` (`drawConnection` has NO arrowheads), `buildFromSource.ts` (pen width/style deliberately nulled), `renderer/buildRenderModel.ts` (AttrOcc placement semantics — port/offset), `waypoints.ts`, R4/R5, the latest `aris-fidelity-report` output.
+
+**Protocol (iterate→fix→re-measure loop):**
+
+- [ ] Run `npx vite-node scripts/aris-fidelity-report.ts`; snapshot per-category counts.
+- [ ] Fix ONE category, in this order: (1) occurrence AttrOcc labels — generalize `syncLabels` to ALL occurrence `attributeOccurrences` (mirror `syncConnectionLabels`: per placement → label element `label:<occId>:<idx>:<attrType>`, text = the definition's attribute value of that type, rect from a generalized `attributePlacementRect(placement, bounds)` reusing the `externalNameRect` math; AT_NAME keeps the name path), so function numbers (`AT_PROC_CODE`/`AT_ID`) render under boxes; (2) arrowheads — `drawConnection` emits a shared `marker-end` via an `svg.ts` helper; (3) connection pen — honor bo pen color/width/dash (`elements.ts` connection bo gains pen fields); (4) occurrence pen width/style carry from source in `buildFromSource` (today nulled) into `occurrence.style`.
+- [ ] Re-run the report + `npm run test:aris:animalwf`; ratchet the iterate suites' BASELINE for that category to exact/0.
+- [ ] Repeat until the **completion bar**: topology exact (spine/gates/satellites/counts 0 diffs), numbering exact, symbol exact, color exact where PDF-confirmed, label-rect geometry within ±2px. Frames (`GfxObj`/`RoundedRectangle`)/`Union`/OLE placeholders only if the report shows them on the iterate models (expected out-of-bar — VACD/decorative; record the verdict in the report artifact).
+- [ ] Prettier. Keep `rawAttributes`/source anchors untouched so `arisDerivedExport` round-trip is unperturbed.
+
+**Verify:**
+
+```bash
+npm run test:aris:animalwf                                  # BOTH iterate models fully exact (BASELINE zeros)
+npx vitest run src/aris/shell/arisDerivedExport.test.ts     # REQUIRED — pen carry must not break round-trip
+npm test
+npm run typecheck && npm run lint && npm run check:no-skips
+```
+
+**NEVER** run the holdout config. **Do NOT touch:** `shapes.ts`, `vocabulary.ts`, `writer/`, `arisDerivedExport.ts`, holdout files.
+
+---
+
+## Lane E1 — e2e: nested processes
+
+**Wave:** 4 · **Worker:** sonnet-med · **Depends on:** everything through Wave 3
+**Files owned (create):** `tests/e2e/aris-nested-processes.spec.ts`
+
+**Read first:** `tests/e2e/aris-explorer-tree.spec.ts` (loopback-HTTP + OPFS harness + webkit persistent-context workaround — copy both verbatim), `tests/e2e/aris-authoring.spec.ts` (palette placement + import via `setInputFiles`).
+
+**Steps:** OPFS workspace: New model `Parent`; place a Function; New folder `subs` + New model `Child` inside; select the function → `Link model…` → pick Child ⇒ `[data-orbitpm-aris-assignment]` visible; tree shows Child nested under Parent (owned row); dblclick the function shape ⇒ Child's tab activates; rename `Child.aml` → `Renamed.aml` in the tree ⇒ marker dblclick still opens it; delete it ⇒ dblclick opens the prefilled New-model dialog (create-missing) ⇒ create ⇒ file exists again in Parent's folder. Chromium + firefox + webkit. Prettier.
+
+**Verify:**
+
+```bash
+npm run build && npx playwright test tests/e2e/aris-nested-processes.spec.ts
+```
+
+**Do NOT touch:** `src/` — if a selector hook is missing, report back.
+
+---
+
+## Lane E2 — e2e: import split
+
+**Wave:** 4 · **Worker:** kimi-k2.7 · **Depends on:** everything through Wave 3
+**Files owned (create):** `tests/e2e/aris-import-split.spec.ts`
+
+**Read first:** `aris-authoring.spec.ts` (fixture import pattern, 3-engine quirks, webkit workaround), `aris-explorer-tree.spec.ts` (OPFS harness).
+
+**Steps:** Scenario A (synthetic inline AML, 2 bilingual groups + a VACD with 2 assignments + 2 EPCs): Import button → dialog lists 3 target paths under the group folder names → confirm → tree shows folders + nesting (VACD owns 2) → dblclick a chevron ⇒ EPC opens. Scenario B (reference): `setInputFiles(resolve(HERE,'../../../reference/AnimalWF/ARISAMLExport.xml'))` → confirm → 8 files, `Animal Welfare` folder, the VACD row owns 7 children (assert the owned-row count) → re-import ⇒ dialog all-skipped. Chromium + firefox + webkit. Prettier.
+
+**Verify:**
+
+```bash
+npm run build && npx playwright test tests/e2e/aris-import-split.spec.ts
 ```
 
 ---
 
-## Lane L5a — Canvas content-language projection + RTL captions
+## Lane E3 — e2e: fidelity screenshots + interaction + scripts
 
-**Wave:** 1 · **Worker:** kimi-k2.7 · **Depends on:** nothing
-**Files owned:** `src/aris/canvas/localization.ts`, `src/aris/canvas/canvasSync.ts`, `src/aris/canvas/ArisCanvas.ts`, `src/aris/canvas/renderer.ts`, `src/aris/canvas/contentLanguage.test.ts` (create)
+**Wave:** 4 · **Worker:** sonnet-med · **Depends on:** everything through Wave 3
+**Files owned:** `tests/e2e/aris-fidelity-screenshots.spec.ts` (create), `tests/e2e/aris-canvas-interaction.spec.ts` (modify — append), `package.json` (modify — scripts)
 
-**Goal:** `ArisCanvas.setContentLanguage('en'|'ar')` re-renders every label in that language with the fallback chain (never blank), producing **zero undo entries**; Arabic captions get RTL text attributes.
+**Read first:** `aris-authoring.spec.ts` (fixture import), `aris-canvas-interaction.spec.ts`, `playwright.config.ts`.
 
 **Steps:**
 
-- [x] **Read first:** `src/aris/canvas/canvasSync.ts` in full — locate all 8 `readLocalized(...)` call sites (lines ~317, 346, 365, 388, 415, 442, 789, 801; the last two are inside free function `connectionLabelText`). Read `upsertShape` and confirm a business-object `name` change marks the shape dirty for redraw; if the diff logic misses `name`, include it. Also read `src/aris/canvas/emptyDocument.ts` (`DEFAULT_LOCALE_ID = 'en-US'`), `src/aris/canvas/commandBridge.ts` line ~185 (`refresh` — re-sync + `ARIS_DOCUMENT_CHANGED`, NOT a command), `src/library/amlParse.ts:182` (`localeLang` classification), `src/aris/shell/arisDetailsEditing.ts:58` (`ARIS_FALLBACK_LOCALE_IDS`).
-- [x] `src/aris/canvas/localization.ts` — add:
-
-  ```ts
-  export type ArisContentLanguage = 'en' | 'ar'
-  export const ARIS_CONTENT_LOCALE_IDS: Readonly<Record<ArisContentLanguage, string>> =
-    Object.freeze({ en: DEFAULT_LOCALE_ID /* 'en-US' */, ar: 'ar-AE' })
-  ```
-
-  (`readLocalized` classifies any representative id per language via `localeLang`, so the exact ar key just needs to classify as Arabic; `'ar-AE'` matches the details-editing fallback.)
-
-- [x] `src/aris/canvas/canvasSync.ts` — add a private `displayLocaleId = DEFAULT_LOCALE_ID` and `setDisplayLocale(localeId: string): void` on `ArisCanvasSync`; thread `displayLocaleId` into **all 8** `readLocalized` call sites (give `connectionLabelText` an optional `localeId` parameter, passed from the class).
-- [x] `src/aris/canvas/ArisCanvas.ts` — facade:
-
-  ```ts
-  setContentLanguage(language: ArisContentLanguage): void {
-    this.sync.setDisplayLocale(ARIS_CONTENT_LOCALE_IDS[language])
-    this.bridge.refresh('content-language')   // NOT a command: undo stack untouched
-  }
-  get contentLanguage(): ArisContentLanguage
-  ```
-
-- [x] `src/aris/canvas/renderer.ts` — in `drawCaption` (~line 238) and `drawLabelText` (~line 283): when the text matches `/\p{Script=Arabic}/u`, set attributes `direction: 'rtl'` and `'unicode-bidi': 'plaintext'` on the text node.
-- [x] Write `src/aris/canvas/contentLanguage.test.ts`: boot a doc with en+ar names → `setContentLanguage('ar')` → occurrence business objects carry Arabic names; back to `'en'` restores exact originals; ar-only element under `'en'` display still shows Arabic (fallback — **never `''`**); en-only under `'ar'` shows English; `canUndo` and command count unchanged across 10 toggles (zero-undo contract); raw-entity locale keys (`"&LocaleId.AEar;"`) resolve under `'ar'`; an Arabic caption node carries `direction="rtl"`.
-- [x] Run prettier.
+- [ ] `aris-fidelity-screenshots.spec.ts`: import the reference fixture via `setInputFiles`, open each iterate model, `page.screenshot({ fullPage: false })` of the canvas → `test-results/fidelity/<model>-<browser>.png`. GATED (3 engines): model opens; exact occurrence-element count; `[data-aris-fidelity]` (symbol fallback) count === 0 for iterate models; ≥1 label element with `data-aris-caption` under a function (numbering visible). NOT gated: pixels.
+- [ ] `aris-canvas-interaction.spec.ts` append: palette place → type "Approve request" → Enter → SVG caption appears; dblclick → edit; quick-pick swap visible.
+- [ ] `package.json` scripts: `"test:aris:animalwf:holdout": "vitest run --config vitest.animalwf.holdout.config.ts"`, `"test:aris:fidelity-report": "vite-node scripts/aris-fidelity-report.ts"`. Prettier.
 
 **Verify:**
 
 ```bash
-npx vitest run src/aris/canvas
-npm run typecheck && npm run check:aris-runtime-boundary
+npm run build && npm run test:e2e
+npm run typecheck && npm run lint && npm run check:no-skips
 ```
+
+**Do NOT touch:** `src/`.
 
 ---
 
-## Lane L5b — ARIS localization adapter
+## Lane X1 — i18n final sweep
 
-**Wave:** 1 · **Worker:** opus-4.8-1M · **Depends on:** nothing
-**Files owned:** `src/aris/localization/` (create: `fields.ts`, `review.ts`, `run.ts`, `aiTranslateTexts.ts`, `apply.ts`, `index.ts`, `__tests__/`)
-
-**Goal:** wire the surviving notation-agnostic `src/localization` core to `ArisWorkingDocument`: field extraction → `DiagramLocalizationReview` construction → provider run → one-gesture apply.
-
-**Layering rule:** this package may import from `src/localization/*` (specific modules, never the barrel), `src/aris/model`, `src/aris/canvas` (types + commandFactory), `src/aris/chat/locale`, `src/library/amlParse` — but **never from `src/aris/shell`** (shell composes lanes; lanes never import shell). Reimplement small shell helpers locally where noted.
-
-**Interfaces (implement exactly):**
-
-```ts
-// fields.ts
-export interface ArisTranslationOwner {
-  readonly kind: 'model' | 'objectDefinition' | 'connectionDefinition' | 'freeText'
-  readonly id: string
-  readonly modelId: string // '' for document-scoped definitions with no occurrence
-}
-export interface ArisLocaleIds {
-  readonly en: string
-  readonly ar: string
-}
-export interface ArisLocalizationExtract {
-  readonly fields: readonly LocalizationField[]
-  readonly owners: ReadonlyMap<string, ArisTranslationOwner> // key = elementId used in fields
-  readonly locales: ArisLocaleIds
-}
-export function extractArisLocalizationFields(
-  document: ArisWorkingDocument,
-  options: { readonly active: 'en' | 'ar'; readonly locales?: ArisLocaleIds }
-): ArisLocalizationExtract
-
-// review.ts
-export interface ArisLocalizationReviewInput {
-  readonly document: ArisWorkingDocument
-  readonly target: 'en' | 'ar'
-  readonly active: 'en' | 'ar'
-  readonly resources?: LocalizationResources // default: SEEDED_GLOSSARY + empty TM
-}
-export interface ArisLocalizationReviewResult {
-  readonly review: DiagramLocalizationReview // source: 'aris'
-  readonly owners: ReadonlyMap<string, ArisTranslationOwner>
-  readonly locales: ArisLocaleIds
-  readonly sourceSignature: string
-  readonly revision: number
-}
-export function buildArisLocalizationReview(
-  input: ArisLocalizationReviewInput
-): ArisLocalizationReviewResult
-export function countArisMissingTranslations(document: ArisWorkingDocument): {
-  en: number
-  ar: number
-}
-
-// run.ts
-export interface ArisTranslationRunResult {
-  readonly proposals: readonly TranslationOutputProposal[]
-  readonly failures: readonly ProviderFailure[]
-}
-export async function runArisReviewedTranslation(
-  review: DiagramLocalizationReview,
-  translateTexts: TranslateTextsFn,
-  signal?: AbortSignal
-): Promise<ArisTranslationRunResult>
-
-// aiTranslateTexts.ts
-export function makeArisAiTranslateTexts(
-  callLLM: (
-    messages: { role: string; content: string }[],
-    opts: { maxTokens: number }
-  ) => Promise<unknown>,
-  options?: { chunkSize?: number } // default 60
-): TranslateTextsFn
-
-// apply.ts
-export interface ArisTranslationUpdate {
-  readonly owner: ArisTranslationOwner
-  readonly localeId: string
-  readonly value: string
-}
-export function toArisTranslationUpdates(
-  patches: readonly LocalizationPatch[],
-  owners: ReadonlyMap<string, ArisTranslationOwner>
-): ArisTranslationUpdate[] // drops 'fallback'-property projection patches
-export function applyArisTranslations(
-  canvas: {
-    document: ArisWorkingDocument
-    bridge: {
-      execute(label: string, thunks: readonly ArisCommandThunk[]): readonly ArisEditCommand[]
-    }
-  },
-  updates: readonly ArisTranslationUpdate[],
-  label: string
-): number // applied count; ONE bridge.execute ⇒ ONE undo entry; throws on rejection (nothing applied)
-```
+**Wave:** 4 · **Worker:** sonnet-med · **Depends on:** everything
+**Files owned:** `src/i18n/dictionaries.ts` (modify), `src/aris/shell/shellI18n.ts` (modify only if a `tk()` key needs registration)
 
 **Steps:**
 
-- [x] **Read first:** `src/localization/types.ts` (`LocalizationField`, `BilingualValue`, `LocalizationSource.Aris` at line ~20, `LocalizationStorage`), `src/localization/plan.ts` (`planLocalResourceApplication` ~105, `planLanguageProjection` ~201, `buildTranslationQueue` ~264), `src/localization/audit.ts`, `src/localization/script.ts` (`validateTargetScript`), `src/localization/modelerAdapter.ts` ~291 (the review-assembly shape to mirror — do NOT import this module), `src/localization/glossary.ts` (`SEEDED_GLOSSARY`), `src/ai/translate.ts` (exports `TranslateTextsFn` ~923, `TRANSLATE_INSTRUCTION` ~225, `TRANSLATE_MAX_TOKENS` ~237; directional loop ~931–957; unexported chunk logic ~399–447 incl. `RETRY_REMINDER`), `src/aris/chat/locale.ts` (`hasEnglishName`/`hasArabicName`, locale-id sets), `src/aris/shell/arisChatProposal.ts` lines 34–76 (`detectLocaleIds` semantics + `resolveOwnerKind` — reimplement locally, byte-identical fallbacks `'1033'`/`'1025'`), `src/aris/canvas/commandFactory.ts` (`setLocalizedNameCommand` ~378, `editFreeTextCommand` ~677), `src/aris/shell/arisChatHost.ts` ~723 (`ArisChatGestureCanvas` structural shape), `src/aris/shell/arisChatUndo.test.ts` (headless bridge test harness pattern), `src/localization/TranslationReviewDialog.tsx` top (`TranslationOutputProposal`/`ProviderFailure` shapes ~line 38).
-- [x] `fields.ts`: locale detection = local reimplementation of `detectLocaleIds` (first `values` key per language classified via `localeLang`; fallbacks `'1033'`/`'1025'`). Include: every `document.models` value (field `'name'`, kind `'name'`, elementId = model id, processId = model id); every objectDefinition **with at least one non-blank name value** (unnamed = fix-missing territory; DO include named `OT_RULE` — rules like "Approved?" must translate); every named connectionDefinition; every non-blank `model.freeText` entry (kind `'annotation'`, field `'text'`, owner kind `'freeText'`). processId for definitions = modelId of the first occurrence found, else `'document'`. Per element: en slot = first `values` entry whose key classifies `'en'` (value + that exact localeId), else absent with write-target `locales.en`; ar likewise. Build `LocalizationField` with `value: {en?, ar?, active}`, `origins` `'paired'` for present slots, and `storage: { enProperty: <en write localeId>, arProperty: <ar write localeId>, projectionProperty: 'fallback' }` — **the storage strings smuggle the ARIS write-locale ids through the notation-agnostic pipeline**; `planeIds: []`, `source: 'aris'`.
-- [x] `review.ts`: assemble exactly like `inspectDiagramLocalization` minus moddle: extract → `planLocalResourceApplication(fields, {glossary, translationMemory})` → fold plan updates into the fields → `planLanguageProjection(fields, target)` (note: `'fallback'`-property projection patches are IGNORED at apply time — projection is the canvas's job) → `buildTranslationQueue(fields, {}, target)` → `{source:'aris', target, fields, issues, queue, localUpdates: plan.updates.filter(p => p.property !== 'fallback'), projected, unchanged, blockers, complete, localResources}`. `sourceSignature` = stable JSON of sorted `[elementId, field, en, ar]` rows; also return `revision: document.revision`. `countArisMissingTranslations` = `hasEnglishName`/`hasArabicName` per named element (comment the intentional delta vs gapScanner name rules: named-but-missing-counterpart counts here because translate can fix it).
-- [x] `run.ts`: per direction (`ar` then `en`), take queue items without `requiresSegmentationReview`, batch their `sourceValue`s through `translateTexts(texts, source, target, signal)`; validate each result with `validateTargetScript` + non-empty + ≠ source; positional `undefined`/invalid → `ProviderFailure`. Mirror the directional loop of `translateReviewedDiagramWithTexts`.
-- [x] `aiTranslateTexts.ts`: chunked (default 60) index-keyed JSON payload (`{"0": "...", ...}`) with `TRANSLATE_INSTRUCTION` as system-style preamble and `TRANSLATE_MAX_TOKENS`; strict-JSON parse with ONE retry appending the `RETRY_REMINDER` sentence; positional results. Reimplement the ~40 unexported lines (`requestChunk`/`coerceToRecord` equivalents) locally.
-- [x] `apply.ts`: thunks — owner kind `model`/`objectDefinition`/`connectionDefinition` → `setLocalizedNameCommand(context, document, ownerKind, ownerId, localeId, value)`; `freeText` → `editFreeTextCommand(context, document, id, { text: value, localeId })`. ONE `bridge.execute(label, thunks)` for all updates. The structural canvas parameter matches `ArisChatGestureCanvas`, so tests drive the real bridge headlessly.
-- [x] `index.ts`: re-export everything above.
-- [x] Tests under `src/aris/localization/__tests__/` (fixtures via `src/aris/chat/testFixtures.ts` or `src/aris/model/testFixture.ts` `SYNTHETIC_AML` → `buildFromSource`): extraction cases (en-only / ar-only / both / wrong-script → audit issue / mixed / neutral "API" / raw-entity locale keys / freeText / named rule included / unnamed definition excluded); write-locale fidelity (existing ar key `'14337'` → patch property `'14337'`, NOT `'1025'`; absent → fallback); glossary/TM local resolution with **zero provider calls** (spy `translateTexts`); run failure taxonomy (per-text failure → `ProviderFailure`; whole-chain `FreeTranslateError` propagates); apply = exactly one `bridge.execute`, one undo restores every name, re-running `buildArisLocalizationReview` after apply → `complete === true` and empty queue (idempotence), a rejected gesture leaves the document untouched; no patch ever writes `''`.
-- [x] Run prettier.
+- [ ] Grep the whole `src/aris` + `src/ArisApp.tsx` for any `t('…')`/`tk('…')` key not present in both dictionaries (or `ARIS_SHELL_MESSAGE_KEYS`); register any stray key en+ar. Confirm `check:ui-copy` and `i18n.test.ts` green. Prettier.
 
 **Verify:**
 
 ```bash
-npx vitest run src/aris/localization
-npm run typecheck && npm run check:aris-runtime-boundary
+npx vitest run src/__tests__/i18n.test.ts && npm run check:ui-copy && npm run typecheck && npm run lint && npm run check:no-skips
 ```
 
 ---
 
-## Lane L1c — Folder tree + CRUD integration
+## Wave 5 — Final verification & ship (orchestrator)
 
-**Wave:** 2 · **Worker:** opus-4.8-1M · **Depends on:** L1a, L1b · **Wave-2 owner of `src/ArisApp.tsx`, `src/aris/shell/ArisExplorerPane.tsx`, `src/i18n/dictionaries.ts`, `src/ArisApp.test.tsx`**
-**Files owned:** those four + `src/aris/shell/arisExplorerActions.tsx` (create) + `src/aris/shell/__tests__/arisExplorerActions.test.tsx` (create)
-
-**Goal:** replace the flat file list with `FolderTreeLite` for multi-file workspaces (directory + OPFS); full CRUD (new folder, rename, delete, move, drag-move, import-drop) against the `WorkspaceAdapter`; single-file mode keeps the flat block; `ArisModelExplorer` stays exactly where it is (models are only known for OPENED sources — do not force eager parsing of every file).
-
-**Steps:**
-
-- [x] **Read first:** `src/workspace/FolderTreeLite.tsx` props + behavior; `src/workspace/processHierarchy.ts` (`buildProcessHierarchy` accepts empty index/graph → pure physical tree, verified); `src/workspace/adapters/types.ts` (capabilities: `multipleFiles`, `directories`, `rename`, `move`, `remove`) and `src/workspace/adapters/handleAdapter.ts` (`walkDirectory` lists directories; cross-parent `relocate` at ~572); `src/workspace/MoveDialog.tsx`, `src/workspace/ConfirmDialog.tsx`, `src/workspace/EmptyWorkspaceCard.tsx`, `src/workspace/importDrop.ts` (`collectDroppedBpmn`, `isBpmnName`); `src/common/prompt` (`PromptText` — `PromptProvider` already mounted in `src/main.tsx`); `src/ArisApp.tsx` `refreshWorkspaceSources` (~line 324) and `handleOpenWorkspaceFile`; `src/workspace/adapters/memory.ts` (test adapter constructor); reference wiring `git show main:src/App.tsx` lines 11040–11100.
-- [x] `src/ArisApp.tsx` — data plumbing:
-  - [x] New state `const [workspaceEntries, setWorkspaceEntries] = useState<WorkspaceEntry[]>([])`. In `refreshWorkspaceSources`, store the **unfiltered** `adapter.list()` result (directory entries included) into `workspaceEntries` while keeping `workspaceSources` filtered as today. Single-file branch sets both.
-  - [x] Memos (runtime imports of `buildProcessHierarchy` + L1a helpers are boundary-safe):
-
-    ```ts
-    const multiFile = workspaceAdapter?.storage.capabilities.multipleFiles === true
-    const explorerTree = useMemo(
-      () =>
-        multiFile
-          ? buildLiteTreeFromEntries(workspaceEntries, rootLabel(mode, workspaceAdapter))
-          : null,
-      [multiFile, mode, workspaceAdapter, workspaceEntries]
-    )
-    const explorerHierarchy = useMemo(
-      () =>
-        explorerTree
-          ? buildProcessHierarchy(explorerTree, EMPTY_PROCESS_INDEX, EMPTY_PROCESS_GRAPH)
-          : null,
-      [explorerTree]
-    )
-    ```
-
-    (`rootLabel` = a small helper returning the workspace's display name; derive from the adapter or mode the way the header already does.)
-
-  - [x] Tabs controller (stable `useCallback`s):
-
-    ```ts
-    interface ArisExplorerTabsController {
-      closeUnder(path: string, kind: 'file' | 'directory'): void // close tabs at/under path; repair activeKey like ProcessTabList's onClose
-      remap(from: string, to: string, kind: 'file' | 'directory'): void // rewrite tab.relPath + title; NEVER change tab.key (a key change remounts the canvas and destroys undo history)
-    }
-    ```
-
-  - [x] `handleOpenWorkspaceFile`: prepend relPath dedupe — `const existing = tabs.find(t => t.relPath === path); if (existing) { setActiveKey(existing.key); return }` (add `tabs` to deps).
-  - [x] Pass to the pane: `adapter`, `multiFile`, `tree`, `hierarchy`, `activePath: activeTab?.relPath ?? null`, `rootName`, `tabsController`, `onRefreshWorkspace`, `onOpenFileFocus` (open + collapse the drawer when `responsiveMode !== 'docked'`), and `onNewModel: (folderRel: string) => pushToast(t('aris.placeholder.newProcessUnavailable'))` — **a stub; Lane L2d replaces only its body**.
-- [x] Create `src/aris/shell/arisExplorerActions.tsx` — a hook + dialog host owning ALL CRUD:
-
-  ```ts
-  export interface UseArisExplorerActionsOptions {
-    readonly adapter: WorkspaceAdapter | null
-    readonly tree: LiteTreeNode | null
-    readonly rootName: string
-    readonly promptText: PromptText
-    readonly refresh: () => Promise<void>
-    readonly toast: (message: string, tone?: 'info' | 'error' | 'success') => void
-    readonly tabs: ArisExplorerTabsController
-  }
-  export interface ArisExplorerActions {
-    readonly onNewFolder: (folderRel: string) => void
-    readonly onRename: (node: LiteTreeNode) => void
-    readonly onDelete: (node: LiteTreeNode) => void
-    readonly onMove: (node: LiteTreeNode) => void
-    readonly onMoveDrop: (
-      fromRel: string,
-      fromType: 'file' | 'directory',
-      toFolderRel: string
-    ) => void
-    readonly onImportDrop: (dataTransfer: DataTransfer, toFolderRel: string) => void
-    readonly dialogs: JSX.Element | null // MoveDialog + ConfirmDialog rendered from hook state
-  }
-  export function useArisExplorerActions(
-    options: UseArisExplorerActionsOptions
-  ): ArisExplorerActions
-  ```
-
-  Handler algorithms (exact):
-  - [x] Common guards: bail with an error toast when `adapter` is null or lacks the relevant capability; refuse any operation whose source or destination path has first segment `.orbitpm` (defense-in-depth — the tree never shows those nodes anyway).
-  - [x] `onNewFolder(folderRel)`: `promptText({ title: t('dialog.newFolder.title'), label: t('dialog.newFolder.label'), initialValue: t('dialog.newFolder.initialValue'), okLabel: t('dialog.newFolder.okLabel') })`; reject names matching `/[/\\]/`; `await adapter.createFolder(folderRel ? folderRel + '/' + name : name)`; `await refresh()`; catch → `toast(t('alert.createFolderFailed', { error }), 'error')`.
-  - [x] `onRename(node)`: prompt with `dialog.rename.*` keys, `initialValue: node.name`; for files, if the new name lacks an ARIS extension (`/\.(?:aml|apc|xml|bpmn)$/i`) append the original extension; dest = same parent + finalName; `await adapter.rename(node.relPath, dest)`; `tabs.remap(node.relPath, dest, node.type)`; `refresh()`; catch → `alert.renameFailed`.
-  - [x] `onDelete(node)`: `ConfirmDialog` (`title: t('contextMenu.delete')`, message `t('confirm.deleteNode', { name: node.name })`; non-empty-folder variant adds `t('confirm.deleteFolder.notEmptyBody')` and `requireTyped: node.name`; `danger`, `role: 'alertdialog'`). On confirm: `await adapter.remove(node.relPath)` (recursive); `tabs.closeUnder(node.relPath, node.type)`; `refresh()`; catch → `alert.deleteFailed`.
-  - [x] `onMove(node)`: open `MoveDialog` with `folders = collectFolderOptions(tree, rootName)`; on choose `dest`: `await adapter.move(node.relPath, dest ? dest + '/' + node.name : node.name)`; `tabs.remap(...)`; `refresh()`; catch → `alert.moveFailed`.
-  - [x] `onMoveDrop(fromRel, fromType, toFolderRel)`: same as move with known destination; no-op when destination equals the current parent.
-  - [x] `onImportDrop(dt, toFolderRel)`: `const dropped = await collectDroppedBpmn(dt)`; for each: `.bpmn` name or rejected content → `toast(t('toast.import.arisOnly'))`, skip; else `path = uniquePathIn(existingPaths, toFolderRel, name)` and `await adapter.writeAtomic(path, new TextEncoder().encode(text), undefined, { expectedMissing: true })`; on `already-exists` conflict retry via `uniquePathIn`. After the loop: `refresh()` + `toast(t('aris.explorer.imported', { count }))`.
-
-- [x] `src/aris/shell/ArisExplorerPane.tsx` — branch the workspace section:
-
-  ```tsx
-  {multiFile && tree && hierarchy ? (
-    countTreeFiles(tree) === 0
-      ? <EmptyWorkspaceCard folderName={rootName} onCreateFirst={() => onNewModel('')} />
-      : <FolderTreeLite hierarchy={hierarchy} activePath={activePath}
-          onOpenFile={(rel) => /\.bpmn$/i.test(rel) ? onRejectUnsupported() : onOpenWorkspaceFile(rel)}
-          onOpenFileFocus={onOpenFileFocus}
-          onOpenProcess={() => undefined}
-          onNewProcess={onNewModel} onNewFolder={actions.onNewFolder}
-          onRename={actions.onRename} onDelete={actions.onDelete} onMove={actions.onMove}
-          onMoveDrop={actions.onMoveDrop} onImportDrop={actions.onImportDrop} />
-  ) : ( /* existing flat single-file block, verbatim */ )}
-  {actions.dialogs}
-  ```
-
-  Chrome row additions (multi-file only, before Import): **`＋ New model`** (primary styling, `title={t('aris.explorer.newModel.title')}`) → `onNewModel('')`; **`📁＋`** (`aria-label={t('tree.newFolder.aria')}`, `title={t('tree.newFolder.title')}`) → `actions.onNewFolder('')`; **`↻`** (`title={t('tree.refresh.title')}`, `aria-label={t('tree.refresh.aria')}`) → `onRefreshWorkspace`. (`tree.newFolder.*`/`tree.refresh.*` keys already exist in the dictionaries — verify with grep; if absent, add them in this lane.) `ArisModelExplorer` stays exactly where it is with identical DOM.
-
-- [x] `src/i18n/dictionaries.ts` — add to BOTH maps: `aris.explorer.newModel` = `＋ New model` / `＋ نموذج جديد`; `aris.explorer.newModel.title` = `Create a blank ARIS model (EPC or value-added chain) in this workspace` / `إنشاء نموذج ARIS فارغ (EPC أو سلسلة قيمة مضافة) في مساحة العمل هذه`; `aris.explorer.imported` = `Imported {count} file(s) into the workspace.` / `تم استيراد {count} ملف/ملفات إلى مساحة العمل.`.
-- [x] Tests:
-  - [x] NEW `src/aris/shell/__tests__/arisExplorerActions.test.tsx` (jsdom; drive the hook via a tiny harness component with the memory adapter): rename preserves extension + calls `tabs.remap`; delete non-empty folder requires typed name + calls `tabs.closeUnder`; move refuses `.orbitpm` destinations; import-drop writes an `.aml`, rejects `.bpmn` with the arisOnly toast, suffixes on collision.
-  - [x] UPDATE `src/ArisApp.test.tsx` directory-mode test (~line 604): the flat `getByRole('button', { name: /legacy\/process\.aml/i })` pills become tree rows — `fireEvent.click(screen.getByRole('treeitem', { name: 'legacy' }))` to expand the synthesized folder, then click the `process.aml` treeitem; `.bpmn` row click asserts the arisOnly toast. Extend `makeDirectoryAdapter`'s mock `storage.capabilities` with `directories/rename/move/remove: true` (**extend the mock, never relax product guards**). Add one new test: folders sort before files and a seeded `.orbitpm/aris/x/manifest.json` entry is hidden.
-- [x] Run prettier.
-
-**Verify:**
-
-```bash
-npx vitest run src/ArisApp.test.tsx src/aris/shell/__tests__/arisExplorerActions.test.tsx src/workspace/__tests__ src/__tests__/i18n.test.ts
-npm run typecheck && npm run lint && npm run check:ui-copy && npm run check:aris-runtime-boundary
-```
-
----
-
-## Lane L3b — `ArisChatDrawer` UI
-
-**Wave:** 2 · **Worker:** opus-4.8-1M · **Depends on:** L3a
-**Files owned:** `src/aris/shell/ArisChatDrawer.tsx` (create), `src/aris/shell/ArisChatDrawer.test.tsx` (create), `src/aris/shell/ArisChatDrawer.aiGate.test.tsx` (create)
-
-**Goal:** the chatbot copied from main's AssistantDrawer UX — 💬 FAB + right-edge sliding panel + two tabs + message bubbles + Enter-to-send — wired to ARIS backends. Chat consent is KEPT via the existing `ArisAssistantAiSection`.
-
-**Props:**
-
-```ts
-export interface ArisChatDrawerProps {
-  open: boolean
-  onOpen: () => void
-  onClose: () => void
-  keysVersion: number // bumped when Settings closes; `void keysVersion` before pickProvider
-  digests: readonly ArisProcessDigest[] // src/aris/assistant/types
-  onOpenChip: (chip: ArisAnswerChip) => boolean // src/aris/assistant/answer
-  onOpenSettings: () => void
-  onChangeWorkspace?: () => void
-  getActiveChatTarget: () => ArisChatDrawerTarget | null
-  interviewRequest?: ArisChatInterviewRequest | null
-}
-```
-
-**Steps:**
-
-- [x] **Read first (transcription source — transcribe, NEVER import):** `src/assist/AssistantDrawer.tsx` (byte-identical to main): style constants lines 1207–1429; launcher lines 938–957; dialog shell + header + tablist lines 1113–1200; tab keydown lines 895–925; scroll effect lines 699–703; bubbles lines 972–1033; input row + footer lines 1077–1110; `pickProvider` lines 152–166; return-focus + `useClientLayoutEffect` lines 233–235 and 402–419; interview-request effect lines 883–891. Also read: `src/common/AccessibleDialog.tsx`; `src/aris/assistant/{answer,retrieval,questionRouter,formatAnswer,types}.ts` (`routeQuestion`, `formatAnswer`, chip shape); `src/aris/shell/ArisAssistantAiSection.tsx` (props + selectors — reused as the consent card); `src/aris/shell/ArisAssistantPanel.tsx` lines 51–54/159–173 (the two suggestion buttons to carry over); `src/aris/shell/ArisChatImproveRail.tsx` lines 317–346 (unusedDefinition checkbox) + 361–431 (confirm card, receipts); `src/ai/TechnicalErrorDetail.tsx`, `src/ai/providerSelection.ts` (`subscribeProviderSelection`), `src/ai/keys.ts` (`hasKey`).
-- [x] Build the chrome: copy the style-constant block; change `PANEL_STYLE.insetBlockEnd: 100` → `0` (no bpmn watermark on this branch) and drop the two attribution comments. Keep `FAB_STYLE` exactly (fixed, insetBlockEnd 72, insetInlineEnd 4, zIndex 900, 44×44 circle, `var(--orbitpm-accent)`, 💬, `aria-label={t('assist.open')}`, `hidden={open}`). `if (!open) return launcher`. Panel via `AccessibleDialog` with `ariaLabel={t('assist.title')}` — **must remain 'Process assistant' / 'مساعد العمليات'** (four e2e suites match the dialog name) — `closeOnEscape`, `closeOnBackdrop`, `initialFocusRef={closeButtonRef}`, `returnFocusRef`, `dir`; header `×` close `aria-label={t('assist.close')}`; optional Change-workspace chip; two `role=tab` buttons `t('assist.tab.library')` / `t('assist.tab.interview')` with the RTL-aware Arrow/Home/End keydown handler.
-- [x] Message model: `{ role: 'user' | 'assistant'; kind?: 'chat' | 'status' | 'error'; text?: string; technicalDetail?: string; lines?: readonly ArisFormattedAnswerLine[]; aiQuestion?: string }`. Message list `role="log" aria-live="polite" aria-relevant="additions text"` with the auto-scroll effect; bubbles per the transcribed styles (user = accent right-aligned; assistant = hover-bg left; status = italic muted; error = `role="alert"` + `TechnicalErrorDetail`); thinking bubble `t('assist.thinking')`.
-- [x] **Library tab:** always-visible muted line `tk('aris.assistant.ask.indexed', '{count} indexed models', { count: digests.length })` under the tabs (preserves the e2e `'8 indexed models'` assertion). Empty state: `t('assist.empty')` + the two suggestion buttons (click = send that text). `send(q)`: push user bubble → `routeQuestion(digests, q, lang)` → `formatAnswer(lang, routed)` → push assistant bubble rendering `lines` (container `data-orbitpm-aris-assistant-answer=""`; each chip a pill button `data-orbitpm-aris-assistant-chip={chip.occurrenceId ?? chip.modelId}` → `onOpenChip(chip)`; failed reveal → status bubble `tk('aris.assistant.chip.unavailable', 'That element is not on the open models.')`). When `routed.kind === 'none'` AND a provider+key is configured (subscribe `subscribeProviderSelection`; check `hasKey`): append an `aiQuestion` message hosting `<ArisAssistantAiSection key={q} digests={digests} question={q} providerId={…} modelId={…} history={aiHistory} onOpenChip={onOpenChip} onAnswered={(turn) => setAiHistory(prev => [...prev, turn])} />` — the kept consent card with its e2e-tested selectors. Input textarea rows=2, Enter sends / Shift+Enter newline, `data-orbitpm-aris-assistant-question=""`, Send `t('assist.send')`. Footer: `t('assist.model.line', {model, provider})` or `t('assist.localMode')`.
-- [x] **Interview tab** (tabpanel root `data-orbitpm-aris-chat=""`; input row hidden here): on tab entry or `interviewRequest`, resolve `getActiveChatTarget()` — null → status `tk('aris.chatDrawer.interview.noTarget', 'Open an ARIS model first, then start the completion interview.')`. Intro card: `tk('aris.chatDrawer.interview.intro', 'I scanned {name} and found {count} gap(s). Answer up to 3 questions per round; safe changes apply as one undoable step.', {name, count})` + gap `<ul data-orbitpm-aris-chat-gaps>` (≤25 rows of `t(gap.messageKey as Key, gap.messageParams)`) + Start button `data-orbitpm-aris-chat-start` + Undo button `data-orbitpm-aris-chat-undo` (enabled when `target.host.getCanUndo() && appliedCount > 0`; on click `host.undo()` then rescan + refresh the count line). Round card when `state.status === 'awaitingAnswers'`: per question a `<label data-orbitpm-aris-chat-question={q.gapKind}>` with `t(q.messageKey, q.messageParams)` + text input — except `unusedDefinition` which renders the checkbox mapping to `ARIS_CHAT_REMOVE_ANSWER` (transcribed from rail lines 317–346); Apply button `data-orbitpm-aris-chat-submit` → `submitDrawerAnswers`; events → bubbles (`applied` → status `tk('aris.chatDrawer.interview.applied', 'Applied {count} change(s) as one undoable step.', {count})`). Confirmation card when `awaitingConfirmation`: rail lines 361–405 structure verbatim (`data-orbitpm-aris-chat-confirm`, per-command checkbox, `data-orbitpm-aris-chat-preview` `<dl>` via `drawerConfirmationPreview` + `describeCommandTargets`, apply button `data-orbitpm-aris-chat-confirm-apply` → `confirmDrawerSelection`). Receipts `<ul data-orbitpm-aris-chat-receipts>` (rail lines 420–431). Terminal `<p data-orbitpm-aris-chat-terminal={status}>` with `tk('aris.chat.finished', …)`-style copy; `roundLimitReached` adds `tk('aris.chatDrawer.interview.roundLimit', 'Round limit reached (5 of 5). Remaining gaps stay listed for a new interview.')`; `clean` → `tk('aris.chatDrawer.interview.clean', 'No gaps found — this model looks complete.')`.
-- [x] `interviewRequest` effect: token-guarded via `lastRequestTokenRef` → `onOpen()` + `setTab('interview')` + fresh session. Carry main's `// eslint-disable-next-line react-hooks/exhaustive-deps` comment on this effect exactly (sanctioned suppression #1).
-- [x] Tests — `ArisChatDrawer.test.tsx` (jsdom): FAB renders with aria-label 'Ask the process assistant' and hides when open; dialog `role=dialog` named 'Process assistant'; Enter sends, Shift+Enter doesn't; local question 'Which processes are available?' renders an answer bubble with `data-orbitpm-aris-assistant-answer` + a chip whose click calls `onOpenChip`; interview with a stub target: gaps card renders, ≤3 questions, answers apply exactly once through `applyCommands`, receipts render; RTL `dir` propagates. `ArisChatDrawer.aiGate.test.tsx`: port the five cases from `ArisAssistantPanel.aiGate.test.tsx` against the drawer — no key ⇒ no `[data-orbitpm-aris-assistant-ai]` and `fetch` never called; with key + unmatched question ⇒ AI section mounts with unchecked consent and disabled submit; etc.
-- [x] Run prettier.
-
-**Verify:**
-
-```bash
-npx vitest run src/aris/shell/ArisChatDrawer.test.tsx src/aris/shell/ArisChatDrawer.aiGate.test.tsx
-npm run typecheck && npm run lint && npm run check:ui-copy && npm run check:aris-runtime-boundary
-```
-
----
-
-## Lane L3c — StudioTab chat host + rail removal
-
-**Wave:** 2 · **Worker:** kimi-k2.7 · **Depends on:** L3a (types file) · **Wave-2 owner of `src/aris/shell/ArisStudioTab.tsx` and `src/aris/shell/index.ts`**
-**Files owned:** `src/aris/shell/ArisStudioTab.tsx`, `src/aris/shell/index.ts`, delete `src/aris/shell/ArisChatImproveRail.tsx`, one new test file
-
-**Steps:**
-
-- [x] In `src/aris/shell/ArisStudioTab.tsx`: delete the `ArisChatImproveRail` import (line 30); KEEP `applyArisChatCommandsAsGesture` (line 32). Add props: `readonly chatHostKey?: string; readonly onChatHostChange?: (key: string, host: ArisTabChatHost | null) => void` (`import type { ArisTabChatHost } from './arisChatDrawerTypes'`).
-- [x] After `handleApplyChatCommands` (lines 343–350, unchanged) add:
-
-  ```ts
-  const chatHost = useMemo<ArisTabChatHost>(
-    () => ({
-      getDocument: () => canvasRef.current?.document ?? null,
-      applyCommands: handleApplyChatCommands,
-      undo: () => canvasRef.current?.undo(),
-      getCanUndo: () => canvasRef.current?.canUndo ?? false
-    }),
-    [handleApplyChatCommands]
-  )
-  useEffect(() => {
-    if (!chatHostKey || !onChatHostChange) return
-    onChatHostChange(chatHostKey, chatHost)
-    return () => onChatHostChange(chatHostKey, null)
-  }, [chatHost, chatHostKey, onChatHostChange])
-  ```
-
-  (`ArisCanvas` exposes the `document` getter at line ~170, `undo()` ~200, `canUndo` getter ~209 — verified. Getter-based host = no exhaustive-deps suppressions needed.)
-
-- [x] Delete the rail JSX (lines 610–615). Delete `src/aris/shell/ArisChatImproveRail.tsx`. Remove its export from `src/aris/shell/index.ts` (line 11).
-- [x] Note: `src/aris/shell/arisChatGate.test.ts` and `arisChatUndo.test.ts` drive `arisChatHost` directly — untouched, must stay green. `src/ArisApp.test.tsx`'s interview test (~911) breaks at this point **by design** — Lane L3d fixes it; run only `src/aris/shell` tests in this lane.
-- [x] Add a jsdom test (new file `src/aris/shell/__tests__/arisStudioTabChatHost.test.tsx`, reusing the geometry shim pattern): mounting `ArisStudioTab` fires `onChatHostChange` with a host whose `getDocument()` returns the canvas document after ready, and fires `(key, null)` on unmount.
-- [x] Run prettier.
-
-**Verify:**
-
-```bash
-npx vitest run src/aris/shell
-npm run typecheck && npm run check:aris-runtime-boundary
-```
-
----
-
-## Lane L4a — Generation panel rebuild
-
-**Wave:** 2 · **Worker:** opus-4.8-1M · **Depends on:** nothing (parallel-safe)
-**Files owned:** `src/ArisGenerationPanel.tsx`, `src/aris/shell/arisCreatePanel.test.tsx`, `src/aris/shell/arisCreateDocumentAi.test.tsx`, `src/aris/shell/arisCreateDescriptionContext.test.tsx`
-
-**Goal:** rebuild the panel's chrome to AiPanelLite's visual system, simplified to **Name + per-tab source + AI provider/model**. Pipeline calls unchanged. This implements authorized product changes #1 and #2.
-
-**Steps:**
-
-- [x] **Read first (transcription source — transcribe, never import):** `src/ai/AiPanelLite.tsx`: `Spinner` 1616–1631; style constants 1672–1776 (`segmentWrap`, `segmentBtn(active)`, `labelStyle`, `labelText`, `inputStyle`, `ghostBtn`, `linkBtn`, `removeBtn`, `warnBox`, `infoBox`, `errorBox`, `okBox`, `noteBox`); tablist JSX 962–1026 + keydown 419–447; provider select 1035–1066; model control 1077–1135; offline listener 355–363; submit/busy/okBox 1426–1538. Also `src/ArisGenerationPanel.tsx` in full (the rewrite target), `src/aris/ai/promptBuilder.ts` lines 34 + 110–122 (`'auto-detect'` support), `src/ai/providerSelection.ts` (`getProviderSelection`/`setProviderSelection`/`subscribeProviderSelection`), `src/ai/providersLite.ts` (`LITE_PROVIDERS`, `defaultLiteModelId`, `allowCustomModel`), `src/ai/keys.ts` (`hasKey`), `src/ai/keyStorageErrorMessage`.
-- [x] Props: remove `digests?`; add `onContinueInChat?: () => void`. Keep everything else (`onCreateModel`, `onDownloadFile`, `onOpenAssistant`, `onOpenSettings`, `embedded`, `workspaceId`, `callProvider`, `parseDocx`, `encodeAttachment`).
-- [x] Rebuild the chrome: body root `<div style={{ padding: '0.8rem', display: 'flex', flexDirection: 'column', gap: 12 }}>`; segmented tablist (three tabs: description / document / excel) with roving tabindex + RTL-aware arrows, **keeping** `data-orbitpm-aris-create-description-tab` / `-document-tab` / `-excel-tab`; provider `<select>` with a `' ✓'` suffix on options where `hasKey(p.id)`; model control — `allowCustomModel` (OpenRouter/Gemini) ⇒ free-text `<input list=…>` + `<datalist>`, else `<select>` — **keep `data-orbitpm-aris-create-model` on whichever control renders**; offline `warnBox` (`t('ai.offlineWarning')`) on AI tabs; no-keys `infoBox` with a Settings `linkBtn` (`t('ai.noKeysAtAll.note')` / `.link`); per-tab source fields (description textarea + DOCX/PDF attach buttons | PDF/image file + hint textarea | the existing Excel block); Generate = `.orbitpm-lite-primary` + `Spinner` when busy + Cancel while busy; error/rejection lists wrapped in `errorBox`/`warnBox` **keeping** `data-orbitpm-aris-create-rejections` / `-warnings`; success `okBox role="status"` + (`onContinueInChat && <button …>{t('ai.continueInChat')}</button>`).
-- [x] **Remove entirely:** the `MODEL_TYPES` const (lines ~121–125) and both model-type `<select>`s (~860–875, ~1042–1057) — pass the literal `'auto-detect'` into the `buildArisAiPrompt` call (~245–257); `includeContext`/`redactNames` state + checkboxes + context chips (~199–200, 240–243, 958–1017); sensitivity/request-estimate lines (~259–272); disclosure/consent state + the `<details data-orbitpm-aris-create-preview>` block + consent checkbox (~201, 276–306, 693–746); the now-unused imports from `./aris/shell/arisCreateDescriptionAi` (~36–42). **Keep the module `arisCreateDescriptionAi.ts` on disk** (pure function tests still pass; do not delete it).
-- [x] Provider-selection sync: initialize local `providerId`/`modelId` from `getProviderSelection() ?? { providerId: LITE_PROVIDERS[0].id, modelId: defaultLiteModelId(LITE_PROVIDERS[0].id) }`; subscribe via `subscribeProviderSelection` in a `useEffect`; on user change call `setProviderSelection(...)` and surface a storage failure via the `errorBox` (`keyStorageErrorMessage`).
-- [x] `submitDisabled = busy || (!providerReady && !callProvider) || (tab === 'document' ? documentFile === null : trimmedDescription === '')` — no consent term. `createWithAi()` otherwise unchanged. Excel tab (~1127–1181) unchanged — template-download selectors `data-orbitpm-aris-template-blank` / `-example`, `data-orbitpm-aris-workbook-open` must not change (restyle buttons with `ghostBtn` if desired).
-- [x] Update the three test files (authorized): `arisCreatePanel.test.tsx` — remove the consent click from the submit helper (~103); repurpose the consent-invalidation test (~344–360) as "submit enabled with description present and NO consent control (`[data-orbitpm-aris-create-consent]` absent from DOM)"; ADD: the prompt sent to `callProvider` contains the auto-detect sentence and no workspace context; provider option label ends `' ✓'` with a key stored (use `resetSessionKeysForTests`/`setKey`); okBox CTA calls `onContinueInChat`. `arisCreateDocumentAi.test.tsx` — remove the consent click (~103). `arisCreateDescriptionContext.test.tsx` — delete the panel-driven consent/context/preview cases (helpers ~95–112 + dependents); keep the pure `buildArisCreateDescriptionDisclosure`/sensitivity function-level cases.
-- [x] Run prettier.
-
-**Verify:**
-
-```bash
-npx vitest run src/aris/shell/arisCreatePanel.test.tsx src/aris/shell/arisCreateDocumentAi.test.tsx src/aris/shell/arisCreateDescriptionContext.test.tsx
-npm run typecheck && npm run lint && npm run check:ui-copy && npm run check:aris-runtime-boundary
-```
-
----
-
-## Lane L3d — App integration of the drawer
-
-**Wave:** 3 · **Worker:** opus-4.8-1M · **Depends on:** L3b, L3c, L4a, L1b · **Wave-3 owner of `src/ArisApp.tsx`, `src/ArisApp.test.tsx`, `src/aris/shell/ArisExplorerPane.tsx`, `src/aris/shell/index.ts`**
-**Files owned:** those four + delete `src/ArisAssistantDrawer.tsx`, `src/aris/shell/ArisAssistantPanel.tsx`, `src/aris/shell/ArisAssistantPanel.aiGate.test.tsx`; touch `src/aris/shell/ArisAssistantAiSection.tsx` (doc comment only)
-
-**Steps:**
-
-- [x] In `src/ArisApp.tsx`:
-  - [x] Replace the `ArisAssistantDrawer` import (line ~3) with `ArisChatDrawer` + `type ArisTabChatHost, type ArisChatDrawerTarget, type ArisChatInterviewRequest` from `./aris/shell`.
-  - [x] Rename `_keysVersion` → `keysVersion` (lines ~258–265 — now consumed) and pass it to the drawer.
-  - [x] Add: `const chatHostsRef = useRef(new Map<string, ArisTabChatHost>())`; `const registerChatHost = useCallback((key: string, host: ArisTabChatHost | null) => { if (host) chatHostsRef.current.set(key, host); else chatHostsRef.current.delete(key) }, [])`; `activeKeyRef`/`tabsRef` mirrors kept current on every render; `const interviewTokenRef = useRef(0)`; `const [interviewRequest, setInterviewRequest] = useState<ArisChatInterviewRequest | null>(null)`; `const getActiveChatTarget = useCallback((): ArisChatDrawerTarget | null => { const key = activeKeyRef.current; if (!key) return null; const host = chatHostsRef.current.get(key); const tab = tabsRef.current.find(t => t.key === key); return host && tab ? { tabKey: key, title: tab.title, host } : null }, [])`; `const handleContinueInChat = useCallback(() => { const tabKey = activeKeyRef.current; if (!tabKey) return; interviewTokenRef.current += 1; setInterviewRequest({ token: interviewTokenRef.current, tabKey }); setAssistantOpen(true) }, [])`.
-  - [x] Delete the pre-ready modal mount (lines ~774–785) — the drawer exists only in the ready phase.
-  - [x] Header Assistant button (~836–842): unchanged — now opens the drawer via `setAssistantOpen(true)`.
-  - [x] StudioTab render block (~1113–1141): add `chatHostKey={tab.key}` and `onChatHostChange={registerChatHost}`.
-  - [x] Replace the ready-phase modal mount (~1183–1195) with:
-
-    ```tsx
-    <ArisChatDrawer
-      open={assistantOpen}
-      onOpen={() => setAssistantOpen(true)}
-      onClose={() => setAssistantOpen(false)}
-      keysVersion={keysVersion}
-      digests={assistantDigests}
-      onOpenChip={handleOpenChip}
-      onOpenSettings={() => setSettingsOpen(true)}
-      onChangeWorkspace={directoryAvailable ? () => void handleOpenDifferent() : undefined}
-      getActiveChatTarget={getActiveChatTarget}
-      interviewRequest={interviewRequest}
-    />
-    ```
-
-    (`handleOpenChip` at ~623 already closes the assistant after a successful reveal — keep.)
-- [x] In `src/aris/shell/ArisExplorerPane.tsx`: remove the `digests` passthrough prop to `ArisGenerationPanel` (feature intentionally removed); add `onContinueInChat` passthrough wired from ArisApp's `handleContinueInChat`.
-- [x] Delete `src/ArisAssistantDrawer.tsx`, `src/aris/shell/ArisAssistantPanel.tsx`, `src/aris/shell/ArisAssistantPanel.aiGate.test.tsx` (superseded by L3b's drawer aiGate test). Remove the panel export from `src/aris/shell/index.ts`; add exports for `ArisChatDrawer` + the drawer types. **Keep `ArisAssistantAiSection.tsx`**; update its module doc comment (lines 4–9): now mounted by `ArisChatDrawer`.
-- [x] Update `src/ArisApp.test.tsx` (authorized): test ~552 — replace the old modal-body assertions with `expect(await screen.findByRole('dialog', { name: 'Process assistant' }))` + the 'Ask the library' tab present; also update the `aris.ai.body` copy assertion to the new EN string (see Lane X1). Test ~575 (digests-context) — **DELETE** (authorized change; feature removed). Test ~860 — the suggestion button 'Which processes are available?' exists in the drawer's empty state; answer/chip selectors unchanged; the "answer gone after chip click" wait passes because the closed drawer unmounts its content. Test ~911 (interview) — new preamble: `fireEvent.click(screen.getByRole('button', { name: 'Assistant' }))`, then `fireEvent.click(screen.getByRole('tab', { name: 'Complete this process' }))`; the existing `data-orbitpm-aris-chat-*` selectors then work unchanged (keep the toolbar `data-orbitpm-aris-undo` check). `fillAndSubmit` helper (~1023–1033): delete the consent click (line ~1030).
-- [x] Run prettier.
-
-**Verify:**
-
-```bash
-npx vitest run src/ArisApp.test.tsx
-npm run typecheck && npm run lint && npm run check:ui-copy && npm run check:aris-runtime-boundary
-```
-
----
-
-## Lane L2c — Movable palette + empty-model hint
-
-**Wave:** 3 · **Worker:** kimi-k2.7 · **Depends on:** L2b (keys) · **Wave-3 owner of `src/aris/shell/ArisStudioTab.tsx` and `src/aris/shell/ArisCanvasView.tsx`**
-**Files owned:** `src/aris/shell/arisPaletteDrag.ts` (create), `src/aris/shell/arisPaletteDrag.test.ts` (create), `src/aris/shell/ArisCanvasView.tsx`, `src/aris/shell/ArisStudioTab.tsx`, `src/aris/shell/__tests__/emptyModelHint.test.tsx` (create), possibly `src/app.css`
-
-**Steps:**
-
-- [x] **Read first:** `git show main:src/editor/paletteDrag.ts` (351 lines — the port source) and `git show main:src/__tests__/paletteDrag.test.ts`; `src/aris/shell/ArisCanvasView.tsx` boot effect (lines ~150–185); `src/aris/shell/ArisStudioTab.tsx` canvas grid cell.
-- [x] Create `src/aris/shell/arisPaletteDrag.ts`: port the main file with the same exported pure helpers `clampPalettePos(pos, bounds)` / `parsePalettePos(raw)` and `installPaletteDrag(canvasContainer: HTMLElement): () => void`; `STORAGE_KEY = 'orbitpm.aris.palettePos'`; grip title `t('aris.palette.grip.title')` (registered by L2b); same `GRIP_CLASS 'orbitpm-palette-grip'` / dragging class; keep the MutationObserver fallback for late palette creation and the ResizeObserver clamp (both are in the tail of the main file). Verify the grip CSS exists: `grep -n orbitpm-palette-grip src/app.css` — if missing, copy the block from `git show main:src/app.css` into `src/app.css`.
-- [x] Create `src/aris/shell/arisPaletteDrag.test.ts`: port the main test (pure helpers only, node env).
-- [x] `src/aris/shell/ArisCanvasView.tsx`: inside the boot effect, after `handlersRef.current.onReady?.(canvas)`, call `const uninstallDrag = installPaletteDrag(container)` and add `uninstallDrag()` to the cleanup. No dependency-array changes (module-level function identity).
-- [x] `src/aris/shell/ArisStudioTab.tsx`: empty-model hint — derive `const activeModelIsEmpty = ((history.document ?? studio.source).models.get(renderableModelId ?? '')?.occurrences.length ?? -1) === 0`; wrap `ArisCanvasView` in a `position: relative` div; render an absolutely positioned dismissible card (`insetInlineStart: 76px; top: 16px; maxWidth: 340px`; panel bg + border + radius; `data-orbitpm-aris-empty-hint=""`) with `t('aris.canvas.emptyModelHint')` and a dismiss button `t('aris.canvas.emptyModelHint.dismiss')`; dismiss = session `useState` (reappears per tab mount only); hidden when `activeModelIsEmpty` is false (disappears live when the first shape lands — `history` republish). The card must not intercept canvas events outside its own box.
-- [x] Create `src/aris/shell/__tests__/emptyModelHint.test.tsx` (jsdom + geometry shim): blank studio doc (via `buildBlankArisAml` + `createArisXmlSourcePackage` + `buildArisStudioDocument`) ⇒ hint visible; a populated fixture doc ⇒ hint absent.
-- [x] Run prettier.
-
-**Verify:**
-
-```bash
-npx vitest run src/aris/shell
-npm run typecheck && npm run lint && npm run check:ui-copy && npm run check:aris-runtime-boundary
-```
-
----
-
-## Lane L5c — Translate controller + toolbar + auto-translate
-
-**Wave:** 4 · **Worker:** opus-4.8-1M · **Depends on:** L5a, L5b, L3c · **Wave-4 owner of `src/ArisApp.tsx` and `src/aris/shell/ArisStudioTab.tsx`**
-**Files owned:** `src/aris/shell/ArisTranslateController.tsx` (create), `src/aris/shell/arisTranslateController.test.tsx` (create), `src/aris/shell/ArisStudioTab.tsx`, `src/ArisApp.tsx`
-
-**Goal:** the per-diagram translation feature — content-language toggle button, Translate action feeding the surviving `TranslationReviewDialog`, missing-translation badge, and the **silent auto-translate** for created models. UX decisions (locked): created tabs (`sourceKind === 'generated'`) auto-fill the missing language via the free chain with NO dialog (toast + one undo + pref opt-out, ≤200 items, silent degrade on failure); opened/imported files never auto-send — badge → review dialog (that dialog IS the consent surface); AI provider is never auto-selected.
-
-**Steps:**
-
-- [x] **Read first:** `main:src/App.tsx` via `git show` — `openTranslationReview` 8953–9046 (skeleton to simplify), provider options 1419–1438, free-run 10120–10140; `src/localization/TranslationReviewDialog.tsx` props (review/providers/disclosure/onTranslateNow/onRetryField/onManualEdit/accept flow — all 160 `translationReview.*` keys already exist in both dictionaries); `src/ai/freeTranslate.ts` (`makeFreeTranslateTexts`, `FreeTranslateError`); `src/ai/browserAi.ts` `makeBrowserCallLLM` exact signature (~line 827); `src/ai/translate.ts` `buildTranslationExternalReview` (~463); `src/localization/workspaceStore.ts` (glossary/TM load + append, `.orbitpm/i18n/*` paths); `src/ai/keys.ts` `getPref`/`setPref` (~1195/1205) + `hasKey` + `getKey`; `src/localization/translationRecovery.ts` (`validateTranslationRecoveryValue`); Lane L5b's `src/aris/localization/index.ts`.
-- [x] Create `src/aris/shell/ArisTranslateController.tsx`:
-
-  ```ts
-  export interface ArisTranslateControllerHandle {
-    openReview(target?: 'en' | 'ar'): void
-  }
-  export interface ArisTranslateControllerProps {
-    readonly getCanvas: () => ArisCanvas | null
-    readonly liveDocument: ArisWorkingDocument
-    readonly contentLang: 'en' | 'ar'
-    readonly documentName: string
-    readonly autoTranslateEligible: boolean // sourceKind === 'generated'
-    readonly resources: LocalizationResources | null // null ⇒ SEEDED_GLOSSARY + empty TM
-    readonly onAcceptedPair?: (pair: { en: string; ar: string }) => void
-    readonly onToast: (message: string, tone?: 'info' | 'error' | 'success') => void
-  }
-  ```
-
-  Behavior: `openReview(target = contentLang === 'en' ? 'ar' : 'en')` → `buildArisLocalizationReview({document: liveDocument, target, active: contentLang, resources})` → if `review.complete` → toast `tk('aris.translate.nothingMissing', 'Every label already has both languages.')` → else mount `TranslationReviewDialog` with providers = (`getProviderSelection()` and `hasKey(sel.providerId)` ? `[{ id: 'selected-ai', label: `${providerLabel} · ${modelId}` }]` : `[]`) plus always `{ id: 'free', label: 'Google Translate → MyMemory' }`; disclosure via `buildTranslationExternalReview(review, {providerId, kind})`. `onTranslateNow`: `'free'` → `makeFreeTranslateTexts({signal})`; `'selected-ai'` → `makeArisAiTranslateTexts(makeBrowserCallLLM(...))`. Run `runArisReviewedTranslation` → proposals; per-field retry re-runs a single-item queue; manual edit validated via `validateTranslationRecoveryValue`. Accept/apply: accepted proposals + `review.localUpdates` → `toArisTranslationUpdates(patches, owners)` → `applyArisTranslations(canvas, updates, tk('aris.translate.gestureLabel', 'Translate labels'))` → toast `tk('aris.translate.applied', 'Applied {count} translations as one undoable step.', {count})`; each accepted provider/manual pair → `onAcceptedPair` (TM persistence). Staleness: before apply, rebuild the extraction and compare `sourceSignature`; mismatch → toast `tk('aris.translate.stale', 'The model changed during review — the list was refreshed.')` + refresh the dialog.
-
-- [x] Auto-run effect in the controller: when `autoTranslateEligible && getPref('arisAutoTranslate') !== 'off' && !ranRef.current && getCanvas()` — set `ranRef`; build the review; empty queue ⇒ done; `queue.length > 200` ⇒ badge only; else apply `localUpdates`, run the FREE chain, apply everything as one gesture **with no dialog**; toast `tk('aris.translate.autoDone', 'Translated {count} labels automatically — Undo reverts, review from the toolbar.', {count})`; on any `FreeTranslateError` stay silent (the badge remains the entry point).
-- [x] `src/aris/shell/ArisStudioTab.tsx`: props add `readonly sourceKind: string`, `readonly localizationResources: LocalizationResources | null`, `readonly onAcceptedTranslationPair?: (pair: { en: string; ar: string }) => void`. State `contentLangOverride: 'en' | 'ar' | null`; `const contentLang = contentLangOverride ?? lang` (**follows the app language by default**); `const [canvasTick, setCanvasTick] = useState(0)` bumped inside the existing `onReady` handler; effect on `[contentLang, canvasTick]` → `canvasRef.current?.setContentLanguage(contentLang)`. Toolbar (insert after the Reset-layout button, before the layout-mode chip): `<button data-orbitpm-aris-content-lang={contentLang} title={tk('aris.toolbar.contentLang.title', 'Switch the diagram labels between English and Arabic (view only, no edit)')} onClick={() => setContentLangOverride(contentLang === 'en' ? 'ar' : 'en')}>{tk('aris.toolbar.contentLang', 'Labels: {language}', { language: t(contentLang === 'en' ? 'app.lang.en' : 'app.lang.ar') })}</button>`; `<button data-orbitpm-aris-translate onClick={() => translateRef.current?.openReview()}>{tk('aris.toolbar.translate', 'Translate…')}</button>` with badge `<span data-orbitpm-aris-translate-missing={n}>{tk('aris.toolbar.translate.missing', '{count} untranslated', {count: n})}</span>` when `countArisMissingTranslations(liveDocument)` > 0 (memoized on `liveDocument`). Mount `<ArisTranslateController ref={translateRef} …/>` next to the rails (renders only its dialog).
-- [x] `src/ArisApp.tsx` (ONLY these two regions): (a) the StudioTab render block — pass `sourceKind={tab.sourceKind}`, `localizationResources`, `onAcceptedTranslationPair={handleAcceptedTranslationPair}`; (b) near the adapter-binding effect — load `localizationResources` state from `.orbitpm/i18n/glossary.json` + `translation-memory.json` via `src/localization/workspaceStore.ts` loaders when a multi-file adapter binds (absence tolerated → null; single-file → null); `handleAcceptedTranslationPair` = fire-and-forget TM append via the same store (failure → toast only).
-- [x] tk() keys used (registered by X1 — use these EXACT keys + fallbacks): `aris.toolbar.contentLang`, `aris.toolbar.contentLang.title`, `aris.toolbar.translate`, `aris.toolbar.translate.missing`, `aris.translate.nothingMissing`, `aris.translate.applied`, `aris.translate.autoDone`, `aris.translate.autoOff` ('Automatic translation of new models'), `aris.translate.stale`, `aris.translate.gestureLabel`.
-- [x] Create `src/aris/shell/arisTranslateController.test.tsx` (jsdom): dialog opens with the free provider always and the AI provider only with a stored key (`resetSessionKeysForTests`/`setKey`); a TM pair applies with **zero fetches**; an injected `translateTexts` stub → proposals → accept → exactly ONE bridge gesture + toast; the auto-run fires exactly once for `sourceKind='generated'`, never for `'aml'`, never when the pref is off; a whole-chain `FreeTranslateError` degrades silently (badge logic still shows).
-- [x] Run prettier.
-
-**Verify:**
-
-```bash
-npx vitest run src/aris/shell src/aris/localization
-npm run typecheck && npm run lint && npm run check:ui-copy && npm run check:aris-runtime-boundary
-```
-
----
-
-## Lane L2d — "New model" wiring
-
-**Wave:** 5 · **Worker:** opus-4.8-1M · **Depends on:** L2a, L1c · **Wave-5 owner of `src/ArisApp.tsx`, `src/i18n/dictionaries.ts`, `src/ArisApp.test.tsx`**
-**Files owned:** those three + `src/aris/shell/ArisNewModelDialog.tsx` (create)
-
-**Steps:**
-
-- [x] **Read first:** `src/workspace/MoveDialog.tsx` (the Modal + footer pattern to copy), `src/workspace/WorkspacePickerLite.tsx` (`onNewProcess`/`onNewDiagram` props), `src/ArisApp.tsx` lines ~740–800 (picker phase + placeholder toasts at ~766–767) and `handleCreateModel` (~555), `src/aris/shell/arisPackageImport.ts` (~101, `SingleFileWorkspaceAdapter` constructor shape), `openImportedBytes` (~350).
-- [x] Create `src/aris/shell/ArisNewModelDialog.tsx`: props `{ open: boolean; folderRel: string | null; lang: 'en' | 'ar'; onCreate(spec: { name: string; modelType: 'MT_EEPC' | 'MT_VAL_ADD_CHN_DGM' }): void; onCancel(): void }`. Fields: name input (initial `t('aris.newModel.nameInitial')`, autofocus + select-all), model-type `<select>` (`aris.newModel.type.epc` default / `aris.newModel.type.vacd`), hint line `t(folderRel === null ? 'aris.newModel.hint.fallback' : 'aris.newModel.hint.directory')`, footer Cancel + Create (`aris.newModel.create`, disabled on empty trimmed name). Root carries `data-orbitpm-aris-new-model=""`.
-- [x] `src/ArisApp.tsx`: state `const [newModelRequest, setNewModelRequest] = useState<{ folderRel: string | null } | null>(null)`. Replace L1c's stub body: `onNewModel: (folderRel) => setNewModelRequest({ folderRel: multiFile ? folderRel : null })`. Implement `handleCreateBlankModel({ name, modelType })`:
-  - [x] Build `const { xml } = buildBlankArisAml({ names: { [lang]: name }, modelType })` (name lands under the active UI language's locale).
-  - [x] **Multi-file + folder target** (`newModelRequest.folderRel !== null`): `bytes = new TextEncoder().encode(xml)`; `path = uniquePathIn(new Set(workspaceEntries.map(e => e.path)), folderRel, deriveArisSourceFileName(name))`; `const outcome = await workspaceAdapter.writeAtomic(path, bytes, undefined, { expectedMissing: true })`; failure → toast `t('aris.newModel.failed', { error })` and return; `await refreshWorkspaceSources(workspaceAdapter)`; `await handleOpenWorkspaceFile(path)`; toast `t('aris.newModel.created', { name: path }, 'success')`.
-  - [x] **Ready but single-file** (`folderRel === null`, workspace bound): `await handleCreateModel({ name, xml })` — virtual generated tab; persist later via the toolbar "Import into workspace…".
-  - [x] **Picker phase** (no workspace yet): `const fileName = deriveArisSourceFileName(name)`; `const adapter = new SingleFileWorkspaceAdapter({ path: fileName, bytes, workspaceId: 'aris-new:' + fileName })`; `await activateAdapter(adapter)`; `await openImportedBytes(fileName, fileName, bytes)`.
-  - [x] Render `<ArisNewModelDialog …/>` in **both** the pre-ready and ready returns (next to `SettingsDialogLite`).
-  - [x] `WorkspacePickerLite`: wire `onNewProcess` and `onNewDiagram` to `setNewModelRequest({ folderRel: null })` — delete the two placeholder toasts (leave the old `aris.placeholder.new*Unavailable` keys in the dictionary; removing keys is churn).
-- [x] `src/i18n/dictionaries.ts` — add to BOTH maps:
-
-  | Key                            | en                                                                                            | ar                                                                        |
-  | ------------------------------ | --------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------- |
-  | `aris.newModel.title`          | New ARIS model                                                                                | نموذج ARIS جديد                                                           |
-  | `aris.newModel.nameLabel`      | Model name                                                                                    | اسم النموذج                                                               |
-  | `aris.newModel.nameInitial`    | New model                                                                                     | نموذج جديد                                                                |
-  | `aris.newModel.create`         | Create model                                                                                  | إنشاء النموذج                                                             |
-  | `aris.newModel.type`           | Model type                                                                                    | نوع النموذج                                                               |
-  | `aris.newModel.type.epc`       | EPC (event-driven process chain)                                                              | سلسلة عمليات مقادة بالأحداث (EPC)                                         |
-  | `aris.newModel.type.vacd`      | Value-added chain diagram                                                                     | مخطط سلسلة القيمة المضافة                                                 |
-  | `aris.newModel.hint.directory` | A new .aml source file is created in the selected folder and opened for drawing immediately.  | يُنشأ ملف مصدر ‎.aml جديد في المجلد المحدد ويُفتح للرسم فورًا.            |
-  | `aris.newModel.hint.fallback`  | The model opens as an in-memory tab; use "Import into workspace…" to store it in a workspace. | يُفتح النموذج كتبويب في الذاكرة؛ استخدم "استيراد إلى مساحة العمل…" لحفظه. |
-  | `aris.newModel.created`        | Created {name}.                                                                               | تم إنشاء {name}.                                                          |
-  | `aris.newModel.failed`         | Could not create the model: {error}                                                           | تعذّر إنشاء النموذج: {error}                                              |
-
-  Value updates to EXISTING keys (both languages): `emptyWorkspace.heading` → `No models yet` / `لا توجد نماذج بعد`; `emptyWorkspace.createFirst` → `＋ Create your first model` / `＋ أنشئ نموذجك الأول`; `emptyWorkspace.explain` → `Create a blank EPC or value-added chain model in {folderName}, or import ARIS AML/XML exports.` / `أنشئ نموذج EPC أو سلسلة قيمة مضافة فارغًا في {folderName}، أو استورد ملفات ARIS AML/XML.`.
-
-- [x] Update `src/ArisApp.test.tsx`: directory mode — extend `makeDirectoryAdapter` with an in-memory write store (`writeAtomic` records bytes and serves them via `read`/`list`); click chrome `＋ New model` → dialog → name 'Intake' → Create ⇒ assert `writeAtomic('intake.aml', …, undefined, { expectedMissing: true })`, the tree gains row `intake.aml`, a tab opens, the canvas mounts, and `[data-orbitpm-aris-empty-hint]` is visible. Picker phase (default mock state): `＋ New model` → Create ⇒ tab `intake.aml` opens with canvas. Collision: seed `intake.aml` ⇒ second create writes `intake-2.aml`.
-- [x] Run prettier.
-
-**Verify:**
-
-```bash
-npx vitest run src/ArisApp.test.tsx src/aris/shell src/__tests__/i18n.test.ts
-npm run typecheck && npm run lint && npm run check:ui-copy && npm run check:aris-runtime-boundary
-```
-
----
-
-## Lane L5d — Fix-missing components
-
-**Wave:** 6 · **Worker:** opus-4.8-1M · **Depends on:** L5b, L5c, L3d · **Wave-6 owner of `src/aris/shell/ArisStudioTab.tsx` + one line in `src/ArisApp.tsx`**
-**Files owned:** `src/aris/chat/deterministicFixes.ts` (create), `src/aris/chat/deterministicFixes.test.ts` (create), `src/aris/shell/ArisFixMissingDialog.tsx` (create), `src/aris/shell/ArisStudioTab.tsx`, `src/ArisApp.tsx` (single line)
-
-**Goal:** the "N issues — Fix…" toolbar badge + three-tier fix dialog. Tier A = safe translation fills (auto, one click); Tier B = deterministic structural proposals, confirm-gated with before/after preview; Tier C = routes into the chat drawer's interview tab.
-
-**Steps:**
-
-- [x] **Read first:** `src/aris/chat/gapScanner.ts` (the 15 gap kinds + `ArisChatGap` shape), `src/aris/chat/classification.ts` (`AUTOMATIC_COMMAND_KINDS`, `TOPOLOGY_COMMAND_KINDS`, `DESTRUCTIVE_COMMAND_KINDS`), `src/aris/chat/patchSchema.ts` (`ArisChatCommand` kinds incl. `addCoreObject`/`addCoreConnection`/`deleteDefinition`/`deleteOccurrence`/`deleteConnection`), **`src/aris/chat/modelCommandMapping.ts` `toArisEditCommands` for `addCoreObject`** (does it synthesize bounds? if not, the dialog copy shows the Clean-Layout hint), `src/aris/chat/applyEngine.ts` (`buildConfirmationPreview`), `src/aris/shell/arisChatHost.ts` (`scanArisGaps`, `applyArisChatCommandsAsGesture`), `src/aris/chat/locale.ts` (`hasEnglishName`/`hasArabicName`), the EPC graph helper used by the gap scanner (`toChatEpcGraph` or equivalent — find it in `gapScanner.ts` imports).
-- [x] Create `src/aris/chat/deterministicFixes.ts` (with a doc-comment table splitting all 15 gap kinds into tiers):
-
-  ```ts
-  export interface ArisDeterministicFixPlan {
-    readonly translationFillTargets: readonly ArisChatGap[] // Tier A: counterpart language exists
-    readonly confirmProposals: readonly {
-      readonly gap: ArisChatGap
-      readonly commands: readonly ArisChatCommand[]
-      readonly labelKey: string
-    }[] // Tier B
-    readonly interviewGaps: readonly ArisChatGap[] // Tier C
-  }
-  export function buildDeterministicFixPlan(
-    document: ArisWorkingDocument,
-    gaps: readonly ArisChatGap[],
-    locales: { readonly en: string; readonly ar: string }
-  ): ArisDeterministicFixPlan
-  ```
-
-  Tier split (implement exactly): `missingEnglishName`/`missingArabicName` → Tier A when the resolved definition/model has the counterpart language (`hasEnglishName`/`hasArabicName`), else Tier C. `missingStartOrEndEvent` → Tier B: propose `addCoreObject` (OT_EVT, event symbol, bilingual names — start: en 'Process started' / ar 'بدأت العملية'; end: en 'Process completed' / ar 'اكتملت العملية' — from the L2b-style key pair `aris.fix.startEvent.name`/`aris.fix.endEvent.name` resolved at build time) + `addCoreConnection` to/from the first/last function (connection type per the EPC adapter's expectations — copy from `src/aris/epc` fixtures). `unusedDefinition` → Tier B `deleteDefinition` (mirrors the `ARIS_CHAT_REMOVE_ANSWER` flow). `danglingObjectOrConnection` → Tier B `deleteOccurrence`/`deleteConnection` per target. Everything else (`missingProcessCode`, `missingOwner`, `missingInputsOutputsSystems`, `missingDecisionBasis`, `missingXorOutcomes`, `missingReturnTarget`, `invalidSequence`, `missingLinkedModel`, `missingAttachment`, `unaccountedSourceContent`) → Tier C. Placeholder ids (e.g. `'fix-start-event'`) — the gesture allocator maps them to real ids.
-
-- [x] Create `src/aris/shell/ArisFixMissingDialog.tsx`: `Modal`-based; props `{ open, document, plan: ArisDeterministicFixPlan, busy, onAutoFix(): void, onApplySelected(commands: readonly ArisChatCommand[]): void, onOpenInterview(): void, onClose(): void }`. Three sections with counts: Tier A (`tk('aris.fix.autoSection', 'Fill automatically (safe)')` + one button invoking `onAutoFix`), Tier B (`tk('aris.fix.confirmSection', 'Proposed changes needing confirmation')` — checkbox per proposal + `buildConfirmationPreview` before/after rows, pattern from the old rail's confirm section; apply button), Tier C (`tk('aris.fix.interviewSection', 'Needs your answers')` + gap list + button `tk('aris.fix.openInterview', 'Answer questions…')` → `onOpenInterview`). If `addCoreObject` has no bounds synthesis, show `tk('aris.fix.cleanLayoutHint', 'New elements are placed automatically — run Clean Layout afterwards.')`. `data-orbitpm-aris-fix-*` attributes on every actionable control.
-- [x] `src/aris/shell/ArisStudioTab.tsx`: `const gaps = useMemo(() => scanArisGaps(liveDocument), [liveDocument])`; toolbar badge-button `data-orbitpm-aris-fix-issues={gaps.length}` labeled `tk('aris.fix.badge', '{count} issues — Fix…', { count: gaps.length })` (hidden at 0) → opens the dialog with `buildDeterministicFixPlan(liveDocument, gaps, locales)`. Wire: `onAutoFix` → the translate controller's fill path (`translateRef.current?.openReview()` or the direct free-run for the fill targets); `onApplySelected` → `applyArisChatCommandsAsGesture(canvas, commands, tk('aris.fix.gestureLabel', 'Fix missing components'))` + toast `tk('aris.fix.applied', 'Applied {count} fixes as one undoable step.', {count})` + rescan; `onOpenInterview` → new prop `readonly onOpenInterview?: () => void`.
-- [x] `src/ArisApp.tsx` (**one line**): in the StudioTab render block pass `onOpenInterview={handleContinueInChat}` — Tier C lands in the chat drawer's interview tab for the active tab.
-- [x] tk() keys used (registered by X1): `aris.fix.badge`, `aris.fix.title` ('Fix missing components'), `aris.fix.autoSection`, `aris.fix.confirmSection`, `aris.fix.interviewSection`, `aris.fix.openInterview`, `aris.fix.applied`, `aris.fix.gestureLabel`, `aris.fix.startEvent.name`, `aris.fix.endEvent.name`, `aris.fix.cleanLayoutHint`.
-- [x] Create `src/aris/chat/deterministicFixes.test.ts`: **classification invariant** — every Tier-A fill maps to a kind in `AUTOMATIC_COMMAND_KINDS`; every Tier-B command kind ∈ `TOPOLOGY_COMMAND_KINDS ∪ DESTRUCTIVE_COMMAND_KINDS` (imported from `classification.ts` so policy can never drift silently); **idempotence** — apply the start/end proposal on a fixture missing both → rescan → `missingStartOrEndEvent` gone and a second plan proposes nothing; delete proposals resolve `unusedDefinition`/dangling gaps; translation-fill partition correctness (counterpart present vs absent); every proposal passes patch-schema validation. Plus a jsdom dialog test: sections render per plan; apply = a single gesture; zero network.
-- [x] Run prettier.
-
-**Verify:**
-
-```bash
-npx vitest run src/aris/chat src/aris/shell
-npm run typecheck && npm run lint && npm run check:ui-copy && npm run check:aris-runtime-boundary
-```
-
----
-
-## Lane X1 — i18n registration sweep
-
-**Wave:** 7 · **Worker:** sonnet-med · **Depends on:** L3b, L3d, L5c, L5d · **Sole owner of `src/aris/shell/shellI18n.ts` + `src/i18n/dictionaries.ts`**
-
-**Steps:**
-
-- [x] Sweep for every `tk()` key in the new/changed files:
-
-  ```bash
-  grep -rhoP "tk\('\K[^']+" src/aris/shell/ArisChatDrawer.tsx src/ArisGenerationPanel.tsx \
-    src/aris/shell/ArisTranslateController.tsx src/aris/shell/ArisFixMissingDialog.tsx \
-    src/aris/shell/ArisStudioTab.tsx src/aris/shell/arisChatDrawerSession.ts | sort -u
-  ```
-
-- [x] Register EVERY key found in `ARIS_SHELL_MESSAGE_KEYS` (`src/aris/shell/shellI18n.ts`, frozen map — insert alphabetically near the `aris.chat.*` block) with its English source text, AND add entries to BOTH `en`/`ar` maps of `src/i18n/dictionaries.ts`. The expected set (verify against the sweep; the English values are the `tk()` fallbacks already in code — Arabic values as follows, proper MSA):
-  - `aris.chatDrawer.interview.intro` → ar: `فحصت {name} ووجدت {count} فجوة. أجب عن ثلاثة أسئلة كحدّ أقصى في كل جولة؛ وتُطبَّق التغييرات الآمنة كخطوة واحدة قابلة للتراجع.`
-  - `aris.chatDrawer.interview.noTarget` → ar: `افتح نموذج ARIS أولًا، ثم ابدأ مقابلة الإكمال.`
-  - `aris.chatDrawer.interview.clean` → ar: `لا توجد فجوات — يبدو هذا النموذج مكتملًا.`
-  - `aris.chatDrawer.interview.applied` → ar: `تم تطبيق {count} من التغييرات كخطوة واحدة قابلة للتراجع.`
-  - `aris.chatDrawer.interview.roundLimit` → ar: `تم بلوغ حدّ الجولات (5 من 5). تبقى الفجوات المتبقية مدرجة لمقابلة جديدة.`
-  - `aris.assistant.chip.unavailable` → ar: `هذا العنصر غير موجود في النماذج المفتوحة.`
-  - `aris.toolbar.contentLang` → ar: `التسميات: {language}` · `aris.toolbar.contentLang.title` → ar: `تبديل تسميات المخطط بين الإنجليزية والعربية (عرض فقط دون تعديل)`
-  - `aris.toolbar.translate` → ar: `ترجمة…` · `aris.toolbar.translate.missing` → ar: `{count} بدون ترجمة`
-  - `aris.translate.nothingMissing` → ar: `كل التسميات تحمل اللغتين بالفعل.` · `aris.translate.applied` → ar: `تم تطبيق {count} ترجمة كخطوة واحدة قابلة للتراجع.` · `aris.translate.autoDone` → ar: `تمت ترجمة {count} تسمية تلقائيًا — تراجع واحد يستعيدها، ويمكن المراجعة من شريط الأدوات.` · `aris.translate.autoOff` → ar: `الترجمة التلقائية للنماذج الجديدة` · `aris.translate.stale` → ar: `تغيّر النموذج أثناء المراجعة — تم تحديث القائمة.` · `aris.translate.gestureLabel` → ar: `ترجمة التسميات`
-  - `aris.fix.badge` → ar: `{count} ملاحظة — إصلاح…` · `aris.fix.title` → ar: `إصلاح المكوّنات الناقصة` · `aris.fix.autoSection` → ar: `تعبئة تلقائية (آمنة)` · `aris.fix.confirmSection` → ar: `تغييرات مقترحة تتطلب تأكيدًا` · `aris.fix.interviewSection` → ar: `تتطلب إجاباتك` · `aris.fix.openInterview` → ar: `الإجابة عن الأسئلة…` · `aris.fix.applied` → ar: `تم تطبيق {count} إصلاحًا كخطوة واحدة قابلة للتراجع.` · `aris.fix.gestureLabel` → ar: `إصلاح المكوّنات الناقصة` · `aris.fix.startEvent.name` → ar: `بدأت العملية` · `aris.fix.endEvent.name` → ar: `اكتملت العملية` · `aris.fix.cleanLayoutHint` → ar: `تُوضع العناصر الجديدة تلقائيًا — شغّل التخطيط النظيف بعد ذلك.`
-  - Any additional keys the sweep surfaces: register them with the English fallback found in code + a faithful MSA Arabic translation.
-- [x] Update **`aris.ai.body`** in both maps: EN `Generate a native ARIS model — an EPC or a value-added chain diagram — from a plain-language description, a document, or the Excel template.` AR `أنشئ نموذج ARIS أصليًا — مخطط EPC أو مخطط سلسلة القيمة المضافة — من وصف بلغة عادية أو من مستند أو من قالب Excel.` (L3d's updated test asserts the new EN string.)
-- [x] Run prettier on both files.
-
-**Verify:**
-
-```bash
-npx vitest run src/__tests__/i18n.test.ts
-npm run check:ui-copy && npm run typecheck
-```
-
----
-
-## Lane X2 — Existing e2e suite updates
-
-**Wave:** 8 · **Worker:** opus-4.8-1M · **Depends on:** everything through X1
-**Files owned:** `tests/e2e/lite-mandatory-ai-security.spec.ts`, `tests/e2e/lite-providers.spec.ts`, `tests/e2e/aris-authoring.spec.ts`, `tests/e2e/aris-accessibility.spec.ts`, `tests/e2e/aris-release-artifact.spec.ts`, `tests/e2e/aris-i18n-rtl.spec.ts`
-
-All edits below implement the authorized product changes — do not "restore" removed UI to satisfy old assertions.
-
-**Steps:**
-
-- [x] `lite-mandatory-ai-security.spec.ts`: helper `prepareArisGeneration` (~355–370) — delete the preview-open + consent lines; `generateAndConsent` (~372–381) → rename `prepareGeneration`, keep `await expect(submit).toBeEnabled()`. Privacy test (~583): retitle (drop "consent-reviewed"); replace the two preview `innerText` assertion blocks (~639–647) with the same assertions run against the CAPTURED outbound request bodies (`chatBodies`): fence markers present, the `Never emit a real ARIS source id` sentence present, the adversarial text present with the attachment and absent after `-attachment-clear`; delete the consent re-checks (~648, ~672–675) — just re-submit. Consent-collision test (~781): preamble becomes the drawer flow — open Assistant, fill `[data-orbitpm-aris-assistant-question]`, click the `Send` button (was 'Ask'); everything from `[data-orbitpm-aris-assistant-ai]` onward is UNCHANGED (the consent card is reused). Cancellation test (~1022): drop preview/consent lines (~1126–1127 and inside the renamed helper); **the model pick `selectOption(VISION_MODEL)` (~1115) becomes `.fill(VISION_MODEL)`** (the OpenRouter model control is now input+datalist); assistant phase (~1160–1180): Ask→Send. Rewrite the stale header comments (lines ~25–28, 54) and the "no user-facing free-text model" comment block (~690–701) — free-text model IS now reachable; keep/extend the `checkArisAiAttachment` fails-closed gate test accordingly.
-- [x] `lite-providers.spec.ts`: test ~173 retitle; delete the preview block (~271–281) — instead assert the outbound `chatRequests[0]` body contains `'Model name: Consent path'`, the description, and the security sentence; delete the disabled/consent dance (~283–286) — submit is enabled immediately after fill; PDF test (~354–365) drop the consent line; update the stale "no model picker" note (~177–181).
-- [x] `aris-authoring.spec.ts`: `completeSafeFields` (~288–326) + the two rail tests (~328–352) get the drawer preamble — `await page.getByRole('banner').getByRole('button', { name: 'Assistant', exact: true }).click()`, `const drawer = page.getByRole('dialog', { name: 'Process assistant', exact: true })`, `await drawer.getByRole('tab', { name: 'Complete this process' }).click()`, `const rail = drawer.locator('[data-orbitpm-aris-chat]')` — rest unchanged (incl. `data-orbitpm-aris-chat-undo`). Assistant test (~353–401): replace fill+Ask with the suggestion-button click OR textarea+Send; chips/close/selection + zero-network assertions unchanged. ADD assertions: palette labels rendered (`.aris-palette-entry__label` count ≥ 15) and the grip exists (`.orbitpm-palette-grip`).
-- [x] `aris-accessibility.spec.ts` (~98–131) and `aris-release-artifact.spec.ts` (~130–168): expected to pass unchanged (dialog name, 'Close assistant' label, focus trap/restore preserved) — run and confirm; adjust only if a stale double-close `.last()` assumption surfaces (the drawer has a single × close).
-- [x] `aris-i18n-rtl.spec.ts` (~112–300): append to test 2 — after switching the app language to Arabic, assert canvas _label text_ changes (content follows app language) while the existing relX/relY geometry checks still pass (canvas geometry stays unmirrored).
-- [x] Run prettier on touched specs.
-
-**Verify:**
-
-```bash
-npm run clean:dist && npm run build
-npx playwright test tests/e2e/lite-mandatory-ai-security.spec.ts tests/e2e/lite-providers.spec.ts \
-  tests/e2e/aris-authoring.spec.ts tests/e2e/aris-accessibility.spec.ts \
-  tests/e2e/aris-release-artifact.spec.ts tests/e2e/aris-i18n-rtl.spec.ts
-```
-
----
-
-## Lane X3 — New e2e specs
-
-**Wave:** 8 · **Worker:** kimi-k2.7 · **Depends on:** everything through X1
-**Files owned:** `tests/e2e/aris-explorer-tree.spec.ts` (create), `tests/e2e/aris-new-model.spec.ts` (create), `tests/e2e/lite-mandatory-translation.spec.ts` (sole owner)
-
-**Steps:**
-
-- [x] Create `tests/e2e/aris-explorer-tree.spec.ts` — loopback-HTTP + OPFS harness (copy from `tests/e2e/lite-mandatory-reliability.spec.ts` ~130–190; real OPFS refuses `file://`). Flow: picker → Browser workspace (OPFS; find the button via its dictionary label — grep the `picker.` keys) → `EmptyWorkspaceCard` visible → `＋ Create your first model` → dialog → name → canvas opens with the hint → the tree shows the file row (`[role="treeitem"]`) → `📁＋` new folder 'Archive' → row action `⤴` Move → `MoveDialog` → destination Archive → expand folder, file inside → row action `✎` rename → row action `🗑` delete file (confirm) → `EmptyWorkspaceCard` returns. Keyboard: focus a row, ArrowDown/ArrowRight/Enter navigate; `Shift+F10` opens the context menu (menuitem roles).
-- [x] Create `tests/e2e/aris-new-model.spec.ts` — `file://` fallback harness (pattern from `aris-authoring.spec.ts:63-80` WITHOUT `setInputFiles`): picker `＋ New model` → EPC → canvas mounts; palette `[data-action="create.ot_func"]` click → canvas click → exactly one `[data-element-id^="ObjOcc."]` exists and `[data-orbitpm-aris-empty-hint]` disappears; focus the canvas, `Control+Z` → occurrence gone; redo via the toolbar button; details-rail rename works; grip drag 60px → the palette's `style.left` changes and persists across reload (localStorage `orbitpm.aris.palettePos`).
-- [x] `tests/e2e/lite-mandatory-translation.spec.ts`: rename helper `consentAndSubmit` (~374–379) → `submitGeneration` (submit only, no consent); TR6 rail test (~925+) gets the drawer preamble (open Assistant → tab 'Complete this process' → `[data-orbitpm-aris-chat]` inside the dialog); **update the header inventory comments (lines ~62–86)** — the "CONFIRMED DEAD" claims about `TranslationReviewDialog`, the Translate button, Google/MyMemory calls, and `.orbitpm/i18n` are now ALIVE (keep the file's grounding-comment style). New tests using the `BILINGUAL_MATRIX_AML` fixture (~113–216) + boot helpers (~230–260):
-  1. **Content toggle**: open the matrix → click `[data-orbitpm-aris-content-lang]` → canvas `text` nodes show the Arabic strings (e.g. `تم استلام الطلب`); the en-only element still shows its English text (fallback, never blank); `[data-orbitpm-aris-undo]` stays **disabled** (zero-undo contract); toggle back restores English; ALSO switching the app header language to Arabic flips labels (default-follow behavior).
-  2. **Translate review (free, offline-stubbed)**: `page.route` both `https://translate.googleapis.com/*` and `https://api.mymemory.translated.net/*` with canned JSON → click `[data-orbitpm-aris-translate]` → dialog lists 'Google Translate → MyMemory' → Translate now → proposals appear → accept → apply → toggling to Arabic shows the stubbed value; ONE undo reverts everything.
-  3. **Auto-translate on create**: stub the endpoints; drive the AI/Excel create path (existing helpers ~609) to open a generated tab ⇒ the toast `Translated … automatically` appears with **no dialog**; undo is enabled; with the pref off via an init script (`localStorage` `orbitpm.lite.cfg.`-prefixed key — read `getPref` to get the exact key format) ⇒ zero translate fetches and the badge `[data-orbitpm-aris-translate-missing]` is visible instead.
-  4. **Fix flow**: open the reference export (`openReferenceExport` helper — real AnimalWF, skipped when the private fixture is absent) → `[data-orbitpm-aris-fix-issues]` shows a count → dialog sections render → tick + apply one delete proposal ⇒ the count drops; one undo restores it.
-- [x] Run prettier on the three specs.
-
-**Verify:**
-
-```bash
-npm run build
-npx playwright test tests/e2e/aris-explorer-tree.spec.ts tests/e2e/aris-new-model.spec.ts tests/e2e/lite-mandatory-translation.spec.ts
-```
-
----
-
-## Wave 9 — Final verification & ship (orchestrator + sonnet-med doc lane)
-
-- [x] Full suite:
+- [ ] `npm run test:aris:animalwf:holdout` — FIRST tuning-free run; both holdout models pass. Red → escalation protocol (fable-xhigh debug-only → opus applies) → fix in the owning lane's files → re-verify BOTH iterate and holdout sets.
+- [ ] Full suite:
 
   ```bash
   npm run format:check && npm run lint && npm run typecheck \
     && npm run check:aris-runtime-boundary && npm run check:ui-copy \
-    && npm run check:no-skips && npm run check:lite-only \
-    && npm test && npm run test:e2e \
+    && npm run check:no-skips && npm run check:lite-only && npm run check:lock \
+    && npm test && npm run test:aris:animalwf && npm run test:aris:animalwf:holdout \
+    && npm run test:e2e \
     && npm run build:aris && npm run check:aris-studio-artifact && npm run check:size
   ```
 
-  **Result — all green.** format/lint/typecheck/check:aris-runtime-boundary/check:ui-copy/check:no-skips/check:lite-only/check:actions → EXIT 0; `npm test` → 333 files / 4160 tests passed; Playwright e2e run per-engine (each with its own 600s budget, since the combined 3-engine run brushes the suite's 600s `globalTimeout`) → **chromium 74 · firefox 74 · webkit 74, all passed**; `build:aris` + `check:aris-studio-artifact` (release == dist) + `check:size` → EXIT 0. Artifact `release/OrbitPM-ARIS-Studio-Lite.html`: 1,766,034 bytes, SHA-256 `5c5eaa60469a70f3cbf509f594c25970c080fca263852e15a8cf2a4bdcf8d6ec`.
-
-- [x] Sonnet doc lane: tick every remaining checkbox in this file; fill the "Resolution evidence" section below (one entry per issue with the command/test that proves it). _(Completed by the orchestrator together with the final commit.)_
-- [x] Orchestrator: final commit (with fresh artifact) + push + final report per `goal.md`.
+- [ ] Tick every remaining checkbox; fill the "Resolution evidence" section (one entry per issue with the command/test that proves it).
+- [ ] Final commit (fresh artifact) + push + final report per `goal.md`.
 
 ---
 
 ## Risk appendix
 
-1. **Single-owner-per-wave** file map (§Wave schedule) is binding. A lane touching an unowned file = STOP + report.
-2. **`hidden`, never unmount**, for the collapsed generation panel (in-flight requests must survive).
-3. **`tab.key` preservation**: rename/move remap `relPath`/`title` only; reopen dedupes by `relPath`. A key change remounts the canvas and silently destroys undo history.
-4. **Playwright model control**: OpenRouter model picker is now input+datalist — `fill()`, not `selectOption()`.
-5. **Sanctioned `exhaustive-deps` suppressions** (the ONLY two): the drawer's `interviewRequest` token effect (transcribed from main) and the pre-existing `selectionRequest` effect at `ArisStudioTab.tsx:359`.
-6. **`check:no-skips` alias trap**: never name helpers matching focused-test aliases (`fit*(` etc.) — precedent comment at `ArisStudioTab.tsx:483`.
-7. **ui-copy allowlist** signatures are `file|kind|text` (line-number-free) — refactors are safe; deleting `ArisAssistantPanel.tsx`/`ArisChatImproveRail.tsx` is safe (no allowlist entries reference them).
-8. **Interview freshness**: gap counts refresh on tab entry/start/round/undo — not on every canvas gesture (getter model). Documented behavior, matches main's step-boundary freshness.
-9. **Single-file build size**: `npm run check:size` must pass; the TranslationReviewDialog adds ~40 KB — within budget, but do not add other heavy dependencies.
-10. **Kimi lanes**: L1a, L2a, L1b, L3a, L5a, L3c, L2c, X3 are pre-assigned to the Kimi K2.7 Coding CLI. See `goal.md` for the invocation contract.
+1. **Single-owner-per-wave** file map (§ownership chains) is binding. A lane touching an unowned file = STOP + report.
+2. **Dblclick priority collision**: assignment-nav (T6) @2000 returns `false` only when navigating; direct-edit (C3) @1500. A function with an assignment drills down; without one, edits its label. Verified by E1.
+3. **Ambiguous Model.IDs** (two blanks pre-T3, duplicated split outputs re-imported): fail-closed everywhere — dropped from index, in `ambiguousProcessIds`, physical rows only, dblclick toasts `aris.assign.ambiguous`. Import-skip on existing ids prevents the common case.
+4. **Shared ObjDefs duplicated across split files** (TAMM et al., same `ObjDef.ID` in many files): intended (cross-file identity). Editing a def in one file does not propagate; documented.
+5. **RTL/Arabic editing**: `dir="auto"` post-activate covers first-strong; commit path is plain text so worst case is cosmetic caret behavior, never data corruption. C3 has an Arabic test; E3/`aris-i18n-rtl` covers a live step.
+6. **Zoom overlay drift**: captured-id commit + `getAbsoluteBBox` + `fontSize×zoom`; an edit survives an unrelated `changed` event (C3 test).
+7. **Unverified ARIS numbers** (SLA/Law/Risk/Service/Committee/model attributes): one contiguous `VERIFY-AGAINST-REAL-ARIS-EXPORT` region + `verification` flag; export emits only authored attributes, so a wrong number is a one-table fix later. goal.md carries a standing verify instruction.
+8. **Template-color guessing**: descriptor fills change to DMT defaults but authored Pen/Brush win; `test:aris:animalwf` (C5 required run) is the tripwire that imported renders don't change.
+9. **Holdout leakage**: separate config + a script that only lands in Wave 4 (E3); holdout expectations authored topology-level in Wave 1 and refined against AML only in Wave 5; never used to tune C8.
+10. **`replaceNewObject` ordering**: sub-commands apply sequentially within `transactionCommand`; the 1-occurrence/0-connections guard removes the dangerous cases; C4 tests undo/redo both ways.
+11. **Pen-carry vs derived export**: C8 keeps `rawAttributes`/source anchors untouched and runs `arisDerivedExport.test.ts` as a required check.
+12. **Span semantics**: T2 pins them with a first-assert; if spans exclude the closing tag, it switches to the element's end boundary — contained in the lane.
+13. **OPFS quirks / webkit e2e**: absent `modifiedAt` falls back to hash compare (one read, no parse); e2e uses the proven loopback-HTTP + webkit persistent-context harness; dblclick synthesized on the `data-element-id` gfx with the marker-button click as the primary assertion path.
+14. **Authorized test updates** (must be made, not worked around): `arisBlankModel.test.ts` (`Model.New` → minted id/GUID); `ArisApp.test.tsx` import-behavior + model-explorer-gating cases; palette entry-count/action-id assertions in `src/aris/canvas`. Explicitly NOT weakened: single-file-mode, §7.3 package import, BPMN-reject, and the still-valid >1-model model-explorer switch test.
 
 ---
 
 ## Baseline record (Wave 0 fills this in)
 
-- Baseline SHA: `e7b077d83b31b8f2fc99d03cb6493fb3c1d4315f` (plan-docs commit; product code identical to `1b89ce7`, the prior HEAD).
-- Gate results at baseline (all run at HEAD, exit codes verbatim):
-  - `npm run format:check` → EXIT 0 (All matched files use Prettier code style)
-  - `npm run lint` → EXIT 0
-  - `npm run typecheck` → EXIT 0
-  - `npm run check:aris-runtime-boundary` → EXIT 0
-  - `npm run check:ui-copy` → EXIT 0
-  - `npm run check:no-skips` → EXIT 0
-  - `npm run check:lite-only` → EXIT 0
-  - `npm test` → EXIT 0 (314 test files passed; 4003 tests passed; zero runtime skips/todos/expected-failures/retries; duration ~98s)
-  - **No pre-existing failures. Baseline is fully green — Wave 1 may proceed.**
+- Baseline SHA: `ff6482b115002b9822a150d12856721f3dbdf11a` (`ff6482b`), branch `feat/aris-only-studio`.
+- Gate results at baseline (exit codes verbatim), run independently (no short-circuit) at HEAD `ff6482b`:
+  - `format:check` — **exit 1** (pre-existing, non-code): the ONLY flagged file was `implementation_plan.md` (the uncommitted plan doc). Prettier-formatted and committed in this Wave-0 commit → green. No source file failed formatting.
+  - `lint` (`eslint . --max-warnings 0`) — exit 0.
+  - `typecheck` (`tsc --noEmit -p tsconfig.json`) — exit 0.
+  - `check:aris-runtime-boundary` — exit 0.
+  - `check:ui-copy` — exit 0.
+  - `check:no-skips` — exit 0.
+  - `check:lite-only` — exit 0.
+  - `check:lock` — exit 0.
+  - `npm test` (unit) — exit 0 (333 test files passed).
+  - `test:aris:animalwf` — exit 0 (14 test files passed).
+- Conclusion: baseline is green at HEAD apart from the plan-doc formatting fixed here. **No fix lane dispatched before Wave 1** (no source gate red).
 
-## Resolution evidence (Wave 9 fills this in)
+## Resolution evidence (Wave 5 fills this in)
 
-- Issue 1 (folder tree): FolderTreeLite wired for directory/OPFS workspaces via `useArisExplorerActions` (CRUD: new-folder/rename/move/drag-move/delete/import-drop; `.orbitpm/**` hidden; single-file keeps the flat list). Proven by `src/workspace/__tests__/liteTreeFromEntries.test.ts`, `src/aris/shell/__tests__/arisExplorerActions.test.tsx`, the directory-mode tree tests in `src/ArisApp.test.tsx`, and e2e `tests/e2e/aris-explorer-tree.spec.ts` (chromium/firefox/webkit).
-- Issue 2 (drawing/new model): New-model dialog creates a blank EPC (writeAtomic `.aml` in directory mode / virtual tab single-file / picker), drawn on via a labeled + localized + iconed palette with a movable, persisted position and an empty-model hint; edits undo via Ctrl+Z. Proven by `src/aris/shell/arisBlankModel.test.ts`, the new-model-flow tests in `src/ArisApp.test.tsx`, `src/aris/shell/__tests__/emptyModelHint.test.tsx`, and e2e `tests/e2e/aris-new-model.spec.ts` + `tests/e2e/aris-authoring.spec.ts` (palette labels + grip).
-- Issue 3 (chatbot): 💬 FAB opens the right-edge `ArisChatDrawer` (library tab = key-free grounded Q&A with source chips + AI-on-miss behind the kept consent card; interview tab = gap-scan applying undoable changes); the old assistant modal is deleted; the "Generate with AI" header is a real collapse toggle. Proven by `ArisChatDrawer.test.tsx`, `ArisChatDrawer.aiGate.test.tsx`, `arisChatDrawerSession.test.ts`, the re-scripted interview test in `src/ArisApp.test.tsx`, and e2e `tests/e2e/aris-authoring.spec.ts`.
-- Issue 4 (generate panel): `ArisGenerationPanel` rebuilt to AiPanelLite visuals — Name + per-tab source + provider/model only; model-type/consent/outbound-preview/context controls removed; generation uses `'auto-detect'`; Excel tab keeps both template downloads. Proven by `arisCreatePanel.test.tsx`, `arisCreateDocumentAi.test.tsx`, `arisCreateDescriptionContext.test.tsx`, and e2e `tests/e2e/lite-mandatory-ai-security.spec.ts` + `tests/e2e/lite-providers.spec.ts` (no `[data-orbitpm-aris-create-consent]` in the DOM).
-- Issue 5 (translation + fix): diagram labels follow the app EN⇄AR toggle with a per-diagram override (zero-undo view switch, fallback never blanks); Translate action feeds the surviving `TranslationReviewDialog` (free Google→MyMemory chain always, AI when keyed); generated models auto-translate silently (toast + one undo + pref opt-out); opened files show the untranslated badge; a "N issues — Fix…" badge opens the three-tier fix dialog (safe fills / confirm-gated deterministic proposals with full-cluster delete cascade / route to the chat interview). Proven by `src/aris/canvas/contentLanguage.test.ts`, `src/aris/localization/__tests__/*`, `arisTranslateController.test.tsx`, `src/aris/chat/deterministicFixes.test.ts`, and e2e `tests/e2e/lite-mandatory-translation.spec.ts`.
+- Issue 1 (folder tree + nested processes): _(record — T5/T6/T7/T8/T9 + E1/E2 evidence: split-to-files, VACD owns 7 EPCs, dblclick drill-down, create-missing, move-safe links, single-file unchanged)_
+- Issue 2 (direct editing + symbols): _(record — C3/C4/C5 + interaction e2e: place→type→Enter caption, dblclick/F2 edit, quick-pick variant swap, full convention palette)_
+- Issue 3 (convention alignment): _(record — C1/C5/C6/C7: catalog resolves every symbol with zero fidelity findings, DMT colors, RACI mapping, legality, attribute schema, convention findings)_
+- Issue 4 (import fidelity): _(record — C8 iterate suites exact via `test:aris:animalwf`; holdout green first-run via `test:aris:animalwf:holdout`; screenshot artifacts)_
