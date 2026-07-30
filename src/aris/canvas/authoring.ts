@@ -29,7 +29,13 @@ import type ElementRegistry from 'diagram-js/lib/core/ElementRegistry'
 import type { Connection, Shape } from 'diagram-js/lib/model/Types'
 
 import type { ArisEditCommand } from '../model/commands'
-import type { ArisAttributeValue, ArisOccurrenceStyle, ArisPoint } from '../model/types'
+import type {
+  ArisAttributeValue,
+  ArisObjectDefinition,
+  ArisObjectOccurrence,
+  ArisOccurrenceStyle,
+  ArisPoint
+} from '../model/types'
 import { resolveArisSymbol } from '../symbols'
 import { ArisCanvasCommandError, ArisCommandBridge } from './commandBridge'
 import { ArisDocumentStore, type ArisCommandThunk } from './documentStore'
@@ -286,11 +292,23 @@ export class ArisAuthoring {
   }
 
   /**
-   * `true` when an occurrence can be safely replaced by a different object type:
-   * its definition has exactly one occurrence (this shape) and no connection
-   * definition touches it. Both `replaceNewObject` and the quick-pick's
-   * cross-type members gate on this — replacing a shared or connected definition
-   * would silently rewrite the object everywhere it appears.
+   * `true` when an occurrence can be safely replaced by a different object type.
+   *
+   * A cross-type replace rebuilds the object from only its type, symbol, bounds
+   * and **primary-locale** name (see `replaceNewObject`), so it is only lossless
+   * on a genuinely metadata-empty, freshly-placed shape. This gate therefore
+   * requires all of:
+   *
+   * - its definition has exactly this one occurrence, and no connection
+   *   definition touches it (replacing a shared or connected definition would
+   *   silently rewrite the object everywhere it appears);
+   * - the definition carries no attributes (attachments live here too), no
+   *   linked-model assignments, no raw source attributes (e.g. `AT_ID`) and at
+   *   most a single name locale — anything more would be dropped on rebuild;
+   * - the occurrence carries no attribute occurrences, no raw attributes and no
+   *   authored style beyond its symbol.
+   *
+   * Both `replaceNewObject` and the quick-pick's cross-type members gate on this.
    */
   canReplaceNewObject(occurrenceId: string): boolean {
     const document = this.store.document
@@ -306,6 +324,10 @@ export class ArisAuthoring {
         return false
       }
     }
+    const definition = document.objectDefinitions.get(definitionId)
+    if (!definition) return false
+    if (!isMetadataEmptyDefinition(definition)) return false
+    if (!isMetadataEmptyOccurrence(occurrence)) return false
     return true
   }
 
@@ -313,9 +335,11 @@ export class ArisAuthoring {
    * Replace a freshly-placed occurrence with one of a different object type,
    * preserving its position, size and name, in one undo step.
    *
-   * Guarded by `canReplaceNewObject`: the definition must have exactly one
-   * occurrence and no touching connection definitions, else this throws
-   * `ArisCanvasCommandError('replace-not-safe')`. The single transaction deletes
+   * Guarded by `canReplaceNewObject`: the shape must be a genuinely
+   * metadata-empty, unshared, unconnected occurrence, else this throws
+   * `ArisCanvasCommandError('replace-not-safe')` rather than silently dropping
+   * the definition's attributes, assignments, attachments, extra name locales or
+   * the occurrence's authored style. The single transaction deletes
    * the old occurrence and its now-unused definition, then creates the new
    * definition (with the preserved name) and its occurrence at the same bounds.
    */
@@ -636,4 +660,40 @@ export class ArisAuthoring {
   definitionIdOfOccurrence(occurrenceId: string): string {
     return requireOccurrence(this.store.document, occurrenceId).definitionId
   }
+}
+
+/**
+ * `true` when a definition holds nothing a cross-type replace would drop:
+ * `replaceNewObject` recreates it from only its type, symbol and primary-locale
+ * name, so any attribute (attachments are stored as attributes too), linked-model
+ * assignment, raw source attribute (e.g. `AT_ID`) or additional name locale is
+ * metadata that would be silently lost.
+ */
+function isMetadataEmptyDefinition(definition: ArisObjectDefinition): boolean {
+  return (
+    definition.attributes.length === 0 &&
+    definition.linkedModelIds.length === 0 &&
+    Object.keys(definition.rawAttributes).length === 0 &&
+    Object.keys(definition.names.values).length <= 1
+  )
+}
+
+/**
+ * `true` when an occurrence holds nothing a cross-type replace would drop: only
+ * its bounds and symbol are carried over, so any attribute occurrence, raw
+ * attribute or authored style value (anything beyond the intrinsic symbol) is
+ * metadata that would be silently lost.
+ */
+function isMetadataEmptyOccurrence(occurrence: ArisObjectOccurrence): boolean {
+  if (occurrence.attributeOccurrences.length > 0) return false
+  if (Object.keys(occurrence.rawAttributes).length > 0) return false
+  const style = occurrence.style
+  return (
+    style.fillColor === null &&
+    style.strokeColor === null &&
+    style.strokeWidth === null &&
+    style.lineStyle === null &&
+    style.fontStyleSheetId === null &&
+    style.zOrder === null
+  )
 }

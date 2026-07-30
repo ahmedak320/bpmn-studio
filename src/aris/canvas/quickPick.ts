@@ -32,6 +32,8 @@ import type { ArisAuthoring } from './authoring'
 import { arisBusinessObject } from './elements'
 import { arisPaletteGlyph } from './paletteProvider'
 
+import './arisQuickPick.css'
+
 /** Structural view of diagram-js Overlays (didi-injected; no exported class type). */
 interface OverlaysLike {
   add(
@@ -44,6 +46,18 @@ interface OverlaysLike {
     }
   ): string
   remove(id: string): void
+}
+
+/**
+ * The slice of `diagram-js-direct-editing`'s service the quick-pick drives to
+ * carry an open inline editor across a cross-type replace (#6): the replace
+ * swaps the occurrence + definition out from under the editor, so the editor
+ * must be re-pointed at the replacement, preserving whatever the user has typed.
+ */
+interface DirectEditingLike {
+  isActive(element?: unknown): boolean
+  getValue(): string
+  activate(element: unknown): boolean
 }
 
 export const ARIS_QUICK_PICK_OVERLAY_TYPE = 'aris-quick-pick'
@@ -71,7 +85,8 @@ export class ArisQuickPick {
     'elementRegistry',
     'selection',
     'canvas',
-    'arisAuthoring'
+    'arisAuthoring',
+    'directEditing'
   ]
 
   private open_: OpenState | null = null
@@ -82,7 +97,8 @@ export class ArisQuickPick {
     private readonly elementRegistry: ElementRegistry,
     private readonly selection: Selection,
     private readonly canvas: Canvas,
-    private readonly authoring: ArisAuthoring
+    private readonly authoring: ArisAuthoring,
+    private readonly directEditing: DirectEditingLike
   ) {
     // Open right after a shape is placed, above direct editing's own
     // `create.end` handler (priority 250) so the popover exists before the
@@ -258,13 +274,34 @@ export class ArisQuickPick {
       this.close()
       return
     }
+    // The replace deletes the occurrence + definition the inline editor is
+    // pointed at and re-creates new ones (#6). Capture any in-progress caption
+    // BEFORE the swap so it can move to the replacement instead of being
+    // committed to (or renaming) the deleted definition.
+    const pendingCaption = this.directEditing.isActive() ? this.directEditing.getValue() : null
     const result = this.authoring.replaceNewObject(elementId, {
       objectType: member.objectType,
       symbolNum: member.symbolNum
     })
     this.close()
     const replacement = this.elementRegistry.get(result.occurrenceId) as Element | undefined
-    if (replacement) this.selection.select(replacement)
+    if (!replacement) return
+    this.selection.select(replacement)
+    if (pendingCaption !== null) this.retargetInlineEdit(replacement, pendingCaption)
+  }
+
+  /**
+   * Re-point an open inline editor at the replacement occurrence, restoring the
+   * caption the user had typed. Re-activating recaptures the new definition id
+   * inside the direct-editing provider, so the eventual commit lands on the new
+   * object; no command runs here, so the replace stays a single undo step (#6).
+   */
+  private retargetInlineEdit(replacement: Element, caption: string): void {
+    // `activate` cancels the stale session (its element is already gone) and
+    // opens a fresh one on the replacement.
+    this.directEditing.activate(replacement)
+    const content = this.canvas.getContainer().querySelector('.djs-direct-editing-content')
+    if (content instanceof HTMLElement) content.innerText = caption
   }
 }
 

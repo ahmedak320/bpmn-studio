@@ -38,6 +38,7 @@ import type { Element, Shape } from 'diagram-js/lib/model/Types'
 
 import DirectEditingModule from 'diagram-js-direct-editing'
 
+import { t } from '../../i18n'
 import type { ArisAuthoring } from './authoring'
 import type { ArisCanvasSync } from './canvasSync'
 import type { ArisCommandBridge } from './commandBridge'
@@ -215,12 +216,15 @@ export class ArisDirectEditingProvider {
     })
 
     // Make the live textbox direction-aware so Arabic / mixed labels lay out
-    // naturally regardless of the UI language.
+    // naturally regardless of the UI language, and give it an accessible name +
+    // placeholder (localized keys registered in `dictionaries.ts`).
     this.eventBus.on('directEditing.activate', () => {
       const content = this.canvas.getContainer().querySelector('.djs-direct-editing-content')
       if (content instanceof HTMLElement) {
         content.setAttribute('dir', 'auto')
         content.style.unicodeBidi = 'plaintext'
+        content.setAttribute('placeholder', t('aris.directEdit.placeholder'))
+        content.setAttribute('aria-label', t('aris.directEdit.aria'))
       }
     })
 

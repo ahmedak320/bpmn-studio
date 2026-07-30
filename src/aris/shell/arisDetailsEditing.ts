@@ -577,14 +577,12 @@ export interface ArisDetailsEditingApi {
    * C4) and takes the plain `localeId → text` map `attributeValuesToRecord`
    * produces.
    *
-   * Optional: the concrete `ArisDetailsEditingApi` object this seam is
-   * implemented against is built in `ArisStudioTab.tsx`, a file outside this
-   * lane's ownership that no lane in this wave re-touches to add this method.
-   * A caller must therefore use optional-call syntax (`editing.setModelAttribute?.(…)`)
-   * until whoever next edits `ArisStudioTab.tsx` wires a concrete
-   * implementation through to `canvas.authoring.setModelAttribute`.
+   * Required: `ArisStudioTab.tsx` builds its concrete `ArisDetailsEditingApi`
+   * object by delegating every member (this one included) to the matching
+   * `canvas.authoring.*` call, so a caller can invoke it unconditionally —
+   * there is no longer a "not wired yet" case to degrade gracefully from.
    */
-  readonly setModelAttribute?: (
+  readonly setModelAttribute: (
     modelId: string,
     attributeType: string,
     values: Readonly<Record<string, string>>

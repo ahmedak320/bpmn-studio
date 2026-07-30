@@ -2860,6 +2860,9 @@ export const en = {
   'aris.details.edit.attributes': 'ARIS attributes',
   'aris.details.edit.attributes.none':
     'This object definition carries no ARIS attributes, so there is no value to edit.',
+  'aris.details.edit.attributes.mandatory': 'Mandatory',
+  'aris.details.edit.attributes.noneModel':
+    'This model type carries no R3 attribute schema, so there is no value to edit.',
   'aris.details.edit.valueEn': 'Value (English locale)',
   'aris.details.edit.valueAr': 'Value (Arabic locale)',
   'aris.details.edit.valueOther': 'Value (locale {locale})',
@@ -5781,6 +5784,9 @@ export const ar: Record<keyof typeof en, string> = {
   'aris.details.edit.attributes': 'سمات ARIS',
   'aris.details.edit.attributes.none':
     'لا يحمل تعريف الكائن هذا أي سمات ARIS، فلا توجد قيمة لتحريرها.',
+  'aris.details.edit.attributes.mandatory': 'إلزامي',
+  'aris.details.edit.attributes.noneModel':
+    'لا يحمل هذا النوع من النماذج مخطط سمات R3، فلا توجد قيمة لتحريرها.',
   'aris.details.edit.valueEn': 'القيمة (اللغة الإنجليزية)',
   'aris.details.edit.valueAr': 'القيمة (اللغة العربية)',
   'aris.details.edit.valueOther': 'القيمة (اللغة {locale})',

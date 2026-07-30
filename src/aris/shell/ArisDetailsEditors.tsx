@@ -628,17 +628,18 @@ export interface ArisModelAttributesEditorProps {
  * `editing.setModelAttribute`, which mirrors `setDefinitionAttribute` with the
  * `'model'` owner kind (Lane C4's `ArisAuthoring.setModelAttribute`).
  *
- * `setModelAttribute` is optional on `ArisDetailsEditingApi`: the concrete
- * object implementing that interface is built in `ArisStudioTab.tsx`, which
- * this lane does not own and which no lane in this wave re-touches to wire
- * this particular method through. Until it is, a commit here is a no-op —
- * the same graceful-degradation the rail already relies on for every other
- * optional capability.
+ * `setModelAttribute` is a required member of `ArisDetailsEditingApi`:
+ * `ArisStudioTab.tsx` builds its concrete object by delegating it to
+ * `canvas.authoring.setModelAttribute`, exactly like every other member, so a
+ * commit here always reaches the document (issue 7 — this used to be a no-op
+ * because that wiring, and the mount below, were both missing). The call
+ * below keeps its optional-chaining syntax as cheap defence-in-depth against a
+ * malformed test double; it is never actually skipped in production.
  *
- * Not yet mounted by `ArisDetailsRail.tsx` (also outside this lane): that
- * file only reaches for `ArisAttributesEditor` when the selection resolves to
- * an object definition, never a bare model. This component is complete and
- * independently testable ahead of that wiring.
+ * Mounted by `ArisDetailsRail.tsx` on the Attributes tab whenever the current
+ * selection resolves to a bare model (`target.modelId` set, no definition) —
+ * the model-scoped counterpart of the `ArisAttributesEditor` mount for an
+ * object-definition selection.
  */
 export function ArisModelAttributesEditor({
   model,

@@ -111,7 +111,7 @@ async function scanFile(
 
   let result: ArisModelScanResult
   try {
-    const xml = new TextDecoder('utf-8').decode(snapshot.bytes)
+    const xml = new TextDecoder('utf-8', { fatal: true }).decode(snapshot.bytes)
     result = scanArisModelSource(xml)
   } catch {
     return undefined

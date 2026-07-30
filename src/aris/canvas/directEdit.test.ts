@@ -199,6 +199,15 @@ describe('ArisDirectEditingProvider (Lane C3)', () => {
     expect(content().style.unicodeBidi).toBe('plaintext')
   })
 
+  it('gives the editing content node a localized placeholder and aria-label', () => {
+    harness = bootCanvas()
+    const target = createFunction('Original')
+
+    directEditing().activate(target.shape)
+    expect(content().getAttribute('placeholder')).toBe('Type a label')
+    expect(content().getAttribute('aria-label')).toBe('Edit label')
+  })
+
   it('removes a just-created empty free-text note when its edit is cancelled', () => {
     harness = bootCanvas()
     const freeTextId = harness.canvas.authoring.addFreeText({

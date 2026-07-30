@@ -143,6 +143,33 @@ describe('scanArisWorkspaceLinks', () => {
     expect(state.graph.links).toHaveLength(0)
   })
 
+  it('skips a file whose bytes are not valid UTF-8 instead of indexing replacement characters', async () => {
+    const prefix = new TextEncoder().encode('<AML><Model Model.ID="Model.')
+    const suffix = new TextEncoder().encode('" Model.Type="MT_EEPC"/></AML>')
+    const bytes = Uint8Array.from([...prefix, 0xff, ...suffix])
+    const adapter = {
+      read: vi.fn().mockResolvedValue({
+        path: 'broken.aml',
+        bytes,
+        hash: '',
+        size: bytes.byteLength,
+        modifiedAt: 1
+      })
+    }
+    const cache = createArisLinkScanCache()
+
+    const state = await scanArisWorkspaceLinks(
+      adapter,
+      [entry('broken.aml', bytes.byteLength, 1)],
+      cache
+    )
+
+    expect(state.scannedFileCount).toBe(1)
+    expect(state.index.size).toBe(0)
+    expect(state.graph.links).toHaveLength(0)
+    expect(cache.byPath.has('broken.aml')).toBe(false)
+  })
+
   it('does not call adapter.read when size+mtime match the cache', async () => {
     const adapter = new MemoryWorkspaceAdapter({
       files: { 'a.aml': aml(model('Model.A', 'MT_EEPC', modelName('A'))) }

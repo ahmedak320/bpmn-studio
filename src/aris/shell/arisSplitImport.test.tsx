@@ -4,7 +4,7 @@
  * Split-import staging + review dialog tests (lane T7).
  */
 
-import { cleanup, render, screen } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
@@ -249,6 +249,67 @@ describe('ArisSplitImportDialog', () => {
 
     const confirm = screen.getByRole('button', { name: 'Import 1 file(s)' }) as HTMLButtonElement
     expect(confirm.disabled).toBe(true)
+  })
+
+  it('disables the cancel button while busy and ignores a click on it (issue 8)', async () => {
+    // `executeArisSplitImport` keeps writing while `busy`; the caller's own
+    // `onCancel` (see src/ArisApp.tsx) unconditionally hides the dialog, so the
+    // guard has to live here — `onCancel` must simply never fire while busy.
+    const user = userEvent.setup()
+    const onCancel = vi.fn()
+
+    render(
+      <ArisSplitImportDialog
+        open
+        plan={makePlan()}
+        busy
+        dir="ltr"
+        onConfirm={() => undefined}
+        onCancel={onCancel}
+      />
+    )
+
+    const cancel = screen.getByRole('button', { name: 'Cancel' }) as HTMLButtonElement
+    expect(cancel.disabled).toBe(true)
+
+    await user.click(cancel)
+    expect(onCancel).not.toHaveBeenCalled()
+  })
+
+  it('ignores Escape (AccessibleDialog onClose) while busy (issue 8)', () => {
+    const onCancel = vi.fn()
+
+    render(
+      <ArisSplitImportDialog
+        open
+        plan={makePlan()}
+        busy
+        dir="ltr"
+        onConfirm={() => undefined}
+        onCancel={onCancel}
+      />
+    )
+
+    fireEvent.keyDown(document, { key: 'Escape' })
+    expect(onCancel).not.toHaveBeenCalled()
+  })
+
+  it('still cancels normally through Escape once busy clears (issue 8, no regression)', () => {
+    const onCancel = vi.fn()
+
+    render(
+      <ArisSplitImportDialog
+        open
+        plan={makePlan()}
+        busy={false}
+        dir="ltr"
+        onConfirm={() => undefined}
+        onCancel={onCancel}
+      />
+    )
+
+    fireEvent.keyDown(document, { key: 'Escape' })
+    expect(onCancel).toHaveBeenCalledTimes(1)
   })
 
   it('returns null when closed or plan is missing', () => {

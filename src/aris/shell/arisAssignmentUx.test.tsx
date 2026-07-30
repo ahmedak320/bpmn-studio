@@ -245,6 +245,50 @@ describe('canvas assignment marker (⊞)', () => {
     })
   })
 
+  it('lets the label editor open when a double-clicked assignment has no in-document target (#10)', async () => {
+    installCanvasGeometry()
+    const studio = await buildStudio()
+    const onOpenAssignedModel = vi.fn()
+    const { container } = mountStudio(studio, 'Model.Intake', { onOpenAssignedModel })
+
+    await waitFor(() => {
+      expect(container.querySelector('[data-element-id="ObjOcc.Foreign"]')).not.toBeNull()
+    })
+
+    act(() => {
+      fireEvent.dblClick(gfx(container, 'ObjOcc.Foreign'))
+    })
+
+    // Model.External is off-file, so no canonical model opened: the priority-2000
+    // handler returns undefined and the direct-edit label editor at 1500 runs.
+    await waitFor(() => {
+      expect(container.querySelector('.djs-direct-editing-content')).not.toBeNull()
+    })
+  })
+
+  it('suppresses the label editor when a double-click opens an in-document model (#10)', async () => {
+    installCanvasGeometry()
+    const studio = await buildStudio()
+    const onModelChange = vi.fn()
+    const { container } = mountStudio(studio, 'Model.Intake', { onModelChange })
+
+    await waitFor(() => {
+      expect(container.querySelector('[data-element-id="ObjOcc.Check"]')).not.toBeNull()
+    })
+
+    act(() => {
+      fireEvent.dblClick(gfx(container, 'ObjOcc.Check'))
+    })
+
+    // A canonical model opened, so the handler halted propagation before 1500 —
+    // the label editor never opened for this gesture.
+    expect(onModelChange).toHaveBeenCalledWith('Model.Review')
+    await waitFor(() => {
+      expect(container.querySelector('[data-element-id="ObjOcc.Review"]')).not.toBeNull()
+    })
+    expect(container.querySelector('.djs-direct-editing-content')).toBeNull()
+  })
+
   it('delegates a foreign target to onOpenAssignedModel with the exact id list', async () => {
     installCanvasGeometry()
     const studio = await buildStudio()

@@ -65,6 +65,7 @@ import {
   ArisAttachmentsEditor,
   ArisAttributesEditor,
   ArisBilingualEditor,
+  ArisModelAttributesEditor,
   ArisStyleEditor,
   ArisTextEditor
 } from './ArisDetailsEditors'
@@ -537,6 +538,19 @@ export function ArisDetailsRail({
         {activeTab === 'attributes' && editing && definition ? (
           <ArisAttributesEditor
             definition={definition}
+            details={details}
+            target={target}
+            editing={editing}
+          />
+        ) : null}
+
+        {/* issue 7: the bare-model counterpart of the definition attributes
+            editor above — same tab, same `editing` gate, but for a selection
+            that resolved to a model rather than a definition (`target.modelId`
+            set, `target.definitionId` null; see `arisEditTarget`). */}
+        {activeTab === 'attributes' && editing && model ? (
+          <ArisModelAttributesEditor
+            model={model.model}
             details={details}
             target={target}
             editing={editing}

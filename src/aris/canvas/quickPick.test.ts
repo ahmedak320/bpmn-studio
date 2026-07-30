@@ -151,6 +151,54 @@ describe('post-placement quick-pick (Lane C4)', () => {
     expect(canvas.document.objectDefinitions.get(role.definitionId)?.type).toBe('OT_PERS_TYPE')
   })
 
+  it('carries the open inline editor and typed caption onto the replacement across a cross-type swap (#6)', () => {
+    harness = bootCanvas()
+    const { canvas, container } = harness
+    const created = canvas.authoring.createObject({
+      objectType: 'OT_PERS_TYPE',
+      name: '',
+      position: { x: 40, y: 60 }
+    })
+
+    // Open the inline editor and type a caption that has NOT been committed yet.
+    const directEditing = canvas.get<{
+      activate: (element: unknown) => boolean
+      isActive: (element?: unknown) => boolean
+      complete: () => void
+    }>('directEditing')
+    directEditing.activate(shape(canvas, created.occurrenceId))
+    const typedInto = container.querySelector<HTMLElement>('.djs-direct-editing-content')
+    if (!typedInto) throw new Error('No direct-editing content node open.')
+    typedInto.innerText = 'Customer'
+
+    // Cross-type swap while the editor is open: replaceNewObject deletes the
+    // occurrence + definition the editor captured and creates new ones.
+    quickPick(harness).open(created.occurrenceId)
+    pointerDown(itemFor(container, 'OT_ORG_UNIT'))
+
+    // The old object is gone; a new OT_ORG_UNIT object took its place.
+    expect(canvas.document.objectDefinitions.has(created.definitionId)).toBe(false)
+    const model = canvas.document.models.get(canvas.activeModelId)
+    const orgOccurrence = model?.occurrences.find(
+      (occurrence) =>
+        canvas.document.objectDefinitions.get(occurrence.definitionId)?.type === 'OT_ORG_UNIT'
+    )
+    expect(orgOccurrence).toBeTruthy()
+
+    // The editor retargeted onto the replacement, keeping the typed caption, so
+    // committing writes to the NEW definition rather than the deleted one.
+    expect(directEditing.isActive()).toBe(true)
+    const retargeted = container.querySelector<HTMLElement>('.djs-direct-editing-content')
+    expect(retargeted?.innerText).toBe('Customer')
+    directEditing.complete()
+
+    expect(
+      canvas.document.objectDefinitions.get(orgOccurrence?.definitionId ?? '')?.names.values[
+        'en-US'
+      ]
+    ).toBe('Customer')
+  })
+
   it('keeps the direct-editing textbox focused when a member is pressed', () => {
     harness = bootCanvas()
     const { canvas, container } = harness

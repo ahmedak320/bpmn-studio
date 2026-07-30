@@ -32,12 +32,23 @@ export function ArisSplitImportDialog({
   const confirmRef = useRef<HTMLButtonElement | null>(null)
   if (!open || !plan) return null
 
+  // `executeArisSplitImport` keeps writing files once started; letting Escape,
+  // the backdrop or the Cancel button dismiss the dialog while `busy` would
+  // hide that in-flight write from the user without stopping it (there is no
+  // abort path). Refusing to call `onCancel` at all while busy is a complete
+  // guard regardless of what the caller's `onCancel` does — the parent simply
+  // never gets a chance to close the dialog out from under the write.
+  const handleCancel = (): void => {
+    if (busy) return
+    onCancel()
+  }
+
   return (
     <AccessibleDialog
       role="dialog"
       dir={dir}
       ariaLabel={tk('aris.import.split.title', 'Import into the workspace')}
-      onClose={onCancel}
+      onClose={handleCancel}
       initialFocusRef={confirmRef}
       dialogStyle={{
         maxWidth: 720,
@@ -98,7 +109,12 @@ export function ArisSplitImportDialog({
         >
           {tk('aris.import.split.confirm', 'Import {count} file(s)', { count: plan.writeCount })}
         </button>
-        <button type="button" className="orbitpm-lite-chrome-btn" onClick={onCancel}>
+        <button
+          type="button"
+          className="orbitpm-lite-chrome-btn"
+          disabled={busy}
+          onClick={handleCancel}
+        >
           {tk('aris.import.split.cancel', 'Cancel')}
         </button>
       </div>

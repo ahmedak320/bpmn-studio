@@ -21,6 +21,14 @@ describe('ARIS convention symbol catalog', () => {
     }
   })
 
+  it('has exactly one catalog row for every persisted objectType + symbolNum identity', () => {
+    const identities = ARIS_CONVENTION_SYMBOLS.map(
+      (symbol) => `${symbol.objectType}:${symbol.symbolNum}`
+    )
+
+    expect(new Set(identities).size).toBe(identities.length)
+  })
+
   it('looks up a symbol by objectType + symbolNum', () => {
     const symbol = conventionSymbol('OT_FUNC', 'ST_FUNC')
     expect(symbol).not.toBeNull()
@@ -61,7 +69,7 @@ describe('ARIS convention symbol catalog', () => {
     const palette = getPaletteSymbols('MT_VAL_ADD_CHN_DGM')
     const keys = palette.map((s) => s.labelKey)
     expect(keys).toContain('aris.symbol.valueAddedChain')
-    expect(keys).toContain('aris.symbol.valueAddedChainStart')
+    expect(keys).not.toContain('aris.symbol.valueAddedChainStart')
   })
 
   it('getVariantFamily(OT_FUNC, ST_FUNC) includes System function + Process interface', () => {

@@ -18,11 +18,13 @@
  *
  * The double-click handler registers on `element.dblclick` at **priority 2000**,
  * above the direct-editing provider's handler at **1500**. It returns `false`
- * (halting propagation) **only** when it actually navigates — i.e. the occurrence
- * belongs to a definition whose `linkedModelIds` is non-empty. When the
- * occurrence has no assignment it returns `undefined`, so the label editor at
- * 1500 runs instead. A function WITH an assignment drills down; WITHOUT one it
- * opens the label editor. The two never fire for the same gesture.
+ * (halting propagation) **only** when a canonical (in-document) model actually
+ * opened — not merely when an assignment exists. `onActivate` reports that by
+ * returning a navigation-result boolean (`true` = a canonical model opened);
+ * a target that is missing/ambiguous or lives off-file resolves to `undefined`,
+ * so the label editor at 1500 runs instead. A definition whose assignment drills
+ * into this document opens that model; one that cannot opens the label editor.
+ * The two never fire for the same gesture.
  *
  * Runs only in the browser (uses `document.createElement`) but is import-safe
  * from a jsdom test environment, and every overlays call is try/catch-wrapped so
@@ -106,7 +108,7 @@ function buildMarker(
   occurrenceId: string,
   activation: ArisAssignmentActivation,
   getActivation: (occurrenceId: string) => ArisAssignmentActivation | null,
-  onActivate: (activation: ArisAssignmentActivation) => void
+  onActivate: (activation: ArisAssignmentActivation) => boolean | void
 ): HTMLElement {
   const button = document.createElement('button')
   button.type = 'button'
@@ -137,7 +139,7 @@ function buildMarker(
  */
 export function installArisAssignmentUx(
   canvas: ArisCanvas,
-  onActivate: (activation: ArisAssignmentActivation) => void
+  onActivate: (activation: ArisAssignmentActivation) => boolean | void
 ): ArisAssignmentUxController {
   const overlays = canvas.get<OverlaysLike>('overlays')
   const elementRegistry = canvas.get<ElementRegistryLike>('elementRegistry')
@@ -188,16 +190,26 @@ export function installArisAssignmentUx(
   }
 
   // Priority 2000: above the direct-editing label editor (1500). Return `false`
-  // ONLY when we actually navigate an assignment; otherwise `undefined` so the
-  // label editor runs. See the module header's priority contract.
+  // (halting propagation, suppressing the editor) ONLY when a canonical model
+  // actually opened; otherwise `undefined` so the label editor runs. See the
+  // module header's priority contract.
   const onDblClick = (event: unknown): boolean | undefined => {
     const element = (event as { element?: unknown } | null)?.element
     const businessObject = arisBusinessObject(element as never)
     if (!businessObject || businessObject.kind !== 'occurrence') return undefined
     const activation = getActivation(businessObject.occurrenceId)
     if (!activation) return undefined
-    onActivate(activation)
-    return false
+    const navigated = onActivate(activation)
+    // `onActivate` reports whether a canonical model opened. A caller that still
+    // returns nothing is inferred from the document: an in-document linked model
+    // would have switched the canvas, whereas a missing/off-file target only
+    // delegates to the shell and leaves the canvas here — where the label editor
+    // should take over.
+    const openedCanonicalModel =
+      navigated === true ||
+      (navigated === undefined &&
+        activation.linkedModelIds.some((modelId) => canvas.document.models.has(modelId)))
+    return openedCanonicalModel ? false : undefined
   }
 
   eventBus.on(ARIS_DOCUMENT_CHANGED, sync)

@@ -803,6 +803,8 @@ export function ArisStudioTab({
         run((authoring) => authoring.renameModel(id, name, localeId)),
       setDefinitionAttribute: (definitionId, attributeType, values) =>
         run((authoring) => authoring.setDefinitionAttribute(definitionId, attributeType, values)),
+      setModelAttribute: (modelId, attributeType, values) =>
+        run((authoring) => authoring.setModelAttribute(modelId, attributeType, values)),
       restyleOccurrence: (occurrenceId, style) =>
         run((authoring) => authoring.restyleOccurrence(occurrenceId, style)),
       addModelAssignment: (definitionId, linkedModelId) =>

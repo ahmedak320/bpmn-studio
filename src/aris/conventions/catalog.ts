@@ -338,20 +338,6 @@ const VERIFY_AGAINST_REAL_ARIS_EXPORT: readonly ArisConventionSymbol[] = Object.
     verification: 'unverified'
   }),
 
-  // [manual/unverified] Data entity (distinct palette entry, see R1 note)
-  Object.freeze({
-    objectType: 'OT_ENT_TYPE',
-    symbolNum: 'ST_ENT_TYPE',
-    labelKey: 'aris.symbol.dataEntity',
-    family: null,
-    defaultFill: '#7f2020',
-    defaultStroke: DEFAULT_STROKE,
-    paletteGroup: 'data',
-    paletteOrder: 41,
-    modelTypes: Object.freeze(['MT_EEPC']),
-    verification: 'aris-doc'
-  }),
-
   // [manual] Internal person
   Object.freeze({
     objectType: 'OT_PERS',
@@ -394,62 +380,6 @@ const VERIFY_AGAINST_REAL_ARIS_EXPORT: readonly ArisConventionSymbol[] = Object.
     verification: 'unverified'
   }),
 
-  // [unverified] Related entity
-  Object.freeze({
-    objectType: 'OT_PERS',
-    symbolNum: 'ST_PERS_EXT',
-    labelKey: 'aris.symbol.relatedEntity',
-    family: 'orgPeople',
-    defaultFill: '#9ca3af',
-    defaultStroke: DEFAULT_STROKE,
-    paletteGroup: 'org',
-    paletteOrder: 82,
-    modelTypes: Object.freeze(['MT_EEPC']),
-    verification: 'unverified'
-  }),
-
-  // [unverified] Committee / Team (org-unit variant)
-  Object.freeze({
-    objectType: 'OT_ORG_UNIT',
-    symbolNum: 'ST_ORG_UNIT_1',
-    labelKey: 'aris.symbol.committeeTeam',
-    family: 'orgPeople',
-    defaultFill: '#f59e0b',
-    defaultStroke: DEFAULT_STROKE,
-    paletteGroup: 'org',
-    paletteOrder: 87,
-    modelTypes: Object.freeze(['MT_EEPC']),
-    verification: 'unverified'
-  }),
-
-  // [unverified] SLA (policy variant)
-  Object.freeze({
-    objectType: 'OT_POLICY',
-    symbolNum: 'ST_BUSINESS_POLICY',
-    labelKey: 'aris.symbol.sla',
-    family: 'governance',
-    defaultFill: '#dc2626',
-    defaultStroke: DEFAULT_STROKE,
-    paletteGroup: 'governance',
-    paletteOrder: 74,
-    modelTypes: Object.freeze(['MT_EEPC']),
-    verification: 'unverified'
-  }),
-
-  // [unverified] Law / Regulation (policy variant)
-  Object.freeze({
-    objectType: 'OT_POLICY',
-    symbolNum: 'ST_BUSINESS_POLICY',
-    labelKey: 'aris.symbol.lawRegulation',
-    family: 'governance',
-    defaultFill: '#dc2626',
-    defaultStroke: DEFAULT_STROKE,
-    paletteGroup: 'governance',
-    paletteOrder: 75,
-    modelTypes: Object.freeze(['MT_EEPC']),
-    verification: 'unverified'
-  }),
-
   // [manual/unverified] Risk
   Object.freeze({
     objectType: 'OT_RISK',
@@ -476,20 +406,6 @@ const VERIFY_AGAINST_REAL_ARIS_EXPORT: readonly ArisConventionSymbol[] = Object.
     paletteOrder: 77,
     modelTypes: Object.freeze(['MT_EEPC']),
     verification: 'unverified'
-  }),
-
-  // [manual] Value-added chain start (VACD only)
-  Object.freeze({
-    objectType: 'OT_FUNC',
-    symbolNum: 'ST_VAL_ADD_CHN_SML_1',
-    labelKey: 'aris.symbol.valueAddedChainStart',
-    family: 'valueChain',
-    defaultFill: '#2f7d31',
-    defaultStroke: DEFAULT_STROKE,
-    paletteGroup: 'flow',
-    paletteOrder: 14,
-    modelTypes: Object.freeze(['MT_VAL_ADD_CHN_DGM']),
-    verification: 'aris-doc'
   })
 ])
 

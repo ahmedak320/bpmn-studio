@@ -1,4 +1,3 @@
-import { renderAttributes, type EmittedAttribute } from '../writer/emit'
 import { deriveArisSourceFileName } from '../shell/arisBlankModel'
 import type {
   ArisConnectionDefinitionRecord,
@@ -17,9 +16,9 @@ import type { XmlSpan } from './xmlTokenizer'
  * source text — never re-serialized record-by-record — so cross-file identity (`LinkedModels`
  * assignments, object/connection ids, styled-run markup, entity-referenced locale ids) and
  * rendering fidelity survive intact. The only structural surgery performed on a slice is the
- * excision of `<CxnDef>` children that the emitted model never occurs, and the reconstruction of
- * the `<AML>`/`<Group>` container open tags (from their raw attributes) so the model can stand on
- * its own inside its group chain.
+ * excision of `<CxnDef>` children that the emitted model never occurs, and the verbatim reuse of
+ * the `<AML>`/`<Group>` container open tags so the model can stand on its own inside its group
+ * chain.
  */
 
 export interface ArisSplitFile {
@@ -37,13 +36,38 @@ export interface ArisSplitPlan {
 
 const GROUP_ROOT_ID = 'Group.Root'
 const NAME_ATTRIBUTE_TYPE = 'AT_NAME'
+const WINDOWS_RESERVED_DEVICE_NAMES = new Set([
+  'con',
+  'prn',
+  'aux',
+  'nul',
+  'com1',
+  'com2',
+  'com3',
+  'com4',
+  'com5',
+  'com6',
+  'com7',
+  'com8',
+  'com9',
+  'lpt1',
+  'lpt2',
+  'lpt3',
+  'lpt4',
+  'lpt5',
+  'lpt6',
+  'lpt7',
+  'lpt8',
+  'lpt9'
+])
 
 /**
  * Windows-safe, cross-platform path-segment sanitizer for a group display name.
  *
  * NFC-normalize and trim → drop the characters no filesystem accepts (`<>:"/\|?*`) plus control
  * characters → collapse internal whitespace to a single space → strip leading dots and trailing
- * dots/spaces (both are unrepresentable on Windows) → fall back to `'group'` if nothing survives.
+ * dots/spaces (both are unrepresentable on Windows) → neutralize reserved device names → fall back
+ * to `'group'` if nothing survives.
  */
 export function sanitizeArisPathSegment(name: string): string {
   const collapsed = name
@@ -55,7 +79,18 @@ export function sanitizeArisPathSegment(name: string): string {
     .trim()
     .replace(/^\.+/u, '')
     .replace(/[.\s]+$/u, '')
-  return collapsed === '' ? 'group' : collapsed
+  if (collapsed === '') return 'group'
+
+  // Windows reserves the base before the first dot regardless of extension, so `AUX.txt` needs
+  // the suffix inserted before `.txt`, not after it.
+  const extensionIndex = collapsed.indexOf('.')
+  const base = (
+    extensionIndex === -1 ? collapsed : collapsed.slice(0, extensionIndex)
+  ).toLowerCase()
+  if (!WINDOWS_RESERVED_DEVICE_NAMES.has(base)) return collapsed
+  return extensionIndex === -1
+    ? `${collapsed}-file`
+    : `${collapsed.slice(0, extensionIndex)}-file${collapsed.slice(extensionIndex)}`
 }
 
 /**
@@ -74,10 +109,70 @@ function sliceSpan(text: string, span: XmlSpan): string {
   return text.slice(span.start.offset, span.end.offset)
 }
 
-function rawAttributesToEmitted(
-  rawAttributes: Readonly<Record<string, string>>
-): readonly EmittedAttribute[] {
-  return Object.entries(rawAttributes).map(([name, value]) => ({ name, value }))
+/** Slice an element's complete source start tag, respecting `>` inside quoted attribute values. */
+function sliceStartTag(text: string, span: XmlSpan): string {
+  let quote: '"' | "'" | null = null
+  for (let index = span.start.offset; index < span.end.offset; index += 1) {
+    const char = text[index]!
+    if (quote !== null) {
+      if (char === quote) quote = null
+      continue
+    }
+    if (char === '"' || char === "'") {
+      quote = char
+      continue
+    }
+    if (char === '>') return text.slice(span.start.offset, index + 1)
+  }
+  throw new Error(`Unable to locate the end of the start tag at offset ${span.start.offset}.`)
+}
+
+/**
+ * Rewrite one existing start-tag attribute value without reserializing any other source token.
+ * The replacement consists only of already-tokenized source ids, so it intentionally retains
+ * their raw entity spelling.
+ */
+function rewriteStartTagAttributeValue(
+  elementSlice: string,
+  attributeName: string,
+  value: string
+): string {
+  const startTag = sliceStartTag(elementSlice, {
+    start: { offset: 0, byteOffset: 0, line: 1, column: 1 },
+    end: {
+      offset: elementSlice.length,
+      byteOffset: elementSlice.length,
+      line: 1,
+      column: elementSlice.length + 1
+    }
+  })
+  let index = 1
+  while (index < startTag.length && !/[\s/>]/u.test(startTag[index]!)) index += 1
+
+  while (index < startTag.length) {
+    while (index < startTag.length && /\s/u.test(startTag[index]!)) index += 1
+    if (startTag[index] === '/' || startTag[index] === '>') break
+
+    const nameStart = index
+    while (index < startTag.length && !/[\s=/>]/u.test(startTag[index]!)) index += 1
+    const name = startTag.slice(nameStart, index)
+    while (index < startTag.length && /\s/u.test(startTag[index]!)) index += 1
+    if (startTag[index] !== '=') break
+    index += 1
+    while (index < startTag.length && /\s/u.test(startTag[index]!)) index += 1
+
+    const quote = startTag[index]
+    if (quote !== '"' && quote !== "'") break
+    const valueStart = index + 1
+    const valueEnd = startTag.indexOf(quote, valueStart)
+    if (valueEnd === -1) break
+    if (name === attributeName) {
+      return elementSlice.slice(0, valueStart) + value + elementSlice.slice(valueEnd)
+    }
+    index = valueEnd + 1
+  }
+
+  return elementSlice
 }
 
 /** The English-preferred (then any other locale) display name for an owner element, or null. */
@@ -122,21 +217,33 @@ function nameAttrDefSlices(
 }
 
 /**
- * Walk a model's group ancestry (innermost group first via `parentGroupId`) and return the chain
- * outermost-first, with the synthetic `Group.Root` container excluded — it is never a real folder.
+ * Walk a model's group ancestry (innermost group first via `parentGroupId`) and return its complete
+ * XML wrapper chain outermost-first, including `Group.Root`.
  */
-function groupChainFor(index: ArisSourceIndex, groupId: string | null): readonly ArisGroupRecord[] {
+function xmlGroupChainFor(
+  index: ArisSourceIndex,
+  groupId: string | null
+): readonly ArisGroupRecord[] {
   const chain: ArisGroupRecord[] = []
   const seen = new Set<string>()
   let currentId = groupId
-  while (currentId && currentId !== GROUP_ROOT_ID && !seen.has(currentId)) {
+  while (currentId && !seen.has(currentId)) {
     seen.add(currentId)
     const group = index.groups.get(currentId)
     if (!group) break
     chain.push(group)
+    if (currentId === GROUP_ROOT_ID) break
     currentId = group.parsed.parentGroupId
   }
   return chain.reverse()
+}
+
+/** A model's folder chain excludes the synthetic `Group.Root` filesystem container. */
+function folderGroupChainFor(
+  index: ArisSourceIndex,
+  groupId: string | null
+): readonly ArisGroupRecord[] {
+  return xmlGroupChainFor(index, groupId).filter((group) => group.parsed.groupId !== GROUP_ROOT_ID)
 }
 
 /** Child `<CxnDef>` records of an object definition, keyed by the parent definition's source id. */
@@ -185,6 +292,20 @@ function sliceObjectDefinition(
     while (cutStart > 0 && /\s/u.test(slice[cutStart - 1]!)) cutStart -= 1
     slice = slice.slice(0, cutStart) + slice.slice(cutEnd)
   }
+
+  const retainedConnectionDefinitionIds = definition.parsed.outboundConnectionDefinitionIds.filter(
+    (id) => keptConnectionDefinitionIds.has(id)
+  )
+  if (
+    retainedConnectionDefinitionIds.length !==
+    definition.parsed.outboundConnectionDefinitionIds.length
+  ) {
+    slice = rewriteStartTagAttributeValue(
+      slice,
+      'ToCxnDefs.IdRefs',
+      retainedConnectionDefinitionIds.join(' ')
+    )
+  }
   return slice
 }
 
@@ -216,7 +337,7 @@ export function buildArisSplitPlan(pkg: ArisXmlSourcePackage): ArisSplitPlan {
   // The prolog (XML declaration + DOCTYPE with the LocaleId entity declarations) is MANDATORY: it
   // is what lets every `&LocaleId…;` reference in the sliced records resolve on re-parse.
   const prolog = text.slice(0, root.span.start.offset).replace(/\s+$/u, '')
-  const rootOpenTag = `<${root.elementName}${renderAttributes(rawAttributesToEmitted(root.rawAttributes))}>`
+  const rootOpenTag = sliceStartTag(text, root.span)
   const rootCloseTag = `</${root.elementName}>`
 
   const headerSlice = index.database ? sliceSpan(text, index.database.span) : null
@@ -226,6 +347,16 @@ export function buildArisSplitPlan(pkg: ArisXmlSourcePackage): ArisSplitPlan {
   )
 
   const childConnectionDefinitions = connectionDefinitionsByParent(index)
+  const ambiguousModelIds = new Set(
+    index.supersededRecords
+      .filter(
+        (record) =>
+          record.recordKind === 'model' &&
+          record.sourceId !== null &&
+          index.models.has(record.sourceId)
+      )
+      .map((record) => record.sourceId!)
+  )
 
   for (const model of index.models.values()) {
     const modelId = model.parsed.modelId
@@ -233,6 +364,12 @@ export function buildArisSplitPlan(pkg: ArisXmlSourcePackage): ArisSplitPlan {
       // A model with no id cannot be addressed or re-imported; retain it in the skip list rather
       // than emit a file that could never round-trip.
       skippedModelIds.push(model.sourceId ?? '(anonymous model)')
+      continue
+    }
+    if (ambiguousModelIds.has(modelId)) {
+      // Every declaration sharing this id is ambiguous: emit neither the first indexed record nor
+      // any superseded duplicate, and make the id explicit to callers.
+      skippedModelIds.push(modelId)
       continue
     }
 
@@ -294,12 +431,10 @@ export function buildArisSplitPlan(pkg: ArisXmlSourcePackage): ArisSplitPlan {
     const modelSlice = sliceSpan(text, model.span)
     let innerContent = [...definitionBlocks, modelSlice].join('\n')
 
-    const chain = groupChainFor(index, model.parsed.groupId)
-    for (let depth = chain.length - 1; depth >= 0; depth -= 1) {
-      const group = chain[depth]!
-      const openTag = `<${group.elementName}${renderAttributes(
-        rawAttributesToEmitted(group.rawAttributes)
-      )}>`
+    const xmlGroupChain = xmlGroupChainFor(index, model.parsed.groupId)
+    for (let depth = xmlGroupChain.length - 1; depth >= 0; depth -= 1) {
+      const group = xmlGroupChain[depth]!
+      const openTag = sliceStartTag(text, group.span)
       const attrDefSlices = nameAttrDefSlices(text, index, group.elementName, group.sourceId)
       innerContent = [openTag, ...attrDefSlices, innerContent, `</${group.elementName}>`].join('\n')
     }
@@ -317,7 +452,7 @@ export function buildArisSplitPlan(pkg: ArisXmlSourcePackage): ArisSplitPlan {
     ].join('\n')}\n`
 
     const modelName = displayName(index, 'Model', model.sourceId)
-    const folderSegments = chain.map((group) =>
+    const folderSegments = folderGroupChainFor(index, model.parsed.groupId).map((group) =>
       sanitizeArisPathSegment(
         displayName(index, group.elementName, group.sourceId) ?? group.parsed.groupId ?? ''
       )

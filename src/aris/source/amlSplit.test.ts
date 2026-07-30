@@ -7,7 +7,7 @@ import {
 } from './amlSplit'
 import { buildSemanticArisDocument, type ArisSourceIndex } from './semanticIndex'
 import type { ArisXmlSourcePackage } from './sourcePackage'
-import { tokenizeXmlDocument } from './xmlTokenizer'
+import { expandXmlEntities, tokenizeXmlDocument, type XmlStartTagToken } from './xmlTokenizer'
 
 function parse(text: string): { index: ArisSourceIndex; errorCount: number; total: number } {
   const semantic = buildSemanticArisDocument(tokenizeXmlDocument(text))
@@ -139,6 +139,12 @@ describe('sanitizeArisPathSegment', () => {
     expect(sanitizeArisPathSegment('   ***   ')).toBe('group')
     expect(sanitizeArisPathSegment('')).toBe('group')
   })
+  it('neutralizes Windows reserved device names, including names with extensions', () => {
+    expect(sanitizeArisPathSegment('CON')).toBe('CON-file')
+    expect(sanitizeArisPathSegment('aux.txt')).toBe('aux-file.txt')
+    expect(sanitizeArisPathSegment('Com1.log')).toBe('Com1-file.log')
+    expect(sanitizeArisPathSegment('COM10')).toBe('COM10')
+  })
 })
 
 describe('deriveSplitFileName', () => {
@@ -203,6 +209,18 @@ describe('buildArisSplitPlan (synthetic AML)', () => {
     expect(model2.connectionDefinitions.has('CxnDef.1')).toBe(false)
   })
 
+  it('rewrites ToCxnDefs.IdRefs to contain only retained connection definitions', () => {
+    const file = fileById(plan.files, 'Model.1')
+    const reparsed = parse(file.text)
+
+    expect(reparsed.index.objectDefinitions.get('ObjDef.Shared')!.parsed).toMatchObject({
+      outboundConnectionDefinitionIds: ['CxnDef.1']
+    })
+    expect(file.text).toContain('ToCxnDefs.IdRefs="CxnDef.1"')
+    expect(file.text).not.toContain('ToCxnDefs.IdRefs="CxnDef.1 CxnDef.2"')
+    expect(reparsed.total).toBe(0)
+  })
+
   it('preserves LinkedModels.IdRefs verbatim on the value-chain model', () => {
     const file = fileById(plan.files, 'Model.3')
     expect(file.text).toContain('LinkedModels.IdRefs="Model.1 Model.2"')
@@ -239,5 +257,61 @@ describe('buildArisSplitPlan (synthetic AML)', () => {
   it('gives two identically-named models the same file name (dedup handled downstream)', () => {
     expect(fileById(plan.files, 'Model.1').fileName).toBe('duplicate-name.aml')
     expect(fileById(plan.files, 'Model.2').fileName).toBe('duplicate-name.aml')
+  })
+})
+
+describe('buildArisSplitPlan (integrity edge cases)', () => {
+  it('fails closed for a duplicated Model.ID and surfaces the ambiguous id', () => {
+    const source = `<AML>
+      <Group Group.ID="Group.Root">
+        <Model Model.ID="Model.A" Model.Type="MT_EEPC"/>
+        <Model Model.ID="Model.A" Model.Type="MT_EEPC"/>
+      </Group>
+    </AML>`
+
+    const plan = buildArisSplitPlan(packageOf(source))
+
+    expect(plan.files).toEqual([])
+    expect(plan.skippedModelIds).toEqual(['Model.A'])
+  })
+
+  it('wraps a Group.Root-level model in its source Group while keeping folders rootless', () => {
+    const source = `<AML>
+      <Group Group.ID='Group.Root' Creator='R&amp;D'>
+        <Model Model.ID="Model.Root" Model.Type="MT_EEPC"/>
+      </Group>
+    </AML>`
+
+    const plan = buildArisSplitPlan(packageOf(source))
+    const file = fileById(plan.files, 'Model.Root')
+    const reparsed = parse(file.text)
+
+    expect(file.folderSegments).toEqual([])
+    expect(file.text).toContain("<Group Group.ID='Group.Root' Creator='R&amp;D'>")
+    expect(reparsed.index.models.get('Model.Root')!.parsed.groupId).toBe('Group.Root')
+    expect(reparsed.total).toBe(0)
+  })
+
+  it('preserves source entity references in reconstructed root and Group start tags', () => {
+    const source = `<AML Vendor='R&amp;D'>
+      <Group Group.ID="Group.Root" Creator="R&amp;D">
+        <Model Model.ID="Model.Entities" Model.Type="MT_EEPC"/>
+      </Group>
+    </AML>`
+
+    const file = fileById(buildArisSplitPlan(packageOf(source)).files, 'Model.Entities')
+    const tokenized = tokenizeXmlDocument(file.text)
+    const creator = tokenized.tokens
+      .find(
+        (token): token is XmlStartTagToken => token.kind === 'start-tag' && token.name === 'Group'
+      )
+      ?.attributes.find((attribute) => attribute.name === 'Creator')
+
+    expect(file.text).toContain("<AML Vendor='R&amp;D'>")
+    expect(file.text).toContain('Creator="R&amp;D"')
+    expect(file.text).not.toContain('&amp;amp;')
+    expect(creator?.value).toBe('R&amp;D')
+    expect(expandXmlEntities(creator!.value)).toBe('R&D')
+    expect(parse(file.text).total).toBe(0)
   })
 })

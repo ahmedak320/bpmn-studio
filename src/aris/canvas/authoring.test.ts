@@ -513,4 +513,97 @@ describe('authoring operations (Section 11.4)', () => {
       })
     ).toThrow(ArisCanvasCommandError)
   })
+
+  it('refuses to replace an object that carries metadata a rebuild would drop (#5)', () => {
+    const { document, first, second } = twoModelDocument()
+    harness = bootCanvas({ document, modelId: first })
+    const { canvas } = harness
+    const target = { objectType: 'OT_ORG_UNIT', symbolNum: 'ST_ORG_UNIT_1' } as const
+
+    // (1) A definition attribute must not be silently dropped.
+    const withAttribute = canvas.authoring.createObject({
+      objectType: 'OT_PERS_TYPE',
+      name: 'Reviewer',
+      localeId: 'en-US',
+      position: { x: 0, y: 0 }
+    })
+    canvas.authoring.setDefinitionAttribute(withAttribute.definitionId, 'AT_DESC', [
+      { localeId: 'en-US', text: 'Signs off applications' }
+    ])
+    expect(canvas.authoring.canReplaceNewObject(withAttribute.occurrenceId)).toBe(false)
+    let attributeError: unknown
+    try {
+      canvas.authoring.replaceNewObject(withAttribute.occurrenceId, target)
+    } catch (error) {
+      attributeError = error
+    }
+    expect(attributeError).toBeInstanceOf(ArisCanvasCommandError)
+    expect((attributeError as ArisCanvasCommandError).code).toBe('replace-not-safe')
+    // The refusal left the object — and its attribute — intact.
+    expect(canvas.document.objectDefinitions.has(withAttribute.definitionId)).toBe(true)
+    expect(
+      canvas.document.objectDefinitions
+        .get(withAttribute.definitionId)
+        ?.attributes.find((entry) => entry.type === 'AT_DESC')?.values
+    ).toEqual([{ localeId: 'en-US', text: 'Signs off applications' }])
+
+    // (2) A linked-model assignment must not be dropped.
+    const withAssignment = canvas.authoring.createObject({
+      objectType: 'OT_PERS_TYPE',
+      position: { x: 0, y: 300 }
+    })
+    canvas.authoring.addModelAssignment(withAssignment.definitionId, second)
+    expect(canvas.authoring.canReplaceNewObject(withAssignment.occurrenceId)).toBe(false)
+    expect(() => canvas.authoring.replaceNewObject(withAssignment.occurrenceId, target)).toThrow(
+      ArisCanvasCommandError
+    )
+
+    // (3) A second name locale must not be dropped.
+    const withLocale = canvas.authoring.createObject({
+      objectType: 'OT_PERS_TYPE',
+      name: 'Reviewer',
+      localeId: 'en-US',
+      position: { x: 0, y: 600 }
+    })
+    canvas.authoring.renameDefinition(withLocale.definitionId, 'مراجع', 'ar-AE')
+    expect(
+      Object.keys(
+        canvas.document.objectDefinitions.get(withLocale.definitionId)?.names.values ?? {}
+      )
+    ).toHaveLength(2)
+    expect(canvas.authoring.canReplaceNewObject(withLocale.occurrenceId)).toBe(false)
+
+    // (4) An authored occurrence style must not be dropped.
+    const withStyle = canvas.authoring.createObject({
+      objectType: 'OT_PERS_TYPE',
+      position: { x: 400, y: 0 }
+    })
+    canvas.authoring.restyleOccurrence(withStyle.occurrenceId, { fillColor: '#abcdef' })
+    expect(canvas.authoring.canReplaceNewObject(withStyle.occurrenceId)).toBe(false)
+
+    // (5) An attachment (stored as an AT_ORBITPM_ATTACHMENT attribute) must not be dropped.
+    const withAttachment = canvas.authoring.createObject({
+      objectType: 'OT_PERS_TYPE',
+      position: { x: 400, y: 300 }
+    })
+    canvas.authoring.addAttachment(withAttachment.definitionId, {
+      id: 'att-1',
+      fileName: 'sig.txt',
+      mimeType: 'text/plain',
+      size: 4,
+      dataBase64: bytesToBase64(new Uint8Array([1, 2, 3, 4]))
+    })
+    expect(canvas.authoring.canReplaceNewObject(withAttachment.occurrenceId)).toBe(false)
+
+    // A pristine, freshly-placed sibling stays replaceable — the gate only
+    // tightened for objects that actually carry droppable metadata.
+    const pristine = canvas.authoring.createObject({
+      objectType: 'OT_PERS_TYPE',
+      name: 'Fresh',
+      localeId: 'en-US',
+      position: { x: 800, y: 0 }
+    })
+    expect(canvas.authoring.canReplaceNewObject(pristine.occurrenceId)).toBe(true)
+    expect(() => canvas.authoring.replaceNewObject(pristine.occurrenceId, target)).not.toThrow()
+  })
 })

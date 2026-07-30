@@ -353,6 +353,8 @@ describe('every rail edit is one command on the canvas stack (continued: R3 sche
         canvas.authoring.renameModel(modelId, name, localeId),
       setDefinitionAttribute: (definitionId, attributeType, values) =>
         canvas.authoring.setDefinitionAttribute(definitionId, attributeType, values),
+      setModelAttribute: (modelId, attributeType, values) =>
+        canvas.authoring.setModelAttribute(modelId, attributeType, values),
       restyleOccurrence: (occurrenceId, style) =>
         canvas.authoring.restyleOccurrence(occurrenceId, style),
       addModelAssignment: (definitionId, modelId) =>
@@ -408,6 +410,45 @@ describe('every rail edit is one command on the canvas stack (continued: R3 sche
       .get(created.definitionId)
       ?.attributes.find((attribute) => attribute.type === 'AT_ID')
     expect(afterUndo?.values ?? []).toHaveLength(0)
+  })
+})
+
+describe('ArisDetailsRail mounts ArisModelAttributesEditor for a bare model selection (issue 7)', () => {
+  // `m1` in the shared fixture is `MT_EEPC` (see `buildModel` in
+  // arisDetailsEditingFixture.ts) and stores no attributes at all, so
+  // `AT_PERS_RESP` (a `schemaForModelType('MT_EEPC')` entry) is a
+  // create-on-first-save row here exactly as it is for the standalone
+  // `ArisModelAttributesEditor` tests below — this block instead proves the
+  // rail itself reaches for that editor on a model selection, which it never
+  // did before issue 7 (it only ever mounted `ArisAttributesEditor`, and only
+  // for a definition selection).
+  it('renders the model attributes editor, not the definition one, for a model selection', () => {
+    mount({ kind: 'model', id: 'm1' }, recorder().api)
+    openTab('attributes')
+    expect(document.querySelector('[data-orbitpm-aris-model-attributes-editor]')).not.toBeNull()
+    expect(document.querySelector('[data-orbitpm-aris-attributes-editor]')).toBeNull()
+  })
+
+  it('commits a missing model attribute through editing.setModelAttribute', () => {
+    const spy = recorder()
+    mount({ kind: 'model', id: 'm1' }, spy.api)
+    openTab('attributes')
+    typeAndBlur(field('[data-orbitpm-aris-attribute-input="AT_PERS_RESP:en"]'), 'Intake team')
+    expect(spy.calls).toEqual([
+      { name: 'setModelAttribute', args: ['m1', 'AT_PERS_RESP', { [EN_LOCALE]: 'Intake team' }] }
+    ])
+  })
+
+  it('does not mount the model attributes editor for an object-definition selection', () => {
+    mount({ kind: 'objectDefinition', id: 'od-shared' }, recorder().api)
+    openTab('attributes')
+    expect(document.querySelector('[data-orbitpm-aris-model-attributes-editor]')).toBeNull()
+  })
+
+  it('does not mount the model attributes editor for an occurrence selection', () => {
+    mount({ kind: 'objectOccurrence', id: 'occ-1' }, recorder().api)
+    openTab('attributes')
+    expect(document.querySelector('[data-orbitpm-aris-model-attributes-editor]')).toBeNull()
   })
 })
 
@@ -911,6 +952,8 @@ describe('every rail edit is one command on the canvas stack', () => {
         canvas.authoring.renameModel(modelId, name, localeId),
       setDefinitionAttribute: (definitionId, attributeType, values) =>
         canvas.authoring.setDefinitionAttribute(definitionId, attributeType, values),
+      setModelAttribute: (modelId, attributeType, values) =>
+        canvas.authoring.setModelAttribute(modelId, attributeType, values),
       restyleOccurrence: (occurrenceId: string, style: Partial<ArisOccurrenceStyle>) =>
         canvas.authoring.restyleOccurrence(occurrenceId, style),
       addModelAssignment: (definitionId, modelId) =>
@@ -1064,5 +1107,37 @@ describe('every rail edit is one command on the canvas stack', () => {
     expect(canvas.commandLog.length).toBe(commandsBefore + 1)
     canvas.undo()
     expect(canvas.document.objectDefinitions.get(created.definitionId)?.linkedModelIds).toEqual([])
+  })
+
+  it('creates a model attribute in one undoable step, selecting the model itself on the rail (issue 7)', () => {
+    // `liveEditing()` above is documented as "exactly as ArisStudioTab builds
+    // it" and now includes `setModelAttribute`, so driving this through
+    // `renderLive` — rather than a bespoke editing object — pins the same
+    // wiring `ArisStudioTab.tsx`'s own `detailsEditing` memo uses: the
+    // create-on-save commit that used to be a no-op (issue 7) reaches a real
+    // canvas, undoably, when the rail resolves the selection to a bare model.
+    harness = bootCanvas()
+    const { canvas } = harness
+    const modelId = canvas.activeModelId
+    const commandsBefore = canvas.commandLog.length
+
+    renderLive(canvas, { kind: 'model', id: modelId })
+    openTab('attributes')
+    expect(document.querySelector('[data-orbitpm-aris-model-attributes-editor]')).not.toBeNull()
+
+    typeAndBlur(field('[data-orbitpm-aris-attribute-input="AT_PERS_RESP:en"]'), 'Intake team')
+
+    expect(canvas.commandLog.length).toBe(commandsBefore + 1)
+    const stored = canvas.document.models
+      .get(modelId)
+      ?.attributes.find((attribute) => attribute.type === 'AT_PERS_RESP')
+    expect(stored?.values).toEqual([{ localeId: expect.any(String), text: 'Intake team' }])
+
+    canvas.undo()
+    expect(canvas.commandLog.length).toBe(commandsBefore)
+    const afterUndo = canvas.document.models
+      .get(modelId)
+      ?.attributes.find((attribute) => attribute.type === 'AT_PERS_RESP')
+    expect(afterUndo?.values ?? []).toHaveLength(0)
   })
 })
