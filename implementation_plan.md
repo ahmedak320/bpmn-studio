@@ -1126,6 +1126,695 @@ npx vitest run src/__tests__/i18n.test.ts && npm run check:ui-copy && npm run ty
 
 ---
 
+## Wave 6 — Visual / Render Fidelity Overhaul (RE-OPENED after live PDF comparison)
+
+> **Why this wave exists.** Waves 1–5 measured import fidelity with the `compare.ts`
+> comparator (the data MODEL: symbol numbers, connections, attribute values) and with the
+> holdout suite. Both went green. But a live import of `ARISAMLExport.xml` into the built
+> `release/OrbitPM-ARIS-Studio-Lite.html`, viewed in the browser and compared against the 4
+> reference PDFs, shows the RENDERED output is nowhere near the PDFs. The comparator is
+> topology-blind (the FidVerify audit warned of exactly this: "comparator-zero is not evidence
+> of rendered fidelity"). **`Issue 4` is NOT resolved.** This wave fixes the actual rendering and
+> adds a real visual gate so a broken render can never pass again.
+
+### Evaluation — actual render (register-owner, 94 occ) vs `Register_Animal_Owner_Profile_Draft03.pdf`
+
+Captured facts (chromium, built artifact) + PDF legend comparison:
+
+- **Control flow broken — `410 errors · 324 warnings`, "disconnected from the main control flow"
+  (`epc.connectivity.orphanNode`).** ROOT CAUSE: production `src/aris/epc/constants.ts`
+  `FLOW_CONNECTION_TYPES` excludes `CT_IS_PREDEC_OF_1` (the DMT FUNC→FUNC sequence connector,
+  28× in the fixture) — the Wave-5 fidelity fix added it to a COMPARATOR-LOCAL set only, so
+  production validation/layout still treat every function as an orphan. The DMT convention is NOT
+  strict EPC alternation; direct FUNC→FUNC steps (numbered 01→02→…) are legal and must be treated
+  as control flow.
+- **Object icons entirely missing — `images:0`, `use:0`, no icon geometry.** In the PDF every
+  object carries a distinctive glyph (Application System = monitor, Role/Person = person,
+  System Function = ▶▶, Event = arrow-chevron, SLA/Risk = shield/△, Document = doc, Email =
+  envelope, etc.). The render draws plain colored boxes. C5's descriptor builders are either not
+  emitting icon paths or the renderer is not drawing them.
+- **Colors wrong vs the PDF / convention legend.** Measured fills: Application System `#d7c49d`
+  (tan) — PDF is light **blue**; Event `#dcbbed` (lavender) — PDF is **pink**; plus spurious
+  `#fde047` (yellow ×3) and `#fb923c` (orange ×1) that appear in NO PDF. The DMT convention-manual
+  colors must be the authoritative per-object-type fills, and the authored-Brush-vs-convention
+  precedence must be resolved so the on-canvas colors match the PDF.
+- **Shapes wrong.** Events render as flat hexagons; PDF events are the ARIS arrow/chevron pentagon.
+  Verify every object type's silhouette against the manual (functions rounded-rect w/ icon band,
+  gates as circle+operator, satellites as rect+icon).
+- **Layout does not match the source ARIS coordinates / PDF.** The PDF is a clean top-to-bottom
+  spine of numbered functions with satellites arranged left/right and orthogonal connectors; the
+  render is scattered, satellites tiny/misplaced. Import must honor the AML `ObjOcc` geometry
+  faithfully (position, size, satellite offset) so the imported diagram reproduces the PDF layout.
+- **Annotations missing.** No RACI letters (R/A/C/I) on role connectors; function numbering
+  (`AT_PROC_CODE`/`AT_ID` 01,02,…) present as 14 labels but not clearly placed under the boxes as
+  in the PDF; the print-frame legend/header/Reference-Laws box are not rendered (decide in-scope).
+- Present and OK: 93 arrowheads (Phase B), 117 captions, correct symbol NUMBERS in the data model.
+
+Renew-profile (46 occ) shows the same pattern. The 2 holdout models must be evaluated the same way.
+
+### Fix lanes (Wave 6 — file-disjoint; product code, NOT test-only)
+
+- [ ] **V1 — DMT control-flow semantics.** Owner: opus-4.8-1M. Files: `src/aris/epc/constants.ts`,
+      `src/aris/epc/flowGraph.ts` (+ tests), `src/aris/epc/validate.ts` (+ tests). Treat
+      `CT_IS_PREDEC_OF_1` FUNC→FUNC as control flow in PRODUCTION so the spine connects and orphan
+      errors clear; update EPC alternation so a DMT FUNC→FUNC step is legal (not an `epc.alternation`
+      error). Target: a reference-model import shows **0 `orphanNode` / `alternation` errors**. Re-verify
+      `realData.animalwf.test.ts`, `test:aris:animalwf`, `arisDerivedExport` stay green; then the Wave-5
+      comparator can DERIVE its flow set from the production one (remove the comparator-local copy —
+      drift risk noted by FidVerify).
+- [ ] **V2 — symbol icons + shapes.** Owner: opus-4.8-1M. Files: `src/aris/symbols/shapes.ts`,
+      `src/aris/symbols/registry.ts`, `src/aris/canvas/renderer.ts`, `src/aris/canvas/elements.ts`
+      (+ their tests). Every convention symbol must render its icon glyph and correct silhouette per
+      `../reference/conventions/ARIS_Convention_Manual_DMT_v02.pdf` and the process-PDF legends:
+      Event chevron, System-Function ▶▶, App-System monitor, Role/Person person, SLA/Risk shield/△,
+      Document/Email/SMS/Letter/Log info-carrier glyphs, XOR/OR/AND gate operators. Assert an icon
+      element exists per occurrence (no bare boxes).
+- [ ] **V3 — DMT convention colors.** Owner: sonnet-med. Files: `src/aris/conventions/catalog.ts`
+      (+ test), `src/aris/canvas/vocabulary.ts`/occurrence-style (+ tests). Set each object type's
+      default fill to the manual/PDF color (App-System blue, Event pink, Function green `#339900`,
+      Role grey, Business-Rule/SLA/Regulation red family, Requirement pink, Service, etc.). Eliminate
+      the `#fde047`/`#fb923c`/`#d7c49d` mis-mappings. Resolve authored-Brush precedence so imported
+      occurrences match the PDF (if ARIS renders the symbol default over the stored Brush for a type,
+      mirror that). Keep `test:aris:animalwf` meaningful (update expectations to the PDF-correct colors).
+- [ ] **V4 — source-coordinate layout fidelity.** Owner: opus-4.8-1M. Files:
+      `src/aris/canvas/canvasSync.ts`, `src/aris/model/buildFromSource.ts`,
+      `src/aris/renderer/buildRenderModel.ts` (+ tests). Reproduce the AML `ObjOcc` positions/sizes and
+      satellite offsets so the imported diagram matches the PDF geometry; orthogonal connector routing.
+- [ ] **V5 — RACI + numbering placement (+ optional print frame).** Owner: sonnet-med. Files:
+      canvas connection-label + attribute-label placement (+ tests). Render R/A/C/I on the correct
+      connectors; place the function number under/beside the box as in the PDF. Legend/header frame:
+      spike and decide (may be a separate deliverable — record the verdict).
+- [ ] **V6 — palette UX.** Owner: sonnet-med. File: `src/aris/canvas/arisQuickPick.css` / palette
+      styling. The catalog palette is 94×754px — taller than the canvas, clipping entries and
+      shadowing shapes at Zoom-Fit (surfaced during e2e). Add max-height + internal scroll or a third
+      column so it never covers the diagram.
+
+### Wave 6 — the visual regression gate (so this is never untested again)
+
+- [ ] **VG1 — real screenshot baselines.** New `tests/e2e/aris-visual-fidelity.spec.ts`: import
+      `ARISAMLExport.xml`, open each of the 4 PDF-backed models (register-owner, renew-profile,
+      transfer-citizens, transfer-citizens-companies), Zoom-Fit, and `await expect(canvas)
+.toHaveScreenshot('<model>.png', { maxDiffPixelRatio: <tuned> })`. The committed baseline PNGs
+      are **human-approved to match the PDFs** (an orchestrator/user checkpoint — a baseline is only
+      accepted after visual sign-off vs the PDF, never auto-generated blind). Runs on all 3 engines.
+- [ ] **VG2 — structural render gates** (fast, deterministic, in the same spec): for each reference
+      model assert — **0 EPC validation errors** on import; **every occurrence has an icon element**
+      (no bare box); each object type's rendered fill equals its DMT convention color; events use the
+      chevron path; XOR/OR/AND gates use the correct operator glyph; RACI labels present on the
+      expected role connectors; function-number labels present under functions; occurrence
+      positions/sizes within ±Npx of the AML source coordinates (layout fidelity). These catch the
+      exact defects this wave fixes without depending on pixel exactness.
+- [ ] **VG3 — wire into the release gate.** Register the new spec in
+      `scripts/release-suite-manifest.mjs`; add an `npm run test:aris:visual` script; include it in the
+      Wave-5 full-suite command. A red render fails the build.
+
+### Wave 6 also folds in the stale-spec e2e repairs (from the fable e2e debug — TEST-only, no src)
+
+The full-3-engine `npm run test:e2e` "16 chromium failures" were mis-measured (playwright
+`globalTimeout: 600_000` killed the run mid-firefox — "160 did not run"; the failures reproduce on
+all engines). All are STALE ASSERTIONS vs authorized branch changes, no product bug:
+
+- [ ] **E-fix-A** — `aris-validation.spec.ts`, `lite-mandatory-translation.spec.ts`,
+      `lite-mandatory-ai-security.spec.ts`: remove the `[data-orbitpm-aris-model]` count==1 readiness
+      waits (model-explorer is now gated to `>1` models — authorized) and use the ObjOcc-attached wait;
+      update `aris-validation` marker counts 5/4/5 → 7/6/7 (C7 added convention rules).
+- [ ] **E-fix-B** — `aris-details-editing.spec.ts`: park the catalog palette via its grip before
+      Zoom-Fit+click (until V6 lands); `aris-authoring.spec.ts`: replace the stale 17-entry
+      `PALETTE_CREATE_ACTIONS` with the catalog's 28 `create.*` ids; `aris-explorer-tree.spec.ts`:
+      assert the nested row is focused instead of the now-semantic `data-tree-key`
+      (`file:[processIds]`, T5/T8 authorized).
+- [ ] **E-fix-C** — `playwright.config.ts`: raise `globalTimeout` (≥45 min) so a 3-engine run
+      completes; verify each of the 6 specs on chromium+firefox+webkit.
+
+### Wave 6 exit gate
+
+- [ ] All 4 PDF-backed models import with **0 EPC validation errors**, icons present, DMT colors,
+      correct shapes, source-faithful layout — verified by the human-approved screenshot baselines AND
+      the structural gates on chromium+firefox+webkit.
+- [ ] Full suite (incl. `test:aris:visual` + full `test:e2e`) green; artifact rebuilt; pushed.
+- [ ] Re-do the live browser check on the rebuilt artifact and confirm against the PDFs.
+
+### Wave 6 ULTRA verification addendum (2026-07-31) — binding corrections and expansion
+
+> **Status and precedence.** This addendum is the result of a second, independent audit of all 49
+> convention-manual pages, the four supplied PDFs, the AML, the production render path, and live SVG
+> output for all four expected model IDs. It is part of Wave 6. Where it conflicts with the provisional
+> Evaluation/V1–V6/VG1–VG3/exit wording above, **this addendum wins**. Correct provisional work is
+> retained; false diagnoses and impossible gates are explicitly superseded below. Wave 6 is not
+> file-disjoint: V2–V5 share the renderer, element contracts, and canvas synchronization. Run them
+> serially under one visual-integration owner, or give those shared files to one owner.
+
+#### Verified evidence and ground-truth classification
+
+The live capture imported SHA-256
+`38db10f0e2160eeb116e2b02564cd0a44662c24a18cb1c3ad82ade608b7926f5`, opened each
+model by exact ID, invoked Zoom Fit, and serialized every occurrence, primitive, caption, attribute
+label, connection path, marker, and warning. The scratch capture and audit artifacts are outside the
+repository at `/home/ahmed/.claude/jobs/501f0ce4/tmp/codex_ultra/live_capture/`.
+The 49-page manual SHA-256 is
+`80852f6c2d9e9111515ea4c998806e8fa40167fb5a7c78c3c787dc0d6d08dab0`; the canonical
+decoded logo PNG is
+`f1566e2bc06682790f94b4e4b88f40e778bda25c6fbcd4c7d665ba300dc7e649`, and the
+transparent convention/RACI legend PNG is
+`db1460c17ba4bc4083f637b795250e1c26ae9c25ea4d652b7a83d65642624fd0`.
+
+| Target                      | Model.ID                 | PDF status                                                  | ObjOcc / CxnOcc | Functions / events / gates | Source number labels | Expected RACI | Source routes changed by current endpoint docking |
+| --------------------------- | ------------------------ | ----------------------------------------------------------- | --------------: | -------------------------- | -------------------: | ------------- | ------------------------------------------------: |
+| register-owner              | `Model.3xqe8yXO9Z7-u-L`  | PDF-exact, SHA `fabb7128…`                                  |         94 / 93 | 14 / 22 / 9 XOR            |                   14 | R5, I5        |                                           57 / 93 |
+| renew-profile               | `Model.-1rUudxIp-wP-u-L` | PDF-exact, SHA `db133f7a…`                                  |         46 / 43 | 8 / 5 / 2 XOR              |                    8 | R7, I1        |                                           24 / 43 |
+| transfer-citizens           | `Model.3i-a2j4HRS3-u-L`  | PDF-exact, SHA `de931235…`                                  |         78 / 74 | 15 / 9 / 1 XOR + 1 AND     |                   15 | R8, I5        |                                           26 / 74 |
+| transfer-citizens-companies | `Model.-778f33baj6c-u-L` | **AML-exact only**; 2025 PDF SHA `91f7d14e…` is directional |         63 / 59 | 11 / 9 / 1 XOR + 1 AND     |                    9 | R6, I4        |                                           20 / 59 |
+
+The first three PDFs are one-page A3 2023 exports whose titles and topology match the AML. The fourth
+PDF was created in October 2025, is titled “Transfer of Pet Ownership,” and contains a different
+Vet/Petshop two-scenario flow with OTP and supporting-document steps. The mapped AML model was created
+in May 2023, is titled “Animal Ownership Transfer between Citizens and Companies,” and has an
+11-function intake/decision/AND-completion topology. It contains none of the 2025 PDF's distinguishing
+text. **No renderer can produce an exact fourth replica from this AML.** Wave 6 must either obtain the
+matching 2025 AML (or the matching 2023 companies PDF) and update the hash-pinned mapping, or report
+three PDF-exact models plus one AML-exact/directional model. It must never silently invent PDF-only
+nodes, approve the wrong model, or claim four PDF-exact results.
+
+##### Per-model live-render/PDF diff ledger
+
+Every target currently shares these DOM defects: fixed system-ui 12 px single-line captions; no rich
+text or Arabic layout; no RACI text; no Gfx/OLE projection; spurious default-lane frames; uniform
+slate connection styling/arrowheads; incorrect endpoint docking; editor palette/minimap/validation
+overlays in the fitted viewport; and the following incorrect symbol presentation:
+
+| Symbol family        | Live DOM evidence                                                | PDF/manual target                                                   |
+| -------------------- | ---------------------------------------------------------------- | ------------------------------------------------------------------- |
+| Function             | solid `#339900` rounded rectangle; ordinary Function has no icon | white card, decoded `#009933` band/top rule, white `▶▶`             |
+| System Function      | solid green card with large central gear                         | same white/green card with small automation/window icon             |
+| Event                | solid `#dcbbed` six-point polygon                                | white angular chevron, decoded `#edbbdc` band/top rule, white flag  |
+| Application System   | tan `#d7c49d` rounded monitor and stand                          | white card, decoded `#9dc4d7` application/window band               |
+| Executor             | large gray body/pink head pictogram                              | white card with role-specific colored person/group tile             |
+| Data Entity          | whole pale-blue `#b6dce9` rectangle                              | white card with `#cc3300` data/storage tile                         |
+| Information Carrier  | freestanding page/envelope/phone pictogram                       | white card with gray variant tile and centered label                |
+| Business Rule/Policy | yellow `#fde047` balance or orange `#fb923c` shield              | white card with `#d52929` scroll/shield tile                        |
+| Requirement          | whole `#d5d5f7` box with invented mark                           | white card with decoded `#f7d5d5` requirement tile                  |
+| Gate                 | `#999999` circle, but generic caption/fixed stroke behavior      | operator-only circle with exact ∧/×/∨ geometry and no invented name |
+
+The model-specific evidence below is additive; “PDF target” includes all common corrections above.
+
+- **register-owner (`Model.3xqe8yXO9Z7-u-L`).** AML/PDF composition is 14 Functions, 22 Events,
+  9 XORs, 22 Application Systems, 9 external persons, 1 employee type, 3 entity types, 8 information
+  carriers, 2 Requirements, 1 Policy, and the 3 Reference-law rules. The live layer bbox is
+  `(45,114,6766,7663)` and uses model Scale 110 / PrintScale 42. Its source routes are 59×2-point,
+  2×3-point, 31×4-point, and 1×5-point; 57 endpoint pairs are currently altered. Fourteen number
+  labels render, while ten `AT_TYPE_6` groups expected to show R5/I5 are present but empty. The global
+  rail attributes 128 rows to this model (75 error/53 warning), and the canvas shows 79 unique
+  warning-marker elements; neither is a model-scoped “410 errors.” Two occurrence widths are also
+  improperly auto-expanded. Against the PDF, the top business/individual split, nested XOR trees,
+  residential-document loop, registration tail, left/right satellite stacks, and long loopbacks are
+  topologically present, but every common shape/paint/text/connector defect applies. Required
+  furniture is header `(0,0,6700,388)`, logo 1194×320 at `(5403,40)`, Reference box 742×747 at
+  `(5880,487)`, and legend 3800×622 at y=8139.
+- **renew-profile (`Model.-1rUudxIp-wP-u-L`).** AML/PDF composition is 8 Functions, 5 Events,
+  2 XORs, 12 Application Systems, 8 external persons, 6 entity types, 1 E-mail carrier,
+  1 Requirement, and 3 Reference-law rules. The live layer bbox is `(127,114,4581,5286)` and uses
+  Scale 110 / PrintScale 62. Routes are 26×2-point, 16×4-point, and 1×5-point; 24 are altered at
+  endpoints. All eight numbers render; eight RACI groups expected to show R7/I1 are blank. The rail
+  attributes 59 rows (31 error/28 warning), with 42 unique canvas marker elements. The PDF's four-step
+  submission spine, owner approval, renewed/amendment XOR, and 06→07→08 amendment loop are present,
+  but the common symbol, text, satellite, connection, header, and legend defects apply. Required
+  furniture is header `(0,0,4600,388)`, logo at `(3303,40)`, Reference box at `(3777,487)`, and
+  legend at y=5489.
+- **transfer-citizens (`Model.3i-a2j4HRS3-u-L`).** AML/PDF composition is 15 Functions, 9 Events,
+  1 XOR, 1 AND, 25 Application Systems, 13 external persons, 7 entity types, 3 information carriers,
+  1 Requirement, and 3 Reference-law rules. The live layer bbox is `(77,114,5334,7013)` and uses
+  Scale 80 / PrintScale 51. Routes are 40×2-point and 34×4-point; 26 have altered endpoints. All 15
+  number placements render; thirteen RACI groups expected to show R8/I5 are blank. The rail attributes
+  112 rows (66 error/46 warning), with 70 unique marker elements. The PDF's authorization spine,
+  new-owner acceptance/rejection split, AND join, and three completion branches are structurally
+  present, but the common visual defects apply. Required furniture is header `(0,0,5300,388)`, logo
+  at `(4003,40)`, Reference box at `(4480,390)`, and legend at y=7289.
+- **transfer-citizens-companies (`Model.-778f33baj6c-u-L`).** AML composition is 11 Functions,
+  9 Events, 1 XOR, 1 AND, 20 Application Systems, 10 external persons, 6 entity types,
+  1 e-document, 1 Requirement, and 3 Reference-law rules. The live layer bbox is
+  `(77,114,5334,5613)` and uses Scale 90 / PrintScale 53. Routes are 31×2-point and 28×4-point;
+  20 have altered endpoints. Nine source number placements render; ten RACI groups expected to show
+  R6/I4 are blank. The rail attributes 79 rows (46 error/33 warning), with 53 unique marker elements.
+  Required AML furniture is header `(0,0,5300,388)`, logo at `(4003,40)`, Reference box at
+  `(4480,490)`, and legend at y=5889. All common render defects apply, but a node-by-node PDF diff is
+  intentionally a provenance **failure**, not a renderer failure: the 2025 Vet/Petshop PDF has
+  different actors, 02.xx/03.xx branches, OTP, supporting documents, and topology that do not exist
+  in this 2023 AML.
+
+#### Corrections to the provisional Evaluation
+
+- The validation rail's `410 errors · 324 warnings` is global across all eight imported models, not
+  scoped to register-owner. The 410 errors are 226 missing Arabic names, 92 missing owners, and 92
+  missing process codes. `epc.connectivity.orphanNode` contributes 43 **warnings**, not 410 errors.
+  Register-owner has zero predecessor edges and zero orphan findings. The 28 legal
+  `CT_IS_PREDEC_OF_1` FUNC→FUNC edges are spread across all seven EEPCs; the four targets contain
+  0/5/8/4. V1 fixes false validation and graph semantics, but it is not the cause of register-owner's
+  visual layout.
+- `images:0` and `use:0` do not mean “no icons.” The current renderer emits inline `rect`, `path`,
+  `polygon`, `circle`, and `line` primitives. The defect is that these are invented approximations:
+  whole-body green pills, a central gear, a balance scale, an orange shield, a monitor-on-a-stand, and
+  an oversized person. They do not implement the DMT white-card/colored-band/icon grammar. Structural
+  tests need semantic part markers, not `<image>`/`<use>` counts.
+- The raw AML colors are Windows `COLORREF`/BGR byte order. The current RGB interpretation is a direct
+  root cause:
+
+  | Stored AML value | Correct sRGB/PDF value | Meaning                            |
+  | ---------------- | ---------------------- | ---------------------------------- |
+  | `339900`         | `#009933`              | Function/System Function accent    |
+  | `dcbbed`         | `#edbbdc`              | Event accent                       |
+  | `d7c49d`         | `#9dc4d7`              | AnimalWF Application System accent |
+  | `d5d5f7`         | `#f7d5d5`              | Requirement accent                 |
+  | `b6dce9`         | `#e9dcb6`              | AnimalWF Role accent               |
+  | `cccccc`         | `#cccccc`              | Person/information-carrier accent  |
+
+  Decode every AML color-bearing field once at the source boundary, including `Pen`, `Brush.Color`,
+  `Brush.Color2`, FontNode color, StyledElement color, Gfx styles, and connection styles. Do not fix
+  these examples with catalog-specific swaps.
+
+- A Brush is not a whole-box fill. The paired PDFs and the AML-embedded legend show a white surface,
+  colored left icon tile/top rule, white icon, light outline, and black label. The current
+  “apply Brush to the first filled primitive” rule floods the body and is architecturally incapable
+  of reproducing the target.
+- Source outer geometry is already mostly honored: 279 of 281 target occurrences retain their AML
+  x/y/w/h exactly. Two register-owner occurrences are incorrectly width-auto-sized. All 269 connections
+  retain their interior source points, but `waypoints.ts` replaces stored endpoints by rectangular
+  docking, changing 127 routes and introducing short diagonal segments. V4 must preserve exact source
+  geometry and fix those bounded exceptions; it must not add an implicit “clean layout.”
+- The live renderer uses a fixed slate `#475569`, 1.5 px, target arrow on every edge, even though all
+  269 target connections have source Pen/style/type semantics. It also ignores occurrence/attachment
+  z-order.
+- All four live layers use a fixed 12 px system font, one `<text>` node, zero `<tspan>` wrapping, and
+  effectively 1.6–2.3 CSS px text after Zoom Fit. The AML contains six FontStyleSheets, locale-specific
+  Arial metrics, rich StyledElement runs, and multiline/bidi content. This is a first-class fidelity
+  lane, not polish.
+- Each target model has 10 free-text occurrences, 2 rounded Gfx frames, 2 OLE occurrences, and 2
+  default lanes. Three free texts bind live model attributes. The current `160×32` outlined note
+  fallback loses anchor auto-sizing, styles, and bindings. The two `LT_DEFAULT`, width-0,
+  `0..50000`, name `"."` lanes are invisible sentinels in the PDFs; current dashed swimlane output is
+  spurious.
+- The header frame, bilingual metadata, DMT logo, Reference Laws box and its three rule cards, bottom
+  convention legend, and RACI key are authored AML content, not optional editor chrome. The 14 OLE
+  occurrences in the full fixture expose directly renderable `AT_IMAGE_FILE_BLOB` PNGs. For each
+  target, the logo is 1194×320 at y=40 and the legend is 3800×622 near the page bottom. V5's
+  “optional print frame” decision is therefore superseded: full-print fidelity includes them.
+- The current render creates the exact `AT_TYPE_6` placement groups but all are empty. RACI is computed
+  connection semantics, not stored text. Resolve it from the complete
+  `(modelType, fromObjectType, toObjectType, connectionType)` rule; type alone is unsafe because some
+  connection types also express non-RACI policy relationships.
+
+#### Complete target presentation contract
+
+The manual defines four model types: Value Added Chain Diagram for process levels 1–3, EPC for process
+level 4, Organizational Chart, and Product/Service Tree. New-diagram authoring must be model-filtered
+accordingly. The following supersedes R1's guessed colors and incomplete icon mapping.
+
+The manual does not print normative hex codes, object dimensions, font sizes, padding, or stroke
+widths. “Manual” codes below are exact solid-pixel samples from the supplied manual raster; some
+relationship examples use alternate tints. The paired process PDF and embedded source legend remain
+the pixel oracle for imported AnimalWF output, while the catalog-page sample is the canonical default
+for a newly authored object. Preserve this provenance per token instead of presenting sampled values
+as undocumented vendor constants.
+
+All rectangular DMT cards share a white caption surface, a light-gray outline, a colored top rule and
+left icon tile, a centered black label in the remaining content box, and a white icon. The outer AML
+occurrence bounds stretch the surface/band only; icons preserve aspect ratio and stroke weight. The
+manual canonical color is the new-object default. An imported, decoded occurrence Brush may override
+the designated **accent** role only when that symbol's paint policy permits it; it must not recolor
+the white surface, icon, text, or outline.
+
+| Library group                               | Presentation / persisted symbol where verified        | Required silhouette and icon                                                                                 | Canonical new-object accent                                     |
+| ------------------------------------------- | ----------------------------------------------------- | ------------------------------------------------------------------------------------------------------------ | --------------------------------------------------------------- |
+| EPC flow                                    | Event / `ST_EV`                                       | horizontal angular event chevron; pink tile and white flag                                                   | `#edbbdc`                                                       |
+| EPC flow                                    | Function / `ST_FUNC`                                  | white rectangle; green top/tile; white double chevrons `▶▶`                                                  | `#009933`                                                       |
+| EPC flow                                    | System Function / `ST_SYS_FUNC_ACT`                   | same card; white application/window automation glyph, **not** gear                                           | `#009933`                                                       |
+| EPC flow                                    | Process Interface / `ST_PRCS_IF`                      | upper white flag card plus large gray lower/right pointed shadow                                             | `#808080`                                                       |
+| Decisions                                   | AND / `ST_OPR_AND_1`                                  | circular operator, white `∧`, no definition-name caption                                                     | `#5e5e5e`                                                       |
+| Decisions                                   | XOR / `ST_OPR_XOR_1`                                  | circular operator, white `×`, no definition-name caption                                                     | `#5e5e5e`                                                       |
+| Decisions                                   | OR / `ST_OPR_OR_1`                                    | circular operator, white `∨`, no definition-name caption                                                     | `#5e5e5e`                                                       |
+| VACD                                        | Start value-added chain / verified start presentation | green left tile/`▶▶`, white body, straight left edge, pointed right edge                                     | manual `#298a25`; exported variant may use `#009900`            |
+| VACD                                        | Successor value-added chain / `ST_VAL_ADD_CHN_SML_1`  | same, but concave/inward left tail and pointed right edge                                                    | manual `#298a25`; exported variant may use `#009900`            |
+| VACD layout mode (not an extra catalog row) | Superior/container chain                              | enlarged pointed container, title top-center, subordinate chains inside; semantic superior connection hidden | same VACD green                                                 |
+| Organization                                | Organizational Unit / `ST_ORG_UNIT_1`                 | three-person/group glyph                                                                                     | `#ff9e00`                                                       |
+| Organization                                | Position / `ST_POS`                                   | opposed-triangle/bow-tie glyph                                                                               | `#f9b600`                                                       |
+| Organization                                | Group / `ST_GRP_1`                                    | group/flag glyph                                                                                             | `#a17220`                                                       |
+| Organization                                | Committee / Team                                      | committee/team glyph; distinct catalog presentation                                                          | embedded AnimalWF legend `#996600`                              |
+| Organization                                | Role / `ST_EMPL_TYPE`                                 | single-person glyph                                                                                          | manual `#e19f2d`; AnimalWF imported accent decodes to `#e9dcb6` |
+| Organization                                | External person/entity / `ST_PERS_EXT`                | single-person glyph                                                                                          | `#aaaaaa`                                                       |
+| Organization                                | Related Entity                                        | person plus `RE`; distinct catalog presentation                                                              | manual `#c2bcae`; embedded AnimalWF legend `#afa098`            |
+| Organization                                | Internal person / `ST_PERS`                           | single-person glyph                                                                                          | `#ffda33`                                                       |
+| Governance                                  | Business Rule / `ST_BUSINESS_RULE`                    | scroll/document glyph                                                                                        | `#d52929`                                                       |
+| Governance                                  | Business Policy / `ST_BUSINESS_POLICY`                | same family, separately named presentation                                                                   | `#d52929`                                                       |
+| Governance                                  | SLA                                                   | shield glyph                                                                                                 | `#d52929`                                                       |
+| Governance                                  | Law / Regulation                                      | shield glyph; Law/Regulation label differentiates variant                                                    | `#d52929`                                                       |
+| Governance                                  | Risk / `ST_RISK_1`                                    | warning triangle/exclamation                                                                                 | `#b10000`                                                       |
+| Performance                                 | Measure / KPI / `ST_PERFORM`                          | gauge/speedometer                                                                                            | `#1c7ca7`                                                       |
+| Service                                     | Product / Service / `ST_SERVICE`                      | cube glyph; document manual's tray-glyph example as an explicit legacy variant                               | `#78684a`                                                       |
+| Technology                                  | Application System / `ST_APPL_SYS`                    | application/window glyph, not a desktop monitor body                                                         | manual `#0a568a`; AnimalWF imported accent `#9dc4d7`            |
+| Data                                        | Data Entity / `ST_ENT_TYPE` where verified            | data/storage glyph                                                                                           | `#cc3300`                                                       |
+| Data                                        | Entity Type / `ST_ENT_TYPE` fixture presentation      | entity/data glyph; retain fixture presentation separately                                                    | occurrence/template evidence, not guessed blue body             |
+| Data                                        | Requirement / `ST_REQUIREMENT`                        | requirement/hand glyph                                                                                       | AnimalWF imported accent `#f7d5d5`                              |
+| Information                                 | Generic Information Carrier / `ST_INFO_CARR_1`        | information `i`                                                                                              | `#aaaaaa`                                                       |
+| Information                                 | Document / `ST_DOC`                                   | outlined page                                                                                                | `#aaaaaa`                                                       |
+| Information                                 | E-mail / `ST_EMAIL_1`                                 | envelope plus `@`                                                                                            | `#aaaaaa`                                                       |
+| Information                                 | SMS / `ST_INFO_CARR_HANDY`                            | mobile phone                                                                                                 | `#aaaaaa`                                                       |
+| Information                                 | Log / `ST_LOG`                                        | log/page glyph                                                                                               | `#aaaaaa`                                                       |
+| Information                                 | ARIS Model carrier                                    | model/hierarchy glyph; persisted identifier must be verified from a real export                              | `#aaaaaa`                                                       |
+| Information                                 | Letter / `ST_LETTER`                                  | stacked letter/envelope glyph                                                                                | `#aaaaaa`                                                       |
+| Information                                 | Electronic file/folder / `ST_INFO_CARR_EDOC`          | folder/bag with `@`                                                                                          | manual `#999999`; imported fixture may decode `#cccccc`         |
+
+This is a 36-presentation library because the complete manual carrier set adds ARIS Model beyond R1's
+35 rows; the superior/container treatment is a layout mode of the VACD presentation, not a 37th
+persisted identity. Some presentations currently collapse to the same known `objectType:symbolNum` pair
+(Data Entity/Entity Type, Related/External, SLA/Law/Policy, Committee/Org Unit, VACD Start/Successor).
+Introduce `catalogId` as presentation identity. A row with no independently verified export
+discriminator remains visible for discovery but disabled for placement/export, with a user-readable
+“round-trip identity not yet verified” reason. Never pretend a label alone proves symbol identity.
+
+##### Geometry, labels, and print projection
+
+- AML units are tenths of a millimetre. Project to print points with
+  `points = amlUnits × 72 / 254 × PrintScale / 100`; retain the model's `Scale` and `PrintScale`
+  independently. Do not compare raw model units directly to CSS pixels.
+- Canonical target outer sizes in the AnimalWF export are 670×240 for Function/System Function
+  (ten register occurrences are 670×210), 454×202 for Event, 141×141 XOR, 140×140 AND, normally
+  530×150 for application/data/requirement satellite cards, 554×151 for a person, and 661×193 for
+  each Reference-law card. Preserve occurrence-specific exceptions rather than normalizing them.
+- Occurrence `SymbolNum` overrides ObjDef default. The targets contain 13 such overrides; descriptor
+  selection, palette display, export, and the expected manifest must key the occurrence result.
+- Render a definition name only when the occurrence has a visible `AT_NAME` placement. Rule
+  occurrences have no name placement; draw only their operator. Empty `AT_PROC_CODE` and average-time
+  placements stay invisible.
+- Function `AT_ID` is centered outside/below its card according to the source AttrOcc port/offset, not
+  guessed from sequence. IDs remain LTR under RTL content. Average processing time, when present, is
+  centered above the object.
+- English and Arabic object names center and wrap inside the declared content box. Preserve explicit
+  paragraph/run breaks, language, bidi isolation, alignment, weight, decoration, color, and overflow
+  semantics. The target sheet uses Arial regular/bold; imported StyledElements also reference
+  Calibri, SansSerif, and Times New Roman at sizes 7–12.
+- The AnimalWF AttrOcc/free-text sheet uses English Arial Height `-10` and Arabic Arial Height `-13`,
+  weight 400. Convert negative logical font height using the documented print/DPI transform. Bundle or
+  pin metrically compatible fonts so layout is deterministic on all three engines; await
+  `document.fonts.ready`.
+- A free-text occurrence without Size is an alignment-anchor-based auto-sized text, not a top-left
+  default box. Do not invent a visible note border. Resolve its model-attribute binding before
+  measurement; preserve inline bold and multiline Arabic/English runs.
+- Satellite cards retain exact outer bounds, side, relative offset, stack order, z-order, symbol, and
+  short attachment route. Shared buses in the PDFs remain shared orthogonal buses.
+
+##### Connections, canonical labels, and RACI
+
+Imported routes preserve every ordered source point verbatim. New or moved routes dock to descriptor
+silhouettes/ports and remain orthogonal where the convention requires it. Pen color/width/style,
+visibility, arrow source/target, z-order, and label placement resolve from `CxnDef.Type` plus
+occurrence overrides; there is no universal arrow marker.
+
+| Model family | From → To                               | Canonical relation label / semantics                                                |
+| ------------ | --------------------------------------- | ----------------------------------------------------------------------------------- |
+| VACD         | chain → successor                       | `is predecessor of`                                                                 |
+| VACD         | superior → subordinate                  | `is process-oriented superior`; approved view hides line and uses containment       |
+| EPC          | Function/Process Interface → Event      | `creates/triggers` (`CT_CRT_1`)                                                     |
+| EPC          | Event → Function/Process Interface      | `activates/triggers` (`CT_ACTIV_1`)                                                 |
+| EPC          | Event → Rule                            | `is evaluated by` (`CT_IS_EVAL_BY_1`)                                               |
+| EPC          | Rule → Event                            | `leads to/triggers` (`CT_LEADS_TO_1`/`CT_LEADS_TO_2`)                               |
+| DMT EEPC     | Function → Function                     | `is predecessor of` (`CT_IS_PREDEC_OF_1`), legal only for this endpoint tuple       |
+| EPC RACI     | eligible executor → Function            | `R`, `A`, `C`, or `I`, arrow at Function                                            |
+| EPC          | Application System → Function           | `supports`                                                                          |
+| EPC          | Law/SLA — Function                      | `Regulate`; manual does not resolve direction, so imported type/arrow evidence wins |
+| EPC          | Business Policy/Rule → Function         | `affects`                                                                           |
+| EPC          | Function → Product/Service              | `produces`                                                                          |
+| EPC          | Function → Data Entity                  | `creates`                                                                           |
+| EPC          | Data Entity → Function                  | `INPUT`                                                                             |
+| EPC          | Function → Information Carrier          | `creates output to`                                                                 |
+| EPC          | Information Carrier → Function          | `provides input for`                                                                |
+| Org Chart    | Org Unit → subordinate Org Unit         | `is composed of`                                                                    |
+| Org Chart    | Position → managed Org Unit             | `is organization manager for`                                                       |
+| Org Chart    | manager Position → subordinate Position | `is technical superior to`                                                          |
+| Org Chart    | Position → Internal Person              | `occupies`                                                                          |
+| Org Chart    | Position → Role                         | `performs`                                                                          |
+| Service Tree | parent Service → subordinate Service    | `encompasses`                                                                       |
+
+RACI resolver rules are tuple-scoped: `CT_EXEC_1`/`CT_EXEC_2` → R,
+`CT_DECID_ON` → A, `CT_MUST_BE_CONSLT_ABT_1` → C, and
+`CT_MUST_BE_INFO_ABT_1` → I only for an eligible executor-to-Function rule. Eligible executors are
+Organizational Unit, Position, Group/Committee, Role, and External/Internal/Related person/entity.
+Place the letter at the source AttrOcc location near the Function endpoint, avoid route collisions,
+and never duplicate a source-authored literal.
+
+##### Attribute, numbering, assignment, and legend contract
+
+| Scope           | Required schema                                                                                                                                                    |
+| --------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| VACD model      | no model attributes                                                                                                                                                |
+| VACD element    | Identifier mandatory; Description/Definition optional; Average Processing Time optional                                                                            |
+| EPC model       | Process Objective, Process Scope, Entity, Authorized by, Relevant Organization Structure, Person Responsible, Version, Identifier, Process Area, Organization Name |
+| EPC Function    | Identifier mandatory; Description/Definition optional; Average Processing Time optional                                                                            |
+| Org Chart       | manual defines no model/object attribute table; do not invent mandatory fields                                                                                     |
+| Service level 1 | Identifier mandatory                                                                                                                                               |
+| Service level 2 | Identifier, Description/Definition, Average Processing Time; manual conflicts between summary M and detail O, so preserve source and expose the ambiguity          |
+| Service level 3 | Identifier and Service Fees; manual conflicts between summary M and detail O; fees examples are `AED 150`/`Free Service`                                           |
+
+Identifier hierarchy follows the process/service prefix and appends a segment for each lower level or
+Function (for example process `DMT.PRS.MGT.14.01.01`, Function
+`DMT.PRS.MGT.14.01.01.01`). The library may suggest the next identifier but must not overwrite an
+imported value. Assignments are VACD level-3 → EPC, Org level-1 → lower-level Org model, Service
+level-1 → level-2, and Service level-2 → level-3; show the small assignment badge without changing
+the underlying silhouette.
+
+The required bottom legend is the AML-embedded 1914×361 RGBA image, positioned through its 3800×622
+OLE occurrence. It includes Event, Process Interface, AND/XOR/OR, Function, System Function,
+Document/E-mail/SMS/Letter, Application System, KPI, Requirement, Risk, Committee/Team, Related
+Entity Role, External Entity, Role, Business Rule/Policy, SLA, Regulation, Service, and the bilingual
+RACI key:
+
+- R — Responsible
+- A — Approval/Accountable
+- C — Consulted
+- I — Informed
+
+Do not reconstruct this particular imported legend from current palette widgets when the source PNG
+is present. The from-scratch library separately generates a descriptor-driven symbol sheet to test
+the complete 36-presentation catalog.
+
+#### Adversarial verdict on the existing lanes and gates
+
+| Item    | Verdict                                                         | Binding correction                                                                                                                                                                                                                                                     |
+| ------- | --------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| V1      | Directionally correct, factually misattributed and under-scoped | Use an endpoint-aware production classifier; the 28 edges span seven EEPCs, register has zero; orphan is warning; remove comparator-local flow logic; add the legal EEPC tuple to convention rules.                                                                    |
+| V2      | Required outcome, wrong detector and one reversed icon mapping  | Function is `▶▶`; System Function is automation/window. Inline primitives already exist. Replace approximations with semantic DMT descriptors shared by canvas and every preview.                                                                                      |
+| V3      | Required outcome, wrong root-cause model                        | Implement the source-wide BGR/COLORREF codec and semantic paint roles. Do not replace authored evidence with flat default fills or test one `fill`.                                                                                                                    |
+| V4      | Mostly misdiagnosed                                             | Preserve the 279 already-exact bounds, stop two imported autosizes, preserve all source endpoints/points, carry connection style/arrows/z-order, and consolidate the non-live `buildRenderModel` projection with the actual live path.                                 |
+| V5      | Materially incomplete                                           | RACI needs a tuple resolver and exact placement. Styled labels/free text, Gfx header/reference frames, OLE logo/legend, print transform, and sentinel-lane suppression are mandatory, not optional.                                                                    |
+| V6      | File scope and product scope are wrong                          | `arisQuickPick.css` alone cannot fix the diagram-js palette. Add responsive containment plus the complete searchable/model-aware drawing library specified below.                                                                                                      |
+| VG1     | Not executable as written                                       | `<tuned>` is undefined, the editor screenshot includes overlays, private baselines cannot be committed under current policy, CI lacks the fixture, and the fourth PDF is mismatched. Use a protected hash-pinned bundle and deterministic print/content captures.      |
+| VG2     | Tests several wrong things                                      | One fill and `<image>/<use>` presence would enshrine defects. Compare exact semantic parts, style roles, text, furniture, routes, arrows, z-order, and inventories to an independent manifest. Separate false-flow findings from legitimate source-quality validation. |
+| VG3     | Incomplete release wiring                                       | A manifest entry does not prove the 12 model/engine cases ran. Update protected workflow and reporter, verify the private bundle, and require exact case execution.                                                                                                    |
+| E-fix-A | Readiness repair valid; count update invalid                    | Use active-model/ObjOcc readiness. Repair the synthetic fixture to use canonical EVT→FUNC `CT_ACTIV_1` and FUNC→EVT `CT_CRT_1`; assert named rules/deltas, not magic 7/6/7 counts.                                                                                     |
+| E-fix-B | Direction valid with sequencing corrections                     | Land final V6 behavior first; use focus assertions; derive palette action inventory from the versioned catalog manifest rather than another hand-copied list.                                                                                                          |
+| E-fix-C | Rejected as written                                             | The workflow overrides Playwright's timeout. Measure/shard first; retain focused readiness/per-test budgets. If needed, coherently raise protected job and CLI ceilings, not a blanket config timeout that hides hangs.                                                |
+
+#### Binding implementation lanes and dependency order
+
+- [ ] **V0 — reference/provenance and privacy contract (BLOCKER).** Record the hashes above plus
+      manual, expected-manifest, OLE, and built-artifact hashes in a versioned protected reference
+      bundle. Classify register/renew/citizens as `pdf-exact`; classify companies as
+      `aml-exact/pdf-directional` until a matching artifact is supplied. Decide nothing by filename
+      similarity. The protected workflow fails closed when the bundle/hash is absent and never exposes
+      private AnimalWF material to untrusted fork code. Full-print scope is mandatory for the three
+      matched PDFs. **Do not start baseline approval or declare Wave 6 complete while the fourth
+      provenance mismatch is unresolved.**
+- [ ] **V1+ — tuple-scoped DMT control flow.** Add one canonical
+      `isControlFlowTriple(type, fromType, toType)` used by `flowGraph`, validation,
+      deterministic fixes, conventions, and fidelity comparison. Treat
+      `CT_IS_PREDEC_OF_1` as EEPC flow only for FUNC→FUNC and exempt only that tuple from alternation.
+      Keep other same-type and invalid-endpoint edges illegal. Remove comparator-local candidate sets
+      and duplicate loops. Acceptance: all 28 legal edges across all seven EEPCs are flow; zero false
+      `orphanNode`/`alternation`; register stays zero before/after; exact positive/negative tuple tests;
+      rule IDs and severities are asserted; VACD validation is scoped separately.
+- [ ] **V7 — one live visual projection and lossless source-style contract.** Make
+      `semanticIndex → buildFromSource → canvasSync → renderer` consume a single resolved visual
+      projection, or make the existing `buildArisRenderModel` canonical; it must no longer be a
+      parallel diagnostic object that the canvas ignores. Carry occurrence-level symbol override,
+      exact source bounds, z-order, Pen/Brush/Color2, FontStyleSheet/runs, AttrOcc placement, complete
+      CxnDef/CxnOcc style and route, FFText, Gfx, OLE, lane semantics, Scale, and PrintScale. Add the
+      BGR/COLORREF codec at parsing and typed semantic paint roles
+      (`surface/accent/outline/icon/text/operator/decoration`). No downstream code sees ambiguous raw
+      color strings. Acceptance: a lossless, ID-sorted projection manifest for every source visual
+      record and explicit live/headless parity tests.
+- [ ] **V3+ — catalog identity, evidence-ranked paint, and model availability.** Replace
+      `defaultFill` with the presentation/paint contract above. Add stable `catalogId`, variant family,
+      supported model types, palette category/order, semantic roles, Brush/Pen target/precedence,
+      provenance, authorability, and round-trip discriminator. Evidence priority for these imports is:
+      paired PDF/embedded legend → decoded occurrence/template style → manual canonical default →
+      explicit fallback. For new objects, the manual canonical style wins. Disabled/unverified
+      duplicate identities remain discoverable with reasons. Validate every authoring entry point,
+      including context pad and programmatic/chat creation, against the active model type.
+- [ ] **V2+ — exact DMT descriptors and shared previews.** Build descriptors for all 36
+      presentations with silhouette/hit path, stretch policy, icon and content boxes, ports, semantic
+      parts, and accessible label. Canvas, palette, quick-pick, drag ghost, context pad, print view, and
+      symbol gallery consume the same descriptor—remove separate crude glyph maps. Expose stable
+      `data-aris-catalog-id`, `data-aris-part`, `data-aris-icon`, `data-aris-silhouette`, and
+      `data-aris-operator`. Unknown imported symbols use a visible `?` fallback plus fidelity finding.
+      Acceptance: a reviewed 36-symbol English/Arabic sheet; distinct fingerprints for every variant;
+      no stretched/clipped icon, caption collision, duplicate caption, or imported fallback at
+      representative 454×202, 670×210/240, 530×150, and 140×140 bounds.
+- [ ] **V8 — typography, rich text, bidi, and label layout.** Parse and resolve locale FontNodes and
+      inline StyledElement/Paragraph/PlainText runs, including family, logical height, size, weight,
+      italic, underline, strikeout, color, alignment, rotation, line breaks, and language. Resolve
+      model-attribute-bound FFText before measurement. Use descriptor content boxes and source
+      AttrOcc ports/offsets for caption, identifier, average-time, connection, and RACI labels. Support
+      Arabic shaping, `dir=auto`/bidi isolation, mixed Arabic/Latin identifiers, deterministic wrapping,
+      and source auto-size anchors. Pin fonts and test English, Arabic, mixed, long, multiline, and
+      bold runs across engines.
+- [ ] **V4+ — exact geometry, routing, connection appearance, satellites, and draw order.** Keep all
+      source x/y/w/h values; disable the two observed imported auto-width mutations. Preserve every
+      ordered source route point—including endpoints—verbatim on initial import; never silently
+      redock or clean-layout imported source. For author-created/moved edges, dock to descriptor
+      silhouettes/ports. Render type-specific Pen/style/width/arrows/visibility/labels and unified
+      z-order across connections, occurrences, AttrOccs, free text, Gfx, and attachments. Acceptance:
+      all 281 bounds and all 269 ordered routes match at ≤0.01 AML unit; after the SVG CTM, screen
+      projection is ≤0.5 CSS px; every source-orthogonal route remains orthogonal; exact satellite side,
+      relative offset, stack, attachment, and z-order.
+- [ ] **V5+ — annotations and authored full-print furniture.** Compute tuple-safe RACI and render the
+      exact per-connection ID/text/rect inventory above; render the exact Function-number occurrence
+      inventory (14/8/15/9), not a sequential guess. Render ten auto-sized/bound FFTexts, two Gfx
+      rounded rectangles, the header/reference box and three rule cards, and two OLE PNG occurrences
+      per model at exact bounds/z-order. Decode image bytes safely without executing OLE content;
+      enforce size/decompression limits and preserve original bytes for export. Suppress only the
+      proven `LT_DEFAULT`, width-0, 0..50000 `"."` sentinel lanes; render genuine lanes. Include OLE
+      and free-text extents in Zoom Fit/print bounds. Acceptance: header metadata/logo, Reference box,
+      body, bottom legend, and RACI key each pass independent region diffs against all three paired
+      PDFs.
+- [ ] **V10 — complete from-scratch DMT object/connection library.** Replace the one tall flat palette
+      with the drawing-toolkit UX and acceptance contract below. V6's responsive containment is part
+      of this lane, not its whole scope. This lane follows V2+/V3+/V8 so it consumes real descriptors,
+      model rules, and text behavior rather than duplicating them.
+- [ ] **V6+ — responsive palette containment and accessibility.** Touch the actual diagram-js palette
+      sizing/positioning sources (`shell.css`, palette grip styles, `arisPaletteDrag.ts`, provider and
+      quick-pick), not only `arisQuickPick.css`. Keep grip/toggle visible; internally scroll or
+      responsive-grid entries; observe both container and palette; reclamp after resize, entry count,
+      locale, font, and column changes. Provide collapse/dock/move rather than claiming a floating
+      palette never covers content. Test 320/400 px heights, LTR/RTL, keyboard/focus restoration,
+      pointer targets, forced colors, and 25–400% zoom. Fidelity capture always hides editor UI.
+
+#### From-scratch drawing toolkit UX
+
+The complete library is a searchable object browser plus contextual connection assistant, not merely
+36 permanent buttons:
+
+- Group objects as **Flow & Decisions**, **Roles & Organization**, **Systems & Data**,
+  **Governance & Performance**, **Services**, and **VACD**. Filter groups by the active model type;
+  show why a manual-only or unverified row cannot yet be placed.
+- Search English/Arabic names, aliases (rule/policy, law/regulation, SMS/mobile, KPI/measure),
+  `objectType`, `SymbolNum`, and catalog ID. Results preserve semantic grouping and highlight the
+  match. Offer Recent and Favorites without changing canonical order.
+- Each result shows the real shared descriptor, bilingual name, one-line purpose, model availability,
+  and variant count. Hover/focus opens an enlarged preview and exact default attributes/style.
+- Click, drag, Enter, or Space enters placement mode. Escape cancels and restores focus. Arrow keys,
+  Home/End, group collapse, type-ahead, and screen-reader names work. SVG internals are decorative
+  inside named controls.
+- A variant quick-pick appears before placement when identity is meaningful (manual/system Function,
+  carrier subtype, executor subtype, rule/policy/SLA/law, VACD start/successor). After placement, the
+  same quick-pick can replace the presentation while preserving compatible definition attributes and
+  connections. Incompatible replacement is blocked with a reason.
+- Defaults are contextual: EPC begins with Event/Function flow items; VACD offers start/successor and
+  containment; Org offers its hierarchy objects; Service Tree offers Service. New cards use manual
+  paint/size/content-box defaults and suggest, but do not silently overwrite, hierarchical IDs.
+- Selecting/hovering an object exposes only legal connection helpers in both directions, with the
+  manual canonical label. Executor→Function opens an R/A/C/I quick-pick; flow helpers can insert a
+  needed Event or rule; data/system/governance/service helpers choose the correct satellite side and
+  port; superior/encompasses helpers offer containment/fan-out geometry. Illegal tuples are absent,
+  not created and warned later.
+- Keep a compact favorites strip/context pad on canvas and put the full library in a dockable drawer.
+  The drawer remembers size/dock state per workspace, never traps focus, and does not affect print or
+  Zoom-Fit bounds.
+
+V10 acceptance:
+
+- Exact 36-row catalog and connection-helper manifest; every manual object is discoverable, every
+  verified row placeable in the correct model, and no enabled rows collapse to an indistinguishable
+  exported identity.
+- Search tests cover English, Arabic, aliases, symbol code, no-result, and disabled-result
+  explanations. Keyboard-only and screen-reader flows place, variant-swap, connect, cancel, and
+  restore focus.
+- Imported and newly authored instances resolve the same descriptor/paint/text contract; canvas,
+  palette, quick-pick, drag ghost, context pad, and print view have identical descriptor fingerprints.
+- Export/reimport preserves verified presentation identity, attributes, layout, and canonical
+  connection type. Unverified presentations cannot masquerade as round-trippable.
+- A visual gallery covers all 36 presentations, all RACI letters, every gate, every information
+  carrier, English/Arabic/mixed labels, supported sizes, light/forced-color UI, and does not use the
+  four AnimalWF models as its only coverage (they contain no OR and omit many manual symbols).
+
+#### Strengthened visual/semantic regression gate
+
+- [ ] **VG0 — independent expected manifest.** Store the private expected manifest in the
+      hash-pinned protected bundle, authored from AML/PDF evidence rather than imported from runtime
+      `catalog.ts`. For every occurrence record ID/definition/object/symbol override, exact source
+      bounds/z-order, required semantic parts/silhouette, per-role paint, caption and AttrOcc
+      text/rect/font. For every connection record ID/type/endpoints, exact ordered route, Pen/arrows,
+      label/RACI text/rect. Also record all FFText/runs/bindings, Gfx, OLE hashes/bounds, lanes,
+      Scale/PrintScale, furniture, validation rule multiset, and PDF classification. Deep-compare an
+      ID-sorted actual manifest and reject missing **or unexpected** elements.
+- [ ] **VG1+ — deterministic PDF and editor captures.** Add a dedicated visual Playwright config in a
+      digest-pinned Linux/Playwright 1.61.1 environment with fixed fonts. Pin viewport, DPR 1, light
+      theme, `en-US`, UTC, reduced motion, service workers off, and animations/caret off. Await
+      `document.fonts.ready`, exact active model/inventory, no editor transaction, render revision
+      ready, decoded OLE images, and an identical viewport transform across two frames. Hide palette,
+      minimap, validation overlays, selections, context pads, direct editor, cursors, and shell chrome.
+      Capture both a full A3 print surface, using AML Scale/PrintScale and comparing the
+      header/body/reference/legend regions plus whole page to each of the three matched PDF rasters,
+      and a fixed 1600×1000 model-only SVG/editor view per engine for cross-browser regressions.
+      Use engine-specific approved baselines, no per-model threshold loosening, no unrecorded masks,
+      and a fixed initial contract of color threshold `0.10`, `maxDiffPixels: 250`, and
+      `maxDiffPixelRatio: 0.0002`. Chromium is the canonical PDF pixel oracle; all engines must match
+      the semantic manifest. Require three clean repeated captures before approval. Baseline update is
+      forbidden in CI and writes candidates only outside tracked paths.
+- [ ] **VG2+ — exact structural/semantic gates.** Add renderer observability for object type, symbol,
+      catalog ID, source bounds, semantic parts, silhouette/operator, label owner/type/value/bounds,
+      connection ordered waypoints/style/arrows, active model/revision/ready state, and validation
+      rule/severity. On Chromium, Firefox, and WebKit assert exact occurrence/connection/text/furniture
+      inventories; per-role sRGB colors; 0.01 model-unit and 0.5 CSS-pixel geometry tolerances; all 269
+      routes and orthogonality; exact arrows/z-order; exact RACI and number maps; no unexpected colors,
+      labels, lanes, or fallbacks. Do **not** require zero global validation errors from source data.
+      Require zero false `orphanNode`/`alternation`, zero render-fidelity diagnostics, and the approved
+      named validation multiset. Cover OR and all objects absent from AnimalWF with the synthetic
+      36-symbol/connection/RTL gallery.
+- [ ] **VG3+ — protected release enforcement.** Securely fetch and SHA-verify the private bundle in an
+      environment-protected post-review candidate job; never expose it to fork code. Extend package
+      scripts, workflow, suite manifest, release reporter, and reporter tests so the four exact model
+      IDs × three engines are discovered and executed exactly once: 12 results, zero skip/retry/
+      interruption/duplicate. A public PR job may use a sanitized synthetic gallery, not private
+      AnimalWF screenshots. If measured runtime requires it, update both workflow and CLI ceilings;
+      config-only timeout changes are insufficient.
+- [ ] **VG4 — review provenance and diagnostics.** Approval metadata binds AML/PDF/manual/OLE/
+      expected-manifest/baseline/dist hashes, page/crop contract, browser/container/font versions,
+      reviewer, and date. Any change invalidates approval. On failure attach private expected/actual/
+      diff PNGs, normalized SVG, expected/actual semantic JSON and field diff, rule IDs, console/page
+      errors, font list, viewport/DPR/transform, model ID, and all hashes. Public logs expose
+      hashes/counts only; protected artifacts use short retention.
+
+#### Corrected Wave 6 exit gate
+
+- [ ] V0 provenance is resolved. Until a matching fourth source/PDF pair exists, release evidence says
+      **three PDF-exact + one AML-exact/PDF-directional**; it never says four PDF-exact.
+- [ ] All seven EEPCs have zero false `epc.connectivity.orphanNode`/`epc.alternation` findings for the
+      legal DMT sequence tuples; legitimate source-quality findings remain visible and match their
+      approved rule/severity manifest.
+- [ ] The three paired models pass whole-page and region-level A3 comparisons, including bilingual
+      header, DMT logo, Reference Laws box, diagram, typography, bottom symbol legend, and RACI key.
+      The companies model passes its independent AML visual manifest and only a convention-directional
+      review against the 2025 PDF.
+- [ ] All four models pass exact occurrence, symbol-override, semantic-part, per-role paint, route,
+      connection-style/arrow, z-order, caption, rich/free-text, furniture, OLE, numbering, and RACI
+      manifests on Chromium, Firefox, and WebKit. No source sentinel lane or editor overlay appears.
+- [ ] The complete 36-presentation drawing library and legal connection assistant pass gallery,
+      authoring, export/reimport, search, keyboard, RTL, accessibility, responsive viewport, and shared
+      descriptor gates.
+- [ ] All 12 protected model/engine cases execute once and pass; synthetic manual-gallery coverage
+      passes in normal CI; the full existing release suite remains green; the rebuilt release artifact
+      is byte-verified against the tested dist artifact.
+
+---
+
 ## Risk appendix
 
 1. **Single-owner-per-wave** file map (§ownership chains) is binding. A lane touching an unowned file = STOP + report.
