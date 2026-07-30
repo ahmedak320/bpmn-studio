@@ -131,34 +131,46 @@ describe('supported object types (Section 11.3)', () => {
     harness = bootCanvas()
     const entries = harness.canvas.palette.getPaletteEntries()
 
-    // The full, stable id -> className map. `data-action` selectors and CSS
-    // hooks are derived from these, so any drift here breaks e2e + styling.
-    const expected: Record<string, string> = {
+    // The three non-catalog tool entries never change shape.
+    const fixedTools: Record<string, string> = {
       'hand-tool': 'aris-palette-hand-tool',
       'lasso-tool': 'aris-palette-lasso-tool',
-      'create.free-text': 'aris-palette-free-text',
-      'create.ot_func': 'aris-palette-ot_func',
-      'create.ot_evt': 'aris-palette-ot_evt',
-      'create.rule-and': 'aris-palette-ot_rule',
-      'create.rule-or': 'aris-palette-ot_rule',
-      'create.rule-xor': 'aris-palette-ot_rule',
-      'create.ot_ent_type': 'aris-palette-ot_ent_type',
-      'create.ot_info_carr': 'aris-palette-ot_info_carr',
-      'create.ot_business_rule': 'aris-palette-ot_business_rule',
-      'create.ot_perf': 'aris-palette-ot_perf',
-      'create.ot_appl_sys': 'aris-palette-ot_appl_sys',
-      'create.ot_pers': 'aris-palette-ot_pers',
-      'create.ot_requirement': 'aris-palette-ot_requirement',
-      'create.ot_policy': 'aris-palette-ot_policy',
-      'create.ot_pers_type': 'aris-palette-ot_pers_type'
+      'create.free-text': 'aris-palette-free-text'
     }
-
-    expect(new Set(Object.keys(entries))).toEqual(new Set(Object.keys(expected)))
-    for (const [id, className] of Object.entries(expected)) {
+    for (const [id, className] of Object.entries(fixedTools)) {
       expect(entries[id]?.className, `className for ${id}`).toBe(className)
-      // Every entry ships a labeled, single-root affordance.
       expect(entries[id]?.html, `html for ${id}`).toContain('aris-palette-entry__label')
       expect(entries[id]?.title, `title for ${id}`).toBeTruthy()
+    }
+
+    // Every object type keeps a stable `create.<ot>` default entry with a
+    // `data-action`-safe, derivable className — `data-action` selectors and
+    // CSS hooks are derived from these, so any drift here breaks e2e + styling.
+    for (const objectType of ARIS_CANVAS_OBJECT_TYPES) {
+      const id = `create.${objectType.toLowerCase()}`
+      const expectedClassName = `aris-palette-${objectType.toLowerCase()}`
+      expect(entries[id], `default create entry for ${objectType}`).toBeDefined()
+      expect(entries[id]?.className, `className for ${id}`).toBe(expectedClassName)
+      expect(entries[id]?.html, `html for ${id}`).toContain('aris-palette-entry__label')
+      expect(entries[id]?.title, `title for ${id}`).toBeTruthy()
+    }
+
+    // The palette is now one entry per `getPaletteSymbols(modelType)` row
+    // (plan R1, palette-catalog lane) rather than one per object type, so the
+    // exact id set grows with the catalog. What must stay true regardless of
+    // catalog size: every entry is a `create.*` action (or one of the three
+    // fixed tools above), with a stable, correctly-derived className and a
+    // labeled, single-root affordance.
+    for (const [id, entry] of Object.entries(entries)) {
+      if (id in fixedTools) continue
+      expect(id.startsWith('create.'), `entry id ${id} should be a create.* action`).toBe(true)
+      if (entry.arisObjectType) {
+        expect(entry.className, `className for ${id}`).toBe(
+          `aris-palette-${entry.arisObjectType.toLowerCase()}`
+        )
+      }
+      expect(entry.html, `html for ${id}`).toContain('aris-palette-entry__label')
+      expect(entry.title, `title for ${id}`).toBeTruthy()
     }
   })
 
@@ -187,6 +199,30 @@ describe('supported object types (Section 11.3)', () => {
     expect(resolveConnectionType('MT_EEPC', 'OT_PERF', 'OT_POLICY')).toEqual({
       connectionType: 'CT_REFS_TO_2',
       fallback: true
+    })
+  })
+
+  it('resolves the new plan R2 executor triples to their RACI connection types', () => {
+    // resolveConnectionType now delegates to conventions/connectionRules,
+    // which adds R form (CT_EXEC_1) coverage for the org/people executor
+    // types beyond OT_PERS/OT_PERS_TYPE (which already had CT_EXEC_1/2).
+    expect(resolveConnectionType('MT_EEPC', 'OT_ORG_UNIT', 'OT_FUNC')).toEqual({
+      connectionType: 'CT_EXEC_1',
+      fallback: false
+    })
+    expect(resolveConnectionType('MT_EEPC', 'OT_POS', 'OT_FUNC')).toEqual({
+      connectionType: 'CT_EXEC_1',
+      fallback: false
+    })
+    expect(resolveConnectionType('MT_EEPC', 'OT_GRP', 'OT_FUNC')).toEqual({
+      connectionType: 'CT_EXEC_1',
+      fallback: false
+    })
+    // The executor rules are model-type-independent, same as the pre-existing
+    // OT_PERS/OT_PERS_TYPE rows.
+    expect(resolveConnectionType('MT_VAL_ADD_CHN_DGM', 'OT_POS', 'OT_FUNC')).toEqual({
+      connectionType: 'CT_EXEC_1',
+      fallback: false
     })
   })
 

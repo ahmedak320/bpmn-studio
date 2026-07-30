@@ -247,6 +247,11 @@ export interface ArisDetailsRailProps {
    * and flash the specific field to fix. Each request bumps `token`.
    */
   readonly highlight?: ArisDetailsRailHighlight | null
+  /**
+   * Open an assigned model from the Assignments tab's per-row Open button.
+   * Absent ⇒ the rail shows no Open button (read-only, pre-T6 behaviour).
+   */
+  readonly onOpenAssignedModel?: (modelId: string) => void
 }
 
 export function ArisDetailsRail({
@@ -259,7 +264,8 @@ export function ArisDetailsRail({
   lang = 'en',
   editing = null,
   onEditError,
-  highlight = null
+  highlight = null,
+  onOpenAssignedModel
 }: ArisDetailsRailProps): JSX.Element {
   const [activeTab, setActiveTab] = useState<ArisDetailsTabId>('general')
   const baseId = useId()
@@ -544,6 +550,7 @@ export function ArisDetailsRail({
             target={target}
             lang={lang}
             editing={editing}
+            onOpenAssignedModel={onOpenAssignedModel}
           />
         ) : null}
 

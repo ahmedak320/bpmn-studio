@@ -73,6 +73,7 @@ import { ArisContextPadProvider } from './contextPadProvider'
 import { ArisDocumentStore } from './documentStore'
 import { ArisModeling } from './arisModeling'
 import { ArisPaletteProvider } from './paletteProvider'
+import { ArisQuickPick } from './quickPick'
 import { ArisRenderer } from './renderer'
 import { ArisRules } from './arisRules'
 import { ArisSearchProvider } from './searchProvider'
@@ -96,6 +97,7 @@ export const ArisCanvasModule: DiagramModuleDeclaration = {
     'arisRenderer',
     'arisRules',
     'arisPaletteProvider',
+    'arisQuickPick',
     'arisContextPadProvider',
     'arisSelectionHighlight',
     'arisClipboard',
@@ -112,6 +114,7 @@ export const ArisCanvasModule: DiagramModuleDeclaration = {
   arisRenderer: ['type', ArisRenderer],
   arisRules: ['type', ArisRules],
   arisPaletteProvider: ['type', ArisPaletteProvider],
+  arisQuickPick: ['type', ArisQuickPick],
   arisContextPadProvider: ['type', ArisContextPadProvider],
   arisSelectionHighlight: ['type', ArisSelectionHighlight],
   arisClipboard: ['type', ArisClipboard],

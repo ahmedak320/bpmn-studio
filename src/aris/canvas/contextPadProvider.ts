@@ -14,6 +14,7 @@ import { t } from '../../i18n'
 import type { ArisModeling } from './arisModeling'
 import { arisBusinessObject } from './elements'
 import type { ArisPaletteProvider } from './paletteProvider'
+import type { ArisQuickPick } from './quickPick'
 
 export interface ArisContextPadEntry {
   readonly group: string
@@ -26,13 +27,14 @@ export interface ArisContextPadEntry {
 }
 
 export class ArisContextPadProvider {
-  static $inject = ['contextPad', 'connect', 'modeling', 'arisPaletteProvider']
+  static $inject = ['contextPad', 'connect', 'modeling', 'arisPaletteProvider', 'arisQuickPick']
 
   constructor(
     contextPad: ContextPad,
     private readonly connect: Connect,
     private readonly modeling: ArisModeling,
-    private readonly palette: ArisPaletteProvider
+    private readonly palette: ArisPaletteProvider,
+    private readonly quickPick: ArisQuickPick
   ) {
     // `ContextPad`'s provider type is generic over the element type; our
     // provider accepts every ARIS element, which the declaration cannot express.
@@ -83,6 +85,19 @@ export class ArisContextPadProvider {
               this.palette.draftShape({ objectType: 'OT_EVT', symbolNum: 'ST_EV' }),
               { x: target.x + target.width + 120, y: target.y + target.height / 2 }
             )
+          }
+        }
+      }
+
+      // Re-open the post-placement quick-pick for an existing shape whose symbol
+      // has variant alternatives to swap between.
+      if (this.quickPick.membersFor(element.id).length > 1) {
+        entries['swap-symbol'] = {
+          group: 'edit',
+          className: 'aris-context-pad-swap-symbol',
+          title: t('aris.contextPad.swapSymbol'),
+          action: {
+            click: (_event, target) => this.quickPick.open(target.id)
           }
         }
       }

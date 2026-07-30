@@ -26,6 +26,7 @@
 
 import { useCallback, useEffect, useId, useRef, useState, type CSSProperties } from 'react'
 
+import { t } from '../../i18n'
 import type { ArisAttachment } from '../canvas/attachments'
 import { bytesToBase64 } from '../canvas/attachments'
 import type { ArisDetailsDocument } from '../details/seam'
@@ -546,6 +547,8 @@ export interface ArisAssignmentsEditorProps {
   readonly target: ArisEditTarget
   readonly lang: ArisEditLang
   readonly editing: ArisDetailsEditingApi
+  /** Open an assigned model from a row's Open button; absent ⇒ no Open button. */
+  readonly onOpenAssignedModel?: (modelId: string) => void
 }
 
 /** §11.4 "add/remove linked-model assignment". */
@@ -554,7 +557,8 @@ export function ArisAssignmentsEditor({
   details,
   target,
   lang,
-  editing
+  editing,
+  onOpenAssignedModel
 }: ArisAssignmentsEditorProps): JSX.Element {
   const noteId = useId()
   const selectId = useId()
@@ -587,18 +591,34 @@ export function ArisAssignmentsEditor({
               }}
             >
               <span style={{ fontSize: 12 }}>{modelLabel(modelId, details, lang)}</span>
-              <button
-                type="button"
-                className="orbitpm-lite-chrome-btn"
-                style={{ fontSize: 12 }}
-                data-orbitpm-aris-assignment-remove={modelId}
-                aria-label={tk('aris.details.edit.assignments.remove', 'Unlink {model}', {
-                  model: modelLabel(modelId, details, lang)
-                })}
-                onClick={() => editing.removeModelAssignment(definition.id, modelId)}
-              >
-                {tk('aris.details.edit.remove', 'Remove')}
-              </button>
+              <span style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+                {onOpenAssignedModel && (
+                  <button
+                    type="button"
+                    className="orbitpm-lite-chrome-btn"
+                    style={{ fontSize: 12 }}
+                    data-orbitpm-aris-assignment-open={modelId}
+                    aria-label={t('aris.assign.open.aria', {
+                      model: modelLabel(modelId, details, lang)
+                    })}
+                    onClick={() => onOpenAssignedModel(modelId)}
+                  >
+                    {t('aris.assign.open')}
+                  </button>
+                )}
+                <button
+                  type="button"
+                  className="orbitpm-lite-chrome-btn"
+                  style={{ fontSize: 12 }}
+                  data-orbitpm-aris-assignment-remove={modelId}
+                  aria-label={tk('aris.details.edit.assignments.remove', 'Unlink {model}', {
+                    model: modelLabel(modelId, details, lang)
+                  })}
+                  onClick={() => editing.removeModelAssignment(definition.id, modelId)}
+                >
+                  {tk('aris.details.edit.remove', 'Remove')}
+                </button>
+              </span>
             </li>
           ))}
         </ul>

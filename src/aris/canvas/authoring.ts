@@ -54,6 +54,7 @@ import {
   deleteOccurrenceCommand,
   editFreeTextCommand,
   editLaneCommand,
+  findOccurrence,
   moveOccurrenceCommand,
   requireObjectDefinition,
   requireOccurrence,
@@ -267,6 +268,116 @@ export class ArisAuthoring {
     this.bridge.execute('set-symbol', (document, context) =>
       setOccurrenceSymbolCommand(context, document, occurrenceId, symbolNum)
     )
+  }
+
+  /**
+   * Edit a **model**-scoped attribute (Section 11.4). Mirrors
+   * `setDefinitionAttribute` with the `'model'` owner kind, taking the plain
+   * `localeId → text` map the details panel builds rather than the internal
+   * `ArisAttributeValue[]` shape.
+   */
+  setModelAttribute(modelId: string, attributeType: string, values: Record<string, string>): void {
+    const attributeValues: readonly ArisAttributeValue[] = Object.entries(values).map(
+      ([localeId, text]) => Object.freeze({ localeId, text })
+    )
+    this.bridge.execute('set-model-attribute', (document, context) =>
+      setAttributeCommand(context, document, 'model', modelId, attributeType, attributeValues)
+    )
+  }
+
+  /**
+   * `true` when an occurrence can be safely replaced by a different object type:
+   * its definition has exactly one occurrence (this shape) and no connection
+   * definition touches it. Both `replaceNewObject` and the quick-pick's
+   * cross-type members gate on this — replacing a shared or connected definition
+   * would silently rewrite the object everywhere it appears.
+   */
+  canReplaceNewObject(occurrenceId: string): boolean {
+    const document = this.store.document
+    const occurrence = findOccurrence(document, occurrenceId)
+    if (!occurrence) return false
+    const definitionId = occurrence.definitionId
+    if (countOccurrencesOfDefinition(document, definitionId) !== 1) return false
+    for (const connectionDefinition of document.connectionDefinitions.values()) {
+      if (
+        connectionDefinition.fromObjectDefinitionId === definitionId ||
+        connectionDefinition.toObjectDefinitionId === definitionId
+      ) {
+        return false
+      }
+    }
+    return true
+  }
+
+  /**
+   * Replace a freshly-placed occurrence with one of a different object type,
+   * preserving its position, size and name, in one undo step.
+   *
+   * Guarded by `canReplaceNewObject`: the definition must have exactly one
+   * occurrence and no touching connection definitions, else this throws
+   * `ArisCanvasCommandError('replace-not-safe')`. The single transaction deletes
+   * the old occurrence and its now-unused definition, then creates the new
+   * definition (with the preserved name) and its occurrence at the same bounds.
+   */
+  replaceNewObject(
+    occurrenceId: string,
+    target: { readonly objectType: string; readonly symbolNum: string }
+  ): CreateObjectResult {
+    // The target object type comes from the convention variant family, which is
+    // broader than the palette's `createObject` vocabulary (it includes types
+    // such as `OT_ORG_UNIT`); the real gate here is `canReplaceNewObject`, not
+    // the authorable-palette list.
+    const document = this.store.document
+    const occurrence = requireOccurrence(document, occurrenceId)
+    const definitionId = occurrence.definitionId
+    if (!this.canReplaceNewObject(occurrenceId)) {
+      throw new ArisCanvasCommandError(
+        'replace-not-safe',
+        `Occurrence ${occurrenceId} cannot be replaced: its definition is shared or connected.`
+      )
+    }
+    const definition = requireObjectDefinition(document, definitionId)
+    const modelId = occurrence.modelId
+    const bounds = occurrence.bounds
+    // Preserve the definition's primary name (its first stored locale).
+    const localeId = Object.keys(definition.names.values)[0]
+    const name =
+      localeId !== undefined
+        ? definition.names.values[localeId]
+        : (definition.names.fallback ?? undefined)
+    const newDefinitionId = this.store.nextId('objectDefinition')
+    const newOccurrenceId = this.store.nextId('objectOccurrence')
+
+    const commands = this.bridge.execute('replace-object', (doc, context) =>
+      transactionCommand(context, [
+        deleteOccurrenceCommand(context, doc, occurrenceId),
+        deleteDefinitionCommand(context, doc, definitionId),
+        createDefinitionCommand(context, {
+          definitionId: newDefinitionId,
+          objectType: target.objectType,
+          symbolNum: target.symbolNum,
+          name: name ?? undefined,
+          localeId
+        }),
+        createOccurrenceCommand(context, {
+          occurrenceId: newOccurrenceId,
+          definitionId: newDefinitionId,
+          modelId,
+          symbolNum: target.symbolNum,
+          bounds: {
+            x: bounds.x,
+            y: bounds.y,
+            width: bounds.width,
+            height: bounds.height
+          }
+        })
+      ])
+    )
+    return Object.freeze({
+      definitionId: newDefinitionId,
+      occurrenceId: newOccurrenceId,
+      commands
+    })
   }
 
   // -- connections ----------------------------------------------------------

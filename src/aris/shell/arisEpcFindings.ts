@@ -29,12 +29,20 @@ const EPC_MODEL_TYPE = 'MT_EEPC'
  *
  * @param document the live working document (imported or edited — both work).
  * @param modelIds restrict validation to these models; omit to validate all.
+ * @param externallyKnownModelIds model ids that live in OTHER workspace files but
+ *   are legitimate assignment targets. They union into the set an assignment is
+ *   validated against, so a cross-file `LinkedModels.IdRef` is not flagged
+ *   `epc.linkedModel.danglingReference` merely because it is not in THIS document.
  */
 export function buildArisEpcFindings(
   document: ArisWorkingDocument,
-  modelIds?: ReadonlySet<string>
+  modelIds?: ReadonlySet<string>,
+  externallyKnownModelIds?: ReadonlySet<string>
 ): readonly ArisEpcModelFinding[] {
   const knownModelIds = new Set(document.models.keys())
+  if (externallyKnownModelIds) {
+    for (const modelId of externallyKnownModelIds) knownModelIds.add(modelId)
+  }
   const findings: ArisEpcModelFinding[] = []
 
   for (const [modelId, model] of document.models) {

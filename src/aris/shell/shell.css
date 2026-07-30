@@ -235,6 +235,25 @@
   outline-offset: 1px;
 }
 
+/* Lane T6: per-occurrence assignment (⊞) marker — drill-down into a linked model. */
+.orbitpm-aris-canvas .orbitpm-aris-assignment-marker {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  font-size: 12px;
+  line-height: 1;
+  padding: 1px 4px;
+  border-radius: 8px;
+  border: 1px solid var(--orbitpm-border, #ccc);
+  background: var(--orbitpm-panel-bg, #fff);
+  color: var(--orbitpm-muted, #475569);
+  cursor: pointer;
+}
+.orbitpm-aris-canvas .orbitpm-aris-assignment-marker:focus-visible {
+  outline: 2px solid var(--orbitpm-aris-highlight, #2563eb);
+  outline-offset: 1px;
+}
+
 /* --- issue 2: inline label editor (diagram-js-direct-editing) ----------- */
 
 /*

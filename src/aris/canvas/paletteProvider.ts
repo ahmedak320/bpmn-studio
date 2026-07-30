@@ -15,13 +15,12 @@ import type LassoTool from 'diagram-js/lib/features/lasso-tool/LassoTool'
 import type Palette from 'diagram-js/lib/features/palette/Palette'
 import type { Shape } from 'diagram-js/lib/model/Types'
 
-import { t } from '../../i18n'
+import { t, type Key } from '../../i18n'
+import { getPaletteSymbols } from '../conventions'
 import { resolveArisSymbol } from '../symbols'
 import type { ArisModeling, ArisCreateShapeAttrs } from './arisModeling'
 import { ArisDocumentStore } from './documentStore'
-import { ARIS_CANVAS_OBJECT_TYPES, ARIS_RULE_SYMBOLS, type ArisRuleOperator } from './vocabulary'
-
-type PaletteMessageKey = Parameters<typeof t>[0]
+import { ruleOperatorOfSymbol } from './vocabulary'
 
 export interface ArisPaletteEntry {
   readonly group: string
@@ -103,6 +102,9 @@ const FREE_TEXT_GLYPH = glyph(
   '<line x1="6" y1="7" x2="18" y2="7"/><line x1="12" y1="7" x2="12" y2="18"/>'
 )
 
+/** Fallback affordance for an object type without a dedicated glyph. */
+const GENERIC_GLYPH = glyph('<rect x="4" y="6" width="16" height="12" rx="2"/>')
+
 /** Glyph per ARIS object type (the create entries). */
 const OBJECT_TYPE_GLYPHS: Record<string, string> = {
   OT_FUNC: glyph('<rect x="3" y="7" width="18" height="10" rx="3"/>'),
@@ -123,40 +125,45 @@ const OBJECT_TYPE_GLYPHS: Record<string, string> = {
   OT_POLICY: glyph('<path d="M12 4l7 3v5c0 4-3 7-7 8-4-1-7-4-7-8V7z"/>'),
   OT_PERS_TYPE: glyph(
     '<circle cx="9" cy="9" r="2.5"/><path d="M4 18a5 5 0 0 1 10 0"/><circle cx="15" cy="9" r="2.5"/><path d="M11 18a5 5 0 0 1 9 0"/>'
+  ),
+  OT_ORG_UNIT: glyph('<rect x="4" y="9" width="16" height="9" rx="1"/><path d="M9 9V6h6v3"/>'),
+  OT_POS: glyph(
+    '<circle cx="12" cy="8" r="2.5"/><rect x="7" y="13" width="10" height="5" rx="1"/>'
+  ),
+  OT_GRP: glyph(
+    '<circle cx="8" cy="9" r="2"/><circle cx="16" cy="9" r="2"/><path d="M4 18a4 4 0 0 1 8 0"/><path d="M12 18a4 4 0 0 1 8 0"/>'
+  ),
+  OT_RISK: glyph(
+    '<path d="M12 4l9 16H3z"/><line x1="12" y1="10" x2="12" y2="14.5"/><circle cx="12" cy="17.2" r="0.7" stroke="none" fill="currentColor"/>'
+  ),
+  OT_SERVICE: glyph(
+    '<circle cx="12" cy="12" r="7"/><line x1="8" y1="12" x2="16" y2="12"/><line x1="12" y1="8" x2="12" y2="16"/>'
   )
 }
 
-/** Localized name key per ARIS object type (interpolated into `createTitle`). */
-const OBJECT_TYPE_NAME_KEYS: Record<string, PaletteMessageKey> = {
-  OT_FUNC: 'aris.palette.func',
-  OT_EVT: 'aris.palette.evt',
-  OT_ENT_TYPE: 'aris.palette.entType',
-  OT_INFO_CARR: 'aris.palette.infoCarr',
-  OT_BUSINESS_RULE: 'aris.palette.businessRule',
-  OT_PERF: 'aris.palette.perf',
-  OT_APPL_SYS: 'aris.palette.applSys',
-  OT_PERS: 'aris.palette.pers',
-  OT_REQUIREMENT: 'aris.palette.requirement',
-  OT_POLICY: 'aris.palette.policy',
-  OT_PERS_TYPE: 'aris.palette.persType'
+/** The operator glyph for a rule symbol. */
+function ruleGlyphFor(symbolNum: string): string {
+  const operator = ruleOperatorOfSymbol(symbolNum)
+  if (operator === 'OR') return ruleGlyph('∨')
+  if (operator === 'XOR') return ruleGlyph('×')
+  return ruleGlyph('∧')
 }
 
-/** Rule entries carry the operator glyph and name keyed by their entry id. */
-const RULE_GLYPHS: Record<string, string> = {
-  'create.rule-and': ruleGlyph('∧'),
-  'create.rule-or': ruleGlyph('∨'),
-  'create.rule-xor': ruleGlyph('×')
-}
-const RULE_NAME_KEYS: Record<string, PaletteMessageKey> = {
-  'create.rule-and': 'aris.palette.rule.and',
-  'create.rule-or': 'aris.palette.rule.or',
-  'create.rule-xor': 'aris.palette.rule.xor'
+/**
+ * The line-art affordance for an object type / symbol, reused by both the
+ * palette entries and the post-placement quick-pick members so a swap target
+ * looks the same in both surfaces.
+ */
+export function arisPaletteGlyph(objectType: string, symbolNum: string): string {
+  if (objectType === 'OT_RULE') return ruleGlyphFor(symbolNum)
+  return OBJECT_TYPE_GLYPHS[objectType] ?? GENERIC_GLYPH
 }
 
 interface PaletteTarget {
   readonly id: string
   readonly objectType: string
   readonly symbolNum: string
+  readonly labelKey: string
   readonly title: string
   readonly group: string
 }
@@ -190,31 +197,43 @@ export class ArisPaletteProvider {
     palette.registerProvider(this)
   }
 
-  /** Every object type the palette offers, in stable order. */
+  /**
+   * Every symbol the palette offers for the active model type, in catalog
+   * order (R1). One entry per `getPaletteSymbols(modelType)` row: the object
+   * type's default symbol keeps the stable `create.<ot>` id, every other symbol
+   * is a variant keyed `create.<ot>.<st>` (numeric-suffixed on the rare catalog
+   * rows that share an object type + SymbolNum, so ids stay unique).
+   */
   targets(): readonly PaletteTarget[] {
     const document = this.store.document
     const model = document.models.get(this.store.activeModelId)
     const modelType = model?.type ?? 'MT_EEPC'
     const entries: PaletteTarget[] = []
-    for (const objectType of ARIS_CANVAS_OBJECT_TYPES) {
-      if (objectType === 'OT_RULE') {
-        for (const operator of Object.keys(ARIS_RULE_SYMBOLS) as ArisRuleOperator[]) {
-          entries.push({
-            id: `create.rule-${operator.toLowerCase()}`,
-            objectType,
-            symbolNum: ARIS_RULE_SYMBOLS[operator],
-            title: `${operator} rule`,
-            group: 'rule'
-          })
+    const usedIds = new Set<string>()
+    const defaultAssigned = new Set<string>()
+    for (const symbol of getPaletteSymbols(modelType)) {
+      const defaultSymbol = defaultSymbolFor(modelType, symbol.objectType)
+      let id: string
+      if (symbol.symbolNum === defaultSymbol && !defaultAssigned.has(symbol.objectType)) {
+        id = `create.${symbol.objectType.toLowerCase()}`
+        defaultAssigned.add(symbol.objectType)
+      } else {
+        const base = `create.${symbol.objectType.toLowerCase()}.${symbol.symbolNum.toLowerCase()}`
+        id = base
+        let ordinal = 2
+        while (usedIds.has(id)) {
+          id = `${base}.${ordinal}`
+          ordinal += 1
         }
-        continue
       }
+      usedIds.add(id)
       entries.push({
-        id: `create.${objectType.toLowerCase()}`,
-        objectType,
-        symbolNum: defaultSymbolFor(modelType, objectType),
-        title: objectType,
-        group: objectType === 'OT_FUNC' || objectType === 'OT_EVT' ? 'flow' : 'satellite'
+        id,
+        objectType: symbol.objectType,
+        symbolNum: symbol.symbolNum,
+        labelKey: symbol.labelKey,
+        title: t(symbol.labelKey as Key),
+        group: symbol.paletteGroup
       })
     }
     return Object.freeze(entries)
@@ -263,15 +282,8 @@ export class ArisPaletteProvider {
       const start = (event: Event): void => {
         this.create.start(event as unknown as MouseEvent, this.draftShape(target))
       }
-      const nameKey =
-        target.objectType === 'OT_RULE'
-          ? RULE_NAME_KEYS[target.id]
-          : OBJECT_TYPE_NAME_KEYS[target.objectType]
-      const label = t(nameKey)
-      const svgInner =
-        target.objectType === 'OT_RULE'
-          ? RULE_GLYPHS[target.id]
-          : OBJECT_TYPE_GLYPHS[target.objectType]
+      const label = target.title
+      const svgInner = arisPaletteGlyph(target.objectType, target.symbolNum)
       entries[target.id] = {
         group: target.group,
         className: `aris-palette-${target.objectType.toLowerCase()}`,

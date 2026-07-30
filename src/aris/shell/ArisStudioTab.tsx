@@ -38,6 +38,13 @@ import {
   type ArisValidationOverlayController
 } from './arisValidationOverlays'
 import {
+  installArisAssignmentUx,
+  type ArisAssignmentActivation,
+  type ArisAssignmentUxController
+} from './arisAssignmentUx'
+import { LinkPicker } from '../../links/LinkPicker'
+import type { ProcessEntry, ProcessIndex } from '../../core/processIndex'
+import {
   applyArisChatCommandsAsGesture,
   createArisChatApplyHost,
   scanArisGaps
@@ -67,6 +74,17 @@ import type { LocalizationResources } from '../../localization/types'
 import { tk } from './shellI18n'
 
 export type ArisLayoutModeState = 'source' | 'clean'
+
+/**
+ * A drill-down whose target model is NOT in this open source — every linked id
+ * lives in another workspace file. The shell (T8) resolves it against the
+ * workspace and opens the right file.
+ */
+export interface ArisOpenAssignedModelRequest {
+  readonly linkedModelIds: readonly string[]
+  readonly definitionId: string
+  readonly definitionName: string
+}
 
 /** A request from outside the tab to reveal one element (assistant chip, §17.6). */
 export interface ArisSelectionRequest {
@@ -111,6 +129,20 @@ export interface ArisStudioTabProps {
   readonly onAcceptedTranslationPair?: (pair: { en: string; ar: string }) => void
   /** Route the fix dialog's Tier-C gaps into the chat drawer's interview tab (plan §18). */
   readonly onOpenInterview?: () => void
+  /**
+   * Workspace-wide model index (id → entry) used by the Link-model picker and to
+   * mark cross-file assignment targets as known (so they are not flagged
+   * dangling). Only T8 (the workspace shell) supplies it; absent ⇒ the picker
+   * falls back to the models in this open source.
+   */
+  readonly workspaceModelIndex?: ProcessIndex
+  /**
+   * Open a linked model that lives in ANOTHER workspace file. Only T8 supplies
+   * it; absent ⇒ a foreign drill-down is a no-op.
+   */
+  readonly onOpenAssignedModel?: (request: ArisOpenAssignedModelRequest) => void
+  /** Publish the live working document to the workspace shell on every change. */
+  readonly onLiveDocumentChange?: (document: ArisWorkingDocument) => void
 }
 
 const EMPTY_HISTORY: ArisCanvasHistoryState = Object.freeze({
@@ -163,7 +195,10 @@ export function ArisStudioTab({
   sourceKind,
   localizationResources = null,
   onAcceptedTranslationPair,
-  onOpenInterview
+  onOpenInterview,
+  workspaceModelIndex,
+  onOpenAssignedModel,
+  onLiveDocumentChange
 }: ArisStudioTabProps): JSX.Element {
   const canvasRef = useRef<ArisCanvas | null>(null)
   const [selection, setSelection] = useState<ArisCanvasSelectionState>(EMPTY_SELECTION)
@@ -179,6 +214,7 @@ export function ArisStudioTab({
   const [canvasTick, setCanvasTick] = useState(0)
   const translateRef = useRef<ArisTranslateControllerHandle | null>(null)
   const [fixDialogOpen, setFixDialogOpen] = useState(false)
+  const [linkPickerOpen, setLinkPickerOpen] = useState(false)
   const dir: 'ltr' | 'rtl' = lang === 'ar' ? 'rtl' : 'ltr'
   const railId = `orbitpm-aris-rail-${useId().replaceAll(':', '')}`
   const rail = useArisRailLayout()
@@ -348,7 +384,16 @@ export function ArisStudioTab({
   )
 
   // --- plan §14.1: EPC findings for the live document ---------------------------
-  const epcFindings = useMemo(() => buildArisEpcFindings(liveDocument), [liveDocument])
+  // Cross-file assignment targets (workspace models in OTHER files) count as known,
+  // so a legitimate cross-file `LinkedModels.IdRef` is not flagged dangling.
+  const externallyKnownModelIds = useMemo(
+    () => new Set(workspaceModelIndex?.keys() ?? []),
+    [workspaceModelIndex]
+  )
+  const epcFindings = useMemo(
+    () => buildArisEpcFindings(liveDocument, undefined, externallyKnownModelIds),
+    [liveDocument, externallyKnownModelIds]
+  )
 
   // --- plan §9: derived AML export ---------------------------------------------
   const handleExportDerivedAml = useCallback(() => {
@@ -506,6 +551,123 @@ export function ArisStudioTab({
       controller.uninstall()
     }
   }, [getCanvas, handleRevealFinding])
+
+  // --- Lane T6: canvas assignment drill-down (⊞ marker + dblclick @2000) --------
+  /**
+   * Open one linked model. In-document targets switch the canvas in place; a
+   * target that lives in another workspace file is delegated to the shell (T8).
+   */
+  const openAssignedModelId = useCallback(
+    (modelId: string, definitionId: string, definitionName: string): void => {
+      const canvas = canvasRef.current
+      if (canvas && canvas.document.models.has(modelId)) {
+        canvas.setActiveModel(modelId)
+        onModelChange(modelId)
+        return
+      }
+      onOpenAssignedModel?.({ linkedModelIds: [modelId], definitionId, definitionName })
+    },
+    [onModelChange, onOpenAssignedModel]
+  )
+
+  /**
+   * A ⊞ marker click or a priority-2000 double-click fires this. The first
+   * linked model that lives in THIS document wins and switches the canvas; when
+   * none do, the whole id list is delegated to the workspace shell.
+   */
+  const handleAssignmentActivation = useCallback(
+    (activation: ArisAssignmentActivation): void => {
+      const canvas = canvasRef.current
+      if (canvas) {
+        for (const modelId of activation.linkedModelIds) {
+          if (canvas.document.models.has(modelId)) {
+            canvas.setActiveModel(modelId)
+            onModelChange(modelId)
+            return
+          }
+        }
+      }
+      onOpenAssignedModel?.({
+        linkedModelIds: activation.linkedModelIds,
+        definitionId: activation.definitionId,
+        definitionName: activation.definitionName
+      })
+    },
+    [onModelChange, onOpenAssignedModel]
+  )
+
+  // Install the assignment UX exactly like the validation overlays: install once
+  // per canvas readiness, resync on model switch or an edit (history revision).
+  const assignmentUxRef = useRef<ArisAssignmentUxController | null>(null)
+  useEffect(() => {
+    const canvas = getCanvas()
+    if (!canvas) return
+    const controller = installArisAssignmentUx(canvas, handleAssignmentActivation)
+    assignmentUxRef.current = controller
+    return () => {
+      assignmentUxRef.current = null
+      controller.uninstall()
+    }
+  }, [getCanvas, handleAssignmentActivation])
+  useEffect(() => {
+    assignmentUxRef.current?.resync()
+  }, [renderableModelId, history.revision])
+
+  // The Link-model toolbar button targets a single selected OT_FUNC occurrence.
+  const linkSelection = useMemo(() => {
+    const businessObject = selection.businessObject
+    if (
+      selection.selectedIds.length === 1 &&
+      businessObject?.kind === 'occurrence' &&
+      businessObject.objectType === 'OT_FUNC'
+    ) {
+      return { definitionId: businessObject.definitionId, definitionName: businessObject.name }
+    }
+    return null
+  }, [selection])
+
+  // The picker's index: the workspace-wide one when supplied, else a local index
+  // built from the models in THIS open source.
+  const linkPickerIndex = useMemo<ProcessIndex>(() => {
+    if (workspaceModelIndex) return workspaceModelIndex
+    const index: ProcessIndex = new Map()
+    for (const [modelId, model] of liveDocument.models) {
+      const entry: ProcessEntry = {
+        processId: modelId,
+        processName: model.names.fallback ?? undefined,
+        relPath: sourceFileName ?? title
+      }
+      index.set(modelId, entry)
+    }
+    return index
+  }, [workspaceModelIndex, liveDocument, sourceFileName, title])
+
+  const handlePickLinkedModel = useCallback(
+    (modelId: string): void => {
+      setLinkPickerOpen(false)
+      const canvas = canvasRef.current
+      if (!canvas || !linkSelection) return
+      try {
+        canvas.authoring.addModelAssignment(linkSelection.definitionId, modelId)
+      } catch (error) {
+        onToast(
+          tk('aris.details.edit.failed', 'The change was refused: {error}', {
+            error: error instanceof Error ? error.message : String(error)
+          }),
+          'error'
+        )
+        return
+      }
+      onToast(
+        t('aris.assign.linked', {
+          model: linkPickerIndex.get(modelId)?.processName || modelId,
+          name: linkSelection.definitionName
+        }),
+        'success'
+      )
+    },
+    [linkPickerIndex, linkSelection, onToast]
+  )
 
   const handleFixAutoFix = useCallback(() => {
     // Tier A hands the counterpart-language fills to the translate controller's review/fill path,
@@ -784,6 +946,16 @@ export function ArisStudioTab({
               })}
             </span>
           )}
+          <button
+            type="button"
+            className="orbitpm-lite-chrome-btn"
+            data-orbitpm-aris-link-model=""
+            title={t('aris.assign.link.title')}
+            disabled={!linkSelection}
+            onClick={() => setLinkPickerOpen(true)}
+          >
+            {t('aris.assign.link')}
+          </button>
           {gaps.length > 0 && (
             <button
               type="button"
@@ -855,7 +1027,10 @@ export function ArisStudioTab({
                 setCanvasTick((tick) => tick + 1)
               }}
               onSelectionChange={setSelection}
-              onHistoryChange={setHistory}
+              onHistoryChange={(next) => {
+                setHistory(next)
+                if (next.document) onLiveDocumentChange?.(next.document)
+              }}
               onError={(error) =>
                 onToast(
                   tk('aris.canvas.bootFailed', 'The ARIS canvas could not be opened: {error}', {
@@ -963,6 +1138,14 @@ export function ArisStudioTab({
           editing={detailsEditing}
           onEditError={(message) => onToast(message, 'error')}
           highlight={railHighlight}
+          onOpenAssignedModel={(modelId) => {
+            const businessObject = selection.businessObject
+            const definitionId =
+              businessObject?.kind === 'occurrence' ? businessObject.definitionId : modelId
+            const definitionName =
+              businessObject?.kind === 'occurrence' ? businessObject.name : modelId
+            openAssignedModelId(modelId, definitionId, definitionName)
+          }}
         />
 
         <ArisEpcRail findings={validationFindings} onSelectFinding={handleRevealFinding} />
@@ -990,6 +1173,13 @@ export function ArisStudioTab({
         onOpenInterview={handleFixOpenInterview}
         onClose={() => setFixDialogOpen(false)}
         buildPreview={buildFixPreview}
+      />
+
+      <LinkPicker
+        open={linkPickerOpen}
+        index={linkPickerIndex}
+        onPick={handlePickLinkedModel}
+        onClose={() => setLinkPickerOpen(false)}
       />
     </section>
   )

@@ -34,13 +34,17 @@ import {
   type WorkspaceLocalizationStore
 } from './localization/workspaceStore'
 import type { LocalizationResources } from './localization/types'
+import { buildLiteTreeFromEntries, uniquePathIn } from './workspace/liteTreeFromEntries'
+import { buildProcessHierarchy, type HierarchyNavigation } from './workspace/processHierarchy'
+import type { TreeRevealRequest } from './workspace/FolderTreeLite'
 import {
-  buildLiteTreeFromEntries,
-  uniquePathIn,
-  EMPTY_PROCESS_GRAPH,
-  EMPTY_PROCESS_INDEX
-} from './workspace/liteTreeFromEntries'
-import { buildProcessHierarchy } from './workspace/processHierarchy'
+  createArisLinkScanCache,
+  scanArisWorkspaceLinks,
+  mergeArisLinkState,
+  EMPTY_ARIS_LINK_STATE,
+  type ArisWorkspaceLinkState
+} from './aris/links/arisWorkspaceLinks'
+import type { ArisModelScanResult } from './aris/links/arisModelScan'
 import type { ArisExplorerTabsController } from './aris/shell/arisExplorerActions'
 import { ArisNewModelDialog } from './aris/shell/ArisNewModelDialog'
 import { buildBlankArisAml, deriveArisSourceFileName } from './aris/shell/arisBlankModel'
@@ -377,9 +381,72 @@ export default function ArisApp(): JSX.Element {
 
   const multiFile = workspaceAdapter?.storage.capabilities.multipleFiles === true
 
-  // The physical folder tree for directory/OPFS workspaces. `buildProcessHierarchy`
-  // over an empty index/graph collapses to a pure physical tree — models are only
-  // known for OPENED sources, so no eager parse of every file is forced here.
+  // A workspace-wide ARIS link scan turns the flat file listing into the process
+  // index + hierarchy graph the folder tree nests owned subprocesses by. The
+  // cache reuses unchanged files across rescans; per-file read/decode failures
+  // are swallowed by the scanner so one bad file cannot break the whole tree.
+  const arisLinkScanCacheRef = useRef(createArisLinkScanCache())
+  const [arisLinkScanState, setArisLinkScanState] =
+    useState<ArisWorkspaceLinkState>(EMPTY_ARIS_LINK_STATE)
+  // Live per-tab overlays: an open canvas's edited links replace that file's
+  // scanned contribution without a re-read. The PRODUCER is wired in a later
+  // wave — here only the state and the merge exist, ready for a caller.
+  const [liveScanOverlays, setLiveScanOverlays] = useState<Map<string, ArisModelScanResult>>(
+    () => new Map()
+  )
+
+  useEffect(() => {
+    if (!multiFile || !workspaceAdapter) {
+      setArisLinkScanState(EMPTY_ARIS_LINK_STATE)
+      return
+    }
+    let cancelled = false
+    void (async () => {
+      const state = await scanArisWorkspaceLinks(
+        workspaceAdapter,
+        workspaceEntries,
+        arisLinkScanCacheRef.current
+      )
+      if (!cancelled) setArisLinkScanState(state)
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [multiFile, workspaceAdapter, workspaceEntries])
+
+  const handleLiveScanChange = useCallback(
+    (relPath: string, result: ArisModelScanResult | null) => {
+      setLiveScanOverlays((current) => {
+        if (result === null) {
+          if (!current.has(relPath)) return current
+          const next = new Map(current)
+          next.delete(relPath)
+          return next
+        }
+        const existing = current.get(relPath)
+        // A move/resize that leaves the link shape identical must not churn the
+        // whole tree, so bail out on an unchanged JSON signature.
+        if (existing && JSON.stringify(existing) === JSON.stringify(result)) return current
+        const next = new Map(current)
+        next.set(relPath, result)
+        return next
+      })
+    },
+    []
+  )
+  // The live-overlay producer is wired in a later wave; a stable ref keeps the
+  // setter reachable from that wave's canvas host without re-subscribing it.
+  const liveScanChangeRef = useRef(handleLiveScanChange)
+  liveScanChangeRef.current = handleLiveScanChange
+
+  const mergedLinks = useMemo(
+    () => mergeArisLinkState(arisLinkScanState, liveScanOverlays),
+    [arisLinkScanState, liveScanOverlays]
+  )
+
+  // The physical folder tree for directory/OPFS workspaces, nested by the merged
+  // scan: owned subprocess files move under their owner, reused ones become
+  // read-only reference rows.
   const explorerTree = useMemo(
     () =>
       multiFile
@@ -390,9 +457,9 @@ export default function ArisApp(): JSX.Element {
   const explorerHierarchy = useMemo(
     () =>
       explorerTree
-        ? buildProcessHierarchy(explorerTree, EMPTY_PROCESS_INDEX, EMPTY_PROCESS_GRAPH)
+        ? buildProcessHierarchy(explorerTree, mergedLinks.index, mergedLinks.graph)
         : null,
-    [explorerTree]
+    [explorerTree, mergedLinks]
   )
 
   // Rename/move keep an open tab pointing at the new path WITHOUT changing
@@ -801,6 +868,39 @@ export default function ArisApp(): JSX.Element {
     )
   }, [])
 
+  // A single reveal token drives the tree's scroll-to + focus effect; bumping it
+  // re-fires even for the same target.
+  const [treeReveal, setTreeReveal] = useState<TreeRevealRequest | null>(null)
+  const treeRevealTokenRef = useRef(0)
+  const requestTreeReveal = useCallback((processId?: string, relPath?: string) => {
+    treeRevealTokenRef.current += 1
+    setTreeReveal({ token: treeRevealTokenRef.current, processId, relPath })
+  }, [])
+
+  /**
+   * Open a process by its stable identity: resolve its canonical file, reveal it
+   * in the tree, open that source and select the exact model. Reference rows and
+   * chips route here so navigation never depends on a file's physical location.
+   */
+  const openCanonicalProcess = useCallback(
+    (processId: string) => {
+      const path = explorerHierarchy?.canonicalPathByProcessId.get(processId)
+      if (!path) return
+      setExplorerOpen(true)
+      requestTreeReveal(processId, path)
+      void handleOpenWorkspaceFile(path)
+      handleSelectModel(`source:${path}`, processId)
+    },
+    [explorerHierarchy, handleOpenWorkspaceFile, handleSelectModel, requestTreeReveal]
+  )
+
+  const handleOpenProcess = useCallback(
+    (navigation: HierarchyNavigation) => {
+      openCanonicalProcess(navigation.processId)
+    },
+    [openCanonicalProcess]
+  )
+
   /**
    * The §17.2 assistant index over every open source.
    *
@@ -1163,6 +1263,8 @@ export default function ArisApp(): JSX.Element {
               adapter={workspaceAdapter}
               tree={explorerTree}
               hierarchy={explorerHierarchy}
+              revealRequest={treeReveal}
+              onOpenProcess={handleOpenProcess}
               activePath={activeTab?.relPath ?? null}
               rootName={rootLabel(mode, workspaceAdapter)}
               tabsController={explorerTabsController}

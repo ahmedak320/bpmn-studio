@@ -306,6 +306,38 @@ describe('linked-model assignments (plan §11.4)', () => {
     fireEvent.click(field('[data-orbitpm-aris-assignment-add]'))
     expect(spy.calls).toEqual([{ name: 'addModelAssignment', args: ['od-shared', 'm1'] }])
   })
+
+  it('a row Open button calls onOpenAssignedModel with the linked model id (Lane T6)', () => {
+    const spy = recorder()
+    const onOpenAssignedModel = vi.fn()
+    render(
+      <ArisDetailsRail
+        details={details}
+        element={{ kind: 'objectDefinition', id: 'od-shared' }}
+        elementLabel="Approve request"
+        modelId="m1"
+        onDownloadAttachment={vi.fn()}
+        document={workingDocument}
+        lang="en"
+        editing={spy.api}
+        onEditError={vi.fn()}
+        onOpenAssignedModel={onOpenAssignedModel}
+      />
+    )
+    openTab('assignments')
+    fireEvent.click(field('[data-orbitpm-aris-assignment-open="m2"]'))
+    expect(onOpenAssignedModel).toHaveBeenCalledTimes(1)
+    expect(onOpenAssignedModel).toHaveBeenCalledWith('m2')
+    // Open is navigation, not an authoring edit.
+    expect(spy.calls).toEqual([])
+  })
+
+  it('renders no Open button when onOpenAssignedModel is not supplied', () => {
+    const spy = recorder()
+    mount({ kind: 'objectDefinition', id: 'od-shared' }, spy.api)
+    openTab('assignments')
+    expect(document.querySelector('[data-orbitpm-aris-assignment-open="m2"]')).toBeNull()
+  })
 })
 
 describe('attachments (plan §11.4, §13.4)', () => {

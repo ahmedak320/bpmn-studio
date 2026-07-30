@@ -127,8 +127,8 @@ describe('the canvas draws the occurrence style it was given', () => {
       document: documentWith([{ id: 'ObjOcc.1' }, { id: 'ObjOcc.2', fillColor: 'cccccc' }]),
       modelId: MODEL_ID
     })
-    // Unstyled: the registry's own fill for ST_FUNC.
-    expect(bodyOf('ObjOcc.1').getAttribute('fill')).toBe('#f3f4f6')
+    // Unstyled: the registry's own fill for ST_FUNC (plan R1 DMT default).
+    expect(bodyOf('ObjOcc.1').getAttribute('fill')).toBe('#339900')
     // Styled: the occurrence's brush wins (§12.2 "source style data wins when present").
     expect(bodyOf('ObjOcc.2').getAttribute('fill')).toBe('#cccccc')
   })
@@ -187,7 +187,7 @@ describe('an edited style changes the rendered output (§11.4 restyle occurrence
   it('repaints the shape the moment restyleOccurrence runs, and undo puts it back', () => {
     harness = bootCanvas({ document: documentWith([{ id: 'ObjOcc.1' }]), modelId: MODEL_ID })
     const before = bodyOf('ObjOcc.1').getAttribute('fill')
-    expect(before).toBe('#f3f4f6')
+    expect(before).toBe('#339900')
 
     harness.canvas.authoring.restyleOccurrence('ObjOcc.1', { fillColor: '#00ff00' })
     expect(bodyOf('ObjOcc.1').getAttribute('fill')).toBe('#00ff00')
@@ -213,7 +213,7 @@ describe('an edited style changes the rendered output (§11.4 restyle occurrence
     })
     expect(bodyOf('ObjOcc.1').getAttribute('fill')).toBe('#cccccc')
     harness.canvas.authoring.restyleOccurrence('ObjOcc.1', { fillColor: null })
-    expect(bodyOf('ObjOcc.1').getAttribute('fill')).toBe('#f3f4f6')
+    expect(bodyOf('ObjOcc.1').getAttribute('fill')).toBe('#339900')
   })
 })
 

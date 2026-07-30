@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
+import { ARIS_CONVENTION_SYMBOLS } from '../conventions/catalog'
 import { UNKNOWN_SYMBOL_DESCRIPTOR } from './fallback'
 import { buildSymbolFidelityFindings } from './fidelity'
 import { resolveArisSymbol } from './registry'
@@ -60,6 +61,36 @@ describe('ARIS symbol registry', () => {
       expect(result.descriptor.symbolNum).toBe(defaultSymbolNum)
       expect(result.fidelity).toHaveLength(0)
     }
+  })
+
+  it('resolves every ARIS_CONVENTION_SYMBOLS row (plan R1) with zero fidelity findings', () => {
+    for (const symbol of ARIS_CONVENTION_SYMBOLS) {
+      for (const modelType of symbol.modelTypes) {
+        const result = resolveArisSymbol({
+          modelType,
+          objectType: symbol.objectType,
+          symbolNum: symbol.symbolNum
+        })
+        expect(
+          result.fidelity,
+          `${modelType}:${symbol.objectType}:${symbol.symbolNum} (${symbol.labelKey}) should resolve without a fidelity finding`
+        ).toHaveLength(0)
+        expect(result.descriptor.objectType).toBe(symbol.objectType)
+        expect(result.descriptor.symbolNum).toBe(symbol.symbolNum)
+      }
+    }
+  })
+
+  it('gives the Function descriptor the DMT convention default fill (plan R1, #339900)', () => {
+    const result = resolveArisSymbol({
+      modelType: 'MT_EEPC',
+      objectType: 'OT_FUNC',
+      symbolNum: 'ST_FUNC'
+    })
+    const body = result.descriptor.drawing.elements.find(
+      (element) => 'fill' in element && element.fill !== 'none' && element.fill !== undefined
+    )
+    expect(body && 'fill' in body ? body.fill : undefined).toBe('#339900')
   })
 
   it('resolves AND, OR, and XOR rules to three visually different descriptors', () => {

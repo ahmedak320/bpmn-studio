@@ -7,9 +7,9 @@ import { t } from '../../i18n'
 import type { ToastTone } from '../../workspace/Toaster'
 import type { WorkspaceAdapter, WorkspaceEntry } from '../../workspace/adapters/types'
 import { EmptyWorkspaceCard } from '../../workspace/EmptyWorkspaceCard'
-import { FolderTreeLite } from '../../workspace/FolderTreeLite'
+import { FolderTreeLite, type TreeRevealRequest } from '../../workspace/FolderTreeLite'
 import { countTreeFiles } from '../../workspace/liteTreeFromEntries'
-import type { ProcessHierarchy } from '../../workspace/processHierarchy'
+import type { HierarchyNavigation, ProcessHierarchy } from '../../workspace/processHierarchy'
 import { ArisModelExplorer } from './ArisModelExplorer'
 import { useArisExplorerActions, type ArisExplorerTabsController } from './arisExplorerActions'
 import type { ArisStudioModelSummary } from './arisStudioDocument'
@@ -46,6 +46,10 @@ export interface ArisExplorerPaneProps {
   readonly adapter: WorkspaceAdapter | null
   readonly tree: LiteTreeNode | null
   readonly hierarchy: ProcessHierarchy | null
+  /** Token-driven request to scroll to and focus one canonical tree row. */
+  readonly revealRequest: TreeRevealRequest | null
+  /** Navigate a read-only reference row through stable process identity. */
+  readonly onOpenProcess: (navigation: HierarchyNavigation) => void
   readonly activePath: string | null
   readonly rootName: string
   readonly tabsController: ArisExplorerTabsController
@@ -94,6 +98,8 @@ export function ArisExplorerPane(props: ArisExplorerPaneProps): JSX.Element {
     adapter,
     tree,
     hierarchy,
+    revealRequest,
+    onOpenProcess,
     activePath,
     rootName,
     tabsController,
@@ -190,7 +196,7 @@ export function ArisExplorerPane(props: ArisExplorerPaneProps): JSX.Element {
           )}
         </div>
 
-        {activeTab && (
+        {activeTab && activeTab.models.length > 1 && (
           <ArisModelExplorer
             sourceTitle={activeTab.title}
             models={activeTab.models}
@@ -207,12 +213,13 @@ export function ArisExplorerPane(props: ArisExplorerPaneProps): JSX.Element {
             <FolderTreeLite
               hierarchy={hierarchy}
               activePath={activePath}
+              revealRequest={revealRequest}
               onOpenFile={(rel) => {
                 if (/\.bpmn$/iu.test(rel)) onRejectUnsupported()
                 else onOpenWorkspaceFile(rel)
               }}
               onOpenFileFocus={onOpenFileFocus}
-              onOpenProcess={() => undefined}
+              onOpenProcess={onOpenProcess}
               onNewProcess={onNewModel}
               onNewFolder={actions.onNewFolder}
               onRename={actions.onRename}

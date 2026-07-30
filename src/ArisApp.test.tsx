@@ -1162,6 +1162,210 @@ describe('ArisApp production shell', () => {
   })
 })
 
+// --- Wave 2: semantic explorer nesting + reference navigation --------------
+
+/** Parent process whose one function is linked to `Model.C` (an owned subprocess). */
+const NEST_PARENT_AML = `<?xml version="1.0" encoding="UTF-8"?>
+<AML>
+  <Header-Info DatabaseName="Nest" UserName="tester" ArisExeVersion="10"/>
+  <Group Group.ID="Group.Root">
+    <ObjDef ObjDef.ID="ObjDef.Sub" TypeNum="OT_FUNC" SymbolNum="ST_FUNC" LinkedModels.IdRefs="Model.C">
+      <AttrDef AttrDef.Type="AT_NAME"><AttrValue LocaleId="1033">Handle child</AttrValue></AttrDef>
+    </ObjDef>
+    <Model Model.ID="Model.P" Model.Type="MT_EEPC">
+      <AttrDef AttrDef.Type="AT_NAME"><AttrValue LocaleId="1033">Parent process</AttrValue></AttrDef>
+      <ObjOcc ObjOcc.ID="ObjOcc.Sub" ObjDef.IdRef="ObjDef.Sub" SymbolNum="ST_FUNC" Zorder="1">
+        <Position Pos.X="200" Pos.Y="100"/>
+        <Size Size.dX="180" Size.dY="60"/>
+      </ObjOcc>
+    </Model>
+  </Group>
+</AML>
+`
+
+/** The child process (`Model.C`) referenced by the parent. */
+const NEST_CHILD_AML = `<?xml version="1.0" encoding="UTF-8"?>
+<AML>
+  <Header-Info DatabaseName="Nest" UserName="tester" ArisExeVersion="10"/>
+  <Group Group.ID="Group.Root">
+    <ObjDef ObjDef.ID="ObjDef.Task" TypeNum="OT_FUNC" SymbolNum="ST_FUNC">
+      <AttrDef AttrDef.Type="AT_NAME"><AttrValue LocaleId="1033">Child task</AttrValue></AttrDef>
+    </ObjDef>
+    <Model Model.ID="Model.C" Model.Type="MT_EEPC">
+      <AttrDef AttrDef.Type="AT_NAME"><AttrValue LocaleId="1033">Child process</AttrValue></AttrDef>
+      <ObjOcc ObjOcc.ID="ObjOcc.Task" ObjDef.IdRef="ObjDef.Task" SymbolNum="ST_FUNC" Zorder="1">
+        <Position Pos.X="200" Pos.Y="100"/>
+        <Size Size.dX="180" Size.dY="60"/>
+      </ObjOcc>
+    </Model>
+  </Group>
+</AML>
+`
+
+/** A THIRD file that also declares `Model.C`, forcing the id ambiguous. */
+const NEST_DUP_AML = `<?xml version="1.0" encoding="UTF-8"?>
+<AML>
+  <Header-Info DatabaseName="Nest" UserName="tester" ArisExeVersion="10"/>
+  <Group Group.ID="Group.Root">
+    <ObjDef ObjDef.ID="ObjDef.Task" TypeNum="OT_FUNC" SymbolNum="ST_FUNC">
+      <AttrDef AttrDef.Type="AT_NAME"><AttrValue LocaleId="1033">Child task</AttrValue></AttrDef>
+    </ObjDef>
+    <Model Model.ID="Model.C" Model.Type="MT_EEPC">
+      <AttrDef AttrDef.Type="AT_NAME"><AttrValue LocaleId="1033">Duplicate child</AttrValue></AttrDef>
+      <ObjOcc ObjOcc.ID="ObjOcc.Task" ObjDef.IdRef="ObjDef.Task" SymbolNum="ST_FUNC" Zorder="1">
+        <Position Pos.X="200" Pos.Y="100"/>
+        <Size Size.dX="180" Size.dY="60"/>
+      </ObjOcc>
+    </Model>
+  </Group>
+</AML>
+`
+
+function bindNestedWorkspace(
+  entries: readonly WorkspaceEntry[],
+  snapshots: Record<string, FileSnapshot>
+): WorkspaceAdapter {
+  const adapter = makeDirectoryAdapter(entries, snapshots)
+  mockState.directoryPickerSupported = true
+  mockState.rememberedHandle = { name: 'AnimalWF' } as FileSystemDirectoryHandle
+  mockState.directoryAdapter = adapter
+  return adapter
+}
+
+function treeExpandable(name: string): string | null {
+  return screen.getByRole('treeitem', { name }).getAttribute('data-tree-expandable')
+}
+
+describe('ArisApp semantic explorer (Wave 2)', () => {
+  beforeEach(() => {
+    localStorage.clear()
+    document.documentElement.removeAttribute('dir')
+    document.documentElement.removeAttribute('lang')
+    document.title = ''
+    installCanvasGeometry()
+    installDownloadCapture()
+    Object.defineProperty(window, 'showDirectoryPicker', { configurable: true, value: undefined })
+    Object.defineProperty(navigator, 'storage', { configurable: true, value: {} })
+    mockState.directoryPickerSupported = false
+    mockState.rememberedHandle = undefined
+    mockState.ensurePermission = 'granted'
+    mockState.directoryAdapter = null
+  })
+
+  afterEach(() => {
+    cleanup()
+    vi.restoreAllMocks()
+  })
+
+  it('nests an owned subprocess file under its parent instead of at the physical root', async () => {
+    bindNestedWorkspace([workspaceFile('parent.aml'), workspaceFile('child.aml')], {
+      'parent.aml': fileSnapshot('parent.aml', NEST_PARENT_AML),
+      'child.aml': fileSnapshot('child.aml', NEST_CHILD_AML)
+    })
+    render(<ArisApp />)
+
+    // Once the workspace scan resolves the Model.P → Model.C link, the parent
+    // becomes expandable (it now owns the child) and the child is lifted out of
+    // the physical root, so it is no longer a top-level row.
+    await screen.findByRole('treeitem', { name: 'parent.aml' })
+    await waitFor(() => expect(treeExpandable('parent.aml')).toBe('true'))
+    expect(screen.queryByRole('treeitem', { name: 'child.aml' })).toBeNull()
+
+    // Expanding the parent reveals the child as an owned subprocess row, nested
+    // beneath its owner (not a root sibling).
+    fireEvent.click(screen.getByRole('treeitem', { name: 'parent.aml' }).querySelector('span')!)
+    const childRow = await screen.findByRole('treeitem', { name: 'child.aml' })
+    expect(childRow.getAttribute('data-owned-subprocess')).toBe('true')
+    expect(childRow.getAttribute('data-owner-process-id')).toBe('Model.P')
+  })
+
+  it('returns a duplicated subprocess to its physical location (ambiguous fail-closed)', async () => {
+    bindNestedWorkspace(
+      [workspaceFile('parent.aml'), workspaceFile('child.aml'), workspaceFile('dup.aml')],
+      {
+        'parent.aml': fileSnapshot('parent.aml', NEST_PARENT_AML),
+        'child.aml': fileSnapshot('child.aml', NEST_CHILD_AML),
+        'dup.aml': fileSnapshot('dup.aml', NEST_DUP_AML)
+      }
+    )
+    render(<ArisApp />)
+
+    // Model.C is declared by two files, so it fails closed: no owner is inferred,
+    // parent.aml stays a leaf and child.aml remains a plain top-level row that was
+    // never nested and carries no ownership marker.
+    const childRow = await screen.findByRole('treeitem', { name: 'child.aml' })
+    await waitFor(() => expect(treeExpandable('parent.aml')).toBe('false'))
+    expect(childRow.getAttribute('data-owned-subprocess')).toBeNull()
+    expect(screen.getByRole('treeitem', { name: 'dup.aml' })).not.toBeNull()
+  })
+
+  it('opens the child source when its owned subprocess row is clicked', async () => {
+    bindNestedWorkspace([workspaceFile('parent.aml'), workspaceFile('child.aml')], {
+      'parent.aml': fileSnapshot('parent.aml', NEST_PARENT_AML),
+      'child.aml': fileSnapshot('child.aml', NEST_CHILD_AML)
+    })
+    render(<ArisApp />)
+
+    await screen.findByRole('treeitem', { name: 'parent.aml' })
+    await waitFor(() => expect(treeExpandable('parent.aml')).toBe('true'))
+    fireEvent.click(screen.getByRole('treeitem', { name: 'parent.aml' }).querySelector('span')!)
+
+    const childRow = await screen.findByRole('treeitem', { name: 'child.aml' })
+    fireEvent.click(childRow)
+
+    expect(await screen.findByRole('tab', { name: 'child.aml' })).not.toBeNull()
+    await waitFor(() => expect(canvasElement('ObjOcc.Task')).not.toBeNull())
+  })
+
+  it('never reads .bpmn or .orbitpm files during the workspace link scan', async () => {
+    const adapter = bindNestedWorkspace(
+      [
+        workspaceFile('parent.aml'),
+        workspaceFile('child.aml'),
+        workspaceFile('legacy.bpmn'),
+        workspaceFile('.orbitpm/aris/x/manifest.json')
+      ],
+      {
+        'parent.aml': fileSnapshot('parent.aml', NEST_PARENT_AML),
+        'child.aml': fileSnapshot('child.aml', NEST_CHILD_AML)
+      }
+    )
+    render(<ArisApp />)
+
+    // The scan's observable effect (ownership nesting) proves it has run.
+    await screen.findByRole('treeitem', { name: 'parent.aml' })
+    await waitFor(() => expect(treeExpandable('parent.aml')).toBe('true'))
+
+    const readPaths = (adapter.read as unknown as { mock: { calls: unknown[][] } }).mock.calls.map(
+      (call) => call[0] as string
+    )
+    // The link scanner never touches the non-candidate .bpmn file, nor the
+    // reserved .orbitpm subtree, so neither planted path was ever read. (The
+    // workspace localization store reads its OWN fixed .orbitpm paths — this
+    // asserts on the exact files the scanner must skip, not on that prefix.)
+    expect(readPaths).not.toContain('legacy.bpmn')
+    expect(readPaths).not.toContain('.orbitpm/aris/x/manifest.json')
+    // The AML candidates, by contrast, were scanned.
+    expect(readPaths).toContain('parent.aml')
+    expect(readPaths).toContain('child.aml')
+  })
+
+  it('renders AML rows whose read throws as plain physical rows', async () => {
+    // An empty snapshot store ⇒ adapter.read throws for every file; the scanner
+    // swallows each failure so the files still render as plain, un-nested rows.
+    bindNestedWorkspace([workspaceFile('parent.aml'), workspaceFile('child.aml')], {})
+    render(<ArisApp />)
+
+    const parentRow = await screen.findByRole('treeitem', { name: 'parent.aml' })
+    expect(await screen.findByRole('treeitem', { name: 'child.aml' })).not.toBeNull()
+    // No links could be scanned, so neither file is nested or owned.
+    expect(parentRow.getAttribute('data-tree-expandable')).toBe('false')
+    expect(
+      screen.getByRole('treeitem', { name: 'child.aml' }).getAttribute('data-owned-subprocess')
+    ).toBeNull()
+  })
+})
+
 describe('downloadBytes', () => {
   afterEach(() => {
     cleanup()

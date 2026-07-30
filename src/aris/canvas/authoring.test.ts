@@ -397,4 +397,120 @@ describe('authoring operations (Section 11.4)', () => {
     expect(selected?.elementId).toBe(other.occurrenceId)
     expect(canvas.selection.get().map((entry) => entry.id)).toEqual([other.occurrenceId])
   })
+
+  it('sets and clears a model-scoped attribute in one undo step each', () => {
+    harness = bootCanvas()
+    const { canvas } = harness
+    const modelId = canvas.activeModelId
+
+    canvas.authoring.setModelAttribute(modelId, 'AT_PROC_OBJ', {
+      'en-US': 'Register the animal'
+    })
+    expect(
+      canvas.document.models.get(modelId)?.attributes.find((entry) => entry.type === 'AT_PROC_OBJ')
+        ?.values
+    ).toEqual([{ localeId: 'en-US', text: 'Register the animal' }])
+
+    canvas.undo()
+    expect(
+      canvas.document.models.get(modelId)?.attributes.find((entry) => entry.type === 'AT_PROC_OBJ')
+        ?.values
+    ).toEqual([])
+
+    canvas.redo()
+    expect(
+      canvas.document.models.get(modelId)?.attributes.find((entry) => entry.type === 'AT_PROC_OBJ')
+        ?.values
+    ).toEqual([{ localeId: 'en-US', text: 'Register the animal' }])
+  })
+
+  it('replaces a fresh object with a different type, preserving bounds and name', () => {
+    harness = bootCanvas()
+    const { canvas } = harness
+    const created = canvas.authoring.createObject({
+      objectType: 'OT_PERS_TYPE',
+      name: 'Reviewer',
+      position: { x: 40, y: 60 }
+    })
+    const originalBounds = findOccurrence(canvas.document, created.occurrenceId)?.bounds
+    const commandCountBefore = canvas.commandLog.length
+
+    const replacement = canvas.authoring.replaceNewObject(created.occurrenceId, {
+      objectType: 'OT_ORG_UNIT',
+      symbolNum: 'ST_ORG_UNIT_1'
+    })
+
+    // One undo step: a single transaction command.
+    expect(canvas.commandLog.length).toBe(commandCountBefore + 1)
+    expect(canvas.commandLog[canvas.commandLog.length - 1].kind).toBe('transaction')
+
+    // Old definition and occurrence are gone; the new object took their place.
+    expect(canvas.document.objectDefinitions.has(created.definitionId)).toBe(false)
+    expect(findOccurrence(canvas.document, created.occurrenceId)).toBeUndefined()
+    const newDefinition = canvas.document.objectDefinitions.get(replacement.definitionId)
+    expect(newDefinition?.type).toBe('OT_ORG_UNIT')
+    expect(newDefinition?.names.fallback).toBe('Reviewer')
+    expect(findOccurrence(canvas.document, replacement.occurrenceId)?.bounds).toEqual(
+      originalBounds
+    )
+    expect(canvas.elementRegistry.get(replacement.occurrenceId)).toBeTruthy()
+
+    // A single undo restores both the old definition and its occurrence.
+    canvas.undo()
+    expect(canvas.document.objectDefinitions.has(created.definitionId)).toBe(true)
+    expect(findOccurrence(canvas.document, created.occurrenceId)?.definitionId).toBe(
+      created.definitionId
+    )
+    expect(canvas.document.objectDefinitions.has(replacement.definitionId)).toBe(false)
+
+    canvas.redo()
+    expect(canvas.document.objectDefinitions.get(replacement.definitionId)?.type).toBe(
+      'OT_ORG_UNIT'
+    )
+  })
+
+  it('refuses to replace a shared or connected object', () => {
+    harness = bootCanvas()
+    const { canvas } = harness
+
+    // Shared: the definition has a second occurrence.
+    const shared = canvas.authoring.createObject({
+      objectType: 'OT_PERS_TYPE',
+      position: { x: 0, y: 0 }
+    })
+    canvas.authoring.createAdditionalOccurrence({
+      definitionId: shared.definitionId,
+      position: { x: 300, y: 0 }
+    })
+    expect(canvas.authoring.canReplaceNewObject(shared.occurrenceId)).toBe(false)
+    let sharedError: unknown
+    try {
+      canvas.authoring.replaceNewObject(shared.occurrenceId, {
+        objectType: 'OT_ORG_UNIT',
+        symbolNum: 'ST_ORG_UNIT_1'
+      })
+    } catch (error) {
+      sharedError = error
+    }
+    expect(sharedError).toBeInstanceOf(ArisCanvasCommandError)
+    expect((sharedError as ArisCanvasCommandError).code).toBe('replace-not-safe')
+
+    // Connected: a connection definition touches the object.
+    const role = canvas.authoring.createObject({
+      objectType: 'OT_PERS_TYPE',
+      position: { x: 0, y: 400 }
+    })
+    const fn = canvas.authoring.createObject({
+      objectType: 'OT_FUNC',
+      position: { x: 400, y: 400 }
+    })
+    canvas.authoring.connect(role.occurrenceId, fn.occurrenceId)
+    expect(canvas.authoring.canReplaceNewObject(role.occurrenceId)).toBe(false)
+    expect(() =>
+      canvas.authoring.replaceNewObject(role.occurrenceId, {
+        objectType: 'OT_ORG_UNIT',
+        symbolNum: 'ST_ORG_UNIT_1'
+      })
+    ).toThrow(ArisCanvasCommandError)
+  })
 })

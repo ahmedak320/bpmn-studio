@@ -2994,7 +2994,89 @@ export const en = {
 
   // --- ARIS canvas: direct label editing (src/aris/canvas/directEdit.ts) ---
   'aris.directEdit.placeholder': 'Type a label',
-  'aris.directEdit.aria': 'Edit label'
+  'aris.directEdit.aria': 'Edit label',
+
+  // --- ARIS convention catalog: additional symbol labels (Lane C4, plan R1) ---
+  'aris.symbol.organizationalUnit': 'Organizational unit',
+  'aris.symbol.infoCarrier': 'Information carrier',
+  'aris.symbol.letter': 'Letter',
+  'aris.symbol.log': 'Log',
+  'aris.symbol.dataEntity': 'Data entity',
+  'aris.symbol.internalPerson': 'Internal person',
+  'aris.symbol.position': 'Position',
+  'aris.symbol.group': 'Group',
+  'aris.symbol.relatedEntity': 'Related entity',
+  'aris.symbol.committeeTeam': 'Committee / team',
+  'aris.symbol.sla': 'Service-level agreement',
+  'aris.symbol.lawRegulation': 'Law / regulation',
+  'aris.symbol.risk': 'Risk',
+  'aris.symbol.productService': 'Product / service',
+  'aris.symbol.valueAddedChainStart': 'Value-added chain (start)',
+
+  // --- ARIS details attribute schema labels (Lane C4 for C6, plan R3) ---
+  'aris.attribute.identifier': 'Identifier',
+  'aris.attribute.description': 'Description',
+  'aris.attribute.averageProcessingTime': 'Average processing time',
+  'aris.attribute.processCode': 'Process code',
+  'aris.attribute.processObjective': 'Process objective',
+  'aris.attribute.processScope': 'Process scope',
+  'aris.attribute.entity': 'Entity',
+  'aris.attribute.authorizedBy': 'Authorized by',
+  'aris.attribute.relevantOrganizationStructure': 'Relevant organizational structure',
+  'aris.attribute.personResponsible': 'Person responsible',
+  'aris.attribute.version': 'Version',
+  'aris.attribute.processArea': 'Process area',
+  'aris.attribute.organizationName': 'Organization name',
+  'aris.attribute.serviceFees': 'Service fees',
+
+  // --- ARIS connection canonical labels (Lane C4, plan R2) ---
+  'aris.connection.activatesTriggers': 'activates',
+  'aris.connection.createsTriggers': 'creates',
+  'aris.connection.leadsToTriggers': 'leads to',
+  'aris.connection.isEvaluatedBy': 'is evaluated by',
+  'aris.connection.isPredecessorOf': 'is predecessor of',
+  'aris.connection.executes': 'executes',
+  'aris.connection.supports': 'supports',
+  'aris.connection.providesInputFor': 'provides input for',
+  'aris.connection.createsOutputTo': 'creates output to',
+  'aris.connection.produces': 'produces',
+  'aris.connection.affects': 'affects',
+  'aris.connection.references': 'references',
+  'aris.connection.mustBeInformedAbout': 'must be informed about',
+  'aris.connection.isProcessOrientedSuperior': 'is process-oriented superior of',
+  'aris.connection.regulates': 'regulates',
+  'aris.connection.isComposedOf': 'is composed of',
+  'aris.connection.isOrganizationManagerFor': 'is organization manager for',
+  'aris.connection.isTechnicalSuperiorTo': 'is technical superior to',
+  'aris.connection.occupies': 'occupies',
+  'aris.connection.performs': 'performs',
+  'aris.connection.encompasses': 'encompasses',
+  'aris.connection.decidesOn': 'decides on',
+  'aris.connection.mustBeConsultedAbout': 'must be consulted about',
+
+  // --- ARIS post-placement quick-pick (Lane C4) ---
+  'aris.quickPick.aria': 'Swap symbol',
+  'aris.quickPick.replaceBlocked':
+    'Cannot change type: this object is used elsewhere or is connected',
+
+  // --- ARIS context pad: swap symbol (Lane C4) ---
+  'aris.contextPad.swapSymbol': 'Swap symbol',
+
+  // --- ARIS convention validation findings (Lane C4 for C7) ---
+  'aris.conv.finding.illegalConnection.title': 'Unsupported connection',
+  'aris.conv.finding.illegalConnection.body':
+    'This connection type is not allowed between these object types under the ARIS convention.',
+  'aris.conv.finding.missingIdentifier.title': 'Missing identifier',
+  'aris.conv.finding.missingIdentifier.body':
+    'This function has no identifier. The convention requires every function to carry one.',
+  'aris.conv.finding.noExecutor.title': 'No executor assigned',
+  'aris.conv.finding.noExecutor.body':
+    'This function has no responsible executor (an R role). Assign an organizational unit, role, or person.',
+  'aris.conv.finding.missingAttribute.title': 'Missing recommended attribute',
+  'aris.conv.finding.missingAttribute.body': 'A recommended attribute for this element is empty.',
+  'aris.conv.finding.namingHint.title': 'Naming convention',
+  'aris.conv.finding.namingHint.body':
+    'This element name does not follow the recommended verb-object naming pattern.'
 } as const
 
 export const ar: Record<keyof typeof en, string> = {
@@ -5832,5 +5914,85 @@ export const ar: Record<keyof typeof en, string> = {
 
   // --- لوحة رسم ARIS: التحرير المباشر للتسمية (src/aris/canvas/directEdit.ts) ---
   'aris.directEdit.placeholder': 'اكتب تسمية',
-  'aris.directEdit.aria': 'تحرير التسمية'
+  'aris.directEdit.aria': 'تحرير التسمية',
+
+  // --- كتالوج اصطلاح ARIS: تسميات رموز إضافية (Lane C4) ---
+  'aris.symbol.organizationalUnit': 'وحدة تنظيمية',
+  'aris.symbol.infoCarrier': 'حامل معلومات',
+  'aris.symbol.letter': 'خطاب',
+  'aris.symbol.log': 'سجل',
+  'aris.symbol.dataEntity': 'كيان بيانات',
+  'aris.symbol.internalPerson': 'شخص داخلي',
+  'aris.symbol.position': 'منصب',
+  'aris.symbol.group': 'مجموعة',
+  'aris.symbol.relatedEntity': 'كيان ذو صلة',
+  'aris.symbol.committeeTeam': 'لجنة / فريق',
+  'aris.symbol.sla': 'اتفاقية مستوى الخدمة',
+  'aris.symbol.lawRegulation': 'قانون / لائحة',
+  'aris.symbol.risk': 'مخاطرة',
+  'aris.symbol.productService': 'منتج / خدمة',
+  'aris.symbol.valueAddedChainStart': 'سلسلة القيمة المضافة (بداية)',
+
+  // --- تسميات مخطط سمات تفاصيل ARIS (Lane C4 لـ C6) ---
+  'aris.attribute.identifier': 'المعرّف',
+  'aris.attribute.description': 'الوصف',
+  'aris.attribute.averageProcessingTime': 'متوسط زمن المعالجة',
+  'aris.attribute.processCode': 'رمز العملية',
+  'aris.attribute.processObjective': 'هدف العملية',
+  'aris.attribute.processScope': 'نطاق العملية',
+  'aris.attribute.entity': 'الكيان',
+  'aris.attribute.authorizedBy': 'معتمد من',
+  'aris.attribute.relevantOrganizationStructure': 'الهيكل التنظيمي ذو الصلة',
+  'aris.attribute.personResponsible': 'الشخص المسؤول',
+  'aris.attribute.version': 'الإصدار',
+  'aris.attribute.processArea': 'مجال العملية',
+  'aris.attribute.organizationName': 'اسم المؤسسة',
+  'aris.attribute.serviceFees': 'رسوم الخدمة',
+
+  // --- التسميات القياسية لاتصالات ARIS (Lane C4) ---
+  'aris.connection.activatesTriggers': 'يُفعّل',
+  'aris.connection.createsTriggers': 'يُنشئ',
+  'aris.connection.leadsToTriggers': 'يؤدي إلى',
+  'aris.connection.isEvaluatedBy': 'يُقيَّم بواسطة',
+  'aris.connection.isPredecessorOf': 'سابق لـ',
+  'aris.connection.executes': 'يُنفّذ',
+  'aris.connection.supports': 'يدعم',
+  'aris.connection.providesInputFor': 'يوفّر مدخلاً لـ',
+  'aris.connection.createsOutputTo': 'يُنتج مخرجاً إلى',
+  'aris.connection.produces': 'يُنتج',
+  'aris.connection.affects': 'يؤثّر على',
+  'aris.connection.references': 'يشير إلى',
+  'aris.connection.mustBeInformedAbout': 'يجب إبلاغه عن',
+  'aris.connection.isProcessOrientedSuperior': 'رئيس موجَّه بالعملية لـ',
+  'aris.connection.regulates': 'يُنظّم',
+  'aris.connection.isComposedOf': 'يتكوّن من',
+  'aris.connection.isOrganizationManagerFor': 'مدير تنظيمي لـ',
+  'aris.connection.isTechnicalSuperiorTo': 'رئيس فني لـ',
+  'aris.connection.occupies': 'يشغل',
+  'aris.connection.performs': 'يؤدّي',
+  'aris.connection.encompasses': 'يشمل',
+  'aris.connection.decidesOn': 'يقرّر بشأن',
+  'aris.connection.mustBeConsultedAbout': 'يجب استشارته بشأن',
+
+  // --- الاختيار السريع بعد الوضع في ARIS (Lane C4) ---
+  'aris.quickPick.aria': 'تبديل الرمز',
+  'aris.quickPick.replaceBlocked': 'يتعذّر تغيير النوع: هذا الكائن مستخدم في مكان آخر أو موصول',
+
+  // --- شريط سياق ARIS: تبديل الرمز (Lane C4) ---
+  'aris.contextPad.swapSymbol': 'تبديل الرمز',
+
+  // --- نتائج التحقق من اصطلاح ARIS (Lane C4 لـ C7) ---
+  'aris.conv.finding.illegalConnection.title': 'اتصال غير مدعوم',
+  'aris.conv.finding.illegalConnection.body':
+    'نوع هذا الاتصال غير مسموح به بين هذين النوعين من الكائنات وفق اصطلاح ARIS.',
+  'aris.conv.finding.missingIdentifier.title': 'معرّف مفقود',
+  'aris.conv.finding.missingIdentifier.body':
+    'لا يحمل هذا النشاط معرّفاً. يتطلب الاصطلاح أن يحمل كل نشاط معرّفاً.',
+  'aris.conv.finding.noExecutor.title': 'لا يوجد منفّذ مُسنَد',
+  'aris.conv.finding.noExecutor.body':
+    'لا يوجد منفّذ مسؤول (دور R) لهذا النشاط. أسنِد وحدة تنظيمية أو دوراً أو شخصاً.',
+  'aris.conv.finding.missingAttribute.title': 'سمة موصى بها مفقودة',
+  'aris.conv.finding.missingAttribute.body': 'سمة موصى بها لهذا العنصر فارغة.',
+  'aris.conv.finding.namingHint.title': 'اصطلاح التسمية',
+  'aris.conv.finding.namingHint.body': 'لا يتبع اسم هذا العنصر نمط التسمية الموصى به (فعل + مفعول).'
 }

@@ -9,6 +9,7 @@
  * flow, and this module never imports it, so the two lanes stay decoupled.
  */
 
+import { resolveConventionConnection } from '../conventions/connectionRules'
 import type { ArisSupportedModelType } from '../model/types'
 
 /** Model types the canvas can author (Section 11.2). */
@@ -21,7 +22,18 @@ export function isSupportedModelType(value: string): value is ArisSupportedModel
   return (ARIS_CANVAS_MODEL_TYPES as readonly string[]).includes(value)
 }
 
-/** Object types the canvas can create/edit/delete/connect (Section 11.3). */
+/**
+ * Object types the canvas can create/edit/delete/connect (Section 11.3), plus
+ * the plan R1 catalog additions (`OT_ORG_UNIT`, `OT_POS`, `OT_GRP`,
+ * `OT_RISK`, `OT_SERVICE` — `conventions/catalog.ts`). `authoring.ts`'s
+ * `isSupportedObjectType` gate reads this list directly, and
+ * `paletteProvider.ts` now offers a palette entry per `getPaletteSymbols(...)`
+ * row regardless of this list (it no longer imports it at all), so every
+ * catalog object type is already draggable from the palette — this list is
+ * what makes `createObject`/`isSupportedObjectType` agree with what the
+ * palette (and an imported document) can already produce, instead of
+ * rejecting a subset of them.
+ */
 export const ARIS_CANVAS_OBJECT_TYPES: readonly string[] = Object.freeze([
   'OT_FUNC',
   'OT_EVT',
@@ -34,7 +46,13 @@ export const ARIS_CANVAS_OBJECT_TYPES: readonly string[] = Object.freeze([
   'OT_PERS',
   'OT_REQUIREMENT',
   'OT_POLICY',
-  'OT_PERS_TYPE'
+  'OT_PERS_TYPE',
+  // R1 catalog additions.
+  'OT_ORG_UNIT',
+  'OT_POS',
+  'OT_GRP',
+  'OT_RISK',
+  'OT_SERVICE'
 ])
 
 export function isSupportedObjectType(value: string): boolean {
@@ -65,7 +83,14 @@ export function ruleOperatorOfSymbol(symbolNum: string | null): ArisRuleOperator
   return null
 }
 
-/** Object types that hang off the control flow rather than sequencing it. */
+/**
+ * Object types that hang off the control flow rather than sequencing it.
+ *
+ * Includes the plan R1 org/governance additions (`OT_ORG_UNIT`, `OT_POS`,
+ * `OT_GRP`, `OT_RISK`, `OT_SERVICE`) alongside the original satellite types —
+ * none of these are core EPC control-flow elements (`OT_FUNC`/`OT_EVT`/
+ * `OT_RULE`), so `layoutSeam.ts` should place all of them the same way.
+ */
 export const ARIS_SATELLITE_OBJECT_TYPES: ReadonlySet<string> = new Set([
   'OT_ENT_TYPE',
   'OT_INFO_CARR',
@@ -75,7 +100,12 @@ export const ARIS_SATELLITE_OBJECT_TYPES: ReadonlySet<string> = new Set([
   'OT_PERS',
   'OT_REQUIREMENT',
   'OT_POLICY',
-  'OT_PERS_TYPE'
+  'OT_PERS_TYPE',
+  'OT_ORG_UNIT',
+  'OT_POS',
+  'OT_GRP',
+  'OT_RISK',
+  'OT_SERVICE'
 ])
 
 export function isSatelliteObjectType(objectType: string): boolean {
@@ -87,45 +117,6 @@ export function isSatelliteObjectType(objectType: string): boolean {
  * fallback so the caller can surface "we guessed a connection type".
  */
 export const ARIS_FALLBACK_CONNECTION_TYPE = 'CT_REFS_TO_2'
-
-interface ConnectionRule {
-  readonly modelType: ArisSupportedModelType | null
-  readonly from: string
-  readonly to: string
-  readonly connectionType: string
-}
-
-const CONNECTION_RULES: readonly ConnectionRule[] = Object.freeze([
-  // --- EEPC control flow -------------------------------------------------
-  { modelType: 'MT_EEPC', from: 'OT_EVT', to: 'OT_FUNC', connectionType: 'CT_ACTIV_1' },
-  { modelType: 'MT_EEPC', from: 'OT_RULE', to: 'OT_FUNC', connectionType: 'CT_ACTIV_1' },
-  { modelType: 'MT_EEPC', from: 'OT_FUNC', to: 'OT_EVT', connectionType: 'CT_CRT_1' },
-  { modelType: 'MT_EEPC', from: 'OT_FUNC', to: 'OT_RULE', connectionType: 'CT_LEADS_TO_1' },
-  { modelType: 'MT_EEPC', from: 'OT_RULE', to: 'OT_EVT', connectionType: 'CT_LEADS_TO_2' },
-  { modelType: 'MT_EEPC', from: 'OT_RULE', to: 'OT_RULE', connectionType: 'CT_LEADS_TO_2' },
-  { modelType: 'MT_EEPC', from: 'OT_EVT', to: 'OT_RULE', connectionType: 'CT_IS_EVAL_BY_1' },
-
-  // --- Value-added chain -------------------------------------------------
-  {
-    modelType: 'MT_VAL_ADD_CHN_DGM',
-    from: 'OT_FUNC',
-    to: 'OT_FUNC',
-    connectionType: 'CT_IS_PREDEC_OF_1'
-  },
-
-  // --- Satellite assignments (model-type independent) --------------------
-  { modelType: null, from: 'OT_PERS', to: 'OT_FUNC', connectionType: 'CT_EXEC_1' },
-  { modelType: null, from: 'OT_PERS_TYPE', to: 'OT_FUNC', connectionType: 'CT_EXEC_2' },
-  { modelType: null, from: 'OT_APPL_SYS', to: 'OT_FUNC', connectionType: 'CT_SUPP_3' },
-  { modelType: null, from: 'OT_ENT_TYPE', to: 'OT_FUNC', connectionType: 'CT_IS_INP_FOR' },
-  { modelType: null, from: 'OT_FUNC', to: 'OT_ENT_TYPE', connectionType: 'CT_CRT_OUT_TO' },
-  { modelType: null, from: 'OT_INFO_CARR', to: 'OT_FUNC', connectionType: 'CT_IS_INP_FOR' },
-  { modelType: null, from: 'OT_FUNC', to: 'OT_INFO_CARR', connectionType: 'CT_HAS_OUT' },
-  { modelType: null, from: 'OT_FUNC', to: 'OT_PERF', connectionType: 'CT_AFFECTS' },
-  { modelType: null, from: 'OT_BUSINESS_RULE', to: 'OT_FUNC', connectionType: 'CT_IS_EVAL_BY_1' },
-  { modelType: null, from: 'OT_REQUIREMENT', to: 'OT_FUNC', connectionType: 'CT_REFS_TO_2' },
-  { modelType: null, from: 'OT_POLICY', to: 'OT_FUNC', connectionType: 'CT_MUST_BE_INFO_ABT_1' }
-])
 
 export interface ResolvedConnectionType {
   readonly connectionType: string
@@ -139,26 +130,26 @@ export interface ResolvedConnectionType {
 /**
  * Choose the connection type for a newly drawn edge.
  *
- * Model-type-specific rules win over model-type-independent ones so an EEPC
- * `OT_FUNC -> OT_FUNC` edge does not silently become the VACD predecessor type.
+ * Delegates to `conventions/connectionRules.resolveConventionConnection`
+ * (plan R2), which is now the single policy source for
+ * `(modelType, fromType, toType) -> connectionType`. That catalog reproduces
+ * every triple this function used to hold verbatim, plus the R2 additions
+ * (executor RACI variants for `OT_ORG_UNIT`/`OT_POS`/`OT_GRP`, org-chart,
+ * service-tree, and the VACD process-oriented-superior rule) — so behaviour
+ * for every triple that existed before R2 is unchanged. Model-type-specific
+ * rules still win over model-type-independent ones (that ordering lives in
+ * `connectionRules.ts` now). Only the public `{connectionType, fallback}`
+ * shape is returned here; the richer `ResolvedConventionConnection` (with its
+ * `rule` detail) stays internal to the conventions module so this function's
+ * signature and return shape are unchanged for existing callers/tests.
  */
 export function resolveConnectionType(
   modelType: string,
   fromObjectType: string,
   toObjectType: string
 ): ResolvedConnectionType {
-  const exact = CONNECTION_RULES.find(
-    (rule) =>
-      rule.modelType === modelType && rule.from === fromObjectType && rule.to === toObjectType
-  )
-  if (exact) return Object.freeze({ connectionType: exact.connectionType, fallback: false })
-
-  const generic = CONNECTION_RULES.find(
-    (rule) => rule.modelType === null && rule.from === fromObjectType && rule.to === toObjectType
-  )
-  if (generic) return Object.freeze({ connectionType: generic.connectionType, fallback: false })
-
-  return Object.freeze({ connectionType: ARIS_FALLBACK_CONNECTION_TYPE, fallback: true })
+  const resolved = resolveConventionConnection(modelType, fromObjectType, toObjectType)
+  return Object.freeze({ connectionType: resolved.connectionType, fallback: resolved.fallback })
 }
 
 /** Attribute type carrying an object's display name. */
