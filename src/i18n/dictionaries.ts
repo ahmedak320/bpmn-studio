@@ -172,6 +172,8 @@ export const en = {
     'The model opens as an in-memory tab; use "Import into workspace…" to store it in a workspace.',
   'aris.newModel.created': 'Created {name}.',
   'aris.newModel.failed': 'Could not create the model: {error}',
+  'aris.newModel.linkedHint':
+    'The model will be created with id {id} so the assignment on {name} resolves immediately.',
   'aris.header.assistant': 'Assistant',
   'aris.header.openFile': 'Open file…',
   'aris.emptyMain':
@@ -2965,7 +2967,34 @@ export const en = {
   'aris.details.fidelity.symbolFallbacks': 'Symbol fallbacks',
   'aris.details.fidelity.oleUnsupported': 'Unsupported OLE objects',
   'aris.details.history.revision': 'Revision',
-  'aris.details.history.definitionId': 'Definition ID'
+  'aris.details.history.definitionId': 'Definition ID',
+
+  // --- ARIS Issue 1: multi-model AML import split (src/aris/shell/arisSplitImport.ts,
+  // ArisSplitImportDialog.tsx) + canvas assigned-model navigation (arisAssignmentUx.ts) ---
+  'aris.import.split.title': 'Import into the workspace',
+  'aris.import.split.body':
+    'Each ARIS model becomes its own .aml file, in folders mirroring the ARIS group tree. Existing files are never overwritten.',
+  'aris.import.split.listAria': 'Files to be created',
+  'aris.import.split.skipExisting': 'Skipped — model {id} already exists in this workspace',
+  'aris.import.split.confirm': 'Import {count} file(s)',
+  'aris.import.split.cancel': 'Cancel',
+  'aris.import.split.done': 'Imported {written} model file(s); {skipped} skipped.',
+  'aris.import.split.failed': 'The import could not be written: {error}',
+  'aris.import.split.nothing': 'No ARIS models were found in {name}.',
+  'aris.assign.marker.aria': 'Open the model assigned to {name}',
+  'aris.assign.open': 'Open',
+  'aris.assign.open.aria': 'Open the assigned model {model}',
+  'aris.assign.ambiguous':
+    'Model id {id} exists in more than one workspace file; resolve the duplicate before navigating.',
+  'aris.assign.missing': 'No model with id {id} exists in this workspace.',
+  'aris.assign.link': 'Link model…',
+  'aris.assign.link.title': 'Assign a workspace model to the selected function',
+  'aris.assign.linked': 'Linked {model} to {name}.',
+  'aris.assign.created': 'Created {path}; the assignment on {name} now resolves.',
+
+  // --- ARIS canvas: direct label editing (src/aris/canvas/directEdit.ts) ---
+  'aris.directEdit.placeholder': 'Type a label',
+  'aris.directEdit.aria': 'Edit label'
 } as const
 
 export const ar: Record<keyof typeof en, string> = {
@@ -3137,6 +3166,7 @@ export const ar: Record<keyof typeof en, string> = {
     'يُفتح النموذج كتبويب في الذاكرة؛ استخدم "استيراد إلى مساحة العمل…" لحفظه.',
   'aris.newModel.created': 'تم إنشاء {name}.',
   'aris.newModel.failed': 'تعذّر إنشاء النموذج: {error}',
+  'aris.newModel.linkedHint': 'سيُنشأ النموذج بالمعرّف {id} بحيث يُحل إسناد {name} فورًا.',
   'aris.header.assistant': 'المساعد',
   'aris.header.openFile': 'فتح ملف…',
   'aris.emptyMain':
@@ -5775,5 +5805,32 @@ export const ar: Record<keyof typeof en, string> = {
   'aris.details.fidelity.symbolFallbacks': 'بدائل الرموز',
   'aris.details.fidelity.oleUnsupported': 'كائنات OLE غير مدعومة',
   'aris.details.history.revision': 'النسخة',
-  'aris.details.history.definitionId': 'معرّف التعريف'
+  'aris.details.history.definitionId': 'معرّف التعريف',
+
+  // --- قضية ARIS رقم 1: تقسيم استيراد AML متعدد النماذج (src/aris/shell/arisSplitImport.ts،
+  // ArisSplitImportDialog.tsx) + التنقل إلى النموذج المُسنَد من لوحة الرسم (arisAssignmentUx.ts) ---
+  'aris.import.split.title': 'استيراد إلى مساحة العمل',
+  'aris.import.split.body':
+    'يتحول كل نموذج ARIS إلى ملف .aml خاص به، ضمن مجلدات تعكس شجرة مجموعات ARIS. ولا تُستبدَل الملفات الموجودة أبدًا.',
+  'aris.import.split.listAria': 'الملفات المراد إنشاؤها',
+  'aris.import.split.skipExisting': 'تم التخطي — النموذج {id} موجود بالفعل في مساحة العمل هذه',
+  'aris.import.split.confirm': 'استيراد {count} ملف/ملفات',
+  'aris.import.split.cancel': 'إلغاء',
+  'aris.import.split.done': 'تم استيراد {written} ملف/ملفات نموذج؛ وتم تخطي {skipped}.',
+  'aris.import.split.failed': 'تعذّرت كتابة الاستيراد: {error}',
+  'aris.import.split.nothing': 'لم يُعثر على أي نماذج ARIS في {name}.',
+  'aris.assign.marker.aria': 'فتح النموذج المُسنَد إلى {name}',
+  'aris.assign.open': 'فتح',
+  'aris.assign.open.aria': 'فتح النموذج المُسنَد {model}',
+  'aris.assign.ambiguous':
+    'معرّف النموذج {id} موجود في أكثر من ملف في مساحة العمل؛ عالِج التكرار قبل الانتقال إليه.',
+  'aris.assign.missing': 'لا يوجد نموذج بالمعرّف {id} في مساحة العمل هذه.',
+  'aris.assign.link': 'ربط نموذج…',
+  'aris.assign.link.title': 'إسناد نموذج من مساحة العمل إلى الوظيفة المحددة',
+  'aris.assign.linked': 'تم ربط {model} بـ{name}.',
+  'aris.assign.created': 'تم إنشاء {path}؛ والإسناد على {name} يُحل الآن.',
+
+  // --- لوحة رسم ARIS: التحرير المباشر للتسمية (src/aris/canvas/directEdit.ts) ---
+  'aris.directEdit.placeholder': 'اكتب تسمية',
+  'aris.directEdit.aria': 'تحرير التسمية'
 }

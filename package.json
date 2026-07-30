@@ -64,6 +64,7 @@
   },
   "dependencies": {
     "diagram-js": "15.22.0",
+    "diagram-js-direct-editing": "3.5.1",
     "diagram-js-minimap": "5.4.0",
     "fflate": "0.8.3",
     "jspdf": "4.2.1",

@@ -62,8 +62,10 @@ import MoveCanvasModule from 'diagram-js/lib/navigation/movecanvas'
 import KeyboardMoveModule from 'diagram-js/lib/navigation/keyboard-move'
 import BaseLayouter from 'diagram-js/lib/layout/BaseLayouter'
 import MinimapModule from 'diagram-js-minimap/dist/index.esm.js'
+import DirectEditingModule from 'diagram-js-direct-editing'
 
 import { ArisAuthoring } from './authoring'
+import { ArisDirectEditingProvider } from './directEdit'
 import { ArisCanvasSync } from './canvasSync'
 import { ArisClipboard } from './clipboard'
 import { ArisCommandBridge } from './commandBridge'
@@ -98,7 +100,8 @@ export const ArisCanvasModule: DiagramModuleDeclaration = {
     'arisSelectionHighlight',
     'arisClipboard',
     'arisAuthoring',
-    'arisSearchProvider'
+    'arisSearchProvider',
+    'arisDirectEditingProvider'
   ],
   arisDocumentStore: ['type', ArisDocumentStore],
   arisCanvasSync: ['type', ArisCanvasSync],
@@ -113,7 +116,8 @@ export const ArisCanvasModule: DiagramModuleDeclaration = {
   arisSelectionHighlight: ['type', ArisSelectionHighlight],
   arisClipboard: ['type', ArisClipboard],
   arisAuthoring: ['type', ArisAuthoring],
-  arisSearchProvider: ['type', ArisSearchProvider]
+  arisSearchProvider: ['type', ArisSearchProvider],
+  arisDirectEditingProvider: ['type', ArisDirectEditingProvider]
 }
 
 /** diagram-js modules the canvas depends on, in load order. */
@@ -148,7 +152,10 @@ export const ARIS_DIAGRAM_JS_MODULES: readonly DiagramModuleDeclaration[] = Obje
   KeyboardMoveModule as DiagramModuleDeclaration,
   EditorActionsModule as DiagramModuleDeclaration,
   ZoomScrollModule as DiagramModuleDeclaration,
-  MoveCanvasModule as DiagramModuleDeclaration
+  MoveCanvasModule as DiagramModuleDeclaration,
+  // Provides the `directEditing` service the ARIS inline label editor drives
+  // (Lane C3); the ARIS provider itself is registered in `ArisCanvasModule`.
+  DirectEditingModule as DiagramModuleDeclaration
 ])
 
 /** The optional minimap (Section 11.1). BPMN-free; kept separate so it can be omitted. */

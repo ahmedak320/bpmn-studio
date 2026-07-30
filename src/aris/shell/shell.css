@@ -234,3 +234,24 @@
   outline: 2px solid var(--orbitpm-aris-highlight, #2563eb);
   outline-offset: 1px;
 }
+
+/* --- issue 2: inline label editor (diagram-js-direct-editing) ----------- */
+
+/*
+ * `TextBox.create` writes a white background and a grey border as *inline*
+ * styles, so the theme-aware overrides here need `!important` to win in dark
+ * mode. The content node's colour is not set inline, so it themes normally.
+ */
+.orbitpm-aris-canvas .djs-direct-editing-parent {
+  background: var(--orbitpm-panel-bg, var(--orbitpm-bg, #ffffff)) !important;
+  border: 1px solid var(--orbitpm-aris-highlight, #2563eb) !important;
+  border-radius: 4px;
+  box-shadow: 0 1px 6px rgba(0, 0, 0, 0.18);
+}
+.orbitpm-aris-canvas .djs-direct-editing-content {
+  color: var(--orbitpm-fg, #1a1a1e);
+  caret-color: var(--orbitpm-aris-highlight, #2563eb);
+  min-width: 24px;
+  padding: 2px 4px;
+  outline: none;
+}

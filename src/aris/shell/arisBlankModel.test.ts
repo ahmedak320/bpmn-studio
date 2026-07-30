@@ -7,10 +7,43 @@ import { ArisCanvas } from '../canvas/ArisCanvas'
 
 describe('buildBlankArisAml', () => {
   it('emits a Model.Type and AT_NAME for an English name', () => {
-    const { xml } = buildBlankArisAml({ names: { en: 'Order intake' }, modelType: 'MT_EEPC' })
+    const { xml, modelId } = buildBlankArisAml({
+      names: { en: 'Order intake' },
+      modelType: 'MT_EEPC'
+    })
+    expect(xml).toContain(`Model.ID="${modelId}"`)
     expect(xml).toContain('Model.Type="MT_EEPC"')
     expect(xml).toContain('<AttrValue LocaleId="1033">')
     expect(xml).toContain('<PlainText TextValue="Order intake"/>')
+  })
+
+  it('mints a unique source-style model id by default', () => {
+    const a = buildBlankArisAml({ names: { en: 'A' }, modelType: 'MT_EEPC' })
+    const b = buildBlankArisAml({ names: { en: 'B' }, modelType: 'MT_EEPC' })
+    expect(a.modelId).toMatch(/^Model\.[-0-9A-Za-z_]{11}-u-L$/)
+    expect(b.modelId).toMatch(/^Model\.[-0-9A-Za-z_]{11}-u-L$/)
+    expect(a.modelId).not.toBe(b.modelId)
+  })
+
+  it('uses deterministic randomness when injected', () => {
+    const random = () => 0.5
+    const a = buildBlankArisAml({ names: { en: 'A' }, modelType: 'MT_EEPC', random })
+    const b = buildBlankArisAml({ names: { en: 'B' }, modelType: 'MT_EEPC', random })
+    expect(a.modelId).toBe(b.modelId)
+  })
+
+  it('uses an explicit model id and guid verbatim', () => {
+    const modelId = 'Model.3xqe8yXO9Z7-u-L'
+    const guid = '12345678-1234-1234-1234-123456789abc'
+    const { xml, modelId: returnedId } = buildBlankArisAml({
+      names: { en: 'Order intake' },
+      modelType: 'MT_EEPC',
+      modelId,
+      guid
+    })
+    expect(returnedId).toBe(modelId)
+    expect(xml).toContain(`Model.ID="${modelId}"`)
+    expect(xml).toContain(`<GUID>${guid}</GUID>`)
   })
 
   it('round-trips through the studio pipeline as one renderable empty model', async () => {
