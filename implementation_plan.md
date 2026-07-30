@@ -899,13 +899,13 @@ npm run typecheck && npm run lint && npm run check:no-skips
 
 **Steps:**
 
-- [ ] `handleImportInput` multi-file branch: per file → BPMN-reject toast as today; `createArisXmlSourcePackage`; `index.models.size === 0` ⇒ toast `aris.import.split.nothing` (no tab); else accumulate ONE combined `ArisSplitImportPlan` (thread `takenPaths` across the batch; `existingModelIds` = `mergedLinks.index` keys ∪ `graph.ambiguousProcessIds`); open `ArisSplitImportDialog`; confirm ⇒ `executeArisSplitImport` ⇒ `refreshWorkspaceSources` ⇒ toast `aris.import.split.done` ⇒ `requestTreeReveal(undefined, firstWritten)`. Single-file branch UNCHANGED.
-- [ ] Tree-drop: add `onStageImport` to `UseArisExplorerActionsOptions` and pass it from `ArisExplorerPane` (the single prop addition this wave); AML-with-models drops route to the same staged dialog with `baseFolderRel = toFolderRel`; other files keep the legacy verbatim write.
-- [ ] `handleOpenAssignedModel(request)`: first id with `mergedLinks.index.has(id)` ⇒ `openCanonicalProcess(id)`; else first id in `graph.ambiguousProcessIds` ⇒ toast `aris.assign.ambiguous`; else multi-file ⇒ `setNewModelRequest({ folderRel: parentFolderOf(activeTabRelPath ?? ''), forcedModelId: ids[0], presetName: humanize(ids[0]), linkContext: request.definitionName })`; single-file ⇒ toast `aris.assign.missing`. `humanize` strips the `Model.` prefix.
-- [ ] `handleCreateBlankModel` passes `modelId: forcedModelId` (from T3's spec); on success with a `forcedModelId`: toast `aris.assign.created` + reveal + open (the assignment resolves because the child's Model.ID matches the dangling id — no parent edit).
-- [ ] `ArisNewModelDialog`: optional `preset?: { name; modelId; linkContext } | null` — prefill name, lock type to the EPC default, show `aris.newModel.linkedHint`.
-- [ ] Wire `workspaceModelIndex={mergedLinks.index}`, `onOpenAssignedModel`, and `onLiveDocumentChange={(doc) => tab.relPath && handleLiveScanChange(tab.relPath, doc ? deriveArisLinksFromDocument(doc) : null)}` into `ArisStudioTab`; clear overlay entries on tab close and remap keys on rename/move.
-- [ ] Prettier.
+- [x] `handleImportInput` multi-file branch: per file → BPMN-reject toast as today; `createArisXmlSourcePackage`; `index.models.size === 0` ⇒ toast `aris.import.split.nothing` (no tab); else accumulate ONE combined `ArisSplitImportPlan` (thread `takenPaths` across the batch; `existingModelIds` = `mergedLinks.index` keys ∪ `graph.ambiguousProcessIds`); open `ArisSplitImportDialog`; confirm ⇒ `executeArisSplitImport` ⇒ `refreshWorkspaceSources` ⇒ toast `aris.import.split.done` ⇒ `requestTreeReveal(undefined, firstWritten)`. Single-file branch UNCHANGED.
+- [x] Tree-drop: add `onStageImport` to `UseArisExplorerActionsOptions` and pass it from `ArisExplorerPane` (the single prop addition this wave); AML-with-models drops route to the same staged dialog with `baseFolderRel = toFolderRel`; other files keep the legacy verbatim write.
+- [x] `handleOpenAssignedModel(request)`: first id with `mergedLinks.index.has(id)` ⇒ `openCanonicalProcess(id)`; else first id in `graph.ambiguousProcessIds` ⇒ toast `aris.assign.ambiguous`; else multi-file ⇒ `setNewModelRequest({ folderRel: parentFolderOf(activeTabRelPath ?? ''), forcedModelId: ids[0], presetName: humanize(ids[0]), linkContext: request.definitionName })`; single-file ⇒ toast `aris.assign.missing`. `humanize` strips the `Model.` prefix.
+- [x] `handleCreateBlankModel` passes `modelId: forcedModelId` (from T3's spec); on success with a `forcedModelId`: toast `aris.assign.created` + reveal + open (the assignment resolves because the child's Model.ID matches the dangling id — no parent edit).
+- [x] `ArisNewModelDialog`: optional `preset?: { name; modelId; linkContext } | null` — prefill name, lock type to the EPC default, show `aris.newModel.linkedHint`.
+- [x] Wire `workspaceModelIndex={mergedLinks.index}`, `onOpenAssignedModel`, and `onLiveDocumentChange={(doc) => tab.relPath && handleLiveScanChange(tab.relPath, doc ? deriveArisLinksFromDocument(doc) : null)}` into `ArisStudioTab`; clear overlay entries on tab close and remap keys on rename/move.
+- [x] Prettier.
 
 **Tests (ArisApp.test.tsx — new + AUTHORIZED updates):** multi-file import splits to FILES not tabs (dialog rows; confirm ⇒ written paths under the group folder; no new tab; tree gains rows); second identical import ⇒ all rows skipped, zero writes; cancel writes nothing; create-missing (dangling assignment → marker/dblclick → prefilled dialog → create ⇒ file in the parent's folder with Model.ID = the dangling id ⇒ tree nests it); cross-file open (marker click with resolvable child ⇒ child tab opens + model active); live overlay (Link in tab A to model of file B ⇒ tree nests B under A with NO disk write; undo ⇒ un-nests). Single-file/§7.3/BPMN-reject tests stay green unmodified.
 
@@ -946,8 +946,8 @@ npm run test:aris:animalwf && npm run typecheck && npm run lint && npm run check
 
 **Steps:**
 
-- [ ] `buildAttributesTab` merges schema rows: attributes from `schemaForObjectType`/`schemaForModelType` with no stored value → a row flagged missing (`bilingual: { enMissing: true, arMissing: true }`) so the existing missing-value highlight + editors light up; mandatory badge from the schema. Editor accepts a schema-declared attribute that does not exist yet (create-on-first-save via `setDefinitionAttribute` / C4's `setModelAttribute` through the `arisDetailsEditing` seam). Every string via `t()` using C4's `aris.attr.*` keys.
-- [ ] Prettier + tests.
+- [x] `buildAttributesTab` merges schema rows: attributes from `schemaForObjectType`/`schemaForModelType` with no stored value → a row flagged missing (`bilingual: { enMissing: true, arMissing: true }`) so the existing missing-value highlight + editors light up; mandatory badge from the schema. Editor accepts a schema-declared attribute that does not exist yet (create-on-first-save via `setDefinitionAttribute` / C4's `setModelAttribute` through the `arisDetailsEditing` seam). Every string via `t()` using C4's `aris.attr.*` keys.
+- [x] Prettier + tests.
 
 **Tests assert:** an `OT_FUNC` definition without `AT_ID` shows an `AT_ID` row flagged missing; saving writes the attribute (undoable); an EPC model shows the 10 model-schema rows; `check:ui-copy` passes.
 
@@ -983,9 +983,9 @@ export function buildConventionFindings(
 
 **Steps:**
 
-- [ ] Five rules emitting `ArisEpcModelFinding`-shaped rows (warning): `conv.connection.illegal` (nodeIds=[cxnOccId]; params from/to/type; via `isLegalConnection`), `conv.function.missingIdentifier` (nodeIds = the definition's occurrence ids; no `AT_ID`), `conv.function.noExecutor` (function with no incoming `CT` whose `raci==='R'` from an executor object type), `conv.model.missingAttribute` (model-scoped: empty nodeIds + modelId → fallback reveal; mandatory schema attribute absent), `conv.naming.hint` (name >60 chars or trailing period). Messages via C4's `aris.conv.finding.*` keys.
-- [ ] `ArisStudioTab.tsx`: append `buildConventionFindings(document)` to the `epcFindings` array before `buildArisValidationFindings` (one statement).
-- [ ] Prettier + tests.
+- [x] Five rules emitting `ArisEpcModelFinding`-shaped rows (warning): `conv.connection.illegal` (nodeIds=[cxnOccId]; params from/to/type; via `isLegalConnection`), `conv.function.missingIdentifier` (nodeIds = the definition's occurrence ids; no `AT_ID`), `conv.function.noExecutor` (function with no incoming `CT` whose `raci==='R'` from an executor object type), `conv.model.missingAttribute` (model-scoped: empty nodeIds + modelId → fallback reveal; mandatory schema attribute absent), `conv.naming.hint` (name >60 chars or trailing period). Messages via C4's `aris.conv.finding.*` keys.
+- [x] `ArisStudioTab.tsx`: append `buildConventionFindings(document)` to the `epcFindings` array before `buildArisValidationFindings` (one statement).
+- [x] Prettier + tests.
 
 **Tests assert:** synthetic docs trigger each rule exactly once; a legal DMT wiring triggers none; `buildArisValidationFindings` maps a conv row to kind `invalidSequence`, keeps `ruleId`, and lands markers on the connection element. `arisValidationFindings.test.ts` gains a conv-pass-through case.
 

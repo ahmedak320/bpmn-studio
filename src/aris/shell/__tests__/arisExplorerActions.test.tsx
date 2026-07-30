@@ -20,6 +20,10 @@ interface HarnessProps {
   node?: LiteTreeNode
   moveDrop?: { from: string; type: 'file' | 'directory'; to: string }
   importDrop?: { transfer: DataTransfer; to: string }
+  onStageImport?: (
+    files: readonly { name: string; bytes: Uint8Array }[],
+    baseFolderRel: string
+  ) => Promise<ReadonlySet<string>>
 }
 
 function Harness(props: HarnessProps): JSX.Element {
@@ -30,7 +34,8 @@ function Harness(props: HarnessProps): JSX.Element {
     promptText: props.promptText,
     refresh: props.refresh,
     toast: props.toast,
-    tabs: props.tabs
+    tabs: props.tabs,
+    onStageImport: props.onStageImport
   })
   return (
     <div>
@@ -254,5 +259,45 @@ describe('useArisExplorerActions', () => {
     expect(new TextDecoder().decode(original.bytes)).toBe('<AML></AML>')
     // The rejected .bpmn was never written.
     expect(paths).not.toContain('target/legacy.bpmn')
+  })
+
+  it('routes staged AML drops to onStageImport and writes only the unstaged rest verbatim', async () => {
+    const { adapter, tree } = treeFromAdapterSeed([])
+    const tabs = makeTabs()
+    const toast = vi.fn()
+    // The stager claims the model-bearing file; the plain one is left for the
+    // legacy verbatim write.
+    const onStageImport = vi.fn(
+      async (files: readonly { name: string; bytes: Uint8Array }[]): Promise<ReadonlySet<string>> =>
+        new Set(files.filter((file) => file.name === 'staged.aml').map((file) => file.name))
+    )
+    const transfer = {
+      files: [
+        droppedFile('staged.aml', '<AML><Model Model.ID="Model.S"/></AML>'),
+        droppedFile('plain.aml', '<AML>plain</AML>')
+      ]
+    } as unknown as DataTransfer
+
+    render(
+      <Harness
+        adapter={adapter}
+        tree={tree}
+        promptText={vi.fn(async () => null) as unknown as PromptText}
+        toast={toast}
+        tabs={tabs}
+        refresh={async () => undefined}
+        importDrop={{ transfer, to: '' }}
+        onStageImport={onStageImport}
+      />
+    )
+
+    fireEvent.click(screen.getByText('run-import'))
+
+    await waitFor(() => expect(onStageImport).toHaveBeenCalledTimes(1))
+    const paths = (await adapter.list()).map((entry) => entry.path)
+    // The staged file was NOT written verbatim (it awaits the split-import
+    // review); the unstaged file took the legacy write path.
+    expect(paths).not.toContain('staged.aml')
+    expect(paths).toContain('plain.aml')
   })
 })

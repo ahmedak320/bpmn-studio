@@ -4,7 +4,7 @@ import {
   findingsByCanvasElement,
   type ArisValidationFinding
 } from './arisValidationFindings'
-import { buildArisEpcFindings } from './arisEpcFindings'
+import { buildArisEpcFindings, type ArisEpcModelFinding } from './arisEpcFindings'
 import { scanArisGaps } from './arisChatHost'
 import { attribute, buildDocument, names } from '../chat/testFixtures'
 import { type ArisChatGap } from '../chat/gapScanner'
@@ -251,6 +251,64 @@ describe('buildArisValidationFindings', () => {
     expect(alternation).toBeDefined()
     expect(alternation!.kind).toBe('invalidSequence')
     expect(alternation!.canvasElementIds).toEqual(['O_A', 'O_B', 'C1'])
+  })
+
+  it('passes a convention (conv.*) finding through with ruleId, fallback kind, and connection markers', () => {
+    const funcA = funcDefinition('OD_A')
+    const funcB = funcDefinition('OD_B')
+    const connDef = {
+      id: 'CD1',
+      type: 'CT_REFS_TO_2',
+      fromObjectDefinitionId: 'OD_A',
+      toObjectDefinitionId: 'OD_B',
+      names: names(null),
+      attributes: []
+    }
+    const model = eepcModel(
+      'M1',
+      [
+        { id: 'O_A', definitionId: 'OD_A', modelId: 'M1', symbol: 'ST_FUNC' },
+        { id: 'O_B', definitionId: 'OD_B', modelId: 'M1', symbol: 'ST_FUNC' }
+      ],
+      [
+        {
+          id: 'C1',
+          definitionId: 'CD1',
+          modelId: 'M1',
+          sourceOccurrenceId: 'O_A',
+          targetOccurrenceId: 'O_B'
+        }
+      ]
+    )
+    const document = buildDocument({
+      models: [model],
+      objectDefinitions: [funcA, funcB],
+      connectionDefinitions: [connDef]
+    })
+    const workingDocument = asWorkingDocument(document)
+
+    // Not built via `buildConventionFindings` (that module owns its own test coverage) —
+    // this is a plain conv.*-shaped row, verifying only the downstream pass-through
+    // contract `buildArisValidationFindings` already guarantees for any unrecognized
+    // `ruleId` (kind falls back to 'invalidSequence' via `EPC_RULE_GAP_KINDS`).
+    const convFinding: ArisEpcModelFinding = {
+      ruleId: 'conv.connection.illegal',
+      severity: 'warning',
+      messageKey: 'aris.conv.finding.illegalConnection.body',
+      messageParams: { from: 'OT_FUNC', to: 'OT_FUNC', type: 'CT_REFS_TO_2' },
+      nodeIds: ['C1'],
+      edgeIds: [],
+      modelId: 'M1'
+    }
+
+    const findings = buildArisValidationFindings(workingDocument, [convFinding], [])
+    const convRow = findings.find((f) => f.ruleId === 'conv.connection.illegal')
+    expect(convRow).toBeDefined()
+    expect(convRow!.kind).toBe('invalidSequence')
+    expect(convRow!.severity).toBe('warning')
+    expect(convRow!.canvasElementIds).toEqual(['C1'])
+    expect(convRow!.anchorElementId).toBe('C1')
+    expect(convRow!.fallbackModelId).toBe('M1')
   })
 
   it('deduplicates EPC findings that the gap scanner re-exposes', () => {

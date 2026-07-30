@@ -12,6 +12,12 @@ export interface ArisNewModelDialogProps {
    * switches the hint copy; the create paths themselves live in `ArisApp`.
    */
   readonly folderRel: string | null
+  /**
+   * Create-missing preset: when set, the dialog prefills the model name, locks
+   * the type to the EPC default (a resolved assignment is always a process), and
+   * shows the linked hint naming the id and the function the model will resolve.
+   */
+  readonly preset?: { name: string; modelId: string; linkContext: string } | null
   readonly lang: 'en' | 'ar'
   readonly onCreate: (spec: { name: string; modelType: ArisBlankModelType }) => void
   readonly onCancel: () => void
@@ -25,6 +31,7 @@ export interface ArisNewModelDialogProps {
 export function ArisNewModelDialog({
   open,
   folderRel,
+  preset,
   lang,
   onCreate,
   onCancel
@@ -33,6 +40,7 @@ export function ArisNewModelDialog({
   return (
     <ArisNewModelDialogBody
       folderRel={folderRel}
+      preset={preset ?? null}
       lang={lang}
       onCreate={onCreate}
       onCancel={onCancel}
@@ -42,12 +50,17 @@ export function ArisNewModelDialog({
 
 function ArisNewModelDialogBody({
   folderRel,
+  preset,
   lang,
   onCreate,
   onCancel
 }: Omit<ArisNewModelDialogProps, 'open'>): JSX.Element {
   const nameRef = useRef<HTMLInputElement>(null)
-  const [name, setName] = useState(() => t('aris.newModel.nameInitial'))
+  const [name, setName] = useState(() =>
+    preset && preset.name.trim() !== '' ? preset.name : t('aris.newModel.nameInitial')
+  )
+  // A create-missing model always resolves a process assignment, so its type is
+  // locked to the EPC default rather than offered as a choice.
   const [modelType, setModelType] = useState<ArisBlankModelType>('MT_EEPC')
 
   useEffect(() => {
@@ -133,6 +146,7 @@ function ArisNewModelDialogBody({
           <select
             value={modelType}
             onChange={(event) => setModelType(event.target.value as ArisBlankModelType)}
+            disabled={preset !== null}
             style={fieldStyle}
           >
             <option value="MT_EEPC">{t('aris.newModel.type.epc')}</option>
@@ -140,7 +154,11 @@ function ArisNewModelDialogBody({
           </select>
         </label>
         <p style={{ margin: 0, fontSize: 12.5, color: 'var(--orbitpm-muted)', lineHeight: 1.5 }}>
-          {t(folderRel === null ? 'aris.newModel.hint.fallback' : 'aris.newModel.hint.directory')}
+          {preset
+            ? t('aris.newModel.linkedHint', { id: preset.modelId, name: preset.linkContext })
+            : t(
+                folderRel === null ? 'aris.newModel.hint.fallback' : 'aris.newModel.hint.directory'
+              )}
         </p>
       </div>
     </Modal>

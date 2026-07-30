@@ -55,6 +55,7 @@ import { detectLocaleIds } from './arisChatProposal'
 import { ArisFixMissingDialog, type ArisFixPreviewRows } from './ArisFixMissingDialog'
 import { derivedAmlFileName, exportArisDerivedAml } from './arisDerivedExport'
 import { buildArisEpcFindings } from './arisEpcFindings'
+import { buildConventionFindings } from '../conventions/validate'
 import {
   ArisCanvasView,
   type ArisCanvasHistoryState,
@@ -391,7 +392,10 @@ export function ArisStudioTab({
     [workspaceModelIndex]
   )
   const epcFindings = useMemo(
-    () => buildArisEpcFindings(liveDocument, undefined, externallyKnownModelIds),
+    () => [
+      ...buildArisEpcFindings(liveDocument, undefined, externallyKnownModelIds),
+      ...buildConventionFindings(liveDocument)
+    ],
     [liveDocument, externallyKnownModelIds]
   )
 

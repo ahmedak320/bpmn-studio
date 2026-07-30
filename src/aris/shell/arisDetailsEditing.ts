@@ -36,10 +36,16 @@
 import { localeLang } from '../../library/amlParse'
 import { DEFAULT_LOCALE_ID } from '../canvas/emptyDocument'
 import { listAttachments, type ArisAttachment } from '../canvas/attachments'
+import {
+  schemaForModelType,
+  schemaForObjectType,
+  type ArisAttributeSchemaEntry
+} from '../conventions/attributes'
 import type {
   ArisAttribute,
   ArisAttributeValue,
   ArisLocalizedValue,
+  ArisModel,
   ArisObjectDefinition,
   ArisOccurrenceStyle,
   ArisWorkingDocument
@@ -265,6 +271,131 @@ export function upsertAttributeValue(
   return Object.freeze(next)
 }
 
+/**
+ * Fallback label for an attribute the R3 schema
+ * (`src/aris/conventions/attributes.ts`) does not describe. Mirrors the
+ * generic label `src/aris/details/tabs.ts` has always used for these, so an
+ * unknown/custom attribute type keeps reading exactly as it did before the
+ * schema merge.
+ */
+const GENERIC_ATTRIBUTE_LABEL_KEY = 'aris.details.attributes.attr'
+
+/**
+ * One editable attribute row: an existing stored value, or — when `isNew` is
+ * true — a schema-declared attribute type this definition/model does not
+ * carry a value for yet.
+ *
+ * A missing row needs no special "create" plumbing: `attributeSlots` already
+ * returns empty, `present: false` slots (seeded from the document's own
+ * locale convention) for a zero-value attribute, and `upsertAttributeValue`
+ * already *appends* rather than requiring an existing entry to replace. So
+ * the very first commit against a missing row both creates the attribute and
+ * fills it, in the same one `bridge.execute` call an edit to an existing
+ * attribute makes — "create-on-first-save" for free, from code already
+ * proven for the existing-attribute case.
+ */
+export interface ArisAttributeEditorRow extends ArisAttributeSlots {
+  readonly attributeType: string
+  readonly labelKey: string
+  readonly mandatory: boolean
+  /** True when the R3 schema describes this attribute type at all. */
+  readonly isSchemaKnown: boolean
+  /** True when there is no stored value yet — a create-on-first-save row. */
+  readonly isNew: boolean
+  readonly values: readonly ArisAttributeValue[]
+}
+
+function mergeAttributeSchemaRows(
+  existing: readonly ArisAttribute[],
+  schema: readonly ArisAttributeSchemaEntry[],
+  convention: ArisLocaleConvention
+): readonly ArisAttributeEditorRow[] {
+  const schemaByType = new Map(schema.map((entry) => [entry.attributeType, entry]))
+  const seen = new Set<string>()
+  const rows: ArisAttributeEditorRow[] = []
+
+  for (const attribute of existing) {
+    seen.add(attribute.type)
+    const entry = schemaByType.get(attribute.type)
+    rows.push(
+      Object.freeze({
+        ...attributeSlots(attribute, convention),
+        attributeType: attribute.type,
+        labelKey: entry?.labelKey ?? GENERIC_ATTRIBUTE_LABEL_KEY,
+        mandatory: entry?.mandatory ?? false,
+        isSchemaKnown: entry !== undefined,
+        isNew: false
+      })
+    )
+  }
+
+  for (const entry of schema) {
+    if (seen.has(entry.attributeType)) continue
+    rows.push(
+      Object.freeze({
+        ...attributeSlots(
+          Object.freeze({ type: entry.attributeType, values: Object.freeze([]) }),
+          convention
+        ),
+        attributeType: entry.attributeType,
+        labelKey: entry.labelKey,
+        mandatory: entry.mandatory,
+        isSchemaKnown: true,
+        isNew: true
+      })
+    )
+  }
+
+  return Object.freeze(rows)
+}
+
+/**
+ * Every editable attribute row for an object definition (plan R3): its own
+ * stored attributes plus any `schemaForObjectType` entry for its object type
+ * that carries no value yet.
+ */
+export function definitionAttributeRows(
+  definition: ArisObjectDefinition,
+  convention: ArisLocaleConvention
+): readonly ArisAttributeEditorRow[] {
+  return mergeAttributeSchemaRows(
+    definition.attributes,
+    schemaForObjectType(definition.type),
+    convention
+  )
+}
+
+/**
+ * Every editable attribute row for a model (plan R3): its own stored
+ * attributes plus any `schemaForModelType` entry for its model type that
+ * carries no value yet.
+ */
+export function modelAttributeRows(
+  model: ArisModel,
+  convention: ArisLocaleConvention
+): readonly ArisAttributeEditorRow[] {
+  return mergeAttributeSchemaRows(model.attributes, schemaForModelType(model.type), convention)
+}
+
+/**
+ * Converts an ordered attribute-value list into the `localeId → text` map
+ * `ArisAuthoring.setModelAttribute` expects — "the plain `localeId → text`
+ * map the details panel builds", per that method's own doc comment, rather
+ * than the internal `ArisAttributeValue[]` shape `setDefinitionAttribute`
+ * takes. A `null` locale id (the "no locale id" case `upsertAttributeValue`
+ * also produces) is filed under the same empty-string key `attributeSlots`
+ * already uses for it elsewhere in this module.
+ */
+export function attributeValuesToRecord(
+  values: readonly ArisAttributeValue[]
+): Readonly<Record<string, string>> {
+  const record: Record<string, string> = {}
+  for (const value of values) {
+    record[value.localeId ?? NO_LOCALE_ID] = value.text
+  }
+  return Object.freeze(record)
+}
+
 /** The object definition an editor should target for the current selection. */
 export interface ArisEditTarget {
   readonly definitionId: string | null
@@ -439,6 +570,24 @@ export interface ArisDetailsEditingApi {
     definitionId: string,
     attributeType: string,
     values: readonly ArisAttributeValue[]
+  ) => void
+  /**
+   * Edit a model-scoped R3 attribute (plan §11.4, the `'model'` owner kind).
+   * Mirrors `ArisAuthoring.setModelAttribute`, which already exists (Lane
+   * C4) and takes the plain `localeId → text` map `attributeValuesToRecord`
+   * produces.
+   *
+   * Optional: the concrete `ArisDetailsEditingApi` object this seam is
+   * implemented against is built in `ArisStudioTab.tsx`, a file outside this
+   * lane's ownership that no lane in this wave re-touches to add this method.
+   * A caller must therefore use optional-call syntax (`editing.setModelAttribute?.(…)`)
+   * until whoever next edits `ArisStudioTab.tsx` wires a concrete
+   * implementation through to `canvas.authoring.setModelAttribute`.
+   */
+  readonly setModelAttribute?: (
+    modelId: string,
+    attributeType: string,
+    values: Readonly<Record<string, string>>
   ) => void
   readonly restyleOccurrence: (occurrenceId: string, style: Partial<ArisOccurrenceStyle>) => void
   readonly addModelAssignment: (definitionId: string, modelId: string) => void

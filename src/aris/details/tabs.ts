@@ -11,7 +11,13 @@
  */
 
 import { localeLang } from '../../library/amlParse'
+import {
+  schemaForModelType,
+  schemaForObjectType,
+  type ArisAttributeSchemaEntry
+} from '../conventions/attributes'
 import type {
+  ArisAttribute,
   ArisConnectionOccurrence,
   ArisObjectDefinition,
   ArisObjectOccurrence
@@ -71,6 +77,13 @@ export interface ArisDetailRow {
   readonly missing?: boolean
   /** Bilingual variant for name-like rows. */
   readonly bilingual?: ArisBilingualValue
+  /**
+   * True when the R3 convention schema (`src/aris/conventions/attributes.ts`)
+   * marks this attribute mandatory for the row's object/model type. Only ever
+   * set on rows from `buildAttributesTab`; every other builder leaves it
+   * unset, which the UI treats exactly like `false`.
+   */
+  readonly mandatory?: boolean
 }
 
 export interface ArisBilingualValue {
@@ -271,26 +284,74 @@ export const buildNamesTab: ArisTabBuilder = (element, doc) => {
   return rows
 }
 
+/**
+ * Fallback label for an attribute the R3 schema does not describe. Kept as
+ * the plain "Attribute" wording every attribute row used before the schema
+ * merge, so an unknown/custom attribute type (e.g. the internal
+ * `AT_ORBITPM_ATTACHMENT` store, or a source-specific `AT_REM`) renders
+ * exactly as it always has.
+ */
+const GENERIC_ATTRIBUTE_LABEL_KEY = 'aris.details.attributes.attr'
+
+/**
+ * One `attributes` tab per plan R3: every attribute already carrying a stored
+ * value, PLUS one explicit "missing" row for every schema-declared attribute
+ * (`schemaForObjectType`/`schemaForModelType`) that has no value at all yet.
+ *
+ * A schema-covered attribute type — stored or not — renders under its own
+ * `aris.attribute.*` label instead of the generic placeholder, and carries
+ * the schema's `mandatory` flag. A stored attribute the schema does not know
+ * about keeps the old generic label untouched.
+ */
+function buildAttributeRows(
+  existing: readonly ArisAttribute[],
+  schema: readonly ArisAttributeSchemaEntry[]
+): ArisDetailRow[] {
+  const schemaByType = new Map(schema.map((entry) => [entry.attributeType, entry]))
+  const seen = new Set<string>()
+  const rows: ArisDetailRow[] = []
+
+  for (const attr of existing) {
+    seen.add(attr.type)
+    const entry = schemaByType.get(attr.type)
+    const en = attr.values.find((v) => classifyLocale(v.localeId) === 'en')?.text
+    const ar = attr.values.find((v) => classifyLocale(v.localeId) === 'ar')?.text
+    rows.push({
+      labelKey: entry?.labelKey ?? GENERIC_ATTRIBUTE_LABEL_KEY,
+      value: attr.type,
+      mandatory: entry?.mandatory ?? false,
+      bilingual: {
+        en: en ?? null,
+        ar: ar ?? null,
+        enMissing: en === undefined,
+        arMissing: ar === undefined
+      }
+    })
+  }
+
+  // Schema-declared attributes with no stored value at all: an explicit
+  // missing row so the existing missing-value highlight + editors light up.
+  for (const entry of schema) {
+    if (seen.has(entry.attributeType)) continue
+    rows.push({
+      labelKey: entry.labelKey,
+      value: entry.attributeType,
+      missing: true,
+      mandatory: entry.mandatory,
+      bilingual: { en: null, ar: null, enMissing: true, arMissing: true }
+    })
+  }
+
+  return rows
+}
+
 export const buildAttributesTab: ArisTabBuilder = (element, doc) => {
   const rows: ArisDetailRow[] = []
 
   if (element.kind === 'objectDefinition') {
     const def = objectDefinitionById(doc, element.id)
     if (def) {
-      for (const attr of def.attributes) {
-        const en = attr.values.find((v) => classifyLocale(v.localeId) === 'en')?.text
-        const ar = attr.values.find((v) => classifyLocale(v.localeId) === 'ar')?.text
-        rows.push({
-          labelKey: 'aris.details.attributes.attr',
-          value: attr.type,
-          bilingual: {
-            en: en ?? null,
-            ar: ar ?? null,
-            enMissing: en === undefined,
-            arMissing: ar === undefined
-          }
-        })
-      }
+      rows.push(...buildAttributeRows(def.attributes, schemaForObjectType(def.type)))
     }
   } else if (element.kind === 'objectOccurrence') {
     const occ = objectOccurrenceById(doc, element.id)
@@ -301,6 +362,13 @@ export const buildAttributesTab: ArisTabBuilder = (element, doc) => {
           value: attrOcc.attributeType
         })
       }
+    }
+  } else if (element.kind === 'model') {
+    const details = modelDetailsById(doc, element.id)
+    if (details) {
+      rows.push(
+        ...buildAttributeRows(details.model.attributes, schemaForModelType(details.model.type))
+      )
     }
   }
 

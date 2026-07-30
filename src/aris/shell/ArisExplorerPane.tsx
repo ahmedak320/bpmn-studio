@@ -57,6 +57,15 @@ export interface ArisExplorerPaneProps {
   readonly onOpenFileFocus: (relPath: string) => void
   /** Blank-model stub; Lane L2d replaces only its body. `folderRel` is '' for root. */
   readonly onNewModel: (folderRel: string) => void
+  /**
+   * Stage a tree-drop of ARIS sources through the split-import review. Returns
+   * the names it consumed (AML-with-models); anything it does not stage falls
+   * back to the legacy verbatim write. Absent ⇒ every drop is a verbatim write.
+   */
+  readonly onStageImport?: (
+    files: readonly { name: string; bytes: Uint8Array }[],
+    baseFolderRel: string
+  ) => Promise<ReadonlySet<string>>
   readonly onToast: (message: string, tone?: ToastTone) => void
 }
 
@@ -106,6 +115,7 @@ export function ArisExplorerPane(props: ArisExplorerPaneProps): JSX.Element {
     onRefreshWorkspace,
     onOpenFileFocus,
     onNewModel,
+    onStageImport,
     onToast
   } = props
 
@@ -117,7 +127,8 @@ export function ArisExplorerPane(props: ArisExplorerPaneProps): JSX.Element {
     promptText,
     refresh: onRefreshWorkspace,
     toast: onToast,
-    tabs: tabsController
+    tabs: tabsController,
+    onStageImport
   })
 
   const [aiCollapsed, setAiCollapsed] = useState<boolean>(() => {

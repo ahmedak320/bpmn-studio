@@ -271,6 +271,18 @@ function makeDirectoryAdapter(
       }
     ),
     delete: vi.fn(async () => undefined),
+    // Remove a file (and any nested subtree) from the in-memory store so the
+    // link scan re-runs against the smaller listing — used by the create-missing
+    // flow to make a previously-resolved model id dangle at runtime.
+    remove: vi.fn(async (path: string) => {
+      for (let index = entryList.length - 1; index >= 0; index -= 1) {
+        const entryPath = entryList[index]!.path
+        if (entryPath === path || entryPath.startsWith(`${path}/`)) {
+          entryList.splice(index, 1)
+          delete snapshotStore[entryPath]
+        }
+      }
+    }),
     move: vi.fn(async () => undefined),
     copy: vi.fn(async () => undefined),
     mkdir: vi.fn(async () => undefined),
@@ -321,6 +333,14 @@ function openFileInput(): HTMLInputElement {
  */
 function installCanvasGeometry(): void {
   installJsdomSvgSupport()
+  // jsdom has no layout, so the tree reveal effect's scroll-to is a no-op here;
+  // without this stub it throws inside a rAF and surfaces as an unhandled error.
+  if (typeof HTMLElement.prototype.scrollIntoView !== 'function') {
+    Object.defineProperty(HTMLElement.prototype, 'scrollIntoView', {
+      configurable: true,
+      value: () => undefined
+    })
+  }
   Object.defineProperty(HTMLElement.prototype, 'clientWidth', {
     configurable: true,
     get: () => 1200
@@ -1364,6 +1384,316 @@ describe('ArisApp semantic explorer (Wave 2)', () => {
       screen.getByRole('treeitem', { name: 'child.aml' }).getAttribute('data-owned-subprocess')
     ).toBeNull()
   })
+})
+
+/** A standalone process whose one function carries NO assignment yet. */
+const LINK_A_AML = `<?xml version="1.0" encoding="UTF-8"?>
+<AML>
+  <Header-Info DatabaseName="Link" UserName="tester" ArisExeVersion="10"/>
+  <Group Group.ID="Group.Root">
+    <ObjDef ObjDef.ID="ObjDef.Fn" TypeNum="OT_FUNC" SymbolNum="ST_FUNC">
+      <AttrDef AttrDef.Type="AT_NAME"><AttrValue LocaleId="1033">Do work</AttrValue></AttrDef>
+    </ObjDef>
+    <Model Model.ID="Model.A" Model.Type="MT_EEPC">
+      <AttrDef AttrDef.Type="AT_NAME"><AttrValue LocaleId="1033">Alpha process</AttrValue></AttrDef>
+      <ObjOcc ObjOcc.ID="ObjOcc.Fn" ObjDef.IdRef="ObjDef.Fn" SymbolNum="ST_FUNC" Zorder="1">
+        <Position Pos.X="200" Pos.Y="100"/>
+        <Size Size.dX="180" Size.dY="60"/>
+      </ObjOcc>
+    </Model>
+  </Group>
+</AML>
+`
+
+/** The separate process the function above will be linked to at runtime. */
+const LINK_B_AML = `<?xml version="1.0" encoding="UTF-8"?>
+<AML>
+  <Header-Info DatabaseName="Link" UserName="tester" ArisExeVersion="10"/>
+  <Group Group.ID="Group.Root">
+    <ObjDef ObjDef.ID="ObjDef.Task" TypeNum="OT_FUNC" SymbolNum="ST_FUNC">
+      <AttrDef AttrDef.Type="AT_NAME"><AttrValue LocaleId="1033">Beta task</AttrValue></AttrDef>
+    </ObjDef>
+    <Model Model.ID="Model.B" Model.Type="MT_EEPC">
+      <AttrDef AttrDef.Type="AT_NAME"><AttrValue LocaleId="1033">Beta process</AttrValue></AttrDef>
+      <ObjOcc ObjOcc.ID="ObjOcc.Task" ObjDef.IdRef="ObjDef.Task" SymbolNum="ST_FUNC" Zorder="1">
+        <Position Pos.X="200" Pos.Y="100"/>
+        <Size Size.dX="180" Size.dY="60"/>
+      </ObjOcc>
+    </Model>
+  </Group>
+</AML>
+`
+
+/**
+ * A parent with a plain, unlinked function. The test boots this clean canvas
+ * (fast/stable), links the function to `Model.Peer` at runtime, then deletes the
+ * peer so the link dangles at drill-down time — exercising create-missing while
+ * keeping the canvas boot free of any pre-existing assignment.
+ */
+const CM_ROOT_AML = `<?xml version="1.0" encoding="UTF-8"?>
+<AML>
+  <Header-Info DatabaseName="Nest" UserName="tester" ArisExeVersion="10"/>
+  <Group Group.ID="Group.Root">
+    <ObjDef ObjDef.ID="ObjDef.Peer" TypeNum="OT_FUNC" SymbolNum="ST_FUNC">
+      <AttrDef AttrDef.Type="AT_NAME"><AttrValue LocaleId="1033">Handle peer</AttrValue></AttrDef>
+    </ObjDef>
+    <Model Model.ID="Model.Owner" Model.Type="MT_EEPC">
+      <AttrDef AttrDef.Type="AT_NAME"><AttrValue LocaleId="1033">Owner process</AttrValue></AttrDef>
+      <ObjOcc ObjOcc.ID="ObjOcc.Peer" ObjDef.IdRef="ObjDef.Peer" SymbolNum="ST_FUNC" Zorder="1">
+        <Position Pos.X="200" Pos.Y="100"/>
+        <Size Size.dX="180" Size.dY="60"/>
+      </ObjOcc>
+    </Model>
+  </Group>
+</AML>
+`
+
+/** The peer process the parent links to — declared once, then deleted at runtime. */
+const CM_PEER_AML = `<?xml version="1.0" encoding="UTF-8"?>
+<AML>
+  <Header-Info DatabaseName="Nest" UserName="tester" ArisExeVersion="10"/>
+  <Group Group.ID="Group.Root">
+    <ObjDef ObjDef.ID="ObjDef.PeerTask" TypeNum="OT_FUNC" SymbolNum="ST_FUNC">
+      <AttrDef AttrDef.Type="AT_NAME"><AttrValue LocaleId="1033">Peer task</AttrValue></AttrDef>
+    </ObjDef>
+    <Model Model.ID="Model.Peer" Model.Type="MT_EEPC">
+      <AttrDef AttrDef.Type="AT_NAME"><AttrValue LocaleId="1033">Peer process</AttrValue></AttrDef>
+      <ObjOcc ObjOcc.ID="ObjOcc.PeerTask" ObjDef.IdRef="ObjDef.PeerTask" SymbolNum="ST_FUNC" Zorder="1">
+        <Position Pos.X="200" Pos.Y="100"/>
+        <Size Size.dX="180" Size.dY="60"/>
+      </ObjOcc>
+    </Model>
+  </Group>
+</AML>
+`
+
+function importFileInput(): HTMLInputElement {
+  const input = document.querySelector<HTMLInputElement>(
+    'input[accept=".bpmn,.aml,.apc,.xml,application/xml,text/xml"][multiple]'
+  )
+  if (!input) throw new Error('missing ARIS shell import input')
+  return input
+}
+
+describe('ArisApp Wave 3 — split import & cross-file navigation', () => {
+  beforeEach(() => {
+    localStorage.clear()
+    document.documentElement.removeAttribute('dir')
+    document.documentElement.removeAttribute('lang')
+    document.title = ''
+    installCanvasGeometry()
+    installDownloadCapture()
+    Object.defineProperty(window, 'showDirectoryPicker', { configurable: true, value: undefined })
+    Object.defineProperty(navigator, 'storage', { configurable: true, value: {} })
+    mockState.directoryPickerSupported = false
+    mockState.rememberedHandle = undefined
+    mockState.ensurePermission = 'granted'
+    mockState.directoryAdapter = null
+  })
+
+  afterEach(() => {
+    cleanup()
+    vi.restoreAllMocks()
+  })
+
+  it('splits a multi-file import into one .aml per model — writing files, not opening a tab', async () => {
+    const adapter = bindNestedWorkspace([], {})
+    render(<ArisApp />)
+    await screen.findByRole('button', { name: 'Assistant' })
+
+    fireEvent.change(importFileInput(), {
+      target: { files: [xmlFile('animalwf.aml', TWO_MODEL_AML)] }
+    })
+
+    // The review lists one row per model, keyed on the split file name — no tab
+    // is opened for the imported source and nothing is written until confirm.
+    const dialog = await screen.findByRole('dialog', { name: 'Import into the workspace' })
+    expect(within(dialog).getByText('intake-process.aml')).not.toBeNull()
+    expect(within(dialog).getByText('review-process.aml')).not.toBeNull()
+    expect(screen.queryByRole('tab', { name: 'animalwf.aml' })).toBeNull()
+
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Import 2 file(s)' }))
+
+    await waitFor(() => expect(creationWritePaths(adapter)).toContain('intake-process.aml'))
+    expect(creationWritePaths(adapter)).toContain('review-process.aml')
+    // The workspace tree gains the split rows; still no source tab was opened.
+    expect(await screen.findByRole('treeitem', { name: 'intake-process.aml' })).not.toBeNull()
+    expect(await screen.findByRole('treeitem', { name: 'review-process.aml' })).not.toBeNull()
+    expect(screen.queryByRole('tab', { name: 'animalwf.aml' })).toBeNull()
+  })
+
+  it('skips every model on a second identical import and writes nothing new', async () => {
+    const adapter = bindNestedWorkspace([], {})
+    render(<ArisApp />)
+    await screen.findByRole('button', { name: 'Assistant' })
+
+    fireEvent.change(importFileInput(), {
+      target: { files: [xmlFile('animalwf.aml', TWO_MODEL_AML)] }
+    })
+    const firstDialog = await screen.findByRole('dialog', { name: 'Import into the workspace' })
+    fireEvent.click(within(firstDialog).getByRole('button', { name: 'Import 2 file(s)' }))
+    await waitFor(() => expect(creationWritePaths(adapter)).toContain('intake-process.aml'))
+    // Wait for the workspace scan to index both new models before re-importing.
+    await screen.findByRole('treeitem', { name: 'review-process.aml' })
+    const writesAfterFirst = creationWritePaths(adapter).length
+
+    fireEvent.change(importFileInput(), {
+      target: { files: [xmlFile('animalwf.aml', TWO_MODEL_AML)] }
+    })
+    const secondDialog = await screen.findByRole('dialog', { name: 'Import into the workspace' })
+    // Both ids already exist, so every row is skipped and the confirm writes zero.
+    expect(within(secondDialog).getAllByText(/already exists in this workspace/u)).toHaveLength(2)
+    fireEvent.click(within(secondDialog).getByRole('button', { name: 'Import 0 file(s)' }))
+
+    await waitFor(() =>
+      expect(screen.queryByRole('dialog', { name: 'Import into the workspace' })).toBeNull()
+    )
+    expect(creationWritePaths(adapter).length).toBe(writesAfterFirst)
+  })
+
+  it('writes nothing when the split-import review is cancelled', async () => {
+    const adapter = bindNestedWorkspace([], {})
+    render(<ArisApp />)
+    await screen.findByRole('button', { name: 'Assistant' })
+
+    fireEvent.change(importFileInput(), {
+      target: { files: [xmlFile('animalwf.aml', TWO_MODEL_AML)] }
+    })
+    const dialog = await screen.findByRole('dialog', { name: 'Import into the workspace' })
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }))
+
+    await waitFor(() =>
+      expect(screen.queryByRole('dialog', { name: 'Import into the workspace' })).toBeNull()
+    )
+    expect(creationWritePaths(adapter)).toHaveLength(0)
+  })
+
+  it('opens a resolvable cross-file model when its linked function is drilled into', async () => {
+    bindNestedWorkspace([workspaceFile('a.aml'), workspaceFile('child.aml')], {
+      'a.aml': fileSnapshot('a.aml', LINK_A_AML),
+      'child.aml': fileSnapshot('child.aml', NEST_CHILD_AML)
+    })
+    render(<ArisApp />)
+
+    // Boot a clean (link-free) canvas, then link the function to Model.C, which
+    // lives in child.aml, exactly as a user would through the Link-model picker.
+    fireEvent.click(await screen.findByRole('treeitem', { name: 'a.aml' }))
+    await waitFor(() => expect(canvasElement('ObjOcc.Fn')).not.toBeNull(), { timeout: 60000 })
+
+    const validation = document.querySelector<HTMLElement>('[data-orbitpm-aris-validation]')!
+    fireEvent.click(
+      validation.querySelector<HTMLButtonElement>(
+        '[data-orbitpm-aris-validation-issue="missingArabicName"][aria-label="Select ObjOcc.Fn on the canvas"]'
+      )!
+    )
+    const linkButton = document.querySelector<HTMLButtonElement>('[data-orbitpm-aris-link-model]')!
+    await waitFor(() => expect(linkButton.disabled).toBe(false), { timeout: 60000 })
+    fireEvent.click(linkButton)
+    fireEvent.click(
+      await screen.findByText(/Model\.C · child\.aml/u, undefined, { timeout: 60000 })
+    )
+
+    // Drilling into the linked function opens Model.C's source (child.aml). The
+    // priority-2000 dblclick reads the live document, not the ⊞ overlay.
+    await waitFor(() => expect(treeExpandable('a.aml')).toBe('true'), { timeout: 60000 })
+    fireEvent.dblClick(canvasElement('ObjOcc.Fn')!)
+
+    expect(await screen.findByRole('tab', { name: 'child.aml' }, { timeout: 60000 })).not.toBeNull()
+    await waitFor(() => expect(canvasElement('ObjOcc.Task')).not.toBeNull(), { timeout: 60000 })
+  }, 150000)
+
+  it('creates a pre-linked file when a linked model goes missing, resolving it with no parent edit', async () => {
+    const adapter = bindNestedWorkspace([workspaceFile('cmroot.aml'), workspaceFile('peer.aml')], {
+      'cmroot.aml': fileSnapshot('cmroot.aml', CM_ROOT_AML),
+      'peer.aml': fileSnapshot('peer.aml', CM_PEER_AML)
+    })
+    render(<ArisApp />)
+
+    // Boot a clean canvas, then link the function to Model.Peer through the
+    // picker (Model.Peer lives in peer.aml).
+    fireEvent.click(await screen.findByRole('treeitem', { name: 'cmroot.aml' }))
+    await waitFor(() => expect(canvasElement('ObjOcc.Peer')).not.toBeNull(), { timeout: 60000 })
+
+    const validation = document.querySelector<HTMLElement>('[data-orbitpm-aris-validation]')!
+    fireEvent.click(
+      validation.querySelector<HTMLButtonElement>(
+        '[data-orbitpm-aris-validation-issue="missingArabicName"][aria-label="Select ObjOcc.Peer on the canvas"]'
+      )!
+    )
+    const linkButton = document.querySelector<HTMLButtonElement>('[data-orbitpm-aris-link-model]')!
+    await waitFor(() => expect(linkButton.disabled).toBe(false), { timeout: 60000 })
+    fireEvent.click(linkButton)
+    fireEvent.click(
+      await screen.findByText(/Model\.Peer · peer\.aml/u, undefined, { timeout: 60000 })
+    )
+
+    // The link now resolves, so cmroot owns peer.aml (nested). Delete the peer so
+    // Model.Peer leaves the workspace and the assignment dangles.
+    await waitFor(() => expect(treeExpandable('cmroot.aml')).toBe('true'), { timeout: 60000 })
+    fireEvent.click(screen.getByRole('treeitem', { name: 'cmroot.aml' }).querySelector('span')!)
+    const peerRow = await screen.findByRole('treeitem', { name: 'peer.aml' })
+    fireEvent.click(within(peerRow).getByRole('button', { name: 'Delete peer.aml' }))
+    const confirm = await screen.findByRole('alertdialog')
+    fireEvent.click(within(confirm).getByRole('button', { name: 'Confirm' }))
+    await waitFor(() => expect(screen.queryByRole('treeitem', { name: 'peer.aml' })).toBeNull())
+
+    // Drilling into the now-dangling function opens the create-missing dialog
+    // forced to Model.Peer (dblclick path reads the live document, overlay-free).
+    fireEvent.dblClick(canvasElement('ObjOcc.Peer')!)
+    const dialog = await screen.findByRole('dialog', { name: 'New ARIS model' }, { timeout: 60000 })
+    expect(
+      within(dialog).getByText(
+        'The model will be created with id Model.Peer so the assignment on Handle peer resolves immediately.'
+      )
+    ).not.toBeNull()
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Create model' }))
+
+    // A real .aml is written in the parent's folder with Model.ID = Model.Peer.
+    await waitFor(() => expect(creationWritePaths(adapter)).toContain('peer.aml'), {
+      timeout: 60000
+    })
+    // The scan now resolves Model.Owner → Model.Peer, so the parent owns the child again.
+    await waitFor(() => expect(treeExpandable('cmroot.aml')).toBe('true'), { timeout: 60000 })
+  }, 150000)
+
+  it('nests a live-linked model with no disk write, and un-nests on undo', async () => {
+    const adapter = bindNestedWorkspace([workspaceFile('a.aml'), workspaceFile('b.aml')], {
+      'a.aml': fileSnapshot('a.aml', LINK_A_AML),
+      'b.aml': fileSnapshot('b.aml', LINK_B_AML)
+    })
+    render(<ArisApp />)
+
+    // Both are plain, un-nested root rows before any link exists.
+    fireEvent.click(await screen.findByRole('treeitem', { name: 'a.aml' }))
+    await waitFor(() => expect(canvasElement('ObjOcc.Fn')).not.toBeNull(), { timeout: 60000 })
+    expect(await screen.findByRole('treeitem', { name: 'b.aml' })).not.toBeNull()
+
+    // Select the function through its validation row so the Link-model action arms.
+    const validation = document.querySelector<HTMLElement>('[data-orbitpm-aris-validation]')!
+    fireEvent.click(
+      validation.querySelector<HTMLButtonElement>(
+        '[data-orbitpm-aris-validation-issue="missingArabicName"][aria-label="Select ObjOcc.Fn on the canvas"]'
+      )!
+    )
+
+    const linkButton = document.querySelector<HTMLButtonElement>('[data-orbitpm-aris-link-model]')!
+    await waitFor(() => expect(linkButton.disabled).toBe(false), { timeout: 60000 })
+    fireEvent.click(linkButton)
+
+    fireEvent.click(await screen.findByText(/Model\.B · b\.aml/u, undefined, { timeout: 60000 }))
+
+    // The live edit nests b.aml under a.aml with no write to disk at all.
+    await waitFor(() => expect(treeExpandable('a.aml')).toBe('true'), { timeout: 60000 })
+    expect(screen.queryByRole('treeitem', { name: 'b.aml' })).toBeNull()
+    expect(adapter.writeAtomic).not.toHaveBeenCalled()
+
+    // Undoing the assignment republishes the document and un-nests b.aml.
+    fireEvent.click(document.querySelector<HTMLButtonElement>('[data-orbitpm-aris-undo]')!)
+    await waitFor(() => expect(screen.queryByRole('treeitem', { name: 'b.aml' })).not.toBeNull(), {
+      timeout: 60000
+    })
+    expect(adapter.writeAtomic).not.toHaveBeenCalled()
+  }, 150000)
 })
 
 describe('downloadBytes', () => {

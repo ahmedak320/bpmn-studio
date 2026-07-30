@@ -19,17 +19,20 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { setLang } from '../../i18n'
 import { bootCanvas, type Harness } from '../canvas/testing/harness'
+import { schemaForModelType } from '../conventions/attributes'
 import { adaptWorkingDocument } from '../details/seam'
 import type { ArisDetailsDocument, ArisDetailsElement } from '../details/seam'
 import type {
   ArisAttributeValue,
+  ArisModel,
   ArisObjectDefinition,
   ArisOccurrenceStyle,
   ArisWorkingDocument
 } from '../model/types'
 import type { ArisAttachment } from '../canvas/attachments'
 import { ArisDetailsRail, type ArisDetailsRailHighlight } from './ArisDetailsRail'
-import type { ArisDetailsEditingApi } from './arisDetailsEditing'
+import { ArisModelAttributesEditor } from './ArisDetailsEditors'
+import { arisEditTarget, type ArisDetailsEditingApi } from './arisDetailsEditing'
 import { AR_LOCALE, EN_LOCALE, buildEditingFixture } from './arisDetailsEditingFixture'
 
 interface Recorder {
@@ -52,6 +55,7 @@ function recorder(): Recorder {
       setDefinitionAttribute: record(
         'setDefinitionAttribute'
       ) as ArisDetailsEditingApi['setDefinitionAttribute'],
+      setModelAttribute: record('setModelAttribute') as ArisDetailsEditingApi['setModelAttribute'],
       restyleOccurrence: record('restyleOccurrence') as ArisDetailsEditingApi['restyleOccurrence'],
       addModelAssignment: record(
         'addModelAssignment'
@@ -282,6 +286,258 @@ describe('ARIS attribute editing (plan §11.4 "edit definition attributes")', ()
     const hint = document.getElementById(hintId)
     expect(hint?.textContent).toContain(EN_LOCALE)
     expect(hint?.textContent).toContain('Arabic')
+  })
+})
+
+describe('R3 attribute schema rows in the editor (plan lane C6, schemaForObjectType)', () => {
+  // `od-shared` is `OT_FUNC` (see arisDetailsEditingFixture.ts) and stores no
+  // AT_ID, so the schema merge must surface it as an always-visible,
+  // create-on-first-save row — no validation highlight required, unlike the
+  // pre-existing `data-orbitpm-aris-pending-attribute` mechanism in
+  // ArisDetailsRail.tsx.
+  it('shows a mandatory schema attribute with no stored value as a badged, missing row', () => {
+    mount({ kind: 'objectDefinition', id: 'od-shared' }, recorder().api)
+    openTab('attributes')
+    const row = document.querySelector('[data-orbitpm-aris-attribute="AT_ID"]') as HTMLElement
+    expect(row).not.toBeNull()
+    expect(row.getAttribute('data-orbitpm-aris-attribute-status')).toBe('missing')
+    expect(row.querySelector('[data-orbitpm-aris-attribute-mandatory]')).not.toBeNull()
+    expect(field('[data-orbitpm-aris-attribute-input="AT_ID:en"]').value).toBe('')
+  })
+
+  it('does not badge an optional schema attribute (AT_DESC) as mandatory', () => {
+    mount({ kind: 'objectDefinition', id: 'od-shared' }, recorder().api)
+    openTab('attributes')
+    const row = document.querySelector('[data-orbitpm-aris-attribute="AT_DESC"]') as HTMLElement
+    expect(row).not.toBeNull()
+    expect(row.getAttribute('data-orbitpm-aris-attribute-status')).toBe('stored')
+    expect(row.querySelector('[data-orbitpm-aris-attribute-mandatory]')).toBeNull()
+  })
+
+  it('creates the missing attribute on first save, in one authoring call', () => {
+    const spy = recorder()
+    mount({ kind: 'objectDefinition', id: 'od-shared' }, spy.api)
+    openTab('attributes')
+    typeAndBlur(field('[data-orbitpm-aris-attribute-input="AT_ID:en"]'), 'AWF.01.01')
+    expect(spy.calls).toEqual([
+      {
+        name: 'setDefinitionAttribute',
+        args: ['od-shared', 'AT_ID', [{ localeId: EN_LOCALE, text: 'AWF.01.01' }]]
+      }
+    ])
+  })
+})
+
+describe('every rail edit is one command on the canvas stack (continued: R3 schema attributes)', () => {
+  let harness: Harness | null = null
+
+  afterEach(() => {
+    harness?.destroy()
+    harness = null
+  })
+
+  it('creates a schema-declared attribute the definition never stored, in one undoable step', () => {
+    harness = bootCanvas()
+    const { canvas } = harness
+    const created = canvas.authoring.createObject({
+      objectType: 'OT_FUNC',
+      name: 'Approve',
+      position: { x: 20, y: 20 }
+    })
+    const commandsBefore = canvas.commandLog.length
+
+    const editing: ArisDetailsEditingApi = {
+      renameDefinition: (definitionId, localeId, name) =>
+        canvas.authoring.renameDefinition(definitionId, name, localeId),
+      renameModel: (modelId, localeId, name) =>
+        canvas.authoring.renameModel(modelId, name, localeId),
+      setDefinitionAttribute: (definitionId, attributeType, values) =>
+        canvas.authoring.setDefinitionAttribute(definitionId, attributeType, values),
+      restyleOccurrence: (occurrenceId, style) =>
+        canvas.authoring.restyleOccurrence(occurrenceId, style),
+      addModelAssignment: (definitionId, modelId) =>
+        canvas.authoring.addModelAssignment(definitionId, modelId),
+      removeModelAssignment: (definitionId, modelId) =>
+        canvas.authoring.removeModelAssignment(definitionId, modelId),
+      addAttachment: (definitionId, attachment) =>
+        canvas.authoring.addAttachment(definitionId, attachment),
+      removeAttachment: (definitionId, attachmentId) =>
+        canvas.authoring.removeAttachment(definitionId, attachmentId),
+      downloadAttachment: (definitionId, attachmentId) => {
+        canvas.authoring.downloadAttachment(definitionId, attachmentId)
+      }
+    }
+
+    render(
+      <ArisDetailsRail
+        details={adaptWorkingDocument(canvas.document)}
+        element={{ kind: 'objectDefinition', id: created.definitionId }}
+        elementLabel="live"
+        modelId={canvas.activeModelId}
+        onDownloadAttachment={vi.fn()}
+        document={canvas.document}
+        lang="en"
+        editing={editing}
+      />
+    )
+    openTab('attributes')
+    expect(
+      document.querySelector(
+        '[data-orbitpm-aris-attribute="AT_ID"][data-orbitpm-aris-attribute-status="missing"]'
+      )
+    ).not.toBeNull()
+
+    typeAndBlur(field('[data-orbitpm-aris-attribute-input="AT_ID:en"]'), 'AWF.01.01')
+
+    expect(canvas.commandLog.length).toBe(commandsBefore + 1)
+    const definition = canvas.document.objectDefinitions.get(created.definitionId)
+    const idAttribute = definition?.attributes.find((attribute) => attribute.type === 'AT_ID')
+    expect(idAttribute?.values).toEqual([{ localeId: expect.any(String), text: 'AWF.01.01' }])
+
+    canvas.undo()
+    expect(canvas.commandLog.length).toBe(commandsBefore)
+    // `setAttributeCommand`'s `before` snapshot for a brand-new attribute type
+    // is `values: []` (there was nothing to restore), and `updateAttributes`
+    // (src/aris/model/commands.ts) always keeps a `{type, values}` entry
+    // rather than deleting it — so undo restores an EMPTY values array, not
+    // the entry's absence from the array. That is exactly the "a missing
+    // attribute and an empty one read alike" contract `upsertAttributeValue`
+    // already documents, so this checks the value is gone, not that the slot
+    // itself vanished.
+    const afterUndo = canvas.document.objectDefinitions
+      .get(created.definitionId)
+      ?.attributes.find((attribute) => attribute.type === 'AT_ID')
+    expect(afterUndo?.values ?? []).toHaveLength(0)
+  })
+})
+
+describe('ArisModelAttributesEditor (plan lane C6, schemaForModelType)', () => {
+  // `m1` in the shared fixture is `MT_EEPC` (see `buildModel` in
+  // arisDetailsEditingFixture.ts) and stores no attributes at all, so it is
+  // itself a ready-made "every schema row is missing" case — used directly
+  // rather than a disconnected standalone model, so `target`/`model` agree.
+  const details: ArisDetailsDocument = adaptWorkingDocument(buildEditingFixture())
+
+  function epcModel(): ArisModel {
+    return details.models.get('m1')!.model
+  }
+
+  it('renders every R3 model-schema attribute, including ones never stored', () => {
+    const model = epcModel()
+    const target = arisEditTarget({ kind: 'model', id: 'm1' }, details)
+    render(
+      <ArisModelAttributesEditor
+        model={model}
+        details={details}
+        target={target}
+        editing={recorder().api}
+      />
+    )
+    const schema = schemaForModelType('MT_EEPC')
+    expect(schema.length).toBeGreaterThan(0)
+    expect(document.querySelectorAll('[data-orbitpm-aris-attribute]')).toHaveLength(schema.length)
+    const persResp = document.querySelector('[data-orbitpm-aris-attribute="AT_PERS_RESP"]')
+    expect(persResp).not.toBeNull()
+    expect(persResp?.getAttribute('data-orbitpm-aris-attribute-status')).toBe('missing')
+  })
+
+  it('creates a model attribute on first save, converted to the localeId → text map setModelAttribute expects', () => {
+    const spy = recorder()
+    const model = epcModel()
+    const target = arisEditTarget({ kind: 'model', id: 'm1' }, details)
+    render(
+      <ArisModelAttributesEditor
+        model={model}
+        details={details}
+        target={target}
+        editing={spy.api}
+      />
+    )
+    typeAndBlur(field('[data-orbitpm-aris-attribute-input="AT_PERS_RESP:en"]'), 'Intake team')
+    expect(spy.calls).toEqual([
+      {
+        name: 'setModelAttribute',
+        args: ['m1', 'AT_PERS_RESP', { [EN_LOCALE]: 'Intake team' }]
+      }
+    ])
+  })
+
+  it('does nothing when setModelAttribute is not supplied, instead of throwing', () => {
+    const model = epcModel()
+    const target = arisEditTarget({ kind: 'model', id: 'm1' }, details)
+    const { setModelAttribute: _drop, ...withoutSetModelAttribute } = recorder().api
+    render(
+      <ArisModelAttributesEditor
+        model={model}
+        details={details}
+        target={target}
+        editing={withoutSetModelAttribute as ArisDetailsEditingApi}
+      />
+    )
+    expect(() =>
+      typeAndBlur(field('[data-orbitpm-aris-attribute-input="AT_PERS_RESP:en"]'), 'Intake team')
+    ).not.toThrow()
+  })
+
+  it('creates a model attribute in one undoable step against a real canvas', () => {
+    const harness = bootCanvas()
+    try {
+      const { canvas } = harness
+      const modelId = canvas.activeModelId
+      const commandsBefore = canvas.commandLog.length
+      const liveDetails = adaptWorkingDocument(canvas.document)
+      const model = liveDetails.models.get(modelId)!.model
+      const target = arisEditTarget({ kind: 'model', id: modelId }, liveDetails)
+      const editing: ArisDetailsEditingApi = {
+        renameDefinition: (definitionId, localeId, name) =>
+          canvas.authoring.renameDefinition(definitionId, name, localeId),
+        renameModel: (id, localeId, name) => canvas.authoring.renameModel(id, name, localeId),
+        setDefinitionAttribute: (definitionId, attributeType, values) =>
+          canvas.authoring.setDefinitionAttribute(definitionId, attributeType, values),
+        setModelAttribute: (id, attributeType, values) =>
+          canvas.authoring.setModelAttribute(id, attributeType, values),
+        restyleOccurrence: (occurrenceId, style) =>
+          canvas.authoring.restyleOccurrence(occurrenceId, style),
+        addModelAssignment: (definitionId, linkedModelId) =>
+          canvas.authoring.addModelAssignment(definitionId, linkedModelId),
+        removeModelAssignment: (definitionId, linkedModelId) =>
+          canvas.authoring.removeModelAssignment(definitionId, linkedModelId),
+        addAttachment: (definitionId, attachment) =>
+          canvas.authoring.addAttachment(definitionId, attachment),
+        removeAttachment: (definitionId, attachmentId) =>
+          canvas.authoring.removeAttachment(definitionId, attachmentId),
+        downloadAttachment: (definitionId, attachmentId) => {
+          canvas.authoring.downloadAttachment(definitionId, attachmentId)
+        }
+      }
+
+      render(
+        <ArisModelAttributesEditor
+          model={model}
+          details={liveDetails}
+          target={target}
+          editing={editing}
+        />
+      )
+      typeAndBlur(field('[data-orbitpm-aris-attribute-input="AT_PERS_RESP:en"]'), 'Intake team')
+
+      expect(canvas.commandLog.length).toBe(commandsBefore + 1)
+      const stored = canvas.document.models
+        .get(modelId)
+        ?.attributes.find((attribute) => attribute.type === 'AT_PERS_RESP')
+      expect(stored?.values).toEqual([{ localeId: expect.any(String), text: 'Intake team' }])
+
+      canvas.undo()
+      expect(canvas.commandLog.length).toBe(commandsBefore)
+      // Same "empty values, not a deleted entry" undo shape as the
+      // definition-attribute case above — see the comment there.
+      const afterUndo = canvas.document.models
+        .get(modelId)
+        ?.attributes.find((attribute) => attribute.type === 'AT_PERS_RESP')
+      expect(afterUndo?.values ?? []).toHaveLength(0)
+    } finally {
+      harness.destroy()
+    }
   })
 })
 

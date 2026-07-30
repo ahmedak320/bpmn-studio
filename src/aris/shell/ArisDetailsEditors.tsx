@@ -26,22 +26,25 @@
 
 import { useCallback, useEffect, useId, useRef, useState, type CSSProperties } from 'react'
 
-import { t } from '../../i18n'
+import { t, type Key } from '../../i18n'
 import type { ArisAttachment } from '../canvas/attachments'
 import { bytesToBase64 } from '../canvas/attachments'
 import type { ArisDetailsDocument } from '../details/seam'
-import type { ArisObjectDefinition, ArisObjectOccurrence } from '../model/types'
+import type { ArisModel, ArisObjectDefinition, ArisObjectOccurrence } from '../model/types'
 import {
   ARIS_EDITABLE_STYLE_FIELDS,
   ARIS_LINE_STYLES,
   ARIS_MAX_ATTACHMENT_BYTES,
   arisLocaleConvention,
   assignableModels,
-  attributeSlots,
+  attributeValuesToRecord,
+  definitionAttributeRows,
+  modelAttributeRows,
   modelLabel,
   styleFieldPatch,
   styleFieldValue,
   upsertAttributeValue,
+  type ArisAttributeEditorRow,
   type ArisBilingualSlots,
   type ArisDetailsEditingApi,
   type ArisEditLang,
@@ -138,6 +141,25 @@ function ScopeBadge({ scope }: { scope: ArisEditScope }): JSX.Element {
       }}
     >
       {scopeBadge(scope)}
+    </span>
+  )
+}
+
+/** Chip marking an R3-schema attribute as mandatory, next to its heading. */
+function MandatoryBadge(): JSX.Element {
+  return (
+    <span
+      data-orbitpm-aris-attribute-mandatory=""
+      style={{
+        padding: '0.05rem 0.4rem',
+        borderRadius: 999,
+        border: '1px solid var(--orbitpm-border)',
+        fontSize: 11,
+        fontWeight: 400,
+        color: 'var(--orbitpm-muted)'
+      }}
+    >
+      {tk('aris.details.edit.attributes.mandatory', 'Mandatory')}
     </span>
   )
 }
@@ -350,6 +372,179 @@ export function ArisBilingualEditor({
   )
 }
 
+interface ArisAttributeRowFieldsProps {
+  readonly row: ArisAttributeEditorRow
+  readonly noteId: string
+  readonly onCommit: (localeId: string, text: string) => void
+}
+
+/**
+ * One editable ARIS attribute row, shared by the definition- and
+ * model-scoped attribute editors (`ArisAttributesEditor` /
+ * `ArisModelAttributesEditor`).
+ *
+ * `row.isNew` (a schema-declared attribute type with no stored value at all)
+ * needs no special-casing here: `definitionAttributeRows`/`modelAttributeRows`
+ * already seed it with empty, `present: false` slots from the document's own
+ * locale convention — exactly like any other missing slot — so the first
+ * commit both creates the attribute and fills it, through the same one-call
+ * `onCommit` every other row uses. "Create-on-first-save" falls out of code
+ * already proven for the existing-attribute case, not a separate path.
+ */
+function ArisAttributeRowFields({
+  row,
+  noteId,
+  onCommit
+}: ArisAttributeRowFieldsProps): JSX.Element {
+  const [addingLocale, setAddingLocale] = useState(false)
+  const [newLocaleId, setNewLocaleId] = useState('')
+  const [newText, setNewText] = useState('')
+  const addButtonRef = useRef<HTMLButtonElement | null>(null)
+
+  // Closing the form unmounts it, so focus can only return to the button that
+  // opened it after the next render — hence the effect rather than a direct
+  // `focus()` call inside the handler.
+  const [refocus, setRefocus] = useState(false)
+  useEffect(() => {
+    if (!refocus) return
+    addButtonRef.current?.focus()
+    setRefocus(false)
+  }, [refocus])
+
+  const closeAdd = useCallback(() => {
+    setAddingLocale(false)
+    setNewLocaleId('')
+    setNewText('')
+    setRefocus(true)
+  }, [])
+
+  return (
+    <div
+      style={{ display: 'grid', gap: 4 }}
+      data-orbitpm-aris-attribute={row.attributeType}
+      data-orbitpm-aris-attribute-status={row.isNew ? 'missing' : 'stored'}
+    >
+      <p
+        style={{
+          ...NOTE_STYLE,
+          fontWeight: 600,
+          color: 'inherit',
+          display: 'flex',
+          alignItems: 'center',
+          gap: 6
+        }}
+      >
+        {row.isSchemaKnown ? t(row.labelKey as Key) : row.attributeType}
+        {row.mandatory ? <MandatoryBadge /> : null}
+      </p>
+      <ArisTextEditor
+        label={tk('aris.details.edit.valueEn', 'Value (English locale)')}
+        value={row.bilingual.en.text}
+        describedBy={noteId}
+        lang="en"
+        hint={localeHint(row.bilingual.en)}
+        dataAttribute={{
+          'data-orbitpm-aris-attribute-input': `${row.attributeType}:en`
+        }}
+        onCommit={(next) => onCommit(row.bilingual.en.localeId, next)}
+      />
+      <ArisTextEditor
+        label={tk('aris.details.edit.valueAr', 'Value (Arabic locale)')}
+        value={row.bilingual.ar.text}
+        describedBy={noteId}
+        lang="ar"
+        hint={localeHint(row.bilingual.ar)}
+        dataAttribute={{
+          'data-orbitpm-aris-attribute-input': `${row.attributeType}:ar`
+        }}
+        onCommit={(next) => onCommit(row.bilingual.ar.localeId, next)}
+      />
+      {row.other.map((slot) => (
+        <ArisTextEditor
+          key={slot.localeId}
+          label={tk('aris.details.edit.valueOther', 'Value (locale {locale})', {
+            locale:
+              slot.localeId === ''
+                ? tk('aris.details.edit.noLocale', 'no locale id')
+                : slot.localeId
+          })}
+          value={slot.text}
+          describedBy={noteId}
+          hint={localeHint(slot)}
+          dataAttribute={{
+            'data-orbitpm-aris-attribute-input': `${row.attributeType}:${slot.localeId}`
+          }}
+          onCommit={(next) => onCommit(slot.localeId, next)}
+        />
+      ))}
+      {addingLocale ? (
+        <div
+          role="group"
+          aria-label={tk('aris.details.edit.addLocale', 'Add a value in another locale')}
+          data-orbitpm-aris-attribute-add={row.attributeType}
+          style={{ display: 'grid', gap: 4 }}
+          onKeyDown={(event) => {
+            if (event.key !== 'Escape') return
+            event.preventDefault()
+            closeAdd()
+          }}
+        >
+          <ArisLiveTextField
+            label={tk('aris.details.edit.addLocale.id', 'Locale id for the new value')}
+            value={newLocaleId}
+            dataAttribute={{ 'data-orbitpm-aris-attribute-new-locale': row.attributeType }}
+            onChange={setNewLocaleId}
+          />
+          <ArisLiveTextField
+            label={tk('aris.details.edit.addLocale.text', 'Value for the new locale')}
+            value={newText}
+            dataAttribute={{ 'data-orbitpm-aris-attribute-new-text': row.attributeType }}
+            onChange={setNewText}
+          />
+          <div style={{ display: 'flex', gap: 6 }}>
+            <button
+              type="button"
+              className="orbitpm-lite-chrome-btn"
+              style={{ fontSize: 12 }}
+              data-orbitpm-aris-attribute-add-submit={row.attributeType}
+              disabled={newLocaleId.trim().length === 0 || newText.length === 0}
+              onClick={() => {
+                onCommit(newLocaleId.trim(), newText)
+                closeAdd()
+              }}
+            >
+              {tk('aris.details.edit.addLocale.submit', 'Add value')}
+            </button>
+            <button
+              type="button"
+              className="orbitpm-lite-chrome-btn"
+              style={{ fontSize: 12 }}
+              onClick={closeAdd}
+            >
+              {tk('aris.details.edit.cancel', 'Cancel')}
+            </button>
+          </div>
+        </div>
+      ) : (
+        <button
+          type="button"
+          className="orbitpm-lite-chrome-btn"
+          style={{ fontSize: 12, justifySelf: 'start' }}
+          ref={addButtonRef}
+          data-orbitpm-aris-attribute-add-open={row.attributeType}
+          onClick={() => {
+            setNewLocaleId('')
+            setNewText('')
+            setAddingLocale(true)
+          }}
+        >
+          {tk('aris.details.edit.addLocale', 'Add a value in another locale')}
+        </button>
+      )}
+    </div>
+  )
+}
+
 export interface ArisAttributesEditorProps {
   readonly definition: ArisObjectDefinition
   readonly details: ArisDetailsDocument
@@ -357,7 +552,16 @@ export interface ArisAttributesEditorProps {
   readonly editing: ArisDetailsEditingApi
 }
 
-/** §11.4 "edit definition attributes", including adding another locale. */
+/**
+ * §11.4 "edit definition attributes", including adding another locale.
+ *
+ * Rows come from `definitionAttributeRows` (plan R3): every attribute the
+ * definition already carries a value for, plus one row per
+ * `schemaForObjectType` entry for its object type that has no value yet —
+ * `data-orbitpm-aris-attribute-status="missing"`, badged when the schema
+ * marks it mandatory. Filling in a missing row's value creates the attribute
+ * on first save; see `ArisAttributeRowFields`.
+ */
 export function ArisAttributesEditor({
   definition,
   details,
@@ -366,29 +570,9 @@ export function ArisAttributesEditor({
 }: ArisAttributesEditorProps): JSX.Element {
   const noteId = useId()
   const convention = arisLocaleConvention(details)
-  const [addingTo, setAddingTo] = useState<string | null>(null)
-  const [newLocaleId, setNewLocaleId] = useState('')
-  const [newText, setNewText] = useState('')
-  const addButtonRef = useRef<Record<string, HTMLButtonElement | null>>({})
+  const rows = definitionAttributeRows(definition, convention)
 
-  // Closing the form unmounts it, so focus can only return to the control that
-  // opened it after the next render — hence the effect rather than a direct
-  // `focus()` call inside the handler.
-  const [refocus, setRefocus] = useState<string | null>(null)
-  useEffect(() => {
-    if (refocus === null) return
-    addButtonRef.current[refocus]?.focus()
-    setRefocus(null)
-  }, [refocus])
-
-  const closeAdd = useCallback((attributeType: string) => {
-    setAddingTo(null)
-    setNewLocaleId('')
-    setNewText('')
-    setRefocus(attributeType)
-  }, [])
-
-  if (definition.attributes.length === 0) {
+  if (rows.length === 0) {
     return (
       <section style={GROUP_STYLE} data-orbitpm-aris-attributes-editor="">
         <h4 style={HEADING_STYLE}>
@@ -412,131 +596,99 @@ export function ArisAttributesEditor({
         <ScopeBadge scope="definition" />
       </h4>
       <ArisScopeNote scope="definition" target={target} id={noteId} />
-      {definition.attributes.map((attribute) => {
-        const slots = attributeSlots(attribute, convention)
-        const commit = (localeId: string, next: string): void => {
-          editing.setDefinitionAttribute(
-            definition.id,
-            attribute.type,
-            upsertAttributeValue(slots.values, localeId, next)
-          )
-        }
-        return (
-          <div
-            key={attribute.type}
-            style={{ display: 'grid', gap: 4 }}
-            data-orbitpm-aris-attribute={attribute.type}
-          >
-            <p style={{ ...NOTE_STYLE, fontWeight: 600, color: 'inherit' }}>{attribute.type}</p>
-            <ArisTextEditor
-              label={tk('aris.details.edit.valueEn', 'Value (English locale)')}
-              value={slots.bilingual.en.text}
-              describedBy={noteId}
-              lang="en"
-              hint={localeHint(slots.bilingual.en)}
-              dataAttribute={{
-                'data-orbitpm-aris-attribute-input': `${attribute.type}:en`
-              }}
-              onCommit={(next) => commit(slots.bilingual.en.localeId, next)}
-            />
-            <ArisTextEditor
-              label={tk('aris.details.edit.valueAr', 'Value (Arabic locale)')}
-              value={slots.bilingual.ar.text}
-              describedBy={noteId}
-              lang="ar"
-              hint={localeHint(slots.bilingual.ar)}
-              dataAttribute={{
-                'data-orbitpm-aris-attribute-input': `${attribute.type}:ar`
-              }}
-              onCommit={(next) => commit(slots.bilingual.ar.localeId, next)}
-            />
-            {slots.other.map((slot) => (
-              <ArisTextEditor
-                key={slot.localeId}
-                label={tk('aris.details.edit.valueOther', 'Value (locale {locale})', {
-                  locale:
-                    slot.localeId === ''
-                      ? tk('aris.details.edit.noLocale', 'no locale id')
-                      : slot.localeId
-                })}
-                value={slot.text}
-                describedBy={noteId}
-                hint={localeHint(slot)}
-                dataAttribute={{
-                  'data-orbitpm-aris-attribute-input': `${attribute.type}:${slot.localeId}`
-                }}
-                onCommit={(next) => commit(slot.localeId, next)}
-              />
-            ))}
-            {addingTo === attribute.type ? (
-              <div
-                role="group"
-                aria-label={tk('aris.details.edit.addLocale', 'Add a value in another locale')}
-                data-orbitpm-aris-attribute-add={attribute.type}
-                style={{ display: 'grid', gap: 4 }}
-                onKeyDown={(event) => {
-                  if (event.key !== 'Escape') return
-                  event.preventDefault()
-                  closeAdd(attribute.type)
-                }}
-              >
-                <ArisLiveTextField
-                  label={tk('aris.details.edit.addLocale.id', 'Locale id for the new value')}
-                  value={newLocaleId}
-                  dataAttribute={{ 'data-orbitpm-aris-attribute-new-locale': attribute.type }}
-                  onChange={setNewLocaleId}
-                />
-                <ArisLiveTextField
-                  label={tk('aris.details.edit.addLocale.text', 'Value for the new locale')}
-                  value={newText}
-                  dataAttribute={{ 'data-orbitpm-aris-attribute-new-text': attribute.type }}
-                  onChange={setNewText}
-                />
-                <div style={{ display: 'flex', gap: 6 }}>
-                  <button
-                    type="button"
-                    className="orbitpm-lite-chrome-btn"
-                    style={{ fontSize: 12 }}
-                    data-orbitpm-aris-attribute-add-submit={attribute.type}
-                    disabled={newLocaleId.trim().length === 0 || newText.length === 0}
-                    onClick={() => {
-                      commit(newLocaleId.trim(), newText)
-                      closeAdd(attribute.type)
-                    }}
-                  >
-                    {tk('aris.details.edit.addLocale.submit', 'Add value')}
-                  </button>
-                  <button
-                    type="button"
-                    className="orbitpm-lite-chrome-btn"
-                    style={{ fontSize: 12 }}
-                    onClick={() => closeAdd(attribute.type)}
-                  >
-                    {tk('aris.details.edit.cancel', 'Cancel')}
-                  </button>
-                </div>
-              </div>
-            ) : (
-              <button
-                type="button"
-                className="orbitpm-lite-chrome-btn"
-                style={{ fontSize: 12, justifySelf: 'start' }}
-                ref={(node) => {
-                  addButtonRef.current[attribute.type] = node
-                }}
-                data-orbitpm-aris-attribute-add-open={attribute.type}
-                onClick={() => {
-                  setNewLocaleId('')
-                  setNewText('')
-                  setAddingTo(attribute.type)
-                }}
-              >
-                {tk('aris.details.edit.addLocale', 'Add a value in another locale')}
-              </button>
-            )}
-          </div>
-        )
-      })}
+      {rows.map((row) => (
+        <ArisAttributeRowFields
+          key={row.attributeType}
+          row={row}
+          noteId={noteId}
+          onCommit={(localeId, next) =>
+            editing.setDefinitionAttribute(
+              definition.id,
+              row.attributeType,
+              upsertAttributeValue(row.values, localeId, next)
+            )
+          }
+        />
+      ))}
+    </section>
+  )
+}
+
+export interface ArisModelAttributesEditorProps {
+  readonly model: ArisModel
+  readonly details: ArisDetailsDocument
+  readonly target: ArisEditTarget
+  readonly editing: ArisDetailsEditingApi
+}
+
+/**
+ * §11.4 "edit model attributes" — the model-scoped analogue of
+ * `ArisAttributesEditor`. Rows come from `modelAttributeRows` (plan R3,
+ * `schemaForModelType`); saving a missing row creates the attribute through
+ * `editing.setModelAttribute`, which mirrors `setDefinitionAttribute` with the
+ * `'model'` owner kind (Lane C4's `ArisAuthoring.setModelAttribute`).
+ *
+ * `setModelAttribute` is optional on `ArisDetailsEditingApi`: the concrete
+ * object implementing that interface is built in `ArisStudioTab.tsx`, which
+ * this lane does not own and which no lane in this wave re-touches to wire
+ * this particular method through. Until it is, a commit here is a no-op —
+ * the same graceful-degradation the rail already relies on for every other
+ * optional capability.
+ *
+ * Not yet mounted by `ArisDetailsRail.tsx` (also outside this lane): that
+ * file only reaches for `ArisAttributesEditor` when the selection resolves to
+ * an object definition, never a bare model. This component is complete and
+ * independently testable ahead of that wiring.
+ */
+export function ArisModelAttributesEditor({
+  model,
+  details,
+  target,
+  editing
+}: ArisModelAttributesEditorProps): JSX.Element {
+  const noteId = useId()
+  const convention = arisLocaleConvention(details)
+  const rows = modelAttributeRows(model, convention)
+
+  if (rows.length === 0) {
+    return (
+      <section style={GROUP_STYLE} data-orbitpm-aris-model-attributes-editor="">
+        <h4 style={HEADING_STYLE}>
+          {tk('aris.details.edit.attributes', 'ARIS attributes')}
+          <ScopeBadge scope="model" />
+        </h4>
+        <p style={NOTE_STYLE}>
+          {tk(
+            'aris.details.edit.attributes.noneModel',
+            'This model type carries no R3 attribute schema, so there is no value to edit.'
+          )}
+        </p>
+      </section>
+    )
+  }
+
+  return (
+    <section style={GROUP_STYLE} data-orbitpm-aris-model-attributes-editor="">
+      <h4 style={HEADING_STYLE}>
+        {tk('aris.details.edit.attributes', 'ARIS attributes')}
+        <ScopeBadge scope="model" />
+      </h4>
+      <ArisScopeNote scope="model" target={target} id={noteId} />
+      {rows.map((row) => (
+        <ArisAttributeRowFields
+          key={row.attributeType}
+          row={row}
+          noteId={noteId}
+          onCommit={(localeId, next) => {
+            const nextValues = upsertAttributeValue(row.values, localeId, next)
+            editing.setModelAttribute?.(
+              model.id,
+              row.attributeType,
+              attributeValuesToRecord(nextValues)
+            )
+          }}
+        />
+      ))}
     </section>
   )
 }

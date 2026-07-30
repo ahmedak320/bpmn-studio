@@ -41,6 +41,7 @@ import {
   createArisLinkScanCache,
   scanArisWorkspaceLinks,
   mergeArisLinkState,
+  deriveArisLinksFromDocument,
   EMPTY_ARIS_LINK_STATE,
   type ArisWorkspaceLinkState
 } from './aris/links/arisWorkspaceLinks'
@@ -50,6 +51,14 @@ import { ArisNewModelDialog } from './aris/shell/ArisNewModelDialog'
 import { buildBlankArisAml, deriveArisSourceFileName } from './aris/shell/arisBlankModel'
 import type { ArisBlankModelType } from './aris/shell/arisBlankModel'
 import { createArisXmlSourcePackage, type ArisXmlSourcePackage } from './aris/source/sourcePackage'
+import {
+  prepareArisSplitImport,
+  executeArisSplitImport,
+  type ArisSplitImportPlan,
+  type ArisSplitImportTarget
+} from './aris/shell/arisSplitImport'
+import { ArisSplitImportDialog } from './aris/shell/ArisSplitImportDialog'
+import type { ArisOpenAssignedModelRequest } from './aris/shell/ArisStudioTab'
 import {
   ArisChatDrawer,
   ArisExplorerPane,
@@ -208,6 +217,17 @@ function upsertTab(current: readonly ArisTab[], next: ArisTab): ArisTab[] {
   return copy
 }
 
+/** The workspace-relative folder holding `relPath` ('' for a root-level file). */
+function parentFolderOf(relPath: string): string {
+  const index = relPath.lastIndexOf('/')
+  return index === -1 ? '' : relPath.slice(0, index)
+}
+
+/** A human name for a dangling model id: the `Model.` prefix is dropped. */
+function humanizeModelId(modelId: string): string {
+  return modelId.replace(/^Model\./u, '')
+}
+
 function pickerErrorMessage(code: ReturnType<typeof classifyPickerError>): string {
   switch (code) {
     case 'security':
@@ -254,11 +274,28 @@ export default function ArisApp(): JSX.Element {
   const [activeModelByTab, setActiveModelByTab] = useState<Record<string, string>>({})
   const [preparedImport, setPreparedImport] = useState<ArisPreparedImport | null>(null)
   /**
+   * A staged multi-file split-import awaiting the user's review. Confirming
+   * writes one `.aml` per model under the group folder; cancelling writes
+   * nothing. `null` when no split import is pending.
+   */
+  const [splitImportPlan, setSplitImportPlan] = useState<ArisSplitImportPlan | null>(null)
+  const [splitImportBusy, setSplitImportBusy] = useState(false)
+  /**
    * The open "New model" request. `folderRel` is the multi-file folder target,
    * or `null` when there is no writable multi-file destination (single-file /
    * picker phase) — the dialog only reads it to pick its hint copy.
    */
-  const [newModelRequest, setNewModelRequest] = useState<{ folderRel: string | null } | null>(null)
+  const [newModelRequest, setNewModelRequest] = useState<{
+    folderRel: string | null
+    /**
+     * When set, the created model is forced to this source id so a dangling
+     * cross-file assignment resolves the moment the child is written — no parent
+     * edit is needed. Only the multi-file create-missing flow supplies it.
+     */
+    forcedModelId?: string
+    presetName?: string
+    linkContext?: string
+  } | null>(null)
   /**
    * The public workspace glossary + translation memory, loaded once per bound
    * multi-file adapter. `null` in single-file mode (and until a load lands),
@@ -303,6 +340,10 @@ export default function ArisApp(): JSX.Element {
   activeKeyRef.current = activeKey
   const tabsRef = useRef(tabs)
   tabsRef.current = tabs
+  // The active source's workspace path, mirrored so the (stable) assignment
+  // handlers can read it without being re-created on every tab switch.
+  const activeTabRelPathRef = useRef<string | null>(null)
+  activeTabRelPathRef.current = activeTab?.relPath ?? null
   const interviewTokenRef = useRef(0)
   const [interviewRequest, setInterviewRequest] = useState<ArisChatInterviewRequest | null>(null)
   const getActiveChatTarget = useCallback((): ArisChatDrawerTarget | null => {
@@ -444,6 +485,71 @@ export default function ArisApp(): JSX.Element {
     [arisLinkScanState, liveScanOverlays]
   )
 
+  /**
+   * Turn a batch of parsed ARIS sources into ONE combined split-import plan:
+   * every model becomes its own `.aml` under the group folder, models that
+   * already exist in the workspace (or that a duplicate id made ambiguous) are
+   * marked skipped, and paths are threaded through a shared `taken` set so no
+   * two staged files collide. A source with zero models is not staged — its name
+   * is returned in `emptyNames` so a drop caller can fall back to a verbatim
+   * write and the import-input caller can toast "nothing found".
+   */
+  const stageSplitImportBatch = useCallback(
+    async (
+      sources: readonly { name: string; bytes: Uint8Array; mimeType?: string }[],
+      baseFolderRel: string
+    ): Promise<{ plan: ArisSplitImportPlan | null; staged: Set<string>; emptyNames: string[] }> => {
+      const existingModelIds = new Set<string>([
+        ...mergedLinks.index.keys(),
+        ...mergedLinks.graph.ambiguousProcessIds
+      ])
+      const taken = new Set(workspaceEntries.map((entry) => entry.path))
+      const staged = new Set<string>()
+      const emptyNames: string[] = []
+      const targets: ArisSplitImportTarget[] = []
+      let sourceName = ''
+      for (const source of sources) {
+        const pkg = await createArisXmlSourcePackage({
+          name: source.name,
+          relPath: null,
+          bytes: source.bytes,
+          mimeType: source.mimeType
+        })
+        if (pkg.index.models.size === 0) {
+          emptyNames.push(source.name)
+          continue
+        }
+        const partial = prepareArisSplitImport({
+          pkg,
+          baseFolderRel,
+          takenPaths: taken,
+          existingModelIds
+        })
+        for (const target of partial.targets) {
+          targets.push(target)
+          if (target.status === 'write') {
+            taken.add(target.relPath)
+            // A later source in the same batch that re-declares this id must skip
+            // it, exactly as a re-import against the committed workspace would.
+            existingModelIds.add(target.modelId)
+          }
+        }
+        staged.add(source.name)
+        if (!sourceName) sourceName = source.name
+      }
+      if (targets.length === 0) return { plan: null, staged, emptyNames }
+      const writeCount = targets.filter((target) => target.status === 'write').length
+      const plan: ArisSplitImportPlan = {
+        sourceName,
+        targets,
+        writeCount,
+        skipCount: targets.length - writeCount
+      }
+      return { plan, staged, emptyNames }
+    },
+    [mergedLinks, workspaceEntries]
+  )
+
   // The physical folder tree for directory/OPFS workspaces, nested by the merged
   // scan: owned subprocess files move under their owner, reused ones become
   // read-only reference rows.
@@ -486,6 +592,17 @@ export default function ArisApp(): JSX.Element {
       return remaining
     })
     setActiveKey((current) => (current !== null && closedKeys.has(current) ? neighborKey : current))
+    // A removed source can no longer contribute a live overlay: drop any overlay
+    // at or under the removed node so the tree stops nesting by it.
+    setLiveScanOverlays((current) => {
+      let next: Map<string, ArisModelScanResult> | null = null
+      for (const overlayPath of current.keys()) {
+        if (!matches(overlayPath)) continue
+        if (!next) next = new Map(current)
+        next.delete(overlayPath)
+      }
+      return next ?? current
+    })
   }, [])
 
   const remapTabs = useCallback((from: string, to: string, kind: 'file' | 'directory') => {
@@ -503,6 +620,23 @@ export default function ArisApp(): JSX.Element {
         return { ...tab, relPath: nextRel, title: nextRel.split('/').pop() ?? tab.title }
       })
       return changed ? next : current
+    })
+    // Keep a live overlay pointing at the source's NEW path so a rename/move does
+    // not drop the open canvas's contribution from the scan.
+    setLiveScanOverlays((current) => {
+      let next: Map<string, ArisModelScanResult> | null = null
+      for (const [overlayPath, result] of current) {
+        let nextPath: string | null = null
+        if (overlayPath === from) nextPath = to
+        else if (kind === 'directory' && overlayPath.startsWith(`${from}/`)) {
+          nextPath = to + overlayPath.slice(from.length)
+        }
+        if (nextPath === null) continue
+        if (!next) next = new Map(current)
+        next.delete(overlayPath)
+        next.set(nextPath, result)
+      }
+      return next ?? current
     })
   }, [])
 
@@ -755,15 +889,38 @@ export default function ArisApp(): JSX.Element {
       if (files.length === 0) return
       setBusy(true)
       try {
+        // Single-file workspaces have no writable multi-file destination, so an
+        // import opens in-memory review tabs exactly as before.
+        if (!multiFile) {
+          for (const file of files) {
+            const bytes = new Uint8Array(await file.arrayBuffer())
+            await openImportedBytes(file.name, null, bytes, file.type || undefined)
+          }
+          return
+        }
+        // Multi-file workspaces split each import into one `.aml` per model: a
+        // BPMN file is refused as always, an ARIS source with no models earns a
+        // "nothing found" toast, and everything else is accumulated into ONE
+        // combined review dialog before a single byte is written.
+        const sources: { name: string; bytes: Uint8Array; mimeType?: string }[] = []
         for (const file of files) {
           const bytes = new Uint8Array(await file.arrayBuffer())
-          await openImportedBytes(file.name, null, bytes, file.type || undefined)
+          const text = new TextDecoder('utf-8').decode(bytes)
+          if (classifyImportBoundarySource(file.name, text) === 'reject-bpmn') {
+            pushToast(t('toast.import.arisOnly'))
+            continue
+          }
+          sources.push({ name: file.name, bytes, mimeType: file.type || undefined })
         }
+        if (sources.length === 0) return
+        const { plan, emptyNames } = await stageSplitImportBatch(sources, '')
+        for (const name of emptyNames) pushToast(t('aris.import.split.nothing', { name }))
+        if (plan) setSplitImportPlan(plan)
       } finally {
         setBusy(false)
       }
     },
-    [openImportedBytes]
+    [multiFile, openImportedBytes, pushToast, stageSplitImportBatch]
   )
 
   /**
@@ -801,12 +958,27 @@ export default function ArisApp(): JSX.Element {
    *  - the picker phase (no workspace) binds a single-file adapter around the
    *    new source and opens it.
    */
+  // A single reveal token drives the tree's scroll-to + focus effect; bumping it
+  // re-fires even for the same target.
+  const [treeReveal, setTreeReveal] = useState<TreeRevealRequest | null>(null)
+  const treeRevealTokenRef = useRef(0)
+  const requestTreeReveal = useCallback((processId?: string, relPath?: string) => {
+    treeRevealTokenRef.current += 1
+    setTreeReveal({ token: treeRevealTokenRef.current, processId, relPath })
+  }, [])
+
   const handleCreateBlankModel = useCallback(
     async ({ name, modelType }: { name: string; modelType: ArisBlankModelType }) => {
       const request = newModelRequest
       if (!request) return
       setNewModelRequest(null)
-      const { xml } = buildBlankArisAml({ names: { [lang]: name }, modelType })
+      // A forced model id (create-missing) makes the child's Model.ID equal the
+      // dangling assignment target, so the assignment resolves with no parent edit.
+      const { xml } = buildBlankArisAml({
+        names: { [lang]: name },
+        modelType,
+        modelId: request.forcedModelId
+      })
       const bytes = new TextEncoder().encode(xml)
       const { folderRel } = request
 
@@ -829,8 +1001,14 @@ export default function ArisApp(): JSX.Element {
           return
         }
         await refreshWorkspaceSources(adapter)
-        await handleOpenWorkspaceFile(path)
-        pushToast(t('aris.newModel.created', { name: path }), 'success')
+        if (request.forcedModelId) {
+          requestTreeReveal(request.forcedModelId, path)
+          await handleOpenWorkspaceFile(path)
+          pushToast(t('aris.assign.created', { path, name: request.linkContext ?? '' }), 'success')
+        } else {
+          await handleOpenWorkspaceFile(path)
+          pushToast(t('aris.newModel.created', { name: path }), 'success')
+        }
         return
       }
 
@@ -857,6 +1035,7 @@ export default function ArisApp(): JSX.Element {
       openImportedBytes,
       pushToast,
       refreshWorkspaceSources,
+      requestTreeReveal,
       workspaceAdapter,
       workspaceEntries
     ]
@@ -866,15 +1045,6 @@ export default function ArisApp(): JSX.Element {
     setActiveModelByTab((current) =>
       current[tabKey] === modelId ? current : { ...current, [tabKey]: modelId }
     )
-  }, [])
-
-  // A single reveal token drives the tree's scroll-to + focus effect; bumping it
-  // re-fires even for the same target.
-  const [treeReveal, setTreeReveal] = useState<TreeRevealRequest | null>(null)
-  const treeRevealTokenRef = useRef(0)
-  const requestTreeReveal = useCallback((processId?: string, relPath?: string) => {
-    treeRevealTokenRef.current += 1
-    setTreeReveal({ token: treeRevealTokenRef.current, processId, relPath })
   }, [])
 
   /**
@@ -899,6 +1069,87 @@ export default function ArisApp(): JSX.Element {
       openCanonicalProcess(navigation.processId)
     },
     [openCanonicalProcess]
+  )
+
+  /** Commit a staged split import, then reveal the first written source. */
+  const handleConfirmSplitImport = useCallback(async () => {
+    const plan = splitImportPlan
+    const adapter = workspaceAdapter
+    if (!plan || !adapter) return
+    setSplitImportBusy(true)
+    try {
+      const outcome = await executeArisSplitImport(adapter, plan)
+      await refreshWorkspaceSources(adapter)
+      if (outcome.failed.length > 0) {
+        pushToast(t('aris.import.split.failed', { error: outcome.failed[0]!.message }), 'error')
+      }
+      pushToast(
+        t('aris.import.split.done', {
+          written: outcome.written.length,
+          skipped: outcome.skipped.length
+        }),
+        'success'
+      )
+      const firstWritten = outcome.written[0]
+      if (firstWritten) requestTreeReveal(undefined, firstWritten)
+    } finally {
+      setSplitImportBusy(false)
+      setSplitImportPlan(null)
+    }
+  }, [pushToast, refreshWorkspaceSources, requestTreeReveal, splitImportPlan, workspaceAdapter])
+
+  /**
+   * Stage a tree-drop of ARIS sources through the same split-import review. AML
+   * sources that carry models are staged and their names returned so the drop
+   * handler skips them; everything else falls back to the legacy verbatim write.
+   */
+  const handleStageImport = useCallback(
+    async (
+      files: readonly { name: string; bytes: Uint8Array }[],
+      baseFolderRel: string
+    ): Promise<ReadonlySet<string>> => {
+      const { plan, staged } = await stageSplitImportBatch(files, baseFolderRel)
+      if (plan) setSplitImportPlan(plan)
+      return staged
+    },
+    [stageSplitImportBatch]
+  )
+
+  /**
+   * Resolve a cross-file assignment drill-down (T6 delegates it here):
+   *  - a linked id already indexed in the workspace opens its canonical source;
+   *  - an id made ambiguous by a duplicate declaration refuses, with guidance;
+   *  - an unknown id in a multi-file workspace opens the New-model dialog forced
+   *    to that id, so creating the child resolves the assignment with no parent
+   *    edit; a single-file workspace can only report the id is missing.
+   */
+  const handleOpenAssignedModel = useCallback(
+    (request: ArisOpenAssignedModelRequest) => {
+      const ids = request.linkedModelIds
+      const known = ids.find((id) => mergedLinks.index.has(id))
+      if (known) {
+        openCanonicalProcess(known)
+        return
+      }
+      const ambiguous = ids.find((id) => mergedLinks.graph.ambiguousProcessIds.has(id))
+      if (ambiguous) {
+        pushToast(t('aris.assign.ambiguous', { id: ambiguous }), 'error')
+        return
+      }
+      const firstId = ids[0]
+      if (firstId === undefined) return
+      if (multiFile) {
+        setNewModelRequest({
+          folderRel: parentFolderOf(activeTabRelPathRef.current ?? ''),
+          forcedModelId: firstId,
+          presetName: humanizeModelId(firstId),
+          linkContext: request.definitionName
+        })
+      } else {
+        pushToast(t('aris.assign.missing', { id: firstId }))
+      }
+    },
+    [mergedLinks, multiFile, openCanonicalProcess, pushToast]
   )
 
   /**
@@ -1136,6 +1387,15 @@ export default function ArisApp(): JSX.Element {
         <ArisNewModelDialog
           open={newModelRequest !== null}
           folderRel={newModelRequest?.folderRel ?? null}
+          preset={
+            newModelRequest?.forcedModelId
+              ? {
+                  name: newModelRequest.presetName ?? '',
+                  modelId: newModelRequest.forcedModelId,
+                  linkContext: newModelRequest.linkContext ?? ''
+                }
+              : null
+          }
           lang={lang}
           onCreate={(spec) => void handleCreateBlankModel(spec)}
           onCancel={() => setNewModelRequest(null)}
@@ -1271,6 +1531,7 @@ export default function ArisApp(): JSX.Element {
               onRefreshWorkspace={handleRefreshWorkspace}
               onOpenFileFocus={handleOpenFileFocus}
               onNewModel={handleNewModel}
+              onStageImport={handleStageImport}
               onToast={pushToast}
             />
           </ResponsiveDrawer>
@@ -1320,6 +1581,10 @@ export default function ArisApp(): JSX.Element {
               dirtyLabel={t('tab.dirty.aria')}
               onActivate={setActiveKey}
               onClose={(key) => {
+                // A closed canvas no longer has a live document, so its overlay
+                // contribution must be dropped and the tree re-scanned from disk.
+                const closingRelPath = tabsRef.current.find((tab) => tab.key === key)?.relPath
+                if (closingRelPath) handleLiveScanChange(closingRelPath, null)
                 let nextActiveKey: string | null = null
                 setTabs((current) => {
                   const closingIndex = current.findIndex((tab) => tab.key === key)
@@ -1399,6 +1664,13 @@ export default function ArisApp(): JSX.Element {
                             if (!revealed) pushToast(t('aris.assistant.none'))
                             setSelectionRequest(null)
                           }}
+                          workspaceModelIndex={mergedLinks.index}
+                          onOpenAssignedModel={handleOpenAssignedModel}
+                          onLiveDocumentChange={(doc) => {
+                            if (tab.relPath) {
+                              handleLiveScanChange(tab.relPath, deriveArisLinksFromDocument(doc))
+                            }
+                          }}
                         />
                       ) : (
                         <div style={{ padding: '1.5rem', opacity: 0.7, lineHeight: 1.6 }}>
@@ -1444,6 +1716,15 @@ export default function ArisApp(): JSX.Element {
       <ArisNewModelDialog
         open={newModelRequest !== null}
         folderRel={newModelRequest?.folderRel ?? null}
+        preset={
+          newModelRequest?.forcedModelId
+            ? {
+                name: newModelRequest.presetName ?? '',
+                modelId: newModelRequest.forcedModelId,
+                linkContext: newModelRequest.linkContext ?? ''
+              }
+            : null
+        }
         lang={lang}
         onCreate={(spec) => void handleCreateBlankModel(spec)}
         onCancel={() => setNewModelRequest(null)}
@@ -1467,6 +1748,14 @@ export default function ArisApp(): JSX.Element {
         dir={dir}
         onConfirm={() => void handleConfirmImport()}
         onCancel={() => setPreparedImport(null)}
+      />
+      <ArisSplitImportDialog
+        open={splitImportPlan !== null}
+        plan={splitImportPlan}
+        busy={splitImportBusy}
+        dir={dir}
+        onConfirm={() => void handleConfirmSplitImport()}
+        onCancel={() => setSplitImportPlan(null)}
       />
       <Toaster toasts={toasts} onDismiss={dismissToast} />
     </PromptProvider>

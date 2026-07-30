@@ -30,6 +30,15 @@ export interface UseArisExplorerActionsOptions {
   readonly refresh: () => Promise<void>
   readonly toast: (message: string, tone?: 'info' | 'error' | 'success') => void
   readonly tabs: ArisExplorerTabsController
+  /**
+   * Route AML-with-models drops through the shell's split-import review instead
+   * of a verbatim write. Returns the file names it staged; the drop handler
+   * writes only the files it did NOT stage. Absent ⇒ every drop is verbatim.
+   */
+  readonly onStageImport?: (
+    files: readonly { name: string; bytes: Uint8Array }[],
+    baseFolderRel: string
+  ) => Promise<ReadonlySet<string>>
 }
 
 export interface ArisExplorerActions {
@@ -94,7 +103,7 @@ function collectPaths(node: LiteTreeNode | null, into: Set<string> = new Set()):
 export function useArisExplorerActions(
   options: UseArisExplorerActionsOptions
 ): ArisExplorerActions {
-  const { adapter, tree, rootName, promptText, refresh, toast, tabs } = options
+  const { adapter, tree, rootName, promptText, refresh, toast, tabs, onStageImport } = options
 
   const [moveNode, setMoveNode] = useState<LiteTreeNode | null>(null)
   const [deleteNode, setDeleteNode] = useState<LiteTreeNode | null>(null)
@@ -301,8 +310,10 @@ export function useArisExplorerActions(
           return
         }
         const dropped = await collectDroppedBpmn(dataTransfer)
-        const taken = collectPaths(tree)
-        let count = 0
+        // Read + boundary-check every dropped file first, so an AML-with-models
+        // batch can be staged as ONE split-import review before anything is
+        // written; a .bpmn is refused exactly as before.
+        const accepted: { name: string; bytes: Uint8Array }[] = []
         for (const item of dropped) {
           let text: string
           try {
@@ -315,7 +326,19 @@ export function useArisExplorerActions(
             toast(t('toast.import.arisOnly'))
             continue
           }
-          const bytes = new TextEncoder().encode(text)
+          accepted.push({ name: item.name, bytes: new TextEncoder().encode(text) })
+        }
+        // AML sources that carry models are staged; their names come back so the
+        // verbatim write below skips them. Everything else keeps the legacy path.
+        let staged: ReadonlySet<string> = new Set()
+        if (onStageImport && accepted.length > 0) {
+          staged = await onStageImport(accepted, toFolderRel)
+        }
+        const taken = collectPaths(tree)
+        let count = 0
+        for (const item of accepted) {
+          if (staged.has(item.name)) continue
+          const bytes = item.bytes
           let path = uniquePathIn(taken, toFolderRel, item.name)
           let outcome = await adapter.writeAtomic(path, bytes, undefined, { expectedMissing: true })
           let attempts = 0
@@ -342,7 +365,7 @@ export function useArisExplorerActions(
         if (count > 0) toast(t('aris.explorer.imported', { count }), 'success')
       })()
     },
-    [adapter, refresh, toast, tree]
+    [adapter, onStageImport, refresh, toast, tree]
   )
 
   const dialogs =
