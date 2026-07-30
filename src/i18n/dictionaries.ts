@@ -2631,10 +2631,14 @@ export const en = {
   'aris.rail.accounting': 'Accounting',
   'aris.rail.fidelity': 'Fidelity',
   'aris.rail.aria': 'ARIS details and accounting rails',
+  'aris.rail.resize.aria': 'Resize the details rail',
+  'aris.rail.toggle.aria': 'Show or hide the details rail',
   'aris.details.noSelection': 'Select an element on the canvas to inspect it.',
   'aris.details.selectionAria': 'Details for {element}',
   'aris.details.emptyTab': 'No values for this tab.',
   'aris.details.missing': 'Not set',
+  'aris.details.highlight.missingAttribute':
+    'The {type} attribute is not recorded yet — add its value below.',
   'aris.accounting.summary':
     '{accounted} of {total} source records accounted for; {unaccounted} unaccounted.',
   'aris.accounting.summary.derived':
@@ -2797,6 +2801,8 @@ export const en = {
   'aris.epc.severity.warning': 'Warning',
   'aris.epc.showMore': 'Show more findings',
   'aris.epc.summary': '{errors} errors · {warnings} warnings',
+  'aris.validation.markerAria': 'Validation issues on {id}: {summary}',
+  'aris.validation.moreOnElement': '+{count} more issues on this element',
   'aris.excel.body':
     'Fill in the official ARIS template and create native models with no AI at all.',
   'aris.excel.create': 'Create from workbook…',
@@ -5445,10 +5451,13 @@ export const ar: Record<keyof typeof en, string> = {
   'aris.rail.accounting': 'المحاسبة',
   'aris.rail.fidelity': 'الدقة',
   'aris.rail.aria': 'أشرطة تفاصيل ARIS والمحاسبة',
+  'aris.rail.resize.aria': 'تغيير عرض شريط التفاصيل',
+  'aris.rail.toggle.aria': 'إظهار أو إخفاء شريط التفاصيل',
   'aris.details.noSelection': 'اختر عنصرًا على لوحة الرسم لفحصه.',
   'aris.details.selectionAria': 'تفاصيل {element}',
   'aris.details.emptyTab': 'لا توجد قيم لهذا التبويب.',
   'aris.details.missing': 'غير محدَّد',
+  'aris.details.highlight.missingAttribute': 'لم تُسجَّل السمة {type} بعد — أضف قيمتها أدناه.',
   'aris.accounting.summary':
     '{accounted} من {total} سجلًا من سجلات المصدر مُحتسَبة؛ {unaccounted} غير مُحتسَبة.',
   'aris.accounting.summary.derived':
@@ -5607,6 +5616,8 @@ export const ar: Record<keyof typeof en, string> = {
   'aris.epc.severity.warning': 'تحذير',
   'aris.epc.showMore': 'عرض المزيد من النتائج',
   'aris.epc.summary': '{errors} أخطاء · {warnings} تحذيرات',
+  'aris.validation.markerAria': 'مشكلات التحقق على {id}: {summary}',
+  'aris.validation.moreOnElement': '+{count} مشكلات أخرى على هذا العنصر',
   'aris.excel.body': 'املأ قالب ARIS الرسمي وأنشئ نماذج أصلية دون أي ذكاء اصطناعي على الإطلاق.',
   'aris.excel.create': 'إنشاء من ملف العمل…',
   'aris.excel.created': 'أُنشئ {models} نماذج و{objects} كائنات و{connections} علاقات.',

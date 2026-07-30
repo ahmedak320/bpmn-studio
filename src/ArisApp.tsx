@@ -61,7 +61,6 @@ import {
   type ArisChatInterviewRequest,
   type ArisPreparedImport,
   type ArisSelectionRequest,
-  type ArisSourceFact,
   type ArisStudioDocument,
   type ArisTabChatHost
 } from './aris/shell'
@@ -124,10 +123,6 @@ function inferSourceKind(name: string, generated = false): ArisSourceKind {
   if (/\.aml$/iu.test(name)) return 'aml'
   if (/\.apc$/iu.test(name)) return 'apc'
   return 'xml'
-}
-
-function sourceKindLabel(kind: ArisSourceKind): string {
-  return t(`aris.sourceKind.${kind}`)
 }
 
 function rootLabel(mode: WorkspaceMode, adapter: WorkspaceAdapter | null): string {
@@ -218,45 +213,6 @@ function pickerErrorMessage(code: ReturnType<typeof classifyPickerError>): strin
     default:
       return t('alert.picker.unknown')
   }
-}
-
-/**
- * The imported-source facts the details rail shows above the accounting rail.
- * These are the counts the Phase 2 shell already surfaced; they stay because
- * they describe the *source*, which the canvas deliberately does not.
- */
-function sourceFactsFor(tab: ArisTab): readonly ArisSourceFact[] {
-  const unknown = t('aris.assistant.none')
-  return [
-    { labelKey: 'aris.placeholder.sourceKind', value: sourceKindLabel(tab.sourceKind) },
-    { labelKey: 'aris.placeholder.sourcePath', value: tab.relPath ?? t('aris.source.virtual') },
-    { labelKey: 'aris.placeholder.sourceBytes', value: tab.bytes.byteLength },
-    { labelKey: 'aris.placeholder.rootElement', value: tab.rootElementName ?? unknown },
-    { labelKey: 'aris.placeholder.sourceTokens', value: tab.xmlTokenCount ?? unknown },
-    { labelKey: 'aris.placeholder.sourceNodes', value: tab.xmlNodeCount ?? unknown },
-    { labelKey: 'aris.placeholder.sourceDoctype', value: tab.doctypeExternalId ?? unknown },
-    { labelKey: 'aris.placeholder.modelCount', value: tab.modelCount ?? unknown },
-    {
-      labelKey: 'aris.placeholder.objectDefinitionCount',
-      value: tab.objectDefinitionCount ?? unknown
-    },
-    {
-      labelKey: 'aris.placeholder.objectOccurrenceCount',
-      value: tab.objectOccurrenceCount ?? unknown
-    },
-    {
-      labelKey: 'aris.placeholder.connectionDefinitionCount',
-      value: tab.connectionDefinitionCount ?? unknown
-    },
-    {
-      labelKey: 'aris.placeholder.connectionOccurrenceCount',
-      value: tab.connectionOccurrenceCount ?? unknown
-    },
-    { labelKey: 'aris.placeholder.attributeCount', value: tab.attributeCount ?? unknown },
-    { labelKey: 'aris.placeholder.semanticDiagnostics', value: tab.diagnosticCount ?? unknown },
-    { labelKey: 'aris.placeholder.unknownRecordCount', value: tab.unknownRecordCount ?? unknown },
-    { labelKey: 'aris.placeholder.sourceDigest', value: tab.sha256 }
-  ]
 }
 
 export default function ArisApp(): JSX.Element {
@@ -1320,7 +1276,6 @@ export default function ArisApp(): JSX.Element {
                           onAcceptedTranslationPair={handleAcceptedTranslationPair}
                           onOpenInterview={handleContinueInChat}
                           lang={lang}
-                          sourceFacts={sourceFactsFor(tab)}
                           sourceText={tab.content}
                           canImport={workspaceAdapter !== null && tab.pkg !== undefined}
                           onModelChange={(modelId) => handleSelectModel(tab.key, modelId)}

@@ -38,10 +38,11 @@ const REFERENCE_AML = resolve(HERE, '../../../reference/AnimalWF/ARISAMLExport.x
  * carrying that name — so counting captions by text is an exact count of that
  * definition's occurrences, and a rename that misses even one of them is
  * visible immediately. The two occurrence ids below are real `ObjOcc` records
- * of that definition in that model; they are selected through the accounting
- * rail rather than clicked, because a large real EPC puts most shapes outside
- * the initial viewport (the same reason tests/e2e/aris-i18n-rtl.spec.ts selects
- * that way).
+ * of that definition in that model; they are selected by fitting the model into
+ * the viewport (Zoom Fit) and clicking the shape's gfx — the Accounting rail's
+ * "Select {id} on the canvas" action it used to be selected through was retired
+ * with the Accounting section (the same helper swap tests/e2e/aris-i18n-rtl.spec.ts
+ * made).
  */
 const SHARED_MODEL_ID = 'Model.3i-a2j4HRS3-u-L'
 const SHARED_DEFINITION_ID = 'ObjDef.-7D6lSfS2UiC-p-L'
@@ -104,17 +105,31 @@ async function selectModel(page: Page, modelId: string): Promise<void> {
     .toBeGreaterThan(0)
 }
 
-/** Reveal one occurrence through the accounting rail's own "select" action. */
+/**
+ * Selects one occurrence by fitting the whole active model into the viewport and
+ * clicking its gfx — the same `element.click` path a user takes. Replaces the
+ * removed Accounting rail's "Select {id} on the canvas" action (the Accounting
+ * section was retired; the rail now shows Details + the validation section only).
+ *
+ * The caller must have made the occurrence's owning model active first
+ * (`selectModel`), because a canvas click — unlike the old accounting reveal —
+ * does not switch models. A large real EPC puts most shapes far apart after Zoom
+ * Fit, so if the gfx centre is covered by an overlapping caption or a floating
+ * palette/minimap, this falls back to the element's own transparent `.djs-hit`
+ * area (a real mouse event, never a synthesized `dispatchEvent`, which diagram-js
+ * ignores).
+ */
 async function selectOccurrence(page: Page, occurrenceId: string): Promise<void> {
-  const filter = page.locator('[data-orbitpm-aris-accounting] input[type="search"]')
-  await filter.fill(occurrenceId)
-  const row = page.getByRole('button', {
-    name: `Select ${occurrenceId} on the canvas`,
-    exact: true
-  })
-  await expect(row).toBeVisible()
-  await row.click()
-  await filter.fill('')
+  await page.getByRole('button', { name: 'Zoom Fit', exact: true }).click()
+  const gfx = page.locator(
+    `[data-orbitpm-aris-canvas] g.djs-element[data-element-id="${occurrenceId}"]`
+  )
+  await gfx.scrollIntoViewIfNeeded()
+  try {
+    await gfx.click()
+  } catch {
+    await gfx.locator('.djs-hit').first().click({ force: true })
+  }
   await expect(page.locator('[data-orbitpm-aris-details]')).toHaveAttribute(
     'data-orbitpm-aris-details-occurrence',
     occurrenceId
@@ -256,12 +271,17 @@ test('an occurrence-scoped edit changes only that shape and undoes in one step',
 })
 
 /**
- * Walk backwards with Shift+Tab from a control that sits after the rail until
- * focus lands on a details tab. Proves the tab strip is reachable by keyboard
- * alone rather than assuming it and calling `focus()`.
+ * Walk backwards with Shift+Tab from a control that sits after the details
+ * section until focus lands on a details tab. Proves the tab strip is reachable
+ * by keyboard alone rather than assuming it and calling `focus()`. The anchor is
+ * the validation section (which follows the details section in the aside's DOM
+ * order), because the Accounting rail its search input used to belong to is gone.
  */
 async function tabBackwardsIntoDetails(page: Page): Promise<void> {
-  await page.locator('[data-orbitpm-aris-accounting] input[type="search"]').click()
+  await page
+    .locator('[data-orbitpm-aris-validation] [data-orbitpm-aris-validation-issue]')
+    .first()
+    .focus()
   for (let step = 0; step < 60; step += 1) {
     const onTab = await page.evaluate(() =>
       document.activeElement?.hasAttribute('data-orbitpm-aris-details-tab')

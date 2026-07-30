@@ -190,3 +190,47 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+
+/* issue 5: the field a validation row points at flashes briefly when revealed. */
+.orbitpm-aris-rail__section .orbitpm-aris-field-flash {
+  outline: 2px solid var(--orbitpm-aris-highlight, #2563eb);
+  outline-offset: 2px;
+  border-radius: 4px;
+  animation: orbitpm-aris-field-flash-fade 1.6s ease-out forwards;
+}
+@keyframes orbitpm-aris-field-flash-fade {
+  from {
+    background: color-mix(in srgb, var(--orbitpm-aris-highlight, #2563eb) 18%, transparent);
+  }
+  to {
+    background: transparent;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .orbitpm-aris-rail__section .orbitpm-aris-field-flash {
+    animation: none;
+  }
+}
+
+/* issue 6: per-element canvas warning markers (diagram-js overlays). */
+.orbitpm-aris-canvas .orbitpm-aris-warning-marker {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  font-size: 12px;
+  line-height: 1;
+  padding: 1px 4px;
+  border-radius: 8px;
+  border: 1px solid var(--orbitpm-border, #ccc);
+  background: var(--orbitpm-panel-bg, #fff);
+  color: #b45309;
+  cursor: pointer;
+}
+.orbitpm-aris-canvas .orbitpm-aris-warning-marker--error {
+  color: #b91c1c;
+  border-color: #b91c1c;
+}
+.orbitpm-aris-canvas .orbitpm-aris-warning-marker:focus-visible {
+  outline: 2px solid var(--orbitpm-aris-highlight, #2563eb);
+  outline-offset: 1px;
+}

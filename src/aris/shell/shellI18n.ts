@@ -102,10 +102,14 @@ export const ARIS_SHELL_MESSAGE_KEYS: Readonly<Record<string, string>> = Object.
   'aris.rail.accounting': 'Accounting',
   'aris.rail.fidelity': 'Fidelity',
   'aris.rail.aria': 'ARIS details and accounting rails',
+  'aris.rail.resize.aria': 'Resize the details rail',
+  'aris.rail.toggle.aria': 'Show or hide the details rail',
   'aris.details.noSelection': 'Select an element on the canvas to inspect it.',
   'aris.details.selectionAria': 'Details for {element}',
   'aris.details.emptyTab': 'No values for this tab.',
   'aris.details.missing': 'Not set',
+  'aris.details.highlight.missingAttribute':
+    'The {type} attribute is not recorded yet — add its value below.',
   'aris.accounting.summary':
     '{accounted} of {total} source records accounted for; {unaccounted} unaccounted.',
   'aris.accounting.summary.derived':
@@ -268,6 +272,8 @@ export const ARIS_SHELL_MESSAGE_KEYS: Readonly<Record<string, string>> = Object.
   'aris.epc.severity.warning': 'Warning',
   'aris.epc.showMore': 'Show more findings',
   'aris.epc.summary': '{errors} errors · {warnings} warnings',
+  'aris.validation.markerAria': 'Validation issues on {id}: {summary}',
+  'aris.validation.moreOnElement': '+{count} more issues on this element',
   'aris.excel.body':
     'Fill in the official ARIS template and create native models with no AI at all.',
   'aris.excel.create': 'Create from workbook…',

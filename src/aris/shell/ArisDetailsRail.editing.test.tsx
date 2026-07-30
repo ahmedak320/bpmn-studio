@@ -28,7 +28,7 @@ import type {
   ArisWorkingDocument
 } from '../model/types'
 import type { ArisAttachment } from '../canvas/attachments'
-import { ArisDetailsRail } from './ArisDetailsRail'
+import { ArisDetailsRail, type ArisDetailsRailHighlight } from './ArisDetailsRail'
 import type { ArisDetailsEditingApi } from './arisDetailsEditing'
 import { AR_LOCALE, EN_LOCALE, buildEditingFixture } from './arisDetailsEditingFixture'
 
@@ -457,7 +457,7 @@ describe('occurrence style (plan §11.4 "restyle occurrence")', () => {
 })
 
 describe('the read-only tabs are not regressed', () => {
-  it.each(['relations', 'accounting', 'fidelity', 'history'] as const)(
+  it.each(['relations', 'history'] as const)(
     'still renders %s as rows with no editable control',
     (tabId) => {
       mount({ kind: 'model', id: 'm1' }, recorder().api)
@@ -483,6 +483,71 @@ describe('the read-only tabs are not regressed', () => {
     openTab('names')
     expect(document.querySelector('[data-orbitpm-aris-bilingual-editor]')).toBeNull()
     expect(document.querySelector('.orbitpm-aris-defs')).not.toBeNull()
+  })
+
+  it('no longer offers the Accounting or Fidelity tabs (issue 5)', () => {
+    mount({ kind: 'objectOccurrence', id: 'occ-1' }, recorder().api)
+    expect(screen.queryByRole('tab', { name: 'Accounting' })).toBeNull()
+    expect(screen.queryByRole('tab', { name: 'Fidelity' })).toBeNull()
+  })
+})
+
+describe('validation highlight (issue 5)', () => {
+  function mountWithHighlight(
+    element: ArisDetailsElement,
+    editing: ArisDetailsEditingApi,
+    highlight: ArisDetailsRailHighlight
+  ): void {
+    render(
+      <ArisDetailsRail
+        details={details}
+        element={element}
+        elementLabel="Approve request"
+        modelId="m1"
+        onDownloadAttachment={vi.fn()}
+        document={workingDocument}
+        lang="en"
+        editing={editing}
+        highlight={highlight}
+      />
+    )
+  }
+
+  it('opens the names tab and flashes the Arabic name input', () => {
+    mountWithHighlight({ kind: 'objectDefinition', id: 'od-shared' }, recorder().api, {
+      token: 1,
+      tab: 'names',
+      field: { kind: 'name', lang: 'ar' }
+    })
+    expect(tab('names').getAttribute('aria-selected')).toBe('true')
+    const panel = document.querySelector('[data-orbitpm-aris-details-panel="names"]') as HTMLElement
+    expect(panel.getAttribute('data-orbitpm-aris-highlight-field')).toBe('name:ar')
+    expect(
+      field('[data-orbitpm-aris-name-input="definition:ar"]').classList.contains(
+        'orbitpm-aris-field-flash'
+      )
+    ).toBe(true)
+  })
+
+  it('renders a pending row for an absent attribute and commits it in one call', () => {
+    const spy = recorder()
+    mountWithHighlight({ kind: 'objectDefinition', id: 'od-shared' }, spy.api, {
+      token: 1,
+      tab: 'attributes',
+      field: { kind: 'attribute', attributeType: 'AT_PERS_RESP' }
+    })
+    expect(
+      document.querySelector('[data-orbitpm-aris-pending-attribute="AT_PERS_RESP"]')
+    ).not.toBeNull()
+
+    typeAndBlur(field('[data-orbitpm-aris-attribute-input="AT_PERS_RESP:en"]'), 'Intake team')
+    expect(spy.calls).toHaveLength(1)
+    expect(spy.calls[0].name).toBe('setDefinitionAttribute')
+    expect(spy.calls[0].args[0]).toBe('od-shared')
+    expect(spy.calls[0].args[1]).toBe('AT_PERS_RESP')
+    expect(spy.calls[0].args[2] as ArisAttributeValue[]).toEqual([
+      { localeId: EN_LOCALE, text: 'Intake team' }
+    ])
   })
 })
 

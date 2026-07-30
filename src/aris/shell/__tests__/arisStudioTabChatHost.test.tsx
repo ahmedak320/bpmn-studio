@@ -77,7 +77,6 @@ describe('ArisStudioTab chat host registration', () => {
         modelId={modelId}
         active
         lang="en"
-        sourceFacts={[]}
         sourceText={'<xml/>'}
         canImport={false}
         onModelChange={() => undefined}

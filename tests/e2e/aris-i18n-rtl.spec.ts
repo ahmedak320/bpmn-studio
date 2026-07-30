@@ -51,6 +51,12 @@ const UAE_PASS_OCCURRENCE_IDS = [
   'ObjOcc.-6EnWVw61nNF-u-L--4IyPkg8Mvvh-x-L-33-c'
 ]
 
+// The owning model of `UAE_PASS_OCCURRENCE_IDS[0]`, verified against the source
+// XML (the occurrence sits inside `<Model Model.ID="Model.3xqe8yXO9Z7-u-L" …>`).
+// A canvas click — unlike the retired Accounting rail's reveal — does not switch
+// models, so the helper below must make this model active before clicking.
+const UAE_PASS_MODEL_ID = 'Model.3xqe8yXO9Z7-u-L'
+
 test.beforeAll(() => {
   expect(readFileSync(DIST, 'utf8').length).toBeGreaterThan(500_000)
   expect(statSync(REFERENCE_AML).isFile(), `reference fixture missing at ${REFERENCE_AML}`).toBe(
@@ -87,26 +93,59 @@ function occurrenceLocator(page: Page): Locator {
   return page.locator('[data-orbitpm-aris-canvas] [data-element-id^="ObjOcc."]')
 }
 
+/** Makes one model active via the explorer and waits for its layer to draw. */
+async function selectModel(page: Page, modelId: string): Promise<void> {
+  await page.locator(`[data-orbitpm-aris-model="${modelId}"]`).click()
+  await expect
+    .poll(
+      async () =>
+        page
+          .locator(
+            `[data-orbitpm-aris-canvas] g[data-element-id="model:${modelId}"] g.djs-element[data-element-id^="ObjOcc."]`
+          )
+          .count(),
+      { timeout: 120_000 }
+    )
+    .toBeGreaterThan(0)
+}
+
 /**
- * Selects the "UAE Pass" / "الهوية الرقمية" occurrence via the Accounting
- * rail rather than clicking it on the canvas directly: this occurrence sits
- * far outside the initial viewport on its owning model (the reference export
- * is a large real EPC), and the rail's "Select {id} on the canvas" action
- * calls the same `canvas.select` the canvas click path uses, switching models
- * if needed — see `revealElement` in src/aris/shell/ArisStudioTab.tsx. This
- * exercises the real selection pipeline without depending on pan/zoom.
+ * Selects one occurrence by fitting the active model into the viewport and
+ * clicking its gfx — the same `element.click` path a user takes. `fitLabel` is
+ * the localized "Zoom Fit" button caption, so the same helper works while the
+ * interface is English or Arabic. Replaces the retired Accounting rail's
+ * "Select {id} on the canvas" reveal; because a canvas click does not switch
+ * models, the caller selects the owning model first. On a large real EPC a gfx
+ * centre can be covered by an overlapping caption, so this falls back to the
+ * element's own transparent `.djs-hit` area (a real mouse event, never a
+ * synthesized `dispatchEvent`, which diagram-js ignores).
  */
-async function selectBilingualAppSystemOccurrence(page: Page): Promise<void> {
-  const occurrenceId = UAE_PASS_OCCURRENCE_IDS[0]
-  const filter = page.locator('[data-orbitpm-aris-accounting] input[type="search"]')
-  await filter.fill(occurrenceId)
-  const row = page.getByRole('button', {
-    name: `Select ${occurrenceId} on the canvas`,
-    exact: true
-  })
-  await expect(row).toBeVisible()
-  await row.click()
-  await filter.fill('')
+async function selectOccurrence(page: Page, occurrenceId: string, fitLabel: string): Promise<void> {
+  await page.getByRole('button', { name: fitLabel, exact: true }).click()
+  const gfx = page.locator(
+    `[data-orbitpm-aris-canvas] g.djs-element[data-element-id="${occurrenceId}"]`
+  )
+  await gfx.scrollIntoViewIfNeeded()
+  try {
+    await gfx.click()
+  } catch {
+    await gfx.locator('.djs-hit').first().click({ force: true })
+  }
+}
+
+/**
+ * Selects the genuinely bilingual "UAE Pass" / "الهوية الرقمية" occurrence on
+ * the canvas. It lives on `UAE_PASS_MODEL_ID`, far outside the initial viewport
+ * on a large real EPC, so this makes that model active, fits it, then clicks the
+ * shape — the same selection pipeline a user drives, without depending on the
+ * removed Accounting rail. `fitLabel` defaults to the English caption.
+ */
+async function selectBilingualAppSystemOccurrence(
+  page: Page,
+  fitLabel = 'Zoom Fit'
+): Promise<void> {
+  await selectModel(page, UAE_PASS_MODEL_ID)
+  await selectOccurrence(page, UAE_PASS_OCCURRENCE_IDS[0], fitLabel)
 }
 
 test('language toggle switches dir/lang and mirrors header, settings, and assistant chrome, then reverts to English', async ({
@@ -224,16 +263,10 @@ test('Arabic mirrors the explorer to the trailing edge while the ARIS canvas geo
   // While the geometry stays unmirrored, the caption *content* follows the
   // interface language (view-only, off the undo stack — `contentLang ?? lang`
   // drives `setContentLanguage` in ArisStudioTab). Select a genuinely bilingual
-  // occurrence (UAE Pass / الهوية الرقمية) via the Accounting rail — the row aria
-  // is localized, so use its Arabic form while the app is Arabic — and its canvas
-  // caption renders in Arabic.
-  const bilingualId = UAE_PASS_OCCURRENCE_IDS[0]
-  const rtlFilter = page.locator('[data-orbitpm-aris-accounting] input[type="search"]')
-  await rtlFilter.fill(bilingualId)
-  await page
-    .getByRole('button', { name: `اختيار ${bilingualId} على لوحة الرسم`, exact: true })
-    .click()
-  await rtlFilter.fill('')
+  // occurrence (UAE Pass / الهوية الرقمية) by fitting its model and clicking it on
+  // the canvas — the Accounting rail that used to select it is gone. The Zoom Fit
+  // button caption is localized, so pass its Arabic form while the app is Arabic.
+  await selectBilingualAppSystemOccurrence(page, 'ملاءمة التكبير')
   await expect(canvas.getByText('الهوية الرقمية').first()).toBeVisible()
 
   // Flip the interface back to English: the SAME occurrence's caption re-renders

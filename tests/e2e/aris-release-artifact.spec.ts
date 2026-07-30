@@ -158,8 +158,11 @@ for (const scenario of [
       .locator('[data-orbitpm-aris-canvas] [data-element-id^="ObjOcc."]')
       .first()
       .waitFor({ state: 'attached', timeout: 120_000 })
-    await expect(page.locator('[data-orbitpm-aris-accounting]')).toBeVisible()
-    await expect(page.locator('[data-orbitpm-aris-fidelity]')).toBeVisible()
+    // The Accounting and Fidelity sections were retired; the rail now shows
+    // Details + the validation section only.
+    await expect(page.locator('[data-orbitpm-aris-accounting]')).toHaveCount(0)
+    await expect(page.locator('[data-orbitpm-aris-fidelity]')).toHaveCount(0)
+    await expect(page.locator('[data-orbitpm-aris-validation]')).toBeVisible()
 
     // The bilingual chrome is live in this exact file, in this exact engine.
     await page.getByRole('button', { name: scenario.assistant, exact: true }).first().click()

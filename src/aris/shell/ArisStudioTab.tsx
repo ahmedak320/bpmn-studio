@@ -1,11 +1,11 @@
 /**
- * One open ARIS source: canvas + toolbar + details/accounting/fidelity rails.
+ * One open ARIS source: canvas + toolbar + details/validation rails.
  *
  * This is where the twelve lanes meet. Everything on screen is produced by a
  * lane's own exported entry point — the canvas by `src/aris/canvas`, the clean
  * layout by `src/aris/layout` through the canvas's documented one-call seam, the
- * fidelity report by `src/aris/renderer`, the properties rail by
- * `src/aris/details`, and the accounting rail by `src/aris/accounting`.
+ * properties rail by `src/aris/details`, and the validation section by the
+ * unified findings core (`arisValidationFindings`).
  *
  * Undo/redo, Clean Layout and Reset to Source Layout are all ARIS commands on
  * the same stack, so "reset" is not a separate mode flag that could drift: it is
@@ -18,17 +18,25 @@ import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react'
 import { t } from '../../i18n'
 import type { ArisCanvas } from '../canvas/ArisCanvas'
 import type { ArisBusinessObject } from '../canvas/elements'
+import { rootElementId } from '../canvas/elements'
 import type { ArisCleanLayoutEngine } from '../canvas/layoutSeam'
-import type { ArisAccountingReportRow } from '../accounting/types'
 import type { ArisChatCommand } from '../chat/patchSchema'
 import { cleanLayout } from '../layout/cleanLayout'
 import { arisLayoutRejectionMessageKey } from '../layout/rejection'
 import type { ArisWorkingDocument } from '../model/types'
 import { ARIS_EXPERIMENTAL_EXPORT_LABEL_KEY } from '../writer'
 import type { Key } from '../../i18n'
-import { ArisAccountingRail } from './ArisAccountingRail'
 import type { ArisTabChatHost } from './arisChatDrawerTypes'
 import { ArisEpcRail } from './ArisEpcRail'
+import {
+  buildArisValidationFindings,
+  findingsByCanvasElement,
+  type ArisValidationFinding
+} from './arisValidationFindings'
+import {
+  installArisValidationOverlays,
+  type ArisValidationOverlayController
+} from './arisValidationOverlays'
 import {
   applyArisChatCommandsAsGesture,
   createArisChatApplyHost,
@@ -39,18 +47,14 @@ import { buildDeterministicFixPlan, type ArisFixConfirmProposal } from '../chat/
 import { detectLocaleIds } from './arisChatProposal'
 import { ArisFixMissingDialog, type ArisFixPreviewRows } from './ArisFixMissingDialog'
 import { derivedAmlFileName, exportArisDerivedAml } from './arisDerivedExport'
-import {
-  buildArisEpcFindings,
-  arisEpcFindingTargetId,
-  type ArisEpcModelFinding
-} from './arisEpcFindings'
+import { buildArisEpcFindings } from './arisEpcFindings'
 import {
   ArisCanvasView,
   type ArisCanvasHistoryState,
   type ArisCanvasSelectionState
 } from './ArisCanvasView'
 import { PaneResizer } from '../../common/PaneResizer'
-import { ArisDetailsRail } from './ArisDetailsRail'
+import { ArisDetailsRail, type ArisDetailsRailHighlight } from './ArisDetailsRail'
 import { ARIS_RAIL_MAX_WIDTH, ARIS_RAIL_MIN_WIDTH, useArisRailLayout } from './arisRailLayout'
 import type { ArisDetailsEditingApi } from './arisDetailsEditing'
 import { arisText, buildArisDetailsDocument, type ArisStudioDocument } from './arisStudioDocument'
@@ -63,11 +67,6 @@ import type { LocalizationResources } from '../../localization/types'
 import { tk } from './shellI18n'
 
 export type ArisLayoutModeState = 'source' | 'clean'
-
-export interface ArisSourceFact {
-  readonly labelKey: string
-  readonly value: string | number
-}
 
 /** A request from outside the tab to reveal one element (assistant chip, §17.6). */
 export interface ArisSelectionRequest {
@@ -83,7 +82,6 @@ export interface ArisStudioTabProps {
   readonly modelId: string | null
   readonly active: boolean
   readonly lang: 'en' | 'ar'
-  readonly sourceFacts: readonly ArisSourceFact[]
   readonly sourceText: string
   readonly canImport: boolean
   readonly onModelChange: (modelId: string) => void
@@ -149,7 +147,6 @@ export function ArisStudioTab({
   modelId,
   active,
   lang,
-  sourceFacts,
   sourceText,
   canImport,
   onModelChange,
@@ -193,7 +190,7 @@ export function ArisStudioTab({
     return studio.models.find((model) => model.renderable)?.id ?? null
   }, [modelId, studio.models])
 
-  // Which model owns each occurrence/connection, so an accounting row can be
+  // Which model owns each occurrence/connection, so a validation row can be
   // revealed even when it lives on another model.
   const modelIdByElementId = useMemo(() => {
     const index = new Map<string, string>()
@@ -350,31 +347,8 @@ export function ArisStudioTab({
     [modelIdByElementId, onModelChange, studio.models, studio.source]
   )
 
-  const handleSelectRecord = useCallback(
-    (row: ArisAccountingReportRow): boolean => {
-      const candidates = [row.sourceId, ...row.targetIds].filter(
-        (value): value is string => typeof value === 'string' && value !== ''
-      )
-      // Shapes first, then the model rows, so a row that names both reveals the
-      // element rather than merely switching models.
-      const shapes = candidates.filter((candidate) => !studio.source.models.has(candidate))
-      const models = candidates.filter((candidate) => studio.source.models.has(candidate))
-      return [...shapes, ...models].some((candidate) => revealElement(candidate))
-    },
-    [revealElement, studio.source]
-  )
-
   // --- plan §14.1: EPC findings for the live document ---------------------------
   const epcFindings = useMemo(() => buildArisEpcFindings(liveDocument), [liveDocument])
-
-  const handleSelectFinding = useCallback(
-    (finding: ArisEpcModelFinding): boolean => {
-      const targetId = arisEpcFindingTargetId(finding)
-      if (targetId === null) return revealElement(finding.modelId)
-      return revealElement(targetId) || revealElement(finding.modelId)
-    },
-    [revealElement]
-  )
 
   // --- plan §9: derived AML export ---------------------------------------------
   const handleExportDerivedAml = useCallback(() => {
@@ -441,6 +415,97 @@ export function ArisStudioTab({
     () => buildDeterministicFixPlan(liveDocument, gaps, fixLocales),
     [liveDocument, gaps, fixLocales]
   )
+
+  // --- issue 5/6: the unified validation findings for the rail and the canvas --
+  const validationFindings = useMemo(
+    () =>
+      buildArisValidationFindings(liveDocument, epcFindings, gaps, {
+        preferredModelId: renderableModelId
+      }),
+    [liveDocument, epcFindings, gaps, renderableModelId]
+  )
+  const validationByElement = useMemo(
+    () => findingsByCanvasElement(validationFindings),
+    [validationFindings]
+  )
+
+  const railHighlightToken = useRef(0)
+  const [railHighlight, setRailHighlight] = useState<ArisDetailsRailHighlight | null>(null)
+
+  /**
+   * The one gesture shared by validation rows (and, later, canvas markers):
+   * reveal the finding's element (switching models when needed), scroll it into
+   * view, and open the details rail on the specific field to fix.
+   */
+  const handleRevealFinding = useCallback(
+    (finding: ArisValidationFinding): boolean => {
+      const canvas = canvasRef.current
+      let revealed = false
+      if (finding.anchorElementId) revealed = revealElement(finding.anchorElementId)
+      if (!revealed && finding.fallbackModelId) {
+        // Model-scoped finding: switch AND select the model root so the details
+        // rail shows the model's own tabs (name editor included).
+        const summary = studio.models.find((model) => model.id === finding.fallbackModelId)
+        if (canvas && summary?.renderable && canvas.document.models.has(finding.fallbackModelId)) {
+          if (canvas.activeModelId !== finding.fallbackModelId) {
+            canvas.setActiveModel(finding.fallbackModelId)
+            onModelChange(finding.fallbackModelId)
+          }
+          canvas.select(rootElementId(finding.fallbackModelId))
+          revealed = true
+        }
+      }
+      if (!revealed) return false
+      // Expand the rail (if the collapse lane left it collapsed) before the
+      // scroll/flash so the flashed field is on screen.
+      if (rail.collapsed) rail.setCollapsed(false)
+      if (canvas && finding.anchorElementId) {
+        const element = canvas.elementRegistry.get(finding.anchorElementId)
+        if (element) {
+          // Port of main:src/editor/EditorTabLite.tsx:1514-1519.
+          try {
+            canvas.canvas.scrollToElement(element, 120)
+          } catch {
+            canvas.zoom('fit-viewport')
+          }
+        }
+      }
+      if (finding.railTarget) {
+        railHighlightToken.current += 1
+        setRailHighlight({
+          token: railHighlightToken.current,
+          tab: finding.railTarget.tab,
+          field: finding.railTarget.field
+        })
+      }
+      return true
+    },
+    [onModelChange, rail, revealElement, studio.models]
+  )
+
+  // --- issue 6: per-element canvas warning markers -----------------------------
+  // The installer reads the findings map through a ref so a findings change never
+  // tears down the overlay subscription; a dedicated effect just re-diffs it.
+  const overlaysRef = useRef<ArisValidationOverlayController | null>(null)
+  const validationByElementRef = useRef(validationByElement)
+  useEffect(() => {
+    validationByElementRef.current = validationByElement
+    overlaysRef.current?.resync()
+  }, [validationByElement])
+  useEffect(() => {
+    const canvas = getCanvas()
+    if (!canvas) return
+    const controller = installArisValidationOverlays(
+      canvas,
+      () => validationByElementRef.current,
+      handleRevealFinding
+    )
+    overlaysRef.current = controller
+    return () => {
+      overlaysRef.current = null
+      controller.uninstall()
+    }
+  }, [getCanvas, handleRevealFinding])
 
   const handleFixAutoFix = useCallback(() => {
     // Tier A hands the counterpart-language fills to the translate controller's review/fill path,
@@ -897,49 +962,10 @@ export function ArisStudioTab({
           lang={lang}
           editing={detailsEditing}
           onEditError={(message) => onToast(message, 'error')}
+          highlight={railHighlight}
         />
 
-        <ArisAccountingRail
-          report={studio.accounting}
-          fidelity={studio.fidelity}
-          fidelityByKind={studio.fidelityByKind}
-          onSelectRecord={handleSelectRecord}
-        />
-
-        <ArisEpcRail findings={epcFindings} onSelectFinding={handleSelectFinding} />
-
-        <section className="orbitpm-aris-rail__section">
-          <h3 className="orbitpm-aris-rail__heading" style={{ fontSize: 15 }}>
-            {t('aris.placeholder.detailsHeading')}
-          </h3>
-          <dl className="orbitpm-aris-defs">
-            {sourceFacts.map((fact) => (
-              <div key={fact.labelKey} style={{ display: 'contents' }}>
-                <dt>{t(fact.labelKey as Key)}</dt>
-                <dd>{fact.value}</dd>
-              </div>
-            ))}
-          </dl>
-        </section>
-
-        <section className="orbitpm-aris-rail__section">
-          <h3 className="orbitpm-aris-rail__heading" style={{ fontSize: 15 }}>
-            {t('aris.placeholder.sourceHeading')}
-          </h3>
-          <pre
-            style={{
-              margin: 0,
-              whiteSpace: 'pre-wrap',
-              overflowWrap: 'anywhere',
-              fontSize: 12,
-              lineHeight: 1.5,
-              maxHeight: 260,
-              overflow: 'auto'
-            }}
-          >
-            {sourceText.slice(0, 20_000)}
-          </pre>
-        </section>
+        <ArisEpcRail findings={validationFindings} onSelectFinding={handleRevealFinding} />
       </aside>
 
       <ArisTranslateController

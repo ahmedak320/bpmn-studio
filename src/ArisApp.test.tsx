@@ -475,16 +475,14 @@ describe('ArisApp production shell', () => {
     // on the canvas until the user switches to it.
     expect(canvasElement('ObjOcc.Review')).toBeNull()
 
-    // The Phase 2 source facts survive alongside the canvas. ("Models" appears
-    // twice now: once as the explorer heading, once as the source-fact label.)
-    expect(screen.getAllByText('Models').length).toBeGreaterThan(1)
-    expect(screen.getByText('Object occurrences')).not.toBeNull()
-    expect(screen.getByText('Semantic diagnostics')).not.toBeNull()
-
-    // Complete source accounting is wired, not stubbed.
-    const accounting = document.querySelector<HTMLElement>('[data-orbitpm-aris-accounting]')
-    expect(accounting).not.toBeNull()
-    expect(accounting?.textContent).toContain('unaccounted')
+    // Issue 5 (authorized product change): the Accounting rail, the "Source
+    // details" facts and the "Exact source preview" are gone; the validation
+    // section is the rail's structured-findings surface.
+    expect(document.querySelector('[data-orbitpm-aris-accounting]')).toBeNull()
+    expect(document.querySelector('[data-orbitpm-aris-fidelity]')).toBeNull()
+    expect(screen.queryByText('Source details')).toBeNull()
+    expect(screen.queryByText('Exact source preview')).toBeNull()
+    expect(document.querySelector('[data-orbitpm-aris-validation]')).not.toBeNull()
   })
 
   it('switches between the models of one export through the model explorer', async () => {
@@ -516,12 +514,14 @@ describe('ArisApp production shell', () => {
     await openAml()
 
     // Select something so the details rail (and its History tab, which reads
-    // the ARIS working document's revision) has an element to describe.
+    // the ARIS working document's revision) has an element to describe. Every
+    // fixture definition has a `missingArabicName` validation row anchored on
+    // its occurrence, so that row is the selection vehicle.
+    const rail = document.querySelector<HTMLElement>('[data-orbitpm-aris-validation]')!
     fireEvent.click(
-      within(document.querySelector<HTMLElement>('[data-orbitpm-aris-accounting]')!).getByRole(
-        'button',
-        { name: 'Select ObjOcc.Start on the canvas' }
-      )
+      rail.querySelector<HTMLButtonElement>(
+        '[data-orbitpm-aris-validation-issue="missingArabicName"][aria-label="Select ObjOcc.Start on the canvas"]'
+      )!
     )
     await waitFor(() => expect(detailsTab('History')).not.toBeNull())
     fireEvent.click(detailsTab('History'))
@@ -574,13 +574,15 @@ describe('ArisApp production shell', () => {
     expect(document.querySelector('[data-orbitpm-aris-layout-mode="source"]')).not.toBeNull()
   })
 
-  it('selects the canvas element behind an accounting row and highlights its relations', async () => {
+  it('selects the canvas element behind a validation row and highlights its relations', async () => {
     render(<ArisApp />)
     await openAml()
 
-    const accounting = document.querySelector<HTMLElement>('[data-orbitpm-aris-accounting]')!
+    const rail = document.querySelector<HTMLElement>('[data-orbitpm-aris-validation]')!
     fireEvent.click(
-      within(accounting).getByRole('button', { name: 'Select ObjOcc.Check on the canvas' })
+      rail.querySelector<HTMLButtonElement>(
+        '[data-orbitpm-aris-validation-issue="missingArabicName"][aria-label="Select ObjOcc.Check on the canvas"]'
+      )!
     )
 
     // Plan 11.5: the selected occurrence is marked as the highlight owner and
@@ -905,6 +907,93 @@ describe('ArisApp production shell', () => {
     // Revealing it switched the canvas to the other model.
     await waitFor(() => expect(canvasElement('ObjOcc.Review')).not.toBeNull())
     expect(canvasElement('ObjOcc.Start')).toBeNull()
+  })
+
+  it('opens the details rail on the missing field behind a validation row', async () => {
+    render(<ArisApp />)
+    await openAml()
+
+    const rail = document.querySelector<HTMLElement>('[data-orbitpm-aris-validation]')!
+    // The Arabic-name gap for ObjDef.Check is anchored on its occurrence.
+    fireEvent.click(
+      rail.querySelector<HTMLButtonElement>(
+        '[data-orbitpm-aris-validation-issue="missingArabicName"][aria-label="Select ObjOcc.Check on the canvas"]'
+      )!
+    )
+
+    // The names tab is opened and the Arabic name input is flashed.
+    await waitFor(() =>
+      expect(
+        document
+          .querySelector('[data-orbitpm-aris-details-tab="names"]')
+          ?.getAttribute('aria-selected')
+      ).toBe('true')
+    )
+    const namesPanel = document.querySelector<HTMLElement>(
+      '[data-orbitpm-aris-details-panel="names"]'
+    )!
+    expect(namesPanel.getAttribute('data-orbitpm-aris-highlight-field')).toBe('name:ar')
+    expect(
+      document
+        .querySelector('[data-orbitpm-aris-name-input="definition:ar"]')
+        ?.classList.contains('orbitpm-aris-field-flash')
+    ).toBe(true)
+
+    // The owner gap points at an attribute the definition does not record yet,
+    // so the Attributes tab shows a pending row; filling it creates the record
+    // in one undoable command and clears the gap.
+    fireEvent.click(
+      rail.querySelector<HTMLButtonElement>(
+        '[data-orbitpm-aris-validation-issue="missingOwner"][aria-label="Select ObjOcc.Check on the canvas"]'
+      )!
+    )
+    await waitFor(() =>
+      expect(
+        document.querySelector('[data-orbitpm-aris-pending-attribute="AT_PERS_RESP"]')
+      ).not.toBeNull()
+    )
+
+    const ownerInput = document.querySelector<HTMLInputElement>(
+      '[data-orbitpm-aris-attribute-input="AT_PERS_RESP:en"]'
+    )!
+    fireEvent.change(ownerInput, { target: { value: 'Intake team' } })
+    fireEvent.blur(ownerInput)
+
+    await waitFor(() =>
+      expect(
+        rail.querySelector(
+          '[data-orbitpm-aris-validation-issue="missingOwner"][aria-label="Select ObjOcc.Check on the canvas"]'
+        )
+      ).toBeNull()
+    )
+    expect(document.querySelector<HTMLButtonElement>('[data-orbitpm-aris-undo]')!.disabled).toBe(
+      false
+    )
+  })
+
+  it('reveals the model root behind a model-scoped validation row', async () => {
+    render(<ArisApp />)
+    await openAml()
+
+    const rail = document.querySelector<HTMLElement>('[data-orbitpm-aris-validation]')!
+    fireEvent.click(
+      rail.querySelector<HTMLButtonElement>(
+        '[data-orbitpm-aris-validation-issue="missingArabicName"][aria-label="Select Model.Intake on the canvas"]'
+      )!
+    )
+
+    await waitFor(() =>
+      expect(
+        document.querySelector('[data-orbitpm-aris-details]')?.getAttribute('aria-label')
+      ).toContain('Intake process')
+    )
+    await waitFor(() =>
+      expect(
+        document
+          .querySelector('[data-orbitpm-aris-name-input="model:ar"]')
+          ?.classList.contains('orbitpm-aris-field-flash')
+      ).toBe(true)
+    )
   })
 
   it('answers a folder question with no provider and no key, and its chip selects the model', async () => {

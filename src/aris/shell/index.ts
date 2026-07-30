@@ -6,7 +6,6 @@
  * under `src/aris/*`.
  */
 
-export { ArisAccountingRail, type ArisAccountingRailProps } from './ArisAccountingRail'
 export {
   ArisExplorerPane,
   type ArisExplorerActiveTab,
@@ -33,7 +32,6 @@ export {
   ArisStudioTab,
   type ArisLayoutModeState,
   type ArisSelectionRequest,
-  type ArisSourceFact,
   type ArisStudioTabProps
 } from './ArisStudioTab'
 export {
