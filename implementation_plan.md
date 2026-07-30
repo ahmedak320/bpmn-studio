@@ -1011,11 +1011,11 @@ npm run typecheck && npm run lint && npm run check:ui-copy && npm run check:no-s
 
 **Protocol (iterate→fix→re-measure loop):**
 
-- [ ] Run `npx vite-node scripts/aris-fidelity-report.ts`; snapshot per-category counts.
-- [ ] Fix ONE category, in this order: (1) occurrence AttrOcc labels — generalize `syncLabels` to ALL occurrence `attributeOccurrences` (mirror `syncConnectionLabels`: per placement → label element `label:<occId>:<idx>:<attrType>`, text = the definition's attribute value of that type, rect from a generalized `attributePlacementRect(placement, bounds)` reusing the `externalNameRect` math; AT_NAME keeps the name path), so function numbers (`AT_PROC_CODE`/`AT_ID`) render under boxes; (2) arrowheads — `drawConnection` emits a shared `marker-end` via an `svg.ts` helper; (3) connection pen — honor bo pen color/width/dash (`elements.ts` connection bo gains pen fields); (4) occurrence pen width/style carry from source in `buildFromSource` (today nulled) into `occurrence.style`.
-- [ ] Re-run the report + `npm run test:aris:animalwf`; ratchet the iterate suites' BASELINE for that category to exact/0.
-- [ ] Repeat until the **completion bar**: topology exact (spine/gates/satellites/counts 0 diffs), numbering exact, symbol exact, color exact where PDF-confirmed, label-rect geometry within ±2px. Frames (`GfxObj`/`RoundedRectangle`)/`Union`/OLE placeholders only if the report shows them on the iterate models (expected out-of-bar — VACD/decorative; record the verdict in the report artifact).
-- [ ] Prettier. Keep `rawAttributes`/source anchors untouched so `arisDerivedExport` round-trip is unperturbed.
+- [x] Run `npx vite-node scripts/aris-fidelity-report.ts`; snapshot per-category counts.
+- [x] Fix ONE category, in this order: (1) occurrence AttrOcc labels — generalize `syncLabels` to ALL occurrence `attributeOccurrences` (mirror `syncConnectionLabels`: per placement → label element `label:<occId>:<idx>:<attrType>`, text = the definition's attribute value of that type, rect from a generalized `attributePlacementRect(placement, bounds)` reusing the `externalNameRect` math; AT_NAME keeps the name path), so function numbers (`AT_PROC_CODE`/`AT_ID`) render under boxes; (2) arrowheads — `drawConnection` emits a shared `marker-end` via an `svg.ts` helper; (3) connection pen — honor bo pen color/width/dash (`elements.ts` connection bo gains pen fields); (4) occurrence pen width/style carry from source in `buildFromSource` (today nulled) into `occurrence.style`.
+- [x] Re-run the report + `npm run test:aris:animalwf`; ratchet the iterate suites' BASELINE for that category to exact/0.
+- [x] Repeat until the **completion bar**: topology exact (spine/gates/satellites/counts 0 diffs), numbering exact, symbol exact, color exact where PDF-confirmed, label-rect geometry within ±2px. Frames (`GfxObj`/`RoundedRectangle`)/`Union`/OLE placeholders only if the report shows them on the iterate models (expected out-of-bar — VACD/decorative; record the verdict in the report artifact).
+- [x] Prettier. Keep `rawAttributes`/source anchors untouched so `arisDerivedExport` round-trip is unperturbed.
 
 **Verify:**
 

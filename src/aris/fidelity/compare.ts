@@ -2,10 +2,23 @@
  * Pure comparator between an `ArisWorkingDocument` model and a hand-authored fidelity
  * expectation.
  *
- * The comparator reuses the EPC flow classification from `src/aris/epc` so the spine walk
- * follows exactly the same control-flow edges as the validator. Satellite side is determined
- * from occurrence geometry; colours are normalized through `occurrenceColorToCss` so authored
- * `#rrggbb` and AML bare-hex spellings compare equal.
+ * ## Comparator-confined flow classification
+ * The spine walk is a geometric depth-first preorder over a COMPARATOR-LOCAL control-flow edge
+ * set (`COMPARATOR_FLOW_CONNECTION_TYPES`): the production `FLOW_CONNECTION_TYPES`
+ * (`epc/constants.ts`, consumed by validation and the canvas) plus `CT_IS_PREDEC_OF_1` — the
+ * AnimalWF export's direct Function→Function sequence connector. This extension lives here, never
+ * in `epc/constants.ts`, so production flow classification stays byte-identical. The walk is
+ * cycle-tolerant (return-loop XOR cycles never stall it): DFS from every in-degree-0 seed in
+ * geometric order `(centerX asc, then centerY asc)`, then from the geometrically-first unvisited
+ * node of any remaining cycle-only component.
+ *
+ * ## Normalization
+ * All authored and derived text (spine/satellite/gate/note names) is run through `normText`
+ * (collapse internal whitespace, trim) on BOTH sides, and English names are resolved via
+ * `readLocalized(names, 'en-US')` / a `localeLang`-based scan so a bilingual object whose Arabic
+ * value is written first still compares by its English caption. Colours are normalized through
+ * `occurrenceColorToCss` so authored `#rrggbb` and AML bare-hex spellings compare equal.
+ * `normalizeExpectation` applies `normText` once to the incoming expectation at compare entry.
  */
 
 import type {
@@ -16,9 +29,12 @@ import type {
   ArisWorkingDocument
 } from '../model/types'
 import { occurrenceColorToCss } from '../canvas/renderer'
+import { readLocalized } from '../canvas/localization'
 import { toEpcGraph } from '../epc/adapter'
-import { buildFlowGraphIndex, type FlowGraphIndex } from '../epc/flowGraph'
-import { FLOW_CONNECTION_TYPES, FLOW_NODE_TYPES, classifyRuleSymbol } from '../epc/constants'
+import { buildFlowGraphIndex, isControlFlowEdge, type FlowGraphIndex } from '../epc/flowGraph'
+import { FLOW_NODE_TYPES, classifyRuleSymbol } from '../epc/constants'
+import type { EpcEdge } from '../epc/types'
+import { localeLang } from '../../library/amlParse'
 import type {
   FidelityDiffReport,
   FidelityDiffRow,
@@ -31,22 +47,41 @@ import type {
 
 const NUMBERING_ATTRIBUTE_TYPES = new Set(['AT_PROC_CODE', 'AT_ID'])
 
+/**
+ * Control-flow connection types recognised by the COMPARATOR spine walk. Deliberately broader
+ * than production `FLOW_CONNECTION_TYPES` (`epc/constants.ts`): it additionally treats
+ * `CT_IS_PREDEC_OF_1` (Function→Function sequence) as flow. Kept comparator-local so production
+ * flow classification — used by validation and the canvas — is untouched.
+ */
+const COMPARATOR_FLOW_CONNECTION_TYPES: ReadonlySet<string> = new Set([
+  'CT_ACTIV_1',
+  'CT_CRT_1',
+  'CT_LEADS_TO_1',
+  'CT_LEADS_TO_2',
+  'CT_IS_EVAL_BY_1',
+  'CT_IS_PREDEC_OF_1'
+])
+
+/** Collapse internal whitespace runs to a single space and trim. Applied to both sides. */
+function normText(value: string): string {
+  return value.replace(/\s+/g, ' ').trim()
+}
+
 function normalizeColor(raw: string | null): string | null {
   return occurrenceColorToCss(raw) ?? null
 }
 
 function getNameEn(names: ArisLocalizedValue): string {
-  return (
-    names.values['en'] ??
-    names.values['en-US'] ??
-    names.fallback ??
-    Object.values(names.values)[0] ??
-    ''
-  )
+  return normText(readLocalized(names, 'en-US'))
 }
 
 function getEpcNameEn(names: Readonly<Record<string, string>>): string {
-  return names['en'] ?? names['en-US'] ?? Object.values(names)[0] ?? ''
+  const exact = names['en-US'] ?? names['en']
+  if (exact) return normText(exact)
+  for (const [key, text] of Object.entries(names)) {
+    if (text && localeLang(key) === 'en') return normText(text)
+  }
+  return normText(Object.values(names)[0] ?? '')
 }
 
 function findAttributeText(
@@ -106,6 +141,35 @@ function buildSpineStep(
   }
 }
 
+/**
+ * Comparator-local control-flow edges: every production control-flow edge (both endpoints resolve
+ * to flow-node types) plus every `CT_IS_PREDEC_OF_1` edge that directly sequences one function
+ * into another. Never mutates the shared index.
+ */
+function comparatorFlowEdges(index: FlowGraphIndex): EpcEdge[] {
+  const edges: EpcEdge[] = []
+  for (const edge of index.graph.edges) {
+    if (isControlFlowEdge(edge, index.nodeById)) {
+      edges.push(edge)
+      continue
+    }
+    if (edge.connectionType === 'CT_IS_PREDEC_OF_1') {
+      const source = index.nodeById.get(edge.source)
+      const target = index.nodeById.get(edge.target)
+      if (source && target && source.objectType === 'OT_FUNC' && target.objectType === 'OT_FUNC') {
+        edges.push(edge)
+      }
+    }
+  }
+  return edges
+}
+
+/**
+ * Geometric depth-first preorder over the comparator-local flow subgraph. Ordering is
+ * `(centerX asc, then centerY asc)`; DFS runs from every in-degree-0 seed in that order, then from
+ * the geometrically-first unvisited node of any remaining cycle-only component so return-loop XOR
+ * cycles (which have no in-degree-0 entry) are still emitted exactly once each.
+ */
 function buildSpine(
   document: ArisWorkingDocument,
   model: ArisModel,
@@ -119,45 +183,54 @@ function buildSpine(
     if (!occurrence) return 0
     return occurrence.bounds.x + occurrence.bounds.width / 2
   }
+  const centerY = (occurrenceId: string): number => {
+    const occurrence = occurrenceById.get(occurrenceId)
+    if (!occurrence) return 0
+    return occurrence.bounds.y + occurrence.bounds.height / 2
+  }
+  const compare = (a: string, b: string): number =>
+    centerX(a) - centerX(b) || centerY(a) - centerY(b)
 
   const flowNodeIds = new Set(
     index.graph.nodes.filter((node) => FLOW_NODE_TYPES.has(node.objectType)).map((node) => node.id)
   )
+  const successorsBySource = new Map<string, string[]>()
   const inDegree = new Map<string, number>()
   for (const nodeId of flowNodeIds) inDegree.set(nodeId, 0)
-  for (const edge of index.flowEdges) {
+  for (const edge of comparatorFlowEdges(index)) {
     if (!flowNodeIds.has(edge.source) || !flowNodeIds.has(edge.target)) continue
+    const list = successorsBySource.get(edge.source)
+    if (list) list.push(edge.target)
+    else successorsBySource.set(edge.source, [edge.target])
     inDegree.set(edge.target, (inDegree.get(edge.target) ?? 0) + 1)
   }
-
-  const queue: string[] = []
-  for (const [nodeId, degree] of inDegree) {
-    if (degree === 0) queue.push(nodeId)
-  }
-  queue.sort((a, b) => centerX(a) - centerX(b))
 
   const visited = new Set<string>()
   const spine: SpineStep[] = []
 
-  while (queue.length > 0) {
-    const nodeId = queue.shift()!
-    if (visited.has(nodeId)) continue
-    visited.add(nodeId)
-    const node = index.nodeById.get(nodeId)
-    const occurrence = occurrenceById.get(nodeId)
-    if (!node || !occurrence) continue
-    spine.push(buildSpineStep(document, occurrence, node.objectType))
+  const dfs = (start: string): void => {
+    const stack = [start]
+    while (stack.length > 0) {
+      const nodeId = stack.pop()!
+      if (visited.has(nodeId)) continue
+      visited.add(nodeId)
+      const node = index.nodeById.get(nodeId)
+      const occurrence = occurrenceById.get(nodeId)
+      if (node && occurrence) spine.push(buildSpineStep(document, occurrence, node.objectType))
 
-    const outgoing = index.flowEdgesBySource.get(nodeId) ?? []
-    const successors = outgoing
-      .filter((edge) => flowNodeIds.has(edge.target))
-      .map((edge) => edge.target)
-    for (const successor of successors) {
-      const nextDegree = (inDegree.get(successor) ?? 1) - 1
-      inDegree.set(successor, nextDegree)
-      if (nextDegree === 0 && !visited.has(successor)) queue.push(successor)
+      const successors = (successorsBySource.get(nodeId) ?? [])
+        .filter((target) => flowNodeIds.has(target) && !visited.has(target))
+        .sort(compare)
+      // Push in reverse so the geometrically-first successor pops (is visited) first.
+      for (let i = successors.length - 1; i >= 0; i -= 1) stack.push(successors[i])
     }
-    queue.sort((a, b) => centerX(a) - centerX(b))
+  }
+
+  const seeds = [...flowNodeIds].filter((id) => (inDegree.get(id) ?? 0) === 0).sort(compare)
+  for (const seed of seeds) dfs(seed)
+  while (visited.size < flowNodeIds.size) {
+    const remaining = [...flowNodeIds].filter((id) => !visited.has(id)).sort(compare)
+    dfs(remaining[0])
   }
 
   return spine
@@ -188,7 +261,7 @@ function buildSatellites(
     for (const connection of model.connectionOccurrences) {
       const connectionDefinition = document.connectionDefinitions.get(connection.definitionId)
       if (!connectionDefinition) continue
-      if (FLOW_CONNECTION_TYPES.has(connectionDefinition.type)) continue
+      if (COMPARATOR_FLOW_CONNECTION_TYPES.has(connectionDefinition.type)) continue
 
       let satelliteOccurrence: ArisObjectOccurrence | null = null
       if (connection.sourceOccurrenceId === functionOccurrence.id) {
@@ -242,7 +315,9 @@ function buildGates(model: ArisModel, index: FlowGraphIndex): GateExpectation[] 
       const target = index.nodeById.get(edge.target)
       return target && FLOW_NODE_TYPES.has(target.objectType)
     })
-    if (outgoingToFlow.length === 0) continue
+    // Only decision splits are gates. Merge rules (a single outgoing flow edge) are not gates and
+    // would otherwise surface as phantom extras.
+    if (outgoingToFlow.length < 2) continue
 
     const incoming = index.flowEdgesByTarget.get(node.id) ?? []
     const predecessorEdge = incoming.find((edge) => {
@@ -273,15 +348,20 @@ function buildGates(model: ArisModel, index: FlowGraphIndex): GateExpectation[] 
 }
 
 function buildNotes(model: ArisModel): NoteExpectation[] {
-  return model.freeText.map((freeText) => {
-    const contains =
+  const notes: NoteExpectation[] = []
+  for (const freeText of model.freeText) {
+    const raw =
       freeText.text.fallback ??
       freeText.text.values['en'] ??
       freeText.text.values['en-US'] ??
       Object.values(freeText.text.values)[0] ??
       ''
-    return { contains }
-  })
+    const contains = normText(raw)
+    // Whitespace-only free text carries no note content and would otherwise be a phantom extra.
+    if (contains.length === 0) continue
+    notes.push({ contains })
+  }
+  return notes
 }
 
 function buildCounts(
@@ -684,11 +764,38 @@ function finalize(rows: FidelityDiffRow[]): FidelityDiffReport {
   })
 }
 
+/**
+ * Applies `normText` once to every authored string in the expectation (spine names, satellite
+ * function keys and names, gate after/branch names, note fragments) so the comparison is
+ * whitespace-insensitive on the expected side too. Applied at compare entry.
+ */
+function normalizeExpectation(expected: FidelityExpectationDoc): FidelityExpectationDoc {
+  const satellites: Record<string, SatelliteExpectation[]> = {}
+  for (const [functionName, list] of Object.entries(expected.satellites)) {
+    satellites[normText(functionName)] = list.map((satellite) => ({
+      ...satellite,
+      nameEn: normText(satellite.nameEn)
+    }))
+  }
+  return {
+    ...expected,
+    spine: expected.spine.map((step) => ({ ...step, nameEn: normText(step.nameEn) })),
+    satellites,
+    gates: expected.gates.map((gate) => ({
+      ...gate,
+      afterNameEn: normText(gate.afterNameEn),
+      branchFirstNamesEn: gate.branchFirstNamesEn.map(normText)
+    })),
+    notes: expected.notes.map((note) => ({ contains: normText(note.contains) }))
+  }
+}
+
 export function compareModelToExpectation(
   document: ArisWorkingDocument,
   modelId: string,
-  expected: FidelityExpectationDoc
+  expectedInput: FidelityExpectationDoc
 ): FidelityDiffReport {
+  const expected = normalizeExpectation(expectedInput)
   const model = document.models.get(modelId)
   if (!model) {
     return finalize([

@@ -492,13 +492,15 @@ describe('compareModelToExpectation — gates', () => {
     return makeDocument(model, definitions, connectionDefinitions)
   }
 
+  // Depth-first preorder over the flow graph: after the geometrically-first branch (Approved) the
+  // walk dives to its successor (End) before backtracking to the second branch (Rejected).
   const gateSpine: SpineStep[] = [
     { kind: 'event', nameEn: 'Start', numbering: null, symbolNum: 'ST_EV', fill: null },
     { kind: 'function', nameEn: 'First step', numbering: null, symbolNum: 'ST_FUNC', fill: null },
     { kind: 'rule', nameEn: 'Decision', numbering: null, symbolNum: 'ST_OPR_XOR_1', fill: null },
     { kind: 'event', nameEn: 'Approved', numbering: null, symbolNum: 'ST_EV', fill: null },
-    { kind: 'event', nameEn: 'Rejected', numbering: null, symbolNum: 'ST_EV', fill: null },
-    { kind: 'event', nameEn: 'End', numbering: null, symbolNum: 'ST_EV', fill: null }
+    { kind: 'event', nameEn: 'End', numbering: null, symbolNum: 'ST_EV', fill: null },
+    { kind: 'event', nameEn: 'Rejected', numbering: null, symbolNum: 'ST_EV', fill: null }
   ]
 
   const gateGates: GateExpectation[] = [
@@ -540,5 +542,294 @@ describe('compareModelToExpectation — gates', () => {
       actual: 'XOR',
       where: 'gate:after First step'
     })
+  })
+})
+
+describe('compareModelToExpectation — comparator-local flow, DFS walk, normalization', () => {
+  const evt = (nameEn: string): SpineStep => ({
+    kind: 'event',
+    nameEn,
+    numbering: null,
+    symbolNum: 'ST_EV',
+    fill: null
+  })
+  const fn = (nameEn: string): SpineStep => ({
+    kind: 'function',
+    nameEn,
+    numbering: null,
+    symbolNum: 'ST_FUNC',
+    fill: null
+  })
+
+  it('follows CT_IS_PREDEC_OF_1 as a direct Function→Function sequence in the spine', () => {
+    const definitions: ArisObjectDefinition[] = [
+      objectDefinition('od-start', 'OT_EVT', 'Start'),
+      objectDefinition('od-a', 'OT_FUNC', 'Step A'),
+      objectDefinition('od-b', 'OT_FUNC', 'Step B'),
+      objectDefinition('od-end', 'OT_EVT', 'End')
+    ]
+    const occurrences: ArisObjectOccurrence[] = [
+      objectOccurrence('occ-start', 'od-start', 'model-1', 'ST_EV', 100, 10, 40, 30),
+      objectOccurrence('occ-a', 'od-a', 'model-1', 'ST_FUNC', 80, 60, 80, 40),
+      objectOccurrence('occ-b', 'od-b', 'model-1', 'ST_FUNC', 80, 120, 80, 40),
+      objectOccurrence('occ-end', 'od-end', 'model-1', 'ST_EV', 100, 180, 40, 30)
+    ]
+    const connectionDefinitions: ArisConnectionDefinition[] = [
+      connectionDefinition('cd1', 'CT_ACTIV_1', 'od-start', 'od-a'),
+      connectionDefinition('cd2', 'CT_IS_PREDEC_OF_1', 'od-a', 'od-b'),
+      connectionDefinition('cd3', 'CT_CRT_1', 'od-b', 'od-end')
+    ]
+    const connectionOccurrences: ArisConnectionOccurrence[] = [
+      connectionOccurrence('cx1', 'cd1', 'model-1', 'occ-start', 'occ-a'),
+      connectionOccurrence('cx2', 'cd2', 'model-1', 'occ-a', 'occ-b'),
+      connectionOccurrence('cx3', 'cd3', 'model-1', 'occ-b', 'occ-end')
+    ]
+    const document = makeDocument(
+      makeModel(occurrences, connectionOccurrences),
+      definitions,
+      connectionDefinitions
+    )
+    const expectation: FidelityExpectationDoc = {
+      modelKey: 'predec',
+      modelIdHint: 'model-1',
+      nameEn: 'Predec model',
+      spine: [evt('Start'), fn('Step A'), fn('Step B'), evt('End')],
+      satellites: {},
+      gates: [],
+      notes: [],
+      counts: { functions: 2, events: 2, rules: 0, connections: 3 }
+    }
+    const report = compareModelToExpectation(document, 'model-1', expectation)
+    expect(report.rows, JSON.stringify(report.rows)).toHaveLength(0)
+    expect(report.pass).toBe(true)
+  })
+
+  it('walks a return-loop cycle to completion, emitting every flow node exactly once', () => {
+    const definitions: ArisObjectDefinition[] = [
+      objectDefinition('od-start', 'OT_EVT', 'Start'),
+      objectDefinition('od-a', 'OT_FUNC', 'Step A'),
+      objectDefinition('od-b', 'OT_FUNC', 'Step B'),
+      objectDefinition('od-end', 'OT_EVT', 'End')
+    ]
+    const occurrences: ArisObjectOccurrence[] = [
+      objectOccurrence('occ-start', 'od-start', 'model-1', 'ST_EV', 100, 10, 40, 30),
+      objectOccurrence('occ-a', 'od-a', 'model-1', 'ST_FUNC', 80, 60, 80, 40),
+      objectOccurrence('occ-b', 'od-b', 'model-1', 'ST_FUNC', 80, 120, 80, 40),
+      objectOccurrence('occ-end', 'od-end', 'model-1', 'ST_EV', 100, 180, 40, 30)
+    ]
+    // a → b → a is a cycle: neither a nor b is ever in-degree-0. A Kahn walk would stall; the
+    // geometric DFS still emits all four nodes exactly once.
+    const connectionDefinitions: ArisConnectionDefinition[] = [
+      connectionDefinition('cd1', 'CT_ACTIV_1', 'od-start', 'od-a'),
+      connectionDefinition('cd2', 'CT_IS_PREDEC_OF_1', 'od-a', 'od-b'),
+      connectionDefinition('cd3', 'CT_IS_PREDEC_OF_1', 'od-b', 'od-a'),
+      connectionDefinition('cd4', 'CT_CRT_1', 'od-b', 'od-end')
+    ]
+    const connectionOccurrences: ArisConnectionOccurrence[] = [
+      connectionOccurrence('cx1', 'cd1', 'model-1', 'occ-start', 'occ-a'),
+      connectionOccurrence('cx2', 'cd2', 'model-1', 'occ-a', 'occ-b'),
+      connectionOccurrence('cx3', 'cd3', 'model-1', 'occ-b', 'occ-a'),
+      connectionOccurrence('cx4', 'cd4', 'model-1', 'occ-b', 'occ-end')
+    ]
+    const document = makeDocument(
+      makeModel(occurrences, connectionOccurrences),
+      definitions,
+      connectionDefinitions
+    )
+    const expectation: FidelityExpectationDoc = {
+      modelKey: 'cycle',
+      modelIdHint: 'model-1',
+      nameEn: 'Cycle model',
+      spine: [evt('Start'), fn('Step A'), fn('Step B'), evt('End')],
+      satellites: {},
+      gates: [],
+      notes: [],
+      counts: { functions: 2, events: 2, rules: 0, connections: 4 }
+    }
+    const report = compareModelToExpectation(document, 'model-1', expectation)
+    expect(report.rows, JSON.stringify(report.rows)).toHaveLength(0)
+    expect(report.pass).toBe(true)
+  })
+
+  it('does not treat a single-outgoing merge rule as a gate', () => {
+    const definitions: ArisObjectDefinition[] = [
+      objectDefinition('od-e1', 'OT_EVT', 'E1'),
+      objectDefinition('od-e2', 'OT_EVT', 'E2'),
+      objectDefinition('od-rule', 'OT_RULE', 'Merge', { defaultSymbol: 'ST_OPR_XOR_1' }),
+      objectDefinition('od-f', 'OT_FUNC', 'After')
+    ]
+    const occurrences: ArisObjectOccurrence[] = [
+      objectOccurrence('occ-e1', 'od-e1', 'model-1', 'ST_EV', 40, 10, 40, 30),
+      objectOccurrence('occ-e2', 'od-e2', 'model-1', 'ST_EV', 160, 10, 40, 30),
+      objectOccurrence('occ-rule', 'od-rule', 'model-1', 'ST_OPR_XOR_1', 100, 80, 40, 40),
+      objectOccurrence('occ-f', 'od-f', 'model-1', 'ST_FUNC', 80, 140, 80, 40)
+    ]
+    const connectionDefinitions: ArisConnectionDefinition[] = [
+      connectionDefinition('cd1', 'CT_IS_EVAL_BY_1', 'od-e1', 'od-rule'),
+      connectionDefinition('cd2', 'CT_IS_EVAL_BY_1', 'od-e2', 'od-rule'),
+      connectionDefinition('cd3', 'CT_ACTIV_1', 'od-rule', 'od-f')
+    ]
+    const connectionOccurrences: ArisConnectionOccurrence[] = [
+      connectionOccurrence('cx1', 'cd1', 'model-1', 'occ-e1', 'occ-rule'),
+      connectionOccurrence('cx2', 'cd2', 'model-1', 'occ-e2', 'occ-rule'),
+      connectionOccurrence('cx3', 'cd3', 'model-1', 'occ-rule', 'occ-f')
+    ]
+    const document = makeDocument(
+      makeModel(occurrences, connectionOccurrences),
+      definitions,
+      connectionDefinitions
+    )
+    const expectation: FidelityExpectationDoc = {
+      modelKey: 'merge',
+      modelIdHint: 'model-1',
+      nameEn: 'Merge model',
+      spine: [
+        evt('E1'),
+        { kind: 'rule', nameEn: 'Merge', numbering: null, symbolNum: 'ST_OPR_XOR_1', fill: null },
+        fn('After'),
+        evt('E2')
+      ],
+      satellites: {},
+      gates: [],
+      notes: [],
+      counts: { functions: 1, events: 2, rules: 1, connections: 3 }
+    }
+    const report = compareModelToExpectation(document, 'model-1', expectation)
+    expect(report.rows.filter((row) => row.category === 'gate')).toHaveLength(0)
+    expect(report.rows, JSON.stringify(report.rows)).toHaveLength(0)
+    expect(report.pass).toBe(true)
+  })
+
+  it('normalizes internal whitespace in names on both sides', () => {
+    const definitions: ArisObjectDefinition[] = [
+      objectDefinition('od-start', 'OT_EVT', 'Start'),
+      objectDefinition('od-f', 'OT_FUNC', 'Login  to\tTAMM\nportal'),
+      objectDefinition('od-end', 'OT_EVT', 'End')
+    ]
+    const occurrences: ArisObjectOccurrence[] = [
+      objectOccurrence('occ-start', 'od-start', 'model-1', 'ST_EV', 100, 10, 40, 30),
+      objectOccurrence('occ-f', 'od-f', 'model-1', 'ST_FUNC', 80, 60, 80, 40),
+      objectOccurrence('occ-end', 'od-end', 'model-1', 'ST_EV', 100, 120, 40, 30)
+    ]
+    const connectionDefinitions: ArisConnectionDefinition[] = [
+      connectionDefinition('cd1', 'CT_ACTIV_1', 'od-start', 'od-f'),
+      connectionDefinition('cd2', 'CT_CRT_1', 'od-f', 'od-end')
+    ]
+    const connectionOccurrences: ArisConnectionOccurrence[] = [
+      connectionOccurrence('cx1', 'cd1', 'model-1', 'occ-start', 'occ-f'),
+      connectionOccurrence('cx2', 'cd2', 'model-1', 'occ-f', 'occ-end')
+    ]
+    const document = makeDocument(
+      makeModel(occurrences, connectionOccurrences),
+      definitions,
+      connectionDefinitions
+    )
+    const expectation: FidelityExpectationDoc = {
+      modelKey: 'ws',
+      modelIdHint: 'model-1',
+      nameEn: 'Whitespace model',
+      // Authored with clean single spaces; the model carries irregular whitespace.
+      spine: [evt('Start'), fn('Login to TAMM portal'), evt('End')],
+      satellites: {},
+      gates: [],
+      notes: [],
+      counts: { functions: 1, events: 2, rules: 0, connections: 2 }
+    }
+    const report = compareModelToExpectation(document, 'model-1', expectation)
+    expect(report.rows, JSON.stringify(report.rows)).toHaveLength(0)
+    expect(report.pass).toBe(true)
+  })
+
+  it('resolves the English caption of a bilingual object whose Arabic value is written first', () => {
+    const bilingual: ArisLocalizedValue = Object.freeze({
+      values: Object.freeze({
+        '&LocaleId.AEar;': 'الاسم العربي',
+        '&LocaleId.USen;': 'English Caption'
+      }),
+      fallback: 'الاسم العربي'
+    })
+    const definitions: ArisObjectDefinition[] = [
+      objectDefinition('od-start', 'OT_EVT', 'Start'),
+      Object.freeze({
+        id: 'od-f',
+        type: 'OT_FUNC',
+        defaultSymbol: null,
+        names: bilingual,
+        attributes: [],
+        linkedModelIds: [],
+        rawAttributes: {}
+      }),
+      objectDefinition('od-end', 'OT_EVT', 'End')
+    ]
+    const occurrences: ArisObjectOccurrence[] = [
+      objectOccurrence('occ-start', 'od-start', 'model-1', 'ST_EV', 100, 10, 40, 30),
+      objectOccurrence('occ-f', 'od-f', 'model-1', 'ST_FUNC', 80, 60, 80, 40),
+      objectOccurrence('occ-end', 'od-end', 'model-1', 'ST_EV', 100, 120, 40, 30)
+    ]
+    const connectionDefinitions: ArisConnectionDefinition[] = [
+      connectionDefinition('cd1', 'CT_ACTIV_1', 'od-start', 'od-f'),
+      connectionDefinition('cd2', 'CT_CRT_1', 'od-f', 'od-end')
+    ]
+    const connectionOccurrences: ArisConnectionOccurrence[] = [
+      connectionOccurrence('cx1', 'cd1', 'model-1', 'occ-start', 'occ-f'),
+      connectionOccurrence('cx2', 'cd2', 'model-1', 'occ-f', 'occ-end')
+    ]
+    const document = makeDocument(
+      makeModel(occurrences, connectionOccurrences),
+      definitions,
+      connectionDefinitions
+    )
+    const expectation: FidelityExpectationDoc = {
+      modelKey: 'bilingual',
+      modelIdHint: 'model-1',
+      nameEn: 'Bilingual model',
+      spine: [evt('Start'), fn('English Caption'), evt('End')],
+      satellites: {},
+      gates: [],
+      notes: [],
+      counts: { functions: 1, events: 2, rules: 0, connections: 2 }
+    }
+    const report = compareModelToExpectation(document, 'model-1', expectation)
+    expect(report.rows, JSON.stringify(report.rows)).toHaveLength(0)
+    expect(report.pass).toBe(true)
+  })
+
+  it('drops whitespace-only free text so it is never a phantom note', () => {
+    const definitions: ArisObjectDefinition[] = [
+      objectDefinition('od-start', 'OT_EVT', 'Start'),
+      objectDefinition('od-f', 'OT_FUNC', 'Only step'),
+      objectDefinition('od-end', 'OT_EVT', 'End')
+    ]
+    const occurrences: ArisObjectOccurrence[] = [
+      objectOccurrence('occ-start', 'od-start', 'model-1', 'ST_EV', 100, 10, 40, 30),
+      objectOccurrence('occ-f', 'od-f', 'model-1', 'ST_FUNC', 80, 60, 80, 40),
+      objectOccurrence('occ-end', 'od-end', 'model-1', 'ST_EV', 100, 120, 40, 30)
+    ]
+    const connectionDefinitions: ArisConnectionDefinition[] = [
+      connectionDefinition('cd1', 'CT_ACTIV_1', 'od-start', 'od-f'),
+      connectionDefinition('cd2', 'CT_CRT_1', 'od-f', 'od-end')
+    ]
+    const connectionOccurrences: ArisConnectionOccurrence[] = [
+      connectionOccurrence('cx1', 'cd1', 'model-1', 'occ-start', 'occ-f'),
+      connectionOccurrence('cx2', 'cd2', 'model-1', 'occ-f', 'occ-end')
+    ]
+    const model = makeModel(occurrences, connectionOccurrences, [
+      freeText('ft-empty', 'model-1', '   \n\t  ')
+    ])
+    const document = makeDocument(model, definitions, connectionDefinitions)
+    const expectation: FidelityExpectationDoc = {
+      modelKey: 'empty-note',
+      modelIdHint: 'model-1',
+      nameEn: 'Empty note model',
+      spine: [evt('Start'), fn('Only step'), evt('End')],
+      satellites: {},
+      gates: [],
+      notes: [],
+      counts: { functions: 1, events: 2, rules: 0, connections: 2 }
+    }
+    const report = compareModelToExpectation(document, 'model-1', expectation)
+    expect(report.rows.filter((row) => row.category === 'note')).toHaveLength(0)
+    expect(report.rows, JSON.stringify(report.rows)).toHaveLength(0)
+    expect(report.pass).toBe(true)
   })
 })

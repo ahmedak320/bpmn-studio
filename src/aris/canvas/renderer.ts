@@ -40,9 +40,10 @@ import {
   type ArisBusinessObject,
   type ArisConnectionLabelBusinessObject,
   type ArisLabelFont,
+  type ArisOccurrenceAttributeLabel,
   type ArisOccurrenceStyleView
 } from './elements'
-import { svgAppend, svgElement } from './svg'
+import { ensureArrowMarker, svgAppend, svgElement } from './svg'
 
 const DEFAULT_STROKE = '#334155'
 const DEFAULT_FILL = '#ffffff'
@@ -314,6 +315,27 @@ function drawLabelText(
 }
 
 /**
+ * A read-only attribute annotation (a function's process-code / id numbering) painted inside the
+ * occurrence's own group, centred in its pre-resolved local rectangle. Marked
+ * `data-aris-attribute-label` — distinct from the name caption's `data-aris-caption` — so it is
+ * never mistaken for the editable caption.
+ */
+function drawAttributeLabel(label: ArisOccurrenceAttributeLabel): SVGElement {
+  const node = svgElement('text', {
+    x: round(label.x + label.width / 2),
+    y: round(label.y + label.height / 2),
+    'text-anchor': 'middle',
+    'dominant-baseline': 'middle',
+    'font-size': CAPTION_FONT_SIZE,
+    fill: CAPTION_FILL,
+    'data-aris-attribute-label': label.attributeType,
+    ...rtlTextAttrs(label.text)
+  })
+  node.textContent = label.text
+  return node
+}
+
+/**
  * The marker a `SymbolFlag="SYMBOL"` placement draws *instead of* its text.
  *
  * ARIS renders such a placement as the attribute's own glyph — a boolean
@@ -417,6 +439,9 @@ export class ArisRenderer extends BaseRenderer {
       if (businessObject.name) {
         svgAppend(group, drawCaption(businessObject.name, shape.width, shape.height))
       }
+      for (const label of businessObject.attributeLabels ?? []) {
+        svgAppend(group, drawAttributeLabel(label))
+      }
       svgAppend(parentGfx, group)
       return group
     }
@@ -493,7 +518,10 @@ export class ArisRenderer extends BaseRenderer {
     if (businessObject?.kind === 'connection') {
       line.setAttribute('data-aris-connection-type', businessObject.connectionType)
     }
+    // EPC control flow is directed; the arrowhead marks the target end. The marker is shared
+    // per stroke colour across the whole diagram (see `ensureArrowMarker`).
     parentGfx.appendChild(line)
+    line.setAttribute('marker-end', `url(#${ensureArrowMarker(parentGfx, CONNECTION_STROKE)})`)
     return line
   }
 

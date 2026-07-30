@@ -43,6 +43,27 @@ export interface ArisOccurrenceStyleView {
   readonly lineStyle: string | null
 }
 
+/**
+ * A non-`AT_NAME` attribute occurrence painted as read-only annotation *inside* the occurrence's
+ * own group — the process-code / id numbering that ARIS draws beside a function symbol.
+ *
+ * Unlike the external `AT_NAME` caption (a first-class `ArisLabelBusinessObject`: selectable,
+ * editable, independently movable), these are decoration: the rectangle is pre-resolved in the
+ * occurrence's local coordinate space and the renderer only paints text into it. Keeping them on
+ * the occurrence's group — not as separate label elements — means they never become spurious
+ * edit/drag targets and never reach the derived export, which reads the working document's
+ * `attributeOccurrences` directly and is never touched here.
+ */
+export interface ArisOccurrenceAttributeLabel {
+  readonly attributeType: string
+  readonly text: string
+  /** Local rectangle (relative to the occurrence's own box) the text is centred in. */
+  readonly x: number
+  readonly y: number
+  readonly width: number
+  readonly height: number
+}
+
 export interface ArisOccurrenceBusinessObject {
   readonly kind: 'occurrence'
   readonly modelId: string
@@ -53,6 +74,8 @@ export interface ArisOccurrenceBusinessObject {
   readonly symbolNum: string
   readonly name: string
   readonly style: ArisOccurrenceStyleView
+  /** Read-only numbering/annotation placements drawn inside the occurrence's group. */
+  readonly attributeLabels?: readonly ArisOccurrenceAttributeLabel[]
 }
 
 export interface ArisConnectionBusinessObject {

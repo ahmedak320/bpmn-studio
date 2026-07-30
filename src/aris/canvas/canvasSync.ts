@@ -24,7 +24,8 @@ import type {
   ArisModel,
   ArisObjectOccurrence,
   ArisPoint,
-  ArisStyleCatalog
+  ArisStyleCatalog,
+  ArisWorkingDocument
 } from '../model/types'
 import { ArisDocumentStore } from './documentStore'
 import { DEFAULT_LOCALE_ID } from './emptyDocument'
@@ -43,6 +44,7 @@ import {
   type ArisLabelFont,
   type ArisLaneBusinessObject,
   type ArisModelBusinessObject,
+  type ArisOccurrenceAttributeLabel,
   type ArisOccurrenceBusinessObject
 } from './elements'
 import { measureTextWidth } from '../renderer/textWrap'
@@ -383,7 +385,8 @@ export class ArisCanvasSync {
           strokeColor: occurrence.style.strokeColor,
           strokeWidth: occurrence.style.strokeWidth,
           lineStyle: occurrence.style.lineStyle
-        })
+        }),
+        attributeLabels: occurrenceAttributeLabels(this.store.document, occurrence)
       })
       this.upsertShape(occurrence.id, occurrence.bounds, businessObject, dirty)
     }
@@ -677,6 +680,86 @@ export function externalNameRect(placement: ExternalNamePlacement, owner: ArisRe
     width: placement.width ?? EXTERNAL_LABEL_DEFAULT_WIDTH,
     height: placement.height ?? EXTERNAL_LABEL_DEFAULT_HEIGHT
   })
+}
+
+/**
+ * The stored text of one attribute type for an occurrence: the occurrence-local source attribute
+ * value first (an occurrence may override its definition), then the definition's own attribute.
+ * `null` when neither carries a non-empty value. Reads only the working document — never a canvas
+ * element — so it is safe to call every sync.
+ */
+function resolveOccurrenceAttributeText(
+  document: ArisWorkingDocument,
+  occurrence: ArisObjectOccurrence,
+  attributeType: string
+): string | null {
+  for (const attribute of document.sourceIndex.attributes) {
+    if (attribute.parsed.ownerSourceId !== occurrence.id) continue
+    if (attribute.parsed.attributeType !== attributeType) continue
+    for (const value of attribute.parsed.values) {
+      const text = value.text.trim()
+      if (text) return text
+    }
+  }
+  const definition = document.objectDefinitions.get(occurrence.definitionId)
+  if (definition) {
+    for (const attribute of definition.attributes) {
+      if (attribute.type !== attributeType) continue
+      const text = attribute.values[0]?.text.trim()
+      if (text) return text
+    }
+  }
+  return null
+}
+
+/**
+ * The read-only attribute annotations drawn inside an occurrence's group: every non-`AT_NAME`
+ * `<AttrOcc>` that both (a) places itself outside the symbol — a non-zero offset, since a zero
+ * offset means "inside", which the caption already owns — and (b) resolves to stored text. This is
+ * what paints a function's `AT_PROC_CODE` / `AT_ID` numbering beside its symbol. Geometry reuses
+ * `externalNameRect` in the occurrence's local coordinate space, so a numbering annotation tracks
+ * its owner exactly as the external caption does. The source `<AttrOcc>` records are read, never
+ * rewritten (§12.2).
+ */
+export function occurrenceAttributeLabels(
+  document: ArisWorkingDocument,
+  occurrence: ArisObjectOccurrence
+): readonly ArisOccurrenceAttributeLabel[] {
+  const localOwner: ArisRect = {
+    x: 0,
+    y: 0,
+    width: occurrence.bounds.width,
+    height: occurrence.bounds.height
+  }
+  const labels: ArisOccurrenceAttributeLabel[] = []
+  for (const placement of occurrence.attributeOccurrences) {
+    if (placement.attributeType === AT_NAME) continue
+    const offsetX = placement.offsetX ?? 0
+    const offsetY = placement.offsetY ?? 0
+    if (offsetX === 0 && offsetY === 0) continue
+    const text = resolveOccurrenceAttributeText(document, occurrence, placement.attributeType)
+    if (!text) continue
+    const rect = externalNameRect(
+      {
+        offsetX,
+        offsetY,
+        width: positiveOrNull(placement.width),
+        height: positiveOrNull(placement.height)
+      },
+      localOwner
+    )
+    labels.push(
+      Object.freeze({
+        attributeType: placement.attributeType,
+        text,
+        x: rect.x,
+        y: rect.y,
+        width: rect.width,
+        height: rect.height
+      })
+    )
+  }
+  return Object.freeze(labels)
 }
 
 /**

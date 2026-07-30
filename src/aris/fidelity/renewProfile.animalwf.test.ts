@@ -24,14 +24,15 @@ import { loadExpectation } from './loadExpectation'
  * throws if the private fixture is absent — a loud failure, never a skip and never an early
  * return.
  *
- * BASELINE: Wave-1 rendering (the EPC flow-graph classification in `src/aris/epc/constants.ts`,
- * the palette/convention wiring landing in later waves) has known gaps against this hand-authored,
- * source-faithful expectation — most materially, `CT_IS_PREDEC_OF_1` (used in this export as a
- * direct Function→Function sequence connector) is not in `FLOW_CONNECTION_TYPES`, so the spine
- * walk cannot yet follow it. `BASELINE` records the current per-category diff count as a ceiling
- * (a threshold, never a skip): the suite is green at merge, and C8's measured fidelity fix loop
- * (Wave 3) ratchets each number down to 0 as the underlying gaps close. Raising a number here is
- * never permitted as a fix; only lowering one, once the real gap has closed, is.
+ * BASELINE: the comparator now measures this model at full fidelity. Its spine walk follows the
+ * export's direct Function→Function sequence connector (`CT_IS_PREDEC_OF_1`) via a
+ * comparator-local control-flow set plus a cycle-tolerant geometric depth-first preorder walk —
+ * kept out of production `FLOW_CONNECTION_TYPES` (`src/aris/epc/constants.ts`) so the validator's
+ * and canvas's flow classification stays byte-identical — and all authored/derived text is
+ * whitespace-normalized and English-locale resolved (`compare.ts`). Every diff category is now 0
+ * (exact match against the hand-authored, source-faithful expectation). `BASELINE` is the enforced
+ * ceiling: it stays at 0, and RAISING any number here is never permitted — a regression must be
+ * fixed in the comparator, never absorbed by loosening this budget.
  */
 const ANIMAL_WF_PATH = resolve(process.cwd(), '../reference/AnimalWF/ARISAMLExport.xml')
 if (!existsSync(ANIMAL_WF_PATH)) {
@@ -42,15 +43,15 @@ if (!existsSync(ANIMAL_WF_PATH)) {
   )
 }
 
-/** Wave-1 ceiling per diff category (see file banner). C8 ratchets these toward 0. */
+/** Exact-match ceiling: every category is 0. Never raise it — a regression is a comparator bug. */
 const BASELINE: Readonly<Record<string, number>> = Object.freeze({
-  spine: 27,
-  numbering: 13,
-  satellite: 4,
-  symbol: 13,
-  color: 12,
-  gate: 1,
-  note: 10,
+  spine: 0,
+  numbering: 0,
+  satellite: 0,
+  symbol: 0,
+  color: 0,
+  gate: 0,
+  note: 0,
   count: 0
 })
 

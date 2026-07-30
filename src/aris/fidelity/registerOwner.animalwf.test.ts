@@ -26,11 +26,14 @@ import { loadExpectation } from './loadExpectation'
  * throws if the private fixture is absent — a loud failure, never a skip and never an early
  * return.
  *
- * BASELINE: see `renewProfile.animalwf.test.ts` for the full rationale (most materially,
- * `CT_IS_PREDEC_OF_1` — this export's direct Function→Function sequence connector — is not yet in
- * `FLOW_CONNECTION_TYPES`, and this model chains it far more than any other). A threshold, never a
- * skip: the suite is green at merge, and C8's measured fidelity fix loop (Wave 3) ratchets each
- * number down to 0.
+ * BASELINE: see `renewProfile.animalwf.test.ts` for the full rationale. This is the largest and
+ * most deeply-branched model (14 functions, 9 nested XOR gates, return-loop cycles); the
+ * comparator now measures it at full fidelity — the geometric depth-first spine walk is
+ * cycle-tolerant, so the nested-XOR return loops that previously stalled a topological walk are
+ * emitted exactly once each, and whitespace-normalized / English-locale-resolved names close the
+ * satellite and note gaps. Every diff category is now 0 (exact match). `BASELINE` is the enforced
+ * ceiling: it stays at 0, and RAISING any number here is never permitted — a regression must be
+ * fixed in the comparator, never absorbed by loosening this budget.
  */
 const ANIMAL_WF_PATH = resolve(process.cwd(), '../reference/AnimalWF/ARISAMLExport.xml')
 if (!existsSync(ANIMAL_WF_PATH)) {
@@ -41,15 +44,15 @@ if (!existsSync(ANIMAL_WF_PATH)) {
   )
 }
 
-/** Wave-1 ceiling per diff category (see file banner). C8 ratchets these toward 0. */
+/** Exact-match ceiling: every category is 0. Never raise it — a regression is a comparator bug. */
 const BASELINE: Readonly<Record<string, number>> = Object.freeze({
-  spine: 48,
-  numbering: 11,
-  satellite: 32,
-  symbol: 14,
-  color: 13,
-  gate: 3,
-  note: 10,
+  spine: 0,
+  numbering: 0,
+  satellite: 0,
+  symbol: 0,
+  color: 0,
+  gate: 0,
+  note: 0,
   count: 0
 })
 
