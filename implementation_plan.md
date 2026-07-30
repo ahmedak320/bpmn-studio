@@ -1136,7 +1136,7 @@ npx playwright test tests/e2e/aris-explorer-tree.spec.ts tests/e2e/aris-new-mode
 
 ## Wave 9 — Final verification & ship (orchestrator + sonnet-med doc lane)
 
-- [ ] Full suite:
+- [x] Full suite:
 
   ```bash
   npm run format:check && npm run lint && npm run typecheck \
@@ -1146,8 +1146,10 @@ npx playwright test tests/e2e/aris-explorer-tree.spec.ts tests/e2e/aris-new-mode
     && npm run build:aris && npm run check:aris-studio-artifact && npm run check:size
   ```
 
-- [ ] Sonnet doc lane: tick every remaining checkbox in this file; fill the "Resolution evidence" section below (one entry per issue with the command/test that proves it).
-- [ ] Orchestrator: final commit (with fresh artifact) + push + final report per `goal.md`.
+  **Result — all green.** format/lint/typecheck/check:aris-runtime-boundary/check:ui-copy/check:no-skips/check:lite-only/check:actions → EXIT 0; `npm test` → 333 files / 4160 tests passed; Playwright e2e run per-engine (each with its own 600s budget, since the combined 3-engine run brushes the suite's 600s `globalTimeout`) → **chromium 74 · firefox 74 · webkit 74, all passed**; `build:aris` + `check:aris-studio-artifact` (release == dist) + `check:size` → EXIT 0. Artifact `release/OrbitPM-ARIS-Studio-Lite.html`: 1,766,034 bytes, SHA-256 `5c5eaa60469a70f3cbf509f594c25970c080fca263852e15a8cf2a4bdcf8d6ec`.
+
+- [x] Sonnet doc lane: tick every remaining checkbox in this file; fill the "Resolution evidence" section below (one entry per issue with the command/test that proves it). _(Completed by the orchestrator together with the final commit.)_
+- [x] Orchestrator: final commit (with fresh artifact) + push + final report per `goal.md`.
 
 ---
 
@@ -1182,8 +1184,8 @@ npx playwright test tests/e2e/aris-explorer-tree.spec.ts tests/e2e/aris-new-mode
 
 ## Resolution evidence (Wave 9 fills this in)
 
-- Issue 1 (folder tree): _(pending)_
-- Issue 2 (drawing/new model): _(pending)_
-- Issue 3 (chatbot): _(pending)_
-- Issue 4 (generate panel): _(pending)_
-- Issue 5 (translation + fix): _(pending)_
+- Issue 1 (folder tree): FolderTreeLite wired for directory/OPFS workspaces via `useArisExplorerActions` (CRUD: new-folder/rename/move/drag-move/delete/import-drop; `.orbitpm/**` hidden; single-file keeps the flat list). Proven by `src/workspace/__tests__/liteTreeFromEntries.test.ts`, `src/aris/shell/__tests__/arisExplorerActions.test.tsx`, the directory-mode tree tests in `src/ArisApp.test.tsx`, and e2e `tests/e2e/aris-explorer-tree.spec.ts` (chromium/firefox/webkit).
+- Issue 2 (drawing/new model): New-model dialog creates a blank EPC (writeAtomic `.aml` in directory mode / virtual tab single-file / picker), drawn on via a labeled + localized + iconed palette with a movable, persisted position and an empty-model hint; edits undo via Ctrl+Z. Proven by `src/aris/shell/arisBlankModel.test.ts`, the new-model-flow tests in `src/ArisApp.test.tsx`, `src/aris/shell/__tests__/emptyModelHint.test.tsx`, and e2e `tests/e2e/aris-new-model.spec.ts` + `tests/e2e/aris-authoring.spec.ts` (palette labels + grip).
+- Issue 3 (chatbot): 💬 FAB opens the right-edge `ArisChatDrawer` (library tab = key-free grounded Q&A with source chips + AI-on-miss behind the kept consent card; interview tab = gap-scan applying undoable changes); the old assistant modal is deleted; the "Generate with AI" header is a real collapse toggle. Proven by `ArisChatDrawer.test.tsx`, `ArisChatDrawer.aiGate.test.tsx`, `arisChatDrawerSession.test.ts`, the re-scripted interview test in `src/ArisApp.test.tsx`, and e2e `tests/e2e/aris-authoring.spec.ts`.
+- Issue 4 (generate panel): `ArisGenerationPanel` rebuilt to AiPanelLite visuals — Name + per-tab source + provider/model only; model-type/consent/outbound-preview/context controls removed; generation uses `'auto-detect'`; Excel tab keeps both template downloads. Proven by `arisCreatePanel.test.tsx`, `arisCreateDocumentAi.test.tsx`, `arisCreateDescriptionContext.test.tsx`, and e2e `tests/e2e/lite-mandatory-ai-security.spec.ts` + `tests/e2e/lite-providers.spec.ts` (no `[data-orbitpm-aris-create-consent]` in the DOM).
+- Issue 5 (translation + fix): diagram labels follow the app EN⇄AR toggle with a per-diagram override (zero-undo view switch, fallback never blanks); Translate action feeds the surviving `TranslationReviewDialog` (free Google→MyMemory chain always, AI when keyed); generated models auto-translate silently (toast + one undo + pref opt-out); opened files show the untranslated badge; a "N issues — Fix…" badge opens the three-tier fix dialog (safe fills / confirm-gated deterministic proposals with full-cluster delete cascade / route to the chat interview). Proven by `src/aris/canvas/contentLanguage.test.ts`, `src/aris/localization/__tests__/*`, `arisTranslateController.test.tsx`, `src/aris/chat/deterministicFixes.test.ts`, and e2e `tests/e2e/lite-mandatory-translation.spec.ts`.

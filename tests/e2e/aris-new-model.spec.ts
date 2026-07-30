@@ -20,9 +20,13 @@ test.beforeAll(() => {
 
 async function gotoLanding(page: Page): Promise<void> {
   await page.addInitScript(() => {
-    if (!window.name.includes('orbitpm-e2e-cleared')) {
+    // WebKit resets window.name to '' across a file:// reload (file:// pages
+    // are opaque origins), so a window.name guard re-clears storage on every
+    // reload there. localStorage itself DOES persist across file:// reloads on
+    // all three engines, so the first-load sentinel lives in localStorage.
+    if (!localStorage.getItem('orbitpm.e2e.cleared')) {
       localStorage.clear()
-      window.name += ' orbitpm-e2e-cleared'
+      localStorage.setItem('orbitpm.e2e.cleared', '1')
     }
     Object.defineProperty(window, 'showDirectoryPicker', { configurable: true, value: undefined })
     Object.defineProperty(window, 'showOpenFilePicker', { configurable: true, value: undefined })
