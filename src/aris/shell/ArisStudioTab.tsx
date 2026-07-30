@@ -13,7 +13,7 @@
  * the clean layout exactly.
  */
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react'
 
 import { t } from '../../i18n'
 import type { ArisCanvas } from '../canvas/ArisCanvas'
@@ -49,7 +49,9 @@ import {
   type ArisCanvasHistoryState,
   type ArisCanvasSelectionState
 } from './ArisCanvasView'
+import { PaneResizer } from '../../common/PaneResizer'
 import { ArisDetailsRail } from './ArisDetailsRail'
+import { ARIS_RAIL_MAX_WIDTH, ARIS_RAIL_MIN_WIDTH, useArisRailLayout } from './arisRailLayout'
 import type { ArisDetailsEditingApi } from './arisDetailsEditing'
 import { arisText, buildArisDetailsDocument, type ArisStudioDocument } from './arisStudioDocument'
 import {
@@ -180,6 +182,9 @@ export function ArisStudioTab({
   const [canvasTick, setCanvasTick] = useState(0)
   const translateRef = useRef<ArisTranslateControllerHandle | null>(null)
   const [fixDialogOpen, setFixDialogOpen] = useState(false)
+  const dir: 'ltr' | 'rtl' = lang === 'ar' ? 'rtl' : 'ltr'
+  const railId = `orbitpm-aris-rail-${useId().replaceAll(':', '')}`
+  const rail = useArisRailLayout()
 
   const renderableModelId = useMemo(() => {
     if (modelId && studio.models.some((model) => model.id === modelId && model.renderable)) {
@@ -228,6 +233,14 @@ export function ArisStudioTab({
   useEffect(() => {
     canvasRef.current?.setContentLanguage(contentLang)
   }, [contentLang, canvasTick])
+
+  // The diagram-js canvas caches its viewport box and there is no ResizeObserver
+  // (ArisCanvasView re-measures only on activate/model-switch), so a rail
+  // collapse or width drag must re-measure explicitly. View-only: the zoom
+  // level is untouched.
+  useEffect(() => {
+    canvasRef.current?.canvas.resized()
+  }, [rail.collapsed, rail.width])
 
   const modelName = useMemo(() => {
     const summary = studio.models.find((model) => model.id === renderableModelId)
@@ -581,9 +594,8 @@ export function ArisStudioTab({
     <section
       aria-label={t('aris.placeholder.mainAria', { name: title })}
       style={{
-        display: 'grid',
-        gridTemplateColumns: 'minmax(0, 1fr) minmax(300px, 380px)',
-        gap: 16,
+        display: 'flex',
+        alignItems: 'stretch',
         padding: '1rem',
         minHeight: 0,
         height: '100%'
@@ -595,7 +607,8 @@ export function ArisStudioTab({
           minHeight: 0,
           display: 'grid',
           gridTemplateRows: 'auto minmax(0, 1fr)',
-          gap: 12
+          gap: 12,
+          flex: '1 1 auto'
         }}
       >
         <header
@@ -831,9 +844,48 @@ export function ArisStudioTab({
         )}
       </div>
 
+      <button
+        type="button"
+        className="orbitpm-lite-rail"
+        data-orbitpm-aris-rail-collapse=""
+        // .orbitpm-lite-rail draws its divider on the inline-end edge (built for the
+        // left explorer); this rail sits on the inline-end side, so flip the border.
+        style={{ borderInlineEnd: 'none', borderInlineStart: '1px solid var(--orbitpm-border)' }}
+        onClick={() => rail.setCollapsed(!rail.collapsed)}
+        aria-label={tk('aris.rail.toggle.aria', 'Show or hide the details rail')}
+        title={tk('aris.rail.toggle.aria', 'Show or hide the details rail')}
+        aria-expanded={!rail.collapsed}
+        aria-controls={railId}
+      >
+        <span aria-hidden>
+          {lang === 'ar' ? (rail.collapsed ? '⟩' : '⟨') : rail.collapsed ? '⟨' : '⟩'}
+        </span>
+      </button>
+      {!rail.collapsed && (
+        <div data-orbitpm-aris-rail-resize="" style={{ display: 'flex', alignSelf: 'stretch' }}>
+          <PaneResizer
+            edge="inline-start"
+            dir={dir}
+            width={rail.width}
+            min={ARIS_RAIL_MIN_WIDTH}
+            max={ARIS_RAIL_MAX_WIDTH}
+            onWidthChange={rail.setWidth}
+            onReset={rail.resetWidth}
+            ariaLabel={tk('aris.rail.resize.aria', 'Resize the details rail')}
+          />
+        </div>
+      )}
+
       <aside
+        id={railId}
         className="orbitpm-aris-rail"
+        data-orbitpm-aris-rail=""
         aria-label={tk('aris.rail.aria', 'ARIS details and accounting rails')}
+        style={{
+          display: rail.collapsed ? 'none' : undefined,
+          inlineSize: rail.width,
+          flex: '0 0 auto'
+        }}
       >
         <ArisDetailsRail
           details={detailsDocument}
