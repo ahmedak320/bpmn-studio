@@ -18,7 +18,8 @@
  * "new core control-flow connection" per 18.4, distinguished only by the `isReturnBackEdge`
  * flag, which does not change the classification), `setAssignment` (model assignment),
  * `reconnect` (reconnection/retargeting), `deleteConnection`/`deleteOccurrence`/
- * `deleteDefinition` (deletion), `removeAttachment` (attachment removal).
+ * `deleteDefinition`/`deleteConnectionDefinition` (deletion), `removeAttachment` (attachment
+ * removal).
  *
  * `setRoute` is deliberately classified `confirm` even though moving a connection's bend points
  * changes no semantic content and is not destructive: plan 18.4 enumerates the automatic set
@@ -30,7 +31,8 @@
  * ## The one invariant that must never break
  *
  * No destructive command (`deleteConnection`, `deleteOccurrence`, `deleteDefinition`,
- * `removeAttachment`) and no topology-changing command (`addCoreObject`, `addCoreConnection`,
+ * `deleteConnectionDefinition`, `removeAttachment`) and no topology-changing command
+ * (`addCoreObject`, `addCoreConnection`,
  * `reconnect`, `setAssignment`) may ever be classified `automatic`. `classification.test.ts`
  * enumerates the full command-kind space and asserts this for every one of them, so a future
  * edit that moves one of these kinds into `AUTOMATIC_COMMAND_KINDS` fails loudly.
@@ -38,7 +40,7 @@
  * ## Overrides
  *
  * Two override conditions from plan 18.4 — "ID change" and "ambiguous target" — do not
- * correspond to any field on the fifteen commands today (none of them renames an id), so they
+ * correspond to any field on the sixteen commands today (none of them renames an id), so they
  * are modeled as caller-supplied flags on `ArisChatClassificationContext` rather than baked
  * into any one command's schema. A caller that resolves a command's targets against the live
  * document and finds more than one candidate, or that detects the command would change an
@@ -68,6 +70,7 @@ export const DESTRUCTIVE_COMMAND_KINDS: ReadonlySet<ArisChatCommandKind> = Objec
     'deleteConnection',
     'deleteOccurrence',
     'deleteDefinition',
+    'deleteConnectionDefinition',
     'removeAttachment'
   ])
 )

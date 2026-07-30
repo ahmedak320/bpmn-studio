@@ -226,6 +226,7 @@ function ArisTranslateControllerInner(
 
   const abortRef = useRef<AbortController | null>(null)
   const autoRanRef = useRef(false)
+  const autoControllerRef = useRef<AbortController | null>(null)
 
   // The imperative seam always calls the latest closure, so the handle can be
   // created once (no re-subscription for the toolbar that holds the ref).
@@ -298,6 +299,11 @@ function ArisTranslateControllerInner(
 
   // Abort any in-flight run when the controller unmounts.
   useEffect(() => () => abortRef.current?.abort(), [])
+
+  // Abort the silent auto-translate run only when the controller unmounts — the
+  // auto-run effect deliberately owns no cleanup so a churning dep (getCanvas)
+  // can't abort its own in-flight run one commit later.
+  useEffect(() => () => autoControllerRef.current?.abort(), [])
 
   const providers = useMemo(() => {
     const options: { id: string; label: string; description: string }[] = []
@@ -487,6 +493,7 @@ function ArisTranslateControllerInner(
     autoRanRef.current = true
 
     const controller = new AbortController()
+    autoControllerRef.current = controller
     void (async () => {
       const target = contentLang === 'en' ? 'ar' : 'en'
       const result = buildArisLocalizationReview({
@@ -546,8 +553,6 @@ function ArisTranslateControllerInner(
       )
       for (const proposal of autoProposals) onAcceptedPair?.(proposalPair(proposal))
     })()
-
-    return () => controller.abort()
   }, [autoTranslateEligible, getCanvas, contentLang, resources, onToast, onAcceptedPair])
 
   if (!open || !session) return null

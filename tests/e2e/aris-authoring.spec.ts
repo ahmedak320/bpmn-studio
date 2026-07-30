@@ -180,6 +180,13 @@ test('the palette offers a create entry for every supported ARIS object type and
   const palette = page.locator('[data-orbitpm-aris-canvas] .djs-palette')
   await expect(palette).toBeVisible()
 
+  // Every palette entry renders a human-readable label (§11.4 create entries plus
+  // the free-text annotation), and the drag grip is wired onto the palette.
+  await expect
+    .poll(async () => palette.locator('.aris-palette-entry__label').count())
+    .toBeGreaterThanOrEqual(15)
+  await expect(palette.locator('.orbitpm-palette-grip')).toHaveCount(1)
+
   // Every supported type is offered — and nothing that is not supported is.
   for (const action of PALETTE_CREATE_ACTIONS) {
     await expect(
@@ -288,7 +295,15 @@ test('the context pad appends, connects and deletes on the real canvas, and undo
 async function completeSafeFields(
   page: Page
 ): Promise<{ gapsBefore: string; answered: number; gapCountLabel: () => Promise<string> }> {
-  const rail = page.locator('[data-orbitpm-aris-chat]')
+  // The gap-completion interview now lives in the chat drawer's "Complete this
+  // process" tab (authorized product change #4: the improve rail was removed and
+  // its interview moved into the drawer). Open the drawer, switch to that tab,
+  // and drive the same `data-orbitpm-aris-chat-*` interview surface.
+  await page.getByRole('banner').getByRole('button', { name: 'Assistant', exact: true }).click()
+  const drawer = page.getByRole('dialog', { name: 'Process assistant', exact: true })
+  await expect(drawer).toBeVisible()
+  await drawer.getByRole('tab', { name: 'Complete this process' }).click()
+  const rail = drawer.locator('[data-orbitpm-aris-chat]')
   await expect(rail).toBeVisible()
   // §18.1: the deterministic gap scanner runs on the LIVE document, with no key.
   await expect
@@ -296,8 +311,11 @@ async function completeSafeFields(
       timeout: 60_000
     })
     .toBeGreaterThan(0)
+  // The drawer's interview intro carries the live gap count ("…found N gap(s)…"),
+  // re-scanned after every apply/undo; its whole text is stable except that
+  // count, so it stands in for the removed rail's "{N} gaps found" line.
   const gapCountLabel = async (): Promise<string> =>
-    (await rail.getByText(/gaps found$/u).innerText()).trim()
+    (await rail.getByText(/found \d+ gap\(s\)/u).innerText()).trim()
   const gapsBefore = await gapCountLabel()
 
   await rail.locator('[data-orbitpm-aris-chat-start]').click()
@@ -379,7 +397,7 @@ test('the process assistant answers a folder question with no provider key, and 
   await dialog
     .locator('[data-orbitpm-aris-assistant-question]')
     .fill('Which processes are available?')
-  await dialog.getByRole('button', { name: 'Ask', exact: true }).click()
+  await dialog.getByRole('button', { name: 'Send', exact: true }).click()
 
   const answer = dialog.locator('[data-orbitpm-aris-assistant-answer]')
   await expect(answer).toBeVisible()

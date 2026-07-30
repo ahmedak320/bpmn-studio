@@ -32,6 +32,7 @@ const EXPECTED_CLASSIFICATION: Readonly<Record<ArisChatCommandKind, ArisChatClas
   deleteConnection: 'confirm',
   deleteOccurrence: 'confirm',
   deleteDefinition: 'confirm',
+  deleteConnectionDefinition: 'confirm',
   removeAttachment: 'confirm'
 }
 
@@ -40,7 +41,7 @@ describe('classifyCommandKind — exhaustive, one assertion per command (table i
     expect(classifyCommandKind(kind)).toBe(EXPECTED_CLASSIFICATION[kind])
   })
 
-  it('covers every one of the fifteen command kinds — no kind is left unclassified', () => {
+  it('covers every one of the sixteen command kinds — no kind is left unclassified', () => {
     expect(Object.keys(EXPECTED_CLASSIFICATION).sort()).toEqual([...ARIS_CHAT_COMMAND_KINDS].sort())
   })
 })
@@ -67,6 +68,7 @@ describe('the invariant: no destructive or topology-changing command is ever aut
   it('every destructive kind is present and is confirm-required (enumeration is not vacuous)', () => {
     expect([...DESTRUCTIVE_COMMAND_KINDS].sort()).toEqual([
       'deleteConnection',
+      'deleteConnectionDefinition',
       'deleteDefinition',
       'deleteOccurrence',
       'removeAttachment'

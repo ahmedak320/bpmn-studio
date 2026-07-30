@@ -82,6 +82,8 @@ function validPayloadFor(kind: (typeof ARIS_CHAT_COMMAND_KINDS)[number]): unknow
       return { occurrenceId: 'O1' }
     case 'deleteDefinition':
       return { definitionId: 'D1' }
+    case 'deleteConnectionDefinition':
+      return { definitionId: 'CD1' }
     case 'removeAttachment':
       return { attachmentId: 'A1', ownerId: 'D1' }
   }
@@ -216,7 +218,7 @@ describe('arisPatchProposalSchema / parseArisPatchProposal', () => {
 })
 
 describe('ARIS_CHAT_COMMAND_KINDS', () => {
-  it('is exactly the fifteen commands plan 18.3 lists, in that order', () => {
+  it('is exactly the sixteen commands plan 18.3 lists, in that order', () => {
     expect(ARIS_CHAT_COMMAND_KINDS).toEqual([
       'setLocalizedName',
       'setAttribute',
@@ -232,8 +234,9 @@ describe('ARIS_CHAT_COMMAND_KINDS', () => {
       'deleteConnection',
       'deleteOccurrence',
       'deleteDefinition',
+      'deleteConnectionDefinition',
       'removeAttachment'
     ])
-    expect(ARIS_CHAT_COMMAND_KINDS).toHaveLength(15)
+    expect(ARIS_CHAT_COMMAND_KINDS).toHaveLength(16)
   })
 })

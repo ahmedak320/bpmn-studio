@@ -27,10 +27,10 @@
  * | missingReturnTarget             | C    | needs the return destination                               |
  * | missingStartOrEndEvent          | B    | addCoreObject (OT_EVT) + addCoreConnection to/from func     |
  * | invalidSequence                 | C    | needs a human to repair the alternation                    |
- * | danglingObjectOrConnection      | B    | deleteOccurrence / deleteConnection per resolvable target  |
+ * | danglingObjectOrConnection      | B    | full-cluster cascade (see `buildDanglingClusterCommands`)   |
  * | missingLinkedModel              | C    | needs the model to link                                    |
  * | missingAttachment               | C    | needs the file to attach                                   |
- * | unusedDefinition                | B/C  | B: deleteDefinition (object def); connection def ⇒ C        |
+ * | unusedDefinition                | B/C  | B: deleteDefinition (object def); standalone connection def ⇒ C (orphaned connection defs are removed inline by the dangling cascade's deleteConnectionDefinition) |
  * | unaccountedSourceContent        | C    | needs a human to account for the source record             |
  *
  * ## Determinism & boundary
@@ -157,13 +157,6 @@ function modelIdForOccurrence(document: ArisChatWorkingDocument, id: string): st
 function isConnectionOccurrence(document: ArisChatWorkingDocument, id: string): boolean {
   for (const model of document.models.values()) {
     if (model.connectionOccurrences.some((connection) => connection.id === id)) return true
-  }
-  return false
-}
-
-function isObjectOccurrence(document: ArisChatWorkingDocument, id: string): boolean {
-  for (const model of document.models.values()) {
-    if (model.occurrences.some((occurrence) => occurrence.id === id)) return true
   }
   return false
 }
@@ -297,28 +290,131 @@ function buildStartEndProposal(
   }
 }
 
-/** A deletion command for one dangling target, or `null` when the id no longer resolves. */
-function deleteCommandForTarget(
+/**
+ * Full-cluster cascade for one dangling/orphan gap's targets.
+ *
+ * A bare `deleteOccurrence` on an object occurrence that still has connection occurrences attached
+ * leaves those connections with a dangling endpoint, and the model layer's post-apply
+ * `validateDocument` rejects the whole batch (`dangling-connection-endpoint`) — exactly what the
+ * interactive canvas delete avoids by cascading attached connections first. Cascading connections
+ * ALONE is not enough either: it strands the connection definitions those occurrences were the
+ * last users of, which the gap scan then reports as new `unusedDefinition` gaps (the count rises).
+ * So this emits a FULL cluster, IN ORDER, per object-occurrence target `id`:
+ *   (a) `deleteConnection` for every connection occurrence attached to `id`
+ *       (source or target endpoint), de-duped across the gap's targets via `claimedConnections`;
+ *   (b) the `deleteOccurrence` for `id` itself;
+ *   (c) `deleteConnectionDefinition` for each connection definition left with zero occurrences
+ *       once (a) is applied;
+ *   (d) `deleteDefinition` for the object definition if `id` was its last occurrence.
+ * A connection-occurrence target keeps the bare `deleteConnection` path. Command ids are
+ * deterministic per record id, so a connection/definition shared by two clusters yields the same
+ * command id in each — `ArisFixMissingDialog` de-dupes selected commands by id so select-all never
+ * double-deletes.
+ */
+function buildDanglingClusterCommands(
   document: ArisChatWorkingDocument,
-  id: string
-): ArisChatCommand | null {
-  if (isConnectionOccurrence(document, id)) {
-    return {
-      commandId: `fix-delete-connection::${id}`,
-      kind: 'deleteConnection',
-      targetIds: [id],
-      payload: { connectionOccurrenceId: id }
+  targets: readonly string[]
+): readonly ArisChatCommand[] {
+  const commands: ArisChatCommand[] = []
+  const claimedConnections = new Set<string>()
+  const deletedObjectOccurrences = new Set<string>()
+  const emittedConnectionDefinitions = new Set<string>()
+  const emittedObjectDefinitions = new Set<string>()
+
+  // Document-wide occurrence rosters per definition, so "zero remaining" is exact.
+  const connectionOccurrenceIdsByDefinition = new Map<string, string[]>()
+  const objectOccurrenceIdsByDefinition = new Map<string, string[]>()
+  const objectOccurrenceById = new Map<string, ChatOccurrenceRef>()
+  for (const model of document.models.values()) {
+    for (const connection of model.connectionOccurrences) {
+      const list = connectionOccurrenceIdsByDefinition.get(connection.definitionId) ?? []
+      list.push(connection.id)
+      connectionOccurrenceIdsByDefinition.set(connection.definitionId, list)
+    }
+    for (const occurrence of model.occurrences) {
+      const list = objectOccurrenceIdsByDefinition.get(occurrence.definitionId) ?? []
+      list.push(occurrence.id)
+      objectOccurrenceIdsByDefinition.set(occurrence.definitionId, list)
+      objectOccurrenceById.set(occurrence.id, occurrence)
     }
   }
-  if (isObjectOccurrence(document, id)) {
-    return {
+
+  const emitDeleteConnection = (connectionId: string): void => {
+    if (claimedConnections.has(connectionId)) return
+    claimedConnections.add(connectionId)
+    commands.push({
+      commandId: `fix-delete-connection::${connectionId}`,
+      kind: 'deleteConnection',
+      targetIds: [connectionId],
+      payload: { connectionOccurrenceId: connectionId }
+    })
+  }
+
+  for (const id of targets) {
+    if (isConnectionOccurrence(document, id)) {
+      emitDeleteConnection(id)
+      continue
+    }
+    const occurrence = objectOccurrenceById.get(id)
+    if (!occurrence) continue
+
+    // (a) every connection occurrence whose source/target endpoint is this object occurrence.
+    const attached: { readonly id: string; readonly definitionId: string }[] = []
+    for (const model of document.models.values()) {
+      for (const connection of model.connectionOccurrences) {
+        if (connection.sourceOccurrenceId === id || connection.targetOccurrenceId === id) {
+          attached.push({ id: connection.id, definitionId: connection.definitionId })
+        }
+      }
+    }
+    for (const connection of attached) emitDeleteConnection(connection.id)
+
+    // (b) the dangling object occurrence itself.
+    deletedObjectOccurrences.add(id)
+    commands.push({
       commandId: `fix-delete-occurrence::${id}`,
       kind: 'deleteOccurrence',
       targetIds: [id],
       payload: { occurrenceId: id }
+    })
+
+    // (c) connection definitions left with zero occurrences once (a) is applied.
+    for (const connection of attached) {
+      const definitionId = connection.definitionId
+      if (emittedConnectionDefinitions.has(definitionId)) continue
+      if (!document.connectionDefinitions.has(definitionId)) continue
+      const roster = connectionOccurrenceIdsByDefinition.get(definitionId) ?? []
+      if (roster.every((occurrenceId) => claimedConnections.has(occurrenceId))) {
+        emittedConnectionDefinitions.add(definitionId)
+        commands.push({
+          commandId: `fix-delete-connection-definition::${definitionId}`,
+          kind: 'deleteConnectionDefinition',
+          targetIds: [definitionId],
+          payload: { definitionId }
+        })
+      }
+    }
+
+    // (d) the object definition if this was its last surviving occurrence.
+    const objectDefinitionId = occurrence.definitionId
+    if (
+      !emittedObjectDefinitions.has(objectDefinitionId) &&
+      document.objectDefinitions.has(objectDefinitionId)
+    ) {
+      const roster = objectOccurrenceIdsByDefinition.get(objectDefinitionId) ?? []
+      if (roster.every((occurrenceId) => deletedObjectOccurrences.has(occurrenceId))) {
+        emittedObjectDefinitions.add(objectDefinitionId)
+        commands.push({
+          commandId: `fix-delete-definition::${objectDefinitionId}`,
+          kind: 'deleteDefinition',
+          targetIds: [objectDefinitionId],
+          payload: { definitionId: objectDefinitionId }
+        })
+      }
     }
   }
-  return null
+
+  return commands
 }
 
 // --- planner ----------------------------------------------------------------------------------
@@ -405,11 +501,7 @@ export function buildDeterministicFixPlan(
           gap.messageKey === DANGLING_CONNECTION_MESSAGE_KEY
             ? gap.targetIds.slice(0, 1)
             : gap.targetIds
-        const commands: ArisChatCommand[] = []
-        for (const id of targets) {
-          const command = deleteCommandForTarget(document, id)
-          if (command) commands.push(command)
-        }
+        const commands = buildDanglingClusterCommands(document, targets)
         if (commands.length > 0) {
           confirmProposals.push({ gap, commands, labelKey: PROPOSE_REMOVAL_LABEL_KEY })
         } else {

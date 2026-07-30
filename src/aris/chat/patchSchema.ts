@@ -1,7 +1,7 @@
 /**
  * `ArisPatchProposalV1` and the allowed patch-command set — plan section 18.3.
  *
- * The allowed commands are EXACTLY the fifteen the plan lists. Every command is validated with
+ * The allowed commands are EXACTLY the sixteen the plan lists. Every command is validated with
  * a strict `zod` object (unknown payload keys are rejected) inside a `z.discriminatedUnion` on
  * `kind` (an unrecognized `kind` literal fails to match any branch and the whole parse fails —
  * see `parseArisPatchProposal`). Payload shapes are this module's own — parallel to, but not
@@ -164,6 +164,9 @@ const deleteConnectionPayloadSchema = z
   .strict()
 const deleteOccurrencePayloadSchema = z.object({ occurrenceId: z.string().min(1) }).strict()
 const deleteDefinitionPayloadSchema = z.object({ definitionId: z.string().min(1) }).strict()
+const deleteConnectionDefinitionPayloadSchema = z
+  .object({ definitionId: z.string().min(1) })
+  .strict()
 const removeAttachmentPayloadSchema = z
   .object({ attachmentId: z.string().min(1), ownerId: z.string().min(1) })
   .strict()
@@ -200,13 +203,14 @@ export const arisPatchCommandSchema = z.discriminatedUnion('kind', [
   commandSchema('deleteConnection', deleteConnectionPayloadSchema),
   commandSchema('deleteOccurrence', deleteOccurrencePayloadSchema),
   commandSchema('deleteDefinition', deleteDefinitionPayloadSchema),
+  commandSchema('deleteConnectionDefinition', deleteConnectionDefinitionPayloadSchema),
   commandSchema('removeAttachment', removeAttachmentPayloadSchema)
 ])
 
 export type ArisChatCommand = z.infer<typeof arisPatchCommandSchema>
 export type ArisChatCommandKind = ArisChatCommand['kind']
 
-/** The exact fifteen allowed command kinds, in the order plan 18.3 lists them. */
+/** The exact sixteen allowed command kinds, in the order plan 18.3 lists them. */
 export const ARIS_CHAT_COMMAND_KINDS: readonly ArisChatCommandKind[] = Object.freeze([
   'setLocalizedName',
   'setAttribute',
@@ -222,6 +226,7 @@ export const ARIS_CHAT_COMMAND_KINDS: readonly ArisChatCommandKind[] = Object.fr
   'deleteConnection',
   'deleteOccurrence',
   'deleteDefinition',
+  'deleteConnectionDefinition',
   'removeAttachment'
 ])
 
@@ -273,7 +278,7 @@ export function parseArisPatchProposal(value: unknown): ArisPatchProposalV1 {
   return result.data
 }
 
-/** Parses a single command. Rejects any `kind` outside the allowed fifteen. */
+/** Parses a single command. Rejects any `kind` outside the allowed sixteen. */
 export function parseArisChatCommand(value: unknown): ArisChatCommand {
   const result = arisPatchCommandSchema.safeParse(value)
   if (!result.success) {

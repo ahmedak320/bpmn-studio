@@ -764,8 +764,7 @@ export function ArisStudioTab({
             style={{
               position: 'relative',
               minWidth: 0,
-              minHeight: 0,
-              pointerEvents: 'none'
+              minHeight: 0
             }}
           >
             <ArisCanvasView
@@ -801,7 +800,7 @@ export function ArisStudioTab({
                   border: '1px solid var(--orbitpm-border)',
                   borderRadius: 8,
                   boxShadow: '0 4px 16px rgba(0, 0, 0, 0.12)',
-                  pointerEvents: 'auto',
+                  pointerEvents: 'none',
                   zIndex: 10
                 }}
               >
@@ -809,6 +808,7 @@ export function ArisStudioTab({
                 <button
                   type="button"
                   className="orbitpm-lite-chrome-btn"
+                  style={{ pointerEvents: 'auto' }}
                   onClick={() => setDismissedHint(true)}
                 >
                   {t('aris.canvas.emptyModelHint.dismiss')}

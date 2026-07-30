@@ -17,7 +17,7 @@
  *    SEPARATE call — mirroring the two-step flow `ArisChatImproveRail` drives in the real product
  *    (auto-apply now, hold the rest for confirmation) rather than re-deriving the policy by hand.
  *  - "Invalid AI patches make no changes" — proved here for two failure shapes the existing
- *    `arisChatUndo.test.ts` batch-failure test does not cover: a `kind` outside the fifteen plan
+ *    `arisChatUndo.test.ts` batch-failure test does not cover: a `kind` outside the sixteen plan
  *    §18.3 allows (`toArisEditCommands`'s exhaustive switch throws `ArisChatUnsupportedCommandError`
  *    for it — see `arisChatHost.ts`), and a patch command that expands into TWO model commands
  *    (`addMetadataConnection`) where only the second half's precondition fails — proving the first

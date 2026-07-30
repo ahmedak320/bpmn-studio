@@ -49,33 +49,53 @@ import { buildMinimalValidDraft } from '../../src/aris/ai/testFixtures'
 //     transport-failure status are real and exercised directly.
 //   - The deterministic chat gap-scanner (`src/aris/chat/gapScanner.ts`) has
 //     dedicated `missingEnglishName`/`missingArabicName` gap kinds (first in
-//     its fixed priority order), auto-answered through the always-mounted
-//     `ArisChatImproveRail` and applied as one atomic, one-undo batch — see
-//     `tests/e2e/aris-authoring.spec.ts`'s "one undo reverts the whole batch"
-//     precedent, reproduced independently below for the translation angle.
+//     its fixed priority order), surfaced through the chat drawer's
+//     "Complete this process" interview (`ArisChatDrawer`,
+//     `[data-orbitpm-aris-chat]`) and applied as one atomic, one-undo batch —
+//     see `tests/e2e/aris-authoring.spec.ts`'s "one undo reverts the whole
+//     batch" precedent, reproduced independently below for the translation
+//     angle.
 //   - Undo/redo (`[data-orbitpm-aris-undo]`/`[data-orbitpm-aris-redo]`) and
 //     the derived-AML export (`[data-orbitpm-aris-export-derived]`) are real
 //     and are this shell's closest equivalent of "save/reopen" and "restore a
 //     backup" — there is no folder-workspace save button or backup zip
 //     feature reachable in the ARIS shell any more (see GAP note below).
 //
+//   STILL REAL (translation surface added after the initial retarget):
+//   - Per-diagram translation review: `TranslationReviewDialog`
+//     (`src/localization/TranslationReviewDialog.tsx`) is mounted by
+//     `ArisTranslateController` (`src/aris/shell/ArisTranslateController.tsx`)
+//     and opened from the toolbar's "Translate…" button
+//     (`[data-orbitpm-aris-translate]`). The free chain uses
+//     `makeFreeTranslateTexts` (`src/ai/freeTranslate.ts`) which calls Google
+//     Translate first and falls back to MyMemory per text; the AI provider is
+//     offered only when a key is stored. Reviewed proposals apply as one
+//     undoable step.
+//   - Silent auto-translate on create: `ArisTranslateController` auto-fills
+//     missing labels for `sourceKind === 'generated'` tabs via the free chain,
+//     honours the `arisAutoTranslate` opt-out preference, and reports the
+//     result through the `[data-orbitpm-aris-translate-missing]` badge and a
+//     `Translated … automatically` toast.
+//     PRODUCT GAP (Wave-8): the auto-translate effect depends on the `onToast`
+//     prop, but `ArisApp.tsx` passes an inline arrow whose identity changes on
+//     every render. When the "Created …" toast renders, the component re-renders,
+//     `onToast` changes, the effect cleanup aborts the in-flight translation
+//     after the fetch but before apply/toast, and `autoRanRef.current` prevents
+//     any rerun. This is reported as BLOCKED; the spec below keeps the intended
+//     assertion verbatim.
+//   - Diagram content-language toggle: `ArisStudioTab`'s
+//     `[data-orbitpm-aris-content-lang]` switches canvas labels between
+//     English and Arabic without editing the document; `[data-orbitpm-aris-undo]`
+//     stays disabled because the toggle is view-only.
+//   - Deterministic fix dialog: `[data-orbitpm-aris-fix-issues]` opens
+//     `ArisFixMissingDialog` (`src/aris/shell/ArisFixMissingDialog.tsx`) with
+//     auto-fill, confirmation, and interview tiers; confirmed delete proposals
+//     apply as one undoable gesture.
+//
 //   CONFIRMED DEAD (grep against every reachable import from `ArisApp.tsx`,
 //   not assumption):
-//   - The entire per-field machine-translation flow: `TranslationReviewDialog`
-//     (`src/localization/TranslationReviewDialog.tsx`), the "Translate"
-//     button, Google Translate/MyMemory provider calls, retry/cancel/429 per
-//     field, and workspace translation-memory (`.orbitpm/i18n/*.json`) +
-//     glossary persistence. None of `src/localization/**` is imported by
-//     `ArisApp.tsx` or anything under `src/aris/**`; `SettingsDialogLite`'s
-//     `localizationResources` prop (which would mount
-//     `LocalizationResourcesEditor`, the one place a glossary/TM editor
-//     exists) is never passed a value anywhere in `ArisApp.tsx`. The CSP
-//     still allowlists `translate.googleapis.com`/`api.mymemory.translated.net`
-//     (see `lite-providers.spec.ts`'s CSP test) but that is a retained
-//     hardening entry over dead code, not a live feature — confirmed no
-//     surviving caller.
-//   - `ReviewedXmlIngestionDialog` ("Complete bilingual XML review") — same
-//     result: not imported anywhere reachable.
+//   - `ReviewedXmlIngestionDialog` ("Complete bilingual XML review") — not
+//     imported anywhere reachable.
 //   - The folder-workspace "Process catalog" shell, its "Export/Import
 //     workspace backup" buttons, and the "Details…"/"Source" (BPMN XML)
 //     dialogs — all deleted with the BPMN UI.
@@ -371,10 +391,73 @@ async function fillDescriptionRequest(
   await createPanel.locator('textarea').fill(description)
 }
 
-async function consentAndSubmit(page: Page): Promise<void> {
+async function submitGeneration(page: Page): Promise<void> {
   const createPanel = page.locator('[data-orbitpm-aris-create]')
-  await createPanel.locator('[data-orbitpm-aris-create-consent]').check()
   await createPanel.locator('[data-orbitpm-aris-create-submit]').click()
+}
+
+/** Routes OpenRouter credits/chat endpoints so AI generation succeeds offline. */
+async function stubOpenRouter(
+  page: Page,
+  chatRequests?: Array<Record<string, unknown>>
+): Promise<void> {
+  await page.route('https://openrouter.ai/**', async (route) => {
+    const request = route.request()
+    const cors = corsHeaders(request)
+    if (request.method() === 'OPTIONS') {
+      await route.fulfill({ status: 204, headers: cors, body: '' })
+      return
+    }
+    const pathname = new URL(request.url()).pathname
+    if (pathname === '/api/v1/credits') {
+      await route.fulfill({
+        status: 200,
+        headers: { ...cors, 'content-type': 'application/json' },
+        body: JSON.stringify({ data: { total_credits: 100, total_usage: 1 } })
+      })
+      return
+    }
+    if (pathname === '/api/v1/chat/completions' && request.method() === 'POST') {
+      chatRequests?.push(request.postDataJSON() as Record<string, unknown>)
+      await route.fulfill({
+        status: 200,
+        headers: { ...cors, 'content-type': 'application/json' },
+        body: successBody()
+      })
+      return
+    }
+    await route.abort()
+  })
+}
+
+/** Routes Google Translate and MyMemory so every source text returns `value`. */
+async function stubFreeTranslate(page: Page, value: string): Promise<void> {
+  await page.route('https://translate.googleapis.com/**', async (route) => {
+    const request = route.request()
+    const cors = corsHeaders(request)
+    if (request.method() === 'OPTIONS') {
+      await route.fulfill({ status: 204, headers: cors, body: '' })
+      return
+    }
+    await route.fulfill({
+      status: 200,
+      headers: { ...cors, 'content-type': 'application/json' },
+      body: JSON.stringify([[[value, 'source', null, null, null]]])
+    })
+  })
+  await page.route('https://api.mymemory.translated.net/**', async (route) => {
+    const request = route.request()
+    const cors = corsHeaders(request)
+    if (request.method() === 'OPTIONS') {
+      await route.fulfill({ status: 204, headers: cors, body: '' })
+      return
+    }
+    await route.fulfill({
+      status: 200,
+      headers: { ...cors, 'content-type': 'application/json' },
+      body: JSON.stringify({ responseStatus: 200, responseData: { translatedText: value } })
+    })
+  })
 }
 
 function corsHeaders(request: { headers(): Record<string, string> }): Record<string, string> {
@@ -647,7 +730,7 @@ test('TR5/TR7: AI text, DOCX, PDF, PNG and Excel use their real generation/impor
   await configureOpenRouterKey(page, apiKey)
   const createPanel = page.locator('[data-orbitpm-aris-create]')
   await createPanel.locator('[data-orbitpm-aris-create-provider]').selectOption('openrouter')
-  await createPanel.locator('[data-orbitpm-aris-create-model]').selectOption(modelId)
+  await createPanel.locator('[data-orbitpm-aris-create-model]').fill(modelId)
 
   // --- AI text (Description tab, no attachment) -----------------------------
   await fillDescriptionRequest(
@@ -656,7 +739,7 @@ test('TR5/TR7: AI text, DOCX, PDF, PNG and Excel use their real generation/impor
     'Review a permit request and record the decision.'
   )
   expect(chatRequests).toHaveLength(0) // TR-07: no network before consent
-  await consentAndSubmit(page)
+  await submitGeneration(page)
   await expect.poll(() => chatRequests.length, { timeout: 30_000 }).toBe(1)
   await expect(
     page.getByRole('status').filter({ hasText: 'Created 2 models, 4 objects, 3 relations' })
@@ -688,7 +771,7 @@ test('TR5/TR7: AI text, DOCX, PDF, PNG and Excel use their real generation/impor
   // Local extraction made no network request of its own.
   expect(docxOffending).toEqual([])
   const beforeDocx = chatRequests.length
-  await consentAndSubmit(page)
+  await submitGeneration(page)
   await expect.poll(() => chatRequests.length, { timeout: 30_000 }).toBe(beforeDocx + 1)
   expect(JSON.stringify(chatRequests[beforeDocx])).toContain('Review the attached permit request')
 
@@ -705,7 +788,7 @@ test('TR5/TR7: AI text, DOCX, PDF, PNG and Excel use their real generation/impor
       buffer: readFileSync(TINY_PDF)
     })
   const beforePdf = chatRequests.length
-  await consentAndSubmit(page)
+  await submitGeneration(page)
   await expect.poll(() => chatRequests.length, { timeout: 30_000 }).toBe(beforePdf + 1)
   expect(JSON.stringify(chatRequests[beforePdf])).toContain('data:application/pdf;base64,')
 
@@ -716,7 +799,7 @@ test('TR5/TR7: AI text, DOCX, PDF, PNG and Excel use their real generation/impor
   // on OpenRouter (`getLiteModelCapabilities`); re-select the model explicitly
   // — a prior `[data-orbitpm-aris-create-provider]` re-selection above reset it
   // back to the curated default (`z-ai/glm-5.2`, PDF-only).
-  await createPanel.locator('[data-orbitpm-aris-create-model]').selectOption(modelId)
+  await createPanel.locator('[data-orbitpm-aris-create-model]').fill(modelId)
   await page.locator('input[type="file"][accept*="image/png"]').setInputFiles({
     name: 'mandatory-translation.png',
     mimeType: 'image/png',
@@ -729,7 +812,7 @@ test('TR5/TR7: AI text, DOCX, PDF, PNG and Excel use their real generation/impor
     .locator('[data-orbitpm-aris-create-hint]')
     .fill('Model the photographed process')
   const beforePng = chatRequests.length
-  await consentAndSubmit(page)
+  await submitGeneration(page)
   await expect.poll(() => chatRequests.length, { timeout: 30_000 }).toBe(beforePng + 1)
   expect(JSON.stringify(chatRequests[beforePng])).toContain('data:image/png;base64,')
   expect(chatRequests).toHaveLength(beforePng + 1)
@@ -866,7 +949,7 @@ test('TR6/TR9: AI provider 429 retry, transport exhaustion, cancellation and man
   // --- 429 retried automatically, then succeeds (text-only: 3 attempts) -----
   await fillDescriptionRequest(page, 'Retry draft', 'RETRY_MARKER review a permit request.')
   const tabsBeforeRetry = await page.getByRole('tab').count()
-  await consentAndSubmit(page)
+  await submitGeneration(page)
   await expect.poll(() => attempts.retry, { timeout: 30_000 }).toBe(3)
   await expect(
     page.getByRole('status').filter({ hasText: 'Created 2 models, 4 objects, 3 relations' })
@@ -876,7 +959,7 @@ test('TR6/TR9: AI provider 429 retry, transport exhaustion, cancellation and man
   // --- transport exhaustion: truthful failure, no false completion (TR-09) --
   await fillDescriptionRequest(page, 'Exhaust draft', 'EXHAUST_MARKER review a permit request.')
   const tabsBeforeExhaust = await page.getByRole('tab').count()
-  await consentAndSubmit(page)
+  await submitGeneration(page)
   await expect.poll(() => attempts.exhaust, { timeout: 30_000 }).toBe(3)
   await expect(
     page
@@ -889,7 +972,7 @@ test('TR6/TR9: AI provider 429 retry, transport exhaustion, cancellation and man
   // --- explicit cancellation mid-flight --------------------------------------
   await fillDescriptionRequest(page, 'Cancel draft', 'CANCEL_MARKER review a permit request.')
   const tabsBeforeCancel = await page.getByRole('tab').count()
-  await consentAndSubmit(page)
+  await submitGeneration(page)
   await cancelRequestStarted
   await page.locator('[data-orbitpm-aris-create-cancel]').click()
   await expect(
@@ -923,13 +1006,20 @@ test('TR6/TR9: AI provider 429 retry, transport exhaustion, cancellation and man
 // TR-02 / TR-06 / TR-09 / TR-10 (chat gap-completion batch)
 // ---------------------------------------------------------------------------
 
-test('TR6/TR9/TR10: the chat gap-completion batch fills missing English/Arabic names atomically and reverts as one undo', async ({
+test('TR6/TR9/TR10: the chat drawer completion batch fills missing English/Arabic names atomically and reverts as one undo', async ({
   page
 }) => {
   test.setTimeout(120_000)
   await openReferenceExport(page)
 
-  const rail = page.locator('[data-orbitpm-aris-chat]')
+  // The interview now lives in the chat drawer: open the assistant and switch
+  // to the 'Complete this process' tab so the interview surface is mounted.
+  await page.getByRole('banner').getByRole('button', { name: 'Assistant', exact: true }).click()
+  const assistant = page.getByRole('dialog', { name: 'Process assistant', exact: true })
+  await expect(assistant).toBeVisible()
+  await assistant.getByRole('tab', { name: 'Complete this process', exact: true }).click()
+
+  const rail = assistant.locator('[data-orbitpm-aris-chat]')
   await expect(rail).toBeVisible()
   // §18.1: the deterministic gap scanner runs on the live document, no AI, no
   // network, and the label is truthful — it is not a stale placeholder.
@@ -937,7 +1027,7 @@ test('TR6/TR9/TR10: the chat gap-completion batch fills missing English/Arabic n
     .poll(async () => rail.locator('[data-orbitpm-aris-chat-gaps] li').count(), { timeout: 60_000 })
     .toBeGreaterThan(0)
   const gapCountLabel = async (): Promise<string> =>
-    (await rail.getByText(/gaps found$/u).innerText()).trim()
+    (await rail.getByText(/found \d+ gap\(s\)/u).innerText()).trim()
   const gapsBefore = await gapCountLabel()
 
   await rail.locator('[data-orbitpm-aris-chat-start]').click()
@@ -984,8 +1074,283 @@ test('TR6/TR9/TR10: the chat gap-completion batch fills missing English/Arabic n
   await expect(railUndo).toBeEnabled()
   await railUndo.click()
   await expect.poll(gapCountLabel, { timeout: 30_000 }).toBe(gapsBefore)
+  // The assistant dialog is still open; close it so the main toolbar is reachable.
+  await assistant.press('Escape')
+  await expect(assistant).toBeHidden()
   const redo = page.locator('[data-orbitpm-aris-redo]')
   await expect(redo).toBeEnabled()
   await redo.click()
+
+  // Redo re-applied the batch; reopen the assistant to read the updated gap count.
+  await page.getByRole('banner').getByRole('button', { name: 'Assistant', exact: true }).click()
+  await expect(assistant).toBeVisible()
+  await assistant.getByRole('tab', { name: 'Complete this process', exact: true }).click()
   await expect.poll(gapCountLabel, { timeout: 30_000 }).not.toBe(gapsBefore)
+})
+
+// ---------------------------------------------------------------------------
+// Lane X3 — new translation surface coverage (TR-content / TR-translate /
+// TR-auto-translate / TR-fix).
+// ---------------------------------------------------------------------------
+
+test('TR-content-toggle: toolbar content-language switch flips canvas labels and follows app language', async ({
+  page
+}) => {
+  test.setTimeout(120_000)
+  await openBilingualMatrix(page)
+
+  const canvas = page.locator('[data-orbitpm-aris-canvas]')
+  await expect(canvas).toBeVisible()
+  const langButton = page.locator('[data-orbitpm-aris-content-lang]')
+  await expect(langButton).toBeVisible()
+
+  // A view-only toggle never mutates the document, so undo stays disabled.
+  const undo = page.locator('[data-orbitpm-aris-undo]')
+  await expect(undo).toBeDisabled()
+
+  // Default: English labels are drawn.
+  await expect(canvas.getByText('Request received', { exact: true }).first()).toBeVisible()
+
+  // Switch canvas labels to Arabic.
+  await langButton.click()
+  await expect(canvas.getByText('تم استلام الطلب', { exact: true }).first()).toBeVisible()
+
+  // The English-only element keeps its English fallback — it is never blank.
+  await expect(canvas.getByText('Record decision', { exact: true }).first()).toBeVisible()
+
+  // Toggle back restores English.
+  await langButton.click()
+  await expect(canvas.getByText('Request received', { exact: true }).first()).toBeVisible()
+
+  // Switch the app header language to Arabic: the content-language toggle
+  // follows by default (it only overrides when the toolbar is clicked).
+  await page.getByRole('button', { name: /Interface:/u }).click()
+  await expect(page.locator('html[lang="ar"]')).toBeAttached()
+  await expect(langButton).toBeVisible()
+})
+
+test('TR-translate-review: free Google → MyMemory chain applies as one undoable step', async ({
+  page
+}) => {
+  test.setTimeout(120_000)
+  const STUB = 'مترجم'
+  await openBilingualMatrix(page)
+  await stubFreeTranslate(page, STUB)
+
+  const translateFetches: string[] = []
+  page.on('request', (req) => {
+    const url = req.url()
+    if (
+      url.startsWith('https://translate.googleapis.com/') ||
+      url.startsWith('https://api.mymemory.translated.net/')
+    ) {
+      translateFetches.push(url)
+    }
+  })
+
+  await page.locator('[data-orbitpm-aris-translate]').click()
+  const dialog = page.getByRole('dialog', { name: 'Review translation', exact: true })
+  await expect(dialog).toBeVisible()
+  await expect(dialog.getByRole('combobox')).toContainText('Google Translate → MyMemory')
+
+  await dialog.getByRole('button', { name: 'Translate now', exact: true }).click()
+  await expect(dialog.getByText('Provider proposal').first()).toBeVisible({ timeout: 30_000 })
+  await expect(
+    dialog.getByRole('button', { name: 'Accept this proposal', exact: true }).first()
+  ).toBeVisible()
+
+  // Accept every proposal so the language view is complete and can be applied.
+  // The accept buttons stay in the DOM after acceptance (they update accepted
+  // state), so collect the current list once and click each distinct button.
+  const acceptButtons = await dialog
+    .getByRole('button', { name: 'Accept this proposal', exact: true })
+    .all()
+  expect(acceptButtons.length).toBeGreaterThan(0)
+  for (const button of acceptButtons) {
+    await button.evaluate((el) => (el as HTMLElement).click())
+  }
+  await dialog.getByRole('button', { name: 'Apply completed language view', exact: true }).click()
+  await expect(dialog).toBeHidden()
+  expect(translateFetches.length).toBeGreaterThan(0)
+
+  // Toggling the canvas to Arabic now shows the stubbed value.
+  await page.locator('[data-orbitpm-aris-content-lang]').click()
+  const canvas = page.locator('[data-orbitpm-aris-canvas]')
+  await expect(canvas.getByText(STUB, { exact: true }).first()).toBeVisible()
+
+  // One undo reverts the whole translation batch.
+  const undo = page.locator('[data-orbitpm-aris-undo]')
+  await expect(undo).toBeEnabled()
+  await undo.click()
+  await expect(canvas.getByText(STUB, { exact: true })).toHaveCount(0)
+})
+
+test('TR-auto-translate: generated models fill missing labels silently unless opted out', async ({
+  page,
+  context
+}) => {
+  test.setTimeout(240_000)
+
+  // --- Preference ON: auto-translate runs after AI generation. ---
+  await stubOpenRouter(page)
+  await stubFreeTranslate(page, 'ترجمة آلية')
+
+  const translateFetches: string[] = []
+  page.on('request', (req) => {
+    const url = req.url()
+    if (
+      url.startsWith('https://translate.googleapis.com/') ||
+      url.startsWith('https://api.mymemory.translated.net/')
+    ) {
+      translateFetches.push(url)
+    }
+  })
+
+  await openBilingualMatrix(page)
+  await configureOpenRouterKey(page, 'auto-translate-key')
+
+  await fillDescriptionRequest(
+    page,
+    'Auto-translate draft',
+    'Review a permit request and record the decision.'
+  )
+  await submitGeneration(page)
+  await expect(page.getByRole('status').filter({ hasText: /^Created/u })).toBeVisible({
+    timeout: 30_000
+  })
+  // Confirm the free chain was actually invoked.
+  await expect.poll(() => translateFetches.length, { timeout: 30_000 }).toBeGreaterThan(0)
+
+  // The "Translated … automatically" toast is the intended contract, but a
+  // Wave-8 product race prevents it: `ArisTranslateController`'s auto-translate
+  // effect depends on `onToast`, and `ArisApp.tsx` passes an inline arrow whose
+  // identity changes when the "Created …" toast renders. The effect cleanup then
+  // aborts the in-flight translation after the fetch but before apply/toast, and
+  // `autoRanRef.current` blocks any rerun. This assertion is kept verbatim and
+  // reported as BLOCKED (product is frozen; no product-code changes in this lane).
+  await expect(
+    page.getByRole('status').filter({ hasText: /Translated .* labels automatically/u })
+  ).toBeVisible({ timeout: 30_000 })
+
+  // No review dialog was opened; the fill happened silently.
+  await expect(page.getByRole('dialog', { name: 'Review translation', exact: true })).toHaveCount(0)
+  await expect(
+    page.locator('[role="tabpanel"]:not([hidden]) [data-orbitpm-aris-undo]')
+  ).toBeEnabled()
+  expect(translateFetches.length).toBeGreaterThan(0)
+
+  // --- Preference OFF: fresh page with opt-out set before load. ---
+  const offPage = await context.newPage()
+  await forceFallbackMode(offPage)
+  await offPage.addInitScript(() => {
+    localStorage.setItem('orbitpm.lite.cfg.arisAutoTranslate', 'off')
+  })
+  await stubOpenRouter(offPage)
+  await stubFreeTranslate(offPage, 'ترجمة آلية')
+
+  const offTranslateFetches: string[] = []
+  offPage.on('request', (req) => {
+    const url = req.url()
+    if (
+      url.startsWith('https://translate.googleapis.com/') ||
+      url.startsWith('https://api.mymemory.translated.net/')
+    ) {
+      offTranslateFetches.push(url)
+    }
+  })
+
+  await offPage.setViewportSize({ width: 1500, height: 950 })
+  await offPage.goto(FILE_URL, { waitUntil: 'load' })
+  await offPage
+    .getByRole('heading', { name: 'OrbitPM ARIS Studio Lite' })
+    .waitFor({ state: 'visible' })
+  await offPage
+    .locator('input[type="file"]')
+    .first()
+    .setInputFiles({
+      name: 'bilingual-matrix.aml',
+      mimeType: 'application/xml',
+      buffer: Buffer.from(BILINGUAL_MATRIX_AML, 'utf8')
+    })
+  await expect(offPage.locator('[data-orbitpm-aris-model]')).toHaveCount(1, { timeout: 30_000 })
+  await offPage
+    .locator('[data-orbitpm-aris-canvas] [data-element-id^="ObjOcc."]')
+    .first()
+    .waitFor({ state: 'attached', timeout: 30_000 })
+  await configureOpenRouterKey(offPage, 'auto-translate-key')
+
+  await fillDescriptionRequest(offPage, 'No auto-translate', 'Another permit review.')
+  await submitGeneration(offPage)
+  await expect(offPage.getByRole('status').filter({ hasText: /^Created/u })).toBeVisible({
+    timeout: 30_000
+  })
+  await offPage.waitForTimeout(1500)
+
+  // Zero outbound translation requests; the missing-translation badge is the
+  // entry point instead.
+  expect(offTranslateFetches.length).toBe(0)
+  await expect(
+    offPage.locator('[role="tabpanel"]:not([hidden]) [data-orbitpm-aris-translate-missing]')
+  ).toBeVisible()
+})
+
+test('TR-fix-flow: a confirmed delete proposal drops the issue count and undo restores it', async ({
+  page
+}) => {
+  test.setTimeout(120_000)
+  await openReferenceExport(page)
+
+  const badge = page.locator('[data-orbitpm-aris-fix-issues]')
+  await expect(badge).toBeVisible({ timeout: 60_000 })
+  const countBefore = Number(await badge.getAttribute('data-orbitpm-aris-fix-issues'))
+  expect(countBefore).toBeGreaterThan(0)
+
+  await badge.click()
+  const dialog = page.locator('[data-orbitpm-aris-fix-dialog]')
+  await expect(dialog).toBeVisible()
+  await expect(dialog.locator('[data-orbitpm-aris-fix-confirm-count]')).toBeVisible()
+  await expect(dialog.locator('[data-orbitpm-aris-fix-auto-count]')).toBeVisible()
+  await expect(dialog.locator('[data-orbitpm-aris-fix-interview-count]')).toBeVisible()
+
+  // Deselect all proposals, then select exactly one unused-definition delete
+  // proposal and apply it. Removing an unreferenced definition drops the gap
+  // count without creating a new gap.
+  const confirmCheckboxes = dialog.locator('[data-orbitpm-aris-fix-confirm]')
+  for (const checkbox of await confirmCheckboxes.all()) {
+    if (await checkbox.isChecked()) await checkbox.uncheck()
+  }
+  // Select the first structural-delete proposal (occurrence, connection or
+  // definition). The command id prefix is `fix-delete-*` for every tier-B removal.
+  const deleteCheckbox = dialog.locator('[data-orbitpm-aris-fix-confirm*="fix-delete"]').first()
+  await expect(deleteCheckbox).toBeVisible()
+  await deleteCheckbox.check()
+  const applyButton = dialog.locator('[data-orbitpm-aris-fix-apply]')
+  await expect(applyButton).toBeEnabled()
+  await applyButton.click()
+
+  // The gesture applied successfully and the dialog stays open.
+  await expect(
+    page.getByRole('status').filter({ hasText: /Applied .* fixes as one undoable step/u })
+  ).toBeVisible({ timeout: 30_000 })
+
+  // The badge count (behind the modal) strictly dropped. It may not be exactly
+  // countBefore - 1 because the deterministic plan can recombine related
+  // findings, so we only assert a strict decrease and that undo restores it.
+  await expect
+    .poll(async () => Number(await badge.getAttribute('data-orbitpm-aris-fix-issues')), {
+      timeout: 30_000
+    })
+    .toBeLessThan(countBefore)
+
+  // Close the dialog, undo the gesture, and verify the count returns.
+  await page.keyboard.press('Escape')
+  await expect(dialog).toBeHidden()
+  const undo = page.locator('[data-orbitpm-aris-undo]')
+  await expect(undo).toBeEnabled()
+  await undo.click()
+  await expect
+    .poll(async () => Number(await badge.getAttribute('data-orbitpm-aris-fix-issues')), {
+      timeout: 30_000
+    })
+    .toBe(countBefore)
 })

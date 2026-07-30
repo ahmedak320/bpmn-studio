@@ -170,14 +170,15 @@ test('AI panel documents the updated browser-capable provider set', async ({ pag
   expect(providerLabels).toEqual(['OpenRouter', 'Anthropic', 'Google Gemini'])
 })
 
-test('OpenRouter generation sends only the consent-reviewed payload and opens the result', async ({
+test('OpenRouter generation sends only the reviewed payload and opens the result', async ({
   page
 }) => {
   const apiKey = 'e2e-openrouter-key'
-  // ArisGenerationPanel has no user-facing model picker (plan §16): it always
-  // calls the provider's curated default model, `defaultLiteModelId('openrouter')`
-  // — OPENROUTER_MODELS[0] in src/ai/providersLite.ts — which happens to be the
-  // same id the pre-ARIS test picked explicitly.
+  // ArisGenerationPanel's OpenRouter model control is now an input+datalist
+  // (LITE_PROVIDERS[openrouter].allowCustomModel === true), so a free-text model
+  // id IS reachable — but this test leaves it at its default, the provider's
+  // curated `defaultLiteModelId('openrouter')` (OPENROUTER_MODELS[0] in
+  // src/ai/providersLite.ts), which is the id the pre-ARIS test picked explicitly.
   const modelId = 'z-ai/glm-5.2'
   const description = 'Review a permit request and record the decision.'
   // A minimal, schema-valid ArisAiDraftV1 (src/aris/ai/testFixtures.ts, also
@@ -268,23 +269,14 @@ test('OpenRouter generation sends only the consent-reviewed payload and opens th
   await createPanel.locator('[data-orbitpm-aris-create-provider]').selectOption('openrouter')
   await createPanel.locator('textarea').fill(description)
 
-  const preview = createPanel.locator('[data-orbitpm-aris-create-preview]')
-  await preview.locator('summary').click()
-  const outboundPreviewText = await preview.locator('pre').innerText()
-  expect(outboundPreviewText).toContain('Model name: Consent path')
-  expect(outboundPreviewText).toContain(description)
-  // Substance of the pre-ARIS "SECURITY BOUNDARY" assertion: the exact
-  // outbound prompt forbids the model from ever emitting real ARIS material.
-  expect(outboundPreviewText).toContain(
-    'Never emit a real ARIS source id, raw AML, raw XML, coordinates'
-  )
-
+  // The consent checkbox and the "Exact outbound request" preview are removed
+  // from the create path (authorized product change #1): submit is enabled the
+  // moment a name/description and a stored key exist, and the exact outbound
+  // request is proven below against the CAPTURED `chatRequests[0]` body rather
+  // than an on-screen preview.
   const submit = createPanel.locator('[data-orbitpm-aris-create-submit]')
-  const consent = createPanel.locator('[data-orbitpm-aris-create-consent]')
-  await expect(submit).toBeDisabled()
-  expect(chatRequests).toEqual([])
-  await consent.check()
   await expect(submit).toBeEnabled()
+  expect(chatRequests).toEqual([])
   await submit.click()
 
   await expect(
@@ -362,12 +354,11 @@ test('PDF flow: pick a PDF + Arabic hint, hit the no-key provider gate', async (
   await expect(createPanel.locator('[data-orbitpm-aris-create-provider]')).toHaveValue('openrouter')
 
   await createPanel.locator('textarea').fill('Review a permit request and record the decision.')
-  await createPanel.locator('[data-orbitpm-aris-create-consent]').check()
 
-  // With no API key stored, the UX stops at the provider gate (not a crash
-  // and not a silent send).
+  // With no keys stored at all, the UX stops at the no-keys gate (the "add a key
+  // in Settings" affordance) — not a crash and not a silent send.
   await expect(
-    createPanel.getByText('No API key is stored for this provider. Open Settings to add one.')
+    createPanel.getByRole('button', { name: 'add a key in Settings', exact: true })
   ).toBeVisible()
   await expect(createPanel.locator('[data-orbitpm-aris-create-submit]')).toBeDisabled()
 

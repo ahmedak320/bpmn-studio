@@ -1,5 +1,5 @@
 /**
- * Documents how each of the fifteen `ArisChatCommandKind`s (plan 18.3) ultimately becomes one
+ * Documents how each of the sixteen `ArisChatCommandKind`s (plan 18.3) ultimately becomes one
  * or more real `ArisEditCommand`s from `src/aris/model/commands.ts` (24 `ArisCommandKind`
  * values, read read-only while authoring this module — see `src/aris/model/commands.ts`).
  *
@@ -171,6 +171,15 @@ export const PATCH_TO_MODEL_COMMAND_MAPPING: readonly ModelCommandMappingEntry[]
     requiresTransactionWrapper: false
   },
   {
+    chatCommandKind: 'deleteConnectionDefinition',
+    modelCommandKinds: ['deleteConnectionDefinition'],
+    requiresTransactionWrapper: false,
+    note:
+      'Removes a connection definition (object-def deleteDefinition cannot target one). Used by ' +
+      "the deterministic fix planner's full-cluster cascade to drop connection definitions left " +
+      'with zero occurrences after a dangling occurrence and its connections are removed.'
+  },
+  {
     chatCommandKind: 'removeAttachment',
     modelCommandKinds: ['setAttribute'],
     requiresTransactionWrapper: false,
@@ -190,7 +199,6 @@ export const MODEL_COMMAND_KINDS_WITHOUT_CHAT_COMMAND: readonly ModelCommandKind
     'restyleOccurrence',
     'setOccurrenceSymbol',
     'setAttributeOccurrencePlacement',
-    'deleteConnectionDefinition',
     'addLane',
     'editLane',
     'deleteLane',

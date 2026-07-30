@@ -148,14 +148,14 @@ describe('toArisEditCommand — direct (already-supported) command kinds', () =>
     expect(edit.after).toEqual({ connectionOccurrenceId, route: [{ x: 1.4, y: 2.6 }] })
   })
 
-  it('lists all fifteen plan §18.3 command kinds as supported', () => {
+  it('lists all sixteen plan §18.3 command kinds as supported', () => {
     expect([...ARIS_CHAT_SUPPORTED_COMMAND_KINDS].sort()).toEqual(
       [...ARIS_CHAT_COMMAND_KINDS].sort()
     )
-    expect(ARIS_CHAT_SUPPORTED_COMMAND_KINDS.size).toBe(15)
+    expect(ARIS_CHAT_SUPPORTED_COMMAND_KINDS.size).toBe(16)
   })
 
-  it('throws ArisChatUnsupportedCommandError for a kind outside the fifteen', () => {
+  it('throws ArisChatUnsupportedCommandError for a kind outside the sixteen', () => {
     const { document } = buildFixture()
     const bogus = {
       commandId: 'c-bogus',

@@ -97,15 +97,38 @@ export function ArisFixMissingDialog({
     setSelected(new Set(allKeys))
   }, [allKeys])
 
+  // Each preview dry-runs its proposal's full command cluster against the live
+  // document (~100ms apiece on the reference export). Computing them inside the
+  // render map made EVERY checkbox toggle re-run all of them (~5.8s per toggle).
+  const previews = useMemo(() => {
+    const map = new Map<string, ArisFixPreviewRows | null>()
+    if (!open || !buildPreview) return map
+    for (const proposal of plan.confirmProposals) {
+      const key = proposalKey(proposal)
+      if (!map.has(key)) map.set(key, buildPreview(proposal))
+    }
+    return map
+  }, [open, plan.confirmProposals, buildPreview])
+
   if (!open) return null
 
   const autoCount = plan.translationFillTargets.length
   const confirmCount = plan.confirmProposals.length
   const interviewCount = plan.interviewGaps.length
 
+  // De-dupe by commandId: full-cluster delete cascades from two orphan clusters can share a
+  // connection occurrence (and thus its deterministic delete command id). Command ids are
+  // deterministic per record id, so first-seen order is stable and de-duping is exact — without
+  // it, select-all would list the same delete twice and the model layer would reject the batch.
+  const seenCommandIds = new Set<string>()
   const selectedCommands: readonly ArisChatCommand[] = plan.confirmProposals
     .filter((proposal) => selected.has(proposalKey(proposal)))
     .flatMap((proposal) => proposal.commands)
+    .filter((command) => {
+      if (seenCommandIds.has(command.commandId)) return false
+      seenCommandIds.add(command.commandId)
+      return true
+    })
 
   const showsCleanLayoutHint = plan.confirmProposals.some((proposal) =>
     proposal.commands.some((command) => command.kind === 'addCoreObject')
@@ -167,11 +190,11 @@ export function ArisFixMissingDialog({
             </p>
           )}
           <ul style={{ listStyle: 'none', margin: 0, padding: 0 }}>
-            {plan.confirmProposals.map((proposal) => {
+            {plan.confirmProposals.map((proposal, index) => {
               const key = proposalKey(proposal)
-              const preview = buildPreview ? buildPreview(proposal) : null
+              const preview = previews.get(key) ?? null
               return (
-                <li key={key} style={{ padding: '0.4rem 0' }}>
+                <li key={`${key}#${index}`} style={{ padding: '0.4rem 0' }}>
                   <label style={{ display: 'flex', gap: 8, alignItems: 'flex-start' }}>
                     <input
                       type="checkbox"

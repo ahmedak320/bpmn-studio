@@ -328,7 +328,7 @@ function updateAttributes(
 
 /**
  * A complete reference `ArisChatApplyHost` over `ArisChatWorkingDocument`, implementing every
- * one of the fifteen chat command kinds. `revision` increments by one per successfully applied
+ * one of the sixteen chat command kinds. `revision` increments by one per successfully applied
  * command (simulating one model-layer `applyCommand` per chat command — see
  * `modelCommandMapping.ts`). Validation hooks and `applyCommand` are individually overridable so
  * tests can inject failures at a specific point without reimplementing the whole host.
@@ -669,6 +669,15 @@ function applyOneCommand(
       return {
         ...document,
         objectDefinitions: deleteFromMap(document.objectDefinitions, definitionId)
+      }
+    }
+    case 'deleteConnectionDefinition': {
+      const { definitionId } = command.payload
+      if (!document.connectionDefinitions.has(definitionId))
+        throw new Error(`Unknown connection definition ${definitionId}`)
+      return {
+        ...document,
+        connectionDefinitions: deleteFromMap(document.connectionDefinitions, definitionId)
       }
     }
     case 'removeAttachment': {

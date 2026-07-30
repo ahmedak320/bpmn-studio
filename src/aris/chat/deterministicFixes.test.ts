@@ -319,6 +319,137 @@ describe('buildDeterministicFixPlan — every proposal is schema-valid', () => {
   })
 })
 
+/**
+ * An orphan object occurrence with a RESOLVABLE definition plus one attached connection whose
+ * connection definition it is the last user of — the full-cluster cascade case (an epc-derived
+ * `orphanNode` finding, not the local missing-definition case).
+ */
+function orphanClusterFixture(): ArisChatWorkingDocument {
+  const modelId = 'M1'
+  return buildDocument({
+    models: [
+      {
+        id: modelId,
+        names: names('Flow', 'تدفق'),
+        occurrences: [
+          { id: 'OC_ORPHAN', definitionId: 'OD_ORPHAN', modelId, symbol: 'ST_FUNC' },
+          { id: 'OC_KEEP', definitionId: 'OD_KEEP', modelId, symbol: 'ST_FUNC' }
+        ],
+        connectionOccurrences: [
+          {
+            id: 'C_ATTACHED',
+            definitionId: 'CD_ATTACHED',
+            modelId,
+            sourceOccurrenceId: 'OC_ORPHAN',
+            targetOccurrenceId: 'OC_KEEP'
+          }
+        ]
+      }
+    ],
+    objectDefinitions: [
+      {
+        id: 'OD_ORPHAN',
+        type: 'OT_FUNC',
+        names: names('Orphan', 'يتيم'),
+        attributes: [],
+        linkedModelIds: []
+      },
+      {
+        id: 'OD_KEEP',
+        type: 'OT_FUNC',
+        names: names('Keep', 'ابقاء'),
+        attributes: [],
+        linkedModelIds: []
+      }
+    ],
+    connectionDefinitions: [
+      {
+        id: 'CD_ATTACHED',
+        type: 'CT_ACTIV_1',
+        fromObjectDefinitionId: 'OD_ORPHAN',
+        toObjectDefinitionId: 'OD_KEEP',
+        names: names(null),
+        attributes: []
+      }
+    ]
+  })
+}
+
+const ORPHAN_GAP = {
+  kind: 'danglingObjectOrConnection',
+  severity: 'error',
+  targetIds: ['OC_ORPHAN'],
+  messageKey: 'aris.epc.finding.orphanNode'
+} as const
+
+describe('buildDeterministicFixPlan — dangling orphan cluster cascade', () => {
+  it('emits a full cluster (connection + occurrence + connection definition + object definition), all schema-valid', () => {
+    const document = orphanClusterFixture()
+    const plan = buildDeterministicFixPlan(document, [ORPHAN_GAP], LOCALES)
+    expect(plan.confirmProposals).toHaveLength(1)
+    const commands = plan.confirmProposals[0]!.commands
+    // Order is load-bearing: connections first, then the occurrence, then the definitions left
+    // with zero occurrences — a bare deleteOccurrence would strand a dangling connection endpoint.
+    expect(commands.map((command) => command.kind)).toEqual([
+      'deleteConnection',
+      'deleteOccurrence',
+      'deleteConnectionDefinition',
+      'deleteDefinition'
+    ])
+    for (const command of commands) {
+      expect(() => parseArisChatCommand(command)).not.toThrow()
+    }
+  })
+
+  it('applies cleanly and is idempotent (a second pass over the crafted gap proposes nothing)', () => {
+    const document = orphanClusterFixture()
+    const plan = buildDeterministicFixPlan(document, [ORPHAN_GAP], LOCALES)
+    const next = applyProposals(document, plan)
+
+    const model = next.models.get('M1')!
+    expect(model.occurrences.some((occurrence) => occurrence.id === 'OC_ORPHAN')).toBe(false)
+    expect(model.connectionOccurrences.some((connection) => connection.id === 'C_ATTACHED')).toBe(
+      false
+    )
+    expect(next.connectionDefinitions.has('CD_ATTACHED')).toBe(false)
+    expect(next.objectDefinitions.has('OD_ORPHAN')).toBe(false)
+    // The neighbour the orphan pointed at, and its definition, survive.
+    expect(model.occurrences.some((occurrence) => occurrence.id === 'OC_KEEP')).toBe(true)
+    expect(next.objectDefinitions.has('OD_KEEP')).toBe(true)
+
+    const secondPlan = buildDeterministicFixPlan(next, [ORPHAN_GAP], LOCALES)
+    expect(secondPlan.confirmProposals).toHaveLength(0)
+  })
+
+  it('de-dupes a connection shared by two orphan targets in one gap', () => {
+    const document = orphanClusterFixture()
+    // Both endpoints of C_ATTACHED are orphaned in the same finding: the connection must be
+    // deleted exactly once, and both object definitions must be dropped.
+    const plan = buildDeterministicFixPlan(
+      document,
+      [
+        {
+          kind: 'danglingObjectOrConnection',
+          severity: 'error',
+          targetIds: ['OC_ORPHAN', 'OC_KEEP'],
+          messageKey: 'aris.epc.finding.orphanNode'
+        }
+      ],
+      LOCALES
+    )
+    const commands = plan.confirmProposals[0]!.commands
+    const connectionDeletes = commands.filter((command) => command.kind === 'deleteConnection')
+    expect(connectionDeletes).toHaveLength(1)
+    expect(
+      commands.filter((command) => command.kind === 'deleteConnectionDefinition')
+    ).toHaveLength(1)
+    expect(commands.filter((command) => command.kind === 'deleteDefinition')).toHaveLength(2)
+    // Every command id is unique within the proposal, so the dialog's id de-dupe is a no-op here.
+    const ids = commands.map((command) => command.commandId)
+    expect(new Set(ids).size).toBe(ids.length)
+  })
+})
+
 // --- jsdom dialog test ------------------------------------------------------------------------
 
 function threeTierDocument(): ArisChatWorkingDocument {

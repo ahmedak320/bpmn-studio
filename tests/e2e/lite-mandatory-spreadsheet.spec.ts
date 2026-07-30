@@ -719,6 +719,10 @@ test('mandatory spreadsheet X7: formula cells with and without cached displayed 
     if (/^https?:/i.test(request.url())) networkRequests.push(request.url())
   })
   const panel = await openExcelTab(page)
+  // The Excel-created tab is sourceKind 'generated', which auto-translates its
+  // missing language via the free chain by default. Opt out so the zero-network
+  // assertion isolates the spreadsheet worker (getPref reads localStorage live).
+  await page.evaluate(() => localStorage.setItem('orbitpm.lite.cfg.arisAutoTranslate', 'off'))
 
   await test.step('cached formula value is used and the formula stays inert', async () => {
     const bytes = workbookWithFormulaModelName(

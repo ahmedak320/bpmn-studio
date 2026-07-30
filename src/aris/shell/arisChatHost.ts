@@ -6,7 +6,7 @@
  * `ArisWorkingDocument` already satisfies `ArisChatWorkingDocument` structurally,
  * so the only thing missing is the translation of one `ArisChatCommand` into one
  * `ArisEditCommand` — `modelCommandMapping.ts` documents the mapping; this file
- * performs it, for all fifteen plan §18.3 commands.
+ * performs it, for all sixteen plan §18.3 commands.
  *
  * Three rules are load-bearing:
  *
@@ -88,6 +88,7 @@ import {
   createConnectionOccurrenceCommand,
   createOccurrenceCommand,
   deleteConnectionCommand,
+  deleteConnectionDefinitionCommand,
   deleteDefinitionCommand,
   deleteOccurrenceCommand,
   readAttributeValues,
@@ -140,7 +141,7 @@ export class ArisChatUnsupportedCommandError extends Error {
   }
 }
 
-/** All fifteen plan §18.3 patch command kinds translate at this seam. */
+/** All sixteen plan §18.3 patch command kinds translate at this seam. */
 export const ARIS_CHAT_SUPPORTED_COMMAND_KINDS: ReadonlySet<ArisChatCommand['kind']> =
   Object.freeze(new Set<ArisChatCommand['kind']>(ARIS_CHAT_COMMAND_KINDS))
 
@@ -274,7 +275,7 @@ function requireModel(document: ArisWorkingDocument, modelId: string): ArisModel
 /**
  * Translate one patch command into the ORDERED list of model commands that perform it.
  *
- * Fourteen of the fifteen kinds produce exactly one `ArisEditCommand`. `addMetadataConnection`
+ * Fifteen of the sixteen kinds produce exactly one `ArisEditCommand`. `addMetadataConnection`
  * and `addCoreConnection` produce TWO, applied one at a time rather than wrapped in a
  * `transaction` — see this file's module doc for why a `transaction` cannot express that pair.
  * `applyOrderedModelCommands` applies whatever this function returns correctly regardless of
@@ -305,6 +306,7 @@ export function toArisEditCommands(
     case 'deleteConnection':
     case 'deleteOccurrence':
     case 'deleteDefinition':
+    case 'deleteConnectionDefinition':
       return [translateDirect(document, command, origin)]
     case 'addMetadataDefinition':
       return [translateAddMetadataDefinition(document, command, origin, idContext)]
@@ -372,7 +374,7 @@ export function applyOrderedModelCommands(
   return current
 }
 
-/** The nine patch kinds whose model command is a single, already-shaped edit. */
+/** The ten patch kinds whose model command is a single, already-shaped edit. */
 type ArisChatDirectCommand = Extract<
   ArisChatCommand,
   {
@@ -386,11 +388,12 @@ type ArisChatDirectCommand = Extract<
       | 'deleteConnection'
       | 'deleteOccurrence'
       | 'deleteDefinition'
+      | 'deleteConnectionDefinition'
   }
 >
 
 /**
- * Build the model command for one of the nine direct kinds, WITH its `before` pre-image.
+ * Build the model command for one of the ten direct kinds, WITH its `before` pre-image.
  *
  * `before` is not decoration. `invertCommand` in `src/aris/model/commands.ts` computes an undo by
  * swapping `before` and `after` (or, for the delete kinds, by re-creating the record it finds in
@@ -470,6 +473,8 @@ function buildDirect(
       return deleteOccurrenceCommand(context, document, command.payload.occurrenceId)
     case 'deleteDefinition':
       return deleteDefinitionCommand(context, document, command.payload.definitionId)
+    case 'deleteConnectionDefinition':
+      return deleteConnectionDefinitionCommand(context, document, command.payload.definitionId)
     default: {
       const exhaustive: never = command
       throw new ArisChatUnsupportedCommandError((exhaustive as ArisChatCommand).kind)
@@ -478,7 +483,7 @@ function buildDirect(
 }
 
 /**
- * The nine patch commands whose payload shape is already identical to the model command's (see
+ * The ten patch commands whose payload shape is already identical to the model command's (see
  * `modelCommandMapping.ts`), so the payload is carried across unchanged — the one exception being
  * `setRoute`, whose points are narrowed to `ArisPoint`.
  *

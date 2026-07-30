@@ -25,8 +25,13 @@ import { buildMinimalValidDraft } from '../../src/aris/ai/testFixtures'
 //   - src/aris/shell/ArisAssistantAiSection.tsx + arisAssistantAi.ts (the AI-grounded
 //     half of the "Ask the process library" surface — real consent/disclosure
 //     fingerprinting, real OpenRouter privacy flags, real cancellation)
-//   - src/aris/shell/ArisAssistantPanel.tsx, src/ArisAssistantDrawer.tsx (the
-//     "Process assistant" dialog — assist.title / assist.close survive verbatim)
+//   - src/aris/shell/ArisChatDrawer.tsx (the "Process assistant" chat drawer —
+//     the 💬 FAB + a banner "Assistant" button both open it; assist.title /
+//     assist.close survive verbatim, and its two tabs are "Ask the library" and
+//     "Complete this process". The old ArisAssistantDrawer modal +
+//     ArisAssistantPanel are gone, replaced by this drawer; the library tab's
+//     AI-grounded half is still ArisAssistantAiSection, mounted per asked
+//     question inside the drawer's message log.)
 //
 // TWO GENUINE GAPS, found by tracing the actual code (not assumed) and reported
 // per this task's brief rather than papered over:
@@ -49,13 +54,14 @@ import { buildMinimalValidDraft } from '../../src/aris/ai/testFixtures'
 //    UI — the empty-context case still proves the opt-out/consent/privacy-flag
 //    machinery around it — and is called out as a gap rather than asserted as
 //    working end-to-end.
-// 2. "Interview" AI cancellation (the pre-ARIS "Complete this process" tab) has no
-//    surviving equivalent: the ARIS rebuild's structurally-similar feature,
-//    `ArisChatImproveRail` (`data-orbitpm-aris-chat-*`), is a purely local/
-//    deterministic gap-filling flow — `ArisStudioTab` mounts it with no
-//    `callLLM`/provider wiring at all (confirmed by grep), and `interviewLoop.ts`'s
-//    own header comment says consent/cancelability are explicitly out of that
-//    lane's scope. There is no in-flight AI request to cancel there today.
+// 2. "Interview" AI cancellation (the drawer's "Complete this process" tab) has no
+//    surviving equivalent: the deterministic gap-completion interview — now hosted
+//    inside `ArisChatDrawer` (`data-orbitpm-aris-chat-*`), formerly the removed
+//    `ArisChatImproveRail` — is a purely local flow driven by
+//    `arisChatDrawerSession.ts` with no `callLLM`/provider wiring at all, and
+//    `interviewLoop.ts`'s own header comment says consent/cancelability are
+//    explicitly out of that lane's scope. There is no in-flight AI request to
+//    cancel there today.
 // 3. "Workspace replacement" AI cancellation also has no reachable path: see
 //    the deleted-test comment above the DOCX-cancellation test below for the
 //    full trace (a `DataCloneError` inside `ArisApp.tsx`'s `handleOpenFolder`
@@ -348,34 +354,32 @@ function storageEntriesWithPrefix(
 }
 
 /**
- * Fill the description-tab fields and open the outbound preview, but do not
- * consent or submit — mirrors `prepareTextGeneration` from the pre-ARIS file,
- * targeting `ArisGenerationPanel` instead of `AiPanelLite`.
+ * Fill the description-tab fields, but do not submit. The consent checkbox and
+ * the "Exact outbound request" preview are removed from the create path
+ * (authorized product change #1), so this no longer opens a preview or checks
+ * consent — it just fills Name/provider/description and returns the submit
+ * button (which is enabled the moment a description and a stored key exist).
  */
 async function prepareArisGeneration(
   page: Page,
   description: string,
   name: string
-): Promise<{ panel: Locator; preview: Locator; submit: Locator; consent: Locator }> {
+): Promise<{ panel: Locator; submit: Locator }> {
   const panel = createPanel(page)
   await expect(panel).toBeVisible()
   await panel.getByLabel('Draft name', { exact: true }).fill(name)
   await panel.locator('[data-orbitpm-aris-create-provider]').selectOption('openrouter')
   await panel.locator('textarea').first().fill(description)
-  const preview = panel.locator('[data-orbitpm-aris-create-preview]')
-  await preview.locator('summary').click()
-  const consent = panel.locator('[data-orbitpm-aris-create-consent]')
   const submit = panel.locator('[data-orbitpm-aris-create-submit]')
-  return { panel, preview, submit, consent }
+  return { panel, submit }
 }
 
-async function generateAndConsent(
+async function prepareGeneration(
   page: Page,
   description: string,
   name: string
 ): Promise<{ panel: Locator; submit: Locator }> {
-  const { panel, submit, consent } = await prepareArisGeneration(page, description, name)
-  await consent.check()
+  const { panel, submit } = await prepareArisGeneration(page, description, name)
   await expect(submit).toBeEnabled()
   return { panel, submit }
 }
@@ -409,10 +413,11 @@ test('mandatory AI credentials: session-only keys never enter storage and disapp
   await closeSettings(dialog)
   expect(JSON.stringify(await browserStorageSnapshot(page))).not.toContain(OPENROUTER_KEY)
 
-  // The key is functionally gone too, not just the Settings placeholder: the
-  // Create panel's gate re-appears after reload.
+  // The key is functionally gone too, not just the Settings placeholder: with no
+  // keys stored at all after reload, the Create panel shows its no-keys gate
+  // (the "add a key in Settings" affordance) again.
   await expect(
-    createPanel(page).getByText('No API key is stored for this provider. Open Settings to add one.')
+    createPanel(page).getByRole('button', { name: 'add a key in Settings', exact: true })
   ).toBeVisible()
 })
 
@@ -575,12 +580,14 @@ test('mandatory AI credentials: encrypted-storage failure is reported and never 
   expect(JSON.stringify(failedStorage)).not.toContain(OPENROUTER_KEY)
   expect(JSON.stringify(failedStorage)).not.toContain('storage failure passphrase')
   await closeSettings(dialog)
+  // The failed save stored no key, so the Create panel shows its no-keys gate
+  // (the "add a key in Settings" affordance) rather than pretending a key exists.
   await expect(
-    createPanel(page).getByText('No API key is stored for this provider. Open Settings to add one.')
+    createPanel(page).getByRole('button', { name: 'add a key in Settings', exact: true })
   ).toBeVisible()
 })
 
-test('mandatory AI privacy: request preview, attachment opt-out, adversarial-quoting defense, and OpenRouter privacy flags bind to the sent payload', async ({
+test('mandatory AI privacy: attachment opt-out, adversarial-quoting defense, and OpenRouter privacy flags bind to the sent payload', async ({
   page
 }) => {
   test.setTimeout(90_000)
@@ -636,18 +643,13 @@ test('mandatory AI privacy: request preview, attachment opt-out, adversarial-quo
     panel.getByText(/Attached notes\.docx: \d+ characters were extracted on this device/)
   ).toBeVisible()
 
-  const preview = panel.locator('[data-orbitpm-aris-create-preview]')
-  await preview.locator('summary').click()
-  const withAttachmentPreview = await preview.locator('pre').innerText()
-  expect(withAttachmentPreview).toContain(adversarialText)
-  expect(withAttachmentPreview).toContain('<<<ARIS_UNTRUSTED_DATA_START>>>')
-  expect(withAttachmentPreview).toContain(
-    'Never emit a real ARIS source id, raw AML, raw XML, coordinates'
-  )
-
-  const consent = panel.locator('[data-orbitpm-aris-create-consent]')
+  // The on-screen "Exact outbound request" preview and the consent checkbox are
+  // both removed from the create path (authorized product change #1). The exact
+  // same privacy guarantees are proven directly against the CAPTURED outbound
+  // request body (`chatBodies[0]`) after submit: the UNTRUSTED DATA fence, the
+  // "Never emit a real ARIS source id" boundary sentence, and the adversarial
+  // attachment text all present WITH the attachment, and gone after opt-out.
   const submit = panel.locator('[data-orbitpm-aris-create-submit]')
-  await consent.check()
   await expect(submit).toBeEnabled()
   await submit.click()
   await expect.poll(() => chatBodies.length).toBe(1)
@@ -664,11 +666,10 @@ test('mandatory AI privacy: request preview, attachment opt-out, adversarial-quo
     withAttachmentMessages.some((m) => m.content.includes('<<<ARIS_UNTRUSTED_DATA_START>>>'))
   ).toBe(true)
 
-  // Opt out by removing the attachment: the exact same request no longer
-  // carries the adversarial text or the UNTRUSTED DATA fence at all.
+  // Opt out by removing the attachment: the exact same request (just re-submit,
+  // no consent gate any more) no longer carries the adversarial text or the
+  // UNTRUSTED DATA fence at all.
   await panel.locator('[data-orbitpm-aris-create-attachment-clear]').click()
-  await expect(consent).not.toBeChecked()
-  await consent.check()
   await expect(submit).toBeEnabled()
   await submit.click()
   await expect.poll(() => chatBodies.length).toBe(2)
@@ -688,17 +689,19 @@ test('mandatory AI privacy: request preview, attachment opt-out, adversarial-quo
   }
 })
 
-// ArisGenerationPanel's own model control (data-orbitpm-aris-create-model) is a
-// plain <select> populated only from the provider's curated, reviewed model
-// list (LITE_PROVIDERS[...].models) — unlike Settings' "AI provider and
-// model" combobox, it has no free-text override, so a genuinely UNREVIEWED
-// model id (getLiteModelCapabilities().verified === false) cannot be typed in
-// through this surface at all. What IS reachable — and still a real,
-// model-specific capability gate, per checkArisAiAttachment's step 1 —  is a
+// ArisGenerationPanel's own model control (data-orbitpm-aris-create-model) is now
+// an input+datalist for OpenRouter (LITE_PROVIDERS[openrouter].allowCustomModel
+// === true), so a free-text model id — including a genuinely UNREVIEWED one — IS
+// reachable through this surface today (a change from the old curated <select>);
+// it is a plain <select> only for providers whose model list is fixed. Either
+// way, `checkArisAiAttachment`'s step-1 capability gate still fails closed on a
+// model that cannot read a picture. This test exercises that gate with a
 // REVIEWED-but-attachment-incapable model: the default OpenRouter model
 // (z-ai/glm-5.2) is verified but `images: false` (only the curated
 // anthropic/* and google/* OpenRouter routes carry native image parts), so it
-// fails closed on a picture attachment exactly like an unverified model would.
+// fails closed on a picture attachment exactly like an unverified model would —
+// and typing the reviewed vision-capable model in through the datalist input
+// then reopens the gate.
 test('mandatory AI capability gate: an incompatible reviewed model fails closed for attachments and the explicit model is shared across surfaces', async ({
   page
 }) => {
@@ -727,7 +730,8 @@ test('mandatory AI capability gate: an incompatible reviewed model fails closed 
   ).toBeVisible()
   await expect(panel.locator('[data-orbitpm-aris-create-submit]')).toBeDisabled()
 
-  await panel.locator('[data-orbitpm-aris-create-model]').selectOption(VISION_MODEL)
+  // OpenRouter's model control is an input+datalist — type the id, don't select.
+  await panel.locator('[data-orbitpm-aris-create-model]').fill(VISION_MODEL)
   await panel.locator('input[type="file"][accept*="image/png"]').setInputFiles({
     name: 'verified-vision.png',
     mimeType: 'image/png',
@@ -751,7 +755,7 @@ test('mandatory AI capability gate: an incompatible reviewed model fails closed 
   await assistant
     .locator('[data-orbitpm-aris-assistant-question]')
     .fill('Describe quantum entanglement briefly, unrelated to any process here.')
-  await assistant.getByRole('button', { name: 'Ask', exact: true }).click()
+  await assistant.getByRole('button', { name: 'Send', exact: true }).click()
   const aiSection = assistant.locator('[data-orbitpm-aris-assistant-ai]')
   await expect(aiSection).toBeVisible()
 
@@ -811,8 +815,10 @@ test('mandatory AI consent: a different payload with the same short fingerprint 
   const question = assistant.locator('[data-orbitpm-aris-assistant-question]')
 
   await question.fill(reviewedQuestion)
-  await assistant.getByRole('button', { name: 'Ask', exact: true }).click()
-  const aiSection = assistant.locator('[data-orbitpm-aris-assistant-ai]')
+  await assistant.getByRole('button', { name: 'Send', exact: true }).click()
+  // The drawer appends a fresh ArisAssistantAiSection message per asked question,
+  // so scope to the FIRST one for the reviewed question here.
+  const aiSection = assistant.locator('[data-orbitpm-aris-assistant-ai]').first()
   await expect(aiSection).toBeVisible()
   const consent = aiSection.locator('[data-orbitpm-aris-assistant-ai-consent]')
   const submit = aiSection.locator('[data-orbitpm-aris-assistant-ai-submit]')
@@ -822,11 +828,12 @@ test('mandatory AI consent: a different payload with the same short fingerprint 
   expect(chatBodies).toEqual([]) // nothing sent yet — consent alone doesn't send
 
   // Ask a DIFFERENT question with the same fingerprint (no submit in between —
-  // a fresh ArisAssistantAiSection instance is created per `asked` question,
-  // per the `key={asked}` in ArisAssistantPanel).
+  // a fresh ArisAssistantAiSection instance is appended for the new question,
+  // per the `key={ai:${index}:${aiQuestion}}` in ArisChatDrawer), so the newest
+  // section is the last one in the message log.
   await question.fill(collidingQuestion)
-  await assistant.getByRole('button', { name: 'Ask', exact: true }).click()
-  const collidingSection = assistant.locator('[data-orbitpm-aris-assistant-ai]')
+  await assistant.getByRole('button', { name: 'Send', exact: true }).click()
+  const collidingSection = assistant.locator('[data-orbitpm-aris-assistant-ai]').last()
   await expect(collidingSection).toBeVisible()
   const collidingConsent = collidingSection.locator('[data-orbitpm-aris-assistant-ai-consent]')
   const collidingSubmit = collidingSection.locator('[data-orbitpm-aris-assistant-ai-submit]')
@@ -869,7 +876,7 @@ test('mandatory AI reliability: permanent data-policy failure is attempted once 
   })
   await openReferenceExport(page)
   await configureSessionOpenRouter(page)
-  const { panel, submit } = await generateAndConsent(
+  const { panel, submit } = await prepareGeneration(
     page,
     'Create a permanent-error test process.',
     'permanent-error'
@@ -917,7 +924,7 @@ test('mandatory AI reliability and accounting: transient failures retry up to th
   })
   await openReferenceExport(page)
   await configureSessionOpenRouter(page)
-  const { panel, submit } = await generateAndConsent(
+  const { panel, submit } = await prepareGeneration(
     page,
     'Create a transient-retry test process.',
     'transient-retry'
@@ -976,7 +983,7 @@ test('mandatory AI accounting: an unknown model without provider cost is display
   await assistant
     .locator('[data-orbitpm-aris-assistant-question]')
     .fill('Describe an unrelated topic of general trivia, nothing to do with any process here.')
-  await assistant.getByRole('button', { name: 'Ask', exact: true }).click()
+  await assistant.getByRole('button', { name: 'Send', exact: true }).click()
   const aiSection = assistant.locator('[data-orbitpm-aris-assistant-ai]')
   await expect(aiSection).toBeVisible()
   await aiSection.locator('[data-orbitpm-aris-assistant-ai-consent]').check()
@@ -1111,7 +1118,8 @@ test('mandatory AI cancellation: attachment, generation, and assistant paths abo
   phase = 'attachment'
   const panel = createPanel(page)
   await panel.locator('[data-orbitpm-aris-create-document-tab]').click()
-  await panel.locator('[data-orbitpm-aris-create-model]').selectOption(VISION_MODEL)
+  // OpenRouter's model control is an input+datalist — type the id, don't select.
+  await panel.locator('[data-orbitpm-aris-create-model]').fill(VISION_MODEL)
   await panel.locator('input[type="file"][accept*="image/png"]').setInputFiles({
     name: 'cancelled-attachment.png',
     mimeType: 'image/png',
@@ -1123,8 +1131,6 @@ test('mandatory AI cancellation: attachment, generation, and assistant paths abo
   await panel
     .locator('[data-orbitpm-aris-create-hint]')
     .fill('Model the attachment cancellation process')
-  await panel.locator('[data-orbitpm-aris-create-preview] summary').click()
-  await panel.locator('[data-orbitpm-aris-create-consent]').check()
   await panel.locator('[data-orbitpm-aris-create-submit]').click()
   const attachmentRequest = await waitForHeld('attachment')
   expect(attachmentRequest.body).toMatchObject({
@@ -1143,7 +1149,7 @@ test('mandatory AI cancellation: attachment, generation, and assistant paths abo
   await panel.locator('[data-orbitpm-aris-create-description-tab]').click()
 
   phase = 'generation'
-  const generation = await generateAndConsent(
+  const generation = await prepareGeneration(
     page,
     'Generate a result that will be explicitly cancelled.',
     'cancelled-generation'
@@ -1164,7 +1170,7 @@ test('mandatory AI cancellation: attachment, generation, and assistant paths abo
   await assistant
     .locator('[data-orbitpm-aris-assistant-question]')
     .fill('Describe quantum entanglement briefly, unrelated to any process here.')
-  await assistant.getByRole('button', { name: 'Ask', exact: true }).click()
+  await assistant.getByRole('button', { name: 'Send', exact: true }).click()
   const aiSection = assistant.locator('[data-orbitpm-aris-assistant-ai]')
   await expect(aiSection).toBeVisible()
   await aiSection.locator('[data-orbitpm-aris-assistant-ai-consent]').check()

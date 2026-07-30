@@ -220,6 +220,27 @@ test('Arabic mirrors the explorer to the trailing edge while the ARIS canvas geo
     .first()
     .evaluate((node) => getComputedStyle(node).direction)
   expect(paletteDirectionRtl).toBe('ltr')
+
+  // While the geometry stays unmirrored, the caption *content* follows the
+  // interface language (view-only, off the undo stack — `contentLang ?? lang`
+  // drives `setContentLanguage` in ArisStudioTab). Select a genuinely bilingual
+  // occurrence (UAE Pass / الهوية الرقمية) via the Accounting rail — the row aria
+  // is localized, so use its Arabic form while the app is Arabic — and its canvas
+  // caption renders in Arabic.
+  const bilingualId = UAE_PASS_OCCURRENCE_IDS[0]
+  const rtlFilter = page.locator('[data-orbitpm-aris-accounting] input[type="search"]')
+  await rtlFilter.fill(bilingualId)
+  await page
+    .getByRole('button', { name: `اختيار ${bilingualId} على لوحة الرسم`, exact: true })
+    .click()
+  await rtlFilter.fill('')
+  await expect(canvas.getByText('الهوية الرقمية').first()).toBeVisible()
+
+  // Flip the interface back to English: the SAME occurrence's caption re-renders
+  // in English — the text changed, the geometry did not.
+  await page.getByRole('button', { name: /^الواجهة:/ }).click()
+  await expect(page.locator('html')).toHaveAttribute('lang', 'en')
+  await expect(canvas.getByText('UAE Pass').first()).toBeVisible()
 })
 
 test('Details rail selection surfaces genuine Arabic source content, and its tabs localize in both languages', async ({

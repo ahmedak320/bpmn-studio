@@ -1335,7 +1335,7 @@ export default function ArisApp(): JSX.Element {
                           }
                           onOpenAssistant={() => setAssistantOpen(true)}
                           onImportPackage={() => void handlePrepareImport(tab)}
-                          onToast={(message, tone) => pushToast(message, tone ?? 'info')}
+                          onToast={pushToast}
                           sourceFileName={tab.relPath?.split('/').pop() ?? `${tab.title}.aml`}
                           selectionRequest={isActive ? selectionRequest : null}
                           onSelectionResolved={(_token, revealed) => {
