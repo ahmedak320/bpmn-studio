@@ -43,6 +43,8 @@
     "test:aris:phase1": "node scripts/aris-phase1-characterization.mjs",
     "test": "vitest run --maxWorkers=4 --retry=0 --reporter=default --reporter=./scripts/vitest-release-reporter.mjs",
     "test:aris:animalwf": "vitest run --config vitest.animalwf.config.ts --maxWorkers=4 --retry=0",
+    "test:aris:animalwf:holdout": "vitest run --config vitest.animalwf.holdout.config.ts",
+    "test:aris:fidelity-report": "vite-node scripts/aris-fidelity-report.ts",
     "test:aris:phase16": "vite-node scripts/aris-animalwf-loop.ts",
     "test:aris:golden": "vite-node scripts/aris-golden-compare.ts",
     "test:aris:reexport-prep": "vite-node scripts/aris-reexport-prep.ts",

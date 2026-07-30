@@ -146,6 +146,13 @@ export const ARIS_SHELL_MESSAGE_KEYS: Readonly<Record<string, string>> = Object.
   'aris.import.rolledBack': 'The import failed and was rolled back: {error}',
   'aris.import.flushFailed': 'The workspace package was written but the file save failed: {error}',
   'aris.import.failed': 'The import could not be prepared: {error}',
+  'aris.import.split.title': 'Import into the workspace',
+  'aris.import.split.body':
+    'Each ARIS model becomes its own .aml file, in folders mirroring the ARIS group tree. Existing files are never overwritten.',
+  'aris.import.split.listAria': 'Files to be created',
+  'aris.import.split.skipExisting': 'Skipped — model {id} already exists in this workspace',
+  'aris.import.split.confirm': 'Import {count} file(s)',
+  'aris.import.split.cancel': 'Cancel',
   'aris.ai.cancelled': 'The request was cancelled; nothing was created.',
   'aris.ai.created':
     'Created {models} models, {objects} objects, {relations} relations; {uncertainties} uncertainties reported.',
@@ -330,6 +337,9 @@ export const ARIS_SHELL_MESSAGE_KEYS: Readonly<Record<string, string>> = Object.
   'aris.details.edit.attributes': 'ARIS attributes',
   'aris.details.edit.attributes.none':
     'This object definition carries no ARIS attributes, so there is no value to edit.',
+  'aris.details.edit.attributes.mandatory': 'Mandatory',
+  'aris.details.edit.attributes.noneModel':
+    'This model type carries no R3 attribute schema, so there is no value to edit.',
   'aris.details.edit.valueEn': 'Value (English locale)',
   'aris.details.edit.valueAr': 'Value (Arabic locale)',
   'aris.details.edit.valueOther': 'Value (locale {locale})',

@@ -1075,9 +1075,9 @@ npm run build && npx playwright test tests/e2e/aris-import-split.spec.ts
 
 **Steps:**
 
-- [ ] `aris-fidelity-screenshots.spec.ts`: import the reference fixture via `setInputFiles`, open each iterate model, `page.screenshot({ fullPage: false })` of the canvas → `test-results/fidelity/<model>-<browser>.png`. GATED (3 engines): model opens; exact occurrence-element count; `[data-aris-fidelity]` (symbol fallback) count === 0 for iterate models; ≥1 label element with `data-aris-caption` under a function (numbering visible). NOT gated: pixels.
-- [ ] `aris-canvas-interaction.spec.ts` append: palette place → type "Approve request" → Enter → SVG caption appears; dblclick → edit; quick-pick swap visible.
-- [ ] `package.json` scripts: `"test:aris:animalwf:holdout": "vitest run --config vitest.animalwf.holdout.config.ts"`, `"test:aris:fidelity-report": "vite-node scripts/aris-fidelity-report.ts"`. Prettier.
+- [x] `aris-fidelity-screenshots.spec.ts`: import the reference fixture via `setInputFiles`, open each iterate model, `page.screenshot({ fullPage: false })` of the canvas → `test-results/fidelity/<model>-<browser>.png`. GATED (3 engines): model opens; exact occurrence-element count; `[data-aris-fidelity]` (symbol fallback) count === 0 for iterate models; ≥1 label element with `data-aris-caption` under a function (numbering visible). NOT gated: pixels.
+- [x] `aris-canvas-interaction.spec.ts` append: palette place → type "Approve request" → Enter → SVG caption appears; dblclick → edit; quick-pick swap visible.
+- [x] `package.json` scripts: `"test:aris:animalwf:holdout": "vitest run --config vitest.animalwf.holdout.config.ts"`, `"test:aris:fidelity-report": "vite-node scripts/aris-fidelity-report.ts"`. Prettier.
 
 **Verify:**
 
@@ -1097,7 +1097,7 @@ npm run typecheck && npm run lint && npm run check:no-skips
 
 **Steps:**
 
-- [ ] Grep the whole `src/aris` + `src/ArisApp.tsx` for any `t('…')`/`tk('…')` key not present in both dictionaries (or `ARIS_SHELL_MESSAGE_KEYS`); register any stray key en+ar. Confirm `check:ui-copy` and `i18n.test.ts` green. Prettier.
+- [x] Grep the whole `src/aris` + `src/ArisApp.tsx` for any `t('…')`/`tk('…')` key not present in both dictionaries (or `ARIS_SHELL_MESSAGE_KEYS`); register any stray key en+ar. Confirm `check:ui-copy` and `i18n.test.ts` green. Prettier.
 
 **Verify:**
 
