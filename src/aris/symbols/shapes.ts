@@ -8,11 +8,39 @@ import type {
   ArisViewBox
 } from './types'
 
-const OUTLINE = '#c4c7c9'
+// Wave 9 P4 (fixplan §4.3): measured hairline grey on the card/event/value-chain surface stroke.
+const OUTLINE = '#c0c0c0'
 const WHITE = '#ffffff'
 const CARD_VIEW_BOX = Object.freeze({ minX: 0, minY: 0, width: 100, height: 60 })
-const CARD_ICON_BOX = Object.freeze({ x: 3, y: 7, width: 20, height: 46 })
-const CARD_CONTENT_BOX = Object.freeze({ x: 27, y: 4, width: 70, height: 53 })
+// Wave 9 P4 (fixplan §4.3): the card surface's outer corners are slightly rounded in the
+// original (the colored band's own outer corners follow the same curve — see cardTopStripPath /
+// cardLeftBandPath below; its INNER seam against the caption area stays square).
+const CARD_CORNER_RADIUS = 2
+
+/**
+ * Wave 9 P4 (fixplan §4.3): the original's green icon band is 17 % of a FUNCTION card's width and
+ * 21 % of every other card's width — both currently render at a too-wide 25 %. `card()` passes
+ * `bandWidth: FUNCTION_BAND_WIDTH` only for the two function descriptors; every other card
+ * defaults to the satellite width.
+ */
+const FUNCTION_BAND_WIDTH = 17
+const SATELLITE_BAND_WIDTH = 21
+
+/**
+ * The icon's own centering box, re-derived from whichever band width a family uses: a 12 % left
+ * inset and an 80 % width (leaving an 8 % right-hand margin) — exactly the ratios the old,
+ * single 25-wide-band CARD_ICON_BOX (x:3, width:20 of 25) already encoded. Reapplying the same
+ * ratios keeps the icon centered inside its band and lets it re-center/shrink along with the band
+ * instead of using a fixed absolute inset.
+ */
+function cardIconBox(bandWidth: number): DmtBox {
+  return { x: bandWidth * 0.12, y: 7, width: bandWidth * 0.8, height: 46 }
+}
+
+const CARD_ICON_BOX = Object.freeze(cardIconBox(SATELLITE_BAND_WIDTH))
+// Measured (fixplan §4.3): caption area starts just right of each family's band.
+const CARD_CONTENT_BOX = Object.freeze({ x: 23, y: 4, width: 74, height: 53 })
+const FUNCTION_CONTENT_BOX = Object.freeze({ x: 18, y: 4, width: 80, height: 53 })
 
 export type DmtSilhouette =
   | 'card'
@@ -320,7 +348,48 @@ function describe(input: DescriptorInput): DmtSymbolDescriptor {
   })
 }
 
-function cardGroups(accent: string, iconElements: readonly ArisDrawingElement[]): DrawingGroup[] {
+/**
+ * The accent "top strip" spans the card's full width, independent of the per-family band width.
+ * Only its outer corners (top-left, top-right) sit on the card's true perimeter and follow the
+ * same `CARD_CORNER_RADIUS` curve as the surface rect beneath it — its bottom edge is an interior
+ * seam against the caption area and stays square (fixplan §4.3: "do not round the inner edge").
+ */
+function cardTopStripPath(): string {
+  const r = CARD_CORNER_RADIUS
+  const left = 0.75
+  const top = 0.75
+  const right = 99.25
+  const bottom = 3.75
+  return (
+    `M ${left + r} ${top} L ${right - r} ${top} A ${r} ${r} 0 0 1 ${right} ${top + r} ` +
+    `L ${right} ${bottom} L ${left} ${bottom} L ${left} ${top + r} ` +
+    `A ${r} ${r} 0 0 1 ${left + r} ${top} Z`
+  )
+}
+
+/**
+ * The accent "left band" spans the card's full height at the family's `bandWidth`. Only its outer
+ * corners (top-left, bottom-left) follow the card's rounded perimeter — its right edge (where it
+ * meets the white caption area) is an interior seam and stays square.
+ */
+function cardLeftBandPath(bandWidth: number): string {
+  const r = CARD_CORNER_RADIUS
+  const left = 0.75
+  const top = 0.75
+  const right = left + bandWidth
+  const bottom = 59.25
+  return (
+    `M ${left + r} ${top} L ${right} ${top} L ${right} ${bottom} L ${left + r} ${bottom} ` +
+    `A ${r} ${r} 0 0 1 ${left} ${bottom - r} L ${left} ${top + r} ` +
+    `A ${r} ${r} 0 0 1 ${left + r} ${top} Z`
+  )
+}
+
+function cardGroups(
+  accent: string,
+  iconElements: readonly ArisDrawingElement[],
+  bandWidth: number
+): DrawingGroup[] {
   return [
     {
       id: 'surface',
@@ -330,7 +399,9 @@ function cardGroups(accent: string, iconElements: readonly ArisDrawingElement[])
         rect(0.75, 0.75, 98.5, 58.5, {
           fill: WHITE,
           stroke: OUTLINE,
-          strokeWidth: 1.5
+          strokeWidth: 1.5,
+          rx: CARD_CORNER_RADIUS,
+          ry: CARD_CORNER_RADIUS
         })
       ]
     },
@@ -339,8 +410,8 @@ function cardGroups(accent: string, iconElements: readonly ArisDrawingElement[])
       scale: 'stretch',
       paintRole: 'accent',
       elements: [
-        rect(0.75, 0.75, 98.5, 3, { fill: accent }),
-        rect(0.75, 0.75, 25, 58.5, { fill: accent })
+        path(cardTopStripPath(), { fill: accent, stroke: 'none', strokeWidth: 0 }),
+        path(cardLeftBandPath(bandWidth), { fill: accent, stroke: 'none', strokeWidth: 0 })
       ]
     },
     {
@@ -377,22 +448,19 @@ function multiPersonIcon(centers: readonly number[]): readonly ArisDrawingElemen
 function iconGeometry(icon: DmtIconId): readonly ArisDrawingElement[] {
   switch (icon) {
     case 'double-chevron':
+      // Wave 9 P4 (fixplan §4.3): the original badge is two SMALL FILLED fast-forward triangles
+      // (≈half the size of the old 6-point chevron-arrow polygons this replaces), calibrated
+      // against `cmp-zoom-funcbadge.png`. Exactly 2 polygons — renderer.dmt.test.ts pins the count.
       return [
         polygon([
-          { x: 5, y: 18 },
-          { x: 11, y: 30 },
-          { x: 5, y: 42 },
-          { x: 9, y: 42 },
-          { x: 15, y: 30 },
-          { x: 9, y: 18 }
+          { x: 6, y: 24 },
+          { x: 12, y: 30 },
+          { x: 6, y: 36 }
         ]),
         polygon([
-          { x: 12, y: 18 },
-          { x: 18, y: 30 },
-          { x: 12, y: 42 },
-          { x: 16, y: 42 },
-          { x: 22, y: 30 },
-          { x: 16, y: 18 }
+          { x: 13, y: 24 },
+          { x: 19, y: 30 },
+          { x: 13, y: 36 }
         ])
       ]
     case 'application-window':
@@ -608,16 +676,22 @@ interface CardInput {
   readonly defaultBounds?: ArisBounds
   readonly roundTripVerified?: boolean
   readonly canonicalKey?: boolean
+  /** Wave 9 P4 (fixplan §4.3): omit for the satellite width; the two function cards pass 17. */
+  readonly bandWidth?: number
 }
 
 function card(input: CardInput): DmtSymbolDescriptor {
   const accent = bodyFill(input.objectType, input.symbolNum, input.fallbackAccent)
+  const bandWidth = input.bandWidth ?? SATELLITE_BAND_WIDTH
+  const contentBox = bandWidth === FUNCTION_BAND_WIDTH ? FUNCTION_CONTENT_BOX : CARD_CONTENT_BOX
   return describe({
     ...input,
     silhouette: 'card',
     hitPath: 'M 0.75 0.75 H 99.25 V 59.25 H 0.75 Z',
     defaultBounds: input.defaultBounds,
-    groups: cardGroups(accent, iconGeometry(input.icon))
+    iconBox: cardIconBox(bandWidth),
+    contentBox,
+    groups: cardGroups(accent, iconGeometry(input.icon), bandWidth)
   })
 }
 
@@ -659,7 +733,8 @@ function eventShape(): DmtSymbolDescriptor {
     icon: 'flag',
     hitPath: 'M 11 0.75 H 88 L 99.25 30 L 88 59.25 H 11 L 0.75 30 Z',
     iconBox: { x: 3, y: 7, width: 21, height: 46 },
-    contentBox: { x: 29, y: 4, width: 60, height: 53 },
+    // Measured (fixplan §4.1 remainder): x27.5 w64.5 (centre 60%), was x29 w60.
+    contentBox: { x: 27.5, y: 4, width: 64.5, height: 53 },
     ports: eventPorts,
     groups: [
       {
@@ -925,7 +1000,8 @@ export const ARIS_SYMBOL_DESCRIPTORS: readonly DmtSymbolDescriptor[] = Object.fr
     accessibleLabel: 'Function',
     icon: 'double-chevron',
     fallbackAccent: '#009933',
-    defaultBounds: { width: 100, height: 70 }
+    defaultBounds: { width: 100, height: 70 },
+    bandWidth: FUNCTION_BAND_WIDTH
   }),
   card({
     catalogId: 'epc.system-function',
@@ -935,7 +1011,8 @@ export const ARIS_SYMBOL_DESCRIPTORS: readonly DmtSymbolDescriptor[] = Object.fr
     accessibleLabel: 'System function',
     icon: 'application-window',
     fallbackAccent: '#009933',
-    defaultBounds: { width: 100, height: 70 }
+    defaultBounds: { width: 100, height: 70 },
+    bandWidth: FUNCTION_BAND_WIDTH
   }),
   processInterfaceShape(),
   eventShape(),
