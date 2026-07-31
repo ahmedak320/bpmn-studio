@@ -79,7 +79,7 @@ import {
   type ArisLabelLayout,
   type ArisResolvedLabelFont
 } from './typography'
-import type { ArisFreeText } from '../model/types'
+import type { ArisFreeText, ArisWorkingDocument } from '../model/types'
 
 const DEFAULT_STROKE = '#334155'
 const DEFAULT_FILL = '#ffffff'
@@ -101,6 +101,32 @@ const CONNECTION_STROKE = '#000000'
  * visually calibrated and is never scaled (Wave 9 P2, fixplan §5.4, plan §0 ground truth).
  */
 export const ARIS_PEN_UNIT = 2.646
+
+/** The AML attribute type that carries an OLE definition's embedded picture as a base64 PNG. */
+const AT_IMAGE_FILE_BLOB = 'AT_IMAGE_FILE_BLOB'
+
+/**
+ * The raw `AT_IMAGE_FILE_BLOB` value (a base64 PNG) an OLE definition carries,
+ * read from the source index the working document already retains (V5+ P11).
+ * Returns the first non-empty value, or `null` when the definition has none.
+ * This only reads the source bytes — it never rewrites them, so the export
+ * stays byte-verbatim; `oleImage.ts` validates and caps the value before it is
+ * ever painted.
+ */
+function resolveOleImageBlobValue(
+  document: ArisWorkingDocument,
+  definitionId: string
+): string | null {
+  for (const attribute of document.sourceIndex.attributes) {
+    if (attribute.parsed.ownerSourceId !== definitionId) continue
+    if (attribute.parsed.attributeType !== AT_IMAGE_FILE_BLOB) continue
+    for (const value of attribute.parsed.values) {
+      if (value.text.trim() !== '') return value.text
+    }
+  }
+  return null
+}
+
 const CAPTION_FILL = '#0f172a'
 const CAPTION_FONT_SIZE = 12
 /** Fill of the marker a `SymbolFlag="SYMBOL"` placement draws in place of text. */
@@ -867,7 +893,11 @@ export class ArisRenderer extends BaseRenderer {
       // The bound header values inherit their note's own FontStyleSheet font
       // (V8) instead of a band-ratio guess.
       resolveNoteFont: (note) =>
-        resolveFreeTextFont(document, note.modelId, note.id, localeId ?? DEFAULT_LOCALE_ID)
+        resolveFreeTextFont(document, note.modelId, note.id, localeId ?? DEFAULT_LOCALE_ID),
+      // The title-block logo is decoded (tier-1 P11) from the OLE definition's
+      // AT_IMAGE_FILE_BLOB PNG, which the source index already retains as an
+      // attribute value. We only read it; the AML bytes are never rewritten.
+      resolveOleImage: (definitionId) => resolveOleImageBlobValue(document, definitionId)
     })
     drawPrintFrame(layer, frame, {
       modelName: readLocalized(model.names, localeId)

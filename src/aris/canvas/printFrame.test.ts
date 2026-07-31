@@ -31,6 +31,10 @@ import { SVG_NS } from './svg'
 
 const MODEL_ID = 'Model.1'
 
+/** A canonical 1×1 PNG — a valid AT_IMAGE_FILE_BLOB value for the decode path. */
+const VALID_PNG_BASE64 =
+  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAC0lEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=='
+
 let harness: Harness | null = null
 
 afterEach(() => {
@@ -448,6 +452,67 @@ describe('drawPrintFrame — SVG furniture', () => {
     const value = parent.querySelector('[data-aris-print-frame-text="anchored-value"]')
     expect(value?.textContent).toBe('AWF.01.01')
     expect(parent.querySelector('[data-aris-ole-pending]')).not.toBeNull()
+  })
+
+  it('paints the decoded logo as an image when the OLE blob resolves to a valid PNG', () => {
+    const model = modelWith({
+      attributes: Object.freeze([
+        Object.freeze({
+          type: 'AT_ID',
+          values: Object.freeze([Object.freeze({ localeId: 'en-US', text: 'AWF.01.01' })])
+        })
+      ]),
+      freeText: Object.freeze([boundNote('FFTextOcc.1', 'AT_ID', 1823, 122)]),
+      attachments: Object.freeze([attachment('logo', 5403, 40, 1194, 320)]),
+      occurrences: Object.freeze([occurrence('ObjOcc.func', 'ObjDef.func', 900, 900)])
+    })
+    const parent = document.createElementNS(SVG_NS, 'g')
+    // The renderer resolves AT_IMAGE_FILE_BLOB for the org-block's OLE definition.
+    const frame = buildPrintFrame(model, {
+      resolveOleImage: (definitionId) => (definitionId === 'OLEDef.logo' ? VALID_PNG_BASE64 : null)
+    })
+    expect(frame.header!.orgImage).toBe(`data:image/png;base64,${VALID_PNG_BASE64}`)
+    drawPrintFrame(parent, frame, { modelName: 'Register profile' })
+
+    const org = parent.querySelector('[data-aris-print-frame-org-block]')!
+    expect(org.getAttribute('data-aris-ole-image')).toBe('true')
+    // The decoded path replaces the placeholder entirely.
+    expect(org.getAttribute('data-aris-ole-pending')).toBeNull()
+    expect(parent.querySelector('[data-aris-ole-pending]')).toBeNull()
+    const image = org.querySelector('image')!
+    expect(image.getAttribute('href')).toBe(`data:image/png;base64,${VALID_PNG_BASE64}`)
+    expect(image.getAttribute('href')).not.toBe('')
+    expect({
+      x: Number(image.getAttribute('x')),
+      y: Number(image.getAttribute('y')),
+      width: Number(image.getAttribute('width')),
+      height: Number(image.getAttribute('height'))
+    }).toEqual({ x: 5403, y: 40, width: 1194, height: 320 })
+  })
+
+  it('keeps the placeholder when the OLE blob is malformed (decode returns null)', () => {
+    const model = modelWith({
+      attributes: Object.freeze([
+        Object.freeze({
+          type: 'AT_ID',
+          values: Object.freeze([Object.freeze({ localeId: 'en-US', text: 'AWF.01.01' })])
+        })
+      ]),
+      freeText: Object.freeze([boundNote('FFTextOcc.1', 'AT_ID', 1823, 122)]),
+      attachments: Object.freeze([attachment('logo', 5403, 40, 1194, 320)]),
+      occurrences: Object.freeze([occurrence('ObjOcc.func', 'ObjDef.func', 900, 900)])
+    })
+    const parent = document.createElementNS(SVG_NS, 'g')
+    const frame = buildPrintFrame(model, {
+      // A non-PNG blob must not be rendered — the placeholder stays.
+      resolveOleImage: () => 'bm90IGEgcG5nIGF0IGFsbA=='
+    })
+    expect(frame.header!.orgImage).toBeNull()
+    drawPrintFrame(parent, frame, { modelName: 'Register profile' })
+    const org = parent.querySelector('[data-aris-print-frame-org-block]')!
+    expect(org.getAttribute('data-aris-ole-pending')).toBe('true')
+    expect(org.querySelector('image')).toBeNull()
+    expect(org.getAttribute('data-aris-ole-image')).toBeNull()
   })
 
   it('draws each non-header graphic frame as an outline at its authored bounds and pen', () => {

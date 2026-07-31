@@ -22,13 +22,15 @@
  *
  * ## Out of scope (named hooks)
  *
- * - **OLE image decode.** The title-block logo and the pixel-exact embedded
- *   legend are OLE blobs. Decoding them safely (size/decompression limits,
- *   bytes preserved verbatim for export) is intentionally NOT in this lane;
- *   the title block renders as a framed placeholder and the legend is drawn
- *   from the convention catalog at the attachment's exact bounds.
- *   TODO(V5+ OLE): decode `index.blobs` for these attachment ids and swap the
- *   placeholder/legend for the authored images.
+ * - **OLE image decode (tier 1, V5+ P11).** The title-block logo is decoded
+ *   from the org-block OLE definition's `AT_IMAGE_FILE_BLOB` attribute — a
+ *   self-contained base64 PNG that the source already carries — validated and
+ *   size/dimension-capped by `oleImage.ts` (untrusted binary: malformed →
+ *   placeholder). The renderer supplies the raw value via
+ *   `ArisPrintFrameOptions.resolveOleImage`; the source bytes are only read,
+ *   never rewritten (export stays byte-verbatim). The bottom DMT legend is a
+ *   far larger vector drawing and is **tier 2, explicitly deferred**: it stays
+ *   drawn from the convention catalog at the attachment's exact bounds.
  * - **Gfx frame geometry.** The header/reference rounded rectangles are AML
  *   `GfxObj` records, parsed into `model.graphicObjects` (Wave 6 GEOM): the
  *   header band draws at the authored frame's exact bounds when one encloses
@@ -41,13 +43,14 @@
  */
 
 import { resolveFreeTextModelAttributeBinding } from '../model/buildFromSource'
-import type { ArisFreeText, ArisGraphicObject, ArisModel } from '../model/types'
+import type { ArisAttachment, ArisFreeText, ArisGraphicObject, ArisModel } from '../model/types'
 import { bidiTextAttrs } from './bidi'
 import { modelContentBounds, type ArisRect } from './canvasSync'
 import { DEFAULT_LOCALE_ID } from './emptyDocument'
 import type { ArisLabelFont } from './elements'
 import { buildArisLegend, drawArisLegend, type ArisLegendModel } from './legend'
 import { readLocalized } from './localization'
+import { decodeArisOleImage } from './oleImage'
 import { arisPrintFrameText } from './printFrameI18n'
 import { ARIS_PEN_UNIT } from './renderer'
 import { svgAppend, svgElement } from './svg'
@@ -75,6 +78,13 @@ export interface ArisPrintFrameHeader {
   readonly anchoredValues: readonly ArisPrintFrameAnchoredValue[]
   /** The organization title block rectangle (an OLE attachment's bounds). */
   readonly orgBlock: ArisRect | null
+  /**
+   * The decoded title-block logo as a `data:image/png;base64,…` URL, when the
+   * org-block OLE attachment carried a valid `AT_IMAGE_FILE_BLOB` PNG (V5+ P11).
+   * `null` keeps the dashed `data-aris-ole-pending` placeholder — the fallback
+   * for a model with no attachment, no resolver, or a malformed/oversized blob.
+   */
+  readonly orgImage: string | null
   /** The authored `GfxObj` frame the band draws at, when the source carries one. */
   readonly sourceFrameId: string | null
 }
@@ -110,6 +120,14 @@ export interface ArisPrintFrameOptions {
    * anchored values keep the band-ratio size.
    */
   readonly resolveNoteFont?: (note: ArisFreeText) => ArisLabelFont | null
+  /**
+   * Resolve the raw `AT_IMAGE_FILE_BLOB` value (a base64 PNG) for an OLE
+   * definition id (V5+ P11). The org-block logo is painted from it when it
+   * decodes; when omitted, or when it returns `null`/a malformed value, the
+   * title block keeps its placeholder. The raw source bytes are never
+   * rewritten — this only reads them to render.
+   */
+  readonly resolveOleImage?: (definitionId: string) => string | null
 }
 
 /**
@@ -193,19 +211,19 @@ function unionRects(a: ArisRect | null, b: ArisRect): ArisRect {
 function classifyAttachments(
   model: ArisModel,
   content: ArisRect | null
-): { readonly orgBlock: ArisRect | null; readonly legend: ArisRect | null } {
+): { readonly orgBlock: ArisAttachment | null; readonly legend: ArisAttachment | null } {
   const sorted = [...model.attachments].sort((a, b) => a.bounds.y - b.bounds.y)
-  let orgBlock: ArisRect | null = null
-  let legend: ArisRect | null = null
+  let orgBlock: ArisAttachment | null = null
+  let legend: ArisAttachment | null = null
   const contentBottom = content === null ? Number.NEGATIVE_INFINITY : content.y + content.height
   const contentTop = content === null ? Number.POSITIVE_INFINITY : content.y
   for (const attachment of sorted) {
     if (attachment.bounds.y >= contentBottom) {
-      legend = legend ?? attachment.bounds
+      legend = legend ?? attachment
       continue
     }
     if (attachment.bounds.y + attachment.bounds.height <= contentTop || orgBlock === null) {
-      orgBlock = attachment.bounds
+      orgBlock = attachment
     }
   }
   return Object.freeze({ orgBlock, legend })
@@ -216,9 +234,19 @@ function buildHeader(
   localeId: string,
   content: ArisRect | null,
   frames: readonly ArisGraphicObject[],
-  resolveNoteFont?: (note: ArisFreeText) => ArisLabelFont | null
+  resolveNoteFont?: (note: ArisFreeText) => ArisLabelFont | null,
+  resolveOleImage?: (definitionId: string) => string | null
 ): ArisPrintFrameHeader | null {
-  const { orgBlock } = classifyAttachments(model, content)
+  const { orgBlock: orgBlockAttachment } = classifyAttachments(model, content)
+  const orgBlock = orgBlockAttachment?.bounds ?? null
+
+  // The title-block logo, decoded from the OLE definition's AT_IMAGE_FILE_BLOB
+  // PNG (V5+ P11). A missing resolver, missing definition, or malformed/oversized
+  // blob leaves this null → the dashed placeholder stays.
+  const orgImage =
+    orgBlockAttachment?.definitionId != null && resolveOleImage
+      ? decodeArisOleImage(resolveOleImage(orgBlockAttachment.definitionId))
+      : null
 
   // Resolved live placeholders at their source anchors (the imported header's
   // value column). Drawn for every bound note, wherever it sits.
@@ -299,6 +327,7 @@ function buildHeader(
       })
     ),
     orgBlock,
+    orgImage,
     sourceFrameId: sourceFrame?.id ?? null
   })
 }
@@ -327,7 +356,7 @@ function frameEnclosing(
 
 function buildLegendSlot(model: ArisModel, content: ArisRect | null): ArisRect | null {
   const { legend } = classifyAttachments(model, content)
-  if (legend !== null) return legend
+  if (legend !== null) return legend.bounds
   if (content === null || content.width <= 0) return null
   return Object.freeze({
     x: content.x,
@@ -348,7 +377,14 @@ export function buildPrintFrame(
   const localeId = options.localeId ?? DEFAULT_LOCALE_ID
   const content = modelContentBounds(model)
   const frames = model.graphicObjects ?? []
-  const header = buildHeader(model, localeId, content, frames, options.resolveNoteFont)
+  const header = buildHeader(
+    model,
+    localeId,
+    content,
+    frames,
+    options.resolveNoteFont,
+    options.resolveOleImage
+  )
   const legendSlot = options.legend === false ? null : buildLegendSlot(model, content)
   // Every authored frame that is not the header band's own draws as page
   // furniture in its own right (the Reference-Laws grouping boxes).
@@ -426,40 +462,64 @@ function drawHeader(group: SVGElement, header: ArisPrintFrameHeader, modelName: 
     })
   )
 
-  // The organization title block: a framed placeholder for the OLE logo.
-  // TODO(V5+ OLE): replace with the decoded attachment image.
+  // The organization title block. When the OLE definition's AT_IMAGE_FILE_BLOB
+  // decoded to a bounded PNG (V5+ P11), paint that logo at the authored bounds;
+  // otherwise keep the dashed `data-aris-ole-pending` placeholder as the
+  // fallback (no attachment, no resolver, or a malformed/oversized blob).
   if (header.orgBlock !== null) {
     const block = header.orgBlock
-    const orgGroup = svgElement('g', {
-      'data-aris-print-frame-org-block': 'true',
-      'data-aris-ole-pending': 'true'
-    })
-    svgAppend(
-      orgGroup,
-      svgElement('rect', {
-        x: block.x,
-        y: block.y,
-        width: block.width,
-        height: block.height,
-        rx: Math.round(block.height / 10),
-        ry: Math.round(block.height / 10),
-        fill: PRINT_FRAME_ORG_FILL,
-        stroke: PRINT_FRAME_STROKE,
-        'stroke-width': 1,
-        'stroke-dasharray': '12 6'
+    if (header.orgImage !== null) {
+      const orgGroup = svgElement('g', {
+        'data-aris-print-frame-org-block': 'true',
+        'data-aris-ole-image': 'true'
       })
-    )
-    svgAppend(
-      orgGroup,
-      drawFrameText(
-        arisPrintFrameText('aris.printFrame.orgBlock'),
-        block.x + block.width / 2,
-        block.y + block.height / 2,
-        Math.max(1, Math.round(block.height / 6)),
-        { marker: 'org-block' }
+      svgAppend(
+        orgGroup,
+        svgElement('image', {
+          x: block.x,
+          y: block.y,
+          width: block.width,
+          height: block.height,
+          // ARIS stretches the embedded picture to the occurrence bounds; match
+          // that so the logo fills the authored title-block rectangle.
+          preserveAspectRatio: 'none',
+          href: header.orgImage,
+          'data-aris-print-frame-image': 'org-block'
+        })
       )
-    )
-    svgAppend(headerGroup, orgGroup)
+      svgAppend(headerGroup, orgGroup)
+    } else {
+      const orgGroup = svgElement('g', {
+        'data-aris-print-frame-org-block': 'true',
+        'data-aris-ole-pending': 'true'
+      })
+      svgAppend(
+        orgGroup,
+        svgElement('rect', {
+          x: block.x,
+          y: block.y,
+          width: block.width,
+          height: block.height,
+          rx: Math.round(block.height / 10),
+          ry: Math.round(block.height / 10),
+          fill: PRINT_FRAME_ORG_FILL,
+          stroke: PRINT_FRAME_STROKE,
+          'stroke-width': 1,
+          'stroke-dasharray': '12 6'
+        })
+      )
+      svgAppend(
+        orgGroup,
+        drawFrameText(
+          arisPrintFrameText('aris.printFrame.orgBlock'),
+          block.x + block.width / 2,
+          block.y + block.height / 2,
+          Math.max(1, Math.round(block.height / 6)),
+          { marker: 'org-block' }
+        )
+      )
+      svgAppend(headerGroup, orgGroup)
+    }
   }
 
   // Computed label/value rows (models that anchor no header notes of their own).

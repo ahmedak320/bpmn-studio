@@ -65,6 +65,19 @@ import type {
 const TEXT_PADDING_PX = 8
 const NO_COLOR_SENTINEL = '-1'
 
+/** The AML attribute type carrying an OLE definition's picture as a base64 PNG. */
+const AT_IMAGE_FILE_BLOB = 'AT_IMAGE_FILE_BLOB'
+/**
+ * Every PNG begins with the same invariant 8-byte signature, so its base64
+ * encoding always starts with these 11 characters. This is a decode-free
+ * "renderable image present" probe for the OLE title-block logo (tier-1 P11):
+ * the canvas paints the logo through `canvas/oleImage.ts`, which applies the
+ * full magic/size/dimension validation. This headless render model never
+ * imports the canvas decoder — it only needs to know a logo will render so it
+ * can clear that occurrence's `unsupported-ole-rendering` finding.
+ */
+const PNG_BASE64_PREFIX = 'iVBORw0KGgo'
+
 interface Identity {
   readonly modelId: string | null
   readonly elementId: string | null
@@ -487,6 +500,17 @@ export function buildArisRenderModel(input: ArisRenderSourceInput): ArisRenderMo
     }
 
     // --- Attachments (OLE) ---
+    // The bottom of the drawn content, used to tell the top title-block logo
+    // (org-block, rendered as an image) from the bottom legend (below the
+    // content, still deferred) — the same split the canvas print frame uses.
+    let contentBottom = Number.NEGATIVE_INFINITY
+    for (const element of elements) {
+      contentBottom = Math.max(contentBottom, element.sourceBounds.y + element.sourceBounds.height)
+    }
+    for (const note of freeText) {
+      contentBottom = Math.max(contentBottom, note.sourceBounds.y + note.sourceBounds.height)
+    }
+
     const attachments: RenderAttachment[] = []
     for (const occ of input.attachmentOccurrences) {
       if (occ.parsed.modelId !== modelId) continue
@@ -504,9 +528,27 @@ export function buildArisRenderModel(input: ArisRenderSourceInput): ArisRenderMo
         : undefined
       const blobCount = attachmentDef?.parsed.blobCount ?? 0
 
-      findings.push(
-        buildUnsupportedOleRenderingFinding(modelId, occ.sourceId, occ.parsed.attachmentId)
-      )
+      // Tier-1 P11: the title-block logo is now decoded and painted as a real
+      // image, so it clears its unsupported-ole-rendering finding. It qualifies
+      // when its OLE definition carries a renderable PNG (AT_IMAGE_FILE_BLOB)
+      // AND it sits above the content (the org-block, not the bottom legend).
+      // The legend also carries a PNG but is a large vector drawing left
+      // deferred/catalog-drawn, so it keeps its finding.
+      const imageAttr = occ.parsed.attachmentId
+        ? attributesByOwnerType.get(`${occ.parsed.attachmentId}::${AT_IMAGE_FILE_BLOB}`)
+        : undefined
+      const imageValue = imageAttr
+        ? (pickPrimaryAttributeValue(imageAttr.parsed.values)?.text ?? '')
+        : ''
+      const hasRenderablePng = imageValue.trimStart().startsWith(PNG_BASE64_PREFIX)
+      const isLegend = occ.parsed.y !== null && occ.parsed.y >= contentBottom
+      const rendersAsLogo = hasRenderablePng && !isLegend
+
+      if (!rendersAsLogo) {
+        findings.push(
+          buildUnsupportedOleRenderingFinding(modelId, occ.sourceId, occ.parsed.attachmentId)
+        )
+      }
       if (blobCount === 0) {
         findings.push(
           buildMissingReferenceExportFinding(modelId, occ.sourceId, occ.parsed.attachmentId)

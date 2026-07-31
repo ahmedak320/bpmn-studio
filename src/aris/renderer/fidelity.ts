@@ -11,8 +11,11 @@
  * - `missing-template`: the model declares a `TemplateGUID`, but this lane has no template
  *   store to resolve visual template content (borders, headers, stamp blocks) from — every
  *   templated model is an explicit, reported blocker per Section 20.2, never a silent omission.
- * - `unsupported-ole-rendering`: every `OLEOcc` (embedded OLE object placement) renders as a
- *   placeholder icon only; this renderer never decodes or previews the embedded binary.
+ * - `unsupported-ole-rendering`: an `OLEOcc` (embedded OLE object placement) that still renders as
+ *   a placeholder rather than its authored picture. Tier-1 P11 decodes the title-block logo from
+ *   the OLE definition's `AT_IMAGE_FILE_BLOB` PNG, so those org-block placements clear this finding
+ *   (see `buildRenderModel.ts`); the bottom legend — a large vector drawing left deferred — keeps
+ *   it. This renderer never decodes or previews any other embedded binary.
  * - `missing-reference-export`: an `OLEDef` (attachment definition) has zero exported `Blob`
  *   children — the binary content that a full reference export would carry is absent from this
  *   package, so nothing at all can be rendered for it (not even a static preview).

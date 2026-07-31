@@ -84,8 +84,11 @@ describe('AnimalWF real-data render model (Section 12.5 exit gate)', () => {
     // Confident, cross-checked expectations from direct inspection of the export:
     // - all 8 models declare a TemplateGUID and this lane has no template store.
     expect(result.fidelityByKind['missing-template']).toBe(8)
-    // - all 14 OLEOcc placements render as a placeholder only.
-    expect(result.fidelityByKind['unsupported-ole-rendering']).toBe(14)
+    // - 14 OLEOcc placements total; tier-1 P11 decodes the 7 title-block logos
+    //   (one per OLE-bearing model) from AT_IMAGE_FILE_BLOB and renders them as
+    //   real images, so those clear the finding. The 7 bottom legends — large
+    //   vector drawings left deferred/catalog-drawn — keep it: 14 − 7 = 7.
+    expect(result.fidelityByKind['unsupported-ole-rendering']).toBe(7)
     // - every OLEDef in this export carries 2 blobs, so no reference content is missing.
     expect(result.fidelityByKind['missing-reference-export']).toBe(0)
     // "Simplified Arabic" (a real proprietary face in this export) is confirmed to produce a

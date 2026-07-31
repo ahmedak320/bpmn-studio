@@ -195,11 +195,22 @@ describe('AnimalWF V5+: print-frame header band', () => {
       expect(positioned.map((value) => value.text).sort()).toEqual([...expectedTexts].sort())
 
       // The organization title block sits at the OLE attachment's exact
-      // position, marked as a pending image rather than invented artwork.
+      // position. Tier-1 P11 decodes the DMT logo from the OLE definition's
+      // AT_IMAGE_FILE_BLOB PNG, so the block renders a real <image> (not the
+      // dashed placeholder) at those exact bounds.
       const orgBlock = header!.querySelector('[data-aris-print-frame-org-block]')
       expect(orgBlock, 'org title block').not.toBeNull()
-      expect(orgBlock!.getAttribute('data-aris-ole-pending')).toBe('true')
-      const block = rectOf(orgBlock!.querySelector('rect'))
+      expect(orgBlock!.getAttribute('data-aris-ole-image')).toBe('true')
+      expect(orgBlock!.getAttribute('data-aris-ole-pending')).toBeNull()
+      const image = orgBlock!.querySelector('image')
+      expect(image, 'decoded logo image').not.toBeNull()
+      const href = image!.getAttribute('href') ?? ''
+      expect(href.startsWith('data:image/png;base64,')).toBe(true)
+      expect(href.length).toBeGreaterThan('data:image/png;base64,'.length)
+      const block = {
+        x: Number(image!.getAttribute('x')),
+        y: Number(image!.getAttribute('y'))
+      }
       expect(block.x).toBe(EXPECTED_FURNITURE[modelId]!.orgBlock.x)
       expect(block.y).toBe(EXPECTED_FURNITURE[modelId]!.orgBlock.y)
     })
