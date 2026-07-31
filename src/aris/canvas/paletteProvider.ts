@@ -162,6 +162,11 @@ export class ArisPaletteProvider {
   private pendingCatalogId: string | null = null
   private placementInvoker: HTMLElement | null = null
   private renderedModelType: string
+  // Live search-box nodes, re-pointed after every diagram-js `_update()` rebuild
+  // so the once-wired keyboard handler always drives the current input.
+  private searchInput: HTMLInputElement | null = null
+  private searchStatus: HTMLElement | null = null
+  private paletteKeysWired = false
 
   constructor(
     palette: Palette,
@@ -408,21 +413,34 @@ export class ArisPaletteProvider {
     palette.setAttribute('role', 'region')
     palette.setAttribute('aria-label', dmtLibraryText('aris.library.aria'))
 
-    const search = document.createElement('div')
-    search.className = 'aris-library-search'
-    const input = document.createElement('input')
-    input.type = 'search'
-    input.className = 'aris-library-search__input'
-    input.placeholder = dmtLibraryText('aris.library.search')
-    input.setAttribute('aria-label', dmtLibraryText('aris.library.search'))
-    input.autocomplete = 'off'
-    const status = document.createElement('span')
-    status.className = 'aris-library-search__status'
-    status.setAttribute('role', 'status')
-    status.setAttribute('aria-live', 'polite')
-    search.append(input, status)
-    entries.prepend(search)
+    // diagram-js fires `palette.changed` after a full `_update()` rebuild (which
+    // wipes this augmentation via domClear) AND on bare `_toggleState()` calls
+    // (open/close/canvas.resized) that leave the DOM intact. Everything below is
+    // therefore idempotent: existing nodes are reused, never prepended twice.
 
+    // One sticky search box per rebuild.
+    let search = entries.querySelector<HTMLElement>(':scope > .aris-library-search')
+    if (search === null) {
+      search = document.createElement('div')
+      search.className = 'aris-library-search'
+      const input = document.createElement('input')
+      input.type = 'search'
+      input.className = 'aris-library-search__input'
+      input.placeholder = dmtLibraryText('aris.library.search')
+      input.setAttribute('aria-label', dmtLibraryText('aris.library.search'))
+      input.autocomplete = 'off'
+      input.addEventListener('input', () => this.applySearchFilter())
+      const status = document.createElement('span')
+      status.className = 'aris-library-search__status'
+      status.setAttribute('role', 'status')
+      status.setAttribute('aria-live', 'polite')
+      search.append(input, status)
+      entries.prepend(search)
+    }
+    this.searchInput = search.querySelector<HTMLInputElement>('.aris-library-search__input')
+    this.searchStatus = search.querySelector<HTMLElement>('.aris-library-search__status')
+
+    // One collapsible header per group.
     const labels = new Map<string, string>([
       ['tools', dmtLibraryText('aris.library.group.tools')],
       ['annotations', dmtLibraryText('aris.library.group.annotations')],
@@ -432,99 +450,116 @@ export class ArisPaletteProvider {
       const groupId = group.dataset.group ?? ''
       const name = labels.get(groupId)
       if (name === undefined) continue
-      const heading = document.createElement('button')
-      heading.type = 'button'
-      heading.className = 'aris-library-group__toggle'
-      const collapsed = this.collapsedGroups.has(groupId)
-      heading.setAttribute('aria-expanded', collapsed ? 'false' : 'true')
-      heading.textContent = name
-      heading.setAttribute(
-        'aria-label',
-        dmtLibraryText('aris.library.group.toggle', {
-          state: dmtLibraryText(
-            collapsed ? 'aris.library.group.expand' : 'aris.library.group.collapse'
-          ),
-          name
+      let heading = group.querySelector<HTMLButtonElement>(':scope > .aris-library-group__toggle')
+      if (heading === null) {
+        const created = document.createElement('button')
+        created.type = 'button'
+        created.className = 'aris-library-group__toggle'
+        created.addEventListener('click', (event) => {
+          event.stopPropagation()
+          if (this.collapsedGroups.has(groupId)) this.collapsedGroups.delete(groupId)
+          else this.collapsedGroups.add(groupId)
+          this.syncGroupToggle(created, groupId, name)
+          this.applySearchFilter()
         })
-      )
-      for (const entry of group.querySelectorAll<HTMLElement>(':scope > .entry')) {
-        entry.hidden = collapsed
+        group.prepend(created)
+        heading = created
       }
-      heading.addEventListener('click', (event) => {
-        event.stopPropagation()
-        const nextCollapsed = !this.collapsedGroups.has(groupId)
-        if (nextCollapsed) this.collapsedGroups.add(groupId)
-        else this.collapsedGroups.delete(groupId)
-        heading.setAttribute('aria-expanded', nextCollapsed ? 'false' : 'true')
-        for (const entry of group.querySelectorAll<HTMLElement>(':scope > .entry')) {
-          entry.hidden = nextCollapsed
+      this.syncGroupToggle(heading, groupId, name)
+    }
+
+    // Keyboard navigation is wired exactly once on the persistent entries
+    // container. The handler reads the live search field through
+    // `this.searchInput`, so it keeps working after a rebuild swaps the input.
+    if (!this.paletteKeysWired) {
+      this.paletteKeysWired = true
+      entries.addEventListener('keydown', (event) => {
+        const input = this.searchInput
+        const target = event.target
+        if (!(target instanceof HTMLElement)) return
+        if (event.key === 'Escape' && input !== null && input.value.length > 0) {
+          input.value = ''
+          this.applySearchFilter()
+          input.focus()
+          event.preventDefault()
+          return
         }
+        if (target === input) return
+        const buttons = visibleEntryButtons(entries)
+        const current = buttons.indexOf(target.closest<HTMLButtonElement>('.entry')!)
+        if (current < 0) return
+        let next = current
+        if (event.key === 'ArrowRight' || event.key === 'ArrowDown') {
+          next = (current + 1) % buttons.length
+        } else if (event.key === 'ArrowLeft' || event.key === 'ArrowUp') {
+          next = (current - 1 + buttons.length) % buttons.length
+        } else if (event.key === 'Home') {
+          next = 0
+        } else if (event.key === 'End') {
+          next = buttons.length - 1
+        } else if (event.key.length === 1 && /\S/u.test(event.key) && input !== null) {
+          input.value += event.key
+          this.applySearchFilter()
+          input.focus()
+          event.preventDefault()
+          return
+        } else {
+          return
+        }
+        buttons[next]?.focus()
+        event.preventDefault()
       })
-      group.prepend(heading)
     }
 
-    const applyFilter = (): void => {
-      const query = input.value
-      const matches = new Set(
-        searchDmtLibrary(query, this.modelType()).map((item) => item.catalogId)
+    // Re-assert filter/collapse state so a rebuild or a bare toggle re-render
+    // leaves entries consistent with the current query and collapsed set.
+    this.applySearchFilter()
+  }
+
+  /** Sync one group header's text/ARIA with the collapsed set. */
+  private syncGroupToggle(heading: HTMLButtonElement, groupId: string, name: string): void {
+    const collapsed = this.collapsedGroups.has(groupId)
+    heading.textContent = name
+    heading.setAttribute('aria-expanded', collapsed ? 'false' : 'true')
+    heading.setAttribute(
+      'aria-label',
+      dmtLibraryText('aris.library.group.toggle', {
+        state: dmtLibraryText(
+          collapsed ? 'aris.library.group.expand' : 'aris.library.group.collapse'
+        ),
+        name
+      })
+    )
+  }
+
+  /** Show/hide entries and groups from the current query + collapsed set. */
+  private applySearchFilter(): void {
+    const entries = this.canvas
+      .getContainer()
+      .querySelector<HTMLElement>('.djs-palette .djs-palette-entries')
+    const input = this.searchInput
+    const status = this.searchStatus
+    if (!entries || input === null || status === null) return
+    const query = input.value
+    const matches = new Set(searchDmtLibrary(query, this.modelType()).map((item) => item.catalogId))
+    const filtering = query.trim().length > 0
+    let visible = 0
+    for (const group of entries.querySelectorAll<HTMLElement>(':scope > .group')) {
+      const isLibraryGroup = DMT_LIBRARY_GROUPS.some(
+        (candidate) => candidate.id === group.dataset.group
       )
-      const filtering = query.trim().length > 0
-      let visible = 0
-      for (const group of entries.querySelectorAll<HTMLElement>(':scope > .group')) {
-        const isLibraryGroup = DMT_LIBRARY_GROUPS.some(
-          (candidate) => candidate.id === group.dataset.group
-        )
-        let groupVisible = 0
-        for (const entry of group.querySelectorAll<HTMLElement>(':scope > .entry')) {
-          const catalogId = entry.dataset.arisCatalogId
-          const match = !filtering || (catalogId !== undefined && matches.has(catalogId))
-          const collapsed = !filtering && this.collapsedGroups.has(group.dataset.group ?? '')
-          entry.hidden = !match || collapsed
-          if (match && !collapsed) groupVisible += 1
-        }
-        group.hidden = filtering && (!isLibraryGroup || groupVisible === 0)
-        visible += groupVisible
+      let groupVisible = 0
+      for (const entry of group.querySelectorAll<HTMLElement>(':scope > .entry')) {
+        const catalogId = entry.dataset.arisCatalogId
+        const match = !filtering || (catalogId !== undefined && matches.has(catalogId))
+        const collapsed = !filtering && this.collapsedGroups.has(group.dataset.group ?? '')
+        entry.hidden = !match || collapsed
+        if (match && !collapsed) groupVisible += 1
       }
-      status.textContent =
-        filtering && visible === 0 ? dmtLibraryText('aris.library.noResults') : ''
+      group.hidden = filtering && (!isLibraryGroup || groupVisible === 0)
+      visible += groupVisible
     }
-    input.addEventListener('input', applyFilter)
-
-    entries.addEventListener('keydown', (event) => {
-      const target = event.target
-      if (!(target instanceof HTMLElement)) return
-      if (event.key === 'Escape' && input.value.length > 0) {
-        input.value = ''
-        applyFilter()
-        input.focus()
-        event.preventDefault()
-        return
-      }
-      if (target === input) return
-      const buttons = visibleEntryButtons(entries)
-      const current = buttons.indexOf(target.closest<HTMLButtonElement>('.entry')!)
-      if (current < 0) return
-      let next = current
-      if (event.key === 'ArrowRight' || event.key === 'ArrowDown') {
-        next = (current + 1) % buttons.length
-      } else if (event.key === 'ArrowLeft' || event.key === 'ArrowUp') {
-        next = (current - 1 + buttons.length) % buttons.length
-      } else if (event.key === 'Home') {
-        next = 0
-      } else if (event.key === 'End') {
-        next = buttons.length - 1
-      } else if (event.key.length === 1 && /\S/u.test(event.key)) {
-        input.value += event.key
-        applyFilter()
-        input.focus()
-        event.preventDefault()
-        return
-      } else {
-        return
-      }
-      buttons[next]?.focus()
-      event.preventDefault()
-    })
+    status.textContent = filtering && visible === 0 ? dmtLibraryText('aris.library.noResults') : ''
   }
 
   private refreshPalette(palette: Palette): void {
