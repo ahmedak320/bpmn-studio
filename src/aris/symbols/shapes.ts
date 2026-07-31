@@ -788,12 +788,21 @@ function ruleShape(operator: DmtOperator): DmtSymbolDescriptor {
       : operator === 'OR'
         ? 'aris.symbol.or'
         : 'aris.symbol.xor'
+  // Wave 9 P3 (fixplan §4.4): the original's grey circle fills its box exactly and its X/AND/OR
+  // marks are bold — pixel-measured on `cmp-gate-merge.png` (a 210px-diameter circle shows a
+  // ~23.5px horizontal cross-section through each X arm well clear of the centre crossing and the
+  // tip caps; perpendicular stroke width = 23.5 * sin(45°) ≈ 16.6px ≈ 7.9% of the circle's
+  // diameter). Applied to the real 141-canvas-unit AnimalWF box that ratio is ≈11.2 canvas units
+  // — `strokeWidth` here is a literal canvas-unit width (renderer.ts `drawPrimitive` emits
+  // `primitive.strokeWidth` unscaled with `vector-effect: non-scaling-stroke`), so 11 lands in the
+  // fixplan's calibrated 10–12 range. AND/OR keep their authored geometry (unowned by this lane)
+  // but pick up the same stroke weight for cross-operator family consistency.
   const mark =
     operator === 'AND'
-      ? [path('M 33 57 L 50 39 L 67 57', { strokeWidth: 7 })]
+      ? [path('M 33 57 L 50 39 L 67 57', { strokeWidth: 11 })]
       : operator === 'OR'
-        ? [path('M 33 41 L 50 59 L 67 41', { strokeWidth: 7 })]
-        : [line(36, 36, 64, 64, { strokeWidth: 7 }), line(64, 36, 36, 64, { strokeWidth: 7 })]
+        ? [path('M 33 41 L 50 59 L 67 41', { strokeWidth: 11 })]
+        : [line(30, 30, 70, 70, { strokeWidth: 11 }), line(70, 30, 30, 70, { strokeWidth: 11 })]
   return describe({
     catalogId: `decision.${operator.toLowerCase()}`,
     objectType: 'OT_RULE',
@@ -803,7 +812,9 @@ function ruleShape(operator: DmtOperator): DmtSymbolDescriptor {
     silhouette: 'operator-circle',
     icon: 'unknown',
     operator,
-    hitPath: 'M 50 5 A 45 45 0 1 1 49.999 5 Z',
+    // r 50 = the viewBox's own half-width, so the hit-test arc traces the same box-filling circle
+    // drawn below (was r 45, one unit short of the drawn r 44 circle it was meant to describe).
+    hitPath: 'M 50 0 A 50 50 0 1 1 49.999 0 Z',
     defaultBounds: { width: 80, height: 80 },
     viewBox: { minX: 0, minY: 0, width: 100, height: 100 },
     iconBox: { x: 25, y: 25, width: 50, height: 50 },
@@ -815,7 +826,10 @@ function ruleShape(operator: DmtOperator): DmtSymbolDescriptor {
         scale: 'uniform',
         paintRole: 'accent',
         elements: [
-          circle(50, 50, 44, {
+          // r 44 -> 50: the circle now fills the box exactly (matches the original) instead of
+          // stopping 6 units short of it; connections dock to the rectangular shape path
+          // (renderer.ts `getShapePath`), so this also closes the visible arrow-to-circle gap.
+          circle(50, 50, 50, {
             fill: bodyFill('OT_RULE', symbolNum, '#5e5e5e'),
             stroke: 'none',
             strokeWidth: 0
