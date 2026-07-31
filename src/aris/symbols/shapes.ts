@@ -623,14 +623,32 @@ function card(input: CardInput): DmtSymbolDescriptor {
 
 function eventShape(): DmtSymbolDescriptor {
   const accent = bodyFill('OT_EVT', 'ST_EV', '#edbbdc')
+  // ARIS's ARIS-EPC event is a horizontal hexagon pointed *outward* on BOTH
+  // sides (convex left and right), with a straight vertical pink/white divider
+  // at ~25 %. The old descriptor had a concave notch on the left (final vertex
+  // at x=11 pulled inward) and a chevron-pointed divider; both now mirror the
+  // right point so the left edge protrudes to the tip at x=0.75 (see fidelity
+  // plan §4.1).
   const outline = [
-    { x: 0.75, y: 0.75 },
+    { x: 11, y: 0.75 },
     { x: 88, y: 0.75 },
     { x: 99.25, y: 30 },
     { x: 88, y: 59.25 },
-    { x: 0.75, y: 59.25 },
-    { x: 11, y: 30 }
+    { x: 11, y: 59.25 },
+    { x: 0.75, y: 30 }
   ]
+  // W docks at the convex left tip (x≈0), NW/SW at the top/bottom-left corners.
+  const eventPorts: readonly ArisPort[] = Object.freeze([
+    { name: 'NW', nx: 0.11, ny: 0 },
+    { name: 'N', nx: 0.5, ny: 0 },
+    { name: 'NE', nx: 0.88, ny: 0 },
+    { name: 'E', nx: 1, ny: 0.5 },
+    { name: 'SE', nx: 0.88, ny: 1 },
+    { name: 'S', nx: 0.5, ny: 1 },
+    { name: 'SW', nx: 0.11, ny: 1 },
+    { name: 'W', nx: 0.0075, ny: 0.5 },
+    { name: 'CENTER', nx: 0.5, ny: 0.5 }
+  ])
   return describe({
     catalogId: 'epc.event',
     objectType: 'OT_EVT',
@@ -639,10 +657,10 @@ function eventShape(): DmtSymbolDescriptor {
     accessibleLabel: 'Event',
     silhouette: 'event-chevron',
     icon: 'flag',
-    hitPath: 'M 0.75 0.75 H 88 L 99.25 30 L 88 59.25 H 0.75 L 11 30 Z',
+    hitPath: 'M 11 0.75 H 88 L 99.25 30 L 88 59.25 H 11 L 0.75 30 Z',
     iconBox: { x: 3, y: 7, width: 21, height: 46 },
     contentBox: { x: 29, y: 4, width: 60, height: 53 },
-    ports: chevronPorts(0.11),
+    ports: eventPorts,
     groups: [
       {
         id: 'surface',
@@ -657,12 +675,11 @@ function eventShape(): DmtSymbolDescriptor {
         elements: [
           polygon(
             [
-              { x: 0.75, y: 0.75 },
-              { x: 23, y: 0.75 },
-              { x: 34, y: 30 },
-              { x: 23, y: 59.25 },
-              { x: 0.75, y: 59.25 },
-              { x: 11, y: 30 }
+              { x: 11, y: 0.75 },
+              { x: 25, y: 0.75 },
+              { x: 25, y: 59.25 },
+              { x: 11, y: 59.25 },
+              { x: 0.75, y: 30 }
             ],
             { fill: accent }
           )
