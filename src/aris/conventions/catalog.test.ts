@@ -43,7 +43,22 @@ describe('ARIS convention symbol catalog', () => {
   })
 
   it('returns the default fill for a known pair', () => {
-    expect(conventionDefaultFill('OT_EVT', 'ST_EV')).toBe('#dcbbed')
+    expect(conventionDefaultFill('OT_EVT', 'ST_EV')).toBe('#edbbdc')
+  })
+
+  it('defaults every brush-less governance object to the DMT governance red', () => {
+    expect(conventionDefaultFill('OT_BUSINESS_RULE', 'ST_BUSINESS_RULE')).toBe('#c82830')
+    expect(conventionDefaultFill('OT_POLICY', 'ST_BUSINESS_POLICY')).toBe('#c82830')
+    for (const catalogId of [
+      'governance.business-rule',
+      'governance.business-policy',
+      'governance.sla',
+      'governance.law-regulation'
+    ]) {
+      const symbol = ARIS_CONVENTION_SYMBOLS.find((entry) => entry.catalogId === catalogId)
+      expect(symbol?.defaultFill).toBe('#c82830')
+      expect(symbol?.verification).toBe('aris-doc')
+    }
   })
 
   it('returns null for an unknown pair', () => {
