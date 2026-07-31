@@ -99,6 +99,39 @@ describe('createArisDiagramPdf', () => {
     expect(new TextDecoder().decode(first.slice(0, 8))).toBe('%PDF-1.3')
     expect(Array.from(second)).toEqual(Array.from(first))
   })
+
+  it('leaves the raster path byte-identical when the overlay is empty', () => {
+    const withoutOption = new Uint8Array(
+      createArisDiagramPdf(ONE_PIXEL_PNG, { width: 100, height: 100 }, 'A')
+    )
+    const withEmptyRuns = new Uint8Array(
+      createArisDiagramPdf(ONE_PIXEL_PNG, { width: 100, height: 100 }, 'A', { textRuns: [] })
+    )
+    // An empty text layer is additive-nothing: identical bytes to the no-option call.
+    expect(Array.from(withEmptyRuns)).toEqual(Array.from(withoutOption))
+  })
+
+  it('lays down an invisible text layer deterministically and only when runs exist', () => {
+    const runs = [
+      { text: 'Register', x: 40, y: 30, fontSize: 12, anchor: 'middle', baseline: 'middle' },
+      { text: '01', x: 10, y: 60, fontSize: 8, anchor: 'start', baseline: 'alphabetic' }
+    ] as const
+    const withText = () =>
+      new Uint8Array(
+        createArisDiagramPdf(ONE_PIXEL_PNG, { width: 100, height: 100 }, 'A', {
+          textRuns: runs,
+          contentSize: { width: 100, height: 100 }
+        })
+      )
+    const first = withText()
+    const second = withText()
+    const withoutText = new Uint8Array(
+      createArisDiagramPdf(ONE_PIXEL_PNG, { width: 100, height: 100 }, 'A')
+    )
+    // Deterministic across runs, and materially different from the raster-only PDF.
+    expect(Array.from(second)).toEqual(Array.from(first))
+    expect(first.length).toBeGreaterThan(withoutText.length)
+  })
 })
 
 describe('buildArisExportSvgMarkup', () => {

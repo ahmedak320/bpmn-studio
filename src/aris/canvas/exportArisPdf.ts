@@ -15,6 +15,17 @@
  * The raster is then wrapped in a direct, deterministic PDF (fixed creation
  * date and file id) so identical views export byte-identical files.
  *
+ * On top of that faithful raster the export also lays down a real, *invisible*
+ * PDF text layer (jsPDF `renderingMode: 'invisible'`) — one text run per
+ * on-canvas `<text>`/`<tspan>` glyph line, positioned at the same spot as the
+ * pixels beneath it. The raster still paints every glyph exactly as rendered
+ * (so Arabic shaping, bidi and the FontStyleSheet typography are untouched),
+ * but the document now carries a selectable, searchable, copy-pasteable text
+ * layer — fixing the "flattened to one PNG, empty text layer" gap without a
+ * second visible font stack, a new dependency, or any change to the drawing.
+ * The overlay is additive and invisible, so it can never alter the visual
+ * output; a true vector (svg2pdf) path remains a future refinement.
+ *
  * One bounded page always holds the whole sheet: the page geometry scales the
  * image down to {@link PDF_MAX_SIDE_PT} on its long side, so no ARIS sheet can
  * overflow and multi-page pagination never triggers (the print frame itself is
@@ -81,13 +92,51 @@ export function deterministicArisPdfFileId(value: string): string {
 }
 
 /**
+ * One selectable text run to lay over the raster, in the export SVG's own
+ * coordinate units, measured *relative to the viewBox origin* (i.e. the same
+ * 0..contentSize space the raster image fills). `anchor` mirrors the source
+ * `text-anchor`; `baseline` mirrors whether the source used
+ * `dominant-baseline: middle` (captions) or the default alphabetic baseline.
+ */
+export interface ArisPdfTextRun {
+  readonly text: string
+  readonly x: number
+  readonly y: number
+  readonly fontSize: number
+  readonly anchor: 'start' | 'middle' | 'end'
+  readonly baseline: 'middle' | 'alphabetic'
+}
+
+export interface ArisDiagramPdfOptions {
+  /** Invisible, selectable text runs, in viewBox units relative to the viewBox origin. */
+  readonly textRuns?: readonly ArisPdfTextRun[]
+  /**
+   * The content size, in viewBox units, that the raster image spans. Runs map
+   * `x/y` through this to page points. Defaults to `size` (the raster is the
+   * content 1:1 when it was not downscaled by the raster cap).
+   */
+  readonly contentSize?: ArisPdfImageSize
+}
+
+/** A short, stable digest of the overlay so identical text layers keep the file id stable. */
+function textRunsDigest(runs: readonly ArisPdfTextRun[] | undefined): string {
+  if (!runs || runs.length === 0) return ''
+  let out = `\n#${runs.length}`
+  for (const run of runs) {
+    out += `\n${run.text}@${Math.round(run.x)},${Math.round(run.y)},${Math.round(run.fontSize)}`
+  }
+  return out
+}
+
+/**
  * Wrap a faithful PNG rasterization of the ARIS canvas in a direct,
- * deterministic PDF.
+ * deterministic PDF, optionally overlaying an invisible selectable text layer.
  */
 export function createArisDiagramPdf(
   pngDataUrl: string,
   size: ArisPdfImageSize,
-  title: string
+  title: string,
+  options: ArisDiagramPdfOptions = {}
 ): ArrayBuffer {
   const geometry = arisPdfPageGeometry(size)
   const normalizedTitle = title.trim() || 'diagram'
@@ -101,7 +150,11 @@ export function createArisDiagramPdf(
     putOnlyUsedFonts: true
   })
   document.setCreationDate(FIXED_PDF_DATE)
-  document.setFileId(deterministicArisPdfFileId(`${normalizedTitle}\n${pngDataUrl}`))
+  document.setFileId(
+    deterministicArisPdfFileId(
+      `${normalizedTitle}\n${pngDataUrl}${textRunsDigest(options.textRuns)}`
+    )
+  )
   document.setProperties({
     title: normalizedTitle,
     subject: 'ARIS process model',
@@ -119,7 +172,47 @@ export function createArisDiagramPdf(
     'orbitpm-aris-diagram',
     'FAST'
   )
+  overlayArisTextRuns(document, geometry, options)
   return document.output('arraybuffer')
+}
+
+/**
+ * Paint each run as an invisible (`renderingMode: 'invisible'`) text run over
+ * the raster, mapping viewBox units to page points through the image geometry.
+ * The core `helvetica` font is metric-compatible with Arial and costs nothing
+ * to embed; the runs are never drawn, so the exact glyph shapes are irrelevant
+ * — only the copyable/searchable characters and their positions matter.
+ */
+function overlayArisTextRuns(
+  document: jsPDF,
+  geometry: ArisPdfPageGeometry,
+  options: ArisDiagramPdfOptions
+): void {
+  const runs = options.textRuns
+  if (!runs || runs.length === 0) return
+  const content = options.contentSize ?? { width: geometry.imageWidth, height: geometry.imageHeight }
+  const perUnitX = content.width > 0 ? geometry.imageWidth / content.width : 0
+  const perUnitY = content.height > 0 ? geometry.imageHeight / content.height : 0
+  if (perUnitX <= 0 || perUnitY <= 0) return
+  document.setFont('helvetica', 'normal')
+  document.setTextColor(0, 0, 0)
+  for (const run of runs) {
+    const text = run.text
+    if (!text || text.trim().length === 0) continue
+    if (!Number.isFinite(run.x) || !Number.isFinite(run.y) || !Number.isFinite(run.fontSize)) {
+      continue
+    }
+    const sizePt = run.fontSize * perUnitY
+    if (!(sizePt > 0)) continue
+    const px = geometry.imageX + run.x * perUnitX
+    const py = geometry.imageY + run.y * perUnitY
+    document.setFontSize(sizePt)
+    document.text(text, px, py, {
+      renderingMode: 'invisible',
+      align: run.anchor === 'middle' ? 'center' : run.anchor === 'end' ? 'right' : 'left',
+      baseline: run.baseline
+    })
+  }
 }
 
 // --- SVG -> PNG rasterization (ported; deps injected for Node-testability) ---
@@ -184,6 +277,8 @@ export interface ArisCanvasSvgBounds {
 export interface ArisCanvasSvgCapture {
   readonly markup: string
   readonly size: ArisPdfImageSize
+  /** Invisible selectable-text overlay runs, in viewBox units from the viewBox origin. */
+  readonly textRuns: readonly ArisPdfTextRun[]
 }
 
 /**
@@ -203,8 +298,15 @@ export const ARIS_EXPORT_MAX_RASTER_SIDE = 8_192
  * must never print: lazily-created selection/hover outlines (class-only
  * styling — serialized bare they would paint as black boxes) and the
  * bendpoint/segment draggers shown while hovering a connection.
+ *
+ * Lane bands (`[data-aris-kind="lane"]`) are stripped too: AnimalWF's `<Lane>`
+ * records are the full-canvas `StartBorder=0 EndBorder=50000` / `Pen Width=0`
+ * sentinels that ARIS itself draws nothing for, yet our on-screen canvas paints
+ * a dashed helper band for them. That helper is screen-only affordance; the
+ * source has no such ink, so it is removed from the printed sheet.
  */
-const EXPORT_STRIP_SELECTOR = '.djs-outline, .djs-segment-dragger, .djs-bendpoint'
+const EXPORT_STRIP_SELECTOR =
+  '.djs-outline, .djs-segment-dragger, .djs-bendpoint, [data-aris-kind="lane"]'
 
 function findViewport(svgRoot: SVGSVGElement): SVGGElement | null {
   for (const child of Array.from(svgRoot.children)) {
@@ -273,19 +375,105 @@ export function findArisCanvasSvg(container: HTMLElement): SVGSVGElement {
 }
 
 /**
+ * Collect the invisible selectable-text overlay from the live canvas SVG: one
+ * run per rendered `<text>` (or `<tspan>` line), in the export viewBox's own
+ * units relative to the padded viewBox origin — the same 0..contentSize space
+ * the raster fills.
+ *
+ * Browser-only: it reads each glyph node's screen CTM relative to the viewport
+ * group (the transform the export neutralizes), which correctly folds in the
+ * per-shape `translate`/symbol-scale group transforms that raw x/y attributes
+ * alone would miss. Nodes stripped from the export (interaction furniture,
+ * lane bands) are skipped so their labels never leak into the text layer.
+ */
+export function collectArisExportTextRuns(
+  svgRoot: SVGSVGElement,
+  bounds: ArisCanvasSvgBounds,
+  padding: number = ARIS_EXPORT_SVG_PADDING
+): readonly ArisPdfTextRun[] {
+  const viewport = findViewport(svgRoot)
+  if (!viewport) return []
+  const viewportCtm = viewport.getScreenCTM()
+  if (!viewportCtm) return []
+  const toContent = viewportCtm.inverse()
+  const originX = bounds.x - padding
+  const originY = bounds.y - padding
+  const runs: ArisPdfTextRun[] = []
+
+  const anchorOf = (node: Element): 'start' | 'middle' | 'end' => {
+    const raw = (node.getAttribute('text-anchor') ?? '').trim()
+    return raw === 'middle' ? 'middle' : raw === 'end' ? 'end' : 'start'
+  }
+  const fontSizeOf = (node: Element, ctmScale: number): number => {
+    const raw = Number.parseFloat(node.getAttribute('font-size') ?? '')
+    return Number.isFinite(raw) && raw > 0 ? raw * ctmScale : 0
+  }
+
+  for (const textNode of Array.from(svgRoot.querySelectorAll('text'))) {
+    if (textNode.closest(EXPORT_STRIP_SELECTOR)) continue
+    const svgText = textNode as SVGGraphicsElement
+    const screenCtm = svgText.getScreenCTM()
+    if (!screenCtm) continue
+    const local = toContent.multiply(screenCtm)
+    const ctmScale = Math.hypot(local.a, local.b) || 1
+    const tspans = Array.from(textNode.querySelectorAll('tspan')).filter(
+      (tspan) => (tspan.textContent ?? '').length > 0
+    )
+    const anchor = anchorOf(textNode)
+    const parts: readonly { node: Element; baseline: 'middle' | 'alphabetic' }[] =
+      tspans.length > 0
+        ? tspans.map((tspan) => ({ node: tspan, baseline: 'middle' as const }))
+        : [
+            {
+              node: textNode,
+              baseline:
+                (textNode.getAttribute('dominant-baseline') ?? '').trim() === 'middle'
+                  ? ('middle' as const)
+                  : ('alphabetic' as const)
+            }
+          ]
+    for (const part of parts) {
+      const text = (part.node.textContent ?? '').replace(/\s+/g, ' ').trim()
+      if (text.length === 0) continue
+      const lx = Number.parseFloat(part.node.getAttribute('x') ?? textNode.getAttribute('x') ?? '')
+      const ly = Number.parseFloat(part.node.getAttribute('y') ?? textNode.getAttribute('y') ?? '')
+      if (!Number.isFinite(lx) || !Number.isFinite(ly)) continue
+      const cx = local.a * lx + local.c * ly + local.e
+      const cy = local.b * lx + local.d * ly + local.f
+      const fontSize = fontSizeOf(textNode, ctmScale)
+      if (!(fontSize > 0)) continue
+      runs.push(
+        Object.freeze({
+          text,
+          x: cx - originX,
+          y: cy - originY,
+          fontSize,
+          anchor,
+          baseline: part.baseline
+        })
+      )
+    }
+  }
+  return Object.freeze(runs)
+}
+
+/**
  * Capture the current canvas view — diagram plus print frame, in the current
- * content language — as standalone SVG markup with its export pixel size.
+ * content language — as standalone SVG markup with its export pixel size and
+ * the invisible selectable-text overlay runs.
  */
 export function captureArisCanvasSvg(container: HTMLElement): ArisCanvasSvgCapture {
   const svgRoot = findArisCanvasSvg(container)
   const bounds = measureArisCanvasSvgBounds(svgRoot)
+  const textRuns = collectArisExportTextRuns(svgRoot, bounds)
   const markup = buildArisExportSvgMarkup(svgRoot, bounds)
   return {
     markup,
     size: {
       width: Math.max(1, Math.ceil(bounds.width + ARIS_EXPORT_SVG_PADDING * 2)),
       height: Math.max(1, Math.ceil(bounds.height + ARIS_EXPORT_SVG_PADDING * 2))
-    }
+    },
+    textRuns
   }
 }
 
@@ -341,7 +529,16 @@ export async function exportArisCanvasPdf(
   const capture = captureArisCanvasSvg(container)
   const rasterSize = arisExportRasterSize(capture.size)
   const pngDataUrl = await arisSvgToPngDataUrl(capture.markup, rasterSize, deps)
-  return { bytes: createArisDiagramPdf(pngDataUrl, rasterSize, title), size: rasterSize }
+  // Geometry is derived from `rasterSize` (the PNG's pixel dimensions), so the
+  // overlay runs — captured in viewBox units — map through `capture.size` (the
+  // content the raster spans) rather than the possibly-downscaled pixel size.
+  return {
+    bytes: createArisDiagramPdf(pngDataUrl, rasterSize, title, {
+      textRuns: capture.textRuns,
+      contentSize: capture.size
+    }),
+    size: rasterSize
+  }
 }
 
 const FILE_NAME_HOSTILE = /[\\/:*?"<>|\s]+/g

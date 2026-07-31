@@ -875,6 +875,24 @@ export function externalNamePlacement(
   const offsetX = placement.offsetX ?? 0
   const offsetY = placement.offsetY ?? 0
   if (offsetX === 0 && offsetY === 0) return null
+  // A small positive offset is an *interior* caption nudge, not a truly
+  // external caption: ARIS keeps the name inside the box (e.g. the Requirements
+  // card's AT_NAME `OffsetX=6 OffsetY=25`, the sheet's only non-zero AT_NAME
+  // offset). Treating it as external created a second 120×24 label that wrapped
+  // to a tall narrow column spilling over the neighbouring satellites *and*
+  // duplicated the in-shape caption (fidelity plan §6.1). Only anchors that
+  // actually land outside the owner box are external.
+  const { width, height } = occurrence.bounds
+  const anchorInsideBox =
+    Number.isFinite(width) &&
+    width > 0 &&
+    Number.isFinite(height) &&
+    height > 0 &&
+    offsetX >= 0 &&
+    offsetY >= 0 &&
+    offsetX < width &&
+    offsetY < height
+  if (anchorInsideBox) return null
   return Object.freeze({
     offsetX,
     offsetY,
