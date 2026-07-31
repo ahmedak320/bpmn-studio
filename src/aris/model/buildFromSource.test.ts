@@ -38,8 +38,9 @@ const SOURCE_COLOR_AML = `<AML>
         <Brush Color="339900" Color2="0" BrushType="SOLID" />
         <Position Pos.X="0" Pos.Y="0" />
         <Size Size.dX="100" Size.dY="60" />
-        <CxnOcc CxnOcc.ID="CxnOcc.1" CxnDef.IdRef="CxnDef.1" ToObjOcc.IdRef="ObjOcc.2">
-          <Pen Color="996600" Style="0" Width="1" />
+        <CxnOcc CxnOcc.ID="CxnOcc.1" CxnDef.IdRef="CxnDef.1" ToObjOcc.IdRef="ObjOcc.2"
+          SrcArrow="ST_ARROW_OPEN_PNT" TgtArrow="ST_ARROW_FILLED_PNT" Visible="NO" Zorder="7">
+          <Pen Color="996600" Style="3" Width="4" />
           <Position Pos.X="100" Pos.Y="30" />
           <Position Pos.X="200" Pos.Y="30" />
         </CxnOcc>
@@ -89,6 +90,14 @@ describe('buildFromSource', () => {
       '#edbbdc'
     ])
     expect(model?.connectionOccurrences[0]?.style.color).toBe('#006699')
+    expect(model?.connectionOccurrences[0]?.style).toMatchObject({
+      width: 4,
+      lineStyle: 'dashdot',
+      srcArrow: 'ST_ARROW_OPEN_PNT',
+      tgtArrow: 'ST_ARROW_FILLED_PNT',
+      zOrder: 7
+    })
+    expect(model?.connectionOccurrences[0]?.rawAttributes['Visible']).toBe('NO')
     expect(model?.freeText[0]?.style.fillColor).toBe('#9dc4d7')
     expect(document.styleCatalog.styles.get('FontSS.1')?.textColor).toBe('#edbbdc')
   })

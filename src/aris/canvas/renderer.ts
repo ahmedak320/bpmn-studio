@@ -51,7 +51,7 @@ import {
   type ArisOccurrenceAttributeLabel,
   type ArisOccurrenceStyleView
 } from './elements'
-import { ensureArrowMarker, svgAppend, svgElement } from './svg'
+import { svgAppend, svgElement } from './svg'
 
 const DEFAULT_STROKE = '#334155'
 const DEFAULT_FILL = '#ffffff'
@@ -63,6 +63,46 @@ const CAPTION_FONT_SIZE = 12
 /** Fill of the marker a `SymbolFlag="SYMBOL"` placement draws in place of text. */
 const ATTRIBUTE_SYMBOL_FILL = '#e2e8f0'
 const ATTRIBUTE_SYMBOL_STROKE = '#475569'
+
+const DIRECTED_CONNECTION_TYPES = new Set([
+  'CT_ACTIV_1',
+  'CT_AFFECTS',
+  'CT_CRT_1',
+  'CT_CRT_OUT_TO',
+  'CT_DECID_ON',
+  'CT_EXEC_1',
+  'CT_EXEC_2',
+  'CT_HAS_OUT',
+  'CT_IS_COMPOUND_OF_1',
+  'CT_IS_EVAL_BY_1',
+  'CT_IS_INP_FOR',
+  'CT_IS_ORG_MANAGER_1',
+  'CT_IS_PREDEC_OF_1',
+  'CT_IS_TECH_SUPER_1',
+  'CT_LEADS_TO_1',
+  'CT_LEADS_TO_2',
+  'CT_MUST_BE_CONSLT_ABT_1',
+  'CT_MUST_BE_INFO_ABT_1',
+  'CT_OCCUPIES_1',
+  'CT_READ_1',
+  'CT_REFS_TO_2',
+  'CT_SUPP_3'
+])
+
+const CONNECTION_DASHARRAY_BY_STYLE: Readonly<Record<string, string | null>> = Object.freeze({
+  '0': null,
+  solid: null,
+  '1': '8 4',
+  dash: '8 4',
+  dashed: '8 4',
+  '2': '2 3',
+  dot: '2 3',
+  dotted: '2 3',
+  '3': '8 3 2 3',
+  dashdot: '8 3 2 3',
+  '4': '8 3 2 3 2 3',
+  dashdotdot: '8 3 2 3 2 3'
+})
 
 /** Render priority above diagram-js's `DefaultRenderer` (1000). */
 export const ARIS_RENDER_PRIORITY = 1500
@@ -506,6 +546,74 @@ function drawConnectionLabel(
   )
 }
 
+type ConnectionArrow = 'none' | 'open' | 'filled'
+
+interface RenderedConnectionBusinessObject {
+  readonly kind: 'connection'
+  readonly connectionType: string
+  readonly color?: string | null
+  readonly width?: number | null
+  readonly lineStyle?: string | null
+  readonly srcArrow?: string | null
+  readonly tgtArrow?: string | null
+  readonly visible?: boolean
+  readonly zOrder?: number | null
+}
+
+function sourceArrow(raw: string | null | undefined, fallback: ConnectionArrow): ConnectionArrow {
+  const normalized = raw?.trim().toUpperCase()
+  if (!normalized || normalized === '0' || normalized === 'DEFAULT') return fallback
+  if (normalized === 'NONE' || normalized === 'NO' || normalized === 'ST_ARROW_NONE') return 'none'
+  return normalized.includes('FILLED') ? 'filled' : 'open'
+}
+
+function arrowMarkerRoot(node: SVGElement): SVGElement {
+  return node.ownerSVGElement ?? node
+}
+
+/**
+ * Connection markers are keyed by source style, end, and color. The default DMT point is an open
+ * chevron as shown in the process PDFs; an explicit `ST_ARROW_FILLED_*` occurrence override gets
+ * the filled point instead.
+ */
+function ensureConnectionArrowMarker(
+  node: SVGElement,
+  color: string,
+  arrow: Exclude<ConnectionArrow, 'none'>,
+  end: 'start' | 'end'
+): string {
+  const root = arrowMarkerRoot(node)
+  const safeColor = color.replace(/[^a-zA-Z0-9]/g, '')
+  const id = `aris-arrow-${arrow}-${end}-${safeColor}`
+  if (root.querySelector(`#${id}`)) return id
+  let defs = root.querySelector('defs')
+  if (!defs) {
+    defs = svgElement('defs')
+    root.insertBefore(defs, root.firstChild)
+  }
+  const marker = svgElement('marker', {
+    id,
+    markerWidth: 9,
+    markerHeight: 9,
+    refX: 8,
+    refY: 4,
+    orient: 'auto-start-reverse',
+    markerUnits: 'userSpaceOnUse'
+  })
+  marker.appendChild(
+    arrow === 'filled'
+      ? svgElement('path', { d: 'M0,0 L8,4 L0,8 z', fill: color, stroke: color })
+      : svgElement('path', {
+          d: 'M0,0 L8,4 L0,8',
+          fill: 'none',
+          stroke: color,
+          'stroke-width': 1
+        })
+  )
+  defs.appendChild(marker)
+  return id
+}
+
 export class ArisRenderer extends BaseRenderer {
   static $inject = ['eventBus']
 
@@ -667,24 +775,56 @@ export class ArisRenderer extends BaseRenderer {
 
   drawConnection(parentGfx: SVGElement, connection: Connection): SVGElement {
     const businessObject = arisBusinessObject(connection)
-    const stroke =
+    const appearance =
       businessObject?.kind === 'connection'
-        ? (occurrenceColorToCss(
-            (businessObject as typeof businessObject & { readonly color?: string | null }).color
-          ) ?? CONNECTION_STROKE)
-        : CONNECTION_STROKE
+        ? (businessObject as RenderedConnectionBusinessObject)
+        : null
+    const stroke = occurrenceColorToCss(appearance?.color) ?? CONNECTION_STROKE
+    const strokeWidth =
+      typeof appearance?.width === 'number' &&
+      Number.isFinite(appearance.width) &&
+      appearance.width >= 0
+        ? appearance.width
+        : 1
+    const normalizedLineStyle = appearance?.lineStyle?.trim().toLowerCase() ?? 'solid'
+    const dasharray = CONNECTION_DASHARRAY_BY_STYLE[normalizedLineStyle]
+    const visible = appearance?.visible !== false && normalizedLineStyle !== 'invisible'
+    const defaultTargetArrow: ConnectionArrow =
+      appearance && DIRECTED_CONNECTION_TYPES.has(appearance.connectionType) ? 'open' : 'none'
+    const srcArrow = sourceArrow(appearance?.srcArrow, 'none')
+    const tgtArrow = sourceArrow(appearance?.tgtArrow, defaultTargetArrow)
     const line = createLine(connection.waypoints, {
       stroke,
-      strokeWidth: 1.5,
+      strokeWidth,
       fill: 'none'
     })
-    if (businessObject?.kind === 'connection') {
-      line.setAttribute('data-aris-connection-type', businessObject.connectionType)
+    if (dasharray) line.setAttribute('stroke-dasharray', dasharray)
+    line.setAttribute('data-aris-visible', visible ? 'true' : 'false')
+    line.setAttribute('data-aris-src-arrow', srcArrow)
+    line.setAttribute('data-aris-tgt-arrow', tgtArrow)
+    if (!visible) {
+      line.setAttribute('visibility', 'hidden')
+      line.setAttribute('pointer-events', 'none')
     }
-    // EPC control flow is directed; the arrowhead marks the target end. The marker is shared
-    // per stroke colour across the whole diagram (see `ensureArrowMarker`).
+    if (appearance) {
+      line.setAttribute('data-aris-connection-type', appearance.connectionType)
+      if (appearance.zOrder !== null && appearance.zOrder !== undefined) {
+        line.setAttribute('data-aris-z-order', String(appearance.zOrder))
+      }
+    }
     parentGfx.appendChild(line)
-    line.setAttribute('marker-end', `url(#${ensureArrowMarker(parentGfx, stroke)})`)
+    if (srcArrow !== 'none') {
+      line.setAttribute(
+        'marker-start',
+        `url(#${ensureConnectionArrowMarker(parentGfx, stroke, srcArrow, 'start')})`
+      )
+    }
+    if (tgtArrow !== 'none') {
+      line.setAttribute(
+        'marker-end',
+        `url(#${ensureConnectionArrowMarker(parentGfx, stroke, tgtArrow, 'end')})`
+      )
+    }
     return line
   }
 

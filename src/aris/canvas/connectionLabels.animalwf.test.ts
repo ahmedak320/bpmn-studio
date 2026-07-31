@@ -50,6 +50,12 @@ if (!existsSync(ANIMAL_WF_PATH)) {
 const TOTAL_PLACEMENTS = 123
 const TEXT_PLACEMENTS = 95
 const SYMBOL_PLACEMENTS = 28
+const PROCESS_MODEL_IDS = Object.freeze([
+  'Model.-1rUudxIp-wP-u-L',
+  'Model.3xqe8yXO9Z7-u-L',
+  'Model.3i-a2j4HRS3-u-L',
+  'Model.-778f33baj6c-u-L'
+])
 
 let workingDocument: ArisWorkingDocument
 let harness: Harness | null = null
@@ -119,6 +125,104 @@ function drawLabelsFor(modelId: string): DrawnLabel[] {
 function allModelIds(): string[] {
   return [...workingDocument.models.keys()]
 }
+
+describe('AnimalWF V4+ exact source geometry reaches the mounted canvas', () => {
+  it('preserves all 281 bounds and all 269 ordered routes through the SVG projection', () => {
+    let bounds = 0
+    let routes = 0
+    let maxAmlDelta = 0
+    let maxCssDelta = 0
+    let orthogonal = 0
+
+    const sourceBounds = new Map(
+      [...workingDocument.sourceIndex.objectOccurrences.values()].map((record) => [
+        record.parsed.objectOccurrenceId,
+        {
+          x: record.parsed.x ?? 0,
+          y: record.parsed.y ?? 0,
+          width: record.parsed.dx ?? 0,
+          height: record.parsed.dy ?? 0
+        }
+      ])
+    )
+    const sourceRoutes = new Map<string, { pointIndex: number; x: number; y: number }[]>()
+    for (const point of workingDocument.sourceIndex.routePoints) {
+      if (!point.connectionOccurrenceId) continue
+      const points = sourceRoutes.get(point.connectionOccurrenceId) ?? []
+      points.push({ pointIndex: point.pointIndex, x: point.x ?? 0, y: point.y ?? 0 })
+      sourceRoutes.set(point.connectionOccurrenceId, points)
+    }
+    for (const points of sourceRoutes.values()) {
+      points.sort((left, right) => left.pointIndex - right.pointIndex)
+    }
+
+    for (const modelId of PROCESS_MODEL_IDS) {
+      const model = workingDocument.models.get(modelId)!
+      harness = bootCanvas({ document: workingDocument, modelId })
+      const registry = harness.canvas.elementRegistry
+
+      for (const occurrence of model.occurrences) {
+        const source = sourceBounds.get(occurrence.id)
+        const drawn = registry.get(occurrence.id) as unknown as Rect
+        expect(source).toBeDefined()
+        for (const key of ['x', 'y', 'width', 'height'] as const) {
+          const delta = Math.abs(drawn[key] - source![key])
+          maxAmlDelta = Math.max(maxAmlDelta, delta)
+          maxCssDelta = Math.max(maxCssDelta, delta)
+        }
+        bounds += 1
+      }
+
+      for (const connection of model.connectionOccurrences) {
+        const source = sourceRoutes.get(connection.id)
+        const drawn = registry.get(connection.id) as unknown as {
+          readonly waypoints: readonly { readonly x: number; readonly y: number }[]
+        }
+        expect(source).toBeDefined()
+        expect(drawn.waypoints).toHaveLength(source!.length)
+        drawn.waypoints.forEach((point, index) => {
+          const expected = source![index]!
+          maxAmlDelta = Math.max(
+            maxAmlDelta,
+            Math.abs(point.x - expected.x),
+            Math.abs(point.y - expected.y)
+          )
+          const graphics = registry.getGraphics(connection.id)
+          const matrix = (graphics as SVGGraphicsElement).getScreenCTM()
+          if (matrix) {
+            const actualX = matrix.a * point.x + matrix.c * point.y + matrix.e
+            const actualY = matrix.b * point.x + matrix.d * point.y + matrix.f
+            const expectedX = matrix.a * expected.x + matrix.c * expected.y + matrix.e
+            const expectedY = matrix.b * expected.x + matrix.d * expected.y + matrix.f
+            maxCssDelta = Math.max(
+              maxCssDelta,
+              Math.abs(actualX - expectedX),
+              Math.abs(actualY - expectedY)
+            )
+          }
+        })
+        if (
+          drawn.waypoints.slice(1).every((point, index) => {
+            const previous = drawn.waypoints[index]!
+            return point.x === previous.x || point.y === previous.y
+          })
+        ) {
+          orthogonal += 1
+        }
+        routes += 1
+      }
+
+      harness.destroy()
+      harness = null
+    }
+
+    expect(bounds).toBe(281)
+    expect(routes).toBe(269)
+    expect(orthogonal).toBe(269)
+    expect(maxAmlDelta).toBeLessThanOrEqual(0.01)
+    expect(maxCssDelta).toBeLessThanOrEqual(0.5)
+  })
+})
 
 describe('AnimalWF connection label placements are painted on the canvas (plan §12.1)', () => {
   it('draws all 123 placements across the eight models, none missing and none invented', () => {

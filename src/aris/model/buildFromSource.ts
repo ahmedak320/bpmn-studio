@@ -139,16 +139,15 @@ function buildBounds(
  * `BrushType="TRANSPARENT"` is "no fill", not a colour: its `Color` is always `0`, so reading the
  * colour would paint every transparent shape black.
  *
- * Only the two *colours* are lifted. A `<Pen>`'s `Width` is in AML logical units while the symbol
- * registry's stroke widths are in its own view-box units, and nothing in the source says how the
- * two relate — inventing a scale factor would draw a confidently wrong outline, so a source pen
- * width stays unmapped (`null`, "no override") and the symbol keeps its authored outline. Pen
- * `Style` is likewise left alone: every `<Pen>` in the reference export is `Style="0"` (solid),
- * which is already what "no override" draws.
+ * The Pen is occurrence-local source presentation, so its color, logical width, and style must
+ * travel together. In particular, connection Pen widths are already expressed in the same AML
+ * coordinate contract as the route and must not be replaced by the canvas's generic 1.5px line.
  */
 export interface SourceOccurrencePaint {
   readonly fillColor: string | null
   readonly strokeColor: string | null
+  readonly strokeWidth: number | null
+  readonly lineStyle: string | null
 }
 
 const TRANSPARENT_FILL = 'none'
@@ -163,15 +162,49 @@ function sourceColorToCss(raw: string | null | undefined): string | null {
   return trimmed.startsWith('#') ? trimmed : amlColorRefToCss(trimmed)
 }
 
+const PEN_STYLE_BY_CODE: Readonly<Record<string, string>> = Object.freeze({
+  '0': 'solid',
+  '1': 'dashed',
+  '2': 'dotted',
+  '3': 'dashdot',
+  '4': 'dashdotdot',
+  '5': 'invisible'
+})
+
+function sourcePenStyle(raw: string | null | undefined): string | null {
+  if (raw === null || raw === undefined) return null
+  const normalized = raw.trim().toLowerCase()
+  if (!normalized) return null
+  return PEN_STYLE_BY_CODE[normalized] ?? normalized
+}
+
 function paintByOwner(index: ArisSourceIndexLike): ReadonlyMap<string, SourceOccurrencePaint> {
-  const byOwner = new Map<string, { fillColor: string | null; strokeColor: string | null }>()
+  const byOwner = new Map<
+    string,
+    {
+      fillColor: string | null
+      strokeColor: string | null
+      strokeWidth: number | null
+      lineStyle: string | null
+    }
+  >()
   const entryFor = (
     ownerSourceId: string | null
-  ): { fillColor: string | null; strokeColor: string | null } | null => {
+  ): {
+    fillColor: string | null
+    strokeColor: string | null
+    strokeWidth: number | null
+    lineStyle: string | null
+  } | null => {
     if (!ownerSourceId) return null
     const existing = byOwner.get(ownerSourceId)
     if (existing) return existing
-    const created = { fillColor: null, strokeColor: null }
+    const created = {
+      fillColor: null,
+      strokeColor: null,
+      strokeWidth: null,
+      lineStyle: null
+    }
     byOwner.set(ownerSourceId, created)
     return created
   }
@@ -187,6 +220,8 @@ function paintByOwner(index: ArisSourceIndexLike): ReadonlyMap<string, SourceOcc
     const entry = entryFor(pen.parsed.ownerSourceId)
     if (!entry) continue
     entry.strokeColor = pen.parsed.color ?? null
+    entry.strokeWidth = pen.parsed.width ?? null
+    entry.lineStyle = sourcePenStyle(pen.parsed.style)
   }
   const frozen = new Map<string, SourceOccurrencePaint>()
   for (const [ownerSourceId, entry] of byOwner) frozen.set(ownerSourceId, Object.freeze(entry))
@@ -205,8 +240,8 @@ function buildOccurrenceStyle(
       symbol,
       fillColor: sourceColorToCss(source.rawAttributes['FillColor']) ?? paint?.fillColor ?? null,
       strokeColor: sourceColorToCss(source.rawAttributes['Color']) ?? paint?.strokeColor ?? null,
-      strokeWidth: null,
-      lineStyle: null,
+      strokeWidth: paint?.strokeWidth ?? null,
+      lineStyle: paint?.lineStyle ?? null,
       fontStyleSheetId: source.rawAttributes['FontSS.IdRef'] ?? null,
       zOrder: source.parsed.zorder ?? null
     })
@@ -219,8 +254,8 @@ function buildConnectionStyle(
 ): ArisConnectionOccurrence['style'] {
   return Object.freeze({
     color: sourceColorToCss(source.rawAttributes['Color']) ?? paint?.strokeColor ?? null,
-    width: null,
-    lineStyle: null,
+    width: paint?.strokeWidth ?? null,
+    lineStyle: paint?.lineStyle ?? null,
     srcArrow: source.parsed.srcArrow ?? null,
     tgtArrow: source.parsed.tgtArrow ?? null,
     fontStyleSheetId: source.rawAttributes['FontSS.IdRef'] ?? null,
@@ -472,8 +507,8 @@ function buildFreeText(
         sourceColorToCss(occurrence.rawAttributes['FillColor']) ?? paint?.fillColor ?? null,
       strokeColor:
         sourceColorToCss(occurrence.rawAttributes['Color']) ?? paint?.strokeColor ?? null,
-      strokeWidth: null,
-      lineStyle: null,
+      strokeWidth: paint?.strokeWidth ?? null,
+      lineStyle: paint?.lineStyle ?? null,
       fontStyleSheetId: occurrence.rawAttributes['FontSS.IdRef'] ?? null,
       zOrder: occurrence.parsed.zorder ?? null
     })

@@ -20,6 +20,7 @@ import type {
   ArisAttributeOccurrence,
   ArisBounds,
   ArisConnectionDefinition,
+  ArisConnectionOccurrence,
   ArisLane,
   ArisModel,
   ArisObjectOccurrence,
@@ -27,6 +28,7 @@ import type {
   ArisStyleCatalog,
   ArisWorkingDocument
 } from '../model/types'
+import { resolveArisSymbol } from '../symbols'
 import { ArisDocumentStore } from './documentStore'
 import { DEFAULT_LOCALE_ID } from './emptyDocument'
 import {
@@ -49,7 +51,7 @@ import {
 } from './elements'
 import { measureTextWidth } from '../renderer/textWrap'
 import { readLocalized } from './localization'
-import { connectionWaypoints } from './waypoints'
+import { connectionWaypoints, type ConnectionPort } from './waypoints'
 import { AT_NAME } from './vocabulary'
 
 /** Thickness of a lane band whose model gives no usable explicit extent. */
@@ -78,6 +80,102 @@ export const FREE_TEXT_DEFAULT_HEIGHT = 32
 
 function sameNumber(a: number | undefined, b: number): boolean {
   return typeof a === 'number' && a === b
+}
+
+interface SourceGeometryIndex {
+  readonly boundsByOccurrenceId: ReadonlyMap<string, ArisBounds>
+  readonly routeByConnectionId: ReadonlyMap<string, readonly ArisPoint[]>
+}
+
+function sourceNumber(value: number | null | undefined): number {
+  return typeof value === 'number' && !Number.isNaN(value) ? value : 0
+}
+
+/** Immutable geometry as it appeared in the imported source index. */
+function sourceGeometryIndex(document: ArisWorkingDocument): SourceGeometryIndex {
+  const boundsByOccurrenceId = new Map<string, ArisBounds>()
+  for (const source of document.sourceIndex.objectOccurrences.values()) {
+    const id = source.parsed.objectOccurrenceId
+    if (!id) continue
+    boundsByOccurrenceId.set(
+      id,
+      Object.freeze({
+        x: sourceNumber(source.parsed.x),
+        y: sourceNumber(source.parsed.y),
+        width: sourceNumber(source.parsed.dx),
+        height: sourceNumber(source.parsed.dy)
+      })
+    )
+  }
+
+  const pointsByConnectionId = new Map<
+    string,
+    { readonly pointIndex: number; readonly point: ArisPoint }[]
+  >()
+  for (const source of document.sourceIndex.routePoints) {
+    const id = source.connectionOccurrenceId
+    if (!id) continue
+    const points = pointsByConnectionId.get(id) ?? []
+    points.push({
+      pointIndex: source.pointIndex,
+      point: Object.freeze({ x: sourceNumber(source.x), y: sourceNumber(source.y) })
+    })
+    pointsByConnectionId.set(id, points)
+  }
+  const routeByConnectionId = new Map<string, readonly ArisPoint[]>()
+  for (const [id, points] of pointsByConnectionId) {
+    routeByConnectionId.set(
+      id,
+      Object.freeze(
+        points.sort((left, right) => left.pointIndex - right.pointIndex).map((entry) => entry.point)
+      )
+    )
+  }
+  return Object.freeze({ boundsByOccurrenceId, routeByConnectionId })
+}
+
+function sameBounds(left: ArisBounds, right: ArisBounds | undefined): boolean {
+  return (
+    right !== undefined &&
+    left.x === right.x &&
+    left.y === right.y &&
+    left.width === right.width &&
+    left.height === right.height
+  )
+}
+
+function sameRoute(left: readonly ArisPoint[], right: readonly ArisPoint[] | undefined): boolean {
+  return (
+    right !== undefined &&
+    left.length === right.length &&
+    left.every((point, index) => point.x === right[index]?.x && point.y === right[index]?.y)
+  )
+}
+
+/**
+ * Source routes are preserved only while both their points and endpoint occurrences still match
+ * the import. A move, reroute, clean-layout result, or authored connection deliberately leaves
+ * this state and is then docked to descriptor ports.
+ */
+export function isUntouchedSourceConnection(
+  connection: ArisConnectionOccurrence,
+  source: ArisObjectOccurrence,
+  target: ArisObjectOccurrence,
+  sourceGeometry: SourceGeometryIndex
+): boolean {
+  return (
+    connection.route.length > 0 &&
+    sameRoute(connection.route, sourceGeometry.routeByConnectionId.get(connection.id)) &&
+    sameBounds(source.bounds, sourceGeometry.boundsByOccurrenceId.get(source.id)) &&
+    sameBounds(target.bounds, sourceGeometry.boundsByOccurrenceId.get(target.id))
+  )
+}
+
+function sourceConnectionVisible(connection: ArisConnectionOccurrence): boolean {
+  const visible = connection.rawAttributes['Visible']?.trim().toUpperCase()
+  if (visible === 'NO' || visible === 'FALSE' || visible === '0' || visible === 'HIDDEN')
+    return false
+  return connection.style.lineStyle?.trim().toLowerCase() !== 'invisible'
 }
 
 /**
@@ -271,17 +369,19 @@ export class ArisCanvasSync {
     const dirty: Element[] = []
     const desiredShapeIds = new Set<string>()
     const desiredConnectionIds = new Set<string>()
+    const sourceGeometry = sourceGeometryIndex(document)
 
     this.syncRoot(model)
     this.syncLanes(model, desiredShapeIds, dirty)
     this.syncOccurrences(model, desiredShapeIds, dirty)
     this.syncFreeText(model, desiredShapeIds, dirty)
     this.syncLabels(model, desiredShapeIds, dirty)
-    this.syncConnections(model, desiredConnectionIds, dirty)
+    this.syncConnections(model, desiredConnectionIds, dirty, sourceGeometry)
     // After the connections: a connection label's `labelTarget` is its
     // connection element, which only exists once `syncConnections` has run.
-    this.syncConnectionLabels(model, desiredShapeIds, dirty)
+    this.syncConnectionLabels(model, desiredShapeIds, dirty, sourceGeometry)
     this.removeStale(desiredShapeIds, desiredConnectionIds)
+    this.applyDrawOrder()
 
     return dirty
   }
@@ -368,7 +468,9 @@ export class ArisCanvasSync {
     for (const occurrence of model.occurrences) {
       desired.add(occurrence.id)
       const definition = definitions.get(occurrence.definitionId)
-      const businessObject: ArisOccurrenceBusinessObject = Object.freeze({
+      const businessObject: ArisOccurrenceBusinessObject & {
+        readonly zOrder: number | null
+      } = Object.freeze({
         kind: 'occurrence',
         modelId: model.id,
         modelType: model.type,
@@ -386,7 +488,8 @@ export class ArisCanvasSync {
           strokeWidth: occurrence.style.strokeWidth,
           lineStyle: occurrence.style.lineStyle
         }),
-        attributeLabels: occurrenceAttributeLabels(this.store.document, occurrence)
+        attributeLabels: occurrenceAttributeLabels(this.store.document, occurrence),
+        zOrder: occurrence.style.zOrder
       })
       this.upsertShape(occurrence.id, occurrence.bounds, businessObject, dirty)
     }
@@ -399,12 +502,14 @@ export class ArisCanvasSync {
       desired.add(id)
       const businessObject: ArisFreeTextBusinessObject & {
         readonly font: ArisLabelFont | null
+        readonly zOrder: number | null
       } = Object.freeze({
         kind: 'freeText',
         modelId: model.id,
         freeTextId: text.id,
         text: readLocalized(text.text, this.displayLocaleId),
-        font: resolveLabelFont(catalog, text.style.fontStyleSheetId)
+        font: resolveLabelFont(catalog, text.style.fontStyleSheetId),
+        zOrder: text.style.zOrder
       })
       // Real exports write `<FFTextOcc>` with a `Position` and no `Size` at
       // all — ARIS sizes the note to its text. Rendering that literally draws
@@ -426,12 +531,15 @@ export class ArisCanvasSync {
       const id = labelElementId(occurrence.id)
       desired.add(id)
       const definition = definitions.get(occurrence.definitionId)
-      const businessObject: ArisLabelBusinessObject = Object.freeze({
+      const businessObject: ArisLabelBusinessObject & {
+        readonly zOrder: number | null
+      } = Object.freeze({
         kind: 'label',
         modelId: model.id,
         ownerOccurrenceId: occurrence.id,
         attributeType: AT_NAME,
-        text: readLocalized(definition?.names, this.displayLocaleId)
+        text: readLocalized(definition?.names, this.displayLocaleId),
+        zOrder: occurrence.style.zOrder
       })
       const bounds = externalNameRect(placement, occurrence.bounds)
       const owner = this.elementRegistry.get(occurrence.id) as Shape | undefined
@@ -439,7 +547,12 @@ export class ArisCanvasSync {
     }
   }
 
-  private syncConnections(model: ArisModel, desired: Set<string>, dirty: Element[]): void {
+  private syncConnections(
+    model: ArisModel,
+    desired: Set<string>,
+    dirty: Element[],
+    sourceGeometry: SourceGeometryIndex
+  ): void {
     const definitions = this.store.document.connectionDefinitions
     const occurrenceById = new Map(
       model.occurrences.map((occurrence) => [occurrence.id, occurrence])
@@ -452,6 +565,12 @@ export class ArisCanvasSync {
       const definition = definitions.get(connection.definitionId)
       const businessObject: ArisConnectionBusinessObject & {
         readonly color: string | null
+        readonly width: number | null
+        readonly lineStyle: string | null
+        readonly srcArrow: string | null
+        readonly tgtArrow: string | null
+        readonly visible: boolean
+        readonly zOrder: number | null
       } = Object.freeze({
         kind: 'connection',
         modelId: model.id,
@@ -461,11 +580,21 @@ export class ArisCanvasSync {
         sourceOccurrenceId: connection.sourceOccurrenceId,
         targetOccurrenceId: connection.targetOccurrenceId,
         name: readLocalized(definition?.names, this.displayLocaleId),
-        color: connection.style.color
+        color: connection.style.color,
+        width: connection.style.width,
+        lineStyle: connection.style.lineStyle,
+        srcArrow: connection.style.srcArrow,
+        tgtArrow: connection.style.tgtArrow,
+        visible: sourceConnectionVisible(connection),
+        zOrder: connection.style.zOrder
       })
-      const waypoints = connectionWaypoints(source.bounds, target.bounds, connection.route, {
-        selfLoop: source.id === target.id
-      })
+      const waypoints = this.projectConnectionWaypoints(
+        model,
+        connection,
+        source,
+        target,
+        sourceGeometry
+      )
       const sourceElement = this.elementRegistry.get(connection.sourceOccurrenceId) as
         Shape | undefined
       const targetElement = this.elementRegistry.get(connection.targetOccurrenceId) as
@@ -505,7 +634,12 @@ export class ArisCanvasSync {
    * no interior to fall back into, so `OffsetX="0" OffsetY="0"` means "sit on
    * the midpoint", which is exactly where 95 of AnimalWF's 123 placements sit.
    */
-  private syncConnectionLabels(model: ArisModel, desired: Set<string>, dirty: Element[]): void {
+  private syncConnectionLabels(
+    model: ArisModel,
+    desired: Set<string>,
+    dirty: Element[],
+    sourceGeometry: SourceGeometryIndex
+  ): void {
     const definitions = this.store.document.connectionDefinitions
     const catalog = this.store.document.styleCatalog
     const occurrenceById = new Map(
@@ -516,9 +650,13 @@ export class ArisCanvasSync {
       const source = occurrenceById.get(connection.sourceOccurrenceId)
       const target = occurrenceById.get(connection.targetOccurrenceId)
       if (!source || !target) continue
-      const waypoints = connectionWaypoints(source.bounds, target.bounds, connection.route, {
-        selfLoop: source.id === target.id
-      })
+      const waypoints = this.projectConnectionWaypoints(
+        model,
+        connection,
+        source,
+        target,
+        sourceGeometry
+      )
       const midpoint = routeMidpoint(waypoints)
       if (!midpoint) continue
       const definition = definitions.get(connection.definitionId)
@@ -526,7 +664,9 @@ export class ArisCanvasSync {
       connection.attributeOccurrences.forEach((placement, index) => {
         const id = connectionLabelElementId(connection.id, index, placement.attributeType)
         desired.add(id)
-        const businessObject: ArisConnectionLabelBusinessObject = Object.freeze({
+        const businessObject: ArisConnectionLabelBusinessObject & {
+          readonly zOrder: number | null
+        } = Object.freeze({
           kind: 'connectionLabel',
           modelId: model.id,
           ownerConnectionOccurrenceId: connection.id,
@@ -538,7 +678,8 @@ export class ArisCanvasSync {
           rotation: placement.rotation,
           fontStyleSheetId: placement.fontStyleSheetId,
           font: resolveLabelFont(catalog, placement.fontStyleSheetId),
-          text: connectionLabelText(placement, definition, this.displayLocaleId)
+          text: connectionLabelText(placement, definition, this.displayLocaleId),
+          zOrder: connection.style.zOrder
         })
         const bounds = connectionLabelRect(placement, midpoint, {
           symbolFlag: businessObject.symbolFlag,
@@ -549,6 +690,77 @@ export class ArisCanvasSync {
           labelTarget: owner
         })
       })
+    }
+  }
+
+  private projectConnectionWaypoints(
+    model: ArisModel,
+    connection: ArisConnectionOccurrence,
+    source: ArisObjectOccurrence,
+    target: ArisObjectOccurrence,
+    sourceGeometry: SourceGeometryIndex
+  ): readonly ArisPoint[] {
+    return connectionWaypoints(source.bounds, target.bounds, connection.route, {
+      selfLoop: source.id === target.id,
+      preserveRoute: isUntouchedSourceConnection(connection, source, target, sourceGeometry),
+      sourcePorts: this.descriptorPorts(model, source),
+      targetPorts: this.descriptorPorts(model, target)
+    })
+  }
+
+  private descriptorPorts(
+    model: ArisModel,
+    occurrence: ArisObjectOccurrence
+  ): readonly ConnectionPort[] {
+    const definition = this.store.document.objectDefinitions.get(occurrence.definitionId)
+    return resolveArisSymbol({
+      modelType: model.type,
+      objectType: definition?.type ?? 'OT_UNKNOWN',
+      symbolNum: occurrence.symbol
+    }).descriptor.ports
+  }
+
+  /**
+   * diagram-js normally keeps shapes and connections in creation order. AML has one Zorder axis
+   * for every visual record, so reconcile both the element tree and each shared SVG parent onto
+   * that axis after all records exist. Attribute labels inherit their owner's z-order and sort
+   * immediately after it.
+   */
+  private applyDrawOrder(): void {
+    const root = this.root() as Root & { children?: Element[] }
+    const children = root.children
+    if (!children || children.length < 2) return
+    const originalIndex = new Map(children.map((element, index) => [element.id, index]))
+    const zOrderOf = (element: Element): number => {
+      const businessObject = arisBusinessObject(element)
+      if (businessObject?.kind === 'lane') return Number.NEGATIVE_INFINITY
+      const value = (businessObject as ({ readonly zOrder?: number | null } & object) | null)
+        ?.zOrder
+      return typeof value === 'number' && Number.isFinite(value) ? value : Number.POSITIVE_INFINITY
+    }
+    const labelRank = (element: Element): number => {
+      const kind = arisBusinessObject(element)?.kind
+      return kind === 'label' || kind === 'connectionLabel' ? 1 : 0
+    }
+    children.sort(
+      (left, right) =>
+        zOrderOf(left) - zOrderOf(right) ||
+        labelRank(left) - labelRank(right) ||
+        (originalIndex.get(left.id) ?? 0) - (originalIndex.get(right.id) ?? 0)
+    )
+
+    const graphicsByParent = new Map<Node, SVGElement[]>()
+    for (const element of children) {
+      const graphics = this.elementRegistry.getGraphics(element.id) as SVGElement | undefined
+      if (!graphics?.parentNode) continue
+      const zOrder = zOrderOf(element)
+      if (Number.isFinite(zOrder)) graphics.setAttribute('data-aris-z-order', String(zOrder))
+      const siblings = graphicsByParent.get(graphics.parentNode) ?? []
+      siblings.push(graphics)
+      graphicsByParent.set(graphics.parentNode, siblings)
+    }
+    for (const [parent, graphics] of graphicsByParent) {
+      for (const node of graphics) parent.appendChild(node)
     }
   }
 

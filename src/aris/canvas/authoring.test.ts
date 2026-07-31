@@ -151,7 +151,13 @@ describe('authoring operations (Section 11.4)', () => {
     const connectionElement = canvas.elementRegistry.get(connectionId) as unknown as {
       waypoints: { x: number; y: number }[]
     }
-    expect(connectionElement.waypoints[1]).toEqual({ x: 150, y: 150 })
+    expect(connectionElement.waypoints).toContainEqual({ x: 150, y: 150 })
+    expect(
+      connectionElement.waypoints.slice(1).every((point, index) => {
+        const previous = connectionElement.waypoints[index]!
+        return point.x === previous.x || point.y === previous.y
+      })
+    ).toBe(true)
 
     canvas.undo()
     expect(findConnectionOccurrence(canvas.document, connectionId)?.route).toHaveLength(0)
