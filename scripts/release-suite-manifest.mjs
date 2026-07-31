@@ -45,6 +45,16 @@
 // bpmn.io attribution, the BPMN "New process" modal/palette, and the old
 // `AiPanelLite` provider note — all superseded or gone).
 //
+// `aris-sequence-1.spec.ts` is the Wave-7 addition (plan §21.x): it drives the
+// new "Export PDF" toolbar action end to end over a loopback HTTP origin —
+// import the AnimalWF AML, export each iterate model to PDF, rasterize both the
+// export and ARIS's own reference PDF through the same `pdftoppm` engine and
+// assert their ink STRUCTURE agrees, then re-export the derived AML and prove
+// the round trip keeps the two matched models structurally identical (the same
+// 0-diff budget the `*.animalwf.test.ts` baselines enforce). Like every other
+// browser suite here it reads the private `reference/AnimalWF` export and so
+// runs only where that fixture is present.
+//
 // `details-responsive.spec.ts` (no `lite-` prefix, so it escaped the Phase 18
 // inventory that scanned `tests/e2e/lite-*.spec.ts`) was found during this
 // same retirement pass to be equally dead: both its tests boot through
@@ -69,6 +79,7 @@ export const REQUIRED_BROWSER_SUITES = Object.freeze([
   'tests/e2e/aris-nested-processes.spec.ts',
   'tests/e2e/aris-new-model.spec.ts',
   'tests/e2e/aris-release-artifact.spec.ts',
+  'tests/e2e/aris-sequence-1.spec.ts',
   'tests/e2e/aris-validation.spec.ts',
   'tests/e2e/lite-csp-runtime.spec.ts',
   'tests/e2e/lite-live-cors.spec.ts',

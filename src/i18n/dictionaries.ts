@@ -2605,6 +2605,10 @@ export const en = {
     'Switch the diagram labels between English and Arabic (view only, no edit)',
   'aris.toolbar.translate': 'Translate…',
   'aris.toolbar.translate.missing': '{count} untranslated',
+  'aris.toolbar.exportPdf': 'Export PDF',
+  'aris.toolbar.exportPdf.title': 'Download the current view — print frame and diagram — as a PDF',
+  'aris.exportPdf.done': 'PDF exported: {bytes} bytes.',
+  'aris.exportPdf.failed': 'The PDF export failed: {error}',
   'aris.translate.nothingMissing': 'Every label already has both languages.',
   'aris.translate.applied': 'Applied {count} translations as one undoable step.',
   'aris.translate.autoDone':
@@ -5541,6 +5545,10 @@ export const ar: Record<keyof typeof en, string> = {
     'تبديل تسميات المخطط بين الإنجليزية والعربية (عرض فقط دون تعديل)',
   'aris.toolbar.translate': 'ترجمة…',
   'aris.toolbar.translate.missing': '{count} بدون ترجمة',
+  'aris.toolbar.exportPdf': 'تصدير PDF',
+  'aris.toolbar.exportPdf.title': 'تنزيل العرض الحالي — إطار الطباعة والمخطط — بصيغة PDF',
+  'aris.exportPdf.done': 'تم تصدير PDF: {bytes} بايت.',
+  'aris.exportPdf.failed': 'تعذّر تصدير PDF: {error}',
   'aris.translate.nothingMissing': 'كل التسميات تحمل اللغتين بالفعل.',
   'aris.translate.applied': 'تم تطبيق {count} ترجمة كخطوة واحدة قابلة للتراجع.',
   'aris.translate.autoDone':

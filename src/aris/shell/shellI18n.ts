@@ -74,6 +74,10 @@ export const ARIS_SHELL_MESSAGE_KEYS: Readonly<Record<string, string>> = Object.
   'aris.toolbar.printFrame.title': 'Show or hide the print header and legend (page furniture)',
   'aris.toolbar.translate': 'Translate…',
   'aris.toolbar.translate.missing': '{count} untranslated',
+  'aris.toolbar.exportPdf': 'Export PDF',
+  'aris.toolbar.exportPdf.title': 'Download the current view — print frame and diagram — as a PDF',
+  'aris.exportPdf.done': 'PDF exported: {bytes} bytes.',
+  'aris.exportPdf.failed': 'The PDF export failed: {error}',
   'aris.translate.nothingMissing': 'Every label already has both languages.',
   'aris.translate.applied': 'Applied {count} translations as one undoable step.',
   'aris.translate.autoDone':

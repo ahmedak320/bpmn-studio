@@ -55,6 +55,7 @@ import { buildDeterministicFixPlan, type ArisFixConfirmProposal } from '../chat/
 import { detectLocaleIds } from './arisChatProposal'
 import { ArisFixMissingDialog, type ArisFixPreviewRows } from './ArisFixMissingDialog'
 import { derivedAmlFileName, exportArisDerivedAml } from './arisDerivedExport'
+import { arisPdfFileName, exportArisCanvasPdf } from '../canvas/exportArisPdf'
 import { buildArisEpcFindings } from './arisEpcFindings'
 import { buildConventionFindings } from '../conventions/validate'
 import {
@@ -456,6 +457,38 @@ export function ArisStudioTab({
     studio.source,
     title
   ])
+
+  // --- Wave 7: PDF export of the live canvas view ------------------------------
+  // Captures exactly what is on screen — print frame, diagram, current content
+  // language — through the diagram-js container the canvas facade exposes, so no
+  // DOM query can drift from the canvas this tab mounted.
+  const handleExportPdf = useCallback(() => {
+    const canvas = canvasRef.current
+    if (!canvas) return
+    void (async () => {
+      try {
+        const result = await exportArisCanvasPdf(canvas.canvas.getContainer(), modelName)
+        onDownloadAttachment(
+          arisPdfFileName(sourceFileName ?? `${title}.aml`, modelName),
+          new Uint8Array(result.bytes),
+          'application/pdf'
+        )
+        onToast(
+          tk('aris.exportPdf.done', 'PDF exported: {bytes} bytes.', {
+            bytes: result.bytes.byteLength
+          }),
+          'success'
+        )
+      } catch (error) {
+        onToast(
+          tk('aris.exportPdf.failed', 'The PDF export failed: {error}', {
+            error: error instanceof Error ? error.message : String(error)
+          }),
+          'error'
+        )
+      }
+    })()
+  }, [modelName, onDownloadAttachment, onToast, sourceFileName, title])
 
   // --- plan §18: commit chat-applied commands as ONE undoable gesture -----------
   const handleApplyChatCommands = useCallback(
@@ -958,6 +991,19 @@ export function ArisStudioTab({
             onClick={() => translateRef.current?.openReview()}
           >
             {tk('aris.toolbar.translate', 'Translate…')}
+          </button>
+          <button
+            type="button"
+            className="orbitpm-lite-chrome-btn"
+            data-orbitpm-aris-export-pdf=""
+            disabled={!renderableModelId}
+            title={tk(
+              'aris.toolbar.exportPdf.title',
+              'Download the current view — print frame and diagram — as a PDF'
+            )}
+            onClick={handleExportPdf}
+          >
+            {tk('aris.toolbar.exportPdf', 'Export PDF')}
           </button>
           {missingTranslationCount > 0 && (
             <span
