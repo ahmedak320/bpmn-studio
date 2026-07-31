@@ -2801,3 +2801,558 @@ untouched:
 - [ ] Wave-9 ledger filled: per lane — worker, verdicts (truth table, RACI anchor rule, green
       drift table, per-glyph board, OLE finding counts, tier-2/pass-3 deferrals), crop evidence
       paths, exit codes verbatim.
+
+## Wave 10 — Create-from-PDF v2 (coarse-to-fine tiling)
+
+> **Section authored 2026-07-31 by the Wave-10 planning agent.** Basis: the Wave-8 live A/B
+> outcome (orchestrator run, 2026-07-31): after the version/modelType normalizer fix
+> (`f80343f`, `src/aris/ai/normalizeDraft.ts` "Live A/B hardening" block), BOTH
+> `google/gemini-3.5-flash-lite` and `qwen/qwen3-vl-235b-a22b-instruct` produce VALID
+> register-owner drafts live, but reproduction fidelity is far below the 0.5 Seq-2 floor —
+> gemini ≈ **0.14** (native PDF) / ≈ **0.23** (rasterized image). All file/line anchors below
+> were re-verified against the working tree at `ff6482b` on 2026-07-31. This wave is an
+> **A/B EXPERIMENT**: v1 single-shot remains the shipped default and the fallback path
+> throughout; v2 activates only behind a complexity gate whose default is flipped by the A/B
+> outcome step, exactly like Wave 8's winner promotion.
+
+### Why this wave exists (root cause)
+
+The register-owner reference is a dense A3 portrait diagram: **14 functions + 22 events +
+9 rules + 46 satellites = 91 objects and 93 connections** (verified against
+`reference/AnimalWF/expected/register-owner.expected.json` `counts` + `spine` (45 entries) +
+`satellites` (46 entries)). Single-shot asks one vision call to read ~91 labeled boxes and 93
+arrows from ONE downscaled page: providers re-scale/tile the uploaded image to a fixed vision
+budget before the encoder (Gemini: 768×768 tiles; Qwen-VL: a dynamic-resolution pixel budget),
+so a 1754×2481 page (the 150-dpi raster) reaches the model at a fraction of its resolution —
+small event labels and arrowheads blur, and the model must also emit ~10–14k output tokens in
+one shot. The scores (0.14/0.23) are a resolution/attention failure, not a validity failure —
+the pipeline itself is proven (drafts validate, AML builds).
+
+**The fix (user-approved design): coarse-to-fine, NOT naive fixed-grid tiling.** Naive tiling
+loses or duplicates every connection that spans a tile boundary. Instead:
+
+1. **Global skeleton pass** (1 vision call, the full page at its native size): inventory every
+   object (type + short label + approximate normalized position) AND the full high-level
+   connection graph (source→target pairs). This pass **owns the cross-region wiring**, so no
+   spanning edge can be lost by cropping.
+2. **Region passes** (B calls, each a high-res crop): re-read one horizontal band of the page
+   at 2–6× effective resolution — exact bilingual names, `symbolType`, satellites, attributes,
+   and the band-local connections, each object carrying a `skeletonRef` back-pointer.
+3. **Deterministic merge** (pure code, no model): graft region detail onto the skeleton
+   backbone; cross-region edges come from pass 1; dedup objects seen in overlapping bands;
+   then the **EXISTING** `normalizeArisAiDraft → validateArisAiDraft → EPC semantics → repair`
+   pipeline runs on the assembled `ArisAiDraftV1` — the contract, forbidden-content scan, and
+   security invariants are reused, never forked.
+
+### Binding design resolutions (each grounded in code — workers implement, not re-litigate)
+
+**D1 — Rasterization/cropping dependency. Decision: v2 is image-source-only; crops via the
+browser's native canvas; NO pdfjs-dist; product PDFs stay v1 single-shot.**
+
+- (a) _Lazy-load pdfjs_ — REJECTED. The build is `viteSingleFile` (`vite.config.ts:72`):
+  `check:size` (`scripts/check-artifact-size.mjs`) fails if `dist/` contains anything but
+  `index.html`, so there is no lazy chunk — "lazy" pdfjs would still be inlined (+~500 KB gzip
+  against the 2.5 MiB gzip gate; current artifact 784 KB gzip leaves numeric headroom, but the
+  CSP/zero-external-request rule forbids a CDN fallback, and Wave 8 M7 RECORDED the
+  no-pdfjs-dist decision (`src/ai/pdf.ts:1-9`) — it stands).
+- (b) _Browser-native rasterization_ — browsers expose **no API that renders PDF bytes to
+  readable pixels** (`<embed>`/`<iframe>` PDF viewers are not canvas-drawable), so (b) is
+  impossible for PDFs. For **images** it is fully native and dependency-free:
+  `createImageBitmap` + `OffscreenCanvas` (HTMLCanvas fallback) crops any accepted
+  PNG/JPEG/WebP. **This is exactly what v2 uses** — lane V3.
+- (c) _v2 image-tab-only_ — **ADOPTED.** v2 activates when the attachment `kind === 'image'`
+  (`src/ai/pdf.ts:15`, already capability- and size-gated by `checkArisAiAttachment`). PDFs
+  keep the v1 single-shot path unchanged, plus a one-line hint suggesting a high-resolution
+  page image for dense diagrams (lane V6). The A/B harness supplies the image the same way
+  Wave 8 M8 did: offline `pdftoppm` raster (already exists at
+  `reference/AnimalWF/png/Register_Animal_Owner_Profile_Draft03-1.png`, 150 dpi), with node-side
+  crops via a `pngjs` devDependency (never bundled — `check:size` measures `dist/` only).
+- (d) _Region prompts on the model's own tiling_ — REJECTED as the mechanism: asking "read the
+  top-left quadrant" of the SAME uploaded image adds zero pixels — the provider already
+  downscaled the whole page before the encoder. Client-side crops work precisely because **each
+  crop re-enters the provider's per-image pixel budget at full scale** (a 1754×538 band ≈
+  0.9 Mpx passes through un-downscaled where the 4.35 Mpx page did not). This sentence is the
+  entire mechanism of the fidelity gain and belongs in the V1 prompt-design comments.
+- ZDR: crops are derived client-side from an attachment the operator already consented to send,
+  and travel as native `image_url` parts through the SAME `makeBrowserCallLLM` transport with
+  the ZDR pin (`src/ai/browserAi.ts:601-604`) — no plugins, no new privacy surface. Qwen never
+  sees a PDF part anywhere in v2 (image-only by construction).
+
+**D2 — How regions are defined. Decision: uniform full-width horizontal bands with overlap,
+computed in code — coverage never depends on model-reported coordinates.**
+
+- Band SHAPE: the four DMT reference diagrams are portrait A3 EPCs whose spine runs top→bottom
+  with each function's satellites in the SAME horizontal band (verified across the
+  `*.expected.json` spines/satellites). Full-width horizontal bands keep a function and its
+  satellites together and cut only vertical spine control-flow edges — which pass 1's graph
+  owns. (A column grid would cut function↔satellite edges, the majority class: 128 CT_SUPP_3
+  alone in the reference census.)
+- Band COUNT: `B = clamp(ceil(N / 12), 2, 8)` where `N` = skeleton object count (register:
+  N≈91 → B=8; each band ≈ 8–14 objects ≈ one or two spine steps + satellites).
+- OVERLAP: `max(60 source-px, 15% of band height)` added on both edges (clamped to the page) so
+  every boundary object appears whole in ≥1 crop; an object whose center falls inside an
+  overlap strip is EXPECTED in both adjacent bands and deduped at merge.
+- Skeleton positions (`u`,`v` ints 0–1000, page-normalized; field names deliberately OUTSIDE
+  the `GEOMETRY_KEY_DENYLIST` at `src/aris/ai/forbiddenContent.ts:93-118`) are used ONLY for
+  (i) the per-band expected-object hint lists and (ii) merge identity — never for coverage, so
+  a skeleton with sloppy coordinates degrades hint quality, not page coverage.
+- Both A/B models are grounding-trained on 0–1000 normalized coordinates (Gemini bounding-box
+  convention; Qwen-VL grounding), so `u`/`v` is the cheapest reliable position vocabulary.
+
+**D3 — Merge/dedup algorithm (exact rules; lane V4 implements verbatim).**
+
+- **Identity:** each region object carries `skeletonRef` (the hint id it claims to be, or
+  null). Code VERIFIES every ref: accepted iff the referenced skeleton object has the same
+  `objectType` AND its global `v` lies within the band's v-range ± overlap. A failed
+  verification demotes the ref to null. Null-ref objects are matched by: same `objectType`,
+  token-Jaccard name similarity ≥ 0.4 (production reimplementation of the
+  `seq2NameSimilarity` tokenizer — fixture code is never imported into product), nearest
+  global-`v`. Still unmatched → a NEW object (zoom found what the skeleton missed — expected
+  for small satellites). **The 9 identically-named "XOR rule" objects make position part of
+  identity, never name alone.**
+- **Overlap dedup:** two region objects (adjacent bands) mapping to the same skeleton id are
+  merged (keep the higher-confidence, then longer-name variant). Two NEW objects from adjacent
+  bands merge iff same type + name similarity ≥ 0.6 + global-`v` distance ≤ the overlap.
+- **Conflict rules:** region detail WINS for `names` (bilingual), `symbolType`, `attributes`,
+  satellite typing; skeleton WINS for inventory (an object no region confirmed stays, at
+  `confidence: 'low'`, plus one `uncertainty {kind:'other'}`) and for ALL cross-band edges.
+  Intra-band edge direction/type: region wins (it saw the arrowheads at zoom).
+- **Edges:** start from skeleton pairs; map region-local relation endpoints through the
+  identity map; add unseen pairs; dedup by ordered (source, target). `connectionType`: the
+  region's code if it is in `ARIS_AI_SUPPORTED_CONNECTION_TYPES`; else
+  `censusConnectionType(sourceType, targetType, modelType)` — a NEW one-line export wrapping
+  the module-private `censusLookup` (`src/aris/ai/normalizeDraft.ts:110-152`); pairs with no
+  census row are DROPPED with an uncertainty (the strict validator would hard-fail them, and
+  the normalizer could not save them either).
+- **Assembly:** exactly one model (v2 scope is single-model; multi-model drafts remain v1);
+  `assignments: []`, top-level `attributes: []` (inline object attributes only, owner ids
+  remapped so `validateLogicalIdIntegrity` holds); `suggestedOrder` = topological order over
+  the skeleton control-flow subgraph from start events, ties/unreachable broken by global `v`
+  (this drives `buildAmlFromArisAiDraft`'s ordering at `src/aris/shell/arisAiCreate.ts:154-160`);
+  logical ids: skeleton ids win; new objects get `b<band>-<localId>` slugs (collision-checked,
+  never ARIS-shaped). The merged draft is built from a fixed contract-field whitelist, so
+  `u`/`v`/band data can NEVER leak into the final draft — and the untouched
+  `validateArisAiDraft` (forbidden scan FIRST, `src/aris/ai/validateDraft.ts:58-62`) still
+  enforces it.
+- **Assembly validation + repair (pure reuse):** run the merged draft through the EXISTING
+  `runArisAiGeneration` (`src/aris/shell/arisAiGeneration.ts:169-305`) with a **seeded send**:
+  the first `send` resolves locally with `JSON.stringify(mergedDraft)` (zero network) and
+  later calls delegate to the live text-only transport. A valid merge returns in 1 loop pass
+  with 0 network calls; an invalid one gets the standard normalize→validate→EPC findings and
+  up to 3 text-only repair turns (`MAX_SEMANTIC_REPAIR_ATTEMPTS`, `repairTurn.ts:33`) with the
+  merged JSON as the fenced "previous response" — attachment-once and text-only-repair hold
+  structurally because the seeded run has no attachment at all.
+
+**D4 — Cost / latency budget (bounded by construction; the harness MEASURES real cost).**
+
+| pass                        | calls        | in tokens (est.)          | out tokens (est.) | gemini-3.5-flash-lite ($0.30/$2.50 per M) | qwen3-vl-235b ($0.21/$1.90) |
+| --------------------------- | ------------ | ------------------------- | ----------------- | ----------------------------------------- | --------------------------- |
+| skeleton (full page)        | 1            | ~4.3k (12×258 img + text) | ~5.5k             | ~$0.015                                   | ~$0.011                     |
+| region (per band, B=8 max)  | B (+≤2 redo) | ~2.6k each                | ~1.5k each        | ~$0.005 × B ≈ $0.037                      | ~$0.028                     |
+| assembly repair (worst 1–3) | 0–3          | ~14k                      | ~12k              | ~$0.034 each                              | ~$0.026                     |
+
+Typical v2 run ≈ **$0.05 (gemini) / $0.04 (qwen)**, worst-case ≈ $0.12/$0.09 — vs v1's
+~$0.02–0.04. Hard bounds: **call cap 14** (1 + 8 + 2 region redispatches + 3 assembly repairs)
+and **cost ceiling $0.15/run** (`SEQ2_V2_MAX_COST_USD`, hard-gated in the harness via the
+existing usage-capture pattern, `createFromPdf.seq2.test.ts:554-579`). Latency: region fan-out
+runs **concurrently, limit 3 in flight** (each pass is an independent `makeBrowserCallLLM`
+invocation — stateless per call; per-call timeout stays `GENERATION_TIMEOUT_MS = 180_000`,
+`browserAi.ts:187`); expected wall clock ≈ 2.5–4 min vs v1's 1–2 min. A transient failure on a
+region (image attachments get `maxAttempts: 1` in the transport, `browserAi.ts:941`) triggers
+ONE re-dispatch of that region pass; a second failure degrades the band (D5), never the run.
+
+**D5 — Complexity gate + fallback ladder (the "complexity assessment" step).**
+
+- Constants (lane V2, all exported + threshold-injectable for tests):
+  `ARIS_AI_V2_MAX_SINGLE_SHOT_OBJECTS = 35`, `ARIS_AI_V2_MAX_SINGLE_SHOT_CONNECTIONS = 45`,
+  `ARIS_AI_V2_MIN_SOURCE_LONG_SIDE_PX = 1600`, `ARIS_AI_V2_TARGET_OBJECTS_PER_BAND = 12`,
+  `ARIS_AI_V2_MAX_BANDS = 8`. Justification: the 26-object recorded fixture succeeds
+  single-shot (Wave 7/8, mocked + live-shaped); the 91-object/93-connection register fails at
+  0.14–0.23; 35/45 sits between with margin. Below
+  `MIN_SOURCE_LONG_SIDE_PX` a crop cannot out-resolve the original, so tiling is pointless.
+- Gate flow: skeleton pass FIRST (cheap, ~$0.015); if `N ≤ 35 AND edges ≤ 45` OR
+  `B < 2` OR source too small → **run v1 single-shot** (the exact bytes of today's prompt;
+  the skeleton spend is recorded as a warning finding). Else → region passes.
+- Fallback ladder: skeleton invalid after its 1-repair budget → v1 single-shot automatically
+  (status line says so). Region failed after redispatch → that band DEGRADES to skeleton data
+  (warning + uncertainties; run continues). Assembly `semantic-exhausted` → the run fails with
+  findings exactly like v1 (no silent second full run — observable, no doubled spend).
+- Rollout switch: `ARIS_AI_COARSE_TO_FINE_DEFAULT: 'auto' | 'off'` ships **'off'** — the
+  product path stays byte-identical to v1 until the A/B WIN criterion flips it to `'auto'` in
+  the outcome step (one-line change, mirrors Wave 8's winner promotion). The harness forces v2
+  regardless of the default.
+
+### Invariants that MUST survive this wave (violating any is a stop-and-revert)
+
+- **The final draft is a plain `ArisAiDraftV1`** through the UNTOUCHED
+  `normalizeArisAiDraft → validateArisAiDraft → validateArisAiDraftEpcSemantics → buildAmlFromArisAiDraft`
+  chain — no schema fork, no new fields, forbidden-content scan first, geometry keys still
+  rejected in the final draft.
+- **Pass outputs are still scanned:** skeleton/region JSON runs through a NEW
+  `scanForForbiddenStrings` (the string patterns of `forbiddenContent.ts:135-163` — XML
+  markup, real ARIS ids, executable content — WITHOUT the geometry-key pass, because
+  normalized positions are the skeleton's job). Full scan still guards the merged draft.
+- **ZDR pin on every request** (`browserAi.ts:601-604`) — all passes ride the same transport;
+  `usage: {include: true}` accounting stays.
+- **Attachment exactly once PER PASS; repair turns text-only** — structural, per pass runner;
+  the assembly loop carries no attachment at all. Never more than ONE attachment per request
+  (the single-`GenAttachment` transport shape at `browserAi.ts:460-486` is unchanged).
+- **qwen never receives a PDF part** — v2 sends only `image` attachments by construction;
+  the M1/M7/M8 capability gates stay untouched.
+- **v1 byte-identical while the default is `'off'`**, and for gate-simple diagrams after
+  `'auto'`: same prompt bytes, same request count, same `MAX_TOKENS`/`MAX_ATTACHMENT_TOKENS`
+  budgets (`ArisGenerationPanel.tsx:130-136`). Mocked proof required (V6).
+- **CI safety:** every new mocked test runs with no key, no network, no `reference/` tree, no
+  `.skip` (`check:no-skips`); live tests keep in-body env-gated early returns.
+- **Single-file artifact:** no new runtime dependency (`pngjs` is devDependency-only, used by
+  the node harness); `check:size` and `check:csp` stay green.
+- The OpenRouter key stays at `/home/ahmed/.claude/jobs/501f0ce4/tmp/openrouter.env` — never
+  committed, echoed, or written into any repo file; nothing under
+  `/home/ahmed/Desktop/bpmn_tool/reference/` ever enters git.
+
+### Worker routing (task contract for the orchestrator)
+
+Lanes execute **strictly in order V1 → V7** (V1's contracts feed V2/V4/V5; `src/aris/ai/index.ts`
+barrel exports are owned by V5 alone; sequential execution is the contention contract, exactly
+like Wave 8's M-lanes). Run each lane's verify set before starting the next. Per goal.md's
+dispatch rules and the recorded routing preference, `[sonnet]` lanes go to a sonnet-medium
+worker; `[opus]` lanes go to the preferred heavy worker (codex gpt-5.6-sol xhigh where the
+memory note applies — **ultra for V4 and V5**, the two judgment-heaviest lanes — otherwise
+opus-4.8[1m] high per the original rules).
+
+| Order | Lane                                                       | Worker |
+| ----- | ---------------------------------------------------------- | ------ |
+| 1     | V1 pass contracts + prompts + JSON Schemas                 | opus   |
+| 2     | V2 band tiling + complexity-gate math (pure)               | sonnet |
+| 3     | V3 browser image cropper (canvas)                          | sonnet |
+| 4     | V4 deterministic merge module                              | opus   |
+| 5     | V5 pass runner + coarse-to-fine orchestrator               | opus   |
+| 6     | V6 panel wiring + progress UX + i18n                       | opus   |
+| 7     | V7 Seq-2 v2 harness + mocked pipeline + live A/B machinery | opus   |
+
+Contended-file owners (binding): `promptBuilder.ts`+`forbiddenContent.ts` → V1;
+`normalizeDraft.ts` (the `censusConnectionType` export) → V4; `src/aris/ai/index.ts` → V5;
+`ArisGenerationPanel.tsx` + `dictionaries.ts` + `shellI18n.ts` → V6; `package.json`/lockfile
+(+`pngjs` devDep) and both `createFromPdf.seq2*` files → V7. No Wave-9 lane (renderer/canvas
+files) overlaps any V-lane.
+
+### Lanes (strictly in order; each lists owned files, exact changes, tests, acceptance)
+
+- [ ] **V1 `[opus]` — Pass contracts, prompts, and enum-locked JSON Schemas.**
+      Files: NEW `src/aris/ai/passContracts.ts`, NEW `src/aris/ai/passContracts.test.ts`,
+      NEW `src/aris/ai/passPrompts.ts`, NEW `src/aris/ai/passPrompts.test.ts`,
+      NEW `src/aris/ai/passJsonSchema.ts`, NEW `src/aris/ai/passJsonSchema.test.ts`,
+      `src/aris/ai/forbiddenContent.ts` (+ its test), `src/aris/ai/promptBuilder.ts` (+ test).
+      Changes: 1. `passContracts.ts` — zod strict contracts mirroring `contract.ts` conventions
+      (`z.strictObject`, no defaults/coercion):
+      `ArisAiSkeletonV1` `{version: literal 1, modelType: string, names: ArisAiLocalizedTextSchema, objects: [{logicalId, objectType, names, symbolType?, u: int, v: int, confidence}], connections: [{sourceLogicalId, targetLogicalId, flavor?: 'control'|'satellite'}]}`
+      and `ArisAiRegionV1` `{version: literal 1, objects: [{logicalId, skeletonRef: string|null, objectType, symbolType?, names, attributes: ArisAiAttributeSchema[], u: int, v: int, confidence}], relations: [{logicalId, sourceLogicalId, targetLogicalId, connectionType, confidence}], uncertainties?: [{targetLogicalId, kind, message}]}`
+      — reuse `ArisAiLocalizedTextSchema`/`ArisAiAttributeSchema`/`ArisAiConfidenceSchema`
+      from `./contract`; `u`/`v` are ints (code clamps 0–1000; no zod min/max so strict-mode
+      json_schema stays representable). Position field names MUST stay `u`/`v` (outside the
+      geometry denylist). 2. `forbiddenContent.ts` — export `scanForForbiddenStrings(value, path = '$')`: the
+      existing recursive walk running ONLY `scanString` (XML/real-id/executable patterns),
+      skipping `isForbiddenGeometryKey`. Refactor the walker to share code; the existing
+      `scanForForbiddenContent` behavior stays byte-identical (its tests untouched + a new
+      test proving the relaxed scan accepts `{u:1,v:2}` but rejects `<AML>` payloads). 3. `promptBuilder.ts` — extract the connection cheat-sheet lines (`:139-148`) into an
+      exported `const ARIS_AI_CONNECTION_CHEAT_SHEET_LINES: readonly string[]` consumed by
+      `SYSTEM_PROMPT` so the assembled `SYSTEM_PROMPT` string stays BYTE-IDENTICAL (the
+      determinism test at `promptBuilder.test.ts` and Wave-8 tests must pass untouched). 4. `passPrompts.ts` — deterministic builders (pure functions, same determinism/fencing
+      discipline as `buildArisAiPrompt`):
+      `buildArisAiSkeletonPrompt({modelName, modelType, hint?})` — system prompt: task =
+      complete inventory + graph, NOT detail ("list EVERY box and EVERY arrow; approximate
+      names are fine; positions as integers u,v in 0–1000 page-normalized units; do NOT skip
+      satellites; connections as source→target pairs only"); vocabularies: the 12
+      `ARIS_AI_SUPPORTED_OBJECT_TYPES`, 2 model types, 3 rule symbols (import the constants —
+      never a second copy); strict-JSON-only rule; untrusted-data rule.
+      `buildArisAiRegionPrompt({bandIndex, bandCount, expectedObjectsBlock, hint?})` — system
+      prompt: task = exact extraction of THIS crop (verbatim bilingual labels, `symbolType`,
+      satellites, attributes such as AT_DESC and numbering, local relations with `CT_*` codes
+      via `ARIS_AI_CONNECTION_CHEAT_SHEET_LINES`, crop-normalized u/v, `skeletonRef` =
+      matching hint id or null); the user turn fences the hint list with
+      `fenceUntrustedText('Skeleton hints', …)` (model-derived content is untrusted, same
+      posture as repair-turn echoes) and states "objects cut off at the crop edge belong to a
+      neighboring region — include them only if their label is readable".
+      Also `buildArisAiAssemblyUser({modelName})` — the short user turn the seeded assembly
+      loop carries (contract reminder; sent only inside repair-turn history). 5. `passJsonSchema.ts` — `buildArisAiSkeletonJsonSchema()` / `buildArisAiRegionJsonSchema()`
+      hand-written like `draftJsonSchema.ts` (`additionalProperties: false`; optionals
+      omitted from `required` and NOT nullable — EXCEPT `skeletonRef`, which IS required and
+      nullable (`type: ['string','null']`) so strict mode forces the model to decide);
+      `objectType`/`connectionType`/`kind`/`confidence`/`flavor` enums locked to the imported
+      vocabulary constants.
+      Tests: contract round-trips (valid skeleton/region parse; extra key rejected; `u:'3'`
+      rejected); schema-vs-vocabulary drift guards mirroring `draftJsonSchema.test.ts`; prompt
+      determinism (same input → byte-equal), fencing shape, cheat-sheet presence in the region
+      system prompt, `SYSTEM_PROMPT` byte-equality with the pre-lane string (snapshot the
+      current value in the test).
+      Acceptance: `npx vitest run src/aris/ai --maxWorkers=2 --retry=0` green;
+      `npm run typecheck` green.
+
+- [ ] **V2 `[sonnet]` — Band tiling + complexity-gate math (pure, no I/O).**
+      Files: NEW `src/aris/ai/regionTiling.ts`, NEW `src/aris/ai/regionTiling.test.ts`.
+      Changes: export the D5 constants; `interface ArisAiCropRect {leftPx, topPx, widthPx, heightPx}`;
+      `interface ArisAiBand {index, rect: ArisAiCropRect, vRange: [number, number], coreVRange: [number, number]}`
+      (vRange includes overlap, coreVRange excludes it — dedup uses the distinction);
+      `computeArisAiComplexityDecision({objectCount, connectionCount, widthPx, heightPx, thresholds?})`
+      → `'single-shot' | 'tile'` per D5; `computeArisAiBands({objectCount, widthPx, heightPx, thresholds?})`
+      → bands per D2 (count clamp(ceil(N/12),2,8); overlap max(60px, 15% band height) clamped
+      to page edges); `assignSkeletonObjectsToBands(skeletonObjects, bands)` → per-band hint
+      lists (an object in an overlap strip appears in BOTH adjacent bands' lists);
+      `regionVToGlobal(band, vLocal)` / `globalVToBand(bands, v)` mapping helpers (0–1000
+      normalized both sides); all pure, deterministic, threshold-injectable.
+      Tests: register-shaped case (N=91, 1754×2481 → 8 full-width bands, complete coverage,
+      overlap ≥ 60px, band 0 top = 0, band 7 bottom = pageH); N=26 → `'single-shot'`; small
+      source (long side 1200) → `'single-shot'`; boundary object at a band edge appears in
+      exactly 2 hint lists; v-mapping round-trips within rounding; clamps at page edges;
+      injected thresholds honored.
+      Acceptance: `npx vitest run src/aris/ai/regionTiling.test.ts` green; `npm run typecheck`.
+
+- [ ] **V3 `[sonnet]` — Browser image cropper (canvas; zero new runtime deps).**
+      Files: NEW `src/ai/imageCrop.ts`, NEW `src/ai/__tests__/imageCrop.test.ts`.
+      Changes: `interface ArisAiCropSource {widthPx, heightPx, crop(rect: ArisAiCropRect): Promise<GenAttachment>, close(): void}`;
+      `createArisAiImageCropSource(attachment: GenAttachment, primitives?): Promise<ArisAiCropSource>`
+      — base64 → `Uint8Array` → `Blob` → `createImageBitmap(blob, {imageOrientation: 'from-image'})`
+      (orientation matters: crops must align with what the model saw in the full page);
+      `crop()` draws the slice onto an `OffscreenCanvas` (fallback `document.createElement('canvas')`
+      when `OffscreenCanvas` is absent — WebKit e2e baseline), `convertToBlob({type: 'image/png'})`
+      / `toBlob` fallback → base64 via the existing FileReader pattern → a `GenAttachment`
+      `{kind:'image', mediaType:'image/png', fileName: '<orig>#band<i>.png', sizeBytes}`.
+      Enforce `checkAttachmentSize('openrouter'|providerId, 'image', sizeBytes)` per crop; on
+      a (pathological) over-limit crop, retry ONCE at 0.75 scale, then throw a transport-shaped
+      error the orchestrator degrades on. `close()` releases the bitmap. The `primitives`
+      injection seam (decode/encode fns) exists ONLY for tests — jsdom has no
+      `createImageBitmap`.
+      Tests (node, via injected primitives): rect math passthrough (the crop call receives
+      exactly the V2 rect); PNG mediaType + naming; size-gate retry path (first encode returns
+      an oversized result → 0.75 retry → accepted); abort/close behavior; no re-encode of the
+      source (the source base64 decoded exactly once).
+      Acceptance: `npx vitest run src/ai --maxWorkers=2 --retry=0` green; `npm run typecheck`;
+      `npm run check:lite-only` / `check:aris-runtime-boundary` green (file lives in `src/ai`
+      beside `pdf.ts`).
+
+- [ ] **V4 `[opus]` — Deterministic merge module.**
+      Files: NEW `src/aris/ai/mergeDraft.ts`, NEW `src/aris/ai/mergeDraft.test.ts`,
+      `src/aris/ai/normalizeDraft.ts` (+ test).
+      Changes: 1. `normalizeDraft.ts` — export
+      `censusConnectionType(sourceType: string, targetType: string, modelType?: string): {code, ambiguous} | null`
+      delegating to the private `censusLookup` (`:110-152`); zero behavior change to
+      `normalizeArisAiDraft` (existing tests byte-identical; one new test for the export). 2. `mergeDraft.ts` —
+      `mergeArisAiPasses({skeleton: ArisAiSkeletonV1, regions: ReadonlyArray<{band: ArisAiBand, value: ArisAiRegionV1 | null}>, bands, modelNameFallback?}): {draft: unknown, warnings: ArisAiValidationFinding[], stats: {matched, added, dropped, degradedBands}}`
+      implementing D3 EXACTLY (ref verification → name/position matching with the
+      token-Jaccard `arisAiNameSimilarity` production helper exported here → overlap dedup on
+      `coreVRange` → conflict rules → edge union with census fill → drop+uncertainty for
+      censusless pairs → single model entry → id allocation `b<band>-<localId>` → inline
+      attribute owner remap → topo `suggestedOrder` with global-`v` tiebreak). Output is a
+      PLAIN JSON draft built from a contract-field whitelist (never spreads pass objects), so
+      no `u`/`v`/`skeletonRef`/band field can survive into it. A `null` region value = a
+      degraded band: its skeleton objects pass through at `confidence:'low'` + uncertainty.
+      Every lossy decision (dropped edge, demoted ref, degraded band, unconfirmed object)
+      emits a warning finding with a distinct code
+      (`v2-dropped-relation`/`v2-demoted-ref`/`v2-degraded-band`/`v2-unconfirmed-object`) or a
+      draft uncertainty per D3.
+      Tests (the heaviest suite of the wave — pure, table-driven): the 9×"XOR rule" identity
+      case (same names, distinct v → 9 distinct merged objects, refs verified by position);
+      overlap dedup (same skeletonRef from 2 bands → 1 object, higher-confidence name wins;
+      two new objects name-sim 0.7 within overlap → merged; outside overlap → both kept);
+      region-wins-names / skeleton-wins-inventory; cross-band edge from skeleton preserved
+      when neither region saw it; intra-band direction conflict → region direction; census
+      fill (`OT_APPL_SYS→OT_FUNC` no code → `CT_SUPP_3`); censusless pair dropped +
+      uncertainty; attribute owner remap satisfies `validateLogicalIdIntegrity`; merged
+      register-shaped fixture passes `validateArisAiDraft` + has zero geometry keys
+      (`scanForForbiddenContent(merged)` empty); determinism (same input → deep-equal output);
+      id collision safety.
+      Acceptance: `npx vitest run src/aris/ai/mergeDraft.test.ts src/aris/ai/normalizeDraft.test.ts` green;
+      `npm run typecheck`.
+
+- [ ] **V5 `[opus]` — Pass runner + coarse-to-fine orchestrator (+ barrel).**
+      Files: NEW `src/aris/shell/arisAiPassRunner.ts`, NEW `src/aris/shell/arisAiPassRunner.test.ts`,
+      NEW `src/aris/shell/arisAiCoarseToFine.ts`, NEW `src/aris/shell/arisAiCoarseToFine.test.ts`,
+      `src/aris/ai/index.ts` (barrel exports for V1/V2/V4 modules — single owner).
+      Changes: 1. `arisAiPassRunner.ts` — `runArisAiJsonPass<T>({system, user, attachment?, send, signal, interpret: (raw: unknown) => {ok: true, value: T} | {ok: false, findings}, maxRepairs = 1, passLabel})`
+      — a lean sibling of `runArisAiGeneration` REUSING its exports
+      (`parseArisAiResponseJson`, the transport/cancel classifiers, bounded-echo constant) and
+      `fenceUntrustedText`; per-pass repair message mirrors `buildArisAiRepairMessage`'s shape
+      but names the pass contract (`Repair turn 1 of 1 for the <passLabel> extraction…`);
+      attachment cleared after the first send (same structural pattern,
+      `arisAiGeneration.ts:172-220`); returns `{ok, value?, findings, requestsSent}`.
+      `interpret` for the skeleton = `scanForForbiddenStrings` → zod parse → code clamp of
+      u/v to 0–1000 → object/model-type vocabulary check; for regions likewise (relation
+      `connectionType` left free here — merge + the final normalizer own it). 2. `arisAiCoarseToFine.ts` —
+      `runArisAiCoarseToFine({modelName, modelType, hint, v1Prompt: ArisAiPrompt, attachment: GenAttachment, cropSource: ArisAiCropSource, makeSend: (pass: 'skeleton'|'region'|'assembly'|'v1') => ArisAiSend, signal, onProgress?: (p: ArisAiV2Progress) => void, thresholds?})`
+      → `ArisAiGenerationResult & {v2?: {pipeline: 'v1'|'v2', bands, degradedBands, callsUsed, skeletonObjects, skeletonEdges}}`.
+      Flow: skeleton pass (16k tokens, skeleton json_schema) → complexity decision (V2) →
+      single-shot ⇒ `runArisAiGeneration` with `v1Prompt` + the ORIGINAL attachment via
+      `makeSend('v1')` (byte-identical v1 semantics) → else bands (V2) + hint lists → region
+      fan-out: concurrency limit 3, each `runArisAiJsonPass` (8k tokens, region json_schema,
+      crop attachment from `cropSource.crop(band.rect)`), one re-dispatch per failed band,
+      then `null`-degrade → `mergeArisAiPasses` (V4) → the SEEDED assembly
+      `runArisAiGeneration` per D3 (16k tokens, draft json_schema on repair turns via
+      `makeSend('assembly')`) → success surfaces
+      `warnings: [...mergeWarnings, ...assemblyWarnings]`. Enforce the call cap (14): the cap
+      trips into a transport-shaped failure with an explicit finding. Cancellation checked
+      between every pass (`signal.aborted` → `'cancelled'` result, matching v1 semantics).
+      The `'off'` default means NOTHING calls this in product until V6 wires the gate; the
+      module is UI-free (runtime-boundary clean).
+      Tests (mocked sends, deterministic): happy path 1+B+seeded-0 calls with per-pass
+      request-shape capture (skeleton schema name, region crops distinct, assembly zero
+      network when merge is valid); simple-diagram gate → EXACT v1 delegation (the v1 send
+      receives `v1Prompt.system`/`.user` bytes and the original attachment; requestsSent
+      matches v1); skeleton failure → v1 fallback with a status callback; one band degrades
+      after redispatch → success + `v2-degraded-band` warning + `degradedBands === 1`;
+      assembly invalid once → one live text-only repair request (no attachment, history
+      carries merged JSON); call-cap trip; cancellation mid-fan-out.
+      Acceptance: `npx vitest run src/aris/shell/arisAiPassRunner.test.ts src/aris/shell/arisAiCoarseToFine.test.ts` green;
+      `npm run typecheck`; `npm run check:aris-runtime-boundary` green.
+
+- [ ] **V6 `[opus]` — Panel wiring, progress UX, i18n (product surface).**
+      Files: `src/ArisGenerationPanel.tsx`, `src/i18n/dictionaries.ts` (en block near `:2758`,
+      ar block near `:5694`), `src/aris/shell/shellI18n.ts` (`ARIS_SHELL_MESSAGE_KEYS`, `:49`),
+      `src/aris/shell/arisCreateDocumentAi.test.tsx` (+ `arisCreatePanel.test.tsx` if request
+      counts are asserted).
+      Changes: 1. `createWithAi` (`:625-767`): after the attachment recheck/encode, branch —
+      `if (ARIS_AI_COARSE_TO_FINE_DEFAULT !== 'off' && encoded?.kind === 'image')` build
+      `cropSource = await createArisAiImageCropSource(encoded)` (V3) and call
+      `runArisAiCoarseToFine` with `makeSend(pass)` = the existing `buildSend` generalized to
+      `buildSend({maxTokens, responseSchema})` (skeleton/assembly 16_000 + their schemas;
+      region 8_000 + region schema; `'v1'` = today's exact budget/schema selection — the
+      current `buildSend(hasAttachment)` call sites keep byte-identical behavior via a thin
+      wrapper so the description/DOCX path is untouched). Everything downstream (placement
+      §16.7, recovery artifact, `aris.ai.created` counts) is UNCHANGED — the orchestrator
+      returns the same result shape. A test-injection prop `coarseToFineMode?: 'auto'|'off'`
+      overrides the const so mocked tests exercise both branches while the shipped default
+      stays `'off'`. 2. Progress: pass `onProgress` mapping to `setStatus` lines —
+      `aris.create.v2.skeleton` "Reading the whole diagram (pass 1)…",
+      `aris.create.v2.dense` "Dense diagram ({objects} objects) — reading it in {count} regions at high resolution.",
+      `aris.create.v2.region` "Zooming into region {index} of {count}…",
+      `aris.create.v2.assembling` "Assembling the model from {count} regions…",
+      `aris.create.v2.assemblyRepair` "The assembled draft needs a correction; sending text-only repair turn {attempt} of {max}.",
+      `aris.create.v2.fallback` "Falling back to the single-pass reader: {reason}",
+      `aris.create.v2.degraded` "{count} region(s) could not be read in full detail; outline data was used for them."
+      (surface the last one as a warning line, not just status). Static hint under the PDF
+      attachment state: `aris.create.v2.pdfHint` "Dense diagram? Attach a high-resolution PNG of the page instead to enable region-zoom reading."
+      All via `tk()`; register EVERY key in BOTH dictionaries AND `ARIS_SHELL_MESSAGE_KEYS`
+      (`src/__tests__/i18n.test.ts:212` fails otherwise); add
+      `data-orbitpm-aris-create-v2-status` on the status line while a v2 run is active. 3. No consent-surface change: crops are derived from the consented attachment and the
+      skeleton-hint round-trip is model output returning to the same model — same trust
+      domain as repair-turn echoes (document this in a code comment).
+      Tests (`arisCreateDocumentAi.test.tsx`, injected `callProvider`/orchestrator seams):
+      default-off → an image run sends EXACTLY the v1 request sequence (byte-compare system/user,
+      1 request); mode `'auto'` + mocked dense skeleton → status walks
+      skeleton→dense→region…→assembling; degraded warning rendered; PDF attach shows the
+      pdfHint; abort mid-run → `aris.ai.cancelled`; i18n suite green.
+      Acceptance: `npx vitest run src/aris/shell/arisCreateDocumentAi.test.tsx src/aris/shell/arisCreatePanel.test.tsx src/__tests__/i18n.test.ts` green;
+      `npm run typecheck && npm run lint && npm run check:ui-copy` green.
+
+- [ ] **V7 `[opus]` — Seq-2 v2 harness: mocked pipeline + live v1-vs-v2 A/B machinery.**
+      Files: NEW `src/aris/ai/createFromPdf.seq2v2.fixture.ts`, NEW
+      `src/aris/ai/createFromPdf.seq2v2.test.ts`, `package.json` + lockfile (devDeps `pngjs`,
+      `@types/pngjs`), `src/aris/ai/createFromPdf.seq2.test.ts` (ONLY the additive
+      `SEQ2_AB_REPORT_ONLY` mechanism below — everything else byte-identical).
+      Changes: 1. Fixture: recorded SKELETON payload (synthetic dense process: ~40 objects incl. 4
+      identically-named XOR rules, ~46 edges, plausible u/v) + 2 recorded REGION payloads +
+      the expected merged summary — self-contained, CI-safe, no `reference/` dependency;
+      thresholds injected small (`{maxSingleShotObjects: 10, targetObjectsPerBand: 20, maxBands: 2}`)
+      so the mocked run is 1 skeleton + 2 regions. Export
+      `SEQ2_V2_MAX_COST_USD = 0.15`, `SEQ2_V2_MAX_CALLS = 14`,
+      `SEQ2_V2_WIN_MARGIN = 0.15`. Node crop source: `pngjs`-based
+      `createNodePngCropSource(pngBytes)` implementing `ArisAiCropSource` (decode once, slice
+      rows/cols per rect, re-encode PNG) — test-tree only, never imported by `src/` product
+      code paths that reach the bundle. 2. Mocked pipeline test: drive `runArisAiCoarseToFine` with the REAL transport
+      (`makeBrowserCallLLM` + `vi.stubGlobal('fetch', …)` replaying skeleton → region×2
+      bodies, mirroring `createFromPdf.seq2.test.ts:95-114`): assert per-request shapes —
+      request 1 carries the full-page image part + `json_schema.name === 'aris_ai_skeleton_v1'`;
+      requests 2–3 carry DISTINCT crop `image_url` payloads + the region schema + `max_tokens`
+      8_000; ZDR pin + `usage: {include: true}` on every body; no `plugins` anywhere; final
+      draft passes `validateArisAiDraft`, merges the XOR rules correctly (4 distinct), and
+      `buildAmlFromArisAiDraft` succeeds; zero assembly network calls (merge valid). A second
+      mocked case degrades one region (two failing bodies) → success + degraded warning. 3. Live A/B (env-gated in-body, `OPENROUTER_API_KEY`; 900 s timeout): cell = model ×
+      pipeline. v2 cell: skeleton on the EXISTING 150-dpi PNG
+      (`readReferencePng` pattern, `createFromPdf.seq2.test.ts:516-541`), crops via the
+      pngjs source from the SAME PNG (product-faithful — the browser would crop the very
+      image the user attached); REAL thresholds (register must tile: assert
+      `v2.pipeline === 'v2'` and `bands between 6 and 8`); usage capture identical to
+      `installOpenRouterUsageCapture` (duplicate the small helper — do not refactor the
+      Wave-8 file). Hard gates: `result.ok`, `callsUsed ≤ SEQ2_V2_MAX_CALLS`,
+      `costUsd < SEQ2_V2_MAX_COST_USD`, `degradedBands ≤ 2`. **Score is REPORTED, not
+      hard-gated** (this is an experiment; the ledger decides) — emit
+      `SEQ2-AB2 pipeline=v2 model=<id> mode=image bands=<B> degraded=<k> calls=<n> repairs=<n> score=<s> fn=<..> ev=<..> mix=<..> conn=<..> costUsd=<c>`
+      via `seq2SummaryFromDraft` + `seq2SimilarityScore` against `readExpectedSummary()`. 4. Paired v1 baseline: `SEQ2_AB_REPORT_ONLY=1` env read INSIDE the two existing live
+      tests of `createFromPdf.seq2.test.ts` — when set, the `score ≥ 0.5` and
+      `semanticAttemptsUsed ≤ 1` expectations become `console.warn`s (explicit, logged,
+      never default, mocked tests untouched) so the same-day v1 re-runs COMPLETE and REPORT
+      their `SEQ2-AB` lines for the paired comparison instead of aborting at the known-red
+      floor. One added mocked assertion pins that without the env the hard gates are intact. 5. Optional exploratory cell (`SEQ2_V2_SOURCE=hi`, gemini only): crops from a 300-dpi
+      raster (`pdftoppm -png -r 300 <pdf> <out>` — offline, never committed; skeleton still
+      the 150-dpi PNG; the 300-dpi page is only a crop source, never sent whole) to measure
+      the source-resolution headroom; recorded in the ledger as advisory.
+      Acceptance (CI, no key): `npx vitest run src/aris/ai/createFromPdf.seq2v2.test.ts src/aris/ai/createFromPdf.seq2.test.ts --maxWorkers=1 --retry=0`
+      green with live tests early-returning; `npm run check:no-skips` + `npm run check:lock`
+      green; `npm run check:size` green (pngjs must NOT appear in the artifact).
+
+### Wave 10 — the live A/B run procedure (orchestrator, after V1–V7 are green)
+
+1. `set -a; source /home/ahmed/.claude/jobs/501f0ce4/tmp/openrouter.env; set +a` — never
+   commit/echo/write the key.
+2. Preconditions: 150-dpi PNG present (it is); optionally build the 300-dpi raster for the
+   exploratory cell. Backfill the still-blank Wave-8 outcome ledger with the v1 lines already
+   measured (gemini pdf ≈ 0.14, image ≈ 0.23, + qwen numbers) before running anything new.
+3. Run the paired matrix from `/home/ahmed/Desktop/bpmn_tool/desktop` (same day, same key):
+   - v1 baselines (report-only mode):
+     `SEQ2_AB_REPORT_ONLY=1 SEQ2_VISION_MODEL=google/gemini-3.5-flash-lite npx vitest run src/aris/ai/createFromPdf.seq2.test.ts --maxWorkers=1 --retry=0`
+     and the same with `SEQ2_VISION_MODEL=qwen/qwen3-vl-235b-a22b-instruct` (its PDF cell
+     self-skips via the capability guard).
+   - v2 cells:
+     `SEQ2_VISION_MODEL=google/gemini-3.5-flash-lite npx vitest run src/aris/ai/createFromPdf.seq2v2.test.ts --maxWorkers=1 --retry=0`
+     and the same for qwen. Expected spend ≈ $0.05/cell, ≤ ~$0.45 total incl. baselines and
+     one repair-heavy re-run.
+4. Copy every `SEQ2-AB` / `SEQ2-AB2` line into the ledger below. If a v2 cell fails a hard
+   gate, diagnose (skeleton under-count? band degradation? schema 400 → remove that pass
+   schema from the structured set as a recorded config fallback? assembly repair loop?), fix,
+   re-run — record every attempt.
+5. **Decision rule (per model): v2 WINS iff `scoreV2 ≥ scoreV1 + 0.15` AND `scoreV2 ≥ 0.5`
+   AND `costUsd < 0.15`.** If the promoted-first vision model (Wave 8 winner slot) wins →
+   flip `ARIS_AI_COARSE_TO_FINE_DEFAULT` to `'auto'` (one line, V5's module) and note it in
+   the ledger; if only the other model wins, flip AND note the model-specific caveat; if
+   neither wins → leave `'off'`, record the disproof + per-part breakdown (fn/ev/mix/conn) and
+   the best surviving hypothesis for a Wave-11 (e.g., 300-dpi source, column sub-tiling for
+   satellites, per-band repair turns).
+6. Full verify set: `npm run typecheck && npm run lint && npm test && npm run check:no-skips && npm run check:ui-copy && npm run check:size`;
+   `npm run build:aris` + artifact size recorded; wave-scoped commits; the key and everything
+   under `/home/ahmed/Desktop/bpmn_tool/reference/` never enter git.
+
+### Wave 10 outcome ledger (fill during steps 3–5)
+
+| model                            | pipeline | score (fn/ev/mix/conn) | bands | degraded | calls | repairs | cost USD | Δscore vs v1 | hard gates |
+| -------------------------------- | -------- | ---------------------- | ----- | -------- | ----- | ------- | -------- | ------------ | ---------- |
+| google/gemini-3.5-flash-lite     | v1-image |                        | —     | —        |       |         |          | baseline     |            |
+| google/gemini-3.5-flash-lite     | v2-image |                        |       |          |       |         |          |              |            |
+| qwen/qwen3-vl-235b-a22b-instruct | v1-image |                        | —     | —        |       |         |          | baseline     |            |
+| qwen/qwen3-vl-235b-a22b-instruct | v2-image |                        |       |          |       |         |          |              |            |
+| gemini (exploratory, 300-dpi)    | v2-hi    |                        |       |          |       |         |          | advisory     |            |
+
+Default flipped to `'auto'`? ______ · schema/config fallbacks: ______ · verdict + notes: ______
+
+### Wave 10 exit gate — definition of done
+
+- [ ] All seven lane verify sets green in order; `npm test` green at HEAD with NO key, NO
+      network, NO `reference/` tree; `check:no-skips`, `check:ui-copy`, `check:lock`,
+      `check:size`, `check:csp`, `check:aris-runtime-boundary`, `typecheck`, `lint` all green.
+- [ ] **v1 is provably untouched**: default-off byte-identical request proof (V6 test), the
+      Wave-8 mocked suite byte-identical (except the additive report-only env), and the
+      simple-diagram gate delegating to exact v1 bytes (V5 test).
+- [ ] **The mocked v2 pipeline runs end-to-end in CI**: skeleton → 2 regions → merge →
+      zero-network assembly → valid `ArisAiDraftV1` → AML, with per-pass request-shape,
+      ZDR-pin, and no-plugins assertions, plus the degraded-band path.
+- [ ] **Live paired A/B executed and recorded**: all four primary cells run same-day; every
+      `SEQ2-AB`/`SEQ2-AB2` line in the ledger; v2 hard gates (ok / calls ≤ 14 / cost < $0.15 /
+      degraded ≤ 2) hold on every recorded v2 cell.
+- [ ] **The experiment is DECIDED**: the step-5 decision rule applied per model; the default
+      const flipped (win) or the disproof + next-hypothesis recorded (loss). Either outcome
+      completes the wave — v1 remains the fallback path in BOTH.
+- [ ] Security/privacy invariants re-verified at exit: final drafts pass the untouched
+      `validateArisAiDraft` (forbidden scan first — no geometry keys, no XML, no real ids);
+      pass outputs scanned by `scanForForbiddenStrings`; ZDR pin + `usage` accounting on every
+      recorded request body; attachment-once per pass; text-only repairs; qwen received zero
+      PDF parts (grep the captured request log); key and `reference/` absent from every commit.
+- [ ] Wave-10 ledger filled (per lane: worker, verdict, exit codes verbatim) and goal.md's
+      dispatch ledger updated.
