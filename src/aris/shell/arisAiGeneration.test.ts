@@ -251,6 +251,50 @@ describe('§16.6 steps 6-9 — bounded parse, draft, types, EPC semantics', () =
   })
 })
 
+describe('Wave 8 — deterministic connection-type normalization (no repair turn)', () => {
+  it('rewrites two invented but mappable codes on the first response without a repair turn', async () => {
+    const base = buildMinimalValidDraft()
+    const withInventedCodes: ArisAiDraftV1 = {
+      ...base,
+      relations: base.relations.map((relation) => {
+        // evt-start → func-approve (event→function) invents CT_FLOW.
+        if (relation.logicalId === 'rel-start-to-approve') {
+          return { ...relation, connectionType: 'CT_FLOW' }
+        }
+        // func-approve → evt-end (function→event) invents CT_SEQ.
+        if (relation.logicalId === 'rel-approve-to-end') {
+          return { ...relation, connectionType: 'CT_SEQ' }
+        }
+        return relation
+      })
+    }
+    const { recorded, send } = recorder([JSON.stringify(withInventedCodes)])
+
+    const result = await runArisAiGeneration({
+      system: 'system',
+      user: 'user',
+      send,
+      signal: new AbortController().signal
+    })
+
+    expect(result.ok).toBe(true)
+    if (!result.ok) throw new Error('unreachable')
+    // One physical request, zero semantic repair turns — the normalizer fixed
+    // the codes before validation ever saw them.
+    expect(recorded.requests).toHaveLength(1)
+    expect(result.requestsSent).toBe(1)
+    expect(result.semanticAttemptsUsed).toBe(0)
+    const normalized = result.warnings.filter(
+      (warning) => warning.code === 'normalized-connection-type'
+    )
+    expect(normalized).toHaveLength(2)
+    // The accepted draft carries the canonical census codes.
+    const byId = new Map(result.draft.relations.map((relation) => [relation.logicalId, relation]))
+    expect(byId.get('rel-start-to-approve')!.connectionType).toBe('CT_ACTIV_1')
+    expect(byId.get('rel-approve-to-end')!.connectionType).toBe('CT_CRT_1')
+  })
+})
+
 describe('§16.7 — cancellation', () => {
   it('returns cancelled without sending when the signal is already aborted', async () => {
     const { recorded, send } = recorder([validDraftJson()])

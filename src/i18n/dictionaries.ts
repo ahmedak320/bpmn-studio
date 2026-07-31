@@ -2755,6 +2755,7 @@ export const en = {
     '{model} on {provider} cannot accept a PDF. Choose a model that reads documents, or describe the process in text instead.',
   'aris.create.attachment.remove': 'Remove attachment',
   'aris.create.attachment.selected': 'Attached {name} ({size}, {type}).',
+  'aris.create.attachment.switchModel': 'Switch to {model} and attach',
   'aris.create.attachment.tooLarge': '{name} is too large to attach for {provider}.',
   'aris.create.attachment.unsupportedType':
     'Only PDF, PNG, JPEG, WebP, and GIF files can be attached.',
@@ -5690,6 +5691,7 @@ export const ar: Record<keyof typeof en, string> = {
     'لا يستطيع {model} على {provider} قبول ملف PDF. اختر نموذجًا يقرأ المستندات، أو صِف العملية نصًّا بدلًا من ذلك.',
   'aris.create.attachment.remove': 'إزالة المرفق',
   'aris.create.attachment.selected': 'أُرفِق {name} ({size}، {type}).',
+  'aris.create.attachment.switchModel': 'التبديل إلى {model} والإرفاق',
   'aris.create.attachment.tooLarge': 'حجم {name} أكبر من أن يُرفَق لدى {provider}.',
   'aris.create.attachment.unsupportedType': 'يمكن إرفاق ملفات PDF وPNG وJPEG وWebP وGIF فقط.',
   'aris.create.attachments.label':

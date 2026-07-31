@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { buildArisAiPrompt, fenceUntrustedText, type ArisAiPromptInput } from './promptBuilder'
+import { ARIS_AI_SUPPORTED_CONNECTION_TYPES } from './typeValidation'
 
 function baseInput(overrides: Partial<ArisAiPromptInput> = {}): ArisAiPromptInput {
   return {
@@ -31,6 +32,23 @@ describe('buildArisAiPrompt', () => {
     expect(system).toMatch(/strict JSON only/i)
     expect(system).toMatch(/uncertainty/i)
     expect(system).toMatch(/bilingual|translation/i)
+  })
+
+  it('teaches the ArisAiDraftV1 shape, the closed vocabularies, and the endpoint cheat-sheet', () => {
+    const { system } = buildArisAiPrompt(baseInput())
+    // Makes the user turn's "ArisAiDraftV1 contract described in the system
+    // message" claim true.
+    expect(system).toContain('ArisAiDraftV1')
+    expect(system).toContain('connectionType')
+    // A satellite object type and two representative connection codes.
+    expect(system).toContain('OT_APPL_SYS')
+    expect(system).toContain('CT_ACTIV_1')
+    expect(system).toContain('CT_IS_PREDEC_OF_1')
+    // Every supported connection code is enumerated (the vocabulary the model
+    // must speak — the CT_FLOW failure class starts by not listing these).
+    for (const code of ARIS_AI_SUPPORTED_CONNECTION_TYPES) {
+      expect(system).toContain(code)
+    }
   })
 
   it('includes the operator description directly (trusted, unfenced)', () => {

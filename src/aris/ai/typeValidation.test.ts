@@ -42,7 +42,12 @@ describe('validateArisAiTypes', () => {
       )
     }
     const findings = validateArisAiTypes(withBadType)
-    expect(findings.some((f) => f.code === 'unsupported-connection-type')).toBe(true)
+    const connectionFinding = findings.find((f) => f.code === 'unsupported-connection-type')
+    expect(connectionFinding).toBeDefined()
+    // The finding now enumerates the allowed set so a repair turn knows what
+    // would be right (mirrors the model-type and rule-symbol findings).
+    expect(connectionFinding!.message).toContain('CT_ACTIV_1')
+    expect(connectionFinding!.message).toContain('CT_SUPP_3')
   })
 
   it('flags an OT_RULE symbolType outside the native AND/OR/XOR set', () => {

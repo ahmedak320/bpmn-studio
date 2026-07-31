@@ -8,6 +8,8 @@ import {
   type ProviderConfig
 } from '../browserAi'
 import type { GenAttachment } from '../pdf'
+import { buildArisAiDraftJsonSchema } from '../../aris/ai/draftJsonSchema'
+import { ARIS_AI_SUPPORTED_CONNECTION_TYPES } from '../../aris/ai/typeValidation'
 import type { LlmMessage } from '@/generation'
 
 const TEXT_MSGS: LlmMessage[] = [{ role: 'user', content: 'Model an order process.' }]
@@ -190,6 +192,39 @@ describe('OpenRouter payload', () => {
     expect(req.body.messages).toEqual([{ role: 'user', content: 'Model an order process.' }])
     expect(req.body.provider).toEqual({ zdr: true, data_collection: 'deny' })
     expect(req.body.plugins).toBeUndefined()
+    // Wave 8 M5: usage accounting is requested on every OpenRouter call.
+    expect(req.body.usage).toEqual({ include: true })
+  })
+
+  it('emits an enum-locked json_schema response_format when a responseSchema is given (M5)', () => {
+    const req = buildOpenRouterRequest(
+      cfg({ providerId: 'openrouter', model: 'google/gemini-3.5-flash-lite' }),
+      TEXT_MSGS,
+      {
+        maxTokens: 3000,
+        jsonMode: true,
+        responseSchema: { name: 'aris_ai_draft_v1', schema: buildArisAiDraftJsonSchema() }
+      }
+    )
+    const responseFormat = req.body.response_format as {
+      type: string
+      json_schema: { name: string; strict: boolean; schema: Record<string, unknown> }
+    }
+    expect(responseFormat.type).toBe('json_schema')
+    expect(responseFormat.json_schema.name).toBe('aris_ai_draft_v1')
+    expect(responseFormat.json_schema.strict).toBe(true)
+    // CT_FLOW is unrepresentable: connectionType is locked to the supported set.
+    const connectionEnum = (
+      (
+        (responseFormat.json_schema.schema.properties as Record<string, unknown>).relations as {
+          items: { properties: Record<string, { enum?: unknown }> }
+        }
+      ).items.properties.connectionType as { enum: unknown }
+    ).enum
+    expect(connectionEnum).toEqual(ARIS_AI_SUPPORTED_CONNECTION_TYPES)
+    // The ZDR pin and usage accounting are untouched by the schema path.
+    expect(req.body.provider).toEqual({ zdr: true, data_collection: 'deny' })
+    expect(req.body.usage).toEqual({ include: true })
   })
 
   it('attaches a file part + file-parser plugin for PDFs', () => {

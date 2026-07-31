@@ -134,7 +134,7 @@ export function validateArisAiTypes(draft: ArisAiDraftV1): ArisAiValidationFindi
         finding(
           'unsupported-connection-type',
           `$.relations[${index}].connectionType`,
-          `Connection type "${relation.connectionType}" is not in the supported EPC connection-type set.`
+          `Connection type "${relation.connectionType}" is not in the supported EPC connection-type set (${ARIS_AI_SUPPORTED_CONNECTION_TYPES.join(', ')}).`
         )
       )
     }

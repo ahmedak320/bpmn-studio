@@ -1,5 +1,12 @@
 import { describe, expect, it } from 'vitest'
-import { LITE_PROVIDERS, getLiteModelCapabilities, type LiteProviderId } from '../providersLite'
+import {
+  LITE_PROVIDERS,
+  OPENROUTER_STRUCTURED_OUTPUT_MODELS,
+  defaultLiteModelId,
+  firstLiteModelForAttachment,
+  getLiteModelCapabilities,
+  type LiteProviderId
+} from '../providersLite'
 
 describe('Lite model capability registry', () => {
   it('offers only current stable direct-Gemini ids', () => {
@@ -55,6 +62,50 @@ describe('Lite model capability registry', () => {
       pdf: true,
       images: false,
       verified: true
+    })
+  })
+
+  describe('Wave 8 — curated vision routes', () => {
+    it('keeps z-ai/glm-5.2 as the OpenRouter text default after appending vision routes', () => {
+      expect(defaultLiteModelId('openrouter')).toBe('z-ai/glm-5.2')
+    })
+
+    it('grants gemini-3.5-flash-lite native PDF + images (google/ prefix rule)', () => {
+      expect(getLiteModelCapabilities('openrouter', 'google/gemini-3.5-flash-lite')).toMatchObject({
+        pdf: true,
+        images: true,
+        verified: true
+      })
+    })
+
+    it('gates qwen3-vl to images only — the ZDR-leak gate: pdf === false', () => {
+      const capabilities = getLiteModelCapabilities(
+        'openrouter',
+        'qwen/qwen3-vl-235b-a22b-instruct'
+      )
+      expect(capabilities).toMatchObject({ pdf: false, images: true, verified: true })
+      // The invariant a PDF must never reach an image-only OpenRouter model.
+      expect(getLiteModelCapabilities('openrouter', 'qwen/qwen3-vl-235b-a22b-instruct').pdf).toBe(
+        false
+      )
+    })
+
+    it('lists both A/B routes as structured-output capable', () => {
+      expect(OPENROUTER_STRUCTURED_OUTPUT_MODELS.has('google/gemini-3.5-flash-lite')).toBe(true)
+      expect(OPENROUTER_STRUCTURED_OUTPUT_MODELS.has('qwen/qwen3-vl-235b-a22b-instruct')).toBe(true)
+    })
+
+    it('firstLiteModelForAttachment returns a model that actually grants that kind', () => {
+      const pdfModel = firstLiteModelForAttachment('openrouter', 'pdf')
+      expect(pdfModel).not.toBeNull()
+      expect(getLiteModelCapabilities('openrouter', pdfModel!).pdf).toBe(true)
+
+      const imageModel = firstLiteModelForAttachment('openrouter', 'image')
+      expect(imageModel).not.toBeNull()
+      expect(getLiteModelCapabilities('openrouter', imageModel!).images).toBe(true)
+      // The first curated pdf-capable model is gemini-3.5-flash-lite (the
+      // curated text routes carry pdf but the first vision slot is gemini).
+      expect(firstLiteModelForAttachment('openrouter', 'image')).toBe('anthropic/claude-opus-4.8')
     })
   })
 })

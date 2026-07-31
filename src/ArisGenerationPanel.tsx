@@ -39,6 +39,7 @@ import {
 } from 'react'
 
 import type { ArisAiValidationFinding } from './aris/ai'
+import { buildArisAiDraftJsonSchema } from './aris/ai/draftJsonSchema'
 import { buildArisAiPrompt } from './aris/ai/promptBuilder'
 import {
   createArisTemplateWorkbooks,
@@ -49,6 +50,7 @@ import {
 import { buildAmlFromArisAiDraft } from './aris/shell/arisAiCreate'
 import {
   checkArisAiAttachment,
+  classifyArisAiAttachmentFile,
   encodeArisAiAttachment,
   extractArisAiDocxText,
   isArisAiDocxFile,
@@ -83,7 +85,9 @@ import {
 } from './ai/providerSelection'
 import {
   LITE_PROVIDERS,
+  OPENROUTER_STRUCTURED_OUTPUT_MODELS,
   defaultLiteModelId,
+  firstLiteModelForAttachment,
   getLiteProvider,
   type LiteProviderId
 } from './ai/providersLite'
@@ -124,6 +128,12 @@ type CreateTab = 'description' | 'document' | 'excel'
 const TAB_ORDER: readonly CreateTab[] = ['description', 'document', 'excel']
 
 const MAX_TOKENS = 8_000
+// A full-fidelity attachment draft (a 14-function register process) scales to
+// ~8–10k output tokens — over the text cap → truncation → a fake "semantic"
+// failure. Attachment runs (and their repair turns, which re-emit the FULL
+// draft) get a larger budget. 16k tokens ≈ 64–100 KB, well inside the 1 MiB
+// MAX_PROVIDER_RESPONSE_BODY_BYTES bound (Wave 8 M6).
+const MAX_ATTACHMENT_TOKENS = 16_000
 
 // --- chrome transcribed from AiPanelLite's visual system -------------------
 
@@ -305,6 +315,14 @@ export function ArisGenerationPanel({
   const [descriptionPdf, setDescriptionPdf] = useState<PickedAttachment | null>(null)
   const [documentFile, setDocumentFile] = useState<PickedAttachment | null>(null)
   const [attachmentNotice, setAttachmentNotice] = useState<string | null>(null)
+  // §16.6 M7: when the selected model rejects a picked attachment for a
+  // capability reason, offer a one-click switch to a curated model that can
+  // take it (no silent auto-switch — the panel's "no fallback" stance stands).
+  const [attachmentSwitch, setAttachmentSwitch] = useState<{
+    readonly suggested: string
+    readonly target: 'description-pdf' | 'document'
+  } | null>(null)
+  const rejectedFileRef = useRef<File | null>(null)
   const [selectionError, setSelectionError] = useState<string | null>(null)
   const [online, setOnline] = useState(() =>
     typeof navigator === 'undefined' ? true : navigator.onLine
@@ -403,6 +421,8 @@ export function ArisGenerationPanel({
     // A provider/model swap can invalidate an already-picked attachment, so
     // the capability gate is re-run at pick time AND at send time.
     setAttachmentNotice(null)
+    setAttachmentSwitch(null)
+    rejectedFileRef.current = null
     const result = setProviderSelection(next, nextModel)
     setSelectionError(
       result.ok
@@ -455,15 +475,40 @@ export function ArisGenerationPanel({
   // --- attachment pickers (§16.6 steps 1-2 run before any byte is read) -----
 
   const pickAttachment = useCallback(
-    (file: File, target: 'description-pdf' | 'document') => {
+    (file: File, target: 'description-pdf' | 'document', modelOverride?: string) => {
       setStatus(null)
-      const check = checkArisAiAttachment({ providerId, modelId, file })
+      // `modelOverride` lets the one-click switch re-check against the model it
+      // just selected without waiting for the state update to flush (§16.6 M7).
+      const effectiveModel = modelOverride ?? modelId
+      const check = checkArisAiAttachment({ providerId, modelId: effectiveModel, file })
       if (!check.ok) {
         setAttachmentNotice(check.message)
         if (target === 'document') setDocumentFile(null)
         else setDescriptionPdf(null)
+        // Offer a switch to a curated model that CAN take this file, for the
+        // three capability rejections, on OpenRouter, when such a model exists.
+        const suggestion =
+          providerId === 'openrouter' &&
+          (check.code === 'pdf-unsupported' ||
+            check.code === 'image-unsupported' ||
+            check.code === 'model-unverified')
+            ? firstLiteModelForAttachment(
+                'openrouter',
+                classifyArisAiAttachmentFile(file)?.kind ?? 'image'
+              )
+            : null
+        if (suggestion && suggestion.trim() !== effectiveModel.trim()) {
+          rejectedFileRef.current = file
+          setAttachmentSwitch({ suggested: suggestion, target })
+        } else {
+          rejectedFileRef.current = null
+          setAttachmentSwitch(null)
+        }
         return
       }
+      // Accepted — any prior switch offer is now moot.
+      rejectedFileRef.current = null
+      setAttachmentSwitch(null)
       if (target === 'description-pdf' && check.kind !== 'pdf') {
         setAttachmentNotice(
           tk(
@@ -488,6 +533,16 @@ export function ArisGenerationPanel({
     },
     [modelId, providerId]
   )
+
+  // The explicit one-click switch: adopt the suggested model, then re-run the
+  // capability gate against the kept file with that model (no auto-send).
+  const switchModelAndAttach = useCallback(() => {
+    const pending = attachmentSwitch
+    const file = rejectedFileRef.current
+    if (!pending || !file) return
+    selectModel(pending.suggested)
+    pickAttachment(file, pending.target, pending.suggested)
+  }, [attachmentSwitch, pickAttachment, selectModel])
 
   const pickDocx = useCallback(
     async (file: File) => {
@@ -532,27 +587,38 @@ export function ArisGenerationPanel({
   // --- the §16.6 sequence ---------------------------------------------------
 
   const buildSend = useCallback(
-    (): ArisAiSend => async (request, signal) => {
-      if (callProvider) return callProvider(request, signal)
-      const call = makeBrowserCallLLM(
-        {
-          providerId,
-          model: modelId,
-          apiKey: getKey(providerId),
-          referer: typeof location !== 'undefined' ? location.origin : undefined,
-          title: 'OrbitPM ARIS Studio Lite'
-        },
-        {
-          ...(request.attachment ? { attachment: request.attachment } : {}),
-          signal
-        }
-      )
-      const result = await call(
-        request.messages.map((message) => ({ role: message.role, content: message.content })),
-        { maxTokens: MAX_TOKENS }
-      )
-      return typeof result === 'string' ? result : JSON.stringify(result)
-    },
+    (hasAttachment: boolean): ArisAiSend =>
+      async (request, signal) => {
+        if (callProvider) return callProvider(request, signal)
+        // Enum-locked json_schema on structured-output OpenRouter routes (M5):
+        // CT_FLOW becomes unrepresentable. Every other route keeps json_object.
+        const responseSchema =
+          providerId === 'openrouter' && OPENROUTER_STRUCTURED_OUTPUT_MODELS.has(modelId.trim())
+            ? { name: 'aris_ai_draft_v1', schema: buildArisAiDraftJsonSchema() }
+            : undefined
+        const call = makeBrowserCallLLM(
+          {
+            providerId,
+            model: modelId,
+            apiKey: getKey(providerId),
+            referer: typeof location !== 'undefined' ? location.origin : undefined,
+            title: 'OrbitPM ARIS Studio Lite'
+          },
+          {
+            ...(request.attachment ? { attachment: request.attachment } : {}),
+            ...(responseSchema ? { responseSchema } : {}),
+            signal
+          }
+        )
+        const result = await call(
+          request.messages.map((message) => ({ role: message.role, content: message.content })),
+          // A larger budget for the whole run when an attachment is in play —
+          // repair turns re-emit the full draft, so keying on request.attachment
+          // (present on the first turn only) would starve turns 2+ (M6).
+          { maxTokens: hasAttachment ? MAX_ATTACHMENT_TOKENS : MAX_TOKENS }
+        )
+        return typeof result === 'string' ? result : JSON.stringify(result)
+      },
     [callProvider, modelId, providerId]
   )
 
@@ -596,7 +662,7 @@ export function ArisGenerationPanel({
         system: prompt.system,
         user: prompt.user,
         ...(encoded ? { attachment: encoded } : {}),
-        send: buildSend(),
+        send: buildSend(encoded !== undefined),
         signal: controller.signal,
         onRepairTurn: (attemptNumber) => {
           setStatus(
@@ -1221,6 +1287,19 @@ export function ArisGenerationPanel({
           <p style={{ margin: 0, fontSize: 12 }} data-orbitpm-aris-create-attachment-notice="">
             {attachmentNotice}
           </p>
+        )}
+
+        {attachmentSwitch !== null && tab !== 'excel' && (
+          <button
+            type="button"
+            data-orbitpm-aris-create-attachment-switch=""
+            style={removeBtn}
+            onClick={switchModelAndAttach}
+          >
+            {tk('aris.create.attachment.switchModel', 'Switch to {model} and attach', {
+              model: attachmentSwitch.suggested
+            })}
+          </button>
         )}
 
         {selectionError !== null && (

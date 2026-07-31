@@ -1714,13 +1714,15 @@ describe('estimateCostUsd', () => {
   })
 
   it.each([
-    ['z-ai/glm-5.2', 0.8106, 2.5476],
+    ['z-ai/glm-5.2', 1.12, 3.52],
     ['moonshotai/kimi-k3', 3, 15],
     ['deepseek/deepseek-v4-pro', 0.435, 0.87],
     ['deepseek/deepseek-v4-flash', 0.14, 0.28],
     ['anthropic/claude-opus-4.8', 5, 25],
     ['anthropic/claude-sonnet-5', 2, 10],
-    ['google/gemini-3.6-flash', 1.5, 7.5]
+    ['google/gemini-3.6-flash', 1.5, 7.5],
+    ['google/gemini-3.5-flash-lite', 0.3, 2.5],
+    ['qwen/qwen3-vl-235b-a22b-instruct', 0.21, 1.9]
   ])(
     'uses the reviewed OpenRouter route price for %s',
     (modelId, inputPerMillion, outputPerMillion) => {

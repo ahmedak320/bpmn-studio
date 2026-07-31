@@ -1469,7 +1469,7 @@ interface ModelPrice {
 }
 
 /** Date on which the bundled fallback prices were last reviewed. */
-export const ESTIMATED_PRICE_AS_OF = '2026-07-27'
+export const ESTIMATED_PRICE_AS_OF = '2026-07-31'
 
 // Best-effort public list prices (USD / 1M tokens) as of the date above. Not
 // guaranteed to the cent — surfaced in the UI as an estimate only. Includes
@@ -1479,13 +1479,18 @@ export const ESTIMATED_PRICE_AS_OF = '2026-07-27'
 const PRICES: Record<string, ModelPrice> = {
   // OpenRouter slugs, independently reviewed against the route catalog; do
   // not inherit these values from direct-vendor API prices.
-  'z-ai/glm-5.2': { in: 0.8106, out: 2.5476 },
+  // glm-5.2, gemini-3.5-flash-lite and qwen3-vl route prices live-verified
+  // against GET https://openrouter.ai/api/v1/models on 2026-07-31.
+  'z-ai/glm-5.2': { in: 1.12, out: 3.52 },
   'moonshotai/kimi-k3': { in: 3, out: 15 },
   'deepseek/deepseek-v4-pro': { in: 0.435, out: 0.87 },
   'deepseek/deepseek-v4-flash': { in: 0.14, out: 0.28 },
   'anthropic/claude-opus-4.8': { in: 5, out: 25 },
   'anthropic/claude-sonnet-5': { in: 2, out: 10 },
   'google/gemini-3.6-flash': { in: 1.5, out: 7.5 },
+  // Wave 8 curated vision routes (Create-from-PDF/Picture A/B).
+  'google/gemini-3.5-flash-lite': { in: 0.3, out: 2.5 },
+  'qwen/qwen3-vl-235b-a22b-instruct': { in: 0.21, out: 1.9 },
   // Bare Anthropic ids (direct adapter)
   'claude-opus-4-8': { in: 5, out: 25 },
   // Current direct promotion through 2026-08-31; the documented standard
