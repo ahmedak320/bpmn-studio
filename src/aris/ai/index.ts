@@ -59,7 +59,12 @@ export {
 
 export { validateLogicalIdIntegrity } from './logicalIntegrity'
 
-export { NORMALIZED_CONNECTION_FINDING_CODE, normalizeArisAiDraft } from './normalizeDraft'
+export {
+  NORMALIZED_CONNECTION_FINDING_CODE,
+  NORMALIZED_MODEL_TYPE_FINDING_CODE,
+  NORMALIZED_VERSION_FINDING_CODE,
+  normalizeArisAiDraft
+} from './normalizeDraft'
 
 export type { ArisAiEpcSemanticsResult } from './epcSemantics'
 export { validateArisAiDraftEpcSemantics } from './epcSemantics'
