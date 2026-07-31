@@ -1856,3 +1856,506 @@ V10 acceptance:
 - Issue 2 (direct editing + symbols): _(record — C3/C4/C5 + interaction e2e: place→type→Enter caption, dblclick/F2 edit, quick-pick variant swap, full convention palette)_
 - Issue 3 (convention alignment): _(record — C1/C5/C6/C7: catalog resolves every symbol with zero fidelity findings, DMT colors, RACI mapping, legality, attribute schema, convention findings)_
 - Issue 4 (import fidelity): _(record — C8 iterate suites exact via `test:aris:animalwf`; holdout green first-run via `test:aris:animalwf:holdout`; screenshot artifacts)_
+
+## Wave 7 — Round-trip & feature-parity test sequences (user request 2026-07-31)
+
+Three end-to-end sequences requested by the user. Feasibility mapped against the actual features; decisions recorded.
+
+### Sequence 1 — XML round-trip fidelity + PDF compare
+
+1. Import `ARISAMLExport.xml`.
+2. **Export PDF** and compare to the original reference PDF. **NOTE:** the tool had NO PDF-export feature (PDF was only an AI _input_). Per user decision, **build a real PDF export** (port `main:src/editor/exportPdf.ts`, which uses `jspdf` 4.2.1 — already a dep — adapt to the ARIS diagram-js canvas + print frame). Then export the PDF, rasterize, and tolerance-compare to `tmp/pdfimg/Register_…-1.png` / `Renew_…-1.png` (near-match threshold, not exact).
+3. **Export XML** (`arisDerivedExport`) and compare to the original XML via `src/aris/fidelity/compare.ts` — 0 structural diffs on register-owner + renew-profile.
+   Lane: PDF-export + Seq-1 on main (Kimi K3-max). Owns `src/aris/canvas/exportArisPdf.ts` (new), ArisStudioTab Export-PDF button, Seq-1 test.
+
+### Sequence 2 — create-from-PDF (AI feature)
+
+Put the original PDF into the create-from-PDF feature and check it produces the same drawing (visually or by XML). This feature is **AI-driven** (`src/ai/pdf.ts` → LLM provider, needs API key, non-deterministic). Two modes:
+
+- **Mode 1 (mocked, CI-safe):** drive the pipeline with a RECORDED provider response → assert a well-formed process (plumbing test, deterministic).
+- **Mode 2 (live, env-gated):** when `OPENROUTER_API_KEY` is set, call **glm-5.2 via OpenRouter** (user provides the key on request) with the register PDF, export AML, FUZZY-compare to original (similarity threshold, not exact). Skips cleanly without the key. **User will provide the OpenRouter key + model glm-5.2 on request; do NOT block other work waiting for it; never commit the key.**
+  Lane: AI-Seq2 harness in worktree (Kimi K3-max). Owns new `src/aris/ai/*.seq2.test.ts` + recorded fixture + minimal transport-injection seam.
+
+### Sequence 3 — Excel round-trip (deterministic)
+
+Generate an Excel of a process using the template, run create-from-Excel, and check it creates the same exact process (visually or by XML). Uses the **deterministic** Excel path (NOT AI): `createArisTemplateWorkbook` (`templateWriter.ts`) → `workbookParser` → `generateAml` → compare. Fully automatable as an exact-match round-trip.
+Lane: Excel-Seq3 in worktree (Kimi K3-max). TEST-only unless a genuine round-trip bug surfaces.
+
+### Wave 7 gate
+
+All three lanes' verify sets green; Seq-1 (XML compare 0 diffs, PDF raster ≈ reference) and Seq-3 (exact-match round-trip) automated in CI; Seq-2 Mode-1 (mocked) in CI, Mode-2 (live glm-5.2) run once manually with the user's key and recorded.
+
+## Wave 8 — Create-from-PDF / Picture vision A/B (gemini-3.5-flash-lite + qwen3-vl)
+
+> **Section authored 2026-07-31 by the Wave-8 planning agent** (Seq-2 multimodal follow-up; these
+> are planning-agent additions, not orchestrator text). Basis: the research report at
+> `/home/ahmed/.claude/jobs/501f0ce4/tmp/seq2-multimodal-recommendation.md` (root cause, live
+> OpenRouter model survey, cost table, hardening list) plus the user's **binding decision** below.
+> All file/line anchors in this section were re-verified against the working tree on 2026-07-31.
+> Numbering note: goal.md's dispatch ledger and some commit subjects reused "Wave 8/9" for e2e
+> work; **this file's own wave sequence is authoritative for this section** — the last wave above
+> is Wave 7, so this is implementation_plan.md Wave 8. No lane below collides with any earlier
+> lane's files (Waves 1–7 are closed).
+
+### Why this wave exists
+
+The Wave-7 Seq-2 live run (`z-ai/glm-5.2` on the register-owner reference PDF) failed
+`semantic-exhausted`: glm-5.2 is **text-only**, so OpenRouter's `file-parser` plugin fell back to
+OCR — labels survived, arrow topology died — and the model invented connection types (`CT_FLOW`).
+Three compounding product gaps make that failure class reachable for ANY model:
+
+1. `SYSTEM_PROMPT` (`src/aris/ai/promptBuilder.ts:101-113`) never lists the 17 supported `CT_*`
+   codes and never describes the `ArisAiDraftV1` field shape, even though the user turn
+   (`promptBuilder.ts:154`) claims "the ArisAiDraftV1 contract described in the system message".
+2. The `unsupported-connection-type` finding (`src/aris/ai/typeValidation.ts:131-141`) is the only
+   type finding that does NOT enumerate the allowed set — repair turns said "wrong" without saying
+   what would be right, so the model re-guessed until the 3-turn budget died.
+3. Nothing normalizes a trivially mappable alias before burning a repair turn, although the
+   endpoint-typed census needed to do it deterministically already exists
+   (`src/aris/epc/constants.ts:23-34` + the AML census re-verified below).
+
+Additionally `MAX_TOKENS = 8_000` (`src/ArisGenerationPanel.tsx:126`) is below the ~8–10k output
+tokens a full-fidelity 14-function draft needs, so a good model can truncate into a fake
+"semantic" failure.
+
+### Binding decisions (user, 2026-07-31)
+
+- **A/B BOTH models, live, and compare outcomes**: `google/gemini-3.5-flash-lite`
+  ($0.30/$2.50 per M, native PDF `file` modality + image, `structured_outputs`, healthy
+  Vertex-global ZDR pool) and `qwen/qwen3-vl-235b-a22b-instruct` ($0.21/$1.90, image-only,
+  `structured_outputs`, ZDR via DeepInfra/Venice). The **instruct** variant, NOT thinking —
+  cleaner json_schema/enum-lock behavior, cheaper, faster for structured extraction.
+- **Qwen has no native PDF** → rasterize the register PDF page offline into the private
+  `reference/AnimalWF/png/` tree (never committed — `reference/` lives OUTSIDE this repo at
+  `/home/ahmed/Desktop/bpmn_tool/reference/`), so both models see the same page.
+- **Product handling of PDFs on image-only models: GATE, do not rasterize client-side** (decision
+  recorded in lane M7 below; no pdfjs-dist).
+- Apply the **model-agnostic hardening** to BOTH models: (1) enumerate the 17 `CT_*` codes + the
+  `ArisAiDraftV1` schema in the system prompt, (2) enumerate the allowed set in the
+  `unsupported-connection-type` finding, (3) new deterministic `normalizeDraft` mapping invented
+  codes onto valid ones via the endpoint census, (4) enum-locked `response_format: json_schema`
+  on capable OpenRouter routes, (5) `MAX_TOKENS` 8_000 → 16_000 for attachment runs.
+- The OpenRouter key for the live A/B is at
+  `/home/ahmed/.claude/jobs/501f0ce4/tmp/openrouter.env` (env `OPENROUTER_API_KEY`). **Never
+  commit it, never echo it, never write it into any repo file.**
+
+### Invariants that MUST survive this wave (violating any of these is a stop-and-revert)
+
+- **The model never emits AML/XML/coordinates/real ARIS ids** — draft JSON only.
+  `scanForForbiddenContent` stays the FIRST pass in `validateArisAiDraft`
+  (`src/aris/ai/validateDraft.ts:58-62`); the normalizer must not weaken it (it rewrites only
+  `connectionType` strings to hardcoded `CT_*` literals, nothing else).
+- **ZDR pin unchanged**: `provider: { zdr: true, data_collection: 'deny' }`
+  (`src/ai/browserAi.ts:591-594`) stays on every OpenRouter request. Both chosen models have ZDR
+  endpoints; that is WHY they were chosen.
+- **Attachment uploads exactly once; repair turns are text-only** (`arisAiGeneration.ts:172-219`,
+  retry cap `browserAi.ts:905`). Nothing below adds an attachment parameter to any repair seam.
+- **Mocked Seq-2 Mode 1 stays CI-safe and deterministic**: no env dependence in mocked tests, no
+  network, no `reference/` dependence; live tests keep the in-body env-gated early return (no
+  `.skip` — `npm run check:no-skips` must stay green).
+- `qwen/qwen3-vl-235b-a22b-instruct` must **never receive a PDF part**: OpenRouter's file-parser
+  OCR fallback for non-native models bills $2/1000 pages outside the account's control AND —
+  per OpenRouter's ZDR doc — **plugins are not covered by ZDR enforcement**, so a PDF sent to an
+  image-only model silently ships workspace content outside the privacy pin. The capability gate
+  (M1) + the live-test guard (M8) enforce this at both layers. (Known pre-existing exception:
+  the curated text models, e.g. glm-5.2, already use the OCR fallback today — changing THEIR pdf
+  capability is explicitly out of scope for this wave; recorded as a follow-up risk.)
+
+### Endpoint census (re-verified 2026-07-31 against `reference/AnimalWF/ARISAMLExport.xml`)
+
+Ground truth for M2's cheat-sheet and M4's mapping table. Every (fromType → toType) pair observed
+in the reference maps to exactly ONE connection type except the three flagged rows:
+
+| from → to | CT code | count | note |
+|---|---|---|---|
+| OT_EVT → OT_FUNC | `CT_ACTIV_1` | 36 | control flow |
+| OT_RULE → OT_FUNC | `CT_ACTIV_1` | 14 | control flow |
+| OT_FUNC → OT_EVT | `CT_CRT_1` | 35 | control flow |
+| OT_FUNC → OT_RULE | `CT_LEADS_TO_1` | 16 | control flow |
+| OT_RULE → OT_EVT | `CT_LEADS_TO_2` | 36 | control flow |
+| OT_EVT → OT_RULE | `CT_IS_EVAL_BY_1` | 19 | control flow |
+| OT_FUNC → OT_FUNC | `CT_IS_PREDEC_OF_1` 28 / `CT_IS_PRCS_ORNT_SUPER` 12 | — | **ambiguous**: pick by owning model's `modelType` — `MT_VAL_ADD_CHN_DGM` → `CT_IS_PRCS_ORNT_SUPER`, else `CT_IS_PREDEC_OF_1` |
+| OT_PERS → OT_FUNC | `CT_EXEC_1` 41 / `CT_MUST_BE_INFO_ABT_1` 23 | — | **ambiguous**: default `CT_EXEC_1` (majority, "carries out"), warning notes the assumption |
+| OT_PERS_TYPE → OT_FUNC | `CT_EXEC_2` | 3 | satellite |
+| OT_APPL_SYS → OT_FUNC | `CT_SUPP_3` | 128 | satellite |
+| OT_ENT_TYPE → OT_FUNC | `CT_IS_INP_FOR` | 9 | satellite |
+| OT_FUNC → OT_ENT_TYPE | `CT_HAS_OUT` 21 / `CT_READ_1` 6 | — | **ambiguous**: default `CT_HAS_OUT` (majority), warning notes the assumption |
+| OT_FUNC → OT_INFO_CARR | `CT_CRT_OUT_TO` | 28 | satellite |
+| OT_REQUIREMENT → OT_FUNC | `CT_REFS_TO_2` | 8 | satellite |
+| OT_POLICY → OT_FUNC | `CT_AFFECTS` | 2 | satellite |
+
+`OT_PERF`, `OT_BUSINESS_RULE`, and all reverse-direction satellite pairs (e.g. OT_FUNC→OT_PERS)
+have NO census entry → the normalizer leaves them untouched and the (now-teaching) finding +
+repair loop handle them.
+
+### Lanes (ONE opus implementer, executed strictly in order M1 → M8; run each lane's verify set before starting the next)
+
+- [ ] **M1 — Curated vision models + capability flags + prices.** Owner: opus implementer.
+      Files: `src/ai/providersLite.ts`, `src/ai/credits.ts`, `src/ai/__tests__/providersLite.test.ts`,
+      `src/ai/__tests__/credits.test.ts` (extend if it asserts PRICES keys).
+      Changes:
+      1. Append to `OPENROUTER_MODELS` (`providersLite.ts:66-74`), AFTER the existing 7 entries so
+         `defaultLiteModelId('openrouter')` stays `z-ai/glm-5.2` (text default unchanged):
+         `{ id: 'google/gemini-3.5-flash-lite', label: 'Gemini 3.5 Flash Lite (Google) — vision, native PDF' }` and
+         `{ id: 'qwen/qwen3-vl-235b-a22b-instruct', label: 'Qwen3-VL 235B Instruct — vision, picture only' }`.
+         (After the A/B, the winner is moved to be the FIRST of these two — see the run procedure.)
+      2. Add a per-model override consulted by `getLiteModelCapabilities` (`:128-148`) BEFORE the
+         `anthropic/`/`google/` prefix heuristic, for reviewed OpenRouter slugs only:
+         `const OPENROUTER_MODEL_CAPABILITY_OVERRIDES: Record<string, { pdf: boolean; images: boolean }> = { 'qwen/qwen3-vl-235b-a22b-instruct': { pdf: false, images: true } }`.
+         Unlisted curated ids keep today's behavior exactly (gemini-3.5-flash-lite needs no entry:
+         the `google/` prefix rule already grants `pdf:true, images:true`). Unreviewed ids still
+         fail closed.
+      3. Add `export const OPENROUTER_STRUCTURED_OUTPUT_MODELS: ReadonlySet<string> = new Set(['google/gemini-3.5-flash-lite', 'qwen/qwen3-vl-235b-a22b-instruct'])`
+         — the models whose selected ZDR endpoints list `structured_outputs` (live-verified
+         2026-07-31; consumed by M5). Deliberately NOT added to `LiteModelCapabilities` (several
+         tests `toEqual` that exact shape).
+      4. Add `export function firstLiteModelForAttachment(providerId: LiteProviderId, kind: 'pdf' | 'image'): string | null`
+         — first curated model of the provider whose `getLiteModelCapabilities` grants that kind
+         (consumed by M7).
+      5. `src/ai/credits.ts` PRICES (`:1479-1501`): add
+         `'google/gemini-3.5-flash-lite': { in: 0.3, out: 2.5 }`,
+         `'qwen/qwen3-vl-235b-a22b-instruct': { in: 0.21, out: 1.9 }`; refresh the stale
+         `'z-ai/glm-5.2'` row `0.8106/2.5476` → `{ in: 1.12, out: 3.52 }` (live catalog
+         2026-07-31); bump `ESTIMATED_PRICE_AS_OF` to the implementation date. Re-verify all three
+         numbers against `GET https://openrouter.ai/api/v1/models` at implementation time (no key
+         needed) and use the live values if they moved.
+      6. Tests: extend `providersLite.test.ts` — qwen route `toMatchObject({ pdf: false, images: true, verified: true })`,
+         gemini-3.5-flash-lite `{ pdf: true, images: true, verified: true }`, and
+         `firstLiteModelForAttachment('openrouter','pdf')`/`('openrouter','image')` return a
+         model whose capabilities actually grant that kind. Fix any list-enumerating assertions
+         that the two new curated entries break (grep: `AiPanelLite.integration.test.tsx`,
+         `arisTranslateController.test.tsx`, `pdf.test.ts`).
+      Acceptance: `npx vitest run src/ai --maxWorkers=2 --retry=0` green; `npm run typecheck` green;
+      `getLiteModelCapabilities('openrouter','qwen/qwen3-vl-235b-a22b-instruct').pdf === false`
+      (the ZDR-leak gate) asserted in a test.
+
+- [ ] **M2 — System prompt teaches the vocabulary + the schema.** Owner: opus implementer.
+      Files: `src/aris/ai/promptBuilder.ts`, `src/aris/ai/promptBuilder.test.ts`.
+      Changes: extend `SYSTEM_PROMPT` (`:101-113`) — keep every existing line byte-identical, then
+      append (importing the constants, never hardcoding a second copy — no import cycle:
+      `typeValidation.ts` imports only `contract`/`findings`):
+      1. A compact `ArisAiDraftV1` field spec making the user turn's claim true: top-level
+         `{version:1, models[], objects[], relations[], attributes[], assignments[], uncertainties[]}`;
+         per-entry required/optional fields exactly as `src/aris/ai/contract.ts` defines them
+         (models: logicalId/modelType/names/confidence; objects: logicalId/modelLogicalId/
+         objectType/names/attributes/confidence + optional symbolType/suggestedOrder/evidence;
+         relations: logicalId/modelLogicalId/sourceLogicalId/targetLogicalId/connectionType/
+         confidence + optional names/returnOutcome; attributes with ownerKind/ownerLogicalId;
+         uncertainties with targetLogicalId/kind/message). State: strict JSON, no extra keys,
+         `names`/`values` carry `en`/`ar` strings.
+      2. Closed vocabularies, each on one line: the 12 `ARIS_AI_SUPPORTED_OBJECT_TYPES`
+         (import from `./typeValidation`), the 17 `ARIS_AI_SUPPORTED_CONNECTION_TYPES`, the 3
+         `ARIS_AI_SUPPORTED_RULE_SYMBOL_TYPES`, the 2 `ARIS_AI_SUPPORTED_MODEL_TYPES` (from
+         `./contract`), confidence `high|medium|low`.
+      3. The endpoint cheat-sheet from the census table above (all unambiguous rows + the three
+         disambiguation rules), e.g. `event→function CT_ACTIV_1; function→event CT_CRT_1; …;
+         application system→function CT_SUPP_3; …`.
+      Static text only — determinism is preserved by construction (the constants are frozen
+      module consts). Budget ≈ +900 prompt tokens (≈ +$0.0003/run at the picks' input rates).
+      Tests: extend `promptBuilder.test.ts` "states the core Section 16.5 rules" (`:26-33`) —
+      system prompt matches `CT_ACTIV_1`, `CT_IS_PREDEC_OF_1`, `ArisAiDraftV1`, `connectionType`,
+      `OT_APPL_SYS`, and contains ALL 17 CT codes (loop over the imported constant). The
+      determinism test (`:22`) needs no change (same-input byte-equality).
+      Acceptance: `npx vitest run src/aris/ai/promptBuilder.test.ts` green; prompt-injection tests
+      untouched and green.
+
+- [ ] **M3 — The repair finding teaches the allowed set.** Owner: opus implementer.
+      Files: `src/aris/ai/typeValidation.ts`, `src/aris/ai/typeValidation.test.ts`.
+      Change: the `unsupported-connection-type` message (`:131-141`) becomes
+      `` `Connection type "${relation.connectionType}" is not in the supported EPC connection-type set (${ARIS_AI_SUPPORTED_CONNECTION_TYPES.join(', ')}).` ``
+      — one line, mirroring the model-type (`:100`) and rule-symbol (`:125`) findings exactly.
+      Tests: update the message expectation; add an assertion that the message contains
+      `CT_ACTIV_1` and `CT_SUPP_3`.
+      Acceptance: `npx vitest run src/aris/ai/typeValidation.test.ts` green.
+
+- [ ] **M4 — Deterministic alias normalizer (`normalizeDraft`).** Owner: opus implementer.
+      Files: NEW `src/aris/ai/normalizeDraft.ts`, NEW `src/aris/ai/normalizeDraft.test.ts`,
+      `src/aris/shell/arisAiGeneration.ts`, `src/aris/shell/arisAiGeneration.test.ts`,
+      `src/aris/ai/index.ts` (barrel export).
+      Module contract (`normalizeDraft.ts`, ~120 lines incl. the census table as comments):
+      - `export const NORMALIZED_CONNECTION_FINDING_CODE = 'normalized-connection-type'`
+      - `export function normalizeArisAiDraft(raw: unknown): { value: unknown; rewrites: ArisAiValidationFinding[] }`
+      - Defensive, never throws, copy-on-write (never mutates `raw`; clones only the relation
+        entries it changes plus the containers on the path to them). Preconditions per step —
+        anything not matching passes through untouched for the validators to report:
+        1. `raw` must be a plain object whose `models`/`objects`/`relations` are arrays; build
+           `logicalId → objectType` from object entries that are plain objects with string
+           `logicalId`+`objectType`, and `logicalId → modelType` from model entries likewise.
+        2. For each relation entry that is a plain object with string `connectionType`,
+           `sourceLogicalId`, `targetLogicalId`:
+           a. `connectionType` already in `ARIS_AI_SUPPORTED_CONNECTION_TYPES` → untouched.
+           b. **Case-fold alias**: `connectionType.trim().toUpperCase()` equals a supported code →
+              rewrite to the canonical casing (endpoint types not required).
+           c. **Endpoint census**: resolve both endpoints' object types; look up the pair in the
+              census mapping table above. OT_FUNC→OT_FUNC picks by the owning model's `modelType`
+              (via the relation's `modelLogicalId`; missing/unknown model → default
+              `CT_IS_PREDEC_OF_1`). OT_PERS→OT_FUNC defaults `CT_EXEC_1`; OT_FUNC→OT_ENT_TYPE
+              defaults `CT_HAS_OUT`. Mapping found → rewrite.
+           d. No mapping / unresolved endpoint / non-flow-nor-census pair → untouched.
+        3. Every rewrite emits one warning finding:
+           `finding(NORMALIZED_CONNECTION_FINDING_CODE, '$.relations[<i>].connectionType', 'Rewrote unsupported connection type "<old>" to "<new>" based on <srcType>→<tgtType> endpoints.')`
+           (append `' Assumed the majority mapping; CT_READ_1/CT_MUST_BE_INFO_ABT_1/CT_IS_PRCS_ORNT_SUPER are the alternatives.'`
+           for the three ambiguous defaults).
+      - The rewrite targets are hardcoded `CT_*` literals from the supported set — the normalizer
+        can never introduce forbidden content, and `scanForForbiddenContent` still runs on the
+        normalized value afterwards.
+      Wiring (`arisAiGeneration.ts`): in the loop after `raw = parseArisAiResponseJson(text)`
+      succeeds (`:230`), insert `const normalized = normalizeArisAiDraft(raw)` and validate
+      `normalized.value` instead of `raw`; on the success return (`:254-262`) surface
+      `warnings: [...normalized.rewrites, ...warnings]`. Repair-turn echo stays the ORIGINAL
+      response text (unchanged). Per-attempt rewrites never leak across attempts (the binding is
+      inside the loop body). The Create panel then shows the rewrites with zero UI change via the
+      existing `setWarnings(findingLines(result.warnings))`.
+      Tests (`normalizeDraft.test.ts` — pure unit): CT_FLOW evt→func → CT_ACTIV_1 + 1 warning;
+      `ct_activ_1`/`CT_Activ_1` case-fold; CT_SEQ func→evt → CT_CRT_1; func→func in MT_EEPC →
+      CT_IS_PREDEC_OF_1 and in MT_VAL_ADD_CHN_DGM → CT_IS_PRCS_ORNT_SUPER; appl_sys→func
+      invented code → CT_SUPP_3; func→ENT_TYPE → CT_HAS_OUT with the ambiguity note; pers→func →
+      CT_EXEC_1 with the ambiguity note; valid codes untouched (zero rewrites, `value` is the
+      SAME reference when nothing changed); dangling sourceLogicalId → untouched; OT_RULE→OT_RULE
+      → untouched; non-object/garbage raw → passed through unchanged; input object provably not
+      mutated. `arisAiGeneration.test.ts`: add a case where the first (and only) response carries
+      two invented codes with mappable endpoints → `ok:true`, `requestsSent === 1`,
+      `semanticAttemptsUsed === 0`, `warnings` contains exactly 2 `normalized-connection-type`
+      findings.
+      Acceptance: `npx vitest run src/aris/ai/normalizeDraft.test.ts src/aris/shell/arisAiGeneration.test.ts` green.
+      Note: with M5's enum lock active the normalizer mostly serves non-structured-output routes
+      (glm-5.2 today) and the OpenRouter silently-dropped-param case — it is the unconditional
+      backstop, not dead code.
+
+- [ ] **M5 — Enum-locked `json_schema` structured outputs (OpenRouter route).** Owner: opus
+      implementer. Files: `src/ai/browserAi.ts`, NEW `src/aris/ai/draftJsonSchema.ts`, NEW
+      `src/aris/ai/draftJsonSchema.test.ts`, `src/ArisGenerationPanel.tsx`,
+      `src/ai/__tests__/payloadBuilders.test.ts`, `src/ai/__tests__/requestPrivacy.test.ts`
+      (extend if request-shape assertions break).
+      Transport (`browserAi.ts`):
+      1. `BuildOpts` (`:92-98`) gains `responseSchema?: { name: string; schema: Record<string, unknown> }`.
+      2. `buildOpenRouterRequest` (`:579-614`): replace the `:596` line with —
+         `if (opts.responseSchema) body.response_format = { type: 'json_schema', json_schema: { name: opts.responseSchema.name, strict: true, schema: opts.responseSchema.schema } }`
+         `else if (opts.jsonMode) body.response_format = { type: 'json_object' }`.
+         Also add `body.usage = { include: true }` unconditionally (OpenRouter accounting field;
+         returns authoritative `usage.cost` that `extractUsage` at `credits.ts:1640` already
+         reads — makes the M8 cost assertion real instead of estimated).
+      3. `buildAnthropicRequest`/`buildGeminiRequest` IGNORE `responseSchema` (documented in a
+         comment — direct-vendor adapters are out of scope this wave).
+      4. `makeBrowserCallLLM` `extra` (`:829-833`) gains `responseSchema?`, threaded into the
+         `buildRequest` call at `:842` for EVERY attempt of the run (first + repair turns — the
+         draft shape is identical on repair).
+      Schema module (`draftJsonSchema.ts`): `export function buildArisAiDraftJsonSchema(): Record<string, unknown>`
+      — a hand-written JSON Schema mirroring `contract.ts` EXACTLY (no new dependency; do NOT add
+      zod-to-json-schema). Every object: `additionalProperties: false`. `required` arrays mirror
+      zod optionality precisely — **optional fields are omitted from `required` and are NOT
+      nullable** (zod `.optional()` rejects explicit `null`, so a nullable schema would produce
+      drafts the validator rejects):
+      - draft: required `[version, models, objects, relations, attributes, assignments, uncertainties]`; `version: {const: 1}`.
+      - model: required `[logicalId, modelType, names, confidence]`; `modelType` enum = `ARIS_AI_SUPPORTED_MODEL_TYPES`.
+      - object: required `[logicalId, modelLogicalId, objectType, names, attributes, confidence]`;
+        `objectType` enum = `ARIS_AI_SUPPORTED_OBJECT_TYPES`; `symbolType` stays a FREE string —
+        deliberate deviation from the research note: `buildAmlFromArisAiDraft`
+        (`src/aris/shell/arisAiCreate.ts:133,197`) uses `object.symbolType ?? DEFAULT_SYMBOLS[…]`
+        for ALL object types, so locking it to the 3 rule operators would destroy legitimate
+        satellite symbol choices; the rule-symbol vocabulary is still enforced for OT_RULE by
+        `typeValidation.ts`.
+      - relation: required `[logicalId, modelLogicalId, sourceLogicalId, targetLogicalId, connectionType, confidence]`;
+        **`connectionType` enum = `ARIS_AI_SUPPORTED_CONNECTION_TYPES`** (the point of the lane —
+        `CT_FLOW` becomes unrepresentable on schema-enforcing routes).
+      - attribute: required `[logicalId, ownerKind, ownerLogicalId, attributeType, values, confidence]`; `ownerKind` enum.
+      - assignment: required `[logicalId, assignmentType, objectLogicalId, assignedModelLogicalId, confidence]`; `assignmentType` enum `['linked-model']`.
+      - uncertainty: required `[targetLogicalId, kind, message]`; `kind` enum = `ARIS_AI_UNCERTAINTY_KINDS`.
+      - localized text (`names`/`values`): properties `en`/`ar` (`type: 'string', minLength: 1`), no `required`, `additionalProperties: false`.
+      - confidence everywhere: enum `['high','medium','low']`.
+      Panel wiring (`ArisGenerationPanel.tsx` `buildSend`, `:534-557`): compute
+      `const responseSchema = providerId === 'openrouter' && OPENROUTER_STRUCTURED_OUTPUT_MODELS.has(modelId.trim()) ? { name: 'aris_ai_draft_v1', schema: buildArisAiDraftJsonSchema() } : undefined`
+      and pass it in the `makeBrowserCallLLM` extra. All other routes keep today's `json_object`.
+      Tests: `draftJsonSchema.test.ts` — every enum in the schema `toEqual`s its exported
+      vocabulary constant (drift guard); the `required` arrays match the lists above; spot-check
+      that a known-valid draft's optional-field omissions are legal (`symbolType` absent from
+      relation/object `required`). `payloadBuilders.test.ts` — with `responseSchema` the body
+      carries `response_format.type === 'json_schema'` + `strict: true` + the enum reachable at
+      `json_schema.schema.properties.relations.items.properties.connectionType.enum`; without it
+      the `json_object` line (`:189`) still holds; `usage: {include:true}` present; the ZDR pin
+      assertion (`:191`) untouched.
+      Acceptance: `npx vitest run src/ai src/aris/ai/draftJsonSchema.test.ts` green.
+      Runtime risk (flagged for the A/B): OpenRouter forwards json_schema per endpoint; if a live
+      route 400s on it, the fallback is CONFIG — remove that model from
+      `OPENROUTER_STRUCTURED_OUTPUT_MODELS` (one line) and note it in the outcome ledger; never
+      auto-fallback silently in code. The zod validator + M4 normalizer remain the unconditional
+      backstop either way (OpenRouter drops unsupported params silently on some routes).
+
+- [ ] **M6 — Raise the attachment output budget 8k → 16k.** Owner: opus implementer.
+      Files: `src/ArisGenerationPanel.tsx`, `src/ai/browserAi.ts` (comment only),
+      panel tests (`src/aris/shell/arisCreateDocumentAi.test.tsx` /
+      `src/aris/shell/arisCreatePanel.test.tsx`) if they assert `max_tokens`.
+      Changes: keep `MAX_TOKENS = 8_000` for text runs; add `const MAX_ATTACHMENT_TOKENS = 16_000`.
+      `buildSend` becomes `buildSend(hasAttachment: boolean)` (call site `send: buildSend(encoded !== undefined)`
+      in `createWithAi`, `:599`) and passes `maxTokens: hasAttachment ? MAX_ATTACHMENT_TOKENS : MAX_TOKENS`
+      — **for every request of the run, including repair turns** (a repair turn re-emits the FULL
+      draft; keying on `request.attachment` would starve turns 2+). Rationale: the recorded
+      26-object draft measures ~3.1k output tokens; a full 14-function register draft scales to
+      ~8–10k — over the old cap → truncation → fake semantic failure. 16k tokens ≈ 64–100 KB,
+      far inside `MAX_PROVIDER_RESPONSE_BODY_BYTES` (1 MiB, `browserAi.ts:187`); update the stale
+      "at most 6,000 output tokens" comment at `browserAi.ts:182-186` to the new number. Both A/B
+      models allow ≥32k completion tokens (live-verified).
+      Acceptance: `npm run typecheck`; the two panel test files green.
+
+- [ ] **M7 — Product decision: PDFs on image-only models are GATED (+ one-click model switch).**
+      Owner: opus implementer. Files: `src/ArisGenerationPanel.tsx`,
+      `src/i18n/dictionaries.ts` (en block near `:2754`, ar block near `:5689`),
+      `src/aris/shell/shellI18n.ts` (`ARIS_SHELL_MESSAGE_KEYS`),
+      `src/aris/shell/arisCreateDocumentAi.test.tsx`.
+      **Decision (recorded): gate via capability flags; do NOT bundle pdfjs-dist.** Justification:
+      (a) repo precedent — `src/ai/pdf.ts:1-9` deliberately excludes pdfjs (~500 KB gzip) from a
+      single-file artifact whose size is a shipping constraint; (b) the OCR fallback a PDF would
+      otherwise take on an image-only model is a **ZDR leak** (plugins are outside ZDR
+      enforcement) and lossy for arrow topology — the exact failure this wave kills; (c) the
+      fail-closed machinery for gating already exists end-to-end
+      (`getLiteModelCapabilities` → `isAttachmentMediaTypeSupported` → `checkArisAiAttachment`
+      `pdf-unsupported`, re-checked at pick AND send time). Client-side rasterization stays a
+      recorded future option if a must-serve-PDF-on-qwen requirement ever appears.
+      UX change (the only product-code change): today a capability rejection is a dead end. Add a
+      suggestion action — keep the last REJECTED `File` in a ref (rejection currently nulls the
+      picked state, `:461-465`); when `checkArisAiAttachment` returns `pdf-unsupported`,
+      `image-unsupported`, or `model-unverified` on the OpenRouter provider AND
+      `firstLiteModelForAttachment(providerId, kind)` (M1) returns a model, render next to the
+      `attachmentNotice` a button `data-orbitpm-aris-create-attachment-switch=""` labeled
+      `tk('aris.create.attachment.switchModel', 'Switch to {model} and attach', { model })` that
+      calls `selectModel(suggested)` then re-runs `pickAttachment` on the kept File. No silent
+      auto-switch (the panel's "no fallback" philosophy at `:343-344` stands — this is an explicit
+      user action).
+      i18n: register the new key in BOTH dictionaries (en+ar) AND `ARIS_SHELL_MESSAGE_KEYS` —
+      `src/__tests__/i18n.test.ts:212` fails otherwise.
+      Tests (`arisCreateDocumentAi.test.tsx`): picking a PDF with the qwen model selected shows
+      the `pdf-unsupported` notice + the switch button; clicking it selects
+      `google/gemini-3.5-flash-lite` (the first pdf-capable curated model per M1 ordering) and the
+      attachment becomes accepted; picking a PNG with a text-only model (e.g. `z-ai/glm-5.2`)
+      offers a switch to the first image-capable model.
+      Acceptance: `npx vitest run src/aris/shell/arisCreateDocumentAi.test.tsx src/__tests__/i18n.test.ts` green.
+
+- [ ] **M8 — Seq-2 A/B harness: parameterized model, image mode, hard gates, cost.** Owner: opus
+      implementer. Files: `src/aris/ai/createFromPdf.seq2.fixture.ts`,
+      `src/aris/ai/createFromPdf.seq2.test.ts`; OFFLINE step in `reference/AnimalWF/png/`
+      (outside the repo — see below).
+      **Rasterization (offline, once, before the live runs; NOT in CI, NOT committed):**
+      ```bash
+      mkdir -p /home/ahmed/Desktop/bpmn_tool/reference/AnimalWF/png
+      pdftoppm -png -r 150 \
+        /home/ahmed/Desktop/bpmn_tool/reference/AnimalWF/pdf/Register_Animal_Owner_Profile_Draft03.pdf \
+        /home/ahmed/Desktop/bpmn_tool/reference/AnimalWF/png/Register_Animal_Owner_Profile_Draft03
+      ```
+      → produces `Register_Animal_Owner_Profile_Draft03-1.png` (A3 842×1191 pt @150 dpi ≈
+      1754×2481 px). Verify size < 5 MiB (`IMAGE_SIZE_LIMITS.openrouter`, `src/ai/pdf.ts:128-132`);
+      if over, re-run at `-r 120`. `pdftoppm` is present at `/usr/bin/pdftoppm`. The `reference/`
+      tree lives outside the git repo, so committing it is structurally impossible from
+      `desktop/` — still, never copy the PNG into the repo.
+      Fixture changes:
+      - KEEP `SEQ2_OPENROUTER_MODEL_ID = 'z-ai/glm-5.2'` (`:32`) — it names the RECORDED
+        fixture's model; mocked tests stay pinned to it (deterministic, env-free).
+      - Add `export const SEQ2_VISION_MODEL_ID = process.env.SEQ2_VISION_MODEL ?? 'google/gemini-3.5-flash-lite'`
+        (live-mode arm selector), `export const SEQ2_LIVE_SOFT_TARGET = 0.65`,
+        `export const SEQ2_LIVE_MAX_COST_USD = 0.1`.
+      Test changes:
+      - `SEQ2_MAX_TOKENS` (`:69`) → `16_000` with a comment tying it to the panel's
+        `MAX_ATTACHMENT_TOKENS` (M6); update the mocked `max_tokens` assertion (`:185`).
+      - `makeSeq2Send(apiKey, modelId = SEQ2_OPENROUTER_MODEL_ID)` — pass the model through to
+        `makeBrowserCallLLM`; when `OPENROUTER_STRUCTURED_OUTPUT_MODELS.has(modelId)` also pass
+        `responseSchema: { name: 'aris_ai_draft_v1', schema: buildArisAiDraftJsonSchema() }`
+        (exactly mirroring the panel's M5 wiring).
+      - Update the two existing mocked request-shape assertions for the M5 transport additions
+        (`usage: {include:true}`; glm-5.2 still gets `response_format: {type:'json_object'}`).
+      - NEW mocked test "json_schema request shape for structured-output vision models": send via
+        `makeSeq2Send('k', 'google/gemini-3.5-flash-lite')` (literal, NOT the env-dependent
+        const), replay the recorded body, assert `response_format.type === 'json_schema'`,
+        `json_schema.name === 'aris_ai_draft_v1'`, `json_schema.strict === true`, and
+        `json_schema.schema.properties.relations.items.properties.connectionType.enum` equals
+        `ARIS_AI_SUPPORTED_CONNECTION_TYPES`; pipeline still returns the recorded draft.
+      - NEW mocked test "invented connection types are normalized without a repair turn": replay a
+        variant of the recorded body with `rel-trigger-login` set to `CT_FLOW` (evt→func) and one
+        func→evt relation set to `CT_SEQ` → expect `ok:true`, `requestsSent === 1`,
+        `semanticAttemptsUsed === 0`, exactly 2 `normalized-connection-type` warnings, and the
+        final draft carrying `CT_ACTIV_1`/`CT_CRT_1`.
+      - Live PDF test (existing, reshaped): model = `SEQ2_VISION_MODEL_ID`; keep the in-body
+        `OPENROUTER_API_KEY` early return FIRST; then a capability mirror-guard —
+        `if (!getLiteModelCapabilities('openrouter', SEQ2_VISION_MODEL_ID).pdf) { console.warn('…image-only model; PDF arm skipped by the same gate the product enforces'); return }`
+        (this is how the qwen sweep legally skips the PDF cell — never send qwen a PDF).
+        Usage capture: wrap the real `fetch` (`const realFetch = globalThis.fetch` +
+        `vi.stubGlobal('fetch', …)` pass-through) — for calls to
+        `https://openrouter.ai/api/v1/chat/completions`, `res.clone()`, parse JSON, run
+        `extractUsage('openrouter', json)`, accumulate `providerCostUsd ?? estimateCostUsd(SEQ2_VISION_MODEL_ID, inputTokens, outputTokens)`
+        (PRICES rows exist per M1) and the request count; return the untouched original response.
+        `afterEach` already unstubs.
+        Assertions (the A/B hard gates): `result.ok`; **`result.semanticAttemptsUsed <= 1`**;
+        `result.warnings.filter(w => w.code === 'normalized-connection-type').length <= 3`
+        (zero `unsupported-connection-type` findings survive by construction on success — the ≤3
+        normalizer bound proves the model mostly speaks the vocabulary rather than being
+        rescued); MT_EEPC + AML assertions unchanged; **`score >= 0.5`** (existing floor) and a
+        SOFT target — `if (breakdown.score < SEQ2_LIVE_SOFT_TARGET) console.warn('below soft target 0.65 …')`
+        (never a hard fail; glm-5.2's OCR-blind runs tuned the 0.5 floor — a model that sees
+        arrows should beat it); **total estimated cost < SEQ2_LIVE_MAX_COST_USD ($0.10)** hard
+        when every request yielded usage, `console.warn` otherwise. Finish with ONE grep-able
+        line: `SEQ2-AB model=<id> mode=pdf score=<s> fn=<..> ev=<..> mix=<..> conn=<..> repairs=<n> requests=<n> normalized=<n> costUsd=<c>`.
+      - NEW live IMAGE test (covers the picture tab the live suite never exercised): same
+        skeleton; read `reference/AnimalWF/png/Register_Animal_Owner_Profile_Draft03-1.png`
+        (accept a no-suffix candidate too, mirroring the PDF candidates pattern `:356-360`);
+        key-gate FIRST, then if the PNG is missing fail loudly with the exact `pdftoppm` command
+        in the message (a keyed run without the raster is an operator error, not a skip);
+        attachment `{ kind:'image', mediaType:'image/png', … }`; prompt mirrors the panel's
+        picture path exactly — `buildArisAiPrompt({ modelName: 'Request to Register Animal Owner Profile', modelType: 'auto-detect', description: buildImageInstruction('Register Animal Owner Profile') })`;
+        model = `SEQ2_VISION_MODEL_ID` (no pdf-capability guard — both arms run this cell); same
+        assertions + `mode=image` summary line; same 900 s timeout.
+      Acceptance (CI-safe, no key): `npx vitest run src/aris/ai/createFromPdf.seq2.test.ts --maxWorkers=1 --retry=0`
+      green with the live tests early-returning; `npm run check:no-skips` green (in-body returns,
+      no `.skip`).
+
+### Wave 8 — the live A/B run procedure (implementer/orchestrator, after M1–M8 are green)
+
+1. Load the key WITHOUT echoing it:
+   `set -a; source /home/ahmed/.claude/jobs/501f0ce4/tmp/openrouter.env; set +a` — never commit,
+   never print, never write it into any file under version control.
+2. Ensure the raster exists (M8 offline step, once).
+3. Run the matrix from `/home/ahmed/Desktop/bpmn_tool/desktop` (three live cells total —
+   gemini×pdf, gemini×image, qwen×image; qwen×pdf self-skips via the capability guard):
+   - `SEQ2_VISION_MODEL=google/gemini-3.5-flash-lite npx vitest run src/aris/ai/createFromPdf.seq2.test.ts --maxWorkers=1 --retry=0`
+   - `SEQ2_VISION_MODEL=qwen/qwen3-vl-235b-a22b-instruct npx vitest run src/aris/ai/createFromPdf.seq2.test.ts --maxWorkers=1 --retry=0`
+   Expected spend ≈ $0.04/cell (gemini) / ≈ $0.03 (qwen), ≤ ~$0.25 total incl. a repair turn.
+4. Copy each `SEQ2-AB …` line into the outcome ledger below. If a cell fails its hard gates,
+   diagnose (truncation? schema 400 → M5 config fallback? repair exhaustion?), fix, re-run —
+   record every attempt.
+5. **Pick the attachment-default winner**: both hard-gate-passing models compared by score (image
+   mode is the common denominator; gemini's PDF cell breaks ties toward gemini), then by cost.
+   Promote the winner to be the FIRST of the two vision entries in `OPENROUTER_MODELS` (M1 note)
+   so `firstLiteModelForAttachment` (M7's suggestion) offers it first. `z-ai/glm-5.2` stays the
+   overall picker default (text tab).
+6. Full verify set: `npm run typecheck && npm run lint && npm test && npm run check:no-skips`
+   (the default vitest project includes the seq2 file; live tests early-return without the key in
+   CI). Commit in wave-scoped commits; the key and anything under
+   `/home/ahmed/Desktop/bpmn_tool/reference/` never enter git.
+
+### Wave 8 outcome ledger (fill during step 4; planning-agent template)
+
+| model | mode | score (fn/ev/mix/conn) | repairs | requests | normalized | cost USD | json_schema honored? | hard gates |
+|---|---|---|---|---|---|---|---|---|
+| google/gemini-3.5-flash-lite | pdf | | | | | | | |
+| google/gemini-3.5-flash-lite | image | | | | | | | |
+| qwen/qwen3-vl-235b-a22b-instruct | image | | | | | | | |
+| qwen/qwen3-vl-235b-a22b-instruct | pdf | — capability-gated skip (by design) | | | | | | |
+
+Winner promoted to first vision slot: ______ · schema fallbacks applied: ______ · notes: ______
+
+### Wave 8 exit gate — definition of done
+
+- [ ] **Both models produce a valid register-owner process live**: gemini-3.5-flash-lite passes
+      the PDF AND image cells, qwen3-vl-235b-a22b-instruct passes the image cell — each with
+      `ok`, `semanticAttemptsUsed ≤ 1`, score ≥ 0.5 (soft-target 0.65 logged), cost < $0.10/run,
+      ≤ 3 normalizer rewrites, zero surviving `unsupported-connection-type` findings.
+- [ ] **The CT_FLOW class is dead twice over**: enum-locked `json_schema` on both A/B routes
+      (or a ledger-recorded config fallback), AND the deterministic normalizer + teaching finding
+      + prompt vocabulary protect every route including non-structured-output ones (mocked
+      coverage in M4/M8 proves the no-repair-turn recovery).
+- [ ] **MAX_TOKENS fix verified**: attachment runs (and their repair turns) request 16_000; the
+      mocked request-shape test pins it.
+- [ ] **The qwen-never-sees-a-PDF invariant holds at every layer**: capability registry test
+      (M1), panel gate + switch suggestion (M7), live-test mirror guard (M8).
+- [ ] Mocked Seq-2 Mode 1 (and every other suite) runs green in CI with NO key, NO network, NO
+      `reference/` tree, no `.skip`.
+- [ ] Full verify set green (`typecheck`, `lint`, `npm test`, `check:no-skips`); outcome ledger
+      filled; winner promoted; the OpenRouter key and the private `reference/` tree (incl. the
+      new `png/`) never appear in any commit.
