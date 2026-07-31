@@ -49,6 +49,7 @@ import type { ArisLabelFont } from './elements'
 import { buildArisLegend, drawArisLegend, type ArisLegendModel } from './legend'
 import { readLocalized } from './localization'
 import { arisPrintFrameText } from './printFrameI18n'
+import { ARIS_PEN_UNIT } from './renderer'
 import { svgAppend, svgElement } from './svg'
 
 export interface ArisPrintFrameHeaderRow {
@@ -501,10 +502,11 @@ function drawHeader(group: SVGElement, header: ArisPrintFrameHeader, modelName: 
 
 /**
  * One authored `<GfxObj>` frame — a Reference-Laws grouping box in practice.
- * Drawn exactly as authored: the source bounds, the decoded pen colour and
- * logical width, and the source fill (`none` for the transparent brush every
- * one of AnimalWF's frames carries). The reference sheets print these frames
- * square-cornered, so no corner radius is invented for them.
+ * Drawn at the source bounds, decoded pen colour, and the source fill (`none`
+ * for the transparent brush every one of AnimalWF's frames carries). The pen's
+ * logical width is scaled to canvas units by `ARIS_PEN_UNIT`, same as every
+ * other source-authored stroke (Wave 9 P2). The reference sheets print these
+ * frames square-cornered, so no corner radius is invented for them.
  */
 function drawGraphicFrames(group: SVGElement, frames: readonly ArisPrintFrameGraphicFrame[]): void {
   for (const frame of frames) {
@@ -523,7 +525,8 @@ function drawGraphicFrames(group: SVGElement, frames: readonly ArisPrintFrameGra
         height: bounds.height,
         fill: frame.fillColor ?? 'none',
         stroke: frame.penColor ?? '#000000',
-        'stroke-width': Math.max(1, frame.penWidth ?? 1)
+        // Source pen width, scaled to canvas units (Wave 9 P2 — ARIS_PEN_UNIT).
+        'stroke-width': Math.max(1, frame.penWidth ?? 1) * ARIS_PEN_UNIT
       })
     )
     svgAppend(group, frameGroup)

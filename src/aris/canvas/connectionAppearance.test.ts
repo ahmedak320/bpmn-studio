@@ -105,7 +105,8 @@ describe('source connection appearance', () => {
     boot()
     const visible = connectionLine('CxnOcc.visible')
     expect(visible.style.stroke).toBe('rgb(0, 102, 153)')
-    expect(visible.style.strokeWidth).toBe('3px')
+    // Pen Width="3" × ARIS_PEN_UNIT (2.646) — Wave 9 P2 pen-width scale.
+    expect(visible.style.strokeWidth).toBe('7.938px')
     expect(visible.getAttribute('stroke-dasharray')).toBe('8 3 2 3')
     expect(visible.getAttribute('data-aris-src-arrow')).toBe('open')
     expect(visible.getAttribute('data-aris-tgt-arrow')).toBe('filled')
@@ -113,7 +114,8 @@ describe('source connection appearance', () => {
     expect(visible.getAttribute('marker-end')).toMatch(/^url\(#aris-arrow-filled-end-/u)
 
     const hidden = connectionLine('CxnOcc.hidden')
-    expect(hidden.style.strokeWidth).toBe('10px')
+    // Pen Width="10" × ARIS_PEN_UNIT (2.646) — Wave 9 P2 pen-width scale.
+    expect(hidden.style.strokeWidth).toBe('26.46px')
     expect(hidden.getAttribute('data-aris-visible')).toBe('false')
     expect(hidden.getAttribute('visibility')).toBe('hidden')
     expect(hidden.getAttribute('pointer-events')).toBe('none')

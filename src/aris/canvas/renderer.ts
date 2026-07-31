@@ -84,7 +84,22 @@ const DEFAULT_STROKE = '#334155'
 const DEFAULT_FILL = '#ffffff'
 const LANE_STROKE = '#94a3b8'
 const FREE_TEXT_STROKE = '#cbd5e1'
-const CONNECTION_STROKE = '#475569'
+/**
+ * Fallback stroke for a connection whose occurrence carries no source `Pen` colour. Every one of
+ * AnimalWF's 93 CxnOcc decodes a pen (`Color="0"` = black), so this only ever paints a
+ * from-scratch connection. `#000000` (not a slate grey) for print parity with the reference PDF,
+ * which renders every connector near-black (Wave 9 P2, fixplan §5.5).
+ */
+const CONNECTION_STROKE = '#000000'
+/**
+ * ARIS's logical pen "Width" is unitless in the source (`Pen Width="1"` etc.) but the reference
+ * PDF prints logical width 1 at ≈0.265 mm — ≈2.646 canvas units at this document's 42 % print
+ * scale (measured at 300 DPI against the original). Every SOURCE-authored pen width (connection
+ * `Pen Width`, occurrence stroke override, `GfxObj` frame pen) is multiplied by this constant
+ * before becoming an SVG `stroke-width`; a primitive's own descriptor-authored width is already
+ * visually calibrated and is never scaled (Wave 9 P2, fixplan §5.4, plan §0 ground truth).
+ */
+export const ARIS_PEN_UNIT = 2.646
 const CAPTION_FILL = '#0f172a'
 const CAPTION_FONT_SIZE = 12
 /** Fill of the marker a `SymbolFlag="SYMBOL"` placement draws in place of text. */
@@ -271,9 +286,11 @@ function resolvePaint(style: ArisOccurrenceStyleView | undefined): ResolvedOccur
   return {
     fill: occurrenceColorToCss(style?.fillColor),
     stroke: occurrenceColorToCss(style?.strokeColor),
+    // The occurrence's own source pen width, scaled to canvas units (Wave 9 P2). `undefined`
+    // (no source override) still falls through to the descriptor's own calibrated width below.
     strokeWidth:
       typeof style?.strokeWidth === 'number' && Number.isFinite(style.strokeWidth)
-        ? style.strokeWidth
+        ? style.strokeWidth * ARIS_PEN_UNIT
         : undefined,
     dasharray:
       lineStyle === undefined || lineStyle === ''
@@ -690,7 +707,9 @@ function arrowMarkerRoot(node: SVGElement): SVGElement {
  * Geometry is calibrated against the measured original (pixel-probed at 300 DPI): an open stick-V
  * ≈34 units across the line × 16 units along it, tip touching the target edge. `refX` equals the
  * path's tip-length so the marker's reference point — where `marker-end`/`marker-start` place it —
- * lands exactly on the endpoint rather than short of or past it.
+ * lands exactly on the endpoint rather than short of or past it. The stroke that draws the V is
+ * itself a pen, so it scales by `ARIS_PEN_UNIT` exactly like every other source pen width (Wave 9
+ * P2) rather than the arbitrary hairline the marker's SIZE (Wave 9 P1) was calibrated against.
  */
 function ensureConnectionArrowMarker(
   node: SVGElement,
@@ -718,12 +737,17 @@ function ensureConnectionArrowMarker(
   })
   marker.appendChild(
     arrow === 'filled'
-      ? svgElement('path', { d: 'M0,0 L16,17 L0,34 z', fill: color, stroke: color })
+      ? svgElement('path', {
+          d: 'M0,0 L16,17 L0,34 z',
+          fill: color,
+          stroke: color,
+          'stroke-width': ARIS_PEN_UNIT
+        })
       : svgElement('path', {
           d: 'M0,0 L16,17 L0,34',
           fill: 'none',
           stroke: color,
-          'stroke-width': 1
+          'stroke-width': ARIS_PEN_UNIT
         })
   )
   defs.appendChild(marker)
@@ -1130,12 +1154,14 @@ export class ArisRenderer extends BaseRenderer {
         ? (businessObject as RenderedConnectionBusinessObject)
         : null
     const stroke = occurrenceColorToCss(appearance?.color) ?? CONNECTION_STROKE
+    // Source `Pen Width` (default 1 when the occurrence carries none), scaled to canvas units
+    // (Wave 9 P2 — ARIS_PEN_UNIT; fixplan §5.4).
     const strokeWidth =
-      typeof appearance?.width === 'number' &&
+      (typeof appearance?.width === 'number' &&
       Number.isFinite(appearance.width) &&
       appearance.width >= 0
         ? appearance.width
-        : 1
+        : 1) * ARIS_PEN_UNIT
     const normalizedLineStyle = appearance?.lineStyle?.trim().toLowerCase() ?? 'solid'
     const dasharray = CONNECTION_DASHARRAY_BY_STYLE[normalizedLineStyle]
     const visible = appearance?.visible !== false && normalizedLineStyle !== 'invisible'

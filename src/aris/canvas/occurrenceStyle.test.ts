@@ -185,7 +185,8 @@ describe('the canvas draws the occurrence style it was given', () => {
     })
     const surface = surfaceOf('ObjOcc.1')
     expect(surface.getAttribute('stroke')).toBe('#009933')
-    expect(surface.getAttribute('stroke-width')).toBe('4')
+    // strokeWidth 4 × ARIS_PEN_UNIT (2.646) — Wave 9 P2 pen-width scale.
+    expect(surface.getAttribute('stroke-width')).toBe('10.584')
     expect(surface.getAttribute('stroke-dasharray')).toBe('6 4')
     // DMT icon strokes are always white and non-scaling.
     const icon = partOf('ObjOcc.1', 'icon')
