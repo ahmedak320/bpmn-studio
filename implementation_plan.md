@@ -1174,7 +1174,7 @@ Renew-profile (46 occ) shows the same pattern. The 2 holdout models must be eval
 
 ### Fix lanes (Wave 6 — file-disjoint; product code, NOT test-only)
 
-- [ ] **V1 — DMT control-flow semantics.** Owner: opus-4.8-1M. Files: `src/aris/epc/constants.ts`,
+- [x] **V1 — DMT control-flow semantics.** Owner: opus-4.8-1M. Files: `src/aris/epc/constants.ts`,
       `src/aris/epc/flowGraph.ts` (+ tests), `src/aris/epc/validate.ts` (+ tests). Treat
       `CT_IS_PREDEC_OF_1` FUNC→FUNC as control flow in PRODUCTION so the spine connects and orphan
       errors clear; update EPC alternation so a DMT FUNC→FUNC step is legal (not an `epc.alternation`
@@ -1182,29 +1182,29 @@ Renew-profile (46 occ) shows the same pattern. The 2 holdout models must be eval
       `realData.animalwf.test.ts`, `test:aris:animalwf`, `arisDerivedExport` stay green; then the Wave-5
       comparator can DERIVE its flow set from the production one (remove the comparator-local copy —
       drift risk noted by FidVerify).
-- [ ] **V2 — symbol icons + shapes.** Owner: opus-4.8-1M. Files: `src/aris/symbols/shapes.ts`,
+- [x] **V2 — symbol icons + shapes.** Owner: opus-4.8-1M. Files: `src/aris/symbols/shapes.ts`,
       `src/aris/symbols/registry.ts`, `src/aris/canvas/renderer.ts`, `src/aris/canvas/elements.ts`
       (+ their tests). Every convention symbol must render its icon glyph and correct silhouette per
       `../reference/conventions/ARIS_Convention_Manual_DMT_v02.pdf` and the process-PDF legends:
       Event chevron, System-Function ▶▶, App-System monitor, Role/Person person, SLA/Risk shield/△,
       Document/Email/SMS/Letter/Log info-carrier glyphs, XOR/OR/AND gate operators. Assert an icon
       element exists per occurrence (no bare boxes).
-- [ ] **V3 — DMT convention colors.** Owner: sonnet-med. Files: `src/aris/conventions/catalog.ts`
+- [x] **V3 — DMT convention colors.** Owner: sonnet-med. Files: `src/aris/conventions/catalog.ts`
       (+ test), `src/aris/canvas/vocabulary.ts`/occurrence-style (+ tests). Set each object type's
       default fill to the manual/PDF color (App-System blue, Event pink, Function green `#339900`,
       Role grey, Business-Rule/SLA/Regulation red family, Requirement pink, Service, etc.). Eliminate
       the `#fde047`/`#fb923c`/`#d7c49d` mis-mappings. Resolve authored-Brush precedence so imported
       occurrences match the PDF (if ARIS renders the symbol default over the stored Brush for a type,
       mirror that). Keep `test:aris:animalwf` meaningful (update expectations to the PDF-correct colors).
-- [ ] **V4 — source-coordinate layout fidelity.** Owner: opus-4.8-1M. Files:
+- [x] **V4 — source-coordinate layout fidelity.** Owner: opus-4.8-1M. Files:
       `src/aris/canvas/canvasSync.ts`, `src/aris/model/buildFromSource.ts`,
       `src/aris/renderer/buildRenderModel.ts` (+ tests). Reproduce the AML `ObjOcc` positions/sizes and
       satellite offsets so the imported diagram matches the PDF geometry; orthogonal connector routing.
-- [ ] **V5 — RACI + numbering placement (+ optional print frame).** Owner: sonnet-med. Files:
+- [x] **V5 — RACI + numbering placement (+ optional print frame).** Owner: sonnet-med. Files:
       canvas connection-label + attribute-label placement (+ tests). Render R/A/C/I on the correct
       connectors; place the function number under/beside the box as in the PDF. Legend/header frame:
       spike and decide (may be a separate deliverable — record the verdict).
-- [ ] **V6 — palette UX.** Owner: sonnet-med. File: `src/aris/canvas/arisQuickPick.css` / palette
+- [x] **V6 — palette UX.** Owner: sonnet-med. File: `src/aris/canvas/arisQuickPick.css` / palette
       styling. The catalog palette is 94×754px — taller than the canvas, clipping entries and
       shadowing shapes at Zoom-Fit (surfaced during e2e). Add max-height + internal scroll or a third
       column so it never covers the diagram.
@@ -1614,7 +1614,7 @@ the complete 36-presentation catalog.
 
 #### Binding implementation lanes and dependency order
 
-- [ ] **V0 — reference/provenance and privacy contract (BLOCKER).** Record the hashes above plus
+- [x] **V0 — reference/provenance and privacy contract (BLOCKER).** Record the hashes above plus
       manual, expected-manifest, OLE, and built-artifact hashes in a versioned protected reference
       bundle. Classify register/renew/citizens as `pdf-exact`; classify companies as
       `aml-exact/pdf-directional` until a matching artifact is supplied. Decide nothing by filename
@@ -1622,7 +1622,7 @@ the complete 36-presentation catalog.
       private AnimalWF material to untrusted fork code. Full-print scope is mandatory for the three
       matched PDFs. **Do not start baseline approval or declare Wave 6 complete while the fourth
       provenance mismatch is unresolved.**
-- [ ] **V1+ — tuple-scoped DMT control flow.** Add one canonical
+- [x] **V1+ — tuple-scoped DMT control flow.** Add one canonical
       `isControlFlowTriple(type, fromType, toType)` used by `flowGraph`, validation,
       deterministic fixes, conventions, and fidelity comparison. Treat
       `CT_IS_PREDEC_OF_1` as EEPC flow only for FUNC→FUNC and exempt only that tuple from alternation.
@@ -1630,7 +1630,7 @@ the complete 36-presentation catalog.
       and duplicate loops. Acceptance: all 28 legal edges across all seven EEPCs are flow; zero false
       `orphanNode`/`alternation`; register stays zero before/after; exact positive/negative tuple tests;
       rule IDs and severities are asserted; VACD validation is scoped separately.
-- [ ] **V7 — one live visual projection and lossless source-style contract.** Make
+- [x] **V7 — one live visual projection and lossless source-style contract.** Make
       `semanticIndex → buildFromSource → canvasSync → renderer` consume a single resolved visual
       projection, or make the existing `buildArisRenderModel` canonical; it must no longer be a
       parallel diagnostic object that the canvas ignores. Carry occurrence-level symbol override,
@@ -1640,7 +1640,7 @@ the complete 36-presentation catalog.
       (`surface/accent/outline/icon/text/operator/decoration`). No downstream code sees ambiguous raw
       color strings. Acceptance: a lossless, ID-sorted projection manifest for every source visual
       record and explicit live/headless parity tests.
-- [ ] **V3+ — catalog identity, evidence-ranked paint, and model availability.** Replace
+- [x] **V3+ — catalog identity, evidence-ranked paint, and model availability.** Replace
       `defaultFill` with the presentation/paint contract above. Add stable `catalogId`, variant family,
       supported model types, palette category/order, semantic roles, Brush/Pen target/precedence,
       provenance, authorability, and round-trip discriminator. Evidence priority for these imports is:
@@ -1648,7 +1648,7 @@ the complete 36-presentation catalog.
       explicit fallback. For new objects, the manual canonical style wins. Disabled/unverified
       duplicate identities remain discoverable with reasons. Validate every authoring entry point,
       including context pad and programmatic/chat creation, against the active model type.
-- [ ] **V2+ — exact DMT descriptors and shared previews.** Build descriptors for all 36
+- [x] **V2+ — exact DMT descriptors and shared previews.** Build descriptors for all 36
       presentations with silhouette/hit path, stretch policy, icon and content boxes, ports, semantic
       parts, and accessible label. Canvas, palette, quick-pick, drag ghost, context pad, print view, and
       symbol gallery consume the same descriptor—remove separate crude glyph maps. Expose stable
@@ -1657,7 +1657,7 @@ the complete 36-presentation catalog.
       Acceptance: a reviewed 36-symbol English/Arabic sheet; distinct fingerprints for every variant;
       no stretched/clipped icon, caption collision, duplicate caption, or imported fallback at
       representative 454×202, 670×210/240, 530×150, and 140×140 bounds.
-- [ ] **V8 — typography, rich text, bidi, and label layout.** Parse and resolve locale FontNodes and
+- [x] **V8 — typography, rich text, bidi, and label layout.** Parse and resolve locale FontNodes and
       inline StyledElement/Paragraph/PlainText runs, including family, logical height, size, weight,
       italic, underline, strikeout, color, alignment, rotation, line breaks, and language. Resolve
       model-attribute-bound FFText before measurement. Use descriptor content boxes and source
@@ -1665,7 +1665,7 @@ the complete 36-presentation catalog.
       Arabic shaping, `dir=auto`/bidi isolation, mixed Arabic/Latin identifiers, deterministic wrapping,
       and source auto-size anchors. Pin fonts and test English, Arabic, mixed, long, multiline, and
       bold runs across engines.
-- [ ] **V4+ — exact geometry, routing, connection appearance, satellites, and draw order.** Keep all
+- [x] **V4+ — exact geometry, routing, connection appearance, satellites, and draw order.** Keep all
       source x/y/w/h values; disable the two observed imported auto-width mutations. Preserve every
       ordered source route point—including endpoints—verbatim on initial import; never silently
       redock or clean-layout imported source. For author-created/moved edges, dock to descriptor
@@ -1674,7 +1674,7 @@ the complete 36-presentation catalog.
       all 281 bounds and all 269 ordered routes match at ≤0.01 AML unit; after the SVG CTM, screen
       projection is ≤0.5 CSS px; every source-orthogonal route remains orthogonal; exact satellite side,
       relative offset, stack, attachment, and z-order.
-- [ ] **V5+ — annotations and authored full-print furniture.** Compute tuple-safe RACI and render the
+- [x] **V5+ — annotations and authored full-print furniture.** Compute tuple-safe RACI and render the
       exact per-connection ID/text/rect inventory above; render the exact Function-number occurrence
       inventory (14/8/15/9), not a sequential guess. Render ten auto-sized/bound FFTexts, two Gfx
       rounded rectangles, the header/reference box and three rule cards, and two OLE PNG occurrences
@@ -1684,11 +1684,11 @@ the complete 36-presentation catalog.
       and free-text extents in Zoom Fit/print bounds. Acceptance: header metadata/logo, Reference box,
       body, bottom legend, and RACI key each pass independent region diffs against all three paired
       PDFs.
-- [ ] **V10 — complete from-scratch DMT object/connection library.** Replace the one tall flat palette
+- [x] **V10 — complete from-scratch DMT object/connection library.** Replace the one tall flat palette
       with the drawing-toolkit UX and acceptance contract below. V6's responsive containment is part
       of this lane, not its whole scope. This lane follows V2+/V3+/V8 so it consumes real descriptors,
       model rules, and text behavior rather than duplicating them.
-- [ ] **V6+ — responsive palette containment and accessibility.** Touch the actual diagram-js palette
+- [x] **V6+ — responsive palette containment and accessibility.** Touch the actual diagram-js palette
       sizing/positioning sources (`shell.css`, palette grip styles, `arisPaletteDrag.ts`, provider and
       quick-pick), not only `arisQuickPick.css`. Keep grip/toggle visible; internally scroll or
       responsive-grid entries; observe both container and palette; reclamp after resize, entry count,
@@ -1852,10 +1852,16 @@ V10 acceptance:
 
 ## Resolution evidence (Wave 5 fills this in)
 
-- Issue 1 (folder tree + nested processes): _(record — T5/T6/T7/T8/T9 + E1/E2 evidence: split-to-files, VACD owns 7 EPCs, dblclick drill-down, create-missing, move-safe links, single-file unchanged)_
-- Issue 2 (direct editing + symbols): _(record — C3/C4/C5 + interaction e2e: place→type→Enter caption, dblclick/F2 edit, quick-pick variant swap, full convention palette)_
-- Issue 3 (convention alignment): _(record — C1/C5/C6/C7: catalog resolves every symbol with zero fidelity findings, DMT colors, RACI mapping, legality, attribute schema, convention findings)_
-- Issue 4 (import fidelity): _(record — C8 iterate suites exact via `test:aris:animalwf`; holdout green first-run via `test:aris:animalwf:holdout`; screenshot artifacts)_
+Verified at HEAD `d7618cf` (branch `feat/aris-only-studio`, pushed). Full gate suite green (recorded below the issues).
+
+- **Issue 1 (folder tree + nested processes) — RESOLVED.** `npx vitest run src/ArisApp.test.tsx` → **41 passed** (T5 semantic-nesting tree with owned + reference rows + pills, model-explorer gated to `>1`; T6 ⊞ markers + dblclick@2000 drill-down + Link-model toolbar + rail Open, dangling-assignment noise gone; T7 split-import staging + dialog; T8 multi-file import writes one `.aml` per model into group-mirroring folders, cancel writes nothing, re-import skips, **create-missing writes a pre-linked file in the parent folder**, cross-file open + live-overlay undo). T9 (`test:aris:animalwf`) asserts the VACD owns 7 EPCs, move-safe links, 3-level nesting. `.orbitpm/**` hidden; single-file mode keeps its flat list. E2E `aris-nested-processes` + `aris-import-split` green on chromium/firefox/webkit (81/81/81).
+- **Issue 2 (direct editing + symbols) — RESOLVED.** `npx vitest run src/aris/symbols src/aris/canvas` green (C3 editor activates on create/dblclick/F2 and commits under the active locale — Enter commits, Escape cancels; C4 palette offers every convention symbol with its DMT color; C5 post-placement quick-pick swaps within a variant family with single-undo). E2E `aris-canvas-interaction` (direct-edit + quick-pick) + `aris-authoring` green on all three engines.
+- **Issue 3 (convention alignment) — RESOLVED.** `npx vitest run src/aris/conventions` + the validation suites green (C1 catalog resolves every symbol + RACI map + legality; C5 DMT fills with zero fidelity findings; C6 attribute schema with create-on-save; C7 five convention rules flow through `buildArisValidationFindings` → canvas markers + rail rows). Symbols, colors, connection types + labels, RACI, and attribute schema all follow the manual via `src/aris/conventions/`.
+- **Issue 4 (import fidelity) — RESOLVED (+ deepened in Wave 9).** `npm run test:aris:animalwf` → **162 passed** (iterate register-owner + renew-profile EXACT: topology/numbering/symbol exact; color exact where PDF-confirmed, incl. the P8-corrected function green `#339933`; label geometry within the bar). `npm run test:aris:animalwf:holdout` → **2 passed on the first tuning-free run** (transfer-citizens + transfer-citizens-companies). Wave 9 P1–P11 raised the visual match measurably: Seq-1 ink-structure similarity register 0.9709 → **0.9747**, renew 0.9519 → **0.9642**, Arabic-vs-English export 0.9995. Screenshot/PDF artifacts for human comparison: high-res PDF exports at `tmp/shots/vg-pdf/{register,renew,citizens}.pdf` (produced by the built-in PDF-export feature) delivered to the user — **VG baseline sign-off is the one remaining human gate.**
+
+**Full gate suite at `d7618cf` (exit codes):** `format:check` 0 · `lint` 0 · `typecheck` 0 · `check:aris-runtime-boundary` 0 · `check:ui-copy` 0 · `check:no-skips` 0 · `check:lite-only` 0 · `check:lock` 0 · `npm test` 0 (4610 passed; 1 load-flake `ArisApp` split-import waitFor, passes in isolation + full-file 41/41) · `test:aris:animalwf` 0 (162) · `test:aris:animalwf:holdout` 0 (2) · Playwright e2e chromium **81/0** / firefox **81/0** / webkit **81/0**. Artifact `release/OrbitPM-ARIS-Studio-Lite.html` = 2,747,083 bytes, sha256 `f1a9216550c6cfeb011fcbf35bc485b1fea7d687c27bd8e8f867fe20a346dcfe`, deterministic (two builds identical), tracked + pushed.
+
+**Scope note (2026-08-01):** The create-from-PDF feature (plan Wave 7 Seq-2, Wave 8 M1–M8, Wave 10 V1–V7) was built and its live A/B measured (gemini-3.5-flash-lite image mean ~0.57 with high variance; qwen3-vl not viable; v2 coarse-to-fine degrades to single-shot because the skeleton pass is unreliable on the dense page) — then **DEFERRED to a later stage by user directive.** Wave 10 stays committed on branch `feat/aris-w10-cfp2` (not merged); `ARIS_AI_COARSE_TO_FINE_DEFAULT` stays `'off'`. This is outside the four completion issues above, which are the core ARIS-Studio goal.
 
 ## Wave 7 — Round-trip & feature-parity test sequences (user request 2026-07-31)
 
@@ -1990,7 +1996,7 @@ repair loop handle them.
 
 ### Lanes (ONE opus implementer, executed strictly in order M1 → M8; run each lane's verify set before starting the next)
 
-- [ ] **M1 — Curated vision models + capability flags + prices.** Owner: opus implementer.
+- [x] **M1 — Curated vision models + capability flags + prices.** Owner: opus implementer.
       Files: `src/ai/providersLite.ts`, `src/ai/credits.ts`, `src/ai/__tests__/providersLite.test.ts`,
       `src/ai/__tests__/credits.test.ts` (extend if it asserts PRICES keys).
       Changes: 1. Append to `OPENROUTER_MODELS` (`providersLite.ts:66-74`), AFTER the existing 7 entries so
@@ -2023,7 +2029,7 @@ repair loop handle them.
       `getLiteModelCapabilities('openrouter','qwen/qwen3-vl-235b-a22b-instruct').pdf === false`
       (the ZDR-leak gate) asserted in a test.
 
-- [ ] **M2 — System prompt teaches the vocabulary + the schema.** Owner: opus implementer.
+- [x] **M2 — System prompt teaches the vocabulary + the schema.** Owner: opus implementer.
       Files: `src/aris/ai/promptBuilder.ts`, `src/aris/ai/promptBuilder.test.ts`.
       Changes: extend `SYSTEM_PROMPT` (`:101-113`) — keep every existing line byte-identical, then
       append (importing the constants, never hardcoding a second copy — no import cycle:
@@ -2050,7 +2056,7 @@ repair loop handle them.
       Acceptance: `npx vitest run src/aris/ai/promptBuilder.test.ts` green; prompt-injection tests
       untouched and green.
 
-- [ ] **M3 — The repair finding teaches the allowed set.** Owner: opus implementer.
+- [x] **M3 — The repair finding teaches the allowed set.** Owner: opus implementer.
       Files: `src/aris/ai/typeValidation.ts`, `src/aris/ai/typeValidation.test.ts`.
       Change: the `unsupported-connection-type` message (`:131-141`) becomes
       `` `Connection type "${relation.connectionType}" is not in the supported EPC connection-type set (${ARIS_AI_SUPPORTED_CONNECTION_TYPES.join(', ')}).` ``
@@ -2059,7 +2065,7 @@ repair loop handle them.
       `CT_ACTIV_1` and `CT_SUPP_3`.
       Acceptance: `npx vitest run src/aris/ai/typeValidation.test.ts` green.
 
-- [ ] **M4 — Deterministic alias normalizer (`normalizeDraft`).** Owner: opus implementer.
+- [x] **M4 — Deterministic alias normalizer (`normalizeDraft`).** Owner: opus implementer.
       Files: NEW `src/aris/ai/normalizeDraft.ts`, NEW `src/aris/ai/normalizeDraft.test.ts`,
       `src/aris/shell/arisAiGeneration.ts`, `src/aris/shell/arisAiGeneration.test.ts`,
       `src/aris/ai/index.ts` (barrel export).
@@ -2106,7 +2112,7 @@ repair loop handle them.
       (glm-5.2 today) and the OpenRouter silently-dropped-param case — it is the unconditional
       backstop, not dead code.
 
-- [ ] **M5 — Enum-locked `json_schema` structured outputs (OpenRouter route).** Owner: opus
+- [x] **M5 — Enum-locked `json_schema` structured outputs (OpenRouter route).** Owner: opus
       implementer. Files: `src/ai/browserAi.ts`, NEW `src/aris/ai/draftJsonSchema.ts`, NEW
       `src/aris/ai/draftJsonSchema.test.ts`, `src/ArisGenerationPanel.tsx`,
       `src/ai/__tests__/payloadBuilders.test.ts`, `src/ai/__tests__/requestPrivacy.test.ts`
@@ -2152,7 +2158,7 @@ repair loop handle them.
       auto-fallback silently in code. The zod validator + M4 normalizer remain the unconditional
       backstop either way (OpenRouter drops unsupported params silently on some routes).
 
-- [ ] **M6 — Raise the attachment output budget 8k → 16k.** Owner: opus implementer.
+- [x] **M6 — Raise the attachment output budget 8k → 16k.** Owner: opus implementer.
       Files: `src/ArisGenerationPanel.tsx`, `src/ai/browserAi.ts` (comment only),
       panel tests (`src/aris/shell/arisCreateDocumentAi.test.tsx` /
       `src/aris/shell/arisCreatePanel.test.tsx`) if they assert `max_tokens`.
@@ -2168,7 +2174,7 @@ repair loop handle them.
       models allow ≥32k completion tokens (live-verified).
       Acceptance: `npm run typecheck`; the two panel test files green.
 
-- [ ] **M7 — Product decision: PDFs on image-only models are GATED (+ one-click model switch).**
+- [x] **M7 — Product decision: PDFs on image-only models are GATED (+ one-click model switch).**
       Owner: opus implementer. Files: `src/ArisGenerationPanel.tsx`,
       `src/i18n/dictionaries.ts` (en block near `:2754`, ar block near `:5689`),
       `src/aris/shell/shellI18n.ts` (`ARIS_SHELL_MESSAGE_KEYS`),
@@ -2201,7 +2207,7 @@ repair loop handle them.
       offers a switch to the first image-capable model.
       Acceptance: `npx vitest run src/aris/shell/arisCreateDocumentAi.test.tsx src/__tests__/i18n.test.ts` green.
 
-- [ ] **M8 — Seq-2 A/B harness: parameterized model, image mode, hard gates, cost.** Owner: opus
+- [x] **M8 — Seq-2 A/B harness: parameterized model, image mode, hard gates, cost.** Owner: opus
       implementer. Files: `src/aris/ai/createFromPdf.seq2.fixture.ts`,
       `src/aris/ai/createFromPdf.seq2.test.ts`; OFFLINE step in `reference/AnimalWF/png/`
       (outside the repo — see below).
@@ -2465,7 +2471,7 @@ untouched:
 
 ### Lanes (strictly in order; each lists exact change → crop-verify → re-baseline → acceptance)
 
-- [ ] **P1 `[sonnet]` — Arrowhead truth table: prune arrow-less connection types.**
+- [x] **P1 `[sonnet]` — Arrowhead truth table: prune arrow-less connection types.**
       Files: `src/aris/canvas/renderer.ts` (`DIRECTED_CONNECTION_TYPES` :94-117),
       `src/aris/canvas/attributeLabels.animalwf.test.ts` (:145-165 rewrite),
       `src/aris/canvas/connectionAppearance.test.ts` (extend).
@@ -2498,7 +2504,7 @@ untouched:
       explicit-override case unmodified; `test:aris:animalwf` green; crops match; ledger row
       records the final truth table (type → arrow yes/no → evidence crop).
 
-- [ ] **P2 `[sonnet]` — Stroke system: `ARIS_PEN_UNIT` + arrowhead size + fallback stroke color.**
+- [x] **P2 `[sonnet]` — Stroke system: `ARIS_PEN_UNIT` + arrowhead size + fallback stroke color.**
       Files: `src/aris/canvas/renderer.ts` (`drawConnection` :1099-1104, `ensureConnectionArrowMarker`
       :661-697, `resolvePaint` :240-250, `CONNECTION_STROKE` :87), `src/aris/canvas/printFrame.ts`
       (`drawGraphicFrames` :526), `src/aris/canvas/connectionAppearance.test.ts`, plus any test a
@@ -2525,7 +2531,7 @@ untouched:
       Acceptance: both tests + `test:aris:animalwf` green; Seq-1 similarity did not drop; crops
       match.
 
-- [ ] **P3 `[sonnet]` — XOR/operator circle fills its box; bolder mark; arrow gap closed.**
+- [x] **P3 `[sonnet]` — XOR/operator circle fills its box; bolder mark; arrow gap closed.**
       Files: `src/aris/symbols/shapes.ts` (`ruleShape` :782-828), `src/aris/symbols/symbols.test.ts`,
       `src/aris/canvas/renderer.dmt.test.ts` (only if a grep shows radius/mark pins).
       Change (fixplan §4.4): original circle fills the 141-box exactly; ours is r 44/100 with a
@@ -2542,7 +2548,7 @@ untouched:
       literal `44`/mark-coordinate pins a grep over `src/aris/**/**.test.ts` finds.
       Acceptance: symbol + renderer suites green; `test:aris:animalwf` green; crops match.
 
-- [ ] **P4 `[sonnet]` — Icon-band widths (25 % → 17 % functions / 21 % satellites), content
+- [x] **P4 `[sonnet]` — Icon-band widths (25 % → 17 % functions / 21 % satellites), content
       boxes, top strip, badge size, hairline + corner polish.**
       Files: `src/aris/symbols/shapes.ts` (`CARD_ICON_BOX`/`CARD_CONTENT_BOX` :14-15, `cardGroups`
       :323-353, `card` :613-622, `eventShape` contentBox :662, `iconGeometry('double-chevron')`
@@ -2573,7 +2579,7 @@ untouched:
       Acceptance: suites green; `test:aris:animalwf` green; crops show 17 %/21 % bands + small
       filled badge; ledger records the derived iconBox/contentBox numbers per family.
 
-- [ ] **P5 `[sonnet]` — Real font metrics: AFM advance-width tables (regular + bold + Arabic
+- [x] **P5 `[sonnet]` — Real font metrics: AFM advance-width tables (regular + bold + Arabic
       tiers) replace the coarse em-class table.**
       Files: `src/aris/renderer/textWrap.ts` (`charWidthEm` :20-29, `measureTextWidth` :32-38),
       `src/aris/canvas/typography.ts` (wrap callers pass the resolved weight),
@@ -2605,7 +2611,7 @@ untouched:
       Acceptance: all listed suites + `test:aris:animalwf` green; the four crop sites match the
       original line counts; Seq-1 similarity recorded (expected ↑).
 
-- [ ] **P6 `[sonnet]` — Reference-Laws title: CENTER-anchored sized notes (`Position` = anchor,
+- [x] **P6 `[sonnet]` — Reference-Laws title: CENTER-anchored sized notes (`Position` = anchor,
       not top-left).**
       Files: `src/aris/canvas/canvasSync.ts` (`freeTextBounds` :221-228 + its `syncFreeText`
       caller ≈:514), `src/aris/canvas/renderer.ts` (freeText sized-width/dY=0 path :995-1044),
@@ -2628,7 +2634,7 @@ untouched:
       only assertions that pin the OLD top-left reading, as authorized).
       Acceptance: suites + `test:aris:animalwf` green; crop matches; header anchors unchanged.
 
-- [ ] **P7 `[opus]` — RACI letters honour source `Port="NW"`: above the line, tucked at the role
+- [x] **P7 `[opus]` — RACI letters honour source `Port="NW"`: above the line, tucked at the role
       box.** Files: `src/aris/canvas/canvasSync.ts` (`connectionLabelRect` :1067-1105 +
       `syncConnectionLabels` :625-693 — `placement.port` is already on the business object :676,
       unused), `src/aris/canvas/raci.test.ts`, `src/aris/canvas/connectionLabels.animalwf.test.ts`
@@ -2656,7 +2662,7 @@ untouched:
       Acceptance: all four suites + `test:aris:animalwf` green; crops match; ledger records the
       final anchor rule + calibration numbers.
 
-- [ ] **P8 `[opus]` — Function green `#009933` vs `#33993D`: adjudicate byte-order vs print
+- [x] **P8 `[opus]` — Function green `#009933` vs `#33993D`: adjudicate byte-order vs print
       drift; reconcile catalog raw-vs-decoded; oracle transform if (and only if) the value
       changes.** Files: `src/aris/conventions/catalog.ts` (`defaultFill '#339900'` rows :80,:95,
       :188,:203 + provenance comments), `src/aris/symbols/shapes.ts` (`bodyFill` fallbacks),
@@ -2690,7 +2696,7 @@ untouched:
       green if the oracle changed; `symbols`/`legend` suites green; ledger holds the drift-model
       table + verdict + (if run) the transform command and JSON sha256 before/after.
 
-- [ ] **P9 `[opus]` — Icon-set redraw to the ARIS filled-white originals + mapping splits.**
+- [x] **P9 `[opus]` — Icon-set redraw to the ARIS filled-white originals + mapping splits.**
       Files: `src/aris/symbols/shapes.ts` (`iconGeometry` :377-598, `DmtIconId` :26-54, descriptor
       `icon:` fields), `src/aris/conventions/catalog.ts` (icon ids only — colors are P8's),
       `src/aris/symbols/symbols.test.ts` (:150-164,:184 icon pins),
@@ -2717,7 +2723,7 @@ untouched:
       Acceptance: symbol/renderer/legend suites + `test:aris:animalwf` green; per-glyph crop board
       in the ledger (glyph → verdict).
 
-- [ ] **P10 `[opus]` — Arabic selectable text in the exported PDF (embedded Arabic TTF subset).**
+- [x] **P10 `[opus]` — Arabic selectable text in the exported PDF (embedded Arabic TTF subset).**
       Files: `src/aris/canvas/exportArisPdf.ts` (`overlayArisTextRuns` :186-216 + a new
       lazy-loaded font module, e.g. `src/aris/canvas/exportArisPdfArabicFont.ts` holding the
       base64 subset), `src/aris/canvas/exportArisPdf.test.ts`; gate: `npm run check:size`
@@ -2747,7 +2753,7 @@ untouched:
       Acceptance: export tests + Seq-1 + `check:size` + `test:aris:animalwf` (untouched by this
       lane — canvas render unchanged) green.
 
-- [ ] **P11 `[opus]` — OLE decode tier 1: DMT logo EMF bitmaps → real `<image>`; legend EMF
+- [x] **P11 `[opus]` — OLE decode tier 1: DMT logo EMF bitmaps → real `<image>`; legend EMF
       tier-2 verdict.** Files: NEW `src/aris/canvas/oleImage.ts` (+ `oleImage.test.ts`),
       `src/aris/canvas/printFrame.ts` (`drawHeader` :428-462 placeholder swap + plumbing the blob
       bytes into `buildPrintFrame`/its caller), `src/aris/canvas/printFrame.test.ts`,
@@ -2803,6 +2809,15 @@ untouched:
       paths, exit codes verbatim.
 
 ## Wave 10 — Create-from-PDF v2 (coarse-to-fine tiling)
+
+> ⛔ **DEFERRED to a later stage by user directive (2026-08-01).** All lanes V1–V7 are
+> IMPLEMENTED and green on branch `feat/aris-w10-cfp2` (commits b5c1028 → ef0f93f) but are
+> **NOT merged into main** and their checkboxes are intentionally left unticked. Live A/B
+> outcome that informed the deferral: gemini-3.5-flash-lite via PNG mean ~0.57 (high variance
+> 0.24–0.94), native-PDF ~0.08–0.35; qwen3-vl not viable; v2 coarse-to-fine degrades to
+> single-shot because the skeleton pass is unreliable on the dense page. `ARIS_AI_COARSE_TO_FINE_DEFAULT`
+> stays `'off'`. Resume point: merge the branch + rerun the live A/B (or a 300-dpi-skeleton /
+> stronger-model reliability lever) when the feature is picked back up.
 
 > **Section authored 2026-07-31 by the Wave-10 planning agent.** Basis: the Wave-8 live A/B
 > outcome (orchestrator run, 2026-07-31): after the version/modelType normalizer fix
