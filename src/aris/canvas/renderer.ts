@@ -29,6 +29,7 @@
  */
 
 import BaseRenderer from 'diagram-js/lib/draw/BaseRenderer'
+import type Canvas from 'diagram-js/lib/core/Canvas'
 import type EventBus from 'diagram-js/lib/core/EventBus'
 import type { Connection, Element, Shape } from 'diagram-js/lib/model/Types'
 import { createLine, updateLine } from 'diagram-js/lib/util/RenderUtil'
@@ -43,14 +44,21 @@ import {
 } from '../symbols'
 import { amlColorRefToCss } from '../source/semanticIndex'
 import type { ArisDrawingElement, ArisSymbolDescriptor } from '../symbols/types'
+import { ARIS_DOCUMENT_CHANGED } from './commandBridge'
+import type { ArisCanvasSync } from './canvasSync'
+import type { ArisDocumentStore } from './documentStore'
 import {
   arisBusinessObject,
   type ArisBusinessObject,
   type ArisConnectionLabelBusinessObject,
   type ArisLabelFont,
   type ArisOccurrenceAttributeLabel,
-  type ArisOccurrenceStyleView
+  type ArisOccurrenceStyleView,
+  type ArisElementLike
 } from './elements'
+import { readLocalized } from './localization'
+import { buildPrintFrame, drawPrintFrame } from './printFrame'
+import { derivedRaciLabelText, type ArisRaciTuple } from './raci'
 import { svgAppend, svgElement } from './svg'
 
 const DEFAULT_STROKE = '#334155'
@@ -614,11 +622,92 @@ function ensureConnectionArrowMarker(
   return id
 }
 
-export class ArisRenderer extends BaseRenderer {
-  static $inject = ['eventBus']
+/**
+ * The endpoint triple one connection label's owner connection forms, read off
+ * the diagram-js element graph: the label's `labelTarget` is the connection,
+ * whose `source`/`target` are the endpoint occurrence shapes. `null` whenever
+ * the label is not anchored to an ARIS connection between two occurrences —
+ * the RACI derivation stays silent there rather than guessing.
+ */
+function raciTupleForLabel(shape: Shape): ArisRaciTuple | null {
+  const labelTarget = (shape as { readonly labelTarget?: unknown }).labelTarget
+  const connection = arisBusinessObject(labelTarget as ArisElementLike)
+  if (connection?.kind !== 'connection') return null
+  const endpoints = labelTarget as { readonly source?: unknown; readonly target?: unknown }
+  const source = arisBusinessObject(endpoints.source as ArisElementLike)
+  const target = arisBusinessObject(endpoints.target as ArisElementLike)
+  if (source?.kind !== 'occurrence' || target?.kind !== 'occurrence') return null
+  return Object.freeze({
+    connectionType: connection.connectionType,
+    sourceObjectType: source.objectType,
+    targetObjectType: target.objectType
+  })
+}
 
-  constructor(eventBus: EventBus) {
+/**
+ * The diagram-js layer the print frame (header band, bottom legend) draws
+ * into, and its index below the base plane (0) so the page furniture always
+ * stays behind the diagram content it frames.
+ */
+export const ARIS_PRINT_FRAME_LAYER = 'aris-print-frame'
+export const ARIS_PRINT_FRAME_LAYER_INDEX = -100
+
+export class ArisRenderer extends BaseRenderer {
+  static $inject = ['eventBus', 'arisDocumentStore', 'arisCanvasSync', 'canvas']
+
+  private readonly documentStore: ArisDocumentStore | null
+  private readonly canvasSync: ArisCanvasSync | null
+  private readonly diagramCanvas: Canvas | null
+  private printFrameVisibleFlag = true
+
+  constructor(
+    eventBus: EventBus,
+    documentStore?: ArisDocumentStore,
+    canvasSync?: ArisCanvasSync,
+    canvas?: Canvas
+  ) {
     super(eventBus, ARIS_RENDER_PRIORITY)
+    this.documentStore = documentStore ?? null
+    this.canvasSync = canvasSync ?? null
+    this.diagramCanvas = canvas ?? null
+    // The print frame is page furniture, not an element: it rebuilds whenever
+    // the bridge announces a fresh projection (boot, edit, undo, model
+    // switch, content-language switch) and is invisible to fit/selection.
+    eventBus.on(ARIS_DOCUMENT_CHANGED, () => this.refreshPrintFrame())
+  }
+
+  /** Whether the print-frame header/legend furniture is drawn. */
+  get printFrameVisible(): boolean {
+    return this.printFrameVisibleFlag
+  }
+
+  /** Show or hide the print frame; the diagram content is unaffected. */
+  setPrintFrameVisible(visible: boolean): void {
+    if (this.printFrameVisibleFlag === visible) return
+    this.printFrameVisibleFlag = visible
+    this.refreshPrintFrame()
+  }
+
+  /**
+   * Rebuild the print-frame layer from the working document. A no-op when the
+   * renderer was constructed without the document services (unit tests draw
+   * single shapes directly and have no model to frame).
+   */
+  private refreshPrintFrame(): void {
+    if (!this.documentStore || !this.diagramCanvas) return
+    const layer = this.diagramCanvas.getLayer(
+      ARIS_PRINT_FRAME_LAYER,
+      ARIS_PRINT_FRAME_LAYER_INDEX
+    ) as SVGGElement
+    while (layer.firstChild) layer.removeChild(layer.firstChild)
+    if (!this.printFrameVisibleFlag) return
+    const model = this.documentStore.document.models.get(this.documentStore.activeModelId)
+    if (!model) return
+    const localeId = this.canvasSync?.displayLocaleId
+    const frame = buildPrintFrame(model, localeId === undefined ? {} : { localeId })
+    drawPrintFrame(layer, frame, {
+      modelName: readLocalized(model.names, localeId)
+    })
   }
 
   canRender(element: Element): boolean {
@@ -765,6 +854,24 @@ export class ArisRenderer extends BaseRenderer {
         )
       }
       drawConnectionLabel(businessObject, group, shape.width, shape.height)
+      // Tuple-safe RACI: an empty relationship-badge placement on an eligible
+      // executor→Function connection shows the convention letter (R/A/C/I) at
+      // the source placement, exactly as the paired PDFs paint it. A
+      // source-authored value always wins; non-RACI placements stay untouched.
+      const raciLetter = derivedRaciLabelText(businessObject, raciTupleForLabel(shape))
+      if (raciLetter !== null) {
+        group.setAttribute('data-aris-raci', raciLetter)
+        svgAppend(
+          group,
+          drawLabelText(
+            raciLetter,
+            shape.width,
+            shape.height,
+            businessObject.alignment,
+            businessObject.font
+          )
+        )
+      }
       svgAppend(parentGfx, group)
       return group
     }

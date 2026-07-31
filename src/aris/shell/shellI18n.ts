@@ -70,6 +70,8 @@ export const ARIS_SHELL_MESSAGE_KEYS: Readonly<Record<string, string>> = Object.
   'aris.toolbar.contentLang': 'Labels: {language}',
   'aris.toolbar.contentLang.title':
     'Switch the diagram labels between English and Arabic (view only, no edit)',
+  'aris.toolbar.printFrame': 'Print frame',
+  'aris.toolbar.printFrame.title': 'Show or hide the print header and legend (page furniture)',
   'aris.toolbar.translate': 'Translate…',
   'aris.toolbar.translate.missing': '{count} untranslated',
   'aris.translate.nothingMissing': 'Every label already has both languages.',

@@ -19,6 +19,7 @@ import { t } from '../../i18n'
 import type { ArisCanvas } from '../canvas/ArisCanvas'
 import type { ArisBusinessObject } from '../canvas/elements'
 import { rootElementId } from '../canvas/elements'
+import type { ArisRenderer } from '../canvas/renderer'
 import type { ArisCleanLayoutEngine } from '../canvas/layoutSeam'
 import type { ArisChatCommand } from '../chat/patchSchema'
 import { cleanLayout } from '../layout/cleanLayout'
@@ -210,6 +211,9 @@ export function ArisStudioTab({
   // toggle overrides it (view-only projection; §L5a's canvas seam).
   const [contentLangOverride, setContentLangOverride] = useState<'en' | 'ar' | null>(null)
   const contentLang = contentLangOverride ?? lang
+  // The print frame (header band + bottom legend) is view-only page furniture
+  // on top of the diagram; toggling it never touches the document.
+  const [printFrameVisible, setPrintFrameVisible] = useState(true)
   // Bumped when the canvas becomes ready, so the content-language effect and the
   // translate controller re-run against the live canvas.
   const [canvasTick, setCanvasTick] = useState(0)
@@ -267,6 +271,12 @@ export function ArisStudioTab({
   useEffect(() => {
     canvasRef.current?.setContentLanguage(contentLang)
   }, [contentLang, canvasTick])
+
+  // Apply the print-frame toggle to the live renderer (view only, off the undo
+  // stack). Re-runs on canvas (re)ready so a fresh canvas picks up the state.
+  useEffect(() => {
+    canvasRef.current?.get<ArisRenderer>('arisRenderer').setPrintFrameVisible(printFrameVisible)
+  }, [printFrameVisible, canvasTick])
 
   // The diagram-js canvas caches its viewport box and there is no ResizeObserver
   // (ArisCanvasView re-measures only on activate/model-switch), so a rail
@@ -913,6 +923,19 @@ export function ArisStudioTab({
             onClick={handleResetLayout}
           >
             {tk('aris.toolbar.resetLayout', 'Reset to Source Layout')}
+          </button>
+          <button
+            type="button"
+            className="orbitpm-lite-chrome-btn"
+            data-orbitpm-aris-print-frame={printFrameVisible ? 'on' : 'off'}
+            aria-pressed={printFrameVisible}
+            title={tk(
+              'aris.toolbar.printFrame.title',
+              'Show or hide the print header and legend (page furniture)'
+            )}
+            onClick={() => setPrintFrameVisible((visible) => !visible)}
+          >
+            {tk('aris.toolbar.printFrame', 'Print frame')}
           </button>
           <button
             type="button"
