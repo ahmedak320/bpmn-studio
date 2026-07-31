@@ -133,14 +133,57 @@ export async function revealOccurrencePoint(
   return state.clickPoint as { x: number; y: number }
 }
 
-/** Fits, pans clear of the palette/minimap, then clicks the occurrence to select it. */
+/**
+ * Ensures the occurrence is the canvas selection: fits + pans it clear of the
+ * palette/minimap and, when it is not already selected, clicks a verified-clear
+ * point on it — confirming the selection landed and retrying a fresh click if
+ * firefox dropped it.
+ *
+ * Firefox's synthetic-pointer path is flaky here in two ways that real OS
+ * pointer events never reproduce, so both are test-harness artifacts rather than
+ * product behaviour:
+ *  - a click can register against the SVG background (a miss), leaving nothing
+ *    selected, and
+ *  - a click on an ALREADY-selected shape occasionally has its `mouseup`
+ *    resolve to the SVG root, which diagram-js reads as a background click and
+ *    DESELECTS the shape (observed ~1 run in 6 on firefox; e.g. after an
+ *    undo/redo that auto-selects the re-created occurrence). The details rail
+ *    then loses its selection and its tabs disappear.
+ * So the shape is never clicked while it is already selected, and a click that
+ * is needed is verified and re-issued until the `selected` marker sticks.
+ */
 export async function selectOccurrenceOnCanvas(
   page: Page,
   occurrenceId: string,
   options: { fitLabel?: string } = {}
 ): Promise<void> {
-  const point = await revealOccurrencePoint(page, occurrenceId, options)
-  await page.mouse.click(point.x, point.y)
+  const { fitLabel = 'Zoom Fit' } = options
+  const selected = page
+    .locator(
+      `[data-orbitpm-aris-canvas]:visible g.djs-element[data-element-id="${occurrenceId}"].selected`
+    )
+    .first()
+
+  for (let attempt = 0; attempt < 6; attempt += 1) {
+    // Reveal (fit only on the first pass so retries don't fight the layout).
+    const point = await revealOccurrencePoint(page, occurrenceId, {
+      fitLabel,
+      fit: attempt === 0
+    })
+    // Already selected (e.g. redo auto-selected it) — do not risk a click that
+    // firefox might read as a background deselect.
+    if ((await selected.count()) > 0) return
+    await page.mouse.click(point.x, point.y)
+    const landed = await selected
+      .waitFor({ state: 'attached', timeout: 1_500 })
+      .then(() => true)
+      .catch(() => false)
+    if (landed) return
+  }
+
+  await expect(selected, `occurrence ${occurrenceId} could not be selected`).toBeAttached({
+    timeout: 5_000
+  })
 }
 
 /**

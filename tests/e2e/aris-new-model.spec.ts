@@ -105,10 +105,12 @@ test('picker fallback: new EPC model, palette authoring, undo/redo, rename and p
   await redo.click()
   await expect.poll(async () => occurrences.count(), { timeout: 20_000 }).toBe(1)
 
-  // Details-rail rename: select the occurrence and edit its definition name.
-  // Fit + pan the occurrence clear of the DMT-library palette before selecting —
-  // firefox's stricter hit-testing drops the click when the shape sits under the
-  // palette overlay, so the details rail never populates the Names tab.
+  // Details-rail rename: ensure the occurrence is selected, then edit its
+  // definition name. `selectOccurrenceOnCanvas` fits + pans it clear of the
+  // DMT-library palette and, because redo already auto-selected the re-created
+  // occurrence, leaves that selection intact (a redundant click was firefox's
+  // flaky failure mode — its synthetic mouseup sometimes read as a background
+  // deselect, so the rail lost its selection and the Names tab vanished).
   const placedOccurrenceId = await occurrences.first().getAttribute('data-element-id')
   expect(placedOccurrenceId, 'placed occurrence has no element id').toBeTruthy()
   await selectOccurrenceOnCanvas(page, placedOccurrenceId!, { fitLabel: 'Zoom Fit' })
