@@ -95,7 +95,9 @@ export const ARIS_CONVENTION_SYMBOLS: readonly ArisConventionSymbol[] = Object.f
     accessibleLabel: 'System function',
     family: 'function',
     silhouette: 'card',
-    icon: 'application-window',
+    // Wave 9 P9 (fixplan §4.2): split from the application-system window — the original system
+    // function paints a window with a DOWN-arrow (download glyph), distinct from ST_APPL_SYS.
+    icon: 'application-window-down',
     // Wave 9 P8 (fixplan §4.3): corrected function green — see the ST_FUNC row above.
     defaultFill: '#339933',
     paletteGroup: 'flow',
@@ -349,7 +351,9 @@ export const ARIS_CONVENTION_SYMBOLS: readonly ArisConventionSymbol[] = Object.f
     accessibleLabel: 'Business rule',
     family: 'governance',
     silhouette: 'card',
-    icon: 'business-rule',
+    // Wave 9 P9 (fixplan §4.2): the imported Reference-Laws rows resolve here and the original
+    // paints them as filled-white shields — moved the shared shield art onto this presentation.
+    icon: 'law-shield',
     defaultFill: '#c82830',
     paletteGroup: 'governance',
     paletteOrder: 70,

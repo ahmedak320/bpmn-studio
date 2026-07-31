@@ -53,6 +53,7 @@ export type DmtSilhouette =
 
 export type DmtIconId =
   | 'application-window'
+  | 'application-window-down'
   | 'aris-model'
   | 'business-policy'
   | 'business-rule'
@@ -424,9 +425,17 @@ function cardGroups(
 }
 
 function personIcon(): readonly ArisDrawingElement[] {
+  // Wave 9 P9 (fixplan §4.5): the original ARIS role/person glyph is a filled-white
+  // head-and-shoulders BUST silhouette (a round head over a wide rounded shoulder cap),
+  // not a geometric circle-plus-slab. The head stays a `circle` primitive so the
+  // renderer.dmt person test can still measure its radius.
   return [
-    circle(13, 21, 4, { fill: WHITE, stroke: 'none', strokeWidth: 0 }),
-    path('M 7 43 C 7 33 19 33 19 43 Z', { fill: WHITE, stroke: 'none', strokeWidth: 0 })
+    circle(13, 20, 4.3, { fill: WHITE, stroke: 'none', strokeWidth: 0 }),
+    path('M 5 43 C 5 34 8.5 30.5 13 30.5 C 17.5 30.5 21 34 21 43 Z', {
+      fill: WHITE,
+      stroke: 'none',
+      strokeWidth: 0
+    })
   ]
 }
 
@@ -464,21 +473,45 @@ function iconGeometry(icon: DmtIconId): readonly ArisDrawingElement[] {
         ])
       ]
     case 'application-window':
+      // Wave 9 P9 (fixplan §4.2): ST_APPL_SYS = filled-white window with a title bar carrying
+      // three dots (top-right) and a small circle badge at the bottom-right corner — NO arrow
+      // (that is the ST_SYS_FUNC_ACT split below). The first rect stays a 16×23 window so the
+      // renderer.dmt window-ratio pin holds. Verified vs orig-1.png (UAE Pass / TAMM satellites).
       return [
         rect(5, 17, 16, 23, { fill: 'none', stroke: WHITE, strokeWidth: 1.8 }),
         line(5, 22, 21, 22, { strokeWidth: 1.8 }),
-        circle(8, 19.5, 0.8, { fill: WHITE, stroke: 'none', strokeWidth: 0 }),
-        circle(11, 19.5, 0.8, { fill: WHITE, stroke: 'none', strokeWidth: 0 }),
-        path('M 9 34 L 13 29 L 17 34 M 13 29 L 13 38', { strokeWidth: 1.8 })
+        circle(14, 19.5, 0.85, { fill: WHITE, stroke: 'none', strokeWidth: 0 }),
+        circle(16.6, 19.5, 0.85, { fill: WHITE, stroke: 'none', strokeWidth: 0 }),
+        circle(19.2, 19.5, 0.85, { fill: WHITE, stroke: 'none', strokeWidth: 0 }),
+        circle(20, 39, 2.3, { fill: WHITE, stroke: 'none', strokeWidth: 0 })
+      ]
+    case 'application-window-down':
+      // Wave 9 P9 (fixplan §4.2): ST_SYS_FUNC_ACT = the same window + title dots, but with a
+      // DOWN-arrow dropping into a small tray bracket (a "download" glyph) instead of the badge.
+      // This is the NEW icon that keeps the system-function distinct from the application system.
+      return [
+        rect(4, 15, 15, 15, { fill: 'none', stroke: WHITE, strokeWidth: 1.8 }),
+        line(4, 20, 19, 20, { strokeWidth: 1.8 }),
+        circle(12.5, 17.5, 0.85, { fill: WHITE, stroke: 'none', strokeWidth: 0 }),
+        circle(15, 17.5, 0.85, { fill: WHITE, stroke: 'none', strokeWidth: 0 }),
+        circle(17.5, 17.5, 0.85, { fill: WHITE, stroke: 'none', strokeWidth: 0 }),
+        path('M 12 25 L 12 37 M 8 33 L 12 37.5 L 16 33', { strokeWidth: 2.2 }),
+        path('M 7 39.5 L 7 42.5 L 17 42.5 L 17 39.5', { strokeWidth: 2.2 })
       ]
     case 'flag':
+      // Wave 9 P9 (fixplan §4.1/§4.2): the event pennant = a full-height pole carrying a SMALL
+      // solid waving pennant in its top third (was an oversized waving banner). Verified vs the
+      // pink "Service terminated" event in orig-1.png / cmp-zoom-eventtip.png.
       return [
-        line(8, 17, 8, 42, { strokeWidth: 2 }),
-        path('M 8 18 C 13 14 16 22 21 17 L 21 31 C 16 36 13 27 8 32 Z', {
-          fill: WHITE,
-          stroke: 'none',
-          strokeWidth: 0
-        })
+        line(8, 16, 8, 43, { strokeWidth: 2 }),
+        path(
+          'M 8 16.5 C 11 14.6 13.5 17.6 16.5 15.7 C 18.6 14.5 20 16.2 21 15.4 L 21 23.6 C 20 24.4 18.6 22.7 16.5 23.9 C 13.5 25.8 11 22.8 8 24.7 Z',
+          {
+            fill: WHITE,
+            stroke: 'none',
+            strokeWidth: 0
+          }
+        )
       ]
     case 'org-unit':
       return multiPersonIcon([7, 13, 19])
@@ -538,12 +571,19 @@ function iconGeometry(icon: DmtIconId): readonly ArisDrawingElement[] {
       ]
     case 'service-level-shield':
     case 'law-shield':
+      // Wave 9 P9 (fixplan §4.2): filled-white heraldic shield with raised shoulders and a small
+      // central top NOTCH, tapering to a rounded point. Verified vs the Reference-Laws shields in
+      // orig-1.png / cmp-reflaws.png. Shared by the law/SLA presentations and (P9 swap) the
+      // business-rule presentation the imported law rows resolve to.
       return [
-        path('M 13 14 L 22 18 L 21 31 C 20 38 13 43 13 43 C 13 43 6 38 5 31 L 4 18 Z', {
-          fill: WHITE,
-          stroke: 'none',
-          strokeWidth: 0
-        })
+        path(
+          'M 5 17 Q 7 15.8 10 16.5 Q 12 17 13 18.2 Q 14 17 16 16.5 Q 19 15.8 21 17 L 21 30 C 21 36.5 17.5 40.5 13 43 C 8.5 40.5 5 36.5 5 30 Z',
+          {
+            fill: WHITE,
+            stroke: 'none',
+            strokeWidth: 0
+          }
+        )
       ]
     case 'risk':
       return [
@@ -574,17 +614,19 @@ function iconGeometry(icon: DmtIconId): readonly ArisDrawingElement[] {
         })
       ]
     case 'data-entity':
-      return [
-        path('M 4 36 L 22 36 L 22 43 L 4 43 Z M 7 31 L 19 31 L 19 36 L 7 36 Z', {
-          strokeWidth: 1.7
-        }),
-        line(8, 39.5, 17, 39.5, { strokeWidth: 1.2 })
-      ]
     case 'entity-type':
+      // Wave 9 P9 (fixplan §4.2): every ST_ENT_TYPE occurrence (Owner Registration Number,
+      // Economy License Details) resolves to this art — the original is a CARD (behind, upper
+      // right) with a filled price-TAG (front, lower left, pointed right, eyelet hole), NOT the
+      // stacked-boxes glyph that read as a printer. Verified vs orig-1.png. The eyelet is punched
+      // with an opposite-wound subpath (nonzero fill rule); if it fails to punch the tag simply
+      // renders solid — still reads as a tag.
       return [
-        rect(4, 16, 18, 27, { fill: 'none', stroke: WHITE, strokeWidth: 1.6 }),
-        line(4, 24, 22, 24, { strokeWidth: 1.4 }),
-        line(10, 16, 10, 43, { strokeWidth: 1.4 })
+        rect(9.5, 14, 11.5, 12, { fill: 'none', stroke: WHITE, strokeWidth: 1.6 }),
+        path(
+          'M 4 27 L 13.5 27 L 17.5 32 L 13.5 37 L 4 37 Z M 14.1 32 A 1.1 1.1 0 1 0 11.9 32 A 1.1 1.1 0 1 0 14.1 32 Z',
+          { fill: WHITE, stroke: 'none', strokeWidth: 0 }
+        )
       ]
     case 'requirement':
       return [
@@ -613,17 +655,25 @@ function iconGeometry(icon: DmtIconId): readonly ArisDrawingElement[] {
         )
       ]
     case 'email':
+      // Wave 9 P9 (fixplan §4.2): ST_EMAIL_1 = envelope (body + flap V) with an @ badge at the
+      // bottom-right. Verified vs the grey "E-mail" satellite in orig-1.png.
       return [
-        rect(4, 18, 18, 22, { fill: 'none', stroke: WHITE, strokeWidth: 1.5 }),
-        path('M 4 19 L 13 29 L 22 19', { strokeWidth: 1.5 }),
-        circle(17, 35, 3.5, { strokeWidth: 1.3 }),
-        path('M 20.5 35 L 20.5 39', { strokeWidth: 1.3 })
+        rect(4, 18, 16, 13, { fill: 'none', stroke: WHITE, strokeWidth: 1.6 }),
+        path('M 4.5 18.5 L 12 25 L 19.5 18.5', { strokeWidth: 1.6 }),
+        circle(17.5, 34.5, 4.3, { fill: 'none', stroke: WHITE, strokeWidth: 1.5 }),
+        circle(17.5, 34.5, 1.6, { fill: 'none', stroke: WHITE, strokeWidth: 1.2 }),
+        path('M 19.1 34.5 C 19.1 37 21.8 36.8 21.8 34 C 21.8 30.8 19 30 17 31', {
+          strokeWidth: 1.2
+        })
       ]
     case 'mobile':
+      // Wave 9 P9 (fixplan §4.2): ST_INFO_CARR_HANDY = filled-white smartphone — a chunky white
+      // bezel (thick-stroked rounded rect) whose accent screen shows through, with a top speaker
+      // slit and a bottom home button. Verified vs the grey "SMS" satellite in orig-1.png.
       return [
-        rect(8, 13, 10, 32, { fill: 'none', stroke: WHITE, strokeWidth: 1.8, rx: 1.5, ry: 1.5 }),
-        line(10, 18, 16, 18, { strokeWidth: 1.3 }),
-        circle(13, 41, 1, { fill: WHITE, stroke: 'none', strokeWidth: 0 })
+        rect(8.5, 13, 9, 31, { fill: 'none', stroke: WHITE, strokeWidth: 2.4, rx: 2, ry: 2 }),
+        line(11, 16.5, 15.5, 16.5, { strokeWidth: 1.3 }),
+        line(11.5, 40.5, 14.5, 40.5, { strokeWidth: 1.6 })
       ]
     case 'log':
       return [
@@ -1009,7 +1059,7 @@ export const ARIS_SYMBOL_DESCRIPTORS: readonly DmtSymbolDescriptor[] = Object.fr
     symbolNum: 'ST_SYS_FUNC_ACT',
     labelKey: 'aris.symbol.systemFunction',
     accessibleLabel: 'System function',
-    icon: 'application-window',
+    icon: 'application-window-down',
     fallbackAccent: '#339933',
     defaultBounds: { width: 100, height: 70 },
     bandWidth: FUNCTION_BAND_WIDTH
@@ -1103,7 +1153,11 @@ export const ARIS_SYMBOL_DESCRIPTORS: readonly DmtSymbolDescriptor[] = Object.fr
     symbolNum: 'ST_BUSINESS_RULE',
     labelKey: 'aris.symbol.businessRule',
     accessibleLabel: 'Business rule',
-    icon: 'business-rule',
+    // Wave 9 P9 (fixplan §4.2): the imported Reference-Laws rows (OT_BUSINESS_RULE:ST_BUSINESS_RULE
+    // occurrences — the قرار… law cards + "Animal Registration Handbook") resolve to THIS
+    // presentation, and the original paints them as filled-white SHIELDS, not the scroll the old
+    // `business-rule` art drew. Moved the shared shield art (`law-shield`) onto this presentation.
+    icon: 'law-shield',
     fallbackAccent: '#d52929'
   }),
   card({

@@ -173,9 +173,11 @@ describe('ARIS symbol registry', () => {
       silhouette: 'card',
       icon: 'double-chevron'
     })
+    // Wave 9 P9 (fixplan §4.2): the system function split off the shared window glyph onto its own
+    // down-arrow (download) window; the application system keeps the plain badge window.
     expect(resolveArisCatalogSymbol('epc.system-function')).toMatchObject({
       silhouette: 'card',
-      icon: 'application-window'
+      icon: 'application-window-down'
     })
     expect(resolveArisCatalogSymbol('technology.application-system')).toMatchObject({
       silhouette: 'card',
