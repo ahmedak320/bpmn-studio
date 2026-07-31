@@ -1,11 +1,28 @@
 .djs-palette {
-  --aris-library-width: min(360px, calc(100vw - 32px));
+  /* Ideal 360px rail, clamped to the viewport AND the canvas container so a
+     narrow window/sidebar never pushes the palette off-canvas. `100%` resolves
+     against the positioned `.orbitpm-aris-canvas` containing block. */
+  --aris-library-width: min(360px, calc(100vw - 32px), calc(100% - 24px));
   width: var(--aris-library-width);
   max-width: var(--aris-library-width);
   max-height: min(78vh, calc(100% - 24px));
   display: flex;
   flex-direction: column;
   overflow: hidden;
+}
+
+/* diagram-js collapses the palette to fixed float widths — `.djs-palette`
+ * { width: 48px } and `.djs-palette.two-column.open` { width: 94px } — whenever
+ * its `_needsCollapse` heuristic decides the entry list is tall (always true
+ * for this 36-row library). This library replaces that float layout with its
+ * own responsive grid + vertical scroll, so the rail keeps its full width in
+ * every collapse state. The extra `.djs-container` ancestor lifts specificity
+ * above those upstream rules regardless of stylesheet order. */
+.djs-container .djs-palette,
+.djs-container .djs-palette.two-column,
+.djs-container .djs-palette.two-column.open {
+  width: var(--aris-library-width);
+  max-width: var(--aris-library-width);
 }
 
 .djs-palette .djs-palette-entries {
