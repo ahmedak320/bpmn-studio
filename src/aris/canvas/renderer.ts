@@ -44,15 +44,19 @@ import {
 } from '../symbols'
 import { amlColorRefToCss } from '../source/semanticIndex'
 import type { ArisDrawingElement, ArisSymbolDescriptor } from '../symbols/types'
+import { bidiTextAttrs } from './bidi'
 import { ARIS_DOCUMENT_CHANGED } from './commandBridge'
 import type { ArisCanvasSync } from './canvasSync'
 import type { ArisDocumentStore } from './documentStore'
+import { DEFAULT_LOCALE_ID } from './emptyDocument'
 import {
   arisBusinessObject,
   type ArisBusinessObject,
   type ArisConnectionLabelBusinessObject,
+  type ArisFreeTextBusinessObject,
   type ArisLabelFont,
   type ArisOccurrenceAttributeLabel,
+  type ArisOccurrenceBusinessObject,
   type ArisOccurrenceStyleView,
   type ArisElementLike
 } from './elements'
@@ -60,6 +64,21 @@ import { readLocalized } from './localization'
 import { buildPrintFrame, drawPrintFrame } from './printFrame'
 import { derivedRaciLabelText, type ArisRaciTuple } from './raci'
 import { svgAppend, svgElement } from './svg'
+import {
+  layoutAnchoredLines,
+  layoutLabelLines,
+  normalizeLabelParagraphs,
+  preferResolvedFont,
+  resolveAttributePlacementFont,
+  resolveConnectionPlacementFont,
+  resolveFreeTextFont,
+  resolveOccurrenceCaptionFont,
+  wrapLabelLines,
+  type ArisLabelAnchor,
+  type ArisLabelLayout,
+  type ArisResolvedLabelFont
+} from './typography'
+import type { ArisFreeText } from '../model/types'
 
 const DEFAULT_STROKE = '#334155'
 const DEFAULT_FILL = '#ffffff'
@@ -344,19 +363,78 @@ function drawPrimitive(
   }
 }
 
-function isArabicText(text: string): boolean {
-  return /\p{Script=Arabic}/u.test(text)
+/**
+ * The SVG attributes every painted text shares for its font, with the
+ * `FontStyleSheet`-resolved values winning over the 12-unit canvas fallback
+ * only when the source actually named them (an authored diagram has no font
+ * style sheet and keeps the canvas default).
+ */
+function fontTextAttrs(
+  font: ArisLabelFont | ArisResolvedLabelFont | null
+): Readonly<Record<string, string | number>> {
+  const fontStyle = font !== null && 'fontStyle' in font && font.fontStyle ? font.fontStyle : null
+  return {
+    'font-size': font?.fontSize ?? CAPTION_FONT_SIZE,
+    ...(font?.fontFamily ? { 'font-family': font.fontFamily } : {}),
+    ...(font?.fontWeight ? { 'font-weight': font.fontWeight } : {}),
+    ...(fontStyle ? { 'font-style': fontStyle } : {}),
+    fill: occurrenceColorToCss(font?.textColor) ?? CAPTION_FILL
+  }
 }
 
-function rtlTextAttrs(text: string): Readonly<Record<string, string>> {
-  return isArabicText(text) ? { direction: 'rtl', 'unicode-bidi': 'plaintext' } : {}
+/**
+ * One laid-out line block as an SVG `<text>`: a single line keeps the
+ * historical shape (the text node carries the content directly), multiple
+ * lines become one `<tspan>` each — horizontally anchored, vertically
+ * centred, each carrying its own bidi attributes so Arabic lines reorder
+ * correctly inside a mixed block.
+ */
+function drawLineBlockText(
+  layout: ArisLabelLayout,
+  anchor: string,
+  font: ArisLabelFont | ArisResolvedLabelFont | null,
+  extraAttrs: Readonly<Record<string, string>> = {}
+): SVGElement {
+  const lines = layout.lines
+  const first = lines[0]
+  if (lines.length <= 1) {
+    const node = svgElement('text', {
+      x: first?.x ?? 0,
+      y: first?.y ?? 0,
+      'text-anchor': anchor,
+      'dominant-baseline': 'middle',
+      ...fontTextAttrs(font),
+      ...extraAttrs,
+      ...bidiTextAttrs(first?.text ?? '')
+    })
+    node.textContent = first?.text ?? ''
+    return node
+  }
+  const node = svgElement('text', {
+    x: first?.x ?? 0,
+    y: (first!.y + lines[lines.length - 1]!.y) / 2,
+    'text-anchor': anchor,
+    ...fontTextAttrs(font),
+    ...extraAttrs
+  })
+  for (const line of lines) {
+    const tspan = svgElement('tspan', {
+      x: line.x,
+      y: line.y,
+      'dominant-baseline': 'middle',
+      ...bidiTextAttrs(line.text)
+    })
+    tspan.textContent = line.text
+    svgAppend(node, tspan)
+  }
+  return node
 }
 
 function drawCaption(
   text: string,
   width: number,
   height: number,
-  font: ArisLabelFont | null = null,
+  font: ArisLabelFont | ArisResolvedLabelFont | null = null,
   box?: Readonly<{
     readonly x: number
     readonly y: number
@@ -365,21 +443,15 @@ function drawCaption(
   }>
 ): SVGElement {
   const region = box ?? { x: 0, y: 0, width, height }
-  const node = svgElement('text', {
-    x: round(region.x + region.width / 2),
-    y: round(region.y + region.height / 2),
-    'text-anchor': 'middle',
-    'dominant-baseline': 'middle',
-    'font-size': font?.fontSize ?? CAPTION_FONT_SIZE,
-    ...(font?.fontFamily ? { 'font-family': font.fontFamily } : {}),
-    ...(font?.fontWeight ? { 'font-weight': font.fontWeight } : {}),
-    fill: occurrenceColorToCss(font?.textColor) ?? CAPTION_FILL,
+  const fontSize = font?.fontSize ?? CAPTION_FONT_SIZE
+  // Wrap within the caption's box: the reference PDFs set function/event
+  // names over 2–3 centred lines inside the content box (V8).
+  const lines = wrapLabelLines(text, region.width, fontSize)
+  const layout = layoutLabelLines(lines, region, fontSize, 'middle')
+  return drawLineBlockText(layout, 'middle', font, {
     'data-aris-caption': 'true',
-    ...(box === undefined ? {} : { 'data-aris-part': 'content' }),
-    ...rtlTextAttrs(text)
+    ...(box === undefined ? {} : { 'data-aris-part': 'content' })
   })
-  node.textContent = text
-  return node
 }
 
 function partByElementIndex(
@@ -450,44 +522,45 @@ function drawLabelText(
   width: number,
   height: number,
   alignment: string | null,
-  font: ArisLabelFont | null
+  font: ArisLabelFont | ArisResolvedLabelFont | null
 ): SVGElement {
-  const { anchor, x } = alignmentAnchor(alignment, width)
-  const node = svgElement('text', {
-    x,
-    y: round(height / 2),
-    'text-anchor': anchor,
-    'dominant-baseline': 'middle',
-    'font-size': font?.fontSize ?? CAPTION_FONT_SIZE,
-    ...(font?.fontFamily ? { 'font-family': font.fontFamily } : {}),
-    ...(font?.fontWeight ? { 'font-weight': font.fontWeight } : {}),
-    fill: occurrenceColorToCss(font?.textColor) ?? CAPTION_FILL,
-    'data-aris-caption': 'true',
-    ...rtlTextAttrs(text)
-  })
-  node.textContent = text
-  return node
+  const { anchor } = alignmentAnchor(alignment, width)
+  const fontSize = font?.fontSize ?? CAPTION_FONT_SIZE
+  // A connection label's box is auto-sized to its text, so wrapping against
+  // it would fight the source placement; explicit paragraph breaks still
+  // stack. The anchor stays the alignment's (CENTER straddles the route).
+  const lines = wrapLabelLines(text, null, fontSize)
+  const layout = layoutLabelLines(
+    lines,
+    { x: 0, y: 0, width, height },
+    fontSize,
+    anchorLabel(anchor)
+  )
+  return drawLineBlockText(layout, anchor, font, { 'data-aris-caption': 'true' })
+}
+
+function anchorLabel(anchor: string): ArisLabelAnchor {
+  return anchor === 'start' ? 'start' : anchor === 'end' ? 'end' : 'middle'
 }
 
 /**
  * A read-only attribute annotation (a function's process-code / id numbering) painted inside the
  * occurrence's own group, centred in its pre-resolved local rectangle. Marked
  * `data-aris-attribute-label` — distinct from the name caption's `data-aris-caption` — so it is
- * never mistaken for the editable caption.
+ * never mistaken for the editable caption. The placement's own `FontStyleSheet`
+ * supplies the font (the AnimalWF numbering is bold Arial), not the canvas
+ * fallback.
  */
-function drawAttributeLabel(label: ArisOccurrenceAttributeLabel): SVGElement {
-  const node = svgElement('text', {
-    x: round(label.x + label.width / 2),
-    y: round(label.y + label.height / 2),
-    'text-anchor': 'middle',
-    'dominant-baseline': 'middle',
-    'font-size': CAPTION_FONT_SIZE,
-    fill: CAPTION_FILL,
-    'data-aris-attribute-label': label.attributeType,
-    ...rtlTextAttrs(label.text)
+function drawAttributeLabel(
+  label: ArisOccurrenceAttributeLabel,
+  font: ArisLabelFont | ArisResolvedLabelFont | null = null
+): SVGElement {
+  const fontSize = font?.fontSize ?? CAPTION_FONT_SIZE
+  const lines = wrapLabelLines(label.text, null, fontSize)
+  const layout = layoutLabelLines(lines, label, fontSize, 'middle')
+  return drawLineBlockText(layout, 'middle', font, {
+    'data-aris-attribute-label': label.attributeType
   })
-  node.textContent = label.text
-  return node
 }
 
 /**
@@ -537,7 +610,8 @@ function drawConnectionLabel(
   businessObject: ArisConnectionLabelBusinessObject,
   group: SVGElement,
   width: number,
-  height: number
+  height: number,
+  font: ArisLabelFont | ArisResolvedLabelFont | null
 ): void {
   group.setAttribute('data-aris-attribute-type', businessObject.attributeType)
   group.setAttribute('data-aris-symbol-flag', businessObject.symbolFlag)
@@ -550,7 +624,7 @@ function drawConnectionLabel(
   }
   svgAppend(
     group,
-    drawLabelText(businessObject.text, width, height, businessObject.alignment, businessObject.font)
+    drawLabelText(businessObject.text, width, height, businessObject.alignment, font)
   )
 }
 
@@ -701,13 +775,112 @@ export class ArisRenderer extends BaseRenderer {
     ) as SVGGElement
     while (layer.firstChild) layer.removeChild(layer.firstChild)
     if (!this.printFrameVisibleFlag) return
-    const model = this.documentStore.document.models.get(this.documentStore.activeModelId)
+    const document = this.documentStore.document
+    const model = document.models.get(this.documentStore.activeModelId)
     if (!model) return
     const localeId = this.canvasSync?.displayLocaleId
-    const frame = buildPrintFrame(model, localeId === undefined ? {} : { localeId })
+    const frame = buildPrintFrame(model, {
+      ...(localeId === undefined ? {} : { localeId }),
+      // The bound header values inherit their note's own FontStyleSheet font
+      // (V8) instead of a band-ratio guess.
+      resolveNoteFont: (note) =>
+        resolveFreeTextFont(document, note.modelId, note.id, localeId ?? DEFAULT_LOCALE_ID)
+    })
     drawPrintFrame(layer, frame, {
       modelName: readLocalized(model.names, localeId)
     })
+  }
+
+  /** The locale text is currently resolved in (the canvas content language). */
+  private textLocaleId(): string {
+    return this.canvasSync?.displayLocaleId ?? DEFAULT_LOCALE_ID
+  }
+
+  /**
+   * The `FontStyleSheet`-resolved caption font of one occurrence, `null` when
+   * the renderer was constructed without the document services — the caller
+   * then keeps its historical fallback, so shape-only unit tests are
+   * unaffected.
+   */
+  private occurrenceCaptionFont(
+    businessObject: ArisOccurrenceBusinessObject
+  ): ArisResolvedLabelFont | null {
+    if (!this.documentStore) return null
+    return resolveOccurrenceCaptionFont(
+      this.documentStore.document,
+      businessObject.modelId,
+      businessObject.occurrenceId,
+      this.textLocaleId()
+    )
+  }
+
+  /** The resolved font of one non-`AT_NAME` placement (numbering, process code). */
+  private attributeLabelFont(
+    businessObject: ArisOccurrenceBusinessObject,
+    attributeType: string
+  ): ArisResolvedLabelFont | null {
+    if (!this.documentStore) return null
+    return resolveAttributePlacementFont(
+      this.documentStore.document,
+      businessObject.modelId,
+      businessObject.occurrenceId,
+      attributeType,
+      this.textLocaleId()
+    )
+  }
+
+  /** The resolved font of one connection label placement (relation text, RACI letter). */
+  private connectionLabelFont(
+    businessObject: ArisConnectionLabelBusinessObject
+  ): ArisResolvedLabelFont | null {
+    if (!this.documentStore) return preferResolvedFont(null, businessObject.font)
+    return preferResolvedFont(
+      resolveConnectionPlacementFont(
+        this.documentStore.document,
+        businessObject.fontStyleSheetId,
+        this.textLocaleId()
+      ),
+      businessObject.font
+    )
+  }
+
+  /** The free-text note's working record, when the document services are wired. */
+  private workingFreeText(businessObject: ArisFreeTextBusinessObject): ArisFreeText | undefined {
+    return this.documentStore?.document.models
+      .get(businessObject.modelId)
+      ?.freeText.find((note) => note.id === businessObject.freeTextId)
+  }
+
+  /** The free-text note's resolved font, over the business object's own. */
+  private freeTextFont(
+    businessObject: ArisFreeTextBusinessObject & {
+      readonly font?: ArisLabelFont | null
+    }
+  ): ArisResolvedLabelFont | null {
+    if (!this.documentStore) {
+      return preferResolvedFont(null, businessObject.font ?? null)
+    }
+    return preferResolvedFont(
+      resolveFreeTextFont(
+        this.documentStore.document,
+        businessObject.modelId,
+        businessObject.freeTextId,
+        this.textLocaleId()
+      ),
+      businessObject.font ?? null
+    )
+  }
+
+  /**
+   * The `<FFTextOcc>`'s own `Alignment`, read from the source record the
+   * working note came from. Everything AnimalWF writes is `CENTER`; the other
+   * two ordinary ARIS settings are honoured rather than silently centred.
+   */
+  private freeTextAlignment(note: ArisFreeText): string | null {
+    const source = this.documentStore?.document.sourceIndex.freeTextOccurrences.find(
+      (occurrence) => occurrence.sourceId === note.id
+    )
+    return source?.rawAttributes['Alignment'] ?? null
   }
 
   canRender(element: Element): boolean {
@@ -783,7 +956,7 @@ export class ArisRenderer extends BaseRenderer {
             businessObject.name,
             shape.width,
             shape.height,
-            null,
+            this.occurrenceCaptionFont(businessObject),
             dmtDescriptor === null
               ? undefined
               : contentBoxAtSize(dmtDescriptor, shape.width, shape.height)
@@ -791,7 +964,10 @@ export class ArisRenderer extends BaseRenderer {
         )
       }
       for (const label of businessObject.attributeLabels ?? []) {
-        svgAppend(group, drawAttributeLabel(label))
+        svgAppend(
+          group,
+          drawAttributeLabel(label, this.attributeLabelFont(businessObject, label.attributeType))
+        )
       }
       svgAppend(parentGfx, group)
       return group
@@ -817,28 +993,66 @@ export class ArisRenderer extends BaseRenderer {
     }
 
     if (businessObject.kind === 'freeText') {
-      const font = (
-        businessObject as typeof businessObject & { readonly font?: ArisLabelFont | null }
-      ).font
-      svgAppend(
-        group,
-        svgElement('rect', {
-          x: 0,
-          y: 0,
-          width: shape.width,
-          height: shape.height,
-          fill: 'none',
-          stroke: FREE_TEXT_STROKE,
-          'stroke-width': 1
-        })
-      )
-      svgAppend(group, drawCaption(businessObject.text, shape.width, shape.height, font ?? null))
+      const font = this.freeTextFont(businessObject)
+      const note = this.workingFreeText(businessObject)
+      const paragraphs = normalizeLabelParagraphs(businessObject.text)
+      if (paragraphs.length === 0 && note !== undefined) {
+        // A bound note (`AT_MODEL_AT`) carries no static text by construction:
+        // the print-frame overlay paints the resolved model-attribute value at
+        // the note's anchor, so the generic path paints nothing at all — no
+        // empty bordered box (plan §"Geometry, labels": "Do not invent a
+        // visible note border"). An empty static note renders empty, exactly
+        // as ARIS renders it.
+        svgAppend(parentGfx, group)
+        return group
+      }
+      const fontSize = font?.fontSize ?? CAPTION_FONT_SIZE
+      if (note !== undefined && !(note.bounds.width > 0) && !(note.bounds.height > 0)) {
+        // An unsized `<FFTextOcc>` is an alignment-anchored auto-sized text,
+        // not a top-left default box: the source `Position` is the text
+        // block's anchor. The drawn element's local origin IS that position
+        // (diagram-js translates the group to the note's coordinates), so the
+        // block anchors at (0, 0) — its centre for AnimalWF's all-CENTER
+        // notes.
+        const { anchor } = alignmentAnchor(this.freeTextAlignment(note), 0)
+        const lines = wrapLabelLines(businessObject.text, null, fontSize)
+        const layout = layoutAnchoredLines(lines, { x: 0, y: 0 }, fontSize)
+        svgAppend(group, drawLineBlockText(layout, anchor, font, { 'data-aris-caption': 'true' }))
+        svgAppend(parentGfx, group)
+        return group
+      }
+      // A source pen is the only licence for a visible note border; the
+      // canvas's old invented border is gone (plan: no invented borders).
+      const noteStroke = occurrenceColorToCss(note?.style.strokeColor)
+      if (note === undefined || noteStroke !== undefined) {
+        svgAppend(
+          group,
+          svgElement('rect', {
+            x: 0,
+            y: 0,
+            width: shape.width,
+            height: shape.height,
+            fill: 'none',
+            stroke: noteStroke ?? FREE_TEXT_STROKE,
+            'stroke-width': 1
+          })
+        )
+      }
+      svgAppend(group, drawCaption(businessObject.text, shape.width, shape.height, font))
       svgAppend(parentGfx, group)
       return group
     }
 
     if (businessObject.kind === 'label') {
-      svgAppend(group, drawCaption(businessObject.text, shape.width, shape.height))
+      const font = this.documentStore
+        ? resolveOccurrenceCaptionFont(
+            this.documentStore.document,
+            businessObject.modelId,
+            businessObject.ownerOccurrenceId,
+            this.textLocaleId()
+          )
+        : null
+      svgAppend(group, drawCaption(businessObject.text, shape.width, shape.height, font))
       svgAppend(parentGfx, group)
       return group
     }
@@ -853,7 +1067,8 @@ export class ArisRenderer extends BaseRenderer {
           `rotate(${round(businessObject.rotation)} ${round(shape.width / 2)} ${round(shape.height / 2)})`
         )
       }
-      drawConnectionLabel(businessObject, group, shape.width, shape.height)
+      const labelFont = this.connectionLabelFont(businessObject)
+      drawConnectionLabel(businessObject, group, shape.width, shape.height, labelFont)
       // Tuple-safe RACI: an empty relationship-badge placement on an eligible
       // executor→Function connection shows the convention letter (R/A/C/I) at
       // the source placement, exactly as the paired PDFs paint it. A
@@ -863,13 +1078,7 @@ export class ArisRenderer extends BaseRenderer {
         group.setAttribute('data-aris-raci', raciLetter)
         svgAppend(
           group,
-          drawLabelText(
-            raciLetter,
-            shape.width,
-            shape.height,
-            businessObject.alignment,
-            businessObject.font
-          )
+          drawLabelText(raciLetter, shape.width, shape.height, businessObject.alignment, labelFont)
         )
       }
       svgAppend(parentGfx, group)

@@ -40,9 +40,11 @@
  */
 
 import { resolveFreeTextModelAttributeBinding } from '../model/buildFromSource'
-import type { ArisModel } from '../model/types'
+import type { ArisFreeText, ArisModel } from '../model/types'
+import { bidiTextAttrs } from './bidi'
 import { modelContentBounds, type ArisRect } from './canvasSync'
 import { DEFAULT_LOCALE_ID } from './emptyDocument'
+import type { ArisLabelFont } from './elements'
 import { buildArisLegend, drawArisLegend, type ArisLegendModel } from './legend'
 import { readLocalized } from './localization'
 import { arisPrintFrameText } from './printFrameI18n'
@@ -59,6 +61,8 @@ export interface ArisPrintFrameAnchoredValue {
   readonly x: number
   readonly y: number
   readonly fontSize: number
+  /** The bound note's own `FontStyleSheet` font, when it resolved (V8). */
+  readonly font: ArisLabelFont | null
 }
 
 export interface ArisPrintFrameHeader {
@@ -81,6 +85,11 @@ export interface ArisPrintFrameOptions {
   readonly localeId?: string
   /** Set false to skip the bottom legend (the header still renders). */
   readonly legend?: boolean
+  /**
+   * Resolve a bound note's own `FontStyleSheet` font (V8). When omitted the
+   * anchored values keep the band-ratio size.
+   */
+  readonly resolveNoteFont?: (note: ArisFreeText) => ArisLabelFont | null
 }
 
 /**
@@ -185,19 +194,22 @@ function classifyAttachments(
 function buildHeader(
   model: ArisModel,
   localeId: string,
-  content: ArisRect | null
+  content: ArisRect | null,
+  resolveNoteFont?: (note: ArisFreeText) => ArisLabelFont | null
 ): ArisPrintFrameHeader | null {
   const { orgBlock } = classifyAttachments(model, content)
 
   // Resolved live placeholders at their source anchors (the imported header's
   // value column). Drawn for every bound note, wherever it sits.
   const anchored: { readonly text: string; readonly x: number; readonly y: number }[] = []
+  const anchoredFonts: (ArisLabelFont | null)[] = []
   for (const note of model.freeText) {
     const binding = resolveFreeTextModelAttributeBinding(note)
     if (binding === null) continue
     const text = printFrameModelAttributeText(model, binding.attributeType, localeId)
     if (!text) continue
     anchored.push(Object.freeze({ text, x: note.bounds.x, y: note.bounds.y }))
+    anchoredFonts.push(resolveNoteFont?.(note) ?? null)
   }
 
   const rows: ArisPrintFrameHeaderRow[] = []
@@ -244,7 +256,18 @@ function buildHeader(
   return Object.freeze({
     bounds,
     rows: orgBlock === null && anchored.length === 0 ? Object.freeze(rows) : Object.freeze([]),
-    anchoredValues: Object.freeze(anchored.map((value) => Object.freeze({ ...value, fontSize }))),
+    anchoredValues: Object.freeze(
+      anchored.map((value, index) => {
+        const font = anchoredFonts[index] ?? null
+        return Object.freeze({
+          ...value,
+          // The note's own FontStyleSheet size wins; the band ratio stays the
+          // fallback for a note whose sheet did not resolve.
+          fontSize: font?.fontSize ?? fontSize,
+          font
+        })
+      })
+    ),
     orgBlock
   })
 }
@@ -271,7 +294,7 @@ export function buildPrintFrame(
 ): ArisPrintFrameModel {
   const localeId = options.localeId ?? DEFAULT_LOCALE_ID
   const content = modelContentBounds(model)
-  const header = buildHeader(model, localeId, content)
+  const header = buildHeader(model, localeId, content, options.resolveNoteFont)
   const legendSlot = options.legend === false ? null : buildLegendSlot(model, content)
   return Object.freeze({
     header,
@@ -280,10 +303,6 @@ export function buildPrintFrame(
 }
 
 // --- drawing -----------------------------------------------------------------
-
-function rtlAttrs(text: string): Readonly<Record<string, string>> {
-  return /\p{Script=Arabic}/u.test(text) ? { direction: 'rtl', 'unicode-bidi': 'plaintext' } : {}
-}
 
 function drawFrameText(
   text: string,
@@ -295,6 +314,7 @@ function drawFrameText(
     readonly bold?: boolean
     readonly baseline?: string
     readonly marker?: string
+    readonly font?: ArisLabelFont | null
   } = {}
 ): SVGElement {
   const node = svgElement('text', {
@@ -302,12 +322,14 @@ function drawFrameText(
     y: Math.round(y),
     'text-anchor': options.anchor ?? 'middle',
     'dominant-baseline': options.baseline ?? 'middle',
-    'font-size': Math.round(fontSize),
-    'font-family': 'Arial, sans-serif',
-    ...(options.bold ? { 'font-weight': 'bold' } : {}),
-    fill: PRINT_FRAME_TEXT_FILL,
+    'font-size': Math.round(options.font?.fontSize ?? fontSize),
+    'font-family': options.font?.fontFamily ?? 'Arial, sans-serif',
+    ...(options.bold || options.font?.fontWeight
+      ? { 'font-weight': options.font?.fontWeight ?? 'bold' }
+      : {}),
+    fill: options.font?.textColor ?? PRINT_FRAME_TEXT_FILL,
     ...(options.marker === undefined ? {} : { 'data-aris-print-frame-text': options.marker }),
-    ...rtlAttrs(text)
+    ...bidiTextAttrs(text)
   })
   node.textContent = text
   return node
@@ -400,7 +422,8 @@ function drawHeader(group: SVGElement, header: ArisPrintFrameHeader, modelName: 
       headerGroup,
       drawFrameText(value.text, value.x, value.y, value.fontSize, {
         baseline: 'hanging',
-        marker: 'anchored-value'
+        marker: 'anchored-value',
+        font: value.font
       })
     )
   }

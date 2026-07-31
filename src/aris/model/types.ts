@@ -180,6 +180,23 @@ export interface ArisConnectionStyle {
   readonly zOrder: number | null
 }
 
+/**
+ * One locale's font inside a `FontStyleSheet`, resolved from its `<FontNode>`
+ * (see `fontStyleSheet.ts`). ARIS sizes text per locale — the AnimalWF sheets
+ * use `Height="-10"` for English and `"-13"` for Arabic — so a single scalar
+ * per sheet cannot represent both; the scalar `ArisStyle` font fields keep
+ * the sheet's primary (English) node for the consumers that predate
+ * per-locale resolution.
+ */
+export interface ArisStyleFontNode {
+  readonly localeId: string | null
+  readonly fontFamily: string | null
+  readonly fontSize: number | null
+  readonly fontWeight: string | null
+  readonly fontStyle: string | null
+  readonly textColor: string | null
+}
+
 /** A catalog of visual styles referenced by occurrences. */
 export interface ArisStyle {
   readonly id: string
@@ -192,6 +209,8 @@ export interface ArisStyle {
   readonly fontWeight: string | null
   readonly textColor: string | null
   readonly zOrder: number | null
+  /** Per-locale `<FontNode>` resolutions. Optional so older fixtures stay valid. */
+  readonly fontNodes?: readonly ArisStyleFontNode[]
 }
 
 export interface ArisStyleCatalog {

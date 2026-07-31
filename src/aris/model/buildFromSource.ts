@@ -32,6 +32,11 @@ import type {
   ArisWorkingDocument
 } from './types'
 import { amlColorRefToCss } from '../source/semanticIndex'
+import {
+  primaryFontNode,
+  resolveFontStyleSheetNodes,
+  type ArisSourceFontNodeLike
+} from './fontStyleSheet'
 
 const NAME_ATTRIBUTE_TYPES = new Set(['AT_NAME', 'Name'])
 const SUPPORTED_MODEL_TYPES = new Set<ArisModelType>(['MT_EEPC', 'MT_VAL_ADD_CHN_DGM'])
@@ -296,25 +301,19 @@ function buildStyleCatalog(source: ArisSourceIndexLike['styles']): ArisStyleCata
   const fonts =
     (
       source as ArisSourceIndexLike['styles'] & {
-        readonly fonts?: readonly {
-          readonly parsed: {
-            readonly ownerSourceId: string | null
-            readonly color: string | null
-          }
-        }[]
+        readonly fonts?: readonly ArisSourceFontNodeLike[]
       }
     ).fonts ?? []
-  const textColorByStyleSheet = new Map<string, string>()
-  for (const font of fonts) {
-    const ownerSourceId = font.parsed.ownerSourceId
-    const textColor = sourceColorToCss(font.parsed.color)
-    if (ownerSourceId && textColor && !textColorByStyleSheet.has(ownerSourceId)) {
-      textColorByStyleSheet.set(ownerSourceId, textColor)
-    }
-  }
   for (const [, sheet] of source.fontStyleSheets) {
     const id = sheet.parsed.fontStyleSheetId
     if (!id) continue
+    // Every `<FontNode>` of the sheet, kept per locale: the AnimalWF sheets
+    // size English text at Height="-10" and Arabic at "-13", and a caption in
+    // the Arabic display locale must get the Arabic node's metrics (V8).
+    const fontNodes = resolveFontStyleSheetNodes(id, fonts).map((node) =>
+      Object.freeze({ ...node, textColor: sourceColorToCss(node.textColor) })
+    )
+    const primary = primaryFontNode(fontNodes)
     styles.set(
       id,
       Object.freeze({
@@ -323,11 +322,12 @@ function buildStyleCatalog(source: ArisSourceIndexLike['styles']): ArisStyleCata
         strokeColor: null,
         strokeWidth: null,
         lineStyle: null,
-        fontFamily: null,
-        fontSize: null,
-        fontWeight: null,
-        textColor: textColorByStyleSheet.get(id) ?? null,
-        zOrder: null
+        fontFamily: primary?.fontFamily ?? null,
+        fontSize: primary?.fontSize ?? null,
+        fontWeight: primary?.fontWeight ?? null,
+        textColor: primary?.textColor ?? null,
+        zOrder: null,
+        fontNodes: Object.freeze(fontNodes)
       })
     )
   }
